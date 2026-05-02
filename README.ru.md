@@ -43,16 +43,14 @@ handler'ом**. Отсюда автоматически:
 коде. Циклы освобождаются автоматически. Современный concurrent GC даёт
 паузы <1ms.
 
-Для real-time зон (звук, торговля, embedded) — явный `region { ... }`
-блок с эффектом `Realtime`, GC внутри выключен:
+Для real-time зон (звук, торговля, embedded) — эффект `Realtime` в
+сигнатуре. Компилятор оборачивает тело в region автоматически (GC
+внутри выключен). Явный `region { ... }` нужен только для контроля над
+несколькими аренами:
 
 ```nova
-fn process_audio(samples []f32) Realtime -> []f32 =>
-    region {
-        let buf = []f32.with_capacity(1024)
-        // ... обработка, гарантированно нет GC pauses
-        buf.to_owned()
-    }
+fn map_audio(samples []f32, gain f32) Realtime -> []f32 =>
+    samples.map(|x| x * gain)   // implicit region, без GC pauses
 ```
 
 Для perf-критичного кода компилятор использует **escape analysis** —

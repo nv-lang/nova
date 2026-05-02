@@ -755,8 +755,9 @@ type Color { r, g, b u8 }
 
 Для perf-критичного кода компилятор использует **escape analysis**:
 не утекающие значения остаются на стеке, без аллокаций в managed
-heap. Программист не пишет ничего особого. Для real-time — явный
-`region { ... }` блок с эффектом `Realtime` ([D6](../decisions.md)).
+heap. Программист не пишет ничего особого. Для real-time — эффект
+`Realtime` в сигнатуре, тело автоматически оборачивается в region
+(или явный `region { ... }` для контроля над аренами), [D6](../decisions.md).
 
 Подробно — [decisions.md D32](../decisions.md).
 
@@ -894,8 +895,9 @@ fn hot_loop(data []f64) -> f64 =>
 объекты — на стеке, остальное — в managed heap. Никаких ссылок
 вручную.
 
-Для real-time hot path — явный `region { ... }` блок с эффектом
-`Realtime`. См. [decisions.md D6](../decisions.md).
+Для real-time hot path — эффект `Realtime` в сигнатуре. Компилятор
+оборачивает тело в implicit region; явный `region { ... }` нужен только
+для контроля над несколькими аренами. См. [decisions.md D6](../decisions.md).
 
 ## Структурные «интерфейсы» — `protocol`
 

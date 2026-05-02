@@ -48,16 +48,14 @@ a handler**. From that, the following fall out automatically:
 code. Cycles are reclaimed automatically. A modern concurrent GC keeps
 pauses below 1ms.
 
-For real-time zones (audio, trading, embedded) — an explicit
-`region { ... }` block with the `Realtime` effect, GC disabled inside:
+For real-time zones (audio, trading, embedded) — the `Realtime` effect
+in the signature. The compiler wraps the body in a region automatically
+(GC off inside). An explicit `region { ... }` block is only needed to
+manage multiple arenas manually:
 
 ```nova
-fn process_audio(samples []f32) Realtime -> []f32 =>
-    region {
-        let buf = []f32.with_capacity(1024)
-        // ... processing, guaranteed no GC pauses
-        buf.to_owned()
-    }
+fn map_audio(samples []f32, gain f32) Realtime -> []f32 =>
+    samples.map(|x| x * gain)   // implicit region, no GC pauses
 ```
 
 For perf-critical code the compiler uses **escape analysis** —
