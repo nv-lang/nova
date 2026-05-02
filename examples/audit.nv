@@ -1,0 +1,440 @@
+// Package admin — audit-лог деструктивных операций.
+//
+// AuditMiddleware навешивается на non-GET роуты внутри /api/admin/*.
+// После успешного (2xx) ответа middleware кладёт запись в таблицу
+// admin_audit_log: admin_id, действие, target (если есть), тело
+// запроса (без потенциальных секретов).
+//
+// Почему после ответа: если handler упал — операция не выполнилась,
+// аудит-запись была бы ложной. Проверяем status code.
+
+module admin.audit
+
+// ──────────────────────────────────────────────────────────────────────────
+// Константы
+// ──────────────────────────────────────────────────────────────────────────
+
+// Максимальный размер payload, который сохраняем в БД (байт).
+// Всё больше усечём до этого предела — реальные админские запросы
+// умещаются в 1 КБ, но defense-in-depth против случайного огромного JSON.
+const MAX_AUDIT_PAYLOAD_BYTES = 4096
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Типы данных
+// ──────────────────────────────────────────────────────────────────────────
+
+// Запись аудита (внутренняя — для middleware).
+type AuditEntryInternal {
+    admin_id    str
+    action      str
+    target_kind str
+    target_id   str
+    payload     Json
+    status      int
+    ip          str
+    user_agent  str
+}
+
+// DTO для GET /api/admin/audit — отдаётся клиенту.
+type AuditEntry {
+    id          str
+    admin_id    str
+    admin_name  str
+    action      str
+    target_kind str
+    target_id   str
+    payload     Json
+    status      int
+    ip          str
+    user_agent  str
+    created_at  Timestamp
+}
+
+// Параметры фильтрации списка.
+type ListParams {
+    admin_id  Option[str]
+    action    Option[str]
+    target_id Option[str]
+    from      Option[Timestamp]
+    to        Option[Timestamp]
+    limit     int
+    offset    int
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Типы-контексты (используются как эффекты в сигнатурах ниже)
+// ──────────────────────────────────────────────────────────────────────────
+
+// Router — поиск pattern и URL-параметров текущего запроса.
+// В Go это chi.RouteContext, в Nova — обычный тип, используемый
+// как эффект (между `)` и `->` в сигнатуре).
+type Router {
+    pattern() -> str
+    url_param(name str) -> Option[str]
+    url_params() -> [(str, str)]
+}
+
+// CurrentAdmin — текущий аутентифицированный админ.
+// В Go это auth.UserID(r.Context()), в Nova — handler ставится
+// в auth-middleware выше по цепочке через `with`.
+type CurrentAdmin {
+    id() -> Option[str]
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Вычисление action из метода + route pattern
+// ──────────────────────────────────────────────────────────────────────────
+
+// actionFromRoute выводит action-ключ из метода + route pattern.
+// Пример: POST /users/{id}/ban → "users.ban", PUT /automsgs/{key} → "automsgs.update".
+fn action_from_route(method str, pattern str) -> str {
+    let p = pattern
+        .trim_prefix("/api/admin")
+        .trim_prefix("/admin")
+        .trim_prefix("/")
+
+    // Найдём первую сущность и (опциональный) verb — пропускаем {param}.
+    let segments = p.split("/").filter((s) => s != "" && !s.starts_with("{"))
+    let entity = segments.get(0).unwrap_or("")
+    let verb_explicit = segments.get(1).unwrap_or("")
+
+    let verb = if verb_explicit != "" {
+        verb_explicit
+    } else {
+        match method {
+            "POST"          => "create"
+            "PUT" | "PATCH" => "update"
+            "DELETE"        => "delete"
+            _               => method.to_lower()
+        }
+    }
+
+    if entity == "" {
+        method.to_lower()
+    } else {
+        "${entity}.${verb}"
+    }
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Извлечение target из chi-роутинга
+// ──────────────────────────────────────────────────────────────────────────
+
+// target_from_route — определяет (kind, id) цели операции из первого
+// path-параметра. Для /users/{id}/ban → ("user", <id>).
+// Для /automsgs/{key} → ("automsg", <key>).
+fn target_from_route(pattern str) Router -> (str, str) {
+    let p = pattern
+        .trim_prefix("/api/admin")
+        .trim_prefix("/admin")
+        .trim_prefix("/")
+
+    // Сущность — первый непараметрический сегмент.
+    let kind = p.split("/")
+        .find((s) => s != "" && !s.starts_with("{"))
+        .map(singularize)
+        .unwrap_or("")
+
+    // ID — первый непустой URL-param, исключая wildcard.
+    let id = Router.url_params()
+        .find((name, value) => value != "" && name != "*")
+        .map((_, value) => value)
+        .unwrap_or("")
+
+    (kind, id)
+}
+
+// users → user, automsgs → automsg, events → event, messages → message.
+fn singularize(s str) -> str =>
+    if s.ends_with("sses") {
+        s
+    } else if s.ends_with("s") {
+        s.trim_suffix("s")
+    } else {
+        s
+    }
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Извлечение IP клиента
+// ──────────────────────────────────────────────────────────────────────────
+
+// client_ip — IP клиента с учётом X-Forwarded-For (за nginx).
+fn client_ip(headers Headers, remote_addr str) -> str =>
+    match headers.get("X-Forwarded-For") {
+        Some(fwd) => fwd.split(",").get(0).unwrap_or(fwd).trim()
+        None      => match split_host_port(remote_addr) {
+            Ok((host, _)) => host
+            Err(_)        => remote_addr
+        }
+    }
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Sanitization payload
+// ──────────────────────────────────────────────────────────────────────────
+
+// sanitize_payload — убираем потенциально-секретные поля
+// (password, token, secret) из JSON-тела до записи в журнал.
+// Если тело не JSON или пустое — пишем {}.
+// Если тело длиннее порога — обрезаем и ставим маркер.
+fn sanitize_payload(raw []u8) -> Json =>
+    if raw.len == 0 {
+        json`{}`
+    } else if raw.len > MAX_AUDIT_PAYLOAD_BYTES {
+        json`{"_truncated": true}`
+    } else {
+        match Json.parse(raw) {
+            Err(_)  => json`{"_nonjson": true}`
+            Ok(obj) => redact_secrets(obj)
+        }
+    }
+
+fn redact_secrets(obj Json) -> Json =>
+    match obj {
+        Json.Object(fields) => Json.Object(
+            fields.map((k, v) => (k, if is_secret_key(k) { json`"***"` } else { v }))
+        )
+        other => other
+    }
+
+fn is_secret_key(k str) -> bool {
+    let low = k.to_lower()
+    low.contains("password") || low.contains("token") || low.contains("secret")
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// AuditMiddleware
+// ──────────────────────────────────────────────────────────────────────────
+
+// AuditMiddleware пишет запись в admin_audit_log для не-GET запросов
+// с 2xx-ответом.
+//
+// Использование:
+//
+//     route("/admin", { ar =>
+//         ar.use(admin_only)
+//         ar.use(audit_middleware)   // ← после admin_only
+//         ...
+//     })
+fn audit_middleware(next Handler) -> Handler =>
+    (req Request) Db Log Router CurrentAdmin Async Throws -> Response => {
+        // GET и HEAD не аудируем.
+        if req.method == "GET" || req.method == "HEAD" {
+            return next(req)
+        }
+
+        // Прочитаем тело: оно может понадобиться handler'у дальше.
+        // limit + 1 — чтобы знать, что превысили лимит без чтения всего.
+        let payload = if req.content_length != 0 {
+            req.body.read_limited(MAX_AUDIT_PAYLOAD_BYTES + 1)
+        } else {
+            []
+        }
+        let req_with_body = req.with_body(payload)
+
+        let resp = next(req_with_body)
+
+        // Не пишем аудит для неуспешных — операция не применилась.
+        if resp.status >= 400 {
+            return resp
+        }
+
+        // Без admin_id запись бесполезна (и нарушит FK).
+        let admin_id = match CurrentAdmin.id() {
+            Some(id) => id
+            None     => return resp
+        }
+
+        let pattern = Router.pattern()
+        let action = action_from_route(req.method, pattern)
+        let (target_kind, target_id) = target_from_route(pattern)
+
+        // Пишем аудит фоном — не блокируем ответ клиенту.
+        spawn write_audit(AuditEntryInternal {
+            admin_id:    admin_id,
+            action:      action,
+            target_kind: target_kind,
+            target_id:   target_id,
+            payload:     sanitize_payload(payload),
+            status:      resp.status,
+            ip:          client_ip(req.headers, req.remote_addr),
+            user_agent:  req.headers.get("User-Agent").unwrap_or(""),
+        })
+
+        resp
+    }
+
+// write_audit — INSERT в admin_audit_log с собственным таймаутом.
+//
+// Отдельный таймаут — основной запрос-контекст уже может быть отменён
+// к моменту записи (клиент закрыл соединение). 2 секунды на INSERT —
+// щедро.
+fn write_audit(e AuditEntryInternal) Db Log Async -> () =>
+    // handler-лямбда (D31): для эффекта с одной операцией (Throws.throw)
+    // сахар — лямбда, параметры соответствуют операции.
+    // Не вызываем resume — блок завершается после handler'а.
+    with Throws[Error] = (err) => {
+        Log.warn("admin audit: insert failed", {
+            "admin_id": e.admin_id,
+            "action":   e.action,
+            "err":      err.message,
+        })
+    } {
+        with_timeout(2.seconds) {
+            let ip_value = if e.ip != "" && e.ip != "<nil>" { Some(e.ip) } else { None }
+            Db.exec(
+                """
+                INSERT INTO admin_audit_log
+                    (admin_id, action, target_kind, target_id, payload, status, ip, user_agent)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                """,
+                [e.admin_id, e.action, e.target_kind, e.target_id,
+                 e.payload, e.status, ip_value, e.user_agent]
+            )
+        }
+    }
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// GET /api/admin/audit
+// ──────────────────────────────────────────────────────────────────────────
+
+// list_audit — handler для GET /api/admin/audit с фильтрами.
+// query: ?from=&to=&admin_id=&action=&target_id=&limit=&offset=
+fn list_audit(req Request) Db Throws -> Response {
+    let params = parse_list_params(req.query)
+    let entries = query_audit(params)?
+    Response.json(200, {
+        "entries": entries,
+        "limit":   params.limit,
+        "offset":  params.offset,
+    })
+}
+
+fn parse_list_params(query Query) -> ListParams {
+    let limit_raw = query.get("limit").and_then(parse_int).unwrap_or(100)
+    let limit = if limit_raw <= 0 || limit_raw > 500 { 100 } else { limit_raw }
+
+    ListParams {
+        admin_id:  query.get("admin_id"),
+        action:    query.get("action"),
+        target_id: query.get("target_id"),
+        from:      query.get("from").and_then(parse_rfc3339),
+        to:        query.get("to").and_then(parse_rfc3339),
+        limit:     limit,
+        offset:    query.get("offset").and_then(parse_int).unwrap_or(0),
+    }
+}
+
+// query_audit — собирает параметризованный SQL и возвращает список.
+//
+// Динамический WHERE строится через Sql.builder, чтобы избежать
+// конкатенации строк и SQL-инъекций.
+fn query_audit(p ListParams) Db Throws -> []AuditEntry {
+    let q = Sql.builder("""
+        SELECT a.id, a.admin_id, COALESCE(u.username, '') AS admin_name,
+               a.action, a.target_kind, a.target_id, a.payload,
+               a.status, COALESCE(a.ip::text, '') AS ip, a.user_agent, a.created_at
+        FROM admin_audit_log a
+        LEFT JOIN users u ON u.id = a.admin_id
+        WHERE 1=1
+    """)
+        .when(p.admin_id,  (v) => "AND a.admin_id = ?",  v)
+        .when(p.action,    (v) => "AND a.action = ?",    v)
+        .when(p.target_id, (v) => "AND a.target_id = ?", v)
+        .when(p.from,      (v) => "AND a.created_at >= ?", v)
+        .when(p.to,        (v) => "AND a.created_at <= ?", v)
+        .append("ORDER BY a.created_at DESC LIMIT ? OFFSET ?", [p.limit, p.offset])
+
+    Db.query(q.sql, q.args)?
+        .map(row_to_audit_entry)
+}
+
+fn row_to_audit_entry(row Row) Throws -> AuditEntry =>
+    AuditEntry {
+        id:          row.get("id")?,
+        admin_id:    row.get("admin_id")?,
+        admin_name:  row.get("admin_name")?,
+        action:      row.get("action")?,
+        target_kind: row.get("target_kind")?,
+        target_id:   row.get("target_id")?,
+        payload:     row.get_or("payload", json`{}`),
+        status:      row.get("status")?,
+        ip:          row.get_or("ip", ""),
+        user_agent:  row.get_or("user_agent", ""),
+        created_at:  row.get("created_at")?,
+    }
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Тесты — эффекты делают это тривиальным
+// ──────────────────────────────────────────────────────────────────────────
+
+test "action_from_route: POST /users/{id}/ban" {
+    assert action_from_route("POST", "/api/admin/users/{id}/ban") == "users.ban"
+}
+
+test "action_from_route: PUT /automsgs/{key}" {
+    assert action_from_route("PUT", "/api/admin/automsgs/{key}") == "automsgs.update"
+}
+
+test "action_from_route: POST /users (create)" {
+    assert action_from_route("POST", "/api/admin/users") == "users.create"
+}
+
+test "sanitize_payload: redacts password" {
+    let input = json`{"name": "alice", "password": "secret123"}`.to_bytes()
+    let out = sanitize_payload(input)
+    assert out == json`{"name": "alice", "password": "***"}`
+}
+
+test "sanitize_payload: truncates large input" {
+    let huge = bytes.repeat('x', MAX_AUDIT_PAYLOAD_BYTES + 100)
+    assert sanitize_payload(huge) == json`{"_truncated": true}`
+}
+
+test "audit middleware: пишет запись для успешного POST" {
+    with Db = in_memory_db,
+         Log = silent,
+         Router = mock_router("/api/admin/users/{id}/ban", [("id", "42")]),
+         CurrentAdmin = fixed_admin("admin-uuid"),
+         Time = fixed(2026-04-30T10:00:00) {
+
+        let next = (req) => Response.ok(json`{}`)
+        let mw = audit_middleware(next)
+
+        mw(Request.post("/users/42/ban", json`{"reason": "spam"}`))?
+
+        // Подождать spawn-задачу.
+        await_all_spawned()
+
+        let rows = Db.query("SELECT action, target_kind, target_id FROM admin_audit_log", [])?
+        assert rows.len == 1
+        assert rows[0].get("action")?         == "users.ban"
+        assert rows[0].get("target_kind")?    == "user"
+        assert rows[0].get("target_id")?      == "42"
+    }
+}
+
+test "audit middleware: НЕ пишет для 4xx" {
+    with Db = in_memory_db,
+         Log = silent,
+         Router = mock_router("/api/admin/users/{id}", [("id", "42")]),
+         CurrentAdmin = fixed_admin("admin-uuid") {
+
+        let next = (req) => Response.error(403, "forbidden")
+        let mw = audit_middleware(next)
+
+        mw(Request.delete("/users/42", []))?
+        await_all_spawned()
+
+        let rows = Db.query("SELECT * FROM admin_audit_log", [])?
+        assert rows.len == 0
+    }
+}

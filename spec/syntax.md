@@ -1,0 +1,1007 @@
+# Nova — синтаксис
+
+## Минимальные примеры
+
+```nova
+// Hello world — никаких main, package, import для stdlib
+print("hello")
+
+// Чистая функция: нет эффектов, нет ошибок, детерминирована
+fn double(x int) -> int => x * 2
+```
+
+## Tagged template literals — `tag\`...\``
+
+Литерал с префиксом-тегом обрабатывается функцией `tag`. Возвращает
+тип, который выбирает функция (не обязательно `str`):
+
+```nova
+let j = json`{"name": "alice"}`              // -> Json
+let q = sql`SELECT * FROM users WHERE id = ${user_id}`   // -> Sql, безопасно
+let r = regex`\d+\.\d+`                       // -> Regex, raw
+let b = bytes`deadbeef`                       // -> Bytes
+```
+
+**Интерполяция через `${expr}`** — tag-функция получает части и
+аргументы **раздельно**, что обеспечивает безопасность (защита от SQL
+injection):
+
+```nova
+sql`SELECT * FROM users WHERE name = ${name}`
+// → sql(["SELECT * FROM users WHERE name = ", ""], [name])
+// функция передаёт name как параметр, не склеивает в строку
+```
+
+**Multiline** работает естественно. Escape: `` \` ``, `\\`, `\${` —
+буквальные. Остальные символы — raw (удобно для regex и SQL).
+
+**Стандартные теги в stdlib:** `json`, `sql`, `regex`, `bytes`.
+
+**Свой тег** — обычная функция:
+
+```nova
+export fn url(parts []str, args []str) -> Url => ...
+
+let u = url`https://api.example.com/users/${user_id}`
+```
+
+Подробно — [decisions.md D48](../decisions.md).
+
+## Statement separator: newline или `;`
+
+**Перенос строки** разделяет statement'ы. **`;` опционален** —
+нужен только для нескольких statement'ов на одной строке:
+
+```nova
+let x = 1                        // newline разделяет
+let y = 2
+foo(x, y)
+
+let a = 1; let b = 2; foo(a, b)  // ; для одной строки
+```
+
+Newline **игнорируется** в позициях, где statement продолжается:
+
+```nova
+// 1. После висящего бинарного оператора
+let total = a +
+            b +
+            c
+
+// 2. Внутри открытых () [] {}
+let user = User {
+    name: "alice",
+    age: 30,
+}
+
+// 3. Перед .method() (chain)
+let result = list
+    .filter() { x => x > 0 }
+    .sum()
+
+// 4. Перед ? (error propagation)
+let user = find_user(id)
+    ?
+```
+
+**Бинарные операторы — в конец строки** (Go-стиль), не в начало:
+
+```nova
+let total = a +              ✅
+            b
+let total = a
+          + b                 ❌ парсится как унарный +b
+```
+
+Подробно — [decisions.md D49](../decisions.md).
+
+## Числовые литералы
+
+```nova
+// Целые
+1
+1_000_000_000              // разделитель `_` между цифрами
+0xFF_FF_FF_FF              // hex (любой регистр)
+0b1010_0001                // binary
+0o755                      // octal
+
+// Float
+1.5
+1_234.567_89
+1e10                       // научная нотация
+1.5e-3
+```
+
+**Default-типы** без контекста: `int` для целых, `f64` для float. С
+аннотацией/контекстом — берётся тип контекста:
+
+```nova
+let x u8 = 200             // 200 это u8
+let arr []f32 = [1.0, 2.0]
+```
+
+**Type-suffixes (`100u32`, `1.5f32`) не вводятся.** Для редких случаев
+дисамбигуации — `as`-cast: `100 as u32`, `0xFF as u8`.
+
+**Разделитель `_` разрешён только между цифрами**, не подряд, не в
+начале/конце, не сразу после префикса (`0x_FF` ❌), не вокруг точки
+или `e`. Подробно — [decisions.md D44](../decisions.md).
+
+## Аннотации типа — без двоеточия
+
+В позициях, где компилятор однозначно знает «дальше идёт тип»,
+двоеточие опускается:
+
+```nova
+fn save(u User, amount money) Throws Db -> ()    // параметры
+let users []User = []                            // let
+type User { id u64, name str }                   // поля типа
+for id u64 in ids { ... }                        // for-loop
+```
+
+`:` остаётся там, где это **разделитель ключ-значение**:
+
+```nova
+let alice = User { id: 1, name: "alice" }       // record-литерал
+let cfg = { "host": "localhost", "port": 8080 } // dict-литерал
+```
+
+## Возврат: `->` обязателен, `()` опционален
+
+```nova
+fn compute(x int) -> int => x * 2    // явный тип возврата
+fn log_event(e Event) Log            // -> () можно опускать
+fn save(u User) Throws Db            // эффекты + dropped -> ()
+```
+
+## Trailing lambda — лямбда за скобками вызова
+
+Если последний параметр функции — `fn(...) -> T`, лямбду можно вынести
+за `(...)`. **`()` обязательны** даже без других аргументов:
+
+```nova
+spawn() {
+    handle_request(req)
+}
+
+with_timeout(2.seconds) {
+    Db.exec("...")
+}
+
+list.filter() { x => x > 0 }
+list.fold(0) { (acc, x) => acc + x }
+```
+
+**Правила:**
+- `()` всегда — `spawn { body }` ❌, `spawn() { body }` ✅.
+- `{` на той же строке, что `)`. Перенос между ними запрещён.
+- Параметры через `=>`: `{ x => body }`, `{ (a, b) => body }`,
+  `{ body }` (без параметров).
+- Тип последнего параметра должен быть функциональным.
+- Один trailing на вызов.
+
+Короткие лямбды можно оставлять в скобках — convention:
+```nova
+list.filter((x) => x > 0)            // короткая inline
+m.get_or_insert("k", () => 0)        // короткая inline
+```
+
+Длинные — выносить через trailing для читаемости. Подробно — [decisions.md D43](../decisions.md).
+
+## Тело функции: `=>` для выражения, `{}` для блока
+
+Два **взаимоисключающих** способа:
+
+```nova
+// expression-body — ровно одно выражение
+fn double(x int) => x * 2                    // -> int выведен (D45)
+fn classify(n int) -> str => match n {       // -> str для ясности
+    0 => "zero",
+    n if n > 0 => "positive",
+    _ => "negative",
+}
+
+// block-body — несколько шагов; последнее выражение = значение блока
+fn next_pow2(n int) -> int {                 // -> int обязателен
+    if n <= 1 { return 1 }
+    let mut p = 1
+    while p < n { p *= 2 }
+    p
+}
+```
+
+**В expression-body `-> T` опционален** — тип выводится из тела
+([D45](../decisions.md)). В block-body `-> T` обязателен (если не unit).
+
+**Indentation не значим.** `fn f() => stmt1; stmt2` или multiline без
+`{}` — ошибка. Если шагов больше одного — `{}` обязательны.
+
+Style: для `export`-функций (public API) рекомендуется писать `-> T`
+явно — это документация и стабильность. Для приватных и tiny helpers
+можно опускать.
+
+Подробно — [decisions.md D40](../decisions.md), [D45](../decisions.md).
+
+## Перегрузка операторов
+
+Стандартные операторы автоматически вызывают методы с фиксированными
+именами:
+
+```nova
+fn Duration @plus(other Duration) => Duration { nanos: @nanos + other.nanos }
+fn Duration @times(n i64) => Duration { nanos: @nanos * n }
+
+let total = 1.hour() + 30.minutes()       // вызывает @plus
+let triple = 5.seconds() * 3              // вызывает @times
+if elapsed > 1.second() { ... }           // вызывает @gt
+```
+
+| Оператор | Метод | | Оператор | Метод |
+|---|---|---|---|---|
+| `+` | `@plus(o)` | | `==` | `@eq(o) -> bool` |
+| `-` (binary) | `@minus(o)` | | `<` | `@lt(o) -> bool` |
+| `-` (unary) | `@neg()` | | `<=` | `@le(o) -> bool` |
+| `*` | `@times(o)` | | `>` | `@gt(o) -> bool` |
+| `/` | `@div(o)` | | `>=` | `@ge(o) -> bool` |
+| `%` | `@rem(o)` | | `!` | `@not()` |
+| `\|` | `@or(o)` | | `<<` | `@shl(n)` |
+| `&` | `@and(o)` | | `>>` | `@shr(n)` |
+| `^` | `@xor(o)` | | | |
+| `a[i]` | `@get(i)` | | `a[i]=v` | `@set(i, v)` |
+
+`!=` выводится из `@eq`. `&&`/`||` **не перегружаются** (short-circuit
+семантика). Custom-операторы (`:+`, `<>`) не разрешены. Подробно —
+[decisions.md D46](../decisions.md).
+
+## Конвенции именования
+
+| Что | Стиль | Пример |
+|---|---|---|
+| Типы, эффекты, протоколы, варианты sum | **PascalCase** | `User`, `HashMap`, `Db`, `Hashable`, `Some` |
+| Generic-параметры | **PascalCase, односимвольные** | `T`, `K`, `V`, `E` |
+| Функции, методы (`@name`), параметры, поля | **snake_case** | `parse_url`, `@deposit`, `user_id`, `created_at` |
+| Константы (`const`) | **SCREAMING_SNAKE_CASE** | `MAX_PAYLOAD`, `DEFAULT_TIMEOUT` |
+| Модули | **snake_case** через точки | `module admin.audit`, `module std.duration` |
+
+**Акронимы — PascalCase, не UPPERCASE.** `Db`, не `DB`. `Http`, не `HTTP`.
+`Json`, не `JSON`. `Url`, не `URL`. Правило: акроним = обычное слово.
+
+**Зарезервированные имена методов** (operator overloading, [D46](../decisions.md)):
+`@plus`, `@minus`, `@times`, `@div`, `@rem`, `@neg`, `@or`, `@and`,
+`@xor`, `@shl`, `@shr`, `@eq`, `@lt`, `@le`, `@gt`, `@ge`, `@not`,
+`@get`, `@set`. Не использовать для других целей.
+
+**Договорные конвенции:**
+- `T.new(...)` — стандартный конструктор; `T.from_X(...)` — из значения.
+- `@show()` — display, `@hash()` — хеш, `@clone()` — копия, `@iter()`/`@next()` — iterator.
+- `@is_X()` — bool-предикат; `@as_X()` — дешёвая конверсия; `@to_X()` —
+  возможно дорогая.
+- `_prefix` — **только для полей** (используй методы вместо прямого
+  доступа). Для функций/методов **не используется**.
+- Test-имена — строки естественного языка: `test "insert and get"`,
+  не `"test_insert_and_get"`.
+
+Подробно — [decisions.md D30](../decisions.md), [D46](../decisions.md), [D47](../decisions.md).
+
+## Видимость: `export` для публичных деклараций
+
+`export` перед декларацией = публичная (видна снаружи модуля).
+Без `export` = приватная (видна только внутри модуля).
+
+Применяется единообразно к **типам**, **функциям**, **методам**,
+**константам** и **протоколам**:
+
+```nova
+module account
+
+export type Account {                    // публичный тип
+    readonly owner str
+    balance money
+    _internal_id u64                     // convention: `_` = приватное-по-договору
+}
+
+type InternalState { ... }               // приватный тип
+
+export const ACCOUNT_MIN_BALANCE money = 0
+const _INTERNAL_TIMEOUT_MS int = 5_000
+
+export fn Account.new(owner str) -> Account => ...      // публичный конструктор
+export fn Account @balance() => @balance                // публичный метод
+fn Account @validate(amount money) => amount > 0       // приватный helper
+
+export protocol Hashable {
+    hash() -> u64
+    eq(other Self) -> bool
+}
+```
+
+**Поля record:** в MVP все поля `export`-типа публичны. Convention
+`_prefix` для приватных-по-договору, не enforced компилятором —
+обычно инкапсуляция делается через **методы** (геттеры/сеттеры).
+
+Подробно — [decisions.md D47](../decisions.md), [D29](../decisions.md) (модули).
+
+## Объявление типов
+
+| После `type Имя` идёт | Что это |
+|---|---|
+| `{ ... }` | record-структура |
+| `( ... )` | позиционная структура |
+| ничего | unit-тип |
+| `=` потом тип | alias |
+| `=` потом список вариантов через `,` | sum-type |
+
+```nova
+// alias
+type UserId = u64
+
+// record (без `=`, форма сразу после имени)
+type User { id u64, name str }
+
+// позиционная структура
+type Point(f64, f64)
+
+// unit-тип
+type Marker
+
+// sum-type — варианты через запятую
+type Color = Red, Green, Blue
+
+type Shape =
+    Circle { radius f64 },
+    Square { side f64 },
+    Triangle { a f64, b f64, c f64 }
+
+type Result[T, E] = Ok(T), Err(E)
+type Option[T] = Some(T), None
+```
+
+### Варианты sum-type — те же три формы, что top-level type
+
+Каждый вариант sum-type объявляется по тем же правилам, что top-level
+объявление:
+
+| После имени варианта | Что это | Пример |
+|---|---|---|
+| `( ... )` | позиционный вариант | `Some(T)`, `Ok(T)`, `Point(f64, f64)` |
+| `{ ... }` | record-вариант | `Circle { radius f64 }` |
+| ничего | unit-вариант | `None`, `Red`, `Origin` |
+
+```nova
+type Option[T] =
+    Some(T),                  // позиционный — несёт значение T
+    None                      // unit — без полей, само по себе значение
+
+type Shape =
+    Circle { radius f64 },    // record-вариант
+    Point(f64, f64),          // позиционный
+    Origin                    // unit
+```
+
+`None` — это значение типа `Option[T]`, **не функция и не конструктор**.
+Используется без скобок:
+
+```nova
+let x = Some(42)              // позиционный — нужен аргумент
+let y = None                  // unit — без скобок
+```
+
+Подробно — [decisions.md D17](../decisions.md).
+
+## Создание значений и pattern matching
+
+```nova
+let p = Point(1.0, 2.0)
+let u = User { id: 1, name: "alice" }
+let c = Circle { radius: 5.0 }
+let s = Active
+
+// доступ к полям (D37)
+println(u.name)              // record — по имени
+println(p.0, p.1)            // позиционная — по индексу
+let pair = (1, "alice")
+println(pair.0, pair.1)      // кортеж — то же
+
+// создание массивов (D38)
+let xs []int = []                          // пустой, тип из annotation
+let ys = []int.new()                       // через static-метод
+let buf = []u8.with_capacity(1024)         // с pre-allocation
+let zeros = []u8.filled(0, 16)             // заполненный
+
+// turbofish для дженериков (D38)
+let n = parse[int]("42")?                  // явный T = int
+let m = HashMap[str, int].new()            // явные K, V
+
+match shape {
+    Circle { radius }    => 3.14159 * radius * radius
+    Square { side }      => side * side
+    Triangle { a, b, c } => heron(a, b, c)
+}
+
+match result {
+    Ok(value)  => value
+    Err(error) => default
+}
+```
+
+## Pattern matching
+
+```nova
+fn classify(x) => match x {
+    0          => "zero"
+    1..=9      => "digit"
+    n if n < 0 => "negative"
+    _          => "big"
+}
+```
+
+Каждая arm имеет форму `pattern => result`, опционально с **guard'ом**
+`pattern if condition => result`. Компилятор пробует arm'ы сверху вниз,
+берёт первую, где паттерн совпал И guard истинный.
+
+**Виды паттернов:**
+
+| Форма | Пример | Что делает |
+|---|---|---|
+| Литерал | `0`, `"hello"`, `true` | сравнение по значению |
+| Range | `1..=9`, `0..100` | попадание в диапазон |
+| Имя (binding) | `n`, `x` | ловит любое значение, привязывает к имени |
+| Wildcard | `_` | ловит любое значение, не привязывает |
+| Конструктор | `Some(v)`, `Ok(value)`, `None` | разбор варианта sum-type |
+| Record | `User { id, name }` | разбор record-полей |
+| Tuple | `(a, b)`, `(_, value)` | разбор кортежа |
+| Guard | `n if n < 0` | паттерн + дополнительное условие |
+
+**Exhaustiveness check.** Компилятор проверяет, что match покрывает
+все возможные случаи. Если нет — ошибка с указанием непокрытого
+варианта. Это работает для sum-type, range'ей, bool. Для общих типов
+(`int`, `str`) нужен либо `_`-wildcard, либо явная проверка всех
+рассматриваемых значений.
+
+```nova
+type Color = Red, Green, Blue
+
+fn name(c Color) -> str => match c {
+    Red   => "red"
+    Green => "green"
+    // ОШИБКА: missing variant `Blue`
+}
+```
+
+`match` — это **выражение**, возвращает значение. Все ветви должны
+иметь совместимый тип (или общий supertype, либо обёрнутые в sum-type).
+
+### Record-литералы и patterns
+
+**Shorthand** — когда имя поля совпадает с именем переменной в scope:
+
+```nova
+let key = "alice"
+let value = 42
+
+let entry = Entry { key, value }                 // = Entry { key: key, value: value }
+let entry = Entry { key, value, extra: "data" }  // можно смешивать
+```
+
+**Partial pattern matching** — указывать только нужные поля:
+
+```nova
+match @buckets[idx] {
+    Occupied { value }     => Some(value)        // partial: key игнорируется
+    Occupied { value, .. } => Some(value)        // явный .. — то же самое
+    _                      => None
+}
+```
+
+Обе формы валидны (`..` или без) — выбор по контексту. `..` —
+сигнал «у типа есть ещё поля». Без — короче.
+
+**Переименование при деструктуризации:**
+
+```nova
+Occupied { key: k, value }      // key переименовано в k, value совпадает
+```
+
+Подробно — [decisions.md D17](../decisions.md).
+
+### Циклы `for` / `while` / `loop`
+
+```nova
+for x in list { ... }            // x — immutable binding на каждой итерации
+for mut x in list { ... }         // x можно мутировать в теле
+for x int in nums { ... }         // явный тип элемента
+for (i, x) in list.enumerate() { ... }   // индекс через метод
+
+while cond { ... }                // условный цикл
+loop { ... }                      // бесконечный, выход через break/return
+```
+
+Переменная в `for x in iter` — **immutable binding** (как `let` без
+`mut`), на каждой итерации получает **новое значение**. В теле блока
+переприсвоить нельзя:
+
+```nova
+for x in list {
+    x = 5                         // ОШИБКА: x immutable
+}
+
+for mut x in list {
+    x = transform(x)              // ок
+}
+```
+
+Это согласовано с правилом D32/D33 — все binding'и иммутабельны по
+умолчанию, мутация явно через `mut`. Никакого `const` или `final`
+маркера в Nova нет — иммутабельность и так дефолт.
+
+`break` / `continue` — стандартные. `break value` выходит из `loop`
+со значением (loop — выражение).
+
+### `if let` и `while let`
+
+Паттерн-матч прямо в условии — короткая альтернатива `match` для
+одного варианта:
+
+```nova
+// если в кеше есть — вернуть
+if let Some(data) = cache.get(key) {
+    return data
+}
+
+// извлечение из Result
+if let Ok(user) = Db.find(id) {
+    process(user)
+} else {
+    Log.warn("user not found")
+}
+
+// while let — итерация пока паттерн совпадает
+while let Some(line) = reader.read_line()? {
+    process(line)
+}
+
+// несколько условий через запятую
+if let Some(user) = lookup(id), user.is_active {
+    process(user)
+}
+```
+
+Локальные binding'и (`data`, `user`, `line`) доступны **только в теле
+блока**. После закрывающей `}` — недоступны.
+
+Подробно — [decisions.md D34](../decisions.md).
+
+## Методы инстанса и static-функции
+
+В Nova — **два вида функций ассоциированных с типом**, различимых по
+синтаксису декларации:
+
+```nova
+// конструктор / static — через точку, без @
+fn Account.new(owner str) -> Account =>
+    Account { _balance: 0, owner: owner }
+
+// метод инстанса — через пробел и @, неявный self
+fn Account @balance() -> money => @_balance
+
+fn Account @is_solvent() -> bool => @_balance > 0
+
+// мутирующий метод — mut перед @name
+fn Account mut @deposit(amount money) {
+    @_balance += amount
+}
+```
+
+**Использование:**
+
+```nova
+let acc = Account.new("alice")    // вызов constructor через точку
+acc.deposit(100)                   // вызов метода — точка + скобки
+let bal = acc.balance()            // getter, обязательные скобки
+```
+
+### `@field` для доступа к полям
+
+Внутри метода (`@method` или `mut @method`) поля self доступны через
+**`@field`** — единственная форма:
+
+```nova
+fn Account @summary() -> str =>
+    "${@owner}: ${@_balance}"      // = self.owner, self._balance
+```
+
+`@.field` **невалидно** — точка не используется. `@field` — единственно
+верно.
+
+`@` без поля — это **значение текущего инстанса**:
+
+```nova
+fn Account @copy() -> Account => @
+fn Account @send_to(ch Channel[Account]) => ch.send(@)
+```
+
+### Скобки обязательны для вызова
+
+```nova
+acc.balance()              // вызов метода
+acc.balance                // bound method value (не вызов!), тип: fn() -> money
+Account.@balance           // unbound method value, тип: fn(Account) -> money
+Account.new                // static-функция как значение, тип: fn(str) -> Account
+```
+
+Программист и LLM мгновенно различают: вызов = со скобками, значение
+= без скобок. Никаких property с побочками.
+
+### Generic'и
+
+```nova
+fn Vec[T].new() -> Vec[T] => ...                  // generic на типе
+fn Vec[T] @push(item T) -> () => ...              // тоже
+fn Vec[T] @map[U](f T -> U) -> Vec[U] => ...      // generic на методе [U]
+```
+
+Подробно — [decisions.md D35](../decisions.md).
+
+## Embed и delegation: `use Type` и `use name Type`
+
+Композиция вместо наследования. `use` — это **поле + автопрокси методов**:
+
+```nova
+type Account {
+    owner str
+    balance money
+}
+
+fn Account mut @deposit(amount money) => @balance += amount
+
+// embed по имени типа: имя поля = "Account"
+type AuditedAccount {
+    use Account
+    audit_log []AuditEntry
+}
+
+fn AuditedAccount mut @withdraw(amount money) Throws[AuditError] {
+    @Account.deposit(-amount)               // явный вызов "родителя"
+    @audit_log.push(AuditEntry.new(amount))
+}
+
+let aa = AuditedAccount { ... }
+aa.deposit(100)                              // авто-прокси: Account.deposit
+aa.balance                                   // авто-прокси: Account.balance
+```
+
+Имя задаётся через `use name Type` — обязательно при конфликте, опционально
+для читаемости:
+
+```nova
+type Wrapper[K, V] {
+    use w HashMapIter[K, V]      // имя поля = "w"
+    extra int
+}
+
+fn Wrapper[K, V] @next() -> Option[Pair[K, V]] => @w.next()
+
+// конфликт двух embed — псевдонимы обязательны
+type Composite {
+    use a TimerA
+    use b TimerB                  // оба определяют tick() — нужны имена
+}
+```
+
+**Override.** Метод того же имени на внешнем типе перекрывает прокси.
+Доступ к «родительскому» — через `@Type.method()`:
+
+```nova
+fn AuditedAccount mut @deposit(amount money) {
+    @Account.deposit(amount)                // вызов оригинала
+    @audit_log.push(AuditEntry.new(amount))
+}
+```
+
+**`use` — это не наследование.** `AuditedAccount` не подтип `Account`.
+Функции `fn(Account)` принимают `Account`, не `AuditedAccount`. Структурные
+интерфейсы — отдельный механизм (см. ниже).
+
+Подробно — [decisions.md D39](../decisions.md).
+
+## Передача параметров
+
+Объекты (record, sum-type, массивы) передаются **по ссылке** в managed
+heap. Примитивы (`int`, `bool`, `f64`, ...) — **по значению**.
+Префикс `mut` разрешает мутацию.
+
+```nova
+type Account { balance money }    // обычное поле — мутируется у mut binding'а
+
+// без mut — иммутабельный view, мутация запрещена
+fn show(acc Account) Io => println("${acc.balance}")
+
+// с mut — мутации видны вызывающему
+fn deposit(mut acc Account, amount money) {
+    acc.balance += amount
+}
+
+let mut my_acc = Account { balance: 100 }
+deposit(my_acc, 50)
+// my_acc.balance == 150  ← мутация видна
+
+show(my_acc)
+// показывает 150, my_acc не изменён
+```
+
+### Поля типа: `let` для never-mut, `mut` для cache
+
+```nova
+type Account {
+    readonly id u64                // никогда не меняется (D36)
+    readonly owner str             // тоже
+    balance money                  // мутируется у mut-binding
+    closed bool                    // тоже
+    mut last_cached_total money    // мутируется ВСЕГДА (для cache/lazy)
+}
+
+// group-syntax — несколько полей одного типа через запятую
+type Point { x, y, z f64 }
+type Color { r, g, b u8 }
+```
+
+Подробно про правила мутации полей — [decisions.md D36](../decisions.md).
+
+| Форма | Передача | Мутация снаружи |
+|---|---|---|
+| `x int` | by value | нет |
+| `o Order` | managed reference | нет (immutable) |
+| `mut o Order` | managed reference | да |
+
+Для perf-критичного кода компилятор использует **escape analysis**:
+не утекающие значения остаются на стеке, без аллокаций в managed
+heap. Программист не пишет ничего особого. Для real-time — явный
+`region { ... }` блок с эффектом `Realtime` ([D6](../decisions.md)).
+
+Подробно — [decisions.md D32](../decisions.md).
+
+## Эффекты в сигнатуре
+
+Любое нечистое действие — эффект, объявляется между `)` и `->`:
+
+```nova
+fn double(x int) -> int                          // чистая
+fn parse(s str) Throws -> int                    // может бросить
+fn save(u User) Throws Db Log -> ()              // три эффекта
+fn fetch(url str) Net Async Throws -> Response   // сеть + async + ошибки
+```
+
+`?` — пробрасывание ошибки, работает в функциях с `Throws`:
+
+```nova
+fn pipeline(s str) Throws -> int {
+    let n = parse(s)?
+    let doubled = n * 2
+    validate(doubled)?
+    doubled
+}
+```
+
+Подробнее — [effects.md](effects.md), [revolutionary.md](revolutionary.md).
+
+## Контракты (опциональны)
+
+```nova
+fn withdraw(mut acc Account, amount money) Throws -> ()
+    requires amount > 0
+    requires acc.balance >= amount
+    ensures acc.balance == old(acc.balance) - amount
+=>
+    acc.balance -= amount
+```
+
+Без контрактов код работает как обычно. С ними компилятор пытается
+доказать статически, что не может — превращает в runtime-проверку
+в debug-режиме.
+
+## Handler'ы — литералы по форме record-литералов
+
+```nova
+type Logger {
+    log(msg str) -> ()
+}
+
+fn process(x int) Logger -> int {
+    Logger.log("processing ${x}")
+    x * 2
+}
+
+// handler — обычное значение
+let console = Logger {
+    log(msg) => resume(println("[LOG] ${msg}"))
+}
+
+// применение через with
+fn main() Io -> () {
+    with Logger = console {
+        process(42)
+    }
+}
+```
+
+`resume(value)` — продолжение вычисления. Handler может не вызвать
+`resume` (прерывание, как `Throws`) или вызвать несколько раз
+(backtracking, генераторы).
+
+## Имя эффекта в коде — три позиции
+
+```nova
+fn process() Db -> ()                // 1. позиция типа
+Db.query("...", args)                // 2. операция активного handler'а
+let captured = Db                    // 3. сам активный handler как значение
+```
+
+Парсер различает по позиции.
+
+## With-блок — несколько подмен в одном
+
+```nova
+test "complex flow" {
+    with Logger = collect_into(buf),
+         Db = in_memory,
+         Time = fixed(t0) {
+        process_order(o)?
+    }
+    assert buf.contains("processed")
+}
+```
+
+После `with` — список «эффект = handler-выражение» через запятую,
+потом **один** блок тела.
+
+## Параллелизм — без `async/await`
+
+```nova
+fn fetch_all(ids []u64) Net Async Throws -> []User =>
+    parallel for id in ids {
+        fetch_user(id)
+    }
+```
+
+`Async` — обычный эффект, не специальная конструкция. Тип возврата
+`[]User`, не `Future<[]User>`. Подробно — [revolutionary.md R7](revolutionary.md).
+
+`parallel for` — structured concurrency: ждёт всех, отменяет хвост
+при ошибке.
+
+## Capability-режим
+
+```nova
+fn run_user_script(code str) Throws -> Result =>
+    forbid Net, Fs, Db {
+        eval(code)
+    }
+```
+
+Внутри `forbid` компилятор не пропустит вызов функции с запрещёнными
+эффектами. Sandbox в типах, не в рантайме.
+
+## Производительность — escape analysis и regions
+
+Программист пишет обычный код:
+
+```nova
+fn hot_loop(data []f64) -> f64 =>
+    data.iter().sum()  // SIMD-авто, zero-alloc через escape analysis
+```
+
+Компилятор сам решает: примитивы — в регистрах, не утекающие
+объекты — на стеке, остальное — в managed heap. Никаких ссылок
+вручную.
+
+Для real-time hot path — явный `region { ... }` блок с эффектом
+`Realtime`. См. [decisions.md D6](../decisions.md).
+
+## Структурные «интерфейсы» — `protocol`
+
+Никаких `interface`/`trait`. Структурный контракт — отдельным keyword
+**`protocol`**:
+
+```nova
+// именованный
+protocol Printable {
+    show() -> str
+}
+
+fn log_one(x Printable) Log -> () => Log.info(x.show())
+
+// или прямо в сигнатуре, без имени — анонимный структурный тип
+fn log_one(x { show() -> str }) Log -> () => Log.info(x.show())
+```
+
+Совместимость **автоматическая** по структуре — любой тип с
+подходящими методами автоматически удовлетворяет protocol'у, никаких
+`impl`-блоков не нужно. `Self` валиден внутри protocol-блока:
+
+```nova
+protocol Hashable {
+    hash() -> u64
+    eq(other Self) -> bool
+}
+
+protocol Iterator[T] {
+    next() -> Option[T]
+}
+```
+
+`type` — для **данных** (record, sum-type, alias). `protocol` — для
+**поведения** (методы как контракт). Подробно — [decisions.md D42](../decisions.md),
+[D9 / D15](../decisions.md).
+
+## Дженерики
+
+```nova
+fn map[T, U](xs []T, f T -> U) -> []U =>
+    [f(x) for x in xs]
+
+// дженерик по эффектам — функция наследует эффекты `f`
+fn map_eff[T, U, E](xs []T, f (T) E -> U) E -> []U =>
+    [f(x) for x in xs]
+```
+
+Параметры типа — после имени в квадратных скобках `Имя[T]`, не `<T>`.
+Подробно — [decisions.md D16](../decisions.md).
+Массивы — `[]T` (динамический), `[N]T` (фиксированный), [decisions.md D27](../decisions.md).
+
+## Supervision (Erlang-style, встроена)
+
+```nova
+fn server() Par Net Throws -> () =>
+    supervised {
+        spawn handle_requests()
+        spawn periodic_cleanup()
+        spawn metrics_reporter()
+    } strategy = one_for_one, max_restarts = 3
+```
+
+## Тестирование без моков
+
+`test "name" { body }` — тест-блок верхнего уровня. Имя — строковый
+литерал (любые символы, обычно человеческое описание поведения).
+Тело — обычный блок выражений; `assert` — встроенный оператор.
+
+```nova
+test "withdraw decreases balance" {
+    with Db = in_memory_db([acc1, acc2]) {
+        let acc = Account.new("alice")
+        acc.deposit(100)?
+        acc.withdraw(30)?
+        assert acc.balance == 70
+    }
+}
+
+test "insert and get" {
+    let mut m = HashMap[str, int].new()
+    m.insert("a", 1)
+    assert m.get("a") == Some(1)
+    assert m.get("b") == None
+}
+```
+
+Тесты собираются и запускаются только под `nova test`. В обычной сборке
+тело пропускается — никаких `#[cfg(test)]`-обвязок. Эффекты подменяются
+теми же `with`-блоками что и в проде, никакого mock-фреймворка.
+
+## Panic — не эффект, ловится только runtime'ом
+
+Деление на ноль, выход за границы массива, переполнение — это
+**не эффект**, это `Panic`. Программист **не ловит panic в коде** —
+panic означает смерть текущего fiber'а, runtime обрабатывает на границе:
+
+```nova
+fn mean(xs []int) -> int =>
+    xs.sum() / xs.len()                  // никакого Throws[DivByZero]
+
+fn handle(r Request) Db Log -> Response =>
+    process(r)             // если panic — fiber умирает, runtime вернёт 500
+```
+
+В синхронной программе без fiber'ов (CLI/скрипт) panic = exit процесса.
+В серверной — смерть только текущего fiber'а.
+
+Подробно — [revolutionary.md R11](revolutionary.md), [decisions.md D13](../decisions.md).

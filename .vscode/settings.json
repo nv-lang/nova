@@ -1,0 +1,12 @@
+{
+    "files.associations": {
+        "*.nv": "nova"
+    },
+    "editor.tabSize": 4,
+    "editor.insertSpaces": true,
+    "[nova]": {
+        "editor.tabSize": 4,
+        "editor.insertSpaces": true,
+        "editor.rulers": [80, 100]
+    }
+}

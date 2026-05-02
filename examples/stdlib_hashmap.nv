@@ -1,0 +1,501 @@
+// Реализация HashMap[K, V] в стиле Nova stdlib.
+//
+// Контекст. По [D26 prelude](../decisions.md), `HashMap[K, V]` живёт
+// в stdlib (`std.collections.HashMap`), не встроен в язык. Встроены
+// только массивы `[]T` и `[N]T` ([D27](../decisions.md)).
+//
+// Это *черновик реализации* — показывает как stdlib-тип выглядит на
+// Nova. Open addressing + linear probing + resize. Без advanced
+// оптимизаций (Robin Hood, SIMD lookup, perfect hashing).
+//
+// Допущения:
+//   - `K` имеет операции `hash() -> u64` и `eq(other K) -> bool`
+//     (структурно, [D15](../decisions.md)). В реальной stdlib —
+//     prelude-trait `Hash` + `Eq` с auto-derive для примитивов
+//     (зависит от Q15).
+//   - Использует `[]T` и `[T; N]` из [D27](../decisions.md).
+//   - Методы инстанса через `@` ([D35](../decisions.md)).
+//   - Поля по правилам [D36](../decisions.md): `readonly` для
+//     invariants, без префикса для мутируемых.
+
+module std.collections.hashmap
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Типы
+// ──────────────────────────────────────────────────────────────────────────
+
+// Slot — состояние ячейки в open-addressing-таблице.
+//
+// `Empty` — никогда не использовалась (можно остановить probing на
+// поиске).
+// `Tombstone` — была занята, потом удалена (probing продолжается, но
+// слот можно переиспользовать на insert).
+// `Occupied(K, V)` — текущий valid слот.
+type Slot[K, V] =
+    Empty,
+    Tombstone,
+    Occupied { key K, value V }
+
+export type HashMap[K, V] {
+    // buckets — массив слотов. Длина — степень двойки (для битовой маски
+    // вместо modulo — `idx & (len - 1)`).
+    buckets []Slot[K, V]
+
+    // count — число Occupied слотов. Не считая Tombstone.
+    count int
+
+    // Tombstones считаются отдельно — для решения о rehash при
+    // accumulating tombstones (даже если count низкий, много
+    // tombstones замедляют lookup).
+    tombstones int
+
+    // Конфигурация — readonly invariants.
+    readonly load_factor f64       // обычно 0.75
+    readonly initial_capacity int  // обычно 16
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Constructor / static
+// ──────────────────────────────────────────────────────────────────────────
+
+// HashMap.new() — пустая мапа с дефолтной capacity (16).
+export fn HashMap[K, V].new() -> HashMap[K, V] =>
+    HashMap[K, V].with_capacity(16)            // turbofish (D38), inference знает [K, V] из сигнатуры
+
+
+// HashMap.with_capacity(n) — пустая мапа с минимальной capacity n,
+// округлённой вверх до степени двойки.
+export fn HashMap[K, V].with_capacity(min_capacity int) -> HashMap[K, V] {
+    let cap = next_pow2(if min_capacity < 4 { 4 } else { min_capacity })
+    HashMap {
+        buckets: new_buckets(cap),
+        count: 0,
+        tombstones: 0,
+        load_factor: 0.75,
+        initial_capacity: cap,
+    }
+}
+
+
+// HashMap.from(pairs) — построить мапу из массива пар.
+//
+// Пример:
+//   let m = HashMap.from([("a", 1), ("b", 2)])
+export fn HashMap[K, V].from(pairs [](K, V)) -> HashMap[K, V] {
+    // Turbofish (D38) — явные generic-параметры [K, V],
+    // потому что m не имеет annotation и inference не справится.
+    let mut m = HashMap[K, V].with_capacity(pairs.len * 2)
+    for (k, v) in pairs {
+        m.insert(k, v)
+    }
+    m
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Методы инстанса
+// ──────────────────────────────────────────────────────────────────────────
+
+// HashMap.@len() — число valid элементов (не считая tombstones).
+// Простой геттер — `-> T` опускаем (D45).
+export fn HashMap[K, V] @len() => @count
+
+// HashMap.@is_empty() — true если len == 0.
+export fn HashMap[K, V] @is_empty() => @count == 0
+
+// HashMap.@capacity() — общая ёмкость buckets массива.
+export fn HashMap[K, V] @capacity() => @buckets.len
+
+
+// HashMap.@get(key) — найти значение по ключу.
+//
+// Возвращает Some(value), если ключ найден; None иначе.
+export fn HashMap[K, V] @get(key K) -> Option[V] {
+    let idx = @find_slot(key)
+    match @buckets[idx] {
+        Occupied { value } => Some(value)        // partial: key игнорируется
+        _                  => None
+    }
+}
+
+
+// HashMap.@contains(key) — проверка наличия ключа.
+export fn HashMap[K, V] @contains(key K) -> bool =>
+    if let Some(_) = @get(key) { true } else { false }
+
+
+// HashMap.mut @insert(key, value) — вставить пару.
+//
+// Если ключ уже есть, перезаписывает значение и возвращает Some(old).
+// Иначе вставляет и возвращает None.
+//
+// Может вызвать rehash при достижении load_factor.
+export fn HashMap[K, V] mut @insert(key K, value V) -> Option[V] {
+    @maybe_grow()
+
+    let idx = @find_slot(key)
+    match @buckets[idx] {
+        Occupied { key: _, value: old } => {
+            // Замена существующего значения — count не меняется.
+            @buckets[idx] = Occupied { key, value }
+            Some(old)
+        }
+        Tombstone => {
+            // Переиспользуем tombstone — count++, tombstones--.
+            @buckets[idx] = Occupied { key, value }
+            @count += 1
+            @tombstones -= 1
+            None
+        }
+        Empty => {
+            // Новая запись.
+            @buckets[idx] = Occupied { key, value }
+            @count += 1
+            None
+        }
+    }
+}
+
+
+// HashMap.mut @remove(key) — удалить пару по ключу.
+//
+// Возвращает Some(value) если было удалено, None иначе.
+//
+// Не уменьшает size массива — оставляет Tombstone. Это нужно для
+// корректности probing'а: если probe-цепочка пересекает удалённый
+// слот, нельзя его сделать Empty (иначе lookup пропустит элементы
+// дальше по цепочке).
+export fn HashMap[K, V] mut @remove(key K) -> Option[V] {
+    let idx = @find_slot(key)
+    match @buckets[idx] {
+        Occupied { value } => {                  // partial: key игнорируется
+            @buckets[idx] = Tombstone
+            @count -= 1
+            @tombstones += 1
+            Some(value)
+        }
+        _ => None
+    }
+}
+
+
+// HashMap.mut @clear() — освободить все слоты.
+//
+// Не освобождает массив (просто заполняет Empty), чтобы не
+// аллоцировать заново при следующем insert.
+export fn HashMap[K, V] mut @clear() {
+    for i in 0..@buckets.len {
+        @buckets[i] = Empty
+    }
+    @count = 0
+    @tombstones = 0
+}
+
+
+// HashMap.@get_or_insert(key, default) — get с lazy default.
+//
+// Если ключ есть — возвращает Some/Ok. Иначе вставляет default()
+// и возвращает его.
+//
+// Полезный паттерн для счётчиков: `m.get_or_insert(key, () => 0) + 1`.
+export fn HashMap[K, V] mut @get_or_insert(key K, default fn() -> V) -> V {
+    if let Some(v) = @get(key) {
+        return v
+    }
+    let v = default()
+    @insert(key, v)
+    v
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Итерация
+// ──────────────────────────────────────────────────────────────────────────
+
+// Iterator pattern — структурный тип для for-цикла ([D15](../decisions.md)).
+type HashMapIter[K, V] {
+    map_ref &HashMap[K, V]    // в реальной stdlib — borrow или Rc
+    pos int
+}
+
+// HashMap.@iter() — итератор по парам (k, v) в произвольном порядке.
+export fn HashMap[K, V] @iter() -> HashMapIter[K, V] =>
+    HashMapIter { map_ref: @, pos: 0 }
+
+// HashMapIter mut @next() — стандартная операция для for-loop.
+//
+// Структурно совместима с любым итератором: { next() -> Option[T] }.
+export fn HashMapIter[K, V] mut @next() -> Option[(K, V)] {
+    while @pos < @map_ref.buckets.len {
+        let slot = @map_ref.buckets[@pos]
+        @pos += 1
+        if let Occupied { key, value } = slot {
+            return Some((key, value))
+        }
+    }
+    None
+}
+
+
+// HashMap.@keys() — итератор только по ключам.
+export fn HashMap[K, V] @keys() -> KeysIter[K, V] =>
+    KeysIter { inner: @iter() }
+
+type KeysIter[K, V] { inner HashMapIter[K, V] }
+
+export fn KeysIter[K, V] mut @next() -> Option[K] =>
+    match @inner.next() {
+        Some((k, _)) => Some(k)
+        None         => None
+    }
+
+
+// HashMap.@values() — итератор только по значениям.
+export fn HashMap[K, V] @values() -> ValuesIter[K, V] =>
+    ValuesIter { inner: @iter() }
+
+type ValuesIter[K, V] { inner HashMapIter[K, V] }
+
+export fn ValuesIter[K, V] mut @next() -> Option[V] =>
+    match @inner.next() {
+        Some((_, v)) => Some(v)
+        None         => None
+    }
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Внутренние helpers
+// ──────────────────────────────────────────────────────────────────────────
+
+// HashMap.@find_slot(key) — найти индекс слота для ключа.
+//
+// Возвращает индекс либо Occupied слота с этим ключом, либо
+// первого Empty/Tombstone в probing-цепочке.
+//
+// Linear probing: cap-mask вместо modulo.
+fn HashMap[K, V] @find_slot(key K) -> int {
+    let mask = @buckets.len - 1
+    let mut idx = (key.hash() as int) & mask
+    let mut first_tombstone = -1
+
+    loop {
+        match @buckets[idx] {
+            Empty => {
+                // Если по пути встретили tombstone — переиспользуем
+                // его. Иначе — первый Empty.
+                return if first_tombstone >= 0 { first_tombstone } else { idx }
+            }
+            Tombstone => {
+                // Запоминаем первый tombstone, продолжаем поиск.
+                if first_tombstone < 0 { first_tombstone = idx }
+            }
+            Occupied { key: k } => {             // partial: value игнорируется
+                if k.eq(key) { return idx }
+            }
+        }
+        idx = (idx + 1) & mask
+    }
+}
+
+
+// HashMap.mut @maybe_grow() — пересоздать массив, если load_factor
+// превышен или слишком много tombstones.
+fn HashMap[K, V] mut @maybe_grow() {
+    let used = @count + @tombstones
+    let threshold = (@buckets.len as f64 * @load_factor) as int
+    if used < threshold { return }
+
+    // Если tombstones — большая часть, можно rehash в тот же размер.
+    // Иначе удваиваем capacity.
+    let new_cap = if @tombstones * 2 > @count {
+        @buckets.len
+    } else {
+        @buckets.len * 2
+    }
+
+    @rehash(new_cap)
+}
+
+
+// HashMap.mut @rehash(new_cap) — пересчёт хешей в новом массиве.
+//
+// Используется при росте и при cleanup tombstones.
+fn HashMap[K, V] mut @rehash(new_cap int) {
+    let old_buckets = @buckets
+    @buckets = new_buckets(new_cap)
+    @count = 0
+    @tombstones = 0
+
+    for slot in old_buckets {
+        if let Occupied { key, value } = slot {
+            @insert(key, value)
+        }
+    }
+}
+
+
+// new_buckets(cap) — создать массив Empty слотов длины cap.
+//
+// Не метод HashMap, а свободная функция: используется в new() и
+// rehash() до того, как HashMap собран.
+fn new_buckets[K, V](cap int) -> []Slot[K, V] {
+    // Turbofish (D38): явный generic для with_capacity, чтобы
+    // type inference знал тип элементов массива.
+    let mut buckets = []Slot[K, V].with_capacity(cap)
+    for _ in 0..cap {
+        buckets.push(Slot.Empty)
+    }
+    buckets
+}
+
+
+// next_pow2(n) — наименьшая степень двойки ≥ n.
+//
+// Чистая функция. При n ≤ 1 возвращает 1.
+fn next_pow2(n int) -> int {
+    if n <= 1 { return 1 }
+    let mut p = 1
+    while p < n { p *= 2 }
+    p
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Тесты — handler-подмена не нужна, HashMap чистый
+// ──────────────────────────────────────────────────────────────────────────
+
+test "insert and get" {
+    let mut m = HashMap[str, int].new()
+    m.insert("alice", 1)
+    m.insert("bob", 2)
+
+    assert m.len() == 2
+    assert m.get("alice") == Some(1)
+    assert m.get("bob") == Some(2)
+    assert m.get("charlie") == None
+}
+
+test "insert returns old value on overwrite" {
+    let mut m = HashMap[str, int].new()
+    assert m.insert("a", 1) == None
+    assert m.insert("a", 2) == Some(1)
+    assert m.get("a") == Some(2)
+    assert m.len() == 1
+}
+
+test "remove" {
+    let mut m = HashMap[str, int].new()
+    m.insert("a", 1)
+    m.insert("b", 2)
+
+    assert m.remove("a") == Some(1)
+    assert m.remove("a") == None
+    assert m.len() == 1
+    assert m.get("a") == None
+    assert m.get("b") == Some(2)
+}
+
+test "iterate keys" {
+    let mut m = HashMap[str, int].new()
+    m.insert("a", 1)
+    m.insert("b", 2)
+    m.insert("c", 3)
+
+    let mut keys = []str.new()
+    for k in m.keys() {
+        keys.push(k)
+    }
+    assert keys.len == 3
+    // Порядок не определён (open addressing), сортируем для
+    // детерминированной проверки.
+    keys.sort()
+    assert keys == ["a", "b", "c"]
+}
+
+test "get_or_insert with counter pattern" {
+    let mut counts = HashMap[str, int].new()
+    let words = ["foo", "bar", "foo", "baz", "foo", "bar"]
+
+    for w in words {
+        let prev = counts.get_or_insert(w, () => 0)
+        counts.insert(w, prev + 1)
+    }
+
+    assert counts.get("foo") == Some(3)
+    assert counts.get("bar") == Some(2)
+    assert counts.get("baz") == Some(1)
+}
+
+test "from pairs constructor" {
+    let m = HashMap.from([("x", 10), ("y", 20), ("z", 30)])
+    assert m.len() == 3
+    assert m.get("y") == Some(20)
+}
+
+test "rehash on growth" {
+    let mut m = HashMap[int, int].with_capacity(4)
+    // Capacity 4 → load_factor 0.75 → grow при 3 элементах
+    for i in 0..100 {
+        m.insert(i, i * 2)
+    }
+    assert m.len() == 100
+    assert m.capacity() >= 128       // достаточно для 100 при 0.75 load
+    for i in 0..100 {
+        assert m.get(i) == Some(i * 2)
+    }
+}
+
+test "tombstones cleanup on rehash" {
+    let mut m = HashMap[int, int].with_capacity(16)
+    for i in 0..10 { m.insert(i, i) }
+    for i in 0..8  { m.remove(i) }
+    // Сейчас: 2 occupied + 8 tombstones. Следующий insert → rehash.
+    m.insert(100, 100)
+    assert m.len() == 3
+    assert m.get(8) == Some(8)
+    assert m.get(9) == Some(9)
+    assert m.get(100) == Some(100)
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Что показывает эта реализация
+// ──────────────────────────────────────────────────────────────────────────
+//
+// 1. **HashMap — обычный stdlib-тип**, не встроен в язык. Все
+//    операции — методы Nova через `@` (D35). Никакой магии.
+//
+// 2. **Generic-параметры `[K, V]`** работают через мономорфизацию
+//    (как Rust/C++). Структурное требование «K имеет hash() и eq()»
+//    проверяется компилятором по [D15](../decisions.md).
+//
+// 3. **Sum-type Slot[K, V]** — три состояния (Empty, Tombstone,
+//    Occupied) с exhaustive match. Каждый бранч проверяется
+//    компилятором.
+//
+// 4. **`readonly` поля** (load_factor, initial_capacity) показывают
+//    [D36](../decisions.md) — invariants нельзя случайно
+//    перезаписать.
+//
+// 5. **`mut @method` vs `@method`** — `insert`/`remove`/`clear`
+//    мутируют, `get`/`contains`/`len` — нет. Видно в сигнатуре.
+//
+// 6. **Тесты без моков** — HashMap чистый, не зависит от эффектов.
+//    Просто `assert m.get("a") == Some(1)`. Ни Db, ни Time, ни Logger.
+//
+// 7. **Iterator pattern** через структурный тип — `for k in m.keys()`
+//    работает потому что `KeysIter` имеет `mut @next() -> Option[K]`.
+//
+// Что **не** реализовано (для production-stdlib):
+//   - Robin Hood hashing (variance reduction для probe distance)
+//   - SIMD lookup (groupwise comparison как в hashbrown)
+//   - HashDoS protection (рандомизированный seed, как в Rust)
+//   - shrink_to_fit, reserve
+//   - Entry API (`entry().or_insert(default)`) — выше get_or_insert
+//     это упрощённая версия
+//   - drain, retain
+//
+// Для examples/ — этого достаточно. Реальный std.collections.HashMap
+// в Nova будет похож на hashbrown в Rust по сложности.

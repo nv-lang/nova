@@ -1,0 +1,258 @@
+// stdlib_duration.nv — реализация Duration с extension-методами на int/f64.
+//
+// Идея:
+//   2.seconds()       → Duration { nanos: 2_000_000_000 }
+//   100.millis()      → Duration { nanos: 100_000_000 }
+//   0.5.hours()       → Duration { nanos: 1_800_000_000_000 }
+//   2.seconds() + 30.millis()
+//
+// Нет magic, нет implicit conversion — обычные методы на примитивах
+// (D35: метод привязан к типу через `fn Type @method`).
+
+module std.duration
+
+// ──────────────────────────────────────────────────────────────────────────
+// Тип
+// ──────────────────────────────────────────────────────────────────────────
+
+// Длительность в наносекундах. Знаковый i64 — диапазон ±292 года, хватает
+// для всех практических случаев. Поле readonly — Duration иммутабелен,
+// арифметика возвращает новый.
+export type Duration {
+    readonly nanos i64
+}
+
+// Нулевая длительность — часто нужна как default.
+export const ZERO Duration = Duration { nanos: 0 }
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Static-конструкторы (Duration.from_X)
+// ──────────────────────────────────────────────────────────────────────────
+
+// Все конструкторы принимают i64 и возвращают Duration без проверок —
+// в проде следует завернуть в Throws[Overflow] (см. ниже).
+
+// `-> Duration` оставляем явно для public API — это документация
+// возвращаемого типа в stdlib (см. D45 style guide для export-функций).
+
+export fn Duration.from_nanos(n i64) -> Duration => Duration { nanos: n }
+export fn Duration.from_micros(n i64) -> Duration => Duration { nanos: n * 1_000 }
+export fn Duration.from_millis(n i64) -> Duration => Duration { nanos: n * 1_000_000 }
+export fn Duration.from_secs(n i64) -> Duration => Duration { nanos: n * 1_000_000_000 }
+export fn Duration.from_mins(n i64) -> Duration => Duration { nanos: n * 60 * 1_000_000_000 }
+export fn Duration.from_hours(n i64) -> Duration => Duration { nanos: n * 3_600 * 1_000_000_000 }
+export fn Duration.from_days(n i64) -> Duration => Duration { nanos: n * 86_400 * 1_000_000_000 }
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Методы инстанса — конверсия обратно в числа
+// ──────────────────────────────────────────────────────────────────────────
+
+// Простые геттеры — тип очевиден, опускаем `-> T` (D45).
+
+export fn Duration @as_nanos() => @nanos
+export fn Duration @as_micros() => @nanos / 1_000
+export fn Duration @as_millis() => @nanos / 1_000_000
+export fn Duration @as_secs() => @nanos / 1_000_000_000
+
+// Дробные секунды — для логов и расчётов.
+export fn Duration @as_secs_f64() => (@nanos as f64) / 1_000_000_000.0
+
+export fn Duration @is_zero() => @nanos == 0
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Арифметика — operator overloading (D46)
+// ──────────────────────────────────────────────────────────────────────────
+
+// Имена методов фиксированы: `@plus` ↔ `+`, `@minus` ↔ `-`, etc.
+// Тип возврата виден по сигнатуре, можно опустить (D45) — но для
+// математических операций оставляем явным для ясности.
+
+export fn Duration @plus(other Duration) -> Duration =>
+    Duration { nanos: @nanos + other.nanos }
+
+export fn Duration @minus(other Duration) -> Duration =>
+    Duration { nanos: @nanos - other.nanos }
+
+export fn Duration @times(n i64) -> Duration =>
+    Duration { nanos: @nanos * n }
+
+export fn Duration @div(n i64) -> Duration =>
+    Duration { nanos: @nanos / n }
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Сравнение — operator overloading (D46)
+// ──────────────────────────────────────────────────────────────────────────
+
+// `@eq` ↔ `==`, `@lt` ↔ `<`, etc.
+// `!=` выводится из `@eq` автоматически (не объявляем).
+
+export fn Duration @eq(other Duration) => @nanos == other.nanos
+export fn Duration @lt(other Duration) => @nanos < other.nanos
+export fn Duration @le(other Duration) => @nanos <= other.nanos
+export fn Duration @gt(other Duration) => @nanos > other.nanos
+export fn Duration @ge(other Duration) => @nanos >= other.nanos
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Display
+// ──────────────────────────────────────────────────────────────────────────
+
+// Человекочитаемое представление с автомасштабированием единиц.
+//   500ns, 150μs, 42ms, 2.5s — выбирает самую крупную единицу,
+//   при которой число ≥ 1.
+export fn Duration @show() -> str {
+    let n = @nanos
+    let abs = if n < 0 { -n } else { n }
+
+    if abs < 1_000 {
+        "${n}ns"
+    } else if abs < 1_000_000 {
+        "${n / 1_000}μs"
+    } else if abs < 1_000_000_000 {
+        "${n / 1_000_000}ms"
+    } else if abs < 60 * 1_000_000_000 {
+        "${@as_secs_f64()}s"
+    } else if abs < 3_600 * 1_000_000_000 {
+        "${@as_secs_f64() / 60.0}min"
+    } else {
+        "${@as_secs_f64() / 3_600.0}h"
+    }
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Extension-методы на int — синтаксис 2.seconds()
+// ──────────────────────────────────────────────────────────────────────────
+
+// `@` внутри метода на примитиве = само значение (D35).
+// Скобки на вызове обязательны (D35), implicit-conversion отсутствует.
+// `-> Duration` оставлен явно — это API stdlib для primitive int.
+
+export fn int @nanos() -> Duration => Duration.from_nanos(@)
+export fn int @micros() -> Duration => Duration.from_micros(@)
+export fn int @millis() -> Duration => Duration.from_millis(@)
+
+export fn int @seconds() -> Duration => Duration.from_secs(@)
+export fn int @minutes() -> Duration => Duration.from_mins(@)
+export fn int @hours() -> Duration => Duration.from_hours(@)
+export fn int @days() -> Duration => Duration.from_days(@)
+
+// Singular-алиасы — для читаемости при значении 1 (1.second(), 1.hour()).
+export fn int @second() -> Duration => Duration.from_secs(@)
+export fn int @minute() -> Duration => Duration.from_mins(@)
+export fn int @hour() -> Duration => Duration.from_hours(@)
+export fn int @day() -> Duration => Duration.from_days(@)
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Extension-методы на f64 — для дробных значений
+// ──────────────────────────────────────────────────────────────────────────
+
+// 0.5.seconds() = 500ms, 1.25.hours() = 75 минут.
+// Конверсия в i64 через приведение — overflow возможен при экстремумах.
+
+export fn f64 @nanos() -> Duration =>
+    Duration.from_nanos(@ as i64)
+
+export fn f64 @micros() -> Duration =>
+    Duration.from_nanos((@ * 1_000.0) as i64)
+
+export fn f64 @millis() -> Duration =>
+    Duration.from_nanos((@ * 1_000_000.0) as i64)
+
+export fn f64 @seconds() -> Duration =>
+    Duration.from_nanos((@ * 1_000_000_000.0) as i64)
+
+export fn f64 @minutes() -> Duration =>
+    Duration.from_nanos((@ * 60.0 * 1_000_000_000.0) as i64)
+
+export fn f64 @hours() -> Duration =>
+    Duration.from_nanos((@ * 3_600.0 * 1_000_000_000.0) as i64)
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Тесты
+// ──────────────────────────────────────────────────────────────────────────
+
+test "int extensions: basic conversions" {
+    assert 2.seconds() == Duration.from_secs(2)
+    assert 100.millis() == Duration.from_millis(100)
+    assert 5.minutes() == Duration.from_mins(5)
+    assert 1.hour() == Duration.from_hours(1)
+}
+
+test "f64 extensions: fractional values" {
+    assert 0.5.seconds() == 500.millis()
+    assert 1.5.hours() == 90.minutes()
+    assert 0.001.seconds() == 1.millis()
+}
+
+test "arithmetic: plus and minus" {
+    let total = 1.hour() + 30.minutes()
+    assert total == 90.minutes()
+    assert total == 5_400.seconds()
+
+    let diff = 1.hour() - 15.minutes()
+    assert diff == 45.minutes()
+}
+
+test "arithmetic: times and div" {
+    assert 5.seconds() * 3 == 15.seconds()
+    assert 1.minute() / 4 == 15.seconds()
+}
+
+test "comparison: ordering" {
+    assert 1.second() < 1.minute()
+    assert 1.hour() > 30.minutes()
+    assert 60.seconds() == 1.minute()
+    assert 1000.millis() <= 1.second()
+}
+
+test "show: human-readable" {
+    assert 500.nanos().show() == "500ns"
+    assert 150.micros().show() == "150μs"
+    assert 42.millis().show() == "42ms"
+    assert 2.seconds().show() == "2s"
+}
+
+test "zero and is_zero" {
+    assert Duration.ZERO.is_zero()
+    assert 0.seconds().is_zero()
+    assert !1.nanos().is_zero()
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Использование с другими функциями (демо)
+// ──────────────────────────────────────────────────────────────────────────
+
+// Trailing lambda (D43) — `()` обязательны, тело за `)`.
+fn demo_with_timeout() Net Async Throws -> () {
+    with_timeout(2.seconds()) {
+        Net.get("https://api.example.com/data")?
+    }
+}
+
+// Retry с увеличивающимся backoff.
+fn demo_retry[T](body fn() Throws -> T) Time Throws -> T {
+    let mut backoff = 100.millis()
+    for attempt in 0..5 {
+        match body() {
+            Ok(v) => return v
+            Err(_) if attempt < 4 => {
+                Time.sleep(backoff)
+                backoff = backoff * 2          // 100ms → 200ms → 400ms → 800ms → 1.6s
+            }
+            Err(e) => throw e
+        }
+    }
+    throw RetryExhausted
+}
+
+// Дедлайны — сложение фиксированной задержки и текущего времени.
+fn demo_deadline() Time -> Timestamp =>
+    Time.now() + 30.seconds()

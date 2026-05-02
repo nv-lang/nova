@@ -1,0 +1,46 @@
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editors
+*.swp
+*.swo
+*~
+.idea/
+*.iml
+
+# Node (для будущего расширения / тулинга)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.vsix
+dist/
+out/
+
+# Rust (на случай реализации компилятора на Rust)
+target/
+Cargo.lock.user
+**/*.rs.bk
+
+# Логи и временные файлы
+*.log
+*.tmp
+*.bak
+.cache/
+
+# Python (для скриптов)
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Локальные настройки Claude Code
+.claude/settings.local.json
+
+# Личные рабочие материалы
+docs/.sessions/
+
+# Артефакты компиляции примеров
+*.asm
