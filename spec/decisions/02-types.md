@@ -555,6 +555,87 @@ type Button {
 }
 ```
 
+#### Generic-параметры: на protocol-уровне vs на методе
+
+В Nova есть **две явных модели** generic-параметров для protocol'а.
+Программист выбирает по семантике.
+
+**Модель A — generic на protocol** (`protocol P[T] { ... }`).
+T фиксирован для всего protocol'а: один handler = один T. Все методы
+видят один и тот же T. Разные T = разные сущности (`Iterator[Int]` и
+`Iterator[String]` несовместимы).
+
+```nova
+protocol Iterator[T] {
+    next() -> Option[T]
+    peek() -> Option[T]
+}
+
+protocol Container[T] {
+    add(item T) -> ()
+    get(idx int) -> T
+    size() -> int                    // методы без T тоже допустимы
+}
+
+protocol Channel[T] {
+    send(value T) -> ()
+    recv() -> T
+}
+
+protocol Cache[K, V] {
+    get(key K) -> Option[V]
+    set(key K, value V) -> ()
+}
+```
+
+Когда применять: когда T — фундаментальная характеристика protocol'а,
+все или большинство методов работают с этим T, и **разные T = разные
+handler'ы** имеют смысл.
+
+**Модель B — generic на методе** (`method[T](...)`).
+T живёт только в скоупе одного метода. Один и тот же handler protocol'а
+вызывает метод с разными T для каждого вызова.
+
+```nova
+protocol Tracer {
+    span[T](body fn() -> T) -> T          // T живёт только здесь
+    measure[U](body fn() -> U) -> Duration  // U независим от T
+    set_attr(key str, value Json) -> ()    // методы без generic тоже
+}
+
+protocol Db {
+    query(sql str, args []any) Throws[DbError] -> []Row
+    in_transaction[T](body fn() Db Throws -> T) Throws -> T
+    // ↑ один Db handler оборачивает любой T
+}
+```
+
+Когда применять: когда метод принимает/возвращает любой тип, а **сам
+protocol не привязан** к этому типу — один handler работает с любым
+T для каждого вызова.
+
+**Различие в семантике handler'а:**
+
+| | Модель A | Модель B |
+|---|---|---|
+| Объявление T | `protocol P[T]` | `method[T]` в сигнатуре |
+| Scope T | весь protocol | один метод |
+| Один handler работает с | одним T | любым T (per-call) |
+| Использование | `with P[Int] = ...` | `with P = ...; P.method[Int](...)` |
+| Реализация | мономорфизация по T | rank-2 polymorphism в handler'е |
+
+В одном protocol'е можно комбинировать оба механизма:
+
+```nova
+protocol Stream[T] {
+    next() -> Option[T]                       // T на protocol-уровне
+    fold[Acc](init Acc, f fn(Acc, T) -> Acc) -> Acc   // Acc на методе
+}
+```
+
+`T` фиксирован для stream (`Stream[int]`), `Acc` независим — fold
+может собирать в разные accumulator-типы из одного и того же stream'а.
+
 ### Почему
 
 1. **Намерение должно быть явным.** Старая форма `type X = { методы }`
@@ -582,6 +663,14 @@ type Button {
 - **`shape`** — короче, но менее знакомо как keyword.
 - **`ability`** — образно, но без знакомства; навязывает `-able`
   суффикс именам.
+- **Implicit shared scope для generic-параметров** (T в нескольких
+  методах одного protocol'а автоматически означает один и тот же тип).
+  Снижает локальность: чтобы понять `[T]` в одном методе, нужно
+  прочитать весь protocol-блок и проверить остальные методы. Невозможно
+  выразить «независимый T в разных методах» без смены convention
+  (использования других букв). Прецедентов нет — Rust/Swift/Scala/Haskell
+  все используют либо явный protocol-уровень, либо явный method-уровень.
+  Альтернатива (`protocol P[T]`) уже даёт ту же семантику явно.
 
 ### Связь
 - [02-types.md → D15](#d15-структурные-интерфейсы) — D15 ввёл
