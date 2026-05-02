@@ -25,7 +25,6 @@ discussion.
 - [spec/revolutionary.md](spec/revolutionary.md) — **flagship features**:
   effects + handlers, AI-first design, contracts, time-travel debugging
 - [spec/syntax.md](spec/syntax.md) — syntax examples
-- [spec/paradigm.md](spec/paradigm.md) — traits + data instead of classes
 - [spec/effects.md](spec/effects.md) — effect system (introduction)
 - [spec/open-questions.md](spec/open-questions.md) — unresolved questions
 - [decisions.md](decisions.md) — design decision log with rationale

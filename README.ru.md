@@ -20,7 +20,6 @@
 - [spec/revolutionary.md](spec/revolutionary.md) — **революционные возможности**:
   effects + handlers, AI-first дизайн, контракты, time-travel debugging
 - [spec/syntax.md](spec/syntax.md) — примеры синтаксиса
-- [spec/paradigm.md](spec/paradigm.md) — traits + data вместо классов
 - [spec/effects.md](spec/effects.md) — система эффектов (базовое введение)
 - [spec/open-questions.md](spec/open-questions.md) — нерешённые вопросы
 - [decisions.md](decisions.md) — журнал дизайн-решений с эволюцией
