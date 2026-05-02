@@ -1,86 +1,94 @@
+**English** | [Русский](README.ru.md)
+
 # Nova
 
-Гипотетический язык программирования с **одной центральной абстракцией**
-(алгебраические эффекты + handler'ы) и **одним killer use-case**
-(AI-first программирование с верифицируемым кодом от LLM).
+A hypothetical programming language with **one central abstraction**
+(algebraic effects + handlers) and **one killer use-case** (AI-first
+programming with verifiable LLM-written code).
 
-Дизайн-документ, не реализация. Накапливается в ходе обсуждения.
+This is a design document, not an implementation. It evolves through
+discussion.
 
-## Главный тезис
+> ⚠️ The full language specification is currently only available in
+> Russian. See [decisions.md](decisions.md) and [spec/](spec/). This
+> README gives an English overview of the core ideas.
 
-> **Nova — это язык, в котором LLM может писать код, который человек
-> может доверять, потому что эффекты делают всё видимым, контракты
-> делают всё проверяемым, а handler'ы делают всё тестируемым.**
+## Core thesis
 
-## Содержание
+> **Nova is a language in which an LLM can write code a human can
+> trust — because effects make everything visible, contracts make
+> everything verifiable, and handlers make everything testable.**
 
-- [spec/overview.md](spec/overview.md) — главные идеи, что заимствует у кого, tooling
-- [spec/revolutionary.md](spec/revolutionary.md) — **революционные возможности**:
-  effects + handlers, AI-first дизайн, контракты, time-travel debugging
-- [spec/syntax.md](spec/syntax.md) — примеры синтаксиса
-- [spec/paradigm.md](spec/paradigm.md) — traits + data вместо классов
-- [spec/effects.md](spec/effects.md) — система эффектов (базовое введение)
-- [spec/open-questions.md](spec/open-questions.md) — нерешённые вопросы
-- [decisions.md](decisions.md) — журнал дизайн-решений с эволюцией
+## Contents
 
-## Из чего следует всё остальное
+- [spec/overview.md](spec/overview.md) — main ideas, what is borrowed from where, tooling
+- [spec/revolutionary.md](spec/revolutionary.md) — **flagship features**:
+  effects + handlers, AI-first design, contracts, time-travel debugging
+- [spec/syntax.md](spec/syntax.md) — syntax examples
+- [spec/paradigm.md](spec/paradigm.md) — traits + data instead of classes
+- [spec/effects.md](spec/effects.md) — effect system (introduction)
+- [spec/open-questions.md](spec/open-questions.md) — unresolved questions
+- [decisions.md](decisions.md) — design decision log with rationale
 
-Одна идея: **всё нечистое — эффект, любой эффект перехватывается
-handler'ом**. Отсюда автоматически:
+## What follows from a single idea
 
-- Тесты без моков (handler-подмена)
-- Транзакции, undo/redo, snapshot (handler `db`/`mut`)
-- Capability security (запрет эффектов в скоупе)
-- Time-travel debugging (запись handler-вызовов)
-- Detерминированный repro (handler `time`+`random` с фиксацией)
-- Supervision как в Erlang (structured `par` + handler перезапуска)
-- LLM-безопасный код (побочные действия видны в типе)
+One idea: **anything impure is an effect, any effect is intercepted by
+a handler**. From that, the following fall out automatically:
 
-## Память: managed по умолчанию, regions opt-in
+- Tests without mocks (handler substitution)
+- Transactions, undo/redo, snapshot (handler `db`/`mut`)
+- Capability security (forbid effects in a scope)
+- Time-travel debugging (record handler calls)
+- Deterministic repro (handlers `time` + `random` with fixed seed)
+- Erlang-style supervision (structured `par` + restart handler)
+- LLM-safe code (side effects are visible in the type signature)
 
-**Программист пишет, GC работает.** Никаких префиксов памяти в обычном
-коде. Циклы освобождаются автоматически. Современный concurrent GC даёт
-паузы <1ms.
+## Memory: managed by default, regions opt-in
 
-Для real-time зон (звук, торговля, embedded) — явный `region { ... }`
-блок с эффектом `Realtime`, GC внутри выключен:
+**The programmer writes, the GC works.** No memory prefixes in regular
+code. Cycles are reclaimed automatically. A modern concurrent GC keeps
+pauses below 1ms.
+
+For real-time zones (audio, trading, embedded) — an explicit
+`region { ... }` block with the `Realtime` effect, GC disabled inside:
 
 ```nova
 fn process_audio(samples []f32) Realtime -> []f32 =>
     region {
         let buf = []f32.with_capacity(1024)
-        // ... обработка, гарантированно нет GC pauses
+        // ... processing, guaranteed no GC pauses
         buf.to_owned()
     }
 ```
 
-Для perf-критичного кода компилятор использует **escape analysis** —
-не утекающие значения остаются на стеке без аллокаций. Программист не
-пишет ничего особого. См. [decisions.md D6](decisions.md).
+For perf-critical code the compiler uses **escape analysis** —
+non-escaping values stay on the stack with no allocations. The
+programmer writes nothing special. See [decisions.md D6](decisions.md).
 
-## Статус
+## Status
 
-Концептуальный набросок. Главная цель документа — фиксировать
-дизайн-решения и причины за ними.
+Conceptual draft. The main goal of this document is to capture design
+decisions and the reasoning behind them.
 
-## Лицензия
+## License
 
-Nova распространяется на условиях одной из двух лицензий по выбору
-пользователя:
+Nova is dual-licensed under either of:
 
 - Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
 - MIT License ([LICENSE-MIT](LICENSE-MIT))
 
+at your option.
+
 `SPDX-License-Identifier: MIT OR Apache-2.0`
 
-Документация и спецификация языка распространяются под
+Documentation and the language specification are licensed under
 [CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/).
 
-### Контрибуции
+### Contributions
 
-Любой вклад, намеренно отправленный для включения в проект, по умолчанию
-лицензируется как `MIT OR Apache-2.0`, без каких-либо дополнительных
-условий — в соответствии с разделом 5 Apache License 2.0.
+Any contribution intentionally submitted for inclusion in the project
+is dual-licensed as `MIT OR Apache-2.0`, without any additional terms
+or conditions — per Section 5 of the Apache License 2.0.
 
-Подробности — в [CONTRIBUTING.md](CONTRIBUTING.md). Коротко: коммиты должны
-быть подписаны DCO (`git commit -s`), это проверяется CI.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for details. In short: commits
+must be DCO-signed (`git commit -s`); this is enforced by CI.
