@@ -1,0 +1,140 @@
+// main — сборка handler-стека и запуск.
+//
+// Здесь заметна ВТОРАЯ важная вещь про эффекты Nova: чем выше слой,
+// тем БОЛЬШЕ эффектов и МЕНЬШЕ пишут handler'ов; чем ближе к main —
+// почти все эффекты «закрываются» в `with`-блоках. К моменту вызова
+// serve_routes() из run() остались только Net и Io — handler'ы Db,
+// Cache, Logger, Clock, IdGen, Metrics, Trace, Idempotency, AuthContext
+// уже привязаны и не «торчат» в типе.
+//
+// Это и есть ключевой механизм управления плотностью: with-блок СНИМАЕТ
+// эффект из сигнатуры внутри своего тела.
+
+module examples.effect_density.main
+
+import examples.effect_density.http as http
+import examples.effect_density.domain.*
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// run — entry point
+// ──────────────────────────────────────────────────────────────────────────
+//
+// На самом верху эффектов МАЛО:
+//   Net — слушает порт
+//   Io  — пишет stdout (стартовое сообщение)
+//   Throws — ошибки запуска
+//
+// Все handler'ы создаются и привязываются ВНУТРИ функции — они не
+// «протекают» в сигнатуру.
+export fn run(cfg Config) Net Io Throws[StartupError] -> () {
+    let pg     = postgres_connect(cfg.db_url)?
+    let redis  = redis_connect(cfg.redis_url)?
+    let logger = json_logger(stdout)
+    let metrics = prom_registry()
+    let tracer = otel_tracer(cfg.otel_endpoint)
+
+    Io.println("starting on :${cfg.port}")
+
+    with Db        = pg,
+         Cache     = redis,
+         Logger    = logger,
+         Clock     = system_clock,
+         IdGen     = uuid_v7,
+         Metrics   = metrics,
+         Trace     = tracer,
+         Idempotency = redis_idem(redis) {
+        // Тут уже ВСЕ инфраструктурные эффекты привязаны.
+        // serve_request будет вызывать handler'ы — он добавит AuthContext
+        // на каждый запрос индивидуально.
+        serve(cfg.port, route)?
+    }
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// route — диспатчер запросов
+// ──────────────────────────────────────────────────────────────────────────
+//
+// Эффекты route'ра — это «средний» слой. Не такой жирный как
+// transfer_money (нет Idempotency и IdGen на уровне диспатчера —
+// они нужны только конкретным endpoint'ам), но больше чем main.
+//
+// Заметьте: AuthContext добавляется ЗДЕСЬ через `with` — на основе
+// заголовка Authorization. Дальше handler'ы уже его «получают»
+// бесплатно из скоупа.
+fn route(req Request) Db Cache Logger Clock IdGen Metrics Trace Idempotency Throws[HttpError] -> Response =>
+    let auth = parse_auth(req.headers)?
+    with AuthContext = auth, Trace = Trace.span("http_${req.method}_${req.path}") {
+        match (req.method, req.path) {
+            ("POST", "/api/transfers")         => http.handle_create_transfer(req)
+            ("GET",  p) if p.starts_with("/api/accounts/") => http.handle_get_account(req)
+            ("GET",  "/healthz")               => http.handle_health(req)
+            _                                   => Response.text(404, "not found")
+        }
+    }
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Альтернативные handler'ы для тестов и dev-режима
+// ──────────────────────────────────────────────────────────────────────────
+//
+// Это и есть главный win эффектов: тот же сервис в тесте работает БЕЗ
+// БД, БЕЗ сети, БЕЗ часов — handler'ы подменяются на in-memory.
+// Сигнатуры тестируемого кода не меняются.
+
+fn run_in_test_mode(cfg Config, fixtures TestData) Throws -> () {
+    with Db          = in_memory_db(fixtures.accounts),
+         Cache       = noop_cache,
+         Logger      = capture_logger,
+         Clock       = fixed_clock(t0),
+         IdGen       = seeded_id_gen(42),
+         Metrics     = noop_metrics,
+         Trace       = noop_tracer,
+         Idempotency = in_memory_idem,
+         AuthContext = fake_admin {
+        // Прогон сценариев — определены в tests/
+        run_scenarios()?
+    }
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Конфиг и заглушки handler'ов (объявления)
+// ──────────────────────────────────────────────────────────────────────────
+
+type Config {
+    port           int
+    db_url         str
+    redis_url      str
+    otel_endpoint  str
+}
+
+type StartupError | ConfigInvalid(str) | DbDown | RedisDown
+
+
+// Реальные handler'ы — реализации эффектов. Каждая — обычная функция,
+// возвращающая Handler[Effect]. Сигнатуры тут не критичны для этого
+// примера, поэтому просто объявления.
+fn postgres_connect(url str) Net Throws[StartupError] -> Handler[Db] => ...
+fn redis_connect(url str) Net Throws[StartupError] -> Handler[Cache] => ...
+fn json_logger(out Stdout) -> Handler[Logger] => ...
+fn prom_registry() -> Handler[Metrics] => ...
+fn otel_tracer(endpoint str) Net -> Handler[Trace] => ...
+fn redis_idem(c Handler[Cache]) -> Handler[Idempotency] => ...
+fn parse_auth(headers []KV) Throws[HttpError] -> Handler[AuthContext] => ...
+
+// Чистые stub'ы для тестов
+fn in_memory_db(seed []Account) -> Handler[Db] => ...
+fn noop_cache() -> Handler[Cache] => ...
+fn capture_logger() -> Handler[Logger] => ...
+fn fixed_clock(t Timestamp) -> Handler[Clock] => ...
+fn seeded_id_gen(seed u64) -> Handler[IdGen] => ...
+fn noop_metrics() -> Handler[Metrics] => ...
+fn noop_tracer() -> Handler[Trace] => ...
+fn in_memory_idem() -> Handler[Idempotency] => ...
+fn fake_admin() -> Handler[AuthContext] => ...
+
+// Чистые константы прод-handler'ов — никаких эффектов в типе.
+const system_clock Handler[Clock] = ...
+const uuid_v7      Handler[IdGen] = ...

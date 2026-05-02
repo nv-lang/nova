@@ -1,0 +1,98 @@
+// Repository — слой доступа к БД.
+//
+// Конвенция этого примера:
+//   - Все функции slой repository — `export fn` (используются service'ом),
+//     поэтому эффекты ВСЕГДА явные (D28).
+//   - Кэширование account'а оставлено в repository (read-through),
+//     потому что это деталь хранения, а не бизнес-логики.
+
+module examples.effect_density.repository
+
+import examples.effect_density.domain.*
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Account repo
+// ──────────────────────────────────────────────────────────────────────────
+
+// Чтение по id с кэшированием. Public — эффекты явные.
+//
+// Эффекты: Db (запрос), Cache (read-through), Throws[DbError|NotFound].
+// Цена видимости — три эффекта, каждый осмысленный:
+//   - Db   — обращение к БД (если кэш промазал)
+//   - Cache — read-through кэширование
+//   - Throws — может не найти / connection error
+//
+// Сравнение с Go: `func (r *Repo) Get(ctx, id) (Account, error)` —
+// 2 параметра, 2 возврата, эффекты невидимы. Связка с Cache в реальном
+// Go-коде живёт ВНУТРИ функции, и читатель её не видит из сигнатуры.
+export fn account_get(id AccountId) Db Cache Throws[RepoError] -> Account =>
+    let cache_key = "account:${id}"
+    match Cache.get(cache_key) {
+        Some(bytes) => decode_account(bytes)?
+        None => {
+            let rows = Db.query("select * from accounts where id = $1", [id])?
+            let acc = match rows {
+                []     => throw RepoError.NotFound
+                [r]    => row_to_account(r)?
+                [_,..] => throw RepoError.Inconsistent("multiple accounts with id ${id}")
+            }
+            Cache.set(cache_key, encode_account(acc), 60)
+            acc
+        }
+    }
+
+
+// Обновление баланса. Используется внутри транзакции перевода.
+// Эффекты: Db (exec), Cache (инвалидация), Throws[DbError].
+// Logger тут НЕТ — лог делает service-слой, repository не должен решать
+// что логгировать.
+export fn account_update_balance(id AccountId, new_balance Money) Db Cache Throws[RepoError] -> () =>
+    let affected = Db.exec(
+        "update accounts set balance_amount = $1, balance_currency = $2 where id = $3 and not closed",
+        [new_balance.amount, new_balance.currency, id]
+    )?
+    if affected == 0 { throw RepoError.NotFound }
+    Cache.invalidate("account:${id}")
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Transfer repo
+// ──────────────────────────────────────────────────────────────────────────
+
+// Запись transfer'а. Public.
+// Эффекты: Db, Throws[DbError]. (Без Cache — transfer не кэшируется,
+// он immutable после завершения, читается редко.)
+export fn transfer_insert(t Transfer) Db Throws[RepoError] -> () =>
+    Db.exec(
+        "insert into transfers (id, from_id, to_id, amount, currency, status, created_at) " +
+        "values ($1, $2, $3, $4, $5, $6, $7)",
+        [t.id, t.from, t.to, t.amount.amount, t.amount.currency, t.status, t.created_at]
+    )?
+    ()
+
+
+export fn transfer_update_status(id TransferId, status TransferStatus) Db Throws[RepoError] -> () =>
+    let affected = Db.exec("update transfers set status = $1 where id = $2", [status, id])?
+    if affected == 0 { throw RepoError.NotFound }
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Helpers — private. Эффекты ВЫВОДЯТСЯ компилятором (D28).
+// ──────────────────────────────────────────────────────────────────────────
+
+// Чистая функция — эффектов нет. Гарантированно детерминирована.
+fn row_to_account(row Row) -> Result[Account, RepoError] => ...
+
+fn encode_account(a Account) -> bytes => ...
+fn decode_account(b bytes) -> Result[Account, RepoError] => ...
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Ошибки repository
+// ──────────────────────────────────────────────────────────────────────────
+
+type RepoError =
+    NotFound,
+    Inconsistent(str),
+    DbDown(DbError)

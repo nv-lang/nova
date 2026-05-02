@@ -38,8 +38,8 @@
 
 ```nova
 fn sort[T](xs []T, less fn(T, T) -> bool) -> []T
-type Option[T] = Some(T), None
-type HashMap[K, V] = ...
+type Option[T] | Some(T) | None
+type HashMap[K, V] { ... }
 
 let parsed = parse[int]("42")?
 ```
@@ -94,8 +94,8 @@ let parsed = parse[int]("42")?
 `->` — для **типов и сигнатур**:
 
 ```nova
-fn f(x int) -> int                  // тип возврата
-type Handler = (Request) -> Response // функциональный тип
+fn f(x int) -> int                       // тип возврата
+type Handler alias (Request) -> Response // функциональный тип через alias
 ```
 
 `=>` — для **тела и разветвлений**:
@@ -403,9 +403,9 @@ generic. Перешли на Go-style; ~50 мест в документах ис
 ```nova
 protocol Db { ... }          // не DB (эффект — protocol)
 protocol Io { ... }          // не IO
-type Url = str               // не URL
+type Url str                 // не URL (newtype над str)
 protocol Http { ... }        // не HTTP
-type JsonValue = ...         // не JSON
+type JsonValue { ... }       // не JSON (record)
 type SqlBuilder { ... }      // не SQL (record с полями)
 ```
 

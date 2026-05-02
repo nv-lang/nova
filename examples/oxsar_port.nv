@@ -394,7 +394,7 @@ export fn multi_run(input BattleInput, n int) Time Throws[BattleError] -> (SimSt
 // calculate. В Go надо было бы выделить интерфейс Rng и передавать
 // явно через все вызовы.
 
-type Winner = Attackers, Defenders, Draw
+type Winner | Attackers | Defenders | Draw
 
 type BattleInput {
     attackers []Side
@@ -406,7 +406,7 @@ type BattleInput {
     is_rocket_attack bool
 }
 
-type BattleError = InvalidInput
+type BattleError    // unit-тип-маркер (single-variant sum запрещён в D52)
 
 // Calculate — единственная публичная функция пакета.
 //

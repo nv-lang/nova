@@ -325,17 +325,22 @@ export protocol Hashable {
 
 | После `type Имя` идёт | Что это |
 |---|---|
-| `{ ... }` | record-структура |
-| `( ... )` | позиционная структура |
+| `\|` | sum-type |
+| `(` | tuple-структура |
+| `{` | record-структура |
+| `alias` | alias |
+| идентификатор/тип | newtype |
 | ничего | unit-тип |
-| `=` потом тип | alias |
-| `=` потом список вариантов через `,` | sum-type |
 
 ```nova
-// alias
-type UserId = u64
+// newtype — type X Y, новый тип, типизированно отличный от Y
+type UserId u64
+type Email str
 
-// record (без `=`, форма сразу после имени)
+// alias — type X alias Y, для длинных дженериков
+type StringMap[V] alias HashMap[str, V]
+
+// record (форма сразу после имени, без `=`)
 type User { id u64, name str }
 
 // позиционная структура
@@ -344,17 +349,30 @@ type Point(f64, f64)
 // unit-тип
 type Marker
 
-// sum-type — варианты через запятую
-type Color = Red, Green, Blue
+// sum-type — варианты через leading |
+type Color | Red | Green | Blue
 
-type Shape =
-    Circle { radius f64 },
-    Square { side f64 },
-    Triangle { a f64, b f64, c f64 }
+type Shape
+    | Circle { radius f64 }
+    | Square { side f64 }
+    | Triangle { a f64, b f64, c f64 }
 
-type Result[T, E] = Ok(T), Err(E)
-type Option[T] = Some(T), None
+type Result[T, E] | Ok(T) | Err(E)
+type Option[T] | Some(T) | None
 ```
+
+Sum-варианты могут иметь числовые discriminants с auto-increment:
+
+```nova
+type ExitStatus | Ok | Failure | Critical              // 0, 1, 2 (auto)
+type ErrorCode
+    | NotFound       = 404
+    | Unauthorized   = 401
+    | InternalError  = 500
+type Bit u8 | Off = 0 | On = 1                         // явный базовый тип
+```
+
+Подробно — [decisions/02-types.md → D52](decisions/02-types.md#d52).
 
 ### Варианты sum-type — те же три формы, что top-level type
 
@@ -459,7 +477,7 @@ fn classify(x) => match x {
 рассматриваемых значений.
 
 ```nova
-type Color = Red, Green, Blue
+type Color | Red | Green | Blue
 
 fn name(c Color) -> str => match c {
     Red   => "red"

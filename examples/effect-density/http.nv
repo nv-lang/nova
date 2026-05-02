@@ -1,0 +1,118 @@
+// HTTP layer — обёртка вокруг service'а: парсинг тела, валидация
+// формата, формирование Response.
+//
+// Здесь видно как cross-cutting эффекты (RequestId, AuthContext,
+// Idempotency) НЕ дублируются в сигнатуре handler'а — они уже включены
+// в service-функцию, которую handler вызывает. Если бы handler хотел
+// сделать что-то СВЕРХ того, что делает service, добавлялись бы только
+// эти лишние эффекты.
+
+module examples.effect_density.http
+
+import examples.effect_density.domain.*
+import examples.effect_density.service as svc
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// POST /api/transfers — создать перевод
+// ──────────────────────────────────────────────────────────────────────────
+//
+// Эффекты handler'а = эффекты вызываемого service + парсинг.
+// Парсинг JSON — чистая Throws[ParseError]. Net эффект сюда не попадает,
+// потому что чтение тела запроса делает HTTP framework на уровне выше
+// (при вызове handler'а тело уже доступно как Request.body bytes).
+//
+// Итого 10 эффектов — те же что у svc.transfer_money + Throws[ParseError]
+// для разбора JSON.
+//
+// Можно ли уменьшить? Да: программист может СУЗИТЬ Throws через
+// handler-блок (отловить TransferError → отдать как Response), и тогда
+// в сигнатуре останется только Throws[ParseError]. Но архитектурно
+// чище ловить ошибки наверху одной точкой.
+export fn handle_create_transfer(
+    req Request
+) Db Cache Logger Clock IdGen AuthContext Metrics Trace Idempotency Throws[HttpError] -> Response =>
+    let body = parse_transfer_request(req.body).map_err(HttpError.BadRequest)?
+    with Throws[TransferError] = (e) => to_http_error(e) {
+        let t = svc.transfer_money(body)?
+        Response.json(201, transfer_dto(t))
+    }
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// GET /api/accounts/{id}
+// ──────────────────────────────────────────────────────────────────────────
+//
+// Read-only — 4 эффекта (Db Cache AuthContext Throws[HttpError]).
+// Сравните: типичный Spring controller method будет
+// `public ResponseEntity<Account> getAccount(@PathVariable id)` —
+// одна строка, никаких эффектов в типе. Но Db и Cache всё равно
+// присутствуют — через @Autowired-поля.
+export fn handle_get_account(req Request) Db Cache AuthContext Throws[HttpError] -> Response =>
+    let id = parse_id(req.path_param("id"))?
+    with Throws[TransferError] = (e) => to_http_error(e) {
+        let dto = svc.account_view(id)?
+        Response.json(200, dto)
+    }
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// GET /healthz — пример МИНИМАЛЬНОГО handler'а
+// ──────────────────────────────────────────────────────────────────────────
+//
+// Один эффект — Db (нужно проверить, что коннект жив). Никаких других.
+// Это «контр-пример»: не любая backend-функция жирная, плотность
+// эффектов отражает ровно то, что функция реально делает.
+export fn handle_health(req Request) Db -> Response =>
+    match Db.query("select 1", []) {
+        Ok(_)  => Response.text(200, "ok")
+        Err(_) => Response.text(503, "db down")
+    }
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Helpers — частные функции, эффекты выводятся
+// ──────────────────────────────────────────────────────────────────────────
+
+// Чистые — никаких эффектов кроме Throws.
+fn parse_transfer_request(body bytes) Throws[ParseError] -> TransferRequest => ...
+fn parse_id(s Option[str]) Throws[HttpError] -> AccountId => ...
+
+// Чистая.
+fn transfer_dto(t Transfer) -> Json => ...
+
+// Чистая — мапит domain-ошибку в HTTP-ошибку.
+fn to_http_error(e TransferError) -> HttpError =>
+    match e {
+        AccountNotFound(_) => HttpError.NotFound
+        AccountClosed(_)   => HttpError.Conflict
+        InsufficientFunds  => HttpError.UnprocessableEntity
+        Forbidden          => HttpError.Forbidden
+        CurrencyMismatch | NonPositiveAmount | SameAccount =>
+            HttpError.BadRequest("validation")
+    }
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// HTTP-типы (упрощённые)
+// ──────────────────────────────────────────────────────────────────────────
+
+type Request {
+    method  str
+    path    str
+    body    bytes
+    headers []KV
+    path_param(name str) -> Option[str]
+}
+
+type Response { status int, body bytes, headers []KV }
+
+type HttpError
+    | BadRequest(str)
+    | NotFound
+    | Forbidden
+    | Conflict
+    | UnprocessableEntity
+    | InternalError(str)
+
+type ParseError | Json(str) | Field(str)

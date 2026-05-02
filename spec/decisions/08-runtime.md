@@ -203,11 +203,11 @@ fn critical(...) -> Result =>
 **Типы:**
 
 ```nova
-type Option[T] = Some(T), None
-type Result[T, E] = Ok(T), Err(E)
-type Error                                       // тип-обёртка для Throws
-type Ordering = Less, Equal, Greater
-type Never =                                     // sum-type БЕЗ вариантов
+type Option[T] | Some(T) | None
+type Result[T, E] | Ok(T) | Err(E)
+type Error                                       // unit-тип-маркер для Throws
+type Ordering | Less | Equal | Greater
+type Never                                       // unit без значений (uninhabited)
 ```
 
 **Базовые числовые и строковые типы** (`int`, `i8`-`i64`, `u8`-`u64`,

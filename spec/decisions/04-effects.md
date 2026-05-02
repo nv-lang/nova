@@ -599,10 +599,10 @@ Runtime-структура `EffectSet`, тип `DynFn` для случаев, к
 #### Чёткое разделение `type` vs `protocol`
 
 ```nova
-// data — keyword type
+// data — keyword type (см. D52)
 type User { id u64, name str }
-type Color = Red, Green, Blue
-type UserId = u64
+type Color | Red | Green | Blue
+type UserId u64
 
 // behavior (эффекты, структурные контракты) — keyword protocol
 protocol Db {
@@ -769,7 +769,7 @@ sum-type. `Throws` без параметра — сахар над `Throws[Error
 #### Базовое использование
 
 ```nova
-type DepositError = Closed, NotPositive, OverLimit
+type DepositError | Closed | NotPositive | OverLimit
 
 fn deposit(mut acc Account, amount money) Throws[DepositError] -> () =>
     if acc.closed   { throw Closed }
@@ -907,7 +907,7 @@ Handler `Throws[E]` может:
 делает sum-type:
 
 ```nova
-type TransferError = InsufficientFunds, InvalidAccount, AccountClosed
+type TransferError | InsufficientFunds | InvalidAccount | AccountClosed
 
 fn transfer(from Account, to Account, amount money) Throws[TransferError] Db -> Receipt => ...
 ```

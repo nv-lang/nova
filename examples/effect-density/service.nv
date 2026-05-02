@@ -1,0 +1,181 @@
+// Service — бизнес-логика. Здесь самые жирные сигнатуры в проекте,
+// потому что service-функции — это центр, где сходятся все cross-cutting
+// concerns: БД, логика, аудит, метрики, трейсинг.
+//
+// Это и есть главная проверка тезиса «десятки эффектов в каждой функции».
+// Считайте перед чтением. После — сравните.
+
+module examples.effect_density.service
+
+import examples.effect_density.domain.*
+import examples.effect_density.repository as repo
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// transfer_money — главная public-функция домена
+// ──────────────────────────────────────────────────────────────────────────
+//
+// Что делает:
+//   1. Проверяет, что вызывающий имеет роль "transfer".
+//   2. Проверяет идемпотентность по Idempotency-Key.
+//   3. В транзакции: читает оба аккаунта, валидирует, обновляет балансы,
+//      пишет запись transfer.
+//   4. Логирует, инкрементирует метрики, оборачивает в trace span.
+//
+// Эффекты в сигнатуре (8):
+//   Db          — для чтения/записи аккаунтов и transfer-записи
+//   Cache       — invalidate при обновлении баланса
+//   Logger      — структурный лог входа/выхода/ошибки
+//   Clock       — время created_at (детерминизм в тестах через fixed_clock)
+//   IdGen       — генерация transfer.id
+//   AuthContext — проверка роли вызывающего
+//   Metrics     — счётчики успехов/ошибок
+//   Trace       — span "transfer_money" с атрибутами
+//   Idempotency — защита от дубля по ключу
+//   Throws[TransferError] — единый sum-type ошибок домена
+//
+// Это 9 эффектов + Throws. Кажется много, но каждый — отдельный
+// cross-cutting concern, и в Java-коде он бы был НЕВИДИМ в сигнатуре,
+// но физически присутствовал бы в теле через ThreadLocal/DI/static.
+//
+// Аналогичная Java-сигнатура:
+//   public Transfer transferMoney(TransferRequest req) throws TransferException
+// — выглядит проще на одну строку, но вся та же сложность размазана
+// по 8 spring-инжектируемым полям и одному ThreadLocal'у.
+export fn transfer_money(
+    req TransferRequest
+) Db Cache Logger Clock IdGen AuthContext Metrics Trace Idempotency Throws[TransferError] -> Transfer =>
+    Trace.span("transfer_money") {
+        if !AuthContext.has_role("transfer") { throw TransferError.Forbidden }
+
+        match Idempotency.check_or_record(req.idem_key, 86400)? {
+            AlreadyProcessed(prev) => decode_transfer(prev)?
+            New => do_transfer(req)
+        }
+    }
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// do_transfer — приватная, эффекты ВЫВОДЯТСЯ (D28)
+// ──────────────────────────────────────────────────────────────────────────
+//
+// Программист пишет «fn do_transfer(req) -> Transfer =>» — без эффектов
+// в сигнатуре. Компилятор анализирует тело и проставляет:
+//   Db Cache Logger Clock IdGen Metrics Throws[TransferError]
+//
+// AuthContext, Idempotency, Trace уже «съедены» вызывающей функцией —
+// здесь не используются. Это уже на 3 эффекта меньше, чем у public.
+//
+// В файле пишется без эффектов — компилятор показывает их через
+// `nova check --show-effects` (D28).
+fn do_transfer(req TransferRequest) -> Transfer => {
+    validate_amount(req.amount)?
+
+    Db.in_transaction(() => {
+        let from = repo.account_get(req.from)?
+        let to   = repo.account_get(req.to)?
+
+        validate_pair(from, to, req.amount)?
+
+        let new_from_balance = sub_money(from.balance, req.amount)?
+        let new_to_balance   = add_money(to.balance, req.amount)?
+
+        repo.account_update_balance(from.id, new_from_balance)?
+        repo.account_update_balance(to.id, new_to_balance)?
+
+        let t = Transfer {
+            id:         IdGen.next(),
+            from:       from.id,
+            to:         to.id,
+            amount:     req.amount,
+            status:     Completed,
+            created_at: Clock.now(),
+        }
+        repo.transfer_insert(t)?
+
+        Logger.log(Info, "transfer completed", [
+            { key: "transfer_id", value: t.id },
+            { key: "amount",      value: req.amount.amount },
+        ])
+        Metrics.counter_inc("transfers_completed_total", [])
+        t
+    })
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Validators — чистые функции
+// ──────────────────────────────────────────────────────────────────────────
+//
+// validate_amount — Throws[TransferError]. Других эффектов нет.
+// Один эффект — рекордно мало для прикладного кода.
+fn validate_amount(m Money) Throws[TransferError] -> () =>
+    if m.amount <= 0 { throw NonPositiveAmount }
+
+
+// validate_pair — тоже один эффект Throws.
+// Чистая логика, никакого IO.
+fn validate_pair(from Account, to Account, amount Money) Throws[TransferError] -> () => {
+    if from.id == to.id           { throw SameAccount }
+    if from.closed                 { throw AccountClosed(from.id) }
+    if to.closed                   { throw AccountClosed(to.id) }
+    if from.balance.currency != amount.currency { throw CurrencyMismatch }
+    if to.balance.currency != amount.currency   { throw CurrencyMismatch }
+    if from.balance.amount < amount.amount      { throw InsufficientFunds }
+}
+
+
+// Чистые функции — БЕЗ ЭФФЕКТОВ. Это база, на которой стоит вся гарантия
+// детерминизма Nova (D28). Можно мемоизировать, вызвать в любом потоке,
+// заменить константой при равных входах.
+fn add_money(a Money, b Money) Throws[TransferError] -> Money =>
+    if a.currency != b.currency { throw CurrencyMismatch }
+    else { Money { amount: a.amount + b.amount, currency: a.currency } }
+
+fn sub_money(a Money, b Money) Throws[TransferError] -> Money =>
+    if a.currency != b.currency { throw CurrencyMismatch }
+    else { Money { amount: a.amount - b.amount, currency: a.currency } }
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// account_view — простая read-only public функция
+// ──────────────────────────────────────────────────────────────────────────
+//
+// 4 эффекта. Сравните с transfer_money (10) — read-only сильно проще:
+// нет идемпотентности, нет генерации id, нет clock'а, нет Metrics
+// (зашиты ниже на уровне HTTP middleware).
+export fn account_view(id AccountId) Db Cache AuthContext Throws[TransferError] -> AccountDto =>
+    let acc = match repo.account_get(id) {
+        Ok(a) => a
+        Err(NotFound) => throw AccountNotFound(id)
+        Err(e) => throw TransferError.from_repo(e)
+    }
+    if acc.owner_id != AuthContext.user_id() && !AuthContext.has_role("admin") {
+        throw TransferError.Forbidden
+    }
+    AccountDto.from(acc)
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Request/Response DTO
+// ──────────────────────────────────────────────────────────────────────────
+
+type TransferRequest {
+    from     AccountId
+    to       AccountId
+    amount   Money
+    idem_key str
+}
+
+type AccountDto {
+    id       AccountId
+    balance  Money
+    closed   bool
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Helpers
+// ──────────────────────────────────────────────────────────────────────────
+
+fn decode_transfer(j Json) Throws[TransferError] -> Transfer => ...

@@ -359,6 +359,52 @@ mapping.
   research.
 - **Макросы / `comptime`** — открытый вопрос.
 
+### Объявление типов revised: D17 → D52
+
+**Что было:** D17 фиксировал систему «один разделитель списка —
+запятая, `=` ставится только когда справа выражение типа»:
+
+```nova
+type UserId = u64                       // alias через =
+type Color = Red, Green, Blue            // sum через = и ,
+type User { id u64, name str }           // record без =
+```
+
+Newtype как явная фича отсутствовал; domain-типы делались через
+record-обёртку (`type UserId { value u64 }`). Discriminants на sum-
+вариантах не были специфицированы.
+
+**Что стало:** [D52](../02-types.md#d52) переписал систему целиком:
+
+```nova
+type UserId u64                          // newtype (Go-style, без =)
+type StringMap[V] alias HashMap[str, V]  // alias через keyword
+type Color | Red | Green | Blue          // sum через leading |
+type ErrorCode | NotFound = 404 | InternalError = 500   // sum + discriminants
+type User { id u64, name str }           // record без = (как было)
+```
+
+**Почему пересмотрели:**
+
+- D17-правило «`=` для выражений типа» спотыкалось на sum-type:
+  `type Color = Red, Green, Blue` — справа не «выражение типа», а
+  список конструкторов. Натяжка.
+- Newtype как first-class запрашивался для domain-modeling
+  (`type Email str`, `type Score f64`) без шумной record-обёртки.
+- Discriminants на sum-вариантах нужны для wire-протоколов
+  (HTTP-коды, syscall-коды, serialization tags) — не были
+  специфицированы.
+- Парсер с D52 **однозначен по первому токену** после имени, нет
+  напряжения «`=` иногда есть, иногда нет».
+- `protocol` остаётся отдельным keyword'ом — D42 не пересматривается.
+
+**Цена:** все существующие type-объявления переписать (`type X = Y` —
+запрещено). Кода пока мало, миграция разовая.
+
+**Связанные D:** [D17](../02-types.md#d17) (revised → D52),
+[D52](../02-types.md#d52) (active), [D42](../02-types.md#d42)
+(`protocol` без изменений).
+
 ## Как читать историю
 
 - **«revised»** в статусе D — текст переписан, решение действует, но
