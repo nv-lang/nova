@@ -22,7 +22,7 @@ dependency injection и моков в одну штуку.
 
 ```nova
 // объявление эффекта
-type Logger {
+protocol Logger {
     log(msg str) -> ()
 }
 
@@ -71,7 +71,7 @@ test "process logs correctly" {
 **Транзакции:**
 
 ```nova
-type Db {
+protocol Db {
     query(sql str, args []any) -> []Row
     exec(sql str, args []any) -> ()
 }

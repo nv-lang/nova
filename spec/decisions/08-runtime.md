@@ -247,11 +247,11 @@ TypeScript `never`. Не уникальная фича Nova.
 
 #### Эффекты как обычные типы — `Throws[E]` не магия
 
-`Throws[E]` объявляется в prelude как любой другой эффект
-([04-effects.md → D18](04-effects.md#d18)):
+`Throws[E]` объявляется в prelude как любой другой эффект — через
+`protocol` ([04-effects.md → D18](04-effects.md#d18-эффекты-объявляются-через-protocol-не-type)):
 
 ```nova
-type Throws[E] {
+protocol Throws[E] {
     throw(value E) -> Never
 }
 ```
@@ -390,8 +390,8 @@ let acc = Account.new_with(account_limits.MIN_BALANCE)
 `with`-блок:
 
 ```nova
-// Эффект — обычный type ([04-effects.md → D18](04-effects.md#d18))
-type IdGen {
+// Эффект — protocol ([04-effects.md → D18](04-effects.md#d18-эффекты-объявляются-через-protocol-не-type))
+protocol IdGen {
     fresh() -> u64
 }
 

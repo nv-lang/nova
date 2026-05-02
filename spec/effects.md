@@ -29,7 +29,7 @@
    обязан быть в её сигнатуре
 
 ```nova
-type Db {
+protocol Db {
     query(sql str, args []any) -> []Row    // только сигнатуры, без реализации
     exec(sql str, args []any) -> ()
 }
@@ -60,13 +60,13 @@ fn fetch(url str) Net Async Throws -> Response
 
 Граница задана структурой: всё между `)` и `->` — эффекты.
 
-## Имена — обычные типы
+## Имена — обычные protocol'ы
 
-Эффекты — это **именованные типы**, как `User` или `HashMap`,
-с большой буквы. Не ключевые слова.
+Эффекты — это **именованные `protocol`'ы**, в PascalCase, как `Hashable`
+или `Iterator`. Не ключевые слова.
 
 ```nova
-type Logger {
+protocol Logger {
     log(msg str) -> ()
 }
 

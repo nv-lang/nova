@@ -800,10 +800,10 @@ fn withdraw(mut acc Account, amount money) Throws -> ()
 доказать статически, что не может — превращает в runtime-проверку
 в debug-режиме.
 
-## Handler'ы — литералы по форме record-литералов
+## Handler'ы — литералы у `protocol`-эффектов
 
 ```nova
-type Logger {
+protocol Logger {
     log(msg str) -> ()
 }
 

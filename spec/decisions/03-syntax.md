@@ -401,12 +401,12 @@ generic. Перешли на Go-style; ~50 мест в документах ис
 Акронимы **PascalCase**, не UPPERCASE:
 
 ```nova
-type Db { ... }              // не DB
-type Io { ... }              // не IO
+protocol Db { ... }          // не DB (эффект — protocol)
+protocol Io { ... }          // не IO
 type Url = str               // не URL
-type Http { ... }            // не HTTP
+protocol Http { ... }        // не HTTP
 type JsonValue = ...         // не JSON
-type SqlBuilder { ... }      // не SQL
+type SqlBuilder { ... }      // не SQL (record с полями)
 ```
 
 Договорные конвенции имён методов:
