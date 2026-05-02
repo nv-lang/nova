@@ -10,7 +10,7 @@ This is a design document, not an implementation. It evolves through
 discussion.
 
 > ⚠️ The full language specification is currently only available in
-> Russian. See [decisions.md](decisions.md) and [spec/](spec/). This
+> Russian. See [spec/decisions/](spec/decisions/) and [spec/](spec/). This
 > README gives an English overview of the core ideas.
 
 ## Core thesis
@@ -27,7 +27,7 @@ discussion.
 - [spec/syntax.md](spec/syntax.md) — syntax examples
 - [spec/effects.md](spec/effects.md) — effect system (introduction)
 - [spec/open-questions.md](spec/open-questions.md) — unresolved questions
-- [decisions.md](decisions.md) — design decision log with rationale
+- [spec/decisions/](spec/decisions/) — design decision log with rationale
 
 ## What follows from a single idea
 
@@ -55,12 +55,12 @@ manage multiple arenas manually:
 
 ```nova
 fn map_audio(samples []f32, gain f32) Realtime -> []f32 =>
-    samples.map(|x| x * gain)   // implicit region, no GC pauses
+    samples.map((x) => x * gain)   // implicit region, no GC pauses
 ```
 
 For perf-critical code the compiler uses **escape analysis** —
 non-escaping values stay on the stack with no allocations. The
-programmer writes nothing special. See [decisions.md D6](decisions.md).
+programmer writes nothing special. See [spec/decisions/05-memory.md#d6](spec/decisions/05-memory.md#d6).
 
 ## Status
 

@@ -3,7 +3,7 @@
 > `mut self` в параметрах, `trait`/`impl`, `throws` без `Throws[]`, `:` в
 > аннотациях типа, `type X = { поля }` вместо `type X { поля }`.
 >
-> **Актуальная парадигма** — в [decisions.md](../decisions.md), [syntax.md](syntax.md).
+> **Актуальная парадигма** — в [decisions/](decisions/), [syntax.md](syntax.md).
 > Этот файл будет переписан целиком (см. open-questions Q8).
 
 # Nova — парадигма: traits + data, без классов

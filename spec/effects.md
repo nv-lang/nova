@@ -3,7 +3,7 @@
 Это введение в концепцию. Полная развёртка с handler'ами, AI-first
 обоснованием и стандартным набором эффектов — в
 [revolutionary.md](revolutionary.md). Вопросы async, panic и
-эффект-стирания — в [decisions.md](../decisions.md) D12-D14.
+эффект-стирания — в [D12](decisions/04-effects.md#d12), [D13](decisions/08-runtime.md#d13), [D14](decisions/06-concurrency.md#d14).
 
 ## Центральный принцип
 
@@ -151,7 +151,7 @@ fn handler(req Request) Net Async Db -> Response {
 
 Под капотом — fiber-based scheduler (как Go/OCaml 5). Цена —
 килобайты памяти на fiber, миллион fiber'ов на машину — норма.
-Подробно — [decisions.md D14](../decisions.md).
+Подробно — [decisions/06-concurrency.md#d14](decisions/06-concurrency.md#d14).
 
 ## Что НЕ эффект — Panic
 
@@ -183,7 +183,7 @@ fn server() Par Net Throws -> () =>
 
 Иначе `Throws[DivByZero]` оказался бы в каждой второй сигнатуре —
 информативность эффектов исчезла бы. Сознательный компромисс,
-подробно — [decisions.md D13](../decisions.md).
+подробно — [decisions/08-runtime.md#d13](decisions/08-runtime.md#d13).
 
 ## Оператор `?`
 

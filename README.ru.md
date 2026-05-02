@@ -22,7 +22,7 @@
 - [spec/syntax.md](spec/syntax.md) — примеры синтаксиса
 - [spec/effects.md](spec/effects.md) — система эффектов (базовое введение)
 - [spec/open-questions.md](spec/open-questions.md) — нерешённые вопросы
-- [decisions.md](decisions.md) — журнал дизайн-решений с эволюцией
+- [spec/decisions/](spec/decisions/) — журнал дизайн-решений с эволюцией
 
 ## Из чего следует всё остальное
 
@@ -50,12 +50,12 @@ handler'ом**. Отсюда автоматически:
 
 ```nova
 fn map_audio(samples []f32, gain f32) Realtime -> []f32 =>
-    samples.map(|x| x * gain)   // implicit region, без GC pauses
+    samples.map((x) => x * gain)   // implicit region, без GC pauses
 ```
 
 Для perf-критичного кода компилятор использует **escape analysis** —
 не утекающие значения остаются на стеке без аллокаций. Программист не
-пишет ничего особого. См. [decisions.md D6](decisions.md).
+пишет ничего особого. См. [spec/decisions/05-memory.md#d6](spec/decisions/05-memory.md#d6).
 
 ## Статус
 

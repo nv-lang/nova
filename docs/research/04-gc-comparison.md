@@ -76,7 +76,7 @@
 
 ## Что это значит для Nova
 
-**Цели Nova по [decisions.md D6](../../decisions.md):**
+**Цели Nova по [D6](../../spec/decisions/05-memory.md#d6):**
 - Pause: <1ms p99 (как Go/ZGC).
 - Throughput: ~70–85% от C на типичной web-нагрузке.
 - Realtime: zero allocation в `region { }` блоках.

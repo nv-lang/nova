@@ -31,10 +31,10 @@
    Для real-time зон (звук, торговля, embedded) — эффект `Realtime`
    в сигнатуре, тело автоматически оборачивается в region (можно явно
    через `region { ... }` для контроля). См.
-   [decisions.md D6](../decisions.md).
+   [decisions/05-memory.md#d6](decisions/05-memory.md#d6).
 3. **Структурная типизация + вывод типов везде.**
 4. **Protocols + data вместо классов.** Никакого наследования. Структурные
-   контракты через `protocol` (см. [decisions.md D1, D42](../decisions.md)).
+   контракты через `protocol` (см. [decisions/01-philosophy.md#d1](decisions/01-philosophy.md#d1), [decisions/02-types.md#d42](decisions/02-types.md#d42)).
 5. **Контракты в сигнатуре.** `requires`/`ensures`/`invariant` —
    опциональны, но проверяются статически где можно.
 

@@ -1,8 +1,8 @@
 // Реализация HashMap[K, V] в стиле Nova stdlib.
 //
-// Контекст. По [D26 prelude](../decisions.md), `HashMap[K, V]` живёт
+// Контекст. По [D26](../spec/decisions/08-runtime.md#d26), `HashMap[K, V]` живёт
 // в stdlib (`std.collections.HashMap`), не встроен в язык. Встроены
-// только массивы `[]T` и `[N]T` ([D27](../decisions.md)).
+// только массивы `[]T` и `[N]T` ([D27](../spec/decisions/03-syntax.md#d27)).
 //
 // Это *черновик реализации* — показывает как stdlib-тип выглядит на
 // Nova. Open addressing + linear probing + resize. Без advanced
@@ -10,12 +10,12 @@
 //
 // Допущения:
 //   - `K` имеет операции `hash() -> u64` и `eq(other K) -> bool`
-//     (структурно, [D15](../decisions.md)). В реальной stdlib —
+//     (структурно, [D15](../spec/decisions/02-types.md#d15)). В реальной stdlib —
 //     prelude-trait `Hash` + `Eq` с auto-derive для примитивов
 //     (зависит от Q15).
-//   - Использует `[]T` и `[T; N]` из [D27](../decisions.md).
-//   - Методы инстанса через `@` ([D35](../decisions.md)).
-//   - Поля по правилам [D36](../decisions.md): `readonly` для
+//   - Использует `[]T` и `[T; N]` из [D27](../spec/decisions/03-syntax.md#d27).
+//   - Методы инстанса через `@` ([D35](../spec/decisions/03-syntax.md#d35)).
+//   - Поля по правилам [D36](../spec/decisions/02-types.md#d36): `readonly` для
 //     invariants, без префикса для мутируемых.
 
 module std.collections.hashmap
@@ -214,7 +214,7 @@ export fn HashMap[K, V] mut @get_or_insert(key K, default fn() -> V) -> V {
 // Итерация
 // ──────────────────────────────────────────────────────────────────────────
 
-// Iterator pattern — структурный тип для for-цикла ([D15](../decisions.md)).
+// Iterator pattern — структурный тип для for-цикла ([D15](../spec/decisions/02-types.md#d15)).
 type HashMapIter[K, V] {
     map_ref &HashMap[K, V]    // в реальной stdlib — borrow или Rc
     pos int
@@ -469,14 +469,14 @@ test "tombstones cleanup on rehash" {
 //
 // 2. **Generic-параметры `[K, V]`** работают через мономорфизацию
 //    (как Rust/C++). Структурное требование «K имеет hash() и eq()»
-//    проверяется компилятором по [D15](../decisions.md).
+//    проверяется компилятором по [D15](../spec/decisions/02-types.md#d15).
 //
 // 3. **Sum-type Slot[K, V]** — три состояния (Empty, Tombstone,
 //    Occupied) с exhaustive match. Каждый бранч проверяется
 //    компилятором.
 //
 // 4. **`readonly` поля** (load_factor, initial_capacity) показывают
-//    [D36](../decisions.md) — invariants нельзя случайно
+//    [D36](../spec/decisions/02-types.md#d36) — invariants нельзя случайно
 //    перезаписать.
 //
 // 5. **`mut @method` vs `@method`** — `insert`/`remove`/`clear`

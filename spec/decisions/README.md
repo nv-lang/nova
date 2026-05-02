@@ -68,11 +68,12 @@
 4. **Внешние ссылки** на `syntax.md`, `effects.md` etc. — относительные
    `../syntax.md` (они теперь рядом, в `spec/`).
 
-## Старый файл
+## Миграция
 
-`decisions.md` в корне репозитория после миграции:
-- Превращён в **redirects-индекс** для совместимости со старыми
-  ссылками `[D17](decisions.md)` в других файлах.
-- Содержит только anchor'ы и ссылки на новые файлы.
+Старый `decisions.md` в корне репозитория **удалён** после переноса
+всех решений в эту директорию (`spec/decisions/`). Все cross-references
+в живых документах (`spec/*.md`, `examples/`, `docs/articles/`,
+`docs/plans/`, `docs/research/`, `README.md`, `CONTRIBUTING.md`,
+`editors/vscode/README.md`) обновлены на новые пути.
 
 См. процесс миграции — [history/evolution.md](history/evolution.md).
