@@ -90,31 +90,31 @@ fn run_server(port int) Net Io Throws -> () {
 // ──────────────────────────────────────────────────────────────────────────
 
 // Mission — sum-type вместо magic numbers (Go: req.Mission == 7 || ... == 12).
-type Mission =
-    Transport,
-    Colonize,
-    Recycling,
-    AttackSingle,
-    Spy,
-    Acs { group_id Option[str] },
-    Expedition
+type Mission
+    | Transport
+    | Colonize
+    | Recycling
+    | AttackSingle
+    | Spy
+    | Acs { group_id Option[str] }
+    | Expedition
 
-// Все ошибки fleet — sum-type (D17). В Go было ~15 errors.New, ловили
+// Все ошибки fleet — sum-type (D52). В Go было ~15 errors.New, ловили
 // через лестницу errors.Is — здесь match даёт exhaustiveness check.
-type FleetError =
-    InvalidDispatch,
-    NotEnoughShips,
-    NotEnoughCarry,
-    ExceedCargoCap,
-    TargetNotFound,
-    UnknownShip,
-    PlanetOwnership,
-    FleetSlotsExceeded,
-    TargetOnVacation,
-    SenderOnVacation,
-    BashingLimit,
-    PositionNotAllowed,
-    ExpeditionSlotsFull
+type FleetError
+    | InvalidDispatch
+    | NotEnoughShips
+    | NotEnoughCarry
+    | ExceedCargoCap
+    | TargetNotFound
+    | UnknownShip
+    | PlanetOwnership
+    | FleetSlotsExceeded
+    | TargetOnVacation
+    | SenderOnVacation
+    | BashingLimit
+    | PositionNotAllowed
+    | ExpeditionSlotsFull
 
 type SendInput {
     user_id str
@@ -222,11 +222,11 @@ export fn phalanx(req Request)
 }
 
 
-type PhalanxError =
-    MissingSource, MissingGalaxy, MissingSystem,
-    InvalidGalaxy, InvalidSystem,
-    NotAMoon, NotInstalled, DifferentGalaxy,
-    OutOfRange, NoHydrogen
+type PhalanxError
+    | MissingSource | MissingGalaxy | MissingSystem
+    | InvalidGalaxy | InvalidSystem
+    | NotAMoon | NotInstalled | DifferentGalaxy
+    | OutOfRange | NoHydrogen
 
 
 // ──────────────────────────────────────────────────────────────────────────

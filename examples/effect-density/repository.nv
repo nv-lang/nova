@@ -92,7 +92,7 @@ fn decode_account(b bytes) -> Result[Account, RepoError] => ...
 // Ошибки repository
 // ──────────────────────────────────────────────────────────────────────────
 
-type RepoError =
-    NotFound,
-    Inconsistent(str),
-    DbDown(DbError)
+type RepoError
+    | NotFound
+    | Inconsistent(str)
+    | DbDown(DbError)

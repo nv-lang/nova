@@ -32,10 +32,10 @@ module std.collections.hashmap
 // `Tombstone` — была занята, потом удалена (probing продолжается, но
 // слот можно переиспользовать на insert).
 // `Occupied(K, V)` — текущий valid слот.
-type Slot[K, V] =
-    Empty,
-    Tombstone,
-    Occupied { key K, value V }
+type Slot[K, V]
+    | Empty
+    | Tombstone
+    | Occupied { key K, value V }
 
 export type HashMap[K, V] {
     // buckets — массив слотов. Длина — степень двойки (для битовой маски

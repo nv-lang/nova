@@ -394,10 +394,10 @@ CLI-приложений, и хорошо сочетается с [D6](decisions
 + handler `Db`/`Fs`, знающий о версиях:
 
 ```nova
-type Account =
-    V1 { id u64, balance money },
-    V2 { id u64, balance money, frozen bool },
-    V3 { id u64, balance money, frozen bool, currency Currency }
+type Account
+    | V1 { id u64, balance money }
+    | V2 { id u64, balance money, frozen bool }
+    | V3 { id u64, balance money, frozen bool, currency Currency }
 
 fn Account.to_latest(self) -> Account => match self {
     V1 { id, balance }                 => V2 { id, balance, frozen: false }.to_latest()
