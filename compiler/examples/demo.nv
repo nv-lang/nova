@@ -1,0 +1,47 @@
+// demo.nv — компактный showcase нескольких фич сразу.
+
+module demo
+
+type User {
+    id   int
+    name str
+    role str
+}
+
+fn main() {
+    // 1. Создание record + field punning
+    let id = 42
+    let alice = User { id, name: "alice", role: "user" }
+
+    // 2. Spread для immutable update
+    let admin_alice = { ...alice, role: "admin" }
+    println("alice.role = ", alice.role)
+    println("admin_alice.role = ", admin_alice.role)
+
+    // 3. Массив со spread
+    let nums = [1, 2, 3]
+    let extended = [0, ...nums, 4, 5]
+    println("extended.len = ", extended.len)
+
+    // 4. Pattern matching на массиве (D59)
+    let first = match extended {
+        [] => -1
+        [x, ..] => x
+    }
+    println("first = ", first)
+
+    // 5. Optional через прелюдийный Option
+    let maybe = extended.get(100)
+    let text = match maybe {
+        Some(n) => "got value"
+        None    => "out of range"
+    }
+    println("maybe[100]: ", text)
+
+    // 6. Range + sum
+    let mut total = 0
+    for n in 1..6 {
+        total += n
+    }
+    println("sum 1..5 = ", total)
+}
