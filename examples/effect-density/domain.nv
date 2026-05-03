@@ -60,7 +60,7 @@ type TransferError
 // Db — единственный handler доступа к БД. В тесте подменяется на
 // in-memory, в проде — на postgres-handler. Транзакция — handler поверх
 // этого же эффекта (вложенный with).
-protocol Db {
+type Db protocol {
     query(sql str, args []any) Throws[DbError] -> []Row
     exec(sql str, args []any) Throws[DbError] -> int    // affected rows
     in_transaction[T](body fn() Db Throws -> T) Throws -> T
@@ -69,14 +69,14 @@ protocol Db {
 type DbError | Connection | Constraint(str) | Timeout | Other(str)
 
 // Cache — read-through кэш. Read возвращает Option, write пишет с TTL.
-protocol Cache {
+type Cache protocol {
     get(key str) -> Option[bytes]
     set(key str, value bytes, ttl_seconds u32) -> ()
     invalidate(key str) -> ()
 }
 
 // Logger — структурированный лог. Поля передаются как map.
-protocol Logger {
+type Logger protocol {
     log(level LogLevel, msg str, fields []KV) -> ()
 }
 
@@ -84,37 +84,37 @@ type LogLevel | Debug | Info | Warn | Error
 type KV { key str, value Json }
 
 // Clock — текущее время. В тесте — fixed_clock(t0).
-protocol Clock {
+type Clock protocol {
     now() -> Timestamp
 }
 
 // IdGen — генерация UUID. В тесте — seeded для детерминизма.
-protocol IdGen {
+type IdGen protocol {
     next() -> str
 }
 
 // AuthContext — кто сделал запрос. Ставится middleware'ом аутентификации.
 // Это Reader-эффект (Ask[T] в стандартном наборе).
-protocol AuthContext {
+type AuthContext protocol {
     user_id() -> str
     has_role(role str) -> bool
 }
 
 // Metrics — Prometheus-style метрики.
-protocol Metrics {
+type Metrics protocol {
     counter_inc(name str, labels []KV) -> ()
     histogram_observe(name str, value f64, labels []KV) -> ()
 }
 
 // Trace — distributed tracing (OpenTelemetry-стиль). span — scope-эффект:
 // span(name, body) запускает body в новом span'е.
-protocol Trace {
+type Trace protocol {
     span[T](name str, body fn() Trace -> T) -> T
     set_attr(key str, value Json) -> ()
 }
 
 // Idempotency — защита от двойного выполнения по Idempotency-Key.
-protocol Idempotency {
+type Idempotency protocol {
     check_or_record(key str, ttl_seconds u32) Throws[IdemError] -> IdemResult
 }
 

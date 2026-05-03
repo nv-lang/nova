@@ -10,8 +10,9 @@
 |---|---|---|
 | [D17](#d17-объявление-типов-единый-синтаксис-без-) | Объявление типов: единый синтаксис без `\|` | revised → D52 |
 | [D52](#d52-объявление-типов-revised-newtype-alias-sum-через-leading-) | Объявление типов revised: newtype, `alias`, sum через leading `\|` | active |
-| [D42](#d42-protocol-keyword-для-структурных-интерфейсов) | `protocol` keyword для структурных интерфейсов | active |
-| [D15](#d15-структурные-интерфейсы) | Структурные интерфейсы | revised → D42 |
+| [D53](#d53-унификация-protocol-под-type-protocol-как-kind-токен) | Унификация: `protocol` под `type`, `protocol` как kind-токен | active |
+| [D42](#d42-protocol-keyword-для-структурных-интерфейсов) | `protocol` keyword для структурных интерфейсов | revised → D53 |
+| [D15](#d15-структурные-интерфейсы) | Структурные интерфейсы | revised → D42 → D53 |
 | [D39](#d39-embed-и-delegation-use-type-и-use-name-type) | Embed и delegation: `use Type` и `use name Type` | active |
 | [D32](#d32-семантика-передачи-параметров) | Семантика передачи параметров | revised для полей → D36 |
 | [D36](#d36-поля-типа-дефолт-mutable-у-mut-bindinga-readonly-для-never-mut) | Поля типа: дефолт mutable у mut-binding'а, `readonly` для never-mut | active |
@@ -483,7 +484,274 @@ type-объявлений. Подробно — [history/evolution.md](history/e
 
 ---
 
+## D53. Унификация: `protocol` под `type`, `protocol` как kind-токен
+
+### Что
+`protocol` перестаёт быть отдельным keyword'ом. Становится **kind-
+токеном** в системе D52, наряду с `alias`. Все объявления типов
+(включая структурные контракты-protocol'ы) идут через единый keyword
+`type`. Анонимный protocol-тип в позиции параметра пишется через
+`protocol { ... }` (с явным маркером, симметрично `[]T`, `(A, B)`,
+`fn() -> T`).
+
+`any` — пустой именованный protocol-тип в prelude:
+
+```nova
+type any protocol { }
+```
+
+### Правило
+
+#### Объявление через `type X protocol { ... }`
+
+```nova
+// Раньше (D42): отдельный keyword
+protocol Hashable {
+    hash() -> u64
+    eq(other Self) -> bool
+}
+
+// Теперь (D53): kind-токен в системе D52
+type Hashable protocol {
+    hash() -> u64
+    eq(other Self) -> bool
+}
+
+type Logger protocol {
+    log(msg str) -> ()
+}
+
+type Iterator[T] protocol {
+    next() -> Option[T]
+}
+
+type Db protocol {
+    query(sql str, args []any) Throws[DbError] -> []Row
+    exec(sql str, args []any) Throws[DbError] -> int
+}
+```
+
+#### Парсер: `protocol` как kind-токен после имени
+
+Расширение таблицы D52:
+
+| После `type X` (или `type X[params]`) идёт | Форма |
+|---|---|
+| `protocol` | protocol-тип |
+| `\|` | sum |
+| `(` | tuple |
+| `{` | record |
+| `alias` | alias |
+| `<base-type>` `\|` | sum с явным базовым типом |
+| идентификатор/тип, конец строки | newtype |
+| конец строки сразу | unit |
+
+`protocol` встаёт в один ряд с `alias`. Парсер однозначен по первому
+токену после имени (или generic-параметров).
+
+#### Анонимный protocol-тип в позиции параметра
+
+`protocol { ... }` в позиции типа — анонимный protocol-литерал,
+симметрично `[]T`, `(A, B)`, `fn() -> T`:
+
+```nova
+fn log_one(x protocol { show() -> str }) Log -> () =>
+    Log.info(x.show())
+
+fn closer_call(c protocol { close() -> () }) Io -> () =>
+    c.close()
+
+fn process(x any) -> () =>      // any — именованный пустой protocol
+    ...
+
+fn process2(x protocol { }) -> () =>   // эквивалент через анонимный
+    ...
+```
+
+Маркер `protocol` обязателен — `{ ... }` без префикса в позиции типа
+запрещено. Это убирает двусмысленность с record-литералами и
+выражениями-блоками.
+
+#### `any` в prelude
+
+```nova
+// В prelude:
+type any protocol { }
+```
+
+Любой тип удовлетворяет пустому контракту (структурная типизация),
+поэтому `any` — top-type. Использование:
+
+```nova
+type Db protocol {
+    query(sql str, args []any) Throws[DbError] -> []Row
+    //                  ^^^^^ массив значений любого типа
+}
+
+fn dump(x any) Io -> () =>
+    println(x)
+```
+
+**Имя `any` lowercase** — исключение в [D30](03-syntax.md#d30) naming
+convention, по аналогии с примитивами (`int`, `str`, `bool`, `f64`,
+`()`). Top-type концептуально близок к примитивам — встроенный
+универсальный тип.
+
+#### Эффекты — без изменений
+
+Эффект — это protocol-тип, использованный в позиции эффекта (между
+`)` и `->`). Меняется только синтаксис **объявления**, не использования:
+
+```nova
+type Db protocol {
+    query(sql str, args []any) Throws[DbError] -> []Row
+    exec(sql str, args []any) Throws[DbError] -> int
+}
+
+fn list_users() Db -> []User =>      // Db в позиции эффекта — как раньше
+    Db.query("SELECT * FROM users", [])
+```
+
+#### Generic-параметры — без изменений
+
+[D42-уточнение](#d42-protocol-keyword-для-структурных-интерфейсов)
+про две модели (на protocol-уровне и на методе) сохраняется. Меняется
+только синтаксис объявления:
+
+```nova
+// Модель A — generic на protocol
+type Container[T] protocol {
+    add(item T) -> ()
+    get(idx int) -> T
+}
+
+// Модель B — generic на методе
+type Tracer protocol {
+    span[T](body fn() -> T) -> T
+    measure[U](body fn() -> U) -> Duration
+}
+```
+
+#### Структурная совместимость — без изменений
+
+Любой тип со структурно совпадающими методами автоматически
+удовлетворяет protocol'у:
+
+```nova
+type User { id u64, name str }
+
+type Printable protocol {
+    show() -> str
+}
+
+fn User @show() -> str => "User(${@name})"
+
+fn log_one(x Printable) Log -> () =>
+    Log.info(x.show())
+
+log_one(my_user)                // ok, User совместим со Printable
+```
+
+`Self` валиден только внутри `protocol { ... }` блока.
+
+### Почему
+
+1. **Унификация под одним keyword.** Все типы (data + behavior) идут
+   через `type`. Один keyword для объявления, kind-токен различает
+   форму. Согласовано с D52, который вводит `alias` как kind-токен —
+   `protocol` встаёт в тот же ряд.
+2. **Снимается асимметрия.** До D53: `protocol Foo` — отдельный
+   keyword, но `Foo` использовался как тип (в позиции параметра).
+   Программист спрашивал «если protocol — тип, почему не объявляется
+   через type?». D53 отвечает: теперь объявляется.
+3. **Анонимные protocol-типы становятся явными.** Раньше `fn f(x { ...
+   })` без префикса — двусмысленно (record-литерал? record-тип?
+   protocol-тип?). С `protocol { ... }` — намерение явно.
+4. **`any` — пустой именованный protocol.** Простое и согласованное
+   решение для top-type, через ту же систему. Прецедент Go (`type any
+   = interface{}`), Swift (`protocol AnyObject { }`).
+5. **Прецедент Go.** Go объявляет `type X struct { }` и `type X
+   interface { }` через единый `type` с kind-токеном. D53 повторяет
+   эту схему точно (только `interface` → `protocol`).
+6. **AI-friendly.** Один keyword `type` в начале — LLM сразу видит
+   «это объявление типа», kind показывает форму. Меньше keyword'ов
+   для запоминания.
+
+### Что отвергнуто
+
+- **Сохранить `protocol Foo { ... }` как отдельный keyword** (текущий
+  D42). Создаёт асимметрию: data объявляется через `type`, behavior —
+  через `protocol`, оба используются как типы — два пути к одной
+  концепции «тип». D53 устраняет.
+- **`type any alias protocol { }` как форма для `any`.** Для protocol'ов
+  alias-форма семантически тождественна newtype-форме (структурная
+  типизация делает имена незначимыми). Дополнительный синтаксис без
+  выигрыша. Прямая `type any protocol { }` короче и яснее.
+- **`Any` (PascalCase).** Согласовано с D30 строже, но `any` lowercase
+  привычнее (Go, TS) и согласовано с примитивами.
+- **Анонимный protocol без префикса `{ ... }`.** Двусмысленно с
+  record-литералами и блок-выражениями. `protocol { ... }` всегда
+  явно.
+- **Литеральные protocol'ы со значениями полей** (как `interface{}` в
+  Go допускает методы и встраивание других interface'ов через
+  composition). Composition protocol'ов (`Foo : Bar`) — открытый
+  вопрос (см. D42 раздел «Открытые вопросы»), не входит в D53.
+
+### Цена
+
+1. **Большой breaking change.** Все `protocol Foo { ... }` в spec/,
+   decisions/, examples/ переписать в `type Foo protocol { ... }`.
+   Это — повторение масштаба D52 миграции.
+2. **На одно слово длиннее.** `type Hashable protocol { ... }` против
+   `protocol Hashable { ... }` — лишний `type ` (5 символов).
+3. **`protocol` теперь kind-токен**, не keyword. Грамматически разные
+   роли (kind-token ≠ leading keyword), хотя пишется одинаково.
+4. **Анонимные protocol-типы в позиции параметра** — новая форма,
+   старая (без префикса) запрещена. Все `fn f(x { method() })` →
+   `fn f(x protocol { method() })`.
+5. **Q22** закрывается этим решением — больше не открытый вопрос.
+
+### Связь
+- [D17](#d17-объявление-типов-единый-синтаксис-без-) — старая система
+  объявлений, revised → D52.
+- [D52](#d52-объявление-типов-revised-newtype-alias-sum-через-leading-)
+  — D53 расширяет: `protocol` встаёт в ряд kind-токенов рядом с `alias`.
+- [D42](#d42-protocol-keyword-для-структурных-интерфейсов) — D53
+  заменяет `protocol` keyword на kind-токен. Семантика структурной
+  типизации и generic-параметров сохраняется.
+- [04-effects.md → D18](04-effects.md#d18) — эффект как использование
+  protocol-типа в позиции эффекта. Меняется только объявление.
+- [08-runtime.md → D26](08-runtime.md#d26) — `any` добавлен в prelude.
+- [03-syntax.md → D30](03-syntax.md#d30) — naming: `any` lowercase
+  как исключение, по аналогии с примитивами.
+
+### Открытые вопросы
+- **Type-pattern-match для значений `any`.** Извлечение конкретного
+  типа из `any`-значения (`match x { int(n) => ..., str(s) => ... }`)
+  требует runtime-tag и новой формы match. Не входит в D53.
+- **Composition protocol'ов** (`Foo : Bar` или `Foo extends Bar`) —
+  не входит, см. Q21 «proliferation эффектов» как родственный вопрос.
+
+### Эволюция
+[D42](#d42-protocol-keyword-для-структурных-интерфейсов) ввёл
+`protocol` как отдельный keyword. После D52 (kind-токены `alias`)
+выявилась асимметрия: protocol используется как тип, но объявляется
+не через `type`. D53 снимает асимметрию — `protocol` становится
+kind-токеном в системе D52, унифицируя объявление всех типов под
+единым keyword'ом.
+
+Q22 («унификация type/protocol») — закрыт принятием D53.
+
+---
+
 ## D42. `protocol` keyword для структурных интерфейсов
+
+> ⚠️ **REVISED.** Заменено [D53](#d53-унификация-protocol-под-type-protocol-как-kind-токен).
+> `protocol` — теперь не отдельный keyword, а **kind-токен** в системе
+> [D52](#d52-объявление-типов-revised-newtype-alias-sum-через-leading-):
+> `type Foo protocol { ... }`. Семантика структурной типизации,
+> generic-параметров и эффектов сохраняется. Текст ниже — для
+> исторической справки.
 
 ### Что
 Структурные интерфейсы объявляются отдельным keyword `protocol`. `type`
@@ -883,7 +1151,7 @@ acc.deposit(100)                    // вызовет AuditedAccount.deposit
 compile error:
 
 ```nova
-protocol Logger { log(msg str) -> () }
+type Logger protocol { log(msg str) -> () }
 type Auditor { log(msg str) -> () }
 
 type Combined {
@@ -929,7 +1197,7 @@ process(aa.Account)                 // ок: извлекли Account-часть
 Если нужен полиморфизм — структурный protocol:
 
 ```nova
-protocol HasBalance {
+type HasBalance protocol {
     balance() -> money
 }
 

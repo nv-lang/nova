@@ -208,11 +208,19 @@ type Result[T, E] | Ok(T) | Err(E)
 type Error                                       // unit-тип-маркер для Throws
 type Ordering | Less | Equal | Greater
 type Never                                       // unit без значений (uninhabited)
+type any protocol { }                            // top-type через пустой protocol (D53)
 ```
 
 **Базовые числовые и строковые типы** (`int`, `i8`-`i64`, `u8`-`u64`,
 `f32`, `f64`, `str`, `bool`, `char`, `()`, `byte`) — встроены в язык,
 не stdlib, но упомянуты для полноты.
+
+**`any`** — пустой protocol-тип (D53). Любой тип удовлетворяет
+пустому контракту, поэтому `any` — top-type (универсальный супертип).
+Имя lowercase — исключение в [03-syntax.md → D30](03-syntax.md#d30)
+naming convention, по аналогии с примитивами. Использование:
+`fn dump(x any) Io -> ()`, `Db.query(sql, [42, "alice"])` где
+`args []any`.
 
 **Стандартные эффекты** — `Throws[E]`, `Io`, `Net`, `Db`, `Fs`,
 `Time`, `Random`, `Mut`, `Alloc[R]`, `Async`, `Par`, `Log`, `Trace`,
@@ -251,7 +259,7 @@ TypeScript `never`. Не уникальная фича Nova.
 `protocol` ([04-effects.md → D18](04-effects.md#d18-эффекты-объявляются-через-protocol-не-type)):
 
 ```nova
-protocol Throws[E] {
+type Throws[E] protocol {
     throw(value E) -> Never
 }
 ```
@@ -391,7 +399,7 @@ let acc = Account.new_with(account_limits.MIN_BALANCE)
 
 ```nova
 // Эффект — protocol ([04-effects.md → D18](04-effects.md#d18-эффекты-объявляются-через-protocol-не-type))
-protocol IdGen {
+type IdGen protocol {
     fresh() -> u64
 }
 

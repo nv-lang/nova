@@ -1066,9 +1066,33 @@ public-сигнатуре оказываются нормой.
 
 ---
 
-## Q22. Унификация `type` / `protocol` в один keyword?
+## Q22. Унификация `type` / `protocol` в один keyword? ✅ ЗАКРЫТО ([D53](decisions/02-types.md#d53))
 
-**Контекст.** После D18-revised и [D42](decisions/02-types.md#d42)
+[D53](decisions/02-types.md#d53) принял унификацию: `protocol` стал
+**kind-токеном** под единым `type`-keyword. Все объявления типов
+(включая структурные контракты) идут через `type`:
+
+```nova
+type Hashable protocol { hash() -> u64 }
+type Logger protocol { log(msg str) -> () }
+type Db protocol { query(sql str, args []any) -> []Row }
+type any protocol { }                      // top-type
+```
+
+Анонимный protocol-тип в позиции параметра — `protocol { ... }` (с
+обязательным префиксом, симметрично `[]T`, `(A, B)`, `fn() -> T`).
+
+D42 помечен revised → D53. Семантика структурной типизации,
+generic-параметров и эффектов сохраняется — изменился только
+синтаксис объявления.
+
+Контекст ниже сохранён как историческая справка.
+
+---
+
+### Исходный контекст Q22
+
+**Контекст (до D53).** После D18-revised и [D42](decisions/02-types.md#d42)
 в Nova два keyword'а:
 
 - `type` — данные (record, sum-type, alias).

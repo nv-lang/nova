@@ -821,7 +821,7 @@ fn withdraw(mut acc Account, amount money) Throws -> ()
 ## Handler'ы — литералы у `protocol`-эффектов
 
 ```nova
-protocol Logger {
+type Logger protocol {
     log(msg str) -> ()
 }
 
@@ -924,7 +924,7 @@ fn hot_loop(data []f64) -> f64 =>
 
 ```nova
 // именованный
-protocol Printable {
+type Printable protocol {
     show() -> str
 }
 
@@ -939,12 +939,12 @@ fn log_one(x { show() -> str }) Log -> () => Log.info(x.show())
 `impl`-блоков не нужно. `Self` валиден внутри protocol-блока:
 
 ```nova
-protocol Hashable {
+type Hashable protocol {
     hash() -> u64
     eq(other Self) -> bool
 }
 
-protocol Iterator[T] {
+type Iterator[T] protocol {
     next() -> Option[T]
 }
 ```

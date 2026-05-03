@@ -69,7 +69,7 @@ private (см. [D25](#d25-throw-и-параметризация-throwse)).
 объявление `protocol` ([D18](#d18-эффекты-объявляются-через-protocol-не-type)):
 
 ```nova
-protocol Logger {
+type Logger protocol {
     log(msg str) -> ()
 }
 
@@ -334,11 +334,11 @@ PascalCase, правильное имя — `Throws[E]`.
 #### Объявление эффекта
 
 ```nova
-protocol Logger {
+type Logger protocol {
     log(msg str) -> ()
 }
 
-protocol Db {
+type Db protocol {
     query(sql str, args []any) -> []Row
     exec(sql str, args []any) -> ()
 }
@@ -408,7 +408,7 @@ with Logger = audit {
 type User { id u64, name str }                              // record-тип (data)
 let alice = User { id: 1, name: "alice" }                   // record-литерал
 
-protocol Logger { log(msg str) -> () }                      // эффект (behavior)
+type Logger protocol { log(msg str) -> () }                      // эффект (behavior)
 let console = Logger { log(msg) => resume(println(msg)) }   // handler-литерал
 ```
 
@@ -587,12 +587,18 @@ Runtime-структура `EffectSet`, тип `DynFn` для случаев, к
 
 ## D18. Эффекты объявляются через `protocol`, не `type`
 
+> ⚠️ **REVISED.** После [D53](02-types.md#d53) `protocol` стал
+> kind-токеном под единым `type`-keyword: эффекты объявляются как
+> `type Db protocol { ... }`, не `protocol Db { ... }`. Семантически
+> ничего не изменилось — эффект всё ещё «protocol-тип в позиции
+> эффекта». Изменился только синтаксис объявления.
+
 ### Что
-Эффект — это **`protocol`**, а не `type`. Ключевое слово `effect`
-отменено (как и в первой редакции этого решения), но эффекты теперь
-объявляются через `protocol` — единый keyword для всего, что
-описывает поведение (контракт + операции). `type` остаётся
-исключительно для **данных** (record, sum-type, alias).
+Эффект — это **`protocol`**, а не `type` (старая редакция). Ключевое
+слово `effect` отменено. После [D53](02-types.md#d53) эффекты
+объявляются как `type X protocol { ... }` — единая форма с прочими
+protocol-типами и со всеми остальными типами под `type`. `type X { ... }`
+без kind-токена остаётся записью **record** (только данные).
 
 ### Правило
 
@@ -605,16 +611,16 @@ type Color | Red | Green | Blue
 type UserId u64
 
 // behavior (эффекты, структурные контракты) — keyword protocol
-protocol Db {
+type Db protocol {
     query(sql str, args []any) -> []Row
     exec(sql str, args []any) -> ()
 }
 
-protocol Logger {
+type Logger protocol {
     log(msg str) -> ()
 }
 
-protocol Hashable {
+type Hashable protocol {
     hash() -> u64
     eq(other Self) -> bool
 }
@@ -630,7 +636,7 @@ protocol Hashable {
 параметр. Различение идёт **по позиции в сигнатуре**:
 
 ```nova
-protocol Logger { log(msg str) -> () }
+type Logger protocol { log(msg str) -> () }
 
 // А: позиция эффекта — между ) и ->. Активный handler берётся из скоупа.
 fn process_a(o Order) Logger -> () =>
@@ -791,7 +797,7 @@ fn deposit(mut acc Account, amount money) Throws[DepositError] -> () =>
 Концептуально prelude объявляет:
 
 ```nova
-protocol Throws[E] {
+type Throws[E] protocol {
     throw(value E) -> Never        // операция, никогда не возвращает
 }
 ```
@@ -1207,7 +1213,7 @@ D28 решает «шум `Async`» иначе: в private он **выводит
 #### Базовое использование
 
 ```nova
-protocol Throws[E] {
+type Throws[E] protocol {
     throw(value E) -> Never
 }
 
@@ -1227,7 +1233,7 @@ with Throws[Error] = Throws {
 Для эффекта с несколькими операциями — handler-литерал обязателен:
 
 ```nova
-protocol Db {
+type Db protocol {
     query(sql str, args []any) -> []Row
     exec(sql str, args []any) -> ()
 }
@@ -1283,7 +1289,7 @@ with Db = Db {
 
 ```nova
 // ОК — эффект с одной операцией
-protocol Logger { log(msg str) -> () }
+type Logger protocol { log(msg str) -> () }
 with Logger = (msg) => println(msg) { ... }
 
 // ОШИБКА — у Db две операции, лямбда неоднозначна

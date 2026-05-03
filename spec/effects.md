@@ -29,7 +29,7 @@
    обязан быть в её сигнатуре
 
 ```nova
-protocol Db {
+type Db protocol {
     query(sql str, args []any) -> []Row    // только сигнатуры, без реализации
     exec(sql str, args []any) -> ()
 }
@@ -66,7 +66,7 @@ fn fetch(url str) Net Async Throws -> Response
 или `Iterator`. Не ключевые слова.
 
 ```nova
-protocol Logger {
+type Logger protocol {
     log(msg str) -> ()
 }
 

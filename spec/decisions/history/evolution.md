@@ -405,6 +405,53 @@ type User { id u64, name str }           // record без = (как было)
 [D52](../02-types.md#d52) (active), [D42](../02-types.md#d42)
 (`protocol` без изменений).
 
+### Объявление protocol revised: D42 → D53
+
+**Что было:** `protocol` — отдельный keyword, рядом с `type`:
+
+```nova
+protocol Hashable {
+    hash() -> u64
+    eq(other Self) -> bool
+}
+```
+
+`type` — для данных, `protocol` — для поведения. Два keyword'а в
+системе типов.
+
+**Что стало:** [D53](../02-types.md#d53) сделал `protocol`
+**kind-токеном** в системе D52 (наряду с `alias`):
+
+```nova
+type Hashable protocol {
+    hash() -> u64
+    eq(other Self) -> bool
+}
+```
+
+Все объявления типов идут через единый keyword `type`. Анонимный
+protocol-тип в позиции параметра — `protocol { ... }` с обязательным
+префиксом, симметрично `[]T`, `(A, B)`, `fn() -> T`. `any` = `type any
+protocol { }` (top-type через пустой контракт) добавлен в prelude.
+
+**Почему пересмотрели:**
+
+- Асимметрия: `protocol Foo` объявлялся отдельным keyword'ом, но `Foo`
+  использовался **в позиции типа параметра** (`fn f(x Foo)`). Программист
+  спрашивал «если protocol — тип, почему не объявляется через type?».
+- D52 ввёл `alias` как kind-токен — `protocol` встаёт в тот же ряд,
+  усиливая системность.
+- Прецедент Go (`type X struct { }`, `type X interface { }`) — единый
+  keyword с kind-токеном.
+
+**Цена:** все `protocol Foo { ... }` в spec/, decisions/, examples/
+переписать в `type Foo protocol { ... }`. Кода мало, миграция разовая.
+
+**Связанные D:**
+- Старое: D42 (revised), D18 (revised — эффекты теперь через
+  `type X protocol`).
+- Новое: [D53](../02-types.md#d53).
+
 ## Как читать историю
 
 - **«revised»** в статусе D — текст переписан, решение действует, но

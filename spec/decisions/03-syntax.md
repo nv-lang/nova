@@ -401,10 +401,10 @@ generic. Перешли на Go-style; ~50 мест в документах ис
 Акронимы **PascalCase**, не UPPERCASE:
 
 ```nova
-protocol Db { ... }          // не DB (эффект — protocol)
-protocol Io { ... }          // не IO
+type Db protocol { ... }          // не DB (эффект — protocol)
+type Io protocol { ... }          // не IO
 type Url str                 // не URL (newtype над str)
-protocol Http { ... }        // не HTTP
+type Http protocol { ... }        // не HTTP
 type JsonValue { ... }       // не JSON (record)
 type SqlBuilder { ... }      // не SQL (record с полями)
 ```

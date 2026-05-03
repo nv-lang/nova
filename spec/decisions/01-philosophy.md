@@ -42,7 +42,7 @@ fn Account mut @deposit(amount money) {
 }
 
 // 4) Структурный контракт через protocol
-protocol Hashable {
+type Hashable protocol {
     hash() -> u64
     eq(other Self) -> bool
 }
