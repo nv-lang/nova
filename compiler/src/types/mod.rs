@@ -6,7 +6,7 @@
 //! интерпретации (treewalk не требует всего).
 
 use crate::ast::*;
-use crate::diag::{Diagnostic, Span};
+use crate::diag::Diagnostic;
 use std::collections::{HashMap, HashSet};
 
 /// Очень упрощённая система типов для bootstrap'а.
@@ -141,5 +141,3 @@ pub fn ty_of_ref(tr: &TypeRef) -> Ty {
     }
 }
 
-#[allow(dead_code)]
-fn _silence_span(_: Span) {}

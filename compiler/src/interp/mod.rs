@@ -167,6 +167,27 @@ impl Interpreter {
         args: &[Value],
         span: Span,
     ) -> Result<Value, Diagnostic> {
+        match self.call_closure_flow(closure, args, span)? {
+            Flow::Value(v) | Flow::Return(v) => Ok(v),
+            Flow::Throw(err) => Err(Diagnostic::new(
+                format!("uncaught throw: {:?}", err),
+                span,
+            )),
+            Flow::Break | Flow::Continue => Err(Diagnostic::new(
+                "break/continue outside loop",
+                span,
+            )),
+        }
+    }
+
+    /// Вызов closure с возвратом Flow — для случаев, когда throw должен
+    /// проброситься выше по call stack'у к обработчику Throws.
+    fn call_closure_flow(
+        &self,
+        closure: &Closure,
+        args: &[Value],
+        span: Span,
+    ) -> Result<Flow, Diagnostic> {
         if closure.params.len() != args.len() {
             return Err(Diagnostic::new(
                 format!(
@@ -188,21 +209,12 @@ impl Interpreter {
             ClosureBody::Expr(e) => self.eval_expr(e, &env)?,
             ClosureBody::Block(b) => self.exec_block_flow(b, &env)?,
         };
-        match flow {
-            Flow::Value(v) => Ok(v),
-            Flow::Return(v) => Ok(v),
-            Flow::Throw(err) => {
-                // Throw без активного handler'а — превращаем в Diagnostic.
-                Err(Diagnostic::new(
-                    format!("uncaught throw: {:?}", err),
-                    span,
-                ))
-            }
-            Flow::Break | Flow::Continue => Err(Diagnostic::new(
-                "break/continue outside loop",
-                span,
-            )),
-        }
+        // Return превращаем в Value — `return` локален функции.
+        // Throw / Value / Break / Continue — пробрасываем как есть.
+        Ok(match flow {
+            Flow::Return(v) => Flow::Value(v),
+            other => other,
+        })
     }
 
     // ─── eval ────────────────────────────────────────────────────────────
