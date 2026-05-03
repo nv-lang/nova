@@ -142,8 +142,8 @@ test "contains works after insert/remove" {
 }
 
 test "union and intersection with operator overloading" {
-    let a = Set[int].from_iter(Vec[int].from_array([1, 2, 3]).iter())
-    let b = Set[int].from_iter(Vec[int].from_array([2, 3, 4]).iter())
+    let a = Set[int].from_iter([1, 2, 3].iter())
+    let b = Set[int].from_iter([2, 3, 4].iter())
 
     let union = a | b
     assert union.len() == 4
@@ -156,8 +156,8 @@ test "union and intersection with operator overloading" {
 }
 
 test "difference" {
-    let a = Set[int].from_iter(Vec[int].from_array([1, 2, 3, 4]).iter())
-    let b = Set[int].from_iter(Vec[int].from_array([2, 4]).iter())
+    let a = Set[int].from_iter([1, 2, 3, 4].iter())
+    let b = Set[int].from_iter([2, 4].iter())
 
     let diff = a - b
     assert diff.len() == 2

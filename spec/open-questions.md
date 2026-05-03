@@ -1863,6 +1863,138 @@ v1.0).
 
 ---
 
+## Q-array-api. Формальный API `[]T` — что встроено, что расширяется
+
+**Контекст.** `[]T` — встроенная конструкция языка ([D27](decisions/03-syntax.md#d27)).
+По [D32](decisions/02-types.md#d32) runtime-представление —
+`(ptr, len, cap)`-структура. В примерах spec/ и examples/
+используются: `xs.len`, `xs.push(x)`, `[]T.with_capacity(n)`,
+`xs.iter()`, и т.д. Но **формального D-решения** про API `[]T`
+нет — это используется «по умолчанию», без зафиксированного списка.
+
+Вопросы:
+
+### Q-array-api.1. Что входит в API `[]T`
+
+Из практики и примеров видны следующие операции — нужно зафиксировать
+полный список:
+
+**Геттеры:**
+- `xs.len` — количество элементов (поле или метод? сейчас как поле).
+- `xs.cap` — capacity (выделенная память).
+- `xs.is_empty` — `len == 0` (для удобства).
+
+**Конструкторы (static-функции на типе `[]T`):**
+- `[]T.with_capacity(n int) -> []T` — выделить с capacity n, len 0.
+- `[]T.alloc(n int) -> []T` — выделить с len n (заполнено default-T).
+  *Не уверен, что зафиксировано. См. Q-array-api.4.*
+- `[]T.from(other []T) -> []T` — копия (shallow clone).
+
+**Мутирующие:**
+- `mut xs.push(item T) -> ()` — добавить в конец, grow при
+  переполнении.
+- `mut xs.pop() -> Option[T]` — удалить с конца.
+- `mut xs.clear() -> ()` — обнулить len, capacity сохранить.
+- `mut xs.insert(i int, item T) -> ()` — вставить по индексу.
+- `mut xs.remove(i int) -> Option[T]` — удалить по индексу.
+
+**Итерация:**
+- `xs.iter() -> Iter[T]` — итератор по элементам.
+- `for x in xs { ... }` — синтаксический сахар над `iter()`.
+
+**Доступ:**
+- `xs[i]` — индексирование, panic при out-of-bounds (D13).
+- `xs.get(i int) -> Option[T]` — безопасный доступ.
+
+**Slicing (если есть):**
+- `xs[a..b]` — slice. Возвращает `[]T` без копирования (zero-cost).
+  Не зафиксировано.
+
+### Q-array-api.2. Можно ли расширять `[]T` методами через `fn []T @custom()`
+
+Да — программист может объявить собственный метод на `[]T`, как на
+любом типе:
+
+```nova
+fn []T @sum_int() -> int where T = int =>     // bound пока нет, см. Q-bounds
+    @fold(0) { (acc, x) => acc + x }
+
+fn []f64 @average() -> f64 =>
+    @fold(0.0) { (a, x) => a + x } / (@len as f64)
+```
+
+**Это валидно по [D35](decisions/03-syntax.md#d35)** — методы на типе
+через `fn Type @method`. `[]T` — тип, расширение работает. Нужно
+зафиксировать формально, что **встроенные конструкции** (массивы,
+tuples) подлежат расширению так же, как именованные типы.
+
+### Q-array-api.3. `use []T` в record (D39 на встроенные типы)
+
+Может ли record-тип использовать `use []T` для прокси-делегации?
+
+```nova
+type Holder[T] {
+    use data []T
+    extra str
+}
+
+let h = Holder[int] { data: [1, 2, 3], extra: "info" }
+let n = h.len             // прокси к data.len через D39
+h.push(42)                 // прокси к data.push
+```
+
+[D39](decisions/02-types.md#d39) написан под именованные типы
+(`use Account`). Распространение на встроенные конструкции (`[]T`,
+tuples) — естественное расширение, но не зафиксировано формально.
+
+См. clarification в D39.
+
+### Q-array-api.4. `[]T.alloc(n)` vs `[]T.with_capacity(n)` — разница
+
+Из текущих примеров используются оба:
+
+- `[]Slot[K, V].with_capacity(cap)` ([decisions/03-syntax.md → D38](decisions/03-syntax.md#d38)).
+- `[]T.alloc(n)` (мой usage в `examples/stdlib_vec.nv`).
+
+Если оба существуют:
+- `with_capacity(n)` — len=0, cap=n. Push не реаллокирует, пока len < cap.
+- `alloc(n)` — len=n, cap=n. Все элементы инициализированы default-T.
+
+Для default-T нужен механизм default-значения. Либо `Default`-protocol,
+либо требование bound'а на T. **Не зафиксировано.**
+
+Возможно, `alloc(n)` вообще не нужен — пользовательские структуры
+(HashMap, Vec) делают `with_capacity` и заполняют сами.
+
+### Q-array-api.5. Slicing — есть ли `xs[a..b]`
+
+Range-индексирование — частая фича slice-семантики. В Go, Rust, Swift
+есть. В Nova:
+- `..` оператор range уже зафиксирован (`for i in 0..n`,
+  [D38](decisions/03-syntax.md#d38)).
+- Применим ли он в индексировании `xs[a..b]`?
+
+Не зафиксировано. Предполагается **есть**, но D-решения нет.
+
+### Решение пока
+
+Не вводить отдельный D — это часть **Q9 (stdlib)**. При работе над
+stdlib уточнить полный API `[]T` и зафиксировать одним D-блоком.
+
+Сейчас: считать API `[]T` де-факто включающим
+`len`/`cap`/`push`/`pop`/`with_capacity`/`iter`/`get`/`[i]` (по
+текущим примерам). Расширение через `fn []T @method` разрешено по
+D35. Embed `use []T` в record — clarification в D39.
+
+**Связь:** [D27](decisions/03-syntax.md#d27) (синтаксис массивов),
+[D32](decisions/02-types.md#d32) (runtime-представление),
+[D35](decisions/03-syntax.md#d35) (методы на типе),
+[D38](decisions/03-syntax.md#d38) (turbofish для конструкторов),
+[D39](decisions/02-types.md#d39) (use-delegation), Q9 (stdlib),
+Q-bounds (где `[]T` методы используют T-constraint'ы).
+
+---
+
 ## Финальное напоминание
 
 Прежде чем продолжать **дизайн**, прочитай:

@@ -45,10 +45,10 @@ export fn Queue[T].with_capacity(cap int) -> Queue[T] =>
 // ──────────────────────────────────────────────────────────────────────────
 
 export fn Queue[T] @len() -> int =>
-    @in.len() + @out.len()
+    @in.len + @out.len
 
 export fn Queue[T] @is_empty() -> bool =>
-    @in.is_empty() && @out.is_empty()
+    @in.is_empty && @out.is_empty
 
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -65,7 +65,7 @@ export fn Queue[T] mut @push(item T) -> () =>
 // D55: Some/None в return-position сохранены явно — match-arms с
 // unit-альтернативой, [Q-style-coercion](../spec/open-questions.md).
 export fn Queue[T] mut @pop() -> Option[T] {
-    if @out.is_empty() {
+    if @out.is_empty {
         // Перелить `in` в `out` в обратном порядке.
         loop {
             match @in.pop() {
@@ -78,10 +78,11 @@ export fn Queue[T] mut @pop() -> Option[T] {
 }
 
 // Просмотреть голову без удаления.
+// `last()` — метод-расширение на []T (stdlib_vec.nv через D35).
 export fn Queue[T] @peek() -> Option[T] {
-    if !@out.is_empty() {
+    if !@out.is_empty {
         @out.last()
-    } else if !@in.is_empty() {
+    } else if !@in.is_empty {
         // Голова находится в `in[0]` (она «дальше всего» от выхода
         // тоже, но ещё не перелита).
         @in.get(0)

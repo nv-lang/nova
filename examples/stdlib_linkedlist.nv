@@ -46,12 +46,13 @@ export fn LinkedList[T].from_array(xs []T) -> LinkedList[T] {
 }
 
 export fn LinkedList[T].from_iter(it protocol { mut next() -> Option[T] }) -> LinkedList[T] {
-    // Накопить в Vec, потом обратный fold — иначе O(n²).
-    let mut buf = Vec[T].new()
+    // Накопить в массив, потом обратный fold — иначе O(n²).
+    // Vec[T] alias []T (см. stdlib_vec.nv), поэтому buf : []T напрямую.
+    let mut buf []T = []
     while let Some(x) = it.next() {
         buf.push(x)
     }
-    LinkedList[T].from_array(buf.data)
+    LinkedList[T].from_array(buf)
 }
 
 
