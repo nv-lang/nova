@@ -7,7 +7,6 @@ use super::value::*;
 use super::Interpreter;
 use crate::ast::Expr;
 use crate::diag::{Diagnostic, Span};
-use std::cell::RefCell;
 use std::rc::Rc;
 
 pub fn install(env: &Env) {

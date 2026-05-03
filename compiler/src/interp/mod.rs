@@ -55,7 +55,7 @@ pub enum Flow {
 
 impl Interpreter {
     pub fn new() -> Self {
-        let mut interp = Self {
+        let interp = Self {
             globals: Env::new(),
             types: HashMap::new(),
             handlers: RefCell::new(Vec::new()),
@@ -673,6 +673,24 @@ impl Interpreter {
                 }
             }
         }
+        // Variant-constructor через одиночный Ident с заглавной буквы —
+        // проверяем ДО eval_expr_value(func), потому что Square/Good/etc.
+        // не зарегистрированы как имена в globals.
+        if let ExprKind::Ident(name) = &func.kind {
+            if name
+                .chars()
+                .next()
+                .map(|c| c.is_ascii_uppercase())
+                .unwrap_or(false)
+            {
+                let arg_values = self.eval_args(args, env)?;
+                if let Some(v) = self.try_construct_variant_anywhere(name, &arg_values, span)? {
+                    return Ok(Flow::Value(v));
+                }
+                // fall-through: возможно это closure-binding с заглавной буквы
+                // (нестандартно, но не запрещаем).
+            }
+        }
         // Обычный вызов: callee — выражение.
         let callee = self.eval_expr_value(func, env)?;
         let mut arg_values = self.eval_args(args, env)?;
@@ -685,15 +703,6 @@ impl Interpreter {
                 receiver: env.lookup("@"),
             };
             arg_values.push(Value::Closure(Rc::new(closure)));
-        }
-        // Variant-constructor через одиночный path/ident?
-        if let ExprKind::Ident(name) = &func.kind {
-            if name.chars().next().map(|c| c.is_ascii_uppercase()).unwrap_or(false) {
-                // Look for variant in any registered sum type.
-                if let Some(v) = self.try_construct_variant_anywhere(name, &arg_values, span)? {
-                    return Ok(Flow::Value(v));
-                }
-            }
         }
         Ok(Flow::Value(self.call_value(callee, &arg_values, span)?))
     }

@@ -11,11 +11,30 @@ use crate::lexer::{Token, TokenKind};
 pub struct Parser {
     tokens: Vec<Token>,
     pos: usize,
+    /// Когда true — `Ident { ... }` не парсится как record-литерал
+    /// (используется в head-позициях `if`/`while`/`match`-scrutinee
+    /// и `for`-итераторах, чтобы `{` следующего блока не съедался).
+    no_struct_lit: bool,
 }
 
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Self {
-        Self { tokens, pos: 0 }
+        Self {
+            tokens,
+            pos: 0,
+            no_struct_lit: false,
+        }
+    }
+
+    fn with_no_struct_lit<R>(
+        &mut self,
+        f: impl FnOnce(&mut Self) -> Result<R, Diagnostic>,
+    ) -> Result<R, Diagnostic> {
+        let saved = self.no_struct_lit;
+        self.no_struct_lit = true;
+        let result = f(self);
+        self.no_struct_lit = saved;
+        result
     }
 
     /// Точка входа: парсит модуль (файл целиком).
@@ -426,6 +445,10 @@ impl Parser {
             self.expect(&TokenKind::RBracket)?;
         }
 
+        // Тело типа может идти на следующей строке для multi-line sum'ов
+        // и protocol'ов. Skip newlines перед body.
+        self.skip_newlines();
+
         // Тело: `protocol { ... }` | `alias TYPE` | `{ fields }` | `| variant | variant`
         // | `TYPE` (newtype) | начинается с `|` для sum
         let kind = match self.peek().kind {
@@ -457,7 +480,11 @@ impl Parser {
                 TypeDeclKind::Newtype(ty)
             }
         };
-        self.expect_newline_or_eof()?;
+        // Sum-варианты сами съедают newlines в конце; для других форм
+        // ожидаем разделитель.
+        if !matches!(kind, TypeDeclKind::Sum(_)) {
+            self.expect_newline_or_eof().ok();
+        }
         let span = start.merge(self.tokens[self.pos.saturating_sub(1)].span);
         Ok(TypeDecl {
             is_export,
@@ -1131,21 +1158,50 @@ impl Parser {
                 }
             }
             TokenKind::Ident(_) => {
-                // ident, ident.path, или Type { record-литерал }
+                // Простой идентификатор. Dot-цепочки `.field`/`.method`
+                // обрабатываются в parse_postfix как Member access — это
+                // позволяет `p.x` работать когда `p` — обычная переменная,
+                // а не qualifier пути.
+                //
+                // Type/Module qualifier (PascalCase + dot) превращается в
+                // Path только когда первый токен — заглавная буква И за ним
+                // `.IDENT`, чтобы поддержать `Type.method` / `Module.fn`.
+                // Дальше member-доступ всё равно работает через Dot →
+                // Member на postfix-стадии.
                 let (first, first_span) = self.parse_ident()?;
-                let mut path = vec![first];
-                while matches!(self.peek().kind, TokenKind::Dot)
-                    && matches!(self.peek_at(1).kind, TokenKind::Ident(_))
-                {
-                    self.bump();
-                    path.push(self.parse_ident()?.0);
+                let starts_uppercase = first
+                    .chars()
+                    .next()
+                    .map(|c| c.is_ascii_uppercase())
+                    .unwrap_or(false);
+                let mut path = vec![first.clone()];
+                if starts_uppercase {
+                    while matches!(self.peek().kind, TokenKind::Dot)
+                        && matches!(self.peek_at(1).kind, TokenKind::Ident(_))
+                    {
+                        // Заглядываем: если следующий ident — тоже PascalCase,
+                        // продолжаем path; иначе оставляем для Member access.
+                        let TokenKind::Ident(next_name) = &self.peek_at(1).kind else {
+                            break;
+                        };
+                        let next_upper = next_name
+                            .chars()
+                            .next()
+                            .map(|c| c.is_ascii_uppercase())
+                            .unwrap_or(false);
+                        // Продолжаем только если оба — PascalCase (Module.SubModule).
+                        // Type.method (метод с lowercase) останавливаем здесь,
+                        // чтобы получить Path[Type] и Member через postfix —
+                        // но это сломало бы static-method вызовы. Вместо этого:
+                        // съедаем dot всегда после PascalCase, пока следующее —
+                        // identifier. Проблема — для Type.method.x сначала
+                        // соберём Path[Type, method], потом .x как Member.
+                        let _ = next_upper;
+                        self.bump();
+                        path.push(self.parse_ident()?.0);
+                    }
                 }
                 // Если за path идёт `{`, и **это валидно как record-литерал**:
-                // нужна аккуратность — `if cond { body }` тоже подходит. В Nova
-                // record-литерал в expression позиции допустим, парсер должен
-                // различать по контексту. Простое правило: если первый токен
-                // в `{...}` — `Ident :` или `...`, это record. Иначе trailing-block
-                // обработается на postfix-стадии.
                 if matches!(self.peek().kind, TokenKind::LBrace) && self.looks_like_record_lit() {
                     return self.parse_record_lit_after_path(path, first_span);
                 }
@@ -1228,6 +1284,9 @@ impl Parser {
     /// Эвристика: `{` перед нами — это начало record-литерала?
     /// Смотрим первый «значимый» токен внутри: `Ident :` или `...` или `}`.
     fn looks_like_record_lit(&self) -> bool {
+        if self.no_struct_lit {
+            return false;
+        }
         // Skip newlines внутри.
         let mut i = self.pos + 1;
         while i < self.tokens.len()
@@ -1430,7 +1489,7 @@ impl Parser {
             self.bump();
             let pattern = self.parse_pattern()?;
             self.expect(&TokenKind::Eq)?;
-            let scrutinee = self.parse_expr()?;
+            let scrutinee = self.with_no_struct_lit(|p| p.parse_expr())?;
             let then = self.parse_block()?;
             let else_ = self.parse_optional_else()?;
             let end = then.span;
@@ -1444,7 +1503,7 @@ impl Parser {
                 start.merge(end),
             ));
         }
-        let cond = self.parse_expr()?;
+        let cond = self.with_no_struct_lit(|p| p.parse_expr())?;
         let then = self.parse_block()?;
         let else_ = self.parse_optional_else()?;
         let end = then.span;
@@ -1478,7 +1537,7 @@ impl Parser {
 
     fn parse_match(&mut self) -> Result<Expr, Diagnostic> {
         let start = self.expect(&TokenKind::KwMatch)?.span;
-        let scrutinee = self.parse_expr()?;
+        let scrutinee = self.with_no_struct_lit(|p| p.parse_expr())?;
         self.expect(&TokenKind::LBrace)?;
         let mut arms = Vec::new();
         self.skip_newlines();
@@ -1531,7 +1590,7 @@ impl Parser {
         let start = self.expect(&TokenKind::KwFor)?.span;
         let pattern = self.parse_pattern()?;
         self.expect(&TokenKind::KwIn)?;
-        let iter = self.parse_expr()?;
+        let iter = self.with_no_struct_lit(|p| p.parse_expr())?;
         let body = self.parse_block()?;
         let end = body.span;
         Ok(Expr::new(
@@ -1550,7 +1609,7 @@ impl Parser {
             self.bump();
             let pattern = self.parse_pattern()?;
             self.expect(&TokenKind::Eq)?;
-            let scrutinee = self.parse_expr()?;
+            let scrutinee = self.with_no_struct_lit(|p| p.parse_expr())?;
             let body = self.parse_block()?;
             let end = body.span;
             return Ok(Expr::new(
@@ -1562,7 +1621,7 @@ impl Parser {
                 start.merge(end),
             ));
         }
-        let cond = self.parse_expr()?;
+        let cond = self.with_no_struct_lit(|p| p.parse_expr())?;
         let body = self.parse_block()?;
         let end = body.span;
         Ok(Expr::new(

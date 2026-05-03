@@ -2,7 +2,7 @@
 //! выполняются через `nova::interp` и проверяются по выводу
 //! функции main или возвращаемого значения.
 
-use nova::interp::value::{Value, VariantPayload};
+use nova::interp::value::Value;
 use nova::interp::Interpreter;
 use nova::parser::parse;
 use nova::types::check_module;
