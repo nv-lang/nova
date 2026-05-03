@@ -15,15 +15,35 @@ pub struct Parser {
     /// (используется в head-позициях `if`/`while`/`match`-scrutinee
     /// и `for`-итераторах, чтобы `{` следующего блока не съедался).
     no_struct_lit: bool,
+    /// Оригинальный текст для обратной выборки (используется в
+    /// `.n.m`-positional-tuple-access, где Float-токен нужно
+    /// расщепить обратно в две части).
+    src: String,
 }
 
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Self {
+        Self::with_src(tokens, String::new())
+    }
+
+    pub fn with_src(tokens: Vec<Token>, src: String) -> Self {
         Self {
             tokens,
             pos: 0,
             no_struct_lit: false,
+            src,
         }
+    }
+
+    fn src_substring(&self, span: Span) -> String {
+        if self.src.is_empty() {
+            // Парсер был создан без src — fallback к синтезу из Float
+            return String::new();
+        }
+        self.src
+            .get(span.start..span.end)
+            .map(|s| s.to_string())
+            .unwrap_or_default()
     }
 
     fn with_no_struct_lit<R>(
@@ -1000,11 +1020,60 @@ impl Parser {
             match self.peek().kind {
                 TokenKind::Dot => {
                     self.bump();
-                    // .field или .0 (positional)
-                    let (name, name_span) = match self.peek().kind {
+                    // .field или .0 (positional). Float-токен `0.0` после
+                    // `.` появляется когда лексер увидел `<expr>.0.0` и
+                    // съел `.0.0` как `Dot Float(0.0)` — расщепляем
+                    // `n.m` обратно в два positional-доступа.
+                    let (name, name_span) = match self.peek().kind.clone() {
                         TokenKind::Int(n) => {
+                            let sp = self.peek().span;
                             self.bump();
-                            (format!("{}", n), self.peek().span)
+                            (format!("{}", n), sp)
+                        }
+                        TokenKind::Float(f) => {
+                            // `n.m` — два positional access'а подряд.
+                            let sp = self.peek().span;
+                            let raw = self.tokens[self.pos].span;
+                            let text = self.src_substring(raw);
+                            let (first, second) = if !text.is_empty() {
+                                let parts: Vec<&str> = text.splitn(2, '.').collect();
+                                if parts.len() != 2 {
+                                    return Err(Diagnostic::new(
+                                        "malformed positional access",
+                                        sp,
+                                    ));
+                                }
+                                (parts[0].to_string(), parts[1].to_string())
+                            } else {
+                                // Fallback: восстанавливаем по значению
+                                // (только для целых частей вроде 0.0, 1.2).
+                                let s = format!("{}", f);
+                                let parts: Vec<&str> = s.splitn(2, '.').collect();
+                                if parts.len() != 2 {
+                                    return Err(Diagnostic::new(
+                                        "malformed positional access",
+                                        sp,
+                                    ));
+                                }
+                                (parts[0].to_string(), parts[1].to_string())
+                            };
+                            self.bump();
+                            // Применяем первый Member, потом второй.
+                            let mid = Expr::new(
+                                ExprKind::Member {
+                                    obj: Box::new(expr),
+                                    name: first,
+                                },
+                                sp,
+                            );
+                            expr = Expr::new(
+                                ExprKind::Member {
+                                    obj: Box::new(mid),
+                                    name: second,
+                                },
+                                sp,
+                            );
+                            continue;
                         }
                         TokenKind::Ident(_) => self.parse_ident()?,
                         _ => {
@@ -2203,7 +2272,7 @@ enum StmtOrExpr {
 /// Удобная обёртка — лексирует и парсит исходник.
 pub fn parse(src: &str) -> Result<Module, Diagnostic> {
     let tokens = crate::lexer::lex(src)?;
-    let mut p = Parser::new(tokens);
+    let mut p = Parser::with_src(tokens, src.to_string());
     p.parse_module()
 }
 

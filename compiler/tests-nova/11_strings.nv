@@ -1,0 +1,53 @@
+// 11_strings.nv — строковые операции
+
+module spec.strings
+
+test "concat via +" {
+    assert("foo" + "bar" == "foobar")
+    assert("" + "x" + "" == "x")
+}
+
+test "len method" {
+    assert("".len == 0)
+    assert("abc".len == 3)
+    assert("hello, world".len == 12)
+}
+
+test "starts_with / ends_with" {
+    let s = "hello, world"
+    assert(s.starts_with("hello"))
+    assert(!s.starts_with("world"))
+    assert(s.ends_with("world"))
+    assert(!s.ends_with("hello"))
+}
+
+test "contains" {
+    let s = "the quick brown fox"
+    assert(s.contains("quick"))
+    assert(s.contains("brown fox"))
+    assert(!s.contains("cat"))
+}
+
+test "to_lower / to_upper" {
+    assert("HELLO".to_lower() == "hello")
+    assert("hello".to_upper() == "HELLO")
+    assert("Mixed Case".to_lower() == "mixed case")
+}
+
+test "trim" {
+    assert("   hello   ".trim() == "hello")
+    assert("\n\tabc\n".trim() == "abc")
+    assert("no-trim".trim() == "no-trim")
+}
+
+test "equality and comparison" {
+    assert("abc" == "abc")
+    assert("abc" != "abd")
+}
+
+test "string contains escaped chars" {
+    let q = "\"quoted\""
+    assert(q.contains("\""))
+    let nl = "line1\nline2"
+    assert(nl.contains("\n"))
+}

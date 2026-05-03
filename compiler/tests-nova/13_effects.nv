@@ -1,0 +1,123 @@
+// 13_effects.nv — protocol-эффекты (D53), handler-литералы (D31),
+// `with`-блок (D11), resume.
+
+module spec.effects
+
+type Counter protocol {
+    next() -> int
+}
+
+type KeyValue protocol {
+    get() -> int
+    set(n int) -> ()
+}
+
+type Echo protocol {
+    say(msg str) -> str
+}
+
+fn three_times() Counter -> int {
+    let a = Counter.next()
+    let b = Counter.next()
+    let c = Counter.next()
+    a + b + c
+}
+
+test "single-op handler with state" {
+    let mut s = 0
+    with Counter = Counter {
+        next() {
+            s += 1
+            resume(s)
+        }
+    } {
+        let total = three_times()
+        assert(total == 1 + 2 + 3)
+    }
+}
+
+test "two-op handler" {
+    let mut store = 0
+    with KeyValue = KeyValue {
+        get()  => resume(store)
+        set(n) {
+            store = n
+            resume(())
+        }
+    } {
+        KeyValue.set(42)
+        assert(KeyValue.get() == 42)
+        KeyValue.set(100)
+        assert(KeyValue.get() == 100)
+    }
+}
+
+test "handler transforms value via resume" {
+    with Echo = Echo {
+        say(msg) => resume(msg + "!")
+    } {
+        let r = Echo.say("hi")
+        assert(r == "hi!")
+    }
+}
+
+test "handler with multiple operations on same effect" {
+    let mut log = []
+    with Echo = Echo {
+        say(msg) {
+            log.push(msg)
+            resume(msg)
+        }
+    } {
+        Echo.say("first")
+        Echo.say("second")
+        Echo.say("third")
+    }
+    assert(log.len == 3)
+    assert(log[0] == "first")
+    assert(log[2] == "third")
+}
+
+test "nested with: inner handler shadows outer" {
+    let mut outer_calls = 0
+    let mut inner_calls = 0
+    with Counter = Counter {
+        next() {
+            outer_calls += 1
+            resume(1)
+        }
+    } {
+        with Counter = Counter {
+            next() {
+                inner_calls += 1
+                resume(99)
+            }
+        } {
+            let v = Counter.next()
+            assert(v == 99)
+        }
+        let v2 = Counter.next()
+        assert(v2 == 1)
+    }
+    assert(outer_calls == 1)
+    assert(inner_calls == 1)
+}
+
+test "handler-method short-form (=> expr)" {
+    with Echo = Echo {
+        say(msg) => resume(msg + "?")
+    } {
+        assert(Echo.say("ok") == "ok?")
+    }
+}
+
+test "handler-method block-form" {
+    with Echo = Echo {
+        say(msg) {
+            let upper = msg.to_upper()
+            resume(upper)
+        }
+    } {
+        assert(Echo.say("hi") == "HI")
+    }
+}

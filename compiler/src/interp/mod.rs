@@ -281,20 +281,30 @@ impl Interpreter {
                 match result {
                     Flow::Throw(err) => Ok(Flow::Throw(err)),
                     Flow::Value(v) => {
-                        // Если Result-like Variant: Ok(x) → x, Err(e) → throw e
+                        // Result-like / Option-like:
+                        //   Ok(x)    → x         (значение распаковано)
+                        //   Err(e)   → return Err(e)  (ранний выход из fn)
+                        //   Some(x)  → x
+                        //   None     → return None
+                        //
+                        // `Flow::Return(...)` всплывает до границы функции,
+                        // где `call_closure_flow` превращает его в `Flow::Value`.
+                        // Так `?` на ошибке мгновенно выходит из текущей fn,
+                        // возвращая исходный Err/None — что и нужно для
+                        // bootstrap-семантики Throws через Result.
                         if let Value::Variant { name, payload, .. } = &v {
                             match (name.as_str(), payload) {
                                 ("Ok", VariantPayload::Tuple(items)) if items.len() == 1 => {
                                     return Ok(Flow::Value(items[0].clone()));
                                 }
-                                ("Err", VariantPayload::Tuple(items)) if items.len() == 1 => {
-                                    return Ok(Flow::Throw(items[0].clone()));
+                                ("Err", _) => {
+                                    return Ok(Flow::Return(v));
                                 }
                                 ("Some", VariantPayload::Tuple(items)) if items.len() == 1 => {
                                     return Ok(Flow::Value(items[0].clone()));
                                 }
                                 ("None", VariantPayload::Unit) => {
-                                    return Ok(Flow::Throw(Value::Unit));
+                                    return Ok(Flow::Return(v));
                                 }
                                 _ => {}
                             }

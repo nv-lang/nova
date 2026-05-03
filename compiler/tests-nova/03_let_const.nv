@@ -1,0 +1,48 @@
+// 03_let_const.nv — let, mut, const
+
+module spec.bindings
+
+const PI int = 3
+const GREETING str = "hello"
+
+test "let binding" {
+    let x = 10
+    assert(x == 10)
+}
+
+test "let with explicit type" {
+    let x int = 42
+    assert(x == 42)
+    let s str = "abc"
+    assert(s == "abc")
+}
+
+test "let mut allows reassign" {
+    let mut x = 1
+    x = 100
+    assert(x == 100)
+    x = -5
+    assert(x == -5)
+}
+
+test "const top-level" {
+    assert(PI == 3)
+    assert(GREETING == "hello")
+}
+
+test "let shadow in inner block" {
+    let x = 5
+    let inner = {
+        let x = 99
+        x
+    }
+    assert(inner == 99)
+    assert(x == 5)
+}
+
+test "let with tuple destructure" {
+    let (a, b, c) = (1, 2, 3)
+    assert(a == 1)
+    assert(b == 2)
+    assert(c == 3)
+}

@@ -1,0 +1,90 @@
+// 07_sum_types.nv — sum-types через `|` (D52), Option/Result из прелюдии
+
+module spec.sum_types
+
+// Unit-only variants
+type Color | Red | Green | Blue
+
+// Tuple-payload variants
+type Shape
+    | Circle(int)
+    | Square(int)
+    | Rectangle(int, int)
+
+// Mixed unit + payload
+type Status
+    | Idle
+    | Running(int)
+    | Failed(str)
+
+fn area(s Shape) -> int => match s {
+    Circle(r)        => 3 * r * r
+    Square(side)     => side * side
+    Rectangle(w, h)  => w * h
+}
+
+fn status_msg(s Status) -> str => match s {
+    Idle           => "idle"
+    Running(n)     => "running"
+    Failed(reason) => reason
+}
+
+test "construct unit variants" {
+    let c = Red
+    let _ = Green
+    let _ = Blue
+    assert(c == Red)
+    assert(c != Green)
+}
+
+test "construct tuple variants" {
+    let s = Square(5)
+    assert(area(s) == 25)
+    let r = Rectangle(3, 4)
+    assert(area(r) == 12)
+    let c = Circle(2)
+    assert(area(c) == 12)
+}
+
+test "mixed variants" {
+    assert(status_msg(Idle) == "idle")
+    assert(status_msg(Running(7)) == "running")
+    assert(status_msg(Failed("disk")) == "disk")
+}
+
+test "Option from prelude" {
+    let some = Some(42)
+    let none = None
+    let v = match some {
+        Some(n) => n
+        None    => 0
+    }
+    assert(v == 42)
+    let v2 = match none {
+        Some(n) => n
+        None    => -1
+    }
+    assert(v2 == -1)
+}
+
+test "Result from prelude" {
+    let ok = Ok(100)
+    let err = Err("boom")
+    let v = match ok {
+        Ok(n)  => n
+        Err(_) => 0
+    }
+    assert(v == 100)
+    let s = match err {
+        Ok(_)   => "ok"
+        Err(msg) => msg
+    }
+    assert(s == "boom")
+}
+
+test "variant equality" {
+    assert(Square(3) == Square(3))
+    assert(Square(3) != Square(4))
+    assert(Red == Red)
+    assert(Red != Blue)
+}
