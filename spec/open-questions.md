@@ -1669,8 +1669,11 @@ let j JsonValue = json`{"name": "${user}", "age": ${age}}`
    используют HashMap.
 3. **Compile-time JSON-парсинг через `json\`...\``.** Нужен
    [Q7 (macros/comptime)](#q7-macros--comptime), без него — runtime.
-4. **`Db.query` сигнатура.** Принимает `(q Sql)` или `(sql str, args
-   []SqlValue)`? Через `Sql`-тег эргономичнее, но менее гибко.
+4. **`Db.query` сигнатура.** ✓ **Решено** (предварительно): через
+   `Sql`-тег. `fn Db.query(q Sql) Throws[DbError] -> []Row`,
+   `fn Db.exec(q Sql) Throws[DbError] -> int`. Прямой `(sql str, args
+   []SqlValue)` остаётся **непубличным** для случаев, когда `sql`-тег
+   не годится. Финализируется в D56.
 5. **Где разместить.** В prelude ([D26](decisions/08-runtime.md#d26))
    или в stdlib-модулях (`std.sql`, `std.json`)? Гибрид:
    `Option`/`Result` — prelude, `SqlValue`/`JsonValue` — модули?

@@ -1,0 +1,251 @@
+// stdlib_vec.nv — динамический массив Vec[T].
+//
+// Идея: эргономичная обёртка вокруг встроенного `[]T` ([D27](../spec/decisions/03-syntax.md#d27)).
+// `[]T` — массив фиксированного размера в памяти; `Vec[T]` управляет
+// capacity и предоставляет push/pop/iter/map/filter/fold.
+//
+// Реальный stdlib переедет в `std.vec` (Q9). Здесь — демонстрация
+// API в актуальном синтаксисе Nova: D52 type-system, D55 literal
+// coercion, D54 `as`/`is`, D46 operator overloading.
+
+module std.vec
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Тип
+// ──────────────────────────────────────────────────────────────────────────
+
+// `data` — указатель на heap-аллокацию длиной `cap`.
+// `len` — текущее количество элементов (len ≤ cap).
+// При переполнении (len == cap) делается grow до 2*cap.
+export type Vec[T] {
+    data    []T          // managed-массив (D27, D6)
+    mut len int          // текущая длина
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Конструкторы
+// ──────────────────────────────────────────────────────────────────────────
+
+// Пустой вектор без аллокации (lazy).
+// D55: имя Vec[T] выводится из `-> Vec[T]`.
+export fn Vec[T].new() -> Vec[T] =>
+    { data: [], len: 0 }
+
+// С предварительно выделенной capacity. Полезно когда известен
+// порядок размера — экономит реаллокации.
+export fn Vec[T].with_capacity(cap int) -> Vec[T] =>
+    { data: []T.alloc(cap), len: 0 }
+
+// Из существующего массива (move).
+export fn Vec[T].from_array(xs []T) -> Vec[T] =>
+    { data: xs, len: xs.len }
+
+// Из итератора. Структурно совместим с любым `protocol { next() -> Option[T] }`
+// (D42-D53 структурная типизация).
+export fn Vec[T].from_iter(it protocol { mut next() -> Option[T] }) -> Vec[T] {
+    let mut v = Vec[T].new()
+    while let Some(x) = it.next() {
+        v.push(x)
+    }
+    v
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Базовые операции
+// ──────────────────────────────────────────────────────────────────────────
+
+// Текущая длина. Простой геттер — тип очевиден, опускаем `-> int` (D45).
+export fn Vec[T] @len() => @len
+
+export fn Vec[T] @is_empty() => @len == 0
+
+// Capacity = длина внутреннего массива. Реаллокация удваивает её.
+export fn Vec[T] @capacity() => @data.len
+
+// Возвращает Option[T] — никаких index-ошибок (D13: out-of-bounds —
+// Panic, но Vec даёт безопасный API через Option).
+// D55: `Some(@data[i])` / `None` записываются явно — match-ветка с
+// unit-альтернативой (Q-style-coercion).
+export fn Vec[T] @get(i int) -> Option[T] =>
+    if i >= 0 && i < @len { Some(@data[i]) }
+    else                   { None }
+
+// Первый элемент или None. Идиома для head/tail работы.
+export fn Vec[T] @first() -> Option[T] => @get(0)
+export fn Vec[T] @last() -> Option[T] => @get(@len - 1)
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Мутирующие операции
+// ──────────────────────────────────────────────────────────────────────────
+
+// Добавить элемент в конец. Если len == cap, делает grow.
+export fn Vec[T] mut @push(item T) -> () {
+    if @len == @data.len { @grow() }
+    @data[@len] = item
+    @len += 1
+}
+
+// Убрать последний. Возвращает Option[T] для безопасности.
+// D55: Some(item) и None — visual symmetry в return.
+export fn Vec[T] mut @pop() -> Option[T] {
+    if @len == 0 { return None }
+    @len -= 1
+    Some(@data[@len])
+}
+
+// Очистить. Capacity сохраняется.
+export fn Vec[T] mut @clear() -> () => @len = 0
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Итератор — структурная совместимость с protocol Iterator[T]
+// ──────────────────────────────────────────────────────────────────────────
+
+export type VecIter[T] {
+    src     Vec[T]
+    mut pos int
+}
+
+// D55: имя VecIter[T] из `-> VecIter[T]`.
+export fn Vec[T] @iter() -> VecIter[T] =>
+    { src: @, pos: 0 }
+
+export fn VecIter[T] mut @next() -> Option[T] {
+    if @pos >= @src.len { return None }
+    let v = @src.data[@pos]
+    @pos += 1
+    Some(v)
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Высокоуровневые комбинаторы
+// ──────────────────────────────────────────────────────────────────────────
+
+// map — новый Vec с применённой функцией.
+// Generic-параметр U на методе (D42 Модель B): один Vec[T]-handler
+// работает с любым возвращаемым типом мaap'а.
+export fn Vec[T] @map[U](f fn(T) -> U) -> Vec[U] {
+    let mut out = Vec[U].with_capacity(@len)
+    for x in @iter() {
+        out.push(f(x))
+    }
+    out
+}
+
+// filter — оставить только удовлетворяющие предикату.
+export fn Vec[T] @filter(pred fn(T) -> bool) -> Vec[T] {
+    let mut out = Vec[T].new()
+    for x in @iter() {
+        if pred(x) { out.push(x) }
+    }
+    out
+}
+
+// fold — свёртка слева. Generic Acc на методе.
+export fn Vec[T] @fold[Acc](init Acc, f fn(Acc, T) -> Acc) -> Acc {
+    let mut acc = init
+    for x in @iter() {
+        acc = f(acc, x)
+    }
+    acc
+}
+
+// any — есть ли элемент, удовлетворяющий предикату.
+export fn Vec[T] @any(pred fn(T) -> bool) -> bool {
+    for x in @iter() {
+        if pred(x) { return true }
+    }
+    false
+}
+
+// all — удовлетворяют ли все элементы предикату.
+export fn Vec[T] @all(pred fn(T) -> bool) -> bool {
+    for x in @iter() {
+        if !pred(x) { return false }
+    }
+    true
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Operator overloading (D46) — индексирование
+// ──────────────────────────────────────────────────────────────────────────
+
+// `v[i]` через `@get_unchecked`. **Может panic** при out-of-bounds —
+// это согласовано с D13 (out-of-bounds — Panic, не Throws).
+// Безопасный доступ — `v.get(i)`.
+export fn Vec[T] @get_unchecked(i int) -> T => @data[i]
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Internal — grow
+// ──────────────────────────────────────────────────────────────────────────
+
+// Удвоение capacity. 0 → 4 (минимум, чтобы избежать многократных
+// растений на старте).
+fn Vec[T] mut @grow() -> () {
+    let new_cap = if @data.len == 0 { 4 } else { @data.len * 2 }
+    let new_data = []T.alloc(new_cap)
+    for i in 0..@len {
+        new_data[i] = @data[i]
+    }
+    @data = new_data
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Тесты
+// ──────────────────────────────────────────────────────────────────────────
+
+test "push/pop preserves order (LIFO)" {
+    let mut v = Vec[int].new()
+    v.push(1)
+    v.push(2)
+    v.push(3)
+    assert v.len() == 3
+    assert v.pop() == Some(3)
+    assert v.pop() == Some(2)
+    assert v.pop() == Some(1)
+    assert v.pop() == None
+}
+
+test "get returns None on out-of-bounds" {
+    let v = Vec[int].from_array([10, 20, 30])
+    assert v.get(0) == Some(10)
+    assert v.get(2) == Some(30)
+    assert v.get(3) == None
+    assert v.get(-1) == None
+}
+
+test "map preserves length and applies function" {
+    let v = Vec[int].from_array([1, 2, 3])
+    let doubled = v.map((x) => x * 2)
+    assert doubled.len() == 3
+    assert doubled.get(0) == Some(2)
+    assert doubled.get(2) == Some(6)
+}
+
+test "filter keeps matching elements" {
+    let v = Vec[int].from_array([1, 2, 3, 4, 5])
+    let even = v.filter((x) => x % 2 == 0)
+    assert even.len() == 2
+    assert even.get(0) == Some(2)
+    assert even.get(1) == Some(4)
+}
+
+test "fold sums elements" {
+    let v = Vec[int].from_array([1, 2, 3, 4])
+    let sum = v.fold(0) { (acc, x) => acc + x }
+    assert sum == 10
+}
+
+test "any/all on empty Vec" {
+    let v Vec[int] = Vec[int].new()
+    assert !v.any((x) => x > 0)              // ни одного → false
+    assert v.all((x) => x > 0)                // вакуумная истина → true
+}
