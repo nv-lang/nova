@@ -45,8 +45,13 @@
 ### Trait-наследование, specialization, HKT
 **Отвергнуто.** Research-уровень, не нужно для прикладного.
 
-### Sum-type c `|` (Haskell-style)
-**Отвергнуто.** Один разделитель — запятая. См. [D17](../02-types.md#d17).
+### Sum-type c `=` и запятой (старый D17 синтаксис)
+**Отвергнуто (D52 пересмотр).** Раньше: `type Color = Red, Green, Blue`.
+Теперь: `type Color | Red | Green | Blue` — leading `|` обязателен,
+`=` для sum-type не используется. Sum-type c `|` (Haskell-style) был
+изначально отвергнут как «дубль запятой при наличии `=`», но после
+снятия `=` (D52) leading `|` стал основной формой. См.
+[D52](../02-types.md#d52), [evolution.md](evolution.md).
 
 ### `type X = { поля }` со знаком равенства для record
 **Отвергнуто.** `=` означает «справа выражение типа», для record
@@ -65,6 +70,99 @@
 ### `mut self` как параметр метода
 **Отвергнуто.** Заменено на `mut @method` модификатор перед `@`. См.
 [D35](../03-syntax.md#d35).
+
+### `type X = Y` для alias и sum-type (старый D17)
+**Отвергнуто (D52 пересмотр).** D17 фиксировал «`=` справа выражение
+типа», но это спотыкалось на sum-type (список конструкторов — не
+выражение). D52 ввёл единую систему: `type X Y` — newtype, `type X
+alias Y` — alias, `type X | A | B | C` — sum через leading `|`,
+`type X { ... }` — record. `=` в декларациях типов вообще не
+используется. См. [D52](../02-types.md#d52).
+
+### `enum` keyword как kind-токен для sum-type
+**Отвергнуто (рассмотрено в процессе D52).** `type Color enum { Red,
+Green, Blue }` — длиннее leading `|` и не даёт дополнительной
+информации. Прецеденты: Rust/Scala/Swift `enum`. Выбран минимальный
+синтаксис `type Color | Red | Green | Blue`. См.
+[D52](../02-types.md#d52).
+
+### Single-variant sum-type
+**Отвергнуто.** `type X | Only(int)` запрещено компилятором — это
+дубль с record/newtype без выигрыша. Используется `type X { value
+int }` (record) или `type X int` (newtype). См.
+[D52](../02-types.md#d52).
+
+### Конфликт discriminants в sum-варианте
+**Отвергнуто.** `type X | A = 5 | B = 5` — ошибка компиляции (B имеет
+то же значение, что A). Программист пишет уникальные discriminants.
+См. [D52](../02-types.md#d52).
+
+### Implicit cast `int → Sum` через `as`
+**Отвергнуто.** Type-небезопасно (число может не попасть в варианты).
+Только через pattern match с `Throws[InvalidVariant]`:
+```nova
+let c = match n {
+    0 => Red
+    1 => Green
+    _ => throw InvalidColor
+}
+```
+См. [D52](../02-types.md#d52), [D54](../03-syntax.md#d54).
+
+### `protocol Foo { ... }` как отдельный keyword (старый D42)
+**Отвергнуто (D53 пересмотр).** Создавало асимметрию: `protocol Foo`
+объявлялся отдельным keyword'ом, но `Foo` использовался **в позиции
+типа параметра**. Программист спрашивал «если protocol — тип, почему
+не объявляется через type?». D53 сделал `protocol` kind-токеном:
+`type Foo protocol { ... }`. Прецедент Go (`type X interface { }`).
+См. [D53](../02-types.md#d53).
+
+### Анонимный protocol без префикса (`fn f(x { method() })`)
+**Отвергнуто.** Двусмысленно с record-литералами и блок-выражениями.
+С [D53](../02-types.md#d53) анонимный protocol-тип записывается с
+префиксом: `fn f(x protocol { method() })`. Симметрично `[]T`,
+`(A, B)`, `fn() -> T`.
+
+### `type any alias protocol { }` для top-type
+**Отвергнуто.** Для protocol'ов alias-форма семантически тождественна
+newtype-форме (структурная типизация делает имена незначимыми).
+Дополнительный синтаксис без выигрыша. Используется прямая форма
+`type any protocol { }`. См. [D53](../02-types.md#d53).
+
+### Implicit shared scope для generic-параметров protocol'а
+**Отвергнуто.** Идея: «если в одном protocol две сигнатуры с
+одинаковым `[T]`, это один и тот же T; для другого типа — другая
+буква». Снижает локальность (нужно прочитать весь protocol-блок),
+невозможно выразить независимый T в нескольких методах без смены
+convention. В Nova явное разделение: `protocol P[T]` (Модель A,
+T на protocol-уровне) и `method[T]()` (Модель B, T на методе). См.
+[D42](../02-types.md#d42), discussion-log этап 20.
+
+### `dyn` как имя top-type
+**Отвергнуто.** Семантическая коллизия: в Rust `dyn Trait` — синтаксис
+trait object'а с runtime-dispatch. Программист с Rust-фоном ожидает
+trait object, а в Nova это просто пустой protocol-тип. См.
+[D53](../02-types.md#d53), discussion-log этап 24.
+
+### `Dynamic` как имя top-type
+**Отвергнуто.** В C# `dynamic` означает **late binding** (любые методы,
+проверка в runtime). У Nova не late binding, а runtime-tag для
+type-check. Семантически близко, но не идентично — программист с C#-
+фоном путается. Длиннее `any`. См. [D53](../02-types.md#d53).
+
+### `Variant` как имя top-type
+**Отвергнуто.** В C++ `std::variant<T1, T2, ...>` — **closed sum**.
+В Nova у нас уже есть closed sum (`type X | A | B`), а `Variant`
+претендует на top-type. Терминологический конфликт. См.
+[D53](../02-types.md#d53), discussion-log этап 24.
+
+### Anonymous unions (TS-style `string | number`)
+**Отвергнуто (зафиксировано как открытый Q-anonymous-union).**
+Требует subtyping (`string <: string | number`), которого в Nova
+нет. Runtime-tag boxing на каждой границе — серьёзная стоимость.
+[D55](../02-types.md#d55) даёт похожую эргономику через literal
+coercion в named sum'ы (`type StrOrInt | S(str) | I(int)`,
+`let x StrOrInt = "test"`) без subtyping.
 
 ### Subtyping для embed/delegation
 **Отвергнуто.** `use Parent` — это композиция, не наследование.
@@ -218,6 +316,62 @@ handler-механизм для observer pattern.
 **Отвергнуто.** Тип «без значения» — `()` (unit). См.
 [D20](../03-syntax.md#d20).
 
+### Один оператор `as`/`as?`/`as!` (Swift-стиль)
+**Отвергнуто.** Усложняет mental model — три формы одного оператора с
+разными свойствами (force-cast, optional-cast, throws-cast). В Nova
+разделение явное: `as` — compile-time конвертация, `is` — runtime
+type-check, `try_as[T]()` / `as[T]?` — методы для extract'а через
+`Option`/`Throws`. См. [D54](../03-syntax.md#d54).
+
+### `is T` для произвольных типов (Kotlin-style)
+**Отвергнуто.** Требует runtime-tag **на всех значениях** — стоимость
+во всём runtime. В Nova `is` ограничен `any`-значениями: tag только у
+них, локализованная стоимость. Sum-варианты проверяются через
+exhaustive `match` (compile-time). См. [D54](../03-syntax.md#d54).
+
+### `is` для sum-вариантов (`if x is Circle`)
+**Отвергнуто.** Дублирует `match` без выигрыша. Match даёт
+exhaustiveness check, `if x is Circle` — нет. Один механизм для одной
+задачи. См. [D54](../03-syntax.md#d54).
+
+### Implicit cast между обычными типами без `as`
+**Отвергнуто.** Все конвертации между типами явные через `as`.
+Implicit conversion введён только для **literal coercion в позиции с
+явным типом** ([D55](../02-types.md#d55)) — узкий механизм для
+sum-обёрток и record-литералов, не общая фича.
+
+### Tuple-coercion для multi-parameter конструкторов sum'а
+**Отвергнуто (отложено в MVP).** Идея: `let e Event = (5, 10)` →
+`Click(5, 10)`. Двусмысленность с tuple-литералами как самостоятельными
+значениями. Сложно различать «tuple как значение» vs «tuple-coercion в
+multi-param». Не критично для use-case'ов. См.
+[D55](../02-types.md#d55).
+
+### Coercion на цепочках конверсий (`int → UserId → Wrapper`)
+**Отвергнуто.** D55 делает **только одну** обёртку вокруг exact-type
+значения. Цепочки усложняют правила и легко дают неожиданный
+результат. Программист пишет промежуточный cast явно (`42 as UserId`).
+См. [D55](../02-types.md#d55).
+
+### Coercion без явной аннотации типа
+**Отвергнуто.** `let x = "test"` остаётся `str`, не превращается в
+`StrOrInt`. Type inference не «угадывает» sum или record. Только явный
+target type активирует coercion. AI-locality сохраняется. См.
+[D55](../02-types.md#d55).
+
+### Opt-in coercion через protocol (Swift `ExpressibleByStringLiteral`)
+**Отвергнуто.** Программист объявляет sum/record, **поведение coercion
+работает автоматически** без дополнительного opt-in. Это менее гибко,
+но проще — не нужно реализовывать марker-протоколы для каждого типа.
+См. [D55](../02-types.md#d55).
+
+### Record-coercion для sum-вариантов с record-формой
+**Отвергнуто.** `let s Shape = { radius: 5.0 }` — нельзя выбрать между
+`Circle` и `Square` по совпадению полей. Программист обязан писать
+имя варианта (`Circle { radius: 5.0 }`). Type-driven parsing по
+структуре полей — антипаттерн в Nova. См.
+[D55](../02-types.md#d55).
+
 ---
 
 ## Видимость и модули
@@ -307,6 +461,32 @@ user-defined теги. См. [D48](../03-syntax.md#d48).
 
 ### OS threads as default
 **Отвергнуто.** Слишком тяжёлые для миллионов задач.
+
+### `await` / маркер на месте вызова async-функции
+**Отвергнуто.** Эффект `Async` в сигнатуре — единственная декларация.
+`await`-маркер дублирует информацию из сигнатуры и не даёт реальных
+гарантий после введения preemption (v1.0+). Прецедент Go/Erlang/
+Java virtual threads. См. [D14](../06-concurrency.md#d14),
+[D50](../06-concurrency.md#d50).
+
+### Fire-and-forget `spawn` свободно (Go-style)
+**Отвергнуто.** `spawn` разрешён **только** внутри structured-scope
+(`supervised`, `parallel for`, `race`, `select`, `cancel_scope`,
+`with_timeout`). Долгоживущие задачи — через `detach { ... }` с
+эффектом `Detach` в сигнатуре. Утечки fiber'ов как в Go-style
+fire-and-forget устраняются. См. [D50](../06-concurrency.md#d50).
+
+### Авто-детект блокирующих syscall'ов (Go runtime / Loom)
+**Отвергнуто.** Сложно реализовать (deep runtime hooks), хрупко на
+нестандартных C-библиотеках, прячет важное поведение от сигнатуры.
+Nova берёт явную модель Tokio — `blocking { ... }` примитив с
+эффектом `Blocking` в сигнатуре. См. [D50](../06-concurrency.md#d50).
+
+### Раздельные эффекты `Async` и `Par`
+**Отвергнуто.** Искусственное разделение, AI-unfriendly. `parallel
+for` — синтаксический примитив с эффектом `Async`. Декларация «эта
+функция fan-out» — через имя или док, не отдельный эффект. См.
+[D50](../06-concurrency.md#d50).
 
 ### Custom Promise как магия компилятора
 **Отвергнуто.** `Promise[T]` если нужен — пишется обычным кодом
