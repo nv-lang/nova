@@ -168,7 +168,7 @@ spawn() {
 }
 
 with_timeout(2.seconds) {
-    Db.exec("...")
+    Db.exec(sql`UPDATE counters SET v = v + 1`)
 }
 
 list.filter() { x => x > 0 }
@@ -859,7 +859,7 @@ fn main() Io -> () {
 
 ```nova
 fn process() Db -> ()                // 1. позиция типа
-Db.query("...", args)                // 2. операция активного handler'а
+Db.query(sql`...`)                   // 2. операция активного handler'а
 let captured = Db                    // 3. сам активный handler как значение
 ```
 

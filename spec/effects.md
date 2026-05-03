@@ -30,13 +30,14 @@
 
 ```nova
 type Db protocol {
-    query(sql str, args []any) -> []DbRow  // только сигнатуры, без реализации
-    exec(sql str, args []any) -> ()
+    query(q Sql) -> []DbRow                // только сигнатуры, без реализации
+    exec(q Sql)  -> ()
 }
 
 // функция декларирует, какой эффект ей нужен
 fn process(o Order) Db -> Receipt =>
-    Db.query("...", [o.id])                // вызов операции активного handler'а
+    Db.query(sql`SELECT * FROM orders WHERE id = ${o.id}`)
+                                           // вызов операции активного handler'а
 
 // реализацию НЕ передаём параметром — она в скоупе
 with Db = postgres_handler {
@@ -82,7 +83,7 @@ let console = Logger {
 
 ```nova
 fn process() Db -> ()                  // 1. позиция типа
-Db.query("...", args)                  // 2. позиция операции
+Db.query(sql`...`)                     // 2. позиция операции
 let captured = Db                      // 3. позиция выражения = активный handler
 ```
 

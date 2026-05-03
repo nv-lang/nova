@@ -236,8 +236,8 @@ type RangeIter {
 пустому контракту, поэтому `any` — top-type (универсальный супертип).
 Имя lowercase — исключение в [03-syntax.md → D30](03-syntax.md#d30)
 naming convention, по аналогии с примитивами. Использование:
-`fn dump(x any) Io -> ()`, `Db.query(sql, [42, "alice"])` где
-`args []any`.
+`fn dump(x any) Io -> ()`, `Logger.log_event(level, fields []any)`
+для гетерогенных структурных логов.
 
 **`Iter[T]`** — структурный protocol для итераторов (D58). Любой
 тип с методом `mut next() -> Option[T]` автоматически удовлетворяет.

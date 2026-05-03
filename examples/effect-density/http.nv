@@ -66,7 +66,7 @@ export fn handle_get_account(req Request) Db Cache AuthContext Throws[HttpError]
 // Это «контр-пример»: не любая backend-функция жирная, плотность
 // эффектов отражает ровно то, что функция реально делает.
 export fn handle_health(req Request) Db -> Response =>
-    match Db.query("select 1", []) {
+    match Db.query(sql`select 1`) {
         Ok(_)  => Response.text(200, "ok")
         Err(_) => Response.text(503, "db down")
     }

@@ -600,8 +600,8 @@ type Iterator[T] protocol {
 }
 
 type Db protocol {
-    query(sql str, args []any) Throws[DbError] -> []DbRow
-    exec(sql str, args []any) Throws[DbError] -> int
+    query(q Sql) Throws[DbError] -> []DbRow
+    exec(q Sql)  Throws[DbError] -> int
 }
 ```
 
@@ -657,9 +657,9 @@ type any protocol { }
 поэтому `any` — top-type. Использование:
 
 ```nova
-type Db protocol {
-    query(sql str, args []any) Throws[DbError] -> []DbRow
-    //                  ^^^^^ массив значений любого типа
+type Logger protocol {
+    log_event(level int, fields []any) -> ()
+    //                          ^^^^^ массив значений любого типа
 }
 
 fn dump(x any) Io -> () =>
@@ -678,12 +678,12 @@ convention, по аналогии с примитивами (`int`, `str`, `bool
 
 ```nova
 type Db protocol {
-    query(sql str, args []any) Throws[DbError] -> []DbRow
-    exec(sql str, args []any) Throws[DbError] -> int
+    query(q Sql) Throws[DbError] -> []DbRow
+    exec(q Sql)  Throws[DbError] -> int
 }
 
 fn list_users() Db -> []User =>      // Db в позиции эффекта — как раньше
-    Db.query("SELECT * FROM users", [])
+    Db.query(sql`SELECT * FROM users`)
 ```
 
 #### Generic-параметры — без изменений
@@ -897,7 +897,9 @@ let opt Option[str] = "alice"                // Some("alice")
 type SqlValue | I(i64) | F(f64) | S(str) | B(bool) | Bytes([]byte) | Null
 
 let args []SqlValue = [42, "alice", true]    // [I(42), S("alice"), B(true)]
-Db.query("SELECT * FROM users WHERE id = ?", [42])  // [I(42)]
+
+// В sql`...` тэге интерполяции тоже coerce'ятся: i64 → I, str → S, bool → B
+let q = sql`SELECT * FROM users WHERE id = ${42}`   // args = [I(42)]
 ```
 
 **Генерики:**
@@ -1092,9 +1094,9 @@ let s State = Open              // unit, coercion не применяется
    уже есть в representation sum'а (D52). Record-coercion — это просто
    подстановка имени типа, никакого runtime-преобразования.
 4. **Закрывает use-case'ы `any` (sum) и убирает шум именования
-   (record).** `Db.query(sql, args []SqlValue)` теперь type-safe —
-   без `[]any` и без `is`-extract. `let u User = { id: 2, name: "Bob"
-   }` — без повтора имени типа.
+   (record).** `sql\`...${value}\`` теперь type-safe — `value`
+   coerce'ится в `SqlValue` без `[]any` и без `is`-extract.
+   `let u User = { id: 2, name: "Bob" }` — без повтора имени типа.
 5. **AI-friendly.** LLM пишет `[42, "alice"]` для SQL-аргументов
    естественно, без думания о конструкторах. `{ id: 2, name: "Bob" }`
    в позиции с явным типом — естественный способ создать record.
@@ -1349,7 +1351,7 @@ protocol Tracer {
 }
 
 protocol Db {
-    query(sql str, args []any) Throws[DbError] -> []DbRow
+    query(q Sql) Throws[DbError] -> []DbRow
     in_transaction[T](body fn() Db Throws -> T) Throws -> T
     // ↑ один Db handler оборачивает любой T
 }

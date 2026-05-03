@@ -72,13 +72,13 @@ test "process logs correctly" {
 
 ```nova
 type Db protocol {
-    query(sql str, args []any) -> []DbRow
-    exec(sql str, args []any) -> ()
+    query(q Sql) -> []DbRow
+    exec(q Sql)  -> ()
 }
 
 fn transactional(real Handler[Db]) -> Handler[Db] => Db {
-    query(sql, args) => resume(real.query(sql, args))
-    exec(sql, args)  { staged.push((sql, args)); resume(()) }
+    query(q) => resume(real.query(q))
+    exec(q)  { staged.push(q); resume(()) }
 }
 
 with Db = transactional(real_db) {
@@ -629,8 +629,8 @@ fn transfer(from AccountId, to AccountId, amount money) Db Throws -> Receipt {
     let src = Db.find(from)?
     let dst = Db.find(to)?
     if src.balance < amount { throw InsufficientFunds }
-    Db.exec("UPDATE accounts SET balance = balance - ? WHERE id = ?", [amount, from])
-    Db.exec("UPDATE accounts SET balance = balance + ? WHERE id = ?", [amount, to])
+    Db.exec(sql`UPDATE accounts SET balance = balance - ${amount} WHERE id = ${from}`)
+    Db.exec(sql`UPDATE accounts SET balance = balance + ${amount} WHERE id = ${to}`)
     Receipt { from, to, amount, ts: Time.now() }
 }
 ```
@@ -648,10 +648,10 @@ fn transfer(from AccountId, to AccountId, amount money) Db Throws -> Receipt {
 
 ```nova
 fn replicated(nodes [Node], quorum int, real Handler[Db]) -> Handler[Db] => Db {
-    query(sql, args) => resume(real.query(sql, args))    // чтения локальны
-    exec(sql, args) {                                     // записи на все узлы
+    query(q) => resume(real.query(q))    // чтения локальны
+    exec(q) {                             // записи на все узлы
         let acks = parallel for node in nodes {
-            node.exec(sql, args)
+            node.exec(q)
         }
         if acks.count(Ok) < quorum { throw QuorumLost }
         resume(())
@@ -663,11 +663,11 @@ fn replicated(nodes [Node], quorum int, real Handler[Db]) -> Handler[Db] => Db {
 
 ```nova
 fn idempotent_by(tx_id str, real Handler[Db]) -> Handler[Db] => Db {
-    query(sql, args) => resume(real.query(sql, args))
-    exec(sql, args)  => match Cache.get(tx_id) {
+    query(q) => resume(real.query(q))
+    exec(q)  => match Cache.get(tx_id) {
         Some(cached) => resume(cached)         // повтор — вернуть кеш
         None => {
-            let result = real.exec(sql, args)
+            let result = real.exec(q)
             Cache.put(tx_id, result)
             resume(result)
         }

@@ -600,7 +600,7 @@ race {
 }
 
 with_timeout(2.seconds) {                 // trailing block
-    Db.exec(...)
+    Db.exec(sql`UPDATE counters SET v = v + 1`)
 }
 
 supervised {                              // trailing block
@@ -1075,7 +1075,7 @@ public-сигнатуре оказываются нормой.
 ```nova
 type Hashable protocol { hash() -> u64 }
 type Logger protocol { log(msg str) -> () }
-type Db protocol { query(sql str, args []any) -> []DbRow }
+type Db protocol { query(q Sql) -> []DbRow }
 type any protocol { }                      // top-type
 ```
 
@@ -1114,8 +1114,8 @@ type User { id u64, name str }
 // behavior — type только с сигнатурами методов
 type Logger { log(msg str) -> () }
 type Db {
-    query(sql str, args []any) -> []DbRow
-    exec(sql str, args []any) -> ()
+    query(q Sql) -> []DbRow
+    exec(q Sql)  -> ()
 }
 ```
 
@@ -1677,11 +1677,12 @@ let j JsonValue = json`{"name": "${user}", "age": ${age}}`
    используют HashMap.
 3. **Compile-time JSON-парсинг через `json\`...\``.** Нужен
    [Q7 (macros/comptime)](#q7-macros--comptime), без него — runtime.
-4. **`Db.query` сигнатура.** ✓ **Решено** (предварительно): через
-   `Sql`-тег. `fn Db.query(q Sql) Throws[DbError] -> []DbRow`,
-   `fn Db.exec(q Sql) Throws[DbError] -> int`. Прямой `(sql str, args
-   []SqlValue)` остаётся **непубличным** для случаев, когда `sql`-тег
-   не годится. Финализируется в D56.
+4. **`Db.query` сигнатура.** ✓ **Решено**: через `Sql`-тег.
+   `fn Db.query(q Sql) Throws[DbError] -> []DbRow`,
+   `fn Db.exec(q Sql) Throws[DbError] -> int`. Это единая публичная
+   сигнатура — все usage'и через `sql\`...\`` или `Sql.builder().build()`
+   (динамические запросы). Прямого пути с raw-string'ом и отдельным
+   `[]SqlValue`-массивом не осталось. Эталон — `examples/stdlib_sql.nv`.
 5. **Где разместить.** В prelude ([D26](decisions/08-runtime.md#d26))
    или в stdlib-модулях (`std.sql`, `std.json`)? Гибрид:
    `Option`/`Result` — prelude, `SqlValue`/`JsonValue` — модули?

@@ -73,9 +73,10 @@ type Logger protocol {
     log(msg str) -> ()
 }
 
-fn process(o Order) Logger Db -> Receipt =>
+fn process(o Order) Logger Db -> Receipt {
     Logger.log("processing")
-    Db.query("...", [o.id])
+    Db.query(sql`SELECT receipt FROM orders WHERE id = ${o.id}`)
+}
 ```
 
 ### Почему
@@ -339,8 +340,8 @@ type Logger protocol {
 }
 
 type Db protocol {
-    query(sql str, args []any) -> []DbRow
-    exec(sql str, args []any) -> ()
+    query(q Sql) -> []DbRow
+    exec(q Sql)  -> ()
 }
 ```
 
@@ -359,7 +360,7 @@ fn process(o Order) Db -> Receipt => ...
 //                  ^^ Db — имя типа эффекта
 
 // 2. ПОЗИЦИЯ ОПЕРАЦИИ — Db.X(...) — обращение к операции активного handler'а
-Db.query("select * from users", [])
+Db.query(sql`select * from users`)
 
 // 3. ПОЗИЦИЯ ВЫРАЖЕНИЯ — одиночное Db в выражении
 let captured_db = Db          // активный handler как значение Handler[Db]
@@ -612,8 +613,8 @@ type UserId u64
 
 // behavior (эффекты, структурные контракты) — keyword protocol
 type Db protocol {
-    query(sql str, args []any) -> []DbRow
-    exec(sql str, args []any) -> ()
+    query(q Sql) -> []DbRow
+    exec(q Sql)  -> ()
 }
 
 type Logger protocol {
@@ -809,11 +810,11 @@ type Throws[E] protocol {
 
 ```nova
 fn lookup(id u64) Db -> User =>           // Db в сигнатуре — ок
-    Db.query("...", [id])
+    Db.query(sql`SELECT * FROM users WHERE id = ${id}`)
 
 fn lookup(id u64) -> User =>               // Db отсутствует — ошибка
-    Db.query("...", [id])
-//  ^^^^^^^^^^^^^^^^^ operation Db.query requires effect Db
+    Db.query(sql`SELECT * FROM users WHERE id = ${id}`)
+//  ^^^^^^^^^^^^^^^^^^^^ operation Db.query requires effect Db
 
 fn parse(s str) Throws[ParseError] -> int =>    // Throws в сигнатуре — ок
     throw ParseError.BadFormat
@@ -1231,14 +1232,14 @@ type Throws[E] protocol {
 
 // сокращённо — handler-лямбда (одна операция → => expr)
 with Throws[Error] = (err) => Log.warn("op failed", { "err": err.message }) {
-    Db.exec(...)
+    Db.exec(sql`UPDATE accounts SET balance = balance - 1`)
 }
 
 // полная форма — эквивалентна
 with Throws[Error] = Throws {
     throw(err) => Log.warn("op failed", { "err": err.message })
 } {
-    Db.exec(...)
+    Db.exec(sql`UPDATE accounts SET balance = balance - 1`)
 }
 ```
 
@@ -1247,17 +1248,17 @@ Handler-method может быть как `=> expr`, так и блок-форм
 
 ```nova
 type Db protocol {
-    query(sql str, args []any) -> []DbRow
-    exec(sql str, args []any) -> ()
+    query(q Sql) -> []DbRow
+    exec(q Sql)  -> ()
 }
 
 with Db = Db {
     // короткая форма — одно выражение
-    query(sql, args) => resume(real.query(sql, args))
+    query(q) => resume(real.query(q))
 
     // блок-форма — несколько statement'ов
-    exec(sql, args) {
-        staged.push((sql, args))
+    exec(q) {
+        staged.push(q)
         resume(())
     }
 } {
@@ -1269,8 +1270,8 @@ with Db = Db {
 
 ```nova
 with Db = Db {
-    exec(sql, args) => {                  // ← запрет: => { block }
-        staged.push((sql, args))
+    exec(q) => {                          // ← запрет: => { block }
+        staged.push(q)
         resume(())
     }
 }

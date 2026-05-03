@@ -1150,7 +1150,7 @@ spawn() {
 }
 
 with_timeout(2.seconds) {
-    Db.exec("...")
+    Db.exec(sql`UPDATE counters SET v = v + 1`)
 }
 
 retry(3) {

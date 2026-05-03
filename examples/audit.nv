@@ -291,15 +291,12 @@ fn write_audit(e AuditEntryInternal) Db Log Async -> () {
     with Throws[Error] = (err) => log_audit_failure(e, err) {
         with_timeout(2.seconds) {
             let ip_value = if e.ip != "" && e.ip != "<nil>" { Some(e.ip) } else { None }
-            Db.exec(
-                """
+            Db.exec(sql`
                 INSERT INTO admin_audit_log
                     (admin_id, action, target_kind, target_id, payload, status, ip, user_agent)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-                """,
-                [e.admin_id, e.action, e.target_kind, e.target_id,
-                 e.payload, e.status, ip_value, e.user_agent]
-            )
+                VALUES (${e.admin_id}, ${e.action}, ${e.target_kind}, ${e.target_id},
+                        ${e.payload}, ${e.status}, ${ip_value}, ${e.user_agent})
+            `)
         }
     }
 }
@@ -363,7 +360,8 @@ fn query_audit(p ListParams) Db Throws -> []AuditEntry {
         .when(p.to,        (v) => "AND a.created_at <= ?", v)
         .append("ORDER BY a.created_at DESC LIMIT ? OFFSET ?", [p.limit, p.offset])
 
-    Db.query(q.sql, q.args)?
+    // QueryBuilder.build() возвращает уже собранный Sql (template + args).
+    Db.query(q.build())?
         .map(row_to_audit_entry)
 }
 
@@ -425,7 +423,7 @@ test "audit middleware: пишет запись для успешного POST" 
         // Подождать spawn-задачу.
         await_all_spawned()
 
-        let rows = Db.query("SELECT action, target_kind, target_id FROM admin_audit_log", [])?
+        let rows = Db.query(sql`SELECT action, target_kind, target_id FROM admin_audit_log`)?
         assert rows.len == 1
         assert rows[0].get("action")?         == "users.ban"
         assert rows[0].get("target_kind")?    == "user"
@@ -445,7 +443,7 @@ test "audit middleware: НЕ пишет для 4xx" {
         mw(Request.delete("/users/42", []))?
         await_all_spawned()
 
-        let rows = Db.query("SELECT * FROM admin_audit_log", [])?
+        let rows = Db.query(sql`SELECT * FROM admin_audit_log`)?
         assert rows.len == 0
     }
 }
