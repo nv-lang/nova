@@ -27,11 +27,13 @@ export type Set[T] {
 // ──────────────────────────────────────────────────────────────────────────
 
 // D55: имя Set[T] из `-> Set[T]`.
+// Имя поля при embed = имя типа ([D39](../spec/decisions/02-types.md#d39)),
+// не keyword `use`. То есть в record-литерале — `HashMap: ...`.
 export fn Set[T].new() -> Set[T] =>
-    { use: HashMap[T, ()].new() }
+    { HashMap: HashMap[T, ()].new() }
 
 export fn Set[T].with_capacity(cap int) -> Set[T] =>
-    { use: HashMap[T, ()].with_capacity(cap) }
+    { HashMap: HashMap[T, ()].with_capacity(cap) }
 
 // Из Vec/массива/итератора.
 export fn Set[T].from_iter(it protocol { mut next() -> Option[T] }) -> Set[T] {

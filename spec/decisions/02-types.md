@@ -1529,6 +1529,43 @@ fn Wrapper mut @next() -> Option[K] => match @w.next() {
 Грамматика согласована со всем языком: везде «имя тип» (параметры,
 поля record, let-bindings, for-loop, embed).
 
+#### `use` — keyword, не имя поля
+
+`use` — зарезервированное слово ([D29](07-modules.md#d29) для импортов
++ embed-конструкция здесь). **Имя поля `use` запрещено.**
+
+В декларации `{use Type}` `use` — keyword embed-формы; **имя поля при
+этом — имя типа** (или alias, если указан): `use Account` → поле
+`Account`, `use w HashMapIter[K, V]` → поле `w`.
+
+В record-литерале и при доступе через `@`/`.` используется
+**имя поля**, не keyword:
+
+```nova
+type Set[T] {
+    use HashMap[T, ()]                // имя поля — "HashMap"
+}
+
+// record-литерал — имя поля
+let s Set[int] = { HashMap: HashMap[int, ()].new() }   // ✓
+let s Set[int] = { use: HashMap[int, ()].new() }        // ✗ use — keyword
+
+// доступ — имя поля
+fn Set[T] @len() => @HashMap.len()                       // ✓
+fn Set[T] @len() => @use.len()                           // ✗ use — keyword
+```
+
+С alias имя поля совпадает с alias'ом:
+
+```nova
+type Set[T] {
+    use map HashMap[T, ()]            // имя поля — "map"
+}
+
+let s Set[int] = { map: HashMap[int, ()].new() }        // ✓
+fn Set[T] @len() => @map.len()                           // ✓
+```
+
 **Override метода.** Если тип-обёртка определяет метод с тем же именем
 — он затмевает делегированный:
 
