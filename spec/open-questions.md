@@ -2148,7 +2148,23 @@ type Wrapper { embed w HashMapIter[K, V] }
 
 ---
 
-## Q-positional-partial-pattern. `..` для позиционных конструкторов sum
+## Q-positional-partial-pattern. `..` для позиционных конструкторов sum ✅ ЗАКРЫТО ([D59](decisions/03-syntax.md#d59))
+
+[D59](decisions/03-syntax.md#d59) формализовал partial-pattern `..`
+для **трёх контекстов одновременно** — record (`{ field, .. }`,
+наследие D17/D52), позиционные конструкторы sum (`Cons(..)`,
+`Move(x, ..)`) и массивы (`[head, ..]`, `[a, .., z]`). Единый `..`
+маркер «остальные элементы игнорируются».
+
+Также формализованы array-patterns (`[]`, `[r]`, `[a, b]`, slice-
+bind `[head, ..rest]`) и tuple-patterns (`(a, b)`, `(a, _, c)`,
+destructuring `let`).
+
+Контекст ниже сохранён как историческая справка.
+
+---
+
+### Исходный контекст Q-positional-partial-pattern
 
 **Контекст.** [D17](decisions/02-types.md#d17) фиксирует partial
 pattern matching **только для record-формы**:

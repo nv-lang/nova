@@ -718,6 +718,54 @@ fn Range @iter() -> RangeIter =>
 (`@field`-доступ), [D40](../03-syntax.md#d40), [D43](../03-syntax.md#d43)
 (прецеденты «один способ»).
 
+### Array, tuple и позиционные partial patterns: формализация (D59)
+
+**Что было:** D17/D52 фиксировали partial-pattern `..` только для
+record-формы (`Occupied { value, .. }`). Array-patterns (`[]`,
+`[r]`, `[_, ..]`), tuple-patterns (`(a, b)`), позиционные partial
+(`Cons(..)`, `Move(x, ..)`) использовались де-факто в examples
+(`effect-density/repository.nv`, `orm_demo.nv`,
+`stdlib_linkedlist.nv`), но **формального D-блока** не существовало.
+
+Q-positional-partial-pattern ставил вопрос только про позиционные
+конструкторы sum.
+
+**Что стало:** [D59](../03-syntax.md#d59) объединил **три родственных
+паттерна** в один D-блок:
+
+1. **Array patterns:** `[]`, `[x]`, `[a, b]`, `[head, ..]`, `[..,
+   last]`, `[a, .., z]`, `[head, ..rest]` со slice-bind остатка.
+2. **Tuple patterns:** `(a, b)`, `(a, _, c)`, destructuring let
+   `let (a, b, c) = tuple`. Без `..` (длина известна типом).
+3. **Positional sum partial:** `Cons(..)`, `Cons(h, ..)`, `Move(.., z)`
+   — `..` как в массиве.
+
+Единый смысл `..` во всех partial-формах: «остальные элементы
+игнорируются».
+
+**Почему пересмотрели:**
+
+- Examples уже использовали без формализации. Парсер не знал
+  грамматику, LLM не знала правила.
+- Прецедент Rust — все три формы с одинаковым синтаксисом, проверено.
+- Объединение трёх родственных правил в один D — паттерн
+  D50/D58 (когда правила взаимно поддерживают друг друга).
+
+**Цена:**
+
+- Парсер расширяется на три формы. Стандартное.
+- Exhaustiveness check для массивов сложнее (длина динамическая) —
+  wildcard `_` обязателен в array-match без полного покрытия.
+- Slice-bind `..rest` требует runtime-сегмента (zero-copy slice
+  по [D32](../02-types.md#d32)).
+
+**Связанные D:** [D59](../03-syntax.md#d59) (новое),
+[D17](../02-types.md#d17), [D52](../02-types.md#d52) (record-partial
+— основа), [D27](../03-syntax.md#d27) (`[]T`), [D34](../03-syntax.md#d34)
+(`if let` с array/tuple-patterns).
+
+Q-positional-partial-pattern закрыт.
+
 ## Как читать историю
 
 - **«revised»** в статусе D — текст переписан, решение действует, но

@@ -28,6 +28,7 @@
 | [D49](#d49-statement-separator-и-парсинг-выражений) | Statement separator и парсинг выражений |
 | [D54](#d54-операторы-as-и-is) | Операторы `as` (compile-time cast) и `is` (runtime type-check для `any`) |
 | [D58](#d58-range-литерал-iterator-protocol-for-in-implicit-iter) | Range-литерал `a..b`, `Iter[T]` protocol, `for x in c` implicit iter |
+| [D59](#d59-array-tuple-и-позиционные-partial-patterns) | Array, tuple и позиционные partial patterns (`[]`, `[r]`, `[_, ..]`, `Cons(..)`) |
 
 ---
 
@@ -1888,3 +1889,174 @@ for x in it { ... }                  // it уже Iter[T], без двойног
   Q-protocol-method-prefix.
 - **Static-метод в protocol через `.method()`-префикс** —
   Q-static-method-protocol.
+
+---
+
+## D59. Array, tuple и позиционные partial patterns
+
+### Что
+Pattern matching на массивах (`[]T`), кортежах (`(A, B)`) и
+позиционных конструкторах sum (`Cons(T, T')`). Покрывает разрозненные
+фичи, которые **уже использовались в examples** (`[]`, `[r]`,
+`[_, ..]`, `Cons(..)`), но не были формально зафиксированы.
+
+`..` (rest-pattern) — единый маркер «остальные элементы игнорируются»
+во всех трёх контекстах: record (`{ field, .. }` — D17/D52),
+позиционные конструкторы (`Cons(..)`, `Click(x, ..)`), массивы
+(`[head, ..]`, `[.., last]`, `[a, .., z]`).
+
+### Правило
+
+#### Array patterns
+
+```nova
+match xs {
+    []           => "empty"                  // пустой массив
+    [x]          => "one: ${x}"               // ровно 1 элемент, bind в x
+    [a, b]       => "two: ${a}, ${b}"          // ровно 2
+    [a, b, c]    => "three: ..."                // ровно 3
+    [head, ..]   => "first: ${head}"            // ≥1, bind первого
+    [.., last]   => "last: ${last}"             // ≥1, bind последнего
+    [a, .., z]   => "first/last: ${a}, ${z}"   // ≥2, bind первого+последнего
+    [_, ..]      => "non-empty"                  // ≥1, без bind
+    [_, _, third]=> "exactly third"              // ровно 3, bind третьего
+    _            => "other"                       // wildcard
+}
+```
+
+**Правила:**
+
+1. **Ровные позиции** (`[a, b]`, `[a, b, c]`) — соответствуют точной
+   длине.
+2. **`..` rest-pattern** — означает «0 или больше элементов».
+   Допустим в позициях:
+   - `[items, ..]` — head + остальное.
+   - `[.., items]` — остальное + last.
+   - `[a, .., z]` — head + middle (игнорируется) + last.
+3. **`..items` с биндингом** — biind остатка как массива:
+   ```nova
+   match xs {
+       [head, ..rest] => process(head, rest)    // rest : []T
+       [.., last]     => last                     // без bind остального
+   }
+   ```
+4. **`_` placeholder** — игнорировать один элемент, точно как в record.
+5. **Не более одного `..` в массиве-pattern** — иначе ambiguous
+   (Rust то же правило).
+
+#### Tuple patterns
+
+```nova
+let p = (1, "alice", true)
+
+match p {
+    (1, _, true)        => "first variant"
+    (n, name, _)        => "n=${n}, name=${name}"
+    _                   => "other"
+}
+
+let (a, b, c) = (1, 2, 3)                  // destructuring let
+let (x, _, z) = (1, 2, 3)                   // ignore middle
+```
+
+**Правила:**
+
+1. **Tuple-pattern** соответствует точно — длина фиксирована типом.
+2. **`..` в tuple запрещён** (длина известна на этапе типизации,
+   `..` не нужен).
+3. Деструктуризация в `let` через tuple-pattern — поддерживается.
+
+#### Positional sum-variant partial-pattern
+
+```nova
+type LinkedList[T] | Empty | Cons(T, LinkedList[T])
+
+match list {
+    Empty       => "nil"
+    Cons(h, _)  => "head only"                  // явный _ для tail
+    Cons(..)    => "non-empty"                   // partial: оба поля игнорируются
+    Cons(h, ..) => "head: ${h}"                  // bind первого, остальное ..
+}
+
+type Event | Click(int, int) | Move(int, int, int) | Idle
+
+match event {
+    Idle             => "idle"
+    Click(..)        => "click"
+    Move(x, ..)      => "move at x=${x}"
+    Move(.., z)      => "move with z=${z}"
+    _                => "other"
+}
+```
+
+**Правила:**
+
+1. **`..` в позиционном конструкторе** работает так же, как в
+   массиве: head/tail/middle-rest.
+2. **Один `..` на конструктор**.
+3. Согласовано с D17/D52 partial-pattern для record-форм.
+
+### Почему
+
+1. **Используется в examples.** `effect-density/repository.nv`,
+   `orm_demo.nv`, `stdlib_linkedlist.nv` уже **активно** применяют
+   `[]`, `[r]`, `[_, ..]`, `Cons(..)`. Без формализации парсер не
+   знает грамматику, LLM не знает правила, code review не имеет
+   опоры.
+2. **Прецедент Rust.** Array/tuple/sum-positional patterns в Rust
+   имеют точно такой синтаксис (`[]`, `[head, ..]`, `[.., tail]`,
+   `Variant(..)`). Программисты с Rust-фоном узнают мгновенно.
+3. **Единый `..` для всех partial-форм.** Record (D17/D52),
+   позиционный sum, массив — везде `..` означает «остальное
+   игнорируется». Один концепт.
+4. **Tuple destructuring в `let`** — стандартная фича современных
+   языков (Rust/Swift/Kotlin/Python).
+
+### Что отвергнуто
+
+- **`Cons(_, _)` как единственная форма** для позиционного sum.
+  Шумно для конструкторов с 3+ полями (`Move(_, _, _)`). С `..`
+  → `Move(..)`.
+- **Cons-list pattern (`head :: tail`)** для массивов, как в
+  Scala/OCaml. Nova не имеет cons-семантики массивов — `[]T` это
+  slice, не linked list. Используем bracket-syntax.
+- **Multiple `..` в одном pattern** (`[a, .., b, .., c]`).
+  Ambiguous — какое `..` сколько элементов берёт? Запрещено.
+- **`..` в tuple-pattern.** Длина tuple фиксирована, `..` не несёт
+  информации. Запрещено для строгости.
+- **Slice-binding `[head, ..rest]`** с типом `rest : []T` — частично
+  отложено. **Bind через `..items`** (без значения по умолчанию)
+  поддерживается. Расширения вроде `[a, b, ..rest, c, d]` (rest в
+  середине с bind) — не в MVP.
+
+### Цена
+
+1. **Парсер усложняется** — три новых формы pattern (array, tuple,
+   positional-rest). Стандартное расширение, прецедент Rust.
+2. **Exhaustiveness check для массивов сложнее.** Длина
+   динамическая, компилятор не может проверить «все случаи покрыты»
+   как для sum-вариантов. **Wildcard `_` обязателен** в array-match,
+   если не покрыты все возможные длины (которых бесконечно). Это
+   как в Rust.
+3. **`..items` slice-binding** требует runtime-аллокации сегмента
+   массива (`rest : []T`). В zero-copy случае — `rest` это slice
+   (start, len). Согласовано с [D32](02-types.md#d32) (slice-семантика).
+
+### Связь
+- [D17](02-types.md#d17), [D52](02-types.md#d52) — partial-pattern
+  `..` для record-форм. D59 расширяет на массивы и позиционные
+  конструкторы.
+- [D27](#d27-синтаксис-массивов-t-префикс-nt-фиксированные) — `[]T`
+  как тип, на котором работают array-patterns.
+- [D34](#d34-if-let-и-while-let-для-pattern-matching-в-условии) —
+  pattern-bind в условиях; array/tuple-patterns доступны и в
+  `if let`/`while let`.
+- Закрывает Q-positional-partial-pattern.
+
+### Открытые вопросы
+- **`[a, b, ..rest, c]`** — rest в середине с bind. Не в MVP.
+- **Slice-bind на массиве с `[]int.alloc(...)` vs zero-copy slice**
+  — деталь runtime, не дизайн.
+- **String-as-array patterns** (`match s { "hello" => ..., _ =>
+  ... }` — strings как массивы char) — отдельный вопрос
+  Q-string-patterns.
