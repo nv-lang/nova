@@ -339,7 +339,7 @@ type Logger protocol {
 }
 
 type Db protocol {
-    query(sql str, args []any) -> []Row
+    query(sql str, args []any) -> []DbRow
     exec(sql str, args []any) -> ()
 }
 ```
@@ -392,7 +392,7 @@ with Logger = console_logger, Db = in_memory, Time = fixed(t0) {
 
 ```nova
 let audit = Logger {
-    log(msg) => { audit_db.write(msg); resume(()) }
+    log(msg) { audit_db.write(msg); resume(()) }
 }
 
 with Logger = audit {
@@ -612,7 +612,7 @@ type UserId u64
 
 // behavior (эффекты, структурные контракты) — keyword protocol
 type Db protocol {
-    query(sql str, args []any) -> []Row
+    query(sql str, args []any) -> []DbRow
     exec(sql str, args []any) -> ()
 }
 
@@ -881,14 +881,20 @@ fn pipeline(s str) Throws[ParseError] -> int =>
 потому что у `Throws[E]` ровно одна операция (`throw`):
 
 ```nova
-fn try_deposit(acc Account, amount money) Log -> bool =>
-    with Throws[DepositError] = (err) => {
-        Log.error("deposit failed: ${err}")
-        false
+fn try_deposit(acc Account, amount money) Log -> bool {
+    // handler-лямбда (D31) — это лямбда (`=> expr`), без блок-формы
+    // (D22). Когда нужен блок с side-effect'ами — используем полный
+    // handler-литерал в блок-форме `op(p) { block }`.
+    with Throws[DepositError] = Throws {
+        throw(err) {
+            Log.error("deposit failed: ${err}")
+            false
+        }
     } {
         deposit(acc, amount)?
         true
     }
+}
 ```
 
 Тип результата `with`-блока — общий тип всех веток (тело и handler'ы).
@@ -1208,6 +1214,12 @@ D28 решает «шум `Async`» иначе: в private он **выводит
 лямбду — параметры лямбды соответствуют параметрам этой операции.
 Для эффектов с двумя и более операциями — handler-литерал обязателен.
 
+Handler-литерал `EffectName { op(p) ... }` содержит **handler-методы**,
+у которых **две взаимоисключающие формы тела**, как у `fn` ([D40](03-syntax.md#d40)):
+`op(p) => expr` (одно выражение) или `op(p) { block }` (блок-форма
+**без `=>`**). Сочетание `=>` и `{}` в handler-method **запрещено** —
+правило симметрично D40.
+
 ### Правило
 
 #### Базовое использование
@@ -1217,7 +1229,7 @@ type Throws[E] protocol {
     throw(value E) -> Never
 }
 
-// сокращённо — handler-лямбда
+// сокращённо — handler-лямбда (одна операция → => expr)
 with Throws[Error] = (err) => Log.warn("op failed", { "err": err.message }) {
     Db.exec(...)
 }
@@ -1230,19 +1242,37 @@ with Throws[Error] = Throws {
 }
 ```
 
-Для эффекта с несколькими операциями — handler-литерал обязателен:
+Для эффекта с несколькими операциями — handler-литерал обязателен.
+Handler-method может быть как `=> expr`, так и блок-формы `{ block }`:
 
 ```nova
 type Db protocol {
-    query(sql str, args []any) -> []Row
+    query(sql str, args []any) -> []DbRow
     exec(sql str, args []any) -> ()
 }
 
 with Db = Db {
+    // короткая форма — одно выражение
     query(sql, args) => resume(real.query(sql, args))
-    exec(sql, args)  => { staged.push((sql, args)); resume(()) }
+
+    // блок-форма — несколько statement'ов
+    exec(sql, args) {
+        staged.push((sql, args))
+        resume(())
+    }
 } {
     transfer(alice, bob, 100)?
+}
+```
+
+**Запрещено** (нарушает D40 «`=>` и `{}` не сочетаются»):
+
+```nova
+with Db = Db {
+    exec(sql, args) => {                  // ← запрет: => { block }
+        staged.push((sql, args))
+        resume(())
+    }
 }
 ```
 
@@ -1269,12 +1299,14 @@ with Db = Db {
 
 В позиции значения после `with EffectName =`:
 
-- **Лямбда** `(params) => body` или `(params) Effects? -> Type? => body`
+- **Лямбда** `(params) => expr` или `(params) Effects? -> Type? => expr`
   → сахар, разворачивается в handler-литерал с одной операцией.
   Компилятор проверяет, что у эффекта **ровно одна операция**, и
-  параметры лямбды совместимы с её сигнатурой.
-- **Handler-литерал** `EffectName { op() => body, ... }` → используется
-  как есть. Работает для любого числа операций.
+  параметры лямбды совместимы с её сигнатурой. Тело — строго одно
+  выражение ([D22](03-syntax.md#d22)).
+- **Handler-литерал** `EffectName { op(p) => expr, op(p) { block }, ... }`
+  → используется как есть. Работает для любого числа операций. Каждый
+  handler-method — `=> expr` или `{ block }`, никогда не вместе ([D40](03-syntax.md#d40)).
 - **Переменная или выражение** типа `Handler[EffectName]` → используется
   как есть.
 
@@ -1338,11 +1370,15 @@ let c Comparator = (a, b) => a - b      // ← отвергнуто, не дел
   handler'а (помимо литерала и переменной).
 - [D25](#d25-throw-и-параметризация-throwse) — `throw` как операция
   эффекта `Throws[E]`, лямбда естественно её перехватывает.
-- [03-syntax.md → D22](03-syntax.md#d22) — лямбды как первоклассные
-  значения, единый синтаксис `(params) => body`.
-- [03-syntax.md → D43](03-syntax.md#d43) — trailing lambda с
-  обязательными `()` (сюда не применяется — здесь лямбда после `=`,
-  не trailing).
+- [03-syntax.md → D22](03-syntax.md#d22) — лямбда строго
+  `(params) => expr`. Handler-лямбда (одна операция) — частный случай:
+  её тело тоже одно выражение.
+- [03-syntax.md → D40](03-syntax.md#d40) — handler-method подчиняется
+  тому же правилу `=>` ↔ `{}`, что и `fn`: или `=> expr`, или
+  `{ block }`, никогда не вместе.
+- [03-syntax.md → D43](03-syntax.md#d43) — trailing-block с
+  обязательными `()` (сюда не применяется — здесь handler-литерал
+  после `=`, не trailing-block).
 
 ### Цена
 

@@ -137,7 +137,7 @@ main / wiring        3        9
 В файле `do_transfer` записан как:
 
 ```nova
-fn do_transfer(req TransferRequest) -> Transfer => { ... }
+fn do_transfer(req TransferRequest) -> Transfer { ... }
 ```
 
 Без эффектов. Компилятор выводит `Db Cache Logger Clock IdGen Metrics

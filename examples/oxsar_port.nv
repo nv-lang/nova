@@ -43,17 +43,12 @@ type Router {
 // строк настройки. Здесь — стек handler'ов, каждый закрывает свой
 // аспект. Никаких middleware-функций как обёрток.
 fn run_server(port int) Net Io Throws -> () {
+    // handler-лямбда `(err) => recover_http(err)` (D31): тело вынесено
+    // в named fn, потому что лямбда строго `=> expr` (D22).
     with Logger = json_logger,
          Trace = otel_tracer,
          Time = system_time,
-         Throws[HttpError] = (err) => {
-             // План 87/BA-recover: runtime ловит panic на границе fiber'а.
-             // Recoverer-middleware в Go был нужен из-за nil-разыменований —
-             // в Nova Option[T] делает это compile-time error, panic на
-             // деление/OOM ловится runtime'ом автоматически.
-             Logger.error("http error: ${err.message}")
-             return error_response(err)
-         } {
+         Throws[HttpError] = (err) => recover_http(err) {
 
         // CORS, request-id, real-ip — это handler'ы вокруг основного
         // обработчика, не middleware-цепочка.
@@ -63,6 +58,15 @@ fn run_server(port int) Net Io Throws -> () {
             serve_routes(port, build_routes())
         }
     }
+}
+
+// План 87/BA-recover: runtime ловит panic на границе fiber'а.
+// Recoverer-middleware в Go был нужен из-за nil-разыменований —
+// в Nova Option[T] делает это compile-time error, panic на
+// деление/OOM ловится runtime'ом автоматически.
+fn recover_http(err HttpError) Logger -> Response {
+    Logger.error("http error: ${err.message}")
+    return error_response(err)
 }
 
 

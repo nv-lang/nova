@@ -26,7 +26,7 @@ import examples.effect_density.domain.*
 // Сравнение с Go: `func (r *Repo) Get(ctx, id) (Account, error)` —
 // 2 параметра, 2 возврата, эффекты невидимы. Связка с Cache в реальном
 // Go-коде живёт ВНУТРИ функции, и читатель её не видит из сигнатуры.
-export fn account_get(id AccountId) Db Cache Throws[RepoError] -> Account =>
+export fn account_get(id AccountId) Db Cache Throws[RepoError] -> Account {
     let cache_key = "account:${id}"
     match Cache.get(cache_key) {
         Some(bytes) => decode_account(bytes)?
@@ -44,13 +44,14 @@ export fn account_get(id AccountId) Db Cache Throws[RepoError] -> Account =>
             acc
         }
     }
+}
 
 
 // Обновление баланса. Используется внутри транзакции перевода.
 // Эффекты: Db (exec), Cache (инвалидация), Throws[DbError].
 // Logger тут НЕТ — лог делает service-слой, repository не должен решать
 // что логгировать.
-export fn account_update_balance(id AccountId, new_balance Money) Db Cache Throws[RepoError] -> () =>
+export fn account_update_balance(id AccountId, new_balance Money) Db Cache Throws[RepoError] -> () {
     // D55: каждый элемент coerce'ится под SqlValue из своего типа.
     let affected = Db.exec(
         "update accounts set balance_amount = $1, balance_currency = $2 where id = $3 and not closed",
@@ -58,6 +59,7 @@ export fn account_update_balance(id AccountId, new_balance Money) Db Cache Throw
     )?
     if affected == 0 { throw RepoError.NotFound }
     Cache.invalidate("account:${id}")
+}
 
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -67,7 +69,7 @@ export fn account_update_balance(id AccountId, new_balance Money) Db Cache Throw
 // Запись transfer'а. Public.
 // Эффекты: Db, Throws[DbError]. (Без Cache — transfer не кэшируется,
 // он immutable после завершения, читается редко.)
-export fn transfer_insert(t Transfer) Db Throws[RepoError] -> () =>
+export fn transfer_insert(t Transfer) Db Throws[RepoError] -> () {
     // D55: каждый элемент списка coerce'ится в SqlValue по своему типу.
     // newtype'ы (TransferId, AccountId, TransferStatus) — через `as` к
     // underlying-типу. Timestamp — предполагаем coerce в Bytes/I через
@@ -79,14 +81,16 @@ export fn transfer_insert(t Transfer) Db Throws[RepoError] -> () =>
          t.amount.currency, t.status as int, t.created_at]
     )?
     ()
+}
     ()
 
 
-export fn transfer_update_status(id TransferId, status TransferStatus) Db Throws[RepoError] -> () =>
+export fn transfer_update_status(id TransferId, status TransferStatus) Db Throws[RepoError] -> () {
     // D55: status и id — newtype'ы, явный cast к underlying для coerce в SqlValue.
     let affected = Db.exec("update transfers set status = $1 where id = $2",
                            [status as int, id as str])?
     if affected == 0 { throw RepoError.NotFound }
+}
 
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -94,7 +98,7 @@ export fn transfer_update_status(id TransferId, status TransferStatus) Db Throws
 // ──────────────────────────────────────────────────────────────────────────
 
 // Чистая функция — эффектов нет. Гарантированно детерминирована.
-fn row_to_account(row Row) -> Result[Account, RepoError] => ...
+fn row_to_account(row DbRow) -> Result[Account, RepoError] => ...
 
 fn encode_account(a Account) -> bytes => ...
 fn decode_account(b bytes) -> Result[Account, RepoError] => ...

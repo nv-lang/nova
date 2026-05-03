@@ -246,7 +246,7 @@ fn handler(req Request) Net Async -> Response =>
 Использование требует эффекта `Detach` в сигнатуре:
 
 ```nova
-fn handle_request(req Request) Net Db Detach -> Response => {
+fn handle_request(req Request) Net Db Detach -> Response {
     let resp = process(req)
     detach {
         write_audit(req, resp)         // живёт после возврата handler'а

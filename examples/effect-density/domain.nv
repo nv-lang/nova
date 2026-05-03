@@ -72,7 +72,7 @@ type SqlValue
 // in-memory, в проде — на postgres-handler. Транзакция — handler поверх
 // этого же эффекта (вложенный with).
 type Db protocol {
-    query(sql str, args []SqlValue) Throws[DbError] -> []Row
+    query(sql str, args []SqlValue) Throws[DbError] -> []DbRow
     exec(sql str, args []SqlValue) Throws[DbError] -> int    // affected rows
     in_transaction[T](body fn() Db Throws -> T) Throws -> T
 }

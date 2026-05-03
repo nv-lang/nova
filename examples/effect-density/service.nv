@@ -68,10 +68,10 @@ export fn transfer_money(
 //
 // В файле пишется без эффектов — компилятор показывает их через
 // `nova check --show-effects` (D28).
-fn do_transfer(req TransferRequest) -> Transfer => {
+fn do_transfer(req TransferRequest) -> Transfer {
     validate_amount(req.amount)?
 
-    Db.in_transaction(() => {
+    Db.in_transaction() {
         let from = repo.account_get(req.from)?
         let to   = repo.account_get(req.to)?
 
@@ -99,7 +99,7 @@ fn do_transfer(req TransferRequest) -> Transfer => {
         ])
         Metrics.counter_inc("transfers_completed_total", [])
         t
-    })
+    }
 }
 
 
@@ -115,7 +115,7 @@ fn validate_amount(m Money) Throws[TransferError] -> () =>
 
 // validate_pair — тоже один эффект Throws.
 // Чистая логика, никакого IO.
-fn validate_pair(from Account, to Account, amount Money) Throws[TransferError] -> () => {
+fn validate_pair(from Account, to Account, amount Money) Throws[TransferError] -> () {
     if from.id == to.id           { throw SameAccount }
     if from.closed                 { throw AccountClosed(from.id) }
     if to.closed                   { throw AccountClosed(to.id) }
@@ -147,7 +147,7 @@ fn sub_money(a Money, b Money) Throws[TransferError] -> Money =>
 // 4 эффекта. Сравните с transfer_money (10) — read-only сильно проще:
 // нет идемпотентности, нет генерации id, нет clock'а, нет Metrics
 // (зашиты ниже на уровне HTTP middleware).
-export fn account_view(id AccountId) Db Cache AuthContext Throws[TransferError] -> AccountDto =>
+export fn account_view(id AccountId) Db Cache AuthContext Throws[TransferError] -> AccountDto {
     let acc = match repo.account_get(id) {
         Ok(a) => a
         Err(NotFound) => throw AccountNotFound(id)
@@ -157,6 +157,7 @@ export fn account_view(id AccountId) Db Cache AuthContext Throws[TransferError] 
         throw TransferError.Forbidden
     }
     AccountDto.from(acc)
+}
 
 
 // ──────────────────────────────────────────────────────────────────────────

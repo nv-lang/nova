@@ -57,7 +57,7 @@ fn main() Io -> () =>
 test "process logs correctly" {
     let mut buf = []
     let collect = Logger {
-        log(msg) => { buf.push(msg); resume(()) }
+        log(msg) { buf.push(msg); resume(()) }
     }
     with Logger = collect {
         process(42)
@@ -72,13 +72,13 @@ test "process logs correctly" {
 
 ```nova
 type Db protocol {
-    query(sql str, args []any) -> []Row
+    query(sql str, args []any) -> []DbRow
     exec(sql str, args []any) -> ()
 }
 
 fn transactional(real Handler[Db]) -> Handler[Db] => Db {
     query(sql, args) => resume(real.query(sql, args))
-    exec(sql, args)  => { staged.push((sql, args)); resume(()) }
+    exec(sql, args)  { staged.push((sql, args)); resume(()) }
 }
 
 with Db = transactional(real_db) {
@@ -649,7 +649,7 @@ fn transfer(from AccountId, to AccountId, amount money) Db Throws -> Receipt {
 ```nova
 fn replicated(nodes [Node], quorum int, real Handler[Db]) -> Handler[Db] => Db {
     query(sql, args) => resume(real.query(sql, args))    // чтения локальны
-    exec(sql, args)  => {                                 // записи на все узлы
+    exec(sql, args) {                                     // записи на все узлы
         let acks = parallel for node in nodes {
             node.exec(sql, args)
         }
@@ -682,7 +682,7 @@ fn idempotent_by(tx_id str, real Handler[Db]) -> Handler[Db] => Db {
 
 ```nova
 fn retry(max_attempts int, real Handler[Net]) -> Handler[Net] => Net {
-    get(url) => {
+    get(url) {
         let mut attempt = 0
         loop {
             match try_throws[NetError] { real.get(url) } {

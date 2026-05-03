@@ -867,7 +867,7 @@ weak'ом помечается противоположная сторона. А
 
    ```nova
    fn with_file[T](path str, body fn(File) Throws[IoError] -> T)
-       Throws[IoError] -> T => {
+       Throws[IoError] -> T {
        let f = File.open(path)?
        let result = body(f)            // если throw — handler ловит выше
        f.close()                        // обычное закрытие

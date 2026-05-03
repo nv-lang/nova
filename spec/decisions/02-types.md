@@ -2032,7 +2032,7 @@ type LazyConfig {
     mut cached_value Option[str]    // обновляется при первом read
 }
 
-fn LazyConfig @get() -> str => {
+fn LazyConfig @get() -> str {
     if let Some(v) = @cached_value { return v }
     let v = read_file(@path)
     @cached_value = Some(v)         // мутация через @-метод даже у let-binding

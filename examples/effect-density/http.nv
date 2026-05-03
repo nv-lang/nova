@@ -31,12 +31,13 @@ import examples.effect_density.service as svc
 // чище ловить ошибки наверху одной точкой.
 export fn handle_create_transfer(
     req Request
-) Db Cache Logger Clock IdGen AuthContext Metrics Trace Idempotency Throws[HttpError] -> Response =>
+) Db Cache Logger Clock IdGen AuthContext Metrics Trace Idempotency Throws[HttpError] -> Response {
     let body = parse_transfer_request(req.body).map_err(HttpError.BadRequest)?
     with Throws[TransferError] = (e) => to_http_error(e) {
         let t = svc.transfer_money(body)?
         Response.json(201, transfer_dto(t))
     }
+}
 
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -48,12 +49,13 @@ export fn handle_create_transfer(
 // `public ResponseEntity<Account> getAccount(@PathVariable id)` —
 // одна строка, никаких эффектов в типе. Но Db и Cache всё равно
 // присутствуют — через @Autowired-поля.
-export fn handle_get_account(req Request) Db Cache AuthContext Throws[HttpError] -> Response =>
+export fn handle_get_account(req Request) Db Cache AuthContext Throws[HttpError] -> Response {
     let id = parse_id(req.path_param("id"))?
     with Throws[TransferError] = (e) => to_http_error(e) {
         let dto = svc.account_view(id)?
         Response.json(200, dto)
     }
+}
 
 
 // ──────────────────────────────────────────────────────────────────────────

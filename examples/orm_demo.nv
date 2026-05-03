@@ -133,17 +133,19 @@ fn row_to_user(row DbRow) Throws[RepoError] -> User {
 // ──────────────────────────────────────────────────────────────────────────
 
 // Локальные helper'ы — в реальном stdlib будут на самом SqlValue.
-fn Option[SqlValue] @as_int() -> Option[i64] =>
+fn Option[SqlValue] @as_int() -> Option[i64] {
     match @ {
         Some(I(n)) => Some(n)
         _          => None
     }
+}
 
-fn Option[SqlValue] @as_str() -> Option[str] =>
+fn Option[SqlValue] @as_str() -> Option[str] {
     match @ {
         Some(S(s)) => Some(s)
         _          => None
     }
+}
 
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -167,14 +169,15 @@ export type RepoError
 // Если внутри transfer происходит throw — handler делает rollback.
 // Если успешно — commit. Никакой явной обработки.
 export fn transfer_users(from_id UserId, to_id UserId)
-    Db Throws[RepoError] -> () =>
-    Db.in_transaction(() => {
+    Db Throws[RepoError] -> () {
+    Db.in_transaction() {
         let repo = users_repo()
         let from = repo.find_by_id(from_id as u64)?
         let to   = repo.find_by_id(to_id as u64)?
         // ...логика перевода между пользователями
         ()
-    })
+    }
+}
 
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -190,7 +193,7 @@ test "find_by_id returns the user" {
                         values:  [1, "alice", "a@example.com", 1700000000] })
 
     with Db = Db {
-        query(q) => {
+        query(q) {
             // Простейшая интерпретация: по template решаем, что вернуть.
             // Реальный test-handler парсит SQL — здесь упрощённо.
             if q.template.contains("WHERE id = ?") {
@@ -237,7 +240,7 @@ test "delete returns true when row existed" {
 
     with Db = Db {
         query(q)            => resume([])
-        exec(q) => {
+        exec(q) {
             // Симулируем DELETE: 1 affected row если в storage
             // Упрощённо: первый arg — id, удаляем если есть.
             let id = match q.args[0] {
@@ -267,7 +270,7 @@ test "transaction rolls back on throw" {
     with Db = Db {
         query(q)  => resume([])              // всегда пусто → NotFound
         exec(q)   => resume(0)
-        in_transaction(b) => {
+        in_transaction(b) {
             // Имитация transaction handler'а: ловим throw → rollback;
             // успех → commit. Реальный postgres-handler сделает
             // BEGIN/COMMIT/ROLLBACK на соединении.

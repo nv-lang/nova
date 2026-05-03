@@ -432,7 +432,7 @@ type IdGen protocol {
 // Handler — обычная функция, возвращающая handler-литерал
 fn counter_id_gen(c mut Counter) -> Handler[IdGen] =>
     IdGen {
-        fresh() => {
+        fresh() {
             c.count += 1
             c.count
         }

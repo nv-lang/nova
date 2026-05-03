@@ -63,7 +63,7 @@ export fn run(cfg Config) Net Io Throws[StartupError] -> () {
 // Заметьте: AuthContext добавляется ЗДЕСЬ через `with` — на основе
 // заголовка Authorization. Дальше handler'ы уже его «получают»
 // бесплатно из скоупа.
-fn route(req Request) Db Cache Logger Clock IdGen Metrics Trace Idempotency Throws[HttpError] -> Response =>
+fn route(req Request) Db Cache Logger Clock IdGen Metrics Trace Idempotency Throws[HttpError] -> Response {
     let auth = parse_auth(req.headers)?
     with AuthContext = auth, Trace = Trace.span("http_${req.method}_${req.path}") {
         match (req.method, req.path) {
@@ -73,6 +73,7 @@ fn route(req Request) Db Cache Logger Clock IdGen Metrics Trace Idempotency Thro
             _                                   => Response.text(404, "not found")
         }
     }
+}
 
 
 // ──────────────────────────────────────────────────────────────────────────

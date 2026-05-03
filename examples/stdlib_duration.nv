@@ -231,7 +231,7 @@ test "zero and is_zero" {
 // Использование с другими функциями (демо)
 // ──────────────────────────────────────────────────────────────────────────
 
-// Trailing lambda (D43) — `()` обязательны, тело за `)`.
+// Trailing-block (D43) — `()` обязательны, тело за `)`.
 fn demo_with_timeout() Net Async Throws -> () {
     with_timeout(2.seconds()) {
         Net.get("https://api.example.com/data")?
