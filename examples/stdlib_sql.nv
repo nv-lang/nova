@@ -67,7 +67,7 @@ export fn sql(parts []str, args []SqlValue) -> Sql =>
 //
 // В тестах handler заменяется на in-memory; никаких mock-библиотек.
 export type Db protocol {
-    query(q Sql) Throws[DbError] -> []Row
+    query(q Sql) Throws[DbError] -> []DbRow
     exec(q Sql) Throws[DbError]  -> int          // affected rows
     in_transaction[T](body fn() Db Throws -> T) Throws -> T
 }
@@ -76,19 +76,19 @@ export type DbError | Connection | Constraint(str) | Timeout | Other(str)
 
 
 // ──────────────────────────────────────────────────────────────────────────
-// Row — результат запроса
+// DbRow — результат запроса
 // ──────────────────────────────────────────────────────────────────────────
 
 // Минимальное представление: позиционный доступ + named-доступ к
 // колонкам. Реальный stdlib даст больше методов (typed get'ы и т.п.),
 // здесь — каркас для demo.
-export type Row {
+export type DbRow {
     readonly columns []str
     readonly values  []SqlValue
 }
 
 // Поиск колонки по имени, возвращает её SqlValue.
-export fn Row @get(name str) -> Option[SqlValue] {
+export fn DbRow @get(name str) -> Option[SqlValue] {
     let mut i = 0
     for col in @columns {
         if col == name { return Some(@values[i]) }
@@ -98,7 +98,7 @@ export fn Row @get(name str) -> Option[SqlValue] {
 }
 
 // Позиционный доступ — для статически известного порядка колонок.
-export fn Row @at(i int) -> Option[SqlValue] => @values.get(i)
+export fn DbRow @at(i int) -> Option[SqlValue] => @values.get(i)
 
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -138,8 +138,8 @@ test "sql tag with no interpolation" {
     assert q.args.len == 0
 }
 
-test "Row.get and Row.at" {
-    let row Row = { columns: ["id", "name"], values: [42, "alice"] }
+test "DbRow.get and DbRow.at" {
+    let row DbRow = { columns: ["id", "name"], values: [42, "alice"] }
     match row.get("id") {
         Some(I(n)) => assert n == 42
         _          => assert false

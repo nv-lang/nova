@@ -39,14 +39,14 @@ type User {
 // фиксирован на repo-уровне ([D42 Модель A](../spec/decisions/02-types.md#d42)) —
 // один repo работает с одним типом сущности.
 //
-// `table` — имя таблицы. `from_row` — парсер Row → T (контракт типа).
+// `table` — имя таблицы. `from_row` — парсер DbRow → T (контракт типа).
 //
 // В реальном ORM это бы делалось через `derive`/comptime. Здесь
 // программист пишет from_row руками — но обёртка через Repo делает
 // CRUD-операции generic.
 export type Repo[T] {
     readonly table    str
-    readonly from_row fn(Row) Throws[DbError] -> T
+    readonly from_row fn(DbRow) Throws[DbError] -> T
 }
 
 
@@ -116,9 +116,9 @@ export fn users_repo() -> Repo[User] =>
         from_row: (row) => row_to_user(row),
     }
 
-// row_to_user — парсер Row → User. В реальном ORM генерируется
+// row_to_user — парсер DbRow → User. В реальном ORM генерируется
 // derive-макросом, здесь руками.
-fn row_to_user(row Row) Throws[RepoError] -> User {
+fn row_to_user(row DbRow) Throws[RepoError] -> User {
     let id    = row.get("id")?.as_int()?
     let name  = row.get("name")?.as_str()?
     let email = row.get("email")?.as_str()?
@@ -185,7 +185,7 @@ export fn transfer_users(from_id UserId, to_id UserId)
 // Никаких mock-библиотек: handler — обычная функция-литерал, прямо в
 // тесте.
 test "find_by_id returns the user" {
-    let mut storage = HashMap[u64, Row].new()
+    let mut storage = HashMap[u64, DbRow].new()
     storage.insert(1, { columns: ["id", "name", "email", "created_at"],
                         values:  [1, "alice", "a@example.com", 1700000000] })
 
@@ -232,7 +232,7 @@ test "find_by_id throws NotFound for missing id" {
 }
 
 test "delete returns true when row existed" {
-    let mut storage = HashMap[u64, Row].new()
+    let mut storage = HashMap[u64, DbRow].new()
     storage.insert(1, { columns: ["id"], values: [1] })
 
     with Db = Db {
