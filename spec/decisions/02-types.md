@@ -600,7 +600,7 @@ type Iterator[T] protocol {
 }
 
 type Db protocol {
-    query(sql str, args []any) Throws[DbError] -> []Row
+    query(sql str, args []any) Throws[DbError] -> []DbRow
     exec(sql str, args []any) Throws[DbError] -> int
 }
 ```
@@ -658,7 +658,7 @@ type any protocol { }
 
 ```nova
 type Db protocol {
-    query(sql str, args []any) Throws[DbError] -> []Row
+    query(sql str, args []any) Throws[DbError] -> []DbRow
     //                  ^^^^^ массив значений любого типа
 }
 
@@ -678,7 +678,7 @@ convention, по аналогии с примитивами (`int`, `str`, `bool
 
 ```nova
 type Db protocol {
-    query(sql str, args []any) Throws[DbError] -> []Row
+    query(sql str, args []any) Throws[DbError] -> []DbRow
     exec(sql str, args []any) Throws[DbError] -> int
 }
 
@@ -1349,7 +1349,7 @@ protocol Tracer {
 }
 
 protocol Db {
-    query(sql str, args []any) Throws[DbError] -> []Row
+    query(sql str, args []any) Throws[DbError] -> []DbRow
     in_transaction[T](body fn() Db Throws -> T) Throws -> T
     // ↑ один Db handler оборачивает любой T
 }

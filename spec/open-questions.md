@@ -1075,7 +1075,7 @@ public-сигнатуре оказываются нормой.
 ```nova
 type Hashable protocol { hash() -> u64 }
 type Logger protocol { log(msg str) -> () }
-type Db protocol { query(sql str, args []any) -> []Row }
+type Db protocol { query(sql str, args []any) -> []DbRow }
 type any protocol { }                      // top-type
 ```
 
@@ -1114,7 +1114,7 @@ type User { id u64, name str }
 // behavior — type только с сигнатурами методов
 type Logger { log(msg str) -> () }
 type Db {
-    query(sql str, args []any) -> []Row
+    query(sql str, args []any) -> []DbRow
     exec(sql str, args []any) -> ()
 }
 ```
@@ -1678,7 +1678,7 @@ let j JsonValue = json`{"name": "${user}", "age": ${age}}`
 3. **Compile-time JSON-парсинг через `json\`...\``.** Нужен
    [Q7 (macros/comptime)](#q7-macros--comptime), без него — runtime.
 4. **`Db.query` сигнатура.** ✓ **Решено** (предварительно): через
-   `Sql`-тег. `fn Db.query(q Sql) Throws[DbError] -> []Row`,
+   `Sql`-тег. `fn Db.query(q Sql) Throws[DbError] -> []DbRow`,
    `fn Db.exec(q Sql) Throws[DbError] -> int`. Прямой `(sql str, args
    []SqlValue)` остаётся **непубличным** для случаев, когда `sql`-тег
    не годится. Финализируется в D56.

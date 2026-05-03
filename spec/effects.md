@@ -30,7 +30,7 @@
 
 ```nova
 type Db protocol {
-    query(sql str, args []any) -> []Row    // только сигнатуры, без реализации
+    query(sql str, args []any) -> []DbRow  // только сигнатуры, без реализации
     exec(sql str, args []any) -> ()
 }
 
