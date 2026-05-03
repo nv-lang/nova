@@ -1995,6 +1995,148 @@ Q-bounds (где `[]T` методы используют T-constraint'ы).
 
 ---
 
+## Q-embed-syntax. Синтаксис embed/delegation — `use Type` vs альтернативы
+
+**Контекст.** [D39](decisions/02-types.md#d39) фиксирует embed через
+keyword `use`:
+
+```nova
+type AuditedAccount {
+    use Account                        // имя поля = "Account"
+    audit_log []AuditEntry
+}
+
+type Wrapper {
+    use w HashMapIter[K, V]            // имя поля = "w" (alias)
+}
+```
+
+`use` — multi-purpose: и для embed (D39), и потенциально для
+импортов/локальных алиасов (D29 использует `import`, но `use` тоже
+рассматривался). Это создаёт перегрузку семантики.
+
+Возникли альтернативные синтаксисы. Вариант B (Go-style голый тип)
+предложил пользователь как более лаконичный.
+
+### Альтернативы
+
+#### A. Текущий D39 — `use Type`
+
+```nova
+type AuditedAccount {
+    use Account
+    audit_log []AuditEntry
+}
+type Wrapper { use w HashMapIter[K, V] }
+```
+
+**За:** keyword явный, AI видит embed с первого токена.
+**Против:** `use` многозначен (embed, потенциально импорты).
+
+#### B. Go-style — голый тип, без keyword
+
+```nova
+type AuditedAccount {
+    Account                            // имя поля = "Account"
+    audit_log []AuditEntry
+}
+type Wrapper {
+    HashMapIter[K, V] as w             // alias через `as`
+}
+```
+
+**Парсер** различает по case первого токена:
+- PascalCase → embed (имя поля = имя типа).
+- snake_case → имя поля + тип следующим токеном (обычное поле).
+
+**За:**
+- Самая краткая форма.
+- Прецедент Go (известный паттерн).
+- Нет нового keyword'а.
+- Симметрично field punning (D17): «имя по умолчанию из контекста».
+
+**Против:**
+- Менее явное намерение — нет keyword'а, программист полагается на
+  case-convention.
+- Несогласованность alias-порядка: обычные поля `name type`,
+  embed `Type as name` — обратный порядок.
+- AI-locality чуть ниже (нужно знать правило case).
+
+#### C. `embed Type` — отдельный keyword
+
+```nova
+type AuditedAccount {
+    embed Account
+    audit_log []AuditEntry
+}
+type Wrapper { embed w HashMapIter[K, V] }
+// или с as:
+type Wrapper { embed HashMapIter[K, V] as w }
+```
+
+**За:**
+- Keyword **точно** описывает намерение («embed = встроить»). `use`
+  более общий.
+- Нет коллизий с другими решениями.
+- AI-locality высокая.
+
+**Против:**
+- Ещё один keyword в языке.
+- Очень похоже на A — выигрыш только в семантической точности слова.
+
+### Отвергнутые альтернативы
+
+- **`name : Type`** через `:` — конфликт с [D17](decisions/02-types.md#d17)
+  (Nova явно отвергла `:` в type annotations).
+- **`Type + {...}` (intersection)** — конфликт с [D46](decisions/03-syntax.md#d46)
+  operator overloading (`+` = `@plus`).
+- **`extends Type`** — обещает наследование (Java/C# семантика), а
+  D39 — delegation, не наследование. Вводит в заблуждение.
+- **`~Type`** — конфликт с removed memory prefix (`~T`/`~&T` из
+  отменённого D21), путает ветеранов.
+- **`@embed Type`** — `@` уже значит self-method/field в [D35](decisions/03-syntax.md#d35),
+  перегрузка значения.
+- **`+Type`** — конфликт с унарным `+`, не принято в mainstream.
+
+### Сравнение топ-3
+
+| Аспект | A. `use Type` | B. голый `Type` | C. `embed Type` |
+|---|---|---|---|
+| Keyword | `use` (multi-purpose) | (нет) | `embed` (специфичный) |
+| Длина | средняя | короткая | средняя |
+| Прецедент | D `mixin`, partial Rust | Go | OCaml `include` (схожая идея) |
+| AI-locality | высокая | средняя | высокая |
+| Парсер | прямолинейный | lookahead по case | прямолинейный |
+| `use` нужен для импортов? | **да, занят** | свободен | свободен |
+
+### Решение пока
+
+Не менять. D39 принят, кода с `use` написано (примеры, decisions).
+Менять синтаксис без сильного триггера — лишний breaking change.
+
+**Если возвращаться** — мой собственный голос за **C (`embed Type`)**:
+
+- Точная семантика keyword'а («embed» однозначно говорит «встроить»,
+  тогда как `use` это и многое другое).
+- Освобождает `use` для других целей (потенциально — local-aliases
+  типов, импорты в скоупе функции).
+- Совместимо с alias-формой через `as` в Go-style — при желании
+  программиста.
+
+Триггеры для пересмотра:
+- Если в реальном Nova-коде накопится боль от перегрузки `use`
+  (программист путает embed и импорт).
+- Если `use` потребуется для другой семантики (например,
+  using-statement из C# для эффект-handler'ов в `with`-альтернативе).
+
+**Связь:** [D39](decisions/02-types.md#d39),
+[D29](decisions/07-modules.md#d29) (импорты — потенциальный второй
+пользователь `use`), [D17](decisions/02-types.md#d17) (record-форма),
+[D52](decisions/02-types.md#d52) (kind-токены — `embed` встал бы
+наряду с `alias`).
+
+---
+
 ## Финальное напоминание
 
 Прежде чем продолжать **дизайн**, прочитай:
