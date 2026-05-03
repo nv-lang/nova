@@ -8,7 +8,7 @@
 // Pattern matching на этой структуре — самый прямой пример sum-семантики
 // и exhaustiveness check от компилятора.
 //
-// Практически в backend этот тип редко используется (Vec эффективнее),
+// Практически в backend этот тип редко используется (`[]T` эффективнее),
 // но он — каноническая иллюстрация sum-recursion для AI-обучения.
 
 module std.linkedlist
@@ -100,7 +100,7 @@ export fn LinkedList[T] @prepend(x T) -> LinkedList[T] =>
 
 // Суффиксное добавление — O(n), нужно пройти весь список.
 // В рекурсивных списках суффикс дороже префикса; для частых append
-// используйте Vec.
+// используйте `[]T`.
 export fn LinkedList[T] @append(x T) -> LinkedList[T] =>
     match @ {
         Empty       => Cons(x, Empty)

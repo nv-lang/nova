@@ -168,9 +168,9 @@ fn map_eff[T, U, E](xs [T], f (T) E -> U) E -> [U]
 ## Q9. Стандартная библиотека
 
 Не описана структура. Что есть в stdlib:
-- `String`, `Vec`, `HashMap`, `Option`, `Result` — очевидно
-- `LinkedList`, `Tree`, `Graph` — какие именно типы? Какие на `~T`,
-  какие на `~&T` (D21)?
+- `String`, `HashMap`, `HashSet`, `Option`, `Result` — очевидно
+  (Vec нет — `[]T` встроенный, см. D58)
+- `LinkedList`, `Tree`, `Graph` — какие именно типы?
 - `Json`, `Sql.builder` — упоминаются в `audit.nv`, не описаны
 - `Time`, `Random`, `Net`, `Db` — стандартные эффекты, не определены
   их операции
@@ -2231,6 +2231,291 @@ revision к D17 или D52.
 **Связь:** [D17](decisions/02-types.md#d17) (partial pattern для
 record), [D52](decisions/02-types.md#d52) (sum-варианты), [D19](decisions/03-syntax.md#d19)
 (match-arms через `=>`).
+
+---
+
+## Q-static-method-protocol. Static-методы в protocol через `.name()`-префикс
+
+**Контекст.** [D42](decisions/02-types.md#d42)/[D53](decisions/02-types.md#d53)
+описывают protocol с **instance-методами** (без префикса):
+
+```nova
+type Hashable protocol {
+    hash() -> u64
+    eq(other Self) -> bool
+}
+```
+
+Реализация — через [D35](decisions/03-syntax.md#d35) `@`-методы.
+
+Для **static-функций** (конструкторов, factory-функций) protocol
+сейчас не предусмотрен. Это блокирует, например, generic `collect`:
+
+```nova
+type FromIter[T] protocol {
+    .from_iter(it Iter[T]) -> Self      // static-функция-конструктор
+}
+
+fn Iter[T] @collect[Out: FromIter[T]]() -> Out =>
+    Out.from_iter(@)
+```
+
+### Предложение
+
+Расширить protocol-синтаксис: **точка-префикс** (`.name()`) маркирует
+static-функцию (по симметрии с [D35](decisions/03-syntax.md#d35)
+`fn Type.name(...)` — точка в реализации).
+
+```nova
+type FromIter[T] protocol {
+    .from_iter(it Iter[T]) -> Self      // static — через точку
+    @count() -> int                      // instance (если нужен @ symmetry,
+                                          //  Q-protocol-method-prefix)
+    method() -> bool                      // instance (текущее, без префикса)
+}
+```
+
+Реализация (структурно):
+
+```nova
+type Vec[T] { data []T }
+fn Vec[T].from_iter(it Iter[T]) -> Vec[T] => ...
+
+// Vec[T] автоматически удовлетворяет FromIter[T]
+```
+
+### Минусы
+
+- Тонкость грамматики: точка в protocol-блоке как маркер.
+- Связано с Q-collect-mechanism — без bound'ов на дженериках
+  (Q-bounds) generic-collect не работает даже со static-protocol.
+- `Self` в protocol — концепция уже есть, но в static-контексте
+  означает «конкретный реализующий тип» (как Swift `Self` в
+  protocol).
+
+### Решение пока
+
+Не вводить. Когда понадобится `collect`/`from_iter`-style generic-
+конструкторы — вернуться. Связано с Q-bounds, Q-collect-mechanism.
+
+**Связь:** [D35](decisions/03-syntax.md#d35) (точка для static),
+[D42](decisions/02-types.md#d42) (protocol),
+[D53](decisions/02-types.md#d53), Q-bounds, Q-collect-mechanism,
+Q-protocol-method-prefix.
+
+---
+
+## Q-protocol-method-prefix. `@method()` vs голое `method()` в protocol-объявлении
+
+**Контекст.** Сейчас в protocol-блоке instance-методы пишутся **без
+префикса**:
+
+```nova
+type Hashable protocol {
+    hash() -> u64                    // instance, без префикса
+    eq(other Self) -> bool
+}
+```
+
+В реализации — **с `@`**:
+
+```nova
+fn User @hash() -> u64 => ...
+```
+
+**Асимметрия:** declaration без `@`, definition с `@`. Программист
+мысленно сопоставляет.
+
+### Предложение
+
+`@` обязателен и в protocol-объявлении — для **полной симметрии**:
+
+```nova
+type Hashable protocol {
+    @hash() -> u64                   // instance — @, как в реализации
+    @eq(other Self) -> bool
+    .new() -> Self                    // static — точка (Q-static-method-protocol)
+    mut @push(item T) -> ()           // mut instance
+}
+```
+
+### За
+
+- **Полная симметрия** declaration ↔ definition.
+- **Меньше неявности** — программист не помнит, что без префикса в
+  protocol = instance.
+- **AI-friendly** — точно как реализация.
+
+### Против
+
+- **Breaking change** — все 16+ protocol-объявлений переписать.
+- **Шум** — `@hash()` чуть длиннее `hash()`.
+- В существующих языках (Swift, Rust, Kotlin) protocol/trait не
+  использует self-маркер в declaration — convention.
+
+### Решение пока
+
+Не менять. Текущая асимметрия живёт. Программист привыкает.
+Возможен пересмотр вместе с Q-static-method-protocol — если вводим
+точку для static, можно добавить `@` для instance ради консистентности.
+
+**Связь:** [D42](decisions/02-types.md#d42),
+[D35](decisions/03-syntax.md#d35), Q-static-method-protocol.
+
+---
+
+## Q-collect-mechanism. Generic collection construction
+
+**Контекст.** В Rust:
+
+```rust
+let v: Vec<i32> = (0..5).collect();
+let s: HashSet<i32> = (0..5).collect();
+```
+
+Один метод `collect`, целевой тип выводится из контекста или
+передаётся через turbofish (`collect::<Vec<_>>()`). Универсальный
+collection-builder.
+
+В Nova через D58 `Iter[T]` есть, но **универсальный `collect` не
+работает** без:
+
+1. **Bound'ов на дженериках** — `Out: FromIter[T]` (Q-bounds, отвергнуты
+   в MVP).
+2. **Static-method в protocol** — `FromIter[T] { .from_iter(...) -> Self }`
+   (Q-static-method-protocol).
+3. **Type-as-value** или turbofish для передачи целевого типа.
+
+### Альтернативы
+
+#### A. Конкретные методы — без collect
+
+```nova
+fn Range @to_vec() -> []int
+fn Range @to_set() -> Set[int]
+fn Range @to_linked_list() -> LinkedList[int]
+```
+
+N методов для N целей. Простой, рабочий, без bound'ов.
+
+#### B. Turbofish + bound (Rust-style)
+
+```nova
+fn Iter[T] @collect[Out]() -> Out where Out: FromIter[T] => ...
+let v = (0..5).collect[[]int]()
+```
+
+Требует Q-bounds + Q-static-method-protocol.
+
+#### C. Type-as-value (Swift-style)
+
+```nova
+let v = (0..5).collect([]int)        // []int как «type-callable»
+```
+
+Тип в позиции аргумента вызывает type's `from_iter`. Требует Q-type-as-value.
+
+#### D. Передача функции явно
+
+```nova
+let v = (0..5).collect(([]int).from_iter)
+```
+
+Длинно, но без новых концепций.
+
+### Решение пока
+
+A в MVP — конкретные `to_vec`, `to_set`, etc. на каждом типе-
+итераторе. B/C/D — после Q-bounds/Q-static-method-protocol/Q-type-
+as-value.
+
+**Связь:** Q-bounds, Q-static-method-protocol, Q-type-as-value,
+[D58](decisions/03-syntax.md#d58).
+
+---
+
+## Q-type-as-value. Передача типа как значения (`xs.collect([]int)`)
+
+**Контекст.** В Swift:
+
+```swift
+let v = Array(0..<5)              // Array — «type как callable»
+```
+
+Тип-имя в позиции функции — вызывает соответствующий `init`.
+
+В Nova сейчас типы — **compile-time сущности**. Передавать `[]int`
+как значение в `()`-аргументе **не работает**:
+
+```nova
+fn collect[Out](ctor SomeProtocol) -> Out => ...
+collect([]int)                    // []int это тип, не значение — ошибка
+```
+
+Turbofish работает (`collect[[]int]()`), но **передача в
+`()`-аргументе** требует механизма «type as callable».
+
+### Предложение
+
+`Type` в позиции выражения вызывает соответствующий конструктор по
+convention:
+
+- `[]int` = type-callable, эквивалентно `[]int.from_iter` или
+  `[]int.new` (выбор по сигнатуре).
+- `User` = type-callable, эквивалентно `User.new` или общему
+  конструктору.
+
+### Минусы
+
+- **Type-resolution полнее.** Какой конструктор выбирается — `from_iter`?
+  `new`? Зависит от target-типа в позиции? Сложно.
+- **Прецеденты ограничены** — Swift, Python (`list(...)`), но не Rust/
+  Kotlin/Go.
+- **Type-as-value в runtime** — требует runtime-tag типа (как Swift
+  Mirror, Java reflection).
+
+### Решение пока
+
+Не вводить. Если когда-то понадобится для эргономики `collect` —
+вернуться вместе с Q-collect-mechanism.
+
+**Связь:** Q-collect-mechanism, [D38](decisions/03-syntax.md#d38)
+(turbofish — текущая альтернатива).
+
+---
+
+## Q-range-extras. Reverse и step для Range
+
+**Контекст.** [D58](decisions/03-syntax.md#d58) ввёл базовый Range
+(`a..b`, `a..=b`). Не зафиксировано:
+
+1. **Reverse range** — `5..0` (start > end). Что значит:
+   - Пустой range (Rust-style — для прямого направления)?
+   - Идущий назад (5, 4, 3, 2, 1, 0)?
+2. **Step** — итерация с шагом, `(0..100).step(10)` или `0..100..10`?
+
+### Прецеденты
+
+- **Rust:** `5..0` — пустой; reverse через `(0..5).rev()`. Step через
+  `step_by(n)`.
+- **Python:** `range(5, 0)` — пустой. `range(5, 0, -1)` — обратный.
+  Step через третий аргумент.
+- **Kotlin:** `5 downTo 0` — отдельный keyword. Step через `step(n)`.
+- **Swift:** `stride(from: 0, to: 100, by: 10)` — отдельная функция.
+
+### Решение пока
+
+Не зафиксировано. Реализуется в `examples/stdlib_range.nv` как
+методы:
+
+```nova
+fn Range @reverse() -> Range
+fn Range @step(n int) -> StepIter
+```
+
+Конкретный синтаксис — после первой версии Range (см. examples).
+
+**Связь:** [D58](decisions/03-syntax.md#d58).
 
 ---
 

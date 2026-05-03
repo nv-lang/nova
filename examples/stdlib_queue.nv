@@ -1,7 +1,7 @@
-// stdlib_queue.nv — FIFO-очередь через два Vec'а.
+// stdlib_queue.nv — FIFO-очередь через два массива.
 //
 // Демонстрирует **composability** базовых контейнеров: Queue не имеет
-// собственной структуры данных, она составлена из двух Vec'ов
+// собственной структуры данных, она составлена из двух массивов
 // ([stdlib_vec.nv](stdlib_vec.nv)) — `in` (вход) и `out` (выход).
 //
 // Алгоритм классический ("amortized O(1) queue из двух стеков"):
@@ -10,7 +10,7 @@
 // каждая операция O(1)).
 //
 // Без специальной поддержки циркулярного буфера, без unsafe — просто
-// два Vec'а и pattern-match на пустоту.
+// два массива и pattern-match на пустоту.
 
 module std.queue
 
@@ -19,12 +19,12 @@ module std.queue
 // Тип
 // ──────────────────────────────────────────────────────────────────────────
 
-// Два Vec — один для входа, один для выхода. push кладёт в `in`,
+// Два массива — один для входа, один для выхода. push кладёт в `in`,
 // pop забирает с конца `out`. Когда `out` пуст, переливаем `in` в
 // `out` в обратном порядке.
 export type Queue[T] {
-    mut in  Vec[T]
-    mut out Vec[T]
+    mut in  []T
+    mut out []T
 }
 
 
@@ -34,10 +34,10 @@ export type Queue[T] {
 
 // D55: имя Queue[T] из `-> Queue[T]`.
 export fn Queue[T].new() -> Queue[T] =>
-    { in: Vec[T].new(), out: Vec[T].new() }
+    { in: [], out: [] }
 
 export fn Queue[T].with_capacity(cap int) -> Queue[T] =>
-    { in: Vec[T].with_capacity(cap), out: Vec[T].with_capacity(cap) }
+    { in: []T.with_capacity(cap), out: []T.with_capacity(cap) }
 
 
 // ──────────────────────────────────────────────────────────────────────────

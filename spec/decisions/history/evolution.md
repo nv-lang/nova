@@ -574,6 +574,88 @@ prior art), [D54](../03-syntax.md#d54) (`as`/`is` остаются явными)
 **Связанные D:** [D39](../02-types.md#d39) (revised),
 [D30](../03-syntax.md#d30) (naming convention — теперь без исключений).
 
+### Range, Iter, for-in: формализация (D58)
+
+**Что было:** `0..n` упоминалось в spec'е только в for-loop
+([D38](../03-syntax.md#d38)). Range как тип, как expression-литерал,
+как итератор — нигде формально не описан. `for x in c` использовался
+как «implicit iter» по факту в `oxsar_port.nv`/`stdlib_hashmap.nv`,
+но без D-решения.
+
+`Iter[T]`-protocol тоже использовался де-факто (анонимный protocol
+`{ mut next() -> Option[T] }` в сигнатурах), без формальной фиксации.
+
+**Что стало:** [D58](../03-syntax.md#d58) объединил три связанных
+правила:
+
+1. `a..b` и `a..=b` — литералы Range в **любой expression-позиции**,
+   не только в for. Разворачиваются в `Range { start, end, inclusive
+   }`.
+2. `Iter[T] protocol { mut next() -> Option[T] }` — формальный
+   protocol в prelude (D26).
+3. `for x in c` — implicit iter: если `c` имеет `next() -> Option[T]`
+   — используется напрямую; если есть `iter()` — компилятор вставляет
+   вызов; иначе ошибка.
+
+**Почему пересмотрели:**
+
+- Range в Nova появлялся в for-loop как «магия». Без формализации
+  нельзя было писать `let r = 0..n`, `fn count(r Range)`,
+  `[]Range`-массивы.
+- Anonymous protocol `{ mut next() -> Option[T] }` повторялся в
+  сигнатурах — нужно именованное `Iter[T]`.
+- `for x in c.iter()` — лишний `.iter()` каждый раз; прецеденты
+  Kotlin/Swift/Python/Rust подтверждают implicit-сахар.
+
+**Цена:**
+
+- Prelude растёт (Range, RangeIter, Iter[T]).
+- Парсер должен принимать `a..b` в любой expression-позиции (легко).
+- `for-in` desugaring требует type-resolution для выбора между
+  «прямое использование» и «.iter()».
+
+**Связанные D:** [D58](../03-syntax.md#d58),
+[D26](../08-runtime.md#d26) (prelude расширен),
+[D38](../03-syntax.md#d38) (range в for — теперь частный случай D58).
+
+### Vec[T] removed; methods on []T
+
+**Что было:** `examples/stdlib_vec.nv` объявлял `type Vec[T] alias
+[]T` и методы расширения. Vec был «именованной alias-обёрткой» над
+`[]T`, без runtime-различия.
+
+**Что стало:** Vec удалён совсем. `examples/stdlib_vec.nv` теперь
+содержит только методы расширения **на `[]T` напрямую** (`fn []T
+@map`, `@filter`, `@fold`, etc.). Vec нигде в spec/examples не
+упоминается; везде `[]T` — единая каноническая форма
+динамического массива.
+
+**Почему пересмотрели:**
+
+- Vec как alias не давал выгоды — `Vec[int]` ≡ `[]int`. Имя Vec
+  только добавляло когнитивную нагрузку.
+- Конструкторы Vec.new()/with_capacity() дублировали `[]` и
+  `[]T.with_capacity(...)` (см. Q-array-api).
+- `from_range` отложен в Q-collect-mechanism — без bound'ов на
+  дженериках generic-collect не делается.
+- Единая форма проще для AI и человека: «массив = `[]T`», ничего
+  больше.
+
+**Каскадные правки:**
+
+- `examples/stdlib_vec.nv` переписан целиком — методы только на `[]T`.
+- `examples/stdlib_queue.nv`: поля `Vec[T]` → `[]T`.
+- `examples/stdlib_set.nv`, `examples/stdlib_linkedlist.nv` —
+  упоминания Vec в комментариях заменены.
+- `editors/vscode/`: `Vec` убран из prelude-types и подсветки.
+- `spec/decisions/08-runtime.md`: `Vec` удалён из перечисления
+  не-prelude коллекций.
+- `spec/syntax.md`: пример generic'ов через `HashMap`/`[]T`.
+
+**Связанные D:** [D52](../02-types.md#d52) (alias-форма — теперь не
+для Vec), [D58](../03-syntax.md#d58) (Range — заменяет потенциальный
+Vec.from_range).
+
 ## Как читать историю
 
 - **«revised»** в статусе D — текст переписан, решение действует, но

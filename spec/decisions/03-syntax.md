@@ -27,6 +27,7 @@
 | [D48](#d48-tagged-template-literals) | Tagged template literals |
 | [D49](#d49-statement-separator-и-парсинг-выражений) | Statement separator и парсинг выражений |
 | [D54](#d54-операторы-as-и-is) | Операторы `as` (compile-time cast) и `is` (runtime type-check для `any`) |
+| [D58](#d58-range-литерал-iterator-protocol-for-in-implicit-iter) | Range-литерал `a..b`, `Iter[T]` protocol, `for x in c` implicit iter |
 
 ---
 
@@ -1704,3 +1705,186 @@ TypeScript narrowing, C# pattern matching, Swift binding-pattern. Все
 D44, D52). D54 фиксирует семантику явно: `as` — compile-time
 конвертация; `is` — runtime type-check. Закрывает Q-any-extract
 (извлечение типа из `any`-значения).
+
+---
+
+## D58. Range-литерал, `Iter[T]` protocol, `for x in c` implicit iter
+
+### Что
+Три связанных правила, объединённых одним D-блоком, потому что они
+взаимно поддерживают друг друга:
+
+1. **`a..b` и `a..=b` — литералы Range** в любой expression-позиции
+   (не только в `for`).
+2. **`Iter[T]`** — структурный protocol в prelude (D26):
+   `protocol { mut next() -> Option[T] }`. Любой тип с таким методом
+   — итератор.
+3. **`for x in c` без `.iter()`** — implicit-iter. Если `c` уже
+   итератор, используется напрямую; если есть метод `iter()`,
+   компилятор подставляет вызов.
+
+### Правило
+
+#### Range-литералы
+
+```nova
+let r1 = 0..5             // Range { start: 0, end: 5, inclusive: false }
+let r2 = 0..=5            // Range { start: 0, end: 5, inclusive: true }
+
+let r Range = 1..10       // в let-binding'е работает
+fn count(r Range) -> int => r.end - r.start
+count(0..100)              // в позиции аргумента работает
+
+let ranges []Range = [0..5, 10..20, 100..200]   // в массиве
+```
+
+`a..b` — синтаксический сахар, разворачивается компилятором в
+`Range { start: a, end: b, inclusive: false }`. `a..=b` →
+`inclusive: true`.
+
+**Range — обычный тип** ([08-runtime.md → D26](08-runtime.md#d26) prelude):
+
+```nova
+type Range {
+    readonly start int
+    readonly end int
+    readonly inclusive bool
+}
+```
+
+Имеет методы `@iter()`, `@contains(x)`, `@len()`, `@is_empty()`.
+Подробно — `examples/stdlib_range.nv`.
+
+#### `Iter[T]` protocol
+
+```nova
+type Iter[T] protocol {
+    mut next() -> Option[T]
+}
+```
+
+Любой тип с структурно-совместимым методом `mut next() -> Option[T]`
+— итератор по [D42](02-types.md#d42)/[D53](02-types.md#d53).
+
+Примеры реализаций (структурно автоматические):
+
+```nova
+type RangeIter { ... }
+fn RangeIter mut @next() -> Option[int] => ...      // Iter[int]
+
+type VecIter[T] { ... }
+fn VecIter[T] mut @next() -> Option[T] => ...        // Iter[T]
+
+type LinesIter { ... }
+fn LinesIter mut @next() -> Option[str] => ...       // Iter[str]
+```
+
+В сигнатурах функций можно использовать как параметр:
+
+```nova
+fn count_items[T](it Iter[T]) -> int {
+    let mut n = 0
+    for _ in it { n += 1 }
+    n
+}
+```
+
+Структурная типизация — никаких `impl Iter for ...`-блоков, любой
+`mut next() -> Option[T]` подходит.
+
+#### `for x in c` — implicit iter
+
+`for-loop` принимает **любое выражение справа от `in`**, разворачиваясь
+по правилу:
+
+```
+for x in c { body }
+```
+
+компилируется как:
+
+1. Если `c` имеет `mut next() -> Option[T]` — используется напрямую
+   как итератор.
+2. Иначе если `c` имеет `iter() -> Iter[T]` — компилятор вставляет
+   `c.iter()`.
+3. Иначе — ошибка компиляции.
+
+Это означает, что **программист пишет `for x in c`** для коллекций
+(используется `c.iter()` под капотом), и **то же самое для
+итераторов** напрямую (без двойного `.iter()`).
+
+```nova
+let v []int = [1, 2, 3]
+for x in v { ... }                   // []T.iter() автоматически
+
+let r = 0..5
+for x in r { ... }                   // Range.iter() автоматически
+for x in 0..5 { ... }                // тот же
+
+let it = v.iter()
+for x in it { ... }                  // it уже Iter[T], без двойного iter()
+```
+
+### Почему
+
+1. **Range как expression — естественно.** В for-loop `0..n` уже
+   работает. Расширение на любую expression-позицию устраняет
+   асимметрию: «range можно в for, но не в let». Прецедент Rust,
+   F#, Haskell, Scala.
+2. **`Iter[T]` как protocol — fits structural typing.** Никакого
+   специального механизма, обычный protocol с одним методом.
+   Прецедент Rust `Iterator`-trait, OCaml `Seq.t`, Python `__iter__`.
+3. **`for x in c` без `.iter()` — стандарт mainstream.** Kotlin,
+   Swift, Python, C#, Rust (через `IntoIterator`) — везде sugar.
+   Только Go требует `range`-keyword.
+4. **AI-friendly.** `for x in c` короче, чем `for x in c.iter()`.
+   Меньше boilerplate, меньше ошибок «забыл `.iter()`».
+
+### Что отвергнуто
+
+- **Range только в for-loop** (текущая ситуация до D58). Ограничивает
+  использование — нельзя передать range как аргумент, сохранить в
+  переменную.
+- **`Range` как примитив языка** (без Range-типа в stdlib). Полезно,
+  но изоляция от системы типов хуже — нельзя добавить методы,
+  написать функцию, принимающую Range.
+- **`for x in c` строгое — только Iter[T]** (без implicit `iter()`
+  сахара). Программист пишет `for x in v.iter()` каждый раз,
+  избыточно.
+- **`for-in` через специальный keyword (Go `range`).** Лишний
+  синтаксис, нет преимущества над implicit iter через protocol.
+
+### Цена
+
+1. **Range type в prelude.** Расширение D26 (prelude растёт).
+2. **`a..b` как expression.** Парсер должен понимать `a..b` в
+   любой expression-позиции, не только в for. Лёгкая правка
+   грамматики.
+3. **`for-in`-сахар.** Компилятор делает desugaring `for x in c`
+   → выбор `c.iter()` vs использование `c` напрямую. Простое
+   правило, но требует type-resolution.
+4. **`Iter[T]` имя.** Короткое, но конфликтует с потенциальными
+   user-defined type'ами `Iter`. Согласовано с [D30](#d30) (типы
+   PascalCase).
+
+### Связь
+- [02-types.md → D42](02-types.md#d42), [D53](02-types.md#d53)
+  — `Iter[T]` как обычный protocol через структурную типизацию.
+- [D38](#d38-создание-массивов-и-turbofish-для-дженериков) — `0..n` как
+  range-выражение в существующем синтаксисе for-loop.
+- [08-runtime.md → D26](08-runtime.md#d26) — `Iter[T]`, `Range`,
+  `RangeIter` в prelude.
+
+### Открытые вопросы
+- **Reverse range** (`5..0` или `(0..5).reverse()`) — что значит
+  range с `start > end`? Пустой? Идущий назад? — открытый
+  Q-range-extras.
+- **`(0..5).step(n)`** — step-итерация. Q-range-extras.
+- **`collect[Out]()` generic-collection-construction** — требует
+  bound'ов (Q-bounds) и static-method-protocol. Q-collect-mechanism.
+- **Type-as-value** (передача типа как значения, `xs.collect([]int)`)
+  — отдельный вопрос Q-type-as-value.
+- **`@`-префикс в protocol-методах** (симметрия с реализацией) —
+  Q-protocol-method-prefix.
+- **Static-метод в protocol через `.method()`-префикс** —
+  Q-static-method-protocol.

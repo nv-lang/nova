@@ -653,9 +653,9 @@ Account.new                // static-функция как значение, т�
 ### Generic'и
 
 ```nova
-fn Vec[T].new() -> Vec[T] => ...                  // generic на типе
-fn Vec[T] @push(item T) -> () => ...              // тоже
-fn Vec[T] @map[U](f T -> U) -> Vec[U] => ...      // generic на методе [U]
+fn HashMap[K, V].new() -> HashMap[K, V] => ...        // generic на типе
+fn HashMap[K, V] @get(key K) -> Option[V] => ...      // тоже
+fn []T @map[U](f fn(T) -> U) -> []U => ...            // generic на методе [U]
 ```
 
 Подробно — [D35](decisions/03-syntax.md#d35).

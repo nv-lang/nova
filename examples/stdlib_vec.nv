@@ -1,73 +1,30 @@
-// stdlib_vec.nv — Vec[T] как alias на []T + методы расширения.
+// stdlib_vec.nv — методы расширения для `[]T`.
 //
-// `[]T` — это и есть «динамический массив» (slice-like, [D27](../spec/decisions/03-syntax.md#d27),
-// runtime-представление `(ptr, len, cap)` по [D32](../spec/decisions/02-types.md#d32)).
-// Ему уже встроенно доступны `len`, `cap`, `push`, `pop`, `get`,
-// `with_capacity`, `iter` — см. [Q-array-api](../spec/open-questions.md).
+// `[]T` — встроенный динамический массив (slice-like, [D27](../spec/decisions/03-syntax.md#d27),
+// `(ptr, len, cap)` по [D32](../spec/decisions/02-types.md#d32)).
+// Базовый API (`len`, `cap`, `push`, `pop`, `with_capacity`, `iter`,
+// `[i]`) встроен — см. [Q-array-api](../spec/open-questions.md).
 //
-// Vec[T] — **просто другое имя** через alias:
-//
-//   type Vec[T] alias []T
-//
-// Никакой обёртки — `Vec[int]` и `[]int` взаимозаменяемы. Этот файл
-// демонстрирует **расширение `[]T`** дополнительными методами через
-// [D35](../spec/decisions/03-syntax.md#d35) (`fn []T @method`) и
-// [D55](../spec/decisions/02-types.md#d55) literal coercion.
+// Этот файл добавляет **функциональные комбинаторы** на `[]T`
+// (map/filter/fold/any/all/first/last) через [D35](../spec/decisions/03-syntax.md#d35)
+// (`fn []T @method`). Никакой Vec-обёртки — `[]T` это и есть «Vec
+// в Nova-семантике».
 
 module std.vec
 
 
 // ──────────────────────────────────────────────────────────────────────────
-// Alias
+// Функциональные комбинаторы
 // ──────────────────────────────────────────────────────────────────────────
 
-// Vec[T] = []T. Полная взаимозаменяемость, без runtime-обёртки.
-// `Vec[int]` и `[]int` — один и тот же тип; alias только для имени.
-export type Vec[T] alias []T
-
-
-// ──────────────────────────────────────────────────────────────────────────
-// Конструкторы — статические функции на []T
-// ──────────────────────────────────────────────────────────────────────────
-
-// Пустой массив. D55: `[]` подгоняется под `[]T` из аннотации.
-//
-// Альтернативно: `[]T.new()` или просто литерал `[]` в позиции с
-// явным типом. Здесь `Vec` для документации API.
-export fn Vec[T].new() -> Vec[T] => []
-
-// `with_capacity` — встроенный конструктор `[]T` (см. Q-array-api).
-// Здесь — алиас-обёртка для именования через Vec.
-export fn Vec[T].with_capacity(cap int) -> Vec[T] =>
-    []T.with_capacity(cap)
-
-// Из range — частый паттерн для тестов и data-init.
-export fn Vec[T].from_range(start int, end int) -> Vec[int] {
-    let mut v Vec[int] = Vec[int].with_capacity(end - start)
-    for i in start..end {
-        v.push(i)
-    }
-    v
-}
-
-
-// ──────────────────────────────────────────────────────────────────────────
-// Расширения []T — методы, которых нет во встроенном API
-// ──────────────────────────────────────────────────────────────────────────
-
-// `[]T` уже имеет `len`, `push`, `pop`, `get`, `iter`, `[i]` — см.
-// Q-array-api. Здесь добавляем functional-style комбинаторы.
-//
-// **Все методы определены прямо на `[]T`** — это и есть Vec через alias.
 // Метод-уровневые generics ([D42 Модель B](../spec/decisions/02-types.md#d42))
-// дают полиморфизм без привязки [T] к каждому методу.
+// дают полиморфизм без привязки `[T]` к каждому методу.
 
 // map — новый массив с применённой функцией.
-// `[U]` на методе: один []T работает с любым U (одна реализация
-// массива, разные результирующие типы).
+// `[U]` на методе — один []T работает с любым U.
 export fn []T @map[U](f fn(T) -> U) -> []U {
     let mut out []U = []U.with_capacity(@len)
-    for x in @iter() {
+    for x in @ {                          // implicit iter (D58)
         out.push(f(x))
     }
     out
@@ -76,7 +33,7 @@ export fn []T @map[U](f fn(T) -> U) -> []U {
 // filter — оставить только удовлетворяющие предикату.
 export fn []T @filter(pred fn(T) -> bool) -> []T {
     let mut out []T = []
-    for x in @iter() {
+    for x in @ {
         if pred(x) { out.push(x) }
     }
     out
@@ -85,7 +42,7 @@ export fn []T @filter(pred fn(T) -> bool) -> []T {
 // fold — свёртка слева. `[Acc]` на методе — независим от T.
 export fn []T @fold[Acc](init Acc, f fn(Acc, T) -> Acc) -> Acc {
     let mut acc = init
-    for x in @iter() {
+    for x in @ {
         acc = f(acc, x)
     }
     acc
@@ -93,7 +50,7 @@ export fn []T @fold[Acc](init Acc, f fn(Acc, T) -> Acc) -> Acc {
 
 // any — есть ли элемент, удовлетворяющий предикату.
 export fn []T @any(pred fn(T) -> bool) -> bool {
-    for x in @iter() {
+    for x in @ {
         if pred(x) { return true }
     }
     false
@@ -101,7 +58,7 @@ export fn []T @any(pred fn(T) -> bool) -> bool {
 
 // all — все ли элементы удовлетворяют.
 export fn []T @all(pred fn(T) -> bool) -> bool {
-    for x in @iter() {
+    for x in @ {
         if !pred(x) { return false }
     }
     true
@@ -121,16 +78,8 @@ export fn []T @last() -> Option[T] =>
 // Тесты
 // ──────────────────────────────────────────────────────────────────────────
 
-// Vec[T] и []T полностью взаимозаменяемы — alias не создаёт нового типа.
-test "Vec is exactly []T" {
-    let v Vec[int] = [1, 2, 3]      // литерал массива в позиции Vec[int]
-    let xs []int = v                 // обратное присваивание тоже ок
-    assert v.len == 3
-    assert xs.len == 3
-}
-
 test "map preserves length and applies function" {
-    let v Vec[int] = [1, 2, 3]
+    let v []int = [1, 2, 3]
     let doubled = v.map((x) => x * 2)
     assert doubled.len == 3
     assert doubled.get(0) == Some(2)
@@ -138,7 +87,7 @@ test "map preserves length and applies function" {
 }
 
 test "filter keeps matching elements" {
-    let v Vec[int] = [1, 2, 3, 4, 5]
+    let v []int = [1, 2, 3, 4, 5]
     let even = v.filter((x) => x % 2 == 0)
     assert even.len == 2
     assert even.get(0) == Some(2)
@@ -146,30 +95,32 @@ test "filter keeps matching elements" {
 }
 
 test "fold sums elements" {
-    let v Vec[int] = [1, 2, 3, 4]
+    let v []int = [1, 2, 3, 4]
     let sum = v.fold(0) { (acc, x) => acc + x }
     assert sum == 10
 }
 
-test "any/all on empty Vec" {
-    let v Vec[int] = []
+test "any/all on empty array" {
+    let v []int = []
     assert !v.any((x) => x > 0)              // ни одного → false
     assert v.all((x) => x > 0)                // вакуумная истина → true
 }
 
 test "first/last" {
-    let v Vec[int] = [10, 20, 30]
+    let v []int = [10, 20, 30]
     assert v.first() == Some(10)
     assert v.last() == Some(30)
 
-    let empty Vec[int] = []
+    let empty []int = []
     assert empty.first() == None
     assert empty.last() == None
 }
 
-test "from_range builds [start..end)" {
-    let v = Vec[int].from_range(1, 5)
-    assert v.len == 4
-    assert v.get(0) == Some(1)
-    assert v.get(3) == Some(4)
+test "for-loop over array uses implicit iter (D58)" {
+    let v []int = [1, 2, 3]
+    let mut total = 0
+    for x in v {                           // implicit iter — без .iter()
+        total += x
+    }
+    assert total == 6
 }

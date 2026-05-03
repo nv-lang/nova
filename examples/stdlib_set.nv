@@ -33,7 +33,7 @@ export fn Set[T].new() -> Set[T] =>
 export fn Set[T].with_capacity(cap int) -> Set[T] =>
     { map: HashMap[T, ()].with_capacity(cap) }
 
-// Из Vec/массива/итератора.
+// Из массива/итератора.
 export fn Set[T].from_iter(it protocol { mut next() -> Option[T] }) -> Set[T] {
     let mut s = Set[T].new()
     while let Some(x) = it.next() {

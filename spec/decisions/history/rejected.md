@@ -164,6 +164,17 @@ type-check. Семантически близко, но не идентично 
 coercion в named sum'ы (`type StrOrInt | S(str) | I(int)`,
 `let x StrOrInt = "test"`) без subtyping.
 
+### `Vec[T]` как именованная обёртка над `[]T`
+**Отвергнуто.** Vec как `type Vec[T] alias []T` не давал выгоды —
+`Vec[int]` ≡ `[]int`, имя только добавляло когнитивную нагрузку.
+Конструкторы Vec.new()/with_capacity() дублировали `[]` и
+`[]T.with_capacity(...)`. Решение — везде `[]T` как единая форма;
+методы расширения определяются напрямую на `[]T` через
+[D35](../03-syntax.md#d35) (`fn []T @map`, `@filter`, etc.).
+[`examples/stdlib_vec.nv`](../../../examples/stdlib_vec.nv) — методы
+расширения, не обёртка. См. [D58](../03-syntax.md#d58),
+[D52](../02-types.md#d52) (alias не используется для Vec).
+
 ### Default-имя поля при embed (`use Type` без alias, Go-style)
 **Отвергнуто (D39 revised).** Раньше D39 разрешал `use Account` без
 имени — поле получало имя `Account` (PascalCase). Это нарушало
