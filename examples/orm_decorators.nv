@@ -1,0 +1,330 @@
+// orm_decorators.nv — handler-обёртки над Db.
+//
+// **Главная демонстрация Nova-эффектов**: cross-cutting concerns
+// (soft-delete, audit, read/write splitting) реализуются как обычные
+// функции, возвращающие декорированный Handler[Db]. Бизнес-код в
+// `orm_demo.nv` остаётся **неизменным** — handler просто подменяется в
+// `with`-блоке.
+//
+// В Java/Spring это потребовало бы AOP-аннотаций с reflection.
+// В Python — декораторов на уровне ORM-класса.
+// В Go — explicit DI и middleware-цепочек на каждой repo-методе.
+// В Nova — handler-функция, обычная high-order function над `Handler[Db]`.
+//
+// Используемые фичи:
+// - [D11](../spec/decisions/04-effects.md#d11) `with X = h { ... }`
+// - [D31](../spec/decisions/04-effects.md#d31) handler-литералы и
+//   handler-method (`op(p) => expr` и `op(p) { block }`)
+// - [D10](../spec/decisions/04-effects.md#d10) effects + handlers
+// - [D40](../spec/decisions/03-syntax.md#d40) общий закон `=>` ↔ `{}`
+//   для handler-method'ов
+// - `Sql.with_filter` ([stdlib_sql.nv](stdlib_sql.nv)) — добавить
+//   предикат к существующему запросу
+
+module examples.orm_decorators
+
+use std.sql                              // Sql, Db, DbRow, DbError
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// 1. Soft-delete decorator
+// ──────────────────────────────────────────────────────────────────────────
+
+// Вместо физического DELETE — выставляем `deleted_at = NOW()`.
+// Read-операции автоматически отфильтровывают удалённые.
+//
+// Это **классический cross-cutting concern**: каждый репо должен
+// игнорировать tombstones, но ни один из них не должен это знать —
+// soft-delete тут реализован как **handler-обёртка**.
+//
+// Переопределяет:
+// - `query` — добавляет `AND deleted_at IS NULL` ко всем SELECT'ам
+//   через `Sql.with_filter` (см. stdlib_sql.nv).
+// - `exec` — DELETE превращается в UPDATE deleted_at = NOW().
+//   UPDATE/INSERT проходят как есть.
+// - `in_transaction` — пробрасываем неизменно (вложенная композиция
+//   handler'ов работает прозрачно).
+export fn with_soft_delete(real Handler[Db]) -> Handler[Db] => Db {
+    query(q) {
+        // SELECT: добавляем фильтр. Простая реализация — `with_filter`
+        // конкатенирует AND. Реальная stdlib-версия делала бы parsing,
+        // чтобы корректно работать с UNION/подзапросами.
+        let filtered = q.with_filter(sql`deleted_at IS NULL`)
+        resume(real.query(filtered)?)
+    }
+    exec(q) {
+        // DELETE → UPDATE deleted_at. Распознаём по template-префиксу.
+        if q.template.starts_with("DELETE FROM") {
+            // Простой rewrite: "DELETE FROM <t> WHERE ..."
+            //              → "UPDATE <t> SET deleted_at = NOW() WHERE ..."
+            let rest = q.template.strip_prefix("DELETE FROM ")?
+            let rewritten Sql = {
+                template: "UPDATE ${rest.until(" WHERE ")} "
+                        + "SET deleted_at = NOW() WHERE ${rest.after(" WHERE ")}",
+                args: q.args,
+            }
+            resume(real.exec(rewritten)?)
+        } else {
+            resume(real.exec(q)?)
+        }
+    }
+    in_transaction(b) => resume(real.in_transaction(b)?)
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// 2. Audit-trail decorator
+// ──────────────────────────────────────────────────────────────────────────
+
+// На каждый mutating-запрос (INSERT/UPDATE/DELETE) пишет запись в
+// `audit_log` через `spawn` — не блокирует основную операцию. Если
+// audit упал — основная транзакция продолжается (audit делается через
+// отдельный handler-обёртку с rollback'ом для надёжности; здесь —
+// упрощённо, fire-and-forget).
+//
+// Это **prosthet-aspect**: audit decision не размазана по всем repo'ам,
+// а сконцентрирована в одной функции. И отключается в тестах
+// тривиально — оборачиваем `with Db = postgres_handler` (без декоратора).
+export fn with_audit(real Handler[Db], current_user_id u64) -> Handler[Db] => Db {
+    query(q) => resume(real.query(q)?)             // SELECT не аудируем
+    exec(q) {
+        let result = real.exec(q)?
+
+        // spawn — fire-and-forget audit-запись. Через handler-композицию
+        // мы можем подменить его в тестах: `with Detach = noop_detach`
+        // отключит фоновые задачи и сделает тест-цикл полностью
+        // детерминированным.
+        spawn write_audit_entry(current_user_id, q, result)
+        resume(result)
+    }
+    in_transaction(b) {
+        // Транзакция — оборачиваем неизменно. Audit за каждый exec
+        // внутри — попадёт в spawn-очередь.
+        resume(real.in_transaction(b)?)
+    }
+}
+
+// write_audit_entry — фоновая запись. В реальной системе пишет в
+// отдельную audit-БД (через свой Db handler) или в Kafka.
+// Здесь — иллюстративный stub.
+fn write_audit_entry(user_id u64, q Sql, affected int) Detach -> () {
+    // Тут был бы вызов: AuditDb.exec(sql`INSERT INTO audit_log ...`)
+    // С handler-substitution в тестах audit-БД заменяется на in-memory.
+    ()
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// 3. Read/write splitting (read-replica routing)
+// ──────────────────────────────────────────────────────────────────────────
+
+// `query` идёт на replica (read-only), `exec` и `in_transaction` —
+// на primary (single source of truth).
+//
+// Это **горизонтальное масштабирование одной строкой**: бизнес-код
+// не знает о replica'х, не выбирает соединение, не помечает методы
+// как @ReadOnly. Decorator всё решает.
+//
+// Тонкость: внутри `in_transaction` все запросы должны идти на primary,
+// иначе read-after-write rounds-trip'ы будут видеть устаревшие данные
+// (replica lag). Поэтому транзакционный body запускается с **под-handler'ом**,
+// у которого query тоже идёт на primary.
+export fn with_read_replica(primary Handler[Db], replica Handler[Db]) -> Handler[Db] => Db {
+    query(q) => resume(replica.query(q)?)
+    exec(q)  => resume(primary.exec(q)?)
+    in_transaction(b) {
+        // Внутри транзакции — всё через primary. Подменяем Db
+        // вложенным handler'ом, который делегирует только primary.
+        resume(primary.in_transaction(() => {
+            with Db = primary {
+                b()
+            }
+        })?)
+    }
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// 4. Композиция декораторов
+// ──────────────────────────────────────────────────────────────────────────
+
+// Декораторы — **обычные функции**, поэтому композиция тривиальна:
+
+// build_db — пример: postgres + soft-delete + audit + read-replica.
+//
+// Порядок применения важен (как middleware):
+// - `with_soft_delete` ближе всего к real-БД — фильтрует на самом
+//   нижнем уровне, чтобы любые верхние слои уже видели
+//   "чистые" данные.
+// - `with_audit` поверх — записывает каждую mutation, включая
+//   soft-delete'ы (которые декоратор #1 превратил в UPDATE).
+// - `with_read_replica` — на самом верху, маршрутизирует по типу
+//   операции **до** того, как остальные декораторы что-то делают
+//   с запросом.
+export fn build_db(primary Handler[Db], replica Handler[Db], current_user_id u64)
+    -> Handler[Db] {
+    let with_sd_primary = with_soft_delete(primary)
+    let with_sd_replica = with_soft_delete(replica)
+    let with_audited    = with_audit(with_sd_primary, current_user_id)
+    with_read_replica(with_audited, with_sd_replica)
+}
+
+// Использование:
+//
+// ```nova
+// fn main() Net Io -> () {
+//     let primary = postgres_handler("primary.db.local")
+//     let replica = postgres_handler("replica.db.local")
+//
+//     with Db = build_db(primary, replica, current_admin_id()) {
+//         run_app()
+//     }
+// }
+// ```
+//
+// В тестах:
+//
+// ```nova
+// test "soft-deleted users excluded from list" {
+//     let mut storage = ...
+//     with Db = with_soft_delete(in_memory_db_handler(storage)) {
+//         let users = users_repo().list_all()?
+//         // удалённые отсутствуют без единой строки фильтрации в repo
+//     }
+// }
+// ```
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Тесты — handler decorator behaviors
+// ──────────────────────────────────────────────────────────────────────────
+
+// Минимальный fake-handler, который записывает все запросы в журнал —
+// ради того, чтобы убедиться, что decorator переписал SQL правильно.
+type CapturedQuery { template str, args []SqlValue }
+
+fn capturing_handler(log mut []CapturedQuery) -> Handler[Db] => Db {
+    query(q) {
+        log.push({ template: q.template, args: q.args })
+        resume([])
+    }
+    exec(q) {
+        log.push({ template: q.template, args: q.args })
+        resume(0)
+    }
+    in_transaction(b) => resume(b())
+}
+
+test "soft-delete: SELECT augmented with deleted_at IS NULL" {
+    let mut log []CapturedQuery = []
+
+    with Db = with_soft_delete(capturing_handler(log)) {
+        Db.query(sql`SELECT * FROM users WHERE id = ${1}`)?
+    }
+
+    assert log.len == 1
+    assert log[0].template.contains("deleted_at IS NULL")
+}
+
+test "soft-delete: DELETE rewritten as UPDATE deleted_at" {
+    let mut log []CapturedQuery = []
+
+    with Db = with_soft_delete(capturing_handler(log)) {
+        Db.exec(sql`DELETE FROM users WHERE id = ${1}`)?
+    }
+
+    assert log.len == 1
+    assert log[0].template.starts_with("UPDATE")
+    assert log[0].template.contains("SET deleted_at = NOW()")
+}
+
+test "read-replica: SELECT idёт на replica, exec — на primary" {
+    let mut primary_log []CapturedQuery = []
+    let mut replica_log []CapturedQuery = []
+
+    with Db = with_read_replica(
+        capturing_handler(primary_log),
+        capturing_handler(replica_log),
+    ) {
+        Db.query(sql`SELECT 1`)?
+        Db.exec(sql`UPDATE users SET name = ${"alice"} WHERE id = ${1}`)?
+    }
+
+    assert primary_log.len == 1                    // только UPDATE
+    assert replica_log.len == 1                    // только SELECT
+    assert primary_log[0].template.starts_with("UPDATE")
+    assert replica_log[0].template.starts_with("SELECT")
+}
+
+test "read-replica: внутри transaction всё на primary" {
+    let mut primary_log []CapturedQuery = []
+    let mut replica_log []CapturedQuery = []
+
+    with Db = with_read_replica(
+        capturing_handler(primary_log),
+        capturing_handler(replica_log),
+    ) {
+        Db.in_transaction() {
+            Db.query(sql`SELECT 1`)?           // должен пойти на primary
+            Db.exec(sql`UPDATE users SET name = ${"alice"} WHERE id = ${1}`)?
+            ()
+        }?
+    }
+
+    assert primary_log.len == 2                    // SELECT + UPDATE
+    assert replica_log.len == 0                    // ничего на replica
+}
+
+test "audit: каждый exec пишется в spawn-задачу" {
+    let mut log []CapturedQuery = []
+    let mut audit_count = 0
+
+    // Перехватываем spawn, чтобы посчитать audit'ы. В реальном тесте
+    // мы бы заменили AuditDb handler.
+    with Detach = Detach {
+        spawn(body) {
+            audit_count += 1
+            // НЕ запускаем тело — для теста достаточно счётчика.
+            resume(())
+        }
+    } {
+        with Db = with_audit(capturing_handler(log), 42) {
+            Db.exec(sql`INSERT INTO users (name) VALUES (${"alice"})`)?
+            Db.exec(sql`UPDATE users SET name = ${"bob"} WHERE id = ${1}`)?
+            Db.query(sql`SELECT * FROM users`)?         // audit на SELECT не пишется
+        }
+    }
+
+    assert audit_count == 2                            // только два exec'а
+}
+
+// Композиционный тест: все три декоратора одновременно.
+test "compose: soft-delete + audit + read-replica" {
+    let mut primary_log []CapturedQuery = []
+    let mut replica_log []CapturedQuery = []
+    let mut audit_count = 0
+
+    with Detach = Detach {
+        spawn(body) { audit_count += 1; resume(()) }
+    } {
+        let composed = with_read_replica(
+            with_audit(with_soft_delete(capturing_handler(primary_log)), 42),
+            with_soft_delete(capturing_handler(replica_log)),
+        )
+
+        with Db = composed {
+            Db.query(sql`SELECT * FROM users`)?    // replica + soft-delete
+            Db.exec(sql`DELETE FROM users WHERE id = ${1}`)?
+                                                   // primary + soft-delete + audit
+        }
+    }
+
+    assert replica_log.len == 1
+    assert replica_log[0].template.contains("deleted_at IS NULL")
+
+    assert primary_log.len == 1
+    assert primary_log[0].template.starts_with("UPDATE")  // DELETE → UPDATE
+    assert primary_log[0].template.contains("SET deleted_at = NOW()")
+
+    assert audit_count == 1                                // audit за DELETE
+}
