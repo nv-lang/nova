@@ -48,11 +48,12 @@ type Hashable protocol {
 }
 ```
 
-Замена наследования — **`use Parent`** внутри `type`:
+Замена наследования — **`use name Type`** внутри `type` (alias
+обязателен, [D39](02-types.md#d39)):
 
 ```nova
 type AuditedAccount {
-    use Account                     // delegation, не наследование
+    use account Account             // delegation, не наследование
     audit_log []AuditEntry
 }
 ```

@@ -14,7 +14,7 @@
 | [D55](#d55-literal-coercion-в-позиции-с-явным-типом-sum-конструкторы-и-record-литералы) | Literal coercion в позиции с явным типом: sum-конструкторы и record-литералы | active |
 | [D42](#d42-protocol-keyword-для-структурных-интерфейсов) | `protocol` keyword для структурных интерфейсов | revised → D53 |
 | [D15](#d15-структурные-интерфейсы) | Структурные интерфейсы | revised → D42 → D53 |
-| [D39](#d39-embed-и-delegation-use-type-и-use-name-type) | Embed и delegation: `use Type` и `use name Type` | active |
+| [D39](#d39-embed-и-delegation-use-name-type-alias-обязателен) | Embed и delegation: `use name Type` (alias обязателен) | active |
 | [D32](#d32-семантика-передачи-параметров) | Семантика передачи параметров | revised для полей → D36 |
 | [D36](#d36-поля-типа-дефолт-mutable-у-mut-bindinga-readonly-для-never-mut) | Поля типа: дефолт mutable у mut-binding'а, `readonly` для never-mut | active |
 
@@ -1464,187 +1464,185 @@ fn log_one(x { show() -> str }) Log -> () =>
 
 ---
 
-## D39. Embed и delegation: `use Type` и `use name Type`
+## D39. Embed и delegation: `use name Type` (alias обязателен)
 
 ### Что
-Композиция типов через `use Type` внутри record-декларации. Имя
-встроенного по умолчанию — имя типа (`use Account` →
-доступ через `@Account`). Для алиаса — `use name Type` (как обычное
-объявление поля: «имя тип»). Это **delegation**, не наследование:
-обёртка не является подтипом встроенного.
+Композиция типов через `use name Type` внутри record-декларации. Имя
+поля **всегда явное** — программист пишет alias в snake_case по
+[D30](03-syntax.md#d30). Default-имя по типу (Go-style `use Type` →
+поле `Type`) **не вводится** — нарушает D30 (поля snake_case, типы
+PascalCase).
+
+Это **delegation**, не наследование: обёртка не является подтипом
+встроенного.
 
 ### Правило
 
+#### Базовое использование
+
 ```nova
 type AuditedAccount {
-    use Account                     // имя = "Account"
+    use account Account              // имя поля = "account" (snake_case)
     audit_log []AuditEntry
 }
 
 let acc AuditedAccount = ...
 
 // Auto-proxy: прямой доступ к полям и методам Account
-println(acc.balance)                // = acc.Account.balance
-println(acc.owner)                  // = acc.Account.owner
-acc.is_solvent()                    // = acc.Account.is_solvent()
+println(acc.balance)                 // = acc.account.balance
+println(acc.owner)                   // = acc.account.owner
+acc.is_solvent()                     // = acc.account.is_solvent()
 
-// Доступ к встроенному объекту целиком
-let just_account = acc.Account
+// Доступ к встроенному объекту целиком — через имя поля
+let just_account = acc.account
 ```
 
-**Auto-generated прокси-методы.** При `use Type` компилятор генерирует
-прокси для каждого метода `Type`:
+`use Account` без имени — **ошибка компиляции**: имя поля обязательно.
+
+```nova
+type AuditedAccount {
+    use Account                      // ОШИБКА: имя поля обязательно
+    audit_log []AuditEntry
+}
+```
+
+#### Auto-generated прокси-методы
+
+При `use name Type` компилятор генерирует прокси для каждого метода
+`Type`:
 
 ```nova
 type Account { balance money }
 fn Account @balance_pct(of money) -> f64 => @balance / of * 100.0
 
-type AuditedAccount { use Account, audit_log []AuditEntry }
+type AuditedAccount {
+    use account Account
+    audit_log []AuditEntry
+}
 
 // Компилятор генерирует:
 // fn AuditedAccount @balance_pct(of money) -> f64 =>
-//     @Account.balance_pct(of)
+//     @account.balance_pct(of)
 
 let aa AuditedAccount = ...
-aa.balance_pct(1000.0)              // через auto-proxy
+aa.balance_pct(1000.0)               // через auto-proxy
 ```
 
 Zero-cost — компилятор инлайнит вызов, никакой vtable.
 
-**Алиас для имени.** Если имя типа неудобно или нужно несколько
-встроенных одного типа — `use name Type`:
+#### Грамматика согласована с record-полями
+
+`use name Type` использует тот же порядок «имя тип», что и обычные
+поля, параметры функций, let-bindings, for-loop:
 
 ```nova
 type Wrapper {
-    use w HashMapIter[K, V]         // имя = "w"
-    extra int
+    item       str                   // обычное поле: имя тип
+    use iter   HashMapIter[K, V]     // embed: use + имя тип
+    extra      int
 }
 
-fn Wrapper mut @next() -> Option[K] => match @w.next() {
-    Some((k, _)) => Some(k)
-    None         => None
-}
+fn deposit(mut acc Account) -> () => ...   // параметр: имя тип
+let user User = ...                           // let: имя тип
+for id u64 in ids { ... }                     // for: имя тип
 ```
 
-Грамматика согласована со всем языком: везде «имя тип» (параметры,
-поля record, let-bindings, for-loop, embed).
+Везде имя слева, тип справа — одно правило для всего языка.
 
 #### `use` — keyword, не имя поля
 
 `use` — зарезервированное слово ([D29](07-modules.md#d29) для импортов
 + embed-конструкция здесь). **Имя поля `use` запрещено.**
 
-В декларации `{use Type}` `use` — keyword embed-формы; **имя поля при
-этом — имя типа** (или alias, если указан): `use Account` → поле
-`Account`, `use w HashMapIter[K, V]` → поле `w`.
-
-В record-литерале и при доступе через `@`/`.` используется
-**имя поля**, не keyword:
+В декларации `{use name Type}` `use` — keyword embed-формы; **имя
+поля — alias после `use`**:
 
 ```nova
 type Set[T] {
-    use HashMap[T, ()]                // имя поля — "HashMap"
+    use map HashMap[T, ()]           // имя поля — "map"
 }
 
 // record-литерал — имя поля
-let s Set[int] = { HashMap: HashMap[int, ()].new() }   // ✓
-let s Set[int] = { use: HashMap[int, ()].new() }        // ✗ use — keyword
+let s Set[int] = { map: HashMap[int, ()].new() }      // ✓
+let s Set[int] = { use: HashMap[int, ()].new() }       // ✗ use — keyword
 
 // доступ — имя поля
-fn Set[T] @len() => @HashMap.len()                       // ✓
-fn Set[T] @len() => @use.len()                           // ✗ use — keyword
+fn Set[T] @len() => @map.len                          // ✓
+fn Set[T] @len() => @use.len                          // ✗ use — keyword
 ```
 
-С alias имя поля совпадает с alias'ом:
+#### Override метода
 
-```nova
-type Set[T] {
-    use map HashMap[T, ()]            // имя поля — "map"
-}
-
-let s Set[int] = { map: HashMap[int, ()].new() }        // ✓
-fn Set[T] @len() => @map.len()                           // ✓
-```
-
-**Override метода.** Если тип-обёртка определяет метод с тем же именем
-— он затмевает делегированный:
+Если тип-обёртка определяет метод с тем же именем — он затмевает
+делегированный:
 
 ```nova
 type AuditedAccount {
-    use Account
+    use account Account
     audit_log []AuditEntry
 }
 
 fn AuditedAccount mut @deposit(amount money) {
-    @Account.deposit(amount)        // явный вызов «родителя»
+    @account.deposit(amount)         // явный вызов «родителя» через имя поля
     @audit_log.push(AuditEntry.deposit(amount))
 }
 
 let mut acc AuditedAccount = ...
-acc.deposit(100)                    // вызовет AuditedAccount.deposit
+acc.deposit(100)                     // вызовет AuditedAccount.deposit
 ```
 
-Без `@Account.` в теле — бесконечная рекурсия. Программист обязан
-явно обращаться к встроенному.
+Без `@account.` в теле — бесконечная рекурсия. Программист обязан
+явно обращаться к встроенному через имя поля.
 
-**Конфликт имён — обязательный alias.** Если два `use` вводят
-одинаковые имена методов и обёртка их не переопределяет —
-compile error:
+#### Конфликт имён — разные alias-имена
+
+Если два `use` вводят одинаковые имена методов — программист даёт
+разные alias-имена и явно решает, через какой:
 
 ```nova
 type Logger protocol { log(msg str) -> () }
 type Auditor { log(msg str) -> () }
 
 type Combined {
-    use Logger
-    use Auditor
-}
-
-let c = Combined { ... }
-c.log("...")                        // ОШИБКА: ambiguous
-```
-
-Решение — alias или явный вызов:
-
-```nova
-type Combined {
     use console Logger
     use audit Auditor
 }
 
+let c = Combined { ... }
+c.log("...")                         // ОШИБКА: ambiguous (оба имеют log)
+```
+
+Решение — явный вызов через имя поля:
+
+```nova
 fn Combined @log_all(msg str) {
     @console.log(msg)
     @audit.log(msg)
 }
 
-// Или явный вызов через имя типа
 let c = Combined { ... }
-c.Logger.log("...")
-c.Auditor.log("...")
+c.console.log("...")
+c.audit.log("...")
 ```
 
 #### `use` для встроенных типов (`[]T`, tuples)
 
 `use` поддерживает не только именованные record-типы, но и **встроенные
-конструкции** — массивы (`[]T`), tuples (`(A, B)`), и т.п. Имя при
-этом **обязательно** (у встроенных конструкций нет имени-по-умолчанию,
-как у `Account`):
+конструкции** — массивы (`[]T`), tuples (`(A, B)`), и т.п. Имя
+поля **обязательно** (как и для именованных типов):
 
 ```nova
-// Vec через embed []T — все методы массива доступны на Vec
+// VecBuf через embed []T — все методы массива доступны
 type VecBuf[T] {
     use data []T
     extra str
 }
 
 let v = VecBuf[int] { data: [1, 2, 3], extra: "info" }
-let n = v.len           // прокси-метод к data.len ([]T API)
-v.push(42)              // прокси-метод к data.push
-let x = v.get(0)        // прокси к data.get
+let n = v.len            // прокси-метод к data.len ([]T API)
+v.push(42)               // прокси-метод к data.push
+let x = v.get(0)         // прокси к data.get
 ```
-
-`use data []T` без имени (`use []T`) **запрещён** — у `[]T` нет
-имени, под которым обращаться к встроенному в коде. Имя обязательно.
 
 Этим механизмом строятся «именованные обёртки над массивами» с
 дополнительными полями/методами без переписывания базового API.
@@ -1668,7 +1666,7 @@ fn process(a Account) -> () => ...
 
 let aa AuditedAccount = ...
 process(aa)                         // ОШИБКА
-process(aa.Account)                 // ок: извлекли Account-часть
+process(aa.account)                 // ок: извлекли Account-часть через имя поля
 ```
 
 Если нужен полиморфизм — структурный protocol:
@@ -1691,19 +1689,28 @@ process(aa)                         // ок: AuditedAccount имеет balance()
 
 1. **Замена наследования** ([D1](01-philosophy.md#d1-парадигма-protocols--data-без-классов))
    — embed решает 80% задач композиции без сложности subtyping.
-2. **Прецедент Go** — Go embed работает в продакшне годами; Nova
-   расширяет его alias'ом и обязательным разрешением конфликтов.
-3. **Согласованность с языком** — `use name Type` использует тот же
-   порядок «имя тип», что параметры, поля, let-bindings.
+2. **Согласованность с D30 naming.** Поля Nova — snake_case
+   ([D30](03-syntax.md#d30)). Default-имя по типу (Go-style) дало бы
+   PascalCase-поле — нарушение D30. Явный alias обязывает программиста
+   выбрать snake_case, всё единообразно.
+3. **Согласованность с language-wide порядком.** `use name Type` —
+   тот же порядок «имя тип», что параметры, поля, let-bindings,
+   for-loop. Одно правило для всего языка.
+4. **AI-friendly.** Никакой magic-conversion (`HashMap` → `hashmap`/
+   `hash_map`?), программист **явно** выбирает имя поля. LLM не
+   догадывается.
 
 ### Что отвергнуто
 
+- **Default-имя поля по типу** (`use Account` → поле `Account`,
+  Go-style). Создаёт исключение в [D30](03-syntax.md#d30) (поля
+  PascalCase в одном record-блоке с snake_case полями). Auto-conversion
+  PascalCase → snake_case (`HashMap` → `hash_map`?) — magic, не
+  очевидное правило.
 - **`use Type as name`** (Rust import-style). `as` зафиксировано для
-  импортов ([07-modules.md → D29](07-modules.md#d29)) — там «alias
-  имени извне». В embed — «объявление поля». Разные случаи; единый
-  порядок «имя тип» лучше.
-- **Только `use Type` без alias** (чистый Go embed) — не покрывает
-  конфликт имён без переименования встроенного типа.
+  cast в выражениях ([D54](03-syntax.md#d54)) и импортов
+  ([07-modules.md → D29](07-modules.md#d29)). В embed — «объявление
+  поля», порядок «имя тип» согласован с остальным языком.
 - **Subtyping** — противоречит [D1](01-philosophy.md#d1-парадигма-protocols--data-без-классов);
   полиморфизм через protocol.
 - **Множественное наследование** — известный антипаттерн (diamond,
@@ -1717,10 +1724,32 @@ process(aa)                         // ок: AuditedAccount имеет balance()
 - [02-types.md → D15](#d15-структурные-интерфейсы),
   [D42](#d42-protocol-keyword-для-структурных-интерфейсов) —
   полиморфизм для embed-типов идёт через protocol, не через subtyping.
-- [03-syntax.md → D35](03-syntax.md#d35) — `@Type.method()` или
-  `@alias.method()` для явного вызова из метода обёртки.
+- [03-syntax.md → D30](03-syntax.md#d30) — naming convention (поля
+  snake_case, типы PascalCase). Обязательность alias следует из D30.
+- [03-syntax.md → D35](03-syntax.md#d35) — `@field.method()` для
+  явного вызова из метода обёртки.
 - [03-syntax.md → D38](03-syntax.md#d38) — generic-применение в
-  embed: `use HashMapIter[K, V]`.
+  embed: `use iter HashMapIter[K, V]`.
+
+### Эволюция
+
+Первая редакция D39 разрешала **default-имя** = имя типа: `use
+Account` → поле `Account` (PascalCase, Go-style). Это создавало
+**нарушение D30** (поля должны быть snake_case) — в одном record-
+блоке `audit_log` (snake) и `Account` (Pascal) выглядели несогласованно.
+
+**Что стало:** alias обязателен. `use Account` без имени — ошибка
+компиляции, программист пишет `use account Account`. Default-имя
+отменено, никакой magic-conversion `HashMap` → `hash_map`.
+
+Также поменялся синтаксис конфликтов: раньше предлагался «явный вызов
+через имя типа» (`c.Logger.log(...)`), теперь только через alias-
+имя поля (`c.console.log(...)`). Это согласовано с тем, что **все
+поля имеют alias-имя**, и в коде используется оно.
+
+Q-embed-syntax в open-questions всё ещё открыт — это отдельный
+вопрос про *keyword* (`use` vs `embed` vs голый тип), а не про
+обязательность имени.
 
 ---
 

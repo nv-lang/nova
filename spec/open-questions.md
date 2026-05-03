@@ -1995,94 +1995,97 @@ Q-bounds (где `[]T` методы используют T-constraint'ы).
 
 ---
 
-## Q-embed-syntax. Синтаксис embed/delegation — `use Type` vs альтернативы
+## Q-embed-syntax. Embed-keyword — `use` vs альтернативы
 
-**Контекст.** [D39](decisions/02-types.md#d39) фиксирует embed через
-keyword `use`:
+**Контекст.** [D39](decisions/02-types.md#d39) (revised) фиксирует
+embed через `use name Type` — alias-имя поля **обязательно**:
 
 ```nova
 type AuditedAccount {
-    use Account                        // имя поля = "Account"
+    use account Account                // имя поля = "account"
     audit_log []AuditEntry
-}
-
-type Wrapper {
-    use w HashMapIter[K, V]            // имя поля = "w" (alias)
 }
 ```
 
-`use` — multi-purpose: и для embed (D39), и потенциально для
-импортов/локальных алиасов (D29 использует `import`, но `use` тоже
-рассматривался). Это создаёт перегрузку семантики.
+Этот вопрос — про **выбор keyword'а** (`use`), не про обязательность
+имени (она зафиксирована в D39).
 
-Возникли альтернативные синтаксисы. Вариант B (Go-style голый тип)
-предложил пользователь как более лаконичный.
+`use` — multi-purpose: и для embed здесь, и потенциально для
+импортов/локальных алиасов в будущем (D29 использует `import`, но
+`use` тоже рассматривался — например, как Rust `use std::io`). Это
+создаёт **перегрузку семантики keyword'а**.
 
 ### Альтернативы
 
-#### A. Текущий D39 — `use Type`
+#### A. Текущий D39 — `use name Type`
 
 ```nova
 type AuditedAccount {
-    use Account
+    use account Account
     audit_log []AuditEntry
 }
 type Wrapper { use w HashMapIter[K, V] }
 ```
 
-**За:** keyword явный, AI видит embed с первого токена.
-**Против:** `use` многозначен (embed, потенциально импорты).
+**За:** проверенный, кода уже написано.
+**Против:** `use` многозначен (embed, потенциально импорты, scope-
+локальные aliases).
 
-#### B. Go-style — голый тип, без keyword
+#### B. Go-style — голый тип без keyword (с обязательным alias)
+
+После нового D39 имя поля обязательно везде, поэтому Go-style без
+keyword'а выглядел бы так:
 
 ```nova
 type AuditedAccount {
-    Account                            // имя поля = "Account"
+    account Account                    // обычная запись поля!
     audit_log []AuditEntry
-}
-type Wrapper {
-    HashMapIter[K, V] as w             // alias через `as`
 }
 ```
 
-**Парсер** различает по case первого токена:
-- PascalCase → embed (имя поля = имя типа).
-- snake_case → имя поля + тип следующим токеном (обычное поле).
+Но это **превращает embed в обычное поле** — синтаксически
+неотличимо. Для активации delegation нужен **специальный токен**.
+Голый тип (Go-style без keyword'а и без alias'а) **несовместим** с
+обязательным alias'ом из D39 — теряется единственный синтаксический
+маркер «это embed, а не обычное поле».
 
-**За:**
-- Самая краткая форма.
-- Прецедент Go (известный паттерн).
-- Нет нового keyword'а.
-- Симметрично field punning (D17): «имя по умолчанию из контекста».
-
-**Против:**
-- Менее явное намерение — нет keyword'а, программист полагается на
-  case-convention.
-- Несогласованность alias-порядка: обычные поля `name type`,
-  embed `Type as name` — обратный порядок.
-- AI-locality чуть ниже (нужно знать правило case).
-
-#### C. `embed Type` — отдельный keyword
+Чтобы спасти этот вариант, нужен какой-то маркер:
 
 ```nova
 type AuditedAccount {
-    embed Account
+    account = Account                  // `=` как маркер embed?
+    audit_log []AuditEntry
+}
+```
+
+Но `=` уже занят (присваивание в `let`, alias в `type X alias Y`).
+Нет хорошего символа.
+
+**Против:** обязательность alias'а из D39 сделала Go-style не
+применимым без явного keyword'а. Голый embed теряет различие с
+обычным полем.
+
+#### C. `embed name Type` — отдельный keyword
+
+```nova
+type AuditedAccount {
+    embed account Account
     audit_log []AuditEntry
 }
 type Wrapper { embed w HashMapIter[K, V] }
-// или с as:
-type Wrapper { embed HashMapIter[K, V] as w }
 ```
 
 **За:**
-- Keyword **точно** описывает намерение («embed = встроить»). `use`
-  более общий.
-- Нет коллизий с другими решениями.
+- Keyword **точно** описывает намерение. `embed` однозначен,
+  `use` — общий.
+- Освобождает `use` для других целей (scope-aliases, импорты в
+  блоке).
 - AI-locality высокая.
 
 **Против:**
 - Ещё один keyword в языке.
-- Очень похоже на A — выигрыш только в семантической точности слова.
+- Очень похоже на A синтаксически — выигрыш только в семантической
+  точности слова (одна роль вместо потенциально нескольких).
 
 ### Отвергнутые альтернативы
 
@@ -2134,6 +2137,100 @@ type Wrapper { embed HashMapIter[K, V] as w }
 пользователь `use`), [D17](decisions/02-types.md#d17) (record-форма),
 [D52](decisions/02-types.md#d52) (kind-токены — `embed` встал бы
 наряду с `alias`).
+
+---
+
+## Q-positional-partial-pattern. `..` для позиционных конструкторов sum
+
+**Контекст.** [D17](decisions/02-types.md#d17) фиксирует partial
+pattern matching **только для record-формы**:
+
+```nova
+type Shape | Circle { radius f64 } | Square { side f64 }
+
+match shape {
+    Circle { radius, .. } => 3.14 * radius * radius      // .. — остальные поля
+    Circle { radius }     => 3.14 * radius * radius      // эквивалент
+}
+```
+
+Для **позиционных** конструкторов (`Cons(T, LinkedList[T])`,
+`Click(int, int)`, etc.) текущий синтаксис требует placeholder для
+каждого поля:
+
+```nova
+type LinkedList[T] | Empty | Cons(T, LinkedList[T])
+
+match list {
+    Empty       => true
+    Cons(_, _)  => false              // два `_` для двух полей
+}
+```
+
+При большем числе полей растёт шум: `Click(int, int) | Move(int,
+int, int) | Scroll(int)` — `Click(_, _)`, `Move(_, _, _)`,
+`Scroll(_)`. Программист пишет «не интересуют поля» N раз.
+
+### Предложение
+
+Расширить `..` partial-pattern на позиционные конструкторы:
+
+```nova
+match list {
+    Empty     => true
+    Cons(..)  => false              // partial: все поля игнорируются
+}
+
+match event {
+    Click(..)   => "click"           // не важны координаты
+    Move(x, ..) => "move at ${x}"    // важна только первая
+    _           => "other"
+}
+```
+
+**Правила (предлагаемые):**
+
+1. `Cons(..)` — все поля игнорируются (как `Cons(_, _)` сейчас).
+2. `Move(x, ..)` — первое поле в bind, остальные игнорируются.
+3. `Move(.., z)` — последнее в bind, начальные игнорируются.
+4. `Move(x, .., z)` — первое и последнее, среднее игнорируется.
+
+### Прецеденты
+
+- **Rust:** `..` работает в обеих формах (`Variant(_, _)` и
+  `Variant(..)`), `Variant(x, ..)`/`Variant(.., x)` тоже.
+- **Swift:** `case .variant(_, _, _)` явно, `..` нет — все
+  поля прописываются.
+- **OCaml:** `Cons (_, _)` явный wildcard, нет `..` для tuple.
+- **Haskell:** wildcard `_` для каждого поля.
+
+**Rust — единственный** mainstream-прецедент. Но Rust-сообщество
+любит `..` — частая идиома.
+
+### Цена
+
+1. **Новая форма pattern.** Парсер должен различать `Variant(..)`,
+   `Variant(x, ..)`, `Variant(.., x)`, `Variant(x, .., y)`.
+2. **Конфликт с record-формой `..`.** В `{ field, .. }` `..` стоит
+   после `,`. В позиционной `(x, ..)` тоже после `,`. Парсер
+   различает по виду внешних скобок (`{}` vs `()`), что согласовано
+   с D17.
+3. **Тонкость с одним полем:** `Variant(..)` для конструктора с
+   одним полем эквивалентно `Variant(_)`. Скорее всего разрешено.
+
+### Решение пока
+
+Не вводить формально. **Текущий код использует `Cons(..)` идиому
+неформально** ([examples/stdlib_linkedlist.nv](../examples/stdlib_linkedlist.nv))
+— ожидая, что D17/D52 будет расширен. До формализации `Cons(..)`
+**фактически** работает по интуитивному правилу «`..` означает
+"остальное игнорируется"», но компилятор может потребовать
+строгую форму D17. При работе над парсером — зафиксировать в
+revision к D17 или D52.
+
+**Связь:** [D17](decisions/02-types.md#d17) (partial pattern для
+record), [D52](decisions/02-types.md#d52) (sum-варианты), [D19](decisions/03-syntax.md#d19)
+(match-arms через `=>`).
 
 ---
 

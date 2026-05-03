@@ -14,11 +14,11 @@ module std.set
 // Тип
 // ──────────────────────────────────────────────────────────────────────────
 
-// `use HashMap[T, ()]` через [D39](../spec/decisions/02-types.md#d39)
-// — embed с прокси-методами. Set автоматически получает get/contains/
-// insert HashMap, в нужных местах переопределяем для Set-семантики.
+// `use map HashMap[T, ()]` через [D39](../spec/decisions/02-types.md#d39):
+// embed с прокси-методами. alias `map` обязателен (D39: имя поля
+// snake_case, default-имя по типу не вводится).
 export type Set[T] {
-    use HashMap[T, ()]
+    use map HashMap[T, ()]
 }
 
 
@@ -26,14 +26,12 @@ export type Set[T] {
 // Конструкторы
 // ──────────────────────────────────────────────────────────────────────────
 
-// D55: имя Set[T] из `-> Set[T]`.
-// Имя поля при embed = имя типа ([D39](../spec/decisions/02-types.md#d39)),
-// не keyword `use`. То есть в record-литерале — `HashMap: ...`.
+// D55: имя Set[T] из `-> Set[T]`. В record-литерале — имя поля `map`.
 export fn Set[T].new() -> Set[T] =>
-    { HashMap: HashMap[T, ()].new() }
+    { map: HashMap[T, ()].new() }
 
 export fn Set[T].with_capacity(cap int) -> Set[T] =>
-    { HashMap: HashMap[T, ()].with_capacity(cap) }
+    { map: HashMap[T, ()].with_capacity(cap) }
 
 // Из Vec/массива/итератора.
 export fn Set[T].from_iter(it protocol { mut next() -> Option[T] }) -> Set[T] {
@@ -50,12 +48,12 @@ export fn Set[T].from_iter(it protocol { mut next() -> Option[T] }) -> Set[T] {
 // ──────────────────────────────────────────────────────────────────────────
 
 // Кол-во элементов — прокси через embed (D39).
-export fn Set[T] @len() => @HashMap.len()
+export fn Set[T] @len() => @map.len()
 
-export fn Set[T] @is_empty() => @HashMap.is_empty()
+export fn Set[T] @is_empty() => @map.is_empty()
 
 // Содержит ли элемент. Прокси через embed.
-export fn Set[T] @contains(item T) -> bool => @HashMap.contains(item)
+export fn Set[T] @contains(item T) -> bool => @map.contains(item)
 
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -64,19 +62,19 @@ export fn Set[T] @contains(item T) -> bool => @HashMap.contains(item)
 
 // Вставить. Возвращает true, если элемент **новый** (раньше не было).
 export fn Set[T] mut @insert(item T) -> bool {
-    if @HashMap.contains(item) { return false }
-    @HashMap.insert(item, ())
+    if @map.contains(item) { return false }
+    @map.insert(item, ())
     true
 }
 
 // Удалить. Возвращает true, если элемент был.
 export fn Set[T] mut @remove(item T) -> bool =>
-    match @HashMap.remove(item) {
+    match @map.remove(item) {
         Some(_) => true
         None    => false
     }
 
-export fn Set[T] mut @clear() -> () => @HashMap.clear()
+export fn Set[T] mut @clear() -> () => @map.clear()
 
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -87,15 +85,15 @@ export fn Set[T] mut @clear() -> () => @HashMap.clear()
 // Имя метода фиксировано D46: `@or` ↔ `|`.
 export fn Set[T] @or(other Set[T]) -> Set[T] {
     let mut out = Set[T].new()
-    for x in @HashMap.keys() { out.insert(x) }
-    for x in other.HashMap.keys() { out.insert(x) }
+    for x in @map.keys() { out.insert(x) }
+    for x in other.map.keys() { out.insert(x) }
     out
 }
 
 // Пересечение `a & b` — общие элементы.
 export fn Set[T] @and(other Set[T]) -> Set[T] {
     let mut out = Set[T].new()
-    for x in @HashMap.keys() {
+    for x in @map.keys() {
         if other.contains(x) { out.insert(x) }
     }
     out
@@ -104,7 +102,7 @@ export fn Set[T] @and(other Set[T]) -> Set[T] {
 // Разность `a - b` — элементы a, которых нет в b.
 export fn Set[T] @minus(other Set[T]) -> Set[T] {
     let mut out = Set[T].new()
-    for x in @HashMap.keys() {
+    for x in @map.keys() {
         if !other.contains(x) { out.insert(x) }
     }
     out
@@ -116,7 +114,7 @@ export fn Set[T] @minus(other Set[T]) -> Set[T] {
 // ──────────────────────────────────────────────────────────────────────────
 
 // Итератор по элементам. Прокси HashMap.keys().
-export fn Set[T] @iter() => @HashMap.keys()
+export fn Set[T] @iter() => @map.keys()
 
 
 // ──────────────────────────────────────────────────────────────────────────

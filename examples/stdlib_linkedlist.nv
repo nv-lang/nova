@@ -46,13 +46,13 @@ export fn LinkedList[T].from_array(xs []T) -> LinkedList[T] {
 }
 
 export fn LinkedList[T].from_iter(it protocol { mut next() -> Option[T] }) -> LinkedList[T] {
-    // Накопить в массив, потом обратный fold — иначе O(n²).
-    // Vec[T] alias []T (см. stdlib_vec.nv), поэтому buf : []T напрямую.
-    let mut buf []T = []
+    // Prepend каждый элемент → получаем обратный список (O(1) на шаг).
+    // Затем reverse — суммарно O(n), без вспомогательного массива.
+    let mut acc LinkedList[T] = Empty
     while let Some(x) = it.next() {
-        buf.push(x)
+        acc = Cons(x, acc)
     }
-    LinkedList[T].from_array(buf)
+    acc.reverse()
 }
 
 
@@ -69,8 +69,8 @@ export fn LinkedList[T] @length() -> int =>
 
 export fn LinkedList[T] @is_empty() -> bool =>
     match @ {
-        Empty   => true
-        Cons(_, _) => false
+        Empty    => true
+        Cons(..) => false                // partial: все поля игнорируются
     }
 
 // Голова — первый элемент или None.

@@ -164,6 +164,15 @@ type-check. Семантически близко, но не идентично 
 coercion в named sum'ы (`type StrOrInt | S(str) | I(int)`,
 `let x StrOrInt = "test"`) без subtyping.
 
+### Default-имя поля при embed (`use Type` без alias, Go-style)
+**Отвергнуто (D39 revised).** Раньше D39 разрешал `use Account` без
+имени — поле получало имя `Account` (PascalCase). Это нарушало
+[D30](../03-syntax.md#d30) (поля snake_case, типы PascalCase) и
+создавало визуальную несогласованность в record-блоке: `audit_log`
+рядом с `Account`. Auto-conversion `HashMap` → `hashmap`/`hash_map` —
+magic, не очевидное правило. Решение: `use name Type` с обязательным
+alias. См. [D39](../02-types.md#d39).
+
 ### Subtyping для embed/delegation
 **Отвергнуто.** `use Parent` — это композиция, не наследование.
 `AuditedAccount` не подтип `Account`. См. [D39](../02-types.md#d39).

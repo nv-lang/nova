@@ -672,24 +672,24 @@ type Account {
 
 fn Account mut @deposit(amount money) => @balance += amount
 
-// embed по имени типа: имя поля = "Account"
+// embed: имя поля обязательно (D39 — alias всегда явный)
 type AuditedAccount {
-    use Account
+    use account Account
     audit_log []AuditEntry
 }
 
 fn AuditedAccount mut @withdraw(amount money) Throws[AuditError] {
-    @Account.deposit(-amount)               // явный вызов "родителя"
+    @account.deposit(-amount)               // явный вызов "родителя" через имя поля
     @audit_log.push(AuditEntry.new(amount))
 }
 
 let aa = AuditedAccount { ... }
-aa.deposit(100)                              // авто-прокси: Account.deposit
-aa.balance                                   // авто-прокси: Account.balance
+aa.deposit(100)                              // авто-прокси: account.deposit
+aa.balance                                   // авто-прокси: account.balance
 ```
 
-Имя задаётся через `use name Type` — обязательно при конфликте, опционально
-для читаемости:
+Имя поля **обязательно** при `use` ([D39](decisions/02-types.md#d39))
+— согласовано с [D30](decisions/03-syntax.md#d30) (поля snake_case):
 
 ```nova
 type Wrapper[K, V] {
@@ -707,11 +707,11 @@ type Composite {
 ```
 
 **Override.** Метод того же имени на внешнем типе перекрывает прокси.
-Доступ к «родительскому» — через `@Type.method()`:
+Доступ к «родительскому» — через имя поля:
 
 ```nova
 fn AuditedAccount mut @deposit(amount money) {
-    @Account.deposit(amount)                // вызов оригинала
+    @account.deposit(amount)                // вызов оригинала через имя поля
     @audit_log.push(AuditEntry.new(amount))
 }
 ```
