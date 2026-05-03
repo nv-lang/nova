@@ -357,18 +357,79 @@ let f u64 = n as u64           // ok через cast
 никто не запрещает**, но `type X u64` — компактнее и привычнее
 программистам с фоном Go.
 
-#### Field punning, partial pattern matching, construction
+#### Field punning — расширено и обязательно
 
-Не меняются — работают так же, как до D17:
+D52 расширяет field punning из D17 двумя правилами:
+
+**1. Shorthand для `@field`-доступов** (новое в D52):
 
 ```nova
-let entry = Entry { key, value }                    // field punning
+type RangeIter { end int, inclusive bool, mut cur int }
+
+fn Range @iter() -> RangeIter =>
+    { @end, @inclusive, cur: @start }
+//    ↑    ↑           ↑
+//    @end shorthand   полная форма (имя поля cur ≠ start)
+```
+
+`{ @end }` означает «поле `end`, значение `@end` (то есть `self.end`)».
+По симметрии с D17 (`{ name }` для переменной `name` в scope) —
+теперь `{ @field }` для self-доступа.
+
+**2. Shorthand обязателен, когда имя поля совпадает с источником:**
+
+```nova
+// Переменная в scope:
+let key = "alice"
+let value = 42
+let entry = Entry { key, value }                  // ✓ обязательная форма
+let entry = Entry { key: key, value: value }      // ✗ ОШИБКА: избыточная форма
+
+// @field-доступ:
+let r = { @end, @inclusive, cur: @start }         // ✓
+let r = { end: @end, inclusive: @inclusive, ... } // ✗ ОШИБКА: избыточная
+
+// Явная форма обязательна, когда имя источника отличается:
+let entry = Entry { name: user_name }             // ✓ имя поля ≠ переменной
+let r = { cur: @start }                            // ✓ имя поля cur ≠ start
+let r = { end: other.end }                         // ✓ источник — выражение, не @field
+```
+
+**Парсер:** `{ name`/`{ @name`/`{ name,`/`{ name }` — shorthand;
+`{ name: expr` — полная форма. После `:` ожидается выражение,
+но если выражение — это **ровно тот же identifier или `@`+identifier**,
+что и имя поля → ошибка компиляции «избыточная форма, используйте
+shorthand».
+
+**Mixed разрешён:**
+
+```nova
+{ @end, @inclusive, cur: @start, kind: "iter" }     // shorthand + полные
+```
+
+**Когда расширение работает:**
+
+| Имя поля | Источник | Правило |
+|---|---|---|
+| `name` | переменная `name` в scope | shorthand `{ name }` обязателен |
+| `name` | `@name` (self-поле) | shorthand `{ @name }` обязателен |
+| `name` | переменная `other` (другое имя) | полная форма `{ name: other }` |
+| `name` | `@other` или выражение | полная форма `{ name: @other }` |
+| `name` | `obj.field` | полная форма `{ name: obj.field }` |
+| `name` | литерал, вызов, любое выражение | полная форма |
+
+#### Pattern matching и construction
+
+```nova
 match @buckets[idx] {
     Occupied { value, .. } => Some(value)            // partial с ..
     Occupied { value }     => Some(value)            // partial без ..
     _                      => None
 }
 ```
+
+**Construction всегда требует все обязательные поля.** Частичное
+заполнение типа Rust `..default` отдельным синтаксисом не зафиксировано.
 
 #### Что запрещено
 
@@ -382,6 +443,10 @@ match @buckets[idx] {
   Red | Green` ✗, `type X | Red | Green` ✓).
 - **Single-variant sum** — запрещён (как в D17), используйте record.
 - **Конфликт discriminants** — запрещён.
+- **Избыточная форма `{ name: name }`** — обязателен shorthand
+  `{ name }`. Аналогично `{ field: @field }` — обязателен `{ @field }`.
+  Если имя источника совпадает с именем поля, программист **обязан**
+  использовать shorthand. См. «Field punning» выше.
 
 ### Почему
 
@@ -406,6 +471,14 @@ match @buckets[idx] {
    выровнены, прецедент OCaml/F#/Scala 3.
 7. **Согласованность с D1 «protocols + data, без классов»** — `type`
    только для данных, `protocol` отдельно для поведения.
+8. **Field punning расширен и обязателен.** Один способ записать
+   «поле = источник с тем же именем» — shorthand. Запрет избыточной
+   формы `{ name: name }` устраняет «два пути к одному результату»,
+   что AI-unfriendly (LLM генерирует случайно). Также покрывает
+   `{ @field }` для self-доступов — частый паттерн в record-литералах
+   методов-конструкторов. Прецедент: TS/Rust имеют shorthand, но не
+   делают его обязательным; Nova идёт строже ради единого стиля
+   (D40/D43-стилевая последовательность).
 
 ### Что отвергнуто
 

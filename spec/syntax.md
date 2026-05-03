@@ -497,8 +497,9 @@ fn name(c Color) -> str => match c {
 let key = "alice"
 let value = 42
 
-let entry = Entry { key, value }                 // = Entry { key: key, value: value }
+let entry = Entry { key, value }                 // shorthand обязателен (D52)
 let entry = Entry { key, value, extra: "data" }  // можно смешивать
+// `Entry { key: key }` — ОШИБКА: используйте shorthand `{ key }`.
 ```
 
 **Partial pattern matching** — указывать только нужные поля:
@@ -597,7 +598,7 @@ if let Some(user) = lookup(id), user.is_active {
 ```nova
 // конструктор / static — через точку, без @
 fn Account.new(owner str) -> Account =>
-    Account { _balance: 0, owner: owner }
+    Account { _balance: 0, owner }
 
 // метод инстанса — через пробел и @, неявный self
 fn Account @balance() -> money => @_balance

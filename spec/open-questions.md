@@ -1634,7 +1634,7 @@ type Sql {
 fn sql(parts []str, args []SqlValue) -> Sql =>
     Sql {
         template: parts.join("?"),
-        args: args
+        args
     }
 
 // Использование (через D55 coercion):

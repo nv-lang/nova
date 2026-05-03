@@ -256,15 +256,13 @@ fn audit_middleware(next Handler) -> Handler =>
         let (target_kind, target_id) = target_from_route(pattern)
 
         // Пишем аудит фоном — не блокируем ответ клиенту.
+        // D52: shorthand для полей с тем же именем, что и переменные.
         spawn write_audit(AuditEntryInternal {
-            admin_id:    admin_id,
-            action:      action,
-            target_kind: target_kind,
-            target_id:   target_id,
-            payload:     sanitize_payload(payload),
-            status:      resp.status,
-            ip:          client_ip(req.headers, req.remote_addr),
-            user_agent:  req.headers.get("User-Agent").unwrap_or(""),
+            admin_id, action, target_kind, target_id,
+            payload:    sanitize_payload(payload),
+            status:     resp.status,
+            ip:         client_ip(req.headers, req.remote_addr),
+            user_agent: req.headers.get("User-Agent").unwrap_or(""),
         })
 
         resp

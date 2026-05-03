@@ -72,7 +72,7 @@ export type RangeIter {
 // `Range.iter()` — конструктор итератора.
 // D55: имя RangeIter из `-> RangeIter`.
 export fn Range @iter() -> RangeIter =>
-    { end: @end, inclusive: @inclusive, cur: @start }
+    { @end, @inclusive, cur: @start }
 
 export fn RangeIter mut @next() -> Option[int] {
     let limit_ok = if @inclusive { @cur <= @end } else { @cur < @end }

@@ -616,7 +616,7 @@ type Account {
 
 // конструктор / static — через точку, без @
 fn Account.new(owner str) -> Account =>
-    Account { _balance: 0, owner: owner }
+    Account { _balance: 0, owner }
 
 // метод инстанса — через пробел и @, неявный self
 fn Account @balance() -> money => @_balance

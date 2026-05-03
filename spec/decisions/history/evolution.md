@@ -656,6 +656,68 @@ prior art), [D54](../03-syntax.md#d54) (`as`/`is` остаются явными)
 для Vec), [D58](../03-syntax.md#d58) (Range — заменяет потенциальный
 Vec.from_range).
 
+### Field punning расширен и обязателен (D52)
+
+**Что было:** D17 ввёл field punning только для **переменных в scope**:
+
+```nova
+let key = "alice"
+let value = 42
+let entry = Entry { key, value }                  // shorthand
+let entry = Entry { key: key, value: value }      // тоже валидно (избыточно)
+```
+
+Обе формы равнозначны. **Два пути к одному результату** — anti-pattern
+по AI-first ([D10](../01-philosophy.md#d10)).
+
+Для `@field`-доступов (записи self-полей в record-литерал)
+shorthand отсутствовал:
+
+```nova
+fn Range @iter() -> RangeIter =>
+    { end: @end, inclusive: @inclusive, cur: @start }
+//    ^^^^^^^^^^ ^^^^^^^^^^^^^^^^^^^^^^ повторяющийся @field
+```
+
+**Что стало:** [D52](../02-types.md#d52) расширяет field punning двумя
+правилами:
+
+1. **`{ @field }` — shorthand для self-доступов:**
+   ```nova
+   { @end, @inclusive, cur: @start }
+   ```
+   Имя поля = `end`/`inclusive`, значение = `@end`/`@inclusive`.
+
+2. **Shorthand обязателен**, когда имя поля совпадает с источником:
+   ```nova
+   Entry { key: key }       // ✗ ОШИБКА — используйте { key }
+   { end: @end }            // ✗ ОШИБКА — используйте { @end }
+   { name: user_name }      // ✓ имя поля ≠ источника
+   ```
+
+**Почему пересмотрели:**
+
+- Два пути к одному результату — AI-unfriendly. LLM генерирует
+  случайно, code review не имеет правила.
+- `@field`-shorthand отсутствовал — пропуск симметрии. `@field` —
+  такой же first-class accessor (D35), как переменная в scope.
+- Запрет избыточной формы — последовательность с D40/D43-стилевой
+  философией Nova («один способ для одного случая»). Прецедент Rust
+  имеет lint, но не язык; Nova идёт строже ради единообразия.
+
+**Цена:**
+
+- Все `Entry { key: key }`-формы в spec/examples переписаны на
+  `{ key }`.
+- Все `{ field: @field }` — на `{ @field }`.
+- Несколько исторических примеров и конструкторов исправлено
+  (`Account.new`, audit middleware, RangeIter constructor).
+
+**Связанные D:** [D52](../02-types.md#d52) (расширение и запрет),
+[D17](../02-types.md#d17) (исходное field punning), [D35](../03-syntax.md#d35)
+(`@field`-доступ), [D40](../03-syntax.md#d40), [D43](../03-syntax.md#d43)
+(прецеденты «один способ»).
+
 ## Как читать историю
 
 - **«revised»** в статусе D — текст переписан, решение действует, но

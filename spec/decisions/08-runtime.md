@@ -383,7 +383,7 @@ static-полей**, **нет static-переменных**, **нет static ini
 
 ```nova
 fn Account.new(owner str) -> Account =>
-    Account { _balance: 0, owner: owner }
+    Account { _balance: 0, owner }
 
 fn Account.from_balance(owner str, initial money) -> Account {
     let acc = Account.new(owner)             // явное Account.new, не self.new
@@ -402,7 +402,7 @@ const ACCOUNT_MIN_BALANCE money = 0
 const ACCOUNT_MAX_OVERDRAFT money = 1000
 
 fn Account.new(owner str) -> Account =>
-    Account { _balance: ACCOUNT_MIN_BALANCE, owner: owner }
+    Account { _balance: ACCOUNT_MIN_BALANCE, owner }
 ```
 
 Если нужна группировка — отдельный модуль:
