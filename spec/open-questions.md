@@ -2544,7 +2544,20 @@ fn Range @step(n int) -> StepIter
 
 ---
 
-## Q-resume-semantics. Семантика `resume` в handler-method'е
+## Q-resume-semantics. Семантика `resume` в handler-method'е ✅ ЗАКРЫТО ([D61](decisions/04-effects.md#d61))
+
+> Закрыт через [D61](decisions/04-effects.md#d61) в варианте **(II)
+> tail-only**: `resume` как keyword **отвергнут**, заменён на
+> комбинацию `return v` (нормальное завершение, continuation
+> возобновляется) + `interrupt v` (досрочное прерывание with-блока).
+> Линейность — one-shot. Multi-shot отложен под Q-multishot-resume
+> (если когда-нибудь потребуется backtracking-эффект). Для Never-операций
+> разрешён только `interrupt`. См. D61 «Алгоритм компиляции/интерпретации
+> эффектов» — пошаговое тех-задание имплементатору.
+>
+> Оригинальный текст ниже сохранён для истории.
+
+
 
 **Контекст.** Все handler-литералы в spec'е и examples массово
 используют `resume(value)` для возобновления континуации операции
@@ -2643,7 +2656,17 @@ log(msg) { println(msg); resume(()) }
 
 ---
 
-## Q-handler-method-param-inference. Тип параметра handler-method'а
+## Q-handler-method-param-inference. Тип параметра handler-method'а ✅ ЗАКРЫТО ([D61](decisions/04-effects.md#d61))
+
+> Закрыт через [D61](decisions/04-effects.md#d61) в варианте **(A)
+> inference обязателен по умолчанию, явные типы разрешены опционально**.
+> Параметры handler-method'а биндятся по позиции к параметрам декларации
+> операции; типы автоматически выводятся из effect-декларации. Можно
+> писать `query(q Sql) => ...` для документации, но это избыточно.
+>
+> Оригинальный текст ниже сохранён для истории.
+
+
 
 **Контекст.** Сейчас в handler-литералах параметры пишутся **без
 типа**:
