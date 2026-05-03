@@ -1,0 +1,153 @@
+// stdlib_sql.nv — `SqlValue`, `Sql` тип и `sql\`...\``-tag.
+//
+// Цель — показать **безопасный SQL без injection** через
+// [tagged template literals](../spec/decisions/03-syntax.md#d48).
+// Tag-функция получает `parts` и `args` **раздельно** (D48), template
+// рендерится с `?`-плейсхолдерами, args подставляются параметром БД.
+//
+// Когда-нибудь это переедет в `std.sql` (Q-stdlib-data-types). Здесь —
+// эталонная реализация на актуальной спеке.
+
+module std.sql
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// SqlValue — closed sum для SQL-аргументов
+// ──────────────────────────────────────────────────────────────────────────
+
+// Соответствует канонической схеме «SQL primitives»: целые, дробные,
+// строки, логические, бинарные, NULL. Этого достаточно для 95%
+// backend-задач. Для остального — ручной cast в одном из этих
+// вариантов.
+//
+// D55 literal coercion: `[42, "alice", true]` в позиции `[]SqlValue`
+// раскрывается в `[I(42), S("alice"), B(true)]` автоматически.
+export type SqlValue
+    | I(i64)
+    | F(f64)
+    | S(str)
+    | B(bool)
+    | Bytes([]byte)
+    | Null
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Sql — пара (template, args)
+// ──────────────────────────────────────────────────────────────────────────
+
+// `template` — SQL с `?`-плейсхолдерами; `args` — порядок-параметры.
+// Драйвер БД подставляет `args` как **параметры**, не склеивает в
+// строку → SQL injection невозможен.
+export type Sql {
+    readonly template str
+    readonly args     []SqlValue
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// `sql\`...\``-tag функция
+// ──────────────────────────────────────────────────────────────────────────
+
+// Сигнатура tag-функции для D48: получает `parts` (статические сегменты
+// между `${...}`) и `args` (значения интерполяций). Длина `parts` всегда
+// `args.len + 1`.
+//
+// Template получается соединением `parts` через `?`-плейсхолдер, args
+// проходят как параметры запроса.
+export fn sql(parts []str, args []SqlValue) -> Sql =>
+    { template: parts.join("?"), args }
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Db protocol — стандартный эффект для запросов
+// ──────────────────────────────────────────────────────────────────────────
+
+// `Db` принимает уже подготовленный `Sql`. Это упрощает API: вызывающий
+// конструирует Sql через тег (безопасно), Db исполняет.
+//
+// В тестах handler заменяется на in-memory; никаких mock-библиотек.
+export type Db protocol {
+    query(q Sql) Throws[DbError] -> []Row
+    exec(q Sql) Throws[DbError]  -> int          // affected rows
+    in_transaction[T](body fn() Db Throws -> T) Throws -> T
+}
+
+export type DbError | Connection | Constraint(str) | Timeout | Other(str)
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Row — результат запроса
+// ──────────────────────────────────────────────────────────────────────────
+
+// Минимальное представление: позиционный доступ + named-доступ к
+// колонкам. Реальный stdlib даст больше методов (typed get'ы и т.п.),
+// здесь — каркас для demo.
+export type Row {
+    readonly columns []str
+    readonly values  []SqlValue
+}
+
+// Поиск колонки по имени, возвращает её SqlValue.
+export fn Row @get(name str) -> Option[SqlValue] {
+    let mut i = 0
+    for col in @columns {
+        if col == name { return Some(@values[i]) }
+        i += 1
+    }
+    None
+}
+
+// Позиционный доступ — для статически известного порядка колонок.
+export fn Row @at(i int) -> Option[SqlValue] => @values.get(i)
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Тесты
+// ──────────────────────────────────────────────────────────────────────────
+
+test "sql tag builds template with placeholders" {
+    let user_id = 42
+    let q = sql`SELECT * FROM users WHERE id = ${user_id}`
+    assert q.template == "SELECT * FROM users WHERE id = ?"
+    assert q.args.len == 1
+    match q.args[0] {
+        I(n) => assert n == 42
+        _    => assert false
+    }
+}
+
+test "sql tag with multiple args preserves order" {
+    let name = "alice"
+    let age  = 30
+    let q = sql`INSERT INTO users (name, age) VALUES (${name}, ${age})`
+    assert q.template == "INSERT INTO users (name, age) VALUES (?, ?)"
+    assert q.args.len == 2
+    match q.args[0] {
+        S(s) => assert s == "alice"
+        _    => assert false
+    }
+    match q.args[1] {
+        I(n) => assert n == 30
+        _    => assert false
+    }
+}
+
+test "sql tag with no interpolation" {
+    let q = sql`SELECT 1`
+    assert q.template == "SELECT 1"
+    assert q.args.len == 0
+}
+
+test "Row.get and Row.at" {
+    let row Row = { columns: ["id", "name"], values: [42, "alice"] }
+    match row.get("id") {
+        Some(I(n)) => assert n == 42
+        _          => assert false
+    }
+    match row.at(1) {
+        Some(S(s)) => assert s == "alice"
+        _          => assert false
+    }
+    assert row.get("missing") == None
+    assert row.at(99) == None
+}

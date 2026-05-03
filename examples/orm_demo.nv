@@ -1,0 +1,293 @@
+// orm_demo.nv — repository-pattern и testability через handlers.
+//
+// Цель — показать ORM-уровень абстракции в Nova: type-safe queries
+// через [`sql\`...\``-tag](stdlib_sql.nv), generic-repository,
+// **транзакции через handler-композицию**, **тесты без mock-библиотек**
+// (просто handler-substitution).
+//
+// Используемые фичи:
+// - [D48](../spec/decisions/03-syntax.md#d48) tagged template `sql\`...\``
+// - [D52](../spec/decisions/02-types.md#d52) record + literal coercion
+//   (`[id, name]` → `[]SqlValue`)
+// - [D53](../spec/decisions/02-types.md#d53) `Db` как protocol-эффект
+// - [D31](../spec/decisions/04-effects.md#d31) handler-литералы
+// - `with`-блок ([D11](../spec/decisions/04-effects.md#d11)) — подмена
+//   handler'а
+
+module examples.orm_demo
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Domain
+// ──────────────────────────────────────────────────────────────────────────
+
+type UserId u64                      // newtype (D52) — domain-safety
+
+type User {
+    readonly id    UserId
+    name           str
+    email          str
+    readonly created_at Timestamp
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Repository — generic CRUD
+// ──────────────────────────────────────────────────────────────────────────
+
+// Repo[T] — параметризованный по domain-типу. Generic-параметр T
+// фиксирован на repo-уровне ([D42 Модель A](../spec/decisions/02-types.md#d42)) —
+// один repo работает с одним типом сущности.
+//
+// `table` — имя таблицы. `from_row` — парсер Row → T (контракт типа).
+//
+// В реальном ORM это бы делалось через `derive`/comptime. Здесь
+// программист пишет from_row руками — но обёртка через Repo делает
+// CRUD-операции generic.
+export type Repo[T] {
+    readonly table    str
+    readonly from_row fn(Row) Throws[DbError] -> T
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// CRUD-операции
+// ──────────────────────────────────────────────────────────────────────────
+
+// find_by_id — поиск по PK. NotFound — отдельный вариант ошибки,
+// чтобы caller мог отличить «нет записи» от «БД упала».
+export fn Repo[T] @find_by_id(id u64) Db Throws[RepoError] -> T {
+    let q = sql`SELECT * FROM ${@table} WHERE id = ${id}`
+    let rows = Db.query(q)?
+    match rows {
+        []     => throw NotFound
+        [r]    => @from_row(r)?
+        [_,..] => throw Inconsistent("multiple rows for id ${id}")
+    }
+}
+
+// list — все записи. Без пагинации для краткости demo (в реальном
+// коде — limit/offset параметры).
+export fn Repo[T] @list() Db Throws[RepoError] -> []T {
+    let q = sql`SELECT * FROM ${@table}`
+    let rows = Db.query(q)?
+    let mut out []T = []T.with_capacity(rows.len)
+    for r in rows {
+        out.push(@from_row(r)?)
+    }
+    out
+}
+
+// delete — по id. Возвращает true, если запись была.
+export fn Repo[T] @delete(id u64) Db Throws[RepoError] -> bool {
+    let q = sql`DELETE FROM ${@table} WHERE id = ${id}`
+    let affected = Db.exec(q)?
+    affected > 0
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// User-specific operations
+// ──────────────────────────────────────────────────────────────────────────
+
+// insert — специфичный для User, потому что генерим id (autoincrement)
+// и читаем created_at от БД. Generic-CRUD не умеет этого без
+// схемы/comptime.
+export fn user_insert(name str, email str) Db Throws[RepoError] -> UserId {
+    let q = sql`
+        INSERT INTO users (name, email, created_at)
+        VALUES (${name}, ${email}, NOW())
+        RETURNING id
+    `
+    let rows = Db.query(q)?
+    match rows {
+        [r] => match r.at(0) {
+            Some(I(id)) => id as UserId
+            _           => throw Inconsistent("expected i64 id")
+        }
+        _ => throw Inconsistent("INSERT...RETURNING expected exactly 1 row")
+    }
+}
+
+// users_repo — фабрика репозитория для User.
+export fn users_repo() -> Repo[User] =>
+    {
+        table: "users",
+        from_row: (row) => row_to_user(row),
+    }
+
+// row_to_user — парсер Row → User. В реальном ORM генерируется
+// derive-макросом, здесь руками.
+fn row_to_user(row Row) Throws[RepoError] -> User {
+    let id    = row.get("id")?.as_int()?
+    let name  = row.get("name")?.as_str()?
+    let email = row.get("email")?.as_str()?
+    let ts    = row.get("created_at")?.as_int()?
+
+    User { id: id as UserId, name, email, created_at: Timestamp.from_unix(ts) }
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// SqlValue — helper-методы для парсинга
+// ──────────────────────────────────────────────────────────────────────────
+
+// Локальные helper'ы — в реальном stdlib будут на самом SqlValue.
+fn Option[SqlValue] @as_int() -> Option[i64] =>
+    match @ {
+        Some(I(n)) => Some(n)
+        _          => None
+    }
+
+fn Option[SqlValue] @as_str() -> Option[str] =>
+    match @ {
+        Some(S(s)) => Some(s)
+        _          => None
+    }
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Errors
+// ──────────────────────────────────────────────────────────────────────────
+
+export type RepoError
+    | NotFound
+    | Inconsistent(str)
+    | Db_(DbError)
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Транзакция через handler-композицию
+// ──────────────────────────────────────────────────────────────────────────
+
+// transfer_users — пример **атомарной** операции через
+// `Db.in_transaction`. handler `Db` сам управляет commit/rollback;
+// бизнес-код не пишет ни `BEGIN`, ни `COMMIT`.
+//
+// Если внутри transfer происходит throw — handler делает rollback.
+// Если успешно — commit. Никакой явной обработки.
+export fn transfer_users(from_id UserId, to_id UserId)
+    Db Throws[RepoError] -> () =>
+    Db.in_transaction(() => {
+        let repo = users_repo()
+        let from = repo.find_by_id(from_id as u64)?
+        let to   = repo.find_by_id(to_id as u64)?
+        // ...логика перевода между пользователями
+        ()
+    })
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Тесты — handler-substitution вместо mocks
+// ──────────────────────────────────────────────────────────────────────────
+
+// in_memory_db — тест-handler, заменяющий настоящий Postgres-handler.
+// Никаких mock-библиотек: handler — обычная функция-литерал, прямо в
+// тесте.
+test "find_by_id returns the user" {
+    let mut storage = HashMap[u64, Row].new()
+    storage.insert(1, { columns: ["id", "name", "email", "created_at"],
+                        values:  [1, "alice", "a@example.com", 1700000000] })
+
+    with Db = Db {
+        query(q) => {
+            // Простейшая интерпретация: по template решаем, что вернуть.
+            // Реальный test-handler парсит SQL — здесь упрощённо.
+            if q.template.contains("WHERE id = ?") {
+                let id_arg = match q.args[0] {
+                    I(n) => n as u64
+                    _    => panic("expected i64 id arg")
+                }
+                match storage.get(id_arg) {
+                    Some(r) => resume([r])
+                    None    => resume([])
+                }
+            } else {
+                resume([])
+            }
+        }
+        exec(q)             => resume(0)
+        in_transaction(b)   => resume(b())   // transaction = inline call
+    } {
+        let repo = users_repo()
+        let u = repo.find_by_id(1)?
+        assert u.name == "alice"
+        assert u.email == "a@example.com"
+    }
+}
+
+test "find_by_id throws NotFound for missing id" {
+    with Db = Db {
+        query(q)            => resume([])    // всегда пусто
+        exec(q)             => resume(0)
+        in_transaction(b)   => resume(b())
+    } {
+        let repo = users_repo()
+        match repo.find_by_id(999) {
+            Ok(_)        => assert false
+            Err(NotFound) => ()              // ожидаемый исход
+            Err(_)       => assert false
+        }
+    }
+}
+
+test "delete returns true when row existed" {
+    let mut storage = HashMap[u64, Row].new()
+    storage.insert(1, { columns: ["id"], values: [1] })
+
+    with Db = Db {
+        query(q)            => resume([])
+        exec(q) => {
+            // Симулируем DELETE: 1 affected row если в storage
+            // Упрощённо: первый arg — id, удаляем если есть.
+            let id = match q.args[0] {
+                I(n) => n as u64
+                _    => 0
+            }
+            if storage.contains(id) {
+                storage.remove(id)
+                resume(1)
+            } else {
+                resume(0)
+            }
+        }
+        in_transaction(b)   => resume(b())
+    } {
+        let repo = users_repo()
+        assert repo.delete(1) == true
+        assert repo.delete(1) == false       // повторно — нечего удалять
+    }
+}
+
+// transfer_users в transaction-handler'е, который **rollback**'ит при throw.
+test "transaction rolls back on throw" {
+    let mut commits = 0
+    let mut rollbacks = 0
+
+    with Db = Db {
+        query(q)  => resume([])              // всегда пусто → NotFound
+        exec(q)   => resume(0)
+        in_transaction(b) => {
+            // Имитация transaction handler'а: ловим throw → rollback;
+            // успех → commit. Реальный postgres-handler сделает
+            // BEGIN/COMMIT/ROLLBACK на соединении.
+            match try_run(b) {
+                Ok(v) => {
+                    commits += 1
+                    resume(v)
+                }
+                Err(e) => {
+                    rollbacks += 1
+                    throw e
+                }
+            }
+        }
+    } {
+        match transfer_users(1 as UserId, 2 as UserId) {
+            Err(NotFound) => ()              // first find_by_id — NotFound
+            _             => assert false
+        }
+    }
+    assert rollbacks == 1
+    assert commits == 0
+}

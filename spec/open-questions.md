@@ -1608,6 +1608,14 @@ type IntOrStr | (int) | (str)
 
 ## Q-stdlib-data-types. `SqlValue`, `JsonValue`, `Sql`, теги `sql`/`json` в stdlib
 
+**SQL-часть — эталонная реализация в [`examples/stdlib_sql.nv`](../examples/stdlib_sql.nv)**
+и применение в [`examples/orm_demo.nv`](../examples/orm_demo.nv).
+Окончательная фиксация в prelude (D26) — отдельным D-блоком после
+v1.0-stdlib.
+
+**JSON-часть — открыта.** Number representation и Object representation
+не зафиксированы (см. подвопросы ниже).
+
 **Контекст.** [D48](decisions/03-syntax.md#d48) фиксирует tagged
 template literals и стандартные теги `json`, `sql`, `regex`, `bytes`.
 Но **возвращаемые типы** этих тегов и их структура — не определены.
