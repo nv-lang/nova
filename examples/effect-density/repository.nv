@@ -31,7 +31,10 @@ export fn account_get(id AccountId) Db Cache Throws[RepoError] -> Account =>
     match Cache.get(cache_key) {
         Some(bytes) => decode_account(bytes)?
         None => {
-            let rows = Db.query("select * from accounts where id = $1", [id])?
+            // D55: [id as u64] coerce'ится в [SqlValue.I(...)] (newtype → underlying → SqlValue).
+            // Будущее: через sql`...` (Q-stdlib-data-types) запишется так:
+            //   let rows = Db.query(sql`select * from accounts where id = ${id as u64}`)?
+            let rows = Db.query("select * from accounts where id = $1", [id as u64])?
             let acc = match rows {
                 []     => throw RepoError.NotFound
                 [r]    => row_to_account(r)?
@@ -48,9 +51,10 @@ export fn account_get(id AccountId) Db Cache Throws[RepoError] -> Account =>
 // Logger тут НЕТ — лог делает service-слой, repository не должен решать
 // что логгировать.
 export fn account_update_balance(id AccountId, new_balance Money) Db Cache Throws[RepoError] -> () =>
+    // D55: каждый элемент coerce'ится под SqlValue из своего типа.
     let affected = Db.exec(
         "update accounts set balance_amount = $1, balance_currency = $2 where id = $3 and not closed",
-        [new_balance.amount, new_balance.currency, id]
+        [new_balance.amount, new_balance.currency, id as u64]
     )?
     if affected == 0 { throw RepoError.NotFound }
     Cache.invalidate("account:${id}")
@@ -64,16 +68,24 @@ export fn account_update_balance(id AccountId, new_balance Money) Db Cache Throw
 // Эффекты: Db, Throws[DbError]. (Без Cache — transfer не кэшируется,
 // он immutable после завершения, читается редко.)
 export fn transfer_insert(t Transfer) Db Throws[RepoError] -> () =>
+    // D55: каждый элемент списка coerce'ится в SqlValue по своему типу.
+    // newtype'ы (TransferId, AccountId, TransferStatus) — через `as` к
+    // underlying-типу. Timestamp — предполагаем coerce в Bytes/I через
+    // serializer (зависит от stdlib-конвенции).
     Db.exec(
         "insert into transfers (id, from_id, to_id, amount, currency, status, created_at) " +
         "values ($1, $2, $3, $4, $5, $6, $7)",
-        [t.id, t.from, t.to, t.amount.amount, t.amount.currency, t.status, t.created_at]
+        [t.id as str, t.from as u64, t.to as u64, t.amount.amount,
+         t.amount.currency, t.status as int, t.created_at]
     )?
+    ()
     ()
 
 
 export fn transfer_update_status(id TransferId, status TransferStatus) Db Throws[RepoError] -> () =>
-    let affected = Db.exec("update transfers set status = $1 where id = $2", [status, id])?
+    // D55: status и id — newtype'ы, явный cast к underlying для coerce в SqlValue.
+    let affected = Db.exec("update transfers set status = $1 where id = $2",
+                           [status as int, id as str])?
     if affected == 0 { throw RepoError.NotFound }
 
 

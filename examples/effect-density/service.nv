@@ -128,6 +128,9 @@ fn validate_pair(from Account, to Account, amount Money) Throws[TransferError] -
 // Чистые функции — БЕЗ ЭФФЕКТОВ. Это база, на которой стоит вся гарантия
 // детерминизма Nova (D28). Можно мемоизировать, вызвать в любом потоке,
 // заменить константой при равных входах.
+// D55 формально применим (тип `Money` из `-> Money`), но `{ {...} }`
+// — `{}` блок + record-литерал внутри — выглядит шумно. Имя `Money`
+// для ясности оставлено; см. open-questions Q-style-coercion.
 fn add_money(a Money, b Money) Throws[TransferError] -> Money =>
     if a.currency != b.currency { throw CurrencyMismatch }
     else { Money { amount: a.amount + b.amount, currency: a.currency } }

@@ -221,8 +221,9 @@ type HashMapIter[K, V] {
 }
 
 // HashMap.@iter() — итератор по парам (k, v) в произвольном порядке.
+// D55: имя HashMapIter[K, V] выводится из `-> HashMapIter[K, V]`.
 export fn HashMap[K, V] @iter() -> HashMapIter[K, V] =>
-    HashMapIter { map_ref: @, pos: 0 }
+    { map_ref: @, pos: 0 }
 
 // HashMapIter mut @next() — стандартная операция для for-loop.
 //
@@ -240,8 +241,9 @@ export fn HashMapIter[K, V] mut @next() -> Option[(K, V)] {
 
 
 // HashMap.@keys() — итератор только по ключам.
+// D55: имя KeysIter[K, V] выводится из `-> KeysIter[K, V]`.
 export fn HashMap[K, V] @keys() -> KeysIter[K, V] =>
-    KeysIter { inner: @iter() }
+    { inner: @iter() }
 
 type KeysIter[K, V] { inner HashMapIter[K, V] }
 
@@ -253,8 +255,9 @@ export fn KeysIter[K, V] mut @next() -> Option[K] =>
 
 
 // HashMap.@values() — итератор только по значениям.
+// D55: имя ValuesIter[K, V] выводится из `-> ValuesIter[K, V]`.
 export fn HashMap[K, V] @values() -> ValuesIter[K, V] =>
-    ValuesIter { inner: @iter() }
+    { inner: @iter() }
 
 type ValuesIter[K, V] { inner HashMapIter[K, V] }
 

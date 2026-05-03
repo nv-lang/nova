@@ -23,7 +23,7 @@ export type Duration {
 }
 
 // Нулевая длительность — часто нужна как default.
-export const ZERO Duration = Duration { nanos: 0 }
+export const ZERO Duration = { nanos: 0 }    // D55: имя Duration из аннотации
 
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -36,13 +36,14 @@ export const ZERO Duration = Duration { nanos: 0 }
 // `-> Duration` оставляем явно для public API — это документация
 // возвращаемого типа в stdlib (см. D45 style guide для export-функций).
 
-export fn Duration.from_nanos(n i64) -> Duration => Duration { nanos: n }
-export fn Duration.from_micros(n i64) -> Duration => Duration { nanos: n * 1_000 }
-export fn Duration.from_millis(n i64) -> Duration => Duration { nanos: n * 1_000_000 }
-export fn Duration.from_secs(n i64) -> Duration => Duration { nanos: n * 1_000_000_000 }
-export fn Duration.from_mins(n i64) -> Duration => Duration { nanos: n * 60 * 1_000_000_000 }
-export fn Duration.from_hours(n i64) -> Duration => Duration { nanos: n * 3_600 * 1_000_000_000 }
-export fn Duration.from_days(n i64) -> Duration => Duration { nanos: n * 86_400 * 1_000_000_000 }
+// D55: имя Duration выводится из `-> Duration`, в литерале опускаем.
+export fn Duration.from_nanos(n i64) -> Duration => { nanos: n }
+export fn Duration.from_micros(n i64) -> Duration => { nanos: n * 1_000 }
+export fn Duration.from_millis(n i64) -> Duration => { nanos: n * 1_000_000 }
+export fn Duration.from_secs(n i64) -> Duration => { nanos: n * 1_000_000_000 }
+export fn Duration.from_mins(n i64) -> Duration => { nanos: n * 60 * 1_000_000_000 }
+export fn Duration.from_hours(n i64) -> Duration => { nanos: n * 3_600 * 1_000_000_000 }
+export fn Duration.from_days(n i64) -> Duration => { nanos: n * 86_400 * 1_000_000_000 }
 
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -71,16 +72,16 @@ export fn Duration @is_zero() => @nanos == 0
 // математических операций оставляем явным для ясности.
 
 export fn Duration @plus(other Duration) -> Duration =>
-    Duration { nanos: @nanos + other.nanos }
+    { nanos: @nanos + other.nanos }
 
 export fn Duration @minus(other Duration) -> Duration =>
-    Duration { nanos: @nanos - other.nanos }
+    { nanos: @nanos - other.nanos }
 
 export fn Duration @times(n i64) -> Duration =>
-    Duration { nanos: @nanos * n }
+    { nanos: @nanos * n }
 
 export fn Duration @div(n i64) -> Duration =>
-    Duration { nanos: @nanos / n }
+    { nanos: @nanos / n }
 
 
 // ──────────────────────────────────────────────────────────────────────────

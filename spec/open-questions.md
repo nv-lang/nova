@@ -1753,6 +1753,113 @@ let j JsonValue = 42         // что: Number(42 as f64) или ОШИБКА?
 
 ---
 
+## Q-style-coercion. Когда применять D55 coercion, когда писать явно?
+
+**Контекст.** [D55](decisions/02-types.md#d55) ввёл literal coercion в
+позиции с явным целевым типом. Это **opt-in эргономика** — старая
+форма (явные конструкторы и имена типов) **тоже валидна** и работает.
+Получаются **два равнозначных написания** одного и того же:
+
+```nova
+// Sum-coercion
+let m Maybe[int] = 42                    // ✓ coercion
+let m Maybe[int] = Just(42)               // ✓ явный, тоже валидно
+
+// Record-coercion
+let u User = { id: 2, name: "Bob" }       // ✓ coercion
+let u User = User { id: 2, name: "Bob" }   // ✓ явный, тоже валидно
+
+fn make() -> Duration => { nanos: 100 }    // ✓ coercion
+fn make() -> Duration => Duration { nanos: 100 }    // ✓ явный
+```
+
+Это **classical style-vs-mandate** вопрос, не зафиксированный в D55.
+
+**Реальные case'ы из миграции `examples/`:**
+
+1. **Однозначно лучше с coercion:**
+   ```nova
+   export fn Duration.from_secs(n i64) -> Duration => { nanos: n * 1e9 }
+   //                                                ^^^ имя из аннотации, чище
+   ```
+
+2. **Явный конструктор лучше из-за визуальной симметрии в match:**
+   ```nova
+   match @buckets[idx] {
+       Occupied { value } => Some(value)        // лучше Some(value)
+       _                  => None               // ← unit, не coerce'ится
+   }
+   // С coercion: `value` слева, `None` справа — асимметрично, читать сложнее.
+   ```
+
+3. **Явный конструктор лучше в `let` без аннотации:**
+   ```nova
+   let ip_value = if e.ip != "" { Some(e.ip) } else { None }
+   // нет аннотации — coercion не работает; нужны явные Some/None.
+   ```
+
+4. **Спорно — `{ {...} }` после else:**
+   ```nova
+   else { Money { amount: a + b, currency: c } }    // явный
+   else { { amount: a + b, currency: c } }           // coerce — `{ {...}}` шумно
+   ```
+
+**Альтернативы политики:**
+
+**A. Permissive (текущее).** Программист сам выбирает — coercion или
+явно. D55 разрешает оба.
+- Плюс: гибкость, читаемость per-case.
+- Минус: **inconsistency** — в кодовой базе одно и то же пишется
+  по-разному. Code review устаёт. LLM генерирует то так, то так.
+
+**B. Style guide (рекомендация).** D55 разрешает оба, но **стиль
+рекомендует** одну форму:
+- expression-body return: предпочитать coercion (короче).
+- match-веточки с unit-альтернативой (Some/None): явные конструкторы
+  (visual symmetry).
+- `let` без аннотации: явный конструктор (других вариантов нет).
+- Сложные nested-литералы (`{ {...} }`): явный для ясности.
+
+Это **не правило компилятора**, а guideline для `nova fmt`/линтера и
+code review.
+
+**C. Mandatory coercion.** Запретить явный конструктор там, где
+coercion применим — компилятор ругается «излишняя обёртка». **Жёсткая
+форма**, единая.
+- Плюс: zero ambiguity, единый стиль везде.
+- Минус: ломает практичность (case 3 выше — нет аннотации, нельзя
+  без Some), требует разрешения для `let` без аннотации.
+
+**D. Mandatory explicit.** Запретить coercion — программист всегда
+пишет имя.
+- Плюс: explicit always.
+- Минус: убивает D55 целиком, теряем эргономику prelude-типов.
+
+**Решение пока:** A (permissive). При работе над `nova fmt`/style
+guide вернуться к B — формализовать рекомендации. C/D — слишком
+жёстко, ограничивает практический код.
+
+**Тонкости для guideline (если введём B):**
+
+- **expression-body** с явным `-> T`: предпочитать coercion (короче).
+- **`let x T = ...`** с аннотацией: предпочитать coercion.
+- **`let x = ...`** без аннотации: явный конструктор обязателен.
+- **match-arms**: unit-варианты (None, Empty) **не coerce'ятся**, для
+  визуальной симметрии писать **все** ветки с явным конструктором.
+- **`{ {...} }` (block + record-литерал)**: писать явный имя для
+  ясности (избегать визуально шумного `{ {...}}`).
+- **call-site аргументы коллекций**: `[42, "alice"]` для `[]SqlValue`
+  — coercion лучше (нет `[I(42), S("alice")]`-шума).
+- **nested coercion**: `let r Result[User, str] = { id: 2, name:
+  "Bob" }` — двойная coercion (record + sum), явный был бы
+  `Ok(User { ... })`. Coercion **значительно** короче.
+
+**Связь:** [D55](decisions/02-types.md#d55), Q-anonymous-union,
+Q-numeric-coercion (связаны), Q9 (style guide как часть tooling в
+v1.0).
+
+---
+
 ## Финальное напоминание
 
 Прежде чем продолжать **дизайн**, прочитай:
