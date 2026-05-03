@@ -9,7 +9,7 @@
 
 ## Что подсвечивается
 
-- **Ключевые слова:** `fn`, `type`, `alias`, `protocol`, `let`, `mut`, `const`, `match`, `if`, `else`, `for`, `while`, `loop`, `return`, `throw`, `with`, `defer`, `spawn`, `parallel`, `supervised`, `forbid`, `test`
+- **Ключевые слова:** `fn`, `type`, `alias`, `protocol`, `let`, `mut`, `const`, `match`, `if`, `else`, `for`, `while`, `loop`, `return`, `throw`, `with`, `defer`, `spawn`, `parallel`, `supervised`, `forbid`, `test`, `is` (D54 runtime type-check для `any`)
 - **Модули и импорты:** `module`, `import`, `export`, `as`
 - **Типы prelude:** `Option`, `Result`, `Some`, `None`, `Ok`, `Err`, `Error`, `Never`, `Vec`, `HashMap`, `Channel`, `Mutex`, ...
 - **Стандартные эффекты:** `Throws`, `Io`, `Net`, `Db`, `Fs`, `Time`, `Random`, `Mut`, `Alloc`, `Async`, `Par`, `Log`, `Trace`, `Ask`

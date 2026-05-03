@@ -170,7 +170,7 @@
                 },
                 {
                     "name": "keyword.operator.expression.nova",
-                    "match": "\\b(resume|old)\\b"
+                    "match": "\\b(resume|old|is)\\b"
                 }
             ]
         },

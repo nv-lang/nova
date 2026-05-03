@@ -11,6 +11,7 @@
 | [D17](#d17-объявление-типов-единый-синтаксис-без-) | Объявление типов: единый синтаксис без `\|` | revised → D52 |
 | [D52](#d52-объявление-типов-revised-newtype-alias-sum-через-leading-) | Объявление типов revised: newtype, `alias`, sum через leading `\|` | active |
 | [D53](#d53-унификация-protocol-под-type-protocol-как-kind-токен) | Унификация: `protocol` под `type`, `protocol` как kind-токен | active |
+| [D55](#d55-literal-coercion-в-позиции-с-явным-типом-sum-конструкторы-и-record-литералы) | Literal coercion в позиции с явным типом: sum-конструкторы и record-литералы | active |
 | [D42](#d42-protocol-keyword-для-структурных-интерфейсов) | `protocol` keyword для структурных интерфейсов | revised → D53 |
 | [D15](#d15-структурные-интерфейсы) | Структурные интерфейсы | revised → D42 → D53 |
 | [D39](#d39-embed-и-delegation-use-type-и-use-name-type) | Embed и delegation: `use Type` и `use name Type` | active |
@@ -741,6 +742,409 @@ kind-токеном в системе D52, унифицируя объявлен
 единым keyword'ом.
 
 Q22 («унификация type/protocol») — закрыт принятием D53.
+
+---
+
+## D55. Literal coercion в позиции с явным типом: sum-конструкторы и record-литералы
+
+### Что
+В позиции, где компилятор **явно знает целевой тип** `T` (let с
+аннотацией, аргумент функции, return-выражение), литерал
+автоматически подгоняется под `T`. Два случая:
+
+1. **Sum-coercion.** Значение типа `S` оборачивается в **единственный**
+   unary-конструктор `C(S)` sum-типа `T`.
+2. **Record-coercion.** Анонимный record-литерал `{ field: value, ... }`
+   получает тип `T` без необходимости писать имя типа перед `{}`.
+
+Без runtime-cost, без subtyping. Тип значения после coercion — сам `T`.
+
+```nova
+// Sum-coercion
+type StrOrInt | S(str) | I(int)
+
+let a StrOrInt = "test"          // компилятор: a = S("test")
+let b StrOrInt = 25               // компилятор: b = I(25)
+
+fn process(x StrOrInt) -> str => ...
+process("alice")                   // компилятор: process(S("alice"))
+process(42)                        // компилятор: process(I(42))
+
+// Record-coercion
+type User { id u64, name str }
+
+let u User = { id: 2, name: "Bob" }    // компилятор: u = User { id: 2, name: "Bob" }
+
+fn create_user() -> User =>
+    { id: 3, name: "Carol" }            // компилятор подставляет User
+
+fn save(u User) -> () => ...
+save({ id: 4, name: "Dave" })           // компилятор: save(User { ... })
+```
+
+### Правило
+
+#### Позиции с «явно ожидаемым типом»
+
+Coercion (и sum-, и record-вариант) применяется только там, где
+компилятор **точно знает** целевой тип:
+
+| Позиция | Coercion применяется? |
+|---|---|
+| `let x T = value` (явная аннотация) | да |
+| `fn f(x T)` — на caller-стороне (`f(value)`) | да |
+| `fn f() -> T => value` (return-выражение) | да |
+| `let x = value` (без аннотации) | **нет** — выводится тип значения |
+| Generic-параметр после конкретизации (`Maybe[int]`) | да |
+| Match-arm result (когда тип ветки фиксирован) | да |
+| Литерал коллекции с явным типом (`[]T`) | да для каждого элемента |
+
+В позициях без явного типа никакая coercion не применяется — литерал
+имеет «свой» тип (`{ id: 2 }` — анонимный record, `42` — int, и т.д.).
+
+#### Sum-coercion
+
+В позиции с явным ожидаемым типом `T` (sum-тип) значение типа `S`
+оборачивается, если:
+
+1. У `T` **ровно один** unary-конструктор `C(S)`, принимающий тип `S`.
+2. Значение точного типа `T` уже не подходит (нет exact match).
+
+**Стандартные prelude-типы:**
+
+```nova
+let m Maybe[int] = 42                        // Just(42)
+let r Result[User, str] = User { ... }       // Ok(User { ... })
+let opt Option[str] = "alice"                // Some("alice")
+```
+
+**Коллекции:**
+
+```nova
+type SqlValue | I(i64) | F(f64) | S(str) | B(bool) | Bytes([]byte) | Null
+
+let args []SqlValue = [42, "alice", true]    // [I(42), S("alice"), B(true)]
+Db.query("SELECT * FROM users WHERE id = ?", [42])  // [I(42)]
+```
+
+**Генерики:**
+
+```nova
+type Wrapper[T] | W(T) | Empty
+
+let w Wrapper[int] = 42                      // W(42)
+let w Wrapper[str] = "test"                   // W("test")
+```
+
+#### Record-coercion
+
+В позиции с явным ожидаемым record-типом `T` анонимный record-литерал
+`{ field: value, ... }` подгоняется под `T`. Имя типа перед `{}`
+писать не нужно — компилятор подставляет.
+
+```nova
+type User { id u64, name str }
+
+let u User = { id: 2, name: "Bob" }
+// эквивалент:
+let u User = User { id: 2, name: "Bob" }
+
+fn save(u User) -> () => ...
+save({ id: 4, name: "Dave" })             // эквивалент save(User { ... })
+
+fn create() -> User =>
+    { id: 5, name: "Eve" }                 // эквивалент User { id: 5, name: "Eve" }
+
+fn make_default() -> Account =>
+    { id: 1, balance: 0, closed: false }   // в return-позиции с типом Account
+```
+
+**Правила:**
+
+1. **Все обязательные поля должны присутствовать** в литерале — как
+   и для именованного record-литерала ([D17](#d17-объявление-типов-единый-синтаксис-без-)
+   construction всегда требует все поля).
+2. **Имена и типы полей** должны точно соответствовать `T`. Лишнее
+   поле или несовпадение типа — ошибка компиляции.
+3. **Field punning** ([D17](#d17-объявление-типов-единый-синтаксис-без-))
+   работает: `let u User = { id, name }` если `id` и `name` —
+   переменные в скоупе.
+4. **Без явного целевого типа** литерал `{ id: 2, name: "Bob" }`
+   остаётся анонимным record-значением. Тип параметра функции или
+   аннотации `let` активирует coercion.
+
+**Композиция с sum-coercion:**
+
+```nova
+let r Result[User, str] = { id: 2, name: "Bob" }
+// шаг 1 (record-coercion): { id: 2, name: "Bob" } → User { id: 2, name: "Bob" }
+// шаг 2 (sum-coercion): User → Ok(User { ... })
+```
+
+Записывается как одно действие компилятора в позиции с явным типом
+`Result[User, str]`. Один-единственный record-литерал → User → Ok.
+
+**Симметрия с массивами:**
+
+То же type-driven поведение работает для массивов и других литералов в
+позиции аргумента — это **та же модель**, которой Nova уже пользуется
+для пустых массивов:
+
+```nova
+fn first[T](xs []T) -> Option[T] => ...
+let r = first([])                   // [] : []T, T выводится из контекста
+
+fn save(u User) -> () => ...
+save({ id: 2, name: "Bob" })        // { ... } : User, тип параметра известен
+
+fn save_all(us []User) -> () => ...
+save_all([{ id: 1, name: "a" }, { id: 2, name: "b" }])
+// каждый { ... } получает тип User из контекста []User
+```
+
+Аннотация типа параметра — единственный «локальный контекст», который
+читается, и он рядом с вызовом.
+
+**Sum-варианты с record-формой** не получают анонимной формы —
+программист пишет конструктор:
+
+```nova
+type Shape | Circle { radius f64 } | Square { side f64 }
+
+let s Shape = Circle { radius: 5.0 }   // явный конструктор обязателен
+let s Shape = { radius: 5.0 }           // ОШИБКА: по полям невозможно
+                                        // выбрать между Circle и Square
+                                        // (даже если у них разные поля,
+                                        // программист пишет имя варианта)
+```
+
+Это сознательное ограничение: sum-варианты с record-формой требуют
+имени конструктора всегда. Иначе at parse-time нужно матчить
+по структуре полей — type-driven parsing, антипаттерн.
+
+#### Когда coercion НЕ применяется
+
+**Ambiguity — несколько конструкторов с тем же типом** (sum-coercion):
+
+```nova
+type Ambiguous | A(int) | B(int)
+
+let x Ambiguous = 42         // ОШИБКА: ambiguous, A(42) или B(42)?
+let x = A(42)                 // явный конструктор — ok
+```
+
+**Несоответствие — ни один конструктор не принимает тип значения:**
+
+```nova
+type Color | Red | Green | Blue
+
+let c Color = "red"           // ОШИБКА: ни один конструктор не принимает str
+let c = Red                    // unit-конструктор
+```
+
+**Без аннотации — coercion отключён:**
+
+```nova
+type StrOrInt | S(str) | I(int)
+
+let a = "test"                // a : str (не StrOrInt, аннотации нет)
+let b StrOrInt = "test"        // b : StrOrInt = S("test") (аннотация есть)
+
+let r = { id: 2, name: "Bob" }   // r : анонимный record { id int, name str }
+let u User = { id: 2, name: "Bob" }   // u : User (через record-coercion)
+```
+
+**Newtype через D52 — coercion следует типу значения, не возможным кастам:**
+
+```nova
+type UserId u64
+type Wrapper | W(UserId) | N(int)
+
+let w Wrapper = 42            // 42 : int → N(42) (тип значения int)
+let w Wrapper = 42 as UserId  // → W(42 as UserId) — явный as, потом coercion
+let w Wrapper = UserId(42)    // явный конструктор UserId
+```
+
+**Несовпадение полей record:**
+
+```nova
+type User { id u64, name str }
+
+let u User = { id: 2 }                    // ОШИБКА: missing field `name`
+let u User = { id: 2, name: "Bob", age: 30 }   // ОШИБКА: unknown field `age`
+let u User = { id: "two", name: "Bob" }   // ОШИБКА: id expects u64, got str
+```
+
+Coercion **не строит цепочку конверсий** — только одна обёртка вокруг
+exact-type значения.
+
+#### Multi-parameter и tuple-варианты
+
+**Multi-parameter конструкторы — coercion не применяется в MVP:**
+
+```nova
+type Event | Click(int, int) | KeyPress(str)
+
+let e Event = "enter"         // ok — KeyPress("enter"), unary с str
+let e Event = (5, 10)          // ОШИБКА в MVP: tuple-coercion не вводится
+let e = Click(5, 10)           // явный конструктор
+```
+
+Tuple-coercion `(5, 10) → Click(5, 10)` — отложено. Усложняет правила
+(как различать «tuple как значение» vs «tuple-coercion в multi-param»),
+не критично для use-case'ов.
+
+#### Unit-конструкторы — coercion бессмыслен
+
+Unit-варианты не принимают значение, coercion не нужен — программист
+пишет конструктор напрямую:
+
+```nova
+type State | Open | Closed
+let s State = Open              // unit, coercion не применяется
+```
+
+### Почему
+
+1. **Огромный win в эргономике для prelude-типов.**
+   `Option[T]` и `Result[T, E]` — самые частые sum'ы языка. Без coercion
+   программист пишет `Some(42)`, `Ok(user)` каждый раз. С coercion —
+   `42`, `user`. Убирает значительную часть boilerplate.
+2. **Без subtyping.** Тип значения после coercion — **сам sum** или
+   **сам record**, не подтип. На уровне типов всё чисто: pattern match
+   exhaustive, variance не возникает. Anonymous unions (TS-style
+   `string | number`) **не вводятся** — coercion не делает того же
+   эффекта семантически.
+3. **Без runtime-cost.** Sum-обёртка — обычный конструктор, runtime-tag
+   уже есть в representation sum'а (D52). Record-coercion — это просто
+   подстановка имени типа, никакого runtime-преобразования.
+4. **Закрывает use-case'ы `any` (sum) и убирает шум именования
+   (record).** `Db.query(sql, args []SqlValue)` теперь type-safe —
+   без `[]any` и без `is`-extract. `let u User = { id: 2, name: "Bob"
+   }` — без повтора имени типа.
+5. **AI-friendly.** LLM пишет `[42, "alice"]` для SQL-аргументов
+   естественно, без думания о конструкторах. `{ id: 2, name: "Bob" }`
+   в позиции с явным типом — естественный способ создать record.
+   Имя типа из аннотации — единственный «локальный контекст», который
+   нужно прочитать, и он уже рядом.
+6. **Прецеденты:**
+   - **Swift `ExpressibleByStringLiteral`/`ExpressibleByIntegerLiteral`** —
+     opt-in protocol'ы для coercion. Nova делает это **автоматически**
+     для unary-конструкторов sum'ов (без opt-in).
+   - **Scala 3 `Conversion[A, B]`** — opt-in given-конверсии.
+   - **TypeScript** — через subtyping для anonymous union, через
+     structural typing для record (`const u: User = { id, name }`
+     работает). Nova даёт похожую эргономику без subtyping.
+   - **Rust struct expressions** требуют имени (`User { id, name }`) —
+     прецедент против record-coercion. Nova выбирает TS-эргономику
+     для record в позиции с явным типом, но **только** в этой позиции.
+
+### Что отвергнуто
+
+- **Subtyping (`int <: StrOrInt`)** — TS-style anonymous unions.
+  Серьёзное расширение системы типов (variance, type inference,
+  exhaustiveness), runtime-cost (boxing на каждой границе). Coercion
+  даёт то же удобство **без** subtyping. Записан как
+  Q-anonymous-union для возможного пересмотра.
+- **Anonymous record-coercion вне позиций с явным типом.**
+  `let x = { id: 2, name: "Bob" }` остаётся **анонимным record-типом**,
+  не превращается в `User`. Только явный целевой тип активирует
+  coercion. AI-locality сохраняется.
+- **Record-coercion для sum-вариантов с record-формой**
+  (`type Shape | Circle { radius f64 } | Square { side f64 }`,
+  `let s Shape = { radius: 5.0 }`). Программист обязан писать имя
+  варианта (`Circle { radius: 5.0 }`), даже если поля уникальны
+  для одного варианта. Альтернатива — type-driven parsing по
+  совпадению полей, антипаттерн в Nova.
+- **Tuple-coercion** в MVP. Двусмысленность с tuple-литералами как
+  значениями. Отложено до v1.0+.
+- **Coercion на цепочках конверсий** (`int → UserId → Wrapper`).
+  Только одна обёртка. Иначе правила усложняются, и легко получить
+  неожиданный результат.
+- **Coercion без явной аннотации типа** (`let x = "test"` →
+  выводить `StrOrInt`?). Type inference не должен «угадывать» sum
+  или record. Только явный target type активирует coercion.
+- **Opt-in coercion через protocol** (Swift-style
+  `ExpressibleBy*Literal`). Программист объявляет sum/record,
+  **поведение работает автоматически** без дополнительного opt-in.
+  Это менее гибко, но проще.
+- **Coercion для multi-parameter конструкторов** через tuple
+  (`(5, 10) → Click(5, 10)`). Отложено как tuple-coercion в MVP.
+
+### Цена
+
+1. **Implicit conversion — первая в Nova.** До D55 язык избегал
+   неявного. Это **философский сдвиг**, обоснованный эргономикой
+   prelude-типов и анонимных record. AI-friendly: LLM не должна
+   угадывать конструктор или имя типа.
+2. **Type-checker сложнее.** В позиции с явным типом нужно проверить
+   exact match, потом coercion (sum или record). Стандартное
+   расширение, но code path не нулевой.
+3. **IDE-подсказки усложняются.** «Ожидается `StrOrInt`, передан
+   `str` → coerce в `S`», «Ожидается `User`, передан анонимный record
+   → подгонка под `User`» — IDE должна это показывать.
+4. **Migration sum'а опасна:** добавление нового unary-конструктора
+   с тем же типом параметра ломает существующий код (был exact match
+   через coercion в `S(str)`, стал ambiguous из-за `S(str) | S2(str)`).
+   Это **breaking change для sum'а** — программист должен учитывать.
+5. **Migration record'а тоже:** добавление обязательного поля в record
+   ломает все анонимные литералы без него. Это **известная
+   проблема** record-типов вообще, не специфическая для D55.
+6. **Закрывает большую часть use-case'ов `any`** — это плюс, но
+   требует пересмотра примеров (`args []any` → `args []SqlValue`).
+7. **Парсер — без type-driven decisions.** Coercion работает в
+   позициях, где целевой тип **уже известен type-checker'у** —
+   парсер по-прежнему чисто синтаксический. `{...}` парсится как
+   record-литерал/block-выражение по обычным правилам D17/D49,
+   а тип ему присваивает type-checker по аннотации.
+
+### Связь
+- [D52](#d52-объявление-типов-revised-newtype-alias-sum-через-leading-)
+  — sum-типы и unary-конструкторы, на которых coercion работает.
+- [D53](#d53-унификация-protocol-под-type-protocol-как-kind-токен)
+  — `any` остаётся для подлинно открытых случаев (plugins, reflection),
+  D55 закрывает большую часть use-case'ов через closed sum'ы.
+- [03-syntax.md → D44](03-syntax.md#d44) — numeric literal coercion
+  (`100` подгоняется под `u8`/`u32` в позиции типа) — D55 расширяет
+  эту идею на sum'ы и record'ы.
+- [03-syntax.md → D54](03-syntax.md#d54) — `as`/`is` остаются явными
+  для конвертации/проверки. D55 не вводит implicit cast между
+  обычными типами, только для sum-обёрток и record-литералов.
+- [08-runtime.md → D26](08-runtime.md#d26) — `Option[T]`, `Result[T, E]`
+  в prelude получают эргономичный синтаксис через D55.
+- [#d17-объявление-типов-единый-синтаксис-без-](#d17-объявление-типов-единый-синтаксис-без-)
+  (revised → D52) — record-литерал `User { id: 1, name: "alice" }` с
+  именем типа — обязательный, когда тип не выводится из контекста.
+  D55 разрешает опускать имя в позиции с явным целевым типом.
+
+### Открытые вопросы
+- **Tuple-coercion** для multi-parameter конструкторов. Отложено.
+- **Anonymous unions** (`type StrOrInt | type str | type int`) —
+  TS-style без обёрток. Записан как Q-anonymous-union (требует
+  subtyping, серьёзное расширение системы типов). См.
+  [open-questions.md](../open-questions.md).
+- **Стандартные closed sum'ы в prelude** (`SqlValue`, `JsonValue`) —
+  что именно положить, формат и набор операций. См. Q9 (stdlib).
+- **Cross-type numeric coercion в D55** (`42` → `f64` для `Number(f64)`).
+  Сейчас строгий exact match. См. Q-numeric-coercion.
+
+### Эволюция
+До D55 sum-варианты требовали **явный конструктор** на каждом значении
+(`Some(42)`, `Ok(user)`, `S("test")`), а record-литералы — **имя типа
+перед `{}`** (`User { id: 1, name: "alice" }`).
+
+После D55 в позиции с явным целевым типом:
+- sum-значение оборачивается автоматически (`42` в позиции `Maybe[int]`
+  → `Just(42)`),
+- анонимный record-литерал получает имя из аннотации (`{ id: 1, name:
+  "alice" }` в позиции `User` → `User { id: 1, name: "alice" }`).
+
+Это **эргономический сдвиг** уровня D52, без слома типовой модели.
+
+Альтернатива (anonymous unions через subtyping) рассмотрена и
+отвергнута — слишком серьёзное расширение системы типов для
+эргономического выигрыша. D55 даёт похожее удобство более узким и
+контролируемым механизмом.
 
 ---
 

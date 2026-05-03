@@ -26,6 +26,7 @@
 | [D46](#d46-перегрузка-операторов-через--методы) | Перегрузка операторов через `@`-методы |
 | [D48](#d48-tagged-template-literals) | Tagged template literals |
 | [D49](#d49-statement-separator-и-парсинг-выражений) | Statement separator и парсинг выражений |
+| [D54](#d54-операторы-as-и-is) | Операторы `as` (compile-time cast) и `is` (runtime type-check для `any`) |
 
 ---
 
@@ -1462,3 +1463,244 @@ primary       = literal | identifier | '(' expr ')' | block | if | match | ...
   выражение блока становится возвратом через newline-разделитель.
 - [04-effects.md](04-effects.md) — handler-литералы используют те же
   правила внутри `{...}`.
+
+---
+
+## D54. Операторы `as` и `is`
+
+### Что
+Два оператора с разной семантикой:
+
+- **`as`** — **compile-time конвертация** значения между совместимыми
+  типами (numeric cast, newtype ↔ underlying, sum → int).
+  Возвращает значение целевого типа. Если конвертация невозможна по
+  правилам типов — ошибка компиляции.
+- **`is`** — **runtime type-check** для значений типа `any`. Возвращает
+  `bool`. Также используется как pattern в `match` и `if` для
+  биндинга и smart cast'а.
+
+`as` — про **«сделай этим типом»** (статически). `is` — про
+**«проверь, какой это тип сейчас»** (runtime).
+
+### Правило
+
+#### `as` — compile-time конвертация
+
+`as` работает в позиции выражения: `<expr> as <type>`. Возвращает
+значение целевого типа.
+
+**Numeric cast** (см. [D44](#d44-числовые-литералы)):
+
+```nova
+let n = 100 as u32           // литерал → u32
+let big = 0xFF_FF as u16
+let x = 1.5 as i32           // f64 → i32 (truncate)
+let y = some_int as f64       // int → f64
+```
+
+**Newtype ↔ underlying** (см. [02-types.md → D52](02-types.md#d52)):
+
+```nova
+type UserId u64
+
+let u UserId = 42 as UserId   // u64 → UserId
+let n u64 = u as u64           // UserId → u64
+```
+
+**Sum → int** (для sum'ов с числовыми discriminants, [D52](02-types.md#d52)):
+
+```nova
+type ErrorCode | NotFound = 404 | InternalError = 500
+let code = NotFound as int    // 404
+```
+
+**Запрещено:**
+
+- **`any → T`** (`x as int` где `x any`) — нет статической конвертации.
+  Используйте `is`-pattern или `try_as[T]()` (см. ниже).
+- **Произвольные типы без явного правила** (`User as Account`) —
+  ошибка компиляции.
+- **int → Sum через `as`** — type-небезопасно (число может не
+  попасть в варианты). Только через pattern match (см. D52).
+
+#### `is` — runtime type-check
+
+`is` работает **только** для значений типа `any`. На обычных типах —
+ошибка компиляции (тип уже известен статически, проверка бессмысленна).
+
+**Как boolean-выражение:**
+
+```nova
+fn dump(x any) Io -> () =>
+    if x is int { println("got int") }
+    if x is str { println("got str") }
+```
+
+**Как pattern в `match`:**
+
+```nova
+match arg {
+    n is int  => process_int(n)         // биндинг + smart cast
+    s is str  => process_str(s)
+    is bool   => println("bool")        // без биндинга
+    _         => throw UnsupportedType
+}
+```
+
+Pattern-форма: `<binding> is <type>` или `is <type>` (без биндинга).
+Если биндинг указан — внутри ветки переменная имеет уточнённый тип.
+
+**Smart cast в `if`:**
+
+```nova
+fn process(x any) -> str =>
+    if x is str {
+        x.upper()              // x здесь имеет тип str автоматически
+    } else if x is int {
+        x.to_str()              // x здесь int
+    } else {
+        "unknown"
+    }
+```
+
+После `if x is T { ... }` внутри блока компилятор автоматически
+уточняет тип переменной до `T` (как Kotlin smart cast). Это работает
+если переменная **не переприсваивается** в блоке.
+
+**На не-`any` типах — ошибка компиляции:**
+
+```nova
+fn process(x User) -> () =>
+    if x is int { ... }       // ОШИБКА: User не any, проверка бессмысленна
+```
+
+#### Методы на `any` для extraction (комплементарные `is`)
+
+Для `if let`-стиля и работы через эффект `Throws`:
+
+```nova
+// Опциональный cast — Option[T]
+fn any.try_as[T](x any) -> Option[T] =>
+    // runtime-проверка тэга, Some если совпал, None иначе
+
+// Cast через Throws — для строгих случаев
+fn any.as[T](x any) Throws[TypeMismatch] -> T =>
+    // throw TypeMismatch если тег не совпал
+```
+
+Использование:
+
+```nova
+// if let
+if let Some(n) = arg.try_as[int]() {
+    process_int(n)
+}
+
+// ?-стиль
+let n int = arg.as[int]?
+```
+
+**Три инструмента под разные сценарии:**
+
+| Способ | Когда применять |
+|---|---|
+| `match { is T => ... }` | несколько вариантов, exhaustive обработка |
+| `if let Some(n) = x.try_as[T]()` | один-два типа, mostly happy path |
+| `let n = x.as[T]?` | один тип, ожидается этот тип; несовпадение — ошибка |
+
+### Почему
+
+#### Раздельные `as` и `is` — два разных вопроса
+
+`as` — **«как сделать значение типа `T`»** (compile-time, статически
+решаемая задача). `is` — **«какой тип у значения сейчас»** (runtime,
+нужен для top-type extraction).
+
+В языках, использующих **один оператор** для обоих (Swift `as`/`as?`/`as!`,
+C++ `static_cast`/`dynamic_cast`), программист путается. В Nova
+разделение явное — два keyword'а с непересекающимися ролями.
+
+#### `is` только для `any` — простая ментальная модель
+
+В Kotlin/C# `is T` работает на любом типе (полиморфный type-check).
+Это требует runtime-tag'ов **на всех значениях** — стоимость во всём
+runtime. В Nova `is` ограничен `any`, потому что:
+
+1. **Runtime-cost** localized — только `any`-значения несут tag.
+2. **Sum-варианты** проверяются через pattern (`match`, exhaustive,
+   compile-time check).
+3. **Protocol-проверка runtime** — отдельный вопрос (требует
+   structural runtime-introspection, дорого), отложен.
+
+Если позже понадобится `x is User` для обычных типов — расширим.
+Сужать сложнее.
+
+#### Smart cast — стандартная эргономика
+
+`if x is T { x.method_of_T() }` без явного re-binding — фича Kotlin,
+TypeScript narrowing, C# pattern matching, Swift binding-pattern. Все
+сообщества **любят** smart cast, и этого не избегают.
+
+#### Прецеденты ключевых слов
+
+- **`as`**: Rust, Swift, C#, Kotlin, TS — для cast (numeric и иначе).
+  Nova берёт это значение.
+- **`is`**: C# (`x is T`), Kotlin (`x is T`), TS (`typeof`/`instanceof`,
+  но не `is` — `is` в TS это type predicate). F# использует `:?`,
+  что менее красиво. Nova берёт C#/Kotlin-стиль.
+
+### Что отвергнуто
+
+- **Один оператор для cast и type-check** (Swift `as?`/`as!`).
+  Усложняет mental model, путает пользователя.
+- **`is T` для произвольных типов** (Kotlin-style). Требует runtime-tag
+  на всех значениях, дорого. Ограничение `is` к `any` локализует
+  стоимость.
+- **`x.is[int]()` метод** вместо оператора. Менее читаемо в условиях
+  (`if x.is[int]()`-запись хуже `if x is int`). Operator проще.
+- **`as` для `any → T`** без runtime-проверки. Type-небезопасно
+  (программист может написать `x as int` для `x any` без гарантии).
+  Используйте `is` или `try_as[T]`.
+- **Implicit cast** между типами без `as`. Все конвертации явные.
+- **Flow-sensitive narrowing на `!is`** в MVP. Для `if !(x is T)
+  { return }` после блока `x` **не** уточняется автоматически. Можно
+  расширить позже.
+
+### Цена
+
+1. **Два keyword'а** в синтаксисе языка вместо одного. `is` ранее
+   не использовался — теперь зарезервирован.
+2. **Runtime-tag** для `any`-значений — стоимость в реализации
+   (memory overhead на boxing).
+3. **Smart cast** требует поддержки в type-checker — переменная имеет
+   разный тип в разных ветках одной функции. Усложняет реализацию.
+4. **`try_as[T]()` и `as[T]?`** — два метода stdlib на `any` поверх
+   оператора `is`. Нужно зафиксировать в prelude (D26).
+
+### Связь
+- [02-types.md → D52](02-types.md#d52) — newtype, sum, discriminants —
+  типы, для которых `as` определён.
+- [02-types.md → D53](02-types.md#d53) — `any` как пустой
+  protocol-тип, для которого работает `is`.
+- [D44](#d44-числовые-литералы) — numeric `as`-cast (`100 as u32`)
+  как частный случай D54.
+- [D34](#d34-if-let-и-while-let-для-pattern-matching-в-условии) —
+  `if let Some(n) = x.try_as[T]()` использует `if let`-форму.
+- [D19](#d19-match-arms-через--не--) — `=>` в match-arms,
+  `is`-pattern наследует ту же стрелку.
+- [08-runtime.md → D26](08-runtime.md#d26) — `try_as` и `as` методы
+  на `any` в prelude.
+
+### Открытые вопросы
+- **Flow-sensitive narrowing на `!is`** — можно ли после `if !(x is
+  T) { return }` уточнять тип в продолжении функции? Отложено.
+- **`is` для protocol-types** (runtime structural check) — дорого,
+  не входит в MVP.
+- **`is` для sum-вариантов** (`if x is Circle { ... }`) — дублирует
+  match, не вводится.
+
+### Эволюция
+До D54 `as` использовался без формального D-решения (упоминался в
+D44, D52). D54 фиксирует семантику явно: `as` — compile-time
+конвертация; `is` — runtime type-check. Закрывает Q-any-extract
+(извлечение типа из `any`-значения).

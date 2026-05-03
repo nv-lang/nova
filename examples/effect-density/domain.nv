@@ -57,12 +57,23 @@ type TransferError
 // стоит между `)` и `->` (D3). Активный handler берётся из `with`-скоупа
 // (D11). Никаких ThreadLocal, никаких DI-фреймворков.
 
+// SqlValue — closed sum для SQL-аргументов. Через D55 literal coercion
+// программист пишет [42, "alice", true], компилятор подгоняет под
+// [I(42), S("alice"), B(true)]. Когда-нибудь переедет в prelude (Q-stdlib-data-types).
+type SqlValue
+    | I(i64)
+    | F(f64)
+    | S(str)
+    | B(bool)
+    | Bytes([]byte)
+    | Null
+
 // Db — единственный handler доступа к БД. В тесте подменяется на
 // in-memory, в проде — на postgres-handler. Транзакция — handler поверх
 // этого же эффекта (вложенный with).
 type Db protocol {
-    query(sql str, args []any) Throws[DbError] -> []Row
-    exec(sql str, args []any) Throws[DbError] -> int    // affected rows
+    query(sql str, args []SqlValue) Throws[DbError] -> []Row
+    exec(sql str, args []SqlValue) Throws[DbError] -> int    // affected rows
     in_transaction[T](body fn() Db Throws -> T) Throws -> T
 }
 
