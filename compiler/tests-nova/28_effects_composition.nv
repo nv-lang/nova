@@ -1,4 +1,4 @@
-// 28_effects_composition.nv — композиция нескольких эффектов.
+// 28_effects_composition.nv — композиция нескольких эффектов (D61).
 //
 // 13_effects.nv покрыл базовые случаи. Здесь:
 // - функция с двумя эффектами в сигнатуре (Logger Counter)
@@ -8,24 +8,24 @@
 
 module spec.effects_comp
 
-type Logger protocol {
+type Logger effect {
     log(msg str) -> ()
 }
 
-type Counter protocol {
+type Counter effect {
     next() -> int
 }
 
-type State protocol {
+type State effect {
     get() -> int
     set(n int) -> ()
 }
 
-type Reader protocol {
+type Reader effect {
     read() -> str
 }
 
-type Writer protocol {
+type Writer effect {
     write(s str) -> ()
 }
 
@@ -40,16 +40,16 @@ fn task(n int) Logger Counter -> int {
 test "функция с двумя эффектами в сигнатуре" {
     let mut entries = []
     let mut count = 0
-    with Logger = Logger {
+    with Logger = handler Logger {
         log(msg) {
             entries.push(msg)
-            resume(())
+            return ()
         }
     } {
-        with Counter = Counter {
+        with Counter = handler Counter {
             next() {
                 count += 1
-                resume(count)
+                return count
             }
         } {
             let a = task(10)
@@ -66,11 +66,11 @@ test "функция с двумя эффектами в сигнатуре" {
 
 test "state effect — get/set" {
     let mut s = 100
-    with State = State {
-        get() => resume(s)
+    with State = handler State {
+        get() => s
         set(n) {
             s = n
-            resume(())
+            return ()
         }
     } {
         let v1 = State.get()
@@ -86,11 +86,11 @@ test "state effect — get/set" {
 
 test "state — accumulator pattern" {
     let mut acc = 0
-    with State = State {
-        get() => resume(acc)
+    with State = handler State {
+        get() => acc
         set(n) {
             acc = n
-            resume(())
+            return ()
         }
     } {
         for i in 1..6 {
@@ -111,13 +111,13 @@ fn echo() Reader Writer -> () {
 test "reader/writer композиция" {
     let mut output = ""
     let input = "hello"
-    with Reader = Reader {
-        read() => resume(input)
+    with Reader = handler Reader {
+        read() => input
     } {
-        with Writer = Writer {
+        with Writer = handler Writer {
             write(s) {
                 output = s
-                resume(())
+                return ()
             }
         } {
             echo()
@@ -133,8 +133,8 @@ fn three() Counter -> int {
 }
 
 test "константный counter" {
-    with Counter = Counter {
-        next() => resume(7)
+    with Counter = handler Counter {
+        next() => 7
     } {
         let total = three()
         assert(total == 21)
@@ -143,10 +143,10 @@ test "константный counter" {
 
 test "нарастающий counter с state" {
     let mut n = 0
-    with Counter = Counter {
+    with Counter = handler Counter {
         next() {
             n += 1
-            resume(n)
+            return n
         }
     } {
         let total = three()
@@ -157,10 +157,10 @@ test "нарастающий counter с state" {
 
 test "decrementing counter" {
     let mut n = 100
-    with Counter = Counter {
+    with Counter = handler Counter {
         next() {
             n -= 10
-            resume(n)
+            return n
         }
     } {
         let r = Counter.next() + Counter.next() + Counter.next()

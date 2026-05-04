@@ -1,9 +1,9 @@
-// effects_d61.nv — handler-substitution в новом D61-синтаксисе.
+// effects_d61.nv — handler-substitution в D61-синтаксисе.
 //
-// Сравните со [старым стилем](effects.nv):
-//   - `protocol` → `effect`
-//   - литерал `Counter { ... }` → `handler Counter { ... }`
-//   - `resume(s)` → `return s` в tail-position
+// Особенности D61:
+//   - `effect` keyword (вместо устаревшего `protocol`)
+//   - `handler X { ... }` keyword для handler-литерала
+//   - `return v` или финальное выражение в handler-method
 //   - `interrupt v` для досрочного завершения with-блока
 
 module effects_d61
@@ -24,12 +24,12 @@ fn count_three() Counter -> int {
 }
 
 fn main() {
-    // Базовый случай: handler с состоянием через resume → return
+    // Базовый случай: handler с состоянием через return
     let mut state = 0
     with Counter = handler Counter {
         next() {
             state += 1
-            resume(state)
+            return state
         }
     } {
         let total = count_three()
@@ -49,7 +49,7 @@ fn main() {
 
     // D61: handler-значение через переменную, прямой вызов h.op
     let switcher = handler Switch {
-        flip() => resume(true)
+        flip() => true
     }
     let b = switcher.flip()              // прямой вызов, минуя with
     println("direct flip = ", b)         // true

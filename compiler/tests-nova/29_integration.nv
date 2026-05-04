@@ -127,7 +127,7 @@ test "linked list sum" {
 
 // ===== Bank account через handler =====
 
-type Account protocol {
+type Account effect {
     deposit(n int) -> ()
     withdraw(n int) -> bool
     balance() -> int
@@ -143,20 +143,20 @@ fn make_transactions() Account -> int {
 
 test "account effect через handler" {
     let mut bal = 0
-    with Account = Account {
+    with Account = handler Account {
         deposit(n) {
             bal += n
-            resume(())
+            return ()
         }
         withdraw(n) {
-            if bal >= n {
+            let enough = bal >= n
+            if enough {
                 bal -= n
-                resume(true)
-            } else {
-                resume(false)
+                return true
             }
+            false
         }
-        balance() => resume(bal)
+        balance() => bal
     } {
         let final_balance = make_transactions()
         // 100 + 50 - 30 = 120 (вторая withdraw отклонена)

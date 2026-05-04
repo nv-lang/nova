@@ -1,8 +1,8 @@
-// effects.nv — handler-substitution в действии.
+// effects.nv — handler-substitution в действии (D61).
 
 module effects
 
-type Counter protocol {
+type Counter effect {
     next() -> int
 }
 
@@ -16,10 +16,10 @@ fn count_three() Counter -> int {
 fn main() {
     // Простой handler — closure захватывает mutable переменную.
     let mut state = 0
-    with Counter = Counter {
+    with Counter = handler Counter {
         next() {
             state += 1
-            resume(state)
+            return state
         }
     } {
         let total = count_three()

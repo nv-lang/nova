@@ -374,11 +374,6 @@ pub enum ExprKind {
         effect_name: Vec<String>,
         methods: Vec<HandlerMethod>,
     },
-    /// `resume(value)` — спец-форма внутри handler-method (старый стиль).
-    /// В D61-семантике bootstrap'а используется как «возобновить caller
-    /// операции с этим значением», семантически совпадает с финальным
-    /// выражением handler-method'а.
-    Resume(Vec<Expr>),
     /// `interrupt v` — досрочное завершение всего with-блока (D61).
     /// Значение становится результатом всего with-блока.
     Interrupt(Option<Box<Expr>>),

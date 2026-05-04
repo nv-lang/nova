@@ -389,7 +389,6 @@ impl<'a> Lexer<'a> {
             "as" => TokenKind::KwAs,
             "is" => TokenKind::KwIs,
             "spawn" => TokenKind::KwSpawn,
-            "resume" => TokenKind::KwResume,
             "interrupt" => TokenKind::KwInterrupt,
             "forbid" => TokenKind::KwForbid,
             "realtime" => TokenKind::KwRealtime,

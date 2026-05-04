@@ -1348,7 +1348,6 @@ impl Parser {
             TokenKind::KwWhile => self.parse_while(),
             TokenKind::KwLoop => self.parse_loop(),
             TokenKind::KwWith => self.parse_with(),
-            TokenKind::KwResume => self.parse_resume(),
             TokenKind::KwInterrupt => self.parse_interrupt_expr(),
             TokenKind::KwSpawn => self.parse_spawn(),
             TokenKind::KwHandler => self.parse_handler_lit(),
@@ -1862,37 +1861,6 @@ impl Parser {
         self.parse_expr()
     }
 
-    fn parse_resume(&mut self) -> Result<Expr, Diagnostic> {
-        let start = self.expect(&TokenKind::KwResume)?.span;
-        let mut args = Vec::new();
-        if self.eat(&TokenKind::LParen).is_some() {
-            self.skip_newlines();
-            while !matches!(self.peek().kind, TokenKind::RParen) {
-                args.push(self.parse_expr()?);
-                if self.eat(&TokenKind::Comma).is_none() {
-                    break;
-                }
-                self.skip_newlines();
-            }
-            self.expect(&TokenKind::RParen)?;
-        }
-        let end = self.tokens[self.pos.saturating_sub(1)].span;
-        Ok(Expr::new(ExprKind::Resume(args), start.merge(end)))
-    }
-
-    /// `interrupt v` — keyword (D61), парсится как ExprKind::Resume с маркером.
-    /// В bootstrap-интерпретаторе interrupt и return-в-handler различаются
-    /// флагом на уровне AST: используем тот же `Resume` для tail-resume и
-    /// добавляем отдельный path для interrupt через стандартный механизм
-    /// «handler-method закончился без resume — возвращает за весь with-блок».
-    ///
-    /// В bootstrap-bridge здесь делаем `interrupt v` синонимом «return v»
-    /// в handler-method'е, который потом интерпретатор обрабатывает как
-    /// «значение для всего with-блока». Полная реализация — задача
-    /// будущего компилятора.
-    ///
-    /// Семантика для AST: `interrupt v` = `ExprKind::Interrupt(v)`. Добавим
-    /// новый AST-узел.
     fn parse_interrupt_expr(&mut self) -> Result<Expr, Diagnostic> {
         let start = self.expect(&TokenKind::KwInterrupt)?.span;
         let value = if self.at_newline() || matches!(self.peek().kind, TokenKind::RBrace) {
@@ -2651,9 +2619,9 @@ mod tests {
         let m = parse_or_panic(
             r#"
             fn run() {
-                with Db = Db {
-                    query(q) => resume([])
-                    exec(q) => resume(0)
+                with Db = handler Db {
+                    query(q) => []
+                    exec(q) => 0
                 } {
                     work()
                 }

@@ -1,30 +1,26 @@
-// 13_effects.nv — protocol-эффекты (D53), handler-литералы (D31),
-// `with`-блок (D11), resume.
+// 13_effects.nv — эффекты (D61): effect/handler keywords, Handler[E],
+// финальное выражение / `return v` в handler-method'е, `interrupt v`
+// для досрочного завершения with-блока.
 //
-// Часть тестов используют **старый bootstrap-синтаксис**: `type X protocol`
-// (вместо `type X effect`), `X { ops }` (без keyword `handler`), `resume(v)`
-// (вместо нового `return v` в tail-position handler-method'а). Старый
-// синтаксис до сих пор поддерживается парсером для обратной совместимости.
-//
-// Часть тестов специально использует **новый синтаксис D61** —
-// `type X effect`, `handler X { ops }` keyword, `interrupt v`.
+// `resume` НЕ существует в спеке D61. Handler-method ведёт себя как
+// обычная функция: финальное выражение или `return v` становится
+// результатом операции в caller'е.
 
 module spec.effects
 
-type Counter protocol {
+type Counter effect {
     next() -> int
 }
 
-type KeyValue protocol {
+type KeyValue effect {
     get() -> int
     set(n int) -> ()
 }
 
-type Echo protocol {
+type Echo effect {
     say(msg str) -> str
 }
 
-// Новый синтаксис D61: эффект через `effect` keyword
 type Switch effect {
     flip() -> bool
 }
@@ -38,10 +34,10 @@ fn three_times() Counter -> int {
 
 test "single-op handler with state" {
     let mut s = 0
-    with Counter = Counter {
+    with Counter = handler Counter {
         next() {
             s += 1
-            resume(s)
+            return s
         }
     } {
         let total = three_times()
@@ -51,11 +47,11 @@ test "single-op handler with state" {
 
 test "two-op handler" {
     let mut store = 0
-    with KeyValue = KeyValue {
-        get()  => resume(store)
+    with KeyValue = handler KeyValue {
+        get()  => store
         set(n) {
             store = n
-            resume(())
+            return ()
         }
     } {
         KeyValue.set(42)
@@ -65,9 +61,9 @@ test "two-op handler" {
     }
 }
 
-test "handler transforms value via resume" {
-    with Echo = Echo {
-        say(msg) => resume(msg + "!")
+test "handler transforms value through return" {
+    with Echo = handler Echo {
+        say(msg) => msg + "!"
     } {
         let r = Echo.say("hi")
         assert(r == "hi!")
@@ -76,10 +72,10 @@ test "handler transforms value via resume" {
 
 test "handler with multiple operations on same effect" {
     let mut log = []
-    with Echo = Echo {
+    with Echo = handler Echo {
         say(msg) {
             log.push(msg)
-            resume(msg)
+            return msg
         }
     } {
         Echo.say("first")
@@ -94,16 +90,16 @@ test "handler with multiple operations on same effect" {
 test "nested with: inner handler shadows outer" {
     let mut outer_calls = 0
     let mut inner_calls = 0
-    with Counter = Counter {
+    with Counter = handler Counter {
         next() {
             outer_calls += 1
-            resume(1)
+            return 1
         }
     } {
-        with Counter = Counter {
+        with Counter = handler Counter {
             next() {
                 inner_calls += 1
-                resume(99)
+                return 99
             }
         } {
             let v = Counter.next()
@@ -117,32 +113,21 @@ test "nested with: inner handler shadows outer" {
 }
 
 test "handler-method short-form (=> expr)" {
-    with Echo = Echo {
-        say(msg) => resume(msg + "?")
+    with Echo = handler Echo {
+        say(msg) => msg + "?"
     } {
         assert(Echo.say("ok") == "ok?")
     }
 }
 
-test "handler-method block-form" {
-    with Echo = Echo {
+test "handler-method block-form с финальным выражением" {
+    with Echo = handler Echo {
         say(msg) {
             let upper = msg.to_upper()
-            resume(upper)
+            upper
         }
     } {
         assert(Echo.say("hi") == "HI")
-    }
-}
-
-// Новые тесты — D61 синтаксис
-
-test "D61: handler keyword with new effect syntax" {
-    with Switch = handler Switch {
-        flip() => resume(true)
-    } {
-        let b = Switch.flip()
-        assert(b == true)
     }
 }
 
@@ -161,7 +146,7 @@ test "D61: interrupt прерывает весь with-блок" {
 
 test "D61: handler-значение через переменную" {
     let h = handler Switch {
-        flip() => resume(false)
+        flip() => false
     }
     with Switch = h {
         let b = Switch.flip()
@@ -172,7 +157,7 @@ test "D61: handler-значение через переменную" {
 test "D61: прямой вызов h.op(args) на handler-значении" {
     // Минует with-стек — handler-method исполняется на h напрямую.
     let h = handler Switch {
-        flip() => resume(true)
+        flip() => true
     }
     let b = h.flip()
     assert(b == true)

@@ -32,9 +32,9 @@ fn process(x int) Logger -> int {
     x * 2
 }
 
-// handler — обычное значение, литерал по форме record-литерала
-let console = Logger {
-    log(msg) => return println("[LOG] ${msg}")
+// handler — обычное значение через `handler` keyword
+let console = handler Logger {
+    log(msg) => println("[LOG] ${msg}")
 }
 
 // применение handler'а
@@ -44,10 +44,10 @@ fn main() Io -> () =>
     }
 ```
 
-`return value` — продолжение вычисления с возвращённым значением.
-В обычном случае `resume` вызывается один раз. Если **не вызвать** —
-эффект «прерывает» вычисление (так работает `Fail`). Если вызвать
-**несколько раз** — backtracking, генераторы, async-fork.
+`return value` (или финальное выражение) в handler-method'е —
+продолжение вычисления с возвращённым значением. Для досрочного
+завершения всего `with`-блока используется `interrupt v` (так
+работает `Fail`).
 
 ### Что из этого следует автоматически
 
@@ -56,7 +56,7 @@ fn main() Io -> () =>
 ```nova
 test "process logs correctly" {
     let mut buf = []
-    let collect = Logger {
+    let collect = handler Logger {
         log(msg) { buf.push(msg); return () }
     }
     with Logger = collect {

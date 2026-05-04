@@ -574,35 +574,10 @@ impl Interpreter {
                 });
                 Ok(Flow::Value(Value::Handler(handler)))
             }
-            ExprKind::Resume(args) => {
-                // resume — спец-форма: возвращает Value, исходящий обратно
-                // в место вызова операции. В bootstrap'е one-shot resumption
-                // реализован через простую модель: операция возвращает
-                // значение, переданное в resume. Если resume не вызван —
-                // handler возвращает значение за весь with-блок (его
-                // return-value).
-                let v = match args.len() {
-                    0 => Value::Unit,
-                    1 => self.eval_expr_value(&args[0], env)?,
-                    _ => {
-                        return Err(Diagnostic::new(
-                            "resume takes 0 or 1 argument",
-                            expr.span,
-                        ));
-                    }
-                };
-                // Возвращаем значение через спец-сигнал: обёртываем в
-                // Variant("__resume", payload), interp ловит наверху.
-                Ok(Flow::Value(Value::Variant {
-                    type_name: Some("__resume".into()),
-                    name: "__resume".into(),
-                    payload: VariantPayload::Tuple(vec![v]),
-                }))
-            }
             ExprKind::Interrupt(value) => {
                 // interrupt v (D61): прерывает текущий with-блок, значение
                 // становится результатом всего with. В bootstrap-модели
-                // sentinel-variant `__interrupt` подобно `__resume`, но
+                // sentinel-variant `__interrupt`, который
                 // ловится в eval_with, где разворачивает стек.
                 let v = match value {
                     Some(e) => self.eval_expr_value(e, env)?,
@@ -1509,20 +1484,8 @@ impl Interpreter {
         //  - финальное выражение (Flow::Value) → return-value операции
         //  - `return v` (Flow::Return) → return-value операции
         //  - `interrupt v` (Flow::Interrupt) → пробивается до eval_with
-        //
-        // (Старый sentinel `__resume` оставлен для совместимости со
-        // существующим bootstrap-кодом, который ещё использует
-        // resume-syntax. Удаляется отдельно.)
         match body_flow {
             Flow::Return(v) => Ok(Flow::Value(v)),
-            Flow::Value(Value::Variant {
-                name,
-                payload: VariantPayload::Tuple(items),
-                ..
-            }) if name == "__resume" => {
-                let inner = items.into_iter().next().unwrap_or(Value::Unit);
-                Ok(Flow::Value(inner))
-            }
             other => Ok(other),
         }
     }
