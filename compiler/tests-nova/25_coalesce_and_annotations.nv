@@ -61,8 +61,8 @@ test "let mut с типом" {
     assert(s == "bye")
 }
 
-test "let с generic Array[int]" {
-    let xs Array[int] = [1, 2, 3]
+test "let с []int annotation" {
+    let xs []int = [1, 2, 3]
     assert(xs[0] == 1)
     assert(xs[2] == 3)
 }

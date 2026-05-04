@@ -47,7 +47,7 @@ type Op
     | OpMul
     | OpDup
 
-fn pop_or_zero(stack Array[int]) -> int {
+fn pop_or_zero(stack []int) -> int {
     let v = stack.pop()
     match v {
         Some(x) => x
@@ -55,7 +55,7 @@ fn pop_or_zero(stack Array[int]) -> int {
     }
 }
 
-fn run(program Array[Op]) -> int {
+fn run(program []Op) -> int {
     let stack = []
     for op in program {
         match op {

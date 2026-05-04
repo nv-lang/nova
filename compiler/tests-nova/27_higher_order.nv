@@ -6,13 +6,13 @@
 
 module spec.hof
 
-fn map_int(xs Array[int], f fn(int) -> int) -> Array[int] {
+fn map_int(xs []int, f fn(int) -> int) -> []int {
     let r = []
     for x in xs { r.push(f(x)) }
     r
 }
 
-fn filter_int(xs Array[int], pred fn(int) -> bool) -> Array[int] {
+fn filter_int(xs []int, pred fn(int) -> bool) -> []int {
     let r = []
     for x in xs {
         let ok = pred(x)
@@ -21,13 +21,13 @@ fn filter_int(xs Array[int], pred fn(int) -> bool) -> Array[int] {
     r
 }
 
-fn fold_int(xs Array[int], init int, f fn(int, int) -> int) -> int {
+fn fold_int(xs []int, init int, f fn(int, int) -> int) -> int {
     let mut acc = init
     for x in xs { acc = f(acc, x) }
     acc
 }
 
-fn count_if(xs Array[int], pred fn(int) -> bool) -> int {
+fn count_if(xs []int, pred fn(int) -> bool) -> int {
     let mut n = 0
     for x in xs {
         let ok = pred(x)
@@ -36,7 +36,7 @@ fn count_if(xs Array[int], pred fn(int) -> bool) -> int {
     n
 }
 
-fn any(xs Array[int], pred fn(int) -> bool) -> bool {
+fn any(xs []int, pred fn(int) -> bool) -> bool {
     for x in xs {
         let ok = pred(x)
         if ok { return true }
@@ -44,7 +44,7 @@ fn any(xs Array[int], pred fn(int) -> bool) -> bool {
     false
 }
 
-fn all(xs Array[int], pred fn(int) -> bool) -> bool {
+fn all(xs []int, pred fn(int) -> bool) -> bool {
     for x in xs {
         let ok = pred(x)
         if !ok { return false }
