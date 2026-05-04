@@ -1277,6 +1277,36 @@ style синтаксис: `fn print[T](...items []T) Io -> ()`.
 [D54](../03-syntax.md#d54) (any), [D26](../08-runtime.md#d26)
 (prelude print/println).
 
+### `ToStr` protocol: D70 формализует to_str() как первоклассную фичу
+
+В bootstrap-stdlib `to_str(v)` работал как Native-функция на любом
+значении (через Rust `format!("{}", v)`), но в спеке формального
+определения protocol'а не было.
+
+D70 формализует:
+- `ToStr` protocol в prelude с методом `@to_str() -> str`.
+- Auto-derive для всех встроенных типов и record/sum-комбинаций.
+- Override через обычный `@to_str()` метод на пользовательских типах.
+- Free function `to_str[T: ToStr](v T) -> str` — публичный API.
+- String interpolation `"${expr}"` — sugar над `to_str(expr)`.
+- D69 variadic `print(...items []any)` использует `to_str` для
+  каждого элемента.
+
+Имя `ToStr` выбрано буквальным (не `Display` как Rust, не `Show` как
+Haskell, не `Stringer` как Go) — описывает что метод делает, без
+конфликта с UI-кодом (`Slide.show()`, `popup.display()`).
+
+Альтернатива через универсальный `@cast[X]` метод **отвергнута**:
+- `[X]` грамматически объявляет generic-параметр (D16), не target.
+- Return-type dispatch потребовал бы typeclass-механизм.
+- Конкретные конверсии через отдельные protocol'ы (`ToStr`, `ToJson`,
+  `ToBytes`) — D46 overloading по имени работает естественно.
+
+**Связанные D:** [D70](../08-runtime.md#d70) (новое),
+[D26](../08-runtime.md#d26) (prelude), [D35](../03-syntax.md#d35)
+(@-методы), [D69](../03-syntax.md#d69) (variadic print через to_str),
+[D46](../03-syntax.md#d46) (overloading методов).
+
 ## Как читать историю
 
 - **«revised»** в статусе D — текст переписан, решение действует, но

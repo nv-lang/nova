@@ -11,6 +11,7 @@ static-состояния.
 | [D13](#d13-panic-vs-эффекты-что-не-является-эффектом) | Panic vs эффекты: что НЕ является эффектом |
 | [D26](#d26-базовая-stdlib-и-prelude) | Базовая stdlib и prelude |
 | [D41](#d41-static-функции-есть-static-состояния-нет) | Static-функции есть, static-состояния нет |
+| [D70](#d70-tostr-protocol--to_str-метод--free-function-tostrv) | `ToStr` protocol + `@to_str()` метод + free function `to_str(v)` |
 
 ---
 
@@ -282,7 +283,8 @@ fn panic(msg str) -> Never
 `print`/`println` — **variadic** ([D69](03-syntax.md#d69)),
 принимают любое число аргументов любого типа (`any` —
 [D54](03-syntax.md#d54)). Каждый аргумент конвертируется в строку
-через `to_str()`. Spread разрешён: `print(...parts)`.
+через `to_str()` ([D70](#d70-tostr-protocol--to_str-метод--free-function-tostrv)).
+Spread разрешён: `print(...parts)`.
 
 #### `Never` — обычный тип без значений
 
@@ -534,3 +536,198 @@ fn main() {
 обычный `type`; слово `handler` не зарезервировано).
 В текущем тексте пример переписан как `type IdGen { ... }` +
 обычная функция, возвращающая handler-литерал.
+
+---
+
+## D70. `ToStr` protocol + `@to_str()` метод + free function `to_str(v)`
+
+### Что
+Универсальный механизм конверсии значения в строку:
+
+1. **`ToStr`** — protocol с одним методом `@to_str() -> str`.
+2. **`@to_str()`** — метод на типе, реализует представление в строку.
+3. **`to_str(v)`** — свободная функция в prelude, sugar над `v.to_str()`.
+
+Все встроенные типы (`int`, `str`, `bool`, `float`, `()`,
+record/sum-комбинации) реализуют `ToStr` автоматически (auto-derive
+по структуре). Программист может override на своих типах через обычный
+`@`-метод.
+
+### Правило
+
+#### Декларация protocol'а в prelude
+
+```nova
+type ToStr protocol {
+    to_str() -> str
+}
+```
+
+#### Builtin реализации (auto-derive)
+
+Все базовые типы реализуют `ToStr` автоматически — программист **не
+пишет** `@to_str()` для:
+
+| Тип | Формат |
+|---|---|
+| `int` (любой size) | десятичное число: `42`, `-100` |
+| `float` (f32/f64) | как Rust `Display`: `3.14`, `-0.5` |
+| `bool` | `true` / `false` |
+| `str` | сама строка (без кавычек) |
+| `()` (unit) | `()` |
+| `[]T` (где T: ToStr) | `[a, b, c]` (элементы через `to_str`) |
+| `(A, B, ...)` tuple | `(a, b, ...)` |
+| record `T { f1, f2 }` | `T { f1: ..., f2: ... }` |
+| sum-variant `Foo(x)` | `Foo(x)` |
+| sum-variant `Bar` (unit) | `Bar` |
+
+Auto-derive работает рекурсивно — записи и sum-варианты
+форматируются через `to_str()` своих полей/аргументов.
+
+#### Override на пользовательском типе
+
+```nova
+type UserId u64
+
+fn UserId @to_str() -> str => "user#${@}"
+
+let id = UserId(42)
+to_str(id)              // "user#42" (через override)
+"id is ${id}"           // "id is user#42" (string interpolation также через ToStr)
+```
+
+#### Free function `to_str`
+
+```nova
+fn to_str[T: ToStr](v T) -> str => v.to_str()
+```
+
+Это единственная универсальная точка для получения строкового
+представления. Внутри `print`/`println` и string interpolation
+используется именно `to_str(v)`.
+
+#### Compile-time enforcement
+
+`ToStr`-bound — обычный generic-bound:
+
+```nova
+fn debug_log[T: ToStr](label str, v T) Log -> () =>
+    Log.info("${label} = ${to_str(v)}")
+```
+
+Если программист объявил `type MyType { ... }` и НЕ реализовал
+`@to_str()`, и тип не подпадает под auto-derive — `to_str(my)`
+вызовет compile error «`MyType` does not implement `ToStr`».
+
+В практике auto-derive покрывает большинство случаев, поэтому
+явное объявление `@to_str()` нужно только для **кастомного формата**
+(как `UserId` выше).
+
+#### Связь со string interpolation
+
+Любой `${expr}` в string-литерале — sugar над `to_str(expr)`:
+
+```nova
+"id=${user_id}"          // ≡ "id=" + to_str(user_id)
+"point=(${x}, ${y})"     // → "point=(3, 4)"
+```
+
+Тип `expr` должен реализовывать `ToStr` (обычно auto-derive).
+
+### Семантика auto-derive
+
+Компилятор генерирует **default `@to_str()`** для:
+
+- **Record**: `T { f1: v1, f2: v2 }` → `"T { f1: ${to_str(v1)}, f2: ${to_str(v2)} }"`
+  - Поля выводятся в порядке объявления (D52).
+- **Sum-variant**: `Foo(x, y)` → `"Foo(${to_str(x)}, ${to_str(y)})"`
+- **Sum-unit-variant**: `Red` → `"Red"`
+- **Tuple**: `(a, b, c)` → `"(${to_str(a)}, ${to_str(b)}, ${to_str(c)})"`
+- **Array**: `[a, b, c]` → `"[${to_str(a)}, ${to_str(b)}, ${to_str(c)}]"`
+- **Newtype**: тот же что и underlying — `type UserId u64` без override
+  → `to_str(UserId(42))` = `"42"`. Override меняет.
+
+Все элементы рекурсивно требуют `ToStr`. Если хоть один не реализует —
+compile error на месте использования.
+
+### Почему
+
+1. **AI-friendly default** — программист пишет `to_str(v)` или `"${v}"`
+   и получает работу для любого типа. Не нужно реализовывать `Show`-
+   trait вручную.
+
+2. **Compile-time enforcement** — `ToStr`-bound в функциях
+   (`fn f[T: ToStr]`) даёт явный контракт. LLM/compiler ловит
+   несоответствие до runtime'а.
+
+3. **Override через стандартный `@`-метод** — не новый синтаксис.
+   Если auto-derive формат не подходит — пишешь `fn T @to_str()` как
+   обычный метод.
+
+4. **Один protocol, не два** (как Rust `Display`/`Debug`) — D40
+   «один способ». Если когда-то понадобится debug-формат — отдельный
+   D-блок (`Debug` protocol с `@to_debug()`), но не сейчас.
+
+5. **Имя `ToStr` буквальное** — описывает что делает (converts to
+   `str`). Не путается с UI-кодом (как `Display`/`Show`).
+
+6. **Symmetric с возможным расширением:**
+   - `ToStr` → `to_str() -> str`
+   - `ToJson` (если понадобится) → `to_json() -> Json`
+   - `ToBytes` → `to_bytes() -> []u8`
+
+   Единое naming convention.
+
+### Что отвергнуто
+
+- **`Display` имя** (как Rust). Слишком общее, конфликтует с UI/HTML
+  кодом (`fn Slide @display()`). `ToStr` описательнее.
+- **`Show` имя** (Haskell/OCaml). Конфликтует с UI (`popup.show()`).
+- **`Stringer` имя** (Go). Метод в Go называется `String()`; у нас
+  метод `to_str()` — несоответствие.
+- **Без protocol'а, только free function `to_str(any)`**. Без bound'а
+  нет compile-time enforcement; программист может забыть реализовать
+  override и получит auto-derive вместо ожидаемого формата.
+- **Два protocol'а `ToStr` + `Debug`** (как Rust). У Nova нет
+  отдельной debug-семантики на уровне prelude. Если понадобится —
+  отдельный D-блок.
+- **Универсальный `@cast[X]` метод** (был рассмотрен и отвергнут):
+  - `[X]` синтаксически объявляет generic-параметр (D16), не target —
+    конфликт грамматики.
+  - Return-type dispatch требует typeclass-механизма, которого в Nova
+    пока нет.
+  - Каждая конверсия — отдельный protocol с уникальным именем
+    (`ToStr`, `ToJson`) — D46 overloading по имени работает естественно.
+
+### Связь
+
+- [D26](#d26-базовая-stdlib-и-prelude) — `to_str(v)` в prelude,
+  `print`/`println` через variadic ([D69](03-syntax.md#d69)).
+- [D35](03-syntax.md#d35) — `@`-методы.
+- [D40](01-philosophy.md#d40) — «один способ» (один protocol, не два).
+- [D42 (REVISED)](02-types.md#d42) / [D53](02-types.md#d53) /
+  [D62](04-effects.md#d62) — `protocol` для структурных контрактов.
+- [D46](03-syntax.md#d46) — overloading методов по имени.
+- [D69](03-syntax.md#d69) — variadic `print(...items []any)` использует
+  `to_str` для каждого элемента.
+
+### Эволюция
+
+В bootstrap-stdlib функция `to_str(v)` существовала как Native-функция,
+работающая на любом значении через Rust-side `format!("{}", v)` (то
+есть auto-derive прямо на runtime-уровне). Но **формальной декларации
+`ToStr` protocol'а в спеке не было** — это был implementation-факт.
+
+D70 формализует:
+1. `ToStr` protocol с методом `@to_str()` — стандартная декларация.
+2. Auto-derive для всех встроенных + record/sum типов.
+3. Override через обычный `@to_str()` метод.
+4. Free function `to_str[T: ToStr](v T) -> str` — публичный API.
+5. String interpolation `"${expr}"` — sugar над `to_str(expr)`.
+
+Альтернативы рассмотрены и отвергнуты:
+- `Display`/`Show`/`Stringer` имена — конфликты с UI-кодом или
+  inconsistency с именем метода.
+- Универсальный `@cast[X]` — синтаксический конфликт с generic-
+  параметрами и нет return-type dispatch'а в Nova.
+- Без protocol'а — нет compile-time enforcement.
