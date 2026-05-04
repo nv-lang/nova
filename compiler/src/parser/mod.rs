@@ -469,10 +469,15 @@ impl Parser {
         // и protocol'ов. Skip newlines перед body.
         self.skip_newlines();
 
-        // Тело: `protocol { ... }` | `alias TYPE` | `{ fields }` | `| variant | variant`
-        // | `TYPE` (newtype) | начинается с `|` для sum
+        // Тело: `protocol { ... }` | `effect { ... }` | `alias TYPE` |
+        // `{ fields }` | `| variant | variant` | `TYPE` (newtype) |
+        // начинается с `|` для sum.
+        //
+        // protocol и effect семантически разные (D61), но в bootstrap-
+        // интерпретаторе хранятся одинаково — оба дают TypeDeclKind::Protocol.
+        // Различение на уровне type checker'а — задача будущего компилятора.
         let kind = match self.peek().kind {
-            TokenKind::KwProtocol => {
+            TokenKind::KwProtocol | TokenKind::KwEffect => {
                 self.bump();
                 self.expect(&TokenKind::LBrace)?;
                 let methods = self.parse_protocol_methods()?;
@@ -1342,7 +1347,9 @@ impl Parser {
             TokenKind::KwLoop => self.parse_loop(),
             TokenKind::KwWith => self.parse_with(),
             TokenKind::KwResume => self.parse_resume(),
+            TokenKind::KwInterrupt => self.parse_interrupt_expr(),
             TokenKind::KwSpawn => self.parse_spawn(),
+            TokenKind::KwHandler => self.parse_handler_lit(),
             other => Err(Diagnostic::new(
                 format!("unexpected {} in expression", other.name()),
                 start,
@@ -1867,6 +1874,132 @@ impl Parser {
         }
         let end = self.tokens[self.pos.saturating_sub(1)].span;
         Ok(Expr::new(ExprKind::Resume(args), start.merge(end)))
+    }
+
+    /// `interrupt v` — keyword (D61), парсится как ExprKind::Resume с маркером.
+    /// В bootstrap-интерпретаторе interrupt и return-в-handler различаются
+    /// флагом на уровне AST: используем тот же `Resume` для tail-resume и
+    /// добавляем отдельный path для interrupt через стандартный механизм
+    /// «handler-method закончился без resume — возвращает за весь with-блок».
+    ///
+    /// В bootstrap-bridge здесь делаем `interrupt v` синонимом «return v»
+    /// в handler-method'е, который потом интерпретатор обрабатывает как
+    /// «значение для всего with-блока». Полная реализация — задача
+    /// будущего компилятора.
+    ///
+    /// Семантика для AST: `interrupt v` = `ExprKind::Interrupt(v)`. Добавим
+    /// новый AST-узел.
+    fn parse_interrupt_expr(&mut self) -> Result<Expr, Diagnostic> {
+        let start = self.expect(&TokenKind::KwInterrupt)?.span;
+        let value = if self.at_newline() || matches!(self.peek().kind, TokenKind::RBrace) {
+            None
+        } else {
+            Some(Box::new(self.parse_expr()?))
+        };
+        let end = match &value {
+            Some(e) => e.span,
+            None => start,
+        };
+        Ok(Expr::new(
+            ExprKind::Interrupt(value),
+            start.merge(end),
+        ))
+    }
+
+    /// `handler EffectName { ops }` — keyword-форма handler-литерала (D61).
+    /// Реиспользует существующую логику парсинга handler-method'ов.
+    fn parse_handler_lit(&mut self) -> Result<Expr, Diagnostic> {
+        let start = self.expect(&TokenKind::KwHandler)?.span;
+        // Имя эффекта — dotted path, опционально с generic-параметрами.
+        let mut path = vec![self.parse_ident()?.0];
+        while matches!(self.peek().kind, TokenKind::Dot)
+            && matches!(self.peek_at(1).kind, TokenKind::Ident(_))
+        {
+            self.bump();
+            path.push(self.parse_ident()?.0);
+        }
+        // Опциональные generic-параметры эффекта (Fail[Error], Throws[E], etc.)
+        // — парсим, но в bootstrap не используем (хранится в name path).
+        if matches!(self.peek().kind, TokenKind::LBracket) {
+            // Пропускаем generic-аргументы целиком
+            let _ = self.parse_type_args()?;
+        }
+        self.expect(&TokenKind::LBrace)?;
+        self.skip_newlines();
+        let methods = self.parse_handler_methods()?;
+        let end = self.expect(&TokenKind::RBrace)?.span;
+        Ok(Expr::new(
+            ExprKind::HandlerLit {
+                effect_name: path,
+                methods,
+            },
+            start.merge(end),
+        ))
+    }
+
+    /// Извлечённая логика парсинга handler-method'ов.
+    /// Используется и в parse_handler_lit, и в parse_expr_or_handler_lit
+    /// (старая эвристика для обратной совместимости).
+    fn parse_handler_methods(&mut self) -> Result<Vec<HandlerMethod>, Diagnostic> {
+        let mut methods = Vec::new();
+        while !matches!(self.peek().kind, TokenKind::RBrace) {
+            let (mname, mspan) = self.parse_ident()?;
+            self.expect(&TokenKind::LParen)?;
+            let mut params = Vec::new();
+            while !matches!(self.peek().kind, TokenKind::RParen) {
+                let (pname, pspan) = self.parse_ident()?;
+                let pty = if !matches!(
+                    self.peek().kind,
+                    TokenKind::Comma | TokenKind::RParen
+                ) {
+                    let attempt = self.pos;
+                    match self.parse_type() {
+                        Ok(t) => Some(t),
+                        Err(_) => {
+                            self.pos = attempt;
+                            None
+                        }
+                    }
+                } else {
+                    None
+                };
+                params.push(HandlerMethodParam {
+                    name: pname,
+                    ty: pty,
+                    span: pspan,
+                });
+                if self.eat(&TokenKind::Comma).is_none() {
+                    break;
+                }
+            }
+            self.expect(&TokenKind::RParen)?;
+            let body = match self.peek().kind {
+                TokenKind::FatArrow => {
+                    self.bump();
+                    self.skip_newlines();
+                    HandlerMethodBody::Expr(self.parse_expr()?)
+                }
+                TokenKind::LBrace => HandlerMethodBody::Block(self.parse_block()?),
+                _ => {
+                    return Err(Diagnostic::new(
+                        "expected `=>` or `{` for handler-method body",
+                        self.peek().span,
+                    ));
+                }
+            };
+            let end = match &body {
+                HandlerMethodBody::Expr(e) => e.span,
+                HandlerMethodBody::Block(b) => b.span,
+            };
+            methods.push(HandlerMethod {
+                name: mname,
+                params,
+                body,
+                span: mspan.merge(end),
+            });
+            self.skip_newlines();
+        }
+        Ok(methods)
     }
 
     fn parse_spawn(&mut self) -> Result<Expr, Diagnostic> {

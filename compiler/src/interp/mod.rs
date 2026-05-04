@@ -51,6 +51,10 @@ pub enum Flow {
     Continue,
     /// `throw err` — поднимается до Throws-handler'а.
     Throw(Value),
+    /// `interrupt v` (D61) — досрочное завершение текущего with-блока.
+    /// Поднимается до ближайшей `eval_with` границы, становится результатом
+    /// всего with-блока. Continuation НЕ возобновляется.
+    Interrupt(Value),
 }
 
 impl Interpreter {
@@ -112,6 +116,10 @@ impl Interpreter {
             Flow::Break => Err(Diagnostic::new("`break` outside loop", expr.span)),
             Flow::Continue => Err(Diagnostic::new("`continue` outside loop", expr.span)),
             Flow::Throw(_) => Err(Diagnostic::new("uncaught throw", expr.span)),
+            Flow::Interrupt(_) => Err(Diagnostic::new(
+                "`interrupt` outside handler-method",
+                expr.span,
+            )),
         }
     }
 
@@ -171,6 +179,10 @@ impl Interpreter {
             Flow::Value(v) | Flow::Return(v) => Ok(v),
             Flow::Throw(err) => Err(Diagnostic::new(
                 format!("uncaught throw: {:?}", err),
+                span,
+            )),
+            Flow::Interrupt(_) => Err(Diagnostic::new(
+                "`interrupt` escaped handler-method",
                 span,
             )),
             Flow::Break | Flow::Continue => Err(Diagnostic::new(
@@ -587,6 +599,17 @@ impl Interpreter {
                     payload: VariantPayload::Tuple(vec![v]),
                 }))
             }
+            ExprKind::Interrupt(value) => {
+                // interrupt v (D61): прерывает текущий with-блок, значение
+                // становится результатом всего with. В bootstrap-модели
+                // sentinel-variant `__interrupt` подобно `__resume`, но
+                // ловится в eval_with, где разворачивает стек.
+                let v = match value {
+                    Some(e) => self.eval_expr_value(e, env)?,
+                    None => Value::Unit,
+                };
+                Ok(Flow::Interrupt(v))
+            }
             ExprKind::Range { start, end, inclusive } => {
                 let s = self.eval_expr_value(start, env)?;
                 let e = self.eval_expr_value(end, env)?;
@@ -629,6 +652,10 @@ impl Interpreter {
                 expr.span,
             )),
             Flow::Throw(_) => Err(Diagnostic::new("uncaught throw", expr.span)),
+            Flow::Interrupt(_) => Err(Diagnostic::new(
+                "`interrupt` in expression context",
+                expr.span,
+            )),
         }
     }
 
@@ -1265,6 +1292,10 @@ impl Interpreter {
             Flow::Break => Err(Diagnostic::new("`break` not allowed here", block.span)),
             Flow::Continue => Err(Diagnostic::new("`continue` not allowed here", block.span)),
             Flow::Throw(_) => Err(Diagnostic::new("uncaught throw", block.span)),
+            Flow::Interrupt(_) => Err(Diagnostic::new(
+                "`interrupt` outside handler-method",
+                block.span,
+            )),
         }
     }
 
@@ -1498,10 +1529,16 @@ impl Interpreter {
         for _ in 0..frames_pushed {
             self.handlers.borrow_mut().pop();
         }
-        // throw → если есть Throws-handler выше, он бы уже его поймал.
+        // throw → если есть Throws/Fail-handler выше, он бы уже его поймал.
         // В bootstrap'е после with-блока throw не превращаем в catch
         // автоматически — конкретные тесты делают match { Err => ... }.
-        result
+        //
+        // Flow::Interrupt(v) — handler-method сделал `interrupt v`,
+        // значение `v` становится результатом всего with-блока.
+        match result {
+            Ok(Flow::Interrupt(v)) => Ok(Flow::Value(v)),
+            other => other,
+        }
     }
 }
 

@@ -1,5 +1,13 @@
 // 13_effects.nv — protocol-эффекты (D53), handler-литералы (D31),
 // `with`-блок (D11), resume.
+//
+// Часть тестов используют **старый bootstrap-синтаксис**: `type X protocol`
+// (вместо `type X effect`), `X { ops }` (без keyword `handler`), `resume(v)`
+// (вместо нового `return v` в tail-position handler-method'а). Старый
+// синтаксис до сих пор поддерживается парсером для обратной совместимости.
+//
+// Часть тестов специально использует **новый синтаксис D61** —
+// `type X effect`, `handler X { ops }` keyword, `interrupt v`.
 
 module spec.effects
 
@@ -14,6 +22,11 @@ type KeyValue protocol {
 
 type Echo protocol {
     say(msg str) -> str
+}
+
+// Новый синтаксис D61: эффект через `effect` keyword
+type Switch effect {
+    flip() -> bool
 }
 
 fn three_times() Counter -> int {
@@ -119,5 +132,39 @@ test "handler-method block-form" {
         }
     } {
         assert(Echo.say("hi") == "HI")
+    }
+}
+
+// Новые тесты — D61 синтаксис
+
+test "D61: handler keyword with new effect syntax" {
+    with Switch = handler Switch {
+        flip() => resume(true)
+    } {
+        let b = Switch.flip()
+        assert(b == true)
+    }
+}
+
+test "D61: interrupt прерывает весь with-блок" {
+    let result = with Switch = handler Switch {
+        flip() {
+            interrupt 42
+        }
+    } {
+        // Эта строка не выполнится — handler сделал interrupt
+        let _ = Switch.flip()
+        0
+    }
+    assert(result == 42)
+}
+
+test "D61: handler-значение через переменную" {
+    let h = handler Switch {
+        flip() => resume(false)
+    }
+    with Switch = h {
+        let b = Switch.flip()
+        assert(b == false)
     }
 }
