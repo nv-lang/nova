@@ -469,13 +469,16 @@ impl Parser {
         // и эффектов. Skip newlines перед body.
         self.skip_newlines();
 
-        // Тело: `effect { ... }` | `alias TYPE` |
+        // Тело: `effect { ... }` | `protocol { ... }` | `alias TYPE` |
         // `{ fields }` | `| variant | variant` | `TYPE` (newtype) |
         // начинается с `|` для sum.
         //
-        // (TypeDeclKind::Effect содержит методы effect-типа.)
+        // (TypeDeclKind::Effect содержит методы effect-типа. По D62
+        // protocol-форма синтаксически идентична effect-форме —
+        // различие program-based, type checker'а это касается.
+        // В bootstrap'е оба попадают в TypeDeclKind::Effect.)
         let kind = match self.peek().kind {
-            TokenKind::KwEffect => {
+            TokenKind::KwEffect | TokenKind::KwProtocol => {
                 self.bump();
                 self.expect(&TokenKind::LBrace)?;
                 let methods = self.parse_effect_methods()?;
