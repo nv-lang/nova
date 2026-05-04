@@ -96,8 +96,8 @@ pub enum TypeDeclKind {
     Record(Vec<RecordField>),
     /// `type Name | A | B(int) | C { x int }` (D52)
     Sum(Vec<SumVariant>),
-    /// `type Name protocol { signatures }`
-    Protocol(Vec<ProtocolMethod>),
+    /// `type Name effect { signatures }`
+    Effect(Vec<EffectMethod>),
     /// `type NewType u64` — newtype (D52)
     Newtype(TypeRef),
     /// `type Name alias OtherType` (D52)
@@ -131,7 +131,7 @@ pub enum SumVariantKind {
 }
 
 #[derive(Debug, Clone)]
-pub struct ProtocolMethod {
+pub struct EffectMethod {
     pub name: String,
     pub generics: Vec<String>,
     pub params: Vec<Param>,
@@ -458,7 +458,7 @@ pub struct HandlerMethod {
 #[derive(Debug, Clone)]
 pub struct HandlerMethodParam {
     pub name: String,
-    pub ty: Option<TypeRef>, // обычно None — выводится из protocol (Q-handler-method-param-inference)
+    pub ty: Option<TypeRef>, // обычно None — выводится из effect-сигнатуры (Q-handler-method-param-inference)
     pub span: Span,
 }
 

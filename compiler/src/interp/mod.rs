@@ -27,7 +27,7 @@ use value::*;
 pub struct Interpreter {
     /// Top-level декларации (зарегистрированные при загрузке модуля).
     pub globals: Env,
-    /// Регистр типов — для resolve'а sum-вариантов и protocol'ов.
+    /// Регистр типов — для resolve'а sum-вариантов и effect'ов.
     pub types: HashMap<String, TypeDecl>,
     /// Handler-стек: последние добавленные сверху.
     pub handlers: RefCell<Vec<HandlerFrame>>,

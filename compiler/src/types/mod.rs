@@ -24,7 +24,7 @@ pub enum Ty {
     Never,
     /// Любой тип / неизвестный (для bootstrap'а — fallback).
     Any,
-    /// Именованный тип (record, sum, protocol, newtype, alias).
+    /// Именованный тип (record, sum, effect, newtype, alias).
     /// Generics не разворачиваются — они мономорфизируются позже.
     Named(String),
     Array(Box<Ty>),

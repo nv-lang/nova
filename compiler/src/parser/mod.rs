@@ -473,15 +473,14 @@ impl Parser {
         // `{ fields }` | `| variant | variant` | `TYPE` (newtype) |
         // начинается с `|` для sum.
         //
-        // (TypeDeclKind::Protocol — историческое имя варианта AST, осталось
-        // от устаревшего `protocol` keyword. Сейчас хранит effect.)
+        // (TypeDeclKind::Effect содержит методы effect-типа.)
         let kind = match self.peek().kind {
             TokenKind::KwEffect => {
                 self.bump();
                 self.expect(&TokenKind::LBrace)?;
-                let methods = self.parse_protocol_methods()?;
+                let methods = self.parse_effect_methods()?;
                 self.expect(&TokenKind::RBrace)?;
-                TypeDeclKind::Protocol(methods)
+                TypeDeclKind::Effect(methods)
             }
             TokenKind::KwAlias => {
                 self.bump();
@@ -603,7 +602,7 @@ impl Parser {
         Ok(variants)
     }
 
-    fn parse_protocol_methods(&mut self) -> Result<Vec<ProtocolMethod>, Diagnostic> {
+    fn parse_effect_methods(&mut self) -> Result<Vec<EffectMethod>, Diagnostic> {
         let mut methods = Vec::new();
         self.skip_newlines();
         while !matches!(self.peek().kind, TokenKind::RBrace) {
@@ -637,7 +636,7 @@ impl Parser {
                 None
             };
             let end = self.tokens[self.pos.saturating_sub(1)].span;
-            methods.push(ProtocolMethod {
+            methods.push(EffectMethod {
                 name,
                 generics,
                 params,
@@ -2527,7 +2526,7 @@ mod tests {
             "#,
         );
         let Item::Type(t) = &m.items[0] else { panic!() };
-        let TypeDeclKind::Protocol(methods) = &t.kind else {
+        let TypeDeclKind::Effect(methods) = &t.kind else {
             panic!()
         };
         assert_eq!(methods.len(), 2);
