@@ -274,10 +274,15 @@ naming convention, по аналогии с примитивами. Исполь
 **Базовые функции:**
 
 ```nova
-fn print(s str) Io -> ()
-fn println(s str) Io -> ()
+fn print(...items []any) Io -> ()           // variadic, см. D69
+fn println(...items []any) Io -> ()         // variadic + newline
 fn panic(msg str) -> Never
 ```
+
+`print`/`println` — **variadic** ([D69](03-syntax.md#d69)),
+принимают любое число аргументов любого типа (`any` —
+[D54](03-syntax.md#d54)). Каждый аргумент конвертируется в строку
+через `to_str()`. Spread разрешён: `print(...parts)`.
 
 #### `Never` — обычный тип без значений
 

@@ -1251,6 +1251,32 @@ D68 формализует **два** паттерна:
 [D11](../04-effects.md#d11), [D31](../04-effects.md#d31) (handler-лямбда),
 [D35](../03-syntax.md#d35) (`@`-методы), [D61](../04-effects.md#d61).
 
+### Variadic-параметры: D69 формализует `print(...)` use-case
+
+В bootstrap-stdlib `print`/`println` изначально были Native-функциями,
+принимающими переменное число аргументов (через Rust-side `&[Value]`).
+Но в спеке D26 объявлял `fn print(s str) Io -> ()` — фиксированную
+arity 1. Это drift между bootstrap и spec.
+
+D69 формализует variadic как полноценную фичу языка через TypeScript-
+style синтаксис: `fn print[T](...items []T) Io -> ()`.
+
+Решающие выборы:
+- **Prefix `...`** (как D60 spread в литералах) — symmetric, не Go-style postfix.
+- **Тип параметра `[]T`** (как TS) — не element type как в Go. «Один
+  тип, две формы вызова».
+- **Только последний параметр** может быть variadic (упрощение).
+- **Mix explicit + spread** разрешён: `f("x", ...arr, "y")`.
+- **Heterogeneous через `any`**: `print(...items []any)` использует
+  D54 top-type. Каждый элемент через `to_str()`.
+
+`print`/`println` в D26 переписаны на variadic-сигнатуру.
+
+**Связанные D:** [D69](../03-syntax.md#d69) (новое),
+[D60](../03-syntax.md#d60) (spread в литералах — symmetric),
+[D54](../03-syntax.md#d54) (any), [D26](../08-runtime.md#d26)
+(prelude print/println).
+
 ## Как читать историю
 
 - **«revised»** в статусе D — текст переписан, решение действует, но

@@ -30,6 +30,7 @@
 | [D58](#d58-range-литерал-iterator-protocol-for-in-implicit-iter) | Range-литерал `a..b`, `Iter[T]` protocol, `for x in c` implicit iter |
 | [D59](#d59-array-tuple-и-позиционные-partial-patterns) | Array, tuple и позиционные partial patterns (`[]`, `[r]`, `[_, ..]`, `Cons(..)`) |
 | [D60](#d60-spread-в-литералах-arr-record) | Spread `...x` в литералах: массив `[1, ...arr, 2]` и record `{ ...obj, field: v }` |
+| [D69](#d69-variadic-параметры-через-items-t) | Variadic-параметры через `...items []T` |
 
 ---
 
@@ -2479,3 +2480,166 @@ Field punning ([D52](02-types.md#d52)) работает после spread — е
 - **Tuple-spread** (`(1, ...t, 5)`) — длина tuple фиксирована типом,
   spread даёт компилятору всю информацию. Не вводится в MVP за
   ненадобностью.
+
+---
+
+## D69. Variadic-параметры через `...items []T`
+
+### Что
+Последний параметр функции может быть помечен префиксом `...` —
+параметр объявляет, что **на call site** его можно вызвать одним из
+двух способов:
+
+1. **Через spread** существующего массива: `f(...arr)`.
+2. **Через отдельные элементы**: `f(a, b, c)` — компилятор соберёт
+   их в `[]T`.
+
+Тип параметра — обычный `[]T`. Внутри функции `items` это `[]T`,
+никакой специальной семантики.
+
+### Правило
+
+#### Декларация
+
+```nova
+fn print[T](...items []T) Io -> () {
+    for x in items {       // items: []T внутри функции
+        Io.write(to_str(x))
+    }
+}
+
+fn fmt(template str, ...args []str) -> str {
+    // template — обычный параметр; args — variadic []str
+    ...
+}
+```
+
+Грамматика:
+
+```
+param = [ '...' ] name type
+```
+
+`...` допустим **только перед последним параметром**. Тип после `...`
+обязан быть `[]T` (или `[]Type` любой формы) — не element type.
+
+#### Call site
+
+```nova
+// Способ 1: spread массива
+let names = ["alice", "bob"]
+print(...names)            // эквивалентно print("alice", "bob")
+
+// Способ 2: отдельные элементы
+print("alice", "bob")      // компилятор собирает в ["alice", "bob"]
+
+// Микс — spread в любой позиции после обычных аргументов
+print("prefix", ...names, "suffix")
+//      ↑          ↑          ↑
+//      обычный    spread     обычный
+//      → результат: ["prefix", "alice", "bob", "suffix"]
+```
+
+Spread на call site можно использовать **только** для variadic-параметра.
+Для обычного `items []T` параметра spread не разрешён —
+программист передаёт массив явно: `f(["a", "b"])`.
+
+### Семантика
+
+- `...items []T` в декларации — это **синтаксический marker**, не
+  новый тип. Тип `items` это `[]T`.
+- На call site spread `...arr` разворачивает `arr: []T` в позиционные
+  аргументы.
+- Без spread'а: компилятор собирает все аргументы в `[]T` неявно
+  (compile-time, zero overhead).
+- **Только последний** параметр может быть variadic — упрощает
+  парсинг и неоднозначности.
+- **Type checking**: каждый аргумент проверяется против element type
+  `T`; spread-выражение должно иметь тип `[]T`.
+
+#### Generic-variadic
+
+```nova
+fn first[T](...items []T) -> Option[T] {
+    if items.len == 0 { None } else { Some(items[0]) }
+}
+
+first(1, 2, 3)             // T = int
+first("a", "b")            // T = str
+first(...["x", "y"])       // T = str через spread
+```
+
+`T` выводится из элементов или spread-массива.
+
+#### Heterogeneous-variadic через `any`
+
+Когда нужен `print("count=", 42, " items")` (разные типы):
+
+```nova
+fn print(...items []any) Io -> ()
+```
+
+`any` — top-type из [D54](#d54). Каждый элемент конвертируется в
+строку через `to_str()` (stdlib). Это разрешает `print` принимать
+смешанные типы без T-параметра.
+
+### Что НЕ делается
+
+- **Variadic не последним параметром** (`fn f(...xs []int, last str)`).
+  Усложняет грамматику без выгоды; в крайнем случае программист
+  переставляет параметры.
+- **Несколько variadic-параметров** — нет смысла.
+- **Keyword args** (Python `**kwargs`) — отдельная фича, не нужна
+  для variadic use-case.
+- **Postfix-синтаксис как в Go** (`items ...string`). Префикс `...`
+  единый для всех spread'ов в Nova ([D60](#d60-spread-в-литералах-arr-record)
+  для массивов, D69 для variadic) — symmetric.
+- **Element-type как в Go** (`...items T`). Декларация показала бы
+  «items: T» с magic-преобразованием в []T. Nova предпочитает
+  явный array-type без скрытой обёртки.
+
+### Почему
+
+1. **D60 symmetry.** В литералах массивов уже используется prefix
+   `...arr` для spread. Variadic-call-spread `f(...arr)` — та же форма.
+2. **D40 «один способ».** Нет «двух типов в одной декларации»
+   (element vs array как в Go). Тип параметра = `[]T`, конец.
+3. **TypeScript-прецедент.** Самый популярный variadic-синтаксис в
+   современных языках, LLM знает.
+4. **AI-friendly.** Сигнатура `(...items []T)` сразу показывает:
+   - `...` → variadic;
+   - `[]T` → точный тип параметра;
+   - element type выводится естественно.
+5. **Минимальные изменения грамматики.** Парсер уже распознаёт `...`
+   в spread-литералах (D60). Расширение на параметры функции —
+   маленькое дополнение.
+
+### Что отвергнуто
+
+- **Без variadic вообще** (всегда явный `f([a, b, c])`). Отвергнуто:
+  частые отладочные `print(...)` стали бы шумнее. Variadic — конкретное
+  улучшение DX.
+- **Macro-style** (`println!`-как-в-Rust). Отвергнуто: у Nova нет
+  macro-системы; добавлять её только ради variadic — overkill.
+- **Variadic через Java-style autoboxing** (`Object...`). Отвергнуто:
+  no implicit boxing в Nova; используем `any` явно.
+
+### Связь
+
+- [D60](#d60-spread-в-литералах-arr-record) — spread `...arr` в литералах
+  массивов и record'ов; D69 распространяет на параметры функций.
+- [D54](#d54-операторы-as-и-is) — `any` для heterogeneous-variadic.
+- [D27](#d27-синтаксис-массивов-t-префикс-nt-фиксированные) — `[]T`
+  как тип параметра.
+- [08-runtime.md → D26](08-runtime.md#d26) — `print`/`println` теперь
+  имеют сигнатуру `fn print(...items []any) Io -> ()`.
+
+### Эволюция
+
+Bootstrap-stdlib изначально имел `print` как Native-функцию принимающую
+переменное число аргументов (Rust-side `&[Value]`), но **в спеке** D26
+определял `fn print(s str)` — fixed arity 1. Это был drift между
+implementation и spec.
+
+D69 фиксирует variadic как полноценную фичу языка и приводит сигнатуру
+`print` к `fn print(...items []any) Io -> ()`.
