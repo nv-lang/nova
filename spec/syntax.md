@@ -979,7 +979,7 @@ fn map_eff[T, U, E](xs []T, f (T) E -> U) E -> []U =>
 ## Supervision (Erlang-style, встроена)
 
 ```nova
-fn server() Par Net Fail -> () =>
+fn server() Net Fail -> () =>
     supervised {
         spawn handle_requests()
         spawn periodic_cleanup()

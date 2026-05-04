@@ -589,7 +589,7 @@ nova replay trace.nrec --step
 Из эффектов следует встроенная structured concurrency с supervision:
 
 ```nova
-fn server() Par Net Fail -> () =>
+fn server() Net Fail -> () =>
     supervised {
         spawn handle_requests()      // если упадёт — рестарт
         spawn periodic_cleanup()     // если упадёт — рестарт
@@ -649,7 +649,7 @@ panic означает смерть текущего fiber'а, runtime обра�
 fn handle_request(r Request) Db Log -> Response =>
     process(r)             // panic → fiber умирает, runtime вернёт 500
 
-fn server() Par Net Fail -> () =>
+fn server() Net Fail -> () =>
     supervised {
         spawn handle_requests()
     } strategy = one_for_one
@@ -736,12 +736,12 @@ fn idempotent_by(tx_id str, real Handler[Db]) -> Handler[Db] => Db {
 и повторяющий вызов:
 
 ```nova
-fn retry(max_attempts int, real Handler[Net]) -> Handler[Net] => Net {
+fn retry(max_attempts int, real Handler[Net]) -> Handler[Net] => handler Net {
     get(url) {
         let mut attempt = 0
         loop {
-            match try_throws[NetError] { real.get(url) } {
-                Ok(resp) => return return resp
+            match try_fail[NetError] { real.get(url) } {
+                Ok(resp) => interrupt resp
                 Err(_) if attempt < max_attempts => {
                     Time.sleep(backoff(attempt))
                     attempt += 1

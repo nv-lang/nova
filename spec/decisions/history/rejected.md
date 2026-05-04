@@ -99,7 +99,7 @@ int }` (record) или `type X int` (newtype). См.
 
 ### Implicit cast `int → Sum` через `as`
 **Отвергнуто.** Type-небезопасно (число может не попасть в варианты).
-Только через pattern match с `Throws[InvalidVariant]`:
+Только через pattern match с `Fail[InvalidVariant]`:
 ```nova
 let c = match n {
     0 => Red
@@ -236,13 +236,16 @@ alias. См. [D39](../02-types.md#d39).
 Использует record-литерал или handler-лямбду. См.
 [D11](../04-effects.md#d11), [D31](../04-effects.md#d31).
 
-### `Throws` без параметра E в публичных функциях
-**Отвергнуто.** Бесконтекстный `Throws` уровня «может бросить что-то»
-не информативен. В публичных API параметр обязателен. См.
-[D25](../04-effects.md#d25), [D28](../04-effects.md#d28).
+### `Fail` без параметра E в публичных функциях
+**Частично отвергнуто.** Бесконтекстный `Fail` уровня «может бросить
+что-то» не информативен в публичных API. Но [D65](../04-effects.md#d65)
+ввёл `Fail` ≡ `Fail[any]` для quick-and-dirty / catch-all сценариев.
+В публичных API параметр обязателен (рекомендация, не compile error).
+См. [D25](../04-effects.md#d25), [D28](../04-effects.md#d28),
+[D65](../04-effects.md#d65).
 
 ### `try { ... } catch (e) { ... }` блок
-**Отвергнуто.** Используется handler через `with Throws[E] = ... { ... }`
+**Отвергнуто.** Используется handler через `with Fail[E] = ... { ... }`
 — тот же механизм, что для всех эффектов.
 
 ### `try_panic`/`catch panic` в коде

@@ -174,7 +174,7 @@ fn handler(req Request) Net Db -> Response {
 fn handle_request(r Request) Db Log -> Response =>
     process(r)             // если panic — fiber умирает, runtime вернёт 500
 
-fn server() Par Net Fail -> () =>
+fn server() Net Fail -> () =>
     supervised {
         spawn handle_requests()
     } strategy = one_for_one

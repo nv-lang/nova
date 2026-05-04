@@ -1,25 +1,38 @@
 # Concurrency — параллелизм и асинхронность
 
 Решения этой группы определяют модель параллельных вычислений Nova:
-как `async` интегрирован в систему эффектов, какие structured-concurrency
-примитивы есть в языке, и как fiber-runtime реализует асинхронность.
+как fiber-runtime обеспечивает невидимую приостановку, какие
+structured-concurrency примитивы есть в языке, и как параллелизм
+выражается в коде.
 
 | # | Решение |
 |---|---|
-| [D14](#d14-async-как-эффект--fiber-runtime) | `Async` как эффект + fiber runtime |
+| [D14](#d14-fiber-runtime--невидимая-инфраструктура) | Fiber runtime — невидимая инфраструктура |
 | [D50](#d50-concurrency-model-spawn-detach-blocking) | Concurrency model: `spawn`, `detach`, `Blocking` |
 
 ---
 
-## D14. `Async` как эффект + fiber runtime
+## D14. Fiber runtime — невидимая инфраструктура
+
+> ⚠️ **REVISED → [D62](04-effects.md#d62), [D64](04-effects.md#d64).**
+> Изначально D14 объявлял `Async` как эффект. После D62 `Async` **не
+> является эффектом** — это runtime-инфраструктура, ambient capability.
+> В сигнатурах не пишется. Гарантия не-приостановки даётся блоком
+> [`realtime`](04-effects.md#d64) как inverse-маркер, а не отсутствием
+> `Async` в сигнатуре. Структурный параллелизм через [D50](#d50)
+> (`spawn`, `parallel`, `race`, `cancel_scope`).
 
 ### Что
-`Async` — обычный эффект в сигнатуре, **без `Future<T>` в типе
-возврата** и **без `await` в коде**. Цвет функции исчезает: точнее,
-переезжает в эффекты, как `Fail`, `Net`, `Db`. Под капотом —
-fiber-based scheduler (Go/OCaml 5/Erlang-стиль). Structured concurrency
-(`parallel for`, `race`, `select`, `cancel_scope`, `with_timeout`) —
-**примитивы языка**, не библиотечные функции.
+**Fiber runtime** обеспечивает приостановку без видимого `await`/
+`Future<T>`. Цвет функции отсутствует: вызов sync-функции и
+suspend-функции выглядят одинаково. Точки приостановки **невидимы в
+типах** — программист и LLM их не видят (это сознательное решение D62:
+runtime-факт, не tipo-факт). Если нужна гарантия, что приостановки
+**нет**, используется блок [`realtime { ... }`](04-effects.md#d64).
+
+Structured concurrency (`parallel for`, `race`, `select`,
+`cancel_scope`, `with_timeout`, `spawn`) — **примитивы языка**, см.
+[D50](#d50).
 
 ### Правило
 
@@ -37,10 +50,11 @@ fn handler(req Request) Net Db -> Response {
 
 Тип возврата `Response`, **не `Future<Response>`**. Программист пишет
 последовательный код, а компилятор + scheduler делают остальное.
+`Async` НЕ присутствует в сигнатуре (D62).
 
 #### Внутри — fiber scheduler
 
-Под `Async` живёт **fiber-based scheduler** (как в Go или OCaml 5).
+Под капотом — **fiber-based scheduler** (как в Go или OCaml 5).
 Когда операция эффекта `Net` приостанавливается, fiber кладётся в
 очередь ожидания, scheduler берёт другой fiber. Память —
 сегментированный стек или cactus stack.
@@ -88,19 +102,18 @@ with_timeout(2.seconds()) {
 ### Почему
 
 1. **Невирусность.** Отсутствие `await`/`Future<T>` снимает «цвет
-   функции» — вызов `Async`-функции из `Async`-функции выглядит как
+   функции» — вызов suspend-функции из suspend-функции выглядит как
    обычный вызов, без обёрток. Это значительно упрощает рефакторинг и
    AI-генерацию.
-2. **Видимость в сигнатуре остаётся.** Эффект `Async` присутствует —
-   программист и LLM видят, что функция может приостановиться.
-   Информации не меньше, чем у Rust `async fn`.
+2. **D62: Async — runtime-инфраструктура, не type-fact.** Программист
+   не должен думать про suspension при чтении сигнатуры. Если в
+   будущем какая-то операция станет sync — сигнатура не меняется.
+   Тип отражает поведение, не реализацию. Гарантия отсутствия
+   suspension даётся блоком `realtime { ... }` ([D64](04-effects.md#d64)).
 3. **Прецеденты.** Erlang и Go доказали, что fiber-runtime работает
    на масштабе backend (миллионы fiber'ов на узел). OCaml 5 показал
    тот же подход в строго типизированном языке.
-4. **Алгебраические эффекты естественно ложатся.** Handler эффекта
-   `Net` приостанавливает fiber и регистрирует callback — это та же
-   операция, что у scheduler'а.
-5. **Structured concurrency встроена.** Не нужны библиотеки типа
+4. **Structured concurrency встроена.** Не нужны библиотеки типа
    Trio/structured-concurrency RFC — `parallel for`, `race`,
    `cancel_scope` — часть языка. Это значительно безопаснее для
    AI-генерации (нет утечек fiber'ов).
@@ -109,13 +122,13 @@ with_timeout(2.seconds()) {
 
 | | Rust async | Nova |
 |---|---|---|
-| Цвет функции | да (`async fn`) | нет (но `Async` в сигнатуре) |
+| Цвет функции | да (`async fn`) | нет |
 | `await` нужен | да | нет |
 | Тип возврата меняется | `Future<T>` | `T` (не меняется) |
 | Стоимость задачи | ~64 байта (state machine) | ~4-8 KB (fiber stack) |
 | Cancellation | ручная (Drop) | structured (`cancel_scope`) |
 | C interop blocking | без проблем | требует `detach to OS thread` |
-| Видимость в сигнатуре | есть | есть |
+| Видимость suspension в сигнатуре | есть | нет (см. D62) |
 
 Nova ближе к **Erlang/Go** по runtime, к **Koka** по типам. Платит
 **памятью** (fiber stacks) ради **простоты кода** (невирусность).
@@ -127,21 +140,25 @@ Nova ближе к **Erlang/Go** по runtime, к **Koka** по типам. Пл
 машину — норма** (как Erlang). Миллиард — нет, для таких задач есть
 `Stream`/событийная модель.
 
-### Признание ограничения главного тезиса
+### Async — runtime, не тип
 
 «Всё — эффект» ([D10](01-philosophy.md#d10)) — это **типовая модель**,
-не **runtime-модель**. На уровне типов `Async` единообразен с
-`Net`/`Db`. На уровне runtime async требует fiber-инфраструктуры, как
-memory regions требуют allocator'а ([D6](05-memory.md#d6)). Это
-**исключение, симметричное другим runtime-исключениям**, а не дыра в
-концепции.
+не **runtime-модель**. На уровне типов `Async` НЕ существует
+([D62](04-effects.md#d62)). На уровне runtime async требует
+fiber-инфраструктуры, как memory regions требуют allocator'а
+([D6](05-memory.md#d6)). Симметрия: GC, region и fiber-scheduler — три
+runtime-капабилити, которые не отражаются в эффектах.
 
 ### Что отвергнуто
 
 - **`Future<T>` в типе возврата** (Rust/TS-стиль) — заставляет
   программиста писать `await`, заражает все вызывающие функции цветом.
-- **`async/await` keywords** — заменены эффектом `Async`. Один
-  механизм для всех побочных действий.
+- **`async/await` keywords** — отвергнуты. Cuspension — runtime-факт,
+  не в типах.
+- **`Async` как эффект в сигнатуре** — отвергнуто в [D62](04-effects.md#d62).
+  Программист не должен видеть suspension в типах; ему достаточно
+  inverse-маркера `realtime` ([D64](04-effects.md#d64)) для гарантии
+  no-suspend.
 - **Stackless coroutines (Rust state machines)** — экономят память,
   но требуют `Pin`/`Send`/`Sync` бойлерплейта; не подходят для
   AI-кодинга.
@@ -161,8 +178,9 @@ memory regions требуют allocator'а ([D6](05-memory.md#d6)). Это
 
 ### Связь
 
-- [01-philosophy.md → D10](01-philosophy.md#d10) — `Async` как часть
-  «всё — эффект».
+- [01-philosophy.md → D10](01-philosophy.md#d10) — «всё — эффект»
+  применимо к Net/Db/Fail/Log; suspension — исключение
+  ([D62](04-effects.md#d62)).
 - [04-effects.md](04-effects.md) — система эффектов в целом.
 - [05-memory.md → D6](05-memory.md#d6) — `region` как родственный
   runtime-примитив.
@@ -171,8 +189,11 @@ memory regions требуют allocator'а ([D6](05-memory.md#d6)). Это
 
 ### Эволюция
 
-D14 в текущей форме **active**. Никаких пересмотров не было —
-fiber-runtime был выбран с самого начала.
+D14 в первой редакции объявлял `Async` как эффект в сигнатуре. После
+[D62](04-effects.md#d62) `Async` убран из type-system целиком —
+suspension стала ambient capability runtime'а. Гарантия отсутствия
+suspension даётся блоком [D64](04-effects.md#d64) `realtime { }` как
+inverse-маркером.
 
 Открытый вопрос про C interop через `detach to OS thread` закрыт
 [D50](#d50-concurrency-model-spawn-detach-blocking) — эффект
