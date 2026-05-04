@@ -349,10 +349,11 @@ Bootstrap-Rust выкидывается.
    stackful) vs ручная реализация. Склонность — `corosensei`,
    быстрый старт. Связано с
    [Q3](../../spec/open-questions.md#q3-реализация-fiber-stack-для-async).
-3. **Структура репо.** Monorepo (компилятор внутри `nova-lang/`,
-   например `nova-lang/compiler/`) vs отдельный репозиторий
-   `nova-compiler/`. Сейчас `nova-lang/` — дом дизайн-документов;
-   решение принимается при создании первого crate'а.
+3. **Структура репо.** Monorepo (bootstrap внутри `nova-lang/` —
+   `nova-lang/compiler-bootstrap/`) vs отдельный репозиторий
+   `nova-compiler/`. **Решено:** monorepo, bootstrap живёт в
+   `compiler-bootstrap/`. Conformance-тесты (`tests-nova/`) на
+   top-level — общие для любого компилятора Nova.
 4. **Минимальная версия Rust.** Stable 1.75+, никаких nightly-фич —
    стабильность важнее.
 

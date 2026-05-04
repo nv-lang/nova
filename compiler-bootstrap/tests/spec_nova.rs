@@ -1,5 +1,8 @@
-//! Запускает все .nv-файлы из tests-nova/ через интерпретатор и
+//! Запускает все .nv-файлы из ../tests-nova/ через интерпретатор и
 //! проверяет, что все `test "..." { ... }` блоки внутри проходят.
+//!
+//! tests-nova/ живёт на top-level репозитория, не в compiler-bootstrap/ —
+//! это conformance tests языка, общие для любого компилятора Nova.
 //!
 //! Это «тестируем язык на самом языке» — bootstrap должен поддержать
 //! каждую заявленную фичу, иначе соответствующий test-блок упадёт.
@@ -30,9 +33,13 @@ fn run_nova_test_file(path: &PathBuf) -> (usize, usize, Vec<String>) {
 }
 
 fn collect_nova_files() -> Vec<PathBuf> {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests-nova");
+    // tests-nova/ — на top-level репо (sibling to compiler-bootstrap/).
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("CARGO_MANIFEST_DIR has no parent")
+        .join("tests-nova");
     let mut files: Vec<PathBuf> = fs::read_dir(&dir)
-        .unwrap_or_else(|e| panic!("failed to read tests-nova/: {}", e))
+        .unwrap_or_else(|e| panic!("failed to read {}: {}", dir.display(), e))
         .filter_map(|entry| entry.ok().map(|e| e.path()))
         .filter(|p| p.extension().map(|e| e == "nv").unwrap_or(false))
         .collect();
