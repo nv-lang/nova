@@ -1,0 +1,74 @@
+// 25_coalesce_and_annotations.nv — `??` (D4) на Option и type
+// annotations в let.
+
+module spec.coalesce
+
+test "?? на Option Some" {
+    let s = Some(42)
+    assert((s ?? 0) == 42)
+}
+
+test "?? на Option None даёт default" {
+    let n = None
+    assert((n ?? -1) == -1)
+}
+
+test "?? цепочка на Option" {
+    let a = None
+    let b = None
+    let c = Some(7)
+    let r = a ?? b ?? c ?? 0
+    assert(r == 7)
+}
+
+test "?? первое Some — остальные не вычисляются" {
+    let a = Some(10)
+    let b = Some(20)
+    let r = a ?? b ?? 0
+    assert(r == 10)
+}
+
+test "?? default — выражение" {
+    let n = None
+    let d = 5 + 5
+    assert((n ?? d) == 10)
+}
+
+test "?? на nested Option" {
+    let outer = Some(Some(42))
+    let inner = match outer {
+        Some(s) => s
+        None    => None
+    }
+    assert((inner ?? 0) == 42)
+}
+
+// --- Type annotations в let (D9) ---
+
+test "let с явным int типом" {
+    let x int = 42
+    assert(x == 42)
+}
+
+test "let с явным str типом" {
+    let s str = "nova"
+    assert(s.len == 4)
+}
+
+test "let mut с типом" {
+    let mut s str = "hi"
+    s = "bye"
+    assert(s == "bye")
+}
+
+test "let с generic Array[int]" {
+    let xs Array[int] = [1, 2, 3]
+    assert(xs[0] == 1)
+    assert(xs[2] == 3)
+}
+
+test "let без аннотации — вывод типа" {
+    let p = (7, "k")
+    assert(p.0 == 7)
+    assert(p.1 == "k")
+}
