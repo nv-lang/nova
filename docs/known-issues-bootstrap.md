@@ -215,6 +215,35 @@ let x int = 42    // OK
 
 ---
 
+## `if pred(x) { ... }` в for-блоке — парсер путается
+
+В теле `for` после `for x in xs {` парсер не принимает прямой
+вызов в условии `if`:
+
+```nova
+for x in xs {
+    if pred(x) { r.push(x) }     // SYNTAX ERROR в bootstrap'е
+}
+```
+
+Workaround — вынести вызов в let:
+
+```nova
+for x in xs {
+    let ok = pred(x)
+    if ok { r.push(x) }
+}
+```
+
+Симптом: `expected '{', got newline`. Видимо conflict между
+trailing-block-call (`pred(x) { ... }`) и `if pred(x) { ... }` —
+парсер пытается распознать вызов с trailing-блоком.
+
+**Где.** Парсер `if`/call disambiguation. Вероятно нужен флаг
+no-trailing-block после `if` (как уже есть для scrutinee в match).
+
+---
+
 ## Scope rules для `type` внутри блока
 
 ```nova
