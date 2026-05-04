@@ -363,7 +363,6 @@ impl<'a> Lexer<'a> {
             "export" => TokenKind::KwExport,
             "fn" => TokenKind::KwFn,
             "type" => TokenKind::KwType,
-            "protocol" => TokenKind::KwProtocol,
             "effect" => TokenKind::KwEffect,
             "handler" => TokenKind::KwHandler,
             "alias" => TokenKind::KwAlias,

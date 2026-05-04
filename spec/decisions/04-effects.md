@@ -3171,7 +3171,7 @@ effect-list  = type-ref { ',' type-ref }
 ```
 
 `type-ref` это полная ссылка на effect-тип, включая generic-параметры:
-`Fail[ParseError]`, `Throws[E]` (из generic-контекста).
+`Fail[ParseError]`, `Fail[E]` (из generic-контекста).
 
 ### Почему
 

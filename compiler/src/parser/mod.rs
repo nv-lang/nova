@@ -407,7 +407,7 @@ impl Parser {
     }
 
     /// Парсит список эффектов между `)` и (`->` | `{` | `=>`).
-    /// Эффект — TypeRef (обычно Named, но может быть с generics: Throws[E]).
+    /// Эффект — TypeRef (обычно Named, но может быть с generics: Fail[E]).
     fn parse_effects_until_arrow_or_body(&mut self) -> Result<Vec<TypeRef>, Diagnostic> {
         let mut effects = Vec::new();
         loop {
@@ -466,18 +466,17 @@ impl Parser {
         }
 
         // Тело типа может идти на следующей строке для multi-line sum'ов
-        // и protocol'ов. Skip newlines перед body.
+        // и эффектов. Skip newlines перед body.
         self.skip_newlines();
 
-        // Тело: `protocol { ... }` | `effect { ... }` | `alias TYPE` |
+        // Тело: `effect { ... }` | `alias TYPE` |
         // `{ fields }` | `| variant | variant` | `TYPE` (newtype) |
         // начинается с `|` для sum.
         //
-        // protocol и effect семантически разные (D61), но в bootstrap-
-        // интерпретаторе хранятся одинаково — оба дают TypeDeclKind::Protocol.
-        // Различение на уровне type checker'а — задача будущего компилятора.
+        // (TypeDeclKind::Protocol — историческое имя варианта AST, осталось
+        // от устаревшего `protocol` keyword. Сейчас хранит effect.)
         let kind = match self.peek().kind {
-            TokenKind::KwProtocol | TokenKind::KwEffect => {
+            TokenKind::KwEffect => {
                 self.bump();
                 self.expect(&TokenKind::LBrace)?;
                 let methods = self.parse_protocol_methods()?;
@@ -1890,7 +1889,7 @@ impl Parser {
             self.bump();
             path.push(self.parse_ident()?.0);
         }
-        // Опциональные generic-параметры эффекта (Fail[Error], Throws[E], etc.)
+        // Опциональные generic-параметры эффекта (Fail[Error], etc.)
         // — парсим, но в bootstrap не используем (хранится в name path).
         if matches!(self.peek().kind, TokenKind::LBracket) {
             // Пропускаем generic-аргументы целиком
@@ -2518,10 +2517,10 @@ mod tests {
     }
 
     #[test]
-    fn type_protocol() {
+    fn type_effect() {
         let m = parse_or_panic(
             r#"
-            type Db protocol {
+            type Db effect {
                 query(q Sql) -> int
                 exec(q Sql) -> int
             }

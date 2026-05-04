@@ -45,7 +45,7 @@ export fn LinkedList[T].from_array(xs []T) -> LinkedList[T] {
     acc
 }
 
-export fn LinkedList[T].from_iter(it protocol { mut next() -> Option[T] }) -> LinkedList[T] {
+export fn LinkedList[T].from_iter(it effect { mut next() -> Option[T] }) -> LinkedList[T] {
     // Prepend каждый элемент → получаем обратный список (O(1) на шаг).
     // Затем reverse — суммарно O(n), без вспомогательного массива.
     let mut acc LinkedList[T] = Empty

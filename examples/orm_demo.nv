@@ -26,7 +26,7 @@
 // - [D48](../spec/decisions/03-syntax.md#d48) tagged template `sql\`...\``
 // - [D52](../spec/decisions/02-types.md#d52) record + literal coercion +
 //   field punning
-// - [D53](../spec/decisions/02-types.md#d53) `Db` как protocol-эффект
+// - [D53](../spec/decisions/02-types.md#d53) `Db` как effect
 // - [D31](../spec/decisions/04-effects.md#d31) handler-литералы и
 //   handler-лямбда
 // - [D11](../spec/decisions/04-effects.md#d11) `with`-блок для подмены

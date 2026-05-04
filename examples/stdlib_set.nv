@@ -34,7 +34,7 @@ export fn Set[T].with_capacity(cap int) -> Set[T] =>
     { map: HashMap[T, ()].with_capacity(cap) }
 
 // Из массива/итератора.
-export fn Set[T].from_iter(it protocol { mut next() -> Option[T] }) -> Set[T] {
+export fn Set[T].from_iter(it effect { mut next() -> Option[T] }) -> Set[T] {
     let mut s = Set[T].new()
     while let Some(x) = it.next() {
         s.insert(x)

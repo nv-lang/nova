@@ -5,7 +5,7 @@
 // значение, передаётся как аргумент, хранится в переменной,
 // используется в `for` (через `@iter()` implicit).
 //
-// `Iter[T]` — структурный protocol в prelude. RangeIter автоматически
+// `Iter[T]` — структурный effect в prelude. RangeIter автоматически
 // удовлетворяет `Iter[int]` через `mut next() -> Option[int]`.
 
 module std.range

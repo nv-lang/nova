@@ -9,10 +9,10 @@
 
 ## Что подсвечивается
 
-- **Ключевые слова:** `fn`, `type`, `alias`, `protocol`, `let`, `mut`, `const`, `match`, `if`, `else`, `for`, `while`, `loop`, `return`, `throw`, `with`, `defer`, `spawn`, `parallel`, `supervised`, `forbid`, `test`, `is` (D54 runtime type-check для `any`)
+- **Ключевые слова:** `fn`, `type`, `alias`, `effect`, `handler`, `let`, `mut`, `const`, `match`, `if`, `else`, `for`, `while`, `loop`, `return`, `throw`, `with`, `interrupt`, `defer`, `spawn`, `parallel`, `supervised`, `forbid`, `realtime`, `test`, `is` (D54 runtime type-check для `any`)
 - **Модули и импорты:** `module`, `import`, `export`, `as`
 - **Типы prelude:** `Option`, `Result`, `Some`, `None`, `Ok`, `Err`, `Error`, `Never`, `Iter`, `Range`, `RangeIter`, `HashMap`, `Channel`, `Mutex`, ...
-- **Стандартные эффекты:** `Throws`, `Io`, `Net`, `Db`, `Fs`, `Time`, `Random`, `Mut`, `Alloc`, `Async`, `Par`, `Log`, `Trace`, `Ask`
+- **Стандартные эффекты:** `Fail`, `Io`, `Net`, `Db`, `Fs`, `Time`, `Random`, `Log`, `Trace`, `Ask`
 - **Примитивные типы:** `int`, `i8`-`i64`, `u8`-`u64`, `f32`, `f64`, `str`, `bool`, `char`, `byte`
 - **Контракты:** `requires`, `ensures`, `invariant`
 - **Стрелки:** `->` (типы), `=>` (тела/match), `?`, `??`

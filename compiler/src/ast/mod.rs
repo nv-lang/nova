@@ -300,7 +300,7 @@ pub enum ExprKind {
         /// trailing-block: D43
         trailing_block: Option<TrailingBlock>,
     },
-    /// `expr?` — пробрасывание Throws
+    /// `expr?` — пробрасывание Fail (D25/D65)
     Try(Box<Expr>),
     /// `expr ?? default` — coalesce
     Coalesce(Box<Expr>, Box<Expr>),

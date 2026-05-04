@@ -150,11 +150,11 @@
             "patterns": [
                 {
                     "name": "keyword.control.flow.nova",
-                    "match": "\\b(if|else|match|for|while|loop|break|continue|return|throw|defer|spawn|parallel|supervised|race|select|with_timeout|cancel_scope|in|forbid|with|region)\\b"
+                    "match": "\\b(if|else|match|for|while|loop|break|continue|return|throw|defer|spawn|parallel|supervised|race|select|with_timeout|cancel_scope|in|forbid|realtime|with|region|interrupt)\\b"
                 },
                 {
                     "name": "keyword.declaration.nova",
-                    "match": "\\b(fn|type|alias|protocol|let|const|module|import|export|as|use|test)\\b"
+                    "match": "\\b(fn|type|alias|effect|handler|let|const|module|import|export|as|use|test)\\b"
                 },
                 {
                     "name": "storage.modifier.nova",
@@ -176,7 +176,7 @@
         },
         "effects": {
             "name": "entity.name.type.effect.nova",
-            "match": "\\b(Throws|Io|Net|Db|Fs|Time|Random|Mut|Alloc|Async|Par|Log|Trace|Ask|Logger|Router|CurrentAdmin|CurrentUser|Realtime|Blocking)\\b"
+            "match": "\\b(Fail|Io|Net|Db|Fs|Time|Random|Alloc|Log|Trace|Ask|Logger|Router|CurrentAdmin|CurrentUser)\\b"
         },
         "prelude-types": {
             "name": "entity.name.type.prelude.nova",
@@ -254,7 +254,7 @@
             ]
         },
         "type-decl": {
-            "match": "\\b(type|protocol|effect|trait)\\s+([A-Z][a-zA-Z0-9_]*)",
+            "match": "\\b(type|effect|handler)\\s+([A-Z][a-zA-Z0-9_]*)",
             "captures": {
                 "1": { "name": "keyword.declaration.type.nova" },
                 "2": { "name": "entity.name.type.declaration.nova" }

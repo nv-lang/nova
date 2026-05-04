@@ -49,7 +49,7 @@ pub enum Flow {
     /// `break` / `continue`.
     Break,
     Continue,
-    /// `throw err` — поднимается до Throws-handler'а.
+    /// `throw err` — поднимается до Fail-handler'а (D65).
     Throw(Value),
     /// `interrupt v` (D61) — досрочное завершение текущего with-блока.
     /// Поднимается до ближайшей `eval_with` границы, становится результатом
@@ -193,7 +193,7 @@ impl Interpreter {
     }
 
     /// Вызов closure с возвратом Flow — для случаев, когда throw должен
-    /// проброситься выше по call stack'у к обработчику Throws.
+    /// проброситься выше по call stack'у к обработчику Fail (D65).
     fn call_closure_flow(
         &self,
         closure: &Closure,
@@ -303,7 +303,7 @@ impl Interpreter {
                         // где `call_closure_flow` превращает его в `Flow::Value`.
                         // Так `?` на ошибке мгновенно выходит из текущей fn,
                         // возвращая исходный Err/None — что и нужно для
-                        // bootstrap-семантики Throws через Result.
+                        // bootstrap-семантики Fail через Result.
                         if let Value::Variant { name, payload, .. } = &v {
                             match (name.as_str(), payload) {
                                 ("Ok", VariantPayload::Tuple(items)) if items.len() == 1 => {
@@ -1529,7 +1529,7 @@ impl Interpreter {
         for _ in 0..frames_pushed {
             self.handlers.borrow_mut().pop();
         }
-        // throw → если есть Throws/Fail-handler выше, он бы уже его поймал.
+        // throw → если есть Fail-handler выше, он бы уже его поймал.
         // В bootstrap'е после with-блока throw не превращаем в catch
         // автоматически — конкретные тесты делают match { Err => ... }.
         //
