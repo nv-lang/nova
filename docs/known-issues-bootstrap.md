@@ -215,6 +215,46 @@ let x int = 42    // OK
 
 ---
 
+## `with X = factory() { body } …` — закрывающий `}` съедается как trailing-block
+
+Когда после `with X = factory()` идёт body-блок, парсер не различает
+вызов `factory()` с trailing-block и `with`-body:
+
+```nova
+with Counter = s.as_handler() {        // <— `{ ... }` уже считается
+    let a = Counter.next()              //     trailing-block для as_handler()
+    assert(a == 1)
+}
+let v = s.value     // SYNTAX ERROR: expected '{', got newline
+```
+
+**Workaround.** Положить handler в let'е до `with`:
+
+```nova
+let h = s.as_handler()
+with Counter = h {
+    ...
+}
+let v = s.value     // OK
+```
+
+Или использовать handler-литерал inline (без вызова метода):
+
+```nova
+with Counter = handler Counter {
+    next() => s.inc_and_get()           // ссылка на метод record'а через closure
+} {
+    ...
+}
+let v = s.value     // OK
+```
+
+**Где.** Парсер `with`-statement / call-expression disambiguation.
+Связано с [«r.push после match в while»](#) — общая проблема
+блоков-аргументов.
+
+---
+
 ## `r.push(v)` после `match { ... }` в while-блоке — `}` съедается как trailing block
 
 В сочетании `while { ... let v = match ... { ... } ; r.push(v) }`
