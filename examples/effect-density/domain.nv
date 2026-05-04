@@ -74,7 +74,7 @@ type SqlValue
 type Db effect {
     query(q Sql) Fail[DbError] -> []DbRow
     exec(q Sql)  Fail[DbError] -> int    // affected rows
-    in_transaction[T](body fn() Db Fail -> T) Fail -> T
+    in_transaction[T, E](body fn() Db Fail[E] -> T) Db Fail[E] -> T
 }
 
 type DbError | Connection | Constraint(str) | Timeout | Other(str)

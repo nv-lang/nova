@@ -239,7 +239,7 @@ fn demo_with_timeout() Net Fail -> () {
 }
 
 // Retry с увеличивающимся backoff.
-fn demo_retry[T](body fn() Fail -> T) Time Fail -> T {
+fn demo_retry[T, E](body fn() Fail[E] -> T) Time Fail[E] -> T {
     let mut backoff = 100.millis()
     for attempt in 0..5 {
         match body() {

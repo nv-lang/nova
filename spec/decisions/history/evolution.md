@@ -1065,6 +1065,72 @@ backend-сигнатурах. `Mut` упоминался в R2 как generic э
 **Связанные R-главы:** R5.2, R5.6, R6, R7 — все revised в
 [revolutionary.md](../../revolutionary.md).
 
+### Полная семантика `Fail`: D65 — гибрид Fail[E]/Fail, lookup, prelude RuntimeError/Error
+
+**Что было:** D25 фиксировал `Fail[E]` для типизированных ошибок и
+`Fail` без параметра как сахар над `Fail[Error]`, где `Error` это
+unit-тип-маркер в prelude. Это работало, но имело пробелы:
+
+- `Error` без полей был бесполезен — нечего было нести в throw.
+- Семантика `Fail` без параметра была неясна — «универсальный сахар»,
+  но без точного определения через какой тип.
+- Lookup-правило handler'ов при `throw expr` нигде явно не описано.
+- Поведение re-throw внутри handler'а не зафиксировано.
+- Не было типа для встроенных runtime-ошибок (DivByZero, Overflow,
+  IndexOutOfBounds) — они существовали как concept, но без D-блока.
+
+**Что стало:** [D65](../04-effects.md#d65) объединяет всё в один
+закрывающий блок:
+
+1. **Гибрид `Fail[E]` / `Fail`**: типизированный для production,
+   universal (= `Fail[any]`) для catch-all и quick-and-dirty.
+2. **Lookup при throw**: точный тип `E` → catch-all `Fail` (any) →
+   runtime panic.
+3. **Match по sum-вариантам — внутри handler'а**, не через subtype-aware
+   lookup. Один handler `Fail[RuntimeError]`, разбор внутри через
+   match.
+4. **Re-throw** через `throw err` в handler'е ищет outer handler.
+5. **Prelude-типы**:
+   - `RuntimeError` sum для встроенных runtime-сбоев (DivByZero,
+     Overflow, IndexOutOfBounds, TypeMismatch, AssertFailed,
+     NoHandler).
+   - `Error` теперь record `{ msg str }` с фабрикой `Error.new(msg)`.
+
+**Почему пересмотрели:**
+
+- **Дискуссия выявила пробел**: `Fail[?]` syntax вопрос — что в нём
+  должно стоять для quick-and-dirty? Что для встроенных runtime'ов?
+  Что для пользовательских?
+- **`Error` как unit-маркер был бессмыслен** — нечего бросать.
+  Replacement на record с msg даёт понятную семантику.
+- **`RuntimeError` нужен** — встроенные `a/b`/`arr[i]`/etc. должны
+  иметь конкретный тип ошибки. Sum-тип в prelude покрывает.
+- **Lookup-правило** требовалось формализовать — без него
+  имплементаторы выбрали бы разные стратегии (subtype-aware vs
+  exact-match), и compatibility ломалась бы.
+- **Гибрид Fail[E] + Fail** — компромисс. Один путь (только typed)
+  — неудобен для скриптов и тестов. Один путь (только universal) —
+  теряется compile-time exhaustiveness. Гибрид с convention для
+  public API — баланс.
+
+**Цена:**
+
+- Sweep по spec и examples — `transaction[T](body fn() Db Fail -> T)`
+  переписать с явным generic-параметром `[E]` или `Fail` (any).
+  Конкретные функции типа `parse(s) Fail` — типизировать.
+- В bootstrap-prelude добавить `RuntimeError` sum и `Error` record.
+- Type checker нужно расширить: «Fail (any) поглощает Fail[E]»;
+  multi-Fail в row; lookup-правило при throw.
+- Q-fail-coercion открыт — auto-coercion `E → E'` через однозначный
+  sum-variant отложено.
+
+**Связанные D:** [D65](../04-effects.md#d65) (новое — закрывающее
+тему ошибок), [D25](../04-effects.md#d25) (уточняется — `throw` и
+`Fail[E]`), [D26](../08-runtime.md#d26) (prelude обновлён —
+`Error` стал record, добавлен `RuntimeError`),
+[D62](../04-effects.md#d62) (Fail strict — уточняется совместимостью
+типов).
+
 ## Как читать историю
 
 - **«revised»** в статусе D — текст переписан, решение действует, но

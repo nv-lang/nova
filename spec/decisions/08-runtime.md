@@ -205,10 +205,26 @@ fn critical(...) -> Result =>
 ```nova
 type Option[T] | Some(T) | None
 type Result[T, E] | Ok(T) | Err(E)
-type Error                                       // unit-тип-маркер для Fail
 type Ordering | Less | Equal | Greater
 type Never                                       // unit без значений (uninhabited)
 type any protocol { }                            // top-type через пустой protocol (D53)
+
+// Error — record для quick-and-dirty ошибок с сообщением (D65)
+type Error {
+    readonly msg str
+}
+fn Error.new(msg str) -> Error => { msg }
+
+// RuntimeError — sum-тип встроенных runtime-сбоев (D65)
+// Бросается встроенными операциями: a/b на 0, arr[i] на out-of-bounds, etc.
+// StackOverflow и OutOfMemory не входят — они panic, не Fail (D13).
+type RuntimeError
+    | DivByZero
+    | Overflow
+    | IndexOutOfBounds { index int, length int }
+    | TypeMismatch(str)
+    | AssertFailed(str)
+    | NoHandler(str)
 
 // Iterator protocol (D58)
 type Iter[T] protocol {

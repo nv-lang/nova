@@ -2727,6 +2727,63 @@ with Db = Db {
 
 ---
 
+## Q-fail-coercion. Auto-coercion типов ошибок при `?`-операторе
+
+**Контекст.** [D65](decisions/04-effects.md#d65) фиксирует семантику
+`Fail[E]`. При транзитивном пробросе через `?` если callee бросает
+`E'`, а caller декларировал `Fail[E]` (E ≠ E') — программист обязан
+явно использовать `.map_err(...)` или multi-Fail в row.
+
+```nova
+type AppError
+    | Parse(ParseError)
+    | Db(DbError)
+
+fn process(s str) Fail[AppError] -> int {
+    let n = parse(s).map_err(AppError.Parse)?      // явный wrap
+    Db.query(...).map_err(AppError.Db)?            // явный wrap
+}
+```
+
+В Rust есть `From<E>`-trait, через который `?` автоматически конвертирует
+тип ошибки если есть имплементация. Для Nova аналогичное правило могло
+бы быть:
+
+> Если `E` (caller's Fail) имеет ровно один sum-вариант с типом `E'`
+> (callee's Fail), `?` автоматически вызывает этот вариант-конструктор:
+>
+> ```nova
+> parse(s)?     // вместо parse(s).map_err(AppError.Parse)?
+> ```
+>
+> compile-time проверка: вариантов с типом E' должно быть **ровно один**.
+> Если несколько — ambiguous, compile error.
+
+### За
+
+- Убирает boilerplate `.map_err(...)` для типичных wrap'ов.
+- Прецедент Rust — программисты знают.
+- Compile-time проверка остаётся (один вариант — однозначно, иначе ошибка).
+
+### Против
+
+- **Магия**. По месту вызова `parse(s)?` неочевидно что происходит wrap.
+- **AI-friendly?** LLM может не знать про auto-coercion и путаться.
+- **D40-style «один способ»**. Auto-coercion + явный `.map_err` —
+  два способа, неоднозначность.
+- **Локальное reasoning**. С явным `.map_err(AppError.Parse)` сразу
+  видно как ошибка маппится. С `?` — нужно смотреть на тип `AppError`.
+
+### Решение пока
+
+Не зафиксировано. Оставляется как потенциальная будущая фича.
+В текущем D65 — всегда явный `.map_err(...)?` или multi-Fail в row.
+
+**Связь:** [D65](decisions/04-effects.md#d65), [D4](decisions/04-effects.md#d4),
+[D25](decisions/04-effects.md#d25).
+
+---
+
 ## Финальное напоминание
 
 Прежде чем продолжать **дизайн**, прочитай:
