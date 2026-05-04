@@ -681,6 +681,22 @@ impl Interpreter {
             }
             // Случай 2: instance-метод `obj.method(...)` или static `Type.method`
             let recv_v = self.eval_expr_value(obj, env)?;
+            // Прямой вызов на handler-значении (D61): `h.op(args)` минует
+            // with-стек, исполняет handler-method прямо на этом значении.
+            // `interrupt v` внутри прерывает только этот вызов (становится
+            // результатом `h.op(args)`), не enclosing with-блок.
+            if let Value::Handler(handler) = &recv_v {
+                let arg_values = self.eval_args(args, env)?;
+                let flow = self.invoke_handler_op(handler, name, &arg_values, env, span)?;
+                // На границе прямого вызова Flow::Interrupt становится
+                // обычным значением вызова — semantics D61: interrupt
+                // прерывает «текущий with», а текущий with у direct-call'а —
+                // это сам этот вызов.
+                return Ok(match flow {
+                    Flow::Interrupt(v) => Flow::Value(v),
+                    other => other,
+                });
+            }
             // Native member-call?
             if let Some(v) = self.try_member_call(&recv_v, name, args, env, span)? {
                 return Ok(Flow::Value(v));

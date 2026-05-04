@@ -168,3 +168,24 @@ test "D61: handler-значение через переменную" {
         assert(b == false)
     }
 }
+
+test "D61: прямой вызов h.op(args) на handler-значении" {
+    // Минует with-стек — handler-method исполняется на h напрямую.
+    let h = handler Switch {
+        flip() => resume(true)
+    }
+    let b = h.flip()
+    assert(b == true)
+}
+
+test "D61: interrupt в прямом h.op() возвращается как результат вызова" {
+    let h = handler Switch {
+        flip() {
+            interrupt false
+        }
+    }
+    // Нет активного with — interrupt становится результатом самого
+    // h.flip(), а не падает наверх.
+    let b = h.flip()
+    assert(b == false)
+}

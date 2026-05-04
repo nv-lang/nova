@@ -1,0 +1,56 @@
+// effects_d61.nv — handler-substitution в новом D61-синтаксисе.
+//
+// Сравните со [старым стилем](effects.nv):
+//   - `protocol` → `effect`
+//   - литерал `Counter { ... }` → `handler Counter { ... }`
+//   - `resume(s)` → `return s` в tail-position
+//   - `interrupt v` для досрочного завершения with-блока
+
+module effects_d61
+
+type Counter effect {
+    next() -> int
+}
+
+type Switch effect {
+    flip() -> bool
+}
+
+fn count_three() Counter -> int {
+    let a = Counter.next()
+    let b = Counter.next()
+    let c = Counter.next()
+    a + b + c
+}
+
+fn main() {
+    // Базовый случай: handler с состоянием через resume → return
+    let mut state = 0
+    with Counter = handler Counter {
+        next() {
+            state += 1
+            resume(state)
+        }
+    } {
+        let total = count_three()
+        println("total = ", total)        // 1 + 2 + 3 = 6
+    }
+
+    // D61: interrupt прерывает with-блок
+    let r = with Switch = handler Switch {
+        flip() {
+            interrupt 999       // вместо bool отдаём int как результат всего with
+        }
+    } {
+        let _ = Switch.flip()
+        0                        // эта строка не выполнится
+    }
+    println("interrupt result = ", r)    // 999
+
+    // D61: handler-значение через переменную, прямой вызов h.op
+    let switcher = handler Switch {
+        flip() => resume(true)
+    }
+    let b = switcher.flip()              // прямой вызов, минуя with
+    println("direct flip = ", b)         // true
+}
