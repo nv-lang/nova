@@ -502,7 +502,7 @@ export fn transfer_balance(from_id UserId, to_id UserId, amount i64)
 //
 // Реальный test-handler разбирал бы SQL полноценно (через парсер); здесь
 // упрощённо ради демонстрации.
-fn in_memory_db_handler(storage mut HashMap[u64, DbRow]) -> Handler[Db] => Db {
+fn in_memory_db_handler(storage mut HashMap[u64, DbRow]) -> Handler[Db] => handler Db {
     query(q) {
         // SELECT WHERE id = ?
         if q.template.contains("WHERE id = ?") {

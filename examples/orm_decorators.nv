@@ -44,7 +44,7 @@ use std.sql                              // Sql, Db, DbRow, DbError
 //   UPDATE/INSERT проходят как есть.
 // - `in_transaction` — пробрасываем неизменно (вложенная композиция
 //   handler'ов работает прозрачно).
-export fn with_soft_delete(real Handler[Db]) -> Handler[Db] => Db {
+export fn with_soft_delete(real Handler[Db]) -> Handler[Db] => handler Db {
     query(q) {
         // SELECT: добавляем фильтр. Простая реализация — `with_filter`
         // конкатенирует AND. Реальная stdlib-версия делала бы parsing,
@@ -130,7 +130,7 @@ fn write_audit_entry(user_id u64, q Sql, affected int) Detach -> () {
 // иначе read-after-write rounds-trip'ы будут видеть устаревшие данные
 // (replica lag). Поэтому транзакционный body запускается с **под-handler'ом**,
 // у которого query тоже идёт на primary.
-export fn with_read_replica(primary Handler[Db], replica Handler[Db]) -> Handler[Db] => Db {
+export fn with_read_replica(primary Handler[Db], replica Handler[Db]) -> Handler[Db] => handler Db {
     query(q) => return replica.query(q)?
     exec(q)  => return primary.exec(q)?
     in_transaction(b) {
@@ -204,7 +204,7 @@ export fn build_db(primary Handler[Db], replica Handler[Db], current_user_id u64
 // ради того, чтобы убедиться, что decorator переписал SQL правильно.
 type CapturedQuery { template str, args []SqlValue }
 
-fn capturing_handler(log mut []CapturedQuery) -> Handler[Db] => Db {
+fn capturing_handler(log mut []CapturedQuery) -> Handler[Db] => handler Db {
     query(q) {
         log.push({ template: q.template, args: q.args })
         return []
