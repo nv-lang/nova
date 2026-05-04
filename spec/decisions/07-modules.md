@@ -270,12 +270,12 @@ fn Account @validate_amount(amount money) =>               // приватный
     amount > 0 && amount < money.MAX
 
 // ── Протоколы ─────────────────────────────────────────────────────
-export protocol Hashable {
+export type Hashable protocol {
     hash() -> u64
     eq(other Self) -> bool
 }
 
-protocol _InternalIter[T] {                // приватный protocol
+type _InternalIter[T] protocol {           // приватный protocol
     next() -> Option[T]
 }
 ```
