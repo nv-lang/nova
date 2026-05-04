@@ -25,6 +25,15 @@ const MAX_AUDIT_PAYLOAD_BYTES = 4096
 // ──────────────────────────────────────────────────────────────────────────
 
 // Запись аудита (внутренняя — для middleware).
+// `Json` — sum-тип из stdlib (не зафиксирован в спеке, см.
+// open-questions Q9). Здесь предполагается:
+//   type Json
+//       | Null
+//       | Bool(bool)
+//       | Num(float)
+//       | Str(str)
+//       | Array([]Json)
+//       | Object([](str, Json))
 type AuditEntryInternal {
     admin_id    str
     action      str
