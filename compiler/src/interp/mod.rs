@@ -1505,9 +1505,16 @@ impl Interpreter {
             HandlerMethodBody::Expr(e) => self.eval_expr(e, &local)?,
             HandlerMethodBody::Block(b) => self.exec_block_flow(b, &local)?,
         };
-        // Распаковываем resume-сигнал: если последнее значение — __resume,
-        // возвращаем его payload[0] как результат операции.
+        // D61: handler-method завершается одним из:
+        //  - финальное выражение (Flow::Value) → return-value операции
+        //  - `return v` (Flow::Return) → return-value операции
+        //  - `interrupt v` (Flow::Interrupt) → пробивается до eval_with
+        //
+        // (Старый sentinel `__resume` оставлен для совместимости со
+        // существующим bootstrap-кодом, который ещё использует
+        // resume-syntax. Удаляется отдельно.)
         match body_flow {
+            Flow::Return(v) => Ok(Flow::Value(v)),
             Flow::Value(Value::Variant {
                 name,
                 payload: VariantPayload::Tuple(items),
