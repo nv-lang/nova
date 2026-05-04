@@ -962,7 +962,7 @@ weak'ом помечается противоположная сторона. А
 
 ```nova
 export fn create_order(req CreateOrderReq)
-    Db Net Log Trace Fail[OrderError] Async Time Random
+    Db Net Log Trace Fail[OrderError] Time Random
     -> OrderResponse
 ```
 
@@ -981,7 +981,7 @@ export fn create_order(req CreateOrderReq)
 ### Вариант A. Effect aliases через `alias`-keyword
 
 ```nova
-alias StandardWeb = Db Net Log Trace Fail Async Time
+alias StandardWeb = Db Net Log Trace Fail Time
 
 export fn create_order(req Req) StandardWeb Random -> Resp
 ```
@@ -2939,6 +2939,69 @@ let s = "Hello " + name + ", you are " + age.to_str()
 взаимодействует с tagged templates.
 
 **Связь:** Tagged templates (нет D-блока пока), [D40](decisions/01-philosophy.md#d40).
+
+---
+
+## Q-coercion-order. Порядок применения coercion: sum vs record vs spread vs punning
+
+**Контекст.** В Nova есть несколько форм неявных трансформаций
+литералов в позиции с явным типом:
+
+- **D55 literal coercion** — sum-конструкторы (`E.Variant(...)`) и
+  record-литералы.
+- **D60 spread** — `[...arr, x]` для массивов и `{ ...rec, k: v }`
+  для записей.
+- **D52 field punning** — `{ x, y }` ≡ `{ x: x, y: y }` когда
+  идентификаторы совпадают с именами полей.
+
+Композиция этих правил в одном литерале **может давать неоднозначность**
+порядка применения:
+
+```nova
+let p = { ...base, x }        // что сделать первым:
+                              // (a) spread → record { ...base.fields, x: x }?
+                              // (b) punning x → x: x → record { ...base.fields, x: x }?
+                              // обычно эквивалентно, но не всегда
+```
+
+```nova
+let r RecordType = { ...base, value: 5 + 10 }
+// 1. coerce 5 + 10 в тип поля value (sum-coercion если value: SomeOption)?
+// 2. spread base?
+// 3. record-construct?
+```
+
+### Открытые пункты
+
+1. **Формальный порядок** — нужно зафиксировать sequence:
+   spread → punning → field-coercion → sum-coercion (или другой).
+2. **Многошаговая coercion**: `let r SomeRecord = { x: 5 }` где
+   `SomeRecord.x: SomeSumType`. Двушаговая: int → SomeVariant → field.
+   Зафиксировано ли «не более одного уровня coercion»?
+3. **Type checker order**: bottom-up vs top-down — на какой стадии
+   применяется coercion?
+
+### За
+
+- Без формального порядка LLM может генерировать «работает в одном
+  направлении, не в другом».
+- D55 в большом примере (`audit.nv`, `orm_demo.nv`) активно
+  использует comlex coercion — нужно правило.
+
+### Против
+
+- Может оказаться что в реальном коде эти кейсы редки.
+- Решение требует expert-внимания к type-checker дизайну (production
+  компилятор).
+
+### Решение пока
+
+Не зафиксировано. Bootstrap применяет правила «по одному за раз»
+(сначала spread, потом field-resolution, потом coercion внутри полей)
+— это implementation-факт. Production должен дать явное правило.
+
+**Связь:** [D55](decisions/02-types.md#d55), [D60](decisions/03-syntax.md#d60),
+[D52](decisions/02-types.md#d52), Q-numeric-coercion, Q-style-coercion.
 
 ---
 

@@ -1591,7 +1591,17 @@ type Db effect {
     exec(q Sql)  Fail[DbError] -> int
     in_transaction[T](body fn() Db Fail -> T) Fail -> T
 }
+```
 
+**Generic-методы в effect-объявлении** (например, `in_transaction[T]`)
+требуют rank-2 polymorphism — один handler работает с любым `T` для
+каждого вызова. Точная семантика type-checker'а для rank-2 в effect-
+методах — открытый вопрос ([Q6](../open-questions.md#q6)). Bootstrap-
+интерпретатор поддерживает через runtime erasure (T мономорфизуется
+как `any` на уровне dispatch'а); production-компилятор должен дать
+формальное правило.
+
+```nova
 type Logger effect {
     log(msg str) -> ()
 }
@@ -3658,6 +3668,25 @@ callee возвращает Result/Option как значение.
   шум: `lookup`, `find`, `parse_int` бросали бы Fail везде.
   Ранний return `None` из функции с `-> Option[T]` — естественнее.
 
+#### Признанное напряжение с D10 «всё — handler»
+
+`?` на `Option` — **второй механизм control-flow** в Nova: ранний
+return из функции, не перехватываемый через `with`-handler. Это
+**признанное исключение** из «всё нечистое — эффект»:
+
+- `Option` это **значение**, не эффект. `None` это валидный результат,
+  не ошибка. Поэтому propagation через эффект-stack здесь
+  неприменимо — нет «вверх» куда передавать.
+- Альтернатива `Fail[NoneError]` создавала бы фантомные эффекты в
+  сигнатурах для каждой функции с `lookup`/`find`/`parse_int`, что
+  **значительно** хуже по AI-first критерию (R5.2).
+- Compile-time правило тривиально: `?` на `Option[T]` валиден только
+  в функции с return type `Option[U]` для какого-то U.
+
+Это **прагматичный компромисс** — в духе D62 (Fail strict, остальное
+ослаблено). Полная унификация через эффект-stack теряет больше чем
+выигрывает.
+
 Альтернативы рассмотрены:
 - **`?` на Option через `Fail[NoneError]`** — отвергнуто: засоряет
   сигнатуры неинформативным типом ошибки.
@@ -3841,6 +3870,51 @@ fn CounterState @as_handler() -> Handler[Counter] =>
 - [D61](#d61) — `handler` keyword.
 - [D66](02-types.md#d66) — `Self` universal (можно использовать
   в return type'е `@as_handler`).
+
+### Thread safety
+
+D68 stateful handlers работают на **одном fiber'е** по умолчанию.
+Если handler передаётся между fiber'ами через `spawn`/`detach`/
+`parallel for` — **программист обязан** использовать thread-safe
+state:
+
+```nova
+// ❌ Race: shared между fiber'ами без атомика
+let mut counter = 0
+parallel for url in urls {
+    with Counter = handler Counter {
+        next() {
+            counter += 1     // race condition
+            return counter
+        }
+    } { ... }
+}
+
+// ✅ Atomic для shared counter:
+let counter = Atomic[int].new(0)
+parallel for url in urls {
+    with Counter = handler Counter {
+        next() => counter.fetch_add(1) + 1
+    } { ... }
+}
+
+// ✅ Или per-fiber state:
+parallel for url in urls {
+    let mut local = 0
+    with Counter = handler Counter {
+        next() {
+            local += 1
+            return local
+        }
+    } { ... }
+}
+```
+
+**Правило:** state, захваченный handler-method'ом, должен быть либо
+fiber-local (новый let на каждый fiber), либо thread-safe
+(`Atomic[T]`, `Mutex[T]`). Compile-time enforcement — открытый
+вопрос ([Q12](../open-questions.md#q12) concurrency model). Bootstrap
+не проверяет.
 
 ### Эволюция
 

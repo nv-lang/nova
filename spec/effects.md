@@ -61,10 +61,12 @@ fn fetch(url str) Net Fail -> Response
 
 Граница задана структурой: всё между `)` и `->` — эффекты.
 
-## Имена — обычные protocol'ы
+## Имена — обычные именованные типы
 
-Эффекты — это **именованные `protocol`'ы**, в PascalCase, как `Hashable`
-или `Iterator`. Не ключевые слова.
+Эффекты — это **именованные `effect`-типы** (по [D61](decisions/04-effects.md#d61)),
+в PascalCase. Объявляются через kind-токен `effect`, отличаются от
+структурных контрактов (`protocol`) семантикой `with`-substitution
+и continuation-capture.
 
 ```nova
 type Logger effect {
@@ -105,6 +107,8 @@ let captured = Db                      // 3. позиция выражения =
 | `Trace` | Распределённая трассировка |
 | `Ask[T]` | Чтение из контекста (как Reader) |
 | `Alloc[R]` | Аллокация в регионе R |
+| `Detach` | Fire-and-forget задача, переживающая caller'а ([D50](decisions/06-concurrency.md#d50)) |
+| `Blocking` | Синхронный C-вызов на blocking-pool потоке ([D50](decisions/06-concurrency.md#d50)) |
 
 `Async`, `Mut`, `Par` **не входят** в стандартный набор по
 [D62](decisions/04-effects.md#d62): `Async` — ambient capability

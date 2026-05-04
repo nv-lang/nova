@@ -316,7 +316,7 @@ export fn Account.new(owner str) -> Account => ...      // публичный к
 export fn Account @balance() => @balance                // публичный метод
 fn Account @validate(amount money) => amount > 0       // приватный helper
 
-export protocol Hashable {
+export type Hashable protocol {
     hash() -> u64
     eq(other Self) -> bool
 }
@@ -781,9 +781,9 @@ type Color { r, g, b u8 }
 
 Для perf-критичного кода компилятор использует **escape analysis**:
 не утекающие значения остаются на стеке, без аллокаций в managed
-heap. Программист не пишет ничего особого. Для real-time — эффект
-`Realtime` в сигнатуре, тело автоматически оборачивается в region
-(или явный `region { ... }` для контроля над аренами), [D6](decisions/05-memory.md#d6).
+heap. Программист не пишет ничего особого. Для real-time — блок
+`realtime nogc { }` ([D64](decisions/04-effects.md#d64)), внутри
+`region { }` для arena-allocations ([D6](decisions/05-memory.md#d6)).
 
 Подробно — [D32](decisions/02-types.md#d32).
 
@@ -922,9 +922,10 @@ fn hot_loop(data []f64) -> f64 =>
 объекты — на стеке, остальное — в managed heap. Никаких ссылок
 вручную.
 
-Для real-time hot path — эффект `Realtime` в сигнатуре. Компилятор
-оборачивает тело в implicit region; явный `region { ... }` нужен только
-для контроля над несколькими аренами. См. [D6](decisions/05-memory.md#d6).
+Для real-time hot path — блок `realtime nogc { body }`
+([D64](decisions/04-effects.md#d64)). Внутри блока запрещены
+suspend-операции и аллокации в managed heap; `region { ... }`
+используется для arena-allocations ([D6](decisions/05-memory.md#d6)).
 
 ## Структурные «интерфейсы» — `protocol`
 
