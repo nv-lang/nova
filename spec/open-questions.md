@@ -1395,7 +1395,7 @@ fn map[K Hashable, V](m HashMap[K, V]) -> ...
    `[T (FromRow, Hashable)]`? Лучше — анонимный structural type или
    композиция протоколов.
 2. Связь с эффектами в bounds — может ли protocol-bound включать
-   эффект-операции? (Эффекты — это `protocol`, [D18](decisions/04-effects.md#d18-эффекты-объявляются-через-protocol-не-type),
+   эффект-операции? (Эффекты — это `protocol`, [D18](decisions/04-effects.md#d18-эффекты-объявляются-через-kind-токен-не-голый-type),
    так что технически да.)
 3. Что бывает с уже принятыми решениями про anonymous structural
    type в позиции параметра ([D42](decisions/02-types.md#d42)):
@@ -1418,7 +1418,7 @@ fn log_one(x { show() -> str }) Log -> () =>
     Log.info(x.show())
 ```
 
-После [D18-revised](decisions/04-effects.md#d18-эффекты-объявляются-через-protocol-не-type)
+После [D18-revised](decisions/04-effects.md#d18-эффекты-объявляются-через-kind-токен-не-голый-type)
 эффект — это `protocol`. По симметрии:
 
 ```nova
