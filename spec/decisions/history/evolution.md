@@ -86,7 +86,7 @@ protocol'у. Никаких `impl`-блоков, никаких `[T: Bound]` bou
 - Новое: [D9 / D15](../02-types.md#d15) — структурный механизм,
   [D42](../02-types.md#d42) — keyword `protocol`.
 
-### Эффекты: lowercase `throws io async` → PascalCase `Throws Io Async`
+### Эффекты: lowercase `throws io async` → PascalCase `Fail[E] Io ...`
 
 **Что было:** эффекты как keyword'ы lowercase: `fn save(u: User)
 throws io async -> ()`.
@@ -94,37 +94,59 @@ throws io async -> ()`.
 **Что стало:** эффекты — обычные **типы** в PascalCase. Тот же
 синтаксис, что для всех типов в Nova.
 
+После [D61](../04-effects.md#d61): `Throws` переименован в `Fail`
+([D65](../04-effects.md#d65)), `Async` убран из type-system целиком
+([D62](../04-effects.md#d62)) — стал ambient runtime-инфраструктурой.
+
+```nova
+fn save(u User) Fail[E] Io -> ()
+```
+
 **Почему пересмотрели:**
 - Унификация: эффекты и типы — одно понятие ([D18](../04-effects.md#d18)).
 - Согласованность с правилами именования ([D30](../03-syntax.md#d30)).
 
 **Связанные D:** [D2](../04-effects.md#d2), [D3](../04-effects.md#d3),
-[D11](../04-effects.md#d11), [D18](../04-effects.md#d18),
-[D30](../03-syntax.md#d30).
+[D11](../04-effects.md#d11), [D18 (REVISED)](../04-effects.md#d18),
+[D30](../03-syntax.md#d30), [D62](../04-effects.md#d62),
+[D65](../04-effects.md#d65).
 
-### `effect X { ... }` keyword → обычный `type X { ... }`
+### `effect X { ... }` keyword → `type X { ... }` → `type X effect { ... }`
 
-**Что было:** объявление эффекта через специальный keyword `effect`:
+**Что было (v0):** объявление эффекта через специальный keyword `effect`:
 
 ```nova
 effect Logger { log(msg str) -> () }
 ```
 
-**Что стало:** эффект — обычный `type` с операциями:
+**Что стало (v1, D18):** эффект — обычный `type` с операциями:
 
 ```nova
 type Logger { log(msg str) -> () }
 ```
 
-**Почему пересмотрели:**
-- Унификация: эффекты — частный случай типов.
-- Меньше keyword'ов.
+**Что стало (v2, D53):** kind-токен `effect` под единым `type`:
 
-**Связанные D:** [D18](../04-effects.md#d18).
+```nova
+type Logger effect { log(msg str) -> () }
+```
 
-### `handler` keyword → handler-литерал и обычные функции
+**Что стало (v3, текущее, [D61](../04-effects.md#d61)):** `effect`
+вернулся как **kind-токен** + **keyword** одновременно.
+Объявление через `type X effect { ... }`. `effect` зарезервирован
+в Nova.
 
-**Что было:** специальный синтаксис объявления handler'а:
+**Почему пересмотрели в v3:**
+- D62 разделил protocol и effect как разные семантики (with-substitution).
+- `effect` keyword даёт явность что это «эффект, не protocol».
+
+**Связанные D:** [D18 (REVISED)](../04-effects.md#d18),
+[D53](../02-types.md#d53), [D61](../04-effects.md#d61).
+
+### `handler` keyword: эволюция через три фазы
+
+**Что было (v0):** специальный синтаксис объявления handler'а через
+keyword:
 
 ```nova
 handler json_logger Logger {
@@ -132,27 +154,39 @@ handler json_logger Logger {
 }
 ```
 
-**Что стало:** handler — обычное **значение**, литерал по форме
-record-литерала или handler-лямбда:
+**Что стало (v1, D11):** handler — обычное **значение**, литерал
+**без префикса**, по форме record-литерала или handler-лямбда:
 
 ```nova
 let json_logger = Logger {
-    log(msg) => resume(println(msg))
+    log(msg) => println("[LOG] ${msg}")
+}
+```
+
+**Что стало (v2, текущее, [D61](../04-effects.md#d61)):** `handler`
+**вернулся как keyword-префикс** перед литералом для disambiguation:
+
+```nova
+let json_logger = handler Logger {
+    log(msg) => println("[LOG] ${msg}")
 }
 
 with Logger = json_logger { ... }
 
-// или handler-лямбда (для эффектов с одной операцией)
-with Throws[Error] = (err) => Log.warn("op failed: ${err}") {
+// handler-лямбда (для эффектов с одной операцией) сохранена:
+with Fail[Error] = (err) => Log.warn("op failed: ${err}") {
     Db.exec(...)
 }
 ```
 
-**Почему пересмотрели:**
-- Handler — это значение, не отдельная категория.
-- Структурное единство — handler-литерал симметричен record-литералу.
+**Почему пересмотрели в v2:**
+- Без префикса литерал `Logger { log(msg) => ... }` визуально похож
+  на record-литерал; D61 ввёл явный keyword `handler` для prefix'а.
+- `resume(...)` отменён в D61 — handler-method ведёт себя как обычная
+  функция (return value / финальное выражение).
 
-**Связанные D:** [D11](../04-effects.md#d11), [D31](../04-effects.md#d31).
+**Связанные D:** [D11](../04-effects.md#d11), [D31](../04-effects.md#d31),
+[D61](../04-effects.md#d61).
 
 ### Match-arms: `->` → `=>`
 

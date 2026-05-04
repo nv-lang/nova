@@ -308,7 +308,8 @@ TypeScript `never`. Не уникальная фича Nova.
 #### Эффекты как обычные типы — `Fail[E]` не магия
 
 `Fail[E]` объявляется в prelude как любой другой эффект — через
-`protocol` ([04-effects.md → D18](04-effects.md#d18-эффекты-объявляются-через-kind-токен-не-голый-type)):
+kind-токен `effect` ([04-effects.md → D18 (REVISED)](04-effects.md#d18-эффекты-объявляются-через-kind-токен-не-голый-type),
+[D61](04-effects.md#d61)):
 
 ```nova
 type Fail[E] effect {

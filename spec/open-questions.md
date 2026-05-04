@@ -1107,25 +1107,31 @@ public-сигнатуре оказываются нормой.
 
 ---
 
-## Q22. Унификация `type` / `protocol` в один keyword? ✅ ЗАКРЫТО ([D53](decisions/02-types.md#d53))
+## Q22. Унификация `type` / `protocol` в один keyword? ✅ ЗАКРЫТО ([D53](decisions/02-types.md#d53), [D61](decisions/04-effects.md#d61))
 
-[D53](decisions/02-types.md#d53) принял унификацию: `protocol` стал
-**kind-токеном** под единым `type`-keyword. Все объявления типов
-(включая структурные контракты) идут через `type`:
+**Финальное решение** — гибрид:
+
+- **Declaration syntax** объединён под единым `type`-keyword'ом по
+  [D53](decisions/02-types.md#d53). Все объявления идут через `type`,
+  с kind-токеном для категории.
+- **Семантика расщеплена** по [D61](decisions/04-effects.md#d61):
+  `effect` и `protocol` — **разные kind-токены** с разным поведением.
+  - `effect` — поддерживает `with`-substitution (mock в тестах) и
+    continuation-capture (`interrupt`, throw).
+  - `protocol` — структурный контракт, без `with`-substitution.
 
 ```nova
-type Hashable protocol { hash() -> u64 }
-type Logger effect { log(msg str) -> () }
-type Db effect { query(q Sql) -> []DbRow }
-type any protocol { }                      // top-type
+type Hashable protocol { hash() -> u64 }    // структурный контракт
+type Logger effect { log(msg str) -> () }   // эффект (with-substitution)
+type Db effect { query(q Sql) -> []DbRow }  // эффект
+type any protocol { }                        // top-type
 ```
 
 Анонимный protocol-тип в позиции параметра — `protocol { ... }` (с
 обязательным префиксом, симметрично `[]T`, `(A, B)`, `fn() -> T`).
 
-D42 помечен revised → D53. Семантика структурной типизации,
-generic-параметров и эффектов сохраняется — изменился только
-синтаксис объявления.
+D42 помечен revised → D53. Выбор между `effect` и `protocol` —
+программистский, через два sniff-вопроса (см. [D62 правило 4](decisions/04-effects.md#d62)).
 
 Контекст ниже сохранён как историческая справка.
 

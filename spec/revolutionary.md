@@ -76,7 +76,7 @@ type Db effect {
     exec(q Sql)  -> ()
 }
 
-fn transactional(real Handler[Db]) -> Handler[Db] => Db {
+fn transactional(real Handler[Db]) -> Handler[Db] => handler Db {
     query(q) => return real.query(q)
     exec(q)  { staged.push(q); return () }
 }
@@ -220,13 +220,19 @@ LLM, которому дали одну функцию, **видит всё, ч�
 объявляются.
 
 ```nova
+type TransferError | InsufficientFunds | InvalidAccount
+
 fn transfer(from AccountId, to AccountId, amount money)
-    Fail[InsufficientFunds, InvalidAccount]
+    Fail[TransferError]
     Db Time Log
     requires amount > 0
     ensures from != to
     -> TransferReceipt
 ```
+
+(Несколько типов ошибки — sum-type или multi-Fail в row
+`Fail[A] Fail[B]`, [D65](decisions/04-effects.md#d65). Multi-параметры
+`Fail[A, B]` отвергнуты [D25](decisions/04-effects.md#d25).)
 
 По этой сигнатуре LLM (и человек) знает:
 - что принимает и возвращает
@@ -704,7 +710,7 @@ fn transfer(from AccountId, to AccountId, amount money) Db Fail -> Receipt {
 и читает локально:
 
 ```nova
-fn replicated(nodes [Node], quorum int, real Handler[Db]) -> Handler[Db] => Db {
+fn replicated(nodes [Node], quorum int, real Handler[Db]) -> Handler[Db] => handler Db {
     query(q) => return real.query(q)    // чтения локальны
     exec(q) {                             // записи на все узлы
         let acks = parallel for node in nodes {
@@ -719,7 +725,7 @@ fn replicated(nodes [Node], quorum int, real Handler[Db]) -> Handler[Db] => Db {
 **2. Идемпотентность.** Handler, кеширующий результат по ключу:
 
 ```nova
-fn idempotent_by(tx_id str, real Handler[Db]) -> Handler[Db] => Db {
+fn idempotent_by(tx_id str, real Handler[Db]) -> Handler[Db] => handler Db {
     query(q) => return real.query(q)
     exec(q)  => match Cache.get(tx_id) {
         Some(cached) => return cached         // повтор — вернуть кеш
@@ -774,7 +780,7 @@ WAL гарантирует, что операция не потеряется п
 стандартном наборе), оборачивающий каждую операцию в span:
 
 ```nova
-fn traced(real Handler[Db]) -> Handler[Db] => Db {
+fn traced(real Handler[Db]) -> Handler[Db] => handler Db {
     query(sql, args) => Trace.span("db.query", { "sql": sql }) {
         return real.query(sql, args)
     }
