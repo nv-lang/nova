@@ -1,0 +1,170 @@
+// 28_effects_composition.nv — композиция нескольких эффектов.
+//
+// 13_effects.nv покрыл базовые случаи. Здесь:
+// - функция с двумя эффектами в сигнатуре (Logger Counter)
+// - вложенные with-блоки для разных эффектов
+// - state-style эффект через get/set
+// - reader/writer паттерн
+
+module spec.effects_comp
+
+type Logger protocol {
+    log(msg str) -> ()
+}
+
+type Counter protocol {
+    next() -> int
+}
+
+type State protocol {
+    get() -> int
+    set(n int) -> ()
+}
+
+type Reader protocol {
+    read() -> str
+}
+
+type Writer protocol {
+    write(s str) -> ()
+}
+
+// --- Two effects ---
+
+fn task(n int) Logger Counter -> int {
+    let id = Counter.next()
+    Logger.log("processing")
+    n * id
+}
+
+test "функция с двумя эффектами в сигнатуре" {
+    let mut entries = []
+    let mut count = 0
+    with Logger = Logger {
+        log(msg) {
+            entries.push(msg)
+            resume(())
+        }
+    } {
+        with Counter = Counter {
+            next() {
+                count += 1
+                resume(count)
+            }
+        } {
+            let a = task(10)
+            let b = task(20)
+            assert(a == 10)
+            assert(b == 40)
+        }
+    }
+    assert(entries.len == 2)
+    assert(count == 2)
+}
+
+// --- State effect ---
+
+test "state effect — get/set" {
+    let mut s = 100
+    with State = State {
+        get() => resume(s)
+        set(n) {
+            s = n
+            resume(())
+        }
+    } {
+        let v1 = State.get()
+        assert(v1 == 100)
+        State.set(v1 + 5)
+        let v2 = State.get()
+        assert(v2 == 105)
+        State.set(v2 * 2)
+        assert(State.get() == 210)
+    }
+    assert(s == 210)
+}
+
+test "state — accumulator pattern" {
+    let mut acc = 0
+    with State = State {
+        get() => resume(acc)
+        set(n) {
+            acc = n
+            resume(())
+        }
+    } {
+        for i in 1..6 {
+            let cur = State.get()
+            State.set(cur + i)
+        }
+    }
+    assert(acc == 1 + 2 + 3 + 4 + 5)
+}
+
+// --- Reader/Writer pipe ---
+
+fn echo() Reader Writer -> () {
+    let s = Reader.read()
+    Writer.write(s + "!")
+}
+
+test "reader/writer композиция" {
+    let mut output = ""
+    let input = "hello"
+    with Reader = Reader {
+        read() => resume(input)
+    } {
+        with Writer = Writer {
+            write(s) {
+                output = s
+                resume(())
+            }
+        } {
+            echo()
+        }
+    }
+    assert(output == "hello!")
+}
+
+// --- Counter с разной семантикой ---
+
+fn three() Counter -> int {
+    Counter.next() + Counter.next() + Counter.next()
+}
+
+test "константный counter" {
+    with Counter = Counter {
+        next() => resume(7)
+    } {
+        let total = three()
+        assert(total == 21)
+    }
+}
+
+test "нарастающий counter с state" {
+    let mut n = 0
+    with Counter = Counter {
+        next() {
+            n += 1
+            resume(n)
+        }
+    } {
+        let total = three()
+        assert(total == 1 + 2 + 3)
+    }
+    assert(n == 3)
+}
+
+test "decrementing counter" {
+    let mut n = 100
+    with Counter = Counter {
+        next() {
+            n -= 10
+            resume(n)
+        }
+    } {
+        let r = Counter.next() + Counter.next() + Counter.next()
+        assert(r == 90 + 80 + 70)
+    }
+    assert(n == 70)
+}

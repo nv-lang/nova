@@ -215,6 +215,45 @@ let x int = 42    // OK
 
 ---
 
+## D61 `return v` в handler-method'е не работает в interp
+
+Спека D61 (см. [spec/decisions/04-effects.md → D61](../spec/decisions/04-effects.md))
+заменяет `resume(v)` на нормальный `return v` (или просто финальное
+выражение) в handler-method'е. Парсер это принимает, но интерпретатор
+не реализует семантику — handler-method с `return` не возвращает
+значение в caller'а корректно.
+
+```nova
+with Counter = handler Counter {
+    next() {
+        s += 1
+        return s        // FAILS: значение не передаётся в caller
+    }
+} { ... }
+```
+
+**Workaround.** Использовать старый bootstrap-синтаксис `resume(v)`
+(работает в interp).
+
+```nova
+with Counter = Counter {        // без `handler` keyword тоже ОК
+    next() {
+        s += 1
+        resume(s)
+    }
+} { ... }
+```
+
+**Где.** [compiler/src/interp/mod.rs](../compiler/src/interp/mod.rs)
+— eval handler-method не интерпретирует `Flow::Return` как resume-value.
+
+**Severity.** D61-семантика частично имплементирована: парсер +
+`Handler[E]` тип + прямой `h.op()` работают; новая `return v` —
+не работает. Все existing 13_effects.nv и 28_effects_composition.nv
+используют `resume(v)`.
+
+---
+
 ## `if pred(x) { ... }` в for-блоке — парсер путается
 
 В теле `for` после `for x in xs {` парсер не принимает прямой
