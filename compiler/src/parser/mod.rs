@@ -923,20 +923,22 @@ impl Parser {
 
     fn parse_range(&mut self) -> Result<Expr, Diagnostic> {
         let left = self.parse_add()?;
-        if matches!(self.peek().kind, TokenKind::DotDot) {
-            self.bump();
-            let right = self.parse_add()?;
-            let span = left.span.merge(right.span);
-            return Ok(Expr::new(
-                ExprKind::Range {
-                    start: Box::new(left),
-                    end: Box::new(right),
-                    inclusive: false,
-                },
-                span,
-            ));
-        }
-        Ok(left)
+        let inclusive = match self.peek().kind {
+            TokenKind::DotDot => false,
+            TokenKind::DotDotEq => true,
+            _ => return Ok(left),
+        };
+        self.bump();
+        let right = self.parse_add()?;
+        let span = left.span.merge(right.span);
+        Ok(Expr::new(
+            ExprKind::Range {
+                start: Box::new(left),
+                end: Box::new(right),
+                inclusive,
+            },
+            span,
+        ))
     }
 
     fn parse_add(&mut self) -> Result<Expr, Diagnostic> {

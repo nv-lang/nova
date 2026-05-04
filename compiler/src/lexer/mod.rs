@@ -84,6 +84,10 @@ impl<'a> Lexer<'a> {
                     self.pos += 3;
                     TokenKind::DotDotDot
                 }
+                (Some(b'.'), Some(b'=')) => {
+                    self.pos += 3;
+                    TokenKind::DotDotEq
+                }
                 (Some(b'.'), _) => {
                     self.pos += 2;
                     TokenKind::DotDot

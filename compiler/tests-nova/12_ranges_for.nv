@@ -82,3 +82,28 @@ test "continue inside for" {
     }
     assert(sum == 1 + 3 + 5)
 }
+
+test "inclusive range 1..=n" {
+    let mut sum = 0
+    for i in 1..=5 {
+        sum += i
+    }
+    assert(sum == 1 + 2 + 3 + 4 + 5)
+}
+
+test "inclusive range single value 7..=7" {
+    let mut count = 0
+    for _ in 7..=7 {
+        count += 1
+    }
+    assert(count == 1)
+}
+
+test "exclusive vs inclusive size" {
+    let mut a = 0
+    for _ in 0..5 { a += 1 }
+    let mut b = 0
+    for _ in 0..=5 { b += 1 }
+    assert(a == 5)
+    assert(b == 6)
+}
