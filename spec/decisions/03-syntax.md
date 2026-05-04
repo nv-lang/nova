@@ -1200,7 +1200,7 @@ fn_call(arg, User { name: "a" })     // record внутри args
 Многие language primitives становятся обычными функциями stdlib:
 
 ```nova
-fn with_timeout[T](dur Duration, body fn() Async -> T) Async Fail -> T
+fn with_timeout[T](dur Duration, body fn() Async -> T) Fail -> T
 fn transaction[T](db mut Db, body fn() Db Fail -> T) Db Fail -> T
 fn retry[T](attempts int, body fn() Fail -> T) Fail -> T
 ```

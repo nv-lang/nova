@@ -26,9 +26,9 @@ fiber-based scheduler (Go/OCaml 5/Erlang-стиль). Structured concurrency
 #### Внешне — синхронно выглядящий код
 
 ```nova
-fn fetch(url str) Net Async -> Response => ...
+fn fetch(url str) Net -> Response => ...
 
-fn handler(req Request) Net Async Db -> Response {
+fn handler(req Request) Net Db -> Response {
     let user = fetch_user(req.id)            // никаких .await
     let posts = fetch_posts(user.id)         // никаких .await
     Response.json(posts)
@@ -52,7 +52,7 @@ fn handler(req Request) Net Async Db -> Response {
 
 ```nova
 // parallel for — ждёт всех, отменяет хвост при ошибке
-fn fetch_all(urls []str) Net Async Fail -> []Response =>
+fn fetch_all(urls []str) Net Fail -> []Response =>
     parallel for url in urls {
         fetch(url)
     }
@@ -201,7 +201,7 @@ structured-scope, `detach { ... }` — отдельный примитив дл�
 (D14), эффект внутри них всё равно `Async`.
 
 ```nova
-fn fan_out(urls []str) Net Async Fail -> []Response =>
+fn fan_out(urls []str) Net Fail -> []Response =>
     parallel for url in urls {
         fetch(url)
     }
@@ -225,7 +225,7 @@ supervised {
 }
 
 // ✗ ОШИБКА компиляции — spawn вне scope'а
-fn handler(req Request) Net Async -> Response =>
+fn handler(req Request) Net -> Response =>
     spawn() { write_audit(req) }   // ← запрещено
     Response.ok()
 ```

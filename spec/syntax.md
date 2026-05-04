@@ -795,7 +795,7 @@ heap. Программист не пишет ничего особого. Для
 fn double(x int) -> int                          // чистая
 fn parse(s str) Fail -> int                    // может бросить
 fn save(u User) Fail Db Log -> ()              // три эффекта
-fn fetch(url str) Net Async Fail -> Response   // сеть + async + ошибки
+fn fetch(url str) Net Fail -> Response   // сеть + async + ошибки
 ```
 
 `?` — пробрасывание ошибки, работает в функциях с `Fail`:
@@ -884,7 +884,7 @@ test "complex flow" {
 ## Параллелизм — без `async/await`
 
 ```nova
-fn fetch_all(ids []u64) Net Async Fail -> []User =>
+fn fetch_all(ids []u64) Net Fail -> []User =>
     parallel for id in ids {
         fetch_user(id)
     }

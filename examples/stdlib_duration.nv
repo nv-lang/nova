@@ -232,7 +232,7 @@ test "zero and is_zero" {
 // ──────────────────────────────────────────────────────────────────────────
 
 // Trailing-block (D43) — `()` обязательны, тело за `)`.
-fn demo_with_timeout() Net Async Fail -> () {
+fn demo_with_timeout() Net Fail -> () {
     with_timeout(2.seconds()) {
         Net.get("https://api.example.com/data")?
     }

@@ -226,13 +226,13 @@ fn is_secret_key(k str) -> bool {
 // Лямбда строго `=> expr` ([D22](../spec/decisions/03-syntax.md#d22)),
 // поэтому тело middleware вынесено в named fn `audit_step`.
 fn audit_middleware(next Handler) -> Handler =>
-    (req Request) Db Log Router CurrentAdmin Async Fail -> Response =>
+    (req Request) Db Log Router CurrentAdmin Fail -> Response =>
         audit_step(next, req)
 
 // audit_step — настоящее тело middleware. Блок-форма fn (`{}`),
 // потому что нужны guard-ранние возвраты и несколько `let`'ов.
 fn audit_step(next Handler, req Request)
-    Db Log Router CurrentAdmin Async Fail -> Response {
+    Db Log Router CurrentAdmin Fail -> Response {
     // GET и HEAD не аудируем.
     if req.method == "GET" || req.method == "HEAD" {
         return next(req)
@@ -282,7 +282,7 @@ fn audit_step(next Handler, req Request)
 // Отдельный таймаут — основной запрос-контекст уже может быть отменён
 // к моменту записи (клиент закрыл соединение). 2 секунды на INSERT —
 // щедро.
-fn write_audit(e AuditEntryInternal) Db Log Async -> () {
+fn write_audit(e AuditEntryInternal) Db Log -> () {
     // handler-лямбда (D31): для эффекта с одной операцией (Fail.throw)
     // сахар — лямбда, параметры соответствуют операции. Лямбда строго
     // `=> expr` (D22), поэтому handler-тело вынесено в named fn

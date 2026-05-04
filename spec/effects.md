@@ -56,7 +56,7 @@ DI-фреймворков и `ThreadLocal`.
 fn double(x int) -> int                       // чистая
 fn parse(s str) Fail -> int                 // может бросить
 fn save(u User) Fail Db Log -> ()           // три эффекта
-fn fetch(url str) Net Async Fail -> Response
+fn fetch(url str) Net Fail -> Response
 ```
 
 Граница задана структурой: всё между `)` и `->` — эффекты.
@@ -94,22 +94,24 @@ let captured = Db                      // 3. позиция выражения =
 | Эффект | Что описывает |
 |---|---|
 | `Fail[E]` | Может выбросить ошибку типа E |
-| `Io` | Файлы, stdout/stderr |
+| `Io` | stdin/stdout/stderr |
+| `Fs` | Файловая система |
 | `Net` | Сетевые запросы |
 | `Db` | База данных |
-| `Fs` | Чтение/запись файлов |
 | `Time` | Часы, таймеры, задержки |
 | `Random` | RNG |
-| `Mut` | Изменяемое состояние |
-| `Alloc[R]` | Аллокация в регионе R |
-| `Async` | Точки приостановки (fiber yield) |
-| `Par` | Параллельный запуск |
 | `Log` | Структурированный лог |
 | `Trace` | Распределённая трассировка |
 | `Ask[T]` | Чтение из контекста (как Reader) |
+| `Alloc[R]` | Аллокация в регионе R |
+
+`Async`, `Mut`, `Par` **не входят** в стандартный набор по
+[D62](decisions/04-effects.md#d62): `Async` — ambient capability
+(не часть type system'ы), `Mut` — заменяется специализированными
+эффектами, `Par` — runtime-keyword `parallel for` / `spawn`.
 
 Программист может объявлять собственные эффекты — это обычное
-объявление типа.
+объявление типа через `effect`.
 
 ## Зачем это нужно
 
@@ -142,8 +144,8 @@ LLM (и человек), читая сигнатуру, **знает все по
 Без `await`. Цвет функции исчезает.
 
 ```nova
-fn fetch(url str) Net Async -> Response => ...
-fn handler(req Request) Net Async Db -> Response {
+fn fetch(url str) Net -> Response => ...
+fn handler(req Request) Net Db -> Response {
     let user = fetch_user(req.id)        // никаких .await
     let posts = fetch_posts(user.id)
     Response.json(posts)
