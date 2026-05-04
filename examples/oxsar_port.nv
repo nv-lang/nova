@@ -42,13 +42,13 @@ type Router {
 // В Go это `NewRouter(deps RouterDeps) chi.Router` + r.Use(...) — 38
 // строк настройки. Здесь — стек handler'ов, каждый закрывает свой
 // аспект. Никаких middleware-функций как обёрток.
-fn run_server(port int) Net Io Throws -> () {
+fn run_server(port int) Net Io Fail -> () {
     // handler-лямбда `(err) => recover_http(err)` (D31): тело вынесено
     // в named fn, потому что лямбда строго `=> expr` (D22).
     with Logger = json_logger,
          Trace = otel_tracer,
          Time = system_time,
-         Throws[HttpError] = (err) => recover_http(err) {
+         Fail[HttpError] = (err) => interrupt recover_http(err) {
 
         // CORS, request-id, real-ip — это handler'ы вокруг основного
         // обработчика, не middleware-цепочка.
@@ -147,7 +147,7 @@ type FleetReceipt { id str, eta_seconds int }
 // X-Idempotency-Key заголовку. В Go — pkg/idempotency с redis,
 // `idem.Replay(w)` явная проверка. Здесь — handler.
 export fn send_fleet(req Request)
-    Db Net Logger CurrentUser Idem Throws[FleetError] -> Response
+    Db Net Logger CurrentUser Idem Fail[FleetError] -> Response
 {
     let input = req.body.parse[SendInput]()?
 
@@ -155,7 +155,7 @@ export fn send_fleet(req Request)
     // невалидное значение не получится создать. В Go было руками:
     //   if req.Mission != 0 && req.Mission != 7 && ... { error }
 
-    let receipt = transport_send(input)?    // Throws[FleetError] пробрасывается через ?
+    let receipt = transport_send(input)?    // Fail[FleetError] пробрасывается через ?
 
     // Idem.record автоматически — handler сам кэширует ответ по
     // X-Idempotency-Key. В Go это были ручные idem.Record(...).
@@ -184,7 +184,7 @@ fn fleet_error_response(err FleetError) -> Response => match err {
 
 // GET /api/fleet — список активных флотов игрока.
 export fn list_fleets(req Request)
-    Db Logger CurrentUser Throws -> Response
+    Db Logger CurrentUser Fail -> Response
 {
     let user_id = CurrentUser.id().ok_or(Unauthorized)?
     let list = transport_list(user_id)?
@@ -205,7 +205,7 @@ export fn list_fleets(req Request)
 // В Nova: parse[int]()? использует stdlib, ошибки экспозиции через
 // match.
 export fn phalanx(req Request)
-    Db Logger CurrentUser Throws[PhalanxError] -> Response
+    Db Logger CurrentUser Fail[PhalanxError] -> Response
 {
     let q = req.query
     let source = q.get("source_planet_id")
@@ -288,8 +288,8 @@ type RunAcc {
 // Возвращает SimStats и последний Report.
 //
 // В Go возврат (SimStats, Report, error) — три значения. В Nova
-// кортеж + Throws.
-export fn multi_run(input BattleInput, n int) Time Throws[BattleError] -> (SimStats, BattleReport) {
+// кортеж + Fail.
+export fn multi_run(input BattleInput, n int) Time Fail[BattleError] -> (SimStats, BattleReport) {
     let n = if n < 1 { 1 } else { n }
     let t0 = Time.now()
 
@@ -418,7 +418,7 @@ type BattleError    // unit-тип-маркер (single-variant sum запрещ
 // Здесь сжато до основной логики — структура та же, но Random как
 // эффект, mut state через Mut.
 export fn calculate(input BattleInput)
-    Random Mut Throws[BattleError] -> BattleReport
+    Random Mut Fail[BattleError] -> BattleReport
 {
     if !validate(input) { throw BattleError.InvalidInput }
 
@@ -625,5 +625,5 @@ test "send_fleet returns 400 on invalid mission" {
 // Главная разница — **видимость эффектов**. В Go из сигнатуры
 // `func (h *Handler) Send(w, r)` нельзя узнать что внутри: БД,
 // idempotency, логи, panic, контекст-значения. В Nova сигнатура
-// `Db Net Logger CurrentUser Idem Throws[FleetError]` показывает
+// `Db Net Logger CurrentUser Idem Fail[FleetError]` показывает
 // всё. Для AI-генерации это критично.

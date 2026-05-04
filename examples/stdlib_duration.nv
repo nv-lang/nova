@@ -31,7 +31,7 @@ export const ZERO Duration = { nanos: 0 }    // D55: имя Duration из анн
 // ──────────────────────────────────────────────────────────────────────────
 
 // Все конструкторы принимают i64 и возвращают Duration без проверок —
-// в проде следует завернуть в Throws[Overflow] (см. ниже).
+// в проде следует завернуть в Fail[Overflow] (см. ниже).
 
 // `-> Duration` оставляем явно для public API — это документация
 // возвращаемого типа в stdlib (см. D45 style guide для export-функций).
@@ -232,14 +232,14 @@ test "zero and is_zero" {
 // ──────────────────────────────────────────────────────────────────────────
 
 // Trailing-block (D43) — `()` обязательны, тело за `)`.
-fn demo_with_timeout() Net Async Throws -> () {
+fn demo_with_timeout() Net Async Fail -> () {
     with_timeout(2.seconds()) {
         Net.get("https://api.example.com/data")?
     }
 }
 
 // Retry с увеличивающимся backoff.
-fn demo_retry[T](body fn() Throws -> T) Time Throws -> T {
+fn demo_retry[T](body fn() Fail -> T) Time Fail -> T {
     let mut backoff = 100.millis()
     for attempt in 0..5 {
         match body() {

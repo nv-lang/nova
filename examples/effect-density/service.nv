@@ -32,9 +32,9 @@ import examples.effect_density.repository as repo
 //   Metrics     — счётчики успехов/ошибок
 //   Trace       — span "transfer_money" с атрибутами
 //   Idempotency — защита от дубля по ключу
-//   Throws[TransferError] — единый sum-type ошибок домена
+//   Fail[TransferError] — единый sum-type ошибок домена
 //
-// Это 9 эффектов + Throws. Кажется много, но каждый — отдельный
+// Это 9 эффектов + Fail. Кажется много, но каждый — отдельный
 // cross-cutting concern, и в Java-коде он бы был НЕВИДИМ в сигнатуре,
 // но физически присутствовал бы в теле через ThreadLocal/DI/static.
 //
@@ -44,7 +44,7 @@ import examples.effect_density.repository as repo
 // по 8 spring-инжектируемым полям и одному ThreadLocal'у.
 export fn transfer_money(
     req TransferRequest
-) Db Cache Logger Clock IdGen AuthContext Metrics Trace Idempotency Throws[TransferError] -> Transfer =>
+) Db Cache Logger Clock IdGen AuthContext Metrics Trace Idempotency Fail[TransferError] -> Transfer =>
     Trace.span("transfer_money") {
         if !AuthContext.has_role("transfer") { throw TransferError.Forbidden }
 
@@ -61,7 +61,7 @@ export fn transfer_money(
 //
 // Программист пишет «fn do_transfer(req) -> Transfer =>» — без эффектов
 // в сигнатуре. Компилятор анализирует тело и проставляет:
-//   Db Cache Logger Clock IdGen Metrics Throws[TransferError]
+//   Db Cache Logger Clock IdGen Metrics Fail[TransferError]
 //
 // AuthContext, Idempotency, Trace уже «съедены» вызывающей функцией —
 // здесь не используются. Это уже на 3 эффекта меньше, чем у public.
@@ -107,15 +107,15 @@ fn do_transfer(req TransferRequest) -> Transfer {
 // Validators — чистые функции
 // ──────────────────────────────────────────────────────────────────────────
 //
-// validate_amount — Throws[TransferError]. Других эффектов нет.
+// validate_amount — Fail[TransferError]. Других эффектов нет.
 // Один эффект — рекордно мало для прикладного кода.
-fn validate_amount(m Money) Throws[TransferError] -> () =>
+fn validate_amount(m Money) Fail[TransferError] -> () =>
     if m.amount <= 0 { throw NonPositiveAmount }
 
 
-// validate_pair — тоже один эффект Throws.
+// validate_pair — тоже один эффект Fail.
 // Чистая логика, никакого IO.
-fn validate_pair(from Account, to Account, amount Money) Throws[TransferError] -> () {
+fn validate_pair(from Account, to Account, amount Money) Fail[TransferError] -> () {
     if from.id == to.id           { throw SameAccount }
     if from.closed                 { throw AccountClosed(from.id) }
     if to.closed                   { throw AccountClosed(to.id) }
@@ -131,11 +131,11 @@ fn validate_pair(from Account, to Account, amount Money) Throws[TransferError] -
 // D55 формально применим (тип `Money` из `-> Money`), но `{ {...} }`
 // — `{}` блок + record-литерал внутри — выглядит шумно. Имя `Money`
 // для ясности оставлено; см. open-questions Q-style-coercion.
-fn add_money(a Money, b Money) Throws[TransferError] -> Money =>
+fn add_money(a Money, b Money) Fail[TransferError] -> Money =>
     if a.currency != b.currency { throw CurrencyMismatch }
     else { Money { amount: a.amount + b.amount, currency: a.currency } }
 
-fn sub_money(a Money, b Money) Throws[TransferError] -> Money =>
+fn sub_money(a Money, b Money) Fail[TransferError] -> Money =>
     if a.currency != b.currency { throw CurrencyMismatch }
     else { Money { amount: a.amount - b.amount, currency: a.currency } }
 
@@ -147,7 +147,7 @@ fn sub_money(a Money, b Money) Throws[TransferError] -> Money =>
 // 4 эффекта. Сравните с transfer_money (10) — read-only сильно проще:
 // нет идемпотентности, нет генерации id, нет clock'а, нет Metrics
 // (зашиты ниже на уровне HTTP middleware).
-export fn account_view(id AccountId) Db Cache AuthContext Throws[TransferError] -> AccountDto {
+export fn account_view(id AccountId) Db Cache AuthContext Fail[TransferError] -> AccountDto {
     let acc = match repo.account_get(id) {
         Ok(a) => a
         Err(NotFound) => throw AccountNotFound(id)
@@ -182,4 +182,4 @@ type AccountDto {
 // Helpers
 // ──────────────────────────────────────────────────────────────────────────
 
-fn decode_transfer(j Json) Throws[TransferError] -> Transfer => ...
+fn decode_transfer(j Json) Fail[TransferError] -> Transfer => ...

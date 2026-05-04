@@ -88,7 +88,7 @@ runtime'ом на границе fiber'а, не программистом в к
 | | Видимое (в сигнатуре) | Универсальное (не в сигнатуре) |
 |---|---|---|
 | **Что** | эффекты, описывающие **намерение** | сбои, описывающие **невозможность вычисления** |
-| **Примеры** | `Net`, `Db`, `Time`, `Log`, `Throws[BusinessError]`, `Mut` | деление на ноль, переполнение, выход за границы, OOM, переполнение стека |
+| **Примеры** | `Net`, `Db`, `Time`, `Log`, `Fail[BusinessError]`, `Mut` | деление на ноль, переполнение, выход за границы, OOM, переполнение стека |
 | **Где ловится** | handler'ом в коде | runtime'ом на границе fiber'а |
 | **Как создаётся** | `throw` | `panic(msg)` или сам runtime |
 
@@ -111,7 +111,7 @@ fn handle_request(r Request) Db Log -> Response =>
     process(r)             // если panic — fiber умирает, runtime вернёт 500
                             // если throw — handler выше ловит обычно
 
-fn server() Par Net Throws -> () {
+fn server() Par Net Fail -> () {
     supervised {
         spawn() { handle_requests() }
         spawn() { periodic_cleanup() }
@@ -123,11 +123,11 @@ fn server() Par Net Throws -> () {
 **Никакого `try_panic`/`catch` в коде.** Программист **не ловит**
 panic в обычной функции — это работа runtime'а на границе fiber'а.
 Если программист хочет управляемую ошибку — пишет `throw` +
-`Throws[E]`, ловит обычным handler'ом.
+`Fail[E]`, ловит обычным handler'ом.
 
 #### Унификация двух уровней ошибок
 
-- **`throw` + `Throws[E]`** — управляемая ошибка, видна в сигнатуре,
+- **`throw` + `Fail[E]`** — управляемая ошибка, видна в сигнатуре,
   перехватывается handler'ом в коде ([04-effects.md → D25](04-effects.md#d25)).
 - **`panic`** — сбой fiber'а, перехват только runtime'ом на границе
   fiber'а. В сигнатуре не виден.
@@ -151,10 +151,10 @@ fn critical(...) -> Result =>
 
 ### Почему
 
-Если бы `Throws[DivByZero]` был обязателен, он бы появился в **каждой
+Если бы `Fail[DivByZero]` был обязателен, он бы появился в **каждой
 второй сигнатуре** (любая функция со средним арифметическим,
-дисперсией, делением). К нему присоединились бы `Throws[IntegerOverflow]`,
-`Throws[ArrayBounds]`. Это **синдром Java checked exceptions** —
+дисперсией, делением). К нему присоединились бы `Fail[IntegerOverflow]`,
+`Fail[ArrayBounds]`. Это **синдром Java checked exceptions** —
 информативность сигнатуры исчезает, потому что эффекты везде.
 
 Сознательный компромисс: **строгая теория эффектов уступает
@@ -162,26 +162,26 @@ fn critical(...) -> Result =>
 
 #### Что НЕ Panic, а обычный эффект
 
-- Бизнес-ошибки парсинга, валидации, аутентификации → `Throws[E]`.
-- Network failure, DB connection refused → `Throws[NetError]`,
-  `Throws[DbError]` внутри эффекта `Net` / `Db`.
+- Бизнес-ошибки парсинга, валидации, аутентификации → `Fail[E]`.
+- Network failure, DB connection refused → `Fail[NetError]`,
+  `Fail[DbError]` внутри эффекта `Net` / `Db`.
 - Любая ошибка, которую программа **намерена обрабатывать**, —
   это не Panic.
 
 **Принцип:** «обработать никак нельзя, надо умереть» → Panic;
-«обработать можно и нужно» → Throws.
+«обработать можно и нужно» → Fail.
 
 ### Что отвергнуто
 
-- **`Throws[DivByZero]` для каждой функции** — спам в сигнатурах.
-- **`try_panic`/`catch` в обычном коде** — путает с `Throws`,
+- **`Fail[DivByZero]` для каждой функции** — спам в сигнатурах.
+- **`try_panic`/`catch` в обычном коде** — путает с `Fail`,
   усложняет reasoning о потоке управления.
 - **Panic как обычное Throwable** (Java RuntimeException) — приводит
   к ловле «всего» через `catch (Exception e)`, антипаттерн.
 
 ### Связь
 
-- [04-effects.md → D25](04-effects.md#d25) — `throw` и `Throws[E]`.
+- [04-effects.md → D25](04-effects.md#d25) — `throw` и `Fail[E]`.
 - [06-concurrency.md → D14](06-concurrency.md#d14) — supervisor, fiber'ы.
 - [01-philosophy.md → D10](01-philosophy.md#d10) — «всё — эффект» с
   оговоркой про runtime panics.
@@ -205,7 +205,7 @@ fn critical(...) -> Result =>
 ```nova
 type Option[T] | Some(T) | None
 type Result[T, E] | Ok(T) | Err(E)
-type Error                                       // unit-тип-маркер для Throws
+type Error                                       // unit-тип-маркер для Fail
 type Ordering | Less | Equal | Greater
 type Never                                       // unit без значений (uninhabited)
 type any protocol { }                            // top-type через пустой protocol (D53)
@@ -248,7 +248,7 @@ naming convention, по аналогии с примитивами. Исполь
 и `a..=b` (inclusive) (D58). Range — обычное значение, можно
 передавать как аргумент, хранить в переменной, использовать в `for`.
 
-**Стандартные эффекты** — `Throws[E]`, `Io`, `Net`, `Db`, `Fs`,
+**Стандартные эффекты** — `Fail[E]`, `Io`, `Net`, `Db`, `Fs`,
 `Time`, `Random`, `Mut`, `Alloc[R]`, `Async`, `Par`, `Log`, `Trace`,
 `Ask[T]` — также в prelude.
 
@@ -279,20 +279,21 @@ fn panic(msg str) -> Never
 Аналоги: Rust `!`, Haskell `Void`, Kotlin/Scala `Nothing`,
 TypeScript `never`. Не уникальная фича Nova.
 
-#### Эффекты как обычные типы — `Throws[E]` не магия
+#### Эффекты как обычные типы — `Fail[E]` не магия
 
-`Throws[E]` объявляется в prelude как любой другой эффект — через
+`Fail[E]` объявляется в prelude как любой другой эффект — через
 `protocol` ([04-effects.md → D18](04-effects.md#d18-эффекты-объявляются-через-protocol-не-type)):
 
 ```nova
-type Throws[E] protocol {
-    throw(value E) -> Never
+type Fail[E] effect {
+    fail(value E) -> Never
 }
 ```
 
-`throw expr` — сахар для `Throws.throw(expr)` (вызов операции
+`throw expr` — сахар для `Fail[E].fail(expr)` (вызов операции
 активного handler'а), как `Db.query(...)`. Никакой специальной
-обработки. См. [04-effects.md → D25](04-effects.md#d25).
+обработки. См. [04-effects.md → D25](04-effects.md#d25),
+[04-effects.md → D61](04-effects.md#d61).
 
 #### Что НЕ в prelude
 
@@ -340,7 +341,7 @@ Prelude **документирован**, его содержимое — фик
 
 - [01-philosophy.md → D10](01-philosophy.md#d10) — AI-first,
   локальность через документированный prelude.
-- [04-effects.md → D25](04-effects.md#d25) — `throw` и `Throws[Error]`.
+- [04-effects.md → D25](04-effects.md#d25) — `throw` и `Fail[Error]`.
 - [04-effects.md → D18](04-effects.md#d18) — эффекты как обычные типы.
 - [02-types.md → D17](02-types.md#d17) — sum-type, `Never` как пустой.
 - [03-syntax.md → D20](03-syntax.md#d20) — `()` вместо `void`.
@@ -425,7 +426,7 @@ let acc = Account.new_with(account_limits.MIN_BALANCE)
 
 ```nova
 // Эффект — protocol ([04-effects.md → D18](04-effects.md#d18-эффекты-объявляются-через-protocol-не-type))
-type IdGen protocol {
+type IdGen effect {
     fresh() -> u64
 }
 

@@ -29,7 +29,7 @@
    обязан быть в её сигнатуре
 
 ```nova
-type Db protocol {
+type Db effect {
     query(q Sql) -> []DbRow                // только сигнатуры, без реализации
     exec(q Sql)  -> ()
 }
@@ -54,9 +54,9 @@ DI-фреймворков и `ThreadLocal`.
 
 ```nova
 fn double(x int) -> int                       // чистая
-fn parse(s str) Throws -> int                 // может бросить
-fn save(u User) Throws Db Log -> ()           // три эффекта
-fn fetch(url str) Net Async Throws -> Response
+fn parse(s str) Fail -> int                 // может бросить
+fn save(u User) Fail Db Log -> ()           // три эффекта
+fn fetch(url str) Net Async Fail -> Response
 ```
 
 Граница задана структурой: всё между `)` и `->` — эффекты.
@@ -67,12 +67,12 @@ fn fetch(url str) Net Async Throws -> Response
 или `Iterator`. Не ключевые слова.
 
 ```nova
-type Logger protocol {
+type Logger effect {
     log(msg str) -> ()
 }
 
 let console = Logger {
-    log(msg) => resume(println(msg))
+    log(msg) => return println(msg)
 }
 ```
 
@@ -93,7 +93,7 @@ let captured = Db                      // 3. позиция выражения =
 
 | Эффект | Что описывает |
 |---|---|
-| `Throws[E]` | Может выбросить ошибку типа E |
+| `Fail[E]` | Может выбросить ошибку типа E |
 | `Io` | Файлы, stdout/stderr |
 | `Net` | Сетевые запросы |
 | `Db` | База данных |
@@ -172,7 +172,7 @@ fn handler(req Request) Net Async Db -> Response {
 fn handle_request(r Request) Db Log -> Response =>
     process(r)             // если panic — fiber умирает, runtime вернёт 500
 
-fn server() Par Net Throws -> () =>
+fn server() Par Net Fail -> () =>
     supervised {
         spawn handle_requests()
     } strategy = one_for_one
@@ -182,24 +182,24 @@ fn server() Par Net Throws -> () =>
 В синхронной программе без fiber'ов (CLI/скрипт) panic = exit процесса.
 В серверной — смерть только текущего fiber'а, остальное работает.
 
-Иначе `Throws[DivByZero]` оказался бы в каждой второй сигнатуре —
+Иначе `Fail[DivByZero]` оказался бы в каждой второй сигнатуре —
 информативность эффектов исчезла бы. Сознательный компромисс,
 подробно — [decisions/08-runtime.md#d13](decisions/08-runtime.md#d13).
 
 ## Оператор `?`
 
 `?` — сахар «если ошибка, верни её выше». Работает в функциях
-с эффектом `Throws`:
+с эффектом `Fail`:
 
 ```nova
-fn pipeline(s str) Throws -> int {
+fn pipeline(s str) Fail -> int {
     let n = parse(s)?
     validate(n)?
     n
 }
 ```
 
-Без `Throws` в сигнатуре `?` — ошибка компиляции.
+Без `Fail` в сигнатуре `?` — ошибка компиляции.
 
 ## Альтернатива: явный Result
 
@@ -207,8 +207,8 @@ fn pipeline(s str) Throws -> int {
 fn parse(s str) -> Result[int, ParseError] => ...
 ```
 
-Два стиля одного и того же. `Throws` — сахар поверх `Result`.
-Дефолт для прикладного кода — `Throws` (читаемее), для библиотек
+Два стиля одного и того же. `Fail` — сахар поверх `Result`.
+Дефолт для прикладного кода — `Fail` (читаемее), для библиотек
 с важным типом ошибки — явный `Result`.
 
 ## Главный смысл

@@ -17,16 +17,16 @@ import examples.effect_density.domain.*
 
 // Чтение по id с кэшированием. Public — эффекты явные.
 //
-// Эффекты: Db (запрос), Cache (read-through), Throws[DbError|NotFound].
+// Эффекты: Db (запрос), Cache (read-through), Fail[DbError|NotFound].
 // Цена видимости — три эффекта, каждый осмысленный:
 //   - Db   — обращение к БД (если кэш промазал)
 //   - Cache — read-through кэширование
-//   - Throws — может не найти / connection error
+//   - Fail — может не найти / connection error
 //
 // Сравнение с Go: `func (r *Repo) Get(ctx, id) (Account, error)` —
 // 2 параметра, 2 возврата, эффекты невидимы. Связка с Cache в реальном
 // Go-коде живёт ВНУТРИ функции, и читатель её не видит из сигнатуры.
-export fn account_get(id AccountId) Db Cache Throws[RepoError] -> Account {
+export fn account_get(id AccountId) Db Cache Fail[RepoError] -> Account {
     let cache_key = "account:${id}"
     match Cache.get(cache_key) {
         Some(bytes) => decode_account(bytes)?
@@ -50,10 +50,10 @@ export fn account_get(id AccountId) Db Cache Throws[RepoError] -> Account {
 
 
 // Обновление баланса. Используется внутри транзакции перевода.
-// Эффекты: Db (exec), Cache (инвалидация), Throws[DbError].
+// Эффекты: Db (exec), Cache (инвалидация), Fail[DbError].
 // Logger тут НЕТ — лог делает service-слой, repository не должен решать
 // что логгировать.
-export fn account_update_balance(id AccountId, new_balance Money) Db Cache Throws[RepoError] -> () {
+export fn account_update_balance(id AccountId, new_balance Money) Db Cache Fail[RepoError] -> () {
     // D48 sql`...`-tag — интерполяции типизированы и параметризованы.
     // D55 + D52: каждый интерпол coerce'ится в SqlValue из своего типа.
     let affected = Db.exec(sql`
@@ -71,9 +71,9 @@ export fn account_update_balance(id AccountId, new_balance Money) Db Cache Throw
 // ──────────────────────────────────────────────────────────────────────────
 
 // Запись transfer'а. Public.
-// Эффекты: Db, Throws[DbError]. (Без Cache — transfer не кэшируется,
+// Эффекты: Db, Fail[DbError]. (Без Cache — transfer не кэшируется,
 // он immutable после завершения, читается редко.)
-export fn transfer_insert(t Transfer) Db Throws[RepoError] -> () {
+export fn transfer_insert(t Transfer) Db Fail[RepoError] -> () {
     // D48 sql`...`-tag: интерполяции — параметры запроса.
     // D55 + D52: каждая интерполяция coerce'ится в SqlValue.
     // newtype'ы (TransferId, AccountId, TransferStatus) — через `as` к
@@ -88,7 +88,7 @@ export fn transfer_insert(t Transfer) Db Throws[RepoError] -> () {
 }
 
 
-export fn transfer_update_status(id TransferId, status TransferStatus) Db Throws[RepoError] -> () {
+export fn transfer_update_status(id TransferId, status TransferStatus) Db Fail[RepoError] -> () {
     // D48 sql`...`-tag. D55 + D52: status и id — newtype'ы, явный
     // cast к underlying для coerce в SqlValue.
     let affected = Db.exec(sql`

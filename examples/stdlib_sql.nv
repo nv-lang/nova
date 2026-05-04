@@ -112,10 +112,10 @@ export fn sql(parts []str, args []SqlValue) -> Sql =>
 // конструирует Sql через тег (безопасно), Db исполняет.
 //
 // В тестах handler заменяется на in-memory; никаких mock-библиотек.
-export type Db protocol {
-    query(q Sql) Throws[DbError] -> []DbRow
-    exec(q Sql) Throws[DbError]  -> int          // affected rows
-    in_transaction[T](body fn() Db Throws -> T) Throws -> T
+export type Db effect {
+    query(q Sql) Fail[DbError] -> []DbRow
+    exec(q Sql) Fail[DbError]  -> int          // affected rows
+    in_transaction[T](body fn() Db Fail -> T) Fail -> T
 }
 
 export type DbError | Connection | Constraint(str) | Timeout | Other(str)
@@ -154,28 +154,28 @@ export fn DbRow @at(i int) -> Option[SqlValue] => @values.get(i)
 // `expect_int` / `expect_str` / etc. — извлечь конкретный тип или throw.
 // Используется from_row-парсерами: `let id = row.get("id")?.expect_int()?`.
 //
-// Возврат `Throws[DbError]`, чтобы ошибки парсинга поднимались как DbError
+// Возврат `Fail[DbError]`, чтобы ошибки парсинга поднимались как DbError
 // (Constraint), а не молча возвращали None.
 
-export fn SqlValue @expect_int() Throws[DbError] -> i64 =>
+export fn SqlValue @expect_int() Fail[DbError] -> i64 =>
     match @ {
         I(n) => n
         _    => throw DbError.Constraint("expected I, got ${@}")
     }
 
-export fn SqlValue @expect_str() Throws[DbError] -> str =>
+export fn SqlValue @expect_str() Fail[DbError] -> str =>
     match @ {
         S(s) => s
         _    => throw DbError.Constraint("expected S, got ${@}")
     }
 
-export fn SqlValue @expect_bool() Throws[DbError] -> bool =>
+export fn SqlValue @expect_bool() Fail[DbError] -> bool =>
     match @ {
         B(b) => b
         _    => throw DbError.Constraint("expected B, got ${@}")
     }
 
-export fn SqlValue @expect_f64() Throws[DbError] -> f64 =>
+export fn SqlValue @expect_f64() Fail[DbError] -> f64 =>
     match @ {
         F(x) => x
         I(n) => n as f64                    // INT → FLOAT — допустимая promotion
@@ -196,19 +196,19 @@ export fn SqlValue @as_str() -> Option[str] =>
     }
 
 // DbRow @get_int / @get_str — comb'ы для частого случая.
-export fn DbRow @get_int(name str) Throws[DbError] -> i64 =>
+export fn DbRow @get_int(name str) Fail[DbError] -> i64 =>
     match @get(name) {
         Some(v) => v.expect_int()?
         None    => throw DbError.Constraint("missing column: ${name}")
     }
 
-export fn DbRow @get_str(name str) Throws[DbError] -> str =>
+export fn DbRow @get_str(name str) Fail[DbError] -> str =>
     match @get(name) {
         Some(v) => v.expect_str()?
         None    => throw DbError.Constraint("missing column: ${name}")
     }
 
-export fn DbRow @get_bool(name str) Throws[DbError] -> bool =>
+export fn DbRow @get_bool(name str) Fail[DbError] -> bool =>
     match @get(name) {
         Some(v) => v.expect_bool()?
         None    => throw DbError.Constraint("missing column: ${name}")

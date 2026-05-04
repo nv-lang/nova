@@ -257,7 +257,7 @@ const _INTERNAL_TIMEOUT_MS int = 5_000
 export fn Account.new(owner str) -> Account =>
     Account { owner, balance: money.zero, _internal_id: gen_id() }
 
-fn Account.from_db_row(row DbRow) Throws -> Account => ...   // приватная
+fn Account.from_db_row(row DbRow) Fail -> Account => ...   // приватная
 
 // ── Методы инстанса ───────────────────────────────────────────────
 export fn Account @balance() => @balance                   // публичный

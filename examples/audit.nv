@@ -226,13 +226,13 @@ fn is_secret_key(k str) -> bool {
 // Лямбда строго `=> expr` ([D22](../spec/decisions/03-syntax.md#d22)),
 // поэтому тело middleware вынесено в named fn `audit_step`.
 fn audit_middleware(next Handler) -> Handler =>
-    (req Request) Db Log Router CurrentAdmin Async Throws -> Response =>
+    (req Request) Db Log Router CurrentAdmin Async Fail -> Response =>
         audit_step(next, req)
 
 // audit_step — настоящее тело middleware. Блок-форма fn (`{}`),
 // потому что нужны guard-ранние возвраты и несколько `let`'ов.
 fn audit_step(next Handler, req Request)
-    Db Log Router CurrentAdmin Async Throws -> Response {
+    Db Log Router CurrentAdmin Async Fail -> Response {
     // GET и HEAD не аудируем.
     if req.method == "GET" || req.method == "HEAD" {
         return next(req)
@@ -283,12 +283,12 @@ fn audit_step(next Handler, req Request)
 // к моменту записи (клиент закрыл соединение). 2 секунды на INSERT —
 // щедро.
 fn write_audit(e AuditEntryInternal) Db Log Async -> () {
-    // handler-лямбда (D31): для эффекта с одной операцией (Throws.throw)
+    // handler-лямбда (D31): для эффекта с одной операцией (Fail.throw)
     // сахар — лямбда, параметры соответствуют операции. Лямбда строго
     // `=> expr` (D22), поэтому handler-тело вынесено в named fn
     // `log_audit_failure`. Не вызываем resume — блок завершается после
     // handler'а.
-    with Throws[Error] = (err) => log_audit_failure(e, err) {
+    with Fail[Error] = (err) => interrupt log_audit_failure(e, err) {
         with_timeout(2.seconds) {
             let ip_value = if e.ip != "" && e.ip != "<nil>" { Some(e.ip) } else { None }
             Db.exec(sql`
@@ -315,7 +315,7 @@ fn log_audit_failure(e AuditEntryInternal, err Error) Log -> () =>
 
 // list_audit — handler для GET /api/admin/audit с фильтрами.
 // query: ?from=&to=&admin_id=&action=&target_id=&limit=&offset=
-fn list_audit(req Request) Db Throws -> Response {
+fn list_audit(req Request) Db Fail -> Response {
     let params = parse_list_params(req.query)
     let entries = query_audit(params)?
     Response.json(200, {
@@ -344,7 +344,7 @@ fn parse_list_params(query Query) -> ListParams {
 //
 // Динамический WHERE строится через Sql.builder, чтобы избежать
 // конкатенации строк и SQL-инъекций.
-fn query_audit(p ListParams) Db Throws -> []AuditEntry {
+fn query_audit(p ListParams) Db Fail -> []AuditEntry {
     let q = Sql.builder("""
         SELECT a.id, a.admin_id, COALESCE(u.username, '') AS admin_name,
                a.action, a.target_kind, a.target_id, a.payload,
@@ -365,7 +365,7 @@ fn query_audit(p ListParams) Db Throws -> []AuditEntry {
         .map(row_to_audit_entry)
 }
 
-fn row_to_audit_entry(row DbRow) Throws -> AuditEntry =>
+fn row_to_audit_entry(row DbRow) Fail -> AuditEntry =>
     AuditEntry {
         id:          row.get("id")?,
         admin_id:    row.get("admin_id")?,

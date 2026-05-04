@@ -50,7 +50,7 @@ export fn with_soft_delete(real Handler[Db]) -> Handler[Db] => Db {
         // конкатенирует AND. Реальная stdlib-версия делала бы parsing,
         // чтобы корректно работать с UNION/подзапросами.
         let filtered = q.with_filter(sql`deleted_at IS NULL`)
-        resume(real.query(filtered)?)
+        return real.query(filtered)?
     }
     exec(q) {
         // DELETE → UPDATE deleted_at. Распознаём по template-префиксу.
@@ -63,12 +63,12 @@ export fn with_soft_delete(real Handler[Db]) -> Handler[Db] => Db {
                         + "SET deleted_at = NOW() WHERE ${rest.after(" WHERE ")}",
                 args: q.args,
             }
-            resume(real.exec(rewritten)?)
+            return real.exec(rewritten)?
         } else {
-            resume(real.exec(q)?)
+            return real.exec(q)?
         }
     }
-    in_transaction(b) => resume(real.in_transaction(b)?)
+    in_transaction(b) => return real.in_transaction(b)?
 }
 
 
@@ -86,7 +86,7 @@ export fn with_soft_delete(real Handler[Db]) -> Handler[Db] => Db {
 // а сконцентрирована в одной функции. И отключается в тестах
 // тривиально — оборачиваем `with Db = postgres_handler` (без декоратора).
 export fn with_audit(real Handler[Db], current_user_id u64) -> Handler[Db] => Db {
-    query(q) => resume(real.query(q)?)             // SELECT не аудируем
+    query(q) => return real.query(q)?             // SELECT не аудируем
     exec(q) {
         let result = real.exec(q)?
 
@@ -95,12 +95,12 @@ export fn with_audit(real Handler[Db], current_user_id u64) -> Handler[Db] => Db
         // отключит фоновые задачи и сделает тест-цикл полностью
         // детерминированным.
         spawn write_audit_entry(current_user_id, q, result)
-        resume(result)
+        return result
     }
     in_transaction(b) {
         // Транзакция — оборачиваем неизменно. Audit за каждый exec
         // внутри — попадёт в spawn-очередь.
-        resume(real.in_transaction(b)?)
+        return real.in_transaction(b)?
     }
 }
 
@@ -130,16 +130,16 @@ fn write_audit_entry(user_id u64, q Sql, affected int) Detach -> () {
 // (replica lag). Поэтому транзакционный body запускается с **под-handler'ом**,
 // у которого query тоже идёт на primary.
 export fn with_read_replica(primary Handler[Db], replica Handler[Db]) -> Handler[Db] => Db {
-    query(q) => resume(replica.query(q)?)
-    exec(q)  => resume(primary.exec(q)?)
+    query(q) => return replica.query(q)?
+    exec(q)  => return primary.exec(q)?
     in_transaction(b) {
         // Внутри транзакции — всё через primary. Подменяем Db
         // вложенным handler'ом, который делегирует только primary.
-        resume(primary.in_transaction(() => {
+        return primary.in_transaction(() => {
             with Db = primary {
                 b()
             }
-        })?)
+        })?
     }
 }
 
@@ -206,13 +206,13 @@ type CapturedQuery { template str, args []SqlValue }
 fn capturing_handler(log mut []CapturedQuery) -> Handler[Db] => Db {
     query(q) {
         log.push({ template: q.template, args: q.args })
-        resume([])
+        return []
     }
     exec(q) {
         log.push({ template: q.template, args: q.args })
-        resume(0)
+        return 0
     }
-    in_transaction(b) => resume(b())
+    in_transaction(b) => return b()
 }
 
 test "soft-delete: SELECT augmented with deleted_at IS NULL" {
@@ -281,11 +281,11 @@ test "audit: каждый exec пишется в spawn-задачу" {
 
     // Перехватываем spawn, чтобы посчитать audit'ы. В реальном тесте
     // мы бы заменили AuditDb handler.
-    with Detach = Detach {
+    with Detach = handler Detach {
         spawn(body) {
             audit_count += 1
             // НЕ запускаем тело — для теста достаточно счётчика.
-            resume(())
+            return ()
         }
     } {
         with Db = with_audit(capturing_handler(log), 42) {
@@ -304,8 +304,8 @@ test "compose: soft-delete + audit + read-replica" {
     let mut replica_log []CapturedQuery = []
     let mut audit_count = 0
 
-    with Detach = Detach {
-        spawn(body) { audit_count += 1; resume(()) }
+    with Detach = handler Detach {
+        spawn(body) { audit_count += 1; return () }
     } {
         let composed = with_read_replica(
             with_audit(with_soft_delete(capturing_handler(primary_log)), 42),

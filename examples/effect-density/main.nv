@@ -23,11 +23,11 @@ import examples.effect_density.domain.*
 // На самом верху эффектов МАЛО:
 //   Net — слушает порт
 //   Io  — пишет stdout (стартовое сообщение)
-//   Throws — ошибки запуска
+//   Fail — ошибки запуска
 //
 // Все handler'ы создаются и привязываются ВНУТРИ функции — они не
 // «протекают» в сигнатуру.
-export fn run(cfg Config) Net Io Throws[StartupError] -> () {
+export fn run(cfg Config) Net Io Fail[StartupError] -> () {
     let pg     = postgres_connect(cfg.db_url)?
     let redis  = redis_connect(cfg.redis_url)?
     let logger = json_logger(stdout)
@@ -63,7 +63,7 @@ export fn run(cfg Config) Net Io Throws[StartupError] -> () {
 // Заметьте: AuthContext добавляется ЗДЕСЬ через `with` — на основе
 // заголовка Authorization. Дальше handler'ы уже его «получают»
 // бесплатно из скоупа.
-fn route(req Request) Db Cache Logger Clock IdGen Metrics Trace Idempotency Throws[HttpError] -> Response {
+fn route(req Request) Db Cache Logger Clock IdGen Metrics Trace Idempotency Fail[HttpError] -> Response {
     let auth = parse_auth(req.headers)?
     with AuthContext = auth, Trace = Trace.span("http_${req.method}_${req.path}") {
         match (req.method, req.path) {
@@ -84,7 +84,7 @@ fn route(req Request) Db Cache Logger Clock IdGen Metrics Trace Idempotency Thro
 // БД, БЕЗ сети, БЕЗ часов — handler'ы подменяются на in-memory.
 // Сигнатуры тестируемого кода не меняются.
 
-fn run_in_test_mode(cfg Config, fixtures TestData) Throws -> () {
+fn run_in_test_mode(cfg Config, fixtures TestData) Fail -> () {
     with Db          = in_memory_db(fixtures.accounts),
          Cache       = noop_cache,
          Logger      = capture_logger,
@@ -117,13 +117,13 @@ type StartupError | ConfigInvalid(str) | DbDown | RedisDown
 // Реальные handler'ы — реализации эффектов. Каждая — обычная функция,
 // возвращающая Handler[Effect]. Сигнатуры тут не критичны для этого
 // примера, поэтому просто объявления.
-fn postgres_connect(url str) Net Throws[StartupError] -> Handler[Db] => ...
-fn redis_connect(url str) Net Throws[StartupError] -> Handler[Cache] => ...
+fn postgres_connect(url str) Net Fail[StartupError] -> Handler[Db] => ...
+fn redis_connect(url str) Net Fail[StartupError] -> Handler[Cache] => ...
 fn json_logger(out Stdout) -> Handler[Logger] => ...
 fn prom_registry() -> Handler[Metrics] => ...
 fn otel_tracer(endpoint str) Net -> Handler[Trace] => ...
 fn redis_idem(c Handler[Cache]) -> Handler[Idempotency] => ...
-fn parse_auth(headers []KV) Throws[HttpError] -> Handler[AuthContext] => ...
+fn parse_auth(headers []KV) Fail[HttpError] -> Handler[AuthContext] => ...
 
 // Чистые stub'ы для тестов
 fn in_memory_db(seed []Account) -> Handler[Db] => ...

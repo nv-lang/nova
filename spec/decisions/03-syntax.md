@@ -254,7 +254,7 @@ let r Result[(), str] = Ok(())   // unit как generic-параметр
 ```nova
 // анонимная — лямбда, строго (params) => expr
 let inc = (x) => x + 1
-let mid = (req Request) Db Log Throws -> Response =>
+let mid = (req Request) Db Log Fail -> Response =>
     Response.ok()
 
 // многострочный match — это всё ещё одно выражение, ОК
@@ -377,7 +377,7 @@ fn classify(x int) -> str {
     "big"                              // последнее выражение = результат
 }
 
-fn process(req Request) Db Throws -> Response {
+fn process(req Request) Db Fail -> Response {
     if req.method == "GET" { return next(req) }
     do_work(req)?
 }
@@ -547,10 +547,10 @@ generic. Перешли на Go-style; ~50 мест в документах ис
 Акронимы **PascalCase**, не UPPERCASE:
 
 ```nova
-type Db protocol { ... }          // не DB (эффект — protocol)
-type Io protocol { ... }          // не IO
+type Db effect { ... }          // не DB (эффект — protocol)
+type Io effect { ... }          // не IO
 type Url str                 // не URL (newtype над str)
-type Http protocol { ... }        // не HTTP
+type Http effect { ... }        // не HTTP
 type JsonValue { ... }       // не JSON (record)
 type SqlBuilder { ... }      // не SQL (record с полями)
 ```
@@ -953,7 +953,7 @@ let zeros = []u8.filled(0, 1024)
 Turbofish — те же `[T]`, без `::`:
 
 ```nova
-fn parse[T](s str) Throws -> T => ...
+fn parse[T](s str) Fail -> T => ...
 let n = parse[int]("42")?
 
 let c = Cache[str, int].new()
@@ -1200,9 +1200,9 @@ fn_call(arg, User { name: "a" })     // record внутри args
 Многие language primitives становятся обычными функциями stdlib:
 
 ```nova
-fn with_timeout[T](dur Duration, body fn() Async -> T) Async Throws -> T
-fn transaction[T](db mut Db, body fn() Db Throws -> T) Db Throws -> T
-fn retry[T](attempts int, body fn() Throws -> T) Throws -> T
+fn with_timeout[T](dur Duration, body fn() Async -> T) Async Fail -> T
+fn transaction[T](db mut Db, body fn() Db Fail -> T) Db Fail -> T
+fn retry[T](attempts int, body fn() Fail -> T) Fail -> T
 ```
 
 Keyword-блоки **остаются** (без `()`): `with X = h { ... }`,
@@ -1816,15 +1816,15 @@ fn process(x User) -> () =>
 
 #### Методы на `any` для extraction (комплементарные `is`)
 
-Для `if let`-стиля и работы через эффект `Throws`:
+Для `if let`-стиля и работы через эффект `Fail`:
 
 ```nova
 // Опциональный cast — Option[T]
 fn any.try_as[T](x any) -> Option[T] =>
     // runtime-проверка тэга, Some если совпал, None иначе
 
-// Cast через Throws — для строгих случаев
-fn any.as[T](x any) Throws[TypeMismatch] -> T =>
+// Cast через Fail — для строгих случаев
+fn any.as[T](x any) Fail[TypeMismatch] -> T =>
     // throw TypeMismatch если тег не совпал
 ```
 

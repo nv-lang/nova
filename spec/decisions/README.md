@@ -16,7 +16,7 @@
 | 01 | [01-philosophy.md](01-philosophy.md) | Цели, парадигма, AI-first | D1, D9, D10 |
 | 02 | [02-types.md](02-types.md) | Record, sum-type, protocol, generic, поля | D15, D17, D32, D36, D39, D42 |
 | 03 | [03-syntax.md](03-syntax.md) | Объявления, литералы, операторы, методы, парсинг | D16, D19, D20, D22, D23, D27, D30, D33, D34, D35, D37, D38, D40, D43, D44, D45, D46, D48, D49 |
-| 04 | [04-effects.md](04-effects.md) | Throws, Io, Db, handlers, with-блоки | D2, D3, D4, D11, D12, D18, D25, D28, D31 |
+| 04 | [04-effects.md](04-effects.md) | Fail, Io, Db, handlers, with-блоки | D2, D3, D4, D11, D12, D18, D25, D28, D31 |
 | 05 | [05-memory.md](05-memory.md) | Managed GC, escape analysis, regions | D6, D21 (cancelled) |
 | 06 | [06-concurrency.md](06-concurrency.md) | Fiber runtime, structured concurrency | D14 |
 | 07 | [07-modules.md](07-modules.md) | Модули, импорты, видимость | D5, D29, D47 |

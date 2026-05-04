@@ -311,12 +311,12 @@ let c = match n {
 ```
 
 Никакого `n as Color` — программист сам обрабатывает «нет такого
-варианта». Это согласовано с эффектом `Throws[E]`.
+варианта». Это согласовано с эффектом `Fail[E]`.
 
 stdlib может предоставлять `Color.from_int(n)` для удобства:
 
 ```nova
-fn Color.from_int(n int) Throws[InvalidVariant] -> Color =>
+fn Color.from_int(n int) Fail[InvalidVariant] -> Color =>
     match n {
         0 => Ok(Red)
         1 => Ok(Green)
@@ -591,7 +591,7 @@ type Hashable protocol {
     eq(other Self) -> bool
 }
 
-type Logger protocol {
+type Logger effect {
     log(msg str) -> ()
 }
 
@@ -599,9 +599,9 @@ type Iterator[T] protocol {
     next() -> Option[T]
 }
 
-type Db protocol {
-    query(q Sql) Throws[DbError] -> []DbRow
-    exec(q Sql)  Throws[DbError] -> int
+type Db effect {
+    query(q Sql) Fail[DbError] -> []DbRow
+    exec(q Sql)  Fail[DbError] -> int
 }
 ```
 
@@ -657,7 +657,7 @@ type any protocol { }
 поэтому `any` — top-type. Использование:
 
 ```nova
-type Logger protocol {
+type Logger effect {
     log_event(level int, fields []any) -> ()
     //                          ^^^^^ массив значений любого типа
 }
@@ -677,9 +677,9 @@ convention, по аналогии с примитивами (`int`, `str`, `bool
 `)` и `->`). Меняется только синтаксис **объявления**, не использования:
 
 ```nova
-type Db protocol {
-    query(q Sql) Throws[DbError] -> []DbRow
-    exec(q Sql)  Throws[DbError] -> int
+type Db effect {
+    query(q Sql) Fail[DbError] -> []DbRow
+    exec(q Sql)  Fail[DbError] -> int
 }
 
 fn list_users() Db -> []User =>      // Db в позиции эффекта — как раньше
@@ -700,7 +700,7 @@ type Container[T] protocol {
 }
 
 // Модель B — generic на методе
-type Tracer protocol {
+type Tracer effect {
     span[T](body fn() -> T) -> T
     measure[U](body fn() -> U) -> Duration
 }
@@ -1351,8 +1351,8 @@ protocol Tracer {
 }
 
 protocol Db {
-    query(q Sql) Throws[DbError] -> []DbRow
-    in_transaction[T](body fn() Db Throws -> T) Throws -> T
+    query(q Sql) Fail[DbError] -> []DbRow
+    in_transaction[T](body fn() Db Fail -> T) Fail -> T
     // ↑ один Db handler оборачивает любой T
 }
 ```
@@ -1675,7 +1675,7 @@ acc.deposit(100)                     // вызовет AuditedAccount.deposit
 разные alias-имена и явно решает, через какой:
 
 ```nova
-type Logger protocol { log(msg str) -> () }
+type Logger effect { log(msg str) -> () }
 type Auditor { log(msg str) -> () }
 
 type Combined {

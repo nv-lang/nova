@@ -20,7 +20,7 @@ trace, генерация id, часы.
 
 В таблице — все функции примера. Колонки:
 
-- **Eff** — количество эффектов в сигнатуре (включая `Throws[E]`)
+- **Eff** — количество эффектов в сигнатуре (включая `Fail[E]`)
 - **Видимость** — `export` (явно) или `private` (выводится компилятором, D28)
 - **Эффекты** — список через пробел
 
@@ -30,10 +30,10 @@ trace, генерация id, часы.
 
 | Функция | Eff | Видимость | Эффекты |
 |---|---:|---|---|
-| `account_get` | 3 | export | `Db Cache Throws[RepoError]` |
-| `account_update_balance` | 3 | export | `Db Cache Throws[RepoError]` |
-| `transfer_insert` | 2 | export | `Db Throws[RepoError]` |
-| `transfer_update_status` | 2 | export | `Db Throws[RepoError]` |
+| `account_get` | 3 | export | `Db Cache Fail[RepoError]` |
+| `account_update_balance` | 3 | export | `Db Cache Fail[RepoError]` |
+| `transfer_insert` | 2 | export | `Db Fail[RepoError]` |
+| `transfer_update_status` | 2 | export | `Db Fail[RepoError]` |
 | `row_to_account` | 0 | private | — |
 | `encode_account` | 0 | private | — |
 | `decode_account` | 0 | private | — |
@@ -42,24 +42,24 @@ trace, генерация id, часы.
 
 | Функция | Eff | Видимость | Эффекты |
 |---|---:|---|---|
-| `transfer_money` | **10** | export | `Db Cache Logger Clock IdGen AuthContext Metrics Trace Idempotency Throws[TransferError]` |
-| `account_view` | 4 | export | `Db Cache AuthContext Throws[TransferError]` |
-| `do_transfer` | 7 | private (выводится) | `Db Cache Logger Clock IdGen Metrics Throws[TransferError]` |
-| `validate_amount` | 1 | private | `Throws[TransferError]` |
-| `validate_pair` | 1 | private | `Throws[TransferError]` |
-| `add_money` | 1 | private | `Throws[TransferError]` |
-| `sub_money` | 1 | private | `Throws[TransferError]` |
-| `decode_transfer` | 1 | private | `Throws[TransferError]` |
+| `transfer_money` | **10** | export | `Db Cache Logger Clock IdGen AuthContext Metrics Trace Idempotency Fail[TransferError]` |
+| `account_view` | 4 | export | `Db Cache AuthContext Fail[TransferError]` |
+| `do_transfer` | 7 | private (выводится) | `Db Cache Logger Clock IdGen Metrics Fail[TransferError]` |
+| `validate_amount` | 1 | private | `Fail[TransferError]` |
+| `validate_pair` | 1 | private | `Fail[TransferError]` |
+| `add_money` | 1 | private | `Fail[TransferError]` |
+| `sub_money` | 1 | private | `Fail[TransferError]` |
+| `decode_transfer` | 1 | private | `Fail[TransferError]` |
 
 ### HTTP
 
 | Функция | Eff | Видимость | Эффекты |
 |---|---:|---|---|
-| `handle_create_transfer` | **10** | export | `Db Cache Logger Clock IdGen AuthContext Metrics Trace Idempotency Throws[HttpError]` |
-| `handle_get_account` | 4 | export | `Db Cache AuthContext Throws[HttpError]` |
+| `handle_create_transfer` | **10** | export | `Db Cache Logger Clock IdGen AuthContext Metrics Trace Idempotency Fail[HttpError]` |
+| `handle_get_account` | 4 | export | `Db Cache AuthContext Fail[HttpError]` |
 | `handle_health` | 1 | export | `Db` |
-| `parse_transfer_request` | 1 | private | `Throws[ParseError]` |
-| `parse_id` | 1 | private | `Throws[HttpError]` |
+| `parse_transfer_request` | 1 | private | `Fail[ParseError]` |
+| `parse_id` | 1 | private | `Fail[HttpError]` |
 | `transfer_dto` | 0 | private | — |
 | `to_http_error` | 0 | private | — |
 
@@ -67,9 +67,9 @@ trace, генерация id, часы.
 
 | Функция | Eff | Видимость | Эффекты |
 |---|---:|---|---|
-| `run` | 3 | export | `Net Io Throws[StartupError]` |
-| `route` | 9 | private (выводится) | `Db Cache Logger Clock IdGen Metrics Trace Idempotency Throws[HttpError]` |
-| `run_in_test_mode` | 1 | private | `Throws` |
+| `run` | 3 | export | `Net Io Fail[StartupError]` |
+| `route` | 9 | private (выводится) | `Db Cache Logger Clock IdGen Metrics Trace Idempotency Fail[HttpError]` |
+| `run_in_test_mode` | 1 | private | `Fail` |
 
 ## Сводная статистика
 
@@ -90,12 +90,12 @@ trace, генерация id, часы.
 Максимум — **10 эффектов** (`transfer_money`, `handle_create_transfer`).
 Это не «десятки», а чёткий потолок, обусловленный набором cross-cutting
 concerns этого сервиса (Db, Cache, Logger, Clock, IdGen, AuthContext,
-Metrics, Trace, Idempotency + Throws). У типового backend'а их и
+Metrics, Trace, Idempotency + Fail). У типового backend'а их и
 бывает 8–12, столько же ThreadLocal'ов и `@Autowired`-полей в
 эквивалентном Spring-сервисе.
 
 Медиана **— 1 эффект**. Половина функций трогает один эффект (обычно
-`Throws`) или ноль.
+`Fail`) или ноль.
 
 ### 2. Плотность сильно различается по слоям
 
@@ -111,12 +111,12 @@ main / wiring        3        9
 ────────────────────────────────────────────────
 ```
 
-- **Repository однообразен**: всегда `Db [+ Cache] + Throws`. 2–3 эффекта.
+- **Repository однообразен**: всегда `Db [+ Cache] + Fail`. 2–3 эффекта.
 - **Service бимодален**: одна жирная public-функция (10) + куча
   чистых валидаторов (1).
 - **Helper'ы и валидаторы — 0–1 эффект.** Их много, и они «разбавляют»
   средние цифры в пользу читаемости.
-- **`run` имеет всего 3 эффекта** (`Net Io Throws`) — все инфраструктурные
+- **`run` имеет всего 3 эффекта** (`Net Io Fail`) — все инфраструктурные
   handler'ы привязаны через `with` и не «протекают» в сигнатуру.
 
 ### 3. Pattern: жирные сигнатуры — это «семейство дублей»
@@ -141,7 +141,7 @@ fn do_transfer(req TransferRequest) -> Transfer { ... }
 ```
 
 Без эффектов. Компилятор выводит `Db Cache Logger Clock IdGen Metrics
-Throws[TransferError]` (7 штук) и показывает их через
+Fail[TransferError]` (7 штук) и показывает их через
 `nova check --show-effects`. То есть **читаемость кода** в private
 не страдает от плотности — сигнатура голая. Расплата за это —
 дисциплина тулинга и ошибка компиляции на public-границе, если private
@@ -201,7 +201,7 @@ public class TransferService {
 внутри тела:
 
 ```
-run            (Net Io Throws)
+run            (Net Io Fail)
 └─ with Db = pg, Cache = redis, ... {
      serve(...)        ← этим эффектам с этого места уже НЕ нужно быть в типе
    }
@@ -213,7 +213,7 @@ run            (Net Io Throws)
 transfer_money     10 ─┐
 do_transfer         7  │ ← сюда не доходят AuthContext, Idempotency, Trace
 route               9  │ ← сюда добавляется AuthContext (через with в route)
-run                 3 ─┘ ← здесь только Net Io Throws
+run                 3 ─┘ ← здесь только Net Io Fail
                    max─┘
 ```
 

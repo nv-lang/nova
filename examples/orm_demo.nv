@@ -96,7 +96,7 @@ export type RepoError
 // query-builder, relations, transactions — все generic.
 export type Repo[T] {
     readonly table      str
-    readonly from_row   fn(DbRow) Throws[RepoError] -> T
+    readonly from_row   fn(DbRow) Fail[RepoError] -> T
     readonly to_columns fn(T) -> []ColumnValue
     readonly id_of      fn(T) -> u64
 }
@@ -115,7 +115,7 @@ export type ColumnValue {
 
 // find_by_id — поиск по PK. NotFound отдельной ошибкой, чтобы caller
 // мог отличить «нет записи» от «БД упала».
-export fn Repo[T] @find_by_id(id u64) Db Throws[RepoError] -> T {
+export fn Repo[T] @find_by_id(id u64) Db Fail[RepoError] -> T {
     let q = sql`SELECT * FROM ${@table} WHERE id = ${id}`
     let rows = Db.query(q)?
     match rows {
@@ -126,7 +126,7 @@ export fn Repo[T] @find_by_id(id u64) Db Throws[RepoError] -> T {
 }
 
 // find_one — первая строка из произвольного query. None если пусто.
-export fn Repo[T] @find_one(q Sql) Db Throws[RepoError] -> Option[T] {
+export fn Repo[T] @find_one(q Sql) Db Fail[RepoError] -> Option[T] {
     let rows = Db.query(q)?
     match rows {
         []      => None
@@ -136,11 +136,11 @@ export fn Repo[T] @find_one(q Sql) Db Throws[RepoError] -> Option[T] {
 
 // list_all — все записи без фильтра. Для больших таблиц — `query()`
 // builder + pagination (см. ниже).
-export fn Repo[T] @list_all() Db Throws[RepoError] -> []T =>
+export fn Repo[T] @list_all() Db Fail[RepoError] -> []T =>
     @list_with(sql`SELECT * FROM ${@table}`)
 
 // list_with — выполнить произвольный SELECT, парсить каждую строку.
-export fn Repo[T] @list_with(q Sql) Db Throws[RepoError] -> []T {
+export fn Repo[T] @list_with(q Sql) Db Fail[RepoError] -> []T {
     let rows = Db.query(q)?
     let mut out []T = []T.with_capacity(rows.len)
     for r in rows {
@@ -154,7 +154,7 @@ export fn Repo[T] @list_with(q Sql) Db Throws[RepoError] -> []T {
 // Поля, которые БД генерирует сама (autoincrement id, created_at NOW()),
 // программист исключает из to_columns — они выставляются БД через
 // DEFAULT/SERIAL.
-export fn Repo[T] @insert(value T) Db Throws[RepoError] -> u64 {
+export fn Repo[T] @insert(value T) Db Fail[RepoError] -> u64 {
     let cols = @to_columns(value)
     if cols.len == 0 { throw Inconsistent("empty INSERT") }
 
@@ -177,7 +177,7 @@ export fn Repo[T] @insert(value T) Db Throws[RepoError] -> u64 {
 
 // update — generic, через `to_columns` + `id_of`. Перезаписывает все
 // колонки из to_columns. Возвращает true если запись была.
-export fn Repo[T] @update(value T) Db Throws[RepoError] -> bool {
+export fn Repo[T] @update(value T) Db Fail[RepoError] -> bool {
     let cols = @to_columns(value)
     if cols.len == 0 { throw Inconsistent("empty UPDATE") }
 
@@ -198,7 +198,7 @@ export fn Repo[T] @update(value T) Db Throws[RepoError] -> bool {
 // Демонстрирует **прозрачную обработку конкурентного доступа**: caller
 // ловит Conflict через handler-лямбду и решает retry/abort.
 export fn Repo[T] @update_versioned(value T, expected_version i64)
-    Db Throws[RepoError] -> () {
+    Db Fail[RepoError] -> () {
     let cols = @to_columns(value)
     let assigns = cols.map((c) => "${c.name} = ?").join(", ")
     let mut args []SqlValue = cols.map((c) => c.value)
@@ -215,7 +215,7 @@ export fn Repo[T] @update_versioned(value T, expected_version i64)
 }
 
 // delete — по id. true если запись была.
-export fn Repo[T] @delete(id u64) Db Throws[RepoError] -> bool {
+export fn Repo[T] @delete(id u64) Db Fail[RepoError] -> bool {
     let q = sql`DELETE FROM ${@table} WHERE id = ${id}`
     Db.exec(q)? > 0
 }
@@ -227,7 +227,7 @@ export fn Repo[T] @delete(id u64) Db Throws[RepoError] -> bool {
 // Это **главный анти-N+1 примитив**: в `posts_of(user_ids)` мы делаем
 // один SQL `WHERE user_id IN (...)` вместо N отдельных find_by_id'ов.
 export fn Repo[T] @bulk_load[K](fk_col str, keys []K, key_to_sql fn(K) -> SqlValue)
-    Db Throws[RepoError] -> []T {
+    Db Fail[RepoError] -> []T {
     if keys.len == 0 { return [] }
 
     let sql_keys []SqlValue = keys.map(key_to_sql)
@@ -295,11 +295,11 @@ export fn Query[T] mut @limit(n int) -> Query[T] {
 }
 
 // fetch_all — выполнить, парсить все строки.
-export fn Query[T] @fetch_all() Db Throws[RepoError] -> []T =>
+export fn Query[T] @fetch_all() Db Fail[RepoError] -> []T =>
     @repo.list_with(@builder.build())
 
 // fetch_first — первая строка или None.
-export fn Query[T] @fetch_first() Db Throws[RepoError] -> Option[T] =>
+export fn Query[T] @fetch_first() Db Fail[RepoError] -> Option[T] =>
     @repo.find_one(@builder.build())
 
 
@@ -321,7 +321,7 @@ export type Page[T] {
 // Cursor-based pagination > offset-based: устойчив к insertion'ам
 // между страницами (в отличие от LIMIT/OFFSET).
 export fn Repo[T] @fetch_page(after Option[u64], size int)
-    Db Throws[RepoError] -> Page[T] {
+    Db Fail[RepoError] -> Page[T] {
     let cursor_predicate Sql = match after {
         Some(id) => { template: "AND id > ?", args: [id as i64] }
         None     => { template: "", args: [] }
@@ -356,7 +356,7 @@ export fn users_repo() -> Repo[User] =>
         id_of:      (u) => u.id as u64,
     }
 
-fn row_to_user(row DbRow) Throws[RepoError] -> User {
+fn row_to_user(row DbRow) Fail[RepoError] -> User {
     let id        = row.get_int("id")?
     let name      = row.get_str("name")?
     let email     = row.get_str("email")?
@@ -394,7 +394,7 @@ export fn posts_repo() -> Repo[Post] =>
         id_of:      (p) => p.id as u64,
     }
 
-fn row_to_post(row DbRow) Throws[RepoError] -> Post {
+fn row_to_post(row DbRow) Fail[RepoError] -> Post {
     let id      = row.get_int("id")?
     let user_id = row.get_int("user_id")?
     let title   = row.get_str("title")?
@@ -423,7 +423,7 @@ fn post_to_columns(p Post) -> []ColumnValue =>
 
 // posts_of — все посты пользователя. Использует Query[Post] напрямую,
 // без N+1 (один SQL).
-export fn posts_of(user_id UserId) Db Throws[RepoError] -> []Post =>
+export fn posts_of(user_id UserId) Db Fail[RepoError] -> []Post =>
     posts_repo().query()
         .where_eq("user_id", I(user_id as i64))
         .order_by("created_at DESC")
@@ -434,7 +434,7 @@ export fn posts_of(user_id UserId) Db Throws[RepoError] -> []Post =>
 //
 // Каноническое анти-N+1: вызывающий получает []User, потом одной
 // функцией собирает посты для всех сразу.
-export fn posts_of_many(user_ids []UserId) Db Throws[RepoError] -> HashMap[UserId, []Post] {
+export fn posts_of_many(user_ids []UserId) Db Fail[RepoError] -> HashMap[UserId, []Post] {
     let posts = posts_repo().bulk_load(
         "user_id",
         user_ids,
@@ -468,7 +468,7 @@ export fn posts_of_many(user_ids []UserId) Db Throws[RepoError] -> HashMap[UserI
 // Если внутри transfer что-то throw'нуло — handler автоматически
 // rollback'ит. Бизнес-код не пишет ни BEGIN, ни COMMIT.
 export fn transfer_balance(from_id UserId, to_id UserId, amount i64)
-    Db Throws[RepoError] -> () {
+    Db Fail[RepoError] -> () {
     if amount <= 0 { throw Inconsistent("amount must be positive") }
 
     Db.in_transaction() {
@@ -511,8 +511,8 @@ fn in_memory_db_handler(storage mut HashMap[u64, DbRow]) -> Handler[Db] => Db {
                 _    => panic("expected i64 id arg")
             }
             match storage.get(id) {
-                Some(r) => resume([r])
-                None    => resume([])
+                Some(r) => return [r]
+                None    => return []
             }
         } else if q.template.contains("WHERE id IN") {
             // SELECT WHERE id IN (?, ?, ...) — bulk_load
@@ -524,36 +524,36 @@ fn in_memory_db_handler(storage mut HashMap[u64, DbRow]) -> Handler[Db] => Db {
             for id in ids {
                 match storage.get(id) { Some(r) => out.push(r), None => () }
             }
-            resume(out)
+            return out
         } else if q.template.contains("RETURNING id") {
             // INSERT — возвращаем фиктивный id (реальный handler выдал бы
             // следующий sequence). Тесты, которые проверяют конкретный id
             // после insert, должны использовать другой handler.
             let new_id = (storage.len + 1) as u64
-            resume([{ columns: ["id"], values: [I(new_id as i64)] }])
+            return [{ columns: ["id"], values: [I(new_id as i64)] }]
         } else {
             // SELECT FROM <table> — все записи.
             let mut out []DbRow = []
             for v in storage.values() { out.push(v) }
-            resume(out)
+            return out
         }
     }
     exec(q) {
         // DELETE / UPDATE — упрощённо: ищем `id = ?` среди args.
         if q.template.starts_with("DELETE") {
             let id = match q.args[0] { I(n) => n as u64, _ => 0 }
-            if storage.contains(id) { storage.remove(id); resume(1) }
-            else                    { resume(0) }
+            if storage.contains(id) { storage.remove(id); return 1 }
+            else                    { return 0 }
         } else {
             // UPDATE — последний arg обычно id.
             let id = match q.args[q.args.len - 1] {
                 I(n) => n as u64
                 _    => 0
             }
-            if storage.contains(id) { resume(1) } else { resume(0) }
+            if storage.contains(id) { return 1 } else { return 0 }
         }
     }
-    in_transaction(b) => resume(b())     // упрощённо: inline call без BEGIN/COMMIT
+    in_transaction(b) => return b()     // упрощённо: inline call без BEGIN/COMMIT
 }
 
 // Минимальный сидер для users-storage.
@@ -634,15 +634,15 @@ test "transfer rolls back on throw" {
     let mut commits = 0
     let mut rollbacks = 0
 
-    with Db = Db {
-        query(q)  => resume([])              // всегда пусто → NotFound
-        exec(q)   => resume(0)
+    with Db = handler Db {
+        query(q)  => return []              // всегда пусто → NotFound
+        exec(q)   => return 0
         in_transaction(b) {
             // Симулируем postgres-handler: при throw делаем rollback,
             // при успехе — commit. На реальном соединении это были бы
             // BEGIN/COMMIT/ROLLBACK SQL-команды.
             match try_run(b) {
-                Ok(v)  => { commits += 1; resume(v) }
+                Ok(v)  => { commits += 1; return v }
                 Err(e) => { rollbacks += 1; throw e }
             }
         }
@@ -662,15 +662,15 @@ test "update_versioned throws Conflict on version mismatch" {
     seed_user(storage, 1, "alice", "a@example.com", 100)
 
     // exec возвращает 0 affected rows → handler сообщит "не совпала версия".
-    with Db = Db {
+    with Db = handler Db {
         query(q) {
             match storage.get(1) {
-                Some(r) => resume([r])
-                None    => resume([])
+                Some(r) => return [r]
+                None    => return []
             }
         }
-        exec(q)            => resume(0)      // ← 0 affected → Conflict
-        in_transaction(b)  => resume(b())
+        exec(q)            => return 0      // ← 0 affected → Conflict
+        in_transaction(b)  => return b()
     } {
         let repo = users_repo()
         let u = repo.find_by_id(1)?
