@@ -632,6 +632,20 @@ impl Interpreter {
                 // В bootstrap'е spawn = inline call (синхронно).
                 self.eval_expr(body, env)
             }
+            ExprKind::Forbid { effects: _, body } => {
+                // В bootstrap-интерпретаторе forbid (D63) исполняется как
+                // обычный block — runtime барьер через sentinel-frame и
+                // compile-time проверка прямых эффектов это задача
+                // production-компилятора. Здесь блок прозрачен.
+                self.exec_block_flow(body, env)
+            }
+            ExprKind::Realtime { nogc: _, body } => {
+                // В bootstrap'е нет fiber-runtime'а с safepoint'ами,
+                // realtime (D64) исполняется как обычный block. В
+                // production-компиляторе runtime ставит флаг и проверяет
+                // на каждом suspend-point'е.
+                self.exec_block_flow(body, env)
+            }
             ExprKind::TaggedTemplate { tag: _, parts, .. } => {
                 // В bootstrap'е tagged template = просто строка (parts
                 // конкатенируются). Tag-функция игнорируется. Достаточно

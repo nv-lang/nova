@@ -382,6 +382,21 @@ pub enum ExprKind {
     /// `interrupt v` — досрочное завершение всего with-блока (D61).
     /// Значение становится результатом всего with-блока.
     Interrupt(Option<Box<Expr>>),
+    /// `forbid X1, X2 { body }` — capability sandbox (D63).
+    /// В bootstrap-интерпретаторе runtime барьер не реализован,
+    /// блок исполняется как обычный block-expression. Compile-time
+    /// проверка type checker'а — задача production-компилятора.
+    Forbid {
+        effects: Vec<TypeRef>,
+        body: Block,
+    },
+    /// `realtime { body }` или `realtime nogc { body }` — гарантия
+    /// не-приостановки (D64). В bootstrap нет fiber-runtime'а с
+    /// safepoint'ами, блок исполняется как обычный block-expression.
+    Realtime {
+        nogc: bool,
+        body: Block,
+    },
     /// `range expr (a..b)` — D58 (генерируется как обычный вызов `Range.exclusive`)
     Range {
         start: Box<Expr>,

@@ -1350,6 +1350,8 @@ impl Parser {
             TokenKind::KwInterrupt => self.parse_interrupt_expr(),
             TokenKind::KwSpawn => self.parse_spawn(),
             TokenKind::KwHandler => self.parse_handler_lit(),
+            TokenKind::KwForbid => self.parse_forbid(),
+            TokenKind::KwRealtime => self.parse_realtime(),
             other => Err(Diagnostic::new(
                 format!("unexpected {} in expression", other.name()),
                 start,
@@ -2007,6 +2009,48 @@ impl Parser {
         let body = self.parse_expr()?;
         let span = start.merge(body.span);
         Ok(Expr::new(ExprKind::Spawn(Box::new(body)), span))
+    }
+
+    /// `forbid X1, X2, ... { body }` — capability sandbox (D63).
+    fn parse_forbid(&mut self) -> Result<Expr, Diagnostic> {
+        let start = self.expect(&TokenKind::KwForbid)?.span;
+        // Список эффектов через запятую до открывающего `{`.
+        let mut effects = Vec::new();
+        loop {
+            effects.push(self.parse_type()?);
+            if self.eat(&TokenKind::Comma).is_none() {
+                break;
+            }
+            self.skip_newlines();
+        }
+        let body = self.parse_block()?;
+        let end = body.span;
+        Ok(Expr::new(
+            ExprKind::Forbid { effects, body },
+            start.merge(end),
+        ))
+    }
+
+    /// `realtime [nogc] { body }` — гарантия не-приостановки (D64).
+    fn parse_realtime(&mut self) -> Result<Expr, Diagnostic> {
+        let start = self.expect(&TokenKind::KwRealtime)?.span;
+        // Опциональный модификатор `nogc`.
+        let nogc = if let TokenKind::Ident(name) = &self.peek().kind {
+            if name == "nogc" {
+                self.bump();
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+        let body = self.parse_block()?;
+        let end = body.span;
+        Ok(Expr::new(
+            ExprKind::Realtime { nogc, body },
+            start.merge(end),
+        ))
     }
 
     // ─── block & stmts ───────────────────────────────────────────────────

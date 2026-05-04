@@ -1131,6 +1131,58 @@ unit-тип-маркер в prelude. Это работало, но имело п
 [D62](../04-effects.md#d62) (Fail strict — уточняется совместимостью
 типов).
 
+### Capability sandbox и realtime: D63 + D64
+
+**Что было:** `forbid` упоминался в R6 (revolutionary.md) как
+keyword для capability-sandbox, но без формальной спеки. Не было
+описано: compile-time + runtime механика, что разрешено внутри,
+что значит «forbid Async». Аналогично, после удаления Async из
+type system ([D62](../04-effects.md#d62)) не было способа гарантировать
+«функция не приостанавливается» — это нужно для real-time-зон,
+hot loops, lock-критичного кода.
+
+**Что стало:** [D63](../04-effects.md#d63) и [D64](../04-effects.md#d64)
+формализуют две связанные runtime-конструкции:
+
+- **`forbid X1, X2 { body }`** — sandbox для type-system эффектов.
+  Compile-time error при прямых нарушениях, runtime барьер через
+  sentinel-frame в handler-стеке для транзитивных. Установка нового
+  handler для forbid-эффекта внутри — compile error (sandbox
+  непреодолим). `forbid Async` явно запрещён — Async не в типах.
+
+- **`realtime { body }`** — runtime-зона, гарантирующая что код не
+  приостанавливается на yield-point'ах. Не эффект, а runtime-флаг
+  fiber-runtime'а. Запрещает suspend-операции (Net, Fs, Db, Time.sleep,
+  Channel.recv, spawn). Опциональный модификатор `realtime nogc` —
+  запрет аллокации в managed heap. Атрибут `@realtime` на функции —
+  sugar для функции целиком.
+
+**Почему два механизма, а не один:**
+
+- `forbid` работает с **type-system эффектами** — там есть имя в
+  типе, можно проверить compile-time.
+- `realtime` работает с **невидимой инфраструктурой** (fiber-suspend,
+  GC pause) — нет имени в типе, только runtime-флаг.
+
+Async-концепт **полностью удалён из языка**. Программист про него не
+знает; есть только `realtime` как inverse-маркер «гарантированно
+sync-зона».
+
+**Цена:**
+
+- Bootstrap-компилятор: lexer keyword'ы `forbid`, `realtime` (опционально),
+  AST/parser/interp — добавить.
+- Type checker: compile-time проверка для forbid (прямые эффекты);
+  частичная для realtime (известные suspend-операции).
+- R6 в revolutionary.md ссылается на D63 как формализацию.
+- R7 уже обновлена под D62 («Async — невидимая инфраструктура»);
+  D64 завершает картину inverse-маркером `realtime`.
+
+**Связанные D:** [D63](../04-effects.md#d63) (новое), [D64](../04-effects.md#d64) (новое),
+[D62](../04-effects.md#d62) (Async ambient — основа для D64),
+[D11](../04-effects.md#d11) (with — параллель с forbid),
+[D14](../06-concurrency.md#d14) (fiber runtime — где realtime ставит флаг).
+
 ## Как читать историю
 
 - **«revised»** в статусе D — текст переписан, решение действует, но

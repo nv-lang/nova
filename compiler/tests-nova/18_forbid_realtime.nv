@@ -1,0 +1,72 @@
+// 18_forbid_realtime.nv — D63 (forbid) + D64 (realtime).
+//
+// В bootstrap-интерпретаторе runtime барьер для forbid не реализован,
+// и нет fiber-runtime'а для realtime — оба блока работают как обычные
+// block-expression'ы. Эти тесты проверяют что **парсер** принимает
+// синтаксис и блок исполняется.
+//
+// Production-компилятор будет делать compile-time + runtime проверки.
+
+module spec.forbid_realtime
+
+type Counter effect {
+    next() -> int
+}
+
+test "forbid block — синтаксис парсится, body исполняется" {
+    let r = forbid Counter {
+        // body исполняется как обычный block;
+        // в production здесь Counter.next() был бы запрещён
+        42
+    }
+    assert(r == 42)
+}
+
+test "forbid с несколькими эффектами через запятую" {
+    let r = forbid Counter, Fail {
+        let x = 10
+        let y = 20
+        x + y
+    }
+    assert(r == 30)
+}
+
+test "realtime block — синтаксис парсится" {
+    let r = realtime {
+        let mut sum = 0
+        for i in 1..6 {
+            sum += i
+        }
+        sum
+    }
+    assert(r == 1 + 2 + 3 + 4 + 5)
+}
+
+test "realtime nogc block" {
+    let r = realtime nogc {
+        let mut x = 100
+        x += 50
+        x
+    }
+    assert(r == 150)
+}
+
+test "forbid вложенный в обычный код" {
+    let mut total = 0
+    for i in 1..4 {
+        let v = forbid Counter {
+            i * 10
+        }
+        total += v
+    }
+    assert(total == 10 + 20 + 30)
+}
+
+test "realtime в expression position" {
+    let r = if true {
+        realtime { 100 }
+    } else {
+        0
+    }
+    assert(r == 100)
+}
