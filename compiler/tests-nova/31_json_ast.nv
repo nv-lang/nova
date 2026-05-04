@@ -1,0 +1,122 @@
+// 31_json_ast.nv — рекурсивный sum-type моделирующий JSON
+// (interpreter-style integration test). Покрывает:
+// - sum-type с вложенными generic-параметрами `[]Json`,
+//   `[](str, Json)` (массив пар)
+// - mutual recursion: json_size → json_arr_size → json_size
+// - tuple element access (p.1)
+
+module spec.json_ast
+
+type Json
+    | JNull
+    | JBool(bool)
+    | JNum(int)
+    | JStr(str)
+    | JArr([]Json)
+    | JObj([](str, Json))
+
+fn json_size(j Json) -> int => match j {
+    JNull       => 1
+    JBool(_)    => 1
+    JNum(_)     => 1
+    JStr(_)     => 1
+    JArr(items) => 1 + json_arr_size(items)
+    JObj(pairs) => 1 + json_obj_size(pairs)
+}
+
+fn json_arr_size(items []Json) -> int {
+    let mut sum = 0
+    for it in items {
+        sum += json_size(it)
+    }
+    sum
+}
+
+fn json_obj_size(pairs [](str, Json)) -> int {
+    let mut sum = 0
+    for p in pairs {
+        sum += json_size(p.1)
+    }
+    sum
+}
+
+fn json_depth(j Json) -> int => match j {
+    JNull       => 1
+    JBool(_)    => 1
+    JNum(_)     => 1
+    JStr(_)     => 1
+    JArr(items) => 1 + arr_max_depth(items)
+    JObj(pairs) => 1 + obj_max_depth(pairs)
+}
+
+fn arr_max_depth(items []Json) -> int {
+    let mut m = 0
+    for it in items {
+        let d = json_depth(it)
+        if d > m { m = d }
+    }
+    m
+}
+
+fn obj_max_depth(pairs [](str, Json)) -> int {
+    let mut m = 0
+    for p in pairs {
+        let d = json_depth(p.1)
+        if d > m { m = d }
+    }
+    m
+}
+
+test "primitive json size" {
+    assert(json_size(JNull) == 1)
+    assert(json_size(JBool(true)) == 1)
+    assert(json_size(JNum(42)) == 1)
+    assert(json_size(JStr("x")) == 1)
+}
+
+test "flat array size" {
+    let j = JArr([JNum(1), JStr("x"), JBool(true), JNull])
+    assert(json_size(j) == 5)
+}
+
+test "nested arrays" {
+    let inner = JArr([JNum(1), JNum(2)])
+    let outer = JArr([JBool(true), inner])
+    assert(json_size(outer) == 5)
+}
+
+test "object size" {
+    let pairs = [
+        ("name", JStr("alice")),
+        ("age", JNum(30)),
+        ("active", JBool(true))
+    ]
+    let j = JObj(pairs)
+    assert(json_size(j) == 4)
+}
+
+test "nested object/array" {
+    let inner_arr = JArr([JNum(1), JNum(2), JNum(3)])
+    let pairs = [
+        ("nums", inner_arr),
+        ("name", JStr("test"))
+    ]
+    let j = JObj(pairs)
+    // 1 (obj) + 1 (arr) + 3 nums + 1 str = 6
+    assert(json_size(j) == 6)
+}
+
+test "depth flat" {
+    assert(json_depth(JNum(1)) == 1)
+    assert(json_depth(JArr([JNum(1)])) == 2)
+}
+
+test "depth nested" {
+    let level3 = JArr([JArr([JArr([JNum(1)])])])
+    assert(json_depth(level3) == 4)
+}
+
+test "depth empty array" {
+    let empty = JArr([])
+    assert(json_depth(empty) == 1)  // нет внутренних, max(0)+1 = 1
+}

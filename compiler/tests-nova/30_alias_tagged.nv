@@ -1,0 +1,64 @@
+// 30_alias_tagged.nv — type aliases (`type X alias T`) и
+// tagged template literals.
+
+module spec.alias_tagged
+
+// --- Alias types ---
+
+type Name alias str
+type UserId alias int
+type Score alias int
+
+fn greet(n Name) -> str {
+    "hello, " + n
+}
+
+fn double_score(s Score) -> Score {
+    s * 2
+}
+
+test "alias на str — функция-парам" {
+    let n Name = "alice"
+    assert(greet(n) == "hello, alice")
+}
+
+test "alias на int — арифметика" {
+    let id UserId = 42
+    assert(id + 8 == 50)
+}
+
+test "alias возвращается из функции" {
+    let s Score = 50
+    let doubled = double_score(s)
+    assert(doubled == 100)
+}
+
+test "alias использует методы базового типа" {
+    let n Name = "world"
+    assert(n.len == 5)
+    assert(n.starts_with("wor"))
+}
+
+// --- Tagged template ---
+//
+// В bootstrap'е tag-функция игнорируется, parts конкатенируются.
+// Это достаточно для написания компилятора.
+
+test "tagged template простая строка" {
+    let q = sql`SELECT * FROM users`
+    assert(q.contains("SELECT"))
+}
+
+test "tagged template с json" {
+    let payload = json`{"id": 1, "name": "alice"}`
+    assert(payload.contains("alice"))
+}
+
+test "tagged template multiline" {
+    let big = html`
+        <html>
+            <body>hello</body>
+        </html>
+    `
+    assert(big.contains("hello"))
+}

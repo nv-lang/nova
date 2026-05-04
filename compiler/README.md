@@ -12,7 +12,7 @@ Nova (self-hosting в v2.0).
 - Type checker с inference для локальных переменных и эффектов
   (D28). Generics через мономорфизацию.
 - Treewalk-интерпретатор + handler-стек (D10/D31)
-- Минимальные эффекты: `Io`, `Throws[E]`, `Mut`, `Random`
+- Минимальные эффекты: `Io`, `Fail[E]`, `Random`
 - CLI: `nova run`, `nova check`, `nova test`
 
 ## Чего нет (намеренно)
