@@ -151,16 +151,14 @@ test "два эффекта на один state" {
             return ()
         }
     }
-    with Counter = h_counter {
-        with Reset = h_reset {
-            let a = Counter.next()
-            let b = Counter.next()
-            assert(a == 1)
-            assert(b == 2)
-            Reset.reset()
-            let c = Counter.next()
-            assert(c == 1)
-        }
+    with Counter = h_counter, Reset = h_reset {
+        let a = Counter.next()
+        let b = Counter.next()
+        assert(a == 1)
+        assert(b == 2)
+        Reset.reset()
+        let c = Counter.next()
+        assert(c == 1)
     }
     let final_v = s.value
     assert(final_v == 1)

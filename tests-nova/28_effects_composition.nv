@@ -37,7 +37,7 @@ fn task(n int) Logger Counter -> int {
     n * id
 }
 
-test "функция с двумя эффектами в сигнатуре" {
+test "функция с двумя эффектами в сигнатуре (flat with)" {
     let mut entries = []
     let mut count = 0
     with Logger = handler Logger {
@@ -45,18 +45,16 @@ test "функция с двумя эффектами в сигнатуре" {
             entries.push(msg)
             return ()
         }
-    } {
-        with Counter = handler Counter {
-            next() {
-                count += 1
-                return count
-            }
-        } {
-            let a = task(10)
-            let b = task(20)
-            assert(a == 10)
-            assert(b == 40)
+    }, Counter = handler Counter {
+        next() {
+            count += 1
+            return count
         }
+    } {
+        let a = task(10)
+        let b = task(20)
+        assert(a == 10)
+        assert(b == 40)
     }
     assert(entries.len == 2)
     assert(count == 2)
@@ -108,20 +106,18 @@ fn echo() Reader Writer -> () {
     Writer.write(s + "!")
 }
 
-test "reader/writer композиция" {
+test "reader/writer композиция (flat with)" {
     let mut output = ""
     let input = "hello"
     with Reader = handler Reader {
         read() => input
-    } {
-        with Writer = handler Writer {
-            write(s) {
-                output = s
-                return ()
-            }
-        } {
-            echo()
+    }, Writer = handler Writer {
+        write(s) {
+            output = s
+            return ()
         }
+    } {
+        echo()
     }
     assert(output == "hello!")
 }
