@@ -1,0 +1,78 @@
+// 19_generics.nv — generic-параметры функций и типов.
+//
+// Bootstrap'е generics — runtime erasure: тип-параметр игнорируется
+// в проверке, значение проходит как есть. Этого достаточно чтобы
+// убедиться что синтаксис парсится и интерпретатор не путает контексты.
+
+module spec.generics
+
+fn identity[T](x T) -> T {
+    x
+}
+
+fn pair[A, B](a A, b B) -> (A, B) {
+    (a, b)
+}
+
+fn first_of_three[T](a T, b T, c T) -> T {
+    a
+}
+
+type Box[T] {
+    value T
+}
+
+fn box_get[T](b Box[T]) -> T {
+    b.value
+}
+
+type Pair[A, B] {
+    fst A
+    snd B
+}
+
+test "generic identity на int" {
+    assert(identity(42) == 42)
+}
+
+test "generic identity на str" {
+    assert(identity("hi") == "hi")
+}
+
+test "generic identity на bool" {
+    assert(identity(true) == true)
+}
+
+test "generic с двумя параметрами" {
+    let p = pair(1, "x")
+    assert(p.0 == 1)
+    assert(p.1 == "x")
+}
+
+test "generic с одинаковыми T для всех аргументов" {
+    assert(first_of_three(10, 20, 30) == 10)
+    assert(first_of_three("a", "b", "c") == "a")
+}
+
+test "generic record type" {
+    let b = Box { value: 42 }
+    assert(box_get(b) == 42)
+}
+
+test "generic record на разных типах" {
+    let b1 = Box { value: 100 }
+    let b2 = Box { value: "world" }
+    assert(b1.value == 100)
+    assert(b2.value == "world")
+}
+
+test "generic record с двумя параметрами" {
+    let p = Pair { fst: 1, snd: "k" }
+    assert(p.fst == 1)
+    assert(p.snd == "k")
+}
+
+test "generic функция возвращает generic record" {
+    let b = Box { value: identity(7) }
+    assert(b.value == 7)
+}

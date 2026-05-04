@@ -1,0 +1,77 @@
+// 22_misc_ops.nv — `as` cast, `spawn`, block-expression-as-value
+//
+// В bootstrap'е:
+// - `as` это no-op (значение не меняется); это заглушка для
+//   будущего production-компилятора с настоящей type-coercion.
+// - `spawn { body }` исполняется синхронно (нет fiber-runtime'а).
+// - block expression `{ ... }` всегда даёт значение последнего
+//   выражения.
+
+module spec.misc_ops
+
+test "as cast int → int (no-op)" {
+    let x = 42 as int
+    assert(x == 42)
+}
+
+test "as cast в выражении" {
+    let r = (10 as int) + 5
+    assert(r == 15)
+}
+
+test "spawn block — синхронное исполнение в bootstrap'е" {
+    let r = spawn { 100 + 1 }
+    assert(r == 101)
+}
+
+test "spawn с side-эффектами на захваченную переменную" {
+    let mut x = 0
+    let _ = spawn {
+        x = 99
+    }
+    assert(x == 99)
+}
+
+test "block expression как значение" {
+    let r = {
+        let a = 10
+        let b = 20
+        a + b
+    }
+    assert(r == 30)
+}
+
+test "вложенные block expression" {
+    let r = {
+        let outer = 1
+        let inner = {
+            let x = outer + 9
+            x * 2
+        }
+        inner + outer
+    }
+    assert(r == 21)
+}
+
+test "block expression в условии" {
+    let cond = {
+        let n = 5
+        n > 0
+    }
+    if cond {
+        assert(true)
+    } else {
+        assert(false)
+    }
+}
+
+test "block в правой части let" {
+    let v = {
+        let mut acc = 0
+        for i in 1..5 {
+            acc += i
+        }
+        acc
+    }
+    assert(v == 10)
+}
