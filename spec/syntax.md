@@ -890,8 +890,9 @@ fn fetch_all(ids []u64) Net Fail -> []User =>
     }
 ```
 
-`Async` — обычный эффект, не специальная конструкция. Тип возврата
-`[]User`, не `Future<[]User>`. Подробно — [revolutionary.md R7](revolutionary.md).
+Suspension в Nova — ambient runtime-инфраструктура, не эффект и не
+специальная конструкция (D62). Тип возврата `[]User`, не
+`Future<[]User>`. Подробно — [revolutionary.md R7](revolutionary.md).
 
 `parallel for` — structured concurrency: ждёт всех, отменяет хвост
 при ошибке.

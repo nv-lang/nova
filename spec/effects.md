@@ -139,10 +139,12 @@ LLM (и человек), читая сигнатуру, **знает все по
 у вызывающих **сломается**, потому что появился эффект `Log`. Тихо
 протащить нельзя. **Это фича.**
 
-## Async — эффект, не вирус
+## Async — невидимая инфраструктура (D62)
 
-`Async` — обычный эффект в сигнатуре. **Без `Future<T>` в типе.**
-Без `await`. Цвет функции исчезает.
+Suspension в Nova — **не эффект**, а ambient runtime-инфраструктура.
+**Без `Future<T>` в типе.** Без `await`. Цвет функции отсутствует.
+Программист не видит «может ли функция приостановиться» в её
+сигнатуре.
 
 ```nova
 fn fetch(url str) Net -> Response => ...
@@ -155,7 +157,13 @@ fn handler(req Request) Net Db -> Response {
 
 Под капотом — fiber-based scheduler (как Go/OCaml 5). Цена —
 килобайты памяти на fiber, миллион fiber'ов на машину — норма.
-Подробно — [decisions/06-concurrency.md#d14](decisions/06-concurrency.md#d14).
+
+Если нужна гарантия «здесь нельзя приостанавливаться» — используется
+блок [`realtime { ... }`](decisions/04-effects.md#d64) как
+inverse-маркер.
+
+Подробно — [decisions/06-concurrency.md#d14](decisions/06-concurrency.md#d14),
+[decisions/04-effects.md#d62](decisions/04-effects.md#d62).
 
 ## Что НЕ эффект — Panic
 
