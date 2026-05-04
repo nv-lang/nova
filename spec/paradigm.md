@@ -1,8 +1,15 @@
-> ⚠️ **УСТАРЕЛО.** Этот документ описывает парадигму ранней версии (D1–D17),
-> до решений D18/D24/D31/D33–D42/D52. Многое здесь синтаксически
-> некорректно: `mut self` в параметрах, `trait`/`impl`, `throws` без
-> `Fail[]`, `:` в аннотациях типа, `type X = { поля }` вместо
-> `type X { поля }`, alias через `=` вместо `type X alias Y`.
+> ⚠️ **УСТАРЕЛО.** Этот документ описывает парадигму ранней версии
+> (D1–D17), до решений D18/D24/D31/D33–D42/D52/D53/D61–D66. Текст
+> синтаксически некорректен по нескольким направлениям:
+>
+> - `mut self` в параметрах → `mut @field` ([D35](decisions/03-syntax.md#d35))
+> - `trait`/`impl` → `protocol`/`effect` через kind-токен ([D53](decisions/02-types.md#d53), [D61](decisions/04-effects.md#d61))
+> - `throws E` → `Fail[E]` ([D25](decisions/04-effects.md#d25), [D65](decisions/04-effects.md#d65))
+> - `:` в аннотациях типа → бесколонная форма (`let x int = 42`)
+> - `type X = { поля }` → `type X { поля }` ([D52](decisions/02-types.md#d52))
+> - alias через `=` → `type X alias Y` ([D52](decisions/02-types.md#d52))
+> - `Async`/`Mut`/`Par` как эффекты → ambient runtime, удалены ([D62](decisions/04-effects.md#d62), [D14 REVISED](decisions/06-concurrency.md#d14))
+> - `resume` keyword → удалён, handler-method = финальное выражение / `return v` / `interrupt v` ([D61](decisions/04-effects.md#d61))
 >
 > **Актуальная парадигма** — в [decisions/](decisions/), [syntax.md](syntax.md).
 > Этот файл будет переписан целиком (см. open-questions Q8).
