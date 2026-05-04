@@ -68,9 +68,9 @@ type ListParams {
 // ──────────────────────────────────────────────────────────────────────────
 
 // Router — поиск pattern и URL-параметров текущего запроса.
-// В Go это chi.RouteContext, в Nova — обычный тип, используемый
-// как эффект (между `)` и `->` в сигнатуре).
-type Router {
+// В Go это chi.RouteContext, в Nova — effect, активный handler
+// которого ставится middleware'ом выше по цепочке через `with`.
+type Router effect {
     pattern() -> str
     url_param(name str) -> Option[str]
     url_params() -> [(str, str)]
@@ -79,7 +79,7 @@ type Router {
 // CurrentAdmin — текущий аутентифицированный админ.
 // В Go это auth.UserID(r.Context()), в Nova — handler ставится
 // в auth-middleware выше по цепочке через `with`.
-type CurrentAdmin {
+type CurrentAdmin effect {
     id() -> Option[str]
 }
 
@@ -226,13 +226,14 @@ fn is_secret_key(k str) -> bool {
 // Лямбда строго `=> expr` ([D22](../spec/decisions/03-syntax.md#d22)),
 // поэтому тело middleware вынесено в named fn `audit_step`.
 fn audit_middleware(next Handler) -> Handler =>
-    (req Request) Db Log Router CurrentAdmin Fail -> Response =>
+    (req Request) Db Log Router CurrentAdmin Detach Fail -> Response =>
         audit_step(next, req)
 
 // audit_step — настоящее тело middleware. Блок-форма fn (`{}`),
 // потому что нужны guard-ранние возвраты и несколько `let`'ов.
+// `Detach` — для fire-and-forget audit-записи (D50).
 fn audit_step(next Handler, req Request)
-    Db Log Router CurrentAdmin Fail -> Response {
+    Db Log Router CurrentAdmin Detach Fail -> Response {
     // GET и HEAD не аудируем.
     if req.method == "GET" || req.method == "HEAD" {
         return next(req)
@@ -265,14 +266,16 @@ fn audit_step(next Handler, req Request)
     let (target_kind, target_id) = target_from_route(pattern)
 
     // Пишем аудит фоном — не блокируем ответ клиенту.
-    // D52: shorthand для полей с тем же именем, что и переменные.
-    spawn write_audit(AuditEntryInternal {
-        admin_id, action, target_kind, target_id,
-        payload:    sanitize_payload(payload),
-        status:     resp.status,
-        ip:         client_ip(req.headers, req.remote_addr),
-        user_agent: req.headers.get("User-Agent").unwrap_or(""),
-    })
+    // D50: detach { } — fire-and-forget; D52: field punning shorthand.
+    detach {
+        write_audit(AuditEntryInternal {
+            admin_id, action, target_kind, target_id,
+            payload:    sanitize_payload(payload),
+            status:     resp.status,
+            ip:         client_ip(req.headers, req.remote_addr),
+            user_agent: req.headers.get("User-Agent").unwrap_or(""),
+        })
+    }
 
     resp
 }
@@ -409,19 +412,19 @@ test "sanitize_payload: truncates large input" {
 }
 
 test "audit middleware: пишет запись для успешного POST" {
+    // SyncDetach — handler по D50: detach { } исполняется синхронно,
+    // так что после mw(...) audit-запись уже в БД.
     with Db = in_memory_db,
          Log = silent,
          Router = mock_router("/api/admin/users/{id}/ban", [("id", "42")]),
          CurrentAdmin = fixed_admin("admin-uuid"),
+         Detach = SyncDetach,
          Time = fixed(2026-04-30T10:00:00) {
 
         let next = (req) => Response.ok(json`{}`)
         let mw = audit_middleware(next)
 
         mw(Request.post("/users/42/ban", json`{"reason": "spam"}`))?
-
-        // Подождать spawn-задачу.
-        await_all_spawned()
 
         let rows = Db.query(sql`SELECT action, target_kind, target_id FROM admin_audit_log`)?
         assert rows.len == 1
@@ -435,13 +438,13 @@ test "audit middleware: НЕ пишет для 4xx" {
     with Db = in_memory_db,
          Log = silent,
          Router = mock_router("/api/admin/users/{id}", [("id", "42")]),
-         CurrentAdmin = fixed_admin("admin-uuid") {
+         CurrentAdmin = fixed_admin("admin-uuid"),
+         Detach = SyncDetach {
 
         let next = (req) => Response.error(403, "forbidden")
         let mw = audit_middleware(next)
 
         mw(Request.delete("/users/42", []))?
-        await_all_spawned()
 
         let rows = Db.query(sql`SELECT * FROM admin_audit_log`)?
         assert rows.len == 0

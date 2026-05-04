@@ -77,7 +77,7 @@ export fn with_soft_delete(real Handler[Db]) -> Handler[Db] => Db {
 // ──────────────────────────────────────────────────────────────────────────
 
 // На каждый mutating-запрос (INSERT/UPDATE/DELETE) пишет запись в
-// `audit_log` через `spawn` — не блокирует основную операцию. Если
+// `audit_log` через `detach` — не блокирует основную операцию. Если
 // audit упал — основная транзакция продолжается (audit делается через
 // отдельный handler-обёртку с rollback'ом для надёжности; здесь —
 // упрощённо, fire-and-forget).
@@ -85,22 +85,23 @@ export fn with_soft_delete(real Handler[Db]) -> Handler[Db] => Db {
 // Это **prosthet-aspect**: audit decision не размазана по всем repo'ам,
 // а сконцентрирована в одной функции. И отключается в тестах
 // тривиально — оборачиваем `with Db = postgres_handler` (без декоратора).
-export fn with_audit(real Handler[Db], current_user_id u64) -> Handler[Db] => Db {
-    query(q) => return real.query(q)?             // SELECT не аудируем
+export fn with_audit(real Handler[Db], current_user_id u64) -> Handler[Db] => handler Db {
+    query(q) => real.query(q)?                    // SELECT не аудируем
     exec(q) {
         let result = real.exec(q)?
 
-        // spawn — fire-and-forget audit-запись. Через handler-композицию
-        // мы можем подменить его в тестах: `with Detach = noop_detach`
-        // отключит фоновые задачи и сделает тест-цикл полностью
-        // детерминированным.
-        spawn write_audit_entry(current_user_id, q, result)
-        return result
+        // detach — fire-and-forget audit-запись (D50). В тестах
+        // `with Detach = SyncDetach` делает тест-цикл полностью
+        // детерминированным — audit-запись произойдёт синхронно.
+        detach {
+            write_audit_entry(current_user_id, q, result)
+        }
+        result
     }
     in_transaction(b) {
         // Транзакция — оборачиваем неизменно. Audit за каждый exec
-        // внутри — попадёт в spawn-очередь.
-        return real.in_transaction(b)?
+        // внутри — попадёт в detach-очередь.
+        real.in_transaction(b)?
     }
 }
 
@@ -275,17 +276,17 @@ test "read-replica: внутри transaction всё на primary" {
     assert replica_log.len == 0                    // ничего на replica
 }
 
-test "audit: каждый exec пишется в spawn-задачу" {
+test "audit: каждый exec пишется в detach-задачу" {
     let mut log []CapturedQuery = []
     let mut audit_count = 0
 
-    // Перехватываем spawn, чтобы посчитать audit'ы. В реальном тесте
+    // Перехватываем Detach, чтобы посчитать audit'ы. В реальном тесте
     // мы бы заменили AuditDb handler.
     with Detach = handler Detach {
-        spawn(body) {
+        run(body) {
             audit_count += 1
             // НЕ запускаем тело — для теста достаточно счётчика.
-            return ()
+            ()
         }
     } {
         with Db = with_audit(capturing_handler(log), 42) {
