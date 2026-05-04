@@ -167,6 +167,26 @@ fn map_eff[T, U, E](xs [T], f (T) E -> U) E -> [U]
   их операции
 - HTTP, WebSocket, gRPC — что в core, что в external?
 
+### Конкретные пробелы методов
+
+**String API** не зафиксирован. В `tests-nova/` и `examples/`
+используются `s.len`, `s.contains(sub)`, `s.starts_with(p)`,
+`s.ends_with(p)`, `s.to_lower()`, `s.to_upper()`, `s.trim()` — все
+работают в bootstrap'е (`compiler-bootstrap/src/interp/stdlib.rs`),
+но это **bootstrap-факт**, не часть спеки. Production-компилятор
+должен ориентироваться на формальный список.
+
+**Escape sequences** в string literals (`"\n"`, `"\t"`, `"\""`,
+`"\\"`) — в bootstrap'е поддержаны, в спеке упоминаются только
+для tagged templates ([D48](decisions/03-syntax.md#d48):1510),
+не для обычных `"..."`-литералов. Нужно явно зафиксировать список
+поддерживаемых escapes для обычных string-литералов.
+
+**Array API** — `xs.len`, `xs.push(v)`, `xs.pop()`, `xs.get(i)`
+работают в bootstrap'е, не описаны в спеке. `xs.map(f)`,
+`xs.filter(p)`, `xs.reduce(...)`, `xs.find(p)` — НЕ работают
+(в bootstrap'е) и НЕ описаны.
+
 Это **большая** работа на отдельный документ.
 
 ---
