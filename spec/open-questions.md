@@ -2906,6 +2906,65 @@ let s = "Hello " + name + ", you are " + age.to_str()
 
 ---
 
+## Q-pure-view. Семантика `pure_view` для handler-state в контрактах
+
+**Контекст.** [D24](decisions/09-tooling.md#d24) упоминает `pure_view`
+как механизм ссылки на handler-state в контрактах:
+
+```nova
+fn transfer(...) Db -> ()
+    ensures Db.balance(to) == old(Db.balance(to)) + amount
+=> ...
+```
+
+«В v1.0 поддержка частичная — только для эффектов с явным
+`pure_view` (чистая проекция состояния handler'а). Полная поддержка —
+research, отдельный D-пункт после v1.0.»
+
+Но **что такое `pure_view`** формально нигде не зафиксировано:
+- Декларация: `pure_view` — это атрибут метода эффекта? Отдельная
+  декларация? Свойство handler'а?
+- Семантика: какие операции можно использовать в pure_view? Только
+  чтение — нельзя `Db.exec(...)`?
+- SMT-кодировка: как решатель переводит `Db.balance(...)` в
+  uninterpreted function + axioms?
+- Проверка: handler обязан реализовать `pure_view` соответствующим
+  методом?
+
+### Используется в
+
+- [revolutionary.md R5.7](revolutionary.md) — обратимость spec ↔ impl,
+  ссылается на handler-state в `ensures`.
+- [revolutionary.md R4](revolutionary.md) — пример с `Db.balance` в
+  ensures.
+- [09-tooling.md D24](decisions/09-tooling.md#d24) — упоминание.
+
+### За
+
+- Без этого ключевая фича spec ↔ impl не работает на effect-методах.
+- Db/Net/Time/Random — типичные handler'ы, контракты на них —
+  естественны.
+
+### Против
+
+- Большой scope: формализация SMT-кодировки + axioms + проверка
+  pure'ности.
+- Связь с D62: handler — обычное значение, `Db.balance(x)` это
+  вызов через handler-стек, который может меняться. Что значит
+  «pure» для такого вызова?
+
+### Решение пока
+
+Открыто. До формализации контракты с `Db.X(...)` принимаются
+грамматикой, но SMT их не доказывает → ошибка `@must_verify` или
+runtime check. Production-компилятор должен дать формальное
+определение.
+
+**Связь:** [D24](decisions/09-tooling.md#d24), Q-contract-dsl,
+[R5.7](revolutionary.md), [D62](decisions/04-effects.md#d62).
+
+---
+
 ## Q-contract-dsl. Формальный contract-DSL: `result`, `old(...)`, `.is_ok`, `.is_err`
 
 **Контекст.** В D24 «Контракты как обычная часть языка» приведены

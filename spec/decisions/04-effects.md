@@ -95,9 +95,10 @@ fn process(o Order) Logger Db -> Receipt {
    что угодно — это не видно по сигнатуре. Checked exceptions Java
    получились плохо: не комбинируются с дженериками и лямбдами.
    Go-стиль `if err != nil` — много шума, легко забыть.
-2. **Async-вирус.** В Rust/JS/C# `async` отравляет всю цепочку вызовов.
-   Эффект `Async` — обычный токен в сигнатуре, без `Future<T>` в типе,
-   без `await` ([06-concurrency.md → D14](06-concurrency.md#d14)).
+2. **Async-вирус.** В Rust/JS/C# `async` отравляет всю цепочку вызовов
+   через `Future<T>` и обязательный `await`. В Nova suspension —
+   ambient runtime-инфраструктура ([D62](#d62), [D14](06-concurrency.md#d14)),
+   без цвета функции и без `await`.
 3. **AI-first.** LLM, читая сигнатуру, **знает все побочные действия**.
    В Python/Java/Go этой информации в типе нет — для AI это
    восстанавливается чтением десятка вызываемых функций.
@@ -128,8 +129,8 @@ fn process(o Order) Logger Db -> Receipt {
   правило вывода private vs public.
 - [01-philosophy.md → D10](01-philosophy.md#d10-революционная-ставка-всё--эффект--ai-first) —
   «всё эффект» как центральная абстракция языка.
-- [06-concurrency.md → D14](06-concurrency.md#d14) — `Async` как эффект,
-  fiber runtime под капотом.
+- [06-concurrency.md → D14](06-concurrency.md#d14) — fiber runtime
+  как ambient инфраструктура (suspension не в типах).
 
 ### Эволюция
 
@@ -152,8 +153,8 @@ fn process(o Order) Logger Db -> Receipt {
 ### Правило
 
 ```nova
-fn save(u User) Fail Io Async -> ()
-fn fetch(url str) Net Async Fail -> Response
+fn save(u User) Fail Io -> ()
+fn fetch(url str) Net Fail -> Response
 fn process(o Order) Db Log -> Receipt
 fn double(x int) -> int                          // нет эффектов — чистая
 ```
@@ -3132,6 +3133,47 @@ Keyword-блок, **запрещающий** использование опер
 
 R6 (revolutionary.md) ссылается на D63 как на формализацию capability
 mode.
+
+### Capability sandbox: три механизма, разные цели
+
+В Nova есть три инструмента для ограничения «что код может делать»,
+часто их путают. Разница важна:
+
+| Механизм | Что ограничивает | Где задаётся | Что нарушение даёт |
+|---|---|---|---|
+| **`forbid X { body }`** ([D63](#d63)) | использование эффектов из set | вокруг блока кода | compile error + runtime fail |
+| **`realtime { body }`** ([D64](#d64)) | suspension (приостановка fiber'а) | вокруг блока кода | runtime panic |
+| **closure границы** ([D62](#d62) capture rules) | какие handler'ы захватываются | при создании handler'а | type error если handler'а нет |
+
+Когда какой использовать:
+
+- **`forbid`** — когда нужно гарантировать «эта подсистема НЕ
+  обращается к Net/Db/Fs» (sandbox для plugins, contract-функций,
+  pure_view).
+- **`realtime`** — когда нужно гарантировать «здесь нельзя
+  приостанавливаться» (real-time loops, ISR-like обработчики, hot
+  paths). Async — runtime-факт, не эффект, поэтому `forbid Async`
+  невозможен; `realtime` — отдельный inverse-маркер.
+- **closure границы** — автоматически: при создании handler-литерала
+  компилятор проверяет, что захваченные handler'ы валидны в момент
+  использования. Не вмешательство программиста.
+
+Они **не пересекаются** по семантике — каждый закрывает свою
+категорию проверок:
+
+```nova
+fn pure_view(u User) -> str =>
+    forbid Net, Db, Fs {           // нельзя side effects
+        realtime nogc {            // нельзя suspension и аллокации
+            format(u)
+        }
+    }
+```
+
+Композиция работает: `forbid` запрещает effect-вызовы, `realtime`
+дополнительно запрещает suspend-точки и (при `nogc`) аллокации.
+Программист выбирает один или оба в зависимости от того, что
+гарантировать.
 
 ### Правило
 
