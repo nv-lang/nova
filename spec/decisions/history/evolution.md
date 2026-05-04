@@ -1183,6 +1183,27 @@ sync-зона».
 [D11](../04-effects.md#d11) (with — параллель с forbid),
 [D14](../06-concurrency.md#d14) (fiber runtime — где realtime ставит флаг).
 
+### `Self` universal: D66 убирает «только в protocol»
+
+В D42 `Self` был ограничен только protocol-объявлениями. Это
+ограничение унаследовано от первой редакции, где Self вводился именно
+для type-safe equality (`eq(other Self) -> bool`). На практике
+оказалось что Self полезен и в:
+
+- static-методах (`fn Box[T].of(v T) -> Self`) — DRY вместо повтора
+  `Box[T]`,
+- instance-методах (builder pattern: `fn User @with_name(n str) -> Self`),
+- effect-методах (transactional `nested(body fn() Self -> ())`),
+- sum-варианте (`fn Tree @clone() -> Self`).
+
+D66 убрал ограничение: `Self` валиден в любом type-контексте. Семантика
+одна — «текущий тип, к которому принадлежит метод/контракт». Аналогично
+Swift/Rust.
+
+**Связанные D:** [D66](../02-types.md#d66) (новое),
+[D42 (REVISED)](../02-types.md#d42) (исходный Self в protocol),
+[D53](../02-types.md#d53) (унификация type/protocol).
+
 ## Как читать историю
 
 - **«revised»** в статусе D — текст переписан, решение действует, но

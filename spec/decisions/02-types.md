@@ -17,6 +17,7 @@
 | [D39](#d39-embed-и-delegation-use-name-type-alias-обязателен) | Embed и delegation: `use name Type` (alias обязателен) | active |
 | [D32](#d32-семантика-передачи-параметров) | Семантика передачи параметров | revised для полей → D36 |
 | [D36](#d36-поля-типа-дефолт-mutable-у-mut-bindinga-readonly-для-never-mut) | Поля типа: дефолт mutable у mut-binding'а, `readonly` для never-mut | active |
+| [D66](#d66-self-universal--ссылка-на-обобщающий-тип-в-методах-effects-protocols) | `Self` universal: ссылка на обобщающий тип в методах, effects, protocols | active |
 
 ---
 
@@ -726,7 +727,9 @@ fn log_one(x Printable) Log -> () =>
 log_one(my_user)                // ok, User совместим со Printable
 ```
 
-`Self` валиден только внутри `protocol { ... }` блока.
+`Self` внутри `protocol { ... }` блока — это «late-bound» тип,
+определяется при удовлетворении (см. также [D66](#d66) — `Self`
+universal во всех type-контекстах).
 
 ### Почему
 
@@ -1263,7 +1266,8 @@ type Login {                    // record (данные) — голый type
 }
 ```
 
-`Self` валиден только внутри `protocol`-блока.
+`Self` внутри protocol-блока — late-bound. См. [D66](#d66) для других
+контекстов где `Self` тоже валиден (static/instance методы, effects).
 
 Структурная совместимость — автоматическая. Метод определяется у типа
 через `@`-синтаксис ([03-syntax.md → D35](03-syntax.md#d35)) и без
@@ -2129,5 +2133,120 @@ type Account {
 поле — мутируется у mut-binding'а», `readonly` — для исключений.
 Семантика параметров (D32) не менялась. Подробно — в
 `history/evolution.md`.
+
+---
+
+## D66. `Self` universal — ссылка на обобщающий тип в методах, effects, protocols
+
+### Что
+`Self` — keyword-ссылка на «тот тип, к которому принадлежит метод»,
+валиден **в любом контексте, ассоциированном с конкретным типом**:
+
+- Внутри `protocol { ... }` — `Self` = тип, удовлетворяющий контракту
+  (как сейчас по [D42 (REVISED)](#d42)/[D53](#d53)).
+- Внутри `effect { ... }` — `Self` = тип эффекта (`Db`, `Net`, ...).
+- В static-методе `fn T.name(...)` — `Self` ≡ `T`.
+- В instance-методе `fn T @method(...)` / `fn T mut @method(...)` —
+  `Self` ≡ `T`.
+- Для generic-типа `T[A, B]` — `Self` ≡ `T[A, B]` (с теми же параметрами).
+
+### Правило
+
+```nova
+type Box[T] {
+    value T
+}
+
+// static method — Self вместо повтора Box[T]
+fn Box[T].of(v T) -> Self =>
+    Self { value: v }
+
+// instance method — Self в return type для builder pattern
+fn Box[T] @with_value(v T) -> Self =>
+    Self { value: v }
+
+// protocol — для type-safe equality
+type Hashable protocol {
+    hash() -> u64
+    eq(other Self) -> bool       // Self = тот тип, что реализует
+}
+
+// effect — для transactional/recursive handler-операций
+type Db effect {
+    query(q Sql) -> []DbRow
+    nested(body fn() Self -> ()) -> ()  // Self = Db
+}
+
+// sum-type method
+type Tree | Leaf | Node(int, Tree, Tree)
+fn Tree @clone() -> Self => match @ {
+    Leaf          => Leaf
+    Node(v, l, r) => Node(v, l.clone(), r.clone())
+}
+```
+
+### Семантика
+
+- `Self` подставляется **в момент использования метода/протокола**,
+  не в момент объявления.
+- Для concrete-типа `T` (record, sum, newtype) `Self` ≡ `T`.
+- Для generic `T[A, B]` `Self` ≡ `T[A, B]` (наследует ту же
+  специализацию).
+- Внутри protocol-объявления `Self` остаётся «late-bound» — конкретный
+  тип определяется при удовлетворении.
+
+### Где запрещено
+
+- На top-level (вне типа/protocol/effect) — compile error «Self не в
+  type-контексте».
+- Внутри лямбды, объявленной не в method-теле — compile error.
+- В сигнатуре свободной (top-level) функции `fn name(...)` — compile
+  error.
+
+### Почему
+
+1. **DRY.** До D66 в каждом методе `fn Box[T].of(v T) -> Box[T]` имя
+   типа повторялось 2-3 раза. Refactoring (`Box` → `Container`) ломал
+   копипастой. `Self` устраняет повтор.
+2. **Generic-параметры наследуются автоматически.** `fn Box[T].of` с
+   `Self` корректно подставит `Box[T]`, не `Box` без параметров —
+   программисту не нужно указывать generics в методе.
+3. **AI-friendly.** LLM генерирует `Self` для return type без знания
+   точного имени — снижает количество ошибок при автогенерации
+   builder-методов.
+4. **Унификация.** До D66 `Self` работало только в protocol — это
+   создавало впечатление, что для других контекстов нужен другой
+   механизм. На самом деле семантика одинаковая — «текущий тип».
+   Один keyword для всех контекстов = D40 «один способ».
+5. **Прецеденты.** Swift, Rust используют `Self` универсально (везде
+   где есть `impl T { ... }` блок). Nova следует тому же паттерну.
+
+### Что отвергнуто
+
+- **`@type`** — конструкция вида `@type` для ссылки на свой тип в
+  методе. Отвергнуто: `@` уже занят под self-field, добавление
+  второго смысла создаёт двусмысленность.
+- **Имя типа повторять везде.** Отвергнуто: см. п.1 «DRY».
+- **`Self` только в generic-методах** (как в Java `<T extends Self>`).
+  Отвергнуто: семантика остаётся та же, ограничение лишнее.
+
+### Связь
+
+- [D42 (REVISED)](#d42) / [D53](#d53) — `Self` в protocol'ах
+  (исходное правило, расширено D66).
+- [03-syntax.md → D35](03-syntax.md#d35) — `@`-методы и `@field`.
+- [04-effects.md → D61](04-effects.md#d61) — effect-типы и handler'ы.
+
+### Эволюция
+В D42 `Self` был валиден **только** внутри `protocol { ... }` блока —
+это ограничение унаследовано от первой редакции, где Self вводился
+именно для type-safe equality (`Hashable.eq(other Self)`). На
+practice'е `Self` оказался полезен также в:
+- static-методах для DRY возврата того же типа,
+- instance-методах для builder pattern'а,
+- effect-методах для self-referential операций (transactions),
+- sum-вариантах для `@clone`/`@with_*` методов.
+
+D66 убирает ограничение: `Self` валиден везде, где есть type-контекст.
 
 ---
