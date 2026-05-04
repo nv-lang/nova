@@ -2784,6 +2784,117 @@ fn process(s str) Fail[AppError] -> int {
 
 ---
 
+## Q-pipe-operator. Pipe-оператор `|>`
+
+**Контекст.** Во многих функциональных языках (Elixir, F#, Elm,
+Hack, OCaml) есть pipe-оператор `x |> f |> g`, эквивалент
+`g(f(x))`. Делает цепочки трансформаций линейными слева-направо.
+
+```nova
+let result = users
+    |> filter(active)
+    |> map(format_name)
+    |> join(", ")
+```
+
+vs. без pipe:
+
+```nova
+let result = join(map(filter(users, active), format_name), ", ")
+```
+
+или через method chaining (если каждая функция — метод):
+
+```nova
+let result = users.filter(active).map(format_name).join(", ")
+```
+
+**Статус.** В bootstrap-парсере токена `|>` нет. В спеке тоже не
+упомянут. Был ли намеренно отвергнут или просто не дошли руки —
+не зафиксировано.
+
+### За
+
+- Линейная читаемость для трансформаций («data flow»).
+- Не требует чтобы функция была методом типа.
+- Прецедент в FP-сообществе.
+
+### Против
+
+- **D40 «один способ».** Уже есть method chaining — pipe это
+  альтернатива, дублирующая тот же data-flow паттерн.
+- **AI-friendly?** Method chaining `x.f().g()` гораздо более распространён
+  в LLM-обучении (Java/Python/JS/Rust). `|>` редкий, повышает
+  cognitive load.
+- **Эффекты + pipe.** `users |> get_users() |> ...` — где effect-row?
+  Pipe скрывает callee, осложняет вывод эффектов.
+- **Партикулярно для Nova.** Все типы могут иметь `@`-методы (D35),
+  поэтому method chaining — universal pattern. Pipe не добавляет
+  выразительности.
+
+### Решение пока
+
+Не зафиксировано. Скорее всего **не добавлять** — есть method
+chaining через `@`-методы, а D40 призывает не дублировать паттерны.
+Если решим зафиксировать как «no» — отдельный D-блок «No pipe».
+
+**Связь:** [D35](decisions/03-syntax.md#d35) (`@`-методы),
+[D40](decisions/01-philosophy.md#d40) (один способ).
+
+---
+
+## Q-string-interpolation. Интерполяция строк `"hello ${name}"`
+
+**Контекст.** Многие современные языки имеют интерполяцию строк:
+```
+JS: `Hello ${name}, you are ${age}`
+Python f"Hello {name}, you are {age}"
+Kotlin "Hello $name, you are $age"
+Swift "Hello \(name)"
+Rust println!("{name}")
+```
+
+В bootstrap-парсере Nova — конкатенация через `+`:
+```nova
+let s = "Hello " + name + ", you are " + age.to_str()
+```
+
+**Статус.** Не зафиксировано в спеке. Bootstrap не парсит интерполяцию.
+
+### За
+
+- Читаемость, особенно для длинных строк.
+- Меньше boilerplate (`+` и `to_str()`).
+- Универсальная фича — все программисты ожидают.
+
+### Против
+
+- **Сложность парсера/лексера.** Интерполяция — это string-mode +
+  embedded expression mode. Усложняет грамматику.
+- **Tagged templates (D-?)** — есть планы на ` `tag`...` ` с runtime'ом.
+  Интерполяция и tagged templates — пересекаются (sql tag = Sql.eval
+  с интерполированными частями?).
+- **AI-friendly формат.** `${...}` — популярно (JS), но `\(...)` (Swift),
+  `{...}` (Python) — все разные. Нужно выбрать один синтаксис.
+- **Type coercion.** `"${n}"` для int — implicit `to_str()`?
+  Или требовать явный? Если implicit — есть ли trait `Display`?
+
+### Альтернативы синтаксиса
+
+1. `"${expr}"` — JS-style (привычно большинству)
+2. `"\(expr)"` — Swift (без $-конфликта со shell)
+3. `"{expr}"` — Python f-string (без префикса) или `f"{expr}"`
+
+### Решение пока
+
+Не зафиксировано. **Скорее всего нужно** — современный язык без
+интерполяции выглядит архаично. Вопрос — какой синтаксис и как
+взаимодействует с tagged templates.
+
+**Связь:** Tagged templates (нет D-блока пока), [D40](decisions/01-philosophy.md#d40).
+
+---
+
 ## Финальное напоминание
 
 Прежде чем продолжать **дизайн**, прочитай:
