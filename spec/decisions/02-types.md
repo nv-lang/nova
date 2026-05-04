@@ -1976,8 +1976,9 @@ fn process_audio(samples []f32) Realtime -> []f32 =>
   изменений.
 - [05-memory.md → D6](05-memory.md#d6) — managed heap делает
   by-reference дешёвым; `region` для real-time.
-- [04-effects.md → D2](04-effects.md#d2) — мутация через эффект
-  `Mut`; `mut` параметра + `Mut` в сигнатуре — два уровня контроля.
+- [04-effects.md → D62](04-effects.md#d62) — `Mut[T]` как generic
+  эффект удалён; мутация через `mut` поля/параметры (локально) или
+  специализированные state-эффекты (Counter/Cache/IdGen).
 - [01-philosophy.md → D10](01-philosophy.md#d10-революционная-ставка-всё--эффект--ai-first)
   — AI-first видимость мутации в типе.
 - [03-syntax.md → D35](03-syntax.md#d35) — `fn Type mut @method`
