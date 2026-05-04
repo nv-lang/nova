@@ -1,0 +1,129 @@
+// 32_error_chains.nv — цепочки ошибок через `?` для Result/Option.
+//
+// 14_throws.nv покрыл базовый `?`. Здесь — цепочки из нескольких
+// `?` в одной функции, ранний return из match-arm, propagation
+// через несколько уровней вызова.
+
+module spec.error_chains
+
+fn safe_div(a int, b int) -> Result {
+    if b == 0 {
+        return Err("div by zero")
+    }
+    Ok(a / b)
+}
+
+fn safe_index(xs []int, i int) -> Result {
+    if i < 0 {
+        return Err("negative index")
+    }
+    if i >= xs.len {
+        return Err("out of bounds")
+    }
+    Ok(xs[i])
+}
+
+fn calc(a int, b int, xs []int, idx int) -> Result {
+    let q = safe_div(a, b)?
+    let v = safe_index(xs, idx)?
+    Ok(q + v)
+}
+
+test "? цепочка через две Result-функции" {
+    let r = calc(10, 2, [100, 200, 300], 1)
+    let v = match r {
+        Ok(n)  => n
+        Err(_) => -1
+    }
+    assert(v == 205)
+}
+
+test "? на первой ошибке прерывает" {
+    let r = calc(10, 0, [100, 200], 0)
+    let s = match r {
+        Ok(_)    => "ok"
+        Err(msg) => msg
+    }
+    assert(s == "div by zero")
+}
+
+test "? на второй ошибке прерывает (первая прошла)" {
+    let r = calc(10, 2, [100, 200], 99)
+    let s = match r {
+        Ok(_)    => "ok"
+        Err(msg) => msg
+    }
+    assert(s == "out of bounds")
+}
+
+// Option chains
+
+fn first_pos(xs []int) -> Option {
+    for x in xs {
+        if x > 0 {
+            return Some(x)
+        }
+    }
+    None
+}
+
+fn double_first_pos(xs []int) -> Option {
+    let v = first_pos(xs)?
+    Some(v * 2)
+}
+
+test "Option ? с ранним return из for-loop" {
+    let r = double_first_pos([-1, -2, 5, 10])
+    let v = match r {
+        Some(n) => n
+        None    => 0
+    }
+    assert(v == 10)
+}
+
+test "Option ? пробрасывает None" {
+    let r = double_first_pos([-1, -2, -3])
+    let v = match r {
+        Some(n) => n
+        None    => -999
+    }
+    assert(v == -999)
+}
+
+// Nested propagation
+
+fn step1() -> Result {
+    Err("step1 failed")
+}
+
+fn step2() -> Result {
+    let _ = step1()?
+    Ok(42)
+}
+
+fn step3() -> Result {
+    let v = step2()?
+    Ok(v + 1)
+}
+
+test "ошибка пробрасывается через 3 уровня" {
+    let r = step3()
+    let s = match r {
+        Ok(_)    => "ok"
+        Err(msg) => msg
+    }
+    assert(s == "step1 failed")
+}
+
+// Mix of ?? and ?
+
+fn maybe_negative(n int) -> Option {
+    if n < 0 { None } else { Some(n) }
+}
+
+test "? и ?? в одном выражении" {
+    let v = maybe_negative(5) ?? 0
+    assert(v == 5)
+    let v2 = maybe_negative(-3) ?? -1
+    assert(v2 == -1)
+}

@@ -1,0 +1,120 @@
+// 33_stack_queue.nv — реализация Stack и Queue через record + методы
+// (как в реальном data-structure коде).
+
+module spec.stack_queue
+
+// --- Generic Stack[T] (LIFO) ---
+
+type Stack[T] {
+    mut items []T
+}
+
+fn Stack[T] @push(v T) {
+    @items.push(v)
+}
+
+fn Stack[T] @pop() -> Option[T] {
+    @items.pop()
+}
+
+fn Stack[T] @len() -> int => @items.len
+
+fn Stack[T] @peek() -> Option[T] {
+    if @items.len == 0 {
+        return None
+    }
+    Some(@items[@items.len - 1])
+}
+
+fn Stack[T] @is_empty() -> bool => @items.len == 0
+
+test "stack push and len" {
+    let s Stack[int] = Stack { items: [] }
+    s.push(1)
+    s.push(2)
+    s.push(3)
+    assert(s.len() == 3)
+}
+
+test "stack LIFO порядок через pop" {
+    let s Stack[int] = Stack { items: [] }
+    s.push(10)
+    s.push(20)
+    s.push(30)
+    let p1 = s.pop()
+    let v1 = match p1 {
+        Some(x) => x
+        None    => 0
+    }
+    let p2 = s.pop()
+    let v2 = match p2 {
+        Some(x) => x
+        None    => 0
+    }
+    assert(v1 == 30)
+    assert(v2 == 20)
+    assert(s.len() == 1)
+}
+
+test "stack peek не модифицирует" {
+    let s Stack[int] = Stack { items: [] }
+    s.push(99)
+    let pk = s.peek()
+    let p = match pk {
+        Some(x) => x
+        None    => 0
+    }
+    assert(p == 99)
+    assert(s.len() == 1)
+}
+
+test "stack pop из пустого даёт None" {
+    let s Stack[int] = Stack { items: [] }
+    let popped = s.pop()
+    let r = match popped {
+        Some(_) => false
+        None    => true
+    }
+    assert(r)
+}
+
+test "stack is_empty" {
+    let s Stack[int] = Stack { items: [] }
+    assert(s.is_empty())
+    s.push(1)
+    assert(!s.is_empty())
+}
+
+test "stack для строк" {
+    let s Stack[str] = Stack { items: [] }
+    s.push("a")
+    s.push("b")
+    s.push("c")
+    let popped = s.pop()
+    let top = match popped {
+        Some(x) => x
+        None    => ""
+    }
+    assert(top == "c")
+}
+
+// --- Реверс через stack ---
+
+test "стек реверсирует массив (через known size)" {
+    let s Stack[int] = Stack { items: [] }
+    for x in [1, 2, 3, 4, 5] {
+        s.push(x)
+    }
+    let r = []
+    for _ in 0..5 {
+        let popped = s.pop()
+        let v = match popped {
+            Some(x) => x
+            None    => 0
+        }
+        r.push(v)
+    }
+    assert(r[0] == 5)
+    assert(r[4] == 1)
+    assert(r.len == 5)
+}

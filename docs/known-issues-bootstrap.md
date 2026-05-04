@@ -215,6 +215,44 @@ let x int = 42    // OK
 
 ---
 
+## `r.push(v)` после `match { ... }` в while-блоке — `}` съедается как trailing block
+
+В сочетании `while { ... let v = match ... { ... } ; r.push(v) }`
+парсер не видит конец while-блока. Симптом: `expected '{', got newline`
+на строке после `}` while'а.
+
+```nova
+while !cond {
+    let v = match opt { Some(x) => x; None => 0 }
+    r.push(v)        // <— здесь парсер думает что push — это trailing-block-call
+}                    // <— этот `}` уже съеден, дальше синтакс ломается
+```
+
+**Workaround.** Заменить while на for с известным числом итераций.
+
+**Где.** Парсер postfix-вызова — конфликтует с blocks-as-arguments.
+Связано с другим багом про `if pred(x) { ... }` в for-блоке.
+
+---
+
+## `let v = match expr.method() { ... }` — парсер путается
+
+Если scrutinee match'а — method call, парсер не корректно обрабатывает
+последующий `}`:
+
+```nova
+let v = match s.pop() { Some(x) => x; None => 0 }   // SYNTAX ERROR
+```
+
+**Workaround.** Вынести вызов в отдельный let:
+
+```nova
+let popped = s.pop()
+let v = match popped { Some(x) => x; None => 0 }   // OK
+```
+
+---
+
 ## `if pred(x) { ... }` в for-блоке — парсер путается
 
 В теле `for` после `for x in xs {` парсер не принимает прямой
