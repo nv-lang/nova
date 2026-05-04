@@ -838,9 +838,9 @@ fn process(x int) Logger -> int {
     x * 2
 }
 
-// handler — обычное значение
-let console = Logger {
-    log(msg) => return println("[LOG] ${msg}")
+// handler — обычное значение через keyword `handler` (D61)
+let console = handler Logger {
+    log(msg) => println("[LOG] ${msg}")
 }
 
 // применение через with
@@ -851,9 +851,9 @@ fn main() Io -> () {
 }
 ```
 
-`return value` — продолжение вычисления. Handler может не вызвать
-`resume` (прерывание, как `Fail`) или вызвать несколько раз
-(backtracking, генераторы).
+`return value` или финальное выражение в handler-method'е продолжает
+вычисление с возвращённым значением. Для досрочного выхода из всего
+with-блока — `interrupt v` (D61). `resume` в Nova не существует.
 
 ## Имя эффекта в коде — три позиции
 

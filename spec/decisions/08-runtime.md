@@ -88,7 +88,7 @@ runtime'ом на границе fiber'а, не программистом в к
 | | Видимое (в сигнатуре) | Универсальное (не в сигнатуре) |
 |---|---|---|
 | **Что** | эффекты, описывающие **намерение** | сбои, описывающие **невозможность вычисления** |
-| **Примеры** | `Net`, `Db`, `Time`, `Log`, `Fail[BusinessError]`, `Mut` | деление на ноль, переполнение, выход за границы, OOM, переполнение стека |
+| **Примеры** | `Net`, `Db`, `Time`, `Log`, `Fail[BusinessError]` | деление на ноль, переполнение, выход за границы, OOM, переполнение стека |
 | **Где ловится** | handler'ом в коде | runtime'ом на границе fiber'а |
 | **Как создаётся** | `throw` | `panic(msg)` или сам runtime |
 
@@ -111,7 +111,7 @@ fn handle_request(r Request) Db Log -> Response =>
     process(r)             // если panic — fiber умирает, runtime вернёт 500
                             // если throw — handler выше ловит обычно
 
-fn server() Par Net Fail -> () {
+fn server() Net Fail -> () {
     supervised {
         spawn() { handle_requests() }
         spawn() { periodic_cleanup() }
@@ -264,9 +264,12 @@ naming convention, по аналогии с примитивами. Исполь
 и `a..=b` (inclusive) (D58). Range — обычное значение, можно
 передавать как аргумент, хранить в переменной, использовать в `for`.
 
-**Стандартные эффекты** — `Fail[E]`, `Io`, `Net`, `Db`, `Fs`,
-`Time`, `Random`, `Mut`, `Alloc[R]`, `Async`, `Par`, `Log`, `Trace`,
-`Ask[T]` — также в prelude.
+**Стандартные эффекты** (после [D62](04-effects.md#d62)) — `Fail[E]`,
+`Io`, `Net`, `Db`, `Fs`, `Time`, `Random`, `Alloc[R]`, `Log`, `Trace`,
+`Ask[T]` — также в prelude. `Async`/`Par` — runtime-инфраструктура,
+не type-system эффекты ([D14 (REVISED)](06-concurrency.md#d14)).
+`Mut` удалён ([D62](04-effects.md#d62)) — изменяемое состояние через
+`mut` поля и параметры.
 
 **Базовые функции:**
 
@@ -441,14 +444,14 @@ let acc = Account.new_with(account_limits.MIN_BALANCE)
 `with`-блок:
 
 ```nova
-// Эффект — protocol ([04-effects.md → D18](04-effects.md#d18-эффекты-объявляются-через-protocol-не-type))
+// Эффект ([04-effects.md → D61](04-effects.md#d61))
 type IdGen effect {
     fresh() -> u64
 }
 
 // Handler — обычная функция, возвращающая handler-литерал
 fn counter_id_gen(c mut Counter) -> Handler[IdGen] =>
-    IdGen {
+    handler IdGen {
         fresh() {
             c.count += 1
             c.count

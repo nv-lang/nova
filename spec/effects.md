@@ -71,13 +71,14 @@ type Logger effect {
     log(msg str) -> ()
 }
 
-let console = Logger {
-    log(msg) => return println(msg)
+let console = handler Logger {
+    log(msg) => println(msg)
 }
 ```
 
-`Logger { ... }` — handler-литерал, симметричный record-литералу
-`User { id: 1 }`. Никакого префикса `handler` не требуется.
+`handler Logger { ... }` — handler-литерал ([D61](decisions/04-effects.md#d61)).
+Префикс `handler` обязателен и однозначно отличает от record-литерала
+`User { id: 1 }`.
 
 ## Имя эффекта в коде — три позиции
 

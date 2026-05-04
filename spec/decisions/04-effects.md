@@ -465,30 +465,22 @@ with Logger = audit {
 type User { id u64, name str }                              // record-тип (data)
 let alice = User { id: 1, name: "alice" }                   // record-литерал
 
-type Logger effect { log(msg str) -> () }                      // эффект (behavior)
-let console = Logger { log(msg) => return println(msg) }   // handler-литерал
+type Logger effect { log(msg str) -> () }                  // эффект (behavior)
+let console = handler Logger { log(msg) => println(msg) }  // handler-литерал
 ```
 
-Парсер различает record-литерал и handler-литерал по содержимому
-`{...}` (правило сохраняется как доп. подсказка):
-
-- `name: value` (двоеточие) → record-литерал у `type`
-- `name(args) => body` (стрелка `=>`) → handler-литерал у `protocol`
-
-Никакого префиксного слова не требуется. Стрелка в handler-операциях —
+Handler-литерал начинается с keyword'а `handler` (по [D61](#d61)) —
+однозначно отличает от record-литерала. Стрелка в handler-операциях —
 именно `=>`, как в match-arms ([03-syntax.md → D19](03-syntax.md#d19))
-и теле лямбды ([03-syntax.md → D22](03-syntax.md#d22)). См.
-[D18](#d18-эффекты-объявляются-через-protocol-не-type) для полной семантики.
+и теле лямбды ([03-syntax.md → D22](03-syntax.md#d22)).
 
-#### Слово `handler` — НЕ зарезервировано
+#### Слово `handler` — keyword (D61)
 
-В ранних черновиках использовался синтаксис `handler EffectName { ... }`
-с обязательным префиксом. Отвергнут: имя эффекта + блок операций уже
-однозначно говорит «это handler этого эффекта», префикс лишний.
-
-`handler` свободно для использования как обычный идентификатор —
-имя переменной, поля, функции. Зарезервированных слов в Nova
-держится минимум.
+В первой редакции D11 использовался синтаксис без префикса —
+`Logger { log(msg) => ... }`, парсер различал record vs handler по
+содержимому `{...}`. После [D61](#d61) `handler` стало keyword'ом,
+а handler-литерал требует явного префикса. Это улучшает локальную
+читаемость: `handler X {...}` сразу читается как «литерал handler'а».
 
 ### Почему
 
