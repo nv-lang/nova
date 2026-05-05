@@ -116,6 +116,9 @@ static inline void nova_print_newline(void)     { putchar('\n'); }
 typedef struct { char _dummy; } nova_unit;
 #define NOVA_UNIT ((nova_unit){0})
 
+/* ---- Arrays (Phase 6) ---- */
+#include "array.h"
+
 /* ---- Effects (Phase 4) — also defines NovaTestFrame + nova_assert ---- */
 #include "effects.h"
 
