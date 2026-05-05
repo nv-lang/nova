@@ -10,3 +10,6 @@ Cargo.lock
 *.lib
 vcpkg_installed/
 vcpkg.json
+
+# Generated C files (codegen output, not source)
+examples/*.c
