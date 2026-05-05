@@ -1,9 +1,17 @@
 // stdlib_range.nv — тип Range и его итератор.
 //
 // `a..b` (exclusive) и `a..=b` (inclusive) — литералы Range
-// ([D58](../spec/decisions/03-syntax.md#d58)). Range — обычное
-// значение, передаётся как аргумент, хранится в переменной,
-// используется в `for` (через `@iter()` implicit).
+// ([D58](../spec/decisions/03-syntax.md#d58)).
+//
+// **Canonical form:** Range всегда хранится в **half-open** форме
+// `[start, end)`. `..=` нормализуется на конструкторе в `..` через
+// `end + 1`. Это даёт:
+//   - 16 байт памяти вместо 17+ (нет поля inclusive)
+//   - единая семантика во всех методах (нет ветвления if inclusive)
+//   - один canonical form — соответствует Rust's `Range`, Python `range()`
+//
+// Edge case: `Range.inclusive(_, int.MAX)` → overflow на end+1.
+// Конструктор бросает `Fail[OverflowError]`.
 //
 // `Iter[T]` — структурный effect в prelude. RangeIter автоматически
 // удовлетворяет `Iter[int]` через `mut next() -> Option[int]`.
@@ -15,14 +23,16 @@ module std.range
 // Тип
 // ──────────────────────────────────────────────────────────────────────────
 
-// Range фиксирован: start, end, и флаг inclusive.
-// `0..5` — exclusive (5 не включается), `0..=5` — inclusive.
+// Range всегда в half-open форме: [start, end).
+// `0..5` — exclusive напрямую.
+// `0..=5` — desugar'ится в Range { start: 0, end: 6 }.
 // readonly везде — Range immutable, операции возвращают новый.
 export type Range {
-    readonly start     int
-    readonly end       int
-    readonly inclusive bool
+    readonly start int
+    readonly end   int      // half-open: end НЕ включён
 }
+
+export type OverflowError { msg str }
 
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -33,10 +43,17 @@ export type Range {
 // конструкторы (D58). Static-функции на типе доступны и вручную.
 
 export fn Range.exclusive(start int, end int) -> Self =>
-    { start, end, inclusive: false }
+    { start, end }
 
-export fn Range.inclusive(start int, end int) -> Self =>
-    { start, end, inclusive: true }
+// Inclusive нормализуется в half-open через end+1.
+// При end == int.MAX — throw OverflowError (нельзя представить
+// inclusive до MAX в half-open форме без перехода в u128).
+export fn Range.inclusive(start int, end int) Fail[OverflowError] -> Self {
+    if end == int.MAX {
+        throw OverflowError { msg: "Range.inclusive(_, int.MAX): cannot normalize to half-open" }
+    }
+    { start, end: end + 1 }
+}
 
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -45,16 +62,15 @@ export fn Range.inclusive(start int, end int) -> Self =>
 
 // Длина — количество элементов. Отрицательная (start > end) → 0.
 export fn Range @len() -> int {
-    let n = if @inclusive { @end - @start + 1 } else { @end - @start }
+    let n = @end - @start
     if n < 0 { 0 } else { n }
 }
 
 export fn Range @is_empty() -> bool => @len() == 0
 
-// Содержит ли значение в range.
+// Содержит ли значение в range. Единая логика — half-open.
 export fn Range @contains(x int) -> bool =>
-    if @inclusive { x >= @start && x <= @end }
-    else          { x >= @start && x <  @end }
+    x >= @start && x < @end
 
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -64,19 +80,16 @@ export fn Range @contains(x int) -> bool =>
 // Структурно совместим с `Iter[int]` (D58 prelude) — есть метод
 // `mut next() -> Option[int]`. Никаких `impl Iter for ...`-блоков.
 export type RangeIter {
-    readonly end       int
-    readonly inclusive bool
-    mut cur            int
+    readonly end int
+    mut cur      int
 }
 
 // `Range.iter()` — конструктор итератора.
-// D55: имя RangeIter из `-> RangeIter`.
 export fn Range @iter() -> RangeIter =>
-    { @end, @inclusive, cur: @start }
+    { end: @end, cur: @start }
 
 export fn RangeIter mut @next() -> Option[int] {
-    let limit_ok = if @inclusive { @cur <= @end } else { @cur < @end }
-    if !limit_ok { return None }
+    if @cur >= @end { return None }
     let v = @cur
     @cur += 1
     Some(v)
@@ -91,15 +104,15 @@ test "exclusive range basic" {
     let r = 0..5
     assert r.start == 0
     assert r.end == 5
-    assert !r.inclusive
     assert r.len() == 5
     assert !r.is_empty()
 }
 
-test "inclusive range basic" {
-    let r = 0..=5
-    assert r.inclusive
-    assert r.len() == 6                  // 0, 1, 2, 3, 4, 5
+test "inclusive range desugars to half-open" {
+    let r = 0..=5                         // нормализуется в { start: 0, end: 6 }
+    assert r.start == 0
+    assert r.end == 6                     // half-open form
+    assert r.len() == 6                   // 0, 1, 2, 3, 4, 5
 }
 
 test "empty range when start >= end" {
@@ -107,9 +120,9 @@ test "empty range when start >= end" {
     assert r.is_empty()
     assert r.len() == 0
 
-    let r2 = 5..=5                        // inclusive с одним элементом
+    let r2 = 5..=5                        // inclusive c одним элементом
     assert !r2.is_empty()
-    assert r2.len() == 1
+    assert r2.len() == 1                  // {5..6} → 1
 }
 
 test "negative range yields empty" {
@@ -122,11 +135,12 @@ test "contains" {
     let r = 0..5                          // [0, 1, 2, 3, 4]
     assert r.contains(0)
     assert r.contains(4)
-    assert !r.contains(5)                 // exclusive — 5 не включён
+    assert !r.contains(5)                 // half-open — 5 не включён
     assert !r.contains(-1)
 
-    let r2 = 0..=5
-    assert r2.contains(5)                 // inclusive — 5 включён
+    let r2 = 0..=5                        // [0..6) — содержит 5
+    assert r2.contains(5)
+    assert !r2.contains(6)
 }
 
 test "iter yields all elements in order" {
@@ -139,8 +153,8 @@ test "iter yields all elements in order" {
     assert it.next() == None              // None стабилен после исчерпания
 }
 
-test "iter inclusive" {
-    let r = 1..=3
+test "iter inclusive — same as exclusive end+1" {
+    let r = 1..=3                         // нормализуется в 1..4
     let mut it = r.iter()
     assert it.next() == Some(1)
     assert it.next() == Some(2)
@@ -165,13 +179,22 @@ test "for-loop on Range value" {
     assert total == 1 + 2 + 3 + 4
 }
 
-test "Range as function argument" {
-    fn sum_range(r Range) -> int {
-        let mut s = 0
-        for x in r { s += x }
-        s
-    }
+// Range as function argument — функция верхнего уровня
+fn sum_range(r Range) -> int {
+    let mut s = 0
+    for x in r { s += x }
+    s
+}
 
+test "Range as function argument" {
     assert sum_range(0..5) == 10
     assert sum_range(1..=4) == 10
+}
+
+test "inclusive overflow throws" {
+    // Range.inclusive(_, int.MAX) → throw OverflowError
+    let r = with Fail[OverflowError] = (e) => interrupt None {
+        Some(Range.inclusive(0, int.MAX)?)
+    }
+    assert r == None
 }
