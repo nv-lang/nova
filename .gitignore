@@ -44,3 +44,7 @@ docs/.sessions/
 
 # Артефакты компиляции примеров
 *.asm
+*.obj
+*.exe
+*.pdb
+*.ilk

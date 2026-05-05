@@ -1,2 +1,12 @@
 /target
 Cargo.lock
+
+# Build artifacts
+*.obj
+*.exe
+*.pdb
+*.ilk
+*.exp
+*.lib
+vcpkg_installed/
+vcpkg.json
