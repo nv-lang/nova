@@ -1,0 +1,25 @@
+// arithmetic.nv — базовые вычисления.
+
+module arithmetic
+
+fn factorial(n int) -> int {
+    if n <= 1 {
+        return 1
+    }
+    n * factorial(n - 1)
+}
+
+fn fib(n int) -> int {
+    if n < 2 { return n }
+    fib(n - 1) + fib(n - 2)
+}
+
+fn main() {
+    println("5! = ", factorial(5))
+    println("fib(10) = ", fib(10))
+    let mut sum = 0
+    for i in 0..11 {
+        sum += i
+    }
+    println("sum 0..10 = ", sum)
+}

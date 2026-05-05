@@ -1,0 +1,27 @@
+// match_demo.nv — sum-types и pattern matching.
+
+module match_demo
+
+type Shape
+    | Circle(f64)
+    | Square(f64)
+    | Rectangle(f64, f64)
+
+fn area(s Shape) -> f64 => match s {
+    Circle(r)         => 3.14 * r * r
+    Square(side)      => side * side
+    Rectangle(w, h)   => w * h
+}
+
+fn describe(opt int) -> str => match opt {
+    0 => "zero"
+    n if n > 0 => "positive"
+    _ => "negative"
+}
+
+fn main() {
+    println("circle area = ", area(Circle(2.0)))
+    println("square area = ", area(Square(3.0)))
+    println("describe(5) = ", describe(5))
+    println("describe(-3) = ", describe(-3))
+}

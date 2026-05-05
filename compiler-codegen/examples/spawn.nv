@@ -1,0 +1,21 @@
+// spawn.nv — Phase 5: stackful fibers via minicoro
+
+module spawn_demo
+
+fn main() {
+    // Простой spawn: вычислить выражение в fiber, вернуть результат
+    let r = spawn { 100 + 1 }
+    println("spawn result = ", r)       // 101
+
+    // spawn с захватом переменной
+    let x = 42
+    let r2 = spawn { x * 2 }
+    println("captured x*2 = ", r2)     // 84
+
+    // spawn с мутацией захваченной переменной
+    let mut counter = 0
+    let _ = spawn {
+        counter += 10
+    }
+    println("counter after spawn = ", counter)   // 10
+}

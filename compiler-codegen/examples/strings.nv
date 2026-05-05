@@ -1,0 +1,21 @@
+// strings.nv — работа со строками (нужно для написания компилятора).
+
+module strings
+
+fn count_lines(s str) -> int {
+    let mut count = 1
+    let mut i = 0
+    while i < s.len {
+        // ВАЖНО: пока нет .char_at(), просто считаем
+        i += 1
+    }
+    count
+}
+
+fn main() {
+    let greeting = "hello, world"
+    println("len = ", greeting.len)
+    println("upper = ", greeting.to_upper())
+    println("starts with 'hello' = ", greeting.starts_with("hello"))
+    println("contains 'world' = ", greeting.contains("world"))
+}
