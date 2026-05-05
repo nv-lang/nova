@@ -156,3 +156,13 @@
 - **Закрыто:** `nova_rt/test_gc_deep.c` (23 assert, malloc+RC) и `nova_rt/test_fibers_deep.c`
   (31 assert) проверяют alloc_count/free_count/live_count, RC lifecycle, раздельность стеков
   fiber, yield/resume порядок, stack isolation, state machine через yield.
+  На Nova-уровне: `tests-nova/37_deep_gc.nv` (18 тестов) и `38_deep_spawn.nv` (28 тестов).
+
+### [ЗАКР] Spawn захватывал локальные переменные как внешние (C2065/C2020/C2440)
+- **Закрыто:** Три бага исправлены при написании Nova-level deep тестов:
+  1. `collect_bound_names`: имена из `let` внутри spawn, for-pattern, match-arm
+     теперь исключаются из списка captures (были Nova_Point** вместо Nova_Point*).
+  2. Поле результата ctx-struct переименовано `result` → `_nova_result` чтобы
+     не конфликтовать с захваченной переменной пользователя named "result".
+  3. `infer_expr_c_type`: добавлен кейс `ExprKind::If` — if без else → `nova_unit`
+     (раньше → `nova_int`, что давало C2440 при cast результата spawn body).

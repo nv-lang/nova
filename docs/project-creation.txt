@@ -154,6 +154,24 @@ test_fibers_deep.c — 31 assert:
 
 run_deep_tests.bat собирает все 4 комбинации (test_gc + test_fibers) x (malloc + RC).
 
+  Фаза 7 (Nova-level deep tests):
+    Три бага в codegen обнаружены и исправлены при написании тестов:
+    1. collect_bound_names: локально объявленные имена (let внутри spawn,
+       for-pattern, match-arm) ошибочно захватывались из внешнего scope.
+       Итог: Nova_Point** вместо Nova_Point* → C2065 на MSVC.
+    2. ctx result field назывался "result" → коллизия с захваченной
+       переменной пользователя тоже named "result" → C2020.
+       Переименован в "_nova_result".
+    3. infer_expr_c_type: if без else инферировался как nova_int вместо
+       nova_unit → C2440 при cast в spawn body result.
+
+    tests-nova/37_deep_gc.nv   — 18 тестов: sentinel survival под
+      10000 allocs, record chains, field arithmetic, records in/across
+      spawn, array len/spread/.get/pattern, mixed records+arrays.
+    tests-nova/38_deep_spawn.nv — 28 тестов: execution ordering,
+      capture semantics, pipelines (fork+join), state machines, 500
+      sequential fibers, fib(25)/factorial inside fiber, records.
+
 ================================================================================
 5. ТЕКУЩЕЕ СОСТОЯНИЕ (2026-05-05)
 ================================================================================
@@ -161,6 +179,10 @@ run_deep_tests.bat собирает все 4 комбинации (test_gc + tes
 Все 11 примеров компилируются и запускают корректно:
   hello, arithmetic, records, match_demo, effects, effects_d61,
   strings, spawn, with_tests, gc_coroutines_test, demo
+
+Nova-уровневые тесты: 38 файлов в tests-nova/, включая:
+  37_deep_gc.nv (18 тестов), 38_deep_spawn.nv (28 тестов)
+Runtime C-тесты: nova_rt/test_gc_deep.c (23 assert), test_fibers_deep.c (31 assert)
 
 Следующие шаги:
   - Generics / монаморфизация
