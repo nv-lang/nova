@@ -109,15 +109,24 @@
   ставить cancel-флаг для остальных, при выходе scope — propagate.
 - **Приоритет:** M
 
-### [R6] detach — не реализован
-- **Где:** `nova_rt/fibers.h` / `emit_c.rs` / spec D50
-- **Что упрощено:** `detach { body }` (D50 fire-and-forget с глобальным supervisor'ом)
-  не реализован. Эффект `Detach` тоже не объявлен.
-- **Почему:** Для interleave-тестов не нужен. Глобальный supervisor требует thread-локального
-  состояния, отдельного от текущего fiber-stack'а.
-- **Как чинить:** Добавить keyword `detach`, эффект `Detach`, глобальный supervisor с
-  default-handler `LogAndDrop`. Возможно, потребуется OS-thread для долгоживущих задач.
-- **Приоритет:** L (нужно для production, не для тестов)
+### [R6] detach — keyword реализован, default handler = SyncDetach (inline)
+- **Где:** `emit_c.rs::emit_detach` / spec D50
+- **Что реализовано (2026-05-06):** keyword `detach { body }`, AST `ExprKind::Detach`,
+  парсер, interp-стаб, codegen. В bootstrap'е default-handler = SyncDetach: body
+  исполняется inline в потоке caller'а (как обычный block, без fiber-обёртки).
+  Тесты: `tests-nova/40_detach.nv` (13 тестов на capture/control-flow/nesting/
+  совместимость с supervised).
+- **Что упрощено:**
+  * Эффект `Detach` не объявлен в effect-system — компилятор не требует его в сигнатуре.
+  * Нет реального глобального supervisor'а: detach исполняется inline, не на отдельном
+    OS-thread'е, поэтому "переживёт caller'а" не реализовано (но spec явно описывает
+    SyncDetach как валидный handler для тестов — bootstrap-default это и есть SyncDetach).
+  * Нет панник-контейнмента (`LogAndDrop`): паника в detach распространится наружу.
+- **Как чинить полностью:**
+  1. Объявить `Detach` как effect; добавить compile-time проверку требования в сигнатуре.
+  2. Сделать глобальный supervisor (OS-thread + queue), routes detach → background.
+  3. Default handler `LogAndDrop`: panic в detach → log + сбросить fiber, не propagate.
+- **Приоритет:** L
 
 ### [R7] Time.sleep(ms) — без timer-wheel
 - **Где:** `emit_c.rs` (builtin) / `nova_rt/fibers.h`

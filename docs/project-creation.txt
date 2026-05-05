@@ -247,10 +247,25 @@ Runtime C-тесты: nova_rt/test_gc_deep.c (23 assert), test_fibers_deep.c (31
 
 Все тесты проходят детерминированно. FIFO scheduler даёт точный observable order.
 
+DETACH (продолжение в той же сессии):
+  - Keyword `detach { body }`, AST::Detach(Block), парсер, interp-стаб.
+  - Codegen: default SyncDetach handler = inline-block. Никакого fiber wrapping —
+    body исполняется в потоке caller'а. Spec D50 явно описывает SyncDetach как
+    тестовый default ("with Detach = SyncDetach { ... }"), bootstrap = это.
+  - Эффект `Detach` НЕ объявлен; compile-time проверка требования отсутствует.
+  - Тесты: tests-nova/40_detach.nv — 13 штук:
+    * базовое исполнение, capture (ints, records, arrays)
+    * detach с if/while внутри
+    * detach внутри supervised — встречается inline ДО scope queue
+    * nested detach (inner inline после outer-первого write)
+    * sequential detach order
+    * detach вне любого scope (валиден, в отличие от spawn)
+
 ОТЛОЖЕНО (см. simplifications.md):
   - parallel for, race, select, cancel_scope, with_timeout
   - cancellation propagation, error-propagation между fibers
-  - detach + Detach эффект (global supervisor)
+  - реальный async detach: OS-thread + global supervisor + LogAndDrop policy
+  - effect Detach в effect-system + compile-time проверка
   - timer-wheel для Time.sleep(N>0)
 
 ================================================================================

@@ -1352,6 +1352,7 @@ impl Parser {
             TokenKind::KwInterrupt => self.parse_interrupt_expr(),
             TokenKind::KwSpawn => self.parse_spawn(),
             TokenKind::KwSupervised => self.parse_supervised(),
+            TokenKind::KwDetach => self.parse_detach(),
             TokenKind::KwHandler => self.parse_handler_lit(),
             TokenKind::KwForbid => self.parse_forbid(),
             TokenKind::KwRealtime => self.parse_realtime(),
@@ -1989,6 +1990,14 @@ impl Parser {
         let block = self.parse_block()?;
         let end = block.span;
         Ok(Expr::new(ExprKind::Supervised(block), start.merge(end)))
+    }
+
+    /// `detach { body }` — fire-and-forget, global supervisor (D50).
+    fn parse_detach(&mut self) -> Result<Expr, Diagnostic> {
+        let start = self.expect(&TokenKind::KwDetach)?.span;
+        let block = self.parse_block()?;
+        let end = block.span;
+        Ok(Expr::new(ExprKind::Detach(block), start.merge(end)))
     }
 
     /// `forbid X1, X2, ... { body }` — capability sandbox (D63).

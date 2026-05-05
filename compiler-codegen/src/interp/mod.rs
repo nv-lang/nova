@@ -612,6 +612,11 @@ impl Interpreter {
                 // только в codegen-варианте через nova_supervised_run.
                 self.exec_block_flow(body, env)
             }
+            ExprKind::Detach(body) => {
+                // В bootstrap'е default-handler Detach = SyncDetach: исполняется inline.
+                // Production-runtime запустит на глобальном supervisor'е.
+                self.exec_block_flow(body, env)
+            }
             ExprKind::Forbid { effects: _, body } => {
                 // В bootstrap-интерпретаторе forbid (D63) исполняется как
                 // обычный block — runtime барьер через sentinel-frame и

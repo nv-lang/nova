@@ -923,6 +923,26 @@ impl CEmitter {
         Ok("NOVA_UNIT".to_string())
     }
 
+    /// Emit `detach { body }` — D50 fire-and-forget primitive.
+    /// Bootstrap default handler is SyncDetach: body executes inline in the caller's
+    /// stack, no fiber, no scheduler. Production runtime would route to a global
+    /// supervisor on a separate OS thread (with LogAndDrop default panic policy).
+    fn emit_detach(&mut self, body: &Block) -> Result<String, String> {
+        // Wrap in a C block so any locals introduced by the body don't leak.
+        self.line("{");
+        self.indent += 1;
+        for stmt in &body.stmts {
+            self.emit_stmt(stmt)?;
+        }
+        if let Some(trailing) = &body.trailing {
+            let v = self.emit_expr(trailing)?;
+            self.line(&format!("(void)({});", v));
+        }
+        self.indent -= 1;
+        self.line("}");
+        Ok("NOVA_UNIT".to_string())
+    }
+
     /// Pre-scan the module for HandlerLit and Spawn nodes; emit file-scope forward decls.
     fn emit_handler_forward_decls(&mut self, module: &Module) -> Result<(), String> {
         let mut h_ctr = 0usize; // handler_counter
@@ -1018,6 +1038,7 @@ impl CEmitter {
             }
             ExprKind::Unary { operand, .. } => self.scan_expr_fwd(operand, h, s)?,
             ExprKind::Supervised(b) => self.scan_block_fwd(b, h, s)?,
+            ExprKind::Detach(b) => self.scan_block_fwd(b, h, s)?,
             _ => {}
         }
         Ok(())
@@ -1109,6 +1130,7 @@ impl CEmitter {
             ExprKind::Loop { body } => Self::collect_bound_names_block(body, out),
             ExprKind::With { body, .. } => Self::collect_bound_names_block(body, out),
             ExprKind::Supervised(body) => Self::collect_bound_names_block(body, out),
+            ExprKind::Detach(body) => Self::collect_bound_names_block(body, out),
             _ => {}
         }
     }
@@ -1265,6 +1287,7 @@ impl CEmitter {
             ExprKind::Interrupt(Some(v)) => Self::collect_idents_expr(v, out),
             ExprKind::Block(b) => Self::collect_idents_block(b, out),
             ExprKind::Supervised(b) => Self::collect_idents_block(b, out),
+            ExprKind::Detach(b) => Self::collect_idents_block(b, out),
             _ => {}
         }
     }
@@ -2583,6 +2606,9 @@ impl CEmitter {
             }
             ExprKind::Supervised(body) => {
                 self.emit_supervised(body)
+            }
+            ExprKind::Detach(body) => {
+                self.emit_detach(body)
             }
             ExprKind::TaggedTemplate { parts, args, .. } => {
                 // Bootstrap: tag function ignored, parts concatenated with args as strings.
@@ -4341,7 +4367,7 @@ impl CEmitter {
             }
             ExprKind::Lambda { body, .. } => Self::collect_free_idents(body, out),
             ExprKind::TupleLit(elems) => { for e in elems { Self::collect_free_idents(e, out); } }
-            ExprKind::Supervised(b) => {
+            ExprKind::Supervised(b) | ExprKind::Detach(b) => {
                 for s in &b.stmts { Self::collect_free_idents_stmt(s, out); }
                 if let Some(t) = &b.trailing { Self::collect_free_idents(t, out); }
             }
@@ -4844,6 +4870,7 @@ impl CEmitter {
             ExprKind::WhileLet { .. } => "nova_unit".into(),
             ExprKind::Loop { .. } => "nova_unit".into(),
             ExprKind::Supervised(_) => "nova_unit".into(),
+            ExprKind::Detach(_) => "nova_unit".into(),
             ExprKind::TaggedTemplate { .. } => "nova_str".into(),
             _ => "nova_int".into(),
         }

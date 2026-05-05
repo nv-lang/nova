@@ -404,6 +404,9 @@ pub enum ExprKind {
     Spawn(Box<Expr>),
     /// `supervised { body }` — structured-concurrency scope (D50)
     Supervised(Block),
+    /// `detach { body }` — fire-and-forget, global supervisor (D50).
+    /// Requires `Detach` effect in the enclosing function's signature.
+    Detach(Block),
 
     // Внутреннее: backtick-tagged template — для bootstrap'а: tag-функция
     // вызывается с (parts: []str, args: []SqlValue/...) — но в bootstrap
