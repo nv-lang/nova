@@ -402,6 +402,8 @@ pub enum ExprKind {
     Block(Block),
     /// `spawn body` — D50
     Spawn(Box<Expr>),
+    /// `supervised { body }` — structured-concurrency scope (D50)
+    Supervised(Block),
 
     // Внутреннее: backtick-tagged template — для bootstrap'а: tag-функция
     // вызывается с (parts: []str, args: []SqlValue/...) — но в bootstrap

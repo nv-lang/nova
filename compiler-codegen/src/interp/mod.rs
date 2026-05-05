@@ -607,6 +607,11 @@ impl Interpreter {
                 // В bootstrap'е spawn = inline call (синхронно).
                 self.eval_expr(body, env)
             }
+            ExprKind::Supervised(body) => {
+                // В bootstrap'е supervised — обычный block. Реальный scheduler
+                // только в codegen-варианте через nova_supervised_run.
+                self.exec_block_flow(body, env)
+            }
             ExprKind::Forbid { effects: _, body } => {
                 // В bootstrap-интерпретаторе forbid (D63) исполняется как
                 // обычный block — runtime барьер через sentinel-frame и

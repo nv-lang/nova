@@ -1351,6 +1351,7 @@ impl Parser {
             TokenKind::KwWith => self.parse_with(),
             TokenKind::KwInterrupt => self.parse_interrupt_expr(),
             TokenKind::KwSpawn => self.parse_spawn(),
+            TokenKind::KwSupervised => self.parse_supervised(),
             TokenKind::KwHandler => self.parse_handler_lit(),
             TokenKind::KwForbid => self.parse_forbid(),
             TokenKind::KwRealtime => self.parse_realtime(),
@@ -1980,6 +1981,14 @@ impl Parser {
         let body = self.parse_expr()?;
         let span = start.merge(body.span);
         Ok(Expr::new(ExprKind::Spawn(Box::new(body)), span))
+    }
+
+    /// `supervised { body }` — structured-concurrency scope (D50).
+    fn parse_supervised(&mut self) -> Result<Expr, Diagnostic> {
+        let start = self.expect(&TokenKind::KwSupervised)?.span;
+        let block = self.parse_block()?;
+        let end = block.span;
+        Ok(Expr::new(ExprKind::Supervised(block), start.merge(end)))
     }
 
     /// `forbid X1, X2, ... { body }` — capability sandbox (D63).

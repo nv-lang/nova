@@ -91,12 +91,43 @@
 - **Как чинить:** Включить RC (`gc=rc`) или Boehm GC (`gc=boehm`) через build_c.bat.
 - **Приоритет:** L (Boehm GC уже есть как опция)
 
-### [R2] Fibers — нет structured concurrency (supervised/race/parallel)
-- **Где:** `nova_rt/fibers.c` / `emit_c.rs`
-- **Что упрощено:** `spawn { }` создаёт fiber и сразу запускает до завершения. Нет параллельного выполнения, нет `supervised`, `race`, `parallel for`.
-- **Почему:** Structured concurrency требует scheduler. Миникоро — stackful coroutines, не OS threads.
-- **Как чинить:** Добавить scheduler loop, async I/O integration, или перейти на OS threads.
+### [R2] Fibers — partial structured concurrency (supervised есть, race/parallel/cancel — нет)
+- **Где:** `nova_rt/fibers.h` / `emit_c.rs`
+- **Что реализовано (2026-05-06):** `supervised { }` scope — round-robin scheduler через
+  `NovaFiberQueue` + `nova_supervised_run`. Внутри scope `spawn` кладёт fiber в очередь,
+  не запускает сразу; на выходе scope крутит resume по очереди пока все не завершатся.
+  Точки yield: `Time.sleep(ms)` → `nova_fiber_yield()` (без timer-wheel, любой ms = один yield).
+  Ёмкость очереди: NOVA_SCOPE_CAP=64.
+- **Что упрощено:** Нет `parallel for`, `race`, `select`, `cancel_scope`, `with_timeout`.
+  `spawn` вне `supervised` остаётся eager-blocking (legacy совместимость, по спеке должна
+  быть compile error). `let r = spawn ...` внутри scope возвращает 0 (результат через
+  shared mut, как в Go-style). Без cancellation и error-propagation между fibers.
+  Размер очереди фиксированный (64), без roll-over.
+- **Почему:** Минимальная реализация для interleave-тестов. Cancellation/error-propagation
+  требуют интеграции с Fail-frame stack для каждого fiber'а.
+- **Как чинить:** добавить cancel-channel в NovaFiberQueue, при error в одном fiber'е —
+  ставить cancel-флаг для остальных, при выходе scope — propagate.
 - **Приоритет:** M
+
+### [R6] detach — не реализован
+- **Где:** `nova_rt/fibers.h` / `emit_c.rs` / spec D50
+- **Что упрощено:** `detach { body }` (D50 fire-and-forget с глобальным supervisor'ом)
+  не реализован. Эффект `Detach` тоже не объявлен.
+- **Почему:** Для interleave-тестов не нужен. Глобальный supervisor требует thread-локального
+  состояния, отдельного от текущего fiber-stack'а.
+- **Как чинить:** Добавить keyword `detach`, эффект `Detach`, глобальный supervisor с
+  default-handler `LogAndDrop`. Возможно, потребуется OS-thread для долгоживущих задач.
+- **Приоритет:** L (нужно для production, не для тестов)
+
+### [R7] Time.sleep(ms) — без timer-wheel
+- **Где:** `emit_c.rs` (builtin) / `nova_rt/fibers.h`
+- **Что упрощено:** `Time.sleep(N)` для любого N → один вызов `nova_fiber_yield()`.
+  Реальной задержки нет, ms-аргумент игнорируется.
+- **Почему:** Достаточно для cooperative-yield тестов. Реальные таймеры требуют
+  timer-heap + интеграции в scheduler-loop.
+- **Как чинить:** Добавить timer-wheel/heap, при `Time.sleep(ms)` ставить fiber в sleep-list
+  с deadline, scheduler пропускает sleeping fibers пока deadline не достигнут.
+- **Приоритет:** L (для тестов interleave не нужно)
 
 ### [R3] nova_str — borrowed slice, нет ownership
 - **Где:** `nova_rt/nova_rt.h`

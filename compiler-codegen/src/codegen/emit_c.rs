@@ -17,6 +17,18 @@ pub struct CEmitter {
     handler_counter: usize,
     /// Monotonic counter for spawn expressions — stable IDs for pre-scan matching
     spawn_counter: usize,
+    /// Monotonic counter for supervised scopes — used to name local NovaFiberQueue variables.
+    supervised_counter: usize,
+    /// When inside a `supervised { }` scope, holds the C name of the local NovaFiberQueue.
+    /// `spawn` inside such a scope goes into the queue via nova_fiber_spawn_into.
+    /// Outside a scope, this is None and `spawn` uses the eager-blocking nova_fiber_run path.
+    current_scope_queue: Option<String>,
+    /// When emitting a spawn-entry body, captures are accessed via `(*_c->name)`.
+    /// We DON'T use `#define` macros for this — they leak into nested supervised
+    /// scopes where `name` could appear as a struct field-declarator and get
+    /// rewritten by the preprocessor. Instead, ExprKind::Ident checks this set
+    /// and rewrites references inline.
+    current_spawn_captures: Option<HashSet<String>>,
     /// Maps variable name → C type string (best-effort)
     var_types: HashMap<String, String>,
     /// Maps struct name → field name → C type
@@ -87,6 +99,9 @@ impl CEmitter {
             tmp_counter: 0,
             handler_counter: 0,
             spawn_counter: 0,
+            supervised_counter: 0,
+            current_scope_queue: None,
+            current_spawn_captures: None,
             var_types: HashMap::new(),
             record_schemas: HashMap::new(),
             sum_schemas: HashMap::new(),
@@ -761,38 +776,51 @@ impl CEmitter {
             }
         }
 
-        // Ctx struct typedef — local scope inside function (C99 allows this)
-        // The return-value field is named _nova_result to avoid collision with
-        // a user variable named "result" being captured.
+        // Ctx struct typedef is emitted ONLY into deferred_impls (file scope, see below).
+        // We do NOT emit a duplicate typedef inside the current function: when this spawn
+        // appears nested in another fiber's body, capture macros (`#define cap (*_c->cap)`)
+        // would tokenize-rewrite the field declarations and break compilation.
         let ctx_ty = format!("NovaSpawnCtx_{}", &spawn_id[1..]); // strip leading _
-        self.line(&format!("typedef struct {{"));
-        for (cap, ty) in &captures {
-            let ptr_ty = format!("{}*", ty);
-            self.line(&format!("    {} {};", ptr_ty, cap));
-        }
-        self.line("    nova_int _nova_result;");
-        self.line(&format!("}} {};", ctx_ty));
 
-        // ctx instance on stack
+        // ctx instance on stack — uses the file-scope typedef.
         let ctx_var = format!("{}_ctx", spawn_id);
         self.line(&format!("{} {} = {{0}};", ctx_ty, ctx_var));
         for (cap, _) in &captures {
-            self.line(&format!("{ctx}.{cap} = &{cap};", ctx = ctx_var, cap = cap));
+            // If cap is itself a capture of the *enclosing* fiber, its address is
+            // already in the outer ctx as `_c->cap` (a pointer). Pass that directly.
+            // Otherwise it's a local variable — take its address with `&cap`.
+            let is_outer_cap = self.current_spawn_captures.as_ref()
+                .map(|s| s.contains(cap)).unwrap_or(false);
+            if is_outer_cap {
+                self.line(&format!("{ctx}.{cap} = _c->{cap};", ctx = ctx_var, cap = cap));
+            } else {
+                self.line(&format!("{ctx}.{cap} = &{cap};", ctx = ctx_var, cap = cap));
+            }
         }
 
-        // Run the fiber — result is written into ctx._nova_result by the entry fn
+        // If we are inside a `supervised { }` scope, push the fiber into the queue
+        // and don't run it now — the scheduler at scope-exit will run all of them.
+        // Result inside a scope is not available (use mut captures instead) — emit 0.
         let result_tmp = self.fresh_tmp();
-        self.line(&format!("nova_fiber_run({id}, &{ctx});", id = spawn_id, ctx = ctx_var));
-        self.line(&format!("nova_int {} = {ctx}._nova_result;", result_tmp, ctx = ctx_var));
-
-        // Emit the spawn entry function into deferred_impls
-        // ctx struct typedef there too (file scope for the entry fn)
-        let _ = writeln!(self.deferred_impls, "typedef struct {{");
-        for (cap, ty) in &captures {
-            let _ = writeln!(self.deferred_impls, "    {}* {};", ty, cap);
+        if let Some(queue) = self.current_scope_queue.clone() {
+            self.line(&format!("nova_fiber_spawn_into(&{q}, {id}, &{ctx});",
+                q = queue, id = spawn_id, ctx = ctx_var));
+            self.line(&format!("nova_int {} = ((nova_int)0LL);", result_tmp));
+        } else {
+            // Eager-blocking: run to completion, take the result.
+            self.line(&format!("nova_fiber_run({id}, &{ctx});", id = spawn_id, ctx = ctx_var));
+            self.line(&format!("nova_int {} = {ctx}._nova_result;", result_tmp, ctx = ctx_var));
         }
-        let _ = writeln!(self.deferred_impls, "    nova_int _nova_result;");
-        let _ = writeln!(self.deferred_impls, "}} {};", ctx_ty);
+
+        // Emit the ctx-struct typedef into lambda_forward_decls — flushed before the
+        // current function in `out`, so the typedef is visible at the spawn-instance
+        // declaration site (and also for the entry fn body which lives in deferred_impls).
+        let _ = writeln!(self.lambda_forward_decls, "typedef struct {{");
+        for (cap, ty) in &captures {
+            let _ = writeln!(self.lambda_forward_decls, "    {}* {};", ty, cap);
+        }
+        let _ = writeln!(self.lambda_forward_decls, "    nova_int _nova_result;");
+        let _ = writeln!(self.lambda_forward_decls, "}} {};", ctx_ty);
 
         // Swap out to deferred_impls for body emission
         let saved_out    = std::mem::take(&mut self.out);
@@ -802,9 +830,10 @@ impl CEmitter {
         self.line(&format!("static void {}(mco_coro* _co) {{", spawn_id));
         self.indent += 1;
         self.line(&format!("{ctx}* _c = ({ctx}*)mco_get_user_data(_co);", ctx = ctx_ty));
-        for (cap, _) in &captures {
-            self.line(&format!("#define {cap} (*_c->{cap})", cap = cap));
-        }
+        // Activate capture rewriting: ExprKind::Ident → `(*_c->name)`.
+        let mut cap_set: HashSet<String> = HashSet::new();
+        for (cap, _) in &captures { cap_set.insert(cap.clone()); }
+        let prev_caps = std::mem::replace(&mut self.current_spawn_captures, Some(cap_set));
 
         // Emit body and capture result. For block exprs, emit stmts + trailing
         // directly rather than going through emit_block_expr (which drops the value).
@@ -840,9 +869,8 @@ impl CEmitter {
 
         self.line(&format!("_c->_nova_result = (nova_int)({});", result_val));
 
-        for (cap, _) in &captures {
-            self.line(&format!("#undef {}", cap));
-        }
+        // Deactivate capture rewriting before emitting closing brace.
+        self.current_spawn_captures = prev_caps;
         self.indent -= 1;
         self.line("}");
         self.line("");
@@ -852,6 +880,47 @@ impl CEmitter {
         self.indent = saved_indent;
 
         Ok(result_tmp)
+    }
+
+    // ---- supervised scope ----
+
+    /// Emit `supervised { body }` — D50 structured-concurrency scope.
+    /// All `spawn` inside the body push fibers into a local NovaFiberQueue;
+    /// at scope-exit, nova_supervised_run drives them round-robin to completion.
+    fn emit_supervised(&mut self, body: &Block) -> Result<String, String> {
+        let id = self.supervised_counter;
+        self.supervised_counter += 1;
+        let queue_var = format!("_nova_scope_q_{}", id);
+
+        // Wrap the scope in a C block so the queue is local.
+        self.line("{");
+        self.indent += 1;
+        self.line(&format!("NovaFiberQueue {} = {{0}};", queue_var));
+        self.line(&format!("nova_scope_init(&{});", queue_var));
+
+        // Activate scope: spawn inside body routes into queue.
+        let prev = std::mem::replace(&mut self.current_scope_queue, Some(queue_var.clone()));
+
+        // Emit body statements (trailing value is discarded — supervised yields unit).
+        for stmt in &body.stmts {
+            self.emit_stmt(stmt)?;
+        }
+        if let Some(trailing) = &body.trailing {
+            let v = self.emit_expr(trailing)?;
+            self.line(&format!("(void)({});", v));
+        }
+
+        // Restore scope state.
+        self.current_scope_queue = prev;
+
+        // Run the scheduler: round-robin until all fibers in queue are dead.
+        self.line(&format!("nova_supervised_run(&{});", queue_var));
+
+        self.indent -= 1;
+        self.line("}");
+
+        // supervised expression evaluates to unit.
+        Ok("NOVA_UNIT".to_string())
     }
 
     /// Pre-scan the module for HandlerLit and Spawn nodes; emit file-scope forward decls.
@@ -948,6 +1017,7 @@ impl CEmitter {
                 }
             }
             ExprKind::Unary { operand, .. } => self.scan_expr_fwd(operand, h, s)?,
+            ExprKind::Supervised(b) => self.scan_block_fwd(b, h, s)?,
             _ => {}
         }
         Ok(())
@@ -1038,6 +1108,7 @@ impl CEmitter {
             }
             ExprKind::Loop { body } => Self::collect_bound_names_block(body, out),
             ExprKind::With { body, .. } => Self::collect_bound_names_block(body, out),
+            ExprKind::Supervised(body) => Self::collect_bound_names_block(body, out),
             _ => {}
         }
     }
@@ -1112,6 +1183,10 @@ impl CEmitter {
                 for a in args { Self::collect_idents_expr(a, out); }
             }
             ExprKind::Member { obj, .. } => Self::collect_idents_expr(obj, out),
+            ExprKind::Index { obj, index } => {
+                Self::collect_idents_expr(obj, out);
+                Self::collect_idents_expr(index, out);
+            }
             ExprKind::If { cond, then, else_ } => {
                 Self::collect_idents_expr(cond, out);
                 Self::collect_idents_block(then, out);
@@ -1122,7 +1197,74 @@ impl CEmitter {
                     Self::collect_idents_expr(e, out);
                 }
             }
+            ExprKind::IfLet { scrutinee, then, else_, .. } => {
+                Self::collect_idents_expr(scrutinee, out);
+                Self::collect_idents_block(then, out);
+                if let Some(ElseBranch::Block(b)) = else_.as_ref() {
+                    Self::collect_idents_block(b, out);
+                }
+                if let Some(ElseBranch::If(e)) = else_.as_ref() {
+                    Self::collect_idents_expr(e, out);
+                }
+            }
+            ExprKind::While { cond, body } => {
+                Self::collect_idents_expr(cond, out);
+                Self::collect_idents_block(body, out);
+            }
+            ExprKind::WhileLet { scrutinee, body, .. } => {
+                Self::collect_idents_expr(scrutinee, out);
+                Self::collect_idents_block(body, out);
+            }
+            ExprKind::For { iter, body, .. } => {
+                Self::collect_idents_expr(iter, out);
+                Self::collect_idents_block(body, out);
+            }
+            ExprKind::Loop { body } => Self::collect_idents_block(body, out),
+            ExprKind::Match { scrutinee, arms } => {
+                Self::collect_idents_expr(scrutinee, out);
+                for arm in arms {
+                    if let Some(g) = &arm.guard { Self::collect_idents_expr(g, out); }
+                    match &arm.body {
+                        MatchArmBody::Expr(e) => Self::collect_idents_expr(e, out),
+                        MatchArmBody::Block(b) => Self::collect_idents_block(b, out),
+                    }
+                }
+            }
+            ExprKind::Range { start, end, .. } => {
+                Self::collect_idents_expr(start, out);
+                Self::collect_idents_expr(end, out);
+            }
+            ExprKind::Lambda { body, .. } => Self::collect_idents_expr(body, out),
+            ExprKind::TupleLit(elems) => {
+                for e in elems { Self::collect_idents_expr(e, out); }
+            }
+            ExprKind::ArrayLit(elems) => {
+                for elem in elems {
+                    match elem {
+                        ArrayElem::Item(x) | ArrayElem::Spread(x) => Self::collect_idents_expr(x, out),
+                    }
+                }
+            }
+            ExprKind::RecordLit { fields, .. } => {
+                for f in fields {
+                    if let Some(v) = &f.value { Self::collect_idents_expr(v, out); }
+                }
+            }
+            ExprKind::Spawn(body) => Self::collect_idents_expr(body, out),
+            ExprKind::With { bindings, body } => {
+                for b in bindings { Self::collect_idents_expr(&b.handler, out); }
+                Self::collect_idents_block(body, out);
+            }
+            ExprKind::Coalesce(l, r) => {
+                Self::collect_idents_expr(l, out);
+                Self::collect_idents_expr(r, out);
+            }
+            ExprKind::Try(e) | ExprKind::As(e, _) | ExprKind::Is(e, _) => {
+                Self::collect_idents_expr(e, out);
+            }
+            ExprKind::Interrupt(Some(v)) => Self::collect_idents_expr(v, out),
             ExprKind::Block(b) => Self::collect_idents_block(b, out),
+            ExprKind::Supervised(b) => Self::collect_idents_block(b, out),
             _ => {}
         }
     }
@@ -2010,6 +2152,14 @@ impl CEmitter {
                         return Ok(format!("nova_make_{}_{}()", type_name, name));
                     }
                 }
+                // Capture access inside spawn-entry body: rewrite to `(*_c->name)`.
+                // This avoids `#define name (*_c->name)` macros, which would corrupt
+                // nested supervised's struct field declarators with the same name.
+                if let Some(caps) = &self.current_spawn_captures {
+                    if caps.contains(name) {
+                        return Ok(format!("(*_c->{})", name));
+                    }
+                }
                 Ok(name.clone())
             }
             ExprKind::Path(parts) => Ok(parts.join("_")),
@@ -2431,6 +2581,9 @@ impl CEmitter {
             ExprKind::Spawn(body) => {
                 self.emit_spawn(body)
             }
+            ExprKind::Supervised(body) => {
+                self.emit_supervised(body)
+            }
             ExprKind::TaggedTemplate { parts, args, .. } => {
                 // Bootstrap: tag function ignored, parts concatenated with args as strings.
                 // Build a single nova_str by concatenating all parts and arg string reprs.
@@ -2809,6 +2962,23 @@ impl CEmitter {
                 }
             }
             ExprKind::Member { obj, name: method } => {
+                // 0. Builtin: `Time.sleep(ms)` → `nova_fiber_yield()` (eval ms but discard).
+                //    Spec D14/D50: Time is a yield-point; sleep(0) ≈ runtime.Gosched() in Go.
+                //    No timer-wheel yet — any sleep duration is just one yield.
+                let obj_name = match &obj.kind {
+                    ExprKind::Ident(n) => Some(n.as_str()),
+                    ExprKind::Path(p) if p.len() == 1 => Some(p[0].as_str()),
+                    _ => None,
+                };
+                if let Some("Time") = obj_name {
+                    if method == "sleep" {
+                        // Evaluate ms argument for side-effects but discard the value.
+                        for a in args { let _ = self.emit_expr(a)?; }
+                        self.line("nova_fiber_yield();");
+                        return Ok("NOVA_UNIT".to_string());
+                    }
+                }
+
                 // 1. Effect dispatch: `Counter.next()` → `Nova_Counter_next()`
                 let eff_name = match &obj.kind {
                     ExprKind::Ident(n) => Some(n.clone()),
@@ -2942,6 +3112,12 @@ impl CEmitter {
                 format!("{obj}{acc}{method}", obj = obj_c, acc = accessor, method = method)
             }
             ExprKind::Path(parts) => {
+                // Builtin: `Time.sleep(ms)` → nova_fiber_yield (path form)
+                if parts.len() == 2 && parts[0] == "Time" && parts[1] == "sleep" {
+                    for a in args { let _ = self.emit_expr(a)?; }
+                    self.line("nova_fiber_yield();");
+                    return Ok("NOVA_UNIT".to_string());
+                }
                 // Check if first segment is a known effect
                 if parts.len() == 2 && self.effect_schemas.contains_key(&parts[0]) {
                     format!("Nova_{}_{}", parts[0], parts[1])
@@ -4165,6 +4341,10 @@ impl CEmitter {
             }
             ExprKind::Lambda { body, .. } => Self::collect_free_idents(body, out),
             ExprKind::TupleLit(elems) => { for e in elems { Self::collect_free_idents(e, out); } }
+            ExprKind::Supervised(b) => {
+                for s in &b.stmts { Self::collect_free_idents_stmt(s, out); }
+                if let Some(t) = &b.trailing { Self::collect_free_idents(t, out); }
+            }
             _ => {}
         }
     }
@@ -4660,6 +4840,10 @@ impl CEmitter {
                 "nova_int".into()
             }
             ExprKind::For { .. } => "nova_unit".into(),
+            ExprKind::While { .. } => "nova_unit".into(),
+            ExprKind::WhileLet { .. } => "nova_unit".into(),
+            ExprKind::Loop { .. } => "nova_unit".into(),
+            ExprKind::Supervised(_) => "nova_unit".into(),
             ExprKind::TaggedTemplate { .. } => "nova_str".into(),
             _ => "nova_int".into(),
         }

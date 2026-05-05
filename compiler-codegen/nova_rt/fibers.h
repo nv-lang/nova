@@ -56,11 +56,83 @@ static inline void nova_fiber_run(void (*entry)(mco_coro*), void* user) {
 }
 
 /* nova_fiber_yield — suspend the current fiber, yielding to the scheduler.
- * Can be called from within a spawn body.
+ * Can be called from within a spawn body. Outside any fiber — no-op.
  */
 static inline void nova_fiber_yield(void) {
     mco_coro* co = mco_running();
     if (co) mco_yield(co);
+}
+
+/* ---- Supervised scope: round-robin scheduler over a local fiber queue ----
+ *
+ * Inside a `supervised { ... }` scope, each `spawn` adds a coroutine to a
+ * local NovaFiberQueue without resuming it. When the scope closes, we run
+ * round-robin: keep resuming live coroutines until all are MCO_DEAD.
+ * This gives real interleaving when fibers yield via nova_fiber_yield()
+ * (e.g. through Time.sleep handler).
+ *
+ * Capacity is fixed at 64 — enough for tests; production would grow.
+ */
+#define NOVA_SCOPE_CAP 64
+
+typedef struct {
+    mco_coro* fibers[NOVA_SCOPE_CAP];
+    int       count;
+} NovaFiberQueue;
+
+static inline void nova_scope_init(NovaFiberQueue* q) {
+    q->count = 0;
+}
+
+/* Create a fiber and push it into the scope queue without resuming it. */
+static inline void nova_fiber_spawn_into(NovaFiberQueue* q,
+                                         void (*entry)(mco_coro*),
+                                         void* user) {
+    if (q->count >= NOVA_SCOPE_CAP) {
+        fprintf(stderr, "nova: supervised scope exceeded NOVA_SCOPE_CAP=%d\n",
+            (int)NOVA_SCOPE_CAP);
+        abort();
+    }
+    mco_desc desc = mco_desc_init(entry, 0);
+    desc.user_data = user;
+    mco_coro* co = NULL;
+    mco_result r = mco_create(&co, &desc);
+    if (r != MCO_SUCCESS || co == NULL) {
+        fprintf(stderr, "nova: fiber create failed (%d)\n", (int)r);
+        abort();
+    }
+    q->fibers[q->count++] = co;
+}
+
+/* Round-robin run: resume each live fiber until all are dead.
+ * On every full pass without progress (no live fibers), exit.
+ */
+static inline void nova_supervised_run(NovaFiberQueue* q) {
+    int alive = q->count;
+    while (alive > 0) {
+        alive = 0;
+        for (int i = 0; i < q->count; i++) {
+            mco_coro* co = q->fibers[i];
+            if (co == NULL) continue;
+            if (mco_status(co) == MCO_DEAD) {
+                mco_destroy(co);
+                q->fibers[i] = NULL;
+                continue;
+            }
+            mco_result r = mco_resume(co);
+            if (r != MCO_SUCCESS) {
+                fprintf(stderr, "nova: fiber resume failed (%d)\n", (int)r);
+                abort();
+            }
+            if (mco_status(co) == MCO_DEAD) {
+                mco_destroy(co);
+                q->fibers[i] = NULL;
+            } else {
+                alive++;
+            }
+        }
+    }
+    q->count = 0;
 }
 
 #endif /* NOVA_RT_FIBERS_H */

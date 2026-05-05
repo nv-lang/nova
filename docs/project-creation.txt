@@ -185,6 +185,75 @@ Nova-уровневые тесты: 39/39 файлов в tests-nova/ — 100% p
 Runtime C-тесты: nova_rt/test_gc_deep.c (23 assert), test_fibers_deep.c (31 assert)
 
 ================================================================================
+9. STRUCTURED CONCURRENCY: supervised + cooperative scheduling (2026-05-06)
+================================================================================
+
+Минимальная реализация structured concurrency по D50.
+
+ЦЕЛЬ: тесты interleave корутин в 38_deep_spawn.nv должны давать
+наблюдаемое переключение fiber'ов, а не sequential subroutine calls.
+
+РЕАЛИЗОВАНО:
+  Runtime (nova_rt/fibers.h):
+    - NovaFiberQueue { mco_coro* fibers[64]; int count; }
+    - nova_fiber_spawn_into(q, entry, user) — создать fiber, в очередь без resume
+    - nova_supervised_run(q) — round-robin resume пока все не MCO_DEAD
+
+  AST + parser:
+    - токен KwSupervised
+    - ExprKind::Supervised(Block)
+    - parse_supervised: `supervised { body }`
+
+  Codegen:
+    - current_scope_queue: Option<String> — активная очередь supervised
+    - emit_supervised: открывает локальную NovaFiberQueue, в конце scheduler
+    - emit_spawn маршрутизирует:
+      * есть scope → nova_fiber_spawn_into(&queue, ...)
+      * нет scope → старая eager-blocking nova_fiber_run (legacy)
+
+  Time.sleep — yield-point:
+    - builtin вместо полноценного эффекта (упрощение для bootstrap)
+    - Time.sleep(N) для любого N → nova_fiber_yield(), ms игнорируется
+    - корректно по D14/D62: Time — yield-point, sleep(0) ≈ runtime.Gosched в Go
+
+  Capture access без #define (важный фикс):
+    - старая схема: `#define cap (*_c->cap)` ломалась в nested supervised
+      (cap-имя расширялось в struct field-declarator)
+    - новая: current_spawn_captures — set имён, ExprKind::Ident при попадании
+      эмитит `(*_c->name)` напрямую
+    - bonus: nested spawn внутри fiber-body передаёт уже-указатель (_c->name),
+      не пытается повторно `&` (это было бы &(*_c->name) что норм, но
+      теперь без macro-расширения это тривиально)
+
+  Прочие фиксы по дороге:
+    - collect_idents_expr расширен: While, WhileLet, For, Loop, Match, Range,
+      Lambda, ArrayLit, RecordLit, Spawn, With, Coalesce, Try, Index — раньше
+      пропускались, capture-сборка работала случайно через Block trailing
+    - infer_expr_c_type: While/Loop/For/Supervised → "nova_unit"
+      (раньше fallback "nova_int", давало MSVC C2440 при cast в nova_int)
+    - typedef ctx-struct → lambda_forward_decls (не deferred_impls), теперь
+      виден до использования в spawn-instance
+
+ТЕСТЫ (новая секция в 38_deep_spawn.nv, 9 штук):
+  - "two fibers interleave at every yield"      log == 142536
+  - "three fibers interleave round-robin"       log == 135246
+  - "fiber without yield runs to completion"    log == 123456
+  - "yield count equals interleave depth"       log == 123456
+  - "yields uneven, fiber A finishes first"     log == 13245
+  - "producer-consumer pattern via shared mut"  received == 15
+  - "4 fibers, 1 yield each, round-robin"       log == 13572468
+  - "yield inside loop, lifetime spans many"    order == 121212
+  - "nested supervised — inner finishes first"  order == 123456
+
+Все тесты проходят детерминированно. FIFO scheduler даёт точный observable order.
+
+ОТЛОЖЕНО (см. simplifications.md):
+  - parallel for, race, select, cancel_scope, with_timeout
+  - cancellation propagation, error-propagation между fibers
+  - detach + Detach эффект (global supervisor)
+  - timer-wheel для Time.sleep(N>0)
+
+================================================================================
 8. C-БЭКЕНД: CLOSURES И GENERICS (2026-05-06)
 ================================================================================
 
