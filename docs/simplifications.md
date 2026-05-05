@@ -42,12 +42,10 @@
 - **Как чинить:** Generics в runtime, NOVA_ARRAY_IMPL для каждого типа.
 - **Приоритет:** M
 
-### [C5] for-in только для Range (0..N или m..n)
-- **Где:** `emit_c.rs` → `emit_for`
-- **Что упрощено:** `for n in arr` не поддержан. Только `for n in start..end`.
-- **Почему:** Итерация по массивам требует iterator protocol которого нет.
-- **Как чинить:** Добавить ветку для NovaArray_T* — генерировать `for (int i=0; i<arr->len; i++) { T n = arr->data[i]; ... }`.
-- **Приоритет:** M
+### [ЗАКР] for-in только для Range (0..N или m..n) — [C5]
+- **Закрыто:** Добавлена ветка для `NovaArray_T*` в `emit_for`.
+  `for n in arr` генерирует `for (int64_t _i=0; _i<arr->len; _i++) { T n = arr->data[_i]; ... }`.
+  Тип элемента выводится через `infer_expr_c_type`. Тест: `tests-nova/39_for_in_array.nv` (11 assert).
 
 ### [C6] Generics — не реализованы (mangle как Nova_Name)
 - **Где:** `emit_c.rs` → `type_ref_to_c`

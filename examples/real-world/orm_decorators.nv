@@ -306,7 +306,7 @@ test "compose: soft-delete + audit + read-replica" {
     let mut audit_count = 0
 
     with Detach = handler Detach {
-        spawn(body) { audit_count += 1; return () }
+        run(body) { audit_count += 1; return () }
     } {
         let composed = with_read_replica(
             with_audit(with_soft_delete(capturing_handler(primary_log)), 42),
