@@ -487,27 +487,38 @@ impl CEmitter {
         let spawn_id = format!("_nova_spawn_{}", self.spawn_counter);
         self.spawn_counter += 1;
 
-        // Collect free variables referenced in the spawn body
+        // Collect all identifiers referenced in the spawn body
         let mut refs: Vec<String> = Vec::new();
         Self::collect_idents_expr(body, &mut refs);
         refs.sort();
         refs.dedup();
 
+        // Collect all names *bound* inside the spawn body (let bindings, for patterns, match arms).
+        // These are local to the spawn and must not be captured from the outer scope.
+        let mut bound: std::collections::HashSet<String> = std::collections::HashSet::new();
+        Self::collect_bound_names_expr(body, &mut bound);
+
+        // A name is a capture only if: it is in outer var_types AND not bound inside spawn
         let mut captures: Vec<(String, String)> = Vec::new();
         for name in refs {
+            if bound.contains(&name) {
+                continue;
+            }
             if let Some(ty) = self.var_types.get(&name).cloned() {
                 captures.push((name, ty));
             }
         }
 
         // Ctx struct typedef — local scope inside function (C99 allows this)
+        // The return-value field is named _nova_result to avoid collision with
+        // a user variable named "result" being captured.
         let ctx_ty = format!("NovaSpawnCtx_{}", &spawn_id[1..]); // strip leading _
         self.line(&format!("typedef struct {{"));
         for (cap, ty) in &captures {
             let ptr_ty = format!("{}*", ty);
             self.line(&format!("    {} {};", ptr_ty, cap));
         }
-        self.line("    nova_int result;");
+        self.line("    nova_int _nova_result;");
         self.line(&format!("}} {};", ctx_ty));
 
         // ctx instance on stack
@@ -517,10 +528,10 @@ impl CEmitter {
             self.line(&format!("{ctx}.{cap} = &{cap};", ctx = ctx_var, cap = cap));
         }
 
-        // Run the fiber — result is written into ctx.result by the entry fn
+        // Run the fiber — result is written into ctx._nova_result by the entry fn
         let result_tmp = self.fresh_tmp();
         self.line(&format!("nova_fiber_run({id}, &{ctx});", id = spawn_id, ctx = ctx_var));
-        self.line(&format!("nova_int {} = {ctx}.result;", result_tmp, ctx = ctx_var));
+        self.line(&format!("nova_int {} = {ctx}._nova_result;", result_tmp, ctx = ctx_var));
 
         // Emit the spawn entry function into deferred_impls
         // ctx struct typedef there too (file scope for the entry fn)
@@ -528,7 +539,7 @@ impl CEmitter {
         for (cap, ty) in &captures {
             let _ = writeln!(self.deferred_impls, "    {}* {};", ty, cap);
         }
-        let _ = writeln!(self.deferred_impls, "    nova_int result;");
+        let _ = writeln!(self.deferred_impls, "    nova_int _nova_result;");
         let _ = writeln!(self.deferred_impls, "}} {};", ctx_ty);
 
         // Swap out to deferred_impls for body emission
@@ -575,7 +586,7 @@ impl CEmitter {
             }
         };
 
-        self.line(&format!("_c->result = (nova_int)({});", result_val));
+        self.line(&format!("_c->_nova_result = (nova_int)({});", result_val));
 
         for (cap, _) in &captures {
             self.line(&format!("#undef {}", cap));
@@ -728,6 +739,112 @@ impl CEmitter {
         names.sort();
         names.dedup();
         names
+    }
+
+    /// Collect all names *introduced* (bound) inside an expression:
+    /// let-bindings, for-pattern, match-arm patterns, if-let, while-let.
+    /// These names are local to the spawn body and must not be treated as captures.
+    fn collect_bound_names_expr(expr: &Expr, out: &mut std::collections::HashSet<String>) {
+        match &expr.kind {
+            ExprKind::Block(b) => Self::collect_bound_names_block(b, out),
+            ExprKind::If { then, else_, .. } => {
+                Self::collect_bound_names_block(then, out);
+                match else_.as_ref() {
+                    Some(ElseBranch::Block(b)) => Self::collect_bound_names_block(b, out),
+                    Some(ElseBranch::If(e))    => Self::collect_bound_names_expr(e, out),
+                    None => {}
+                }
+            }
+            ExprKind::IfLet { pattern, then, else_, .. } => {
+                Self::collect_bound_names_pattern(pattern, out);
+                Self::collect_bound_names_block(then, out);
+                match else_.as_ref() {
+                    Some(ElseBranch::Block(b)) => Self::collect_bound_names_block(b, out),
+                    Some(ElseBranch::If(e))    => Self::collect_bound_names_expr(e, out),
+                    None => {}
+                }
+            }
+            ExprKind::Match { scrutinee, arms } => {
+                Self::collect_bound_names_expr(scrutinee, out);
+                for arm in arms {
+                    Self::collect_bound_names_pattern(&arm.pattern, out);
+                    match &arm.body {
+                        MatchArmBody::Expr(e)  => Self::collect_bound_names_expr(e, out),
+                        MatchArmBody::Block(b) => Self::collect_bound_names_block(b, out),
+                    }
+                }
+            }
+            ExprKind::For { pattern, iter, body } => {
+                Self::collect_bound_names_expr(iter, out);
+                Self::collect_bound_names_pattern(pattern, out);
+                Self::collect_bound_names_block(body, out);
+            }
+            ExprKind::While { body, .. } => Self::collect_bound_names_block(body, out),
+            ExprKind::WhileLet { pattern, body, .. } => {
+                Self::collect_bound_names_pattern(pattern, out);
+                Self::collect_bound_names_block(body, out);
+            }
+            ExprKind::Loop { body } => Self::collect_bound_names_block(body, out),
+            ExprKind::With { body, .. } => Self::collect_bound_names_block(body, out),
+            _ => {}
+        }
+    }
+
+    fn collect_bound_names_block(block: &Block, out: &mut std::collections::HashSet<String>) {
+        for stmt in &block.stmts {
+            match stmt {
+                Stmt::Let(d) => {
+                    Self::collect_bound_names_pattern(&d.pattern, out);
+                    Self::collect_bound_names_expr(&d.value, out);
+                }
+                Stmt::Expr(e) => Self::collect_bound_names_expr(e, out),
+                Stmt::Assign { target, value, .. } => {
+                    Self::collect_bound_names_expr(target, out);
+                    Self::collect_bound_names_expr(value, out);
+                }
+                _ => {}
+            }
+        }
+        if let Some(t) = &block.trailing {
+            Self::collect_bound_names_expr(t, out);
+        }
+    }
+
+    fn collect_bound_names_pattern(pat: &Pattern, out: &mut std::collections::HashSet<String>) {
+        match pat {
+            Pattern::Ident { name, .. } => { out.insert(name.clone()); }
+            Pattern::Binding { name, inner, .. } => {
+                out.insert(name.clone());
+                Self::collect_bound_names_pattern(inner, out);
+            }
+            Pattern::Variant { kind, .. } => {
+                if let VariantPatternKind::Tuple { patterns, .. } = kind {
+                    for p in patterns { Self::collect_bound_names_pattern(p, out); }
+                }
+            }
+            Pattern::Record { fields, .. } => {
+                for f in fields {
+                    if let Some(p) = &f.pattern {
+                        Self::collect_bound_names_pattern(p, out);
+                    } else {
+                        out.insert(f.name.clone());
+                    }
+                }
+            }
+            Pattern::Array { elems, .. } => {
+                for e in elems {
+                    match e {
+                        ArrayPatternElem::Item(p) => Self::collect_bound_names_pattern(p, out),
+                        ArrayPatternElem::RestBind(name) => { out.insert(name.clone()); }
+                        ArrayPatternElem::Rest => {}
+                    }
+                }
+            }
+            Pattern::Tuple(pats, _) => {
+                for p in pats { Self::collect_bound_names_pattern(p, out); }
+            }
+            Pattern::Wildcard(_) | Pattern::Literal(_, _) => {}
+        }
     }
 
     fn collect_idents_expr(expr: &Expr, out: &mut Vec<String>) {
@@ -2238,6 +2355,16 @@ impl CEmitter {
                 }
             }
             ExprKind::ArrayLit(_) => "NovaArray_nova_int*".into(),
+            ExprKind::If { else_, then, .. } => {
+                // if without else is always nova_unit
+                if else_.is_none() {
+                    return "nova_unit".into();
+                }
+                // if/else: infer from then-block trailing
+                then.trailing.as_ref()
+                    .map(|e| self.infer_expr_c_type(e))
+                    .unwrap_or_else(|| "nova_unit".into())
+            }
             ExprKind::Match { arms, .. } => {
                 // Infer result type from first non-unit arm
                 for arm in arms {
