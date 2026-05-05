@@ -26,7 +26,10 @@ typedef struct {
 #define PTR_TO_HEADER(p) ((NovaRcHeader*)((char*)(p) - HEADER_SIZE))
 #define HEADER_TO_PTR(h) ((void*)((char*)(h) + HEADER_SIZE))
 
-void nova_gc_init(void) {}
+static size_t _alloc_count = 0;
+static size_t _free_count  = 0;
+
+void nova_gc_init(void)     { _alloc_count = 0; _free_count = 0; }
 void nova_gc_shutdown(void) {}
 
 void* nova_alloc(size_t size) {
@@ -38,6 +41,7 @@ void* nova_alloc(size_t size) {
     h->refcount = 1;
     void* p = HEADER_TO_PTR(h);
     memset(p, 0, size);
+    _alloc_count++;
     return p;
 }
 
@@ -52,5 +56,11 @@ void nova_release(void* ptr) {
     NovaRcHeader* h = PTR_TO_HEADER(ptr);
     if (--h->refcount == 0) {
         free(h);
+        _free_count++;
     }
 }
+
+size_t nova_gc_alloc_count(void) { return _alloc_count; }
+size_t nova_gc_free_count(void)  { return _free_count; }
+size_t nova_gc_live_count(void)  { return _alloc_count - _free_count; }
+void   nova_gc_reset_stats(void) { _alloc_count = 0; _free_count = 0; }
