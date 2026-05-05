@@ -13,6 +13,25 @@ typedef int64_t  nova_int;
 typedef double   nova_f64;
 typedef float    nova_f32;
 typedef bool     nova_bool;
+
+/* ---- Closure representation ---- */
+/* Closures are stored as void* pointing to a struct { fn_ptr; void* env }. */
+/* fn_ptr takes (void* env, args...) and returns the result type. */
+typedef nova_int(*nova_fn_vi)(void*);
+typedef struct { nova_fn_vi fn; void* env; } NovaClos_vi;
+typedef nova_int(*nova_fn_ii)(void*, nova_int);
+typedef struct { nova_fn_ii fn; void* env; } NovaClos_ii;
+typedef nova_bool(*nova_fn_ib)(void*, nova_int);
+typedef struct { nova_fn_ib fn; void* env; } NovaClos_ib;
+typedef nova_int(*nova_fn_iii)(void*, nova_int, nova_int);
+typedef struct { nova_fn_iii fn; void* env; } NovaClos_iii;
+typedef nova_int(*nova_fn_vii)(void*, void*, nova_int);
+typedef struct { nova_fn_vii fn; void* env; } NovaClos_vii;
+#define NOVA_CLOS_CALL_vi(f)        (((NovaClos_vi*)(f))->fn(((NovaClos_vi*)(f))->env))
+#define NOVA_CLOS_CALL_ii(f, a)     (((NovaClos_ii*)(f))->fn(((NovaClos_ii*)(f))->env, (a)))
+#define NOVA_CLOS_CALL_ib(f, a)     (((NovaClos_ib*)(f))->fn(((NovaClos_ib*)(f))->env, (a)))
+#define NOVA_CLOS_CALL_iii(f,a,b)   (((NovaClos_iii*)(f))->fn(((NovaClos_iii*)(f))->env, (a), (b)))
+#define NOVA_CLOS_CALL_vii(f,a,b)   (((NovaClos_vii*)(f))->fn(((NovaClos_vii*)(f))->env, (a), (b)))
 typedef uint8_t  nova_byte;
 
 /* ---- String ---- */
@@ -92,6 +111,18 @@ static inline nova_str nova_str_concat(nova_str a, nova_str b) {
 
 static inline nova_bool nova_str_eq(nova_str a, nova_str b) {
     return a.len == b.len && memcmp(a.ptr, b.ptr, a.len) == 0;
+}
+
+/* nova_str_char_len: count UTF-8 code points (not bytes).
+ * Leading bytes of multi-byte sequences start with 11xxxxxx; continuation
+ * bytes start with 10xxxxxx and are skipped. ASCII bytes (0xxxxxxx) count 1. */
+static inline nova_int nova_str_char_len(nova_str s) {
+    nova_int count = 0;
+    for (size_t i = 0; i < s.len; i++) {
+        unsigned char c = (unsigned char)s.ptr[i];
+        if ((c & 0xC0) != 0x80) count++;
+    }
+    return count;
 }
 
 /* nova_int_to_str: convert integer to string */
