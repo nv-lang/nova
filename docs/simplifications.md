@@ -47,12 +47,17 @@
   `for n in arr` генерирует `for (int64_t _i=0; _i<arr->len; _i++) { T n = arr->data[_i]; ... }`.
   Тип элемента выводится через `infer_expr_c_type`. Тест: `tests-nova/39_for_in_array.nv` (11 assert).
 
-### [C6] Generics — не реализованы (mangle как Nova_Name)
-- **Где:** `emit_c.rs` → `type_ref_to_c`
-- **Что упрощено:** Generic параметры игнорируются, тип генерируется как `Nova_Name*` без специализации.
-- **Почему:** Монаморфизация требует отдельного прохода и отслеживания специализаций.
-- **Как чинить:** Прохождение по всем call sites, сбор конкретных типов, повторная генерация типа и функций для каждой специализации.
-- **Приоритет:** H
+### [ЗАКР] Generics — не реализованы (mangle как Nova_Name) — [C6]
+- **Закрыто:** Реализован type erasure для generics (2026-05-06):
+  - Generic free functions: T-params → void*, return → void*; call sites box args
+  - Generic records: T-fields → void*, []T → NovaArray_nova_int*
+  - void* boxing: nova_int через (void*)(intptr_t)(v), nova_str через heap-ptr
+  - Tuple returns: generic_fn_tuple_arity + tuple_element_types для p.0/p.1 access
+  - Generic methods: arg boxing на call sites, void*→nova_int cast в bodies
+  - Match arm coercion: nova_int↔nova_str в erased contexts
+  - Все 39 тестов проходят, включая 19_generics и 33_stack_queue.
+- **Остаток:** Stack[str] работает через pointer-as-int — значения корректны только для Stack[int]. Полная монаморфизация нужна для Stack[str].
+- **Приоритет:** M (монаморфизация)
 
 ### [C7] Index выражения — прямое разыменование без bounds check
 - **Где:** `emit_c.rs` → `ExprKind::Index`

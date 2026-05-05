@@ -173,19 +173,48 @@ run_deep_tests.bat собирает все 4 комбинации (test_gc + tes
       sequential fibers, fib(25)/factorial inside fiber, records.
 
 ================================================================================
-5. ТЕКУЩЕЕ СОСТОЯНИЕ (2026-05-05)
+5. ТЕКУЩЕЕ СОСТОЯНИЕ (2026-05-06)
 ================================================================================
 
-Все 11 примеров компилируются и запускают корректно:
-  hello, arithmetic, records, match_demo, effects, effects_d61,
-  strings, spawn, with_tests, gc_coroutines_test, demo
+Все примеры компилируются и запускают корректно.
 
-Nova-уровневые тесты: 38 файлов в tests-nova/, включая:
-  37_deep_gc.nv (18 тестов), 38_deep_spawn.nv (28 тестов)
+Nova-уровневые тесты: 39/39 файлов в tests-nova/ — 100% pass rate.
+  tests-nova/37_deep_gc.nv   (18 тестов)
+  tests-nova/38_deep_spawn.nv (28 тестов)
+  tests-nova/39_for_in_array.nv и т.д.
 Runtime C-тесты: nova_rt/test_gc_deep.c (23 assert), test_fibers_deep.c (31 assert)
 
+================================================================================
+8. C-БЭКЕНД: CLOSURES И GENERICS (2026-05-06)
+================================================================================
+
+Реализованы и протестированы (39/39 тестов):
+
+CLOSURES (тест 05, 21, 27):
+  - Все лямбды используют NovaClos_XX структуры: { fn_ptr; void* env }
+  - Тело: static T body(void* _env_ptr, params...) — единая сигнатура
+  - Env-struct: { captured vars } heap-allocated, для non-capturing: { int _dummy }
+  - fn_param_sigs: fn-typed параметры вызываются через NOVA_CLOS_CALL_XX макросы
+  - fn_returns_fn_sig: let b = make_adder(5) — b регистрируется как closure
+  - Buffered emission: lambda forward decls + impls флашатся перед каждой функцией
+
+TRAILING BLOCKS (тест 15):
+  - run() { body } — тело блока оборачивается в NovaClos_vi (0 params → int)
+  - NovaClos_vi + NOVA_CLOS_CALL_vi добавлены в nova_rt.h для fn()→int case
+  - Тело берёт (void* _env_ptr, params...) как и обычные closures
+
+GENERICS — TYPE ERASURE (тест 19, 33):
+  - Generic free functions: все T-params → void*, return → void*
+  - Generic records: T-fields → void*, []T → NovaArray_nova_int*
+  - void* boxing: nova_int/bool через (void*)(intptr_t)(v); nova_str через heap-ptr
+  - generic_fn_tuple_arity: pair[A,B]() → arity=2, call sites populate tuple_element_types
+  - Tuple field access на void* (p.0, p.1): cast к _NovaTupleN* + unbox по elem_ty
+  - infer_expr_c_type(Member): tuple_element_types проверяется до void* early-return
+  - Generic methods (Stack[T]): call sites boxing args → void*; body: void* → nova_int cast
+  - Array push с void* param: (nova_int)(intptr_t)(v)
+  - Match arm coercion: nova_int → nova_str через *(nova_str*)(intptr_t)(x) для erased contexts
+
 Следующие шаги:
-  - Generics / монаморфизация
-  - Строки с форматированием (f-strings)
+  - Полная монаморфизация generics для Stack[str] и подобных
+  - Строки с форматированием (f-strings / tagged templates)
   - stdlib скелет
-  - Паттерн-матчинг расширенный (if-let, while-let)
