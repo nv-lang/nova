@@ -1815,7 +1815,7 @@ impl CEmitter {
     // ---- for loop ----
 
     fn emit_for(&mut self, pattern: &Pattern, iter: &Expr, body: &Block) -> Result<String, String> {
-        // Only handle Range for now: `for i in 0..N`
+        // Case 1: `for i in start..end`
         if let ExprKind::Range { start, end, inclusive } = &iter.kind {
             let binding = self.pattern_binding(pattern)?;
             let s = self.emit_expr(start)?;
@@ -1831,12 +1831,55 @@ impl CEmitter {
             for stmt in &body.stmts {
                 self.emit_stmt(stmt)?;
             }
+            if let Some(trailing) = &body.trailing {
+                let v = self.emit_expr(trailing)?;
+                self.line(&format!("(void)({});", v));
+            }
             self.indent -= 1;
             self.line("}");
             self.line(&format!("{} = NOVA_UNIT;", tmp));
             return Ok(tmp);
         }
-        Err("for-in only supports Range (0..N) in Phase 1 codegen".into())
+
+        // Case 2: `for elem in array_expr`
+        // Emit: { NovaArray_T* _arr = <iter>; for (int64_t _i = 0; _i < _arr->len; _i++) { T elem = _arr->data[_i]; ... } }
+        let arr_ty = self.infer_expr_c_type(iter);
+        if arr_ty.starts_with("NovaArray_") {
+            let elem_ty = arr_ty
+                .strip_prefix("NovaArray_").unwrap_or("nova_int")
+                .trim_end_matches('*').trim()
+                .to_string();
+            let binding = self.pattern_binding(pattern)?;
+            let arr_tmp = self.fresh_tmp();
+            let idx_tmp = self.fresh_tmp();
+            let result_tmp = self.fresh_tmp();
+
+            let arr_expr = self.emit_expr(iter)?;
+            self.line(&format!("{} {} = {};", arr_ty, arr_tmp, arr_expr));
+            self.var_types.insert(arr_tmp.clone(), arr_ty.clone());
+
+            self.line(&format!("nova_unit {};", result_tmp));
+            self.line(&format!(
+                "for (nova_int {} = 0; {} < {}->len; {}++) {{",
+                idx_tmp, idx_tmp, arr_tmp, idx_tmp
+            ));
+            self.indent += 1;
+            self.line(&format!("{} {} = {}->data[{}];", elem_ty, binding, arr_tmp, idx_tmp));
+            self.var_types.insert(binding.clone(), elem_ty);
+            for stmt in &body.stmts {
+                self.emit_stmt(stmt)?;
+            }
+            if let Some(trailing) = &body.trailing {
+                let v = self.emit_expr(trailing)?;
+                self.line(&format!("(void)({});", v));
+            }
+            self.indent -= 1;
+            self.line("}");
+            self.line(&format!("{} = NOVA_UNIT;", result_tmp));
+            return Ok(result_tmp);
+        }
+
+        Err(format!("for-in: unsupported iterator type '{}' — only Range and Array are supported", arr_ty))
     }
 
     // ---- match ----
