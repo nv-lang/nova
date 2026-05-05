@@ -280,13 +280,47 @@ if elapsed > 1.second() { ... }           // вызывает @gt
 
 **Договорные конвенции:**
 - `T.new(...)` — стандартный конструктор; `T.from_X(...)` — из значения.
-- `@show()` — display, `@hash()` — хеш, `@clone()` — копия, `@iter()`/`@next()` — iterator.
+- `@to_str()` — конверсия в строку через `ToStr` ([D70](decisions/08-runtime.md#d70)),
+  `@hash()` — хеш, `@clone()` — копия, `@iter()`/`@next()` — iterator.
 - `@is_X()` — bool-предикат; `@as_X()` — дешёвая конверсия; `@to_X()` —
   возможно дорогая.
 - `_prefix` — **только для полей** (используй методы вместо прямого
   доступа). Для функций/методов **не используется**.
 - Test-имена — строки естественного языка: `test "insert and get"`,
   не `"test_insert_and_get"`.
+
+### Зарезервированные identifier'ы
+
+Помимо grammar-keyword'ов, Nova имеет identifier'ы со специальной
+семантикой, известной компилятору. Их можно переопределить локально,
+но это анти-паттерн (линтер предупреждает).
+
+**Special types:**
+- `Self` — referential type, refers к receiver-типу метода или типу,
+  удовлетворяющему protocol'у ([D66](decisions/02-types.md#d66)).
+  Валиден в любом type-контексте.
+- `any` — top-type для runtime type-check ([D54](decisions/03-syntax.md#d54)).
+- `Never` — bottom-type для не-возвращающих функций.
+
+**Prelude types:**
+- `Option[T]`, `Some(v)`, `None` — sum-тип
+- `Result[T, E]`, `Ok(v)`, `Err(e)` — sum-тип
+- `Error` — record `{ msg str }` для `throw err`
+- `RuntimeError` — sum bottom-уровневых runtime-ошибок
+- `Handler[E]` — first-class тип handler'а эффекта
+- `ToStr` — protocol с методом `@to_str() -> str` ([D70](decisions/08-runtime.md#d70))
+
+**Стандартные эффекты:**
+- `Fail[E]`, `Fail` — failable-эффект
+- `Io`, `Net`, `Db`, `Fs`, `Time`, `Random`, `Log`, `Trace` — основные
+- `Ask[T]` — Reader-style контекст
+- `Alloc[R]` — аллокация в region
+- `Detach`, `Blocking` — ([D50](decisions/06-concurrency.md#d50))
+
+**Примитивные типы (lowercase, исключение из PascalCase-правила):**
+- `int`, `i8`, `i16`, `i32`, `i64`, `u8`, `u16`, `u32`, `u64`
+- `f32`, `f64`
+- `str`, `bool`, `byte`
 
 Подробно — [D30](decisions/03-syntax.md#d30), [D46](decisions/03-syntax.md#d46), [D47](decisions/07-modules.md#d47).
 

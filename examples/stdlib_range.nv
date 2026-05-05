@@ -32,10 +32,10 @@ export type Range {
 // Литералы `0..5`/`0..=5` разворачиваются компилятором в эти
 // конструкторы (D58). Static-функции на типе доступны и вручную.
 
-export fn Range.exclusive(start int, end int) -> Range =>
+export fn Range.exclusive(start int, end int) -> Self =>
     { start, end, inclusive: false }
 
-export fn Range.inclusive(start int, end int) -> Range =>
+export fn Range.inclusive(start int, end int) -> Self =>
     { start, end, inclusive: true }
 
 

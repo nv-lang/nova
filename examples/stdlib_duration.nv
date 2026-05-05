@@ -36,14 +36,15 @@ export const ZERO Duration = { nanos: 0 }    // D55: имя Duration из анн
 // `-> Duration` оставляем явно для public API — это документация
 // возвращаемого типа в stdlib (см. D45 style guide для export-функций).
 
-// D55: имя Duration выводится из `-> Duration`, в литерале опускаем.
-export fn Duration.from_nanos(n i64) -> Duration => { nanos: n }
-export fn Duration.from_micros(n i64) -> Duration => { nanos: n * 1_000 }
-export fn Duration.from_millis(n i64) -> Duration => { nanos: n * 1_000_000 }
-export fn Duration.from_secs(n i64) -> Duration => { nanos: n * 1_000_000_000 }
-export fn Duration.from_mins(n i64) -> Duration => { nanos: n * 60 * 1_000_000_000 }
-export fn Duration.from_hours(n i64) -> Duration => { nanos: n * 3_600 * 1_000_000_000 }
-export fn Duration.from_days(n i64) -> Duration => { nanos: n * 86_400 * 1_000_000_000 }
+// D55: имя Duration выводится из `-> Self`, в литерале опускаем.
+// D66: `Self` в return type — DRY, без повтора имени Duration.
+export fn Duration.from_nanos(n i64) -> Self => { nanos: n }
+export fn Duration.from_micros(n i64) -> Self => { nanos: n * 1_000 }
+export fn Duration.from_millis(n i64) -> Self => { nanos: n * 1_000_000 }
+export fn Duration.from_secs(n i64) -> Self => { nanos: n * 1_000_000_000 }
+export fn Duration.from_mins(n i64) -> Self => { nanos: n * 60 * 1_000_000_000 }
+export fn Duration.from_hours(n i64) -> Self => { nanos: n * 3_600 * 1_000_000_000 }
+export fn Duration.from_days(n i64) -> Self => { nanos: n * 86_400 * 1_000_000_000 }
 
 
 // ──────────────────────────────────────────────────────────────────────────

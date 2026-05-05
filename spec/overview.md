@@ -82,6 +82,32 @@
 - **Mock-библиотеки** — handler'ы из языка
 - **Скрытые импорты** — каждый идентификатор виден откуда
 
+## Зарезервированные identifier'ы
+
+Помимо grammar-keyword'ов (`fn`, `type`, `effect`, `handler`, `let`,
+`if`, `match`, `return`, ... — около 38 слов), Nova имеет
+**identifier'ы с зарезервированной семантикой**. Они парсятся как
+обычные имена, но компилятор знает их специальное значение в
+определённых контекстах.
+
+| Identifier | Категория | Где валиден | См. |
+|---|---|---|---|
+| `Self` | referential type | в любом type-контексте — refers к receiver-типу метода / типу удовлетворяющему protocol'у | [D66](decisions/02-types.md#d66) |
+| `any` | top-type | везде; runtime type-tag для downcast'а | [D54](decisions/03-syntax.md#d54) |
+| `Never` | bottom-type | return type не-возвращающих функций (`throw`, `panic`, `loop`) | [D26](decisions/08-runtime.md#d26) |
+| `Option[T]`, `Some`, `None` | sum-тип в prelude | везде | [D26](decisions/08-runtime.md#d26) |
+| `Result[T, E]`, `Ok`, `Err` | sum-тип в prelude | везде | [D26](decisions/08-runtime.md#d26) |
+| `Error` | record-тип в prelude | для `throw err` | [D26](decisions/08-runtime.md#d26) |
+| `RuntimeError` | sum-тип в prelude | bottom-уровневые runtime-ошибки | [D26](decisions/08-runtime.md#d26) |
+| `Handler[E]` | first-class тип handler'а эффекта `E` | везде | [D61](decisions/04-effects.md#d61) |
+| `Fail[E]`, `Fail` | стандартный эффект | в effect-row сигнатуры | [D25](decisions/04-effects.md#d25), [D65](decisions/04-effects.md#d65) |
+| `Io`, `Net`, `Db`, `Fs`, `Time`, `Random`, `Log`, `Trace`, `Ask[T]`, `Alloc[R]`, `Detach`, `Blocking` | стандартные эффекты | в effect-row сигнатуры | [D2 (REVISED)](decisions/04-effects.md#d2), [D50](decisions/06-concurrency.md#d50) |
+| `int`, `i8`-`i64`, `u8`-`u64`, `f32`, `f64`, `str`, `bool`, `byte` | примитивные типы | везде | [D44](decisions/03-syntax.md#d44), [D27](decisions/03-syntax.md#d27) |
+
+Эти identifier'ы можно **переопределить локально** (например, тип
+`Net` пользовательской библиотеки), но это — анти-паттерн. Линтер
+выдаст warning.
+
 ## Главные trade-offs
 
 1. **Algebraic effects сложны в реализации** — это передовой край PL,
