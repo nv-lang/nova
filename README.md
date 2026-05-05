@@ -2,12 +2,9 @@
 
 # Nova
 
-A hypothetical programming language with **one central abstraction**
+A programming language with **one central abstraction**
 (algebraic effects + handlers) and **one killer use-case** (AI-first
 programming with verifiable LLM-written code).
-
-This is a design document, not an implementation. It evolves through
-discussion.
 
 > ⚠️ The full language specification is currently only available in
 > Russian. See [spec/decisions/](spec/decisions/) and [spec/](spec/). This
@@ -28,6 +25,8 @@ discussion.
 - [spec/effects.md](spec/effects.md) — effect system (introduction)
 - [spec/open-questions.md](spec/open-questions.md) — unresolved questions
 - [spec/decisions/](spec/decisions/) — design decision log with rationale
+- [compiler-bootstrap/](compiler-bootstrap/) — treewalk interpreter (Rust)
+- [compiler-codegen/](compiler-codegen/) — C-backend compiler (Rust → C → native)
 
 ## What follows from a single idea
 
@@ -64,8 +63,12 @@ programmer writes nothing special. See [spec/decisions/05-memory.md#d6](spec/dec
 
 ## Status
 
-Conceptual draft. The main goal of this document is to capture design
-decisions and the reasoning behind them.
+Active development. The specification is stable across core features (effects,
+handlers, syntax, memory, concurrency). Two compilers exist:
+
+- **compiler-bootstrap** — treewalk interpreter, runs all spec tests
+- **compiler-codegen** — compiles Nova to C via a native runtime (effects,
+  fibers, GC); used for benchmarking and validation against the spec
 
 ## License
 

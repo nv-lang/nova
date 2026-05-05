@@ -1,37 +1,70 @@
-# Nova bootstrap compiler
+# Nova codegen compiler
 
-Минимальный treewalk-интерпретатор Nova на Rust. Цель — поддержать
-достаточно языковых фич для того, чтобы переписать компилятор уже на
-Nova (self-hosting в v2.0).
+Компилятор Nova с C-бэкендом: парсер + type checker + treewalk-интерпретатор + codegen в C. Цель — компилировать Nova в нативный бинарь через C (GCC/Clang).
 
-## Что в нём есть
+## Что внутри
 
-- Лексер всех токенов (D27/D44/D49)
-- Парсер: модули, типы, выражения, декларации; D17/D52/D55/D58/D59/D60
-- Resolve и базовая проверка имён
+- Лексер, парсер, AST — форк из bootstrap с доработками
 - Type checker с inference для локальных переменных и эффектов
-  (D28). Generics через мономорфизацию.
-- Treewalk-интерпретатор + handler-стек (D10/D31)
-- Минимальные эффекты: `Io`, `Fail[E]`, `Random`
-- CLI: `nova run`, `nova check`, `nova test`
+- Treewalk-интерпретатор (те же возможности, что у bootstrap)
+- **C-бэкенд** (`src/codegen/emit_c.rs`) — генерирует `.c` файл
+- **Runtime** (`nova_rt/`) — заголовки и реализации:
+  - `alloc.{h,c}` — аллокатор (ref-counting + опциональный Boehm GC)
+  - `effects.{h,c}` — механизм эффектов (handler-стек, D61)
+  - `fibers.{h,c}` — файберы через minicoro (stackful coroutines)
+  - `nova_rt.h` — единый include для сгенерированного кода
+- CLI: `nova-codegen check`, `run`, `test`, `compile`
+
+## Что поддерживает codegen
+
+- Примитивные типы: `int`, `f64`, `f32`, `bool`, `str`, `byte`
+- Records, sum types (match)
+- Функции, методы, generics (через мономорфизацию)
+- Эффекты и handlers (D61: `handler` keyword, `with X = h`, `interrupt`)
+- `spawn() { ... }` через файберы (minicoro)
+- `let`, `mut`, арифметика, строки, `println`
 
 ## Чего нет (намеренно)
 
-- LLVM codegen — интерпретатор достаточно для написания компилятора
-- Concurrent GC — циклы текут, для bootstrap'а ок
-- Async/Par fiber-runtime — синхронный исполняется
+- Concurrent GC — ref-counting достаточно для текущих примеров
+- `supervised`, `parallel for`, `race` — файберы есть, structured concurrency впереди
 - SMT contracts — парсятся, не проверяются
-- Comptime/macros, region/Realtime, JIT, hot reload, time-travel
-- LSP, package manager, doc generator, formatter
+- Comptime/macros, region/Realtime, JIT, hot reload
+- LSP, package manager, formatter
 
 ## Запуск
 
 ```sh
 cargo build --release
-cargo test
+
+# Интерпретировать
 cargo run -- run examples/hello.nv
-cargo run -- check examples/effects.nv
-cargo run -- test examples/
+
+# Скомпилировать в C
+cargo run -- compile examples/hello.nv          # -> examples/hello.c
+cargo run -- compile examples/effects.nv -o out.c
+
+# Type-check без запуска
+cargo run -- check examples/records.nv
+
+# Тесты
+cargo run -- test examples/with_tests.nv
+cargo test
+```
+
+## Сборка нативного бинаря
+
+После `compile` компилируем через GCC/Clang:
+
+```sh
+gcc examples/hello.c nova_rt/alloc.c nova_rt/effects.c nova_rt/fibers.c \
+    -Inova_rt -o hello && ./hello
+```
+
+На Windows (через `build_c.bat`):
+
+```bat
+build_c.bat examples\hello.c
 ```
 
 ## Структура
@@ -43,9 +76,11 @@ src/
   ast/        типы AST
   types/      type checker + effect inference
   interp/     treewalk interpreter
+  codegen/    C-бэкенд (emit_c.rs)
   diag/       структурированные ошибки
   lib.rs
   main.rs
+nova_rt/      C runtime (alloc, effects, fibers, minicoro)
+examples/     .nv файлы + сгенерированные .c + скомпилированные .exe
 tests/        интеграционные тесты
-examples/     минимальные тестовые программы
 ```

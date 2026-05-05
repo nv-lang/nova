@@ -2,11 +2,9 @@
 
 # Nova
 
-Гипотетический язык программирования с **одной центральной абстракцией**
+Язык программирования с **одной центральной абстракцией**
 (алгебраические эффекты + handler'ы) и **одним killer use-case**
 (AI-first программирование с верифицируемым кодом от LLM).
-
-Дизайн-документ, не реализация. Накапливается в ходе обсуждения.
 
 ## Главный тезис
 
@@ -17,12 +15,14 @@
 ## Содержание
 
 - [spec/overview.md](spec/overview.md) — главные идеи, что заимствует у кого, tooling
-- [spec/revolutionary.md](spec/revolutionary.md) — **революционные возможности**:
+- [spec/revolutionary.md](spec/revolutionary.md) — **флагманские возможности**:
   effects + handlers, AI-first дизайн, контракты, time-travel debugging
 - [spec/syntax.md](spec/syntax.md) — примеры синтаксиса
 - [spec/effects.md](spec/effects.md) — система эффектов (базовое введение)
 - [spec/open-questions.md](spec/open-questions.md) — нерешённые вопросы
 - [spec/decisions/](spec/decisions/) — журнал дизайн-решений с эволюцией
+- [compiler-bootstrap/](compiler-bootstrap/) — treewalk-интерпретатор (Rust)
+- [compiler-codegen/](compiler-codegen/) — C-бэкенд компилятор (Rust → C → нативный бинарь)
 
 ## Из чего следует всё остальное
 
@@ -59,8 +59,12 @@ fn map_audio(samples []f32, gain f32) Realtime -> []f32 =>
 
 ## Статус
 
-Концептуальный набросок. Главная цель документа — фиксировать
-дизайн-решения и причины за ними.
+Активная разработка. Спецификация стабильна по ключевым областям (эффекты,
+handlers, синтаксис, память, конкуренция). Существуют два компилятора:
+
+- **compiler-bootstrap** — treewalk-интерпретатор, запускает все spec-тесты
+- **compiler-codegen** — компилирует Nova в C через нативный runtime (эффекты,
+  файберы, GC); используется для проверки реализации против спецификации
 
 ## Лицензия
 

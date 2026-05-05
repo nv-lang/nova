@@ -86,8 +86,8 @@ select {
 
 // cancel_scope — ручное управление отменой
 cancel_scope { tok =>
-    spawn() { do_thing(tok) }
-    spawn() { do_other(tok) }
+    spawn do_thing(tok)
+    spawn do_other(tok)
 }
 
 // with_timeout — bound на время выполнения
@@ -244,6 +244,17 @@ fn fan_out(urls []str) Net Fail -> []Response =>
 
 #### 2. `spawn` — только в structured-scope
 
+`spawn` — keyword-конструкция (не функция). Синтаксис: `spawn expr`, где
+`expr` — любое выражение: вызов функции, блок, и т.д.
+
+```nova
+spawn fetch_users()          // вызов функции
+spawn { compute(x) }         // inline-блок
+```
+
+`spawn()` с пустыми скобками — **запрещено**: скобки не несут смысла и
+создают иллюзию вызова функции. Подробно — [D43](03-syntax.md#d43).
+
 `spawn` **запрещён** вне structured-блока. Допустимые скоупы:
 `supervised`, `parallel for`, `race`, `select`, `cancel_scope`,
 `with_timeout`. Вне такого скоупа `spawn foo()` — ошибка компиляции.
@@ -251,13 +262,13 @@ fn fan_out(urls []str) Net Fail -> []Response =>
 ```nova
 // ✓ ОК — spawn внутри supervised
 supervised {
-    spawn() { fetch_a() }
-    spawn() { fetch_b() }
+    spawn fetch_a()
+    spawn fetch_b()
 }
 
 // ✗ ОШИБКА компиляции — spawn вне scope'а
 fn handler(req Request) Net -> Response =>
-    spawn() { write_audit(req) }   // ← запрещено
+    spawn write_audit(req)   // ← запрещено
     Response.ok()
 ```
 

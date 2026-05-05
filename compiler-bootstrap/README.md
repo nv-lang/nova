@@ -1,27 +1,30 @@
 # Nova bootstrap compiler
 
-Минимальный treewalk-интерпретатор Nova на Rust. Цель — поддержать
-достаточно языковых фич для того, чтобы переписать компилятор уже на
-Nova (self-hosting в v2.0).
+Treewalk-интерпретатор Nova на Rust. Цель — поддержать достаточно языковых
+фич для написания компилятора на самой Nova (self-hosting в v2.0).
 
 ## Что в нём есть
 
-- Лексер всех токенов (D27/D44/D49)
-- Парсер: модули, типы, выражения, декларации; D17/D52/D55/D58/D59/D60
-- Resolve и базовая проверка имён
-- Type checker с inference для локальных переменных и эффектов
-  (D28). Generics через мономорфизацию.
-- Treewalk-интерпретатор + handler-стек (D10/D31)
-- Минимальные эффекты: `Io`, `Fail[E]`, `Random`
+- Лексер, парсер, AST — все текущие конструкции языка
+- Type checker с inference для локальных переменных и эффектов (D28).
+  Generics через мономорфизацию.
+- Treewalk-интерпретатор + handler-стек
+- Эффекты: `Io`, `Fail[E]`, `Random`, `Log`, пользовательские
+- Handler-литералы через `handler` keyword (D61), `interrupt`, прямой вызов на handler-значении
+- `forbid X { ... }` — capability sandbox (D63)
+- `realtime { ... }` — маркер реального времени (D64), без GC-пауз (семантика, в bootstrap просто блок)
+- `Self` как универсальный self-тип в методах и handler'ах (D66)
+- Stateful handlers через closure capture (D68)
+- `spawn() { ... }` — выполняется синхронно (fiber runtime отсутствует)
 - CLI: `nova run`, `nova check`, `nova test`
 
 ## Чего нет (намеренно)
 
-- LLVM codegen — интерпретатор достаточно для написания компилятора
+- C/LLVM codegen — для этого есть `compiler-codegen/`
 - Concurrent GC — циклы текут, для bootstrap'а ок
-- Async/Par fiber-runtime — синхронный исполняется
+- Fiber runtime — `spawn()` исполняется синхронно
 - SMT contracts — парсятся, не проверяются
-- Comptime/macros, region/Realtime, JIT, hot reload, time-travel
+- Comptime/macros, JIT, hot reload, time-travel
 - LSP, package manager, doc generator, formatter
 
 ## Запуск
@@ -31,7 +34,7 @@ cargo build --release
 cargo test
 cargo run -- run examples/hello.nv
 cargo run -- check examples/effects.nv
-cargo run -- test examples/
+cargo run -- test tests-nova/13_effects.nv
 ```
 
 ## Структура
@@ -46,6 +49,7 @@ src/
   diag/       структурированные ошибки
   lib.rs
   main.rs
-tests/        интеграционные тесты
-examples/     минимальные тестовые программы
+tests/        интеграционные тесты (Rust)
+tests-nova/   тесты на самой Nova (01_literals … 36_self_universal)
+examples/     демо-программы
 ```

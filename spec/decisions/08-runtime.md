@@ -114,8 +114,8 @@ fn handle_request(r Request) Db Log -> Response =>
 
 fn server() Net Fail -> () {
     supervised {
-        spawn() { handle_requests() }
-        spawn() { periodic_cleanup() }
+        spawn handle_requests()
+        spawn periodic_cleanup()
     } strategy = one_for_one, max_restarts = 3
     // supervisor рестартует упавшие fiber'ы
 }

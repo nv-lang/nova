@@ -163,10 +163,6 @@ fn save(u User) Fail Db            // эффекты + dropped -> ()
 даже без других аргументов:
 
 ```nova
-spawn() {
-    handle_request(req)
-}
-
 with_timeout(2.seconds) {
     Db.exec(sql`UPDATE counters SET v = v + 1`)
 }
@@ -176,7 +172,6 @@ list.fold(0) { (acc, x) => acc + x }
 ```
 
 **Правила:**
-- `()` всегда — `spawn { body }` ❌, `spawn() { body }` ✅.
 - `{` на той же строке, что `)`. Перенос между ними запрещён.
 - Параметры через `=>`: `{ x => stmts; expr }`, `{ (a, b) => stmts; expr }`,
   `{ stmts; expr }` (без параметров).
@@ -184,6 +179,9 @@ list.fold(0) { (acc, x) => acc + x }
   выражение, как у блок-формы `fn`.
 - Тип последнего параметра должен быть функциональным.
 - Один trailing на вызов.
+
+`spawn` — keyword-конструкция, не функция, поэтому не подчиняется правилу D43.
+Его синтаксис описан отдельно ниже.
 
 Короткие лямбды (одно выражение) — в скобках, через `=> expr`:
 ```nova
@@ -1014,6 +1012,26 @@ fn map_eff[T, U, E](xs []T, f (T) E -> U) E -> []U =>
 Подробно — [D16](decisions/03-syntax.md#d16).
 Массивы — `[]T` (динамический), `[N]T` (фиксированный), [D27](decisions/03-syntax.md#d27).
 
+## spawn
+
+`spawn` — keyword-конструкция (не функция). Запускает выражение в отдельном
+fiber'е и возвращает его результат. Разрешён только внутри structured-scope
+(`supervised`, `parallel for`, `race`, `cancel_scope`, `with_timeout`).
+
+```nova
+// spawn + вызов функции
+spawn fetch_users()
+
+// spawn + блок
+let r = spawn { compute() }
+
+// spawn + блок с захватом переменной
+let x = 42
+let r2 = spawn { x * 2 }
+```
+
+`spawn() { body }` — **запрещено** (пустые скобки без смысла; `spawn` не функция).
+
 ## Supervision (Erlang-style, встроена)
 
 ```nova
@@ -1021,7 +1039,7 @@ fn server() Net Fail -> () =>
     supervised {
         spawn handle_requests()
         spawn periodic_cleanup()
-        spawn metrics_reporter()
+        spawn metrics_reporters()
     } strategy = one_for_one, max_restarts = 3
 ```
 
