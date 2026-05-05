@@ -91,6 +91,22 @@
 - **Как чинить:** Включить RC (`gc=rc`) или Boehm GC (`gc=boehm`) через build_c.bat.
 - **Приоритет:** L (Boehm GC уже есть как опция)
 
+### [R8] parallel for — не реализован
+- **Где:** `emit_c.rs` / spec D14, D50
+- **Что упрощено:** `parallel for x in iter { body }` (D14 пример: fan-out N HTTP-запросов
+  с join'ом всех в конце) — не реализован.
+- **Почему сложно:** Простой de-sugar `supervised { for x in iter { spawn { body } } }`
+  даёт неправильную семантику из-за capture-by-pointer: все отложенные fiber'ы внутри
+  scope'а получают указатель на ОДНУ ячейку `x`, которая после цикла указывает на
+  последний элемент. Результат: `parallel for x in [1,2,3] { sum += x }` даст 9 (3*3),
+  не 6 (1+2+3). Требует поддержки **value-capture** для loop-переменной (копировать
+  значение в ctx-struct, а не указатель).
+- **Как чинить:** В parser'е добавить `parallel` модификатор перед `for`. В codegen
+  для parallel-for spawn'а на каждой итерации эмитить ctx-struct с loop-переменной
+  по значению, а остальные captures — как обычно. Альтернатива — общее решение
+  через анализ "captured but iteration-local" имён.
+- **Приоритет:** M
+
 ### [R2] Fibers — partial structured concurrency (supervised есть, race/parallel/cancel — нет)
 - **Где:** `nova_rt/fibers.h` / `emit_c.rs`
 - **Что реализовано (2026-05-06):** `supervised { }` scope — round-robin scheduler через
