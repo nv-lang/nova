@@ -48,3 +48,5 @@ docs/.sessions/
 *.exe
 *.pdb
 *.ilk
+examples/**/*.c
+tests-nova/*.c
