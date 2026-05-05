@@ -122,6 +122,39 @@ Runtime (nova_rt/):
 Поэтому examples/ в корне, а не внутри compiler-*.
 
 ================================================================================
+6. ГЛУБОКИЕ ТЕСТЫ RUNTIME (nova_rt/)
+================================================================================
+
+После замечания что Nova-тесты не проверяют реальную работу GC и корутин:
+
+Добавлена инструментация в alloc.h / alloc.c / alloc_rc.c:
+  nova_gc_alloc_count()  — сколько раз вызван nova_alloc
+  nova_gc_free_count()   — сколько раз RC реально освободил память
+  nova_gc_live_count()   — alloc_count - free_count (сейчас живых объектов)
+  nova_gc_reset_stats()  — обнулить счётчики (изоляция тестов)
+
+test_gc_deep.c — 23 assert на malloc + RC:
+  - alloc_count инкрементируется на каждый nova_alloc
+  - free_count инкрементируется только в RC при refcount == 0
+  - retain предотвращает преждевременный free
+  - 10 sentinel-объектов выживают после 10000 промежуточных аллокаций
+  - linked list из 1000 узлов, sum=500500, в RC все узлы освобождены
+  - 100000 alloc+release циклов: RC: frees=100000 live=0
+
+test_fibers_deep.c — 31 assert:
+  - стек fiber отличается от caller на ~1.8TB (minicoro vmem)
+  - yield/resume порядок: caller-fiber-caller-fiber-caller = 1,2,3,4,5
+  - fib(30)=832040 внутри fiber (реальная глубина рекурсии)
+  - mutable counter через 5 yield/resume циклов
+  - два fiber с interleave: log 100,200,101,201... нет коррупции
+  - sentinel-переменные caller целы после fiber заполнившего стек 0xCC
+  - 1000 последовательных fiber: sum(1..1000)=500500
+  - state machine: INIT→PROCESSING(partial=14)→DONE(result=21) через yield
+  - GC-объект аллоцированный внутри fiber читается снаружи
+
+run_deep_tests.bat собирает все 4 комбинации (test_gc + test_fibers) x (malloc + RC).
+
+================================================================================
 5. ТЕКУЩЕЕ СОСТОЯНИЕ (2026-05-05)
 ================================================================================
 

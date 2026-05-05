@@ -151,3 +151,8 @@
 
 ### [ЗАКР] examples/ разбросаны по compiler-codegen/ и compiler-bootstrap/
 - **Закрыто:** Все .nv файлы перемещены в корневой `examples/`.
+
+### [ЗАКР] GC и fibers не имели глубоких тестов
+- **Закрыто:** `nova_rt/test_gc_deep.c` (23 assert, malloc+RC) и `nova_rt/test_fibers_deep.c`
+  (31 assert) проверяют alloc_count/free_count/live_count, RC lifecycle, раздельность стеков
+  fiber, yield/resume порядок, stack isolation, state machine через yield.
