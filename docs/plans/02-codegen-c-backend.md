@@ -55,6 +55,17 @@ void  nova_gc_shutdown(void);    // финализация
 - Подключить `minicoro.h` в `nova_rt/` (header-only, кросс-платформенная)
 - `spawn` / `parallel` → `mco_create` + scheduler loop
 
+### Фаза 5b — тест-блоки
+- `test "name" { body }` → статическая функция + setjmp-runner в nova_fn_main_impl
+- `assert(expr)` → `nova_assert(cond, "expr_text")` с текстом условия
+- NovaTestFrame в effects.h, _nova_test_frame TLS
+
+### Фаза 6 — массивы
+- `NovaArray_T` через NOVA_ARRAY_DECL/IMPL макросы (nova_rt/array.h)
+- ArrayLit, spread, `.len`, `.get(i)` → NovaOpt_T
+- Паттерны `[]`, `[x, ..]`, `[head, ..rest]` на массивах
+- Some(n)/None паттерны на NovaOpt_T (value struct)
+
 ## Статус
 
 | Фаза | Статус |
@@ -63,5 +74,14 @@ void  nova_gc_shutdown(void);    // финализация
 | 1 — синхронный subset | ✅ готово |
 | 2 — типы данных | ✅ готово |
 | 3 — замена GC | ✅ готово (alloc.c / alloc_rc.c / alloc_boehm.c) |
-| 4 — эффекты | ✅ готово (with/handler → thread-local vtable + ctx struct, captured vars через #define) |
+| 4 — эффекты | ✅ готово (with/handler → thread-local vtable + ctx struct, D61: interrupt, прямой vtable call) |
 | 5 — fiber'ы | ✅ готово (minicoro stackful coroutines, spawn { } → nova_fiber_run) |
+| 5b — тест-блоки | ✅ готово (test/assert → setjmp-runner, with_tests + gc_coroutines_test) |
+| 6 — массивы | ✅ готово (NovaArray_T макросы, spread, .len/.get, array patterns, demo.nv) |
+
+## Следующие шаги
+
+- Generics / монаморфизация (сейчас тип элемента массива = nova_int по умолчанию)
+- for-in по массивам (сейчас только Range)
+- f-string / строковая интерполяция
+- stdlib скелет

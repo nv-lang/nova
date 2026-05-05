@@ -1,0 +1,136 @@
+================================================================================
+КАК СОЗДАВАЛСЯ NOVA-LANG
+================================================================================
+
+Дневник работы над языком программирования Nova. Формат: по шагам, от
+первой идеи до текущего состояния. Цель — дать материал для статьи и
+для понимания принятых решений.
+
+Среда: Claude Code (Sonnet 4.6), Windows, MSVC, Rust.
+
+================================================================================
+ПРЕДЫСТОРИЯ
+================================================================================
+
+Nova — новый язык программирования, созданный с нуля. Цель: язык для
+прагматичных разработчиков с чистой моделью эффектов, без исключений,
+со структурированным concurrency и GC-управлением памятью.
+
+Ключевые идеи:
+  - Эффекты вместо исключений (Fail, Async, IO — все через эффекты)
+  - spawn { } вместо async/await (структурированный concurrency)
+  - Records + sum types, pattern matching
+  - Интерпретируемый + компилируемый через C-бэкенд
+
+================================================================================
+1. СПЕЦИФИКАЦИЯ ЯЗЫКА (spec/)
+================================================================================
+
+Написана параллельно с реализацией. Ключевые решения:
+
+D6  — realtime{} блоки как альтернатива `timing` эффекту
+D14 — `spawn { }` как выражение, возвращающее результат
+D50 — убраны `async`/`await`, весь concurrency через spawn + Async эффект
+D59 — паттерн-матчинг на массивах: `[x, ..]`, `[head, ..rest]`
+D60 — spread в массивах: `[0, ...arr, 4, 5]`
+D61 — handler keyword, прямой вызов методов handler-объекта (`h.flip()`)
+D62 — Async как ambient-эффект, не требует явного объявления
+D66 — Self universal: `Self` в типах методов указывает на тип реализатора
+D67 — `?` оператор через Fail эффект и ранний return из Option
+D68 — stateful handlers через closure capture или record + @method
+D69 — variadic параметры `...items []T`
+D70 — ToStr протокол + @to_str() метод
+
+================================================================================
+2. КОМПИЛЯТОР-BOOTSTRAP (compiler-bootstrap/)
+================================================================================
+
+Первая реализация: лексер, парсер, AST, type checker, treewalk-интерпретатор.
+Написан на Rust. Покрывает весь синтаксис Nova достаточно для прототипирования.
+
+================================================================================
+3. C-БЭКЕНД (compiler-codegen/)
+================================================================================
+
+Форк compiler-bootstrap с добавленным модулем codegen/emit_c.rs.
+Компилирует Nova AST → C → нативный бинарь через MSVC.
+
+Runtime (nova_rt/):
+  - alloc.{h,c}   — три реализации: malloc, ref-counting, Boehm GC
+  - fibers.{h,c}  — stackful coroutines через minicoro (header-only, x64 asm)
+  - effects.{h,c} — Fail/interrupt механизм через setjmp/longjmp + NovaTestFrame
+  - array.h       — NOVA_ARRAY_DECL/IMPL макросы для generic массивов
+  - nova_rt.h     — единый include
+
+Фазы реализации:
+
+  Фаза 1 (синхронный subset): fn, let, арифметика, if/else, return, println
+    Примеры: hello.nv, arithmetic.nv
+
+  Фаза 2 (типы данных): records → C struct, sum types → tagged union, match
+    Примеры: records.nv, match_demo.nv
+
+  Фаза 3 (GC): три заменяемые реализации alloc.c
+    alloc.c (malloc), alloc_rc.c (ref-counting), alloc_boehm.c (Boehm)
+
+  Фаза 4 (эффекты): with/handler → thread-local vtable pointer + ctx struct
+    D61: handler keyword, interrupt, прямой вызов h.flip() минуя with
+    Захваченные переменные через ctx-struct + #define cap (*_c->cap)
+    effects_d61.nv: Counter с return, Switch с interrupt, прямой vtable call
+    Фиксы: empty ctx struct → char _dummy (MSVC), infer_expr_c_type для vtable,
+    zero_literal_for_type для handler trailing NOVA_UNIT, last_is_return check
+
+  Фаза 5 (fibers): spawn { body } → nova_fiber_run(entry, &ctx) через minicoro
+    Закрытые переменные через ctx-struct с pointer fields
+    Pre-scan для stable handler/spawn IDs (два прохода по AST)
+    Pre-scan расширен на While/For/Loop/Match/Test тела
+    Wildcard binding через fresh_tmp() вместо фиксированного "_nova_unused"
+
+  Тест-блоки: test "name" { body } → статическая функция + setjmp-runner
+    assert(expr) → nova_assert(cond, "expr text") с текстом условия
+    Runner: N/M passed, exit(1) при провале
+    Примеры: with_tests.nv (4 теста, 1 намеренный fail)
+             gc_coroutines_test.nv (13 тестов — GC stress, spawn captures,
+             spawn mutations, pipeline, nested, record fields, factorial)
+
+  Фаза 6 (массивы): NovaArray_T через NOVA_ARRAY_DECL/IMPL макросы
+    ArrayLit → nova_array_new_T + push loop
+    Spread → inline while-loop копирования
+    .len → arr->len, .get(i) → NovaOpt_T с NOVA_TAG_Option_Some/None
+    Pattern::Array: [] / [x, ..] / [head, ..rest]
+    Some(n)/None на NovaOpt_T value struct (не указатель)
+    Пример: demo.nv (records, spread update, массивы, match на массиве, .get)
+
+Ключевые технические решения:
+  - MSVC-совместимость: нет пустых struct, нет nested function-scope typedef,
+    нет non-constant static initializers
+  - build_c.bat: объектники в %TEMP%\nova_build_%RANDOM% → нет коллизий имён
+  - Генерируемые .c файлы не хранятся в git (в .gitignore)
+
+================================================================================
+4. СТРУКТУРА РЕПОЗИТОРИЯ
+================================================================================
+
+  examples/              — все .nv примеры (язык, не компилятор)
+  spec/                  — спецификация языка
+  compiler-bootstrap/    — интерпретатор (Rust)
+  compiler-codegen/      — C-бэкенд компилятор (Rust + nova_rt/)
+  docs/                  — планы, research, этот файл
+  tests-nova/            — тесты синтаксиса
+
+Примеры языка принадлежат языку, а не конкретному компилятору.
+Поэтому examples/ в корне, а не внутри compiler-*.
+
+================================================================================
+5. ТЕКУЩЕЕ СОСТОЯНИЕ (2026-05-05)
+================================================================================
+
+Все 11 примеров компилируются и запускают корректно:
+  hello, arithmetic, records, match_demo, effects, effects_d61,
+  strings, spawn, with_tests, gc_coroutines_test, demo
+
+Следующие шаги:
+  - Generics / монаморфизация
+  - Строки с форматированием (f-strings)
+  - stdlib скелет
+  - Паттерн-матчинг расширенный (if-let, while-let)
