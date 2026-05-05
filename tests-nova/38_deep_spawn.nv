@@ -1,0 +1,401 @@
+// deep_spawn_test.nv — Nova-level deep spawn/fiber tests
+//
+// Verifies: execution ordering, capture semantics, mutation visibility,
+// pipeline chaining, state-machine patterns, nested spawns, and
+// correctness under high spawn count.
+//
+// C-level counterpart: compiler-codegen/nova_rt/test_fibers_deep.c
+// That file tests stack addresses, yield/resume ordering, fib(30), etc.
+// This file tests the observable Nova semantics built on top of that runtime.
+
+module deep_spawn_test
+
+type Counter {
+    val int
+}
+
+type Stage {
+    input  int
+    output int
+}
+
+fn make_counter(val int) -> Counter => Counter { val }
+fn make_stage(input int, output int) -> Stage => Stage { input, output }
+
+fn fib(n int) -> int {
+    let mut a = 0
+    let mut b = 1
+    let mut i = 0
+    while i < n {
+        let t = a + b
+        a = b
+        b = t
+        i += 1
+    }
+    a
+}
+
+fn sum_range(n int) -> int {
+    let mut acc = 0
+    let mut i = 1
+    while i <= n {
+        acc += i
+        i += 1
+    }
+    acc
+}
+
+fn factorial(n int) -> int {
+    let mut acc = 1
+    let mut i = 1
+    while i <= n {
+        acc = acc * i
+        i += 1
+    }
+    acc
+}
+
+// ================================================================
+// SECTION 1: execution ordering — spawn runs before caller sees result
+// ================================================================
+
+test "spawn: sequential ordering — result visible immediately after spawn" {
+    let mut log = 0
+    // log starts 0; fiber sets it to 1; after spawn log == 1
+    let _ = spawn { log = 1 }
+    assert(log == 1)
+}
+
+test "spawn: three sequential spawns, order preserved" {
+    let mut seq = 0
+    let _ = spawn { seq = seq * 10 + 1 }   // seq = 1
+    let _ = spawn { seq = seq * 10 + 2 }   // seq = 12
+    let _ = spawn { seq = seq * 10 + 3 }   // seq = 123
+    assert(seq == 123)
+}
+
+test "spawn: ten sequential mutations, accumulation exact" {
+    let mut acc = 0
+    let mut i = 0
+    while i < 10 {
+        let cur = i
+        let _ = spawn { acc += cur + 1 }   // adds 1,2,...,10
+        i += 1
+    }
+    // 1+2+...+10 = 55
+    assert(acc == 55)
+}
+
+test "spawn: result capture — r is settled before next line" {
+    let x = 7
+    let r = spawn { x * x * x }   // 343
+    // r must be settled; use it in further computation:
+    let r2 = r + 1
+    assert(r == 343)
+    assert(r2 == 344)
+}
+
+// ================================================================
+// SECTION 2: capture semantics
+// ================================================================
+
+test "spawn: captures immutable int" {
+    let n = 42
+    let r = spawn { n * 2 }
+    assert(r == 84)
+}
+
+test "spawn: captures multiple immutable vars" {
+    let a = 3
+    let b = 4
+    let c = 5
+    let r = spawn { a * a + b * b + c * c }   // 9 + 16 + 25 = 50
+    assert(r == 50)
+}
+
+test "spawn: captures mutable var, mutation visible" {
+    let mut x = 10
+    let _ = spawn { x = x * 3 }
+    assert(x == 30)
+}
+
+test "spawn: two fibers capture same mutable var, both mutations apply" {
+    let mut n = 0
+    let _ = spawn { n += 5 }
+    let _ = spawn { n += 3 }
+    assert(n == 8)
+}
+
+test "spawn: captures result of function call" {
+    let n = 10
+    let r = spawn { sum_range(n) }   // 55
+    assert(r == 55)
+}
+
+test "spawn: captures result of expensive function" {
+    let r = spawn { fib(20) }   // 6765
+    assert(r == 6765)
+}
+
+// ================================================================
+// SECTION 3: pipeline chaining (each fiber sees previous result)
+// ================================================================
+
+test "spawn pipeline: 2 stages" {
+    let x = 6
+    let s1 = spawn { x * x }        // 36
+    let s2 = spawn { s1 + s1 }      // 72
+    assert(s1 == 36)
+    assert(s2 == 72)
+}
+
+test "spawn pipeline: 3 stages" {
+    let base = 2
+    let s1 = spawn { base * base }       // 4
+    let s2 = spawn { s1 * s1 }          // 16
+    let s3 = spawn { s2 * s2 }          // 256
+    assert(s1 == 4)
+    assert(s2 == 16)
+    assert(s3 == 256)
+}
+
+test "spawn pipeline: 5 stages, doubling" {
+    let start = 1
+    let v1 = spawn { start + 1 }    // 2
+    let v2 = spawn { v1 * 2 }       // 4
+    let v3 = spawn { v2 * 2 }       // 8
+    let v4 = spawn { v3 * 2 }       // 16
+    let v5 = spawn { v4 * 2 }       // 32
+    assert(v1 == 2)
+    assert(v3 == 8)
+    assert(v5 == 32)
+}
+
+test "spawn pipeline: fork and join" {
+    let x = 10
+    let left  = spawn { x + 1 }     // 11
+    let right = spawn { x * x }     // 100
+    let joined = spawn { left + right }  // 111
+    assert(left  == 11)
+    assert(right == 100)
+    assert(joined == 111)
+}
+
+// ================================================================
+// SECTION 4: state machine via mutation (mirrors fiber_state_machine in C tests)
+// ================================================================
+
+test "spawn state machine: 3-state protocol" {
+    // Mirrors test_fiber_state_machine: INIT → PROCESSING → DONE.
+    // We use mutable ints to represent state.
+    //   state: 0=INIT, 1=PROCESSING, 2=DONE
+    let mut state = 0
+    let mut partial = 0
+    let mut result = 0
+    let input = 7
+
+    // First "step": compute partial, move to PROCESSING
+    let _ = spawn {
+        state = 1
+        partial = input * 2   // 14
+    }
+    assert(state == 1)
+    assert(partial == 14)
+    assert(result == 0)
+
+    // Second "step": complete, move to DONE
+    let _ = spawn {
+        result = partial + input   // 14 + 7 = 21
+        state = 2
+    }
+    assert(state == 2)
+    assert(result == 21)
+}
+
+test "spawn state machine: 5-step accumulator" {
+    let mut step = 0
+    let mut total = 0
+
+    let _ = spawn { step = 1   total += 1 }
+    assert(step == 1)
+    assert(total == 1)
+
+    let _ = spawn { step = 2   total += 2 }
+    assert(step == 2)
+    assert(total == 3)
+
+    let _ = spawn { step = 3   total += 4 }
+    assert(step == 3)
+    assert(total == 7)
+
+    let _ = spawn { step = 4   total += 8 }
+    assert(step == 4)
+    assert(total == 15)
+
+    let _ = spawn { step = 5   total += 16 }
+    assert(step == 5)
+    assert(total == 31)
+}
+
+// ================================================================
+// SECTION 5: 1000 sequential fibers (mirrors test_many_sequential_fibers)
+// ================================================================
+
+test "spawn: 100 sequential fibers, sum correct" {
+    let mut total = 0
+    let mut i = 1
+    while i <= 100 {
+        let cur = i
+        let _ = spawn { total += cur }
+        i += 1
+    }
+    // 1+2+...+100 = 5050
+    assert(total == 5050)
+}
+
+test "spawn: 500 fibers, sum of squares" {
+    let mut total = 0
+    let mut i = 0
+    while i < 500 {
+        let cur = i
+        let _ = spawn { total += cur * cur }
+        i += 1
+    }
+    // sum(i^2, i=0..499) = 499*500*999/6 = 41541750
+    assert(total == 41541750)
+}
+
+// ================================================================
+// SECTION 6: factorial and recursive calls inside spawn
+// ================================================================
+
+test "spawn: factorial 10 inside fiber" {
+    let n = 10
+    let r = spawn { factorial(n) }
+    // 10! = 3628800
+    assert(r == 3628800)
+}
+
+test "spawn: fib(25) inside fiber" {
+    let r = spawn { fib(25) }
+    // fib(25) = 75025
+    assert(r == 75025)
+}
+
+test "spawn: recursive sum inside fiber" {
+    let n = 1000
+    let r = spawn { sum_range(n) }
+    // 1+2+...+1000 = 500500
+    assert(r == 500500)
+}
+
+// ================================================================
+// SECTION 7: mutation accumulates across many fibers (mirrors GC test "factorial via loop + spawn")
+// ================================================================
+
+test "spawn: factorial via sequential spawn mutations" {
+    let mut acc = 1
+    let mut i = 1
+    while i <= 12 {
+        let cur = i
+        let _ = spawn { acc = acc * cur }
+        i += 1
+    }
+    // 12! = 479001600
+    assert(acc == 479001600)
+}
+
+test "spawn: alternating add/multiply pattern" {
+    let mut val = 1
+    let mut i = 0
+    while i < 10 {
+        let cur = i
+        let _ = spawn {
+            if cur * 2 == cur + cur {   // always true, keeps value non-zero
+                val = val + cur + 1
+            }
+        }
+        i += 1
+    }
+    // val += (0+1) + (1+1) + ... + (9+1) = sum(cur+1, 0..9) = sum(i,1..10) = 55
+    assert(val == 56)   // 1 + 55
+}
+
+// ================================================================
+// SECTION 8: captures of records inside spawn
+// ================================================================
+
+test "spawn: record captured in fiber, field accessed" {
+    let c = make_counter(42)
+    let r = spawn { c.val * 2 }
+    assert(r == 84)
+}
+
+test "spawn: record mutated via intermediate int captures" {
+    let c = make_counter(100)
+    let cap = c.val
+    let mut result = 0
+    let _ = spawn { result = cap + 1 }
+    assert(result == 101)
+}
+
+test "spawn: pipeline of records through spawn stages" {
+    let s1_in = 5
+    let s1 = make_stage(s1_in, 0)
+    let r1 = spawn { s1.input * s1.input }   // 25
+
+    let s2_in = r1
+    let s2 = make_stage(s2_in, 0)
+    let r2 = spawn { s2.input + 1 }          // 26
+
+    assert(r1 == 25)
+    assert(r2 == 26)
+}
+
+// ================================================================
+// SECTION 9: independence — two mutable vars, each touched by one fiber
+// ================================================================
+
+test "spawn: independent mutations don't interfere" {
+    let mut a = 0
+    let mut b = 0
+    let _ = spawn { a = 111 }
+    let _ = spawn { b = 222 }
+    assert(a == 111)
+    assert(b == 222)
+}
+
+test "spawn: 10 independent pairs, no cross-contamination" {
+    let mut r0 = 0
+    let mut r1 = 0
+    let mut r2 = 0
+    let mut r3 = 0
+    let mut r4 = 0
+    let mut r5 = 0
+    let mut r6 = 0
+    let mut r7 = 0
+    let mut r8 = 0
+    let mut r9 = 0
+
+    let _ = spawn { r0 = 0 * 7 + 1 }
+    let _ = spawn { r1 = 1 * 7 + 1 }
+    let _ = spawn { r2 = 2 * 7 + 1 }
+    let _ = spawn { r3 = 3 * 7 + 1 }
+    let _ = spawn { r4 = 4 * 7 + 1 }
+    let _ = spawn { r5 = 5 * 7 + 1 }
+    let _ = spawn { r6 = 6 * 7 + 1 }
+    let _ = spawn { r7 = 7 * 7 + 1 }
+    let _ = spawn { r8 = 8 * 7 + 1 }
+    let _ = spawn { r9 = 9 * 7 + 1 }
+
+    assert(r0 == 1)
+    assert(r1 == 8)
+    assert(r2 == 15)
+    assert(r3 == 22)
+    assert(r4 == 29)
+    assert(r5 == 36)
+    assert(r6 == 43)
+    assert(r7 == 50)
+    assert(r8 == 57)
+    assert(r9 == 64)
+}
