@@ -946,7 +946,9 @@ fn log_one(x { show() -> str }) Log -> () => Log.info(x.show())
 
 Совместимость **автоматическая** по структуре — любой тип с
 подходящими методами автоматически удовлетворяет protocol'у, никаких
-`impl`-блоков не нужно. `Self` валиден внутри protocol-блока:
+`impl`-блоков не нужно. `Self` валиден внутри любого type-контекста
+(protocol-блок, effect-блок, instance-метод, static-метод, sum-вариант)
+по [D66](decisions/02-types.md#d66):
 
 ```nova
 type Hashable protocol {
