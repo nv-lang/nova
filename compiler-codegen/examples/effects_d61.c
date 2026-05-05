@@ -86,7 +86,7 @@ static nova_unit nova_fn_main_impl(void) {
     nova_interrupt_push(&_nova_tmp7);
     if (setjmp(_nova_tmp7.jmp) == 0) {
         {
-            nova_int _nova_unused = Nova_Switch_flip();
+            nova_int _nova_tmp9 = Nova_Switch_flip();
             _nova_tmp8 = (nova_int)(((nova_int)0LL));
         }
         _nova_handler_Switch = _nova_tmp6;
@@ -96,14 +96,14 @@ static nova_unit nova_fn_main_impl(void) {
     }
     nova_interrupt_pop();
     nova_int r = _nova_tmp8;
-    nova_unit _nova_tmp9;
+    nova_unit _nova_tmp10;
     {
         nova_print_str((nova_str){.ptr="interrupt result = ", .len=19});
         nova_print_int(r);
         nova_print_newline();
     }
-    _nova_tmp9 = NOVA_UNIT;
-    _nova_tmp9;
+    _nova_tmp10 = NOVA_UNIT;
+    _nova_tmp10;
     typedef struct {
         char _dummy;
     } NovaCtx__nova_handler_lit_2;
@@ -111,17 +111,17 @@ static nova_unit nova_fn_main_impl(void) {
     NovaCtx__nova_handler_lit_2 _nova_handler_lit_2_ctx = {0};
     _nova_handler_lit_2_vtable.ctx = &_nova_handler_lit_2_ctx;
     _nova_handler_lit_2_vtable.flip = _nova_handler_lit_2_impl_Switch_flip;
-    NovaVtable_Switch* _nova_tmp10 = &_nova_handler_lit_2_vtable;
-    NovaVtable_Switch* switcher = _nova_tmp10;
+    NovaVtable_Switch* _nova_tmp11 = &_nova_handler_lit_2_vtable;
+    NovaVtable_Switch* switcher = _nova_tmp11;
     nova_bool b = switcher->flip(switcher->ctx);
-    nova_unit _nova_tmp11;
+    nova_unit _nova_tmp12;
     {
         nova_print_str((nova_str){.ptr="direct flip = ", .len=14});
         nova_print_bool(b);
         nova_print_newline();
     }
-    _nova_tmp11 = NOVA_UNIT;
-    _nova_tmp11;
+    _nova_tmp12 = NOVA_UNIT;
+    _nova_tmp12;
     return NOVA_UNIT;
 }
 

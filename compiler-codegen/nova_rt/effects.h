@@ -120,6 +120,52 @@ static inline void nova_interrupt(nova_int value) {
     /* No with-block: interrupt is a no-op (body already exited) */
 }
 
+/* ---- Test support ---- *
+ *
+ * Each test block runs inside a setjmp frame. If nova_assert() fails,
+ * it longjmps back to the test runner with the failed expression string.
+ *
+ * Generated code pattern for  test "name" { body }:
+ *
+ *   static void nova_test_name_impl(void) {
+ *       body
+ *   }
+ *
+ *   // In runner:
+ *   NovaTestFrame _tf;
+ *   _nova_test_frame = &_tf;
+ *   if (setjmp(_tf.jmp) == 0) {
+ *       nova_test_name_impl();
+ *       printf("  PASS: name\n");
+ *   } else {
+ *       printf("  FAIL: name — %s\n", _tf.fail_msg);
+ *       _nova_tests_failed++;
+ *   }
+ *   _nova_test_frame = NULL;
+ */
+
+typedef struct NovaTestFrame {
+    jmp_buf jmp;
+    const char* fail_msg;
+} NovaTestFrame;
+
+#ifdef _MSC_VER
+__declspec(thread) extern NovaTestFrame* _nova_test_frame;
+#else
+extern __thread NovaTestFrame* _nova_test_frame;
+#endif
+
+static inline void nova_assert(nova_bool cond, const char* expr_str) {
+    if (!cond) {
+        if (_nova_test_frame) {
+            _nova_test_frame->fail_msg = expr_str;
+            longjmp(_nova_test_frame->jmp, 1);
+        }
+        fprintf(stderr, "assertion failed: %s\n", expr_str);
+        abort();
+    }
+}
+
 /* ---- Generic effect handler vtable ---- *
  *
  * Each effect type is represented as a pointer to a struct of function

@@ -1,0 +1,128 @@
+// gc_coroutines_test.nv — deep tests for GC and coroutines (Phase 3 + Phase 5)
+//
+// Tests:
+//   1. GC stress — allocate many records, verify values survive
+//   2. spawn basic — result capture
+//   3. spawn with capture — immutable capture
+//   4. spawn with mutable capture — mutation visible after fiber
+//   5. spawn with arithmetic chain — chained deps
+//   6. spawn sequential pipeline — output of one is input to next
+//   7. spawn multiple captures — several vars captured
+//   8. GC inside spawn — alloc record inside fiber, read after
+
+module gc_coroutines_test
+
+type Point {
+    x int
+    y int
+}
+
+fn make_point(x int, y int) -> Point => Point { x, y }
+
+fn sum_to(n int) -> int {
+    let mut acc = 0
+    let mut i = 0
+    while i < n {
+        i += 1
+        acc += i
+    }
+    acc
+}
+
+test "spawn basic value" {
+    let r = spawn { 42 }
+    assert(r == 42)
+}
+
+test "spawn arithmetic" {
+    let r = spawn { 10 + 20 + 30 }
+    assert(r == 60)
+}
+
+test "spawn captures immutable" {
+    let x = 100
+    let y = 200
+    let r = spawn { x + y }
+    assert(r == 300)
+}
+
+test "spawn mutates captured var" {
+    let mut counter = 0
+    let _ = spawn { counter += 7 }
+    assert(counter == 7)
+}
+
+test "spawn multiple mutations" {
+    let mut a = 0
+    let mut b = 0
+    let _ = spawn { a += 10 }
+    let _ = spawn { b += 20 }
+    assert(a == 10)
+    assert(b == 20)
+}
+
+test "spawn pipeline: output feeds next" {
+    let x = 5
+    let r1 = spawn { x * x }       // 25
+    let r2 = spawn { r1 + r1 }      // 50
+    assert(r1 == 25)
+    assert(r2 == 50)
+}
+
+test "spawn with computation" {
+    let n = 10
+    let r = spawn { sum_to(n) }     // 1+2+...+10 = 55
+    assert(r == 55)
+}
+
+test "spawn nested: capture spawn result" {
+    let a = 3
+    let b = 4
+    let hyp_sq = spawn { a * a + b * b }   // 25
+    let r = spawn { hyp_sq + 0 }            // pass through
+    assert(r == 25)
+}
+
+test "GC stress: many short-lived records" {
+    let mut sum = 0
+    let mut i = 0
+    while i < 100 {
+        let p = make_point(i, i * 2)
+        sum += p.x + p.y
+        i += 1
+    }
+    // sum_x = 0+1+...+99 = 4950, sum_y = 0+2+...+198 = 9900, total = 14850
+    assert(sum == 14850)
+}
+
+test "GC record survives across statements" {
+    let p = make_point(7, 13)
+    let q = make_point(p.x + 1, p.y + 1)
+    assert(q.x == 8)
+    assert(q.y == 14)
+}
+
+test "spawn captures record field" {
+    let p = make_point(3, 4)
+    let r = spawn { p.x * p.x + p.y * p.y }
+    assert(r == 25)
+}
+
+test "spawn large computation" {
+    let n = 100
+    let r = spawn { sum_to(n) }
+    // 1+2+...+100 = 5050
+    assert(r == 5050)
+}
+
+test "factorial via spawn" {
+    let mut acc = 1
+    let mut i = 1
+    while i <= 10 {
+        let cur = i
+        let _ = spawn { acc = acc * cur }
+        i += 1
+    }
+    // 10! = 3628800
+    assert(acc == 3628800)
+}

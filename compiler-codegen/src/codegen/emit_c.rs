@@ -54,6 +54,13 @@ impl CEmitter {
                 self.emit_fn_forward_decl(f)?;
             }
         }
+        // Forward declarations for test impl functions
+        for item in &module.items {
+            if let Item::Test(t) = item {
+                let safe = Self::mangle_test_name(&t.name);
+                self.line(&format!("static nova_unit nova_test_{}(void);", safe));
+            }
+        }
         self.line("");
 
         // 3. Pre-scan: emit forward decls for all handler impl functions before fn definitions.
@@ -67,7 +74,14 @@ impl CEmitter {
             }
         }
 
-        // 5. Handler impl function bodies (ctx structs + bodies at file scope, after fn defs)
+        // 5. Test function definitions
+        for item in &module.items {
+            if let Item::Test(t) = item {
+                self.emit_test(t)?;
+            }
+        }
+
+        // 6. Handler impl function bodies (ctx structs + bodies at file scope, after fn defs)
         if !self.deferred_impls.is_empty() {
             self.out.push_str(&self.deferred_impls.clone());
             self.out.push('\n');
@@ -75,6 +89,23 @@ impl CEmitter {
 
         self.emit_main_wrapper(module);
         Ok(self.out)
+    }
+
+    fn mangle_test_name(name: &str) -> String {
+        name.chars()
+            .map(|c| if c.is_alphanumeric() || c == '_' { c } else { '_' })
+            .collect()
+    }
+
+    fn emit_test(&mut self, t: &TestDecl) -> Result<(), String> {
+        let safe = Self::mangle_test_name(&t.name);
+        self.line(&format!("static nova_unit nova_test_{}(void) {{", safe));
+        self.indent += 1;
+        self.emit_block_stmts(&t.body, "nova_unit")?;
+        self.indent -= 1;
+        self.line("}");
+        self.line("");
+        Ok(())
     }
 
     // ---- preamble ----
@@ -555,8 +586,10 @@ impl CEmitter {
         let mut h_ctr = 0usize; // handler_counter
         let mut s_ctr = 0usize; // spawn_counter
         for item in &module.items {
-            if let Item::Fn(f) = item {
-                self.scan_fn_fwd(f, &mut h_ctr, &mut s_ctr)?;
+            match item {
+                Item::Fn(f) => self.scan_fn_fwd(f, &mut h_ctr, &mut s_ctr)?,
+                Item::Test(t) => self.scan_block_fwd(&t.body, &mut h_ctr, &mut s_ctr)?,
+                _ => {}
             }
         }
         Ok(())
@@ -621,6 +654,27 @@ impl CEmitter {
                 self.scan_expr_fwd(left, h, s)?;
                 self.scan_expr_fwd(right, h, s)?;
             }
+            ExprKind::While { cond, body } => {
+                self.scan_expr_fwd(cond, h, s)?;
+                self.scan_block_fwd(body, h, s)?;
+            }
+            ExprKind::For { iter, body, .. } => {
+                self.scan_expr_fwd(iter, h, s)?;
+                self.scan_block_fwd(body, h, s)?;
+            }
+            ExprKind::Loop { body } => {
+                self.scan_block_fwd(body, h, s)?;
+            }
+            ExprKind::Match { scrutinee, arms } => {
+                self.scan_expr_fwd(scrutinee, h, s)?;
+                for arm in arms {
+                    match &arm.body {
+                        MatchArmBody::Expr(e) => self.scan_expr_fwd(e, h, s)?,
+                        MatchArmBody::Block(b) => self.scan_block_fwd(b, h, s)?,
+                    }
+                }
+            }
+            ExprKind::Unary { operand, .. } => self.scan_expr_fwd(operand, h, s)?,
             _ => {}
         }
         Ok(())
@@ -1015,7 +1069,52 @@ impl CEmitter {
         Ok(())
     }
 
-    fn emit_main_wrapper(&mut self, _module: &Module) {
+    fn emit_main_wrapper(&mut self, module: &Module) {
+        let has_main = module.items.iter().any(|i| {
+            if let Item::Fn(f) = i { f.name == "main" } else { false }
+        });
+        let tests: Vec<&TestDecl> = module.items.iter().filter_map(|i| {
+            if let Item::Test(t) = i { Some(t) } else { None }
+        }).collect();
+
+        if !tests.is_empty() && !has_main {
+            // Generate a test runner as nova_fn_main_impl + C main
+            self.line("static nova_unit nova_fn_main_impl(void) {");
+            self.indent += 1;
+            self.line(&format!("int _nova_tests_total = {};", tests.len()));
+            self.line("int _nova_tests_failed = 0;");
+            self.line("printf(\"Running %d tests...\\n\", _nova_tests_total);");
+            for t in &tests {
+                let safe = Self::mangle_test_name(&t.name);
+                let escaped = Self::escape_c_str(&t.name);
+                self.line("{");
+                self.indent += 1;
+                self.line("NovaTestFrame _tf;");
+                self.line("_tf.fail_msg = NULL;");
+                self.line("_nova_test_frame = &_tf;");
+                self.line(&format!("if (setjmp(_tf.jmp) == 0) {{"));
+                self.indent += 1;
+                self.line(&format!("nova_test_{}();", safe));
+                self.line(&format!("printf(\"  PASS: {}\\n\");", escaped));
+                self.indent -= 1;
+                self.line("} else {");
+                self.indent += 1;
+                self.line(&format!("printf(\"  FAIL: {} — %s\\n\", _tf.fail_msg ? _tf.fail_msg : \"assertion failed\");", escaped));
+                self.line("_nova_tests_failed++;");
+                self.indent -= 1;
+                self.line("}");
+                self.line("_nova_test_frame = NULL;");
+                self.indent -= 1;
+                self.line("}");
+            }
+            self.line("printf(\"%d/%d passed\\n\", _nova_tests_total - _nova_tests_failed, _nova_tests_total);");
+            self.line("if (_nova_tests_failed > 0) { exit(1); }");
+            self.line("return NOVA_UNIT;");
+            self.indent -= 1;
+            self.line("}");
+            self.line("");
+        }
+
         self.line("int main(void) {");
         self.indent += 1;
         self.line("nova_gc_init();");
@@ -1297,6 +1396,15 @@ impl CEmitter {
         if let ExprKind::Ident(name) = &func.kind {
             if name == "println" || name == "print" {
                 return self.emit_println(args, name == "println");
+            }
+            // assert(cond) → nova_assert(cond, "condition text")
+            if name == "assert" {
+                if let Some(cond_expr) = args.first() {
+                    let cond_val = self.emit_expr(cond_expr)?;
+                    let cond_text = Self::expr_to_display(cond_expr);
+                    let escaped_text = Self::escape_c_str(&cond_text);
+                    return Ok(format!("nova_assert({}, \"{}\")", cond_val, escaped_text));
+                }
             }
         }
 
@@ -1740,10 +1848,10 @@ impl CEmitter {
 
     // ---- pattern helpers ----
 
-    fn pattern_binding(&self, pat: &Pattern) -> Result<String, String> {
+    fn pattern_binding(&mut self, pat: &Pattern) -> Result<String, String> {
         match pat {
             Pattern::Ident { name, .. } => Ok(name.clone()),
-            Pattern::Wildcard(_) => Ok("_nova_unused".into()),
+            Pattern::Wildcard(_) => Ok(self.fresh_tmp()),  // unique name to avoid redeclaration
             _ => Err(format!("complex pattern in let binding not yet supported: {:?}", pat)),
         }
     }
@@ -2017,6 +2125,39 @@ impl CEmitter {
                 "nova_int".into()
             }
             _ => "nova_int".into(),
+        }
+    }
+
+    /// Produce a short human-readable description of an expression for assert messages.
+    fn expr_to_display(expr: &Expr) -> String {
+        match &expr.kind {
+            ExprKind::IntLit(n) => n.to_string(),
+            ExprKind::BoolLit(b) => b.to_string(),
+            ExprKind::StrLit(s) => format!("\"{}\"", s),
+            ExprKind::Ident(n) => n.clone(),
+            ExprKind::Binary { op, left, right } => {
+                let op_str = match op {
+                    BinOp::Eq => "==", BinOp::Neq => "!=",
+                    BinOp::Lt => "<",  BinOp::Le  => "<=",
+                    BinOp::Gt => ">",  BinOp::Ge  => ">=",
+                    BinOp::Add => "+", BinOp::Sub => "-",
+                    BinOp::Mul => "*", BinOp::Div => "/",
+                    BinOp::Mod => "%",
+                    BinOp::And => "&&", BinOp::Or => "||",
+                };
+                format!("{} {} {}",
+                    Self::expr_to_display(left), op_str, Self::expr_to_display(right))
+            }
+            ExprKind::Call { func, args, .. } => {
+                let fn_name = Self::expr_to_display(func);
+                let arg_strs: Vec<String> = args.iter().map(Self::expr_to_display).collect();
+                format!("{}({})", fn_name, arg_strs.join(", "))
+            }
+            ExprKind::Unary { op, operand } => {
+                let op_str = match op { UnOp::Neg => "-", UnOp::Not => "!" };
+                format!("{}{}", op_str, Self::expr_to_display(operand))
+            }
+            _ => "assert".to_string(),
         }
     }
 
