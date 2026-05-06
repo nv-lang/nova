@@ -3157,6 +3157,18 @@ impl CEmitter {
                 // After interrupt the code is unreachable, but emit a dummy value
                 Ok("NOVA_UNIT".into())
             }
+            ExprKind::Throw(value) => {
+                // D25/D65: throw в expression-position. Тип Never — control
+                // никогда не вернётся. Эмитируем effect-call Nova_Fail_fail
+                // как statement, потом dummy zero-литерал нужного типа,
+                // чтобы C-выражение было валидным. Тип-target не известен
+                // здесь точно — берём nova_int (cast'ы в caller сделают
+                // остальное).
+                let v = self.emit_expr(value)?;
+                self.line(&format!("Nova_Fail_fail({});", v));
+                // Unreachable, но возвращаем синтаксически валидный dummy.
+                Ok("((nova_int)0LL)".to_string())
+            }
             ExprKind::Forbid { body, .. } => {
                 // forbid X { body } — in bootstrap, emit body as plain block (no runtime check)
                 self.emit_block_expr(body)

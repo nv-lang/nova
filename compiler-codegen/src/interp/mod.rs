@@ -622,6 +622,12 @@ impl Interpreter {
                 // Codegen реализует D75 полноценно через NovaCancelToken.
                 self.exec_block_flow(body, env)
             }
+            ExprKind::Throw(value) => {
+                // D25/D65: throw в expression-position. В интерпретаторе
+                // делегируем к stmt-механизму через Flow::Throw.
+                let v = self.eval_expr_value(value, env)?;
+                Ok(Flow::Throw(v))
+            }
             ExprKind::ParallelFor { pattern, iter, body } => {
                 // В bootstrap'е parallel for ≡ обычный for (sequential).
                 // Codegen раскрывает в supervised + spawn для реального параллелизма.

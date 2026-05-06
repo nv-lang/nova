@@ -1358,6 +1358,17 @@ impl Parser {
             TokenKind::KwParallel => self.parse_parallel_for(),
             TokenKind::KwDetach => self.parse_detach(),
             TokenKind::KwCancelScope => self.parse_cancel_scope(),
+            TokenKind::KwThrow => {
+                // D25/D65: `throw expr` as expression (type Never).
+                // Stmt-level throw уже обрабатывается parse_stmt_or_expr;
+                // expression-level — здесь, для match-arm body, ternary,
+                // тd. Codegen эмитирует как Nova_Fail_fail(msg) +
+                // zero-of-target-type dummy.
+                let start_span = self.bump().span;
+                let value = self.parse_expr()?;
+                let span = start_span.merge(value.span);
+                Ok(Expr::new(ExprKind::Throw(Box::new(value)), span))
+            }
             TokenKind::KwHandler => self.parse_handler_lit(),
             TokenKind::KwForbid => self.parse_forbid(),
             TokenKind::KwRealtime => self.parse_realtime(),

@@ -849,6 +849,15 @@ fn deposit(mut acc Account, amount money) Fail[DepositError] -> () =>
 функцию и передаёт `expr` через эффект `Fail[E]`. Тип `expr` должен
 совпадать с `E` в сигнатуре.
 
+**Bootstrap (2026-05-06):** `throw` парсится и как statement, и как
+expression. В expression-position (match-arm body, ternary, аргумент
+функции) codegen эмитирует `Nova_Fail_fail(msg)` + dummy `((nova_int)0LL)`
+— dummy после fail() недостижим. Тесты — `tests-nova/14_throws.nv` (stmt),
+`tests-nova/54_throw_in_expression.nv` (expr). Известное ограничение
+bootstrap'а: `if cond { throw } else { val }` выражение не работает —
+codegen смешивает unit и реальный тип; workaround — `if cond { throw msg }
+val` (throw как stmt, fall-through к val).
+
 #### `throw` — операция эффекта `Fail[E]`, не магия
 
 Связь между `throw` и `Fail[E]` — **не специальная проверка
@@ -1616,13 +1625,14 @@ type Fail[E] effect {
 **эффект и protocol — семантически разные** контракты:
 
 - `protocol` — структурный интерфейс, проверяется на типе значения
-  параметра (`fn sort[T: Hashable](xs []T)`). Статический dispatch.
+  параметра (`fn sort[T Hashable](xs []T)`, [D72](02-types.md#d72)).
+  Статический dispatch.
 - `effect` — контракт на наличие активного handler'а в скоупе
   (`fn save() Db -> ()`). Lookup в with-стеке, динамический dispatch.
 
 Смешение запрещено:
 
-- `fn f[T: Db](x T)` — compile error: `Db` это эффект, не protocol.
+- `fn f[T Db](x T)` — compile error: `Db` это эффект, не protocol.
 - `fn f() Hashable -> ()` — compile error: `Hashable` это protocol, не effect.
 
 #### 2. `handler Foo { ops }` — handler-литерал
