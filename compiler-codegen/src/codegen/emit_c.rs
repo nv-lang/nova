@@ -2761,9 +2761,29 @@ impl CEmitter {
                 self.emit_expr(inner)
             }
 
-            ExprKind::Is(inner, _ty) => {
-                let _ = self.emit_expr(inner)?;
-                Err("`is` expression not yet supported in codegen".into())
+            ExprKind::Is(inner, ty) => {
+                // D54 v2: `expr is Variant` for sum-types — runtime tag check.
+                // Get the variant name from the TypeRef (must be Named with len 1 or 2).
+                let variant_name = match ty {
+                    TypeRef::Named { path, .. } if path.len() == 1 => path[0].clone(),
+                    TypeRef::Named { path, .. } if path.len() == 2 => path[1].clone(),
+                    _ => return Err("`is` expects a variant name (e.g. `x is Some`)".into()),
+                };
+                // Find the sum-type that owns this variant.
+                let (sum_type, _fields) = self.find_variant(&variant_name)
+                    .ok_or_else(|| format!("`is {}` — unknown variant", variant_name))?;
+                let inner_ty = self.infer_expr_c_type(inner);
+                let inner_c = self.emit_expr(inner)?;
+                // Tag access depends on layout:
+                //   NovaOpt_nova_int (Option) → value-struct, dot accessor
+                //   Nova_<Sum>* (custom sum)  → pointer, arrow accessor
+                let accessor = if inner_ty.starts_with("NovaOpt_") && !inner_ty.ends_with('*') {
+                    "."
+                } else {
+                    "->"
+                };
+                Ok(format!("(({}){}tag == NOVA_TAG_{}_{})",
+                    inner_c, accessor, sum_type, variant_name))
             }
 
             ExprKind::Coalesce(left, right) => {
@@ -5095,6 +5115,7 @@ impl CEmitter {
                 }
                 "nova_int".into()
             }
+            ExprKind::Is(_, _) => "nova_bool".into(),
             ExprKind::For { .. } => "nova_unit".into(),
             ExprKind::ParallelFor { .. } => "nova_unit".into(),
             ExprKind::While { .. } => "nova_unit".into(),

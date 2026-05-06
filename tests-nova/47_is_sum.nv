@@ -1,0 +1,116 @@
+// 47_is_sum.nv — D54 v2: оператор `is` для sum-типов.
+//
+// `expr is Variant` — runtime tag-check. Возвращает bool.
+// Без binding-формы (binding это работа `if let` из D34).
+
+module spec.is_sum
+
+type Shape
+    | Circle { radius f64 }
+    | Square { side f64 }
+    | Origin
+
+fn make_circle(r f64) -> Shape => Circle { radius: r }
+fn make_square(s f64) -> Shape => Square { side: s }
+fn make_origin() -> Shape => Origin
+
+// ================================================================
+// SECTION 1: базовый is для sum-вариантов
+// ================================================================
+
+test "is Circle on Circle value" {
+    let s = make_circle(2.0)
+    assert(s is Circle)
+    assert(!(s is Square))
+    assert(!(s is Origin))
+}
+
+test "is Square on Square value" {
+    let s = make_square(3.0)
+    assert(!(s is Circle))
+    assert(s is Square)
+    assert(!(s is Origin))
+}
+
+test "is Origin (unit-вариант)" {
+    let s = make_origin()
+    assert(!(s is Circle))
+    assert(!(s is Square))
+    assert(s is Origin)
+}
+
+// ================================================================
+// SECTION 2: is в if-условии
+// ================================================================
+
+test "if-using-is: dispatch на вариант" {
+    let s = make_circle(5.0)
+    let mut tag = 0
+    if s is Circle { tag = 1 }
+    if s is Square { tag = 2 }
+    if s is Origin { tag = 3 }
+    assert(tag == 1)
+}
+
+test "if-using-is: else-if цепочка" {
+    let s = make_square(7.0)
+    let mut kind = "other"
+    if s is Circle { kind = "round" }
+    if s is Square { kind = "boxy" }
+    assert(kind == "boxy")
+}
+
+// ================================================================
+// SECTION 3: is для prelude sum'ов — Option, Result
+// ================================================================
+
+test "is Some / is None on Option" {
+    let a = Some(42)
+    let b = None
+    assert(a is Some)
+    assert(!(a is None))
+    assert(!(b is Some))
+    assert(b is None)
+}
+
+test "is Ok / is Err on Result" {
+    let ok_val = Ok(42)
+    let err_val = Err("boom")
+    assert(ok_val is Ok)
+    assert(!(ok_val is Err))
+    assert(!(err_val is Ok))
+    assert(err_val is Err)
+}
+
+// ================================================================
+// SECTION 4: is в более сложных выражениях
+// ================================================================
+
+test "is — counter of variants in array" {
+    // Считаем число Circle'ов в массиве forms.
+    // Сейчас массивы Shape работают через type-erasure, но для is
+    // мы итерируем по индексу и считаем теги.
+    let s1 = make_circle(1.0)
+    let s2 = make_square(2.0)
+    let s3 = make_circle(3.0)
+    let mut circles = 0
+    if s1 is Circle { circles += 1 }
+    if s2 is Circle { circles += 1 }
+    if s3 is Circle { circles += 1 }
+    assert(circles == 2)
+}
+
+test "is — guard-стиль раннего возврата" {
+    let s Shape = make_origin()
+    let mut label = "square"
+    if s is Origin { label = "at-origin" }
+    if s is Circle { label = "circle" }
+    assert(label == "at-origin")
+}
+
+test "is — отрицание !is для проверки 'не такой вариант'" {
+    let s = make_circle(1.0)
+    assert(!(s is Square))
+    let other = !(s is Origin)
+    assert(other)
+}
