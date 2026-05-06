@@ -290,9 +290,10 @@ if elapsed > 1.second() { ... }           // вызывает @gt
 - `@to_X()` дублирует `X.from(v)` / `v.@into()` (D73).
 - `@as_X()` дублирует keyword `as` (D54) для дешёвых cast'ов или
   `X.from` для нетривиальных.
-- `@is_X()` дублирует `match v { X(_) => true, _ => false }`
-  или `if let X(_) = v` (D34). Для `any`-значений — `v is X`
-  (D54).
+- `@is_X()` дублирует `v is X` (D54): для sum-типов и `any`
+  оператор `is` работает напрямую (`shape is Circle`,
+  `arg is int` для `arg any`). Для извлечения значения варианта
+  с биндингом — `if let X(n) = v` (D34).
 - `_prefix` — **только для полей** (используй методы вместо прямого
   доступа). Для функций/методов **не используется**.
 - Test-имена — строки естественного языка: `test "insert and get"`,
@@ -1066,9 +1067,9 @@ protocol { ... }`).
 
 Подробно — [D72](decisions/02-types.md#d72).
 
-## Конверсии: `as`, `from`/`into`, `to_str`
+## Конверсии: `as` и `From`/`Into`
 
-Три способа конверсии под разные сценарии:
+Два способа конверсии под разные сценарии:
 
 ```nova
 // 1. as — compile-time, тривиальные cast'ы (D54)
@@ -1076,35 +1077,44 @@ let n = 100 as u32                          // numeric
 let u = 42 as UserId                         // newtype ↔ underlying
 let code = NotFound as int                   // sum → int
 
-// 2. From — нетривиальная конверсия с runtime-логикой (D73)
+// 2. From / Into — нетривиальная конверсия с runtime-логикой (D73)
 type Celsius f64
 type Fahrenheit f64
 
+// Программист пишет ОДНУ сторону пары — компилятор синтезирует парную.
 fn Fahrenheit.from(c Celsius) -> Self =>
     Self((c as f64) * 9.0 / 5.0 + 32.0)
 
-let f = Fahrenheit.from(Celsius(100.0))     // явный вызов
+// Две формы вызова из одной реализации:
+let f1 = Fahrenheit.from(Celsius(100.0))    // static, explicit-type
+let f2 = Celsius(100.0).@into()              // instance, тип из контекста (требует let-аннотации
+                                              // или return-position)
+let f3 Fahrenheit = Celsius(100.0).@into()   // тип цели — Fahrenheit (из аннотации)
 
-let f Fahrenheit = into(Celsius(100.0))     // через free function, U выводится
-let f = into[Fahrenheit](Celsius(0.0))      // через turbofish
-
-// 3. ToStr — конверсия в строку (D70)
-let s = to_str(42)                          // "42"
-let msg = "id=${user_id}"                    // sugar над to_str
+// Конверсия в строку — частный случай:
+let s = str.from(42)                         // "42"
+let s2 str = (42).@into()                    // "42"
+let msg = "id=${user_id}"                    // sugar над str.from(user_id)
 ```
 
-**Граница `as` vs `from`:**
+**Когда какая форма:**
+
+- **`T.from(v)`** — целевой тип в начале, читается «build a Fahrenheit
+  from this Celsius». Хорош в выражениях.
+- **`v.@into()`** — короче в method-chains: `c.@into().log()`. Тип
+  цели — из контекста (`let x T = ...`, параметр функции, return-type).
+
+**Граница `as` vs `From`:**
 
 - `as` — bit/tag-уровень, без runtime-кода: `100 as u32`, `id as u64`.
-- `from` — арифметика, парсинг, валидация: `Fahrenheit.from(c)`,
+- `From` — арифметика, парсинг, валидация: `Fahrenheit.from(c)`,
   `User.from(json)`.
 
 **Граница D73 vs D55:** D55 — automatic coercion для record/sum-литералов
 в позиции с известным типом (`let u User = { id: 1, name: "x" }`).
 D73 — explicit method call для произвольных типов.
 
-Подробно: [D54](decisions/03-syntax.md#d54), [D70](decisions/08-runtime.md#d70),
-[D73](decisions/08-runtime.md#d73).
+Подробно: [D54](decisions/03-syntax.md#d54), [D73](decisions/08-runtime.md#d73).
 
 ## spawn / supervised / parallel for / detach
 

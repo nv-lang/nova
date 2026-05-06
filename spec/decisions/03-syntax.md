@@ -1800,10 +1800,20 @@ let code = NotFound as int    // 404
 
 #### `is` — runtime type-check
 
-`is` работает **только** для значений типа `any`. На обычных типах —
-ошибка компиляции (тип уже известен статически, проверка бессмысленна).
+`is` работает в **двух сценариях**:
 
-**Как boolean-выражение:**
+1. **`any → T`** — type-check для значений top-type'а `any`.
+   Возвращает `bool` (или используется как pattern в match).
+2. **`Sum → Variant`** — variant-check для sum-значений: «является
+   ли это значение конкретным вариантом sum-типа?» (revision v2).
+
+На остальных «обычных» типах (record без вариантов, primitives,
+аносу́ты) `is` — ошибка компиляции: тип известен статически, проверка
+бессмысленна.
+
+##### Сценарий 1: `any is T`
+
+**Boolean-выражение:**
 
 ```nova
 fn dump(x any) Io -> () =>
@@ -1811,7 +1821,7 @@ fn dump(x any) Io -> () =>
     if x is str { println("got str") }
 ```
 
-**Как pattern в `match`:**
+**Pattern в `match`:**
 
 ```nova
 match arg {
@@ -1823,7 +1833,6 @@ match arg {
 ```
 
 Pattern-форма: `<binding> is <type>` или `is <type>` (без биндинга).
-Если биндинг указан — внутри ветки переменная имеет уточнённый тип.
 
 **Smart cast в `if`:**
 
@@ -1832,21 +1841,70 @@ fn process(x any) -> str =>
     if x is str {
         x.upper()              // x здесь имеет тип str автоматически
     } else if x is int {
-        x.to_str()              // x здесь int
+        str.from(x)             // x здесь int (D73)
     } else {
         "unknown"
     }
 ```
 
 После `if x is T { ... }` внутри блока компилятор автоматически
-уточняет тип переменной до `T` (как Kotlin smart cast). Это работает
-если переменная **не переприсваивается** в блоке.
+уточняет тип переменной до `T` (Kotlin smart cast). Работает если
+переменная **не переприсваивается** в блоке.
 
-**На не-`any` типах — ошибка компиляции:**
+##### Сценарий 2: `<sum> is <Variant>`
+
+`is` работает на любом sum-значении, проверяя соответствие конкретному
+варианту:
 
 ```nova
+type Shape | Circle { radius f64 } | Square { side f64 } | Origin
+
+let s Shape = Circle { radius: 1.0 }
+
+if s is Circle { println("circular") }       // ✅ true
+if s is Square { println("squarish") }        // ✅ false
+if s is Origin { println("at origin") }       // ✅ unit-вариант
+
+// Также для prelude sum-типов:
+let r Result[int, str] = Ok(42)
+if r is Ok    { println("happy path") }      // ✅
+if r is Err   { handle_error() }              // ✅
+
+let opt Option[User] = Some(u)
+if opt is Some { ... }
+if opt is None { ... }
+```
+
+**Без биндинга** — `is` это просто `bool`. Для извлечения значения
+из варианта используется `if let` (D34), который комбинирует check
+и binding в одном выражении:
+
+```nova
+// Без биндинга — только yes/no:
+if r is Ok { println("ok") }
+
+// С биндингом — if let:
+if let Ok(n) = r { use(n) }
+```
+
+Это даёт чёткое разделение:
+- **`is`** = «yes/no» (короткий guard).
+- **`if let`** = «yes + extract» (binding form).
+
+Поэтому `is` **не поддерживает binding-форму** на sum-типах —
+`r is Ok(n)` ошибка, нужно `if let Ok(n) = r`. Это согласовано
+с D9 «один очевидный путь»: одна форма для одной задачи.
+
+**Реализация:** компилятор знает теги вариантов и эмитит
+runtime-проверку tag'а sum-struct'а (`shape->tag == NOVA_TAG_Shape_Circle`).
+Стоимость — одно сравнение integer'ов.
+
+**На не-sum / не-`any` — ошибка компиляции:**
+
+```nova
+type User { id u64 }
 fn process(x User) -> () =>
-    if x is int { ... }       // ОШИБКА: User не any, проверка бессмысленна
+    if x is int { ... }       // ОШИБКА: User — record, не sum и не any
 ```
 
 #### Методы на `any` для extraction (комплементарные `is`)
@@ -1895,20 +1953,43 @@ let n int = arg.as[int]?
 C++ `static_cast`/`dynamic_cast`), программист путается. В Nova
 разделение явное — два keyword'а с непересекающимися ролями.
 
-#### `is` только для `any` — простая ментальная модель
+#### `is` для `any` и sum-типов — без overhead на остальных типах
 
-В Kotlin/C# `is T` работает на любом типе (полиморфный type-check).
-Это требует runtime-tag'ов **на всех значениях** — стоимость во всём
-runtime. В Nova `is` ограничен `any`, потому что:
+`is` работает там, где **runtime-tag уже есть структурно**:
 
-1. **Runtime-cost** localized — только `any`-значения несут tag.
-2. **Sum-варианты** проверяются через pattern (`match`, exhaustive,
-   compile-time check).
-3. **Protocol-проверка runtime** — отдельный вопрос (требует
-   structural runtime-introspection, дорого), отложен.
+1. **`any`-значения** содержат tag дискриминирующий конкретный тип
+   (boxing-цена для top-type — обязательная).
+2. **Sum-типы** содержат tag дискриминирующий вариант (это часть
+   layout'а sum-struct'а — `tag + payload`).
 
-Если позже понадобится `x is User` для обычных типов — расширим.
-Сужать сложнее.
+Для record/primitives/protocol — tag'а нет, и `is` ошибка компиляции:
+тип уже известен статически, проверка бессмысленна.
+
+В Kotlin/C# `is T` работает **на любом типе** через RTTI (Runtime
+Type Information) — каждое значение несёт type-tag. Это глобальный
+overhead. Nova избегает этого: `is` использует **существующие** теги
+(any-boxing, sum-discriminant), не добавляет новых. Поэтому стоимость
+`is` localized.
+
+**Sum-вариант check vs `match`**:
+
+```nova
+// Короткая форма для yes/no:
+if shape is Circle { return "round" }
+
+// Полная форма с biding'ом:
+if let Circle(r) = shape { use(r) }
+
+// Exhaustive обработка:
+match shape {
+    Circle(r)  => ...
+    Square(s)  => ...
+    Origin     => ...
+}
+```
+
+Каждая форма для своего сценария: `is` — guard, `if let` — guard +
+extract, `match` — exhaustive multi-way.
 
 #### Smart cast — стандартная эргономика
 
@@ -1928,9 +2009,13 @@ TypeScript narrowing, C# pattern matching, Swift binding-pattern. Все
 
 - **Один оператор для cast и type-check** (Swift `as?`/`as!`).
   Усложняет mental model, путает пользователя.
-- **`is T` для произвольных типов** (Kotlin-style). Требует runtime-tag
-  на всех значениях, дорого. Ограничение `is` к `any` локализует
-  стоимость.
+- **`is T` для любого типа без tag'а** (Kotlin-style RTTI). Требует
+  runtime-tag на всех значениях — глобальный overhead. Nova ограничена
+  типами, у которых tag **уже есть структурно** (`any`-boxing,
+  sum-discriminant). Для record/primitives — compile error.
+- **`is Variant(binding)` с биндингом на sum-типах.** Дублирует
+  `if let Variant(binding) = expr` (D34). Чтобы избежать двух форм
+  для одной задачи — `is` без binding, `if let` с binding.
 - **`x.is[int]()` метод** вместо оператора. Менее читаемо в условиях
   (`if x.is[int]()`-запись хуже `if x is int`). Operator проще.
 - **`as` для `any → T`** без runtime-проверки. Type-небезопасно
@@ -1971,8 +2056,25 @@ TypeScript narrowing, C# pattern matching, Swift binding-pattern. Все
   T) { return }` уточнять тип в продолжении функции? Отложено.
 - **`is` для protocol-types** (runtime structural check) — дорого,
   не входит в MVP.
-- **`is` для sum-вариантов** (`if x is Circle { ... }`) — дублирует
-  match, не вводится.
+- **`is` для error/cancel-detection в `Result[T, E]`.** `r is Err`
+  работает (variant check), но иногда хочется проверить конкретный
+  payload — `r is Err(NotFound)`. Сейчас это не поддерживается
+  (binding запрещён), нужно `if let Err(NotFound) = r`.
+
+### Эволюция
+
+**v1:** `is` работал только для `any`-значений. Sum-варианты
+проверялись через `match` или `if let` — короткой `is`-формы не было.
+Это вынуждало писать convention `@is_circle()` методы для часто
+проверяемых вариантов, что засоряет API типов.
+
+**v2 (текущая, 2026-05-06):** `is` расширен на sum-варианты —
+`shape is Circle` работает. Cтоимость localized: tag для sum уже
+есть в layout'е, никакого нового runtime-overhead'а. Биндинг-форма
+**не** добавлена — это работа `if let` (D34); чёткое разделение
+ролей: `is` = yes/no, `if let` = yes + extract.
+
+Это убрало нужду в `@is_X` convention'ах из syntax.md.
 
 ### Эволюция
 До D54 `as` использовался без формального D-решения (упоминался в
