@@ -84,6 +84,20 @@
 
 ## Runtime (nova_rt/)
 
+### [R9] NovaFiberQueue — фиксированный capacity (1024)
+- **Где:** `nova_rt/fibers.h` (NOVA_SCOPE_CAP)
+- **Что упрощено:** Очередь fiber'ов в `supervised` scope — фиксированный массив
+  `mco_coro* fibers[1024]`. При попытке добавить 1025-й fiber — runtime abort с
+  сообщением "supervised scope exceeded NOVA_SCOPE_CAP".
+- **По спеке (D14):** ограничения на количество fiber'ов нет ("миллион fiber'ов
+  на машину — норма как Erlang"). Это чистое bootstrap-ограничение.
+- **Почему:** Динамический массив требует realloc при росте — лишняя сложность
+  для bootstrap.
+- **Как чинить:** заменить fixed-array на `mco_coro** fibers; int cap;` с
+  geometric growth (cap *= 2 при заполнении). ~1 час работы.
+- **Приоритет:** L (для большинства тестов 1024 хватает; миллион — отдельная задача
+  на performance, требует benchmark'и).
+
 ### [R1] Аллокатор — malloc без free (по умолчанию)
 - **Где:** `nova_rt/alloc.c`
 - **Что упрощено:** `nova_alloc` → malloc, `nova_release` → no-op. Нет GC. Память течёт.

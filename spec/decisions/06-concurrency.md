@@ -553,6 +553,33 @@ D71 фиксирует **минимальную, но spec-faithful** реали
 
 ### Правило
 
+#### Тип результата `supervised` и `parallel for`
+
+**`supervised { body }` возвращает unit** (bootstrap, 2026-05-06). Trailing
+expression body не пробрасывается caller'у — отбрасывается как `(void)`.
+Это согласовано с «spawn возвращает unit» (см. п. 2): результаты от
+concurrent-выполнения берутся через mut-захваты, не через возвращаемое
+значение блока.
+
+**`parallel for x in iter { body }`** в bootstrap'е тоже возвращает unit,
+несмотря на то что D14 предполагает `[]T` массив результатов. Полная
+реализация требует:
+- Сбор результатов body каждой итерации в массив.
+- Heap-allocated `NovaArray_T*` нужного типа (тип берётся из body).
+- Гарантия порядка результатов — соответствует порядку `iter`.
+
+Сейчас идиома для массива результатов — мутировать массив вручную:
+
+```nova
+let mut results = [0, 0, 0]
+parallel for i in 0..3 {
+    results[i] = compute(i)   // НЕ работает: array mutation в spawn
+}
+```
+
+— но это **не работает в bootstrap** (нет array-index-mutation для
+`NovaArray*` в captured контексте). Open-question D71.
+
 #### 1. `supervised { body }` — round-robin scope
 
 ```nova

@@ -1066,6 +1066,9 @@ Structured-concurrency scope. Все `spawn` внутри ждут scope-exit п
 scheduler крутит resume по очереди (round-robin) пока все не завершатся. См.
 D71 для bootstrap-семантики.
 
+**Возвращает unit.** Trailing expression body отбрасывается. Результаты
+концurrent-выполнения — через mut-захваты или (для гомогенных) `parallel for`.
+
 ```nova
 supervised {
     spawn handle_requests()
