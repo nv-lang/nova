@@ -1,6 +1,15 @@
 /* nova_rt/effects.c — thread-local state for Fail, effect handlers, and tests */
 
 #include "nova_rt.h"
+#include "minicoro.h"
+
+/* Whether the calling code is currently running on a fiber's stack.
+ * Used by nova_assert to decide between fail-frame routing (in fiber) and
+ * test-frame routing (on main flow). Defined here because effects.h is
+ * included before fibers.h / minicoro.h, so it can't see mco_running(). */
+int nova_in_fiber(void) {
+    return mco_running() != NULL ? 1 : 0;
+}
 
 #ifdef _MSC_VER
 __declspec(thread) NovaFailFrame*      _nova_fail_top      = NULL;

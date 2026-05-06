@@ -155,8 +155,21 @@ __declspec(thread) extern NovaTestFrame* _nova_test_frame;
 extern __thread NovaTestFrame* _nova_test_frame;
 #endif
 
+/* Forward decl: defined later in nova_rt.h once mco is included.
+ * We test "are we inside a fiber" to decide where assertion failure lands. */
+int nova_in_fiber(void);
+
 static inline void nova_assert(nova_bool cond, const char* expr_str) {
     if (!cond) {
+        /* Inside a fiber: route through the nearest NovaFailFrame so longjmp
+         * stays on the fiber's own stack — never crosses the mco boundary.
+         * Spawn-entry pushes a per-fiber fail-frame; supervised_run re-throws
+         * on main flow via nova_throw, which the test runner's _tf_fail catches.
+         * On main flow (no fiber): route to _nova_test_frame as before. */
+        if (nova_in_fiber() && _nova_fail_top) {
+            _nova_fail_top->error_msg = nova_str_from_cstr(expr_str);
+            longjmp(_nova_fail_top->jmp, 1);
+        }
         if (_nova_test_frame) {
             _nova_test_frame->fail_msg = expr_str;
             longjmp(_nova_test_frame->jmp, 1);

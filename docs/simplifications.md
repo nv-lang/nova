@@ -174,13 +174,16 @@ backedge'ах циклов и function entries.
 - **Roadmap:** добавить safepoint-полл в codegen for-loop / function-
   entry; timer-based signal в runtime.
 
-**[M] `_nova_test_frame` НЕ switching per-fiber.**
-`nova_assert` внутри spawn-body всё ещё пишет `_nova_test_frame->
-fail_msg` и longjmp'ит в test runner — но frame на main-stack'е,
-fiber-stack ушёл. UB. Тесты `38/40/41/42/43/44` это маскируют тем,
-что assert делается ВНЕ spawn-body (на main после scope-exit).
-- **Roadmap:** аналогично fail_top — switching `_nova_test_frame`
-  в `nova_supervised_step`. ~10 строк, тривиально.
+**[ЗАКР] `nova_assert` внутри fiber'а — fail-frame routing (2026-05-06).**
+До фикса: `nova_assert` в fiber-body делал longjmp на `_nova_test_frame`,
+который живёт на main-coroutine-stack — пересечение mco-границы (UB).
+После фикса: `nova_assert` проверяет `nova_in_fiber()`. Если true —
+longjmp идёт через `_nova_fail_top` (per-fiber chain, который пушится
+в spawn-entry). Spawn-entry catch'ит, scope-runner re-throw'ит на
+main flow через `nova_throw`; test runner ловит через дополнительный
+`_tf_fail` NovaFailFrame. Если false (main flow) — старый путь через
+`_nova_test_frame`. Тест `tests-nova/51_assert_in_fiber.nv` (4 теста:
+simple spawn, parallel for, after Time.sleep yield, nested supervised).
 
 **[L] Cancel-channel API.**
 Сейчас cancel-сигнал односторонний (scope→fiber через scope-flag).
@@ -194,8 +197,8 @@ cancel-channel в queue + Nova API `cancel_scope { tok => spawn ... }`
 1. **Top-level `try/catch`** (D25) — разблокирует positive-тесты на
    throw-paths и закроет [H] gap. После этого можно тестировать
    все error-related фичи.
-2. **`_nova_test_frame` switching per-fiber** — закроет UB с
-   nova_assert внутри fiber'а. Тривиально.
+2. ~~**`_nova_test_frame` switching per-fiber**~~ — **сделано (2026-05-06).**
+   nova_assert роутится через nova_in_fiber()/_nova_fail_top.
 3. **`with Fail = ... { body }`** — handler-механизм для Fail
    эффекта. Тогда можно catch'ать без `try`. Это уже есть в spec
    D11 / D31, не реализовано.

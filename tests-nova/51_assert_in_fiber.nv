@@ -1,0 +1,82 @@
+// 51_assert_in_fiber.nv — assert внутри fiber'а корректно роутится через
+// fiber-local NovaFailFrame, а не cross-stack longjmp на test_frame.
+//
+// До фикса (D71 v1): nova_assert делал longjmp на _nova_test_frame, который
+// живёт на main-coroutine-stack — longjmp пересекал mco-границу (UB).
+// После фикса: nova_assert проверяет nova_in_fiber() и роутит на
+// _nova_fail_top (per-fiber chain). Spawn-entry catch'ит, scope-runner
+// re-throw'ит на main, test runner catch'ит через _tf_fail.
+//
+// Этот тест доказывает что pass-path (assert(true) внутри fiber) работает
+// без abort'а; assert(false) внутри fiber должен **завалить** test, но мы
+// этого не можем проверить позитивно — только косвенно (через отсутствие
+// краша suite во всех parallel-for тестах с assert'ами в bodies).
+
+module spec.assert_in_fiber
+
+// ================================================================
+// SECTION 1: assert(true) внутри simple spawn body
+// ================================================================
+
+test "assert(true) inside spawn body — fiber returns cleanly" {
+    let mut k = 0
+    supervised {
+        spawn {
+            assert(true)
+            k = 1
+        }
+    }
+    assert(k == 1)
+}
+
+// ================================================================
+// SECTION 2: assert(true) внутри parallel for
+// ================================================================
+
+test "assert(true) inside parallel for body" {
+    let mut total = 0
+    parallel for i in 0..3 {
+        assert(i >= 0)   // всегда true
+        total += i
+    }
+    assert(total == 3)
+}
+
+// ================================================================
+// SECTION 3: assert после yield — fiber-local fail-top сохранён через resume
+// ================================================================
+
+test "assert after Time.sleep yields — fiber fail-frame survives switch" {
+    let mut hits = 0
+    parallel for i in 0..3 {
+        Time.sleep(0)         // yield: fiber paused, scope switches frames
+        assert(i < 5)         // на возврате _nova_fail_top снова правильный
+        hits += 1
+        Time.sleep(0)
+        assert(hits >= 1)     // после ещё одного round-trip
+    }
+    assert(hits == 3)
+}
+
+// ================================================================
+// SECTION 4: nested supervised — внешний и внутренний fail-frames не путаются
+// ================================================================
+
+test "nested supervised: inner fiber assert ok, outer asserts ok" {
+    let mut outer_count = 0
+    let mut inner_count = 0
+    supervised {
+        spawn {
+            assert(true)
+            supervised {
+                spawn {
+                    assert(true)
+                    inner_count += 1
+                }
+            }
+            outer_count += 1
+        }
+    }
+    assert(outer_count == 1)
+    assert(inner_count == 1)
+}

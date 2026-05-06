@@ -2447,17 +2447,30 @@ impl CEmitter {
                 self.line("NovaTestFrame _tf;");
                 self.line("_tf.fail_msg = NULL;");
                 self.line("_nova_test_frame = &_tf;");
-                self.line(&format!("if (setjmp(_tf.jmp) == 0) {{"));
+                /* Push a fail-frame too: assertion failures inside a fiber are
+                 * routed to the nearest NovaFailFrame (so longjmp stays on the
+                 * fiber's own stack); supervised_run re-throws on main flow via
+                 * nova_throw. Without a top-level fail-frame here, that re-throw
+                 * would abort. We catch it via _tf_fail and report as test
+                 * failure. _tf still catches plain main-flow asserts. */
+                self.line("NovaFailFrame _tf_fail;");
+                self.line("_tf_fail.error_msg = (nova_str){.ptr=NULL, .len=0};");
+                self.line("nova_fail_push(&_tf_fail);");
+                self.line("int _tf_jmp = setjmp(_tf.jmp);");
+                self.line("int _tf_fail_jmp = (_tf_jmp == 0) ? setjmp(_tf_fail.jmp) : 0;");
+                self.line("if (_tf_jmp == 0 && _tf_fail_jmp == 0) {");
                 self.indent += 1;
                 self.line(&format!("nova_test_{}();", safe));
                 self.line(&format!("printf(\"  PASS: {}\\n\");", escaped));
                 self.indent -= 1;
                 self.line("} else {");
                 self.indent += 1;
-                self.line(&format!("printf(\"  FAIL: {} — %s\\n\", _tf.fail_msg ? _tf.fail_msg : \"assertion failed\");", escaped));
+                self.line("const char* _tf_msg = _tf.fail_msg ? _tf.fail_msg : (_tf_fail.error_msg.ptr ? _tf_fail.error_msg.ptr : \"assertion failed\");");
+                self.line(&format!("printf(\"  FAIL: {} — %s\\n\", _tf_msg);", escaped));
                 self.line("_nova_tests_failed++;");
                 self.indent -= 1;
                 self.line("}");
+                self.line("nova_fail_pop();");
                 self.line("_nova_test_frame = NULL;");
                 self.indent -= 1;
                 self.line("}");
