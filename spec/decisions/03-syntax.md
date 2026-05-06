@@ -782,6 +782,39 @@ instance-method  := Type ("mut")? "@" identifier "(" params ")" ...
 
 После имени типа: `.` → static, `@` или `mut @` → instance.
 
+#### Receiver — любой тип, включая примитивы
+
+Receiver-тип может быть **любым именованным типом**: record, sum, newtype,
+unit-тип, protocol — **и встроенный примитив** (`int`, `str`, `bool`,
+`f64`, `u8`, ..., `byte`). Это естественное следствие того, что в Nova
+примитивы — обычные типы (D30, D32), просто с lowercase-именами и
+особым представлением в runtime.
+
+```nova
+// Static method on a primitive — `str` is a regular type.
+fn str.from(i int) -> Self => /* ... */
+
+// Instance method on a primitive — used via `value.method()`.
+fn int @to_hex() -> str => /* ... */
+fn f64 @round() -> int => /* ... */
+
+let s = str.from(42)            // static via D35
+let h = (255).@to_hex()          // instance, parens around literal
+let r = 3.7.@round()             // chained on numeric literal
+```
+
+Применение: `From[X]` для `str` (D73) — основной механизм
+строковой конверсии. Также `int.parse(s str)`, `bool.from(n int)`
+и другие фабрики, не требующие отдельного wrapper-типа.
+
+Ограничения: примитивы — **закрытые** типы, программист не может
+добавить **новые поля** (нет `type str { ... }` для существующего
+`str`). Только методы. Это согласовано с тем, что `extension functions`
+в Nova не вводятся (D46): метод определяется один раз в модуле,
+владеющем типом-receiver. Для примитивов это **stdlib**: `fn int.method`
+определяется только в stdlib-модулях, пользовательский код может
+определять методы только на собственных типах.
+
 В теле метода `@field` — единственная форма доступа к self-полю.
 `@.field` невалидно. `@` без поля — значение текущего инстанса
 (аналог `self`):

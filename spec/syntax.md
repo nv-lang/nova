@@ -277,11 +277,22 @@ if elapsed > 1.second() { ... }           // вызывает @gt
 `@get`, `@set`. Не использовать для других целей.
 
 **Договорные конвенции:**
-- `T.new(...)` — стандартный конструктор; `T.from_X(...)` — из значения.
-- `@to_str()` — конверсия в строку через `ToStr` ([D70](decisions/08-runtime.md#d70)),
-  `@hash()` — хеш, `@clone()` — копия, `@iter()`/`@next()` — iterator.
-- `@is_X()` — bool-предикат; `@as_X()` — дешёвая конверсия; `@to_X()` —
-  возможно дорогая.
+- `T.new(...)` — стандартный конструктор; `T.from(v X)` — из значения
+  через `From[X]` protocol ([D73](decisions/08-runtime.md#d73)).
+- `@into()` — конверсия в другой тип через `Into[T]` ([D73](decisions/08-runtime.md#d73));
+  тип цели берётся из контекста (`let s str = v.@into()`). Конверсия
+  в строку — `str.from(v)` или `v.@into()` с context = `str` (раньше
+  было `@to_str()` через old D70 `ToStr`, отменено в v3).
+- `@hash()` — хеш, `@clone()` — копия, `@iter()`/`@next()` — iterator.
+
+Конвенции `@to_X()`, `@as_X()`, `@is_X()` **не вводятся** — они
+дублируют существующие механизмы:
+- `@to_X()` дублирует `X.from(v)` / `v.@into()` (D73).
+- `@as_X()` дублирует keyword `as` (D54) для дешёвых cast'ов или
+  `X.from` для нетривиальных.
+- `@is_X()` дублирует `match v { X(_) => true, _ => false }`
+  или `if let X(_) = v` (D34). Для `any`-значений — `v is X`
+  (D54).
 - `_prefix` — **только для полей** (используй методы вместо прямого
   доступа). Для функций/методов **не используется**.
 - Test-имена — строки естественного языка: `test "insert and get"`,
@@ -306,7 +317,11 @@ if elapsed > 1.second() { ... }           // вызывает @gt
 - `Error` — record `{ msg str }` для `throw err`
 - `RuntimeError` — sum bottom-уровневых runtime-ошибок
 - `Handler[E]` — first-class тип handler'а эффекта
-- `ToStr` — protocol с методом `@to_str() -> str` ([D70](decisions/08-runtime.md#d70))
+- `From[T]` — protocol со static-методом `from(v T) -> Self`
+  ([D73](decisions/08-runtime.md#d73))
+- `Into[T]` — protocol с instance-методом `@into() -> T`
+  ([D73](decisions/08-runtime.md#d73)). Авто-выводится из `From[T]`
+  и наоборот; пишется одна сторона, другая синтезируется компилятором.
 
 **Стандартные эффекты:**
 - `Fail[E]`, `Fail` — failable-эффект
@@ -1011,6 +1026,85 @@ fn map_eff[T, U, E](xs []T, f (T) E -> U) E -> []U =>
 Параметры типа — после имени в квадратных скобках `Имя[T]`, не `<T>`.
 Подробно — [D16](decisions/03-syntax.md#d16).
 Массивы — `[]T` (динамический), `[N]T` (фиксированный), [D27](decisions/03-syntax.md#d27).
+
+## Generic bounds — `[T Protocol]`
+
+Параметр-тип ограничивается protocol'ом через единое правило «name type»
+(без двоеточия):
+
+```nova
+fn dedup[T Hashable](xs []T) -> []T => ...
+fn map[K Hashable, V](m HashMap[K, V]) -> ...
+fn fold[T, Acc](xs Iter[T], init Acc, f fn(Acc, T) -> Acc) -> Acc
+```
+
+Bound — это **protocol-тип** ([D53](decisions/02-types.md#d53)). Тот же
+`Hashable` стоит и в позиции типа значения (existential), и в bound'е
+(universal через мономорфизацию):
+
+```nova
+fn dump(x Hashable) -> u64 => x.hash()        // existential, dynamic dispatch
+fn dump2[T Hashable](x T) -> u64 => x.hash()  // universal, mono dispatch
+```
+
+**Порядок параметров — слева направо.** Имя в bound'е должно быть
+объявлено раньше:
+
+```nova
+fn func[K, T From[K]](v K) -> T => T.from(v)   // ok: K объявлен первым
+fn func[T From[K], K](v K) -> T                 // ОШИБКА: K используется до объявления
+```
+
+**Множественные bounds** — через анонимный protocol:
+
+```nova
+fn min[T protocol { @lt(other Self) -> bool, @eq(other Self) -> bool }](xs []T) -> T
+```
+
+Если паттерн повторяется — выносится в именованный protocol (`type Ord
+protocol { ... }`).
+
+Подробно — [D72](decisions/02-types.md#d72).
+
+## Конверсии: `as`, `from`/`into`, `to_str`
+
+Три способа конверсии под разные сценарии:
+
+```nova
+// 1. as — compile-time, тривиальные cast'ы (D54)
+let n = 100 as u32                          // numeric
+let u = 42 as UserId                         // newtype ↔ underlying
+let code = NotFound as int                   // sum → int
+
+// 2. From — нетривиальная конверсия с runtime-логикой (D73)
+type Celsius f64
+type Fahrenheit f64
+
+fn Fahrenheit.from(c Celsius) -> Self =>
+    Self((c as f64) * 9.0 / 5.0 + 32.0)
+
+let f = Fahrenheit.from(Celsius(100.0))     // явный вызов
+
+let f Fahrenheit = into(Celsius(100.0))     // через free function, U выводится
+let f = into[Fahrenheit](Celsius(0.0))      // через turbofish
+
+// 3. ToStr — конверсия в строку (D70)
+let s = to_str(42)                          // "42"
+let msg = "id=${user_id}"                    // sugar над to_str
+```
+
+**Граница `as` vs `from`:**
+
+- `as` — bit/tag-уровень, без runtime-кода: `100 as u32`, `id as u64`.
+- `from` — арифметика, парсинг, валидация: `Fahrenheit.from(c)`,
+  `User.from(json)`.
+
+**Граница D73 vs D55:** D55 — automatic coercion для record/sum-литералов
+в позиции с известным типом (`let u User = { id: 1, name: "x" }`).
+D73 — explicit method call для произвольных типов.
+
+Подробно: [D54](decisions/03-syntax.md#d54), [D70](decisions/08-runtime.md#d70),
+[D73](decisions/08-runtime.md#d73).
 
 ## spawn / supervised / parallel for / detach
 

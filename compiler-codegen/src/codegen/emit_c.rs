@@ -2832,7 +2832,9 @@ impl CEmitter {
                     let escaped = Self::escape_c_str(&combined);
                     return Ok(format!("(nova_str){{.ptr=\"{}\", .len={}}}", escaped, combined.len()));
                 }
-                // With interpolations: concatenate parts[0] + to_str(args[0]) + parts[1] + ...
+                // With interpolations: concatenate parts[0] + str.from(args[0]) + parts[1] + ...
+                // (D73: string interpolation uses From[X]/str. In bootstrap codegen we call
+                //  nova_int_to_str directly for int-like values; full From-dispatch is TBD.)
                 let mut result_exprs = Vec::new();
                 for (i, part) in parts.iter().enumerate() {
                     if !part.is_empty() {
@@ -3143,13 +3145,8 @@ impl CEmitter {
             if name == "println" || name == "print" {
                 return self.emit_println(args, name == "println");
             }
-            // to_str(x) → nova_int_to_str((nova_int)(x))
-            if name == "to_str" {
-                if let Some(arg) = args.first() {
-                    let v = self.emit_expr(arg)?;
-                    return Ok(format!("nova_int_to_str((nova_int)({}))", v));
-                }
-            }
+            // D70 `to_str(x)` builtin removed (REPLACED → D73). String
+            // conversion now via `str.from(x)` / `x.@into()` (with str-context).
             // assert(cond) → nova_assert(cond, "condition text")
             if name == "assert" {
                 if let Some(cond_expr) = args.first() {
@@ -3198,6 +3195,21 @@ impl CEmitter {
                 }
             }
             ExprKind::Member { obj, name: method } => {
+                // 0. Built-in primitive static methods (D35 + D73).
+                //    `str.from(x)` — string conversion (replaces old D70 to_str).
+                if let ExprKind::Ident(prim) = &obj.kind {
+                    if prim == "str" && method == "from" {
+                        if let Some(arg) = args.first() {
+                            let arg_ty = self.infer_expr_c_type(arg);
+                            let v = self.emit_expr(arg)?;
+                            return Ok(if arg_ty == "nova_str" {
+                                v
+                            } else {
+                                format!("nova_int_to_str((nova_int)({}))", v)
+                            });
+                        }
+                    }
+                }
                 // 1. Effect dispatch: `Counter.next()` → `Nova_Counter_next()`
                 //    `Time` and `Fail` are pre-registered as built-in effects in
                 //    emit_module — `Time.sleep(ms)` and `Fail.fail(msg)` go through
@@ -3339,6 +3351,22 @@ impl CEmitter {
                 if parts.len() == 2 && self.effect_schemas.contains_key(&parts[0]) {
                     format!("Nova_{}_{}", parts[0], parts[1])
                 } else if parts.len() == 2 {
+                    // Built-in primitive static methods (D35 + D73).
+                    // `str.from(x)` — convert any value to string (replaces
+                    // old D70 to_str). Bootstrap implementation: dispatch on
+                    // arg type — nova_str pass-through, nova_int via
+                    // nova_int_to_str. Other types TBD.
+                    if parts[0] == "str" && parts[1] == "from" {
+                        if let Some(arg) = args.first() {
+                            let arg_ty = self.infer_expr_c_type(arg);
+                            let v = self.emit_expr(arg)?;
+                            return Ok(if arg_ty == "nova_str" {
+                                v
+                            } else {
+                                format!("nova_int_to_str((nova_int)({}))", v)
+                            });
+                        }
+                    }
                     // Could be a static method call: `Type.method(args)`
                     // Check method_receivers for the method name
                     let method_name = &parts[1];

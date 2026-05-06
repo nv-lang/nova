@@ -104,19 +104,18 @@ test "effect методы используют обычные типы (не Sel
 }
 
 // === 6. Self в protocol — исходный D42 use-case ===
+//
+// String conversion in Nova: `Into[str]` via `@into() -> str` (D73,
+// replaces old D70 `ToStr` / `@to_str`). Built-in `str.from(int)`
+// turns an int into its decimal string.
 
-type ToStr protocol {
-    to_str() -> str
-}
-
-// Custom тип реализует ToStr — возвращает str (не Self)
 type UserId { id u64 }
 
-fn UserId @to_str() -> str => "user#" + to_str(@id)
+fn UserId @into() -> str => "user#" + str.from(@id)
 
-test "ToStr protocol — реализация на UserId" {
+test "Into[str] for UserId — string conversion via D73" {
     let u = UserId { id: 42 }
-    let s = u.to_str()
+    let s str = u.into()
     assert(s == "user#42")
 }
 

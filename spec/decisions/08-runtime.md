@@ -12,6 +12,7 @@ static-состояния.
 | [D26](#d26-базовая-stdlib-и-prelude) | Базовая stdlib и prelude |
 | [D41](#d41-static-функции-есть-static-состояния-нет) | Static-функции есть, static-состояния нет |
 | [D70](#d70-tostr-protocol--to_str-метод--free-function-tostrv) | `ToStr` protocol + `@to_str()` метод + free function `to_str(v)` |
+| [D73](#d73-from--into-protocol-пара-с-авто-выводом) | `From` / `Into` protocol-пара с авто-выводом |
 
 ---
 
@@ -548,6 +549,18 @@ fn main() {
 
 ## D70. `ToStr` protocol + `@to_str()` метод + free function `to_str(v)`
 
+> ⚠️ **REPLACED → [D73](#d73-from--into-protocol-пара-с-авто-выводом).**
+> `ToStr` отменён как отдельный protocol — конверсия в строку это
+> частный случай `From`/`Into`-механизма из D73. Вместо `@to_str()` /
+> `ToStr` пишется `fn str.from(v X) -> Self` (или `fn X @into() -> str`),
+> и компилятор автоматически даёт обе формы вызова: `str.from(v)`
+> и `v.@into()`. String interpolation `"${v}"` использует `str.from(v)`
+> внутри. См. D73 для полной семантики и [«Эволюция»](#d70-эволюция)
+> ниже про переход.
+>
+> Раздел сохранён как историческая справка; в живом коде D70-механизм
+> не используется.
+
 ### Что
 Универсальный механизм конверсии значения в строку:
 
@@ -738,3 +751,436 @@ D70 формализует:
 - Универсальный `@cast[X]` — синтаксический конфликт с generic-
   параметрами и нет return-type dispatch'а в Nova.
 - Без protocol'а — нет compile-time enforcement.
+
+#### v3 (2026-05-06) — REPLACED → D73
+
+D70 отменён как отдельный механизм. Конверсия в строку — частный
+случай универсального `From`/`Into`-механизма из D73:
+
+| Старая форма (D70) | Новая форма (D73) |
+|---|---|
+| `fn UserId @to_str() -> str => ...` | `fn str.from(u UserId) -> Self => ...` |
+| `to_str(user)` | `str.from(user)` |
+| `user.@to_str()` | `user.@into()` (`Into[str]` авто-выведен из `From`) |
+| `"${user}"` (через `to_str`) | `"${user}"` (через `str.from`) |
+
+**Почему замена сделана:**
+
+1. **Дублирование механизмов.** D70 + D73 решают **одну задачу**
+   («конверсия значения в другой тип») разными способами.
+   Конверсия в `str` — частный случай конверсии в любой тип.
+2. **Принцип «один очевидный путь» (D9).** Программист не должен
+   выбирать между `to_str` и `into[str]` для одного и того же.
+3. **Methods on primitives (D35).** Расширение D35 явно позволяет
+   `fn str.from(...)` — раньше это было неочевидно. С этим
+   `str.from` становится естественным конструктором.
+4. **AI-friendly.** LLM генерирует `str.from(x)` единообразно с
+   любой другой конверсией, без специального правила «для строк
+   используй to_str».
+
+**Как мигрировать:** заменить `@to_str() -> str` на `str.from(v Self)`
+(switching method body to `static-method-on-str`), либо `@into() -> str`
+(оставить body на receiver-типе). Free function `to_str(v)` —
+вызовы заменяются на `str.from(v)`. String interpolation работает
+автоматически (компилятор использует `str.from`).
+
+**Auto-derive для встроенных типов и record/sum** — переносится из
+D70 на `str.from`: stdlib pre-registers `str.from(int)`, `str.from(bool)`,
+`str.from(f64)`, `str.from(<any record>)`, `str.from(<any sum>)` — те
+же типы что в D70 авто-derive'ились.
+
+---
+
+## D73. `From` / `Into` protocol-пара с авто-выводом
+
+### Что
+Универсальный механизм нетривиальной конверсии значения между типами:
+
+1. **`From[T]`** — protocol со static-методом `from(v T) -> Self`.
+   «Целевой тип знает, как сделать себя из источника».
+2. **`Into[T]`** — protocol с instance-методом `@into() -> T`.
+   «Источник знает, как превратиться в целевой».
+3. **Авто-вывод одного из другого** — компилятор знает про симметрию.
+   Если задан только `From[X]` для типа `T`, компилятор автоматически
+   удовлетворяет `Into[T]` для `X` (и наоборот). Программист пишет
+   **одну** реализацию из пары.
+
+Программисту доступны **две формы вызова** из одной реализации:
+
+```nova
+T.from(v X)             // static, на целевом типе
+v.@into()               // instance, на источнике (тип цели — из контекста)
+```
+
+В отличие от `as` (D54) — compile-time numeric/newtype/sum cast без
+runtime-кода, — `From`/`Into` для **семантически нетривиальных**
+конверсий (парсинг, единицы измерения, формат-обмен, представление
+в строку — последнее заменяет old D70 `ToStr`).
+
+### Правило
+
+#### Декларация protocol'ов в prelude
+
+```nova
+type From[T] protocol {
+    from(v T) -> Self           // static, на целевом типе
+}
+
+type Into[T] protocol {
+    @into() -> T                 // instance, на источнике
+}
+```
+
+`Self` (D66) — тип, реализующий protocol. `From.from` — static-метод,
+вызывается через точку (D35): `Fahrenheit.from(celsius)`. `Into.@into`
+— instance-метод, через `@`-нотацию: `c.@into()`.
+
+**Программист пишет одну сторону пары** — компилятор автоматически
+выводит другую. Подробности — секция «`Into[T]` protocol и
+автоматический вывод» ниже.
+
+#### Реализация на пользовательском типе
+
+Программист пишет обычный static-метод (D35):
+
+```nova
+type Celsius f64
+type Fahrenheit f64
+
+fn Fahrenheit.from(c Celsius) -> Self =>
+    Self((c as f64) * 9.0 / 5.0 + 32.0)
+
+let f = Fahrenheit.from(Celsius(100.0))   // Fahrenheit(212.0)
+```
+
+Структурно `Fahrenheit` теперь удовлетворяет `From[Celsius]` (D53 +
+D72) — никаких явных `impl` блоков.
+
+**Несколько `From[X]` на одном типе** через overloading по
+параметру (D46):
+
+```nova
+fn Fahrenheit.from(c Celsius) -> Self => ...
+fn Fahrenheit.from(k Kelvin) -> Self => ...
+
+let f1 = Fahrenheit.from(Celsius(100.0))
+let f2 = Fahrenheit.from(Kelvin(373.15))
+```
+
+#### Generic-функции с `From`-bound
+
+```nova
+fn parse_typed[U From[str]](s str) -> U => U.from(s)
+
+let n int = parse_typed("42")     // если int реализует From[str]
+```
+
+Bound `[U From[X]]` в generic-сигнатуре требует чтобы конкретный
+тип `U` реализовывал `From[X]` — структурно, через D72 bound check.
+
+#### Соотношение с `as` (D54)
+
+**`as` — compile-time, без runtime-кода:**
+
+```nova
+let n = 100 as u32                 // numeric cast
+let u = 42 as UserId                // newtype ↔ underlying
+let code = NotFound as int          // sum → int
+```
+
+**`From` — нетривиальная конверсия с runtime-логикой:**
+
+```nova
+let f = Fahrenheit.from(c)         // арифметика
+let u = User.from(json_value)      // парсинг
+let m = Money.from(("USD", 100))    // конструирование с валидацией
+```
+
+Граница чёткая: если конверсия выражается одним bit-level/tag-уровнем —
+`as`. Если требует логики или может бросить — `from`.
+
+#### Соотношение с D55 record-coercion
+
+D55 — automatic coercion в позиции с известным целевым типом для
+**record-литералов** и **sum-конструкторов**:
+
+```nova
+let u User = { id: 2, name: "Bob" }     // D55: anonymous record → User
+let m Maybe[int] = 42                    // D55: 42 → Just(42)
+```
+
+D73 — **explicit** конверсия через method call для произвольных типов.
+D55 срабатывает раньше на синтаксическом уровне; `From.from` — обычный
+вызов. Не конфликтуют:
+
+```nova
+let f Fahrenheit = Celsius(100.0)        // ОШИБКА: D55 не работает —
+                                          // Fahrenheit не sum с unary Celsius
+let f = Fahrenheit.from(Celsius(100.0))  // ok: D73
+let f = into[Fahrenheit](Celsius(100.0)) // ok: через free function
+```
+
+#### `Into[T]` protocol и автоматический вывод
+
+`Into[T]` — protocol с instance-методом, симметричный к `From[T]`:
+
+```nova
+type From[T] protocol {
+    from(v T) -> Self          // static — на целевом типе
+}
+
+type Into[T] protocol {
+    @into() -> T                // instance — на источнике
+}
+```
+
+**Компилятор знает про симметрию `From`/`Into` и выводит одно из
+другого автоматически.** Программист пишет **одну** реализацию из
+пары, вторая выводится без блан­ket-impl и orphan-rule:
+
+```nova
+// Программист пишет From — Into выводится автоматически.
+type Celsius f64
+type Fahrenheit f64
+
+fn Fahrenheit.from(c Celsius) -> Self =>
+    Self((c as f64) * 9.0 / 5.0 + 32.0)
+
+// Компилятор автоматически синтезирует:
+//   fn Celsius @into() -> Fahrenheit => Fahrenheit.from(@)
+// → Celsius структурно удовлетворяет Into[Fahrenheit].
+
+let f1 = Fahrenheit.from(Celsius(100.0))    // явная from-форма
+let f2 = Celsius(100.0).@into()              // авто-выведенная into-форма
+let f3 = into[Fahrenheit](Celsius(100.0))   // free function
+let f4 Fahrenheit = into(Celsius(100.0))    // через context (D55)
+```
+
+Симметрично, если программист пишет `@into`, компилятор синтезирует
+`from`:
+
+```nova
+// Программист пишет Into — From выводится автоматически.
+type Json record { ... }
+type User { id u64, name str }
+
+fn Json @into() -> User =>
+    User { id: @get_u64("id"), name: @get_str("name") }
+
+// Компилятор автоматически синтезирует:
+//   fn User.from(v Json) -> Self => v.@into()
+// → User структурно удовлетворяет From[Json].
+
+let u1 = json.@into()                        // явная into-форма
+let u2 = User.from(json)                     // авто-выведенная from-форма
+```
+
+**Если написаны обе** — обе используются как написаны, авто-вывод
+не применяется. **Несовпадение результатов** между руками
+написанными `from` и `into` — ответственность программиста (типичный
+лит-чек предупреждает, но не запрещает: бывают legitimate случаи
+типа explicit-from-bytes vs implicit-into-bytes).
+
+**Запрет циклов авто-вывода.** Авто-вывод одноуровневый: из `From[X]`
+для `T` синтезируется `Into[T]` для `X`. Не наоборот в той же
+итерации (это создало бы цикл). Это значит:
+
+- Программист пишет `From[X]` или `Into[X]` — оба триггерят авто-вывод парного.
+- Компилятор не пытается «найти transitively From[Y] через From[X] и From[X→Y]».
+
+Если нужна транзитивность (`A → B → C` через две промежуточные
+конверсии) — программист пишет explicit:
+
+```nova
+fn C.from(a A) -> Self =>
+    let b = B.from(a)
+    Self.from(b)
+```
+
+#### Две формы вызова
+
+Конверсия доступна в **двух формах**, обе из одной реализации:
+
+```nova
+Fahrenheit.from(Celsius(100.0))       // 1. static method (From[T] protocol)
+Celsius(100.0).@into()                // 2. instance method (Into[T] protocol)
+```
+
+Обе формы эквивалентны. Выбирай по читаемости:
+
+- **`T.from(v)`** — целевой тип выделен в начале, читается как
+  «build a Fahrenheit from this Celsius». Хорош в выражениях,
+  где тип цели — главная информация.
+- **`v.@into()`** — короче в method-chains: `c.@into().log()`.
+  Тип цели берётся из контекста (`let s str = v.@into()`,
+  параметр функции, return-type). Без context — компилятор
+  попросит указать тип цели через аннотацию.
+
+Free function `into[T, U From[T]](v T) -> U` **не вводится** —
+третья форма создавала бы лишний выбор для программиста и LLM
+(нарушение D9 «один очевидный путь»). Static `T.from` уже
+покрывает explicit-type case, instance `.@into()` — context-driven.
+
+#### Throwing-варианты
+
+`From.from` может throw'ить через `Fail[E]`:
+
+```nova
+type ParseError | InvalidFormat | OutOfRange
+
+fn UserId.from(s str) Fail[ParseError] -> Self =>
+    match parse_int(s) {
+        Some(n) if n >= 0 => Self(n as u64)
+        Some(_)            => throw OutOfRange
+        None               => throw InvalidFormat
+    }
+
+let id UserId = UserId.from("42")        // throws Fail[ParseError]
+```
+
+Это обычная сигнатура с эффектом, никаких специальных правил.
+`?` после такого вызова — нарушение D67 (`from` возвращает T через
+Fail, не Result/Option):
+
+```nova
+let id = UserId.from(s)?       // ОШИБКА D67
+let id = UserId.from(s)         // ok, throw сам пробрасывается
+```
+
+### Почему
+
+1. **Нетривиальные конверсии — частая нужда.** Единицы измерения
+   (`Celsius` ↔ `Fahrenheit`), парсинг (`str` → `UserId`), формат-обмен
+   (`Json` → `User`). Без `From` каждый тип придумывает своё имя
+   (`Celsius.to_fahrenheit`, `User.parse_json`). Единый protocol даёт
+   общий контракт.
+
+2. **Согласовано с `ToStr` (D70).** D70 уже использует ту же форму:
+   protocol с одним методом + free function в prelude (`to_str(v)`).
+   D73 повторяет паттерн для конверсий: `From` + `into`.
+
+3. **`Self` универсален (D66).** `Self` в protocol-методе делает
+   объявление коротким — не нужно повторять имя типа. До D66 `From[T]`
+   потребовал бы typeclass-механизм; с D66 это обычный protocol.
+
+4. **Bounds (D72) разблокируют generic-функции.** `fn parse[U From[str]]`
+   до D72 было невозможно. Теперь — естественно.
+
+5. **Прецедент Rust.** `From`/`Into` — самый используемый паттерн в
+   Rust ecosystem. Nova берёт идею (явные конверсии через protocol),
+   адаптирует под свою систему (структурная типизация, без orphan
+   rule, free function вместо blanket-impl).
+
+6. **AI-friendly.** LLM генерирует `Fahrenheit.from(celsius)` без
+   обдумывания имени метода. Структурный bound `[U From[T]]`
+   проверяется compile-time с понятной ошибкой («`Bar` не реализует
+   `From[Foo]`: missing static method `from(v Foo)`»).
+
+### Что отвергнуто
+
+- **Free function `into[T, U From[T]](v T) -> U`.** Раньше была
+  предложена как третья форма вызова (`into[Target](value)`).
+  Отвергнута: дублирует `T.from(v)` (ровно та же ширина и информация),
+  создаёт три формы для одной операции — нарушение D9. `T.from`
+  для explicit-type, `v.@into()` для context-driven — этих двух
+  достаточно.
+- **Только `From[T]` без `Into[T]`** (как было в первой редакции D73).
+  Без `Into` method-form `c.@into()` была недоступна. Теперь
+  `Into[T]` — first-class protocol; method-form работает; компилятор
+  выводит парность из `From[T]` автоматически.
+- **Blanket-impl типа Rust `T: From<U> ⇒ U: Into<T>`.** В Nova нет
+  orphan rule и нет `impl` блоков (D42/D53), классический blanket-impl
+  негде. **Решение Nova** — компилятор синтезирует парный protocol
+  на уровне type-checker'а: если у типа есть `from`, считается что
+  есть и `@into` (и наоборот). Это сохраняет преимущество Rust
+  (одна реализация → две формы вызова) без orphan-механики.
+- **`From` как trait с default-методами.** Без `impl` блоков и orphan
+  rule концептуально неприменимо. Авто-синтез symmetric'а заменяет.
+- **Implicit conversion в позиции аргумента** (Scala 3 `Conversion`,
+  C++ implicit constructors). Nova: все конверсии явные (`as`, `from`,
+  D55 — но D55 only для sum/record-литералов, без method call).
+- **`@from(v T) -> Self` instance-метод вместо static.** `from` это
+  фабрика — у неё нет существующего инстанса для `@`. По D35
+  `fn Type.method` для конструкторов / static, что соответствует
+  семантике.
+- **`as` для нетривиальных конверсий** (`celsius as Fahrenheit`).
+  D54 явно ограничивает `as` — compile-time numeric/newtype/sum.
+  Расширять — теряется граница между cheap-cast и expensive-conversion.
+- **Отдельный `ToStr` protocol для конверсии в строку (старая D70).**
+  Конверсия в `str` — частный случай `From[X]`-механизма. Иметь два
+  механизма для одной задачи нарушает D9. См. D70 v3 «REPLACED → D73»
+  про переход.
+
+### Цена
+
+1. **Без context требуется явный целевой тип.** `v.@into()` на
+   bare-line-position не компилируется — нужно либо `let x T = v.@into()`,
+   либо `T.from(v)` с явным типом-prefix'ом.
+2. **Multiple `From[X]` через overloading по типу параметра** (D46) —
+   зависит от Q-overloading-rules. В MVP overloading по типу аргумента
+   разрешён в D46, но детали ambiguity ещё не финализированы.
+3. **`From` от типа из чужого модуля.** Без orphan rule — добавляешь
+   `fn MyType.from(v ForeignType)` где угодно, **но** реализация
+   живёт в модуле, владеющем `MyType` (по D47 visibility). Если ни
+   один из типов не «твой» — добавить `From` нельзя без обёртки
+   (newtype). Это сознательное ограничение: предотвращает duplicate
+   conflicting implementations.
+
+### Связь
+
+- [02-types.md → D53](02-types.md#d53) — protocol = тип, основа.
+- [02-types.md → D66](02-types.md#d66) — `Self` в protocol.
+- [02-types.md → D72](02-types.md#d72) — bounds для `[U From[T]]`.
+- [03-syntax.md → D35](03-syntax.md#d35) — static / instance методы;
+  receiver — любой тип, включая примитивы (`fn str.from(...)`).
+- [03-syntax.md → D54](03-syntax.md#d54) — `as` для тривиальных
+  cast'ов; D73 покрывает остальное.
+- [02-types.md → D55](02-types.md#d55) — record/sum coercion;
+  D73 для остальных типов.
+- [04-effects.md → D67](04-effects.md#d67) — `from` с throw через
+  `Fail` следует общим правилам `?`.
+- [08-runtime.md → D70](#d70-tostr-protocol--to_str-метод--free-function-tostrv)
+  — REPLACED → D73; конверсия в `str` это частный случай D73.
+- [D26](#d26-базовая-stdlib-и-prelude) — `From`, `Into` в prelude.
+
+### Открытые вопросы
+
+- **`From` для базовых типов.** Stdlib pre-registers `str.from(int)`,
+  `str.from(bool)`, `str.from(f64)` (D70-replacement). Должны ли
+  `int.from(bool)`, `f64.from(int)` etc. — сейчас open вопрос
+  Q-from-builtins.
+- **`TryFrom`** — отдельный protocol для **fallible** конверсий
+  с явным `Result`/`Fail` в сигнатуре? Сейчас обычный `from` с
+  `Fail[E]` достаточен. Q-tryfrom.
+- **Auto-derive `From`** — для newtype можно автоматически (`type
+  UserId u64` ⇒ `UserId.from(n u64) -> Self`)? Сейчас программист
+  пишет вручную. Q-auto-from.
+- **`From`-цепочки.** Если `B: From[A]` и `C: From[B]`, можно ли
+  одно вызовом перейти `A → C`? В Rust — нет (single-step). Nova —
+  пока тоже нет, программист пишет `C.from(B.from(a))`. Q-from-chain.
+
+### Эволюция
+
+**v1 (первая редакция D73):** только `From[T]` protocol + free function
+`into[T, U From[T]](v T) -> U`. `Into` отвергнут как «Rust-style
+blanket-impl нет, не нужен отдельный protocol». Method-form
+`value.@into()` не работала.
+
+**v2:** добавлен `Into[T]` protocol с instance-методом `@into() -> T`.
+Компилятор автоматически синтезирует парный protocol — `T.from(v X)`
+written → `X.@into() -> T` synthesized (и наоборот). Три эквивалентные
+формы вызова из одной реализации: `into[T](v)`, `v.@into()`,
+`T.from(v)`.
+
+**v3 (текущая, 2026-05-06):** убрана free function `into[T, U](v)`.
+Три формы — это нарушение D9. Остались две: `T.from(v)` (static,
+explicit-type) и `v.@into()` (instance, context-driven). Также:
+
+- D70 `ToStr` помечен как REPLACED → D73 — конверсия в строку
+  выражается через `str.from(v)` / `v.@into()` (с context = str).
+- D35 явно расширен: receiver-тип может быть примитивом
+  (`fn str.from(int)`, `fn int @to_hex() -> str` и т.п.).
+
+**Что было невозможно до этого:** D73 как механизм требует bound'ы
+(D72). До D72 (Q-bounds открыт) `From`/`Into` пара была заблокирована.
+С D72 разблокирована.
