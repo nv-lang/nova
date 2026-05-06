@@ -264,6 +264,57 @@ if elapsed > 1.second() { ... }           // вызывает @gt
 семантика). Custom-операторы (`:+`, `<>`) не разрешены. Подробно —
 [D46](decisions/03-syntax.md#d46).
 
+## Математические операции на числовых типах
+
+Стандартные математические функции на `f64` / `f32` / `int` объявлены
+как **instance-методы** через `@`, не как static `Math.sin(...)`.
+Это согласовано с D35 (методы — основной механизм для type-bound
+функций) и даёт chain-friendly формулы:
+
+```nova
+let r = (x * x + y * y).sqrt()
+let phi = im.atan2(re)
+let dist = a.hypot(b)
+let s = (theta + offset).sin()
+```
+
+**Стандартный набор на `f64` (prelude):**
+
+| Категория | Методы |
+|---|---|
+| Корни и степени | `@sqrt()`, `@cbrt()`, `@sqr()`, `@pow(exp f64)`, `@powi(n int)` |
+| Тригонометрия | `@sin()`, `@cos()`, `@tan()`, `@asin()`, `@acos()`, `@atan()` |
+| `atan2` (двух-арг) | `@atan2(other f64) -> f64` (`y.atan2(x)`) |
+| Гиперболические | `@sinh()`, `@cosh()`, `@tanh()` |
+| Экспонента / лог | `@exp()`, `@ln()`, `@log10()`, `@log2()`, `@log(base f64)` |
+| Норма / расстояние | `@abs()`, `@hypot(other f64)` |
+| Округление | `@floor()`, `@ceil()`, `@round()`, `@trunc()`, `@fract()` |
+| Знак / минимум | `@signum()`, `@min(other f64)`, `@max(other f64)` |
+| Предикаты | `@is_finite()`, `@is_nan()`, `@is_infinite()` |
+
+Аналогичный набор на `int` для целочисленных операций
+(`@abs()`, `@pow(n int)`, `@signum()`, `@min`, `@max`).
+
+**Имена**, на которые стоит обратить внимание:
+
+- **`@sqr()`** — квадрат `x*x`. Прецедент Pascal `Sqr(x)`, короче чем
+  `squared`. Согласовано с `Complex @sqr()` и любыми другими типами,
+  где квадрат — частая операция.
+- **`@hypot(other)`** / **`@atan2(other)`** — двухаргументные функции,
+  второй аргумент идёт как параметр; receiver — первый аргумент по
+  математической конвенции (`y.atan2(x)`, `a.hypot(b)`).
+
+**Static-функции на типе** для тех случаев, где нет естественного
+receiver'а:
+
+```nova
+f64.PI                   // константа
+f64.E                    // константа
+f64.NAN                  // константа
+f64.INFINITY             // константа
+f64.try_parse(s str) -> Option[f64]
+```
+
 ## Конвенции именования
 
 | Что | Стиль | Пример |
@@ -284,12 +335,18 @@ if elapsed > 1.second() { ... }           // вызывает @gt
 
 **Договорные конвенции:**
 - `T.new(...)` — стандартный конструктор; `T.from(v X)` — из значения
-  через `From[X]` protocol ([D73](decisions/08-runtime.md#d73)).
+  через `From[X]` protocol ([D73](decisions/08-runtime.md#d73));
+  `T.from_X(...)` — доменный конструктор когда `from(v)` не передаёт
+  смысл (`from_secs`, `from_polar`, `from_imag`).
 - `@into()` — конверсия в другой тип через `Into[T]` ([D73](decisions/08-runtime.md#d73));
   тип цели берётся из контекста (`let s str = v.into()`). Конверсия
   в строку — `str.from(v)` или `v.into()` с context = `str` (раньше
   было `@to_str()` через old D70 `ToStr`, отменено в v3).
 - `@hash()` — хеш, `@clone()` — копия, `@iter()`/`@next()` — iterator.
+- **Имена ошибок** ([D30](decisions/03-syntax.md#d30)) — с типом / доменом:
+  `ParseComplexError`, `ParseIntError`, `DbError`, `OverflowError`.
+  Не использовать generic `ParseError`, `ValueError`, `Exception` —
+  коллизии импорта, неоднозначность для AI.
 
 Конвенции `@to_X()`, `@as_X()`, `@is_X()` **не вводятся** — они
 дублируют существующие механизмы:
@@ -841,6 +898,68 @@ heap. Программист не пишет ничего особого. Для
 
 Подробно — [D32](decisions/02-types.md#d32).
 
+## Опциональные параметры — через record + spread, не через defaults
+
+Default-значений у параметров функции в Nova **нет** (намеренно — см.
+[history/rejected.md](decisions/history/rejected.md)). Когда у функции
+много параметров с разумными дефолтами, используется паттерн
+**опции-record + spread**: комбинация record-типа с константой-дефолтом
+([D52](decisions/02-types.md#d52)), record-coercion в позиции с
+известным типом ([D55](decisions/02-types.md#d55)) и spread `...obj`
+для override отдельных полей ([D60](decisions/03-syntax.md#d60)).
+
+```nova
+type ServerOpts {
+    port     int
+    host     str
+    max_conn int
+    timeout  Duration
+}
+
+const SERVER_DEFAULTS ServerOpts = {
+    port:     8080,
+    host:     "0.0.0.0",
+    max_conn: 1024,
+    timeout:  30.seconds(),
+}
+
+fn serve(opts ServerOpts) Net -> () => ...
+
+// Все дефолты:
+serve({ ...SERVER_DEFAULTS })
+
+// Override одного-двух полей:
+serve({ ...SERVER_DEFAULTS, port: 9000 })
+serve({ ...SERVER_DEFAULTS, port: 9000, max_conn: 4096 })
+
+// Совсем кастом:
+serve({ port: 9000, host: "127.0.0.1", max_conn: 16, timeout: 5.seconds() })
+```
+
+**Преимущества над default-значениями:**
+
+1. **Все опции видны на call-site** — программист и LLM не гадают что
+   значит «остальные дефолты». `...SERVER_DEFAULTS` явно говорит
+   «возьми всё остальное оттуда».
+2. **Дефолты переиспользуются** — `SERVER_DEFAULTS`, `TEST_DEFAULTS`,
+   `DEV_DEFAULTS` для разных сред.
+3. **Refactoring безопасен** — добавил поле в record, спред-вызовы
+   подхватывают новое поле; вызовы без спреда — compile error «missing
+   field», программист увидит каждое место.
+4. **Композиция** — несколько spread'ов: `{ ...BASE, ...OVERRIDES, port: 9000 }`.
+5. **Без новой грамматики** — работает через существующие D52/D55/D60.
+
+**Когда такой паттерн избыточен:**
+
+- Функция имеет **2–3 параметра** без дефолтов — пишутся напрямую:
+  `fn move(x int, y int)`.
+- Дефолты семантически разные («режимы») — лучше отдельные функции
+  или sum-type: `fn parse_strict(s str)`, `fn parse_lenient(s str)`.
+
+Подробно: [D52 record](decisions/02-types.md#d52),
+[D55 coercion](decisions/02-types.md#d55),
+[D60 spread](decisions/03-syntax.md#d60).
+
 ## Эффекты в сигнатуре
 
 Любое нечистое действие — эффект, объявляется между `)` и `->`:
@@ -1230,10 +1349,12 @@ let names []str = users.map() { u => u.name }      // trailing-block
 |---|---|---|
 | `for x in iter { body }` | `unit` | statement, side-effects |
 | `iter.map((x) => body)` | `[]T` | sequential map |
-| `parallel for x in iter { body }` | `[]T` | parallel map (fan-out) |
+| `parallel for x in iter { body }` (body has trailing) | `[]T` | parallel map (fan-out) |
+| `parallel for x in iter { body }` (no trailing) | `unit` | parallel side-effect loop |
 
-В bootstrap'е `parallel for` сейчас возвращает `unit` (упрощение D71); полное
-spec-поведение `[]T` — в roadmap.
+Bootstrap-реализация (2026-05-06): array-mode работает для T ∈ {int, bool,
+f64, str} и итераторов `a..b`, `a..=b`, array literal. Без trailing — старая
+семантика (statement, unit). См. D71 в decisions/06-concurrency.md.
 
 ### `detach { body }`
 

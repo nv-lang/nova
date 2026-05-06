@@ -48,8 +48,8 @@ export fn transfer_money(
     Trace.span("transfer_money") {
         if !AuthContext.has_role("transfer") { throw TransferError.Forbidden }
 
-        match Idempotency.check_or_record(req.idem_key, 86400)? {
-            AlreadyProcessed(prev) => decode_transfer(prev)?
+        match Idempotency.check_or_record(req.idem_key, 86400) {
+            AlreadyProcessed(prev) => decode_transfer(prev)
             New => do_transfer(req)
         }
     }
@@ -69,19 +69,19 @@ export fn transfer_money(
 // В файле пишется без эффектов — компилятор показывает их через
 // `nova check --show-effects` (D28).
 fn do_transfer(req TransferRequest) -> Transfer {
-    validate_amount(req.amount)?
+    validate_amount(req.amount)
 
-    Db.in_transaction() {
-        let from = repo.account_get(req.from)?
-        let to   = repo.account_get(req.to)?
+    Db.in_transaction(() => {
+        let from = repo.account_get(req.from)
+        let to   = repo.account_get(req.to)
 
-        validate_pair(from, to, req.amount)?
+        validate_pair(from, to, req.amount)
 
-        let new_from_balance = sub_money(from.balance, req.amount)?
-        let new_to_balance   = add_money(to.balance, req.amount)?
+        let new_from_balance = sub_money(from.balance, req.amount)
+        let new_to_balance   = add_money(to.balance, req.amount)
 
-        repo.account_update_balance(from.id, new_from_balance)?
-        repo.account_update_balance(to.id, new_to_balance)?
+        repo.account_update_balance(from.id, new_from_balance)
+        repo.account_update_balance(to.id, new_to_balance)
 
         let t = Transfer {
             id:         IdGen.next(),
@@ -91,7 +91,7 @@ fn do_transfer(req TransferRequest) -> Transfer {
             status:     Completed,
             created_at: Clock.now(),
         }
-        repo.transfer_insert(t)?
+        repo.transfer_insert(t)
 
         Logger.log(Info, "transfer completed", [
             { key: "transfer_id", value: t.id },
@@ -99,7 +99,7 @@ fn do_transfer(req TransferRequest) -> Transfer {
         ])
         Metrics.counter_inc("transfers_completed_total", [])
         t
-    }
+    })
 }
 
 

@@ -265,9 +265,13 @@ fn audit_step(next Handler, req Request)
     }
 
     // Без admin_id запись бесполезна (и нарушит FK).
-    let admin_id = match CurrentAdmin.id() {
+    let admin_id_opt = CurrentAdmin.id()
+    if admin_id_opt == None {
+        return resp
+    }
+    let admin_id = match admin_id_opt {
         Some(id) => id
-        None     => return resp
+        None     => 0    // unreachable из-за check выше
     }
 
     let pattern = Router.pattern()
@@ -329,7 +333,7 @@ fn log_audit_failure(e AuditEntryInternal, err Error) Log -> () =>
 // query: ?from=&to=&admin_id=&action=&target_id=&limit=&offset=
 fn list_audit(req Request) Db Fail -> Response {
     let params = parse_list_params(req.query)
-    let entries = query_audit(params)?
+    let entries = query_audit(params)
     Response.json(200, {
         "entries": entries,
         "limit":   params.limit,
@@ -373,23 +377,23 @@ fn query_audit(p ListParams) Db Fail -> []AuditEntry {
         .append("ORDER BY a.created_at DESC LIMIT ? OFFSET ?", [p.limit, p.offset])
 
     // QueryBuilder.build() возвращает уже собранный Sql (template + args).
-    Db.query(q.build())?
+    Db.query(q.build())
         .map(row_to_audit_entry)
 }
 
 fn row_to_audit_entry(row DbRow) Fail -> AuditEntry =>
     AuditEntry {
-        id:          row.get("id")?,
-        admin_id:    row.get("admin_id")?,
-        admin_name:  row.get("admin_name")?,
-        action:      row.get("action")?,
-        target_kind: row.get("target_kind")?,
-        target_id:   row.get("target_id")?,
+        id:          row.get_int("id"),
+        admin_id:    row.get_int("admin_id"),
+        admin_name:  row.get_str("admin_name"),
+        action:      row.get_str("action"),
+        target_kind: row.get_str("target_kind"),
+        target_id:   row.get_str("target_id"),
         payload:     row.get_or("payload", json`{}`),
-        status:      row.get("status")?,
+        status:      row.get_int("status"),
         ip:          row.get_or("ip", ""),
         user_agent:  row.get_or("user_agent", ""),
-        created_at:  row.get("created_at")?,
+        created_at:  row.get_int("created_at"),
     }
 
 
@@ -433,13 +437,13 @@ test "audit middleware: пишет запись для успешного POST" 
         let next = (req) => Response.ok(json`{}`)
         let mw = audit_middleware(next)
 
-        mw(Request.post("/users/42/ban", json`{"reason": "spam"}`))?
+        mw(Request.post("/users/42/ban", json`{"reason": "spam"}`))
 
-        let rows = Db.query(sql`SELECT action, target_kind, target_id FROM admin_audit_log`)?
+        let rows = Db.query(sql`SELECT action, target_kind, target_id FROM admin_audit_log`)
         assert rows.len == 1
-        assert rows[0].get("action")?         == "users.ban"
-        assert rows[0].get("target_kind")?    == "user"
-        assert rows[0].get("target_id")?      == "42"
+        assert rows[0].get_str("action")      == "users.ban"
+        assert rows[0].get_str("target_kind") == "user"
+        assert rows[0].get_str("target_id")   == "42"
     }
 }
 
@@ -453,9 +457,9 @@ test "audit middleware: НЕ пишет для 4xx" {
         let next = (req) => Response.error(403, "forbidden")
         let mw = audit_middleware(next)
 
-        mw(Request.delete("/users/42", []))?
+        mw(Request.delete("/users/42", []))
 
-        let rows = Db.query(sql`SELECT * FROM admin_audit_log`)?
+        let rows = Db.query(sql`SELECT * FROM admin_audit_log`)
         assert rows.len == 0
     }
 }

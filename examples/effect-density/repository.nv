@@ -36,7 +36,7 @@ export fn account_get(id AccountId) Db Cache Fail[RepoError] -> Account {
             // newtype id → u64 → SqlValue.I(...) автоматически.
             let rows = Db.query(sql`
                 SELECT * FROM accounts WHERE id = ${id as u64}
-            `)?
+            `)
             let acc = match rows {
                 []     => throw RepoError.NotFound
                 [r]    => row_to_account(r)?
@@ -60,7 +60,7 @@ export fn account_update_balance(id AccountId, new_balance Money) Db Cache Fail[
         UPDATE accounts SET balance_amount = ${new_balance.amount},
                             balance_currency = ${new_balance.currency}
         WHERE id = ${id as u64} AND NOT closed
-    `)?
+    `)
     if affected == 0 { throw RepoError.NotFound }
     Cache.invalidate("account:${id}")
 }
@@ -83,7 +83,7 @@ export fn transfer_insert(t Transfer) Db Fail[RepoError] -> () {
         INSERT INTO transfers (id, from_id, to_id, amount, currency, status, created_at)
         VALUES (${t.id as str}, ${t.from as u64}, ${t.to as u64}, ${t.amount.amount},
                 ${t.amount.currency}, ${t.status as int}, ${t.created_at})
-    `)?
+    `)
     ()
 }
 
@@ -93,7 +93,7 @@ export fn transfer_update_status(id TransferId, status TransferStatus) Db Fail[R
     // cast к underlying для coerce в SqlValue.
     let affected = Db.exec(sql`
         UPDATE transfers SET status = ${status as int} WHERE id = ${id as str}
-    `)?
+    `)
     if affected == 0 { throw RepoError.NotFound }
 }
 

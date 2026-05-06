@@ -155,7 +155,7 @@ export fn send_fleet(req Request)
     // невалидное значение не получится создать. В Go было руками:
     //   if req.Mission != 0 && req.Mission != 7 && ... { error }
 
-    let receipt = transport_send(input)?    // Fail[FleetError] пробрасывается через ?
+    let receipt = transport_send(input)  // Fail[FleetError] пробрасывается напрямую
 
     // Idem.record автоматически — handler сам кэширует ответ по
     // X-Idempotency-Key. В Go это были ручные idem.Record(...).
@@ -187,8 +187,8 @@ export fn list_fleets(req Request)
     Db Logger CurrentUser Fail -> Response
 {
     let user_id = CurrentUser.id().ok_or(Unauthorized)?
-    let list = transport_list(user_id)?
-    let (slots_used, slots_max) = transport_slots(user_id)?
+    let list = transport_list(user_id)
+    let (slots_used, slots_max) = transport_slots(user_id)
 
     Response.json(200, {
         "fleets": list,
@@ -220,7 +220,7 @@ export fn phalanx(req Request)
         .map_err((_) => PhalanxError.InvalidSystem)?
 
     let user_id = CurrentUser.id().ok_or(Unauthorized)?
-    let scans = phalanx_scan(user_id, source, galaxy, system)?
+    let scans = phalanx_scan(user_id, source, galaxy, system)
 
     Response.json(200, { "scans": scans })
 }
@@ -317,7 +317,7 @@ export fn multi_run(input BattleInput, n int) Time Fail[BattleError] -> (SimStat
         let mut iter_input = input
         iter_input.seed = input.seed + i + seed_offset
 
-        let rep = with Random = seeded(iter_input.seed) { calculate(iter_input)? }
+        let rep = with Random = seeded(iter_input.seed) { calculate(iter_input) }
 
         last = rep
         acc.total_rounds += rep.rounds
@@ -440,7 +440,7 @@ export fn calculate(input BattleInput)
         let def_snap = def_state.snapshot()
 
         // shoot_at_sides использует Random — в сигнатуре виден эффект.
-        // Тесты: with Random = seeded(...) { calculate(input)? }
+        // Тесты: with Random = seeded(...) { calculate(input) }
         let atk_stats = shoot_at_sides(atk_snap, def_state)
         let def_stats = shoot_at_sides(def_snap, atk)
 
@@ -547,7 +547,7 @@ test "multi_run with fixed seed gives deterministic stats" {
             is_rocket_attack: false,
         }
 
-        let (stats, _) = multi_run(input, 100)?
+        let (stats, _) = multi_run(input, 100)
 
         // С детерминированным seed результат стабилен между запусками.
         assert stats.num_sim == 100
@@ -579,7 +579,7 @@ test "send_fleet returns 400 on invalid mission" {
         // Невалидная mission в Nova не пройдёт parse[SendInput]() —
         // тип Mission = sum-type без вариантов для 999. В Go было
         // ручное `if req.Mission != 0 && req.Mission != 7 && ...`.
-        let resp = send_fleet(req)?
+        let resp = send_fleet(req)
         assert resp.status == 400
     }
 }

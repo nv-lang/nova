@@ -1,0 +1,32 @@
+# nova.toml — Nova examples package.
+#
+# Это workspace-member корневого `../nova.toml`. Содержит
+# демонстрационные программы и черновики stdlib-модулей,
+# организованные по подкаталогам:
+#
+#   basics/         Hello, arithmetic, match, records, strings
+#   effects/        Эффекты и handler'ы (D61, D63, D64)
+#   stdlib/         Кандидаты в стандартную библиотеку
+#                   (complex, semver, json, hashmap, и т.д.)
+#   real-world/     Полноразмерные примеры (audit, orm, oxsar_port)
+#   effect-density/ Микросервис-сценарий для измерения «плотности
+#                   эффектов» в реальном коде
+
+[package]
+name = "nova_examples"
+version = "0.1.0"
+nova-version = "0.5"
+license = "MIT OR Apache-2.0"
+description = "Демонстрационные программы и stdlib-черновики Nova"
+repository = "https://github.com/nova-lang/nova"
+
+# Корень — текущий каталог `.` вместо стандартного `src/`,
+# потому что demo-файлы лежат в подкаталогах прямо в examples/,
+# не в examples/src/.
+[lib]
+src = "."
+
+# Зависимостей нет — каждый demo-файл self-contained, использует
+# только prelude. Когда stdlib-черновики мигрируют в реальные
+# пакеты, deps появятся здесь.
+[dependencies]

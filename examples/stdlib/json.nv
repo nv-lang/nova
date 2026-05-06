@@ -1,0 +1,920 @@
+// stdlib/json.nv — JSON parser/serializer по RFC 8259.
+//
+// Independent implementation. Не порт существующего парсера.
+// Спецификация: https://www.rfc-editor.org/rfc/rfc8259
+//
+// Поддержка:
+//   - Все типы: null, bool, number (f64), string, array, object
+//   - Escape: \" \\ \/ \b \f \n \r \t \uXXXX (включая surrogate pairs)
+//   - Числа: целые/дробные/exponent (3.14, -1, 1e10, -2.5e-3)
+//   - Whitespace между токенами
+//   - Round-trip: from(into(v)) ≈ v
+//
+// Не поддержка (намеренно):
+//   - Comments (RFC 8259 не разрешает; JSON5/JSONC — отдельные форматы)
+//   - Trailing commas
+//   - Single quotes
+//   - NaN / Infinity (не валидный JSON)
+//   - Unquoted keys
+//
+// Pending language features (используются ниже, ещё не зафиксированы
+// формально в decisions/, но необходимы для практических парсеров):
+//   - char-литералы (`'a'`, `'\n'`) — Q-char-literals в open-questions
+//   - `str.from_codepoint(int) -> str` — для unicode escape \uXXXX
+//   - `HashMap.entries()` — итератор пар (key, value)
+//   - `HashMap.contains(key) -> bool`
+//   - `Option.is_some() -> bool`
+//   - structural `==` на sum-типах (D46 не покрывает явно — open Q)
+// Когда эти фичи будут зафиксированы / реализованы, файл прогонится
+// через bootstrap без правок.
+//
+// Decisions:
+//   - D52 sum-type JsonValue с unary-вариантами (поддерживает D55 coercion)
+//   - D55 record-coercion: { "key": value } → JsonValue.Object
+//   - D67 `?` на Option (для лексера: char_at -> Option[char])
+//   - D72 generic bounds (HashMap[str, JsonValue] — str уже Hashable)
+//   - D73 `Json.from(s str)` парсинг + `@into() -> str` сериализация;
+//     компилятор даёт обе формы вызова автоматически.
+//
+// API в стиле stdlib/duration.nv, complex.nv:
+//   - JsonValue.null() / JsonValue.bool(b) / etc.  доменные конструкторы
+//   - Json.parse(s str)                            явная функция парсинга
+//   - JsonValue.from(s str)                        D73 From[str] (alias parse)
+//   - v.@into() -> str                             D73 Into[str] (сериализация)
+
+module std.json
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Тип
+// ──────────────────────────────────────────────────────────────────────────
+
+// JsonValue — рекурсивный sum-type. Поддерживает D55 coercion: литерал
+// `42` в позиции `JsonValue` подгонится в `Num(42.0)` (если кодек умный),
+// иначе программист пишет конструктор явно.
+export type JsonValue
+    | Null
+    | Bool(bool)
+    | Num(f64)
+    | Str(str)
+    | Array([]JsonValue)
+    | Object(HashMap[str, JsonValue])
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Ошибки
+// ──────────────────────────────────────────────────────────────────────────
+
+// `ParseJsonError` — namespace ошибок парсера. Префикс типа по конвенции
+// D30 («Parse<TypeName>Error»), позиция (line/column) для отладки.
+export type ParseJsonError
+    | UnexpectedChar { line int, col int, found char }
+    | UnexpectedEof { line int, col int }
+    | InvalidEscape { line int, col int, seq str }
+    | InvalidUnicode { line int, col int, hex str }
+    | InvalidNumber { line int, col int, text str }
+    | DuplicateKey { line int, col int, key str }
+    | TrailingContent { line int, col int }
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Static-конструкторы доменные
+// ──────────────────────────────────────────────────────────────────────────
+
+// Удобные shortcut'ы — краткая форма для частых случаев. Можно писать
+// явный конструктор `JsonValue.Null` / `JsonValue.Num(42.0)` тоже.
+export fn JsonValue.null() -> Self => Null
+export fn JsonValue.bool(b bool) -> Self => Bool(b)
+export fn JsonValue.num(n f64) -> Self => Num(n)
+export fn JsonValue.str(s str) -> Self => Str(s)
+export fn JsonValue.array(items []JsonValue) -> Self => Array(items)
+export fn JsonValue.object(fields HashMap[str, JsonValue]) -> Self => Object(fields)
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Геттеры / предикаты
+// ──────────────────────────────────────────────────────────────────────────
+
+export fn JsonValue @is_null()   -> bool => match @ { Null => true, _ => false }
+export fn JsonValue @is_bool()   -> bool => match @ { Bool(_) => true, _ => false }
+export fn JsonValue @is_num()    -> bool => match @ { Num(_) => true, _ => false }
+export fn JsonValue @is_str()    -> bool => match @ { Str(_) => true, _ => false }
+export fn JsonValue @is_array()  -> bool => match @ { Array(_) => true, _ => false }
+export fn JsonValue @is_object() -> bool => match @ { Object(_) => true, _ => false }
+
+// Type-safe extractors через Option (не throw, не panic).
+export fn JsonValue @as_bool() -> Option[bool] =>
+    match @ { Bool(b) => Some(b), _ => None }
+
+export fn JsonValue @as_num() -> Option[f64] =>
+    match @ { Num(n) => Some(n), _ => None }
+
+export fn JsonValue @as_str() -> Option[str] =>
+    match @ { Str(s) => Some(s), _ => None }
+
+export fn JsonValue @as_array() -> Option[[]JsonValue] =>
+    match @ { Array(xs) => Some(xs), _ => None }
+
+export fn JsonValue @as_object() -> Option[HashMap[str, JsonValue]] =>
+    match @ { Object(m) => Some(m), _ => None }
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Lexer — token type и tokenization
+// ──────────────────────────────────────────────────────────────────────────
+
+type Token
+    | LBrace      // {
+    | RBrace      // }
+    | LBracket    // [
+    | RBracket    // ]
+    | Comma       // ,
+    | Colon       // :
+    | TrueTok
+    | FalseTok
+    | NullTok
+    | NumTok(f64)
+    | StrTok(str)
+    | EofTok
+
+type TokenWithPos {
+    readonly tok Token
+    readonly line int
+    readonly col int
+}
+
+// Lexer state — прогресс по входной строке + позиция для диагностики.
+type Lexer {
+    readonly input str
+    mut pos      int            // байтовая позиция (для slice)
+    mut line     int            // 1-based
+    mut col      int            // 1-based
+}
+
+fn Lexer.new(input str) -> Self =>
+    { input, pos: 0, line: 1, col: 1 }
+
+// Текущий символ (Option, None если конец).
+fn Lexer @peek() -> Option[char] => @input.char_at(@pos)
+
+fn Lexer mut @advance() -> Option[char] {
+    let c = @peek()
+    match c {
+        Some('\n') => { @line += 1; @col = 1 }
+        Some(_)    => @col += 1
+        None       => ()
+    }
+    if c != None { @pos += 1 }
+    c
+}
+
+fn Lexer mut @skip_whitespace() -> () {
+    let mut done = false
+    while !done {
+        match @peek() {
+            Some(' ') | Some('\t') | Some('\n') | Some('\r') => {
+                @advance()
+            }
+            _ => { done = true }
+        }
+    }
+}
+
+// Прочитать следующий токен. Возвращает (TokenWithPos) или throws через
+// Fail[ParseJsonError] на лексической ошибке.
+fn Lexer mut @next_token() Fail[ParseJsonError] -> TokenWithPos {
+    @skip_whitespace()
+    let line = @line
+    let col = @col
+
+    match @peek() {
+        None      => { tok: EofTok, line, col }
+        Some('{') => { @advance(); { tok: LBrace,   line, col } }
+        Some('}') => { @advance(); { tok: RBrace,   line, col } }
+        Some('[') => { @advance(); { tok: LBracket, line, col } }
+        Some(']') => { @advance(); { tok: RBracket, line, col } }
+        Some(',') => { @advance(); { tok: Comma,    line, col } }
+        Some(':') => { @advance(); { tok: Colon,    line, col } }
+        Some('"') => { tok: StrTok(@read_string()), line, col }
+        Some('t') => { @read_keyword("true",  TrueTok,  line, col) }
+        Some('f') => { @read_keyword("false", FalseTok, line, col) }
+        Some('n') => { @read_keyword("null",  NullTok,  line, col) }
+        Some(c) if is_num_start(c) => {
+            { tok: NumTok(@read_number()), line, col }
+        }
+        Some(c) => throw UnexpectedChar { line, col, found: c }
+    }
+}
+
+fn is_num_start(c char) -> bool =>
+    c == '-' || (c >= '0' && c <= '9')
+
+fn is_digit(c char) -> bool =>
+    c >= '0' && c <= '9'
+
+fn is_hex_digit(c char) -> bool =>
+    is_digit(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
+
+fn Lexer mut @read_keyword(kw str, t Token, line int, col int) Fail[ParseJsonError] -> TokenWithPos {
+    let mut i = 0
+    while i < kw.len {
+        let expected = kw.char_at(i)
+        let actual = @peek()
+        if Some(expected.unwrap_or(' ')) != actual {
+            throw UnexpectedChar { line: @line, col: @col, found: actual.unwrap_or(' ') }
+        }
+        @advance()
+        i += 1
+    }
+    { tok: t, line, col }
+}
+
+// Чтение JSON-строки в кавычках. Возвращает декодированный str.
+fn Lexer mut @read_string() Fail[ParseJsonError] -> str {
+    @advance()    // открывающая "
+    let mut buf = ""
+    let mut done = false
+    while !done {
+        match @advance() {
+            None => throw UnexpectedEof { line: @line, col: @col }
+            Some('"') => { done = true }
+            Some('\\') => { buf = buf + @read_escape() }
+            Some(c) => { buf = buf + str.from(c) }
+        }
+    }
+    buf
+}
+
+// Обработка escape sequences. После '\\' — следующий символ.
+fn Lexer mut @read_escape() Fail[ParseJsonError] -> str {
+    match @advance() {
+        None       => throw UnexpectedEof { line: @line, col: @col }
+        Some('"')  => "\""
+        Some('\\') => "\\"
+        Some('/')  => "/"
+        Some('b')  => ""
+        Some('f')  => ""
+        Some('n')  => "\n"
+        Some('r')  => "\r"
+        Some('t')  => "\t"
+        Some('u')  => @read_unicode_escape()
+        Some(c)    => throw InvalidEscape { line: @line, col: @col, seq: "\\" + str.from(c) }
+    }
+}
+
+// \uXXXX — 4 hex digits. Проверяем surrogate pair для чисел >= 0xD800.
+fn Lexer mut @read_unicode_escape() Fail[ParseJsonError] -> str {
+    let hex = @read_hex_quad()
+    let code = parse_hex(hex)
+    // Surrogate pair: high (D800-DBFF) + low (DC00-DFFF).
+    if code >= 0xD800 && code <= 0xDBFF {
+        // Ожидаем \u low-surrogate.
+        let next = @advance()
+        let next2 = @advance()
+        if next != Some('\\') || next2 != Some('u') {
+            throw InvalidUnicode { line: @line, col: @col, hex: hex }
+        }
+        let low_hex = @read_hex_quad()
+        let low = parse_hex(low_hex)
+        if low < 0xDC00 || low > 0xDFFF {
+            throw InvalidUnicode { line: @line, col: @col, hex: low_hex }
+        }
+        let codepoint = 0x10000 + ((code - 0xD800) * 0x400) + (low - 0xDC00)
+        str.from_codepoint(codepoint)
+    } else if code >= 0xDC00 && code <= 0xDFFF {
+        // Lone low-surrogate — невалидно.
+        throw InvalidUnicode { line: @line, col: @col, hex: hex }
+    } else {
+        str.from_codepoint(code)
+    }
+}
+
+fn Lexer mut @read_hex_quad() Fail[ParseJsonError] -> str {
+    let mut hex = ""
+    let mut i = 0
+    while i < 4 {
+        match @advance() {
+            None => throw UnexpectedEof { line: @line, col: @col }
+            Some(c) if is_hex_digit(c) => { hex = hex + str.from(c) }
+            Some(c) => throw InvalidUnicode {
+                line: @line, col: @col, hex: hex + str.from(c)
+            }
+        }
+        i += 1
+    }
+    hex
+}
+
+fn parse_hex(s str) -> int {
+    let mut acc = 0
+    for c in s.chars() {
+        let d = if c >= '0' && c <= '9' {
+            (c as int) - ('0' as int)
+        } else if c >= 'a' && c <= 'f' {
+            10 + (c as int) - ('a' as int)
+        } else {
+            10 + (c as int) - ('A' as int)
+        }
+        acc = acc * 16 + d
+    }
+    acc
+}
+
+// Чтение числа: optional '-', integer part, optional '.fraction',
+// optional 'e[+-]exp'. Возвращает f64.
+fn Lexer mut @read_number() Fail[ParseJsonError] -> f64 {
+    let start = @pos
+    let start_line = @line
+    let start_col = @col
+
+    // Знак
+    if @peek() == Some('-') { @advance() }
+
+    // Integer part: либо '0', либо [1-9][0-9]*
+    match @peek() {
+        Some('0') => { @advance() }
+        Some(c) if c >= '1' && c <= '9' => {
+            @advance()
+            while is_digit_opt(@peek()) { @advance() }
+        }
+        _ => throw InvalidNumber {
+            line: start_line, col: start_col,
+            text: @input.slice(start, @pos)
+        }
+    }
+
+    // Fraction: .[0-9]+
+    if @peek() == Some('.') {
+        @advance()
+        if !is_digit_opt(@peek()) {
+            throw InvalidNumber {
+                line: start_line, col: start_col,
+                text: @input.slice(start, @pos)
+            }
+        }
+        while is_digit_opt(@peek()) { @advance() }
+    }
+
+    // Exponent: [eE][+-]?[0-9]+
+    match @peek() {
+        Some('e') | Some('E') => {
+            @advance()
+            match @peek() {
+                Some('+') | Some('-') => { @advance() }
+                _ => ()
+            }
+            if !is_digit_opt(@peek()) {
+                throw InvalidNumber {
+                    line: start_line, col: start_col,
+                    text: @input.slice(start, @pos)
+                }
+            }
+            while is_digit_opt(@peek()) { @advance() }
+        }
+        _ => ()
+    }
+
+    let text = @input.slice(start, @pos)
+    match f64.try_parse(text) {
+        Some(n) => n
+        None    => throw InvalidNumber {
+            line: start_line, col: start_col, text: text
+        }
+    }
+}
+
+fn is_digit_opt(c Option[char]) -> bool =>
+    match c { Some(ch) => is_digit(ch), None => false }
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Parser — recursive descent
+// ──────────────────────────────────────────────────────────────────────────
+
+type Parser {
+    mut lex Lexer
+    mut cur TokenWithPos
+}
+
+fn Parser.new(input str) Fail[ParseJsonError] -> Self {
+    let mut lex = Lexer.new(input)
+    let cur = lex.next_token()
+    { lex, cur }
+}
+
+fn Parser mut @advance() Fail[ParseJsonError] -> TokenWithPos {
+    let prev = @cur
+    @cur = @lex.next_token()
+    prev
+}
+
+fn Parser mut @parse_value() Fail[ParseJsonError] -> JsonValue {
+    let tp = @cur
+    match tp.tok {
+        NullTok    => { @advance(); Null }
+        TrueTok    => { @advance(); Bool(true) }
+        FalseTok   => { @advance(); Bool(false) }
+        NumTok(n)  => { @advance(); Num(n) }
+        StrTok(s)  => { @advance(); Str(s) }
+        LBracket   => @parse_array()
+        LBrace     => @parse_object()
+        EofTok     => throw UnexpectedEof { line: tp.line, col: tp.col }
+        _          => throw UnexpectedChar {
+            line: tp.line, col: tp.col,
+            found: tok_first_char(tp.tok)
+        }
+    }
+}
+
+// Helper для диагностики — превращает токен в первый символ для
+// сообщения об ошибке.
+fn tok_first_char(t Token) -> char => match t {
+    LBrace   => '{'
+    RBrace   => '}'
+    LBracket => '['
+    RBracket => ']'
+    Comma    => ','
+    Colon    => ':'
+    _        => '?'
+}
+
+fn Parser mut @parse_array() Fail[ParseJsonError] -> JsonValue {
+    @advance()    // [
+    let mut items []JsonValue = []
+
+    // Пустой массив
+    if @cur.tok == RBracket {
+        @advance()
+        return Array(items)
+    }
+
+    items.push(@parse_value())
+    let mut done = false
+    while !done {
+        match @cur.tok {
+            Comma => {
+                @advance()
+                items.push(@parse_value())
+            }
+            RBracket => {
+                @advance()
+                done = true
+            }
+            _ => throw UnexpectedChar {
+                line: @cur.line, col: @cur.col,
+                found: tok_first_char(@cur.tok)
+            }
+        }
+    }
+    Array(items)
+}
+
+fn Parser mut @parse_object() Fail[ParseJsonError] -> JsonValue {
+    @advance()    // {
+    let mut fields = HashMap[str, JsonValue].new()
+
+    // Пустой объект
+    if @cur.tok == RBrace {
+        @advance()
+        return Object(fields)
+    }
+
+    @parse_member(fields)
+    let mut done = false
+    while !done {
+        match @cur.tok {
+            Comma => {
+                @advance()
+                @parse_member(fields)
+            }
+            RBrace => {
+                @advance()
+                done = true
+            }
+            _ => throw UnexpectedChar {
+                line: @cur.line, col: @cur.col,
+                found: tok_first_char(@cur.tok)
+            }
+        }
+    }
+    Object(fields)
+}
+
+fn Parser mut @parse_member(mut fields HashMap[str, JsonValue]) Fail[ParseJsonError] -> () {
+    // ключ — string token
+    let key_tp = @cur
+    let key = match key_tp.tok {
+        StrTok(s) => s
+        _ => throw UnexpectedChar {
+            line: key_tp.line, col: key_tp.col,
+            found: tok_first_char(key_tp.tok)
+        }
+    }
+    @advance()
+
+    // ':'
+    match @cur.tok {
+        Colon => { @advance() }
+        _ => throw UnexpectedChar {
+            line: @cur.line, col: @cur.col,
+            found: tok_first_char(@cur.tok)
+        }
+    }
+
+    // value
+    let value = @parse_value()
+
+    // RFC 8259: behavior on duplicate keys is implementation-defined.
+    // Мы выбираем строгое поведение — DuplicateKey error. Это AI-friendly:
+    // duplicate почти всегда ошибка.
+    if fields.contains(key) {
+        throw DuplicateKey { line: key_tp.line, col: key_tp.col, key: key }
+    }
+    fields.insert(key, value)
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Public API: парсинг
+// ──────────────────────────────────────────────────────────────────────────
+
+// `Json.parse(s)` — основная точка входа. Throws Fail[ParseJsonError]
+// на любой ошибке (lexical, syntactic).
+//
+// По D67 `?` после parse запрещён — throw сам пробрасывается через
+// Fail[ParseJsonError].
+export fn Json.parse(s str) Fail[ParseJsonError] -> JsonValue {
+    let mut p = Parser.new(s)
+    let v = p.parse_value()
+
+    // Trailing content (после value должен быть только EOF).
+    match p.cur.tok {
+        EofTok => v
+        _ => throw TrailingContent { line: p.cur.line, col: p.cur.col }
+    }
+}
+
+// `JsonValue.from(s str)` — D73 From[str]. Алиас Json.parse, чтобы
+// стандартная from/into-форма тоже работала: `JsonValue.from(s)` /
+// `let v JsonValue = s.into()`.
+export fn JsonValue.from(s str) Fail[ParseJsonError] -> Self =>
+    Json.parse(s)
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Сериализация: @into() -> str
+// ──────────────────────────────────────────────────────────────────────────
+
+// `JsonValue @into() -> str` — D73 Into[str]. Компилятор синтезирует
+// парный `str.from(v JsonValue)`, поэтому обе формы вызова работают:
+//   let s str = v.into()
+//   let s = str.from(v)
+//
+// Compact-формат (без отступов). Pretty-print — отдельная функция
+// `pretty(v)` (см. ниже).
+export fn JsonValue @into() -> str => match @ {
+    Null      => "null"
+    Bool(b)   => if b { "true" } else { "false" }
+    Num(n)    => format_num(n)
+    Str(s)    => format_string(s)
+    Array(xs) => format_array(xs)
+    Object(m) => format_object(m)
+}
+
+fn format_num(n f64) -> str {
+    // Целые числа — без .0 в выводе. JSON допускает и "1" и "1.0",
+    // но для round-trip с целыми хорошо иметь короткую форму.
+    if n.is_finite() && n == n.trunc() && n.abs() < 1e16 {
+        // целое в безопасном диапазоне для f64 (2^53)
+        str.from(n as i64)
+    } else {
+        str.from(n)
+    }
+}
+
+fn format_string(s str) -> str {
+    let mut buf = "\""
+    for c in s.chars() {
+        buf = buf + escape_char(c)
+    }
+    buf + "\""
+}
+
+fn escape_char(c char) -> str => match c {
+    '"'  => "\\\""
+    '\\' => "\\\\"
+    '\n' => "\\n"
+    '\r' => "\\r"
+    '\t' => "\\t"
+    '' => "\\b"
+    '' => "\\f"
+    c if (c as int) < 0x20 => unicode_escape(c as int)
+    _    => str.from(c)
+}
+
+fn unicode_escape(code int) -> str {
+    let hex = to_hex_4(code)
+    "\\u" + hex
+}
+
+fn to_hex_4(n int) -> str {
+    let chars = ['0','1','2','3','4','5','6','7','8','9','a','b','c','d','e','f']
+    let h0 = chars[(n / 0x1000) % 16]
+    let h1 = chars[(n / 0x100) % 16]
+    let h2 = chars[(n / 0x10) % 16]
+    let h3 = chars[n % 16]
+    str.from(h0) + str.from(h1) + str.from(h2) + str.from(h3)
+}
+
+fn format_array(xs []JsonValue) -> str {
+    let mut buf = "["
+    let mut first = true
+    for x in xs {
+        if !first { buf = buf + "," }
+        buf = buf + x.into()
+        first = false
+    }
+    buf + "]"
+}
+
+fn format_object(m HashMap[str, JsonValue]) -> str {
+    let mut buf = "{"
+    let mut first = true
+    for entry in m.entries() {
+        if !first { buf = buf + "," }
+        buf = buf + format_string(entry.key)
+        buf = buf + ":"
+        buf = buf + entry.value.into()
+        first = false
+    }
+    buf + "}"
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Pretty-print с отступами
+// ──────────────────────────────────────────────────────────────────────────
+
+// `pretty(v)` — multi-line форматирование для логов / debug. Не покрывает
+// D73 (не часть Into[str]) — отдельная функция, потому что compact —
+// каноническое представление для round-trip.
+export fn pretty(v JsonValue) -> str => pretty_at(v, 0)
+
+fn pretty_at(v JsonValue, depth int) -> str => match v {
+    Array(xs) if xs.len == 0 => "[]"
+    Array(xs) => pretty_array(xs, depth)
+    Object(m) if m.len == 0 => "{}"
+    Object(m) => pretty_object(m, depth)
+    _ => v.into()
+}
+
+fn pretty_array(xs []JsonValue, depth int) -> str {
+    let inner_indent = indent(depth + 1)
+    let outer_indent = indent(depth)
+    let mut buf = "[\n"
+    let mut first = true
+    for x in xs {
+        if !first { buf = buf + ",\n" }
+        buf = buf + inner_indent + pretty_at(x, depth + 1)
+        first = false
+    }
+    buf + "\n" + outer_indent + "]"
+}
+
+fn pretty_object(m HashMap[str, JsonValue], depth int) -> str {
+    let inner_indent = indent(depth + 1)
+    let outer_indent = indent(depth)
+    let mut buf = "{\n"
+    let mut first = true
+    for entry in m.entries() {
+        if !first { buf = buf + ",\n" }
+        buf = buf + inner_indent + format_string(entry.key) + ": " + pretty_at(entry.value, depth + 1)
+        first = false
+    }
+    buf + "\n" + outer_indent + "}"
+}
+
+fn indent(depth int) -> str {
+    let mut s = ""
+    let mut i = 0
+    while i < depth { s = s + "  "; i += 1 }
+    s
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Тесты — RFC 8259 conformance + round-trip
+// ──────────────────────────────────────────────────────────────────────────
+
+test "parse: примитивы" {
+    assert Json.parse("null").is_null()
+    assert Json.parse("true").as_bool() == Some(true)
+    assert Json.parse("false").as_bool() == Some(false)
+    assert Json.parse("42").as_num() == Some(42.0)
+    assert Json.parse("-3.14").as_num() == Some(-3.14)
+    assert Json.parse("1e3").as_num() == Some(1000.0)
+    assert Json.parse("\"hello\"").as_str() == Some("hello")
+}
+
+test "parse: пустые collections" {
+    let arr = Json.parse("[]")
+    assert arr.is_array()
+    match arr.as_array() {
+        Some(xs) => assert xs.len == 0
+        None     => assert false
+    }
+
+    let obj = Json.parse("{}")
+    assert obj.is_object()
+}
+
+test "parse: array элементов" {
+    let v = Json.parse("[1, 2, 3]")
+    match v.as_array() {
+        Some(xs) => {
+            assert xs.len == 3
+            assert xs[0].as_num() == Some(1.0)
+            assert xs[1].as_num() == Some(2.0)
+            assert xs[2].as_num() == Some(3.0)
+        }
+        None => assert false
+    }
+}
+
+test "parse: object с полями" {
+    let v = Json.parse("{\"name\": \"alice\", \"age\": 30}")
+    match v.as_object() {
+        Some(m) => {
+            assert m.get("name") == Some(Str("alice"))
+            assert m.get("age") == Some(Num(30.0))
+        }
+        None => assert false
+    }
+}
+
+test "parse: nested structures" {
+    let s = "{\"users\": [{\"id\": 1}, {\"id\": 2}]}"
+    let v = Json.parse(s)
+    match v.as_object() {
+        Some(root) => match root.get("users") {
+            Some(users_v) => match users_v.as_array() {
+                Some(users) => {
+                    assert users.len == 2
+                    assert users[0].as_object().is_some()
+                }
+                None => assert false
+            }
+            None => assert false
+        }
+        None => assert false
+    }
+}
+
+test "parse: escape sequences в string" {
+    let v = Json.parse("\"line1\\nline2\\ttab\\\"quote\"")
+    assert v.as_str() == Some("line1\nline2\ttab\"quote")
+}
+
+test "parse: unicode escape" {
+    let v = Json.parse("\"\\u00E9\"")          // é
+    assert v.as_str() == Some("é")
+}
+
+test "parse: surrogate pair (emoji)" {
+    let v = Json.parse("\"\\uD83D\\uDE00\"")   // 😀 (U+1F600)
+    match v.as_str() {
+        Some(s) => assert s.len > 0
+        None    => assert false
+    }
+}
+
+test "parse: ошибка — неизвестный токен" {
+    let r = with Fail[ParseJsonError] = (e) => interrupt Some(e) {
+        let _ = Json.parse("xyz")
+        None
+    }
+    assert match r {
+        Some(UnexpectedChar { .. }) => true
+        _                            => false
+    }
+}
+
+test "parse: ошибка — незакрытая string" {
+    let r = with Fail[ParseJsonError] = (e) => interrupt Some(e) {
+        let _ = Json.parse("\"unclosed")
+        None
+    }
+    assert match r {
+        Some(UnexpectedEof { .. }) => true
+        _                           => false
+    }
+}
+
+test "parse: ошибка — trailing content" {
+    let r = with Fail[ParseJsonError] = (e) => interrupt Some(e) {
+        let _ = Json.parse("42 garbage")
+        None
+    }
+    assert match r {
+        Some(TrailingContent { .. }) => true
+        _                             => false
+    }
+}
+
+test "parse: ошибка — duplicate key" {
+    let r = with Fail[ParseJsonError] = (e) => interrupt Some(e) {
+        let _ = Json.parse("{\"a\": 1, \"a\": 2}")
+        None
+    }
+    assert match r {
+        Some(DuplicateKey { .. }) => true
+        _                          => false
+    }
+}
+
+test "parse: ошибка — bad number" {
+    let r = with Fail[ParseJsonError] = (e) => interrupt Some(e) {
+        let _ = Json.parse("01")           // leading zero запрещён в JSON
+        None
+    }
+    assert match r {
+        Some(TrailingContent { .. }) | Some(InvalidNumber { .. }) => true
+        _ => false
+    }
+}
+
+test "into: примитивы — round-trip" {
+    let cases = [
+        Null,
+        Bool(true),
+        Bool(false),
+        Num(42.0),
+        Num(-3.14),
+        Str("hello"),
+    ]
+    for v in cases {
+        let s = v.into()
+        let parsed = Json.parse(s)
+        assert parsed == v
+    }
+}
+
+test "into: array round-trip" {
+    let v = Array([Num(1.0), Num(2.0), Str("three")])
+    let s = v.into()
+    let parsed = Json.parse(s)
+    assert parsed == v
+}
+
+test "into: nested object round-trip" {
+    let mut m = HashMap[str, JsonValue].new()
+    m.insert("name", Str("alice"))
+    m.insert("score", Num(95.5))
+    let v = Object(m)
+    let s = v.into()
+    let parsed = Json.parse(s)
+    assert parsed == v
+}
+
+test "into: escape в string" {
+    let v = Str("line1\nline2\ttab\"quote")
+    let s = v.into()
+    let parsed = Json.parse(s)
+    assert parsed == v
+}
+
+test "D73: JsonValue.from(s) и s.into() работают парно" {
+    let v JsonValue = JsonValue.from("[1, 2, 3]")
+    assert v.is_array()
+
+    // Через .into() (D73 авто-Into)
+    let v2 JsonValue = "[1, 2, 3]".into()
+    assert v == v2
+}
+
+test "pretty: формат с отступами" {
+    let mut m = HashMap[str, JsonValue].new()
+    m.insert("name", Str("alice"))
+    let v = Object(m)
+    let p = pretty(v)
+    // Проверяем что есть newlines (формат multi-line)
+    assert p.contains("\n")
+    // Round-trip через парсер всё ещё работает
+    assert Json.parse(p) == v
+}
+
+test "whitespace терпимость" {
+    let v = Json.parse("  [  1  ,  2  ]  ")
+    match v.as_array() {
+        Some(xs) => assert xs.len == 2
+        None     => assert false
+    }
+}
+
+test "числа: разные форматы" {
+    assert Json.parse("0").as_num() == Some(0.0)
+    assert Json.parse("-0").as_num() == Some(-0.0) || Json.parse("-0").as_num() == Some(0.0)
+    assert Json.parse("1.5e2").as_num() == Some(150.0)
+    assert Json.parse("2.5E-1").as_num() == Some(0.25)
+    assert Json.parse("-1.5e+3").as_num() == Some(-1500.0)
+}

@@ -194,7 +194,7 @@ test "Range as function argument" {
 test "inclusive overflow throws" {
     // Range.inclusive(_, int.MAX) → throw OverflowError
     let r = with Fail[OverflowError] = (e) => interrupt None {
-        Some(Range.inclusive(0, int.MAX)?)
+        Some(Range.inclusive(0, int.MAX))
     }
     assert r == None
 }

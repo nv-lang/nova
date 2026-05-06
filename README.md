@@ -34,27 +34,28 @@ One idea: **anything impure is an effect, any effect is intercepted by
 a handler**. From that, the following fall out automatically:
 
 - Tests without mocks (handler substitution)
-- Transactions, undo/redo, snapshot (handler `db`/`mut`)
-- Capability security (forbid effects in a scope)
+- Transactions, undo/redo, snapshot (handler `Db`)
+- Capability security (`forbid X { ... }` blocks an effect in a scope)
 - Time-travel debugging (record handler calls)
-- Deterministic repro (handlers `time` + `random` with fixed seed)
-- Erlang-style supervision (structured `par` + restart handler)
+- Deterministic repro (handlers `Time` + `Random` with fixed seed)
+- Erlang-style supervision (`supervised { spawn ... }` + restart strategy)
 - LLM-safe code (side effects are visible in the type signature)
 
-## Memory: managed by default, regions opt-in
+## Memory: managed by default, real-time opt-in
 
 **The programmer writes, the GC works.** No memory prefixes in regular
 code. Cycles are reclaimed automatically. A modern concurrent GC keeps
 pauses below 1ms.
 
-For real-time zones (audio, trading, embedded) — the `Realtime` effect
-in the signature. The compiler wraps the body in a region automatically
-(GC off inside). An explicit `region { ... }` block is only needed to
-manage multiple arenas manually:
+For real-time zones (audio, trading, embedded) — a `realtime { ... }`
+block. Inside it the compiler guarantees no suspension and no GC pauses;
+violation is a compile-time error:
 
 ```nova
-fn map_audio(samples []f32, gain f32) Realtime -> []f32 =>
-    samples.map((x) => x * gain)   // implicit region, no GC pauses
+fn map_audio(samples []f32, gain f32) -> []f32 =>
+    realtime {
+        samples.map((x) => x * gain)   // no GC, no suspension
+    }
 ```
 
 For perf-critical code the compiler uses **escape analysis** —

@@ -308,7 +308,7 @@ nova check --fragment 'fn double(x int) -> int = x * 2'
 # → ok
 
 nova check --fragment 'fn double(x) = x * 2' --infer
-# → fn double[T: Mul[T, int]](x T) -> T  (выведенная сигнатура)
+# → fn double[T Mul[T, int]](x T) -> T  (выведенная сигнатура)
 ```
 
 LLM может генерировать функции и проверять их по одной, без

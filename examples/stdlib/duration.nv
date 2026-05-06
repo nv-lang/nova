@@ -235,24 +235,38 @@ test "zero and is_zero" {
 // Trailing-block (D43) — `()` обязательны, тело за `)`.
 fn demo_with_timeout() Net Fail -> () {
     with_timeout(2.seconds()) {
-        Net.get("https://api.example.com/data")?
+        Net.get("https://api.example.com/data")
     }
 }
 
 // Retry с увеличивающимся backoff.
+// Перехватывает Fail[E] из body локальным handler'ом: на ошибку либо
+// retry с back-off, либо проброс на последней попытке.
 fn demo_retry[T, E](body fn() Fail[E] -> T) Time Fail[E] -> T {
     let mut backoff = 100.millis()
-    for attempt in 0..5 {
-        match body() {
-            Ok(v) => return v
-            Err(_) if attempt < 4 => {
-                Time.sleep(backoff)
-                backoff = backoff * 2          // 100ms → 200ms → 400ms → 800ms → 1.6s
+    let mut attempt = 0
+    let mut result Option[T] = None
+    while result == None && attempt < 5 {
+        let r = with Fail[E] = (e) => interrupt Err(e) {
+            Ok(body())
+        }
+        match r {
+            Ok(v)  => { result = Some(v) }
+            Err(e) => {
+                if attempt < 4 {
+                    Time.sleep(backoff)
+                    backoff = backoff * 2      // 100ms → 200ms → 400ms → 800ms → 1.6s
+                    attempt += 1
+                } else {
+                    throw e
+                }
             }
-            Err(e) => throw e
         }
     }
-    throw RetryExhausted
+    match result {
+        Some(v) => v
+        None    => throw RetryExhausted
+    }
 }
 
 // Дедлайны — сложение фиксированной задержки и текущего времени.

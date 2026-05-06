@@ -1,0 +1,28 @@
+# nova.toml — workspace для всего Nova-кода в проекте.
+#
+# Этот файл объявляет workspace по [D78](spec/decisions/07-modules.md#d78).
+# Сами компиляторы — `compiler-bootstrap/` и `compiler-codegen/` —
+# Rust crate'ы и не входят в Nova workspace; у них собственные
+# Cargo.toml.
+#
+# Внутри Nova workspace:
+#   - examples/ — демонстрационные программы и stdlib-черновики
+#   - tests-nova/ — тесты языка (корпус для bootstrap-компилятора)
+
+[workspace]
+members = [
+    "examples",
+    "tests-nova",
+]
+
+# Пока пакетов в реестре нет, регистрация цепочки реестров носит
+# демонстрационный характер. Когда появится центральный реестр —
+# `https://nova-registry.org` станет реальным URL.
+[registry]
+default = [
+    # Для closed-network / банковских deployments первым идёт
+    # внутренний прокси:
+    # "https://nova.bank.local/proxy",
+    "https://nova-registry.org",
+    "direct",
+]

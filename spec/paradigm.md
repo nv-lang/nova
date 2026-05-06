@@ -1,5 +1,5 @@
 > ⚠️ **УСТАРЕЛО.** Этот документ описывает парадигму ранней версии
-> (D1–D17), до решений D18/D24/D31/D33–D42/D52/D53/D61–D66. Текст
+> (D1–D17), до решений D18/D24/D31/D33–D42/D52/D53/D61–D66/D70/D73. Текст
 > синтаксически некорректен по нескольким направлениям:
 >
 > - `mut self` в параметрах → `mut @field` ([D35](decisions/03-syntax.md#d35))
@@ -10,6 +10,8 @@
 > - alias через `=` → `type X alias Y` ([D52](decisions/02-types.md#d52))
 > - `Async`/`Mut`/`Par` как эффекты → ambient runtime, удалены ([D62](decisions/04-effects.md#d62), [D14 REVISED](decisions/06-concurrency.md#d14))
 > - `resume` keyword → удалён, handler-method = финальное выражение / `return v` / `interrupt v` ([D61](decisions/04-effects.md#d61))
+> - `to_str(self)` / `ToStr` protocol → удалён ([D70 REPLACED → D73](decisions/08-runtime.md#d73))
+>   и заменён на `From`/`Into` pair с auto-derive
 >
 > **Актуальная парадигма** — в [decisions/](decisions/), [syntax.md](syntax.md).
 > Этот файл будет переписан целиком (см. open-questions Q8).

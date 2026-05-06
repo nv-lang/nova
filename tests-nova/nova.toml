@@ -1,0 +1,20 @@
+# nova.toml — Nova test suite for bootstrap compiler.
+#
+# Workspace-member корневого `../nova.toml`. Содержит тесты языка,
+# которые прогоняются bootstrap-компилятором (`nova test ...`)
+# для проверки корректности парсера, type-checker'а, интерпретатора.
+#
+# Файлы пронумерованы по теме: 01_literals, 02_operators, ...,
+# 38_deep_spawn. Каждый — отдельный модуль с `test "..." { }` блоками.
+
+[package]
+name = "nova_tests"
+version = "0.1.0"
+nova-version = "0.5"
+license = "MIT OR Apache-2.0"
+description = "Тесты языка Nova для bootstrap-компилятора"
+
+[lib]
+src = "."
+
+[dependencies]

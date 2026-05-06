@@ -8,6 +8,7 @@
 | [D5](#d5-видимость-только-export-или-приватно) | Видимость: только `export` или приватно |
 | [D29](#d29-модули-и-импорты) | Модули и импорты |
 | [D47](#d47-видимость-деклараций) | Видимость деклараций (расширение D5) |
+| [D78](#d78-package-tooling-novatoml-novalock-registry-chain-workspace) | Package tooling: `nova.toml`, `nova.lock`, registry chain, workspace |
 
 ---
 
@@ -392,3 +393,374 @@ Nova ближе всего к **Python** для полей и к **Rust** для
 3. **Документация** — нужно зафиксировать convention в стайл-гайде,
    чтобы не было сюрприза «почему `_balance` всё-таки доступен
    снаружи».
+
+---
+
+## D78. Package tooling: `nova.toml`, `nova.lock`, registry chain, workspace
+
+### Что
+Манифест проекта `nova.toml` (TOML), lockfile `nova.lock`, цепочка
+реестров пакетов с поддержкой private mirror'ов / proxy для closed
+networks, SAT-resolution алгоритм, workspace для monorepo, опциональный
+prelude opt-out, настраиваемый source root.
+
+### Правило
+
+#### Манифест проекта — `nova.toml`
+
+Минимальные обязательные поля: `name`, `version`. Всё остальное —
+опционально.
+
+```toml
+[package]
+name = "my-project"                        # snake_case (D30)
+version = "0.1.0"                           # semver, std.semver
+nova-version = "0.5"                        # минимальная версия Nova
+authors = ["Alice <alice@example.com>"]     # опционально
+description = "Один абзац про что"           # опционально
+license = "MIT OR Apache-2.0"               # SPDX
+repository = "https://github.com/..."       # опционально
+
+[lib]                                       # опционально, если пакет — библиотека
+src = "src"                                 # default — переопределяемо
+
+[[bin]]                                     # опционально, для каждого бинаря
+name = "my-tool"
+src = "src/bin/my_tool.nv"
+
+[dependencies]
+serde = "1.2"                               # из реестра, semver-range
+internal = { path = "../internal" }         # local dependency
+foo = { git = "https://github.com/...", tag = "v1.0" }  # git
+
+[dev-dependencies]
+test-utils = "0.1"                          # только для тестов
+
+[workspace]                                  # опционально, monorepo
+members = ["server", "client", "common"]
+
+[features]                                   # опционально, conditional compilation
+default = ["std"]
+std = []
+realtime = []
+```
+
+`[[bin]]` — TOML array of tables (двойные скобки) — позволяет
+несколько бинарей в одном пакете. Каждое появление `[[bin]]` —
+новый элемент массива.
+
+`[lib]` / `[[bin]]` — секции **взаимодополняющие**: пакет может быть
+и библиотекой (`[lib]`), и иметь бинари (`[[bin]]`).
+
+#### Source root — настраиваемый, default `src/`
+
+```toml
+# nova.toml
+[lib]
+src = "src"                  # default
+# src = "lib"                # переопределение
+# src = "."                  # корень проекта = source root (для маленьких)
+```
+
+Корень для резолвинга путей module ↔ file. `module admin.audit` ↔
+`<src>/admin/audit.nv`.
+
+Если `[lib]` отсутствует — `src/` по умолчанию.
+
+#### Path / module enforcement
+
+Компилятор **обязан** проверить соответствие пути файла и имени модуля.
+Несоответствие — **compile error с suggestion**:
+
+```
+error: module declaration does not match file path
+  in src/audit/main.nv:1:1
+  │
+  1 │ module admin.audit
+  │ ^^^^^^^^^^^^^^^^^^ this declares `admin.audit`
+  │
+  expected one of:
+  - move file to: src/admin/audit.nv (preserve module name)
+  - rename module to: audit.main (match current path)
+```
+
+Это AI-friendly: LLM получает не просто ошибку, а конкретное действие.
+
+#### Lockfile — `nova.lock`
+
+TOML-формат, имя lowercase, единообразно с `nova.toml`. Auto-generated,
+commit в VCS обязателен:
+
+```toml
+# nova.lock — auto-generated, не редактировать вручную
+version = 1                                 # формат lockfile
+
+[[package]]
+name = "serde"
+version = "1.2.5"
+source = "registry+https://nova-registry.org"
+hash = "sha256:abc123..."
+dependencies = ["std-utils 0.3.1"]
+
+[[package]]
+name = "internal-utils"
+version = "0.1.0"
+source = "git+https://github.com/...#commitsha"
+hash = "sha256:def456..."
+
+[[package]]
+name = "local-lib"
+version = "0.1.0"
+source = "path+../local-lib"                # для local — без hash
+```
+
+Префикс в `source` показывает тип источника:
+
+| Префикс | Значение |
+|---|---|
+| `registry+<url>` | взято из реестра, скачан tarball |
+| `git+<url>#<commit>` | git clone + checkout commit |
+| `path+<path>` | local path (нестабильно между машинами, без hash) |
+
+Без префикса формат был бы неоднозначным. С префиксом — однозначно
+для tooling'а и для человека.
+
+#### Resolution — SAT с lockfile
+
+Используется **SAT-алгоритм** (стандарт индустрии 2020+: Cargo, npm,
+Poetry, Maven). Конкретная реализация — **pubgrub** (open-source,
+доказательно корректный, используется Cargo и Dart). Это implementation
+detail, не часть language spec.
+
+**Свойства:**
+- Решает «найди такой набор версий чтобы все ограничения выполнились»
+- Может выбрать **более новую** версию транзитивной dep если безопасно
+- При обновлении одной dep лочит остальные через lockfile
+- Воспроизводимость через lockfile
+
+`Go-style MVS` отвергнут: проще, но «застывает» зависимости — security
+updates требуют ручного bump'а каждой dep отдельно.
+
+#### Registry chain — цепочка реестров
+
+Глобальная конфигурация в `~/.nova/config.toml`:
+
+```toml
+[registry]
+default = [
+    "https://nova.bank.local/proxy",        # 1. Внутренний прокси банка
+    "https://nova-registry.org",             # 2. Публичный реестр
+    "direct"                                  # 3. git URLs из deps clone'аются напрямую
+]
+```
+
+**Алгоритм для `serde = "1.2"`:**
+1. GET `https://nova.bank.local/proxy/serde/...` — найдено? Берём.
+2. Не найдено / network error → следующий source.
+3. GET `https://nova-registry.org/serde/...` — найдено? Берём.
+4. Не найдено → fail (для name+version из реестра; `direct` имеет
+   смысл только для `git`-зависимостей).
+
+**Per-project override** в `nova.toml` — то же поле локально:
+
+```toml
+# nova.toml
+[registry]
+default = ["https://my-team.local/registry"]    # override global
+```
+
+**Auth/credentials** — отдельный файл, **вне VCS**:
+
+```toml
+# ~/.nova/credentials.toml
+[registry."nova.bank.local"]
+token = "..."
+```
+
+**Offline mode** через CLI flag — для closed networks:
+
+```sh
+nova build --offline                            # только локальный кэш, без сети
+```
+
+**Назначение цепочки:**
+
+| Среда | Конфигурация |
+|---|---|
+| Корпоративная (банк, санкции) | внутренний прокси первым; кэширует public, audit'ит |
+| Closed network | только internal, public недоступен |
+| Open-source разработка | public registry + direct |
+| Mix (private + public deps) | internal-then-public chain |
+
+Прецедент — Go `GOPROXY` с chain'ом + Maven/Cargo per-project override.
+
+#### Workspace — monorepo
+
+`[workspace]` секция в root `nova.toml` объявляет multi-package
+проект:
+
+```
+my-project/
+├── nova.toml                # [workspace] members = ["server", "client", "common"]
+├── nova.lock                # ОДИН lockfile на всё workspace
+├── server/
+│   └── nova.toml            # [package] name = "server"
+├── client/
+│   └── nova.toml            # [package] name = "client"
+└── common/
+    └── nova.toml            # [package] name = "common"
+```
+
+```toml
+# Корневой nova.toml
+[workspace]
+members = ["server", "client", "common"]
+```
+
+**Свойства:**
+- Один lockfile на всё workspace — гарантирует одинаковые версии
+  транзитивных deps между пакетами
+- Один build cache (быстрее перекомпиляция)
+- Внутренние deps по path: `server/nova.toml` пишет
+  `common = { path = "../common" }`
+
+Стандартная практика для backend monorepo (microservices в одном репо).
+
+#### Prelude opt-out
+
+Per-file декларация в module-line:
+
+```nova
+module my.realtime no_prelude
+
+// Никаких автоматических импортов; даже Option/Result надо импортировать
+import std.option.Option
+import std.result.Result
+```
+
+Применение:
+- **Real-time / embedded** — где prelude содержит код использующий GC
+- **Bootstrap уровни** — реализация самого prelude
+- **Обучающие примеры** — для AI/преподавания иногда нужно «всё видно»
+
+Без `no_prelude` — стандартный prelude в скоупе (D26).
+
+#### Конвенции имён
+
+- **Пакет** — `name` в `nova.toml`, snake_case (`my_project`).
+- **Модуль** — иерархическое имя через точки (`admin.audit`).
+- **Файлы** — snake_case (`audit.nv`, не `Audit.nv`).
+- **Workspace member** — имя папки = имя пакета (по convention).
+
+### Почему
+
+1. **TOML формат.** Cargo/npm поверх JSON/TOML; TOML читаемее для
+   человека и LLM, поддерживает комментарии.
+2. **Минимум обязательных полей.** `name` + `version` достаточно для
+   простого проекта. Всё остальное — постепенный opt-in.
+3. **Registry chain — Go GOPROXY style.** Один из лучших дизайнов
+   индустрии: простая ENV-переменная или TOML-список, понятная
+   семантика «попробуй по очереди». Покрывает корпоративные и
+   open-source сценарии без отдельных модов.
+4. **Lockfile обязателен в VCS.** Воспроизводимые сборки — стандарт
+   2020+. Отдельный файл (vs встроенный в manifest) — manifest
+   стабильнее.
+5. **SAT resolution** — стандарт индустрии, лучший trade-off между
+   гибкостью и автоматическими updates. MVS (Go) проще, но «застывает»
+   зависимости.
+6. **`source = "registry+<url>"` префикс.** Cargo прецедент,
+   однозначное различение типов источников без множества полей.
+7. **Workspace** — критично для backend monorepo. Cargo доказал
+   эффективность.
+8. **Path/module enforcement** — AI-friendly. LLM получает
+   compile error с suggestion, а не undefined behavior.
+9. **Prelude opt-out per-file** — гранулярнее чем per-project, согласовано
+   с D64 `realtime { ... }` блоками per-function.
+10. **Корень src/ default + override** — простой default + power user
+    customization. Прецедент Cargo (`[lib] path = "..."`), Maven (`src/main/java`).
+
+### Что отвергнуто
+
+- **JSON manifest** (npm-стиль `package.json`). JSON не поддерживает
+  комментарии, плохо читается LLM/человеком в больших файлах.
+- **YAML manifest**. Whitespace-sensitive, известный источник ошибок,
+  обширное spec'ирование (3 редакции).
+- **`Cargo.toml` имя**. PascalCase нарушает D30 (snake_case для модулей
+  и файлов). `nova.toml` единообразно.
+- **Lockfile в JSON** (`package-lock.json`). TOML единообразен с
+  manifest.
+- **MVS (Go-style)** алгоритм резолюции. Простое, но «застывает» deps.
+  Современный consensus за SAT.
+- **Decentralized registry** (Go style — каждый dep это URL). Сложнее
+  для security audit, нет центрального discovery. Chain покрывает
+  корпоративные сценарии без decentralization.
+- **Wildcard в version requirements** (`serde = "*"`). Запрещён
+  resolver'ом — порождает невоспроизводимые сборки.
+- **`[bin]` (single section)** для бинарей. `[[bin]]` (array of tables)
+  единообразен для 1+ бинарей, не требует переключения форматов.
+- **Несколько lockfile в workspace**. Один lockfile гарантирует единые
+  версии транзитивных deps — иначе server и client получают разные
+  serde, что ломает type-compat.
+- **Auto-detect manifest fields** (через scan кода). Явное лучше
+  неявного, AI-friendly.
+
+### Цена
+
+1. **Tooling сложность.** SAT resolver — нетривиальная реализация
+   (pubgrub можно использовать готовый). Registry protocol, lockfile
+   format, workspace coordination — это всё нужно реализовать.
+2. **Bootstrap problem.** Сама Nova-stdlib должна жить **до** появления
+   tooling'а. Решение: stdlib монолитна на ранних этапах (всё в
+   `examples/stdlib/*.nv`), package tooling появляется параллельно
+   с self-hosted compiler.
+3. **Central registry — открытый вопрос.** Когда появится,
+   нужна команда поддержки (хостинг, security policy, DMCA, etc.).
+   До появления — только local + git URLs.
+4. **Backward-compat lockfile format.** Поле `version = 1` — для
+   будущих миграций. v2 lockfile должен парситься старым tooling'ом
+   с понятным error'ом.
+
+### Связь
+
+- [D29](#d29-модули-и-импорты) — модули, иерархия, импорты. D78
+  расширяет: где лежат модули относительно корня, как резолвятся
+  внешние пакеты.
+- [D26](08-runtime.md#d26) — prelude. D78 описывает opt-out.
+- [D30](03-syntax.md#d30) — конвенции имён модулей и файлов.
+- [D64](04-effects.md#d64) — `realtime { }` блок; prelude opt-out
+  полезен для real-time uses.
+- [examples/stdlib/semver.nv](../../examples/stdlib/semver.nv) —
+  semver используется для `version` поля и для resolver-сравнений.
+
+### Открытые вопросы
+
+- **Central registry hosting.** Когда появится `https://nova-registry.org`?
+  До появления — только git URLs и local paths. Q-central-registry.
+- **Registry API spec.** Точный HTTP API реестра (как
+  `https://crates.io/api/v1/crates`). Q-registry-api.
+- **Security model.** SBOM (software bill of materials), supply-chain
+  attacks, signed packages? Q-package-security.
+- **Build script / hooks.** `cargo build.rs` — нужны ли native build
+  steps в Nova? Q-build-scripts.
+- **Feature combinations validation.** SAT над features (как Cargo)
+  vs simple bool flags. Q-features-resolution.
+- **Cross-compilation.** Target-specific deps (`[target.x86_64-linux]`).
+  Q-cross-compile.
+
+### Эволюция
+
+До D78 в [D29](#d29-модули-и-импорты) `nova.toml` был упомянут как
+«манифест проекта», но **без** описания формата. Резолвинг сторонних
+пакетов и lockfile вообще не были зафиксированы. На практическом
+backend-проекте это блокирующий пробел.
+
+D78 фиксирует **полный tooling-стек**: формат manifest'а, lockfile,
+registry chain (с поддержкой closed networks / proxy), SAT-resolution,
+workspace, prelude opt-out, source root override, path/module
+enforcement.
+
+Прецеденты:
+- **Cargo.toml + Cargo.lock** — основной образец (TOML, sections, SAT).
+- **Go GOPROXY chain** — для registry mirror.
+- **npm workspaces / Cargo workspaces** — multi-package monorepo.
+- **Maven settings.xml mirrors** — corporate proxy stories.

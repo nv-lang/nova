@@ -30,27 +30,28 @@
 handler'ом**. Отсюда автоматически:
 
 - Тесты без моков (handler-подмена)
-- Транзакции, undo/redo, snapshot (handler `db`/`mut`)
-- Capability security (запрет эффектов в скоупе)
+- Транзакции, undo/redo, snapshot (handler `Db`)
+- Capability security (`forbid X { ... }` запрещает эффект в скоупе)
 - Time-travel debugging (запись handler-вызовов)
-- Detерминированный repro (handler `time`+`random` с фиксацией)
-- Supervision как в Erlang (structured `par` + handler перезапуска)
+- Детерминированный repro (handler'ы `Time`+`Random` с фиксацией)
+- Supervision как в Erlang (`supervised { spawn ... }` + restart strategy)
 - LLM-безопасный код (побочные действия видны в типе)
 
-## Память: managed по умолчанию, regions opt-in
+## Память: managed по умолчанию, real-time opt-in
 
 **Программист пишет, GC работает.** Никаких префиксов памяти в обычном
 коде. Циклы освобождаются автоматически. Современный concurrent GC даёт
 паузы <1ms.
 
-Для real-time зон (звук, торговля, embedded) — эффект `Realtime` в
-сигнатуре. Компилятор оборачивает тело в region автоматически (GC
-внутри выключен). Явный `region { ... }` нужен только для контроля над
-несколькими аренами:
+Для real-time зон (звук, торговля, embedded) — блок `realtime { ... }`.
+Внутри него компилятор гарантирует отсутствие приостановок и GC-пауз;
+нарушение — compile-time error:
 
 ```nova
-fn map_audio(samples []f32, gain f32) Realtime -> []f32 =>
-    samples.map((x) => x * gain)   // implicit region, без GC pauses
+fn map_audio(samples []f32, gain f32) -> []f32 =>
+    realtime {
+        samples.map((x) => x * gain)   // без GC, без suspension
+    }
 ```
 
 Для perf-критичного кода компилятор использует **escape analysis** —

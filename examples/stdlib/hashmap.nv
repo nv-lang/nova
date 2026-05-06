@@ -11,7 +11,7 @@
 // Допущения:
 //   - `K` имеет операции `hash() -> u64` и `eq(other K) -> bool`
 //     (структурно, [D15](../spec/decisions/02-types.md#d15)). В реальной stdlib —
-//     prelude-trait `Hash` + `Eq` с auto-derive для примитивов
+//     prelude-protocol `Hash` + `Eq` с auto-derive для примитивов
 //     (зависит от Q15).
 //   - Использует `[]T` и `[T; N]` из [D27](../spec/decisions/03-syntax.md#d27).
 //   - Методы инстанса через `@` ([D35](../spec/decisions/03-syntax.md#d35)).

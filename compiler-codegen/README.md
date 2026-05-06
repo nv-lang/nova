@@ -21,15 +21,21 @@
 - Records, sum types (match)
 - Функции, методы, generics (через мономорфизацию)
 - Эффекты и handlers (D61: `handler` keyword, `with X = h`, `interrupt`)
-- `spawn() { ... }` через файберы (minicoro)
+- `spawn func()` / `spawn { body }` через minicoro stackful coroutines
 - `let`, `mut`, арифметика, строки, `println`
 
 ## Чего нет (намеренно)
 
-- Concurrent GC — ref-counting достаточно для текущих примеров
-- `supervised`, `parallel for`, `race` — файберы есть, structured concurrency впереди
-- SMT contracts — парсятся, не проверяются
-- Comptime/macros, region/Realtime, JIT, hot reload
+- Concurrent GC — ref-counting достаточно для текущих примеров,
+  опциональный Boehm GC через `alloc_boehm.c`
+- `supervised`, `parallel for`, `race` — файберы есть, structured
+  concurrency и cooperative scheduler из D71 — следующий шаг
+- SMT contracts (D24) — парсятся, не проверяются
+- Generic bounds (D72) и `From`/`Into` (D73) — в spec формализованы,
+  в type-checker'е пока нет
+- `realtime { ... }` (D64) — парсится, без compile-time enforcement
+  правил no-suspend
+- Comptime/macros, JIT, hot reload
 - LSP, package manager, formatter
 
 ## Запуск
@@ -38,17 +44,17 @@
 cargo build --release
 
 # Интерпретировать
-cargo run -- run examples/hello.nv
+cargo run -- run examples/basics/hello.nv
 
 # Скомпилировать в C
-cargo run -- compile examples/hello.nv          # -> examples/hello.c
-cargo run -- compile examples/effects.nv -o out.c
+cargo run -- compile examples/basics/hello.nv             # -> examples/basics/hello.c
+cargo run -- compile examples/effects/effects.nv -o out.c
 
 # Type-check без запуска
-cargo run -- check examples/records.nv
+cargo run -- check examples/basics/records.nv
 
 # Тесты
-cargo run -- test examples/with_tests.nv
+cargo run -- test examples/effects/with_tests.nv
 cargo test
 ```
 
@@ -57,14 +63,14 @@ cargo test
 После `compile` компилируем через GCC/Clang:
 
 ```sh
-gcc examples/hello.c nova_rt/alloc.c nova_rt/effects.c nova_rt/fibers.c \
+gcc examples/basics/hello.c nova_rt/alloc.c nova_rt/effects.c nova_rt/fibers.c \
     -Inova_rt -o hello && ./hello
 ```
 
 На Windows (через `build_c.bat`):
 
 ```bat
-build_c.bat examples\hello.c
+build_c.bat examples\basics\hello.c
 ```
 
 ## Структура
@@ -81,6 +87,7 @@ src/
   lib.rs
   main.rs
 nova_rt/      C runtime (alloc, effects, fibers, minicoro)
-examples/     .nv файлы + сгенерированные .c + скомпилированные .exe
+examples/     .nv файлы (basics/, effects/, real-world/, stdlib/, effect-density/)
+              + сгенерированные .c + скомпилированные .exe
 tests/        интеграционные тесты
 ```

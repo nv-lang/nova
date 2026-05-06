@@ -18,6 +18,7 @@
 | [D32](#d32-семантика-передачи-параметров) | Семантика передачи параметров | revised для полей → D36 |
 | [D36](#d36-поля-типа-дефолт-mutable-у-mut-bindinga-readonly-для-never-mut) | Поля типа: дефолт mutable у mut-binding'а, `readonly` для never-mut | active |
 | [D66](#d66-self-universal--ссылка-на-обобщающий-тип-в-методах-effects-protocols) | `Self` universal: ссылка на обобщающий тип в методах, effects, protocols | active |
+| [D72](#d72-generic-bounds-через-t-protocol--protocol-как-тип) | Generic bounds через `[T Protocol]` — protocol как тип | active |
 
 ---
 
@@ -2249,5 +2250,298 @@ practice'е `Self` оказался полезен также в:
 - sum-вариантах для `@clone`/`@with_*` методов.
 
 D66 убирает ограничение: `Self` валиден везде, где есть type-контекст.
+
+---
+
+## D72. Generic bounds через `[T Protocol]` — protocol как тип
+
+### Что
+Параметр-тип в generic-списке может иметь **bound** — protocol-тип,
+которому должны удовлетворять конкретизации параметра. Синтаксис —
+единое правило «name type» без двоеточия:
+
+```nova
+[T Hashable]
+[K Hashable, V]
+[K, T From[K]]
+```
+
+Без bound — `[T]` — параметр без ограничений (структурное соответствие
+проверяется при использовании, как было до D72).
+
+Bound — это **protocol-тип** (D53). Тот же `Hashable` стоит и в
+позиции типа значения (`fn f(x Hashable)` — existential), и в позиции
+bound'а (`fn f[T Hashable](x T)` — universal). Одна сущность —
+тип со структурным контрактом — в трёх позициях:
+
+1. Тип значения: `fn f(x Hashable) -> u64`
+2. Bound: `fn f[T Hashable](x T) -> u64`
+3. Эффект (между `)` и `->`): `fn f(...) Db -> ()` (D18)
+
+Различение по позиции, не по keyword'у. Закрывает [Q-bounds](../open-questions.md#q-bounds).
+
+### Правило
+
+#### Синтаксис
+
+```
+generic-params = '[' generic-param { ',' generic-param } ']'
+generic-param  = identifier [ type ]
+```
+
+`generic-param` следует общему правилу Nova «`name type`», как
+параметры функции (`x int`), поля record (`id u64`), let-bindings
+(`let x int = 5`), for-loops (`for x int in xs`), embed
+(`use w HashMapIter[K, V]`).
+
+```nova
+fn sort[T](xs []T, less fn(T, T) -> bool) -> []T
+//      ^ без bound — структурное соответствие при использовании
+
+fn dedup[T Hashable](xs []T) -> []T
+//       ^^^^^^^^^^^ T должен реализовывать Hashable
+
+type HashMap[K Hashable, V] {
+//          ^^^^^^^^^^^ K — Hashable, V — без bound
+    ...
+}
+
+fn fold[T, Acc](xs Iter[T], init Acc, f fn(Acc, T) -> Acc) -> Acc
+//      ^^^^^^ ни T, ни Acc bound'а не имеют
+```
+
+#### Порядок объявления параметров
+
+Generic-параметры читаются **слева направо**. Имя в bound'е должно
+быть **уже объявлено** — либо ранее в том же списке `[...]`, либо в
+type-контексте (top-level type, окружающий тип для метода).
+
+```nova
+fn func[K, T From[K]](v K) -> T => T.from(v)
+//      ^                          ^
+//      объявлен раньше            используется в bound
+
+fn func[T From[K], K](v K) -> T          // ОШИБКА: K используется до объявления
+fn func[T Test[K]](v K) -> T             // ОШИБКА: K не объявлен вообще
+```
+
+Это согласовано с правилом параметров функции: `fn f(x int, y T)` —
+имена читаются слева направо, ранее объявленные доступны позже.
+Forward-references запрещены ради простоты type-checker'а и
+читаемости (LLM не нужно держать «отложенный контекст»).
+
+#### Bound — это protocol-тип
+
+`Hashable`, `From[T]`, `Into[T]` и т.д. — обычные protocol-типы (D53):
+
+```nova
+type Hashable protocol {
+    hash() -> u64
+    eq(other Self) -> bool
+}
+
+// Bound в generic-объявлении:
+fn map[K Hashable, V](m HashMap[K, V]) -> ...
+
+// Тот же Hashable в позиции типа значения (existential):
+fn dump_one(x Hashable) -> u64 => x.hash()
+```
+
+**Existential vs universal — различение по позиции:**
+
+| Форма | Семантика | Dispatch | Аналог Rust |
+|---|---|---|---|
+| `fn f(x Hashable)` | existential («какое-то значение типа Hashable») | dynamic (vtable) | `fn f(x: &dyn Hashable)` |
+| `fn f[T Hashable](x T)` | universal («для любого T : Hashable») | static (mono) | `fn f<T: Hashable>(x: T)` |
+
+В обоих случаях `Hashable` — **тип**. Различие только в позиции:
+внутри `[...]` — generic-параметр и его bound; в обычной позиции —
+тип значения. Прецедент — Go (`interface { M() }` используется и как
+тип, и как constraint).
+
+#### Multiple bounds — анонимный protocol
+
+Если параметру нужно несколько bounds, объединяются в анонимный
+protocol-тип через `protocol { ... }` (D53):
+
+```nova
+fn min[T protocol { @lt(other Self) -> bool, @eq(other Self) -> bool }](xs []T) -> T
+```
+
+Долго, но без специального синтаксиса для intersection bound'ов.
+Если паттерн повторяется — выносится в именованный protocol:
+
+```nova
+type Ord protocol {
+    @lt(other Self) -> bool
+    @eq(other Self) -> bool
+}
+
+fn min[T Ord](xs []T) -> T => ...
+```
+
+**Сокращённая форма `[T A & B]`** — открытый вопрос
+([Q-multi-bound](../open-questions.md)).
+
+#### `Self` в bounds
+
+`Self` (D66) валиден внутри protocol/method-контекста. В bound'е
+generic-параметра свободной функции — **запрещён**:
+
+```nova
+fn merge[T Eq](a T, b T) -> T => ...           // ok
+fn merge[T Eq Self](a T, b T) -> T => ...      // ОШИБКА: Self вне type-контекста
+```
+
+В method-контексте (`fn Box[T] @method[U Self]`) — открытый вопрос,
+пока запрещено.
+
+#### Bound как effect — запрещено
+
+Bound — это `protocol`-тип. Effect — тоже `protocol`, но используется
+**в позиции эффекта** (между `)` и `->`). Использовать `Db` как bound
+запрещено — это ошибка категории (D62: `effect` ≠ `protocol` для
+generic-bound):
+
+```nova
+fn run[T Db](handler T) -> ()         // ОШИБКА: Db — effect, не bound-protocol
+```
+
+Если нужно «принимает Handler[Db]» — пишется явно: `fn run(h Handler[Db])`.
+
+#### Bound на типах (не функциях)
+
+Тот же синтаксис в declaration типов:
+
+```nova
+type HashMap[K Hashable, V] {
+    readonly buckets []Slot[K, V]
+}
+
+type Set[T Hashable] {
+    readonly inner HashMap[T, ()]
+}
+
+type Sorted[T Ord] | Empty | Node(T, Sorted[T], Sorted[T])
+```
+
+Bound применяется при инстанциировании: `HashMap[User, int]` требует
+чтобы `User` реализовывал `Hashable`.
+
+#### Проверка bound'а — структурная (D53)
+
+Bound удовлетворён, если у конкретного типа есть **методы из
+protocol'а** (структурно). Никаких явных `impl`/declaration не нужно:
+
+```nova
+type User { id u64 }
+
+fn User @hash() -> u64 => @id
+fn User @eq(other Self) -> bool => @id == other.id
+
+// User автоматически удовлетворяет Hashable, потому что есть @hash и @eq
+let m HashMap[User, str] = HashMap.new()       // ok
+```
+
+Если методов нет — compile error на месте использования (`HashMap[User, str]`
+с инстанциированием), не на declaration `type User`.
+
+### Почему
+
+1. **Закрывает Q-bounds.** Generic-инфраструктура (HashMap, From/Into,
+   collect, FromIter) требует bound'ов. Без них либо безопасности
+   нет, либо ошибки откладываются до места использования с непонятным
+   сообщением.
+
+2. **Согласовано с правилом «name type».** Параметр функции `x int`,
+   поле `id u64`, generic-параметр `T Hashable` — единая грамматика.
+   Двоеточие в Nova зарезервировано под key-value, использовать его
+   для bound — нарушение D17.
+
+3. **Protocol = тип (D53).** `Hashable` уже тип в Nova. Использовать
+   его как bound — естественное расширение, не новый механизм.
+   Existential (`x Hashable`) и universal (`[T Hashable]`) различаются
+   позицией.
+
+4. **Прецедент Go.** Go 1.18+: `interface { M() }` используется и как
+   тип значения, и как constraint в generics. Один синтаксис, два
+   контекста, проверено в большом продакшне.
+
+5. **Структурная проверка вместо impl.** Nova не имеет orphan rule
+   (D42/D53) — нет `impl Trait for Type` блоков. Bound удовлетворяется
+   автоматически, как и existential. Это последовательно.
+
+6. **AI-friendly.** LLM пишет `[T Hashable]` без специальных
+   keyword'ов (`where`, `impl`, `:`). Грамматика читается как
+   естественный язык: «параметр T типа Hashable».
+
+### Что отвергнуто
+
+- **`[T: Hashable]`** (Rust/Scala/Kotlin/Swift). Конфликтует с D17 —
+  двоеточие в Nova только для key-value (record-литералы, dict).
+  Делать исключение для generic-list — нарушение единства.
+- **`[T is Hashable]`.** `is` уже занят под runtime type-check (D54).
+  Третий смысл (compile-time bound) перегружает keyword.
+- **`where`-clauses после сигнатуры** (C# / Haskell-style). Многословно,
+  раздваивает информацию между списком параметров и where-блоком.
+  Bound у параметра — единое место.
+- **`[T impl Hashable]`** (Swift `some`-style). Нестандартно,
+  `impl` не используется в Nova ни для чего ещё.
+- **Bounds через контракты** (`requires implements(T, Hashable)`).
+  Контракты (D24) проверяются SMT на значениях, bound — type-checker'ом
+  на типах. Разные уровни.
+- **Sealed/closed bound'ы** («только эти типы»). Открытый вопрос,
+  не входит в D72.
+
+### Цена
+
+1. **Type-checker сложнее.** Проверка structural-bound при
+   мономорфизации — дополнительная работа.
+2. **Сообщения об ошибках.** «`User` не реализует `Hashable`: missing
+   method `@hash`» — нужно генерировать понятные диагностики.
+3. **Множественные bounds через анонимный protocol** — многословно
+   для частых пар (`Hash + Eq`). Сокращённая форма откладывается.
+
+### Связь
+
+- [02-types.md → D53](#d53-унификация-protocol-под-type-protocol-как-kind-токен)
+  — protocol = тип, основа D72.
+- [02-types.md → D42](#d42-protocol-keyword-для-структурных-интерфейсов)
+  — структурная типизация, две модели generic-параметров.
+- [02-types.md → D66](#d66-self-universal--ссылка-на-обобщающий-тип-в-методах-effects-protocols)
+  — `Self` в protocol-контексте.
+- [03-syntax.md → D16](03-syntax.md#d16-дженерики-через-t-не-t)
+  — `[T]` синтаксис для generic'ов.
+- [04-effects.md → D18](04-effects.md#d18-эффекты-объявляются-через-kind-токен-не-голый-type)
+  — protocol в effect-position, отличается от bound-position.
+- [08-runtime.md → D73](08-runtime.md#d73) — `From[T]`/`Into[T]`
+  используют bound `[U From[T]]` для generic-функций конверсии.
+- [Q-bounds](../open-questions.md#q-bounds) — closed by D72.
+- [Q-collect-mechanism](../open-questions.md#q-collect-mechanism)
+  — становится решаемой после D72.
+
+### Открытые вопросы
+
+- **Множественные bounds**: сокращённая форма (`[T Hash & Eq]`,
+  `[T (Hash, Eq)]`) — Q-multi-bound.
+- **Bound на эффект-параметре**: можно ли `[E SomeProtocolOnEffects]`
+  — связано с Q-effect-params.
+- **`Self` в bound** в method-контексте — отложено.
+- **Conditional methods** через `where`-clause (`fn Vec[T] @sort()
+  where T Ord`) — отложено вместе с conditional impls.
+
+### Эволюция
+
+В MVP bounds были **отвергнуты** ([D42 «Открытые вопросы»](#d42),
+[history/rejected.md](history/rejected.md): «`[T: Bound]` отвергнут
+в MVP»). Пользовались структурным соответствием при использовании —
+ошибка вылезала на месте вызова, не объявления. С ростом stdlib
+(HashMap, From/Into, collect) стало ясно что **без bound'ов нельзя**:
+generic-функции не могут опираться на методы T без явного контракта.
+
+Q-bounds зафиксировал синтаксис заранее (`[T Bound]` без двоеточия).
+D72 принимает это как формальное решение, расширяет до полной семантики
+(structural check, existential-vs-universal через позицию, multiple
+bounds через анонимный protocol).
 
 ---

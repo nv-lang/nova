@@ -152,7 +152,7 @@ export fn DbRow @at(i int) -> Option[SqlValue] => @values.get(i)
 // ──────────────────────────────────────────────────────────────────────────
 
 // `expect_int` / `expect_str` / etc. — извлечь конкретный тип или throw.
-// Используется from_row-парсерами: `let id = row.get("id")?.expect_int()?`.
+// Используется from_row-парсерами: `let id = row.get_int("id")` (throw через Fail[DbError]).
 //
 // Возврат `Fail[DbError]`, чтобы ошибки парсинга поднимались как DbError
 // (Constraint), а не молча возвращали None.
@@ -198,19 +198,19 @@ export fn SqlValue @as_str() -> Option[str] =>
 // DbRow @get_int / @get_str — comb'ы для частого случая.
 export fn DbRow @get_int(name str) Fail[DbError] -> i64 =>
     match @get(name) {
-        Some(v) => v.expect_int()?
+        Some(v) => v.expect_int()
         None    => throw DbError.Constraint("missing column: ${name}")
     }
 
 export fn DbRow @get_str(name str) Fail[DbError] -> str =>
     match @get(name) {
-        Some(v) => v.expect_str()?
+        Some(v) => v.expect_str()
         None    => throw DbError.Constraint("missing column: ${name}")
     }
 
 export fn DbRow @get_bool(name str) Fail[DbError] -> bool =>
     match @get(name) {
-        Some(v) => v.expect_bool()?
+        Some(v) => v.expect_bool()
         None    => throw DbError.Constraint("missing column: ${name}")
     }
 
@@ -335,8 +335,8 @@ test "DbRow.get and DbRow.at" {
 
 test "DbRow.get_int / get_str — typed accessors" {
     let row DbRow = { columns: ["id", "name"], values: [42, "alice"] }
-    assert row.get_int("id")? == 42
-    assert row.get_str("name")? == "alice"
+    assert row.get_int("id") == 42
+    assert row.get_str("name") == "alice"
 }
 
 test "Sql.concat — fragments compose with args preserved" {

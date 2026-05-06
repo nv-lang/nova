@@ -116,15 +116,17 @@ export fn LinkedList[T] @append(x T) -> LinkedList[T] =>
 export fn LinkedList[T] @reverse() -> Self {
     let mut acc = Empty
     let mut cur = @
-    loop {
+    let mut done = false
+    while !done {
         match cur {
-            Empty       => return acc
-            Cons(h, t)  => {
+            Empty      => { done = true }
+            Cons(h, t) => {
                 acc = Cons(h, acc)
                 cur = t
             }
         }
     }
+    acc
 }
 
 // map — generic U на методе (D42 Модель B).

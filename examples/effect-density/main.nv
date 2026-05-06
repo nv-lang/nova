@@ -28,8 +28,8 @@ import examples.effect_density.domain.*
 // Все handler'ы создаются и привязываются ВНУТРИ функции — они не
 // «протекают» в сигнатуру.
 export fn run(cfg Config) Net Io Fail[StartupError] -> () {
-    let pg     = postgres_connect(cfg.db_url)?
-    let redis  = redis_connect(cfg.redis_url)?
+    let pg     = postgres_connect(cfg.db_url)
+    let redis  = redis_connect(cfg.redis_url)
     let logger = json_logger(stdout)
     let metrics = prom_registry()
     let tracer = otel_tracer(cfg.otel_endpoint)
@@ -47,7 +47,7 @@ export fn run(cfg Config) Net Io Fail[StartupError] -> () {
         // Тут уже ВСЕ инфраструктурные эффекты привязаны.
         // serve_request будет вызывать handler'ы — он добавит AuthContext
         // на каждый запрос индивидуально.
-        serve(cfg.port, route)?
+        serve(cfg.port, route)
     }
 }
 
@@ -64,7 +64,7 @@ export fn run(cfg Config) Net Io Fail[StartupError] -> () {
 // заголовка Authorization. Дальше handler'ы уже его «получают»
 // бесплатно из скоупа.
 fn route(req Request) Db Cache Logger Clock IdGen Metrics Trace Idempotency Fail[HttpError] -> Response {
-    let auth = parse_auth(req.headers)?
+    let auth = parse_auth(req.headers)
     with AuthContext = auth, Trace = Trace.span("http_${req.method}_${req.path}") {
         match (req.method, req.path) {
             ("POST", "/api/transfers")         => http.handle_create_transfer(req)
@@ -95,7 +95,7 @@ fn run_in_test_mode(cfg Config, fixtures TestData) Fail -> () {
          Idempotency = in_memory_idem,
          AuthContext = fake_admin {
         // Прогон сценариев — определены в tests/
-        run_scenarios()?
+        run_scenarios()
     }
 }
 

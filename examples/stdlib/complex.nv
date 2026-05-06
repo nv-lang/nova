@@ -1,0 +1,565 @@
+// stdlib/complex.nv — комплексные числа Complex с алгеброй и
+// тригонометрической формой.
+//
+// API в стиле stdlib/duration.nv:
+//   - Complex.new(re, im)               прямой конструктор
+//   - Complex.from(re f64) / from(n int)  D73 From[f64]/From[int] —
+//                                       действительная часть
+//   - Complex.from(s str)               D73 From[str] — парсинг
+//                                       (обратное к @into() -> str,
+//                                        round-trip property)
+//   - Complex.from_imag(im f64)         доменный конструктор —
+//                                       мнимая часть
+//   - Complex.from_polar(r, theta)      из полярных координат
+//   - 3.0.j() / 5.j()                   sugar для мнимой единицы
+//                                       (доменный синтаксис эл.техники)
+//   - z + w, z * w, z.conj(), z.abs()   обычная алгебра через @-методы
+//   - z.sqr(), z.norm_sqr()             квадрат и квадрат модуля
+//   - z.is_finite(), z.into()           сервисные методы
+//
+// Decisions:
+//   - D17 / D52 record-тип с readonly-полями: Complex иммутабелен,
+//     арифметика возвращает новый.
+//   - D35 instance-методы через `fn Type @method`.
+//   - D45 для простых геттеров `-> T` опускаем; для арифметики оставляем
+//     явно (документация stdlib API).
+//   - D46 operator overloading через `@plus`, `@times`, `@neg`, `@eq`.
+//     `!=` выводится из `@eq` автоматически.
+//   - D55 record-coercion: literal `{ re: 1.0, im: 2.0 }` в позиции
+//     `Self` подставится сам.
+//   - D66 `Self` в return type — DRY, без повтора имени Complex.
+//   - D73 From/Into: `Complex.from(f64)` даёт авто-выведенный
+//     `Into[Complex]` для f64, поэтому `(2.0).into()` тоже работает
+//     (в позиции с известным целевым типом).
+//   - D70 (replaced → D73) — для строкового представления реализуем
+//     `Complex @into() -> str`, компилятор синтезирует парный
+//     `str.from(z)`.
+//
+// Использует instance-методы на f64 (std.math): `@sqrt`, `@hypot`,
+// `@atan2`, `@cos`, `@sin`, `@is_finite`, `@is_nan`, `@abs`.
+
+module std.complex
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Тип
+// ──────────────────────────────────────────────────────────────────────────
+
+// Complex число в декартовых координатах. Поля readonly — иммутабелен,
+// все операции возвращают новое значение.
+export type Complex {
+    readonly re f64
+    readonly im f64
+}
+
+// Часто нужные константы.
+export const ZERO Complex = { re: 0.0, im: 0.0 }
+export const ONE  Complex = { re: 1.0, im: 0.0 }
+export const I    Complex = { re: 0.0, im: 1.0 }    // мнимая единица
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Static-конструкторы
+// ──────────────────────────────────────────────────────────────────────────
+
+// Прямой конструктор. Дублирует record-литерал, но даёт «один способ»
+// для chain-style: `Complex.new(1.0, 2.0).times(other)`.
+export fn Complex.new(re f64, im f64) -> Self =>
+    { re, im }
+
+// `From[f64]` — реализуется через обычный static-метод `from(v T)` (D73).
+// Авто-синтезирует `Into[Complex]` для `f64`, поэтому обе формы работают:
+//   let z = Complex.from(2.0)
+//   let z Complex = (2.0).into()      // тип цели из контекста
+//
+// Конверсия делает f64 чисто-действительным Complex (im = 0).
+export fn Complex.from(re f64) -> Self =>
+    { re, im: 0.0 }
+
+// `From[int]` — для удобства `Complex.from(2)` без явного `as f64`.
+export fn Complex.from(n int) -> Self =>
+    { re: n as f64, im: 0.0 }
+
+// Чисто мнимое — это **не** конверсия `f64 → Complex` (та уже занята
+// `Complex.from`), а доменная операция «использовать значение как
+// мнимую часть». Поэтому отдельный конструктор с явным именем.
+export fn Complex.from_imag(im f64) -> Self =>
+    { re: 0.0, im }
+
+// Из полярных координат: `r * (cos θ + i·sin θ)`.
+//   r     — модуль (длина радиус-вектора, обычно ≥ 0)
+//   theta — аргумент в радианах
+export fn Complex.from_polar(r f64, theta f64) -> Self =>
+    { re: r * theta.cos(), im: r * theta.sin() }
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Геттеры — типы очевидны, опускаем `-> T` (D45)
+// ──────────────────────────────────────────────────────────────────────────
+
+export fn Complex @real() => @re
+export fn Complex @imag() => @im
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Алгебра — operator overloading (D46)
+// ──────────────────────────────────────────────────────────────────────────
+
+// Сложение: (a+bi) + (c+di) = (a+c) + (b+d)i.
+export fn Complex @plus(other Complex) -> Complex =>
+    { re: @re + other.re, im: @im + other.im }
+
+// Вычитание: (a+bi) - (c+di) = (a-c) + (b-d)i.
+export fn Complex @minus(other Complex) -> Complex =>
+    { re: @re - other.re, im: @im - other.im }
+
+// Унарный минус.
+export fn Complex @neg() -> Complex =>
+    { re: -@re, im: -@im }
+
+// Умножение: (a+bi)(c+di) = (ac-bd) + (ad+bc)i.
+export fn Complex @times(other Complex) -> Complex =>
+    {
+        re: @re * other.re - @im * other.im,
+        im: @re * other.im + @im * other.re,
+    }
+
+// Деление: (a+bi)/(c+di) = ((ac+bd) + (bc-ad)i) / (c²+d²).
+// При нулевом знаменателе — поведение IEEE 754 (inf/nan).
+// Strict-режим (`Fail[DivByZero]`) — отдельный variant `@try_div`.
+export fn Complex @div(other Complex) -> Complex {
+    let denom = other.re * other.re + other.im * other.im
+    {
+        re: (@re * other.re + @im * other.im) / denom,
+        im: (@im * other.re - @re * other.im) / denom,
+    }
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Скалярные операции — для эргономики `z * 2.0`, `z / 3.0`
+// ──────────────────────────────────────────────────────────────────────────
+
+// D46 разрешает overloading методов по типу аргумента (см. Vector @times):
+// `z * Complex(...)` и `z * 2.0` — оба валидны через одно имя `@times`.
+
+export fn Complex @times(s f64) -> Complex =>
+    { re: @re * s, im: @im * s }
+
+export fn Complex @div(s f64) -> Complex =>
+    { re: @re / s, im: @im / s }
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Геометрия / тригонометрическая форма
+// ──────────────────────────────────────────────────────────────────────────
+
+// Сопряжённое: conj(a+bi) = a-bi.
+export fn Complex @conj() -> Complex =>
+    { re: @re, im: -@im }
+
+// Квадрат модуля (squared norm): |z|² = a² + b². Дешевле чем @abs
+// (без sqrt) — удобно когда нужно только сравнение длин.
+export fn Complex @norm_sqr() -> f64 =>
+    @re * @re + @im * @im
+
+// Модуль (абсолютная величина): |z| = √(a² + b²).
+// Через `@hypot` — численно устойчиво при больших/малых компонентах.
+export fn Complex @abs() -> f64 =>
+    @re.hypot(@im)
+
+// Аргумент (полярный угол) в радианах, в диапазоне (-π, π].
+// Через `atan2(im, re)` — корректно обрабатывает все четверти.
+// Для `z == 0` возвращает 0 (соглашение IEEE 754 atan2).
+export fn Complex @arg() -> f64 =>
+    @im.atan2(@re)
+
+// Возведение в квадрат — частый случай. Имя `sqr` — Pascal-прецедент
+// (там `Sqr(x) = x*x`), короче чем `squared`, согласовано с потенциальным
+// `f64 @sqr()` в std.math.
+//
+// Можно писать `z * z` (D46 даёт то же), но прямая формула с одним
+// fused умножением чуть быстрее: 2 mul + 1 sub + 1 mul вместо
+// 4 mul + 2 add/sub в общем @times.
+export fn Complex @sqr() -> Complex =>
+    {
+        re: @re * @re - @im * @im,
+        im: 2.0 * @re * @im,
+    }
+
+// Обратное число: 1/z = conj(z) / |z|².
+export fn Complex @inv() -> Complex {
+    let denom = @norm_sqr()
+    { re: @re / denom, im: -@im / denom }
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Предикаты
+// ──────────────────────────────────────────────────────────────────────────
+
+export fn Complex @is_zero() => @re == 0.0 && @im == 0.0
+
+export fn Complex @is_real() => @im == 0.0
+
+export fn Complex @is_imag() => @re == 0.0 && @im != 0.0
+
+// Все компоненты конечны (не nan, не ±inf).
+export fn Complex @is_finite() => @re.is_finite() && @im.is_finite()
+
+// Хотя бы один компонент — NaN.
+export fn Complex @is_nan() => @re.is_nan() || @im.is_nan()
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Сравнение (D46)
+// ──────────────────────────────────────────────────────────────────────────
+
+// `==` для Complex — точное равенство компонент. Из-за плавающей точки
+// для содержательных задач лучше использовать `@approx_eq` ниже.
+export fn Complex @eq(other Complex) =>
+    @re == other.re && @im == other.im
+
+// Приблизительное равенство — относительная и абсолютная погрешности.
+// `tol` — допуск (например, 1e-9). Сравнивается |a - b| < tol.
+export fn Complex @approx_eq(other Complex, tol f64) -> bool {
+    let diff = @minus(other)
+    diff.abs() < tol
+}
+
+// Линейного порядка `<`/`>` у комплексных нет — намеренно не реализуем.
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Конверсия в строку (D73 + D70-replacement)
+// ──────────────────────────────────────────────────────────────────────────
+
+// Реализуем `Into[str]` — компилятор автоматически даёт парный
+// `str.from(z)` через D73 авто-вывод. Обе формы вызова работают:
+//   "z = ${z}"          → через str.from(z)
+//   z.into()            // тип цели = str из контекста
+//   str.from(z)
+//
+// Формат: `1.5+2.0i`, `3.0`, `4.0i`, `0.0`, `1.0-2.0i`.
+export fn Complex @into() -> str {
+    if @im == 0.0 {
+        "${@re}"
+    } else if @re == 0.0 {
+        "${@im}i"
+    } else if @im < 0.0 {
+        "${@re}${@im}i"        // отрицательный im уже идёт со знаком "-"
+    } else {
+        "${@re}+${@im}i"
+    }
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Парсинг из строки — обратная к `@into() -> str` (D73)
+// ──────────────────────────────────────────────────────────────────────────
+
+// `From[str]` — обратная к `Into[str]`. Round-trip property:
+//   Complex.from(z.into()) ≈ z
+//
+// Принимает форматы из @into():
+//   "3.0"            → re=3.0, im=0
+//   "2.0i"           → re=0,   im=2.0
+//   "1.0+2.0i"       → re=1.0, im=2.0
+//   "1.0-2.0i"       → re=1.0, im=-2.0
+//   "0.0"            → re=0,   im=0
+//
+// Throws Fail[ParseComplexError] на невалидной строке. По D67 `?` после
+// этого вызова — ошибка: throw сам пробрасывается через Fail.
+export type ParseComplexError | InvalidFormat | NotANumber
+
+export fn Complex.from(s str) Fail[ParseComplexError] -> Self {
+    let trimmed = s.trim()
+    if trimmed == "" {
+        throw InvalidFormat
+    }
+
+    // Чисто мнимое: заканчивается на 'i', не содержит знаков посередине.
+    if trimmed.ends_with("i") {
+        let body = trimmed.strip_suffix("i") ?? trimmed
+        // Может быть `2.0i` (полностью мнимое) или `1.0+2.0i` /
+        // `1.0-2.0i` (комбинированное). Различение по наличию знака
+        // не на первой позиции.
+        let split = split_re_im(body)
+        match split {
+            Some((re_s, im_s)) => {
+                let re = parse_f64_or_throw(re_s)
+                let im = parse_f64_or_throw(im_s)
+                { re, im }
+            }
+            None => {
+                // Чисто мнимое: `2.0i`, `-3.0i`, `i`, `-i`.
+                let im = match body {
+                    ""  => 1.0      // `i` → 1.0
+                    "-" => -1.0     // `-i` → -1.0
+                    _   => parse_f64_or_throw(body)
+                }
+                { re: 0.0, im }
+            }
+        }
+    } else {
+        // Чисто действительное.
+        { re: parse_f64_or_throw(trimmed), im: 0.0 }
+    }
+}
+
+// Разделить body вида "1.0+2.0" / "1.0-2.0" на (re, im).
+// Знак на первой позиции относится к re, не разделитель.
+// None если разделителя нет (значит чисто-мнимое).
+fn split_re_im(body str) -> Option[(str, str)] {
+    let mut i = 1                              // пропускаем знак re если есть
+    while i < body.len {
+        let c = body.char_at(i)
+        if c == '+' || c == '-' {
+            // Не часть экспоненты `1e-5`?
+            let prev = body.char_at(i - 1)
+            if prev != 'e' && prev != 'E' {
+                let re_s = body.slice(0, i)
+                let im_s = body.slice(i, body.len)
+                return Some((re_s, im_s))
+            }
+        }
+        i += 1
+    }
+    None
+}
+
+fn parse_f64_or_throw(s str) Fail[ParseComplexError] -> f64 {
+    match f64.try_parse(s) {
+        Some(x) => x
+        None    => throw NotANumber
+    }
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Extension-методы на f64 / int — sugar `2.0.j()`, `3.j()`
+// ──────────────────────────────────────────────────────────────────────────
+
+// `2.0.j()` → Complex { re: 0, im: 2.0 } — sugar для построения чисто
+// мнимых через доменный синтаксис электротехники / физики.
+//
+// Конверсия f64/int → Complex (как чисто-действительное) делается
+// через D73: `Complex.from(2.0)` или `let z Complex = (2.0).into()`.
+// Здесь `j` — отдельная семантика (мнимая часть), не конверсия.
+export fn f64 @j() -> Complex => Complex.from_imag(@)
+export fn int @j() -> Complex => Complex.from_imag(@ as f64)
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Тесты — базовые свойства алгебры и идентичности
+// ──────────────────────────────────────────────────────────────────────────
+
+test "constructors: new / from / from_imag / from_polar" {
+    let z = Complex.new(3.0, 4.0)
+    assert z.re == 3.0
+    assert z.im == 4.0
+
+    // Complex.from(f64) — действительная часть (D73 From[f64]).
+    let r = Complex.from(5.0)
+    assert r.is_real()
+    assert r.re == 5.0
+
+    let im = Complex.from_imag(7.0)
+    assert im.is_imag()
+    assert im.im == 7.0
+
+    // Та же конверсия через .into() — тип цели из аннотации (D73 авто-Into).
+    let r2 Complex = (5.0).into()
+    assert r2.eq(r)
+}
+
+test "addition: commutative and associative" {
+    let a = Complex.new(1.0, 2.0)
+    let b = Complex.new(3.0, 4.0)
+    let c = Complex.new(-1.0, 5.0)
+
+    let ab = a + b
+    let ba = b + a
+    assert ab.eq(ba)                        // a+b == b+a
+    assert ab.re == 4.0
+    assert ab.im == 6.0
+
+    let abc1 = (a + b) + c
+    let abc2 = a + (b + c)
+    assert abc1.eq(abc2)                    // ассоциативность
+}
+
+test "negation and subtraction" {
+    let z = Complex.new(2.0, -3.0)
+    let neg = -z
+    assert neg.re == -2.0
+    assert neg.im == 3.0
+
+    let zero = z + neg
+    assert zero.is_zero()
+
+    let diff = Complex.new(5.0, 5.0) - Complex.new(2.0, 1.0)
+    assert diff.re == 3.0
+    assert diff.im == 4.0
+}
+
+test "multiplication: i * i == -1" {
+    let i_sq = I * I
+    assert i_sq.eq(-ONE)                    // основное свойство мнимой единицы
+
+    let z = Complex.new(2.0, 3.0)
+    let zi = z * I
+    // (2+3i) * i = 2i + 3i² = -3 + 2i
+    assert zi.re == -3.0
+    assert zi.im == 2.0
+}
+
+test "multiplication: distributive" {
+    let a = Complex.new(1.0, 2.0)
+    let b = Complex.new(3.0, -1.0)
+    let c = Complex.new(0.0, 4.0)
+
+    let lhs = a * (b + c)
+    let rhs = (a * b) + (a * c)
+    assert lhs.approx_eq(rhs, 1e-12)
+}
+
+test "scalar times: z * f64" {
+    let z = Complex.new(2.0, 3.0)
+    let scaled = z.times(2.0)
+    assert scaled.re == 4.0
+    assert scaled.im == 6.0
+}
+
+test "division: z / z == 1 (для z != 0)" {
+    let z = Complex.new(3.0, 4.0)
+    let one = z / z
+    assert one.approx_eq(ONE, 1e-12)
+}
+
+test "inverse: z * z.inv() == 1" {
+    let z = Complex.new(2.0, 5.0)
+    let prod = z * z.inv()
+    assert prod.approx_eq(ONE, 1e-12)
+}
+
+test "conj: re/im сохраняются и инвертируются" {
+    let z = Complex.new(3.0, -4.0)
+    let c = z.conj()
+    assert c.re == 3.0
+    assert c.im == 4.0
+
+    // z * conj(z) == |z|² (вещественное)
+    let prod = z * c
+    assert prod.is_real()
+    assert prod.re == 25.0                  // 3² + 4² = 25
+}
+
+test "abs / norm_sqr для (3, 4)" {
+    let z = Complex.new(3.0, 4.0)
+    assert z.norm_sqr() == 25.0
+    assert z.abs() == 5.0                   // 3-4-5 треугольник
+}
+
+test "from_polar / arg: round-trip" {
+    let r = 2.0
+    let theta = 1.0                          // ~57°
+    let z = Complex.from_polar(r, theta)
+    // Модуль восстанавливается точно.
+    assert (z.abs() - r).abs() < 1e-12
+    // Аргумент восстанавливается точно.
+    assert (z.arg() - theta).abs() < 1e-12
+}
+
+test "predicates" {
+    assert ZERO.is_zero()
+    assert ONE.is_real()
+    assert I.is_imag()
+    assert !ZERO.is_imag()                   // 0 не считается чисто мнимым
+    assert !ONE.is_imag()
+}
+
+test "into[str]: формат для разных случаев" {
+    let s_real str = Complex.from(3.0).into()
+    assert s_real == "3.0"
+
+    let s_imag str = Complex.from_imag(2.0).into()
+    assert s_imag == "2.0i"
+
+    let s_pos str = Complex.new(1.0, 2.0).into()
+    assert s_pos == "1.0+2.0i"
+
+    let s_neg str = Complex.new(1.0, -2.0).into()
+    assert s_neg == "1.0-2.0i"
+}
+
+test "extension method j(): мнимая единица" {
+    let z1 = 2.0.j()
+    assert z1.eq(Complex.from_imag(2.0))
+
+    let z2 = 3.j()
+    assert z2.eq(Complex.from_imag(3.0))
+
+    // Композиция через D73 (для действительной части) + j() (для мнимой):
+    //   `Complex.from(2) + 3.j()` или `(2).into() + 3.j()`
+    let z3 = Complex.from(2) + 3.j()
+    assert z3.re == 2.0
+    assert z3.im == 3.0
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// From[str] / Into[str] round-trip
+// ──────────────────────────────────────────────────────────────────────────
+
+test "Complex.from(str): чисто действительное" {
+    let z = Complex.from("3.0")
+    assert z.re == 3.0
+    assert z.im == 0.0
+}
+
+test "Complex.from(str): чисто мнимое" {
+    let z = Complex.from("2.0i")
+    assert z.re == 0.0
+    assert z.im == 2.0
+
+    let neg = Complex.from("-3.0i")
+    assert neg.re == 0.0
+    assert neg.im == -3.0
+}
+
+test "Complex.from(str): полная форма + и -" {
+    let pos = Complex.from("1.0+2.0i")
+    assert pos.re == 1.0
+    assert pos.im == 2.0
+
+    let neg = Complex.from("1.0-2.0i")
+    assert neg.re == 1.0
+    assert neg.im == -2.0
+}
+
+test "round-trip: from(z.into()) == z для всех канонических форм" {
+    let cases = [
+        Complex.new(3.0, 0.0),
+        Complex.from_imag(2.0),
+        Complex.new(1.0, 2.0),
+        Complex.new(1.0, -2.0),
+        ZERO,
+    ]
+    for z in cases {
+        let s = z.into()
+        let parsed Complex = Complex.from(s)
+        assert parsed.approx_eq(z, 1e-12)
+    }
+}
+
+test "Complex.from(str): невалидный формат" {
+    let r = with Fail[ParseComplexError] = (e) => interrupt Some(e) {
+        let _ = Complex.from("not a number")
+        None
+    }
+    match r {
+        Some(InvalidFormat) | Some(NotANumber) => ()
+        _ => assert false
+    }
+}

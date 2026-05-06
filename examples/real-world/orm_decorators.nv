@@ -50,25 +50,29 @@ export fn with_soft_delete(real Handler[Db]) -> Handler[Db] => handler Db {
         // конкатенирует AND. Реальная stdlib-версия делала бы parsing,
         // чтобы корректно работать с UNION/подзапросами.
         let filtered = q.with_filter(sql`deleted_at IS NULL`)
-        return real.query(filtered)?
+        real.query(filtered)
     }
     exec(q) {
         // DELETE → UPDATE deleted_at. Распознаём по template-префиксу.
         if q.template.starts_with("DELETE FROM") {
             // Простой rewrite: "DELETE FROM <t> WHERE ..."
             //              → "UPDATE <t> SET deleted_at = NOW() WHERE ..."
-            let rest = q.template.strip_prefix("DELETE FROM ")?
+            // strip_prefix возвращает Option[str]; на None — Constraint-ошибка.
+            let rest = match q.template.strip_prefix("DELETE FROM ") {
+                Some(r) => r
+                None    => throw DbError.Other("expected DELETE FROM prefix")
+            }
             let rewritten Sql = {
                 template: "UPDATE ${rest.until(" WHERE ")} "
                         + "SET deleted_at = NOW() WHERE ${rest.after(" WHERE ")}",
                 args: q.args,
             }
-            return real.exec(rewritten)?
+            real.exec(rewritten)
         } else {
-            return real.exec(q)?
+            real.exec(q)
         }
     }
-    in_transaction(b) => return real.in_transaction(b)?
+    in_transaction(b) => real.in_transaction(b)
 }
 
 
@@ -86,9 +90,9 @@ export fn with_soft_delete(real Handler[Db]) -> Handler[Db] => handler Db {
 // а сконцентрирована в одной функции. И отключается в тестах
 // тривиально — оборачиваем `with Db = postgres_handler` (без декоратора).
 export fn with_audit(real Handler[Db], current_user_id u64) -> Handler[Db] => handler Db {
-    query(q) => real.query(q)?                    // SELECT не аудируем
+    query(q) => real.query(q)                     // SELECT не аудируем
     exec(q) {
-        let result = real.exec(q)?
+        let result = real.exec(q)
 
         // detach — fire-and-forget audit-запись (D50). В тестах
         // `with Detach = SyncDetach` делает тест-цикл полностью
@@ -101,7 +105,7 @@ export fn with_audit(real Handler[Db], current_user_id u64) -> Handler[Db] => ha
     in_transaction(b) {
         // Транзакция — оборачиваем неизменно. Audit за каждый exec
         // внутри — попадёт в detach-очередь.
-        real.in_transaction(b)?
+        real.in_transaction(b)
     }
 }
 
@@ -131,16 +135,12 @@ fn write_audit_entry(user_id u64, q Sql, affected int) Detach -> () {
 // (replica lag). Поэтому транзакционный body запускается с **под-handler'ом**,
 // у которого query тоже идёт на primary.
 export fn with_read_replica(primary Handler[Db], replica Handler[Db]) -> Handler[Db] => handler Db {
-    query(q) => return replica.query(q)?
-    exec(q)  => return primary.exec(q)?
+    query(q) => replica.query(q)
+    exec(q)  => primary.exec(q)
     in_transaction(b) {
         // Внутри транзакции — всё через primary. Подменяем Db
         // вложенным handler'ом, который делегирует только primary.
-        return primary.in_transaction(() => {
-            with Db = primary {
-                b()
-            }
-        })?
+        primary.in_transaction(() => with Db = primary { b() })
     }
 }
 
@@ -207,20 +207,20 @@ type CapturedQuery { template str, args []SqlValue }
 fn capturing_handler(log mut []CapturedQuery) -> Handler[Db] => handler Db {
     query(q) {
         log.push({ template: q.template, args: q.args })
-        return []
+        []
     }
     exec(q) {
         log.push({ template: q.template, args: q.args })
-        return 0
+        0
     }
-    in_transaction(b) => return b()
+    in_transaction(b) => b()
 }
 
 test "soft-delete: SELECT augmented with deleted_at IS NULL" {
     let mut log []CapturedQuery = []
 
     with Db = with_soft_delete(capturing_handler(log)) {
-        Db.query(sql`SELECT * FROM users WHERE id = ${1}`)?
+        Db.query(sql`SELECT * FROM users WHERE id = ${1}`)
     }
 
     assert log.len == 1
@@ -231,7 +231,7 @@ test "soft-delete: DELETE rewritten as UPDATE deleted_at" {
     let mut log []CapturedQuery = []
 
     with Db = with_soft_delete(capturing_handler(log)) {
-        Db.exec(sql`DELETE FROM users WHERE id = ${1}`)?
+        Db.exec(sql`DELETE FROM users WHERE id = ${1}`)
     }
 
     assert log.len == 1
@@ -239,7 +239,7 @@ test "soft-delete: DELETE rewritten as UPDATE deleted_at" {
     assert log[0].template.contains("SET deleted_at = NOW()")
 }
 
-test "read-replica: SELECT idёт на replica, exec — на primary" {
+test "read-replica: SELECT идёт на replica, exec — на primary" {
     let mut primary_log []CapturedQuery = []
     let mut replica_log []CapturedQuery = []
 
@@ -247,8 +247,8 @@ test "read-replica: SELECT idёт на replica, exec — на primary" {
         capturing_handler(primary_log),
         capturing_handler(replica_log),
     ) {
-        Db.query(sql`SELECT 1`)?
-        Db.exec(sql`UPDATE users SET name = ${"alice"} WHERE id = ${1}`)?
+        Db.query(sql`SELECT 1`)
+        Db.exec(sql`UPDATE users SET name = ${"alice"} WHERE id = ${1}`)
     }
 
     assert primary_log.len == 1                    // только UPDATE
@@ -265,11 +265,11 @@ test "read-replica: внутри transaction всё на primary" {
         capturing_handler(primary_log),
         capturing_handler(replica_log),
     ) {
-        Db.in_transaction() {
-            Db.query(sql`SELECT 1`)?           // должен пойти на primary
-            Db.exec(sql`UPDATE users SET name = ${"alice"} WHERE id = ${1}`)?
+        Db.in_transaction(() => {
+            Db.query(sql`SELECT 1`)            // должен пойти на primary
+            Db.exec(sql`UPDATE users SET name = ${"alice"} WHERE id = ${1}`)
             ()
-        }?
+        })
     }
 
     assert primary_log.len == 2                    // SELECT + UPDATE
@@ -290,9 +290,9 @@ test "audit: каждый exec пишется в detach-задачу" {
         }
     } {
         with Db = with_audit(capturing_handler(log), 42) {
-            Db.exec(sql`INSERT INTO users (name) VALUES (${"alice"})`)?
-            Db.exec(sql`UPDATE users SET name = ${"bob"} WHERE id = ${1}`)?
-            Db.query(sql`SELECT * FROM users`)?         // audit на SELECT не пишется
+            Db.exec(sql`INSERT INTO users (name) VALUES (${"alice"})`)
+            Db.exec(sql`UPDATE users SET name = ${"bob"} WHERE id = ${1}`)
+            Db.query(sql`SELECT * FROM users`)         // audit на SELECT не пишется
         }
     }
 
@@ -306,7 +306,7 @@ test "compose: soft-delete + audit + read-replica" {
     let mut audit_count = 0
 
     with Detach = handler Detach {
-        run(body) { audit_count += 1; return () }
+        run(body) { audit_count += 1 }
     } {
         let composed = with_read_replica(
             with_audit(with_soft_delete(capturing_handler(primary_log)), 42),
@@ -314,8 +314,8 @@ test "compose: soft-delete + audit + read-replica" {
         )
 
         with Db = composed {
-            Db.query(sql`SELECT * FROM users`)?    // replica + soft-delete
-            Db.exec(sql`DELETE FROM users WHERE id = ${1}`)?
+            Db.query(sql`SELECT * FROM users`)    // replica + soft-delete
+            Db.exec(sql`DELETE FROM users WHERE id = ${1}`)
                                                    // primary + soft-delete + audit
         }
     }

@@ -180,7 +180,7 @@
         },
         "prelude-types": {
             "name": "entity.name.type.prelude.nova",
-            "match": "\\b(Option|Result|Some|None|Ok|Err|Error|Never|Ordering|Less|Equal|Greater|Iter|Range|RangeIter|HashMap|HashSet|String|LinkedList|Tree|Graph|Channel|Mutex|RwLock|Atomic|Handler|Iterator|Duration|Timestamp|Bytes|Json|Sql|SqlValue|Request|Response|Headers|Query|DbRow|Reader|Writer|File)\\b"
+            "match": "\\b(Option|Result|Some|None|Ok|Err|Error|Never|Ordering|Less|Equal|Greater|Iter|Range|RangeIter|HashMap|HashSet|String|LinkedList|Tree|Graph|Channel|Mutex|RwLock|Atomic|Handler|Iterator|Duration|Timestamp|Bytes|Json|Sql|SqlValue|Request|Response|Headers|Query|DbRow|Reader|Writer|File|From|Into|Hashable|Eq|Ord|Self)\\b"
         },
         "primitive-types": {
             "name": "support.type.primitive.nova",
