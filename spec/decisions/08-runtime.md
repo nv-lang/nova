@@ -1086,25 +1086,53 @@ let s str = with Fail[Utf8Error] = (_) => interrupt "[invalid utf-8]" {
 остальные. Это объединяет D73 (`from`/`into`) и D77 (`try_from`/`try_into`)
 в один механизм.
 
-**Рекомендуемый выбор какую форму писать:**
+**Разделение «реализовать» vs «использовать»:**
 
-| Природа конверсии | Реализовать | Compiler синтезирует |
+| Природа конверсии | Программисту реализовать | Программисту использовать |
 |---|---|---|
-| **Fallible** (может failure'ить) | `T.try_from(v) -> Result[T, E]` | `from() Fail[E]`, `into() Fail[E]`, `try_into() -> Result[T, E]` |
-| **Infallible** (всегда успех) | `T.from(v) -> T` | `into() -> T`. (try-формы НЕ синтезируются — не имеют смысла без error type.) |
+| **Fallible** | `T.try_from(v) -> Result[T, E]` | `T.from(v)` или `v.into()` (короче, throws Fail) |
+| **Infallible** | `T.from(v) -> T` | `T.from(v)` или `v.into()` |
 
-**Почему `try_from` рекомендуется для fallible:**
+То есть **писать богатую форму** (`try_from` для fallible — Result-стиль
+явный, error type first-class), а **использовать в обычном коде**
+короткую (`from` / `into`).
+
+**Compiler синтезирует все 4 формы из одной:**
+
+| Программист написал | Compiler даёт |
+|---|---|
+| `try_from(v) -> Result[T, E]` (fallible) | `from() Fail[E]`, `into() Fail[E]`, `try_into() -> Result[T, E]` |
+| `from(v) -> T` (infallible) | `into() -> T`. (try-формы НЕ синтезируются — не имеют смысла без error type.) |
+
+**Почему `try_from` — самое богатое для имплементации:**
 1. **Result в типе явный.** `Result[T, E]` показывает error type как
    first-class signature element — IDE / AI читают это сразу. Через
    `Fail[E]` нужен ещё шаг effect-rezolution.
-2. **Boilerplate Ok(...) — это feature.** `Ok(value)` явно говорит
-   «вот success-path», `Err(...)` — «вот failure-path». Программист
-   читает контракт без неявных throw'ов в теле функции.
-3. **Прецедент Rust.** `TryFrom` каноническая форма для fallible
-   конверсий; сообщество выработало этот стиль.
-4. **D77-форма работает с `?`** для propagation, c `match` для
-   разбиения, с `.ok()` для Option, c `.unwrap_or(default)` для
-   fallback. Все стандартные идиомы под рукой.
+2. **Compiler легко синтезирует throwing-форму** из Result — простое
+   `match { Ok(v) => v, Err(e) => throw e }`. Обратное (Result из
+   throwing) требует with-handler инфраструктуры.
+3. **Boilerplate Ok(...) — это feature имплементации.** `Ok(value)`
+   явно говорит «вот success-path», `Err(...)` — «вот failure-path».
+   Программист читает контракт без неявных throw'ов в теле функции.
+
+**Почему `from`/`into` — для использования в коде:**
+1. **Короче** — `T.from(v)` против `T.try_from(v)?` или
+   `T.try_from(v).unwrap()`.
+2. **Идиоматичнее** — `v.into()` через context-driven dispatch
+   читается как «преобразовать v к ожидаемому типу».
+3. **Throws пропагируются естественно** — caller или handle через
+   `with Fail`, или эффект уходит наружу. Программист не пишет
+   `?`-цепочки руками.
+
+**Когда использовать `try_from`/`try_into` в коде:**
+- Когда нужен **explicit branching** на error type через `match`.
+- Когда нужно **map error** в другой тип (`r.map_err(|e| MyError::Wrap(e))`).
+- Когда нужен **default fallback** через `unwrap_or` без handler-блока.
+
+В остальных случаях — `from`/`into` через эффекты.
+
+**Прецедент Rust:** `TryFrom` каноническая форма для fallible
+конверсий; сообщество выработало этот стиль.
 
 **Алгоритм синтеза (программист пишет `try_from`):**
 

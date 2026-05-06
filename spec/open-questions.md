@@ -4219,12 +4219,14 @@ keyword-style assert (без скобок), но Nova `assert` это обычн
 
 ---
 
-## Q-source-annotations. CLI `--annotate-source` для отладки сгенерированного C ✅ ЗАКРЫТО (2026-05-07)
+## Q-source-annotations. CLI `--no-annotate-source` (default-on) ✅ ЗАКРЫТО (2026-05-07)
 
-> Реализован opt-in flag `--annotate-source` (`-a`) у `nova-codegen
-> compile`. Включает вставку `/* SRC: <Nova-исходник> */` комментариев
-> перед каждым statement'ом сгенерированного `.c` файла. По умолчанию
-> отключён — diff-friendly для CI.
+> Реализованы annotations `/* SRC: <Nova-исходник> */` перед каждым
+> statement'ом / fn-body / trailing-expr сгенерированного `.c` файла.
+> **По умолчанию включены** (user-driven решение 2026-05-07): полезно
+> настолько часто (отладка, code-review, понимание codegen), что
+> должно быть default-on. Off — через явный `--no-annotate-source`
+> для CI-friendly стабильных diff'ов.
 >
 > Прецеденты: Cython (по умолчанию вставляет Python-исходник),
 > Crystal (`--emit-line-numbers`), Rust LLVM (`#line` директивы).
