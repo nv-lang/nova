@@ -561,21 +561,63 @@ expression body не пробрасывается caller'у — отбрасыв
 concurrent-выполнения берутся через mut-захваты, не через возвращаемое
 значение блока.
 
-**`parallel for x in iter { body }`** в bootstrap'е тоже возвращает unit,
-несмотря на то что D14 предполагает `[]T` массив результатов. Полная
+**`parallel for x in iter { body }`** — по spec D14 это **expression**
+типа `[]T` (где `T` — тип `body`). Spec-семантика: parallel-fan-out
+с собранными в порядке итерации результатами. Это **map**, не loop.
+
+```nova
+let responses []Response = parallel for url in urls { fetch(url) }
+//                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+//                          параллельный map: 1 element → 1 response
+```
+
+В bootstrap-codegen **сейчас возвращает unit** — упрощение. Полная
 реализация требует:
 - Сбор результатов body каждой итерации в массив.
 - Heap-allocated `NovaArray_T*` нужного типа (тип берётся из body).
 - Гарантия порядка результатов — соответствует порядку `iter`.
 
-Сейчас идиома для массива результатов — мутировать массив вручную:
+#### `for` vs `parallel for` — разные семантики
+
+**Обычный `for x in iter { body }` — это statement** (тип `unit`).
+Тело выполняется ради side-effects:
 
 ```nova
-let mut results = [0, 0, 0]
-parallel for i in 0..3 {
-    results[i] = compute(i)   // НЕ работает: array mutation в spawn
+for url in urls {
+    Log.info(url)         // только side effect, ничего не собирается
 }
+// for сам — unit
 ```
+
+Если нужен **sequential map** (собрать массив результатов
+последовательно) — использовать `iter.map((x) => body)`:
+
+```nova
+let names []str = users.map((u) => u.name)
+// или с trailing-block:
+let names []str = users.map() { u => u.name }
+```
+
+**`parallel for` — expression** (тип `[]T`). Тело — функция от элемента
+к результату:
+
+```nova
+let responses []Response = parallel for url in urls { fetch(url) }
+```
+
+Сводная таблица:
+
+| Форма | Тип | Семантика |
+|---|---|---|
+| `for x in iter { body }` | `unit` | statement, side-effects |
+| `iter.map((x) => body)` | `[]T` | sequential map |
+| `parallel for x in iter { body }` | `[]T` | parallel map (fan-out) |
+
+Это **намеренное** различие — `for` для side-effects (большинство
+случаев), `parallel for` для structured fan-out. Sequential map
+выражается через method-chain, не через `for`-form, чтобы избежать
+аллокации `[]unit` для side-effect-циклов и сохранить привычную
+семантику `for` из Go/Rust/Java.
 
 — но это **не работает в bootstrap** (нет array-index-mutation для
 `NovaArray*` в captured контексте). Open-question D71.

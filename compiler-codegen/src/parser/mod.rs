@@ -665,6 +665,8 @@ impl Parser {
             None
         };
         self.expect(&TokenKind::Eq)?;
+        // Allow newline after `=` so that `let x =\n    if ... else ...` works (D49 #5).
+        self.skip_newlines();
         let value = self.parse_expr()?;
         let span = start.merge(value.span);
         self.expect_newline_or_eof().ok();
@@ -687,6 +689,7 @@ impl Parser {
             None
         };
         self.expect(&TokenKind::Eq)?;
+        self.skip_newlines();
         let value = self.parse_expr()?;
         let value_span = value.span;
         self.expect_newline_or_eof().ok();

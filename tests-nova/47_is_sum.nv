@@ -52,11 +52,12 @@ test "if-using-is: dispatch на вариант" {
     assert(tag == 1)
 }
 
-test "if-using-is: else-if цепочка" {
+test "if-using-is: else-if цепочка как expression (D49 #5)" {
     let s = make_square(7.0)
-    let mut kind = "other"
-    if s is Circle { kind = "round" }
-    if s is Square { kind = "boxy" }
+    let kind =
+        if s is Circle { "round" }
+        else if s is Square { "boxy" }
+        else { "other" }
     assert(kind == "boxy")
 }
 
@@ -100,11 +101,12 @@ test "is — counter of variants in array" {
     assert(circles == 2)
 }
 
-test "is — guard-стиль раннего возврата" {
+test "is — guard-стиль через if-expression" {
     let s Shape = make_origin()
-    let mut label = "square"
-    if s is Origin { label = "at-origin" }
-    if s is Circle { label = "circle" }
+    let label =
+        if s is Origin { "at-origin" }
+        else if s is Circle { "circle" }
+        else { "square" }
     assert(label == "at-origin")
 }
 

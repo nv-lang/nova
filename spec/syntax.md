@@ -82,6 +82,12 @@ let result = list
 // 4. Перед ? (error propagation)
 let user = find_user(id)
     ?
+
+// 5. Перед else / else if (продолжение if-выражения)
+let label =
+    if s is Origin { "at-origin" }
+    else if s is Circle { "circle" }
+    else { "square" }
 ```
 
 **Бинарные операторы — в конец строки** (Go-стиль), не в начало:
@@ -1185,16 +1191,49 @@ supervised {
 
 ### `parallel for x in iter { body }`
 
-Fan-out: для каждого элемента `iter` запускается fiber с `body`. Десугарится в
-`supervised { for x in iter { spawn { body } } }`. Loop-переменная захватывается
-**по value** (snapshot на момент spawn'а).
+Fan-out parallel map: для каждого элемента `iter` запускается fiber с `body`,
+результаты собираются в массив **в порядке итерации**. Тип возврата — `[]T`,
+где `T` — тип `body`. Десугарится в `supervised { for x in iter { spawn { body } } }`.
+Loop-переменная захватывается **по value** (snapshot на момент spawn'а).
 
 ```nova
+// Семантически: параллельный map.
+let responses []Response = parallel for url in urls { fetch(url) }
+
+// Или с inferred return type:
 fn fetch_all(urls []str) Net Fail -> []Response =>
     parallel for url in urls {
         fetch(url)
     }
 ```
+
+**Не путать с обычным `for`!** `for x in iter { body }` — это **statement**
+(тип `unit`), тело для side-effects:
+
+```nova
+for url in urls {
+    Log.info(url)         // только side effect, ничего не возвращается
+}
+```
+
+Для **sequential map** (собрать массив результатов последовательно) —
+использовать `.map()`, не `for`:
+
+```nova
+let names []str = users.map((u) => u.name)
+let names []str = users.map() { u => u.name }      // trailing-block
+```
+
+Сводка:
+
+| Форма | Тип | Семантика |
+|---|---|---|
+| `for x in iter { body }` | `unit` | statement, side-effects |
+| `iter.map((x) => body)` | `[]T` | sequential map |
+| `parallel for x in iter { body }` | `[]T` | parallel map (fan-out) |
+
+В bootstrap'е `parallel for` сейчас возвращает `unit` (упрощение D71); полное
+spec-поведение `[]T` — в roadmap.
 
 ### `detach { body }`
 
