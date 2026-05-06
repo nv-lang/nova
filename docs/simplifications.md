@@ -157,14 +157,15 @@ fail-frame mechanism'а; fiber просто умирает на следующе
 
 #### Что НЕ реализовано (приоритеты)
 
-**[H] Positive-тесты на real throw → catch на main.**
-Без top-level `try { ... } catch (e)` (D25) или Nova-level
-`with Fail = handler { ... }` нельзя написать тест который кидает
-throw из fiber, ждёт rethrow на main, и assert'ит сообщение об
-ошибке. Сейчас правильное поведение (rethrow → abort с msg)
-unverifiable как PASS.
-- **Roadmap:** реализовать spec D25 `try { body } catch (Pattern)`
-  или Nova-level `with Fail = (msg) => ... { body }` handler.
+**[ЗАКР] Positive-тесты на real throw → catch на main (2026-05-06).**
+`with Fail = handler Fail { fail(msg) { ... } } { body }` реализован
+в codegen + рантайме (Fail pre-registered как built-in эффект,
+`throw msg` desugared to `Nova_Fail_fail(msg)` → vtable dispatch →
+user handler). Тесты в `tests-nova/45_fail_handler.nv` (7 тестов:
+main-flow happy/sad path, divide-by-zero, throw-from-spawn caught,
+multiple-fibers throw, cancellation peer behavior). `try/catch`
+синтаксис rejected по spec — единственный способ перехвата это
+handler через `with`.
 
 **[M] Не-cooperative cancellation.**
 Fiber без yield-точек продолжит работу до конца body, даже если
@@ -194,14 +195,14 @@ cancel-channel в queue + Nova API `cancel_scope { tok => spawn ... }`
 
 #### Roadmap к полноценной реализации (порядок)
 
-1. **Top-level `try/catch`** (D25) — разблокирует positive-тесты на
-   throw-paths и закроет [H] gap. После этого можно тестировать
-   все error-related фичи.
+1. ~~**Top-level `try/catch`**~~ → **rejected by spec.** Заменяется
+   через `with Fail = handler { ... }` (см. п. 3). **Сделано
+   (2026-05-06): tests-nova/45_fail_handler.nv** — 7 positive-тестов
+   на throw-paths, в т.ч. throw-from-spawn caught, multi-fiber, cancel.
 2. ~~**`_nova_test_frame` switching per-fiber**~~ — **сделано (2026-05-06).**
    nova_assert роутится через nova_in_fiber()/_nova_fail_top.
-3. **`with Fail = ... { body }`** — handler-механизм для Fail
-   эффекта. Тогда можно catch'ать без `try`. Это уже есть в spec
-   D11 / D31, не реализовано.
+3. ~~**`with Fail = ... { body }`**~~ — **сделано (2026-05-06).**
+   Fail pre-registered как built-in эффект, throw → vtable dispatch.
 4. **Preemptive cancellation** — на безopiate-полла (function entry,
    loop backedge). Добавить флаг проверки → `nova_throw("cancelled")`
    если cancel_requested. Аналог Go 1.14+ preemption.
