@@ -1,0 +1,88 @@
+// 49_methods_on_primitives.nv — D35 v2: methods on primitive types.
+//
+// Receiver-тип может быть любым именованным типом, включая встроенные
+// примитивы (int, str, bool, f64...). Методы определяются как обычно
+// через `fn <prim> @method(...)` или `fn <prim>.static(...)`.
+
+module spec.methods_on_primitives
+
+// ================================================================
+// SECTION 1: instance methods on int
+// ================================================================
+
+fn int @doubled() -> int => @ * 2
+fn int @is_positive() -> bool => @ > 0
+fn int @add(other int) -> int => @ + other
+
+test "int.@doubled" {
+    let n = 5
+    assert(n.doubled() == 10)
+    assert((100).doubled() == 200)
+}
+
+test "int.@is_positive" {
+    assert((5).is_positive())
+    assert(!((0).is_positive()))
+    assert(!((-3).is_positive()))
+}
+
+test "int.@add — method with parameter" {
+    assert((10).add(7) == 17)
+}
+
+// ================================================================
+// SECTION 2: static methods on int
+// ================================================================
+
+fn int.zero() -> int => 0
+fn int.from_bool(b bool) -> int => if b { 1 } else { 0 }
+
+test "int.zero — static factory" {
+    assert(int.zero() == 0)
+}
+
+test "int.from_bool — static converter" {
+    assert(int.from_bool(true) == 1)
+    assert(int.from_bool(false) == 0)
+}
+
+// ================================================================
+// SECTION 3: methods on bool
+// ================================================================
+
+fn bool @flip() -> bool => !@
+
+test "bool.@flip" {
+    assert(true.flip() == false)
+    assert(false.flip() == true)
+}
+
+// ================================================================
+// SECTION 4: метод на str
+// ================================================================
+
+fn str @doubled_str() -> str => @ + @
+
+test "str.@doubled_str" {
+    let s = "ab"
+    assert(s.doubled_str() == "abab")
+}
+
+// ================================================================
+// SECTION 5: интеграция с D73 — fn str.from(int)
+// ================================================================
+
+// Это раньше падало в codegen — теперь работает (D35 v2).
+// Заменяет встроенный str.from-builtin для int (по auto-derive
+// логика: explicit user-defined `str.from(int)` имеет приоритет).
+//
+// Однако сейчас встроенный `str.from(int)` уже есть и срабатывает раньше
+// (через путь D73 dispatch). Чтобы не конфликтовать с встроенным,
+// определяем `str.from` для bool — этого нет в builtin.
+
+fn str.from(b bool) -> str => if b { "true" } else { "false" }
+
+test "str.from(bool) — user-defined static on primitive" {
+    assert(str.from(true) == "true")
+    assert(str.from(false) == "false")
+}

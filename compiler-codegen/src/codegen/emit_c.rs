@@ -1575,7 +1575,7 @@ impl CEmitter {
                 }).collect();
                 let mangled = self.mangle_fn(f);
                 let ret_c = self.erased_type_ref_c(&f.return_type, &type_params);
-                let mut parts = vec![format!("Nova_{}* nova_self", recv.type_name)];
+                let mut parts = vec![format!("{} nova_self", self.receiver_c_type(&recv.type_name))];
                 for p in &f.params {
                     let p_c = self.erased_type_ref_c(&Some(p.ty.clone()), &type_params);
                     parts.push(format!("{} {}", p_c, p.name));
@@ -1885,12 +1885,35 @@ impl CEmitter {
         }
     }
 
+    /// C type for receiver-typed parameter (D35 v2: receiver may be a primitive).
+    /// Returns the C type to use for `nova_self`. Primitives are passed by value;
+    /// records/sums by pointer.
+    fn receiver_c_type(&self, type_name: &str) -> String {
+        match type_name {
+            "int" | "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64" => "nova_int".to_string(),
+            "f32" => "nova_f32".to_string(),
+            "f64" => "nova_f64".to_string(),
+            "bool" => "nova_bool".to_string(),
+            "str" => "nova_str".to_string(),
+            "byte" => "nova_byte".to_string(),
+            other => format!("Nova_{}*", other),
+        }
+    }
+
+    /// True if `type_name` is a primitive receiver — value-passed, no `*`.
+    fn is_primitive_receiver(type_name: &str) -> bool {
+        matches!(type_name,
+            "int" | "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64"
+            | "f32" | "f64" | "bool" | "str" | "byte")
+    }
+
     fn params_c(&self, f: &FnDecl) -> Result<String, String> {
         let mut parts = Vec::new();
-        // Instance methods receive a pointer to the receiver as the first parameter
+        // Instance methods receive the receiver as the first parameter.
+        // Primitives by value (D35 v2), records/sums by pointer.
         if let Some(recv) = &f.receiver {
             if matches!(recv.kind, ReceiverKind::Instance) {
-                parts.push(format!("Nova_{}* nova_self", recv.type_name));
+                parts.push(format!("{} nova_self", self.receiver_c_type(&recv.type_name)));
             }
         }
         for p in &f.params {
@@ -1953,7 +1976,8 @@ impl CEmitter {
         let mangled = self.mangle_fn(f);
         let ret_c = self.erased_type_ref_c(&f.return_type, &type_params);
         // Build params: nova_self + erased params
-        let mut parts = vec![format!("Nova_{}* nova_self", recv.type_name)];
+        let recv_c = self.receiver_c_type(&recv.type_name);
+        let mut parts = vec![format!("{} nova_self", recv_c)];
         for p in &f.params {
             let p_c = self.erased_type_ref_c(&Some(p.ty.clone()), &type_params);
             parts.push(format!("{} {}", p_c, p.name));
@@ -1962,7 +1986,7 @@ impl CEmitter {
         self.line(&format!("static {} {}({}) {{", ret_c, mangled, params_s));
         self.indent += 1;
         // Register nova_self and params
-        self.var_types.insert("nova_self".into(), format!("Nova_{}*", recv.type_name));
+        self.var_types.insert("nova_self".into(), recv_c.clone());
         let saved: Vec<(String, Option<String>)> = f.params.iter().map(|p| {
             let p_c = self.erased_type_ref_c(&Some(p.ty.clone()), &type_params);
             (p.name.clone(), self.var_types.insert(p.name.clone(), p_c))
@@ -2105,7 +2129,7 @@ impl CEmitter {
         // Register param types in var_types for match/infer
         if let Some(recv) = &f.receiver {
             if matches!(recv.kind, ReceiverKind::Instance) {
-                self.var_types.insert("nova_self".into(), format!("Nova_{}*", recv.type_name));
+                self.var_types.insert("nova_self".into(), self.receiver_c_type(&recv.type_name));
             }
         }
         for p in &f.params {
@@ -3253,6 +3277,11 @@ impl CEmitter {
                         if let Some(arg) = args.first() {
                             let arg_ty = self.infer_expr_c_type(arg);
                             let arg_type = arg_ty.trim_start_matches("Nova_").trim_end_matches('*').to_string();
+                            // User-defined `fn str.from(...)` wins over builtin.
+                            if let Some(("str", false)) = self.method_receivers.get("from").map(|(t, b)| (t.as_str(), *b)) {
+                                let v = self.emit_expr(arg)?;
+                                return Ok(format!("Nova_str_static_from({})", v));
+                            }
                             if let Some(into_target) = self.into_targets.get(&arg_type) {
                                 if into_target == "str" {
                                     let v = self.emit_expr(arg)?;
@@ -3444,6 +3473,14 @@ impl CEmitter {
                         if let Some(arg) = args.first() {
                             let arg_ty = self.infer_expr_c_type(arg);
                             let arg_type = arg_ty.trim_start_matches("Nova_").trim_end_matches('*').to_string();
+                            // User-defined `fn str.from(...)` wins over builtin.
+                            // method_receivers["from"] = ("str", false) means user defined a static
+                            // `from` on str — emit the user impl. Note: doesn't disambiguate
+                            // multiple from-on-str overloads (Q-overloading), but works for one.
+                            if let Some(("str", false)) = self.method_receivers.get("from").map(|(t, b)| (t.as_str(), *b)) {
+                                let v = self.emit_expr(arg)?;
+                                return Ok(format!("Nova_str_static_from({})", v));
+                            }
                             // Auto-derive: V has @into() -> str?
                             if let Some(into_target) = self.into_targets.get(&arg_type) {
                                 if into_target == "str" {
