@@ -19,15 +19,18 @@ test "as cast в выражении" {
     assert(r == 15)
 }
 
-test "spawn block — синхронное исполнение в bootstrap'е" {
-    let r = spawn { 100 + 1 }
+test "spawn block — результат через mut-захват (D50/D71)" {
+    let mut r = 0
+    supervised {
+        spawn { r = 100 + 1 }
+    }
     assert(r == 101)
 }
 
 test "spawn с side-эффектами на захваченную переменную" {
     let mut x = 0
-    let _ = spawn {
-        x = 99
+    supervised {
+        spawn { x = 99 }
     }
     assert(x == 99)
 }

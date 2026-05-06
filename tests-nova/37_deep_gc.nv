@@ -213,10 +213,12 @@ test "GC: 500 triples, sum of all fields" {
 test "GC: record allocated inside spawn readable outside" {
     let mut out_x = 0
     let mut out_y = 0
-    let _ = spawn {
-        let inner = make_point(777, 888)
-        out_x = inner.x
-        out_y = inner.y
+    supervised {
+        spawn {
+            let inner = make_point(777, 888)
+            out_x = inner.x
+            out_y = inner.y
+        }
     }
     assert(out_x == 777)
     assert(out_y == 888)
@@ -224,19 +226,21 @@ test "GC: record allocated inside spawn readable outside" {
 
 test "GC: 10 spawns each allocate a record, all mutations visible" {
     let mut sum = 0
-    let mut i = 0
-    while i < 10 {
-        let cur = i
-        let _ = spawn {
-            let inner = make_point(cur * 10, cur * 10 + 1)
-            let vx = inner.x
-            let vy = inner.y
-            sum += vx + vy
+    supervised {
+        let mut i = 0
+        while i < 10 {
+            let cur = i
+            spawn {
+                let inner = make_point(cur * 10, cur * 10 + 1)
+                let vx = inner.x
+                let vy = inner.y
+                sum += vx + vy
+            }
+            i += 1
         }
-        i += 1
     }
     // vx + vy = cur*10 + cur*10 + 1 = 20*cur + 1
-    // sum over cur=0..9: sum(20*cur+1) = 20*(0+1+...+9) + 10 = 20*45 + 10 = 900 + 10 = 910
+    // sum over cur=0..9: 20*45 + 10 = 910
     assert(sum == 910)
 }
 
@@ -244,8 +248,10 @@ test "GC: record survives two spawns (pipeline)" {
     let p = make_point(30, 40)
     let px = p.x
     let py = p.y
-    let r1 = spawn { px * px + py * py }   // 900 + 1600 = 2500
-    let r2 = spawn { r1 + px + py }         // 2500 + 30 + 40 = 2570
+    let mut r1 = 0
+    let mut r2 = 0
+    supervised { spawn { r1 = px * px + py * py } }   // 2500
+    supervised { spawn { r2 = r1 + px + py } }         // 2570
     assert(r1 == 2500)
     assert(r2 == 2570)
 }
@@ -351,24 +357,25 @@ test "GC: records and arrays interleaved, no corruption" {
 
 test "GC: 20 spawns each create records and arrays, mutations visible" {
     let mut total = 0
-    let mut i = 0
-    while i < 20 {
-        let cur = i
-        let _ = spawn {
-            let inner = make_point(cur, cur * 2)
-            let vx = inner.x
-            let vy = inner.y
-            let arr = [vx, vy, vx + vy]
-            let ms = arr.get(2)
-            let s = match ms {
-                Some(n) => n
-                None    => 0
+    supervised {
+        let mut i = 0
+        while i < 20 {
+            let cur = i
+            spawn {
+                let inner = make_point(cur, cur * 2)
+                let vx = inner.x
+                let vy = inner.y
+                let arr = [vx, vy, vx + vy]
+                let ms = arr.get(2)
+                let s = match ms {
+                    Some(n) => n
+                    None    => 0
+                }
+                total += s
             }
-            total += s
+            i += 1
         }
-        i += 1
     }
-    // arr[2] = vx + vy = cur + cur*2 = 3*cur
-    // total = sum(3*cur, cur=0..19) = 3 * (0+1+...+19) = 3*190 = 570
+    // arr[2] = vx + vy = 3*cur; total = 3 * (0+1+...+19) = 570
     assert(total == 570)
 }

@@ -1037,15 +1037,28 @@ supervised {
 
 #### Тип результата
 
-| Контекст | `spawn body` возвращает |
-|---|---|
-| Вне scope (legacy bootstrap) | результат `body` синхронно — eager-blocking |
-| Внутри `supervised` / `parallel for` / etc. | unit; реальный результат — через `mut`-захваты или каналы |
+**`spawn body` возвращает unit, всегда** (D50/D71, resolution 2026-05-06).
+Результат body не доступен caller'у. Чтобы получить значение от
+concurrent-выполнения:
 
-В bootstrap-реализации (D71) тип результата вне scope — `nova_int` через
-type-erasure ctx-поля `_nova_result` (lossy для строк/records). Полноценная
-типизация — открытый вопрос D71. По спеке D62 итоговый тип = тип body, но
-семантика «как именно достать значение из spawn внутри scope» не закрыта.
+```nova
+// (1) прямой вызов — async прозрачный, suspension сама
+let users = fetch_users()
+
+// (2) гомогенный fan-out — массив результатов
+let responses = parallel for url in urls { fetch(url) }
+
+// (3) гетерогенная параллельность — mut-захваты
+let mut a = 0; let mut b = 0
+supervised {
+    spawn { a = compute_a() }
+    spawn { b = compute_b() }
+}
+```
+
+**Bootstrap-исключение:** `let r = spawn { ... }` вне `supervised`
+временно работает (legacy eager-blocking). Удалится вместе с
+ужесточением «`spawn` вне scope = compile error».
 
 ### `supervised { body }`
 

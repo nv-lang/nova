@@ -759,6 +759,14 @@ impl CEmitter {
     // ---- spawn ----
 
     fn emit_spawn(&mut self, body: &Expr) -> Result<String, String> {
+        // D50/D71: spawn разрешён только внутри structured-scope.
+        // В bootstrap-codegen — только supervised. Вне scope — compile error.
+        if self.current_scope_queue.is_none() {
+            return Err(format!(
+                "spawn is only allowed inside `supervised`, `parallel for` or other structured-scope (D50). \
+                 Wrap your code in `supervised {{ ... }}` to enable concurrent execution."
+            ));
+        }
         let spawn_id = format!("_nova_spawn_{}", self.spawn_counter);
         self.spawn_counter += 1;
 
@@ -796,26 +804,18 @@ impl CEmitter {
             }
         }
 
-        // Ctx struct typedef is emitted ONLY into deferred_impls (file scope, see below).
+        // Ctx struct typedef is emitted ONLY into lambda_forward_decls (file scope).
         // We do NOT emit a duplicate typedef inside the current function: when this spawn
-        // appears nested in another fiber's body, capture macros (`#define cap (*_c->cap)`)
-        // would tokenize-rewrite the field declarations and break compilation.
+        // appears nested in another fiber's body, capture macros could tokenize-rewrite
+        // the field declarations and break compilation.
         let ctx_ty = format!("NovaSpawnCtx_{}", &spawn_id[1..]); // strip leading _
 
-        // ctx instance: stack for eager-blocking spawn, heap for queued spawn (supervised).
-        // Heap-alloc inside supervised is required so each iteration of an enclosing loop
-        // gets its own ctx — otherwise all queued fibers would share the same stack slot
-        // and see the LAST iteration's snapshot.
+        // Heap-alloc the ctx — each spawn inside a loop iteration needs its own ctx,
+        // and the queue holds them until scope-exit. nova_alloc returns zeroed memory.
         let ctx_var = format!("{}_ctx", spawn_id);
-        if self.current_scope_queue.is_some() {
-            self.line(&format!("{ty}* {var} = ({ty}*)nova_alloc(sizeof({ty}));",
-                ty = ctx_ty, var = ctx_var));
-            // Zero-init: nova_alloc returns zeroed memory.
-        } else {
-            self.line(&format!("{} {} = {{0}};", ctx_ty, ctx_var));
-        }
-        // Field access syntax: stack ctx uses `.`, heap ctx (pointer) uses `->`.
-        let dot = if self.current_scope_queue.is_some() { "->" } else { "." };
+        self.line(&format!("{ty}* {var} = ({ty}*)nova_alloc(sizeof({ty}));",
+            ty = ctx_ty, var = ctx_var));
+
         for (cap, _, by_value) in &captures {
             // If cap is itself a capture of the *enclosing* fiber, the outer ctx field
             // is either T (by-value) or T* (by-pointer). For inner spawn:
@@ -839,30 +839,21 @@ impl CEmitter {
             };
             if *by_value {
                 // Copy current value into the new ctx (snapshot).
-                self.line(&format!("{ctx}{dot}{cap} = {acc};",
-                    ctx = ctx_var, dot = dot, cap = cap, acc = access_outer));
+                self.line(&format!("{ctx}->{cap} = {acc};",
+                    ctx = ctx_var, cap = cap, acc = access_outer));
             } else {
                 // Store a pointer for shared mutation.
-                self.line(&format!("{ctx}{dot}{cap} = {addr};",
-                    ctx = ctx_var, dot = dot, cap = cap, addr = address_outer));
+                self.line(&format!("{ctx}->{cap} = {addr};",
+                    ctx = ctx_var, cap = cap, addr = address_outer));
             }
         }
 
-        // If we are inside a `supervised { }` scope, push the fiber into the queue
-        // and don't run it now — the scheduler at scope-exit will run all of them.
-        // Result inside a scope is not available (use mut captures instead) — emit 0.
-        // Inside supervised: ctx_var is heap-alloc'd T*, pass directly.
-        // Outside: ctx_var is stack T, take address with `&`.
-        let result_tmp = self.fresh_tmp();
-        if let Some(queue) = self.current_scope_queue.clone() {
-            self.line(&format!("nova_fiber_spawn_into(&{q}, {id}, {ctx});",
-                q = queue, id = spawn_id, ctx = ctx_var));
-            self.line(&format!("nova_int {} = ((nova_int)0LL);", result_tmp));
-        } else {
-            // Eager-blocking: run to completion, take the result.
-            self.line(&format!("nova_fiber_run({id}, &{ctx});", id = spawn_id, ctx = ctx_var));
-            self.line(&format!("nova_int {} = {ctx}._nova_result;", result_tmp, ctx = ctx_var));
-        }
+        // Push the fiber into the scope queue. spawn returns unit (D50/D71):
+        // results from concurrent execution come through mut-captures or
+        // `parallel for` (homogeneous results), never from spawn itself.
+        let queue = self.current_scope_queue.clone().expect("scope queue must be active");
+        self.line(&format!("nova_fiber_spawn_into(&{q}, {id}, {ctx});",
+            q = queue, id = spawn_id, ctx = ctx_var));
 
         // Emit the ctx-struct typedef into lambda_forward_decls — flushed before the
         // current function in `out`, so the typedef is visible at the spawn-instance
@@ -875,7 +866,11 @@ impl CEmitter {
                 let _ = writeln!(self.lambda_forward_decls, "    {}* {};", ty, cap);
             }
         }
-        let _ = writeln!(self.lambda_forward_decls, "    nova_int _nova_result;");
+        // Note: no `_nova_result` field — spawn returns unit (D50/D71).
+        // We need at least one field for empty-capture spawns to satisfy MSVC.
+        if captures.is_empty() {
+            let _ = writeln!(self.lambda_forward_decls, "    char _nova_dummy;");
+        }
         let _ = writeln!(self.lambda_forward_decls, "}} {};", ctx_ty);
 
         // Swap out to deferred_impls for body emission
@@ -885,7 +880,13 @@ impl CEmitter {
 
         self.line(&format!("static void {}(mco_coro* _co) {{", spawn_id));
         self.indent += 1;
-        self.line(&format!("{ctx}* _c = ({ctx}*)mco_get_user_data(_co);", ctx = ctx_ty));
+        if !captures.is_empty() {
+            self.line(&format!("{ctx}* _c = ({ctx}*)mco_get_user_data(_co);", ctx = ctx_ty));
+        } else {
+            // Even with no captures, mco_get_user_data is needed if we activate captures —
+            // but we don't here, so just consume the parameter.
+            self.line("(void)_co;");
+        }
         // Activate capture rewriting: ExprKind::Ident → `(*_c->name)` or `_c->name`.
         let mut cap_set: HashSet<String> = HashSet::new();
         let mut cap_by_value: HashSet<String> = HashSet::new();
@@ -896,39 +897,22 @@ impl CEmitter {
         let prev_caps = std::mem::replace(&mut self.current_spawn_captures, Some(cap_set));
         let prev_by_value = std::mem::replace(&mut self.current_spawn_capture_by_value, Some(cap_by_value));
 
-        // Emit body and capture result. For block exprs, emit stmts + trailing
-        // directly rather than going through emit_block_expr (which drops the value).
-        let result_val = match &body.kind {
+        // Emit body, discard its value (spawn returns unit).
+        match &body.kind {
             ExprKind::Block(b) => {
                 for stmt in &b.stmts {
                     self.emit_stmt(stmt)?;
                 }
                 if let Some(trailing) = &b.trailing {
-                    let body_ret_ty = self.infer_expr_c_type(trailing);
                     let v = self.emit_expr(trailing)?;
-                    if body_ret_ty == "nova_unit" || body_ret_ty == "void" {
-                        self.line(&format!("(void)({});", v));
-                        "((nova_int)0LL)".to_string()
-                    } else {
-                        v
-                    }
-                } else {
-                    "((nova_int)0LL)".to_string()
+                    self.line(&format!("(void)({});", v));
                 }
             }
             _ => {
-                let body_ret_ty = self.infer_expr_c_type(body);
                 let v = self.emit_expr(body)?;
-                if body_ret_ty == "nova_unit" || body_ret_ty == "void" {
-                    self.line(&format!("(void)({});", v));
-                    "((nova_int)0LL)".to_string()
-                } else {
-                    v
-                }
+                self.line(&format!("(void)({});", v));
             }
-        };
-
-        self.line(&format!("_c->_nova_result = (nova_int)({});", result_val));
+        }
 
         // Deactivate capture rewriting before emitting closing brace.
         self.current_spawn_captures = prev_caps;
@@ -941,7 +925,8 @@ impl CEmitter {
         self.deferred_impls.push_str(&entry_code);
         self.indent = saved_indent;
 
-        Ok(result_tmp)
+        // spawn evaluates to unit.
+        Ok("NOVA_UNIT".to_string())
     }
 
     // ---- supervised scope ----

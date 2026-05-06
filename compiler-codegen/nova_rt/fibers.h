@@ -73,7 +73,7 @@ static inline void nova_fiber_yield(void) {
  *
  * Capacity is fixed at 64 — enough for tests; production would grow.
  */
-#define NOVA_SCOPE_CAP 64
+#define NOVA_SCOPE_CAP 1024
 
 typedef struct {
     mco_coro* fibers[NOVA_SCOPE_CAP];

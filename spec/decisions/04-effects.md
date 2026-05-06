@@ -2498,12 +2498,29 @@ fiber-runtime сам решает где можно вытесняться.
 функции), не как эффекты:
 
 ```nova
+// Гомогенный fan-out — массив результатов через parallel for.
+fn fetch_dashboard(uid int) Net Fail -> Dashboard {
+    let users_and_posts = parallel for kind in ["users", "posts"] {
+        fetch_section(uid, kind)
+    }
+    Dashboard.ok(users_and_posts)
+}
+
+// Гетерогенная параллельность — mut-захваты в supervised.
 fn handle_request(req Request) Net Db -> Response {
-    let users = spawn fetch_users()        // spawn keyword, не effect
-    let posts = spawn fetch_posts()
-    Response.ok(users.join(), posts.join())
+    let mut users = []
+    let mut posts = []
+    supervised {
+        spawn { users = fetch_users() }     // spawn — fire-and-forget statement
+        spawn { posts = fetch_posts() }
+    }
+    Response.ok(users, posts)
 }
 ```
+
+`spawn body` сам по себе **возвращает unit** — не результат body.
+Результат — только через прямой вызов (async прозрачный), `parallel
+for` (массив) или mut-захваты (см. [D50 п. 2](../decisions/06-concurrency.md#d50)).
 
 #### Почему так
 
