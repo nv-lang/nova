@@ -191,7 +191,11 @@ simple spawn, parallel for, after Time.sleep yield, nested supervised).
 Двусторонний cancel (caller hint cancel scope извне) требует
 cancel-channel в queue + Nova API `cancel_scope { tok => spawn ... }`
 из D50.
-- **Roadmap:** spec D50 `cancel_scope`, отдельная задача.
+- **Spec (2026-05-06):** [D75](../spec/decisions/06-concurrency.md#d75)
+  draft — `CancelToken` first-class type, `tok.cancel()`/`is_cancelled()`/
+  `bind()`, надстраивается над существующим `cancel_requested` flag из D71.
+- **Roadmap:** реализовать D75 после необходимости (escape hatch для
+  timeout-обёрток, user cancel button, kill-switch).
 
 #### Roadmap к полноценной реализации (порядок)
 

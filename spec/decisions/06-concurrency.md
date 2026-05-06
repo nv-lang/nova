@@ -10,6 +10,7 @@ structured-concurrency примитивы есть в языке, и как па
 | [D14](#d14-fiber-runtime--невидимая-инфраструктура) | Fiber runtime — невидимая инфраструктура |
 | [D50](#d50-concurrency-model-spawn-detach-blocking) | Concurrency model: `spawn`, `detach`, `Blocking` |
 | [D71](#d71-bootstrap-concurrency-runtime) | Bootstrap concurrency runtime: cooperative scheduler, `Time.sleep` yield-point, capture-by-value |
+| [D75](#d75-cancel_scope--ручная-структурная-отмена) | `cancel_scope { tok => ... }` — ручная структурная отмена (draft spec) |
 
 ---
 
@@ -927,3 +928,144 @@ bootstrap-codegen (`compiler-codegen/`):
 - Тесты: `tests-nova/38_deep_spawn.nv` (section 10, 9 interleave-тестов),
   `40_detach.nv` (13), `41_parallel_for.nv` (12), `42_main_yield.nv` (11).
   Полный suite — 42/42 passing.
+
+---
+
+## D75. `cancel_scope { tok => ... }` — ручная структурная отмена
+
+> **Status:** draft spec. **Не реализовано** в bootstrap'е.
+> Спецификация фиксирует семантику; реализация — отдельная задача
+> поверх существующего `NovaFiberQueue.cancel_requested`.
+
+### Что
+
+`cancel_scope { tok => body }` — это `supervised`-scope, которому
+**снаружи** можно сообщить «отмени всех fiber'ов внутри». Связь
+снаружи/внутри идёт через токен `tok` — first-class значение,
+которое замыкается в spawn'ах body и которое **caller текущего
+scope'а** может удерживать и вызвать `tok.cancel()` на нём извне
+(например, из другого fiber'а).
+
+```nova
+fn fetch_with_kill_switch(urls []str, kill ?CancelToken) -> []Response {
+    let mut results []Response = []
+    cancel_scope { tok =>
+        // если caller дал нам внешний kill — связываем его с tok
+        if let Some(k) = kill { k.bind(tok) }
+        for url in urls {
+            spawn {
+                if !tok.is_cancelled() {
+                    results.push(fetch(url))
+                }
+            }
+        }
+    }
+    results
+}
+
+// caller-side:
+let tok = CancelToken.new()
+spawn {
+    Time.sleep(5_000)
+    tok.cancel()        // через 5s принудительно валим scope
+}
+fetch_with_kill_switch(urls, Some(tok))
+```
+
+### Семантика
+
+1. **`cancel_scope { tok => body }`** — синтаксис аналогичен
+   `supervised { ... }`, но вводит `tok` (тип `CancelToken` —
+   pre-registered protocol/struct в prelude) как биндинг в body-scope.
+2. **Token capabilities:**
+   - `tok.cancel()` — пометить scope как cancelled. Все fiber'ы
+     scope'а на следующем yield-point бросят `"scope cancelled"`
+     (тот же механизм что `cancel_requested` в D71). Idempotent.
+   - `tok.is_cancelled() -> bool` — проверка флага без yield.
+     Не throws.
+   - `tok.bind(other CancelToken)` — связать токен с другим:
+     при отмене `other.cancel()` вызывает и `tok.cancel()`. Это
+     даёт композицию (включение scope-токена в более широкий
+     родительский kill-switch).
+3. **Ручная отмена изнутри scope'а** (`tok.cancel()` внутри
+   spawn-body) — допустима. Эффект: остальные spawn'ы в том же
+   scope'е тоже получают cancel-сигнал на следующем yield.
+4. **Auto-уборка fiber'ов:** на выходе из `cancel_scope { ... }`
+   гарантируется, что все spawn'ы scope'а завершились (как в
+   `supervised`), независимо от того, сработала отмена или нет.
+5. **Throw + cancel:** если внутри scope'а `throw`, scope сначала
+   ставит `cancel_requested = true` (как в supervised), потом
+   re-throw'ит на main flow. Token остаётся cancelled.
+
+### Отличие от `supervised`
+
+| | `supervised { body }` | `cancel_scope { tok => body }` |
+|---|---|---|
+| Wait для всех fiber'ов | да | да |
+| Cancel изнутри (через throw) | да | да |
+| **Cancel снаружи** | **нет** | **да** (через `tok.cancel()`) |
+| Token-binding (родительский kill-switch) | нет | да |
+
+### Реализация (план)
+
+В bootstrap'е уже есть `NovaFiberQueue.cancel_requested` (D71).
+Реализация D75 — это:
+
+1. **Lexer/parser/AST.** Новый keyword `cancel_scope`,
+   AST `ExprKind::CancelScope { token_name, body }`.
+2. **`CancelToken` тип в runtime.** Структура с `cancelled bool` и
+   опциональным указателем на чужую очередь:
+   ```c
+   typedef struct CancelToken {
+       NovaFiberQueue* scope;       // own scope
+       struct CancelToken** linked; // bound parents
+       int linked_count;
+   } CancelToken;
+   ```
+   Методы: `cancel()` ставит `scope->cancel_requested = true` +
+   walks `linked[]` и cancel'ит их; `is_cancelled()` читает
+   `scope->cancel_requested`; `bind(other)` пушит `&self.scope`
+   в `other.linked`.
+3. **Codegen.** `emit_cancel_scope` — как `emit_supervised`, но
+   объявляет локальный `CancelToken` биндинг, чей `scope` указывает
+   на queue scope'а. Token капчится в spawn-body как обычная
+   immutable scalar (by-value pointer).
+4. **Tests.**
+   - manual `tok.cancel()` внутри spawn → peer fiber отменяется на yield
+   - manual `tok.cancel()` снаружи (из другого fiber'а в outer scope)
+   - `bind` каскадная отмена
+   - повторный `cancel()` — idempotent, no panic
+
+### Почему отдельный примитив
+
+`supervised` намеренно «закрытый» — нет способа извне принудительно
+свалить его (кроме panic'а изнутри). Это безопасное умолчание для
+большинства serial-кода. `cancel_scope` — escape hatch для случаев
+когда нужен kill-switch (timeout-обёртка, user cancel button,
+fail-fast при внешнем сигнале). Разделение делает код самодокументирующимся:
+если видно `cancel_scope`, значит scope намеренно отменяемый.
+
+### Что отвергнуто
+
+- **Передача `tok` через goroutine-channel** — это паттерн Go (через
+  ctx.Done()). В Nova предпочли явный `bind` метод: композиция
+  токенов происходит compile-time видимо, без аллокации канала.
+- **Auto-cancel через Drop** — Nova не имеет Drop. Cancellation —
+  явная операция через `cancel()`, не побочный эффект scope-exit.
+  Это согласовано с D7-style explicit-resource-management.
+
+### Связь
+
+- [D14](#d14-fiber-runtime--невидимая-инфраструктура) — fiber-runtime.
+- [D50](#d50-concurrency-model-spawn-detach-blocking) — concurrency model.
+- [D71](#d71-bootstrap-concurrency-runtime) — `cancel_requested` flag,
+  cooperative cancellation propagation. D75 надстраивается над ним.
+
+### Реализация-путь
+
+- `compiler-codegen/nova_rt/fibers.h`: добавить `NovaCancelToken` struct.
+- `compiler-codegen/src/lexer/`: keyword `cancel_scope`.
+- `compiler-codegen/src/ast/`: variant `CancelScope { token_name, body }`.
+- `compiler-codegen/src/parser/`: парсинг `cancel_scope { name => body }`.
+- `compiler-codegen/src/codegen/emit_c.rs`: `emit_cancel_scope`.
+- `tests-nova/52_cancel_scope.nv`: 4-6 тестов.
