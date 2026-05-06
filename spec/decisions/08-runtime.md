@@ -214,7 +214,56 @@ type Result[T, E] | Ok(T) | Err(E)
 type Ordering | Less | Equal | Greater
 type Never                                       // unit без значений (uninhabited)
 type any protocol { }                            // top-type через пустой protocol (D53)
+```
 
+**Базовые методы `Option[T]`:**
+
+```nova
+fn Option[T] @is_some() -> bool
+fn Option[T] @is_none() -> bool
+fn Option[T] @unwrap() Fail[Error] -> T              // throw "called unwrap on None"
+fn Option[T] @unwrap_or(default T) -> T              // None → default
+fn Option[T] @unwrap_or_else(f fn() -> T) -> T       // None → f() (lazy default)
+fn Option[T] @map[U](f fn(T) -> U) -> Option[U]
+fn Option[T] @ok_or[E](err E) -> Result[T, E]        // None → Err(err)
+fn Option[T] @or(other Option[T]) -> Option[T]
+```
+
+**Базовые методы `Result[T, E]`:**
+
+```nova
+fn Result[T, E] @is_ok() -> bool
+fn Result[T, E] @is_err() -> bool
+fn Result[T, E] @ok() -> Option[T]                   // Ok(v) → Some(v); Err → None
+fn Result[T, E] @err() -> Option[E]                  // Err(e) → Some(e); Ok → None
+fn Result[T, E] @unwrap() Fail[E] -> T               // Err(e) → throw e
+fn Result[T, E] @unwrap_or(default T) -> T           // Err → default
+fn Result[T, E] @unwrap_or_else(f fn(E) -> T) -> T   // Err → f(e) (lazy)
+fn Result[T, E] @map[U](f fn(T) -> U) -> Result[U, E]
+fn Result[T, E] @map_err[F](f fn(E) -> F) -> Result[T, F]
+```
+
+`unwrap_or` / `unwrap_or_else` — основной идиоматический путь
+безопасного доступа к значению с fallback. Прецеденты — Rust
+`Option::unwrap_or`, Swift `??` оператор, TypeScript `??`.
+
+```nova
+let n int = parse_int(s).unwrap_or(0)               // на ошибке — 0
+let cfg = config.unwrap_or_else(|| default_config())  // lazy default
+
+// Идиома: цепочка через map / unwrap_or:
+let port int = env.get("PORT").map(parse_int).unwrap_or(8080)
+```
+
+`@unwrap()` — assertion-style: throw'ает Fail если None/Err. Идиома
+для случаев когда программист **гарантирует** что значение есть
+(prove'ил выше через `if let` / `match`). Caller-side либо ловит
+через `with Fail = ...`, либо позволяет распространиться (паника
+на границе fiber'а — D13).
+
+**Прочие prelude-типы:**
+
+```nova
 // Error — record для quick-and-dirty ошибок с сообщением (D65)
 type Error {
     readonly msg str
@@ -474,8 +523,12 @@ Prelude **документирован**, его содержимое — фик
 
 ### Открытые вопросы
 
-- Полный API `Option`/`Result` (`unwrap`, `map`, `and_then` и т.д.) —
-  stdlib API, описывается отдельно.
+- ~~Полный API `Option`/`Result`~~ — **частично закрыт (2026-05-07):**
+  базовые методы (`is_some`/`is_none`/`unwrap`/`unwrap_or`/`unwrap_or_else`/
+  `map`/`ok_or`/`or` для Option; `is_ok`/`is_err`/`ok`/`err`/`unwrap`/
+  `unwrap_or`/`unwrap_or_else`/`map`/`map_err` для Result) описаны в
+  prelude выше. Расширенный API (`and_then`, `flatten`, etc.) —
+  отдельная задача (Q-monadic-api).
 - ~~Семантика `?` для `Option`~~ — закрыто
   [D67](04-effects.md#d67): ранний `return None` из текущей функции.
 - `Error` как универсальный тип — что в нём (поддержка `str.from(e)`,
@@ -1027,6 +1080,78 @@ let s str = with Fail[Utf8Error] = (_) => interrupt "[invalid utf-8]" {
 компилятор авто-синтезирует `v.into() Fail[E] -> T`. Эффект
 наследуется, видим в сигнатуре auto-derived формы.
 
+#### Auto-derive 4-way (D73 + D77 unified)
+
+**Программист пишет ОДНУ форму** из четырёх; компилятор синтезирует
+остальные. Это объединяет D73 (`from`/`into`) и D77 (`try_from`/`try_into`)
+в один механизм.
+
+**Рекомендуемый выбор какую форму писать:**
+
+| Природа конверсии | Реализовать | Compiler синтезирует |
+|---|---|---|
+| **Fallible** (может failure'ить) | `T.try_from(v) -> Result[T, E]` | `from() Fail[E]`, `into() Fail[E]`, `try_into() -> Result[T, E]` |
+| **Infallible** (всегда успех) | `T.from(v) -> T` | `into() -> T`. (try-формы НЕ синтезируются — не имеют смысла без error type.) |
+
+**Почему `try_from` рекомендуется для fallible:**
+1. **Result в типе явный.** `Result[T, E]` показывает error type как
+   first-class signature element — IDE / AI читают это сразу. Через
+   `Fail[E]` нужен ещё шаг effect-rezolution.
+2. **Boilerplate Ok(...) — это feature.** `Ok(value)` явно говорит
+   «вот success-path», `Err(...)` — «вот failure-path». Программист
+   читает контракт без неявных throw'ов в теле функции.
+3. **Прецедент Rust.** `TryFrom` каноническая форма для fallible
+   конверсий; сообщество выработало этот стиль.
+4. **D77-форма работает с `?`** для propagation, c `match` для
+   разбиения, с `.ok()` для Option, c `.unwrap_or(default)` для
+   fallback. Все стандартные идиомы под рукой.
+
+**Алгоритм синтеза (программист пишет `try_from`):**
+
+```nova
+// Программист написал:
+fn u64.try_from(s str) -> Result[Self, ParseIntError] => ...
+
+// Компилятор синтезирует автоматически:
+// (1) throwing-from через D73:
+fn u64.from(s str) Fail[ParseIntError] -> Self =>
+    match try_from(s) { Ok(n) => n, Err(e) => throw e }
+
+// (2) instance try_into через D77:
+fn str @try_into() -> Result[u64, ParseIntError] =>
+    u64.try_from(@)
+
+// (3) instance into через D73:
+fn str @into() Fail[ParseIntError] -> u64 =>
+    u64.from(@)
+
+// Программист может вызвать любую из 4-х форм:
+let n = u64.try_from(s)?           // → Result, propagate с ?
+let n = u64.from(s)                // → throws Fail (caller handles)
+let n: u64 = s.try_into()?         // → instance Result
+let n: u64 = s.into()              // → instance throws
+let n = u64.try_from(s).unwrap_or(0)  // → fallback default
+```
+
+**Когда писать `from` вместо `try_from`:**
+- Конверсия математически не может failure'ить: numeric upcast
+  (`f64.from(int)`), unit ↔ unit (`Fahrenheit.from(Celsius)`),
+  newtype unwrap (`int.from(UserId)`).
+- Программист может сам убедиться что параметр валиден prerequisite'ом
+  (например `from(s str)` где `s` уже валидирован выше) — но это
+  опасно, лучше fallible форма.
+
+**Тонкости:**
+1. **Если программист пишет ОБЕ формы** (`from` без Fail и `try_from`
+   с `Result[T, !]`) — compile-error: ambiguity, какая основная.
+   Программист выбирает одну.
+2. **Compiler не синтезирует try-формы из infallible `from()`** —
+   нет error-type для Result. Если нужно (например, generic-bound
+   требует `TryFrom`), программист пишет explicit
+   `T.try_from(v) -> Result[T, Never]` (Never = uninhabited error).
+3. **`Result[T, Never]`** automatically converts to `T` через unwrap
+   — Never-type не имеет значений, `Err` ветка unreachable.
+
 **Когда писать `Fail`, когда нет:**
 - `Fahrenheit.from(c Celsius)` — без Fail (всегда успех).
 - `int.from(s str) Fail[ParseIntError]` — с Fail (может не парситься).
@@ -1537,12 +1662,16 @@ D-решением D74.
 ## D77. `TryFrom` / `TryInto` — protocol-пара, расширение D73 для fallible-конверсий
 
 > **Уточнение (2026-05-07):** D73 теперь сам поддерживает fallible
-> через `Fail[E]` в сигнатуре `from`/`into` — это **основной**
-> механизм. D77 (`try_from` / `try_into`) — **convenience sugar** для
-> программистов, которые предпочитают Result-стиль (explicit error
-> path через `?` или `match`). Компилятор синтезирует одну форму из
-> другой; программист может писать любую. Документ ниже описывает
-> Result-форму как secondary-API.
+> через `Fail[E]` в сигнатуре `from`/`into` — единый механизм.
+> Программист пишет **одну** из 4-х форм (`from` / `into` / `try_from` /
+> `try_into`), компилятор синтезирует остальные. **Рекомендуется
+> писать `try_from`** для fallible (Result-стиль явный, error type
+> first-class в signature) и `from` для infallible (без boilerplate
+> `Ok(...)`). Подробности в D73 «Auto-derive 4-way».
+>
+> Этот документ (D77) описывает Result-форму (`try_from` / `try_into`)
+> как **рекомендуемую implementation form** для fallible конверсий
+> (вопреки названию «convenience sugar» в раннем описании).
 
 ### Что
 Парный механизм к [D73](#d73-from--into-protocol-пара-с-авто-выводом)
