@@ -414,6 +414,13 @@ pub enum ExprKind {
     /// `detach { body }` — fire-and-forget, global supervisor (D50).
     /// Requires `Detach` effect in the enclosing function's signature.
     Detach(Block),
+    /// `cancel_scope { tok => body }` — D75 manual structured cancellation.
+    /// Same as `supervised` but exposes a `CancelToken` binding so external
+    /// code can call `tok.cancel()` to fail-fast all fibers in the scope.
+    CancelScope {
+        token_name: String,
+        body: Block,
+    },
 
     // Внутреннее: backtick-tagged template — для bootstrap'а: tag-функция
     // вызывается с (parts: []str, args: []SqlValue/...) — но в bootstrap

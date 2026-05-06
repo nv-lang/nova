@@ -391,6 +391,7 @@ impl<'a> Lexer<'a> {
             "supervised" => TokenKind::KwSupervised,
             "parallel" => TokenKind::KwParallel,
             "detach" => TokenKind::KwDetach,
+            "cancel_scope" => TokenKind::KwCancelScope,
             "protocol" => TokenKind::KwProtocol,
             "interrupt" => TokenKind::KwInterrupt,
             "forbid" => TokenKind::KwForbid,

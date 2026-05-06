@@ -1112,6 +1112,66 @@ impl CEmitter {
         Ok("NOVA_UNIT".to_string())
     }
 
+    /// Emit `cancel_scope { tok => body }` — D75 manual structured cancellation.
+    /// Like `emit_supervised` but binds a `NovaCancelToken*` variable named
+    /// `token_name` for the body to capture into spawns. External code that
+    /// holds the token can call `nova_cancel_token_cancel()` to fail-fast.
+    fn emit_cancel_scope(&mut self, token_name: &str, body: &Block) -> Result<String, String> {
+        let id = self.supervised_counter;
+        self.supervised_counter += 1;
+        let queue_var = format!("_nova_scope_q_{}", id);
+        let prev_scope_var = format!("_nova_prev_scope_{}", id);
+        let tok_var = token_name.to_string();
+
+        // The token must be heap-allocated: its address is captured by spawns
+        // (by-pointer capture for non-scalars), but the queue lives on the
+        // stack inside the supervised C-block. Spawns may run after we've
+        // finished emitting body — they just resume in-place. The token
+        // pointing into the same C-frame's stack is fine; we keep the
+        // C-block open until nova_supervised_run returns.
+        self.line("{");
+        self.indent += 1;
+        self.line(&format!("NovaFiberQueue {} = {{0}};", queue_var));
+        self.line(&format!("nova_scope_init(&{});", queue_var));
+        self.line(&format!(
+            "NovaCancelToken* {} = (NovaCancelToken*)nova_alloc(sizeof(NovaCancelToken));",
+            tok_var
+        ));
+        self.line(&format!("nova_cancel_token_init({}, &{});", tok_var, queue_var));
+
+        self.line(&format!("NovaFiberQueue* {} = _nova_active_scope;", prev_scope_var));
+        self.line(&format!("_nova_active_scope = &{};", queue_var));
+
+        // Register the token in var_types so spawns capturing it work.
+        // Type "NovaCancelToken*" is a pointer; spawn-capture treats it
+        // by-pointer. We also mark non-mut so it's pass-by-pointer once
+        // (token is immutable handle; the *scope it points to* is what mutates).
+        self.var_types.insert(tok_var.clone(), "NovaCancelToken*".to_string());
+        self.var_mutable.remove(&tok_var);
+
+        let prev = std::mem::replace(&mut self.current_scope_queue, Some(queue_var.clone()));
+
+        for stmt in &body.stmts {
+            self.emit_stmt(stmt)?;
+        }
+        if let Some(trailing) = &body.trailing {
+            let v = self.emit_expr(trailing)?;
+            self.line(&format!("(void)({});", v));
+        }
+
+        self.current_scope_queue = prev;
+        self.line(&format!("nova_supervised_run(&{});", queue_var));
+        self.line(&format!("_nova_active_scope = {};", prev_scope_var));
+
+        // Drop the binding from var_types (scope-local).
+        self.var_types.remove(&tok_var);
+
+        self.indent -= 1;
+        self.line("}");
+
+        Ok("NOVA_UNIT".to_string())
+    }
+
     /// Emit `parallel for x in iter { body }` — D14 fan-out via desugar to
     /// `supervised { for x in iter { spawn { body } } }`. Each iteration spawns
     /// a fiber capturing the loop-variable BY VALUE (immutable scalar) so all
@@ -1450,6 +1510,7 @@ impl CEmitter {
             ExprKind::Unary { operand, .. } => self.scan_expr_fwd(operand, h, s)?,
             ExprKind::Supervised(b) => self.scan_block_fwd(b, h, s)?,
             ExprKind::Detach(b) => self.scan_block_fwd(b, h, s)?,
+            ExprKind::CancelScope { body, .. } => self.scan_block_fwd(body, h, s)?,
             _ => {}
         }
         Ok(())
@@ -1543,6 +1604,10 @@ impl CEmitter {
             ExprKind::With { body, .. } => Self::collect_bound_names_block(body, out),
             ExprKind::Supervised(body) => Self::collect_bound_names_block(body, out),
             ExprKind::Detach(body) => Self::collect_bound_names_block(body, out),
+            ExprKind::CancelScope { token_name, body } => {
+                out.insert(token_name.clone());
+                Self::collect_bound_names_block(body, out);
+            }
             _ => {}
         }
     }
@@ -1701,6 +1766,7 @@ impl CEmitter {
             ExprKind::Block(b) => Self::collect_idents_block(b, out),
             ExprKind::Supervised(b) => Self::collect_idents_block(b, out),
             ExprKind::Detach(b) => Self::collect_idents_block(b, out),
+            ExprKind::CancelScope { body, .. } => Self::collect_idents_block(body, out),
             _ => {}
         }
     }
@@ -3095,6 +3161,9 @@ impl CEmitter {
             ExprKind::Detach(body) => {
                 self.emit_detach(body)
             }
+            ExprKind::CancelScope { token_name, body } => {
+                self.emit_cancel_scope(token_name, body)
+            }
             ExprKind::ParallelFor { pattern, iter, body } => {
                 self.emit_parallel_for(pattern, iter, body)
             }
@@ -3466,6 +3535,31 @@ impl CEmitter {
                 }
             }
             ExprKind::Member { obj, name: method } => {
+                // D75: built-in methods on NovaCancelToken*.
+                {
+                    let obj_ty = self.infer_expr_c_type(obj);
+                    if obj_ty == "NovaCancelToken*" {
+                        let obj_c = self.emit_expr(obj)?;
+                        match method.as_str() {
+                            "cancel" => {
+                                return Ok(format!("nova_cancel_token_cancel({})", obj_c));
+                            }
+                            "is_cancelled" => {
+                                return Ok(format!("nova_cancel_token_is_cancelled({})", obj_c));
+                            }
+                            "bind" => {
+                                if let Some(parent_arg) = args.first() {
+                                    let parent_c = self.emit_expr(parent_arg)?;
+                                    return Ok(format!(
+                                        "(nova_cancel_token_bind({}, {}), NOVA_UNIT)",
+                                        obj_c, parent_c
+                                    ));
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
                 // 0. Built-in primitive static methods (D35 + D73).
                 //    `str.from(x)` — string conversion (replaces old D70 to_str).
                 //    Auto-derive: if user defined `fn V @into() -> str` for V,
@@ -4936,6 +5030,10 @@ impl CEmitter {
                 for s in &b.stmts { Self::collect_free_idents_stmt(s, out); }
                 if let Some(t) = &b.trailing { Self::collect_free_idents(t, out); }
             }
+            ExprKind::CancelScope { body, .. } => {
+                for s in &body.stmts { Self::collect_free_idents_stmt(s, out); }
+                if let Some(t) = &body.trailing { Self::collect_free_idents(t, out); }
+            }
             _ => {}
         }
     }
@@ -5476,6 +5574,7 @@ impl CEmitter {
             ExprKind::Loop { .. } => "nova_unit".into(),
             ExprKind::Supervised(_) => "nova_unit".into(),
             ExprKind::Detach(_) => "nova_unit".into(),
+            ExprKind::CancelScope { .. } => "nova_unit".into(),
             ExprKind::TaggedTemplate { .. } => "nova_str".into(),
             _ => "nova_int".into(),
         }

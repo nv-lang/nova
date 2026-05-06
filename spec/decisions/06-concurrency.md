@@ -10,7 +10,7 @@ structured-concurrency примитивы есть в языке, и как па
 | [D14](#d14-fiber-runtime--невидимая-инфраструктура) | Fiber runtime — невидимая инфраструктура |
 | [D50](#d50-concurrency-model-spawn-detach-blocking) | Concurrency model: `spawn`, `detach`, `Blocking` |
 | [D71](#d71-bootstrap-concurrency-runtime) | Bootstrap concurrency runtime: cooperative scheduler, `Time.sleep` yield-point, capture-by-value |
-| [D75](#d75-cancel_scope--ручная-структурная-отмена) | `cancel_scope { tok => ... }` — ручная структурная отмена (draft spec) |
+| [D75](#d75-cancel_scope--ручная-структурная-отмена) | `cancel_scope { tok => ... }` — ручная структурная отмена (реализовано) |
 
 ---
 
@@ -933,9 +933,8 @@ bootstrap-codegen (`compiler-codegen/`):
 
 ## D75. `cancel_scope { tok => ... }` — ручная структурная отмена
 
-> **Status:** draft spec. **Не реализовано** в bootstrap'е.
-> Спецификация фиксирует семантику; реализация — отдельная задача
-> поверх существующего `NovaFiberQueue.cancel_requested`.
+> **Status:** active. **Реализовано** в bootstrap'е (2026-05-06).
+> Тесты: `tests-nova/52_cancel_scope.nv` (5 тестов).
 
 ### Что
 
@@ -1061,11 +1060,40 @@ fail-fast при внешнем сигнале). Разделение делае
 - [D71](#d71-bootstrap-concurrency-runtime) — `cancel_requested` flag,
   cooperative cancellation propagation. D75 надстраивается над ним.
 
-### Реализация-путь
+### Реализация (2026-05-06)
 
-- `compiler-codegen/nova_rt/fibers.h`: добавить `NovaCancelToken` struct.
-- `compiler-codegen/src/lexer/`: keyword `cancel_scope`.
+- `compiler-codegen/nova_rt/fibers.h`: `NovaCancelToken` struct +
+  `nova_cancel_token_init/cancel/is_cancelled/bind`.
+- `compiler-codegen/src/lexer/`: keyword `cancel_scope` (`KwCancelScope`).
 - `compiler-codegen/src/ast/`: variant `CancelScope { token_name, body }`.
-- `compiler-codegen/src/parser/`: парсинг `cancel_scope { name => body }`.
-- `compiler-codegen/src/codegen/emit_c.rs`: `emit_cancel_scope`.
-- `tests-nova/52_cancel_scope.nv`: 4-6 тестов.
+- `compiler-codegen/src/parser/`: `parse_cancel_scope`.
+- `compiler-codegen/src/codegen/emit_c.rs`: `emit_cancel_scope` +
+  built-in dispatch для `tok.cancel()` / `is_cancelled()` / `bind()`
+  на receiver-типе `NovaCancelToken*`.
+- `tests-nova/52_cancel_scope.nv`: 5 тестов (без cancel ≡ supervised,
+  is_cancelled false по умолчанию, internal cancel + peer-non-execute,
+  double-cancel idempotent, is_cancelled() reflects state, bind cascade).
+
+### Известные ограничения bootstrap-реализации
+
+1. **Cancel-throw на main flow приходит как plain `nova_throw`**, не как
+   `Nova_Fail_fail` через handler-vtable. Это значит user `with Fail`
+   handler **не вызывается** (handler-method не запускается). Top-level
+   `_nova_fail_top` ловит longjmp, control возвращается в `with`-блок
+   через else-ветку. Различить cancel-throw от любого другого fiber-
+   error через caught-msg сейчас нельзя. Тесты в 52 обходят это
+   проверкой side-effects (peer не выполнился).
+
+   *Причина:* если supervised_run роутил бы re-throw через
+   `Nova_Fail_fail`, для thrown-в-fiber через `throw "msg"` (D25) handler
+   вызывался бы дважды (раз в fiber-Nova_Fail_fail, раз в re-throw),
+   что ломает тест `45_fail_handler.nv` "handler invoked once per
+   throwing fiber". Корректный фикс требует различать source: fiber-
+   throw-from-handler vs cooperative-cancel-throw — отдельная задача.
+
+2. **NOVA_CANCEL_LINKED_CAP=8** — token может быть привязан к не более
+   чем 8 родительским токенам. Production-runtime — динамический список.
+
+3. **Token не survives scope-exit.** Token хранит указатель на
+   queue-frame. После выхода из cancel_scope queue уничтожен; token
+   становится dangling. По дизайну: токен — scope-bound handle.

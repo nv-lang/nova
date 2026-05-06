@@ -107,6 +107,59 @@ static inline void nova_scope_init(NovaFiberQueue* q) {
     }
 }
 
+/* ---- D75: CancelToken — first-class cancellation handle ----
+ *
+ * Token wraps a NovaFiberQueue* (its "own" scope). cancel() sets the
+ * scope's cancel_requested flag — same mechanism D71 uses for cooperative
+ * cancellation. linked[] holds tokens that should also be cancelled when
+ * this one is (parent kill-switch composition via bind()). */
+#define NOVA_CANCEL_LINKED_CAP 8
+
+typedef struct NovaCancelToken {
+    NovaFiberQueue*           scope;          /* own scope (owner) */
+    struct NovaCancelToken*   linked[NOVA_CANCEL_LINKED_CAP];
+    int                       linked_count;
+} NovaCancelToken;
+
+static inline void nova_cancel_token_init(NovaCancelToken* t, NovaFiberQueue* q) {
+    t->scope = q;
+    t->linked_count = 0;
+    for (int i = 0; i < NOVA_CANCEL_LINKED_CAP; i++) t->linked[i] = NULL;
+}
+
+static inline void nova_cancel_token_cancel(NovaCancelToken* t) {
+    if (!t || !t->scope) return;
+    if (t->scope->cancel_requested) return;   /* idempotent */
+    t->scope->cancel_requested = true;
+    /* Walk linked tokens and cancel them too — kill-switch composition. */
+    for (int i = 0; i < t->linked_count; i++) {
+        NovaCancelToken* other = t->linked[i];
+        if (other) nova_cancel_token_cancel(other);
+    }
+}
+
+static inline nova_bool nova_cancel_token_is_cancelled(NovaCancelToken* t) {
+    if (!t || !t->scope) return false;
+    return t->scope->cancel_requested;
+}
+
+/* bind(self, parent): when parent.cancel() fires, self gets cancelled too.
+ * Implementation: append self into parent.linked[]. */
+static inline void nova_cancel_token_bind(NovaCancelToken* self,
+                                          NovaCancelToken* parent) {
+    if (!self || !parent) return;
+    if (parent->linked_count >= NOVA_CANCEL_LINKED_CAP) {
+        fprintf(stderr, "nova: cancel-token linked cap (%d) exceeded\n",
+            NOVA_CANCEL_LINKED_CAP);
+        abort();
+    }
+    parent->linked[parent->linked_count++] = self;
+    /* If parent is already cancelled, propagate immediately. */
+    if (parent->scope && parent->scope->cancel_requested) {
+        nova_cancel_token_cancel(self);
+    }
+}
+
 /* Create a fiber and push it into the scope queue without resuming it. */
 static inline void nova_fiber_spawn_into(NovaFiberQueue* q,
                                          void (*entry)(mco_coro*),

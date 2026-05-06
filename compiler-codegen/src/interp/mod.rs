@@ -617,6 +617,11 @@ impl Interpreter {
                 // Production-runtime запустит на глобальном supervisor'е.
                 self.exec_block_flow(body, env)
             }
+            ExprKind::CancelScope { body, .. } => {
+                // В bootstrap-интерпретаторе cancel_scope ≡ supervised без token-API.
+                // Codegen реализует D75 полноценно через NovaCancelToken.
+                self.exec_block_flow(body, env)
+            }
             ExprKind::ParallelFor { pattern, iter, body } => {
                 // В bootstrap'е parallel for ≡ обычный for (sequential).
                 // Codegen раскрывает в supervised + spawn для реального параллелизма.
