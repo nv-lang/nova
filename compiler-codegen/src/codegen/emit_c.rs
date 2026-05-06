@@ -179,8 +179,17 @@ impl CEmitter {
     /// statement's C code. Multi-line statements get just the first line +
     /// `…` ellipsis to keep .c readable.
     fn emit_source_annotation_for_stmt(&mut self, stmt: &Stmt) {
+        self.emit_source_annotation_for_span(Self::stmt_span(stmt));
+    }
+
+    /// Same as `..._for_stmt` but for trailing-expression of a block (which
+    /// parser routes into `block.trailing` instead of `block.stmts`).
+    fn emit_source_annotation_for_expr(&mut self, expr: &Expr) {
+        self.emit_source_annotation_for_span(expr.span);
+    }
+
+    fn emit_source_annotation_for_span(&mut self, span: Span) {
         let Some(src) = self.annotation_source.clone() else { return; };
-        let span = Self::stmt_span(stmt);
         let snippet = src
             .get(span.start..span.end)
             .unwrap_or("")
@@ -2361,6 +2370,7 @@ impl CEmitter {
         // Emit body
         match &f.body {
             FnBody::Expr(e) => {
+                self.emit_source_annotation_for_expr(e);
                 let val = self.emit_expr(e)?;
                 if ret_c == "nova_unit" {
                     self.line(&format!("{};", val));
@@ -2438,6 +2448,7 @@ impl CEmitter {
         };
         match &f.body {
             FnBody::Expr(e) => {
+                self.emit_source_annotation_for_expr(e);
                 let val_ty = self.infer_expr_c_type(e);
                 let val = self.emit_expr(e)?;
                 emit_erased_return(self, &val, &val_ty);
@@ -2447,6 +2458,7 @@ impl CEmitter {
                     self.emit_stmt(stmt)?;
                 }
                 if let Some(trailing) = &block.trailing {
+                    self.emit_source_annotation_for_expr(trailing);
                     let val_ty = self.infer_expr_c_type(trailing);
                     let val = self.emit_expr(trailing)?;
                     emit_erased_return(self, &val, &val_ty);
@@ -2660,6 +2672,7 @@ impl CEmitter {
             self.emit_stmt(stmt)?;
         }
         if let Some(trailing) = &block.trailing {
+            self.emit_source_annotation_for_expr(trailing);
             let val = self.emit_expr(trailing)?;
             if ret_ty == "nova_unit" {
                 self.line(&format!("{};", val));
