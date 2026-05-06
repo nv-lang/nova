@@ -146,12 +146,19 @@
 
 ### [R7] Time.sleep(ms) — без timer-wheel
 - **Где:** `emit_c.rs` (builtin) / `nova_rt/fibers.h`
-- **Что упрощено:** `Time.sleep(N)` для любого N → один вызов `nova_fiber_yield()`.
+- **Что упрощено:** `Time.sleep(N)` для любого N → один cooperative yield.
   Реальной задержки нет, ms-аргумент игнорируется.
-- **Почему:** Достаточно для cooperative-yield тестов. Реальные таймеры требуют
-  timer-heap + интеграции в scheduler-loop.
-- **Как чинить:** Добавить timer-wheel/heap, при `Time.sleep(ms)` ставить fiber в sleep-list
-  с deadline, scheduler пропускает sleeping fibers пока deadline не достигнут.
+- **Поведение в зависимости от контекста (2026-05-06):**
+  * Внутри fiber-body (spawn) → `nova_fiber_yield()` — корутина возвращает управление
+    scheduler'у.
+  * Вне fiber, но внутри `supervised { }` body → `nova_supervised_step(&queue)` —
+    main-flow прокручивает один round очереди (каждый живой fiber делает один resume).
+  * Вне любого scope (top-level main) → no-op (нет scheduler'а для yield).
+- **Почему:** Spec D62 — async ambient, Time.sleep callable откуда угодно. Контекст-
+  чувствительная диспатчизация даёт корректный observable interleave даже когда yield
+  делается из main-flow.
+- **Как чинить полноценно:** Timer-wheel/heap, при `Time.sleep(ms)` fiber кладётся в
+  sleep-list с deadline, scheduler пропускает sleeping fibers до его наступления.
 - **Приоритет:** L (для тестов interleave не нужно)
 
 ### [R3] nova_str — borrowed slice, нет ownership

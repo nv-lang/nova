@@ -3134,7 +3134,17 @@ impl CEmitter {
                     if method == "sleep" {
                         // Evaluate ms argument for side-effects but discard the value.
                         for a in args { let _ = self.emit_expr(a)?; }
-                        self.line("nova_fiber_yield();");
+                        // Inside a fiber body → cooperative yield to scheduler.
+                        // Outside fiber but inside supervised body → drive scope queue
+                        // one round so main-flow yields to queued spawns.
+                        // Outside both → no-op (no scheduler to yield to).
+                        if self.current_spawn_captures.is_some() {
+                            self.line("nova_fiber_yield();");
+                        } else if let Some(queue) = self.current_scope_queue.clone() {
+                            self.line(&format!("nova_supervised_step(&{});", queue));
+                        } else {
+                            self.line("nova_fiber_yield();");  // no-op outside any context
+                        }
                         return Ok("NOVA_UNIT".to_string());
                     }
                 }
@@ -3272,10 +3282,16 @@ impl CEmitter {
                 format!("{obj}{acc}{method}", obj = obj_c, acc = accessor, method = method)
             }
             ExprKind::Path(parts) => {
-                // Builtin: `Time.sleep(ms)` → nova_fiber_yield (path form)
+                // Builtin: `Time.sleep(ms)` → yield (path form)
                 if parts.len() == 2 && parts[0] == "Time" && parts[1] == "sleep" {
                     for a in args { let _ = self.emit_expr(a)?; }
-                    self.line("nova_fiber_yield();");
+                    if self.current_spawn_captures.is_some() {
+                        self.line("nova_fiber_yield();");
+                    } else if let Some(queue) = self.current_scope_queue.clone() {
+                        self.line(&format!("nova_supervised_step(&{});", queue));
+                    } else {
+                        self.line("nova_fiber_yield();");
+                    }
                     return Ok("NOVA_UNIT".to_string());
                 }
                 // Check if first segment is a known effect

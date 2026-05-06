@@ -247,6 +247,28 @@ Runtime C-тесты: nova_rt/test_gc_deep.c (23 assert), test_fibers_deep.c (31
 
 Все тесты проходят детерминированно. FIFO scheduler даёт точный observable order.
 
+MAIN-LEVEL Time.sleep(0) (продолжение):
+  - Time.sleep(0) теперь работает на уровне supervised-body (не только в fiber).
+    Раньше main-flow между spawn'ами не мог yield'нуть → не было реального interleave
+    с участием main.
+  - Runtime: добавлена nova_supervised_step(q) — один round-robin pass очереди,
+    возвращает количество живых fiber'ов. Используется как для main-yield'а внутри
+    scope, так и внутри nova_supervised_run (do { step } while alive).
+  - Codegen Time.sleep(0) теперь context-sensitive:
+    * внутри fiber (current_spawn_captures.is_some()) → nova_fiber_yield()
+    * вне fiber, внутри scope (current_scope_queue.is_some()) → nova_supervised_step
+    * полностью вне → no-op
+  - Тесты: tests-nova/42_main_yield.nv — 11 штук:
+    * spawn + main sleep + read result
+    * main interleaves with two spawns (1234675 trace)
+    * counter ping-pong main↔fiber (123456 alternating)
+    * fiber finishes early before main yields again
+    * sleep(0) over empty queue is no-op
+    * nested supervised — outer/inner queue isolation
+    * producer-consumer in both directions (main as consumer, main as producer)
+    * 5 fibers each yields twice, main drives 2 rounds (total = 165)
+    * 10-round ping-pong (counter = 20)
+
 PARALLEL FOR (продолжение):
   - Keyword `parallel for x in iter { body }`, ExprKind::ParallelFor.
   - Codegen — синтетический desugar в supervised { for x in iter { spawn { body } } }.

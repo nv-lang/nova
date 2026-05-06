@@ -104,34 +104,41 @@ static inline void nova_fiber_spawn_into(NovaFiberQueue* q,
     q->fibers[q->count++] = co;
 }
 
+/* Single round-robin pass: resume each live fiber in the queue ONCE.
+ * Returns the number of still-live fibers after the pass.
+ * Used for `Time.sleep(0)` in supervised body (main-flow yields into queue).
+ */
+static inline int nova_supervised_step(NovaFiberQueue* q) {
+    int alive = 0;
+    for (int i = 0; i < q->count; i++) {
+        mco_coro* co = q->fibers[i];
+        if (co == NULL) continue;
+        if (mco_status(co) == MCO_DEAD) {
+            mco_destroy(co);
+            q->fibers[i] = NULL;
+            continue;
+        }
+        mco_result r = mco_resume(co);
+        if (r != MCO_SUCCESS) {
+            fprintf(stderr, "nova: fiber resume failed (%d)\n", (int)r);
+            abort();
+        }
+        if (mco_status(co) == MCO_DEAD) {
+            mco_destroy(co);
+            q->fibers[i] = NULL;
+        } else {
+            alive++;
+        }
+    }
+    return alive;
+}
+
 /* Round-robin run: resume each live fiber until all are dead.
  * On every full pass without progress (no live fibers), exit.
  */
 static inline void nova_supervised_run(NovaFiberQueue* q) {
-    int alive = q->count;
-    while (alive > 0) {
-        alive = 0;
-        for (int i = 0; i < q->count; i++) {
-            mco_coro* co = q->fibers[i];
-            if (co == NULL) continue;
-            if (mco_status(co) == MCO_DEAD) {
-                mco_destroy(co);
-                q->fibers[i] = NULL;
-                continue;
-            }
-            mco_result r = mco_resume(co);
-            if (r != MCO_SUCCESS) {
-                fprintf(stderr, "nova: fiber resume failed (%d)\n", (int)r);
-                abort();
-            }
-            if (mco_status(co) == MCO_DEAD) {
-                mco_destroy(co);
-                q->fibers[i] = NULL;
-            } else {
-                alive++;
-            }
-        }
-    }
+    int alive;
+    do { alive = nova_supervised_step(q); } while (alive > 0);
     q->count = 0;
 }
 

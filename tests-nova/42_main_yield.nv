@@ -1,0 +1,283 @@
+// 42_main_yield.nv — Time.sleep(0) at supervised-body level (not inside spawn).
+//
+// Spec D62: async is ambient — Time.sleep(0) callable from any context.
+// In a supervised scope, Time.sleep(0) at body level (between/around spawns)
+// drives one round of the queue's scheduler — main flow yields to queued fibers.
+//
+// Outside any scope: Time.sleep(0) is a no-op (no scheduler to yield to).
+//
+// This test set verifies REAL coroutine interleaving where the supervised
+// body itself participates in the cooperative dance.
+
+module spec.main_yield
+
+// ================================================================
+// SECTION 1: main yields between spawn registrations
+// ================================================================
+
+test "main yield: spawn, sleep(0), then read result" {
+    // Spawn one fiber that writes 42 then yields.
+    // Main calls Time.sleep(0) — drives scheduler — fiber runs once.
+    // After scope exits, fiber finishes second half.
+    let mut value = 0
+    let mut stage = 0
+    supervised {
+        spawn {
+            value = 42
+            stage = 1
+            Time.sleep(0)   // fiber yields back to main
+            stage = 2
+        }
+        // At this point fiber hasn't run yet (queue holds it).
+        Time.sleep(0)       // main drives queue once → fiber runs to its yield
+        // Now fiber has paused at "stage = 1, value = 42".
+        assert(stage == 1)
+        assert(value == 42)
+        // scope exit will drive remaining work → stage = 2
+    }
+    assert(stage == 2)
+}
+
+test "main interleaves with two spawns via sleep(0)" {
+    // Three actors: main, A, B. Each makes a few writes.
+    // Order:
+    //   main writes 1, sleep → A writes 2, B writes 3 → main resumes
+    //   main writes 4, sleep → A continues (after its yield) → B continues
+    //   main writes 5
+    let mut log = 0
+    supervised {
+        spawn {
+            log = log * 10 + 2
+            Time.sleep(0)
+            log = log * 10 + 6
+        }
+        spawn {
+            log = log * 10 + 3
+            Time.sleep(0)
+            log = log * 10 + 7
+        }
+        log = log * 10 + 1
+        Time.sleep(0)         // step 1: A writes 2, B writes 3
+        log = log * 10 + 4
+        Time.sleep(0)         // step 2: A writes 6, B writes 7
+        log = log * 10 + 5
+        // scope exit: nothing left in queue (A and B both done)
+    }
+    // Steps:
+    //   main: 1                        log = 1
+    //   sleep(0) → A: 2, B: 3          log = 1 → 12 → 123
+    //   main: 4                        log = 1234
+    //   sleep(0) → A: 6, B: 7          log = 12346 → 123467
+    //   main: 5                        log = 1234675
+    assert(log == 1234675)
+}
+
+test "main yield: counter ping-pong with one fiber" {
+    // Main and one fiber alternate: each writes a digit, yields.
+    let mut log = 0
+    supervised {
+        spawn {
+            log = log * 10 + 2
+            Time.sleep(0)
+            log = log * 10 + 4
+            Time.sleep(0)
+            log = log * 10 + 6
+        }
+        log = log * 10 + 1
+        Time.sleep(0)           // → fiber: 2 (yields)
+        log = log * 10 + 3
+        Time.sleep(0)           // → fiber: 4 (yields)
+        log = log * 10 + 5
+        Time.sleep(0)           // → fiber: 6 (done)
+    }
+    // 1, 2, 3, 4, 5, 6 → 123456
+    assert(log == 123456)
+}
+
+// ================================================================
+// SECTION 2: main yields, but fiber finishes earlier
+// ================================================================
+
+test "main yield: fiber finishes before main does its next yield" {
+    // Fiber writes one value, no yield, exits. Main's sleep(0) is then
+    // a single step that resumes-and-completes the fiber (one resume = MCO_DEAD).
+    let mut log = 0
+    supervised {
+        spawn {
+            log = log * 10 + 2   // no yield: fiber runs to completion in one resume
+        }
+        log = log * 10 + 1
+        Time.sleep(0)            // step: fiber writes 2, dies
+        log = log * 10 + 3
+    }
+    // 1, 2, 3 → 123
+    assert(log == 123)
+}
+
+test "main yield: with no fibers in queue is a no-op" {
+    // sleep(0) outside fiber, but inside scope — drives empty queue (no-op).
+    let mut value = 0
+    supervised {
+        value = 1
+        Time.sleep(0)   // queue empty: no-op
+        value = 2
+        Time.sleep(0)   // still empty
+        value = 3
+    }
+    assert(value == 3)
+}
+
+// ================================================================
+// SECTION 3: main yields in nested supervised
+// ================================================================
+
+test "main yield in nested supervised: outer scope drives inner" {
+    let mut log = 0
+    supervised {
+        log = log * 10 + 1
+        supervised {
+            spawn {
+                log = log * 10 + 3
+                Time.sleep(0)
+                log = log * 10 + 5
+            }
+            log = log * 10 + 2
+            Time.sleep(0)            // inner main yields → fiber: 3 (yields)
+            log = log * 10 + 4
+            // inner scope exit: drains remaining → fiber: 5
+        }
+        log = log * 10 + 6
+    }
+    // 1, 2, 3 (fiber via main yield), 4 (main resumes), 5 (scope drain), 6 (outer)
+    assert(log == 123456)
+}
+
+test "main yield in outer doesn't drive inner queue" {
+    // Outer supervised has fiber X. Inner supervised within X has no relation
+    // to the outer queue — outer's sleep(0) drives only outer queue.
+    let mut log = 0
+    supervised {
+        spawn {
+            log = log * 10 + 2
+            Time.sleep(0)
+            log = log * 10 + 5
+        }
+        log = log * 10 + 1
+        Time.sleep(0)               // outer drives its queue: fiber writes 2
+        log = log * 10 + 3
+        supervised {
+            log = log * 10 + 4
+            // inner has no fibers; sleep(0) here is no-op
+        }
+        // outer scope exit: fiber writes 5
+    }
+    // 1, 2, 3, 4, 5 → 12345
+    assert(log == 12345)
+}
+
+// ================================================================
+// SECTION 4: producer-consumer where main is consumer
+// ================================================================
+
+test "main as consumer: spawn produces, main reads after each yield" {
+    // Spawn writes 5 values into `slot`, yielding after each.
+    // Main reads `slot` after each yield, accumulates `received`.
+    let mut slot = 0
+    let mut received = 0
+    supervised {
+        spawn {
+            let mut i = 1
+            while i <= 5 {
+                slot = i
+                Time.sleep(0)   // hand off to main
+                i += 1
+            }
+        }
+        // Main waits for first produce, reads, repeat.
+        let mut count = 0
+        while count < 5 {
+            Time.sleep(0)       // wait for next produce
+            received += slot
+            count += 1
+        }
+    }
+    // Producer: 1, 2, 3, 4, 5 → received sums to 15
+    assert(received == 15)
+}
+
+test "main as producer: writes then yields to consumer fiber" {
+    // Consumer: each iteration first sleeps (waits for main to produce),
+    // then reads. With FIFO scheduler, the trace is:
+    //   spawn consumer (queued, not run)
+    //   main: slot=10, sleep(0) → step: consumer starts: enter while,
+    //                              SLEEP (skipping the just-written 10),
+    //                              yields → back to main
+    //   main: slot=20, sleep(0) → consumer reads 20, sleeps
+    //   main: slot=30, sleep(0) → consumer reads 30, sleeps
+    //   main: slot=40, sleep(0) → consumer reads 40, sleeps
+    //   main exits while
+    //   scope exit → run drains: consumer wakes, reads slot=40 again
+    // Consumer reads: 20, 30, 40, 40 → received = 130
+    let mut slot = 0
+    let mut received = 0
+    supervised {
+        spawn {
+            let mut count = 0
+            while count < 4 {
+                Time.sleep(0)   // wait for main to write
+                received += slot
+                count += 1
+            }
+        }
+        let mut i = 1
+        while i <= 4 {
+            slot = i * 10
+            Time.sleep(0)       // hand off to consumer
+            i += 1
+        }
+    }
+    assert(received == 130)
+}
+
+// ================================================================
+// SECTION 5: stress
+// ================================================================
+
+test "main yield: 5 fibers each yields twice, main drives" {
+    let mut total = 0
+    supervised {
+        spawn { total += 1; Time.sleep(0); total += 10 }
+        spawn { total += 2; Time.sleep(0); total += 20 }
+        spawn { total += 3; Time.sleep(0); total += 30 }
+        spawn { total += 4; Time.sleep(0); total += 40 }
+        spawn { total += 5; Time.sleep(0); total += 50 }
+        Time.sleep(0)     // step 1: all fibers do first half (1+2+3+4+5 = 15)
+        // After step 1: total = 15
+        Time.sleep(0)     // step 2: all fibers do second half (10+20+30+40+50 = 150)
+        // After step 2: total = 165
+    }
+    assert(total == 165)
+}
+
+test "main yield: ping-pong sum across many rounds" {
+    // Single fiber + main alternate increments. Each round both add 1.
+    let mut counter = 0
+    supervised {
+        spawn {
+            let mut k = 0
+            while k < 10 {
+                counter += 1
+                Time.sleep(0)
+                k += 1
+            }
+        }
+        let mut j = 0
+        while j < 10 {
+            Time.sleep(0)
+            counter += 1
+            j += 1
+        }
+    }
+    // 10 * 2 = 20
+    assert(counter == 20)
+}
