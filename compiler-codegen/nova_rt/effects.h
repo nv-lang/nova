@@ -194,4 +194,50 @@ static inline void nova_assert(nova_bool cond, const char* expr_str) {
  *   _nova_handler_Counter->next(_nova_ctx_Counter)
  */
 
+/* ---- Built-in `Fail` effect (D25 / D62 / D65) ----
+ *
+ * `throw expr` desugars to `Fail.fail(expr)`. Same dispatch path as any
+ * other effect operation — D62: «Никакой отдельной логики для throw нет;
+ * та же проверка, что для Db.query, Net.get, Time.now».
+ *
+ * Vtable layout matches the codegen-generated layout for user-defined
+ * effects (emit_effect_type): first field is `void* ctx`, then one
+ * function pointer per method. Each method takes `void* _ctx` as the
+ * first parameter.
+ *
+ * Default handler: NULL → Nova_Fail_fail dispatcher falls back to
+ * nova_throw (longjmp to nearest fail-frame; abort with message if none).
+ *
+ * User override: `with Fail = (msg) => handler_body { body }` — D31
+ * single-op handler-lambda sugar. Works automatically because Fail is
+ * a regular effect.
+ */
+typedef struct {
+    void*     ctx;
+    nova_unit (*fail)(void* _ctx, nova_str msg);
+} NovaVtable_Fail;
+
+#ifdef _MSC_VER
+__declspec(thread) extern NovaVtable_Fail* _nova_handler_Fail;
+#else
+extern __thread NovaVtable_Fail* _nova_handler_Fail;
+#endif
+
+/* Inline dispatch: Nova_Fail_fail(msg). Codegen emits this from
+ * Stmt::Throw. With user handler installed → handler runs (e.g. records
+ * the error in captured state), THEN we longjmp to the nearest fail-frame
+ * — Fail-strict semantics (D65): fail() never resumes the caller.
+ * Without handler → nova_throw directly (longjmp to fail-frame; abort
+ * with message if no frame). */
+static inline nova_unit Nova_Fail_fail(nova_str msg) {
+    if (_nova_handler_Fail) {
+        _nova_handler_Fail->fail(_nova_handler_Fail->ctx, msg);
+        /* Handler returned — by D65 Fail-strict, fail() is `Never` from the
+         * caller's perspective. Force unwind to the nearest fail-frame so
+         * caller code after the throw doesn't execute. */
+    }
+    nova_throw(msg);
+    return NOVA_UNIT;  /* unreachable */
+}
+
 #endif /* NOVA_RT_EFFECTS_H */

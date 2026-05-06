@@ -150,6 +150,18 @@ impl CEmitter {
             self.sum_schemas.insert("Result".to_string(), res_variants);
         }
 
+        // Pre-register Fail as a built-in effect (D25 / D62 / D65).
+        // Operation: `fail(msg str) -> nova_unit`. `throw expr` desugars to
+        // `Fail.fail(expr)` — same dispatch path as any other effect operation.
+        // Default handler installed by runtime (Nova_Fail_fail) calls nova_throw,
+        // which longjmp's to nearest fail-frame (test_frame or spawn-entry frame).
+        // User can override via `with Fail = (msg) => ... { body }` (D31 sugar).
+        {
+            let mut fail_schema: HashMap<String, (Vec<String>, String)> = HashMap::new();
+            fail_schema.insert("fail".to_string(), (vec!["nova_str".into()], "nova_unit".into()));
+            self.effect_schemas.insert("Fail".to_string(), fail_schema);
+        }
+
         self.emit_preamble();
 
         // 1. Type declarations first (structs/unions needed by fn signatures)
@@ -446,12 +458,14 @@ impl CEmitter {
 
     fn emit_with(&mut self, bindings: &[WithBinding], body: &Block) -> Result<String, String> {
         let mut saves: Vec<(String, String)> = Vec::new(); // (effect_name, prev_var)
+        let mut has_fail = false;
 
         for binding in bindings {
             let effect_name = match &binding.effect {
                 TypeRef::Named { path, .. } => path.join("_"),
                 _ => return Err("non-named effect in with binding".into()),
             };
+            if effect_name == "Fail" { has_fail = true; }
             let handler_val = self.emit_expr(&binding.handler)?;
             let prev_var = self.fresh_tmp();
             self.line(&format!(
@@ -465,12 +479,30 @@ impl CEmitter {
             saves.push((effect_name, prev_var));
         }
 
+        // For `with Fail = ... { body }`: install a fail-frame around body so
+        // that throw inside body (Nova_Fail_fail with installed handler) ends
+        // up unwinding back here. Body normal completion → result; throw →
+        // handler runs (state captured), then nova_throw → fail-frame catches.
+        // (D65 «Fail strict»: fail() is Never from caller's perspective.)
+        let fframe = if has_fail { Some(self.fresh_tmp()) } else { None };
+        if let Some(ff) = &fframe {
+            self.line(&format!("NovaFailFrame {};", ff));
+            self.line(&format!("nova_fail_push(&{});", ff));
+        }
+
         // Emit interrupt frame so `interrupt v` can early-exit this with-block
         let iframe = self.fresh_tmp();
         let result_tmp = self.fresh_tmp();
         self.line(&format!("NovaInterruptFrame {};", iframe));
         self.line(&format!("nova_int {};", result_tmp));
         self.line(&format!("nova_interrupt_push(&{});", iframe));
+
+        // If we have fail-frame, wrap interrupt-setjmp inside fail-setjmp.
+        if let Some(ff) = &fframe {
+            self.line(&format!("if (setjmp({ff}.jmp) == 0) {{", ff = ff));
+            self.indent += 1;
+        }
+
         self.line(&format!("if (setjmp({iframe}.jmp) == 0) {{", iframe = iframe));
         self.indent += 1;
 
@@ -496,26 +528,32 @@ impl CEmitter {
         self.indent -= 1;
         self.line("}");
 
-        // Restore handlers inside normal path
-        for (effect_name, prev_var) in saves.iter().rev() {
-            self.line(&format!("_nova_handler_{eff} = {prev};",
-                eff = effect_name, prev = prev_var));
-        }
-
         self.indent -= 1;
         self.line("} else {");
         self.indent += 1;
+        // Interrupt path: read interrupt value
+        self.line(&format!("{} = {iframe}.value;", result_tmp, iframe = iframe));
+        self.indent -= 1;
+        self.line("}");
 
-        // Interrupt path: restore handlers, read interrupt value
+        // Close fail-frame outer if we opened it
+        if fframe.is_some() {
+            self.indent -= 1;
+            self.line("} else {");
+            self.indent += 1;
+            // Fail path: handler already ran; result is unit (0).
+            self.line(&format!("{} = ((nova_int)0LL);", result_tmp));
+            self.indent -= 1;
+            self.line("}");
+            self.line("nova_fail_pop();");
+        }
+
+        // Restore handlers (regardless of path)
         for (effect_name, prev_var) in saves.iter().rev() {
             self.line(&format!("_nova_handler_{eff} = {prev};",
                 eff = effect_name, prev = prev_var));
         }
-        self.line(&format!("{} = {iframe}.value;", result_tmp, iframe = iframe));
-
-        self.indent -= 1;
-        self.line("}");
-        self.line(&format!("nova_interrupt_pop();"));
+        self.line("nova_interrupt_pop();");
 
         Ok(result_tmp)
     }
@@ -2275,16 +2313,18 @@ impl CEmitter {
             Stmt::Break(_) => self.line("break;"),
             Stmt::Continue(_) => self.line("continue;"),
             Stmt::Throw { value, .. } => {
-                // throw evaluates message (a nova_str) then longjmp's to the
-                // nearest fail-frame on _nova_fail_top. Inside a spawn fiber
-                // the frame is set up by spawn-entry (D71 cancellation hint);
-                // outside any frame nova_throw aborts with a message.
+                // `throw expr` desugars to `Fail.fail(expr)` — operation of the
+                // built-in `Fail` effect (D25/D62/D65). Compiler dispatches via
+                // _nova_handler_Fail. Default handler calls nova_throw, which
+                // longjmp's to the nearest setjmp-frame (test_frame or spawn-
+                // entry frame). User can install handler-lambda via
+                // `with Fail = (msg) => ... { body }` (D31).
                 let val_ty = self.infer_expr_c_type(value);
                 let val = self.emit_expr(value)?;
                 if val_ty == "nova_str" {
-                    self.line(&format!("nova_throw({});", val));
+                    self.line(&format!("Nova_Fail_fail({});", val));
                 } else {
-                    self.line(&format!("nova_throw(nova_int_to_str((nova_int)({})));", val));
+                    self.line(&format!("Nova_Fail_fail(nova_int_to_str((nova_int)({})));", val));
                 }
             }
         }

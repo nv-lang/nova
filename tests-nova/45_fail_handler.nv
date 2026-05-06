@@ -1,0 +1,173 @@
+// 45_fail_handler.nv — Fail как обычный эффект, ловится через with-handler.
+//
+// Spec D25/D62/D65: `throw expr` — это операция эффекта Fail, не магия.
+// «Никакой отдельной логики для throw нет; та же проверка, что для
+//  Db.query, Net.get, Time.now».
+//
+// В bootstrap'е (2026-05-06): Fail pre-registered как built-in эффект,
+// `throw msg` desugared to `Nova_Fail_fail(msg)`. Default handler в
+// runtime — fall back на nova_throw (longjmp в test_frame или abort).
+// User override: `with Fail = handler Fail { fail(msg) { ... } } { body }`.
+//
+// Spec явно отвергает try/catch синтаксис ([rejected.md]) — единственный
+// способ перехватить throw это handler через with.
+
+module spec.fail_handler
+
+// Functions that throw via Fail.
+fn parse_num(s str) -> int {
+    if s == "ok" { return 42 }
+    throw "parse failed"
+}
+
+fn divide(a int, b int) -> int {
+    if b == 0 {
+        throw "division by zero"
+    }
+    a / b
+}
+
+// ================================================================
+// SECTION 1: handler ловит throw на main-flow
+// ================================================================
+
+test "with Fail: catches throw, body completes after handler" {
+    let mut caught_msg = ""
+    let mut handler_ran = false
+    with Fail = handler Fail {
+        fail(msg) {
+            caught_msg = msg
+            handler_ran = true
+            return ()
+        }
+    } {
+        let _ = parse_num("bad")
+    }
+    assert(handler_ran)
+    assert(caught_msg == "parse failed")
+}
+
+test "with Fail: ok-path doesn't trigger handler" {
+    let mut handler_ran = false
+    let mut got_value = 0
+    with Fail = handler Fail {
+        fail(_msg) {
+            handler_ran = true
+            return ()
+        }
+    } {
+        got_value = parse_num("ok")
+    }
+    assert(!handler_ran)
+    assert(got_value == 42)
+}
+
+test "with Fail: divide by zero caught" {
+    let mut caught = ""
+    with Fail = handler Fail {
+        fail(msg) {
+            caught = msg
+            return ()
+        }
+    } {
+        let _ = divide(10, 0)
+    }
+    assert(caught == "division by zero")
+}
+
+test "with Fail: divide ok-path returns value" {
+    let mut value = 0
+    with Fail = handler Fail {
+        fail(_msg) {
+            return ()
+        }
+    } {
+        value = divide(10, 2)
+    }
+    assert(value == 5)
+}
+
+// ================================================================
+// SECTION 2: handler ловит throw из supervised
+// ================================================================
+//
+// КЛЮЧЕВОЙ ТЕСТ: throw из fiber → spawn-entry catch → scope rethrow
+// на main → with Fail handler ловит. Закрывает [H]-gap из roadmap [R10]
+// (см. simplifications.md).
+
+test "with Fail: throw from spawn caught by outer handler" {
+    let mut caught = ""
+    with Fail = handler Fail {
+        fail(msg) {
+            caught = msg
+            return ()
+        }
+    } {
+        supervised {
+            spawn {
+                throw "from fiber"
+            }
+        }
+    }
+    assert(caught == "from fiber")
+}
+
+test "with Fail: handler invoked once per throwing fiber" {
+    // Несколько fiber'ов throw'ят. Без yield — каждый fiber запускается,
+    // throw'ит, handler вызывается, fiber умирает чисто, scheduler
+    // переходит к следующему. Cancel-проверка происходит ТОЛЬКО на yield;
+    // без yield — все три fiber'а успевают throw'нуть.
+    //
+    // Поэтому handler вызывается 3 раза. caught содержит последнюю
+    // обработанную ошибку (last writer wins), invocations = 3.
+    let mut caught = ""
+    let mut invocations = 0
+    with Fail = handler Fail {
+        fail(msg) {
+            caught = msg
+            invocations += 1
+            return ()
+        }
+    } {
+        supervised {
+            spawn { throw "first" }
+            spawn { throw "second" }
+            spawn { throw "third" }
+        }
+    }
+    println("caught = ", caught, " invocations = ", invocations)
+    assert(invocations == 3)
+    assert(caught == "third")     // FIFO order, last writer wins
+}
+
+test "with Fail: cancellation — peer fiber writes BEFORE the failing one" {
+    // FIFO scheduler: spawn0 ставится в очередь, spawn1 ставится в очередь,
+    // на scope-exit scheduler resume'ит spawn0 (один pass — работает до конца),
+    // потом spawn1.
+    //
+    // Если spawn0 throw'ит без yield — он умирает, scope.cancel_requested
+    // = true. Когда scheduler доходит до spawn1, он resume'ится; перед
+    // первым yield (Time.sleep) проверяет cancel_requested и throw'ит
+    // "scope cancelled".
+    //
+    // Без yield в spawn1 — он работает до конца обычным путём. Здесь
+    // используется sleep, чтобы cancel сработал.
+    let mut peer_completed = false
+    let mut caught = ""
+    with Fail = handler Fail {
+        fail(msg) {
+            caught = msg
+            return ()
+        }
+    } {
+        supervised {
+            spawn { throw "boom" }       // spawn0 — fail
+            spawn {
+                Time.sleep(0)            // первый yield-point — cancel detected
+                peer_completed = true    // не должно выполниться
+            }
+        }
+    }
+    assert(caught == "boom")
+    assert(!peer_completed)              // peer был отменён
+}
