@@ -764,3 +764,61 @@ enforcement.
 - **Go GOPROXY chain** — для registry mirror.
 - **npm workspaces / Cargo workspaces** — multi-package monorepo.
 - **Maven settings.xml mirrors** — corporate proxy stories.
+
+---
+
+## Пример: иерархическая структура test-suite (D29 в действии)
+
+Реальный пример организации test-suite показывает применение D29
+(strict file ↔ module correspondence) + D30 (snake_case naming) +
+D78 (nova.toml package).
+
+### `tests-nova/` layout
+
+```
+tests-nova/
+├── nova.toml                # workspace member, src = "."
+├── basics/                  # = D-области 01-philosophy + базовый syntax
+│   ├── literals.nv          # module nova_tests.basics.literals
+│   ├── operators.nv         # module nova_tests.basics.operators
+│   └── ...
+├── types/                   # = 02-types
+├── syntax/                  # = 03-syntax
+├── effects/                 # = 04-effects
+├── concurrency/             # = 06-concurrency
+├── runtime/                 # = 08-runtime
+└── modules/                 # = 07-modules
+```
+
+### Соглашения
+
+1. **Группа = тематическая область** spec/decisions/. Тест на feature
+   D71 (parallel for → []T) лежит в `concurrency/`, тест на D76 (Mem
+   effect) — в `runtime/`.
+2. **Имена файлов** — snake_case без нумерации (D30). Файл
+   `concurrency/parallel_for.nv` — это `module nova_tests.concurrency.parallel_for`.
+3. **Module path = filesystem path.** Первая компонента — package name
+   (`nova_tests` из `nova.toml`), затем подкаталоги, затем файл.
+4. **Keyword collisions избегаются.** Если файл/группа конфликтует с
+   keyword'ом (`cancel_scope` — keyword), используется `_test` суффикс:
+   `concurrency/cancel_scope_test.nv` → `module nova_tests.concurrency.cancel_scope_test`.
+
+### Преимущества (vs плоский нумерованный layout)
+
+- **Findability.** Concurrency-тесты лежат рядом, не размазаны через
+  весь корень по нумерации `38, 40, 41, 42, ..., 52`.
+- **By-topic, не by-creation-order.** При добавлении нового D-фичо тест
+  ложится в соответствующую группу — нет поиска свободного numeric slot.
+- **AI-friendly.** AI генерирует test imports / module-paths по
+  filesystem-path — нет magic-mapping `01_literals → spec.literals`.
+- **D29-compliance** автоматически.
+
+### Anti-pattern: плоская нумерация
+
+`01_literals.nv`, `02_operators.nv`, ..., `57_unwrap_or.nv` — был
+ранний bootstrap-стиль. Проблемы:
+- D30 запрещает не-snake_case символы (нумерные префиксы — это шум).
+- Order-by-creation, не by-topic — рядом неродственные feature.
+- Хрупкость: insert требует shift всех соседей или поиск slot'а.
+
+После миграции (commit `a33b245`) этот anti-pattern удалён.

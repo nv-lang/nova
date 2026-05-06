@@ -4,8 +4,18 @@
 # которые прогоняются bootstrap-компилятором (`nova test ...`)
 # для проверки корректности парсера, type-checker'а, интерпретатора.
 #
-# Файлы пронумерованы по теме: 01_literals, 02_operators, ...,
-# 38_deep_spawn. Каждый — отдельный модуль с `test "..." { }` блоками.
+# Структура — иерархическая по тематическим областям spec'а
+# (D29-compliant):
+#   basics/       — фундаментальный syntax (literals, operators, ...)
+#   types/        — система типов (records, sum-types, generics, ...)
+#   syntax/       — pattern matching, methods, closures, ...
+#   effects/      — Fail / handlers / forbid / realtime
+#   concurrency/  — supervised / parallel for / cancel_scope / Time
+#   runtime/      — From/Into, Mem effect, Buffer, Option/Result
+#   modules/      — cross-module integration
+#
+# Каждый файл — отдельный модуль `nova_tests.<group>.<file>` с
+# `test "..." { }` блоками.
 
 [package]
 name = "nova_tests"
