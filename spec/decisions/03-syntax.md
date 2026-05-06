@@ -561,13 +561,48 @@ type SqlBuilder { ... }      // не SQL (record с полями)
 | Имя | Когда |
 |---|---|
 | `T.new(...)` | стандартный конструктор |
-| `T.from_X(...)` | конструктор из значения X (`from_secs`, `from_db_row`) |
+| `T.from(v X)` | general-purpose конверсия из X через [D73](../08-runtime.md#d73) `From[X]` |
+| `T.from_X(...)` | **доменный** конструктор (`from_secs`, `from_polar`, `from_imag`) — когда `from(v)` не передаёт смысл |
+| `v.into()` | парная форма для `T.from` через [D73](../08-runtime.md#d73) `Into[T]` |
 | `@is_X()` | bool-предикат |
 | `@as_X()` | дешёвая конверсия (без аллокации) |
 | `@to_X()` | возможно дорогая конверсия |
-| `@show()`, `@hash()`, `@clone()`, `@iter()`, `@next()` | стандартные методы |
+| `@hash()`, `@clone()`, `@iter()`, `@next()` | стандартные методы |
 
 `is_`/`as_`/`to_` — семантическая разница, следуй ей.
+
+#### Типы ошибок: `Parse<TypeName>Error`, `<Operation><Domain>Error`
+
+Имена ошибок в публичных API должны включать **тип / домен** который
+породил ошибку, а не быть generic-словом:
+
+| Стиль | Пример | Прецедент |
+|---|---|---|
+| `Parse<TypeName>Error` | `ParseIntError`, `ParseComplexError`, `ParseUrlError` | Rust `std`, `num-complex` |
+| `<Domain>Error` | `DbError`, `HttpError`, `RepoError` | стандартный backend-стиль |
+| `<Operation>Error` | `OverflowError`, `TransferError` | для конкретной операции, не типа |
+
+**Не использовать generic-имена:**
+
+| Плохо | Почему | Лучше |
+|---|---|---|
+| `ParseError` | коллизии: URL/JSON/datetime/complex/... | `ParseUrlError`, `ParseComplexError`, ... |
+| `Error` (как пользовательский тип) | конфликт с prelude `Error` (D65) | конкретное имя |
+| `Exception`, `Failure` | пустые слова без домена | по операции / домену |
+| `ValueError`, `TypeError` | заимствование из Python — слишком общо | по операции / домену |
+
+**Вариантам внутри sum-типа** доменный префикс не нужен — они уже
+живут в namespace своего типа:
+
+```nova
+type ParseComplexError | InvalidFormat | NotANumber
+
+throw InvalidFormat                          // имя варианта без префикса
+throw ParseComplexError.InvalidFormat        // полная форма (если ambiguous)
+```
+
+Это согласовано с D65 lookup'ом: `throw InvalidFormat` находит
+активный `Fail[ParseComplexError]` handler по типу варианта.
 
 `_prefix` — **только для полей record** (по конвенции, означает
 «используй методы, не прямой доступ»). Для функций/методов `_prefix`
@@ -1656,8 +1691,24 @@ let a = 1; let b = 2; foo(a, b)  // ; для одной строки (редко
    Без этого правила multi-line `if/else` приходится писать через
    повторное присваивание `let mut x = default; if ... { x = ... }`.
 
-**Бинарные операторы — в конце предыдущей строки** (Go-стиль). `+` в
-начале новой строки воспринимается как унарный.
+6. **Перед `||` / `&&` / `or` / `and`** — продолжение boolean expression:
+   ```nova
+   fn is_alnum(c char) -> bool {
+       (c >= '0' && c <= '9')
+       || (c >= 'A' && c <= 'Z')
+       || (c >= 'a' && c <= 'z')
+   }
+   ```
+   Это исключение из общего правила «бинарные операторы — в конце
+   предыдущей строки» (Go-стиль). `||` и `&&` часто пишут leading'ом
+   для читаемости; обе формы допустимы. Реализовано через look-ahead
+   в `parse_or` / `parse_and`.
+
+**Бинарные операторы — в конце предыдущей строки** (Go-стиль) для
+большинства операторов (`+`, `-`, `*`, и т.п.). Исключения
+зафиксированы в правилах 5 и 6 выше: `else`/`else if` и
+`||`/`&&`/`or`/`and` — leading-форма допустима. `+` в начале новой
+строки воспринимается как унарный.
 
 Edge cases:
 
