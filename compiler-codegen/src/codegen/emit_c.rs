@@ -3699,6 +3699,67 @@ impl CEmitter {
                             _ => {}
                         }
                     }
+                    // D26 prelude: built-in methods on Option (NovaOpt_T) and Result.
+                    if obj_ty.starts_with("NovaOpt_") {
+                        let elem_ty = obj_ty.strip_prefix("NovaOpt_")
+                            .unwrap_or("nova_int")
+                            .trim_end_matches('*')
+                            .trim()
+                            .to_string();
+                        let obj_c = self.emit_expr(obj)?;
+                        match method.as_str() {
+                            "is_some" => return Ok(format!(
+                                "Nova_Option_method_is_some_{}({})", elem_ty, obj_c)),
+                            "is_none" => return Ok(format!(
+                                "Nova_Option_method_is_none_{}({})", elem_ty, obj_c)),
+                            "unwrap_or" => {
+                                if let Some(arg) = args.first() {
+                                    let v = self.emit_expr(arg)?;
+                                    return Ok(format!(
+                                        "Nova_Option_method_unwrap_or_{}({}, {})",
+                                        elem_ty, obj_c, v));
+                                }
+                            }
+                            "unwrap" => {
+                                // Inline check + Nova_Fail_fail on None
+                                let tmp = self.fresh_tmp();
+                                self.line(&format!("NovaOpt_{} {} = {};", elem_ty, tmp, obj_c));
+                                self.line(&format!("if ({}.tag == NOVA_TAG_Option_None) {{", tmp));
+                                self.indent += 1;
+                                self.line("Nova_Fail_fail((nova_str){.ptr=\"called unwrap on None\", .len=21});");
+                                self.indent -= 1;
+                                self.line("}");
+                                return Ok(format!("({}.value)", tmp));
+                            }
+                            _ => {}
+                        }
+                    }
+                    if obj_ty == "Nova_Result*" {
+                        let obj_c = self.emit_expr(obj)?;
+                        match method.as_str() {
+                            "is_ok" => return Ok(format!("Nova_Result_method_is_ok({})", obj_c)),
+                            "is_err" => return Ok(format!("Nova_Result_method_is_err({})", obj_c)),
+                            "ok" => return Ok(format!("Nova_Result_method_ok({})", obj_c)),
+                            "unwrap_or" => {
+                                if let Some(arg) = args.first() {
+                                    let v = self.emit_expr(arg)?;
+                                    return Ok(format!(
+                                        "Nova_Result_method_unwrap_or({}, {})", obj_c, v));
+                                }
+                            }
+                            "unwrap" => {
+                                let tmp = self.fresh_tmp();
+                                self.line(&format!("Nova_Result* {} = {};", tmp, obj_c));
+                                self.line(&format!("if ({}->tag == NOVA_TAG_Result_Err) {{", tmp));
+                                self.indent += 1;
+                                self.line(&format!("Nova_Fail_fail({}->payload.Err._0);", tmp));
+                                self.indent -= 1;
+                                self.line("}");
+                                return Ok(format!("({}->payload.Ok._0)", tmp));
+                            }
+                            _ => {}
+                        }
+                    }
                     // Q-buffer: built-in methods on Nova_Buffer*.
                     if obj_ty == "Nova_Buffer*" {
                         let obj_c = self.emit_expr(obj)?;
@@ -5608,6 +5669,28 @@ impl CEmitter {
                             "into" => "NovaArray_nova_int*".into(),
                             "try_into" | "into_str_unchecked" => "nova_str".into(),
                             "add_str" | "add_bytes" | "add_byte" | "add_char" => "nova_unit".into(),
+                            _ => "nova_int".into(),
+                        };
+                    }
+                    // D26 prelude: NovaOpt_T method type inference.
+                    if obj_ty.starts_with("NovaOpt_") {
+                        let elem_ty = obj_ty.strip_prefix("NovaOpt_")
+                            .unwrap_or("nova_int")
+                            .trim_end_matches('*')
+                            .trim()
+                            .to_string();
+                        return match method.as_str() {
+                            "is_some" | "is_none" => "nova_bool".into(),
+                            "unwrap_or" | "unwrap" => elem_ty,
+                            _ => "nova_int".into(),
+                        };
+                    }
+                    // D26 prelude: Nova_Result* method type inference.
+                    if obj_ty == "Nova_Result*" {
+                        return match method.as_str() {
+                            "is_ok" | "is_err" => "nova_bool".into(),
+                            "unwrap" | "unwrap_or" => "nova_int".into(),
+                            "ok" => "NovaOpt_nova_int".into(),
                             _ => "nova_int".into(),
                         };
                     }

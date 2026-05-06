@@ -80,10 +80,145 @@
         if (i >= 0 && i < a->len) { r.tag = NOVA_TAG_Option_Some; r.value = a->data[i]; } \
         else                       { r.tag = NOVA_TAG_Option_None; r.value = (T){0}; } \
         return r; \
+    } \
+    static NovaOpt_##T nova_array_pop_##T(NovaArray_##T* a) { \
+        NovaOpt_##T r; \
+        if (a->len > 0) { a->len--; r.tag = NOVA_TAG_Option_Some; r.value = a->data[a->len]; } \
+        else             { r.tag = NOVA_TAG_Option_None; r.value = (T){0}; } \
+        return r; \
+    } \
+    static nova_bool nova_array_eq_##T(NovaArray_##T* a, NovaArray_##T* b) { \
+        if (a->len != b->len) return 0; \
+        for (int64_t _i = 0; _i < a->len; _i++) { if (a->data[_i] != b->data[_i]) return 0; } \
+        return 1; \
     }
 
 /* ---- Default instantiation for nova_int arrays ---- */
 NOVA_ARRAY_DECL(nova_int)
 NOVA_ARRAY_IMPL(nova_int)
+
+/* ---- nova_str array (cannot use macro: eq needs nova_str_eq) ---- */
+#ifndef NOVA_RT_H  /* nova_str defined in nova_rt.h; skip if not included yet */
+#endif
+NOVA_ARRAY_DECL(nova_str)
+static NovaArray_nova_str* nova_array_new_nova_str(int64_t init_cap) {
+    NovaArray_nova_str* a = (NovaArray_nova_str*)nova_alloc(sizeof(NovaArray_nova_str));
+    a->cap  = init_cap > 0 ? init_cap : 8;
+    a->len  = 0;
+    a->data = (nova_str*)nova_alloc((size_t)(a->cap) * sizeof(nova_str));
+    return a;
+}
+static void nova_array_push_nova_str(NovaArray_nova_str* a, nova_str v) {
+    if (a->len >= a->cap) {
+        int64_t new_cap = a->cap * 2;
+        nova_str* new_data = (nova_str*)nova_alloc((size_t)new_cap * sizeof(nova_str));
+        memcpy(new_data, a->data, (size_t)(a->len) * sizeof(nova_str));
+        a->data = new_data;
+        a->cap  = new_cap;
+    }
+    a->data[a->len++] = v;
+}
+static NovaOpt_nova_str nova_array_get_nova_str(NovaArray_nova_str* a, int64_t i) {
+    NovaOpt_nova_str r;
+    if (i >= 0 && i < a->len) { r.tag = NOVA_TAG_Option_Some; r.value = a->data[i]; }
+    else                       { r.tag = NOVA_TAG_Option_None; r.value = (nova_str){0,0}; }
+    return r;
+}
+static NovaOpt_nova_str nova_array_pop_nova_str(NovaArray_nova_str* a) {
+    NovaOpt_nova_str r;
+    if (a->len > 0) { a->len--; r.tag = NOVA_TAG_Option_Some; r.value = a->data[a->len]; }
+    else             { r.tag = NOVA_TAG_Option_None; r.value = (nova_str){0,0}; }
+    return r;
+}
+
+/* ---- Option constructors for nova_int (for match compatibility) ---- */
+/* Both naming conventions supported: Option and NovaOpt_nova_int */
+static inline NovaOpt_nova_int nova_make_Option_Some(nova_int v) {
+    NovaOpt_nova_int r; r.tag = NOVA_TAG_Option_Some; r.value = v; return r;
+}
+static inline NovaOpt_nova_int nova_make_Option_None(void) {
+    NovaOpt_nova_int r; r.tag = NOVA_TAG_Option_None; r.value = 0; return r;
+}
+static inline NovaOpt_nova_int nova_make_NovaOpt_nova_int_Some(nova_int v) {
+    NovaOpt_nova_int r; r.tag = NOVA_TAG_Option_Some; r.value = v; return r;
+}
+static inline NovaOpt_nova_int nova_make_NovaOpt_nova_int_None(void) {
+    NovaOpt_nova_int r; r.tag = NOVA_TAG_Option_None; r.value = 0; return r;
+}
+static inline nova_bool nova_opt_eq_nova_int(NovaOpt_nova_int a, NovaOpt_nova_int b) {
+    if (a.tag != b.tag) return 0;
+    if (a.tag == NOVA_TAG_Option_None) return 1;
+    return a.value == b.value;
+}
+
+/* ---- D26 Option methods: is_some / is_none / unwrap_or ---- */
+static inline nova_bool Nova_Option_method_is_some_nova_int(NovaOpt_nova_int o) {
+    return o.tag == NOVA_TAG_Option_Some;
+}
+static inline nova_bool Nova_Option_method_is_none_nova_int(NovaOpt_nova_int o) {
+    return o.tag == NOVA_TAG_Option_None;
+}
+static inline nova_int Nova_Option_method_unwrap_or_nova_int(NovaOpt_nova_int o, nova_int default_v) {
+    return o.tag == NOVA_TAG_Option_Some ? o.value : default_v;
+}
+/* nova_str-specialized variants — avoid name clash; codegen dispatches by elem type */
+static inline nova_bool Nova_Option_method_is_some_nova_str(NovaOpt_nova_str o) {
+    return o.tag == NOVA_TAG_Option_Some;
+}
+static inline nova_bool Nova_Option_method_is_none_nova_str(NovaOpt_nova_str o) {
+    return o.tag == NOVA_TAG_Option_None;
+}
+static inline nova_str Nova_Option_method_unwrap_or_nova_str(NovaOpt_nova_str o, nova_str default_v) {
+    return o.tag == NOVA_TAG_Option_Some ? o.value : default_v;
+}
+/* Note: @unwrap() throws Fail on None — реализация в codegen через
+ * Nova_Fail_fail (effects.h инклюдится после array.h в nova_rt.h);
+ * codegen emits inline check + fail call. */
+
+/* ---- Built-in Result type (Ok carries nova_int, Err carries nova_str) ---- */
+#define NOVA_TAG_Result_Ok  0
+#define NOVA_TAG_Result_Err 1
+
+typedef struct Nova_Result {
+    int tag;
+    union {
+        struct { nova_int _0; } Ok;
+        struct { nova_str _0; } Err;
+    } payload;
+} Nova_Result;
+
+static inline Nova_Result* nova_make_Result_Ok(nova_int v) {
+    Nova_Result* r = (Nova_Result*)nova_alloc(sizeof(Nova_Result));
+    r->tag = NOVA_TAG_Result_Ok; r->payload.Ok._0 = v; return r;
+}
+static inline Nova_Result* nova_make_Result_Err(nova_str v) {
+    Nova_Result* r = (Nova_Result*)nova_alloc(sizeof(Nova_Result));
+    r->tag = NOVA_TAG_Result_Err; r->payload.Err._0 = v; return r;
+}
+static inline nova_bool nova_result_eq(Nova_Result* a, Nova_Result* b) {
+    if (a->tag != b->tag) return 0;
+    if (a->tag == NOVA_TAG_Result_Ok)  return a->payload.Ok._0  == b->payload.Ok._0;
+    return nova_str_eq(a->payload.Err._0, b->payload.Err._0);
+}
+
+/* ---- D26 Result methods: is_ok / is_err / unwrap_or / ok ---- */
+static inline nova_bool Nova_Result_method_is_ok(Nova_Result* r) {
+    return r->tag == NOVA_TAG_Result_Ok;
+}
+static inline nova_bool Nova_Result_method_is_err(Nova_Result* r) {
+    return r->tag == NOVA_TAG_Result_Err;
+}
+static inline nova_int Nova_Result_method_unwrap_or(Nova_Result* r, nova_int default_v) {
+    return r->tag == NOVA_TAG_Result_Ok ? r->payload.Ok._0 : default_v;
+}
+static inline NovaOpt_nova_int Nova_Result_method_ok(Nova_Result* r) {
+    NovaOpt_nova_int o;
+    if (r->tag == NOVA_TAG_Result_Ok) {
+        o.tag = NOVA_TAG_Option_Some; o.value = r->payload.Ok._0;
+    } else {
+        o.tag = NOVA_TAG_Option_None; o.value = 0;
+    }
+    return o;
+}
 
 #endif /* NOVA_RT_ARRAY_H */

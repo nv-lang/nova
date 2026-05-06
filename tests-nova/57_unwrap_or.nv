@@ -1,0 +1,123 @@
+// 57_unwrap_or.nv — D26 prelude: базовые методы Option/Result.
+//
+// Option[T]: is_some / is_none / unwrap / unwrap_or
+// Result[T,E]: is_ok / is_err / ok / unwrap / unwrap_or
+
+module spec.unwrap_or
+
+// ================================================================
+// SECTION 1: Option<int>
+// ================================================================
+
+test "Some.is_some / is_none" {
+    let s = Some(42)
+    assert(s.is_some())
+    assert(!s.is_none())
+}
+
+test "None.is_some / is_none" {
+    let n = None
+    assert(!n.is_some())
+    assert(n.is_none())
+}
+
+test "Some.unwrap_or" {
+    let s = Some(42)
+    assert(s.unwrap_or(0) == 42)
+}
+
+test "None.unwrap_or" {
+    let n = None
+    assert(n.unwrap_or(99) == 99)
+}
+
+test "Some.unwrap" {
+    let s = Some(7)
+    assert(s.unwrap() == 7)
+}
+
+test "None.unwrap throws Fail (caught)" {
+    let mut caught = false
+    with Fail = handler Fail {
+        fail(_msg) {
+            caught = true
+            return ()
+        }
+    } {
+        let n = None
+        let _ = n.unwrap()
+    }
+    assert(caught)
+}
+
+// ================================================================
+// SECTION 2: Result<int, str>
+// ================================================================
+
+test "Ok.is_ok / is_err" {
+    let r = Ok(42)
+    assert(r.is_ok())
+    assert(!r.is_err())
+}
+
+test "Err.is_ok / is_err" {
+    let r = Err("oops")
+    assert(!r.is_ok())
+    assert(r.is_err())
+}
+
+test "Ok.unwrap_or" {
+    let r = Ok(42)
+    assert(r.unwrap_or(0) == 42)
+}
+
+test "Err.unwrap_or" {
+    let r = Err("bad")
+    assert(r.unwrap_or(99) == 99)
+}
+
+test "Ok.ok() returns Some" {
+    let r = Ok(5)
+    let o = r.ok()
+    assert(o.unwrap_or(-1) == 5)
+}
+
+test "Err.ok() returns None" {
+    let r = Err("err")
+    let o = r.ok()
+    assert(o.is_none())
+    assert(o.unwrap_or(99) == 99)
+}
+
+test "Ok.unwrap" {
+    let r = Ok(123)
+    assert(r.unwrap() == 123)
+}
+
+test "Err.unwrap throws Fail with err message" {
+    let mut caught_msg = ""
+    with Fail = handler Fail {
+        fail(msg) {
+            caught_msg = msg
+            return ()
+        }
+    } {
+        let r = Err("custom error")
+        let _ = r.unwrap()
+    }
+    assert(caught_msg == "custom error")
+}
+
+// ================================================================
+// SECTION 3: chained unwrap_or pattern
+// ================================================================
+
+fn try_parse(s str) -> Option {
+    if s == "42" { Some(42) } else { None }
+}
+
+test "chained: try_parse(s).unwrap_or(default)" {
+    assert(try_parse("42").unwrap_or(0) == 42)
+    assert(try_parse("bad").unwrap_or(0) == 0)
+    assert(try_parse("nope").unwrap_or(-1) == -1)
+}
