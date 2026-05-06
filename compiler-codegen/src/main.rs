@@ -26,10 +26,10 @@ enum Cmd {
         /// Выходной .c файл (по умолчанию: <name>.c)
         #[arg(short = 'o')]
         output: Option<PathBuf>,
-        /// Вставлять Nova-исходник как `/* SRC: ... */` комментарии перед
-        /// каждым statement'ом (для отладки сгенерированного C).
-        #[arg(short = 'a', long = "annotate-source")]
-        annotate_source: bool,
+        /// Не вставлять Nova-исходник как `/* SRC: ... */` комментарии.
+        /// По умолчанию аннотации включены — для удобства отладки .c.
+        #[arg(long = "no-annotate-source")]
+        no_annotate_source: bool,
     },
 }
 
@@ -39,8 +39,8 @@ fn main() -> ExitCode {
         Cmd::Check { file } => cmd_check(&file),
         Cmd::Run { file } => cmd_run(&file),
         Cmd::Test { file } => cmd_test(&file),
-        Cmd::Compile { file, output, annotate_source } =>
-            cmd_compile(&file, output.as_deref(), annotate_source),
+        Cmd::Compile { file, output, no_annotate_source } =>
+            cmd_compile(&file, output.as_deref(), !no_annotate_source),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
