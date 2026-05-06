@@ -100,6 +100,10 @@ pub struct CEmitter {
     /// Maps type alias name → resolved C type string (e.g. "Name" → "nova_str").
     /// Type aliases don't use pointer indirection; their C type is used directly.
     type_aliases: HashMap<String, String>,
+    /// D71 `parallel for → []T` mode. When Some, the next `emit_spawn` writes its
+    /// trailing-expression value into `result[idx]` instead of discarding.
+    /// Tuple: (idx_var_name, result_var_name, element_c_type).
+    current_parfor_slot: Option<(String, String, String)>,
 }
 
 impl CEmitter {
@@ -142,6 +146,7 @@ impl CEmitter {
             generic_types: HashSet::new(),
             generic_fn_tuple_arity: HashMap::new(),
             type_aliases: HashMap::new(),
+            current_parfor_slot: None,
         }
     }
 
@@ -929,6 +934,16 @@ impl CEmitter {
             }
         }
 
+        // D71 `parallel for → []T`: also snapshot the per-iteration index and
+        // result-array pointer so the spawn body can write its result slot.
+        let parfor_slot = self.current_parfor_slot.clone();
+        if let Some((idx_var, result_var, _)) = &parfor_slot {
+            self.line(&format!("{ctx}->_nova_par_idx = {iv};",
+                ctx = ctx_var, iv = idx_var));
+            self.line(&format!("{ctx}->_nova_par_result = {rv};",
+                ctx = ctx_var, rv = result_var));
+        }
+
         // Push the fiber into the scope queue. spawn returns unit (D50/D71):
         // results from concurrent execution come through mut-captures or
         // `parallel for` (homogeneous results), never from spawn itself.
@@ -947,9 +962,15 @@ impl CEmitter {
                 let _ = writeln!(self.lambda_forward_decls, "    {}* {};", ty, cap);
             }
         }
+        // D71 `parallel for → []T`: extra ctx fields for per-iteration result write.
+        if let Some((_, _, elem_ty)) = &parfor_slot {
+            let _ = writeln!(self.lambda_forward_decls, "    int64_t _nova_par_idx;");
+            let _ = writeln!(self.lambda_forward_decls,
+                "    NovaArray_{}* _nova_par_result;", elem_ty);
+        }
         // Note: no `_nova_result` field — spawn returns unit (D50/D71).
         // We need at least one field for empty-capture spawns to satisfy MSVC.
-        if captures.is_empty() {
+        if captures.is_empty() && parfor_slot.is_none() {
             let _ = writeln!(self.lambda_forward_decls, "    char _nova_dummy;");
         }
         let _ = writeln!(self.lambda_forward_decls, "}} {};", ctx_ty);
@@ -961,7 +982,7 @@ impl CEmitter {
 
         self.line(&format!("static void {}(mco_coro* _co) {{", spawn_id));
         self.indent += 1;
-        if !captures.is_empty() {
+        if !captures.is_empty() || parfor_slot.is_some() {
             self.line(&format!("{ctx}* _c = ({ctx}*)mco_get_user_data(_co);", ctx = ctx_ty));
         } else {
             // Even with no captures, mco_get_user_data is needed if we activate captures —
@@ -988,7 +1009,12 @@ impl CEmitter {
         self.line("if (setjmp(_ff.jmp) == 0) {");
         self.indent += 1;
 
-        // Emit body, discard its value (spawn returns unit).
+        // Inside the spawn body, the parfor_slot belongs to THIS spawn — but any
+        // *nested* spawn must not inherit it. Temporarily disable while emitting body.
+        let saved_parfor = self.current_parfor_slot.take();
+
+        // Emit body, discard its value (spawn returns unit) — UNLESS in parfor mode,
+        // where the trailing expression's value is written to result[idx].
         match &body.kind {
             ExprKind::Block(b) => {
                 for stmt in &b.stmts {
@@ -996,14 +1022,26 @@ impl CEmitter {
                 }
                 if let Some(trailing) = &b.trailing {
                     let v = self.emit_expr(trailing)?;
-                    self.line(&format!("(void)({});", v));
+                    if saved_parfor.is_some() {
+                        self.line(&format!("_c->_nova_par_result->data[_c->_nova_par_idx] = {};", v));
+                    } else {
+                        self.line(&format!("(void)({});", v));
+                    }
                 }
             }
             _ => {
                 let v = self.emit_expr(body)?;
-                self.line(&format!("(void)({});", v));
+                if saved_parfor.is_some() {
+                    self.line(&format!("_c->_nova_par_result->data[_c->_nova_par_idx] = {};", v));
+                } else {
+                    self.line(&format!("(void)({});", v));
+                }
             }
         }
+
+        // Restore parfor_slot so the surrounding emit_parallel_for can clear it
+        // after the for-loop body has run.
+        self.current_parfor_slot = saved_parfor;
 
         self.line("nova_fail_pop();");
         self.indent -= 1;
@@ -1084,6 +1122,11 @@ impl CEmitter {
     /// `supervised { for x in iter { spawn { body } } }`. Each iteration spawns
     /// a fiber capturing the loop-variable BY VALUE (immutable scalar) so all
     /// queued fibers see their own snapshot.
+    ///
+    /// D71 `parallel for → []T`: when `body` has a trailing expression, the
+    /// parallel-for evaluates to `[]T` where T is the trailing's type. Each
+    /// fiber writes its result into `result.data[idx]` at a pre-allocated slot.
+    /// When body has no trailing (purely effectful), the form yields unit.
     fn emit_parallel_for(
         &mut self,
         pattern: &Pattern,
@@ -1093,36 +1136,199 @@ impl CEmitter {
         use crate::diag::Span;
         let span = Span::dummy();
 
-        // Build synthetic: spawn { body }
-        let spawn_body_expr = Expr::new(
-            ExprKind::Block(body.clone()),
-            span,
-        );
-        let spawn_expr = Expr::new(
-            ExprKind::Spawn(Box::new(spawn_body_expr)),
-            span,
-        );
-        // for-loop body holds the synthetic spawn as a statement
-        let for_body = Block {
-            stmts: vec![Stmt::Expr(spawn_expr)],
-            trailing: None,
-            span,
+        // Detect array-mode: body has a trailing expression that yields a value.
+        // In that case we evaluate the trailing's type to size the result array
+        // and route each spawn's value into result[idx].
+        let array_mode = body.trailing.is_some();
+
+        if !array_mode {
+            // Statement-mode (legacy): pure desugar.
+            let spawn_body_expr = Expr::new(ExprKind::Block(body.clone()), span);
+            let spawn_expr = Expr::new(ExprKind::Spawn(Box::new(spawn_body_expr)), span);
+            let for_body = Block {
+                stmts: vec![Stmt::Expr(spawn_expr)],
+                trailing: None,
+                span,
+            };
+            let for_expr = Expr::new(
+                ExprKind::For { pattern: pattern.clone(), iter: Box::new(iter.clone()), body: for_body },
+                span,
+            );
+            let supervised_block = Block { stmts: vec![Stmt::Expr(for_expr)], trailing: None, span };
+            return self.emit_supervised(&supervised_block);
+        }
+
+        // Array-mode: infer element type from the trailing expression.
+        // Best-effort — fall back to nova_int.
+        let trailing = body.trailing.as_ref().unwrap();
+        let elem_ty = self.infer_expr_c_type(trailing);
+        // Element type names used in NovaArray_T are restricted to a few primitives.
+        // For pointer types or unsupported forms, conservatively bail out by pretending
+        // the body has no trailing — caller ends up with a unit `parallel for`.
+        let elem_ty_name = match elem_ty.as_str() {
+            "nova_int" | "nova_bool" | "nova_f64" | "nova_str" => elem_ty.clone(),
+            _ => {
+                // Unsupported element type for D71 v1 — degrade to statement mode.
+                let spawn_body_expr = Expr::new(ExprKind::Block(body.clone()), span);
+                let spawn_expr = Expr::new(ExprKind::Spawn(Box::new(spawn_body_expr)), span);
+                let for_body = Block {
+                    stmts: vec![Stmt::Expr(spawn_expr)],
+                    trailing: None,
+                    span,
+                };
+                let for_expr = Expr::new(
+                    ExprKind::For { pattern: pattern.clone(), iter: Box::new(iter.clone()), body: for_body },
+                    span,
+                );
+                let supervised_block = Block { stmts: vec![Stmt::Expr(for_expr)], trailing: None, span };
+                return self.emit_supervised(&supervised_block);
+            }
         };
-        let for_expr = Expr::new(
-            ExprKind::For {
-                pattern: pattern.clone(),
-                iter: Box::new(iter.clone()),
-                body: for_body,
-            },
-            span,
-        );
-        // supervised { for ... }
-        let supervised_block = Block {
-            stmts: vec![Stmt::Expr(for_expr)],
-            trailing: None,
-            span,
+
+        // ---- emit array-mode lowering, by hand ----
+        // 1) compute iteration count N and a per-iteration "current value" expression.
+        //    Supported iterators: ArrayLit, Range a..b, RangeInclusive a..=b, Ident
+        //    bound to an array. For unsupported iter shapes, fall back to unit.
+        let len_expr: String;
+        let iter_setup: String; // C statements that set up `nova_int _i` and per-iter `cur` value
+        let cur_value_expr: String; // expression evaluating to the current loop element
+
+        match &iter.kind {
+            ExprKind::Range { start, end, inclusive } => {
+                let s = self.emit_expr(start)?;
+                let e = self.emit_expr(end)?;
+                let plus_one = if *inclusive { " + 1" } else { "" };
+                len_expr = format!("({} - {}{})", e, s, plus_one);
+                iter_setup = format!("nova_int _nova_par_start = {}; (void)_nova_par_start;", s);
+                cur_value_expr = "(_nova_par_start + _nova_par_i)".to_string();
+            }
+            ExprKind::ArrayLit(elems) => {
+                // No spread support in v1.
+                if elems.iter().any(|e| matches!(e, ArrayElem::Spread(_))) {
+                    let spawn_body_expr = Expr::new(ExprKind::Block(body.clone()), span);
+                    let spawn_expr = Expr::new(ExprKind::Spawn(Box::new(spawn_body_expr)), span);
+                    let for_body = Block { stmts: vec![Stmt::Expr(spawn_expr)], trailing: None, span };
+                    let for_expr = Expr::new(
+                        ExprKind::For { pattern: pattern.clone(), iter: Box::new(iter.clone()), body: for_body },
+                        span,
+                    );
+                    let supervised_block = Block { stmts: vec![Stmt::Expr(for_expr)], trailing: None, span };
+                    return self.emit_supervised(&supervised_block);
+                }
+                // Materialise the array once, then walk indices.
+                let arr_var = format!("_nova_par_src_{}", self.tmp_counter);
+                self.tmp_counter += 1;
+                // Element C type for the *iter* array — for simplicity, assume nova_int when
+                // not inferable; the loop variable is bound as nova_int regardless.
+                let iter_elem_ty = "nova_int".to_string();
+                let mut emitted = Vec::with_capacity(elems.len());
+                for el in elems {
+                    if let ArrayElem::Item(x) = el {
+                        emitted.push(self.emit_expr(x)?);
+                    }
+                }
+                self.line(&format!("NovaArray_{}* {} = nova_array_new_{}({});",
+                    iter_elem_ty, arr_var, iter_elem_ty,
+                    if elems.is_empty() { 8 } else { elems.len() }));
+                for v in &emitted {
+                    self.line(&format!("nova_array_push_{}({}, {});", iter_elem_ty, arr_var, v));
+                }
+                len_expr = format!("{}->len", arr_var);
+                iter_setup = format!("NovaArray_{}* _nova_par_src = {}; (void)_nova_par_src;",
+                    iter_elem_ty, arr_var);
+                cur_value_expr = "_nova_par_src->data[_nova_par_i]".to_string();
+            }
+            ExprKind::Ident(name) => {
+                // Assume name is bound to NovaArray_T*.
+                let arr_var = format!("(({})", name);
+                len_expr = format!("{})->len", arr_var);
+                iter_setup = format!("NovaArray_{}* _nova_par_src = {}; (void)_nova_par_src;",
+                    elem_ty_name, name);
+                cur_value_expr = "_nova_par_src->data[_nova_par_i]".to_string();
+            }
+            _ => {
+                // Unsupported iter shape for array-mode; degrade.
+                let spawn_body_expr = Expr::new(ExprKind::Block(body.clone()), span);
+                let spawn_expr = Expr::new(ExprKind::Spawn(Box::new(spawn_body_expr)), span);
+                let for_body = Block {
+                    stmts: vec![Stmt::Expr(spawn_expr)],
+                    trailing: None,
+                    span,
+                };
+                let for_expr = Expr::new(
+                    ExprKind::For { pattern: pattern.clone(), iter: Box::new(iter.clone()), body: for_body },
+                    span,
+                );
+                let supervised_block = Block { stmts: vec![Stmt::Expr(for_expr)], trailing: None, span };
+                return self.emit_supervised(&supervised_block);
+            }
         };
-        self.emit_supervised(&supervised_block)
+
+        // 2) Declare the result array at the *outer* scope so its name is visible
+        //    after the supervised block runs (we don't have GCC statement-exprs).
+        let id = self.supervised_counter;
+        self.supervised_counter += 1;
+        let queue_var = format!("_nova_scope_q_{}", id);
+        let prev_scope_var = format!("_nova_prev_scope_{}", id);
+        let result_var = format!("_nova_par_res_{}", id);
+        let len_var = format!("_nova_par_len_{}", id);
+
+        self.line(&iter_setup);
+        self.line(&format!("nova_int {} = {};", len_var, len_expr));
+        self.line(&format!("NovaArray_{ty}* {res} = nova_array_new_{ty}({len});",
+            ty = elem_ty_name, res = result_var, len = len_var));
+        self.line(&format!("{res}->len = {len};", res = result_var, len = len_var));
+
+        // Open scope-block.
+        self.line("{");
+        self.indent += 1;
+        self.line(&format!("NovaFiberQueue {} = {{0}};", queue_var));
+        self.line(&format!("nova_scope_init(&{});", queue_var));
+        self.line(&format!("NovaFiberQueue* {} = _nova_active_scope;", prev_scope_var));
+        self.line(&format!("_nova_active_scope = &{};", queue_var));
+
+        // Activate scope for nested spawns.
+        let prev = std::mem::replace(&mut self.current_scope_queue, Some(queue_var.clone()));
+
+        // 3) Emit the for-loop in C.
+        self.line(&format!("for (nova_int _nova_par_i = 0; _nova_par_i < {}; _nova_par_i++) {{", len_var));
+        self.indent += 1;
+        let bind_name = match pattern {
+            Pattern::Ident { name, .. } => name.clone(),
+            _ => "_nova_par_loopvar".to_string(),
+        };
+        self.line(&format!("nova_int {} = {};", bind_name, cur_value_expr));
+        self.var_types.insert(bind_name.clone(), "nova_int".to_string());
+        self.var_mutable.remove(&bind_name);
+
+        // 4) Activate parfor_slot for this spawn.
+        let saved_slot = self.current_parfor_slot.replace((
+            "_nova_par_i".to_string(),
+            result_var.clone(),
+            elem_ty_name.clone(),
+        ));
+
+        let spawn_body_expr = Expr::new(ExprKind::Block(body.clone()), span);
+        let spawn_expr = Expr::new(ExprKind::Spawn(Box::new(spawn_body_expr)), span);
+        let _ = self.emit_expr(&spawn_expr)?;
+
+        self.current_parfor_slot = saved_slot;
+        self.indent -= 1;
+        self.line("}");
+
+        // 5) Run scheduler, restore scope state.
+        self.current_scope_queue = prev;
+        self.line(&format!("nova_supervised_run(&{});", queue_var));
+        self.line(&format!("_nova_active_scope = {};", prev_scope_var));
+
+        self.indent -= 1;
+        self.line("}");
+
+        // Track the element type so let-binding propagation (`xs[i]` typing) works.
+        self.array_element_types.insert(result_var.clone(), elem_ty_name.clone());
+
+        // The expression value is the result array pointer.
+        Ok(result_var)
     }
 
     /// Emit `detach { body }` — D50 fire-and-forget primitive.
@@ -5269,7 +5475,20 @@ impl CEmitter {
             }
             ExprKind::Is(_, _) => "nova_bool".into(),
             ExprKind::For { .. } => "nova_unit".into(),
-            ExprKind::ParallelFor { .. } => "nova_unit".into(),
+            ExprKind::ParallelFor { body, .. } => {
+                // D71: array-mode when trailing exists, unit otherwise.
+                match &body.trailing {
+                    Some(t) => {
+                        let et = self.infer_expr_c_type(t);
+                        match et.as_str() {
+                            "nova_int" | "nova_bool" | "nova_f64" | "nova_str" =>
+                                format!("NovaArray_{}*", et),
+                            _ => "nova_unit".into(),
+                        }
+                    }
+                    None => "nova_unit".into(),
+                }
+            }
             ExprKind::While { .. } => "nova_unit".into(),
             ExprKind::WhileLet { .. } => "nova_unit".into(),
             ExprKind::Loop { .. } => "nova_unit".into(),

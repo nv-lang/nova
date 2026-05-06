@@ -1,0 +1,90 @@
+// 50_parallel_for_array.nv — D71: `parallel for x in iter { expr }` evaluates to []T.
+//
+// Когда тело `parallel for` имеет trailing-expression — форма возвращает
+// массив `[]T`, где T — тип trailing-expression. Каждый fiber записывает
+// своё значение в `result.data[idx]` по своему индексу.
+//
+// Когда тело без trailing — старая семантика: parallel for как statement (unit).
+
+module spec.parallel_for_array
+
+// ================================================================
+// SECTION 1: range → []int
+// ================================================================
+
+test "parallel for over range returns []int" {
+    let xs = parallel for i in 0..5 {
+        i * 2
+    }
+    assert(xs[0] == 0)
+    assert(xs[1] == 2)
+    assert(xs[2] == 4)
+    assert(xs[3] == 6)
+    assert(xs[4] == 8)
+}
+
+test "parallel for over inclusive range returns []int" {
+    let xs = parallel for i in 1..=4 {
+        i + 100
+    }
+    assert(xs[0] == 101)
+    assert(xs[1] == 102)
+    assert(xs[2] == 103)
+    assert(xs[3] == 104)
+}
+
+test "parallel for: each result-slot independent of order" {
+    // Доказательство: даже если fiber'ы выполнились в произвольном порядке,
+    // результат записан в правильный slot (idx). Yield внутри тела не влияет
+    // на финальную раскладку массива.
+    let xs = parallel for i in 0..4 {
+        Time.sleep(0)
+        i * i
+    }
+    assert(xs[0] == 0)
+    assert(xs[1] == 1)
+    assert(xs[2] == 4)
+    assert(xs[3] == 9)
+}
+
+// ================================================================
+// SECTION 2: array literal → []int
+// ================================================================
+
+test "parallel for over array literal returns []int" {
+    let xs = parallel for v in [10, 20, 30] {
+        v + 1
+    }
+    assert(xs[0] == 11)
+    assert(xs[1] == 21)
+    assert(xs[2] == 31)
+}
+
+// ================================================================
+// SECTION 3: capture mut outer + write to array
+// ================================================================
+
+test "parallel for: array result + mut capture work together" {
+    let mut total = 0
+    let xs = parallel for i in 0..3 {
+        total += 1   // mutation visible after scope-run
+        i * 10
+    }
+    assert(total == 3)
+    assert(xs[0] == 0)
+    assert(xs[1] == 10)
+    assert(xs[2] == 20)
+}
+
+// ================================================================
+// SECTION 4: regression — old statement-mode still unit
+// ================================================================
+
+test "parallel for without trailing yields unit (regression)" {
+    // Если body НЕ имеет trailing — старая семантика: statement, unit.
+    let mut sum = 0
+    parallel for x in [1, 2, 3] {
+        sum += x
+    }
+    assert(sum == 6)
+}

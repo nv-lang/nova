@@ -346,3 +346,45 @@ GENERICS — TYPE ERASURE (тест 19, 33):
   - Полная монаморфизация generics для Stack[str] и подобных
   - Строки с форматированием (f-strings / tagged templates)
   - stdlib скелет
+
+================================================================================
+PARALLEL FOR → []T (тест 50, 2026-05-06)
+================================================================================
+
+D71 array-mode parallel for.
+
+Spec D14 говорит: parallel for x in iter { body } — это expression типа
+[]T, где T — тип body. До этого момента bootstrap-codegen возвращал unit
+(статусный desugar в supervised{for{spawn{...}}}), что нарушало spec.
+
+Реализация:
+  - В CEmitter добавлено поле current_parfor_slot: Option<(idx_var,
+    result_var, elem_ty)>. Когда оно Some, emit_spawn:
+      * добавляет в ctx два extra-field (_nova_par_idx, _nova_par_result)
+      * копирует в ctx значения idx и pointer на result-array
+      * trailing-expression body эмитируется как
+        _c->_nova_par_result->data[_c->_nova_par_idx] = trailing
+        вместо (void)(trailing)
+  - emit_parallel_for детектирует array-mode по body.trailing.is_some().
+    Если elem_ty не из {nova_int, nova_bool, nova_f64, nova_str} —
+    degrade to statement-mode (unit).
+  - Pre-allocate NovaArray_T* размера N (для Range — end-start[+1],
+    для ArrayLit — длина литерала, для Ident — len arr_var->len).
+  - Поддерживаются итераторы: Range a..b, RangeInclusive a..=b,
+    ArrayLit (без spread), Ident bound к array.
+  - infer_expr_c_type(ParallelFor) возвращает NovaArray_T* когда body
+    имеет trailing, иначе nova_unit. Это включает proper let-binding
+    propagation: let xs = parallel for ... { ... } получает корректный тип.
+  - array_element_types регистрируется для result_var, чтобы xs[i]
+    типизировался правильно при последующих операциях.
+
+Тест: tests-nova/50_parallel_for_array.nv — 6 тестов:
+  * range → []int
+  * inclusive-range → []int
+  * yield-stable ordering (Time.sleep внутри body не ломает порядок slots)
+  * array-literal → []int
+  * mut-capture одновременно с array-result
+  * regression: без trailing — старая semantic (unit)
+
+Регрессия: тест 41_parallel_for (12 тестов statement-mode) продолжает
+проходить без изменений.

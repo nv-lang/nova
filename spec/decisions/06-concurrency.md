@@ -571,11 +571,14 @@ let responses []Response = parallel for url in urls { fetch(url) }
 //                          параллельный map: 1 element → 1 response
 ```
 
-В bootstrap-codegen **сейчас возвращает unit** — упрощение. Полная
-реализация требует:
-- Сбор результатов body каждой итерации в массив.
-- Heap-allocated `NovaArray_T*` нужного типа (тип берётся из body).
-- Гарантия порядка результатов — соответствует порядку `iter`.
+**Bootstrap-codegen (2026-05-06):** array-mode реализован.
+Когда body имеет trailing-expression — форма возвращает `NovaArray_T*`
+(T ∈ {nova_int, nova_bool, nova_f64, nova_str}); каждый fiber пишет
+результат в `result.data[idx]` по своему индексу — порядок результатов
+соответствует порядку `iter` независимо от порядка планирования fiber'ов.
+Без trailing — старая semantic (statement, unit). Поддержанные
+итераторы: `a..b`, `a..=b`, array literal. Spread в array literal
+не поддержан (degrade to unit). См. `tests-nova/50_parallel_for_array.nv`.
 
 #### `for` vs `parallel for` — разные семантики
 
@@ -611,7 +614,8 @@ let responses []Response = parallel for url in urls { fetch(url) }
 |---|---|---|
 | `for x in iter { body }` | `unit` | statement, side-effects |
 | `iter.map((x) => body)` | `[]T` | sequential map |
-| `parallel for x in iter { body }` | `[]T` | parallel map (fan-out) |
+| `parallel for x in iter { body }` (body has trailing) | `[]T` | parallel map (fan-out) |
+| `parallel for x in iter { body }` (no trailing) | `unit` | parallel side-effect loop |
 
 Это **намеренное** различие — `for` для side-effects (большинство
 случаев), `parallel for` для structured fan-out. Sequential map
@@ -619,8 +623,14 @@ let responses []Response = parallel for url in urls { fetch(url) }
 аллокации `[]unit` для side-effect-циклов и сохранить привычную
 семантику `for` из Go/Rust/Java.
 
-— но это **не работает в bootstrap** (нет array-index-mutation для
-`NovaArray*` в captured контексте). Open-question D71.
+**Bootstrap-реализация (2026-05-06):** array-mode работает для
+T ∈ {int, bool, f64, str} и для итераторов `a..b`, `a..=b`, array
+literal. Pre-allocate `NovaArray_T*` размера N (`end - start [+1]`
+для range, длина литерала для array), per-iteration ctx содержит
+`_nova_par_idx` + `_nova_par_result`, spawn body's trailing
+автоматически пишет в `result.data[idx]`. Если trailing отсутствует —
+старая семантика (statement, unit). Spread в array literal не
+поддержан в v1 — degrade to unit. См. `tests-nova/50_parallel_for_array.nv`.
 
 #### 1. `supervised { body }` — round-robin scope
 

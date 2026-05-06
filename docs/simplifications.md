@@ -232,6 +232,15 @@ cancel-channel в queue + Nova API `cancel_scope { tok => spawn ... }`
 ### [ЗАКР] parallel for — реализован — [R8]
 - **Закрыто (2026-05-06):** keyword `parallel for x in iter { body }`.
   Десугарится в codegen в `supervised { for x in iter { spawn { body } } }`.
+- **Закрыто (2026-05-06): array-mode `parallel for → []T`** (D71). Когда body имеет
+  trailing-expression, форма возвращает `NovaArray_T*` (T ∈ {int, bool, f64, str}).
+  Каждый fiber пишет результат в `result.data[idx]` по своему индексу — порядок
+  записи в slots не зависит от порядка планирования. Реализация в `emit_parallel_for`:
+  pre-allocate `NovaArray_T*` размера N (для Range — `end - start [+1]`; для ArrayLit —
+  длина литерала), per-iteration ctx содержит `_nova_par_idx` + `_nova_par_result`,
+  spawn body's trailing пишет в `_c->_nova_par_result->data[_c->_nova_par_idx]`.
+  Без trailing — старая semantic (statement, unit). Spread в array literal не
+  поддержан в v1 — degrade to unit.
 - **Capture-by-value для immutable scalars:** spawn-capture теперь различает
   `let` (immutable) vs `let mut` (mutable). Immutable scalar (int/bool/f64/byte) →
   capture by value (snapshot в ctx struct). Всё остальное — by pointer (shared mut).
@@ -240,10 +249,10 @@ cancel-channel в queue + Nova API `cancel_scope { tok => spawn ... }`
   внутри loop разделяют один stack-slot и видят последнее значение.
 - **Loop-var регистрация:** range-loop в `emit_for` теперь регистрирует binding
   в `var_types` (как nova_int) — без этого capture не находил loop-переменную.
-- **Тесты:** `tests-nova/41_parallel_for.nv` — 12 тестов: array/range/inclusive-range,
-  empty array, single elem, snapshot semantics, cooperative yield внутри тела,
-  nested parallel-for внутри for, обычный for внутри parallel-for, mut-outer +
-  immutable-inner mix.
+- **Тесты:** `tests-nova/41_parallel_for.nv` — 12 тестов statement-mode (interleaving,
+  snapshot semantics). `tests-nova/50_parallel_for_array.nv` — 6 тестов array-mode
+  (range/inclusive-range/array-lit → []int, yield-stable ordering, mix mut-capture +
+  array-result, regression statement-mode).
 
 ### [R2] Fibers — partial structured concurrency (supervised есть, race/parallel/cancel — нет)
 - **Где:** `nova_rt/fibers.h` / `emit_c.rs`
