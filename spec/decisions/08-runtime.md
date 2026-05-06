@@ -254,6 +254,61 @@ type RangeIter {
 `f32`, `f64`, `str`, `bool`, `char`, `()`, `byte`) — встроены в язык,
 не stdlib, но упомянуты для полноты.
 
+**`str` — UTF-8 byte slice.** Внутреннее представление — пара
+`(ptr, len)` байтов (как Rust `&str` или Go `string`). Содержимое —
+валидный UTF-8 по конвенции: литералы, конкатенация и `str.from(...)`
+гарантируют валидность; FFI-код должен сам проверять при создании
+`str` из чужого буфера.
+
+**Длина и индексация:**
+- `s.len` (поле) — длина в **байтах**, O(1).
+- `s.char_len()` — длина в **code-point'ах** (Unicode scalar), O(n).
+- `s.slice(a, b)` принимает **byte-индексы** (как Rust `&s[a..b]`),
+  O(1). Если границы попадают в середину multi-byte sequence —
+  результат невалидный UTF-8.
+  **Bootstrap (2026-05-06):** boundary НЕ проверяется. Production-
+  runtime должен валидировать (открытый вопрос: panic vs `Result[str]`;
+  Rust паникует, Swift — `Result`).
+- Индексирование `s[i]` — открытый вопрос (Q-string-indexing).
+  Варианты: `s[i]` = byte (Go-style, O(1), но не Unicode-aware),
+  `s[i]` = `Option[char]` через codepoint-обход (Swift-style, O(n)).
+  В bootstrap `s[i]` для строк не реализовано; использовать
+  `s.chars()` / `s.char_at(i)`.
+
+**Конверсия в `[]byte`:**
+- `s.bytes() -> []byte` — копия (или zero-copy view, открытый вопрос
+  ownership). `[]byte` это `[]u8` под `byte` alias.
+- `str.from(b []byte) -> Result[str, Utf8Error]` через D77 TryFrom —
+  валидирует UTF-8 при конверсии.
+
+**Nul-termination (C-interop):** `nova_str_concat` сейчас аллоцирует
+`len + 1` байт и кладёт `\0` после данных, чтобы `s.ptr` можно было
+передать в C-функции. Литералы тоже nul-terminated (`.rodata` C-string).
+Slice — **НЕ** добавляет `\0` (просто view). Это значит
+`nova_str.ptr` — **не** гарантированно cstring; зависит от того как
+строка построена. **Открытый вопрос (Q-cstring):** либо унифицировать
+("все `nova_str` всегда nul-terminated, slice копирует") ценой
+аллокаций, либо отказаться от частичной гарантии и ввести явный
+`s.as_cstr() -> *const char` (с копированием при необходимости).
+В bootstrap'е действует текущее inconsistent поведение.
+
+**Дедупликация / interning:** `str` **не интернируется автоматически**.
+Одинаковые runtime-строки — разные инстансы. `==` сравнивает контент
+(memcmp), O(min). Compile-time литералы deduplicate-аются C-компилятором
+через стандартное string-literal pooling в `.rodata`. Для opt-in
+interning — **открытый вопрос (Q-string-interning):** Atom-тип или
+`Sym[T]` (Erlang-style); прецеденты — Rust не интернирует, Java/C#
+имеют пул для литералов + opt-in `intern()`.
+
+**Конкатенация:** `s1 + s2` — O(a+b), новая аллокация каждый раз.
+В hot loop `s = s + x` × N → O(N²). Для аккумуляции использовать
+**`StrBuilder`** (открытый вопрос — Q-strbuilder). Прецеденты —
+Java `StringBuilder`, C# `StringBuilder`, Go `strings.Builder`,
+Rust `String` (он же mutable builder).
+
+См. также [Q-char-literals](../open-questions.md) (синтаксис
+char-литералов) и [D54](03-syntax.md#d54) (`as`/`is` для конверсий).
+
 **Математические операции на числовых типах** объявлены как
 **instance-методы** через `@` ([D74](#d74-математические-операции-на-числовых-типах--instance-методы)):
 `x.sqrt()`, `theta.cos()`, `y.atan2(x)`, `a.hypot(b)`, `n.abs()`,
