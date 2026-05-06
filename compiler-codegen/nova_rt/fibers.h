@@ -131,14 +131,17 @@ static inline void nova_fiber_spawn_into(NovaFiberQueue* q,
 }
 
 /* Active scope queue + current fiber slot index — used by spawn-entry to
- * report errors back to the scope. Set by nova_supervised_step around
- * each mco_resume. */
+ * report errors back to the scope, and by main-flow Time.sleep dispatch.
+ * Set by:
+ *  - nova_supervised_step around each mco_resume (fiber-active context)
+ *  - emit_supervised entry/exit (main-flow scope context)
+ * Externally linked so codegen can write to it from emitted C. */
 #ifdef _MSC_VER
-__declspec(thread) static NovaFiberQueue* _nova_active_scope = NULL;
-__declspec(thread) static int             _nova_active_slot  = -1;
+__declspec(thread) extern NovaFiberQueue* _nova_active_scope;
+__declspec(thread) extern int             _nova_active_slot;
 #else
-static __thread NovaFiberQueue* _nova_active_scope = NULL;
-static __thread int             _nova_active_slot  = -1;
+extern __thread NovaFiberQueue* _nova_active_scope;
+extern __thread int             _nova_active_slot;
 #endif
 
 /* Called from spawn-entry's catch block when the body threw.
@@ -230,6 +233,48 @@ static inline void nova_fiber_yield(void) {
         nova_throw(nova_str_from_cstr("scope cancelled"));
     }
     mco_yield(co);
+}
+
+/* ---- Built-in `Time` effect operations ----
+ *
+ * Defined here because the default handler needs nova_fiber_yield +
+ * nova_supervised_step + _nova_active_scope, all of which require
+ * NovaFiberQueue to be complete. Declarations are in effects.h.
+ */
+
+/* Default impl: context-sensitive yield (D71).
+ *  - In fiber → nova_fiber_yield (cooperative suspend, scope cancel-check).
+ *  - On main inside supervised body → nova_supervised_step (drain queue once).
+ *  - Else → no-op (no scheduler to yield to).
+ * `ms` is ignored — no timer-wheel in bootstrap. */
+static inline nova_unit _nova_time_default_sleep(nova_int ms) {
+    (void)ms;
+    if (mco_running()) {
+        nova_fiber_yield();
+    } else if (_nova_active_scope) {
+        nova_supervised_step(_nova_active_scope);
+    }
+    return NOVA_UNIT;
+}
+
+/* Default impl: returns 0 (real clock not wired up in bootstrap). */
+static inline nova_int _nova_time_default_now(void) {
+    return 0;
+}
+
+/* Inline dispatch: with user handler → handler method; else → default. */
+static inline nova_unit Nova_Time_sleep(nova_int ms) {
+    if (_nova_handler_Time) {
+        return _nova_handler_Time->sleep(_nova_handler_Time->ctx, ms);
+    }
+    return _nova_time_default_sleep(ms);
+}
+
+static inline nova_int Nova_Time_now(void) {
+    if (_nova_handler_Time) {
+        return _nova_handler_Time->now(_nova_handler_Time->ctx);
+    }
+    return _nova_time_default_now();
 }
 
 #endif /* NOVA_RT_FIBERS_H */

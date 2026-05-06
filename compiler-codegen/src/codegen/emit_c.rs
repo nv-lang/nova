@@ -162,6 +162,20 @@ impl CEmitter {
             self.effect_schemas.insert("Fail".to_string(), fail_schema);
         }
 
+        // Pre-register Time as a built-in effect (D11 / D14 / D62).
+        // Operations: `now() -> int`, `sleep(ms int) -> unit`. Default handlers
+        // in runtime: sleep → context-sensitive cooperative yield (fiber-yield
+        // in fiber, supervised_step in scope-body, no-op outside); now → 0
+        // (real clock not wired up in bootstrap). User override via
+        // `with Time = handler Time { sleep(ms) {...} now() {...} } { body }`
+        // — used by tests for fixed clock / mock sleep.
+        {
+            let mut time_schema: HashMap<String, (Vec<String>, String)> = HashMap::new();
+            time_schema.insert("sleep".to_string(), (vec!["nova_int".into()], "nova_unit".into()));
+            time_schema.insert("now".to_string(),   (vec![],                   "nova_int".into()));
+            self.effect_schemas.insert("Time".to_string(), time_schema);
+        }
+
         self.emit_preamble();
 
         // 1. Type declarations first (structs/unions needed by fn signatures)
@@ -996,12 +1010,19 @@ impl CEmitter {
         let id = self.supervised_counter;
         self.supervised_counter += 1;
         let queue_var = format!("_nova_scope_q_{}", id);
+        let prev_scope_var = format!("_nova_prev_scope_{}", id);
 
         // Wrap the scope in a C block so the queue is local.
         self.line("{");
         self.indent += 1;
         self.line(&format!("NovaFiberQueue {} = {{0}};", queue_var));
         self.line(&format!("nova_scope_init(&{});", queue_var));
+
+        // Set _nova_active_scope to this queue so that on main-flow,
+        // Time.sleep (default handler) finds the right scope to drive.
+        // Saved/restored around the body.
+        self.line(&format!("NovaFiberQueue* {} = _nova_active_scope;", prev_scope_var));
+        self.line(&format!("_nova_active_scope = &{};", queue_var));
 
         // Activate scope: spawn inside body routes into queue.
         let prev = std::mem::replace(&mut self.current_scope_queue, Some(queue_var.clone()));
@@ -1020,6 +1041,8 @@ impl CEmitter {
 
         // Run the scheduler: round-robin until all fibers in queue are dead.
         self.line(&format!("nova_supervised_run(&{});", queue_var));
+        // Restore previous active scope (may be NULL or outer scope).
+        self.line(&format!("_nova_active_scope = {};", prev_scope_var));
 
         self.indent -= 1;
         self.line("}");
@@ -3175,34 +3198,11 @@ impl CEmitter {
                 }
             }
             ExprKind::Member { obj, name: method } => {
-                // 0. Builtin: `Time.sleep(ms)` → `nova_fiber_yield()` (eval ms but discard).
-                //    Spec D14/D50: Time is a yield-point; sleep(0) ≈ runtime.Gosched() in Go.
-                //    No timer-wheel yet — any sleep duration is just one yield.
-                let obj_name = match &obj.kind {
-                    ExprKind::Ident(n) => Some(n.as_str()),
-                    ExprKind::Path(p) if p.len() == 1 => Some(p[0].as_str()),
-                    _ => None,
-                };
-                if let Some("Time") = obj_name {
-                    if method == "sleep" {
-                        // Evaluate ms argument for side-effects but discard the value.
-                        for a in args { let _ = self.emit_expr(a)?; }
-                        // Inside a fiber body → cooperative yield to scheduler.
-                        // Outside fiber but inside supervised body → drive scope queue
-                        // one round so main-flow yields to queued spawns.
-                        // Outside both → no-op (no scheduler to yield to).
-                        if self.current_spawn_captures.is_some() {
-                            self.line("nova_fiber_yield();");
-                        } else if let Some(queue) = self.current_scope_queue.clone() {
-                            self.line(&format!("nova_supervised_step(&{});", queue));
-                        } else {
-                            self.line("nova_fiber_yield();");  // no-op outside any context
-                        }
-                        return Ok("NOVA_UNIT".to_string());
-                    }
-                }
-
                 // 1. Effect dispatch: `Counter.next()` → `Nova_Counter_next()`
+                //    `Time` and `Fail` are pre-registered as built-in effects in
+                //    emit_module — `Time.sleep(ms)` and `Fail.fail(msg)` go through
+                //    this same path. Default handlers in runtime fall back to
+                //    nova_fiber_yield / nova_throw respectively.
                 let eff_name = match &obj.kind {
                     ExprKind::Ident(n) => Some(n.clone()),
                     ExprKind::Path(p) => Some(p.join("_")),
@@ -3335,18 +3335,6 @@ impl CEmitter {
                 format!("{obj}{acc}{method}", obj = obj_c, acc = accessor, method = method)
             }
             ExprKind::Path(parts) => {
-                // Builtin: `Time.sleep(ms)` → yield (path form)
-                if parts.len() == 2 && parts[0] == "Time" && parts[1] == "sleep" {
-                    for a in args { let _ = self.emit_expr(a)?; }
-                    if self.current_spawn_captures.is_some() {
-                        self.line("nova_fiber_yield();");
-                    } else if let Some(queue) = self.current_scope_queue.clone() {
-                        self.line(&format!("nova_supervised_step(&{});", queue));
-                    } else {
-                        self.line("nova_fiber_yield();");
-                    }
-                    return Ok("NOVA_UNIT".to_string());
-                }
                 // Check if first segment is a known effect
                 if parts.len() == 2 && self.effect_schemas.contains_key(&parts[0]) {
                     format!("Nova_{}_{}", parts[0], parts[1])

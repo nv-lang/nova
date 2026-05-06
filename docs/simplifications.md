@@ -282,22 +282,26 @@ cancel-channel в queue + Nova API `cancel_scope { tok => spawn ... }`
   3. Default handler `LogAndDrop`: panic в detach → log + сбросить fiber, не propagate.
 - **Приоритет:** L
 
-### [R7] Time.sleep(ms) — без timer-wheel
-- **Где:** `emit_c.rs` (builtin) / `nova_rt/fibers.h`
-- **Что упрощено:** `Time.sleep(N)` для любого N → один cooperative yield.
-  Реальной задержки нет, ms-аргумент игнорируется.
-- **Поведение в зависимости от контекста (2026-05-06):**
-  * Внутри fiber-body (spawn) → `nova_fiber_yield()` — корутина возвращает управление
-    scheduler'у.
-  * Вне fiber, но внутри `supervised { }` body → `nova_supervised_step(&queue)` —
-    main-flow прокручивает один round очереди (каждый живой fiber делает один resume).
-  * Вне любого scope (top-level main) → no-op (нет scheduler'а для yield).
-- **Почему:** Spec D62 — async ambient, Time.sleep callable откуда угодно. Контекст-
-  чувствительная диспатчизация даёт корректный observable interleave даже когда yield
-  делается из main-flow.
-- **Как чинить полноценно:** Timer-wheel/heap, при `Time.sleep(ms)` fiber кладётся в
-  sleep-list с deadline, scheduler пропускает sleeping fibers до его наступления.
-- **Приоритет:** L (для тестов interleave не нужно)
+### [R7] Time.sleep(ms) — without timer-wheel (Time-as-effect REALIZED)
+- **Где:** `nova_rt/effects.h`/`fibers.h` (vtable + dispatch) / `emit_c.rs`
+  (Time pre-registered as built-in effect).
+- **Что реализовано (2026-05-06):**
+  * `Time` теперь обычный pre-registered эффект в codegen (D11/D62).
+  * `Time.sleep(ms)` → `Nova_Time_sleep(ms)` идёт через handler-vtable.
+  * `Time.now()` → `Nova_Time_now()` (default returns 0).
+  * Default handler `_nova_time_default_sleep`: context-sensitive yield
+    (fiber → `mco_yield`, supervised body → `nova_supervised_step`,
+    top-level → no-op).
+  * User override: `with Time = handler Time { sleep(ms) {...} now() {...} } { body }`
+    устанавливает custom handler — для test fixtures с fixed clock
+    или mock sleep. Работает (тесты `46_time_handler.nv`).
+- **Что упрощено:** `ms` игнорируется в default handler — нет timer-wheel.
+  `Time.sleep(100)` и `Time.sleep(0)` неотличимы. Реальной задержки нет.
+- **Как чинить полноценно:** Timer-wheel/heap, при `Time.sleep(ms)` fiber
+  кладётся в sleep-list с deadline, scheduler пропускает sleeping fibers
+  до его наступления. Аналогично `Time.now()` нуждается в реальном
+  c-clock (через QueryPerformanceCounter / clock_gettime).
+- **Приоритет:** L (для тестов interleave не нужно).
 
 ### [R3] nova_str — borrowed slice, нет ownership
 - **Где:** `nova_rt/nova_rt.h`

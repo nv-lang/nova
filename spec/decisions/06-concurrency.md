@@ -824,18 +824,16 @@ queued fibers видели бы только последнее значение
   legacy-семантику `let r = spawn ...` вне `supervised`. Удаляется
   одновременно с переходом «spawn вне scope = compile error» — после
   миграции 28 legacy-тестов в `38_deep_spawn.nv` верхней части.
-- **Эффект `Time` в effect-system.** По D11 / D31 / D62 — `Time` это
-  обычный stdlib-эффект с операциями `now()` и `sleep(d)`. В bootstrap'е
-  D71 `Time.sleep` реализован как **builtin** в codegen (прямая инлайн-эмиссия
-  yield), не через handler-vtable. Следствия:
-  * `Time` не требуется в сигнатуре функций использующих `Time.sleep`.
-  * `with Time = fixed_clock { ... }` (для тестов) **не работает** — handler-
-    подмена не интегрирована с builtin'ом.
-  * `Time.now()` вообще не реализован.
-  Полноценная реализация: объявить `Time` через `effect Time { now() -> int;
-  sleep(d int) }`, эмитить вызовы через стандартный handler-vtable, default
-  handler в bootstrap-runtime — реальные часы для `now()` и
-  `nova_fiber_yield()` для `sleep()`.
+- **Эффект `Time` в effect-system — РЕАЛИЗОВАН** (2026-05-06).
+  По D11/D31/D62: pre-registered как built-in effect (`sleep(int)`,
+  `now() -> int`); `Time.sleep`/`Time.now` идут через стандартный
+  effect-dispatch путь (Nova_Time_sleep / Nova_Time_now). Default
+  handlers в runtime: sleep — context-sensitive cooperative yield
+  (fiber → mco_yield, supervised body → step queue, top-level → no-op);
+  now — возвращает 0 (timer-wheel не реализован). User override через
+  `with Time = handler Time { sleep(ms) {...} now() {...} } { body }`
+  — работает (тесты `46_time_handler.nv`). Что НЕ закрыто: реальный
+  timer-wheel (sleep с задержкой не делает реальной задержки).
 - **Cooperative cancellation propagation реализована** (2026-05-06):
   fiber-throw → scope `cancel_requested = true` → остальные fiber'ы
   при следующем yield (`Time.sleep` или scheduler step) делают

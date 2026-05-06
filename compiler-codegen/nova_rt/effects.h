@@ -240,4 +240,37 @@ static inline nova_unit Nova_Fail_fail(nova_str msg) {
     return NOVA_UNIT;  /* unreachable */
 }
 
+/* ---- Built-in `Time` effect (D11 / D14 / D62) ----
+ *
+ * Operations: now() -> int, sleep(ms int) -> unit. By D11 — это обычный
+ * stdlib-эффект. По D62 — Async ambient: Time-операции callable откуда
+ * угодно, в сигнатуре не требуется, default handler доступен.
+ *
+ * Default handler:
+ *   sleep(ms) — context-sensitive yield (через nova_fiber_yield в фибере;
+ *               nova_supervised_step в supervised body на main; no-op
+ *               вне scope). ms игнорируется (нет timer-wheel).
+ *   now()     — TODO: реальное время через C clock. Сейчас возвращает 0.
+ *
+ * User override: `with Time = handler Time { sleep(ms) { ... } now() { ... } } { body }`
+ * — для тестов (fixed clock, mock sleep). */
+
+/* Layout matches codegen-generated layout for user effects. */
+typedef struct {
+    void*     ctx;
+    nova_unit (*sleep)(void* _ctx, nova_int ms);
+    nova_int  (*now)(void* _ctx);
+} NovaVtable_Time;
+
+#ifdef _MSC_VER
+__declspec(thread) extern NovaVtable_Time* _nova_handler_Time;
+#else
+extern __thread NovaVtable_Time* _nova_handler_Time;
+#endif
+
+/* Nova_Time_sleep / Nova_Time_now defined in fibers.h (after NovaFiberQueue
+ * complete + nova_fiber_yield + nova_supervised_step). They are not
+ * forward-declared here because callers always include nova_rt.h which pulls
+ * in fibers.h after effects.h. */
+
 #endif /* NOVA_RT_EFFECTS_H */
