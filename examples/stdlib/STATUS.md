@@ -9,62 +9,85 @@ codegen в текущей итерации не покрывает все исп
 сейчас компилируются** в bootstrap'е. Это ожидаемо. Список причин ниже —
 для приоритезации будущих compiler-задач.
 
-| File | Блокирующая фича | Stage |
-|---|---|---|
-| complex.nv | char-литералы `'+'` `'-'` (для парсинга строки) | lexer |
-| duration.nv | `expected '{', got newline` — multi-line if-else? | parser |
-| hashmap.nv | `&` operator (referencing/borrowing) | spec/lexer |
-| json.nv | char-литералы `'"'` `'\\\\'` для парсера | lexer |
-| linkedlist.nv | `effect` keyword в позиции type | parser |
-| queue.nv | `in` keyword в выражении (loop?) | parser |
-| range.nv | anonymous record literal `{ field: val }` без spread | codegen |
-| semver.nv | `=>` в неожиданном месте (handler-like construct?) | parser |
-| set.nv | `&` operator (referencing) | spec/lexer |
-| sql.nv | match-arm separator (parser ambiguity) — после fix throw-as-expr продвинулся со 163 до 201 | parser |
-| vec.nv | `expected identifier, got '['` — turbofish/generic syntax? | parser |
+## Закрытые блокеры (2026-05-07)
 
-## Проблемы по группам
+- **char-литералы** ('a' / '\n' / '\u{...}') — реализованы (Q-char-literals,
+  commit 7852ced). Это разблокировало complex.nv и json.nv в начальных
+  строках.
+- **throw в expression position** (D25/D65) — реализован (commit cfa53ca).
+  Это разблокировало sql.nv от старого блокера на 163.
+- **Match scrutinee parsing** — fix `match foo() { ... }` парсился как
+  call-with-trailing-block (commit d467cd2). Разблокировало semver.nv
+  и sql.nv.
 
-**A. Char-литералы (`'c'`)** — 2 файла: complex.nv, json.nv. Открытый
-   вопрос **Q-char-literals** в [spec/open-questions.md:3629](../../spec/open-questions.md)
-   уже описывает proposed-синтаксис, грамматику и прецеденты. Нужно
-   зафиксировать как D-решение и реализовать lexer + AST + codegen.
-   Альтернатива (без char-литералов): использовать `s.char_at(i)` +
-   `nova_str` сравнение, но это менее эргономично для парсеров.
+## Текущие блокеры
+
+| File | Блокирующая фича | Stage | Прогресс |
+|---|---|---|---|
+| complex.nv | multi-line if-else (`expected '{', got newline`) на 560 | parser | 317 → 560 (после char-литералов) |
+| duration.nv | multi-line if-else на 252 | parser | без изменений |
+| hashmap.nv | `&` operator (referencing) на 219 | spec/lexer | без изменений |
+| json.nv | pattern parser (`expected pattern, got ','`) на 98 | parser | 163 → 98 (после char-литералов) |
+| linkedlist.nv | `effect` keyword в позиции type на 48 | parser/spec | без изменений |
+| queue.nv | `in` keyword в выражении (loop?) на 26 | parser | без изменений |
+| range.nv | anonymous record literal `{ field: val }` без spread | codegen | без изменений |
+| semver.nv | `unexpected '||'` на 251 | parser/operator | 136 → 251 (после match-arm fix) |
+| set.nv | `&` operator (referencing) на 152 | spec/lexer | без изменений |
+| sql.nv | `expected '=>', got '=='` на 295 (match-arm с условием guard?) | parser | 201 → 295 (после match-arm fix) |
+| vec.nv | `expected identifier, got '['` на 25 (turbofish/generic syntax?) | parser | без изменений |
+
+## Группы блокеров
+
+**A. ~~Char-литералы~~** — ✅ закрыто (commit 7852ced).
 
 **B. `&` operator** — 2 файла: hashmap.nv, set.nv. Это referencing
    синтаксис который Nova spec **отвергает** (D6: managed heap, нет
    ownership-borrowing). Файлы написаны до этого решения. Чинятся
-   убиранием `&` (просто пропустить — Nova передаёт по reference сам).
+   убиранием `&` в коде stdlib-файлов.
 
-**C. Multi-line if-else или handler block** — duration.nv, semver.nv.
-   Возможно D49 newline-rules не покрывают этих случаев.
+**C. Multi-line if-else / continuation** — duration.nv, complex.nv.
+   D49 newline-tolerance может не покрывать все cases. Конкретные
+   места — multiline expression continuation.
 
 **D. Generic syntax** — vec.nv. Spec D16: дженерики через `[T]`.
-   Конкретное место надо смотреть.
+   Конкретное место — `vec[T]` в начале файла, парсер ожидает ident
+   после `vec`.
 
 **E. Anonymous record literal** — range.nv. Bootstrap codegen
    эксплицитно говорит «not supported». Spec D55 описывает coercion в
-   позиции с явным типом — это другой случай.
+   позиции с явным типом — нужна inferred-type-context реализация.
 
-**F. effect keyword as type** — linkedlist.nv. Возможно, `Iter[T]` или
-   `Iterable[T]` где T = effect-type? Не должно быть в spec.
+**F. effect keyword as type** — linkedlist.nv. `effect` в позиции type
+   не предусмотрен Nova spec'ом. Скорее всего — баг в файле.
 
-**G. throw в expression position** — sql.nv. По spec throw — это
-   statement (D25). Файл ожидает что throw возвращает Never и работает
-   как expression.
+**G. ~~throw в expression position~~** — ✅ закрыто (commit cfa53ca).
+
+**H. Pattern parsing** — json.nv expecting pattern but got comma.
+   Возможно — паттерны внутри tuple-deconstruction или другая
+   композиция, не поддержанная парсером.
+
+**I. `||` operator** — semver.nv. Boolean-or `||` в expression position.
+   Скорее всего парсер не справляется в каком-то контексте.
+
+**J. Match-arm guards (`=>` after `==`)** — sql.nv. Возможно `Some(x) if cond => ...`
+   где `if` не распознан, или другая arm-form.
+
+**K. `in` keyword в expression** — queue.nv. Может быть `for ... in ...`
+   в неожиданном контексте, либо использование `in` для membership-check
+   (что Nova spec отвергает).
 
 ## Что делать
 
 Это **не приоритетные баги**, а **gap'ы между spec-aspiration и
 bootstrap-возможностями**. Рекомендуемая последовательность:
 
-1. **Spec-clarification:** проверить group A (char литералы),
-   group B (&), group F (effect-type), group G (throw expr).
-2. **Парсер-доработки:** group C (newline-tolerance в if-else цепях),
-   group D (vec.nv).
-3. **Codegen-доработки:** group E (anonymous record literal — ввести
-   inferred-type-coercion как при obvious-context'е).
+1. **Spec-clarification:** group B (`&` — переписать stdlib-файлы),
+   group F (effect-type — bug в файле), group K (in-keyword).
+2. **Парсер-доработки:** group C (multi-line continuation), group D
+   (vec generic syntax), group H (pattern composition), group I (`||`),
+   group J (match-arm guards).
+3. **Codegen-доработки:** group E (anonymous record literal с
+   inferred-type-context).
 
 После каждой группы — recompile и продвигаться по списку. Финальная
 цель — **11/11 stdlib examples PASS** через `run_tests.ps1 -IncludeStdlib`.

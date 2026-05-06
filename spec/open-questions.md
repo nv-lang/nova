@@ -3626,7 +3626,15 @@ generic Complex / Vector / Matrix через [Q-math-protocol](#q-math-protocol)
 
 ---
 
-## Q-char-literals. Синтаксис char-литералов
+## Q-char-literals. Синтаксис char-литералов ✅ ЗАКРЫТО (2026-05-07)
+
+> Реализовано предложенное в Q-char-literals: lexer recognizes
+> `'a'` / `'\n'` / `'\u{HEX}'` → TokenKind::Char(u32) (codepoint).
+> AST: ExprKind::CharLit + Literal::Char (для match-pattern'ов).
+> Codegen: char как nova_int в bootstrap (codepoint напрямую). См.
+> tests-nova/56_char_literals.nv (16 тестов).
+>
+> Оригинальный текст ниже сохранён для истории.
 
 **Контекст.** В prelude есть тип `char` ([D26](decisions/08-runtime.md#d26)),
 он используется в сигнатурах: `fn s @chars() -> Iter[char]`,
