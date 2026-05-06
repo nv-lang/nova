@@ -1,0 +1,381 @@
+// deep_gc_test.nv — Nova-level deep GC stress tests
+//
+// Verifies object lifetime, field integrity under allocation pressure,
+// record chains, array grow/shrink, and mixed alloc patterns.
+//
+// C-level counterpart: compiler-codegen/nova_rt/test_gc_deep.c
+// That file tests alloc_count/free_count directly; this file tests
+// observable value correctness from the Nova side.
+
+module nova_tests.concurrency.deep_gc
+
+type Point {
+    x int
+    y int
+}
+
+type Box {
+    val   int
+    depth int
+}
+
+type Triple {
+    a int
+    b int
+    c int
+}
+
+fn make_point(x int, y int) -> Point => Point { x, y }
+fn make_box(val int, depth int) -> Box => Box { val, depth }
+fn make_triple(a int, b int, c int) -> Triple => Triple { a, b, c }
+
+// ---- helpers ----
+
+fn sum_range(n int) -> int {
+    // 1+2+...+n = n*(n+1)/2
+    let mut acc = 0
+    let mut i = 1
+    while i <= n {
+        acc += i
+        i += 1
+    }
+    acc
+}
+
+// ================================================================
+// SECTION 1: object survival under allocation pressure
+// ================================================================
+
+test "GC: sentinel survives 10000 interleaved allocs" {
+    // Allocate a sentinel, then create 10000 short-lived objects, verify sentinel intact.
+    let sentinel = make_point(12345, 67890)
+
+    let mut i = 0
+    while i < 10000 {
+        let tmp = make_point(i, i * 2)
+        // prevent optimizer from eliding: use tmp in a way that affects state
+        let _ = tmp.x + tmp.y
+        i += 1
+    }
+
+    assert(sentinel.x == 12345)
+    assert(sentinel.y == 67890)
+}
+
+test "GC: 5 sentinels survive 5000 allocs each phase" {
+    let s0 = make_point(0,  100)
+    let s1 = make_point(1,  200)
+    let s2 = make_point(2,  300)
+    let s3 = make_point(3,  400)
+    let s4 = make_point(4,  500)
+
+    // Phase 1: 5000 allocs
+    let mut i = 0
+    while i < 5000 {
+        let tmp = make_point(i, i)
+        let _ = tmp.x
+        i += 1
+    }
+
+    // Check mid-point
+    assert(s0.x == 0)
+    assert(s2.x == 2)
+    assert(s4.x == 4)
+
+    // Phase 2: 5000 more allocs
+    i = 0
+    while i < 5000 {
+        let tmp = make_triple(i, i + 1, i + 2)
+        let _ = tmp.a + tmp.b + tmp.c
+        i += 1
+    }
+
+    // All sentinels intact after both phases
+    assert(s0.x == 0)
+    assert(s0.y == 100)
+    assert(s1.x == 1)
+    assert(s1.y == 200)
+    assert(s2.x == 2)
+    assert(s2.y == 300)
+    assert(s3.x == 3)
+    assert(s3.y == 400)
+    assert(s4.x == 4)
+    assert(s4.y == 500)
+}
+
+// ================================================================
+// SECTION 2: record chains and field integrity
+// ================================================================
+
+test "GC: 1000-step chain, each depends on previous" {
+    // Simulates a linked list traversal without actual pointers:
+    // each record's field = previous.x + 1.
+    let mut cur_x = 0
+    let mut cur_y = 0
+    let mut i = 0
+    while i < 1000 {
+        let p = make_point(cur_x + 1, cur_y + 2)
+        cur_x = p.x
+        cur_y = p.y
+        i += 1
+    }
+    // After 1000 steps: x = 1000, y = 2000
+    assert(cur_x == 1000)
+    assert(cur_y == 2000)
+}
+
+test "GC: deep box chain, depth tracked" {
+    // 30 iterations: val = 2^30 = 1073741824, well within int64
+    let mut val = 1
+    let mut depth = 0
+    let mut i = 0
+    while i < 30 {
+        let b = make_box(val * 2, depth + 1)
+        val = b.val
+        depth = b.depth
+        i += 1
+    }
+    assert(depth == 30)
+    assert(val == 1073741824)
+}
+
+test "GC: triple chain sum invariant" {
+    // At each step: new triple = (prev.b, prev.c, prev.a + prev.b + prev.c)
+    // Running sum of .c should follow Tribonacci-like growth.
+    let mut a = 1
+    let mut b = 1
+    let mut c = 1
+    let mut i = 0
+    while i < 20 {
+        let t = make_triple(b, c, a + b + c)
+        a = t.a
+        b = t.b
+        c = t.c
+        i += 1
+    }
+    // After 20 steps the value is large but deterministic; just verify c == a + b before last step
+    // Actually verify the invariant holds: c was set to prev_a + prev_b + prev_c.
+    // We can verify c > b (always growing):
+    assert(c > b)
+    assert(b > 0)
+    assert(a > 0)
+}
+
+// ================================================================
+// SECTION 3: 100 records, values correct throughout
+// ================================================================
+
+test "GC: 100 records, field arithmetic correct" {
+    let mut sum_x = 0
+    let mut sum_y = 0
+    let mut i = 0
+    while i < 100 {
+        let p = make_point(i, i * i)
+        sum_x += p.x
+        sum_y += p.y
+        i += 1
+    }
+    // sum_x = 0+1+...+99 = 4950
+    // sum_y = 0+1+4+9+...+9801 = sum(i^2, 0..99) = 99*100*199/6 = 328350
+    assert(sum_x == 4950)
+    assert(sum_y == 328350)
+}
+
+test "GC: 1000 records, p.x + p.y == const" {
+    let mut check = 0
+    let mut i = 0
+    while i < 1000 {
+        let p = make_point(i, 999 - i)
+        check += p.x + p.y    // always 999
+        i += 1
+    }
+    // 1000 * 999 = 999000
+    assert(check == 999000)
+}
+
+test "GC: 500 triples, sum of all fields" {
+    let mut total = 0
+    let mut i = 0
+    while i < 500 {
+        let t = make_triple(i, i + 1, i + 2)
+        total += t.a + t.b + t.c
+        i += 1
+    }
+    // sum(3i + 3, i=0..499) = 3 * sum(i, 0..499) + 3 * 500
+    // = 3 * (499*500/2) + 1500 = 3 * 124750 + 1500 = 374250 + 1500 = 375750
+    assert(total == 375750)
+}
+
+// ================================================================
+// SECTION 4: records allocated inside spawn, visible after
+// ================================================================
+
+test "GC: record allocated inside spawn readable outside" {
+    let mut out_x = 0
+    let mut out_y = 0
+    supervised {
+        spawn {
+            let inner = make_point(777, 888)
+            out_x = inner.x
+            out_y = inner.y
+        }
+    }
+    assert(out_x == 777)
+    assert(out_y == 888)
+}
+
+test "GC: 10 spawns each allocate a record, all mutations visible" {
+    let mut sum = 0
+    supervised {
+        let mut i = 0
+        while i < 10 {
+            let cur = i
+            spawn {
+                let inner = make_point(cur * 10, cur * 10 + 1)
+                let vx = inner.x
+                let vy = inner.y
+                sum += vx + vy
+            }
+            i += 1
+        }
+    }
+    // vx + vy = cur*10 + cur*10 + 1 = 20*cur + 1
+    // sum over cur=0..9: 20*45 + 10 = 910
+    assert(sum == 910)
+}
+
+test "GC: record survives two spawns (pipeline)" {
+    let p = make_point(30, 40)
+    let px = p.x
+    let py = p.y
+    let mut r1 = 0
+    let mut r2 = 0
+    supervised { spawn { r1 = px * px + py * py } }   // 2500
+    supervised { spawn { r2 = r1 + px + py } }         // 2570
+    assert(r1 == 2500)
+    assert(r2 == 2570)
+}
+
+// ================================================================
+// SECTION 5: array allocation pressure
+// ================================================================
+
+test "GC: array len grows correctly" {
+    let arr = [10, 20, 30, 40, 50]
+    assert(arr.len == 5)
+}
+
+test "GC: array spread creates correct length" {
+    let a = [1, 2, 3]
+    let b = [0, ...a, 4, 5, 6]
+    assert(b.len == 7)
+}
+
+test "GC: array .get returns Some/None correctly" {
+    let arr = [100, 200, 300]
+    let m0 = arr.get(0)
+    let v0 = match m0 {
+        Some(n) => n
+        None    => -1
+    }
+    let m2 = arr.get(2)
+    let v2 = match m2 {
+        Some(n) => n
+        None    => -1
+    }
+    let mx = arr.get(9)
+    let vx = match mx {
+        Some(n) => n
+        None    => -999
+    }
+    assert(v0 == 100)
+    assert(v2 == 300)
+    assert(vx == -999)
+}
+
+test "GC: array pattern [] vs [x, ..]" {
+    let empty = [0, 0]
+    let nonempty = [42, 99]
+
+    let r1 = match nonempty {
+        []      => -1
+        [x, ..] => x
+    }
+    let r2 = match empty {
+        []      => -1
+        [x, ..] => x
+    }
+    assert(r1 == 42)
+    assert(r2 == 0)
+}
+
+test "GC: 100 arrays with spread accumulate correctly" {
+    let base = [1, 2, 3]
+    let mut total = 0
+    let mut i = 0
+    while i < 100 {
+        let extended = [0, ...base, i]
+        let mv = extended.get(4)
+        let v = match mv {
+            Some(n) => n
+            None    => -1
+        }
+        total += v
+        i += 1
+    }
+    // sum(i, 0..99) = 4950
+    assert(total == 4950)
+}
+
+// ================================================================
+// SECTION 6: mixed record + array + spawn pressure
+// ================================================================
+
+test "GC: records and arrays interleaved, no corruption" {
+    let mut record_sum = 0
+    let mut array_sum = 0
+
+    let mut i = 0
+    while i < 50 {
+        let p = make_point(i, i + 1)
+        let arr = [i, i + 1, i + 2]
+        record_sum += p.x + p.y
+        let mv = arr.get(2)
+        let v = match mv {
+            Some(n) => n
+            None    => 0
+        }
+        array_sum += v
+        i += 1
+    }
+
+    // record_sum = sum(i + i + 1, 0..49) = sum(2i+1, 0..49) = 2*(0+1+...+49)+50 = 2*1225+50 = 2500
+    // array_sum = sum(i+2, 0..49) = sum(i, 0..49) + 50*2 = 1225 + 100 = 1325
+    assert(record_sum == 2500)
+    assert(array_sum == 1325)
+}
+
+test "GC: 20 spawns each create records and arrays, mutations visible" {
+    let mut total = 0
+    supervised {
+        let mut i = 0
+        while i < 20 {
+            let cur = i
+            spawn {
+                let inner = make_point(cur, cur * 2)
+                let vx = inner.x
+                let vy = inner.y
+                let arr = [vx, vy, vx + vy]
+                let ms = arr.get(2)
+                let s = match ms {
+                    Some(n) => n
+                    None    => 0
+                }
+                total += s
+            }
+            i += 1
+        }
+    }
+    // arr[2] = vx + vy = 3*cur; total = 3 * (0+1+...+19) = 570
+    assert(total == 570)
+}

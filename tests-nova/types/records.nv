@@ -1,0 +1,74 @@
+// 06_records.nv — records, field access, field punning (D52), spread (D60)
+
+module nova_tests.types.records
+
+type Point {
+    x int
+    y int
+}
+
+type User {
+    id   int
+    name str
+    role str
+}
+
+type Boxed {
+    readonly id int
+    mut value int
+}
+
+test "construct and access" {
+    let p = Point { x: 3, y: 4 }
+    assert(p.x == 3)
+    assert(p.y == 4)
+}
+
+test "named type construction" {
+    let u = User { id: 1, name: "alice", role: "admin" }
+    assert(u.id == 1)
+    assert(u.name == "alice")
+    assert(u.role == "admin")
+}
+
+test "field punning shorthand (D52)" {
+    let x = 5
+    let y = 6
+    let p = Point { x, y }
+    assert(p.x == 5)
+    assert(p.y == 6)
+}
+
+test "spread copy (D60)" {
+    let p1 = Point { x: 1, y: 2 }
+    let p2 = { ...p1 }
+    assert(p2.x == 1)
+    assert(p2.y == 2)
+}
+
+test "spread with override (D60)" {
+    let p1 = Point { x: 1, y: 2 }
+    let p2 = { ...p1, y: 10 }
+    assert(p2.x == 1)
+    assert(p2.y == 10)
+}
+
+test "spread with multiple overrides" {
+    let u = User { id: 1, name: "alice", role: "user" }
+    let admin = { ...u, name: "ALICE", role: "admin" }
+    assert(admin.id == 1)
+    assert(admin.name == "ALICE")
+    assert(admin.role == "admin")
+}
+
+test "spread + field punning together" {
+    let role = "user"
+    let u = User { id: 1, name: "bob", role }
+    assert(u.role == "user")
+}
+
+test "readonly + mut fields parse" {
+    let b = Boxed { id: 1, value: 100 }
+    assert(b.id == 1)
+    assert(b.value == 100)
+}

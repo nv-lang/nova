@@ -1,0 +1,119 @@
+// 10_arrays.nv — массивы (D27), spread (D60), методы
+
+module nova_tests.types.arrays
+
+test "array literal and len" {
+    let a = [1, 2, 3]
+    assert(a.len == 3)
+}
+
+test "empty array" {
+    let a []int = []
+    assert(a.len == 0)
+}
+
+test "indexing" {
+    let a = [10, 20, 30]
+    assert(a[0] == 10)
+    assert(a[1] == 20)
+    assert(a[2] == 30)
+}
+
+test "spread concat (D60)" {
+    let a = [1, 2, 3]
+    let b = [4, 5]
+    let c = [...a, ...b]
+    assert(c.len == 5)
+    assert(c[0] == 1)
+    assert(c[4] == 5)
+}
+
+test "spread with literals around" {
+    let mid = [2, 3]
+    let full = [1, ...mid, 4, 5]
+    assert(full.len == 5)
+    assert(full[0] == 1)
+    assert(full[1] == 2)
+    assert(full[3] == 4)
+}
+
+test "multiple spreads" {
+    let a = [1]
+    let b = [2]
+    let c = [3]
+    let combined = [...a, ...b, ...c]
+    assert(combined.len == 3)
+    assert(combined[1] == 2)
+}
+
+test "spread copy is independent" {
+    let a = [1, 2, 3]
+    let b = [...a]
+    assert(b.len == 3)
+    assert(b[0] == 1)
+}
+
+test "push and len" {
+    let a = [1, 2]
+    a.push(3)
+    a.push(4)
+    assert(a.len == 4)
+    assert(a[3] == 4)
+}
+
+test "pop returns Some/None" {
+    let a = [10, 20, 30]
+    let last = a.pop()
+    assert(last == Some(30))
+    assert(a.len == 2)
+}
+
+test "pop empty returns None" {
+    let a []int = []
+    let r = a.pop()
+    assert(r == None)
+}
+
+test "get with valid index" {
+    let a = [10, 20, 30]
+    let v = a.get(1)
+    assert(v == Some(20))
+}
+
+test "get with out-of-range index" {
+    let a = [10]
+    let v = a.get(99)
+    assert(v == None)
+}
+
+test "for-in over array" {
+    let xs = [1, 2, 3, 4, 5]
+    let mut sum = 0
+    for x in xs {
+        sum += x
+    }
+    assert(sum == 15)
+}
+
+test "index assignment" {
+    let a = [1, 2, 3]
+    a[0] = 100
+    a[2] = 300
+    assert(a[0] == 100)
+    assert(a[1] == 2)
+    assert(a[2] == 300)
+}
+
+test "compound index assignment" {
+    let a = [10, 20]
+    a[0] += 5
+    assert(a[0] == 15)
+}
+
+test "tuple of arrays" {
+    let pair = ([1, 2], [3, 4])
+    let left = pair.0
+    let right = pair.1
+    assert(left[0] == 1)
+    assert(right[1] == 4)
+}

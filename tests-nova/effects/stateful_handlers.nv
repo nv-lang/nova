@@ -1,0 +1,165 @@
+// 35_stateful_handlers.nv — D68: stateful handlers через closure capture
+// или через record + @-метод-фабрику.
+//
+// Демонстрирует два паттерна по D68:
+// 1. Closure capture — state живёт в let mut вне with, handler-методы
+//    захватывают state через closure.
+// 2. Record + @method — state живёт в полях record'а, handler-литерал
+//    обращается к state через метод record'а (closure-capture record'а
+//    самого).
+//
+// Полный паттерн D68 «type T { mut x int }; fn T @as_handler() -> Handler[E]»
+// с использованием `s.as_handler()` в `with` — ломается в bootstrap-парсере
+// (см. docs/known-issues-bootstrap.md «with X = factory()»).
+// Для тестов используем альтернативный синтаксис.
+
+module nova_tests.effects.stateful_handlers
+
+type Counter effect {
+    next() -> int
+}
+
+// === Способ 1: Closure capture ===
+
+test "closure capture — state в let mut" {
+    let mut counter = 0
+    with Counter = handler Counter {
+        next() {
+            counter += 1
+            return counter
+        }
+    } {
+        let a = Counter.next()
+        let b = Counter.next()
+        let c = Counter.next()
+        assert(a == 1)
+        assert(b == 2)
+        assert(c == 3)
+    }
+    let v = counter
+    assert(v == 3)
+}
+
+test "closure capture — state переживает несколько with-блоков" {
+    let mut counter = 100
+    with Counter = handler Counter {
+        next() {
+            counter += 10
+            return counter
+        }
+    } {
+        let _ = Counter.next()
+        let _ = Counter.next()
+    }
+    let mid = counter
+    assert(mid == 120)
+
+    with Counter = handler Counter {
+        next() {
+            counter += 1
+            return counter
+        }
+    } {
+        let r = Counter.next()
+        assert(r == 121)
+    }
+    let final_v = counter
+    assert(final_v == 121)
+}
+
+// === Способ 2: Record + @method (упрощённый — handler ссылается через closure) ===
+
+type CounterState { mut value int }
+
+fn CounterState @inc_and_get() -> int {
+    @value += 1
+    @value
+}
+
+test "record + @method — handler ссылается через closure на record" {
+    let s = CounterState { value: 0 }
+    with Counter = handler Counter {
+        next() => s.inc_and_get()
+    } {
+        let a = Counter.next()
+        let b = Counter.next()
+        let c = Counter.next()
+        assert(a == 1)
+        assert(b == 2)
+        assert(c == 3)
+    }
+    let v = s.value
+    assert(v == 3)
+}
+
+test "record state — несколько handler'ов на один state" {
+    let s = CounterState { value: 0 }
+    let h1 = handler Counter {
+        next() => s.inc_and_get()
+    }
+    with Counter = h1 {
+        let _ = Counter.next()
+        let _ = Counter.next()
+    }
+    let after_h1 = s.value
+    assert(after_h1 == 2)
+
+    let h2 = handler Counter {
+        next() => s.inc_and_get()
+    }
+    with Counter = h2 {
+        let r = Counter.next()
+        assert(r == 3)
+    }
+    let after_h2 = s.value
+    assert(after_h2 == 3)
+}
+
+// === Handler-фабрика как свободная функция (caller передаёт state) ===
+
+fn make_counter_starting(start_state CounterState) -> Handler[Counter] => handler Counter {
+    next() => start_state.inc_and_get()
+}
+
+test "handler-фабрика принимает state как параметр" {
+    let s = CounterState { value: 10 }
+    let h = make_counter_starting(s)
+    with Counter = h {
+        let a = Counter.next()
+        let b = Counter.next()
+        assert(a == 11)
+        assert(b == 12)
+    }
+    let v = s.value
+    assert(v == 12)
+}
+
+// === Two effects, общий state ===
+
+type Reset effect {
+    reset() -> ()
+}
+
+test "два эффекта на один state" {
+    let s = CounterState { value: 0 }
+    let h_counter = handler Counter {
+        next() => s.inc_and_get()
+    }
+    let h_reset = handler Reset {
+        reset() {
+            s.value = 0
+            return ()
+        }
+    }
+    with Counter = h_counter, Reset = h_reset {
+        let a = Counter.next()
+        let b = Counter.next()
+        assert(a == 1)
+        assert(b == 2)
+        Reset.reset()
+        let c = Counter.next()
+        assert(c == 1)
+    }
+    let final_v = s.value
+    assert(final_v == 1)
+}

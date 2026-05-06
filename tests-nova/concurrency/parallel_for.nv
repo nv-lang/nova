@@ -1,0 +1,246 @@
+// 41_parallel_for.nv — D14 `parallel for x in iter { body }` fan-out.
+//
+// Desugars to `supervised { for x in iter { spawn { body } } }`.
+// Loop-variable `x` captured BY VALUE (immutable scalar) — each queued
+// fiber sees its own snapshot, not the last iteration's value.
+//
+// CRITICAL: тесты должны ОТЛИЧАТЬ parallel-выполнение от sequential.
+// `parallel for x in [1..5] { sum += x }` даёт 15 в обоих случаях —
+// такой тест не доказывает параллельность. Поэтому здесь используется
+// encoded log: каждая итерация делает несколько шагов с Time.sleep(0)
+// между ними, и порядок записей в log проверяется assert'ом.
+//
+// Println'ы внутри fiber bodies — для визуальной диагностики при ручном
+// запуске бинаря (test runner их не показывает).
+
+module nova_tests.concurrency.parallel_for
+
+// ================================================================
+// SECTION 1: базовое суммирование (НЕ доказывает параллельность —
+// просто проверяет что итерации происходят и значения корректные)
+// ================================================================
+
+test "parallel for: sum of [1..5]" {
+    let mut sum = 0
+    parallel for x in [1, 2, 3, 4, 5] {
+        sum += x
+    }
+    assert(sum == 15)
+}
+
+test "parallel for: empty array, no iterations" {
+    let mut touched = 0
+    let xs = []
+    parallel for _ in xs {
+        touched += 1
+    }
+    assert(touched == 0)
+}
+
+test "parallel for: single element" {
+    let mut got = 0
+    parallel for x in [42] {
+        got = x
+    }
+    assert(got == 42)
+}
+
+// ================================================================
+// SECTION 2: ДОКАЗАТЕЛЬСТВО ПАРАЛЛЕЛЬНОСТИ через encoded log.
+// Каждая итерация пишет несколько digit'ов с yield между ними.
+// Sequential: AAA BBB → log = 111222
+// Parallel:   ABABAB → log = 121212
+// ================================================================
+
+test "parallel for: 2 fibers interleave (proves parallelism)" {
+    // Каждая итерация пишет цифру x три раза, yield'ит после каждой.
+    // FIFO scheduler: spawn(x=1) → spawn(x=2). Оба ждут scope-exit,
+    // потом round-robin:
+    //   A1 yield → B1 yield → A1 yield → B1 yield → ... ?
+    // Не совсем — каждая spawn body одна за другой:
+    //   spawn1(x=1): write 1, yield, write 1, yield, write 1
+    //   spawn2(x=2): write 2, yield, write 2, yield, write 2
+    // Round-robin pass:
+    //   pass 1: spawn1 → 1 (yield), spawn2 → 2 (yield) [log=12]
+    //   pass 2: spawn1 → 1 (yield), spawn2 → 2 (yield) [log=1212]
+    //   pass 3: spawn1 → 1 (done), spawn2 → 2 (done)   [log=121212]
+    let mut log = 0
+    parallel for x in [1, 2] {
+        println("  fiber x=", x, " step 1")
+        log = log * 10 + x
+        Time.sleep(0)
+        println("  fiber x=", x, " step 2")
+        log = log * 10 + x
+        Time.sleep(0)
+        println("  fiber x=", x, " step 3")
+        log = log * 10 + x
+    }
+    println("final log = ", log)
+    // Sequential выполнение дало бы: 111222 (не 121212)
+    assert(log == 121212)
+}
+
+test "parallel for: 3 fibers strict round-robin" {
+    // 3 fibers по 2 шага с yield между.
+    // Sequential: 112233. Parallel round-robin: 123123.
+    let mut log = 0
+    parallel for x in [1, 2, 3] {
+        println("  fiber ", x, " a")
+        log = log * 10 + x
+        Time.sleep(0)
+        println("  fiber ", x, " b")
+        log = log * 10 + x
+    }
+    println("final log = ", log)
+    assert(log == 123123)
+}
+
+test "parallel for: NO yield → sequential within scheduler" {
+    // Без Time.sleep cooperative-only scheduler НЕ переключает fiber
+    // посреди body. Каждый fiber доедает до конца, потом следующий.
+    // Поэтому выглядит как sequential: 1,2,2,3,3,3.
+    let mut log = 0
+    parallel for x in [1, 2, 3] {
+        println("  fiber ", x, " writes")
+        // x раз дублирует x в log без yield
+        let mut i = 0
+        while i < x {
+            log = log * 10 + x
+            i += 1
+        }
+    }
+    println("final log = ", log)
+    // 1: пишет 1 (log=1)
+    // 2: пишет 22 (log=122)
+    // 3: пишет 333 (log=122333)
+    assert(log == 122333)
+}
+
+test "parallel for vs sequential for: same code, different order" {
+    // Тот же body, но через обычный for — порядок sequential.
+    let mut seq_log = 0
+    for x in [1, 2] {
+        seq_log = seq_log * 10 + x
+        // Time.sleep(0) тут no-op (нет scope), не влияет
+        Time.sleep(0)
+        seq_log = seq_log * 10 + x
+        Time.sleep(0)
+        seq_log = seq_log * 10 + x
+    }
+    // Sequential: 111, потом 222 → 111222
+    assert(seq_log == 111222)
+
+    // Parallel: тот же body, тот же массив — другой порядок.
+    let mut par_log = 0
+    parallel for x in [1, 2] {
+        par_log = par_log * 10 + x
+        Time.sleep(0)
+        par_log = par_log * 10 + x
+        Time.sleep(0)
+        par_log = par_log * 10 + x
+    }
+    // Parallel: 121212
+    assert(par_log == 121212)
+
+    // Самое важное — они РАЗНЫЕ:
+    assert(seq_log != par_log)
+}
+
+// ================================================================
+// SECTION 3: range-iterator (доказательство для range, не array)
+// ================================================================
+
+test "parallel for over range 0..3: round-robin" {
+    let mut log = 0
+    parallel for i in 0..3 {
+        println("  fiber i=", i, " a")
+        log = log * 10 + i + 1   // pad to non-zero
+        Time.sleep(0)
+        println("  fiber i=", i, " b")
+        log = log * 10 + i + 1
+    }
+    println("final log = ", log)
+    // i=0,1,2 → digits 1,2,3
+    // Round-robin: A1, B1, C1, A2, B2, C2 → 123123
+    assert(log == 123123)
+}
+
+test "parallel for over inclusive range 1..=3" {
+    let mut log = 0
+    parallel for i in 1..=3 {
+        log = log * 10 + i
+        Time.sleep(0)
+        log = log * 10 + i
+    }
+    // 3 fibers, 2 шага каждый → 123123
+    assert(log == 123123)
+}
+
+// ================================================================
+// SECTION 4: snapshot-семантика (capture-by-value)
+// ================================================================
+
+test "parallel for: each fiber sees its OWN x (snapshot)" {
+    // Если бы x захватывалось by-pointer, все queued fibers видели бы
+    // последний элемент массива (=5). Сумма была бы 5+5+5+5+5 = 25.
+    // С by-value snapshot: 1+2+3+4+5 = 15.
+    let mut sum = 0
+    parallel for x in [1, 2, 3, 4, 5] {
+        sum += x
+    }
+    assert(sum == 15)   // by-pointer дало бы 25 — это ловушка для регрессии
+}
+
+test "parallel for: snapshot survives across yield" {
+    // x каждого fiber'а сохраняется через yield-точку.
+    // Если бы x перезаписывался между итерациями, после yield все увидели бы 3.
+    let mut sum = 0
+    parallel for x in [1, 2, 3] {
+        Time.sleep(0)   // yield ДО чтения x
+        sum += x
+    }
+    assert(sum == 6)   // 1+2+3 = 6, не 3+3+3 = 9
+}
+
+// ================================================================
+// SECTION 5: вложенные структуры
+// ================================================================
+
+test "parallel for inside ordinary for (3 outer × 3 parallel)" {
+    let mut total = 0
+    let mut row = 0
+    while row < 3 {
+        parallel for x in [1, 2, 3] {
+            total += x
+        }
+        row += 1
+    }
+    assert(total == 18)   // 3 проходов × (1+2+3)
+}
+
+test "ordinary for inside parallel for" {
+    let mut count = 0
+    parallel for outer in [10, 20, 30] {
+        let mut inner = 0
+        while inner < 4 {
+            count += 1
+            inner += 1
+        }
+        let _ = outer   // touch capture
+    }
+    assert(count == 12)   // 3 × 4
+}
+
+// ================================================================
+// SECTION 6: capture mutable outer + immutable inner
+// ================================================================
+
+test "parallel for: mut outer by-ptr, inner x by-value" {
+    let mut accum = 0
+    let bonus = 100
+    parallel for x in [1, 2, 3] {
+        accum += x + bonus
+    }
+    // (1+100)+(2+100)+(3+100) = 306
+    assert(accum == 306)
+}

@@ -49,8 +49,12 @@ $inputs | Sort-Object FullName | ForEach-Object {
         $fail++; return
     }
 
-    # Step 2: compile .c -> .exe via MSVC
-    $cl_cmd = "cl.exe /nologo /W0 /I `"d:\Sources\nova-lang\compiler-codegen`" /Fo`"$tmp_dir\\`" /Fe`"$exe_file`" `"$c_file`" `"$rt_dir\alloc.c`" `"$rt_dir\effects.c`" `"$rt_dir\fibers.c`""
+    # Step 2: compile .c -> .exe via MSVC.
+    # Используем per-test obj-каталог, чтобы избежать коллизий имён
+    # (test `effects/effects.c` иначе перезапишет runtime `effects.obj`).
+    $obj_dir = "$tmp_dir\$exe_safe-obj"
+    New-Item -ItemType Directory -Force -Path $obj_dir | Out-Null
+    $cl_cmd = "cl.exe /nologo /W0 /I `"d:\Sources\nova-lang\compiler-codegen`" /Fo`"$obj_dir\\`" /Fe`"$exe_file`" `"$c_file`" `"$rt_dir\alloc.c`" `"$rt_dir\effects.c`" `"$rt_dir\fibers.c`""
     $cl_out = cmd /c "`"$vcvars`" && $cl_cmd" 2>&1
     if ($LASTEXITCODE -ne 0) {
         $errs = ($cl_out | Where-Object { $_ -match "error" } | Select-Object -First 3) -join " | "

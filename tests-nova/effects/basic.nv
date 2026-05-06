@@ -1,0 +1,176 @@
+// 13_effects.nv — эффекты (D61): effect/handler keywords, Handler[E],
+// финальное выражение / `return v` в handler-method'е, `interrupt v`
+// для досрочного завершения with-блока.
+//
+// `resume` НЕ существует в спеке D61. Handler-method ведёт себя как
+// обычная функция: финальное выражение или `return v` становится
+// результатом операции в caller'е.
+
+module nova_tests.effects.basic
+
+type Counter effect {
+    next() -> int
+}
+
+type KeyValue effect {
+    get() -> int
+    set(n int) -> ()
+}
+
+type Echo effect {
+    say(msg str) -> str
+}
+
+type Switch effect {
+    flip() -> bool
+}
+
+fn three_times() Counter -> int {
+    let a = Counter.next()
+    let b = Counter.next()
+    let c = Counter.next()
+    a + b + c
+}
+
+test "single-op handler with state" {
+    let mut s = 0
+    with Counter = handler Counter {
+        next() {
+            s += 1
+            return s
+        }
+    } {
+        let total = three_times()
+        assert(total == 1 + 2 + 3)
+    }
+}
+
+test "two-op handler" {
+    let mut store = 0
+    with KeyValue = handler KeyValue {
+        get()  => store
+        set(n) {
+            store = n
+            return ()
+        }
+    } {
+        KeyValue.set(42)
+        assert(KeyValue.get() == 42)
+        KeyValue.set(100)
+        assert(KeyValue.get() == 100)
+    }
+}
+
+test "handler transforms value through return" {
+    with Echo = handler Echo {
+        say(msg) => msg + "!"
+    } {
+        let r = Echo.say("hi")
+        assert(r == "hi!")
+    }
+}
+
+test "handler with multiple operations on same effect" {
+    let mut log = []
+    with Echo = handler Echo {
+        say(msg) {
+            log.push(msg)
+            return msg
+        }
+    } {
+        Echo.say("first")
+        Echo.say("second")
+        Echo.say("third")
+    }
+    assert(log.len == 3)
+    assert(log[0] == "first")
+    assert(log[2] == "third")
+}
+
+test "nested with: inner handler shadows outer" {
+    let mut outer_calls = 0
+    let mut inner_calls = 0
+    with Counter = handler Counter {
+        next() {
+            outer_calls += 1
+            return 1
+        }
+    } {
+        with Counter = handler Counter {
+            next() {
+                inner_calls += 1
+                return 99
+            }
+        } {
+            let v = Counter.next()
+            assert(v == 99)
+        }
+        let v2 = Counter.next()
+        assert(v2 == 1)
+    }
+    assert(outer_calls == 1)
+    assert(inner_calls == 1)
+}
+
+test "handler-method short-form (=> expr)" {
+    with Echo = handler Echo {
+        say(msg) => msg + "?"
+    } {
+        assert(Echo.say("ok") == "ok?")
+    }
+}
+
+test "handler-method block-form с финальным выражением" {
+    with Echo = handler Echo {
+        say(msg) {
+            let upper = msg.to_upper()
+            upper
+        }
+    } {
+        assert(Echo.say("hi") == "HI")
+    }
+}
+
+test "D61: interrupt прерывает весь with-блок" {
+    let result = with Switch = handler Switch {
+        flip() {
+            interrupt 42
+        }
+    } {
+        // Эта строка не выполнится — handler сделал interrupt
+        let _ = Switch.flip()
+        0
+    }
+    assert(result == 42)
+}
+
+test "D61: handler-значение через переменную" {
+    let h = handler Switch {
+        flip() => false
+    }
+    with Switch = h {
+        let b = Switch.flip()
+        assert(b == false)
+    }
+}
+
+test "D61: прямой вызов h.op(args) на handler-значении" {
+    // Минует with-стек — handler-method исполняется на h напрямую.
+    let h = handler Switch {
+        flip() => true
+    }
+    let b = h.flip()
+    assert(b == true)
+}
+
+test "D61: interrupt в прямом h.op() возвращается как результат вызова" {
+    let h = handler Switch {
+        flip() {
+            interrupt false
+        }
+    }
+    // Нет активного with — interrupt становится результатом самого
+    // h.flip(), а не падает наверх.
+    let b = h.flip()
+    assert(b == false)
+}

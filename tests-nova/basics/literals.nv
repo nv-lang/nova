@@ -1,0 +1,70 @@
+// 01_literals.nv — числовые/строковые/булевые литералы (D44)
+
+module nova_tests.basics.literals
+
+test "int decimal" {
+    assert(42 == 42)
+    assert(0 == 0)
+    assert(-7 == 0 - 7)
+}
+
+test "int with underscores" {
+    assert(1_000 == 1000)
+    assert(1_000_000 == 1000000)
+}
+
+test "int hex" {
+    assert(0xFF == 255)
+    assert(0x10 == 16)
+}
+
+test "int binary" {
+    assert(0b1010 == 10)
+    assert(0b11111111 == 255)
+}
+
+test "int octal" {
+    assert(0o755 == 493)
+    assert(0o10 == 8)
+}
+
+test "float basic" {
+    assert(3.14 > 3.0)
+    assert(3.14 < 3.2)
+    assert(0.5 + 0.5 == 1.0)
+}
+
+test "float exponent" {
+    assert(1e3 == 1000.0)
+    assert(1.5e2 == 150.0)
+    assert(2e-1 < 0.21)
+    assert(2e-1 > 0.19)
+}
+
+test "string literal" {
+    let s = "hello"
+    assert(s == "hello")
+    assert(s.len == 5)
+}
+
+test "string escapes" {
+    let nl = "a\nb"
+    assert(nl.len == 3)
+    let tab = "x\ty"
+    assert(tab.len == 3)
+    let q = "he said \"hi\""
+    assert(q.contains("\""))
+    let bs = "back\\slash"
+    assert(bs.contains("\\"))
+}
+
+test "bool literals" {
+    assert(true)
+    assert(!false)
+    assert(true != false)
+}
+
+test "unit literal" {
+    let u = ()
+    assert(u == ())
+}

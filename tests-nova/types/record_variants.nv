@@ -1,0 +1,74 @@
+// 20_record_variants.nv — D52 record-payload в sum-вариантах.
+//
+// В 07_sum_types.nv покрыты unit и tuple варианты. Здесь — варианты
+// с именованными полями: `Success { code int, body str }`.
+
+module nova_tests.types.record_variants
+
+type Response
+    | Success { code int, body str }
+    | Redirect { url str }
+    | Failure { error str }
+
+fn describe(r Response) -> str => match r {
+    Success { code: 200, body }  => body
+    Success { code, body }        => "non-200"
+    Redirect { url }              => url
+    Failure { error }             => error
+}
+
+fn status_code(r Response) -> int => match r {
+    Success { code, body } => code
+    Redirect { url }       => 302
+    Failure { error }      => 500
+}
+
+test "construct и match по record-варианту" {
+    let r = Success { code: 200, body: "ok" }
+    assert(describe(r) == "ok")
+    assert(status_code(r) == 200)
+}
+
+test "literal-pattern на поле variant'а" {
+    let r = Success { code: 404, body: "not found" }
+    assert(describe(r) == "non-200")
+    assert(status_code(r) == 404)
+}
+
+test "альтернативный record-вариант" {
+    let r = Failure { error: "boom" }
+    assert(describe(r) == "boom")
+    assert(status_code(r) == 500)
+}
+
+test "redirect вариант" {
+    let r = Redirect { url: "/login" }
+    assert(describe(r) == "/login")
+    assert(status_code(r) == 302)
+}
+
+type Event
+    | Click { x int, y int }
+    | KeyPress(str)
+    | Tick
+
+fn event_summary(e Event) -> str => match e {
+    Click { x, y }  => "click"
+    KeyPress(k)     => k
+    Tick            => "tick"
+}
+
+test "смешанные unit/tuple/record варианты" {
+    assert(event_summary(Click { x: 10, y: 20 }) == "click")
+    assert(event_summary(KeyPress("Enter")) == "Enter")
+    assert(event_summary(Tick) == "tick")
+}
+
+test "доступ к полям record-варианта после match" {
+    let e = Click { x: 7, y: 13 }
+    let sum = match e {
+        Click { x, y } => x + y
+        _              => 0
+    }
+    assert(sum == 20)
+}

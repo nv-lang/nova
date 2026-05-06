@@ -1,0 +1,135 @@
+// 56_char_literals.nv — Q-char-literals: 'a' / '\n' / '\u{...}' literals.
+//
+// `char` в Nova — Unicode codepoint (4 байта значение, как Rust char,
+// Go rune). В bootstrap `char` представлен как nova_int. Литералы:
+//   'a'        — ASCII byte
+//   '\n'/'\t'/'\r'/'\\'/'\''/'"'/'\0'   — escape sequences
+//   '\u{HEX}'  — Unicode codepoint by hex (1-6 hex digits)
+//   'é'        — non-ASCII through UTF-8 source
+//
+// Сравнение `c == 'A'` работает (оба int). Match-pattern `match c { 'a' => ... }` тоже.
+
+module nova_tests.types.char_literals
+
+// ================================================================
+// SECTION 1: ASCII literals
+// ================================================================
+
+test "ASCII char 'A' = 65" {
+    let c = 'A'
+    assert(c == 65)
+}
+
+test "ASCII char 'a' = 97" {
+    let c = 'a'
+    assert(c == 97)
+}
+
+test "ASCII char '0' = 48" {
+    let c = '0'
+    assert(c == 48)
+}
+
+// ================================================================
+// SECTION 2: escape sequences
+// ================================================================
+
+test "escape '\\n' = 10" {
+    let c = '\n'
+    assert(c == 10)
+}
+
+test "escape '\\t' = 9" {
+    let c = '\t'
+    assert(c == 9)
+}
+
+test "escape '\\\\' (backslash) = 92" {
+    let c = '\\'
+    assert(c == 92)
+}
+
+test "escape '\\'' (single quote) = 39" {
+    let c = '\''
+    assert(c == 39)
+}
+
+test "escape '\\0' (nul) = 0" {
+    let c = '\0'
+    assert(c == 0)
+}
+
+// ================================================================
+// SECTION 3: Unicode escape \u{...}
+// ================================================================
+
+test "Unicode \\u{41} = 65 ('A')" {
+    let c = '\u{41}'
+    assert(c == 65)
+}
+
+test "Unicode \\u{410} = 1040 (Cyrillic 'А')" {
+    let c = '\u{410}'
+    assert(c == 1040)
+}
+
+test "Unicode \\u{1F600} = 128512 (😀)" {
+    let c = '\u{1F600}'
+    assert(c == 128512)
+}
+
+// ================================================================
+// SECTION 4: char in match patterns
+// ================================================================
+
+fn classify(c int) -> int {
+    match c {
+        '0' => 0
+        '1' => 1
+        '+' => 100
+        '-' => 200
+        _ => -1
+    }
+}
+
+test "match с char literal patterns" {
+    assert(classify(48) == 0)       // '0'
+    assert(classify(49) == 1)       // '1'
+    assert(classify(43) == 100)     // '+'
+    assert(classify(45) == 200)     // '-'
+    assert(classify(99) == -1)
+}
+
+// ================================================================
+// SECTION 5: char as Buffer.add_char arg
+// ================================================================
+
+test "Buffer.add_char with char literals" {
+    let mut buf = Buffer.new()
+    buf.add_char('h')
+    buf.add_char('i')
+    let s = buf.try_into()
+    assert(s == "hi")
+}
+
+test "Buffer.add_char with Unicode codepoint" {
+    let mut buf = Buffer.new()
+    buf.add_char('\u{410}')        // Cyrillic 'А' — 2 bytes UTF-8
+    assert(buf.len() == 2)
+}
+
+// ================================================================
+// SECTION 6: comparison patterns
+// ================================================================
+
+fn is_digit(c int) -> bool {
+    c >= '0' && c <= '9'
+}
+
+test "digit range check using char literals" {
+    assert(is_digit(48))            // '0'
+    assert(is_digit(53))            // '5'
+    assert(is_digit(57))            // '9'
+    assert(!is_digit(47))           // '/' just below '0'
+    assert(!is_digit(58))           // ':' just above '9'
+}

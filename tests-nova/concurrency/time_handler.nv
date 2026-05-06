@@ -1,0 +1,143 @@
+// 46_time_handler.nv — Time как обычный effect, override через with-handler.
+//
+// Spec D11/D14/D62: Time — stdlib-эффект, операции now()/sleep(d).
+// По D62 Async ambient — callable откуда угодно с default handler'ом.
+// User override: `with Time = handler Time { sleep(ms) {...} now() {...} } { body }`.
+//
+// Default handler в bootstrap'е (D71+):
+//   sleep(ms) — context-sensitive (fiber → yield-loop until ms elapsed;
+//     supervised body на main → drain queue per pass; top-level → native
+//     OS sleep). ms учитывается через monotonic wall-clock.
+//   now() — monotonic ms через GetTickCount64/clock_gettime(MONOTONIC).
+
+module nova_tests.concurrency.time_handler
+
+// ================================================================
+// SECTION 1: with Time handler overrides default
+// ================================================================
+
+test "with Time: handler.sleep called instead of default" {
+    let mut sleep_calls = 0
+    let mut last_ms = -1
+    with Time = handler Time {
+        sleep(ms) {
+            sleep_calls += 1
+            last_ms = ms
+            return ()
+        }
+        now() {
+            return 0
+        }
+    } {
+        Time.sleep(100)
+        Time.sleep(250)
+        Time.sleep(0)
+    }
+    assert(sleep_calls == 3)
+    assert(last_ms == 0)
+}
+
+test "with Time: handler.now() returns custom clock value" {
+    let mut got1 = -1
+    let mut got2 = -1
+    with Time = handler Time {
+        sleep(_ms) {
+            return ()
+        }
+        now() {
+            return 42
+        }
+    } {
+        got1 = Time.now()
+        got2 = Time.now()
+    }
+    assert(got1 == 42)
+    assert(got2 == 42)
+}
+
+test "with Time: stateful clock that ticks on each call" {
+    let mut clock = 0
+    with Time = handler Time {
+        sleep(ms) {
+            clock = clock + ms
+            return ()
+        }
+        now() {
+            return clock
+        }
+    } {
+        let t0 = Time.now()
+        Time.sleep(10)
+        let t1 = Time.now()
+        Time.sleep(5)
+        let t2 = Time.now()
+        assert(t0 == 0)
+        assert(t1 == 10)
+        assert(t2 == 15)
+    }
+}
+
+// ================================================================
+// SECTION 2: handler-override НЕ влияет на сторонние fiber'ы
+// ================================================================
+
+test "with Time: handler installed on main, supervised inside still works" {
+    // when handler installed on main, и в body запускается supervised —
+    // fibers увидят установленный handler. Time.sleep внутри fiber'а
+    // вызовет handler.sleep, не default yield. Это значит fibers НЕ
+    // переключаются (handler — обычный return).
+    //
+    // Это означает что user override Time.sleep ЛОМАЕТ cooperative
+    // scheduling в supervised. Документируется как ожидаемое поведение:
+    // если хочешь и yield, и handler — handler должен сам вызвать
+    // nova_fiber_yield (через какую-то Nova-API; в bootstrap нет).
+    let mut sleep_count = 0
+    let mut log = 0
+    with Time = handler Time {
+        sleep(_ms) {
+            sleep_count += 1
+            return ()
+        }
+        now() { return 0 }
+    } {
+        supervised {
+            spawn {
+                log = log * 10 + 1
+                Time.sleep(0)            // → handler (NOT yield)
+                log = log * 10 + 2
+            }
+            spawn {
+                log = log * 10 + 3
+                Time.sleep(0)            // → handler (NOT yield)
+                log = log * 10 + 4
+            }
+        }
+    }
+    // Без yield в Time.sleep: spawn0 завершится first (1, 2), потом spawn1 (3, 4)
+    // → 1234 (sequential), не 1324 (interleaved).
+    println("log = ", log, " sleep_count = ", sleep_count)
+    assert(log == 1234)
+    assert(sleep_count == 2)
+}
+
+// ================================================================
+// SECTION 3: default Time.sleep работает откуда угодно (D62 ambient)
+// ================================================================
+
+test "Time.sleep on top level (no with) — small delays don't crash" {
+    Time.sleep(0)        // single-yield path (no scheduler → no-op)
+    Time.sleep(1)        // native 1ms sleep
+    Time.sleep(2)
+    assert(true)
+}
+
+test "Time.now() on top level — monotonic non-decreasing" {
+    // Sleep long enough to span GetTickCount64's 16ms granularity on Win.
+    // GetTickCount64 ticks ≈ every 15.625ms (system timer resolution).
+    // Even after sleep(50), occasionally t2 lands in the same bucket as t1,
+    // so we only assert monotonicity (>=), not exact delay.
+    let t1 = Time.now()
+    Time.sleep(50)
+    let t2 = Time.now()
+    assert(t2 >= t1)            // monotonic (clock never goes backwards)
+}

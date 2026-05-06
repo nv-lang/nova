@@ -1,0 +1,77 @@
+// 04_control_flow.nv — if/else/while/loop/break/continue/return
+
+module nova_tests.basics.control_flow
+
+fn classify(n int) -> str {
+    if n < 0 { return "negative" }
+    if n == 0 { return "zero" }
+    "positive"
+}
+
+test "if-else as expression" {
+    let r = if 5 > 3 { "yes" } else { "no" }
+    assert(r == "yes")
+}
+
+test "if-else if chain" {
+    let n = 0
+    let r = if n > 0 { "pos" } else if n < 0 { "neg" } else { "zero" }
+    assert(r == "zero")
+}
+
+test "early return" {
+    assert(classify(-5) == "negative")
+    assert(classify(0) == "zero")
+    assert(classify(7) == "positive")
+}
+
+test "while loop counts" {
+    let mut n = 1
+    let mut count = 0
+    while n < 100 {
+        n *= 2
+        count += 1
+    }
+    assert(count == 7)
+}
+
+test "loop with break" {
+    let mut i = 0
+    let mut sum = 0
+    loop {
+        if i >= 5 { break }
+        sum += i
+        i += 1
+    }
+    assert(sum == 10)
+}
+
+test "loop with continue" {
+    let mut i = 0
+    let mut even_sum = 0
+    while i < 10 {
+        i += 1
+        if i % 2 != 0 { continue }
+        even_sum += i
+    }
+    assert(even_sum == 2 + 4 + 6 + 8 + 10)
+}
+
+test "nested if" {
+    let x = 5
+    let r = if x > 0 {
+        if x > 10 { "big positive" } else { "small positive" }
+    } else {
+        "non-positive"
+    }
+    assert(r == "small positive")
+}
+
+test "block expression value" {
+    let v = {
+        let a = 10
+        let b = 20
+        a + b
+    }
+    assert(v == 30)
+}
