@@ -1012,36 +1012,85 @@ fn map_eff[T, U, E](xs []T, f (T) E -> U) E -> []U =>
 Подробно — [D16](decisions/03-syntax.md#d16).
 Массивы — `[]T` (динамический), `[N]T` (фиксированный), [D27](decisions/03-syntax.md#d27).
 
-## spawn
+## spawn / supervised / parallel for / detach
 
-`spawn` — keyword-конструкция (не функция). Запускает выражение в отдельном
-fiber'е и возвращает его результат. Разрешён только внутри structured-scope
-(`supervised`, `parallel for`, `race`, `cancel_scope`, `with_timeout`).
+См. [D14](decisions/06-concurrency.md#d14), [D50](decisions/06-concurrency.md#d50),
+[D71](decisions/06-concurrency.md#d71).
 
-```nova
-// spawn + вызов функции
-spawn fetch_users()
+### `spawn expr`
 
-// spawn + блок
-let r = spawn { compute() }
+`spawn` — keyword-конструкция (не функция). По спеке D50 — разрешён только внутри
+structured-scope (`supervised`, `parallel for`, `race`, `cancel_scope`,
+`with_timeout`); вне scope — compile error. В bootstrap-реализации `spawn` вне
+scope временно разрешён в eager-blocking семантике (D71 legacy).
 
-// spawn + блок с захватом переменной
-let x = 42
-let r2 = spawn { x * 2 }
-```
-
-`spawn() { body }` — **запрещено** (пустые скобки без смысла; `spawn` не функция).
-
-## Supervision (Erlang-style, встроена)
+Внутри scope `spawn` кладёт fiber в очередь и возвращает unit; результат
+работы — через захваченные `mut`-переменные или каналы. `spawn() { body }`
+с пустыми скобками **запрещён** (нет смысла; `spawn` — не функция).
 
 ```nova
-fn server() Net Fail -> () =>
-    supervised {
-        spawn handle_requests()
-        spawn periodic_cleanup()
-        spawn metrics_reporters()
-    } strategy = one_for_one, max_restarts = 3
+supervised {
+    spawn fetch_users()           // spawn + вызов функции
+    spawn { compute(x) }          // spawn + inline-блок
+}
 ```
+
+### `supervised { body }`
+
+Structured-concurrency scope. Все `spawn` внутри ждут scope-exit перед запуском;
+scheduler крутит resume по очереди (round-robin) пока все не завершатся. См.
+D71 для bootstrap-семантики.
+
+```nova
+supervised {
+    spawn handle_requests()
+    spawn periodic_cleanup()
+}                                  // ← ждёт пока обе fiber'ы не завершатся
+```
+
+`Time.sleep(0)` внутри `supervised` body (на main-уровне) даёт main-flow yield
+к queued fibers'ам — один full pass scheduler'а очереди.
+
+### `parallel for x in iter { body }`
+
+Fan-out: для каждого элемента `iter` запускается fiber с `body`. Десугарится в
+`supervised { for x in iter { spawn { body } } }`. Loop-переменная захватывается
+**по value** (snapshot на момент spawn'а).
+
+```nova
+fn fetch_all(urls []str) Net Fail -> []Response =>
+    parallel for url in urls {
+        fetch(url)
+    }
+```
+
+### `detach { body }`
+
+Fire-and-forget: тело живёт после возврата вызывающей функции, привязано к
+глобальному supervisor'у. Требует эффекта `Detach` в сигнатуре (D50). В bootstrap-
+default'е — `SyncDetach` исполняет тело inline.
+
+```nova
+fn handle_request(req Request) Net Db Detach -> Response {
+    let resp = process(req)
+    detach { write_audit(req, resp) }
+    resp
+}
+```
+
+### `Time.sleep(ms)`
+
+Yield-point. По D62 — обычная функция, callable откуда угодно (Async ambient).
+В bootstrap'е (D71) — context-sensitive:
+
+| Контекст | Эффект |
+|---|---|
+| Внутри fiber-body (spawn) | suspend — scheduler крутит других |
+| Вне fiber, внутри `supervised` body | один pass очереди (main-yield) |
+| Полностью вне scope | no-op |
+
+В bootstrap'е `ms` игнорируется (timer-wheel'а нет). Любое `Time.sleep(N)` =
+один cooperative yield.
 
 ## Тестирование без моков
 

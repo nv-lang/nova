@@ -9,6 +9,7 @@ structured-concurrency примитивы есть в языке, и как па
 |---|---|
 | [D14](#d14-fiber-runtime--невидимая-инфраструктура) | Fiber runtime — невидимая инфраструктура |
 | [D50](#d50-concurrency-model-spawn-detach-blocking) | Concurrency model: `spawn`, `detach`, `Blocking` |
+| [D71](#d71-bootstrap-concurrency-runtime) | Bootstrap concurrency runtime: cooperative scheduler, `Time.sleep` yield-point, capture-by-value |
 
 ---
 
@@ -21,6 +22,11 @@ structured-concurrency примитивы есть в языке, и как па
 > [`realtime`](04-effects.md#d64) как inverse-маркер, а не отсутствием
 > `Async` в сигнатуре. Структурный параллелизм через [D50](#d50)
 > (`spawn`, `parallel`, `race`, `cancel_scope`).
+>
+> 📋 **CONCRETIZED IN [D71](#d71-bootstrap-concurrency-runtime).**
+> Bootstrap-runtime: round-robin scheduler `nova_supervised_run`,
+> `nova_fiber_yield` для cooperative suspension. Без preemption,
+> single-threaded. Production-runtime — расширение D71.
 
 ### Что
 **Fiber runtime** обеспечивает приостановку без видимого `await`/
@@ -211,6 +217,14 @@ inverse-маркером.
 > остаются эффектами — у них есть видимый side-effect для caller'а
 > (fire-and-forget семантика и блокировка ОС-потока соответственно),
 > что делает их кандидатами на type-level декларацию.
+>
+> 📋 **PARTIALLY IMPLEMENTED IN [D71](#d71-bootstrap-concurrency-runtime).**
+> Bootstrap'ом реализованы: `supervised`, `parallel for`, `detach`
+> (default SyncDetach handler — sync inline), `Time.sleep` как
+> yield-point. Capture-by-value для immutable scalars. Не реализованы:
+> `race`, `select`, `cancel_scope`, `with_timeout`, `blocking`, реальный
+> async-detach (OS-thread + global supervisor), эффект `Detach` в
+> effect-system, cancellation/error-propagation между fibers.
 
 ### Что
 
@@ -446,3 +460,275 @@ D50 **active**. До его принятия D14 оставлял несколь
 (Q12.1 spawn-семантика, Q12.2 Async vs Par, Q12.6 C interop) —
 закрыты этим решением. Q12 в [open-questions](../open-questions.md)
 сжимается до stdlib-API (переходит в Q9).
+
+---
+
+## D71. Bootstrap concurrency runtime
+
+> **Status:** active. Конкретизирует [D14](#d14-fiber-runtime--невидимая-инфраструктура)
+> и [D50](#d50-concurrency-model-spawn-detach-blocking) для bootstrap-компилятора:
+> минимальная реализация `supervised`, `detach`, `parallel for`, `Time.sleep` —
+> достаточно для тестов с реальным переключением корутин и pre-production-кода.
+> Production-runtime будет надстройкой (preemption, timer-wheel, multi-thread,
+> cancellation, error-propagation).
+
+### Что
+
+D71 фиксирует **минимальную, но spec-faithful** реализацию concurrency-примитивов
+из D14/D50 в bootstrap-runtime'е:
+
+1. **`supervised { body }` — round-robin scheduler над локальной очередью fiber'ов.**
+2. **`spawn` имеет две семантики**, выбираемые контекстом:
+   - **Внутри `supervised`** — кладётся в очередь scope'а, запускается scheduler'ом
+     при выходе из scope.
+   - **Вне `supervised`** — eager-blocking (запускается до завершения немедленно).
+     Это **не** spec-compliant поведение D50 (по спеке должно быть compile error),
+     но сохранено для bootstrap-совместимости. См. «Что упрощено».
+3. **`detach { body }` — fire-and-forget.** Default-handler `SyncDetach` исполняет
+   body inline (как обычный block). Эффект `Detach` в сигнатуре пока не требуется
+   компилятором.
+4. **`parallel for x in iter { body }` — D14 fan-out.** Десугарится в
+   `supervised { for x in iter { spawn { body } } }`.
+5. **`Time.sleep(ms)` — yield-point** с context-sensitive диспатчизацией.
+6. **Capture-by-value для immutable scalars.** Без этого parallel for и любой
+   spawn-в-цикле дают неправильную семантику (все queued fibers видят последнее
+   значение loop-переменной).
+7. **Heap-allocated ctx-struct в supervised.** Без этого N spawn'ов в одной
+   итерации цикла разделяют один stack-slot.
+
+### Правило
+
+#### 1. `supervised { body }` — round-robin scope
+
+```nova
+supervised {
+    spawn fiber_a()       // в очередь, не запускается
+    spawn fiber_b()       // в очередь
+    do_main_work()        // исполняется eager в текущем потоке
+    spawn fiber_c()       // в очередь
+}                         // ← scheduler крутит resume A, B, C по кругу
+                          //   пока все не MCO_DEAD
+```
+
+Семантика:
+
+- **Очередь scope'а** — локальная `NovaFiberQueue` с фиксированной capacity (64 в
+  bootstrap). Превышение → runtime panic.
+- **`spawn` в scope** — создаёт coroutine через `mco_create`, кладёт в очередь,
+  **не делает resume**. Возвращает unit.
+- **Scope-exit** — `nova_supervised_run` крутит цикл `do { step } while alive`,
+  где `step` — один full pass очереди (resume каждый живой fiber один раз).
+- **Тело `supervised`** исполняется eager в потоке вызвающего, **до** scheduler-runa.
+  Yield-point на main-уровне (см. п. 5) даёт main-flow возможность переключиться
+  с queued fiber'ами.
+- **Captures** в spawn-body живут на стеке (по pointer) или копируются в ctx-struct
+  (по value) — см. п. 6.
+
+#### 2. `spawn` — две семантики по контексту
+
+```nova
+// (a) Внутри supervised — отложенный запуск
+supervised {
+    spawn { compute_a() }     // запустится при scope-exit (или раньше при yield)
+    spawn { compute_b() }
+}
+
+// (b) Вне supervised — eager (legacy bootstrap-семантика)
+let r = spawn { compute_x() }    // запускается СРАЗУ до завершения,
+                                  // r получает результат
+```
+
+В bootstrap'е разрешены оба варианта. По спеке D50 (b) должен быть compile error.
+Закрытие этого расхождения — после миграции существующих тестов на `supervised`.
+
+#### 3. `detach { body }` — fire-and-forget с default handler
+
+```nova
+fn handle_request(req Request) Net Db Detach -> Response {
+    let resp = process(req)
+    detach { write_audit(req, resp) }
+    resp
+}
+```
+
+Default-handler `SyncDetach`: тело исполняется **inline** в потоке caller'а —
+никакого fiber'а, никакого scheduler'а. Семантически валидно для тестов
+(spec D50 явно описывает `with Detach = SyncDetach { ... }` как тестовый default,
+bootstrap-default = это).
+
+В bootstrap'е:
+- Эффект `Detach` **не объявлен** в effect-system. Compile-time проверка
+  требования эффекта в сигнатуре не выполняется.
+- Глобальный supervisor (для реального async-execution на отдельном OS-thread'е)
+  — отложен до production-runtime.
+- Panic-containment (`LogAndDrop`) — отложен.
+
+#### 4. `parallel for x in iter { body }` — fan-out
+
+```nova
+fn fetch_all(urls []str) Net Fail -> []Response =>
+    parallel for url in urls {
+        fetch(url)
+    }
+```
+
+Семантически идентично `supervised { for x in iter { spawn { body } } }`.
+Codegen строит этот AST синтетически и эмитит через общий путь.
+
+Loop-переменная — **immutable scalar** (для range — всегда `int`; для array —
+тип элемента). Captures её **по value** (см. п. 6), что обеспечивает корректный
+snapshot в каждой итерации.
+
+#### 5. `Time.sleep(ms)` — context-sensitive yield-point
+
+```nova
+fn anywhere() {
+    Time.sleep(0)         // вне scope: no-op
+}
+
+supervised {
+    spawn { ... }
+    Time.sleep(0)         // в scope-body: один pass очереди
+                          // (main-flow yield'ает queued fibers'ам)
+    spawn {
+        Time.sleep(0)     // в fiber: nova_fiber_yield()
+                          // — corutine суспендится, scheduler крутит других
+    }
+}
+```
+
+В bootstrap'е **`ms` игнорируется** — нет timer-wheel'а. `sleep(0)` и `sleep(100)`
+неотличимы. Любое значение даёт **один cooperative yield**:
+
+| Контекст вызова | Поведение |
+|---|---|
+| Внутри fiber-body (spawn) | `nova_fiber_yield()` — coroutine suspended, scheduler resumes others |
+| Вне fiber, внутри `supervised` body | `nova_supervised_step(&queue)` — main-flow прокручивает queue один раз |
+| Полностью вне любого scope | no-op (нет scheduler'а) |
+
+Это **spec-faithful по D62** (Async — ambient): `Time.sleep` — обычная функция
+без эффект-окраски, callable откуда угодно. Поведение зависит от ambient
+runtime-окружения в точке вызова.
+
+В production-runtime'е добавится timer-wheel: `sleep(N>0)` поставит fiber в
+sleep-list с deadline, scheduler пропускает sleeping fibers до момента их
+пробуждения.
+
+#### 6. Capture-by-value для immutable scalars
+
+При запуске spawn внутри `supervised`, его захваты переменных делятся на:
+
+- **By value** — переменная объявлена как `let` (не `let mut`) И тип scalar
+  (`int`, `bool`, `f64`, `f32`, `byte`). Значение **копируется** в ctx-struct
+  как `T name` — fiber видит snapshot на момент spawn'а.
+- **By pointer** — переменная mutable (`let mut`) или non-scalar (record, array,
+  string). В ctx-struct хранится `T* name`, fiber разделяет состояние с
+  caller'ом и другими fiber'ами.
+
+**Зачем это:** очередь supervised держит fiber'ы до scope-exit. Если бы все
+captures были by-pointer, loop-переменные (после for'а указывающие на последний
+элемент) видели бы все queued fibers как «последний элемент» — `parallel for x in
+[1,2,3] { sum += x }` дал бы 9, не 6. By-value snapshot этого избегает.
+
+**Mutable shared state работает как ожидается:** `let mut acc = 0; spawn { acc +=
+x }` — `acc` остаётся by-pointer (mutable), все fiber'ы пишут в одну ячейку.
+
+#### 7. Heap-allocated ctx-struct в supervised
+
+ctx-struct для spawn внутри supervised аллоцируется через `nova_alloc` (не на
+стеке). Без этого N итераций цикла перезаписали бы один stack-slot, и все
+queued fibers видели бы только последнее значение captures. Stack-allocation
+сохраняется для eager-blocking spawn вне scope.
+
+### Почему
+
+1. **Минимальный delta vs full D50.** D14/D50 определяют большой набор
+   примитивов (`spawn`/`detach`/`parallel for`/`race`/`select`/`cancel_scope`/
+   `with_timeout`/`blocking`). Без preemption и scheduler-thread'а реализуемы
+   только cooperative-варианты — они и реализованы. Остальное — production.
+
+2. **Spec-faithful по D62.** Async ambient → `Time.sleep` callable откуда угодно
+   и не требует эффекта в сигнатуре. Context-sensitive диспатчизация в bootstrap
+   — естественное следствие: где scheduler есть — yield, где нет — no-op.
+
+3. **Capture-by-value для immutable closes a real correctness hole.** Без этого
+   `parallel for` + любой spawn-в-цикле дают неправильную семантику. Это **не**
+   опциональная оптимизация, а необходимость для базовой корректности.
+
+4. **Heap-ctx — единственный способ дать каждой итерации независимый snapshot**
+   при отложенном запуске. Альтернативы (stack-allocated array of ctx) сложнее
+   и не лучше по производительности (всё равно нужно держать N структур до
+   scope-exit).
+
+5. **Eager-blocking `spawn` вне scope — bootstrap legacy.** Существующие тесты
+   `38_deep_spawn.nv` (top section) рассчитывают на эту семантику. Перевод на
+   strict-spec (compile error без supervised) требует одновременной миграции
+   всех тестов — отдельная задача.
+
+### Что отвергнуто
+
+- **`spawn` всегда eager-blocking** (включая внутри supervised). Это убирает
+  весь смысл `supervised` — нет очереди, нет round-robin, нет interleave.
+  Отвергнуто.
+- **`spawn` всегда deferred-into-queue** (включая вне scope). Ломает 28 legacy-
+  тестов. Отвергнуто до миграции.
+- **Implicit fiber-wrap для тела `supervised`.** Альтернатива main-yield: само
+  тело scope'а становится первым fiber'ом в очереди. Семантически корректнее
+  (главный flow тоже full participant), но требует переноса всех локальных
+  переменных body в ctx-struct, что усложняет capture-семантику для других
+  spawn'ов в том же scope. Отвергнуто в пользу простого
+  `nova_supervised_step` для main-yield.
+- **`#define cap (*_c->cap)` macro для capture access.** Использовалось до
+  2026-05-06. Ломалось при nested supervised/spawn: имя `cap` рекурсивно
+  расширялось в struct field-declarators (`nova_int* order;` → garbage).
+  Заменено на inline rewrite в `ExprKind::Ident`.
+- **Stack-allocated ctx внутри supervised.** Один slot шарится между
+  итерациями цикла → bug. Heap-alloc обязателен.
+- **`yield` keyword.** Альтернатива `Time.sleep(0)`. Отвергнут: D62 говорит
+  «suspension — runtime, не type/syntax-level», keyword подсветил бы то что
+  спека прячет. `Time.sleep` — обычная функция, валидная спецификационно.
+
+### Открытые вопросы
+
+- **Когда переключить `spawn` вне scope на compile error?** После миграции
+  `38_deep_spawn.nv` верхней части на `supervised`-обёртки. Затрагивает 28
+  существующих тестов.
+- **`detach` через OS-thread в bootstrap?** Сейчас SyncDetach. Реальный
+  background требует pthread/Win32-интеграции — большая работа, отложена.
+- **Эффект `Detach` в effect-system.** Объявление + compile-time проверка
+  требования в сигнатуре. Сейчас не выполняется.
+- **Cancellation propagation.** Один fiber бросил error → scope отменяет
+  остальных. Требует cancel-channel в `NovaFiberQueue` и интеграции с
+  Fail-frame-stack. Не реализовано.
+- **`race`, `select`, `cancel_scope`, `with_timeout`.** Каждый — отдельная
+  задача после cancellation propagation.
+- **Channels (`Channel[T]`).** Spec-mention в D50 secondary. Без них
+  producer-consumer — через shared mut + yields (что и тестируется).
+
+### Связь
+
+- [D14](#d14-fiber-runtime--невидимая-инфраструктура) — fiber-runtime как
+  ambient capability. D71 даёт минимальный конкретный runtime.
+- [D50](#d50-concurrency-model-spawn-detach-blocking) — language-level
+  модель concurrency. D71 — её первая bootstrap-реализация.
+- [D62](04-effects.md#d62) — Async ambient. Объясняет почему `Time.sleep`
+  не требует эффекта в сигнатуре.
+- [D64](04-effects.md#d64) — `realtime { }` запрещает suspension. По D71
+  `Time.sleep` внутри realtime-блока должен давать compile error
+  (compile-time check эффекта `Time` в сигнатуре). Не реализовано в
+  bootstrap'е.
+
+### Реализация
+
+bootstrap-codegen (`compiler-codegen/`):
+
+- `nova_rt/fibers.h`: `NovaFiberQueue`, `nova_supervised_step`,
+  `nova_supervised_run`, `nova_fiber_yield`, `nova_fiber_spawn_into`.
+- `src/codegen/emit_c.rs`: `emit_supervised`, `emit_detach`,
+  `emit_parallel_for`, `emit_spawn` (with by-value/heap-ctx logic),
+  context-sensitive `Time.sleep` dispatch.
+- `src/lexer/`, `src/ast/`, `src/parser/`: keywords `supervised`, `parallel`,
+  `detach`; AST variants `Supervised`, `Detach`, `ParallelFor`.
+- Тесты: `tests-nova/38_deep_spawn.nv` (section 10, 9 interleave-тестов),
+  `40_detach.nv` (13), `41_parallel_for.nv` (12), `42_main_yield.nv` (11).
+  Полный suite — 42/42 passing.
