@@ -836,9 +836,12 @@ queued fibers видели бы только последнее значение
   sleep(d int) }`, эмитить вызовы через стандартный handler-vtable, default
   handler в bootstrap-runtime — реальные часы для `now()` и
   `nova_fiber_yield()` для `sleep()`.
-- **Cancellation propagation.** Один fiber бросил error → scope отменяет
-  остальных. Требует cancel-channel в `NovaFiberQueue` и интеграции с
-  Fail-frame-stack. Не реализовано.
+- **Cancellation propagation между fibers.** Сейчас (2026-05-06):
+  fiber-throw безопасно ловится локально (per-fiber fail-frame), error
+  пишется в scope queue, после drain'а scope rethrow'ит на main-flow.
+  Что НЕ работает: остальные fiber'ы scope'а продолжают работу несмотря
+  на error в одном из них (нет cancel-channel в `NovaFiberQueue`).
+  По D50 «scope cancel'ит остальных при error» — отдельная задача.
 - **`race`, `select`, `cancel_scope`, `with_timeout`.** Каждый — отдельная
   задача после cancellation propagation.
 - **Channels (`Channel[T]`).** Spec-mention в D50 secondary. Без них

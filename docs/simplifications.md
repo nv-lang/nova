@@ -84,6 +84,34 @@
 
 ## Runtime (nova_rt/)
 
+### [R10] Fiber-throw: half-implemented
+- **Где:** `nova_rt/fibers.h` (per-fiber fail-frame switching) + `emit_c.rs::emit_spawn`
+  (setjmp wrapper).
+- **Что реализовано (2026-05-06):**
+  * Каждая fiber имеет свой fail-frame chain. `_nova_fail_top` сохраняется/
+    восстанавливается per-fiber в `nova_supervised_step` вокруг каждого `mco_resume`.
+  * spawn-entry оборачивает body в `setjmp + nova_fail_push/pop` — `throw`
+    внутри body больше не UB и не abort, а ловится в fiber-stack'е.
+  * При catch в fiber: вызывается `nova_fiber_report_error(msg)`, error
+    записывается в scope queue's `first_error`. Fiber завершается чисто.
+  * `nova_supervised_run` после полного drain'а проверяет `first_error` и
+    rethrow'ит на main-flow (через `nova_throw`) — это безопасно, longjmp
+    идёт по main-stack'у.
+  * `Stmt::Throw` в codegen: сейчас эмитит реальный `nova_throw(msg)`,
+    раньше был просто `abort()`.
+- **Что не реализовано:**
+  * **Cancellation propagation** между fiber'ами. Если один fiber `throw`-нул,
+    остальные продолжают работу до своего завершения. По D50 «scope cancel'ит
+    остальных» — нет cancel-channel в `NovaFiberQueue`.
+  * **Positive-тесты на real throw → catch на main**. Нет `try { ... } catch (e)`
+    ни `with Fail = ...` инфраструктуры в тестах. Sequence "throw from fiber →
+    rethrow on main → abort" работает (= correctness требование), но без top-level
+    try-catch positive-test не написать. Нужен test runner с поддержкой
+    "expected non-zero exit code" или Nova-level `try` keyword (D25).
+  * Switching `_nova_test_frame` per-fiber. `nova_assert` внутри fiber
+    сейчас по-прежнему UB (longjmp пересекает fiber boundary в test runner).
+- **Приоритет:** M (cancellation важна для AI-friendly fan-out с ошибками).
+
 ### [R9] NovaFiberQueue — фиксированный capacity (1024)
 - **Где:** `nova_rt/fibers.h` (NOVA_SCOPE_CAP)
 - **Что упрощено:** Очередь fiber'ов в `supervised` scope — фиксированный массив

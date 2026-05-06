@@ -897,6 +897,16 @@ impl CEmitter {
         let prev_caps = std::mem::replace(&mut self.current_spawn_captures, Some(cap_set));
         let prev_by_value = std::mem::replace(&mut self.current_spawn_capture_by_value, Some(cap_by_value));
 
+        // Wrap body in a fail-frame so that `throw` inside fiber is caught here
+        // (longjmp lands on THIS fiber's stack — safe). After catch, report the
+        // error to the active scope queue via nova_fiber_report_error, and let
+        // the fiber finish cleanly. Scope-runner re-throws on main flow after
+        // all fibers have been drained (nova_supervised_run).
+        self.line("NovaFailFrame _ff;");
+        self.line("nova_fail_push(&_ff);");
+        self.line("if (setjmp(_ff.jmp) == 0) {");
+        self.indent += 1;
+
         // Emit body, discard its value (spawn returns unit).
         match &body.kind {
             ExprKind::Block(b) => {
@@ -913,6 +923,16 @@ impl CEmitter {
                 self.line(&format!("(void)({});", v));
             }
         }
+
+        self.line("nova_fail_pop();");
+        self.indent -= 1;
+        self.line("} else {");
+        self.indent += 1;
+        self.line("nova_fail_pop();");
+        // Report error to the scope. error_msg.ptr lives on heap or static — safe.
+        self.line("nova_fiber_report_error(_ff.error_msg.ptr);");
+        self.indent -= 1;
+        self.line("}");
 
         // Deactivate capture rewriting before emitting closing brace.
         self.current_spawn_captures = prev_caps;
@@ -2255,9 +2275,17 @@ impl CEmitter {
             Stmt::Break(_) => self.line("break;"),
             Stmt::Continue(_) => self.line("continue;"),
             Stmt::Throw { value, .. } => {
-                // Phase 4: proper Fail handling. For now: abort with message.
+                // throw evaluates message (a nova_str) then longjmp's to the
+                // nearest fail-frame on _nova_fail_top. Inside a spawn fiber
+                // the frame is set up by spawn-entry (D71 cancellation hint);
+                // outside any frame nova_throw aborts with a message.
+                let val_ty = self.infer_expr_c_type(value);
                 let val = self.emit_expr(value)?;
-                self.line(&format!("(void)({}); fprintf(stderr, \"nova: unhandled throw\\n\"); abort();", val));
+                if val_ty == "nova_str" {
+                    self.line(&format!("nova_throw({});", val));
+                } else {
+                    self.line(&format!("nova_throw(nova_int_to_str((nova_int)({})));", val));
+                }
             }
         }
         Ok(())
