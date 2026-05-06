@@ -1352,6 +1352,7 @@ impl Parser {
             TokenKind::KwInterrupt => self.parse_interrupt_expr(),
             TokenKind::KwSpawn => self.parse_spawn(),
             TokenKind::KwSupervised => self.parse_supervised(),
+            TokenKind::KwParallel => self.parse_parallel_for(),
             TokenKind::KwDetach => self.parse_detach(),
             TokenKind::KwHandler => self.parse_handler_lit(),
             TokenKind::KwForbid => self.parse_forbid(),
@@ -1677,6 +1678,25 @@ impl Parser {
         let end = body.span;
         Ok(Expr::new(
             ExprKind::For {
+                pattern,
+                iter: Box::new(iter),
+                body,
+            },
+            start.merge(end),
+        ))
+    }
+
+    /// `parallel for x in iter { body }` — D14 fan-out (D50 supervised + spawn).
+    fn parse_parallel_for(&mut self) -> Result<Expr, Diagnostic> {
+        let start = self.expect(&TokenKind::KwParallel)?.span;
+        self.expect(&TokenKind::KwFor)?;
+        let pattern = self.parse_pattern()?;
+        self.expect(&TokenKind::KwIn)?;
+        let iter = self.with_no_struct_lit(|p| p.parse_expr())?;
+        let body = self.parse_block()?;
+        let end = body.span;
+        Ok(Expr::new(
+            ExprKind::ParallelFor {
                 pattern,
                 iter: Box::new(iter),
                 body,

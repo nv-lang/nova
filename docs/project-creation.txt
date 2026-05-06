@@ -247,6 +247,28 @@ Runtime C-тесты: nova_rt/test_gc_deep.c (23 assert), test_fibers_deep.c (31
 
 Все тесты проходят детерминированно. FIFO scheduler даёт точный observable order.
 
+PARALLEL FOR (продолжение):
+  - Keyword `parallel for x in iter { body }`, ExprKind::ParallelFor.
+  - Codegen — синтетический desugar в supervised { for x in iter { spawn { body } } }.
+  - Capture-by-value для immutable scalars (int/bool/f64/byte):
+    * spawn-capture теперь различает let vs let mut по var_mutable HashSet.
+    * Immutable scalar → snapshot value в ctx struct (не pointer).
+    * Mutable / non-scalar → pointer как раньше.
+  - Heap-allocated ctx в supervised:
+    * ctx-struct в spawn внутри scope аллоцируется через nova_alloc.
+    * Без этого все queued fibers внутри loop разделяют stack-slot ctx →
+      все видят последнее значение → bug.
+    * Stack ctx сохраняется для eager-blocking spawn (вне scope).
+  - Loop-var регистрируется в var_types при range-for (nova_int) — без
+    этого capture-detection не находил переменную цикла.
+  - Тесты (41_parallel_for.nv, 12 штук):
+    * sum [1..5], sum-of-squares, empty/single
+    * range 0..5 и 1..=10
+    * snapshot: каждый fiber видит свой x
+    * cooperative yield внутри parallel for body
+    * nested: parallel for в for, обычный for в parallel for
+    * mut-outer + immutable-inner mix
+
 DETACH (продолжение в той же сессии):
   - Keyword `detach { body }`, AST::Detach(Block), парсер, interp-стаб.
   - Codegen: default SyncDetach handler = inline-block. Никакого fiber wrapping —

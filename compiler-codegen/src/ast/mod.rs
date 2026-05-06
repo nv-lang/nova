@@ -342,6 +342,13 @@ pub enum ExprKind {
         iter: Box<Expr>,
         body: Block,
     },
+    /// `parallel for x in iter { body }` — D14, fan-out body for each element.
+    /// Desugars to `supervised { for x in iter { spawn { body } } }`.
+    ParallelFor {
+        pattern: Pattern,
+        iter: Box<Expr>,
+        body: Block,
+    },
     While {
         cond: Box<Expr>,
         body: Block,

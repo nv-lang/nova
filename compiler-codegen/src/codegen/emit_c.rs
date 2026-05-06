@@ -29,8 +29,14 @@ pub struct CEmitter {
     /// rewritten by the preprocessor. Instead, ExprKind::Ident checks this set
     /// and rewrites references inline.
     current_spawn_captures: Option<HashSet<String>>,
+    /// Subset of current_spawn_captures that are captured by value (T field, not T*).
+    /// These names rewrite to `_c->name`, not `(*_c->name)`.
+    current_spawn_capture_by_value: Option<HashSet<String>>,
     /// Maps variable name → C type string (best-effort)
     var_types: HashMap<String, String>,
+    /// Names of variables declared as `let mut` (mutable) — used by spawn-capture
+    /// to decide between copy-by-value (immutable scalar) and capture-by-pointer.
+    var_mutable: HashSet<String>,
     /// Maps struct name → field name → C type
     record_schemas: HashMap<String, HashMap<String, String>>,
     /// Maps sum type name → variant name → field types (positional)
@@ -102,7 +108,9 @@ impl CEmitter {
             supervised_counter: 0,
             current_scope_queue: None,
             current_spawn_captures: None,
+            current_spawn_capture_by_value: None,
             var_types: HashMap::new(),
+            var_mutable: HashSet::new(),
             record_schemas: HashMap::new(),
             sum_schemas: HashMap::new(),
             effect_schemas: HashMap::new(),
@@ -765,14 +773,26 @@ impl CEmitter {
         let mut bound: std::collections::HashSet<String> = std::collections::HashSet::new();
         Self::collect_bound_names_expr(body, &mut bound);
 
-        // A name is a capture only if: it is in outer var_types AND not bound inside spawn
-        let mut captures: Vec<(String, String)> = Vec::new();
+        // A name is a capture only if: it is in outer var_types AND not bound inside spawn.
+        // Each capture is recorded with `by_value` flag:
+        //   - immutable scalar (let, not let mut, type ∈ {nova_int, nova_bool, nova_f64})
+        //     → captured BY VALUE (snapshot at spawn site).
+        //   - everything else (mutable, or non-scalar) → BY POINTER (shared mutation).
+        // Rationale: parallel-for / supervised holds spawns until end-of-scope; loop-
+        // variables (`let cur = xs[i]`) are immutable scalars that change ВНЕШНЕ across
+        // iterations. Capturing by value snapshots them; by pointer would let all queued
+        // fibers see the last iteration's value.
+        let mut captures: Vec<(String, String, bool)> = Vec::new();
         for name in refs {
             if bound.contains(&name) {
                 continue;
             }
             if let Some(ty) = self.var_types.get(&name).cloned() {
-                captures.push((name, ty));
+                let is_scalar = matches!(ty.as_str(),
+                    "nova_int" | "nova_bool" | "nova_f64" | "nova_f32" | "nova_byte");
+                let is_mut = self.var_mutable.contains(&name);
+                let by_value = is_scalar && !is_mut;
+                captures.push((name, ty, by_value));
             }
         }
 
@@ -782,28 +802,60 @@ impl CEmitter {
         // would tokenize-rewrite the field declarations and break compilation.
         let ctx_ty = format!("NovaSpawnCtx_{}", &spawn_id[1..]); // strip leading _
 
-        // ctx instance on stack — uses the file-scope typedef.
+        // ctx instance: stack for eager-blocking spawn, heap for queued spawn (supervised).
+        // Heap-alloc inside supervised is required so each iteration of an enclosing loop
+        // gets its own ctx — otherwise all queued fibers would share the same stack slot
+        // and see the LAST iteration's snapshot.
         let ctx_var = format!("{}_ctx", spawn_id);
-        self.line(&format!("{} {} = {{0}};", ctx_ty, ctx_var));
-        for (cap, _) in &captures {
-            // If cap is itself a capture of the *enclosing* fiber, its address is
-            // already in the outer ctx as `_c->cap` (a pointer). Pass that directly.
-            // Otherwise it's a local variable — take its address with `&cap`.
+        if self.current_scope_queue.is_some() {
+            self.line(&format!("{ty}* {var} = ({ty}*)nova_alloc(sizeof({ty}));",
+                ty = ctx_ty, var = ctx_var));
+            // Zero-init: nova_alloc returns zeroed memory.
+        } else {
+            self.line(&format!("{} {} = {{0}};", ctx_ty, ctx_var));
+        }
+        // Field access syntax: stack ctx uses `.`, heap ctx (pointer) uses `->`.
+        let dot = if self.current_scope_queue.is_some() { "->" } else { "." };
+        for (cap, _, by_value) in &captures {
+            // If cap is itself a capture of the *enclosing* fiber, the outer ctx field
+            // is either T (by-value) or T* (by-pointer). For inner spawn:
+            //   - inner by-value: copy the current value; if outer is by-pointer, deref.
+            //   - inner by-pointer: pass the same pointer; if outer is by-value, take address.
             let is_outer_cap = self.current_spawn_captures.as_ref()
                 .map(|s| s.contains(cap)).unwrap_or(false);
-            if is_outer_cap {
-                self.line(&format!("{ctx}.{cap} = _c->{cap};", ctx = ctx_var, cap = cap));
+            let outer_by_value = self.current_spawn_capture_by_value.as_ref()
+                .map(|s| s.contains(cap)).unwrap_or(false);
+            let access_outer = if is_outer_cap {
+                if outer_by_value { format!("_c->{}", cap) }            // T value
+                else { format!("(*_c->{})", cap) }                       // *T
             } else {
-                self.line(&format!("{ctx}.{cap} = &{cap};", ctx = ctx_var, cap = cap));
+                cap.clone()                                              // local var
+            };
+            let address_outer = if is_outer_cap {
+                if outer_by_value { format!("&_c->{}", cap) }           // address of T field
+                else { format!("_c->{}", cap) }                          // already a pointer
+            } else {
+                format!("&{}", cap)                                      // local var address
+            };
+            if *by_value {
+                // Copy current value into the new ctx (snapshot).
+                self.line(&format!("{ctx}{dot}{cap} = {acc};",
+                    ctx = ctx_var, dot = dot, cap = cap, acc = access_outer));
+            } else {
+                // Store a pointer for shared mutation.
+                self.line(&format!("{ctx}{dot}{cap} = {addr};",
+                    ctx = ctx_var, dot = dot, cap = cap, addr = address_outer));
             }
         }
 
         // If we are inside a `supervised { }` scope, push the fiber into the queue
         // and don't run it now — the scheduler at scope-exit will run all of them.
         // Result inside a scope is not available (use mut captures instead) — emit 0.
+        // Inside supervised: ctx_var is heap-alloc'd T*, pass directly.
+        // Outside: ctx_var is stack T, take address with `&`.
         let result_tmp = self.fresh_tmp();
         if let Some(queue) = self.current_scope_queue.clone() {
-            self.line(&format!("nova_fiber_spawn_into(&{q}, {id}, &{ctx});",
+            self.line(&format!("nova_fiber_spawn_into(&{q}, {id}, {ctx});",
                 q = queue, id = spawn_id, ctx = ctx_var));
             self.line(&format!("nova_int {} = ((nova_int)0LL);", result_tmp));
         } else {
@@ -816,8 +868,12 @@ impl CEmitter {
         // current function in `out`, so the typedef is visible at the spawn-instance
         // declaration site (and also for the entry fn body which lives in deferred_impls).
         let _ = writeln!(self.lambda_forward_decls, "typedef struct {{");
-        for (cap, ty) in &captures {
-            let _ = writeln!(self.lambda_forward_decls, "    {}* {};", ty, cap);
+        for (cap, ty, by_value) in &captures {
+            if *by_value {
+                let _ = writeln!(self.lambda_forward_decls, "    {} {};", ty, cap);
+            } else {
+                let _ = writeln!(self.lambda_forward_decls, "    {}* {};", ty, cap);
+            }
         }
         let _ = writeln!(self.lambda_forward_decls, "    nova_int _nova_result;");
         let _ = writeln!(self.lambda_forward_decls, "}} {};", ctx_ty);
@@ -830,10 +886,15 @@ impl CEmitter {
         self.line(&format!("static void {}(mco_coro* _co) {{", spawn_id));
         self.indent += 1;
         self.line(&format!("{ctx}* _c = ({ctx}*)mco_get_user_data(_co);", ctx = ctx_ty));
-        // Activate capture rewriting: ExprKind::Ident → `(*_c->name)`.
+        // Activate capture rewriting: ExprKind::Ident → `(*_c->name)` or `_c->name`.
         let mut cap_set: HashSet<String> = HashSet::new();
-        for (cap, _) in &captures { cap_set.insert(cap.clone()); }
+        let mut cap_by_value: HashSet<String> = HashSet::new();
+        for (cap, _, by_value) in &captures {
+            cap_set.insert(cap.clone());
+            if *by_value { cap_by_value.insert(cap.clone()); }
+        }
         let prev_caps = std::mem::replace(&mut self.current_spawn_captures, Some(cap_set));
+        let prev_by_value = std::mem::replace(&mut self.current_spawn_capture_by_value, Some(cap_by_value));
 
         // Emit body and capture result. For block exprs, emit stmts + trailing
         // directly rather than going through emit_block_expr (which drops the value).
@@ -871,6 +932,7 @@ impl CEmitter {
 
         // Deactivate capture rewriting before emitting closing brace.
         self.current_spawn_captures = prev_caps;
+        self.current_spawn_capture_by_value = prev_by_value;
         self.indent -= 1;
         self.line("}");
         self.line("");
@@ -921,6 +983,51 @@ impl CEmitter {
 
         // supervised expression evaluates to unit.
         Ok("NOVA_UNIT".to_string())
+    }
+
+    /// Emit `parallel for x in iter { body }` — D14 fan-out via desugar to
+    /// `supervised { for x in iter { spawn { body } } }`. Each iteration spawns
+    /// a fiber capturing the loop-variable BY VALUE (immutable scalar) so all
+    /// queued fibers see their own snapshot.
+    fn emit_parallel_for(
+        &mut self,
+        pattern: &Pattern,
+        iter: &Expr,
+        body: &Block,
+    ) -> Result<String, String> {
+        use crate::diag::Span;
+        let span = Span::dummy();
+
+        // Build synthetic: spawn { body }
+        let spawn_body_expr = Expr::new(
+            ExprKind::Block(body.clone()),
+            span,
+        );
+        let spawn_expr = Expr::new(
+            ExprKind::Spawn(Box::new(spawn_body_expr)),
+            span,
+        );
+        // for-loop body holds the synthetic spawn as a statement
+        let for_body = Block {
+            stmts: vec![Stmt::Expr(spawn_expr)],
+            trailing: None,
+            span,
+        };
+        let for_expr = Expr::new(
+            ExprKind::For {
+                pattern: pattern.clone(),
+                iter: Box::new(iter.clone()),
+                body: for_body,
+            },
+            span,
+        );
+        // supervised { for ... }
+        let supervised_block = Block {
+            stmts: vec![Stmt::Expr(for_expr)],
+            trailing: None,
+            span,
+        };
+        self.emit_supervised(&supervised_block)
     }
 
     /// Emit `detach { body }` — D50 fire-and-forget primitive.
@@ -1024,6 +1131,15 @@ impl CEmitter {
                 self.scan_expr_fwd(iter, h, s)?;
                 self.scan_block_fwd(body, h, s)?;
             }
+            ExprKind::ParallelFor { iter, body, .. } => {
+                // Desugar mirrors supervised { for x in iter { spawn { body } } }
+                // — pre-scan reserves a spawn id for the implicit spawn.
+                self.scan_expr_fwd(iter, h, s)?;
+                self.scan_block_fwd(body, h, s)?;
+                let spawn_id = format!("_nova_spawn_{}", *s);
+                *s += 1;
+                self.line(&format!("static void {}(mco_coro* _co);", spawn_id));
+            }
             ExprKind::Loop { body } => {
                 self.scan_block_fwd(body, h, s)?;
             }
@@ -1117,7 +1233,8 @@ impl CEmitter {
                     }
                 }
             }
-            ExprKind::For { pattern, iter, body } => {
+            ExprKind::For { pattern, iter, body }
+            | ExprKind::ParallelFor { pattern, iter, body } => {
                 Self::collect_bound_names_expr(iter, out);
                 Self::collect_bound_names_pattern(pattern, out);
                 Self::collect_bound_names_block(body, out);
@@ -1237,7 +1354,8 @@ impl CEmitter {
                 Self::collect_idents_expr(scrutinee, out);
                 Self::collect_idents_block(body, out);
             }
-            ExprKind::For { iter, body, .. } => {
+            ExprKind::For { iter, body, .. }
+            | ExprKind::ParallelFor { iter, body, .. } => {
                 Self::collect_idents_expr(iter, out);
                 Self::collect_idents_block(body, out);
             }
@@ -2075,6 +2193,12 @@ impl CEmitter {
                 // For pointer types: the emitted tmp expression already carries the type.
                 // Just declare the binding with the right type.
                 self.var_types.insert(binding.clone(), ty_c.clone());
+                // Track mutability so spawn-capture can decide copy-by-value vs by-ptr.
+                if decl.mutable {
+                    self.var_mutable.insert(binding.clone());
+                } else {
+                    self.var_mutable.remove(&binding);
+                }
                 // Propagate tuple element types so pair.0 can be correctly typed
                 if let Some(elem_tys) = self.tuple_element_types.get(&val).cloned() {
                     self.tuple_element_types.insert(binding.clone(), elem_tys);
@@ -2175,12 +2299,19 @@ impl CEmitter {
                         return Ok(format!("nova_make_{}_{}()", type_name, name));
                     }
                 }
-                // Capture access inside spawn-entry body: rewrite to `(*_c->name)`.
-                // This avoids `#define name (*_c->name)` macros, which would corrupt
+                // Capture access inside spawn-entry body. By-pointer → `(*_c->name)`,
+                // by-value → `_c->name` (T field, no deref).
+                // This avoids `#define name ...` macros, which would corrupt
                 // nested supervised's struct field declarators with the same name.
                 if let Some(caps) = &self.current_spawn_captures {
                     if caps.contains(name) {
-                        return Ok(format!("(*_c->{})", name));
+                        let by_value = self.current_spawn_capture_by_value.as_ref()
+                            .map(|s| s.contains(name)).unwrap_or(false);
+                        return if by_value {
+                            Ok(format!("_c->{}", name))
+                        } else {
+                            Ok(format!("(*_c->{})", name))
+                        };
                     }
                 }
                 Ok(name.clone())
@@ -2609,6 +2740,9 @@ impl CEmitter {
             }
             ExprKind::Detach(body) => {
                 self.emit_detach(body)
+            }
+            ExprKind::ParallelFor { pattern, iter, body } => {
+                self.emit_parallel_for(pattern, iter, body)
             }
             ExprKind::TaggedTemplate { parts, args, .. } => {
                 // Bootstrap: tag function ignored, parts concatenated with args as strings.
@@ -3450,6 +3584,11 @@ impl CEmitter {
                 binding, s, binding, cmp, e, binding
             ));
             self.indent += 1;
+            // Register loop-var so spawn-capture inside body can find it.
+            // Range loop-var is immutable scalar (the for-loop drives it,
+            // user shouldn't mutate it) — fits by-value capture.
+            let prev_ty = self.var_types.insert(binding.clone(), "nova_int".to_string());
+            let was_mut = self.var_mutable.remove(&binding);
             for stmt in &body.stmts {
                 self.emit_stmt(stmt)?;
             }
@@ -3457,6 +3596,12 @@ impl CEmitter {
                 let v = self.emit_expr(trailing)?;
                 self.line(&format!("(void)({});", v));
             }
+            // Restore prior state.
+            match prev_ty {
+                Some(t) => { self.var_types.insert(binding.clone(), t); }
+                None => { self.var_types.remove(&binding); }
+            }
+            if was_mut { self.var_mutable.insert(binding); }
             self.indent -= 1;
             self.line("}");
             self.line(&format!("{} = NOVA_UNIT;", tmp));
@@ -4866,6 +5011,7 @@ impl CEmitter {
                 "nova_int".into()
             }
             ExprKind::For { .. } => "nova_unit".into(),
+            ExprKind::ParallelFor { .. } => "nova_unit".into(),
             ExprKind::While { .. } => "nova_unit".into(),
             ExprKind::WhileLet { .. } => "nova_unit".into(),
             ExprKind::Loop { .. } => "nova_unit".into(),

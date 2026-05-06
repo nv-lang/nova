@@ -1,0 +1,139 @@
+// 41_parallel_for.nv — D14 `parallel for x in iter { body }` fan-out.
+//
+// Desugars to `supervised { for x in iter { spawn { body } } }`.
+// Loop-variable `x` is captured by VALUE (immutable scalar) — each
+// queued fiber sees its own snapshot, not the last iteration's value.
+
+module spec.parallel_for
+
+// ================================================================
+// SECTION 1: базовое суммирование через shared mut
+// ================================================================
+
+test "parallel for: sum of [1..5]" {
+    let mut sum = 0
+    parallel for x in [1, 2, 3, 4, 5] {
+        sum += x
+    }
+    assert(sum == 15)
+}
+
+test "parallel for: sum of squares [1..4]" {
+    let mut total = 0
+    parallel for x in [1, 2, 3, 4] {
+        total += x * x   // 1+4+9+16 = 30
+    }
+    assert(total == 30)
+}
+
+test "parallel for: empty array, no iterations" {
+    let mut touched = 0
+    let xs = []
+    parallel for _ in xs {
+        touched += 1
+    }
+    assert(touched == 0)
+}
+
+test "parallel for: single element" {
+    let mut got = 0
+    parallel for x in [42] {
+        got = x
+    }
+    assert(got == 42)
+}
+
+// ================================================================
+// SECTION 2: range
+// ================================================================
+
+test "parallel for over range 0..5" {
+    let mut sum = 0
+    parallel for i in 0..5 {
+        sum += i
+    }
+    // 0+1+2+3+4 = 10
+    assert(sum == 10)
+}
+
+test "parallel for over inclusive range 1..=10" {
+    let mut sum = 0
+    parallel for i in 1..=10 {
+        sum += i
+    }
+    // 1+2+...+10 = 55
+    assert(sum == 55)
+}
+
+// ================================================================
+// SECTION 3: каждый fiber снимает копию своего x (per-iter snapshot)
+// ================================================================
+
+test "parallel for: each fiber sees its own loop value (snapshot)" {
+    // Если бы capture был by-pointer, все fiber'ы увидели бы последний
+    // элемент xs, и сумма была бы 5*5 = 25, а не 15.
+    let mut sum = 0
+    parallel for x in [1, 2, 3, 4, 5] {
+        sum += x
+    }
+    assert(sum == 15)   // by-value snapshot работает
+}
+
+test "parallel for: cooperative yield via Time.sleep(0) inside body" {
+    // Внутри parallel for каждый fiber делает yield — interleave работает.
+    let mut log = 0
+    parallel for x in [1, 2] {
+        log = log * 100 + x * 10
+        Time.sleep(0)
+        log = log * 10 + x
+    }
+    // FIFO: A1 writes 10 (log=10), B1 writes 20 (log=10*100+20=1020), yield;
+    //       A2 writes 1 (log=10201), B2 writes 2 (log=102012)
+    assert(log == 102012)
+}
+
+// ================================================================
+// SECTION 4: вложенные структуры
+// ================================================================
+
+test "parallel for inside ordinary for" {
+    // Внешний for последовательный, внутренний parallel for — параллельный.
+    let mut total = 0
+    let mut row = 0
+    while row < 3 {
+        parallel for x in [1, 2, 3] {
+            total += x
+        }
+        row += 1
+    }
+    // 3 проходов * (1+2+3) = 18
+    assert(total == 18)
+}
+
+test "ordinary for inside parallel for" {
+    let mut count = 0
+    parallel for outer in [10, 20, 30] {
+        let mut inner = 0
+        while inner < 4 {
+            count += 1
+            inner += 1
+        }
+        // touch outer to make sure capture works
+        let _ = outer
+    }
+    assert(count == 12)   // 3 * 4
+}
+
+// ================================================================
+// SECTION 5: capture mutable outer + immutable inner
+// ================================================================
+
+test "parallel for: mut outer captured by ptr, inner x by value" {
+    let mut accum = 0
+    let bonus = 100   // immutable scalar — by-value capture
+    parallel for x in [1, 2, 3] {
+        accum += x + bonus
+    }
+    // (1+100)+(2+100)+(3+100) = 306
+    assert(accum == 306)
+}

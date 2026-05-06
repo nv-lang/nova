@@ -617,6 +617,12 @@ impl Interpreter {
                 // Production-runtime запустит на глобальном supervisor'е.
                 self.exec_block_flow(body, env)
             }
+            ExprKind::ParallelFor { pattern, iter, body } => {
+                // В bootstrap'е parallel for ≡ обычный for (sequential).
+                // Codegen раскрывает в supervised + spawn для реального параллелизма.
+                let iter_v = self.eval_expr_value(iter, env)?;
+                self.run_for_loop(pattern, iter_v, body, env, expr.span)
+            }
             ExprKind::Forbid { effects: _, body } => {
                 // В bootstrap-интерпретаторе forbid (D63) исполняется как
                 // обычный block — runtime барьер через sentinel-frame и

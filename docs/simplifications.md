@@ -91,21 +91,21 @@
 - **Как чинить:** Включить RC (`gc=rc`) или Boehm GC (`gc=boehm`) через build_c.bat.
 - **Приоритет:** L (Boehm GC уже есть как опция)
 
-### [R8] parallel for — не реализован
-- **Где:** `emit_c.rs` / spec D14, D50
-- **Что упрощено:** `parallel for x in iter { body }` (D14 пример: fan-out N HTTP-запросов
-  с join'ом всех в конце) — не реализован.
-- **Почему сложно:** Простой de-sugar `supervised { for x in iter { spawn { body } } }`
-  даёт неправильную семантику из-за capture-by-pointer: все отложенные fiber'ы внутри
-  scope'а получают указатель на ОДНУ ячейку `x`, которая после цикла указывает на
-  последний элемент. Результат: `parallel for x in [1,2,3] { sum += x }` даст 9 (3*3),
-  не 6 (1+2+3). Требует поддержки **value-capture** для loop-переменной (копировать
-  значение в ctx-struct, а не указатель).
-- **Как чинить:** В parser'е добавить `parallel` модификатор перед `for`. В codegen
-  для parallel-for spawn'а на каждой итерации эмитить ctx-struct с loop-переменной
-  по значению, а остальные captures — как обычно. Альтернатива — общее решение
-  через анализ "captured but iteration-local" имён.
-- **Приоритет:** M
+### [ЗАКР] parallel for — реализован — [R8]
+- **Закрыто (2026-05-06):** keyword `parallel for x in iter { body }`.
+  Десугарится в codegen в `supervised { for x in iter { spawn { body } } }`.
+- **Capture-by-value для immutable scalars:** spawn-capture теперь различает
+  `let` (immutable) vs `let mut` (mutable). Immutable scalar (int/bool/f64/byte) →
+  capture by value (snapshot в ctx struct). Всё остальное — by pointer (shared mut).
+- **Heap-alloc ctx в supervised:** ctx-struct для spawn внутри supervised
+  аллоцируется на куче (через nova_alloc), не на стеке — иначе все queued fibers
+  внутри loop разделяют один stack-slot и видят последнее значение.
+- **Loop-var регистрация:** range-loop в `emit_for` теперь регистрирует binding
+  в `var_types` (как nova_int) — без этого capture не находил loop-переменную.
+- **Тесты:** `tests-nova/41_parallel_for.nv` — 12 тестов: array/range/inclusive-range,
+  empty array, single elem, snapshot semantics, cooperative yield внутри тела,
+  nested parallel-for внутри for, обычный for внутри parallel-for, mut-outer +
+  immutable-inner mix.
 
 ### [R2] Fibers — partial structured concurrency (supervised есть, race/parallel/cancel — нет)
 - **Где:** `nova_rt/fibers.h` / `emit_c.rs`
