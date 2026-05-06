@@ -263,6 +263,9 @@ pub enum ExprKind {
     StrLit(String),
     BoolLit(bool),
     UnitLit,
+    /// Q-char-literals: 'a' / '\n' / '\u{...}' — Unicode codepoint as u32.
+    /// Тип char в bootstrap эмитируется как nova_int.
+    CharLit(u32),
     /// `arr` или `[1, 2, ...rest, 4]` — D60
     ArrayLit(Vec<ArrayElem>),
     /// `{ field: value, ...spread, name }` — D17/D52/D60
@@ -624,6 +627,8 @@ pub enum Literal {
     Str(String),
     Bool(bool),
     Unit,
+    /// Q-char-literals: 'a' codepoint as u32 (используется в pattern'ах, как `match c { 'a' => ... }`).
+    Char(u32),
 }
 
 impl Pattern {

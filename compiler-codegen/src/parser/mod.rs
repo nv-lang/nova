@@ -1233,6 +1233,10 @@ impl Parser {
                 self.bump();
                 Ok(Expr::new(ExprKind::StrLit(s), start))
             }
+            TokenKind::Char(cp) => {
+                self.bump();
+                Ok(Expr::new(ExprKind::CharLit(cp), start))
+            }
             TokenKind::KwTrue => {
                 self.bump();
                 Ok(Expr::new(ExprKind::BoolLit(true), start))
@@ -2358,6 +2362,10 @@ impl Parser {
             TokenKind::Str(s) => {
                 self.bump();
                 Ok(Pattern::Literal(Literal::Str(s), start))
+            }
+            TokenKind::Char(cp) => {
+                self.bump();
+                Ok(Pattern::Literal(Literal::Char(cp), start))
             }
             TokenKind::KwTrue => {
                 self.bump();

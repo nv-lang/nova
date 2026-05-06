@@ -234,6 +234,7 @@ impl Interpreter {
     pub fn eval_expr(&self, expr: &Expr, env: &Env) -> Result<Flow, Diagnostic> {
         match &expr.kind {
             ExprKind::IntLit(n) => Ok(Flow::Value(Value::Int(*n))),
+            ExprKind::CharLit(cp) => Ok(Flow::Value(Value::Int(*cp as i64))),
             ExprKind::FloatLit(x) => Ok(Flow::Value(Value::Float(*x))),
             ExprKind::StrLit(s) => Ok(Flow::Value(Value::Str(s.clone()))),
             ExprKind::BoolLit(b) => Ok(Flow::Value(Value::Bool(*b))),

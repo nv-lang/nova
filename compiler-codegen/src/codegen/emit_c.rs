@@ -448,6 +448,7 @@ impl CEmitter {
     fn emit_const_expr(&mut self, expr: &Expr) -> Result<String, String> {
         match &expr.kind {
             ExprKind::IntLit(n) => Ok(format!("((nova_int){}LL)", n)),
+            ExprKind::CharLit(cp) => Ok(format!("((nova_int){}LL)", cp)),
             ExprKind::BoolLit(b) => Ok(if *b { "1".into() } else { "0".into() }),
             ExprKind::StrLit(s) => {
                 let len = s.len();
@@ -2738,6 +2739,7 @@ impl CEmitter {
     fn emit_expr(&mut self, expr: &Expr) -> Result<String, String> {
         match &expr.kind {
             ExprKind::IntLit(n)   => Ok(format!("((nova_int){}LL)", n)),
+            ExprKind::CharLit(cp) => Ok(format!("((nova_int){}LL)", cp)),
             ExprKind::FloatLit(f) => Ok(format!("((nova_f64){})", f)),
             ExprKind::BoolLit(b)  => Ok(if *b { "true".into() } else { "false".into() }),
             ExprKind::UnitLit     => Ok("NOVA_UNIT".into()),
@@ -4728,6 +4730,7 @@ impl CEmitter {
             Pattern::Literal(lit, _) => {
                 match lit {
                     Literal::Int(n) => Ok(format!("({} == {}LL)", scr, n)),
+                    Literal::Char(cp) => Ok(format!("({} == {}LL)", scr, cp)),
                     Literal::Bool(b) => Ok(format!("({} == {})", scr, b)),
                     Literal::Str(s) => {
                         let escaped = Self::escape_c_str(s);
@@ -5431,6 +5434,7 @@ impl CEmitter {
     fn infer_expr_c_type(&self, expr: &Expr) -> String {
         match &expr.kind {
             ExprKind::IntLit(_) => "nova_int".into(),
+            ExprKind::CharLit(_) => "nova_int".into(),
             ExprKind::FloatLit(_) => "nova_f64".into(),
             ExprKind::BoolLit(_) => "nova_bool".into(),
             ExprKind::StrLit(_) => "nova_str".into(),

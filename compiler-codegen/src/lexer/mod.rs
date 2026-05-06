@@ -58,6 +58,7 @@ impl<'a> Lexer<'a> {
             b if b.is_ascii_digit() => return self.lex_number(start),
             b if is_ident_start(b) => return self.lex_ident_or_keyword(start),
             b'"' => return self.lex_string(start),
+            b'\'' => return self.lex_char(start),
             b'`' => return self.lex_backtick(start),
             b'(' => self.single(TokenKind::LParen),
             b')' => self.single(TokenKind::RParen),
@@ -457,6 +458,111 @@ impl<'a> Lexer<'a> {
                 }
             }
         }
+    }
+
+    /// Q-char-literals: `'a'` / `'\n'` / `'\\'` / `'\''` / `'\u{1F600}'`.
+    /// Возвращает TokenKind::Char(u32) с Unicode codepoint'ом.
+    fn lex_char(&mut self, start: usize) -> Result<Token, Diagnostic> {
+        self.pos += 1; // consume opening '
+        let Some(&b) = self.bytes.get(self.pos) else {
+            return Err(Diagnostic::new(
+                "unterminated char literal",
+                Span::new(start, self.pos),
+            ));
+        };
+        let cp: u32 = if b == b'\\' {
+            self.pos += 1;
+            let Some(&esc) = self.bytes.get(self.pos) else {
+                return Err(Diagnostic::new(
+                    "unterminated char escape",
+                    Span::new(start, self.pos),
+                ));
+            };
+            match esc {
+                b'n' => { self.pos += 1; '\n' as u32 }
+                b't' => { self.pos += 1; '\t' as u32 }
+                b'r' => { self.pos += 1; '\r' as u32 }
+                b'\\' => { self.pos += 1; '\\' as u32 }
+                b'\'' => { self.pos += 1; '\'' as u32 }
+                b'"' => { self.pos += 1; '"' as u32 }
+                b'0' => { self.pos += 1; 0 }
+                b'u' => {
+                    // \u{HEX}
+                    self.pos += 1;
+                    if self.bytes.get(self.pos) != Some(&b'{') {
+                        return Err(Diagnostic::new(
+                            "expected '{' after \\u in char literal",
+                            Span::new(self.pos, self.pos + 1),
+                        ));
+                    }
+                    self.pos += 1;
+                    let hex_start = self.pos;
+                    while let Some(&c) = self.bytes.get(self.pos) {
+                        if c.is_ascii_hexdigit() { self.pos += 1; } else { break; }
+                    }
+                    let hex_end = self.pos;
+                    if hex_end == hex_start {
+                        return Err(Diagnostic::new(
+                            "expected hex digits in \\u{...}",
+                            Span::new(hex_start, hex_end),
+                        ));
+                    }
+                    let hex_str = &self.src[hex_start..hex_end];
+                    let cp = u32::from_str_radix(hex_str, 16).map_err(|_| {
+                        Diagnostic::new(
+                            format!("invalid hex in \\u{{...}}: {}", hex_str),
+                            Span::new(hex_start, hex_end),
+                        )
+                    })?;
+                    if cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF) {
+                        return Err(Diagnostic::new(
+                            format!("invalid Unicode codepoint: U+{:X}", cp),
+                            Span::new(hex_start, hex_end),
+                        ));
+                    }
+                    if self.bytes.get(self.pos) != Some(&b'}') {
+                        return Err(Diagnostic::new(
+                            "expected '}' to close \\u{...}",
+                            Span::new(self.pos, self.pos + 1),
+                        ));
+                    }
+                    self.pos += 1;
+                    cp
+                }
+                other => {
+                    return Err(Diagnostic::new(
+                        format!("unknown char escape: \\{}", other as char),
+                        Span::new(self.pos - 1, self.pos + 1),
+                    ));
+                }
+            }
+        } else {
+            // UTF-8 codepoint (1-4 bytes). Decode it.
+            let ch_len = utf8_char_len(b);
+            let end = self.pos + ch_len;
+            if end > self.bytes.len() {
+                return Err(Diagnostic::new(
+                    "incomplete UTF-8 in char literal",
+                    Span::new(start, self.pos),
+                ));
+            }
+            let s = &self.src[self.pos..end];
+            let cp = s.chars().next().ok_or_else(|| {
+                Diagnostic::new("empty char literal", Span::new(start, end))
+            })? as u32;
+            self.pos = end;
+            cp
+        };
+        // Closing '
+        if self.bytes.get(self.pos) != Some(&b'\'') {
+            return Err(Diagnostic::new(
+                "expected closing ' in char literal",
+                Span::new(self.pos, self.pos + 1),
+            ));
+        }
+        self.pos += 1;
+        let span = Span::new(start, self.pos);
+        Ok(Token::new(TokenKind::Char(cp), span))
     }
 
     fn lex_backtick(&mut self, start: usize) -> Result<Token, Diagnostic> {
