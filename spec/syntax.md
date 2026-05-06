@@ -1035,6 +1035,18 @@ supervised {
 }
 ```
 
+#### Тип результата
+
+| Контекст | `spawn body` возвращает |
+|---|---|
+| Вне scope (legacy bootstrap) | результат `body` синхронно — eager-blocking |
+| Внутри `supervised` / `parallel for` / etc. | unit; реальный результат — через `mut`-захваты или каналы |
+
+В bootstrap-реализации (D71) тип результата вне scope — `nova_int` через
+type-erasure ctx-поля `_nova_result` (lossy для строк/records). Полноценная
+типизация — открытый вопрос D71. По спеке D62 итоговый тип = тип body, но
+семантика «как именно достать значение из spawn внутри scope» не закрыта.
+
 ### `supervised { body }`
 
 Structured-concurrency scope. Все `spawn` внутри ждут scope-exit перед запуском;
