@@ -697,6 +697,18 @@ queued fibers видели бы только последнее значение
   background требует pthread/Win32-интеграции — большая работа, отложена.
 - **Эффект `Detach` в effect-system.** Объявление + compile-time проверка
   требования в сигнатуре. Сейчас не выполняется.
+- **Эффект `Time` в effect-system.** По D11 / D31 / D62 — `Time` это
+  обычный stdlib-эффект с операциями `now()` и `sleep(d)`. В bootstrap'е
+  D71 `Time.sleep` реализован как **builtin** в codegen (прямая инлайн-эмиссия
+  yield), не через handler-vtable. Следствия:
+  * `Time` не требуется в сигнатуре функций использующих `Time.sleep`.
+  * `with Time = fixed_clock { ... }` (для тестов) **не работает** — handler-
+    подмена не интегрирована с builtin'ом.
+  * `Time.now()` вообще не реализован.
+  Полноценная реализация: объявить `Time` через `effect Time { now() -> int;
+  sleep(d int) }`, эмитить вызовы через стандартный handler-vtable, default
+  handler в bootstrap-runtime — реальные часы для `now()` и
+  `nova_fiber_yield()` для `sleep()`.
 - **Cancellation propagation.** Один fiber бросил error → scope отменяет
   остальных. Требует cancel-channel в `NovaFiberQueue` и интеграции с
   Fail-frame-stack. Не реализовано.
