@@ -84,33 +84,123 @@
 
 ## Runtime (nova_rt/)
 
-### [R10] Fiber-throw: half-implemented
-- **Где:** `nova_rt/fibers.h` (per-fiber fail-frame switching) + `emit_c.rs::emit_spawn`
-  (setjmp wrapper).
-- **Что реализовано (2026-05-06):**
-  * Каждая fiber имеет свой fail-frame chain. `_nova_fail_top` сохраняется/
-    восстанавливается per-fiber в `nova_supervised_step` вокруг каждого `mco_resume`.
-  * spawn-entry оборачивает body в `setjmp + nova_fail_push/pop` — `throw`
-    внутри body больше не UB и не abort, а ловится в fiber-stack'е.
-  * При catch в fiber: вызывается `nova_fiber_report_error(msg)`, error
-    записывается в scope queue's `first_error`. Fiber завершается чисто.
-  * `nova_supervised_run` после полного drain'а проверяет `first_error` и
-    rethrow'ит на main-flow (через `nova_throw`) — это безопасно, longjmp
-    идёт по main-stack'у.
-  * `Stmt::Throw` в codegen: сейчас эмитит реальный `nova_throw(msg)`,
-    раньше был просто `abort()`.
-- **Что не реализовано:**
-  * **Cancellation propagation** между fiber'ами. Если один fiber `throw`-нул,
-    остальные продолжают работу до своего завершения. По D50 «scope cancel'ит
-    остальных» — нет cancel-channel в `NovaFiberQueue`.
-  * **Positive-тесты на real throw → catch на main**. Нет `try { ... } catch (e)`
-    ни `with Fail = ...` инфраструктуры в тестах. Sequence "throw from fiber →
-    rethrow on main → abort" работает (= correctness требование), но без top-level
-    try-catch positive-test не написать. Нужен test runner с поддержкой
-    "expected non-zero exit code" или Nova-level `try` keyword (D25).
-  * Switching `_nova_test_frame` per-fiber. `nova_assert` внутри fiber
-    сейчас по-прежнему UB (longjmp пересекает fiber boundary в test runner).
-- **Приоритет:** M (cancellation важна для AI-friendly fan-out с ошибками).
+### [R10] Fiber-throw + cooperative cancellation propagation
+- **Где:** `nova_rt/fibers.h` (per-fiber fail-frame switching, cancel flag) +
+  `emit_c.rs::emit_spawn` (setjmp wrapper) + `Stmt::Throw` (теперь nova_throw).
+
+#### Что реализовано (2026-05-06)
+1. **Per-fiber fail-frame chain.** `_nova_fail_top` (thread-local stack
+   setjmp-frame'ов) теперь switching: `nova_supervised_step` сохраняет
+   текущий top, ставит fiber'у его сохранённый chain (NULL для нового),
+   делает `mco_resume`, после resume сохраняет fiber'овский chain
+   обратно в `q->fiber_fail_top[i]` и восстанавливает outer top.
+2. **Spawn-entry оборачивает body в setjmp.** Codegen `emit_spawn` теперь
+   эмитит:
+   ```c
+   NovaFailFrame _ff;
+   nova_fail_push(&_ff);
+   if (setjmp(_ff.jmp) == 0) { ...body... nova_fail_pop(); }
+   else { nova_fail_pop(); nova_fiber_report_error(_ff.error_msg.ptr); }
+   ```
+   `throw` внутри body → longjmp в `_ff` (frame на ЭТОЙ fiber-stack'е,
+   safe), error пишется в scope queue, fiber завершается чисто.
+3. **Cooperative cancellation.** `nova_fiber_report_error` ставит
+   `q->cancel_requested = true`. `nova_fiber_yield` перед `mco_yield`
+   проверяет флаг — если установлен, `nova_throw("scope cancelled")`,
+   который ловится тем же spawn-entry frame'ом. Этот fiber умирает,
+   scope переходит к следующему.
+4. **Scope rethrow на main.** `nova_supervised_run` после полного drain'а
+   проверяет `q->first_error` и если он не NULL — `nova_throw` на
+   main-flow. Это безопасно: longjmp идёт по main-stack'у.
+5. **`Stmt::Throw` теперь использует `nova_throw`** (раньше был
+   `abort()`). Без активного fail-frame nova_throw тоже abort'ит, но
+   с сообщением — нормальный graceful path.
+
+#### Почему именно так
+
+**Альтернатива 1: единый thread-local fail-frame (без switching).**
+Изначально `_nova_fail_top` был один на thread. Когда fiber A push'ит
+frame, yield'ит, fiber B push'ит frame — top.prev указывает на A's
+frame, **но A's frame на A's stack'е**. Если B throw'ит → longjmp в
+B's frame OK, но если B fail-pop'нет и потом throw'ит на следующем
+уровне — top уже A's frame, longjmp пересекает fiber boundary → UB.
+Поэтому **switching обязателен**.
+
+**Альтернатива 2: NovaFiberMeta (extension struct в user_data).**
+Вместо хранения fail_top в queue хранить в `user_data` через wrapper-
+struct `{ NovaSpawnCtx*, fail_top }`. Это потребовало бы изменить
+ВСЕ обращения к ctx через прокси-структуру — десятки мест в codegen.
+Слишком много change'й. Queue-side storage концентрирует сложность
+в одном месте (fibers.h).
+
+**Альтернатива 3: per-fiber dynamic fail-stack.** Хранить указатель
+на fail-stack head в `mco_user_data`, на пути save/restore через
+обёртки. Сложнее, требует custom user_data routing. Queue-side
+проще на 30% кода.
+
+**Cooperative cancellation, не preemptive.** Альтернатива —
+preemption (timer-based safepoint check, как Go 1.14+). Требует
+сигнал-доставки и safepoint-кода в каждом цикле. Большая работа,
+явно отложена до production. Cooperative — норма Erlang/OCaml 5,
+spec-faithful по D14/D62.
+
+**Cancel-через-throw, не через флаг-проверку в каждой операции.**
+Альтернатива — Go-style context.Done() где fiber сам проверяет.
+Это требует API канала. Throw — простой re-use существующего
+fail-frame mechanism'а; fiber просто умирает на следующем yield.
+
+#### Что НЕ реализовано (приоритеты)
+
+**[H] Positive-тесты на real throw → catch на main.**
+Без top-level `try { ... } catch (e)` (D25) или Nova-level
+`with Fail = handler { ... }` нельзя написать тест который кидает
+throw из fiber, ждёт rethrow на main, и assert'ит сообщение об
+ошибке. Сейчас правильное поведение (rethrow → abort с msg)
+unverifiable как PASS.
+- **Roadmap:** реализовать spec D25 `try { body } catch (Pattern)`
+  или Nova-level `with Fail = (msg) => ... { body }` handler.
+
+**[M] Не-cooperative cancellation.**
+Fiber без yield-точек продолжит работу до конца body, даже если
+scope cancelled. Это норма для cooperative-only scheduler'а
+(Trio, Kotlin coroutines), но в production нужен preemption на
+backedge'ах циклов и function entries.
+- **Roadmap:** добавить safepoint-полл в codegen for-loop / function-
+  entry; timer-based signal в runtime.
+
+**[M] `_nova_test_frame` НЕ switching per-fiber.**
+`nova_assert` внутри spawn-body всё ещё пишет `_nova_test_frame->
+fail_msg` и longjmp'ит в test runner — но frame на main-stack'е,
+fiber-stack ушёл. UB. Тесты `38/40/41/42/43/44` это маскируют тем,
+что assert делается ВНЕ spawn-body (на main после scope-exit).
+- **Roadmap:** аналогично fail_top — switching `_nova_test_frame`
+  в `nova_supervised_step`. ~10 строк, тривиально.
+
+**[L] Cancel-channel API.**
+Сейчас cancel-сигнал односторонний (scope→fiber через scope-flag).
+Двусторонний cancel (caller hint cancel scope извне) требует
+cancel-channel в queue + Nova API `cancel_scope { tok => spawn ... }`
+из D50.
+- **Roadmap:** spec D50 `cancel_scope`, отдельная задача.
+
+#### Roadmap к полноценной реализации (порядок)
+
+1. **Top-level `try/catch`** (D25) — разблокирует positive-тесты на
+   throw-paths и закроет [H] gap. После этого можно тестировать
+   все error-related фичи.
+2. **`_nova_test_frame` switching per-fiber** — закроет UB с
+   nova_assert внутри fiber'а. Тривиально.
+3. **`with Fail = ... { body }`** — handler-механизм для Fail
+   эффекта. Тогда можно catch'ать без `try`. Это уже есть в spec
+   D11 / D31, не реализовано.
+4. **Preemptive cancellation** — на безopiate-полла (function entry,
+   loop backedge). Добавить флаг проверки → `nova_throw("cancelled")`
+   если cancel_requested. Аналог Go 1.14+ preemption.
+5. **`cancel_scope { tok => ... }`** (D50) — двусторонний cancel
+   token. tok.cancel() извне сигналит fibers'ам.
+
+- **Приоритет верхнеуровневой задачи:** M (после [H] try/catch
+  работа по [M] preemption и `_nova_test_frame` относительно мала).
 
 ### [R9] NovaFiberQueue — фиксированный capacity (1024)
 - **Где:** `nova_rt/fibers.h` (NOVA_SCOPE_CAP)

@@ -57,13 +57,8 @@ static inline void nova_fiber_run(void (*entry)(mco_coro*), void* user) {
     /* result is already stored in user->result by the entry function */
 }
 
-/* nova_fiber_yield — suspend the current fiber, yielding to the scheduler.
- * Can be called from within a spawn body. Outside any fiber — no-op.
- */
-static inline void nova_fiber_yield(void) {
-    mco_coro* co = mco_running();
-    if (co) mco_yield(co);
-}
+/* nova_fiber_yield is defined later (after NovaFiberQueue / _nova_active_scope). */
+static inline void nova_fiber_yield(void);
 
 /* ---- Supervised scope: round-robin scheduler over a local fiber queue ----
  *
@@ -94,11 +89,16 @@ typedef struct {
     int             count;
     /* Scope error: first error captured from any fiber. Reset on init. */
     const char*     first_error;
+    /* Cancellation: set to true after the first fiber throws.
+     * Other fibers see this on their next yield-point and throw "cancelled"
+     * (cooperative cancellation — D50). */
+    nova_bool       cancel_requested;
 } NovaFiberQueue;
 
 static inline void nova_scope_init(NovaFiberQueue* q) {
     q->count = 0;
     q->first_error = NULL;
+    q->cancel_requested = false;
     for (int i = 0; i < NOVA_SCOPE_CAP; i++) {
         q->fiber_fail_top[i] = NULL;
         q->fiber_error[i] = NULL;
@@ -142,13 +142,15 @@ static __thread int             _nova_active_slot  = -1;
 #endif
 
 /* Called from spawn-entry's catch block when the body threw.
- * Records the error message into the scope queue's slot. */
+ * Records the error message into the scope queue's slot.
+ * Also signals cancellation to remaining live fibers (cooperative). */
 static inline void nova_fiber_report_error(const char* msg) {
     if (_nova_active_scope && _nova_active_slot >= 0) {
         _nova_active_scope->fiber_error[_nova_active_slot] = msg;
         if (_nova_active_scope->first_error == NULL) {
             _nova_active_scope->first_error = msg;
         }
+        _nova_active_scope->cancel_requested = true;
     }
 }
 
@@ -210,6 +212,24 @@ static inline void nova_supervised_run(NovaFiberQueue* q) {
         /* Re-throw on main-flow (back in caller's stack — safe to longjmp). */
         nova_throw(nova_str_from_cstr(err));
     }
+}
+
+/* nova_fiber_yield — suspend the current fiber, yielding to the scheduler.
+ * Outside any fiber — no-op.
+ *
+ * Checks scope cancellation: if another fiber in the same scope threw,
+ * `cancel_requested` is set on the scope, and this fiber throws
+ * "scope cancelled" instead of yielding. The throw is caught by the
+ * fiber's local fail-frame (set up by spawn-entry) — fiber dies cleanly.
+ */
+static inline void nova_fiber_yield(void) {
+    mco_coro* co = mco_running();
+    if (!co) return;
+    /* Cooperative cancellation check. _nova_active_scope set by step. */
+    if (_nova_active_scope && _nova_active_scope->cancel_requested) {
+        nova_throw(nova_str_from_cstr("scope cancelled"));
+    }
+    mco_yield(co);
 }
 
 #endif /* NOVA_RT_FIBERS_H */
