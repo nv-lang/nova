@@ -109,21 +109,22 @@ test "detach inside supervised: runs but not part of scope schedule" {
     // Пишем порядок выполнения через encoded log.
     let mut log = 0
     supervised {
-        log = log * 10 + 1   // before any spawn
+        println("main: 1"); log = log * 10 + 1   // before any spawn
         detach {
-            log = log * 10 + 2   // inline before spawn queue runs
+            println("detach: 2 (inline)"); log = log * 10 + 2
         }
         spawn {
-            log = log * 10 + 3
+            println("  spawn A: 3"); log = log * 10 + 3
             Time.sleep(0)
-            log = log * 10 + 5
+            println("  spawn A: 5"); log = log * 10 + 5
         }
         spawn {
-            log = log * 10 + 4
+            println("  spawn B: 4"); log = log * 10 + 4
             Time.sleep(0)
-            log = log * 10 + 6
+            println("  spawn B: 6"); log = log * 10 + 6
         }
     }
+    println("detach-in-supervised log = ", log)
     // Order: 1 (sync), 2 (detach inline), then supervised runs queue:
     //   spawn A: 3, yield → spawn B: 4, yield → A: 5 → B: 6
     // Encoded: 1,2,3,4,5,6 → 123456
@@ -137,21 +138,23 @@ test "detach inside supervised: runs but not part of scope schedule" {
 test "detach inside detach: both run inline" {
     let mut order = 0
     detach {
-        order = order * 10 + 1
+        println("outer detach: 1"); order = order * 10 + 1
         detach {
-            order = order * 10 + 2
+            println("  inner detach: 2"); order = order * 10 + 2
         }
-        order = order * 10 + 3
+        println("outer detach: 3"); order = order * 10 + 3
     }
+    println("nested detach order = ", order)
     // 1, 2 (inner detach inline), 3 → 123
     assert(order == 123)
 }
 
 test "detach: multiple detaches preserve sequential order" {
     let mut log = 0
-    detach { log = log * 10 + 1 }
-    detach { log = log * 10 + 2 }
-    detach { log = log * 10 + 3 }
+    detach { println("detach #1"); log = log * 10 + 1 }
+    detach { println("detach #2"); log = log * 10 + 2 }
+    detach { println("detach #3"); log = log * 10 + 3 }
+    println("multi detach log = ", log)
     assert(log == 123)
 }
 

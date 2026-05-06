@@ -47,22 +47,25 @@ test "main interleaves with two spawns via sleep(0)" {
     let mut log = 0
     supervised {
         spawn {
-            log = log * 10 + 2
+            println("  fiber A: write 2"); log = log * 10 + 2
             Time.sleep(0)
-            log = log * 10 + 6
+            println("  fiber A: write 6"); log = log * 10 + 6
         }
         spawn {
-            log = log * 10 + 3
+            println("  fiber B: write 3"); log = log * 10 + 3
             Time.sleep(0)
-            log = log * 10 + 7
+            println("  fiber B: write 7"); log = log * 10 + 7
         }
-        log = log * 10 + 1
+        println("main: write 1"); log = log * 10 + 1
+        println("main: sleep(0) — yield to queue")
         Time.sleep(0)         // step 1: A writes 2, B writes 3
-        log = log * 10 + 4
+        println("main: write 4"); log = log * 10 + 4
+        println("main: sleep(0)")
         Time.sleep(0)         // step 2: A writes 6, B writes 7
-        log = log * 10 + 5
+        println("main: write 5"); log = log * 10 + 5
         // scope exit: nothing left in queue (A and B both done)
     }
+    println("3-actors log = ", log)
     // Steps:
     //   main: 1                        log = 1
     //   sleep(0) → A: 2, B: 3          log = 1 → 12 → 123
@@ -77,19 +80,20 @@ test "main yield: counter ping-pong with one fiber" {
     let mut log = 0
     supervised {
         spawn {
-            log = log * 10 + 2
+            println("  F: 2"); log = log * 10 + 2
             Time.sleep(0)
-            log = log * 10 + 4
+            println("  F: 4"); log = log * 10 + 4
             Time.sleep(0)
-            log = log * 10 + 6
+            println("  F: 6"); log = log * 10 + 6
         }
-        log = log * 10 + 1
-        Time.sleep(0)           // → fiber: 2 (yields)
-        log = log * 10 + 3
-        Time.sleep(0)           // → fiber: 4 (yields)
-        log = log * 10 + 5
-        Time.sleep(0)           // → fiber: 6 (done)
+        println("M: 1"); log = log * 10 + 1
+        Time.sleep(0)
+        println("M: 3"); log = log * 10 + 3
+        Time.sleep(0)
+        println("M: 5"); log = log * 10 + 5
+        Time.sleep(0)
     }
+    println("ping-pong log = ", log)
     // 1, 2, 3, 4, 5, 6 → 123456
     assert(log == 123456)
 }
@@ -189,6 +193,7 @@ test "main as consumer: spawn produces, main reads after each yield" {
             let mut i = 1
             while i <= 5 {
                 slot = i
+                println("  producer: slot = ", i)
                 Time.sleep(0)   // hand off to main
                 i += 1
             }
@@ -197,10 +202,12 @@ test "main as consumer: spawn produces, main reads after each yield" {
         let mut count = 0
         while count < 5 {
             Time.sleep(0)       // wait for next produce
+            println("main consumer: read slot = ", slot)
             received += slot
             count += 1
         }
     }
+    println("main-consumer received = ", received)
     // Producer: 1, 2, 3, 4, 5 → received sums to 15
     assert(received == 15)
 }

@@ -424,20 +424,21 @@ test "supervised: two fibers interleave at every yield" {
     let mut log = 0
     supervised {
         spawn {
-            log = log * 10 + 1
+            println("A: 1"); log = log * 10 + 1
             Time.sleep(0)
-            log = log * 10 + 2
+            println("A: 2"); log = log * 10 + 2
             Time.sleep(0)
-            log = log * 10 + 3
+            println("A: 3"); log = log * 10 + 3
         }
         spawn {
-            log = log * 10 + 4
+            println("B: 4"); log = log * 10 + 4
             Time.sleep(0)
-            log = log * 10 + 5
+            println("B: 5"); log = log * 10 + 5
             Time.sleep(0)
-            log = log * 10 + 6
+            println("B: 6"); log = log * 10 + 6
         }
     }
+    println("two-fibers final log = ", log)
     assert(log == 142536)
 }
 
@@ -450,21 +451,22 @@ test "supervised: three fibers interleave round-robin" {
     let mut log = 0
     supervised {
         spawn {
-            log = log * 10 + 1
+            println("A first"); log = log * 10 + 1
             Time.sleep(0)
-            log = log * 10 + 2
+            println("A second"); log = log * 10 + 2
         }
         spawn {
-            log = log * 10 + 3
+            println("B first"); log = log * 10 + 3
             Time.sleep(0)
-            log = log * 10 + 4
+            println("B second"); log = log * 10 + 4
         }
         spawn {
-            log = log * 10 + 5
+            println("C first"); log = log * 10 + 5
             Time.sleep(0)
-            log = log * 10 + 6
+            println("C second"); log = log * 10 + 6
         }
     }
+    println("three-fibers final log = ", log)
     assert(log == 135246)
 }
 
@@ -476,16 +478,19 @@ test "supervised: fiber without yield runs to completion before others" {
     let mut log = 0
     supervised {
         spawn {
+            println("A runs all 3 (no yield)")
             log = log * 10 + 1
             log = log * 10 + 2
             log = log * 10 + 3
         }
         spawn {
+            println("B runs all 3 (after A done)")
             log = log * 10 + 4
             log = log * 10 + 5
             log = log * 10 + 6
         }
     }
+    println("no-yield final log = ", log)
     assert(log == 123456)
 }
 
@@ -496,20 +501,21 @@ test "supervised: yield count equals interleave depth" {
     let mut log = 0
     supervised {
         spawn {
-            log = log * 10 + 1
+            println("A: 1"); log = log * 10 + 1
             Time.sleep(0)
-            log = log * 10 + 3
+            println("A: 3"); log = log * 10 + 3
             Time.sleep(0)
-            log = log * 10 + 5
+            println("A: 5"); log = log * 10 + 5
         }
         spawn {
-            log = log * 10 + 2
+            println("B: 2"); log = log * 10 + 2
             Time.sleep(0)
-            log = log * 10 + 4
+            println("B: 4"); log = log * 10 + 4
             Time.sleep(0)
-            log = log * 10 + 6
+            println("B: 6"); log = log * 10 + 6
         }
     }
+    println("strict-alternation log = ", log)
     assert(log == 123456)
 }
 
@@ -520,18 +526,19 @@ test "supervised: yields uneven, fiber A finishes first" {
     let mut log = 0
     supervised {
         spawn {
-            log = log * 10 + 1
+            println("A: 1"); log = log * 10 + 1
             Time.sleep(0)
-            log = log * 10 + 2
+            println("A: 2 (done)"); log = log * 10 + 2
         }
         spawn {
-            log = log * 10 + 3
+            println("B: 3"); log = log * 10 + 3
             Time.sleep(0)
-            log = log * 10 + 4
+            println("B: 4"); log = log * 10 + 4
             Time.sleep(0)
-            log = log * 10 + 5
+            println("B: 5 (done)"); log = log * 10 + 5
         }
     }
+    println("uneven log = ", log)
     assert(log == 13245)
 }
 
@@ -548,6 +555,7 @@ test "supervised: producer-consumer pattern via shared mut + yields" {
             let mut i = 1
             while i <= 5 {
                 slot = i
+                println("  producer: slot = ", i)
                 Time.sleep(0)   // hand off to consumer
                 i += 1
             }
@@ -556,12 +564,14 @@ test "supervised: producer-consumer pattern via shared mut + yields" {
         spawn {
             let mut count = 0
             while count < 5 {
+                println("  consumer: read ", slot)
                 received += slot   // pick up current value
                 Time.sleep(0)      // wait for next produce
                 count += 1
             }
         }
     }
+    println("producer-consumer received = ", received)
     // Consumer sees slot at: 1, 2, 3, 4, 5 → sum = 15
     assert(received == 15)
     assert(producer_done)
@@ -573,26 +583,27 @@ test "supervised: 4 fibers, 1 yield each, round-robin order" {
     let mut log = 0
     supervised {
         spawn {
-            log = log * 10 + 1
+            println("A: 1"); log = log * 10 + 1
             Time.sleep(0)
-            log = log * 10 + 2
+            println("A: 2"); log = log * 10 + 2
         }
         spawn {
-            log = log * 10 + 3
+            println("B: 3"); log = log * 10 + 3
             Time.sleep(0)
-            log = log * 10 + 4
+            println("B: 4"); log = log * 10 + 4
         }
         spawn {
-            log = log * 10 + 5
+            println("C: 5"); log = log * 10 + 5
             Time.sleep(0)
-            log = log * 10 + 6
+            println("C: 6"); log = log * 10 + 6
         }
         spawn {
-            log = log * 10 + 7
+            println("D: 7"); log = log * 10 + 7
             Time.sleep(0)
-            log = log * 10 + 8
+            println("D: 8"); log = log * 10 + 8
         }
     }
+    println("4-fibers log = ", log)
     assert(log == 13572468)
 }
 
@@ -608,6 +619,7 @@ test "supervised: yield inside loop, fiber lifetime spans many iterations" {
             let mut i = 0
             while i < 3 {
                 a_steps += 1
+                println("  A iteration ", i)
                 order = order * 10 + 1   // A marker
                 Time.sleep(0)
                 i += 1
@@ -617,12 +629,14 @@ test "supervised: yield inside loop, fiber lifetime spans many iterations" {
             let mut j = 0
             while j < 3 {
                 b_steps += 1
+                println("  B iteration ", j)
                 order = order * 10 + 2   // B marker
                 Time.sleep(0)
                 j += 1
             }
         }
     }
+    println("loop-spans order = ", order)
     assert(a_steps == 3)
     assert(b_steps == 3)
     assert(order == 121212)   // strict alternation A,B,A,B,A,B
@@ -634,23 +648,24 @@ test "supervised: nested supervised — inner scope completes before outer conti
     let mut order = 0
     supervised {
         spawn {
-            order = order * 10 + 1     // X starts
+            println("X starts"); order = order * 10 + 1
             supervised {
                 spawn {
-                    order = order * 10 + 2
+                    println("  Y1 first"); order = order * 10 + 2
                     Time.sleep(0)
-                    order = order * 10 + 4
+                    println("  Y1 second"); order = order * 10 + 4
                 }
                 spawn {
-                    order = order * 10 + 3
+                    println("  Y2 first"); order = order * 10 + 3
                     Time.sleep(0)
-                    order = order * 10 + 5
+                    println("  Y2 second"); order = order * 10 + 5
                 }
             }
             // Inner finished: 2,3,4,5 appended (interleaved)
-            order = order * 10 + 6     // X resumes
+            println("X resumes"); order = order * 10 + 6     // X resumes
         }
     }
+    println("nested order = ", order)
     // 1 (X), 2,3,4,5 (Y1+Y2 interleaved), 6 (X) → 123456
     assert(order == 123456)
 }
