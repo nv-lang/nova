@@ -296,24 +296,80 @@ static inline void nova_fiber_yield(void) {
  * NovaFiberQueue to be complete. Declarations are in effects.h.
  */
 
-/* Default impl: context-sensitive yield (D71).
- *  - In fiber → nova_fiber_yield (cooperative suspend, scope cancel-check).
- *  - On main inside supervised body → nova_supervised_step (drain queue once).
- *  - Else → no-op (no scheduler to yield to).
- * `ms` is ignored — no timer-wheel in bootstrap. */
+/* Monotonic wall clock in milliseconds. Used by Nova_Time_now and as
+ * the timing source for Nova_Time_sleep's yield-loop. Resolution is
+ * platform-dependent but at least 1ms. Implemented inline so each TU
+ * gets its own copy — fine since the call is cheap and the function
+ * is small. */
+#ifdef _WIN32
+#  ifndef WIN32_LEAN_AND_MEAN
+#    define WIN32_LEAN_AND_MEAN
+#  endif
+#  include <windows.h>
+static inline int64_t _nova_monotonic_ms(void) {
+    /* GetTickCount64 returns milliseconds since system boot, monotonic,
+     * 64-bit so no rollover concern. */
+    return (int64_t)GetTickCount64();
+}
+static inline void _nova_native_sleep_ms(int64_t ms) {
+    if (ms <= 0) return;
+    Sleep((DWORD)ms);
+}
+#else
+#  include <time.h>
+#  ifdef __unix__
+#    include <unistd.h>
+#  endif
+static inline int64_t _nova_monotonic_ms(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (int64_t)ts.tv_sec * 1000 + (int64_t)(ts.tv_nsec / 1000000);
+}
+static inline void _nova_native_sleep_ms(int64_t ms) {
+    if (ms <= 0) return;
+    struct timespec req;
+    req.tv_sec = (time_t)(ms / 1000);
+    req.tv_nsec = (long)((ms % 1000) * 1000000L);
+    nanosleep(&req, NULL);
+}
+#endif
+
+/* Default impl: context-sensitive sleep (D71).
+ *  - In fiber → yield-loop until ms elapsed (each yield checks scope-cancel).
+ *  - On main inside supervised body → drain queue once per yield, then check.
+ *  - Else (top-level, no scope) → native OS sleep (no scheduler to yield to).
+ * `ms <= 0` → single yield (compatibility with `Time.sleep(0)` idiom). */
 static inline nova_unit _nova_time_default_sleep(nova_int ms) {
-    (void)ms;
+    if (ms <= 0) {
+        if (mco_running()) {
+            nova_fiber_yield();
+        } else if (_nova_active_scope) {
+            nova_supervised_step(_nova_active_scope);
+        }
+        return NOVA_UNIT;
+    }
+    int64_t deadline = _nova_monotonic_ms() + (int64_t)ms;
     if (mco_running()) {
-        nova_fiber_yield();
+        /* Cooperative wait: yield repeatedly until deadline. Each yield gives
+         * other fibers a chance to run; cancel-check happens inside yield. */
+        while (_nova_monotonic_ms() < deadline) {
+            nova_fiber_yield();
+        }
     } else if (_nova_active_scope) {
-        nova_supervised_step(_nova_active_scope);
+        /* Main flow inside a scope: drain queue per pass until deadline. */
+        while (_nova_monotonic_ms() < deadline) {
+            nova_supervised_step(_nova_active_scope);
+        }
+    } else {
+        /* Top-level, no scheduler — fall back to native sleep. */
+        _nova_native_sleep_ms((int64_t)ms);
     }
     return NOVA_UNIT;
 }
 
-/* Default impl: returns 0 (real clock not wired up in bootstrap). */
+/* Default impl: monotonic milliseconds since some unspecified epoch. */
 static inline nova_int _nova_time_default_now(void) {
-    return 0;
+    return (nova_int)_nova_monotonic_ms();
 }
 
 /* Inline dispatch: with user handler → handler method; else → default. */

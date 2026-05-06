@@ -4,10 +4,11 @@
 // По D62 Async ambient — callable откуда угодно с default handler'ом.
 // User override: `with Time = handler Time { sleep(ms) {...} now() {...} } { body }`.
 //
-// Default handler в bootstrap'е (D71):
-//   sleep(ms) — context-sensitive cooperative yield (fiber → mco_yield;
-//     supervised body → drain queue once; outside → no-op). ms игнорируется.
-//   now() — возвращает 0 (timer-wheel не реализован).
+// Default handler в bootstrap'е (D71+):
+//   sleep(ms) — context-sensitive (fiber → yield-loop until ms elapsed;
+//     supervised body на main → drain queue per pass; top-level → native
+//     OS sleep). ms учитывается через monotonic wall-clock.
+//   now() — monotonic ms через GetTickCount64/clock_gettime(MONOTONIC).
 
 module spec.time_handler
 
@@ -123,14 +124,17 @@ test "with Time: handler installed on main, supervised inside still works" {
 // SECTION 3: default Time.sleep работает откуда угодно (D62 ambient)
 // ================================================================
 
-test "Time.sleep on top level (no with) — no-op, doesn't crash" {
-    Time.sleep(100)
-    Time.sleep(0)
-    Time.sleep(99999)
+test "Time.sleep on top level (no with) — small delays don't crash" {
+    Time.sleep(0)        // single-yield path (no scheduler → no-op)
+    Time.sleep(1)        // native 1ms sleep
+    Time.sleep(2)
     assert(true)
 }
 
-test "Time.now() on top level (no with) — returns 0 (default)" {
-    let t = Time.now()
-    assert(t == 0)
+test "Time.now() on top level — monotonic non-decreasing" {
+    let t1 = Time.now()
+    Time.sleep(2)
+    let t2 = Time.now()
+    assert(t2 >= t1)            // monotonic
+    assert(t2 - t1 >= 1)        // at least the requested delay (allow 1ms slack)
 }
