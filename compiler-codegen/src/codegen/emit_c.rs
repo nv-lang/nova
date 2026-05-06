@@ -200,14 +200,16 @@ impl CEmitter {
         if snippet.is_empty() {
             return;
         }
-        // Sanitize for C comment: ascii-only-ish, escape `*/` to avoid
-        // closing the comment. Truncate long lines.
-        let safe: String = snippet
-            .chars()
-            .map(|c| if c == '*' || c == '/' { ' ' } else { c })
-            .take(120)
-            .collect();
-        let suffix = if snippet.len() > safe.len() { " …" } else { "" };
+        // Sanitize for C comment: replace `*/` sequences with `* /` to avoid
+        // closing the comment prematurely. Lone `*` and `/` are kept (so
+        // multiplication and division operators читаемы). Truncate long lines.
+        let truncated: String = snippet.chars().take(120).collect();
+        let suffix = if snippet.chars().count() > truncated.chars().count() {
+            " …"
+        } else {
+            ""
+        };
+        let safe = truncated.replace("*/", "* /");
         self.line(&format!("/* SRC: {}{} */", safe, suffix));
     }
 
@@ -2548,6 +2550,7 @@ impl CEmitter {
         self.indent = 1;
         match &f.body {
             FnBody::Expr(e) => {
+                self.emit_source_annotation_for_expr(e);
                 let val = self.emit_expr(e)?;
                 if ret == "nova_unit" {
                     self.line(&format!("{};", val));
@@ -2582,6 +2585,7 @@ impl CEmitter {
         self.indent += 1;
         match &f.body {
             FnBody::Expr(e) => {
+                self.emit_source_annotation_for_expr(e);
                 let val = self.emit_expr(e)?;
                 self.line(&format!("{};", val));
                 self.line("return NOVA_UNIT;");
