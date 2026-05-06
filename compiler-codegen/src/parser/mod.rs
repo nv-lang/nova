@@ -861,7 +861,17 @@ impl Parser {
 
     fn parse_or(&mut self) -> Result<Expr, Diagnostic> {
         let mut left = self.parse_and()?;
-        while matches!(self.peek().kind, TokenKind::PipePipe | TokenKind::KwOr) {
+        loop {
+            // D49 newline-tolerance: leading `||` / `or` after newline
+            // continues the expression. Save position to roll back if not.
+            let saved_pos = self.pos;
+            if matches!(self.peek().kind, TokenKind::Newline) {
+                self.skip_newlines();
+            }
+            if !matches!(self.peek().kind, TokenKind::PipePipe | TokenKind::KwOr) {
+                self.pos = saved_pos;
+                break;
+            }
             self.bump();
             self.skip_newlines();
             let right = self.parse_and()?;
@@ -880,7 +890,15 @@ impl Parser {
 
     fn parse_and(&mut self) -> Result<Expr, Diagnostic> {
         let mut left = self.parse_eq()?;
-        while matches!(self.peek().kind, TokenKind::AmpAmp | TokenKind::KwAnd) {
+        loop {
+            let saved_pos = self.pos;
+            if matches!(self.peek().kind, TokenKind::Newline) {
+                self.skip_newlines();
+            }
+            if !matches!(self.peek().kind, TokenKind::AmpAmp | TokenKind::KwAnd) {
+                self.pos = saved_pos;
+                break;
+            }
             self.bump();
             self.skip_newlines();
             let right = self.parse_eq()?;
