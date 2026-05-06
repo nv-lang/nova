@@ -296,7 +296,8 @@ Q-char-literals.
   `s.chars()` / `s.char_at(i)`.
 
 **Конверсия в `[]byte` через D73:**
-- `[]byte.from(s str) -> []byte` объявлена в prelude — **копирует**
+- `[]byte.from(s str) -> []byte` — infallible (всегда работает,
+  `str` гарантированно валидный UTF-8). **Копирует**
   `s.ptr..s.ptr+s.len` в свежий `[]byte`. D73 авто-синтезирует
   `s.into()` для `let b []byte = s.into()`.
 - Копирует, не view: Nova не имеет readonly-меток (D6 — managed
@@ -304,8 +305,11 @@ Q-char-literals.
   испортил бы immutability `str`. Стоимость O(n) — приемлемо для
   границы str↔bytes; для in-place аккумуляции использовать `Buffer`
   (Q-buffer).
-- `str.try_from(b []byte) -> Result[str, Utf8Error]` через D77 —
-  валидирует UTF-8 при конверсии. Auto-синтезирует `b.try_into()`.
+- `str.from(b []byte) Fail[Utf8Error] -> str` — fallible-форма
+  (D73 + Fail-effect). Валидирует UTF-8; на ошибке throw'ает.
+  Auto-derived: `b.into()` тоже декларирует `Fail[Utf8Error]`.
+  Result-форма (`str.try_from(b)` → `Result[str, Utf8Error]`)
+  доступна через D77 как convenience sugar.
 
 **Nul-termination (C-interop):** `nova_str_concat` сейчас аллоцирует
 `len + 1` байт и кладёт `\0` после данных, чтобы `s.ptr` можно было
@@ -886,6 +890,12 @@ D70 на `str.from`: stdlib pre-registers `str.from(int)`, `str.from(bool)`,
 
 ## D73. `From` / `Into` protocol-пара с авто-выводом
 
+> **Уточнение (2026-05-07):** `from`/`into` могут декларировать
+> `Fail[E]` если конверсия fallible. Это **унифицирует** infallible и
+> fallible конверсии под одной формой `from`/`into` — нет нужды в
+> отдельном `try_from`/`try_into` (D77 теперь convenience-sugar,
+> см. там).
+
 ### Что
 Универсальный механизм нетривиальной конверсии значения между типами:
 
@@ -897,6 +907,9 @@ D70 на `str.from`: stdlib pre-registers `str.from(int)`, `str.from(bool)`,
    Если задан только `From[X]` для типа `T`, компилятор автоматически
    удовлетворяет `Into[T]` для `X` (и наоборот). Программист пишет
    **одну** реализацию из пары.
+4. **Fallible конверсии** объявляются эффектом `Fail[E]` в сигнатуре —
+   та же `from`/`into` форма; effect-aware auto-derive переносит
+   эффект на парную форму.
 
 Программисту доступны **две формы вызова** из одной реализации:
 
@@ -904,6 +917,10 @@ D70 на `str.from`: stdlib pre-registers `str.from(int)`, `str.from(bool)`,
 T.from(v X)             // static, на целевом типе
 v.into()               // instance, на источнике (тип цели — из контекста)
 ```
+
+Для fallible (с `Fail[E]`) семантика та же; ошибка распространяется
+через стандартный effect-механизм — `with Fail = handler { ... }` /
+`?` оператор / propagation наружу.
 
 В отличие от `as` (D54) — compile-time numeric/newtype/sum cast без
 runtime-кода, — `From`/`Into` для **семантически нетривиальных**
@@ -970,6 +987,55 @@ let n int = parse_typed("42")     // если int реализует From[str]
 
 Bound `[U From[X]]` в generic-сигнатуре требует чтобы конкретный
 тип `U` реализовывал `From[X]` — структурно, через D72 bound check.
+
+#### Fallible конверсии через `Fail[E]`
+
+Если конверсия может **не получиться** (валидация, парсинг, проверка
+диапазона), `from`/`into` декларируют `Fail[E]` в сигнатуре:
+
+```nova
+type Utf8Error | InvalidByte | UnexpectedEnd
+
+fn str.from(b []byte) Fail[Utf8Error] -> Self {
+    if !is_valid_utf8(b) {
+        throw Utf8Error.InvalidByte
+    }
+    // ...
+}
+
+// Caller-side — три варианта:
+
+// (1) Propagate via Fail в сигнатуре caller'а:
+fn parse_message(b []byte) Fail[Utf8Error] -> Message {
+    let s = str.from(b)              // ошибка пробрасывается
+    parse_inner(s)
+}
+
+// (2) Catch handler'ом — Result-стиль через with-handler:
+let r Result[str, Utf8Error] =
+    with Fail[Utf8Error] = (e) => interrupt Err(e) {
+        Ok(str.from(b))
+    }
+
+// (3) Default-fallback через with-handler:
+let s str = with Fail[Utf8Error] = (_) => interrupt "[invalid utf-8]" {
+    str.from(b)
+}
+```
+
+**Effect-aware auto-derive:** если `T.from(v V) Fail[E] -> Self`,
+компилятор авто-синтезирует `v.into() Fail[E] -> T`. Эффект
+наследуется, видим в сигнатуре auto-derived формы.
+
+**Когда писать `Fail`, когда нет:**
+- `Fahrenheit.from(c Celsius)` — без Fail (всегда успех).
+- `int.from(s str) Fail[ParseIntError]` — с Fail (может не парситься).
+- `Buffer.into() Fail[Utf8Error] -> str` — с Fail (валидация UTF-8).
+
+Это **унифицирует** API: одна форма `from`/`into` для всех конверсий.
+Не нужно решать «infallible или try_»; effect-аннотация в сигнатуре
+сама описывает контракт. Согласовано с D2/D10/D25/D62/D65 («всё —
+эффект», throw — операция Fail).
 
 #### Соотношение с `as` (D54)
 
@@ -1470,16 +1536,28 @@ D-решением D74.
 
 ## D77. `TryFrom` / `TryInto` — protocol-пара, расширение D73 для fallible-конверсий
 
+> **Уточнение (2026-05-07):** D73 теперь сам поддерживает fallible
+> через `Fail[E]` в сигнатуре `from`/`into` — это **основной**
+> механизм. D77 (`try_from` / `try_into`) — **convenience sugar** для
+> программистов, которые предпочитают Result-стиль (explicit error
+> path через `?` или `match`). Компилятор синтезирует одну форму из
+> другой; программист может писать любую. Документ ниже описывает
+> Result-форму как secondary-API.
+
 ### Что
 Парный механизм к [D73](#d73-from--into-protocol-пара-с-авто-выводом)
 для **fallible-конверсий**: когда конверсия может не получиться,
 программист может выбрать одну из двух эквивалентных форм:
 
-1. **Throwing-форма** через `Fail[E]` — `T.from(v) Fail[E] -> Self`.
-2. **Result-форма** — `T.try_from(v) -> Result[Self, E]`.
+1. **Throwing-форма** через `Fail[E]` — `T.from(v) Fail[E] -> Self`
+   (D73, основная форма).
+2. **Result-форма** — `T.try_from(v) -> Result[Self, E]` (D77,
+   convenience sugar).
 
 Семантически **эквивалентны** (одна задача — конверсия с возможной
-ошибкой), различаются **формой возврата ошибки**.
+ошибкой), различаются **формой возврата ошибки**. D73 forma — Nova-
+канонический путь («всё — эффект», D2/D10), D77 — для error-aware
+веток с explicit Result.
 
 **Компилятор синтезирует одну из другой.** Программист пишет одну
 сторону, другая выводится — точно так же как `From` ↔ `Into` в D73.

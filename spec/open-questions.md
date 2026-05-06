@@ -3847,9 +3847,16 @@ fn Buffer mut @add_char(c char) -> ()    // UTF-8 encode 1-4 bytes
 
 // Финализация (consume — после неё mutating-методы → runtime panic
 // "buffer consumed")
-fn Buffer @into() -> []byte                       // через D73
-fn Buffer @try_into() -> Result[str, Utf8Error]   // через D77, валидирует UTF-8
-fn Buffer @into_str_unchecked() -> str            // escape hatch без проверки
+fn Buffer @into() -> []byte                              // infallible — через D73
+fn Buffer @into() Fail[Utf8Error] -> str                 // fallible — D73 + Fail (target str)
+fn Buffer @try_into() -> Result[str, Utf8Error]          // D77 sugar — equivalent
+fn Buffer @into_str_unchecked() -> str                   // escape hatch без проверки
+
+// Note: D73 уточнение (2026-05-07) — fallible from/into через Fail-effect
+// в сигнатуре. То есть `buf.into()` для target `str` декларирует
+// Fail[Utf8Error] и throw'ает на невалидный UTF-8; для target `[]byte` —
+// infallible. Compiler разрешает overload по target-type через D73 dispatch.
+// `try_into()` остаётся как D77 convenience-sugar (Result-стиль).
 
 // Read (без consume)
 fn Buffer @len() -> int
