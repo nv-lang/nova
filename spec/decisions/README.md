@@ -14,13 +14,13 @@
 | # | Файл | Что внутри | D-решения |
 |---|---|---|---|
 | 01 | [01-philosophy.md](01-philosophy.md) | Цели, парадигма, AI-first | D1, D9, D10 |
-| 02 | [02-types.md](02-types.md) | Record, sum-type, protocol, generic, поля | D15, D17, D32, D36, D39, D42, D52, D53, D55, D66 |
+| 02 | [02-types.md](02-types.md) | Record, sum-type, protocol, generic, поля, bounds | D15, D17, D32, D36, D39, D42, D52, D53, D55, D66, D72 |
 | 03 | [03-syntax.md](03-syntax.md) | Объявления, литералы, операторы, методы, парсинг | D16, D19, D20, D22, D23, D27, D30, D33, D34, D35, D37, D38, D40, D43, D44, D45, D46, D48, D49, D54, D58, D59, D60, D69 |
 | 04 | [04-effects.md](04-effects.md) | Fail, Io, Db, handlers, with-блоки, interrupt, forbid, realtime, ? | D2, D3, D4, D11, D12, D18, D25, D28, D31, D61, D62, D63, D64, D65, D67, D68 |
 | 05 | [05-memory.md](05-memory.md) | Managed GC, escape analysis, regions | D6, D21 (cancelled) |
-| 06 | [06-concurrency.md](06-concurrency.md) | Fiber runtime, structured concurrency, spawn, detach | D14, D50, D71 |
+| 06 | [06-concurrency.md](06-concurrency.md) | Fiber runtime, structured concurrency, spawn, detach, cancel_scope | D14, D50, D71, D75 |
 | 07 | [07-modules.md](07-modules.md) | Модули, импорты, видимость | D5, D29, D47 |
-| 08 | [08-runtime.md](08-runtime.md) | Panic, capability, deployment, prelude, ToStr | D7, D13, D26, D41, D70 |
+| 08 | [08-runtime.md](08-runtime.md) | Panic, capability, deployment, prelude, From/Into, TryFrom, math, Mem | D7, D13, D26, D41, D70 (replaced → D73), D73, D74, D76, D77 |
 | 09 | [09-tooling.md](09-tooling.md) | Тесты, контракты, форматирование | D24 |
 
 ## История

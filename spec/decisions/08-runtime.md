@@ -14,7 +14,7 @@ static-состояния.
 | [D70](#d70-tostr-protocol--to_str-метод--free-function-tostrv) | ⚠️ REPLACED → D73. `ToStr` protocol + `@to_str()` (историческая справка) |
 | [D73](#d73-from--into-protocol-пара-с-авто-выводом) | `From` / `Into` protocol-пара с авто-выводом |
 | [D74](#d74-математические-операции-на-числовых-типах--instance-методы) | Математические операции на числовых типах — instance-методы |
-| [D75](#d75-tryfrom--tryinto-protocol-пара-расширение-d73-для-fallible-конверсий) | `TryFrom` / `TryInto` — расширение D73 для fallible-конверсий |
+| [D77](#d77-tryfrom--tryinto-protocol-пара-расширение-d73-для-fallible-конверсий) | `TryFrom` / `TryInto` — расширение D73 для fallible-конверсий |
 | [D76](#d76-mem-эффект--runtime-introspection-для-leakgrowth-тестов) | `Mem` эффект — runtime introspection для leak/growth тестов |
 | [D76](#d76-mem-эффект--runtime-introspection-для-leakgrowth-тестов) | `Mem` эффект — runtime introspection для leak/growth тестов |
 
@@ -1385,7 +1385,7 @@ D-решением D74.
 
 ---
 
-## D75. `TryFrom` / `TryInto` — protocol-пара, расширение D73 для fallible-конверсий
+## D77. `TryFrom` / `TryInto` — protocol-пара, расширение D73 для fallible-конверсий
 
 ### Что
 Парный механизм к [D73](#d73-from--into-protocol-пара-с-авто-выводом)
@@ -1471,9 +1471,9 @@ type TryInto[T, E] protocol {
 3. **`from` ↔ `into` / `try_from` ↔ `try_into`:** через D73-механизм
    на каждой из форм отдельно. То есть если написано `u64.from(s)`,
    синтезируются:
-   - `u64.try_from(s)` (D75)
+   - `u64.try_from(s)` (D77)
    - `s.into()` для типа `u64` (D73)
-   - `s.try_into()` для типа `u64` (D75)
+   - `s.try_into()` для типа `u64` (D77)
 
 **Если написаны обе** (например, `from` и `try_from` обе вручную) —
 обе используются как написаны, авто-синтез не применяется. Как в D73,
@@ -1573,14 +1573,14 @@ match u64.try_from(s).ok() {
    все формы вызова». Не нужно помнить «for fallible — другая система».
 
 2. **Закрывает три формы вызова через одну реализацию.** Парсинг —
-   частый use case. Без D75 программисту нужно либо:
+   частый use case. Без D77 программисту нужно либо:
    - Писать `try_X` отдельно (Kotlin-style `toIntOrNull`, размножение
      имён), или
    - Всегда `match { Some => ... None => throw }` обёртку.
 
-3. **Стандартизованное имя `try_from`.** До D75 разные библиотеки
+3. **Стандартизованное имя `try_from`.** До D77 разные библиотеки
    могли использовать `try_parse`, `parse_or_err`, `validate`, и
-   т.д. — каждая со своим именем. С D75 — единое имя как `from`
+   т.д. — каждая со своим именем. С D77 — единое имя как `from`
    стандартно для конверсии.
 
 4. **Прецедент Rust:** `From` / `TryFrom` — стандарт `std`. Auto-blanket
@@ -1617,7 +1617,7 @@ match u64.try_from(s).ok() {
 ### Цена
 
 1. **Расширение compiler-логики.** D73 уже синтезирует пару From/Into,
-   D75 удваивает: from/try_from + into/try_into = 4 формы из одной
+   D77 удваивает: from/try_from + into/try_into = 4 формы из одной
    написанной. Компилятор должен:
    - Распознать одну из четырёх форм
    - Сгенерировать остальные три
@@ -1641,7 +1641,7 @@ match u64.try_from(s).ok() {
 ### Связь
 
 - [D73](#d73-from--into-protocol-пара-с-авто-выводом) — базовая
-  пара From/Into, D75 расширяет на fallible-форму.
+  пара From/Into, D77 расширяет на fallible-форму.
 - [D67](04-effects.md#d67) — `?`-оператор; работает на Result
   (`try_from(s)?`), не работает на throwing `from`.
 - [D72](02-types.md#d72) — bounds: `[U TryFrom[T, E]]` для
@@ -1653,15 +1653,15 @@ match u64.try_from(s).ok() {
   (`Parse<TypeName>Error`); не меняется.
 - [examples/stdlib/semver.nv](../../examples/stdlib/semver.nv) —
   использует `u64.try_parse` (legacy имя) — должно мигрировать на
-  `u64.try_from` после принятия D75.
+  `u64.try_from` после принятия D77.
 
 ### Открытые вопросы
 
 - **Auto-derive для newtype?** `type UserId u64` — должны ли
   автоматически быть `UserId.from(n u64)` и `UserId.try_from(s str)`?
   Сейчас — программист пишет вручную. Q-auto-from осталось открытым
-  из D73, расширяется на D75.
-- **`from` цепочки** (`A → B → C`) — ни D73, ни D75 не вводят
+  из D73, расширяется на D77.
+- **`from` цепочки** (`A → B → C`) — ни D73, ни D77 не вводят
   транзитивность. Программист пишет `C.from(B.from(a))`. Q-from-chain.
 - **`TryFrom` для одного и того же `T` с разными `E`?** Пример:
   `u64.try_from(s str) -> Result[Self, ParseIntError]` и
@@ -1674,7 +1674,7 @@ match u64.try_from(s).ok() {
 
 ### Эволюция
 
-До D75 в первой реализации `examples/stdlib/semver.nv` использовался
+До D77 в первой реализации `examples/stdlib/semver.nv` использовался
 `u64.try_parse(s) -> Option[u64]` — отдельное имя для Option-варианта
 парсинга. При обсуждении выявилось три проблемы:
 
@@ -1685,7 +1685,7 @@ match u64.try_from(s).ok() {
 3. **Прецедент Rust** — `TryFrom` парный к `From` решает ту же
    задачу унифицированно.
 
-D75 формализует: **одно имя `try_from`** для Result-варианта, авто-
+D77 формализует: **одно имя `try_from`** для Result-варианта, авто-
 синтез четырёх форм вызова из одной реализации. Option получается
 через `Result.ok()`. `try_parse` отвергается как избыточное.
 

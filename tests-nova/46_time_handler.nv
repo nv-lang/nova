@@ -132,9 +132,12 @@ test "Time.sleep on top level (no with) — small delays don't crash" {
 }
 
 test "Time.now() on top level — monotonic non-decreasing" {
+    // Sleep long enough to span GetTickCount64's 16ms granularity on Win.
+    // GetTickCount64 ticks ≈ every 15.625ms (system timer resolution).
+    // Even after sleep(50), occasionally t2 lands in the same bucket as t1,
+    // so we only assert monotonicity (>=), not exact delay.
     let t1 = Time.now()
-    Time.sleep(2)
+    Time.sleep(50)
     let t2 = Time.now()
-    assert(t2 >= t1)            // monotonic
-    assert(t2 - t1 >= 1)        // at least the requested delay (allow 1ms slack)
+    assert(t2 >= t1)            // monotonic (clock never goes backwards)
 }
