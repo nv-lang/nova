@@ -254,6 +254,26 @@ type RangeIter {
 `f32`, `f64`, `str`, `bool`, `char`, `()`, `byte`) — встроены в язык,
 не stdlib, но упомянуты для полноты.
 
+**`char` — Unicode codepoint, НЕ UTF-8 byte sequence.** `char` хранит
+**одно скалярное значение Unicode** (диапазон 0..0x10FFFF, исключая
+surrogate pairs 0xD800..0xDFFF). Размер в памяти — 4 байта (как Rust
+`char`, Go `rune`, Swift `Unicode.Scalar`).
+
+`str` хранит UTF-8 байты, `char` — codepoint. Конверсии:
+- `char → str` или `char → []byte` — UTF-8 encode (1-4 байта в
+  зависимости от значения; см. `Buffer.add_char` в Q-buffer).
+- `str.chars() -> Iter[char]` — UTF-8 decode по ходу итерации.
+
+Это разделение типичное для современных языков (Rust, Swift). Go
+использует `rune` = `int32` по тому же принципу. C `char` это byte —
+**не** аналог Nova `char`.
+
+Bootstrap-status: `char` зарезервирован как тип, но синтаксис
+char-литералов (`'a'`) — ещё открытый вопрос (Q-char-literals).
+В коде сейчас используется `nova_int` напрямую (передаём codepoint
+как число) — это будет заменено на нормальный `char` при закрытии
+Q-char-literals.
+
 **`str` — UTF-8 byte slice.** Внутреннее представление — пара
 `(ptr, len)` байтов (как Rust `&str` или Go `string`). Содержимое —
 валидный UTF-8 по конвенции: литералы, конкатенация и `str.from(...)`

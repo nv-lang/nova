@@ -1,4 +1,4 @@
-//! Recursive-descent parser для Nova.
+﻿//! Recursive-descent parser для Nova.
 //!
 //! Один большой модуль: `Parser` — состояние с указателем на токены,
 //! методы для каждого нетерминала. Никаких внешних парсер-комбинаторов:
@@ -15,6 +15,11 @@ pub struct Parser {
     /// (используется в head-позициях `if`/`while`/`match`-scrutinee
     /// и `for`-итераторах, чтобы `{` следующего блока не съедался).
     no_struct_lit: bool,
+    /// Когда true — `expr(args) { ... }` не парсится как call-with-
+    /// trailing-block. Используется в head-позиции `match`-scrutinee,
+    /// чтобы `match foo() { Some(i) => ... }` не рассматривался как
+    /// `foo()` с trailing-block'ом.
+    no_trailing_block: bool,
     /// Оригинальный текст для обратной выборки (используется в
     /// `.n.m`-positional-tuple-access, где Float-токен нужно
     /// расщепить обратно в две части).
@@ -31,6 +36,7 @@ impl Parser {
             tokens,
             pos: 0,
             no_struct_lit: false,
+            no_trailing_block: false,
             src,
         }
     }
@@ -54,6 +60,22 @@ impl Parser {
         self.no_struct_lit = true;
         let result = f(self);
         self.no_struct_lit = saved;
+        result
+    }
+
+    /// Аналогично, но также блокирует trailing-block-attachment к call'у.
+    /// Используется в match-scrutinee позиции.
+    fn with_no_struct_or_trailing<R>(
+        &mut self,
+        f: impl FnOnce(&mut Self) -> Result<R, Diagnostic>,
+    ) -> Result<R, Diagnostic> {
+        let saved_struct = self.no_struct_lit;
+        let saved_trailing = self.no_trailing_block;
+        self.no_struct_lit = true;
+        self.no_trailing_block = true;
+        let result = f(self);
+        self.no_struct_lit = saved_struct;
+        self.no_trailing_block = saved_trailing;
         result
     }
 
@@ -1128,8 +1150,12 @@ impl Parser {
                         }
                     }
                     let end = self.expect(&TokenKind::RParen)?.span;
-                    // trailing block?
-                    let trailing_block = if matches!(self.peek().kind, TokenKind::LBrace) {
+                    // trailing block? Skip when inside match-scrutinee context
+                    // (see no_trailing_block flag) — `match f(x) { ... }` should
+                    // be parsed as `match` over `f(x)`, not `f(x){...}` call-with-block.
+                    let trailing_block = if matches!(self.peek().kind, TokenKind::LBrace)
+                        && !self.no_trailing_block
+                    {
                         Some(self.parse_trailing_block()?)
                     } else {
                         None
@@ -1587,7 +1613,7 @@ impl Parser {
             self.bump();
             let pattern = self.parse_pattern()?;
             self.expect(&TokenKind::Eq)?;
-            let scrutinee = self.with_no_struct_lit(|p| p.parse_expr())?;
+            let scrutinee = self.with_no_struct_or_trailing(|p| p.parse_expr())?;
             let then = self.parse_block()?;
             let else_ = self.parse_optional_else()?;
             let end = then.span;
@@ -1601,7 +1627,7 @@ impl Parser {
                 start.merge(end),
             ));
         }
-        let cond = self.with_no_struct_lit(|p| p.parse_expr())?;
+        let cond = self.with_no_struct_or_trailing(|p| p.parse_expr())?;
         let then = self.parse_block()?;
         let else_ = self.parse_optional_else()?;
         let end = then.span;
@@ -1635,7 +1661,7 @@ impl Parser {
 
     fn parse_match(&mut self) -> Result<Expr, Diagnostic> {
         let start = self.expect(&TokenKind::KwMatch)?.span;
-        let scrutinee = self.with_no_struct_lit(|p| p.parse_expr())?;
+        let scrutinee = self.with_no_struct_or_trailing(|p| p.parse_expr())?;
         self.expect(&TokenKind::LBrace)?;
         let mut arms = Vec::new();
         self.skip_newlines();
@@ -1688,7 +1714,7 @@ impl Parser {
         let start = self.expect(&TokenKind::KwFor)?.span;
         let pattern = self.parse_pattern()?;
         self.expect(&TokenKind::KwIn)?;
-        let iter = self.with_no_struct_lit(|p| p.parse_expr())?;
+        let iter = self.with_no_struct_or_trailing(|p| p.parse_expr())?;
         let body = self.parse_block()?;
         let end = body.span;
         Ok(Expr::new(
@@ -1707,7 +1733,7 @@ impl Parser {
         self.expect(&TokenKind::KwFor)?;
         let pattern = self.parse_pattern()?;
         self.expect(&TokenKind::KwIn)?;
-        let iter = self.with_no_struct_lit(|p| p.parse_expr())?;
+        let iter = self.with_no_struct_or_trailing(|p| p.parse_expr())?;
         let body = self.parse_block()?;
         let end = body.span;
         Ok(Expr::new(
@@ -1726,7 +1752,7 @@ impl Parser {
             self.bump();
             let pattern = self.parse_pattern()?;
             self.expect(&TokenKind::Eq)?;
-            let scrutinee = self.with_no_struct_lit(|p| p.parse_expr())?;
+            let scrutinee = self.with_no_struct_or_trailing(|p| p.parse_expr())?;
             let body = self.parse_block()?;
             let end = body.span;
             return Ok(Expr::new(
@@ -1738,7 +1764,7 @@ impl Parser {
                 start.merge(end),
             ));
         }
-        let cond = self.with_no_struct_lit(|p| p.parse_expr())?;
+        let cond = self.with_no_struct_or_trailing(|p| p.parse_expr())?;
         let body = self.parse_block()?;
         let end = body.span;
         Ok(Expr::new(
