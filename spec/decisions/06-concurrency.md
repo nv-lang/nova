@@ -772,22 +772,30 @@ supervised {
 }
 ```
 
-В bootstrap'е **`ms` игнорируется** — нет timer-wheel'а. `sleep(0)` и `sleep(100)`
-неотличимы. Любое значение даёт **один cooperative yield**:
+В bootstrap'е **`ms` учитывается через monotonic wall-clock** (2026-05-06).
+`sleep(0)` даёт один yield (compatibility с устоявшимся `Time.sleep(0)`
+идиомом). `sleep(N>0)` ждёт реально N миллисекунд:
 
-| Контекст вызова | Поведение |
-|---|---|
-| Внутри fiber-body (spawn) | `nova_fiber_yield()` — coroutine suspended, scheduler resumes others |
-| Вне fiber, внутри `supervised` body | `nova_supervised_step(&queue)` — main-flow прокручивает queue один раз |
-| Полностью вне любого scope | no-op (нет scheduler'а) |
+| Контекст вызова | Поведение для ms<=0 | Поведение для ms>0 |
+|---|---|---|
+| Внутри fiber-body (spawn) | `nova_fiber_yield()` (один yield) | yield-loop пока `_nova_monotonic_ms() < deadline`; каждый yield проверяет cancel |
+| Вне fiber, внутри `supervised` body | `nova_supervised_step(&queue)` (drain один раз) | drain queue per pass пока `< deadline` |
+| Полностью вне любого scope | no-op | native OS sleep (`Sleep` на Win, `nanosleep` на POSIX) |
+
+`Time.now()` возвращает monotonic ms (`GetTickCount64` на Win,
+`clock_gettime(CLOCK_MONOTONIC)` на POSIX). Эпоха unspecified —
+тесты должны сравнивать только разности, не абсолютные значения.
 
 Это **spec-faithful по D62** (Async — ambient): `Time.sleep` — обычная функция
 без эффект-окраски, callable откуда угодно. Поведение зависит от ambient
 runtime-окружения в точке вызова.
 
-В production-runtime'е добавится timer-wheel: `sleep(N>0)` поставит fiber в
-sleep-list с deadline, scheduler пропускает sleeping fibers до момента их
-пробуждения.
+**Чем bootstrap отличается от production-timer-wheel:** bootstrap делает
+busy-yield-loop с проверкой clock'а — fiber, ожидающий 100ms, всё это
+время съедает CPU yield-проверками. Production-runtime поставит fiber в
+sleep-list с deadline и scheduler пропустит sleeping fibers до их
+пробуждения (нулевой CPU между yield'ами). Поведение из Nova-кода
+неотличимо; это чисто оптимизация.
 
 #### 6. Capture-by-value для immutable scalars
 
@@ -880,13 +888,15 @@ queued fibers видели бы только последнее значение
 - **Эффект `Time` в effect-system — РЕАЛИЗОВАН** (2026-05-06).
   По D11/D31/D62: pre-registered как built-in effect (`sleep(int)`,
   `now() -> int`); `Time.sleep`/`Time.now` идут через стандартный
-  effect-dispatch путь (Nova_Time_sleep / Nova_Time_now). Default
-  handlers в runtime: sleep — context-sensitive cooperative yield
-  (fiber → mco_yield, supervised body → step queue, top-level → no-op);
-  now — возвращает 0 (timer-wheel не реализован). User override через
-  `with Time = handler Time { sleep(ms) {...} now() {...} } { body }`
-  — работает (тесты `46_time_handler.nv`). Что НЕ закрыто: реальный
-  timer-wheel (sleep с задержкой не делает реальной задержки).
+  effect-dispatch путь (Nova_Time_sleep / Nova_Time_now).
+  **Real wall-clock реализован (2026-05-06):** `Time.now()` возвращает
+  monotonic ms (GetTickCount64 на Win, clock_gettime на POSIX);
+  `Time.sleep(ms>0)` ждёт реально через yield-loop с deadline в fiber/
+  scope-context'е, native OS sleep на top-level. `Time.sleep(0)` — один
+  yield (compatibility-режим). User override через `with Time = handler
+  Time { ... } { body }` — работает (тесты `46_time_handler.nv`).
+  Что НЕ закрыто: production-timer-wheel (sleeping fiber'ы съедают CPU
+  yield-проверками — бизнес-логика этого не видит, это оптимизация).
 - **Cooperative cancellation propagation реализована** (2026-05-06):
   fiber-throw → scope `cancel_requested = true` → остальные fiber'ы
   при следующем yield (`Time.sleep` или scheduler step) делают

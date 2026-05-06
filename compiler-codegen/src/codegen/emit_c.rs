@@ -178,17 +178,30 @@ impl CEmitter {
         }
 
         // Pre-register Time as a built-in effect (D11 / D14 / D62).
-        // Operations: `now() -> int`, `sleep(ms int) -> unit`. Default handlers
-        // in runtime: sleep → context-sensitive cooperative yield (fiber-yield
-        // in fiber, supervised_step in scope-body, no-op outside); now → 0
-        // (real clock not wired up in bootstrap). User override via
-        // `with Time = handler Time { sleep(ms) {...} now() {...} } { body }`
-        // — used by tests for fixed clock / mock sleep.
+        // Operations: `now() -> int` (monotonic ms), `sleep(ms int) -> unit`
+        // (yields/sleeps depending on context — see fibers.h). User override
+        // via `with Time = handler Time { sleep(ms) {...} now() {...} } { body }`.
         {
             let mut time_schema: HashMap<String, (Vec<String>, String)> = HashMap::new();
             time_schema.insert("sleep".to_string(), (vec!["nova_int".into()], "nova_unit".into()));
             time_schema.insert("now".to_string(),   (vec![],                   "nova_int".into()));
             self.effect_schemas.insert("Time".to_string(), time_schema);
+        }
+
+        // Pre-register Mem as a built-in effect for runtime introspection.
+        // Operations:
+        //   - alloc_count() -> int : total nova_alloc calls since gc_init/reset
+        //   - free_count()  -> int : total frees (plain malloc backend → 0)
+        //   - live()        -> int : alloc_count - free_count
+        //   - reset()       -> unit: zero stats counters (per-test isolation)
+        // Used by leak/growth tests (see tests-nova/53_memory_growth.nv).
+        {
+            let mut mem_schema: HashMap<String, (Vec<String>, String)> = HashMap::new();
+            mem_schema.insert("alloc_count".to_string(), (vec![], "nova_int".into()));
+            mem_schema.insert("free_count".to_string(),  (vec![], "nova_int".into()));
+            mem_schema.insert("live".to_string(),        (vec![], "nova_int".into()));
+            mem_schema.insert("reset".to_string(),       (vec![], "nova_unit".into()));
+            self.effect_schemas.insert("Mem".to_string(), mem_schema);
         }
 
         self.emit_preamble();

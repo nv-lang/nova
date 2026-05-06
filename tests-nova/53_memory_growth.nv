@@ -1,0 +1,173 @@
+// 53_memory_growth.nv — runtime leak/growth tests via Mem effect.
+//
+// Mem.alloc_count() / Mem.live() / Mem.reset() — built-in runtime
+// instrumentation. Plain-malloc backend (default): free_count всегда 0,
+// live = alloc_count. Это даёт нам точку замера "сколько раз runtime
+// аллоцировал" — proxy для роста памяти.
+//
+// Цель — поймать регрессии где при изменении codegen один alloc на
+// итерацию случайно становится десятью. Тесты НЕ доказывают отсутствие
+// утечек (Phase-0 backend release is no-op), но фиксируют growth-rate
+// — если изменения в codegen начнут аллоцировать в N раз больше,
+// тест упадёт.
+
+module spec.memory_growth
+
+// ================================================================
+// SECTION 1: Mem effect — basic operations
+// ================================================================
+
+test "Mem.reset() zeroes counters" {
+    Mem.reset()
+    assert(Mem.alloc_count() == 0)
+    assert(Mem.live() == 0)
+}
+
+test "Mem.alloc_count() monotonically non-decreasing" {
+    Mem.reset()
+    let a = Mem.alloc_count()
+    // Force at least one allocation: string concat.
+    let s = "hello" + "world"
+    let b = Mem.alloc_count()
+    let _ = s.len
+    assert(b >= a)
+}
+
+// ================================================================
+// SECTION 2: hot-loop allocation budget
+// ================================================================
+
+// Pure-int loop should allocate nothing — int is value-typed, no heap.
+test "pure int loop — zero allocations" {
+    Mem.reset()
+    let before = Mem.alloc_count()
+    let mut sum = 0
+    let mut i = 0
+    while i < 1000 {
+        sum = sum + i
+        i = i + 1
+    }
+    let after = Mem.alloc_count()
+    assert(sum == 499500)
+    // Budget: 0 allocations for 1000 iterations.
+    assert(after - before == 0)
+}
+
+// Bool-flag loop also allocation-free.
+test "bool loop — zero allocations" {
+    Mem.reset()
+    let before = Mem.alloc_count()
+    let mut flag = false
+    let mut i = 0
+    while i < 500 {
+        flag = !flag
+        i = i + 1
+    }
+    let after = Mem.alloc_count()
+    assert(after - before == 0)
+}
+
+// ================================================================
+// SECTION 3: bounded-allocation expectations
+// ================================================================
+
+// String concat in a loop allocates per iteration (no immutable interning
+// in bootstrap). Budget: each concat = at most a small number of allocs.
+// We measure rate, not absolute — catches regressions where rate explodes.
+test "string concat loop — bounded growth rate" {
+    Mem.reset()
+    let before = Mem.alloc_count()
+    let mut s = ""
+    let mut i = 0
+    while i < 50 {
+        s = s + "x"
+        i = i + 1
+    }
+    let after = Mem.alloc_count()
+    let delta = after - before
+    // Each iteration should allocate a small constant number of times
+    // (concat builds new buffer). Exact rate not fixed — but if it goes
+    // above ~10 allocs/iter, something regressed.
+    assert(delta < 50 * 10)
+}
+
+// ================================================================
+// SECTION 4: spawn / supervised — bounded per-fiber alloc
+// ================================================================
+
+test "supervised with N spawns — bounded per-fiber growth" {
+    Mem.reset()
+    let before = Mem.alloc_count()
+    let mut sum = 0
+    supervised {
+        let mut k = 0
+        while k < 10 {
+            spawn { sum = sum + 1 }
+            k = k + 1
+        }
+    }
+    let after = Mem.alloc_count()
+    assert(sum == 10)
+    let delta = after - before
+    // Each spawn allocates: ctx struct + minicoro stack + fiber bookkeeping.
+    // 10 fibers shouldn't blow past, say, 200 allocations total.
+    assert(delta < 200)
+}
+
+// ================================================================
+// SECTION 5: parallel for array-mode — single result-array allocation
+// ================================================================
+
+test "parallel for → []int — bounded allocations" {
+    Mem.reset()
+    let before = Mem.alloc_count()
+    let xs = parallel for i in 0..10 {
+        i * 2
+    }
+    let after = Mem.alloc_count()
+    assert(xs[5] == 10)
+    let delta = after - before
+    // Result array (NovaArray + data buffer) + 10 spawn ctx allocs +
+    // minicoro stacks. Loose bound — catches regressions only.
+    assert(delta < 300)
+}
+
+// ================================================================
+// SECTION 6: re-running same op gives same growth (no accumulating leak
+// in compiler-emitted code itself)
+// ================================================================
+
+test "repeated supervised: same per-iter growth (no extra leak)" {
+    // Run the same supervised twice. The DELTA between runs should be
+    // ≈ same. If the second run is much larger, codegen left state
+    // around (e.g. global table grew unboundedly).
+    Mem.reset()
+    let before1 = Mem.alloc_count()
+    let mut sum1 = 0
+    supervised {
+        spawn { sum1 = sum1 + 1 }
+        spawn { sum1 = sum1 + 2 }
+        spawn { sum1 = sum1 + 4 }
+    }
+    let after1 = Mem.alloc_count()
+    let delta1 = after1 - before1
+
+    let before2 = Mem.alloc_count()
+    let mut sum2 = 0
+    supervised {
+        spawn { sum2 = sum2 + 1 }
+        spawn { sum2 = sum2 + 2 }
+        spawn { sum2 = sum2 + 4 }
+    }
+    let after2 = Mem.alloc_count()
+    let delta2 = after2 - before2
+
+    assert(sum1 == 7)
+    assert(sum2 == 7)
+    // Two runs should allocate roughly equally (within 50%).
+    // Allow some slack since GC bookkeeping might differ.
+    let lo = if delta1 < delta2 { delta1 } else { delta2 }
+    let hi = if delta1 > delta2 { delta1 } else { delta2 }
+    // hi should be at most 2x lo (catches "second run is exponentially worse").
+    assert(hi <= lo * 2)
+}

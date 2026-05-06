@@ -11,8 +11,12 @@ static-состояния.
 | [D13](#d13-panic-vs-эффекты-что-не-является-эффектом) | Panic vs эффекты: что НЕ является эффектом |
 | [D26](#d26-базовая-stdlib-и-prelude) | Базовая stdlib и prelude |
 | [D41](#d41-static-функции-есть-static-состояния-нет) | Static-функции есть, static-состояния нет |
-| [D70](#d70-tostr-protocol--to_str-метод--free-function-tostrv) | `ToStr` protocol + `@to_str()` метод + free function `to_str(v)` |
+| [D70](#d70-tostr-protocol--to_str-метод--free-function-tostrv) | ⚠️ REPLACED → D73. `ToStr` protocol + `@to_str()` (историческая справка) |
 | [D73](#d73-from--into-protocol-пара-с-авто-выводом) | `From` / `Into` protocol-пара с авто-выводом |
+| [D74](#d74-математические-операции-на-числовых-типах--instance-методы) | Математические операции на числовых типах — instance-методы |
+| [D75](#d75-tryfrom--tryinto-protocol-пара-расширение-d73-для-fallible-конверсий) | `TryFrom` / `TryInto` — расширение D73 для fallible-конверсий |
+| [D76](#d76-mem-эффект--runtime-introspection-для-leakgrowth-тестов) | `Mem` эффект — runtime introspection для leak/growth тестов |
+| [D76](#d76-mem-эффект--runtime-introspection-для-leakgrowth-тестов) | `Mem` эффект — runtime introspection для leak/growth тестов |
 
 ---
 
@@ -249,6 +253,12 @@ type RangeIter {
 **Базовые числовые и строковые типы** (`int`, `i8`-`i64`, `u8`-`u64`,
 `f32`, `f64`, `str`, `bool`, `char`, `()`, `byte`) — встроены в язык,
 не stdlib, но упомянуты для полноты.
+
+**Математические операции на числовых типах** объявлены как
+**instance-методы** через `@` ([D74](#d74-математические-операции-на-числовых-типах--instance-методы)):
+`x.sqrt()`, `theta.cos()`, `y.atan2(x)`, `a.hypot(b)`, `n.abs()`,
+`x.is_finite()`, etc. Static-функции — только для констант
+(`f64.PI`, `f64.NAN`) и парсинга (`f64.try_parse(s)`).
 
 **`any`** — пустой protocol-тип (D53). Любой тип удовлетворяет
 пустому контракту, поэтому `any` — top-type (универсальный супертип).
@@ -1184,3 +1194,584 @@ explicit-type) и `v.into()` (instance, context-driven). Также:
 **Что было невозможно до этого:** D73 как механизм требует bound'ы
 (D72). До D72 (Q-bounds открыт) `From`/`Into` пара была заблокирована.
 С D72 разблокирована.
+
+---
+
+## D74. Математические операции на числовых типах — instance-методы
+
+### Что
+Стандартные математические функции (`sin`, `cos`, `sqrt`, `atan2`,
+`hypot`, `abs`, `pow`, `floor`, `is_finite`, и др.) объявляются как
+**instance-методы** через `@` на числовых типах (`f64`, `f32`, `int`,
+i8-i64, u8-u64), а не как static `Math.fn(...)` или free function
+`sin(x)`. Static-функции остаются только для **констант**
+(`f64.PI`, `f64.NAN`) и **парсинга** (`f64.try_parse(s)`).
+
+```nova
+let r = (x * x + y * y).sqrt()
+let phi = im.atan2(re)
+let dist = a.hypot(b)
+let s = (theta + offset).sin()
+let n = magnitude.abs()
+```
+
+### Правило
+
+#### Полный набор на `f64` (prelude)
+
+| Категория | Методы |
+|---|---|
+| Корни и степени | `@sqrt()`, `@cbrt()`, `@sqr()`, `@pow(exp f64)`, `@powi(n int)` |
+| Тригонометрия | `@sin()`, `@cos()`, `@tan()`, `@asin()`, `@acos()`, `@atan()` |
+| `atan2` (двух-арг) | `@atan2(other f64) -> f64` (`y.atan2(x)`) |
+| Гиперболические | `@sinh()`, `@cosh()`, `@tanh()` |
+| Экспонента / лог | `@exp()`, `@ln()`, `@log10()`, `@log2()`, `@log(base f64)` |
+| Норма / расстояние | `@abs()`, `@hypot(other f64)` |
+| Округление | `@floor()`, `@ceil()`, `@round()`, `@trunc()`, `@fract()` |
+| Знак / минимум | `@signum()`, `@min(other f64)`, `@max(other f64)` |
+| Предикаты | `@is_finite()`, `@is_nan()`, `@is_infinite()` |
+
+Аналогичный набор на `int` (где математически осмысленно):
+`@abs()`, `@pow(n int)`, `@signum()`, `@min(other)`, `@max(other)`,
+`@is_negative()`, `@is_positive()`. Тригонометрия и логарифмы — только
+на float-типах.
+
+#### Static-функции на типе (не методы)
+
+Для констант и операций без естественного receiver'а — обычные
+static через точку (D35):
+
+```nova
+f64.PI                                    // константа π
+f64.E                                     // константа e
+f64.NAN                                   // тихий NaN
+f64.INFINITY                              // +∞
+f64.NEG_INFINITY                          // -∞
+f64.MAX                                   // максимальное конечное
+f64.MIN_POSITIVE                          // минимальное положительное
+f64.EPSILON                               // машинная точность
+
+f64.try_parse(s str) -> Option[f64]      // парсинг с возможной ошибкой
+```
+
+Парсинг через `f64.try_parse(s)` дополнен `From[str]` через D73 —
+доступна обе формы:
+
+```nova
+let x = f64.try_parse("3.14")            // Option[f64]
+let y f64 = f64.from("3.14")              // throws Fail[ParseError]
+let z f64 = "2.71".into()                 // через D73 авто-Into
+```
+
+#### Двух-аргументные функции
+
+`atan2`, `hypot`, `min`, `max`, `pow`, `log` принимают два аргумента.
+Receiver — первый по математической / физической конвенции:
+
+```nova
+y.atan2(x)        // arctangent of y/x — y первый
+a.hypot(b)        // √(a² + b²) — симметрично, но a первый
+base.log(other)   // log_base(other)
+x.pow(n)          // x^n
+```
+
+Это даёт chain-style: `dy.atan2(dx).abs() < tolerance`.
+
+#### Соответствующее имя `@sqr()`
+
+`@sqr()` — квадрат (`x*x`). Имя из Pascal (`Sqr(x)`), короче
+`squared`, согласовано с одноимённым методом на других типах
+(например, `Complex @sqr()`). Для нецелых степеней — `@pow(2.0)`
+или `@powi(2)`.
+
+### Почему
+
+1. **Согласовано с D35** ([03-syntax.md → D35](03-syntax.md#d35)).
+   `@`-методы — основной механизм для type-bound функций. Числовые
+   операции — type-bound по определению (зависят от типа: `i32.abs()`
+   ≠ `f64.abs()` в реализации). Использовать static-стиль для одних
+   операций и `@` для других — нарушение D40 «один способ».
+
+2. **Chain-friendly формулы.** Длинные математические выражения
+   читаются слева направо в «pipeline»-стиле:
+   ```nova
+   let result = (a*a + b*b).sqrt().abs().min(MAX_VALUE)
+   ```
+   В static-стиле было бы:
+   ```nova
+   let result = f64.min(f64.abs(f64.sqrt(a*a + b*b)), MAX_VALUE)
+   ```
+   Вложенность растёт справа налево, читать тяжелее.
+
+3. **Прецедент Rust / Kotlin / Swift.** Все три используют instance-
+   методы для математики (`(2.0_f64).sqrt()`, `theta.cos()`).
+   Java/JS/Python со static-стилем (`Math.sin(x)`) — наследие старой
+   эпохи без object-методов на примитивах.
+
+4. **Free functions конфликтуют с user-кодом.** `sin(x)` как глобальная
+   функция занимает имя `sin` — пользователь не может назвать так
+   свою функцию без shadowing prelude. `@sin()` живёт в namespace
+   типа, не глобально.
+
+5. **AI-friendly.** LLM пишет `theta.cos()` без раздумий «math.cos
+   или Math.cos или просто cos». Один паттерн — один способ
+   вызова.
+
+### Что отвергнуто
+
+- **Static `Math.sin(x)`** (Java, JavaScript). Менее читаемо для
+  длинных формул, не chain-friendly, и в Nova нет объекта-namespace
+  `Math` (нет static-namespace объектов как в Java).
+- **Free function `sin(x)`** (C, Python). Захватывает короткие имена
+  в глобальном scope, конфликтует с пользовательскими функциями.
+- **Trait-style `Float` protocol с `sin/cos/...`** (Haskell `Floating`,
+  Rust `num_traits::Float`). Лишняя indirection, generics с bounds
+  для каждой математической функции усложняют сигнатуры. В Nova
+  `f64`/`f32` — отдельные типы, дублирование методов на оба
+  допустимо (как в Rust).
+- **Разные имена для разных размеров** (`sinf` для f32, `sin` для f64
+  как в C). Перегрузка по типу receiver'а (D35) даёт одно имя, разные
+  реализации — естественно для языка с типами.
+- **`@squared()` вместо `@sqr()`.** Длиннее без выгоды; `sqr` имеет
+  Pascal-прецедент и согласовано со стилем коротких имён в Nova
+  (`@neg`, `@inv`, `@conj`, `@arg`, `@rem`, `@shl`).
+- **Только static-функции для констант + instance для операций
+  через `@`** (mixed). Принято: константы — static (`f64.PI` — у
+  значения нет receiver'а), операции — `@`. Это два разных рода
+  имён (decleration site), не конфликт.
+
+### Цена
+
+1. **Дублирование методов между f32/f64**, потенциально int.
+   Реализация — обычно одна (через builtin / FFI к libm), но
+   объявления повторяются. Это цена отсутствия Float-protocol;
+   терпимо для prelude, который пишется один раз.
+
+2. **`x.sqrt()` для `x < 0`** возвращает `NaN` (IEEE 754) — runtime-
+   surprise. Strict-режим (`Fail[NaN]`) — отдельная функция
+   `@try_sqrt()` если понадобится; в base — IEEE без проверок.
+
+3. **Нет namespace `math`.** Если пользователь хочет
+   `import math; math.sin(x)` — придётся писать `x.sin()`. Часть
+   программистов из Python/Java будут удивлены поначалу.
+
+### Связь
+
+- [D26](#d26-базовая-stdlib-и-prelude) — prelude содержит математику
+  как часть числовых типов; D74 уточняет форму объявления.
+- [03-syntax.md → D35](03-syntax.md#d35) — `@`-методы как механизм.
+- [03-syntax.md → D46](03-syntax.md#d46) — operator overloading
+  (`@plus`, `@times`, ...) дополняет D74 для арифметики.
+- [03-syntax.md → D40](03-syntax.md#d40) — «один способ» — выбор
+  между static и instance не остаётся на усмотрение программиста.
+- [D73](#d73-from--into-protocol-пара-с-авто-выводом) — парсинг
+  чисел через `f64.from(s)` / `s.into()`, согласовано с from/into.
+- [examples/stdlib/complex.nv](../../examples/stdlib/complex.nv) —
+  использует instance-стиль (`theta.cos()`, `im.atan2(re)`,
+  `a.hypot(b)`) как канонический пример.
+
+### Эволюция
+
+Изначально черновик `complex.nv` (2026-05) использовал static-стиль
+`f64.cos(theta)`, `f64.atan2(im, re)` по аналогии с Java `Math.sin`.
+При обсуждении выявлено что это противоречит D35 (методы — основной
+механизм) и плохо читается для математических формул. Все вызовы
+переписаны в instance-стиль, и паттерн зафиксирован формальным
+D-решением D74.
+
+`Math` namespace отвергнут (нет static-namespace в Nova, имя `Math`
+конфликтовало бы с пользовательскими типами `Math` для предметных
+областей).
+
+---
+
+## D75. `TryFrom` / `TryInto` — protocol-пара, расширение D73 для fallible-конверсий
+
+### Что
+Парный механизм к [D73](#d73-from--into-protocol-пара-с-авто-выводом)
+для **fallible-конверсий**: когда конверсия может не получиться,
+программист может выбрать одну из двух эквивалентных форм:
+
+1. **Throwing-форма** через `Fail[E]` — `T.from(v) Fail[E] -> Self`.
+2. **Result-форма** — `T.try_from(v) -> Result[Self, E]`.
+
+Семантически **эквивалентны** (одна задача — конверсия с возможной
+ошибкой), различаются **формой возврата ошибки**.
+
+**Компилятор синтезирует одну из другой.** Программист пишет одну
+сторону, другая выводится — точно так же как `From` ↔ `Into` в D73.
+
+```nova
+// Программист пишет — одну форму:
+fn u64.try_from(s str) -> Result[Self, ParseIntError] => ...
+
+// Компилятор автоматически даёт обе формы вызова:
+let n = u64.from("42")             // throws Fail[ParseIntError]
+let r = u64.try_from("42")          // Result[u64, ParseIntError]
+let opt = u64.try_from("42").ok()   // Option[u64] через Result.ok()
+```
+
+`Option`-вариант **не** требует отдельного метода — `Result.ok()`
+из prelude превращает Result в Option. Один универсальный путь.
+
+### Правило
+
+#### Декларация protocol'ов в prelude
+
+```nova
+type TryFrom[T, E] protocol {
+    try_from(v T) -> Result[Self, E]
+}
+
+type TryInto[T, E] protocol {
+    @try_into() -> Result[T, E]
+}
+```
+
+`Self` (D66) — реализующий тип. `try_from` — static-метод (как
+обычный `from`), `try_into` — instance-метод.
+
+#### Авто-синтез четырёхугольника
+
+Если программист пишет любую **одну** форму из четырёх, компилятор
+выводит остальные три:
+
+```nova
+       T.from(v X)              ← throws Fail[E]
+       T.try_from(v X)          ← Result[Self, E]
+       v.into() -> T            ← throws Fail[E]
+       v.try_into() -> T        ← Result[T, E]
+```
+
+**Правила синтеза:**
+
+1. **`from` → `try_from`:** оборачивает throw в Result.
+   ```nova
+   // Если написано:
+   fn u64.from(s str) Fail[ParseIntError] -> Self => ...
+   // Синтезируется:
+   fn u64.try_from(s str) -> Result[Self, ParseIntError] =>
+       with Fail[ParseIntError] = (e) => interrupt Err(e) {
+           Ok(Self.from(s))
+       }
+   ```
+
+2. **`try_from` → `from`:** разворачивает Result в throw.
+   ```nova
+   // Если написано:
+   fn u64.try_from(s str) -> Result[Self, ParseIntError] => ...
+   // Синтезируется:
+   fn u64.from(s str) Fail[ParseIntError] -> Self =>
+       match Self.try_from(s) {
+           Ok(v)  => v
+           Err(e) => throw e
+       }
+   ```
+
+3. **`from` ↔ `into` / `try_from` ↔ `try_into`:** через D73-механизм
+   на каждой из форм отдельно. То есть если написано `u64.from(s)`,
+   синтезируются:
+   - `u64.try_from(s)` (D75)
+   - `s.into()` для типа `u64` (D73)
+   - `s.try_into()` для типа `u64` (D75)
+
+**Если написаны обе** (например, `from` и `try_from` обе вручную) —
+обе используются как написаны, авто-синтез не применяется. Как в D73,
+программист отвечает за consistency.
+
+#### Какую форму писать?
+
+Рекомендация — **писать `try_from`**, для парсинга / валидации:
+
+```nova
+fn u64.try_from(s str) -> Result[Self, ParseIntError] =>
+    if !is_all_digits(s) {
+        Err(InvalidDigit { position: 0 })
+    } else {
+        // ... основная логика
+        Ok(parsed_value)
+    }
+```
+
+Причины:
+- **Result-возврат явный** — программисту не нужно держать в голове
+  активный handler `Fail[E]`.
+- **Тип ошибки виден в сигнатуре** (`Result[Self, ParseIntError]`),
+  а не пробрасывается через эффект-row (где может теряться).
+- **Pattern matching** на Result удобен внутри парсера для composition.
+
+`from` остаётся для случаев когда программист **уверен** в успехе и
+не хочет писать `match`:
+
+```nova
+fn UserId.from(n u64) -> Self => Self(n)         // infallible
+fn Greeting.from(name str) -> Self =>
+    Self("Hello, ${name}!")                       // тоже infallible
+```
+
+Если конверсия **infallible** — `from` достаточно, `try_from` не
+синтезируется (нет `E`).
+
+#### Семантика равенства
+
+`from(s)` и `try_from(s).unwrap()` — поведенческое равенство (с
+учётом разной формы ошибки). Компилятор гарантирует:
+- `try_from(v) == Ok(x)` ⇒ `from(v) == x`
+- `try_from(v) == Err(e)` ⇒ `from(v)` бросает `throw e`
+
+#### `D67` ?-оператор
+
+- `let v = u64.try_from(s)?` — **валидно**, Result оборачивается
+  через [D67](04-effects.md#d67) `?` на Result.
+- `let v = u64.from(s)?` — **ошибка** (D67), `from` возвращает T
+  через `Fail`, не Result. Throw сам пробрасывается без `?`.
+
+```nova
+// Функция возвращает Fail[ParseIntError]:
+fn parse_pair(s str) Fail[ParseIntError] -> (u64, u64) {
+    let parts = s.split(",")
+    let a = u64.from(parts[0])              // throws через Fail (без ?)
+    let b = u64.from(parts[1])              // throws через Fail (без ?)
+    (a, b)
+}
+
+// Функция возвращает Result, использует try_from + ?:
+fn parse_pair_r(s str) -> Result[(u64, u64), ParseIntError] {
+    let parts = s.split(",")
+    let a = u64.try_from(parts[0])?         // ? на Result (D67)
+    let b = u64.try_from(parts[1])?
+    Ok((a, b))
+}
+```
+
+#### Option через `Result.ok()`
+
+Отдельный `try_parse` / `from_str_or_null` / similar **не вводится**.
+Если нужен Option — `Result.ok()` в prelude:
+
+```nova
+fn Result[T, E] @ok() -> Option[T] => match @ {
+    Ok(v)  => Some(v)
+    Err(_) => None
+}
+
+// Использование:
+let opt = u64.try_from(s).ok()          // Option[u64]
+match u64.try_from(s).ok() {
+    Some(n) => n
+    None    => default_value
+}
+```
+
+Прецедент Rust: `s.parse::<u64>().ok()` → `Option<u64>`. Один
+универсальный путь, не требует отдельного именования.
+
+### Почему
+
+1. **Согласовано с D73.** Тот же auto-pair-механизм. Программист
+   видит ровно один паттерн «пишу одну сторону — компилятор даёт
+   все формы вызова». Не нужно помнить «for fallible — другая система».
+
+2. **Закрывает три формы вызова через одну реализацию.** Парсинг —
+   частый use case. Без D75 программисту нужно либо:
+   - Писать `try_X` отдельно (Kotlin-style `toIntOrNull`, размножение
+     имён), или
+   - Всегда `match { Some => ... None => throw }` обёртку.
+
+3. **Стандартизованное имя `try_from`.** До D75 разные библиотеки
+   могли использовать `try_parse`, `parse_or_err`, `validate`, и
+   т.д. — каждая со своим именем. С D75 — единое имя как `from`
+   стандартно для конверсии.
+
+4. **Прецедент Rust:** `From` / `TryFrom` — стандарт `std`. Auto-blanket
+   реализация (`Into ↔ From`) делается компилятором. Nova повторяет
+   паттерн.
+
+5. **Option получается бесплатно** через `Result.ok()`. Не нужны
+   `_or_null`-suffix имена (Kotlin), `init?` (Swift), `*OrNull`
+   (Java fluent helpers). Один Result — три формы (`from`, `try_from`,
+   `try_from(...).ok()`).
+
+6. **AI-friendly.** LLM пишет `Version.from(s)` и работает; пишет
+   `Version.try_from(s)?` для propagation через Result — тоже
+   работает. Не нужно помнить какая форма реализована — всегда обе
+   доступны.
+
+### Что отвергнуто
+
+- **`u64.try_parse(s) -> Option[u64]`** — отдельный Option-вариант
+  как метод. Конфликтует с принципом «один способ» (D9): `try_parse`
+  vs `try_from(...).ok()` делают одно и то же. Result.ok() универсальнее.
+- **`u64.parse(s)`** — отдельное имя для парсинга. Парсинг — это
+  частный случай конверсии (`str → u64`), общий механизм через
+  `from`/`try_from` лучше.
+- **`OrNull`-suffix имена** (Kotlin): `toIntOrNull`. Размножение
+  имён, не масштабируется (`fromOrNull`, `intoOrNull`, `parseOrNull`).
+- **Java-style overloading throwing/non-throwing с одинаковым именем**
+  (`int.parse(s) -> int` vs `int.parse(s) -> int` через флаг).
+  Тип-ambiguity, нечитаемо.
+- **Failable initializer как в Swift** (`init?`). Специальный
+  синтаксис конструктора — лишняя категория. У Nova `from`/`try_from`
+  обычные функции.
+
+### Цена
+
+1. **Расширение compiler-логики.** D73 уже синтезирует пару From/Into,
+   D75 удваивает: from/try_from + into/try_into = 4 формы из одной
+   написанной. Компилятор должен:
+   - Распознать одну из четырёх форм
+   - Сгенерировать остальные три
+   - Применять одни и те же правила structural-conformance.
+   Цена — реализация в type-checker'е, не run-time.
+
+2. **Semantic equivalence требует доверия.** Компилятор гарантирует
+   что `from(v)` и `try_from(v).unwrap()` поведенчески одинаковы.
+   Если программист пишет **обе вручную** и они расходятся —
+   ответственность программиста (как в D73).
+
+3. **Ambiguity при нескольких `try_from`.** Если у `u64` есть
+   `try_from(str)` и `try_from(f64)` (через overloading D46) —
+   `u64.try_from(x)` резолвится по типу аргумента. Стандартный D46
+   overloading.
+
+4. **`Self` в Result.** `Result[Self, E]` корректно по D66 (Self
+   валиден в method-контексте). Generic-параметр `E` свободен —
+   не привязан к Self.
+
+### Связь
+
+- [D73](#d73-from--into-protocol-пара-с-авто-выводом) — базовая
+  пара From/Into, D75 расширяет на fallible-форму.
+- [D67](04-effects.md#d67) — `?`-оператор; работает на Result
+  (`try_from(s)?`), не работает на throwing `from`.
+- [D72](02-types.md#d72) — bounds: `[U TryFrom[T, E]]` для
+  generic-функций fallible-конверсии.
+- [D26](#d26-базовая-stdlib-и-prelude) — `TryFrom`, `TryInto`,
+  `Result`, `Option` в prelude. `Result.ok() -> Option[T]` — стандартный
+  метод для перевода.
+- [D30](03-syntax.md#d30) — конвенция имён ошибок
+  (`Parse<TypeName>Error`); не меняется.
+- [examples/stdlib/semver.nv](../../examples/stdlib/semver.nv) —
+  использует `u64.try_parse` (legacy имя) — должно мигрировать на
+  `u64.try_from` после принятия D75.
+
+### Открытые вопросы
+
+- **Auto-derive для newtype?** `type UserId u64` — должны ли
+  автоматически быть `UserId.from(n u64)` и `UserId.try_from(s str)`?
+  Сейчас — программист пишет вручную. Q-auto-from осталось открытым
+  из D73, расширяется на D75.
+- **`from` цепочки** (`A → B → C`) — ни D73, ни D75 не вводят
+  транзитивность. Программист пишет `C.from(B.from(a))`. Q-from-chain.
+- **`TryFrom` для одного и того же `T` с разными `E`?** Пример:
+  `u64.try_from(s str) -> Result[Self, ParseIntError]` и
+  `u64.try_from(s str) -> Result[Self, ValidateError]` — отличаются
+  только `E`. По D46 overloading методов по типу аргумента работает,
+  но здесь типы аргументов одинаковы (`str`), а `E` это return-type
+  параметр — overloading по return-type Nova не поддерживает.
+  Решение: использовать `enum`-объединение ошибок (`type AnyError | A | B`)
+  или разные имена. Q-tryfrom-multi-error.
+
+### Эволюция
+
+До D75 в первой реализации `examples/stdlib/semver.nv` использовался
+`u64.try_parse(s) -> Option[u64]` — отдельное имя для Option-варианта
+парсинга. При обсуждении выявилось три проблемы:
+
+1. **Ad-hoc имя** — каждая stdlib-либа могла использовать своё
+   (`try_parse`, `parse_opt`, `from_str_or_null`).
+2. **Дублирование с `from`** — `try_parse` это «`from` минус throw,
+   плюс Option». Семантически избыточно.
+3. **Прецедент Rust** — `TryFrom` парный к `From` решает ту же
+   задачу унифицированно.
+
+D75 формализует: **одно имя `try_from`** для Result-варианта, авто-
+синтез четырёх форм вызова из одной реализации. Option получается
+через `Result.ok()`. `try_parse` отвергается как избыточное.
+
+Backward-compat: `try_parse` в существующих файлах (semver.nv) —
+переименовывается на `try_from`. Общая семантика не меняется.
+
+---
+
+## D76. `Mem` эффект — runtime introspection для leak/growth тестов
+
+> **Status:** active. **Реализовано** в bootstrap'е (2026-05-06).
+> Тесты: `tests-nova/53_memory_growth.nv`.
+
+### Что
+
+Built-in эффект `Mem` даёт Nova-коду доступ к runtime-счётчикам
+аллокаций. Цель — **regression detection**: тест запоминает
+`Mem.alloc_count()` до и после горячего кода и assert'ит, что прирост
+остался в разумном бюджете. Если codegen начнёт генерировать в N раз
+больше аллокаций (баг типа "alloc-per-iter увеличился на порядок"),
+тест поймает это сразу.
+
+### Операции
+
+```nova
+Mem.alloc_count() -> int   // total nova_alloc since gc_init/reset
+Mem.free_count()  -> int   // total frees (plain malloc backend → 0)
+Mem.live()        -> int   // alloc_count - free_count
+Mem.reset()       -> ()    // zero stats counters (for per-test isolation)
+```
+
+Числа — это **счётчики вызовов**, не байты. Этого достаточно для
+поимки регрессий "1 alloc на итерацию стало 10".
+
+### Семантика
+
+- `Mem` pre-registered как built-in эффект (как `Time`, `Fail`).
+  Compiler не требует `Mem` в сигнатуре функции — это ambient
+  capability (D11 / D62-style).
+- **Нет user-handler'а:** в отличие от `Time` и `Fail`, операции
+  `Mem` не имеют vtable; они эмитируются прямо в `Nova_Mem_*`
+  inline-функции, которые ходят к runtime-counters.
+  *Причина:* эти операции должны быть **наблюдаемыми с очень
+  низкими накладными расходами** — vtable добавляет лишний indirect
+  call который сам бы изменил alloc-pattern. И смысла переопределять
+  их нет (это не business effect — это runtime-факт).
+
+### Реализация
+
+- **`compiler-codegen/nova_rt/alloc.h`** — runtime-функции
+  `nova_gc_alloc_count`, `nova_gc_free_count`, `nova_gc_live_count`,
+  `nova_gc_reset_stats`. Доступны во всех allocator-backend'ах.
+- **`compiler-codegen/nova_rt/alloc.c`** (Phase-0 plain malloc) —
+  считает `nova_alloc` calls; `free_count` всегда 0 (`release`
+  no-op). Достаточно для growth-rate тестов.
+- **`compiler-codegen/nova_rt/effects.h`** — `Nova_Mem_*` inline-
+  обёртки.
+- **`compiler-codegen/src/codegen/emit_c.rs`** — `effect_schemas`
+  pre-populated с `Mem` schema; standard effect-call dispatch
+  работает (`Mem.live()` → `Nova_Mem_live()`).
+
+### Bootstrap-ограничения
+
+1. **Plain-malloc backend (default):** `free_count` всегда 0,
+   `live` == `alloc_count`. Это значит leak-тесты могут только
+   измерять **growth rate**, не "осталось ли что-то живое". Когда
+   подключим Boehm GC (alloc_boehm.c) или RC (alloc_rc.c) —
+   free_count станет осмысленным, тесты можно расширить.
+2. **Нет per-allocation type info.** `alloc_count` — счётчик всех
+   `nova_alloc` calls без разбивки по типам. Production-runtime
+   возможно даст breakdown (records, arrays, fiber stacks).
+3. **Не thread-safe** в multi-threaded backend'е (счётчики не
+   atomic). На bootstrap single-threaded fiber-runtime это OK.
+
+### Связь
+
+- [D7](#d7-один-язык--три-режима-компиляции) — runtime modes;
+  `Mem` доступен во всех режимах.
+- [D11](04-effects.md#d11) — pre-registered effects pattern.
+- [05-memory.md → D6](05-memory.md#d6) — managed-heap design;
+  `Mem` — observability над ним.
+
+### Что отвергнуто
+
+- **Free function `mem_alloc_count()`** — нарушает D9 («одна
+  идиома для одной задачи»). Effect-форма даёт ровно столько же
+  выразительности и согласована с Time.
+- **Bytes-tracking** в bootstrap — требует instrumentированного
+  allocator (overhead). Counts достаточно для regression-detection.
