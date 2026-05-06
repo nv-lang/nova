@@ -12,28 +12,40 @@ New-Item -ItemType Directory -Force -Path $tmp_dir | Out-Null
 $pass = 0; $fail = 0
 $results = @()
 
-# Collect input files: tests-nova always, stdlib if -IncludeStdlib.
-$inputs = @(Get-ChildItem "$tests_dir\*.nv")
+# Collect input files: tests-nova (recursive: подкаталоги groups/), stdlib if -IncludeStdlib.
+$inputs = @(Get-ChildItem -Path $tests_dir -Filter "*.nv" -Recurse -File)
 if ($IncludeStdlib) {
-    $inputs += @(Get-ChildItem "$stdlib_dir\*.nv")
+    $inputs += @(Get-ChildItem -Path $stdlib_dir -Filter "*.nv" -Recurse -File)
 }
-$inputs | Sort-Object Name | ForEach-Object {
+# Sort by relative path so group/file order is predictable, group-by-group.
+$inputs | Sort-Object FullName | ForEach-Object {
     $nv = $_.FullName
     $name = $_.BaseName
-    if ($Filter -and $name -notlike "*$Filter*") { return }
+    # Display name includes parent group для multi-level layout
+    $relative = $_.FullName.Substring($tests_dir.Length).TrimStart('\').TrimStart('/')
+    if (-not $relative.StartsWith($_.Name)) {
+        $relative = $relative -replace '\\', '/'
+    } else {
+        $relative = $name
+    }
+    $display = $relative -replace '\.nv$', ''
+    if ($Filter -and $display -notlike "*$Filter*") { return }
 
     # .c file is emitted next to .nv by the codegen, regardless of source dir.
     $c_file = Join-Path $_.Directory.FullName "$name.c"
-    $exe_file = "$tmp_dir\$name.exe"
+    # Уникальный exe name через display (group__file), чтобы избежать
+    # коллизий при одинаковых basename в разных группах.
+    $exe_safe = ($display -replace '[/\\]', '__')
+    $exe_file = "$tmp_dir\$exe_safe.exe"
 
     # Step 1: codegen .nv -> .c
     $cg_out = & $codegen compile $nv 2>&1
     if ($LASTEXITCODE -ne 0) {
-        $results += [PSCustomObject]@{Name=$name; Status="CODEGEN-FAIL"; Detail=($cg_out -join " " | ForEach-Object { if ($_.Length -gt 100) { $_.Substring(0,100) } else { $_ } })}
+        $results += [PSCustomObject]@{Name=$display; Status="CODEGEN-FAIL"; Detail=($cg_out -join " " | ForEach-Object { if ($_.Length -gt 100) { $_.Substring(0,100) } else { $_ } })}
         $fail++; return
     }
     if (-not (Test-Path $c_file)) {
-        $results += [PSCustomObject]@{Name=$name; Status="NO-C-FILE"; Detail=""}
+        $results += [PSCustomObject]@{Name=$display; Status="NO-C-FILE"; Detail=""}
         $fail++; return
     }
 
@@ -42,18 +54,18 @@ $inputs | Sort-Object Name | ForEach-Object {
     $cl_out = cmd /c "`"$vcvars`" && $cl_cmd" 2>&1
     if ($LASTEXITCODE -ne 0) {
         $errs = ($cl_out | Where-Object { $_ -match "error" } | Select-Object -First 3) -join " | "
-        $results += [PSCustomObject]@{Name=$name; Status="CC-FAIL"; Detail=$errs}
+        $results += [PSCustomObject]@{Name=$display; Status="CC-FAIL"; Detail=$errs}
         $fail++; return
     }
 
     # Step 3: run
     $run_out = & $exe_file 2>&1
     if ($LASTEXITCODE -ne 0) {
-        $results += [PSCustomObject]@{Name=$name; Status="RUN-FAIL"; Detail=(($run_out | Select-Object -Last 3) -join " | ")}
+        $results += [PSCustomObject]@{Name=$display; Status="RUN-FAIL"; Detail=(($run_out | Select-Object -Last 3) -join " | ")}
         $fail++; return
     }
 
-    $results += [PSCustomObject]@{Name=$name; Status="PASS"; Detail=""}
+    $results += [PSCustomObject]@{Name=$display; Status="PASS"; Detail=""}
     $pass++
 }
 
