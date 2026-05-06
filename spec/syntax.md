@@ -280,14 +280,14 @@ if elapsed > 1.second() { ... }           // вызывает @gt
 - `T.new(...)` — стандартный конструктор; `T.from(v X)` — из значения
   через `From[X]` protocol ([D73](decisions/08-runtime.md#d73)).
 - `@into()` — конверсия в другой тип через `Into[T]` ([D73](decisions/08-runtime.md#d73));
-  тип цели берётся из контекста (`let s str = v.@into()`). Конверсия
-  в строку — `str.from(v)` или `v.@into()` с context = `str` (раньше
+  тип цели берётся из контекста (`let s str = v.into()`). Конверсия
+  в строку — `str.from(v)` или `v.into()` с context = `str` (раньше
   было `@to_str()` через old D70 `ToStr`, отменено в v3).
 - `@hash()` — хеш, `@clone()` — копия, `@iter()`/`@next()` — iterator.
 
 Конвенции `@to_X()`, `@as_X()`, `@is_X()` **не вводятся** — они
 дублируют существующие механизмы:
-- `@to_X()` дублирует `X.from(v)` / `v.@into()` (D73).
+- `@to_X()` дублирует `X.from(v)` / `v.into()` (D73).
 - `@as_X()` дублирует keyword `as` (D54) для дешёвых cast'ов или
   `X.from` для нетривиальных.
 - `@is_X()` дублирует `v is X` (D54): для sum-типов и `any`
@@ -1087,13 +1087,13 @@ fn Fahrenheit.from(c Celsius) -> Self =>
 
 // Две формы вызова из одной реализации:
 let f1 = Fahrenheit.from(Celsius(100.0))    // static, explicit-type
-let f2 = Celsius(100.0).@into()              // instance, тип из контекста (требует let-аннотации
+let f2 = Celsius(100.0).into()              // instance, тип из контекста (требует let-аннотации
                                               // или return-position)
-let f3 Fahrenheit = Celsius(100.0).@into()   // тип цели — Fahrenheit (из аннотации)
+let f3 Fahrenheit = Celsius(100.0).into()   // тип цели — Fahrenheit (из аннотации)
 
 // Конверсия в строку — частный случай:
 let s = str.from(42)                         // "42"
-let s2 str = (42).@into()                    // "42"
+let s2 str = (42).into()                    // "42"
 let msg = "id=${user_id}"                    // sugar над str.from(user_id)
 ```
 
@@ -1101,7 +1101,7 @@ let msg = "id=${user_id}"                    // sugar над str.from(user_id)
 
 - **`T.from(v)`** — целевой тип в начале, читается «build a Fahrenheit
   from this Celsius». Хорош в выражениях.
-- **`v.@into()`** — короче в method-chains: `c.@into().log()`. Тип
+- **`v.into()`** — короче в method-chains: `c.into().log()`. Тип
   цели — из контекста (`let x T = ...`, параметр функции, return-type).
 
 **Граница `as` vs `From`:**
