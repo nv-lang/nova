@@ -4092,6 +4092,126 @@ runtime-marker pattern), Q-effect-polymorphism.
 
 ---
 
+## Q-keywords-as-fields. Можно ли использовать keyword как имя поля?
+
+**Контекст.** examples/stdlib/queue.nv использует `in` как имя поля:
+
+```nova
+export type Queue[T] {
+    mut in  []T            // ⛔ in — keyword (for x in iter)
+    mut out []T            // ✅ out — обычный ident
+}
+```
+
+Bootstrap-парсер падает на `in` field-declaration:
+`expected identifier, got 'in'`.
+
+**Варианты:**
+1. **Запретить keywords как identifiers вообще.** Все keywords —
+   зарезервированы. Программист переименовывает (`input`, `inq`).
+   Самый простой, согласован с большинством языков (Rust/Go/Java).
+2. **Контекстно-чувствительные keywords.** `in` keyword только в
+   `for x in iter`-конструкции, везде ещё — обычный ident. Сложнее
+   парсер, но эргономичнее. Прецедент: Swift, C# (contextual keywords).
+3. **Raw-identifier escape.** `r#in` — keyword как ident через префикс.
+   Прецедент: Rust `r#fn`, `r#move`.
+
+**Предложение:** **1** — простой и согласованный default. Программист
+переименовывает поле (`input` / `inputs`). queue.nv нужно поправить.
+
+**Связь:** [D30](decisions/03-syntax.md#d30) (naming convention).
+
+---
+
+## Q-effect-type-anonymous. Anonymous effect types в позиции type
+
+**Контекст.** examples/stdlib/linkedlist.nv использует `effect { ... }`
+inline в параметре функции:
+
+```nova
+fn LinkedList[T].from_iter(it effect { mut next() -> Option[T] }) -> Self {
+    while let Some(x) = it.next() { ... }
+}
+```
+
+Это **anonymous effect type** — структурный effect, объявленный в
+позиции type-аннотации. Bootstrap-парсер не поддерживает: `expected
+type, got 'effect'`.
+
+**Варианты:**
+1. **Поддержать anonymous effect types.** Парсер видит `effect {...}`
+   в type-position, парсит method-block, создаёт anonymous effect.
+   Согласовано с D53 (protocol как type).
+2. **Только named effects.** Программист объявляет `effect Iter[T] {
+   mut next() -> Option[T] }` отдельно, потом использует имя.
+   Простой, less expressive.
+3. **`Iter[T]` protocol в prelude.** Стандартный protocol для
+   итераторов; пользователь принимает `it Iter[T]` без объявления.
+   Прецедент: Rust `IntoIterator`, Swift `IteratorProtocol`.
+
+**Предложение:** **3** — Iter[T] в prelude (D58 уже намекает). Anonymous
+effects — открытое архитектурное решение, отложено до конкретных
+use-cases.
+
+**Связь:** [D58](decisions/03-syntax.md#d58) (Iter[T] protocol),
+[D53](decisions/02-types.md#d53), Q-stdlib-data-types.
+
+---
+
+## Q-generic-receiver-method. `fn []T @method[U](...)` — generic methods на slice
+
+**Контекст.** examples/stdlib/vec.nv хочет writing extension methods
+на встроенный `[]T`:
+
+```nova
+export fn []T @map[U](f fn(T) -> U) -> []U { ... }
+export fn []T @filter(pred fn(T) -> bool) -> []T { ... }
+```
+
+Bootstrap не парсит `[]T` как receiver type. Это требует:
+1. Парсер: `[]T` в receiver position — type с inferred type-parameter.
+2. Codegen: генерация специализированных функций (или void*-erasure)
+   для каждой комбинации `(T, U)`.
+
+**Варианты:**
+1. **Полная поддержка generic methods на built-in типах.** Сложно —
+   требует refined type system (D72 bounds + per-type instantiation).
+2. **Free functions с TYpe parameters.** `fn map[T, U](xs []T, f fn(T) -> U) -> []U`.
+   Просто, но теряется method-syntax (`xs.map(f)`).
+3. **Prelude-методы только.** Compiler знает фиксированный набор
+   `[]T.map/.filter/.fold` и т.п., user не расширяет. Простой
+   bootstrap-уровень.
+
+**Предложение:** **3** на bootstrap, **1** на production. Q-array-api
+(уже открыт) формализует prelude-список методов на `[]T`.
+
+**Связь:** [D27](decisions/03-syntax.md#d27), [D35](decisions/03-syntax.md#d35),
+[D72](decisions/02-types.md#d72), Q-array-api.
+
+---
+
+## Q-assert-without-parens. `assert cond` без parentheses?
+
+**Контекст.** examples/stdlib/sql.nv писал `assert n == 42` как
+keyword-style assert (без скобок), но Nova `assert` это обычная
+функция, требует `assert(n == 42)`.
+
+**Варианты:**
+1. **`assert` — функция (текущее).** `assert(cond)` обязательны
+   parens. Nova-консистентно (`println("...")`, `Mem.live()` —
+   все функции с parens).
+2. **`assert` — keyword.** `assert cond` — отдельный statement.
+   Прецедент: Rust `assert!(cond)` (макрос); Java `assert cond` (statement).
+3. **Trailing-block style.** `assert { cond }`? Нелепо для assertions.
+
+**Предложение:** **1** — keep current. Nova не имеет macros, и
+выделять `assert` как special-form нет причин. Обновить файлы где
+было `assert ...` без скобок.
+
+**Связь:** [D40](decisions/03-syntax.md#d40) (function call syntax).
+
+---
+
 ## Q-source-annotations. CLI `--annotate-source` для отладки сгенерированного C ✅ ЗАКРЫТО (2026-05-07)
 
 > Реализован opt-in flag `--annotate-source` (`-a`) у `nova-codegen

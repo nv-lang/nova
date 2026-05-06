@@ -12,13 +12,14 @@ codegen в текущей итерации не покрывает все исп
 ## Закрытые блокеры (2026-05-07)
 
 - **char-литералы** ('a' / '\n' / '\u{...}') — реализованы (Q-char-literals,
-  commit 7852ced). Это разблокировало complex.nv и json.nv в начальных
-  строках.
+  commit 7852ced). Разблокировало complex.nv и json.nv в начальных строках.
 - **throw в expression position** (D25/D65) — реализован (commit cfa53ca).
-  Это разблокировало sql.nv от старого блокера на 163.
+  Разблокировало sql.nv от старого блокера на 163.
 - **Match scrutinee parsing** — fix `match foo() { ... }` парсился как
-  call-with-trailing-block (commit d467cd2). Разблокировало semver.nv
-  и sql.nv.
+  call-with-trailing-block (commit d467cd2). Разблокировало semver.nv и sql.nv.
+- **Leading `||` / `&&` newline-tolerance** (commit 781bb43, spec 1073295).
+  Boolean-expression может продолжаться с leading || / && на новой строке.
+  Разблокировало semver.nv (251 → 449).
 
 ## Текущие блокеры
 
@@ -31,7 +32,7 @@ codegen в текущей итерации не покрывает все исп
 | linkedlist.nv | `effect` keyword в позиции type на 48 | parser/spec | без изменений |
 | queue.nv | `in` keyword в выражении (loop?) на 26 | parser | без изменений |
 | range.nv | anonymous record literal `{ field: val }` без spread | codegen | без изменений |
-| semver.nv | `unexpected '||'` на 251 | parser/operator | 136 → 251 (после match-arm fix) |
+| semver.nv | `assert match` (нет такого) + handler-lambda `(e) => interrupt Some(e)` на 449 | parser/spec | 136 → 251 → 449 (после match + leading-`||`) |
 | set.nv | `&` operator (referencing) на 152 | spec/lexer | без изменений |
 | sql.nv | `expected '=>', got '=='` на 295 (match-arm с условием guard?) | parser | 201 → 295 (после match-arm fix) |
 | vec.nv | `expected identifier, got '['` на 25 (turbofish/generic syntax?) | parser | без изменений |
