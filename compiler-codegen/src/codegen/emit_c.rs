@@ -308,12 +308,6 @@ impl CEmitter {
         Ok(self.out)
     }
 
-    fn mangle_test_name(name: &str) -> String {
-        name.chars()
-            .map(|c| if c.is_ascii_alphanumeric() || c == '_' { c } else { '_' })
-            .collect()
-    }
-
     /// Mangle a test name and append a numeric suffix to guarantee uniqueness.
     fn mangle_test_name_indexed(name: &str, index: usize) -> String {
         let base: String = name.chars()
@@ -2106,13 +2100,6 @@ impl CEmitter {
         }
     }
 
-    /// True if `type_name` is a primitive receiver — value-passed, no `*`.
-    fn is_primitive_receiver(type_name: &str) -> bool {
-        matches!(type_name,
-            "int" | "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64"
-            | "f32" | "f64" | "bool" | "str" | "byte")
-    }
-
     fn params_c(&self, f: &FnDecl) -> Result<String, String> {
         let mut parts = Vec::new();
         // Instance methods receive the receiver as the first parameter.
@@ -2839,7 +2826,6 @@ impl CEmitter {
                             if let Some(elem_tys) = self.tuple_element_types.get(var_name.as_str()).cloned() {
                                 let arity = elem_tys.len();
                                 if let Some(elem_ty) = elem_tys.get(idx) {
-                                    let cast_ptr = format!("((_NovaTuple{}*)({}))-> {}", arity, o, field_name);
                                     // Unbox based on element type. Fields are nova_int storing void* values.
                                     // Note: parens around cast are essential: ((_NovaTupleN*)(ptr))->field
                                     if elem_ty == "nova_str*" || elem_ty == "nova_str" {
@@ -3305,13 +3291,6 @@ impl CEmitter {
             // (trailing block inherits return type of its enclosing call's expected type).
             // For simplicity: look up fn-param signature for the function being called.
             let (param_c_tys, ret_c_ty) = self.infer_trailing_block_sig(func, tb);
-
-            // Build parameter list for the trailing block function
-            let param_list: String = tb.params.iter().zip(param_c_tys.iter())
-                .map(|(p, ty)| format!("{} {}", ty, p.name))
-                .collect::<Vec<_>>()
-                .join(", ");
-            let param_list = if param_list.is_empty() { "void".to_string() } else { param_list };
 
             // Trailing block body function takes (void* env, params...) like closures
             let body_param_list: String = {
@@ -3983,11 +3962,6 @@ impl CEmitter {
         } else {
             self.line(&format!("{} = ({})0;", tmp, ty));
         }
-    }
-
-    /// Emit block statements into an existing `nova_unit` temp variable (legacy).
-    fn emit_block_into_unit(&mut self, block: &Block, tmp: &str) -> Result<(), String> {
-        self.emit_block_into(tmp, "nova_unit", block)
     }
 
     // ---- block expression ----
@@ -4668,10 +4642,6 @@ impl CEmitter {
     }
 
     /// Emit variable bindings for pattern (after condition is confirmed true).
-    fn pattern_bind(&mut self, pat: &Pattern, scr: &str) -> Result<(), String> {
-        self.pattern_bind_typed(pat, scr)
-    }
-
     fn pattern_bind_typed(&mut self, pat: &Pattern, scr: &str) -> Result<(), String> {
         match pat {
             Pattern::Ident { name, .. } => {
@@ -4994,7 +4964,6 @@ impl CEmitter {
     ) -> Result<String, String> {
         let id = self.lambda_counter;
         self.lambda_counter += 1;
-        let fn_name = format!("nova_lambda_{}", id);
 
         // Determine param C types — use explicit types, or default to nova_int
         let param_c_tys: Vec<String> = params.iter().enumerate().map(|(i, p)| {
