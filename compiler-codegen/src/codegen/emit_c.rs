@@ -204,6 +204,47 @@ impl CEmitter {
             self.effect_schemas.insert("Mem".to_string(), mem_schema);
         }
 
+        // Pre-register Buffer as a built-in record type with associated methods
+        // (Q-buffer). Runtime impl in nova_rt/buffer.h. Methods registered in
+        // method_receivers so emit_call routes Buffer.new() / buf.add_str() /
+        // buf.into() / buf.try_into() etc. to the corresponding C functions.
+        //
+        // Note: `Buffer.from` is registered with overloads handled by the
+        // dispatch logic in emit_call (different runtime fns for str/[]byte
+        // arguments), since bootstrap's method_receivers is single-key —
+        // see Q-overloading. We special-case the dispatch directly.
+        {
+            // record_schemas: Buffer has private fields (data/len/cap/consumed),
+            // user code shouldn't touch them. We register with empty schema so
+            // type lookup works but field access stays opaque.
+            self.record_schemas.insert("Buffer".to_string(), HashMap::new());
+
+            // Register methods. Static methods: new, with_capacity, from.
+            // Instance methods: add_str/add_bytes/add_byte/add_char, len,
+            // capacity, clone, into, try_into, into_str_unchecked.
+            // method_receivers maps name -> (type, is_instance). Conflicts
+            // with user-defined methods of the same name on other types are
+            // possible: existing Nova_T_method_X dispatch wins for declared
+            // user methods (registered later). For Buffer-only methods like
+            // add_str, add_bytes, into_str_unchecked — no conflict.
+            //
+            // We do NOT register `new`, `with_capacity`, `from`, `len`,
+            // `capacity`, `clone`, `into`, `try_into` here, because those
+            // names are commonly shadowed by user types. Instead, dispatch
+            // is special-cased in emit_call for receiver-typed Buffer*.
+            // Only the unambiguous-name methods we register normally:
+            self.method_receivers.insert("add_str".to_string(),
+                ("Buffer".to_string(), true));
+            self.method_receivers.insert("add_bytes".to_string(),
+                ("Buffer".to_string(), true));
+            self.method_receivers.insert("add_byte".to_string(),
+                ("Buffer".to_string(), true));
+            self.method_receivers.insert("add_char".to_string(),
+                ("Buffer".to_string(), true));
+            self.method_receivers.insert("into_str_unchecked".to_string(),
+                ("Buffer".to_string(), true));
+        }
+
         self.emit_preamble();
 
         // 1. Type declarations first (structs/unions needed by fn signatures)
@@ -3584,6 +3625,58 @@ impl CEmitter {
                             _ => {}
                         }
                     }
+                    // Q-buffer: built-in methods on Nova_Buffer*.
+                    if obj_ty == "Nova_Buffer*" {
+                        let obj_c = self.emit_expr(obj)?;
+                        match method.as_str() {
+                            "len" => return Ok(format!("Nova_Buffer_method_len({})", obj_c)),
+                            "capacity" => return Ok(format!("Nova_Buffer_method_capacity({})", obj_c)),
+                            "clone" => return Ok(format!("Nova_Buffer_method_clone({})", obj_c)),
+                            "into" => return Ok(format!("Nova_Buffer_method_into({})", obj_c)),
+                            "try_into" => return Ok(format!("Nova_Buffer_method_try_into({})", obj_c)),
+                            "into_str_unchecked" =>
+                                return Ok(format!("Nova_Buffer_method_into_str_unchecked({})", obj_c)),
+                            "add_str" | "add_bytes" | "add_byte" | "add_char" => {
+                                if let Some(arg) = args.first() {
+                                    let v = self.emit_expr(arg)?;
+                                    return Ok(format!(
+                                        "Nova_Buffer_method_{}({}, {})",
+                                        method, obj_c, v));
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                // 0a. Built-in Buffer static methods (Q-buffer).
+                if let ExprKind::Ident(name) = &obj.kind {
+                    if name == "Buffer" {
+                        match method.as_str() {
+                            "new" => return Ok("Nova_Buffer_static_new()".to_string()),
+                            "with_capacity" => {
+                                if let Some(arg) = args.first() {
+                                    let v = self.emit_expr(arg)?;
+                                    return Ok(format!("Nova_Buffer_static_with_capacity({})", v));
+                                }
+                            }
+                            "from" => {
+                                // Dispatch by argument type: str → from_str, []byte → from_bytes.
+                                if let Some(arg) = args.first() {
+                                    let arg_ty = self.infer_expr_c_type(arg);
+                                    let v = self.emit_expr(arg)?;
+                                    if arg_ty == "nova_str" {
+                                        return Ok(format!("Nova_Buffer_static_from_str({})", v));
+                                    } else if arg_ty.starts_with("NovaArray_") {
+                                        return Ok(format!("Nova_Buffer_static_from_bytes({})", v));
+                                    } else {
+                                        return Err(format!(
+                                            "Buffer.from(...) expects str or []byte, got {}", arg_ty));
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
                 }
                 // 0. Built-in primitive static methods (D35 + D73).
                 //    `str.from(x)` — string conversion (replaces old D70 to_str).
@@ -3772,6 +3865,33 @@ impl CEmitter {
                 format!("{obj}{acc}{method}", obj = obj_c, acc = accessor, method = method)
             }
             ExprKind::Path(parts) => {
+                // Q-buffer: built-in Buffer static methods (Path-form).
+                if parts.len() == 2 && parts[0] == "Buffer" {
+                    match parts[1].as_str() {
+                        "new" => return Ok("Nova_Buffer_static_new()".to_string()),
+                        "with_capacity" => {
+                            if let Some(arg) = args.first() {
+                                let v = self.emit_expr(arg)?;
+                                return Ok(format!("Nova_Buffer_static_with_capacity({})", v));
+                            }
+                        }
+                        "from" => {
+                            if let Some(arg) = args.first() {
+                                let arg_ty = self.infer_expr_c_type(arg);
+                                let v = self.emit_expr(arg)?;
+                                if arg_ty == "nova_str" {
+                                    return Ok(format!("Nova_Buffer_static_from_str({})", v));
+                                } else if arg_ty.starts_with("NovaArray_") {
+                                    return Ok(format!("Nova_Buffer_static_from_bytes({})", v));
+                                } else {
+                                    return Err(format!(
+                                        "Buffer.from(...) expects str or []byte, got {}", arg_ty));
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
                 // Check if first segment is a known effect
                 if parts.len() == 2 && self.effect_schemas.contains_key(&parts[0]) {
                     format!("Nova_{}_{}", parts[0], parts[1])
@@ -5396,6 +5516,25 @@ impl CEmitter {
                     self.var_types.get(&key).cloned().unwrap_or_else(|| "nova_int".into())
                 } else if let ExprKind::Member { obj, name: method } = &func.kind {
                     let obj_ty = self.infer_expr_c_type(obj);
+                    // Q-buffer: built-in Buffer methods.
+                    if let ExprKind::Ident(n) = &obj.kind {
+                        if n == "Buffer" {
+                            return match method.as_str() {
+                                "new" | "with_capacity" | "from" => "Nova_Buffer*".into(),
+                                _ => "nova_int".into(),
+                            };
+                        }
+                    }
+                    if obj_ty == "Nova_Buffer*" {
+                        return match method.as_str() {
+                            "len" | "capacity" => "nova_int".into(),
+                            "clone" => "Nova_Buffer*".into(),
+                            "into" => "NovaArray_nova_int*".into(),
+                            "try_into" | "into_str_unchecked" => "nova_str".into(),
+                            "add_str" | "add_bytes" | "add_byte" | "add_char" => "nova_unit".into(),
+                            _ => "nova_int".into(),
+                        };
+                    }
                     // Built-in primitive `str.from(x) -> str` (D35 + D73).
                     if let ExprKind::Ident(n) = &obj.kind {
                         if n == "str" && method == "from" { return "nova_str".into(); }
@@ -5465,6 +5604,13 @@ impl CEmitter {
                     if parts.len() == 2 {
                         let eff = &parts[0];
                         let method_name = &parts[1];
+                        // Q-buffer: Buffer static methods.
+                        if eff == "Buffer" {
+                            return match method_name.as_str() {
+                                "new" | "with_capacity" | "from" => "Nova_Buffer*".into(),
+                                _ => "nova_int".into(),
+                            };
+                        }
                         // Built-in primitive `str.from(x) -> str` (D35 + D73).
                         if eff == "str" && method_name == "from" {
                             return "nova_str".into();

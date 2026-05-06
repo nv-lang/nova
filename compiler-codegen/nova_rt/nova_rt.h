@@ -156,4 +156,7 @@ typedef struct { char _dummy; } nova_unit;
 /* ---- Fibers / spawn (Phase 5) ---- */
 #include "fibers.h"
 
+/* ---- Buffer — Q-buffer (mutable byte accumulator) ---- */
+#include "buffer.h"
+
 #endif /* NOVA_RT_H */
