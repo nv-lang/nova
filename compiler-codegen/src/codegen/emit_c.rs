@@ -46,6 +46,14 @@ pub struct CEmitter {
     /// Maps method name → (type_name, is_instance) for user-defined methods.
     /// Used at call sites to resolve `obj.method(args)` → `Nova_T_method_m(obj, args)`.
     method_receivers: HashMap<String, (String, bool)>,
+    /// D73 v2 auto-derive: target_type → list of source_types for which
+    /// `target.from(src V)` is explicitly defined. Used to synthesize
+    /// `v.into()` for V via target.from when no explicit `@into` exists.
+    from_targets: HashMap<String, Vec<String>>,
+    /// D73 v2 auto-derive: source_type → target_type for which
+    /// `fn V @into() -> T` is explicitly defined. Used to synthesize
+    /// `T.from(v)` via v.into() when no explicit `T.from` exists.
+    into_targets: HashMap<String, String>,
     /// Maps tuple variable name → per-element C types.
     /// Used at field access `pair.0` to cast back to the original element type when needed.
     tuple_element_types: HashMap<String, Vec<String>>,
@@ -115,6 +123,8 @@ impl CEmitter {
             sum_schemas: HashMap::new(),
             effect_schemas: HashMap::new(),
             method_receivers: HashMap::new(),
+            from_targets: HashMap::new(),
+            into_targets: HashMap::new(),
             tuple_element_types: HashMap::new(),
             record_variant_field_types: HashMap::new(),
             record_variant_field_order: HashMap::new(),
@@ -201,6 +211,25 @@ impl CEmitter {
                         f.name.clone(),
                         (recv.type_name.clone(), is_instance),
                     );
+                    // D73 v2 auto-derive registry:
+                    //   - `T.from(v V)`     → from_targets[T] += V
+                    //   - `fn V @into() -> T` → into_targets[V] = T
+                    if !is_instance && f.name == "from" && !f.params.is_empty() {
+                        if let TypeRef::Named { path, .. } = &f.params[0].ty {
+                            if !path.is_empty() {
+                                self.from_targets.entry(recv.type_name.clone())
+                                    .or_default()
+                                    .push(path.join("_"));
+                            }
+                        }
+                    }
+                    if is_instance && f.name == "into" {
+                        if let Some(TypeRef::Named { path, .. }) = &f.return_type {
+                            if !path.is_empty() {
+                                self.into_targets.insert(recv.type_name.clone(), path.join("_"));
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -3217,10 +3246,19 @@ impl CEmitter {
             ExprKind::Member { obj, name: method } => {
                 // 0. Built-in primitive static methods (D35 + D73).
                 //    `str.from(x)` — string conversion (replaces old D70 to_str).
+                //    Auto-derive: if user defined `fn V @into() -> str` for V,
+                //    call that instead of the builtin.
                 if let ExprKind::Ident(prim) = &obj.kind {
                     if prim == "str" && method == "from" {
                         if let Some(arg) = args.first() {
                             let arg_ty = self.infer_expr_c_type(arg);
+                            let arg_type = arg_ty.trim_start_matches("Nova_").trim_end_matches('*').to_string();
+                            if let Some(into_target) = self.into_targets.get(&arg_type) {
+                                if into_target == "str" {
+                                    let v = self.emit_expr(arg)?;
+                                    return Ok(format!("Nova_{}_method_into({})", arg_type, v));
+                                }
+                            }
                             let v = self.emit_expr(arg)?;
                             return Ok(if arg_ty == "nova_str" {
                                 v
@@ -3326,6 +3364,27 @@ impl CEmitter {
                     return Ok("NULL".into());
                 }
 
+                // 4c. D73 v2 auto-derive: `v.into()` for type V where V has no
+                //     explicit `@into`, but some target T has `T.from(v V)`.
+                //     Emit `Nova_T_static_from(v)` in that case.
+                if method == "into" && args.is_empty() {
+                    let recv_ty = self.infer_expr_c_type(obj);
+                    let recv_type = recv_ty.trim_start_matches("Nova_").trim_end_matches('*').to_string();
+                    // Skip if explicit `fn V @into()` is present (handled by method_receivers below).
+                    let has_explicit_into = self.method_receivers.get("into")
+                        .map(|(t, _)| t == &recv_type).unwrap_or(false);
+                    if !has_explicit_into {
+                        // Look for any target T such that `T.from(v V)` is defined.
+                        let target = self.from_targets.iter()
+                            .find(|(_, sources)| sources.iter().any(|s| s == &recv_type))
+                            .map(|(t, _)| t.clone());
+                        if let Some(target_type) = target {
+                            let obj_c = self.emit_expr(obj)?;
+                            return Ok(format!("Nova_{}_static_from({})", target_type, obj_c));
+                        }
+                    }
+                }
+
                 // 5. User-defined method call: `obj.method(args)` → `Nova_T_method_name(obj, args)`
                 //    or static: `TypeName.method(args)` → `Nova_T_static_name(args)`
                 //    Detect by checking method_receivers map populated at module-scan time.
@@ -3376,9 +3435,22 @@ impl CEmitter {
                     // old D70 to_str). Bootstrap implementation: dispatch on
                     // arg type — nova_str pass-through, nova_int via
                     // nova_int_to_str. Other types TBD.
+                    //
+                    // Auto-derive caveat: if user defined `fn V @into() -> str`
+                    // for the arg's type V, we should call that instead of
+                    // the builtin (so user code wins). Checked below before
+                    // falling back to builtin.
                     if parts[0] == "str" && parts[1] == "from" {
                         if let Some(arg) = args.first() {
                             let arg_ty = self.infer_expr_c_type(arg);
+                            let arg_type = arg_ty.trim_start_matches("Nova_").trim_end_matches('*').to_string();
+                            // Auto-derive: V has @into() -> str?
+                            if let Some(into_target) = self.into_targets.get(&arg_type) {
+                                if into_target == "str" {
+                                    let v = self.emit_expr(arg)?;
+                                    return Ok(format!("Nova_{}_method_into({})", arg_type, v));
+                                }
+                            }
                             let v = self.emit_expr(arg)?;
                             return Ok(if arg_ty == "nova_str" {
                                 v
@@ -3391,9 +3463,26 @@ impl CEmitter {
                     // Check method_receivers for the method name
                     let method_name = &parts[1];
                     if let Some((type_name, false)) = self.method_receivers.get(method_name.as_str()).cloned() {
-                        let mut arg_strs = Vec::new();
-                        for a in args { arg_strs.push(self.emit_expr(a)?); }
-                        return Ok(format!("Nova_{}_static_{}({})", type_name, method_name, arg_strs.join(", ")));
+                        // Strict match: type_name must equal parts[0].
+                        if type_name == parts[0] {
+                            let mut arg_strs = Vec::new();
+                            for a in args { arg_strs.push(self.emit_expr(a)?); }
+                            return Ok(format!("Nova_{}_static_{}({})", type_name, method_name, arg_strs.join(", ")));
+                        }
+                    }
+                    // D73 v2 auto-derive: `T.from(v)` when no explicit T.from
+                    // exists, but `fn V @into() -> T` is defined where v: V.
+                    if method_name == "from" && args.len() == 1 {
+                        let target = parts[0].clone();
+                        let arg_ty = self.infer_expr_c_type(&args[0]);
+                        let arg_type = arg_ty.trim_start_matches("Nova_").trim_end_matches('*').to_string();
+                        // Check that V has @into() -> T defined.
+                        if let Some(into_target) = self.into_targets.get(&arg_type) {
+                            if into_target == &target {
+                                let v = self.emit_expr(&args[0])?;
+                                return Ok(format!("Nova_{}_method_into({})", arg_type, v));
+                            }
+                        }
                     }
                     format!("nova_fn_{}", parts.join("_"))
                 } else {
@@ -4959,6 +5048,17 @@ impl CEmitter {
                     self.var_types.get(&key).cloned().unwrap_or_else(|| "nova_int".into())
                 } else if let ExprKind::Member { obj, name: method } = &func.kind {
                     let obj_ty = self.infer_expr_c_type(obj);
+                    // Built-in primitive `str.from(x) -> str` (D35 + D73).
+                    if let ExprKind::Ident(n) = &obj.kind {
+                        if n == "str" && method == "from" { return "nova_str".into(); }
+                        // User-defined `T.from(v)` returns Nova_T* (most cases).
+                        if method == "from"
+                            && (self.record_schemas.contains_key(n)
+                                || self.sum_schemas.contains_key(n))
+                        {
+                            return format!("Nova_{}*", n);
+                        }
+                    }
                     // If object is an unknown generic stub (void*), method result is also void*
                     if obj_ty == "void*" {
                         return "void*".into();
@@ -5017,6 +5117,21 @@ impl CEmitter {
                     if parts.len() == 2 {
                         let eff = &parts[0];
                         let method_name = &parts[1];
+                        // Built-in primitive `str.from(x) -> str` (D35 + D73).
+                        if eff == "str" && method_name == "from" {
+                            return "nova_str".into();
+                        }
+                        // User-defined `T.from(v)` returns Nova_T* (most cases).
+                        // Match by receiver type explicitly — avoids `fn_ret_from`
+                        // collision when multiple types have `from`.
+                        if method_name == "from" {
+                            // Heuristic: if T is a known record/sum, return Nova_T*.
+                            if self.record_schemas.contains_key(eff)
+                                || self.sum_schemas.contains_key(eff)
+                            {
+                                return format!("Nova_{}*", eff);
+                            }
+                        }
                         if let Some(schema) = self.effect_schemas.get(eff.as_str()) {
                             if let Some((_, ret_ty)) = schema.get(method_name.as_str()) {
                                 return ret_ty.clone();
