@@ -104,6 +104,11 @@ pub struct CEmitter {
     /// trailing-expression value into `result[idx]` instead of discarding.
     /// Tuple: (idx_var_name, result_var_name, element_c_type).
     current_parfor_slot: Option<(String, String, String)>,
+    /// Optional Nova source text — when Some, codegen inserts each statement's
+    /// originating Nova source as `/* SRC: ... */` comment in the generated C.
+    /// Set via `--annotate-source` CLI flag. Off by default to keep .c diffs
+    /// stable in CI.
+    annotation_source: Option<String>,
 }
 
 impl CEmitter {
@@ -147,7 +152,54 @@ impl CEmitter {
             generic_fn_tuple_arity: HashMap::new(),
             type_aliases: HashMap::new(),
             current_parfor_slot: None,
+            annotation_source: None,
         }
+    }
+
+    /// Enable source-annotation mode: codegen will insert `/* SRC: ... */`
+    /// comments before each statement showing the originating Nova source.
+    /// Off by default — turn on for debugging the generated C.
+    pub fn set_source_for_annotations(&mut self, src: String) {
+        self.annotation_source = Some(src);
+    }
+
+    /// Get the Span of a statement (where in source it came from).
+    fn stmt_span(stmt: &Stmt) -> Span {
+        match stmt {
+            Stmt::Let(d) => d.span,
+            Stmt::Expr(e) => e.span,
+            Stmt::Assign { span, .. }
+            | Stmt::Return { span, .. }
+            | Stmt::Throw { span, .. } => *span,
+            Stmt::Break(s) | Stmt::Continue(s) => *s,
+        }
+    }
+
+    /// If source-annotation mode is on, emit `/* SRC: <line> */` before the
+    /// statement's C code. Multi-line statements get just the first line +
+    /// `…` ellipsis to keep .c readable.
+    fn emit_source_annotation_for_stmt(&mut self, stmt: &Stmt) {
+        let Some(src) = self.annotation_source.clone() else { return; };
+        let span = Self::stmt_span(stmt);
+        let snippet = src
+            .get(span.start..span.end)
+            .unwrap_or("")
+            .lines()
+            .next()
+            .unwrap_or("")
+            .trim();
+        if snippet.is_empty() {
+            return;
+        }
+        // Sanitize for C comment: ascii-only-ish, escape `*/` to avoid
+        // closing the comment. Truncate long lines.
+        let safe: String = snippet
+            .chars()
+            .map(|c| if c == '*' || c == '/' { ' ' } else { c })
+            .take(120)
+            .collect();
+        let suffix = if snippet.len() > safe.len() { " …" } else { "" };
+        self.line(&format!("/* SRC: {}{} */", safe, suffix));
     }
 
     pub fn emit_module(mut self, module: &Module) -> Result<String, String> {
@@ -2622,6 +2674,9 @@ impl CEmitter {
     }
 
     fn emit_stmt(&mut self, stmt: &Stmt) -> Result<(), String> {
+        // Source annotation hook: if --annotate-source enabled, emit the
+        // originating Nova source as a /* SRC: ... */ comment.
+        self.emit_source_annotation_for_stmt(stmt);
         match stmt {
             Stmt::Let(decl) => {
                 // Special case: tuple destructure  `let (a, b, c) = expr`

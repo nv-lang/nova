@@ -4092,6 +4092,27 @@ runtime-marker pattern), Q-effect-polymorphism.
 
 ---
 
+## Q-source-annotations. CLI `--annotate-source` для отладки сгенерированного C ✅ ЗАКРЫТО (2026-05-07)
+
+> Реализован opt-in flag `--annotate-source` (`-a`) у `nova-codegen
+> compile`. Включает вставку `/* SRC: <Nova-исходник> */` комментариев
+> перед каждым statement'ом сгенерированного `.c` файла. По умолчанию
+> отключён — diff-friendly для CI.
+>
+> Прецеденты: Cython (по умолчанию вставляет Python-исходник),
+> Crystal (`--emit-line-numbers`), Rust LLVM (`#line` директивы).
+> Nova выбрал opt-in — потому что (a) Nova-исходник может содержать
+> non-ASCII (UTF-8 в строках/идентификаторах), MSVC иногда хочет
+> `/utf-8` flag; (b) тестовая сюита диффает `.c`, аннотации дают
+> разные diffs.
+>
+> Реализация: `CEmitter::set_source_for_annotations(src: String)`,
+> `emit_source_annotation_for_stmt(stmt)` hook в начале `emit_stmt`.
+> Snippet берётся из span'а statement'а, первая строка, escaped `*//*`,
+> truncated до 120 символов.
+
+---
+
 ## Финальное напоминание
 
 Прежде чем продолжать **дизайн**, прочитай:

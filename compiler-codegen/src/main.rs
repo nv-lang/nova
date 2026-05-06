@@ -26,6 +26,10 @@ enum Cmd {
         /// Выходной .c файл (по умолчанию: <name>.c)
         #[arg(short = 'o')]
         output: Option<PathBuf>,
+        /// Вставлять Nova-исходник как `/* SRC: ... */` комментарии перед
+        /// каждым statement'ом (для отладки сгенерированного C).
+        #[arg(short = 'a', long = "annotate-source")]
+        annotate_source: bool,
     },
 }
 
@@ -35,7 +39,8 @@ fn main() -> ExitCode {
         Cmd::Check { file } => cmd_check(&file),
         Cmd::Run { file } => cmd_run(&file),
         Cmd::Test { file } => cmd_test(&file),
-        Cmd::Compile { file, output } => cmd_compile(&file, output.as_deref()),
+        Cmd::Compile { file, output, annotate_source } =>
+            cmd_compile(&file, output.as_deref(), annotate_source),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -100,7 +105,7 @@ fn cmd_run(path: &PathBuf) -> Result<()> {
     Ok(())
 }
 
-fn cmd_compile(path: &PathBuf, output: Option<&std::path::Path>) -> Result<()> {
+fn cmd_compile(path: &PathBuf, output: Option<&std::path::Path>, annotate_source: bool) -> Result<()> {
     let src = read_file(path)?;
     let module = nova_codegen::parser::parse(&src).map_err(|d| {
         anyhow!("{}", d.render(&src, &path.to_string_lossy()))
@@ -113,7 +118,10 @@ fn cmd_compile(path: &PathBuf, output: Option<&std::path::Path>) -> Result<()> {
         anyhow!("{}", messages.join("\n"))
     })?;
 
-    let emitter = nova_codegen::codegen::CEmitter::new();
+    let mut emitter = nova_codegen::codegen::CEmitter::new();
+    if annotate_source {
+        emitter.set_source_for_annotations(src.clone());
+    }
     let c_code = emitter
         .emit_module(&module)
         .map_err(|e| anyhow!("codegen error: {}", e))?;
