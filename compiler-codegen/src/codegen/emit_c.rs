@@ -5961,6 +5961,23 @@ impl CEmitter {
                 }
                 "nova_int".into()
             }
+            ExprKind::Index { obj, .. } => {
+                // arr[i] → element type of arr.
+                // Если obj — NovaArray_T*, элемент имеет тип T (из имени).
+                let obj_ty = self.infer_expr_c_type(obj);
+                if let Some(elem) = obj_ty.strip_prefix("NovaArray_") {
+                    let elem = elem.trim_end_matches('*').trim();
+                    return elem.to_string();
+                }
+                // Если obj — переменная-массив с явным element_type
+                // (boxed pointers, нестандартные типы).
+                if let ExprKind::Ident(name) = &obj.kind {
+                    if let Some(et) = self.array_element_types.get(name) {
+                        return et.clone();
+                    }
+                }
+                "nova_int".into()
+            }
             ExprKind::SelfAccess => {
                 self.var_types.get("nova_self").cloned().unwrap_or_else(|| "nova_int".into())
             }

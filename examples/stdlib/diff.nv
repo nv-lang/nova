@@ -113,8 +113,8 @@ test "diff: complete change" {
     let mut has_insert = false
     for op in ops {
         match op {
-            Delete("a") => has_delete = true
-            Insert("b") => has_insert = true
+            Delete("a") => { has_delete = true }
+            Insert("b") => { has_insert = true }
             _           => ()
         }
     }
@@ -127,7 +127,7 @@ test "diff: insertion в середине" {
     let mut has_insert_b = false
     for op in ops {
         match op {
-            Insert("b") => has_insert_b = true
+            Insert("b") => { has_insert_b = true }
             _           => ()
         }
     }
@@ -139,7 +139,7 @@ test "diff: deletion в середине" {
     let mut has_delete_b = false
     for op in ops {
         match op {
-            Delete("b") => has_delete_b = true
+            Delete("b") => { has_delete_b = true }
             _           => ()
         }
     }
