@@ -4242,6 +4242,272 @@ keyword-style assert (без скобок), но Nova `assert` это обычн
 
 ---
 
+## Q-stdlib-minimal-api. Минимальный stdlib API surface, выявленный из practical libraries
+
+**Контекст.** Реализация пяти практических stdlib-либ
+([complex.nv](../examples/stdlib/complex.nv), [semver.nv](../examples/stdlib/semver.nv),
+[json.nv](../examples/stdlib/json.nv), [uuid.nv](../examples/stdlib/uuid.nv),
+[base64.nv](../examples/stdlib/base64.nv), [url.nv](../examples/stdlib/url.nv),
+[crc32.nv](../examples/stdlib/crc32.nv), [ulid.nv](../examples/stdlib/ulid.nv))
+выявила **минимальный набор API**, без которого парсеры и
+сериализаторы не пишутся. Этот набор — ориентир для bootstrap stdlib
+implementation.
+
+Каждая API ниже **используется по крайней мере в двух** из перечисленных
+файлов. Это не пожелания, а измеренные требования.
+
+### Эффекты
+
+```nova
+// Random — детерминизм через handler-substitution в тестах
+type Random effect {
+    u64() -> u64                        // 64 случайных бита
+    bytes(n int) -> []byte              // массовая генерация
+}
+
+// Pre-defined handlers
+fn seeded(seed u64) -> Handler[Random]      // PRNG с фиксированным seed
+fn secure() -> Handler[Random]               // CSPRNG для production
+
+// Time — Unix-timestamp + sleep
+type Time effect {
+    now_ms() -> u64                     // Unix timestamp в миллисекундах
+    now_ns() -> u64                     // наносекунды (для high-precision)
+    sleep(d Duration) -> ()
+}
+
+// Pre-defined handlers
+fn fixed_ms(ms u64) -> Handler[Time]         // время заморожено
+fn system_clock() -> Handler[Time]            // реальные часы OS
+```
+
+**Use cases:**
+- `Random` — uuid.nv (v4), ulid.nv, любая криптография
+- `Time` — uuid.nv (v7), ulid.nv, expiration, retry backoff
+
+### Парсинг чисел из строки
+
+```nova
+fn int.try_from(s str) -> Result[int, ParseIntError]
+fn u64.try_from(s str) -> Result[u64, ParseIntError]
+fn i64.try_from(s str) -> Result[i64, ParseIntError]
+fn f64.try_from(s str) -> Result[f64, ParseFloatError]
+// ... для всех числовых типов
+```
+
+D77 даёт обе формы: `int.from(s) Fail[ParseIntError] -> int` синтезируется.
+
+`ParseIntError` / `ParseFloatError` — отдельные типы (D30 convention).
+
+### Базовые str-методы (предполагаются в prelude)
+
+```nova
+fn str @len() -> int                        // длина в байтах (или codepoint'ах? — Q-string-len)
+fn str @char_at(i int) -> Option[char]      // codepoint на позиции i
+fn str @chars() -> Iter[char]               // итератор codepoint'ов
+fn str @bytes() -> []byte                   // UTF-8 байты
+fn str @slice(from int, to int) -> str      // подстрока (D78 — открытый Q что значит i)
+fn str @starts_with(prefix str) -> bool
+fn str @ends_with(suffix str) -> bool
+fn str @contains(needle str) -> bool
+fn str @find(needle str) -> Option[int]     // позиция или None
+fn str @replace(from str, to str) -> str
+fn str @to_lower() -> str
+fn str @to_upper() -> str
+fn str @trim() -> str
+fn str @split(sep str) -> []str
+fn str @strip_prefix(p str) -> Option[str]  // None если не starts_with
+fn str @strip_suffix(s str) -> Option[str]
+```
+
+### Static-методы str (конструкторы)
+
+```nova
+fn str.from(c char) -> str                  // 1-char string
+fn str.from(n int) -> str                   // через D74 conversion
+fn str.from(b bool) -> str                  // "true" / "false"
+fn str.from(f f64) -> str                   // лучше через format spec
+fn str.from_codepoint(code int) Fail[InvalidCodepoint] -> str  // 1 codepoint → str
+fn str.from_bytes(b []byte) Fail[Utf8Error] -> str             // UTF-8 validate
+fn str.from_bytes_unchecked(b []byte) -> str                    // escape hatch
+```
+
+### `[]T` API
+
+```nova
+fn []T.new() -> []T                          // empty с capacity 0
+fn []T.with_capacity(n int) -> []T           // empty с зарезервированной памятью
+fn []T mut @push(item T)
+fn []T @len() -> int
+fn []T @is_empty() -> bool
+fn []T @get(i int) -> Option[T]              // safe indexing
+// arr[i] — panic on bounds (D13), arr.get(i) — Option
+fn []T mut @clear()
+fn []T mut @remove(i int) -> Option[T]
+fn []T @first() -> Option[T]
+fn []T @last() -> Option[T]
+fn []T @contains(value T) -> bool             // требует @eq на T
+fn []T @iter() -> Iter[T]
+```
+
+### `Buffer` API (Q-buffer закрыто, реализовано)
+
+```nova
+fn Buffer.new() -> Buffer
+fn Buffer.with_capacity(n int) -> Buffer
+fn Buffer.from(s str) -> Buffer
+fn Buffer.from(b []byte) -> Buffer
+
+fn Buffer mut @add_str(s str)
+fn Buffer mut @add_bytes(b []byte)
+fn Buffer mut @add_byte(b byte)
+fn Buffer mut @add_char(c char)              // UTF-8 encode 1-4 bytes
+
+fn Buffer @into() -> []byte                   // consume → bytes (infallible)
+fn Buffer @into() Fail[Utf8Error] -> str      // consume → str (UTF-8 validate)
+fn Buffer @try_into() -> Result[str, Utf8Error]
+fn Buffer @into_str_unchecked() -> str        // escape hatch
+fn Buffer @len() -> int
+fn Buffer @capacity() -> int
+fn Buffer @clone() -> Buffer
+```
+
+### `Option[T]` методы
+
+```nova
+fn Option[T] @is_some() -> bool
+fn Option[T] @is_none() -> bool
+fn Option[T] @unwrap() -> T                   // panic on None
+fn Option[T] @unwrap_or(default T) -> T
+fn Option[T] @unwrap_or_else(f fn() -> T) -> T
+fn Option[T] @map[U](f fn(T) -> U) -> Option[U]
+fn Option[T] @and_then[U](f fn(T) -> Option[U]) -> Option[U]
+fn Option[T] @ok_or[E](err E) -> Result[T, E]
+```
+
+### `Result[T, E]` методы
+
+```nova
+fn Result[T, E] @is_ok() -> bool
+fn Result[T, E] @is_err() -> bool
+fn Result[T, E] @unwrap() -> T                // panic on Err
+fn Result[T, E] @unwrap_err() -> E             // panic on Ok
+fn Result[T, E] @ok() -> Option[T]             // Result → Option (D77)
+fn Result[T, E] @err() -> Option[E]
+fn Result[T, E] @map[U](f fn(T) -> U) -> Result[U, E]
+fn Result[T, E] @map_err[F](f fn(E) -> F) -> Result[T, F]
+fn Result[T, E] @and_then[U](f fn(T) -> Result[U, E]) -> Result[U, E]
+```
+
+### `HashMap[K, V]` API (для json.nv)
+
+```nova
+fn HashMap[K Hashable, V].new() -> HashMap[K, V]
+fn HashMap[K, V].with_capacity(n int) -> HashMap[K, V]
+fn HashMap[K, V] mut @insert(key K, value V) -> Option[V]
+fn HashMap[K, V] @get(key K) -> Option[V]
+fn HashMap[K, V] @contains(key K) -> bool
+fn HashMap[K, V] mut @remove(key K) -> Option[V]
+fn HashMap[K, V] @len() -> int
+fn HashMap[K, V] @entries() -> Iter[(K, V)]
+fn HashMap[K, V] @keys() -> Iter[K]
+fn HashMap[K, V] @values() -> Iter[V]
+```
+
+### Iter[T] composers
+
+```nova
+fn Iter[T] @map[U](f fn(T) -> U) -> Iter[U]
+fn Iter[T] @filter(pred fn(T) -> bool) -> Iter[T]
+fn Iter[T] @fold[Acc](init Acc, f fn(Acc, T) -> Acc) -> Acc
+fn Iter[T] @count() -> int
+fn Iter[T] @collect() -> []T                  // в массив; collect[Out]() — Q-collect-mechanism
+```
+
+### Числовые операции (D74 instance methods)
+
+Уже зафиксировано в D74. Минимум для парсеров и математики:
+
+```nova
+fn f64 @sqrt() / @cbrt() / @sqr()
+fn f64 @sin() / @cos() / @atan2(other) / @hypot(other)
+fn f64 @abs()
+fn f64 @is_finite() / @is_nan() / @is_infinite()
+fn f64 @floor() / @ceil() / @round() / @trunc()
+fn f64 @min(other) / @max(other)
+
+fn int @abs()
+fn int @pow(n int)
+fn int @signum()
+fn int @min(other) / @max(other)
+```
+
+Static константы:
+```nova
+f64.PI / f64.E / f64.NAN / f64.INFINITY / f64.MAX / f64.EPSILON
+int.MAX / int.MIN
+```
+
+### Ошибки парсинга — стандартные типы в prelude
+
+По D30 convention `Parse<TypeName>Error`:
+
+```nova
+type ParseIntError { value str, reason str }
+type ParseFloatError { value str, reason str }
+type Utf8Error { position int, byte byte }
+type InvalidCodepoint { value int }
+```
+
+### Что отсутствует (намеренно — не для MVP)
+
+- **Regex** — отдельная либа, не prelude. Q-regex.
+- **Date/Time formatting** — кроме `Time.now_ms()`, format/parse сложен.
+- **JSON parser** — пользовательская либа (`std.json`), не prelude.
+- **Crypto primitives** — отдельная либа.
+- **Async I/O** — через эффекты Net/Fs, не prelude API.
+
+### Приоритеты реализации
+
+**Tier 1 (без них stdlib не пишется):**
+- `int.try_from(s)` / `u64.try_from(s)` / `f64.try_from(s)`
+- `str` методы (`@len`, `@char_at`, `@chars`, `@slice`, `@find`, `@contains`, `@starts_with`)
+- `[]T` базовые (`new`, `with_capacity`, `push`, `len`, `get`, `iter`)
+- `Buffer` (уже реализован 2026-05-07)
+- `Option`/`Result` основные методы
+
+**Tier 2 (для production):**
+- `Random` / `Time` handler'ы (включая `seeded` / `fixed_ms`)
+- `HashMap`
+- Iter composers
+- str manipulation (`@to_lower`, `@to_upper`, `@trim`, `@replace`)
+
+**Tier 3 (nice-to-have):**
+- Regex
+- Format spec
+- Расширенные числовые (`f64 @atan2`, etc.)
+
+### Связь
+
+- [D26](decisions/08-runtime.md#d26) — prelude содержит часть этого
+  набора; D26 нужно расширить под этот список.
+- [D74](decisions/08-runtime.md#d74) — math instance methods.
+- [D77](decisions/08-runtime.md#d77) — TryFrom для парсинга.
+- [Q-buffer](#q-buffer) — закрыто.
+- [Q-char-literals](#q-char-literals) — закрыто.
+- [Q-string-indexing](#q-string-indexing) — open: что значит `i` в
+  `str @char_at(i int)` (байты или codepoint'ы).
+- [Q-collect-mechanism](#q-collect-mechanism) — open: `collect[Out]()`.
+- [examples/stdlib/](../examples/stdlib/) — все 8 файлов используют
+  этот набор.
+
+**Статус.** Open question — не decision потому что это **накопительный
+список**, не финальный. Каждая новая stdlib-либа может выявить что-то
+ещё. Но текущий набор уже **измерен** на 8 практических файлах и
+является обязательным минимумом для bootstrap stdlib implementation.
+
+---
+
 ## Финальное напоминание
 
 Прежде чем продолжать **дизайн**, прочитай:
