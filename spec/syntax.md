@@ -1370,6 +1370,68 @@ fn handle_request(req Request) Net Db Detach -> Response {
 }
 ```
 
+### `cancel_scope { tok => body }`
+
+Manual structured cancellation. Аналог `supervised`, но вводит
+биндинг `tok` (тип `CancelToken` в prelude) — first-class токен,
+который можно передать снаружи и вызвать `tok.cancel()` для fail-fast
+всех fiber'ов в scope'е. Все spawn'ы scope'а на следующем yield-point
+бросят `"scope cancelled"`.
+
+```nova
+cancel_scope { tok =>
+    spawn { do_thing(tok) }
+    spawn { do_other(tok) }
+}
+
+// внешний kill-switch:
+let tok = CancelToken.new()
+spawn { Time.sleep(5_000); tok.cancel() }
+fetch_with_kill(urls, tok)
+```
+
+Token capabilities: `tok.cancel()`, `tok.is_cancelled()`,
+`tok.bind(other)` для каскадной отмены. Подробно — [D75](decisions/06-concurrency.md#d75).
+
+### `Channel[T]` и `select`
+
+Coordination между fiber'ами через message-passing. `Channel[T]` —
+typed bounded channel с blocking-семантикой. **Единственный safe
+способ** разделять данные между fiber'ами в production-runtime
+(альтернатива — shared `mut` — UB при preemption).
+
+```nova
+let ch = Channel.new(10)            // capacity = 10 (0 = unbuffered)
+ch.send(value)                       // блокирует если буфер полон
+let v = ch.recv()                    // Option[T]; None = closed + drained
+ch.close()                            // idempotent
+
+// drain pattern:
+while let Some(msg) = ch.recv() {
+    process(msg)
+}
+```
+
+`select { ... }` — мультиплексирование recv-операций с опциональным
+`timeout` case:
+
+```nova
+select {
+    msg <- ch_a       => process_a(msg)
+    msg <- ch_b       => process_b(msg)
+    timeout(5.seconds()) => default_action()
+}
+```
+
+Если несколько каналов готовы одновременно — выбор non-deterministic.
+`<-` — recv-оператор только в pattern-position select-арма, не general.
+
+Полная семантика (closed-channel, owner-actor pattern, отказ от
+Mutex/Atomic) — [D79](decisions/06-concurrency.md#d79).
+
+Bootstrap-status: `Channel` base реализован (раунд 5);
+`select` parser отложен до spawn-block fix.
+
 ### `Time.sleep(ms)`
 
 Yield-point. По D62 — обычная функция, callable откуда угодно (Async ambient).
