@@ -1,21 +1,46 @@
-// spawn.nv — Phase 5: stackful fibers via minicoro
+// spawn.nv — D50: spawn внутри structured-scope (supervised/parallel for).
+//
+// По D50 (06-concurrency.md): `spawn body` — fire-and-forget, возвращает
+// unit. Результаты concurrent-вычислений — через mut-захваты или
+// `parallel for` (homogeneous results). `let r = spawn { expr }` —
+// compile-error (spawn не возвращает значение).
 
 module spawn_demo
 
 fn main() {
-    // Простой spawn: вычислить выражение в fiber, вернуть результат
-    let r = spawn { 100 + 1 }
-    println("spawn result = ", r)       // 101
-
-    // spawn с захватом переменной
-    let x = 42
-    let r2 = spawn { x * 2 }
-    println("captured x*2 = ", r2)     // 84
-
-    // spawn с мутацией захваченной переменной
-    let mut counter = 0
-    let _ = spawn {
-        counter += 10
+    // Простое spawn внутри supervised: fiber вычисляет, результат через
+    // mut-захват.
+    let mut r1 = 0
+    supervised {
+        spawn {
+            r1 = 100 + 1
+        }
     }
-    println("counter after spawn = ", counter)   // 10
+    println("spawn result = ", r1)       // 101
+
+    // spawn с захватом переменной.
+    let x = 42
+    let mut r2 = 0
+    supervised {
+        spawn {
+            r2 = x * 2
+        }
+    }
+    println("captured x*2 = ", r2)       // 84
+
+    // Несколько spawn'ов в одном supervised — выполняются concurrent
+    // (fiber scheduler делает round-robin), supervised ждёт всех.
+    let mut a = 0
+    let mut b = 0
+    supervised {
+        spawn { a = 10 }
+        spawn { b = 20 }
+    }
+    println("a + b = ", a + b)           // 30
+
+    // Гомогенный fan-out: parallel for возвращает массив результатов.
+    let results = parallel for i in 0..5 {
+        i * i
+    }
+    println("squares = ", results.len)   // 5
 }

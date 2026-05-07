@@ -1,12 +1,14 @@
-// gc_coroutines_test.nv — Nova-level tests for GC and coroutines
+// gc_coroutines_test.nv — Nova-level tests for GC and coroutines (D50)
 //
 // Deep runtime tests (stack isolation, yield/resume order, RC lifecycle,
 // alloc_count tracking) live in nova_rt/test_gc_deep.c and
 // nova_rt/test_fibers_deep.c — run them with nova_rt/run_deep_tests.bat.
 //
-// These tests verify the Nova codegen layer on top of the runtime:
-// capture semantics, mutation visibility, chained spawns, record lifetime
-// under allocation pressure.
+// Эти тесты проверяют codegen-слой Nova поверх runtime'а:
+// capture-семантику, mutation visibility, chained spawns, record lifetime
+// под GC pressure. По D50: spawn — fire-and-forget внутри supervised,
+// возвращает unit. Результаты — через mut-захваты или `parallel for`
+// (homogeneous fan-out с массивом результатов).
 
 module gc_coroutines_test
 
@@ -37,22 +39,31 @@ fn sum_to(n int) -> int {
 fn dot_product(ax int, ay int, bx int, by int) -> int =>
     ax * bx + ay * by
 
-// ---- basic spawn semantics ----
+// ---- basic spawn semantics (D50) ----
 
-test "spawn: literal value" {
-    let r = spawn { 42 }
+test "spawn: literal value через mut-capture" {
+    let mut r = 0
+    supervised {
+        spawn { r = 42 }
+    }
     assert(r == 42)
 }
 
 test "spawn: arithmetic expression" {
-    let r = spawn { 10 + 20 + 30 }
+    let mut r = 0
+    supervised {
+        spawn { r = 10 + 20 + 30 }
+    }
     assert(r == 60)
 }
 
 test "spawn: captures immutable vars" {
     let x = 100
     let y = 200
-    let r = spawn { x + y }
+    let mut r = 0
+    supervised {
+        spawn { r = x + y }
+    }
     assert(r == 300)
 }
 
@@ -60,62 +71,40 @@ test "spawn: captures immutable vars" {
 
 test "spawn: mutates captured var, change visible after fiber" {
     let mut counter = 0
-    let _ = spawn { counter += 7 }
+    supervised {
+        spawn { counter += 7 }
+    }
     assert(counter == 7)
 }
 
 test "spawn: two independent mutations, both visible" {
     let mut a = 0
     let mut b = 0
-    let _ = spawn { a += 10 }
-    let _ = spawn { b += 20 }
+    supervised {
+        spawn { a += 10 }
+        spawn { b += 20 }
+    }
     assert(a == 10)
     assert(b == 20)
 }
 
-test "spawn: mutation accumulates across sequential fibers" {
-    // Each fiber reads the current value and adds to it.
-    // Sequential execution guarantees ordering.
-    let mut total = 0
-    let _ = spawn { total += 1 }
-    let _ = spawn { total += 2 }
-    let _ = spawn { total += 3 }
-    let _ = spawn { total += 4 }
-    assert(total == 10)
-}
-
-// ---- capture of spawn result (pipeline) ----
-
-test "spawn pipeline: r1 feeds r2" {
-    let x = 5
-    let r1 = spawn { x * x }       // 25
-    let r2 = spawn { r1 + r1 }      // 50
-    assert(r1 == 25)
-    assert(r2 == 50)
-}
-
-test "spawn pipeline: three stages" {
-    let base = 2
-    let s1 = spawn { base * base }      // 4
-    let s2 = spawn { s1 * s1 }          // 16
-    let s3 = spawn { s2 * s2 }          // 256
-    assert(s1 == 4)
-    assert(s2 == 16)
-    assert(s3 == 256)
-}
-
-// ---- capture of function results ----
+// ---- function calls inside fiber ----
 
 test "spawn: calls function inside fiber" {
     let n = 10
-    let r = spawn { sum_to(n) }
+    let mut r = 0
+    supervised {
+        spawn { r = sum_to(n) }
+    }
     assert(r == 55)
 }
 
 test "spawn: large computation sum_to(1000)" {
     let n = 1000
-    let r = spawn { sum_to(n) }
-    // 1+2+...+1000 = 500500
+    let mut r = 0
+    supervised {
+        spawn { r = sum_to(n) }
+    }
     assert(r == 500500)
 }
 
@@ -124,8 +113,10 @@ test "spawn: captures multiple vars into function call" {
     let ay = 4
     let bx = 5
     let by = 6
-    let r = spawn { dot_product(ax, ay, bx, by) }
-    // 3*5 + 4*6 = 15 + 24 = 39
+    let mut r = 0
+    supervised {
+        spawn { r = dot_product(ax, ay, bx, by) }
+    }
     assert(r == 39)
 }
 
@@ -150,11 +141,9 @@ test "GC: 1000 short-lived records, no corruption" {
     let mut i = 0
     while i < 1000 {
         let p = make_point(i, 1000 - i)
-        // p.x + p.y should always equal 1000
         check += p.x + p.y
         i += 1
     }
-    // Each iteration contributes 1000, so total = 1000 * 1000 = 1000000
     assert(check == 1000000)
 }
 
@@ -178,17 +167,22 @@ test "GC: chain of records, each depends on previous" {
 
 test "GC: allocate during spawn, read after" {
     let p = make_point(3, 4)
-    let r = spawn { p.x * p.x + p.y * p.y }
+    let mut r = 0
+    supervised {
+        spawn { r = p.x * p.x + p.y * p.y }
+    }
     assert(r == 25)
 }
 
 test "GC: records allocated inside spawn body visible after fiber" {
     let mut result_x = 0
     let mut result_y = 0
-    let _ = spawn {
-        let inner = make_point(42, 99)
-        result_x = inner.x
-        result_y = inner.y
+    supervised {
+        spawn {
+            let inner = make_point(42, 99)
+            result_x = inner.x
+            result_y = inner.y
+        }
     }
     assert(result_x == 42)
     assert(result_y == 99)
@@ -198,24 +192,30 @@ test "GC: records allocated inside spawn body visible after fiber" {
 
 test "GC+spawn interleaved: records allocated between fibers survive" {
     let p1 = make_point(10, 20)
-    let r1 = spawn { p1.x + p1.y }      // fiber 1: 30
-    let p2 = make_point(r1, r1 * 2)     // allocate between fibers: {30, 60}
-    let r2 = spawn { p2.x + p2.y }      // fiber 2: 90
+    let mut r1 = 0
+    supervised {
+        spawn { r1 = p1.x + p1.y }      // fiber 1: 30
+    }
+    let p2 = make_point(r1, r1 * 2)     // {30, 60}
+    let mut r2 = 0
+    supervised {
+        spawn { r2 = p2.x + p2.y }      // fiber 2: 90
+    }
     assert(r1 == 30)
     assert(p2.x == 30)
     assert(p2.y == 60)
     assert(r2 == 90)
 }
 
-test "GC+spawn: 10 fibers each mutate through record fields" {
+// ---- parallel for — homogeneous fan-out ----
+
+test "parallel for: 10 independent computations, sum results" {
+    let xs = parallel for i in 0..10 {
+        i + i * i
+    }
     let mut total = 0
-    let mut i = 0
-    while i < 10 {
-        let p = make_point(i, i * i)
-        let cur_x = p.x
-        let cur_y = p.y
-        let _ = spawn { total += cur_x + cur_y }
-        i += 1
+    for x in xs {
+        total += x
     }
     // sum(i + i^2) for i=0..9
     // i:   0 1 2  3  4  5  6  7  8  9
@@ -224,39 +224,16 @@ test "GC+spawn: 10 fibers each mutate through record fields" {
     assert(total == 330)
 }
 
-// ---- factorial via loop + spawn ----
-
-test "factorial: 10! via loop with spawn" {
-    let mut acc = 1
-    let mut i = 1
-    while i <= 10 {
-        let cur = i
-        let _ = spawn { acc = acc * cur }
-        i += 1
-    }
-    assert(acc == 3628800)
-}
-
-// ---- nested spawn capture ----
-
-test "spawn nested: outer result captured by inner" {
-    let a = 3
-    let b = 4
-    let hyp_sq = spawn { a * a + b * b }    // 25
-    let doubled = spawn { hyp_sq * 2 }       // 50
-    let final_r = spawn { doubled + hyp_sq } // 75
-    assert(hyp_sq == 25)
-    assert(doubled == 50)
-    assert(final_r == 75)
-}
-
 // ---- Tree records + spawn ----
 
 test "Tree record: depth tracking via spawn" {
     let root = make_tree(1, 0)
     let child = make_tree(root.val * 2, root.depth + 1)
     let grandchild = make_tree(child.val * 2, child.depth + 1)
-    let r = spawn { grandchild.val + grandchild.depth }
+    let mut r = 0
+    supervised {
+        spawn { r = grandchild.val + grandchild.depth }
+    }
     // val = 4, depth = 2 → 6
     assert(r == 6)
 }
