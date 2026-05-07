@@ -696,10 +696,114 @@ heap (или на стеке через escape analysis).
 - **Без разделения** — массивы `[N]T` потребуют литералов всюду;
   comptime станет несовместимым.
 
+### Сравнение с `readonly` / `mut` field — три оси immutability
+
+Nova имеет **три разных** keyword'а связанных с immutability — `let`,
+`const`, `readonly`/`mut` field. Они **не конкурируют**, потому что
+работают на **разных уровнях** программы:
+
+| Конструкция | Что фиксирует | Где живёт | Решает |
+|---|---|---|---|
+| `let x` / `let mut x` | binding | в функции / scope | можно ли переприсвоить переменную |
+| `const X = ...` | compile-time placement | top-level или scope | известно ли значение при компиляции |
+| `readonly field T` | поле record'а never-mut | внутри `type X { ... }` ([D36](02-types.md#d36)) | можно ли мутировать поле даже у `let mut` binding'а |
+| `mut field T` | поле record'а always-mut | внутри `type X { ... }` ([D36](02-types.md#d36)) | можно ли мутировать поле даже у `let` binding'а |
+
+#### `let` / `let mut` — про **binding**
+
+```nova
+let x = 5             // binding x не переприсваивается
+let mut y = 0         // binding y переприсваивается
+y = y + 1
+```
+
+Default immutable ([D32](02-types.md#d32)) — `let` без префикса всегда
+immutable. `let mut` — явный opt-in в mutable, аналогично Rust
+`let mut`, Swift `var`, Kotlin `var`. Программист видит `let mut` —
+знает что переменная меняется.
+
+#### `const` — про **compile-time**
+
+```nova
+const MAX = 4096                  // compile-time, в data-segment
+let limit = compute_limit()        // runtime, в heap/stack
+```
+
+Оба immutable. **Разница** — `const` накладывает требование
+compile-time computability (литералы + арифметика над ними +
+const-record'ы). `let` принимает любое runtime-выражение.
+
+`const` нужен для:
+- Размеров фиксированных массивов: `[N]T` ([D27](#d27)) требует `const N`.
+- Compile-time оптимизаций (свёртка, размещение в data-segment).
+- Семантической декларации «это всегда константа», не «immutable
+  до scope-exit».
+
+#### `readonly` / `mut` field — про **поле record'а**
+
+```nova
+type Account {
+    readonly id u64        // поле never-mut, даже у `let mut acc`
+    balance money          // поле default — mut если binding mut
+    mut log_count int      // поле always-mut, даже у `let acc`
+}
+
+let mut acc = Account { id: 1, balance: 100, log_count: 0 }
+acc.balance = 200          // OK   — поле default + binding mut
+acc.id = 999               // ERR  — id readonly
+acc.log_count += 1         // OK   — log_count mut
+```
+
+`readonly` / `mut` per-field — это **freeze/unfreeze** конкретного
+поля относительно дефолта. Они **не пересекаются** с `let`/`let mut`:
+binding управляет «можно ли модифицировать **переменную**», поле
+управляет «можно ли модифицировать **конкретное поле в записи**».
+
+Пример где они комбинируются:
+
+| binding | field declaration | можно `acc.field = ...` |
+|---|---|---|
+| `let acc` | `field T` (default) | ❌ — binding immutable |
+| `let acc` | `mut field T` | ✅ — поле always-mut |
+| `let acc` | `readonly field T` | ❌ |
+| `let mut acc` | `field T` (default) | ✅ |
+| `let mut acc` | `mut field T` | ✅ |
+| `let mut acc` | `readonly field T` | ❌ — readonly сильнее |
+
+#### Почему **три**, а не одно
+
+Альтернативы и почему они хуже:
+
+1. **Только `let`/`let mut` без `const`** — массивы `[N]T` требовали
+   бы compile-time выводимости из `let N = 5`. Компилятор должен
+   проводить escape-analysis на каждый `let`, чтобы понять
+   const-eligible. Программист не видит явно «это compile-time»,
+   а получает компилятор-error при первом нарушении. AI-unfriendly.
+
+2. **Только `let`/`let mut` без `readonly`/`mut field`** — потеря
+   per-field freeze. Альтернатива — newtype wrappers (`type AccountId(u64)`
+   для каждого immutable поля), что ведёт к verbose-коду и потере
+   ergonomics (`acc.id.value()` вместо `acc.id`). Cell/RefCell-style
+   wrappers (как в Rust) ещё хуже для AI-кодинга.
+
+3. **Только `const`/`readonly`** (без `let`/`let mut`) — теряем
+   обычные mutable переменные в функциях. Можно через field record'а
+   (тип-обёртку `Counter { mut value int }`), но это противоестественно
+   для локальных счётчиков.
+
+Это **три разные оси ответственности**, каждая решает свою задачу:
+- `let`/`let mut` — **binding mutability** (можно ли переприсвоить).
+- `const` — **compile-time vs runtime placement**.
+- `readonly`/`mut` field — **per-field freeze в record'е**.
+
 ### Связь
 - [D27](#d27-синтаксис-массивов-t-префикс-nt-фиксированные) — `const`
   для размеров фиксированных массивов.
 - [D30](#d30-стиль-именования) — `SCREAMING_SNAKE_CASE` для `const`.
+- [D32](02-types.md#d32) — default immutable bindings; `mut` для
+  переменных и параметров.
+- [D36](02-types.md#d36) — `readonly`/`mut` модификаторы полей
+  record'а; per-field freeze.
 - [07-modules.md](07-modules.md) — `export const` экспортирует.
 
 ---

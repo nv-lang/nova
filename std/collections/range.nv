@@ -97,6 +97,72 @@ export fn RangeIter mut @next() -> Option[int] {
 
 
 // ──────────────────────────────────────────────────────────────────────────
+// step_by — итерация с шагом
+// ──────────────────────────────────────────────────────────────────────────
+//
+// Альтернатива C-style `for(i=0; i<n; i+=step)` — отвергнут D82.
+// Use-case: crypto-блоки (MD5/SHA по 64 байта), base64 (по 4),
+// chunked encoding (по N байт).
+//
+// Семантика: yield'ит start, start+step, start+2*step, ... пока < end.
+
+export type StepRangeIter {
+    readonly end  int
+    readonly step int                       // должен быть > 0
+    mut cur       int
+}
+
+// Range.@step_by(n) -> Iter[int] — итератор с шагом n.
+// step <= 0 → throw — бесконечный цикл недопустим.
+export fn Range @step_by(step int) Fail[OverflowError] -> StepRangeIter {
+    if step <= 0 {
+        throw OverflowError { msg: "Range.step_by: step must be positive, got ${step}" }
+    }
+    StepRangeIter { end: @end, step, cur: @start }
+}
+
+export fn StepRangeIter mut @next() -> Option[int] {
+    if @cur >= @end { return None }
+    let v = @cur
+    @cur += @step
+    Some(v)
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// reverse — обратная итерация
+// ──────────────────────────────────────────────────────────────────────────
+//
+// Альтернатива C-style `for(i=n-1; i>=0; i--)` — отвергнут D82.
+// Yield'ит end-1, end-2, ..., start.
+
+export type ReverseRangeIter {
+    readonly start int
+    mut cur        int                      // следующее значение для выдачи
+                                            // (decremented после каждого next)
+    mut done       bool                     // флаг завершения (для start == int.MIN)
+}
+
+// Range.@reverse() -> Iter[int] — итератор в обратном порядке.
+export fn Range @reverse() -> ReverseRangeIter {
+    let cur = if @end > @start { @end - 1 } else { @start }
+    let done = @end <= @start
+    ReverseRangeIter { start: @start, cur, done }
+}
+
+export fn ReverseRangeIter mut @next() -> Option[int] {
+    if @done { return None }
+    let v = @cur
+    if @cur == @start {
+        @done = true                        // следующая итерация завершит
+    } else {
+        @cur -= 1
+    }
+    Some(v)
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
 // Тесты
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -197,4 +263,96 @@ test "inclusive overflow throws" {
         Some(Range.inclusive(0, int.MAX))
     }
     assert(r == None)
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// step_by tests
+// ──────────────────────────────────────────────────────────────────────────
+
+test "step_by basic — every other" {
+    let collected = (0..10).step_by(2)
+    let mut it = collected
+    assert(it.next() == Some(0))
+    assert(it.next() == Some(2))
+    assert(it.next() == Some(4))
+    assert(it.next() == Some(6))
+    assert(it.next() == Some(8))
+    assert(it.next() == None)
+}
+
+test "step_by 64 — crypto block iteration" {
+    // Use-case: SHA-256 обрабатывает блоки по 64 байта
+    let mut blocks = 0
+    for i in (0..256).step_by(64) {
+        blocks += 1
+    }
+    assert(blocks == 4)                     // 0, 64, 128, 192
+}
+
+test "step_by stops before end" {
+    // step не делает «overshoot» — последний yield < end
+    let mut last = -1
+    for i in (0..10).step_by(3) {
+        last = i
+    }
+    assert(last == 9)                       // 0, 3, 6, 9 — следующее 12 > 10
+}
+
+test "step_by step >= end-start gives single element" {
+    let mut count = 0
+    for i in (0..5).step_by(100) {
+        count += 1
+    }
+    assert(count == 1)                      // только начальный 0
+}
+
+test "step_by zero step throws" {
+    let r = with Fail[OverflowError] = (e) => interrupt None {
+        let it = (0..10).step_by(0)
+        Some(it)
+    }
+    assert(r == None)
+}
+
+test "step_by negative step throws" {
+    let r = with Fail[OverflowError] = (e) => interrupt None {
+        let it = (0..10).step_by(-1)
+        Some(it)
+    }
+    assert(r == None)
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// reverse tests
+// ──────────────────────────────────────────────────────────────────────────
+
+test "reverse basic" {
+    let mut it = (0..5).reverse()
+    assert(it.next() == Some(4))
+    assert(it.next() == Some(3))
+    assert(it.next() == Some(2))
+    assert(it.next() == Some(1))
+    assert(it.next() == Some(0))
+    assert(it.next() == None)
+}
+
+test "reverse empty" {
+    let mut it = (5..5).reverse()
+    assert(it.next() == None)
+}
+
+test "reverse single element" {
+    let mut it = (3..4).reverse()
+    assert(it.next() == Some(3))
+    assert(it.next() == None)
+}
+
+test "reverse via for-loop" {
+    let mut collected []int = []
+    for i in (1..=3).reverse() {
+        collected.push(i)
+    }
+    assert(collected == [3, 2, 1])
 }
