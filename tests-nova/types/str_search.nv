@@ -266,3 +266,93 @@ test "slice across emoji boundary" {
     assert(r.byte_len() == 4)      // emoji = 4 bytes
     assert(r.len == 1)             // 1 codepoint
 }
+
+// ================================================================
+// SECTION 9: bytes() и chars() — итерация по строке
+// ================================================================
+// D26 spec: s.bytes() → []byte (UTF-8 байты),
+//           s.chars() → Iter[char] (lazy в spec, eager в bootstrap).
+// for-in по результату должен работать.
+
+test "bytes: ASCII — каждый символ = 1 байт" {
+    let s = "abc"
+    let bs = s.bytes()
+    assert(bs.len == 3)
+}
+
+test "bytes: Cyrillic — UTF-8 многобайтовое представление" {
+    let s = "Привет"               // 6 codepoints, 12 bytes
+    let bs = s.bytes()
+    assert(bs.len == 12)
+}
+
+test "bytes: for-in over s.bytes()" {
+    let s = "abc"
+    let mut sum int = 0
+    for b in s.bytes() {
+        sum = sum + (b as int)
+    }
+    // 'a'(97) + 'b'(98) + 'c'(99) = 294
+    assert(sum == 294)
+}
+
+test "bytes: let-binding then for-in" {
+    let s = "ABC"
+    let bs = s.bytes()
+    let mut count = 0
+    for b in bs {
+        if b == 'A' as byte { count = count + 1 }
+        if b == 'B' as byte { count = count + 1 }
+        if b == 'C' as byte { count = count + 1 }
+    }
+    assert(count == 3)
+}
+
+test "chars: count codepoints через for-in" {
+    let s = "Привет"
+    let mut n = 0
+    for c in s.chars() {
+        let _ = c
+        n = n + 1
+    }
+    assert(n == 6)                 // 6 codepoints
+}
+
+test "chars: emoji decode" {
+    let s = "ab😀"                  // 3 codepoints
+    let mut count = 0
+    for c in s.chars() {
+        let _ = c
+        count = count + 1
+    }
+    assert(count == 3)
+}
+
+// ================================================================
+// SECTION 10: split — D26 (eager bootstrap)
+// ================================================================
+
+test "split: basic" {
+    let parts = "a,b,c".split(",")
+    assert(parts.len == 3)
+}
+
+test "split: no separator → один элемент" {
+    let parts = "abc".split(",")
+    assert(parts.len == 1)
+}
+
+test "split: для for-in" {
+    let mut count = 0
+    for p in "x,y,z,w".split(",") {
+        let _ = p
+        count = count + 1
+    }
+    assert(count == 4)
+}
+
+test "split: trailing separator" {
+    let parts = "a,b,".split(",")
+    // ["a", "b", ""] — empty tail
+    assert(parts.len == 3)
+}
