@@ -1,0 +1,119 @@
+// per_fiber_handlers.nv — D-handler-scope: handlers per-fiber, не shared.
+//
+// Проверяет что разные fibers внутри supervised могут устанавливать
+// собственные `with X = handler { ... }` биндинги, и handler одного
+// fiber'а НЕ видим другому.
+//
+// Без per-fiber snapshot (см. effects.h NovaEffectSnapshot +
+// fibers.h::nova_supervised_step) handlers лежали бы в shared
+// __declspec(thread) globals — fiber A установил handler, yield,
+// fiber B перезаписал — A после resume увидел бы handler от B.
+// Это классический bug кооперативной shared-state модели.
+//
+// Реализация (см. effects.h): nova_register_effect_storage регистрирует
+// все handler-storages при старте. supervised_step save/restore
+// snapshot вокруг mco_resume.
+
+module nova_tests.concurrency.per_fiber_handlers
+
+// ================================================================
+// SECTION 1: Разные Time handlers в разных fiber'ах
+// ================================================================
+
+fn helper_with_clock_100() -> int {
+    with Time = handler Time {
+        sleep(_ms) { return () }
+        now() { return 100 }
+    } {
+        Time.now()
+    }
+}
+
+fn helper_with_clock_200() -> int {
+    with Time = handler Time {
+        sleep(_ms) { return () }
+        now() { return 200 }
+    } {
+        Time.now()
+    }
+}
+
+test "per-fiber Time handlers — разные значения в разных fibers" {
+    let mut a = -1
+    let mut b = -1
+    supervised {
+        spawn { a = helper_with_clock_100() }
+        spawn { b = helper_with_clock_200() }
+    }
+    assert(a == 100)
+    assert(b == 200)
+}
+
+// ================================================================
+// SECTION 2: Outer handler наследуется в spawn'ах через snapshot save
+// ================================================================
+
+test "spawn наследует outer with-handler" {
+    let mut got = -1
+    with Time = handler Time {
+        sleep(_ms) { return () }
+        now() { return 42 }
+    } {
+        supervised {
+            spawn {
+                got = Time.now()         // должен видеть outer handler = 42
+            }
+        }
+    }
+    assert(got == 42)
+}
+
+// ================================================================
+// SECTION 3: Inner with в spawn перекрывает outer
+// ================================================================
+
+fn helper_with_nested() -> int {
+    with Time = handler Time {
+        sleep(_ms) { return () }
+        now() { return 999 }
+    } {
+        Time.now()
+    }
+}
+
+test "inner with в spawn перекрывает outer для своего fiber" {
+    let mut outer_seen = -1
+    let mut inner_seen = -1
+    with Time = handler Time {
+        sleep(_ms) { return () }
+        now() { return 111 }
+    } {
+        supervised {
+            spawn { outer_seen = Time.now() }      // видит outer = 111
+            spawn { inner_seen = helper_with_nested() }  // inner with → 999
+        }
+    }
+    assert(outer_seen == 111)
+    assert(inner_seen == 999)
+}
+
+// ================================================================
+// SECTION 4: Outer handler сохраняется после spawn-завершения
+// ================================================================
+
+test "outer handler не затирается завершившимися fibers" {
+    let mut outer_after = -1
+    with Time = handler Time {
+        sleep(_ms) { return () }
+        now() { return 555 }
+    } {
+        supervised {
+            spawn { let _ = helper_with_clock_100() }
+            spawn { let _ = helper_with_clock_200() }
+        }
+        // Здесь, после supervised, outer handler должен снова быть 555.
+        // Без правильного snapshot restore — затёрся бы последним fiber'ом.
+        outer_after = Time.now()
+    }
+    assert(outer_after == 555)
+}
