@@ -205,7 +205,7 @@ type Db effect {
 
 ### Конкретные пробелы методов
 
-**String API** не зафиксирован. В `tests-nova/` и `examples/`
+**String API** не зафиксирован. В `nova_tests/` и `examples/`
 используются `s.len`, `s.contains(sub)`, `s.starts_with(p)`,
 `s.ends_with(p)`, `s.to_lower()`, `s.to_upper()`, `s.trim()` — все
 работают в bootstrap'е (`compiler-bootstrap/src/interp/stdlib.rs`),
@@ -1485,7 +1485,7 @@ D. **Оставить как есть.** Обе формы валидны без
    `match @ { Leaf => Leaf, ... }` нельзя `Leaf => Self.Leaf`
    (конструктор). Self применим только в типовых позициях.
 4. **Миграция существующих файлов** — большая часть spec/decisions/,
-   examples/, tests-nova/ написаны с явными именами. Hard-rule
+   examples/, nova_tests/ написаны с явными именами. Hard-rule
    потребует масштабного sweep.
 
 **Статус.** Не зафиксировано. Склонность — **(B) линт-warning**:
@@ -3632,7 +3632,7 @@ generic Complex / Vector / Matrix через [Q-math-protocol](#q-math-protocol)
 > `'a'` / `'\n'` / `'\u{HEX}'` → TokenKind::Char(u32) (codepoint).
 > AST: ExprKind::CharLit + Literal::Char (для match-pattern'ов).
 > Codegen: char как nova_int в bootstrap (codepoint напрямую). См.
-> tests-nova/56_char_literals.nv (16 тестов).
+> nova_tests/types/char_literals.nv (16 тестов).
 >
 > Оригинальный текст ниже сохранён для истории.
 
@@ -3823,7 +3823,7 @@ special-case dispatch для `Buffer.new()` / `Buffer.with_capacity(n)` /
 `Buffer.from(s/b)` (Path-form static) и для `buf.add_*()` / `buf.into()` /
 `buf.try_into()` / `buf.into_str_unchecked()` / `buf.len()` / `buf.capacity()`
 / `buf.clone()` (Member-form instance методов на receiver-type
-`Nova_Buffer*`). Tests: `tests-nova/55_buffer.nv` (16 passing) — basic
+`Nova_Buffer*`). Tests: `nova_tests/runtime/buffer.nv` (16 passing) — basic
 ops, capacity-grow, clone independence, UTF-8 add_char (1/2/4-byte),
 hot-loop 1000-add accumulation. UTF-8 валидация в `try_into`
 реализована вручную (overlong/surrogate detection). После consume

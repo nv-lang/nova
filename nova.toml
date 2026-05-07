@@ -8,11 +8,13 @@
 # Внутри Nova workspace:
 #   - std/        — стандартная библиотека Nova (.nv-модули по доменам)
 #   - examples/   — демо-программы и tutorial snippets (используют std)
-#   - tests-nova/ — тесты языка (корпус для bootstrap-компилятора)
+#   - nova_tests/ — тесты языка (корпус для bootstrap-компилятора)
+#
+# Имя директории == package.name внутри (D78 path/module enforcement).
 
 [workspace]
 members = [
     "std",
     "examples",
-    "tests-nova",
+    "nova_tests",
 ]

@@ -192,11 +192,11 @@ nova-lang/compiler-bootstrap/           (Rust crate, name = "nova")
 ├── tests/
 │   ├── common/                         тестовый helper
 │   ├── integration.rs                  smoke-тесты компилятора
-│   └── spec_nova.rs                    запуск ../tests-nova/*.nv
+│   └── spec_nova.rs                    запуск ../nova_tests/*.nv
 └── examples/                           Rust-side примеры (hello, effects, ...)
 ```
 
-`tests-nova/` (на top-level репозитория) — conformance-тесты языка,
+`nova_tests/` (на top-level репозитория) — conformance-тесты языка,
 общие для bootstrap'а и будущего self-hosted компилятора.
 
 **Изначально** план предполагал разделение на crates
@@ -371,7 +371,7 @@ Bootstrap-Rust выкидывается. После self-host'а — package eco
    - `compiler/` — будущий self-hosted компилятор на Nova
      (появится после того как bootstrap сможет запустить парсер
      написанный на Nova)
-   - `tests-nova/` (top-level) — conformance-тесты языка, общие
+   - `nova_tests/` (top-level) — conformance-тесты языка, общие
      для обоих компиляторов
    - `spec/` — дизайн-документы
 

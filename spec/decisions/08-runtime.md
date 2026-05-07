@@ -2137,7 +2137,7 @@ Backward-compat: `try_parse` в существующих файлах (semver.nv
 ## D76. `Mem` эффект — runtime introspection для leak/growth тестов
 
 > **Status:** active. **Реализовано** в bootstrap'е (2026-05-06).
-> Тесты: `tests-nova/53_memory_growth.nv`.
+> Тесты: `nova_tests/runtime/memory_growth.nv`.
 
 ### Что
 

@@ -18,7 +18,7 @@ lockfile, registry chain, workspace, package tooling).
 - ✅ **Spec D78** написан: `nova.toml`, `nova.lock` format, registry
   chain, workspace.
 - ✅ **Workspace структура** реализована: корневой `nova.toml` + per-
-  member `nova.toml` (`std/`, `examples/`, `tests-nova/`).
+  member `nova.toml` (`std/`, `examples/`, `nova_tests/`).
 - ✅ **Module path = file path** enforcement (D78) — bootstrap
   компилятор уже должен это проверять.
 - ❌ `[registry]` секция убрана из корневого `nova.toml` —
@@ -51,7 +51,7 @@ Bootstrap-Rust компилятор переписывается на Nova. Ну
    Nova-кода — для linter'ов, formatter'ов, IDE-плагинов.
 
 **Критерий готовности:** `nova` CLI собирается из Nova-исходников
-и проходит все тесты `tests-nova/`.
+и проходит все тесты `nova_tests/`.
 
 ### Шаг 2. `nova` CLI с базовыми командами
 

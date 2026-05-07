@@ -39,7 +39,7 @@ cargo build --release
 cargo test
 cargo run -- run examples/hello.nv
 cargo run -- check examples/effects.nv
-cargo run -- test tests-nova/13_effects.nv
+cargo run -- test nova_tests/effects/throws.nv
 ```
 
 ## Структура
@@ -55,6 +55,6 @@ src/
   lib.rs
   main.rs
 tests/        интеграционные тесты (Rust)
-tests-nova/   тесты на самой Nova (01_literals … 38_deep_spawn)
+nova_tests/   тесты на самой Nova (basics/ types/ syntax/ effects/ concurrency/ runtime/ modules/)
 examples/     демо-программы
 ```

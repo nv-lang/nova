@@ -49,4 +49,4 @@ docs/.sessions/
 *.pdb
 *.ilk
 examples/**/*.c
-tests-nova/**/*.c
+nova_tests/**/*.c

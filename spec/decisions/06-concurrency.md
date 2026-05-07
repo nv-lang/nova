@@ -589,7 +589,7 @@ let responses []Response = parallel for url in urls { fetch(url) }
 соответствует порядку `iter` независимо от порядка планирования fiber'ов.
 Без trailing — старая semantic (statement, unit). Поддержанные
 итераторы: `a..b`, `a..=b`, array literal. Spread в array literal
-не поддержан (degrade to unit). См. `tests-nova/50_parallel_for_array.nv`.
+не поддержан (degrade to unit). См. `nova_tests/concurrency/parallel_for_array.nv`.
 
 #### `for` vs `parallel for` — разные семантики
 
@@ -641,7 +641,7 @@ literal. Pre-allocate `NovaArray_T*` размера N (`end - start [+1]`
 `_nova_par_idx` + `_nova_par_result`, spawn body's trailing
 автоматически пишет в `result.data[idx]`. Если trailing отсутствует —
 старая семантика (statement, unit). Spread в array literal не
-поддержан в v1 — degrade to unit. См. `tests-nova/50_parallel_for_array.nv`.
+поддержан в v1 — degrade to unit. См. `nova_tests/concurrency/parallel_for_array.nv`.
 
 #### 1. `supervised { body }` — round-robin scope
 
@@ -947,16 +947,16 @@ bootstrap-codegen (`compiler-codegen/`):
   context-sensitive `Time.sleep` dispatch.
 - `src/lexer/`, `src/ast/`, `src/parser/`: keywords `supervised`, `parallel`,
   `detach`; AST variants `Supervised`, `Detach`, `ParallelFor`.
-- Тесты: `tests-nova/38_deep_spawn.nv` (section 10, 9 interleave-тестов),
-  `40_detach.nv` (13), `41_parallel_for.nv` (12), `42_main_yield.nv` (11).
-  Полный suite — 42/42 passing.
+- Тесты: `nova_tests/concurrency/deep_spawn.nv` (section 10, 9 interleave-
+  тестов), `detach_test.nv` (13), `parallel_for.nv` (12), `main_yield.nv`
+  (11). Полный suite в `nova_tests/concurrency/`.
 
 ---
 
 ## D75. `cancel_scope { tok => ... }` — ручная структурная отмена
 
 > **Status:** active. **Реализовано** в bootstrap'е (2026-05-06).
-> Тесты: `tests-nova/52_cancel_scope.nv` (5 тестов).
+> Тесты: `nova_tests/concurrency/cancel_scope_test.nv` (5 тестов).
 
 ### Что
 
@@ -1092,7 +1092,7 @@ fail-fast при внешнем сигнале). Разделение делае
 - `compiler-codegen/src/codegen/emit_c.rs`: `emit_cancel_scope` +
   built-in dispatch для `tok.cancel()` / `is_cancelled()` / `bind()`
   на receiver-типе `NovaCancelToken*`.
-- `tests-nova/52_cancel_scope.nv`: 5 тестов (без cancel ≡ supervised,
+- `nova_tests/concurrency/cancel_scope_test.nv`: 5 тестов (без cancel ≡ supervised,
   is_cancelled false по умолчанию, internal cancel + peer-non-execute,
   double-cancel idempotent, is_cancelled() reflects state, bind cascade).
 
@@ -1827,4 +1827,4 @@ TLS-globals **без** per-fiber изоляции — handler одного fiber
 параллельных fiber'ах и пофиксил через snapshot save/restore вокруг
 `mco_resume` + `nova_register_effect_storage` registry. D80
 формализует invariant в spec'е (тесты:
-`tests-nova/concurrency/per_fiber_handlers.nv` — 4 случая).
+`nova_tests/concurrency/per_fiber_handlers.nv` — 4 случая).

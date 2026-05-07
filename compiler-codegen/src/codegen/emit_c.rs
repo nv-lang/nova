@@ -262,7 +262,7 @@ impl CEmitter {
         //   - free_count()  -> int : total frees (plain malloc backend → 0)
         //   - live()        -> int : alloc_count - free_count
         //   - reset()       -> unit: zero stats counters (per-test isolation)
-        // Used by leak/growth tests (see tests-nova/53_memory_growth.nv).
+        // Used by leak/growth tests (see nova_tests/runtime/memory_growth.nv).
         {
             let mut mem_schema: HashMap<String, (Vec<String>, String)> = HashMap::new();
             mem_schema.insert("alloc_count".to_string(), (vec![], "nova_int".into()));

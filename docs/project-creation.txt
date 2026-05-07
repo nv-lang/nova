@@ -116,7 +116,7 @@ Runtime (nova_rt/):
   compiler-bootstrap/    — интерпретатор (Rust)
   compiler-codegen/      — C-бэкенд компилятор (Rust + nova_rt/)
   docs/                  — планы, research, этот файл
-  tests-nova/            — тесты синтаксиса
+  nova_tests/            — тесты синтаксиса
 
 Примеры языка принадлежат языку, а не конкретному компилятору.
 Поэтому examples/ в корне, а не внутри compiler-*.
@@ -165,10 +165,10 @@ run_deep_tests.bat собирает все 4 комбинации (test_gc + tes
     3. infer_expr_c_type: if без else инферировался как nova_int вместо
        nova_unit → C2440 при cast в spawn body result.
 
-    tests-nova/37_deep_gc.nv   — 18 тестов: sentinel survival под
+    nova_tests/37_deep_gc.nv   — 18 тестов: sentinel survival под
       10000 allocs, record chains, field arithmetic, records in/across
       spawn, array len/spread/.get/pattern, mixed records+arrays.
-    tests-nova/38_deep_spawn.nv — 28 тестов: execution ordering,
+    nova_tests/38_deep_spawn.nv — 28 тестов: execution ordering,
       capture semantics, pipelines (fork+join), state machines, 500
       sequential fibers, fib(25)/factorial inside fiber, records.
 
@@ -178,10 +178,10 @@ run_deep_tests.bat собирает все 4 комбинации (test_gc + tes
 
 Все примеры компилируются и запускают корректно.
 
-Nova-уровневые тесты: 39/39 файлов в tests-nova/ — 100% pass rate.
-  tests-nova/37_deep_gc.nv   (18 тестов)
-  tests-nova/38_deep_spawn.nv (28 тестов)
-  tests-nova/39_for_in_array.nv и т.д.
+Nova-уровневые тесты: 39/39 файлов в nova_tests/ — 100% pass rate.
+  nova_tests/37_deep_gc.nv   (18 тестов)
+  nova_tests/38_deep_spawn.nv (28 тестов)
+  nova_tests/39_for_in_array.nv и т.д.
 Runtime C-тесты: nova_rt/test_gc_deep.c (23 assert), test_fibers_deep.c (31 assert)
 
 ================================================================================
@@ -258,7 +258,7 @@ MAIN-LEVEL Time.sleep(0) (продолжение):
     * внутри fiber (current_spawn_captures.is_some()) → nova_fiber_yield()
     * вне fiber, внутри scope (current_scope_queue.is_some()) → nova_supervised_step
     * полностью вне → no-op
-  - Тесты: tests-nova/42_main_yield.nv — 11 штук:
+  - Тесты: nova_tests/42_main_yield.nv — 11 штук:
     * spawn + main sleep + read result
     * main interleaves with two spawns (1234675 trace)
     * counter ping-pong main↔fiber (123456 alternating)
@@ -297,7 +297,7 @@ DETACH (продолжение в той же сессии):
     body исполняется в потоке caller'а. Spec D50 явно описывает SyncDetach как
     тестовый default ("with Detach = SyncDetach { ... }"), bootstrap = это.
   - Эффект `Detach` НЕ объявлен; compile-time проверка требования отсутствует.
-  - Тесты: tests-nova/40_detach.nv — 13 штук:
+  - Тесты: nova_tests/40_detach.nv — 13 штук:
     * базовое исполнение, capture (ints, records, arrays)
     * detach с if/while внутри
     * detach внутри supervised — встречается inline ДО scope queue
@@ -378,7 +378,7 @@ Spec D14 говорит: parallel for x in iter { body } — это expression �
   - array_element_types регистрируется для result_var, чтобы xs[i]
     типизировался правильно при последующих операциях.
 
-Тест: tests-nova/50_parallel_for_array.nv — 6 тестов:
+Тест: nova_tests/50_parallel_for_array.nv — 6 тестов:
   * range → []int
   * inclusive-range → []int
   * yield-stable ordering (Time.sleep внутри body не ломает порядок slots)
@@ -407,7 +407,7 @@ PER-FIBER ASSERT ROUTING (тест 51, 2026-05-06)
   через nova_throw. Test-runner получает дополнительный _tf_fail
   NovaFailFrame чтобы поймать этот re-throw.
 
-Тест: tests-nova/51_assert_in_fiber.nv (4 теста) — assert внутри
+Тест: nova_tests/51_assert_in_fiber.nv (4 теста) — assert внутри
 spawn / parallel for / после Time.sleep yield / nested supervised.
 
 ================================================================================
@@ -432,7 +432,7 @@ Codegen (emit_c.rs):
 - Built-in dispatch для tok.cancel()/.is_cancelled()/.bind() на
   receiver-type Nova_CancelToken*.
 
-Тесты (tests-nova/52_cancel_scope.nv, 5 passing).
+Тесты (nova_tests/52_cancel_scope.nv, 5 passing).
 
 ================================================================================
 TIME REAL-CLOCK (2026-05-06)
@@ -467,7 +467,7 @@ API:
 Реализация: pre-registered effect в codegen с прямой emission
 Nova_Mem_*(...) inline-обёртки в effects.h, без vtable (не overridable).
 
-Тесты (tests-nova/53_memory_growth.nv, 7 passing) — pure int loop = 0
+Тесты (nova_tests/53_memory_growth.nv, 7 passing) — pure int loop = 0
 allocations, hot-loop bounded growth, repeated supervised — same growth.
 
 ================================================================================
@@ -505,7 +505,7 @@ Runtime (nova_rt/buffer.h):
 - UTF-8 validate для try_into с overlong/surrogate detection.
 - После consume mutating-method → nova_assert "buffer consumed".
 
-Тесты (tests-nova/55_buffer.nv, 16 passing).
+Тесты (nova_tests/55_buffer.nv, 16 passing).
 
 ================================================================================
 Q-CHAR-LITERALS (тест 56, 2026-05-07)
@@ -523,7 +523,7 @@ char-литералы 'a' / '\n' / '\u{...}'. char в Nova — Unicode codepoint
 - Codegen: char как nova_int (codepoint напрямую). Match-pattern
   Literal::Char → ==.
 
-Тесты (tests-nova/56_char_literals.nv, 16 passing).
+Тесты (nova_tests/56_char_literals.nv, 16 passing).
 
 Прогресс по stdlib:
 - complex.nv: 317 → 560 (char-literal blocker pass'нул)
@@ -585,7 +585,7 @@ D25 — добавлен performance-анализ throw:
   Сравнение с Java/C++/Rust/Go.
   Hot-loop рекомендация: использовать Result-стиль через D77.
 
-Тесты (tests-nova/runtime/unwrap_or.nv, 14 passing):
+Тесты (nova_tests/runtime/unwrap_or.nv, 14 passing):
   - Some/None .is_some/.is_none/.unwrap/.unwrap_or
   - None.unwrap throws Fail (caught)
   - Ok/Err .is_ok/.is_err/.ok/.unwrap/.unwrap_or
@@ -709,7 +709,7 @@ with_resource_safe(id, t, body):
 vs naive-версия (без внутреннего handler'а): на throw'е closed остаётся
 0, ресурс leaked.
 
-Тесты (tests-nova/effects/handler_wrappers.nv, 4 passing):
+Тесты (nova_tests/effects/handler_wrappers.nv, 4 passing):
   - happy path safe + naive (oба opened==1, closed==1).
   - naive throw → leak (closed==0).
   - safe throw → cleanup (closed==1).
@@ -733,7 +733,7 @@ Suite: 60/60 tests passing.
 - Parser: уровни приоритета 7-10 (bit-or → bit-xor → bit-and → shift)
   по spec/03-syntax.md.
 - Codegen: emit C-операторы напрямую (биты тождественны).
-- Тесты: tests-nova/types/bitwise.nv (28 тестов).
+- Тесты: nova_tests/types/bitwise.nv (28 тестов).
 - Stdlib unblock: 14 файлов на bitwise, 4 — на large-int.
 
 Раунд 3 — handler-lambda + mut-params + D55 anon-record:
@@ -759,7 +759,7 @@ Suite: 60/60 tests passing.
 Раунд 5 — D79 Channel + lints + D28 inference:
 - Runtime: D79 Channel[T] — bounded ring-buffer с send/recv yield,
   close+drain семантика, try_send/try_recv (channels.h).
-  11 sequential тестов в tests-nova/runtime/channels.nv.
+  11 sequential тестов в nova_tests/runtime/channels.nv.
   Concurrent через spawn-block — отложено (codegen bug
   NovaSpawnCtx_*).
 - Codegen: dispatch Channel.new(cap) + ch.@method (send/recv/close/etc).
@@ -787,7 +787,7 @@ runtime/modules), все module-decls согласованы с paths.
 - D25 throw cost-model документирован
 - Source annotations default-on (--no-annotate-source для opt-out)
 - Interrupt v через mco-coroutine-boundary (UB-fix, как assert ранее)
-- tests-nova reorganization (плоская нумерация → группы по темам)
+- nova_tests reorganization (плоская нумерация → группы по темам)
 - Named tmps в .c (роль вместо счётчика)
 - Handler-wrapper D10 demo
 - Q-string-indexing закрыта: вариант B (codepoint).
@@ -803,3 +803,42 @@ Open questions значимые:
 - Q-overloading по argument-type (bootstrap last-wins).
 - Q-clone-semantics (deep auto-derive предложено).
 - Q-readonly-types (TS-style — отложено).
+
+
+================================================================================
+2026-05-07 D78 path/module enforcement + tests-nova → nova_tests
+================================================================================
+
+D78 декларировал "module path = file path" но bootstrap-компилятор
+это не enforced. Можно было скопировать файл с тем же `module ...`
+declaration в другую папку и компилятор пропускал. Закрыли:
+
+1. compiler-codegen/src/manifest.rs (новый):
+   - find_manifest(file) — walks parent dirs, ищет nova.toml
+   - parse_manifest(toml_path) — минимальный TOML-парсер
+     (только [package].name и [lib].src, без full crate)
+   - expected_module_path(file, manifest) — vychisляет
+     `<package>.<rel-path-from-src-without-ext>`
+   - check_module_path(file, declared) — Err с hints если mismatch:
+     "move file to ... / rename module to ..."
+   - Если nova.toml не найден — skip (file не часть пакета).
+
+2. main.rs: вызов check_module_path в cmd_check / cmd_run /
+   cmd_compile / cmd_test после parse, до type-check.
+
+3. Сразу же активация выявила: tests-nova/ имеет
+   [package].name = "nova_tests" в nova.toml. Все declared module'и
+   `module nova_tests.<group>.<file>` ожидают path под
+   `nova_tests/...`, не `tests-nova/...`. Переименовали папку.
+
+4. Обновили все ссылки:
+   - nova.toml workspace members
+   - run_tests.ps1 ($tests_dir)
+   - compiler-{bootstrap,codegen}/tests/spec_nova.rs
+   - .gitignore (nova_tests/**/*.c)
+   - спека D78 (07-modules.md) — добавили rename note
+   - docs/* — заменили все live refs
+
+В spec/decisions/history/evolution.md ссылки на `tests-nova/`
+оставили как frozen historical record (та эпоха называлась так).
+

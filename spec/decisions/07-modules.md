@@ -511,7 +511,7 @@ nova-lang/
 │   └── (новые домены — net/, io/, testing/, и т.д.)
 ├── examples/                демо-программы и tutorial snippets
 │   └── *.nv                 (НЕ stdlib — это именно examples)
-├── tests-nova/              .nv-тесты bootstrap'а
+├── nova_tests/              .nv-тесты bootstrap'а (package `nova_tests`)
 ├── spec/                    spec-документация (этот файл здесь)
 └── docs/                    plans, articles, research
 ```
@@ -842,11 +842,17 @@ enforcement.
 (strict file ↔ module correspondence) + D30 (snake_case naming) +
 D78 (nova.toml package).
 
-### `tests-nova/` layout
+### `nova_tests/` layout
+
+> **Note (2026-05-07):** Папка переименована из `tests-nova/` в
+> `nova_tests/`. Имя директории должно совпадать с `package.name`
+> внутри `nova.toml` (D78 path/module enforcement: иначе declared
+> `module nova_tests.basics.literals` не сматчится с file path
+> `tests-nova/basics/literals.nv`).
 
 ```
-tests-nova/
-├── nova.toml                # workspace member, src = "."
+nova_tests/
+├── nova.toml                # workspace member, src = ".", name = "nova_tests"
 ├── basics/                  # = D-области 01-philosophy + базовый syntax
 │   ├── literals.nv          # module nova_tests.basics.literals
 │   ├── operators.nv         # module nova_tests.basics.operators

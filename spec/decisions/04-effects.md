@@ -852,8 +852,8 @@ fn deposit(mut acc Account, amount money) Fail[DepositError] -> () =>
 **Bootstrap (2026-05-06):** `throw` парсится и как statement, и как
 expression. В expression-position (match-arm body, ternary, аргумент
 функции) codegen эмитирует `Nova_Fail_fail(msg)` + dummy `((nova_int)0LL)`
-— dummy после fail() недостижим. Тесты — `tests-nova/14_throws.nv` (stmt),
-`tests-nova/54_throw_in_expression.nv` (expr). Известное ограничение
+— dummy после fail() недостижим. Тесты — `nova_tests/effects/throws.nv` (stmt),
+`nova_tests/syntax/throw_in_expression.nv` (expr). Известное ограничение
 bootstrap'а: `if cond { throw } else { val }` выражение не работает —
 codegen смешивает unit и реальный тип; workaround — `if cond { throw msg }
 val` (throw как stmt, fall-through к val).
@@ -4187,7 +4187,7 @@ fiber-local (новый let на каждый fiber), либо thread-safe
 ### Эволюция
 
 D68 формализует два устоявшихся паттерна. Closure-capture
-использовался во всех `tests-nova/` и в большинстве `examples/*.nv`
+использовался во всех `nova_tests/` и в большинстве `examples/*.nv`
 (`make_counter`, `in_memory_db_handler` и т.д.). Паттерн через
 `@as_handler` явно ещё не использовался — D68 рекомендует его как
 канонический способ для stateful handler'ов с публичным state.

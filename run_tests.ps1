@@ -3,7 +3,7 @@ param([string]$Filter = "", [switch]$IncludeStdlib)
 $ErrorActionPreference = "Continue"
 $codegen = "d:\Sources\nova-lang\compiler-codegen\target\debug\nova-codegen.exe"
 $rt_dir = "d:\Sources\nova-lang\compiler-codegen\nova_rt"
-$tests_dir = "d:\Sources\nova-lang\tests-nova"
+$tests_dir = "d:\Sources\nova-lang\nova_tests"
 $stdlib_dir = "d:\Sources\nova-lang\std"
 $tmp_dir = "C:\Temp\nova_tests"
 $vcvars = "C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
@@ -12,7 +12,7 @@ New-Item -ItemType Directory -Force -Path $tmp_dir | Out-Null
 $pass = 0; $fail = 0
 $results = @()
 
-# Collect input files: tests-nova (recursive: подкаталоги groups/), stdlib if -IncludeStdlib.
+# Collect input files: nova_tests (recursive: подкаталоги groups/), stdlib if -IncludeStdlib.
 $inputs = @(Get-ChildItem -Path $tests_dir -Filter "*.nv" -Recurse -File)
 if ($IncludeStdlib) {
     $inputs += @(Get-ChildItem -Path $stdlib_dir -Filter "*.nv" -Recurse -File)
@@ -22,7 +22,7 @@ $inputs | Sort-Object FullName | ForEach-Object {
     $nv = $_.FullName
     $name = $_.BaseName
     # Display name includes parent group для multi-level layout. Используем
-    # подходящую базу: tests_dir для tests-nova/* или stdlib_dir для std/*.
+    # подходящую базу: tests_dir для nova_tests/* или stdlib_dir для std/*.
     # Case-insensitive — Windows может вернуть FullName с любым регистром drive letter.
     $full_lower = $_.FullName.ToLower()
     $is_stdlib  = $full_lower.StartsWith($stdlib_dir.ToLower())
