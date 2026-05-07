@@ -3015,7 +3015,8 @@ impl CEmitter {
             ExprKind::Member { obj, name } => {
                 let obj_ty = self.infer_expr_c_type(obj);
                 let o = self.emit_expr(obj)?;
-                // nova_str.len → count Unicode code points, not bytes
+                // D26 (school B): s.len — длина в codepoint'ах, O(n).
+                // Для байтовой длины — s.byte_len() (см. str_method_to_rt).
                 if obj_ty == "nova_str" && name == "len" {
                     return Ok(format!("nova_str_char_len({})", o));
                 }
@@ -5583,6 +5584,10 @@ impl CEmitter {
             "slice"       => Some("nova_str_slice"),
             "concat"      => Some("nova_str_concat"),
             "eq"          => Some("nova_str_eq"),
+            "find"        => Some("nova_str_find"),
+            "rfind"       => Some("nova_str_rfind"),
+            "char_len"    => Some("nova_str_char_len"),
+            "byte_len"    => Some("nova_str_byte_len"),
             _ => None,
         }
     }
@@ -5773,7 +5778,8 @@ impl CEmitter {
                         return match method.as_str() {
                             "to_upper" | "to_lower" | "trim" | "slice" | "concat" => "nova_str".into(),
                             "starts_with" | "ends_with" | "contains" | "eq" => "nova_bool".into(),
-                            "len" => "nova_int".into(),
+                            "len" | "char_len" => "nova_int".into(),
+                            "find" | "rfind" => "NovaOpt_nova_int".into(),
                             _ => "nova_int".into(),
                         };
                     }
