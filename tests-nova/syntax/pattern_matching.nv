@@ -185,3 +185,28 @@ test "alternation: many alternatives на одной строке" {
     assert(many_alts(0) == "zero")
     assert(many_alts(100) == "other")
 }
+
+// ─── D49 запятая как разделитель match-arm'ов ───
+// На одной строке: `match x { 0 => "z", _ => "n" }`. На разных строках
+// запятая опциональна (newline разделяет). Trailing comma после
+// последнего arm'а — OK.
+
+fn classify_inline(n int) -> str => match n {
+    0 => "zero", 1 => "one", _ => "other"
+}
+
+test "match-arm: запятая как разделитель на одной строке" {
+    assert(classify_inline(0) == "zero")
+    assert(classify_inline(1) == "one")
+    assert(classify_inline(99) == "other")
+}
+
+fn with_trailing_comma(n int) -> str => match n {
+    0 => "z",
+    _ => "o",
+}
+
+test "match-arm: trailing comma после последнего arm'а" {
+    assert(with_trailing_comma(0) == "z")
+    assert(with_trailing_comma(5) == "o")
+}

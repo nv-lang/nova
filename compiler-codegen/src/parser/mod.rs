@@ -1834,6 +1834,9 @@ impl Parser {
                 body,
                 span,
             });
+            // D49: разделитель между arms — newline или `,`. Опциональная
+            // trailing-запятая после последнего arm'а тоже допустима.
+            self.eat(&TokenKind::Comma);
             self.skip_newlines();
         }
         let end = self.expect(&TokenKind::RBrace)?.span;
