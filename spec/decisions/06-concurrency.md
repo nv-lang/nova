@@ -1647,6 +1647,177 @@ emit_c.rs` эмитит без `static` начиная с 2026-05-07 (commit
   снапшот save/restore реализован в `nova_supervised_step` (2026-05-07).
 - [D75](#d75) — `cancel_scope` использует тот же per-scope state pattern.
 
+### Производительность и roadmap оптимизации
+
+Текущая bootstrap-реализация (snapshot save/restore через registry)
+**корректна, но не оптимальна** по скорости. Зафиксируем стоимость
+и варианты оптимизации для production-runtime.
+
+#### Текущая стоимость (bootstrap)
+
+При каждом fiber-switch в `nova_supervised_step`:
+
+```
+   1× snapshot_restore(outer)    — N pointer-copy
+   for each fiber:
+       1× snapshot_restore(fiber)  — N pointer-copy
+       mco_resume                   — actual coroutine switch
+       1× snapshot_save(fiber)      — N pointer-copy
+       1× snapshot_restore(outer)   — N pointer-copy
+```
+
+**Итого: 4 × N memory operations per switch** (N = registered effects,
+обычно ≤ 5 в bootstrap, потенциально 10-20 в большом проекте).
+
+Дополнительно:
+- **Heap allocation** snapshot'а при spawn (`nova_alloc(sizeof(snapshot))`
+  ≈ 256 B) → GC pressure.
+- **Indirection через registry**: `*registry.slots[i] = snap.values[i]`
+  — extra pointer chase per restore.
+- **`Nova_X.op()`**: один indirect call через TLS pointer + один indirect
+  через vtable function pointer = 2 indirect calls вместо direct.
+
+Для типичного backend-кода (handler'ы редко перезапускаются, fiber switches
+на уровне сотен/секунду) — **negligible**. Для hot-path / real-time /
+game-loop — может стать bottleneck.
+
+#### Варианты оптимизации (от простого к сложному)
+
+##### 1. **Linked-list cactus stack handler-frames** (умеренно быстрее)
+
+Каждый fiber имеет указатель `current_handler_frame` в его coroutine
+context. `with X = h { body }` пушит frame в linked list:
+
+```c
+typedef struct HandlerFrame {
+    EffectId           effect_id;
+    void*              vtable;
+    void*              ctx;
+    struct HandlerFrame* prev;
+} HandlerFrame;
+
+__declspec(thread) HandlerFrame* _nova_handler_top;
+
+// Nova_X.op() walks the chain
+static inline ret_t Nova_X_op(args) {
+    for (HandlerFrame* f = _nova_handler_top; f; f = f->prev)
+        if (f->effect_id == X_ID)
+            return ((Vt_X*)f->vtable)->op(f->ctx, args);
+    abort_no_handler();
+}
+```
+
+**Плюсы:**
+- Switch: O(1) — просто swap `_nova_handler_top` (один pointer вместо
+  массива). Может быть встроено в mco-coroutine state, switch — free.
+- No heap allocation для snapshot — frames живут на fiber stack.
+- Spawn inheritance — копировать только указатель `_nova_handler_top`
+  родителя.
+
+**Минусы:**
+- `Nova_X.op()` теперь O(depth) — walk handler-stack. На практике
+  depth обычно 1-2, но в plagued-with-handlers коде может быть 5-10.
+- Branch prediction менее предсказуем (depth разная per call).
+
+**Сложность реализации:** ~100 строк runtime, codegen меняется минимально
+(`with X = h { body }` → push/pop frame вместо assign/restore TLS).
+
+**Целевой gain:** ~3-5× быстрее snapshot save/restore для switches.
+`Nova_X.op()` слегка медленнее (1 extra branch + memory read).
+
+##### 2. **Inline handler-frames на fiber stack + statically-resolved op-call**
+
+Самое быстрое — Koka/Effekt-style runtime. Compiler **во время
+type-check'а** определяет какой handler-frame будет активен в каждой
+точке `Nova_X.op()` call'а (через effect-row analysis), и эмитит
+**прямой call** через known offset.
+
+```nova
+fn process() X -> ()  =>  X.op()    // X известен в типе
+```
+
+Компилируется в:
+
+```c
+static void process(HandlerFrame_X* x_frame) {
+    x_frame->op(x_frame->ctx);    // direct call, 0 overhead vs обычная функция
+}
+```
+
+`with X = h { body }` создаёт `HandlerFrame_X` на стеке и передаёт
+адрес в body как явный параметр (или через register).
+
+**Плюсы:**
+- `Nova_X.op()`: **0 overhead** vs обычная функция (один direct call).
+- Switch: трогать handler-state не надо вообще — передаются с фреймом.
+- Inlinable: компилятор может полностью inline `op()` если
+  handler-литерал известен.
+
+**Минусы:**
+- Требует **полную мономорфизацию по effect-rows** в compiler'е.
+- `Handler[X]` как first-class value (`fn make() -> Handler[X]`) сложнее —
+  нужен fallback dynamic dispatch когда handler передан как value.
+- Dependent на static effect-resolution; rank-2 effect polymorphism
+  усложняется.
+- Major compiler work — ~3-5k строк для proper effect type-checker'а.
+
+**Целевой gain:** ~10-50× для hot-path effect ops (от dispatch overhead
+до полного inline).
+
+**Прецеденты:** Koka, Effekt (academic), OCaml 5 (multicore).
+
+##### 3. **Lazy / Copy-on-Write snapshot**
+
+Промежуточный вариант: оставить registry-based snapshot, но
+**не делать save/restore** на каждом switch. Tracking dirty-bit
+per effect:
+
+```c
+typedef struct {
+    void*    values[N];
+    uint64_t dirty_mask;   // bit i set if effect i was modified by this fiber
+} Snapshot;
+```
+
+`with X = h { body }` устанавливает dirty bit. На fiber-switch:
+- Restore: только те slots что были dirty в old fiber + те что
+  dirty в new fiber.
+- Save: только dirty slots.
+
+**Плюсы:** для типичного кода где fiber меняет 0-1 handlers → 0-1
+copy на switch (вместо N).
+
+**Минусы:** добавляет complexity tracking + branch на каждый `with`.
+
+**Целевой gain:** ~3-10× для typical code, нет gain для plagued-with-
+handlers.
+
+#### Рекомендуемый roadmap
+
+| Phase | Что | Когда |
+|---|---|---|
+| **bootstrap (now)** | Snapshot save/restore (текущее) | done |
+| **v0.5** | Cactus-list handler-frames | первый perf-critical use-case (game/real-time/proxy) |
+| **v0.7+** | Static effect resolution + inline frames | при работе над production type-checker'ом (rank-2 effect polymorphism, Koka-style) |
+
+**Принцип:** **не оптимизировать преждевременно.** Текущая реализация —
+~µs overhead на switch, для backend-кода это <1% от стоимости request'а.
+Когда найдётся реальный bottleneck (профилирование production-приложения)
+— перейдём на cactus-list. Inline frames — финальная стадия, требует
+significant compiler work и не имеет смысла до того как остальные
+части compiler'а matured.
+
+#### Что **не делать**
+
+- **Локализовать handler в каждый scope** через текущее save/restore с
+  меньшим N (через тонкую регистрацию). Добавляет complexity без
+  существенного gain'а — N в bootstrap уже маленькое.
+- **Atomic compare-and-swap для multi-thread** — премature; D14
+  production multithreaded — отдельный design (D81+), там handler-storage
+  per OS-thread + per-fiber внутри thread.
+- **Caching last-resolved handler in fiber state** — добавляет
+  invalidation complexity без чёткого gain'а.
+
 ### Эволюция
 
 До 2026-05-07 bootstrap-runtime хранил handler'ы в `__declspec(thread)`
