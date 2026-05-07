@@ -16,15 +16,3 @@ members = [
     "examples",
     "tests-nova",
 ]
-
-# Пока пакетов в реестре нет, регистрация цепочки реестров носит
-# демонстрационный характер. Когда появится центральный реестр —
-# `https://nova-registry.org` станет реальным URL.
-[registry]
-default = [
-    # Для closed-network / банковских deployments первым идёт
-    # внутренний прокси:
-    # "https://nova.bank.local/proxy",
-    "https://nova-registry.org",
-    "direct",
-]
