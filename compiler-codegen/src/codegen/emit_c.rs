@@ -3825,6 +3825,39 @@ impl CEmitter {
                             _ => {}
                         }
                     }
+                    // D79: built-in Channel methods.
+                    if obj_ty == "Nova_Channel*" {
+                        let obj_c = self.emit_expr(obj)?;
+                        match method.as_str() {
+                            "send" => {
+                                if let Some(arg) = args.first() {
+                                    let v = self.emit_expr(arg)?;
+                                    self.line(&format!(
+                                        "nova_channel_send({}, (nova_int)({}));",
+                                        obj_c, v));
+                                    return Ok("NOVA_UNIT".into());
+                                }
+                            }
+                            "try_send" => {
+                                if let Some(arg) = args.first() {
+                                    let v = self.emit_expr(arg)?;
+                                    return Ok(format!(
+                                        "nova_channel_try_send({}, (nova_int)({}))",
+                                        obj_c, v));
+                                }
+                            }
+                            "recv" => return Ok(format!("nova_channel_recv({})", obj_c)),
+                            "try_recv" => return Ok(format!("nova_channel_try_recv({})", obj_c)),
+                            "close" => {
+                                self.line(&format!("nova_channel_close({});", obj_c));
+                                return Ok("NOVA_UNIT".into());
+                            }
+                            "is_closed" => return Ok(format!("nova_channel_is_closed({})", obj_c)),
+                            "len" => return Ok(format!("nova_channel_len({})", obj_c)),
+                            "capacity" => return Ok(format!("nova_channel_capacity({})", obj_c)),
+                            _ => {}
+                        }
+                    }
                     // Q-buffer: built-in methods on Nova_Buffer*.
                     if obj_ty == "Nova_Buffer*" {
                         let obj_c = self.emit_expr(obj)?;
@@ -3845,6 +3878,15 @@ impl CEmitter {
                                 }
                             }
                             _ => {}
+                        }
+                    }
+                }
+                // 0a-channel. Built-in Channel static method (D79).
+                if let ExprKind::Ident(name) = &obj.kind {
+                    if name == "Channel" && method == "new" {
+                        if let Some(arg) = args.first() {
+                            let v = self.emit_expr(arg)?;
+                            return Ok(format!("nova_channel_new({})", v));
                         }
                     }
                 }
@@ -4065,6 +4107,13 @@ impl CEmitter {
                 format!("{obj}{acc}{method}", obj = obj_c, acc = accessor, method = method)
             }
             ExprKind::Path(parts) => {
+                // D79: built-in Channel static method (Path-form).
+                if parts.len() == 2 && parts[0] == "Channel" && parts[1] == "new" {
+                    if let Some(arg) = args.first() {
+                        let v = self.emit_expr(arg)?;
+                        return Ok(format!("nova_channel_new({})", v));
+                    }
+                }
                 // Q-buffer: built-in Buffer static methods (Path-form).
                 if parts.len() == 2 && parts[0] == "Buffer" {
                     match parts[1].as_str() {
@@ -5798,6 +5847,24 @@ impl CEmitter {
                     self.var_types.get(&key).cloned().unwrap_or_else(|| "nova_int".into())
                 } else if let ExprKind::Member { obj, name: method } = &func.kind {
                     let obj_ty = self.infer_expr_c_type(obj);
+                    // D79: Channel static + instance methods.
+                    if let ExprKind::Ident(n) = &obj.kind {
+                        if n == "Channel" {
+                            return match method.as_str() {
+                                "new" => "Nova_Channel*".into(),
+                                _ => "nova_int".into(),
+                            };
+                        }
+                    }
+                    if obj_ty == "Nova_Channel*" {
+                        return match method.as_str() {
+                            "send" | "close" => "nova_unit".into(),
+                            "try_send" | "is_closed" => "nova_bool".into(),
+                            "recv" | "try_recv" => "NovaOpt_nova_int".into(),
+                            "len" | "capacity" => "nova_int".into(),
+                            _ => "nova_int".into(),
+                        };
+                    }
                     // Q-buffer: built-in Buffer methods.
                     if let ExprKind::Ident(n) = &obj.kind {
                         if n == "Buffer" {
@@ -5913,6 +5980,10 @@ impl CEmitter {
                     if parts.len() == 2 {
                         let eff = &parts[0];
                         let method_name = &parts[1];
+                        // D79: Channel.new(cap) — Path-form.
+                        if eff == "Channel" && method_name == "new" {
+                            return "Nova_Channel*".into();
+                        }
                         // Q-buffer: Buffer static methods.
                         if eff == "Buffer" {
                             return match method_name.as_str() {
