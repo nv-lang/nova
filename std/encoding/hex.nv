@@ -58,12 +58,10 @@ export fn Hex.decode(s str) Fail[ParseHexError] -> []byte {
         throw OddLength { actual: s.len }
     }
     let mut out []byte = []byte.with_capacity(s.len / 2)
-    let mut i = 0
-    while i < s.len {
+    for i in (0..s.len).step_by(2) {
         let hi = digit_value(s, i)
         let lo = digit_value(s, i + 1)
         out.push(((hi * 16 + lo) & 0xFF) as byte)
-        i += 2
     }
     out
 }

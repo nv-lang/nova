@@ -116,8 +116,7 @@ fn encode_with(data []byte, alphabet fn(u8) -> char, with_padding bool) -> str {
     let mut buf = Buffer.with_capacity(out_len)
 
     // Полные chunks по 3 байта = 24 бита = 4 × 6 бит.
-    let mut i = 0
-    while i < chunks {
+    for i in 0..chunks {
         let base = i * 3
         let b0 = data[base] as u32
         let b1 = data[base + 1] as u32
@@ -128,7 +127,6 @@ fn encode_with(data []byte, alphabet fn(u8) -> char, with_padding bool) -> str {
         buf.add_char(alphabet(((triple >> 12) & 0x3F) as u8))
         buf.add_char(alphabet(((triple >> 6) & 0x3F) as u8))
         buf.add_char(alphabet((triple & 0x3F) as u8))
-        i += 1
     }
 
     // Хвост: 1 или 2 байта.
@@ -201,9 +199,8 @@ fn decode_with(s str, require_padding bool) Fail[Base64Error] -> []byte {
 
     let mut out = []byte.with_capacity(out_capacity)
 
-    let mut i = 0
     let mut pos = 0
-    while i < full_blocks {
+    for _ in 0..full_blocks {
         let c0 = decode_or_throw(s, pos)
         let c1 = decode_or_throw(s, pos + 1)
         let c2 = decode_or_throw(s, pos + 2)
@@ -215,7 +212,6 @@ fn decode_with(s str, require_padding bool) Fail[Base64Error] -> []byte {
         out.push(((triple >> 16) & 0xFF) as byte)
         out.push(((triple >> 8) & 0xFF) as byte)
         out.push((triple & 0xFF) as byte)
-        i += 1
         pos += 4
     }
 
