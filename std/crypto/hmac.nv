@@ -128,8 +128,8 @@ test "HMAC-SHA256: RFC 4231 test case 1" {
     let mut i = 0
     while i < 20 { key.push(0x0B); i += 1 }
     let data = "Hi There".bytes()
-    assert(HmacSha256.compute_str(key, data) ==)
-        "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7"
+    assert(HmacSha256.compute_str(key, data) ==
+        "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7")
 }
 
 test "HMAC-SHA256: RFC 4231 test case 2" {
@@ -138,8 +138,8 @@ test "HMAC-SHA256: RFC 4231 test case 2" {
     // HMAC = 5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843
     let key = "Jefe".bytes()
     let data = "what do ya want for nothing?".bytes()
-    assert(HmacSha256.compute_str(key, data) ==)
-        "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
+    assert(HmacSha256.compute_str(key, data) ==
+        "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843")
 }
 
 test "HMAC-SHA256: RFC 4231 test case 3 (длинный key)" {
@@ -152,8 +152,8 @@ test "HMAC-SHA256: RFC 4231 test case 3 (длинный key)" {
     let mut data []byte = []
     let mut j = 0
     while j < 50 { data.push(0xDD); j += 1 }
-    assert(HmacSha256.compute_str(key, data) ==)
-        "773ea91e36800e46854db8ebd09181a72959098b3ef8c122d9635514ced565fe"
+    assert(HmacSha256.compute_str(key, data) ==
+        "773ea91e36800e46854db8ebd09181a72959098b3ef8c122d9635514ced565fe")
 }
 
 test "HMAC-SHA256: key > block_size (используется hashed)" {
@@ -163,8 +163,8 @@ test "HMAC-SHA256: key > block_size (используется hashed)" {
     let mut i = 0
     while i < 131 { key.push(0xAA); i += 1 }
     let data = "Test Using Larger Than Block-Size Key - Hash Key First".bytes()
-    assert(HmacSha256.compute_str(key, data) ==)
-        "60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54"
+    assert(HmacSha256.compute_str(key, data) ==
+        "60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54")
 }
 
 test "verify: правильный MAC — true" {
