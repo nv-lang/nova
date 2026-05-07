@@ -420,6 +420,13 @@ impl Parser {
 
     fn parse_param(&mut self) -> Result<Param, Diagnostic> {
         let (name, name_span) = self.parse_ident()?;
+        // D6: mut-маркер на параметре говорит, что внутри fn значение
+        // можно мутировать. В bootstrap'е GC + reference-семантика делают
+        // это noop для семантики, но позволяет писать spec-faithful код.
+        // Игнорируем `mut`, оставляем тип.
+        if matches!(self.peek().kind, TokenKind::KwMut) {
+            self.bump();
+        }
         let ty = self.parse_type()?;
         Ok(Param {
             name,
