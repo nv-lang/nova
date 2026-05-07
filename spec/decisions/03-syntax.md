@@ -1064,6 +1064,17 @@ generic-application := identifier "[" type ("," type)* "]"
 [D16](#d16-дженерики-через-t-не-t) уточнён: `[T]` сам по себе не
 является типом — только generic-применение к именованной сущности.
 
+**Bootstrap (2026-05-07):** turbofish реализован в codegen-парсере.
+Активируется в expression-position через peek-disambiguation: после
+`Ident[T1, T2, ...]` смотрим post-`]` token; если это `(` (call),
+`.IDENT(` (method-call) или `?` (Try) — это turbofish-узел
+(`ExprKind::TurboFish { base, type_args }`); иначе — обычный
+Index-доступ. Параллельно с этим, multi-arg внутри `[...]` —
+однозначно turbofish (Index не имеет comma). Bootstrap-codegen
+прозрачно делегирует TurboFish в `base` (monomorphization идёт по
+call-site / receiver-type), но AST сохраняет `type_args` для будущих
+этапов inference. Тесты — `nova_tests/types/generics.nv`.
+
 ---
 
 ## D40. Тело функции: `=>` для одного выражения, `{}` для блока
