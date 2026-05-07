@@ -3099,7 +3099,7 @@ impl CEmitter {
 
             ExprKind::While { cond, body } => {
                 let cond_val = self.emit_expr(cond)?;
-                let tmp = self.fresh_tmp();
+                let tmp = self.fresh_tmp_named("while");
                 self.line(&format!("nova_unit {};", tmp));
                 self.line(&format!("while ({}) {{", cond_val));
                 self.indent += 1;
@@ -3113,7 +3113,7 @@ impl CEmitter {
             }
 
             ExprKind::Loop { body } => {
-                let tmp = self.fresh_tmp();
+                let tmp = self.fresh_tmp_named("loop");
                 self.line(&format!("nova_unit {};", tmp));
                 self.line("for (;;) {");
                 self.indent += 1;
@@ -3405,7 +3405,7 @@ impl CEmitter {
                 // → evaluate scrutinee, check pattern cond, bind, run then or else_
                 let scr = self.emit_expr(scrutinee)?;
                 let scr_ty = self.infer_expr_c_type(scrutinee);
-                let scr_tmp = self.fresh_tmp();
+                let scr_tmp = self.fresh_tmp_named("scr");
                 self.var_types.insert(scr_tmp.clone(), scr_ty.clone());
                 self.line(&format!("{} {} = {};", scr_ty, scr_tmp, scr));
                 if let Some(elem_tys) = self.tuple_element_types.get(scr.as_str()).cloned() {
@@ -3416,7 +3416,7 @@ impl CEmitter {
                 let result_ty = then.trailing.as_ref()
                     .map(|e| self.infer_expr_c_type(e))
                     .unwrap_or_else(|| "nova_unit".into());
-                let result_tmp = self.fresh_tmp();
+                let result_tmp = self.fresh_tmp_named("if_let");
                 self.line(&format!("{} {};", result_ty, result_tmp));
 
                 let cond = self.pattern_cond(pattern, &scr_tmp)?;
@@ -3458,13 +3458,13 @@ impl CEmitter {
             ExprKind::WhileLet { pattern, scrutinee, body } => {
                 // while let Pat = expr { body }
                 // → loop: evaluate scrutinee, if pattern matches bind and run body, else break
-                let loop_tmp = self.fresh_tmp();
+                let loop_tmp = self.fresh_tmp_named("while_let");
                 self.line(&format!("nova_unit {};", loop_tmp));
                 self.line("while (1) {");
                 self.indent += 1;
                 let scr = self.emit_expr(scrutinee)?;
                 let scr_ty = self.infer_expr_c_type(scrutinee);
-                let scr_tmp = self.fresh_tmp();
+                let scr_tmp = self.fresh_tmp_named("scr");
                 self.var_types.insert(scr_tmp.clone(), scr_ty.clone());
                 self.line(&format!("{} {} = {};", scr_ty, scr_tmp, scr));
                 if let Some(elem_tys) = self.tuple_element_types.get(scr.as_str()).cloned() {
@@ -4147,7 +4147,7 @@ impl CEmitter {
         // Since emit_expr returns a C expression, we use a GNU statement-expr ({ ... value })
         // or just emit statements and return NOVA_UNIT.
         // Strategy: emit print calls as statements, capture in tmp.
-        let tmp = self.fresh_tmp();
+        let tmp = self.fresh_tmp_named("println");
         self.line(&format!("nova_unit {};", tmp));
         self.line("{");
         self.indent += 1;
@@ -4263,7 +4263,7 @@ impl CEmitter {
                 .unwrap_or_else(|| "nova_unit".into())
         };
         let cond_val = self.emit_expr(cond)?;
-        let tmp = self.fresh_tmp();
+        let tmp = self.fresh_tmp_named("if");
         self.line(&format!("{} {};", if_ty, tmp));
         self.var_types.insert(tmp.clone(), if_ty.clone());
         self.line(&format!("if ({}) {{", cond_val));
@@ -4465,9 +4465,9 @@ impl CEmitter {
 
     fn emit_match(&mut self, scrutinee: &Expr, arms: &[MatchArm]) -> Result<String, String> {
         let scr = self.emit_expr(scrutinee)?;
-        let scr_tmp = self.fresh_tmp();
-        let result_tmp = self.fresh_tmp();
-        let matched_tmp = self.fresh_tmp();
+        let scr_tmp = self.fresh_tmp_named("scr");
+        let result_tmp = self.fresh_tmp_named("match");
+        let matched_tmp = self.fresh_tmp_named("matched");
 
         // Determine scrutinee C type from its expression
         let scr_ty = self.infer_expr_c_type(scrutinee);
@@ -5256,7 +5256,18 @@ impl CEmitter {
     fn fresh_tmp(&mut self) -> String {
         let n = self.tmp_counter;
         self.tmp_counter += 1;
-        format!("_nova_tmp{}", n)
+        format!("_nv_tmp_{}", n)
+    }
+
+    /// Сгенерировать temporary name с **семантической ролью** в имени:
+    /// `_nv_<role>_<n>` (например `_nv_scr_0`, `_nv_match_3`,
+    /// `_nv_matched_2`). Понятнее чем сырой `_nova_tmp42` при чтении
+    /// сгенерированного C. Role должна быть коротким snake_case
+    /// идентификатором.
+    fn fresh_tmp_named(&mut self, role: &str) -> String {
+        let n = self.tmp_counter;
+        self.tmp_counter += 1;
+        format!("_nv_{}_{}", role, n)
     }
 
     /// Box a value as void* for storage in a void* field (generic type erasure).
