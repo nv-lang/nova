@@ -159,6 +159,11 @@ Nova берёт **прагматичный путь Dafny** (статика + ru
   класс, имя движка — выбор реализации».
 - [08-runtime.md → D13](08-runtime.md#d13) — отношение Panic и
   contract-violations: нарушение контракта в runtime — это panic.
+- [08-runtime.md → D81](08-runtime.md#d81) — три уровня safety:
+  `assert(cond)` (always runtime) < `debug_assert(cond)` (debug-only)
+  < `requires`/`ensures` (D24, compile-time где возможно). Контракты —
+  «zero-cost» вариант для compile-time; assert'ы — escape hatch для
+  ситуаций где SMT недоступен.
 
 ### Цена
 

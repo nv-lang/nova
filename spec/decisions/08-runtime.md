@@ -16,7 +16,7 @@ static-состояния.
 | [D74](#d74-математические-операции-на-числовых-типах--instance-методы) | Математические операции на числовых типах — instance-методы |
 | [D77](#d77-tryfrom--tryinto-protocol-пара-расширение-d73-для-fallible-конверсий) | `TryFrom` / `TryInto` — расширение D73 для fallible-конверсий |
 | [D76](#d76-mem-эффект--runtime-introspection-для-leakgrowth-тестов) | `Mem` эффект — runtime introspection для leak/growth тестов |
-| [D76](#d76-mem-эффект--runtime-introspection-для-leakgrowth-тестов) | `Mem` эффект — runtime introspection для leak/growth тестов |
+| [D81](#d81-assertcond-vs-debug_assertcond--build-mode-семантика) | `assert(cond)` vs `debug_assert(cond)` — build-mode семантика |
 
 ---
 
@@ -539,6 +539,10 @@ fn parse_data(s str) -> Data { ... }
 fn print(...items []any) Io -> ()           // variadic, см. D69
 fn println(...items []any) Io -> ()         // variadic + newline
 fn panic(msg str) -> Never
+
+// Assertions — обычные fn-call, обязательно со скобками
+fn assert(cond bool) -> ()                  // always runtime; failure → panic (D13)
+fn debug_assert(cond bool) -> ()            // debug-only; no-op в release (D81)
 ```
 
 `print`/`println` — **variadic** ([D69](03-syntax.md#d69)),
@@ -546,6 +550,10 @@ fn panic(msg str) -> Never
 [D54](03-syntax.md#d54)). Каждый аргумент конвертируется в строку
 через `str.from(v)` ([D73](#d73-from--into-protocol-пара-с-авто-выводом)).
 Spread разрешён: `print(...parts)`.
+
+`assert`/`debug_assert` — **обычные функции, не keyword'ы**. Вызываются
+со скобками как любой fn-call: `assert(x > 0)`. Build-mode семантика —
+[D81](#d81). Failure любого assert'а — panic ([D13](#d13)), не Fail.
 
 #### `Never` — обычный тип без значений
 
@@ -2207,3 +2215,150 @@ Mem.reset()       -> ()    // zero stats counters (for per-test isolation)
   выразительности и согласована с Time.
 - **Bytes-tracking** в bootstrap — требует instrumentированного
   allocator (overhead). Counts достаточно для regression-detection.
+
+---
+
+## D81. `assert(cond)` vs `debug_assert(cond)` — build-mode семантика
+
+### Что
+
+Два уровня assertion'ов в prelude:
+
+- **`assert(cond)`** — **always runtime**, проверяется во всех
+  режимах сборки (debug/release/JIT/AOT). Failure → panic
+  ([D13](#d13)).
+- **`debug_assert(cond)`** — **debug-only**, в release-сборке
+  полностью отбрасывается компилятором (zero cost).
+
+Третий уровень — формальные контракты `requires`/`ensures`
+([D24](09-tooling.md#d24)) — отдельный механизм, не путать.
+
+### Правило
+
+#### Декларация в prelude
+
+```nova
+// always runtime — production invariants
+fn assert(cond bool) -> ()
+
+// debug-only — hot-path / sanity checks
+fn debug_assert(cond bool) -> ()
+```
+
+Сигнатуры идентичны на уровне типов; разница — в семантике релиза.
+Обе — обычные prelude-функции (не keyword'ы), вызываются со скобками
+как любой fn-call (см. также [syntax.md секция «Тестирование без
+моков»](../syntax.md)).
+
+#### Семантика по build-mode
+
+| Form | Compile-time check | Debug runtime | Release runtime | Use-case |
+|---|---|---|---|---|
+| `assert(cond)` | нет | check | **check** | production invariants |
+| `debug_assert(cond)` | нет | check | **no-op** | hot-path / sanity |
+| `requires`/`ensures` (D24) | SMT где возможно | check rest | **no-op** | formal contracts |
+
+#### Примеры использования
+
+```nova
+// Production invariant — всегда проверяется
+fn divide(a int, b int) -> int {
+    assert(b != 0)            // ВСЕГДА runtime, даже в release
+    a / b
+}
+
+// Hot-path — release не платит за проверку
+fn fast_lookup(arr []int, idx int) -> int {
+    debug_assert(idx >= 0 && idx < arr.len)   // только в debug
+    arr[idx]                                    // unchecked в release
+}
+
+// Формальный контракт — compile-time где возможно, runtime fallback
+fn sqrt(x f64) -> f64
+    requires x >= 0.0
+    ensures result >= 0.0
+=> ...
+```
+
+#### Build-mode mechanics в bootstrap
+
+Bootstrap (D71) **не различает** debug/release — все три режима
+([D7](#d7-один-язык--три-режима-компиляции)) одинаковы, всегда
+checked. `debug_assert` в bootstrap'е — **синоним `assert`** (тот же
+runtime check, готовность к production-семантике).
+
+Production-runtime добавит:
+- preprocessor-style `#ifdef NOVA_DEBUG` для C-backend, или
+- codegen-флаг для no-op generation в release-сборке.
+
+Build-mode влияет на **performance**, не на **семантику** программы:
+`assert` всегда работает; `debug_assert` — только performance в release.
+Это согласовано с D7 принципом «один язык — три режима».
+
+### Почему `assert` = always runtime (не Java/C-style no-op)
+
+1. **AI-friendly: одна семантика.** LLM генерирует `assert(...)`
+   ожидая, что invariant держится. Если в release он silent — это
+   **тихий bug class** (Java pre-1.4 classic).
+
+2. **Безопасность.** «Production runs without your invariants» —
+   известная проблема C/Java/Python: программист в курсе своих
+   asserts только в debug, в release они **исчезают** без следа.
+
+3. **Прецедент Rust/Swift.** `assert!` в Rust always runtime;
+   `debug_assert!` для debug-only. Swift аналогично: `assert`
+   debug-only, `precondition` always runtime — но Nova инвертирует
+   defaults (более безопасный — короткое имя).
+
+4. **Согласовано с D24.** Если программист хочет zero-cost проверку
+   с compile-time гарантией — пишет `requires` (D24 contract). Если
+   просто debug-time hint — `debug_assert`. `assert` — strong
+   invariant, всегда работает.
+
+5. **D13 (panic vs effects).** `assert` failure = panic = fiber dies.
+   Это «hardware/math сбой» класс, не business error. По D13 такое
+   **не должно зависеть от build-mode**.
+
+### Что отвергнуто
+
+- **`assert` no-op в release** (C/Java/Python style). Тихие bug'и в
+  production — главная причина отказа.
+- **`assert` как keyword без скобок** (Rust macro / Java `assert`
+  expression). Закрыто в spec sweep 2026-05-07: assert — обычная
+  fn-call, со скобками. Один способ для одной задачи (D40).
+- **Только один уровень (`assert` always runtime).** Hot-path
+  use-case реален; без `debug_assert` программисты пишут
+  `if (DEBUG) { ... }` ручками. Лучше дать canonical-форму.
+- **Только один уровень (`assert` debug-only).** Невозможно выразить
+  production invariant. Java pre-1.4 опыт показывает что это
+  anti-pattern.
+
+### Связь
+
+- [D7](#d7-один-язык--три-режима-компиляции) — три режима компиляции;
+  D81 уточняет, как build-mode влияет на assert-семантику.
+- [D13](#d13-panic-vs-эффекты-что-не-является-эффектом) — assert
+  failure = panic, не Fail-эффект.
+- [D24](09-tooling.md#d24) — `requires`/`ensures` контракты;
+  D81 определяет три уровня safety: `assert` < `debug_assert` <
+  `contracts`.
+- [D26](#d26) — prelude содержит обе функции (`assert`,
+  `debug_assert`).
+- spec/syntax.md — секция «Тестирование без моков» уточняет, что
+  `assert(cond)` обязательно со скобками (fn-call).
+
+### Эволюция
+
+До 2026-05-07 spec упоминал `assert` неявно — в `syntax.md` как
+«встроенный оператор» (без скобок), в D26 prelude как функцию (со
+скобками). Bootstrap-парсер принимал только со скобками.
+spec-assert-syntax sweep 2026-05-07 канонизировал форму
+`assert(cond)` — функция из prelude, обязательно со скобками.
+
+D81 закрывает оставшийся вопрос — **семантика в release**.
+Принята модель Rust (`assert!` always runtime + `debug_assert!`
+debug-only). До D81 spec не различал `assert`/`debug_assert`,
+bootstrap имел только always-runtime `nova_assert` без build-mode
+разделения. После D81: prelude содержит обе функции; production-
+runtime реализует zero-cost `debug_assert` в release; bootstrap
+оставляет `debug_assert` как alias `assert` до production.
