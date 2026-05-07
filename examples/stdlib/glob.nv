@@ -1,0 +1,167 @@
+// stdlib/glob.nv — POSIX glob pattern matching.
+//
+// Поддержка:
+//   *      — любые символы кроме / (single-segment wildcard)
+//   **     — любые символы включая / (recursive wildcard)
+//   ?      — один любой символ кроме /
+//   [abc]  — character class
+//   [a-z]  — character range
+//   [!abc] — negated class
+//
+// API:
+//   Glob.match(pattern str, path str) -> bool
+
+module std.glob
+
+
+// Matches a path against a glob pattern.
+export fn Glob.match(pattern str, path str) -> bool =>
+    match_at(pattern, 0, path, 0)
+
+
+fn match_at(pattern str, pi int, path str, si int) -> bool {
+    if pi == pattern.len {
+        return si == path.len
+    }
+
+    let p = match pattern.char_at(pi) { Some(c) => c, None => return false }
+
+    if p == '*' {
+        // Check for ** (recursive)
+        if pi + 1 < pattern.len && pattern.char_at(pi + 1) == Some('*') {
+            // Skip extra * and any following /
+            let mut next_pi = pi + 2
+            if next_pi < pattern.len && pattern.char_at(next_pi) == Some('/') {
+                next_pi += 1
+            }
+            // ** matches anything including /
+            let mut try_si = si
+            while try_si <= path.len {
+                if match_at(pattern, next_pi, path, try_si) { return true }
+                try_si += 1
+            }
+            return false
+        }
+
+        // Single * — matches anything except /
+        let next_pi = pi + 1
+        let mut try_si = si
+        while try_si <= path.len {
+            if match_at(pattern, next_pi, path, try_si) { return true }
+            // Останавливаемся на /
+            if try_si < path.len && path.char_at(try_si) == Some('/') {
+                return match_at(pattern, next_pi, path, try_si)
+            }
+            try_si += 1
+        }
+        return false
+    }
+
+    if p == '?' {
+        if si == path.len { return false }
+        if path.char_at(si) == Some('/') { return false }
+        return match_at(pattern, pi + 1, path, si + 1)
+    }
+
+    if p == '[' {
+        if si == path.len { return false }
+        let c = match path.char_at(si) { Some(ch) => ch, None => return false }
+        let (matched, next_pi) = match_class(pattern, pi + 1, c)
+        if !matched { return false }
+        return match_at(pattern, next_pi, path, si + 1)
+    }
+
+    // Literal char
+    if si == path.len { return false }
+    if path.char_at(si) != Some(p) { return false }
+    match_at(pattern, pi + 1, path, si + 1)
+}
+
+
+fn match_class(pattern str, start int, c char) -> (bool, int) {
+    let mut pi = start
+    let mut negate = false
+    if pi < pattern.len && pattern.char_at(pi) == Some('!') {
+        negate = true
+        pi += 1
+    }
+    let mut found = false
+    while pi < pattern.len {
+        match pattern.char_at(pi) {
+            Some(']') => {
+                let result = if negate { !found } else { found }
+                return (result, pi + 1)
+            }
+            Some(ch) => {
+                // Check for range a-z
+                if pi + 2 < pattern.len
+                   && pattern.char_at(pi + 1) == Some('-')
+                   && pattern.char_at(pi + 2) != Some(']') {
+                    let from_c = ch
+                    let to_c = match pattern.char_at(pi + 2) { Some(x) => x, None => return (false, pi) }
+                    if (c as int) >= (from_c as int) && (c as int) <= (to_c as int) {
+                        found = true
+                    }
+                    pi += 3
+                } else {
+                    if c == ch { found = true }
+                    pi += 1
+                }
+            }
+            None => return (false, pi)
+        }
+    }
+    (false, pi)         // unclosed [
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Тесты
+// ──────────────────────────────────────────────────────────────────────────
+
+test "literal match" {
+    assert Glob.match("hello.txt", "hello.txt")
+    assert !Glob.match("hello.txt", "world.txt")
+}
+
+test "* wildcard" {
+    assert Glob.match("*.nv", "hello.nv")
+    assert Glob.match("*.nv", "complex.nv")
+    assert !Glob.match("*.nv", "hello.txt")
+    assert !Glob.match("*.nv", "src/hello.nv")           // * не пересекает /
+}
+
+test "** recursive wildcard" {
+    assert Glob.match("**/*.nv", "src/main.nv")
+    assert Glob.match("**/*.nv", "src/admin/audit.nv")
+    assert Glob.match("**", "any/path/here.txt")
+}
+
+test "? single char" {
+    assert Glob.match("?.nv", "a.nv")
+    assert !Glob.match("?.nv", "ab.nv")
+    assert !Glob.match("?.nv", ".nv")
+}
+
+test "character class" {
+    assert Glob.match("[abc].nv", "a.nv")
+    assert Glob.match("[abc].nv", "b.nv")
+    assert !Glob.match("[abc].nv", "d.nv")
+}
+
+test "character range" {
+    assert Glob.match("[a-z].nv", "x.nv")
+    assert !Glob.match("[a-z].nv", "X.nv")
+    assert Glob.match("[0-9].nv", "5.nv")
+}
+
+test "negated class" {
+    assert Glob.match("[!abc].nv", "d.nv")
+    assert !Glob.match("[!abc].nv", "a.nv")
+}
+
+test "complex pattern" {
+    assert Glob.match("src/**/*.nv", "src/main.nv")
+    assert Glob.match("src/**/*.nv", "src/admin/audit.nv")
+    assert !Glob.match("src/**/*.nv", "tests/main.nv")
+}

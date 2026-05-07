@@ -1,0 +1,294 @@
+// stdlib/markdown_minimal.nv — minimal CommonMark subset → HTML.
+// https://spec.commonmark.org/0.31.2/
+//
+// Поддержка:
+//   - Headings: # h1, ## h2, ... ###### h6
+//   - Paragraphs (пустая строка как separator)
+//   - Inline emphasis: *italic*, **bold**, `code`
+//   - Inline links: [text](url)
+//   - Code blocks: ```...```
+//   - Bullet lists: - item / * item
+//
+// Не поддержка (намеренно):
+//   - Numbered lists, nested lists
+//   - Tables (GFM extension)
+//   - Reference-style links
+//   - HTML passthrough
+//   - Images, footnotes, blockquotes
+//
+// Это ~25% CommonMark, достаточно для README/docs/changelogs.
+//
+// API:
+//   Markdown.to_html(md str) -> str
+
+module std.markdown_minimal
+
+
+export fn Markdown.to_html(md str) -> str {
+    let mut buf = Buffer.with_capacity(md.len * 2)
+    let lines = md.split("\n")
+    let mut i = 0
+    let mut in_code_block = false
+    let mut in_list = false
+    let mut paragraph = Buffer.new()
+
+    while i < lines.len {
+        let line = lines[i]
+
+        // Code block fence
+        if line.starts_with("```") {
+            if in_code_block {
+                buf.add_str("</code></pre>\n")
+                in_code_block = false
+            } else {
+                flush_paragraph(buf, paragraph)
+                paragraph = Buffer.new()
+                if in_list { buf.add_str("</ul>\n"); in_list = false }
+                buf.add_str("<pre><code>")
+                in_code_block = true
+            }
+            i += 1
+            continue
+        }
+
+        if in_code_block {
+            buf.add_str(escape_html(line))
+            buf.add_char('\n')
+            i += 1
+            continue
+        }
+
+        // Heading
+        if line.starts_with("#") {
+            flush_paragraph(buf, paragraph)
+            paragraph = Buffer.new()
+            if in_list { buf.add_str("</ul>\n"); in_list = false }
+            let mut level = 0
+            while level < 6 && line.char_at(level) == Some('#') {
+                level += 1
+            }
+            let text = line.slice(level, line.len).trim()
+            buf.add_str("<h" + str.from(level) + ">")
+            buf.add_str(render_inline(text))
+            buf.add_str("</h" + str.from(level) + ">\n")
+            i += 1
+            continue
+        }
+
+        // Bullet list item
+        if line.starts_with("- ") || line.starts_with("* ") {
+            flush_paragraph(buf, paragraph)
+            paragraph = Buffer.new()
+            if !in_list {
+                buf.add_str("<ul>\n")
+                in_list = true
+            }
+            buf.add_str("<li>")
+            buf.add_str(render_inline(line.slice(2, line.len)))
+            buf.add_str("</li>\n")
+            i += 1
+            continue
+        }
+
+        // Empty line — paragraph break
+        if line.trim().len == 0 {
+            flush_paragraph(buf, paragraph)
+            paragraph = Buffer.new()
+            if in_list { buf.add_str("</ul>\n"); in_list = false }
+            i += 1
+            continue
+        }
+
+        // Regular paragraph line
+        if paragraph.len() > 0 { paragraph.add_char(' ') }
+        paragraph.add_str(line)
+        i += 1
+    }
+
+    // Flush последнего
+    flush_paragraph(buf, paragraph)
+    if in_list { buf.add_str("</ul>\n") }
+    if in_code_block { buf.add_str("</code></pre>\n") }
+
+    buf.into_str_unchecked()
+}
+
+
+fn flush_paragraph(buf mut Buffer, paragraph Buffer) -> () {
+    if paragraph.len() > 0 {
+        let text = paragraph.clone().into_str_unchecked()
+        if text.trim().len > 0 {
+            buf.add_str("<p>")
+            buf.add_str(render_inline(text.trim()))
+            buf.add_str("</p>\n")
+        }
+    }
+}
+
+
+// Inline parsing: **bold**, *italic*, `code`, [text](url)
+fn render_inline(s str) -> str {
+    let mut buf = Buffer.with_capacity(s.len)
+    let mut i = 0
+    while i < s.len {
+        let c = match s.char_at(i) { Some(ch) => ch, None => break }
+
+        // Inline code
+        if c == '`' {
+            let start = i + 1
+            let mut end = start
+            while end < s.len && s.char_at(end) != Some('`') { end += 1 }
+            if end < s.len {
+                buf.add_str("<code>")
+                buf.add_str(escape_html(s.slice(start, end)))
+                buf.add_str("</code>")
+                i = end + 1
+                continue
+            }
+        }
+
+        // Bold ** ... **
+        if c == '*' && s.char_at(i + 1) == Some('*') {
+            let start = i + 2
+            let mut end = start
+            while end + 1 < s.len {
+                if s.char_at(end) == Some('*') && s.char_at(end + 1) == Some('*') { break }
+                end += 1
+            }
+            if end + 1 < s.len {
+                buf.add_str("<strong>")
+                buf.add_str(escape_html(s.slice(start, end)))
+                buf.add_str("</strong>")
+                i = end + 2
+                continue
+            }
+        }
+
+        // Italic * ... *
+        if c == '*' {
+            let start = i + 1
+            let mut end = start
+            while end < s.len && s.char_at(end) != Some('*') { end += 1 }
+            if end < s.len {
+                buf.add_str("<em>")
+                buf.add_str(escape_html(s.slice(start, end)))
+                buf.add_str("</em>")
+                i = end + 1
+                continue
+            }
+        }
+
+        // Link [text](url)
+        if c == '[' {
+            let close_bracket_opt = find_in(s, ']', i + 1)
+            match close_bracket_opt {
+                Some(close_bracket) => {
+                    if s.char_at(close_bracket + 1) == Some('(') {
+                        let close_paren_opt = find_in(s, ')', close_bracket + 2)
+                        match close_paren_opt {
+                            Some(close_paren) => {
+                                let text = s.slice(i + 1, close_bracket)
+                                let url = s.slice(close_bracket + 2, close_paren)
+                                buf.add_str("<a href=\"")
+                                buf.add_str(escape_html(url))
+                                buf.add_str("\">")
+                                buf.add_str(escape_html(text))
+                                buf.add_str("</a>")
+                                i = close_paren + 1
+                                continue
+                            }
+                            None => ()
+                        }
+                    }
+                }
+                None => ()
+            }
+        }
+
+        // Литерал
+        buf.add_char(c)
+        i += 1
+    }
+    buf.into_str_unchecked()
+}
+
+
+fn find_in(s str, target char, start int) -> Option[int] {
+    let mut i = start
+    while i < s.len {
+        if s.char_at(i) == Some(target) { return Some(i) }
+        i += 1
+    }
+    None
+}
+
+
+fn escape_html(s str) -> str {
+    let mut buf = Buffer.with_capacity(s.len)
+    for c in s.chars() {
+        match c {
+            '<' => buf.add_str("&lt;")
+            '>' => buf.add_str("&gt;")
+            '&' => buf.add_str("&amp;")
+            '"' => buf.add_str("&quot;")
+            _   => buf.add_char(c)
+        }
+    }
+    buf.into_str_unchecked()
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Тесты
+// ──────────────────────────────────────────────────────────────────────────
+
+test "headings" {
+    assert Markdown.to_html("# Hello").contains("<h1>Hello</h1>")
+    assert Markdown.to_html("## World").contains("<h2>World</h2>")
+    assert Markdown.to_html("###### Six").contains("<h6>Six</h6>")
+}
+
+test "paragraph" {
+    let html = Markdown.to_html("This is a paragraph.")
+    assert html.contains("<p>This is a paragraph.</p>")
+}
+
+test "bold and italic" {
+    let html = Markdown.to_html("**bold** and *italic*")
+    assert html.contains("<strong>bold</strong>")
+    assert html.contains("<em>italic</em>")
+}
+
+test "inline code" {
+    let html = Markdown.to_html("Use `code` here")
+    assert html.contains("<code>code</code>")
+}
+
+test "link" {
+    let html = Markdown.to_html("Visit [example](https://example.com)")
+    assert html.contains("<a href=\"https://example.com\">example</a>")
+}
+
+test "code block" {
+    let md = "```\nlet x = 1\n```\n"
+    let html = Markdown.to_html(md)
+    assert html.contains("<pre><code>")
+    assert html.contains("let x = 1")
+    assert html.contains("</code></pre>")
+}
+
+test "bullet list" {
+    let md = "- one\n- two\n- three\n"
+    let html = Markdown.to_html(md)
+    assert html.contains("<ul>")
+    assert html.contains("<li>one</li>")
+    assert html.contains("<li>two</li>")
+    assert html.contains("</ul>")
+}
+
+test "html escape" {
+    let html = Markdown.to_html("a < b & c > d")
+    assert html.contains("&lt;")
+    assert html.contains("&gt;")
+    assert html.contains("&amp;")
+}
