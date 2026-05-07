@@ -244,24 +244,24 @@ fn write_le_u32(out mut [16]byte, offset int, v u32) -> () {
 // ──────────────────────────────────────────────────────────────────────────
 
 test "MD5: пустая строка" {
-    assert Md5.hash_str("".bytes()) == "d41d8cd98f00b204e9800998ecf8427e"
+    assert(Md5.hash_str("".bytes()) == "d41d8cd98f00b204e9800998ecf8427e")
 }
 
 test "MD5: 'a'" {
-    assert Md5.hash_str("a".bytes()) == "0cc175b9c0f1b6a831c399e269772661"
+    assert(Md5.hash_str("a".bytes()) == "0cc175b9c0f1b6a831c399e269772661")
 }
 
 test "MD5: 'abc'" {
-    assert Md5.hash_str("abc".bytes()) == "900150983cd24fb0d6963f7d28e17f72"
+    assert(Md5.hash_str("abc".bytes()) == "900150983cd24fb0d6963f7d28e17f72")
 }
 
 test "MD5: 'message digest'" {
-    assert Md5.hash_str("message digest".bytes()) == "f96b697d7cb7938d525a2f31aaf161d0"
+    assert(Md5.hash_str("message digest".bytes()) == "f96b697d7cb7938d525a2f31aaf161d0")
 }
 
 test "MD5: 'abcdefghijklmnopqrstuvwxyz'" {
     let s = "abcdefghijklmnopqrstuvwxyz"
-    assert Md5.hash_str(s.bytes()) == "c3fcd3d76192e4007dfb496cca67e13b"
+    assert(Md5.hash_str(s.bytes()) == "c3fcd3d76192e4007dfb496cca67e13b")
 }
 
 test "MD5: incremental == one-shot" {
@@ -281,5 +281,5 @@ test "MD5: incremental == one-shot" {
     let mut i = 0
     while i < 16 { bytes.push(digest[i]); i += 1 }
 
-    assert one_shot == Hex.encode(bytes)
+    assert(one_shot == Hex.encode(bytes))
 }

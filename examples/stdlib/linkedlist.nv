@@ -170,53 +170,53 @@ export fn LinkedList[T] @plus(other LinkedList[T]) -> LinkedList[T] =>
 
 test "from_array preserves order" {
     let l = LinkedList[int].from_array([1, 2, 3])
-    assert l.length() == 3
-    assert l.head() == Some(1)
-    assert l.tail().head() == Some(2)
-    assert l.tail().tail().head() == Some(3)
-    assert l.tail().tail().tail().head() == None
+    assert(l.length() == 3)
+    assert(l.head() == Some(1))
+    assert(l.tail().head() == Some(2))
+    assert(l.tail().tail().head() == Some(3))
+    assert(l.tail().tail().tail().head() == None)
 }
 
 test "prepend is O(1) and adds in front" {
     let l = LinkedList[int].from_array([2, 3])
     let l2 = l.prepend(1)
-    assert l2.head() == Some(1)
-    assert l2.length() == 3
+    assert(l2.head() == Some(1))
+    assert(l2.length() == 3)
 }
 
 test "reverse" {
     let l = LinkedList[int].from_array([1, 2, 3])
     let r = l.reverse()
-    assert r.head() == Some(3)
-    assert r.tail().head() == Some(2)
+    assert(r.head() == Some(3))
+    assert(r.tail().head() == Some(2))
 }
 
 test "map applies function preserving structure" {
     let l = LinkedList[int].from_array([1, 2, 3])
     let doubled = l.map((x) => x * 2)
-    assert doubled.head() == Some(2)
-    assert doubled.length() == 3
+    assert(doubled.head() == Some(2))
+    assert(doubled.length() == 3)
 }
 
 test "filter removes non-matching" {
     let l = LinkedList[int].from_array([1, 2, 3, 4, 5])
     let even = l.filter((x) => x % 2 == 0)
-    assert even.length() == 2
-    assert even.head() == Some(2)
+    assert(even.length() == 2)
+    assert(even.head() == Some(2))
 }
 
 test "fold sums" {
     let l = LinkedList[int].from_array([1, 2, 3, 4])
     let sum = l.fold(0) { (acc, x) => acc + x }
-    assert sum == 10
+    assert(sum == 10)
 }
 
 test "concat with operator +" {
     let a = LinkedList[int].from_array([1, 2])
     let b = LinkedList[int].from_array([3, 4])
     let c = a + b
-    assert c.length() == 4
-    assert c.head() == Some(1)
+    assert(c.length() == 4)
+    assert(c.head() == Some(1))
 }
 
 test "Empty is identity for concat" {

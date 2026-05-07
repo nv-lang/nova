@@ -109,11 +109,11 @@ fn PriorityQueue[T] mut @sift_down(idx int) -> () {
 
 test "empty queue" {
     let pq = PriorityQueue[int].new()
-    assert pq.is_empty()
-    assert pq.peek() == None
+    assert(pq.is_empty())
+    assert(pq.peek() == None)
     // pop из пустой — None
     let mut pq2 = pq
-    assert pq2.pop() == None
+    assert(pq2.pop() == None)
 }
 
 test "push / pop порядок" {
@@ -124,20 +124,20 @@ test "push / pop порядок" {
     pq.push(8)
     pq.push(2)
 
-    assert pq.len == 5
-    assert pq.pop() == Some(1)
-    assert pq.pop() == Some(2)
-    assert pq.pop() == Some(3)
-    assert pq.pop() == Some(5)
-    assert pq.pop() == Some(8)
-    assert pq.pop() == None
+    assert(pq.len == 5)
+    assert(pq.pop() == Some(1))
+    assert(pq.pop() == Some(2))
+    assert(pq.pop() == Some(3))
+    assert(pq.pop() == Some(5))
+    assert(pq.pop() == Some(8))
+    assert(pq.pop() == None)
 }
 
 test "peek не удаляет" {
     let mut pq = PriorityQueue[int].new()
     pq.push(5)
     pq.push(1)
-    assert pq.peek() == Some(1)
-    assert pq.peek() == Some(1)
-    assert pq.len == 2
+    assert(pq.peek() == Some(1))
+    assert(pq.peek() == Some(1))
+    assert(pq.len == 2)
 }

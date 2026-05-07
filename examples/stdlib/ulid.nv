@@ -333,21 +333,21 @@ fn decode_char_or_throw(s str, pos int) Fail[ParseUlidError] -> u8 {
 test "генерация: ulid имеет правильный timestamp" {
     with Time = fixed_ms(1700000000000), Random = seeded(0) {
         let u = Ulid.new()
-        assert u.timestamp_ms() == 1700000000000
+        assert(u.timestamp_ms() == 1700000000000)
     }
 }
 
 test "genеrация: одинаковый seed → одинаковый ULID" {
     let a = with Time = fixed_ms(1000), Random = seeded(42) { Ulid.new() }
     let b = with Time = fixed_ms(1000), Random = seeded(42) { Ulid.new() }
-    assert a.eq(b)
+    assert(a.eq(b))
 }
 
 test "генерация: разные timestamps → разные ULID" {
     let a = with Time = fixed_ms(1000), Random = seeded(0) { Ulid.new() }
     let b = with Time = fixed_ms(2000), Random = seeded(0) { Ulid.new() }
-    assert !a.eq(b)
-    assert a.lt(b)                                    // earlier < later
+    assert(!a.eq(b))
+    assert(a.lt(b)                                    // earlier < later)
 }
 
 test "lexicographic ordering — главная фича ULID" {
@@ -362,15 +362,15 @@ test "lexicographic ordering — главная фича ULID" {
     let s3 = u3.into()
 
     // Лексикографически (как строки): s1 < s2 < s3
-    assert s1 < s2
-    assert s2 < s3
+    assert(s1 < s2)
+    assert(s2 < s3)
 }
 
 test "формат: 26 символов" {
     with Time = fixed_ms(1700000000000), Random = seeded(0) {
         let u = Ulid.new()
         let s = u.into()
-        assert s.len == 26
+        assert(s.len == 26)
     }
 }
 
@@ -378,10 +378,10 @@ test "формат: только Crockford-Base32 символы" {
     with Time = fixed_ms(1700000000000), Random = seeded(0xFEEDC0DE) {
         let s = Ulid.new().into()
         // Без I, L, O, U
-        assert !s.contains("I") && !s.contains("i")
-        assert !s.contains("L") && !s.contains("l")
-        assert !s.contains("O") && !s.contains("o")
-        assert !s.contains("U") && !s.contains("u")
+        assert(!s.contains("I") && !s.contains("i"))
+        assert(!s.contains("L") && !s.contains("l"))
+        assert(!s.contains("O") && !s.contains("o"))
+        assert(!s.contains("U") && !s.contains("u"))
     }
 }
 
@@ -390,7 +390,7 @@ test "round-trip: from(u.into()) == u" {
         let u = Ulid.new()
         let s = u.into()
         let parsed = Ulid.from(s)
-        assert parsed.eq(u)
+        assert(parsed.eq(u))
     }
 }
 
@@ -400,7 +400,7 @@ test "from: case-insensitive" {
         let s_upper = u.into()
         // ULID by spec — upper-case, но decode принимает обе.
         let parsed = Ulid.from(s_upper.to_lower())
-        assert parsed.eq(u)
+        assert(parsed.eq(u))
     }
 }
 
@@ -414,7 +414,7 @@ test "from: I/L → 1, O → 0 (Crockford ambiguity)" {
         if s.contains("0") || s.contains("1") {
             let modified = s.replace("0", "O").replace("1", "I")
             let parsed = Ulid.from(modified)
-            assert parsed.eq(u)
+            assert(parsed.eq(u))
         }
     }
 }
@@ -424,7 +424,7 @@ test "from: ошибка — неправильная длина" {
         let _ = Ulid.from("too-short")
         None
     }
-    assert match r {
+    assert(match r {)
         Some(InvalidLength { .. }) => true
         _                           => false
     }
@@ -436,7 +436,7 @@ test "from: ошибка — невалидный символ (U)" {
         let _ = Ulid.from("UAAAAAAAAAAAAAAAAAAAAAAAAA")     // 26 chars, но 'U' невалид
         None
     }
-    assert match r {
+    assert(match r {)
         Some(InvalidChar { .. }) => true
         _                         => false
     }
@@ -448,8 +448,8 @@ test "AI-first: ULID-генерация детерминистична чере�
         let u1 = Ulid.new()
         let u2 = Ulid.new()
         // Time fixed → одинаковый timestamp
-        assert u1.timestamp_ms() == u2.timestamp_ms()
+        assert(u1.timestamp_ms() == u2.timestamp_ms())
         // Random seeded → каждый вызов выдаёт разные значения, но детерминистично
-        assert !u1.eq(u2)
+        assert(!u1.eq(u2))
     }
 }

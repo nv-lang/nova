@@ -374,18 +374,18 @@ test "insert and get" {
     m.insert("alice", 1)
     m.insert("bob", 2)
 
-    assert m.len() == 2
-    assert m.get("alice") == Some(1)
-    assert m.get("bob") == Some(2)
-    assert m.get("charlie") == None
+    assert(m.len() == 2)
+    assert(m.get("alice") == Some(1))
+    assert(m.get("bob") == Some(2))
+    assert(m.get("charlie") == None)
 }
 
 test "insert returns old value on overwrite" {
     let mut m = HashMap[str, int].new()
-    assert m.insert("a", 1) == None
-    assert m.insert("a", 2) == Some(1)
-    assert m.get("a") == Some(2)
-    assert m.len() == 1
+    assert(m.insert("a", 1) == None)
+    assert(m.insert("a", 2) == Some(1))
+    assert(m.get("a") == Some(2))
+    assert(m.len() == 1)
 }
 
 test "remove" {
@@ -393,11 +393,11 @@ test "remove" {
     m.insert("a", 1)
     m.insert("b", 2)
 
-    assert m.remove("a") == Some(1)
-    assert m.remove("a") == None
-    assert m.len() == 1
-    assert m.get("a") == None
-    assert m.get("b") == Some(2)
+    assert(m.remove("a") == Some(1))
+    assert(m.remove("a") == None)
+    assert(m.len() == 1)
+    assert(m.get("a") == None)
+    assert(m.get("b") == Some(2))
 }
 
 test "iterate keys" {
@@ -410,11 +410,11 @@ test "iterate keys" {
     for k in m.keys() {
         keys.push(k)
     }
-    assert keys.len == 3
+    assert(keys.len == 3)
     // Порядок не определён (open addressing), сортируем для
     // детерминированной проверки.
     keys.sort()
-    assert keys == ["a", "b", "c"]
+    assert(keys == ["a", "b", "c"])
 }
 
 test "get_or_insert with counter pattern" {
@@ -426,15 +426,15 @@ test "get_or_insert with counter pattern" {
         counts.insert(w, prev + 1)
     }
 
-    assert counts.get("foo") == Some(3)
-    assert counts.get("bar") == Some(2)
-    assert counts.get("baz") == Some(1)
+    assert(counts.get("foo") == Some(3))
+    assert(counts.get("bar") == Some(2))
+    assert(counts.get("baz") == Some(1))
 }
 
 test "from pairs constructor" {
     let m = HashMap.from([("x", 10), ("y", 20), ("z", 30)])
-    assert m.len() == 3
-    assert m.get("y") == Some(20)
+    assert(m.len() == 3)
+    assert(m.get("y") == Some(20))
 }
 
 test "rehash on growth" {
@@ -443,10 +443,10 @@ test "rehash on growth" {
     for i in 0..100 {
         m.insert(i, i * 2)
     }
-    assert m.len() == 100
-    assert m.capacity() >= 128       // достаточно для 100 при 0.75 load
+    assert(m.len() == 100)
+    assert(m.capacity() >= 128       // достаточно для 100 при 0.75 load)
     for i in 0..100 {
-        assert m.get(i) == Some(i * 2)
+        assert(m.get(i) == Some(i * 2))
     }
 }
 
@@ -456,10 +456,10 @@ test "tombstones cleanup on rehash" {
     for i in 0..8  { m.remove(i) }
     // Сейчас: 2 occupied + 8 tombstones. Следующий insert → rehash.
     m.insert(100, 100)
-    assert m.len() == 3
-    assert m.get(8) == Some(8)
-    assert m.get(9) == Some(9)
-    assert m.get(100) == Some(100)
+    assert(m.len() == 3)
+    assert(m.get(8) == Some(8))
+    assert(m.get(9) == Some(9))
+    assert(m.get(100) == Some(100))
 }
 
 
@@ -486,7 +486,7 @@ test "tombstones cleanup on rehash" {
 //    мутируют, `get`/`contains`/`len` — нет. Видно в сигнатуре.
 //
 // 6. **Тесты без моков** — HashMap чистый, не зависит от эффектов.
-//    Просто `assert m.get("a") == Some(1)`. Ни Db, ни Time, ни Logger.
+//    Просто `assert(m.get("a") == Some(1))`. Ни Db, ни Time, ни Logger.
 //
 // 7. **Iterator pattern** через структурный тип — `for k in m.keys()`
 //    работает потому что `KeysIter` имеет `mut @next() -> Option[K]`.

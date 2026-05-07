@@ -135,22 +135,22 @@ test "no false negatives" {
     bf.insert("world")
     bf.insert("nova")
     // Все вставленные — гарантированно contains
-    assert bf.contains("hello")
-    assert bf.contains("world")
-    assert bf.contains("nova")
+    assert(bf.contains("hello"))
+    assert(bf.contains("world"))
+    assert(bf.contains("nova"))
 }
 
 test "empty filter — никого не содержит" {
     let bf = BloomFilter.new(1024, 3)
-    assert !bf.contains("anything")
+    assert(!bf.contains("anything"))
 }
 
 test "optimal sizing" {
     let mut bf = BloomFilter.optimal(100, 0.01)         // 100 items, 1% false-positive
     bf.insert("test1")
     bf.insert("test2")
-    assert bf.contains("test1")
-    assert bf.contains("test2")
+    assert(bf.contains("test1"))
+    assert(bf.contains("test2"))
 }
 
 test "false positive rate приемлемый для small set" {
@@ -170,5 +170,5 @@ test "false positive rate приемлемый для small set" {
         j += 1
     }
     // С m=1024, k=4, n=50 — false-positive rate << 50%
-    assert false_pos < 50
+    assert(false_pos < 50)
 }

@@ -130,43 +130,43 @@ fn find_last_dot(s str) -> Option[int] {
 // ──────────────────────────────────────────────────────────────────────────
 
 test "join" {
-    assert Path.join("a", "b", "c") == "a/b/c"
-    assert Path.join("/usr", "bin") == "/usr/bin"
-    assert Path.join("a", "/b") == "a/b"             // strip leading /
-    assert Path.join("", "b") == "b"
+    assert(Path.join("a", "b", "c") == "a/b/c")
+    assert(Path.join("/usr", "bin") == "/usr/bin")
+    assert(Path.join("a", "/b") == "a/b"             // strip leading /)
+    assert(Path.join("", "b") == "b")
 }
 
 test "parent" {
-    assert Path.parent("/usr/bin/ls") == Some("/usr/bin")
-    assert Path.parent("/usr") == Some("/")
-    assert Path.parent("/") == None
-    assert Path.parent("file.txt") == None
+    assert(Path.parent("/usr/bin/ls") == Some("/usr/bin"))
+    assert(Path.parent("/usr") == Some("/"))
+    assert(Path.parent("/") == None)
+    assert(Path.parent("file.txt") == None)
 }
 
 test "basename" {
-    assert Path.basename("/usr/bin/ls") == "ls"
-    assert Path.basename("file.txt") == "file.txt"
-    assert Path.basename("/dir/") == "dir"
+    assert(Path.basename("/usr/bin/ls") == "ls")
+    assert(Path.basename("file.txt") == "file.txt")
+    assert(Path.basename("/dir/") == "dir")
 }
 
 test "extension" {
-    assert Path.extension("file.txt") == Some("txt")
-    assert Path.extension("archive.tar.gz") == Some("gz")
-    assert Path.extension("README") == None
-    assert Path.extension(".bashrc") == None         // dotfile
+    assert(Path.extension("file.txt") == Some("txt"))
+    assert(Path.extension("archive.tar.gz") == Some("gz"))
+    assert(Path.extension("README") == None)
+    assert(Path.extension(".bashrc") == None         // dotfile)
 }
 
 test "is_absolute" {
-    assert Path.is_absolute("/usr/bin")
-    assert !Path.is_absolute("relative/path")
-    assert !Path.is_absolute("")
+    assert(Path.is_absolute("/usr/bin"))
+    assert(!Path.is_absolute("relative/path"))
+    assert(!Path.is_absolute(""))
 }
 
 test "normalize" {
-    assert Path.normalize("/a/b/../c") == "/a/c"
-    assert Path.normalize("/a/./b") == "/a/b"
-    assert Path.normalize("a/b/..") == "a"
-    assert Path.normalize("//a//b//") == "/a/b"
-    assert Path.normalize(".") == "."
-    assert Path.normalize("..") == ".."
+    assert(Path.normalize("/a/b/../c") == "/a/c")
+    assert(Path.normalize("/a/./b") == "/a/b")
+    assert(Path.normalize("a/b/..") == "a")
+    assert(Path.normalize("//a//b//") == "/a/b")
+    assert(Path.normalize(".") == ".")
+    assert(Path.normalize("..") == "..")
 }

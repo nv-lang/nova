@@ -118,8 +118,8 @@ test "diff: complete change" {
             _           => ()
         }
     }
-    assert has_delete
-    assert has_insert
+    assert(has_delete)
+    assert(has_insert)
 }
 
 test "diff: insertion в середине" {
@@ -131,7 +131,7 @@ test "diff: insertion в середине" {
             _           => ()
         }
     }
-    assert has_insert_b
+    assert(has_insert_b)
 }
 
 test "diff: deletion в середине" {
@@ -143,5 +143,5 @@ test "diff: deletion в середине" {
             _           => ()
         }
     }
-    assert has_delete_b
+    assert(has_delete_b)
 }

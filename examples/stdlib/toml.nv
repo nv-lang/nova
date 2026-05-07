@@ -416,10 +416,10 @@ test "parse: ключ-значение топ-уровня" {
     let v = Toml.parse("name = \"nova\"\nversion = \"0.1.0\"\n")
     match v {
         TomlTable(t) => {
-            assert t.get("name") == Some(TomlStr("nova"))
-            assert t.get("version") == Some(TomlStr("0.1.0"))
+            assert(t.get("name") == Some(TomlStr("nova")))
+            assert(t.get("version") == Some(TomlStr("0.1.0")))
         }
-        _ => assert false
+        _ => assert(false)
     }
 }
 
@@ -427,10 +427,10 @@ test "parse: integer и float" {
     let v = Toml.parse("port = 8080\npi = 3.14\n")
     match v {
         TomlTable(t) => {
-            assert t.get("port") == Some(TomlInt(8080))
-            assert t.get("pi") == Some(TomlFloat(3.14))
+            assert(t.get("port") == Some(TomlInt(8080)))
+            assert(t.get("pi") == Some(TomlFloat(3.14)))
         }
-        _ => assert false
+        _ => assert(false)
     }
 }
 
@@ -438,10 +438,10 @@ test "parse: bool" {
     let v = Toml.parse("debug = true\nprod = false\n")
     match v {
         TomlTable(t) => {
-            assert t.get("debug") == Some(TomlBool(true))
-            assert t.get("prod") == Some(TomlBool(false))
+            assert(t.get("debug") == Some(TomlBool(true)))
+            assert(t.get("prod") == Some(TomlBool(false)))
         }
-        _ => assert false
+        _ => assert(false)
     }
 }
 
@@ -450,20 +450,20 @@ test "parse: array" {
     match v {
         TomlTable(t) => match t.get("ports") {
             Some(TomlArray(xs)) => {
-                assert xs.len == 3
-                assert xs[0] == TomlInt(80)
+                assert(xs.len == 3)
+                assert(xs[0] == TomlInt(80))
             }
-            _ => assert false
+            _ => assert(false)
         }
-        _ => assert false
+        _ => assert(false)
     }
 }
 
 test "parse: comments игнорируются" {
     let v = Toml.parse("# top comment\nname = \"x\"  # inline\n")
     match v {
-        TomlTable(t) => assert t.get("name") == Some(TomlStr("x"))
-        _ => assert false
+        TomlTable(t) => assert(t.get("name") == Some(TomlStr("x")))
+        _ => assert(false)
     }
 }
 
@@ -472,7 +472,7 @@ test "parse: ошибка — незакрытая string" {
         let _ = Toml.parse("k = \"unclosed")
         None
     }
-    assert match r {
+    assert(match r {)
         Some(UnexpectedEof { .. }) => true
         _                           => false
     }

@@ -166,10 +166,10 @@ test "encode/decode round-trip" {
 
     match decoded.as_object() {
         Some(m) => {
-            assert m.get("sub") == Some(Str("user-42"))
-            assert m.get("admin") == Some(Bool(true))
+            assert(m.get("sub") == Some(Str("user-42")))
+            assert(m.get("admin") == Some(Bool(true)))
         }
-        None => assert false
+        None => assert(false)
     }
 }
 
@@ -183,7 +183,7 @@ test "decode: неправильный secret → InvalidSignature" {
         let _ = Jwt.decode_hs256("wrong".bytes(), token)
         None
     }
-    assert match r {
+    assert(match r {)
         Some(InvalidSignature) => true
         _                       => false
     }
@@ -194,7 +194,7 @@ test "decode: неправильный формат → InvalidFormat" {
         let _ = Jwt.decode_hs256("secret".bytes(), "not-a-jwt")
         None
     }
-    assert match r {
+    assert(match r {)
         Some(InvalidFormat) => true
         _                   => false
     }
@@ -210,7 +210,7 @@ test "validate: expired token" {
         let _ = Jwt.validate_hs256(secret, token)
         None
     }
-    assert match r {
+    assert(match r {)
         Some(TokenExpired { .. }) => true
         _                          => false
     }
@@ -226,7 +226,7 @@ test "validate: not yet valid (nbf в будущем)" {
         let _ = Jwt.validate_hs256(secret, token)
         None
     }
-    assert match r {
+    assert(match r {)
         Some(NotYetValid { .. }) => true
         _                         => false
     }
@@ -243,8 +243,8 @@ test "validate: ok если exp в будущем и nbf в прошлом" {
     with Time = fixed_ms(5_000_000) {
         let claims = Jwt.validate_hs256(secret, token)
         match claims.as_object() {
-            Some(c) => assert c.get("sub") == Some(Str("user"))
-            None    => assert false
+            Some(c) => assert(c.get("sub") == Some(Str("user")))
+            None    => assert(false)
         }
     }
 }

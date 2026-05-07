@@ -234,18 +234,18 @@ fn write_be_u32(out mut [32]byte, offset int, v u32) -> () {
 // ──────────────────────────────────────────────────────────────────────────
 
 test "SHA-256: пустая строка" {
-    assert Sha256.hash_str("".bytes()) ==
+    assert(Sha256.hash_str("".bytes()) ==)
         "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 }
 
 test "SHA-256: 'abc' (NIST sample)" {
-    assert Sha256.hash_str("abc".bytes()) ==
+    assert(Sha256.hash_str("abc".bytes()) ==)
         "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
 }
 
 test "SHA-256: 56-byte input (NIST 2-block sample)" {
     let s = "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"
-    assert Sha256.hash_str(s.bytes()) ==
+    assert(Sha256.hash_str(s.bytes()) ==)
         "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1"
 }
 
@@ -266,7 +266,7 @@ test "SHA-256: 1 миллион 'a' — long input stress" {
     let mut bytes []byte = []
     let mut j = 0
     while j < 32 { bytes.push(digest[j]); j += 1 }
-    assert Hex.encode(bytes) ==
+    assert(Hex.encode(bytes) ==)
         "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0"
 }
 
@@ -283,5 +283,5 @@ test "SHA-256: incremental == one-shot" {
     let mut i = 0
     while i < 32 { bytes.push(digest[i]); i += 1 }
 
-    assert one_shot == Hex.encode(bytes)
+    assert(one_shot == Hex.encode(bytes))
 }

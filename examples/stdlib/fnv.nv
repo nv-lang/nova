@@ -85,33 +85,33 @@ export fn Fnv64State @finalize() -> u64 => @h
 // ──────────────────────────────────────────────────────────────────────────
 
 test "FNV-1a 32: пустой ввод" {
-    assert Fnv.hash32([]) == FNV1A_32_OFFSET     // 0x811C9DC5
+    assert(Fnv.hash32([]) == FNV1A_32_OFFSET     // 0x811C9DC5)
 }
 
 test "FNV-1a 64: пустой ввод" {
-    assert Fnv.hash64([]) == FNV1A_64_OFFSET     // 0xCBF29CE484222325
+    assert(Fnv.hash64([]) == FNV1A_64_OFFSET     // 0xCBF29CE484222325)
 }
 
 test "FNV-1a 32: 'a'" {
     // Test vector: hash32("a") = 0xE40C292C
-    assert Fnv.hash32("a".bytes()) == 0xE40C292C
+    assert(Fnv.hash32("a".bytes()) == 0xE40C292C)
 }
 
 test "FNV-1a 64: 'foobar'" {
     // Test vector: hash64("foobar") = 0x85944171F73967E8
-    assert Fnv.hash64("foobar".bytes()) == 0x85944171F73967E8
+    assert(Fnv.hash64("foobar".bytes()) == 0x85944171F73967E8)
 }
 
 test "детерминизм: повторный hash → тот же результат" {
     let a = Fnv.hash_str("test")
     let b = Fnv.hash_str("test")
-    assert a == b
+    assert(a == b)
 }
 
 test "разные inputs → разные hashes (статистически)" {
     let a = Fnv.hash_str("hello")
     let b = Fnv.hash_str("world")
-    assert a != b
+    assert(a != b)
 }
 
 test "streaming: один chunk == split chunks" {
@@ -124,15 +124,15 @@ test "streaming: один chunk == split chunks" {
     state.update("world!".bytes())
     let streaming = state.finalize()
 
-    assert one_shot == streaming
+    assert(one_shot == streaming)
 }
 
 test "small change → big diff (avalanche-ish)" {
     let h1 = Fnv.hash_str("hello")
     let h2 = Fnv.hash_str("Hello")               // только регистр
     // Хорошая hash function должна давать совсем разные значения
-    assert h1 != h2
+    assert(h1 != h2)
     // XOR должен иметь много set bits (statistical, упрощённо)
     let xor_diff = h1 ^ h2
-    assert xor_diff != 0
+    assert(xor_diff != 0)
 }

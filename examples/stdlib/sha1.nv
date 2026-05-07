@@ -144,14 +144,14 @@ fn rotl32(x u32, n int) -> u32 =>
 // ──────────────────────────────────────────────────────────────────────────
 
 test "SHA-1: пустая строка" {
-    assert Sha1.hash_str("".bytes()) == "da39a3ee5e6b4b0d3255bfef95601890afd80709"
+    assert(Sha1.hash_str("".bytes()) == "da39a3ee5e6b4b0d3255bfef95601890afd80709")
 }
 
 test "SHA-1: 'abc'" {
-    assert Sha1.hash_str("abc".bytes()) == "a9993e364706816aba3e25717850c26c9cd0d89d"
+    assert(Sha1.hash_str("abc".bytes()) == "a9993e364706816aba3e25717850c26c9cd0d89d")
 }
 
 test "SHA-1: 'The quick brown fox jumps over the lazy dog'" {
-    assert Sha1.hash_str("The quick brown fox jumps over the lazy dog".bytes()) ==
+    assert(Sha1.hash_str("The quick brown fox jumps over the lazy dog".bytes()) ==)
         "2fd4e1c67a2d28fced849ee1bb76e7391b93eb12"
 }

@@ -644,131 +644,131 @@ export fn Regex @find_all(text str) -> [](int, int) {
 
 test "literal match" {
     let r = Regex.compile("hello")
-    assert r.matches("hello")
-    assert !r.matches("world")
-    assert r.find("say hello world") == Some((4, 9))
+    assert(r.matches("hello"))
+    assert(!r.matches("world"))
+    assert(r.find("say hello world") == Some((4, 9)))
 }
 
 test "any char ." {
     let r = Regex.compile("a.c")
-    assert r.matches("abc")
-    assert r.matches("a-c")
-    assert !r.matches("ac")
+    assert(r.matches("abc"))
+    assert(r.matches("a-c"))
+    assert(!r.matches("ac"))
 }
 
 test "char class" {
     let r = Regex.compile("[abc]")
-    assert r.matches("a")
-    assert r.matches("b")
-    assert !r.matches("d")
+    assert(r.matches("a"))
+    assert(r.matches("b"))
+    assert(!r.matches("d"))
 }
 
 test "char class range" {
     let r = Regex.compile("[a-z]+")
-    assert r.matches("hello")
-    assert !r.matches("123")
+    assert(r.matches("hello"))
+    assert(!r.matches("123"))
 }
 
 test "negated class" {
     let r = Regex.compile("[^0-9]")
-    assert r.matches("a")
-    assert !r.matches("5")
+    assert(r.matches("a"))
+    assert(!r.matches("5"))
 }
 
 test "\\d \\w \\s" {
     let digit = Regex.compile("\\d+")
-    assert digit.matches("12345")
-    assert !digit.matches("abc")
+    assert(digit.matches("12345"))
+    assert(!digit.matches("abc"))
 
     let word = Regex.compile("\\w+")
-    assert word.matches("hello_world123")
+    assert(word.matches("hello_world123"))
 
     let space = Regex.compile("\\s+")
-    assert space.matches("   ")
+    assert(space.matches("   "))
 }
 
 test "anchors ^ $" {
     let r = Regex.compile("^abc$")
-    assert r.matches("abc")
-    assert !r.matches("xabc")
-    assert !r.matches("abcx")
+    assert(r.matches("abc"))
+    assert(!r.matches("xabc"))
+    assert(!r.matches("abcx"))
 }
 
 test "quantifier *" {
     let r = Regex.compile("ab*c")
-    assert r.matches("ac")
-    assert r.matches("abc")
-    assert r.matches("abbbbbc")
+    assert(r.matches("ac"))
+    assert(r.matches("abc"))
+    assert(r.matches("abbbbbc"))
 }
 
 test "quantifier +" {
     let r = Regex.compile("ab+c")
-    assert !r.matches("ac")
-    assert r.matches("abc")
+    assert(!r.matches("ac"))
+    assert(r.matches("abc"))
 }
 
 test "quantifier ?" {
     let r = Regex.compile("ab?c")
-    assert r.matches("ac")
-    assert r.matches("abc")
-    assert !r.matches("abbc")
+    assert(r.matches("ac"))
+    assert(r.matches("abc"))
+    assert(!r.matches("abbc"))
 }
 
 test "repeat {n}" {
     let r = Regex.compile("a{3}")
-    assert r.matches("aaa")
-    assert !r.matches("aa")
-    assert !r.matches("aaaa")        // в matches требуем полное совпадение
+    assert(r.matches("aaa"))
+    assert(!r.matches("aa"))
+    assert(!r.matches("aaaa")        // в matches требуем полное совпадение)
 }
 
 test "repeat {n,m}" {
     let r = Regex.compile("a{2,4}")
-    assert !r.matches("a")
-    assert r.matches("aa")
-    assert r.matches("aaa")
-    assert r.matches("aaaa")
-    assert !r.matches("aaaaa")
+    assert(!r.matches("a"))
+    assert(r.matches("aa"))
+    assert(r.matches("aaa"))
+    assert(r.matches("aaaa"))
+    assert(!r.matches("aaaaa"))
 }
 
 test "alternation" {
     let r = Regex.compile("cat|dog|bird")
-    assert r.matches("cat")
-    assert r.matches("dog")
-    assert r.matches("bird")
-    assert !r.matches("fish")
+    assert(r.matches("cat"))
+    assert(r.matches("dog"))
+    assert(r.matches("bird"))
+    assert(!r.matches("fish"))
 }
 
 test "groups (...)" {
     let r = Regex.compile("(ab)+")
-    assert r.matches("ab")
-    assert r.matches("abab")
-    assert r.matches("ababab")
-    assert !r.matches("aba")
+    assert(r.matches("ab"))
+    assert(r.matches("abab"))
+    assert(r.matches("ababab"))
+    assert(!r.matches("aba"))
 }
 
 test "phone number pattern" {
     let r = Regex.compile("^\\d{3}-\\d{4}$")
-    assert r.matches("123-4567")
-    assert !r.matches("12-4567")
-    assert !r.matches("123-456")
+    assert(r.matches("123-4567"))
+    assert(!r.matches("12-4567"))
+    assert(!r.matches("123-456"))
 }
 
 test "find inside text" {
     let r = Regex.compile("\\d+")
-    assert r.find("call 123 then 456") == Some((5, 8))
+    assert(r.find("call 123 then 456") == Some((5, 8)))
 }
 
 test "find_all" {
     let r = Regex.compile("\\d+")
     let matches = r.find_all("a1 b22 c333")
-    assert matches.len == 3
+    assert(matches.len == 3)
 }
 
 test "no catastrophic backtracking — ключевое отличие от PCRE" {
     // Этот pattern на длинной строке 'aaaa...' зависает в PCRE,
     // но в RE2/Thompson NFA — линейная сложность.
     let r = Regex.compile("(a+)+b")
-    assert !r.matches("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+    assert(!r.matches("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"))
     // Должно завершиться быстро без зависания.
 }
 
@@ -777,7 +777,7 @@ test "compile: unclosed group" {
         let _ = Regex.compile("(abc")
         None
     }
-    assert match r {
+    assert(match r {)
         Some(UnclosedGroup { .. }) => true
         _                           => false
     }
@@ -788,7 +788,7 @@ test "compile: unclosed class" {
         let _ = Regex.compile("[abc")
         None
     }
-    assert match r {
+    assert(match r {)
         Some(UnclosedClass { .. }) => true
         _                           => false
     }

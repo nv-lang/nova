@@ -381,63 +381,63 @@ fn hex_value_or_throw(s str, pos int) Fail[ParseUrlError] -> u8 {
 
 test "parse: простой HTTP URL" {
     let u = Url.from("http://example.com/")
-    assert u.scheme == "http"
-    assert u.host == Some("example.com")
-    assert u.port == None
-    assert u.path == "/"
-    assert u.query == None
-    assert u.fragment == None
+    assert(u.scheme == "http")
+    assert(u.host == Some("example.com"))
+    assert(u.port == None)
+    assert(u.path == "/")
+    assert(u.query == None)
+    assert(u.fragment == None)
 }
 
 test "parse: HTTPS с портом и path" {
     let u = Url.from("https://api.example.com:8443/v1/users")
-    assert u.scheme == "https"
-    assert u.host == Some("api.example.com")
-    assert u.port == Some(8443)
-    assert u.path == "/v1/users"
+    assert(u.scheme == "https")
+    assert(u.host == Some("api.example.com"))
+    assert(u.port == Some(8443))
+    assert(u.path == "/v1/users")
 }
 
 test "parse: с query string и fragment" {
     let u = Url.from("https://example.com/search?q=nova&lang=en#results")
-    assert u.path == "/search"
-    assert u.query == Some("q=nova&lang=en")
-    assert u.fragment == Some("results")
+    assert(u.path == "/search")
+    assert(u.query == Some("q=nova&lang=en"))
+    assert(u.fragment == Some("results"))
 }
 
 test "parse: userinfo (user:pass)" {
     let u = Url.from("https://alice:s3cret@example.com/")
-    assert u.user == Some("alice")
-    assert u.password == Some("s3cret")
+    assert(u.user == Some("alice"))
+    assert(u.password == Some("s3cret"))
 }
 
 test "parse: только user без password" {
     let u = Url.from("ftp://anonymous@ftp.example.org/")
-    assert u.user == Some("anonymous")
-    assert u.password == None
+    assert(u.user == Some("anonymous"))
+    assert(u.password == None)
 }
 
 test "parse: file:// без host" {
     let u = Url.from("file:///etc/hosts")
-    assert u.scheme == "file"
-    assert u.host == Some("")
-    assert u.path == "/etc/hosts"
+    assert(u.scheme == "file")
+    assert(u.host == Some(""))
+    assert(u.path == "/etc/hosts")
 }
 
 test "parse: scheme нормализуется в lowercase" {
     let u = Url.from("HTTP://example.com/")
-    assert u.scheme == "http"
+    assert(u.scheme == "http")
 }
 
 test "round-trip: стандартный URL" {
     let s = "https://api.example.com:8443/v1/users?id=42&active=true#section1"
     let u = Url.from(s)
-    assert u.into() == s
+    assert(u.into() == s)
 }
 
 test "round-trip: с userinfo" {
     let s = "https://alice:s3cret@example.com/path"
     let u = Url.from(s)
-    assert u.into() == s
+    assert(u.into() == s)
 }
 
 test "parse: ошибка — пустой ввод" {
@@ -445,7 +445,7 @@ test "parse: ошибка — пустой ввод" {
         let _ = Url.from("")
         None
     }
-    assert match r {
+    assert(match r {)
         Some(EmptyInput) => true
         _                => false
     }
@@ -456,7 +456,7 @@ test "parse: ошибка — нет scheme" {
         let _ = Url.from("example.com/path")          // нет ":"
         None
     }
-    assert match r {
+    assert(match r {)
         Some(MissingScheme) => true
         _                   => false
     }
@@ -467,7 +467,7 @@ test "parse: ошибка — порт не число" {
         let _ = Url.from("http://example.com:abc/")
         None
     }
-    assert match r {
+    assert(match r {)
         Some(InvalidPort { .. }) => true
         _                         => false
     }
@@ -478,23 +478,23 @@ test "parse: ошибка — порт > 65535" {
         let _ = Url.from("http://example.com:99999/")
         None
     }
-    assert match r {
+    assert(match r {)
         Some(InvalidPort { .. }) => true
         _                         => false
     }
 }
 
 test "encode_query: ASCII unreserved неизменны" {
-    assert Url.encode_query("hello") == "hello"
-    assert Url.encode_query("a-b.c_d~e") == "a-b.c_d~e"
+    assert(Url.encode_query("hello") == "hello")
+    assert(Url.encode_query("a-b.c_d~e") == "a-b.c_d~e")
 }
 
 test "encode_query: пробел → +" {
-    assert Url.encode_query("hello world") == "hello+world"
+    assert(Url.encode_query("hello world") == "hello+world")
 }
 
 test "encode_query: спецсимволы → %XX" {
-    assert Url.encode_query("a&b=c") == "a%26b%3Dc"
+    assert(Url.encode_query("a&b=c") == "a%26b%3Dc")
 }
 
 test "decode_query: round-trip" {
@@ -502,7 +502,7 @@ test "decode_query: round-trip" {
     for s in cases {
         let encoded = Url.encode_query(s)
         let decoded = Url.decode_query(encoded)
-        assert decoded == s
+        assert(decoded == s)
     }
 }
 
@@ -511,7 +511,7 @@ test "decode_query: ошибка — обрезанное %X" {
         let _ = Url.decode_query("abc%2")             // обрезано
         None
     }
-    assert match r {
+    assert(match r {)
         Some(InvalidPercentEncoding { .. }) => true
         _                                    => false
     }

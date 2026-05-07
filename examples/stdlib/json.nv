@@ -707,37 +707,37 @@ fn indent(depth int) -> str {
 // ──────────────────────────────────────────────────────────────────────────
 
 test "parse: примитивы" {
-    assert Json.parse("null").is_null()
-    assert Json.parse("true").as_bool() == Some(true)
-    assert Json.parse("false").as_bool() == Some(false)
-    assert Json.parse("42").as_num() == Some(42.0)
-    assert Json.parse("-3.14").as_num() == Some(-3.14)
-    assert Json.parse("1e3").as_num() == Some(1000.0)
-    assert Json.parse("\"hello\"").as_str() == Some("hello")
+    assert(Json.parse("null").is_null())
+    assert(Json.parse("true").as_bool() == Some(true))
+    assert(Json.parse("false").as_bool() == Some(false))
+    assert(Json.parse("42").as_num() == Some(42.0))
+    assert(Json.parse("-3.14").as_num() == Some(-3.14))
+    assert(Json.parse("1e3").as_num() == Some(1000.0))
+    assert(Json.parse("\"hello\"").as_str() == Some("hello"))
 }
 
 test "parse: пустые collections" {
     let arr = Json.parse("[]")
-    assert arr.is_array()
+    assert(arr.is_array())
     match arr.as_array() {
-        Some(xs) => assert xs.len == 0
-        None     => assert false
+        Some(xs) => assert(xs.len == 0)
+        None     => assert(false)
     }
 
     let obj = Json.parse("{}")
-    assert obj.is_object()
+    assert(obj.is_object())
 }
 
 test "parse: array элементов" {
     let v = Json.parse("[1, 2, 3]")
     match v.as_array() {
         Some(xs) => {
-            assert xs.len == 3
-            assert xs[0].as_num() == Some(1.0)
-            assert xs[1].as_num() == Some(2.0)
-            assert xs[2].as_num() == Some(3.0)
+            assert(xs.len == 3)
+            assert(xs[0].as_num() == Some(1.0))
+            assert(xs[1].as_num() == Some(2.0))
+            assert(xs[2].as_num() == Some(3.0))
         }
-        None => assert false
+        None => assert(false)
     }
 }
 
@@ -745,10 +745,10 @@ test "parse: object с полями" {
     let v = Json.parse("{\"name\": \"alice\", \"age\": 30}")
     match v.as_object() {
         Some(m) => {
-            assert m.get("name") == Some(Str("alice"))
-            assert m.get("age") == Some(Num(30.0))
+            assert(m.get("name") == Some(Str("alice")))
+            assert(m.get("age") == Some(Num(30.0)))
         }
-        None => assert false
+        None => assert(false)
     }
 }
 
@@ -759,32 +759,32 @@ test "parse: nested structures" {
         Some(root) => match root.get("users") {
             Some(users_v) => match users_v.as_array() {
                 Some(users) => {
-                    assert users.len == 2
-                    assert users[0].as_object().is_some()
+                    assert(users.len == 2)
+                    assert(users[0].as_object().is_some())
                 }
-                None => assert false
+                None => assert(false)
             }
-            None => assert false
+            None => assert(false)
         }
-        None => assert false
+        None => assert(false)
     }
 }
 
 test "parse: escape sequences в string" {
     let v = Json.parse("\"line1\\nline2\\ttab\\\"quote\"")
-    assert v.as_str() == Some("line1\nline2\ttab\"quote")
+    assert(v.as_str() == Some("line1\nline2\ttab\"quote"))
 }
 
 test "parse: unicode escape" {
     let v = Json.parse("\"\\u00E9\"")          // é
-    assert v.as_str() == Some("é")
+    assert(v.as_str() == Some("é"))
 }
 
 test "parse: surrogate pair (emoji)" {
     let v = Json.parse("\"\\uD83D\\uDE00\"")   // 😀 (U+1F600)
     match v.as_str() {
-        Some(s) => assert s.len > 0
-        None    => assert false
+        Some(s) => assert(s.len > 0)
+        None    => assert(false)
     }
 }
 
@@ -793,7 +793,7 @@ test "parse: ошибка — неизвестный токен" {
         let _ = Json.parse("xyz")
         None
     }
-    assert match r {
+    assert(match r {)
         Some(UnexpectedChar { .. }) => true
         _                            => false
     }
@@ -804,7 +804,7 @@ test "parse: ошибка — незакрытая string" {
         let _ = Json.parse("\"unclosed")
         None
     }
-    assert match r {
+    assert(match r {)
         Some(UnexpectedEof { .. }) => true
         _                           => false
     }
@@ -815,7 +815,7 @@ test "parse: ошибка — trailing content" {
         let _ = Json.parse("42 garbage")
         None
     }
-    assert match r {
+    assert(match r {)
         Some(TrailingContent { .. }) => true
         _                             => false
     }
@@ -826,7 +826,7 @@ test "parse: ошибка — duplicate key" {
         let _ = Json.parse("{\"a\": 1, \"a\": 2}")
         None
     }
-    assert match r {
+    assert(match r {)
         Some(DuplicateKey { .. }) => true
         _                          => false
     }
@@ -837,7 +837,7 @@ test "parse: ошибка — bad number" {
         let _ = Json.parse("01")           // leading zero запрещён в JSON
         None
     }
-    assert match r {
+    assert(match r {)
         Some(TrailingContent { .. }) | Some(InvalidNumber { .. }) => true
         _ => false
     }
@@ -855,7 +855,7 @@ test "into: примитивы — round-trip" {
     for v in cases {
         let s = v.into()
         let parsed = Json.parse(s)
-        assert parsed == v
+        assert(parsed == v)
     }
 }
 
@@ -863,7 +863,7 @@ test "into: array round-trip" {
     let v = Array([Num(1.0), Num(2.0), Str("three")])
     let s = v.into()
     let parsed = Json.parse(s)
-    assert parsed == v
+    assert(parsed == v)
 }
 
 test "into: nested object round-trip" {
@@ -873,23 +873,23 @@ test "into: nested object round-trip" {
     let v = Object(m)
     let s = v.into()
     let parsed = Json.parse(s)
-    assert parsed == v
+    assert(parsed == v)
 }
 
 test "into: escape в string" {
     let v = Str("line1\nline2\ttab\"quote")
     let s = v.into()
     let parsed = Json.parse(s)
-    assert parsed == v
+    assert(parsed == v)
 }
 
 test "D73: JsonValue.from(s) и s.into() работают парно" {
     let v JsonValue = JsonValue.from("[1, 2, 3]")
-    assert v.is_array()
+    assert(v.is_array())
 
     // Через .into() (D73 авто-Into)
     let v2 JsonValue = "[1, 2, 3]".into()
-    assert v == v2
+    assert(v == v2)
 }
 
 test "pretty: формат с отступами" {
@@ -898,23 +898,23 @@ test "pretty: формат с отступами" {
     let v = Object(m)
     let p = pretty(v)
     // Проверяем что есть newlines (формат multi-line)
-    assert p.contains("\n")
+    assert(p.contains("\n"))
     // Round-trip через парсер всё ещё работает
-    assert Json.parse(p) == v
+    assert(Json.parse(p) == v)
 }
 
 test "whitespace терпимость" {
     let v = Json.parse("  [  1  ,  2  ]  ")
     match v.as_array() {
-        Some(xs) => assert xs.len == 2
-        None     => assert false
+        Some(xs) => assert(xs.len == 2)
+        None     => assert(false)
     }
 }
 
 test "числа: разные форматы" {
-    assert Json.parse("0").as_num() == Some(0.0)
-    assert Json.parse("-0").as_num() == Some(-0.0) || Json.parse("-0").as_num() == Some(0.0)
-    assert Json.parse("1.5e2").as_num() == Some(150.0)
-    assert Json.parse("2.5E-1").as_num() == Some(0.25)
-    assert Json.parse("-1.5e+3").as_num() == Some(-1500.0)
+    assert(Json.parse("0").as_num() == Some(0.0))
+    assert(Json.parse("-0").as_num() == Some(-0.0) || Json.parse("-0").as_num() == Some(0.0))
+    assert(Json.parse("1.5e2").as_num() == Some(150.0))
+    assert(Json.parse("2.5E-1").as_num() == Some(0.25))
+    assert(Json.parse("-1.5e+3").as_num() == Some(-1500.0))
 }

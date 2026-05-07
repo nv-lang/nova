@@ -356,21 +356,21 @@ export fn int @j() -> Complex => Complex.from_imag(@ as f64)
 
 test "constructors: new / from / from_imag / from_polar" {
     let z = Complex.new(3.0, 4.0)
-    assert z.re == 3.0
-    assert z.im == 4.0
+    assert(z.re == 3.0)
+    assert(z.im == 4.0)
 
     // Complex.from(f64) — действительная часть (D73 From[f64]).
     let r = Complex.from(5.0)
-    assert r.is_real()
-    assert r.re == 5.0
+    assert(r.is_real())
+    assert(r.re == 5.0)
 
     let im = Complex.from_imag(7.0)
-    assert im.is_imag()
-    assert im.im == 7.0
+    assert(im.is_imag())
+    assert(im.im == 7.0)
 
     // Та же конверсия через .into() — тип цели из аннотации (D73 авто-Into).
     let r2 Complex = (5.0).into()
-    assert r2.eq(r)
+    assert(r2.eq(r))
 }
 
 test "addition: commutative and associative" {
@@ -380,38 +380,38 @@ test "addition: commutative and associative" {
 
     let ab = a + b
     let ba = b + a
-    assert ab.eq(ba)                        // a+b == b+a
-    assert ab.re == 4.0
-    assert ab.im == 6.0
+    assert(ab.eq(ba)                        // a+b == b+a)
+    assert(ab.re == 4.0)
+    assert(ab.im == 6.0)
 
     let abc1 = (a + b) + c
     let abc2 = a + (b + c)
-    assert abc1.eq(abc2)                    // ассоциативность
+    assert(abc1.eq(abc2)                    // ассоциативность)
 }
 
 test "negation and subtraction" {
     let z = Complex.new(2.0, -3.0)
     let neg = -z
-    assert neg.re == -2.0
-    assert neg.im == 3.0
+    assert(neg.re == -2.0)
+    assert(neg.im == 3.0)
 
     let zero = z + neg
-    assert zero.is_zero()
+    assert(zero.is_zero())
 
     let diff = Complex.new(5.0, 5.0) - Complex.new(2.0, 1.0)
-    assert diff.re == 3.0
-    assert diff.im == 4.0
+    assert(diff.re == 3.0)
+    assert(diff.im == 4.0)
 }
 
 test "multiplication: i * i == -1" {
     let i_sq = I * I
-    assert i_sq.eq(-ONE)                    // основное свойство мнимой единицы
+    assert(i_sq.eq(-ONE)                    // основное свойство мнимой единицы)
 
     let z = Complex.new(2.0, 3.0)
     let zi = z * I
     // (2+3i) * i = 2i + 3i² = -3 + 2i
-    assert zi.re == -3.0
-    assert zi.im == 2.0
+    assert(zi.re == -3.0)
+    assert(zi.im == 2.0)
 }
 
 test "multiplication: distributive" {
@@ -421,44 +421,44 @@ test "multiplication: distributive" {
 
     let lhs = a * (b + c)
     let rhs = (a * b) + (a * c)
-    assert lhs.approx_eq(rhs, 1e-12)
+    assert(lhs.approx_eq(rhs, 1e-12))
 }
 
 test "scalar times: z * f64" {
     let z = Complex.new(2.0, 3.0)
     let scaled = z.times(2.0)
-    assert scaled.re == 4.0
-    assert scaled.im == 6.0
+    assert(scaled.re == 4.0)
+    assert(scaled.im == 6.0)
 }
 
 test "division: z / z == 1 (для z != 0)" {
     let z = Complex.new(3.0, 4.0)
     let one = z / z
-    assert one.approx_eq(ONE, 1e-12)
+    assert(one.approx_eq(ONE, 1e-12))
 }
 
 test "inverse: z * z.inv() == 1" {
     let z = Complex.new(2.0, 5.0)
     let prod = z * z.inv()
-    assert prod.approx_eq(ONE, 1e-12)
+    assert(prod.approx_eq(ONE, 1e-12))
 }
 
 test "conj: re/im сохраняются и инвертируются" {
     let z = Complex.new(3.0, -4.0)
     let c = z.conj()
-    assert c.re == 3.0
-    assert c.im == 4.0
+    assert(c.re == 3.0)
+    assert(c.im == 4.0)
 
     // z * conj(z) == |z|² (вещественное)
     let prod = z * c
-    assert prod.is_real()
-    assert prod.re == 25.0                  // 3² + 4² = 25
+    assert(prod.is_real())
+    assert(prod.re == 25.0                  // 3² + 4² = 25)
 }
 
 test "abs / norm_sqr для (3, 4)" {
     let z = Complex.new(3.0, 4.0)
-    assert z.norm_sqr() == 25.0
-    assert z.abs() == 5.0                   // 3-4-5 треугольник
+    assert(z.norm_sqr() == 25.0)
+    assert(z.abs() == 5.0                   // 3-4-5 треугольник)
 }
 
 test "from_polar / arg: round-trip" {
@@ -472,39 +472,39 @@ test "from_polar / arg: round-trip" {
 }
 
 test "predicates" {
-    assert ZERO.is_zero()
-    assert ONE.is_real()
-    assert I.is_imag()
-    assert !ZERO.is_imag()                   // 0 не считается чисто мнимым
-    assert !ONE.is_imag()
+    assert(ZERO.is_zero())
+    assert(ONE.is_real())
+    assert(I.is_imag())
+    assert(!ZERO.is_imag()                   // 0 не считается чисто мнимым)
+    assert(!ONE.is_imag())
 }
 
 test "into[str]: формат для разных случаев" {
     let s_real str = Complex.from(3.0).into()
-    assert s_real == "3.0"
+    assert(s_real == "3.0")
 
     let s_imag str = Complex.from_imag(2.0).into()
-    assert s_imag == "2.0i"
+    assert(s_imag == "2.0i")
 
     let s_pos str = Complex.new(1.0, 2.0).into()
-    assert s_pos == "1.0+2.0i"
+    assert(s_pos == "1.0+2.0i")
 
     let s_neg str = Complex.new(1.0, -2.0).into()
-    assert s_neg == "1.0-2.0i"
+    assert(s_neg == "1.0-2.0i")
 }
 
 test "extension method j(): мнимая единица" {
     let z1 = 2.0.j()
-    assert z1.eq(Complex.from_imag(2.0))
+    assert(z1.eq(Complex.from_imag(2.0)))
 
     let z2 = 3.j()
-    assert z2.eq(Complex.from_imag(3.0))
+    assert(z2.eq(Complex.from_imag(3.0)))
 
     // Композиция через D73 (для действительной части) + j() (для мнимой):
     //   `Complex.from(2) + 3.j()` или `(2).into() + 3.j()`
     let z3 = Complex.from(2) + 3.j()
-    assert z3.re == 2.0
-    assert z3.im == 3.0
+    assert(z3.re == 2.0)
+    assert(z3.im == 3.0)
 }
 
 
@@ -514,28 +514,28 @@ test "extension method j(): мнимая единица" {
 
 test "Complex.from(str): чисто действительное" {
     let z = Complex.from("3.0")
-    assert z.re == 3.0
-    assert z.im == 0.0
+    assert(z.re == 3.0)
+    assert(z.im == 0.0)
 }
 
 test "Complex.from(str): чисто мнимое" {
     let z = Complex.from("2.0i")
-    assert z.re == 0.0
-    assert z.im == 2.0
+    assert(z.re == 0.0)
+    assert(z.im == 2.0)
 
     let neg = Complex.from("-3.0i")
-    assert neg.re == 0.0
-    assert neg.im == -3.0
+    assert(neg.re == 0.0)
+    assert(neg.im == -3.0)
 }
 
 test "Complex.from(str): полная форма + и -" {
     let pos = Complex.from("1.0+2.0i")
-    assert pos.re == 1.0
-    assert pos.im == 2.0
+    assert(pos.re == 1.0)
+    assert(pos.im == 2.0)
 
     let neg = Complex.from("1.0-2.0i")
-    assert neg.re == 1.0
-    assert neg.im == -2.0
+    assert(neg.re == 1.0)
+    assert(neg.im == -2.0)
 }
 
 test "round-trip: from(z.into()) == z для всех канонических форм" {
@@ -549,7 +549,7 @@ test "round-trip: from(z.into()) == z для всех канонических �
     for z in cases {
         let s = z.into()
         let parsed Complex = Complex.from(s)
-        assert parsed.approx_eq(z, 1e-12)
+        assert(parsed.approx_eq(z, 1e-12))
     }
 }
 
@@ -560,6 +560,6 @@ test "Complex.from(str): невалидный формат" {
     }
     match r {
         Some(InvalidFormat) | Some(NotANumber) => ()
-        _ => assert false
+        _ => assert(false)
     }
 }

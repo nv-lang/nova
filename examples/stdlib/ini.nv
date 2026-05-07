@@ -122,10 +122,10 @@ test "parse: простой INI" {
     let r = Ini.parse(s)
     match r.get("server") {
         Some(m) => {
-            assert m.get("host") == Some("localhost")
-            assert m.get("port") == Some("8080")
+            assert(m.get("host") == Some("localhost"))
+            assert(m.get("port") == Some("8080"))
         }
-        None => assert false
+        None => assert(false)
     }
 }
 
@@ -134,10 +134,10 @@ test "parse: top-level (без section)" {
     let r = Ini.parse(s)
     match r.get("") {
         Some(m) => {
-            assert m.get("name") == Some("nova")
-            assert m.get("version") == Some("0.5")
+            assert(m.get("name") == Some("nova"))
+            assert(m.get("version") == Some("0.5"))
         }
-        None => assert false
+        None => assert(false)
     }
 }
 
@@ -145,8 +145,8 @@ test "parse: комментарии" {
     let s = "# this is a comment\n; this too\n[s]\nk = v\n"
     let r = Ini.parse(s)
     match r.get("s") {
-        Some(m) => assert m.get("k") == Some("v")
-        None    => assert false
+        Some(m) => assert(m.get("k") == Some("v"))
+        None    => assert(false)
     }
 }
 
@@ -154,8 +154,8 @@ test "parse: quoted values" {
     let s = "[s]\nk = \"hello world\"\n"
     let r = Ini.parse(s)
     match r.get("s") {
-        Some(m) => assert m.get("k") == Some("hello world")
-        None    => assert false
+        Some(m) => assert(m.get("k") == Some("hello world"))
+        None    => assert(false)
     }
 }
 
@@ -164,7 +164,7 @@ test "parse: ошибка — невалидная line" {
         let _ = Ini.parse("[s]\nbroken-line-no-equals\n")
         None
     }
-    assert match r {
+    assert(match r {)
         Some(InvalidLine { .. }) => true
         _                         => false
     }
@@ -175,7 +175,7 @@ test "parse: ошибка — незакрытая section" {
         let _ = Ini.parse("[unclosed\nk = v\n")
         None
     }
-    assert match r {
+    assert(match r {)
         Some(UnclosedSection { .. }) => true
         _                             => false
     }

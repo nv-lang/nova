@@ -198,14 +198,14 @@ export fn StreamingStats @max() Fail[StatsError] -> f64 {
 // ──────────────────────────────────────────────────────────────────────────
 
 test "mean базовый" {
-    assert Stats.mean([1.0, 2.0, 3.0, 4.0, 5.0]) == 3.0
+    assert(Stats.mean([1.0, 2.0, 3.0, 4.0, 5.0]) == 3.0)
 }
 
 test "median: нечётная и чётная длина" {
-    assert Stats.median([1.0, 2.0, 3.0]) == 2.0
-    assert Stats.median([1.0, 2.0, 3.0, 4.0]) == 2.5
+    assert(Stats.median([1.0, 2.0, 3.0]) == 2.0)
+    assert(Stats.median([1.0, 2.0, 3.0, 4.0]) == 2.5)
     // Несортированный input
-    assert Stats.median([5.0, 1.0, 3.0]) == 3.0
+    assert(Stats.median([5.0, 1.0, 3.0]) == 3.0)
 }
 
 test "variance / stddev" {
@@ -226,8 +226,8 @@ test "percentile: квартили" {
 
 test "min_max" {
     let (lo, hi) = Stats.min_max([3.0, 1.0, 4.0, 1.0, 5.0, 9.0, 2.0])
-    assert lo == 1.0
-    assert hi == 9.0
+    assert(lo == 1.0)
+    assert(hi == 9.0)
 }
 
 test "ошибка: пустой ввод" {
@@ -235,7 +235,7 @@ test "ошибка: пустой ввод" {
         let _ = Stats.mean([])
         None
     }
-    assert match r {
+    assert(match r {)
         Some(EmptyInput) => true
         _                => false
     }
@@ -249,8 +249,8 @@ test "streaming: equivalent one-shot" {
 
     assert (acc.mean() - Stats.mean(xs)).abs() < 0.0001
     assert (acc.variance() - Stats.variance(xs)).abs() < 0.0001
-    assert acc.min() == 2.0
-    assert acc.max() == 9.0
+    assert(acc.min() == 2.0)
+    assert(acc.max() == 9.0)
 }
 
 test "streaming: больших чисел не теряет точность" {

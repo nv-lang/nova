@@ -120,48 +120,48 @@ fn match_class(pattern str, start int, c char) -> (bool, int) {
 // ──────────────────────────────────────────────────────────────────────────
 
 test "literal match" {
-    assert Glob.match("hello.txt", "hello.txt")
-    assert !Glob.match("hello.txt", "world.txt")
+    assert(Glob.match("hello.txt", "hello.txt"))
+    assert(!Glob.match("hello.txt", "world.txt"))
 }
 
 test "* wildcard" {
-    assert Glob.match("*.nv", "hello.nv")
-    assert Glob.match("*.nv", "complex.nv")
-    assert !Glob.match("*.nv", "hello.txt")
-    assert !Glob.match("*.nv", "src/hello.nv")           // * не пересекает /
+    assert(Glob.match("*.nv", "hello.nv"))
+    assert(Glob.match("*.nv", "complex.nv"))
+    assert(!Glob.match("*.nv", "hello.txt"))
+    assert(!Glob.match("*.nv", "src/hello.nv")           // * не пересекает /)
 }
 
 test "** recursive wildcard" {
-    assert Glob.match("**/*.nv", "src/main.nv")
-    assert Glob.match("**/*.nv", "src/admin/audit.nv")
-    assert Glob.match("**", "any/path/here.txt")
+    assert(Glob.match("**/*.nv", "src/main.nv"))
+    assert(Glob.match("**/*.nv", "src/admin/audit.nv"))
+    assert(Glob.match("**", "any/path/here.txt"))
 }
 
 test "? single char" {
-    assert Glob.match("?.nv", "a.nv")
-    assert !Glob.match("?.nv", "ab.nv")
-    assert !Glob.match("?.nv", ".nv")
+    assert(Glob.match("?.nv", "a.nv"))
+    assert(!Glob.match("?.nv", "ab.nv"))
+    assert(!Glob.match("?.nv", ".nv"))
 }
 
 test "character class" {
-    assert Glob.match("[abc].nv", "a.nv")
-    assert Glob.match("[abc].nv", "b.nv")
-    assert !Glob.match("[abc].nv", "d.nv")
+    assert(Glob.match("[abc].nv", "a.nv"))
+    assert(Glob.match("[abc].nv", "b.nv"))
+    assert(!Glob.match("[abc].nv", "d.nv"))
 }
 
 test "character range" {
-    assert Glob.match("[a-z].nv", "x.nv")
-    assert !Glob.match("[a-z].nv", "X.nv")
-    assert Glob.match("[0-9].nv", "5.nv")
+    assert(Glob.match("[a-z].nv", "x.nv"))
+    assert(!Glob.match("[a-z].nv", "X.nv"))
+    assert(Glob.match("[0-9].nv", "5.nv"))
 }
 
 test "negated class" {
-    assert Glob.match("[!abc].nv", "d.nv")
-    assert !Glob.match("[!abc].nv", "a.nv")
+    assert(Glob.match("[!abc].nv", "d.nv"))
+    assert(!Glob.match("[!abc].nv", "a.nv"))
 }
 
 test "complex pattern" {
-    assert Glob.match("src/**/*.nv", "src/main.nv")
-    assert Glob.match("src/**/*.nv", "src/admin/audit.nv")
-    assert !Glob.match("src/**/*.nv", "tests/main.nv")
+    assert(Glob.match("src/**/*.nv", "src/main.nv"))
+    assert(Glob.match("src/**/*.nv", "src/admin/audit.nv"))
+    assert(!Glob.match("src/**/*.nv", "tests/main.nv"))
 }

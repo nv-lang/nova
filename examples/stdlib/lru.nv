@@ -95,9 +95,9 @@ test "basic put/get" {
     cache.put("b", 2)
     cache.put("c", 3)
 
-    assert cache.get("a") == Some(1)
-    assert cache.get("b") == Some(2)
-    assert cache.get("c") == Some(3)
+    assert(cache.get("a") == Some(1))
+    assert(cache.get("b") == Some(2))
+    assert(cache.get("c") == Some(3))
 }
 
 test "eviction at capacity" {
@@ -106,9 +106,9 @@ test "eviction at capacity" {
     cache.put("b", 2)
     cache.put("c", 3)              // evicts "a" (LRU)
 
-    assert cache.get("a") == None
-    assert cache.get("b") == Some(2)
-    assert cache.get("c") == Some(3)
+    assert(cache.get("a") == None)
+    assert(cache.get("b") == Some(2))
+    assert(cache.get("c") == Some(3))
 }
 
 test "get refreshes recency" {
@@ -118,15 +118,15 @@ test "get refreshes recency" {
     let _ = cache.get("a")          // "a" теперь most recent
     cache.put("c", 3)               // evicts "b" (LRU теперь b)
 
-    assert cache.get("a") == Some(1)
-    assert cache.get("b") == None
-    assert cache.get("c") == Some(3)
+    assert(cache.get("a") == Some(1))
+    assert(cache.get("b") == None)
+    assert(cache.get("c") == Some(3))
 }
 
 test "update existing key" {
     let mut cache = Lru[str, int].new(2)
     cache.put("a", 1)
     cache.put("a", 99)
-    assert cache.get("a") == Some(99)
-    assert cache.len == 1
+    assert(cache.get("a") == Some(99))
+    assert(cache.len == 1)
 }

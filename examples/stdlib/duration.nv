@@ -361,111 +361,111 @@ export fn deadline_in(d Duration) Time -> Timestamp =>
 // ──────────────────────────────────────────────────────────────────────────
 
 test "int extensions: basic conversions" {
-    assert 2.seconds() == Duration.from_secs(2)
-    assert 100.millis() == Duration.from_millis(100)
-    assert 5.minutes() == Duration.from_mins(5)
-    assert 1.hour() == Duration.from_hours(1)
-    assert 3.days() == Duration.from_days(3)
-    assert 2.weeks() == Duration.from_weeks(2)
+    assert(2.seconds() == Duration.from_secs(2))
+    assert(100.millis() == Duration.from_millis(100))
+    assert(5.minutes() == Duration.from_mins(5))
+    assert(1.hour() == Duration.from_hours(1))
+    assert(3.days() == Duration.from_days(3))
+    assert(2.weeks() == Duration.from_weeks(2))
 }
 
 test "f64 extensions: fractional values" {
-    assert 0.5.seconds() == 500.millis()
-    assert 1.5.hours() == 90.minutes()
-    assert 0.001.seconds() == 1.millis()
+    assert(0.5.seconds() == 500.millis())
+    assert(1.5.hours() == 90.minutes())
+    assert(0.001.seconds() == 1.millis())
 }
 
 test "arithmetic: plus / minus / neg" {
     let total = 1.hour() + 30.minutes()
-    assert total == 90.minutes()
+    assert(total == 90.minutes())
 
     let diff = 1.hour() - 15.minutes()
-    assert diff == 45.minutes()
+    assert(diff == 45.minutes())
 
     let n = -(5.seconds())
-    assert n.is_negative()
-    assert n.abs() == 5.seconds()
+    assert(n.is_negative())
+    assert(n.abs() == 5.seconds())
 }
 
 test "arithmetic: times / div" {
-    assert 5.seconds() * 3 == 15.seconds()
-    assert 1.minute() / 4 == 15.seconds()
-    assert 10.seconds() * 1.5 == 15.seconds()       // f64 multiplier
-    assert 30.seconds() / 1.5 == 20.seconds()
+    assert(5.seconds() * 3 == 15.seconds())
+    assert(1.minute() / 4 == 15.seconds())
+    assert(10.seconds() * 1.5 == 15.seconds()       // f64 multiplier)
+    assert(30.seconds() / 1.5 == 20.seconds())
 }
 
 test "ratio between durations" {
     let r = 30.seconds().ratio(1.minute())
-    assert r == 0.5
+    assert(r == 0.5)
 }
 
 test "comparison" {
-    assert 1.second() < 1.minute()
-    assert 1.hour() > 30.minutes()
-    assert 60.seconds() == 1.minute()
+    assert(1.second() < 1.minute())
+    assert(1.hour() > 30.minutes())
+    assert(60.seconds() == 1.minute())
 }
 
 test "min / max" {
-    assert 5.seconds().min(10.seconds()) == 5.seconds()
-    assert 5.seconds().max(10.seconds()) == 10.seconds()
+    assert(5.seconds().min(10.seconds()) == 5.seconds())
+    assert(5.seconds().max(10.seconds()) == 10.seconds())
 }
 
 test "predicates" {
-    assert Duration.ZERO.is_zero()
+    assert(Duration.ZERO.is_zero())
     assert (-1.second()).is_negative()
-    assert 1.second().is_positive()
+    assert(1.second().is_positive())
 }
 
 test "parts: декомпозиция" {
     let d = 1.day() + 2.hours() + 30.minutes() + 45.seconds()
     let p = d.parts()
-    assert p.days == 1
-    assert p.hours == 2
-    assert p.minutes == 30
-    assert p.seconds == 45
+    assert(p.days == 1)
+    assert(p.hours == 2)
+    assert(p.minutes == 30)
+    assert(p.seconds == 45)
 }
 
 test "into[str]: auto-scale" {
-    assert 500.nanos().into() == "500ns"
-    assert 150.micros().into() == "150μs"
-    assert 42.millis().into() == "42ms"
-    assert 2.seconds().into() == "2s"
-    assert 5.minutes().into() == "5min"
-    assert 2.hours().into() == "2h"
+    assert(500.nanos().into() == "500ns")
+    assert(150.micros().into() == "150μs")
+    assert(42.millis().into() == "42ms")
+    assert(2.seconds().into() == "2s")
+    assert(5.minutes().into() == "5min")
+    assert(2.hours().into() == "2h")
 }
 
 test "into_human: компонентами" {
     let d = 1.day() + 2.hours() + 30.minutes()
     let s = d.into_human()
-    assert s.contains("1d")
-    assert s.contains("2h")
-    assert s.contains("30min")
+    assert(s.contains("1d"))
+    assert(s.contains("2h"))
+    assert(s.contains("30min"))
 }
 
 test "Timestamp arithmetic: ts + duration → ts" {
     let t1 = Timestamp.from_unix_secs(1000)
     let t2 = t1 + 30.seconds()
-    assert t2.as_unix_secs() == 1030
+    assert(t2.as_unix_secs() == 1030)
 }
 
 test "Timestamp arithmetic: ts - ts → duration" {
     let t1 = Timestamp.from_unix_secs(1000)
     let t2 = Timestamp.from_unix_secs(1042)
     let elapsed = t2 - t1
-    assert elapsed == 42.seconds()
+    assert(elapsed == 42.seconds())
 }
 
 test "Timestamp comparison" {
     let t1 = Timestamp.from_unix_secs(1000)
     let t2 = Timestamp.from_unix_secs(2000)
-    assert t1 < t2
-    assert t2 > t1
+    assert(t1 < t2)
+    assert(t2 > t1)
 }
 
 test "AI-first: Time fixed → детерминированный код" {
     with Time = fixed_ms(1700000000000) {
         let now = Time.now()
-        assert now.as_unix_millis() == 1700000000000
+        assert(now.as_unix_millis() == 1700000000000)
     }
 }
 
@@ -473,31 +473,31 @@ test "deadline_in + is_past через Time-handler" {
     with Time = fixed_ms(1000) {
         let dl = deadline_in(5.seconds())
         // Сейчас 1000ms = 1s; deadline = 1s + 5s = 6s
-        assert dl.as_unix_secs() == 6
-        assert !dl.is_past()
+        assert(dl.as_unix_secs() == 6)
+        assert(!dl.is_past())
     }
     with Time = fixed_ms(10_000) {
         // 10 секунд после epoch — deadline 6s уже прошёл
         let dl = Timestamp.from_unix_secs(6)
-        assert dl.is_past()
+        assert(dl.is_past())
     }
 }
 
 test "measure: длительность action'а" {
     with Time = fixed_ms(1000) {
         let (result, elapsed) = measure(() => 42)
-        assert result == 42
+        assert(result == 42)
         // С fixed_ms всегда возвращает то же — elapsed = 0
-        assert elapsed == Duration.ZERO
+        assert(elapsed == Duration.ZERO)
     }
 }
 
 test "elapsed / time_until" {
     with Time = fixed_ms(5000) {
         let earlier = Timestamp.from_unix_secs(2)
-        assert earlier.elapsed() == 3.seconds()    // 5s - 2s
+        assert(earlier.elapsed() == 3.seconds()    // 5s - 2s)
 
         let later = Timestamp.from_unix_secs(10)
-        assert later.time_until() == 5.seconds()   // 10s - 5s
+        assert(later.time_until() == 5.seconds()   // 10s - 5s)
     }
 }

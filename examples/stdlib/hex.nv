@@ -93,22 +93,22 @@ fn digit_value(s str, pos int) Fail[ParseHexError] -> int {
 
 test "encode: пустой массив" {
     let empty []byte = []
-    assert Hex.encode(empty) == ""
+    assert(Hex.encode(empty) == "")
 }
 
 test "encode: lowercase по умолчанию" {
     let data []byte = [0xDE, 0xAD, 0xBE, 0xEF]
-    assert Hex.encode(data) == "deadbeef"
+    assert(Hex.encode(data) == "deadbeef")
 }
 
 test "encode_upper: uppercase" {
     let data []byte = [0xDE, 0xAD, 0xBE, 0xEF]
-    assert Hex.encode_upper(data) == "DEADBEEF"
+    assert(Hex.encode_upper(data) == "DEADBEEF")
 }
 
 test "encode: leading zeros сохраняются" {
     let data []byte = [0x00, 0x01, 0x0F]
-    assert Hex.encode(data) == "00010f"
+    assert(Hex.encode(data) == "00010f")
 }
 
 test "decode: round-trip" {
@@ -121,13 +121,13 @@ test "decode: round-trip" {
     for data in cases {
         let encoded = Hex.encode(data)
         let decoded = Hex.decode(encoded)
-        assert decoded == data
+        assert(decoded == data)
     }
 }
 
 test "decode: case-insensitive" {
-    assert Hex.decode("DEADbeef") == [0xDE, 0xAD, 0xBE, 0xEF]
-    assert Hex.decode("deadBEEF") == [0xDE, 0xAD, 0xBE, 0xEF]
+    assert(Hex.decode("DEADbeef") == [0xDE, 0xAD, 0xBE, 0xEF])
+    assert(Hex.decode("deadBEEF") == [0xDE, 0xAD, 0xBE, 0xEF])
 }
 
 test "decode: ошибка — нечётная длина" {
@@ -135,7 +135,7 @@ test "decode: ошибка — нечётная длина" {
         let _ = Hex.decode("abc")
         None
     }
-    assert match r {
+    assert(match r {)
         Some(OddLength { .. }) => true
         _                       => false
     }
@@ -146,7 +146,7 @@ test "decode: ошибка — невалидный символ" {
         let _ = Hex.decode("abXY")
         None
     }
-    assert match r {
+    assert(match r {)
         Some(InvalidChar { .. }) => true
         _                         => false
     }

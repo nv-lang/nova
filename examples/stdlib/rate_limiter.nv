@@ -79,11 +79,11 @@ test "burst в пределах capacity" {
         // 5 запросов подряд — все проходят
         let mut i = 0
         while i < 5 {
-            assert bucket.try_acquire()
+            assert(bucket.try_acquire())
             i += 1
         }
         // 6-й — отказ
-        assert !bucket.try_acquire()
+        assert(!bucket.try_acquire())
     }
 }
 
@@ -94,21 +94,21 @@ test "refill через прошедшее время" {
 
     // На t=0 — 2 tokens
     with Time = fixed_ms(0) {
-        assert bucket.try_acquire()
-        assert bucket.try_acquire()
-        assert !bucket.try_acquire()                    // empty
+        assert(bucket.try_acquire())
+        assert(bucket.try_acquire())
+        assert(!bucket.try_acquire()                    // empty)
     }
 
     // На t=1500ms — refill 1.5 tokens, можем взять 1
     with Time = fixed_ms(1500) {
-        assert bucket.try_acquire()
+        assert(bucket.try_acquire())
         // ещё 0.5 — не хватит на 1
-        assert !bucket.try_acquire()
+        assert(!bucket.try_acquire())
     }
 
     // На t=2500ms — добралось до 1.5 tokens, ещё 1
     with Time = fixed_ms(2500) {
-        assert bucket.try_acquire()
+        assert(bucket.try_acquire())
     }
 }
 
@@ -119,11 +119,11 @@ test "capacity ограничивает refill" {
 
     // Через 100 секунд — должен оставаться 3 (capped)
     with Time = fixed_ms(100_000) {
-        assert bucket.available() == 3.0
-        assert bucket.try_acquire()
-        assert bucket.try_acquire()
-        assert bucket.try_acquire()
-        assert !bucket.try_acquire()
+        assert(bucket.available() == 3.0)
+        assert(bucket.try_acquire())
+        assert(bucket.try_acquire())
+        assert(bucket.try_acquire())
+        assert(!bucket.try_acquire())
     }
 }
 
@@ -133,9 +133,9 @@ test "try_acquire_n: атомарность" {
     }
 
     with Time = fixed_ms(0) {
-        assert bucket.try_acquire_n(3)               // ok
-        assert !bucket.try_acquire_n(3)               // нет 3, отказ
-        assert bucket.try_acquire_n(2)                // ровно 2 — ok
-        assert !bucket.try_acquire_n(1)               // empty
+        assert(bucket.try_acquire_n(3)               // ok)
+        assert(!bucket.try_acquire_n(3)               // нет 3, отказ)
+        assert(bucket.try_acquire_n(2)                // ровно 2 — ok)
+        assert(!bucket.try_acquire_n(1)               // empty)
     }
 }

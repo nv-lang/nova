@@ -243,52 +243,52 @@ fn escape_html(s str) -> str {
 // ──────────────────────────────────────────────────────────────────────────
 
 test "headings" {
-    assert Markdown.to_html("# Hello").contains("<h1>Hello</h1>")
-    assert Markdown.to_html("## World").contains("<h2>World</h2>")
-    assert Markdown.to_html("###### Six").contains("<h6>Six</h6>")
+    assert(Markdown.to_html("# Hello").contains("<h1>Hello</h1>"))
+    assert(Markdown.to_html("## World").contains("<h2>World</h2>"))
+    assert(Markdown.to_html("###### Six").contains("<h6>Six</h6>"))
 }
 
 test "paragraph" {
     let html = Markdown.to_html("This is a paragraph.")
-    assert html.contains("<p>This is a paragraph.</p>")
+    assert(html.contains("<p>This is a paragraph.</p>"))
 }
 
 test "bold and italic" {
     let html = Markdown.to_html("**bold** and *italic*")
-    assert html.contains("<strong>bold</strong>")
-    assert html.contains("<em>italic</em>")
+    assert(html.contains("<strong>bold</strong>"))
+    assert(html.contains("<em>italic</em>"))
 }
 
 test "inline code" {
     let html = Markdown.to_html("Use `code` here")
-    assert html.contains("<code>code</code>")
+    assert(html.contains("<code>code</code>"))
 }
 
 test "link" {
     let html = Markdown.to_html("Visit [example](https://example.com)")
-    assert html.contains("<a href=\"https://example.com\">example</a>")
+    assert(html.contains("<a href=\"https://example.com\">example</a>"))
 }
 
 test "code block" {
     let md = "```\nlet x = 1\n```\n"
     let html = Markdown.to_html(md)
-    assert html.contains("<pre><code>")
-    assert html.contains("let x = 1")
-    assert html.contains("</code></pre>")
+    assert(html.contains("<pre><code>"))
+    assert(html.contains("let x = 1"))
+    assert(html.contains("</code></pre>"))
 }
 
 test "bullet list" {
     let md = "- one\n- two\n- three\n"
     let html = Markdown.to_html(md)
-    assert html.contains("<ul>")
-    assert html.contains("<li>one</li>")
-    assert html.contains("<li>two</li>")
-    assert html.contains("</ul>")
+    assert(html.contains("<ul>"))
+    assert(html.contains("<li>one</li>"))
+    assert(html.contains("<li>two</li>"))
+    assert(html.contains("</ul>"))
 }
 
 test "html escape" {
     let html = Markdown.to_html("a < b & c > d")
-    assert html.contains("&lt;")
-    assert html.contains("&gt;")
-    assert html.contains("&amp;")
+    assert(html.contains("&lt;"))
+    assert(html.contains("&gt;"))
+    assert(html.contains("&amp;"))
 }

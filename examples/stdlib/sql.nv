@@ -289,11 +289,11 @@ export fn SqlBuilder @build() -> Sql {
 test "sql tag builds template with placeholders" {
     let user_id = 42
     let q = sql`SELECT * FROM users WHERE id = ${user_id}`
-    assert q.template == "SELECT * FROM users WHERE id = ?"
-    assert q.args.len == 1
+    assert(q.template == "SELECT * FROM users WHERE id = ?")
+    assert(q.args.len == 1)
     match q.args[0] {
-        I(n) => assert n == 42
-        _    => assert false
+        I(n) => assert(n == 42)
+        _    => assert(false)
     }
 }
 
@@ -301,50 +301,50 @@ test "sql tag with multiple args preserves order" {
     let name = "alice"
     let age  = 30
     let q = sql`INSERT INTO users (name, age) VALUES (${name}, ${age})`
-    assert q.template == "INSERT INTO users (name, age) VALUES (?, ?)"
-    assert q.args.len == 2
+    assert(q.template == "INSERT INTO users (name, age) VALUES (?, ?)")
+    assert(q.args.len == 2)
     match q.args[0] {
-        S(s) => assert s == "alice"
-        _    => assert false
+        S(s) => assert(s == "alice")
+        _    => assert(false)
     }
     match q.args[1] {
-        I(n) => assert n == 30
-        _    => assert false
+        I(n) => assert(n == 30)
+        _    => assert(false)
     }
 }
 
 test "sql tag with no interpolation" {
     let q = sql`SELECT 1`
-    assert q.template == "SELECT 1"
-    assert q.args.len == 0
+    assert(q.template == "SELECT 1")
+    assert(q.args.len == 0)
 }
 
 test "DbRow.get and DbRow.at" {
     let row DbRow = { columns: ["id", "name"], values: [42, "alice"] }
     match row.get("id") {
-        Some(I(n)) => assert n == 42
-        _          => assert false
+        Some(I(n)) => assert(n == 42)
+        _          => assert(false)
     }
     match row.at(1) {
-        Some(S(s)) => assert s == "alice"
-        _          => assert false
+        Some(S(s)) => assert(s == "alice")
+        _          => assert(false)
     }
-    assert row.get("missing") == None
-    assert row.at(99) == None
+    assert(row.get("missing") == None)
+    assert(row.at(99) == None)
 }
 
 test "DbRow.get_int / get_str — typed accessors" {
     let row DbRow = { columns: ["id", "name"], values: [42, "alice"] }
-    assert row.get_int("id") == 42
-    assert row.get_str("name") == "alice"
+    assert(row.get_int("id") == 42)
+    assert(row.get_str("name") == "alice")
 }
 
 test "Sql.concat — fragments compose with args preserved" {
     let a Sql = { template: "SELECT * FROM users WHERE id = ?", args: [1] }
     let b Sql = { template: "AND name = ?", args: ["alice"] }
     let combined = a.concat(b)
-    assert combined.template == "SELECT * FROM users WHERE id = ? AND name = ?"
-    assert combined.args.len == 2
+    assert(combined.template == "SELECT * FROM users WHERE id = ? AND name = ?")
+    assert(combined.args.len == 2)
 }
 
 test "Sql.builder — fluent WHERE composition" {
@@ -354,15 +354,15 @@ test "Sql.builder — fluent WHERE composition" {
         .set_suffix(sql`ORDER BY created_at DESC LIMIT 10`)
         .build()
 
-    assert q.template.contains("AND status = ?")
-    assert q.template.contains("AND role IN (?, ?)")
-    assert q.template.contains("ORDER BY created_at DESC LIMIT 10")
-    assert q.args.len == 3
+    assert(q.template.contains("AND status = ?"))
+    assert(q.template.contains("AND role IN (?, ?)"))
+    assert(q.template.contains("ORDER BY created_at DESC LIMIT 10"))
+    assert(q.args.len == 3)
 }
 
 test "Sql.with_filter — handler-decorator use case" {
     let original = sql`SELECT * FROM users WHERE active = ${true}`
     let filtered = original.with_filter(sql`deleted_at IS NULL`)
-    assert filtered.template.contains("AND (deleted_at IS NULL)")
-    assert filtered.args.len == 1                      // только original.args
+    assert(filtered.template.contains("AND (deleted_at IS NULL)"))
+    assert(filtered.args.len == 1                      // только original.args)
 }

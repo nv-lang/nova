@@ -225,15 +225,15 @@ fn field_contains(f CronField, v int) -> bool {
 test "parse: every minute" {
     let e = Cron.parse("* * * * *")
     let t CronTime = { minute: 30, hour: 12, day_month: 15, month: 6, day_week: 3 }
-    assert e.matches(t)
+    assert(e.matches(t))
 }
 
 test "parse: top of hour" {
     let e = Cron.parse("0 * * * *")
     let t1 CronTime = { minute: 0, hour: 5, day_month: 1, month: 1, day_week: 0 }
     let t2 CronTime = { minute: 1, hour: 5, day_month: 1, month: 1, day_week: 0 }
-    assert e.matches(t1)
-    assert !e.matches(t2)
+    assert(e.matches(t1))
+    assert(!e.matches(t2))
 }
 
 test "parse: weekdays 9-17" {
@@ -241,9 +241,9 @@ test "parse: weekdays 9-17" {
     let monday_10 CronTime = { minute: 0, hour: 10, day_month: 1, month: 1, day_week: 1 }
     let monday_18 CronTime = { minute: 0, hour: 18, day_month: 1, month: 1, day_week: 1 }
     let saturday_10 CronTime = { minute: 0, hour: 10, day_month: 1, month: 1, day_week: 6 }
-    assert e.matches(monday_10)
-    assert !e.matches(monday_18)
-    assert !e.matches(saturday_10)
+    assert(e.matches(monday_10))
+    assert(!e.matches(monday_18))
+    assert(!e.matches(saturday_10))
 }
 
 test "parse: */15 каждые 15 минут" {
@@ -251,9 +251,9 @@ test "parse: */15 каждые 15 минут" {
     let zero CronTime = { minute: 0, hour: 0, day_month: 1, month: 1, day_week: 0 }
     let fifteen CronTime = { minute: 15, hour: 0, day_month: 1, month: 1, day_week: 0 }
     let seven CronTime = { minute: 7, hour: 0, day_month: 1, month: 1, day_week: 0 }
-    assert e.matches(zero)
-    assert e.matches(fifteen)
-    assert !e.matches(seven)
+    assert(e.matches(zero))
+    assert(e.matches(fifteen))
+    assert(!e.matches(seven))
 }
 
 test "parse: list" {
@@ -261,9 +261,9 @@ test "parse: list" {
     let t0 CronTime = { minute: 0, hour: 0, day_month: 1, month: 1, day_week: 0 }
     let t30 CronTime = { minute: 30, hour: 0, day_month: 1, month: 1, day_week: 0 }
     let t15 CronTime = { minute: 15, hour: 0, day_month: 1, month: 1, day_week: 0 }
-    assert e.matches(t0)
-    assert e.matches(t30)
-    assert !e.matches(t15)
+    assert(e.matches(t0))
+    assert(e.matches(t30))
+    assert(!e.matches(t15))
 }
 
 test "parse: ошибка — out of range" {
@@ -271,7 +271,7 @@ test "parse: ошибка — out of range" {
         let _ = Cron.parse("0 25 * * *")          // hour > 23
         None
     }
-    assert match r {
+    assert(match r {)
         Some(OutOfRange { .. }) => true
         _                        => false
     }
@@ -282,7 +282,7 @@ test "parse: ошибка — wrong field count" {
         let _ = Cron.parse("0 0 0")
         None
     }
-    assert match r {
+    assert(match r {)
         Some(InvalidFieldCount { .. }) => true
         _                               => false
     }

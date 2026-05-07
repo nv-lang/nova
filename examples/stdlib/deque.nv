@@ -99,11 +99,11 @@ test "push_back / pop_back" {
     d.push_back(1)
     d.push_back(2)
     d.push_back(3)
-    assert d.len == 3
-    assert d.pop_back() == Some(3)
-    assert d.pop_back() == Some(2)
-    assert d.pop_back() == Some(1)
-    assert d.pop_back() == None
+    assert(d.len == 3)
+    assert(d.pop_back() == Some(3))
+    assert(d.pop_back() == Some(2))
+    assert(d.pop_back() == Some(1))
+    assert(d.pop_back() == None)
 }
 
 test "push_front / pop_front" {
@@ -111,12 +111,12 @@ test "push_front / pop_front" {
     d.push_front(1)
     d.push_front(2)
     d.push_front(3)                    // d = [3, 2, 1]
-    assert d.front() == Some(3)
-    assert d.back() == Some(1)
-    assert d.pop_front() == Some(3)
-    assert d.pop_front() == Some(2)
-    assert d.pop_front() == Some(1)
-    assert d.is_empty()
+    assert(d.front() == Some(3))
+    assert(d.back() == Some(1))
+    assert(d.pop_front() == Some(3))
+    assert(d.pop_front() == Some(2))
+    assert(d.pop_front() == Some(1))
+    assert(d.is_empty())
 }
 
 test "mixed push_back + pop_front (FIFO queue)" {
@@ -124,9 +124,9 @@ test "mixed push_back + pop_front (FIFO queue)" {
     d.push_back("a")
     d.push_back("b")
     d.push_back("c")
-    assert d.pop_front() == Some("a")
-    assert d.pop_front() == Some("b")
-    assert d.pop_front() == Some("c")
+    assert(d.pop_front() == Some("a"))
+    assert(d.pop_front() == Some("b"))
+    assert(d.pop_front() == Some("c"))
 }
 
 test "BFS-like sliding window" {
@@ -139,13 +139,13 @@ test "BFS-like sliding window" {
         }
     }
     // Window of size 3 на конце
-    assert d.len == 3
-    assert d.front() == Some(3)
-    assert d.back() == Some(5)
+    assert(d.len == 3)
+    assert(d.front() == Some(3))
+    assert(d.back() == Some(5))
 }
 
 test "front/back пустого deque" {
     let d = Deque[int].new()
-    assert d.front() == None
-    assert d.back() == None
+    assert(d.front() == None)
+    assert(d.back() == None)
 }

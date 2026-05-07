@@ -123,22 +123,22 @@ export fn Set[T] @iter() => @map.keys()
 
 test "insert returns true for new, false for existing" {
     let mut s = Set[int].new()
-    assert s.insert(1) == true
-    assert s.insert(1) == false      // повтор
-    assert s.insert(2) == true
-    assert s.len() == 2
+    assert(s.insert(1) == true)
+    assert(s.insert(1) == false      // повтор)
+    assert(s.insert(2) == true)
+    assert(s.len() == 2)
 }
 
 test "contains works after insert/remove" {
     let mut s = Set[str].new()
     s.insert("alice")
     s.insert("bob")
-    assert s.contains("alice")
-    assert s.contains("bob")
-    assert !s.contains("charlie")
+    assert(s.contains("alice"))
+    assert(s.contains("bob"))
+    assert(!s.contains("charlie"))
     s.remove("alice")
-    assert !s.contains("alice")
-    assert s.contains("bob")
+    assert(!s.contains("alice"))
+    assert(s.contains("bob"))
 }
 
 test "union and intersection with operator overloading" {
@@ -146,13 +146,13 @@ test "union and intersection with operator overloading" {
     let b = Set[int].from_iter([2, 3, 4].iter())
 
     let union = a | b
-    assert union.len() == 4
-    assert union.contains(1) && union.contains(4)
+    assert(union.len() == 4)
+    assert(union.contains(1) && union.contains(4))
 
     let inter = a & b
-    assert inter.len() == 2
-    assert inter.contains(2) && inter.contains(3)
-    assert !inter.contains(1) && !inter.contains(4)
+    assert(inter.len() == 2)
+    assert(inter.contains(2) && inter.contains(3))
+    assert(!inter.contains(1) && !inter.contains(4))
 }
 
 test "difference" {
@@ -160,6 +160,6 @@ test "difference" {
     let b = Set[int].from_iter([2, 4].iter())
 
     let diff = a - b
-    assert diff.len() == 2
-    assert diff.contains(1) && diff.contains(3)
+    assert(diff.len() == 2)
+    assert(diff.contains(1) && diff.contains(3))
 }

@@ -318,10 +318,10 @@ fn hex_value(c char, position int) Fail[ParseUuidError] -> u8 {
 // ──────────────────────────────────────────────────────────────────────────
 
 test "NIL и MAX константы" {
-    assert NIL.is_nil()
-    assert NIL.into() == "00000000-0000-0000-0000-000000000000"
-    assert MAX.into() == "ffffffff-ffff-ffff-ffff-ffffffffffff"
-    assert !MAX.is_nil()
+    assert(NIL.is_nil())
+    assert(NIL.into() == "00000000-0000-0000-0000-000000000000")
+    assert(MAX.into() == "ffffffff-ffff-ffff-ffff-ffffffffffff")
+    assert(!MAX.is_nil())
 }
 
 test "v4: version и variant корректны" {
@@ -329,22 +329,22 @@ test "v4: version и variant корректны" {
         let u = Uuid.v4()
         match u.version() {
             V4 => ()
-            _  => assert false
+            _  => assert(false)
         }
-        assert u.is_rfc4122()
+        assert(u.is_rfc4122())
     }
 }
 
 test "v4: разные seed → разные UUID" {
     let a = with Random = seeded(1) { Uuid.v4() }
     let b = with Random = seeded(2) { Uuid.v4() }
-    assert !a.eq(b)
+    assert(!a.eq(b))
 }
 
 test "v4: одинаковый seed → одинаковый UUID (детерминизм)" {
     let a = with Random = seeded(42) { Uuid.v4() }
     let b = with Random = seeded(42) { Uuid.v4() }
-    assert a.eq(b)
+    assert(a.eq(b))
 }
 
 test "v7: version и timestamp" {
@@ -352,18 +352,18 @@ test "v7: version и timestamp" {
         let u = Uuid.v7()
         match u.version() {
             V7 => ()
-            _  => assert false
+            _  => assert(false)
         }
-        assert u.is_rfc4122()
-        assert u.timestamp_ms() == 1700000000000
+        assert(u.is_rfc4122())
+        assert(u.timestamp_ms() == 1700000000000)
     }
 }
 
 test "v7: lexicographic ordering по timestamp" {
     let earlier = with Time = fixed_ms(1000), Random = seeded(0) { Uuid.v7() }
     let later = with Time = fixed_ms(2000), Random = seeded(0) { Uuid.v7() }
-    assert earlier.lt(later)
-    assert !later.lt(earlier)
+    assert(earlier.lt(later))
+    assert(!later.lt(earlier))
 }
 
 test "round-trip: from(u.into()) == u" {
@@ -376,23 +376,23 @@ test "round-trip: from(u.into()) == u" {
     for u in cases {
         let s = u.into()
         let parsed = Uuid.from(s)
-        assert parsed.eq(u)
+        assert(parsed.eq(u))
     }
 }
 
 test "from: канонический пример из RFC 4122" {
     let u = Uuid.from("550e8400-e29b-41d4-a716-446655440000")
-    assert u.into() == "550e8400-e29b-41d4-a716-446655440000"
+    assert(u.into() == "550e8400-e29b-41d4-a716-446655440000")
     match u.version() {
         V4 => ()
-        _  => assert false
+        _  => assert(false)
     }
 }
 
 test "from: case-insensitive hex" {
     let lower = Uuid.from("550e8400-e29b-41d4-a716-446655440000")
     let upper = Uuid.from("550E8400-E29B-41D4-A716-446655440000")
-    assert lower.eq(upper)
+    assert(lower.eq(upper))
 }
 
 test "from: ошибка — неправильная длина" {
@@ -400,7 +400,7 @@ test "from: ошибка — неправильная длина" {
         let _ = Uuid.from("too-short")
         None
     }
-    assert match r {
+    assert(match r {)
         Some(InvalidLength { .. }) => true
         _                           => false
     }
@@ -411,7 +411,7 @@ test "from: ошибка — отсутствует дефис" {
         let _ = Uuid.from("550e8400xe29b-41d4-a716-446655440000")
         None
     }
-    assert match r {
+    assert(match r {)
         Some(MissingDash { .. }) => true
         _                         => false
     }
@@ -422,7 +422,7 @@ test "from: ошибка — не-hex символ" {
         let _ = Uuid.from("550e8400-e29b-41d4-a716-44665544000Z")
         None
     }
-    assert match r {
+    assert(match r {)
         Some(InvalidHex { .. }) => true
         _                        => false
     }
@@ -433,10 +433,10 @@ test "ordering: total order на UUID" {
     let b = Uuid.new(1, 1)
     let c = Uuid.new(2, 0)
 
-    assert a.lt(b)
-    assert b.lt(c)
-    assert a.lt(c)
-    assert !c.lt(a)
+    assert(a.lt(b))
+    assert(b.lt(c))
+    assert(a.lt(c))
+    assert(!c.lt(a))
 }
 
 test "AI-first: тест UUID-генерации детерминистичен через handler" {
@@ -446,7 +446,7 @@ test "AI-first: тест UUID-генерации детерминистичен 
         let u1 = Uuid.v4()
         let u2 = Uuid.v4()
         // Воспроизводимо: тот же seed → те же UUID при любом запуске.
-        assert u1.into() == u1.into()
-        assert !u1.eq(u2)
+        assert(u1.into() == u1.into())
+        assert(!u1.eq(u2))
     }
 }

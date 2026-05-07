@@ -106,41 +106,41 @@ test "FIFO order" {
     q.push(1)
     q.push(2)
     q.push(3)
-    assert q.pop() == Some(1)
-    assert q.pop() == Some(2)
-    assert q.pop() == Some(3)
-    assert q.pop() == None
+    assert(q.pop() == Some(1))
+    assert(q.pop() == Some(2))
+    assert(q.pop() == Some(3))
+    assert(q.pop() == None)
 }
 
 test "interleaved push/pop" {
     let mut q = Queue[int].new()
     q.push(1)
     q.push(2)
-    assert q.pop() == Some(1)
+    assert(q.pop() == Some(1))
     q.push(3)
     q.push(4)
-    assert q.pop() == Some(2)
-    assert q.pop() == Some(3)
+    assert(q.pop() == Some(2))
+    assert(q.pop() == Some(3))
     q.push(5)
-    assert q.pop() == Some(4)
-    assert q.pop() == Some(5)
-    assert q.is_empty()
+    assert(q.pop() == Some(4))
+    assert(q.pop() == Some(5))
+    assert(q.is_empty())
 }
 
 test "peek doesn't remove" {
     let mut q = Queue[int].new()
     q.push(42)
-    assert q.peek() == Some(42)
-    assert q.peek() == Some(42)              // повторно — то же значение
-    assert q.len() == 1
-    assert q.pop() == Some(42)
-    assert q.peek() == None
+    assert(q.peek() == Some(42))
+    assert(q.peek() == Some(42)              // повторно — то же значение)
+    assert(q.len() == 1)
+    assert(q.pop() == Some(42))
+    assert(q.peek() == None)
 }
 
 test "empty queue" {
     let mut q Queue[int] = Queue[int].new()
-    assert q.is_empty()
-    assert q.len() == 0
-    assert q.pop() == None
-    assert q.peek() == None
+    assert(q.is_empty())
+    assert(q.len() == 0)
+    assert(q.pop() == None)
+    assert(q.peek() == None)
 }

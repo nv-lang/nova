@@ -100,8 +100,8 @@ test "next: monotonic в одной ms" {
         let b = gen.next()
         let c = gen.next()
         // Все три в той же ms — sequence 0, 1, 2
-        assert a < b
-        assert b < c
+        assert(a < b)
+        assert(b < c)
     }
 }
 
@@ -109,16 +109,16 @@ test "next: разные ms → разные ID" {
     let mut gen = SnowflakeGen.new(5)
     let id1 = with Time = fixed_ms(1000) { gen.next() }
     let id2 = with Time = fixed_ms(2000) { gen.next() }
-    assert id1 < id2
+    assert(id1 < id2)
 }
 
 test "parse: round-trip компонентов" {
     let mut gen = SnowflakeGen.new(42)
     let id = with Time = fixed_ms(1700000000000) { gen.next() }
     let parts = Snowflake.parse(id)
-    assert parts.timestamp_ms == 1700000000000
-    assert parts.machine_id == 42
-    assert parts.sequence == 0
+    assert(parts.timestamp_ms == 1700000000000)
+    assert(parts.machine_id == 42)
+    assert(parts.sequence == 0)
 }
 
 test "ошибка — невалидный machine_id" {
@@ -126,7 +126,7 @@ test "ошибка — невалидный machine_id" {
         let _ = SnowflakeGen.new(2000)
         None
     }
-    assert match r {
+    assert(match r {)
         Some(InvalidMachineId { .. }) => true
         _                              => false
     }
@@ -139,7 +139,7 @@ test "ошибка — clock backwards" {
         let _ = gen.next()
         None
     }
-    assert match r {
+    assert(match r {)
         Some(ClockBackwards { .. }) => true
         _                            => false
     }
