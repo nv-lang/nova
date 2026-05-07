@@ -1,0 +1,287 @@
+// stdlib/sha256.nv — SHA-256 hash function.
+//
+// Independent implementation per FIPS 180-4:
+// https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.180-4.pdf
+//
+// SHA-256 — криптографически стойкая (на 2026-05). Подходит для:
+//   - File integrity, etag
+//   - Digital signatures (с подписью отдельно)
+//   - HMAC (см. hmac.nv)
+//   - JWT signing (см. jwt.nv)
+//   - Merkle trees, content-addressable storage
+//
+// НЕ для:
+//   - Password hashing — argon2/bcrypt/scrypt
+//   - Случайные числа — `Random` effect
+//
+// API:
+//   Sha256.hash(data []byte) -> [32]byte
+//   Sha256.hash_str(data []byte) -> str        // 64-char hex
+//
+// Incremental:
+//   let mut state = Sha256.new()
+//   state.update(chunk1)
+//   state.update(chunk2)
+//   let digest = state.finalize()
+
+module std.sha256
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// State
+// ──────────────────────────────────────────────────────────────────────────
+
+export type Sha256 {
+    mut h [8]u32                       // hash state H0..H7
+    mut buffer []byte                   // pending < 64 bytes
+    mut total_len u64                   // total bytes
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Constants — FIPS 180-4 § 4.2.2
+// ──────────────────────────────────────────────────────────────────────────
+
+// Initial hash values H0..H7 = first 32 bits of fractional parts
+// of square roots of first 8 primes.
+fn initial_h() -> [8]u32 =>
+    [
+        0x6A09E667, 0xBB67AE85, 0x3C6EF372, 0xA54FF53A,
+        0x510E527F, 0x9B05688C, 0x1F83D9AB, 0x5BE0CD19,
+    ]
+
+// Round constants K0..K63 = first 32 bits of fractional parts of
+// cube roots of first 64 primes.
+fn k_constant(i int) -> u32 {
+    let table [64]u32 = [
+        0x428A2F98, 0x71374491, 0xB5C0FBCF, 0xE9B5DBA5,
+        0x3956C25B, 0x59F111F1, 0x923F82A4, 0xAB1C5ED5,
+        0xD807AA98, 0x12835B01, 0x243185BE, 0x550C7DC3,
+        0x72BE5D74, 0x80DEB1FE, 0x9BDC06A7, 0xC19BF174,
+        0xE49B69C1, 0xEFBE4786, 0x0FC19DC6, 0x240CA1CC,
+        0x2DE92C6F, 0x4A7484AA, 0x5CB0A9DC, 0x76F988DA,
+        0x983E5152, 0xA831C66D, 0xB00327C8, 0xBF597FC7,
+        0xC6E00BF3, 0xD5A79147, 0x06CA6351, 0x14292967,
+        0x27B70A85, 0x2E1B2138, 0x4D2C6DFC, 0x53380D13,
+        0x650A7354, 0x766A0ABB, 0x81C2C92E, 0x92722C85,
+        0xA2BFE8A1, 0xA81A664B, 0xC24B8B70, 0xC76C51A3,
+        0xD192E819, 0xD6990624, 0xF40E3585, 0x106AA070,
+        0x19A4C116, 0x1E376C08, 0x2748774C, 0x34B0BCB5,
+        0x391C0CB3, 0x4ED8AA4A, 0x5B9CCA4F, 0x682E6FF3,
+        0x748F82EE, 0x78A5636F, 0x84C87814, 0x8CC70208,
+        0x90BEFFFA, 0xA4506CEB, 0xBEF9A3F7, 0xC67178F2,
+    ]
+    table[i]
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// API
+// ──────────────────────────────────────────────────────────────────────────
+
+export fn Sha256.new() -> Self =>
+    {
+        h: initial_h(),
+        buffer: [],
+        total_len: 0,
+    }
+
+export fn Sha256.hash(data []byte) -> [32]byte {
+    let mut state = Sha256.new()
+    state.update(data)
+    state.finalize()
+}
+
+export fn Sha256.hash_str(data []byte) -> str {
+    let digest = Sha256.hash(data)
+    let mut bytes []byte = []
+    let mut i = 0
+    while i < 32 { bytes.push(digest[i]); i += 1 }
+    Hex.encode(bytes)
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Incremental
+// ──────────────────────────────────────────────────────────────────────────
+
+export fn Sha256 mut @update(data []byte) -> () {
+    @total_len = @total_len + (data.len as u64)
+    for b in data {
+        @buffer.push(b)
+        if @buffer.len == 64 {
+            @process_block(@buffer)
+            @buffer = []
+        }
+    }
+}
+
+export fn Sha256 mut @finalize() -> [32]byte {
+    let total_bits = @total_len * 8
+
+    // Padding: 0x80, потом zeros до длины ≡ 56 (mod 64),
+    // потом 8 байт длины в bits big-endian.
+    @buffer.push(0x80)
+    while @buffer.len % 64 != 56 {
+        @buffer.push(0x00)
+    }
+    let mut i = 7
+    while i >= 0 {
+        @buffer.push(((total_bits >> (i * 8)) & 0xFF) as byte)
+        i -= 1
+    }
+
+    let mut pos = 0
+    while pos < @buffer.len {
+        let mut block []byte = []
+        let mut j = 0
+        while j < 64 { block.push(@buffer[pos + j]); j += 1 }
+        @process_block(block)
+        pos += 64
+    }
+
+    // 32 bytes output, big-endian.
+    let mut out [32]byte = [0; 32]
+    let mut k = 0
+    while k < 8 {
+        write_be_u32(out, k * 4, @h[k])
+        k += 1
+    }
+    out
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Internal — process 64-byte block (FIPS 180-4 § 6.2)
+// ──────────────────────────────────────────────────────────────────────────
+
+fn Sha256 mut @process_block(block []byte) -> () {
+    // 1. Prepare message schedule W[0..63]
+    let mut w [64]u32 = [0; 64]
+    let mut t = 0
+    while t < 16 {
+        w[t] = read_be_u32(block, t * 4)
+        t += 1
+    }
+    while t < 64 {
+        let s0 = rotr32(w[t-15], 7) ^ rotr32(w[t-15], 18) ^ (w[t-15] >> 3)
+        let s1 = rotr32(w[t-2], 17) ^ rotr32(w[t-2], 19) ^ (w[t-2] >> 10)
+        w[t] = (w[t-16] + s0 + w[t-7] + s1) & 0xFFFFFFFF
+        t += 1
+    }
+
+    // 2. Init working vars
+    let mut a = @h[0]
+    let mut b = @h[1]
+    let mut c = @h[2]
+    let mut d = @h[3]
+    let mut e = @h[4]
+    let mut f = @h[5]
+    let mut g = @h[6]
+    let mut hh = @h[7]
+
+    // 3. Main loop
+    let mut i = 0
+    while i < 64 {
+        let s1 = rotr32(e, 6) ^ rotr32(e, 11) ^ rotr32(e, 25)
+        let ch = (e & f) ^ ((e ^ 0xFFFFFFFF) & g)
+        let temp1 = (hh + s1 + ch + k_constant(i) + w[i]) & 0xFFFFFFFF
+        let s0 = rotr32(a, 2) ^ rotr32(a, 13) ^ rotr32(a, 22)
+        let maj = (a & b) ^ (a & c) ^ (b & c)
+        let temp2 = (s0 + maj) & 0xFFFFFFFF
+
+        hh = g
+        g = f
+        f = e
+        e = (d + temp1) & 0xFFFFFFFF
+        d = c
+        c = b
+        b = a
+        a = (temp1 + temp2) & 0xFFFFFFFF
+        i += 1
+    }
+
+    // 4. Add to state
+    @h[0] = (@h[0] + a) & 0xFFFFFFFF
+    @h[1] = (@h[1] + b) & 0xFFFFFFFF
+    @h[2] = (@h[2] + c) & 0xFFFFFFFF
+    @h[3] = (@h[3] + d) & 0xFFFFFFFF
+    @h[4] = (@h[4] + e) & 0xFFFFFFFF
+    @h[5] = (@h[5] + f) & 0xFFFFFFFF
+    @h[6] = (@h[6] + g) & 0xFFFFFFFF
+    @h[7] = (@h[7] + hh) & 0xFFFFFFFF
+}
+
+fn rotr32(x u32, n int) -> u32 =>
+    ((x >> n) | (x << (32 - n))) & 0xFFFFFFFF
+
+fn read_be_u32(data []byte, offset int) -> u32 =>
+    ((data[offset] as u32) << 24)
+    | ((data[offset + 1] as u32) << 16)
+    | ((data[offset + 2] as u32) << 8)
+    | (data[offset + 3] as u32)
+
+fn write_be_u32(out mut [32]byte, offset int, v u32) -> () {
+    out[offset]     = ((v >> 24) & 0xFF) as byte
+    out[offset + 1] = ((v >> 16) & 0xFF) as byte
+    out[offset + 2] = ((v >> 8)  & 0xFF) as byte
+    out[offset + 3] = (v & 0xFF) as byte
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Тесты — NIST test vectors
+// ──────────────────────────────────────────────────────────────────────────
+
+test "SHA-256: пустая строка" {
+    assert Sha256.hash_str("".bytes()) ==
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+}
+
+test "SHA-256: 'abc' (NIST sample)" {
+    assert Sha256.hash_str("abc".bytes()) ==
+        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+}
+
+test "SHA-256: 56-byte input (NIST 2-block sample)" {
+    let s = "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"
+    assert Sha256.hash_str(s.bytes()) ==
+        "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1"
+}
+
+test "SHA-256: 1 миллион 'a' — long input stress" {
+    // Известный test vector. Используем incremental чтобы не строить
+    // огромный []byte в памяти.
+    let mut state = Sha256.new()
+    let chunk []byte = []byte.with_capacity(1000)
+    let mut tmp = chunk
+    let mut i = 0
+    while i < 1000 { tmp.push('a' as byte); i += 1 }
+    let mut k = 0
+    while k < 1000 {
+        state.update(tmp)
+        k += 1
+    }
+    let digest = state.finalize()
+    let mut bytes []byte = []
+    let mut j = 0
+    while j < 32 { bytes.push(digest[j]); j += 1 }
+    assert Hex.encode(bytes) ==
+        "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0"
+}
+
+test "SHA-256: incremental == one-shot" {
+    let full = "The quick brown fox jumps over the lazy dog".bytes()
+    let one_shot = Sha256.hash_str(full)
+
+    let mut state = Sha256.new()
+    state.update("The quick brown ".bytes())
+    state.update("fox jumps over ".bytes())
+    state.update("the lazy dog".bytes())
+    let digest = state.finalize()
+    let mut bytes []byte = []
+    let mut i = 0
+    while i < 32 { bytes.push(digest[i]); i += 1 }
+
+    assert one_shot == Hex.encode(bytes)
+}
