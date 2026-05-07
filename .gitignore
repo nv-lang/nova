@@ -50,3 +50,4 @@ docs/.sessions/
 *.ilk
 examples/**/*.c
 nova_tests/**/*.c
+std/**/*.c
