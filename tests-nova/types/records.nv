@@ -72,3 +72,25 @@ test "readonly + mut fields parse" {
     assert(b.id == 1)
     assert(b.value == 100)
 }
+
+// ─── D55 anonymous record literal с inferred type ───
+// `=> { ... }` в позиции с известным `-> ReturnType` codegen
+// использует return type как target struct. До D55-fix падало с
+// "anonymous record literal without spread not supported".
+
+fn make_point() -> Point => { x: 7, y: 11 }
+
+fn make_admin(uid int) -> User => { id: uid, name: "admin", role: "admin" }
+
+test "anonymous record в return-position по сигнатуре fn" {
+    let p = make_point()
+    assert(p.x == 7)
+    assert(p.y == 11)
+}
+
+test "anonymous record для record с большим числом полей" {
+    let u = make_admin(42)
+    assert(u.id == 42)
+    assert(u.name == "admin")
+    assert(u.role == "admin")
+}

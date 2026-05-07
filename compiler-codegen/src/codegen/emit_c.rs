@@ -78,6 +78,10 @@ pub struct CEmitter {
     str_box_arrays: HashSet<String>,
     /// C type of the current method receiver (e.g. "Nova_Box"), for resolving `Self`.
     current_receiver_type: Option<String>,
+    /// Expected struct type для anonymous record literal `=> { ... }` —
+    /// устанавливается при эмите function body, когда нужно использовать
+    /// declared return type как target для anonymous record (D55).
+    expected_record_type: Option<String>,
     /// Maps local variable name → (param_c_types, return_c_type) for function-typed parameters.
     /// Used to emit proper function pointer calls for `body(args)` where body is a fn param.
     fn_param_sigs: HashMap<String, (Vec<String>, String)>,
@@ -143,6 +147,7 @@ impl CEmitter {
             pending_option_inner_type: None,
             str_box_arrays: HashSet::new(),
             current_receiver_type: None,
+            expected_record_type: None,
             fn_param_sigs: HashMap::new(),
             trailing_block_counter: 0,
             lambda_counter: 0,
@@ -2383,6 +2388,8 @@ impl CEmitter {
         }).collect();
         self.current_receiver_type = Some(recv.type_name.clone());
         // Emit body
+        let saved_expected = self.expected_record_type.clone();
+        self.expected_record_type = Self::struct_name_from_c_type(&ret_c);
         match &f.body {
             FnBody::Expr(e) => {
                 self.emit_source_annotation_for_expr(e);
@@ -2398,6 +2405,7 @@ impl CEmitter {
                 self.emit_block_stmts(block, &ret_c)?;
             }
         }
+        self.expected_record_type = saved_expected;
         // Restore params
         for (name, prev) in saved {
             match prev {
@@ -2561,6 +2569,8 @@ impl CEmitter {
         self.indent = 0;
         self.line(&format!("static {} {}({}) {{", ret, mangled, params));
         self.indent = 1;
+        let saved_expected = self.expected_record_type.clone();
+        self.expected_record_type = Self::struct_name_from_c_type(&ret);
         match &f.body {
             FnBody::Expr(e) => {
                 self.emit_source_annotation_for_expr(e);
@@ -2576,6 +2586,7 @@ impl CEmitter {
                 self.emit_block_stmts(block, &ret)?;
             }
         }
+        self.expected_record_type = saved_expected;
         self.indent = 0;
         self.line("}");
         self.line("");
@@ -4724,6 +4735,44 @@ impl CEmitter {
                 }
                 self.var_types.insert(tmp.clone(), format!("Nova_{}*", struct_name));
             }
+        } else if type_name.is_none() && spread_src.is_none()
+            && self.expected_record_type.is_some()
+        {
+            // D55 inferred-type-context: anonymous record `{ a, b }` в позиции
+            // с известным struct-target (e.g. `=> { end: ..., cur: ... }` в fn
+            // с `-> RangeIter`). expected_record_type выставлен emit_fn_body /
+            // emit_method_body перед emit_expr(body).
+            let raw = self.expected_record_type.clone().unwrap();
+            let struct_name = if raw == "Self" {
+                self.current_receiver_type.clone().unwrap_or(raw)
+            } else { raw };
+            if !self.record_schemas.contains_key(&struct_name) {
+                return Err(format!(
+                    "anonymous record literal: expected struct '{}' not in record_schemas",
+                    struct_name));
+            }
+            self.line(&format!("Nova_{0}* {1} = (Nova_{0}*)nova_alloc(sizeof(Nova_{0}));",
+                struct_name, tmp));
+            for f in fields {
+                if f.is_spread { continue; }
+                let val = if let Some(v) = &f.value {
+                    self.emit_expr(v)?
+                } else {
+                    f.name.clone()
+                };
+                let field_ty = self.record_schemas.get(&struct_name)
+                    .and_then(|s| s.get(&f.name)).cloned().unwrap_or_default();
+                if field_ty == "void*" {
+                    let val_ty = if let Some(v) = &f.value {
+                        self.infer_expr_c_type(v)
+                    } else { "nova_int".into() };
+                    let boxed = self.box_value_as_void_ptr(&val, &val_ty);
+                    self.line(&format!("{}->{} = {};", tmp, f.name, boxed));
+                } else {
+                    self.line(&format!("{}->{} = {};", tmp, f.name, val));
+                }
+            }
+            self.var_types.insert(tmp.clone(), format!("Nova_{}*", struct_name));
         } else if let Some(src) = spread_src {
             // Anonymous record with spread: `{ ...p, y: 10.0 }`
             // Determine the struct type from var_types table.
@@ -5593,6 +5642,13 @@ impl CEmitter {
             "byte_len"    => Some("nova_str_byte_len"),
             _ => None,
         }
+    }
+
+    /// Из C-типа `Nova_Foo*` (или `Nova_Foo`) извлечь struct name `Foo`.
+    /// Для не-Nova_-типов возвращает None.
+    fn struct_name_from_c_type(c_ty: &str) -> Option<String> {
+        let trimmed = c_ty.trim_end_matches('*').trim();
+        trimmed.strip_prefix("Nova_").map(|s| s.to_string())
     }
 
     /// Returns true for C types that are passed by value (use `.` accessor, not `->`).
