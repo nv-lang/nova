@@ -746,6 +746,34 @@ Suite: 60/60 tests passing.
 - Тесты: records.nv +2 теста на anon-record.
 - Stdlib unblock: ~15 файлов продвинулись на следующие блокеры.
 
+Раунд 4 — str-iter + pattern alternation:
+- Codegen+Runtime: str.bytes() / chars() / split() — eager
+  bootstrap-имплементация Iter[char]/Iter[str]. nova_str_bytes/chars/
+  split в array.h, dispatch в emit_c.rs.
+- AST+Parser+Codegen+Interp: pattern alternation `pat1 | pat2 => body`
+  через Pattern::Or. Disjunction условий, bindings из первого варианта.
+- Тесты: str_search.nv section 9-10, pattern_matching.nv +3 теста.
+- Stdlib unblock: 6+ файлов продвинулись по for-in iter; complex.nv
+  продвинулся через alternation.
+
+Раунд 5 — D79 Channel + lints + D28 inference:
+- Runtime: D79 Channel[T] — bounded ring-buffer с send/recv yield,
+  close+drain семантика, try_send/try_recv (channels.h).
+  11 sequential тестов в tests-nova/runtime/channels.nv.
+  Concurrent через spawn-block — отложено (codegen bug
+  NovaSpawnCtx_*).
+- Codegen: dispatch Channel.new(cap) + ch.@method (send/recv/close/etc).
+- Lints: новый модуль src/lints.rs:
+  - export-fail-untyped (D65): public API + bare Fail → warning.
+  - protocol-in-effect-position (D62 matrix): protocol в effect-row
+    → warning.
+  - --no-lint флаг в compile.
+- D28 effect inference: types::infer_effects(&mut module). Private fn
+  с throw в теле, без явного Fail в effect-row — auto-add Fail
+  (placeholder per D65). Public fn не трогается. Минимальная импл —
+  только Fail (Db/Net/etc остаются explicit).
+- Тесты: throws.nv +D28 smoke test. Lints unit-тесты (6).
+
 Tests-nova layout: иерархическая (basics/types/syntax/effects/concurrency/
 runtime/modules), все module-decls согласованы с paths.
 

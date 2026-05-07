@@ -61,6 +61,26 @@
 - complex (562 → 563) — pattern alternation сработал, ушёл на
   следующий синтаксический блокер.
 
+### 2026-05-07 (раунд 5)
+- **D79 Channel base** (commit c0cd4337, 3d0cc7e9, 0dc5421b).
+  Bootstrap-runtime: bounded ring-buffer, send/recv c yield, close +
+  drain семантика, try_send/try_recv. 11 sequential тестов.
+- **Lint: export-fail-untyped** (commit 835473f66). D65 convention:
+  `export fn ... Fail` без `[E]` → warning. `Fail[E]`/`Fail[any]` OK.
+- **Lint: protocol-in-effect-position** (commit 1fedd158d). D62 matrix:
+  `fn f() Hashable -> ()` → warning, должно быть generic-bound.
+- **D28 effect inference для private fn** (commit 284b20743, 4ee684852).
+  Private fn с throw, без явного Fail — auto-add `Fail` placeholder.
+  Public fn не трогается (lint вместо).
+- **`select` parser + concurrent channels** — отложено (требует
+  spawn-block codegen-fix).
+
+### Совокупный эффект 5-го раунда
+- Channel разблокирует concurrent примитивы как только spawn-block fix.
+- D28 inference уменьшает шум в private helper'ах.
+- Lints выводят рекомендации (suppressable через `--no-lint`) для
+  AI-friendly кода.
+
 ## Группы блокеров (после раунда 3)
 
 ### A. for-in: codegen iterator type-inference (5 файлов)
