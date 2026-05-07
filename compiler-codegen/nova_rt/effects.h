@@ -284,6 +284,72 @@ extern __thread NovaVtable_Time* _nova_handler_Time;
  * forward-declared here because callers always include nova_rt.h which pulls
  * in fibers.h after effects.h. */
 
+/* ---- Per-fiber handler scoping (D-handler-scope) ---- *
+ *
+ * Все `_nova_handler_X` — `__declspec(thread)` глобалы, по факту делящиеся
+ * между fiber'ами на одном OS-thread (D71 single-threaded cooperative).
+ * Если fiber A делает `with X = ...`, yield'ит, а fiber B перезаписывает
+ * глобал, A после resume увидит handler от B — undefined behavior.
+ *
+ * Решение: handler-storage registry + per-fiber snapshot.
+ *
+ * Каждый `_nova_handler_X` (как Fail, Time, и user-defined) **регистрируется**
+ * через nova_register_effect_storage(&_nova_handler_X) при инициализации
+ * программы. Получается список адресов всех handler-pointers (TLS-адресов).
+ *
+ * При `nova_supervised_step` (resume fiber'а из scheduler'а):
+ *   1. Save current globals in `prev_snapshot` (на стеке scheduler'а).
+ *   2. Restore fiber's saved snapshot in globals (если fiber suspended).
+ *   3. mco_resume.
+ *   4. После return: save globals back в fiber's snapshot.
+ *   5. Restore prev_snapshot in globals.
+ *
+ * Limit: 32 effect-storages — достаточно для bootstrap'а (built-in 3 +
+ * user-defined обычно <10). Production-runtime — динамический rezize.
+ */
+
+#define NOVA_MAX_EFFECT_STORAGES 32
+
+typedef struct {
+    void** slots[NOVA_MAX_EFFECT_STORAGES];   /* registered TLS addresses */
+    int    count;
+} NovaEffectRegistry;
+
+extern NovaEffectRegistry _nova_effect_registry;
+
+/* Регистрация handler-storage. Idempotent (по адресу). Вызывается из
+ * codegen'а при первом использовании эффекта (или статически перед main). */
+static inline void nova_register_effect_storage(void** slot_addr) {
+    for (int i = 0; i < _nova_effect_registry.count; i++) {
+        if (_nova_effect_registry.slots[i] == slot_addr) return;
+    }
+    if (_nova_effect_registry.count < NOVA_MAX_EFFECT_STORAGES) {
+        _nova_effect_registry.slots[_nova_effect_registry.count++] = slot_addr;
+    }
+    /* Silent overflow: бутстрап не дотянется до 32 эффектов. Production
+     * должен использовать dynamic-resize либо assert. */
+}
+
+/* Snapshot — массив значений pointer-ов. Размер фиксированный, индексы
+ * совпадают с registry.slots. Хранится per-fiber. */
+typedef struct {
+    void* values[NOVA_MAX_EFFECT_STORAGES];
+} NovaEffectSnapshot;
+
+/* Save current TLS values → snapshot. */
+static inline void nova_effect_snapshot_save(NovaEffectSnapshot* snap) {
+    for (int i = 0; i < _nova_effect_registry.count; i++) {
+        snap->values[i] = *_nova_effect_registry.slots[i];
+    }
+}
+
+/* Restore snapshot → TLS. */
+static inline void nova_effect_snapshot_restore(const NovaEffectSnapshot* snap) {
+    for (int i = 0; i < _nova_effect_registry.count; i++) {
+        *_nova_effect_registry.slots[i] = snap->values[i];
+    }
+}
+
 /* ---- Built-in `Mem` effect — runtime introspection for leak/growth tests ----
  *
  * Operations:

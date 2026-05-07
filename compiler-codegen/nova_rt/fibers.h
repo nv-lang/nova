@@ -84,6 +84,17 @@ typedef struct {
      * fiber-stack; outer with-blocks (on main-stack) must NOT be visible
      * from inside the fiber. */
     NovaInterruptFrame* fiber_interrupt_top[NOVA_SCOPE_CAP];
+    /* Per-fiber snapshot of effect handler-pointers (D-handler-scope).
+     * Saved when fiber yields, restored when fiber resumes — изолирует
+     * `with X = handler { ... }` между fiber'ами. Без этого все fiber'ы
+     * на одном OS-thread делят одни __declspec(thread) globals, и
+     * handler одного fiber'а перезаписывался бы handler'ом другого
+     * (cross-fiber UB).
+     *
+     * Heap-allocated (через nova_alloc) lazily в spawn_into — иначе
+     * NOVA_SCOPE_CAP*sizeof(NovaEffectSnapshot) занимает много стека
+     * (256+ KB), и nested supervised выходит за границы. */
+    NovaEffectSnapshot* fiber_effect_snapshot[NOVA_SCOPE_CAP];
     /* Per-fiber error captured from a fiber-local fail-frame. NULL means OK.
      * The owner ctx (or scope-runner) reads this after fiber dies to know
      * whether the fiber threw. */
@@ -121,6 +132,7 @@ static inline void nova_scope_init(NovaFiberQueue* q) {
         q->fiber_interrupt_top[i] = NULL;
         q->fiber_error[i] = NULL;
         q->fiber_did_throw[i] = NULL;
+        q->fiber_effect_snapshot[i] = NULL;
     }
 }
 
@@ -199,6 +211,12 @@ static inline void nova_fiber_spawn_into(NovaFiberQueue* q,
     q->fiber_interrupt_top[q->count] = NULL;  /* and empty interrupt-stack */
     q->fiber_error[q->count] = NULL;
     q->fiber_did_throw[q->count] = NULL;
+    /* Inherit current handler-state: новый fiber видит handlers из enclosing
+     * scope. Heap-allocate snapshot — на стеке держать массив 1024
+     * snapshot'ов недопустимо (nested supervised → stack overflow). */
+    q->fiber_effect_snapshot[q->count] =
+        (NovaEffectSnapshot*)nova_alloc(sizeof(NovaEffectSnapshot));
+    nova_effect_snapshot_save(q->fiber_effect_snapshot[q->count]);
     q->count++;
 }
 
@@ -244,6 +262,13 @@ static inline int nova_supervised_step(NovaFiberQueue* q) {
     int             outer_slot  = _nova_active_slot;
     NovaFailFrame*  outer_fail_top = _nova_fail_top;
     NovaInterruptFrame* outer_interrupt_top = _nova_interrupt_top;
+    /* Save outer effect-handler-snapshot before scheduling fibers — после
+     * resume каждого fiber'а handlers будут восстановлены к состоянию
+     * outer flow. Фибры могут устанавливать собственные `with X = h`
+     * внутри своего тела — те состояния хранятся per-fiber, не утекают
+     * наружу. */
+    NovaEffectSnapshot outer_effects;
+    nova_effect_snapshot_save(&outer_effects);
     for (int i = 0; i < q->count; i++) {
         mco_coro* co = q->fibers[i];
         if (co == NULL) continue;
@@ -259,7 +284,18 @@ static inline int nova_supervised_step(NovaFiberQueue* q) {
         _nova_interrupt_top = q->fiber_interrupt_top[i];
         _nova_active_scope  = q;
         _nova_active_slot   = i;
+        /* Per-fiber handler scoping: install fiber's saved handler-snapshot
+         * before resume. Каждый fiber видит свои `with X = h` биндинги,
+         * не handlers других fibers. */
+        if (q->fiber_effect_snapshot[i]) {
+            nova_effect_snapshot_restore(q->fiber_effect_snapshot[i]);
+        }
         mco_result r = mco_resume(co);
+        /* Save fiber's current handler state back (с учётом изменений
+         * сделанных fiber'ом во время выполнения — `with`-блоков push/pop). */
+        if (q->fiber_effect_snapshot[i]) {
+            nova_effect_snapshot_save(q->fiber_effect_snapshot[i]);
+        }
         /* Save fiber's current state back; restore outer state. */
         q->fiber_fail_top[i]      = _nova_fail_top;
         q->fiber_interrupt_top[i] = _nova_interrupt_top;
@@ -267,6 +303,9 @@ static inline int nova_supervised_step(NovaFiberQueue* q) {
         _nova_interrupt_top = outer_interrupt_top;
         _nova_active_scope  = outer_scope;
         _nova_active_slot   = outer_slot;
+        /* Restore outer handlers (clean state для следующего fiber'а
+         * или main-flow после step). */
+        nova_effect_snapshot_restore(&outer_effects);
         if (r != MCO_SUCCESS) {
             fprintf(stderr, "nova: fiber resume failed (%d)\n", (int)r);
             abort();

@@ -81,3 +81,10 @@ __thread NovaVtable_Time*    _nova_handler_Time  = NULL;
 __thread NovaFiberQueue*     _nova_active_scope  = NULL;
 __thread int                 _nova_active_slot   = -1;
 #endif
+
+/* Per-fiber handler scoping: registry of effect-storage addresses.
+ * Built-in effects (Fail, Time) auto-registered in nova_runtime_init.
+ * User-defined эффекты регистрируются codegen'ом при первом использовании
+ * (через `nova_register_effect_storage(&_nova_handler_X)` в startup-code).
+ * Глобальная (не TLS) — все threads делят один registry. */
+NovaEffectRegistry _nova_effect_registry = {0};
