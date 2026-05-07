@@ -1952,7 +1952,30 @@ impl Parser {
             self.expect(&TokenKind::FatArrow)?;
             self.skip_newlines();
             // body: либо `{ block }` (D19 исключение), либо expr.
-            let body = if matches!(self.peek().kind, TokenKind::LBrace) {
+            // Special case: `return X` / `break` / `continue` — control-flow
+            // statements в arm body. Идиоматично для early-exit:
+            //   match opt { Some(v) => v, None => return defaults }
+            // Эмитим как Block с одним stmt'ом, тип unit (! фактически).
+            let body = if matches!(self.peek().kind,
+                TokenKind::KwReturn | TokenKind::KwBreak | TokenKind::KwContinue)
+            {
+                let stmt_or_expr = self.parse_stmt_or_expr()?;
+                let stmts = match stmt_or_expr {
+                    StmtOrExpr::Stmt(s) => vec![s],
+                    StmtOrExpr::Expr(e) => vec![Stmt::Expr(e)],
+                };
+                let last_span = stmts.last().map(|s| match s {
+                    Stmt::Return { span, .. } => *span,
+                    Stmt::Break(s) | Stmt::Continue(s) => *s,
+                    Stmt::Expr(e) => e.span,
+                    _ => pattern.span(),
+                }).unwrap_or_else(|| pattern.span());
+                MatchArmBody::Block(Block {
+                    stmts,
+                    trailing: None,
+                    span: pattern.span().merge(last_span),
+                })
+            } else if matches!(self.peek().kind, TokenKind::LBrace) {
                 let saved = self.pos;
                 if self.looks_like_record_lit() {
                     // record-литерал — выражение
