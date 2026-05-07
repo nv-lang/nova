@@ -175,6 +175,83 @@ static inline nova_str Nova_Option_method_unwrap_or_nova_str(NovaOpt_nova_str o,
  * Nova_Fail_fail (effects.h инклюдится после array.h в nova_rt.h);
  * codegen emits inline check + fail call. */
 
+/* ---- D26 string search: find / rfind (codepoint-offsets, school B) ---- *
+ *
+ * Возвращают Option[int] с **codepoint-offset** первого/последнего
+ * вхождения needle (школа B — Python/Swift). Empty needle → Some(0)
+ * для find, Some(s.char_len) для rfind. needle.len в байтах > s.len
+ * → None. Совпадение проверяется byte-wise (memcmp), но возвращаемая
+ * позиция — codepoint-индекс начала match. Считается, что needle
+ * начинается на границе UTF-8 codepoint (если нет — match не найдётся
+ * на границе, и мы вернём None / следующее найденное вхождение). */
+static inline NovaOpt_nova_int nova_str_find(nova_str s, nova_str needle) {
+    NovaOpt_nova_int r;
+    if (needle.len == 0) {
+        r.tag = NOVA_TAG_Option_Some; r.value = 0; return r;
+    }
+    if (needle.len > s.len) {
+        r.tag = NOVA_TAG_Option_None; r.value = 0; return r;
+    }
+    /* Walk UTF-8: i — byte offset, cp — codepoint offset.
+     * Совпадение допустимо только на codepoint-границе. */
+    nova_int cp = 0;
+    for (size_t i = 0; i + needle.len <= s.len; ) {
+        if (memcmp(s.ptr + i, needle.ptr, needle.len) == 0) {
+            r.tag = NOVA_TAG_Option_Some;
+            r.value = cp;
+            return r;
+        }
+        unsigned char b = (unsigned char)s.ptr[i];
+        if      (b < 0x80) i += 1;
+        else if ((b & 0xE0) == 0xC0) i += 2;
+        else if ((b & 0xF0) == 0xE0) i += 3;
+        else if ((b & 0xF8) == 0xF0) i += 4;
+        else                          i += 1;
+        cp++;
+    }
+    r.tag = NOVA_TAG_Option_None; r.value = 0;
+    return r;
+}
+
+static inline NovaOpt_nova_int nova_str_rfind(nova_str s, nova_str needle) {
+    NovaOpt_nova_int r;
+    /* Сначала посчитаем общее число codepoint'ов в s. */
+    nova_int total_cp = 0;
+    for (size_t i = 0; i < s.len; i++) {
+        unsigned char c = (unsigned char)s.ptr[i];
+        if ((c & 0xC0) != 0x80) total_cp++;
+    }
+    if (needle.len == 0) {
+        r.tag = NOVA_TAG_Option_Some; r.value = total_cp; return r;
+    }
+    if (needle.len > s.len) {
+        r.tag = NOVA_TAG_Option_None; r.value = 0; return r;
+    }
+    /* Идём слева направо, запоминаем последний match как codepoint-индекс. */
+    nova_int last_cp = -1;
+    nova_int cp = 0;
+    for (size_t i = 0; i + needle.len <= s.len; ) {
+        if (memcmp(s.ptr + i, needle.ptr, needle.len) == 0) {
+            last_cp = cp;
+        }
+        unsigned char b = (unsigned char)s.ptr[i];
+        if      (b < 0x80) i += 1;
+        else if ((b & 0xE0) == 0xC0) i += 2;
+        else if ((b & 0xF0) == 0xE0) i += 3;
+        else if ((b & 0xF8) == 0xF0) i += 4;
+        else                          i += 1;
+        cp++;
+    }
+    if (last_cp < 0) { r.tag = NOVA_TAG_Option_None; r.value = 0; return r; }
+    r.tag = NOVA_TAG_Option_Some; r.value = last_cp;
+    return r;
+}
+
+/* ---- byte_len: длина в байтах (school B вспомогательное) ---- */
+static inline nova_int nova_str_byte_len(nova_str s) {
+    return (nova_int)s.len;
+}
+
 /* ---- Built-in Result type (Ok carries nova_int, Err carries nova_str) ---- */
 #define NOVA_TAG_Result_Ok  0
 #define NOVA_TAG_Result_Err 1

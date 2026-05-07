@@ -64,6 +64,8 @@ static inline nova_bool nova_str_contains(nova_str s, nova_str needle) {
     return false;
 }
 
+/* find/rfind defined in array.h after NovaOpt_nova_int is available. */
+
 /* nova_str_to_upper: allocates via nova_alloc, returns new nova_str */
 static inline nova_str nova_str_to_upper(nova_str s) {
     char* buf = (char*)nova_alloc(s.len + 1);
@@ -92,11 +94,34 @@ static inline nova_str nova_str_trim(nova_str s) {
     return (nova_str){ s.ptr + start, end - start };
 }
 
+/* nova_str_slice — D26 codepoint-indexed slice (school B).
+ * `from` и `to` — codepoint-индексы. Обходим UTF-8 чтобы найти
+ * соответствующие byte-offset'ы. Возвращаем view (не копия). */
 static inline nova_str nova_str_slice(nova_str s, nova_int from, nova_int to) {
     if (from < 0) from = 0;
-    if (to > (nova_int)s.len) to = (nova_int)s.len;
-    if (from >= to) return (nova_str){ s.ptr, 0 };
-    return (nova_str){ s.ptr + from, (size_t)(to - from) };
+    if (to < from) to = from;
+    /* Walk UTF-8 to find byte offsets for codepoint indices. */
+    size_t byte_from = 0, byte_to = s.len;
+    nova_int cp = 0;
+    nova_bool found_from = (from == 0);
+    for (size_t i = 0; i < s.len; ) {
+        if (cp == from && !found_from) { byte_from = i; found_from = 1; }
+        if (cp == to) { byte_to = i; break; }
+        unsigned char b = (unsigned char)s.ptr[i];
+        if      (b < 0x80) i += 1;
+        else if ((b & 0xE0) == 0xC0) i += 2;
+        else if ((b & 0xF0) == 0xE0) i += 3;
+        else if ((b & 0xF8) == 0xF0) i += 4;
+        else                          i += 1;   /* invalid — skip */
+        cp++;
+    }
+    if (!found_from) {
+        /* from > total codepoints */
+        return (nova_str){ s.ptr + s.len, 0 };
+    }
+    if (cp < to) byte_to = s.len;   /* to >= total codepoints — clamp */
+    if (byte_from > byte_to) byte_from = byte_to;
+    return (nova_str){ s.ptr + byte_from, byte_to - byte_from };
 }
 
 /* nova_str_concat: concatenate two strings, allocates via nova_alloc */
