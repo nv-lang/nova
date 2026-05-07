@@ -184,4 +184,7 @@ typedef struct { char _dummy; } nova_unit;
 /* ---- Buffer — Q-buffer (mutable byte accumulator) ---- */
 #include "buffer.h"
 
+/* ---- Channels (D79) — coordination между fiber'ами ---- */
+#include "channels.h"
+
 #endif /* NOVA_RT_H */
