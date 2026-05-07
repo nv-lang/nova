@@ -54,7 +54,7 @@ test "tok.cancel() изнутри — peer на следующем yield не в
     let mut peer_completed = false
     with Fail = handler Fail {
         fail(_msg) {
-            return ()
+            interrupt ()
         }
     } {
         cancel_scope { tok =>

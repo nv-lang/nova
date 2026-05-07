@@ -1160,8 +1160,21 @@ impl CEmitter {
         self.line("} else {");
         self.indent += 1;
         self.line("nova_fail_pop();");
+        // D61: distinguish real error from cross-mco-boundary `interrupt v`
+        // (nova_interrupt sets the sentinel message "__nova_interrupt__" and
+        // populates scope->interrupt_pending/interrupt_value). For interrupt
+        // we DON'T report a fiber error — supervised_run will re-issue the
+        // interrupt on main-flow after drain.
+        self.line("if (_ff.error_msg.ptr && _ff.error_msg.len == 18 && memcmp(_ff.error_msg.ptr, \"__nova_interrupt__\", 18) == 0) {");
+        self.indent += 1;
+        self.line("/* interrupt: scope state already set, fiber dies cleanly */");
+        self.indent -= 1;
+        self.line("} else {");
+        self.indent += 1;
         // Report error to the scope. error_msg.ptr lives on heap or static — safe.
         self.line("nova_fiber_report_error(_ff.error_msg.ptr);");
+        self.indent -= 1;
+        self.line("}");
         self.indent -= 1;
         self.line("}");
 
@@ -3262,11 +3275,23 @@ impl CEmitter {
             }
             ExprKind::Interrupt(val) => {
                 // interrupt v — longjmp to the nearest with-block via nova_interrupt()
-                let int_val = if let Some(v) = val {
-                    let vstr = self.emit_expr(v)?;
-                    format!("(nova_int)({})", vstr)
-                } else {
-                    "((nova_int)0LL)".to_string()
+                // nova_interrupt принимает nova_int, поэтому unit-значение (() или
+                // отсутствие val) кодируется как 0. Cast struct'а NOVA_UNIT
+                // невалиден, поэтому detect'им UnitLit отдельно.
+                let int_val = match val.as_deref().map(|e| &e.kind) {
+                    None | Some(ExprKind::UnitLit) => "((nova_int)0LL)".to_string(),
+                    Some(_) => {
+                        let v = val.as_deref().unwrap();
+                        let vstr = self.emit_expr(v)?;
+                        // Если значение — nova_unit (например блок без trailing-value),
+                        // cast'им через 0; иначе обычный numeric cast.
+                        let v_ty = self.infer_expr_c_type(v);
+                        if v_ty == "nova_unit" {
+                            format!("((void)({}), (nova_int)0LL)", vstr)
+                        } else {
+                            format!("(nova_int)({})", vstr)
+                        }
+                    }
                 };
                 self.line(&format!("nova_interrupt({});", int_val));
                 // After interrupt the code is unreachable, but emit a dummy value

@@ -28,7 +28,7 @@ test "throw in match-arm — handler catches" {
     with Fail = handler Fail {
         fail(msg) {
             caught = msg
-            return ()
+            interrupt ()
         }
     } {
         got = check_positive(-5)
@@ -39,7 +39,7 @@ test "throw in match-arm — handler catches" {
 test "throw in match-arm — happy path returns value" {
     let mut got = -1
     with Fail = handler Fail {
-        fail(_msg) { return () }
+        fail(_msg) { interrupt () }
     } {
         got = check_positive(5)
     }
@@ -65,7 +65,7 @@ test "throw before fall-through statement" {
     with Fail = handler Fail {
         fail(msg) {
             caught = msg
-            return ()
+            interrupt ()
         }
     } {
         let _ = assert_not_zero(0)
@@ -76,7 +76,7 @@ test "throw before fall-through statement" {
 test "throw before fall-through — happy path" {
     let mut got = -1
     with Fail = handler Fail {
-        fail(_msg) { return () }
+        fail(_msg) { interrupt () }
     } {
         got = assert_not_zero(7)
     }

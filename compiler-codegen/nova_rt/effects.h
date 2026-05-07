@@ -112,13 +112,10 @@ static inline void nova_interrupt_pop(void) {
     if (_nova_interrupt_top) _nova_interrupt_top = _nova_interrupt_top->prev;
 }
 
-static inline void nova_interrupt(nova_int value) {
-    if (_nova_interrupt_top) {
-        _nova_interrupt_top->value = value;
-        longjmp(_nova_interrupt_top->jmp, 1);
-    }
-    /* No with-block: interrupt is a no-op (body already exited) */
-}
+/* nova_interrupt forward-declared here as a real C-function; defined in
+ * fibers.h after NovaFiberQueue is complete (needs _nova_active_scope and
+ * fiber error machinery for the cross-mco-boundary case). */
+void nova_interrupt(nova_int value);
 
 /* ---- Test support ---- *
  *

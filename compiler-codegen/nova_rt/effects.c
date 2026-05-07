@@ -11,6 +11,59 @@ int nova_in_fiber(void) {
     return mco_running() != NULL ? 1 : 0;
 }
 
+/* D61: `interrupt v` — early-exit from the nearest enclosing with-block.
+ *
+ * Semantics across mco coroutine boundary:
+ *
+ * 1. **Inside fiber, with-frame in same fiber**: _nova_interrupt_top points
+ *    to a frame on the fiber-stack (pushed by `with`-block within
+ *    spawn-body). longjmp safe — stays on fiber-stack.
+ *
+ * 2. **Inside fiber, NO with-frame in same fiber** (with-block lives on
+ *    main-stack, outside `supervised`): direct longjmp would cross mco
+ *    boundary → UB. Instead:
+ *      a. Record `(interrupt_pending=true, interrupt_value=v)` in the
+ *         active scope queue.
+ *      b. longjmp to fiber-local fail-frame (pushed by spawn-entry).
+ *         Spawn-entry catch sees pending interrupt and skips
+ *         nova_fiber_report_error.
+ *      c. After all fibers drain, `nova_supervised_run` re-issues
+ *         `nova_interrupt(v)` on main-flow where with-frame is reachable.
+ *
+ * 3. **On main-flow** (no fiber): longjmp directly to with-frame. */
+void nova_interrupt(nova_int value) {
+    if (_nova_interrupt_top) {
+        /* Case 1 (fiber-local with) or case 3 (main-flow with) — both safe. */
+        _nova_interrupt_top->value = value;
+        longjmp(_nova_interrupt_top->jmp, 1);
+        /* unreachable */
+    }
+    if (mco_running() && _nova_active_scope) {
+        /* Case 2: cross-boundary interrupt. Record pending + abort fiber via
+         * fail-frame. spawn-entry catch sees q->interrupt_pending and skips
+         * report_error so we don't poison `first_error`. Also set
+         * cancel_requested so peer fibers in same scope unwind on next
+         * yield-point — `interrupt v` is a hard exit from the with-block,
+         * peers shouldn't keep running after handler decided to exit. */
+        _nova_active_scope->interrupt_pending = true;
+        _nova_active_scope->interrupt_value   = value;
+        _nova_active_scope->cancel_requested  = true;
+        if (_nova_fail_top) {
+            /* Use a sentinel error message so spawn-entry can distinguish
+             * interrupt-abort from real error. The catch reads
+             * scope->interrupt_pending instead. */
+            _nova_fail_top->error_msg = (nova_str){
+                .ptr = "__nova_interrupt__", .len = 18
+            };
+            longjmp(_nova_fail_top->jmp, 1);
+            /* unreachable */
+        }
+        /* No fail-frame either — should not happen (spawn-entry always
+         * pushes one). Fall through to no-op as last resort. */
+    }
+    /* No with-block, no fiber: interrupt is a no-op (body already exited). */
+}
+
 #ifdef _MSC_VER
 __declspec(thread) NovaFailFrame*      _nova_fail_top      = NULL;
 __declspec(thread) NovaInterruptFrame* _nova_interrupt_top = NULL;

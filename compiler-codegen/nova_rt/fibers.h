@@ -79,6 +79,11 @@ typedef struct {
      * each fiber has its own throw-protection chain — longjmp from inside the
      * fiber lands in a frame on the SAME fiber-stack, never crosses fibers. */
     NovaFailFrame*  fiber_fail_top[NOVA_SCOPE_CAP];
+    /* Per-fiber saved interrupt-frame top. Same rationale as fiber_fail_top:
+     * with-blocks inside spawn-body push their own interrupt-frames on
+     * fiber-stack; outer with-blocks (on main-stack) must NOT be visible
+     * from inside the fiber. */
+    NovaInterruptFrame* fiber_interrupt_top[NOVA_SCOPE_CAP];
     /* Per-fiber error captured from a fiber-local fail-frame. NULL means OK.
      * The owner ctx (or scope-runner) reads this after fiber dies to know
      * whether the fiber threw. */
@@ -94,14 +99,26 @@ typedef struct {
      * Other fibers see this on their next yield-point and throw "cancelled"
      * (cooperative cancellation — D50). */
     nova_bool       cancel_requested;
+    /* Pending interrupt: when a fiber's handler-method calls `interrupt v`
+     * but the matching with-frame lives on main-stack (not in fiber), we
+     * cannot longjmp across the mco boundary. Instead we record the
+     * interrupt value here and abort the fiber via fail-frame. After
+     * supervised_run drains all fibers, on main-flow it re-issues
+     * `nova_interrupt(pending_interrupt_value)` so the with-frame catches
+     * it correctly. interrupt_pending=true → value is set. */
+    nova_bool       interrupt_pending;
+    nova_int        interrupt_value;
 } NovaFiberQueue;
 
 static inline void nova_scope_init(NovaFiberQueue* q) {
     q->count = 0;
     q->first_error = NULL;
     q->cancel_requested = false;
+    q->interrupt_pending = false;
+    q->interrupt_value = 0;
     for (int i = 0; i < NOVA_SCOPE_CAP; i++) {
         q->fiber_fail_top[i] = NULL;
+        q->fiber_interrupt_top[i] = NULL;
         q->fiber_error[i] = NULL;
         q->fiber_did_throw[i] = NULL;
     }
@@ -178,7 +195,8 @@ static inline void nova_fiber_spawn_into(NovaFiberQueue* q,
         abort();
     }
     q->fibers[q->count] = co;
-    q->fiber_fail_top[q->count] = NULL;     /* fresh fiber: empty fail-stack */
+    q->fiber_fail_top[q->count] = NULL;       /* fresh fiber: empty fail-stack */
+    q->fiber_interrupt_top[q->count] = NULL;  /* and empty interrupt-stack */
     q->fiber_error[q->count] = NULL;
     q->fiber_did_throw[q->count] = NULL;
     q->count++;
@@ -225,6 +243,7 @@ static inline int nova_supervised_step(NovaFiberQueue* q) {
     NovaFiberQueue* outer_scope = _nova_active_scope;
     int             outer_slot  = _nova_active_slot;
     NovaFailFrame*  outer_fail_top = _nova_fail_top;
+    NovaInterruptFrame* outer_interrupt_top = _nova_interrupt_top;
     for (int i = 0; i < q->count; i++) {
         mco_coro* co = q->fibers[i];
         if (co == NULL) continue;
@@ -233,16 +252,21 @@ static inline int nova_supervised_step(NovaFiberQueue* q) {
             q->fibers[i] = NULL;
             continue;
         }
-        /* Switch fail-top to fiber's saved chain before resuming. */
-        _nova_fail_top    = q->fiber_fail_top[i];
-        _nova_active_scope = q;
-        _nova_active_slot  = i;
+        /* Switch fail-top + interrupt-top to fiber's saved chains.
+         * Outer with-frames live on main-stack — must NOT be visible to
+         * code running on fiber-stack (longjmp across mco-boundary = UB). */
+        _nova_fail_top      = q->fiber_fail_top[i];
+        _nova_interrupt_top = q->fiber_interrupt_top[i];
+        _nova_active_scope  = q;
+        _nova_active_slot   = i;
         mco_result r = mco_resume(co);
-        /* Save fiber's current fail-top back; restore outer fail-top. */
-        q->fiber_fail_top[i] = _nova_fail_top;
-        _nova_fail_top    = outer_fail_top;
-        _nova_active_scope = outer_scope;
-        _nova_active_slot  = outer_slot;
+        /* Save fiber's current state back; restore outer state. */
+        q->fiber_fail_top[i]      = _nova_fail_top;
+        q->fiber_interrupt_top[i] = _nova_interrupt_top;
+        _nova_fail_top      = outer_fail_top;
+        _nova_interrupt_top = outer_interrupt_top;
+        _nova_active_scope  = outer_scope;
+        _nova_active_slot   = outer_slot;
         if (r != MCO_SUCCESS) {
             fprintf(stderr, "nova: fiber resume failed (%d)\n", (int)r);
             abort();
@@ -264,7 +288,16 @@ static inline void nova_supervised_run(NovaFiberQueue* q) {
     int alive;
     do { alive = nova_supervised_step(q); } while (alive > 0);
     const char* err = q->first_error;
+    nova_bool pending = q->interrupt_pending;
+    nova_int  ivalue  = q->interrupt_value;
     q->count = 0;
+    /* Pending interrupt from a fiber's handler-method takes priority over
+     * fiber-throw error: handler ran successfully, decided to interrupt
+     * the with-block. Re-issue on main-flow where the with-frame is reachable. */
+    if (pending) {
+        nova_interrupt(ivalue);
+        /* unreachable */
+    }
     if (err) {
         /* Re-throw on main-flow (back in caller's stack — safe to longjmp). */
         nova_throw(nova_str_from_cstr(err));

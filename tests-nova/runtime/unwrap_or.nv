@@ -41,7 +41,7 @@ test "None.unwrap throws Fail (caught)" {
     with Fail = handler Fail {
         fail(_msg) {
             caught = true
-            return ()
+            interrupt ()
         }
     } {
         let n = None
@@ -99,7 +99,7 @@ test "Err.unwrap throws Fail with err message" {
     with Fail = handler Fail {
         fail(msg) {
             caught_msg = msg
-            return ()
+            interrupt ()
         }
     } {
         let r = Err("custom error")

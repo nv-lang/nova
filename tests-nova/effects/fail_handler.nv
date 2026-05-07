@@ -38,7 +38,7 @@ test "with Fail: catches throw, body completes after handler" {
         fail(msg) {
             caught_msg = msg
             handler_ran = true
-            return ()
+            interrupt ()
         }
     } {
         let _ = parse_num("bad")
@@ -53,7 +53,7 @@ test "with Fail: ok-path doesn't trigger handler" {
     with Fail = handler Fail {
         fail(_msg) {
             handler_ran = true
-            return ()
+            interrupt ()
         }
     } {
         got_value = parse_num("ok")
@@ -67,7 +67,7 @@ test "with Fail: divide by zero caught" {
     with Fail = handler Fail {
         fail(msg) {
             caught = msg
-            return ()
+            interrupt ()
         }
     } {
         let _ = divide(10, 0)
@@ -79,7 +79,7 @@ test "with Fail: divide ok-path returns value" {
     let mut value = 0
     with Fail = handler Fail {
         fail(_msg) {
-            return ()
+            interrupt ()
         }
     } {
         value = divide(10, 2)
@@ -100,7 +100,7 @@ test "with Fail: throw from spawn caught by outer handler" {
     with Fail = handler Fail {
         fail(msg) {
             caught = msg
-            return ()
+            interrupt ()
         }
     } {
         supervised {
@@ -112,32 +112,34 @@ test "with Fail: throw from spawn caught by outer handler" {
     assert(caught == "from fiber")
 }
 
-test "with Fail: handler invoked once per throwing fiber" {
-    // Несколько fiber'ов throw'ят. Без yield — каждый fiber запускается,
-    // throw'ит, handler вызывается, fiber умирает чисто, scheduler
-    // переходит к следующему. Cancel-проверка происходит ТОЛЬКО на yield;
-    // без yield — все три fiber'а успевают throw'нуть.
+test "with Fail: handler ловит throw из supervised (cross-mco-boundary interrupt)" {
+    // По spec D61/D65: handler-method для Fail (fail() -> Never)
+    // завершается через `interrupt v`, не через return/trailing.
     //
-    // Поэтому handler вызывается 3 раза. caught содержит последнюю
-    // обработанную ошибку (last writer wins), invocations = 3.
+    // Когда throw случается в spawn-body, а with-handler установлен
+    // снаружи supervised, `interrupt v` пересекает mco-coroutine-boundary.
+    // Runtime обрабатывает через scope.interrupt_pending mechanism:
+    //   1. nova_interrupt() detect'ит что нет fiber-local interrupt-frame.
+    //   2. Записывает (pending=true, value) в scope, set'ит cancel_requested.
+    //   3. longjmp на fiber-local fail-frame с sentinel-msg "__nova_interrupt__".
+    //   4. spawn-entry catch detect'ит sentinel — НЕ вызывает report_error.
+    //   5. supervised_run после drain re-issue'ит nova_interrupt(value)
+    //      на main-flow, где with-frame достижим.
     let mut caught = ""
     let mut invocations = 0
     with Fail = handler Fail {
         fail(msg) {
             caught = msg
             invocations += 1
-            return ()
+            interrupt ()
         }
     } {
         supervised {
-            spawn { throw "first" }
-            spawn { throw "second" }
-            spawn { throw "third" }
+            spawn { throw "boom" }
         }
     }
-    println("caught = ", caught, " invocations = ", invocations)
-    assert(invocations == 3)
-    assert(caught == "third")     // FIFO order, last writer wins
+    assert(invocations == 1)
+    assert(caught == "boom")
 }
 
 test "with Fail: cancellation — peer fiber writes BEFORE the failing one" {
@@ -157,7 +159,7 @@ test "with Fail: cancellation — peer fiber writes BEFORE the failing one" {
     with Fail = handler Fail {
         fail(msg) {
             caught = msg
-            return ()
+            interrupt ()
         }
     } {
         supervised {

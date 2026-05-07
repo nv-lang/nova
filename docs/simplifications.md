@@ -183,8 +183,31 @@ longjmp идёт через `_nova_fail_top` (per-fiber chain, который п
 в spawn-entry). Spawn-entry catch'ит, scope-runner re-throw'ит на
 main flow через `nova_throw`; test runner ловит через дополнительный
 `_tf_fail` NovaFailFrame. Если false (main flow) — старый путь через
-`_nova_test_frame`. Тест `tests-nova/51_assert_in_fiber.nv` (4 теста:
+`_nova_test_frame`. Тест `tests-nova/concurrency/assert_in_fiber.nv` (4 теста:
 simple spawn, parallel for, after Time.sleep yield, nested supervised).
+
+**[ЗАКР] `interrupt v` через mco-coroutine-boundary (2026-05-07).**
+По spec D61/D65 handler-method для Fail (`fail() -> Never`) завершается
+через `interrupt v`, не через `return`/trailing. До фикса: если
+fail-handler установлен снаружи `supervised`, а throw случается в
+spawn-body, `nova_interrupt(v)` делал longjmp на with-frame на main-
+stack — пересечение mco-границы, exe crash.
+
+После фикса (runtime):
+- `NovaFiberQueue` имеет per-fiber `fiber_interrupt_top[i]` (как
+  `fiber_fail_top[i]`), switch'ится в `nova_supervised_step`.
+- `NovaFiberQueue.interrupt_pending/interrupt_value` — pending
+  interrupt от fiber'а.
+- `nova_interrupt(v)`: если `_nova_interrupt_top != NULL` — direct
+  longjmp (fiber-local или main-flow with). Если `NULL` И fiber
+  активен — set'ит `scope.interrupt_pending = true` + `cancel_requested
+  = true` + longjmp на fiber-local fail-frame с sentinel-msg
+  `"__nova_interrupt__"`. Spawn-entry catch detect'ит sentinel и
+  пропускает `nova_fiber_report_error`. `nova_supervised_run`
+  после drain re-issue'ит `nova_interrupt(value)` на main-flow.
+- Тесты `tests-nova/effects/fail_handler.nv` — все 7 spec-compliant
+  через `interrupt ()` (раньше использовали bootstrap-leniency
+  `return ()` — теперь это spec-correct).
 
 **[ЗАКР] Cancel-token API — D75 (2026-05-06).**
 `cancel_scope { tok => body }` keyword, `NovaCancelToken` first-class
