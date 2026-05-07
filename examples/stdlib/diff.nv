@@ -101,7 +101,7 @@ test "diff: identical arrays" {
     for op in ops {
         match op {
             Equal(_) => ()
-            _        => assert false
+            _        => assert(false)
         }
     }
 }
