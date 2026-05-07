@@ -1,0 +1,121 @@
+// channels.nv — D79 Channel[T] базовая семантика.
+//
+// Bootstrap (D71) — single-threaded cooperative; concurrent тесты
+// через supervised+spawn потребуют отдельной работы (см. spawn-block
+// codegen). Пока — sequential sanity-checks.
+
+module nova_tests.runtime.channels
+
+// ================================================================
+// SECTION 1: send / recv — buffered channel
+// ================================================================
+
+test "channel: send + recv FIFO" {
+    let ch = Channel.new(4)
+    ch.send(10)
+    ch.send(20)
+    ch.send(30)
+    let a = ch.recv()
+    let b = ch.recv()
+    let c = ch.recv()
+    assert(a.unwrap_or(-1) == 10)
+    assert(b.unwrap_or(-1) == 20)
+    assert(c.unwrap_or(-1) == 30)
+}
+
+test "channel: len и capacity" {
+    let ch = Channel.new(8)
+    assert(ch.capacity() == 8)
+    assert(ch.len() == 0)
+    ch.send(1)
+    ch.send(2)
+    assert(ch.len() == 2)
+    let _ = ch.recv()
+    assert(ch.len() == 1)
+}
+
+test "channel: ring-buffer wrap" {
+    let ch = Channel.new(3)
+    ch.send(1)
+    ch.send(2)
+    let _ = ch.recv()                  // освободил slot
+    ch.send(3)
+    ch.send(4)                         // wrap-around
+    assert(ch.recv().unwrap_or(-1) == 2)
+    assert(ch.recv().unwrap_or(-1) == 3)
+    assert(ch.recv().unwrap_or(-1) == 4)
+}
+
+// ================================================================
+// SECTION 2: closed-channel семантика
+// ================================================================
+
+test "channel: close + recv drain" {
+    let ch = Channel.new(4)
+    ch.send(1)
+    ch.send(2)
+    ch.close()
+    // После close: recv'ы дренируют буфер, потом None.
+    assert(ch.recv().unwrap_or(-1) == 1)
+    assert(ch.recv().unwrap_or(-1) == 2)
+    assert(ch.recv().is_none())
+    assert(ch.recv().is_none())        // повторный — снова None
+}
+
+test "channel: is_closed" {
+    let ch = Channel.new(2)
+    assert(!ch.is_closed())
+    ch.close()
+    assert(ch.is_closed())
+}
+
+test "channel: close idempotent" {
+    let ch = Channel.new(2)
+    ch.close()
+    ch.close()                         // не должно бросать
+    assert(ch.is_closed())
+}
+
+// ================================================================
+// SECTION 3: try_send / try_recv — non-blocking
+// ================================================================
+
+test "channel: try_send full buffer" {
+    let ch = Channel.new(2)
+    assert(ch.try_send(10))
+    assert(ch.try_send(20))
+    assert(!ch.try_send(30))           // полон — false, не блокирует
+    assert(ch.recv().unwrap_or(-1) == 10)
+    assert(ch.try_send(30))            // место освободилось
+}
+
+test "channel: try_recv empty buffer" {
+    let ch = Channel.new(4)
+    assert(ch.try_recv().is_none())   // пусто — None
+    ch.send(42)
+    assert(ch.try_recv().unwrap_or(-1) == 42)
+    assert(ch.try_recv().is_none())   // снова пусто
+}
+
+test "channel: try_send на closed → false" {
+    let ch = Channel.new(2)
+    ch.close()
+    assert(!ch.try_send(1))            // closed — false
+}
+
+// ================================================================
+// SECTION 4: while-let recv-loop
+// ================================================================
+
+test "channel: while-let drain pattern" {
+    let ch = Channel.new(4)
+    ch.send(10)
+    ch.send(20)
+    ch.send(30)
+    ch.close()
+    let mut sum = 0
+    while let Some(v) = ch.recv() {
+        sum = sum + v
+    }
+    assert(sum == 60)
+}
