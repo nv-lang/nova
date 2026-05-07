@@ -1315,6 +1315,16 @@ impl Interpreter {
                 env.define(name.clone(), value.clone());
                 true
             }
+            Pattern::Or { alternatives, .. } => {
+                // Pattern alternation: пытаемся каждый альтернатив,
+                // bindings от первого matched варианта.
+                for alt in alternatives {
+                    if self.match_pattern(alt, value, env) {
+                        return true;
+                    }
+                }
+                false
+            }
         }
     }
 

@@ -1783,7 +1783,26 @@ impl Parser {
         let mut arms = Vec::new();
         self.skip_newlines();
         while !matches!(self.peek().kind, TokenKind::RBrace) {
-            let pattern = self.parse_pattern()?;
+            // Pattern alternation: `pat1 | pat2 | pat3 =>`. Собираем
+            // в Pattern::Or если есть хотя бы один `|` после первого
+            // pattern'а (но до `=>` / `if`-guard'а).
+            let first = self.parse_pattern()?;
+            let pattern = if matches!(self.peek().kind, TokenKind::Pipe) {
+                let mut alts = vec![first];
+                let start_span = alts[0].span();
+                while matches!(self.peek().kind, TokenKind::Pipe) {
+                    self.bump();
+                    self.skip_newlines();
+                    alts.push(self.parse_pattern()?);
+                }
+                let end_span = alts.last().map(|p| p.span()).unwrap_or(start_span);
+                Pattern::Or {
+                    alternatives: alts,
+                    span: start_span.merge(end_span),
+                }
+            } else {
+                first
+            };
             let guard = if matches!(self.peek().kind, TokenKind::KwIf) {
                 self.bump();
                 Some(self.parse_expr()?)

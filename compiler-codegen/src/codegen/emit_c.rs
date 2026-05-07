@@ -1801,6 +1801,12 @@ impl CEmitter {
             Pattern::Tuple(pats, _) => {
                 for p in pats { Self::collect_bound_names_pattern(p, out); }
             }
+            Pattern::Or { alternatives, .. } => {
+                // Используем bindings из первого альтернатива (canonical).
+                if let Some(first) = alternatives.first() {
+                    Self::collect_bound_names_pattern(first, out);
+                }
+            }
             Pattern::Wildcard(_) | Pattern::Literal(_, _) => {}
         }
     }
@@ -5109,6 +5115,14 @@ impl CEmitter {
                     Ok("true".into())
                 }
             }
+            Pattern::Or { alternatives, .. } => {
+                // Pattern alternation: condition = disjunction всех вариантов.
+                let mut conds = Vec::with_capacity(alternatives.len());
+                for alt in alternatives {
+                    conds.push(self.pattern_cond(alt, scr)?);
+                }
+                Ok(format!("({})", conds.join(" || ")))
+            }
             _ => Ok("true".into()),
         }
     }
@@ -5331,6 +5345,15 @@ impl CEmitter {
                 }
             }
             Pattern::Wildcard(_) | Pattern::Literal(..) => {}
+            Pattern::Or { alternatives, .. } => {
+                // Pattern alternation: bindings берём из первого варианта.
+                // По pattern-matching semantike все альтернативы должны
+                // вводить одинаковый набор bindings — bootstrap не проверяет,
+                // используем первого как канонический.
+                if let Some(first) = alternatives.first() {
+                    self.pattern_bind_typed(first, scr)?;
+                }
+            }
             _ => {}
         }
         Ok(())

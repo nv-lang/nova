@@ -595,6 +595,15 @@ pub enum Pattern {
         inner: Box<Pattern>,
         span: Span,
     },
+    /// `p1 | p2 | p3` — alternation в match arm.
+    /// Все варианты должны иметь одинаковый набор bindings (по spec
+    /// pattern-match семантике); в bootstrap'е bindings из первого
+    /// варианта используются в теле arm. Не вкладывается внутрь других
+    /// patterns — alternation только на верхнем уровне match-arm.
+    Or {
+        alternatives: Vec<Pattern>,
+        span: Span,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -647,7 +656,8 @@ impl Pattern {
             | Pattern::Record { span: s, .. }
             | Pattern::Array { span: s, .. }
             | Pattern::Tuple(_, s)
-            | Pattern::Binding { span: s, .. } => *s,
+            | Pattern::Binding { span: s, .. }
+            | Pattern::Or { span: s, .. } => *s,
         }
     }
 }
