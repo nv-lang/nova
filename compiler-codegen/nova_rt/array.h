@@ -252,6 +252,84 @@ static inline nova_int nova_str_byte_len(nova_str s) {
     return (nova_int)s.len;
 }
 
+/* ---- nova_str_bytes: возвращает []byte (массив байт UTF-8 представления).
+ * Под bootstrap [] byte хранится как NovaArray_nova_int* с элементами
+ * nova_byte (uint8_t), упакованными в int64_t слоты. Это согласовано с
+ * codegen-маппингом `[]byte` → `NovaArray_nova_int*`. */
+static inline NovaArray_nova_int* nova_str_bytes(nova_str s) {
+    NovaArray_nova_int* a = nova_array_new_nova_int((int64_t)s.len);
+    for (size_t i = 0; i < s.len; i++) {
+        nova_array_push_nova_int(a, (nova_int)(unsigned char)s.ptr[i]);
+    }
+    return a;
+}
+
+/* ---- nova_str_split: разбивает строку по разделителю.
+ * D26 spec: `fn str @split(sep str) -> Iter[str]`. Bootstrap делает
+ * eager массив string-view'ов. Пустой sep — пограничный случай: возвращаем
+ * массив с одной строкой (исходная). */
+static inline NovaArray_nova_str* nova_str_split(nova_str s, nova_str sep) {
+    NovaArray_nova_str* a = nova_array_new_nova_str(0);
+    if (sep.len == 0) {
+        nova_array_push_nova_str(a, s);
+        return a;
+    }
+    size_t start = 0;
+    size_t i = 0;
+    while (i + sep.len <= s.len) {
+        if (memcmp(s.ptr + i, sep.ptr, sep.len) == 0) {
+            nova_str part = { s.ptr + start, i - start };
+            nova_array_push_nova_str(a, part);
+            i += sep.len;
+            start = i;
+        } else {
+            i++;
+        }
+    }
+    /* Tail */
+    nova_str tail = { s.ptr + start, s.len - start };
+    nova_array_push_nova_str(a, tail);
+    return a;
+}
+
+/* ---- nova_str_chars: возвращает []char (eager массив codepoints).
+ * D26 spec говорит про `Iter[char]` (lazy), bootstrap делает eager
+ * массив codepoints. Каждый codepoint — uint32_t, хранится как
+ * nova_int в NovaArray_nova_int*. */
+static inline NovaArray_nova_int* nova_str_chars(nova_str s) {
+    NovaArray_nova_int* a = nova_array_new_nova_int((int64_t)s.len);
+    for (size_t i = 0; i < s.len; ) {
+        unsigned char b = (unsigned char)s.ptr[i];
+        nova_int cp = 0;
+        size_t step = 1;
+        if (b < 0x80) {
+            cp = b;
+            step = 1;
+        } else if ((b & 0xE0) == 0xC0 && i + 1 < s.len) {
+            cp = ((nova_int)(b & 0x1F) << 6)
+               | ((nova_int)((unsigned char)s.ptr[i+1] & 0x3F));
+            step = 2;
+        } else if ((b & 0xF0) == 0xE0 && i + 2 < s.len) {
+            cp = ((nova_int)(b & 0x0F) << 12)
+               | ((nova_int)((unsigned char)s.ptr[i+1] & 0x3F) << 6)
+               | ((nova_int)((unsigned char)s.ptr[i+2] & 0x3F));
+            step = 3;
+        } else if ((b & 0xF8) == 0xF0 && i + 3 < s.len) {
+            cp = ((nova_int)(b & 0x07) << 18)
+               | ((nova_int)((unsigned char)s.ptr[i+1] & 0x3F) << 12)
+               | ((nova_int)((unsigned char)s.ptr[i+2] & 0x3F) << 6)
+               | ((nova_int)((unsigned char)s.ptr[i+3] & 0x3F));
+            step = 4;
+        } else {
+            cp = b;
+            step = 1;
+        }
+        nova_array_push_nova_int(a, cp);
+        i += step;
+    }
+    return a;
+}
+
 /* ---- Built-in Result type (Ok carries nova_int, Err carries nova_str) ---- */
 #define NOVA_TAG_Result_Ok  0
 #define NOVA_TAG_Result_Err 1
