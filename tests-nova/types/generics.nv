@@ -76,3 +76,29 @@ test "generic функция возвращает generic record" {
     let b = Box { value: identity(7) }
     assert(b.value == 7)
 }
+
+// ─── D72 generic-bounds: парсятся и игнорируются (smoke) ───
+// Spec D72 разрешает `type X[T Bound, U Other]` — bound это identifier
+// (имя protocol'а) после имени параметра. Bootstrap парсит и игнорирует
+// (нет typecheck'а на satisfaction). Production type-checker (D72)
+// проверит что T реально удовлетворяет Bound.
+
+type WithBound[T Hashable] {
+    value T
+}
+
+type TwoBounds[K Hashable, V Eq] {
+    key   K
+    value V
+}
+
+test "D72 bound: type-decl с одним bound parsed" {
+    let w = WithBound { value: 42 }
+    assert(w.value == 42)
+}
+
+test "D72 bound: type-decl с двумя bound'ами parsed" {
+    let t = TwoBounds { key: "k", value: 7 }
+    assert(t.key == "k")
+    assert(t.value == 7)
+}
