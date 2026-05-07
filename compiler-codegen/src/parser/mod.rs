@@ -1772,6 +1772,21 @@ impl Parser {
             }
         }
         let end = self.expect(&TokenKind::RBracket)?.span;
+        // D38 array-type-static-method: `[]T.method(...)` — empty литерал
+        // immediately followed by Ident `.` означает array-type prefix, не
+        // empty literal. Превращаем в Path(["__array", "<T>"]) — codegen
+        // эмитит как `nova_array_new_<T>` для `.new()` / `.with_capacity()`.
+        if elems.is_empty() {
+            if let TokenKind::Ident(_) = &self.peek().kind {
+                if matches!(self.peek_at(1).kind, TokenKind::Dot) {
+                    let (elem_type_name, ty_span) = self.parse_ident()?;
+                    return Ok(Expr::new(
+                        ExprKind::Path(vec!["__array".to_string(), elem_type_name]),
+                        start.merge(ty_span),
+                    ));
+                }
+            }
+        }
         Ok(Expr::new(ExprKind::ArrayLit(elems), start.merge(end)))
     }
 

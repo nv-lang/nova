@@ -344,6 +344,50 @@ static inline NovaArray_nova_int* nova_str_chars(nova_str s) {
     return a;
 }
 
+/* ---- nova_str_char_at: codepoint по codepoint-индексу.
+ * Возвращает Option[char] = NovaOpt_nova_int. None если idx out-of-range
+ * или невалидный UTF-8. O(idx) — линейная итерация по UTF-8. */
+static inline NovaOpt_nova_int nova_str_char_at(nova_str s, nova_int idx) {
+    NovaOpt_nova_int r;
+    r.tag = NOVA_TAG_Option_None;
+    r.value = 0;
+    if (idx < 0) return r;
+    nova_int cp_idx = 0;
+    for (size_t i = 0; i < s.len; ) {
+        unsigned char b = (unsigned char)s.ptr[i];
+        nova_int cp = 0;
+        size_t step = 1;
+        if (b < 0x80) {
+            cp = b; step = 1;
+        } else if ((b & 0xE0) == 0xC0 && i + 1 < s.len) {
+            cp = ((nova_int)(b & 0x1F) << 6)
+               | ((nova_int)((unsigned char)s.ptr[i+1] & 0x3F));
+            step = 2;
+        } else if ((b & 0xF0) == 0xE0 && i + 2 < s.len) {
+            cp = ((nova_int)(b & 0x0F) << 12)
+               | ((nova_int)((unsigned char)s.ptr[i+1] & 0x3F) << 6)
+               | ((nova_int)((unsigned char)s.ptr[i+2] & 0x3F));
+            step = 3;
+        } else if ((b & 0xF8) == 0xF0 && i + 3 < s.len) {
+            cp = ((nova_int)(b & 0x07) << 18)
+               | ((nova_int)((unsigned char)s.ptr[i+1] & 0x3F) << 12)
+               | ((nova_int)((unsigned char)s.ptr[i+2] & 0x3F) << 6)
+               | ((nova_int)((unsigned char)s.ptr[i+3] & 0x3F));
+            step = 4;
+        } else {
+            cp = b; step = 1;
+        }
+        if (cp_idx == idx) {
+            r.tag = NOVA_TAG_Option_Some;
+            r.value = cp;
+            return r;
+        }
+        cp_idx++;
+        i += step;
+    }
+    return r;
+}
+
 /* ---- Built-in Result type (Ok carries nova_int, Err carries nova_str) ---- */
 #define NOVA_TAG_Result_Ok  0
 #define NOVA_TAG_Result_Err 1

@@ -151,6 +151,8 @@ static inline nova_int nova_str_char_len(nova_str s) {
     return count;
 }
 
+/* nova_str_char_at объявлен в array.h (после NovaOpt_nova_int instantiation). */
+
 /* nova_int_to_str: convert integer to string */
 static inline nova_str nova_int_to_str(nova_int v) {
     char* buf = (char*)nova_alloc(24);

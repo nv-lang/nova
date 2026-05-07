@@ -626,7 +626,15 @@ impl CEmitter {
                 // Function type — use a void pointer as opaque representation
                 Ok("void*".into())
             }
-            TypeRef::FixedArray(_, _, _) => Err("fixed arrays not yet supported in codegen".into()),
+            TypeRef::FixedArray(_n, inner, span) => {
+                // [N]T в bootstrap — тот же runtime-тип что и `[]T` (NovaArray_T*).
+                // Размер N запоминается в типе AST, но в bootstrap-codegen не
+                // enforce'ится: dynamic-array под капотом, push/pop/len работают
+                // одинаково. Stack-allocation как в C `T[N]` пока не делаем —
+                // это будет отдельная оптимизация (production), здесь bootstrap
+                // приоритезирует совместимость с `[]T`-кодом.
+                self.type_ref_to_c(&TypeRef::Array(inner.clone(), *span))
+            }
         }
     }
 
@@ -3003,6 +3011,17 @@ impl CEmitter {
                         };
                     }
                 }
+                // Function-as-first-class-value: если `name` это user fn
+                // (fn_ret_<name> в var_types), а не local variable
+                // (просто <name> в var_types) — emit `nova_fn_<name>` чтобы
+                // получить указатель на функцию. Без этого callback-передача
+                // (`encode_with(data, encode_char_std, true)`) ломает linker:
+                // Nova-имя ≠ C-имя.
+                let is_local_var = self.var_types.contains_key(name);
+                let is_user_fn = self.var_types.contains_key(&format!("fn_ret_{}", name));
+                if is_user_fn && !is_local_var {
+                    return Ok(format!("nova_fn_{}", name));
+                }
                 Ok(name.clone())
             }
             ExprKind::Path(parts) => Ok(parts.join("_")),
@@ -3867,6 +3886,36 @@ impl CEmitter {
                 }
             }
             ExprKind::Member { obj, name: method } => {
+                // D38 array-static-method: `[]T.new()` / `[]T.with_capacity(n)`.
+                // Парсер строит obj = Path(["__array", "<T>"]); здесь
+                // диспетчеризуем в `nova_array_new_<T>` runtime.
+                if let ExprKind::Path(parts) = &obj.kind {
+                    if parts.len() == 2 && parts[0] == "__array" {
+                        let elem_t = &parts[1];
+                        // Mapping Nova-type → NovaArray storage suffix.
+                        let arr_suffix = match elem_t.as_str() {
+                            "str"            => "nova_str",
+                            "byte" | "u8"    => "nova_byte",
+                            "bool"           => "nova_bool",
+                            "f64" | "f32"    => "nova_f64",
+                            // int / другие типы — через nova_int slot.
+                            _                => "nova_int",
+                        };
+                        match method.as_str() {
+                            "new" => {
+                                // []T.new() → nova_array_new_<T>(default_cap=8)
+                                return Ok(format!("nova_array_new_{}(8)", arr_suffix));
+                            }
+                            "with_capacity" => {
+                                if let Some(arg) = args.first() {
+                                    let v = self.emit_expr(arg)?;
+                                    return Ok(format!("nova_array_new_{}({})", arr_suffix, v));
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
                 // D75: built-in methods on NovaCancelToken*.
                 {
                     let obj_ty = self.infer_expr_c_type(obj);
@@ -5938,6 +5987,7 @@ impl CEmitter {
             "byte_len"    => Some("nova_str_byte_len"),
             "bytes"       => Some("nova_str_bytes"),
             "chars"       => Some("nova_str_chars"),
+            "char_at"     => Some("nova_str_char_at"),
             "split"       => Some("nova_str_split"),
             _ => None,
         }
@@ -6074,6 +6124,22 @@ impl CEmitter {
                     let key = format!("fn_ret_{}", name);
                     self.var_types.get(&key).cloned().unwrap_or_else(|| "nova_int".into())
                 } else if let ExprKind::Member { obj, name: method } = &func.kind {
+                    // D38 array-static-method: `[]T.new()` / `[]T.with_capacity(n)`
+                    // → NovaArray_<T>*. obj — Path(["__array", "<T>"]).
+                    if let ExprKind::Path(parts) = &obj.kind {
+                        if parts.len() == 2 && parts[0] == "__array"
+                            && (method == "new" || method == "with_capacity")
+                        {
+                            let arr_suffix = match parts[1].as_str() {
+                                "str"            => "nova_str",
+                                "byte" | "u8"    => "nova_byte",
+                                "bool"           => "nova_bool",
+                                "f64" | "f32"    => "nova_f64",
+                                _                => "nova_int",
+                            };
+                            return format!("NovaArray_{}*", arr_suffix);
+                        }
+                    }
                     let obj_ty = self.infer_expr_c_type(obj);
                     // D79: Channel static + instance methods.
                     if let ExprKind::Ident(n) = &obj.kind {
@@ -6193,7 +6259,7 @@ impl CEmitter {
                             "to_upper" | "to_lower" | "trim" | "slice" | "concat" => "nova_str".into(),
                             "starts_with" | "ends_with" | "contains" | "eq" => "nova_bool".into(),
                             "len" | "char_len" | "byte_len" => "nova_int".into(),
-                            "find" | "rfind" => "NovaOpt_nova_int".into(),
+                            "find" | "rfind" | "char_at" => "NovaOpt_nova_int".into(),
                             // D26: s.bytes() → []byte (packed uint8_t[]).
                             "bytes" => "NovaArray_nova_byte*".into(),
                             // s.chars() → []char (bootstrap-eager codepoints как nova_int).
