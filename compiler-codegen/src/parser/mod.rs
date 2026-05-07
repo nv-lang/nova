@@ -2032,7 +2032,16 @@ impl Parser {
             // Не handler-литерал — откатываемся и парсим как обычное выражение.
             self.pos = saved;
         }
-        self.parse_expr()
+        // Handler — это выражение в позиции `with E = <expr> { body }`.
+        // Чтобы `(e) => interrupt Some(e)` не "сожрало" следующий `{`-block
+        // как trailing-block, парсим в режиме no_trailing_block. С этим
+        // флагом `interrupt Some(e) { body }` остановится на `interrupt Some(e)`,
+        // а `{ body }` достанется внешнему with-парсеру.
+        let saved_trailing = self.no_trailing_block;
+        self.no_trailing_block = true;
+        let result = self.parse_expr();
+        self.no_trailing_block = saved_trailing;
+        result
     }
 
     fn parse_interrupt_expr(&mut self) -> Result<Expr, Diagnostic> {
