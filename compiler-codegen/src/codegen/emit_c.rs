@@ -2116,9 +2116,16 @@ impl CEmitter {
         self.line(&format!("}} NovaVtable_{};", name));
         self.line("");
 
-        // 2. Thread-local handler slot
+        // 2. Thread-local handler slot. БЕЗ static — handler-storage
+        // должен быть видим из других TU (для multi-module compilation
+        // в production) и регистрируется в registry
+        // (nova_register_effect_storage), которая может быть в другом TU.
+        // В bootstrap'е (single-TU) static тоже работает через
+        // &_nova_handler_X в том же файле, но semantically неверно.
+        // D80 (per-fiber handler scoping) требует чтобы registry был
+        // полным — внешняя видимость storage-слотов.
         self.line(&format!(
-            "__declspec(thread) static NovaVtable_{name}* _nova_handler_{name} = NULL;",
+            "__declspec(thread) NovaVtable_{name}* _nova_handler_{name} = NULL;",
             name = name
         ));
         self.line("");
