@@ -556,6 +556,10 @@ impl CEmitter {
                     "bool" => Ok("nova_bool".into()),
                     "str"  => Ok("nova_str".into()),
                     "byte" => Ok("nova_byte".into()),
+                    // D26 Q-string-indexing школа B: char это codepoint = nova_int в bootstrap.
+                    // Без этой ветки fallback вёл к `Nova_char*` (struct ptr) → invalid C
+                    // (`Nova_char` undefined и коллизия с C keyword `char`).
+                    "char" => Ok("nova_int".into()),
                     "Option" => Ok("NovaOpt_nova_int".into()),
                     "Result" => Ok("Nova_Result*".into()),
                     "Self" => {

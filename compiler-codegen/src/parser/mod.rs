@@ -1048,7 +1048,17 @@ impl Parser {
     fn parse_bit_or(&mut self) -> Result<Expr, Diagnostic> {
         let mut left = self.parse_bit_xor()?;
         loop {
-            if !matches!(self.peek().kind, TokenKind::Pipe) { break; }
+            // D49 newline-tolerance: leading `|` after newline продолжает expression.
+            // Аналогично `||`/`&&` (rule 6). Ценен для multi-line bitwise expr'ов
+            // в hash/codec алгоритмах (base64 / md5 / sha / fnv-style packs).
+            let saved_pos = self.pos;
+            if matches!(self.peek().kind, TokenKind::Newline) {
+                self.skip_newlines();
+            }
+            if !matches!(self.peek().kind, TokenKind::Pipe) {
+                self.pos = saved_pos;
+                break;
+            }
             self.bump();
             self.skip_newlines();
             let right = self.parse_bit_xor()?;
@@ -1069,7 +1079,15 @@ impl Parser {
     fn parse_bit_xor(&mut self) -> Result<Expr, Diagnostic> {
         let mut left = self.parse_bit_and()?;
         loop {
-            if !matches!(self.peek().kind, TokenKind::Caret) { break; }
+            // D49 newline-tolerance: leading `^` after newline.
+            let saved_pos = self.pos;
+            if matches!(self.peek().kind, TokenKind::Newline) {
+                self.skip_newlines();
+            }
+            if !matches!(self.peek().kind, TokenKind::Caret) {
+                self.pos = saved_pos;
+                break;
+            }
             self.bump();
             self.skip_newlines();
             let right = self.parse_bit_and()?;
@@ -1090,7 +1108,15 @@ impl Parser {
     fn parse_bit_and(&mut self) -> Result<Expr, Diagnostic> {
         let mut left = self.parse_shift()?;
         loop {
-            if !matches!(self.peek().kind, TokenKind::Amp) { break; }
+            // D49 newline-tolerance: leading `&` after newline.
+            let saved_pos = self.pos;
+            if matches!(self.peek().kind, TokenKind::Newline) {
+                self.skip_newlines();
+            }
+            if !matches!(self.peek().kind, TokenKind::Amp) {
+                self.pos = saved_pos;
+                break;
+            }
             self.bump();
             self.skip_newlines();
             let right = self.parse_shift()?;
@@ -1111,10 +1137,18 @@ impl Parser {
     fn parse_shift(&mut self) -> Result<Expr, Diagnostic> {
         let mut left = self.parse_range()?;
         loop {
+            // D49 newline-tolerance: leading `<<`/`>>` after newline.
+            let saved_pos = self.pos;
+            if matches!(self.peek().kind, TokenKind::Newline) {
+                self.skip_newlines();
+            }
             let op = match self.peek().kind {
                 TokenKind::Shl => BinOp::Shl,
                 TokenKind::Shr => BinOp::Shr,
-                _ => break,
+                _ => {
+                    self.pos = saved_pos;
+                    break;
+                }
             };
             self.bump();
             self.skip_newlines();
