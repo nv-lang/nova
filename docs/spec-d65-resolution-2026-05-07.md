@@ -64,6 +64,47 @@ fn retry[E](body fn() Fail[E] -> T) Fail[E] -> T
   public API использует sugar-form вместо typed.
 - Реализации compile/codegen ничего не меняется.
 
+### Дополнительный аргумент: catch-all use-case
+
+> «А если программист хочет ловить все ошибки через `Fail`, а не
+> только свои?»
+
+Это **главный use-case для `Fail` без параметра** — supervisor /
+top-level handler / quick scripts. Программист пишет:
+
+```nova
+with Fail = (e) => log_error(e) {
+    untrusted_plugin()                 // может бросить что угодно
+}
+```
+
+Этот handler ловит **любой** `throw expr` (любого типа `E`), который
+не был перехвачен внутренним `Fail[E']` handler'ом. Семантика по
+D65 Правилу 2 (lookup): сначала точный тип, потом catch-all.
+
+**Если бы Правило 1 действовало строго** (`Fail` = placeholder, не
+erasure), такой catch-all паттерн **не имел бы чёткой семантики**:
+placeholder ждёт inference, а в `with Fail = handler` нет контекста
+для inference какого `E`.
+
+**С откатом Правила 1** (`Fail` ≡ `Fail[any]`) семантика
+**однозначна**: catch-all handler принимает значение типа `any`,
+программист в теле может использовать `is`-проверки или просто
+конвертировать в string через `str.from(e)`:
+
+```nova
+with Fail = (e) => Log.error("error: ${e}") {
+    risky_operation()
+}
+```
+
+Это работает в bootstrap'е сейчас — точно из-за того что `Fail` =
+`Fail[any]`.
+
+**Вывод:** catch-all — естественный use-case, который **подкрепляет**
+старую формулировку D65. Не стоит её пересматривать ради
+аспирационной placeholder-семантики.
+
 ---
 
 ## По syntax.md gap
