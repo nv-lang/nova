@@ -12,6 +12,8 @@ structured-concurrency примитивы есть в языке, и как па
 | [D71](#d71-bootstrap-concurrency-runtime) | Bootstrap concurrency runtime: cooperative scheduler, `Time.sleep` yield-point, capture-by-value |
 | [D75](#d75-cancel_scope--ручная-структурная-отмена) | `cancel_scope { tok => ... }` — ручная структурная отмена (реализовано) |
 | [D79](#d79-channels--coordination-между-fiber-ами) | `Channel[T]` — coordination между fiber'ами, `select { ... }` |
+| [D80](#d80-handler-scoping-per-fiber) | Handler scoping per-fiber — `with X = handler` локален для fiber'а, наследуется через spawn |
+| [D80](#d80-handler-scoping-per-fiber) | Handler scoping per-fiber — `with X = h` биндинги изолированы между fibers |
 
 ---
 
@@ -1483,3 +1485,175 @@ D79 закрывает gap: формальная декларация Channel[T]
 семантика closed/non-deterministic ordering/owner-actor pattern.
 
 Bootstrap-реализация — следующий шаг (компиляторный агент).
+
+---
+
+## D80. Handler scoping per-fiber
+
+### Что
+`with X = handler { body }` устанавливает binding `X = handler`
+**только** для текущего fiber'а (D14). Другие fiber'ы — работающие
+concurrent на том же OS-thread (D71 cooperative) или разных
+OS-thread'ах (D14 production multithreaded) — **не видят** этот
+binding.
+
+При `spawn`/`parallel for`/`supervised`-spawn новый fiber **наследует**
+текущий handler-stack (snapshot всех активных handler-pointers).
+Изменения handler'ов внутри fiber'а (через дополнительные `with`-блоки)
+видны только этому fiber'у.
+
+### Правило
+
+**Семантика:**
+
+1. Каждый fiber имеет собственный snapshot handler-pointers для всех
+   эффектов.
+2. При resume fiber'а scheduler'ом: handler-state восстанавливается
+   из fiber's snapshot.
+3. После yield/return: handler-state сохраняется обратно в fiber's
+   snapshot.
+4. Handler-state восстанавливается к outer-flow state (как до resume).
+5. `spawn` нового fiber'а наследует current handler-state как initial
+   snapshot — structured-concurrency наследование.
+
+**Грамматика без изменений** — это runtime-инвариант, не
+языковая конструкция.
+
+### Пример
+
+Изоляция между fiber'ами:
+
+```nova
+fn use_clock_100() -> int {
+    with Time = handler Time { sleep(_) => () now() => 100 } {
+        Time.now()                   // ВСЕГДА 100, независимо от других fiber'ов
+    }
+}
+
+fn use_clock_200() -> int {
+    with Time = handler Time { sleep(_) => () now() => 200 } {
+        Time.now()                   // ВСЕГДА 200
+    }
+}
+
+supervised {
+    spawn { let a = use_clock_100() }   // a == 100, гарантированно
+    spawn { let b = use_clock_200() }   // b == 200, гарантированно
+}
+```
+
+Inheritance + override:
+
+```nova
+with Time = handler Time { ... now() => 42 } {
+    supervised {
+        spawn {
+            assert(Time.now() == 42)         // наследовал outer
+
+            with Time = handler Time { ... now() => 999 } {
+                assert(Time.now() == 999)    // inner override виден только здесь
+            }
+
+            assert(Time.now() == 42)         // outer восстановлен
+        }
+    }
+}
+```
+
+### Почему
+
+1. **Корректность.** Без per-fiber scoping handler одного fiber'а
+   может быть перезаписан другим fiber'ом на shared TLS-globals.
+   Тихий data corruption — наихудший класс багов в concurrent коде.
+
+2. **D14 invariant.** «Невидимая инфраструктура fiber-runtime'а»
+   подразумевает, что fiber'ы логически независимы. Shared mutable
+   state — нарушение.
+
+3. **AI-friendly.** LLM генерирует код по логической модели «каждый
+   spawn — независимый поток вычисления». Без per-fiber scoping
+   эта модель ломается на handler'ах.
+
+4. **Прецеденты.**
+   - **OCaml 5 effect handlers** — handler scope follows fiber-tree.
+   - **Koka effect handlers** — то же.
+   - **Rust `tokio::task_local!`** — explicit per-task storage с
+     parent inheritance.
+
+### Что отвергнуто
+
+- **Shared TLS handlers** (старая bootstrap-семантика до 2026-05-07).
+  Тихий data corruption между fiber'ами на одном OS-thread'е.
+- **Explicit handler passing** через параметры. Нарушает D62
+  «handler — implicit через with-scope».
+- **Copy-on-write snapshot.** Premature optimization; bootstrap
+  использует eager save/restore, ~µs overhead per resume.
+
+### Цена
+
+- **Memory:** один snapshot per fiber, размер = N × pointer (N =
+  количество зарегистрированных эффектов). В bootstrap'е N ≤ 5,
+  ~256 байт. Heap-allocated чтобы не overflow'ить fiber stack.
+- **CPU:** save/restore — N memcpy-equivalent на каждый resume.
+  Production может использовать lazy/COW snapshots.
+
+### Implementation invariant: handler-storage **не static**
+
+Codegen эмитит handler-storage (`_nova_handler_X` для каждого
+эффекта `X`) с **external linkage** — без `static`:
+
+```c
+__declspec(thread) NovaVtable_X* _nova_handler_X = NULL;          // ✓ correct
+__declspec(thread) static NovaVtable_X* _nova_handler_X = NULL;   // ✗ WRONG
+```
+
+`static` ограничивает visibility одним translation unit (TU). Это
+**ломает D80** в трёх случаях:
+
+1. **Registry в другом TU.**
+   `nova_register_effect_storage(&_nova_handler_X)` вызывается из
+   main wrapper. Если storage `static` в module-TU, а registry в
+   `effects.c` — registry формально не должен видеть storage.
+   В bootstrap'е (single-TU compilation) случайно работает, но
+   архитектурно неверно.
+
+2. **Production multi-module compilation.** При разделении проекта
+   на multiple `.c` файлов user-defined effect, объявленный в
+   module A, может использоваться в module B (через `import`).
+   Storage обязан быть extern-видимым.
+
+3. **Snapshot save/restore через `void**`.** Registry хранит `void**`
+   (адрес slot'а). Доступ через TLS-pointer должен следовать
+   правилам external linkage; со `static` это
+   implementation-defined behavior.
+
+Built-in эффекты (Fail, Time, Mem) в `nova_rt/effects.c` уже без
+`static` — правильно. **User-defined effect storage обязан
+следовать тому же правилу.** Codegen `compiler-codegen/src/codegen/
+emit_c.rs` эмитит без `static` начиная с 2026-05-07 (commit
+55d896de3); до этого эмитился `static`, что работало случайно
+из-за single-TU bootstrap-компиляции.
+
+### Связь
+
+- [D14](#d14-fiber-runtime--невидимая-инфраструктура) — fiber-runtime
+  как «невидимая инфраструктура». D80 уточняет, что handler-state
+  входит в эту инфраструктуру (per-fiber, не shared).
+- [D50](#d50-concurrency-model-spawn-detach-blocking) — `spawn`/`detach`
+  естественно расширяются handler-наследованием.
+- [D61](04-effects.md#d61) — effect/handler keywords; D80 — runtime
+  invariant, который семантика D61 уже подразумевала.
+- [D71](#d71-bootstrap-concurrency-runtime) — bootstrap runtime;
+  снапшот save/restore реализован в `nova_supervised_step` (2026-05-07).
+- [D75](#d75) — `cancel_scope` использует тот же per-scope state pattern.
+
+### Эволюция
+
+До 2026-05-07 bootstrap-runtime хранил handler'ы в `__declspec(thread)`
+TLS-globals **без** per-fiber изоляции — handler одного fiber'а на
+том же OS-thread'е перезаписывал handler другого. Compiler-агент
+выявил bug на тестах с разными `with Time = ...` handler'ами в
+параллельных fiber'ах и пофиксил через snapshot save/restore вокруг
+`mco_resume` + `nova_register_effect_storage` registry. D80
+формализует invariant в spec'е (тесты:
+`tests-nova/concurrency/per_fiber_handlers.nv` — 4 случая).
