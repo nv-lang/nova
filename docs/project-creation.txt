@@ -724,7 +724,20 @@ vs naive-версия (без внутреннего handler'а): на throw'е 
 ИТОГО (2026-05-07 финал)
 ================================================================================
 
-Suite: 59/59 tests passing.
+Suite: 60/60 tests passing.
+
+Раунд 2 — добавлены bitwise операторы и u64-литералы:
+- Lexer: токены Amp, Caret, Shl, Shr; single `&` больше не ошибка;
+  hex/binary литералы > i64::MAX парсятся как u64 wrapping в i64
+  (для FNV/UUID/CRC констант).
+- Parser: уровни приоритета 7-10 (bit-or → bit-xor → bit-and → shift)
+  по spec/03-syntax.md.
+- Codegen: emit C-операторы напрямую (биты тождественны).
+- Тесты: tests-nova/types/bitwise.nv (28 тестов: basic + precedence +
+  patterns + u64-литералы за i64::MAX).
+- Stdlib unblock: 14 файлов больше не блокируются на bitwise, 4 — на
+  large-int. Каждый продвинулся на следующий блокер; см. examples/
+  stdlib/STATUS.md.
 
 Tests-nova layout: иерархическая (basics/types/syntax/effects/concurrency/
 runtime/modules), все module-decls согласованы с paths.
