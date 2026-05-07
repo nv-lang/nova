@@ -8,6 +8,7 @@ pub mod diag;
 pub mod interp;
 pub mod lexer;
 pub mod lints;
+pub mod manifest;
 pub mod parser;
 pub mod types;
 

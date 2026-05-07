@@ -47,6 +47,15 @@ fn run_lints(module: &nova_codegen::ast::Module, src: &str, file: &str) {
     }
 }
 
+/// D78 path/module enforcement. Если файл лежит внутри пакета
+/// (нашли nova.toml в parent dirs), проверяем что declared module
+/// соответствует file path относительно source root.
+/// Если nova.toml не найден — skip (файл не часть пакета).
+fn check_module_path(file: &PathBuf, module: &nova_codegen::ast::Module) -> Result<()> {
+    nova_codegen::manifest::check_module_path(file.as_path(), &module.name)
+        .map_err(|msg| anyhow!("{}", msg))
+}
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let result = match cli.cmd {
@@ -77,6 +86,7 @@ fn cmd_check(path: &PathBuf) -> Result<()> {
             d.render(&src, &path.to_string_lossy())
         )
     })?;
+    check_module_path(path, &module)?;
     nova_codegen::types::check_module(&module).map_err(|errs| {
         let messages: Vec<String> = errs
             .iter()
@@ -96,6 +106,7 @@ fn cmd_run(path: &PathBuf) -> Result<()> {
             d.render(&src, &path.to_string_lossy())
         )
     })?;
+    check_module_path(path, &module)?;
     nova_codegen::types::check_module(&module).map_err(|errs| {
         let messages: Vec<String> = errs
             .iter()
@@ -124,6 +135,7 @@ fn cmd_compile(path: &PathBuf, output: Option<&std::path::Path>, annotate_source
     let mut module = nova_codegen::parser::parse(&src).map_err(|d| {
         anyhow!("{}", d.render(&src, &path.to_string_lossy()))
     })?;
+    check_module_path(path, &module)?;
     nova_codegen::types::check_module(&module).map_err(|errs| {
         let messages: Vec<String> = errs
             .iter()
@@ -164,6 +176,7 @@ fn cmd_test(path: &PathBuf) -> Result<()> {
             d.render(&src, &path.to_string_lossy())
         )
     })?;
+    check_module_path(path, &module)?;
     let mut interp = nova_codegen::interp::Interpreter::new();
     interp.load_module(&module).map_err(|d| {
         anyhow!(
