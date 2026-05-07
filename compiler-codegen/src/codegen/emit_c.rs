@@ -2056,7 +2056,12 @@ impl CEmitter {
                 self.line(&format!("struct Nova_{} {{", t.name));
                 self.indent += 1;
                 for (c_ty, fname) in &field_c_pairs {
-                    self.line(&format!("{} {};", c_ty, fname));
+                    let mangled = Self::mangle_field_name(fname);
+                    self.line(&format!("{} {};", c_ty, mangled));
+                    // Schema хранит **исходное** Nova-имя поля — все callers
+                    // должны mangle'ить при доступе. Иначе schema-lookup
+                    // ломается на полях типа `char` (mangle'нуто в C → `nv_char`,
+                    // но в Nova-AST оно `char`).
                     schema.insert(fname.clone(), c_ty.clone());
                 }
                 self.indent -= 1;
@@ -2177,7 +2182,9 @@ impl CEmitter {
         for f in fields {
             let ty_c = self.type_ref_to_c(&f.ty)?;
             schema.insert(f.name.clone(), ty_c.clone());
-            self.line(&format!("{} {};", ty_c, f.name));
+            // Mangle если коллизия с C reserved keyword.
+            let mangled = Self::mangle_field_name(&f.name);
+            self.line(&format!("{} {};", ty_c, mangled));
         }
         self.indent -= 1;
         self.line("};");
@@ -2238,7 +2245,9 @@ impl CEmitter {
                         let tc = self.type_ref_to_c(&f.ty)?;
                         field_types.push(tc.clone());
                         field_names_ordered.push(f.name.clone());
-                        self.line(&format!("{} {};", tc, f.name));
+                        // Mangle если коллизия с C-keyword.
+                        let mfn = Self::mangle_field_name(&f.name);
+                        self.line(&format!("{} {};", tc, mfn));
                         let key = format!("{}::{}::{}", name, v.name, f.name);
                         self.record_variant_field_types.insert(key, tc);
                     }
@@ -2284,10 +2293,12 @@ impl CEmitter {
                     }
                 }
                 SumVariantKind::Record(fields) => {
-                    // Named fields — assign by field name, not positional index
+                    // Named fields — assign by field name, not positional index.
+                    // Mangle field if collides with C-keyword.
                     for (i, f) in fields.iter().enumerate() {
+                        let mfn = Self::mangle_field_name(&f.name);
                         self.line(&format!("_r->payload.{var}.{fname} = _{i};",
-                            var = v.name, fname = f.name, i = i));
+                            var = v.name, fname = mfn, i = i));
                     }
                 }
             }
@@ -2299,6 +2310,34 @@ impl CEmitter {
 
         self.sum_schemas.insert(name.to_string(), sum_schema);
         Ok(())
+    }
+
+    /// Если field-name коллизирует с C reserved-keyword'ом — добавим
+    /// префикс `nv_`. Применяется ко **всем** field-emission точкам:
+    /// struct decl, record-literal, member-access, pattern match.
+    /// Иначе генерируется invalid C (`nova_int char;`).
+    ///
+    /// `n` это C-keyword? Список — стандартный C99 + popular extensions.
+    fn mangle_field_name(name: &str) -> String {
+        if Self::is_c_keyword(name) {
+            format!("nv_{}", name)
+        } else {
+            name.to_string()
+        }
+    }
+
+    fn is_c_keyword(name: &str) -> bool {
+        matches!(name,
+            "auto" | "break" | "case" | "char" | "const" | "continue" |
+            "default" | "do" | "double" | "else" | "enum" | "extern" |
+            "float" | "for" | "goto" | "if" | "inline" | "int" | "long" |
+            "register" | "restrict" | "return" | "short" | "signed" |
+            "sizeof" | "static" | "struct" | "switch" | "typedef" |
+            "union" | "unsigned" | "void" | "volatile" | "while" |
+            "_Bool" | "_Atomic" | "_Complex" | "_Imaginary" |
+            "_Generic" | "_Thread_local" | "_Static_assert" | "_Noreturn" |
+            "asm" | "fortran"
+        )
     }
 
     // ---- function emission ----
@@ -3197,7 +3236,8 @@ impl CEmitter {
                 if obj_ty == "void*" {
                     return Ok("NULL".into());
                 }
-                let field_name = name.clone();
+                // Mangle field name если коллизия с C-keyword (`char`, `int` и т.п.).
+                let field_name = Self::mangle_field_name(name);
                 // Check if obj is an array index expression whose elements are record pointers.
                 // e.g. xs[1].inner where xs = NovaArray_nova_int* containing Nova_Box*.
                 if let ExprKind::Index { obj: arr_obj, .. } = &obj.kind {
@@ -4908,9 +4948,11 @@ impl CEmitter {
                         if field_ty == "void*" {
                             let val_ty = if let Some(v) = &f.value { self.infer_expr_c_type(v) } else { "nova_int".into() };
                             let boxed = self.box_value_as_void_ptr(&val, &val_ty);
-                            self.line(&format!("{}->{} = {};", tmp, f.name, boxed));
+                            let mfn = Self::mangle_field_name(&f.name);
+                            self.line(&format!("{}->{} = {};", tmp, mfn, boxed));
                         } else {
-                            self.line(&format!("{}->{} = {};", tmp, f.name, val));
+                            let mfn = Self::mangle_field_name(&f.name);
+                            self.line(&format!("{}->{} = {};", tmp, mfn, val));
                         }
                     }
                 }
@@ -4948,9 +4990,11 @@ impl CEmitter {
                         self.infer_expr_c_type(v)
                     } else { "nova_int".into() };
                     let boxed = self.box_value_as_void_ptr(&val, &val_ty);
-                    self.line(&format!("{}->{} = {};", tmp, f.name, boxed));
+                    let mfn = Self::mangle_field_name(&f.name);
+                    self.line(&format!("{}->{} = {};", tmp, mfn, boxed));
                 } else {
-                    self.line(&format!("{}->{} = {};", tmp, f.name, val));
+                    let mfn = Self::mangle_field_name(&f.name);
+                    self.line(&format!("{}->{} = {};", tmp, mfn, val));
                 }
             }
             self.var_types.insert(tmp.clone(), format!("Nova_{}*", struct_name));
@@ -5247,7 +5291,8 @@ impl CEmitter {
                     for field in fields {
                         if let Some(Pattern::Literal(lit, _)) = &field.pattern {
                             let accessor = if Self::is_value_type(&scr_ty) { "." } else { "->" };
-                            let field_access = format!("{}{}{}", scr, accessor, field.name);
+                            let mfn = Self::mangle_field_name(&field.name);
+                            let field_access = format!("{}{}{}", scr, accessor, mfn);
                             let sub = self.pattern_cond(&Pattern::Literal(lit.clone(), Span::dummy()), &field_access)?;
                             if sub != "true" { conds.push(sub); }
                         }
@@ -5261,7 +5306,8 @@ impl CEmitter {
                     let mut conds = vec![format!("({}->tag == NOVA_TAG_{}_{})", scr, sum_type_name, variant_name)];
                     for field in fields {
                         if let Some(Pattern::Literal(lit, _)) = &field.pattern {
-                            let field_access = format!("{}->payload.{}.{}", scr, variant_name, field.name);
+                            let mfn = Self::mangle_field_name(&field.name);
+                            let field_access = format!("{}->payload.{}.{}", scr, variant_name, mfn);
                             let sub = self.pattern_cond(&Pattern::Literal(lit.clone(), Span::dummy()), &field_access)?;
                             if sub != "true" { conds.push(sub); }
                         }
@@ -5454,7 +5500,8 @@ impl CEmitter {
                     let field_types = self.record_schemas.get(&type_name_from_path).cloned().unwrap_or_default();
                     for field in fields {
                         let ty = field_types.get(&field.name).cloned().unwrap_or_else(|| "nova_int".into());
-                        let field_access = format!("{}{}{}", scr, accessor, field.name);
+                        let mfn = Self::mangle_field_name(&field.name);
+                        let field_access = format!("{}{}{}", scr, accessor, mfn);
                         match &field.pattern {
                             None => {
                                 self.var_types.insert(field.name.clone(), ty.clone());
@@ -5482,7 +5529,8 @@ impl CEmitter {
                     for field in fields {
                         let ty = self.get_record_variant_field_type(&sum_type_name, &variant_name, &field.name)
                             .unwrap_or_else(|| "nova_int".into());
-                        let field_access = format!("{}->payload.{}.{}", scr, variant_name, field.name);
+                        let mfn = Self::mangle_field_name(&field.name);
+                        let field_access = format!("{}->payload.{}.{}", scr, variant_name, mfn);
                         match &field.pattern {
                             None => {
                                 self.var_types.insert(field.name.clone(), ty.clone());

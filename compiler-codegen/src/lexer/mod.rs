@@ -413,9 +413,6 @@ impl<'a> Lexer<'a> {
             "interrupt" => TokenKind::KwInterrupt,
             "forbid" => TokenKind::KwForbid,
             "realtime" => TokenKind::KwRealtime,
-            "and" => TokenKind::KwAnd,
-            "or" => TokenKind::KwOr,
-            "not" => TokenKind::KwNot,
             _ => TokenKind::Ident(text.to_string()),
         };
         Ok(Token::new(kind, span))
@@ -447,22 +444,96 @@ impl<'a> Lexer<'a> {
                             Span::new(start, self.pos),
                         ));
                     };
-                    let ch = match esc {
-                        b'n' => '\n',
-                        b't' => '\t',
-                        b'r' => '\r',
-                        b'\\' => '\\',
-                        b'"' => '"',
-                        b'0' => '\0',
+                    match esc {
+                        b'n' => { s.push('\n'); self.pos += 1; }
+                        b't' => { s.push('\t'); self.pos += 1; }
+                        b'r' => { s.push('\r'); self.pos += 1; }
+                        b'\\' => { s.push('\\'); self.pos += 1; }
+                        b'"' => { s.push('"'); self.pos += 1; }
+                        b'0' => { s.push('\0'); self.pos += 1; }
+                        b'x' => {
+                            // \xNN — ровно 2 hex digit'а, byte value 0..255.
+                            // Для бинарных байтов в string (тест-кейсы, протоколы).
+                            self.pos += 1; // 'x'
+                            let hex_start = self.pos;
+                            for _ in 0..2 {
+                                match self.bytes.get(self.pos) {
+                                    Some(&c) if c.is_ascii_hexdigit() => self.pos += 1,
+                                    _ => return Err(Diagnostic::new(
+                                        "expected 2 hex digits after \\x",
+                                        Span::new(hex_start.saturating_sub(2), self.pos + 1),
+                                    )),
+                                }
+                            }
+                            let hex_str = &self.src[hex_start..self.pos];
+                            let byte_val = u8::from_str_radix(hex_str, 16).map_err(|_| {
+                                Diagnostic::new(
+                                    format!("invalid hex in \\x: {}", hex_str),
+                                    Span::new(hex_start, self.pos),
+                                )
+                            })?;
+                            // Для байтов 0..127 — push as ASCII char (ровно 1 byte UTF-8).
+                            // Для байтов 128..255 — push as Latin-1 codepoint (2 bytes UTF-8).
+                            // Если нужны raw bytes для протокола — использовать Buffer/[]byte.
+                            s.push(byte_val as char);
+                        }
+                        b'u' => {
+                            // \u{HEX} — Unicode codepoint, encoded as UTF-8 в string.
+                            self.pos += 1; // 'u'
+                            if self.bytes.get(self.pos) != Some(&b'{') {
+                                return Err(Diagnostic::new(
+                                    "expected '{' after \\u in string literal",
+                                    Span::new(self.pos, self.pos + 1),
+                                ));
+                            }
+                            self.pos += 1;
+                            let hex_start = self.pos;
+                            while let Some(&c) = self.bytes.get(self.pos) {
+                                if c.is_ascii_hexdigit() { self.pos += 1; } else { break; }
+                            }
+                            let hex_end = self.pos;
+                            if hex_end == hex_start {
+                                return Err(Diagnostic::new(
+                                    "expected hex digits in \\u{...}",
+                                    Span::new(hex_start, hex_end),
+                                ));
+                            }
+                            let hex_str = &self.src[hex_start..hex_end];
+                            let cp = u32::from_str_radix(hex_str, 16).map_err(|_| {
+                                Diagnostic::new(
+                                    format!("invalid hex in \\u{{...}}: {}", hex_str),
+                                    Span::new(hex_start, hex_end),
+                                )
+                            })?;
+                            if cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF) {
+                                return Err(Diagnostic::new(
+                                    format!("invalid Unicode codepoint: U+{:X}", cp),
+                                    Span::new(hex_start, hex_end),
+                                ));
+                            }
+                            if self.bytes.get(self.pos) != Some(&b'}') {
+                                return Err(Diagnostic::new(
+                                    "expected '}' to close \\u{...}",
+                                    Span::new(self.pos, self.pos + 1),
+                                ));
+                            }
+                            self.pos += 1;
+                            if let Some(c) = char::from_u32(cp) {
+                                s.push(c);
+                            } else {
+                                return Err(Diagnostic::new(
+                                    format!("invalid char codepoint: U+{:X}", cp),
+                                    Span::new(hex_start, hex_end),
+                                ));
+                            }
+                        }
                         other => {
                             return Err(Diagnostic::new(
                                 format!("unknown escape: \\{}", other as char),
                                 Span::new(self.pos - 1, self.pos + 1),
                             ));
                         }
-                    };
-                    s.push(ch);
-                    self.pos += 1;
+                    }
                 }
                 _ => {
                     // Берём всю utf-8 кодовую точку.
