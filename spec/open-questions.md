@@ -3642,8 +3642,8 @@ generic Complex / Vector / Matrix через [Q-math-protocol](#q-math-protocol)
 char-литерала** (`'a'`, `'\n'`, `'é'`) в спеке не описан.
 
 Это пробел: код вида `match c { '0'..='9' => ... }` или
-`if c == '"'` нужен в практических парсерах ([examples/stdlib/json.nv](examples/stdlib/json.nv),
-[examples/stdlib/complex.nv](examples/stdlib/complex.nv) и т.д.),
+`if c == '"'` нужен в практических парсерах ([stdlib/encoding/json.nv](../stdlib/encoding/json.nv),
+[stdlib/math/complex.nv](../stdlib/math/complex.nv) и т.д.),
 но формально не определён.
 
 **Предложение.** Добавить char-литералы стандартного вида:
@@ -4101,7 +4101,7 @@ runtime-marker pattern), Q-effect-polymorphism.
 
 ## Q-keywords-as-fields. Можно ли использовать keyword как имя поля?
 
-**Контекст.** examples/stdlib/queue.nv использует `in` как имя поля:
+**Контекст.** stdlib/collections/queue.nv использует `in` как имя поля:
 
 ```nova
 export type Queue[T] {
@@ -4132,7 +4132,7 @@ Bootstrap-парсер падает на `in` field-declaration:
 
 ## Q-effect-type-anonymous. Anonymous effect types в позиции type
 
-**Контекст.** examples/stdlib/linkedlist.nv использует `effect { ... }`
+**Контекст.** stdlib/collections/linkedlist.nv использует `effect { ... }`
 inline в параметре функции:
 
 ```nova
@@ -4167,7 +4167,7 @@ use-cases.
 
 ## Q-generic-receiver-method. `fn []T @method[U](...)` — generic methods на slice
 
-**Контекст.** examples/stdlib/vec.nv хочет writing extension methods
+**Контекст.** stdlib/collections/vec.nv хочет writing extension methods
 на встроенный `[]T`:
 
 ```nova
@@ -4199,7 +4199,7 @@ Bootstrap не парсит `[]T` как receiver type. Это требует:
 
 ## Q-assert-without-parens. `assert cond` без parentheses?
 
-**Контекст.** examples/stdlib/sql.nv писал `assert n == 42` как
+**Контекст.** stdlib/data/sql.nv писал `assert n == 42` как
 keyword-style assert (без скобок), но Nova `assert` это обычная
 функция, требует `assert(n == 42)`.
 
@@ -4245,10 +4245,10 @@ keyword-style assert (без скобок), но Nova `assert` это обычн
 ## Q-stdlib-minimal-api. Минимальный stdlib API surface, выявленный из practical libraries
 
 **Контекст.** Реализация пяти практических stdlib-либ
-([complex.nv](../examples/stdlib/complex.nv), [semver.nv](../examples/stdlib/semver.nv),
-[json.nv](../examples/stdlib/json.nv), [uuid.nv](../examples/stdlib/uuid.nv),
-[base64.nv](../examples/stdlib/base64.nv), [url.nv](../examples/stdlib/url.nv),
-[crc32.nv](../examples/stdlib/crc32.nv), [ulid.nv](../examples/stdlib/ulid.nv))
+([math/complex.nv](../stdlib/math/complex.nv), [data/semver.nv](../stdlib/data/semver.nv),
+[encoding/json.nv](../stdlib/encoding/json.nv), [identifiers/uuid.nv](../stdlib/identifiers/uuid.nv),
+[encoding/base64.nv](../stdlib/encoding/base64.nv), [encoding/url.nv](../stdlib/encoding/url.nv),
+[checksums/crc32.nv](../stdlib/checksums/crc32.nv), [identifiers/ulid.nv](../stdlib/identifiers/ulid.nv))
 выявила **минимальный набор API**, без которого парсеры и
 сериализаторы не пишутся. Этот набор — ориентир для bootstrap stdlib
 implementation.
@@ -4516,8 +4516,7 @@ Pending Tier 1/2:
 - [Q-string-indexing](#q-string-indexing) — open: что значит `i` в
   `str @char_at(i int)` (байты или codepoint'ы).
 - [Q-collect-mechanism](#q-collect-mechanism) — open: `collect[Out]()`.
-- [examples/stdlib/](../examples/stdlib/) — все 8 файлов используют
-  этот набор.
+- [stdlib/](../stdlib/) — все либы используют этот набор.
 
 **Статус.** Open question — не decision потому что это **накопительный
 список**, не финальный. Каждая новая stdlib-либа может выявить что-то

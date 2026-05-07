@@ -486,6 +486,65 @@ error: module declaration does not match file path
 
 Это AI-friendly: LLM получает не просто ошибку, а конкретное действие.
 
+#### Структура nova-lang репозитория
+
+Сам репозиторий языка (этот) использует **specific layout**, который
+служит **эталоном** для других пакетов и закреплён в spec'е чтобы
+будущие libs/тулинг знали где что искать:
+
+```
+nova-lang/
+├── compiler-bootstrap/      Rust — первая реализация (treewalk-interp)
+├── compiler-codegen/        Rust + C runtime — bootstrap codegen
+├── stdlib/                  стандартная библиотека Nova (.nv)
+│   ├── collections/         hashmap, set, deque, vec, queue, ...
+│   ├── crypto/              md5, sha1, sha256, hmac, jwt, bcrypt
+│   ├── encoding/            base64, hex, json, csv, ini, toml, url
+│   ├── identifiers/         uuid, ulid, snowflake
+│   ├── checksums/           crc32, fnv
+│   ├── time/                duration, cron
+│   ├── path/                path, glob
+│   ├── math/                complex, statistics
+│   ├── text/                regex, markdown_minimal, diff
+│   ├── data/                semver, semver_range, sql
+│   ├── concurrency/         rate_limiter, retry
+│   └── (новые домены — net/, io/, testing/, и т.д.)
+├── examples/                демо-программы и tutorial snippets
+│   └── *.nv                 (НЕ stdlib — это именно examples)
+├── tests-nova/              .nv-тесты bootstrap'а
+├── spec/                    spec-документация (этот файл здесь)
+└── docs/                    plans, articles, research
+```
+
+**Принципы layout'а:**
+
+1. **`stdlib/` ≠ `examples/`.** Stdlib — production-код для всех
+   программ Nova. Examples — туториальные snippets и демо-программы,
+   которые **используют** stdlib.
+
+2. **Группировка по домену, не по типу артефакта.** Каждая папка в
+   `stdlib/` — semantic domain (`crypto`, `encoding`, `time`),
+   а не «source-files vs tests vs docs». Тесты живут рядом с
+   модулем (внутри `.nv`-файла через `test "..." { }` блоки) —
+   см. [03-syntax.md → D29](03-syntax.md#d29).
+
+3. **Module path = file path.** По правилу `Path / module enforcement`
+   выше: `module std.crypto.md5` ↔ `stdlib/crypto/md5.nv`. Один и
+   тот же файл не может быть объявлен в двух модулях.
+
+4. **Плоская иерархия внутри домена.** Без подпапок второго уровня
+   (`stdlib/crypto/md5.nv`, не `stdlib/crypto/hash/md5.nv`). Если
+   домен растёт до 15+ файлов — рассматривать подкатегорию.
+
+5. **Прецеденты.** Go (`net/http/`, `encoding/json/`), Python
+   (`Lib/http/`, `Lib/json/`), Rust (`library/std/src/collections/`).
+   Все три используют **доменную flat-иерархию**, не type-based
+   (как Maven/Gradle src/main/java).
+
+Этот layout фиксируется как **convention**, не как обязательное
+правило для пользовательских пакетов — `nova.toml` через `[lib].src`
+позволяет любую структуру. Но `stdlib/` — каноничный пример.
+
 #### Lockfile — `nova.lock`
 
 TOML-формат, имя lowercase, единообразно с `nova.toml`. Auto-generated,
@@ -711,7 +770,7 @@ import std.result.Result
    format, workspace coordination — это всё нужно реализовать.
 2. **Bootstrap problem.** Сама Nova-stdlib должна жить **до** появления
    tooling'а. Решение: stdlib монолитна на ранних этапах (всё в
-   `examples/stdlib/*.nv`), package tooling появляется параллельно
+   `stdlib/<домен>/*.nv`), package tooling появляется параллельно
    с self-hosted compiler.
 3. **Central registry — открытый вопрос.** Когда появится,
    нужна команда поддержки (хостинг, security policy, DMCA, etc.).
@@ -729,7 +788,7 @@ import std.result.Result
 - [D30](03-syntax.md#d30) — конвенции имён модулей и файлов.
 - [D64](04-effects.md#d64) — `realtime { }` блок; prelude opt-out
   полезен для real-time uses.
-- [examples/stdlib/semver.nv](../../examples/stdlib/semver.nv) —
+- [stdlib/data/semver.nv](../../stdlib/data/semver.nv) —
   semver используется для `version` поля и для resolver-сравнений.
 
 ### Открытые вопросы
