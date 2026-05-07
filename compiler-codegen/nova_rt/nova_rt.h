@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <math.h>     /* D74: f64.sqrt()/sin()/cos()/etc. → libm */
 
 /* ---- Primitive types ---- */
 typedef int64_t  nova_int;

@@ -4082,6 +4082,30 @@ impl CEmitter {
                     }
                 }
 
+                // 3a. D74 math methods on f64/f32:
+                //     `x.sqrt()` → `sqrt(x)` (libm <math.h>); `x.abs()` → `fabs(x)`.
+                //     По D74: математические операции — instance-методы на числовых
+                //     типах. В runtime'е они мапятся на стандартные C-функции
+                //     из <math.h>.
+                if obj_ty == "nova_f64" || obj_ty == "nova_f32" {
+                    if let Some(c_fn) = Self::f64_method_to_c(method) {
+                        let obj_c = self.emit_expr(obj)?;
+                        let mut arg_strs = vec![obj_c];
+                        for a in args { arg_strs.push(self.emit_expr(a)?); }
+                        return Ok(format!("{}({})", c_fn, arg_strs.join(", ")));
+                    }
+                }
+                // 3b. D74 math methods on int (selected — abs, sign):
+                //     `n.abs()` → `llabs(n)`. Большинство int-методов — это
+                //     int-to-string, обработаны в str.from(...).
+                if obj_ty == "nova_int" {
+                    if let Some(c_fn) = Self::int_method_to_c(method) {
+                        let obj_c = self.emit_expr(obj)?;
+                        let mut arg_strs = vec![obj_c];
+                        for a in args { arg_strs.push(self.emit_expr(a)?); }
+                        return Ok(format!("{}({})", c_fn, arg_strs.join(", ")));
+                    }
+                }
                 // 3. String methods: `s.starts_with(...)` → `nova_str_starts_with(s, ...)`
                 if obj_ty == "nova_str" {
                     if let Some(rt_fn) = Self::str_method_to_rt(method) {
@@ -5779,6 +5803,52 @@ impl CEmitter {
         self.infer_expr_c_type(expr)
     }
 
+    /// D74: Map a Nova f64/f32 method to a C math.h function.
+    /// Все эти функции — стандартные libm; <math.h> подключён через
+    /// nova_rt.h (косвенно, через alloc.h/effects.h fall-through).
+    fn f64_method_to_c(method: &str) -> Option<&'static str> {
+        match method {
+            "sqrt"      => Some("sqrt"),
+            "cbrt"      => Some("cbrt"),
+            "abs"       => Some("fabs"),
+            "ceil"      => Some("ceil"),
+            "floor"     => Some("floor"),
+            "round"     => Some("round"),
+            "trunc"     => Some("trunc"),
+            "sin"       => Some("sin"),
+            "cos"       => Some("cos"),
+            "tan"       => Some("tan"),
+            "asin"      => Some("asin"),
+            "acos"      => Some("acos"),
+            "atan"      => Some("atan"),
+            "atan2"     => Some("atan2"),
+            "sinh"      => Some("sinh"),
+            "cosh"      => Some("cosh"),
+            "tanh"      => Some("tanh"),
+            "exp"       => Some("exp"),
+            "exp2"      => Some("exp2"),
+            "ln"        => Some("log"),       // натуральный log
+            "log2"      => Some("log2"),
+            "log10"     => Some("log10"),
+            "pow"       => Some("pow"),
+            "hypot"     => Some("hypot"),
+            "is_nan"    => Some("isnan"),
+            "is_finite" => Some("isfinite"),
+            "is_infinite" => Some("isinf"),
+            _ => None,
+        }
+    }
+
+    /// D74: Map a Nova int method to a C function.
+    /// Большинство int-операций — встроенные операторы; здесь только
+    /// дополнительные (abs).
+    fn int_method_to_c(method: &str) -> Option<&'static str> {
+        match method {
+            "abs"  => Some("llabs"),     // long long abs
+            _ => None,
+        }
+    }
+
     /// Map a Nova str method name to a nova_rt C function name.
     fn str_method_to_rt(method: &str) -> Option<&'static str> {
         match method {
@@ -6007,6 +6077,21 @@ impl CEmitter {
                             "push" => "nova_unit".into(),
                             _ => "nova_int".into(),
                         };
+                    }
+                    // D74 math methods on f64/f32 — return f64 (most) or bool (predicates).
+                    if obj_ty == "nova_f64" || obj_ty == "nova_f32" {
+                        if Self::f64_method_to_c(method).is_some() {
+                            return match method.as_str() {
+                                "is_nan" | "is_finite" | "is_infinite" => "nova_bool".into(),
+                                _ => "nova_f64".into(),
+                            };
+                        }
+                    }
+                    // D74 math methods on int.
+                    if obj_ty == "nova_int" {
+                        if Self::int_method_to_c(method).is_some() {
+                            return "nova_int".into();
+                        }
                     }
                     // String method calls return type inference
                     if obj_ty == "nova_str" {
