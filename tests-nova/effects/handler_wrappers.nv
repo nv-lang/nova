@@ -1,0 +1,137 @@
+// handler_wrappers.nv — D10 «всё — handler»: cleanup через handler-обёртки.
+//
+// Nova не имеет defer/RAII (Q20 open). Cleanup ресурсов оформляется через
+// функцию-обёртку, принимающую body-lambda. На любом пути выхода
+// (нормальный return, throw) обёртка делает cleanup.
+//
+// Это согласовано с D10: lifecycle ресурса = handler, body = lambda.
+//
+// Bootstrap-ограничения встретившиеся при написании:
+// 1. `mut` параметры в свободных fn не парсятся — счётчики через
+//    record-Tracker с `mut` полями (как в D36).
+// 2. `fn T @method(...) Fail[E] -> R` парсер не любит — throw-методы
+//    реализованы как свободные fn с receiver в первом аргументе.
+// 3. Trailing-block body с non-int параметром (fn(Resource) -> int)
+//    падает в codegen — упрощено до `body fn(int) -> int`, где body
+//    получает resource id, а не сам Resource. Реальный API будет
+//    после type-erasure доработки codegen'а.
+
+module nova_tests.effects.handler_wrappers
+
+// ================================================================
+// SECTION 1: tracker для отслеживания open/close
+// ================================================================
+
+type Tracker {
+    mut opened int
+    mut closed int
+}
+
+// ================================================================
+// SECTION 2: throw-функция (use_resource)
+// ================================================================
+
+// Имитирует операцию на ресурсе: id — fake resource handle, amount —
+// бизнес-параметр. На amount<0 — throw.
+fn use_resource(id int, amount int) Fail[str] -> int {
+    if amount < 0 { throw "negative amount" }
+    id * amount
+}
+
+// ================================================================
+// SECTION 3: handler-обёртки
+// ================================================================
+//
+// `with_resource_safe(id, t, body)` — открывает ресурс (инкремент
+// t.opened), вызывает body(id), на ЛЮБОМ пути выхода (happy + throw)
+// инкрементирует t.closed. Если body throw'ит — внутренний handler
+// ловит, делает cleanup, и re-throw'ит наружу.
+
+fn with_resource_safe(id int, t Tracker, body fn(int) -> int) Fail[str] -> int {
+    t.opened = t.opened + 1
+    let mut caught = ""
+    let mut had_throw = false
+    let result = with Fail[str] = handler Fail[str] {
+        fail(msg) {
+            caught = msg
+            had_throw = true
+            interrupt 0
+        }
+    } {
+        body(id)
+    }
+    // Cleanup — выполняется на ЛЮБОМ пути.
+    t.closed = t.closed + 1
+    if had_throw {
+        throw caught
+    }
+    result
+}
+
+// Простая (без cleanup на throw) версия — для motivating example.
+fn with_resource_naive(id int, t Tracker, body fn(int) -> int) -> int {
+    t.opened = t.opened + 1
+    let result = body(id)
+    t.closed = t.closed + 1     // ⚠️ если body throw'ит — сюда не дойдёт
+    result
+}
+
+// ================================================================
+// SECTION 4: тесты — happy path
+// ================================================================
+
+test "happy path: tracker увеличен на open + close без throw" {
+    let t = Tracker { opened: 0, closed: 0 }
+    let result = with_resource_safe(7, t) { id => use_resource(id, 5) }
+    assert(result == 35)
+    assert(t.opened == 1)
+    assert(t.closed == 1)
+}
+
+test "with_resource_naive: happy path тоже работает" {
+    let t = Tracker { opened: 0, closed: 0 }
+    let result = with_resource_naive(3, t) { id => use_resource(id, 4) }
+    assert(result == 12)
+    assert(t.opened == 1)
+    assert(t.closed == 1)
+}
+
+// ================================================================
+// SECTION 5: тесты — throw inside body
+// ================================================================
+
+test "with_resource_naive: throw в body — closed НЕ инкрементирован (resource leak)" {
+    // Демонстрация ПОЧЕМУ нужна safe-обёртка: naive-версия течёт.
+    let t = Tracker { opened: 0, closed: 0 }
+    let mut caught_msg = ""
+    let _ = with Fail[str] = handler Fail[str] {
+        fail(msg) {
+            caught_msg = msg
+            interrupt 0
+        }
+    } {
+        with_resource_naive(5, t) { id => use_resource(id, -1) }
+    }
+    assert(caught_msg == "negative amount")
+    assert(t.opened == 1)
+    assert(t.closed == 0)           // ⚠️ ресурс НЕ закрыт — leak!
+}
+
+test "with_resource_safe: throw в body — cleanup вызывается + re-throw" {
+    let t = Tracker { opened: 0, closed: 0 }
+    let mut caught_msg = ""
+    let _ = with Fail[str] = handler Fail[str] {
+        fail(msg) {
+            caught_msg = msg
+            interrupt 0
+        }
+    } {
+        with_resource_safe(9, t) { id => use_resource(id, -1) }
+        // throw из body → внутренний handler в with_resource_safe ловит,
+        // closed инкрементируется, и re-throw наружу. Внешний handler
+        // ловит уже после cleanup'а.
+    }
+    assert(caught_msg == "negative amount")
+    assert(t.opened == 1)
+    assert(t.closed == 1)           // ✅ ресурс "закрыт" несмотря на throw
+}
