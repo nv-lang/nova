@@ -724,14 +724,16 @@ vs naive-версия (без внутреннего handler'а): на throw'е 
 ИТОГО (2026-05-07 финал)
 ================================================================================
 
-Suite: 58/58 tests passing.
+Suite: 59/59 tests passing.
 
 Tests-nova layout: иерархическая (basics/types/syntax/effects/concurrency/
 runtime/modules), все module-decls согласованы с paths.
 
 Закрытые с прошлой записи:
 - D26 prelude API (Option/Result methods)
-- D26 str API формализован (find/contains/etc — byte-index)
+- D26 str API: **школа B (codepoint-indexed)** — s.len = codepoints,
+  s.byte_len() = bytes; slice/find/rfind работают в codepoint-индексах.
+  Внутреннее хранение остаётся UTF-8.
 - D73 + D77 4-way auto-derive (try_from реализуется, from/into
   используется в коде; recommendation в spec)
 - D25 throw cost-model документирован
@@ -740,6 +742,7 @@ runtime/modules), все module-decls согласованы с paths.
 - tests-nova reorganization (плоская нумерация → группы по темам)
 - Named tmps в .c (роль вместо счётчика)
 - Handler-wrapper D10 demo
+- Q-string-indexing закрыта: вариант B (codepoint).
 
 Stdlib examples: 0/16 (5 новых от пользователя — base64/crc32/ulid/url/uuid
 тоже падают на разных blocker'ах). Все блокеры — отдельные codegen/
@@ -747,7 +750,6 @@ parser задачи (документированы в examples/stdlib/STATUS.md
 
 Open questions значимые:
 - Q20 defer (выжидать MVP-stdlib и реальные use-cases).
-- Q-string-indexing s[i] (byte / codepoint / запрет).
 - Q-cstring nul-termination guarantee (вариант 2 рекомендован).
 - Q-string-interning (Atom-тип отложен).
 - Q-overloading по argument-type (bootstrap last-wins).
