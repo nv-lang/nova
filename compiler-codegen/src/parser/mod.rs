@@ -480,12 +480,19 @@ impl Parser {
         self.expect(&TokenKind::KwType)?;
         let (name, _) = self.parse_ident()?;
 
-        // generics: Repo[T, U]
+        // generics: Repo[T, U] или Repo[T Hashable, V] (bounds D72).
+        // В bootstrap'е bound — просто identifier после имени параметра,
+        // парсится и игнорируется (нет typecheck'а на satisfaction).
         let mut generics: Vec<String> = Vec::new();
         if self.eat(&TokenKind::LBracket).is_some() {
             loop {
                 let (n, _) = self.parse_ident()?;
                 generics.push(n);
+                // Optional bound: `T Hashable`, `T Ord`. Bootstrap игнорирует —
+                // production type-checker (D72) проверит satisfaction.
+                if matches!(self.peek().kind, TokenKind::Ident(_)) {
+                    let _ = self.parse_ident()?;
+                }
                 if self.eat(&TokenKind::Comma).is_none() {
                     break;
                 }
