@@ -121,7 +121,7 @@ fn cmd_run(path: &PathBuf) -> Result<()> {
 
 fn cmd_compile(path: &PathBuf, output: Option<&std::path::Path>, annotate_source: bool, lint: bool) -> Result<()> {
     let src = read_file(path)?;
-    let module = nova_codegen::parser::parse(&src).map_err(|d| {
+    let mut module = nova_codegen::parser::parse(&src).map_err(|d| {
         anyhow!("{}", d.render(&src, &path.to_string_lossy()))
     })?;
     nova_codegen::types::check_module(&module).map_err(|errs| {
@@ -131,6 +131,9 @@ fn cmd_compile(path: &PathBuf, output: Option<&std::path::Path>, annotate_source
             .collect();
         anyhow!("{}", messages.join("\n"))
     })?;
+    // D28: effect inference для private fn — добавить `Fail` если throw
+    // в теле и нет явного Fail в effect-row.
+    nova_codegen::types::infer_effects(&mut module);
     if lint {
         run_lints(&module, &src, &path.to_string_lossy());
     }
