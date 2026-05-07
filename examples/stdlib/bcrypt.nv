@@ -1,0 +1,313 @@
+// stdlib/bcrypt.nv — password hashing (bcrypt).
+//
+// Bcrypt by Niels Provos and David Mazières (1999). Базируется на
+// Blowfish cipher с настраиваемым cost factor (work factor).
+//
+// Лицензия: BSD (OpenBSD origin), независимая реализация по public spec.
+//
+// ⚠️ Этот файл — **демонстрация API и интерфейсов**, не production-grade
+// crypto. Полная Blowfish encryption + EksBlowfishSetup требует ~600+ LOC
+// и тщательной верификации. В bootstrap-stdlib используем упрощённую
+// сигнатуру через PBKDF2-style key stretching на sha256.
+//
+// Production-Nova должна включить argon2 (current best practice 2026)
+// или libsodium bindings.
+//
+// API:
+//   Bcrypt.hash(password str, cost int) Random -> str
+//   Bcrypt.verify(password str, hash str) -> bool
+//
+// Use case: безопасное хранение паролей в БД.
+//
+// ВАЖНО: НЕ использовать sha256/md5 напрямую для паролей — они слишком
+// быстрые, GPU-attackable. Bcrypt намеренно медленный (cost 10 ≈ 100ms
+// на современном CPU) — экспоненциально замедляет brute-force.
+
+module std.bcrypt
+
+
+export type BcryptError
+    | InvalidCost { value int }                  // cost вне [4, 31]
+    | InvalidHash { reason str }
+    | PasswordTooLong { length int, max int }
+
+
+// Cost factor: 2^cost rounds. 10 = 1024 rounds (default), безопасно
+// в 2026; 12+ для критичных систем. Минимум 4, максимум 31.
+const MIN_COST int = 4
+const MAX_COST int = 31
+const DEFAULT_COST int = 10
+const MAX_PASSWORD_LEN int = 72        // bcrypt лимит
+
+
+// Hash формат: $2b$<cost>$<22-char-salt><31-char-hash>
+//   "$2b$10$abc...xyz"
+//   2b — bcrypt версия (2a/2b/2y — разные историчические варианты)
+//   10 — cost (2^10 = 1024 rounds)
+//   22 chars salt в bcrypt-base64
+//   31 chars hash output в bcrypt-base64
+
+const SALT_LEN int = 16          // 16 random bytes → 22 base64 chars
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Public API
+// ──────────────────────────────────────────────────────────────────────────
+
+// Создаёт hash для password с указанным cost factor.
+// Эффект Random — для генерации salt. В тестах подменяется.
+export fn Bcrypt.hash(password str, cost int) Random Fail[BcryptError] -> str {
+    if cost < MIN_COST || cost > MAX_COST {
+        throw InvalidCost { value: cost }
+    }
+    if password.bytes().len > MAX_PASSWORD_LEN {
+        throw PasswordTooLong { length: password.bytes().len, max: MAX_PASSWORD_LEN }
+    }
+
+    let salt = Random.bytes(SALT_LEN)
+    let hashed = bcrypt_kdf(password.bytes(), salt, cost)
+
+    // Format: $2b$<cost>$<salt><hash>
+    let cost_str = if cost < 10 { "0" + str.from(cost) } else { str.from(cost) }
+    "$2b$" + cost_str + "$" + bcrypt_base64_encode(salt) + bcrypt_base64_encode(hashed)
+}
+
+
+// Проверяет password против hash. Constant-time для security.
+// Возвращает false на любой malformed input — не throws.
+export fn Bcrypt.verify(password str, hash_str str) -> bool {
+    // Parse format
+    let parts = hash_str.split("$")
+    // ["", "2b", "<cost>", "<salt><hash>"]
+    if parts.len != 4 { return false }
+    if parts[1] != "2b" && parts[1] != "2a" && parts[1] != "2y" { return false }
+
+    let cost = match int.try_from(parts[2]) {
+        Ok(c) if c >= MIN_COST && c <= MAX_COST => c
+        _                                        => return false
+    }
+
+    let combined = parts[3]
+    if combined.len < 53 { return false }    // 22 salt + 31 hash
+    let salt_b64 = combined.slice(0, 22)
+    let hash_b64 = combined.slice(22, combined.len)
+
+    let salt = match bcrypt_base64_decode(salt_b64) {
+        Some(b) if b.len == SALT_LEN => b
+        _                             => return false
+    }
+    let expected_hash = match bcrypt_base64_decode(hash_b64) {
+        Some(h) => h
+        None    => return false
+    }
+
+    let computed = bcrypt_kdf(password.bytes(), salt, cost)
+    constant_time_eq(computed, expected_hash)
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Internal — упрощённая KDF (placeholder для реальной EksBlowfishSetup)
+// ──────────────────────────────────────────────────────────────────────────
+//
+// Production Nova должна включать настоящий Blowfish (~600 LOC) или
+// argon2 (newer, рекомендуется OWASP). Здесь — PBKDF2-style stretching
+// через SHA-256 для демонстрации API.
+
+fn bcrypt_kdf(password []byte, salt []byte, cost int) -> []byte {
+    let rounds = 1 << cost          // 2^cost
+    let mut state = Sha256.new()
+    state.update(salt)
+    state.update(password)
+    let mut digest = state.finalize()
+    let mut bytes []byte = []
+    let mut i = 0
+    while i < 32 { bytes.push(digest[i]); i += 1 }
+
+    // Iterate `rounds` times — экспоненциальная стоимость по cost.
+    let mut k = 0
+    while k < rounds {
+        let mut s = Sha256.new()
+        s.update(bytes)
+        s.update(salt)
+        let d = s.finalize()
+        let mut new_bytes []byte = []
+        let mut j = 0
+        while j < 32 { new_bytes.push(d[j]); j += 1 }
+        bytes = new_bytes
+        k += 1
+    }
+    // Берём первые 23 байта (как bcrypt — 184 бита output)
+    let mut out []byte = []
+    let mut p = 0
+    while p < 23 { out.push(bytes[p]); p += 1 }
+    out
+}
+
+
+fn constant_time_eq(a []byte, b []byte) -> bool {
+    if a.len != b.len { return false }
+    let mut diff = 0
+    let mut i = 0
+    while i < a.len {
+        diff = diff | ((a[i] as int) ^ (b[i] as int))
+        i += 1
+    }
+    diff == 0
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Bcrypt-specific Base64 (alphabet отличается от standard)
+// ──────────────────────────────────────────────────────────────────────────
+//
+// Bcrypt использует свой alphabet:
+//   "./ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+//
+// Без padding, group по 3 bytes → 4 chars.
+
+const BCRYPT_ALPHABET str = "./ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+
+
+fn bcrypt_base64_encode(data []byte) -> str {
+    let mut buf = Buffer.with_capacity(data.len * 4 / 3 + 4)
+    let mut i = 0
+    while i + 2 < data.len {
+        let b0 = data[i] as u32
+        let b1 = data[i + 1] as u32
+        let b2 = data[i + 2] as u32
+        let triple = (b0 << 16) | (b1 << 8) | b2
+        buf.add_char(alphabet_char(((triple >> 18) & 0x3F) as int))
+        buf.add_char(alphabet_char(((triple >> 12) & 0x3F) as int))
+        buf.add_char(alphabet_char(((triple >> 6) & 0x3F) as int))
+        buf.add_char(alphabet_char((triple & 0x3F) as int))
+        i += 3
+    }
+    let remaining = data.len - i
+    if remaining == 1 {
+        let b0 = data[i] as u32
+        buf.add_char(alphabet_char(((b0 >> 2) & 0x3F) as int))
+        buf.add_char(alphabet_char(((b0 << 4) & 0x3F) as int))
+    } else if remaining == 2 {
+        let b0 = data[i] as u32
+        let b1 = data[i + 1] as u32
+        buf.add_char(alphabet_char(((b0 >> 2) & 0x3F) as int))
+        buf.add_char(alphabet_char((((b0 << 4) | (b1 >> 4)) & 0x3F) as int))
+        buf.add_char(alphabet_char(((b1 << 2) & 0x3F) as int))
+    }
+    buf.into_str_unchecked()
+}
+
+
+fn alphabet_char(idx int) -> char =>
+    BCRYPT_ALPHABET.char_at(idx).unwrap_or('.')
+
+
+fn bcrypt_base64_decode(s str) -> Option[[]byte] {
+    let mut out []byte = []
+    let mut i = 0
+    while i + 3 < s.len {
+        let c0 = bcrypt_decode_char(s.char_at(i))
+        let c1 = bcrypt_decode_char(s.char_at(i + 1))
+        let c2 = bcrypt_decode_char(s.char_at(i + 2))
+        let c3 = bcrypt_decode_char(s.char_at(i + 3))
+        match (c0, c1, c2, c3) {
+            (Some(a), Some(b), Some(c), Some(d)) => {
+                let triple = (a << 18) | (b << 12) | (c << 6) | d
+                out.push(((triple >> 16) & 0xFF) as byte)
+                out.push(((triple >> 8) & 0xFF) as byte)
+                out.push((triple & 0xFF) as byte)
+            }
+            _ => return None
+        }
+        i += 4
+    }
+    // Trailing
+    if i + 1 < s.len {
+        match (bcrypt_decode_char(s.char_at(i)), bcrypt_decode_char(s.char_at(i + 1))) {
+            (Some(a), Some(b)) => out.push(((a << 2) | (b >> 4)) as byte)
+            _ => return None
+        }
+    }
+    Some(out)
+}
+
+
+fn bcrypt_decode_char(c Option[char]) -> Option[u32] {
+    match c {
+        None => None
+        Some(ch) => {
+            let mut idx = 0
+            for ach in BCRYPT_ALPHABET.chars() {
+                if ach == ch { return Some(idx) }
+                idx += 1
+            }
+            None
+        }
+    }
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Тесты
+// ──────────────────────────────────────────────────────────────────────────
+
+test "hash + verify round-trip" {
+    let h = with Random = seeded(42) {
+        Bcrypt.hash("my-password", 4)        // cost=4 для скорости тестов
+    }
+    assert Bcrypt.verify("my-password", h)
+    assert !Bcrypt.verify("wrong-password", h)
+}
+
+test "детерминизм через seeded Random (тестовый сценарий)" {
+    let h1 = with Random = seeded(42) { Bcrypt.hash("password", 4) }
+    let h2 = with Random = seeded(42) { Bcrypt.hash("password", 4) }
+    // Тот же seed → тот же salt → тот же hash
+    assert h1 == h2
+}
+
+test "разные salts → разные hashes" {
+    let h1 = with Random = seeded(1) { Bcrypt.hash("password", 4) }
+    let h2 = with Random = seeded(2) { Bcrypt.hash("password", 4) }
+    assert h1 != h2
+    // Но оба verify правильным паролем
+    assert Bcrypt.verify("password", h1)
+    assert Bcrypt.verify("password", h2)
+}
+
+test "формат hash правильный" {
+    let h = with Random = seeded(0) { Bcrypt.hash("test", 4) }
+    assert h.starts_with("$2b$04$")
+}
+
+test "ошибка: cost вне диапазона" {
+    let r = with Random = seeded(0), Fail[BcryptError] = (e) => interrupt Some(e) {
+        let _ = Bcrypt.hash("x", 1)
+        None
+    }
+    assert match r {
+        Some(InvalidCost { .. }) => true
+        _                         => false
+    }
+}
+
+test "ошибка: пароль > 72 байта" {
+    let mut long = ""
+    let mut i = 0
+    while i < 100 { long = long + "a"; i += 1 }
+    let r = with Random = seeded(0), Fail[BcryptError] = (e) => interrupt Some(e) {
+        let _ = Bcrypt.hash(long, 4)
+        None
+    }
+    assert match r {
+        Some(PasswordTooLong { .. }) => true
+        _                             => false
+    }
+}
+
+test "verify: malformed hash → false (не throws)" {
+    assert !Bcrypt.verify("password", "not-a-bcrypt-hash")
+    assert !Bcrypt.verify("password", "$2b$10$short")
+    assert !Bcrypt.verify("password", "")
+}
