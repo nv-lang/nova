@@ -30,7 +30,21 @@ enum Cmd {
         /// По умолчанию аннотации включены — для удобства отладки .c.
         #[arg(long = "no-annotate-source")]
         no_annotate_source: bool,
+        /// Отключить lint-проверки (export-fail-untyped и т.д.).
+        #[arg(long = "no-lint")]
+        no_lint: bool,
     },
+}
+
+/// Запустить lint-проходы и вывести warning'и в stderr.
+/// Lint-сообщения уже содержат «warning:» префикс — render через
+/// прямой формат (без render() который вставляет «error:»).
+fn run_lints(module: &nova_codegen::ast::Module, src: &str, file: &str) {
+    let warnings = nova_codegen::lints::lint_module(module);
+    for w in warnings {
+        let (line, col) = nova_codegen::diag::byte_to_line_col(src, w.diag.span.start);
+        eprintln!("{}:{}:{}: {} [{}]", file, line, col, w.diag.message, w.rule);
+    }
 }
 
 fn main() -> ExitCode {
@@ -39,8 +53,8 @@ fn main() -> ExitCode {
         Cmd::Check { file } => cmd_check(&file),
         Cmd::Run { file } => cmd_run(&file),
         Cmd::Test { file } => cmd_test(&file),
-        Cmd::Compile { file, output, no_annotate_source } =>
-            cmd_compile(&file, output.as_deref(), !no_annotate_source),
+        Cmd::Compile { file, output, no_annotate_source, no_lint } =>
+            cmd_compile(&file, output.as_deref(), !no_annotate_source, !no_lint),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -105,7 +119,7 @@ fn cmd_run(path: &PathBuf) -> Result<()> {
     Ok(())
 }
 
-fn cmd_compile(path: &PathBuf, output: Option<&std::path::Path>, annotate_source: bool) -> Result<()> {
+fn cmd_compile(path: &PathBuf, output: Option<&std::path::Path>, annotate_source: bool, lint: bool) -> Result<()> {
     let src = read_file(path)?;
     let module = nova_codegen::parser::parse(&src).map_err(|d| {
         anyhow!("{}", d.render(&src, &path.to_string_lossy()))
@@ -117,6 +131,9 @@ fn cmd_compile(path: &PathBuf, output: Option<&std::path::Path>, annotate_source
             .collect();
         anyhow!("{}", messages.join("\n"))
     })?;
+    if lint {
+        run_lints(&module, &src, &path.to_string_lossy());
+    }
 
     let mut emitter = nova_codegen::codegen::CEmitter::new();
     if annotate_source {
