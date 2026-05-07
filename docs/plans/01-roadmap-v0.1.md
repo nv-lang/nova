@@ -330,7 +330,10 @@ Go 1.14+).
 
 **v0.6** — SMT для контрактов (Z3), `@must_verify`/`@unverified`,
 structured error messages для непроверенных контрактов
-([D24](../../spec/decisions/09-tooling.md#d24)). Package manager.
+([D24](../../spec/decisions/09-tooling.md#d24)). Package manager
+(базовый — path/git зависимости). Полная экосистема (registry,
+publish/add/update команды) — см. [03-package-ecosystem-roadmap.md](03-package-ecosystem-roadmap.md),
+после v2.0+.
 
 **v0.8** — Time-travel debugging ([R8](../../spec/revolutionary.md)). Запись
 handler-вызовов и replay.
@@ -345,7 +348,10 @@ handler-вызовов и replay.
 **v1.5+** — JIT, hot reload.
 
 **v2.0+** — переписывание компилятора на Nova (self-hosting).
-Bootstrap-Rust выкидывается.
+Bootstrap-Rust выкидывается. После self-host'а — package ecosystem
+(self-hosted CLI, registry-протокол, запуск `nova-registry.org`,
+первые опубликованные либы) — см.
+[03-package-ecosystem-roadmap.md](03-package-ecosystem-roadmap.md).
 
 ---
 

@@ -14,6 +14,7 @@
 |---|---|---|---|
 | 01 | [01-roadmap-v0.1.md](01-roadmap-v0.1.md) | Roadmap разработки компилятора v0.1–v1.0+ | активный |
 | 02 | [02-codegen-c-backend.md](02-codegen-c-backend.md) | C backend: компиляция Nova в нативный бинарь | активный |
+| 03 | [03-package-ecosystem-roadmap.md](03-package-ecosystem-roadmap.md) | Package ecosystem: self-host → CLI → lockfile → registry | будущий (после v2.0+) |
 
 ## Связанные директории
 
