@@ -253,6 +253,17 @@ impl Expr {
     pub fn new(kind: ExprKind, span: Span) -> Self {
         Self { kind, span }
     }
+
+    /// D38 turbofish: type_args — explicit hint для monomorphization, в bootstrap
+    /// прозрачно. Возвращает inner base, разворачивая вложенные TurboFish; если
+    /// expr — не TurboFish, возвращает себя.
+    pub fn unwrap_turbofish(&self) -> &Expr {
+        let mut cur = self;
+        while let ExprKind::TurboFish { base, .. } = &cur.kind {
+            cur = base.as_ref();
+        }
+        cur
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -294,6 +305,16 @@ pub enum ExprKind {
     Index {
         obj: Box<Expr>,
         index: Box<Expr>,
+    },
+    /// `Type[T1, T2]` или `func[T]` — generic-application (turbofish, D38).
+    /// Семантически `base` сохраняется как есть; `type_args` — explicit hints
+    /// для monomorphization (в bootstrap-codegen monomorphization идёт по
+    /// receiver/call-site, поэтому TurboFish прозрачно делегирует в `base`).
+    /// Появляется только если за `]` идёт `.` / `(` / `?` (postfix-continuation),
+    /// иначе `[` парсится как Index.
+    TurboFish {
+        base: Box<Expr>,
+        type_args: Vec<TypeRef>,
     },
 
     // Вызовы

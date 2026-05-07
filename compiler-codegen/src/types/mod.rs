@@ -239,6 +239,7 @@ fn has_throw_in_expr(e: &Expr) -> bool {
         ExprKind::Supervised(b) => has_throw_in_block(b),
         ExprKind::ParallelFor { iter, body, .. } =>
             has_throw_in_expr(iter) || has_throw_in_block(body),
+        ExprKind::TurboFish { base, .. } => has_throw_in_expr(base),
         _ => false,
     }
 }

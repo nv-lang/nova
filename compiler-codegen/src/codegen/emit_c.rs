@@ -2822,6 +2822,8 @@ impl CEmitter {
                 // Special case: `let xs = s.bytes()` / `s.chars()` — set element type
                 // explicitly, even though val is not a known variable.
                 if let ExprKind::Call { func, .. } = &decl.value.kind {
+                    // D38: turbofish прозрачен — смотрим под него.
+                    let func = func.unwrap_turbofish();
                     if let ExprKind::Member { obj, name } = &func.kind {
                         if self.infer_expr_c_type(obj) == "nova_str" {
                             match name.as_str() {
@@ -2858,6 +2860,8 @@ impl CEmitter {
                 }
                 // If RHS is a call to a function that returns fn(...), propagate closure sig to binding
                 if let ExprKind::Call { func, args, .. } = &decl.value.kind {
+                    // D38: turbofish прозрачен — смотрим под него.
+                    let func = func.unwrap_turbofish();
                     if let ExprKind::Ident(fname) = &func.kind {
                         if let Some(sig) = self.fn_returns_fn_sig.get(fname).cloned() {
                             self.fn_param_sigs.insert(binding.clone(), sig);
@@ -2959,6 +2963,11 @@ impl CEmitter {
                 Ok(name.clone())
             }
             ExprKind::Path(parts) => Ok(parts.join("_")),
+
+            // D38 turbofish: type_args — explicit hint для monomorphization;
+            // bootstrap monomorphizes по call-site / receiver-type, поэтому
+            // type_args не нужны на этом этапе. Делегируем в base.
+            ExprKind::TurboFish { base, .. } => self.emit_expr(base),
 
             ExprKind::Binary { op, left, right } => {
                 // Infer types before emitting (emit_expr may add temporaries)
@@ -3619,6 +3628,11 @@ impl CEmitter {
     /// Wrapper for emit_call that handles trailing blocks.
     /// A trailing block is emitted as a static C function and passed as an extra argument.
     fn emit_call_with_trailing(&mut self, func: &Expr, args: &[Expr], trailing: Option<&TrailingBlock>) -> Result<String, String> {
+        // D38 turbofish: type_args в bootstrap прозрачны для codegen
+        // (monomorphization идёт по call-site / receiver). Распакуем
+        // base, чтобы downstream-логика (mangling имени, signature
+        // lookup, built-in method dispatch) видела голый Ident/Path/Member.
+        let func = func.unwrap_turbofish();
         if let Some(tb) = trailing {
             // Generate a unique name for the trailing block function
             let id = self.trailing_block_counter;
@@ -5898,6 +5912,10 @@ impl CEmitter {
     }
 
     fn infer_expr_c_type(&self, expr: &Expr) -> String {
+        // D38 turbofish: type_args не меняют c-тип; делегируем в base.
+        if let ExprKind::TurboFish { base, .. } = &expr.kind {
+            return self.infer_expr_c_type(base);
+        }
         match &expr.kind {
             ExprKind::IntLit(_) => "nova_int".into(),
             ExprKind::CharLit(_) => "nova_int".into(),
@@ -5986,6 +6004,8 @@ impl CEmitter {
                 format!("NovaVtable_{}*", effect_name.join("_"))
             }
             ExprKind::Call { func, .. } => {
+                // D38 turbofish прозрачен для inference — unwrap base.
+                let func = func.unwrap_turbofish();
                 // Infer return type for call expressions
                 if let ExprKind::Ident(name) = &func.kind {
                     if name == "println" || name == "print" || name == "assert" || name == "debug_assert" {

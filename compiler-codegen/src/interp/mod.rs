@@ -279,6 +279,9 @@ impl Interpreter {
                 let obj_v = self.eval_expr_value(obj, env)?;
                 self.member_access(&obj_v, name, expr.span).map(Flow::Value)
             }
+            // D38 turbofish: type_args — explicit hint, в interp игнорируем
+            // (treewalk не делает monomorphization).
+            ExprKind::TurboFish { base, .. } => self.eval_expr(base, env),
             ExprKind::Index { obj, index } => {
                 let obj_v = self.eval_expr_value(obj, env)?;
                 let idx_v = self.eval_expr_value(index, env)?;

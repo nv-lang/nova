@@ -867,6 +867,71 @@ impl Parser {
         Ok(args)
     }
 
+    /// D38 turbofish disambiguation в expression-position. Caller — на токене
+    /// `[`. Speculative-parse: пробуем разобрать `[T1, T2, ...]` как type-args;
+    /// если получилось до `]`, проверяем next token:
+    ///   - `(`            → call — turbofish (`func[T](args)`)
+    ///   - `.` IDENT `(`  → method call — turbofish (`Type[T].method(...)`)
+    ///   - `?`            → try — turbofish (`func[T]?`)
+    ///   - иначе          → не turbofish, rollback (это Index).
+    /// Если parse_type fails внутри — rollback (Index). Возвращает Some((args,
+    /// end_span_of_RBracket)) при успехе и оставляет позицию **сразу за `]`**;
+    /// возвращает None и оставляет позицию **на `[`** при rollback.
+    fn try_parse_turbofish_args(&mut self) -> Option<(Vec<TypeRef>, Span)> {
+        debug_assert!(matches!(self.peek().kind, TokenKind::LBracket));
+        let saved_pos = self.pos;
+        // Bump `[`
+        self.bump();
+        // Empty `[]` нелегально для turbofish — rollback.
+        if matches!(self.peek().kind, TokenKind::RBracket) {
+            self.pos = saved_pos;
+            return None;
+        }
+        let mut args: Vec<TypeRef> = Vec::new();
+        loop {
+            // Speculative parse_type. Если ошибка — rollback.
+            let before = self.pos;
+            let ty = match self.parse_type() {
+                Ok(t) => t,
+                Err(_) => {
+                    self.pos = saved_pos;
+                    let _ = before;
+                    return None;
+                }
+            };
+            args.push(ty);
+            if self.eat(&TokenKind::Comma).is_none() {
+                break;
+            }
+        }
+        // Должны быть на `]`.
+        let end_span = match self.peek().kind {
+            TokenKind::RBracket => self.peek().span,
+            _ => {
+                self.pos = saved_pos;
+                return None;
+            }
+        };
+        // Bump `]`.
+        self.bump();
+        // Post-`]` continuation check.
+        let is_turbofish = match &self.peek().kind {
+            TokenKind::LParen => true,
+            TokenKind::Question => true,
+            TokenKind::Dot => {
+                // `.` IDENT `(` — method call. Голый `.field` — не turbofish.
+                matches!(self.peek_at(1).kind, TokenKind::Ident(_))
+                    && matches!(self.peek_at(2).kind, TokenKind::LParen)
+            }
+            _ => false,
+        };
+        if !is_turbofish {
+            self.pos = saved_pos;
+            return None;
+        }
+        Some((args, end_span))
+    }
+
     // ─── expressions ─────────────────────────────────────────────────────
 
     pub fn parse_expr(&mut self) -> Result<Expr, Diagnostic> {
@@ -1246,16 +1311,35 @@ impl Parser {
                     );
                 }
                 TokenKind::LBracket => {
-                    self.bump();
-                    let index = self.parse_expr()?;
-                    let end = self.expect(&TokenKind::RBracket)?.span;
-                    expr = Expr::new(
-                        ExprKind::Index {
-                            obj: Box::new(expr.clone()),
-                            index: Box::new(index),
-                        },
-                        expr.span.merge(end),
-                    );
+                    // D38 turbofish: `Type[T1, T2].method(...)` или `func[T](args)`.
+                    // Disambiguation: speculative parse `[...]` as type-args; если
+                    // успешно (все элементы — типы) И post-`]` token — `(`, `.IDENT(`
+                    // или `?`, это turbofish; иначе rollback к Index.
+                    //
+                    // Rationale: index-доступ всегда single-arg expression,
+                    // turbofish — N type-args + обязательный postfix-continuation
+                    // (call / method-call / try). Multi-arg внутри `[...]` →
+                    // однозначно turbofish (Index не имеет comma).
+                    if let Some((type_args, end_span)) = self.try_parse_turbofish_args() {
+                        expr = Expr::new(
+                            ExprKind::TurboFish {
+                                base: Box::new(expr.clone()),
+                                type_args,
+                            },
+                            expr.span.merge(end_span),
+                        );
+                    } else {
+                        self.bump();
+                        let index = self.parse_expr()?;
+                        let end = self.expect(&TokenKind::RBracket)?.span;
+                        expr = Expr::new(
+                            ExprKind::Index {
+                                obj: Box::new(expr.clone()),
+                                index: Box::new(index),
+                            },
+                            expr.span.merge(end),
+                        );
+                    }
                 }
                 TokenKind::LParen => {
                     self.bump();

@@ -102,3 +102,44 @@ test "D72 bound: type-decl с двумя bound'ами parsed" {
     assert(t.key == "k")
     assert(t.value == 7)
 }
+
+// ─── D38 turbofish: `func[T](args)`, `Type[T].method(...)` ───
+// Bootstrap monomorphization идёт по call-site/receiver, поэтому type-args
+// в turbofish — explicit hint, который codegen прозрачно делегирует в base.
+// Грамматика: `Имя[T1, T2, ...]` активируется как turbofish только когда
+// за `]` идёт `(` (call), `.IDENT(` (method-call) или `?` (Try).
+//
+// Static-method-call с turbofish (`Type[T].method(...)`) проверяется в
+// std/* через HashMap[K, V].new() — там же где этот синтаксис реально
+// используется.
+
+fn parse_one[T](x T) -> T {
+    x
+}
+
+test "D38 turbofish: function call with one type-arg" {
+    let n = parse_one[int](42)
+    assert(n == 42)
+}
+
+test "D38 turbofish: function call with two type-args" {
+    let p = pair[int, str](7, "hi")
+    assert(p.0 == 7)
+    assert(p.1 == "hi")
+}
+
+test "D38 turbofish не ломает обычный Index" {
+    // arr[i] остаётся Index'ом — за `]` идёт `;` / EOL / op, не `(`/`.IDENT(`/`?`.
+    let xs = [10, 20, 30]
+    assert(xs[0] == 10)
+    assert(xs[1] == 20)
+    let mid = xs[1] + xs[2]
+    assert(mid == 50)
+}
+
+test "D38 turbofish: arr[i].field остаётся Index→Member (не turbofish)" {
+    // post-`]` token — `.field` без `(` после; это НЕ turbofish.
+    let bs = [Box { value: 1 }, Box { value: 2 }]
+    assert(bs[0].value == 1)
+    assert(bs[1].value == 2)
+}
