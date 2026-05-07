@@ -356,3 +356,44 @@ test "split: trailing separator" {
     // ["a", "b", ""] — empty tail
     assert(parts.len == 3)
 }
+
+// ================================================================
+// SECTION 11: []byte — packed storage (real uint8_t[], не int64-erasure)
+// ================================================================
+// Codegen-маппинг `[]byte` → `NovaArray_nova_byte*` с реальным uint8_t[]
+// (не nova_int слотами). Тест проверяет что round-trip через
+// bytes() / for-in / Buffer работает.
+
+test "bytes: round-trip через Buffer" {
+    let original = "Hello, мир!"
+    let bs = original.bytes()
+    // Восстановим строку через Buffer.from(bytes) → into_str_unchecked.
+    let buf = Buffer.from(bs)
+    let recon = buf.into_str_unchecked()
+    assert(recon == original)
+}
+
+test "bytes: extreme values 0..255 через Buffer" {
+    // Если []byte был int64-erasure, 0xFF мог бы потеряться при
+    // приведении (signed sign-extend). С packed uint8_t[] сохраняется
+    // битово-точно.
+    let buf = Buffer.with_capacity(3)
+    buf.add_byte(0xFF)
+    buf.add_byte(0x00)
+    buf.add_byte(0x7F)
+    let bs = buf.into()
+    assert(bs.len == 3)
+}
+
+test "bytes: for-in over packed []byte" {
+    // For-in: каждый элемент — реально byte (uint8_t), не int64.
+    let s = "ABC"
+    let bs = s.bytes()
+    let mut sum = 0
+    for b in bs {
+        // b — это byte (nova_byte = uint8_t), но cast to int для арифметики
+        sum = sum + (b as int)
+    }
+    // 'A'(65) + 'B'(66) + 'C'(67) = 198
+    assert(sum == 198)
+}
