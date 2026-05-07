@@ -1141,7 +1141,44 @@ LLM-генерации (нет вложенных match'ей). `Result` — ко
    дополнительная работа, оправданная видимостью контракта.
 2. Sum-type для нескольких типов ошибок — небольшой синтаксический
    налог, оправданный простотой композиции handler'ов.
-3. Граница `throw` vs `panic` требует понимания — лечится документацией
+3. Граница `throw` vs `panic` требует понимания — лечится документацией.
+
+### Performance: насколько дорогой `throw`
+
+Bootstrap-runtime реализация `throw msg`:
+
+1. **Vtable indirect call**: `_nova_handler_Fail->fail(ctx, msg)` —
+   один pointer-load + indirect-call. ~1ns на современном CPU.
+2. **Handler-method body** — пользовательский Nova-код. Зависит.
+3. **`longjmp`** на nearest fail-frame: restore callee-saved regs,
+   sp, pc. ~10-20ns. Без RAII-unwind (D6 GC — нет destructor'ов).
+4. **Cross-mco-boundary** (если throw в fiber, handler снаружи):
+   запись pending в scope-state, longjmp на fiber-local fail-frame,
+   потом scope-runner re-issue на main. Дополнительно ~10-20ns.
+
+Итого: **~50-200ns** на throw без stack-trace. Дёшево.
+
+Сравнение:
+
+| Язык | Cost throw |
+|---|---|
+| Java exceptions | 10000-50000ns (stack-trace fill-in + class lookup) |
+| C++ exceptions | 1000-10000ns (zero-cost happy path, expensive throw) |
+| Rust panic | 1000-10000ns (similar to C++) |
+| Go panic | 100-500ns (similar approach to Nova) |
+| **Nova throw** | **~50-200ns** (без stack-trace, без RAII) |
+
+**Когда throw становится узким местом:**
+
+Hot loop с throw на каждой итерации (парсер где throw для каждого
+invalid char) — даже 100ns × 10⁶ итераций = 100ms. В таком случае
+**использовать Result-стиль через D77** `try_from`/`try_into`:
+match на Result в hot path вообще не использует longjmp.
+
+Throw — для **business-level errors**, где он редок и acceptable.
+Result — для **парсинга / валидации / hot path**. Это рекомендация
+из D73 (`from`/`into` для use-cases, `try_from`/`try_into` для
+implementation хотя оба доступны вызывающему).
    и сообщениями компилятора.
 
 ### Эволюция

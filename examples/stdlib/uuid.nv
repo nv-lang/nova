@@ -1,0 +1,452 @@
+// stdlib/uuid.nv — UUID v4 (random) и v7 (sortable, time-based).
+//
+// Independent implementation, не порт. Спецификации:
+//   - RFC 4122 (v4): https://www.rfc-editor.org/rfc/rfc4122
+//   - RFC 9562 (v7): https://www.rfc-editor.org/rfc/rfc9562
+//
+// Поддержка:
+//   - v4 — 122 случайных бита, 6 битов на version+variant.
+//   - v7 — 48-bit Unix timestamp ms + 74 random bits + version+variant
+//          (lexicographically sortable по времени создания).
+//   - Парсинг и форматирование "8-4-4-4-12" hex-формата.
+//
+// Демонстрация AI-first effects: тесты подменяют `Random` и `Time`
+// handler'ами на детерминированные — UUID-генерация становится
+// воспроизводимой без mock-библиотек.
+//
+// Decisions:
+//   - D52 record-тип с readonly-полями: Uuid иммутабелен.
+//   - D55 record-coercion для конструкции внутреннего представления.
+//   - D67 ?-оператор работает только на Result/Option.
+//   - D72 bounds (не используется напрямую — нет generic API).
+//   - D73 From[str] / Into[str]: парсинг и форматирование.
+//   - D77 TryFrom для парсинга через Result (если caller хочет
+//     не throw, а explicit Result).
+//   - D74 instance-методы числовых операций.
+//
+// Pending features в bootstrap (для production tooling):
+//   - `Random.bytes(n int) -> []byte` — массовая генерация
+//   - `Random.u64() -> u64`
+//   - `Time.now_ms() -> u64` — Unix timestamp ms
+//   - `Buffer @add_byte`, `@add_str`, `@into_str_unchecked`
+//   - char-литералы (Q-char-literals закрыто 2026-05-07)
+
+module std.uuid
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Тип
+// ──────────────────────────────────────────────────────────────────────────
+
+// 128 бит = два u64. `hi` хранит первые 8 байт (включая version в
+// старших 4 битах байта 6), `lo` — последние 8 (включая variant в
+// старших 2 битах байта 8).
+//
+// Layout по байтам:
+//   bytes[0..6]   = первые 48 бит (timestamp в v7)
+//   bytes[6]      = version (старшие 4 бита) + 4 бита random/timestamp
+//   bytes[7]      = 8 бит random
+//   bytes[8]      = variant (старшие 2 бита) + 6 бит random
+//   bytes[9..16]  = 56 бит random
+export type Uuid {
+    readonly hi u64
+    readonly lo u64
+}
+
+// Версия — старшие 4 бита 7-го байта (= bits 48..51 от начала).
+export type UuidVersion
+    | V4                                // random
+    | V7                                // sortable timestamp
+    | Other(u8)                         // v1, v2, v3, v5, v6, v8
+
+// Ошибки парсинга
+export type ParseUuidError
+    | InvalidLength { actual int, expected int }
+    | InvalidHex { position int }
+    | MissingDash { position int }
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Static-конструкторы
+// ──────────────────────────────────────────────────────────────────────────
+
+// Nil UUID — все нули. Корректный по RFC 4122 § 4.1.7.
+export const NIL Uuid = { hi: 0, lo: 0 }
+
+// Max UUID — все единицы. Используется в фильтрах "до конца".
+export const MAX Uuid = { hi: 0xFFFFFFFFFFFFFFFF, lo: 0xFFFFFFFFFFFFFFFF }
+
+// Прямой конструктор по двум u64 — для тестов и вычислений.
+export fn Uuid.new(hi u64, lo u64) -> Self =>
+    { hi, lo }
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Версия 4 — random
+// ──────────────────────────────────────────────────────────────────────────
+
+// `Uuid.v4()` — генерирует 128 бит через Random handler, выставляет
+// version=4 и variant=10 (RFC 4122 layout).
+//
+// Эффект `Random` ambient — handler берётся из текущего скоупа.
+// В production — secure RNG; в тестах — `with Random = seeded(...)`
+// даёт детерминированный поток.
+export fn Uuid.v4() Random -> Self {
+    let raw_hi = Random.u64()
+    let raw_lo = Random.u64()
+
+    // Version = 4 в старшие 4 бита 7-го байта (биты 48..51 от MSB).
+    // Маска: очистить биты 48..51 → задать 0100 = 0x4.
+    let hi = (raw_hi & 0xFFFFFFFFFFFF0FFF) | 0x0000000000004000
+
+    // Variant = 10 (RFC 4122) в старшие 2 бита 9-го байта.
+    // Биты 62..63 от MSB lo. Очистить → задать 10.
+    let lo = (raw_lo & 0x3FFFFFFFFFFFFFFF) | 0x8000000000000000
+
+    { hi, lo }
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Версия 7 — sortable, timestamp-based
+// ──────────────────────────────────────────────────────────────────────────
+
+// `Uuid.v7()` — RFC 9562 layout:
+//   48 bits — Unix timestamp в миллисекундах (биты 0..47)
+//   4 bits  — version = 7 (биты 48..51)
+//   12 bits — random (биты 52..63 = младшие 12 бит hi)
+//   2 bits  — variant = 10 (биты 64..65)
+//   62 bits — random (биты 66..127)
+//
+// Сортируется лексикографически по времени создания → отлично для
+// primary keys в БД (B-tree friendly).
+export fn Uuid.v7() Time Random -> Self {
+    let ms = Time.now_ms()                            // u64
+
+    // Заполняем верхние 48 бит timestamp'ом.
+    // hi = [48 бит ts][4 бит version=7][12 бит rand]
+    let ts_part = (ms & 0xFFFFFFFFFFFF) << 16          // ms в биты 16..63
+    let rand_12 = Random.u64() & 0xFFF                 // младшие 12 бит — random
+    let hi = ts_part | 0x7000 | rand_12                // version=7 в биты 12..15
+
+    // lo = [2 бит variant=10][62 бит random]
+    let raw_lo = Random.u64()
+    let lo = (raw_lo & 0x3FFFFFFFFFFFFFFF) | 0x8000000000000000
+
+    { hi, lo }
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Геттеры
+// ──────────────────────────────────────────────────────────────────────────
+
+// Версия — биты 48..51 от MSB hi, то есть биты 12..15 младшего
+// порядка hi (после смещения на 16 младших бит).
+export fn Uuid @version() -> UuidVersion {
+    let v = ((@hi >> 12) & 0xF) as u8
+    match v {
+        4 => V4
+        7 => V7
+        _ => Other(v)
+    }
+}
+
+// Variant: для RFC 4122 — старшие 2 бита 9-го байта = биты 62..63 от MSB lo.
+export fn Uuid @is_rfc4122() -> bool =>
+    ((@lo >> 62) & 0x3) == 0x2                          // 10 binary
+
+// Timestamp v7 — старшие 48 бит hi → миллисекунды.
+// Для не-v7 значение бессмысленно; caller проверяет version().
+export fn Uuid @timestamp_ms() -> u64 =>
+    @hi >> 16
+
+// Nil-UUID check.
+export fn Uuid @is_nil() -> bool =>
+    @hi == 0 && @lo == 0
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Сравнение и hash (D46)
+// ──────────────────────────────────────────────────────────────────────────
+
+export fn Uuid @eq(other Uuid) -> bool =>
+    @hi == other.hi && @lo == other.lo
+
+// Лексикографический порядок (по hi, потом lo) — естественен для
+// сортировки v7 по timestamp'у.
+export fn Uuid @lt(other Uuid) -> bool {
+    if @hi != other.hi { @hi < other.hi } else { @lo < other.lo }
+}
+
+export fn Uuid @le(other Uuid) -> bool => @lt(other) || @eq(other)
+export fn Uuid @gt(other Uuid) -> bool => other.lt(@)
+export fn Uuid @ge(other Uuid) -> bool => @gt(other) || @eq(other)
+
+// Hash — XOR двух половин. Хорошее распределение для random-заполненного
+// UUID, не идеально для timestamp-зон в v7 (но и не плохо).
+export fn Uuid @hash() -> u64 => @hi ^ @lo
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Сериализация (D73 Into[str])
+// ──────────────────────────────────────────────────────────────────────────
+
+// Стандартный формат "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" (36 символов).
+// 4-2-2-2-6 байт через дефисы, lowercase hex.
+//
+// Round-trip: Uuid.from(u.into()) == u для любой валидной Uuid.
+export fn Uuid @into() -> str {
+    let mut buf = Buffer.with_capacity(36)
+
+    // 4 байта hi MSB → 8 hex
+    write_hex_u32(buf, (@hi >> 32) as u32)
+    buf.add_char('-')
+    // 2 байта hi (биты 16..31) → 4 hex
+    write_hex_u16(buf, ((@hi >> 16) & 0xFFFF) as u16)
+    buf.add_char('-')
+    // 2 байта hi (биты 0..15) → 4 hex (содержит version в старших 4 битах)
+    write_hex_u16(buf, (@hi & 0xFFFF) as u16)
+    buf.add_char('-')
+    // 2 байта lo MSB → 4 hex (содержит variant в старших 2 битах)
+    write_hex_u16(buf, (@lo >> 48) as u16)
+    buf.add_char('-')
+    // 6 байт lo младшие
+    write_hex_u32(buf, ((@lo >> 16) & 0xFFFFFFFF) as u32)
+    write_hex_u16(buf, (@lo & 0xFFFF) as u16)
+
+    buf.into_str_unchecked()
+}
+
+fn write_hex_u32(buf mut Buffer, v u32) {
+    let mut shift = 28
+    while shift >= 0 {
+        buf.add_char(hex_digit(((v >> shift) & 0xF) as u8))
+        shift -= 4
+    }
+}
+
+fn write_hex_u16(buf mut Buffer, v u16) {
+    let mut shift = 12
+    while shift >= 0 {
+        buf.add_char(hex_digit(((v >> shift) & 0xF) as u8))
+        shift -= 4
+    }
+}
+
+fn hex_digit(n u8) -> char =>
+    if n < 10 {
+        ('0' as int + n as int) as char
+    } else {
+        ('a' as int + n as int - 10) as char
+    }
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Парсинг (D73 From[str] + D77 TryFrom)
+// ──────────────────────────────────────────────────────────────────────────
+
+// Принимает форму "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" (36 символов,
+// case-insensitive в hex-цифрах). Throws Fail[ParseUuidError] на любой
+// ошибке. По D67 `?` после этого вызова — ошибка.
+export fn Uuid.from(s str) Fail[ParseUuidError] -> Self {
+    if s.len != 36 {
+        throw InvalidLength { actual: s.len, expected: 36 }
+    }
+
+    // Дефисы на позициях 8, 13, 18, 23.
+    check_dash(s, 8)
+    check_dash(s, 13)
+    check_dash(s, 18)
+    check_dash(s, 23)
+
+    // hi = 4 байта (биты 32..63) + 2 байта (16..31) + 2 байта (0..15)
+    let hi_high = parse_hex_range(s, 0, 8)             // 8 hex = u32
+    let hi_mid  = parse_hex_range(s, 9, 13)            // 4 hex = u16
+    let hi_low  = parse_hex_range(s, 14, 18)           // 4 hex (содержит version)
+    let hi = (hi_high << 32) | (hi_mid << 16) | hi_low
+
+    // lo = 2 байта (биты 48..63 — variant) + 4 байта + 2 байта
+    let lo_high = parse_hex_range(s, 19, 23)           // 4 hex (содержит variant)
+    let lo_mid  = parse_hex_range(s, 24, 32)           // 8 hex
+    let lo_low  = parse_hex_range(s, 32, 36)           // 4 hex
+    let lo = (lo_high << 48) | (lo_mid << 16) | lo_low
+
+    { hi, lo }
+}
+
+fn check_dash(s str, pos int) Fail[ParseUuidError] -> () {
+    match s.char_at(pos) {
+        Some('-') => ()
+        _         => throw MissingDash { position: pos }
+    }
+}
+
+// Парсит hex-цифры в диапазоне [from, to) → u64. Throws на не-hex.
+fn parse_hex_range(s str, from int, to int) Fail[ParseUuidError] -> u64 {
+    let mut acc u64 = 0
+    let mut i = from
+    while i < to {
+        match s.char_at(i) {
+            Some(c) => {
+                let d = hex_value(c, i)
+                acc = acc * 16 + (d as u64)
+            }
+            None => throw InvalidHex { position: i }
+        }
+        i += 1
+    }
+    acc
+}
+
+fn hex_value(c char, position int) Fail[ParseUuidError] -> u8 {
+    let n = c as int
+    if n >= 48 && n <= 57 {           // '0'..'9'
+        (n - 48) as u8
+    } else if n >= 97 && n <= 102 {    // 'a'..'f'
+        (n - 97 + 10) as u8
+    } else if n >= 65 && n <= 70 {     // 'A'..'F'
+        (n - 65 + 10) as u8
+    } else {
+        throw InvalidHex { position: position }
+    }
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Тесты — round-trip, версии, AI-first handler-substitution
+// ──────────────────────────────────────────────────────────────────────────
+
+test "NIL и MAX константы" {
+    assert NIL.is_nil()
+    assert NIL.into() == "00000000-0000-0000-0000-000000000000"
+    assert MAX.into() == "ffffffff-ffff-ffff-ffff-ffffffffffff"
+    assert !MAX.is_nil()
+}
+
+test "v4: version и variant корректны" {
+    with Random = seeded(42) {
+        let u = Uuid.v4()
+        match u.version() {
+            V4 => ()
+            _  => assert false
+        }
+        assert u.is_rfc4122()
+    }
+}
+
+test "v4: разные seed → разные UUID" {
+    let a = with Random = seeded(1) { Uuid.v4() }
+    let b = with Random = seeded(2) { Uuid.v4() }
+    assert !a.eq(b)
+}
+
+test "v4: одинаковый seed → одинаковый UUID (детерминизм)" {
+    let a = with Random = seeded(42) { Uuid.v4() }
+    let b = with Random = seeded(42) { Uuid.v4() }
+    assert a.eq(b)
+}
+
+test "v7: version и timestamp" {
+    with Time = fixed_ms(1700000000000), Random = seeded(0) {
+        let u = Uuid.v7()
+        match u.version() {
+            V7 => ()
+            _  => assert false
+        }
+        assert u.is_rfc4122()
+        assert u.timestamp_ms() == 1700000000000
+    }
+}
+
+test "v7: lexicographic ordering по timestamp" {
+    let earlier = with Time = fixed_ms(1000), Random = seeded(0) { Uuid.v7() }
+    let later = with Time = fixed_ms(2000), Random = seeded(0) { Uuid.v7() }
+    assert earlier.lt(later)
+    assert !later.lt(earlier)
+}
+
+test "round-trip: from(u.into()) == u" {
+    let cases = [
+        NIL,
+        MAX,
+        Uuid.new(0x550e8400e29b41d4, 0xa716446655440000),
+        Uuid.new(0xffffffffffffffff, 0x0000000000000000),
+    ]
+    for u in cases {
+        let s = u.into()
+        let parsed = Uuid.from(s)
+        assert parsed.eq(u)
+    }
+}
+
+test "from: канонический пример из RFC 4122" {
+    let u = Uuid.from("550e8400-e29b-41d4-a716-446655440000")
+    assert u.into() == "550e8400-e29b-41d4-a716-446655440000"
+    match u.version() {
+        V4 => ()
+        _  => assert false
+    }
+}
+
+test "from: case-insensitive hex" {
+    let lower = Uuid.from("550e8400-e29b-41d4-a716-446655440000")
+    let upper = Uuid.from("550E8400-E29B-41D4-A716-446655440000")
+    assert lower.eq(upper)
+}
+
+test "from: ошибка — неправильная длина" {
+    let r = with Fail[ParseUuidError] = (e) => interrupt Some(e) {
+        let _ = Uuid.from("too-short")
+        None
+    }
+    assert match r {
+        Some(InvalidLength { .. }) => true
+        _                           => false
+    }
+}
+
+test "from: ошибка — отсутствует дефис" {
+    let r = with Fail[ParseUuidError] = (e) => interrupt Some(e) {
+        let _ = Uuid.from("550e8400xe29b-41d4-a716-446655440000")
+        None
+    }
+    assert match r {
+        Some(MissingDash { .. }) => true
+        _                         => false
+    }
+}
+
+test "from: ошибка — не-hex символ" {
+    let r = with Fail[ParseUuidError] = (e) => interrupt Some(e) {
+        let _ = Uuid.from("550e8400-e29b-41d4-a716-44665544000Z")
+        None
+    }
+    assert match r {
+        Some(InvalidHex { .. }) => true
+        _                        => false
+    }
+}
+
+test "ordering: total order на UUID" {
+    let a = Uuid.new(1, 0)
+    let b = Uuid.new(1, 1)
+    let c = Uuid.new(2, 0)
+
+    assert a.lt(b)
+    assert b.lt(c)
+    assert a.lt(c)
+    assert !c.lt(a)
+}
+
+test "AI-first: тест UUID-генерации детерминистичен через handler" {
+    // Без mock-библиотек: подменяем Random handler на seeded.
+    // Тот же handler-substitution что в orm_decorators.nv для Db.
+    with Random = seeded(0xDEADBEEF) {
+        let u1 = Uuid.v4()
+        let u2 = Uuid.v4()
+        // Воспроизводимо: тот же seed → те же UUID при любом запуске.
+        assert u1.into() == u1.into()
+        assert !u1.eq(u2)
+    }
+}

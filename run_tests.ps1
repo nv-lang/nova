@@ -21,14 +21,22 @@ if ($IncludeStdlib) {
 $inputs | Sort-Object FullName | ForEach-Object {
     $nv = $_.FullName
     $name = $_.BaseName
-    # Display name includes parent group для multi-level layout
-    $relative = $_.FullName.Substring($tests_dir.Length).TrimStart('\').TrimStart('/')
-    if (-not $relative.StartsWith($_.Name)) {
-        $relative = $relative -replace '\\', '/'
+    # Display name includes parent group для multi-level layout. Используем
+    # подходящую базу: tests_dir для tests-nova/* или stdlib_dir для examples/stdlib/*.
+    # Case-insensitive — Windows может вернуть FullName с любым регистром drive letter.
+    $full_lower = $_.FullName.ToLower()
+    $is_stdlib  = $full_lower.StartsWith($stdlib_dir.ToLower())
+    $base = if ($full_lower.StartsWith($tests_dir.ToLower())) { $tests_dir }
+            elseif ($is_stdlib) { $stdlib_dir }
+            else { Split-Path $_.FullName -Parent }
+    $relative = $_.FullName.Substring($base.Length).TrimStart('\').TrimStart('/')
+    $relative = $relative -replace '\\', '/'
+    if ($is_stdlib) {
+        # Префикс "stdlib/" чтобы display было нагрузочно-говорящим
+        $display = "stdlib/" + ($relative -replace '\.nv$', '')
     } else {
-        $relative = $name
+        $display = $relative -replace '\.nv$', ''
     }
-    $display = $relative -replace '\.nv$', ''
     if ($Filter -and $display -notlike "*$Filter*") { return }
 
     # .c file is emitted next to .nv by the codegen, regardless of source dir.

@@ -344,6 +344,40 @@ Q-char-literals.
   В bootstrap `s[i]` для строк не реализовано; использовать
   `s.chars()` / `s.char_at(i)`.
 
+**Поиск и сравнение** (все индексы — **byte-offset**, не code-point;
+согласовано с `slice` и Rust/Go конвенцией):
+
+```nova
+fn str @find(needle str) -> Option[int]          // byte-offset первого вхождения
+fn str @rfind(needle str) -> Option[int]         // byte-offset последнего
+fn str @contains(needle str) -> bool
+fn str @starts_with(prefix str) -> bool
+fn str @ends_with(suffix str) -> bool
+fn str @split(sep str) -> Iter[str]              // лениво
+fn str @trim() -> str                            // обрезает ASCII whitespace + Unicode пробелы
+fn str @to_lower() -> str
+fn str @to_upper() -> str
+```
+
+`s.find(":") -> Option[int]` возвращает **byte-индекс** ":". Это
+позволяет напрямую передать в `s.slice(0, i)` без re-indexing:
+
+```nova
+let s = "user:42"
+if let Some(i) = s.find(":") {
+    let key = s.slice(0, i)         // "user"
+    let val = s.slice(i + 1, s.len) // "42"
+}
+```
+
+**Почему byte-index'ы для всех string-операций**: смешивать byte-
+и codepoint-индексы (find возвращает codepoint-id, slice ожидает
+byte) — источник bugs. Rust/Go все consistent на byte-уровне; Swift
+делает codepoint-через-Index'ы — type-safer, но дороже syntax. Nova
+выбирает byte-уровень для O(1) slice + простоту. Code-point обход —
+через `s.chars()` / `s.char_at(byte_i)` (последний пропускает чтобы
+landing'a в середине multi-byte → возврат `None`).
+
 **Конверсия в `[]byte` через D73:**
 - `[]byte.from(s str) -> []byte` — infallible (всегда работает,
   `str` гарантированно валидный UTF-8). **Копирует**
