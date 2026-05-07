@@ -141,3 +141,47 @@ test "record pattern with rest" {
     }
     assert(r == 1)
 }
+
+// ─── Pattern alternation `|` ───
+// `pat1 | pat2 | pat3 => body` — match arm срабатывает на любом
+// из вариантов. Bindings не предусмотрены в alternation (по spec
+// все варианты должны вводить одинаковый набор; bootstrap не проверяет).
+
+type Color | Red | Green | Blue | Yellow
+
+fn category(c Color) -> str => match c {
+    Red | Yellow => "warm"
+    Green | Blue => "cool"
+}
+
+test "alternation: variants" {
+    assert(category(Red) == "warm")
+    assert(category(Yellow) == "warm")
+    assert(category(Green) == "cool")
+    assert(category(Blue) == "cool")
+}
+
+fn classify_int(n int) -> str => match n {
+    0 | 1 | 2 => "low"
+    3 | 4 | 5 => "mid"
+    _ => "high"
+}
+
+test "alternation: literal patterns" {
+    assert(classify_int(0) == "low")
+    assert(classify_int(2) == "low")
+    assert(classify_int(4) == "mid")
+    assert(classify_int(99) == "high")
+}
+
+fn many_alts(n int) -> str => match n {
+    1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 => "single digit positive"
+    0 => "zero"
+    _ => "other"
+}
+
+test "alternation: many alternatives на одной строке" {
+    assert(many_alts(5) == "single digit positive")
+    assert(many_alts(0) == "zero")
+    assert(many_alts(100) == "other")
+}
