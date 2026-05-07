@@ -2749,6 +2749,25 @@ impl CEmitter {
                 if let Some(arr_elem_ty) = self.array_element_types.get(&val).cloned() {
                     self.array_element_types.insert(binding.clone(), arr_elem_ty);
                 }
+                // Special case: `let xs = s.bytes()` / `s.chars()` — set element type
+                // explicitly, even though val is not a known variable.
+                if let ExprKind::Call { func, .. } = &decl.value.kind {
+                    if let ExprKind::Member { obj, name } = &func.kind {
+                        if self.infer_expr_c_type(obj) == "nova_str" {
+                            match name.as_str() {
+                                "bytes" => {
+                                    self.array_element_types
+                                        .insert(binding.clone(), "nova_byte".into());
+                                }
+                                "chars" => {
+                                    // codepoints stored as nova_int — нет специального
+                                    // element-type; default из NovaArray_nova_int* подойдёт.
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
                 // Consume pending Option inner type (set when boxing a struct for nova_make_Option_Some)
                 if let Some(inner_ty) = self.pending_option_inner_type.take() {
                     self.option_inner_types.insert(binding.clone(), inner_ty);
@@ -5640,6 +5659,9 @@ impl CEmitter {
             "rfind"       => Some("nova_str_rfind"),
             "char_len"    => Some("nova_str_char_len"),
             "byte_len"    => Some("nova_str_byte_len"),
+            "bytes"       => Some("nova_str_bytes"),
+            "chars"       => Some("nova_str_chars"),
+            "split"       => Some("nova_str_split"),
             _ => None,
         }
     }
@@ -5837,8 +5859,12 @@ impl CEmitter {
                         return match method.as_str() {
                             "to_upper" | "to_lower" | "trim" | "slice" | "concat" => "nova_str".into(),
                             "starts_with" | "ends_with" | "contains" | "eq" => "nova_bool".into(),
-                            "len" | "char_len" => "nova_int".into(),
+                            "len" | "char_len" | "byte_len" => "nova_int".into(),
                             "find" | "rfind" => "NovaOpt_nova_int".into(),
+                            // D26: s.bytes() → []byte; s.chars() → []char (bootstrap-eager).
+                            "bytes" | "chars" => "NovaArray_nova_int*".into(),
+                            // s.split(sep) → []str (Iter[str] eager в bootstrap).
+                            "split" => "NovaArray_nova_str*".into(),
                             _ => "nova_int".into(),
                         };
                     }
