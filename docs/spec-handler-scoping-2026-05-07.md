@@ -186,6 +186,51 @@ with Time = handler Time { ... now() => 42 } {
 - **Registration:** caller (codegen) должен registrировать каждый
   handler-storage в `nova_register_effect_storage` при старте.
 
+#### Implementation invariant: handler-storage **не static**
+
+**Все** handler-storage переменные (`_nova_handler_X` для каждого
+эффекта `X`) **должны** быть emit'нуты с external linkage:
+
+```c
+__declspec(thread) NovaVtable_X* _nova_handler_X = NULL;   // ✓ correct
+```
+
+**НЕ** так:
+
+```c
+__declspec(thread) static NovaVtable_X* _nova_handler_X = NULL;   // ✗ WRONG
+```
+
+`static` ограничивает visibility одним translation unit (TU). Это
+ломает D80, потому что:
+
+1. **Registry в другом TU.** `nova_register_effect_storage(&_nova_handler_X)`
+   вызывается из main wrapper. Если storage `static` в module-TU, а
+   registry в effects.c — registry не сможет хранить адрес (формально
+   адрес можно взять, но это implementation-defined и неportable).
+
+2. **Production multi-module compilation.** При разделении проекта на
+   multiple `.c` файлов user-defined effect объявленный в module A
+   может использоваться в module B (через `import`). Storage должен
+   быть extern-видимым.
+
+3. **Snapshot save/restore через `void**`.** Registry хранит `void**`
+   (адрес slot'а). Доступ через TLS-pointer работает корректно если
+   storage extern; со `static` strict aliasing rules могут быть
+   нарушены при cross-TU access.
+
+**Правило:** codegen эмитит handler-storage **без `static`** —
+default external linkage с TLS-storage class. Built-in эффекты
+(Fail, Time, Mem) в runtime'е (`effects.c`) уже следуют этому
+правилу.
+
+#### Test protection
+
+`tests-nova/concurrency/per_fiber_handlers.nv` — 4 теста на per-fiber
+scoping. Они защищают invariant: если storage возвратится в `static`
+(или snapshot save/restore сломается), эти тесты упадут с data
+corruption (handler одного fiber'а вернёт значение от другого).
+
 #### Связь
 - D14 (Fiber runtime — невидимая infra) — D80 уточняет, что **handlers
   входят в "невидимую инфра"** (per-fiber state).
