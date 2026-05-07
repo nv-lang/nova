@@ -93,9 +93,24 @@
         return 1; \
     }
 
-/* ---- Default instantiation for nova_int arrays ---- */
+/* ---- Default instantiations for primitive arrays.
+ *
+ * Каждый primitive-тип получает собственный NovaArray_T struct с реальным
+ * packed `T data[]` (не int64-erasure). Это критично для byte:
+ * `[]byte` хранится как `uint8_t[]`, не int64[]. Иначе 8x memory
+ * overhead и неправильная FFI-семантика.
+ */
 NOVA_ARRAY_DECL(nova_int)
 NOVA_ARRAY_IMPL(nova_int)
+
+NOVA_ARRAY_DECL(nova_byte)
+NOVA_ARRAY_IMPL(nova_byte)
+
+NOVA_ARRAY_DECL(nova_bool)
+NOVA_ARRAY_IMPL(nova_bool)
+
+NOVA_ARRAY_DECL(nova_f64)
+NOVA_ARRAY_IMPL(nova_f64)
 
 /* ---- nova_str array (cannot use macro: eq needs nova_str_eq) ---- */
 #ifndef NOVA_RT_H  /* nova_str defined in nova_rt.h; skip if not included yet */
@@ -252,14 +267,13 @@ static inline nova_int nova_str_byte_len(nova_str s) {
     return (nova_int)s.len;
 }
 
-/* ---- nova_str_bytes: возвращает []byte (массив байт UTF-8 представления).
- * Под bootstrap [] byte хранится как NovaArray_nova_int* с элементами
- * nova_byte (uint8_t), упакованными в int64_t слоты. Это согласовано с
- * codegen-маппингом `[]byte` → `NovaArray_nova_int*`. */
-static inline NovaArray_nova_int* nova_str_bytes(nova_str s) {
-    NovaArray_nova_int* a = nova_array_new_nova_int((int64_t)s.len);
+/* ---- nova_str_bytes: возвращает []byte (packed UTF-8 байты).
+ * `[]byte` codegen-маппится в `NovaArray_nova_byte*` — реальный
+ * uint8_t[] storage, без int64-erasure. */
+static inline NovaArray_nova_byte* nova_str_bytes(nova_str s) {
+    NovaArray_nova_byte* a = nova_array_new_nova_byte((int64_t)s.len);
     for (size_t i = 0; i < s.len; i++) {
-        nova_array_push_nova_int(a, (nova_int)(unsigned char)s.ptr[i]);
+        nova_array_push_nova_byte(a, (nova_byte)(unsigned char)s.ptr[i]);
     }
     return a;
 }

@@ -593,12 +593,26 @@ impl CEmitter {
             }
             TypeRef::Unit(_) => Ok("nova_unit".into()),
             TypeRef::Array(inner, _) => {
-                // str arrays use NovaArray_nova_str*; all others use nova_int storage.
-                if matches!(inner.as_ref(), TypeRef::Named { path, .. } if path.len() == 1 && path[0] == "str") {
-                    Ok("NovaArray_nova_str*".into())
-                } else {
-                    Ok("NovaArray_nova_int*".into())
+                // Мономорфизация по primitive elem-type. Каждый primitive
+                // type имеет собственный NovaArray_T с реальным packed
+                // storage (не int64-erasure). Для byte это критично:
+                // `[]byte` = `uint8_t[]`, не int64[].
+                // Record/sum/array-of-array хранятся через nova_int slots
+                // (boxed pointers) — bootstrap-ограничение.
+                if let TypeRef::Named { path, .. } = inner.as_ref() {
+                    if path.len() == 1 {
+                        return Ok(match path[0].as_str() {
+                            "str" => "NovaArray_nova_str*".into(),
+                            "byte" | "u8" => "NovaArray_nova_byte*".into(),
+                            "bool" => "NovaArray_nova_bool*".into(),
+                            "f64" | "f32" => "NovaArray_nova_f64*".into(),
+                            // int/i8-i64/u16-u64/char и unknown user types
+                            // — через int64 slot (boxed pointers для record/sum).
+                            _ => "NovaArray_nova_int*".into(),
+                        });
+                    }
                 }
+                Ok("NovaArray_nova_int*".into())
             }
             TypeRef::Tuple(elems, _) => {
                 let n = elems.len();
@@ -3908,7 +3922,7 @@ impl CEmitter {
                                     let v = self.emit_expr(arg)?;
                                     if arg_ty == "nova_str" {
                                         return Ok(format!("Nova_Buffer_static_from_str({})", v));
-                                    } else if arg_ty.starts_with("NovaArray_") {
+                                    } else if arg_ty == "NovaArray_nova_byte*" {
                                         return Ok(format!("Nova_Buffer_static_from_bytes({})", v));
                                     } else {
                                         return Err(format!(
@@ -4130,7 +4144,7 @@ impl CEmitter {
                                 let v = self.emit_expr(arg)?;
                                 if arg_ty == "nova_str" {
                                     return Ok(format!("Nova_Buffer_static_from_str({})", v));
-                                } else if arg_ty.starts_with("NovaArray_") {
+                                } else if arg_ty == "NovaArray_nova_byte*" {
                                     return Ok(format!("Nova_Buffer_static_from_bytes({})", v));
                                 } else {
                                     return Err(format!(
@@ -5878,7 +5892,7 @@ impl CEmitter {
                         return match method.as_str() {
                             "len" | "capacity" => "nova_int".into(),
                             "clone" => "Nova_Buffer*".into(),
-                            "into" => "NovaArray_nova_int*".into(),
+                            "into" => "NovaArray_nova_byte*".into(),
                             "try_into" | "into_str_unchecked" => "nova_str".into(),
                             "add_str" | "add_bytes" | "add_byte" | "add_char" => "nova_unit".into(),
                             _ => "nova_int".into(),
@@ -5951,8 +5965,10 @@ impl CEmitter {
                             "starts_with" | "ends_with" | "contains" | "eq" => "nova_bool".into(),
                             "len" | "char_len" | "byte_len" => "nova_int".into(),
                             "find" | "rfind" => "NovaOpt_nova_int".into(),
-                            // D26: s.bytes() → []byte; s.chars() → []char (bootstrap-eager).
-                            "bytes" | "chars" => "NovaArray_nova_int*".into(),
+                            // D26: s.bytes() → []byte (packed uint8_t[]).
+                            "bytes" => "NovaArray_nova_byte*".into(),
+                            // s.chars() → []char (bootstrap-eager codepoints как nova_int).
+                            "chars" => "NovaArray_nova_int*".into(),
                             // s.split(sep) → []str (Iter[str] eager в bootstrap).
                             "split" => "NovaArray_nova_str*".into(),
                             _ => "nova_int".into(),

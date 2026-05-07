@@ -77,18 +77,13 @@ static inline Nova_Buffer* Nova_Buffer_static_from_str(nova_str s) {
     return b;
 }
 
-/* Buffer.from(b []byte) — copy of bytes. */
-static inline Nova_Buffer* Nova_Buffer_static_from_bytes(NovaArray_nova_int* arr) {
+/* Buffer.from(b []byte) — copy of bytes. `[]byte` теперь — packed
+ * NovaArray_nova_byte с реальным uint8_t[] storage (нет int64-erasure). */
+static inline Nova_Buffer* Nova_Buffer_static_from_bytes(NovaArray_nova_byte* arr) {
     Nova_Buffer* b = (Nova_Buffer*)nova_alloc(sizeof(Nova_Buffer));
     int64_t cap = arr->len > 0 ? arr->len : NOVA_BUFFER_INIT_CAP;
     b->data = (nova_byte*)nova_alloc((size_t)cap);
-    /* arr->data has nova_int (int64_t) elements storing byte values; copy
-     * the low byte of each into the buffer. Kept for Nova-side []byte
-     * compatibility — Nova represents []byte as []int currently (D27 not
-     * yet differentiating byte arrays). */
-    for (int64_t i = 0; i < arr->len; i++) {
-        b->data[i] = (nova_byte)(arr->data[i] & 0xFF);
-    }
+    memcpy(b->data, arr->data, (size_t)arr->len);
     b->len = arr->len;
     b->cap = cap;
     b->consumed = 0;
@@ -105,14 +100,12 @@ static inline nova_unit Nova_Buffer_method_add_str(Nova_Buffer* b, nova_str s) {
     return NOVA_UNIT;
 }
 
-/* @add_bytes(b []byte) — append bytes from a Nova []byte (stored as []int). */
-static inline nova_unit Nova_Buffer_method_add_bytes(Nova_Buffer* buf, NovaArray_nova_int* arr) {
+/* @add_bytes(b []byte) — append bytes from a Nova []byte. */
+static inline nova_unit Nova_Buffer_method_add_bytes(Nova_Buffer* buf, NovaArray_nova_byte* arr) {
     _nova_buffer_check_live(buf);
     if (arr->len == 0) return NOVA_UNIT;
     _nova_buffer_reserve(buf, arr->len);
-    for (int64_t i = 0; i < arr->len; i++) {
-        buf->data[buf->len + i] = (nova_byte)(arr->data[i] & 0xFF);
-    }
+    memcpy(buf->data + buf->len, arr->data, (size_t)arr->len);
     buf->len += arr->len;
     return NOVA_UNIT;
 }
@@ -177,18 +170,15 @@ static inline Nova_Buffer* Nova_Buffer_method_clone(Nova_Buffer* src) {
     return b;
 }
 
-/* @into() -> []byte — consume and return contents as []byte.
- * Implemented as conversion to NovaArray_nova_int (Nova's []byte
- * representation). */
-static inline NovaArray_nova_int* Nova_Buffer_method_into(Nova_Buffer* b) {
+/* @into() -> []byte — consume and return contents as packed []byte.
+ * `[]byte` теперь NovaArray_nova_byte (real uint8_t[] storage). */
+static inline NovaArray_nova_byte* Nova_Buffer_method_into(Nova_Buffer* b) {
     _nova_buffer_check_live(b);
-    NovaArray_nova_int* arr = (NovaArray_nova_int*)nova_alloc(sizeof(NovaArray_nova_int));
+    NovaArray_nova_byte* arr = (NovaArray_nova_byte*)nova_alloc(sizeof(NovaArray_nova_byte));
     arr->cap = b->len > 0 ? b->len : 8;
     arr->len = b->len;
-    arr->data = (nova_int*)nova_alloc((size_t)arr->cap * sizeof(nova_int));
-    for (int64_t i = 0; i < b->len; i++) {
-        arr->data[i] = (nova_int)b->data[i];
-    }
+    arr->data = (nova_byte*)nova_alloc((size_t)arr->cap * sizeof(nova_byte));
+    memcpy(arr->data, b->data, (size_t)b->len);
     b->consumed = 1;
     return arr;
 }
