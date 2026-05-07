@@ -496,7 +496,7 @@ error: module declaration does not match file path
 nova-lang/
 ├── compiler-bootstrap/      Rust — первая реализация (treewalk-interp)
 ├── compiler-codegen/        Rust + C runtime — bootstrap codegen
-├── stdlib/                  стандартная библиотека Nova (.nv)
+├── std/                     стандартная библиотека Nova (.nv)
 │   ├── collections/         hashmap, set, deque, vec, queue, ...
 │   ├── crypto/              md5, sha1, sha256, hmac, jwt, bcrypt
 │   ├── encoding/            base64, hex, json, csv, ini, toml, url
@@ -518,32 +518,42 @@ nova-lang/
 
 **Принципы layout'а:**
 
-1. **`stdlib/` ≠ `examples/`.** Stdlib — production-код для всех
-   программ Nova. Examples — туториальные snippets и демо-программы,
+1. **`std/` ≠ `examples/`.** `std/` — production-код стандартной
+   библиотеки. `examples/` — туториальные snippets и демо-программы,
    которые **используют** stdlib.
 
-2. **Группировка по домену, не по типу артефакта.** Каждая папка в
-   `stdlib/` — semantic domain (`crypto`, `encoding`, `time`),
+2. **Имя папки `std/` = префикс модуля `std.`.** Module path 1:1
+   соответствует file path **без специальных маппингов** (см. правило
+   `Path / module enforcement` выше). Файл `std/encoding/base64.nv`
+   объявляет `module std.encoding.base64`; ничего не разворачивается
+   в имени, ничего не подразумевается.
+
+3. **Группировка по домену, не по типу артефакта.** Каждая папка в
+   `std/` — semantic domain (`crypto`, `encoding`, `time`),
    а не «source-files vs tests vs docs». Тесты живут рядом с
    модулем (внутри `.nv`-файла через `test "..." { }` блоки) —
    см. [03-syntax.md → D29](03-syntax.md#d29).
 
-3. **Module path = file path.** По правилу `Path / module enforcement`
-   выше: `module std.crypto.md5` ↔ `stdlib/crypto/md5.nv`. Один и
-   тот же файл не может быть объявлен в двух модулях.
-
 4. **Плоская иерархия внутри домена.** Без подпапок второго уровня
-   (`stdlib/crypto/md5.nv`, не `stdlib/crypto/hash/md5.nv`). Если
+   (`std/crypto/md5.nv`, не `std/crypto/hash/md5.nv`). Если
    домен растёт до 15+ файлов — рассматривать подкатегорию.
 
 5. **Прецеденты.** Go (`net/http/`, `encoding/json/`), Python
    (`Lib/http/`, `Lib/json/`), Rust (`library/std/src/collections/`).
    Все три используют **доменную flat-иерархию**, не type-based
-   (как Maven/Gradle src/main/java).
+   (как Maven/Gradle src/main/java). Имя `std/` повторяет Rust'овский
+   `library/std/`, но без обёртки `library/`.
 
 Этот layout фиксируется как **convention**, не как обязательное
 правило для пользовательских пакетов — `nova.toml` через `[lib].src`
-позволяет любую структуру. Но `stdlib/` — каноничный пример.
+позволяет любую структуру. Но `std/` — каноничный пример.
+
+Вопрос «почему `std/`, а не `stdlib/`?» — короткое имя сохраняет
+краткость импортов (`import std.encoding.json` vs
+`import stdlib.encoding.json`) и **избавляет от спецправила**
+«папка `stdlib/` мапится в префикс `std.`» — path 1:1 = module без
+исключений. `stdlib/` рассматривался; отвергнут в пользу `std/`
+по этим двум причинам.
 
 #### Lockfile — `nova.lock`
 
@@ -770,7 +780,7 @@ import std.result.Result
    format, workspace coordination — это всё нужно реализовать.
 2. **Bootstrap problem.** Сама Nova-stdlib должна жить **до** появления
    tooling'а. Решение: stdlib монолитна на ранних этапах (всё в
-   `stdlib/<домен>/*.nv`), package tooling появляется параллельно
+   `std/<домен>/*.nv`), package tooling появляется параллельно
    с self-hosted compiler.
 3. **Central registry — открытый вопрос.** Когда появится,
    нужна команда поддержки (хостинг, security policy, DMCA, etc.).
@@ -788,7 +798,7 @@ import std.result.Result
 - [D30](03-syntax.md#d30) — конвенции имён модулей и файлов.
 - [D64](04-effects.md#d64) — `realtime { }` блок; prelude opt-out
   полезен для real-time uses.
-- [stdlib/data/semver.nv](../../stdlib/data/semver.nv) —
+- [std/data/semver.nv](../../std/data/semver.nv) —
   semver используется для `version` поля и для resolver-сравнений.
 
 ### Открытые вопросы

@@ -1,0 +1,41 @@
+# nova.toml — Nova standard library.
+#
+# Это workspace-member корневого `../nova.toml`. Содержит
+# стандартную библиотеку Nova, организованную по семантическим
+# доменам (см. spec/decisions/07-modules.md раздел «Структура
+# nova-lang репозитория» в D78):
+#
+#   collections/    HashMap, Set, Deque, Vec, Queue, LinkedList,
+#                   Range, LRU, PriorityQueue, BloomFilter
+#   crypto/         MD5, SHA-1, SHA-256, HMAC, JWT, bcrypt
+#   encoding/       Base64, Hex, JSON, CSV, INI, TOML, URL
+#   identifiers/    UUID, ULID, Snowflake
+#   checksums/      CRC32, FNV
+#   time/           Duration, Cron
+#   path/           Path, Glob
+#   math/           Complex, Statistics
+#   text/           Regex, Markdown, Diff
+#   data/           SemVer, SemVerRange, SQL
+#   concurrency/    RateLimiter, Retry
+#
+# Module path 1:1 = file path: файл `std/encoding/base64.nv`
+# объявляет `module std.encoding.base64`. Имя папки `std/` ↔
+# префикс модуля `std.` без специальных маппингов (см. D78
+# «Path / module enforcement»).
+
+[package]
+name = "std"
+version = "0.1.0"
+nova-version = "0.5"
+license = "MIT OR Apache-2.0"
+description = "Стандартная библиотека Nova"
+repository = "https://github.com/nova-lang/nova"
+
+# Корень — текущий каталог `.`. Файлы лежат в подкаталогах прямо
+# в std/<домен>/, не в std/src/.
+[lib]
+src = "."
+
+# Stdlib не имеет внешних зависимостей — использует только
+# prelude и собственные модули.
+[dependencies]

@@ -6,11 +6,13 @@
 # Cargo.toml.
 #
 # Внутри Nova workspace:
-#   - examples/ — демонстрационные программы и stdlib-черновики
+#   - std/        — стандартная библиотека Nova (.nv-модули по доменам)
+#   - examples/   — демо-программы и tutorial snippets (используют std)
 #   - tests-nova/ — тесты языка (корпус для bootstrap-компилятора)
 
 [workspace]
 members = [
+    "std",
     "examples",
     "tests-nova",
 ]

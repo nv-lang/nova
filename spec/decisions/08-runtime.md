@@ -1790,7 +1790,7 @@ x.pow(n)          // x^n
   между static и instance не остаётся на усмотрение программиста.
 - [D73](#d73-from--into-protocol-пара-с-авто-выводом) — парсинг
   чисел через `f64.from(s)` / `s.into()`, согласовано с from/into.
-- [stdlib/math/complex.nv](../../stdlib/math/complex.nv) —
+- [std/math/complex.nv](../../std/math/complex.nv) —
   использует instance-стиль (`theta.cos()`, `im.atan2(re)`,
   `a.hypot(b)`) как канонический пример.
 
@@ -2091,7 +2091,7 @@ match u64.try_from(s).ok() {
   метод для перевода.
 - [D30](03-syntax.md#d30) — конвенция имён ошибок
   (`Parse<TypeName>Error`); не меняется.
-- [stdlib/data/semver.nv](../../stdlib/data/semver.nv) —
+- [std/data/semver.nv](../../std/data/semver.nv) —
   использует `u64.try_parse` (legacy имя) — должно мигрировать на
   `u64.try_from` после принятия D77.
 
@@ -2114,7 +2114,7 @@ match u64.try_from(s).ok() {
 
 ### Эволюция
 
-До D77 в первой реализации `stdlib/data/semver.nv` использовался
+До D77 в первой реализации `std/data/semver.nv` использовался
 `u64.try_parse(s) -> Option[u64]` — отдельное имя для Option-варианта
 парсинга. При обсуждении выявилось три проблемы:
 
