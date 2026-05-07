@@ -1,0 +1,268 @@
+// str_search.nv — D26 string search/slice API: find / rfind / slice
+// edge cases (byte-offsets).
+//
+// Spec D26: все индексы — byte-offset (consistent с Rust/Go),
+// возвращаемое значение — Option[int] для find/rfind.
+
+module nova_tests.types.str_search
+
+// ================================================================
+// SECTION 1: find — первое вхождение
+// ================================================================
+
+test "find: ASCII presence returns Some(byte_offset)" {
+    let s = "hello world"
+    let r = s.find("world")
+    assert(r.unwrap_or(-1) == 6)
+}
+
+test "find: at the start" {
+    let r = "hello".find("hel")
+    assert(r.unwrap_or(-1) == 0)
+}
+
+test "find: at the end" {
+    let r = "hello".find("llo")
+    assert(r.unwrap_or(-1) == 2)
+}
+
+test "find: needle not present" {
+    let r = "hello".find("world")
+    assert(r.is_none())
+}
+
+test "find: empty needle returns Some(0)" {
+    // Rust convention: пустой needle всегда matches at offset 0.
+    let r = "hello".find("")
+    assert(r.unwrap_or(-1) == 0)
+}
+
+test "find: needle longer than haystack" {
+    let r = "abc".find("abcdef")
+    assert(r.is_none())
+}
+
+test "find: empty haystack with non-empty needle" {
+    let r = "".find("x")
+    assert(r.is_none())
+}
+
+test "find: empty haystack with empty needle" {
+    let r = "".find("")
+    assert(r.unwrap_or(-1) == 0)
+}
+
+test "find: returns first match (not later)" {
+    let r = "abc-abc-abc".find("abc")
+    assert(r.unwrap_or(-1) == 0)
+}
+
+test "find: single character search" {
+    let r = "hello".find("e")
+    assert(r.unwrap_or(-1) == 1)
+}
+
+// ================================================================
+// SECTION 2: rfind — последнее вхождение
+// ================================================================
+
+test "rfind: returns last match offset" {
+    let r = "abc-abc-abc".rfind("abc")
+    assert(r.unwrap_or(-1) == 8)
+}
+
+test "rfind: when only one match" {
+    let r = "hello".rfind("ll")
+    assert(r.unwrap_or(-1) == 2)
+}
+
+test "rfind: not present returns None" {
+    let r = "hello".rfind("xyz")
+    assert(r.is_none())
+}
+
+test "rfind: empty needle returns Some(s.len)" {
+    // Rust convention: пустой needle для rfind = position past last char.
+    let r = "abc".rfind("")
+    assert(r.unwrap_or(-1) == 3)
+}
+
+// ================================================================
+// SECTION 3: find vs rfind для unique/multi-occurrence
+// ================================================================
+
+test "find != rfind для multi-occurrence" {
+    let s = "ab-cd-ef"
+    let f = s.find("-").unwrap_or(-1)
+    let r = s.rfind("-").unwrap_or(-1)
+    assert(f == 2)
+    assert(r == 5)
+    assert(f != r)
+}
+
+test "find == rfind для unique match" {
+    let s = "abc-def"
+    let f = s.find("-").unwrap_or(-1)
+    let r = s.rfind("-").unwrap_or(-1)
+    assert(f == r)
+    assert(f == 3)
+}
+
+// ================================================================
+// SECTION 4: find + slice — типичный split-by-delimiter pattern
+// ================================================================
+
+test "split-by-find: parse 'key:value'" {
+    let s = "user:42"
+    let i = s.find(":").unwrap_or(-1)
+    assert(i == 4)
+    let key = s.slice(0, i)
+    let val = s.slice(i + 1, s.len)
+    assert(key == "user")
+    assert(val == "42")
+}
+
+test "split-by-rfind: get last segment of path" {
+    let path = "/usr/local/bin/nova"
+    let i = path.rfind("/").unwrap_or(-1)
+    assert(i == 14)
+    let dir = path.slice(0, i)
+    let name = path.slice(i + 1, path.len)
+    assert(dir == "/usr/local/bin")
+    assert(name == "nova")
+}
+
+// ================================================================
+// SECTION 5: slice edge cases
+// ================================================================
+
+test "slice: full range == original" {
+    let s = "hello"
+    let r = s.slice(0, s.len)
+    assert(r == "hello")
+}
+
+test "slice: empty slice (a == b)" {
+    let s = "hello"
+    let r = s.slice(2, 2)
+    assert(r == "")
+    assert(r.len == 0)
+}
+
+test "slice: middle" {
+    let r = "hello world".slice(6, 11)
+    assert(r == "world")
+}
+
+test "slice: from start" {
+    let r = "hello".slice(0, 3)
+    assert(r == "hel")
+}
+
+test "slice: to end" {
+    let s = "hello"
+    let r = s.slice(2, s.len)
+    assert(r == "llo")
+}
+
+// ================================================================
+// SECTION 6: case-sensitivity для всех методов
+// ================================================================
+
+test "find is case-sensitive" {
+    let s = "Hello World"
+    assert(s.find("hello").is_none())          // нижний регистр не найдём
+    assert(s.find("Hello").unwrap_or(-1) == 0)
+}
+
+test "rfind is case-sensitive" {
+    let s = "Hello hello"
+    assert(s.rfind("Hello").unwrap_or(-1) == 0) // только заглавный
+    let r = s.rfind("hello")
+    assert(r.unwrap_or(-1) == 6)
+}
+
+// ================================================================
+// SECTION 7: len/byte_len/char_len — школа B (codepoint-indexed)
+// ================================================================
+// School B (D26): s.len — длина в codepoint'ах, s.byte_len() — в байтах.
+// char_len() — алиас s.len (для совместимости/явности).
+
+test "len: ASCII — codepoints == bytes" {
+    let s = "hello"
+    assert(s.len == 5)             // 5 codepoints
+    assert(s.byte_len() == 5)      // 5 bytes
+    assert(s.char_len() == 5)      // alias of len
+}
+
+test "len: Cyrillic — codepoints != bytes" {
+    let s = "Привет"               // 6 codepoints, 12 bytes (2 byte/char UTF-8)
+    assert(s.len == 6)             // school B: codepoints
+    assert(s.byte_len() == 12)     // bytes
+    assert(s.char_len() == 6)
+}
+
+test "len: emoji — 4 байта на codepoint" {
+    let s = "ab😀cd"                // 5 codepoints, 4 ASCII + 4 emoji = 8 bytes
+    assert(s.len == 5)
+    assert(s.byte_len() == 8)
+    assert(s.char_len() == 5)
+}
+
+test "len: empty string" {
+    assert("".len == 0)
+    assert("".byte_len() == 0)
+    assert("".char_len() == 0)
+}
+
+test "len for mixed content" {
+    let s = "a Привет b"           // a + space + 6 cyrillic + space + b = 10 codepoints
+                                   // ASCII: a, space, space, b = 4 bytes
+                                   // Cyrillic: 6*2 = 12 bytes; total bytes = 16
+    assert(s.len == 10)            // codepoints
+    assert(s.byte_len() == 16)     // bytes
+    assert(s.char_len() == 10)
+}
+
+// ================================================================
+// SECTION 8: find/rfind/slice с Unicode (codepoint offsets)
+// ================================================================
+
+test "find: Cyrillic returns codepoint offset, not byte offset" {
+    let s = "Привет мир"           // 'мир' starts at codepoint 7 (byte 13)
+    let r = s.find("мир")
+    assert(r.unwrap_or(-1) == 7)   // codepoint, не 13
+}
+
+test "rfind: Cyrillic returns codepoint offset" {
+    let s = "ааа-ааа"              // последний 'ааа' начинается с codepoint 4
+    let r = s.rfind("ааа")
+    assert(r.unwrap_or(-1) == 4)
+}
+
+test "slice: Cyrillic codepoint indices" {
+    let s = "Привет мир"
+    // codepoints: П(0) р(1) и(2) в(3) е(4) т(5) ' '(6) м(7) и(8) р(9)
+    let hello = s.slice(0, 6)      // "Привет"
+    assert(hello == "Привет")
+    let world = s.slice(7, 10)     // "мир"
+    assert(world == "мир")
+}
+
+test "split-by-find with Cyrillic" {
+    let s = "ключ:значение"        // 'ключ'(0..4) + ':'(4) + 'значение'(5..13)
+    let i = s.find(":").unwrap_or(-1)
+    assert(i == 4)                 // codepoint offset
+    let key = s.slice(0, i)
+    let val = s.slice(i + 1, s.len)
+    assert(key == "ключ")
+    assert(val == "значение")
+}
+
+test "slice across emoji boundary" {
+    let s = "ab😀cd"                // codepoints: a(0) b(1) 😀(2) c(3) d(4)
+    let r = s.slice(2, 3)
+    assert(r == "😀")
+    assert(r.byte_len() == 4)      // emoji = 4 bytes
+    assert(r.len == 1)             // 1 codepoint
+}
