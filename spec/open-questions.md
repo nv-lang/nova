@@ -4487,6 +4487,24 @@ type InvalidCodepoint { value int }
 - Format spec
 - Расширенные числовые (`f64 @atan2`, etc.)
 
+### Что уже реализовано в bootstrap (по состоянию на 2026-05-07)
+
+После раундов 4–5 codegen+runtime закрыли часть Tier 1/2:
+
+- **str**: `@bytes()` / `@chars()` / `@split(sep)` — раунд 4 (eager, []byte / []int / []str)
+- **Pattern alternation** `Some(A) | Some(B) => body` в match-arms — раунд 4
+- **Buffer** API (Q-buffer закрыто) — реализован
+- **Channel[T]** base API (D79): `Channel.new(cap)`, `@send/@recv/@try_send/@try_recv/@close/@is_closed/@len/@capacity`, drain-семантика — раунд 5
+  - Tier 1+ (для concurrent stdlib); `select { ... }` — pending до spawn-block fix
+- **D28 effect inference** — private fn с throw авто-получает Fail
+- **char-литералы** (Q-char-literals закрыто) — `'a' / '\n' / '\u{...}'`
+
+Pending Tier 1/2:
+- `int.try_from(s)` / `u64.try_from(s)` / `f64.try_from(s)` — D77 spec есть, runtime нет
+- `Random` / `Time` handler'ы — нужны для AI-first тестов через handler-substitution
+- `HashMap[K, V]` — base нет в runtime
+- `Iter[T]` composers (`@map`, `@filter`, `@fold`, `@count`, `@collect`)
+
 ### Связь
 
 - [D26](decisions/08-runtime.md#d26) — prelude содержит часть этого
