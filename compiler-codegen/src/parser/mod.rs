@@ -940,13 +940,101 @@ impl Parser {
     }
 
     fn parse_cmp(&mut self) -> Result<Expr, Diagnostic> {
-        let mut left = self.parse_range()?;
+        let mut left = self.parse_bit_or()?;
         loop {
             let op = match self.peek().kind {
                 TokenKind::Lt => BinOp::Lt,
                 TokenKind::Le => BinOp::Le,
                 TokenKind::Gt => BinOp::Gt,
                 TokenKind::Ge => BinOp::Ge,
+                _ => break,
+            };
+            self.bump();
+            self.skip_newlines();
+            let right = self.parse_bit_or()?;
+            let span = left.span.merge(right.span);
+            left = Expr::new(
+                ExprKind::Binary {
+                    op,
+                    left: Box::new(left),
+                    right: Box::new(right),
+                },
+                span,
+            );
+        }
+        Ok(left)
+    }
+
+    /// Bitwise-or `|` (level 7 в spec). Не путаем с `||`.
+    fn parse_bit_or(&mut self) -> Result<Expr, Diagnostic> {
+        let mut left = self.parse_bit_xor()?;
+        loop {
+            if !matches!(self.peek().kind, TokenKind::Pipe) { break; }
+            self.bump();
+            self.skip_newlines();
+            let right = self.parse_bit_xor()?;
+            let span = left.span.merge(right.span);
+            left = Expr::new(
+                ExprKind::Binary {
+                    op: BinOp::BitOr,
+                    left: Box::new(left),
+                    right: Box::new(right),
+                },
+                span,
+            );
+        }
+        Ok(left)
+    }
+
+    /// Bitwise-xor `^` (level 8).
+    fn parse_bit_xor(&mut self) -> Result<Expr, Diagnostic> {
+        let mut left = self.parse_bit_and()?;
+        loop {
+            if !matches!(self.peek().kind, TokenKind::Caret) { break; }
+            self.bump();
+            self.skip_newlines();
+            let right = self.parse_bit_and()?;
+            let span = left.span.merge(right.span);
+            left = Expr::new(
+                ExprKind::Binary {
+                    op: BinOp::BitXor,
+                    left: Box::new(left),
+                    right: Box::new(right),
+                },
+                span,
+            );
+        }
+        Ok(left)
+    }
+
+    /// Bitwise-and `&` (level 9). Не путаем с `&&`.
+    fn parse_bit_and(&mut self) -> Result<Expr, Diagnostic> {
+        let mut left = self.parse_shift()?;
+        loop {
+            if !matches!(self.peek().kind, TokenKind::Amp) { break; }
+            self.bump();
+            self.skip_newlines();
+            let right = self.parse_shift()?;
+            let span = left.span.merge(right.span);
+            left = Expr::new(
+                ExprKind::Binary {
+                    op: BinOp::BitAnd,
+                    left: Box::new(left),
+                    right: Box::new(right),
+                },
+                span,
+            );
+        }
+        Ok(left)
+    }
+
+    /// Shift `<<` / `>>` (level 10).
+    fn parse_shift(&mut self) -> Result<Expr, Diagnostic> {
+        let mut left = self.parse_range()?;
+        loop {
+            let op = match self.peek().kind {
+                TokenKind::Shl => BinOp::Shl,
+                TokenKind::Shr => BinOp::Shr,
                 _ => break,
             };
             self.bump();

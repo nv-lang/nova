@@ -2987,6 +2987,9 @@ impl CEmitter {
                     BinOp::Lt  => "<",  BinOp::Le  => "<=",
                     BinOp::Gt  => ">",  BinOp::Ge  => ">=",
                     BinOp::And => "&&", BinOp::Or  => "||",
+                    BinOp::BitAnd => "&", BinOp::BitOr => "|",
+                    BinOp::BitXor => "^",
+                    BinOp::Shl => "<<", BinOp::Shr => ">>",
                 };
                 Ok(format!("({} {} {})", l, op_str, r))
             }
@@ -5968,6 +5971,9 @@ impl CEmitter {
                     BinOp::Mul => "*", BinOp::Div => "/",
                     BinOp::Mod => "%",
                     BinOp::And => "&&", BinOp::Or => "||",
+                    BinOp::BitAnd => "&", BinOp::BitOr => "|",
+                    BinOp::BitXor => "^",
+                    BinOp::Shl => "<<", BinOp::Shr => ">>",
                 };
                 format!("{} {} {}",
                     Self::expr_to_display(left), op_str, Self::expr_to_display(right))

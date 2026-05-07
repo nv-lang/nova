@@ -543,6 +543,12 @@ pub enum BinOp {
     Ge,
     And,
     Or,
+    /// Bitwise (D-operators в spec/03-syntax.md). Применимы только к int.
+    BitAnd,
+    BitOr,
+    BitXor,
+    Shl,
+    Shr,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

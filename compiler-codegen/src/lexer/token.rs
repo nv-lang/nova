@@ -111,6 +111,14 @@ pub enum TokenKind {
     AmpAmp,
     PipePipe,
     Pipe,
+    /// `&` — bitwise and (D-operators)
+    Amp,
+    /// `^` — bitwise xor
+    Caret,
+    /// `<<` — left shift
+    Shl,
+    /// `>>` — right shift
+    Shr,
     FatArrow,
     Arrow,
 
@@ -207,6 +215,10 @@ impl TokenKind {
             TokenKind::AmpAmp => "`&&`",
             TokenKind::PipePipe => "`||`",
             TokenKind::Pipe => "`|`",
+            TokenKind::Amp => "`&`",
+            TokenKind::Caret => "`^`",
+            TokenKind::Shl => "`<<`",
+            TokenKind::Shr => "`>>`",
             TokenKind::FatArrow => "`=>`",
             TokenKind::Arrow => "`->`",
             TokenKind::Newline => "newline",

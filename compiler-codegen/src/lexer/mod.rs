@@ -175,6 +175,10 @@ impl<'a> Lexer<'a> {
                     self.pos += 2;
                     TokenKind::Le
                 }
+                Some(b'<') => {
+                    self.pos += 2;
+                    TokenKind::Shl
+                }
                 _ => {
                     self.pos += 1;
                     TokenKind::Lt
@@ -184,6 +188,10 @@ impl<'a> Lexer<'a> {
                 Some(b'=') => {
                     self.pos += 2;
                     TokenKind::Ge
+                }
+                Some(b'>') => {
+                    self.pos += 2;
+                    TokenKind::Shr
                 }
                 _ => {
                     self.pos += 1;
@@ -196,10 +204,8 @@ impl<'a> Lexer<'a> {
                     TokenKind::AmpAmp
                 }
                 _ => {
-                    return Err(Diagnostic::new(
-                        "single `&` is not used in Nova; did you mean `&&`?",
-                        Span::new(start, start + 1),
-                    ));
+                    self.pos += 1;
+                    TokenKind::Amp
                 }
             },
             b'|' => match self.peek_at(1) {
@@ -212,6 +218,7 @@ impl<'a> Lexer<'a> {
                     TokenKind::Pipe
                 }
             },
+            b'^' => self.single(TokenKind::Caret),
             other => {
                 return Err(Diagnostic::new(
                     format!("unexpected byte: {:?}", other as char),
