@@ -62,7 +62,7 @@ test "process logs correctly" {
     with Logger = collect {
         process(42)
     }
-    assert buf == ["processing 42"]
+    assert(buf == ["processing 42"])
 }
 ```
 
@@ -152,7 +152,7 @@ test "complex flow is deterministic" {
          Net = record_or_replay("testdata/flow.json"),
          Db = in_memory() {
         let result = run_complex_flow()
-        assert result.snapshot() == expected_snapshot
+        assert(result.snapshot() == expected_snapshot)
     }
 }
 ```
