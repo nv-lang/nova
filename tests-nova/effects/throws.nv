@@ -79,3 +79,24 @@ test "?? coalesce on None" {
     let b = None ?? 10
     assert(b == 10)
 }
+
+// ─── D28 effect inference для private fn ───
+// Private fn без явного `Fail` в сигнатуре, но с `throw` в теле,
+// получает `Fail` автоматически через D28-inference (D62 strict
+// transitivity делает явное добавление обязательным иначе).
+//
+// Smoke test: компиляция должна пройти, потому что D28 добавляет
+// Fail в сигнатуру validate_d28. Без D28 codegen падал бы на «throw
+// requires effect Fail». Тестируем happy path (n >= 0).
+
+fn validate_d28(n int) -> int {
+    if n < 0 { throw "negative" }
+    n * 2
+}
+
+test "D28: private fn компилируется + работает на happy path" {
+    let r = validate_d28(7)
+    assert(r == 14)
+    let r2 = validate_d28(0)
+    assert(r2 == 0)
+}
