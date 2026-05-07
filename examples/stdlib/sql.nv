@@ -364,5 +364,5 @@ test "Sql.with_filter — handler-decorator use case" {
     let original = sql`SELECT * FROM users WHERE active = ${true}`
     let filtered = original.with_filter(sql`deleted_at IS NULL`)
     assert(filtered.template.contains("AND (deleted_at IS NULL)"))
-    assert(filtered.args.len == 1                      // только original.args)
+    assert(filtered.args.len == 1)                     // только original.args
 }

@@ -380,13 +380,13 @@ test "addition: commutative and associative" {
 
     let ab = a + b
     let ba = b + a
-    assert(ab.eq(ba)                        // a+b == b+a)
+    assert(ab.eq(ba))                       // a+b == b+a
     assert(ab.re == 4.0)
     assert(ab.im == 6.0)
 
     let abc1 = (a + b) + c
     let abc2 = a + (b + c)
-    assert(abc1.eq(abc2)                    // ассоциативность)
+    assert(abc1.eq(abc2))                   // ассоциативность
 }
 
 test "negation and subtraction" {
@@ -405,7 +405,7 @@ test "negation and subtraction" {
 
 test "multiplication: i * i == -1" {
     let i_sq = I * I
-    assert(i_sq.eq(-ONE)                    // основное свойство мнимой единицы)
+    assert(i_sq.eq(-ONE))                   // основное свойство мнимой единицы
 
     let z = Complex.new(2.0, 3.0)
     let zi = z * I
@@ -452,13 +452,13 @@ test "conj: re/im сохраняются и инвертируются" {
     // z * conj(z) == |z|² (вещественное)
     let prod = z * c
     assert(prod.is_real())
-    assert(prod.re == 25.0                  // 3² + 4² = 25)
+    assert(prod.re == 25.0)                 // 3² + 4² = 25
 }
 
 test "abs / norm_sqr для (3, 4)" {
     let z = Complex.new(3.0, 4.0)
     assert(z.norm_sqr() == 25.0)
-    assert(z.abs() == 5.0                   // 3-4-5 треугольник)
+    assert(z.abs() == 5.0)                  // 3-4-5 треугольник
 }
 
 test "from_polar / arg: round-trip" {
@@ -475,7 +475,7 @@ test "predicates" {
     assert(ZERO.is_zero())
     assert(ONE.is_real())
     assert(I.is_imag())
-    assert(!ZERO.is_imag()                   // 0 не считается чисто мнимым)
+    assert(!ZERO.is_imag())                  // 0 не считается чисто мнимым
     assert(!ONE.is_imag())
 }
 

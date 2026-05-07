@@ -111,8 +111,8 @@ test "exclusive range basic" {
 test "inclusive range desugars to half-open" {
     let r = 0..=5                         // нормализуется в { start: 0, end: 6 }
     assert(r.start == 0)
-    assert(r.end == 6                     // half-open form)
-    assert(r.len() == 6                   // 0, 1, 2, 3, 4, 5)
+    assert(r.end == 6)                    // half-open form
+    assert(r.len() == 6)                  // 0, 1, 2, 3, 4, 5
 }
 
 test "empty range when start >= end" {
@@ -122,7 +122,7 @@ test "empty range when start >= end" {
 
     let r2 = 5..=5                        // inclusive c одним элементом
     assert(!r2.is_empty())
-    assert(r2.len() == 1                  // {5..6} → 1)
+    assert(r2.len() == 1)                 // {5..6} → 1
 }
 
 test "negative range yields empty" {
@@ -135,7 +135,7 @@ test "contains" {
     let r = 0..5                          // [0, 1, 2, 3, 4]
     assert(r.contains(0))
     assert(r.contains(4))
-    assert(!r.contains(5)                 // half-open — 5 не включён)
+    assert(!r.contains(5))                // half-open — 5 не включён
     assert(!r.contains(-1))
 
     let r2 = 0..=5                        // [0..6) — содержит 5
@@ -150,7 +150,7 @@ test "iter yields all elements in order" {
     assert(it.next() == Some(2))
     assert(it.next() == Some(3))
     assert(it.next() == None)
-    assert(it.next() == None              // None стабилен после исчерпания)
+    assert(it.next() == None)             // None стабилен после исчерпания
 }
 
 test "iter inclusive — same as exclusive end+1" {

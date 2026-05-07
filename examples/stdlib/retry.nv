@@ -228,7 +228,7 @@ test "jitter детерминистичен через seeded Random" {
     let policy = RetryPolicy.custom(3, Fixed { delay: 1.second() }, FullJitter)
     let d1 = with Random = seeded(42) { policy.compute_delay(1) }
     let d2 = with Random = seeded(42) { policy.compute_delay(1) }
-    assert(d1 == d2                                // тот же seed → тот же jitter)
+    assert(d1 == d2)                               // тот же seed → тот же jitter
 }
 
 test "AI-first: тесты retry полностью детерминированы" {
