@@ -3710,29 +3710,29 @@ parser char-литералы **не поддерживает** — это бло
 
 ---
 
-## Q-string-indexing. Семантика `s[i]` для `str`
+## Q-string-indexing. Семантика `s[i]` для `str` ✅ ЗАКРЫТО (2026-05-07)
 
-**Контекст.** D26 фиксирует `str` как UTF-8 byte slice. Что означает
-`s[i]`? Три варианта с разными trade-offs:
+> **Решение: вариант B (Codepoint).** В соответствии с школой B
+> codepoint-indexed API (D26 пересмотрен 2026-05-07), `s[i]` —
+> codepoint at index, `Option[char]`. O(n) cost — это явная цена
+> школы B; для hot-path есть explicit `s.bytes()` → byte-level access.
+
+**Контекст.** D26 фиксирует `str` как UTF-8 byte slice внутри, но
+**все public operations работают на codepoint-уровне**. Что означает
+`s[i]`? Три варианта были рассмотрены:
 
 | Вариант | Семантика | Cost | Прецедент |
 |---|---|---|---|
-| **A. Byte** | `s[i]: byte` (`u8`) | O(1) | Go (`s[i]` — byte) |
-| **B. Codepoint** | `s[i]: Option[char]` через UTF-8-обход | O(n) | Python (`s[i]` — char) |
-| **C. Запрещено** | Только `s.bytes()[i]` или `s.chars().nth(i)` | n/a | Rust (`s[..]` — byte slice; индекс одним числом — compile error) |
+| A. Byte | `s[i]: byte` (`u8`) | O(1) | Go |
+| **B. Codepoint** ✅ | `s[i]: Option[char]` | O(i) | Python |
+| C. Запрещено | Только `s.bytes()[i]` / `s.chars().nth(i)` | n/a | Rust |
 
-Bootstrap-runtime сейчас не реализует ни одного. Парсеры
-(`examples/stdlib/json.nv`, `complex.nv`) хотят `s.char_at(i)` →
-`Option[char]` (вариант B) или `s.bytes()[i]` (вариант A через
-явную конверсию).
-
-**Предложение:** **C** — по умолчанию `s[i]` запрещён, есть `s.bytes()`
-для byte-array view и `s.chars()` для codepoint-iteration. Это
-честное API: программист явно выбирает уровень абстракции, нет
-скрытой O(n) cost'и.
+**Принят вариант B** — consistent со всем остальным D26 API
+(s.len, s.slice, s.find, etc — всё codepoint-indexed). См. D26
+«Почему codepoint-indexing (школа B) выбрана для Nova».
 
 **Связь:** [D26](decisions/08-runtime.md#d26), Q-char-literals,
-[D27](decisions/03-syntax.md#d27) (`[]T` синтаксис).
+[D27](decisions/03-syntax.md#d27).
 
 ---
 

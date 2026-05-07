@@ -323,60 +323,81 @@ char-литералов (`'a'`) — ещё открытый вопрос (Q-char
 как число) — это будет заменено на нормальный `char` при закрытии
 Q-char-literals.
 
-**`str` — UTF-8 byte slice.** Внутреннее представление — пара
-`(ptr, len)` байтов (как Rust `&str` или Go `string`). Содержимое —
-валидный UTF-8 по конвенции: литералы, конкатенация и `str.from(...)`
-гарантируют валидность; FFI-код должен сам проверять при создании
-`str` из чужого буфера.
+**`str` — Unicode-string.** Внутреннее представление — UTF-8 байты
+`(ptr, byte_len)`, но **все public operations работают на уровне
+codepoint'ов** (Unicode scalar values). Содержимое — валидный UTF-8
+по конвенции: литералы, конкатенация и `str.from(...)` гарантируют
+валидность; FFI-код должен сам проверять при создании `str` из
+чужого буфера.
 
-**Длина и индексация:**
-- `s.len` (поле) — длина в **байтах**, O(1).
-- `s.char_len()` — длина в **code-point'ах** (Unicode scalar), O(n).
-- `s.slice(a, b)` принимает **byte-индексы** (как Rust `&s[a..b]`),
-  O(1). Если границы попадают в середину multi-byte sequence —
-  результат невалидный UTF-8.
-  **Bootstrap (2026-05-06):** boundary НЕ проверяется. Production-
-  runtime должен валидировать (открытый вопрос: panic vs `Result[str]`;
-  Rust паникует, Swift — `Result`).
-- Индексирование `s[i]` — открытый вопрос (Q-string-indexing).
-  Варианты: `s[i]` = byte (Go-style, O(1), но не Unicode-aware),
-  `s[i]` = `Option[char]` через codepoint-обход (Swift-style, O(n)).
-  В bootstrap `s[i]` для строк не реализовано; использовать
-  `s.chars()` / `s.char_at(i)`.
+**Длина и индексация (codepoint-indexed, школа Python/Swift):**
 
-**Поиск и сравнение** (все индексы — **byte-offset**, не code-point;
-согласовано с `slice` и Rust/Go конвенцией):
+- `s.len` — длина в **codepoint'ах**, O(n) (требует обхода UTF-8).
+  Это **базовая** «длина строки» с точки зрения программиста.
+- `s.byte_len()` — длина в байтах, O(1). Для FFI и буферных операций.
+- `s.slice(a, b)` принимает **codepoint-индексы**, O(b) (нужен обход
+  до byte-offset'ов). Boundary всегда корректные — невозможно
+  попасть в середину multi-byte sequence.
+- `s[i]` (codepoint indexing) — `Option[char]`, O(i). `None` если
+  `i >= s.len`. См. также Q-string-indexing.
+- `s.chars() -> Iter[char]` — ленивый обход codepoint за codepoint.
+
+**Поиск, сравнение, конверсия** (все индексы — **codepoint-offset**):
 
 ```nova
-fn str @find(needle str) -> Option[int]          // byte-offset первого вхождения
-fn str @rfind(needle str) -> Option[int]         // byte-offset последнего
+fn str @find(needle str) -> Option[int]          // codepoint-offset
+fn str @rfind(needle str) -> Option[int]         // последний codepoint-offset
 fn str @contains(needle str) -> bool
 fn str @starts_with(prefix str) -> bool
 fn str @ends_with(suffix str) -> bool
-fn str @split(sep str) -> Iter[str]              // лениво
-fn str @trim() -> str                            // обрезает ASCII whitespace + Unicode пробелы
+fn str @split(sep str) -> Iter[str]
+fn str @trim() -> str
 fn str @to_lower() -> str
 fn str @to_upper() -> str
 ```
 
-`s.find(":") -> Option[int]` возвращает **byte-индекс** ":". Это
-позволяет напрямую передать в `s.slice(0, i)` без re-indexing:
+`s.find(":") -> Option[int]` возвращает **codepoint-индекс** ":".
+Это передаётся напрямую в `s.slice(0, i)`:
 
 ```nova
-let s = "user:42"
-if let Some(i) = s.find(":") {
-    let key = s.slice(0, i)         // "user"
-    let val = s.slice(i + 1, s.len) // "42"
-}
+let s = "Привет:мир"           // 10 codepoints, 19 bytes
+let i = s.find(":").unwrap_or(0)  // i == 6 (codepoints)
+let key = s.slice(0, i)        // "Привет"
+let val = s.slice(i + 1, s.len)// "мир"
+assert(s.len == 10)            // codepoints
+assert(key.len == 6)
 ```
 
-**Почему byte-index'ы для всех string-операций**: смешивать byte-
-и codepoint-индексы (find возвращает codepoint-id, slice ожидает
-byte) — источник bugs. Rust/Go все consistent на byte-уровне; Swift
-делает codepoint-через-Index'ы — type-safer, но дороже syntax. Nova
-выбирает byte-уровень для O(1) slice + простоту. Code-point обход —
-через `s.chars()` / `s.char_at(byte_i)` (последний пропускает чтобы
-landing'a в середине multi-byte → возврат `None`).
+**Почему codepoint-indexing (школа B) выбрана для Nova:**
+
+1. **AI-friendly.** LLM генерирует код где `s.len` интуитивно
+   «количество символов». Byte-уровень (Rust/Go) — источник bug'ов
+   у новичков и AI: `"Привет".len == 12` нелогично.
+2. **Безопасность boundary.** Невозможно попасть в середину UTF-8
+   sequence — все индексы codepoint-выровнены.
+3. **Consistency.** `find` / `slice` / `s[i]` — все codepoint-уровень,
+   не нужно мысленно переключаться между byte и codepoint.
+4. **Прецеденты:** Python (codepoints), Swift (graphemes — ещё выше),
+   Java (UTF-16 code units, близко к codepoint для BMP). Все
+   современные языки кроме system-low-level (Rust, Go, C) выбирают
+   codepoint-or-grapheme уровень.
+
+**Цена:**
+
+- O(n) для `s.len`, O(b) для `s.slice(a, b)` — обходы UTF-8.
+  Внутреннее byte-хранилище неизбежно: альтернатива (UTF-32 4-byte
+  per char) утроит память для ASCII-heavy кода.
+- Hot-path работа с byte-уровнем — через explicit `s.bytes()`
+  → `[]byte` или через `Buffer` (Q-buffer).
+- В Nova принципе AI-генерация важнее микро-perf для primitive ops;
+  программист может явно перейти на byte-уровень там где надо.
+
+**FFI / byte-уровень доступен через:**
+
+```nova
+fn str @byte_len() -> int                    // O(1) — для C-interop размеров
+fn str @bytes() -> []byte                    // copy (D73 []byte.from(s))
+```
 
 **Конверсия в `[]byte` через D73:**
 - `[]byte.from(s str) -> []byte` — infallible (всегда работает,
