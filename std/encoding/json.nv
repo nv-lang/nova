@@ -793,10 +793,10 @@ test "parse: ошибка — неизвестный токен" {
         let _ = Json.parse("xyz")
         None
     }
-    assert(match r {)
+    assert(match r {
         Some(UnexpectedChar { .. }) => true
         _                            => false
-    }
+    })
 }
 
 test "parse: ошибка — незакрытая string" {
@@ -804,10 +804,10 @@ test "parse: ошибка — незакрытая string" {
         let _ = Json.parse("\"unclosed")
         None
     }
-    assert(match r {)
+    assert(match r {
         Some(UnexpectedEof { .. }) => true
         _                           => false
-    }
+    })
 }
 
 test "parse: ошибка — trailing content" {
@@ -815,10 +815,10 @@ test "parse: ошибка — trailing content" {
         let _ = Json.parse("42 garbage")
         None
     }
-    assert(match r {)
+    assert(match r {
         Some(TrailingContent { .. }) => true
         _                             => false
-    }
+    })
 }
 
 test "parse: ошибка — duplicate key" {
@@ -826,10 +826,10 @@ test "parse: ошибка — duplicate key" {
         let _ = Json.parse("{\"a\": 1, \"a\": 2}")
         None
     }
-    assert(match r {)
+    assert(match r {
         Some(DuplicateKey { .. }) => true
         _                          => false
-    }
+    })
 }
 
 test "parse: ошибка — bad number" {
@@ -837,10 +837,10 @@ test "parse: ошибка — bad number" {
         let _ = Json.parse("01")           // leading zero запрещён в JSON
         None
     }
-    assert(match r {)
+    assert(match r {
         Some(TrailingContent { .. }) | Some(InvalidNumber { .. }) => true
         _ => false
-    }
+    })
 }
 
 test "into: примитивы — round-trip" {

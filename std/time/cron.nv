@@ -271,10 +271,10 @@ test "parse: ошибка — out of range" {
         let _ = Cron.parse("0 25 * * *")          // hour > 23
         None
     }
-    assert(match r {)
+    assert(match r {
         Some(OutOfRange { .. }) => true
         _                        => false
-    }
+    })
 }
 
 test "parse: ошибка — wrong field count" {
@@ -282,8 +282,8 @@ test "parse: ошибка — wrong field count" {
         let _ = Cron.parse("0 0 0")
         None
     }
-    assert(match r {)
+    assert(match r {
         Some(InvalidFieldCount { .. }) => true
         _                               => false
-    }
+    })
 }

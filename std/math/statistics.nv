@@ -235,10 +235,10 @@ test "ошибка: пустой ввод" {
         let _ = Stats.mean([])
         None
     }
-    assert(match r {)
+    assert(match r {
         Some(EmptyInput) => true
         _                => false
-    }
+    })
 }
 
 test "streaming: equivalent one-shot" {

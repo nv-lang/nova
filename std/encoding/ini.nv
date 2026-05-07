@@ -164,10 +164,10 @@ test "parse: ошибка — невалидная line" {
         let _ = Ini.parse("[s]\nbroken-line-no-equals\n")
         None
     }
-    assert(match r {)
+    assert(match r {
         Some(InvalidLine { .. }) => true
         _                         => false
-    }
+    })
 }
 
 test "parse: ошибка — незакрытая section" {
@@ -175,8 +175,8 @@ test "parse: ошибка — незакрытая section" {
         let _ = Ini.parse("[unclosed\nk = v\n")
         None
     }
-    assert(match r {)
+    assert(match r {
         Some(UnclosedSection { .. }) => true
         _                             => false
-    }
+    })
 }

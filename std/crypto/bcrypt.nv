@@ -286,10 +286,10 @@ test "ошибка: cost вне диапазона" {
         let _ = Bcrypt.hash("x", 1)
         None
     }
-    assert(match r {)
+    assert(match r {
         Some(InvalidCost { .. }) => true
         _                         => false
-    }
+    })
 }
 
 test "ошибка: пароль > 72 байта" {
@@ -300,10 +300,10 @@ test "ошибка: пароль > 72 байта" {
         let _ = Bcrypt.hash(long, 4)
         None
     }
-    assert(match r {)
+    assert(match r {
         Some(PasswordTooLong { .. }) => true
         _                             => false
-    }
+    })
 }
 
 test "verify: malformed hash → false (не throws)" {

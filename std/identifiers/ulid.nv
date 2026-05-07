@@ -424,10 +424,10 @@ test "from: ошибка — неправильная длина" {
         let _ = Ulid.from("too-short")
         None
     }
-    assert(match r {)
+    assert(match r {
         Some(InvalidLength { .. }) => true
         _                           => false
-    }
+    })
 }
 
 test "from: ошибка — невалидный символ (U)" {
@@ -436,10 +436,10 @@ test "from: ошибка — невалидный символ (U)" {
         let _ = Ulid.from("UAAAAAAAAAAAAAAAAAAAAAAAAA")     // 26 chars, но 'U' невалид
         None
     }
-    assert(match r {)
+    assert(match r {
         Some(InvalidChar { .. }) => true
         _                         => false
-    }
+    })
 }
 
 test "AI-first: ULID-генерация детерминистична через handler-substitution" {

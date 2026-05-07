@@ -472,8 +472,8 @@ test "parse: ошибка — незакрытая string" {
         let _ = Toml.parse("k = \"unclosed")
         None
     }
-    assert(match r {)
+    assert(match r {
         Some(UnexpectedEof { .. }) => true
         _                           => false
-    }
+    })
 }

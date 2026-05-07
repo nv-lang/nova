@@ -447,10 +447,10 @@ test "parse: ошибка — пустой ввод" {
         let _ = Version.from("")
         None
     }
-    assert(match r {)
+    assert(match r {
         Some(EmptyInput) => true
         _                => false
-    }
+    })
 }
 
 test "parse: ошибка — нет minor" {
@@ -458,10 +458,10 @@ test "parse: ошибка — нет minor" {
         let _ = Version.from("1")
         None
     }
-    assert(match r {)
+    assert(match r {
         Some(MissingMinor) => true
         _                  => false
-    }
+    })
 }
 
 test "parse: ошибка — нет patch" {
@@ -469,10 +469,10 @@ test "parse: ошибка — нет patch" {
         let _ = Version.from("1.2")
         None
     }
-    assert(match r {)
+    assert(match r {
         Some(MissingPatch) => true
         _                  => false
-    }
+    })
 }
 
 test "parse: ошибка — leading zero в major" {
@@ -480,10 +480,10 @@ test "parse: ошибка — leading zero в major" {
         let _ = Version.from("01.0.0")
         None
     }
-    assert(match r {)
+    assert(match r {
         Some(LeadingZero { .. }) => true
         _                         => false
-    }
+    })
 }
 
 test "parse: ошибка — leading zero в pre numeric" {
@@ -491,10 +491,10 @@ test "parse: ошибка — leading zero в pre numeric" {
         let _ = Version.from("1.0.0-01")
         None
     }
-    assert(match r {)
+    assert(match r {
         Some(LeadingZero { .. }) => true
         _                         => false
-    }
+    })
 }
 
 test "parse: ошибка — пустой identifier в pre" {
@@ -502,10 +502,10 @@ test "parse: ошибка — пустой identifier в pre" {
         let _ = Version.from("1.0.0-")
         None
     }
-    assert(match r {)
+    assert(match r {
         Some(EmptyIdentifier { .. }) => true
         _                             => false
-    }
+    })
 }
 
 test "parse: ошибка — нечисловой major" {
@@ -513,10 +513,10 @@ test "parse: ошибка — нечисловой major" {
         let _ = Version.from("a.b.c")
         None
     }
-    assert(match r {)
+    assert(match r {
         Some(InvalidComponent { .. }) => true
         _                              => false
-    }
+    })
 }
 
 test "into: round-trip простая версия" {

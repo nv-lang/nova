@@ -400,10 +400,10 @@ test "from: ошибка — неправильная длина" {
         let _ = Uuid.from("too-short")
         None
     }
-    assert(match r {)
+    assert(match r {
         Some(InvalidLength { .. }) => true
         _                           => false
-    }
+    })
 }
 
 test "from: ошибка — отсутствует дефис" {
@@ -411,10 +411,10 @@ test "from: ошибка — отсутствует дефис" {
         let _ = Uuid.from("550e8400xe29b-41d4-a716-446655440000")
         None
     }
-    assert(match r {)
+    assert(match r {
         Some(MissingDash { .. }) => true
         _                         => false
-    }
+    })
 }
 
 test "from: ошибка — не-hex символ" {
@@ -422,10 +422,10 @@ test "from: ошибка — не-hex символ" {
         let _ = Uuid.from("550e8400-e29b-41d4-a716-44665544000Z")
         None
     }
-    assert(match r {)
+    assert(match r {
         Some(InvalidHex { .. }) => true
         _                        => false
-    }
+    })
 }
 
 test "ordering: total order на UUID" {

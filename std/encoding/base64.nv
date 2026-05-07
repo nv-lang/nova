@@ -324,10 +324,10 @@ test "decode: ошибка — нечётная длина без padding в str
         let _ = Base64.decode("abc")            // 3 символа — не кратно 4
         None
     }
-    assert(match r {)
+    assert(match r {
         Some(InvalidLength { .. }) => true
         _                           => false
-    }
+    })
 }
 
 test "decode: ошибка — невалидный символ" {
@@ -335,10 +335,10 @@ test "decode: ошибка — невалидный символ" {
         let _ = Base64.decode("Zm$=")            // $ не в alphabet
         None
     }
-    assert(match r {)
+    assert(match r {
         Some(InvalidChar { .. }) => true
         _                         => false
-    }
+    })
 }
 
 test "Base64 → JWT-like usage" {

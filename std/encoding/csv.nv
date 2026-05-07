@@ -145,10 +145,10 @@ test "parse: ошибка — незакрытая quote" {
         let _ = Csv.parse("\"unterminated")
         None
     }
-    assert(match r {)
+    assert(match r {
         Some(UnterminatedQuote { .. }) => true
         _                               => false
-    }
+    })
 }
 
 test "encode: простой round-trip" {

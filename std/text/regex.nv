@@ -777,10 +777,10 @@ test "compile: unclosed group" {
         let _ = Regex.compile("(abc")
         None
     }
-    assert(match r {)
+    assert(match r {
         Some(UnclosedGroup { .. }) => true
         _                           => false
-    }
+    })
 }
 
 test "compile: unclosed class" {
@@ -788,8 +788,8 @@ test "compile: unclosed class" {
         let _ = Regex.compile("[abc")
         None
     }
-    assert(match r {)
+    assert(match r {
         Some(UnclosedClass { .. }) => true
         _                           => false
-    }
+    })
 }

@@ -126,10 +126,10 @@ test "ошибка — невалидный machine_id" {
         let _ = SnowflakeGen.new(2000)
         None
     }
-    assert(match r {)
+    assert(match r {
         Some(InvalidMachineId { .. }) => true
         _                              => false
-    }
+    })
 }
 
 test "ошибка — clock backwards" {
@@ -139,8 +139,8 @@ test "ошибка — clock backwards" {
         let _ = gen.next()
         None
     }
-    assert(match r {)
+    assert(match r {
         Some(ClockBackwards { .. }) => true
         _                            => false
-    }
+    })
 }

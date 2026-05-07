@@ -135,10 +135,10 @@ test "decode: ошибка — нечётная длина" {
         let _ = Hex.decode("abc")
         None
     }
-    assert(match r {)
+    assert(match r {
         Some(OddLength { .. }) => true
         _                       => false
-    }
+    })
 }
 
 test "decode: ошибка — невалидный символ" {
@@ -146,8 +146,8 @@ test "decode: ошибка — невалидный символ" {
         let _ = Hex.decode("abXY")
         None
     }
-    assert(match r {)
+    assert(match r {
         Some(InvalidChar { .. }) => true
         _                         => false
-    }
+    })
 }
