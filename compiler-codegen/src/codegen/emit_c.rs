@@ -2625,8 +2625,14 @@ impl CEmitter {
 
     fn emit_nova_main(&mut self, f: &FnDecl) -> Result<(), String> {
         // nova main() → stored separately, called from C main()
+        // Buffer body so spawn-ctx typedefs (lambda_forward_decls) flush
+        // BEFORE main's body — иначе typedef в out появится после своего
+        // первого usage внутри тела main.
+        let saved_out = std::mem::take(&mut self.out);
+        let saved_indent = self.indent;
+        self.indent = 0;
         self.line("static nova_unit nova_fn_main_impl(void) {");
-        self.indent += 1;
+        self.indent = 1;
         match &f.body {
             FnBody::Expr(e) => {
                 self.emit_source_annotation_for_expr(e);
@@ -2638,9 +2644,20 @@ impl CEmitter {
                 self.emit_block_stmts(block, "nova_unit")?;
             }
         }
-        self.indent -= 1;
+        self.indent = 0;
         self.line("}");
         self.line("");
+        let body = std::mem::replace(&mut self.out, saved_out);
+        self.indent = saved_indent;
+        // Flush forward decls for spawn-ctx typedefs / lambda forward decls
+        // accumulated during main's body emit — they must precede the body.
+        if !self.lambda_forward_decls.is_empty() {
+            self.out.push_str(&std::mem::take(&mut self.lambda_forward_decls));
+        }
+        if !self.lambda_impls.is_empty() {
+            self.out.push_str(&std::mem::take(&mut self.lambda_impls));
+        }
+        self.out.push_str(&body);
         Ok(())
     }
 
@@ -2706,11 +2723,37 @@ impl CEmitter {
         self.line("int main(void) {");
         self.indent += 1;
         self.line("nova_gc_init();");
+        // Per-fiber handler scoping: register all built-in effect-storage
+        // addresses so nova_supervised_step может save/restore их в
+        // per-fiber snapshot. Без этой регистрации fiber-snapshot был бы
+        // пустой и handlers утекали бы между fibers.
+        self.line("nova_register_effect_storage((void**)&_nova_handler_Fail);");
+        self.line("nova_register_effect_storage((void**)&_nova_handler_Time);");
+        // User-defined effects регистрируются здесь же — codegen эмитит
+        // дополнительные nova_register_effect_storage(...) для каждого
+        // объявленного `type X effect { }`.
+        self.emit_user_effect_registrations();
         self.line("nova_fn_main_impl();");
         self.line("nova_gc_shutdown();");
         self.line("return 0;");
         self.indent -= 1;
         self.line("}");
+    }
+
+    /// Register handler-storage TLS addresses for all user-defined effects
+    /// so per-fiber snapshot mechanism (effects.h) can swap them.
+    fn emit_user_effect_registrations(&mut self) {
+        // effect_schemas содержит и built-in (Fail, Time, Mem) и user-defined.
+        // Built-in уже регистрируются явно в emit_main_wrapper. Для user-defined
+        // эмитим nova_register_effect_storage для каждого `_nova_handler_X`.
+        let mut names: Vec<String> = self.effect_schemas.keys().cloned().collect();
+        names.sort();  // deterministic order
+        for name in names {
+            // Skip built-ins (зарегистрированы явно).
+            if name == "Fail" || name == "Time" || name == "Mem" { continue; }
+            self.line(&format!(
+                "nova_register_effect_storage((void**)&_nova_handler_{});", name));
+        }
     }
 
     // ---- block / statements ----
