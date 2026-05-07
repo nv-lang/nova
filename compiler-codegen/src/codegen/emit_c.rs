@@ -3756,8 +3756,13 @@ impl CEmitter {
             }
             // D70 `to_str(x)` builtin removed (REPLACED → D73). String
             // conversion now via `str.from(x)` / `x.@into()` (with str-context).
-            // assert(cond) → nova_assert(cond, "condition text")
-            if name == "assert" {
+            // assert(cond) / debug_assert(cond) → nova_assert(cond, "condition text").
+            // По D81: assert — always runtime; debug_assert — debug-only,
+            // в release no-op. В bootstrap'е (single build-mode) оба
+            // эмитятся одинаково; production-runtime добавит conditional
+            // compilation для debug_assert (например, через NDEBUG-style
+            // пре-процессор или codegen-флаг).
+            if name == "assert" || name == "debug_assert" {
                 if let Some(cond_expr) = args.first() {
                     let cond_val = self.emit_expr(cond_expr)?;
                     let cond_text = Self::expr_to_display(cond_expr);
@@ -5966,7 +5971,7 @@ impl CEmitter {
             ExprKind::Call { func, .. } => {
                 // Infer return type for call expressions
                 if let ExprKind::Ident(name) = &func.kind {
-                    if name == "println" || name == "print" || name == "assert" {
+                    if name == "println" || name == "print" || name == "assert" || name == "debug_assert" {
                         return "nova_unit".into();
                     }
                     // Variant constructor call: Some(x), None, etc. → return option/sum type

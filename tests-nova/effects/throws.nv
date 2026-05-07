@@ -100,3 +100,14 @@ test "D28: private fn компилируется + работает на happy p
     let r2 = validate_d28(0)
     assert(r2 == 0)
 }
+
+// ─── D81 debug_assert smoke ───
+// debug_assert(cond) — alias для assert в bootstrap (single build-mode).
+// Production-runtime: debug-only, no-op в release. По D81 семантика та
+// же, что assert — strong invariant; разница только в overhead.
+
+test "D81 debug_assert: same runtime semantics как assert" {
+    debug_assert(1 + 1 == 2)
+    debug_assert(true)
+    debug_assert("a" == "a")
+}
