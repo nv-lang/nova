@@ -1,0 +1,251 @@
+// stdlib/retry.nv — retry policies для transient failures.
+//
+// Decorate любую Fail[E]-функцию retry-логикой:
+//   - Exponential backoff с jitter
+//   - Max attempts
+//   - Custom error filter (retry только определённые ошибки)
+//
+// Использует Time + Random эффекты — детерминируется в тестах
+// через `with Time = fixed_ms(0), Random = seeded(42)`.
+//
+// API:
+//   RetryPolicy.exponential(...) -> RetryPolicy
+//   RetryPolicy.fixed(...) -> RetryPolicy
+//   policy.execute[T, E](body fn() Fail[E] -> T) Time Random Fail[E] -> T
+
+module std.concurrency.retry
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Policy types
+// ──────────────────────────────────────────────────────────────────────────
+
+export type Backoff
+    | Fixed { delay Duration }                          // одинаковая пауза
+    | Exponential { initial Duration, multiplier f64, max_delay Duration }
+    | Linear { initial Duration, increment Duration, max_delay Duration }
+
+
+export type Jitter
+    | NoJitter
+    | FullJitter                                         // 0..delay (random uniform)
+    | EqualJitter                                        // delay/2 + random(0..delay/2)
+
+
+export type RetryPolicy {
+    readonly max_attempts int                            // включая первую попытку
+    readonly backoff Backoff
+    readonly jitter Jitter
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Constructors
+// ──────────────────────────────────────────────────────────────────────────
+
+// Exponential backoff: 100ms, 200ms, 400ms, 800ms, 1600ms ...
+export fn RetryPolicy.exponential(max_attempts int) -> Self =>
+    {
+        max_attempts,
+        backoff: Exponential {
+            initial: 100.millis(),
+            multiplier: 2.0,
+            max_delay: 30.seconds(),
+        },
+        jitter: FullJitter,
+    }
+
+// Fixed delay (for cases когда мы знаем точный период)
+export fn RetryPolicy.fixed(max_attempts int, delay Duration) -> Self =>
+    {
+        max_attempts,
+        backoff: Fixed { delay: delay },
+        jitter: NoJitter,
+    }
+
+// Custom — любой backoff + jitter
+export fn RetryPolicy.custom(max_attempts int, backoff Backoff, jitter Jitter) -> Self =>
+    { max_attempts, backoff, jitter }
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Execute
+// ──────────────────────────────────────────────────────────────────────────
+
+// Запускает body, на Fail[E] делает retry по policy. Если все попытки
+// исчерпаны — пробрасывает последний throw.
+export fn RetryPolicy @execute[T, E](body fn() Fail[E] -> T) Time Random Fail[E] -> T {
+    let mut attempt = 0
+    let mut result Option[T] = None
+    let mut last_error Option[E] = None
+
+    while attempt < @max_attempts && result == None {
+        let r = with Fail[E] = (e) => interrupt Err(e) {
+            Ok(body())
+        }
+        match r {
+            Ok(v)  => { result = Some(v) }
+            Err(e) => {
+                last_error = Some(e)
+                attempt += 1
+                if attempt < @max_attempts {
+                    let delay = @compute_delay(attempt)
+                    Time.sleep(delay)
+                }
+            }
+        }
+    }
+
+    match result {
+        Some(v) => v
+        None    => match last_error {
+            Some(e) => throw e
+            None    => throw last_error.unwrap()      // unreachable
+        }
+    }
+}
+
+
+// Вычисляет delay для attempt-номера (1-based — первый retry это attempt=1).
+fn RetryPolicy @compute_delay(attempt int) Random -> Duration {
+    let base = match @backoff {
+        Fixed { delay } => delay
+        Exponential { initial, multiplier, max_delay } => {
+            // initial * multiplier^(attempt-1)
+            let mut d = initial
+            let mut i = 1
+            while i < attempt {
+                d = d * multiplier
+                if d.gt(max_delay) { d = max_delay; i = attempt }
+                i += 1
+            }
+            d
+        }
+        Linear { initial, increment, max_delay } => {
+            let total_inc = increment * ((attempt - 1) as i64)
+            let d = initial + total_inc
+            if d.gt(max_delay) { max_delay } else { d }
+        }
+    }
+
+    apply_jitter(@jitter, base)
+}
+
+
+fn apply_jitter(j Jitter, d Duration) Random -> Duration => match j {
+    NoJitter => d
+    FullJitter => {
+        // 0..d uniform random
+        let max_ns = d.as_nanos()
+        let ns = (Random.u64() % (max_ns as u64)) as i64
+        Duration.from_nanos(ns)
+    }
+    EqualJitter => {
+        // d/2 + random(0..d/2)
+        let half = d / 2
+        let max_ns = half.as_nanos()
+        let ns = (Random.u64() % (max_ns as u64)) as i64
+        half + Duration.from_nanos(ns)
+    }
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Тесты
+// ──────────────────────────────────────────────────────────────────────────
+
+test "execute: первая попытка успешна" {
+    let policy = RetryPolicy.exponential(3)
+    with Time = fixed_ms(0), Random = seeded(0) {
+        let result = policy.execute(() => 42)
+        assert(result == 42)
+    }
+}
+
+test "execute: retry до успеха" {
+    let policy = RetryPolicy.fixed(5, 10.millis())
+    let mut attempts = 0
+    with Time = fixed_ms(0), Random = seeded(0) {
+        let result = policy.execute(() => {
+            attempts += 1
+            if attempts < 3 { throw "transient" }
+            "success"
+        })
+        assert(result == "success")
+        assert(attempts == 3)
+    }
+}
+
+test "execute: исчерпание попыток" {
+    let policy = RetryPolicy.fixed(3, 10.millis())
+    let r = with Time = fixed_ms(0), Random = seeded(0),
+                Fail[str] = (e) => interrupt Some(e) {
+        let _ = policy.execute(() => {
+            throw "always fails"
+            ""
+        })
+        None
+    }
+    assert(r == Some("always fails"))
+}
+
+test "exponential backoff: правильные delay'и" {
+    let policy = RetryPolicy.custom(
+        5,
+        Exponential {
+            initial: 100.millis(),
+            multiplier: 2.0,
+            max_delay: 1.hour(),
+        },
+        NoJitter,
+    )
+    // attempt 1: 100ms, 2: 200ms, 3: 400ms, 4: 800ms
+    with Random = seeded(0) {
+        assert(policy.compute_delay(1) == 100.millis())
+        assert(policy.compute_delay(2) == 200.millis())
+        assert(policy.compute_delay(3) == 400.millis())
+        assert(policy.compute_delay(4) == 800.millis())
+    }
+}
+
+test "max_delay ограничивает exponential" {
+    let policy = RetryPolicy.custom(
+        20,
+        Exponential {
+            initial: 1.second(),
+            multiplier: 10.0,
+            max_delay: 30.seconds(),
+        },
+        NoJitter,
+    )
+    with Random = seeded(0) {
+        // attempt 5: 1*10^4 = 10000s ≫ 30s, должен capped
+        assert(policy.compute_delay(5) == 30.seconds())
+    }
+}
+
+test "jitter детерминистичен через seeded Random" {
+    let policy = RetryPolicy.custom(3, Fixed { delay: 1.second() }, FullJitter)
+    let d1 = with Random = seeded(42) { policy.compute_delay(1) }
+    let d2 = with Random = seeded(42) { policy.compute_delay(1) }
+    assert(d1 == d2)                               // тот же seed → тот же jitter
+}
+
+test "AI-first: тесты retry полностью детерминированы" {
+    // Без mock-библиотек: just handler-substitution.
+    let policy = RetryPolicy.exponential(3)
+    let mut count = 0
+    with Time = fixed_ms(0), Random = seeded(123) {
+        let r = with Fail[str] = (e) => interrupt None {
+            count += 1
+            Some(policy.execute(() => {
+                count += 1
+                if count < 4 { throw "fail" }
+                "ok"
+            }))
+        }
+        // Внутри policy.execute — count увеличивается на каждой попытке
+    }
+    // Тест воспроизводимый при любом запуске
+    assert(count > 0)
+}

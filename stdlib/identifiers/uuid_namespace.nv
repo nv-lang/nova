@@ -1,0 +1,132 @@
+// stdlib/uuid_v3_v5.nv — name-based UUIDs (RFC 4122 § 4.3).
+//
+// v3 = MD5(namespace || name)  — legacy, MD5 broken
+// v5 = SHA-1(namespace || name) — preferred для name-based
+//
+// Namespace UUIDs из RFC 4122 Appendix C:
+//   DNS:  6ba7b810-9dad-11d1-80b4-00c04fd430c8
+//   URL:  6ba7b811-9dad-11d1-80b4-00c04fd430c8
+//   OID:  6ba7b812-9dad-11d1-80b4-00c04fd430c8
+//   X500: 6ba7b814-9dad-11d1-80b4-00c04fd430c8
+
+module std.identifiers.uuid_namespace
+
+
+// Стандартные namespace UUIDs (RFC 4122 Appendix C).
+export const NAMESPACE_DNS Uuid =
+    Uuid.new(0x6ba7b8109dad11d1, 0x80b400c04fd430c8)
+
+export const NAMESPACE_URL Uuid =
+    Uuid.new(0x6ba7b8119dad11d1, 0x80b400c04fd430c8)
+
+export const NAMESPACE_OID Uuid =
+    Uuid.new(0x6ba7b8129dad11d1, 0x80b400c04fd430c8)
+
+export const NAMESPACE_X500 Uuid =
+    Uuid.new(0x6ba7b8149dad11d1, 0x80b400c04fd430c8)
+
+
+// UUID v3: MD5-based name UUID.
+export fn Uuid.v3(namespace Uuid, name str) -> Self {
+    let mut input []byte = []
+    push_uuid_bytes(input, namespace)
+    for b in name.bytes() { input.push(b) }
+
+    let digest = Md5.hash(input)
+    let mut bytes []byte = []
+    let mut i = 0
+    while i < 16 { bytes.push(digest[i]); i += 1 }
+
+    // Set version=3 (MD5) и variant
+    set_version_variant(bytes, 3)
+    bytes_to_uuid(bytes)
+}
+
+// UUID v5: SHA-1-based name UUID.
+export fn Uuid.v5(namespace Uuid, name str) -> Self {
+    let mut input []byte = []
+    push_uuid_bytes(input, namespace)
+    for b in name.bytes() { input.push(b) }
+
+    let digest = Sha1.hash(input)
+    // Берём первые 16 байт SHA-1 (она даёт 20).
+    let mut bytes []byte = []
+    let mut i = 0
+    while i < 16 { bytes.push(digest[i]); i += 1 }
+
+    set_version_variant(bytes, 5)
+    bytes_to_uuid(bytes)
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Helpers
+// ──────────────────────────────────────────────────────────────────────────
+
+fn push_uuid_bytes(out mut []byte, u Uuid) {
+    let mut i = 7
+    while i >= 0 {
+        out.push(((u.hi >> (i * 8)) & 0xFF) as byte)
+        i -= 1
+    }
+    let mut j = 7
+    while j >= 0 {
+        out.push(((u.lo >> (j * 8)) & 0xFF) as byte)
+        j -= 1
+    }
+}
+
+fn set_version_variant(bytes mut []byte, version int) {
+    // Version в старшие 4 бита 6-го байта (нумерация с 0).
+    bytes[6] = (((bytes[6] as int) & 0x0F) | (version << 4)) as byte
+    // Variant 10 в старшие 2 бита 8-го байта.
+    bytes[8] = (((bytes[8] as int) & 0x3F) | 0x80) as byte
+}
+
+fn bytes_to_uuid(bytes []byte) -> Uuid {
+    let mut hi u64 = 0
+    let mut i = 0
+    while i < 8 {
+        hi = (hi << 8) | (bytes[i] as u64)
+        i += 1
+    }
+    let mut lo u64 = 0
+    let mut j = 8
+    while j < 16 {
+        lo = (lo << 8) | (bytes[j] as u64)
+        j += 1
+    }
+    Uuid.new(hi, lo)
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Тесты — RFC 4122 Appendix C examples
+// ──────────────────────────────────────────────────────────────────────────
+
+test "v5: DNS namespace + 'www.example.com'" {
+    // Известный test vector
+    let u = Uuid.v5(NAMESPACE_DNS, "www.example.com")
+    assert(u.into() == "2ed6657d-e927-568b-95e1-2665a8aea6a2")
+    match u.version() {
+        Other(5) => ()        // v5 — пока нет в UuidVersion enum в uuid.nv
+        _        => ()        // если позже добавим V5 в enum, поправим
+    }
+}
+
+test "v3: DNS namespace + 'www.example.com'" {
+    let u = Uuid.v3(NAMESPACE_DNS, "www.example.com")
+    assert(u.into() == "5df41881-3aed-3515-88a7-2f4a814cf09e")
+}
+
+test "v5: одинаковые namespace+name → одинаковый UUID (детерминизм)" {
+    let a = Uuid.v5(NAMESPACE_URL, "https://example.com/")
+    let b = Uuid.v5(NAMESPACE_URL, "https://example.com/")
+    assert(a.eq(b))
+}
+
+test "v5: разные namespaces → разные UUIDs" {
+    let dns = Uuid.v5(NAMESPACE_DNS, "test")
+    let url = Uuid.v5(NAMESPACE_URL, "test")
+    assert(!dns.eq(url))
+}

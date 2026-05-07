@@ -1,0 +1,227 @@
+// stdlib_linkedlist.nv — односвязный список через recursive sum-type.
+//
+// Демонстрирует [D52](../spec/decisions/02-types.md#d52) sum с
+// рекурсивным конструктором — классический ML-стиль:
+//
+//   type LinkedList[T] | Empty | Cons(T, LinkedList[T])
+//
+// Pattern matching на этой структуре — самый прямой пример sum-семантики
+// и exhaustiveness check от компилятора.
+//
+// Практически в backend этот тип редко используется (`[]T` эффективнее),
+// но он — каноническая иллюстрация sum-recursion для AI-обучения.
+
+module std.collections.linkedlist
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Тип
+// ──────────────────────────────────────────────────────────────────────────
+
+// Recursive sum — Cons держит ссылку на следующий элемент.
+// Managed GC ([D6](../spec/decisions/05-memory.md#d6)) автоматически
+// освобождает узлы при недостижимости.
+export type LinkedList[T]
+    | Empty
+    | Cons(T, LinkedList[T])
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Конструкторы
+// ──────────────────────────────────────────────────────────────────────────
+
+// Пустой список — литерал Empty.
+// `-> LinkedList[T]` опускаем — тип очевиден из тела (D45).
+export fn LinkedList[T].new() => Empty
+
+// Из массива — fold справа налево.
+export fn LinkedList[T].from_array(xs []T) -> Self {
+    let mut acc = Empty
+    let mut i = xs.len - 1
+    while i >= 0 {
+        acc = Cons(xs[i], acc)
+        i -= 1
+    }
+    acc
+}
+
+export fn LinkedList[T].from_iter(it effect { mut next() -> Option[T] }) -> Self {
+    // Prepend каждый элемент → получаем обратный список (O(1) на шаг).
+    // Затем reverse — суммарно O(n), без вспомогательного массива.
+    let mut acc LinkedList[T] = Empty
+    while let Some(x) = it.next() {
+        acc = Cons(x, acc)
+    }
+    acc.reverse()
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Базовые операции
+// ──────────────────────────────────────────────────────────────────────────
+
+// Длина — O(n) по природе списка.
+export fn LinkedList[T] @length() -> int =>
+    match @ {
+        Empty       => 0
+        Cons(_, t)  => 1 + t.length()
+    }
+
+export fn LinkedList[T] @is_empty() -> bool =>
+    match @ {
+        Empty    => true
+        Cons(..) => false                // partial: все поля игнорируются
+    }
+
+// Голова — первый элемент или None.
+// D55: `Some(h)` и `None` явно — match-arms с unit-альтернативой.
+export fn LinkedList[T] @head() -> Option[T] =>
+    match @ {
+        Empty       => None
+        Cons(h, _)  => Some(h)
+    }
+
+// Хвост — список без головы. Empty для Empty.
+export fn LinkedList[T] @tail() -> LinkedList[T] =>
+    match @ {
+        Empty       => Empty
+        Cons(_, t)  => t
+    }
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Конструкция
+// ──────────────────────────────────────────────────────────────────────────
+
+// Префиксное добавление — O(1), конструирует новый Cons.
+// Имя метода `prepend` — convention; в OCaml/Haskell это `::` или `cons`.
+export fn LinkedList[T] @prepend(x T) -> LinkedList[T] =>
+    Cons(x, @)
+
+// Суффиксное добавление — O(n), нужно пройти весь список.
+// В рекурсивных списках суффикс дороже префикса; для частых append
+// используйте `[]T`.
+export fn LinkedList[T] @append(x T) -> LinkedList[T] =>
+    match @ {
+        Empty       => Cons(x, Empty)
+        Cons(h, t)  => Cons(h, t.append(x))
+    }
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Операции трансформации
+// ──────────────────────────────────────────────────────────────────────────
+
+// Reverse — O(n) с одним проходом через accumulator.
+export fn LinkedList[T] @reverse() -> Self {
+    let mut acc = Empty
+    let mut cur = @
+    let mut done = false
+    while !done {
+        match cur {
+            Empty      => { done = true }
+            Cons(h, t) => {
+                acc = Cons(h, acc)
+                cur = t
+            }
+        }
+    }
+    acc
+}
+
+// map — generic U на методе (D42 Модель B).
+export fn LinkedList[T] @map[U](f fn(T) -> U) -> LinkedList[U] =>
+    match @ {
+        Empty       => Empty
+        Cons(h, t)  => Cons(f(h), t.map(f))
+    }
+
+// filter.
+export fn LinkedList[T] @filter(pred fn(T) -> bool) -> LinkedList[T] =>
+    match @ {
+        Empty       => Empty
+        Cons(h, t)  => if pred(h) { Cons(h, t.filter(pred)) }
+                       else        { t.filter(pred) }
+    }
+
+// fold left — свёртка слева направо.
+export fn LinkedList[T] @fold[Acc](init Acc, f fn(Acc, T) -> Acc) -> Acc =>
+    match @ {
+        Empty       => init
+        Cons(h, t)  => t.fold(f(init, h), f)
+    }
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Конкатенация — operator overloading (D46)
+// ──────────────────────────────────────────────────────────────────────────
+
+// `a + b` — конкатенация. O(len(a)).
+export fn LinkedList[T] @plus(other LinkedList[T]) -> LinkedList[T] =>
+    match @ {
+        Empty       => other
+        Cons(h, t)  => Cons(h, t + other)
+    }
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Тесты
+// ──────────────────────────────────────────────────────────────────────────
+
+test "from_array preserves order" {
+    let l = LinkedList[int].from_array([1, 2, 3])
+    assert(l.length() == 3)
+    assert(l.head() == Some(1))
+    assert(l.tail().head() == Some(2))
+    assert(l.tail().tail().head() == Some(3))
+    assert(l.tail().tail().tail().head() == None)
+}
+
+test "prepend is O(1) and adds in front" {
+    let l = LinkedList[int].from_array([2, 3])
+    let l2 = l.prepend(1)
+    assert(l2.head() == Some(1))
+    assert(l2.length() == 3)
+}
+
+test "reverse" {
+    let l = LinkedList[int].from_array([1, 2, 3])
+    let r = l.reverse()
+    assert(r.head() == Some(3))
+    assert(r.tail().head() == Some(2))
+}
+
+test "map applies function preserving structure" {
+    let l = LinkedList[int].from_array([1, 2, 3])
+    let doubled = l.map((x) => x * 2)
+    assert(doubled.head() == Some(2))
+    assert(doubled.length() == 3)
+}
+
+test "filter removes non-matching" {
+    let l = LinkedList[int].from_array([1, 2, 3, 4, 5])
+    let even = l.filter((x) => x % 2 == 0)
+    assert(even.length() == 2)
+    assert(even.head() == Some(2))
+}
+
+test "fold sums" {
+    let l = LinkedList[int].from_array([1, 2, 3, 4])
+    let sum = l.fold(0) { (acc, x) => acc + x }
+    assert(sum == 10)
+}
+
+test "concat with operator +" {
+    let a = LinkedList[int].from_array([1, 2])
+    let b = LinkedList[int].from_array([3, 4])
+    let c = a + b
+    assert(c.length() == 4)
+    assert(c.head() == Some(1))
+}
+
+test "Empty is identity for concat" {
+    let a = LinkedList[int].from_array([1, 2])
+    let e LinkedList[int] = Empty
+    assert (a + e).length() == 2
+    assert (e + a).length() == 2
+}

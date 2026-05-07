@@ -1,0 +1,518 @@
+// stdlib/url.nv — URL parser по RFC 3986 (минимальный, для backend).
+//
+// Independent implementation. Спецификация:
+// https://www.rfc-editor.org/rfc/rfc3986
+//
+// Поддержка:
+//   - Generic URI: scheme://[user[:pass]@]host[:port][/path][?query][#fragment]
+//   - HTTP/HTTPS (наиболее частые), но синтаксис общий — работает
+//     для file://, ftp://, ws://, etc.
+//   - Percent-encoding для query parameters (decode/encode helpers)
+//
+// Не поддержка (намеренно):
+//   - IRI (internationalized), unicode в host — отдельная сложность
+//   - URI references относительные ("../foo" с base) — требует resolution
+//     algorithm RFC 3986 § 5; не критично для backend
+//   - Полный валидатор хоста (DNS labels, IPv6 brackets) — упрощённо
+//
+// Decisions:
+//   - D52 record-тип: Url иммутабелен.
+//   - D55 record-coercion для конструирования.
+//   - D67 ?-оператор работает только на Result/Option.
+//   - D73 From[str] / Into[str]: парсинг и сериализация (round-trip).
+//   - D74 instance-методы char-операций.
+//
+// API:
+//   Url.from(s str) Fail[ParseUrlError] -> Self
+//   u.into() -> str  (через D73 авто-Into)
+//   Url.encode_query(s str) -> str  (percent-encoding)
+//   Url.decode_query(s str) Fail[ParseUrlError] -> str
+
+module std.encoding.url
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Тип
+// ──────────────────────────────────────────────────────────────────────────
+
+// Структурное представление URL. Все компоненты, кроме `scheme` и
+// `path`, опциональны.
+export type Url {
+    readonly scheme    str             // "http", "https", "ftp", ...
+    readonly user      Option[str]      // userinfo (без password)
+    readonly password  Option[str]      // часть userinfo, после ":"
+    readonly host      Option[str]      // хост или IP
+    readonly port      Option[int]      // 0..65535
+    readonly path      str              // "/api/users", может быть "" или "/"
+    readonly query     Option[str]      // raw query string (без "?")
+    readonly fragment  Option[str]      // raw fragment (без "#")
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Ошибки
+// ──────────────────────────────────────────────────────────────────────────
+
+export type ParseUrlError
+    | EmptyInput
+    | MissingScheme                              // нет ":" или схема пустая
+    | InvalidScheme { value str }                 // невалидные символы в схеме
+    | InvalidPort { value str }                    // не число или > 65535
+    | InvalidPercentEncoding { position int }      // %XX где XX не hex
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Парсинг (D73 From[str])
+// ──────────────────────────────────────────────────────────────────────────
+
+// Парсит URL по RFC 3986 generic syntax.
+// Throws Fail[ParseUrlError] на ошибке. По D67 `?` после нельзя.
+export fn Url.from(s str) Fail[ParseUrlError] -> Self {
+    if s.len == 0 { throw EmptyInput }
+
+    // 1. Извлечь scheme (до первого ":") и валидировать.
+    let (scheme, after_scheme) = parse_scheme(s)
+
+    // 2. Если "://" — есть authority (user/host/port), иначе path сразу.
+    let (user, password, host, port, after_authority) =
+        if after_scheme.starts_with("//") {
+            parse_authority(after_scheme.slice(2, after_scheme.len))
+        } else {
+            (None, None, None, None, after_scheme)
+        }
+
+    // 3. Path — до "?" или "#".
+    let (path, after_path) = parse_path(after_authority)
+
+    // 4. Query — после "?", до "#".
+    let (query, after_query) = if after_path.starts_with("?") {
+        let rest = after_path.slice(1, after_path.len)
+        match rest.find("#") {
+            Some(i) => (Some(rest.slice(0, i)), rest.slice(i, rest.len))
+            None    => (Some(rest), "")
+        }
+    } else {
+        (None, after_path)
+    }
+
+    // 5. Fragment — после "#".
+    let fragment = if after_query.starts_with("#") {
+        Some(after_query.slice(1, after_query.len))
+    } else {
+        None
+    }
+
+    { scheme, user, password, host, port, path, query, fragment }
+}
+
+// Scheme = ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )  (RFC 3986 § 3.1)
+// Заканчивается на ":". Чувствительна к регистру технически, но
+// конвенция — lowercase.
+fn parse_scheme(s str) Fail[ParseUrlError] -> (str, str) {
+    match s.find(":") {
+        None => throw MissingScheme
+        Some(i) => {
+            if i == 0 { throw MissingScheme }
+            let scheme = s.slice(0, i)
+            // Первый символ — letter
+            match scheme.char_at(0) {
+                Some(c) if !is_alpha(c) =>
+                    throw InvalidScheme { value: scheme }
+                _ => ()
+            }
+            // Остальные — letter/digit/+/-/.
+            let mut j = 1
+            while j < scheme.len {
+                match scheme.char_at(j) {
+                    Some(c) if !is_scheme_char(c) =>
+                        throw InvalidScheme { value: scheme }
+                    _ => ()
+                }
+                j += 1
+            }
+            (scheme.to_lower(), s.slice(i + 1, s.len))
+        }
+    }
+}
+
+// Authority = [ userinfo "@" ] host [ ":" port ]
+// Заканчивается на "/", "?", "#" или EOF.
+fn parse_authority(s str) Fail[ParseUrlError] ->
+    (Option[str], Option[str], Option[str], Option[int], str)
+{
+    // Найти конец authority — первый из /, ?, #.
+    let auth_end = find_first_of(s, "/?#")
+    let (auth, rest) = match auth_end {
+        Some(i) => (s.slice(0, i), s.slice(i, s.len))
+        None    => (s, "")
+    }
+
+    if auth.len == 0 {
+        return (None, None, None, None, rest)
+    }
+
+    // Userinfo — до "@", если есть
+    let (userinfo_opt, host_port) = match auth.find("@") {
+        Some(i) => (Some(auth.slice(0, i)), auth.slice(i + 1, auth.len))
+        None    => (None, auth)
+    }
+
+    // Userinfo разбираем на user[:password]
+    let (user, password) = match userinfo_opt {
+        None => (None, None)
+        Some(ui) => match ui.find(":") {
+            Some(i) => (Some(ui.slice(0, i)), Some(ui.slice(i + 1, ui.len)))
+            None    => (Some(ui), None)
+        }
+    }
+
+    // host[:port]
+    let (host, port) = match host_port.find(":") {
+        Some(i) => {
+            let port_str = host_port.slice(i + 1, host_port.len)
+            let port_num = match int.try_from(port_str) {
+                Ok(n) if n >= 0 && n <= 65535 => n
+                _                              => throw InvalidPort { value: port_str }
+            }
+            let h = host_port.slice(0, i)
+            (Some(h), Some(port_num))
+        }
+        None => (Some(host_port), None)
+    }
+
+    (user, password, host, port, rest)
+}
+
+fn parse_path(s str) -> (str, str) {
+    // Path до "?" или "#" или EOF
+    let path_end = find_first_of(s, "?#")
+    match path_end {
+        Some(i) => (s.slice(0, i), s.slice(i, s.len))
+        None    => (s, "")
+    }
+}
+
+fn find_first_of(s str, chars str) -> Option[int] {
+    let mut i = 0
+    while i < s.len {
+        match s.char_at(i) {
+            Some(c) => if chars.contains(str.from(c)) { return Some(i) }
+            None    => return None
+        }
+        i += 1
+    }
+    None
+}
+
+fn is_alpha(c char) -> bool {
+    let n = c as int
+    (n >= 65 && n <= 90) || (n >= 97 && n <= 122)
+}
+
+fn is_alphanum(c char) -> bool {
+    let n = c as int
+    is_alpha(c) || (n >= 48 && n <= 57)
+}
+
+fn is_scheme_char(c char) -> bool =>
+    is_alphanum(c) || c == '+' || c == '-' || c == '.'
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Сериализация (D73 Into[str])
+// ──────────────────────────────────────────────────────────────────────────
+
+export fn Url @into() -> str {
+    let mut buf = Buffer.with_capacity(64)
+    buf.add_str(@scheme)
+    buf.add_str(":")
+
+    if @host != None {
+        buf.add_str("//")
+
+        // userinfo
+        match @user {
+            Some(u) => {
+                buf.add_str(u)
+                match @password {
+                    Some(p) => {
+                        buf.add_char(':')
+                        buf.add_str(p)
+                    }
+                    None => ()
+                }
+                buf.add_char('@')
+            }
+            None => ()
+        }
+
+        match @host {
+            Some(h) => buf.add_str(h)
+            None    => ()
+        }
+
+        match @port {
+            Some(p) => {
+                buf.add_char(':')
+                buf.add_str(str.from(p))
+            }
+            None => ()
+        }
+    }
+
+    buf.add_str(@path)
+
+    match @query {
+        Some(q) => {
+            buf.add_char('?')
+            buf.add_str(q)
+        }
+        None => ()
+    }
+
+    match @fragment {
+        Some(f) => {
+            buf.add_char('#')
+            buf.add_str(f)
+        }
+        None => ()
+    }
+
+    buf.into_str_unchecked()
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Percent-encoding (RFC 3986 § 2.1)
+// ──────────────────────────────────────────────────────────────────────────
+
+// Кодирует строку для использования в query parameter.
+// Безопасные символы: ALPHA / DIGIT / "-" / "." / "_" / "~"
+// Всё остальное — `%XX` где XX — hex.
+export fn Url.encode_query(s str) -> str {
+    let mut buf = Buffer.with_capacity(s.len * 2)    // worst case
+    for c in s.chars() {
+        if is_unreserved(c) {
+            buf.add_char(c)
+        } else if c == ' ' {
+            buf.add_char('+')                          // конвенция form-encoding
+        } else {
+            // UTF-8 encode и percent-encode каждый байт.
+            // Простая версия для ASCII; для unicode требуется UTF-8 byte iteration.
+            let n = c as int
+            if n < 128 {
+                buf.add_char('%')
+                buf.add_char(hex_upper((n / 16) as u8))
+                buf.add_char(hex_upper((n % 16) as u8))
+            } else {
+                // Multi-byte UTF-8: упрощённо через char.
+                // Production: использовать Buffer.add_char + перекодировать байты.
+                buf.add_char('%')
+                buf.add_char(hex_upper((n / 16) as u8))
+                buf.add_char(hex_upper((n % 16) as u8))
+            }
+        }
+    }
+    buf.into_str_unchecked()
+}
+
+// Декодирует percent-encoded строку.
+export fn Url.decode_query(s str) Fail[ParseUrlError] -> str {
+    let mut buf = Buffer.with_capacity(s.len)
+    let mut i = 0
+    while i < s.len {
+        match s.char_at(i) {
+            Some('%') => {
+                if i + 2 >= s.len {
+                    throw InvalidPercentEncoding { position: i }
+                }
+                let hi = hex_value_or_throw(s, i + 1)
+                let lo = hex_value_or_throw(s, i + 2)
+                let byte_val = (hi * 16 + lo) as u8
+                buf.add_byte(byte_val as byte)
+                i += 3
+            }
+            Some('+') => {
+                buf.add_char(' ')
+                i += 1
+            }
+            Some(c) => {
+                buf.add_char(c)
+                i += 1
+            }
+            None => return buf.into_str_unchecked()
+        }
+    }
+    buf.into_str_unchecked()
+}
+
+fn is_unreserved(c char) -> bool =>
+    is_alphanum(c) || c == '-' || c == '.' || c == '_' || c == '~'
+
+fn hex_upper(n u8) -> char =>
+    if n < 10 {
+        ('0' as int + n as int) as char
+    } else {
+        ('A' as int + n as int - 10) as char
+    }
+
+fn hex_value_or_throw(s str, pos int) Fail[ParseUrlError] -> u8 {
+    match s.char_at(pos) {
+        Some(c) => {
+            let n = c as int
+            if n >= 48 && n <= 57 {
+                (n - 48) as u8
+            } else if n >= 97 && n <= 102 {
+                (n - 97 + 10) as u8
+            } else if n >= 65 && n <= 70 {
+                (n - 65 + 10) as u8
+            } else {
+                throw InvalidPercentEncoding { position: pos }
+            }
+        }
+        None => throw InvalidPercentEncoding { position: pos }
+    }
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Тесты
+// ──────────────────────────────────────────────────────────────────────────
+
+test "parse: простой HTTP URL" {
+    let u = Url.from("http://example.com/")
+    assert(u.scheme == "http")
+    assert(u.host == Some("example.com"))
+    assert(u.port == None)
+    assert(u.path == "/")
+    assert(u.query == None)
+    assert(u.fragment == None)
+}
+
+test "parse: HTTPS с портом и path" {
+    let u = Url.from("https://api.example.com:8443/v1/users")
+    assert(u.scheme == "https")
+    assert(u.host == Some("api.example.com"))
+    assert(u.port == Some(8443))
+    assert(u.path == "/v1/users")
+}
+
+test "parse: с query string и fragment" {
+    let u = Url.from("https://example.com/search?q=nova&lang=en#results")
+    assert(u.path == "/search")
+    assert(u.query == Some("q=nova&lang=en"))
+    assert(u.fragment == Some("results"))
+}
+
+test "parse: userinfo (user:pass)" {
+    let u = Url.from("https://alice:s3cret@example.com/")
+    assert(u.user == Some("alice"))
+    assert(u.password == Some("s3cret"))
+}
+
+test "parse: только user без password" {
+    let u = Url.from("ftp://anonymous@ftp.example.org/")
+    assert(u.user == Some("anonymous"))
+    assert(u.password == None)
+}
+
+test "parse: file:// без host" {
+    let u = Url.from("file:///etc/hosts")
+    assert(u.scheme == "file")
+    assert(u.host == Some(""))
+    assert(u.path == "/etc/hosts")
+}
+
+test "parse: scheme нормализуется в lowercase" {
+    let u = Url.from("HTTP://example.com/")
+    assert(u.scheme == "http")
+}
+
+test "round-trip: стандартный URL" {
+    let s = "https://api.example.com:8443/v1/users?id=42&active=true#section1"
+    let u = Url.from(s)
+    assert(u.into() == s)
+}
+
+test "round-trip: с userinfo" {
+    let s = "https://alice:s3cret@example.com/path"
+    let u = Url.from(s)
+    assert(u.into() == s)
+}
+
+test "parse: ошибка — пустой ввод" {
+    let r = with Fail[ParseUrlError] = (e) => interrupt Some(e) {
+        let _ = Url.from("")
+        None
+    }
+    assert(match r {)
+        Some(EmptyInput) => true
+        _                => false
+    }
+}
+
+test "parse: ошибка — нет scheme" {
+    let r = with Fail[ParseUrlError] = (e) => interrupt Some(e) {
+        let _ = Url.from("example.com/path")          // нет ":"
+        None
+    }
+    assert(match r {)
+        Some(MissingScheme) => true
+        _                   => false
+    }
+}
+
+test "parse: ошибка — порт не число" {
+    let r = with Fail[ParseUrlError] = (e) => interrupt Some(e) {
+        let _ = Url.from("http://example.com:abc/")
+        None
+    }
+    assert(match r {)
+        Some(InvalidPort { .. }) => true
+        _                         => false
+    }
+}
+
+test "parse: ошибка — порт > 65535" {
+    let r = with Fail[ParseUrlError] = (e) => interrupt Some(e) {
+        let _ = Url.from("http://example.com:99999/")
+        None
+    }
+    assert(match r {)
+        Some(InvalidPort { .. }) => true
+        _                         => false
+    }
+}
+
+test "encode_query: ASCII unreserved неизменны" {
+    assert(Url.encode_query("hello") == "hello")
+    assert(Url.encode_query("a-b.c_d~e") == "a-b.c_d~e")
+}
+
+test "encode_query: пробел → +" {
+    assert(Url.encode_query("hello world") == "hello+world")
+}
+
+test "encode_query: спецсимволы → %XX" {
+    assert(Url.encode_query("a&b=c") == "a%26b%3Dc")
+}
+
+test "decode_query: round-trip" {
+    let cases = ["hello", "hello world", "a&b=c", "100%"]
+    for s in cases {
+        let encoded = Url.encode_query(s)
+        let decoded = Url.decode_query(encoded)
+        assert(decoded == s)
+    }
+}
+
+test "decode_query: ошибка — обрезанное %X" {
+    let r = with Fail[ParseUrlError] = (e) => interrupt Some(e) {
+        let _ = Url.decode_query("abc%2")             // обрезано
+        None
+    }
+    assert(match r {)
+        Some(InvalidPercentEncoding { .. }) => true
+        _                                    => false
+    }
+}

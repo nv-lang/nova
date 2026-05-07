@@ -1,0 +1,153 @@
+// stdlib/hex.nv — Hex encoding/decoding `[]byte` ↔ `str`.
+//
+// Independent implementation. Hex — universal encoding, no copyright.
+//
+// API:
+//   Hex.encode(data []byte) -> str            // lowercase
+//   Hex.encode_upper(data []byte) -> str
+//   Hex.decode(s str) Fail[ParseHexError] -> []byte
+//
+// Use cases: hash digests (SHA, CRC), binary dumps, debugging,
+// crypto tokens, file integrity.
+
+module std.encoding.hex
+
+
+export type ParseHexError
+    | OddLength { actual int }
+    | InvalidChar { position int, char char }
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Encoding
+// ──────────────────────────────────────────────────────────────────────────
+
+export fn Hex.encode(data []byte) -> str =>
+    encode_with(data, false)
+
+export fn Hex.encode_upper(data []byte) -> str =>
+    encode_with(data, true)
+
+fn encode_with(data []byte, upper bool) -> str {
+    let mut buf = Buffer.with_capacity(data.len * 2)
+    for b in data {
+        let hi = (b as int) / 16
+        let lo = (b as int) % 16
+        buf.add_char(digit(hi as u8, upper))
+        buf.add_char(digit(lo as u8, upper))
+    }
+    buf.into_str_unchecked()
+}
+
+fn digit(n u8, upper bool) -> char =>
+    if n < 10 {
+        ('0' as int + n as int) as char
+    } else if upper {
+        ('A' as int + n as int - 10) as char
+    } else {
+        ('a' as int + n as int - 10) as char
+    }
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Decoding
+// ──────────────────────────────────────────────────────────────────────────
+
+export fn Hex.decode(s str) Fail[ParseHexError] -> []byte {
+    if s.len % 2 != 0 {
+        throw OddLength { actual: s.len }
+    }
+    let mut out []byte = []byte.with_capacity(s.len / 2)
+    let mut i = 0
+    while i < s.len {
+        let hi = digit_value(s, i)
+        let lo = digit_value(s, i + 1)
+        out.push(((hi * 16 + lo) & 0xFF) as byte)
+        i += 2
+    }
+    out
+}
+
+fn digit_value(s str, pos int) Fail[ParseHexError] -> int {
+    match s.char_at(pos) {
+        Some(c) => {
+            let n = c as int
+            if n >= 48 && n <= 57 {
+                n - 48
+            } else if n >= 97 && n <= 102 {
+                n - 97 + 10
+            } else if n >= 65 && n <= 70 {
+                n - 65 + 10
+            } else {
+                throw InvalidChar { position: pos, char: c }
+            }
+        }
+        None => throw InvalidChar { position: pos, char: ' ' }
+    }
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Тесты
+// ──────────────────────────────────────────────────────────────────────────
+
+test "encode: пустой массив" {
+    let empty []byte = []
+    assert(Hex.encode(empty) == "")
+}
+
+test "encode: lowercase по умолчанию" {
+    let data []byte = [0xDE, 0xAD, 0xBE, 0xEF]
+    assert(Hex.encode(data) == "deadbeef")
+}
+
+test "encode_upper: uppercase" {
+    let data []byte = [0xDE, 0xAD, 0xBE, 0xEF]
+    assert(Hex.encode_upper(data) == "DEADBEEF")
+}
+
+test "encode: leading zeros сохраняются" {
+    let data []byte = [0x00, 0x01, 0x0F]
+    assert(Hex.encode(data) == "00010f")
+}
+
+test "decode: round-trip" {
+    let cases = [
+        [],
+        [0x00],
+        [0xDE, 0xAD, 0xBE, 0xEF],
+        [0x00, 0x01, 0xFF, 0x80],
+    ]
+    for data in cases {
+        let encoded = Hex.encode(data)
+        let decoded = Hex.decode(encoded)
+        assert(decoded == data)
+    }
+}
+
+test "decode: case-insensitive" {
+    assert(Hex.decode("DEADbeef") == [0xDE, 0xAD, 0xBE, 0xEF])
+    assert(Hex.decode("deadBEEF") == [0xDE, 0xAD, 0xBE, 0xEF])
+}
+
+test "decode: ошибка — нечётная длина" {
+    let r = with Fail[ParseHexError] = (e) => interrupt Some(e) {
+        let _ = Hex.decode("abc")
+        None
+    }
+    assert(match r {)
+        Some(OddLength { .. }) => true
+        _                       => false
+    }
+}
+
+test "decode: ошибка — невалидный символ" {
+    let r = with Fail[ParseHexError] = (e) => interrupt Some(e) {
+        let _ = Hex.decode("abXY")
+        None
+    }
+    assert(match r {)
+        Some(InvalidChar { .. }) => true
+        _                         => false
+    }
+}

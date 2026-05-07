@@ -1,0 +1,182 @@
+// stdlib/ini.nv — простой INI parser.
+//
+// Формат:
+//   ; comment
+//   # тоже comment
+//   [section]
+//   key = value
+//   key2 = value2
+//
+// Не имеет официального RFC, формат тривиальный. Поддерживает:
+//   - sections в [...] (пустая section = top-level)
+//   - key = value (whitespace вокруг = игнорируется)
+//   - комментарии # и ;
+//   - quoted values "..." (опционально)
+//
+// API:
+//   Ini.parse(s str) Fail[ParseIniError] -> HashMap[str, HashMap[str, str]]
+//
+// Структура: outer map от section name → inner map от key → value.
+// Top-level keys (вне sections) — в section с именем "".
+
+module std.encoding.ini
+
+
+export type ParseIniError
+    | InvalidLine { line int, content str }
+    | UnclosedSection { line int }
+
+
+export fn Ini.parse(s str) Fail[ParseIniError] -> HashMap[str, HashMap[str, str]] {
+    let mut result = HashMap[str, HashMap[str, str]].new()
+    result.insert("", HashMap[str, str].new())
+    let mut current_section = ""
+    let mut line_num = 0
+
+    for raw_line in s.split("\n") {
+        line_num += 1
+        let line = raw_line.trim()
+
+        // Пропускаем пустые и комментарии
+        if line.len == 0 { continue }
+        if line.starts_with("#") || line.starts_with(";") { continue }
+
+        // Section header
+        if line.starts_with("[") {
+            if !line.ends_with("]") {
+                throw UnclosedSection { line: line_num }
+            }
+            current_section = line.slice(1, line.len - 1).trim()
+            if !result.contains(current_section) {
+                result.insert(current_section, HashMap[str, str].new())
+            }
+            continue
+        }
+
+        // Key = value
+        match line.find("=") {
+            None => throw InvalidLine { line: line_num, content: line }
+            Some(i) => {
+                let key = line.slice(0, i).trim()
+                let value_raw = line.slice(i + 1, line.len).trim()
+                let value = if value_raw.starts_with("\"") && value_raw.ends_with("\"") && value_raw.len >= 2 {
+                    value_raw.slice(1, value_raw.len - 1)
+                } else {
+                    value_raw
+                }
+                match result.get(current_section) {
+                    Some(mut section_map) => {
+                        section_map.insert(key, value)
+                        result.insert(current_section, section_map)
+                    }
+                    None => ()    // unreachable: создали выше
+                }
+            }
+        }
+    }
+
+    result
+}
+
+
+// Сериализация обратно в INI.
+export fn Ini.encode(data HashMap[str, HashMap[str, str]]) -> str {
+    let mut buf = Buffer.with_capacity(256)
+    // Сначала top-level ("")
+    match data.get("") {
+        Some(top) => {
+            for entry in top.entries() {
+                buf.add_str(entry.0)
+                buf.add_str(" = ")
+                buf.add_str(entry.1)
+                buf.add_char('\n')
+            }
+        }
+        None => ()
+    }
+    // Потом sections
+    for entry in data.entries() {
+        if entry.0 == "" { continue }
+        buf.add_char('\n')
+        buf.add_char('[')
+        buf.add_str(entry.0)
+        buf.add_char(']')
+        buf.add_char('\n')
+        for kv in entry.1.entries() {
+            buf.add_str(kv.0)
+            buf.add_str(" = ")
+            buf.add_str(kv.1)
+            buf.add_char('\n')
+        }
+    }
+    buf.into_str_unchecked()
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Тесты
+// ──────────────────────────────────────────────────────────────────────────
+
+test "parse: простой INI" {
+    let s = "[server]\nhost = localhost\nport = 8080\n"
+    let r = Ini.parse(s)
+    match r.get("server") {
+        Some(m) => {
+            assert(m.get("host") == Some("localhost"))
+            assert(m.get("port") == Some("8080"))
+        }
+        None => assert(false)
+    }
+}
+
+test "parse: top-level (без section)" {
+    let s = "name = nova\nversion = 0.5\n"
+    let r = Ini.parse(s)
+    match r.get("") {
+        Some(m) => {
+            assert(m.get("name") == Some("nova"))
+            assert(m.get("version") == Some("0.5"))
+        }
+        None => assert(false)
+    }
+}
+
+test "parse: комментарии" {
+    let s = "# this is a comment\n; this too\n[s]\nk = v\n"
+    let r = Ini.parse(s)
+    match r.get("s") {
+        Some(m) => assert(m.get("k") == Some("v"))
+        None    => assert(false)
+    }
+}
+
+test "parse: quoted values" {
+    let s = "[s]\nk = \"hello world\"\n"
+    let r = Ini.parse(s)
+    match r.get("s") {
+        Some(m) => assert(m.get("k") == Some("hello world"))
+        None    => assert(false)
+    }
+}
+
+test "parse: ошибка — невалидная line" {
+    let r = with Fail[ParseIniError] = (e) => interrupt Some(e) {
+        let _ = Ini.parse("[s]\nbroken-line-no-equals\n")
+        None
+    }
+    assert(match r {)
+        Some(InvalidLine { .. }) => true
+        _                         => false
+    }
+}
+
+test "parse: ошибка — незакрытая section" {
+    let r = with Fail[ParseIniError] = (e) => interrupt Some(e) {
+        let _ = Ini.parse("[unclosed\nk = v\n")
+        None
+    }
+    assert(match r {)
+        Some(UnclosedSection { .. }) => true
+        _                             => false
+    }
+}

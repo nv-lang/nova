@@ -1,0 +1,165 @@
+// stdlib/csv.nv — CSV parser per RFC 4180.
+// https://www.rfc-editor.org/rfc/rfc4180
+
+module std.encoding.csv
+
+
+export type ParseCsvError
+    | UnterminatedQuote { line int }
+    | UnexpectedChar { line int, col int, char char }
+
+
+// Парсит CSV-документ в []record, где record это []str (поля).
+// Поддерживает quoted fields ("...") с escape "" → ".
+export fn Csv.parse(input str) Fail[ParseCsvError] -> [][]str {
+    let mut records [][]str = []
+    let mut current_record []str = []
+    let mut current_field = Buffer.new()
+    let mut in_quote = false
+    let mut line = 1
+
+    let mut i = 0
+    while i < input.len {
+        let c = match input.char_at(i) { Some(ch) => ch, None => return records }
+
+        if in_quote {
+            if c == '"' {
+                // Lookahead: "" → escaped quote, иначе закрытие quote
+                let next = input.char_at(i + 1)
+                if next == Some('"') {
+                    current_field.add_char('"')
+                    i += 2
+                } else {
+                    in_quote = false
+                    i += 1
+                }
+            } else {
+                if c == '\n' { line += 1 }
+                current_field.add_char(c)
+                i += 1
+            }
+        } else {
+            if c == '"' {
+                in_quote = true
+                i += 1
+            } else if c == ',' {
+                current_record.push(current_field.into_str_unchecked())
+                current_field = Buffer.new()
+                i += 1
+            } else if c == '\n' {
+                current_record.push(current_field.into_str_unchecked())
+                current_field = Buffer.new()
+                records.push(current_record)
+                current_record = []
+                line += 1
+                i += 1
+            } else if c == '\r' {
+                // CRLF: пропускаем \r, обработка на \n
+                i += 1
+            } else {
+                current_field.add_char(c)
+                i += 1
+            }
+        }
+    }
+
+    if in_quote {
+        throw UnterminatedQuote { line: line }
+    }
+
+    // Финальная запись (если последняя строка без \n)
+    if current_field.len() > 0 || current_record.len > 0 {
+        current_record.push(current_field.into_str_unchecked())
+        records.push(current_record)
+    }
+
+    records
+}
+
+
+// Сериализация [][]str → str.
+export fn Csv.encode(records [][]str) -> str {
+    let mut buf = Buffer.with_capacity(records.len * 64)
+    for record in records {
+        let mut first = true
+        for field in record {
+            if !first { buf.add_char(',') }
+            first = false
+            if needs_quoting(field) {
+                buf.add_char('"')
+                for c in field.chars() {
+                    if c == '"' {
+                        buf.add_char('"')
+                        buf.add_char('"')
+                    } else {
+                        buf.add_char(c)
+                    }
+                }
+                buf.add_char('"')
+            } else {
+                buf.add_str(field)
+            }
+        }
+        buf.add_char('\n')
+    }
+    buf.into_str_unchecked()
+}
+
+fn needs_quoting(field str) -> bool {
+    field.contains(",")
+    || field.contains("\"")
+    || field.contains("\n")
+    || field.contains("\r")
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Тесты
+// ──────────────────────────────────────────────────────────────────────────
+
+test "parse: простой CSV" {
+    let r = Csv.parse("a,b,c\n1,2,3\n")
+    assert(r.len == 2)
+    assert(r[0] == ["a", "b", "c"])
+    assert(r[1] == ["1", "2", "3"])
+}
+
+test "parse: quoted fields" {
+    let r = Csv.parse("\"hello, world\",foo\n")
+    assert(r[0][0] == "hello, world")
+    assert(r[0][1] == "foo")
+}
+
+test "parse: escaped quote (\"\")" {
+    let r = Csv.parse("\"He said \"\"hi\"\"\"\n")
+    assert(r[0][0] == "He said \"hi\"")
+}
+
+test "parse: multiline в quoted field" {
+    let r = Csv.parse("\"line1\nline2\",x\n")
+    assert(r[0][0] == "line1\nline2")
+}
+
+test "parse: ошибка — незакрытая quote" {
+    let r = with Fail[ParseCsvError] = (e) => interrupt Some(e) {
+        let _ = Csv.parse("\"unterminated")
+        None
+    }
+    assert(match r {)
+        Some(UnterminatedQuote { .. }) => true
+        _                               => false
+    }
+}
+
+test "encode: простой round-trip" {
+    let data [][]str = [["a", "b"], ["1", "2"]]
+    let s = Csv.encode(data)
+    let parsed = Csv.parse(s)
+    assert(parsed == data)
+}
+
+test "encode: quoting запятых и кавычек" {
+    let data [][]str = [["hello, world", "x"]]
+    let s = Csv.encode(data)
+    assert(s.contains("\"hello, world\""))
+}

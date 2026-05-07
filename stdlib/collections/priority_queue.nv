@@ -1,0 +1,143 @@
+// stdlib/priority_queue.nv — binary min-heap.
+//
+// API:
+//   PriorityQueue[T Ord].new() -> PriorityQueue[T]
+//   pq.push(item T)
+//   pq.pop() -> Option[T]      // min element
+//   pq.peek() -> Option[T]
+//   pq.len -> int
+//   pq.is_empty() -> bool
+
+module std.collections.priority_queue
+
+
+// T Ord — должен иметь @lt method (D72 bound).
+export type PriorityQueue[T Ord] {
+    mut items []T              // heap-ordered: items[0] = min
+}
+
+
+export fn PriorityQueue[T].new() -> Self =>
+    { items: [] }
+
+export fn PriorityQueue[T] @len() -> int => @items.len
+export fn PriorityQueue[T] @is_empty() -> bool => @items.len == 0
+
+
+// Min element без удаления.
+export fn PriorityQueue[T] @peek() -> Option[T] {
+    if @items.len == 0 { None } else { Some(@items[0]) }
+}
+
+
+// Добавить элемент. O(log n).
+export fn PriorityQueue[T] mut @push(item T) -> () {
+    @items.push(item)
+    @sift_up(@items.len - 1)
+}
+
+
+// Удалить и вернуть min. O(log n).
+export fn PriorityQueue[T] mut @pop() -> Option[T] {
+    if @items.len == 0 { return None }
+    let top = @items[0]
+    let last = @items.len - 1
+    if last > 0 {
+        @items[0] = @items[last]
+    }
+    // Удаляем последний элемент (используем вспомогательный массив).
+    let mut new_items []T = []
+    let mut i = 0
+    while i < last {
+        new_items.push(@items[i])
+        i += 1
+    }
+    @items = new_items
+    if @items.len > 0 {
+        @sift_down(0)
+    }
+    Some(top)
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Heap operations
+// ──────────────────────────────────────────────────────────────────────────
+
+fn PriorityQueue[T] mut @sift_up(idx int) -> () {
+    let mut i = idx
+    while i > 0 {
+        let parent = (i - 1) / 2
+        if @items[i].lt(@items[parent]) {
+            // swap
+            let tmp = @items[i]
+            @items[i] = @items[parent]
+            @items[parent] = tmp
+            i = parent
+        } else {
+            return ()
+        }
+    }
+}
+
+
+fn PriorityQueue[T] mut @sift_down(idx int) -> () {
+    let mut i = idx
+    let n = @items.len
+    while true {
+        let left = 2 * i + 1
+        let right = 2 * i + 2
+        let mut smallest = i
+        if left < n && @items[left].lt(@items[smallest]) {
+            smallest = left
+        }
+        if right < n && @items[right].lt(@items[smallest]) {
+            smallest = right
+        }
+        if smallest == i { return () }
+        let tmp = @items[i]
+        @items[i] = @items[smallest]
+        @items[smallest] = tmp
+        i = smallest
+    }
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Тесты
+// ──────────────────────────────────────────────────────────────────────────
+
+test "empty queue" {
+    let pq = PriorityQueue[int].new()
+    assert(pq.is_empty())
+    assert(pq.peek() == None)
+    // pop из пустой — None
+    let mut pq2 = pq
+    assert(pq2.pop() == None)
+}
+
+test "push / pop порядок" {
+    let mut pq = PriorityQueue[int].new()
+    pq.push(5)
+    pq.push(1)
+    pq.push(3)
+    pq.push(8)
+    pq.push(2)
+
+    assert(pq.len == 5)
+    assert(pq.pop() == Some(1))
+    assert(pq.pop() == Some(2))
+    assert(pq.pop() == Some(3))
+    assert(pq.pop() == Some(5))
+    assert(pq.pop() == Some(8))
+    assert(pq.pop() == None)
+}
+
+test "peek не удаляет" {
+    let mut pq = PriorityQueue[int].new()
+    pq.push(5)
+    pq.push(1)
+    assert(pq.peek() == Some(1))
+    assert(pq.peek() == Some(1))
+    assert(pq.len == 2)
+}

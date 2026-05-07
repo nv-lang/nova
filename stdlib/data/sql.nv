@@ -1,0 +1,368 @@
+// stdlib_sql.nv — `SqlValue`, `Sql` тип и `sql\`...\``-tag.
+//
+// Цель — показать **безопасный SQL без injection** через
+// [tagged template literals](../spec/decisions/03-syntax.md#d48).
+// Tag-функция получает `parts` и `args` **раздельно** (D48), template
+// рендерится с `?`-плейсхолдерами, args подставляются параметром БД.
+//
+// Когда-нибудь это переедет в `std.sql` (Q-stdlib-data-types). Здесь —
+// эталонная реализация на актуальной спеке.
+
+module std.data.sql
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// SqlValue — closed sum для SQL-аргументов
+// ──────────────────────────────────────────────────────────────────────────
+
+// Соответствует канонической схеме «SQL primitives»: целые, дробные,
+// строки, логические, бинарные, NULL. Этого достаточно для 95%
+// backend-задач. Для остального — ручной cast в одном из этих
+// вариантов.
+//
+// D55 literal coercion: `[42, "alice", true]` в позиции `[]SqlValue`
+// раскрывается в `[I(42), S("alice"), B(true)]` автоматически.
+export type SqlValue
+    | I(i64)
+    | F(f64)
+    | S(str)
+    | B(bool)
+    | Bytes([]byte)
+    | Null
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Sql — пара (template, args)
+// ──────────────────────────────────────────────────────────────────────────
+
+// `template` — SQL с `?`-плейсхолдерами; `args` — порядок-параметры.
+// Драйвер БД подставляет `args` как **параметры**, не склеивает в
+// строку → SQL injection невозможен.
+export type Sql {
+    readonly template str
+    readonly args     []SqlValue
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Sql composition — concat и with_filter
+// ──────────────────────────────────────────────────────────────────────────
+
+// concat — соединить два Sql фрагмента: template'ы конкатенируются с
+// разделителем-пробелом, args сцепляются по порядку.
+//
+// Используется query-builder'ом для динамического WHERE/ORDER BY: каждый
+// предикат — отдельный Sql, в конце всё сшивается в один.
+export fn Sql @concat(other Sql) -> Sql =>
+    {
+        template: @template + " " + other.template,
+        args:     [...@args, ...other.args],     // D60 spread
+    }
+
+// concat_many — связать список Sql фрагментов через разделитель.
+// Удобно для AND-цепочек: `Sql.concat_many(predicates, " AND ")`.
+export fn Sql.concat_many(parts []Sql, sep str) -> Sql {
+    if parts.len == 0 { return { template: "", args: [] } }
+
+    let mut tpl = parts[0].template
+    let mut args []SqlValue = [...parts[0].args]
+    let mut i = 1
+    while i < parts.len {
+        tpl = tpl + sep + parts[i].template
+        args.extend(parts[i].args)
+        i += 1
+    }
+    { template: tpl, args }
+}
+
+// with_filter — добавить дополнительное `AND <expr>` к WHERE-секции.
+// Используется handler-декораторами (soft-delete, multi-tenancy) для
+// прозрачной фильтрации без вмешательства в бизнес-код.
+//
+// Реализация — простая: append " AND <expr>". Это работает для запросов
+// с уже существующим WHERE. Реальная stdlib-версия делала бы parsing,
+// чтобы корректно вставлять в любые позиции (включая UNION, подзапросы);
+// здесь — упрощённо ради читаемости.
+export fn Sql @with_filter(predicate Sql) -> Sql =>
+    {
+        template: "${@template} AND (${predicate.template})",
+        args:     [...@args, ...predicate.args],
+    }
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// `sql\`...\``-tag функция
+// ──────────────────────────────────────────────────────────────────────────
+
+// Сигнатура tag-функции для D48: получает `parts` (статические сегменты
+// между `${...}`) и `args` (значения интерполяций). Длина `parts` всегда
+// `args.len + 1`.
+//
+// Template получается соединением `parts` через `?`-плейсхолдер, args
+// проходят как параметры запроса.
+export fn sql(parts []str, args []SqlValue) -> Sql =>
+    { template: parts.join("?"), args }
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Db effect — стандартный эффект для запросов
+// ──────────────────────────────────────────────────────────────────────────
+
+// `Db` принимает уже подготовленный `Sql`. Это упрощает API: вызывающий
+// конструирует Sql через тег (безопасно), Db исполняет.
+//
+// В тестах handler заменяется на in-memory; никаких mock-библиотек.
+export type Db effect {
+    query(q Sql) Fail[DbError] -> []DbRow
+    exec(q Sql) Fail[DbError]  -> int          // affected rows
+    in_transaction[T, E](body fn() Db Fail[E] -> T) Db Fail[E] -> T
+}
+
+export type DbError | Connection | Constraint(str) | Timeout | Other(str)
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// DbRow — результат запроса
+// ──────────────────────────────────────────────────────────────────────────
+
+// Минимальное представление: позиционный доступ + named-доступ к
+// колонкам. Реальный stdlib даст больше методов (typed get'ы и т.п.),
+// здесь — каркас для demo.
+export type DbRow {
+    readonly columns []str
+    readonly values  []SqlValue
+}
+
+// Поиск колонки по имени, возвращает её SqlValue.
+export fn DbRow @get(name str) -> Option[SqlValue] {
+    let mut i = 0
+    for col in @columns {
+        if col == name { return Some(@values[i]) }
+        i += 1
+    }
+    None
+}
+
+// Позиционный доступ — для статически известного порядка колонок.
+export fn DbRow @at(i int) -> Option[SqlValue] => @values.get(i)
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// SqlValue extractors — typed accessors для парсинга строк
+// ──────────────────────────────────────────────────────────────────────────
+
+// `expect_int` / `expect_str` / etc. — извлечь конкретный тип или throw.
+// Используется from_row-парсерами: `let id = row.get_int("id")` (throw через Fail[DbError]).
+//
+// Возврат `Fail[DbError]`, чтобы ошибки парсинга поднимались как DbError
+// (Constraint), а не молча возвращали None.
+
+export fn SqlValue @expect_int() Fail[DbError] -> i64 =>
+    match @ {
+        I(n) => n
+        _    => throw DbError.Constraint("expected I, got ${@}")
+    }
+
+export fn SqlValue @expect_str() Fail[DbError] -> str =>
+    match @ {
+        S(s) => s
+        _    => throw DbError.Constraint("expected S, got ${@}")
+    }
+
+export fn SqlValue @expect_bool() Fail[DbError] -> bool =>
+    match @ {
+        B(b) => b
+        _    => throw DbError.Constraint("expected B, got ${@}")
+    }
+
+export fn SqlValue @expect_f64() Fail[DbError] -> f64 =>
+    match @ {
+        F(x) => x
+        I(n) => n as f64                    // INT → FLOAT — допустимая promotion
+        _    => throw DbError.Constraint("expected F/I, got ${@}")
+    }
+
+// Option-варианты для NULL-able колонок: NULL → None, иначе — извлекаем.
+export fn SqlValue @as_int() -> Option[i64] =>
+    match @ {
+        I(n) => Some(n)
+        _    => None
+    }
+
+export fn SqlValue @as_str() -> Option[str] =>
+    match @ {
+        S(s) => Some(s)
+        _    => None
+    }
+
+// DbRow @get_int / @get_str — comb'ы для частого случая.
+export fn DbRow @get_int(name str) Fail[DbError] -> i64 =>
+    match @get(name) {
+        Some(v) => v.expect_int()
+        None    => throw DbError.Constraint("missing column: ${name}")
+    }
+
+export fn DbRow @get_str(name str) Fail[DbError] -> str =>
+    match @get(name) {
+        Some(v) => v.expect_str()
+        None    => throw DbError.Constraint("missing column: ${name}")
+    }
+
+export fn DbRow @get_bool(name str) Fail[DbError] -> bool =>
+    match @get(name) {
+        Some(v) => v.expect_bool()
+        None    => throw DbError.Constraint("missing column: ${name}")
+    }
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// SqlBuilder — динамический WHERE через method chain
+// ──────────────────────────────────────────────────────────────────────────
+
+// SqlBuilder накапливает предикаты и в конце собирает Sql одним вызовом.
+// Альтернатива конкатенации строк "WHERE 1=1 AND a=? AND b=?" с ручными
+// параметрами — здесь параметры идут вместе с фрагментом.
+//
+// Все методы — chainable: возвращают `SqlBuilder`. Финальный `.build()`
+// собирает Sql.
+export type SqlBuilder {
+    base       Sql              // базовая часть: SELECT ... FROM ... WHERE 1=1
+    predicates []Sql            // дополнения через AND
+    suffix     Option[Sql]      // ORDER BY / LIMIT / OFFSET
+}
+
+export fn Sql.builder(base Sql) -> SqlBuilder =>
+    { base, predicates: [], suffix: None }
+
+// `where_eq` — добавить `AND col = ?`.
+export fn SqlBuilder mut @where_eq(col str, value SqlValue) -> SqlBuilder {
+    @predicates.push({ template: "${col} = ?", args: [value] })
+    @
+}
+
+// `where_in` — добавить `AND col IN (?, ?, ...)`.
+export fn SqlBuilder mut @where_in(col str, values []SqlValue) -> SqlBuilder {
+    if values.len == 0 {
+        // IN () — пустой набор. Чтобы запрос вернул 0 строк без
+        // синтаксической ошибки, добавляем AND FALSE.
+        @predicates.push({ template: "FALSE", args: [] })
+        return @
+    }
+    let mut placeholders = "?"
+    let mut i = 1
+    while i < values.len { placeholders = placeholders + ", ?"; i += 1 }
+    @predicates.push({ template: "${col} IN (${placeholders})", args: values })
+    @
+}
+
+// `where_raw` — escape hatch: вставить произвольный Sql фрагмент.
+export fn SqlBuilder mut @where_raw(predicate Sql) -> SqlBuilder {
+    @predicates.push(predicate)
+    @
+}
+
+// `set_suffix` — установить ORDER BY / LIMIT / OFFSET одним блоком.
+export fn SqlBuilder mut @set_suffix(s Sql) -> SqlBuilder {
+    @suffix = Some(s)
+    @
+}
+
+// `build` — собрать финальный Sql.
+export fn SqlBuilder @build() -> Sql {
+    let body = if @predicates.len == 0 {
+        @base
+    } else {
+        let preds = Sql.concat_many(@predicates, " AND ")
+        @base.concat({ template: "AND", args: [] }).concat(preds)
+    }
+    match @suffix {
+        Some(s) => body.concat(s)
+        None    => body
+    }
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Тесты
+// ──────────────────────────────────────────────────────────────────────────
+
+test "sql tag builds template with placeholders" {
+    let user_id = 42
+    let q = sql`SELECT * FROM users WHERE id = ${user_id}`
+    assert(q.template == "SELECT * FROM users WHERE id = ?")
+    assert(q.args.len == 1)
+    match q.args[0] {
+        I(n) => assert(n == 42)
+        _    => assert(false)
+    }
+}
+
+test "sql tag with multiple args preserves order" {
+    let name = "alice"
+    let age  = 30
+    let q = sql`INSERT INTO users (name, age) VALUES (${name}, ${age})`
+    assert(q.template == "INSERT INTO users (name, age) VALUES (?, ?)")
+    assert(q.args.len == 2)
+    match q.args[0] {
+        S(s) => assert(s == "alice")
+        _    => assert(false)
+    }
+    match q.args[1] {
+        I(n) => assert(n == 30)
+        _    => assert(false)
+    }
+}
+
+test "sql tag with no interpolation" {
+    let q = sql`SELECT 1`
+    assert(q.template == "SELECT 1")
+    assert(q.args.len == 0)
+}
+
+test "DbRow.get and DbRow.at" {
+    let row DbRow = { columns: ["id", "name"], values: [42, "alice"] }
+    match row.get("id") {
+        Some(I(n)) => assert(n == 42)
+        _          => assert(false)
+    }
+    match row.at(1) {
+        Some(S(s)) => assert(s == "alice")
+        _          => assert(false)
+    }
+    assert(row.get("missing") == None)
+    assert(row.at(99) == None)
+}
+
+test "DbRow.get_int / get_str — typed accessors" {
+    let row DbRow = { columns: ["id", "name"], values: [42, "alice"] }
+    assert(row.get_int("id") == 42)
+    assert(row.get_str("name") == "alice")
+}
+
+test "Sql.concat — fragments compose with args preserved" {
+    let a Sql = { template: "SELECT * FROM users WHERE id = ?", args: [1] }
+    let b Sql = { template: "AND name = ?", args: ["alice"] }
+    let combined = a.concat(b)
+    assert(combined.template == "SELECT * FROM users WHERE id = ? AND name = ?")
+    assert(combined.args.len == 2)
+}
+
+test "Sql.builder — fluent WHERE composition" {
+    let q = Sql.builder(sql`SELECT * FROM users WHERE 1 = 1`)
+        .where_eq("status", "active")
+        .where_in("role", ["admin", "user"])
+        .set_suffix(sql`ORDER BY created_at DESC LIMIT 10`)
+        .build()
+
+    assert(q.template.contains("AND status = ?"))
+    assert(q.template.contains("AND role IN (?, ?)"))
+    assert(q.template.contains("ORDER BY created_at DESC LIMIT 10"))
+    assert(q.args.len == 3)
+}
+
+test "Sql.with_filter — handler-decorator use case" {
+    let original = sql`SELECT * FROM users WHERE active = ${true}`
+    let filtered = original.with_filter(sql`deleted_at IS NULL`)
+    assert(filtered.template.contains("AND (deleted_at IS NULL)"))
+    assert(filtered.args.len == 1)                     // только original.args
+}

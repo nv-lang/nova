@@ -1,0 +1,174 @@
+// stdlib/bloom_filter.nv — probabilistic membership.
+//
+// Bloom filter гарантирует:
+//   - Negative answer (contains → false) — определённо нет в set'е
+//   - Positive answer (contains → true) — может быть false positive
+//
+// Параметры:
+//   m — битов в bit array
+//   k — число hash functions
+//   n — ожидаемое число элементов
+//   Optimal: m = -n*ln(p) / ln(2)^2, k = (m/n) * ln(2)
+//
+// Use cases:
+//   - Cache pre-check (избежать DB-запроса для отсутствующих)
+//   - Дедупликация в streaming
+//   - Предварительная фильтрация в join'ах
+
+module std.collections.bloom_filter
+
+
+export type BloomFilter {
+    readonly bits_size int
+    readonly num_hashes int
+    mut bits []byte                  // packed: 1 byte = 8 bits
+}
+
+
+// Создать filter с заданными параметрами.
+//   bits_size — количество битов (round up до байтов)
+//   num_hashes — k, число hash-функций
+export fn BloomFilter.new(bits_size int, num_hashes int) -> Self {
+    let byte_size = (bits_size + 7) / 8
+    let mut bits []byte = []
+    let mut i = 0
+    while i < byte_size { bits.push(0); i += 1 }
+    {
+        bits_size,
+        num_hashes,
+        bits,
+    }
+}
+
+
+// Optimal-size constructor: для expected_n элементов и false-positive rate
+// false_pos_rate, вычисляет m и k.
+export fn BloomFilter.optimal(expected_n int, false_pos_rate f64) -> Self {
+    // m = -n * ln(p) / ln(2)^2
+    let n = expected_n as f64
+    let ln2 = 0.6931471805599453
+    let m = (-n * false_pos_rate.ln() / (ln2 * ln2)).ceil() as int
+    // k = (m/n) * ln(2)
+    let k = ((m as f64 / n) * ln2).ceil() as int
+    let k_safe = if k < 1 { 1 } else { k }
+    BloomFilter.new(m, k_safe)
+}
+
+
+export fn BloomFilter mut @insert(s str) -> () {
+    let h1 = hash1(s)
+    let h2 = hash2(s)
+    let mut i = 0
+    while i < @num_hashes {
+        let bit_idx = ((h1 + (i as u64) * h2) as int) % @bits_size
+        let safe_idx = if bit_idx < 0 { bit_idx + @bits_size } else { bit_idx }
+        @set_bit(safe_idx)
+        i += 1
+    }
+}
+
+
+export fn BloomFilter @contains(s str) -> bool {
+    let h1 = hash1(s)
+    let h2 = hash2(s)
+    let mut i = 0
+    while i < @num_hashes {
+        let bit_idx = ((h1 + (i as u64) * h2) as int) % @bits_size
+        let safe_idx = if bit_idx < 0 { bit_idx + @bits_size } else { bit_idx }
+        if !@get_bit(safe_idx) { return false }
+        i += 1
+    }
+    true
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Bit manipulation
+// ──────────────────────────────────────────────────────────────────────────
+
+fn BloomFilter mut @set_bit(idx int) -> () {
+    let byte_idx = idx / 8
+    let bit_in_byte = idx % 8
+    let mask = (1 << bit_in_byte) as byte
+    @bits[byte_idx] = ((@bits[byte_idx] as int) | (mask as int)) as byte
+}
+
+
+fn BloomFilter @get_bit(idx int) -> bool {
+    let byte_idx = idx / 8
+    let bit_in_byte = idx % 8
+    let mask = (1 << bit_in_byte)
+    ((@bits[byte_idx] as int) & mask) != 0
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Hash functions — простые (FNV-1a варианты)
+// ──────────────────────────────────────────────────────────────────────────
+
+fn hash1(s str) -> u64 {
+    let mut h u64 = 0xCBF29CE484222325        // FNV offset basis
+    for c in s.chars() {
+        h = h ^ ((c as int) as u64)
+        h = h * 0x100000001B3                  // FNV prime
+    }
+    h
+}
+
+fn hash2(s str) -> u64 {
+    let mut h u64 = 0x100000001B3              // другая seed
+    for c in s.chars() {
+        h = h * 31
+        h = h + ((c as int) as u64)
+    }
+    h
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Тесты
+// ──────────────────────────────────────────────────────────────────────────
+
+test "no false negatives" {
+    let mut bf = BloomFilter.new(1024, 3)
+    bf.insert("hello")
+    bf.insert("world")
+    bf.insert("nova")
+    // Все вставленные — гарантированно contains
+    assert(bf.contains("hello"))
+    assert(bf.contains("world"))
+    assert(bf.contains("nova"))
+}
+
+test "empty filter — никого не содержит" {
+    let bf = BloomFilter.new(1024, 3)
+    assert(!bf.contains("anything"))
+}
+
+test "optimal sizing" {
+    let mut bf = BloomFilter.optimal(100, 0.01)         // 100 items, 1% false-positive
+    bf.insert("test1")
+    bf.insert("test2")
+    assert(bf.contains("test1"))
+    assert(bf.contains("test2"))
+}
+
+test "false positive rate приемлемый для small set" {
+    let mut bf = BloomFilter.new(1024, 4)
+    let mut i = 0
+    while i < 50 {
+        bf.insert("item-" + str.from(i))
+        i += 1
+    }
+    // Сколько false positives на 100 неинсёртенных?
+    let mut false_pos = 0
+    let mut j = 50
+    while j < 150 {
+        if bf.contains("item-" + str.from(j)) {
+            false_pos += 1
+        }
+        j += 1
+    }
+    // С m=1024, k=4, n=50 — false-positive rate << 50%
+    assert(false_pos < 50)
+}

@@ -4,7 +4,7 @@ $ErrorActionPreference = "Continue"
 $codegen = "d:\Sources\nova-lang\compiler-codegen\target\debug\nova-codegen.exe"
 $rt_dir = "d:\Sources\nova-lang\compiler-codegen\nova_rt"
 $tests_dir = "d:\Sources\nova-lang\tests-nova"
-$stdlib_dir = "d:\Sources\nova-lang\examples\stdlib"
+$stdlib_dir = "d:\Sources\nova-lang\stdlib"
 $tmp_dir = "C:\Temp\nova_tests"
 $vcvars = "C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
 New-Item -ItemType Directory -Force -Path $tmp_dir | Out-Null
@@ -22,7 +22,7 @@ $inputs | Sort-Object FullName | ForEach-Object {
     $nv = $_.FullName
     $name = $_.BaseName
     # Display name includes parent group для multi-level layout. Используем
-    # подходящую базу: tests_dir для tests-nova/* или stdlib_dir для examples/stdlib/*.
+    # подходящую базу: tests_dir для tests-nova/* или stdlib_dir для stdlib/*.
     # Case-insensitive — Windows может вернуть FullName с любым регистром drive letter.
     $full_lower = $_.FullName.ToLower()
     $is_stdlib  = $full_lower.StartsWith($stdlib_dir.ToLower())
