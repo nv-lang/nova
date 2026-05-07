@@ -40,6 +40,27 @@
   больше не блокирует.
 - uuid/uuid_v3_v5 — mut-params больше не блокирует.
 
+### 2026-05-07 (раунд 4)
+- **str.bytes() / chars() / split()** в codegen+runtime (commit f5a744f4,
+  faa37299, e1f1b561). Eager bootstrap-имплементация Iter[char]/Iter[str]:
+  - `nova_str_bytes(s)` → `[]byte` копия UTF-8 байтов
+  - `nova_str_chars(s)` → `[]int` decoded codepoints
+  - `nova_str_split(s, sep)` → `[]str` разбиение
+  - `array_element_types[var] = nova_byte` для `let xs = s.bytes()`,
+    чтобы for-in типизировал как byte.
+- **Pattern alternation `|` в match arms** (commit e64b3b5e, e5befbbb).
+  `Some(A) | Some(B) => body` собирается в Pattern::Or; codegen
+  emit'ит disjunction условий; bindings из первого варианта.
+
+### Совокупный эффект 4-го раунда
+- crc32/fnv/snowflake/statistics — продвинулись через codegen, упёрлись
+  в C-stage (assert/sqrt/Timestamp).
+- bloom_filter — продвинулся, упёрся на `f64.ln()` (отсутствующий метод).
+- cron/semver/semver_range — продвинулись через for-in блок на
+  следующие блокеры.
+- complex (562 → 563) — pattern alternation сработал, ушёл на
+  следующий синтаксический блокер.
+
 ## Группы блокеров (после раунда 3)
 
 ### A. for-in: codegen iterator type-inference (5 файлов)
