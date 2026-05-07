@@ -1,0 +1,795 @@
+// stdlib/regex.nv — RE2-style regex engine.
+//
+// Independent implementation. Алгоритм Russ Cox (Thompson's NFA simulation):
+//   https://swtch.com/~rsc/regstack/
+//
+// Ключевое отличие от PCRE / Perl:
+//   - Гарантированная O(n*m) линейная сложность по длине input.
+//   - НЕТ catastrophic backtracking — `(a+)+b` на 'aaaa...' работает быстро.
+//   - НЕТ backreferences (\1, \2) — математически требуют backtracking.
+//   - НЕТ lookbehind ((?<=...)) — лимитация классической NFA.
+//
+// Поддержка:
+//   - Char classes: . [a-z] [^abc] \d \w \s \D \W \S
+//   - Anchors: ^ $
+//   - Quantifiers: * + ? {n} {n,m}
+//   - Groups: (...) (?:...)
+//   - Alternation: a|b
+//   - Escape: \. \\ \( \) \[ \] \* \+ \? \| \^ \$
+//
+// API:
+//   Regex.compile(pattern str) Fail[CompileError] -> Regex
+//   re.matches(text str) -> bool
+//   re.find(text str) -> Option[(int, int)]    // (start, end)
+//   re.find_all(text str) -> [](int, int)
+//
+// Use cases: validation, search-filtering, user-supplied patterns
+// (без риска DoS).
+
+module std.regex
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// AST после парсинга pattern'а
+// ──────────────────────────────────────────────────────────────────────────
+
+export type RegexNode
+    | NEmpty                                           // пустой паттерн
+    | NLiteral(char)                                    // 'a'
+    | NAnyChar                                          // .
+    | NCharClass { chars []char, ranges [](char, char), negated bool }
+    | NConcat([]RegexNode)                              // ab
+    | NAlternate([]RegexNode)                           // a|b
+    | NStar(RegexNode)                                  // a*
+    | NPlus(RegexNode)                                  // a+
+    | NOptional(RegexNode)                              // a?
+    | NRepeat { node RegexNode, min int, max int }      // a{n,m}; max=-1 = unbounded
+    | NAnchorStart                                      // ^
+    | NAnchorEnd                                        // $
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// NFA states (после компиляции)
+// ──────────────────────────────────────────────────────────────────────────
+//
+// Каждый state — node в NFA. Переходы:
+//   - Match: один out, потребляет character matching predicate
+//   - Split: два out, эпсилон-переход (без потребления)
+//   - Match (final): принимающее состояние
+//
+// State хранится как индекс в []NfaState.
+
+export type NfaState
+    | SMatch                                                  // accepting
+    | SChar { c char, out int }                                // потребляет ровно c
+    | SAnyChar { out int }                                     // потребляет любой кроме \n
+    | SCharClass { chars []char, ranges [](char, char), negated bool, out int }
+    | SSplit { out1 int, out2 int }                            // ε-переход в оба
+    | SAnchorStart { out int }
+    | SAnchorEnd { out int }
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Compiled regex
+// ──────────────────────────────────────────────────────────────────────────
+
+export type Regex {
+    readonly states []NfaState
+    readonly start int
+    readonly anchored_start bool       // pattern начинается с ^
+}
+
+
+export type CompileError
+    | UnclosedGroup { position int }
+    | UnclosedClass { position int }
+    | InvalidEscape { position int, char char }
+    | InvalidQuantifier { position int }
+    | NothingToRepeat { position int }
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Parsing — pattern → AST
+// ──────────────────────────────────────────────────────────────────────────
+
+type Parser {
+    pattern str
+    mut pos int
+}
+
+fn Parser.new(p str) -> Self => { pattern: p, pos: 0 }
+
+fn Parser @peek() -> Option[char] => @pattern.char_at(@pos)
+
+fn Parser mut @advance() -> Option[char] {
+    let c = @peek()
+    if c != None { @pos += 1 }
+    c
+}
+
+fn Parser mut @parse_pattern() Fail[CompileError] -> RegexNode {
+    @parse_alternate()
+}
+
+// alternate := concat ('|' concat)*
+fn Parser mut @parse_alternate() Fail[CompileError] -> RegexNode {
+    let mut alts []RegexNode = [@parse_concat()]
+    while @peek() == Some('|') {
+        @advance()
+        alts.push(@parse_concat())
+    }
+    if alts.len == 1 { alts[0] } else { NAlternate(alts) }
+}
+
+// concat := atom*
+fn Parser mut @parse_concat() Fail[CompileError] -> RegexNode {
+    let mut items []RegexNode = []
+    let mut done = false
+    while !done {
+        match @peek() {
+            None             => { done = true }
+            Some(')')        => { done = true }
+            Some('|')        => { done = true }
+            _ => {
+                let atom = @parse_quantified()
+                items.push(atom)
+            }
+        }
+    }
+    if items.len == 0 { NEmpty }
+    else if items.len == 1 { items[0] }
+    else { NConcat(items) }
+}
+
+// quantified := atom quantifier?
+// quantifier := '*' | '+' | '?' | '{n}' | '{n,}' | '{n,m}'
+fn Parser mut @parse_quantified() Fail[CompileError] -> RegexNode {
+    let atom = @parse_atom()
+    match @peek() {
+        Some('*') => { @advance(); NStar(atom) }
+        Some('+') => { @advance(); NPlus(atom) }
+        Some('?') => { @advance(); NOptional(atom) }
+        Some('{') => @parse_braced_quantifier(atom)
+        _         => atom
+    }
+}
+
+fn Parser mut @parse_braced_quantifier(atom RegexNode) Fail[CompileError] -> RegexNode {
+    let start = @pos
+    @advance()                           // {
+    let mut n_str = Buffer.new()
+    while true {
+        match @peek() {
+            Some(c) if c >= '0' && c <= '9' => { n_str.add_char(c); @advance() }
+            _ => break
+        }
+    }
+    let min_str = n_str.into_str_unchecked()
+    if min_str.len == 0 { throw InvalidQuantifier { position: start } }
+    let min = match int.try_from(min_str) {
+        Ok(n)  => n
+        Err(_) => throw InvalidQuantifier { position: start }
+    }
+
+    let max = if @peek() == Some(',') {
+        @advance()
+        let mut m_str = Buffer.new()
+        while true {
+            match @peek() {
+                Some(c) if c >= '0' && c <= '9' => { m_str.add_char(c); @advance() }
+                _ => break
+            }
+        }
+        let m = m_str.into_str_unchecked()
+        if m.len == 0 { -1 }       // {n,} — unbounded
+        else {
+            match int.try_from(m) {
+                Ok(n)  => n
+                Err(_) => throw InvalidQuantifier { position: start }
+            }
+        }
+    } else {
+        min                          // {n} — точно n
+    }
+
+    if @peek() != Some('}') {
+        throw InvalidQuantifier { position: start }
+    }
+    @advance()
+    NRepeat { node: atom, min: min, max: max }
+}
+
+// atom := char | '.' | '[' ... ']' | '(' alt ')' | '\\' escape | '^' | '$'
+fn Parser mut @parse_atom() Fail[CompileError] -> RegexNode {
+    match @peek() {
+        None      => throw NothingToRepeat { position: @pos }
+        Some('.') => { @advance(); NAnyChar }
+        Some('^') => { @advance(); NAnchorStart }
+        Some('$') => { @advance(); NAnchorEnd }
+        Some('[') => @parse_char_class()
+        Some('(') => @parse_group()
+        Some('\\') => {
+            @advance()
+            @parse_escape()
+        }
+        Some(c) if is_special(c) => throw NothingToRepeat { position: @pos }
+        Some(c) => { @advance(); NLiteral(c) }
+    }
+}
+
+fn is_special(c char) -> bool =>
+    c == '*' || c == '+' || c == '?' || c == '|'
+    || c == ')' || c == '}' || c == ']'
+
+fn Parser mut @parse_char_class() Fail[CompileError] -> RegexNode {
+    let start = @pos
+    @advance()                          // [
+    let negated = @peek() == Some('^')
+    if negated { @advance() }
+    let mut chars []char = []
+    let mut ranges [](char, char) = []
+    let mut closed = false
+    while !closed {
+        match @peek() {
+            None => throw UnclosedClass { position: start }
+            Some(']') => { @advance(); closed = true }
+            Some('\\') => {
+                @advance()
+                let c = match @advance() {
+                    Some(c) => decode_escape_char(c)
+                    None    => throw UnclosedClass { position: start }
+                }
+                // Может быть range: \d-\f
+                if @peek() == Some('-') && @pattern.char_at(@pos + 1) != Some(']') {
+                    @advance()
+                    let to = match @advance() {
+                        Some('\\') => match @advance() {
+                            Some(x) => decode_escape_char(x)
+                            None    => throw UnclosedClass { position: start }
+                        }
+                        Some(x) => x
+                        None    => throw UnclosedClass { position: start }
+                    }
+                    ranges.push((c, to))
+                } else {
+                    chars.push(c)
+                }
+            }
+            Some(c) => {
+                @advance()
+                if @peek() == Some('-') && @pattern.char_at(@pos + 1) != Some(']') {
+                    @advance()
+                    let to = match @advance() {
+                        Some(x) => x
+                        None    => throw UnclosedClass { position: start }
+                    }
+                    ranges.push((c, to))
+                } else {
+                    chars.push(c)
+                }
+            }
+        }
+    }
+    NCharClass { chars: chars, ranges: ranges, negated: negated }
+}
+
+fn Parser mut @parse_group() Fail[CompileError] -> RegexNode {
+    let start = @pos
+    @advance()                          // (
+    // Non-capturing: (?:...)
+    if @peek() == Some('?') {
+        @advance()
+        if @peek() == Some(':') {
+            @advance()
+        }
+        // Named groups (?<name>...) — упрощено: пропускаем
+    }
+    let inner = @parse_alternate()
+    if @peek() != Some(')') {
+        throw UnclosedGroup { position: start }
+    }
+    @advance()                          // )
+    inner
+}
+
+fn Parser mut @parse_escape() Fail[CompileError] -> RegexNode {
+    match @advance() {
+        None => throw InvalidEscape { position: @pos, char: ' ' }
+        Some(c) => match c {
+            'd' => NCharClass { chars: [], ranges: [('0', '9')], negated: false }
+            'D' => NCharClass { chars: [], ranges: [('0', '9')], negated: true }
+            'w' => NCharClass {
+                chars: ['_'],
+                ranges: [('a', 'z'), ('A', 'Z'), ('0', '9')],
+                negated: false,
+            }
+            'W' => NCharClass {
+                chars: ['_'],
+                ranges: [('a', 'z'), ('A', 'Z'), ('0', '9')],
+                negated: true,
+            }
+            's' => NCharClass {
+                chars: [' ', '\t', '\n', '\r'],
+                ranges: [],
+                negated: false,
+            }
+            'S' => NCharClass {
+                chars: [' ', '\t', '\n', '\r'],
+                ranges: [],
+                negated: true,
+            }
+            'n' => NLiteral('\n')
+            't' => NLiteral('\t')
+            'r' => NLiteral('\r')
+            other => NLiteral(other)        // \. \\ \( etc — литерал escape'а
+        }
+    }
+}
+
+fn decode_escape_char(c char) -> char => match c {
+    'n' => '\n'
+    't' => '\t'
+    'r' => '\r'
+    other => other
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Compile AST → NFA
+// ──────────────────────────────────────────────────────────────────────────
+
+type Compiler {
+    mut states []NfaState
+}
+
+fn Compiler.new() -> Self => { states: [] }
+
+fn Compiler mut @add(s NfaState) -> int {
+    @states.push(s)
+    @states.len - 1
+}
+
+// Compile node → возвращает (start, [out_indices]) — outs нужно
+// "patch'нуть" после.
+//
+// Упрощено: возвращаем только start; out — последний state ссылается
+// на placeholder-id, который мы потом обновляем.
+//
+// Для bootstrap делаем линейную композицию: каждый node возвращает
+// start-state и помещает свой "exit" как ссылку на следующий start.
+//
+// Используем sentinel-out -1 для "ещё не привязано", потом patch'им.
+
+fn Compiler mut @compile_node(node RegexNode, out_state int) -> int {
+    match node {
+        NEmpty => out_state
+        NLiteral(c) => @add(SChar { c: c, out: out_state })
+        NAnyChar    => @add(SAnyChar { out: out_state })
+        NCharClass { chars, ranges, negated } =>
+            @add(SCharClass { chars: chars, ranges: ranges, negated: negated, out: out_state })
+        NAnchorStart => @add(SAnchorStart { out: out_state })
+        NAnchorEnd   => @add(SAnchorEnd { out: out_state })
+
+        NConcat(items) => {
+            // Compile right-to-left так чтобы каждое item вело в start следующего
+            let mut current = out_state
+            let mut i = items.len - 1
+            while i >= 0 {
+                current = @compile_node(items[i], current)
+                i -= 1
+            }
+            current
+        }
+
+        NAlternate(alts) => {
+            // Для двух — простой Split; для N — n-1 Split-ов.
+            if alts.len == 1 { return @compile_node(alts[0], out_state) }
+            // Compile все ветви, объединяем через Split
+            let mut start = @compile_node(alts[alts.len - 1], out_state)
+            let mut i = alts.len - 2
+            while i >= 0 {
+                let branch = @compile_node(alts[i], out_state)
+                start = @add(SSplit { out1: branch, out2: start })
+                i -= 1
+            }
+            start
+        }
+
+        NStar(inner) => {
+            // Split: либо в inner (с возвратом в Split), либо в out
+            // Patch loop: inner.out → split
+            let split_idx = @add(SSplit { out1: 0, out2: out_state })   // placeholder
+            let inner_start = @compile_node(inner, split_idx)
+            // Patch out1
+            @states[split_idx] = SSplit { out1: inner_start, out2: out_state }
+            split_idx
+        }
+
+        NPlus(inner) => {
+            // Однократный inner, потом Star inside
+            let split_idx = @add(SSplit { out1: 0, out2: out_state })
+            let inner_start = @compile_node(inner, split_idx)
+            @states[split_idx] = SSplit { out1: inner_start, out2: out_state }
+            inner_start
+        }
+
+        NOptional(inner) => {
+            // Split: в inner или сразу к out
+            let inner_start = @compile_node(inner, out_state)
+            @add(SSplit { out1: inner_start, out2: out_state })
+        }
+
+        NRepeat { node, min, max } => {
+            // Развёртка: min обязательных, потом max-min опциональных
+            // (или unbounded если max=-1).
+            let mut current = out_state
+            // Optional / unbounded хвост
+            if max == -1 {
+                // {min,} = min обязательных + Star
+                current = @compile_node(NStar(node), current)
+            } else {
+                // {min,max} = max-min Optional
+                let mut k = max - min
+                while k > 0 {
+                    current = @compile_node(NOptional(node), current)
+                    k -= 1
+                }
+            }
+            // min обязательных перед хвостом
+            let mut k = min
+            while k > 0 {
+                current = @compile_node(node, current)
+                k -= 1
+            }
+            current
+        }
+    }
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Public API
+// ──────────────────────────────────────────────────────────────────────────
+
+export fn Regex.compile(pattern str) Fail[CompileError] -> Self {
+    let mut p = Parser.new(pattern)
+    let ast = p.parse_pattern()
+
+    // Detect anchored start
+    let anchored = match ast {
+        NConcat(items) if items.len > 0 => match items[0] {
+            NAnchorStart => true
+            _            => false
+        }
+        NAnchorStart => true
+        _            => false
+    }
+
+    let mut c = Compiler.new()
+    let accept = c.add(SMatch)
+    let start = c.compile_node(ast, accept)
+
+    {
+        states: c.states,
+        start: start,
+        anchored_start: anchored,
+    }
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// NFA simulation (Thompson)
+// ──────────────────────────────────────────────────────────────────────────
+//
+// Двойной буфер: current set of states, next set. Для каждого character
+// шагаем по character-edge'ам. ε-переходы expand'ятся в add_state().
+
+fn add_state(set mut []bool, states []NfaState, idx int, pos int, text str) -> () {
+    if idx < 0 || idx >= states.len { return () }
+    if set[idx] { return () }
+    set[idx] = true
+    match states[idx] {
+        SSplit { out1, out2 } => {
+            add_state(set, states, out1, pos, text)
+            add_state(set, states, out2, pos, text)
+        }
+        SAnchorStart { out } => {
+            if pos == 0 {
+                add_state(set, states, out, pos, text)
+            }
+        }
+        SAnchorEnd { out } => {
+            if pos == text.len {
+                add_state(set, states, out, pos, text)
+            }
+        }
+        _ => ()
+    }
+}
+
+fn matches_class(s NfaState, c char) -> bool => match s {
+    SChar { c: target, .. } => c == target
+    SAnyChar { .. } => c != '\n'
+    SCharClass { chars, ranges, negated, .. } => {
+        let mut found = false
+        for ch in chars { if ch == c { found = true } }
+        for r in ranges {
+            let n = c as int
+            if n >= (r.0 as int) && n <= (r.1 as int) { found = true }
+        }
+        if negated { !found } else { found }
+    }
+    _ => false
+}
+
+fn step_out(s NfaState) -> int => match s {
+    SChar { out, .. } => out
+    SAnyChar { out } => out
+    SCharClass { out, .. } => out
+    _ => -1
+}
+
+
+// Попробовать matchить начиная с position `start_pos` в text.
+// Возвращает Some(end_pos) если matched (consumed [start_pos..end_pos]),
+// иначе None.
+fn try_match(re Regex, text str, start_pos int) -> Option[int] {
+    let n = re.states.len
+    let mut current []bool = []
+    let mut next []bool = []
+    let mut i = 0
+    while i < n { current.push(false); next.push(false); i += 1 }
+
+    add_state(current, re.states, re.start, start_pos, text)
+
+    let mut last_match = if current[final_state(re)] { Some(start_pos) } else { None }
+
+    let mut pos = start_pos
+    while pos < text.len {
+        let c = match text.char_at(pos) { Some(ch) => ch, None => break }
+
+        // Reset next
+        let mut k = 0
+        while k < n { next[k] = false; k += 1 }
+
+        // Step every active state
+        let mut idx = 0
+        while idx < n {
+            if current[idx] {
+                if matches_class(re.states[idx], c) {
+                    let out = step_out(re.states[idx])
+                    if out >= 0 {
+                        add_state(next, re.states, out, pos + 1, text)
+                    }
+                }
+            }
+            idx += 1
+        }
+
+        // Swap
+        let tmp = current
+        current = next
+        next = tmp
+
+        pos += 1
+
+        if current[final_state(re)] {
+            last_match = Some(pos)
+        }
+    }
+
+    last_match
+}
+
+fn final_state(re Regex) -> int {
+    let mut i = 0
+    while i < re.states.len {
+        match re.states[i] {
+            SMatch => return i
+            _      => ()
+        }
+        i += 1
+    }
+    -1
+}
+
+
+// Полное соответствие?
+export fn Regex @matches(text str) -> bool {
+    let r = try_match(@, text, 0)
+    match r {
+        Some(end) => end == text.len
+        None      => false
+    }
+}
+
+// Найти первое вхождение, вернуть (start, end).
+export fn Regex @find(text str) -> Option[(int, int)] {
+    let mut start = 0
+    if @anchored_start {
+        match try_match(@, text, 0) {
+            Some(end) => return Some((0, end))
+            None      => return None
+        }
+    }
+    while start <= text.len {
+        match try_match(@, text, start) {
+            Some(end) => return Some((start, end))
+            None      => ()
+        }
+        start += 1
+    }
+    None
+}
+
+export fn Regex @find_all(text str) -> [](int, int) {
+    let mut results [](int, int) = []
+    let mut start = 0
+    while start <= text.len {
+        match try_match(@, text, start) {
+            Some(end) => {
+                results.push((start, end))
+                if end > start { start = end } else { start += 1 }
+            }
+            None => start += 1
+        }
+    }
+    results
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Тесты
+// ──────────────────────────────────────────────────────────────────────────
+
+test "literal match" {
+    let r = Regex.compile("hello")
+    assert r.matches("hello")
+    assert !r.matches("world")
+    assert r.find("say hello world") == Some((4, 9))
+}
+
+test "any char ." {
+    let r = Regex.compile("a.c")
+    assert r.matches("abc")
+    assert r.matches("a-c")
+    assert !r.matches("ac")
+}
+
+test "char class" {
+    let r = Regex.compile("[abc]")
+    assert r.matches("a")
+    assert r.matches("b")
+    assert !r.matches("d")
+}
+
+test "char class range" {
+    let r = Regex.compile("[a-z]+")
+    assert r.matches("hello")
+    assert !r.matches("123")
+}
+
+test "negated class" {
+    let r = Regex.compile("[^0-9]")
+    assert r.matches("a")
+    assert !r.matches("5")
+}
+
+test "\\d \\w \\s" {
+    let digit = Regex.compile("\\d+")
+    assert digit.matches("12345")
+    assert !digit.matches("abc")
+
+    let word = Regex.compile("\\w+")
+    assert word.matches("hello_world123")
+
+    let space = Regex.compile("\\s+")
+    assert space.matches("   ")
+}
+
+test "anchors ^ $" {
+    let r = Regex.compile("^abc$")
+    assert r.matches("abc")
+    assert !r.matches("xabc")
+    assert !r.matches("abcx")
+}
+
+test "quantifier *" {
+    let r = Regex.compile("ab*c")
+    assert r.matches("ac")
+    assert r.matches("abc")
+    assert r.matches("abbbbbc")
+}
+
+test "quantifier +" {
+    let r = Regex.compile("ab+c")
+    assert !r.matches("ac")
+    assert r.matches("abc")
+}
+
+test "quantifier ?" {
+    let r = Regex.compile("ab?c")
+    assert r.matches("ac")
+    assert r.matches("abc")
+    assert !r.matches("abbc")
+}
+
+test "repeat {n}" {
+    let r = Regex.compile("a{3}")
+    assert r.matches("aaa")
+    assert !r.matches("aa")
+    assert !r.matches("aaaa")        // в matches требуем полное совпадение
+}
+
+test "repeat {n,m}" {
+    let r = Regex.compile("a{2,4}")
+    assert !r.matches("a")
+    assert r.matches("aa")
+    assert r.matches("aaa")
+    assert r.matches("aaaa")
+    assert !r.matches("aaaaa")
+}
+
+test "alternation" {
+    let r = Regex.compile("cat|dog|bird")
+    assert r.matches("cat")
+    assert r.matches("dog")
+    assert r.matches("bird")
+    assert !r.matches("fish")
+}
+
+test "groups (...)" {
+    let r = Regex.compile("(ab)+")
+    assert r.matches("ab")
+    assert r.matches("abab")
+    assert r.matches("ababab")
+    assert !r.matches("aba")
+}
+
+test "phone number pattern" {
+    let r = Regex.compile("^\\d{3}-\\d{4}$")
+    assert r.matches("123-4567")
+    assert !r.matches("12-4567")
+    assert !r.matches("123-456")
+}
+
+test "find inside text" {
+    let r = Regex.compile("\\d+")
+    assert r.find("call 123 then 456") == Some((5, 8))
+}
+
+test "find_all" {
+    let r = Regex.compile("\\d+")
+    let matches = r.find_all("a1 b22 c333")
+    assert matches.len == 3
+}
+
+test "no catastrophic backtracking — ключевое отличие от PCRE" {
+    // Этот pattern на длинной строке 'aaaa...' зависает в PCRE,
+    // но в RE2/Thompson NFA — линейная сложность.
+    let r = Regex.compile("(a+)+b")
+    assert !r.matches("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+    // Должно завершиться быстро без зависания.
+}
+
+test "compile: unclosed group" {
+    let r = with Fail[CompileError] = (e) => interrupt Some(e) {
+        let _ = Regex.compile("(abc")
+        None
+    }
+    assert match r {
+        Some(UnclosedGroup { .. }) => true
+        _                           => false
+    }
+}
+
+test "compile: unclosed class" {
+    let r = with Fail[CompileError] = (e) => interrupt Some(e) {
+        let _ = Regex.compile("[abc")
+        None
+    }
+    assert match r {
+        Some(UnclosedClass { .. }) => true
+        _                           => false
+    }
+}
