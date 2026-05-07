@@ -2583,36 +2583,92 @@ keyword'а), Erlang/Elixir (то же). Async в типах остаётся в 
 (где async важен из-за no-runtime), C# (где async из-за callbacks),
 Koka (academic effects). В Nova не нужен.
 
-### Правило 4. `effect` vs `protocol` — выбор программиста
+### Правило 4. `effect` vs `protocol` — критерий resource-capability
 
-Программист **сначала** решает какой это контракт, **потом** объявляет.
-Решающие вопросы:
+#### Формулировка
 
-> **Q1.** Нужна ли подмена реализации в тестах через `with X = mock`,
-> без передачи объекта параметром через цепочку функций?
+> **Эффект описывает resource-capability — нечто, что можно подменить
+> handler'ом в скоупе. Suspension и runtime-механизмы — не resource,
+> а ambient mechanic, общая для всех асинхронных операций; они НЕ
+> эффекты.**
+
+Resource-capability — концептуальная единица, к которой имеет смысл
+question «может ли это быть подменено в тесте?». Если **да** — это
+effect (handler-substitution). Если **нет** — это либо runtime-mechanic
+(не существует в типах), либо обычный protocol на значении.
+
+Применение к стандартным эффектам:
+
+| Эффект | Resource-capability? | Подменяется в тесте? |
+|---|---|---|
+| `Time` | clock | `fixed_ms(ms)` ✓ |
+| `Random` | RNG | `seeded(seed)` ✓ |
+| `Db`/`Net`/`Fs` | соединение/socket/fd | in-memory handler ✓ |
+| `Mem` | alloc counter | mock-counter (для leak-тестов) ✓ |
+| `Detach` | background supervisor | `SyncDetach` ✓ |
+| `Blocking` | OS-thread pool | mock ✓ |
+| `Async` | fiber scheduler | **не подменяется** (runtime mechanic) — НЕ effect |
+
+#### Decision flow для программиста
+
+Программист **сначала** решает какой это контракт, **потом** объявляет:
+
+> **Q1. Resource-capability?** Описывает ли тип ресурс, который имело
+> бы смысл подменить handler'ом в тесте (mock-clock, mock-db, etc.)?
 >
-> **Q2.** Нужен ли continuation-capture — `throw` (тип Never),
+> **Q2. Continuation-capture?** Нужен ли `throw` (тип Never) или
 > `interrupt` (досрочное завершение with-блока)?
 
 - Хотя бы одно «да» — **`effect`**.
-- Оба «нет» — **`protocol`**.
+- Оба «нет» — **`protocol`** (структурный контракт на значении).
+- «Это runtime mechanic» — **ambient**, в типах не объявляется
+  (см. `Async`, `Mem`/`Trace` instrumental эффекты в [D26](08-runtime.md#d26)).
 
-#### Примеры
+#### Decision matrix — канонические случаи
 
-| Тип | with-substitution? | continuation-capture? | Решение |
-|---|---|---|---|
-| `Hashable` | нет (у каждого значения свой hash) | нет | `protocol` |
-| `Iterator[T]` | нет (конкретный итератор) | нет | `protocol` |
-| `Comparable` | нет | нет | `protocol` |
-| `Display`/`Debug` | нет | нет | `protocol` |
-| `Db` | **да** (mock в тестах) | нет | `effect` |
-| `Net` | **да** (recorded responses) | нет | `effect` |
-| `Time` | **да** (фиксированное время) | нет | `effect` |
-| `Log` | **да** (capture-log) | нет | `effect` |
-| `Fail[E]` | нет (один на язык) | **да** (throw → Never) | `effect` |
-| `Random` | **да** (seeded) | нет | `effect` |
-| `Io` | **да** (mock-stdout) | нет | `effect` |
-| `Fs` | **да** (virtual-fs) | нет | `effect` |
+| Тип / контракт | Resource? | Continuation? | Решение | Why |
+|---|---|---|---|---|
+| **Структурные protocols (значения)** | | | | |
+| `Hashable` | нет (у каждого значения свой hash) | нет | `protocol` | bound на T в `HashMap[K Hashable, V]` |
+| `Ord` | нет | нет | `protocol` | bound в priority queue, сортировке |
+| `Eq` | нет | нет | `protocol` | bound в множествах |
+| `Iter[T]` | нет (конкретный итератор) | нет | `protocol` | for-in / collect через D58 |
+| `From[T]` / `Into[T]` | нет | нет | `protocol` | conversion ([D73](08-runtime.md#d73)) |
+| `TryFrom[T,E]` | нет | нет | `protocol` | fallible conversion ([D77](08-runtime.md#d77)) |
+| `ToStr` (replaced → D73) | нет | нет | `protocol` | string conversion |
+| **Resource-capabilities (effects)** | | | | |
+| `Db` | соединение к БД | нет | `effect` | mock в тестах через `with Db = ...` |
+| `Net` | сокет/HTTP-клиент | нет | `effect` | recorded responses |
+| `Fs` | файловая система | нет | `effect` | virtual-fs handler |
+| `Time` | clock | нет | `effect` | `fixed_ms(...)` ✓ — uuid v7, jwt, rate_limiter |
+| `Random` | RNG | нет | `effect` | `seeded(...)` ✓ — uuid v4, ulid, snowflake |
+| `Log` | logger sink | нет | `effect` | capture-log в тестах |
+| `Trace` | distributed tracer | нет | `effect` | в-memory trace |
+| `Io` | stdout/stderr | нет | `effect` | mock-stdout |
+| `Cache[K,V]` | кэш-провайдер | нет | `effect` | in-memory mock |
+| `Authn`/`Authz` | identity / capability | нет | `effect` | fixed-user в тестах |
+| `Idempotency` | dedup-store | нет | `effect` | in-memory mock |
+| **Continuation-effects** | | | | |
+| `Fail[E]` | error reporter | **да** (throw → Never) | `effect` | один на язык, особый |
+| **Resource + instrumental** | | | | |
+| `Mem` | alloc counter | нет | `effect` (instrumental) | observability, ambient ([D26](08-runtime.md#d26)) |
+| **Не существует в типах** | | | | |
+| `Async` | fiber scheduler | — | **runtime mechanic** | suspension ambient (D14/D62) |
+| GC / region | memory allocator | — | **runtime mechanic** | implicit ([D6](05-memory.md#d6)) |
+
+#### Кейсы где границы нечёткие
+
+- **`Logger` как protocol**: возможно, если используется через
+  `fn f(log Logger)` parameter passing без mock. Но 99% случаев —
+  effect (тесты подменяют). Default — `effect`.
+
+- **`Comparable` vs `Ord` effect**: `Ord` всегда protocol (bound).
+  Если нужно «глобальный compare-handler в тесте» — это **очень
+  редкий** use-case, лучше через named-fn-параметр.
+
+- **`Cache[K,V]`**: effect, потому что нужен mock в тестах (бесплатный
+  `with Cache = noop_cache`). Если cache — value-handle (как
+  Channel), то protocol; но обычно — handler-driven.
 
 #### Аналогия со статическим классом
 
@@ -2622,7 +2678,8 @@ Koka (academic effects). В Nova не нужен.
 `effect`:
 - Реализация **подменяется** через `with` (статический класс не
   подменяется без рефлексии).
-- Operations могут **захватывать continuation** через resume/interrupt.
+- Operations могут **захватывать continuation** через `throw` /
+  `interrupt`.
 
 Если эти два свойства не нужны — это просто `protocol` на инстансе,
 не `effect`.
@@ -2632,12 +2689,23 @@ Koka (academic effects). В Nova не нужен.
 Type checker ловит несоответствие:
 
 - Тип объявлен через `effect` — используется в effect-position
-  сигнатуры, operations через имя `X.op(...)`.
+  сигнатуры (`fn f() Db -> ...`), operations через имя `X.op(...)`.
 - Тип объявлен через `protocol` — используется в позиции значения
-  (параметр, поле), operations через инстанс `x.op(...)`.
+  (параметр, поле, generic-bound), operations через инстанс
+  `x.op(...)`.
 
-Смешение — compile error. Это **gatekeeper**, ловит ошибки выбора;
-не диктует, какой выбор делать.
+Смешение — compile error. Качество ошибок:
+
+```
+error: `Db` is an effect, not a protocol-bound
+  in fn f[T Db](x T)
+                ^^ effect cannot appear as type-bound
+  hint: use effect-position instead:
+        fn f(x T) Db -> ...
+```
+
+Это **gatekeeper**, ловит ошибки выбора; не диктует, какой выбор
+делать.
 
 ### Правило 5. `Mut[T]` убран из стандартного набора
 
@@ -2863,33 +2931,64 @@ D65 заменяет ранее существовавший unit-маркер `
 ([D26](08-runtime.md#d26)) на полноценный record. Также формализует
 лукап-правило handler'ов для `Fail`, которое раньше было implicit.
 
-### Правило 1. Гибрид `Fail[E]` / `Fail`
+### Правило 1. Три формы `Fail`: `Fail` / `Fail[E]` / `Fail[any]`
 
 ```nova
-// Типизированный
+// 1. Типизированный
 fn parse(s str) Fail[ParseError] -> int {
     if invalid(s) { throw ParseError.Bad }
 }
 
-// Universal — сахар над Fail[any]
+// 2. Inference placeholder — компилятор выводит конкретный E
 fn quick_helper(s str) Fail -> int {
-    if bad { throw "raw string error" }
+    if bad { throw "raw string error" }   // E inferred = str
 }
+
+// 3. Explicit erasure — программист явно хочет catch-all
+fn dump_handler[E](body fn() Fail[E] -> ()) Fail[any] -> () =>
+    with Fail[any] = (e) => Log.error("any error: ${e}") { body() }
 ```
 
-Семантика:
-- `Fail` без параметра ≡ `Fail[any]` (через top-type [D53](02-types.md#d53)).
-- `Fail[E]` — точный тип ошибки. Programmer выбирает `E`.
+Семантика — три **различные** формы:
 
-Convention (рекомендация, не enforce'ится type checker'ом):
+| Форма | Семантика | Use-case |
+|---|---|---|
+| `Fail` | **inference placeholder** — компилятор выводит конкретный E через [D28](#d28) (по телу private fn) или из call-site (для generic-параметров) | private fn / quick scripts |
+| `Fail[E]` | **typed** — точный тип ошибки | public API |
+| `Fail[any]` | **explicit erasure** — dynamic dispatch, catch-all handler | библиотечный код, который **сознательно** хочет catch-all (logging, supervision) |
 
-| Контекст | Рекомендуется |
-|---|---|
-| `export` (public API) | `Fail[E]` с конкретным типом |
-| Library, переиспользуемый код | `Fail[E]` |
-| Internal/private helper | `Fail` или `Fail[E]` |
-| Quick-and-dirty / scripts / тесты | `Fail` |
-| Generic в `retry`, `transaction` | `Fail[E]` через generic-параметр `[E]` |
+Это **три разные формы**; одна **не desugar'ится** в другую. В частности
+`Fail` ≠ `Fail[any]`:
+- `Fail` — программист **не указал** тип, ждёт inference.
+- `Fail[any]` — программист **явно** просит erasure, понимая trade-offs.
+
+**Пример где разница важна:**
+
+```nova
+// Generic retry — E выводится из body через D28
+fn retry[T, E](attempts int, body fn() Fail[E] -> T) Time Fail[E] -> T
+
+// Caller:
+retry(3, () => parse("..."))
+//              ↑ возвращает Fail[ParseError] → E = ParseError
+//                retry имеет signature Fail[ParseError]
+```
+
+Если бы `Fail` ≡ `Fail[any]`, такая generic-сигнатура (`fn body fn()
+Fail[E] -> T`) с inferred E работать не могла бы — `E` был бы
+зафиксирован в `any`. Через **placeholder-семантику** программист
+получает реальную типизацию.
+
+Convention (рекомендация, частично enforce'ится линтером):
+
+| Контекст | Форма | Линт |
+|---|---|---|
+| `export` (public API) | `Fail[E]` с конкретным типом | warning если `Fail` без E или `Fail[any]` |
+| Library, переиспользуемый код | `Fail[E]` | warning |
+| Internal/private helper | `Fail` (inferred) или `Fail[E]` | ok |
+| Quick-and-dirty / scripts / тесты | `Fail` | ok |
+| Generic в `retry`, `transaction` | `Fail[E]` через `[E]` | ok |
+| Catch-all logger / supervisor | `Fail[any]` явно | ok (намеренный паттерн) |
 
 Линтер может предупреждать «public-fn использует `Fail` без параметра» —
 suppressable через настройку проекта.

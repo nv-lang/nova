@@ -4508,6 +4508,161 @@ type InvalidCodepoint { value int }
 
 ---
 
+## Q-parallel-tuple. `parallel { ... }` блок с typed tuple-result
+
+**Контекст.** [D50](decisions/06-concurrency.md#d50) рекомендует
+`mut`-захваты для гетерогенного fan-out:
+
+```nova
+let mut a = 0
+let mut b = 0
+spawn { a = compute_a() }
+spawn { b = compute_b() }
+```
+
+Это **race-prone** в production-runtime (D14 с preemption) и допустимо
+только в D71 single-threaded bootstrap. После принятия [D79
+(channels)](decisions/06-concurrency.md#d79) есть safe-альтернатива
+для streaming/pipelines, но для **2-N** разнородных задач channel
+тяжеловат.
+
+**Предложение.** `parallel { ... }` блок с typed tuple-result:
+
+```nova
+let (a, b) = parallel {
+    compute_a(),    // → A
+    compute_b()     // → B
+}
+
+let (users, posts, count) = parallel {
+    fetch_users(),     // []User
+    fetch_posts(),     // []Post
+    count_active()     // int
+}
+```
+
+Семантика:
+- Каждое выражение запускается в отдельном fiber'е параллельно.
+- Блок ждёт завершения **всех**.
+- Результат — tuple типов выражений в порядке объявления.
+- При throw в любом fiber — отмена остальных через cancel-propagation
+  (как `parallel for` сегодня).
+- Никакого shared `mut` — программист не пишет race-prone захваты.
+
+**Преимущества:**
+
+1. **Safe by construction.** Нет shared state, только структурное
+   агрегирование результатов.
+2. **Типизировано.** Compiler знает типы каждого выражения, собирает
+   правильный tuple-тип.
+3. **AI-friendly.** Один паттерн вместо двух (`mut`-захват vs
+   channels) для типичного fan-out.
+4. **Композиция с D75.** Если нужен kill-switch снаружи — оборачиваем
+   в `cancel_scope`.
+
+### Implementation hint — overload-семья (bootstrap)
+
+В Nova **нет variadic generics** (есть только variadic для одного
+типа `[]T` через [D69](decisions/03-syntax.md#d69)). Для bootstrap-
+времени реализация — **explicit overload-семья N=2..8**:
+
+```nova
+fn parallel[A, B](
+    a fn() -> A,
+    b fn() -> B,
+) -> (A, B)
+
+fn parallel[A, B, C](
+    a fn() -> A,
+    b fn() -> B,
+    c fn() -> C,
+) -> (A, B, C)
+
+// ...до N=8 (стандартный лимит, как Rust tuple impls)
+```
+
+**Особенности:**
+
+- `parallel` — **library function**, не language keyword. Это упрощает
+  парсер.
+- Overloading по **arity** (число параметров) — [D46](decisions/03-syntax.md#d46)
+  разрешает overloading по типу аргумента, по arity тоже работает.
+- Generic-параметры выводятся из типов lambda-выражений в позиции
+  аргумента.
+
+**Использование как блок-выражение** возможно благодаря
+trailing-block-стилю ([D43](decisions/03-syntax.md#d43)):
+
+```nova
+let (a, b) = parallel(
+    () => compute_a(),
+    () => compute_b(),
+)
+```
+
+### Долгосрочная цель — variadic generics
+
+В будущем (отдельный Q-variadic-generics) вместо overload-семьи —
+один generic:
+
+```nova
+fn parallel[T...](fns ...fn() -> T) -> (T...)
+```
+
+Где `T...` — variadic generic-параметр (как Rust `tuple[T...]` или
+TypeScript `[...T]`). Это **отдельный Q**, не блокер для
+parallel-tuple сейчас.
+
+### Тонкости
+
+1. **Cancellation на throw.** Если первая задача throw'ит, остальные
+   должны отмениться. Реализация через `supervised`-style scope под
+   капотом. Если нужен «keep going on error» — программист пишет
+   `Result[T, E]` в каждой ветке явно.
+
+2. **Empty / 1-arg parallel.** `parallel()` или `parallel(f)` —
+   тривиальные случаи. `parallel(f)` ≡ `(f(),)` (single-element
+   tuple) — runtime overhead не оправдан, лучше compile-warning.
+
+3. **Effect-row.** `parallel(f, g)` имеет union эффектов f и g. В
+   bootstrap при overload-семье — статическая union. С variadic
+   generics — динамическая.
+
+4. **Async-context.** `parallel` использует suspension (ambient,
+   [D62](decisions/04-effects.md#d62)) — сигнатуры fn() -> T чистые,
+   suspension implicit.
+
+### Прецеденты
+
+| Язык | Конструкция | Notes |
+|---|---|---|
+| Rust | `tokio::join!(f, g)` | macro, возвращает tuple |
+| OCaml 5 | `Domain.spawn` + manual sync | без tuple-builder |
+| Erlang | `rpc:multicall` | для distributed |
+| Go | `errgroup.Group{}.Go(...)` | через group, не tuple |
+| Swift | `async let a = ...` | per-binding async |
+| Kotlin | `awaitAll(deferred1, deferred2)` | возвращает list |
+
+Nova `parallel(...) -> (T1, T2, ...)` — **гетерогенный typed tuple**,
+самая близкая аналогия — Rust `tokio::join!`.
+
+### Статус
+
+**Не зафиксировано.** После принятия [D79](decisions/06-concurrency.md#d79)
+(channels) parallel-tuple — естественное дополнение для гетерогенного
+fan-out. Решение:
+- **Bootstrap path:** overload-семья `parallel[A,B]`, `parallel[A,B,C]`,
+  …, `parallel[A,B,…,H]` в prelude.
+- **v2 path:** variadic generics + единая `parallel[T...]` функция.
+
+**Связь:** [D14](decisions/06-concurrency.md#d14) (suspension ambient),
+[D50](decisions/06-concurrency.md#d50) (concurrency model),
+[D69](decisions/03-syntax.md#d69) (variadic для одного типа),
+[D79](decisions/06-concurrency.md#d79) (channels — solution для
+streaming, parallel-tuple — для fan-out 2..N).
+
+---
+
 ## Финальное напоминание
 
 Прежде чем продолжать **дизайн**, прочитай:

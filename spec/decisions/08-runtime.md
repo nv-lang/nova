@@ -467,12 +467,71 @@ naming convention, по аналогии с примитивами. Исполь
 и `a..=b` (inclusive) (D58). Range — обычное значение, можно
 передавать как аргумент, хранить в переменной, использовать в `for`.
 
-**Стандартные эффекты** (после [D62](04-effects.md#d62)) — `Fail[E]`,
-`Io`, `Net`, `Db`, `Fs`, `Time`, `Random`, `Alloc[R]`, `Log`, `Trace`,
-`Ask[T]` — также в prelude. `Async`/`Par` — runtime-инфраструктура,
-не type-system эффекты ([D14 (REVISED)](06-concurrency.md#d14)).
-`Mut` удалён ([D62](04-effects.md#d62)) — изменяемое состояние через
-`mut` поля и параметры.
+**Стандартные эффекты** в prelude — после [D62](04-effects.md#d62)
+делятся на **две категории** по влиянию на семантику программы:
+
+#### Semantic effects — влияют на результат
+
+Программист **обязан** объявить в сигнатуре, если функция их
+использует. Caller получает информацию что зависит от resource'а.
+
+| Эффект | Resource | Тестовый handler |
+|---|---|---|
+| `Fail[E]` | error reporter | `with Fail[E] = (e) => ...` |
+| `Io` | stdout/stderr | mock-stdout |
+| `Net` | сеть (HTTP/socket) | recorded responses |
+| `Db` | соединение к БД | in-memory db |
+| `Fs` | файловая система | virtual-fs |
+| `Time` | clock | `fixed_ms(ms)` |
+| `Random` | RNG | `seeded(seed)` |
+| `Log` | logger | capture-log |
+| `Ask[T]` | контекстный read (Reader) | fixed value |
+| `Alloc[R]` | region аллокация | (для real-time, [D6](05-memory.md#d6)) |
+| `Detach` | background scheduler | `SyncDetach` |
+| `Blocking` | OS-thread pool | mock |
+
+#### Instrumental effects — observability, ambient
+
+`Mem` ([D76](#d76)) и `Trace` — **не влияют** на результат программы,
+только на наблюдаемость. Программист **не декларирует** их в
+сигнатуре; компилятор не лифтит через D28-inference.
+
+```nova
+// Программист пишет:
+fn parse_data(s str) -> Data { ... }
+
+// Внутри может быть Trace.span("parse"), Mem.alloc_count() — это
+// implementation detail, в сигнатуру НЕ лифтится.
+```
+
+**Ambient capability — прецедент `Async` (D14/D62).** Если в скоупе
+нет active handler для instrumental эффекта — runtime-panic
+(`RuntimeError.NoHandler("Mem")` через [D65](04-effects.md#d65)),
+**не compile error**.
+
+| Эффект | Категория |
+|---|---|
+| `Mem` | instrumental, ambient |
+| `Trace` | instrumental, ambient |
+
+**Зачем разделять:**
+
+1. **Сигнатуры остаются чистыми.** Если бы `Trace` был semantic, то
+   почти **каждая** функция бы содержала его — observability обычно
+   pervasive. Шум в типах.
+2. **AI-friendly.** LLM не должна писать `Mem` в сигнатуре —
+   instrumental detail имплементации.
+3. **Интуитивно.** `Time` в сигнатуре говорит "функция зависит от
+   времени, тестируй с fixed clock". `Trace` в сигнатуре ничего
+   полезного не говорит.
+
+#### Не существуют как эффекты
+
+| Имя | Почему |
+|---|---|
+| `Async` | runtime mechanic (suspension, [D14 (REVISED)](06-concurrency.md#d14)) |
+| `Par` | runtime mechanic (parallelism через `parallel for`) |
+| `Mut` | удалён ([D62](04-effects.md#d62)) — `mut` поля/параметры |
 
 **Базовые функции:**
 

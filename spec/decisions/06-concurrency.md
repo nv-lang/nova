@@ -11,6 +11,7 @@ structured-concurrency примитивы есть в языке, и как па
 | [D50](#d50-concurrency-model-spawn-detach-blocking) | Concurrency model: `spawn`, `detach`, `Blocking` |
 | [D71](#d71-bootstrap-concurrency-runtime) | Bootstrap concurrency runtime: cooperative scheduler, `Time.sleep` yield-point, capture-by-value |
 | [D75](#d75-cancel_scope--ручная-структурная-отмена) | `cancel_scope { tok => ... }` — ручная структурная отмена (реализовано) |
+| [D79](#d79-channels--coordination-между-fiber-ами) | `Channel[T]` — coordination между fiber'ами, `select { ... }` |
 
 ---
 
@@ -84,7 +85,7 @@ race {
     fetch(url_b),
 }
 
-// select — ожидание любого из событий
+// select — ожидание любого из событий (полная семантика — D79)
 select {
     msg <- channel_a => process(msg),
     msg <- channel_b => process(msg),
@@ -444,7 +445,12 @@ implementation detail (preemption после v1.0 делает их
      никакого `.await`/`.value()` не пишется.
    - Если нужна параллельность с гомогенным результатом →
      `parallel for ... { ... }` возвращает массив.
-   - Гетерогенная параллельность → `mut`-захваты или channels.
+   - Гетерогенная параллельность → channels ([D79](#d79)) или
+     `parallel { ... }` typed tuple (открытый
+     [Q-parallel-tuple](../open-questions.md#q-parallel-tuple)).
+     ⚠️ `mut`-захваты — race-prone в preemptive runtime, безопасны
+     только в D71 single-threaded bootstrap; для production
+     использовать channel или parallel-tuple.
 
    Альтернативы — implicit-await (= «цвет функции», D62 запрещает) или
    `Handle[T].value()` (= новый тип в системе, дополнительный
@@ -505,7 +511,9 @@ implementation detail (preemption после v1.0 делает их
 
 ### Открытые вопросы
 
-- Точные API `Channel[T]`, `Mutex`, `Atomic[T]` — Q9 (stdlib).
+- `Channel[T]` API — формализован в [D79](#d79). `Mutex`/`Atomic`
+  отвергнуты ([D79 «Что отвергнуто»](#d79)) в пользу channel-only
+  модели + owner-actor pattern.
 - Размер blocking-pool по умолчанию — детали реализации runtime'а.
 - Поведение при отмене detached-задачи — отдельный handler-сахар или
   работа через capability?
@@ -908,8 +916,10 @@ queued fibers видели бы только последнее значение
   работает корректно, но не testable как PASS.
 - **`race`, `select`, `cancel_scope`, `with_timeout`.** Каждый — отдельная
   задача после cancellation propagation.
-- **Channels (`Channel[T]`).** Spec-mention в D50 secondary. Без них
-  producer-consumer — через shared mut + yields (что и тестируется).
+- **Channels (`Channel[T]`).** Формализованы в [D79](#d79) (2026-05-07).
+  В D71 bootstrap-runtime реализация — следующая задача (single-
+  threaded queue + yield). До тех пор producer-consumer тестируется
+  через shared mut + yields (валидно только в D71 single-threaded).
 
 ### Связь
 
@@ -1107,3 +1117,369 @@ fail-fast при внешнем сигнале). Разделение делае
 3. **Token не survives scope-exit.** Token хранит указатель на
    queue-frame. После выхода из cancel_scope queue уничтожен; token
    становится dangling. По дизайну: токен — scope-bound handle.
+
+---
+
+## D79. Channels — coordination между fiber'ами
+
+### Что
+`Channel[T]` — типизированный канал для передачи значений между
+fiber'ами с blocking-семантикой. **First-class value** (не effect),
+обеспечивает safe-by-default взаимодействие в concurrent коде.
+
+`select { ... }` — мультиплексирование recv-операций по нескольким
+каналам с опциональным `timeout` case. Был упомянут в D14/D50 как
+пример без формальной декларации; D79 закрывает эту дыру.
+
+Channels — **единственный safe способ** разделять данные между
+fiber'ами в production-runtime (D14 с preemption). Альтернатива —
+shared `mut` через захваты — ⚠️ undefined behavior в preemptive
+runtime, разрешён только в D71 single-threaded bootstrap.
+
+### Правило
+
+#### Тип Channel[T]
+
+```nova
+type Channel[T] { ... }    // opaque в spec; реализация в runtime
+
+fn Channel[T].new(capacity int) -> Channel[T]
+//   capacity = 0   — unbuffered (rendezvous, send блокирует пока recv не пришёл)
+//   capacity = N>0 — bounded buffer, send блокирует когда полон
+```
+
+`Channel[T]` — обычный value-тип. Передаётся между fiber'ами
+**через capture в spawn-body** или **как параметр функции**. Это
+single canonical pattern; никаких глобальных channel-handler'ов не
+нужно (channel сам по себе — handle-объект).
+
+#### Operations
+
+```nova
+fn Channel[T] @send(v T) -> ()              // блокирует если буфер полон
+fn Channel[T] @recv() -> Option[T]          // None ⇔ closed и буфер пуст
+fn Channel[T] @try_send(v T) -> bool        // true если послал, false если полон
+fn Channel[T] @try_recv() -> Option[T]      // None если пусто (вне closed-семантики)
+fn Channel[T] @close() -> ()                // idempotent
+fn Channel[T] @is_closed() -> bool
+fn Channel[T] @len() -> int                  // текущий размер буфера
+fn Channel[T] @capacity() -> int             // фиксированный, из new()
+```
+
+**Семантика closed-channel:**
+
+| Operation | Closed + buffer empty | Closed + buffer non-empty |
+|---|---|---|
+| `send(v)` | panic ("send on closed channel") | panic |
+| `try_send(v)` | false | false |
+| `recv()` | None | Some(item) — дренаж |
+| `try_recv()` | None | Some(item) — дренаж |
+
+**`send` на closed channel — panic, не throw.** Это programming error
+(как двойной free), не recoverable runtime condition. Закрывать channel
+должен **producer** (или координирующая сторона), и после close никто
+не должен отправлять — это invariant программы. По D13 — panic.
+
+**`recv` после close**: дренаж буфера, потом None. Receivers могут
+безопасно итерировать `while let Some(v) = ch.recv() { ... }` без
+явной проверки is_closed.
+
+#### Suspension и signature
+
+Send/recv блокируют → требуют suspension. По D62 suspension — ambient
+runtime mechanic, **не effect**. Сигнатура чистая:
+
+```nova
+fn process(ch Channel[Request]) Db -> () {
+    while let Some(req) = ch.recv() {
+        Db.exec(req.sql)
+    }
+}
+```
+
+В сигнатуре только бизнес-эффекты (`Db`), никакого `Async`. Suspension
+неявная.
+
+#### `select { ... }` — мультиплексирование
+
+```nova
+select {
+    msg <- ch_a       => process_a(msg)
+    msg <- ch_b       => process_b(msg)
+    timeout(5.seconds()) => default_action()
+}
+```
+
+**Грамматика:**
+
+```
+select-expr   = 'select' '{' select-arm+ '}'
+select-arm    = recv-arm | timeout-arm
+recv-arm      = pattern '<-' expr '=>' arm-body
+timeout-arm   = 'timeout' '(' expr ')' '=>' arm-body
+```
+
+**`<-`** — recv-операция в pattern-position select-арма (только там).
+Не general operator.
+
+**Семантика:**
+
+1. Запускается **все** recv-операции одновременно. Блокирует пока
+   ≥ 1 готов (есть значение в буфере или закрыт), либо timeout
+   истёк.
+2. Если **несколько** готовы одновременно — выбор **non-deterministic**
+   (runtime может round-robin / random / FIFO). Программист **не
+   должен** полагаться на конкретный порядок.
+3. **Closed channel в recv-арме** → возвращает None, арм-pattern
+   match'ится (например, `None => break`).
+4. **Без timeout-case** — `select` может блокировать бесконечно
+   (если все каналы пусты и не закрываются).
+5. **Один timeout-case** — обязательное-уникальное ограничение.
+   Несколько timeout — compile error.
+
+Pattern в recv-арме — **обычный pattern** на `Option[T]` (channel
+type). Programmer обычно пишет `Some(msg)` или `None`:
+
+```nova
+select {
+    Some(msg) <- ch_a => process(msg)
+    None      <- ch_a => break               // ch_a закрылся
+    Some(req) <- ch_b => handle(req)
+    timeout(1.second()) => log_idle()
+}
+```
+
+Сокращение `msg <- ch_a` (без `Some(...)`) валидно если все ветки
+ждут только Some-вариантов:
+
+```nova
+select {
+    msg <- ch_a => process(msg)              // подразумевает Some(msg); None игнорируется
+    msg <- ch_b => process(msg)
+}
+```
+
+Если все каналы закрылись и нет timeout-case — `select` panic
+("all channels closed in select without timeout"). Программист либо
+обрабатывает None явно, либо ставит timeout.
+
+#### Канонические patterns
+
+**Producer/consumer:**
+
+```nova
+fn pipeline(input Channel[Request]) Db -> () {
+    let processed = Channel[Response].new(100)
+
+    spawn {
+        while let Some(req) = input.recv() {
+            let resp = process(req)
+            processed.send(resp)
+        }
+        processed.close()
+    }
+
+    spawn {
+        while let Some(resp) = processed.recv() {
+            Db.exec(resp.persist_sql)
+        }
+    }
+}
+```
+
+**Fan-out:**
+
+```nova
+let work = Channel[Task].new(0)
+for i in 0..10 {
+    spawn {
+        while let Some(task) = work.recv() {
+            task.run()
+        }
+    }
+}
+for t in tasks {
+    work.send(t)
+}
+work.close()
+```
+
+**Worker pool с graceful shutdown:**
+
+```nova
+let work = Channel[Task].new(0)
+let shutdown = Channel[()].new(1)
+
+spawn {
+    select {
+        Some(task) <- work        => task.run()
+        Some(_)    <- shutdown    => return ()
+    }
+}
+```
+
+#### Bootstrap-семантика (D71)
+
+В D71 bootstrap-runtime (single-threaded cooperative):
+- `send` на полный буфер — yield, продолжается когда recv освобождает место
+- `recv` на пустой — yield, продолжается когда send добавит
+- Memory ordering тривиальна (single thread)
+- Round-robin между select-armами
+
+В production-runtime (D14 future):
+- Memory-barriers / atomic counters для buffer indexes
+- Wait queues для blocked senders/receivers
+- Channel — единственный гарантированно-safe primitive
+
+#### Mutex / Atomic — НЕ в spec
+
+Channel — **достаточный** primitive для всех coordination patterns.
+Mutex и atomic — нижнеуровневые, легко misuse'ить, не AI-friendly.
+
+Если мутируемое разделяемое состояние действительно нужно, идиома:
+**dedicated owner-fiber + channel** (Erlang-стиль). Owner владеет
+данными, остальные шлют ему сообщения через channel.
+
+```nova
+fn counter_actor(input Channel[CounterMsg], output Channel[int]) {
+    let mut value = 0
+    while let Some(msg) = input.recv() {
+        match msg {
+            Increment => value += 1
+            Get       => output.send(value)
+            Reset     => value = 0
+        }
+    }
+}
+```
+
+Это **safe by construction** — нет shared state, только message-passing.
+
+### Почему
+
+1. **Закрывает реальный пробел spec'и.** D14/D50 упоминали `select { msg
+   <- ch_a => ... }` как пример с подразумеваемым Channel[T], но без
+   формальной декларации. D79 формализует.
+
+2. **Production-correctness.** В preemptive runtime (D14) shared `mut`
+   между fiber'ами — UB. Channels единственный safe primitive по
+   умолчанию.
+
+3. **AI-first.** LLM пишет concurrent код по узнаваемому паттерну
+   (Go-style channels). Никаких lock ordering задач, deadlock detection
+   через структуру pipeline'а.
+
+4. **D62-согласованность.** Suspension ambient → channel methods чистая
+   сигнатура. Никаких Channel-effects в effect-row.
+
+5. **`select` как primitive.** D14 уже описывал `select` как
+   structured-concurrency primitive (наряду с `parallel for` / `race`);
+   D79 даёт ему точную семантику относительно channels.
+
+6. **Прецеденты:**
+   - **Go** — channels + select как core feature; основа large-scale
+     production систем (Kubernetes, Docker).
+   - **Erlang/Elixir** — message-passing через mailboxes, та же
+     философия.
+   - **Crystal** — Go-style channels.
+   - **Rust** (`std::sync::mpsc`) — channels как отдельный modul, не
+     core; результат — community предпочла tokio crate с собственной
+     моделью.
+   - **OCaml 5** — domains + channels (effect-handlers).
+
+### Что отвергнуто
+
+- **`Channel[T]` как effect**, требующий `with Channel = ...`.
+  Channel — это value-handle, не resource-capability. Подменять
+  channel в тестах = передавать другой channel-объект (parameter
+  injection), не handler-substitution.
+
+- **Mutex / Atomic в prelude.** Низкоуровневые, легко misuse,
+  deadlock-prone. Owner-actor pattern закрывает 99% use case'ов.
+  Если кому-то реально нужен Mutex — может реализовать через channel
+  (token-channel вместимостью 1).
+
+- **`<-` как general operator.** `recv` через method `.recv()` для
+  consistency с другими method-based API. `<-` только в pattern-position
+  select-арма — синтаксический сахар, не expression.
+
+- **Unbounded channels по умолчанию.** Bounded channel явно — лучшая
+  practice для backpressure. `Channel[T].new(0)` для unbuffered;
+  unbounded — **отвергнуто** (опасный antipattern). Если действительно
+  нужен — через explicit buffer-grow в user-коде.
+
+- **Channels как structural protocol.** Channel — конкретный type
+  с runtime-implementation, не protocol. Возможны разные Channel-
+  типы (например, `BroadcastChannel`), но они отдельные типы.
+
+- **Builtin priority в select.** `select` non-deterministic между
+  ready-armами. Если нужен приоритет — программист сам пишет
+  if-cascade с try_recv.
+
+### Цена
+
+1. **Runtime сложность.** Channel требует buffer, lock-free queue
+   (production), wait list, close-state machine. Bootstrap (D71) —
+   проще: single-threaded queue + yield. Production — серьёзная
+   реализация.
+
+2. **`select` в parser.** Новая конструкция: `select { pattern <- expr
+   => body, timeout(d) => body }`. Compiler-codegen агент займётся
+   когда D79 будет принят.
+
+3. **Closed-channel panic vs throw.** Send на closed — panic. Это
+   осознанный выбор: programmer error, не recoverable. Альтернатива
+   (`Fail[ChannelClosed]`) усложнила бы каждый send. Cost: программист
+   должен следить за close-protocol (обычно single owner закрывает).
+
+4. **Non-determinism в select.** Программист не может полагаться
+   на порядок arms. Тесты должны не зависеть от порядка (или
+   использовать try_recv для строгого порядка).
+
+### Связь
+
+- [D14](#d14-fiber-runtime--невидимая-инфраструктура) — fiber-runtime
+  основа; channels — primitive поверх него.
+- [D50](#d50-concurrency-model-spawn-detach-blocking) — concurrency
+  model; D79 формализует упомянутые там channels.
+- [D62](04-effects.md#d62) — suspension ambient → чистые signatures
+  для channel methods.
+- [D71](#d71-bootstrap-concurrency-runtime) — bootstrap runtime;
+  channels там тривиальная queue + yield.
+- [D72](02-types.md#d72) — generic bounds; `Channel[T Clone]` если
+  понадобится требование на T (пока не требуется).
+- [D73](08-runtime.md#d73) — `From`/`Into`; для channels не применимо
+  (channel — handle, не value-конверсия).
+- [D75](#d75) — `cancel_scope`; channels часто используются с
+  cancellation tokens.
+- [D13](08-runtime.md#d13) — panic vs Fail; close+send → panic.
+
+### Открытые вопросы
+
+- **Broadcast channels** (один send → все receivers). Q-broadcast —
+  отдельная задача после v1.0. Pattern: можно реализовать через
+  владельческий fiber, который рассылает в N output-каналов.
+- **Channel of channels** для dynamic worker pools. Технически
+  работает (Channel[Channel[T]]), нужны примеры в stdlib.
+- **`@send_timeout(v T, d Duration)`** — отдельная вариация. Можно
+  через select с timeout, но iдиома громоздкая. Q-send-timeout.
+- **Memory model между fibers.** В preemptive runtime — strong
+  ordering (как Go: channel send/recv — happens-before). В D14
+  production-runtime — нужно явно зафиксировать. Q-memory-model.
+
+### Эволюция
+
+До D79:
+- D14 (2024-2025) — упомянул `select` пример с `<- channel_a` без
+  определения Channel.
+- D50 — упомянул «channels» в обсуждении spawn'а с `mut`-захватами,
+  но без типа.
+- D71 (2026-05-06) — bootstrap runtime; channels отложены как
+  «producer-consumer через shared mut + yields».
+- spec-review (2026-05-07) — компиляторный агент идентифицировал
+  Channel/Mutex как spec-gap.
+
+D79 закрывает gap: формальная декларация Channel[T] + select +
+семантика closed/non-deterministic ordering/owner-actor pattern.
+
+Bootstrap-реализация — следующий шаг (компиляторный агент).
