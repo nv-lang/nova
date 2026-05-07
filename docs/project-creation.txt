@@ -547,22 +547,209 @@ parse_trailing_block — `unexpected => in expression`.
 (после исправления видны новые блокеры).
 
 ================================================================================
-ИТОГО (2026-05-07)
+D26 PRELUDE API — OPTION / RESULT МЕТОДЫ + STR-API (тесты 57, 2026-05-07)
 ================================================================================
 
-Suite: 56/56 tests passing.
+D26 prelude расширен базовыми методами Option[T] / Result[T,E]:
+  Option: is_some / is_none / unwrap (Fail[Error]) / unwrap_or(default) /
+          unwrap_or_else(f) / map[U] / ok_or[E] / or
+  Result: is_ok / is_err / ok -> Option[T] / err -> Option[E] /
+          unwrap (Fail[E]) / unwrap_or / unwrap_or_else / map[U] / map_err[F]
+
+Реализация (runtime nova_rt/array.h):
+  Nova_Option_method_is_some_<T>, _is_none_<T>, _unwrap_or_<T>
+  для T ∈ {nova_int, nova_str} (per-elem-type специализация).
+  Nova_Result_method_is_ok / _is_err / _unwrap_or / _ok.
+
+Codegen:
+  - Special-case dispatch для obj_ty.starts_with("NovaOpt_") и
+    obj_ty == "Nova_Result*" в emit_call.
+  - unwrap → inline check + Nova_Fail_fail.
+  - infer_expr_c_type для NovaOpt_T.{is_some,is_none}->bool, etc.
+
+Также формализован str API в spec D26:
+  - Все индексы — byte-offset (consistent с slice, как Rust/Go).
+  - Зафиксированы методы: @find, @rfind, @contains, @starts_with,
+    @ends_with, @split, @trim, @to_lower, @to_upper.
+
+D73 + D77 — 4-way auto-derive:
+  Программист пишет ОДНУ из 4-х форм (from/into/try_from/try_into),
+  компилятор синтезирует остальные.
+  РЕКОМЕНДАЦИЯ:
+    - реализовывать try_from (для fallible) — Result-стиль явный
+    - использовать в коде from/into — короче
+  Алгоритм синтеза задокументирован в D73 «Auto-derive 4-way».
+
+D25 — добавлен performance-анализ throw:
+  ~50-200ns в bootstrap (vtable + longjmp + cross-mco optional).
+  Сравнение с Java/C++/Rust/Go.
+  Hot-loop рекомендация: использовать Result-стиль через D77.
+
+Тесты (tests-nova/runtime/unwrap_or.nv, 14 passing):
+  - Some/None .is_some/.is_none/.unwrap/.unwrap_or
+  - None.unwrap throws Fail (caught)
+  - Ok/Err .is_ok/.is_err/.ok/.unwrap/.unwrap_or
+  - Err.unwrap throws с err-msg
+  - Chained: try_parse(s).unwrap_or(default)
+
+================================================================================
+SOURCE ANNOTATIONS В .C ФАЙЛАХ (2026-05-07)
+================================================================================
+
+CLI-флаг для отладки сгенерированного C:
+  Раньше: nova-codegen compile <file> [-a | --annotate-source]
+  Теперь: nova-codegen compile <file> [--no-annotate-source]
+  (annotations включены ПО УМОЛЧАНИЮ, opt-out через --no-...)
+
+Hook вставляет /* SRC: <Nova-line> */ перед каждым C-statement'ом.
+Покрытие:
+  - emit_stmt (each Stmt::*)
+  - emit_block_stmts trailing-expr (закрывающий expr в block)
+  - FnBody::Expr (4 места — обычные fn, generic, methods, main)
+
+Sanitize: replace "*/" → "* /" (escape comment-close); одинокие * и /
+сохраняются (multiplication / division читаемы).
+
+Truncate до 120 символов с " …" если урезано.
+
+================================================================================
+INTERRUPT V ЧЕРЕЗ MCO-COROUTINE-BOUNDARY (2026-05-07)
+================================================================================
+
+D61/D65: handler-method для Fail (fail() -> Never) завершается через
+`interrupt v`, не `return`/trailing. До фикса работало только когда
+with-frame на fiber-stack; при выходе с main-stack — UB.
+
+Runtime:
+  NovaFiberQueue.fiber_interrupt_top[N] — per-fiber saved
+  NovaInterruptFrame*, switch'ится в supervised_step рядом с
+  fiber_fail_top.
+  interrupt_pending/interrupt_value поля для cross-boundary.
+
+nova_interrupt(value) (effects.c):
+  1. _nova_interrupt_top != NULL → direct longjmp (fiber-local или
+     main-flow).
+  2. NULL И in fiber → запись pending в scope, longjmp на fiber-local
+     fail-frame с sentinel "__nova_interrupt__", set cancel_requested
+     для peer-fibers.
+  3. NULL И не fiber → no-op.
+
+Codegen emit_spawn catch detect'ит sentinel — НЕ вызывает
+nova_fiber_report_error (чтобы не отравить scope.first_error).
+
+supervised_run после drain: pending имеет приоритет → re-issue
+nova_interrupt(value) на main-flow ДО re-throw'а fail-error.
+
+После фикса все handler-method'ы для Fail используют spec-correct
+`interrupt ()` вместо bootstrap-leniency `return ()`. Изменены
+14 occurrences в 4 файлах (effects/fail_handler, syntax/throw_in_expression,
+concurrency/cancel_scope_test, runtime/unwrap_or).
+
+================================================================================
+TESTS-NOVA/ — ИЕРАРХИЧЕСКАЯ РЕОРГАНИЗАЦИЯ (2026-05-07)
+================================================================================
+
+Из плоского нумерованного layout (`01_literals.nv` ... `57_unwrap_or.nv`)
+в иерархию по тематическим группам spec'а:
+
+  basics/        8 файлов (literals, operators, ..., trailing_block)
+  types/        12 файлов (records, sum_types, ..., char_literals)
+  syntax/       12 файлов (pattern_matching, methods, ..., throw_in_expression)
+  effects/       7 файлов (basic, throws, ..., handler_wrappers)
+  concurrency/  11 файлов (deep_spawn, parallel_for, ..., cancel_scope_test)
+  runtime/       4 файла (from_into_derive, memory_growth, buffer, unwrap_or)
+  modules/       3 файла (stack_queue, json_ast, integration)
+
+Module declarations: `module spec.X` → `module nova_tests.<group>.X`.
+Это D29-compliance (path = module name, package name из nova.toml).
+
+Keyword-collisions handled через `_test` суффикс:
+  cancel_scope.nv → cancel_scope_test.nv (cancel_scope keyword)
+  detach.nv → detach_test.nv
+  effects.nv → basic.nv (collision с runtime nova_rt/effects.c при
+  компиляции в общий tmp_dir).
+
+run_tests.ps1 обновлён:
+  - Recursive .nv search в подкаталогах.
+  - Per-test obj_dir для cl.exe (избегаем .obj name collisions).
+  - Display name: relative path (concurrency/parallel_for vs голый "41").
+  - Case-insensitive path comparison (Windows: D:\ vs d:\).
+
+================================================================================
+NAMED TMPS В ГЕНЕРИРОВАННОМ C (2026-05-07)
+================================================================================
+
+Раньше: _nova_tmp0, _nova_tmp1, _nova_tmp2 — голый счётчик.
+Теперь: семантические роли в имени:
+  _nv_scr_<n>      — match scrutinee
+  _nv_match_<n>    — match result
+  _nv_matched_<n>  — match success flag
+  _nv_if_<n>       — if-expression result
+  _nv_if_let_<n>, _nv_while_let_<n>, _nv_while_<n>, _nv_loop_<n>
+  _nv_println_<n>  — println scope
+  _nv_tmp_<n>      — generic fallback
+
+Применено в emit_match, emit_if, ExprKind::IfLet, WhileLet, While, Loop,
+emit_println. Остальные ~40 fresh_tmp call-sites используют общий
+_nv_tmp_<n>.
+
+================================================================================
+HANDLER-WRAPPER PATTERN — D10 DEMO (2026-05-07)
+================================================================================
+
+Демонстрационный пример «всё — handler» (D10) — cleanup ресурсов через
+функцию-обёртку с body-lambda, без defer/RAII.
+
+with_resource_safe(id, t, body):
+  1. opened += 1.
+  2. body внутри `with Fail = handler { fail → caught + interrupt }`.
+  3. На любом пути выхода (happy + throw) делает cleanup (closed += 1).
+  4. Если был throw — re-throw наружу.
+
+vs naive-версия (без внутреннего handler'а): на throw'е closed остаётся
+0, ресурс leaked.
+
+Тесты (tests-nova/effects/handler_wrappers.nv, 4 passing):
+  - happy path safe + naive (oба opened==1, closed==1).
+  - naive throw → leak (closed==0).
+  - safe throw → cleanup (closed==1).
+
+При написании выявлены bootstrap-ограничения (документированы в файле):
+  1. mut в свободных fn-параметрах не парсится.
+  2. fn T @method(...) Fail[E] -> R парсер не любит throw-методы.
+  3. Trailing-block с non-int closure-параметром падает в codegen
+     (нет type-erasure для closures).
+
+================================================================================
+ИТОГО (2026-05-07 финал)
+================================================================================
+
+Suite: 58/58 tests passing.
+
+Tests-nova layout: иерархическая (basics/types/syntax/effects/concurrency/
+runtime/modules), все module-decls согласованы с paths.
 
 Закрытые с прошлой записи:
-- D71 array-mode parallel for → []T
-- D75 cancel_scope { tok => ... }
-- D76 Mem effect (introspection)
-- Time real-clock (now/sleep)
-- per-fiber assert routing (UB fix)
-- throw в expression position
-- D77 TryFrom/TryInto (была D75, переименована)
-- Q-buffer (Buffer accumulator)
-- Q-char-literals
-- Parser no_trailing_block fix
+- D26 prelude API (Option/Result methods)
+- D26 str API формализован (find/contains/etc — byte-index)
+- D73 + D77 4-way auto-derive (try_from реализуется, from/into
+  используется в коде; recommendation в spec)
+- D25 throw cost-model документирован
+- Source annotations default-on (--no-annotate-source для opt-out)
+- Interrupt v через mco-coroutine-boundary (UB-fix, как assert ранее)
+- tests-nova reorganization (плоская нумерация → группы по темам)
+- Named tmps в .c (роль вместо счётчика)
+- Handler-wrapper D10 demo
 
-Stdlib examples: 0/11 (все 11 имеют разные блокеры; 4 продвинулись
-в номерах строк после описанных fix'ов).
+Stdlib examples: 0/16 (5 новых от пользователя — base64/crc32/ulid/url/uuid
+тоже падают на разных blocker'ах). Все блокеры — отдельные codegen/
+parser задачи (документированы в examples/stdlib/STATUS.md).
+
+Open questions значимые:
+- Q20 defer (выжидать MVP-stdlib и реальные use-cases).
+- Q-string-indexing s[i] (byte / codepoint / запрет).
+- Q-cstring nul-termination guarantee (вариант 2 рекомендован).
+- Q-string-interning (Atom-тип отложен).
+- Q-overloading по argument-type (bootstrap last-wins).
+- Q-clone-semantics (deep auto-derive предложено).
+- Q-readonly-types (TS-style — отложено).
