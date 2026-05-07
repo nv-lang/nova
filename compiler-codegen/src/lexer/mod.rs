@@ -349,8 +349,17 @@ impl<'a> Lexer<'a> {
         }
         let text = &self.src[digits_start..self.pos];
         let cleaned: String = text.chars().filter(|c| *c != '_').collect();
-        let v = i64::from_str_radix(&cleaned, radix)
-            .map_err(|e| Diagnostic::new(format!("invalid int: {e}"), span))?;
+        // Сначала пробуем i64. Если не лезет (e.g. 0xCBF29CE484222325 в FNV-64 prime),
+        // парсим как u64 и приводим к i64 wrapping — биты тождественны, что важно для
+        // bitwise/hash операций. Это spec'оподобное поведение u64-литералов в i64-типе.
+        let v = match i64::from_str_radix(&cleaned, radix) {
+            Ok(v) => v,
+            Err(_) => {
+                let u = u64::from_str_radix(&cleaned, radix)
+                    .map_err(|e| Diagnostic::new(format!("invalid int: {e}"), span))?;
+                u as i64
+            }
+        };
         Ok(Token::new(TokenKind::Int(v), span))
     }
 

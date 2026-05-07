@@ -150,3 +150,30 @@ test "is even via & 1" {
     assert((42 & 1) == 0)
     assert((43 & 1) == 1)
 }
+
+// ================================================================
+// SECTION 8: hex-литералы > i64::MAX (u64-семантика, wrapping в i64)
+// ================================================================
+// Hex/binary литералы которые помещаются в u64 но не в i64 — парсятся
+// как u64 и приводятся к i64 wrapping (биты тождественны). Это нужно
+// для FNV/UUID/CRC констант.
+
+test "u64 hex literal beyond i64::MAX wraps to negative i64" {
+    // 0xCBF29CE484222325 = 14695981039346656037 (FNV-64 offset basis)
+    // i64-биты: -3750763034362895579
+    let fnv64_offset = 0xCBF29CE484222325
+    assert(fnv64_offset == -3750763034362895579)
+}
+
+test "u64 hex all-ones = -1 in i64" {
+    let all_ones = 0xFFFFFFFFFFFFFFFF
+    assert(all_ones == -1)
+}
+
+test "u64 hex high bit set" {
+    let high_bit = 0x8000000000000000      // 2^63
+    // i64-биты: -9223372036854775808 (i64::MIN)
+    // Используем bitwise & 1 для проверки что компилятор сохранил битовый паттерн.
+    assert((high_bit & 1) == 0)
+    assert((high_bit >> 63) & 1 == 1)
+}
