@@ -7960,13 +7960,14 @@ impl CEmitter {
                             return "nova_int".into();
                         }
                     }
-                    // Plan 04: instance-method type inference.
+                    // Plan 04 + Plan 13 Ф.9.1: instance-method type inference.
+                    // Self-return для chaining (mut @append, all @write_*, @clone).
                     if obj_ty == "Nova_StringBuilder*" {
                         return match method.as_str() {
                             "len" | "capacity" => "nova_int".into(),
                             "clone" => "Nova_StringBuilder*".into(),
                             "into" => "nova_str".into(),
-                            "append" => "nova_unit".into(),
+                            "append" => "Nova_StringBuilder*".into(),  // Self (Ф.9.1)
                             _ => "nova_int".into(),
                         };
                     }
@@ -7975,7 +7976,8 @@ impl CEmitter {
                             "len" | "capacity" => "nova_int".into(),
                             "clone" => "Nova_WriteBuffer*".into(),
                             "into" => "NovaArray_nova_byte*".into(),
-                            m if m.starts_with("write_") => "nova_unit".into(),
+                            // Self-return для chaining (Ф.9.1).
+                            m if m.starts_with("write_") => "Nova_WriteBuffer*".into(),
                             _ => "nova_int".into(),
                         };
                     }
@@ -7989,6 +7991,9 @@ impl CEmitter {
                             "read_byte" | "read_u8" => "nova_byte".into(),
                             "read_i8" => "nova_int".into(),
                             "read_bytes" => "NovaArray_nova_byte*".into(),
+                            // Plan 13 Ф.9.4: codepoint-уровневые reads.
+                            "read_char" => "nova_int".into(),  // char хранится как nova_int
+                            "read_str"  => "nova_str".into(),
                             "read_u16_le" | "read_u16_be"
                             | "read_u32_le" | "read_u32_be"
                             | "read_u64_le" | "read_u64_be"
