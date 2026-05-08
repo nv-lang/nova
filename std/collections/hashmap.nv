@@ -215,22 +215,23 @@ export fn HashMap[K, V] mut @get_or_insert(key K, default fn() -> V) -> V {
 // ──────────────────────────────────────────────────────────────────────────
 
 // Iterator pattern — структурный тип для for-цикла ([D15](../spec/decisions/02-types.md#d15)).
+// GC keeps map alive via field reference (D43 — нет &T / borrow в Nova).
 type HashMapIter[K, V] {
-    map_ref &HashMap[K, V]    // в реальной stdlib — borrow или Rc
+    map HashMap[K, V]
     pos int
 }
 
 // HashMap.@iter() — итератор по парам (k, v) в произвольном порядке.
 // D55: имя HashMapIter[K, V] выводится из `-> HashMapIter[K, V]`.
 export fn HashMap[K, V] @iter() -> HashMapIter[K, V] =>
-    { map_ref: @, pos: 0 }
+    { map: @, pos: 0 }
 
 // HashMapIter mut @next() — стандартная операция для for-loop.
 //
 // Структурно совместима с любым итератором: { next() -> Option[T] }.
 export fn HashMapIter[K, V] mut @next() -> Option[(K, V)] {
-    while @pos < @map_ref.buckets.len {
-        let slot = @map_ref.buckets[@pos]
+    while @pos < @map.buckets.len {
+        let slot = @map.buckets[@pos]
         @pos += 1
         if let Occupied { key, value } = slot {
             return Some((key, value))

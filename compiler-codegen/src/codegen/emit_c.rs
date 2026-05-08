@@ -4882,10 +4882,20 @@ impl CEmitter {
                         if let Some(arg) = args.first() {
                             let arg_ty = self.infer_expr_c_type(arg);
                             let arg_type = arg_ty.trim_start_matches("Nova_").trim_end_matches('*').to_string();
-                            // User-defined `fn str.from(...)` wins over builtin.
-                            if let Some(("str", false)) = self.method_receivers.get("from").map(|(t, b)| (t.as_str(), *b)) {
-                                let v = self.emit_expr(arg)?;
-                                return Ok(format!("Nova_str_static_from({})", v));
+                            // Plan 11: try multi-overload registry first.
+                            let key = ("str".to_string(), "from".to_string());
+                            if let Some(overloads) = self.method_overloads.get(&key).cloned() {
+                                let static_overloads: Vec<MethodSig> = overloads.into_iter()
+                                    .filter(|s| !s.is_instance).collect();
+                                if !static_overloads.is_empty() {
+                                    let v = self.emit_expr(arg)?;
+                                    let chosen = static_overloads.iter()
+                                        .find(|s| s.param_c_types.len() == 1
+                                            && s.param_c_types[0] == arg_ty);
+                                    if let Some(sig) = chosen {
+                                        return Ok(format!("{}({})", sig.c_name, v));
+                                    }
+                                }
                             }
                             if let Some(into_target) = self.into_targets.get(&arg_type) {
                                 if into_target == "str" {
@@ -5419,13 +5429,23 @@ impl CEmitter {
                         if let Some(arg) = args.first() {
                             let arg_ty = self.infer_expr_c_type(arg);
                             let arg_type = arg_ty.trim_start_matches("Nova_").trim_end_matches('*').to_string();
-                            // User-defined `fn str.from(...)` wins over builtin.
-                            // method_receivers["from"] = ("str", false) means user defined a static
-                            // `from` on str — emit the user impl. Note: doesn't disambiguate
-                            // multiple from-on-str overloads (Q-overloading), but works for one.
-                            if let Some(("str", false)) = self.method_receivers.get("from").map(|(t, b)| (t.as_str(), *b)) {
-                                let v = self.emit_expr(arg)?;
-                                return Ok(format!("Nova_str_static_from({})", v));
+                            // Plan 11: try multi-overload registry first — strict
+                            // arg-type match resolves between overloads (e.g. char vs int).
+                            // If found, use the matching overload's c_name (with parameter
+                            // mangling like `Nova_str_static_from_char`).
+                            let key = ("str".to_string(), "from".to_string());
+                            if let Some(overloads) = self.method_overloads.get(&key).cloned() {
+                                let static_overloads: Vec<MethodSig> = overloads.into_iter()
+                                    .filter(|s| !s.is_instance).collect();
+                                if !static_overloads.is_empty() {
+                                    let v = self.emit_expr(arg)?;
+                                    let chosen = static_overloads.iter()
+                                        .find(|s| s.param_c_types.len() == 1
+                                            && s.param_c_types[0] == arg_ty);
+                                    if let Some(sig) = chosen {
+                                        return Ok(format!("{}({})", sig.c_name, v));
+                                    }
+                                }
                             }
                             // Auto-derive: V has @into() -> str?
                             if let Some(into_target) = self.into_targets.get(&arg_type) {
