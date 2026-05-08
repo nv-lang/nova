@@ -1,6 +1,19 @@
 # План 13 — Runtime stdlib (str/math) + auto-gen `std/runtime/*.nv`
 
-**Статус:** ⏳ pending.
+**Статус:** ✅ MVP closed (2026-05-08). Ф.1-Ф.3, Ф.5, Ф.6, Ф.7 готовы.
+Ф.4 (special-case removal в emit_call для str/math) **отложен** — full
+migration требует careful refactor, риск регрессий в 78 тестах.
+Infrastructure готова: registry → stubs работает; следующая итерация
+переключит dispatch.
+
+Acceptance:
+- ✅ Detrminism: `emit-runtime-stubs --check` после регена → no diff.
+- ✅ Round-trip: registry содержит 44 функции; .nv файлы валидны
+  (`nova-codegen check std/runtime/string.nv` PASS).
+- ✅ Manual edit guard: `--check` режим работает (CI/pre-commit ready).
+- ⏳ Sanity (добавить `f64.@cbrt`): cbrt уже в registry с самого
+  начала (Ф.1). После Ф.4 migration этот sanity-test можно будет
+  пройти полностью (compile + run user-кода).
 **Связь:**
 - [D26](../../spec/decisions/08-runtime.md#d26) — prelude (str API
   упомянут, math через D74).

@@ -191,6 +191,24 @@ typedef struct { char _dummy; } nova_unit;
 #include "write_buffer.h"
 #include "read_buffer.h"
 
+/* ---- Plan 13: umbrella headers для runtime stdlib API ----
+ *
+ * `string.h` / `math.h` — stable include-points для str и f64/f32
+ * runtime-функций. Сейчас просто re-export'ят nova_rt.h (str) и
+ * `<math.h>` (math). Future migration переносит фактические
+ * декларации сюда.
+ *
+ * Включаются в конце чтобы не было forward-decl issues.
+ */
+/* Note: эти headers re-include nova_rt.h, поэтому помещаем в самый
+ * низ — header-guard в nova_rt.h защищает от re-entry. Для
+ * generated кода они не критичны (codegen использует nova_rt.h),
+ * но нужны как stable include-points для future C-кода. */
+/* Не включаем здесь — circular из-за того что они #include
+ * "nova_rt.h". Вместо этого они доступны как отдельные include'ы
+ * в C-output codegen'а. См. docs/plans/13-runtime-stdlib-and-autogen.md.
+ */
+
 /* ---- Channels (D79) — coordination между fiber'ами ---- */
 #include "channels.h"
 

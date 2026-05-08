@@ -56,6 +56,12 @@ impl ExternalRegistry {
 
     /// Парсит `builtins.nv` и строит registry. Вызывается один раз
     /// при инициализации CEmitter.
+    ///
+    /// Plan 13: runtime_registry (str/math) загружается **отдельно** через
+    /// `emit-runtime-stubs` для генерации `std/runtime/*.nv`. Loading в
+    /// codegen-runtime registry (с merge'ингом сюда) — следующий шаг
+    /// Plan 13 Ф.4 (отдельная итерация после full migration special-case
+    /// dispatch'ей).
     pub fn load_builtins() -> Result<Self, String> {
         let module = crate::parser::parse(Self::BUILTINS_SRC)
             .map_err(|d| format!("failed to parse builtins.nv: {}", d.message))?;

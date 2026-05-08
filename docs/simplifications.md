@@ -1714,3 +1714,90 @@ Single-pass не знает «всего» количества overload'ов н
 opaque type → declare в builtins.nv + impl runtime → готово. Ни
 codegen, ни method_receivers init не правятся. Это значит **ниже
 порог входа** для расширения stdlib runtime.
+
+### [MVP-CLOSED 2026-05-08] Plan 13: Runtime stdlib projection (str/math)
+
+`std/runtime/*.nv` расширен с `builtins.nv` (StringBuilder/WriteBuffer/
+ReadBuffer) на str/math API через **auto-generation** из
+`runtime_registry.rs`. MVP: Ф.1-Ф.3, Ф.5-Ф.7 готовы. Ф.4 (полная
+migration special-case dispatch'ей в emit_call → registry-driven)
+отложен — риск регрессий в 78 тестах требует careful refactor.
+
+#### Что сделано
+
+1. **Ф.1 runtime_registry.rs** (~280 строк):
+   - Struct `RuntimeFn`: module/receiver/params/return_ty/c_name/doc.
+   - 17 str API entries (char_len, byte_len, find, slice, trim, ...).
+   - 27 f64 math entries (sin/cos/sqrt/atan2/pow/hypot/is_nan/...).
+   - `all()`/`group_by_module()`/`render_nv()` helpers.
+   - Stable order (by module → by receiver → by name) для детерминизма.
+
+2. **Ф.2 nova_rt/string.h + math.h umbrella headers**:
+   - String функции уже в nova_rt.h; string.h re-includes для stable
+     include-point.
+   - Math wrappers ↦ libc <math.h>; math.h re-includes для stable point.
+   - Future migration: фактические декларации могут переехать сюда без
+     ломки user-кода.
+
+3. **Ф.3 emit-runtime-stubs subcommand**:
+   - `nova-codegen emit-runtime-stubs [--root <path>] [--check]`
+   - Без `--check`: пишет `std/runtime/string.nv` + `math.nv` (44 funcs).
+   - С `--check`: сравнивает existing с registry, fail если diff.
+     **Используется в CI/pre-commit для предотвращения manual edits.**
+   - Bonus: `nova-codegen dump-runtime` — sanity-print реестра.
+
+4. **Ф.5 D26 + D74 spec update**:
+   - D26 → раздел "Runtime stdlib проекция (Plan 13)" — explains что
+     методы str/f64/f32 живут в std/runtime/*.nv (auto-gen).
+   - D74 → cross-link на std/runtime/math.nv.
+   - D82 Bootstrap status → расширен Plan 13 projection описанием.
+
+5. **Ф.6 CI guard**:
+   - `--check` режим в emit-runtime-stubs.
+   - README.md compiler-codegen — раздел "Регенерация
+     std/runtime/*.nv" с workflow.
+   - Pre-commit hook integration — TBD (можно добавить как opt-in
+     git hook позже).
+
+6. **Ф.7 docs**:
+   - README.md compiler-codegen обновлён.
+   - docs/promts/regen-runtime.md уже существует от user'а.
+
+#### Ф.4 deferred — почему
+
+Полная migration `f64_method_to_c` / `str_method_to_rt` special-case'ов
+в emit_call на registry-driven dispatch требует:
+- Замена 2 больших match-таблиц (~50 строк каждая).
+- Изменение dispatch path'ов для str/math инстанс-методов.
+- Обработка edge cases: `str.from(int/bool/f64)` через nova_*_to_str
+  (НЕ external fn), оставить hard-coded; runtime registry's `str.find/etc`
+  через registry.
+- Тщательный regression test 78 nova_tests на каждом шаге.
+
+Попытка Ф.4 в этой сессии (через `merge_runtime_registry`) trigger'ила
+регрессию в self_universal — `Nova_str_static_from` (single overload
+без suffix) не существует в runtime (`Nova_str_static_from_char`).
+Откатил merge, оставил Ф.1-Ф.3 infrastructure.
+
+Следующая итерация Ф.4: **отдельная сессия** с careful step-by-step
++ runtime renames для consistency.
+
+#### Тесты
+
+- 78/78 PASS на nova_tests после Plan 13.
+- Detrminism `emit-runtime-stubs --check` после регена → OK.
+- Round-trip: dump-runtime print'ает 44 fn; nova-codegen check
+  std/runtime/string.nv + math.nv → both PASS.
+
+#### Урок
+
+**Auto-gen separation of concerns**: registry (Rust) — driver,
+.nv-файлы — projection. CI guard через `--check` — **lightweight
+typesafety**: drift поймается при review даже если разработчик
+случайно отредактировал .nv. Прецеденты: Cargo.lock vs Cargo.toml,
+go generate, protoc-generated .pb.go — все используют этот pattern.
+
+**Migration risk-management**: full Ф.4 был соблазнительным «всё
+одним коммитом», но conservative split (Ф.1-Ф.3 + Ф.5-Ф.7
+infrastructure → Ф.4 dispatch отдельно) даёт **safe-rollout**:
+каждая фаза независимо проверяема, регрессии не накладываются.

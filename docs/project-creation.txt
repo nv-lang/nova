@@ -1918,3 +1918,53 @@ Single source of truth pattern масштабируется: новый opaque t
 declare в builtins.nv + impl runtime — без codegen edits.
 
 Plan 12 закрыт.
+
+
+================================================================================
+2026-05-08 Plan 13 (MVP): Runtime stdlib projection (str/math)
+================================================================================
+
+Plan 13 закрыт MVP'ом: Ф.1-Ф.3, Ф.5-Ф.7. Ф.4 отложен.
+
+`std/runtime/*.nv` расширен с builtins.nv (opaque types) на
+str/math API через auto-generation из runtime_registry.rs.
+
+Что сделано:
+
+1. Ф.1 runtime_registry.rs:
+   - Struct RuntimeFn (module/receiver/params/return_ty/c_name/doc).
+   - 17 str API + 27 f64 math = 44 entries.
+   - Stable ordering для детерминизма.
+
+2. Ф.2 nova_rt/string.h + math.h umbrella headers:
+   - Re-include nova_rt.h (str) и <math.h> для stable include-point.
+   - Future migration переносит фактические декларации сюда.
+
+3. Ф.3 emit-runtime-stubs subcommand:
+   - Команда nova-codegen emit-runtime-stubs [--root <path>] [--check].
+   - Генерирует std/runtime/string.nv + math.nv (44 fn).
+   - --check режим для CI guard (manual edit fail).
+   - Bonus: dump-runtime для sanity-print'а.
+
+4. Ф.5 spec:
+   - D26 раздел "Runtime stdlib проекция".
+   - D74 cross-link на std/runtime/math.nv.
+   - D82 Bootstrap status расширен.
+
+5. Ф.6 CI guard через --check.
+
+6. Ф.7 README compiler-codegen раздел "Регенерация std/runtime/*.nv".
+
+Ф.4 deferred: full migration special-case dispatch'ей в emit_call
+требует careful refactor. Попытка через merge_runtime_registry
+trigger'ила регрессию (Nova_str_static_from vs _from_char). Откатил.
+
+Тесты: 78/78 PASS на nova_tests. Determinism --check → OK.
+
+Урок: auto-gen separation of concerns — registry driver,
+.nv-projection. CI guard через --check — lightweight typesafety
+(prevents drift). Прецеденты: Cargo.lock, go generate, protoc.
+
+Migration risk-management: conservative split (infrastructure
+→ dispatch отдельно) > all-at-once. Каждая фаза независимо
+проверяема.

@@ -13,7 +13,36 @@
   - `effects.{h,c}` — механизм эффектов (handler-стек, D61)
   - `fibers.{h,c}` — файберы через minicoro (stackful coroutines)
   - `nova_rt.h` — единый include для сгенерированного кода
-- CLI: `nova-codegen check`, `run`, `test`, `compile`
+- CLI: `nova-codegen check`, `run`, `test`, `compile`,
+  `emit-runtime-stubs`, `dump-runtime` (Plan 13)
+
+## Регенерация `std/runtime/*.nv` (Plan 13)
+
+`std/runtime/string.nv` и `std/runtime/math.nv` — **auto-generated**
+из `src/codegen/runtime_registry.rs`. **Не править вручную.**
+
+Workflow добавления новой runtime fn (например `f64.@cbrt`):
+
+1. Добавить запись в `src/codegen/runtime_registry.rs` (`RuntimeFn { ... }`).
+2. Реализовать в `nova_rt/<module>.c` (или wrapper к libc).
+3. Регенерировать stubs из корня nova-lang:
+   ```
+   cargo build --manifest-path compiler-codegen/Cargo.toml
+   compiler-codegen/target/debug/nova-codegen.exe emit-runtime-stubs
+   ```
+4. Закоммитить все три (registry + .c + .nv).
+
+**Проверка drift'а** (registry vs существующие .nv-файлы):
+```
+compiler-codegen/target/debug/nova-codegen.exe emit-runtime-stubs --check
+```
+Используется в CI / pre-commit hook'е для предотвращения manual edit'ов.
+
+**Sanity-check реестра:**
+```
+compiler-codegen/target/debug/nova-codegen.exe dump-runtime
+```
+Печатает структурированный список всех зарегистрированных runtime-fn.
 
 ## Что поддерживает codegen
 

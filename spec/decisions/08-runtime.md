@@ -750,6 +750,32 @@ Prelude **документирован**, его содержимое — фик
 2. **Импорт-конфликты.** Если программист объявит свой `type Option`,
    будет конфликт с prelude — компилятор предупредит.
 
+### Runtime stdlib проекция (Plan 13)
+
+Все методы str / f64 / f32 которые знает компилятор объявлены в
+[`std/runtime/string.nv`](../../std/runtime/string.nv) и
+[`std/runtime/math.nv`](../../std/runtime/math.nv) — **auto-generated**
+из `compiler-codegen/src/codegen/runtime_registry.rs` через команду
+`nova-codegen emit-runtime-stubs`.
+
+**Эти модули НЕ требуют import** — методы доступны через обычный
+method-call синтаксис (`s.find`, `x.sin`), потому что str / f64 /
+f32 — built-in типы из prelude. `std/runtime/*.nv` — read-only artefact
+для:
+
+1. **Code-review:** разработчик видит формальные сигнатуры всех
+   runtime-функций в одном месте.
+2. **Type-check без полной компиляции:** `nova-codegen check` загружает
+   декларации и валидирует user-код против них.
+3. **Single source of truth:** runtime_registry.rs (Rust) — driver,
+   `.nv`-файлы — проекция. Изменение реестра → регенерация → diff
+   видно в `.nv`.
+
+**Manual edits запрещены** — pre-commit/CI guard через
+`emit-runtime-stubs --check` (Plan 13 Ф.6).
+
+См. [docs/plans/13-runtime-stdlib-and-autogen.md](../../docs/plans/13-runtime-stdlib-and-autogen.md).
+
 ---
 
 ## D41. Static-функции есть, static-состояния нет
@@ -1872,6 +1898,8 @@ x.pow(n)          // x^n
 - [03-syntax.md → D35](03-syntax.md#d35) — `@`-методы как механизм.
 - [03-syntax.md → D46](03-syntax.md#d46) — operator overloading
   (`@plus`, `@times`, ...) дополняет D74 для арифметики.
+- [`std/runtime/math.nv`](../../std/runtime/math.nv) — auto-generated
+  external-fn декларации всех f64/f32 math методов (Plan 13).
 - [03-syntax.md → D40](03-syntax.md#d40) — «один способ» — выбор
   между static и instance не остаётся на усмотрение программиста.
 - [D73](#d73-from--into-protocol-пара-с-авто-выводом) — парсинг
@@ -2753,3 +2781,18 @@ special-case'ил по имени receiver'а — fragile).
 - ⏳ Runtime: `nova_rt/string_builder.h` / `write_buffer.h` /
   `read_buffer.h` — TBD. Реализации обязаны матчить builtins.nv по
   C-name + сигнатуре; иначе linker error.
+
+### Plan 13: расширение projection на str/math (2026-05-08)
+
+`std/runtime/builtins.nv` (single source of truth для opaque types)
+расширяется концепцией **projection** на все runtime-функции:
+
+- `std/runtime/string.nv` — auto-generated декларации для str API
+  (UTF-8 операции).
+- `std/runtime/math.nv` — auto-generated f64/f32 math (D74 instance-методы).
+
+Источник истины — `compiler-codegen/src/codegen/runtime_registry.rs` (Rust).
+Команда `nova-codegen emit-runtime-stubs` генерирует `.nv` файлы;
+manual edit запрещён (CI guard через `--check`).
+
+См. [docs/plans/13-runtime-stdlib-and-autogen.md](../../docs/plans/13-runtime-stdlib-and-autogen.md).
