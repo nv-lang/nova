@@ -1523,6 +1523,27 @@ impl Parser {
                     .map(|c| c.is_ascii_uppercase())
                     .unwrap_or(false);
                 let mut path = vec![first.clone()];
+                // Plan 08 Ф.2: primitive type-names — `int`, `f64`, `bool`,
+                // `char`, `byte`, `str`, `u8`-`u64`, `i8`-`i64`, `f32`/`f64` —
+                // могут быть subject'ом static-method'а (`int.try_from`,
+                // `str.from`, `f64.try_from`). Lowercase, поэтому не path
+                // через PascalCase-rule. Делаем явное исключение.
+                let is_primitive_type = matches!(first.as_str(),
+                    "int" | "i8" | "i16" | "i32" | "i64"
+                    | "u8" | "u16" | "u32" | "u64"
+                    | "f32" | "f64" | "byte" | "bool" | "char" | "str"
+                );
+                if (starts_uppercase || is_primitive_type)
+                    && matches!(self.peek().kind, TokenKind::Dot)
+                    && matches!(self.peek_at(1).kind, TokenKind::Ident(_))
+                {
+                    // Один шаг path: primitive.method (стесняемся продолжать,
+                    // primitives не имеют sub-namespace'ов).
+                    if is_primitive_type && !starts_uppercase {
+                        self.bump(); // dot
+                        path.push(self.parse_ident()?.0);
+                    }
+                }
                 if starts_uppercase {
                     while matches!(self.peek().kind, TokenKind::Dot)
                         && matches!(self.peek_at(1).kind, TokenKind::Ident(_))

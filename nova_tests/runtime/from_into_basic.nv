@@ -1,0 +1,195 @@
+// from_into_basic.nv — Plan 08 Ф.1+Ф.2: D77 try_from / D73 from
+// для встроенных пар str ↔ numeric / bool / char.
+//
+// Bootstrap-table в codegen эмитит вызовы runtime helper'ов
+// (nova_str_to_i64, nova_str_to_f64, nova_str_to_bool, nova_str_to_char,
+// nova_int_to_char, nova_bool_to_str, nova_char_to_str).
+//
+// Результат try_from — Result[T, E]. Используем match для извлечения.
+// Bootstrap-ограничение: Result hardcoded на (nova_int Ok, nova_str Err) —
+// все try_from возвращают payload как nova_int. Поэтому char.try_from
+// тоже распаковывается как int (codepoint).
+
+module nova_tests.runtime.from_into_basic
+
+
+// ───── str → int ─────
+
+test "int.try_from валидное число" {
+    let r = int.try_from("42")
+    assert(r.is_ok())
+    assert(r.unwrap_or(0) == 42)
+}
+
+
+test "int.try_from отрицательное" {
+    let r = int.try_from("-17")
+    assert(r.is_ok())
+    assert(r.unwrap_or(0) == -17)
+}
+
+
+test "int.try_from с пробелами в начале" {
+    let r = int.try_from("  100")
+    assert(r.is_ok())
+    assert(r.unwrap_or(0) == 100)
+}
+
+
+test "int.try_from невалидная строка" {
+    let r = int.try_from("abc")
+    assert(r.is_err())
+}
+
+
+test "int.try_from пустая строка" {
+    let r = int.try_from("")
+    assert(r.is_err())
+}
+
+
+test "int.try_from overflow" {
+    // 2^63 = 9223372036854775808 > INT64_MAX
+    let r = int.try_from("9999999999999999999999")
+    assert(r.is_err())
+}
+
+
+// ───── str → f64 ─────
+
+test "f64.try_from валидное число" {
+    let r = f64.try_from("3.14")
+    assert(r.is_ok())
+    // Bootstrap Result hardcoded на nova_int payload — для f64 не имеет смысла
+    // unwrap_or(0) (даст int-cast). Просто проверяем is_ok.
+}
+
+
+test "f64.try_from целое" {
+    let r = f64.try_from("42")
+    assert(r.is_ok())
+}
+
+
+test "f64.try_from невалидное" {
+    let r = f64.try_from("not a number")
+    assert(r.is_err())
+}
+
+
+// ───── str → bool ─────
+
+test "bool.try_from \"true\"" {
+    let r = bool.try_from("true")
+    assert(r.is_ok())
+}
+
+
+test "bool.try_from \"false\"" {
+    let r = bool.try_from("false")
+    assert(r.is_ok())
+}
+
+
+test "bool.try_from invalid" {
+    let r = bool.try_from("yes")
+    assert(r.is_err())
+}
+
+
+test "bool.try_from case-sensitive" {
+    let r = bool.try_from("TRUE")
+    assert(r.is_err())  // case-sensitive
+}
+
+
+// ───── str → char ─────
+
+test "char.try_from single ASCII char" {
+    let r = char.try_from("A")
+    assert(r.is_ok())
+    assert(r.unwrap_or(0) == 65)
+}
+
+
+test "char.try_from empty string" {
+    let r = char.try_from("")
+    assert(r.is_err())
+}
+
+
+test "char.try_from multi-char" {
+    let r = char.try_from("AB")
+    assert(r.is_err())
+}
+
+
+// ───── int → char (codepoint range-check) ─────
+
+test "char.try_from(int) валидный codepoint" {
+    let r = char.try_from(65)
+    assert(r.is_ok())
+    assert(r.unwrap_or(0) == 65)
+}
+
+
+test "char.try_from(int) negative" {
+    let r = char.try_from(-1)
+    assert(r.is_err())
+}
+
+
+test "char.try_from(int) выше 0x10FFFF" {
+    let r = char.try_from(0x110000)
+    assert(r.is_err())
+}
+
+
+test "char.try_from(int) surrogate" {
+    let r = char.try_from(0xD800)
+    assert(r.is_err())
+}
+
+
+// ───── bool → str ─────
+
+test "str.from(true)" {
+    let s = str.from(true)
+    assert(s == "true")
+}
+
+
+test "str.from(false)" {
+    let s = str.from(false)
+    assert(s == "false")
+}
+
+
+// ───── int → str ─────
+
+test "str.from(int)" {
+    let s = str.from(42)
+    assert(s == "42")
+}
+
+
+test "str.from(negative int)" {
+    let s = str.from(-7)
+    assert(s == "-7")
+}
+
+
+// ───── char → str (UTF-8 encode) ─────
+
+test "str.from(char) ASCII" {
+    let s = str.from('A')
+    assert(s == "A")
+}
+
+
+test "str.from(char) Cyrillic (2-byte UTF-8)" {
+    // 'П' = U+041F
+    let s = str.from('П')
+    // byte_len 2 (UTF-8: 0xD0 0x9F), char_len 1
+    assert(s.len == 1)
+}

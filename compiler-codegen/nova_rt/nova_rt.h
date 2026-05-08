@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <math.h>     /* D74: f64.sqrt()/sin()/cos()/etc. → libm */
 #include "cast.h"     /* План 07: float→int saturation helpers */
+/* conv.h подключается в array.h (после nova_alloc и определения nova_str). */
 
 /* ---- Primitive types ---- */
 typedef int64_t  nova_int;

@@ -4602,6 +4602,113 @@ impl CEmitter {
                         return Ok(format!("nova_channel_new({})", v));
                     }
                 }
+                // Plan 08 Ф.2: D77 try_from / D73 from для numeric/char/bool ↔ str.
+                // T.try_from(v) → Result[T, ParseError]; здесь эмитим
+                // через runtime helper'ы из nova_rt/conv.h.
+                if parts.len() == 2 && parts[1] == "try_from" {
+                    if let Some(arg) = args.first() {
+                        let arg_ty = self.infer_expr_c_type(arg);
+                        let v = self.emit_expr(arg)?;
+                        // str → numeric / bool: используем парсеры.
+                        if arg_ty == "nova_str" {
+                            let target = parts[0].as_str();
+                            let helper_name = match target {
+                                "int" | "i64" => Some("nova_str_to_i64"),
+                                "u64" | "u32" | "u16" | "u8" => Some("nova_str_to_u64"),
+                                "i32" | "i16" | "i8" => Some("nova_str_to_i64"),
+                                "f64" | "f32" => Some("nova_str_to_f64"),
+                                "bool" => Some("nova_str_to_bool"),
+                                "char" => Some("nova_str_to_char"),
+                                _ => None,
+                            };
+                            if let Some(helper) = helper_name {
+                                // Emit: parse → wrap в Result.
+                                // nova_<helper>(s) даёт {value, ok}; если ok=true,
+                                // возвращаем Ok(value), иначе Err(<msg>).
+                                let tmp = self.fresh_tmp();
+                                self.line(&format!("nova_str {} = {};", tmp, v));
+                                let res_var = self.fresh_tmp();
+                                let result_struct_ty = if helper == "nova_str_to_u64" {
+                                    "nova_parse_u64_result"
+                                } else if helper == "nova_str_to_f64" {
+                                    "nova_parse_f64_result"
+                                } else if helper == "nova_str_to_bool" {
+                                    "nova_parse_bool_result"
+                                } else if helper == "nova_str_to_char" {
+                                    "nova_char_decode_result"
+                                } else {
+                                    "nova_parse_int_result"
+                                };
+                                self.line(&format!("{} {} = {}({});",
+                                    result_struct_ty, res_var, helper, tmp));
+                                let out = self.fresh_tmp();
+                                self.line(&format!("Nova_Result* {};", out));
+                                self.line(&format!("if ({}.ok) {{", res_var));
+                                self.indent += 1;
+                                // Cast value к nova_int payload (Result hardcoded на nova_int).
+                                self.line(&format!(
+                                    "{} = nova_make_Result_Ok((nova_int){}.value);",
+                                    out, res_var));
+                                self.indent -= 1;
+                                self.line("} else {");
+                                self.indent += 1;
+                                let err_msg = format!("{}.try_from: parse error", target);
+                                self.line(&format!(
+                                    "{} = nova_make_Result_Err((nova_str){{.ptr=\"{}\", .len={}}});",
+                                    out, err_msg, err_msg.len()));
+                                self.indent -= 1;
+                                self.line("}");
+                                return Ok(out);
+                            }
+                        }
+                        // int → char: range-check.
+                        if arg_ty == "nova_int" && parts[0] == "char" {
+                            let res_var = self.fresh_tmp();
+                            self.line(&format!(
+                                "nova_char_decode_result {} = nova_int_to_char({});",
+                                res_var, v));
+                            let out = self.fresh_tmp();
+                            self.line(&format!("Nova_Result* {};", out));
+                            self.line(&format!("if ({}.ok) {{", res_var));
+                            self.indent += 1;
+                            self.line(&format!(
+                                "{} = nova_make_Result_Ok({}.value);",
+                                out, res_var));
+                            self.indent -= 1;
+                            self.line("} else {");
+                            self.indent += 1;
+                            self.line(&format!(
+                                "{} = nova_make_Result_Err((nova_str){{.ptr=\"char.try_from: invalid codepoint\", .len=37}});",
+                                out));
+                            self.indent -= 1;
+                            self.line("}");
+                            return Ok(out);
+                        }
+                    }
+                }
+                // Plan 08 Ф.2: T.from(v) — infallible конверсии.
+                // bool → str / char → str / f64 → str.
+                if parts.len() == 2 && parts[1] == "from" {
+                    if let Some(arg) = args.first() {
+                        let arg_ty = self.infer_expr_c_type(arg);
+                        let v = self.emit_expr(arg)?;
+                        if parts[0] == "str" {
+                            // CharLit detection — ДО numeric, потому что
+                            // char хранится как nova_int (одно представление).
+                            // emit_expr_c_type для CharLit даёт "nova_int",
+                            // но семантика char→str ≠ int→str.
+                            if let ExprKind::CharLit(_) = &arg.kind {
+                                return Ok(format!("nova_char_to_str({})", v));
+                            }
+                            match arg_ty.as_str() {
+                                "nova_bool" => return Ok(format!("nova_bool_to_str({})", v)),
+                                "nova_f64"  => return Ok(format!("nova_f64_to_str({})", v)),
+                                "nova_int"  => return Ok(format!("nova_int_to_str({})", v)),
+                                _ => {}
+                            }
+                        }
+                    }
+                }
                 // Q-buffer: built-in Buffer static methods (Path-form).
                 if parts.len() == 2 && parts[0] == "Buffer" {
                     match parts[1].as_str() {
@@ -6599,6 +6706,14 @@ impl CEmitter {
                         // D26 prelude: Error.new(msg) → Nova_Error*.
                         if eff == "Error" && method_name == "new" {
                             return "Nova_Error*".into();
+                        }
+                        // Plan 08 Ф.2: T.try_from(...) → Result[T, E] = Nova_Result*.
+                        if method_name == "try_from" {
+                            return "Nova_Result*".into();
+                        }
+                        // Plan 08 Ф.2: str.from(numeric/bool/char) → nova_str.
+                        if eff == "str" && method_name == "from" {
+                            return "nova_str".into();
                         }
                         // Built-in primitive `str.from(x) -> str` (D35 + D73).
                         if eff == "str" && method_name == "from" {

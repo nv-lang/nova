@@ -434,6 +434,11 @@ static inline NovaOpt_nova_int Nova_Result_method_ok(Nova_Result* r) {
     return o;
 }
 
+/* Plan 08 Ф.1: D73/D77 prelude конверсии (str↔numeric, char↔str, etc.).
+ * Подключаем здесь — после определения nova_alloc (alloc.h) и nova_str
+ * (nova_rt.h), чтобы conv.h мог их использовать. */
+#include "conv.h"
+
 /* ---- D26 prelude: Error — record для quick-and-dirty ошибок с msg ---- */
 typedef struct Nova_Error {
     nova_str msg;

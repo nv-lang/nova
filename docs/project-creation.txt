@@ -903,3 +903,66 @@ Spec D38 декларировал turbofish (`Cache[K, V].new()`, `parse[T](x)?`
   поддержка const-evaluation для Try-выражений (отдельный блокер).
 
 
+================================================================================
+2026-05-08 Plan 08 Ф.1+Ф.2: D77 try_from / D73 from для встроенных пар
+================================================================================
+
+Spec D26 декларировал `int.try_from(s)`, `f64.try_from(s)`, `str.from(b)`
+и т.п. как prelude. В bootstrap'е этого не было — runtime helper'ов нет,
+codegen не знает где маппить. План 08 закрывает Ф.1+Ф.2 (core).
+
+Реализация:
+
+1. compiler-codegen/nova_rt/conv.h (новый, ~180 строк):
+   - nova_str_to_i64 (с overflow-check, '+'/'-' префиксы, leading
+     whitespace skip)
+   - nova_str_to_u64 (аналог для unsigned)
+   - nova_str_to_f64 (через strtod, проверка что вся строка распарсена)
+   - nova_str_to_bool ("true"/"false" case-sensitive)
+   - nova_str_to_char (single-codepoint UTF-8 decode, multi-char и
+     empty → err)
+   - nova_int_to_char (range-check 0..0x10FFFF, surrogate exclude)
+   - nova_char_to_str (UTF-8 encode, replacement char для invalid)
+   - nova_bool_to_str ("true"/"false")
+   - nova_f64_to_str (через snprintf %g)
+
+2. compiler-codegen/src/parser/mod.rs: primitive type-names как
+   Path-prefix. Раньше парсер только PascalCase идентификаторы делал
+   path'ом — поэтому `int.try_from` парсилось как Member access на
+   ident("int"), который codegen не знал как mappingить. Расширение:
+   список primitive-types (int/i8-i64/u8-u64/f32/f64/byte/bool/char/str)
+   также инициируют path-конструкцию.
+
+3. compiler-codegen/src/codegen/emit_c.rs:
+   - Path-call dispatch для `T.try_from(v)`: ловим (int/i8-i64/u8-u64,
+     f32/f64, bool, char) × (nova_str, nova_int) → emit nova_<helper>
+     + Result-wrapping. Bootstrap-ограничение: Result hardcoded на
+     `(nova_int Ok, nova_str Err)` — payload эмитится как nova_int
+     даже для f64 (truncation в payload). Полный generic Result —
+     Q-result-monomorphization, отдельная задача.
+   - Path-call dispatch для `T.from(v)`: str.from для bool/f64/int/char.
+     CharLit detection ДО numeric — char хранится как nova_int но
+     семантика char→str (UTF-8 encode) ≠ int→str (decimal).
+   - Type-inference: `T.try_from(...)` → `Nova_Result*`,
+     `str.from(...)` → `nova_str`.
+
+Тесты (nova_tests/runtime/from_into_basic.nv, 26 тестов):
+- str → int валидное / отрицательное / с пробелами / невалидное /
+  пустая строка / overflow
+- str → f64 целое / валидное / невалидное
+- str → bool true/false/invalid/case-sensitive
+- str → char single ASCII / empty / multi-char
+- int → char (codepoint range-check / surrogate)
+- bool → str / int → str
+- char → str ASCII / Cyrillic 2-byte UTF-8
+
+67/67 nova_tests PASS.
+
+Что НЕ сделано в этом этапе (отдельные коммиты в Plan 08):
+- Ф.3: 4-way auto-derive synthesis
+- Ф.4: strict if cond:bool в type-checker
+- Ф.5: as-cast restrictions для char/byte/bool (compile errors)
+- Ф.6: generic-bound `[T Into[X]]` enforcement
+- Ф.7: spec D54 расширение + conversions.md + simplifications
+
+
