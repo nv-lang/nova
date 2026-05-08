@@ -4041,6 +4041,82 @@ impl CEmitter {
                                 self.line("}");
                                 return Ok(format!("({}.value)", tmp));
                             }
+                            // D26 prelude: Option.unwrap_or_else(f).
+                            // Some(v) → v, None → f() (zero-arg closure).
+                            "unwrap_or_else" => {
+                                if let Some(arg) = args.first() {
+                                    let f = self.emit_expr(arg)?;
+                                    let tmp = self.fresh_tmp();
+                                    self.line(&format!("NovaOpt_{} {} = {};", elem_ty, tmp, obj_c));
+                                    let result = self.fresh_tmp();
+                                    self.line(&format!("{} {};", elem_ty, result));
+                                    self.line(&format!("if ({}.tag == NOVA_TAG_Option_Some) {{", tmp));
+                                    self.indent += 1;
+                                    self.line(&format!("{} = {}.value;", result, tmp));
+                                    self.indent -= 1;
+                                    self.line("} else {");
+                                    self.indent += 1;
+                                    // Closure без аргументов (() → T): NovaClos_vi
+                                    // (signature `T(*)(void*)`).
+                                    self.line(&format!(
+                                        "{} = (({}(*)(void*))(((NovaClos_vi*)({}))->fn))(((NovaClos_vi*)({}))->env);",
+                                        result, elem_ty, f, f));
+                                    self.indent -= 1;
+                                    self.line("}");
+                                    return Ok(result);
+                                }
+                            }
+                            // D26 prelude: Option.map(f).
+                            // Some(v) → Some(f(v)), None → None.
+                            "map" => {
+                                if let Some(arg) = args.first() {
+                                    let f = self.emit_expr(arg)?;
+                                    let tmp = self.fresh_tmp();
+                                    self.line(&format!("NovaOpt_{} {} = {};", elem_ty, tmp, obj_c));
+                                    let out = self.fresh_tmp();
+                                    self.line(&format!("NovaOpt_{} {};", elem_ty, out));
+                                    self.line(&format!("if ({}.tag == NOVA_TAG_Option_Some) {{", tmp));
+                                    self.indent += 1;
+                                    // Closure (T → T): берём `nova_int(*)(void*, nova_int)`
+                                    // signature через ручной cast (NovaClos_ii layout
+                                    // совпадает в bootstrap'е для одинаковых-T-параметров).
+                                    let mapped = self.fresh_tmp();
+                                    self.line(&format!(
+                                        "{} {} = (({}(*)(void*, {}))(((NovaClos_ii*)({}))->fn))(((NovaClos_ii*)({}))->env, {}.value);",
+                                        elem_ty, mapped, elem_ty, elem_ty, f, f, tmp));
+                                    self.line(&format!("{}.tag = NOVA_TAG_Option_Some;", out));
+                                    self.line(&format!("{}.value = {};", out, mapped));
+                                    self.indent -= 1;
+                                    self.line("} else {");
+                                    self.indent += 1;
+                                    self.line(&format!("{}.tag = NOVA_TAG_Option_None;", out));
+                                    self.line(&format!("{}.value = 0;", out));
+                                    self.indent -= 1;
+                                    self.line("}");
+                                    return Ok(out);
+                                }
+                            }
+                            // D26 prelude: Option.ok_or(e).
+                            // Some(v) → Ok(v), None → Err(e).
+                            "ok_or" => {
+                                if let Some(arg) = args.first() {
+                                    let e = self.emit_expr(arg)?;
+                                    let tmp = self.fresh_tmp();
+                                    self.line(&format!("NovaOpt_{} {} = {};", elem_ty, tmp, obj_c));
+                                    let out = self.fresh_tmp();
+                                    self.line(&format!("Nova_Result* {};", out));
+                                    self.line(&format!("if ({}.tag == NOVA_TAG_Option_Some) {{", tmp));
+                                    self.indent += 1;
+                                    self.line(&format!("{} = nova_make_Result_Ok((nova_int){}.value);", out, tmp));
+                                    self.indent -= 1;
+                                    self.line("} else {");
+                                    self.indent += 1;
+                                    self.line(&format!("{} = nova_make_Result_Err({});", out, e));
+                                    self.indent -= 1;
+                                    self.line("}");
+                                    return Ok(out);
+                                }
+                            }
                             _ => {}
                         }
                     }
@@ -6362,7 +6438,9 @@ impl CEmitter {
                             .to_string();
                         return match method.as_str() {
                             "is_some" | "is_none" => "nova_bool".into(),
-                            "unwrap_or" | "unwrap" => elem_ty,
+                            "unwrap_or" | "unwrap" | "unwrap_or_else" => elem_ty,
+                            "map" => format!("NovaOpt_{}", elem_ty),
+                            "ok_or" => "Nova_Result*".into(),
                             _ => "nova_int".into(),
                         };
                     }

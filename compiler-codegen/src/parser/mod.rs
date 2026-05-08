@@ -1582,7 +1582,37 @@ impl Parser {
                 self.bump();
                 self.skip_newlines();
                 if matches!(self.peek().kind, TokenKind::RParen) {
+                    let rparen_end = self.peek().span;
+                    // Lookahead за `)`: если `=>` или `-> T =>` — это
+                    // zero-arg lambda `() => expr`, не unit-литерал.
+                    // Иначе — обычный unit `()`.
+                    let is_lambda_zero = matches!(self.peek_at(1).kind, TokenKind::FatArrow)
+                        || matches!(self.peek_at(1).kind, TokenKind::Arrow);
+                    if is_lambda_zero {
+                        self.bump(); // `)`
+                        // Опц. `-> T`
+                        let ret_ty = if matches!(self.peek().kind, TokenKind::Arrow) {
+                            self.bump();
+                            Some(self.parse_type()?)
+                        } else {
+                            None
+                        };
+                        self.expect(&TokenKind::FatArrow)?;
+                        self.skip_newlines();
+                        let body = self.parse_expr()?;
+                        let span = start.merge(body.span);
+                        return Ok(Expr::new(
+                            ExprKind::Lambda {
+                                params: Vec::new(),
+                                effects: Vec::new(),
+                                return_type: ret_ty,
+                                body: Box::new(body),
+                            },
+                            span,
+                        ));
+                    }
                     let end = self.bump().span;
+                    let _ = rparen_end;
                     return Ok(Expr::new(ExprKind::UnitLit, start.merge(end)));
                 }
                 // Lambda? `(p1, p2) => expr` или `(p) =>` или `(p Type) =>`

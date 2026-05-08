@@ -261,6 +261,38 @@ let port int = env.get("PORT").map(parse_int).unwrap_or(8080)
 через `with Fail = ...`, либо позволяет распространиться (паника
 на границе fiber'а — D13).
 
+#### Bootstrap status (2026-05-08)
+
+| Метод | Codegen | Тесты |
+|---|---|---|
+| `Option.is_some` / `is_none` | ✅ | ✅ |
+| `Option.unwrap` (Fail на None) | ✅ inline | ✅ runtime/unwrap_or.nv |
+| `Option.unwrap_or(default)` | ✅ runtime helper | ✅ |
+| `Option.unwrap_or_else(f)` | ✅ inline (closure call) | ✅ runtime/result_methods.nv |
+| `Option.map(f)` | ✅ inline | ✅ |
+| `Option.ok_or(e)` | ✅ inline | ✅ |
+| `Option.or(other)` | ❌ не реализован в bootstrap | — |
+| `Result.is_ok` / `is_err` | ✅ | ✅ |
+| `Result.ok()` → Option[T] | ✅ runtime helper | ✅ |
+| `Result.err()` → Option[E] | ✅ inline (boxed nova_str) | ✅ |
+| `Result.unwrap` (Fail на Err) | ✅ inline | ✅ |
+| `Result.unwrap_or(default)` | ✅ runtime helper | ✅ |
+| `Result.unwrap_or_else(f)` | ✅ inline (closure call) | ✅ |
+| `Result.map(f)` | ✅ inline | ✅ |
+| `Result.map_err(f)` | ✅ inline | ✅ |
+
+**Bootstrap-ограничения**:
+- `Result[T, E]` зашит на `(nova_int Ok, nova_str Err)`. Generic
+  monomorphization для произвольных T/E — отдельная задача
+  (Q-result-monomorphization).
+- Lambda-параметры с не-`int` типом (например `(e str) -> str => ...`
+  для `map_err`) требуют **явной аннотации** `(e str) -> str`. Codegen
+  не делает inference closure-параметра по сигнатуре method'а
+  (Q-closure-param-inference).
+- Zero-arg lambda для `unwrap_or_else` — `() => expr` или
+  `() -> T => expr`. Парсер lookahead за `(` теперь различает
+  zero-arg lambda и unit-литерал `()`.
+
 **Прочие prelude-типы:**
 
 ```nova
