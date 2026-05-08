@@ -1,9 +1,10 @@
 # План 11: Method values + overload resolution
 
-**Статус:** **частично закрыт (2026-05-08).** Ф.1-Ф.3 + Ф.4.5 + Ф.6
-готовы (overload + Self in expr + spec); Ф.4 (method values как
-first-class) и Ф.5 (disambiguation `as fn(...)`) отложены — отдельная
-сессия.
+**Статус:** ✅ **ЗАКРЫТ (2026-05-08, вечер).** Ф.1-Ф.3 + Ф.4 + Ф.4.5 +
+Ф.5 + Ф.6 + Ф.7 + Ф.9 готовы. Ф.8 (sweep std для overload-rename) —
+optional, не блокер. Method values как first-class работают (bound /
+unbound / static), overloaded method values disambig'ятся через
+`as fn(P...) -> R`.
 **Дата создания:** 2026-05-08.
 **Зависимости:**
 - [D35](../../spec/decisions/03-syntax.md#d35) — методы через `@`/`.`.

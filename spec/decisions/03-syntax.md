@@ -1195,10 +1195,13 @@ let f = t.@m as fn(str) -> int
 - ✅ Free-functions (без receiver'а) — overload **не разрешён** (нет
   established паттерна resolution для bootstrap'а; программист пишет
   разные имена).
-- ⏳ Method values как first-class (`let f = t.@m`) — отложено
-  (Plan 11 Ф.4).
-- ⏳ Disambiguation через `as fn(...)` annotation на ambiguity —
-  отложено (Plan 11 Ф.5).
+- ✅ Method values как first-class (`let f = obj.@m`, `Type.@m`) —
+  закрыт (Plan 11 Ф.4). Bound = closure {fn_ptr, captured_self};
+  unbound = closure {fn_ptr, _empty_env}, fn принимает self явно.
+  Backed by `NovaClosBase` runtime layout для arbitrary signatures.
+- ✅ Disambiguation через `as fn(...)` annotation для overloaded
+  method values — закрыт (Plan 11 Ф.5). Type annotation на let-binding
+  определяет какой overload выбрать (param-types match).
 
 #### C-name mangling
 
@@ -1206,6 +1209,84 @@ let f = t.@m as fn(str) -> int
 `Nova_T_method_m` / `Nova_T_static_m`. Вторая+ — с param-types
 suffix: `Nova_T_method_m__nova_str`, `Nova_T_method_m__nova_int`.
 Mangling: `<original>__<param_type_1>_<param_type_2>_...`.
+
+### Method values (Plan 11 Ф.4)
+
+Методы — first-class values: можно сохранить в переменную, передать
+в HOF, вернуть из функции. Три формы:
+
+```nova
+type Account { balance int }
+fn Account.new(b int) -> Self => Self { balance: b }
+fn Account @get() -> int => @balance
+fn Account @add(n int) -> int => @balance + n
+
+let acc = Account.new(42)
+
+// 1. Bound method value: захватывает obj как self.
+//    Тип: fn(<remaining-params>) -> R
+let f = acc.@get          // тип: fn() -> int
+let g = acc.@add          // тип: fn(int) -> int
+let v = f()               // 42
+let r = g(10)             // 52
+
+// 2. Unbound method value: self передаётся явно как первый аргумент.
+//    Тип: fn(Receiver, <params>) -> R
+let h = Account.@add      // тип: fn(Account, int) -> int
+let r2 = h(acc, 10)       // 52
+
+// 3. Static method value: обычная свободная функция.
+//    Тип: fn(<params>) -> R
+let mk = Account.new      // тип: fn(int) -> Self
+let acc2 = mk(7)
+```
+
+#### Семантика
+
+- **Bound** копирует / захватывает receiver внутрь closure-структуры.
+  Subsequent calls используют captured self.
+- **Unbound** — fn pointer без env'а. Caller обязан передать receiver
+  как первый аргумент.
+- **Static** — fn pointer без receiver'а вообще.
+
+#### Использование в HOF
+
+```nova
+let nums = [1, 2, 3]
+let pairs = nums.map(int.@to_str)   // unbound: применяет to_str к каждому
+let total = nums.fold(0, acc.@add)  // bound: добавляет каждый num к acc
+```
+
+#### Disambiguation для overloaded methods (Ф.5)
+
+Если у метода несколько overload'ов, нужна type annotation:
+
+```nova
+fn Buffer mut @write(s str) -> ()
+fn Buffer mut @write(b []byte) -> ()
+
+let buf = Buffer.new()
+let f1 = buf.@write as fn(str) -> ()      // выбор по annotation
+let f2 = buf.@write as fn([]byte) -> ()
+```
+
+Без annotation — compile error «ambiguous method value». Annotation
+либо на cast (`as fn(...)`), либо на let-binding type
+(`let f fn(str) -> () = buf.@write` — также работает).
+
+#### C-runtime представление
+
+Bound и unbound — оба используют generic `NovaClosBase` layout:
+```c
+typedef struct { void* fn; void* env; } NovaClosBase;
+```
+
+`fn` указывает на сгенерированный wrapper, `env` — указатель на
+struct с captured receiver (для bound) или dummy struct (для unbound).
+Call-site: cast `fn` к нужной сигнатуре, передача `env` + args.
+
+Static method values — bare fn pointer (без env'а) — но в bootstrap
+для единообразия тоже оборачиваются в NovaClosBase.
 
 ### Self в expression position (D66 расширение, Plan 11 Ф.4.5)
 

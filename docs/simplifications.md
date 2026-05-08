@@ -2017,3 +2017,105 @@ method_overloads и parameter-type mangling. Риск регрессий в 78
 12 Ф.4.5 try_read auto-derive — асимметричное (Fail vs Result, разная
 семантика для caller'а). Симметричные правила выживают, асимметричные
 становятся source of bugs.
+
+
+### Plan 11 Ф.4+Ф.5 — Method values как first-class (2026-05-08, вечер)
+
+Plan 11 Ф.1-Ф.3 (overload по типу аргумента) был закрыт в первой
+половине дня. Ф.4 (method values) и Ф.5 (`as fn(...)` disambig)
+оставались deferred до этой сессии.
+
+#### Ф.4 — три формы method values
+
+**Bound** — `obj.@method`. Closure struct {fn_ptr, captured_self}.
+При вызове `f(args)` codegen unpacks struct, вызывает fn с env+args,
+fn-wrapper извлекает self из env и вызывает реальный
+`Nova_<T>_method_<m>(self, args)`.
+
+**Unbound** — `Type.@method`. Closure struct {fn_ptr, dummy_env}.
+fn-wrapper принимает self как первый параметр явно, не хранит его в
+env.
+
+**Static** — `Type.method` (без `@`). Уже работало через
+`nova_fn_<name>` поинтер.
+
+#### NovaClosBase — generic closure layout
+
+До Ф.4 nova_rt.h имел только 5 hardcoded closure structs (NovaClos_vi,
+ii, ib, iii, vii) — для конкретных сигнатур lambda. Method values
+имеют **произвольные** сигнатуры (Counter*, int) → int, etc.
+
+Решение: добавлен `NovaClosBase = { void* fn; void* env }` —
+**generic** layout. Bit-уровень: same as NovaClos_*. На call-site
+codegen cast'ит `fn`-поле к нужной сигнатуре:
+
+```c
+((ret(*)(void*, args...))((NovaClosBase*)f)->fn)(((NovaClosBase*)f)->env, args...)
+```
+
+Это работает для **любой** сигнатуры без per-sig macros. Per-sig
+macros остаются для optimization (когда сигнатура hardcoded — компилятор
+видит typed call) и backward-compat для NovaClos_* lambda emission.
+
+#### Ф.5 — `as fn(P...) -> R` disambiguation
+
+Когда у метода несколько overload'ов по типу аргумента:
+
+```nova
+fn Buf mut @push(n int) -> int => ...
+fn Buf mut @push(b bool) -> int => ...
+
+let f = buf.@push                       // ambiguous → берётся first
+let g = buf.@push as fn(int) -> int     // выбор первого overload'а
+let h = buf.@push as fn(bool) -> int    // выбор второго overload'а
+```
+
+В codegen emit_expr для `As(Member, TypeRef::Func)`:
+1. Извлекаем target_signature из Func type.
+2. Вызываем `emit_method_value_typed(obj, method, Some(sig))`.
+3. `emit_method_value_typed` фильтрует overloads по param-types match.
+4. Match'ed overload даёт правильный mangled c_name (Plan 11 Ф.3
+   уже эмитил `Nova_Buf_method_push__nova_bool` для второго overload'а).
+
+Для unbound `Type.@method as fn(Recv, P...) -> R` skip первый param
+(receiver) при сравнении.
+
+#### Ф.7 — тесты
+
+- `nova_tests/syntax/method_values.nv` — 7 тестов: bound (no/one/two
+  args), unbound, разные obj несут свои self, as-fn annotation.
+- `nova_tests/syntax/overload_method_values.nv` — 3 теста: bound int
+  overload, bound bool overload, unbound int overload — все через
+  `as fn(...)`.
+
+После Ф.4+Ф.5: **80/80 nova_tests PASS** (было 78 — +2 новых тестовых
+файла, оба passes).
+
+#### Bootstrap-ограничение
+
+**External methods (str, int runtime) не доступны как method values.**
+`s.@byte_len` сейчас bails: codegen ищет в `method_overloads` registry,
+а built-in str API живёт в `ExternalRegistry` (`std/runtime/string.nv`
+external decls). Routing через ExternalRegistry — future work.
+
+Workaround: для current bootstrap'а — оборачивать в lambda:
+`let f = (s) => s.byte_len()`. Future: emit_method_value_typed
+fallback'ом ищет в external registry.
+
+#### Урок
+
+**Generic `NovaClosBase` lifts the «hardcoded sig matrix» limitation.**
+Closures с произвольными сигнатурами были невозможны без per-sig macros.
+NovaClosBase + cast-at-call-site решает это в ~10 строк runtime'а +
+~15 строк codegen-fallback.
+
+**Desugar to lambda был bardziej elegant, но не нужен.** Думал сначала
+synthesize Lambda AST для bound case → reuse emit_lambda. Но direct
+emission (генерация wrapper-fn + env-struct + closure-alloc inline)
+оказался проще: меньше indirections, прозрачнее в emitted C.
+
+**Type annotation как hint для codegen — стандартный приём.**
+`as fn(...)` не меняет run-time поведение (остаётся `(void*)expr`
+cast), но **меняет codegen** на let-binding и emit_method_value
+levels — выбор overload'а. Прецедент: TypeScript type assertions
+влияют на overload resolution.

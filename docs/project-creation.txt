@@ -2137,3 +2137,105 @@ Total numbers (после Ф.9):
     12 Ф.4.5 read↔try_read) — нет.
 
 Plan 13 после Ф.9: ✅ ЗАКРЫТ кроме Ф.9.2 (deferred).
+
+
+====================================================================
+Plan 11 Ф.4+Ф.5 — Method values + as-fn disambiguation (2026-05-08, вечер)
+====================================================================
+
+Plan 11 Ф.1-Ф.3 (overload по типу аргумента) был закрыт ранее.
+Ф.4 (method values как first-class) и Ф.5 (as-fn disambig) остались
+deferred. Эта сессия закрывает обе фазы.
+
+Ф.4 — три формы method values:
+
+1. Bound — `obj.@method`. Closure struct {fn_ptr, captured_self}.
+   Captured receiver хранится в env. При вызове fn-wrapper извлекает
+   self и вызывает Nova_<T>_method_<m>(self, args).
+
+2. Unbound — `Type.@method`. Closure struct с пустым env. Fn принимает
+   self как первый параметр явно.
+
+3. Static — `Type.method` (без @). Уже работало через nova_fn_<name>.
+
+Реализация:
+
+1. Parser (parser/mod.rs): после Dot теперь принимает `@ident`,
+   собирает имя с префиксом `@` чтобы маркировать method-value
+   семантику.
+
+2. Codegen — emit_method_value() в emit_c.rs:
+   - Determine bound vs unbound по obj.kind.
+   - Lookup method в method_overloads registry.
+   - Emit static C-функция nova_mv_<id>_body со сигнатурой
+     (void* env, params...).
+   - Emit env-struct (с self-полем для bound, dummy для unbound).
+   - At call site: nova_alloc env, nova_alloc closure struct, return void*.
+
+3. NovaClosBase в nova_rt.h — generic closure layout {fn, env}.
+   Заменяет wrong direct fn-pointer cast для arbitrary signatures
+   в call-site fallback emit_call (line 4453).
+
+   Layout совпадает с любым NovaClos_*; cast `fn`-поля к нужной
+   сигнатуре на call-site:
+
+       ((ret(*)(void*, P1, P2))((NovaClosBase*)f)->fn)
+           (((NovaClosBase*)f)->env, args...)
+
+4. Var-types/fn_param_sigs registration в let-binding:
+   `let f = obj.@m`: f.type = void*, f register'ится в fn_param_sigs
+   с (param_c_types, return_c_type) из MethodSig. Для unbound —
+   receiver добавляется первым параметром.
+
+Ф.5 — as fn(...) disambiguation:
+
+При `obj.@m as fn(P...) -> R`:
+- Emit_expr для As(Member, Func) извлекает target signature.
+- Вызывает emit_method_value_typed(obj, method, Some(sig)).
+- Фильтрует overloads по param-types match.
+- Использует sig.c_name с mangling-suffix'ом из Plan 11 Ф.3
+  (Nova_Buf_method_push vs Nova_Buf_method_push__nova_bool).
+
+Для unbound — skip первый параметр (receiver) при сравнении.
+При let-binding type annotation также используется для выбора
+fn_param_sigs.
+
+Тесты:
+
+- nova_tests/syntax/method_values.nv (7 тестов):
+  * bound no-args / one-arg / two-args
+  * unbound (Type.@method)
+  * разные obj несут свои self
+  * as-fn annotation для single overload
+- nova_tests/syntax/overload_method_values.nv (3 теста):
+  * bound int overload через as fn(int) -> int
+  * bound bool overload через as fn(bool) -> int
+  * unbound disambig через as fn(Buf, int) -> int
+
+Acceptance: 80/80 nova_tests PASS (было 78 — +2 новых файла).
+
+Bootstrap-ограничение:
+
+Method values для primitive runtime методов (str, int API в
+std/runtime/*.nv) пока не работают — нужна routing через
+ExternalRegistry, не method_overloads. Workaround: lambda обёртка
+(let f = (s) => s.byte_len()).
+
+Plan 11 после этой сессии: ✅ ЗАКРЫТ кроме Ф.8 (sweep std для
+overload-rename — optional, не блокер).
+
+Файлы изменены:
+  compiler-codegen/src/parser/mod.rs (+15 строк)
+  compiler-codegen/src/codegen/emit_c.rs (+200 строк)
+  compiler-codegen/nova_rt/nova_rt.h (+2 строки NovaClosBase)
+  spec/decisions/03-syntax.md (D35 расширение, ~70 строк нового)
+  docs/plans/11-method-values-and-overload.md (status update)
+  + 2 новых test files
+
+Урок:
+  - Generic NovaClosBase убрал hardcoded-sig-matrix limitation. ~25
+    строк кода против per-sig macros (десятки).
+  - Direct emission > AST desugaring. Думал synthesize Lambda → reuse
+    emit_lambda, но direct (wrapper-fn + env + closure) проще.
+  - Type annotation как hint для codegen — стандарт. Не меняет
+    runtime, меняет codegen routing.
