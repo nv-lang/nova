@@ -1968,3 +1968,58 @@ trigger'ила регрессию (Nova_str_static_from vs _from_char). Отка
 Migration risk-management: conservative split (infrastructure
 → dispatch отдельно) > all-at-once. Каждая фаза независимо
 проверяема.
+
+
+================================================================================
+2026-05-08 Plan 13 Ф.8: декомпозиция builtins.nv + f32 math
+================================================================================
+
+Plan 13 Ф.8 — расширение scope: f32 math + полная декомпозиция
+handwritten builtins.nv на per-type auto-generated файлы. После
+Ф.8 в std/runtime/ нет ни одного handwritten файла.
+
+Что сделано:
+
+1. Ф.8.1 string registry audit:
+   - Убран is_empty (нет в runtime).
+   - Добавлен eq.
+   - Все 17 special-case'ов соответствуют registry.
+
+2. Ф.8.2 f32 math (~25 entries):
+   - C-имена через f-suffix (sqrtf/sinf/cosf/...).
+   - Predicates type-generic (isnan/isfinite/isinf — C99 macros).
+
+3. Ф.8.3 декомпозиция builtins.nv (~70 entries):
+   - string_builder.nv: StringBuilder API.
+   - write_buffer.nv: WriteBuffer API (18 numeric × LE/BE + write_*).
+   - read_buffer.nv: ReadBuffer API (40 entries — Fail+Try forms).
+   - char.nv: str.from(c char).
+   - Box::leak'ом для 'static имён formed runtime'е.
+
+4. Ф.8.4 regen + delete:
+   - 6 .nv файлов сгенерированы.
+   - std/runtime/builtins.nv удалён.
+
+5. Ф.8.5 Multi-file ExternalRegistry:
+   - include_str! для 4 файлов (string_builder/write_buffer/
+     read_buffer/char).
+   - merge_from_module aggregator.
+
+6. Spec D26/D82 — заменены упоминания на per-type файлы.
+
+7. regen-runtime.md prompt обновлён.
+
+Total numbers:
+- Registry: 157 entries (было 44).
+- Auto-generated .nv: 6 (было 2).
+- Handwritten .nv в std/runtime/: 0 (было 1).
+
+Тесты: 78/78 PASS на nova_tests. Determinism --check OK.
+
+Урок: декомпозиция handwritten exception — единообразный single
+source of truth pattern. Multi-file include_str! для embedded
+sources где их несколько. Box::leak для 'static str из computed
+имён — один-time alloc, без boilerplate'а.
+
+Plan 13 закрыт полностью (MVP + Ф.8). Ф.4 (special-case removal
+для str/math) остается deferred.

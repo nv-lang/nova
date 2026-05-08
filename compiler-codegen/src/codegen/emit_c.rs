@@ -188,7 +188,7 @@ impl CEmitter {
             method_receivers: HashMap::new(),
             method_overloads: HashMap::new(),
             external_registry: super::external_registry::ExternalRegistry::load_builtins()
-                .expect("failed to load std/runtime/builtins.nv"),
+                .expect("failed to load std/runtime/*.nv (Plan 13 Ф.8)"),
             embed_fields: HashMap::new(),
             all_methods: HashSet::new(),
             iter_returns: HashMap::new(),

@@ -63,3 +63,60 @@ export external fn f64 @is_nan() -> bool
 export external fn f64 @is_finite() -> bool
 // True если ±∞.
 export external fn f64 @is_infinite() -> bool
+
+// ─── f32 ───
+
+// Квадратный корень (single precision).
+export external fn f32 @sqrt() -> f32
+// Кубический корень (single precision).
+export external fn f32 @cbrt() -> f32
+// Модуль |x| (single precision).
+export external fn f32 @abs() -> f32
+// Округление вверх (single precision).
+export external fn f32 @ceil() -> f32
+// Округление вниз (single precision).
+export external fn f32 @floor() -> f32
+// Округление до ближайшего (single precision).
+export external fn f32 @round() -> f32
+// Truncate (single precision).
+export external fn f32 @trunc() -> f32
+// Синус radians (single precision).
+export external fn f32 @sin() -> f32
+// Косинус radians (single precision).
+export external fn f32 @cos() -> f32
+// Тангенс radians (single precision).
+export external fn f32 @tan() -> f32
+// Арксинус (single precision).
+export external fn f32 @asin() -> f32
+// Арккосинус (single precision).
+export external fn f32 @acos() -> f32
+// Арктангенс (single precision).
+export external fn f32 @atan() -> f32
+// Гиперболический синус (single precision).
+export external fn f32 @sinh() -> f32
+// Гиперболический косинус (single precision).
+export external fn f32 @cosh() -> f32
+// Гиперболический тангенс (single precision).
+export external fn f32 @tanh() -> f32
+// e^x (single precision).
+export external fn f32 @exp() -> f32
+// 2^x (single precision).
+export external fn f32 @exp2() -> f32
+// Натуральный log (single precision).
+export external fn f32 @ln() -> f32
+// Log2 (single precision).
+export external fn f32 @log2() -> f32
+// Log10 (single precision).
+export external fn f32 @log10() -> f32
+// atan2 (single precision).
+export external fn f32 @atan2(x f32) -> f32
+// self^exp (single precision).
+export external fn f32 @pow(exp f32) -> f32
+// hypot (single precision).
+export external fn f32 @hypot(y f32) -> f32
+// True если NaN (single precision).
+export external fn f32 @is_nan() -> bool
+// True если не ±∞ и не NaN (single precision).
+export external fn f32 @is_finite() -> bool
+// True если ±∞ (single precision).
+export external fn f32 @is_infinite() -> bool

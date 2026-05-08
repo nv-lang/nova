@@ -6,8 +6,10 @@
 ## Цель
 
 Перегенерировать read-only Nova-side projection реестра runtime-
-функций компилятора. Файлы `std/runtime/*.nv` (`builtins.nv`,
-`string.nv`, `math.nv`) — auto-generated; источник истины —
+функций компилятора. После Plan 13 Ф.8 — **6 файлов**:
+`std/runtime/string.nv`, `math.nv`, `char.nv`, `string_builder.nv`,
+`write_buffer.nv`, `read_buffer.nv`. **`builtins.nv` ❌ REMOVED**
+(декомпозирован на per-type файлы). Источник истины —
 `compiler-codegen/src/codegen/runtime_registry.rs`.
 
 После прогона все `external fn`-декларации в `std/runtime/*.nv`

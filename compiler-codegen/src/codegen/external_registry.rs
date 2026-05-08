@@ -49,23 +49,54 @@ pub struct ExternalRegistry {
 }
 
 impl ExternalRegistry {
-    /// Builtins source — embedded в binary через include_str!. Это
-    /// гарантирует что codegen и `std/runtime/builtins.nv` синхронны
-    /// без зависимости от файловой системы.
-    pub const BUILTINS_SRC: &'static str = include_str!("../../../std/runtime/builtins.nv");
+    /// Plan 13 Ф.8: builtins.nv удалён, заменён на per-type
+    /// auto-generated файлы. ExternalRegistry загружает все 4 модуля
+    /// (string_builder, write_buffer, read_buffer, char) — они embedded
+    /// в binary через include_str!.
+    pub const STRING_BUILDER_SRC: &'static str =
+        include_str!("../../../std/runtime/string_builder.nv");
+    pub const WRITE_BUFFER_SRC: &'static str =
+        include_str!("../../../std/runtime/write_buffer.nv");
+    pub const READ_BUFFER_SRC: &'static str =
+        include_str!("../../../std/runtime/read_buffer.nv");
+    pub const CHAR_SRC: &'static str =
+        include_str!("../../../std/runtime/char.nv");
 
-    /// Парсит `builtins.nv` и строит registry. Вызывается один раз
-    /// при инициализации CEmitter.
+    /// Парсит per-type .nv файлы (string_builder/write_buffer/read_buffer/
+    /// char) и строит unified registry. Вызывается один раз при
+    /// инициализации CEmitter.
     ///
-    /// Plan 13: runtime_registry (str/math) загружается **отдельно** через
-    /// `emit-runtime-stubs` для генерации `std/runtime/*.nv`. Loading в
-    /// codegen-runtime registry (с merge'ингом сюда) — следующий шаг
-    /// Plan 13 Ф.4 (отдельная итерация после full migration special-case
-    /// dispatch'ей).
+    /// Plan 13 Ф.8: builtins.nv декомпозирован — теперь 4 источника.
+    /// Все embedded в binary через include_str!.
     pub fn load_builtins() -> Result<Self, String> {
-        let module = crate::parser::parse(Self::BUILTINS_SRC)
-            .map_err(|d| format!("failed to parse builtins.nv: {}", d.message))?;
-        Self::from_module(&module)
+        let mut reg = Self::default();
+        for (name, src) in &[
+            ("string_builder.nv", Self::STRING_BUILDER_SRC),
+            ("write_buffer.nv",   Self::WRITE_BUFFER_SRC),
+            ("read_buffer.nv",    Self::READ_BUFFER_SRC),
+            ("char.nv",           Self::CHAR_SRC),
+        ] {
+            let module = crate::parser::parse(src)
+                .map_err(|d| format!("failed to parse {}: {}", name, d.message))?;
+            reg.merge_from_module(&module)?;
+        }
+        Ok(reg)
+    }
+
+    /// Merge entries из одного модуля в self. Используется для
+    /// multi-file load_builtins. Сохраняет cumulative receiver_types
+    /// и by_key.
+    fn merge_from_module(&mut self, module: &Module) -> Result<(), String> {
+        let other = Self::from_module(module)?;
+        for rt in other.receiver_types {
+            if !self.receiver_types.contains(&rt) {
+                self.receiver_types.push(rt);
+            }
+        }
+        for (k, v) in other.by_key {
+            self.by_key.entry(k).or_default().extend(v);
+        }
+        Ok(())
     }
 
     /// Строит registry из произвольного модуля (для тестов / sanity).

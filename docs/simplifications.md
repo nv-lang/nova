@@ -1801,3 +1801,81 @@ go generate, protoc-generated .pb.go — все используют этот pa
 одним коммитом», но conservative split (Ф.1-Ф.3 + Ф.5-Ф.7
 infrastructure → Ф.4 dispatch отдельно) даёт **safe-rollout**:
 каждая фаза независимо проверяема, регрессии не накладываются.
+
+### [ЗАКР 2026-05-08] Plan 13 Ф.8: декомпозиция builtins.nv + f32 math
+
+После Ф.8 **в `std/runtime/` нет ни одного handwritten файла** — всё
+auto-generated. Single source of truth pattern окончательно завершён
+для opaque types и numeric/str API.
+
+#### Что сделано
+
+1. **Ф.8.1 string registry audit**: убран `is_empty` (нет в runtime),
+   добавлен `eq` (есть в runtime, использовался через operator).
+   Все 17 special-case'ов в emit_c.rs соответствуют registry.
+
+2. **Ф.8.2 f32 math** (~25 entries):
+   - C-имена через `f`-suffix (sqrtf, sinf, cosf, ...).
+   - Predicates (isnan/isfinite/isinf) — type-generic C99 macros,
+     те же имена.
+   - Auto-generated в `std/runtime/math.nv` параллельно f64 секции.
+
+3. **Ф.8.3 декомпозиция builtins.nv** (~70 entries):
+   - `string_builder.nv`: StringBuilder API (new/with_capacity/
+     from(s|c)/append(s|c)/len/capacity/clone/into).
+   - `write_buffer.nv`: WriteBuffer API (write_byte/write_bytes/
+     write_zero/write_char/write_str + 18 numeric × LE/BE +
+     finalize).
+   - `read_buffer.nv`: ReadBuffer API (cursor metadata + 20 read_*
+     × Fail-form/try-form pairs = 40 entries).
+   - `char.nv`: `str.from(c char)` UTF-8 encode.
+   - Box::leak'ом для `'static str` runtime-вычисленных имён.
+
+4. **Ф.8.4 regen + delete**:
+   - 6 файлов сгенерированы.
+   - `std/runtime/builtins.nv` удалён.
+   - 78/78 PASS regression.
+
+5. **Ф.8.5 Multi-file ExternalRegistry**:
+   - `include_str!` для 4 файлов (string_builder/write_buffer/
+     read_buffer/char) — все embedded в binary.
+   - `merge_from_module` aggregator: каждый файл парсится → merge
+     entries в общий registry.
+   - string.nv/math.nv пока не loaded в codegen (Plan 13 Ф.4
+     deferred — special-case dispatch остаётся для str/math).
+
+6. **Spec D26/D82** — описания заменены на per-type файлы.
+   Plan 13 раздел в D82 расширен — таблица 6 файлов + объяснение
+   ExternalRegistry multi-file load.
+
+7. **regen-runtime.md** prompt обновлён.
+
+#### Total numbers
+
+- Registry entries: **157** (было 44 — +113 от opaque types + f32).
+- Auto-generated .nv файлов: **6** (было 2 — string + math; +4
+  opaque + char).
+- Handwritten .nv в `std/runtime/`: **0** (было 1 — builtins.nv).
+
+#### Тесты
+
+- 78/78 PASS на nova_tests.
+- `nova-codegen check std/runtime/*.nv` — все 6 файлов parse'ятся.
+- Detrминизм `regen_runtime.bat --check` → OK.
+
+#### Урок
+
+**Декомпозиция handwritten exception**: один handwritten файл рядом
+с auto-generated — это «исключение из правила». Plan 13 Ф.8
+устраняет его, делая единообразный single source of truth pattern.
+
+**Multi-file include_str!** — паттерн для embedded sources где их
+несколько. `include_str!` принимает literal path (не runtime),
+поэтому каждый файл — отдельная константа. Загрузка через цикл
+`for src in [SRC_A, SRC_B, ...]` aggregator'ом. Это даёт
+extensibility без runtime FS dependency.
+
+**Box::leak для 'static str из runtime-computed строк**: registry
+содержит ~50 entries которые формируются программно (`format!`).
+Для `&'static str` lifetime — leak'аем, один-time alloc. Альтернатива
+(static lookup table) — тысячи строк boilerplate'а.

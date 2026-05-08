@@ -349,7 +349,9 @@ type RangeIter {
 
 // Built-in opaque accumulator/buffer типы (Plan 04, D82).
 // Объявлены как известные компилятору по имени (как int/str);
-// API — через external fn декларации в std/runtime/builtins.nv.
+// API — через external fn декларации в std/runtime/string_builder.nv,
+// std/runtime/write_buffer.nv, std/runtime/read_buffer.nv (Plan 13 Ф.8;
+// раньше были в едином std/runtime/builtins.nv — REMOVED 2026-05-08).
 type StringBuilder    // UTF-8 string accumulator, @into() -> str (infallible)
 type WriteBuffer      // binary write buffer, @into() -> []byte
 type ReadBuffer       // cursor-style binary reader, view над []byte
@@ -365,9 +367,10 @@ type ReadBufferError
 
 **Built-in opaque-типы для аккумуляции** (`StringBuilder`,
 `WriteBuffer`, `ReadBuffer`) — расширяют примитивы D26. Полный API
-описан в `std/runtime/builtins.nv` через `external fn` декларации
-(D82). Программист **не пишет** `type StringBuilder { ... }` —
-тип known-by-name.
+описан в `std/runtime/string_builder.nv`, `std/runtime/write_buffer.nv`,
+`std/runtime/read_buffer.nv` (auto-generated через Plan 13 Ф.8) —
+`external fn` декларации (D82). Программист **не пишет**
+`type StringBuilder { ... }` — тип known-by-name.
 
 | Тип | Глагол | Финализация | Use-case |
 |---|---|---|---|
@@ -2782,17 +2785,32 @@ special-case'ил по имени receiver'а — fragile).
   `read_buffer.h` — TBD. Реализации обязаны матчить builtins.nv по
   C-name + сигнатуре; иначе linker error.
 
-### Plan 13: расширение projection на str/math (2026-05-08)
+### Plan 13: расширение projection на str/math + декомпозиция (2026-05-08)
 
-`std/runtime/builtins.nv` (single source of truth для opaque types)
-расширяется концепцией **projection** на все runtime-функции:
+После Plan 13 Ф.8 **в `std/runtime/` нет ни одного handwritten файла**.
+`builtins.nv` ❌ REMOVED — декомпозирован на per-type auto-generated файлы:
 
-- `std/runtime/string.nv` — auto-generated декларации для str API
-  (UTF-8 операции).
-- `std/runtime/math.nv` — auto-generated f64/f32 math (D74 instance-методы).
+| Что | Файл (auto-gen) |
+|---|---|
+| str API (UTF-8 операции) | `std/runtime/string.nv` |
+| f64/f32 math (D74 instance-методы) | `std/runtime/math.nv` |
+| char/str interop (`str.from(c char)`) | `std/runtime/char.nv` |
+| StringBuilder API | `std/runtime/string_builder.nv` |
+| WriteBuffer API | `std/runtime/write_buffer.nv` |
+| ReadBuffer API | `std/runtime/read_buffer.nv` |
 
-Источник истины — `compiler-codegen/src/codegen/runtime_registry.rs` (Rust).
-Команда `nova-codegen emit-runtime-stubs` генерирует `.nv` файлы;
+Источник истины — `compiler-codegen/src/codegen/runtime_registry.rs` (Rust):
+~157 entries (~17 str + ~50 math f64+f32 + ~50 ReadBuffer fail+try
+форм + ~20 WriteBuffer numeric × LE/BE + StringBuilder + char).
+
+Команда `regen_runtime.bat` (или `.\regen_runtime.ps1`, или прямой
+`nova-codegen emit-runtime-stubs`) генерирует все 6 `.nv` файлов;
 manual edit запрещён (CI guard через `--check`).
+
+ExternalRegistry в codegen загружает 4 .nv файла через `include_str!`
+(string_builder, write_buffer, read_buffer, char) — единый registry для
+opaque-types dispatch (Plan 12). string.nv/math.nv пока загружаются
+emit-runtime-stubs только; codegen-side dispatch для str/math остаётся
+через legacy special-cases (Plan 13 Ф.4 deferred).
 
 См. [docs/plans/13-runtime-stdlib-and-autogen.md](../../docs/plans/13-runtime-stdlib-and-autogen.md).

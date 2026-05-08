@@ -13,8 +13,6 @@ module std.runtime.string
 export external fn str @char_len() -> int
 // Длина в байтах. O(1). Для FFI / буферных операций.
 export external fn str @byte_len() -> int
-// True если byte_len == 0.
-export external fn str @is_empty() -> bool
 // True если строка начинается с prefix.
 export external fn str @starts_with(prefix str) -> bool
 // True если строка заканчивается на suffix.
@@ -37,6 +35,8 @@ export external fn str @to_lower() -> str
 export external fn str @to_upper() -> str
 // Конкатенация двух строк (создаёт новую). O(a+b).
 export external fn str @concat(other str) -> str
+// Равенство по контенту (memcmp). O(min). Также вызывается оператором ==.
+export external fn str @eq(other str) -> bool
 // UTF-8 bytes как []byte (copy).
 export external fn str @bytes() -> []byte
 // Codepoints как []int (eager bootstrap; production будет Iter[char]).
