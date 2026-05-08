@@ -105,7 +105,7 @@ let parsed = parse[int]("42")?
 
 ```nova
 fn f(x int) -> int                       // тип возврата
-type Handler alias (Request) -> Response // функциональный тип через alias
+type Handler alias fn(Request) -> Response // функциональный тип через alias
 ```
 
 `=>` — для **тела и разветвлений**:
@@ -185,11 +185,12 @@ block      = '{' { statement } [ expression ] '}'
 
 ---
 
-## D20. `()` вместо `void` и сводка стрелок
+## D20. `()` вместо `void`, сводка стрелок, function type syntax
 
 ### Что
 Тип «без значения» — `()` (unit), не `void`. Плюс сводная таблица
-стрелок: каждая роль закреплена за одним символом.
+стрелок (каждая роль закреплена за одним символом) и **обязательный
+`fn`-keyword** для function type везде.
 
 ### Правило
 
@@ -209,6 +210,86 @@ let r Result[(), str] = Ok(())   // unit как generic-параметр
 | `=`  | присваивание (`let x = 5`) |
 
 Один символ — одна роль.
+
+#### Function type — всегда с `fn` префиксом
+
+Function type записывается **только** через `fn(args) Effects? -> Ret`.
+Бесколонная форма `(args) -> Ret` **запрещена** во всех контекстах.
+
+```nova
+// ✓ — function type везде с fn
+fn sort[T](xs []T, less fn(T, T) -> bool) -> []T
+type Handler alias fn(Request) -> Response
+let callback fn() -> int = ...
+type Server { handler fn(Request) -> Response }
+fn measure[T](action fn() Io -> T) Time -> (T, Duration)
+
+// ✗ — без fn запрещено
+let f () -> int = ...                      // ✗
+type Handler alias (Request) -> Response   // ✗
+fn sort[T](xs []T, less (T, T) -> bool)    // ✗
+type Server { handler (Request) -> Response }  // ✗
+```
+
+**Где конкретно `fn` нужен:**
+
+| Контекст | Синтаксис |
+|---|---|
+| Type alias | `type H alias fn(Args) -> Ret` |
+| Параметр функции | `fn f(g fn(Args) -> Ret) -> ...` |
+| Let-annotation | `let f fn(Args) -> Ret = ...` |
+| Поле record | `type X { cb fn(Args) -> Ret }` |
+| Generic-bound | `[T fn(Args) -> Ret]` (если применимо) |
+| Возврат функции | `fn make() -> fn(int) -> int` |
+
+#### Почему `fn` обязателен
+
+1. **Парсер однозначен.** Без `fn` парсер видит `(int) -> bool` и должен
+   делать lookahead чтобы различить:
+   - Group expression (parens around expression) в выражении.
+   - Tuple type `(int)` в позиции типа (хотя одно-element tuple
+     обычно не пишется в Nova).
+   - Function type начало.
+
+   `fn` ставит явный признак «дальше function type» — парсер не
+   ошибается.
+
+2. **AI-friendly.** LLM, генерирующая код, не путает функциональный
+   тип с tuple/grouping. Один синтаксис для function type, один путь.
+
+3. **Согласованность с named-fn.** `fn name(args) -> Ret => body` —
+   именованная функция начинается с `fn`. Function type
+   `fn(args) -> Ret` — то же начало. Это **одна и та же** концепция
+   «function thing» — `fn` это её префикс.
+
+4. **D9 «один путь».** Не два варианта (alias-form vs other-form).
+   Везде одинаково.
+
+5. **Прецеденты.** Rust (`fn(i32) -> bool`), Go (`func(int) bool`) —
+   оба требуют function-type keyword. TypeScript/Kotlin/Swift не
+   требуют, потому что у них grammar не имеет `(x)` group-expr
+   ambiguity (разные приоритеты parsing). Nova с её парсером ближе
+   к Rust/Go.
+
+#### Не путать с лямбдой
+
+**Function type** (тип) — `fn(int) -> bool`.
+**Lambda value** (выражение) — `(x) => x > 0`.
+
+```nova
+// Тип: fn(int) -> bool
+let pred fn(int) -> bool = (x) => x > 0
+//        ^^^^^^^^^^^^^^^^^      ^^^^^^^^^^^^^
+//        type annotation         lambda value
+
+// fn() в выражении (анонимная функция) запрещён по D22:
+let f = fn(x) => x + 1   // ✗ — анонимной fn нет, см. D22
+let f = (x) => x + 1     // ✓ — лямбда
+```
+
+D22 запрещает **анонимные функции через `fn`**, но **type syntax
+требует `fn` префикс**. Это **не противоречие** — `fn` в типе
+играет роль «type-marker», как `[]` для array-types.
 
 ### Почему
 
