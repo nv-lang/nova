@@ -4460,7 +4460,17 @@ Bootstrap-парсер падает на `in` field-declaration:
 
 ## Q-effect-type-anonymous. Anonymous effect types в позиции type
 
-**Контекст.** std/collections/linkedlist.nv использует `effect { ... }`
+> ✅ **CLOSED by Variant 3** (2026-05-08): использовать `Iter[T]`
+> protocol из prelude. Нет нужды в anonymous effect types в позиции
+> типа — D58 даёт `Iter[T]` явно, D53 protocol-as-type работает для
+> структурного match'а.
+>
+> Sweep done: `std/collections/linkedlist.nv:from_iter` и
+> `std/collections/set.nv:from_iter` мигрированы с
+> `it effect { mut next() -> Option[T] }` (некорректный синтаксис) →
+> `it Iter[T]` (корректный, prelude).
+
+**Контекст.** std/collections/linkedlist.nv использовал `effect { ... }`
 inline в параметре функции:
 
 ```nova
@@ -4470,10 +4480,16 @@ fn LinkedList[T].from_iter(it effect { mut next() -> Option[T] }) -> Self {
 ```
 
 Это **anonymous effect type** — структурный effect, объявленный в
-позиции type-аннотации. Bootstrap-парсер не поддерживает: `expected
-type, got 'effect'`.
+позиции type-аннотации. Bootstrap-парсер не поддерживал: `expected
+type, got 'effect'`. Также синтаксис **некорректен** по двум
+причинам:
 
-**Варианты:**
+1. `effect` — kind-token при declaration of named type (D18/D61),
+   не используется в позиции типа значения inline.
+2. `mut` на operation в effect-declaration не описан spec'ом —
+   effects описывают operations без `mut` (D61).
+
+**Варианты (на момент обсуждения):**
 1. **Поддержать anonymous effect types.** Парсер видит `effect {...}`
    в type-position, парсит method-block, создаёт anonymous effect.
    Согласовано с D53 (protocol как type).
@@ -4484,12 +4500,22 @@ type, got 'effect'`.
    итераторов; пользователь принимает `it Iter[T]` без объявления.
    Прецедент: Rust `IntoIterator`, Swift `IteratorProtocol`.
 
-**Предложение:** **3** — Iter[T] в prelude (D58 уже намекает). Anonymous
-effects — открытое архитектурное решение, отложено до конкретных
-use-cases.
+**Принятое решение:** **Variant 3** — `Iter[T]` protocol уже есть
+в D26 prelude (см. D58/08-runtime.md строки 332-336):
+
+```nova
+type Iter[T] protocol {
+    mut next() -> Option[T]
+}
+```
+
+Программист пишет `it Iter[T]` для drain-параметра. Структурно любой
+тип с `mut @next() -> Option[T]` удовлетворяет. Anonymous effects
+в позиции типа **не нужны** — D53 protocol-as-type решает то же самое.
 
 **Связь:** [D58](decisions/03-syntax.md#d58) (Iter[T] protocol),
-[D53](decisions/02-types.md#d53), Q-stdlib-data-types.
+[D53](decisions/02-types.md#d53), [D26](decisions/08-runtime.md#d26)
+(prelude содержит Iter[T]).
 
 ---
 
