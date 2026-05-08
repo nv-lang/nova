@@ -966,3 +966,41 @@ codegen не знает где маппить. План 08 закрывает Ф
 - Ф.7: spec D54 расширение + conversions.md + simplifications
 
 
+================================================================================
+2026-05-08 Plan 06 Ф.1: Iter[T] protocol fallback в for-in
+================================================================================
+
+D58 описывал Iter[T] как структурный protocol — любой тип с
+`mut @next() -> Option[T]` автоматически удовлетворяет. Но bootstrap
+emit_for поддерживал только Range и Array — для всех остальных:
+"for-in: unsupported iterator type 'Nova_X*'".
+
+Реализация Case 3 в emit_for:
+1. Multi-key registry `all_methods: HashSet<(TypeName, MethodName)>` —
+   single-key method_receivers страдал от last-wins (несколько
+   итераторов в одном модуле вытесняли друг друга).
+2. for-in Case 3: проверяем `all_methods.contains((iter_struct, "next"))`,
+   эмитим:
+   ```c
+   T_iter it = <expr>;
+   for (;;) {
+       NovaOpt_nova_int opt = Nova_T_method_next(it);
+       if (opt.tag == NOVA_TAG_Option_None) break;
+       nova_int x = opt.value;
+       <body>
+   }
+   ```
+
+Тесты (nova_tests/syntax/for_iter.nv, 4 теста):
+- Counter custom iterator (basic / empty / single element)
+- Stateful Doubler (бесконечный с условным None)
+
+68/68 nova_tests PASS.
+
+Bootstrap-ограничения:
+- Element type из Option[T] не infer'ится — payload как nova_int.
+- Tuple destructuring `for (k, v) in ...` пока не работает (Ф.2).
+- Implicit .iter() для коллекций (`for x in deque`) пока не работает (Ф.3).
+- Sweep stdlib (std/collections тесты) — отдельный шаг (Ф.5+Ф.6).
+
+

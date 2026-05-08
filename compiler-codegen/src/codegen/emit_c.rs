@@ -46,6 +46,12 @@ pub struct CEmitter {
     /// Maps method name → (type_name, is_instance) for user-defined methods.
     /// Used at call sites to resolve `obj.method(args)` → `Nova_T_method_m(obj, args)`.
     method_receivers: HashMap<String, (String, bool)>,
+    /// Plan 06 Ф.1: multi-key registry — `(type_name, method_name) → is_instance`.
+    /// `method_receivers` single-key страдает от last-wins (если два типа имеют
+    /// одноимённый method, второй вытесняет первый). `all_methods` хранит все.
+    /// Используется в for-in для Iter[T] dispatch: проверяем
+    /// `all_methods.contains((iter_struct, "next"))`.
+    all_methods: HashSet<(String, String)>,
     /// D73 v2 auto-derive: target_type → list of source_types for which
     /// `target.from(src V)` is explicitly defined. Used to synthesize
     /// `v.into()` for V via target.from when no explicit `@into` exists.
@@ -136,6 +142,7 @@ impl CEmitter {
             sum_schemas: HashMap::new(),
             effect_schemas: HashMap::new(),
             method_receivers: HashMap::new(),
+            all_methods: HashSet::new(),
             from_targets: HashMap::new(),
             into_targets: HashMap::new(),
             tuple_element_types: HashMap::new(),
@@ -378,6 +385,8 @@ impl CEmitter {
                         f.name.clone(),
                         (recv.type_name.clone(), is_instance),
                     );
+                    // Plan 06 Ф.1: multi-key для for-in Iter[T] dispatch.
+                    self.all_methods.insert((recv.type_name.clone(), f.name.clone()));
                     // D73 v2 auto-derive registry:
                     //   - `T.from(v V)`     → from_targets[T] += V
                     //   - `fn V @into() -> T` → into_targets[V] = T
@@ -5165,6 +5174,57 @@ impl CEmitter {
             self.line("}");
             self.line(&format!("{} = NOVA_UNIT;", result_tmp));
             return Ok(result_tmp);
+        }
+
+        // Plan 06 Ф.1: Iter[T] protocol fallback.
+        // Если тип имеет метод `mut @next() -> Option[T]` (через
+        // all_methods multi-key registry — выдерживает overlap нескольких
+        // итераторов в модуле) — эмитим generic loop с next-вызовом.
+        let iter_struct = arr_ty.strip_prefix("Nova_").unwrap_or("")
+            .trim_end_matches('*').trim().to_string();
+        if !iter_struct.is_empty()
+            && self.all_methods.contains(&(iter_struct.clone(), "next".to_string()))
+        {
+            let iter_type = iter_struct.clone();
+            {
+                let binding = self.pattern_binding(pattern)?;
+                let it_tmp = self.fresh_tmp();
+                let opt_tmp = self.fresh_tmp();
+                let result_tmp = self.fresh_tmp();
+
+                let it_expr = self.emit_expr(iter)?;
+                self.line(&format!("{} {} = {};", arr_ty, it_tmp, it_expr));
+                self.var_types.insert(it_tmp.clone(), arr_ty.clone());
+
+                self.line(&format!("nova_unit {};", result_tmp));
+                self.line("for (;;) {");
+                self.indent += 1;
+                // _opt = Nova_<T>_method_next(it)
+                // По bootstrap-конвенции Result/Option payload — nova_int.
+                // Реальный elem_ty determined by method_receivers schema —
+                // сейчас просто берём nova_int (для простых iter'ов это OK).
+                self.line(&format!(
+                    "NovaOpt_nova_int {} = Nova_{}_method_next({});",
+                    opt_tmp, iter_type, it_tmp));
+                self.line(&format!(
+                    "if ({}.tag == NOVA_TAG_Option_None) break;", opt_tmp));
+                self.line(&format!(
+                    "nova_int {} = {}.value;", binding, opt_tmp));
+                self.var_types.insert(binding.clone(), "nova_int".to_string());
+
+                for stmt in &body.stmts {
+                    self.emit_stmt(stmt)?;
+                }
+                if let Some(trailing) = &body.trailing {
+                    let v = self.emit_expr(trailing)?;
+                    self.line(&format!("(void)({});", v));
+                }
+
+                self.indent -= 1;
+                self.line("}");
+                self.line(&format!("{} = NOVA_UNIT;", result_tmp));
+                return Ok(result_tmp);
+            }
         }
 
         Err(format!("for-in: unsupported iterator type '{}' — only Range and Array are supported", arr_ty))

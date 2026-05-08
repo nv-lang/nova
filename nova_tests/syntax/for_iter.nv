@@ -1,0 +1,94 @@
+// for_iter.nv — Plan 06: Iter[T] protocol fallback в for-in.
+//
+// D58: любой тип с `mut @next() -> Option[T]` структурно
+// удовлетворяет Iter[T]. emit_for сейчас (после Plan 06 Ф.1)
+// использует method_receivers["next"] для dispatch на
+// Nova_<T>_method_next.
+//
+// Этот тест определяет custom-итератор (Counter) и проходится
+// через него. Это покрывает path «structural Iter[T] для
+// user-defined типов».
+
+module nova_tests.syntax.for_iter
+
+
+// Custom итератор: считает 0..end.
+type Counter {
+    end       int
+    mut cur   int
+}
+
+
+export fn Counter mut @next() -> Option[int] {
+    if @cur >= @end {
+        None
+    } else {
+        let v = @cur
+        @cur = @cur + 1
+        Some(v)
+    }
+}
+
+
+export fn Counter.new(end int) -> Counter {
+    Counter { end: end, cur: 0 }
+}
+
+
+test "for-in over custom Iter[T] (Counter)" {
+    let mut sum = 0
+    let it = Counter.new(5)
+    for x in it {
+        sum = sum + x
+    }
+    // 0+1+2+3+4 = 10
+    assert(sum == 10)
+}
+
+
+test "for-in over Counter — empty range" {
+    let mut count = 0
+    let it = Counter.new(0)
+    for _ in it {
+        count = count + 1
+    }
+    assert(count == 0)
+}
+
+
+test "for-in over Counter — single element" {
+    let mut last = -1
+    let it = Counter.new(1)
+    for x in it {
+        last = x
+    }
+    assert(last == 0)
+}
+
+
+// Stateful итератор: бесконечный с break.
+type Doubler {
+    mut value int
+}
+
+
+export fn Doubler mut @next() -> Option[int] {
+    let v = @value
+    @value = @value * 2
+    if v > 100 {
+        None
+    } else {
+        Some(v)
+    }
+}
+
+
+test "for-in over stateful iterator (Doubler)" {
+    let it = Doubler { value: 1 }
+    let mut last = 0
+    for x in it {
+        last = x
+    }
+    // Doubler даёт: 1, 2, 4, 8, 16, 32, 64 (next дал бы 128 > 100 → None)
+    assert(last == 64)
+}
