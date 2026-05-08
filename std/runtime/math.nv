@@ -11,56 +11,82 @@ module std.runtime.math
 
 // Квадратный корень. NaN на отрицательном.
 export external fn f64 @sqrt() -> f64
+
 // Кубический корень.
 export external fn f64 @cbrt() -> f64
+
 // Модуль (|x|).
 export external fn f64 @abs() -> f64
+
 // Округление вверх (toward +∞).
 export external fn f64 @ceil() -> f64
+
 // Округление вниз (toward -∞).
 export external fn f64 @floor() -> f64
+
 // Округление до ближайшего целого (half away from zero).
 export external fn f64 @round() -> f64
+
 // Отбрасывание дробной части (toward zero).
 export external fn f64 @trunc() -> f64
+
 // Синус (radians).
 export external fn f64 @sin() -> f64
+
 // Косинус (radians).
 export external fn f64 @cos() -> f64
+
 // Тангенс (radians).
 export external fn f64 @tan() -> f64
+
 // Арксинус. Result в [-π/2, π/2].
 export external fn f64 @asin() -> f64
+
 // Арккосинус. Result в [0, π].
 export external fn f64 @acos() -> f64
+
 // Арктангенс. Result в (-π/2, π/2).
 export external fn f64 @atan() -> f64
+
 // Гиперболический синус.
 export external fn f64 @sinh() -> f64
+
 // Гиперболический косинус.
 export external fn f64 @cosh() -> f64
+
 // Гиперболический тангенс.
 export external fn f64 @tanh() -> f64
+
 // e^x.
 export external fn f64 @exp() -> f64
+
 // 2^x.
 export external fn f64 @exp2() -> f64
+
 // Натуральный log (по основанию e).
 export external fn f64 @ln() -> f64
+
 // Log по основанию 2.
 export external fn f64 @log2() -> f64
+
 // Log по основанию 10.
 export external fn f64 @log10() -> f64
+
 // atan2(y, x) — angle от positive x-axis. Self = y.
 export external fn f64 @atan2(x f64) -> f64
+
 // self^exp.
 export external fn f64 @pow(exp f64) -> f64
+
 // sqrt(self^2 + y^2) без overflow.
 export external fn f64 @hypot(y f64) -> f64
+
 // True если NaN.
 export external fn f64 @is_nan() -> bool
+
 // True если не ±∞ и не NaN.
 export external fn f64 @is_finite() -> bool
+
 // True если ±∞.
 export external fn f64 @is_infinite() -> bool
 
@@ -68,55 +94,82 @@ export external fn f64 @is_infinite() -> bool
 
 // Квадратный корень (single precision).
 export external fn f32 @sqrt() -> f32
+
 // Кубический корень (single precision).
 export external fn f32 @cbrt() -> f32
+
 // Модуль |x| (single precision).
 export external fn f32 @abs() -> f32
+
 // Округление вверх (single precision).
 export external fn f32 @ceil() -> f32
+
 // Округление вниз (single precision).
 export external fn f32 @floor() -> f32
+
 // Округление до ближайшего (single precision).
 export external fn f32 @round() -> f32
+
 // Truncate (single precision).
 export external fn f32 @trunc() -> f32
+
 // Синус radians (single precision).
 export external fn f32 @sin() -> f32
+
 // Косинус radians (single precision).
 export external fn f32 @cos() -> f32
+
 // Тангенс radians (single precision).
 export external fn f32 @tan() -> f32
+
 // Арксинус (single precision).
 export external fn f32 @asin() -> f32
+
 // Арккосинус (single precision).
 export external fn f32 @acos() -> f32
+
 // Арктангенс (single precision).
 export external fn f32 @atan() -> f32
+
 // Гиперболический синус (single precision).
 export external fn f32 @sinh() -> f32
+
 // Гиперболический косинус (single precision).
 export external fn f32 @cosh() -> f32
+
 // Гиперболический тангенс (single precision).
 export external fn f32 @tanh() -> f32
+
 // e^x (single precision).
 export external fn f32 @exp() -> f32
+
 // 2^x (single precision).
 export external fn f32 @exp2() -> f32
+
 // Натуральный log (single precision).
 export external fn f32 @ln() -> f32
+
 // Log2 (single precision).
 export external fn f32 @log2() -> f32
+
 // Log10 (single precision).
 export external fn f32 @log10() -> f32
+
 // atan2 (single precision).
 export external fn f32 @atan2(x f32) -> f32
+
 // self^exp (single precision).
 export external fn f32 @pow(exp f32) -> f32
+
 // hypot (single precision).
 export external fn f32 @hypot(y f32) -> f32
+
 // True если NaN (single precision).
 export external fn f32 @is_nan() -> bool
+
 // True если не ±∞ и не NaN (single precision).
 export external fn f32 @is_finite() -> bool
+
 // True если ±∞ (single precision).
 export external fn f32 @is_infinite() -> bool
+

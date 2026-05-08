@@ -756,7 +756,6 @@ pub fn render_nv(module: &str, fns: &[&RuntimeFn]) -> String {
     let mut last_recv: Option<&str> = None;
     for f in fns {
         if last_recv != f.receiver {
-            if last_recv.is_some() { out.push('\n'); }
             if let Some(r) = f.receiver {
                 out.push_str(&format!("// ─── {} ───\n\n", r));
             }
@@ -798,7 +797,7 @@ pub fn render_nv(module: &str, fns: &[&RuntimeFn]) -> String {
         // return.
         out.push_str(" -> ");
         out.push_str(f.return_ty);
-        out.push('\n');
+        out.push_str("\n\n");
     }
     out
 }

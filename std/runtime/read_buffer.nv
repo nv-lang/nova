@@ -11,91 +11,136 @@ module std.runtime.read_buffer
 
 // Создать ReadBuffer из []byte (view, no copy).
 export external fn ReadBuffer.from(b []byte) -> ReadBuffer
+
 // Текущий offset cursor'а в байтах.
 export external fn ReadBuffer @position() -> int
+
 // Сколько байт осталось до конца буфера.
 export external fn ReadBuffer @remaining() -> int
+
 // True если осталось ≥ n байт.
 export external fn ReadBuffer @has_remaining(n int) -> bool
+
 // Скопировать оставшиеся байты как []byte.
 export external fn ReadBuffer @remaining_bytes() -> []byte
+
 // 1 byte. Throw'ит ReadBufferError при недостатке байт.
 export external fn ReadBuffer mut @read_byte() Fail[ReadBufferError] -> byte
+
 // 1 byte. Result-форма (Ok(value) или Err(UnexpectedEnd)).
 export external fn ReadBuffer mut @try_read_byte() -> Result[byte, ReadBufferError]
+
 // n байт (с n int параметром). Throw'ит ReadBufferError при недостатке байт.
 export external fn ReadBuffer mut @read_bytes(n int) Fail[ReadBufferError] -> []byte
+
 // n байт (с n int параметром). Result-форма (Ok(value) или Err(UnexpectedEnd)).
 export external fn ReadBuffer mut @try_read_bytes(n int) -> Result[[]byte, ReadBufferError]
+
 // 1 byte unsigned. Throw'ит ReadBufferError при недостатке байт.
 export external fn ReadBuffer mut @read_u8() Fail[ReadBufferError] -> u8
+
 // 1 byte unsigned. Result-форма (Ok(value) или Err(UnexpectedEnd)).
 export external fn ReadBuffer mut @try_read_u8() -> Result[u8, ReadBufferError]
+
 // 1 byte signed. Throw'ит ReadBufferError при недостатке байт.
 export external fn ReadBuffer mut @read_i8() Fail[ReadBufferError] -> i8
+
 // 1 byte signed. Result-форма (Ok(value) или Err(UnexpectedEnd)).
 export external fn ReadBuffer mut @try_read_i8() -> Result[i8, ReadBufferError]
+
 // u16 little-endian. Throw'ит ReadBufferError при недостатке байт.
 export external fn ReadBuffer mut @read_u16_le() Fail[ReadBufferError] -> u16
+
 // u16 little-endian. Result-форма (Ok(value) или Err(UnexpectedEnd)).
 export external fn ReadBuffer mut @try_read_u16_le() -> Result[u16, ReadBufferError]
+
 // u16 big-endian. Throw'ит ReadBufferError при недостатке байт.
 export external fn ReadBuffer mut @read_u16_be() Fail[ReadBufferError] -> u16
+
 // u16 big-endian. Result-форма (Ok(value) или Err(UnexpectedEnd)).
 export external fn ReadBuffer mut @try_read_u16_be() -> Result[u16, ReadBufferError]
+
 // u32 little-endian. Throw'ит ReadBufferError при недостатке байт.
 export external fn ReadBuffer mut @read_u32_le() Fail[ReadBufferError] -> u32
+
 // u32 little-endian. Result-форма (Ok(value) или Err(UnexpectedEnd)).
 export external fn ReadBuffer mut @try_read_u32_le() -> Result[u32, ReadBufferError]
+
 // u32 big-endian. Throw'ит ReadBufferError при недостатке байт.
 export external fn ReadBuffer mut @read_u32_be() Fail[ReadBufferError] -> u32
+
 // u32 big-endian. Result-форма (Ok(value) или Err(UnexpectedEnd)).
 export external fn ReadBuffer mut @try_read_u32_be() -> Result[u32, ReadBufferError]
+
 // u64 little-endian. Throw'ит ReadBufferError при недостатке байт.
 export external fn ReadBuffer mut @read_u64_le() Fail[ReadBufferError] -> u64
+
 // u64 little-endian. Result-форма (Ok(value) или Err(UnexpectedEnd)).
 export external fn ReadBuffer mut @try_read_u64_le() -> Result[u64, ReadBufferError]
+
 // u64 big-endian. Throw'ит ReadBufferError при недостатке байт.
 export external fn ReadBuffer mut @read_u64_be() Fail[ReadBufferError] -> u64
+
 // u64 big-endian. Result-форма (Ok(value) или Err(UnexpectedEnd)).
 export external fn ReadBuffer mut @try_read_u64_be() -> Result[u64, ReadBufferError]
+
 // i16 little-endian. Throw'ит ReadBufferError при недостатке байт.
 export external fn ReadBuffer mut @read_i16_le() Fail[ReadBufferError] -> i16
+
 // i16 little-endian. Result-форма (Ok(value) или Err(UnexpectedEnd)).
 export external fn ReadBuffer mut @try_read_i16_le() -> Result[i16, ReadBufferError]
+
 // i16 big-endian. Throw'ит ReadBufferError при недостатке байт.
 export external fn ReadBuffer mut @read_i16_be() Fail[ReadBufferError] -> i16
+
 // i16 big-endian. Result-форма (Ok(value) или Err(UnexpectedEnd)).
 export external fn ReadBuffer mut @try_read_i16_be() -> Result[i16, ReadBufferError]
+
 // i32 little-endian. Throw'ит ReadBufferError при недостатке байт.
 export external fn ReadBuffer mut @read_i32_le() Fail[ReadBufferError] -> i32
+
 // i32 little-endian. Result-форма (Ok(value) или Err(UnexpectedEnd)).
 export external fn ReadBuffer mut @try_read_i32_le() -> Result[i32, ReadBufferError]
+
 // i32 big-endian. Throw'ит ReadBufferError при недостатке байт.
 export external fn ReadBuffer mut @read_i32_be() Fail[ReadBufferError] -> i32
+
 // i32 big-endian. Result-форма (Ok(value) или Err(UnexpectedEnd)).
 export external fn ReadBuffer mut @try_read_i32_be() -> Result[i32, ReadBufferError]
+
 // i64 little-endian. Throw'ит ReadBufferError при недостатке байт.
 export external fn ReadBuffer mut @read_i64_le() Fail[ReadBufferError] -> i64
+
 // i64 little-endian. Result-форма (Ok(value) или Err(UnexpectedEnd)).
 export external fn ReadBuffer mut @try_read_i64_le() -> Result[i64, ReadBufferError]
+
 // i64 big-endian. Throw'ит ReadBufferError при недостатке байт.
 export external fn ReadBuffer mut @read_i64_be() Fail[ReadBufferError] -> i64
+
 // i64 big-endian. Result-форма (Ok(value) или Err(UnexpectedEnd)).
 export external fn ReadBuffer mut @try_read_i64_be() -> Result[i64, ReadBufferError]
+
 // f32 little-endian IEEE 754. Throw'ит ReadBufferError при недостатке байт.
 export external fn ReadBuffer mut @read_f32_le() Fail[ReadBufferError] -> f32
+
 // f32 little-endian IEEE 754. Result-форма (Ok(value) или Err(UnexpectedEnd)).
 export external fn ReadBuffer mut @try_read_f32_le() -> Result[f32, ReadBufferError]
+
 // f32 big-endian IEEE 754. Throw'ит ReadBufferError при недостатке байт.
 export external fn ReadBuffer mut @read_f32_be() Fail[ReadBufferError] -> f32
+
 // f32 big-endian IEEE 754. Result-форма (Ok(value) или Err(UnexpectedEnd)).
 export external fn ReadBuffer mut @try_read_f32_be() -> Result[f32, ReadBufferError]
+
 // f64 little-endian IEEE 754. Throw'ит ReadBufferError при недостатке байт.
 export external fn ReadBuffer mut @read_f64_le() Fail[ReadBufferError] -> f64
+
 // f64 little-endian IEEE 754. Result-форма (Ok(value) или Err(UnexpectedEnd)).
 export external fn ReadBuffer mut @try_read_f64_le() -> Result[f64, ReadBufferError]
+
 // f64 big-endian IEEE 754. Throw'ит ReadBufferError при недостатке байт.
 export external fn ReadBuffer mut @read_f64_be() Fail[ReadBufferError] -> f64
+
 // f64 big-endian IEEE 754. Result-форма (Ok(value) или Err(UnexpectedEnd)).
 export external fn ReadBuffer mut @try_read_f64_be() -> Result[f64, ReadBufferError]
+

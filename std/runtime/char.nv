@@ -11,3 +11,4 @@ module std.runtime.char
 
 // UTF-8 encode codepoint в 1-4 байта (D73 auto-derive: char.into() -> str).
 export external fn str.from(c char) -> str
+
