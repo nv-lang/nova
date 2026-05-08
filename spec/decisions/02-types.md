@@ -820,6 +820,53 @@ kind-токеном в системе D52, унифицируя объявлен
 
 Q22 («унификация type/protocol») — закрыт принятием D53.
 
+### Method-prefix в protocol-блоке (Plan 17 Ф.1)
+
+В protocol-объявлении instance-методы можно писать в **обеих формах**
+— и с префиксом `@`, и без. Они **эквивалентны**:
+
+```nova
+type Hashable protocol {
+    hash() -> u64                    // ✅ голое имя
+    eq(other Self) -> bool
+}
+
+type Hashable protocol {
+    @hash() -> u64                   // ✅ с @, симметрия с реализацией
+    @eq(other Self) -> bool
+}
+```
+
+`@` факультативен потому что в protocol-блоке метод **всегда
+instance** — без receiver-выражения, контекст однозначный. С `@`
+форма читается как «копия декларации из реализации» (точно как `fn
+User @hash() -> u64`); без `@` — короче. Структурная совместимость
+работает одинаково.
+
+**Когда писать что:**
+
+- `@method()` — для **визуальной симметрии** с реализацией; для
+  объявлений где соседние static-методы (если они появятся через
+  Q-static-method-protocol) пишутся через `.method()`.
+- `method()` — для **краткости** в простых protocol'ах.
+
+**Mut-методы** — `mut @method()` обязательно с `@` (mut-modifier
+требует receiver-маркера; голое `mut method()` отвергнуто как
+двусмысленное с mut-binding'ом):
+
+```nova
+type Iter[T] protocol {
+    mut @next() -> Option[T]         // ✅
+    mut next() -> Option[T]          // ✅ (текущая prelude-форма, D26)
+}
+```
+
+В bootstrap'е (2026-05-08) обе формы парсятся; std/testing/property.nv
+и std/collections/* используют голую форму.
+
+См. также [Q-protocol-method-prefix](../open-questions.md#q-protocol-method-prefix)
+(closed этой секцией).
+
 ---
 
 ## D55. Literal coercion в позиции с явным типом: sum-конструкторы и record-литералы
@@ -1206,6 +1253,82 @@ let s State = Open              // unit, coercion не применяется
   что именно положить, формат и набор операций. См. Q9 (stdlib).
 - **Cross-type numeric coercion в D55** (`42` → `f64` для `Number(f64)`).
   Сейчас строгий exact match. См. Q-numeric-coercion.
+
+### Style-guide: когда coerce, когда писать тип явно (Plan 17 Ф.1)
+
+D55 разрешает обе формы — coerce и явный конструктор. Чтобы кодовая
+база не превращалась в смесь стилей, ниже **рекомендации** для `nova
+fmt`/линтера и code review (это **не правило компилятора**, оба
+варианта остаются валидными).
+
+**Coerce (короче, тип в аннотации) — предпочитать когда:**
+
+```nova
+// 1. let с явной аннотацией — тип сразу слева, имя справа лишнее
+let u User = { id: 1, name: "alice" }                ✅
+let m Maybe[int] = 42                                 ✅
+
+// 2. return-position в expression-body, есть -> T
+fn make_default() -> Account => { id: 0, balance: 0 } ✅
+
+// 3. call-site с явным типом параметра — coercion даёт чистый литерал
+serve({ ...SERVER_DEFAULTS, port: 9000 })             ✅
+
+// 4. коллекции с разнородными элементами в позиции []SqlValue
+let args []SqlValue = [42, "alice", true]             ✅
+//                    [I(42), S("alice"), B(true)]    ❌ шумно
+```
+
+**Явный конструктор — предпочитать когда:**
+
+```nova
+// 1. let без аннотации — coercion не работает, имя обязательно
+let r = if cond { Some(value) } else { None }         ✅
+let r = if cond { value } else { None }               ❌ — нет аннотации
+
+// 2. match-arms где хотя бы одна ветка — unit-вариант (None / Empty)
+//    — для визуальной симметрии писать ВСЕ ветки с конструкторами
+match @cache.get(key) {
+    Some(v) => Some(v)            ✅ симметрично с None
+    None    => fallback()
+}
+match @cache.get(key) {
+    Some(v) => v                  ❌ value слева, None справа —
+    None    => fallback()         //    асимметрично, читать сложнее
+}
+
+// 3. nested record-литерал внутри блока — { {...} } визуально шумно
+fn compute() -> Money =>
+    if special { Money { amount: 100, currency: usd } }   ✅
+    else       { Money { amount: a + b, currency: c } }
+fn compute() -> Money =>
+    if special { { amount: 100, currency: usd } }          ❌ шум
+    else       { { amount: a + b, currency: c } }
+
+// 4. ambiguous unary-конструкторы (compile-error без явного имени)
+type Mixed | A(int) | B(int)
+let x Mixed = 42                  ❌ ambiguous — обязателен A(42) / B(42)
+```
+
+**Сводка:**
+
+| Контекст | Рекомендация |
+|---|---|
+| `let x T = ...` (есть аннотация) | coerce |
+| `let x = ...` (нет аннотации) | явный конструктор |
+| `fn f() -> T => ...` (есть `-> T`) | coerce |
+| `fn f(x T)` call-site `f(...)` | coerce |
+| match с unit-веткой | явный (симметрия) |
+| nested `{ ... }` в блоке после `if`/`else` | явный (избежать `{ {...} }`) |
+| ambiguous unary-конструкторы | явный (обязательно) |
+
+**Аргумент.** `nova fmt` не должен переписывать одну форму в другую —
+выбор стилистический. Линтер может в будущем выдавать **подсказку**
+для самых тяжёлых случаев (например, `{ {...} }` в block-context),
+но без флага `--strict-style` — это рекомендация, не ошибка.
+
+См. также [Q-style-coercion](../open-questions.md#q-style-coercion)
+(закрыт этой секцией).
 
 ### Эволюция
 До D55 sum-варианты требовали **явный конструктор** на каждом значении

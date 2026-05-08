@@ -1474,6 +1474,63 @@ Index-доступ. Параллельно с этим, multi-arg внутри `
 call-site / receiver-type), но AST сохраняет `type_args` для будущих
 этапов inference. Тесты — `nova_tests/types/generics.nv`.
 
+### Built-in API для `[]T` (Plan 17 Ф.1, закрывает Q-array-api)
+
+`[]T` — встроенный тип, **не** запись stdlib (`Vec[T]` нет). Граница
+между **built-in API** (компилятор знает напрямую) и **stdlib
+extensions** (методы добавлены через `fn []T @method` по D35) —
+зафиксирована ниже.
+
+**Built-in API — известно компилятору:**
+
+| Категория | API | Семантика |
+|---|---|---|
+| длина | `xs.len`, `xs.is_empty` | `len` — поле без скобок (О(1)); `is_empty` ≡ `len == 0` |
+| capacity | `xs.cap` | размер выделенного storage'а; `len ≤ cap` |
+| доступ | `xs[i]`, `xs.get(i)` | `[i]` — panic при out-of-bounds (D13); `get(i)` → `Option[T]` |
+| мутация | `mut xs.push(v)`, `mut xs.pop() -> Option[T]` | `push` grow при `len == cap` |
+| итерация | `xs.iter() -> Iter[T]`, `for x in xs { ... }` | `for` — sugar над `.iter().next()` (D58) |
+| создание | `[]T.new()`, `[]T.with_capacity(n)`, `[]T.filled(v T, n int)` | static-функции на типе |
+
+`xs.cap` — присутствует, но **не часть стабильного API** для
+прикладного кода (deтail of representation D32). Использование — для
+оптимизации pre-allocation; при изменениях representation может
+исчезнуть.
+
+**Stdlib extensions** (`std/collections/vec.nv` через D35) — то, что
+пишется как обычный пользовательский метод:
+
+| Метод | Что делает |
+|---|---|
+| `xs.map[U](f fn(T) -> U) -> []U` | каждый элемент через `f` |
+| `xs.filter(pred fn(T) -> bool) -> []T` | оставить совпадения |
+| `xs.fold[Acc](init Acc, f fn(Acc, T) -> Acc) -> Acc` | свёртка слева |
+| `xs.any(pred)`, `xs.all(pred)` | bool-предикаты |
+| `xs.first()`, `xs.last()` | `Option[T]` head/tail |
+
+Расширяется по необходимости (`contains`, `index_of`, `reverse`,
+`sort`, `zip`, `take`, `drop`, `unique`, `enumerate` — добавляются по
+запросу use-case'ов; формальный D-block не нужен, любой `fn []T
+@method` валиден по D35).
+
+**Слайсинг `xs[a..b]`** — отложен (Q-array-slicing). Сейчас у `[]T`
+нет range-индексирования.
+
+**Embed `use []T`** — допустим по D39 (имя поля обязательно):
+
+```nova
+type Holder[T] {
+    use data []T
+    extra str
+}
+let h = Holder[int] { data: [1, 2, 3], extra: "info" }
+let n = h.len             // прокси к data.len
+h.push(42)                // прокси к data.push
+```
+
+Подробно — Plan 17 Ф.1, [Q-array-api](../open-questions.md#q-array-api)
+(closed), [02-types.md → D39](02-types.md#d39) (use-delegation).
+
 ---
 
 ## D40. Тело функции: `=>` для одного выражения, `{}` для блока
@@ -1813,6 +1870,92 @@ float       = decimal-int "." decimal-int (("e"|"E") ("+"|"-")? decimal-int)?
 - [D40](#d40-тело-функции--для-одного-выражения--для-блока) — литералы
   в expression-body.
 
+### Строковые литералы и интерполяция `${expr}`
+
+Строковый литерал `"..."` хранит **UTF-8 байты** (тип `str`). Внутри
+литерала разрешена **интерполяция** через `${expr}` (D-string-interp,
+закрыт в Plan 17 Ф.1):
+
+```nova
+let name = "alice"
+let age  = 30
+let s = "Hello, ${name}, you are ${age}"   // → "Hello, alice, you are 30"
+```
+
+**Семантика — sugar над `+` и `str.from(...)`** (D73 [Into]). Литерал
+с N интерполяциями развёртывается в N+1 литеральных частей и N
+выражений:
+
+```nova
+"a${x}b${y}c"
+// = "a" + str.from(x) + "b" + str.from(y) + "c"
+```
+
+Каждое выражение `${expr}` должно иметь тип, удовлетворяющий
+`Into[str]` (через D73 это автоматически верно для `int`, `f64`,
+`bool`, `str`, `char`, `Option[T]` где `T: Into[str]`, и любых
+user-типов с реализованным `From[Self] for str` или `Into[str]`).
+
+**Escape для буквального `${`** — обратный слэш: `"price: \${value}"`
+печатает `${value}` без интерполяции.
+
+**Multi-line** работает через обычные newlines в литерале (`\n` или
+сырой newline между `"..."`); tag-форма (D48) для raw-строк отдельная.
+
+Пустое выражение `"${}"` — **compile error**.
+
+```nova
+// Что разрешено
+let v = "x = ${1 + 2}"             // sub-expression — ok
+let v = "user = ${user.name()}"    // method call — ok
+let v = "${a}${b}"                 // соседние интерполяции — ok
+let v = "literal \${name}"         // escape — буквальное "${name}"
+
+// Что НЕ работает
+let v = "${}"                      // ✗ пустое выражение
+let v = "${let x = 1; x}"          // ✗ statement, не выражение
+```
+
+**Bootstrap status (2026-05-08):** ✅ реализовано в lexer/parser/codegen
+(Plan 17 Ф.4):
+
+- **Lexer** видит `\$` как escape — сохраняет sentinel-байт `\x01$`
+  (SOH+`$`), чтобы парсер мог отличить literal-`${` от
+  interpolation-`${`.
+- **Parser** разворачивает `TokenKind::Str(s)` в expression-position в
+  `ExprKind::InterpolatedStr { parts: Vec<InterpStrPart> }`. Каждое
+  `${expr}` парсится через sub-Lexer + sub-Parser; balanced `{}`
+  внутри expr поддерживается. Пустое `${}` — compile error.
+- **Codegen** эмитит цепочку StringBuilder с pre-size estimate:
+  `Nova_StringBuilder_static_with_capacity(N)` →
+  `Nova_StringBuilder_method_append_str(...)` per fragment →
+  `Nova_StringBuilder_method_into(sb)`. Одна аллокация на итоговый
+  buffer; нет O(N²) от цепочки `+`. Per-fragment dispatch по типу:
+  `nova_str` pass-through, `nova_bool` → `nova_bool_to_str`,
+  `nova_f64` → `nova_f64_to_str`, `CharLit` → `nova_char_to_str`
+  (UTF-8 encode), user-тип с `@into() -> str` (D73) — `Nova_T_method_into`,
+  fallback `nova_int_to_str`.
+- **Interp** (для тестов и `nova run`) — обычная конкатенация через
+  `format!("{}", value)`.
+- **Const-инициализатор**: интерполяция запрещена (требует runtime
+  StringBuilder); compile error «not allowed in const initialiser».
+
+Тесты — `nova_tests/types/string_interpolation.nv` (13 тестов, все
+PASS): int / negative int / str / bool / f64 / char-литерал /
+multi-interpolation / expression в `${}` / escape `\${` / большие
+строки через StringBuilder.
+
+В `tag\`...\``-литералах ([D48](#d48-tagged-template-literals)) tag-функция
+получает части и аргументы раздельно — для них интерполяция работает
+по той же грамматике `${expr}`, но обработка идёт user-функцией.
+
+**Связь:** [D48](#d48-tagged-template-literals) (tagged templates —
+raw-строки `tag\`...\`` без интерполяции по такой же грамматике
+`${expr}`, но обработка зависит от tag-функции),
+[08-runtime.md → D73](08-runtime.md#d73) (`str.from` через
+`From`/`Into`), [08-runtime.md → D26](08-runtime.md#d26) (`str` тип
++ конкатенация).
+
 ---
 
 ## D45. Inferred return type для expression-body
@@ -2119,6 +2262,57 @@ let a = 1; let b = 2; foo(a, b)  // ; для одной строки (редко
 зафиксированы в правилах 5 и 6 выше: `else`/`else if` и
 `||`/`&&`/`or`/`and` — leading-форма допустима. `+` в начале новой
 строки воспринимается как унарный.
+
+#### Compound-assignment
+
+Compound-операторы — синтаксический сахар:
+
+| Оператор | Десахар |
+|---|---|
+| `a += e` | `a = a + e` |
+| `a -= e` | `a = a - e` |
+| `a *= e` | `a = a * e` |
+| `a /= e` | `a = a / e` |
+
+**Target обязан быть lvalue** — одна из трёх форм:
+
+```nova
+// 1) Локальная mut-переменная
+let mut n = 0
+n += 1                              // ✅
+
+// 2) @field на self в методе (D35)
+fn Counter mut @inc() -> () {
+    @value += 1                     // ✅
+}
+
+// 3) Element массива/индексируемой коллекции
+let mut xs = [10, 20, 30]
+xs[0] += 5                          // ✅
+```
+
+Compound-assign — это **statement**, не expression. После `=>` в
+match-arm или в expression-body функции его нельзя писать без
+обёртки в `{ ... }`:
+
+```nova
+match c {
+    Some('\n') => { @line += 1; @col = 1 }     // ✅ блок
+    Some(_)    => { @col += 1 }                 // ✅ блок
+    None       => ()
+}
+
+// ❌ парсер не поймёт `+=` в expression-position arm:
+// Some(_) => @col += 1
+```
+
+Правая часть compound-assign — обычное выражение (любое допустимое в
+RHS обычного `=`). Type-check соответствует базовому оператору:
+`a += e` валидно ⇔ `a + e` валидно и его тип присваиваем `a`.
+
+Перегрузка через `@plus`/`@minus`/`@times`/`@div` ([D46](#d46-перегрузка-операторов))
+работает прозрачно — compound на user-типе с `@plus` десахарится в
+`a = a.@plus(e)`.
 
 Edge cases:
 

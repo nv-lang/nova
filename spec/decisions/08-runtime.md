@@ -382,6 +382,62 @@ type ReadBufferError
 закрыт REPLACED 2026-05-08). Причина split: text+binary mixed
 ломает `@into() -> str` infallible-семантику. См. Plan 04.
 
+#### `@clone()` — shallow по умолчанию (Plan 17 Ф.1)
+
+Конвенция в Nova:
+
+> **`@clone() -> Self` — shallow copy.** Возвращает новый экземпляр с
+> тем же набором полей; managed-references (другие record'ы, массивы,
+> вложенные коллекции) после clone **разделяются** между оригиналом и
+> копией. Для глубокой копии — `@deep_clone()` (не в prelude,
+> определяется по необходимости вручную).
+
+**Что значит «shallow» для разных категорий:**
+
+- **Примитивы** (`int`, `f64`, `bool`, `char`, `byte`) — value semantics,
+  clone = тривиальная копия.
+- **`str`** — immutable, `s.clone()` возвращает тот же ptr (равноценно
+  присваиванию). Семантически независимая копия не нужна.
+- **Record** — копируются поля; managed-поля (вложенные record'ы,
+  массивы) — по ссылке.
+- **`[]T`** — копируется внутренний `(ptr, len, cap)`-storage в свежий
+  buffer (O(n) поверхностно), но элементы `T` — managed-references
+  share'аются если `T` сам не примитив.
+- **HashMap / Vec / Set / Queue (stdlib)** — копируется внутренний
+  storage, элементы и ключи — по ссылке.
+- **`StringBuilder`, `WriteBuffer`** — `@clone()` тут **deep** для
+  внутреннего byte-buffer'а, потому что **сам тип определён как
+  mutable accumulator с уникальным storage'ом** — shared buffer между
+  clone'ами = data race по семантике D26. Это **исключение из общего
+  shallow-правила**, обоснованное mutability-семантикой типа.
+
+**Когда писать `@deep_clone()`** — когда нужно гарантировать, что
+после clone никакая мутация одной копии не видна другой. Stdlib не
+вводит общий `@deep_clone()`-protocol; программист реализует на
+конкретном типе:
+
+```nova
+fn HashMap[K, V] @deep_clone() -> HashMap[str, []int] {
+    let mut out = HashMap[str, []int].new()
+    for (k, v) in @ {
+        out.insert(k, v.clone())     // элементы клонируются shallow
+    }
+    out
+}
+```
+
+Прецедент: Rust `Clone` shallow по умолчанию, deep — руками. Java
+`Object.clone()` shallow, override для deep. Go — value semantics на
+структурах + reference semantics на slice/map (=shallow на assign).
+
+**Bootstrap status (2026-05-08):** только `StringBuilder.@clone()` и
+`WriteBuffer.@clone()` зарегистрированы как built-in (deep, через
+`Nova_*_clone` C-функции). Для record/коллекций программист пишет
+clone вручную.
+
+Подробно — Plan 17 Ф.1, [Q-clone-semantics](../open-questions.md#q-clone-semantics)
+(closed).
+
 `StringBuilder.@into() -> str` — **infallible** (UTF-8 invariant
 поддерживается каждым `@append`, который принимает только `str` или
 `char`). `WriteBuffer.@into() -> []byte` — infallible (произвольные

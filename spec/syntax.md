@@ -47,6 +47,26 @@ let u = url`https://api.example.com/users/${user_id}`
 
 Подробно — [D48](decisions/03-syntax.md#d48).
 
+## Интерполяция строк — `"... ${expr} ..."`
+
+В обычном строковом литерале `"..."` (без tag-префикса) разрешена
+интерполяция выражений через `${expr}`. Это **sugar** над конкатенацией
+с `str.from(...)`:
+
+```nova
+let name = "alice"
+let age  = 30
+let s = "Hello, ${name}, you are ${age}"
+// = "Hello, " + str.from(name) + ", you are " + str.from(age)
+```
+
+Каждое `${expr}` должно иметь тип, удовлетворяющий `Into[str]`
+([D73](decisions/08-runtime.md#d73)) — для всех примитивов и
+prelude-типов это автоматически. Буквальное `${` в строке — через
+escape: `"\${name}"`.
+
+Подробно — [D44 → «Строковые литералы и интерполяция»](decisions/03-syntax.md#d44).
+
 ## Statement separator: newline или `;`
 
 **Перенос строки** разделяет statement'ы. **`;` опционален** —

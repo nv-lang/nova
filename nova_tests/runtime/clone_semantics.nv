@@ -1,0 +1,86 @@
+// clone_semantics.nv — D26 + Plan 17 Ф.1
+//
+// Зафиксировать: `@clone()` shallow по умолчанию. Для record copy
+// полей; nested managed-references — share'ятся (не deep). Исключения
+// — opaque accumulator-типы (StringBuilder, WriteBuffer), для которых
+// clone deep по семантике типа.
+//
+// Эти тесты — regression-фиксаторы, чтобы случайный switch на
+// auto-derived deep clone не прошёл незамеченным.
+
+module nova_tests.runtime.clone_semantics
+
+
+// === 1. Shallow @clone для record: примитивные поля копируются ===
+
+type Counter { mut value int }
+
+fn Counter @clone() -> Self => Counter { value: @value }
+
+test "shallow @clone — примитивные поля независимы" {
+    let mut a = Counter { value: 10 }
+    let mut b = a.clone()
+    a.value = 99
+    assert(a.value == 99)
+    assert(b.value == 10)        // b не затронут — int копируется
+}
+
+
+// === 2. Shallow @clone для nested record — share managed ref ===
+
+type Inner { mut x int }
+type Outer { inner Inner, label str }
+
+fn Outer @clone() -> Self => Outer { inner: @inner, label: @label }
+
+test "shallow @clone — nested record share'ится по ссылке" {
+    let nested = Inner { x: 1 }
+    let mut a = Outer { inner: nested, label: "a" }
+    let mut b = a.clone()
+    a.inner.x = 42
+    // shallow: a.inner и b.inner — одна managed-reference,
+    // мутация через a видна через b
+    assert(a.inner.x == 42)
+    assert(b.inner.x == 42)      // shared!
+    // верхний-уровень label — независим (str immutable, тот же ptr)
+    assert(a.label == "a")
+    assert(b.label == "a")
+}
+
+
+// === 3. StringBuilder.@clone() — DEEP (исключение для accumulator) ===
+
+test "StringBuilder.@clone() — независимые буферы (исключение)" {
+    let mut a = StringBuilder.new()
+    a.append("hello")
+    let mut b = a.clone()
+    b.append(" world")
+    // оба независимы — accumulator clone deep по семантике типа
+    assert(a.len() == 5)
+    assert(b.len() == 11)
+}
+
+
+// === 4. WriteBuffer.@clone() — DEEP ===
+
+test "WriteBuffer.@clone() — независимые буферы (исключение)" {
+    let mut a = WriteBuffer.new()
+    a.write_u8(1)
+    a.write_u8(2)
+    let mut b = a.clone()
+    b.write_u8(3)
+    // a.len = 2, b.len = 3 (a не получил третьего байта)
+    assert(a.len() == 2)
+    assert(b.len() == 3)
+}
+
+
+// === 5. str — clone-эквивалент простого присваивания ===
+
+test "str — присваивание = логическая копия (immutable)" {
+    let s1 = "hello"
+    let s2 = s1                  // тот же ptr или новый — неважно
+    assert(s1 == s2)
+    assert(s1.len == 5)
+    assert(s2.len == 5)
+}
