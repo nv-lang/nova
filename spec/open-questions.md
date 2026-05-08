@@ -2257,6 +2257,16 @@ type Wrapper { embed w HashMapIter[K, V] }
 Не менять. D39 принят, кода с `use` написано (примеры, decisions).
 Менять синтаксис без сильного триггера — лишний breaking change.
 
+**Update 2026-05-08:** D39 расширен формой `use _ Type` (anonymous
+embed) для simple wrappers где явный alias бессмысленный. Это
+**снимает часть давления** на keyword `use` — программист не
+вынужден придумывать имя поля каждый раз. Q-embed-syntax по-прежнему
+открыт про выбор `use` vs `embed` keyword'а, но anonymous form
+закрыла главный pain-point обязательного alias'а в simple cases.
+
+Реализация anonymous embed — Plan 11 Ф.9 (через override-precedence
+в общем overload-resolution, lazy mechanism).
+
 **Если возвращаться** — мой собственный голос за **C (`embed Type`)**:
 
 - Точная семантика keyword'а («embed» однозначно говорит «встроить»,
