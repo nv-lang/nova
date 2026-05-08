@@ -93,18 +93,21 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
                     Some(r) => format!("{}.{}", r.type_name, fd.name),
                     None => fd.name.clone(),
                 };
-                if !names.insert(key.clone()) {
-                    // D82 + Plan 04: external fn разрешает overload по типу
-                    // аргумента (StringBuilder.from(s) / StringBuilder.from(c)).
-                    // Dispatch — special-case в codegen для built-in opaque-типов.
-                    // User-defined external запрещён (whitelist `std.runtime.*`),
-                    // поэтому проверка на is_external достаточна.
-                    if !fd.is_external {
-                        errors.push(Diagnostic::new(
-                            format!("duplicate top-level name `{}`", key),
-                            fd.span,
-                        ));
-                    }
+                // Plan 11 Ф.1-Ф.3: ad-hoc overload по типу аргумента.
+                // Один method-name на одном receiver-type может иметь несколько
+                // signatures, различающихся param types и/или arity. Codegen
+                // (method_overloads registry) резолвит на call-site по
+                // статическим типам args. Поэтому duplicate (key) разрешён
+                // для методов с receiver'ом — отдельные signatures.
+                //
+                // Free functions (без receiver'а) — overload не разрешён
+                // (нет established паттерна для resolution в bootstrap'е).
+                let is_method = fd.receiver.is_some();
+                if !names.insert(key.clone()) && !is_method && !fd.is_external {
+                    errors.push(Diagnostic::new(
+                        format!("duplicate top-level name `{}`", key),
+                        fd.span,
+                    ));
                 }
                 env.fns.insert(key, fd.clone());
             }

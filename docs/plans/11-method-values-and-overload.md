@@ -1,6 +1,9 @@
 # План 11: Method values + overload resolution
 
-**Статус:** активный, не начат.
+**Статус:** **частично закрыт (2026-05-08).** Ф.1-Ф.3 + Ф.4.5 + Ф.6
+готовы (overload + Self in expr + spec); Ф.4 (method values как
+first-class) и Ф.5 (disambiguation `as fn(...)`) отложены — отдельная
+сессия.
 **Дата создания:** 2026-05-08.
 **Зависимости:**
 - [D35](../../spec/decisions/03-syntax.md#d35) — методы через `@`/`.`.

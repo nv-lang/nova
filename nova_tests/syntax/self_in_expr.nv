@@ -1,0 +1,93 @@
+// self_in_expr.nv — Plan 11 Ф.4.5: D66 Self в expression position.
+//
+// Self в type-position (return type, parameter type) уже работает.
+// План 11 Ф.4.5 добавляет Self в expression-position:
+//   - `Self.method(args)` — call current type's static.
+//   - `Self { fields }` — record literal current type'а.
+//   - `Self.@method` — unbound method value (Ф.4, отдельно).
+
+module nova_tests.syntax.self_in_expr
+
+
+// ─── Default → parameterized constructor через Self.method ───
+
+// Bootstrap-ограничение: method_receivers single-key, поэтому имена
+// методов уникальные между типами (Plan 11 Ф.1-Ф.3 это решит). Здесь
+// проверяем только Ф.4.5 — Self resolution.
+
+type Account {
+    balance int
+}
+
+export fn Account.acc_with_initial(amount int) -> Self =>
+    Self { balance: amount }
+
+export fn Account.acc_new() -> Self =>
+    Self.acc_with_initial(0)
+
+
+test "Self.method(...) в static — default → parameterized" {
+    let a = Account.acc_new()
+    assert(a.balance == 0)
+    let b = Account.acc_with_initial(100)
+    assert(b.balance == 100)
+}
+
+
+type Box {
+    value int
+    tag   int
+}
+
+export fn Box.box_empty() -> Self =>
+    Self { value: 0, tag: 0 }
+
+export fn Box.box_tagged(v int, t int) -> Self =>
+    Self { value: v, tag: t }
+
+
+test "Self { ... } literal" {
+    let b1 = Box.box_empty()
+    assert(b1.value == 0 && b1.tag == 0)
+    let b2 = Box.box_tagged(42, 7)
+    assert(b2.value == 42 && b2.tag == 7)
+}
+
+
+type Builder {
+    count int
+}
+
+export fn Builder.bld_empty() -> Self =>
+    Self.bld_with_count(0)
+
+export fn Builder.bld_with_count(n int) -> Self =>
+    Self { count: n }
+
+export fn Builder.bld_from_default() -> Self =>
+    Self.bld_empty()
+
+
+test "Self.method chain в нескольких constructors" {
+    let b = Builder.bld_from_default()
+    assert(b.count == 0)
+    let c = Builder.bld_with_count(5)
+    assert(c.count == 5)
+}
+
+
+type Counter {
+    value int
+}
+
+export fn Counter.ctr_with_initial(v int) -> Self =>
+    Self { value: v }
+
+export fn Counter.ctr_from_pair(a int, b int) -> Self =>
+    Self.ctr_with_initial(a + b)
+
+
+test "Self.method с несколькими args" {
+    let c = Counter.ctr_from_pair(3, 4)
+    assert(c.value == 7)
+}

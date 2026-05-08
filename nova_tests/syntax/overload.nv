@@ -1,0 +1,88 @@
+// overload.nv — Plan 11 Ф.1-Ф.3: ad-hoc overload по типу аргумента.
+//
+// `method_overloads: HashMap<(type, name), Vec<MethodSig>>` хранит
+// все signatures. Resolution на call-site по статическим типам args.
+
+module nova_tests.syntax.overload
+
+
+// ─── Static overload по типу аргумента ───
+
+type Money {
+    cents int
+}
+
+export fn Money.from_int(c int) -> Money =>
+    Money { cents: c }
+
+// Старый Money.from(int) был зарегистрирован выше (через from_int).
+// Plan 11 — две разные сигнатуры на одном имени:
+export fn Money.from(n int) -> Money =>
+    Money { cents: n }
+
+export fn Money.from(s str) -> Money =>
+    Money { cents: 999 }    // marker — distinguish from int-version
+
+
+test "static overload Money.from(int) vs from(str)" {
+    let m_int = Money.from(42)
+    assert(m_int.cents == 42)
+    let m_str = Money.from("hello")
+    assert(m_str.cents == 999)
+}
+
+
+// ─── Instance overload по типу аргумента ───
+
+type Acc {
+    sum int
+}
+
+export fn Acc.new() -> Acc =>
+    Acc { sum: 0 }
+
+// Бутстрап-ограничение: bootstrap не парсит `mut` в method receiver
+// для overload (нужно перепроверить parser). Пока используем
+// non-mut overload — bootstrap всё равно permissive.
+export fn Acc @add(n int) -> Acc =>
+    Acc { sum: @sum + n }
+
+export fn Acc @add(s str) -> Acc =>
+    Acc { sum: @sum + 1 }    // marker: str increments by 1
+
+
+test "instance overload Acc.@add(int) vs @add(str)" {
+    let a0 = Acc.new()
+    let a1 = a0.add(10)
+    assert(a1.sum == 10)
+    let a2 = a1.add("foo")
+    assert(a2.sum == 11)         // 10 + 1 (marker)
+    let a3 = a2.add(5)
+    assert(a3.sum == 16)
+}
+
+
+// ─── Two static methods named the same on different types ───
+// Это раньше падало (single-key last-wins).
+
+type Box1 {
+    value int
+}
+
+type Box2 {
+    label int
+}
+
+export fn Box1.make() -> Box1 =>
+    Box1 { value: 100 }
+
+export fn Box2.make() -> Box2 =>
+    Box2 { label: 200 }
+
+
+test "одноимённые static на разных типах не конфликтуют" {
+    let b1 = Box1.make()
+    assert(b1.value == 100)
+    let b2 = Box2.make()
+    assert(b2.label == 200)
+}

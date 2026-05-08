@@ -1641,3 +1641,58 @@ write_buffer 14/14, string_builder 15/15, buffer 15/15.
 которые были перечислены ("отложены") в Plan 04.md закрыты, кроме
 тех что явно отложены до других планов (Q-overloading, Q-no-derive,
 Q-readonly-types).
+
+
+================================================================================
+2026-05-08 Plan 11 Ф.4.5 + Ф.1-Ф.3 + Ф.6: Self in expr + ad-hoc overload
+================================================================================
+
+Plan 11 (method values + overload resolution) — три фазы закрыты,
+Ф.4 (method values как first-class) отложена на следующую сессию.
+
+Что сделано:
+
+1. Ф.4.5 — D66 Self в expression position:
+   - `Self.method(args)` rebind в codegen (Path-form + Member-form).
+   - `Self { ... }` literal — уже работало.
+   - infer тоже резолвит Self → current_receiver_type.
+   - Тест self_in_expr.nv (4 теста, все PASS).
+
+2. Ф.1 — Multi-overload registry:
+   - Struct MethodSig (param_c_types, return_c_type, is_instance,
+     is_external, c_name).
+   - method_overloads: HashMap<(type, name), Vec<MethodSig>>.
+   - Регистрация при AST-walk fn-items.
+   - Backward compat: 1st overload — короткое имя; 2nd+ — с
+     param-types suffix.
+
+3. Ф.2 — Overload resolution на call-site:
+   - Strict matching по типам args (no implicit conversions).
+   - emit_call: Member-form (instance) + Path-form (static).
+   - infer_expr_c_type: тоже multi-key путь (раньше last-wins).
+   - 0 matches → fallback на legacy single-key путь.
+
+4. Ф.3 — C-name mangling:
+   - Sanitize: `*` → `_p`, `[` → `_arr_`, `]` → "".
+   - `Nova_T_method_m__nova_str_nova_int` для (str, int) overload.
+
+5. Ф.6 — Spec:
+   - D35 расширен разделом «Перегрузка методов».
+   - Q-overloading — PARTIALLY CLOSED (variant 1 для методов).
+   - types::check_module разрешает duplicate name для методов
+     с receiver'ом (overload), но не для free functions.
+
+Тесты:
+- self_in_expr.nv — 4 теста PASS.
+- overload.nv — 3 теста (static from int|str, instance @add int|str,
+  одноимённые make() на разных типах) PASS.
+- Полная регрессия 15 файлов: 169/169 PASS.
+
+Урок (safe-rollout pattern): добавили multi-overload рядом со старой
+single-key, не сломав существующее. Все 169 тестов прошли без
+изменений; новый функционал через новый путь. Это снижает риск —
+большие рефакторинги ломают много, миграция должна быть постепенной.
+
+Plan 11 Ф.4 (method values как first-class) — отложен. Требует
+runtime struct BoundMethod + GC integration + adapter для higher-
+order. Отдельная сессия.

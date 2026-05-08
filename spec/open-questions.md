@@ -4217,7 +4217,26 @@ Nova auto-derive read/try_read — оригинальная фича (закре
 
 ---
 
-## Q-overloading. Перегрузка функций / методов по типу аргументов
+## Q-overloading. Перегрузка функций / методов по типу аргументов ⚠️ PARTIALLY CLOSED (2026-05-08)
+
+> **Variant 1 (ad-hoc) ✅ закрыт Plan'ом 11** для **методов** (со
+> receiver'ом). Multi-overload registry в bootstrap-codegen +
+> strict resolution по статическим типам args + C-name mangling.
+> См. [D35 раздел «Перегрузка методов»](decisions/03-syntax.md#d35).
+>
+> **Free-functions (без receiver'а)** — overload остаётся **не
+> разрешён**: дубликат имени по-прежнему compile error в
+> `types::check_module`. Это сознательный choice: для свободных
+> функций в bootstrap'е нет established dispatch path'а; программист
+> пишет разные имена (`parse_int`, `parse_float`).
+>
+> **Variant 4 (protocol-based dispatch)** — отложен до Plan'а 12
+> (после Plan'а 08 Ф.6 generic-bound enforcement).
+>
+> Остаётся открытым: variant 4 (protocol-based), method values
+> (Plan 11 Ф.4), disambiguation через `as fn(...)` (Plan 11 Ф.5).
+
+
 
 **Контекст.** D46 фиксирует **operator overloading** через `@plus`/
 `@times` etc — это перегрузка по operator-кейсу. Но ad-hoc overload

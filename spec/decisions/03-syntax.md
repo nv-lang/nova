@@ -1146,6 +1146,90 @@ Generic'и: `[T]` после имени типа (`fn Vec[T] @len()`) и/или 
 - [01-philosophy.md → D1](01-philosophy.md#d1) — методы как часть
   парадигмы `protocols + data`.
 
+### Перегрузка методов по типу аргумента и arity (Plan 11)
+
+Несколько определений одного метода на одном receiver-типе различаются
+по сигнатуре (типы параметров и/или arity):
+
+```nova
+fn Buffer mut @write(s str) -> ()
+fn Buffer mut @write(b []byte) -> ()
+fn Buffer mut @write(c char) -> ()
+
+fn Logger @log(msg str) -> ()
+fn Logger @log(level int, msg str) -> ()         // arity overload
+```
+
+Resolution на call-site по **статическим типам** аргументов:
+
+```nova
+buf.write("hello")        // → @write(str)
+buf.write([0xDE, 0xAD])   // → @write([]byte)
+buf.write('A')            // → @write(char)
+
+log.log("ok")             // → @log(str) — arity 1
+log.log(2, "ok")          // → @log(int, str) — arity 2
+```
+
+**Strict matching типов: no implicit conversions.** `buf.write(42)`
+где `42 int` — error если нет `@write(int)`. Программист пишет
+`buf.write(42 as char)` или `buf.write(int.to_str(42))`.
+
+При ambiguity (≥2 кандидатов после фильтрации) — compile error
+с suggestion'ом disambiguate через `as fn(...)` annotation:
+
+```nova
+let f = t.@m as fn(str) -> int
+```
+
+#### Bootstrap-status (Plan 11)
+
+- ✅ **static** overload по типу аргумента (`T.from(int)` vs `T.from(str)`)
+  работает в bootstrap-codegen через `method_overloads` registry +
+  C-name mangling по param types.
+- ✅ **instance** overload по типу аргумента (`@write(str)` vs
+  `@write([]byte)`) работает.
+- ✅ **arity** overload (`@log(msg)` vs `@log(level, msg)`).
+- ✅ Одноимённые методы на разных типах (`Box1.make()` vs `Box2.make()`)
+  не конфликтуют — multi-key registry `(type, name) → Vec<Sig>`.
+- ✅ Free-functions (без receiver'а) — overload **не разрешён** (нет
+  established паттерна resolution для bootstrap'а; программист пишет
+  разные имена).
+- ⏳ Method values как first-class (`let f = t.@m`) — отложено
+  (Plan 11 Ф.4).
+- ⏳ Disambiguation через `as fn(...)` annotation на ambiguity —
+  отложено (Plan 11 Ф.5).
+
+#### C-name mangling
+
+Первая overload использует короткое имя (backward-compat):
+`Nova_T_method_m` / `Nova_T_static_m`. Вторая+ — с param-types
+suffix: `Nova_T_method_m__nova_str`, `Nova_T_method_m__nova_int`.
+Mangling: `<original>__<param_type_1>_<param_type_2>_...`.
+
+### Self в expression position (D66 расширение, Plan 11 Ф.4.5)
+
+`Self` ранее работал только в **type position** (return type, parameter
+type). Plan 11 Ф.4.5 добавляет **expression position**:
+
+```nova
+type Account { balance int }
+
+fn Account.with_initial(amount int) -> Self =>
+    Self { balance: amount }                  // record literal
+
+fn Account.new() -> Self =>
+    Self.with_initial(0)                      // call current type's static
+```
+
+Резолюция: `Self` в expression context резолвится в имя текущего
+receiver-типа из метода (тот же `current_receiver_type` что для
+type-position). Полезно для default → parameterized constructor
+chain'ов и DRY.
+
+Прецеденты: Rust `impl Foo { fn make() -> Self { Self::new(2) } }`,
+Swift `Self.method()`. D66 расширяется этим Plan'ом 11.
+
 ---
 
 ## D37. Доступ к полям: `.name` для record, `.N` для позиционных и кортежей

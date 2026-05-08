@@ -3,6 +3,20 @@ use crate::diag::Span;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as FmtWrite;
 
+/// Plan 11 Ф.1: одна signature методa в multi-overload registry.
+/// `param_c_types` — C-типы параметров (без receiver'а), используются
+/// для resolve по arg-types и для C-name mangling.
+#[derive(Debug, Clone)]
+pub struct MethodSig {
+    pub param_c_types: Vec<String>,
+    pub return_c_type: String,
+    pub is_instance: bool,
+    pub is_external: bool,
+    /// Mangled C name. Для single-overload — `Nova_T_method_m` /
+    /// `Nova_T_static_m`. Для overloaded — с `_<param_type1>_<...>` суффиксом.
+    pub c_name: String,
+}
+
 pub struct CEmitter {
     out: String,
     /// File-scope handler impl function bodies (ctx structs + forward decls + bodies)
@@ -52,6 +66,12 @@ pub struct CEmitter {
     /// Используется в for-in для Iter[T] dispatch: проверяем
     /// `all_methods.contains((iter_struct, "next"))`.
     all_methods: HashSet<(String, String)>,
+    /// Plan 11 Ф.1: multi-overload registry. Key = `(type_name, method_name)`,
+    /// value = list of overloaded signatures (param C types, is_instance,
+    /// is_external). Используется на call-site для resolve по arg-types
+    /// (Ф.2). Single-key `method_receivers` остаётся для backward compat —
+    /// single-overload пути ссылаются на него.
+    method_overloads: HashMap<(String, String), Vec<MethodSig>>,
     /// Plan 06 Ф.3: для каждого типа Coll с методом `mut @iter() -> IterT`
     /// запоминаем имя IterT. Используется в for-in: при `for x in coll`
     /// (где `coll: Coll`) вставляем implicit `.iter()` и emit'им loop
@@ -151,6 +171,7 @@ impl CEmitter {
             sum_schemas: HashMap::new(),
             effect_schemas: HashMap::new(),
             method_receivers: HashMap::new(),
+            method_overloads: HashMap::new(),
             all_methods: HashSet::new(),
             iter_returns: HashMap::new(),
             from_targets: HashMap::new(),
@@ -458,6 +479,56 @@ impl CEmitter {
                     );
                     // Plan 06 Ф.1: multi-key для for-in Iter[T] dispatch.
                     self.all_methods.insert((recv.type_name.clone(), f.name.clone()));
+                    // Plan 11 Ф.1: register signature в multi-overload registry.
+                    // param_c_types — C-типы параметров без receiver'а.
+                    let param_c_types: Vec<String> = f.params.iter()
+                        .map(|p| self.type_ref_to_c(&p.ty)
+                            .unwrap_or_else(|_| "nova_int".into()))
+                        .collect();
+                    // Resolve return type. `Self` → recv.type_name.
+                    let return_c_type = match &f.return_type {
+                        Some(TypeRef::Named { path, .. }) if path.len() == 1 && path[0] == "Self" => {
+                            format!("Nova_{}*", recv.type_name)
+                        }
+                        Some(t) => self.type_ref_to_c(t)
+                            .unwrap_or_else(|_| "nova_int".into()),
+                        None => "nova_unit".into(),
+                    };
+                    let key = (recv.type_name.clone(), f.name.clone());
+                    let existing_count = self.method_overloads.get(&key).map(|v| v.len()).unwrap_or(0);
+                    // Mangling: для первой overload — короткое имя
+                    // (backward compat); для второй+ — с param-types suffix.
+                    let base_c_name = if is_instance {
+                        format!("Nova_{}_method_{}", recv.type_name, f.name)
+                    } else {
+                        format!("Nova_{}_static_{}", recv.type_name, f.name)
+                    };
+                    let c_name = if existing_count == 0 {
+                        base_c_name
+                    } else {
+                        // Mangling по param-types. Sanitize: `*` / `[`
+                        // не валидны в C-identifier'ах.
+                        let suffix = param_c_types.iter()
+                            .map(|t| t.replace('*', "_p")
+                                      .replace(' ', "_")
+                                      .replace('[', "_arr_")
+                                      .replace(']', ""))
+                            .collect::<Vec<_>>()
+                            .join("_");
+                        if suffix.is_empty() {
+                            base_c_name
+                        } else {
+                            format!("{}__{}", base_c_name, suffix)
+                        }
+                    };
+                    let sig = MethodSig {
+                        param_c_types,
+                        return_c_type,
+                        is_instance,
+                        is_external: f.is_external,
+                        c_name,
+                    };
+                    self.method_overloads.entry(key).or_default().push(sig);
                     // D73 v2 auto-derive registry:
                     //   - `T.from(v V)`     → from_targets[T] += V
                     //   - `fn V @into() -> T` → into_targets[V] = T
@@ -2532,12 +2603,59 @@ impl CEmitter {
 
     fn mangle_fn(&self, f: &FnDecl) -> String {
         if let Some(recv) = &f.receiver {
+            // Plan 11 Ф.3: если есть multi-overload registry для (type, name),
+            // ищем по сигнатуре и берём её c_name (mangled). Иначе — старый mangling.
+            let key = (recv.type_name.clone(), f.name.clone());
+            if let Some(overloads) = self.method_overloads.get(&key) {
+                if overloads.len() > 1 {
+                    // Резолвим по param C-типам этого FnDecl'а.
+                    let want_params: Vec<String> = f.params.iter()
+                        .map(|p| self.type_ref_to_c(&p.ty)
+                            .unwrap_or_else(|_| "nova_int".into()))
+                        .collect();
+                    for sig in overloads {
+                        if sig.param_c_types == want_params {
+                            return sig.c_name.clone();
+                        }
+                    }
+                }
+            }
             match recv.kind {
                 ReceiverKind::Instance => format!("Nova_{}_method_{}", recv.type_name, f.name),
                 ReceiverKind::Static   => format!("Nova_{}_static_{}", recv.type_name, f.name),
             }
         } else {
             format!("nova_fn_{}", f.name)
+        }
+    }
+
+    /// Plan 11 Ф.2: overload resolution. Возвращает выбранный MethodSig
+    /// или подробную ошибку. `arg_c_types` — типы args без receiver'а.
+    /// Strict matching, no implicit conversions.
+    fn resolve_overload(
+        &self,
+        receiver_type: &str,
+        method_name: &str,
+        arg_c_types: &[String],
+    ) -> Option<MethodSig> {
+        let key = (receiver_type.to_string(), method_name.to_string());
+        let overloads = self.method_overloads.get(&key)?;
+        // Single-overload — short-circuit.
+        if overloads.len() == 1 {
+            return Some(overloads[0].clone());
+        }
+        // Filter по arity + param types. Strict.
+        let matches: Vec<&MethodSig> = overloads.iter()
+            .filter(|sig| sig.param_c_types.len() == arg_c_types.len())
+            .filter(|sig| sig.param_c_types.iter().zip(arg_c_types.iter())
+                .all(|(want, got)| want == got))
+            .collect();
+        match matches.len() {
+            1 => Some(matches[0].clone()),
+            // 0 или >1 — single-overload fallback path не помогает.
+            // Возвращаем None, вызывающий code сам fallback'нется на старую
+            // логику или эмитит ошибку.
+            _ => None,
         }
     }
 
@@ -4156,6 +4274,24 @@ impl CEmitter {
                 }
             }
             ExprKind::Member { obj, name: method } => {
+                // Plan 11 Ф.4.5: D66 — `Self.method(...)` в expression
+                // position. obj=Ident("Self") в теле метода → Ident(<current>).
+                // Создаем local rebind, не мутируя обратно.
+                let self_obj_storage;
+                let obj: &Expr = match &obj.kind {
+                    ExprKind::Ident(n) if n == "Self" => {
+                        if let Some(recv) = &self.current_receiver_type {
+                            self_obj_storage = Expr {
+                                kind: ExprKind::Ident(recv.clone()),
+                                span: obj.span,
+                            };
+                            &self_obj_storage
+                        } else {
+                            obj
+                        }
+                    }
+                    _ => obj,
+                };
                 // D38 array-static-method: `[]T.new()` / `[]T.with_capacity(n)`.
                 // Парсер строит obj = Path(["__array", "<T>"]); здесь
                 // диспетчеризуем в `nova_array_new_<T>` runtime.
@@ -4889,6 +5025,80 @@ impl CEmitter {
                 // 5. User-defined method call: `obj.method(args)` → `Nova_T_method_name(obj, args)`
                 //    or static: `TypeName.method(args)` → `Nova_T_static_name(args)`
                 //    Detect by checking method_receivers map populated at module-scan time.
+                // Plan 11 Ф.2: сначала пытаемся multi-overload registry —
+                // strict resolution по types args. Покрывает overload + решает
+                // single-key last-wins для одноимённых методов на разных типах.
+                {
+                    // Определяем receiver-type:
+                    //   - obj=Ident("T") где T — known type → static call.
+                    //   - иначе (obj — variable / expr) → instance call;
+                    //     receiver-type из обуточенного obj_ty.
+                    let recv_type_name = if let ExprKind::Ident(n) = &obj.kind {
+                        if self.method_overloads.keys().any(|(t, _)| t == n) {
+                            // Static call.
+                            Some(n.clone())
+                        } else {
+                            // Instance call (obj — variable). Берём из obj_ty.
+                            let trimmed = obj_ty.trim_start_matches("Nova_")
+                                .trim_end_matches('*').trim().to_string();
+                            if !trimmed.is_empty() && trimmed != "void" {
+                                Some(trimmed)
+                            } else {
+                                None
+                            }
+                        }
+                    } else {
+                        // Не-Ident obj (expr) → всегда instance.
+                        let trimmed = obj_ty.trim_start_matches("Nova_")
+                            .trim_end_matches('*').trim().to_string();
+                        if !trimmed.is_empty() && trimmed != "void" {
+                            Some(trimmed)
+                        } else {
+                            None
+                        }
+                    };
+                    if let Some(rt) = recv_type_name {
+                        // want_instance: true unless obj is Ident(known-type).
+                        let want_instance = !matches!(&obj.kind, ExprKind::Ident(n)
+                            if self.method_overloads.keys().any(|(t, _)| t == n));
+                        let key = (rt, method.clone());
+                        if let Some(overloads) = self.method_overloads.get(&key).cloned() {
+                            let candidates: Vec<MethodSig> = overloads.into_iter()
+                                .filter(|s| s.is_instance == want_instance)
+                                .collect();
+                            if !candidates.is_empty() {
+                                let mut arg_strs = Vec::new();
+                                let mut arg_types = Vec::new();
+                                for a in args {
+                                    arg_types.push(self.infer_expr_c_type(a));
+                                    arg_strs.push(self.emit_expr(a)?);
+                                }
+                                let chosen = if candidates.len() == 1 {
+                                    Some(candidates[0].clone())
+                                } else {
+                                    candidates.iter()
+                                        .filter(|s| s.param_c_types.len() == arg_types.len())
+                                        .filter(|s| s.param_c_types.iter().zip(arg_types.iter())
+                                            .all(|(w, g)| w == g))
+                                        .next()
+                                        .cloned()
+                                };
+                                if let Some(sig) = chosen {
+                                    if want_instance {
+                                        let obj_c = self.emit_expr(obj)?;
+                                        let mut full = vec![obj_c];
+                                        full.extend(arg_strs);
+                                        return Ok(format!("{}({})", sig.c_name, full.join(", ")));
+                                    } else {
+                                        return Ok(format!("{}({})", sig.c_name, arg_strs.join(", ")));
+                                    }
+                                }
+                                // 0 matches при ≥2 candidates → fallback на старую
+                                // логику ниже (или error на дальнейших шагах).
+                            }
+                        }
+                    }
+                }
                 if let Some((type_name, is_instance)) = self.method_receivers.get(method).cloned() {
                     let is_generic_type = self.generic_types.contains(&type_name);
                     if is_instance {
@@ -4927,6 +5137,22 @@ impl CEmitter {
                 format!("{obj}{acc}{method}", obj = obj_c, acc = accessor, method = method)
             }
             ExprKind::Path(parts) => {
+                // Plan 11 Ф.4.5: D66 — Self в expression position (call).
+                // `Self.method(args)` в теле метода резолвится в
+                // `<current_type>.method(args)`. Тот же current_receiver_type
+                // что используется для type-position (-> Self).
+                let parts: Vec<String> = if !parts.is_empty() && parts[0] == "Self" {
+                    if let Some(recv) = &self.current_receiver_type {
+                        let mut new_parts = parts.clone();
+                        new_parts[0] = recv.clone();
+                        new_parts
+                    } else {
+                        parts.clone()
+                    }
+                } else {
+                    parts.clone()
+                };
+                let parts: &[String] = &parts;
                 // D79: built-in Channel static method (Path-form).
                 if parts.len() == 2 && parts[0] == "Channel" && parts[1] == "new" {
                     if let Some(arg) = args.first() {
@@ -5175,9 +5401,51 @@ impl CEmitter {
                             });
                         }
                     }
-                    // Could be a static method call: `Type.method(args)`
-                    // Check method_receivers for the method name
+                    // Could be a static method call: `Type.method(args)`.
                     let method_name = &parts[1];
+                    // Plan 11 Ф.2: используем multi-overload registry —
+                    // strict resolution по типам args. Это работает и
+                    // при single-overload (тогда match unique без проверки
+                    // arg-types). Покрывает overload, и решает single-key
+                    // last-wins проблему когда ≥2 типов имеют одноимённый
+                    // static с разной сигнатурой.
+                    let key = (parts[0].clone(), method_name.clone());
+                    if let Some(overloads) = self.method_overloads.get(&key).cloned() {
+                        // Только static-overloads (is_instance == false).
+                        let static_overloads: Vec<MethodSig> = overloads.into_iter()
+                            .filter(|s| !s.is_instance)
+                            .collect();
+                        if !static_overloads.is_empty() {
+                            // Эмиттим args сначала, чтобы получить C-типы.
+                            let mut arg_strs = Vec::new();
+                            let mut arg_types = Vec::new();
+                            for a in args {
+                                arg_types.push(self.infer_expr_c_type(a));
+                                arg_strs.push(self.emit_expr(a)?);
+                            }
+                            // Single-overload: short-circuit.
+                            let chosen = if static_overloads.len() == 1 {
+                                Some(static_overloads[0].clone())
+                            } else {
+                                // Multi-overload: strict match по arity + types.
+                                static_overloads.iter()
+                                    .filter(|s| s.param_c_types.len() == arg_types.len())
+                                    .filter(|s| s.param_c_types.iter().zip(arg_types.iter())
+                                        .all(|(w, g)| w == g))
+                                    .next()
+                                    .cloned()
+                            };
+                            if let Some(sig) = chosen {
+                                return Ok(format!("{}({})", sig.c_name, arg_strs.join(", ")));
+                            }
+                            // 0 matches — fallback на старую логику ниже,
+                            // которая может найти через method_receivers
+                            // (single-key) или auto-derive.
+                        }
+                    }
+                    // Legacy single-key path (для типов которые не
+                    // зарегистрированы в method_overloads, например
+                    // built-in opaque типы special-case'нутые выше).
                     if let Some((type_name, false)) = self.method_receivers.get(method_name.as_str()).cloned() {
                         // Strict match: type_name must equal parts[0].
                         if type_name == parts[0] {
@@ -7158,9 +7426,88 @@ impl CEmitter {
                 // handler Switch { ... } has type NovaVtable_Switch*
                 format!("NovaVtable_{}*", effect_name.join("_"))
             }
-            ExprKind::Call { func, .. } => {
+            ExprKind::Call { func, args, .. } => {
                 // D38 turbofish прозрачен для inference — unwrap base.
                 let func = func.unwrap_turbofish();
+                // Plan 11 Ф.1-Ф.3: multi-overload infer. Если func — Path/Member
+                // call на known receiver-type, ищем в method_overloads. Это
+                // решает single-key last-wins для одноимённых методов.
+                {
+                    let recv_and_method: Option<(String, String, bool)> = match &func.kind {
+                        ExprKind::Path(parts) => {
+                            // Self → current_receiver_type
+                            let parts: Vec<String> = if !parts.is_empty() && parts[0] == "Self" {
+                                if let Some(r) = &self.current_receiver_type {
+                                    let mut p = parts.clone();
+                                    p[0] = r.clone();
+                                    p
+                                } else {
+                                    parts.clone()
+                                }
+                            } else {
+                                parts.clone()
+                            };
+                            if parts.len() == 2 {
+                                Some((parts[0].clone(), parts[1].clone(), false))
+                            } else {
+                                None
+                            }
+                        }
+                        ExprKind::Member { obj, name } => {
+                            // Static (obj=Ident("T")) or instance.
+                            match &obj.kind {
+                                ExprKind::Ident(n) if n == "Self" => {
+                                    if let Some(r) = &self.current_receiver_type {
+                                        Some((r.clone(), name.clone(), false))
+                                    } else {
+                                        None
+                                    }
+                                }
+                                ExprKind::Ident(n) if self.method_overloads.keys().any(|(t, _)| t == n) => {
+                                    Some((n.clone(), name.clone(), false))
+                                }
+                                _ => {
+                                    let obj_ty = self.infer_expr_c_type(obj);
+                                    let trimmed = obj_ty.trim_start_matches("Nova_")
+                                        .trim_end_matches('*').trim().to_string();
+                                    if !trimmed.is_empty() && trimmed != "void" {
+                                        Some((trimmed, name.clone(), true))
+                                    } else {
+                                        None
+                                    }
+                                }
+                            }
+                        }
+                        _ => None,
+                    };
+                    if let Some((rt, mn, want_inst)) = recv_and_method {
+                        let key = (rt, mn);
+                        if let Some(overloads) = self.method_overloads.get(&key) {
+                            let candidates: Vec<&MethodSig> = overloads.iter()
+                                .filter(|s| s.is_instance == want_inst)
+                                .collect();
+                            if !candidates.is_empty() {
+                                // Single → return its return_c_type.
+                                if candidates.len() == 1 {
+                                    return candidates[0].return_c_type.clone();
+                                }
+                                // Multi → strict match по arg-types.
+                                let arg_types: Vec<String> = args.iter()
+                                    .map(|a| self.infer_expr_c_type(a))
+                                    .collect();
+                                let chosen = candidates.iter()
+                                    .filter(|s| s.param_c_types.len() == arg_types.len())
+                                    .filter(|s| s.param_c_types.iter().zip(arg_types.iter())
+                                        .all(|(w, g)| w == g))
+                                    .next();
+                                if let Some(sig) = chosen {
+                                    return sig.return_c_type.clone();
+                                }
+                                // 0 matches — fallback на старую логику ниже.
+                            }
+                        }
+                    }
+                }
                 // Infer return type for call expressions
                 if let ExprKind::Ident(name) = &func.kind {
                     if name == "println" || name == "print" || name == "assert" || name == "debug_assert" {
@@ -7462,6 +7809,20 @@ impl CEmitter {
                     }
                     "nova_int".into()
                 } else if let ExprKind::Path(parts) = &func.kind {
+                    // Plan 11 Ф.4.5: Self.method(...) → <current>.method(...).
+                    let parts_resolved: Vec<String>;
+                    let parts: &[String] = if !parts.is_empty() && parts[0] == "Self" {
+                        if let Some(recv) = &self.current_receiver_type {
+                            let mut p = parts.clone();
+                            p[0] = recv.clone();
+                            parts_resolved = p;
+                            &parts_resolved
+                        } else {
+                            parts
+                        }
+                    } else {
+                        parts
+                    };
                     // Effect dispatch via path: `Echo.say()` → look up in effect_schemas
                     if parts.len() == 2 {
                         let eff = &parts[0];
