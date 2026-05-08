@@ -24,7 +24,7 @@
 | 10 | [10-pgo-integration.md](10-pgo-integration.md) | PGO integration (stub, после плана 09) — 15-30% perf на hot path | stub / future |
 | 11 | [11-method-values-and-overload.md](11-method-values-and-overload.md) | Method values + overload по типу аргумента (закрывает Q-overloading вариант 1) | ✅ ЗАКРЫТ (Ф.8 sweep std — optional, не блокер) |
 | 12 | [12-builtins-driven-codegen.md](12-builtins-driven-codegen.md) | builtins.nv-driven external dispatch (Q-codegen-builtins-cleanup) | ✅ ЗАКРЫТ (Ф.6 type-checker gate отложен; Ф.4.5 auto-derive ❌ ОТМЕНЕНО Plan 13 Ф.9.5) |
-| 13 | [13-runtime-stdlib-and-autogen.md](13-runtime-stdlib-and-autogen.md) | Runtime stdlib (str/math) + auto-gen std/runtime/*.nv (read-only projection реестра компилятора) | ✅ ЗАКРЫТ (MVP + Ф.8 + Ф.9.0/9.1/9.3/9.4/9.5); Ф.4 (special-case removal) и Ф.9.2 (operator `+` aliases) вынесены в future plans |
+| 13 | [13-runtime-stdlib-and-autogen.md](13-runtime-stdlib-and-autogen.md) | Runtime stdlib (str/math) + auto-gen std/runtime/*.nv (read-only projection реестра компилятора) | MVP + Ф.8 + Ф.9 (кроме Ф.9.2) ✅; Ф.9.2 reopened — оператор `+` через `@plus` Nova-метод (body `=> @append/@concat`) и общий routing (D46) |
 
 ## Связанные директории
 

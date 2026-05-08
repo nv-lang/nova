@@ -16,7 +16,7 @@ ExternalRegistry (codegen) загружает 4 per-type файла через `
 Acceptance — добавить новый method тремя правками (registry + .c + regen)
 работает (write_zero verified в Plan 12; принцип сохранён).
 
-**Ф.9 (API polish, добавлен 2026-05-08):** ✅ ЗАКРЫТ кроме Ф.9.2 (split-out).
+**Ф.9 (API polish, добавлен 2026-05-08):** ⏳ Pending Ф.9.2 (refocused).
 - ✅ **Ф.9.0** — пустые строки между методами в auto-gen (commit 940c58f041).
 - ✅ **Ф.9.1** — Self-return для StringBuilder/WriteBuffer mut +
   унификация static (`new`/`from`/`with_capacity`/`clone` тоже Self).
@@ -30,24 +30,41 @@ Acceptance — добавить новый method тремя правками (r
 - ✅ **Ф.9.5** — `try_read_*` явно в registry (16 numeric + 2 text пар);
   Plan 12 Ф.4.5 (auto-derive) ❌ ОТМЕНЕНО, spec D82 обновлён.
   Codegen-side синтез никогда не был реализован — отмена no-op.
-- ❌ **Ф.9.2** — оператор `+` как alias `@plus`/`@concat` для
-  StringBuilder/str. **ВЫНЕСЕНО ИЗ Plan 13** в отдельный future plan.
-  Закрытие Ф.9.2 требует careful routing через method_overloads +
-  parameter mangling (зависимость от Plan 11 Ф.3) + операторный
-  AST-rewriting в codegen — это **отдельная инициатива**, не часть
-  «runtime-stdlib polish». Plan 13 закрывается без неё.
+- ⏳ **Ф.9.2** — оператор `+` через **обычный** Nova-метод `@plus`
+  с body (не external alias). Реализация:
+  ```nova
+  // в std/runtime/string_builder.nv (auto-gen, рядом с external @append):
+  export fn StringBuilder mut @plus(s str)  -> Self => @append(s)
+  export fn StringBuilder mut @plus(c char) -> Self => @append(c)
 
-  Текущее состояние оператора `+`:
-  - `str + str` уже работает через intrinsic в codegen (line 3548 emit_c.rs:
-    эмитит `nova_str_concat` напрямую). Программисту не видно — это
-    «invisible runtime knowledge», но user-API работает.
-  - `StringBuilder + str` НЕ работает — нет ни registry-entry, ни
-    routing. Программист пишет `sb.append(s)` — это короткая, ясная
-    форма, оператор `+` не критичен для closure'а Plan 13.
+  // в std/runtime/string.nv (auto-gen):
+  export fn str @plus(other str) -> str => @concat(other)
+  ```
+  Routing: codegen встретив `a + b` ищет method `@plus` на типе `a`.
+  Если есть — эмитит `a.@plus(b)`. Если нет — fallback на builtin
+  intrinsic (int+int, float+float). Общее правило, работает и для
+  user-defined типов (D46 operator overload).
 
-  Future plan «operator-aliases via registry» добавит явные `@plus`
-  declarations и routing. Когда — when needed (если grep покажет много
-  `sb + ` use-case'ов в user-коде).
+  **Что нужно в реализации:**
+  1. Расширить `runtime_registry.rs`: `RuntimeFn` поддерживает
+     записи **с body** (не только external). Новое поле
+     `nova_body: Option<&'static str>` — текст после `=>`.
+  2. Renderer в emit-runtime-stubs: если `nova_body.is_some()` —
+     эмитит `export fn ... => <body>`, иначе — `export external fn ...`.
+  3. В registry добавить:
+     - `StringBuilder.@plus(s str) -> Self` body `=> @append(s)`
+     - `StringBuilder.@plus(c char) -> Self` body `=> @append(c)`
+     - `str.@plus(other str) -> str` body `=> @concat(other)`
+     - `str.@concat(other str) -> str` (external; сейчас invisible
+       intrinsic `nova_str_concat` — переехать в registry).
+  4. В codegen — общее правило: оператор `+` lookup'ит method
+     `@plus` через method_overloads. Если есть — `a.@plus(b)`,
+     иначе fallback на встроенные числовые intrinsics. str + str
+     теперь идёт через `@plus → @concat` без special-case.
+
+  **Что отмирает:** invisible intrinsic для `str + str` в codegen
+  (line ~3548 `emit_c.rs`). После Ф.9.2 `nova_str_concat` либо
+  переименовать в `Nova_str_method_concat`, либо trampoline.
 
 Бонус-фиксы по дороге:
 - ✅ str.from(int) regression: routing через method_overloads вместо
@@ -579,13 +596,14 @@ RuntimeFn { module: "std.runtime.string_builder",
 | `write_buffer.nv` | `mut @write_byte(v byte) -> ()` | `mut @write_byte(v byte) -> Self` (и все `@write_*`) | ✅ Ф.9.1 |
 | `string.nv` | `@char_len() -> int` | `@len() -> int` | ✅ Ф.9.3 |
 | Все .nv | декларации вплотную | пустая строка между группами `// doc + external fn` | ✅ Ф.9.0 |
-| `string_builder.nv` | (нет `@plus`) | ~~`mut @plus(s str|c char) -> Self` (alias на `@append`)~~ | ❌ вынесено |
-| `string.nv` | (нет `@plus`) | ~~`@plus(other str) -> str` (alias на `@concat`)~~ | ❌ вынесено |
+| `string_builder.nv` | (нет `@plus`) | `mut @plus(s str) -> Self => @append(s)` + char-overload | ⏳ Ф.9.2 |
+| `string.nv` | (нет `@plus`) | `@plus(other str) -> str => @concat(other)` + явный `@concat` | ⏳ Ф.9.2 |
+| `emit_c.rs` line ~3548 | invisible intrinsic `nova_str_concat` для `str + str` | удалён, routing через `@plus → @concat` | ⏳ Ф.9.2 |
 
 Первые 4 строки закрыты в этой сессии (см. commits 940c58f041,
-529f97806b, 94bc22b3c3). Последние 2 строки (operator-aliases)
-вынесены из Plan 13 в отдельный future plan — см. описание Ф.9.2
-выше.
+529f97806b, 94bc22b3c3). Operator-aliases (Ф.9.2) — pending: метод
+`@plus` теперь обычный Nova-fn с body `=> @append/@concat(...)`,
+не external alias.
 
 ### Что меняется
 
@@ -626,49 +644,62 @@ wb.write_u32_be(magic).write_u16_be(version).write_bytes(payload)
   (`u16`, `byte`, etc.), а не Self. Self для read-методов был бы
   бессмыслен.
 
-#### 2. StringBuilder: операторный алиас `+` → `@append` ❌ ВЫНЕСЕНО ИЗ Plan 13
+#### 2. Оператор `+` через метод `@plus` (StringBuilder + str)
 
-Изначально планировалось добавить в registry `fn StringBuilder mut
-@plus(s str|char) -> Self` как alias на `@append`, чтобы `sb + s`
-работал.
+**Принцип.** Оператор `+` — generic Nova feature: компилятор встретив
+`a + b` ищет method `@plus` на типе `a`. Есть — эмитит `a.@plus(b)`.
+Нет — fallback на builtin intrinsic (int+int, float+float). Это общее
+правило (D46 operator overload), работает одинаково для StringBuilder,
+str и user-defined типов.
 
-**Решение (2026-05-08, после ревью Ф.9):** **вынесено в отдельный
-future plan**. Причины:
+**Реализация для StringBuilder.** `@plus` — обычный Nova-метод (с
+body), не external. Body просто перенаправляет на `@append`:
 
-1. **Не критично для closure'а Plan 13.** Plan 13 — про runtime-stdlib
-   projection. Operator-aliasing — отдельная инициатива.
-2. **Routing complexity.** Требует:
-   - Parameter-type mangling (Plan 11 Ф.3) для `@plus(str)` vs `@plus(char)`.
-   - AST-rewrite в codegen для `BinOp::Add` на StringBuilder-receiver
-     → method-call.
-   - Aliasing semantics (один `c_name` для двух registry-entries).
-3. **Workaround есть.** `sb.append(s)` короче и яснее чем `sb + s`
-   для mutation-builder'а. Reader не путается с обычной `+`-семантикой
-   (immutable allocation).
+```nova
+// std/runtime/string_builder.nv (auto-gen):
+export fn StringBuilder mut @plus(s str)  -> Self => @append(s)
+export fn StringBuilder mut @plus(c char) -> Self => @append(c)
+```
 
-Future plan «operator-aliases via registry» закроет это (когда —
-when needed; trigger: grep по user-коду показывает много `sb +`).
+`=> @append(...)` — это обычная Nova syntax для function body. Вызов
+`sb + "x"` после type-check'а превращается в `sb.@plus("x")`, который
+inline-вызывает `@append`. Никакого invisible knowledge: метод явно
+объявлен в .nv.
 
-#### 3. str: алиас `+` → `@concat` ❌ ВЫНЕСЕНО ИЗ Plan 13
+**Реализация для str.** Аналогично, но через `@concat`:
 
-Изначально планировалось добавить `fn str @concat(other str) -> str`
-+ routing для `+` на str-receiver, чтобы убрать «invisible runtime
-knowledge» (special-case intrinsic в codegen для `nova_str_concat`).
+```nova
+// std/runtime/string.nv (auto-gen):
+export external fn str @concat(other str) -> str
+export fn str @plus(other str) -> str => @concat(other)
+```
 
-**Решение (2026-05-08):** **вынесено в отдельный future plan вместе
-с п.2 выше**. Причины:
+`@concat` — external (real C-implementation, бывший
+`nova_str_concat`). `@plus` — wrapper на Nova. После Ф.9.2 invisible
+intrinsic для `str + str` в emit_c.rs удаляется: routing идёт через
+обычный method-call.
 
-1. **`s1 + s2` уже работает.** Codegen line 3548 emit_c.rs эмитит
-   `nova_str_concat(l, r)` для `BinOp::Add` на str-receiver. User-API
-   работает, тесты PASS.
-2. **Дыра в D82 single-source — известная и приемлемая в bootstrap.**
-   `str + str` — single intrinsic, не overload. В отличие от
-   `StringBuilder.@append` (где есть char/str overloads и реальная
-   D82-проблема), `str.@concat` — total function без неоднозначности.
-3. **Routing через registry — отдельная задача**, см. п.2.
+#### 3. Registry: поддержка записей с body
 
-Когда п.2 будет реализован, п.3 идёт в комплекте (одна и та же
-инфраструктура — operator-aliases через registry).
+`runtime_registry.rs` сейчас описывает только external-функции (без
+body). Для Ф.9.2 — расширение:
+
+```rust
+struct RuntimeFn {
+    // ... existing fields ...
+    nova_body: Option<&'static str>,   // None для external; Some("...") для Nova-impl
+}
+```
+
+Renderer в emit-runtime-stubs:
+- `nova_body == None` → `export external fn ... -> T`
+- `nova_body == Some(b)` → `export fn ... -> T => {b}`
+
+C-side **не меняется** для записей с body — компилятор сам
+синтезирует Nova-AST из `=> body` строки и type-check'ает её. Если
+body ссылается на `@append` / `@concat` — это method call'ы которые
+резолвятся через тот же registry. Закольцовка не возникает (`@plus`
+не вызывает себя).
 
 #### 4. str API rename: `@char_len` → `@len`
 
@@ -889,17 +920,76 @@ fix, проверяется детерминизмом regen + manual eyeball'о
 4. Regen std/runtime/string_builder.nv + write_buffer.nv.
 5. Прогнать тесты.
 
-**Ф.9.2 — `+` алиас для StringBuilder + str ❌ ВЫНЕСЕНО ИЗ Plan 13**
+**Ф.9.2 — `@plus` метод + общий routing оператора `+` (~3-4ч)**
 
-Закрытие требует:
-1. ~~В registry добавить `@plus` записи для StringBuilder и str.~~
-2. ~~В codegen — для оператора `+` lookup в registry по
-   `(receiver, "plus")` (или по special method name).~~
-3. ~~Если `plus` не найден — fallback на существующие intrinsics.~~
-4. ~~Regen.~~
+`@plus` — обычный Nova-метод с body `=> @append(...)` или
+`=> @concat(...)`, не external alias. Routing для оператора `+` —
+общее правило для любого типа (D46 operator overload).
 
-См. таблицу состояния выше — Ф.9.2 вынесено в отдельный future plan
-«operator-aliases via registry». Plan 13 закрывается без неё.
+Шаги:
+
+1. **Расширить `RuntimeFn`** в `runtime_registry.rs`:
+   ```rust
+   pub struct RuntimeFn {
+       // ... existing fields ...
+       pub nova_body: Option<&'static str>,  // None = external; Some = Nova-impl
+   }
+   ```
+2. **Добавить записи в registry:**
+   ```rust
+   // string_builder.nv:
+   RuntimeFn { module: "std.runtime.string_builder",
+               receiver: Some("StringBuilder"), is_mut: true,
+               name: "plus", params: vec![("s", "str")],
+               return_ty: "Self",
+               nova_body: Some("@append(s)"), ... },
+   RuntimeFn { /* same, params: ("c", "char"), body: "@append(c)" */ },
+
+   // string.nv:
+   RuntimeFn { module: "std.runtime.string",
+               receiver: Some("str"),
+               name: "concat", params: vec![("other", "str")],
+               return_ty: "str",
+               c_name: "Nova_str_method_concat",
+               nova_body: None,  // external
+               ... },
+   RuntimeFn { /* str.@plus, params: ("other", "str"), body: "@concat(other)" */ },
+   ```
+
+3. **Renderer** в emit-runtime-stubs:
+   - `nova_body == None` → `export external fn ... -> T`
+   - `nova_body == Some(b)` → `export fn ... -> T => {b}`
+
+4. **Codegen routing для `+`:** в `emit_c.rs` для `BinOp::Add`:
+   - Resolve типы операндов.
+   - Lookup в method_overloads: есть ли `@plus(other_ty)` на типе
+     left-operand'а?
+   - Есть → эмитить `<left>.@plus(<right>)` (через обычный method
+     dispatch).
+   - Нет → fallback на существующий builtin (int+int, float+float).
+
+5. **Удалить invisible intrinsic для `str + str`** в `emit_c.rs`
+   (line ~3548). После Ф.9.2 он не нужен — routing идёт через
+   `@plus → @concat` (последний вызов всё равно эмитит
+   `Nova_str_method_concat`).
+
+6. **C-side:** переименовать `nova_str_concat` →
+   `Nova_str_method_concat` (или trampoline). Это единственная
+   правка в `nova_rt/string.c`.
+
+7. **Regen** `string_builder.nv` + `string.nv`.
+
+8. **Тесты:**
+   ```nova
+   test "StringBuilder + str" {
+       let mut sb = StringBuilder.new()
+       (sb + "hello ").append("world")  // chaining
+       assert(sb.into() == "hello world")
+   }
+   test "str + str" {
+       assert("foo" + "bar" == "foobar")  // routing через @plus → @concat
+   }
+   ```
 
 **Ф.9.3 — str API renames (~30мин)**
 1. `char_len` → `len` в registry.
@@ -966,12 +1056,20 @@ fix, проверяется детерминизмом regen + manual eyeball'о
       методами; double-regen → no diff (Ф.9.0).
 - [x] 78/78 тестов проходят.
 
-**Ф.9.2 acceptance — вынесено в отдельный future plan, не часть
-Plan 13:**
-- [ ] ~~`sb + "text"` эквивалентно `sb.append("text")`~~ — future plan.
-- [ ] ~~`s1 + s2` явно резолвится через `Nova_str_method_concat`,
-      registry содержит запись~~ — future plan. Текущее: special-case
-      intrinsic, user-API работает.
+**Ф.9.2 acceptance — pending (refocused: `@plus` через body, не alias):**
+- [ ] `sb + "text"` эквивалентно `sb.@append("text")` (через `@plus`
+      method body `=> @append(s)`).
+- [ ] `sb + 'c'` эквивалентно `sb.@append('c')` (char-overload).
+- [ ] `s1 + s2` явно резолвится через `s1.@plus(s2)` → `@concat` →
+      `Nova_str_method_concat`. Invisible intrinsic в emit_c.rs
+      удалён.
+- [ ] `runtime_registry.rs` поддерживает поле `nova_body: Option<&str>`;
+      renderer эмитит `=> body` для записей с `nova_body.is_some()`.
+- [ ] `string_builder.nv` содержит две Nova-fn декларации `@plus`
+      (str/char overloads).
+- [ ] `string.nv` содержит external `@concat` + Nova-fn `@plus`.
+- [ ] User-defined тип с собственным `@plus` корректно работает с
+      оператором `+` (общее правило, не special-case для StringBuilder).
 
 ### Risks Ф.9
 
