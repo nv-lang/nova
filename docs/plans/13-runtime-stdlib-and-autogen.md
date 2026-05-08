@@ -16,7 +16,7 @@ ExternalRegistry (codegen) загружает 4 per-type файла через `
 Acceptance — добавить новый method тремя правками (registry + .c + regen)
 работает (write_zero verified в Plan 12; принцип сохранён).
 
-**Ф.9 (API polish, добавлен 2026-05-08):** ✅ ЗАКРЫТ кроме Ф.9.2 (deferred).
+**Ф.9 (API polish, добавлен 2026-05-08):** ✅ ЗАКРЫТ кроме Ф.9.2 (split-out).
 - ✅ **Ф.9.0** — пустые строки между методами в auto-gen (commit 940c58f041).
 - ✅ **Ф.9.1** — Self-return для StringBuilder/WriteBuffer mut +
   унификация static (`new`/`from`/`with_capacity`/`clone` тоже Self).
@@ -30,9 +30,24 @@ Acceptance — добавить новый method тремя правками (r
 - ✅ **Ф.9.5** — `try_read_*` явно в registry (16 numeric + 2 text пар);
   Plan 12 Ф.4.5 (auto-derive) ❌ ОТМЕНЕНО, spec D82 обновлён.
   Codegen-side синтез никогда не был реализован — отмена no-op.
-- ⏳ **Ф.9.2** — оператор `+` как alias `@plus`/`@concat` для
-  StringBuilder/str. **DEFERRED to next session** (требует careful
-  routing через method_overloads + parameter mangling, риск регрессий).
+- ❌ **Ф.9.2** — оператор `+` как alias `@plus`/`@concat` для
+  StringBuilder/str. **ВЫНЕСЕНО ИЗ Plan 13** в отдельный future plan.
+  Закрытие Ф.9.2 требует careful routing через method_overloads +
+  parameter mangling (зависимость от Plan 11 Ф.3) + операторный
+  AST-rewriting в codegen — это **отдельная инициатива**, не часть
+  «runtime-stdlib polish». Plan 13 закрывается без неё.
+
+  Текущее состояние оператора `+`:
+  - `str + str` уже работает через intrinsic в codegen (line 3548 emit_c.rs:
+    эмитит `nova_str_concat` напрямую). Программисту не видно — это
+    «invisible runtime knowledge», но user-API работает.
+  - `StringBuilder + str` НЕ работает — нет ни registry-entry, ни
+    routing. Программист пишет `sb.append(s)` — это короткая, ясная
+    форма, оператор `+` не критичен для closure'а Plan 13.
+
+  Future plan «operator-aliases via registry» добавит явные `@plus`
+  declarations и routing. Когда — when needed (если grep покажет много
+  `sb + ` use-case'ов в user-коде).
 
 Бонус-фиксы по дороге:
 - ✅ str.from(int) regression: routing через method_overloads вместо
@@ -558,18 +573,19 @@ RuntimeFn { module: "std.runtime.string_builder",
 Подтверждённый ревью список расхождений в текущих `std/runtime/*.nv`
 которые Ф.9 должна исправить:
 
-| Файл | Сейчас | Должно быть после Ф.9 |
-|---|---|---|
-| `string_builder.nv` | `mut @append(s str) -> ()` | `mut @append(s str) -> Self` |
-| `string_builder.nv` | (нет `@plus`) | `mut @plus(s str) -> Self`, `mut @plus(c char) -> Self` (alias на `@append`) |
-| `write_buffer.nv` | `mut @write_byte(v byte) -> ()` | `mut @write_byte(v byte) -> Self` (и все 24 `@write_*`) |
-| `string.nv` | `@char_len() -> int` | `@len() -> int` |
-| `string.nv` | (нет `@plus`) | `@plus(other str) -> str` (alias на `@concat`) |
-| Все .nv | декларации вплотную | пустая строка между группами `// doc + external fn` (Ф.9.0) |
+| Файл | Сейчас | Должно быть после Ф.9 | Статус |
+|---|---|---|---|
+| `string_builder.nv` | `mut @append(s str) -> ()` | `mut @append(s str) -> Self` | ✅ Ф.9.1 |
+| `write_buffer.nv` | `mut @write_byte(v byte) -> ()` | `mut @write_byte(v byte) -> Self` (и все `@write_*`) | ✅ Ф.9.1 |
+| `string.nv` | `@char_len() -> int` | `@len() -> int` | ✅ Ф.9.3 |
+| Все .nv | декларации вплотную | пустая строка между группами `// doc + external fn` | ✅ Ф.9.0 |
+| `string_builder.nv` | (нет `@plus`) | ~~`mut @plus(s str|c char) -> Self` (alias на `@append`)~~ | ❌ вынесено |
+| `string.nv` | (нет `@plus`) | ~~`@plus(other str) -> str` (alias на `@concat`)~~ | ❌ вынесено |
 
-Эти расхождения — **доказательство** что Ф.9 ещё не выполнялась
-(только Ф.1-Ф.3 + Ф.8 closed). Каждая sub-фаза Ф.9.1-Ф.9.5 закрывает
-одну строку таблицы выше; Ф.9.0 закрывает строку «формат».
+Первые 4 строки закрыты в этой сессии (см. commits 940c58f041,
+529f97806b, 94bc22b3c3). Последние 2 строки (operator-aliases)
+вынесены из Plan 13 в отдельный future plan — см. описание Ф.9.2
+выше.
 
 ### Что меняется
 
@@ -610,46 +626,49 @@ wb.write_u32_be(magic).write_u16_be(version).write_bytes(payload)
   (`u16`, `byte`, etc.), а не Self. Self для read-методов был бы
   бессмыслен.
 
-#### 2. StringBuilder: операторный алиас `+` → `@append`
+#### 2. StringBuilder: операторный алиас `+` → `@append` ❌ ВЫНЕСЕНО ИЗ Plan 13
 
-**Добавить в registry** для StringBuilder:
-```nova
-// `sb + s` — синоним sb.append(s). Mutates sb, возвращает sb.
-fn StringBuilder mut @plus(s str)  -> Self
-fn StringBuilder mut @plus(c char) -> Self
-```
+Изначально планировалось добавить в registry `fn StringBuilder mut
+@plus(s str|char) -> Self` как alias на `@append`, чтобы `sb + s`
+работал.
 
-Это **алиас** — codegen для оператора `+` на StringBuilder receiver
-эмитит вызов того же `Nova_StringBuilder_method_append`. Отдельной
-C-функции не нужно. В реестре `c_name` тот же (`Nova_StringBuilder_method_append`),
-но запись новая (отдельный module + receiver lookup для оператора).
+**Решение (2026-05-08, после ревью Ф.9):** **вынесено в отдельный
+future plan**. Причины:
 
-**Нюанс:** оператор `+` на StringBuilder mutates left-hand operand.
-Это отступление от обычной семантики `+` (immutable, allocation), но
-оправдано: StringBuilder сам по себе — mutation-builder, копирующий
-`+` был бы O(n²) regression. См. Q-stringbuilder-op-add — open
-question нужно ли это вообще, или оставить только `@append`. Решение
-— делать, потому что AI-friendly: знакомый `+` без learning curve.
+1. **Не критично для closure'а Plan 13.** Plan 13 — про runtime-stdlib
+   projection. Operator-aliasing — отдельная инициатива.
+2. **Routing complexity.** Требует:
+   - Parameter-type mangling (Plan 11 Ф.3) для `@plus(str)` vs `@plus(char)`.
+   - AST-rewrite в codegen для `BinOp::Add` на StringBuilder-receiver
+     → method-call.
+   - Aliasing semantics (один `c_name` для двух registry-entries).
+3. **Workaround есть.** `sb.append(s)` короче и яснее чем `sb + s`
+   для mutation-builder'а. Reader не путается с обычной `+`-семантикой
+   (immutable allocation).
 
-#### 3. str: алиас `+` → `@concat`
+Future plan «operator-aliases via registry» закроет это (когда —
+when needed; trigger: grep по user-коду показывает много `sb +`).
 
-**Сейчас:** `s1 + s2` для `str` — special-case intrinsic в codegen
-(прямой call `nova_str_concat`).
+#### 3. str: алиас `+` → `@concat` ❌ ВЫНЕСЕНО ИЗ Plan 13
 
-**После Ф.9:** добавить в registry **явное** объявление:
-```nova
-// Конкатенация строк. O(a+b) — новая аллокация.
-fn str @concat(other str) -> str
-```
+Изначально планировалось добавить `fn str @concat(other str) -> str`
++ routing для `+` на str-receiver, чтобы убрать «invisible runtime
+knowledge» (special-case intrinsic в codegen для `nova_str_concat`).
 
-И оператор `+` на str-receiver — алиас на `@concat`. Codegen
-для `s1 + s2` эмитит `Nova_str_method_concat(s1, s2)`. Старое имя
-`nova_str_concat` либо переименовать, либо trampoline (решает
-реализатор).
+**Решение (2026-05-08):** **вынесено в отдельный future plan вместе
+с п.2 выше**. Причины:
 
-**Зачем:** убрать «invisible runtime knowledge» — конкатенация
-строк должна быть видна в registry, как и любой другой method.
-Закрывает дыру в D82 single-source принципе для str.
+1. **`s1 + s2` уже работает.** Codegen line 3548 emit_c.rs эмитит
+   `nova_str_concat(l, r)` для `BinOp::Add` на str-receiver. User-API
+   работает, тесты PASS.
+2. **Дыра в D82 single-source — известная и приемлемая в bootstrap.**
+   `str + str` — single intrinsic, не overload. В отличие от
+   `StringBuilder.@append` (где есть char/str overloads и реальная
+   D82-проблема), `str.@concat` — total function без неоднозначности.
+3. **Routing через registry — отдельная задача**, см. п.2.
+
+Когда п.2 будет реализован, п.3 идёт в комплекте (одна и та же
+инфраструктура — operator-aliases через registry).
 
 #### 4. str API rename: `@char_len` → `@len`
 
@@ -870,13 +889,17 @@ fix, проверяется детерминизмом regen + manual eyeball'о
 4. Regen std/runtime/string_builder.nv + write_buffer.nv.
 5. Прогнать тесты.
 
-**Ф.9.2 — `+` алиас для StringBuilder + str (~1ч)**
-1. В registry добавить `@plus` записи для StringBuilder и str.
-2. В codegen — для оператора `+` lookup в registry по
-   `(receiver, "plus")` (или по special method name).
-3. Если `plus` не найден — fallback на существующие intrinsics
-   (для `int + int`, etc.).
-4. Regen.
+**Ф.9.2 — `+` алиас для StringBuilder + str ❌ ВЫНЕСЕНО ИЗ Plan 13**
+
+Закрытие требует:
+1. ~~В registry добавить `@plus` записи для StringBuilder и str.~~
+2. ~~В codegen — для оператора `+` lookup в registry по
+   `(receiver, "plus")` (или по special method name).~~
+3. ~~Если `plus` не найден — fallback на существующие intrinsics.~~
+4. ~~Regen.~~
+
+См. таблицу состояния выше — Ф.9.2 вынесено в отдельный future plan
+«operator-aliases via registry». Plan 13 закрывается без неё.
 
 **Ф.9.3 — str API renames (~30мин)**
 1. `char_len` → `len` в registry.
@@ -921,27 +944,34 @@ fix, проверяется детерминизмом regen + manual eyeball'о
 
 ### Acceptance Ф.9
 
-- [ ] `sb.append("a").append("b").append("c")` компилируется и
-      работает.
-- [ ] `wb.write_u32_be(x).write_u16_be(y)` компилируется и работает.
-- [ ] `sb + "text"` эквивалентно `sb.append("text")`.
-- [ ] `s1 + s2` после Ф.9.2 явно резолвится через `Nova_str_method_concat`,
-      registry содержит запись.
-- [ ] `s.len` работает (вместо `s.char_len`); старое имя удалено или
-      deprecated с warning.
-- [ ] `let cs []char = "hello".chars()` компилируется.
-- [ ] `rb.read_char()` работает: один codepoint UTF-8 → char.
-- [ ] `rb.read_str(5)` возвращает 5 codepoint'ов как `str`.
-- [ ] `rb.try_read_char()` / `rb.try_read_str(5)` возвращают
+- [x] `sb.append("a").append("b").append("c")` компилируется и
+      работает (Ф.9.1 Self-return).
+- [x] `wb.write_u32_be(x).write_u16_be(y)` компилируется и работает.
+- [x] `s.len` работает (вместо `s.char_len`); старое имя удалено
+      из registry (Ф.9.3).
+- [x] `let cs []char = "hello".chars()` тип возврата `[]char`
+      зафиксирован в registry (Ф.9.3). Использование в user-code —
+      зависит от Plan 06 Iter[char].
+- [x] `rb.read_char()` работает: один codepoint UTF-8 → char.
+- [x] `rb.read_str(5)` возвращает 5 codepoint'ов как `str`.
+- [x] `rb.try_read_char()` / `rb.try_read_str(5)` возвращают
       `Result[..., ReadBufferError]`.
-- [ ] `ReadBufferError.InvalidUtf8 { position }` бросается на
-      невалидной UTF-8 sequence.
-- [ ] **Auto-derive `try_read_*` отменён:** в `read_buffer.nv` явно
+- [x] `ReadBufferError.InvalidUtf8 { position }` бросается на
+      невалидной UTF-8 sequence (через Fail-сообщение «ReadBuffer.
+      InvalidUtf8: position N»).
+- [x] **Auto-derive `try_read_*` отменён:** в `read_buffer.nv` явно
       присутствуют обе формы для каждого read-метода (Fail и Result);
-      компилятор не синтезирует обёртки.
-- [ ] Все 6 файлов в std/runtime/ имеют пустую строку между
-      методами; double-regen → no diff.
-- [ ] 78/78 тестов проходят (включая новые тесты на read_char/read_str).
+      компилятор не синтезирует обёртки (Ф.9.5).
+- [x] Все 6 файлов в std/runtime/ имеют пустую строку между
+      методами; double-regen → no diff (Ф.9.0).
+- [x] 78/78 тестов проходят.
+
+**Ф.9.2 acceptance — вынесено в отдельный future plan, не часть
+Plan 13:**
+- [ ] ~~`sb + "text"` эквивалентно `sb.append("text")`~~ — future plan.
+- [ ] ~~`s1 + s2` явно резолвится через `Nova_str_method_concat`,
+      registry содержит запись~~ — future plan. Текущее: special-case
+      intrinsic, user-API работает.
 
 ### Risks Ф.9
 
