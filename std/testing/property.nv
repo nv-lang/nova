@@ -220,15 +220,13 @@ export fn ArrayGen[T] @shrink(value []T) -> Iter[[]T] {
         // Половина (первая)
         if len > 1 {
             let mut half []T = []
-            let mut i = 0
-            while i < len / 2 { half.push(value[i]); i += 1 }
+            for i in 0..len / 2 { half.push(value[i]) }
             steps.push(half)
         }
         // Без последнего элемента
         if len > 1 {
             let mut shorter []T = []
-            let mut i = 0
-            while i < len - 1 { shorter.push(value[i]); i += 1 }
+            for i in 0..len - 1 { shorter.push(value[i]) }
             steps.push(shorter)
         }
     }

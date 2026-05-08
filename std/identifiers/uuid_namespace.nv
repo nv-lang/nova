@@ -34,8 +34,7 @@ export fn Uuid.v3(namespace Uuid, name str) -> Self {
 
     let digest = Md5.hash(input)
     let mut bytes []byte = []
-    let mut i = 0
-    while i < 16 { bytes.push(digest[i]); i += 1 }
+    for i in 0..16 { bytes.push(digest[i]) }
 
     // Set version=3 (MD5) и variant
     set_version_variant(bytes, 3)
@@ -51,8 +50,7 @@ export fn Uuid.v5(namespace Uuid, name str) -> Self {
     let digest = Sha1.hash(input)
     // Берём первые 16 байт SHA-1 (она даёт 20).
     let mut bytes []byte = []
-    let mut i = 0
-    while i < 16 { bytes.push(digest[i]); i += 1 }
+    for i in 0..16 { bytes.push(digest[i]) }
 
     set_version_variant(bytes, 5)
     bytes_to_uuid(bytes)

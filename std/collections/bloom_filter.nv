@@ -31,8 +31,7 @@ export type BloomFilter {
 export fn BloomFilter.new(bits_size int, num_hashes int) -> Self {
     let byte_size = (bits_size + 7) / 8
     let mut bits []byte = []
-    let mut i = 0
-    while i < byte_size { bits.push(0); i += 1 }
+    for i in 0..byte_size { bits.push(0) }
     {
         bits_size,
         num_hashes,

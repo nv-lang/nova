@@ -692,8 +692,7 @@ fn pretty_object(m HashMap[str, JsonValue], depth int) -> str {
 
 fn indent(depth int) -> str {
     let mut s = ""
-    let mut i = 0
-    while i < depth { s = s + "  "; i += 1 }
+    for i in 0..depth { s = s + "  " }
     s
 }
 

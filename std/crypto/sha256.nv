@@ -95,8 +95,7 @@ export fn Sha256.hash(data []byte) -> [32]byte {
 export fn Sha256.hash_str(data []byte) -> str {
     let digest = Sha256.hash(data)
     let mut bytes []byte = []
-    let mut i = 0
-    while i < 32 { bytes.push(digest[i]); i += 1 }
+    for i in 0..32 { bytes.push(digest[i]) }
     Hex.encode(bytes)
 }
 
@@ -134,8 +133,7 @@ export fn Sha256 mut @finalize() -> [32]byte {
     let mut pos = 0
     while pos < @buffer.len {
         let mut block []byte = []
-        let mut j = 0
-        while j < 64 { block.push(@buffer[pos + j]); j += 1 }
+        for j in 0..64 { block.push(@buffer[pos + j]) }
         @process_block(block)
         pos += 64
     }
@@ -253,8 +251,7 @@ test "SHA-256: 1 миллион 'a' — long input stress" {
     let mut state = Sha256.new()
     let chunk []byte = []byte.with_capacity(1000)
     let mut tmp = chunk
-    let mut i = 0
-    while i < 1000 { tmp.push('a' as byte); i += 1 }
+    for i in 0..1000 { tmp.push('a' as byte) }
     let mut k = 0
     while k < 1000 {
         state.update(tmp)
@@ -262,8 +259,7 @@ test "SHA-256: 1 миллион 'a' — long input stress" {
     }
     let digest = state.finalize()
     let mut bytes []byte = []
-    let mut j = 0
-    while j < 32 { bytes.push(digest[j]); j += 1 }
+    for j in 0..32 { bytes.push(digest[j]) }
     assert(Hex.encode(bytes) ==
         "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0")
 }
@@ -278,8 +274,7 @@ test "SHA-256: incremental == one-shot" {
     state.update("the lazy dog".bytes())
     let digest = state.finalize()
     let mut bytes []byte = []
-    let mut i = 0
-    while i < 32 { bytes.push(digest[i]); i += 1 }
+    for i in 0..32 { bytes.push(digest[i]) }
 
     assert(one_shot == Hex.encode(bytes))
 }

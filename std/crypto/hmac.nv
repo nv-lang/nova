@@ -64,8 +64,7 @@ export fn HmacSha256.compute(key []byte, message []byte) -> [32]byte {
 export fn HmacSha256.compute_str(key []byte, message []byte) -> str {
     let mac = HmacSha256.compute(key, message)
     let mut bytes []byte = []
-    let mut i = 0
-    while i < SHA256_OUTPUT_SIZE { bytes.push(mac[i]); i += 1 }
+    for i in 0..SHA256_OUTPUT_SIZE { bytes.push(mac[i]) }
     Hex.encode(bytes)
 }
 
@@ -99,8 +98,7 @@ fn normalize_key_sha256(key []byte) -> []byte {
 
     if key.len > SHA256_BLOCK_SIZE {
         let hashed = Sha256.hash(key)
-        let mut i = 0
-        while i < SHA256_OUTPUT_SIZE { block.push(hashed[i]); i += 1 }
+        for i in 0..SHA256_OUTPUT_SIZE { block.push(hashed[i]) }
     } else {
         for b in key { block.push(b) }
     }
@@ -119,8 +117,7 @@ test "HMAC-SHA256: RFC 4231 test case 1" {
     // Data = "Hi There"
     // HMAC = b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7
     let mut key []byte = []
-    let mut i = 0
-    while i < 20 { key.push(0x0B); i += 1 }
+    for i in 0..20 { key.push(0x0B) }
     let data = "Hi There".bytes()
     assert(HmacSha256.compute_str(key, data) ==
         "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7")
@@ -141,11 +138,9 @@ test "HMAC-SHA256: RFC 4231 test case 3 (длинный key)" {
     // Data = 0xdd × 50
     // HMAC = 773ea91e36800e46854db8ebd09181a72959098b3ef8c122d9635514ced565fe
     let mut key []byte = []
-    let mut i = 0
-    while i < 20 { key.push(0xAA); i += 1 }
+    for i in 0..20 { key.push(0xAA) }
     let mut data []byte = []
-    let mut j = 0
-    while j < 50 { data.push(0xDD); j += 1 }
+    for j in 0..50 { data.push(0xDD) }
     assert(HmacSha256.compute_str(key, data) ==
         "773ea91e36800e46854db8ebd09181a72959098b3ef8c122d9635514ced565fe")
 }
@@ -154,8 +149,7 @@ test "HMAC-SHA256: key > block_size (используется hashed)" {
     // Key  = 0xaa × 131
     // Data = "Test Using Larger Than Block-Size Key - Hash Key First"
     let mut key []byte = []
-    let mut i = 0
-    while i < 131 { key.push(0xAA); i += 1 }
+    for i in 0..131 { key.push(0xAA) }
     let data = "Test Using Larger Than Block-Size Key - Hash Key First".bytes()
     assert(HmacSha256.compute_str(key, data) ==
         "60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54")

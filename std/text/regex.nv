@@ -533,8 +533,7 @@ fn try_match(re Regex, text str, start_pos int) -> Option[int] {
     let n = re.states.len
     let mut current []bool = []
     let mut next []bool = []
-    let mut i = 0
-    while i < n { current.push(false); next.push(false); i += 1 }
+    for i in 0..n { current.push(false); next.push(false) }
 
     add_state(current, re.states, re.start, start_pos, text)
 
@@ -545,8 +544,7 @@ fn try_match(re Regex, text str, start_pos int) -> Option[int] {
         let c = match text.char_at(pos) { Some(ch) => ch, None => break }
 
         // Reset next
-        let mut k = 0
-        while k < n { next[k] = false; k += 1 }
+        for k in 0..n { next[k] = false }
 
         // Step every active state
         for idx in 0..n {

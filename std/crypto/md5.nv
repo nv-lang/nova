@@ -106,8 +106,7 @@ export fn Md5.hash(data []byte) -> [16]byte {
 export fn Md5.hash_str(data []byte) -> str {
     let digest = Md5.hash(data)
     let mut bytes []byte = []
-    let mut i = 0
-    while i < 16 { bytes.push(digest[i]); i += 1 }
+    for i in 0..16 { bytes.push(digest[i]) }
     Hex.encode(bytes)
 }
 
@@ -147,8 +146,7 @@ export fn Md5 mut @finalize() -> [16]byte {
     let mut pos = 0
     while pos < @buffer.len {
         let mut block []byte = []
-        let mut j = 0
-        while j < 64 { block.push(@buffer[pos + j]); j += 1 }
+        for j in 0..64 { block.push(@buffer[pos + j]) }
         @process_block(block)
         pos += 64
     }
@@ -272,8 +270,7 @@ test "MD5: incremental == one-shot" {
     state.update(part3)
     let digest = state.finalize()
     let mut bytes []byte = []
-    let mut i = 0
-    while i < 16 { bytes.push(digest[i]); i += 1 }
+    for i in 0..16 { bytes.push(digest[i]) }
 
     assert(one_shot == Hex.encode(bytes))
 }

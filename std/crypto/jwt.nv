@@ -38,8 +38,7 @@ export fn Jwt.encode_hs256(secret []byte, claims JsonValue) -> str {
     let signing_input = header_b64 + "." + payload_b64
     let mac = HmacSha256.compute(secret, signing_input.bytes())
     let mut mac_bytes []byte = []
-    let mut i = 0
-    while i < 32 { mac_bytes.push(mac[i]); i += 1 }
+    for i in 0..32 { mac_bytes.push(mac[i]) }
     let sig_b64 = Base64.encode_url(mac_bytes)
 
     signing_input + "." + sig_b64

@@ -121,8 +121,7 @@ fn bcrypt_kdf(password []byte, salt []byte, cost int) -> []byte {
     state.update(password)
     let mut digest = state.finalize()
     let mut bytes []byte = []
-    let mut i = 0
-    while i < 32 { bytes.push(digest[i]); i += 1 }
+    for i in 0..32 { bytes.push(digest[i]) }
 
     // Iterate `rounds` times — экспоненциальная стоимость по cost.
     for k in 0..rounds {
@@ -131,14 +130,12 @@ fn bcrypt_kdf(password []byte, salt []byte, cost int) -> []byte {
         s.update(salt)
         let d = s.finalize()
         let mut new_bytes []byte = []
-        let mut j = 0
-        while j < 32 { new_bytes.push(d[j]); j += 1 }
+        for j in 0..32 { new_bytes.push(d[j]) }
         bytes = new_bytes
     }
     // Берём первые 23 байта (как bcrypt — 184 бита output)
     let mut out []byte = []
-    let mut p = 0
-    while p < 23 { out.push(bytes[p]); p += 1 }
+    for p in 0..23 { out.push(bytes[p]) }
     out
 }
 
@@ -290,8 +287,7 @@ test "ошибка: cost вне диапазона" {
 
 test "ошибка: пароль > 72 байта" {
     let mut long = ""
-    let mut i = 0
-    while i < 100 { long = long + "a"; i += 1 }
+    for i in 0..100 { long = long + "a" }
     let r = with Random = seeded(0), Fail[BcryptError] = (e) => interrupt Some(e) {
         let _ = Bcrypt.hash(long, 4)
         None
