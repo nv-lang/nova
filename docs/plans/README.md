@@ -18,6 +18,7 @@
 | 04 | [04-buffer-split-and-external.md](04-buffer-split-and-external.md) | Buffer → StringBuilder/WriteBuffer/ReadBuffer + `external` keyword | активный, не начат |
 | 05 | [05-as-cast-codegen.md](05-as-cast-codegen.md) | `as`-cast — реализация narrowing в codegen (D54 compliance) | активный, не начат |
 | 06 | [06-iter-protocol-codegen.md](06-iter-protocol-codegen.md) | `Iter[T]` protocol в codegen — общий for-in (D58 compliance) | активный, не начат |
+| 07 | [07-as-cast-saturation.md](07-as-cast-saturation.md) | `as`-cast saturation для float→int + spec D54 narrowing semantics | активный, не начат |
 
 ## Связанные директории
 

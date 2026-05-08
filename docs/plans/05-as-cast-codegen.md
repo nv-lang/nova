@@ -10,6 +10,11 @@
 работать). Подробнее — `simplifications.md` запись от 2026-05-08
 [P-as-cast-wraparound].
 
+**Spec-долг:** D54 в spec'е **не обновлён** — semantics narrowing
+(wraparound для int→int, поведение для float→int) не зафиксированы
+явно. Закрывается [Plan 07](07-as-cast-saturation.md) Ф.4, который
+дополнительно реализует saturation для float→int (UB-gap в плане 05).
+
 ---
 
 ## Проблема
