@@ -362,4 +362,141 @@ static inline Nova_Result* Nova_ReadBuffer_method_try_read_f64_be(Nova_ReadBuffe
     return nova_make_Result_Ok(_nova_f64_to_bits(d));
 }
 
+/* ────── Plan 13 Ф.9.4: UTF-8 codepoint reads ──────
+ *
+ * @read_char / @read_str(n) для парсинга текстовых форматов.
+ * Throws либо UnexpectedEnd (буфер пуст / неполная sequence на хвосте),
+ * либо InvalidUtf8 { position } (мусорный байт в середине).
+ *
+ * Helper `_nova_rb_decode_utf8_one` — возвращает 1 (success), 0 (UnexpectedEnd:
+ * not enough bytes), -1 (InvalidUtf8). При success — out_cp заполнен,
+ * out_consumed = число потреблённых байт.
+ */
+
+static inline int _nova_rb_decode_utf8_one(const nova_byte* p, int64_t avail,
+                                           uint32_t* out_cp, int* out_consumed) {
+    if (avail <= 0) return 0;
+    uint8_t b0 = (uint8_t)p[0];
+    if (b0 < 0x80) {
+        *out_cp = b0; *out_consumed = 1; return 1;
+    }
+    int need;
+    uint32_t cp;
+    if      ((b0 & 0xE0) == 0xC0) { need = 2; cp = b0 & 0x1F; }
+    else if ((b0 & 0xF0) == 0xE0) { need = 3; cp = b0 & 0x0F; }
+    else if ((b0 & 0xF8) == 0xF0) { need = 4; cp = b0 & 0x07; }
+    else return -1; /* invalid leader */
+    if (avail < need) return 0;
+    for (int i = 1; i < need; ++i) {
+        uint8_t bi = (uint8_t)p[i];
+        if ((bi & 0xC0) != 0x80) return -1; /* invalid continuation */
+        cp = (cp << 6) | (bi & 0x3F);
+    }
+    *out_cp = cp; *out_consumed = need; return 1;
+}
+
+static inline void _nova_rb_throw_invalid_utf8(int64_t position) {
+    char msg[64];
+    int n = snprintf(msg, sizeof(msg),
+        "ReadBuffer.InvalidUtf8: position %lld", (long long)position);
+    if (n < 0) n = 0;
+    if ((size_t)n >= sizeof(msg)) n = (int)sizeof(msg) - 1;
+    char* heap_msg = (char*)nova_alloc((size_t)n + 1);
+    memcpy(heap_msg, msg, (size_t)n);
+    heap_msg[n] = '\0';
+    Nova_Fail_fail((nova_str){.ptr = heap_msg, .len = (size_t)n});
+}
+
+static inline Nova_Result* _nova_rb_make_invalid_utf8_err(int64_t position) {
+    char msg[64];
+    int n = snprintf(msg, sizeof(msg),
+        "ReadBuffer.InvalidUtf8: position %lld", (long long)position);
+    if (n < 0) n = 0;
+    if ((size_t)n >= sizeof(msg)) n = (int)sizeof(msg) - 1;
+    char* heap_msg = (char*)nova_alloc((size_t)n + 1);
+    memcpy(heap_msg, msg, (size_t)n);
+    heap_msg[n] = '\0';
+    return nova_make_Result_Err((nova_str){.ptr = heap_msg, .len = (size_t)n});
+}
+
+/* @read_char() Fail[ReadBufferError] -> char */
+static inline nova_int Nova_ReadBuffer_method_read_char(Nova_ReadBuffer* b) {
+    uint32_t cp; int consumed;
+    int r = _nova_rb_decode_utf8_one(b->data + b->pos, b->len - b->pos, &cp, &consumed);
+    if (r == 0) {
+        _nova_read_buffer_throw_unexpected_end(1, b->len - b->pos);
+        return 0;
+    }
+    if (r < 0) {
+        _nova_rb_throw_invalid_utf8(b->pos);
+        return 0;
+    }
+    b->pos += consumed;
+    return (nova_int)cp;
+}
+
+/* @try_read_char() -> Result[char, ReadBufferError] */
+static inline Nova_Result* Nova_ReadBuffer_method_try_read_char(Nova_ReadBuffer* b) {
+    uint32_t cp; int consumed;
+    int r = _nova_rb_decode_utf8_one(b->data + b->pos, b->len - b->pos, &cp, &consumed);
+    if (r == 0) return _nova_rb_make_err(1, b->len - b->pos);
+    if (r < 0)  return _nova_rb_make_invalid_utf8_err(b->pos);
+    b->pos += consumed;
+    return nova_make_Result_Ok((nova_int)cp);
+}
+
+/* @read_str(n int) Fail[ReadBufferError] -> str — n codepoint'ов как str (UTF-8 byte view). */
+static inline nova_str Nova_ReadBuffer_method_read_str(Nova_ReadBuffer* b, nova_int n) {
+    if (n < 0) {
+        _nova_read_buffer_throw_unexpected_end(0, b->len - b->pos);
+        return (nova_str){.ptr = "", .len = 0};
+    }
+    int64_t start_pos = b->pos;
+    int64_t walked = b->pos;
+    for (nova_int i = 0; i < n; ++i) {
+        uint32_t cp; int consumed;
+        int r = _nova_rb_decode_utf8_one(b->data + walked, b->len - walked, &cp, &consumed);
+        if (r == 0) {
+            _nova_read_buffer_throw_unexpected_end(n - i, 0);
+            return (nova_str){.ptr = "", .len = 0};
+        }
+        if (r < 0) {
+            _nova_rb_throw_invalid_utf8(walked);
+            return (nova_str){.ptr = "", .len = 0};
+        }
+        walked += consumed;
+    }
+    int64_t bytelen = walked - start_pos;
+    /* Copy byte slice в свежий buffer чтобы независим от life-time ReadBuffer'а. */
+    char* copy = (char*)nova_alloc((size_t)bytelen + 1);
+    if (bytelen > 0) memcpy(copy, b->data + start_pos, (size_t)bytelen);
+    copy[bytelen] = '\0';
+    b->pos = walked;
+    return (nova_str){.ptr = copy, .len = (size_t)bytelen};
+}
+
+/* @try_read_str(n int) -> Result[str, ReadBufferError] */
+static inline Nova_Result* Nova_ReadBuffer_method_try_read_str(Nova_ReadBuffer* b, nova_int n) {
+    if (n < 0) return _nova_rb_make_err(0, b->len - b->pos);
+    int64_t start_pos = b->pos;
+    int64_t walked = b->pos;
+    for (nova_int i = 0; i < n; ++i) {
+        uint32_t cp; int consumed;
+        int r = _nova_rb_decode_utf8_one(b->data + walked, b->len - walked, &cp, &consumed);
+        if (r == 0) return _nova_rb_make_err(n - i, 0);
+        if (r < 0)  return _nova_rb_make_invalid_utf8_err(walked);
+        walked += consumed;
+    }
+    int64_t bytelen = walked - start_pos;
+    char* copy = (char*)nova_alloc((size_t)bytelen + 1);
+    if (bytelen > 0) memcpy(copy, b->data + start_pos, (size_t)bytelen);
+    copy[bytelen] = '\0';
+    b->pos = walked;
+    nova_str s = (nova_str){.ptr = copy, .len = (size_t)bytelen};
+    /* Box nova_str для Result.Ok. */
+    nova_str* heap_s = (nova_str*)nova_alloc(sizeof(nova_str));
+    *heap_s = s;
+    return nova_make_Result_Ok((nova_int)(intptr_t)heap_s);
+}
+
 #endif /* NOVA_RT_READ_BUFFER_H */

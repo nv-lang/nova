@@ -144,3 +144,15 @@ export external fn ReadBuffer mut @read_f64_be() Fail[ReadBufferError] -> f64
 // f64 big-endian IEEE 754. Result-форма (Ok(value) или Err(UnexpectedEnd)).
 export external fn ReadBuffer mut @try_read_f64_be() -> Result[f64, ReadBufferError]
 
+// Один codepoint (UTF-8 1-4 байта). Throw'ит UnexpectedEnd / InvalidUtf8.
+export external fn ReadBuffer mut @read_char() Fail[ReadBufferError] -> char
+
+// Result-форма @read_char (Ok(char) или Err(UnexpectedEnd|InvalidUtf8)).
+export external fn ReadBuffer mut @try_read_char() -> Result[char, ReadBufferError]
+
+// n codepoint'ов как str. Throw'ит UnexpectedEnd / InvalidUtf8.
+export external fn ReadBuffer mut @read_str(n int) Fail[ReadBufferError] -> str
+
+// Result-форма @read_str (Ok(str) или Err).
+export external fn ReadBuffer mut @try_read_str(n int) -> Result[str, ReadBufferError]
+

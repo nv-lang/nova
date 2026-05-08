@@ -718,6 +718,27 @@ fn read_buffer_runtime() -> Vec<RuntimeFn> {
             name: try_name, params: params_try, return_ty: try_ret, effects: &[],
             c_name: c_name_try, doc: doc_try });
     }
+    // Plan 13 Ф.9.4: codepoint-уровневые reads.
+    v.push(RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: true,
+        name: "read_char", params: &[],
+        return_ty: "char", effects: &["Fail[ReadBufferError]"],
+        c_name: "Nova_ReadBuffer_method_read_char",
+        doc: "Один codepoint (UTF-8 1-4 байта). Throw'ит UnexpectedEnd / InvalidUtf8." });
+    v.push(RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: true,
+        name: "try_read_char", params: &[],
+        return_ty: "Result[char, ReadBufferError]", effects: &[],
+        c_name: "Nova_ReadBuffer_method_try_read_char",
+        doc: "Result-форма @read_char (Ok(char) или Err(UnexpectedEnd|InvalidUtf8))." });
+    v.push(RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: true,
+        name: "read_str", params: &[("n", "int")],
+        return_ty: "str", effects: &["Fail[ReadBufferError]"],
+        c_name: "Nova_ReadBuffer_method_read_str",
+        doc: "n codepoint'ов как str. Throw'ит UnexpectedEnd / InvalidUtf8." });
+    v.push(RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: true,
+        name: "try_read_str", params: &[("n", "int")],
+        return_ty: "Result[str, ReadBufferError]", effects: &[],
+        c_name: "Nova_ReadBuffer_method_try_read_str",
+        doc: "Result-форма @read_str (Ok(str) или Err)." });
     v
 }
 

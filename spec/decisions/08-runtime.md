@@ -389,8 +389,12 @@ type ReadBufferError
 **не определён** (явный throw блокирует D73 auto-derive).
 
 `ReadBuffer` пара `@read_*` (Fail-form) / `@try_read_*` (Result-form)
-— **auto-derived на C-runtime уровне** (одна C-функция возвращает
-result-структуру; codegen эмитит обе обёртки). См. Plan 04 Этап 3.
+— **обе формы явно** в `runtime_registry.rs` и в `std/runtime/read_buffer.nv`.
+Каждая Fail-форма имеет независимую C-функцию `Nova_ReadBuffer_method_read_X`,
+а Result-форма — `Nova_ReadBuffer_method_try_read_X`. Автоматический
+синтез одной из другой **отменён** (Plan 13 Ф.9.5; ранее Plan 12 Ф.4.5
+предлагал такое правило, но было отменено для соблюдения D82 single-source-
+of-truth — всё что компилятор знает, должно быть в registry явно).
 
 **`char` — Unicode codepoint, НЕ UTF-8 byte sequence.** `char` хранит
 **одно скалярное значение Unicode** (диапазон 0..0x10FFFF, исключая

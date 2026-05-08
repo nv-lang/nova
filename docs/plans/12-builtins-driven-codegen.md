@@ -298,7 +298,31 @@ is_static = true.
 по value, не `Nova_str*`. Убедиться что `type_ref_to_c("Self")` в
 контексте receiver=str даёт `nova_str` корректно.
 
-### Ф.4.5 — Auto-derive non-declared формы (~2-3ч)
+### Ф.4.5 — Auto-derive non-declared формы (~2-3ч) ❌ ОТМЕНЕНО
+
+**Статус.** Этот этап **отменён** в Plan 13 Ф.9.5 (см.
+docs/plans/13-runtime-stdlib-and-autogen.md → Ф.9.5).
+
+**Причины отмены:**
+1. **Hidden magic** — в registry / `read_buffer.nv` видна только
+   Fail-форма, но автокомплит и AI-codegen видят `try_read_X` неоткуда.
+2. **Edge cases** — UTF-8 ошибки в `read_char`/`read_str` (Plan 13
+   Ф.9.4) делают universal правило хрупким: synthesized форма должна
+   корректно мапить и `UnexpectedEnd`, и `InvalidUtf8`.
+3. **D82 single source of truth** — auto-derive противоречит принципу
+   «всё что компилятор умеет — видно в registry».
+
+**Что вместо.** В `runtime_registry.rs` (Plan 13) явно перечислены
+обе формы для каждого read-метода: Fail-form и Result-form. C-функции
+тоже две (одна на Fail, одна на Result). См. Plan 13 Ф.9.5.
+
+**D73 From↔Into auto-derive остаётся** — это симметричное правило
+прописано в D73, не зависит от данной отмены.
+
+---
+
+Исходный (отменённый) текст Ф.4.5 ниже сохранён как историческая
+справка:
 
 **Цель.** Удалить из builtins.nv все формы, которые компилятор может
 вывести автоматически по D73/D77, и синтезировать их в codegen'е.
