@@ -17,6 +17,7 @@
 | 03 | [03-package-ecosystem-roadmap.md](03-package-ecosystem-roadmap.md) | Package ecosystem: self-host → CLI → lockfile → registry | будущий (после v2.0+) |
 | 04 | [04-buffer-split-and-external.md](04-buffer-split-and-external.md) | Buffer → StringBuilder/WriteBuffer/ReadBuffer + `external` keyword | активный, не начат |
 | 05 | [05-as-cast-codegen.md](05-as-cast-codegen.md) | `as`-cast — реализация narrowing в codegen (D54 compliance) | активный, не начат |
+| 06 | [06-iter-protocol-codegen.md](06-iter-protocol-codegen.md) | `Iter[T]` protocol в codegen — общий for-in (D58 compliance) | активный, не начат |
 
 ## Связанные директории
 
