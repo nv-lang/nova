@@ -434,4 +434,83 @@ static inline NovaOpt_nova_int Nova_Result_method_ok(Nova_Result* r) {
     return o;
 }
 
+/* ---- D26 prelude: Error — record для quick-and-dirty ошибок с msg ---- */
+typedef struct Nova_Error {
+    nova_str msg;
+} Nova_Error;
+
+static inline Nova_Error* Nova_Error_static_new(nova_str msg) {
+    Nova_Error* e = (Nova_Error*)nova_alloc(sizeof(Nova_Error));
+    e->msg = msg;
+    return e;
+}
+
+/* ---- D26 prelude: RuntimeError — sum-тип встроенных runtime-сбоев ----
+ * Бросается встроенными операциями (D65):
+ *   - DivByZero               — `a / 0`
+ *   - Overflow                — численное переполнение
+ *   - IndexOutOfBounds {i, n} — arr[i] на out-of-range
+ *   - TypeMismatch(str)       — runtime type-check провален
+ *   - AssertFailed(str)       — assert(...) провален
+ *   - NoHandler(str)          — эффект без handler'а
+ *
+ * StackOverflow и OutOfMemory не входят — это panic, не Fail (D13).
+ *
+ * Bootstrap: представлены как pointer-to-tag-union. Конструкторы
+ * `nova_make_RuntimeError_<Variant>` создают boxed копию. */
+#define NOVA_TAG_RuntimeError_DivByZero        0
+#define NOVA_TAG_RuntimeError_Overflow         1
+#define NOVA_TAG_RuntimeError_IndexOutOfBounds 2
+#define NOVA_TAG_RuntimeError_TypeMismatch     3
+#define NOVA_TAG_RuntimeError_AssertFailed     4
+#define NOVA_TAG_RuntimeError_NoHandler        5
+
+typedef struct Nova_RuntimeError {
+    int tag;
+    union {
+        struct { int _dummy; } DivByZero;
+        struct { int _dummy; } Overflow;
+        struct { nova_int index; nova_int length; } IndexOutOfBounds;
+        struct { nova_str _0; } TypeMismatch;
+        struct { nova_str _0; } AssertFailed;
+        struct { nova_str _0; } NoHandler;
+    } payload;
+} Nova_RuntimeError;
+
+static inline Nova_RuntimeError* nova_make_RuntimeError_DivByZero(void) {
+    Nova_RuntimeError* e = (Nova_RuntimeError*)nova_alloc(sizeof(Nova_RuntimeError));
+    e->tag = NOVA_TAG_RuntimeError_DivByZero;
+    return e;
+}
+static inline Nova_RuntimeError* nova_make_RuntimeError_Overflow(void) {
+    Nova_RuntimeError* e = (Nova_RuntimeError*)nova_alloc(sizeof(Nova_RuntimeError));
+    e->tag = NOVA_TAG_RuntimeError_Overflow;
+    return e;
+}
+static inline Nova_RuntimeError* nova_make_RuntimeError_IndexOutOfBounds(nova_int idx, nova_int len) {
+    Nova_RuntimeError* e = (Nova_RuntimeError*)nova_alloc(sizeof(Nova_RuntimeError));
+    e->tag = NOVA_TAG_RuntimeError_IndexOutOfBounds;
+    e->payload.IndexOutOfBounds.index = idx;
+    e->payload.IndexOutOfBounds.length = len;
+    return e;
+}
+static inline Nova_RuntimeError* nova_make_RuntimeError_TypeMismatch(nova_str msg) {
+    Nova_RuntimeError* e = (Nova_RuntimeError*)nova_alloc(sizeof(Nova_RuntimeError));
+    e->tag = NOVA_TAG_RuntimeError_TypeMismatch;
+    e->payload.TypeMismatch._0 = msg;
+    return e;
+}
+static inline Nova_RuntimeError* nova_make_RuntimeError_AssertFailed(nova_str msg) {
+    Nova_RuntimeError* e = (Nova_RuntimeError*)nova_alloc(sizeof(Nova_RuntimeError));
+    e->tag = NOVA_TAG_RuntimeError_AssertFailed;
+    e->payload.AssertFailed._0 = msg;
+    return e;
+}
+static inline Nova_RuntimeError* nova_make_RuntimeError_NoHandler(nova_str msg) {
+    Nova_RuntimeError* e = (Nova_RuntimeError*)nova_alloc(sizeof(Nova_RuntimeError));
+    e->tag = NOVA_TAG_RuntimeError_NoHandler;
+    e->payload.NoHandler._0 = msg;
+    return e;
+}
+
 #endif /* NOVA_RT_ARRAY_H */

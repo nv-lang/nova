@@ -233,6 +233,46 @@ impl CEmitter {
             self.sum_schemas.insert("Result".to_string(), res_variants);
         }
 
+        // D26 prelude: Error — record для quick errors с msg.
+        // Декларирован в spec/decisions/08-runtime.md; runtime тип
+        // в nova_rt/array.h (Nova_Error). Регистрируем schema чтобы
+        // codegen видел Nova_Error*.msg как nova_str и эмитил
+        // Nova_Error_static_new для Error.new(...).
+        {
+            let mut err_schema = HashMap::new();
+            err_schema.insert("msg".to_string(), "nova_str".to_string());
+            self.record_schemas.insert("Error".to_string(), err_schema);
+            self.method_receivers.insert(
+                "new".to_string(),
+                ("Error".to_string(), false),
+            );
+        }
+
+        // D26 prelude: RuntimeError — sum-тип встроенных runtime-сбоев.
+        // Variants (D65): DivByZero, Overflow, IndexOutOfBounds {index,length},
+        // TypeMismatch(str), AssertFailed(str), NoHandler(str).
+        // Конструкторы — `nova_make_RuntimeError_<Variant>` в nova_rt/array.h.
+        {
+            let mut rt_variants: HashMap<String, Vec<String>> = HashMap::new();
+            rt_variants.insert("DivByZero".to_string(), vec![]);
+            rt_variants.insert("Overflow".to_string(), vec![]);
+            rt_variants.insert("IndexOutOfBounds".to_string(),
+                vec!["nova_int".to_string(), "nova_int".to_string()]);
+            rt_variants.insert("TypeMismatch".to_string(), vec!["nova_str".to_string()]);
+            rt_variants.insert("AssertFailed".to_string(), vec!["nova_str".to_string()]);
+            rt_variants.insert("NoHandler".to_string(), vec!["nova_str".to_string()]);
+            self.sum_schemas.insert("RuntimeError".to_string(), rt_variants);
+            // IndexOutOfBounds — record-variant; field order для constructor.
+            self.record_variant_field_order.insert(
+                "RuntimeError::IndexOutOfBounds".to_string(),
+                vec!["index".to_string(), "length".to_string()],
+            );
+            self.record_variant_field_types.insert(
+                "RuntimeError::IndexOutOfBounds::index".to_string(), "nova_int".into());
+            self.record_variant_field_types.insert(
+                "RuntimeError::IndexOutOfBounds::length".to_string(), "nova_int".into());
+        }
+
         // Pre-register Fail as a built-in effect (D25 / D62 / D65).
         // Operation: `fail(msg str) -> nova_unit`. `throw expr` desugars to
         // `Fail.fail(expr)` — same dispatch path as any other effect operation.
@@ -6555,6 +6595,10 @@ impl CEmitter {
                                 "new" | "with_capacity" | "from" => "Nova_Buffer*".into(),
                                 _ => "nova_int".into(),
                             };
+                        }
+                        // D26 prelude: Error.new(msg) → Nova_Error*.
+                        if eff == "Error" && method_name == "new" {
+                            return "Nova_Error*".into();
                         }
                         // Built-in primitive `str.from(x) -> str` (D35 + D73).
                         if eff == "str" && method_name == "from" {

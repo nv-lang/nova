@@ -1,0 +1,116 @@
+// error_runtime_error.nv — D26 prelude: Error и RuntimeError.
+//
+// Spec: spec/decisions/08-runtime.md → "Прочие prelude-типы".
+// Bootstrap'е оба типа определены в nova_rt/array.h:
+//   - Nova_Error { msg }
+//   - Nova_RuntimeError tag-union со 6 вариантами
+//
+// Codegen-prelude автоматически регистрирует:
+//   - Error.new(msg) — конструктор
+//   - RuntimeError.<Variant>(...) — sum-конструкторы
+
+module nova_tests.runtime.error_runtime_error
+
+
+// ───── Error.new ─────
+
+test "Error.new создаёт Error со строкой" {
+    let e = Error.new("something failed")
+    assert(e.msg == "something failed")
+}
+
+
+test "Error.new с пустой строкой" {
+    let e = Error.new("")
+    assert(e.msg == "")
+}
+
+
+test "Error.new в throw-контексте" {
+    // Error.new(msg) можно бросить через throw — handler ловит
+    // string-payload (потому что bootstrap throw — nova_str).
+    let mut caught = ""
+    with Fail = handler Fail {
+        fail(msg) {
+            caught = msg
+            interrupt ()
+        }
+    } {
+        let e = Error.new("validation failed: empty input")
+        throw e.msg
+    }
+    assert(caught == "validation failed: empty input")
+}
+
+
+// ───── RuntimeError variants ─────
+
+test "RuntimeError.DivByZero — unit-variant" {
+    let e = DivByZero
+    assert(e is DivByZero)
+}
+
+
+test "RuntimeError.Overflow — unit-variant" {
+    let e = Overflow
+    assert(e is Overflow)
+}
+
+
+test "RuntimeError.IndexOutOfBounds — record-variant" {
+    let e = IndexOutOfBounds { index: 7, length: 3 }
+    assert(e is IndexOutOfBounds)
+    // Извлечение полей через if-let (избегаем assignment-style match,
+    // который ломается на nova_assert-void mismatch).
+    let mut got_index = 0
+    let mut got_length = 0
+    if let IndexOutOfBounds { index, length } = e {
+        got_index = index
+        got_length = length
+    }
+    assert(got_index == 7)
+    assert(got_length == 3)
+}
+
+
+test "RuntimeError.TypeMismatch — tuple-variant с string" {
+    let e = TypeMismatch("expected int")
+    assert(e is TypeMismatch)
+    let mut got = ""
+    if let TypeMismatch(s) = e {
+        got = s
+    }
+    assert(got == "expected int")
+}
+
+
+test "RuntimeError.AssertFailed — tuple-variant с string" {
+    let e = AssertFailed("x > 0")
+    assert(e is AssertFailed)
+    let mut got = ""
+    if let AssertFailed(s) = e {
+        got = s
+    }
+    assert(got == "x > 0")
+}
+
+
+test "RuntimeError.NoHandler — tuple-variant с string" {
+    let e = NoHandler("Db")
+    assert(e is NoHandler)
+    let mut got = ""
+    if let NoHandler(s) = e {
+        got = s
+    }
+    assert(got == "Db")
+}
+
+
+// ───── Mixed: используем оба ─────
+
+test "Error и RuntimeError независимы" {
+    let qe = Error.new("quick")
+    let re = DivByZero
+    assert(qe.msg == "quick")
+    assert(re is DivByZero)
+}

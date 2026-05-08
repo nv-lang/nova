@@ -280,6 +280,14 @@ let port int = env.get("PORT").map(parse_int).unwrap_or(8080)
 | `Result.unwrap_or_else(f)` | ✅ inline (closure call) | ✅ |
 | `Result.map(f)` | ✅ inline | ✅ |
 | `Result.map_err(f)` | ✅ inline | ✅ |
+| `Error.new(msg)` | ✅ runtime helper | ✅ runtime/error_runtime_error.nv |
+| `Error.msg` (field) | ✅ direct field access | ✅ |
+| `RuntimeError.DivByZero` | ✅ unit-variant constructor | ✅ |
+| `RuntimeError.Overflow` | ✅ unit-variant constructor | ✅ |
+| `RuntimeError.IndexOutOfBounds {i, n}` | ✅ record-variant constructor | ✅ |
+| `RuntimeError.TypeMismatch(s)` | ✅ tuple-variant constructor | ✅ |
+| `RuntimeError.AssertFailed(s)` | ✅ tuple-variant constructor | ✅ |
+| `RuntimeError.NoHandler(s)` | ✅ tuple-variant constructor | ✅ |
 
 **Bootstrap-ограничения**:
 - `Result[T, E]` зашит на `(nova_int Ok, nova_str Err)`. Generic
@@ -292,6 +300,15 @@ let port int = env.get("PORT").map(parse_int).unwrap_or(8080)
 - Zero-arg lambda для `unwrap_or_else` — `() => expr` или
   `() -> T => expr`. Парсер lookahead за `(` теперь различает
   zero-arg lambda и unit-литерал `()`.
+- `Error` имеет поле `msg`. По D26 spec'у должно быть `readonly msg`,
+  но bootstrap не enforce'ит readonly — поле модифицируется как
+  обычное (bootstrap-grade compromise).
+- `RuntimeError` варианты создаются и matchаются user-кодом, но
+  **встроенные операции** (`a/b` на 0, `arr[i]` out-of-bounds,
+  unhandled effects) пока бросают `nova_str` через `Nova_Fail_fail`,
+  не структурированный `Nova_RuntimeError*`. Конверсия throw-points
+  в RuntimeError-payload — отдельная задача (требует расширения
+  fail-frame mechanism с `nova_str` на `void*` payload).
 
 **Прочие prelude-типы:**
 
