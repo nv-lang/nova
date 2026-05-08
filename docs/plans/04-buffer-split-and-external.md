@@ -171,6 +171,20 @@ export external fn WriteBuffer.from(b []byte) -> Self
 export external fn WriteBuffer mut @write_byte(v byte)      -> ()
 export external fn WriteBuffer mut @write_bytes(src []byte) -> ()
 
+// Text → UTF-8 bytes (нужно для смешанных text+binary use-case'ов:
+// percent-decoding URL, multi-byte sequences). Кодирует char/str как
+// UTF-8 байты и пишет их в буфер. Финализация через @into() даёт
+// `[]byte`; для конверсии в str — `str.try_from(bs)?` (UTF-8
+// validate, D77).
+//
+// Use-case: url.nv decode_query — смешивает percent-decoded байты
+// (могут быть multi-byte UTF-8 sequences) и обычные char'ы.
+// StringBuilder не подходит — он text-only, не поддерживает raw
+// byte append. WriteBuffer + write_char/write_str позволяет
+// единообразно накапливать UTF-8 bytes.
+export external fn WriteBuffer mut @write_char(c char)      -> ()  // 1-4 UTF-8 bytes
+export external fn WriteBuffer mut @write_str(s str)        -> ()  // UTF-8 bytes напрямую
+
 // 18 числовых × LE/BE:
 export external fn WriteBuffer mut @write_u8(v u8)           -> ()
 export external fn WriteBuffer mut @write_i8(v i8)           -> ()
@@ -398,6 +412,65 @@ export external fn str.from(c char) -> Self    // UTF-8 encode 1-4 bytes
 2. Fix регрессий (если есть).
 3. Sanity-check spec: cross-references работают.
 4. Commit.
+
+### Этап 6 — полное удаление `Buffer` из языка (~1-2 часа)
+
+**Цель:** убрать `Buffer` из языка полностью. Это **неудачное
+решение** (попытка унифицировать text+binary в одном типе) которое
+правильно заменено split'ом на StringBuilder/WriteBuffer/ReadBuffer.
+
+Никакой backward compatibility — Nova не в production, революционный
+язык важнее обратной совместимости. Buffer удаляется без deprecation-
+периода: одним коммитом убирается из codegen, runtime и всех ссылок
+в std.
+
+**Подзадачи:**
+
+1. **WriteBuffer extension API.** Добавить `@write_char(c char)` и
+   `@write_str(s str)` — UTF-8 кодирование char/str в byte buffer.
+   Реализация в `nova_rt/write_buffer.h`:
+   ```c
+   void Nova_WriteBuffer_method_write_char(Nova_WriteBuffer*, nova_int codepoint);
+   void Nova_WriteBuffer_method_write_str(Nova_WriteBuffer*, nova_str s);
+   ```
+   `write_char` UTF-8 encode'ит codepoint в 1-4 байта. `write_str`
+   копирует UTF-8 bytes напрямую (str уже UTF-8).
+
+2. **Sweep std/.** Полная миграция оставшихся файлов:
+   - **Text-only** (12 файлов уже мигрированы 2026-05-08): bcrypt,
+     base64, csv, hex, ini, toml, ulid, uuid, path, diff, regex,
+     duration, markdown_minimal — `Buffer` → `StringBuilder`.
+   - **Mixed text+binary** (url.nv `decode_query`): `Buffer` →
+     `WriteBuffer` + finalize через `str.try_from(bytes)?`. Также
+     `url.nv encode_query` — text-only, мигрировано.
+   - **ASCII-only single byte** (testing/property.nv): `add_byte(c
+     as byte)` → `append(c as int as char)`. Мигрировано.
+
+3. **Удаление Buffer из codegen.** В `compiler-codegen/src/codegen/
+   emit_c.rs`:
+   - Убрать `record_schemas.insert("Buffer", ...)`.
+   - Убрать method dispatch для `Nova_Buffer*` (`add_str`, `add_byte`,
+     `into_str_unchecked`, etc.).
+   - Убрать `Nova_Buffer_static_*` paths.
+
+4. **Удаление runtime.** `nova_rt/buffer.h` — удалить.
+
+5. **nova_tests/runtime/buffer.nv** — удалить или мигрировать на
+   `string_builder.nv` / `write_buffer.nv` (которые уже есть).
+
+6. **Q-buffer закрыть финально** в open-questions.md как
+   ✅ REMOVED — `Buffer` удалён из языка, неудачное решение.
+
+**Риск:** случаи где `Buffer` использовался для **смешанных** text+
+binary без финализации в str — должны мигрировать на WriteBuffer
++ str.try_from. Случаи где `add_byte` для пишет non-ASCII byte
+(часть UTF-8 sequence) могут потерять корректность если
+конвертировать наивно.
+
+**Cross-check:** все sweep-коммиты обязаны прогонять `run_tests.ps1
+-IncludeStdlib` для catch'а регрессий. После Этапа 6 все ссылки на
+Buffer в std должны исчезнуть; в codegen — только если и его сноска
+ушла.
 
 ## Открытые вопросы (на момент планирования)
 
