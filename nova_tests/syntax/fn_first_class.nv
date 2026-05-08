@@ -1,0 +1,227 @@
+// First-class functions — дополняет closures.nv (lambda + closure-захват),
+// higher_order.nv (HOF с lambda-аргументами) и method_values.nv
+// (bound/unbound method values).
+//
+// Здесь — расширенные сценарии **lambda как value**:
+// - lambda в let-bindings разной арности и эффектности
+// - lambda внутри record (ad-hoc dispatcher через mut поле)
+// - lambda возвращаемая из match-ветвей
+// - lambda как параметр и возвращаемое значение HOF
+
+module nova_tests.syntax.fn_first_class
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Lambda как значение разной арности
+// ──────────────────────────────────────────────────────────────────────────
+
+test "lambda 0-арная как значение" {
+    let f = () => 42
+    assert(f() == 42)
+}
+
+test "lambda 1-арная" {
+    let f = (x) => x + 1
+    assert(f(0) == 1)
+    assert(f(99) == 100)
+}
+
+test "lambda 2-арная" {
+    let f = (a, b) => a * b
+    assert(f(3, 4) == 12)
+    assert(f(0, 100) == 0)
+}
+
+test "lambda 3-арная" {
+    let f = (a, b, c) => a + b + c
+    assert(f(1, 2, 3) == 6)
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Lambda → принимает lambda → возвращает lambda
+// ──────────────────────────────────────────────────────────────────────────
+
+fn map_int(xs []int, f fn(int) -> int) -> []int {
+    let r = []
+    for x in xs { r.push(f(x)) }
+    r
+}
+
+fn make_scaler(factor int) -> fn(int) -> int =>
+    (x) => x * factor
+
+fn make_adder(n int) -> fn(int) -> int =>
+    (x) => x + n
+
+test "HOF возвращает lambda — параметризованный builder" {
+    let triple = make_scaler(3)
+    let half = make_scaler(0)
+    assert(triple(7) == 21)
+    assert(half(99) == 0)
+}
+
+test "HOF возвращает lambda + сразу применяется" {
+    let xs = [1, 2, 3]
+    let ys = map_int(xs, make_adder(10))
+    assert(ys[0] == 11)
+    assert(ys[1] == 12)
+    assert(ys[2] == 13)
+}
+
+test "две независимые lambda-фабрики не конфликтуют" {
+    let a = make_adder(5)
+    let s = make_scaler(2)
+    // (x + 5) * 2 != (x * 2) + 5
+    assert(s(a(10)) == 30)
+    assert(a(s(10)) == 25)
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Lambda как результат match-выражения (ветви возвращают fn)
+// ──────────────────────────────────────────────────────────────────────────
+
+fn pick_op(code int) -> fn(int) -> int =>
+    match code {
+        0 => (x) => x + 1
+        1 => (x) => x * 2
+        _ => (x) => -x
+    }
+
+test "match-выражение возвращает lambda" {
+    let f0 = pick_op(0)
+    let f1 = pick_op(1)
+    let f2 = pick_op(99)
+    assert(f0(10) == 11)
+    assert(f1(10) == 20)
+    assert(f2(10) == -10)
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Lambda с захватом mut-переменной — счётчик/аккумулятор
+// (state живёт в captured env, lambda ведёт себя как stateless caller)
+// ──────────────────────────────────────────────────────────────────────────
+
+test "lambda с захватом неизменяемого окружения — детерминированна" {
+    let base = 100
+    let offset = (x) => base + x
+    assert(offset(1) == 101)
+    assert(offset(2) == 102)
+    assert(offset(1) == 101)              // idempotent — нет внутреннего state
+}
+
+test "lambda захватывает несколько переменных" {
+    let a = 10
+    let b = 20
+    let c = 30
+    let sum_with = (x) => a + b + c + x
+    assert(sum_with(0) == 60)
+    assert(sum_with(40) == 100)
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Композиция через HOF
+// ──────────────────────────────────────────────────────────────────────────
+
+fn compose(f fn(int) -> int, g fn(int) -> int) -> fn(int) -> int =>
+    (x) => f(g(x))
+
+test "compose lambda-аргументов" {
+    let inc1 = (x) => x + 1
+    let dbl  = (x) => x * 2
+    let f = compose(inc1, dbl)
+    // f(x) = inc1(dbl(x)) = (x*2) + 1
+    assert(f(3) == 7)
+    assert(f(0) == 1)
+}
+
+test "compose трёх — композиция результата с третьей" {
+    let inc1 = (x) => x + 1
+    let dbl  = (x) => x * 2
+    let neg1 = (x) => -x
+    let f = compose(neg1, compose(inc1, dbl))
+    // f(x) = -(inc1(dbl(x))) = -((x*2)+1)
+    assert(f(3) == -7)
+    assert(f(0) == -1)
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Plan 14 Ф.3: free-fn как значение (по имени без скобок).
+//
+// Имена `top_inc`/`top_dbl` — чтобы не конфликтовать с локальными
+// `inc1`/`dbl` из тестов выше; bootstrap-codegen имеет flat var_types
+// (нет scope'а), поэтому local-let-binding `dbl` в одном тесте затмевал
+// бы global `fn dbl` в другом.
+// ──────────────────────────────────────────────────────────────────────────
+
+fn top_inc(x int) -> int => x + 1
+fn top_dbl(x int) -> int => x * 2
+
+test "free fn name as value — let-binding" {
+    let f = top_inc
+    assert(f(0) == 1)
+    assert(f(41) == 42)
+}
+
+test "free fn name as value — передача в HOF" {
+    let xs = [1, 2, 3]
+    let ys = map_int(xs, top_inc)
+    assert(ys[0] == 2)
+    assert(ys[1] == 3)
+    assert(ys[2] == 4)
+}
+
+test "две free fn в HOF — независимые" {
+    let xs = [1, 2, 3]
+    let incd = map_int(xs, top_inc)
+    let dbld = map_int(xs, top_dbl)
+    assert(incd[2] == 4)
+    assert(dbld[2] == 6)
+}
+
+test "free fn в compose с lambda" {
+    // compose ожидает fn(int)->int; передаём именованную top_inc + lambda.
+    let f = compose(top_inc, (x) => x * 10)
+    // f(x) = top_inc((x) * 10) = x*10 + 1
+    assert(f(0) == 1)
+    assert(f(3) == 31)
+}
+
+test "две именованные fn в compose" {
+    let f = compose(top_inc, top_dbl)
+    // f(x) = top_inc(top_dbl(x)) = x*2 + 1
+    assert(f(0) == 1)
+    assert(f(5) == 11)
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// BOOTSTRAP-GAP — спека D35/D69 это покрывает, в bootstrap-codegen ещё нет.
+// Раскомменчивать по мере реализации:
+//
+//   2) Static method as value (Type.method без `@`, D35):
+//        fn Box.zero() -> Self => Self { v: 0 }
+//        let make = Box.zero; let b = make()
+//      → cм. method_values.nv комментарий про routing через ExternalRegistry.
+//
+//   3) fn-поле в record + вызов через `(@f)(x)` или `obj.f(x)`:
+//        type Op { f fn(int) -> int }
+//        let op = Op { f: (x) => x + 1 }
+//        op.f(5)
+//      → codegen генерирует `nova_self->f(x)` вместо closure-call.
+//
+//   4) []fn(...) -> R массив функций (pipeline / index dispatch):
+//        let pipeline []fn(int) -> int = [(x) => x+1, (x) => x*2]
+//      → same closure-call routing missing для array element.
+//
+//   5) Currying — closure возвращённый сразу применяется:
+//        fn add(a int) -> fn(int) -> int => (b) => a + b
+//        add(3)(4)                        // callable-of-callable
+//      → промежуточный let работает, прямой call-of-call — нет.
+//
+//   6) Variadic + spread (D69): fn f(...items []T), f(...arr).
+//      → bootstrap-парсер не поддерживает (см. std/path/path.nv NB).
+// ──────────────────────────────────────────────────────────────────────────

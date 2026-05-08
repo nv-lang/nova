@@ -135,6 +135,16 @@ pub struct CEmitter {
     /// Maps local variable name → (param_c_types, return_c_type) for function-typed parameters.
     /// Used to emit proper function pointer calls for `body(args)` where body is a fn param.
     fn_param_sigs: HashMap<String, (Vec<String>, String)>,
+    /// Plan 14 Ф.3: signature of every top-level user fn (`fn name(...)`).
+    /// Используется для emit free-fn-as-value: при `let f = inc` или
+    /// `xs.map(inc)` — нужно знать sig чтобы построить thunk и closure.
+    /// Обновляется при register_fn в первом проходе.
+    user_fn_sigs: HashMap<String, (Vec<String>, String)>,
+    /// Plan 14 Ф.3: имена user fn'ов, для которых уже эмитнут thunk
+    /// (envless adapter `static <ret> nova_fn_<name>_thunk(void* env, args)
+    /// { return nova_fn_<name>(args); }`). Дедупликация — несколько
+    /// references к одной fn делят один thunk.
+    emitted_fn_thunks: HashSet<String>,
     /// Monotonic counter for trailing block functions — generates unique names.
     trailing_block_counter: usize,
     /// Counter for lambda/closure static functions.
@@ -207,6 +217,8 @@ impl CEmitter {
             current_receiver_type: None,
             expected_record_type: None,
             fn_param_sigs: HashMap::new(),
+            user_fn_sigs: HashMap::new(),
+            emitted_fn_thunks: HashSet::new(),
             trailing_block_counter: 0,
             lambda_counter: 0,
             fn_returns_fn_sig: HashMap::new(),
@@ -794,6 +806,12 @@ impl CEmitter {
             ExprKind::StrLit(s) => {
                 let len = s.len();
                 Ok(format!("{{.ptr=\"{}\", .len={}}}", Self::escape_c_str(s), len))
+            }
+            ExprKind::InterpolatedStr { .. } => {
+                // String interpolation в const-инициализаторе требует runtime-
+                // вычислений (StringBuilder.append + into) — не constexpr.
+                Err("string interpolation `${...}` is not allowed in const initialiser \
+                     (use a plain string literal or a runtime expression)".to_string())
             }
             ExprKind::FloatLit(f) => {
                 // То же что в emit_expr — гарантируем что C видит double-литерал,
@@ -2331,6 +2349,16 @@ impl CEmitter {
             let rty = return_type.as_ref().map(|rt| self.type_ref_to_c(rt).unwrap_or_else(|_| "nova_int".into())).unwrap_or_else(|| "nova_unit".into());
             self.fn_returns_fn_sig.insert(f.name.clone(), (ptys, rty));
         }
+        // Plan 14 Ф.3: регистрируем сигнатуру free fn в user_fn_sigs для
+        // emit free-fn-as-value (`let f = inc`, `xs.map(inc)`).
+        // Только для top-level fn без receiver'а (не методы) и не для
+        // generic fn (мономорфизация по call-site, sig зависит от инстанциации).
+        if f.receiver.is_none() && f.generics.is_empty() {
+            let param_c_tys: Vec<String> = f.params.iter()
+                .map(|p| self.type_ref_to_c(&p.ty).unwrap_or_else(|_| "nova_int".into()))
+                .collect();
+            self.user_fn_sigs.insert(f.name.clone(), (param_c_tys, ret.clone()));
+        }
         self.line(&format!("static {} {}({});", ret, mangled, params));
         Ok(())
     }
@@ -3425,6 +3453,17 @@ impl CEmitter {
                         }
                     }
                 }
+                // Plan 14 Ф.3: если RHS — Ident, ссылающийся на user fn
+                // (`let f = inc`), регистрируем binding в fn_param_sigs
+                // через user_fn_sigs. Тогда `f(x)` пойдёт через
+                // NOVA_CLOS_CALL_* macro (так же как для lambda).
+                if let ExprKind::Ident(rhs_name) = &decl.value.kind {
+                    if !self.var_types.contains_key(rhs_name) {
+                        if let Some(sig) = self.user_fn_sigs.get(rhs_name).cloned() {
+                            self.fn_param_sigs.insert(binding.clone(), sig);
+                        }
+                    }
+                }
                 // If RHS is a lambda, register the binding in fn_param_sigs so inc(5) works
                 if let ExprKind::Lambda { params, return_type, .. } = &decl.value.kind {
                     let param_c_tys: Vec<String> = params.iter().map(|p| {
@@ -3536,6 +3575,9 @@ impl CEmitter {
                 let escaped = Self::escape_c_str(s);
                 Ok(format!("(nova_str){{.ptr=\"{}\", .len={}}}", escaped, s.len()))
             }
+            ExprKind::InterpolatedStr { parts } => {
+                self.emit_interpolated_str(parts)
+            }
 
             ExprKind::Ident(name) => {
                 // Unit variants (e.g. `Red` from `type Color | Red | Green`) are
@@ -3562,13 +3604,26 @@ impl CEmitter {
                 }
                 // Function-as-first-class-value: если `name` это user fn
                 // (fn_ret_<name> в var_types), а не local variable
-                // (просто <name> в var_types) — emit `nova_fn_<name>` чтобы
-                // получить указатель на функцию. Без этого callback-передача
-                // (`encode_with(data, encode_char_std, true)`) ломает linker:
-                // Nova-имя ≠ C-имя.
+                // (просто <name> в var_types) — emit closure-value для
+                // совместимости с HOF/closure-call mechanism (Plan 14 Ф.3).
+                //
+                // Раньше (pre-Ф.3): эмитили `nova_fn_<name>` (raw fn-ptr).
+                // Это работало только если callee — direct typed C function;
+                // для HOF (`xs.map(inc)`) или fn_param_sigs-driven call'ов
+                // через NOVA_CLOS_CALL_* — нужен closure-struct {fn, env}.
+                //
+                // Стратегия:
+                //   - Если sig fn известна (user_fn_sigs) — эмитим thunk +
+                //     closure-литерал через `emit_free_fn_value`.
+                //   - Иначе fallback'имся на raw fn-pointer (для случаев
+                //     где callee принимает direct C function: built-in
+                //     dispatch, generic erasure, и т.д.).
                 let is_local_var = self.var_types.contains_key(name);
                 let is_user_fn = self.var_types.contains_key(&format!("fn_ret_{}", name));
                 if is_user_fn && !is_local_var {
+                    if let Some(closure_value) = self.emit_free_fn_value(name) {
+                        return Ok(closure_value);
+                    }
                     return Ok(format!("nova_fn_{}", name));
                 }
                 Ok(name.clone())
@@ -5739,6 +5794,7 @@ impl CEmitter {
             ExprKind::FloatLit(_) => "nova_print_f64",
             ExprKind::BoolLit(_) => "nova_print_bool",
             ExprKind::StrLit(_) => "nova_print_str",
+            ExprKind::InterpolatedStr { .. } => "nova_print_str",
             ExprKind::Binary { op, .. } => match op {
                 BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::Le
                 | BinOp::Gt | BinOp::Ge | BinOp::And | BinOp::Or => "nova_print_bool",
@@ -5902,6 +5958,100 @@ impl CEmitter {
         } else {
             self.line(&format!("{} = ({})0;", tmp, ty));
         }
+    }
+
+    // ---- interpolated string (D44, Plan 17 Ф.4) ----
+
+    /// Эмитит `"... ${expr} ..."` через цепочку StringBuilder.
+    ///
+    /// Стратегия:
+    ///   1. Pre-size estimate из literal-частей (точная сумма длин
+    ///      литералов + 16 байт на каждое interpolation-выражение —
+    ///      эвристика для int/bool, для длинных значений SB сам grow'ит).
+    ///   2. Создаём `Nova_StringBuilder*` с этой capacity.
+    ///   3. Для каждой части эмитим `append_str(...)` (для literal —
+    ///      direct nova_str, для expr — приведение к str через type-
+    ///      dispatch: nova_str pass-through, nova_bool → nova_bool_to_str,
+    ///      nova_f64 → nova_f64_to_str, char-литерал → nova_char_to_str
+    ///      (UTF-8 encode), всё остальное → nova_int_to_str).
+    ///   4. Финализация: `Nova_StringBuilder_method_into(sb) -> nova_str`.
+    ///
+    /// Одна аллокация под итоговый buffer (вместо O(N²) от цепочки `+`).
+    fn emit_interpolated_str(
+        &mut self,
+        parts: &[InterpStrPart],
+    ) -> Result<String, String> {
+        // Pre-size estimate: точные литералы + 16 байт на expr.
+        let mut estimate: usize = 0;
+        for p in parts {
+            match p {
+                InterpStrPart::Lit(s) => estimate += s.len(),
+                InterpStrPart::Expr(_) => estimate += 16,
+            }
+        }
+        let sb = self.fresh_tmp_named("interp_sb");
+        self.line(&format!(
+            "Nova_StringBuilder* {} = Nova_StringBuilder_static_with_capacity({});",
+            sb, estimate
+        ));
+        for p in parts {
+            match p {
+                InterpStrPart::Lit(s) => {
+                    if s.is_empty() {
+                        continue;
+                    }
+                    let escaped = Self::escape_c_str(s);
+                    self.line(&format!(
+                        "Nova_StringBuilder_method_append_str({}, (nova_str){{.ptr=\"{}\", .len={}}});",
+                        sb, escaped, s.len()
+                    ));
+                }
+                InterpStrPart::Expr(e) => {
+                    let arg_ty = self.infer_expr_c_type(e);
+                    // CharLit detection — char хранится как nova_int,
+                    // но семантика char→str = UTF-8 encode codepoint, а не печать числа.
+                    let v = self.emit_expr(e)?;
+                    let s_expr = if matches!(e.kind, ExprKind::CharLit(_)) {
+                        format!("nova_char_to_str({})", v)
+                    } else {
+                        match arg_ty.as_str() {
+                            "nova_str" => v,
+                            "nova_bool" => format!("nova_bool_to_str({})", v),
+                            "nova_f64" => format!("nova_f64_to_str({})", v),
+                            "nova_int" => format!("nova_int_to_str({})", v),
+                            _ => {
+                                // User-type: ищем @into() -> str через D73.
+                                let arg_type = arg_ty
+                                    .trim_start_matches("Nova_")
+                                    .trim_end_matches('*')
+                                    .to_string();
+                                if let Some(into_target) = self.into_targets.get(&arg_type) {
+                                    if into_target == "str" {
+                                        format!("Nova_{}_method_into({})", arg_type, v)
+                                    } else {
+                                        format!("nova_int_to_str((nova_int)({}))", v)
+                                    }
+                                } else {
+                                    format!("nova_int_to_str((nova_int)({}))", v)
+                                }
+                            }
+                        }
+                    };
+                    self.line(&format!(
+                        "Nova_StringBuilder_method_append_str({}, {});",
+                        sb, s_expr
+                    ));
+                }
+            }
+        }
+        let result = self.fresh_tmp_named("interp_str");
+        self.line(&format!(
+            "nova_str {} = Nova_StringBuilder_method_into({});",
+            result, sb
+        ));
+        self.var_types
+            .insert(result.clone(), "nova_str".to_string());
+        Ok(result)
     }
 
     // ---- block expression ----
@@ -7455,6 +7605,73 @@ impl CEmitter {
         Ok(format!("(void*)({})", clos_tmp))
     }
 
+    /// Plan 14 Ф.3: emit free fn name as first-class value.
+    ///
+    /// `let f = inc` или `xs.map(inc)` — `inc` нужно превратить в
+    /// closure-value `(void*)NovaClos_X*` чтобы callers (HOF, fn-typed
+    /// params, fn_param_sigs-driven calls через NOVA_CLOS_CALL_*) работали.
+    ///
+    /// Generates:
+    ///   1. **Thunk** (один раз на user fn, deduped через
+    ///      `emitted_fn_thunks`): envless adapter
+    ///      `static <ret> nova_fn_<name>_thunk(void* env, args...)
+    ///      { (void)env; return nova_fn_<name>(args...); }`.
+    ///      Игнорирует `env` (free fn без захвата).
+    ///   2. **Closure-литерал** на use-site: alloc'ает `NovaClos_X*` с
+    ///      `fn = &nova_fn_<name>_thunk, env = NULL`. Возвращается как
+    ///      `(void*)clos_ptr`.
+    ///
+    /// Если sig user fn'а отсутствует в `user_fn_sigs` (не free fn —
+    /// generic, метод, и т.д.) — возвращает `None`, caller должен
+    /// fallback'ить на старое поведение (`nova_fn_<name>` raw pointer).
+    fn emit_free_fn_value(&mut self, fn_name: &str) -> Option<String> {
+        let (param_c_tys, ret_c_ty) = self.user_fn_sigs.get(fn_name).cloned()?;
+        // Emit thunk one-time (deduped).
+        if !self.emitted_fn_thunks.contains(fn_name) {
+            let thunk_name = format!("nova_fn_{}_thunk", fn_name);
+            // Build params: void* env, T0 p0, T1 p1, ...
+            let mut params = vec!["void* _env".to_string()];
+            for (i, ty) in param_c_tys.iter().enumerate() {
+                params.push(format!("{} p{}", ty, i));
+            }
+            let params_str = params.join(", ");
+            // Forward decl into lambda_forward_decls.
+            self.lambda_forward_decls
+                .push_str(&format!("static {} {}({});\n", ret_c_ty, thunk_name, params_str));
+            // Body — call original nova_fn_<name>.
+            let mut impl_buf = String::new();
+            impl_buf.push_str(&format!("static {} {}({}) {{\n", ret_c_ty, thunk_name, params_str));
+            impl_buf.push_str("    (void)_env;\n");
+            let call_args: Vec<String> = (0..param_c_tys.len())
+                .map(|i| format!("p{}", i))
+                .collect();
+            if ret_c_ty == "nova_unit" {
+                impl_buf.push_str(&format!("    nova_fn_{}({});\n", fn_name, call_args.join(", ")));
+                impl_buf.push_str("    return NOVA_UNIT;\n");
+            } else {
+                impl_buf.push_str(&format!("    return nova_fn_{}({});\n", fn_name, call_args.join(", ")));
+            }
+            impl_buf.push_str("}\n\n");
+            self.lambda_impls.push_str(&impl_buf);
+            self.emitted_fn_thunks.insert(fn_name.to_string());
+        }
+        // Emit closure-struct on use site.
+        let clos_struct = Self::clos_struct_name(&param_c_tys, &ret_c_ty);
+        let clos_fn_ty = Self::clos_fn_ty(&param_c_tys, &ret_c_ty);
+        let clos_tmp = self.fresh_tmp();
+        let thunk_name = format!("nova_fn_{}_thunk", fn_name);
+        self.line(&format!(
+            "{}* {} = ({}*)nova_alloc(sizeof({}));",
+            clos_struct, clos_tmp, clos_struct, clos_struct
+        ));
+        self.line(&format!(
+            "{}->fn = ({})({});",
+            clos_tmp, clos_fn_ty, thunk_name
+        ));
+        self.line(&format!("{}->env = (void*)0;", clos_tmp));
+        Some(format!("(void*)({})", clos_tmp))
+    }
+
 
     /// Look up the C type of a record variant field.
     fn get_record_variant_field_type(&self, type_name: &str, variant_name: &str, field_name: &str) -> Option<String> {
@@ -7692,6 +7909,7 @@ impl CEmitter {
             ExprKind::FloatLit(_) => "nova_f64".into(),
             ExprKind::BoolLit(_) => "nova_bool".into(),
             ExprKind::StrLit(_) => "nova_str".into(),
+            ExprKind::InterpolatedStr { .. } => "nova_str".into(),
             ExprKind::UnitLit => "nova_unit".into(),
             ExprKind::TupleLit(elems) => format!("_NovaTuple{}", elems.len()),
             ExprKind::Binary { op, left, right } => match op {
