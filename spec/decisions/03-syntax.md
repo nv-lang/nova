@@ -1948,6 +1948,50 @@ let x = 1.5 as i32           // f64 → i32 (truncate)
 let y = some_int as f64       // int → f64
 ```
 
+#### Семантика narrowing-конверсий
+
+Поведение `as` при потере точности зависит от пары source→target.
+В отличие от C (где out-of-range float→int это UB), Nova даёт
+**defined behavior** на любом входе:
+
+| From → To | Семантика | Пример |
+|---|---|---|
+| `iN → iM` (M < N) | wraparound (modulo 2^M) | `0x1_FFFF as i16 == -1` |
+| `iN → uM` | bit-pattern truncate | `-1i32 as u16 == 65535` |
+| `uN → uM` (M < N) | wraparound | `0x1_FFFF as u16 == 0xFFFF` |
+| `uN → iM` | bit-pattern, signed reinterpret | `0xFFFFu16 as i16 == -1` |
+| `f64 → f32` | IEEE rounding | `1.1 as f32 ≈ 1.1` (с потерей) |
+| **`f → iN`** | **saturation + NaN→0** | `70000.5 as i16 == 32767` |
+| **`f → uN`** | **saturation + NaN→0 + neg→0** | `-1.0 as u16 == 0` |
+| `iN → f` | exact (или nearest IEEE) | `123 as f64 == 123.0` |
+| newtype ↔ underlying | identity | `42 as UserId` reuses bits |
+
+**Float → integer — saturation, не UB.** Out-of-range, NaN, ±Infinity
+дают defined значение, не зависящее от платформы:
+
+- Out-of-range positive → `INT_MAX` / `UINT_MAX`.
+- Out-of-range negative → `INT_MIN` / `0` (для unsigned).
+- NaN → `0`.
+- `+Infinity` → `INT_MAX` / `UINT_MAX`.
+- `-Infinity` → `INT_MIN` / `0`.
+
+**Если нужна проверка** out-of-range — используйте
+[`TryFrom`](08-runtime.md#d77):
+
+```nova
+let n = f as i16                // saturation, infallible
+let n = i16.try_from(f)?         // throws Fail[OutOfRangeError]
+```
+
+`as` остаётся **pure** (без Fail-эффекта). Throw-форма доступна через
+D77 как explicit choice.
+
+**Прецеденты.** Saturation для float→int согласован с **Rust 1.45+**
+(RFC #2484 «sealed casts») — прямой аналог. C/C++ дают UB, Nova
+улучшает. Swift делает trap (panic), нет pure `as` — Nova выбирает
+saturation для совместимости с D54 «as это pure». Java делает
+IEEE round + wraparound (defined, но не saturation).
+
 **Newtype ↔ underlying** (см. [02-types.md → D52](02-types.md#d52)):
 
 ```nova

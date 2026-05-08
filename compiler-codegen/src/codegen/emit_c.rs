@@ -522,7 +522,21 @@ impl CEmitter {
                 let len = s.len();
                 Ok(format!("{{.ptr=\"{}\", .len={}}}", Self::escape_c_str(s), len))
             }
-            ExprKind::FloatLit(f) => Ok(f.to_string()),
+            ExprKind::FloatLit(f) => {
+                // То же что в emit_expr — гарантируем что C видит double-литерал,
+                // не integer (избегает overflow на 1e20 → "100000000000000000000").
+                let s = if f.is_finite() && (f.abs() >= 1e16 || (f.abs() != 0.0 && f.abs() < 1e-4)) {
+                    format!("{:e}", f)
+                } else {
+                    let raw = f.to_string();
+                    if raw.contains('.') || raw.contains('e') || raw.contains('E') {
+                        raw
+                    } else {
+                        format!("{}.0", raw)
+                    }
+                };
+                Ok(s)
+            }
             ExprKind::Unary { op, operand } => {
                 let inner = self.emit_const_expr(operand)?;
                 let op_str = match op {
@@ -2980,7 +2994,22 @@ impl CEmitter {
         match &expr.kind {
             ExprKind::IntLit(n)   => Ok(format!("((nova_int){}LL)", n)),
             ExprKind::CharLit(cp) => Ok(format!("((nova_int){}LL)", cp)),
-            ExprKind::FloatLit(f) => Ok(format!("((nova_f64){})", f)),
+            ExprKind::FloatLit(f) => {
+                // f.to_string() для 1e20 даёт "100000000000000000000" (без точки/exp)
+                // — это integer-литерал в C, переполняет u64. Принудительно
+                // используем scientific notation, добавляем суффикс если нужен dot.
+                let s = if f.is_finite() && (f.abs() >= 1e16 || (f.abs() != 0.0 && f.abs() < 1e-4)) {
+                    format!("{:e}", f)  // scientific для очень больших/малых
+                } else {
+                    let raw = f.to_string();
+                    if raw.contains('.') || raw.contains('e') || raw.contains('E') {
+                        raw
+                    } else {
+                        format!("{}.0", raw)  // целые f64-литералы — добавим .0
+                    }
+                };
+                Ok(format!("((nova_f64){})", s))
+            }
             ExprKind::BoolLit(b)  => Ok(if *b { "true".into() } else { "false".into() }),
             ExprKind::UnitLit     => Ok("NOVA_UNIT".into()),
             ExprKind::StrLit(s)   => {
@@ -3400,13 +3429,46 @@ impl CEmitter {
             ExprKind::As(inner, ty) => {
                 // D54: `expr as T` эмитит явный C-cast `((c_ty)(expr))`.
                 // - numeric narrowing → wraparound (C-style truncate младших битов)
-                // - int → f64 / f64 → int → C handles
                 // - newtype ↔ underlying → idempotent (одинаковое C-представление)
                 // План 05.
-                let c_ty = self.type_ref_to_c(ty)
+                //
+                // План 07: float → integer narrowing требует **saturation**
+                // вместо C-cast (UB на out-of-range). Детектим источник как
+                // f64/f32 и target как integer, эмитим runtime helper
+                // `nova_<src>_to_<dst>` (см. nova_rt/cast.h). Saturation
+                // совпадает с Rust 1.45+ (RFC #2484 sealed casts):
+                //   - in-range → truncate towards zero
+                //   - out-of-range positive → INT_MAX / UINT_MAX
+                //   - out-of-range negative → INT_MIN / 0 (для unsigned)
+                //   - NaN → 0
+                //   - ±Infinity → границы
+                let target_c = self.type_ref_to_c(ty)
                     .map_err(|e| format!("as-cast type error: {}", e))?;
+                let inner_c_ty = self.infer_expr_c_type(inner);
                 let v = self.emit_expr(inner)?;
-                Ok(format!("(({})({}))", c_ty, v))
+
+                let src_suffix = match inner_c_ty.as_str() {
+                    "nova_f64" => Some("f64"),
+                    "nova_f32" => Some("f32"),
+                    _ => None,
+                };
+                let dst_suffix: Option<&str> = match target_c.as_str() {
+                    "nova_int" | "int64_t" => Some("i64"),
+                    "int32_t"              => Some("i32"),
+                    "int16_t"              => Some("i16"),
+                    "int8_t"               => Some("i8"),
+                    "uint64_t"             => Some("u64"),
+                    "uint32_t"             => Some("u32"),
+                    "uint16_t"             => Some("u16"),
+                    "nova_byte" | "uint8_t" => Some("u8"),
+                    _ => None,
+                };
+                if let (Some(src), Some(dst)) = (src_suffix, dst_suffix) {
+                    // План 07 saturation helper.
+                    return Ok(format!("nova_{}_to_{}({})", src, dst, v));
+                }
+                // Все остальные cast'ы — прямой C-cast (план 05).
+                Ok(format!("(({})({}))", target_c, v))
             }
 
             ExprKind::Is(inner, ty) => {

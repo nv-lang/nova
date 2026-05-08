@@ -1,7 +1,14 @@
 # План 07: `as`-cast — saturation для float→int (закрытие UB-gap'а из плана 05)
 
-**Статус:** активный, не начат.
+**Статус:** ✅ выполнено (2026-05-08).
 **Дата создания:** 2026-05-08.
+
+**Результат:** Ф.1-Ф.5 закрыты. `nova_rt/cast.h` (16 saturation
+helpers), codegen As детектит float→int, `nova_tests/syntax/as_cast_float.nv`
+(13 тестов) PASS, spec D54 дополнен таблицей «Семантика narrowing»,
+запись `[P-as-cast-float-saturation]` в simplifications.md.
+64/64 nova_tests PASS, stdlib без регрессий. Bonus: исправлен
+emit FloatLit (`1e20` теперь не переполняет u64-литерал в C).
 **Зависимости:** [Plan 05](05-as-cast-codegen.md) — закрыл core вопрос
 (`as` теперь эмитит C-cast); этот план добавляет defined-семантику
 для narrowing-cases где C даёт UB.

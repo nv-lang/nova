@@ -8,6 +8,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <math.h>     /* D74: f64.sqrt()/sin()/cos()/etc. → libm */
+#include "cast.h"     /* План 07: float→int saturation helpers */
 
 /* ---- Primitive types ---- */
 typedef int64_t  nova_int;
