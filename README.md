@@ -71,6 +71,59 @@ handlers, syntax, memory, concurrency). Single compiler:
   native runtime (effects, fibers, GC); used for both interactive runs
   (`run`, `test`) and native compilation (`compile`).
 
+## Building from source
+
+The pipeline is two-stage: `nova-codegen` produces `.c`, a native C
+compiler links it with the runtime (`nova_rt/`). Wrapper scripts make
+this a single command:
+
+```powershell
+# Windows (requires MSVC Build Tools)
+cd compiler-codegen
+cargo build
+.\build_c.ps1 path\to\hello.nv -Run
+```
+
+```sh
+# Linux / Mac (requires gcc or clang)
+cd compiler-codegen
+cargo build
+./build_c.sh path/to/hello.nv --run
+```
+
+Without the wrapper:
+
+```sh
+cd compiler-codegen
+cargo run -- compile path/to/hello.nv          # Nova → C
+gcc path/to/hello.c nova_rt/alloc.c nova_rt/effects.c nova_rt/fibers.c \
+    -I. -o hello                                # C → binary
+./hello
+```
+
+There are also non-codegen modes: `cargo run -- run file.nv` (treewalk
+interpreter), `cargo run -- check file.nv` (type-check only),
+`cargo run -- test file.nv` (run `test "..."` blocks via interpreter).
+
+Full guide, options, known limitations:
+[compiler-codegen/README.md](compiler-codegen/README.md).
+
+## Editor support
+
+Syntax highlighting plugins for several editors are in
+[editors/](editors/). All are TextMate grammar / handcrafted — no
+semantic analysis (LSP is not yet implemented).
+
+| Editor | Subdir | Notes |
+|---|---|---|
+| VSCode / Cursor / VSCodium | [`editors/vscode/`](editors/vscode/) | TextMate grammar |
+| Sublime Text / TextMate | [`editors/sublime/`](editors/sublime/) | reuses VSCode `.tmLanguage.json` |
+| Vim / Neovim | [`editors/vim/`](editors/vim/) | handcrafted `syntax/nova.vim` |
+| Emacs | [`editors/emacs/`](editors/emacs/) | major-mode `nova-mode.el` |
+
+See [editors/README.md](editors/README.md) for the full overview,
+install commands per editor, and roadmap (LSP, tree-sitter, JetBrains).
+
 ## License
 
 Nova is dual-licensed under either of:

@@ -68,6 +68,59 @@ handlers, синтаксис, память, конкуренция). Один к
   интерактивных запусков (`run`, `test`), так и для нативной компиляции
   (`compile`).
 
+## Сборка из исходников
+
+Pipeline двухступенчатый: `nova-codegen` создаёт `.c`, нативный
+C-компилятор линкует его с runtime'ом (`nova_rt/`). Wrapper-скрипты
+делают это одной командой:
+
+```powershell
+# Windows (требуется MSVC Build Tools)
+cd compiler-codegen
+cargo build
+.\build_c.ps1 path\to\hello.nv -Run
+```
+
+```sh
+# Linux / Mac (требуется gcc или clang)
+cd compiler-codegen
+cargo build
+./build_c.sh path/to/hello.nv --run
+```
+
+Без wrapper'а:
+
+```sh
+cd compiler-codegen
+cargo run -- compile path/to/hello.nv          # Nova → C
+gcc path/to/hello.c nova_rt/alloc.c nova_rt/effects.c nova_rt/fibers.c \
+    -I. -o hello                                # C → бинарь
+./hello
+```
+
+Есть также режимы без codegen'а: `cargo run -- run file.nv` (treewalk-
+интерпретатор), `cargo run -- check file.nv` (только type-check),
+`cargo run -- test file.nv` (запуск `test "..."` блоков через интерпретатор).
+
+Полный guide, опции, известные ограничения:
+[compiler-codegen/README.md](compiler-codegen/README.md).
+
+## Поддержка редакторов
+
+Plugin'ы подсветки синтаксиса для нескольких редакторов лежат в
+[editors/](editors/). Все — TextMate grammar / handcrafted, без
+семантического анализа (LSP пока не реализован).
+
+| Редактор | Подкаталог | Заметки |
+|---|---|---|
+| VSCode / Cursor / VSCodium | [`editors/vscode/`](editors/vscode/) | TextMate grammar |
+| Sublime Text / TextMate | [`editors/sublime/`](editors/sublime/) | переиспользует `.tmLanguage.json` от VSCode |
+| Vim / Neovim | [`editors/vim/`](editors/vim/) | handcrafted `syntax/nova.vim` |
+| Emacs | [`editors/emacs/`](editors/emacs/) | major-mode `nova-mode.el` |
+
+Полный обзор, команды установки для каждого редактора и roadmap
+(LSP, tree-sitter, JetBrains): [editors/README.md](editors/README.md).
+
 ## Лицензия
 
 Nova распространяется на условиях одной из двух лицензий по выбору
