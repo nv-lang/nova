@@ -1,0 +1,35 @@
+// Plan 11 Ф.5: as fn(...) disambiguation для overloaded method values.
+//
+// Когда у метода несколько overload'ов, без annotation нельзя выбрать —
+// используем `as fn(P...) -> R` для disambiguation.
+
+module nova_tests.syntax.overload_method_values
+
+type Buf { items []int }
+
+fn Buf.new() -> Self => Self { items: [] }
+
+// Два overload'а — по типу аргумента.
+fn Buf mut @push(n int) -> int => @items.len
+fn Buf mut @push(b bool) -> int => if b { 1 } else { 0 }
+
+test "Ф.5: bound method value disambiguation through as-fn" {
+    let mut buf = Buf.new()
+    let f = buf.@push as fn(int) -> int
+    let r = f(42)
+    assert(r == 0)   // empty before push (наша заглушка возвращает len без push)
+}
+
+test "Ф.5: bound method value, bool overload" {
+    let mut buf = Buf.new()
+    let g = buf.@push as fn(bool) -> int
+    let r = g(true)
+    assert(r == 1)
+}
+
+test "Ф.5: unbound disambiguation" {
+    let mut buf = Buf.new()
+    let h = Buf.@push as fn(Buf, int) -> int
+    let r = h(buf, 10)
+    assert(r == 0)
+}

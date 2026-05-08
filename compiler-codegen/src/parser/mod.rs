@@ -1395,6 +1395,22 @@ impl Parser {
                             continue;
                         }
                         TokenKind::Ident(_) => self.parse_ident()?,
+                        TokenKind::At => {
+                            // `obj.@method` — bound method value (Plan 11 Ф.4).
+                            // `Type.@method` — unbound method value.
+                            // Префикс "@" в имени маркирует method-value seman-
+                            // тику для codegen (bound vs unbound — по obj kind).
+                            let at_span = self.peek().span;
+                            self.bump(); // consume @
+                            if !matches!(self.peek().kind, TokenKind::Ident(_)) {
+                                return Err(Diagnostic::new(
+                                    "expected method name after `.@`",
+                                    self.peek().span,
+                                ));
+                            }
+                            let (mname, mname_span) = self.parse_ident()?;
+                            (format!("@{}", mname), at_span.merge(mname_span))
+                        }
                         _ => {
                             return Err(Diagnostic::new(
                                 "expected field name or index after `.`",

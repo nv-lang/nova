@@ -3352,6 +3352,79 @@ impl CEmitter {
                     self.option_inner_types.insert(binding.clone(), inner_ty);
                 }
                 self.line(&format!("{} {} = {};", ty_c, binding, val));
+                // Plan 11 Ф.4: RHS — method value `obj.@method` или `Type.@method`.
+                // Регистрируем binding в fn_param_sigs так чтобы `f(args)` работало.
+                // Plan 11 Ф.5: `expr as fn(P...) -> R` — type annotation для disambig
+                // overloaded method values. Берём signature из аннотации, а не из registry.
+                let (mv_expr, type_anno_sig): (&Expr, Option<(Vec<String>, String)>) =
+                    if let ExprKind::As(inner, ty) = &decl.value.kind {
+                        if let TypeRef::Func { params: fp, return_type, .. } = ty {
+                            let ptys: Vec<String> = fp.iter()
+                                .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".into()))
+                                .collect();
+                            let rty = return_type.as_ref()
+                                .map(|rt| self.type_ref_to_c(rt).unwrap_or_else(|_| "nova_int".into()))
+                                .unwrap_or_else(|| "nova_unit".into());
+                            (inner.as_ref(), Some((ptys, rty)))
+                        } else {
+                            (&decl.value, None)
+                        }
+                    } else {
+                        (&decl.value, None)
+                    };
+                if let ExprKind::Member { obj, name } = &mv_expr.kind {
+                    if let Some(method_name) = name.strip_prefix('@') {
+                        // Plan 11 Ф.5: type annotation override — берём sig из
+                        // `as fn(...) -> R` если есть. Иначе — first overload.
+                        if let Some(anno_sig) = type_anno_sig.clone() {
+                            self.fn_param_sigs.insert(binding.clone(), anno_sig);
+                        } else {
+                            // Resolve receiver type.
+                            let (type_name, is_unbound) = match &obj.kind {
+                                ExprKind::Ident(n) => {
+                                    let is_type = n.chars().next().map(|c| c.is_ascii_uppercase()).unwrap_or(false)
+                                        || matches!(n.as_str(),
+                                            "int" | "i8" | "i16" | "i32" | "i64"
+                                            | "u8" | "u16" | "u32" | "u64"
+                                            | "f32" | "f64" | "byte" | "bool" | "char" | "str");
+                                    if is_type { (n.clone(), true) } else {
+                                        let obj_ty = self.var_types.get(n).cloned().unwrap_or_default();
+                                        let t = Self::nova_type_name_from_c(&obj_ty);
+                                        (t, false)
+                                    }
+                                }
+                                ExprKind::Path(parts) if parts.len() == 1 => (parts[0].clone(), true),
+                                _ => {
+                                    let obj_ty = self.infer_expr_c_type(obj);
+                                    let t = Self::nova_type_name_from_c(&obj_ty);
+                                    (t, false)
+                                }
+                            };
+                            let key = (type_name.clone(), method_name.to_string());
+                            if let Some(overloads) = self.method_overloads.get(&key).cloned() {
+                                if let Some(sig) = overloads.first() {
+                                    let recv_c_ty = match type_name.as_str() {
+                                        "int" | "i64" => "nova_int".to_string(),
+                                        "f64" => "nova_f64".to_string(),
+                                        "f32" => "nova_f32".to_string(),
+                                        "str" => "nova_str".to_string(),
+                                        "char" => "nova_int".to_string(),
+                                        "byte" => "nova_byte".to_string(),
+                                        "bool" => "nova_bool".to_string(),
+                                        _ => format!("Nova_{}*", type_name),
+                                    };
+                                    let param_tys: Vec<String> = if is_unbound {
+                                        std::iter::once(recv_c_ty).chain(sig.param_c_types.iter().cloned()).collect()
+                                    } else {
+                                        sig.param_c_types.clone()
+                                    };
+                                    self.fn_param_sigs.insert(binding.clone(),
+                                        (param_tys, sig.return_c_type.clone()));
+                                }
+                            }
+                        }
+                    }
+                }
                 // If RHS is a lambda, register the binding in fn_param_sigs so inc(5) works
                 if let ExprKind::Lambda { params, return_type, .. } = &decl.value.kind {
                     let param_c_tys: Vec<String> = params.iter().map(|p| {
@@ -3663,6 +3736,13 @@ impl CEmitter {
             }
 
             ExprKind::Member { obj, name } => {
+                // Plan 11 Ф.4: method values (bound / unbound).
+                // `obj.@method` — bound method value (закрывает `obj` как self).
+                // `Type.@method` — unbound method value (fn-pointer, явный self).
+                // Парсер маркирует обе формы префиксом `@` в имени.
+                if let Some(method_name) = name.strip_prefix('@') {
+                    return self.emit_method_value(obj, method_name);
+                }
                 let obj_ty = self.infer_expr_c_type(obj);
                 let o = self.emit_expr(obj)?;
                 // D26 (school B): s.len — длина в codepoint'ах, O(n).
@@ -3877,6 +3957,23 @@ impl CEmitter {
             }
 
             ExprKind::As(inner, ty) => {
+                // Plan 11 Ф.5: `obj.@method as fn(P...) -> R` — type annotation
+                // disambig'ит overloaded method values. Передаём аннотированный
+                // signature в emit_method_value чтобы выбрать right overload.
+                if let ExprKind::Member { obj: mvobj, name: mvname } = &inner.kind {
+                    if let Some(method_name) = mvname.strip_prefix('@') {
+                        if let TypeRef::Func { params: fp, return_type, .. } = ty {
+                            let target_ptys: Vec<String> = fp.iter()
+                                .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".into()))
+                                .collect();
+                            let target_rty = return_type.as_ref()
+                                .map(|rt| self.type_ref_to_c(rt).unwrap_or_else(|_| "nova_int".into()))
+                                .unwrap_or_else(|| "nova_unit".into());
+                            return self.emit_method_value_typed(mvobj, method_name,
+                                Some((target_ptys, target_rty)));
+                        }
+                    }
+                }
                 // D54: `expr as T` эмитит явный C-cast `((c_ty)(expr))`.
                 // - numeric narrowing → wraparound (C-style truncate младших битов)
                 // - newtype ↔ underlying → idempotent (одинаковое C-представление)
@@ -4403,10 +4500,19 @@ impl CEmitter {
                         }
                     }
                     None => {
-                        // Fallback: cast to function pointer directly (for plain fn ptrs, no closure)
-                        let cast_params = if param_tys.is_empty() { "void".to_string() } else { param_tys.join(", ") };
-                        Ok(format!("(({ret}(*)({params}))({name}))({args})",
-                            ret = ret_ty, params = cast_params, name = name, args = arg_strs.join(", ")))
+                        // Plan 11 Ф.4: arbitrary-signature closure call. f points to
+                        // a struct { fn_ptr; void* env } (NovaClosBase). Extract fn,
+                        // cast to (ret(*)(void*, params...)), pass env + args.
+                        let mut cast_params = vec!["void*".to_string()];
+                        cast_params.extend(param_tys.iter().cloned());
+                        let cast_params_str = cast_params.join(", ");
+                        let mut all_args = vec![format!("((NovaClosBase*)({}))->env", name)];
+                        all_args.extend(arg_strs.iter().cloned());
+                        Ok(format!("(({ret}(*)({params}))(((NovaClosBase*)({n}))->fn))({args})",
+                            ret = ret_ty,
+                            params = cast_params_str,
+                            n = name,
+                            args = all_args.join(", ")))
                     }
                 };
             }
@@ -7134,7 +7240,10 @@ impl CEmitter {
             ([p0], r) if p0 == "nova_int" && r == "nova_bool"                        => "NovaClos_ib",
             ([p0, p1], r) if p0 == "nova_int" && p1 == "nova_int" && r == "nova_int" => "NovaClos_iii",
             ([p0, p1], r) if p0 == "void*"    && p1 == "nova_int" && r == "nova_int" => "NovaClos_vii",
-            _ => "NovaClos_ii",
+            // Plan 11 Ф.4: для arbitrary signatures используем generic
+            // NovaClosBase ({fn, env}) — size совпадает, fn-ptr cast'ается на
+            // call-site по нужной сигнатуре.
+            _ => "NovaClosBase",
         }
     }
 
@@ -7145,13 +7254,187 @@ impl CEmitter {
             ([p0], r) if p0 == "nova_int" && r == "nova_bool"                        => "nova_fn_ib",
             ([p0, p1], r) if p0 == "nova_int" && p1 == "nova_int" && r == "nova_int" => "nova_fn_iii",
             ([p0, p1], r) if p0 == "void*"    && p1 == "nova_int" && r == "nova_int" => "nova_fn_vii",
-            _ => "nova_fn_ii",
+            // Plan 11 Ф.4: void* — generic fn pointer (cast applied at call site).
+            _ => "void*",
         }
     }
 
     fn line(&mut self, s: &str) {
         let indent = "    ".repeat(self.indent);
         let _ = writeln!(self.out, "{}{}", indent, s);
+    }
+
+    /// Plan 11 Ф.4: emit method value (bound or unbound).
+    ///
+    /// **Bound case** (`obj.@method`): obj is a value expression (variable,
+    /// expression). Эмитим closure struct который захватывает `obj` как self
+    /// и при вызове делает `Nova_T_method_<m>(self, args...)`.
+    ///
+    /// **Unbound case** (`Type.@method`): obj is a Type-name path. Эмитим
+    /// closure (env пустой) который при вызове делает `Nova_T_method_<m>(arg0,
+    /// arg1, ...)` где arg0 — receiver.
+    ///
+    /// Для overload'ов берём первый match (ambiguity resolution через Ф.5
+    /// `as fn(...)` annotation). Single-overload — без проблем.
+    fn emit_method_value(&mut self, obj: &Expr, method_name: &str) -> Result<String, String> {
+        self.emit_method_value_typed(obj, method_name, None)
+    }
+
+    fn emit_method_value_typed(
+        &mut self,
+        obj: &Expr,
+        method_name: &str,
+        target_sig: Option<(Vec<String>, String)>,
+    ) -> Result<String, String> {
+        // Determine kind: bound (obj is value) vs unbound (obj is Type).
+        // Type if obj is Path/Ident starting with uppercase (or primitive type).
+        let (type_name, is_unbound) = match &obj.kind {
+            ExprKind::Ident(n) => {
+                let is_type = n.chars().next().map(|c| c.is_ascii_uppercase()).unwrap_or(false)
+                    || matches!(n.as_str(),
+                        "int" | "i8" | "i16" | "i32" | "i64"
+                        | "u8" | "u16" | "u32" | "u64"
+                        | "f32" | "f64" | "byte" | "bool" | "char" | "str");
+                if is_type { (n.clone(), true) } else {
+                    // Bound: derive type from var.
+                    let obj_ty = self.var_types.get(n).cloned().unwrap_or_default();
+                    let t = Self::nova_type_name_from_c(&obj_ty);
+                    (t, false)
+                }
+            }
+            ExprKind::Path(parts) if parts.len() == 1 => (parts[0].clone(), true),
+            _ => {
+                // Bound: infer from obj_ty.
+                let obj_ty = self.infer_expr_c_type(obj);
+                let t = Self::nova_type_name_from_c(&obj_ty);
+                (t, false)
+            }
+        };
+        // Lookup method in registry.
+        let key = (type_name.clone(), method_name.to_string());
+        let overloads = self.method_overloads.get(&key).cloned()
+            .ok_or_else(|| format!("method value: no method `{}` on type `{}`",
+                                   method_name, type_name))?;
+        // Plan 11 Ф.5: если задан target_sig из `as fn(...)` annotation —
+        // ищем overload с матч'ащимися param-типами. Иначе fallback —
+        // первый overload (single-overload — typical case).
+        let sig = if let Some((target_ptys, _)) = &target_sig {
+            // Для bound: target_ptys = method params (без receiver'а).
+            // Для unbound: target_ptys = receiver + method params.
+            // method_overloads хранит param_c_types БЕЗ receiver'а; сравниваем
+            // в зависимости от is_unbound.
+            let recv_offset = if is_unbound { 1 } else { 0 };
+            let method_target: Vec<String> = target_ptys.iter().skip(recv_offset).cloned().collect();
+            overloads.iter()
+                .find(|s| s.param_c_types == method_target)
+                .cloned()
+                .ok_or_else(|| format!("method value: no overload of `{}.{}` matches signature {:?}",
+                                       type_name, method_name, method_target))?
+        } else {
+            overloads.first().cloned()
+                .ok_or_else(|| format!("method value: empty overload list for `{}.{}`",
+                                       type_name, method_name))?
+        };
+        let id = self.lambda_counter;
+        self.lambda_counter += 1;
+        let body_name = format!("nova_mv_{}_body", id);
+        let env_name = format!("nova_mv_{}_env", id);
+
+        // Determine receiver C-type. Для primitive — value; для record —
+        // pointer Nova_<T>*.
+        let recv_c_ty = match type_name.as_str() {
+            "int" | "i64" => "nova_int".to_string(),
+            "f64" => "nova_f64".to_string(),
+            "f32" => "nova_f32".to_string(),
+            "str" => "nova_str".to_string(),
+            "char" => "nova_int".to_string(),
+            "byte" => "nova_byte".to_string(),
+            "bool" => "nova_bool".to_string(),
+            _ => format!("Nova_{}*", type_name),
+        };
+
+        // Param C-types and ret type.
+        let params = &sig.param_c_types;
+        let ret_ty = &sig.return_c_type;
+        let c_name = &sig.c_name;
+
+        // Build closure struct/fn names. Reuse clos_struct_name selecting from
+        // hardcoded list for known signatures.
+        // For method-value the *closure* signature is:
+        //   - bound: same params as method, same return.
+        //   - unbound: receiver + same params, same return.
+        let closure_param_tys: Vec<String> = if is_unbound {
+            std::iter::once(recv_c_ty.clone()).chain(params.iter().cloned()).collect()
+        } else {
+            params.clone()
+        };
+        let clos_struct = Self::clos_struct_name(&closure_param_tys, ret_ty);
+        let clos_fn_ty  = Self::clos_fn_ty(&closure_param_tys, ret_ty);
+
+        // Generate body fn signature (C):
+        //   static <ret> <body_name>(void* env, <closure_params>) { ... }
+        let mut body_params = vec!["void* _env_ptr".to_string()];
+        for (i, ty) in closure_param_tys.iter().enumerate() {
+            body_params.push(format!("{} p{}", ty, i));
+        }
+        let body_sig = format!("static {} {}({})", ret_ty, body_name, body_params.join(", "));
+        // Fwd decl.
+        self.lambda_forward_decls.push_str(&format!("{};\n", body_sig));
+
+        // Body emission into lambda_impls.
+        let mut impl_buf = String::new();
+        if is_unbound {
+            // Env пустой — игнорим _env_ptr.
+            impl_buf.push_str(&format!("typedef struct {{ int _dummy; }} {};\n", env_name));
+            impl_buf.push_str(&format!("{} {{\n", body_sig));
+            impl_buf.push_str("    (void)_env_ptr;\n");
+            // Call: c_name(p0, p1, ...) — receiver is p0.
+            let call_args: Vec<String> = (0..closure_param_tys.len())
+                .map(|i| format!("p{}", i)).collect();
+            if ret_ty == "nova_unit" {
+                impl_buf.push_str(&format!("    {}({});\n", c_name, call_args.join(", ")));
+                impl_buf.push_str("    return NOVA_UNIT;\n");
+            } else {
+                impl_buf.push_str(&format!("    return {}({});\n", c_name, call_args.join(", ")));
+            }
+            impl_buf.push_str("}\n\n");
+        } else {
+            // Bound — env содержит receiver.
+            impl_buf.push_str(&format!("typedef struct {{ {} self; }} {};\n", recv_c_ty, env_name));
+            impl_buf.push_str(&format!("{} {{\n", body_sig));
+            impl_buf.push_str(&format!("    {}* _env = ({}*)_env_ptr;\n", env_name, env_name));
+            // Call: c_name(_env->self, p0, p1, ...).
+            let mut call_args = vec!["_env->self".to_string()];
+            for i in 0..params.len() { call_args.push(format!("p{}", i)); }
+            if ret_ty == "nova_unit" {
+                impl_buf.push_str(&format!("    {}({});\n", c_name, call_args.join(", ")));
+                impl_buf.push_str("    return NOVA_UNIT;\n");
+            } else {
+                impl_buf.push_str(&format!("    return {}({});\n", c_name, call_args.join(", ")));
+            }
+            impl_buf.push_str("}\n\n");
+        }
+        self.lambda_impls.push_str(&impl_buf);
+
+        // At call site: allocate env + closure struct, return as void*.
+        let env_tmp = self.fresh_tmp();
+        let clos_tmp = self.fresh_tmp();
+        if is_unbound {
+            self.line(&format!("{}* {} = ({}*)nova_alloc(sizeof({}));",
+                env_name, env_tmp, env_name, env_name));
+            self.line(&format!("{}->_dummy = 0;", env_tmp));
+        } else {
+            // Emit obj expression to capture as self.
+            let o = self.emit_expr(obj)?;
+            self.line(&format!("{}* {} = ({}*)nova_alloc(sizeof({}));",
+                env_name, env_tmp, env_name, env_name));
+            self.line(&format!("{}->self = ({})({});", env_tmp, recv_c_ty, o));
+        }
+        self.line(&format!("{}* {} = ({}*)nova_alloc(sizeof({}));",
+            clos_struct, clos_tmp, clos_struct, clos_struct));
+        self.line(&format!("{}->fn = ({})({});", clos_tmp, clos_fn_ty, body_name));
+        self.line(&format!("{}->env = (void*)({});", clos_tmp, env_tmp));
+        Ok(format!("(void*)({})", clos_tmp))
     }
 
 
@@ -7990,6 +8273,10 @@ impl CEmitter {
                 "nova_int".into()
             }
             ExprKind::Member { obj, name } => {
+                // Plan 11 Ф.4: method value `@`-prefix → closure (void*).
+                if name.starts_with('@') {
+                    return "void*".into();
+                }
                 let obj_ty = self.infer_expr_c_type(obj);
                 if obj_ty == "nova_str" && name == "len" {
                     return "nova_int".into();

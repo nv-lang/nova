@@ -1,0 +1,67 @@
+// Method values тесты (Plan 11 Ф.4).
+// `obj.@method` — bound method value (struct {fn_ptr, self}).
+// `Type.@method` — unbound method value (fn pointer берёт self явно).
+// `Type.method`  — static method value (fn pointer без self).
+
+module nova_tests.syntax.method_values
+
+type Counter { value int }
+
+fn Counter.new() -> Self => Self { value: 0 }
+fn Counter @get() -> int => @value
+fn Counter @add(n int) -> int => @value + n
+fn Counter @add_two(a int, b int) -> int => @value + a + b
+
+test "bound method value: no args" {
+    let c = Counter.new()
+    let f = c.@get
+    let v = f()
+    assert(v == 0)
+}
+
+test "bound method value: one arg" {
+    let c = Counter.new()
+    let f = c.@add
+    let r = f(7)
+    assert(r == 7)
+}
+
+test "bound method value: two args" {
+    let c = Counter.new()
+    let f = c.@add_two
+    let r = f(3, 4)
+    assert(r == 7)
+}
+
+test "unbound method value: explicit self pass" {
+    let c = Counter.new()
+    let f = Counter.@add
+    let r = f(c, 5)
+    assert(r == 5)
+}
+
+test "bound method value: разные обращения" {
+    let a = Counter.new()
+    let b = Counter.new()
+    // Каждый bound несёт свой self.
+    let fa = a.@get
+    let fb = b.@get
+    assert(fa() == 0)
+    assert(fb() == 0)
+}
+
+// Method values на primitive types (str, int) — пока bootstrap-
+// ограничение: external runtime методы (str API в std/runtime/string.nv)
+// не доступны как method values, нужна отдельная routing-логика
+// через ExternalRegistry. Future work. Пока method values работают
+// только на user-defined типах.
+
+// Plan 11 Ф.5: as fn(...) disambiguation.
+// Сейчас @add единственный overload, поэтому disambiguation тривиальная,
+// но annotation должна compile + работать.
+test "Ф.5: as fn type annotation" {
+    let c = Counter.new()
+    let f = c.@add as fn(int) -> int
+    let r = f(11)
+    assert(r == 11)
+}

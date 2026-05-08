@@ -20,6 +20,8 @@ typedef bool     nova_bool;
 /* ---- Closure representation ---- */
 /* Closures are stored as void* pointing to a struct { fn_ptr; void* env }. */
 /* fn_ptr takes (void* env, args...) and returns the result type. */
+/* NovaClosBase — generic closure layout, для arbitrary-sig calls (Plan 11 Ф.4). */
+typedef struct { void* fn; void* env; } NovaClosBase;
 typedef nova_int(*nova_fn_vi)(void*);
 typedef struct { nova_fn_vi fn; void* env; } NovaClos_vi;
 typedef nova_int(*nova_fn_ii)(void*, nova_int);
