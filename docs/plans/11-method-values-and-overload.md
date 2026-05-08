@@ -435,12 +435,30 @@ struct, lifetimes для self в C). Может потребовать GC integr
 
 ## Связь с другими планами
 
+- [Plan 04](04-buffer-split-and-external.md) — **главный motivating
+  consumer.** План 04 (Buffer split + `external` keyword) **прямо
+  зависит** от плана 11 для overload static/instance методов:
+  ```nova
+  export external fn StringBuilder.from(s str)  -> Self
+  export external fn StringBuilder.from(c char) -> Self
+  // ↑ нужен план 11 Ф.1-Ф.2 (Vec<MethodSig> + overload resolution)
+
+  export external fn StringBuilder mut @append(s str)  -> ()
+  export external fn StringBuilder mut @append(c char) -> ()
+  // ↑ то же
+  ```
+  Без плана 11 — `method_receivers` last-wins, второе объявление
+  переписывает первое. Plan 04 также добавляет `external fn` как
+  новую форму — взаимодействие с overload-resolution описано в plan 04.
+  **Делать план 04 после плана 11.**
 - [Plan 06](06-iter-protocol-codegen.md) — `Iter[T]` protocol;
   не зависит, можно делать параллельно. Iterator methods (например
   `m.values()`) — в общем path с method values.
 - [Plan 08](08-from-into-conversions.md) — `From`/`Into` 4-way
   auto-derive. Это **специальный случай overload** (по результирующему
   типу через D77 dispatch). План 11 расширяет на любые методы.
+  Большая часть Plan 08 закрыта (Ф.1-Ф.5), 4-way auto-derive
+  работает.
 - [Plan 12 (будущий)](12-protocol-dispatch.md) — protocol-based
   dispatch (Q-overloading вариант 4). После Ф.6 плана 08
   (generic-bound enforcement) + плана 11 (ad-hoc overload).

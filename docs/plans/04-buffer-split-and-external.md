@@ -1,16 +1,18 @@
 # План: Split Buffer на StringBuilder/WriteBuffer/ReadBuffer + keyword `external`
 
 **Статус:** активный, не начат (зафиксирован 2026-05-08).
-**Делать после:** [Plan 08](08-from-into-conversions.md). Причины:
+**Делать после:** [Plan 08](08-from-into-conversions.md) **и**
+[Plan 11](11-method-values-and-overload.md). Причины:
+
+### Зависимости от плана 08 (большая часть закрыта 2026-05-08)
 
 1. **`str.from(c char)` через auto-derive D73** — этот план рассчитывает
    что 4-way auto-derive работает (генерирует `c.into() -> str` из
-   `str.from(c char)`). Реализуется **в плане 08 Ф.3**. Без него
-   `char.@into()` не работает.
+   `str.from(c char)`). Реализуется **в плане 08 Ф.3** ✅ ЗАКРЫТО.
 2. **Bootstrap-table для `external fn`** — механизм lookup'а
    runtime-функций по имени (`Nova_StringBuilder_static_new`, etc.)
    архитектурно идентичен **плану 08 Ф.2** (registry built-in
-   conversions). Делать одну инфраструктуру, не две.
+   conversions) ✅ ЗАКРЫТО. Делать одну инфраструктуру, не две.
 3. **18 числовых типов в WriteBuffer.@write_uN_le/be** — они
    регистрируются в плане 08 как полноценные типы с конверсиями
    (`u32 ↔ int`, `f32 ↔ f64` через `as`/`from`). До плана 08
@@ -21,8 +23,43 @@
    явного `external` keyword'а. Возможно `external` нужен только
    для типов которые не покрываются registry. Решается после плана 08.
 
-После плана 08 этот план можно сильно упростить — большая часть
-infrastructure'ы уже будет.
+### Зависимости от плана 11 (overload по типу аргумента)
+
+5. **Overload static-методов:** API плана 04 содержит несколько
+   `T.from(...)` на одном receiver-типе:
+   ```nova
+   export external fn StringBuilder.from(s str)  -> Self
+   export external fn StringBuilder.from(c char) -> Self
+   ```
+   В bootstrap'е сейчас (до плана 11 Ф.1-Ф.2) `method_receivers`
+   key = только имя метода → последнее объявление **переписывает**
+   первое. Без плана 11 — only одна форма работает.
+
+6. **Overload instance-методов:** то же для `@append`:
+   ```nova
+   export external fn StringBuilder mut @append(s str)  -> ()
+   export external fn StringBuilder mut @append(c char) -> ()
+   ```
+   Без плана 11 — last-wins.
+
+7. **C-side mangling для overloaded `external` методов.** План 11 Ф.3
+   требует mangling по сигнатуре (`Nova_T_method_<param_types>`).
+   Для `external fn` с overload — runtime должен предоставить **обе**
+   функции под mangled именами. План 04 диктует как это связано с
+   Nova-side declarations.
+
+### Что план 04 добавляет поверх 08+11
+
+- **`external` keyword** — отдельная новая фича дизайна.
+- **Три новых типа** в prelude (StringBuilder/WriteBuffer/ReadBuffer)
+  — расширение D26.
+- **Декларация типов как built-in opaque** (без `type X { ... }` block'а).
+- **Соглашение `std/runtime/builtins.nv`** для documentation-stub'а.
+
+После планов 08 и 11 этот план можно сильно упростить —
+infrastructure (bootstrap-table, overload-resolution, auto-derive)
+уже будет, остаётся только **новая семантика** (`external` keyword,
+opaque типы).
 
 **Контекст обсуждения:** разговор про Buffer API → добавить endianness-методы → выявилось семантическое смешение text+binary в одном `Buffer` → split на три специализированных типа + расширение D26 prelude + новый keyword `external` для runtime-implemented функций stdlib.
 
