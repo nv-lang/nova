@@ -2197,6 +2197,105 @@ fn Tree @clone() -> Self => match @ {
 - Внутри protocol-объявления `Self` остаётся «late-bound» — конкретный
   тип определяется при удовлетворении.
 
+### Static-методы знают свой тип через `Self`
+
+Static-метод в Nova **связан с типом** на уровне компилятора — не
+«просто функция в namespace» (как Go), а **полноценный метод типа**
+с доступом к `Self`. Это влияет на три use-case'а:
+
+#### 1. Self в return type (DRY-форма)
+
+```nova
+type Box[T] {
+    value T
+}
+
+fn Box[T].of(v T) -> Self =>            // Self ≡ Box[T]
+    Self { value: v }                    // generic-параметры наследуются
+
+// Эквивалент без Self (verbose):
+fn Box[T].of(v T) -> Box[T] =>
+    Box[T] { value: v }
+```
+
+Без `Self` программист пишет `Box[T]` дважды; с `Self` — один раз
+(в receiver). Compiler знает что `Self ≡ Box[T]` потому что метод
+объявлен **на `Box[T]`**.
+
+#### 2. Self в expression position — вызов другого статического
+
+```nova
+type Account { balance money }
+
+fn Account.new() -> Self =>
+    Self.with_initial(0)                 // другой static-метод того же типа
+
+fn Account.with_initial(amount money) -> Self =>
+    Self { balance: amount }              // Self { ... } literal
+```
+
+`Self.with_initial(0)` резолвится compiler'ом в `Account.with_initial(0)`.
+То же для `Self { ... }` — это **`Account { ... }` literal**.
+
+Это canonical pattern для **default-конструктор → parameterized-конструктор**:
+
+```nova
+fn HashMap[K, V].new() -> Self =>
+    Self.with_capacity(16)              // default делегирует к parameterized
+
+fn HashMap[K, V].with_capacity(n int) -> Self =>
+    Self { buckets: new_buckets(n), count: 0, ... }
+```
+
+Refactoring-safe: переименование `HashMap → Map` меняет только
+**заголовки методов**, не тела. Все `Self` авто-резолвятся.
+
+#### 3. Self в полиморфных контекстах (через protocol bound)
+
+```nova
+type FromStr protocol {
+    from_str(s str) -> Self              // late-bound
+}
+
+fn parse[T FromStr](s str) -> T => T.from_str(s)
+//                                  ^^^^^^^^^^^^
+// На каждой инстанциации parse[int](...) / parse[Money](...)
+// T резолвится в конкретный тип. Compiler через monomorphization
+// знает Self ≡ T для каждого вызова.
+```
+
+Это **post-monomorphization** — для каждого `parse[X]` генерится свой
+код где `X.from_str(s)` это конкретный static-метод X. Static-метод
+знает что он на X **в каждом инстанциации**.
+
+#### Что это **не** значит
+
+- **Нет runtime-рефлексии.** Static-метод не имеет `cls`-параметра
+  (как Python `@classmethod`), не может узнать своё имя как строку,
+  не может сравнить два типа в runtime. Знание чисто **compile-time**.
+- **Self в expression — синтаксическая подстановка.** Compiler
+  заменяет `Self` на имя receiver-типа в момент codegen'а; runtime
+  никаких type-id не передаёт.
+- **Нет inheritance / virtual dispatch.** Self ≠ виртуальный
+  reference на subclass. У Nova нет наследования (D1) — только
+  generic-bound через protocol.
+
+#### Прецеденты
+
+- **Rust:** `impl Foo { fn make() -> Self { Self::new(2) } }` —
+  активно используется. `Self` доступен везде в impl-блоке.
+- **Swift:** `static func make() -> Self`, `Self.method()`,
+  `Self()` initializer.
+- **Kotlin:** `companion object` с methods, доступ к `this::class`.
+- **C#:** `static` метод имеет доступ к containing type.
+
+Не следуем:
+- **Go:** static-методов нет, только receiver-функции. Static в Nova =
+  named function в namespace типа.
+- **Python `@staticmethod`:** не получает `cls`, не знает свой тип.
+  `@classmethod` получает `cls` runtime — мы делаем то же на
+  compile-time через `Self`.
+
 ### Где запрещено
 
 - На top-level (вне типа/protocol/effect) — compile error «Self не в
