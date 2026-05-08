@@ -24,7 +24,7 @@
 | 10 | [10-pgo-integration.md](10-pgo-integration.md) | PGO integration (stub, после плана 09) — 15-30% perf на hot path | stub / future |
 | 11 | [11-method-values-and-overload.md](11-method-values-and-overload.md) | Method values + overload по типу аргумента (закрывает Q-overloading вариант 1) | частично закрыт (Ф.1-Ф.3+Ф.4.5+Ф.6+Ф.7), осталось Ф.4+Ф.5+Ф.8 |
 | 12 | [12-builtins-driven-codegen.md](12-builtins-driven-codegen.md) | builtins.nv-driven external dispatch + auto-derive try_*/into() из Fail-form/from() (Q-codegen-builtins-cleanup) | ✅ ЗАКРЫТ (кроме Ф.6 — отложен) |
-| 13 | [13-runtime-stdlib-and-autogen.md](13-runtime-stdlib-and-autogen.md) | Runtime stdlib (str/math) + auto-gen std/runtime/*.nv (read-only projection реестра компилятора) | MVP ✅ + Ф.8 ✅ (декомпозиция builtins.nv); осталось Ф.4 + Ф.9 (API polish: chaining Self, op+, char_len→len, []char) |
+| 13 | [13-runtime-stdlib-and-autogen.md](13-runtime-stdlib-and-autogen.md) | Runtime stdlib (str/math) + auto-gen std/runtime/*.nv (read-only projection реестра компилятора) | MVP ✅ + Ф.8 ✅ (декомпозиция builtins.nv); осталось Ф.4 + Ф.9 (API polish: chaining `Self`, op+, char_len→len, []char) |
 
 ## Связанные директории
 

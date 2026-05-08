@@ -18,7 +18,7 @@ Acceptance — добавить новый method тремя правками (r
 
 **Ф.9 (API polish, добавлен 2026-05-08):** ⏳ pending. Прицельные
 правки реестра + emitter'а после ревью текущих сгенерированных файлов:
-- `StringBuilder mut @append` возвращает `StringBuilder` (chaining).
+- `StringBuilder mut @append` возвращает `Self` (chaining).
 - Все `WriteBuffer mut @write_*` возвращают `Self` (chaining).
 - StringBuilder получает оператор `+` как алиас `@append` (str + char).
 - `str + str` явно через `@concat` в registry (не invisible intrinsic).
@@ -553,15 +553,15 @@ export external fn WriteBuffer  mut @write_u32_be(v u32) -> ()
 
 **Станет:**
 ```nova
-export external fn StringBuilder mut @append(s str) -> StringBuilder
+export external fn StringBuilder mut @append(s str) -> Self
 export external fn WriteBuffer  mut @write_byte(v byte) -> Self
 export external fn WriteBuffer  mut @write_u32_be(v u32) -> Self
 // ... все @write_*
 ```
 
-Для StringBuilder: явный `-> StringBuilder` (без Self для clarity на
-public API). Для WriteBuffer: `Self` — короче и единообразно для всех
-24 `@write_*` методов.
+Везде `Self` — единый паттерн для chaining-методов на opaque types.
+Короче чем явное имя типа и единообразно через все 24 `@write_*`,
+все `@append`-перегрузки и любые будущие mutating-методы.
 
 **Use-case:** chaining без промежуточных переменных:
 ```nova
@@ -570,9 +570,10 @@ wb.write_u32_be(magic).write_u16_be(version).write_bytes(payload)
 ```
 
 **C-side изменения:**
-- `nova_str` для StringBuilder: возвращать `Nova_StringBuilder*`
-  (тот же `self`, не копия).
-- WriteBuffer: возвращать `Nova_WriteBuffer*` (тот же `self`).
+- `Nova_StringBuilder_method_append` возвращает `Nova_StringBuilder*`
+  (тот же `self`, не копия). Аналогично для `Nova_WriteBuffer_method_*`
+  → `Nova_WriteBuffer*`.
+- В обоих случаях return — тот же pointer что receiver, без аллокации.
 - `ReadBuffer @read_*` **не меняется** — там return-type это значение
   (`u16`, `byte`, etc.), а не Self. Self для read-методов был бы
   бессмыслен.
@@ -582,8 +583,8 @@ wb.write_u32_be(magic).write_u16_be(version).write_bytes(payload)
 **Добавить в registry** для StringBuilder:
 ```nova
 // `sb + s` — синоним sb.append(s). Mutates sb, возвращает sb.
-fn StringBuilder mut @op_add(s str)  -> StringBuilder
-fn StringBuilder mut @op_add(c char) -> StringBuilder
+fn StringBuilder mut @op_add(s str)  -> Self
+fn StringBuilder mut @op_add(c char) -> Self
 ```
 
 Это **алиас** — codegen для оператора `+` на StringBuilder receiver
