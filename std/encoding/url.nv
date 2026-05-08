@@ -221,62 +221,62 @@ fn is_scheme_char(c char) -> bool =>
 // ──────────────────────────────────────────────────────────────────────────
 
 export fn Url @into() -> str {
-    let mut buf = Buffer.with_capacity(64)
-    buf.add_str(@scheme)
-    buf.add_str(":")
+    let mut buf = StringBuilder.with_capacity(64)
+    buf.append(@scheme)
+    buf.append(":")
 
     if @host != None {
-        buf.add_str("//")
+        buf.append("//")
 
         // userinfo
         match @user {
             Some(u) => {
-                buf.add_str(u)
+                buf.append(u)
                 match @password {
                     Some(p) => {
-                        buf.add_char(':')
-                        buf.add_str(p)
+                        buf.append(':')
+                        buf.append(p)
                     }
                     None => ()
                 }
-                buf.add_char('@')
+                buf.append('@')
             }
             None => ()
         }
 
         match @host {
-            Some(h) => buf.add_str(h)
+            Some(h) => buf.append(h)
             None    => ()
         }
 
         match @port {
             Some(p) => {
-                buf.add_char(':')
-                buf.add_str(str.from(p))
+                buf.append(':')
+                buf.append(str.from(p))
             }
             None => ()
         }
     }
 
-    buf.add_str(@path)
+    buf.append(@path)
 
     match @query {
         Some(q) => {
-            buf.add_char('?')
-            buf.add_str(q)
+            buf.append('?')
+            buf.append(q)
         }
         None => ()
     }
 
     match @fragment {
         Some(f) => {
-            buf.add_char('#')
-            buf.add_str(f)
+            buf.append('#')
+            buf.append(f)
         }
         None => ()
     }
 
-    buf.into_str_unchecked()
+    buf.into()
 }
 
 
@@ -288,33 +288,40 @@ export fn Url @into() -> str {
 // Безопасные символы: ALPHA / DIGIT / "-" / "." / "_" / "~"
 // Всё остальное — `%XX` где XX — hex.
 export fn Url.encode_query(s str) -> str {
-    let mut buf = Buffer.with_capacity(s.len * 2)    // worst case
+    let mut buf = StringBuilder.with_capacity(s.len * 2)    // worst case
     for c in s.chars() {
         if is_unreserved(c) {
-            buf.add_char(c)
+            buf.append(c)
         } else if c == ' ' {
-            buf.add_char('+')                          // конвенция form-encoding
+            buf.append('+')                          // конвенция form-encoding
         } else {
             // UTF-8 encode и percent-encode каждый байт.
             // Простая версия для ASCII; для unicode требуется UTF-8 byte iteration.
             let n = c as int
             if n < 128 {
-                buf.add_char('%')
-                buf.add_char(hex_upper((n / 16) as u8))
-                buf.add_char(hex_upper((n % 16) as u8))
+                buf.append('%')
+                buf.append(hex_upper((n / 16) as u8))
+                buf.append(hex_upper((n % 16) as u8))
             } else {
                 // Multi-byte UTF-8: упрощённо через char.
-                // Production: использовать Buffer.add_char + перекодировать байты.
-                buf.add_char('%')
-                buf.add_char(hex_upper((n / 16) as u8))
-                buf.add_char(hex_upper((n % 16) as u8))
+                // Production: перекодировать через UTF-8 byte sequence.
+                buf.append('%')
+                buf.append(hex_upper((n / 16) as u8))
+                buf.append(hex_upper((n % 16) as u8))
             }
         }
     }
-    buf.into_str_unchecked()
+    buf.into()
 }
 
 // Декодирует percent-encoded строку.
+//
+// TODO(plan-04 Этап 6): мигрировать на WriteBuffer + str.try_from([]byte)
+// после реализации `WriteBuffer @write_char/@write_str` в runtime.
+// Buffer удаляется как неудачное решение (см. Q-buffer). Здесь он
+// временно остался: percent-decoded byte может быть частью multi-byte
+// UTF-8 sequence — нужен byte-buffer с финализацией через UTF-8
+// validation. StringBuilder для этого не подходит (text-only API).
 export fn Url.decode_query(s str) Fail[ParseUrlError] -> str {
     let mut buf = Buffer.with_capacity(s.len)
     let mut i = 0
