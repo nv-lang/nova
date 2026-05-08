@@ -152,9 +152,16 @@ sanity-check'а.
 **Acceptance:** `nova_rt/string.c` + `nova_rt/math.c` компилируются;
 все функции из реестра Ф.1 имеют реализацию.
 
-### Ф.3 — Auto-gen команда (~2ч)
+### Ф.3 — Auto-gen команда + промпт для агента (~2ч)
 
 Добавить subcommand: `nova-codegen emit-runtime-stubs`.
+
+**Рабочий промпт для агента/разработчика** —
+[`docs/promts/regen-runtime.md`](../promts/regen-runtime.md). Это
+повторно используемая инструкция: входы, шаги, acceptance, ограничения,
+троблшутинг. Она версионируется вместе с кодом — при изменении
+формата `RuntimeFn` или процедуры регенерации промпт обновляется
+синхронно.
 
 Pseudo-code:
 ```rust
