@@ -1352,3 +1352,35 @@ silently разрешал всё. Теперь — compile error с suggestion'�
   type-checker'а с trait-resolution. Отложен.
 - Compile-error suggestions с file:line:col — TBD при добавлении
   diagnostic'ов.
+
+
+================================================================================
+2026-05-08 Plan 06 Ф.2: tuple-destructuring в for-in
+================================================================================
+
+`for (k, v) in m.entries() { ... }` — стандартный pattern для
+итерации по парам. Раньше pattern_binding падал на Pattern::Tuple.
+
+Реализация:
+
+1. pattern_binding: Pattern::Tuple возвращает fresh_tmp (caller
+   делает destructure отдельно).
+
+2. Новый helper pattern_destructure_tuple(pat, scr_tmp, scr_is_pointer):
+   эмитит локальные биндинги `T0 a = tmp.f0; T1 b = tmp.f1;`.
+
+3. emit_for Case 3 (Iter[T]): для tuple-pattern эмитит
+   _NovaTupleN tmp = *(_NovaTupleN*)(intptr_t)opt.value
+   затем destructure через pattern_destructure_tuple.
+
+Тесты (nova_tests/syntax/for_iter_tuple.nv, 2 теста):
+- basic destructure `(i, v)` через EnumeratedCounter
+- wildcard destructure `(_, v)`
+
+72/72 nova_tests PASS.
+
+Bootstrap-ограничения:
+- Все tuple-fields эмитятся как nova_int (bootstrap-convention
+  через nova_int slot). Для (str, int) / (int, Custom) нужен
+  полный element-type infer (отложено).
+- Nested patterns `((a, b), c)` пока не поддержаны.

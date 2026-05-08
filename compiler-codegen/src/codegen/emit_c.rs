@@ -5287,9 +5287,22 @@ impl CEmitter {
                     opt_tmp, iter_type, it_tmp));
                 self.line(&format!(
                     "if ({}.tag == NOVA_TAG_Option_None) break;", opt_tmp));
-                self.line(&format!(
-                    "nova_int {} = {}.value;", binding, opt_tmp));
-                self.var_types.insert(binding.clone(), "nova_int".to_string());
+                // Plan 06 Ф.2: tuple-pattern destructure для `for (k, v) in ...`.
+                // Если pattern это Pattern::Tuple, _opt.value — boxed
+                // _NovaTupleN* pointer (Option payload — nova_int slot).
+                // Casting (intptr_t) → tuple-pointer → destructure через
+                // ->fN access.
+                if let Pattern::Tuple(parts, _) = pattern {
+                    let arity = parts.len();
+                    self.line(&format!(
+                        "_NovaTuple{} {} = ({}.value == 0) ? (_NovaTuple{}){{0}} : *((_NovaTuple{}*)(intptr_t)({}.value));",
+                        arity, binding, opt_tmp, arity, arity, opt_tmp));
+                    self.pattern_destructure_tuple(pattern, &binding, false)?;
+                } else {
+                    self.line(&format!(
+                        "nova_int {} = {}.value;", binding, opt_tmp));
+                    self.var_types.insert(binding.clone(), "nova_int".to_string());
+                }
 
                 for stmt in &body.stmts {
                     self.emit_stmt(stmt)?;
@@ -5741,7 +5754,48 @@ impl CEmitter {
         match pat {
             Pattern::Ident { name, .. } => Ok(name.clone()),
             Pattern::Wildcard(_) => Ok(self.fresh_tmp()),  // unique name to avoid redeclaration
+            // Plan 06 Ф.2: tuple pattern `(a, b, ...)` — возвращаем fresh_tmp,
+            // дальше caller (emit_for) делает destructure через
+            // pattern_destructure_tuple_into_locals.
+            Pattern::Tuple(_, _) => Ok(self.fresh_tmp()),
             _ => Err(format!("complex pattern in let binding not yet supported: {:?}", pat)),
+        }
+    }
+
+    /// Plan 06 Ф.2: для tuple-pattern `(a, b)` в for-in эмитит локальные
+    /// биндинги `T0 a = tmp.f0; T1 b = tmp.f1;`. Caller обеспечивает
+    /// что `tmp` это `_NovaTuple{N}*` или `_NovaTuple{N}` value.
+    fn pattern_destructure_tuple(
+        &mut self,
+        pat: &Pattern,
+        scr_tmp: &str,
+        scr_is_pointer: bool,
+    ) -> Result<(), String> {
+        if let Pattern::Tuple(parts, _) = pat {
+            let accessor = if scr_is_pointer { "->" } else { "." };
+            for (i, p) in parts.iter().enumerate() {
+                let field = format!("{}{}f{}", scr_tmp, accessor, i);
+                match p {
+                    Pattern::Ident { name, .. } => {
+                        // Default тип nova_int — bootstrap'ная convention
+                        // (tuple-payload хранится как nova_int slots).
+                        self.line(&format!("nova_int {} = {};", name, field));
+                        self.var_types.insert(name.clone(), "nova_int".to_string());
+                    }
+                    Pattern::Wildcard(_) => {
+                        // Skip — `_` биндинг не используется.
+                        self.line(&format!("(void)({});", field));
+                    }
+                    other => {
+                        return Err(format!(
+                            "for-in tuple pattern: nested {:?} не поддерживается",
+                            other));
+                    }
+                }
+            }
+            Ok(())
+        } else {
+            Err(format!("expected tuple pattern, got {:?}", pat))
         }
     }
 

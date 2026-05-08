@@ -1,0 +1,60 @@
+// for_iter_tuple.nv — Plan 06 Ф.2: tuple-destructuring в for-in loop.
+//
+// Iter[(K, V)] — итератор возвращает tuple, программист деструктурирует
+// через `for (k, v) in iter { ... }`. Bootstrap'е tuple хранится как
+// _NovaTuple{N}* boxed pointer; pattern_destructure_tuple извлекает
+// поля через ->fN.
+//
+// Bootstrap-ограничение: tuple-payload через nova_int slot — поэтому
+// все значения в pattern '(a, b)' автоматически nova_int. Для пары
+// (k str, v int) или (k int, v Custom) это пока не работает в
+// generic-форме (TBD когда element-type полностью infer'ится).
+
+module nova_tests.syntax.for_iter_tuple
+
+
+// Custom итератор, возвращает пары (index, value).
+type EnumeratedCounter {
+    end       int
+    mut idx   int
+}
+
+
+export fn EnumeratedCounter mut @next() -> Option[(int, int)] {
+    if @idx >= @end {
+        None
+    } else {
+        let pair = (@idx, @idx * 10)
+        @idx = @idx + 1
+        Some(pair)
+    }
+}
+
+
+export fn EnumeratedCounter.new(end int) -> EnumeratedCounter {
+    EnumeratedCounter { end: end, idx: 0 }
+}
+
+
+test "for-in tuple destructure: (idx, value)" {
+    let mut sum_idx = 0
+    let mut sum_value = 0
+    for (i, v) in EnumeratedCounter.new(4) {
+        sum_idx = sum_idx + i
+        sum_value = sum_value + v
+    }
+    // i: 0,1,2,3 → sum 6
+    // v: 0,10,20,30 → sum 60
+    assert(sum_idx == 6)
+    assert(sum_value == 60)
+}
+
+
+test "for-in tuple destructure с wildcard" {
+    let mut count = 0
+    for (_, v) in EnumeratedCounter.new(3) {
+        count = count + v
+    }
+    // 0+10+20 = 30
+    assert(count == 30)
+}
