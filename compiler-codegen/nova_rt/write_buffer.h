@@ -48,7 +48,7 @@ static inline Nova_WriteBuffer* Nova_WriteBuffer_static_with_capacity(nova_int n
     return b;
 }
 
-static inline Nova_WriteBuffer* Nova_WriteBuffer_static_from_bytes(NovaArray_nova_byte* arr) {
+static inline Nova_WriteBuffer* Nova_WriteBuffer_static_from(NovaArray_nova_byte* arr) {
     Nova_WriteBuffer* b = (Nova_WriteBuffer*)nova_alloc(sizeof(Nova_WriteBuffer));
     int64_t cap = arr->len > 0 ? arr->len : NOVA_WRITE_BUFFER_INIT_CAP;
     b->data = (nova_byte*)nova_alloc((size_t)cap);
@@ -89,6 +89,18 @@ static inline nova_unit Nova_WriteBuffer_method_write_bytes(Nova_WriteBuffer* b,
     _nova_write_buffer_reserve(b, src->len);
     memcpy(b->data + b->len, src->data, (size_t)src->len);
     b->len += src->len;
+    return NOVA_UNIT;
+}
+
+/* Plan 12 acceptance: @write_zero(n int) — append n null bytes.
+ * Тест что добавление новой external fn в builtins.nv + runtime impl
+ * работает без правки Rust-codegen'а (registry-driven dispatch). */
+static inline nova_unit Nova_WriteBuffer_method_write_zero(Nova_WriteBuffer* b, nova_int n) {
+    _nova_write_buffer_check_live(b);
+    if (n <= 0) return NOVA_UNIT;
+    _nova_write_buffer_reserve(b, n);
+    memset(b->data + b->len, 0, (size_t)n);
+    b->len += n;
     return NOVA_UNIT;
 }
 

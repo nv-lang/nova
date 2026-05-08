@@ -1,6 +1,15 @@
 # План 12 — builtins.nv-driven external dispatch
 
-**Статус:** ⏳ pending (готов к старту — Plan 04 закрыт 2026-05-08).
+**Статус:** ✅ ЗАКРЫТ (2026-05-08, кроме Ф.6 — отложен).
+Ф.1-Ф.5 + Ф.7 acceptance готовы. Ф.6 (type-checker gate для unknown
+methods на opaque types) — отдельный refactor types/mod.rs, не блокер
+для main goal'а (single source of truth — builtins.nv).
+
+Acceptance criterion **выполнен**: добавление `WriteBuffer @write_zero(n int)`
+в builtins.nv + runtime impl `Nova_WriteBuffer_method_write_zero` —
+работает БЕЗ правки Rust-codegen'а. Тест в nova_tests/runtime/write_buffer.nv.
+
+Прежний статус: ⏳ pending (готов к старту — Plan 04 закрыт 2026-05-08).
 **Связь:** [D82](../../spec/decisions/08-runtime.md#d82) (extended
 2026-05-08), [D73/D77](../../spec/decisions/08-runtime.md#d73-from--into-protocol-пара-с-авто-выводом)
 (auto-derive From↔Into, TryFrom↔TryInto, Fail↔Result),

@@ -221,3 +221,26 @@ test "write_char + write_str + write_byte mixed" {
     assert(arr[2] == 67)        // 'C'
     assert(arr[3] == 0x44)      // 'D'
 }
+
+
+// ================================================================
+// SECTION 9: Plan 12 acceptance — registry-driven dispatch
+// ================================================================
+// `@write_zero(n int)` добавлен в builtins.nv + nova_rt без правки
+// Rust-codegen. Если этот тест проходит — Plan 12 acceptance: codegen
+// читает builtins.nv напрямую через ExternalRegistry, hard-coded
+// таблицы не нужны.
+
+test "write_zero — добавлено в builtins.nv без правки codegen" {
+    let mut wb = WriteBuffer.new()
+    wb.write_byte(0xFF)
+    wb.write_zero(3)            // append 3 нулей
+    wb.write_byte(0xAA)
+    let arr = wb.into()
+    assert(arr.len == 5)
+    assert(arr[0] == 0xFF)
+    assert(arr[1] == 0)
+    assert(arr[2] == 0)
+    assert(arr[3] == 0)
+    assert(arr[4] == 0xAA)
+}

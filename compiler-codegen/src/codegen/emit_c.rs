@@ -77,6 +77,12 @@ pub struct CEmitter {
     /// (Ф.2). Single-key `method_receivers` остаётся для backward compat —
     /// single-overload пути ссылаются на него.
     method_overloads: HashMap<(String, String), Vec<MethodSig>>,
+    /// Plan 12: builtins.nv-driven external dispatch registry.
+    /// Single source of truth для StringBuilder/WriteBuffer/ReadBuffer/
+    /// str.from(char) — `std/runtime/builtins.nv`. Codegen читает AST
+    /// и применяет mangling/type-mapping автоматически (вместо hard-coded
+    /// таблиц). Загружается один раз в `CEmitter::new()`.
+    pub external_registry: super::external_registry::ExternalRegistry,
     /// D39 / Plan 11 Ф.9: embed-поля per record-type.
     /// Key = wrapper type name; value = list of (field_name, embedded_type_name,
     /// is_anonymous). Используется для auto-proxy generation после AST-walk fn-items.
@@ -181,6 +187,8 @@ impl CEmitter {
             effect_schemas: HashMap::new(),
             method_receivers: HashMap::new(),
             method_overloads: HashMap::new(),
+            external_registry: super::external_registry::ExternalRegistry::load_builtins()
+                .expect("failed to load std/runtime/builtins.nv"),
             embed_fields: HashMap::new(),
             all_methods: HashSet::new(),
             iter_returns: HashMap::new(),
@@ -367,65 +375,31 @@ impl CEmitter {
         // регистрация (record_schemas + method_receivers для add_*/
         // into_str_unchecked) — удалена.
 
-        // Plan 04: register built-in opaque types (StringBuilder/WriteBuffer/
-        // ReadBuffer) as known type names so type_ref_to_c maps them to
-        // Nova_<T>*. We register empty schemas because their layout is
-        // opaque (defined в nova_rt/*.h, не в Nova-source).
-        {
-            self.record_schemas.insert("StringBuilder".to_string(), HashMap::new());
-            self.record_schemas.insert("WriteBuffer".to_string(), HashMap::new());
-            self.record_schemas.insert("ReadBuffer".to_string(), HashMap::new());
-
-            // Register method names to receivers. Names like `append`,
-            // `write_*`, `read_*`, `try_read_*`, `position`, `remaining`,
-            // `has_remaining`, `remaining_bytes` — not commonly shadowed.
-            // Common names (`new`, `from`, `with_capacity`, `into`, `clone`,
-            // `len`, `capacity`) — dispatched via receiver-type check in
-            // emit_call (special-case), не регистрируем здесь.
-            for m in &["append"] {
-                self.method_receivers.insert(m.to_string(),
-                    ("StringBuilder".to_string(), true));
-            }
-            // WriteBuffer methods: write_byte/write_bytes + write_char/write_str
-            // (text→UTF-8 для смешанных text+binary use-case'ов, Plan 04 Этап 6.1)
-            // + 18 numeric × LE/BE.
-            for m in &[
-                "write_byte", "write_bytes",
-                "write_char", "write_str",
-                "write_u8", "write_i8",
-                "write_u16_le", "write_u16_be", "write_u32_le", "write_u32_be",
-                "write_u64_le", "write_u64_be",
-                "write_i16_le", "write_i16_be", "write_i32_le", "write_i32_be",
-                "write_i64_le", "write_i64_be",
-                "write_f32_le", "write_f32_be", "write_f64_le", "write_f64_be",
-            ] {
-                self.method_receivers.insert(m.to_string(),
-                    ("WriteBuffer".to_string(), true));
-            }
-            // ReadBuffer methods: position/remaining/has_remaining/remaining_bytes
-            // + read_* (Fail-form) + try_read_* (Result-form).
-            for m in &[
-                "position", "remaining", "has_remaining", "remaining_bytes",
-                "read_byte", "read_bytes",
-                "read_u8", "read_i8",
-                "read_u16_le", "read_u16_be", "read_u32_le", "read_u32_be",
-                "read_u64_le", "read_u64_be",
-                "read_i16_le", "read_i16_be", "read_i32_le", "read_i32_be",
-                "read_i64_le", "read_i64_be",
-                "read_f32_le", "read_f32_be", "read_f64_le", "read_f64_be",
-                "try_read_byte", "try_read_bytes",
-                "try_read_u8", "try_read_i8",
-                "try_read_u16_le", "try_read_u16_be",
-                "try_read_u32_le", "try_read_u32_be",
-                "try_read_u64_le", "try_read_u64_be",
-                "try_read_i16_le", "try_read_i16_be",
-                "try_read_i32_le", "try_read_i32_be",
-                "try_read_i64_le", "try_read_i64_be",
-                "try_read_f32_le", "try_read_f32_be",
-                "try_read_f64_le", "try_read_f64_be",
-            ] {
-                self.method_receivers.insert(m.to_string(),
-                    ("ReadBuffer".to_string(), true));
+        // Plan 12: register built-in opaque types и method_receivers
+        // automatically из ExternalRegistry (single source of truth —
+        // std/runtime/builtins.nv). Hard-coded таблицы для StringBuilder/
+        // WriteBuffer/ReadBuffer удалены.
+        for recv_ty in self.external_registry.receiver_types.clone() {
+            // primitive str — не record, не нужен schema. Только
+            // user-defined opaque types (StringBuilder/WriteBuffer/...).
+            if recv_ty == "str" { continue; }
+            self.record_schemas.entry(recv_ty.clone())
+                .or_insert_with(HashMap::new);
+        }
+        // method_receivers (single-key, last-wins) — для backward compat
+        // dispatch'ей которые ещё не мигрированы на multi-overload путь.
+        // Plan 11 multi-overload + Plan 12 registry — основные пути; этот
+        // legacy registry остаётся для conservative routing.
+        //
+        // NOTE: используем `entry().or_insert()` чтобы НЕ перетирать
+        // existing entries из prelude (Error.new etc.). Single-key
+        // registry — last-wins, но prelude занят сначала.
+        for (key, decls) in self.external_registry.by_key.clone().into_iter() {
+            let (recv_ty, method_name) = key;
+            if recv_ty.is_empty() { continue; }     // free fns
+            if let Some(decl) = decls.first() {
+                self.method_receivers.entry(method_name)
+                    .or_insert((recv_ty, decl.is_instance));
             }
         }
 
@@ -4794,86 +4768,48 @@ impl CEmitter {
                     }
                     // Plan 04 Этап 6: Buffer removed. Use StringBuilder /
                     // WriteBuffer / ReadBuffer instead.
-                    // Plan 04: built-in StringBuilder methods.
-                    if obj_ty == "Nova_StringBuilder*" {
-                        let obj_c = self.emit_expr(obj)?;
-                        match method.as_str() {
-                            "len"      => return Ok(format!("Nova_StringBuilder_method_len({})", obj_c)),
-                            "capacity" => return Ok(format!("Nova_StringBuilder_method_capacity({})", obj_c)),
-                            "clone"    => return Ok(format!("Nova_StringBuilder_method_clone({})", obj_c)),
-                            "into"     => return Ok(format!("Nova_StringBuilder_method_into({})", obj_c)),
-                            "append" => {
-                                // Overload: append(str) vs append(char).
-                                if let Some(arg) = args.first() {
-                                    let arg_ty = self.infer_expr_c_type(arg);
-                                    let v = self.emit_expr(arg)?;
-                                    let suffix = if arg_ty == "nova_str" {
-                                        "str"
-                                    } else if matches!(&arg.kind, ExprKind::CharLit(_))
-                                        || arg_ty == "nova_char" {
-                                        "char"
-                                    } else {
-                                        "char"
-                                    };
-                                    return Ok(format!(
-                                        "Nova_StringBuilder_method_append_{}({}, {})",
-                                        suffix, obj_c, v));
+                    // Plan 12: registry-driven dispatch для opaque-types.
+                    // Single source of truth — std/runtime/builtins.nv.
+                    // Resolve по (recv_type, method_name) + arg-types
+                    // (overload, Plan 11).
+                    if obj_ty.starts_with("Nova_") && obj_ty.ends_with('*') {
+                        let recv_ty = obj_ty.trim_start_matches("Nova_")
+                            .trim_end_matches('*').trim();
+                        if let Some(decls) = self.external_registry
+                            .lookup(recv_ty, method).map(|s| s.to_vec())
+                        {
+                            // Filter instance overloads.
+                            let candidates: Vec<_> = decls.into_iter()
+                                .filter(|d| d.is_instance)
+                                .collect();
+                            if !candidates.is_empty() {
+                                // Emit args + collect types.
+                                let mut arg_strs = Vec::new();
+                                let mut arg_types = Vec::new();
+                                for a in args {
+                                    arg_types.push(self.infer_expr_c_type(a));
+                                    arg_strs.push(self.emit_expr(a)?);
                                 }
-                            }
-                            _ => {}
-                        }
-                    }
-                    // Plan 04: built-in WriteBuffer methods.
-                    if obj_ty == "Nova_WriteBuffer*" {
-                        let obj_c = self.emit_expr(obj)?;
-                        match method.as_str() {
-                            "len"      => return Ok(format!("Nova_WriteBuffer_method_len({})", obj_c)),
-                            "capacity" => return Ok(format!("Nova_WriteBuffer_method_capacity({})", obj_c)),
-                            "clone"    => return Ok(format!("Nova_WriteBuffer_method_clone({})", obj_c)),
-                            "into"     => return Ok(format!("Nova_WriteBuffer_method_into({})", obj_c)),
-                            // write_byte / write_bytes / write_uN_le/be — single-arg.
-                            m if m.starts_with("write_") => {
-                                if let Some(arg) = args.first() {
-                                    let v = self.emit_expr(arg)?;
-                                    return Ok(format!(
-                                        "Nova_WriteBuffer_method_{}({}, {})",
-                                        method, obj_c, v));
+                                let chosen = if candidates.len() == 1 {
+                                    Some(&candidates[0])
                                 } else {
-                                    return Err(format!(
-                                        "WriteBuffer.{} requires one argument", method));
+                                    candidates.iter()
+                                        .find(|d| d.param_c_types.len() == arg_types.len()
+                                            && d.param_c_types.iter().zip(arg_types.iter())
+                                                .all(|(w, g)| w == g))
+                                };
+                                if let Some(decl) = chosen {
+                                    let obj_c = self.emit_expr(obj)?;
+                                    let mut full = vec![obj_c];
+                                    full.extend(arg_strs);
+                                    return Ok(format!("{}({})", decl.c_name, full.join(", ")));
                                 }
                             }
-                            _ => {}
                         }
                     }
-                    // Plan 04: built-in ReadBuffer methods.
-                    if obj_ty == "Nova_ReadBuffer*" {
-                        let obj_c = self.emit_expr(obj)?;
-                        match method.as_str() {
-                            "position"        => return Ok(format!("Nova_ReadBuffer_method_position({})", obj_c)),
-                            "remaining"       => return Ok(format!("Nova_ReadBuffer_method_remaining({})", obj_c)),
-                            "remaining_bytes" => return Ok(format!("Nova_ReadBuffer_method_remaining_bytes({})", obj_c)),
-                            "has_remaining" => {
-                                if let Some(arg) = args.first() {
-                                    let v = self.emit_expr(arg)?;
-                                    return Ok(format!(
-                                        "Nova_ReadBuffer_method_has_remaining({}, {})", obj_c, v));
-                                }
-                            }
-                            // read_* (Fail-form) и try_read_* (Result-form):
-                            m if m.starts_with("read_") || m.starts_with("try_read_") => {
-                                let mut call_args = vec![obj_c.clone()];
-                                for a in args.iter() {
-                                    call_args.push(self.emit_expr(a)?);
-                                }
-                                return Ok(format!(
-                                    "Nova_ReadBuffer_method_{}({})",
-                                    method,
-                                    call_args.join(", ")));
-                            }
-                            _ => {}
-                        }
-                    }
+                    // Plan 12 Ф.5: hard-coded dispatch для StringBuilder/
+                    // WriteBuffer/ReadBuffer удалён. Все вызовы идут через
+                    // registry-driven путь выше (Plan 12 Ф.3).
                 }
                 // 0a-channel. Built-in Channel static method (D79).
                 if let ExprKind::Ident(name) = &obj.kind {
@@ -4884,68 +4820,46 @@ impl CEmitter {
                         }
                     }
                 }
-                // Plan 04 Этап 6: Buffer удалён (REMOVED). Use StringBuilder
-                // (text) / WriteBuffer (binary) / ReadBuffer (cursor).
-                // 0a2. Plan 04: Built-in StringBuilder/WriteBuffer/ReadBuffer
-                // static-методы. Dispatch на C-runtime функции.
+                // Plan 12: registry-driven dispatch для Member-form static
+                // (obj=Ident("Type")). Resolve через external_registry.
+                // Skip `str.from` — см. Path-form блок выше.
                 if let ExprKind::Ident(name) = &obj.kind {
-                    if name == "StringBuilder" {
-                        match method.as_str() {
-                            "new" => return Ok("Nova_StringBuilder_static_new()".to_string()),
-                            "with_capacity" => {
-                                if let Some(arg) = args.first() {
-                                    let v = self.emit_expr(arg)?;
-                                    return Ok(format!("Nova_StringBuilder_static_with_capacity({})", v));
-                                }
+                    let skip_str_from = name == "str" && method == "from";
+                    if !skip_str_from { if let Some(decls) = self.external_registry
+                        .lookup(name, method).map(|s| s.to_vec())
+                    {
+                        let candidates: Vec<_> = decls.into_iter()
+                            .filter(|d| !d.is_instance)
+                            .collect();
+                        if !candidates.is_empty() {
+                            let mut arg_strs = Vec::new();
+                            let mut arg_types = Vec::new();
+                            for a in args {
+                                arg_types.push(self.infer_expr_c_type(a));
+                                arg_strs.push(self.emit_expr(a)?);
                             }
-                            "from" => {
-                                // Overload: from(str) vs from(char). Differ by C-fn name suffix.
-                                if let Some(arg) = args.first() {
-                                    let arg_ty = self.infer_expr_c_type(arg);
-                                    let v = self.emit_expr(arg)?;
-                                    if arg_ty == "nova_str" {
-                                        return Ok(format!("Nova_StringBuilder_static_from_str({})", v));
-                                    } else if matches!(&arg.kind, ExprKind::CharLit(_))
-                                        || arg_ty == "nova_char" {
-                                        return Ok(format!("Nova_StringBuilder_static_from_char({})", v));
-                                    } else {
-                                        // Fallback: char-as-int (bootstrap convention).
-                                        return Ok(format!("Nova_StringBuilder_static_from_char({})", v));
-                                    }
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-                    if name == "WriteBuffer" {
-                        match method.as_str() {
-                            "new" => return Ok("Nova_WriteBuffer_static_new()".to_string()),
-                            "with_capacity" => {
-                                if let Some(arg) = args.first() {
-                                    let v = self.emit_expr(arg)?;
-                                    return Ok(format!("Nova_WriteBuffer_static_with_capacity({})", v));
-                                }
-                            }
-                            "from" => {
-                                if let Some(arg) = args.first() {
-                                    let v = self.emit_expr(arg)?;
-                                    return Ok(format!("Nova_WriteBuffer_static_from_bytes({})", v));
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-                    if name == "ReadBuffer" {
-                        if method == "from" {
-                            if let Some(arg) = args.first() {
-                                let v = self.emit_expr(arg)?;
-                                return Ok(format!("Nova_ReadBuffer_static_from_bytes({})", v));
+                            let chosen = if candidates.len() == 1 {
+                                Some(&candidates[0])
+                            } else {
+                                candidates.iter()
+                                    .find(|d| d.param_c_types.len() == arg_types.len()
+                                        && d.param_c_types.iter().zip(arg_types.iter())
+                                            .all(|(w, g)| w == g))
+                            };
+                            if let Some(decl) = chosen {
+                                return Ok(format!("{}({})", decl.c_name, arg_strs.join(", ")));
                             }
                         }
-                    }
-                    // Plan 04 follow-up: f64.from_bits(n int) / int.to_bits(f f64)
-                    // — IEEE 754 bit-cast pair. Используется для распаковки
-                    // try_read_f64_* (Result-payload — int bits, нужен double).
+                    }}
+                }
+                // Plan 12 Ф.5: hard-coded Member-form static dispatch для
+                // StringBuilder/WriteBuffer/ReadBuffer удалён. Registry-
+                // driven путь (Plan 12 Ф.3) обрабатывает это раньше.
+                //
+                // f64.from_bits / int.to_bits — НЕ в registry (это primitive
+                // type methods, не external fn в std/runtime/builtins.nv).
+                // Оставляем как hard-coded.
+                if let ExprKind::Ident(name) = &obj.kind {
                     if name == "f64" && method == "from_bits" {
                         if let Some(arg) = args.first() {
                             let v = self.emit_expr(arg)?;
@@ -5446,58 +5360,47 @@ impl CEmitter {
                         }
                     }
                 }
-                // Plan 04 Этап 6: Buffer removed. Path-form для
-                // StringBuilder/WriteBuffer/ReadBuffer ниже.
-                // Plan 04: built-in StringBuilder/WriteBuffer/ReadBuffer (Path-form).
-                if parts.len() == 2 && parts[0] == "StringBuilder" {
-                    match parts[1].as_str() {
-                        "new" => return Ok("Nova_StringBuilder_static_new()".to_string()),
-                        "with_capacity" => {
-                            if let Some(arg) = args.first() {
-                                let v = self.emit_expr(arg)?;
-                                return Ok(format!("Nova_StringBuilder_static_with_capacity({})", v));
+                // Plan 12: registry-driven dispatch для Path-form static
+                // (Type.method(args)). Resolve по (recv_type, method_name)
+                // + arg-types.
+                //
+                // Skip `str.from` — есть hard-coded path ниже с auto-derive
+                // через D73 into_targets. Registry знает только `str.from(char)`
+                // но `str.from(int/f64/bool)` идут через builtin nova_*_to_str
+                // helpers — которых в registry нет.
+                if parts.len() == 2 && !(parts[0] == "str" && parts[1] == "from") {
+                    let recv_ty = &parts[0];
+                    let method_name = &parts[1];
+                    if let Some(decls) = self.external_registry
+                        .lookup(recv_ty, method_name).map(|s| s.to_vec())
+                    {
+                        let candidates: Vec<_> = decls.into_iter()
+                            .filter(|d| !d.is_instance)
+                            .collect();
+                        if !candidates.is_empty() {
+                            let mut arg_strs = Vec::new();
+                            let mut arg_types = Vec::new();
+                            for a in args {
+                                arg_types.push(self.infer_expr_c_type(a));
+                                arg_strs.push(self.emit_expr(a)?);
                             }
-                        }
-                        "from" => {
-                            if let Some(arg) = args.first() {
-                                let arg_ty = self.infer_expr_c_type(arg);
-                                let v = self.emit_expr(arg)?;
-                                if arg_ty == "nova_str" {
-                                    return Ok(format!("Nova_StringBuilder_static_from_str({})", v));
-                                } else {
-                                    return Ok(format!("Nova_StringBuilder_static_from_char({})", v));
-                                }
+                            let chosen = if candidates.len() == 1 {
+                                Some(&candidates[0])
+                            } else {
+                                candidates.iter()
+                                    .find(|d| d.param_c_types.len() == arg_types.len()
+                                        && d.param_c_types.iter().zip(arg_types.iter())
+                                            .all(|(w, g)| w == g))
+                            };
+                            if let Some(decl) = chosen {
+                                return Ok(format!("{}({})", decl.c_name, arg_strs.join(", ")));
                             }
-                        }
-                        _ => {}
-                    }
-                }
-                if parts.len() == 2 && parts[0] == "WriteBuffer" {
-                    match parts[1].as_str() {
-                        "new" => return Ok("Nova_WriteBuffer_static_new()".to_string()),
-                        "with_capacity" => {
-                            if let Some(arg) = args.first() {
-                                let v = self.emit_expr(arg)?;
-                                return Ok(format!("Nova_WriteBuffer_static_with_capacity({})", v));
-                            }
-                        }
-                        "from" => {
-                            if let Some(arg) = args.first() {
-                                let v = self.emit_expr(arg)?;
-                                return Ok(format!("Nova_WriteBuffer_static_from_bytes({})", v));
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-                if parts.len() == 2 && parts[0] == "ReadBuffer" {
-                    if parts[1] == "from" {
-                        if let Some(arg) = args.first() {
-                            let v = self.emit_expr(arg)?;
-                            return Ok(format!("Nova_ReadBuffer_static_from_bytes({})", v));
                         }
                     }
                 }
+                // Plan 12 Ф.5: hard-coded Path-form static dispatch для
+                // StringBuilder/WriteBuffer/ReadBuffer удалён. Registry-
+                // driven путь (Plan 12 Ф.3) обрабатывает это раньше.
                 // Check if first segment is a known effect
                 if parts.len() == 2 && self.effect_schemas.contains_key(&parts[0]) {
                     format!("Nova_{}_{}", parts[0], parts[1])

@@ -1631,3 +1631,86 @@ Stack[T] был bypass'ом legacy single-key path где boxing был.
 Теперь Plan 11 покрывает все случаи. Уровень покрытия codegen-
 dispatch'а можно проверить через regression-suite — stack_queue
 поймал регрессию который иначе попал бы в production.
+
+### [ЗАКР 2026-05-08] Plan 12: builtins.nv-driven external dispatch
+
+`std/runtime/builtins.nv` теперь single source of truth для
+StringBuilder/WriteBuffer/ReadBuffer. Codegen читает AST через
+`ExternalRegistry` и применяет mangling автоматически. Hard-coded
+match'и на ~150 строк удалены.
+
+#### Что сделано
+
+1. **Ф.1 ExternalRegistry** (~200 строк нового кода в
+   `compiler-codegen/src/codegen/external_registry.rs`):
+   - `include_str!("../../../std/runtime/builtins.nv")` — embedded
+     в binary; парсится при `CEmitter::new()`.
+   - Двухпроходный `from_module`: подсчёт overload'ов per ключ →
+     генерация ExternalDecl с правильным mangling'ом.
+   - Mangling: для overload'ов суффикс по Nova-type первого param
+     (`_str`/`_char`/`_bytes`/...) — compatible с runtime naming.
+   - `lookup(recv_ty, method)` → `Option<&[ExternalDecl]>`.
+
+2. **Ф.2 record_schemas + method_receivers из registry**: hard-coded
+   таблицы для StringBuilder/WriteBuffer/ReadBuffer удалены из
+   init блока. Replace через iteration по
+   `external_registry.receiver_types`. method_receivers использует
+   `entry().or_insert()` чтобы НЕ перетирать prelude entries
+   (Error.new etc.).
+
+3. **Ф.3 emit_call dispatch через registry**: добавлены
+   registry-driven path'и (Member-form instance, Member-form
+   static, Path-form static) **до** hard-coded блоков. Strict
+   match по arg-types + override Plan 11 multi-overload pattern.
+
+4. **Ф.4 str.from(char) — skip-list**: `str.from` имеет hard-coded
+   special-case путь для `int/bool/f64 → str` через
+   `nova_int_to_str`/etc helpers (НЕ external fn). Registry
+   skip'ает `str.from` чтобы старый hard-coded path работал.
+
+5. **Ф.5 удалить hard-coded dispatch**: 3 блока × ~50 строк удалены:
+   - StringBuilder/WriteBuffer/ReadBuffer Member-form instance
+     (`obj_ty == "Nova_StringBuilder*"` etc.).
+   - StringBuilder/WriteBuffer/ReadBuffer Member-form static
+     (`name == "StringBuilder"` etc.).
+   - StringBuilder/WriteBuffer/ReadBuffer Path-form static
+     (`parts[0] == "StringBuilder"` etc.).
+   - Runtime renames: `Nova_WriteBuffer_static_from_bytes` →
+     `Nova_WriteBuffer_static_from`, `Nova_ReadBuffer_static_from_bytes`
+     → `Nova_ReadBuffer_static_from` (consistent с registry naming
+     для single-overload methods).
+
+6. **Ф.7 Acceptance test**: добавлено `WriteBuffer @write_zero(n int)`:
+   - `builtins.nv`: `export external fn WriteBuffer mut @write_zero(n int) -> ()`.
+   - `nova_rt/write_buffer.h`: `Nova_WriteBuffer_method_write_zero` impl.
+   - test в `nova_tests/runtime/write_buffer.nv`.
+   **Без правки Rust-codegen'а** — registry парсит builtins.nv,
+   mangling даёт правильное имя, dispatch находит. PASS.
+
+7. **Ф.6 — отложен**. Type-checker gate для unknown methods на opaque
+   types. Сейчас unknown даёт linker error (late stage); ideal —
+   early-stage type error. Отдельный refactor `types/mod.rs`.
+
+#### Регрессии
+
+- 78/78 PASS на nova_tests.
+- Регрессия в процессе: prelude.Error.new перетёрся registry-init →
+  fix через `entry().or_insert()` чтобы не trample existing entries.
+
+#### Урок
+
+**`include_str!` для embedded source** — правильный паттерн для
+"compile-time validated config". Альтернативы:
+- Хардкод путя через CARGO_MANIFEST_DIR — fragile, зависит от FS.
+- Build script — overengineering для одного файла.
+- include_str! — atomic, валидируется на compile time, single binary.
+
+**Двухпроходный mangling** — необходимо для overload'ов с suffix.
+Single-pass не знает «всего» количества overload'ов на момент
+обработки первой; нужен pre-pass count. Этот pattern переиспользуется
+в любом mangling'е где decoration зависит от глобального состояния.
+
+**Single source of truth pattern** масштабируется: добавить новый
+opaque type → declare в builtins.nv + impl runtime → готово. Ни
+codegen, ни method_receivers init не правятся. Это значит **ниже
+порог входа** для расширения stdlib runtime.

@@ -1855,3 +1855,66 @@ is_generic_recv check. Regression-suite (stack_queue)
 поймал то что в production имело бы серьёзные последствия.
 
 Plan 04 закрыт. Все 6 этапов выполнены.
+
+
+================================================================================
+2026-05-08 Plan 12: builtins.nv-driven external dispatch
+================================================================================
+
+Plan 12 закрыт (Ф.1-Ф.5 + Ф.7 acceptance). Ф.6 type-checker gate
+отложен (отдельный refactor types/mod.rs).
+
+std/runtime/builtins.nv — теперь single source of truth для
+StringBuilder/WriteBuffer/ReadBuffer. Codegen читает AST через
+ExternalRegistry и применяет mangling автоматически.
+
+Что сделано:
+
+1. Ф.1 ExternalRegistry (compiler-codegen/src/codegen/external_registry.rs):
+   - include_str! builtins.nv embedded в binary.
+   - Парсится при CEmitter::new() через crate::parser::parse.
+   - Двухпроходный from_module: pre-pass подсчёт overload'ов,
+     main-pass генерация ExternalDecl с mangling.
+   - Mangling: для overload'ов суффикс по Nova-type первого param
+     (_str/_char/_bytes/...) — compatible с runtime naming.
+
+2. Ф.2 record_schemas + method_receivers init из registry.
+   Hard-coded таблицы ("StringBuilder", "WriteBuffer", "ReadBuffer"
+   + ~70 method_receivers entries) удалены — replaces iteration
+   по registry.receiver_types и registry.by_key.
+   method_receivers использует entry().or_insert() для prelude
+   compat (Error.new не должен перетираться).
+
+3. Ф.3 emit_call dispatch через registry: добавлены registry-driven
+   path'и для Member-form instance, Member-form static, Path-form
+   static — все ДО hard-coded блоков. Strict match по arg-types
+   + Plan 11 multi-overload override pattern.
+
+4. Ф.4 str.from(char) skip-list: str.from имеет hard-coded путь
+   для int/bool/f64 → str через nova_int_to_str/etc helpers
+   (НЕ external fn). Registry skip'ает str.from.
+
+5. Ф.5 удалить hard-coded dispatch: 3 блока × ~50 LoC удалены
+   (Member-form instance, Member-form static, Path-form static).
+   Runtime renames Nova_WriteBuffer_static_from_bytes → from,
+   Nova_ReadBuffer_static_from_bytes → from для consistency
+   с registry mangling.
+
+6. Ф.7 Acceptance test: добавлено WriteBuffer @write_zero(n int):
+   - builtins.nv: export external fn declaration.
+   - nova_rt/write_buffer.h: impl через memset.
+   - nova_tests: PASS.
+   БЕЗ правки Rust-codegen — registry парсит builtins.nv, mangling
+   даёт правильное имя, dispatch находит.
+
+7. Ф.6 type-checker gate отложен (отдельный refactor).
+
+Регрессии: 78/78 PASS на nova_tests.
+
+Урок: include_str! для embedded source — правильный паттерн для
+compile-time validated config. Двухпроходный mangling необходим
+для overload'ов с suffix (single-pass не знает общего count'а).
+Single source of truth pattern масштабируется: новый opaque type =
+declare в builtins.nv + impl runtime — без codegen edits.
+
+Plan 12 закрыт.

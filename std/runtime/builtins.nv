@@ -53,6 +53,11 @@ export external fn WriteBuffer.from(b []byte)              -> Self
 export external fn WriteBuffer mut @write_byte(v byte)     -> ()
 export external fn WriteBuffer mut @write_bytes(src []byte) -> ()
 
+// Plan 12 acceptance: добавлен как external fn в builtins.nv +
+// runtime impl без правки Rust-codegen'а. Если эта декларация работает
+// «из коробки» — registry-driven dispatch операционен.
+export external fn WriteBuffer mut @write_zero(n int)      -> ()
+
 // Plan 04 Этап 6: text → UTF-8 bytes для смешанных text+binary
 // use-case'ов (percent-decoding URL, multi-byte sequences).
 // StringBuilder text-only; WriteBuffer + write_char/write_str

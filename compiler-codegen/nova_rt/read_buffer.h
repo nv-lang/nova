@@ -24,7 +24,7 @@ typedef struct Nova_ReadBuffer {
 } Nova_ReadBuffer;
 
 /* ReadBuffer.from(b []byte) — view, no copy. */
-static inline Nova_ReadBuffer* Nova_ReadBuffer_static_from_bytes(NovaArray_nova_byte* arr) {
+static inline Nova_ReadBuffer* Nova_ReadBuffer_static_from(NovaArray_nova_byte* arr) {
     Nova_ReadBuffer* b = (Nova_ReadBuffer*)nova_alloc(sizeof(Nova_ReadBuffer));
     b->data = arr->data;
     b->len = arr->len;

@@ -4244,7 +4244,20 @@ Nova auto-derive read/try_read — оригинальная фича (закре
 
 ---
 
-## Q-codegen-builtins-cleanup. Удаление hard-coded external-таблиц из codegen
+## Q-codegen-builtins-cleanup. Удаление hard-coded external-таблиц из codegen ✅ CLOSED (2026-05-08)
+
+> **Plan 12 закрыт (2026-05-08).** Ф.1-Ф.5 + Ф.7 acceptance.
+> `std/runtime/builtins.nv` — single source of truth; codegen
+> читает AST через `ExternalRegistry` (`include_str!`-embedded
+> в binary). Hard-coded dispatch удалён в emit_call (Member-form
+> instance + Member-form static + Path-form static). Acceptance:
+> добавление `WriteBuffer @write_zero(n int)` в builtins.nv +
+> runtime impl работает БЕЗ правки Rust-codegen'а.
+>
+> **Не сделано (отложено):** Ф.6 type-checker gate для unknown
+> methods на opaque types. Сейчас unknown method даёт linker error
+> (late-stage); idealем early-stage type error. Отдельный refactor
+> `types/mod.rs`, не блокер для main goal'а.
 
 **Контекст.** [D82](decisions/08-runtime.md#d82) (расширен 2026-05-08)
 фиксирует: `std/runtime/builtins.nv` — единственный источник истины
