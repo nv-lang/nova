@@ -2302,3 +2302,80 @@ levels — выбор overload'а. Прецедент: TypeScript type assertion
   тестов на free-fn-as-value. 87/87 nova_tests PASS (без регрессий).
 - **Файлы:** compiler-codegen/src/codegen/emit_c.rs (+95 строк),
   nova_tests/syntax/fn_first_class.nv (+50 строк), plan 14 status.
+
+---
+
+## Plan 14 Ф.2 + Ф.4 + bonus codegen-fixes (2026-05-09, ✅ ЗАКРЫТЫ)
+
+### Ф.2 — const с runtime-init (lazy-init геттер)
+
+- **Что упрощено в use-site:** `const SERVER_DEFAULTS = ServerOpts {
+  port: 8080, host: "0.0.0.0", ... }` теперь работает. Раньше падал
+  на codegen с «non-constant expression in const declaration».
+  Программист мог обойти только через геттер-функцию вручную.
+- **Lazy-init pattern.** Codegen эмитит storage + init-flag + геттер
+  `nova_const_<name>()` с проверкой первого вызова. Вызывается O(1)
+  после init. Use-site `Ident(name)` → `nova_const_<name>()`. D55
+  coercion работает (`expected_record_type` устанавливается перед
+  emit).
+- **Constexpr path неизменен.** Простые литералы (int/bool/f64/str/
+  char/Unary) по-прежнему `static const` без накладных расходов.
+
+### Ф.4 — fn-поле в record (closure-call routing)
+
+- **Что упрощено в use-site:** `let op = Op { f: (x) => x + 1 };
+  op.f(5)` теперь работает. Раньше codegen воспринимал Member-call
+  как метод-вызов и не находил method `f` на типе `Op`.
+- **Реестр record_field_fn_sigs.** Заполняется при `emit_record_type`
+  для всех `TypeRef::Func` полей. Routing в Call: если obj_ty —
+  record и (record, method) ∈ record_field_fn_sigs → emit
+  `NOVA_CLOS_CALL_*` macro с f-value `(obj->field)`.
+
+### Bonus a — line:col в codegen-ошибках
+
+- **Что упрощено в debug-loop:** ошибки codegen теперь показывают
+  `<file>:<line>:<col>:` вместо абстрактного «non-bool cond».
+  Найти конкретное место стало тривиально (раньше нужны были грепы).
+- **Архитектура:** main.rs всегда передаёт source в emitter (это уже
+  было через `set_source_for_annotations`); флаг `annotation_enabled`
+  отделяет SRC-комментарии в C-output (--annotate-source) от
+  диагностики (всегда). Метод `check_bool_condition_at(span)`
+  использует source для line:col.
+
+### Bonus b — D38 built-in is_empty для []T и str
+
+- **Что упрощено в use-site:** `if arr.is_empty { ... }` и
+  `if s.is_empty { ... }` работают. Раньше падали на strict bool-check
+  потому что infer возвращал `nova_int` (default fallback).
+- **Codegen:** прямой emit `(arr->len) == 0` / `(s.len) == 0` (это
+  bool-выражение, не cast). Infer возвращает `nova_bool`.
+
+### Bonus c — str-методы ret-type в infer
+
+- **Что упрощено в use-site:** `if s.starts_with(...)` / `.ends_with` /
+  `.contains` / `.eq` теперь корректно проходят strict bool-check.
+  Раньше infer возвращал default `nova_int` для всех Member-call'ов
+  на str (потому что str-методы зарегистрированы в `runtime_registry`,
+  не `method_overloads`, который смотрит infer).
+- **Решение:** `str_method_ret_type` map (parallel к существующему
+  `str_method_to_rt` для emit). Используется в `infer_expr_c_type`
+  для Call с Member-func и obj_ty == "nova_str".
+
+### Tests / regression
+
+- nova_tests/syntax/const_complex.nv (новый, 6 тестов) — все слои Ф.2.
+- nova_tests/syntax/fn_first_class.nv (+4 тестов) — Ф.4 closure-call.
+- 88/88 nova_tests PASS (87 baseline + const_complex).
+- 91/137 std PASS — то же overall, но 4 const-related файла
+  продвинулись по pipeline'у (упираются дальше в др. gap'ы).
+
+### Файлы
+
+- compiler-codegen/src/codegen/emit_c.rs — Ф.2 (lazy_const) + Ф.4
+  (record_field_fn_sigs) + bonus (line:col, is_empty, str-method
+  ret-type) — ~220 строк всего.
+- compiler-codegen/src/main.rs — source всегда передаётся.
+- nova_tests/syntax/const_complex.nv — новый.
+- nova_tests/syntax/fn_first_class.nv — +50 строк тестов.
+- docs/plans/14-stdlib-codegen-gaps.md — Ф.2/Ф.4 retro + table.
+- docs/plans/README.md — статус.

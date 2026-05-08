@@ -2645,3 +2645,122 @@ Real fix — scope в bootstrap codegen — отдельная задача.
                   - Остальное — устаревшая грамматика.
 
 Examples — archaic test code, не блокеры. После Ф.3 регрессий нет.
+
+================================================================
+Plan 14 Ф.2 + Ф.4 + bonus codegen-fixes (2026-05-09, ✅ ЗАКРЫТЫ)
+================================================================
+
+## Ф.2 — const non-trivial (lazy-init)
+
+До: emit_const_decl принимал только IntLit/FloatLit/BoolLit/StrLit/
+CharLit/Unary (constexpr-only). Запись `const FOO = Record { ... }`
+или `const FOO = make()` падала с «non-constant expression in const
+declaration».
+
+После: при ошибке emit_const_expr fallback → emit_lazy_const:
+  static <Ty> _nova_const_<name>_value;
+  static int   _nova_const_<name>_init = 0;
+  static <Ty> nova_const_<name>(void) {
+      if (!_nova_const_<name>_init) {
+          ... emit_expr (включая side-statements, runtime calls) ...
+          _nova_const_<name>_value = <expr_val>;
+          _nova_const_<name>_init = 1;
+      }
+      return _nova_const_<name>_value;
+  }
+
+На use-site:
+  - `Ident(name)` для lazy-const → `nova_const_<name>()`.
+  - `Path([name, field])` (парсер строит Path, не Member, для
+    UpperCase ident.member) → `nova_const_<name>()->field`.
+
+Реестры: lazy_consts: HashSet<String> + var_types[name] для type infer.
+expected_record_type выставляется перед emit_expr → D55 coercion
+для `const FOO Type = { ... }` без явного имени.
+
+Тесты: nova_tests/syntax/const_complex.nv (6 тестов) — record-литерал,
+D55 coercion, function-call в const, использование в fn body,
+кеширование (повторное обращение), простые const'ы (constexpr-path).
+Все 6 PASS.
+
+std/ effect: 4 файла (complex / duration / uuid / uuid_namespace)
+теперь проходят const-emit; падают на других gap'ах (Ф.5 / Ф.7 /
+str API gaps), не const-emit.
+
+## Ф.4 — fn-поле в record (closure-call routing)
+
+До: `let op = Op { f: (x) => x + 1 }; op.f(5)` падал — codegen
+обрабатывал Member как метод-вызов и не знал, что field — fn-typed.
+
+После: реестр record_field_fn_sigs: HashMap<(record, field),
+(param_tys, ret_ty)> заполняется при emit_record_type для каждого
+TypeRef::Func поля. В Member-call routing: если obj — record и
+(record, method) ∈ record_field_fn_sigs → emit NOVA_CLOS_CALL_*
+с f-value `(obj->field_mangled)`.
+
+Тесты: nova_tests/syntax/fn_first_class.nv (+4):
+  - fn-поле в record + вызов через obj.f(x)
+  - fn-поле в record — две разные fn
+  - fn-поле arity 2
+  - fn-поле + free fn (Plan 14 Ф.3) — combo
+
+Все 21/21 в fn_first_class.nv PASS.
+
+## Bonus: codegen quality-of-life fixes
+
+a) Line:col в codegen-ошибках. Добавлен метод `check_bool_condition_at`
+   с span-параметром; main.rs всегда передаёт source в emitter; флаг
+   annotation_enabled отделяет SRC-комментарии (по --annotate-source)
+   от диагностики. Теперь ошибки показывают `<file>:<line>:<col>:`.
+
+b) Spec D38 built-in `is_empty` для `[]T` и `str` теперь корректно
+   эмитится как bool (`(arr->len) == 0` / `(s.len) == 0`) и инфер'ится
+   как `nova_bool`. До этого `if arr.is_empty { ... }` падал с strict
+   bool-check'ом потому что infer возвращал nova_int.
+
+c) Str-методы ret-type через `str_method_ret_type` map в infer:
+   `s.starts_with(...)` / `.ends_with` / `.contains` / `.eq` →
+   nova_bool; `.to_upper`/.../`.slice` → nova_str; `.find/.rfind` →
+   NovaOpt_nova_int. Без этого все эти методы инфер'лись как
+   default `nova_int`, что ломало bool-check для `if`.
+
+## Tests
+
+- nova_tests: 88/88 PASS (87 baseline + 1 const_complex).
+- std/: 91/137 PASS — те же что и до Ф.2/Ф.4 в overall (потому что
+  большинство std-файлов имеют **несколько** codegen-gap'ов; мои
+  fix'ы продвинули их по pipeline'у, но они упёрлись в следующий gap).
+
+## Известные нерешённые случаи
+
+Найденные через линеризацию ошибок:
+  - hashmap.nv:299:20 — `if k.eq(key)` где K=void* (generic). Требует
+    Ф.5 cross-file resolution (Hashable protocol из spec).
+  - retry.nv:119:20 — `if d.gt(...)` на Duration cross-file.
+    Аналогично.
+  - url.nv:78:12 — `after_scheme.starts_with(...)` где after_scheme —
+    компонент tuple-destructure от fn возвращающей `(str, str)`.
+    Требует tuple-element-type tracking через fn-return.
+
+Все три — codegen type-inference issues, не синтаксические ошибки в
+std-файлах.
+
+Файлы:
+  compiler-codegen/src/codegen/emit_c.rs — Ф.2 (~140 строк) + Ф.4
+    (~50 строк) + Bonus a/b/c (~30 строк).
+  compiler-codegen/src/main.rs — source всегда передаётся (для line:col).
+  nova_tests/syntax/const_complex.nv — новый, 6 тестов.
+  nova_tests/syntax/fn_first_class.nv — +4 тестов (всего 21).
+  docs/plans/14-stdlib-codegen-gaps.md — Ф.2/Ф.4 retro + table update.
+  docs/plans/README.md — статус plan 14.
+
+Урок:
+- Lazy-init pattern для non-constexpr константов — стандартная
+  техника. Альтернатива (`__attribute__((constructor))`) была бы
+  компактнее, но требует cross-platform-compatible синтаксиса.
+- Diagnostic improvements (line:col) часто оказываются критичными
+  для debugging'а std-файлов. До этой фазы я тратил время на грепы
+  с пробами; после — ошибки сами говорят где.
+- Ф.2 + Ф.3 + Ф.4 = больше **closure-related gaps**: free-fn-as-value
+  (Ф.3), fn-в-record (Ф.4), lazy-init вызов (Ф.2 — по сути «const как
+  thunk»). Все три объединены через NOVA_CLOS_CALL_* infrastructure.
