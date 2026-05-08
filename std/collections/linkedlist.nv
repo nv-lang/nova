@@ -47,7 +47,7 @@ export fn LinkedList[T].from_iter(it effect { mut next() -> Option[T] }) -> Self
     // Prepend каждый элемент → получаем обратный список (O(1) на шаг).
     // Затем reverse — суммарно O(n), без вспомогательного массива.
     let mut acc LinkedList[T] = Empty
-    while let Some(x) = it.next() {
+    for x in it {
         acc = Cons(x, acc)
     }
     acc.reverse()
