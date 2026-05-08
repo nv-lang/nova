@@ -281,12 +281,25 @@ impl Expr {
     }
 }
 
+/// Часть `"... ${expr} ..."` interpolated-строки (D44, Plan 17 Ф.4).
+#[derive(Debug, Clone)]
+pub enum InterpStrPart {
+    /// Буквальная часть строки (literal-сегмент).
+    Lit(String),
+    /// Подвыражение `${expr}` — будет вычислено и приведено к str.
+    Expr(Box<Expr>),
+}
+
 #[derive(Debug, Clone)]
 pub enum ExprKind {
     // Литералы
     IntLit(i64),
     FloatLit(f64),
     StrLit(String),
+    /// `"hello ${name}, age=${n}"` — D44 string interpolation.
+    /// Codegen эмитит StringBuilder-цепочку: одна аллокация
+    /// + per-fragment `@append` (без O(N²) от `+`).
+    InterpolatedStr { parts: Vec<InterpStrPart> },
     BoolLit(bool),
     UnitLit,
     /// Q-char-literals: 'a' / '\n' / '\u{...}' — Unicode codepoint as u32.

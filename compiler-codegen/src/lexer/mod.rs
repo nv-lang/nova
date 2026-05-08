@@ -452,6 +452,15 @@ impl<'a> Lexer<'a> {
                         b'\\' => { s.push('\\'); self.pos += 1; }
                         b'"' => { s.push('"'); self.pos += 1; }
                         b'0' => { s.push('\0'); self.pos += 1; }
+                        b'$' => {
+                            // \$ — escape для буквального ${ в interpolated string.
+                            // Сохраняем sentinel-байт U+0001 (SOH) перед `$`, чтобы
+                            // parser отличил literal-${ от interpolation-${.
+                            // SOH в обычном Nova-коде не встречается (control char).
+                            s.push('\u{0001}');
+                            s.push('$');
+                            self.pos += 1;
+                        }
                         b'x' => {
                             // \xNN — ровно 2 hex digit'а, byte value 0..255.
                             // Для бинарных байтов в string (тест-кейсы, протоколы).

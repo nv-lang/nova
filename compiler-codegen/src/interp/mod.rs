@@ -240,6 +240,24 @@ impl Interpreter {
             ExprKind::CharLit(cp) => Ok(Flow::Value(Value::Int(*cp as i64))),
             ExprKind::FloatLit(x) => Ok(Flow::Value(Value::Float(*x))),
             ExprKind::StrLit(s) => Ok(Flow::Value(Value::Str(s.clone()))),
+            ExprKind::InterpolatedStr { parts } => {
+                // D44 string interpolation: вычисляем каждую часть и
+                // конкатенируем (interp — без StringBuilder).
+                let mut out = String::new();
+                for p in parts {
+                    match p {
+                        crate::ast::InterpStrPart::Lit(s) => out.push_str(s),
+                        crate::ast::InterpStrPart::Expr(e) => {
+                            let v = match self.eval_expr(e, env)? {
+                                Flow::Value(v) => v,
+                                other => return Ok(other),
+                            };
+                            out.push_str(&format!("{}", v));
+                        }
+                    }
+                }
+                Ok(Flow::Value(Value::Str(out)))
+            }
             ExprKind::BoolLit(b) => Ok(Flow::Value(Value::Bool(*b))),
             ExprKind::UnitLit => Ok(Flow::Value(Value::Unit)),
             ExprKind::SelfAccess => match env.lookup("@") {

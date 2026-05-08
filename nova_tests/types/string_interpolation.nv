@@ -1,0 +1,102 @@
+// string_interpolation.nv — D44 string interpolation, Plan 17 Ф.4
+//
+// `"... ${expr} ..."` — sugar над конкатенацией с str.from(...).
+// Каждый ${expr} — sub-expression, который парсится отдельно и
+// оборачивается в str.from(...) (D73 Into[str]).
+//
+// Escape `\${` сохраняет буквальный `${` в строке.
+
+module nova_tests.types.string_interpolation
+
+test "interpolation of int" {
+    let n = 42
+    assert("n=${n}" == "n=42")
+}
+
+test "interpolation of negative int" {
+    let n = -7
+    assert("n=${n}" == "n=-7")
+}
+
+test "interpolation of str" {
+    let name = "alice"
+    assert("hello, ${name}" == "hello, alice")
+}
+
+test "multiple interpolations" {
+    let a = 1
+    let b = 2
+    let c = 3
+    assert("${a}, ${b}, ${c}" == "1, 2, 3")
+}
+
+test "interpolation around literals" {
+    let x = 10
+    assert("[${x}]" == "[10]")
+    assert("a${x}b${x}c" == "a10b10c")
+}
+
+test "interpolation of expression" {
+    let a = 2
+    let b = 3
+    assert("sum=${a + b}" == "sum=5")
+    assert("prod=${a * b}" == "prod=6")
+}
+
+test "single interpolation no surrounding text" {
+    let x = 7
+    assert("${x}" == "7")
+}
+
+test "interpolation followed by punctuation" {
+    let id = 42
+    assert("user-${id}." == "user-42.")
+    assert("(${id})" == "(42)")
+}
+
+test "escape literal dollar-brace" {
+    let v = 100
+    // \${v} должен дать буквальное "${v}" без интерполяции.
+    // Правая часть тоже escape'ится — иначе была бы попытка
+    // взять переменную `v` (что дало бы "100", не "${v}").
+    assert("\${v}" == "\${v}")
+    // Смешанный case: literal `${literal}` + интерполированный ${v}
+    assert("\${literal} vs ${v}" == "\${literal} vs 100")
+}
+
+test "interpolation of bool" {
+    assert("flag=${true}" == "flag=true")
+    assert("flag=${false}" == "flag=false")
+    let b = true
+    assert("b=${b}" == "b=true")
+}
+
+test "interpolation of f64" {
+    let pi = 3.14
+    assert("pi=${pi}" == "pi=3.14")
+    let zero = 0.0
+    assert("z=${zero}" == "z=0")
+}
+
+test "interpolation of char literal" {
+    // CharLit прямо в ${} — codegen знает, что это char (не int),
+    // и эмитит nova_char_to_str (UTF-8 encode codepoint).
+    assert("c=${'A'}" == "c=A")
+    // Cyrillic codepoint — UTF-8 encode даёт многобайтовый.
+    assert("c=${'Я'}" == "c=Я")
+}
+
+// Note: char-переменные в ${} (let c = 'A'; "${c}") сейчас печатаются
+// как int — bootstrap-codegen не отслеживает char-vs-int через
+// var-types (Q-char-tracking-in-interpolation). Workaround:
+// `${str.from(c)}` или char-литерал прямо в ${...}.
+
+test "interpolation efficiency — большая строка через StringBuilder" {
+    // Конкатенация через цепочку + была бы O(N²);
+    // через StringBuilder — O(N). Тест на корректность сборки
+    // длинной строки (12 интерполяций).
+    let s = "x"
+    let r = "${s}${s}${s}${s}${s}${s}${s}${s}${s}${s}${s}${s}"
+    assert(r == "xxxxxxxxxxxx")
+    assert(r.len == 12)
+}

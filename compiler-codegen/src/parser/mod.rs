@@ -282,16 +282,40 @@ impl Parser {
         let start = self.peek().span;
         self.expect(&TokenKind::KwFn)?;
 
-        // Сначала парсим первый идентификатор. Это либо имя fn, либо
-        // имя receiver-типа.
-        let (first_ident, first_span) = self.parse_ident()?;
-
-        // Если за ним `[`, `<`, `mut`, `@` или `.` — это receiver.
+        // Special case: receiver `[]T` (slice-receiver, vec.nv style D38).
+        // `fn []T @method(...)` — парсим как receiver type_name="[]T", где T —
+        // generic param. Первый idеntifier синтезируется из bracket'ов
+        // как "[]<elem>" (один логический name).
+        let (first_ident, first_span);
         let mut generics_first: Vec<TypeRef> = Vec::new();
-        if matches!(self.peek().kind, TokenKind::LBracket) {
-            // `Type[T] @method` или `funcName[T](...)` — посмотрим что дальше после `]`.
-            // В bootstrap'е делаем простое разрешение: парсим generics, потом смотрим.
-            generics_first = self.parse_type_args()?;
+        if matches!(self.peek().kind, TokenKind::LBracket)
+            && matches!(self.peek_at(1).kind, TokenKind::RBracket)
+        {
+            let lb = self.bump().span;
+            self.bump(); // ]
+            // Парсим element-type. Обычно это `T` (generic param).
+            let elem_ty = self.parse_type()?;
+            let elem_span = elem_ty.span();
+            // Сохраняем generic-параметр как fn_generics, а type_name = "[]T".
+            // Bootstrap-codegen видит receiver_type "[]T" и ищет методы на "[]"-типе.
+            let elem_name = match &elem_ty {
+                TypeRef::Named { path, .. } if path.len() == 1 => path[0].clone(),
+                _ => "T".into(),
+            };
+            first_ident = format!("[]{}", elem_name);
+            first_span = lb.merge(elem_span);
+        } else {
+            // Сначала парсим первый идентификатор. Это либо имя fn, либо
+            // имя receiver-типа.
+            let (id, sp) = self.parse_ident()?;
+            first_ident = id;
+            first_span = sp;
+            // Если за ним `[`, `<`, `mut`, `@` или `.` — это receiver.
+            if matches!(self.peek().kind, TokenKind::LBracket) {
+                // `Type[T] @method` или `funcName[T](...)` — посмотрим что дальше после `]`.
+                // В bootstrap'е делаем простое разрешение: парсим generics, потом смотрим.
+                generics_first = self.parse_type_args()?;
+            }
         }
 
         let receiver: Option<Receiver>;
@@ -1552,7 +1576,7 @@ impl Parser {
             }
             TokenKind::Str(s) => {
                 self.bump();
-                Ok(Expr::new(ExprKind::StrLit(s), start))
+                self.desugar_string_interpolation(s, start)
             }
             TokenKind::Char(cp) => {
                 self.bump();
@@ -1800,8 +1824,24 @@ impl Parser {
         if matches!(self.tokens[i].kind, TokenKind::RBrace) {
             return true;
         }
-        if matches!(self.tokens[i].kind, TokenKind::DotDotDot | TokenKind::At) {
+        if matches!(self.tokens[i].kind, TokenKind::DotDotDot) {
             return true;
+        }
+        // `@`-shorthand в record-литерале: `@field` punning. Но `@method(...)`
+        // — это method call (statement). Различаем по двум следующим
+        // токенам: `@ Ident (Comma|RBrace|Colon)` — punning; иначе — call.
+        if matches!(self.tokens[i].kind, TokenKind::At) {
+            let after_at = self.tokens.get(i + 1);
+            let after_ident = self.tokens.get(i + 2);
+            if matches!(after_at.map(|t| &t.kind), Some(TokenKind::Ident(_)))
+                && matches!(after_ident.map(|t| &t.kind),
+                    Some(TokenKind::Comma | TokenKind::RBrace | TokenKind::Colon))
+            {
+                return true;
+            }
+            // Bare `@` (без ident) — self-value; в record-lit это
+            // нонсенс, но в expression-блоке валидно. Не record-lit.
+            return false;
         }
         if matches!(self.tokens[i].kind, TokenKind::Ident(_)) {
             // smart: `Ident :` → record. `Ident ,` → punning. `Ident }` → punning.
@@ -2989,6 +3029,142 @@ impl Parser {
             rest,
             span: start.merge(end),
         })
+    }
+
+    /// D44 string interpolation (Plan 17 Ф.4): `"... ${expr} ..."` →
+    /// `ExprKind::InterpolatedStr { parts }`.
+    ///
+    /// Вход — сырая строка после lex'а; literal `\${` уже преобразован
+    /// lexer'ом в sentinel `\x01$` (SOH+$), чтобы парсер мог отличить
+    /// настоящий `${` от escape'нутого. Sentinel удаляется при сборке
+    /// literal-частей.
+    ///
+    /// Если интерполяций нет — возвращаем обычный `StrLit`.
+    /// Иначе codegen сам построит StringBuilder-цепочку (одна
+    /// аллокация с pre-size estimate, без O(N²) от `+`).
+    fn desugar_string_interpolation(
+        &mut self,
+        raw: String,
+        span: Span,
+    ) -> Result<Expr, Diagnostic> {
+        let bytes = raw.as_bytes();
+        let mut parts: Vec<InterpPart> = Vec::new();
+        let mut cur_lit = String::new();
+        let mut i = 0;
+        while i < bytes.len() {
+            let b = bytes[i];
+            if b == 0x01 {
+                // SOH sentinel: следующий байт — буквальный `$` (escape \$).
+                if i + 1 < bytes.len() {
+                    cur_lit.push(bytes[i + 1] as char);
+                    i += 2;
+                    continue;
+                } else {
+                    i += 1;
+                    continue;
+                }
+            }
+            if b == b'$' && i + 1 < bytes.len() && bytes[i + 1] == b'{' {
+                // ${expr} — flush литерала и парсим выражение.
+                if !cur_lit.is_empty() {
+                    parts.push(InterpPart::Lit(std::mem::take(&mut cur_lit)));
+                }
+                // Найти `}` с балансом скобок (поддержка nested {}).
+                let expr_start = i + 2;
+                let mut depth: i32 = 1;
+                let mut j = expr_start;
+                while j < bytes.len() && depth > 0 {
+                    match bytes[j] {
+                        b'{' => depth += 1,
+                        b'}' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                    j += 1;
+                }
+                if depth != 0 {
+                    return Err(Diagnostic::new(
+                        "unterminated ${...} interpolation in string literal",
+                        span,
+                    ));
+                }
+                let expr_src = &raw[expr_start..j];
+                if expr_src.trim().is_empty() {
+                    return Err(Diagnostic::new(
+                        "empty `${}` interpolation in string literal",
+                        span,
+                    ));
+                }
+                // Sub-lex и sub-parse выражение из ${...}.
+                let tokens = crate::lexer::lex(expr_src).map_err(|e| {
+                    Diagnostic::new(
+                        format!("invalid expression in `${{...}}`: {}", e.message),
+                        span,
+                    )
+                })?;
+                let mut sub = Parser::with_src(tokens, expr_src.to_string());
+                let inner = sub.parse_expr().map_err(|e| {
+                    Diagnostic::new(
+                        format!("invalid expression in `${{...}}`: {}", e.message),
+                        span,
+                    )
+                })?;
+                parts.push(InterpPart::Expr(inner));
+                i = j + 1;
+                continue;
+            }
+            // Обычный байт — берём целиком codepoint.
+            let ch_len = parser_utf8_char_len(b);
+            let end = (i + ch_len).min(bytes.len());
+            cur_lit.push_str(&raw[i..end]);
+            i = end;
+        }
+        if !cur_lit.is_empty() {
+            parts.push(InterpPart::Lit(cur_lit));
+        }
+        // Если только Lit-части (или ничего) — обычный StrLit
+        // (без interpolation).
+        if parts.iter().all(|p| matches!(p, InterpPart::Lit(_))) {
+            let s: String = parts
+                .into_iter()
+                .map(|p| match p {
+                    InterpPart::Lit(s) => s,
+                    _ => unreachable!(),
+                })
+                .collect();
+            return Ok(Expr::new(ExprKind::StrLit(s), span));
+        }
+        // Конвертим InterpPart → InterpStrPart (для AST).
+        let ast_parts: Vec<InterpStrPart> = parts
+            .into_iter()
+            .map(|p| match p {
+                InterpPart::Lit(s) => InterpStrPart::Lit(s),
+                InterpPart::Expr(e) => InterpStrPart::Expr(Box::new(e)),
+            })
+            .collect();
+        Ok(Expr::new(
+            ExprKind::InterpolatedStr { parts: ast_parts },
+            span,
+        ))
+    }
+}
+
+enum InterpPart {
+    Lit(String),
+    Expr(Expr),
+}
+
+fn parser_utf8_char_len(first_byte: u8) -> usize {
+    match first_byte {
+        b if b < 0x80 => 1,
+        b if b < 0xC0 => 1,
+        b if b < 0xE0 => 2,
+        b if b < 0xF0 => 3,
+        _ => 4,
     }
 }
 
