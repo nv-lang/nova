@@ -1415,3 +1415,65 @@ D58 говорит: `for x in collection` вызывает `collection.iter().ne
 73/73 nova_tests PASS, без регрессий.
 
 Plan 06 закрыт полностью (Ф.1 + Ф.2 + Ф.3).
+
+
+================================================================================
+2026-05-08 Plan 04 Этап 1: spec changes (D82 external, D30 full-words)
+================================================================================
+
+Plan 04 = split унифицированного Buffer (Q-buffer закрыт 2026-05-07)
+на три специализированных типа + новый keyword `external` для
+документирования stdlib runtime-функций.
+
+Этап 1 (этот) — только спека, без codegen и runtime изменений.
+
+Что изменилось в спеке:
+
+1. spec/decisions/08-runtime.md — новый D82 (external fn keyword):
+   - Модификатор для функций с реализацией в nova_rt/*.h.
+   - Применяется только к функциям, не к типам и не к переменным.
+   - Body должен отсутствовать (compile error если есть).
+   - Порядок modifiers строгий: export external fn.
+   - Whitelisted namespace — std.runtime.*. Программистский
+     Nova-код external НЕ пишет.
+   - Совместим с будущим extern("C") для FFI (Q-ffi отдельно).
+
+2. spec/decisions/03-syntax.md — D30 расширен новым разделом
+   "Полные слова, не сокращения":
+   - Правило: полные слова в именах методов/типов/параметров/полей.
+   - Mainstream-исключения: len, iter, idx (только в локальных).
+   - Запрет ad-hoc сокращений: pos/cap/dest/src/buf/val/tmp/cnt и т.д.
+   - Operator-overloading имена (@plus, @rem, ...) фиксированы по
+     D46 — не подчиняются правилу.
+
+3. spec/decisions/08-runtime.md — D26 (prelude) расширен:
+   - StringBuilder, WriteBuffer, ReadBuffer как built-in opaque-типы.
+   - ReadBufferError sum-тип (только UnexpectedEnd вариант пока).
+   - Таблица verb/финализация для трёх типов.
+   - Связь с D82 — API через external fn в std/runtime/builtins.nv.
+
+4. spec/open-questions.md:
+   - Q-buffer помечена ⚠️ REPLACED (2026-05-08). История сохранена.
+   - Q-string-builder (новый, ✅ closed) — UTF-8 builder, infallible
+     @into() -> str.
+   - Q-write-buffer (новый, ✅ closed) — binary, 18 numeric × LE/BE.
+   - Q-read-buffer (новый, ✅ closed) — cursor reader, pair
+     @read_*/@try_read_* через auto-derive на C-runtime уровне.
+
+5. std/runtime/builtins.nv — новый documentation-stub:
+   - Все 3 типа × API (~80 external fn деклараций).
+   - str.from(c char) для UTF-8 encode (D73 auto-derive char.into()->str).
+   - Сейчас bootstrap codegen НЕ парсит external — этот файл
+     валидируется только глазами. Будет live после Этапа 2.
+
+Что осталось:
+- Этап 2: codegen (lexer KwExternal, parser, AST, dispatch table) ~3-4ч
+- Этап 3: runtime (string_builder.h, write_buffer.h, read_buffer.h) ~3-4ч
+- Этап 4: тесты (3 файла, ~50+ тестов) ~1-2ч
+- Этап 5: финализация (прогон, регрессии) ~30мин
+
+Итого ~7-9 часов работы остаётся. Делать step-by-step.
+
+Урок: spec-changes сделали отдельным этапом и отдельным коммитом —
+если codegen потом сломается, спека уже зафиксирована и можно
+обсуждать без риска что текст и код разъедутся.

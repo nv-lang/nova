@@ -653,6 +653,54 @@ type SqlBuilder { ... }      // не SQL (record с полями)
 
 `is_`/`as_`/`to_` — семантическая разница, следуй ей.
 
+#### Полные слова, не сокращения
+
+Имена методов, типов, параметров и полей — **полные слова**, не
+сокращения. Приоритет — читаемость, а не количество символов.
+
+```nova
+fn StringBuilder @capacity()  -> int     // не @cap()
+fn ReadBuffer    @position()  -> int     // не @pos()
+
+fn copy_into(destination []byte) -> ()   // не dest
+fn parse(input str) -> Result[T, E]      // не buf, не val
+```
+
+**Запрещены ad-hoc сокращения** (mainstream-precedent): `pos`, `cap`,
+`dest`, `src`, `buf`, `val`, `tmp`, `cnt`, `idx` (кроме mainstream-исключений
+ниже), `arr`, `len` (кроме mainstream-исключения), `msg` (кроме `Error.msg`
+field — закреплено D26), `cfg`, `ctx`.
+
+**Mainstream-исключения** (Rust/Go/Swift convention — слишком устоявшиеся
+формы, чтобы менять):
+
+| Сокращение | Где разрешено | Прецеденты |
+|---|---|---|
+| `len` | длина коллекции (`s.len`, `arr.len`, `Vec::len`) | Rust, Go |
+| `iter` | итератор (`coll.iter()`, `Iterator`) | Rust |
+| `idx` | index — **только в локальных переменных** (`for idx in ...`) | Rust convention |
+
+Ровно три исключения, никаких других. Остальные — full word:
+`length` если не коллекция-`len`, `iterator` если не protocol-имя,
+`index` если параметр или поле.
+
+**Operator-overloading имена** ([D46](#d46-перегрузка-операторов-через--методы))
+— `@plus`, `@rem`, `@neg`, `@shl`, ... — **фиксированы** и **не подчиняются
+правилу полных слов**. Это исторически зацементированная convention из
+Rust/C++/Swift; менять `@plus` → `@addition` бессмысленно.
+
+**Acronyms** работают по правилу выше (PascalCase в типах, snake_case
+в методах: `JsonParser`, `parse_json`). К full-word правилу не относятся.
+
+**Зачем строго:**
+
+1. **AI-friendly.** LLM не должна угадывать когда `pos` это `position`,
+   а когда `posix`. Один canonical full word — однозначность.
+2. **Code review consistency.** Reviewer видит `dest` и спрашивает «destination
+   or destruct?» — лишний cycle. Full word убирает класс багов.
+3. **Прецедент Swift API Guidelines.** Swift строго запрещает abbreviations,
+   и это даёт API surface, которую читать как естественный язык.
+
 #### Типы ошибок: `Parse<TypeName>Error`, `<Operation><Domain>Error`
 
 Имена ошибок в публичных API должны включать **тип / домен** который

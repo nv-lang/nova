@@ -346,11 +346,48 @@ type RangeIter {
     inclusive bool
     mut cur   int
 }
+
+// Built-in opaque accumulator/buffer типы (Plan 04, D82).
+// Объявлены как известные компилятору по имени (как int/str);
+// API — через external fn декларации в std/runtime/builtins.nv.
+type StringBuilder    // UTF-8 string accumulator, @into() -> str (infallible)
+type WriteBuffer      // binary write buffer, @into() -> []byte
+type ReadBuffer       // cursor-style binary reader, view над []byte
+
+// Ошибка ReadBuffer — недостаточно байт для read-операции.
+type ReadBufferError
+    | UnexpectedEnd { wanted int, available int }
 ```
 
 **Базовые числовые и строковые типы** (`int`, `i8`-`i64`, `u8`-`u64`,
 `f32`, `f64`, `str`, `bool`, `char`, `()`, `byte`) — встроены в язык,
 не stdlib, но упомянуты для полноты.
+
+**Built-in opaque-типы для аккумуляции** (`StringBuilder`,
+`WriteBuffer`, `ReadBuffer`) — расширяют примитивы D26. Полный API
+описан в `std/runtime/builtins.nv` через `external fn` декларации
+(D82). Программист **не пишет** `type StringBuilder { ... }` —
+тип known-by-name.
+
+| Тип | Глагол | Финализация | Use-case |
+|---|---|---|---|
+| `StringBuilder` | `@append` | `@into() -> str` infallible | string concat в hot loop |
+| `WriteBuffer` | `@write_*` | `@into() -> []byte` | binary serialize |
+| `ReadBuffer` | `@read_*` / `@try_read_*` | view, no into | binary parse |
+
+Эти три типа **заменяют** старый унифицированный `Buffer` (Q-buffer
+закрыт REPLACED 2026-05-08). Причина split: text+binary mixed
+ломает `@into() -> str` infallible-семантику. См. Plan 04.
+
+`StringBuilder.@into() -> str` — **infallible** (UTF-8 invariant
+поддерживается каждым `@append`, который принимает только `str` или
+`char`). `WriteBuffer.@into() -> []byte` — infallible (произвольные
+байты валидны как `[]byte`). `ReadBuffer` — view, `@into()`
+**не определён** (явный throw блокирует D73 auto-derive).
+
+`ReadBuffer` пара `@read_*` (Fail-form) / `@try_read_*` (Result-form)
+— **auto-derived на C-runtime уровне** (одна C-функция возвращает
+result-структуру; codegen эмитит обе обёртки). См. Plan 04 Этап 3.
 
 **`char` — Unicode codepoint, НЕ UTF-8 byte sequence.** `char` хранит
 **одно скалярное значение Unicode** (диапазон 0..0x10FFFF, исключая
@@ -2411,3 +2448,182 @@ bootstrap имел только always-runtime `nova_assert` без build-mode
 разделения. После D81: prelude содержит обе функции; production-
 runtime реализует zero-cost `debug_assert` в release; bootstrap
 оставляет `debug_assert` как alias `assert` до production.
+
+---
+
+## D82. `external fn` — функции с runtime-implementation
+
+### Что
+
+`external fn` — модификатор функции-декларации, означающий что **тело
+функции реализовано в runtime (C-коде `nova_rt/`)**, а не на Nova.
+Декларация даёт сигнатуру и имя; codegen lookup'ит C-функцию по
+имени в hard-coded таблице.
+
+`external` применяется **только к функциям**, не к типам и не к
+переменным. Built-in opaque-типы (`StringBuilder`, `WriteBuffer`,
+`ReadBuffer`) известны компилятору **по имени** как примитивы
+(`int`/`str`/`bool`); отдельной декларации типа нет.
+
+### Правило
+
+#### Грамматика
+
+```
+fn-decl = ['export'] ['external'] 'fn' [receiver] name [generic-params]
+          [params] [effects] ['->' return-type] [body | ';']
+```
+
+Порядок modifiers строгий: `export` первым, `external` вторым. Body
+у `external fn` **должен отсутствовать** (никакого `=>` или `{ ... }`),
+иначе compile error «external function cannot have a body».
+
+#### Примеры
+
+```nova
+// Public external static
+export external fn StringBuilder.new() -> Self
+
+// Public external instance, mutating
+export external fn StringBuilder mut @append(s str) -> ()
+
+// Private external (используется внутри runtime/builtins.nv module'а)
+external fn Nova_intrinsic_unreachable() -> Never
+```
+
+#### Связь с D26 prelude
+
+Built-in opaque-типы из D26 (`StringBuilder`, `WriteBuffer`,
+`ReadBuffer`) объявляются **только** через `external fn`-декларации
+(в файле `std/runtime/builtins.nv`). Программист **не пишет**
+`type StringBuilder { ... }` block — этот тип known-by-name как `int`.
+
+```nova
+// std/runtime/builtins.nv (documentation-stub)
+module std.runtime.builtins
+
+export external fn StringBuilder.new() -> Self
+export external fn StringBuilder.with_capacity(n int) -> Self
+export external fn StringBuilder mut @append(s str) -> ()
+// ... остальные методы
+```
+
+`Self` в receiver-context для external — `StringBuilder` (имя
+содержащего receiver-type'а). Те же правила, что для обычных
+fn-декл.
+
+#### Связь с D5/D47 видимостью
+
+`export external fn` — публичная: имя видно из других модулей.
+`external fn` без `export` — модуль-private. Те же правила, что для
+обычных fn-декл. `external` ортогонален `export`.
+
+#### Связь с будущим FFI
+
+`external fn` — для функций, реализованных **в Nova-runtime**
+(`nova_rt/*.h`/`.c`). Для функций, импортируемых из **сторонних
+C-библиотек** (libc, OS-libs), будет отдельный keyword
+`extern("C")` (Q-ffi, не реализуется сейчас). Семантика разная:
+
+| Keyword | Реализация | C-name | Разрешён программисту |
+|---|---|---|---|
+| `external fn` | Nova-runtime (`nova_rt/`) | `Nova_<Type>_<...>` mangled | **нет** (только в `std.runtime.*`) |
+| `extern("C") fn` (TBD) | сторонний C/lib | as-is | да (FFI) |
+
+Программистский Nova-код **не пишет** `external fn`. Этот keyword —
+**экспозиционный**: только модули в `std.runtime.*` имеют право его
+использовать. Компилятор **отклоняет** `external fn` в любом другом
+namespace'е.
+
+#### Bootstrap: dispatch table
+
+Codegen имеет hard-coded таблицу: для каждого `external fn` (имя +
+receiver) — соответствующая C-функция в `nova_rt/`. Mapping:
+
+| Nova-form | C-name |
+|---|---|
+| `T.method(...)` static | `Nova_T_static_method(...)` |
+| `t.method(...)` instance | `Nova_T_method_method(t, ...)` |
+| `t.method(...)` mut instance | `Nova_T_method_method(t, ...)` (тот же mangling) |
+
+Этот mapping **архитектурно идентичен** registry built-in conversions
+(D73 + Plan 08 Ф.2). Один механизм lookup'а.
+
+### Почему
+
+#### Зачем нужен `external` keyword
+
+1. **Документация stdlib API.** Программист (и AI) видя
+   `external fn StringBuilder.new()` понимает: тело реализовано
+   runtime'ом, не Nova. Не нужно искать в `nova_rt/` где определён.
+2. **Compile-time validation.** Без `external` компилятор не знает,
+   что функция без тела должна искаться в C-runtime — попытается
+   эмитить empty body и упадёт. С `external` — явный contract.
+3. **AI-friendly.** LLM-генерируемый код для stdlib имеет canonical
+   форму: `export external fn ...`. Шаблонная подстановка тривиальна.
+4. **Будущая совместимость с FFI.** Когда появится `extern("C")` для
+   сторонних libs, два keyword'а различаются однозначно.
+
+#### Почему не `intrinsic` или `builtin`
+
+- `intrinsic` — занят понятием compile-time intrinsic (Rust-style
+  `intrinsics::transmute`). Для Nova таких пока нет, но имя зарезервируем.
+- `builtin` — слишком общее. `int`/`str` тоже builtin (D26), но они
+  **типы**, не функции.
+- `external` — точное слово: «реализация во **внешнем** (по отношению
+  к Nova-source) контексте — runtime/C». Прецеденты: OCaml `external`,
+  Dart `external`, Kotlin `external`.
+
+#### Почему не `extern`
+
+D30 фиксирует «полные слова, не сокращения». `external` — full word.
+`extern` — сокращение (как в C/Rust). Мы выбираем full form.
+
+### Что отвергнуто
+
+- **Без keyword'а — компилятор сам решает по имени модуля.** Магия:
+  программист не видит чего ожидать, AI генерирует boilerplate-`type`
+  декларации.
+- **`builtin fn`** — конфликт с понятием built-in типа.
+- **`@external` атрибут вместо keyword'а.** Атрибуты в Nova
+  зарезервированы для тестов / dev-tools (Q-attributes). Modifier-форма
+  единообразна с `export`/`mut`.
+- **`external type`** — отложено. Если когда-то появятся opaque
+  user-defined типы (Channel, mmap'ed Region), вернёмся; сейчас
+  built-in только.
+
+### Связь
+
+- [D5 / D47](07-modules.md#d47) — `export` modifier; `external` —
+  ортогональный второй modifier.
+- [D26](#d26) — prelude содержит StringBuilder/WriteBuffer/ReadBuffer
+  как built-in opaque-типы; декларации API — через `external fn`.
+- [D30](03-syntax.md#d30) — naming convention; `external` — full word.
+- [D52](02-types.md#d52) — kind-tokens (`type`/`effect`/`protocol`);
+  D82 **не** добавляет нового kind-token'а.
+- [D54](03-syntax.md#d54) — `as`/`is` для конверсий; не пересекается.
+- [D73](#d73-from--into-protocol-пара-с-авто-выводом) — From/Into
+  registry; D82 использует тот же dispatch-механизм для external-функций.
+
+### Эволюция
+
+До 2026-05-08 spec фиксировал `Buffer` как единый тип (Q-buffer) —
+text+binary mixed. В разговоре про endianness-методы выявилось
+семантическое смешение: `add_str` рядом с `add_u32_le` несогласовано.
+
+Plan 04 (зафиксирован 2026-05-08) — split на три типа
+(`StringBuilder` / `WriteBuffer` / `ReadBuffer`) + новый keyword
+`external` для документирования stdlib runtime-функций. До D82 такие
+функции декларировались как обычные `fn` без тела (компилятор
+special-case'ил по имени receiver'а — fragile).
+
+### Bootstrap status (2026-05-08)
+
+- ✅ Спека: D82 закрыт (этот блок).
+- ⏳ Lexer: `KwExternal` token — TBD (Plan 04 Этап 2).
+- ⏳ Parser: `external` modifier в `parse_fn_decl` — TBD.
+- ⏳ AST: `is_external: bool` flag — TBD.
+- ⏳ Codegen: dispatch table для StringBuilder/WriteBuffer/ReadBuffer —
+  TBD.
+- ⏳ Runtime: `nova_rt/string_builder.h` / `write_buffer.h` /
+  `read_buffer.h` — TBD.
