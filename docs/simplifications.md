@@ -1527,3 +1527,39 @@ Spec D39 обновлён: добавлена Bootstrap-status секция.
 fn-emit'ов. Resolution унифицирован для Own/Delegated через
 priority-фильтр. Тот же pattern что для overload в Ф.1-Ф.3 —
 **common path с priority**.
+
+### [ЗАКР 2026-05-08] Plan 11 Ф.7: расширение тестов
+
+Plan 11 Ф.7 фиксировал тестовые наборы для overload, self_in_expr,
+anonymous_embed. Изначально были минимальные (3+4+3 = 10 тестов).
+Расширены до полноценного покрытия:
+
+- **overload.nv: 3 → 9 тестов.** Добавлены: arity overload
+  (`@log(msg)` vs `@log(level, msg)`), 3+ overloads на одном методе
+  (int/str/bool), mixed static+instance одного имени, разные
+  return-types по arg-type, multi-arg overload (по first arg type),
+  no-arg vs N-arg arity overload.
+- **self_in_expr.nv: 4 → 7 тестов.** Добавлены: Self.method из
+  instance-метода (`@si_double` вызывает `Self.si_make`), Self в
+  return + Self literal в body одновременно, nested Self.method
+  calls (`Self.nst_one().depth + 1`).
+- **anonymous_embed.nv: 3 → 9 тестов.** Добавлены: explicit base-call
+  через `@<alias>.method()` в named embed, несколько auto-proxy
+  методов от одного embed, auto-proxy с args, два named embed разных
+  типов, anonymous embed coexists с extra fields, override через
+  anonymous embed (Own wins, lint warning).
+
+**Negative test verification:** multi-anonymous detection (`use _
+Inner / use _ Inner` в одном record'е) даёт ожидаемый compile error
+«multiple anonymous embeds of `Inner`». Проверено напрямую через
+nova-codegen (без cl.exe — это compile-time check).
+
+**Регрессия 17 файлов: 190/190 PASS** (было 175 после Ф.9, +15
+новых тестов).
+
+Урок: **расширение тестов раскрывает граничные случаи**. При
+написании arity-overload (`@log(msg)` vs `@log(lvl, msg)`) проверил
+что bootstrap правильно различает по `param_c_types.len()` — да.
+При написании Self в instance-методе — проверил что Self резолвится
+не только в Path-form но и в Member-form (`obj=Ident("Self")`) —
+работало благодаря раннему rebind на 4276.

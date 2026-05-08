@@ -4,12 +4,13 @@
 // `use _ Type`    — anonymous embed (auto-proxy без alias).
 //
 // Override-precedence: Own > Delegated — wrapper-метод побеждает.
-// Multi-anonymous one type → compile error.
+// Multi-anonymous one type → compile error (см. отдельный negative
+// test, нужна compile_fail инфраструктура).
 
 module nova_tests.syntax.anonymous_embed
 
 
-// ─── Базовый named embed ───
+// ─── 1. Базовый named embed: auto-proxy ───
 
 type Account {
     bal int
@@ -28,15 +29,14 @@ type AuditedAccount {
 }
 
 
-test "named embed: auto-proxy" {
+test "named embed: auto-proxy через wrapper" {
     let a = Account.acc_new(100)
     let aa = AuditedAccount { account: a, audit_log_count: 0 }
-    // Auto-proxy: aa.balance() делегирует на aa.account.balance().
     assert(aa.balance() == 100)
 }
 
 
-// ─── Anonymous embed ───
+// ─── 2. Anonymous embed: auto-proxy без alias ───
 
 type Counter {
     cnt_value int
@@ -56,15 +56,13 @@ type LoggingCounter {
 
 
 test "anonymous embed: auto-proxy без alias" {
-    // Anonymous embed: name field — synthesized как `__embed_Counter`.
-    // Программист обращается через wrapper'а методы напрямую.
     let inner = Counter.cnt_new(42)
     let lc = LoggingCounter { __embed_Counter: inner, log_count: 0 }
     assert(lc.value() == 42)
 }
 
 
-// ─── Override Own > Delegated ───
+// ─── 3. Override Own > Delegated ───
 
 type Inner {
     inner_val int
@@ -90,6 +88,201 @@ export fn Wrapper @get() -> int =>
 test "override Own wins over Delegated" {
     let i = Inner.inner_new(10)
     let w = Wrapper { inner: i, extra: 5 }
-    // Wrapper.@get активен → 10 + 5 == 15, не 10 (delegated).
-    assert(w.get() == 15)
+    assert(w.get() == 15)        // 10 + 5, не просто 10
+}
+
+
+// ─── 4. Named embed: explicit base-call через @<alias>.method() ───
+
+type Storage {
+    cap int
+}
+
+export fn Storage.stor_new(c int) -> Self =>
+    Self { cap: c }
+
+export fn Storage @capacity() -> int =>
+    @cap
+
+export fn Storage @doubled_capacity() -> int =>
+    @cap * 2
+
+
+type Cache {
+    use storage Storage
+    hits int
+}
+
+// Wrapper-метод обращается к base через alias-имя поля.
+export fn Cache @capacity() -> int =>
+    @storage.capacity() + @hits     // own override calls explicit base
+
+
+test "explicit base-call через @<alias>.method() в named embed" {
+    let s = Storage.stor_new(100)
+    let c = Cache { storage: s, hits: 5 }
+    // Own @capacity вызывает @storage.capacity() (через alias) + hits.
+    assert(c.capacity() == 105)
+    // Delegated @doubled_capacity (auto-proxy) — нет own override.
+    assert(c.doubled_capacity() == 200)
+}
+
+
+// ─── 5. Multiple methods от одного embedded типа ───
+
+type MultiBase {
+    x int
+    y int
+}
+
+export fn MultiBase.mb_new(a int, b int) -> Self =>
+    Self { x: a, y: b }
+
+export fn MultiBase @get_x() -> int => @x
+export fn MultiBase @get_y() -> int => @y
+export fn MultiBase @sum() -> int => @x + @y
+
+
+type MultiWrap {
+    use base MultiBase
+    label int
+}
+
+
+test "несколько auto-proxy методов от одного embed" {
+    let mb = MultiBase.mb_new(3, 4)
+    let mw = MultiWrap { base: mb, label: 99 }
+    assert(mw.get_x() == 3)
+    assert(mw.get_y() == 4)
+    assert(mw.sum() == 7)
+}
+
+
+// ─── 6. Auto-proxy с параметрами ───
+
+type Calc {
+    base int
+}
+
+export fn Calc.calc_new(b int) -> Self =>
+    Self { base: b }
+
+export fn Calc @add_to(n int) -> int =>
+    @base + n
+
+export fn Calc @combine(a int, b int) -> int =>
+    @base + a + b
+
+
+type CalcWrap {
+    use _ Calc
+    multiplier int
+}
+
+
+test "auto-proxy с args" {
+    let c = Calc.calc_new(10)
+    let cw = CalcWrap { __embed_Calc: c, multiplier: 2 }
+    assert(cw.add_to(5) == 15)
+    assert(cw.combine(3, 7) == 20)
+}
+
+
+// ─── 7. Two named embeds разных типов — отсутствие конфликта ───
+
+type SourceA {
+    a_val int
+}
+
+export fn SourceA.src_a_new(v int) -> Self =>
+    Self { a_val: v }
+
+export fn SourceA @get_a() -> int => @a_val
+
+
+type SourceB {
+    b_val int
+}
+
+export fn SourceB.src_b_new(v int) -> Self =>
+    Self { b_val: v }
+
+export fn SourceB @get_b() -> int => @b_val
+
+
+type Merged {
+    use src_a SourceA
+    use src_b SourceB
+}
+
+
+test "два named embed разных типов работают вместе" {
+    let m = Merged {
+        src_a: SourceA.src_a_new(10),
+        src_b: SourceB.src_b_new(20),
+    }
+    assert(m.get_a() == 10)
+    assert(m.get_b() == 20)
+}
+
+
+// ─── 8. Anonymous embed + extra fields ───
+
+type Engine {
+    rpm int
+}
+
+export fn Engine.eng_new(r int) -> Self =>
+    Self { rpm: r }
+
+export fn Engine @rev() -> int =>
+    @rpm
+
+
+type Car {
+    use _ Engine
+    fuel int
+}
+
+
+test "anonymous embed coexists с extra fields" {
+    let e = Engine.eng_new(3000)
+    let c = Car { __embed_Engine: e, fuel: 50 }
+    assert(c.rev() == 3000)
+    assert(c.fuel == 50)
+}
+
+
+// ─── 9. Override через anonymous embed ───
+// Программист override'ит delegated method у anonymous embed'а —
+// должен сработать lint warning (stderr), но компиляция проходит.
+// Own wins.
+
+type Animal {
+    legs int
+}
+
+export fn Animal.an_new(l int) -> Self =>
+    Self { legs: l }
+
+export fn Animal @description() -> int =>
+    @legs
+
+
+type Dog {
+    use _ Animal
+    name_id int
+}
+
+// Override через anonymous embed. Lint warning ожидается, но
+// компиляция должна пройти; Own (метод Dog) wins.
+export fn Dog @description() -> int =>
+    100 + @name_id     // не делегирует к Animal — пишем свой результат
+
+
+test "override через anonymous embed: Own wins (с lint warning)" {
+    let a = Animal.an_new(4)
+    let d = Dog { __embed_Animal: a, name_id: 5 }
+    // Own @description: 100 + 5 == 105, не 4 (delegated).
+    assert(d.description() == 105)
 }

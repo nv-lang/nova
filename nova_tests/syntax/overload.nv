@@ -2,11 +2,14 @@
 //
 // `method_overloads: HashMap<(type, name), Vec<MethodSig>>` хранит
 // все signatures. Resolution на call-site по статическим типам args.
+//
+// Strict matching, no implicit conversions.
+// Free-functions overload не разрешён (только для methods).
 
 module nova_tests.syntax.overload
 
 
-// ─── Static overload по типу аргумента ───
+// ─── 1. Static overload по типу аргумента ───
 
 type Money {
     cents int
@@ -15,8 +18,6 @@ type Money {
 export fn Money.from_int(c int) -> Money =>
     Money { cents: c }
 
-// Старый Money.from(int) был зарегистрирован выше (через from_int).
-// Plan 11 — две разные сигнатуры на одном имени:
 export fn Money.from(n int) -> Money =>
     Money { cents: n }
 
@@ -32,7 +33,7 @@ test "static overload Money.from(int) vs from(str)" {
 }
 
 
-// ─── Instance overload по типу аргумента ───
+// ─── 2. Instance overload по типу аргумента ───
 
 type Acc {
     sum int
@@ -41,9 +42,6 @@ type Acc {
 export fn Acc.new() -> Acc =>
     Acc { sum: 0 }
 
-// Бутстрап-ограничение: bootstrap не парсит `mut` в method receiver
-// для overload (нужно перепроверить parser). Пока используем
-// non-mut overload — bootstrap всё равно permissive.
 export fn Acc @add(n int) -> Acc =>
     Acc { sum: @sum + n }
 
@@ -62,8 +60,8 @@ test "instance overload Acc.@add(int) vs @add(str)" {
 }
 
 
-// ─── Two static methods named the same on different types ───
-// Это раньше падало (single-key last-wins).
+// ─── 3. Одноимённые static на разных типах ───
+// Раньше падало (single-key last-wins).
 
 type Box1 {
     value int
@@ -85,4 +83,168 @@ test "одноимённые static на разных типах не конфл
     assert(b1.value == 100)
     let b2 = Box2.make()
     assert(b2.label == 200)
+}
+
+
+// ─── 4. Arity overload — разное число параметров ───
+
+type Logger {
+    level int
+}
+
+export fn Logger.new() -> Logger =>
+    Logger { level: 0 }
+
+// 1 параметр:
+export fn Logger @log(msg str) -> Logger =>
+    Logger { level: @level + 1 }
+
+// 2 параметра:
+export fn Logger @log(lvl int, msg str) -> Logger =>
+    Logger { level: @level + lvl }
+
+
+test "arity overload: @log(msg) vs @log(level, msg)" {
+    let l0 = Logger.new()
+    let l1 = l0.log("info")              // 1 arg → @log(msg) → +1
+    assert(l1.level == 1)
+    let l2 = l1.log(5, "warn")           // 2 args → @log(int, str) → +5
+    assert(l2.level == 6)                // 1 + 5
+    let l3 = l2.log("debug")             // 1 arg again
+    assert(l3.level == 7)
+}
+
+
+// ─── 5. 3+ overloads на одном методе ───
+
+type Combiner {
+    state int
+}
+
+export fn Combiner.new() -> Combiner =>
+    Combiner { state: 0 }
+
+export fn Combiner @put(n int) -> Combiner =>
+    Combiner { state: @state + n }       // int: add
+
+export fn Combiner @put(s str) -> Combiner =>
+    Combiner { state: @state * 2 }       // str: double
+
+export fn Combiner @put(b bool) -> Combiner =>
+    Combiner { state: @state - 1 }       // bool: decrement
+
+
+test "3 overloads различаются по типу первого аргумента" {
+    let c0 = Combiner.new()
+    let c1 = c0.put(10)                  // +10 → 10
+    assert(c1.state == 10)
+    let c2 = c1.put("foo")               // *2 → 20
+    assert(c2.state == 20)
+    let c3 = c2.put(true)                // -1 → 19
+    assert(c3.state == 19)
+}
+
+
+// ─── 6. Mixed: static + instance overload одного имени ───
+// `from` как static и instance method'ом — оба должны работать.
+
+type Mixed {
+    value int
+}
+
+export fn Mixed.from(n int) -> Mixed =>
+    Mixed { value: n }
+
+export fn Mixed @from(other Mixed) -> Mixed =>
+    Mixed { value: @value + other.value }
+
+
+test "mixed static+instance overload одного имени" {
+    let m1 = Mixed.from(7)               // static
+    let m2 = Mixed.from(3)
+    let m3 = m1.from(m2)                 // instance — Self.@from(Self)
+    assert(m3.value == 10)
+}
+
+
+// ─── 7. Overload с разными возвращаемыми типами ───
+// Strict-match по param-types: return-type не участвует, выбирает
+// сам compiler по контексту.
+
+type Convert {
+    raw int
+}
+
+export fn Convert.new(v int) -> Convert =>
+    Convert { raw: v }
+
+export fn Convert @get(fallback int) -> int =>
+    if @raw == 0 { fallback } else { @raw }
+
+export fn Convert @get(fallback str) -> str =>
+    if @raw == 0 { fallback } else { "non-zero" }
+
+
+test "overload с разными return типами по типу arg" {
+    let c1 = Convert.new(42)
+    let v_int = c1.get(0)
+    assert(v_int == 42)
+
+    let c2 = Convert.new(0)
+    let v_str = c2.get("fallback")
+    assert(v_str == "fallback")
+}
+
+
+// ─── 8. Multi-arg overload ───
+
+type Pair {
+    a int
+    b int
+}
+
+export fn Pair.new() -> Pair =>
+    Pair { a: 0, b: 0 }
+
+export fn Pair @set(x int, y int) -> Pair =>
+    Pair { a: x, b: y }
+
+export fn Pair @set(x str, y int) -> Pair =>
+    Pair { a: 0, b: y }                  // ignores str x
+
+
+test "overload по first arg type" {
+    let p0 = Pair.new()
+    let p1 = p0.set(3, 4)                // (int, int) → both
+    assert(p1.a == 3)
+    assert(p1.b == 4)
+    let p2 = p0.set("foo", 7)            // (str, int) → b only
+    assert(p2.a == 0)
+    assert(p2.b == 7)
+}
+
+
+// ─── 9. No-arg overload (одно из них без args, другое с args) ───
+// Это arity-overload с 0 vs N args.
+
+type Counter2 {
+    n int
+}
+
+export fn Counter2.zero() -> Counter2 =>
+    Counter2 { n: 0 }
+
+export fn Counter2 @bump() -> Counter2 =>
+    Counter2 { n: @n + 1 }
+
+export fn Counter2 @bump(by int) -> Counter2 =>
+    Counter2 { n: @n + by }
+
+
+test "no-arg vs N-arg arity overload" {
+    let c0 = Counter2.zero()
+    let c1 = c0.bump()                   // 0 args → +1
+    assert(c1.n == 1)
+    let c2 = c1.bump(10)                 // 1 arg → +10
+    assert(c2.n == 11)
 }

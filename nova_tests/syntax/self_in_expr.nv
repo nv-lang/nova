@@ -2,18 +2,19 @@
 //
 // Self в type-position (return type, parameter type) уже работает.
 // План 11 Ф.4.5 добавляет Self в expression-position:
-//   - `Self.method(args)` — call current type's static.
+//   - `Self.method(args)` — call current type's static (Path-form).
+//   - `Self.method(args)` — то же через Member-form (obj=Ident("Self")).
 //   - `Self { fields }` — record literal current type'а.
-//   - `Self.@method` — unbound method value (Ф.4, отдельно).
+//
+// Bootstrap-ограничение: method_receivers single-key, поэтому имена
+// методов уникальные между типами (Plan 11 Ф.1-Ф.3 это решит для
+// methods с receiver'ом). Здесь Self — именно эти methods, поэтому
+// уникальные имена нужны.
 
 module nova_tests.syntax.self_in_expr
 
 
-// ─── Default → parameterized constructor через Self.method ───
-
-// Bootstrap-ограничение: method_receivers single-key, поэтому имена
-// методов уникальные между типами (Plan 11 Ф.1-Ф.3 это решит). Здесь
-// проверяем только Ф.4.5 — Self resolution.
+// ─── 1. Default → parameterized constructor ───
 
 type Account {
     balance int
@@ -34,6 +35,8 @@ test "Self.method(...) в static — default → parameterized" {
 }
 
 
+// ─── 2. Self { ... } literal в multi-field record ───
+
 type Box {
     value int
     tag   int
@@ -53,6 +56,8 @@ test "Self { ... } literal" {
     assert(b2.value == 42 && b2.tag == 7)
 }
 
+
+// ─── 3. Builder pattern: chain Self.method ───
 
 type Builder {
     count int
@@ -76,6 +81,8 @@ test "Self.method chain в нескольких constructors" {
 }
 
 
+// ─── 4. Self.method с несколькими args ───
+
 type Counter {
     value int
 }
@@ -90,4 +97,69 @@ export fn Counter.ctr_from_pair(a int, b int) -> Self =>
 test "Self.method с несколькими args" {
     let c = Counter.ctr_from_pair(3, 4)
     assert(c.value == 7)
+}
+
+
+// ─── 5. Self.method в instance-методе ───
+// Instance method вызывает static через Self.
+
+type SelfInstance {
+    n int
+}
+
+export fn SelfInstance.si_make(v int) -> Self =>
+    Self { n: v }
+
+// Instance метод, который через Self вызывает свой static.
+export fn SelfInstance @si_double() -> Self =>
+    Self.si_make(@n * 2)
+
+
+test "Self.method из instance-метода" {
+    let a = SelfInstance.si_make(5)
+    let b = a.si_double()
+    assert(b.n == 10)
+}
+
+
+// ─── 6. Self в return-position и expression-position одновременно ───
+
+type Chain {
+    step int
+}
+
+export fn Chain.chain_zero() -> Self =>
+    Self { step: 0 }
+
+export fn Chain @chain_next() -> Self =>
+    Self { step: @step + 1 }
+
+
+test "Self в return + Self literal в body" {
+    let c0 = Chain.chain_zero()
+    let c1 = c0.chain_next()
+    let c2 = c1.chain_next()
+    assert(c2.step == 2)
+}
+
+
+// ─── 7. Nested Self (Self.X где X сам делает Self.Y) ───
+
+type Nest {
+    depth int
+}
+
+export fn Nest.nst_zero() -> Self =>
+    Self { depth: 0 }
+
+export fn Nest.nst_one() -> Self =>
+    Self { depth: 1 }
+
+export fn Nest.nst_two() -> Self =>
+    Self { depth: Self.nst_one().depth + 1 }
+
+
+test "nested Self.method calls" {
+    let n = Nest.nst_two()
+    assert(n.depth == 2)
 }

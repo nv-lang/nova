@@ -1759,4 +1759,51 @@ path with priority.
 - Ф.9.4-9.5 multi-anon detection + recursion lint
 
 Не сделано: Ф.4 (method values first-class), Ф.5 (disambiguation
-`as fn(...)`), Ф.7 (полные тесты как в плане), Ф.8 (sweep std).
+`as fn(...)`), Ф.8 (sweep std).
+
+
+================================================================================
+2026-05-08 Plan 11 Ф.7: расширение тестов до полноценного покрытия
+================================================================================
+
+Plan 11 Ф.7 закрыт — все три тестовых файла расширены с минимальных
+наборов до полного покрытия граничных случаев.
+
+overload.nv (3 → 9 тестов):
+- static overload Money.from(int|str)
+- instance overload Acc.@add(int|str)
+- одноимённые static на разных типах не конфликтуют
+- arity overload @log(msg) vs @log(level, msg)
+- 3+ overloads на одном методе (int/str/bool)
+- mixed static+instance одного имени
+- overload с разными return типами по arg type
+- multi-arg overload (по first arg type)
+- no-arg vs N-arg arity overload
+
+self_in_expr.nv (4 → 7 тестов):
+- Self.method(...) default → parameterized constructor
+- Self { ... } literal
+- Self.method chain через несколько constructors
+- Self.method с несколькими args
+- Self.method из instance-метода (новое)
+- Self в return + Self literal в body (новое)
+- nested Self.method calls (новое)
+
+anonymous_embed.nv (3 → 9 тестов):
+- named embed: auto-proxy
+- anonymous embed: auto-proxy без alias
+- override Own wins over Delegated
+- explicit base-call через @<alias>.method() (новое)
+- несколько auto-proxy методов от одного embed (новое)
+- auto-proxy с args (новое)
+- два named embed разных типов (новое)
+- anonymous embed coexists с extra fields (новое)
+- override через anonymous embed: Own wins + lint warning (новое)
+
+Multi-anonymous detection: проверено напрямую через nova-codegen
+(compile-time check) — даёт правильный compile error.
+
+Регрессия 17 файлов: 190/190 PASS (было 175 после Ф.9, +15 новых).
+
+Урок: расширение тестов даёт уверенность в крайних случаях
+(arity overload, Self в Member-form, override на anon embed).
