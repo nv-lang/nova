@@ -170,8 +170,11 @@ fn cmd_compile(path: &PathBuf, output: Option<&std::path::Path>, annotate_source
     }
 
     let mut emitter = nova_codegen::codegen::CEmitter::new();
-    if annotate_source {
-        emitter.set_source_for_annotations(src.clone());
+    // Plan 14 std-fix: source передаётся всегда — для line:col в
+    // codegen-ошибках. Активация SRC-комментариев — отдельный флаг.
+    emitter.set_source_for_annotations(src.clone());
+    if !annotate_source {
+        emitter.disable_source_annotations();
     }
     let c_code = emitter
         .emit_module(&module)

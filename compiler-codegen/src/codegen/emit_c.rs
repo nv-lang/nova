@@ -145,6 +145,16 @@ pub struct CEmitter {
     /// { return nova_fn_<name>(args); }`). Дедупликация — несколько
     /// references к одной fn делят один thunk.
     emitted_fn_thunks: HashSet<String>,
+    /// Plan 14 Ф.2: имена const'ов с runtime-init (record-литерал, call,
+    /// и т.д.). На use-site `Ident(name)` для них эмитится `nova_const_<name>()`
+    /// (lazy-init геттер) вместо имени переменной. Тип сохраняется в
+    /// `var_types[name]` (как для обычных const'ов).
+    lazy_consts: HashSet<String>,
+    /// Plan 14 Ф.4: fn-typed поля record'ов — `(record_name, field_name)
+    /// → (param_c_tys, ret_c_ty)`. Заполняется при `emit_type_decl`
+    /// для record-полей с TypeRef::Func. Используется в Member-call
+    /// для routing'а через `NOVA_CLOS_CALL_*`.
+    record_field_fn_sigs: HashMap<(String, String), (Vec<String>, String)>,
     /// Monotonic counter for trailing block functions — generates unique names.
     trailing_block_counter: usize,
     /// Counter for lambda/closure static functions.
@@ -168,11 +178,14 @@ pub struct CEmitter {
     /// trailing-expression value into `result[idx]` instead of discarding.
     /// Tuple: (idx_var_name, result_var_name, element_c_type).
     current_parfor_slot: Option<(String, String, String)>,
-    /// Optional Nova source text — when Some, codegen inserts each statement's
-    /// originating Nova source as `/* SRC: ... */` comment in the generated C.
-    /// Set via `--annotate-source` CLI flag. Off by default to keep .c diffs
-    /// stable in CI.
+    /// Optional Nova source text — when Some, используется для (1) line:col
+    /// в codegen-ошибках (Plan 14 std-fix) и (2) `/* SRC: ... */` комментов
+    /// при `annotation_enabled=true`. Set via `--annotate-source` CLI flag
+    /// активирует комментарии; источник передаётся всегда.
     annotation_source: Option<String>,
+    /// Plan 14 std-fix: контролирует только эмит SRC-комментариев. Source
+    /// в `annotation_source` остаётся для line:col в ошибках.
+    annotation_enabled: bool,
 }
 
 impl CEmitter {
@@ -219,6 +232,8 @@ impl CEmitter {
             fn_param_sigs: HashMap::new(),
             user_fn_sigs: HashMap::new(),
             emitted_fn_thunks: HashSet::new(),
+            lazy_consts: HashSet::new(),
+            record_field_fn_sigs: HashMap::new(),
             trailing_block_counter: 0,
             lambda_counter: 0,
             fn_returns_fn_sig: HashMap::new(),
@@ -228,14 +243,24 @@ impl CEmitter {
             type_aliases: HashMap::new(),
             current_parfor_slot: None,
             annotation_source: None,
+            annotation_enabled: false,
         }
     }
 
     /// Enable source-annotation mode: codegen will insert `/* SRC: ... */`
     /// comments before each statement showing the originating Nova source.
-    /// Off by default — turn on for debugging the generated C.
+    /// On by default since Plan 14 std-fix (нужно для line:col в ошибках);
+    /// SRC-комментарии в C-output контролируются `annotation_enabled` flag.
     pub fn set_source_for_annotations(&mut self, src: String) {
         self.annotation_source = Some(src);
+        self.annotation_enabled = true;
+    }
+
+    /// Plan 14 std-fix: выключает SRC-комментарии но оставляет source для
+    /// line:col в codegen-ошибках. Вызывается main.rs когда `--annotate-source`
+    /// не передан.
+    pub fn disable_source_annotations(&mut self) {
+        self.annotation_enabled = false;
     }
 
     /// Get the Span of a statement (where in source it came from).
@@ -264,6 +289,9 @@ impl CEmitter {
     }
 
     fn emit_source_annotation_for_span(&mut self, span: Span) {
+        // Plan 14 std-fix: SRC-комментарии теперь управляются отдельно
+        // от наличия source (source нужен для line:col в ошибках).
+        if !self.annotation_enabled { return; }
         let Some(src) = self.annotation_source.clone() else { return; };
         let snippet = src
             .get(span.start..span.end)
@@ -791,8 +819,75 @@ impl CEmitter {
         }
         // General case: emit as static const with initialiser expression
         // (covers int/bool/etc.)
-        let val = self.emit_const_expr(&c.value)?;
-        self.line(&format!("static const {} {} = {};", ty_c, c.name, val));
+        match self.emit_const_expr(&c.value) {
+            Ok(val) => {
+                self.line(&format!("static const {} {} = {};", ty_c, c.name, val));
+                Ok(())
+            }
+            Err(_) => {
+                // Plan 14 Ф.2: non-constant initialiser (record-literal,
+                // function call, и т.п.) — desugaring в lazy-init геттер.
+                self.emit_lazy_const(&c.name, &ty_c, &c.value)
+            }
+        }
+    }
+
+    /// Plan 14 Ф.2: эмит const'а с runtime-init через lazy-init геттер.
+    ///
+    /// ```c
+    /// static <Ty> _nova_const_<name>_value;
+    /// static int _nova_const_<name>_init = 0;
+    /// static <Ty> nova_const_<name>(void) {
+    ///     if (!_nova_const_<name>_init) {
+    ///         <emit_expr statements>
+    ///         _nova_const_<name>_value = <expr_val>;
+    ///         _nova_const_<name>_init = 1;
+    ///     }
+    ///     return _nova_const_<name>_value;
+    /// }
+    /// ```
+    ///
+    /// На use-site `Ident(name)` для lazy const'ов эмитим `nova_const_<name>()`.
+    fn emit_lazy_const(&mut self, name: &str, ty_c: &str, value: &Expr) -> Result<(), String> {
+        // Регистрируем имя как lazy — use-site Ident(name) станет вызовом геттера.
+        self.lazy_consts.insert(name.to_string());
+        // Регистрируем тип, чтобы infer_expr_c_type(Ident(name)) возвращал
+        // правильный c-тип (для записи в var_types — как обычный binding).
+        self.var_types.insert(name.to_string(), ty_c.to_string());
+        // Эмитим storage + init-flag (file-scope statics).
+        self.line(&format!("static {} _nova_const_{}_value;", ty_c, name));
+        self.line(&format!("static int _nova_const_{}_init = 0;", name));
+        // Эмитим геттер. Тело уходит в deferred_impls (после всех forward
+        // declarations), чтобы вложенные emit'ы (record-литерал → side
+        // statements) не разрушали file-scope порядок.
+        let saved_out = std::mem::take(&mut self.out);
+        let saved_indent = self.indent;
+        self.indent = 0;
+        self.line(&format!("static {} nova_const_{}(void) {{", ty_c, name));
+        self.indent = 1;
+        self.line(&format!("if (!_nova_const_{}_init) {{", name));
+        self.indent = 2;
+        // Передать ty_c как ожидаемый record-target для D55 coercion
+        // (`const FOO = { ... }` без явного имени типа должен подхватить
+        // тип из аннотации/typed-target).
+        let saved_expected = self.expected_record_type.clone();
+        self.expected_record_type = Self::struct_name_from_c_type(ty_c);
+        let val = self.emit_expr(value)?;
+        self.expected_record_type = saved_expected;
+        self.line(&format!("_nova_const_{}_value = {};", name, val));
+        self.line(&format!("_nova_const_{}_init = 1;", name));
+        self.indent = 1;
+        self.line("}");
+        self.line(&format!("return _nova_const_{}_value;", name));
+        self.indent = 0;
+        self.line("}");
+        self.line("");
+        let getter_body = std::mem::replace(&mut self.out, saved_out);
+        self.indent = saved_indent;
+        // Forward decl рядом с storage — чтобы вызовы видели функцию.
+        self.line(&format!("static {} nova_const_{}(void);", ty_c, name));
+        // Тело уходит в deferred_impls (печатается после forward decls).
+        self.deferred_impls.push_str(&getter_body);
         Ok(())
     }
 
@@ -2619,6 +2714,21 @@ impl CEmitter {
             // Mangle если коллизия с C reserved keyword.
             let mangled = Self::mangle_field_name(&f.name);
             self.line(&format!("{} {};", ty_c, mangled));
+            // Plan 14 Ф.4: записываем fn-typed поля в реестр sig'ов
+            // record-полей. Использует Member-call routing для эмита
+            // closure-call (`obj.f(x)` → NOVA_CLOS_CALL_*).
+            if let TypeRef::Func { params: fp, return_type, .. } = &f.ty {
+                let ptys: Vec<String> = fp.iter()
+                    .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".into()))
+                    .collect();
+                let rty = return_type.as_ref()
+                    .map(|rt| self.type_ref_to_c(rt).unwrap_or_else(|_| "nova_int".into()))
+                    .unwrap_or_else(|| "nova_unit".into());
+                self.record_field_fn_sigs.insert(
+                    (name.to_string(), f.name.clone()),
+                    (ptys, rty),
+                );
+            }
         }
         self.indent -= 1;
         self.line("};");
@@ -3618,6 +3728,13 @@ impl CEmitter {
                 //   - Иначе fallback'имся на raw fn-pointer (для случаев
                 //     где callee принимает direct C function: built-in
                 //     dispatch, generic erasure, и т.д.).
+                // Plan 14 Ф.2: lazy const → вызов геттера. Проверяем
+                // ПЕРВЫМ, до is_local_var, потому что emit_lazy_const
+                // регистрирует name в var_types для type-inference, а
+                // is_local_var тогда был бы true.
+                if self.lazy_consts.contains(name) {
+                    return Ok(format!("nova_const_{}()", name));
+                }
                 let is_local_var = self.var_types.contains_key(name);
                 let is_user_fn = self.var_types.contains_key(&format!("fn_ret_{}", name));
                 if is_user_fn && !is_local_var {
@@ -3628,7 +3745,23 @@ impl CEmitter {
                 }
                 Ok(name.clone())
             }
-            ExprKind::Path(parts) => Ok(parts.join("_")),
+            ExprKind::Path(parts) => {
+                // Plan 14 Ф.2: `FACTOR.x` парсится как Path(["FACTOR", "x"])
+                // если первая часть — Ident с UpperCase (parser routing).
+                // Для lazy const'ов нужно `nova_const_FACTOR()->x` вместо
+                // `FACTOR_x` (last segment — record-поле).
+                if parts.len() >= 2 && self.lazy_consts.contains(&parts[0]) {
+                    let const_ty = self.var_types.get(&parts[0]).cloned()
+                        .unwrap_or_default();
+                    let accessor = if Self::is_value_type(&const_ty) { "." } else { "->" };
+                    let mut acc = format!("nova_const_{}(){}{}", parts[0], accessor, parts[1]);
+                    for p in &parts[2..] {
+                        acc = format!("({}.{})", acc, p);
+                    }
+                    return Ok(acc);
+                }
+                Ok(parts.join("_"))
+            }
 
             // D38 turbofish: type_args — explicit hint для monomorphization;
             // bootstrap monomorphizes по call-site / receiver-type, поэтому
@@ -3827,6 +3960,15 @@ impl CEmitter {
                 if obj_ty.starts_with("NovaArray_") && name == "len" {
                     return Ok(format!("({}->len)", o));
                 }
+                // NovaArray_T*.is_empty → (arr->len == 0) — bool, D38 built-in.
+                if obj_ty.starts_with("NovaArray_") && name == "is_empty" {
+                    return Ok(format!("(({}->len) == 0)", o));
+                }
+                // nova_str.is_empty → (s.len == 0) — bool. D26: str.len в
+                // codepoint'ах (O(n)); is_empty можно проверить по byte_len O(1).
+                if obj_ty == "nova_str" && name == "is_empty" {
+                    return Ok(format!("(({}.len) == 0)", o));
+                }
                 // Tuple field access: t.0 → t.f0, t.1 → t.f1, etc.
                 if name.chars().all(|c| c.is_ascii_digit()) {
                     let idx: usize = name.parse().unwrap_or(0);
@@ -3918,7 +4060,7 @@ impl CEmitter {
             ExprKind::While { cond, body } => {
                 // Plan 08 Ф.4: strict bool-check.
                 let cond_ty = self.infer_expr_c_type(cond);
-                Self::check_bool_condition(&cond_ty, "while")?;
+                self.check_bool_condition_at(&cond_ty, "while", cond.span)?;
                 let cond_val = self.emit_expr(cond)?;
                 let tmp = self.fresh_tmp_named("while");
                 self.line(&format!("nova_unit {};", tmp));
@@ -4618,6 +4760,50 @@ impl CEmitter {
                     }
                     _ => obj,
                 };
+                // Plan 14 Ф.4: если obj — record и `method` это fn-typed поле
+                // (записано в record_field_fn_sigs), эмитим closure-call
+                // через NOVA_CLOS_CALL_* macro.
+                {
+                    let obj_ty = self.infer_expr_c_type(obj);
+                    if let Some(record_name) = obj_ty
+                        .strip_prefix("Nova_")
+                        .map(|s| s.trim_end_matches('*').to_string())
+                    {
+                        let key = (record_name.clone(), method.clone());
+                        if let Some((param_tys, ret_ty)) = self.record_field_fn_sigs.get(&key).cloned() {
+                            let o = self.emit_expr(obj)?;
+                            let mut arg_strs = Vec::new();
+                            for a in args { arg_strs.push(self.emit_expr(a)?); }
+                            let field_mangled = Self::mangle_field_name(method);
+                            let f_expr = format!("({}->{})", o, field_mangled);
+                            let macro_name = Self::clos_call_macro(&param_tys, &ret_ty);
+                            return match macro_name {
+                                Some(m) => {
+                                    if arg_strs.is_empty() {
+                                        Ok(format!("{}({})", m, f_expr))
+                                    } else {
+                                        Ok(format!("{}({}, {})", m, f_expr, arg_strs.join(", ")))
+                                    }
+                                }
+                                None => {
+                                    // Generic closure-call через NovaClosBase.
+                                    let mut cast_params = vec!["void*".to_string()];
+                                    cast_params.extend(param_tys.iter().cloned());
+                                    let cps = cast_params.join(", ");
+                                    let mut all_args = vec![format!("((NovaClosBase*)({}))->env", f_expr)];
+                                    all_args.extend(arg_strs.iter().cloned());
+                                    Ok(format!(
+                                        "(({ret}(*)({params}))(((NovaClosBase*)({fc}))->fn))({args})",
+                                        ret = ret_ty,
+                                        params = cps,
+                                        fc = f_expr,
+                                        args = all_args.join(", ")
+                                    ))
+                                }
+                            };
+                        }
+                    }
+                }
                 // D38 array-static-method: `[]T.new()` / `[]T.with_capacity(n)`.
                 // Парсер строит obj = Path(["__array", "<T>"]); здесь
                 // диспетчеризуем в `nova_array_new_<T>` runtime.
@@ -5875,7 +6061,7 @@ impl CEmitter {
         // silent-bug class. Conservative — error только если ОЧЕВИДНО
         // non-bool (numeric/str). type-neutral (void*) — пропускаем.
         let cond_ty = self.infer_expr_c_type(cond);
-        Self::check_bool_condition(&cond_ty, "if")?;
+        self.check_bool_condition_at(&cond_ty, "if", cond.span)?;
         // Infer result type from then-block (if any trailing), default nova_unit
         let if_ty = if else_.is_none() {
             "nova_unit".into()
@@ -7749,6 +7935,25 @@ impl CEmitter {
         }
     }
 
+    /// Plan 14 std-fix: возвращаемый C-тип для встроенных методов str.
+    /// Используется в `infer_expr_c_type` для Call с `Member`-func, чтобы
+    /// `s.starts_with(...)`/`s.contains(...)` (и т.д.) корректно
+    /// инфер'ились как `nova_bool` для strict bool-check'а в `if`.
+    fn str_method_ret_type(method: &str) -> Option<&'static str> {
+        match method {
+            "starts_with" | "ends_with" | "contains" | "eq"
+                => Some("nova_bool"),
+            "to_upper" | "to_lower" | "trim" | "slice" | "concat"
+                => Some("nova_str"),
+            "char_len" | "byte_len"
+                => Some("nova_int"),
+            "find" | "rfind"
+                => Some("NovaOpt_nova_int"),
+            // Iter[T] / NovaArray возврат — пока не критично для bool-check.
+            _ => None,
+        }
+    }
+
     /// Map a Nova str method name to a nova_rt C function name.
     fn str_method_to_rt(method: &str) -> Option<&'static str> {
         match method {
@@ -7856,6 +8061,19 @@ impl CEmitter {
                 "{} condition must be `bool`, got `{}`. \
                 Hint: use explicit comparison (e.g. `n != 0` for truthy-int).",
                 ctx, cond_ty));
+        }
+        Ok(())
+    }
+
+    /// Plan 14 std-fix: версия с указанием места (line:col) в условии.
+    /// Использует `annotation_source` (set_source_for_annotations).
+    fn check_bool_condition_at(&self, cond_ty: &str, ctx: &str, span: crate::diag::Span) -> Result<(), String> {
+        if let Err(msg) = Self::check_bool_condition(cond_ty, ctx) {
+            if let Some(src) = &self.annotation_source {
+                let (line, col) = crate::diag::byte_to_line_col(src, span.start);
+                return Err(format!("{}:{}: {}", line, col, msg));
+            }
+            return Err(msg);
         }
         Ok(())
     }
@@ -8138,6 +8356,15 @@ impl CEmitter {
                         }
                     }
                     let obj_ty = self.infer_expr_c_type(obj);
+                    // Plan 14 std-fix: built-in str методы (starts_with/ends_with/
+                    // contains/eq/...) — return-type из hardcoded map'а. Без этого
+                    // `s.starts_with(...)` инфер'ится как `nova_int` (default
+                    // fallback), что ломает strict bool-check для `if`.
+                    if obj_ty == "nova_str" {
+                        if let Some(rt) = Self::str_method_ret_type(method) {
+                            return rt.into();
+                        }
+                    }
                     // Plan 06 Ф.3: `coll.iter()` → registered IterT type.
                     if method == "iter" {
                         let coll_type = obj_ty.trim_start_matches("Nova_")
@@ -8526,6 +8753,10 @@ impl CEmitter {
                 }
                 if obj_ty.starts_with("NovaArray_") && name == "len" {
                     return "nova_int".into();
+                }
+                // Plan 14 std-fix: D38 built-in `is_empty` для []T и str → bool.
+                if (obj_ty.starts_with("NovaArray_") || obj_ty == "nova_str") && name == "is_empty" {
+                    return "nova_bool".into();
                 }
                 // Tuple field access: check element type registry first (works for void* too)
                 if name.chars().all(|c| c.is_ascii_digit()) {
