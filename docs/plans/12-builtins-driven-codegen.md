@@ -1,10 +1,12 @@
 # План 12 — builtins.nv-driven external dispatch
 
-**Статус:** ⏳ pending (после Plan 04 Этап 6).
+**Статус:** ⏳ pending (готов к старту — Plan 04 закрыт 2026-05-08).
 **Связь:** [D82](../../spec/decisions/08-runtime.md#d82) (extended
-2026-05-08), Q-codegen-builtins-cleanup
+2026-05-08), [D73/D77](../../spec/decisions/08-runtime.md#d73-from--into-protocol-пара-с-авто-выводом)
+(auto-derive From↔Into, TryFrom↔TryInto, Fail↔Result),
+Q-codegen-builtins-cleanup
 ([open-questions.md](../../spec/open-questions.md#q-codegen-builtins-cleanup)),
-Plan 04 Этап 6.
+[Plan 04](04-buffer-split-and-external.md) (✅ закрыт).
 
 ## Цель
 
@@ -16,6 +18,36 @@ ReadBuffer / `str.from(char)` — `std/runtime/builtins.nv`. Codegen
 
 Расхождение между .nv-декларацией и runtime-реализацией ловится
 **линкером** (undefined reference / type mismatch).
+
+### Ключевой принцип: только non-derivable формы в builtins.nv
+
+**В builtins.nv объявляются только те external функции, которые
+компилятор не может вывести автоматически.** Auto-derived формы из
+builtins.nv **удаляются** — они синтезируются codegen'ом по
+правилам D73/D77.
+
+Сейчас в builtins.nv дублирование:
+```nova
+export external fn ReadBuffer mut @read_byte()       Fail[ReadBufferError] -> byte
+export external fn ReadBuffer mut @try_read_byte()                          -> Result[byte, ReadBufferError]
+```
+
+После Plan 12: остаётся только Fail-форма, `try_read_byte` синтезируется
+codegen'ом как Nova-обёртка по D77 (Fail↔Result). То же для возможных
+будущих `write_*`/`try_write_*` пар.
+
+**Что считается auto-derivable:**
+
+| Из | Авто-выводится | Правило |
+|---|---|---|
+| `T.from(s S) Fail[E] -> Self` | `T.try_from(s S) -> Result[Self, E]` | D77 Fail↔Result |
+| `T.from(s S) -> Self` | `s.into() -> T` | D73 From→Into |
+| `T mut @read_X() Fail[E] -> X` | `T mut @try_read_X() -> Result[X, E]` | D77 (паттерн `read_*`/`try_read_*`) |
+| `t.into() -> T` | `T.from(t)` (зеркально) | D73 |
+
+Auto-derived функции **наследуют видимость источника** (D5/D47):
+если source `export external` — derived публичная и попадает в
+prelude через D26 (для типов из `std.runtime.builtins`).
 
 ## Не цели
 
@@ -179,6 +211,77 @@ is_static = true.
 по value, не `Nova_str*`. Убедиться что `type_ref_to_c("Self")` в
 контексте receiver=str даёт `nova_str` корректно.
 
+### Ф.4.5 — Auto-derive non-declared формы (~2-3ч)
+
+**Цель.** Удалить из builtins.nv все формы, которые компилятор может
+вывести автоматически по D73/D77, и синтезировать их в codegen'е.
+
+**Что удаляется из builtins.nv:**
+
+1. **`ReadBuffer.@try_read_*`** (16+ функций — `try_read_byte`,
+   `try_read_u8/16/32/64_le/be`, `try_read_i*`, `try_read_f*`).
+   Остаётся только `@read_*` (Fail-форма).
+2. **`char.into() -> str`** — если он есть как явная декларация
+   (сейчас комментарий в builtins.nv). Выводится из
+   `str.from(c char)` по D73.
+3. **Любые `Type.try_from(...)` пары к `Type.from(...) Fail[E]`** —
+   если есть. Сейчас в builtins.nv нет, но правило фиксируется.
+
+**Codegen-логика (D77 Fail↔Result auto-derive):**
+
+При обходе `external_registry` для каждой Fail-form декларации
+`fn T mut @read_X() Fail[E] -> X` codegen **синтезирует** Nova-AST
+для `try_read_X`:
+
+```nova
+fn T mut @try_read_X() -> Result[X, E] {
+    let r = with Fail[E] = (e) => interrupt Err(e) {
+        Ok(@read_X())
+    }
+    r
+}
+```
+
+(Не C-функцию — Nova-уровневую обёртку. Runtime реализует только
+одну C-функцию `Nova_T_method_read_X`.)
+
+Эта синтезированная декларация добавляется в `external_registry`
+**виртуально** (с пометкой `is_derived: true`, чтобы Ф.5 знала что
+её не надо искать в builtins.nv AST). При вызове `rb.try_read_X()`
+codegen эмитит inline-обёртку над `Nova_T_method_read_X`.
+
+**Codegen-логика (D73 From→Into auto-derive):**
+
+Уже работает в Plan 08 Ф.3 (`str.from(c char)` → `c.into() -> str`).
+Plan 12 не меняет этот механизм, только подключает к
+`external_registry` lookup'у — `into()` calls должны находить
+synthesized декларацию через тот же registry, что и `read_*`.
+
+**Pattern recognition для `read_*`/`try_read_*`:**
+
+Codegen матчит по двум критериям:
+1. Имя method'а начинается с `read_` (после `@`).
+2. Сигнатура: `fn T mut @read_<X>(...) Fail[E] -> R`.
+
+Если оба условия выполнены — синтезирует `try_read_<X>`. Если в
+builtins.nv явно объявлена `try_read_X` — это **ошибка** (auto-
+derived form не должна объявляться вручную):
+
+```
+error: external fn `T.@try_read_X` is auto-derived from `T.@read_X`
+       (D77 Fail↔Result); remove the explicit declaration from
+       std/runtime/builtins.nv
+```
+
+**Visibility:** synthesized функции наследуют `is_export` от source.
+Все 17 `read_*` в builtins.nv — `export external`, значит все
+synthesized `try_read_*` тоже public и попадают в prelude через D26.
+
+**Тест:** удалить `@try_read_byte` из builtins.nv, прогнать
+`nova_tests/runtime/read_buffer.nv` — должно работать (synthesized
+обёртка эмитится автоматически). Затем добавить `@try_read_byte`
+явно — компилятор должен дать error «auto-derived; remove».
+
 ### Ф.5 — Удалить hard-coded таблицы (~30мин)
 
 После того как Ф.1-Ф.4 работают и проходят тесты:
@@ -282,12 +385,20 @@ test "StringBuilder unknown method" {
 - [ ] Ф.3: emit_call использует registry для StringBuilder/WriteBuffer/
       ReadBuffer; все 42/42 codegen теста проходят.
 - [ ] Ф.4: `str.from(char)` работает через registry.
+- [ ] Ф.4.5: `try_read_*` удалены из builtins.nv (≥17 деклараций),
+      codegen синтезирует обёртки автоматически; runtime тесты
+      `read_buffer.nv` проходят без изменений; явная декларация
+      auto-derived формы — compile error.
 - [ ] Ф.5: hard-coded таблицы удалены из emit_c.rs (4850-5023);
       diff в LoC негативный на ~200 строк.
 - [ ] Ф.6: type-checker отвергает unknown method на opaque-типе.
 - [ ] Ф.7: docs обновлены.
-- [ ] **Sanity:** добавление новой `external fn` в builtins.nv +
-      runtime-impl работает без правки Rust-codegen'а.
+- [ ] **Sanity 1:** добавление новой Fail-form `external fn` в
+      builtins.nv + runtime-impl работает без правки Rust-codegen'а;
+      `try_*` форма доступна автоматически.
+- [ ] **Sanity 2:** добавление новой `T.from(s S) Fail[E]` в
+      builtins.nv даёт `T.try_from(s)` и `s.into()` бесплатно
+      (через D73/D77 + Plan 12 Ф.4.5).
 
 ## Open questions внутри плана
 
