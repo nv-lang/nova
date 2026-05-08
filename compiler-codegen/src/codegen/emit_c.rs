@@ -56,6 +56,10 @@ pub struct CEmitter {
     /// `target.from(src V)` is explicitly defined. Used to synthesize
     /// `v.into()` for V via target.from when no explicit `@into` exists.
     from_targets: HashMap<String, Vec<String>>,
+    /// Plan 08 Ф.3: try_from/try_into registries (D77 4-way auto-derive).
+    /// Параллельно with from_targets/into_targets.
+    try_from_targets: HashMap<String, Vec<String>>,
+    try_into_targets: HashMap<String, String>,
     /// D73 v2 auto-derive: source_type → target_type for which
     /// `fn V @into() -> T` is explicitly defined. Used to synthesize
     /// `T.from(v)` via v.into() when no explicit `T.from` exists.
@@ -145,6 +149,8 @@ impl CEmitter {
             all_methods: HashSet::new(),
             from_targets: HashMap::new(),
             into_targets: HashMap::new(),
+            try_from_targets: HashMap::new(),
+            try_into_targets: HashMap::new(),
             tuple_element_types: HashMap::new(),
             record_variant_field_types: HashMap::new(),
             record_variant_field_order: HashMap::new(),
@@ -403,6 +409,31 @@ impl CEmitter {
                         if let Some(TypeRef::Named { path, .. }) = &f.return_type {
                             if !path.is_empty() {
                                 self.into_targets.insert(recv.type_name.clone(), path.join("_"));
+                            }
+                        }
+                    }
+                    // Plan 08 Ф.3: D77 try_from/try_into registries.
+                    // - `T.try_from(v V)` → try_from_targets[T] += V
+                    // - `fn V @try_into() -> Result[T, E]` → try_into_targets[V] = T
+                    if !is_instance && f.name == "try_from" && !f.params.is_empty() {
+                        if let TypeRef::Named { path, .. } = &f.params[0].ty {
+                            if !path.is_empty() {
+                                self.try_from_targets.entry(recv.type_name.clone())
+                                    .or_default()
+                                    .push(path.join("_"));
+                            }
+                        }
+                    }
+                    if is_instance && f.name == "try_into" {
+                        // Берём первый generic-arg возвращаемого Result (если есть).
+                        if let Some(TypeRef::Named { path, generics, .. }) = &f.return_type {
+                            if path.last().map(|s| s.as_str()) == Some("Result") {
+                                if let Some(TypeRef::Named { path: tp, .. }) = generics.first() {
+                                    if !tp.is_empty() {
+                                        self.try_into_targets.insert(
+                                            recv.type_name.clone(), tp.join("_"));
+                                    }
+                                }
                             }
                         }
                     }
@@ -4547,7 +4578,7 @@ impl CEmitter {
                 //     Emit `Nova_T_static_from(v)` in that case.
                 if method == "into" && args.is_empty() {
                     let recv_ty = self.infer_expr_c_type(obj);
-                    let recv_type = recv_ty.trim_start_matches("Nova_").trim_end_matches('*').to_string();
+                    let recv_type = Self::nova_type_name_from_c(&recv_ty);
                     // Skip if explicit `fn V @into()` is present (handled by method_receivers below).
                     let has_explicit_into = self.method_receivers.get("into")
                         .map(|(t, _)| t == &recv_type).unwrap_or(false);
@@ -4559,6 +4590,24 @@ impl CEmitter {
                         if let Some(target_type) = target {
                             let obj_c = self.emit_expr(obj)?;
                             return Ok(format!("Nova_{}_static_from({})", target_type, obj_c));
+                        }
+                    }
+                }
+                // Plan 08 Ф.3: D77 4-way auto-derive — `v.@try_into()`.
+                // Симметрия для @into. Если есть `T.try_from(v V)` и нет
+                // явного `V.@try_into()`, эмитим как `T.try_from(v)`.
+                if method == "try_into" && args.is_empty() {
+                    let recv_ty = self.infer_expr_c_type(obj);
+                    let recv_type = Self::nova_type_name_from_c(&recv_ty);
+                    let has_explicit = self.method_receivers.get("try_into")
+                        .map(|(t, _)| t == &recv_type).unwrap_or(false);
+                    if !has_explicit {
+                        let target = self.try_from_targets.iter()
+                            .find(|(_, sources)| sources.iter().any(|s| s == &recv_type))
+                            .map(|(t, _)| t.clone());
+                        if let Some(target_type) = target {
+                            let obj_c = self.emit_expr(obj)?;
+                            return Ok(format!("Nova_{}_static_try_from({})", target_type, obj_c));
                         }
                     }
                 }
@@ -6458,6 +6507,31 @@ impl CEmitter {
         trimmed.strip_prefix("Nova_").map(|s| s.to_string())
     }
 
+    /// Plan 08 Ф.3: convert C-type back to Nova-type name для lookup'ов в
+    /// from_targets / try_from_targets (которые хранят Nova-имена).
+    /// `nova_int` → `int`, `nova_str` → `str`, `Nova_Wrapper*` → `Wrapper`.
+    /// Числовые primitive C-aliases (`int32_t` etc.) → соответствующее Nova-имя.
+    fn nova_type_name_from_c(c_ty: &str) -> String {
+        let trimmed = c_ty.trim_end_matches('*').trim();
+        match trimmed {
+            "nova_int"  => "int".into(),
+            "nova_f64"  => "f64".into(),
+            "nova_f32"  => "f32".into(),
+            "nova_bool" => "bool".into(),
+            "nova_str"  => "str".into(),
+            "nova_byte" => "byte".into(),
+            "int8_t"    => "i8".into(),
+            "int16_t"   => "i16".into(),
+            "int32_t"   => "i32".into(),
+            "int64_t"   => "i64".into(),
+            "uint8_t"   => "u8".into(),
+            "uint16_t"  => "u16".into(),
+            "uint32_t"  => "u32".into(),
+            "uint64_t"  => "u64".into(),
+            other => other.strip_prefix("Nova_").unwrap_or(other).to_string(),
+        }
+    }
+
     /// Returns true for C types that are passed by value (use `.` accessor, not `->`).
     fn is_value_type(ty: &str) -> bool {
         if ty.starts_with("_NovaTuple") && !ty.ends_with('*') {
@@ -6687,6 +6761,36 @@ impl CEmitter {
                             if let Some((_, ret_ty)) = schema.get(method.as_str()) {
                                 return ret_ty.clone();
                             }
+                        }
+                    }
+                    // Plan 08 Ф.3: v.@try_into() через auto-derive →
+                    // Result[T, E]. Distinct от @into (return T напрямую).
+                    if method == "try_into" {
+                        let recv_type = Self::nova_type_name_from_c(&obj_ty);
+                        // Если есть `T.try_from(v V)` для V == recv_type, это
+                        // synthesis target — возвращает Result.
+                        let has_try_from_target = self.try_from_targets.iter()
+                            .any(|(_, sources)| sources.iter().any(|s| s == &recv_type));
+                        if has_try_from_target {
+                            return "Nova_Result*".into();
+                        }
+                        // Иначе fallback на explicit @try_into.
+                        if let Some(target) = self.try_into_targets.get(&recv_type) {
+                            let _ = target;
+                            return "Nova_Result*".into();
+                        }
+                    }
+                    // Plan 08 Ф.3: v.@into() через auto-derive → T напрямую.
+                    if method == "into" {
+                        let recv_type = Self::nova_type_name_from_c(&obj_ty);
+                        let target = self.from_targets.iter()
+                            .find(|(_, sources)| sources.iter().any(|s| s == &recv_type))
+                            .map(|(t, _)| t.clone());
+                        if let Some(target_type) = target {
+                            return format!("Nova_{}*", target_type);
+                        }
+                        if let Some(target_type) = self.into_targets.get(&recv_type) {
+                            return format!("Nova_{}*", target_type);
                         }
                     }
                     // Array method calls

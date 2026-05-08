@@ -1,0 +1,83 @@
+// auto_derive.nv — Plan 08 Ф.3: D77 4-way auto-derive synthesis.
+//
+// Программист пишет ОДНУ форму конверсии, codegen синтезирует
+// обратную:
+//   - `T.from(v V)` ↔ `v.@into() -> T`        (D73, уже работало)
+//   - `T.try_from(v V)` ↔ `v.@try_into() -> Result[T, E]`  (Ф.3, новое)
+//
+// Bootstrap-ограничение: оба направления симметричны на уровне
+// dispatch'а (try_from/from registries). Compile-time ошибки если
+// синтез не находит target — ещё не реализованы (Ф.6).
+
+module nova_tests.runtime.auto_derive
+
+
+// Custom тип Celsius с try_from(int).
+type Celsius {
+    degrees int
+}
+
+
+// Программист пишет ОДНУ форму — try_from. Synthesis даёт try_into.
+export fn Celsius.try_from(n int) -> Result[Celsius, str] {
+    // Validation: −273.15 — абсолютный ноль.
+    if n < -273 {
+        Err("below absolute zero")
+    } else {
+        Ok(Celsius { degrees: n })
+    }
+}
+
+
+test "Celsius.try_from(int) валидное" {
+    let r = Celsius.try_from(20)
+    assert(r.is_ok())
+}
+
+
+test "Celsius.try_from(int) невалидное" {
+    let r = Celsius.try_from(-300)
+    assert(r.is_err())
+}
+
+
+test "auto-derive: int.@try_into() → Result[Celsius, str]" {
+    // Программист НЕ писал `fn int @try_into() -> Result[Celsius, str]`.
+    // Codegen синтезирует через Celsius.try_from.
+    // Проверка через is_ok — payload-extraction требует доп. boilerplate.
+    let n = 25
+    let r = n.try_into()
+    assert(r.is_ok())
+}
+
+
+test "auto-derive: int.@try_into() невалидный → Err" {
+    let n = -500
+    let r = n.try_into()
+    assert(r.is_err())
+}
+
+
+// from/into auto-derive (уже работало; smoke-проверка).
+type Wrapper {
+    inner int
+}
+
+
+export fn Wrapper.from(n int) -> Wrapper {
+    Wrapper { inner: n }
+}
+
+
+test "from auto-derive: Wrapper.from(int)" {
+    let w = Wrapper.from(42)
+    assert(w.inner == 42)
+}
+
+
+test "into auto-derive: int.@into() → Wrapper" {
+    // Программист НЕ писал `fn int @into() -> Wrapper`.
+    // Codegen синтезирует через Wrapper.from.
+    let w = 100.into()
+    assert(w.inner == 100)
+}

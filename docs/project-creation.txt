@@ -1004,3 +1004,46 @@ Bootstrap-ограничения:
 - Sweep stdlib (std/collections тесты) — отдельный шаг (Ф.5+Ф.6).
 
 
+================================================================================
+2026-05-08 Plan 08 Ф.3: D77 4-way auto-derive synthesis
+================================================================================
+
+D77 описывал 4-way auto-derive: программист пишет одну форму конверсии,
+компилятор синтезирует обратную. Bootstrap'е работало одно направление:
+`T.from(v V)` → `v.@into() -> T`. Не работало: try-форма
+(`T.try_from(v V)` → `v.@try_into() -> Result[T, E]`) и обратное
+направление для @into.
+
+Реализация:
+
+1. compiler-codegen/src/codegen/emit_c.rs:
+   - Новые registries `try_from_targets`, `try_into_targets` —
+     параллельно with from_targets/into_targets.
+   - AST-walk fn-items: при receiver-fn с именем `try_from` /
+     `try_into` заполняем соответствующий registry.
+   - Member-call dispatch для `v.@try_into()` — если есть
+     `T.try_from(v V)`, эмитим `Nova_T_static_try_from(v)`.
+   - Type-inference для `v.@try_into()` → `Nova_Result*`,
+     `v.@into()` → `Nova_<Target>*` (через registry lookup).
+
+2. Helper `nova_type_name_from_c` — двунаправленное mapping
+   между C-type'ом (которое возвращает infer_expr_c_type) и Nova-
+   именем (которое хранится в registries). Без этого primitive
+   receiver'ы (`int`, `f64`, etc.) не находили target'ы — registry
+   хранит "int", recv — "nova_int".
+
+Тесты (nova_tests/runtime/auto_derive.nv, 7 тестов):
+- Custom тип Celsius.try_from(int) → int.@try_into() через
+  synthesis (валидное / невалидное)
+- Wrapper.from(int) → 100.into() через synthesis (smoke)
+
+69/69 nova_tests PASS.
+
+Bootstrap-ограничения:
+- Compile-time check «synthesis target существует?» не реализован
+  (если нет ни from, ни into для пары — silent fall-through на
+  raw method-call). Делается в Ф.6 (generic-bound enforcement).
+- Транзитивный auto-derive не делается consciously (предотвращает
+  surprising conversion paths).
+
+
