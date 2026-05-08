@@ -18,6 +18,8 @@ Acceptance — добавить новый method тремя правками (r
 
 **Ф.9 (API polish, добавлен 2026-05-08):** ⏳ pending. Прицельные
 правки реестра + emitter'а после ревью текущих сгенерированных файлов:
+- ⚡ **Ф.9.0 (priority):** пустые строки между методами в auto-gen
+  файлах (cosmetic fix, делается первым, ~30мин).
 - `StringBuilder mut @append` возвращает `Self` (chaining).
 - Все `WriteBuffer mut @write_*` возвращают `Self` (chaining).
 - StringBuilder получает оператор `+` как алиас `@append` (str + char).
@@ -807,6 +809,30 @@ fix, проверяется детерминизмом regen + manual eyeball'о
 
 ### Этапы Ф.9
 
+**Ф.9.0 — Quick fix: пустые строки между методами в auto-gen (~30мин)** ⚡ priority
+
+Это первый этап Ф.9 — независим от всех остальных правок, делается
+сразу. Цель: улучшить читаемость auto-gen файлов без изменения API.
+
+1. В renderer'е `emit-runtime-stubs` (где-то в codegen) — между
+   каждой группой `// doc-comment + external fn` вставлять пустую
+   строку. На псевдо-уровне: `format!("{}\n\n", external_fn_decl)`
+   вместо `format!("{}\n", ...)`.
+2. Для `read_*` / `try_read_*` пар: пустая строка остаётся **между**
+   декларациями (внутри пары — тоже пустая, см. п.7 «Форматирование»
+   ниже).
+3. Regen всех 6 файлов (`std/runtime/*.nv`).
+4. Sanity:
+   - Diff на каждый файл должен быть «across-the-board» вставка
+     пустых строк, без изменений деклараций.
+   - Round-trip: `emit-runtime-stubs` → regen → `git diff` пусто.
+5. Commit с сообщением вроде «codegen: empty lines между методами в
+   auto-gen runtime stubs».
+
+**Acceptance Ф.9.0:** все 6 файлов в `std/runtime/` имеют empty line
+между каждой группой `doc + external fn`; double-regen → no diff.
+Это **отдельный коммит**, до остальных правок Ф.9.
+
 **Ф.9.1 — Mutating-методы Self (~1.5ч)**
 1. В registry изменить return_ty для StringBuilder mut методов и
    всех WriteBuffer mut методов.
@@ -865,11 +891,7 @@ fix, проверяется детерминизмом regen + manual eyeball'о
    - Plan 12 Ф.4.5 пометить ❌ ОТМЕНЕНО, cross-link на Plan 13 Ф.9.5.
 5. Regen `std/runtime/read_buffer.nv`.
 
-**Ф.9.6 — Formatting empty lines (~30мин)**
-1. Renderer в emit-runtime-stubs: empty line между методами.
-2. Regen всех 6 файлов.
-3. Round-trip determinism check (двойной регенерации даёт пустой
-   diff).
+**Ф.9.6** — освобождён (объединён с Ф.9.0 priority quick-fix).
 
 ### Acceptance Ф.9
 
