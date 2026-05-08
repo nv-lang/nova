@@ -10,21 +10,61 @@ Q-codegen-builtins-cleanup
 
 ## Цель
 
-Удалить hard-coded таблицы external-функций из codegen'а. После
-плана единственный источник истины для StringBuilder / WriteBuffer /
-ReadBuffer / `str.from(char)` — `std/runtime/builtins.nv`. Codegen
-читает декларации из AST builtins.nv и автоматически выводит C-name
-+ C-prototype через mangling и Nova→C type mapping.
+Удалить из codegen'а **только** hard-coded list-of-methods для
+конкретных opaque-типов (StringBuilder/WriteBuffer/ReadBuffer).
+Остальные «знания» компилятора о runtime — паттерны auto-derive,
+mangling, type-mapping, intrinsics для операторов — **остаются**.
+
+После плана компилятор **не знает наизусть**, какие методы есть у
+StringBuilder; он узнаёт это, читая `std/runtime/builtins.nv`. Но
+он по-прежнему **знает паттерн** «если есть `@read_X() Fail[E] -> R`,
+синтезируй `@try_read_X() -> Result[R, E]`», без участия builtins.nv.
 
 Расхождение между .nv-декларацией и runtime-реализацией ловится
 **линкером** (undefined reference / type mismatch).
 
+### Что остаётся в компиляторе
+
+Эти знания **не вытаскиваются** в builtins.nv — они описывают
+правила, не данные:
+
+1. **Auto-derive patterns.** Компилятор знает паттерны:
+   - `read_X` (Fail-form) → `try_read_X` (Result-form), D77.
+   - `write_X` (Fail-form, если когда-то появится) → `try_write_X`.
+   - `T.from(s S)` → `s.into() -> T`, D73 From→Into.
+   - `T.from(s S) Fail[E]` → `T.try_from(s) -> Result[Self, E]`, D77.
+   Источник для синтеза находится в builtins.nv (есть `read_X`?), но
+   **правило синтеза** — в Rust-коде компилятора.
+2. **Mangling rules.** `Nova_<T>_method_<X>` / `Nova_<T>_static_<X>`,
+   plus parameter-type mangling для overload (Plan 11 Ф.3).
+3. **Nova→C type mapping.** `int → nova_int`, `str → nova_str`,
+   `byte → uint8_t`, `u32 → uint32_t`, `mut T → Nova_T*`, etc. Это
+   правила, не таблица функций.
+4. **Operator/intrinsic implementations.** `s1 + s2 → nova_str_concat(s1, s2)`,
+   арифметика `+`/`-`/`*`/`/` для int/float, `==` для типов. Эти
+   операторы не объявляются в builtins.nv — компилятор знает их по
+   синтаксису, не по имени.
+
+### Что вытаскивается в builtins.nv
+
+Только **имена и сигнатуры** конкретных runtime-функций для
+opaque-типов:
+
+```nova
+export external fn StringBuilder mut @append(s str) -> ()
+export external fn ReadBuffer mut @read_byte() Fail[ReadBufferError] -> byte
+```
+
+Из этого компилятор выводит:
+- C-prototype для линковки (mangling + type-mapping).
+- Auto-derived формы (`@try_read_byte` без явной декларации).
+
 ### Ключевой принцип: только non-derivable формы в builtins.nv
 
 **В builtins.nv объявляются только те external функции, которые
-компилятор не может вывести автоматически.** Auto-derived формы из
-builtins.nv **удаляются** — они синтезируются codegen'ом по
-правилам D73/D77.
+компилятор не может вывести автоматически по своим встроенным
+паттернам.** Auto-derived формы из builtins.nv **удаляются** —
+они синтезируются codegen'ом.
 
 Сейчас в builtins.nv дублирование:
 ```nova
@@ -33,16 +73,17 @@ export external fn ReadBuffer mut @try_read_byte()                          -> R
 ```
 
 После Plan 12: остаётся только Fail-форма, `try_read_byte` синтезируется
-codegen'ом как Nova-обёртка по D77 (Fail↔Result). То же для возможных
-будущих `write_*`/`try_write_*` пар.
+codegen'ом по встроенному паттерну. Runtime реализует **одну**
+C-функцию `Nova_ReadBuffer_method_read_byte`; обёртка
+`try_read_byte` — Nova-уровневая, генерируется компилятором.
 
-**Что считается auto-derivable:**
+**Что считается auto-derivable (паттерны компилятора):**
 
 | Из | Авто-выводится | Правило |
 |---|---|---|
 | `T.from(s S) Fail[E] -> Self` | `T.try_from(s S) -> Result[Self, E]` | D77 Fail↔Result |
 | `T.from(s S) -> Self` | `s.into() -> T` | D73 From→Into |
-| `T mut @read_X() Fail[E] -> X` | `T mut @try_read_X() -> Result[X, E]` | D77 (паттерн `read_*`/`try_read_*`) |
+| `T mut @read_X() Fail[E] -> X` | `T mut @try_read_X() -> Result[X, E]` | D77 + naming pattern `read_*`/`try_read_*` |
 | `t.into() -> T` | `T.from(t)` (зеркально) | D73 |
 
 Auto-derived функции **наследуют видимость источника** (D5/D47):
@@ -51,16 +92,24 @@ prelude через D26 (для типов из `std.runtime.builtins`).
 
 ## Не цели
 
-- **Mangling/type-mapping для user-defined типов и обычных функций**
-  — не трогаем. Сейчас они тоже hard-coded местами в `type_ref_to_c`
-  и `mangle_fn`, но это отдельный refactor.
+- **Mangling/type-mapping rules** — не трогаем. Это правила
+  компилятора, не данные.
+- **Operator/intrinsic implementations** (s1+s2, math, ==, etc.) —
+  не трогаем. Они не external-функции, компилятор знает их по
+  синтаксису.
+- **Auto-derive patterns в Rust-коде** — не трогаем; они и должны
+  быть в компиляторе (Plan 12 их **использует**, а не «удаляет
+  таблицу с ними»).
 - **Поддержка `external fn` за пределами `std.runtime.*`** — D82
   whitelist сохраняется.
-- **Удаление Buffer** — это Plan 04 Этап 6, идёт **до** Plan 12.
+- **Удаление Buffer** — это было Plan 04 Этап 6, ✅ закрыт до Plan 12.
 
 ## Текущее состояние (2026-05-08)
 
-Hard-coded в `compiler-codegen/src/codegen/emit_c.rs`:
+В `compiler-codegen/src/codegen/emit_c.rs` (классифицировано по
+тому, что план **трогает**, а что нет):
+
+**Списки методов (план Ф.5 удаляет):**
 
 | Что | Локация |
 |---|---|
@@ -71,9 +120,21 @@ Hard-coded в `compiler-codegen/src/codegen/emit_c.rs`:
 | Method dispatch: `WriteBuffer` (len/capacity/clone/into/write_*) | 4879-4900 |
 | Method dispatch: `ReadBuffer` (position/remaining/.../read_*/try_read_*) | 4902-4928 |
 | Static-форма (`Type.factory(...)`) для всех трёх типов | 4948-5023 |
+
+**Правила (план НЕ трогает, использует):**
+
+| Что | Локация |
+|---|---|
 | Mangling instance: `format!("Nova_{}_method_{}", ...)` | 548, 658, 2830-2831 |
 | Mangling static: `format!("Nova_{}_static_{}", ...)` | 5208 и др. |
 | Type mapping `type_ref_to_c` | 886-985 |
+| Auto-derive (Plan 08 Ф.3 для D73 From→Into) | разные места |
+| Operator/intrinsic emit (s+s, math) | разные места |
+
+**Что игнорируется codegen'ом (план Ф.1 начинает использовать):**
+
+| Что | Локация |
+|---|---|
 | Парсинг builtins.nv | парсится, но `FnBody::External => {}` игнорируется codegen'ом (строки 1935, 2987, 3218) |
 
 ## Архитектура целевого решения
@@ -282,21 +343,34 @@ synthesized `try_read_*` тоже public и попадают в prelude чере
 обёртка эмитится автоматически). Затем добавить `@try_read_byte`
 явно — компилятор должен дать error «auto-derived; remove».
 
-### Ф.5 — Удалить hard-coded таблицы (~30мин)
+### Ф.5 — Удалить hard-coded list-of-methods (~30мин)
 
-После того как Ф.1-Ф.4 работают и проходят тесты:
+После того как Ф.1-Ф.4.5 работают и проходят тесты:
 
-Удалить из `emit_c.rs`:
-- Method dispatch для StringBuilder (4850-4877).
+Удалить из `emit_c.rs` **именно списки методов конкретных типов**
+(не паттерны и не правила mangling):
+
+- Method dispatch для StringBuilder (4850-4877) — это hard-coded
+  список «вот такие методы есть у StringBuilder».
 - Method dispatch для WriteBuffer (4879-4900).
 - Method dispatch для ReadBuffer (4902-4928).
 - Static-форма Buffer/StringBuilder/WriteBuffer/ReadBuffer
   (4948-5023; Buffer уже удалён в Plan 04 Этап 6).
 - Hard-coded `record_schemas.insert(...)` для трёх типов
-  (заменено в Ф.2).
+  (заменено в Ф.2 на «inserts via registry walk»).
 
-Mangling helper'ы (`format!("Nova_{}_method_{}", ...)`) остаются —
-теперь вызываются из registry-builder, а не из emit_call.
+**Что НЕ удаляется** (это правила, не данные):
+- Mangling helper'ы (`format!("Nova_{}_method_{}", ...)`) — остаются,
+  теперь вызываются из registry-builder, а не из emit_call.
+- `type_ref_to_c` (Nova→C type mapping) — целиком остаётся.
+- `emit_external_call` (общий driver вызова) — это новый код Ф.3,
+  не таблица.
+- Auto-derive patterns Ф.4.5 — остаются как Rust-код.
+- Operator/intrinsic дескриптор (`s1+s2 → nova_str_concat`) — не
+  трогаем, это другой механизм.
+
+Diff в LoC: ожидается негативный на ~150-200 строк (только списки
+методов), не больше. Ничего «универсально-полезного» не удаляется.
 
 ### Ф.6 — Compile-time gate против stale references (~1ч)
 
@@ -353,11 +427,10 @@ test "StringBuilder unknown method" {
 
 ## Зависимости
 
-- ✅ Plan 04 Этапы 1-5 (типы StringBuilder/WriteBuffer/ReadBuffer
-  существуют в runtime).
-- ⏳ Plan 04 Этап 6 (Buffer удалён) — Plan 12 идёт **после**.
-- Parsing `external fn` — уже работает (lexer/parser/types подтверждены
-  в инвентаре).
+- ✅ Plan 04 (включая Этап 6 — Buffer удалён) — закрыт 2026-05-08.
+- ✅ Parsing `external fn` — работает (lexer/parser/types).
+- ✅ Plan 08 Ф.3 (D73 From→Into auto-derive) — закрыт; Plan 12 Ф.4.5
+  расширяет тот же механизм паттерном `read_*`/`try_read_*` (D77).
 
 ## Риски
 
