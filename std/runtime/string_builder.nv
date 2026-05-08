@@ -27,10 +27,19 @@ export external fn StringBuilder mut @append(s str) -> Self
 // Append codepoint как UTF-8 (1-4 байта). Возвращает self для chaining.
 export external fn StringBuilder mut @append(c char) -> Self
 
-// Текущий размер в байтах (UTF-8 байты, не codepoint'ы).
+// Оператор `+`: `sb + s == sb.@plus(s)` → @append (D46).
+export fn StringBuilder mut @plus(s str) -> Self => @append(s)
+
+// Оператор `+`: `sb + c == sb.@plus(c)` → @append (D46, char overload).
+export fn StringBuilder mut @plus(c char) -> Self => @append(c)
+
+// Длина в codepoint'ах (D26 школа B). O(n) UTF-8 walk.
 export external fn StringBuilder @len() -> int
 
-// Allocated capacity в байтах (>= len).
+// Размер в UTF-8 байтах. O(1). Для FFI / capacity-планирования.
+export external fn StringBuilder @byte_len() -> int
+
+// Allocated capacity в байтах (>= byte_len).
 export external fn StringBuilder @capacity() -> int
 
 // Создать независимую копию (deep copy buffer).

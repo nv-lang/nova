@@ -115,8 +115,9 @@ test "StringBuilder.append with char literals" {
 
 test "StringBuilder.append with Unicode codepoint" {
     let mut sb = StringBuilder.new()
-    sb.append('\u{410}')           // Cyrillic 'А' — 2 bytes UTF-8
-    assert(sb.len() == 2)
+    sb.append('\u{410}')           // Cyrillic 'А' — 1 codepoint, 2 bytes UTF-8
+    assert(sb.len() == 1)          // Plan 13 Ф.9: codepoint count
+    assert(sb.byte_len() == 2)
 }
 
 // ================================================================

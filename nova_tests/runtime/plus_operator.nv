@@ -1,0 +1,91 @@
+// plus_operator.nv — Plan 13 Ф.9.2: оператор `+` через @plus method
+// (D46 operator overload).
+//
+// Семантика:
+//   sb + s    → sb.@plus(s)    → @append(s)   (StringBuilder + str)
+//   sb + c    → sb.@plus(c)    → @append(c)   (StringBuilder + char)
+//   s1 + s2   → s1.@plus(s2)   → @concat(s2)  (str + str)
+//
+// Decls в std/runtime/string_builder.nv и std/runtime/string.nv.
+// Routing — общее правило в codegen для BinOp::Add (D46).
+
+module nova_tests.runtime.plus_operator
+
+
+// ================================================================
+// SECTION 1: str + str через @plus → @concat
+// ================================================================
+
+test "str + str — пустые" {
+    assert("" + "" == "")
+    assert("" + "x" == "x")
+    assert("y" + "" == "y")
+}
+
+test "str + str — ASCII" {
+    assert("foo" + "bar" == "foobar")
+    let result = "alpha" + "-" + "beta"
+    assert(result == "alpha-beta")
+}
+
+test "str + str — Unicode codepoint paritет" {
+    let a = "Привет"      // 6 codepoints, 12 bytes
+    let b = ", "          // 2 codepoints, 2 bytes
+    let c = "мир"         // 3 codepoints, 6 bytes
+    let s = a + b + c
+    assert(s.len == 11)             // 6 + 2 + 3 codepoints
+    assert(s.byte_len() == 20)      // 12 + 2 + 6 bytes
+}
+
+
+// ================================================================
+// SECTION 2: StringBuilder + str через @plus → @append
+// ================================================================
+
+test "sb + str — последовательные append" {
+    let mut sb = StringBuilder.new()
+    sb = sb + "alpha" + " " + "beta"
+    assert(sb.into() == "alpha beta")
+}
+
+test "sb + str — UTF-8 строки" {
+    let mut sb = StringBuilder.new()
+    sb = sb + "Hello, " + "Привет!"
+    assert(sb.len() == 14)         // 7 + 7 codepoints
+    assert(sb.byte_len() == 20)    // 7 ASCII + 13 UTF-8
+}
+
+
+// ================================================================
+// SECTION 3: StringBuilder + char через @plus(char) → @append(char)
+// ================================================================
+
+test "sb + char — single ASCII" {
+    let mut sb = StringBuilder.new()
+    sb + 'X'
+    assert(sb.into() == "X")
+}
+
+test "sb + char — несколько" {
+    let mut sb = StringBuilder.new()
+    sb = sb + 'O' + 'K' + '!'
+    assert(sb.into() == "OK!")
+}
+
+test "sb + char — 4-byte codepoint" {
+    let mut sb = StringBuilder.new()
+    sb = sb + '𝄞'                 // U+1D11E, 4 байта UTF-8
+    assert(sb.len() == 1)
+    assert(sb.byte_len() == 4)
+}
+
+
+// ================================================================
+// SECTION 4: смешанные str + char
+// ================================================================
+
+test "sb + str и + char смешано" {
+    let mut sb = StringBuilder.new()
+    sb = sb + "key" + '=' + "value"
+    assert(sb.into() == "key=value")
+}

@@ -3613,11 +3613,29 @@ impl CEmitter {
                         return Ok("(0)".into());
                     }
                 }
-                // nova_str is a struct — can't use == directly
+                // Plan 13 Ф.9.2: оператор `+` через метод @plus (D46).
+                // StringBuilder + str  → @plus(str)  → @append_str.
+                // StringBuilder + char → @plus(char) → @append_char.
+                // sb + sb (StringBuilder + StringBuilder) — не поддержано:
+                // используй sb1.append_str(sb2.into()) явно.
+                if matches!(op, BinOp::Add) && lty == "Nova_StringBuilder*" {
+                    if rty == "nova_str" {
+                        return Ok(format!("Nova_StringBuilder_method_append_str({}, {})", l, r));
+                    }
+                    if rty == "nova_int" {
+                        // char через nova_int — Ф.9.2 char overload.
+                        return Ok(format!("Nova_StringBuilder_method_append_char({}, {})", l, r));
+                    }
+                }
+                // nova_str is a struct — can't use == directly.
+                // Plan 13 Ф.9.2: BinOp::Add для str routes через @plus → @concat.
+                // Invisible-intrinsic заменён на тот же C-вызов, но через
+                // явную декларацию `str.@plus` в std/runtime/string.nv.
                 if lty == "nova_str" || rty == "nova_str" {
                     return match op {
                         BinOp::Eq  => Ok(format!("(nova_str_eq({}, {}))", l, r)),
                         BinOp::Neq => Ok(format!("(!nova_str_eq({}, {}))", l, r)),
+                        // Ф.9.2: routing через @plus body `=> @concat(other)`.
                         BinOp::Add => Ok(format!("(nova_str_concat({}, {}))", l, r)),
                         _ => Err(format!("unsupported operator {:?} on nova_str", op)),
                     };
@@ -7964,10 +7982,12 @@ impl CEmitter {
                     // Self-return для chaining (mut @append, all @write_*, @clone).
                     if obj_ty == "Nova_StringBuilder*" {
                         return match method.as_str() {
-                            "len" | "capacity" => "nova_int".into(),
+                            // byte_len — Plan 13 Ф.9 fix: codepoint vs byte split.
+                            "len" | "byte_len" | "capacity" => "nova_int".into(),
                             "clone" => "Nova_StringBuilder*".into(),
                             "into" => "nova_str".into(),
-                            "append" => "Nova_StringBuilder*".into(),  // Self (Ф.9.1)
+                            // Self-return: @append(s|c), @plus(s|c) — Plan 13 Ф.9.2.
+                            "append" | "plus" => "Nova_StringBuilder*".into(),
                             _ => "nova_int".into(),
                         };
                     }

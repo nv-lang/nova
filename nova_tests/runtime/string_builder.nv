@@ -1,13 +1,23 @@
-// string_builder.nv — Plan 04: StringBuilder UTF-8 string accumulator.
+// string_builder.nv — Plan 04 + Plan 13 Ф.9: StringBuilder UTF-8
+// string accumulator с двойной семантикой длины.
 //
 // StringBuilder заменяет text-side унифицированного Buffer (Q-buffer
 // REPLACED). Append-only, @into() -> str infallible.
+//
+// Plan 13 Ф.9 fix:
+//   sb.len()      — длина в codepoint'ах (D26 школа B), O(n).
+//   sb.byte_len() — размер в UTF-8 байтах, O(1).
+// Раньше @len возвращал байты — несовместимо с str API и сбивало
+// пользователей.
+//
+// Plan 13 Ф.9.2: оператор `+` через @plus method (body `=> @append(...)`).
 //
 // API:
 //   StringBuilder.new(), StringBuilder.with_capacity(n)
 //   StringBuilder.from(s str), StringBuilder.from(c char)
 //   sb.append(s str), sb.append(c char)
-//   sb.len(), sb.capacity(), sb.clone()
+//   sb.plus(s str), sb.plus(c char)        — body, alias for оператора `+`
+//   sb.len(), sb.byte_len(), sb.capacity(), sb.clone()
 //   sb.into() -> str (infallible)
 //
 // После consume любой append → runtime panic "string builder consumed".
@@ -16,34 +26,45 @@ module nova_tests.runtime.string_builder
 
 
 // ================================================================
-// SECTION 1: создание
+// SECTION 1: создание + двойная длина
 // ================================================================
 
 test "StringBuilder.new() — empty" {
     let sb = StringBuilder.new()
     assert(sb.len() == 0)
+    assert(sb.byte_len() == 0)
     assert(sb.capacity() >= 16)
 }
 
 test "StringBuilder.with_capacity(64)" {
     let sb = StringBuilder.with_capacity(64)
     assert(sb.len() == 0)
+    assert(sb.byte_len() == 0)
     assert(sb.capacity() >= 64)
 }
 
-test "StringBuilder.from(s)" {
+test "StringBuilder.from(s) — ASCII длина совпадает" {
     let sb = StringBuilder.from("hello")
-    assert(sb.len() == 5)
+    assert(sb.len() == 5)         // 5 codepoints
+    assert(sb.byte_len() == 5)    // 5 bytes (ASCII)
 }
 
-test "StringBuilder.from(c char) — ASCII" {
+test "StringBuilder.from(c char) — ASCII single codepoint" {
     let sb = StringBuilder.from('A')
-    assert(sb.len() == 1)
+    assert(sb.len() == 1)         // 1 codepoint
+    assert(sb.byte_len() == 1)    // 1 byte
 }
 
-test "StringBuilder.from(c char) — Cyrillic 2 bytes" {
+test "StringBuilder.from(c char) — Cyrillic один codepoint = 2 байта" {
     let sb = StringBuilder.from('Я')
-    assert(sb.len() == 2)
+    assert(sb.len() == 1)         // 1 codepoint
+    assert(sb.byte_len() == 2)    // 2 bytes UTF-8
+}
+
+test "StringBuilder.from(s) — Cyrillic codepoint vs byte" {
+    let sb = StringBuilder.from("Привет")
+    assert(sb.len() == 6)          // 6 codepoints
+    assert(sb.byte_len() == 12)    // 12 bytes (2 байта на codepoint)
 }
 
 
@@ -51,12 +72,13 @@ test "StringBuilder.from(c char) — Cyrillic 2 bytes" {
 // SECTION 2: append
 // ================================================================
 
-test "append(s str)" {
+test "append(s str) — ASCII" {
     let mut sb = StringBuilder.new()
     sb.append("hello")
     sb.append(" ")
     sb.append("world")
     assert(sb.len() == 11)
+    assert(sb.byte_len() == 11)
 }
 
 test "append(c char) — ASCII single byte" {
@@ -64,15 +86,17 @@ test "append(c char) — ASCII single byte" {
     sb.append('A')
     sb.append('B')
     sb.append('C')
-    assert(sb.len() == 3)
+    assert(sb.len() == 3)         // 3 codepoints
+    assert(sb.byte_len() == 3)    // 3 bytes
 }
 
 test "append(c char) — UTF-8 multi-byte mixed" {
     let mut sb = StringBuilder.new()
-    sb.append('A')      // 1 byte
-    sb.append('Я')      // 2 bytes (Cyrillic)
-    sb.append('中')     // 3 bytes (CJK)
-    assert(sb.len() == 6)
+    sb.append('A')      // 1 byte, 1 codepoint
+    sb.append('Я')      // 2 bytes, 1 codepoint
+    sb.append('中')     // 3 bytes, 1 codepoint
+    assert(sb.len() == 3)         // 3 codepoints
+    assert(sb.byte_len() == 6)    // 1+2+3 = 6 bytes
 }
 
 test "append mix str + char" {
@@ -80,28 +104,29 @@ test "append mix str + char" {
     sb.append("hi ")
     sb.append('!')
     assert(sb.len() == 4)
+    assert(sb.byte_len() == 4)
 }
 
 
 // ================================================================
-// SECTION 3: capacity grow
+// SECTION 3: capacity grow + byte_len O(1)
 // ================================================================
 
 test "auto-grow при переполнении" {
     let mut sb = StringBuilder.with_capacity(4)
     sb.append("aaaaaaaa")     // 8 bytes > cap 4 → grow
     assert(sb.len() == 8)
+    assert(sb.byte_len() == 8)
     assert(sb.capacity() >= 8)
 }
 
 test "hot-loop accumulation 100 raz" {
     let mut sb = StringBuilder.new()
-    let mut i = 0
-    while i < 100 {
+    for i in 0..100 {
         sb.append("x")
-        i = i + 1
     }
     assert(sb.len() == 100)
+    assert(sb.byte_len() == 100)
 }
 
 
@@ -116,6 +141,8 @@ test "clone независим от source" {
     b.append(" world")
     assert(a.len() == 5)        // a not affected
     assert(b.len() == 11)
+    assert(a.byte_len() == 5)
+    assert(b.byte_len() == 11)
 }
 
 
@@ -136,10 +163,52 @@ test "into() ASCII пустая строка" {
     assert(s.len == 0)
 }
 
-test "into() с Unicode codepoint'ами" {
+test "into() с Unicode codepoint'ами — паритет sb.len и s.len" {
     let mut sb = StringBuilder.new()
-    sb.append("Привет")        // 6 codepoints, 12 bytes
+    sb.append("Привет")
+    // Plan 13 Ф.9: sb.len теперь codepoints — совпадает с str.len.
+    assert(sb.len() == 6)
+    assert(sb.byte_len() == 12)
     let s = sb.into()
-    // D26 школа B: s.len — codepoint count (не byte count).
+    // D26 школа B: s.len — codepoint count. Должно совпадать с sb.len()
+    // ДО consume.
     assert(s.len == 6)
+}
+
+
+// ================================================================
+// SECTION 6: оператор `+` через @plus (Plan 13 Ф.9.2, D46)
+// ================================================================
+
+test "sb + str — append через @plus" {
+    let mut sb = StringBuilder.new()
+    sb + "hello"
+    sb + " world"
+    assert(sb.byte_len() == 11)
+    assert(sb.into() == "hello world")
+}
+
+test "sb + char — append codepoint через @plus" {
+    let mut sb = StringBuilder.new()
+    sb + 'A'
+    sb + 'B'
+    assert(sb.len() == 2)
+    assert(sb.byte_len() == 2)
+    assert(sb.into() == "AB")
+}
+
+test "sb + char — UTF-8 multi-byte" {
+    let mut sb = StringBuilder.new()
+    sb = sb + 'Я' + '中'
+    assert(sb.len() == 2)
+    assert(sb.byte_len() == 5)    // 2 + 3 байта
+}
+
+test "str + str через @plus — body delegating to @concat" {
+    // Самый базовый тест: оператор `+` на str работает через
+    // `s.@plus(other) => @concat(other)` в std/runtime/string.nv.
+    assert("foo" + "bar" == "foobar")
+    let a = "Привет"
+    let b = ", мир"
+    assert((a + b).len == 11)     // 6 + 5 codepoints
 }

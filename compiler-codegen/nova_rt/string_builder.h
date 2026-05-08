@@ -132,12 +132,33 @@ static inline Nova_StringBuilder* Nova_StringBuilder_method_append_char(Nova_Str
     return b;
 }
 
-/* @len() -> int. */
-static inline nova_int Nova_StringBuilder_method_len(Nova_StringBuilder* b) {
+/* @byte_len() -> int — текущий размер в UTF-8 байтах. O(1).
+ * Поле `len` в struct хранит именно байты (как `s.byte_len()` в str). */
+static inline nova_int Nova_StringBuilder_method_byte_len(Nova_StringBuilder* b) {
     return (nova_int)b->len;
 }
 
-/* @capacity() -> int. */
+/* @len() -> int — codepoint count (UTF-8 walk). O(n).
+ * D26 школа B: единая семантика @len для всех текстовых типов.
+ * Для O(1) byte size — @byte_len(). */
+static inline nova_int Nova_StringBuilder_method_len(Nova_StringBuilder* b) {
+    nova_int count = 0;
+    int64_t i = 0;
+    while (i < b->len) {
+        nova_byte c = b->data[i];
+        int step;
+        if (c < 0x80)              step = 1;
+        else if ((c & 0xE0) == 0xC0) step = 2;
+        else if ((c & 0xF0) == 0xE0) step = 3;
+        else if ((c & 0xF8) == 0xF0) step = 4;
+        else                          step = 1; /* invalid lead — count as one to make progress */
+        i += step;
+        count++;
+    }
+    return count;
+}
+
+/* @capacity() -> int — allocated capacity в байтах (>= byte_len). */
 static inline nova_int Nova_StringBuilder_method_capacity(Nova_StringBuilder* b) {
     return (nova_int)b->cap;
 }

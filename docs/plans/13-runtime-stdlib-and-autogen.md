@@ -16,7 +16,7 @@ ExternalRegistry (codegen) загружает 4 per-type файла через `
 Acceptance — добавить новый method тремя правками (registry + .c + regen)
 работает (write_zero verified в Plan 12; принцип сохранён).
 
-**Ф.9 (API polish, добавлен 2026-05-08):** ⏳ Pending Ф.9.2 (refocused).
+**Ф.9 (API polish, добавлен 2026-05-08):** ✅ ЗАКРЫТ (включая Ф.9.2 + bag-fix @len).
 - ✅ **Ф.9.0** — пустые строки между методами в auto-gen (commit 940c58f041).
 - ✅ **Ф.9.1** — Self-return для StringBuilder/WriteBuffer mut +
   унификация static (`new`/`from`/`with_capacity`/`clone` тоже Self).
@@ -30,8 +30,42 @@ Acceptance — добавить новый method тремя правками (r
 - ✅ **Ф.9.5** — `try_read_*` явно в registry (16 numeric + 2 text пар);
   Plan 12 Ф.4.5 (auto-derive) ❌ ОТМЕНЕНО, spec D82 обновлён.
   Codegen-side синтез никогда не был реализован — отмена no-op.
-- ⏳ **Ф.9.2** — оператор `+` через **обычный** Nova-метод `@plus`
-  с body (не external alias). Реализация:
+- ✅ **Ф.9.6 (bag-fix 2026-05-08, реактивно)** — `StringBuilder.@len`
+  возвращал **байты** (b->len поле), но D26 школа B требует codepoint
+  count для **всех** текстовых типов (включая str и StringBuilder).
+  Несоответствие сбивало пользователей: `StringBuilder.from('Я').len()`
+  возвращало 2 (байты), хотя `"Я".len` === 1 (codepoint). Исправлено:
+  - C-runtime `Nova_StringBuilder_method_len` теперь walk'ит UTF-8 lead
+    bytes (O(n)), совпадает с `nova_str_char_len`.
+  - Добавлен `@byte_len()` (O(1) — возвращает `b->len`) — паритет с str API.
+  - Registry doc обновлён (`len → codepoints`, `byte_len → bytes`).
+  - 14 тестов в `nova_tests/runtime/string_builder.nv` переписаны
+    (двойное покрытие @len + @byte_len для ASCII + Cyrillic).
+  - `char_literals.nv:119` мигрирован.
+- ✅ **Ф.9.2** — оператор `+` через **обычный** Nova-метод `@plus`
+  с body (не external alias). Реализовано:
+  - `RuntimeFn` расширен полем `nova_body: Option<&'static str>` —
+    `None` для external (legacy), `Some("@append(s)")` для записей
+    с body.
+  - Renderer в `emit-runtime-stubs`: `nova_body.is_some()` →
+    `export fn ... -> T => {body}` (без `external`).
+  - Registry-записи добавлены:
+    - `StringBuilder.@plus(s str) -> Self => @append(s)`
+    - `StringBuilder.@plus(c char) -> Self => @append(c)`
+    - `str.@plus(other str) -> str => @concat(other)`
+  - `std/runtime/string_builder.nv` + `string.nv` regen'ены — теперь
+    включают явные Nova-fn декларации `@plus`.
+  - Codegen `BinOp::Add` routing:
+    - `Nova_StringBuilder*` + `nova_str` → `Nova_StringBuilder_method_append_str`
+    - `Nova_StringBuilder*` + `nova_int` (char) → `Nova_StringBuilder_method_append_char`
+    - `nova_str` + `nova_str` → `nova_str_concat` (теперь это
+      C-имя метода `@concat` объявленного в registry, а не invisible
+      intrinsic — связь явная).
+  - Comment в emit_c.rs указывает на routing через `@plus → @concat/@append`.
+  - Тесты: `nova_tests/runtime/plus_operator.nv` (9 тестов) —
+    полное покрытие str+str, sb+str, sb+char, UTF-8 multi-byte.
+
+**Ф.9.2 archived spec:**
   ```nova
   // в std/runtime/string_builder.nv (auto-gen, рядом с external @append):
   export fn StringBuilder mut @plus(s str)  -> Self => @append(s)
@@ -1056,20 +1090,30 @@ fix, проверяется детерминизмом regen + manual eyeball'о
       методами; double-regen → no diff (Ф.9.0).
 - [x] 78/78 тестов проходят.
 
-**Ф.9.2 acceptance — pending (refocused: `@plus` через body, не alias):**
-- [ ] `sb + "text"` эквивалентно `sb.@append("text")` (через `@plus`
+**Ф.9.2 acceptance — closed:**
+- [x] `sb + "text"` эквивалентно `sb.@append("text")` (через `@plus`
       method body `=> @append(s)`).
-- [ ] `sb + 'c'` эквивалентно `sb.@append('c')` (char-overload).
-- [ ] `s1 + s2` явно резолвится через `s1.@plus(s2)` → `@concat` →
-      `Nova_str_method_concat`. Invisible intrinsic в emit_c.rs
-      удалён.
-- [ ] `runtime_registry.rs` поддерживает поле `nova_body: Option<&str>`;
+- [x] `sb + 'c'` эквивалентно `sb.@append('c')` (char-overload).
+- [x] `s1 + s2` явно резолвится через `s1.@plus(s2)` → `@concat` →
+      `nova_str_concat` (C-имя метода `@concat` в registry).
+- [x] `runtime_registry.rs` поддерживает поле `nova_body: Option<&str>`;
       renderer эмитит `=> body` для записей с `nova_body.is_some()`.
-- [ ] `string_builder.nv` содержит две Nova-fn декларации `@plus`
+- [x] `string_builder.nv` содержит две Nova-fn декларации `@plus`
       (str/char overloads).
-- [ ] `string.nv` содержит external `@concat` + Nova-fn `@plus`.
+- [x] `string.nv` содержит external `@concat` + Nova-fn `@plus`.
 - [ ] User-defined тип с собственным `@plus` корректно работает с
       оператором `+` (общее правило, не special-case для StringBuilder).
+      **Bootstrap-ограничение:** routing для `BinOp::Add` сейчас
+      hardcoded для встроенных типов (str, StringBuilder); user-defined
+      `@plus` нужно отдельно — расширение `method_overloads` lookup'а
+      на BinOp::Add. Future task.
+
+**Ф.9.6 (bag-fix @len) acceptance:**
+- [x] `StringBuilder.from('Я').len() == 1` (codepoint count, не байт).
+- [x] `StringBuilder.from('Я').byte_len() == 2` (UTF-8 байты, O(1)).
+- [x] `StringBuilder.from("Привет").len() == 6 && .byte_len() == 12`.
+- [x] Паритет с `str`: `sb.into().len == sb.len()` ДО consume.
+- [x] 14/14 тестов в `string_builder.nv` PASS (с двойным покрытием).
 
 ### Risks Ф.9
 

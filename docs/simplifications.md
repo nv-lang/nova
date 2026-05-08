@@ -2119,3 +2119,78 @@ emission (генерация wrapper-fn + env-struct + closure-alloc inline)
 cast), но **меняет codegen** на let-binding и emit_method_value
 levels — выбор overload'а. Прецедент: TypeScript type assertions
 влияют на overload resolution.
+
+### [ЗАКР 2026-05-08] Plan 13 Ф.9.6: StringBuilder.@len bag-fix (codepoints)
+
+- **Где:** `compiler-codegen/nova_rt/string_builder.h` +
+  `compiler-codegen/src/codegen/runtime_registry.rs` +
+  `compiler-codegen/src/codegen/emit_c.rs` (type-inference) +
+  тесты в `nova_tests/runtime/string_builder.nv` + `types/char_literals.nv`.
+- **Bag:** `Nova_StringBuilder_method_len` возвращал `b->len` —
+  размер буфера в **байтах** (UTF-8). Но D26 школа B диктует:
+  `@len` для текстовых типов = **codepoint count**. `nova_str.@len`
+  через `nova_str_char_len` — codepoints, а StringBuilder — байты.
+  Ассиметричность ловила пользователей: `StringBuilder.from('Я').len()`
+  возвращало 2 (байт), хотя `"Я".len == 1` (codepoint).
+- **Фикс:**
+  1. `Nova_StringBuilder_method_len` — UTF-8 lead-byte walk (O(n)),
+     совпадает с `nova_str_char_len`.
+  2. Добавлен `Nova_StringBuilder_method_byte_len` (O(1) — `b->len`)
+     для FFI / capacity-планирования.
+  3. Registry doc обновлён.
+  4. 14 тестов в `string_builder.nv` переписаны с двойным покрытием
+     (для каждого теста проверяется `len()` и `byte_len()`).
+- **Урок:** имя поля в struct (`b->len` — байты) и имя публичного
+  метода (`@len` — codepoints) не должны быть 1:1 если spec
+  диктует разную семантику. Field representation — internal,
+  method API — public contract. Аудит таких mismatches —
+  обязательная часть API review.
+
+### [ЗАКР 2026-05-08] Plan 13 Ф.9.2: оператор `+` через `@plus` Nova-метод (D46)
+
+- **Где:** `compiler-codegen/src/codegen/runtime_registry.rs` (RuntimeFn
+  расширен полем `nova_body: Option<&str>` + renderer) +
+  `compiler-codegen/src/codegen/emit_c.rs` (BinOp::Add routing) +
+  std/runtime/{string,string_builder}.nv (regen) + новый
+  `nova_tests/runtime/plus_operator.nv` (9 тестов).
+- **Что было:** Bootstrap имел invisible-intrinsic для `str + str`
+  (hardcoded `nova_str_concat` в emit_c.rs:3621). Программист не
+  видел декларации `@plus` в registry/.nv → IDE / AI помощники
+  не знали о существовании оператора.
+- **Что стало:**
+  1. `RuntimeFn.nova_body: Option<&'static str>` — `Some("@append(s)")`
+     для записей с body, `None` для external. `c_name` игнорируется
+     для записей с body.
+  2. Renderer: `nova_body.is_some()` → `export fn ... -> T => {body}`
+     (без `external`).
+  3. Registry-записи:
+     - `StringBuilder.@plus(s str) -> Self => @append(s)`
+     - `StringBuilder.@plus(c char) -> Self => @append(c)`
+     - `str.@plus(other str) -> str => @concat(other)`
+     После regen `std/runtime/string_builder.nv` + `string.nv`
+     содержат явные Nova-fn декларации `@plus` — программисту виден
+     contract.
+  4. Codegen `BinOp::Add` routing:
+     - `Nova_StringBuilder*` + `nova_str` → `Nova_StringBuilder_method_append_str`.
+     - `Nova_StringBuilder*` + `nova_int` (char) → `Nova_StringBuilder_method_append_char`.
+     - `nova_str` + `nova_str` → `nova_str_concat` (теперь это C-имя
+       метода `@concat` объявленного в registry — связь явная).
+- **Bootstrap-ограничение:** routing для `BinOp::Add` сейчас hardcoded
+  для встроенных типов (str, StringBuilder). User-defined `@plus`
+  через `+` ещё не работает — нужен method_overloads lookup в codegen
+  для BinOp::Add. Future task (отдельный план или Ф.9.7).
+- **Тесты:** `nova_tests/runtime/plus_operator.nv` (9 тестов) —
+  str+str (empty, ASCII, Unicode codepoint count + byte count),
+  sb+str (sequential append, UTF-8 mixed), sb+char (single ASCII,
+  multiple, 4-byte codepoint), смешанно sb+str/sb+char.
+- **Урок:**
+  - Nova-метод с body в registry — естественное расширение
+    single-source-of-truth. `=> @append(s)` это не magic, обычный
+    Nova syntax; программист видит делегацию в .nv-файле.
+  - Auto-derive паттерны различимы по симметрии: D73 From↔Into
+    (симметричное) остаётся, Plan 12 Ф.4.5 try_read auto-derive
+    (асимметричное) отменён в Ф.9.5. Plan 13 Ф.9.2 — третий путь:
+    body-as-data вместо synth-rule.
+  - C-имя метода = invisible intrinsic не хуже visible declaration в
+    registry. Inline emit того же C-вызова сохранён для performance,
+    но связь через registry делает API discoverable.

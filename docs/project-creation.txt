@@ -2239,3 +2239,137 @@ overload-rename — optional, не блокер).
     emit_lambda, но direct (wrapper-fn + env + closure) проще.
   - Type annotation как hint для codegen — стандарт. Не меняет
     runtime, меняет codegen routing.
+
+
+====================================================================
+Plan 13 Ф.9.6 + Ф.9.2 — StringBuilder.@len bug-fix + оператор `+`
+через @plus body (2026-05-08, поздний вечер)
+====================================================================
+
+После закрытия Plan 11 пользователь обнаружил bag в StringBuilder API:
+
+  // std/runtime/string_builder.nv (auto-gen):
+  // Текущий размер в байтах (UTF-8 байты, не codepoint'ы).
+  export external fn StringBuilder @len() -> int
+
+Это противоречит D26 школа B: для **всех** текстовых типов `@len`
+обязан быть codepoint count. `nova_str` — codepoints (через
+`nova_str_char_len`), но `Nova_StringBuilder_method_len` возвращал
+`b->len` (поле — UTF-8 byte count). Несимметричность ловила
+пользователей: `StringBuilder.from('Я').len() == 2` но `"Я".len == 1`.
+
+Ф.9.6 — bug-fix:
+
+1. C-runtime `Nova_StringBuilder_method_len` теперь walk'ит UTF-8 lead
+   bytes и считает codepoints (O(n)). Logic совпадает с
+   `nova_str_char_len`.
+2. Добавлен `Nova_StringBuilder_method_byte_len` (O(1) — `b->len`)
+   для FFI / capacity-планирования. Паритет с `str.byte_len()`.
+3. Registry doc обновлён: `len` → "Длина в codepoint'ах (D26 школа B).
+   O(n) UTF-8 walk."; `byte_len` → "Размер в UTF-8 байтах. O(1)."
+4. Type-inference для `Nova_StringBuilder*` в emit_c.rs: добавлен
+   `byte_len` к int-методам.
+5. 14 тестов в `nova_tests/runtime/string_builder.nv` переписаны
+   с двойным покрытием — для каждого теста проверяется и `len()`
+   (codepoints) и `byte_len()` (bytes). ASCII строки → совпадают;
+   Cyrillic / multi-byte → расходятся.
+6. `nova_tests/types/char_literals.nv:119` мигрирован: `sb.len() == 2`
+   (старая семантика байтов) → `sb.len() == 1 && sb.byte_len() == 2`.
+
+Урок: одно поле `b->len` хранит байты (как `nova_str.len` в struct).
+Method `@len` обязан возвращать codepoints (по spec'е). Имя поля и
+имя метода не должны отображаться 1:1, особенно когда spec диктует
+другую семантику. Аудит таких mismatches — обязательная часть API
+review.
+
+Ф.9.2 — оператор `+` через `@plus` Nova-метод с body:
+
+Spec D46 говорит «`a + b` lookup'ит method `@plus` на типе a; есть —
+`a.@plus(b)`, нет — fallback на builtin numeric intrinsic». Bootstrap
+до Plan 13 Ф.9.2 имел invisible-intrinsic для `nova_str + nova_str`
+напрямую `nova_str_concat`. Программист не видел декларации `@plus`
+в registry/.nv → IDE / AI помощники не знали про оператор.
+
+Реализация:
+
+1. `runtime_registry.rs` — поле `nova_body: Option<&'static str>`:
+   - `None` для external (legacy записи).
+   - `Some("@append(s)")` для Nova-impl методов с trivial body.
+   `c_name` игнорируется для записей с body.
+
+2. Renderer в `emit-runtime-stubs`:
+   - `nova_body == None` → `export external fn ... -> T`.
+   - `nova_body == Some(b)` → `export fn ... -> T => {b}` (без external).
+
+3. Registry-записи добавлены:
+   ```rust
+   // std/runtime/string_builder.nv:
+   StringBuilder mut @plus(s str)  -> Self => @append(s)
+   StringBuilder mut @plus(c char) -> Self => @append(c)
+
+   // std/runtime/string.nv:
+   str @plus(other str) -> str => @concat(other)
+   ```
+
+4. После regen `std/runtime/string_builder.nv` и `string.nv`
+   содержат явные Nova-fn декларации `@plus`. Программисту виден
+   contract.
+
+5. Codegen `BinOp::Add` routing в emit_c.rs:
+   - `Nova_StringBuilder*` + `nova_str` →
+     `Nova_StringBuilder_method_append_str(self, s)`.
+   - `Nova_StringBuilder*` + `nova_int` (char) →
+     `Nova_StringBuilder_method_append_char(self, c)`.
+   - `nova_str` + `nova_str` → `nova_str_concat(l, r)` (теперь
+     это C-имя метода `@concat` объявленного в registry, не invisible
+     intrinsic; связь явная через декларацию в .nv).
+
+6. Тесты: `nova_tests/runtime/plus_operator.nv` — 9 тестов:
+   - str + str (пустые / ASCII / Unicode codepoint count + byte count).
+   - sb + str (sequential append, UTF-8 mixed).
+   - sb + char (single ASCII / multiple / 4-byte codepoint).
+   - sb + str / sb + char смешанно.
+
+Bootstrap-ограничение: routing для `BinOp::Add` сейчас hardcoded для
+встроенных типов (str, StringBuilder). User-defined `@plus` ещё не
+работает через `+`. Расширение → method_overloads lookup на BinOp::Add
+— future задача (отдельный план).
+
+Полная регрессия: 83/83 nova_tests PASS (было 82, +1 plus_operator.nv).
+Determinism `emit-runtime-stubs --check` → no diff после регена.
+
+Файлы изменены:
+  compiler-codegen/nova_rt/string_builder.h
+    (Nova_StringBuilder_method_len → codepoint walk +
+     добавлен method_byte_len; ~25 строк)
+  compiler-codegen/src/codegen/runtime_registry.rs
+    (RuntimeFn.nova_body field +
+     str.@plus + StringBuilder.@plus(s/c) +
+     @byte_len + 67×nova_body:None default; ~50 строк)
+  compiler-codegen/src/codegen/emit_c.rs
+    (BinOp::Add routing для StringBuilder + comment про @plus →
+     @concat для str; type-inference @byte_len + plus → Self;
+     ~25 строк)
+  std/runtime/string_builder.nv (regen)
+  std/runtime/string.nv (regen)
+  nova_tests/runtime/string_builder.nv (тесты переписаны)
+  nova_tests/runtime/plus_operator.nv (новый файл, 9 тестов)
+  nova_tests/types/char_literals.nv (1 тест мигрирован)
+
+Урок:
+  - **Nova-метод с body в registry** — естественное расширение
+    single-source-of-truth. Body `=> @append(s)` это не magic —
+    это обычный Nova syntax, программист видит делегацию
+    в .nv-файле. Auto-derive D73 From↔Into остаётся (симметричное
+    правило в spec'е), Plan 12 Ф.4.5 try_read auto-derive отменён
+    (Ф.9.5) — теперь все routing'и явные.
+  - **C-имя метода = invisible intrinsic не хуже visible declaration'а
+    в registry**. Раньше `nova_str_concat` был hardcoded в codegen,
+    теперь он — C-имя `str.@concat` который объявлен в string.nv.
+    Inline emit того же C-вызова сохранён для performance, но связь
+    через registry делает API discoverable.
+  - **`b->len` (байты) vs `@len()` (codepoints) — два уровня
+    representation'а.** Одно — internal storage, другое — public API
+    contract. Их **не надо отображать 1:1**. Правильное именование
+    методов важнее простоты реализации (`return b->len;` лаконично,
+    но семантически неверно).
