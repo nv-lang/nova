@@ -25,16 +25,19 @@ Workflow добавления новой runtime fn (например `f64.@cbrt
 
 1. Добавить запись в `src/codegen/runtime_registry.rs` (`RuntimeFn { ... }`).
 2. Реализовать в `nova_rt/<module>.c` (или wrapper к libc).
-3. Регенерировать stubs из корня nova-lang:
+3. Регенерировать stubs из корня nova-lang. Удобный shortcut:
    ```
-   cargo build --manifest-path compiler-codegen/Cargo.toml
-   compiler-codegen/target/debug/nova-codegen.exe emit-runtime-stubs
+   regen_runtime.bat        # cmd / Windows Terminal
+   .\regen_runtime.ps1       # PowerShell
    ```
+   Под капотом:
+   `compiler-codegen\target\debug\nova-codegen.exe emit-runtime-stubs --root .`
 4. Закоммитить все три (registry + .c + .nv).
 
 **Проверка drift'а** (registry vs существующие .nv-файлы):
 ```
-compiler-codegen/target/debug/nova-codegen.exe emit-runtime-stubs --check
+regen_runtime.bat --check
+.\regen_runtime.ps1 --check
 ```
 Используется в CI / pre-commit hook'е для предотвращения manual edit'ов.
 
