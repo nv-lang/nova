@@ -55,9 +55,20 @@ export external fn StringBuilder mut @append(s str) -> ()
 export external fn ReadBuffer mut @read_byte() Fail[ReadBufferError] -> byte
 ```
 
+«Сигнатура» здесь — **полный contract вызова**: имя, receiver-type +
+`mut`-флаг, параметры (имена + типы), **return-type**, effects
+(`Fail[E]`). Все компоненты участвуют в C-prototype'е и проверяются
+линкером — return-type **тоже**: если в builtins.nv `... -> u32`,
+а runtime возвращает `uint64_t` — link error. См.
+[D82 Validation](../../spec/decisions/08-runtime.md#d82) для полной
+таблицы.
+
 Из этого компилятор выводит:
-- C-prototype для линковки (mangling + type-mapping).
-- Auto-derived формы (`@try_read_byte` без явной декларации).
+- C-prototype для линковки (mangling + type-mapping всех компонентов
+  сигнатуры, включая return-type).
+- Auto-derived формы (`@try_read_byte` без явной декларации) —
+  return-type Fail-формы (`-> R` под `Fail[E]`) определяет
+  return-type synthesized обёртки (`-> Result[R, E]`).
 
 ### Ключевой принцип: только non-derivable формы в builtins.nv
 

@@ -2562,6 +2562,23 @@ Codegen **не хранит** список external-функций. Source of tr
 если есть — это bug, и расхождение между .nv-декларацией и Rust-
 таблицей приведёт к runtime-крашу или silent UB.
 
+**Сигнатура** в этом разделе понимается полно — это весь contract
+вызова, не только имя и типы параметров:
+
+| Компонент | Используется для |
+|---|---|
+| Имя метода (`write_u32_be`) | C-name через mangling |
+| Receiver-type + `mut`-флаг (`WriteBuffer mut`) | Первый параметр C-функции (`Nova_WriteBuffer*`), prefix mangling |
+| Параметры (имена + типы, в порядке) | Остальные параметры C-функции; для overload — также часть mangling (Plan 11 Ф.3) |
+| **Return-type** | C-return type; для auto-derive — целевой тип synthesized обёртки |
+| Effects (`Fail[E]`, etc.) | Дополнительный `*err`-параметр в C-сигнатуре + control-flow эмиссии |
+
+Любой из этих компонентов, если расходится между .nv-декларацией и
+runtime-реализацией → линкер ловит (при включённом
+`-Wstrict-prototypes`). В частности **return-type входит в
+проверку**: если в builtins.nv `... -> u32`, а runtime возвращает
+`uint64_t` — линковка падает.
+
 **Pipeline:**
 
 1. Компилятор парсит `std/runtime/builtins.nv` как обычный Nova-
