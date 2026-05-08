@@ -806,6 +806,15 @@ impl Interpreter {
             }
             _ => {}
         }
+        // Prelude D26 methods на Result/Option (Variant'ы).
+        // Spec 08-runtime.md:235 для Result, аналогично для Option.
+        if let Value::Variant { name, payload, .. } = recv {
+            if let Some(out) = self.try_result_option_method(
+                name, payload, method, args, env, span,
+            )? {
+                return Ok(Some(out));
+            }
+        }
         // Метод на пользовательском типе: ищем Type.method в globals.
         let type_name = match recv {
             Value::Record {
@@ -834,6 +843,160 @@ impl Interpreter {
             }
         }
         Ok(None)
+    }
+
+    /// Built-in методы D26 prelude на Result[T,E] и Option[T].
+    /// Spec: spec/decisions/08-runtime.md:235.
+    /// Распознаёт receiver по имени variant'а (Ok/Err для Result,
+    /// Some/None для Option). type_name могут не быть выставлен —
+    /// различаем pure-name'ом.
+    ///
+    /// Result methods:
+    ///   - is_ok / is_err
+    ///   - ok() → Option[T] / err() → Option[E]
+    ///   - unwrap_or(d) / unwrap_or_else(f)
+    ///   - map(f) / map_err(f)
+    /// Option methods:
+    ///   - is_some / is_none
+    ///   - unwrap_or(d) / unwrap_or_else(f)
+    ///   - map(f)
+    ///   - ok_or(e) → Result[T, E]
+    fn try_result_option_method(
+        &self,
+        name: &str,
+        payload: &VariantPayload,
+        method: &str,
+        args: &[Expr],
+        env: &Env,
+        span: Span,
+    ) -> Result<Option<Value>, Diagnostic> {
+        let make_some = |v: Value| Value::Variant {
+            type_name: Some("Option".into()),
+            name: "Some".into(),
+            payload: VariantPayload::Tuple(vec![v]),
+        };
+        let make_none = || Value::Variant {
+            type_name: Some("Option".into()),
+            name: "None".into(),
+            payload: VariantPayload::Unit,
+        };
+        let make_ok = |v: Value| Value::Variant {
+            type_name: Some("Result".into()),
+            name: "Ok".into(),
+            payload: VariantPayload::Tuple(vec![v]),
+        };
+        let make_err = |v: Value| Value::Variant {
+            type_name: Some("Result".into()),
+            name: "Err".into(),
+            payload: VariantPayload::Tuple(vec![v]),
+        };
+        let inner = |p: &VariantPayload| -> Option<Value> {
+            if let VariantPayload::Tuple(items) = p {
+                if items.len() == 1 {
+                    return Some(items[0].clone());
+                }
+            }
+            None
+        };
+
+        match (name, method) {
+            // ===== Result =====
+            ("Ok", "is_ok")  | ("Err", "is_err")  => Ok(Some(Value::Bool(true))),
+            ("Ok", "is_err") | ("Err", "is_ok")   => Ok(Some(Value::Bool(false))),
+
+            ("Ok", "ok") => Ok(Some(make_some(inner(payload).unwrap_or(Value::Unit)))),
+            ("Err", "ok") => Ok(Some(make_none())),
+            ("Ok", "err") => Ok(Some(make_none())),
+            ("Err", "err") => Ok(Some(make_some(inner(payload).unwrap_or(Value::Unit)))),
+
+            ("Ok", "unwrap_or") => Ok(Some(inner(payload).unwrap_or(Value::Unit))),
+            ("Err", "unwrap_or") => {
+                let arg_values = self.eval_args(args, env)?;
+                Ok(Some(arg_values.into_iter().next().unwrap_or(Value::Unit)))
+            }
+
+            ("Ok", "unwrap_or_else") => Ok(Some(inner(payload).unwrap_or(Value::Unit))),
+            ("Err", "unwrap_or_else") => {
+                let arg_values = self.eval_args(args, env)?;
+                let f = arg_values.into_iter().next().ok_or_else(|| {
+                    Diagnostic::new("Result.unwrap_or_else: missing closure arg", span)
+                })?;
+                let e = inner(payload).unwrap_or(Value::Unit);
+                Ok(Some(self.call_value(f, &[e], span)?))
+            }
+
+            ("Ok", "map") => {
+                let arg_values = self.eval_args(args, env)?;
+                let f = arg_values.into_iter().next().ok_or_else(|| {
+                    Diagnostic::new("Result.map: missing closure arg", span)
+                })?;
+                let v = inner(payload).unwrap_or(Value::Unit);
+                let mapped = self.call_value(f, &[v], span)?;
+                Ok(Some(make_ok(mapped)))
+            }
+            ("Err", "map") => {
+                // Err остаётся Err — re-wrap с тем же payload.
+                let e = inner(payload).unwrap_or(Value::Unit);
+                Ok(Some(make_err(e)))
+            }
+
+            ("Ok", "map_err") => {
+                // Ok остаётся Ok без вызова f.
+                let v = inner(payload).unwrap_or(Value::Unit);
+                Ok(Some(make_ok(v)))
+            }
+            ("Err", "map_err") => {
+                let arg_values = self.eval_args(args, env)?;
+                let f = arg_values.into_iter().next().ok_or_else(|| {
+                    Diagnostic::new("Result.map_err: missing closure arg", span)
+                })?;
+                let e = inner(payload).unwrap_or(Value::Unit);
+                let mapped = self.call_value(f, &[e], span)?;
+                Ok(Some(make_err(mapped)))
+            }
+
+            // ===== Option =====
+            ("Some", "is_some") | ("None", "is_none") => Ok(Some(Value::Bool(true))),
+            ("Some", "is_none") | ("None", "is_some") => Ok(Some(Value::Bool(false))),
+
+            ("Some", "unwrap_or") => Ok(Some(inner(payload).unwrap_or(Value::Unit))),
+            ("None", "unwrap_or") => {
+                let arg_values = self.eval_args(args, env)?;
+                Ok(Some(arg_values.into_iter().next().unwrap_or(Value::Unit)))
+            }
+
+            ("Some", "unwrap_or_else") => Ok(Some(inner(payload).unwrap_or(Value::Unit))),
+            ("None", "unwrap_or_else") => {
+                let arg_values = self.eval_args(args, env)?;
+                let f = arg_values.into_iter().next().ok_or_else(|| {
+                    Diagnostic::new("Option.unwrap_or_else: missing closure arg", span)
+                })?;
+                Ok(Some(self.call_value(f, &[], span)?))
+            }
+
+            ("Some", "map") => {
+                let arg_values = self.eval_args(args, env)?;
+                let f = arg_values.into_iter().next().ok_or_else(|| {
+                    Diagnostic::new("Option.map: missing closure arg", span)
+                })?;
+                let v = inner(payload).unwrap_or(Value::Unit);
+                let mapped = self.call_value(f, &[v], span)?;
+                Ok(Some(make_some(mapped)))
+            }
+            ("None", "map") => Ok(Some(make_none())),
+
+            ("Some", "ok_or") => {
+                let v = inner(payload).unwrap_or(Value::Unit);
+                Ok(Some(make_ok(v)))
+            }
+            ("None", "ok_or") => {
+                let arg_values = self.eval_args(args, env)?;
+                let e = arg_values.into_iter().next().unwrap_or(Value::Unit);
+                Ok(Some(make_err(e)))
+            }
+
+            _ => Ok(None),
+        }
     }
 
     fn try_construct_variant(

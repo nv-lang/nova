@@ -3509,8 +3509,8 @@ impl CEmitter {
                 }
             }
 
-            ExprKind::Lambda { params, body, .. } => {
-                self.emit_lambda(params, body, None)
+            ExprKind::Lambda { params, body, return_type, .. } => {
+                self.emit_lambda(params, body, None, return_type.as_ref())
             }
             ExprKind::With { bindings, body } => {
                 self.emit_with(bindings, body)
@@ -4050,11 +4050,114 @@ impl CEmitter {
                             "is_ok" => return Ok(format!("Nova_Result_method_is_ok({})", obj_c)),
                             "is_err" => return Ok(format!("Nova_Result_method_is_err({})", obj_c)),
                             "ok" => return Ok(format!("Nova_Result_method_ok({})", obj_c)),
+                            // D26 prelude: Result.err() → Option[E].
+                            // Bootstrap: Err type — nova_str. Возвращаем
+                            // NovaOpt_nova_int с интерпретируемой как str
+                            // (heap-боксированной) ссылкой. Простой путь:
+                            // используем boxed nova_str* из tmp.
+                            "err" => {
+                                let tmp = self.fresh_tmp();
+                                self.line(&format!("Nova_Result* {} = {};", tmp, obj_c));
+                                let opt_tmp = self.fresh_tmp();
+                                self.line(&format!("NovaOpt_nova_int {};", opt_tmp));
+                                self.line(&format!("if ({}->tag == NOVA_TAG_Result_Err) {{", tmp));
+                                self.indent += 1;
+                                let str_box = self.fresh_tmp();
+                                self.line(&format!("nova_str* {} = (nova_str*)nova_alloc(sizeof(nova_str));", str_box));
+                                self.line(&format!("*{} = {}->payload.Err._0;", str_box, tmp));
+                                self.line(&format!("{}.tag = NOVA_TAG_Option_Some;", opt_tmp));
+                                self.line(&format!("{}.value = (nova_int)(intptr_t){};", opt_tmp, str_box));
+                                self.indent -= 1;
+                                self.line("} else {");
+                                self.indent += 1;
+                                self.line(&format!("{}.tag = NOVA_TAG_Option_None;", opt_tmp));
+                                self.line(&format!("{}.value = 0;", opt_tmp));
+                                self.indent -= 1;
+                                self.line("}");
+                                return Ok(opt_tmp);
+                            }
                             "unwrap_or" => {
                                 if let Some(arg) = args.first() {
                                     let v = self.emit_expr(arg)?;
                                     return Ok(format!(
                                         "Nova_Result_method_unwrap_or({}, {})", obj_c, v));
+                                }
+                            }
+                            // D26 prelude: Result.unwrap_or_else(f). Err →
+                            // f(e), Ok(v) → v. f это closure (nova_str → nova_int).
+                            "unwrap_or_else" => {
+                                if let Some(arg) = args.first() {
+                                    let f = self.emit_expr(arg)?;
+                                    let tmp = self.fresh_tmp();
+                                    self.line(&format!("Nova_Result* {} = {};", tmp, obj_c));
+                                    let result = self.fresh_tmp();
+                                    self.line(&format!("nova_int {};", result));
+                                    self.line(&format!("if ({}->tag == NOVA_TAG_Result_Ok) {{", tmp));
+                                    self.indent += 1;
+                                    self.line(&format!("{} = {}->payload.Ok._0;", result, tmp));
+                                    self.indent -= 1;
+                                    self.line("} else {");
+                                    self.indent += 1;
+                                    // Closure (nova_str → nova_int): NovaClos_si signature.
+                                    self.line(&format!(
+                                        "{} = ((nova_int(*)(void*, nova_str))(((NovaClos_ii*)({}))->fn))(((NovaClos_ii*)({}))->env, {}->payload.Err._0);",
+                                        result, f, f, tmp));
+                                    self.indent -= 1;
+                                    self.line("}");
+                                    return Ok(result);
+                                }
+                            }
+                            // D26 prelude: Result.map(f). Ok(v) → Ok(f(v)),
+                            // Err(e) → Err(e). f это closure (nova_int → nova_int).
+                            "map" => {
+                                if let Some(arg) = args.first() {
+                                    let f = self.emit_expr(arg)?;
+                                    let tmp = self.fresh_tmp();
+                                    self.line(&format!("Nova_Result* {} = {};", tmp, obj_c));
+                                    let out = self.fresh_tmp();
+                                    self.line(&format!("Nova_Result* {};", out));
+                                    self.line(&format!("if ({}->tag == NOVA_TAG_Result_Ok) {{", tmp));
+                                    self.indent += 1;
+                                    let mapped = self.fresh_tmp();
+                                    self.line(&format!(
+                                        "nova_int {} = NOVA_CLOS_CALL_ii({}, {}->payload.Ok._0);",
+                                        mapped, f, tmp));
+                                    self.line(&format!("{} = nova_make_Result_Ok({});", out, mapped));
+                                    self.indent -= 1;
+                                    self.line("} else {");
+                                    self.indent += 1;
+                                    self.line(&format!("{} = {};", out, tmp));
+                                    self.indent -= 1;
+                                    self.line("}");
+                                    return Ok(out);
+                                }
+                            }
+                            // D26 prelude: Result.map_err(f). Err(e) → Err(f(e)),
+                            // Ok остаётся. f это closure (nova_str → nova_str).
+                            "map_err" => {
+                                if let Some(arg) = args.first() {
+                                    let f = self.emit_expr(arg)?;
+                                    let tmp = self.fresh_tmp();
+                                    self.line(&format!("Nova_Result* {} = {};", tmp, obj_c));
+                                    let out = self.fresh_tmp();
+                                    self.line(&format!("Nova_Result* {};", out));
+                                    self.line(&format!("if ({}->tag == NOVA_TAG_Result_Err) {{", tmp));
+                                    self.indent += 1;
+                                    // Closure (nova_str → nova_str): сигнатура
+                                    // не в стандартных NOVA_CLOS_CALL_*, делаем
+                                    // ручной cast fn-указателя.
+                                    let new_err = self.fresh_tmp();
+                                    self.line(&format!(
+                                        "nova_str {} = ((nova_str(*)(void*, nova_str))(((NovaClos_ii*)({}))->fn))(((NovaClos_ii*)({}))->env, {}->payload.Err._0);",
+                                        new_err, f, f, tmp));
+                                    self.line(&format!("{} = nova_make_Result_Err({});", out, new_err));
+                                    self.indent -= 1;
+                                    self.line("} else {");
+                                    self.indent += 1;
+                                    self.line(&format!("{} = {};", out, tmp));
+                                    self.indent -= 1;
+                                    self.line("}");
+                                    return Ok(out);
                                 }
                             }
                             "unwrap" => {
@@ -5797,6 +5900,7 @@ impl CEmitter {
         params: &[LambdaParam],
         body: &Expr,
         context_param_tys: Option<&[(String, String)]>, // (param_c_ty, ret_c_ty) from outer fn sig context
+        return_type_ann: Option<&TypeRef>,
     ) -> Result<String, String> {
         let id = self.lambda_counter;
         self.lambda_counter += 1;
@@ -5812,8 +5916,10 @@ impl CEmitter {
             }
         }).collect();
 
-        // Determine return type
-        let ret_c_ty = if let Some(ctx) = context_param_tys {
+        // Determine return type. Приоритет: явная аннотация `-> T` > context > nova_int.
+        let ret_c_ty = if let Some(rt) = return_type_ann {
+            self.type_ref_to_c(rt).unwrap_or_else(|_| "nova_int".into())
+        } else if let Some(ctx) = context_param_tys {
             ctx.first().and_then(|(_, ret)| if !ret.is_empty() { Some(ret.clone()) } else { None })
                 .unwrap_or_else(|| "nova_int".into())
         } else {
@@ -6264,8 +6370,9 @@ impl CEmitter {
                     if obj_ty == "Nova_Result*" {
                         return match method.as_str() {
                             "is_ok" | "is_err" => "nova_bool".into(),
-                            "unwrap" | "unwrap_or" => "nova_int".into(),
-                            "ok" => "NovaOpt_nova_int".into(),
+                            "unwrap" | "unwrap_or" | "unwrap_or_else" => "nova_int".into(),
+                            "ok" | "err" => "NovaOpt_nova_int".into(),
+                            "map" | "map_err" => "Nova_Result*".into(),
                             _ => "nova_int".into(),
                         };
                     }
