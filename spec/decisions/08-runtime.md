@@ -2535,10 +2535,11 @@ C-библиотек** (libc, OS-libs), будет отдельный keyword
 использовать. Компилятор **отклоняет** `external fn` в любом другом
 namespace'е.
 
-#### Bootstrap: dispatch table
+#### Mangling и dispatch
 
-Codegen имеет hard-coded таблицу: для каждого `external fn` (имя +
-receiver) — соответствующая C-функция в `nova_rt/`. Mapping:
+Codegen **не хранит** список external-функций. Source of truth — это
+`std/runtime/builtins.nv`. Codegen знает **только правила mangling**
+и для каждой `external fn` декларации выводит C-name детерминированно:
 
 | Nova-form | C-name |
 |---|---|
@@ -2546,8 +2547,65 @@ receiver) — соответствующая C-функция в `nova_rt/`. Map
 | `t.method(...)` instance | `Nova_T_method_method(t, ...)` |
 | `t.method(...)` mut instance | `Nova_T_method_method(t, ...)` (тот же mangling) |
 
+Имена параметров в C-сигнатуре генерируются из позиций (`arg0`,
+`arg1`, ...); типы маппятся по canonical Nova→C таблице (`int` →
+`nova_int`, `str` → `nova_str`, `byte` → `uint8_t`, `u32` →
+`uint32_t`, `&T` → `Nova_T*`, `mut T` → `Nova_T*`, ...).
+
 Этот mapping **архитектурно идентичен** registry built-in conversions
 (D73 + Plan 08 Ф.2). Один механизм lookup'а.
+
+#### Validation: builtins.nv — single source of truth
+
+Подписи external-функций живут **только** в `std/runtime/builtins.nv`.
+Никакой дублирующей таблицы в Rust-коде codegen'а быть не должно;
+если есть — это bug, и расхождение между .nv-декларацией и Rust-
+таблицей приведёт к runtime-крашу или silent UB.
+
+**Pipeline:**
+
+1. Компилятор парсит `std/runtime/builtins.nv` как обычный Nova-
+   модуль. Каждая `export external fn ...`-декларация даёт AST-узел
+   с полной сигнатурой (имя, receiver, params, return, effects).
+2. Codegen применяет mangling rules → C-name + C-prototype:
+   ```c
+   void Nova_WriteBuffer_method_write_u32_be(Nova_WriteBuffer*, uint32_t);
+   ```
+3. Codegen эмитит этот prototype в сгенерированный header (или
+   inline в transition unit) для линковки с `nova_rt/`.
+4. Runtime (`nova_rt/write_buffer.h`/`.c`) обязан реализовать
+   функцию **под этим именем и сигнатурой**.
+5. Расхождение → **linker error** (undefined reference / type
+   mismatch). Это compile-time gate: невозможно собрать бинарь, в
+   котором .nv-декларация не совпадает с runtime-реализацией.
+
+**Что это даёт:**
+
+- Программист добавляет `export external fn WriteBuffer mut
+  @write_u64_le(v u64) -> ()` в builtins.nv — codegen автоматически
+  знает C-name и тип. Не нужно править Rust-код codegen'а.
+- Реализация в runtime обязана матчить — иначе линкер падает.
+- AI-генерируемый код для расширения runtime API — single-file
+  edit (только builtins.nv + .c-реализация).
+
+**Что это запрещает:**
+
+- Hard-coded списки external-методов в codegen'е (сейчас есть в
+  `record_schemas.insert("StringBuilder", ...)` и method dispatch
+  таблицах) — должны быть **удалены** или сведены к чтению из
+  AST builtins.nv. Q-codegen-builtins-cleanup.
+- «Скрытые» external-функции, известные только codegen'у, без
+  декларации в builtins.nv. Если codegen эмитит вызов
+  `Nova_X_method_y` — соответствующая `external fn X.@y(...)`
+  декларация **обязана** существовать в builtins.nv (или другом
+  модуле в `std.runtime.*`).
+
+**Что не валидируется на этом уровне:**
+
+- Семантика реализации (правильно ли `write_u32_be` пишет big-endian
+  байты) — runtime tests, не compile-time check.
+- Memory ownership / lifetime / aliasing — это контракт типа (mut,
+  &T), линкер его не видит.
 
 ### Почему
 
@@ -2591,6 +2649,16 @@ D30 фиксирует «полные слова, не сокращения». `
 - **`external type`** — отложено. Если когда-то появятся opaque
   user-defined типы (Channel, mmap'ed Region), вернёмся; сейчас
   built-in только.
+- **Codegen — single source (вариант A).** Сигнатуры жили бы в
+  Rust-таблицах; builtins.nv был бы только документацией, а codegen
+  cross-check'ал бы при чтении. Отвергнуто: дублирование (два места
+  правки на каждую новую runtime-функцию), риск тихого расхождения
+  если cross-check где-то пропущен, недружелюбно к AI (надо править
+  Rust-код codegen'а).
+- **Hybrid: builtins.nv для типов + codegen хранит mangling.** Тоже
+  отвергнуто — оставляет Rust-таблицу как «второй источник», даже
+  если меньшего объёма. Принят чистый вариант B: builtins.nv —
+  единый источник; codegen знает только правила mangling.
 
 ### Связь
 
@@ -2619,11 +2687,19 @@ special-case'ил по имени receiver'а — fragile).
 
 ### Bootstrap status (2026-05-08)
 
-- ✅ Спека: D82 закрыт (этот блок).
+- ✅ Спека: D82 закрыт (этот блок). Validation rule (builtins.nv —
+  single source of truth) добавлен 2026-05-08 после обсуждения
+  signature mismatch для `WriteBuffer.@write_u32_be`.
 - ⏳ Lexer: `KwExternal` token — TBD (Plan 04 Этап 2).
 - ⏳ Parser: `external` modifier в `parse_fn_decl` — TBD.
 - ⏳ AST: `is_external: bool` flag — TBD.
-- ⏳ Codegen: dispatch table для StringBuilder/WriteBuffer/ReadBuffer —
-  TBD.
+- ⏳ Codegen: чтение external-деклараций из AST builtins.nv,
+  применение mangling rules, эмиссия C-prototype'ов в header — TBD
+  (Plan 04 Этап 2).
+- ⏳ Codegen cleanup: удалить hard-coded `record_schemas.insert(...)`
+  и method dispatch-таблицы для StringBuilder/WriteBuffer/ReadBuffer.
+  Должны замениться чтением builtins.nv. Это **ломает** silent
+  расхождения, которые сейчас существуют (Q-codegen-builtins-cleanup).
 - ⏳ Runtime: `nova_rt/string_builder.h` / `write_buffer.h` /
-  `read_buffer.h` — TBD.
+  `read_buffer.h` — TBD. Реализации обязаны матчить builtins.nv по
+  C-name + сигнатуре; иначе linker error.

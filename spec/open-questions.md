@@ -4245,6 +4245,63 @@ Nova auto-derive read/try_read — оригинальная фича (закре
 
 ---
 
+## Q-codegen-builtins-cleanup. Удаление hard-coded external-таблиц из codegen
+
+**Контекст.** [D82](decisions/08-runtime.md#d82) (расширен 2026-05-08)
+фиксирует: `std/runtime/builtins.nv` — единственный источник истины
+для сигнатур external-функций. Codegen знает только правила mangling
+и Nova→C type mapping, но не хранит список самих функций.
+
+Сейчас codegen этому ещё не соответствует. В `compiler-codegen/` есть:
+
+- `record_schemas.insert("StringBuilder", ...)` / `"WriteBuffer"` /
+  `"ReadBuffer"` — hard-coded layout/method tables.
+- Method dispatch таблицы — special-case `Nova_StringBuilder_method_*`
+  emit'ы в emit_c.rs.
+- Старый `record_schemas.insert("Buffer", ...)` (Plan 04 Этап 6
+  удалит).
+
+**Проблема.** Любое расхождение между builtins.nv и Rust-таблицей —
+silent. Если в builtins.nv:
+```nova
+export external fn WriteBuffer mut @write_u32_be(v u32) -> ()
+```
+а в codegen Rust hard-coded `Nova_WriteBuffer_method_write_u32_be(buf,
+v)` где `v` имеет тип `int` (не `uint32_t`) — компилируется, но
+runtime UB: codegen эмитит call с `nova_int` (64-bit), runtime ждёт
+`uint32_t`, ABI ломается.
+
+**Что нужно сделать.** Codegen читает AST builtins.nv (как обычный
+Nova-модуль) и для каждой `external fn` декларации:
+1. Применяет mangling rules → C-name.
+2. Применяет Nova→C type mapping → C-prototype.
+3. Эмитит prototype в сгенерированный header.
+4. При встрече вызова `wb.@write_u32_be(v)` — lookup'ит декларацию
+   в builtins.nv AST, не в Rust-таблице.
+
+После этой миграции hard-coded таблицы удаляются. Расхождение между
+.nv-декларацией и runtime-реализацией ловится **линкером** (undefined
+reference / type mismatch при включённом `-Wstrict-prototypes`).
+
+**Объём работы.**
+- AST-walker для builtins.nv (можно переиспользовать существующий
+  parser).
+- Mangling rules вынесены в один модуль (сейчас разбросано).
+- Type mapper Nova→C централизован.
+- Удаление `record_schemas.insert(...)` для StringBuilder/WriteBuffer/
+  ReadBuffer (после Plan 04 Этап 6 — и для Buffer, до — оставить).
+
+**Зависимости.**
+- Plan 04 Этапы 1-5 (runtime типы реализованы) — закрыты.
+- Plan 04 Этап 6 (удаление Buffer) — pending.
+- Этот cleanup — после Этапа 6 или параллельно.
+
+**Связь:** [D82](decisions/08-runtime.md#d82) (single source of truth
+правило), Plan 04 Этап 6, Q-overloading (overload-resolution тоже
+читает из AST builtins.nv).
+
+---
+
 ## Q-overloading. Перегрузка функций / методов по типу аргументов ⚠️ PARTIALLY CLOSED (2026-05-08)
 
 > **Variant 1 (ad-hoc) ✅ закрыт Plan'ом 11** для **методов** (со
