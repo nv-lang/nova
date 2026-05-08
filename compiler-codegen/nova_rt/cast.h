@@ -149,4 +149,22 @@ static inline uint64_t nova_f32_to_u64(float f) {
     return (uint64_t)f;
 }
 
+/* ===== Plan 04 follow-up: IEEE 754 bit-cast pair ===== */
+/* `f64.from_bits(n int)` / `int.to_bits(f f64)` — для распаковки */
+/* `try_read_f64_*` Result-payload (хранится как int64 bits double'а). */
+#include <string.h>  /* memcpy */
+
+static inline double nova_f64_from_bits(int64_t n) {
+    double d;
+    uint64_t u = (uint64_t)n;
+    memcpy(&d, &u, sizeof(d));
+    return d;
+}
+
+static inline int64_t nova_int_from_f64_bits(double f) {
+    uint64_t u;
+    memcpy(&u, &f, sizeof(u));
+    return (int64_t)u;
+}
+
 #endif /* NOVA_CAST_H */

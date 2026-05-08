@@ -4682,6 +4682,21 @@ impl CEmitter {
                             }
                         }
                     }
+                    // Plan 04 follow-up: f64.from_bits(n int) / int.to_bits(f f64)
+                    // — IEEE 754 bit-cast pair. Используется для распаковки
+                    // try_read_f64_* (Result-payload — int bits, нужен double).
+                    if name == "f64" && method == "from_bits" {
+                        if let Some(arg) = args.first() {
+                            let v = self.emit_expr(arg)?;
+                            return Ok(format!("nova_f64_from_bits({})", v));
+                        }
+                    }
+                    if name == "int" && method == "to_bits" {
+                        if let Some(arg) = args.first() {
+                            let v = self.emit_expr(arg)?;
+                            return Ok(format!("nova_int_from_f64_bits({})", v));
+                        }
+                    }
                 }
                 // 0. Built-in primitive static methods (D35 + D73).
                 //    `str.from(x)` — string conversion (replaces old D70 to_str).
@@ -5001,6 +5016,22 @@ impl CEmitter {
                             self.line("}");
                             return Ok(out);
                         }
+                    }
+                }
+                // Plan 04 follow-up: f64.from_bits(n int) — IEEE 754
+                // bit-cast int → f64. Pair with int.to_bits(f f64). Используется
+                // для распаковки try_read_f64_*: r.unwrap_or(0) даёт nova_int
+                // bits, f64.from_bits(bits) → восстанавливает double.
+                if parts.len() == 2 && parts[0] == "f64" && parts[1] == "from_bits" {
+                    if let Some(arg) = args.first() {
+                        let v = self.emit_expr(arg)?;
+                        return Ok(format!("nova_f64_from_bits({})", v));
+                    }
+                }
+                if parts.len() == 2 && parts[0] == "int" && parts[1] == "to_bits" {
+                    if let Some(arg) = args.first() {
+                        let v = self.emit_expr(arg)?;
+                        return Ok(format!("nova_int_from_f64_bits({})", v));
                     }
                 }
                 // Plan 08 Ф.2: T.from(v) — infallible конверсии.
@@ -7238,6 +7269,14 @@ impl CEmitter {
                                 _ => "nova_int".into(),
                             };
                         }
+                        // Plan 04 follow-up: f64.from_bits(int) → nova_f64,
+                        // int.to_bits(f64) → nova_int.
+                        if n == "f64" && method == "from_bits" {
+                            return "nova_f64".into();
+                        }
+                        if n == "int" && method == "to_bits" {
+                            return "nova_int".into();
+                        }
                     }
                     // Plan 04: instance-method type inference.
                     if obj_ty == "Nova_StringBuilder*" {
@@ -7456,6 +7495,13 @@ impl CEmitter {
                                 "from" => "Nova_ReadBuffer*".into(),
                                 _ => "nova_int".into(),
                             };
+                        }
+                        // Plan 04 follow-up: f64.from_bits / int.to_bits.
+                        if eff == "f64" && method_name == "from_bits" {
+                            return "nova_f64".into();
+                        }
+                        if eff == "int" && method_name == "to_bits" {
+                            return "nova_int".into();
                         }
                         // D26 prelude: Error.new(msg) → Nova_Error*.
                         if eff == "Error" && method_name == "new" {

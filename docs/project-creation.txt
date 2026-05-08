@@ -1600,3 +1600,44 @@ skipped, output пустой (правильно).
 user-defined overloaded методы, вернёмся к Q-overloading.
 
 Plan 04 закрыт полностью.
+
+
+================================================================================
+2026-05-08 Plan 04 follow-ups: whitelist + f64.from_bits + macro UB fix
+================================================================================
+
+Три follow-up задачи после закрытия Plan 04:
+
+1. Whitelist std.runtime.* enforcement (D82):
+   types::check_module проверяет module.name[0..1] == ["std", "runtime"].
+   Если нет и встретил external fn — error: "`external fn` is only
+   allowed in `std.runtime.*` modules". Ручной negative-test
+   подтвердил compile error.
+
+2. f64.from_bits(int) / int.to_bits(f64) pair:
+   - Codegen dispatch (Path-form в emit_path_call, Member-form в
+     emit_call где obj — Ident "f64"/"int").
+   - infer_expr_c_type возвращает nova_f64 / nova_int.
+   - C-helpers nova_f64_from_bits / nova_int_from_f64_bits в
+     nova_rt/cast.h через memcpy bit-cast (IEEE 754).
+   - 3 новых теста в read_buffer.nv (f64 round-trip Fail-form,
+     try_read_f64_be Result-form, int.to_bits round-trip pair).
+
+3. Bugfix: UB shadowing в WriteBuffer macros:
+   Macros NOVA_WB_WRITE_LE/BE_16/32/64 объявляли uint{16,32,64}_t u.
+   Когда вызывались из write_f32_le/f64_le — outer scope тоже имел
+   uint32_t u / uint64_t u. C declarator вводит имя в scope ДО
+   инициализатора, поэтому (uintN_t)(u) в macro читал ещё-
+   неинициализированную shadow'ed variable. MSVC давал мусор для
+   f32/f64. Fix: переименовали macro-internal u → _nova_u.
+
+   Урок: macros должны префиксовать internal variables (_nova_*) —
+   иначе риск shadowing с outer scope.
+
+Тесты: read_buffer.nv 15/15 (было 12). Регрессий нет:
+write_buffer 14/14, string_builder 15/15, buffer 15/15.
+
+После follow-up'ов Plan 04 действительно ВСЁ. Все open-вопросы
+которые были перечислены ("отложены") в Plan 04.md закрыты, кроме
+тех что явно отложены до других планов (Q-overloading, Q-no-derive,
+Q-readonly-types).

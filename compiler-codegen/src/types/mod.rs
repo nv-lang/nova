@@ -52,6 +52,31 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
     let mut errors = Vec::new();
     let mut names: HashSet<String> = HashSet::new();
 
+    // D82: `external fn` whitelisted только в `std.runtime.*`. User-код
+    // не должен использовать external — это keyword для документирования
+    // stdlib runtime-функций, реализованных в nova_rt/*.h. Будущий
+    // `extern("C")` для FFI к сторонним libs — отдельный keyword.
+    let is_runtime_module = module.name.len() >= 2
+        && module.name[0] == "std"
+        && module.name[1] == "runtime";
+    if !is_runtime_module {
+        for item in &module.items {
+            if let Item::Fn(fd) = item {
+                if fd.is_external {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "`external fn` is only allowed in `std.runtime.*` modules \
+                             (this module is `{}`); for FFI to external C libraries \
+                             a future `extern(\"C\")` keyword will be added (Q-ffi)",
+                            module.name.join(".")
+                        ),
+                        fd.span,
+                    ));
+                }
+            }
+        }
+    }
+
     for item in &module.items {
         match item {
             Item::Type(td) => {

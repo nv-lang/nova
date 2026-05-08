@@ -118,58 +118,58 @@ static inline nova_unit Nova_WriteBuffer_method_write_i8(Nova_WriteBuffer* b, no
 #define NOVA_WB_WRITE_LE_16(b, v) do { \
     _nova_write_buffer_check_live(b); \
     _nova_write_buffer_reserve(b, 2); \
-    uint16_t u = (uint16_t)(v); \
-    (b)->data[(b)->len + 0] = (nova_byte)(u & 0xFF); \
-    (b)->data[(b)->len + 1] = (nova_byte)((u >> 8) & 0xFF); \
+    uint16_t _nova_u = (uint16_t)(v); \
+    (b)->data[(b)->len + 0] = (nova_byte)(_nova_u & 0xFF); \
+    (b)->data[(b)->len + 1] = (nova_byte)((_nova_u >> 8) & 0xFF); \
     (b)->len += 2; \
 } while (0)
 
 #define NOVA_WB_WRITE_BE_16(b, v) do { \
     _nova_write_buffer_check_live(b); \
     _nova_write_buffer_reserve(b, 2); \
-    uint16_t u = (uint16_t)(v); \
-    (b)->data[(b)->len + 0] = (nova_byte)((u >> 8) & 0xFF); \
-    (b)->data[(b)->len + 1] = (nova_byte)(u & 0xFF); \
+    uint16_t _nova_u = (uint16_t)(v); \
+    (b)->data[(b)->len + 0] = (nova_byte)((_nova_u >> 8) & 0xFF); \
+    (b)->data[(b)->len + 1] = (nova_byte)(_nova_u & 0xFF); \
     (b)->len += 2; \
 } while (0)
 
 #define NOVA_WB_WRITE_LE_32(b, v) do { \
     _nova_write_buffer_check_live(b); \
     _nova_write_buffer_reserve(b, 4); \
-    uint32_t u = (uint32_t)(v); \
-    (b)->data[(b)->len + 0] = (nova_byte)(u & 0xFF); \
-    (b)->data[(b)->len + 1] = (nova_byte)((u >> 8) & 0xFF); \
-    (b)->data[(b)->len + 2] = (nova_byte)((u >> 16) & 0xFF); \
-    (b)->data[(b)->len + 3] = (nova_byte)((u >> 24) & 0xFF); \
+    uint32_t _nova_u = (uint32_t)(v); \
+    (b)->data[(b)->len + 0] = (nova_byte)(_nova_u & 0xFF); \
+    (b)->data[(b)->len + 1] = (nova_byte)((_nova_u >> 8) & 0xFF); \
+    (b)->data[(b)->len + 2] = (nova_byte)((_nova_u >> 16) & 0xFF); \
+    (b)->data[(b)->len + 3] = (nova_byte)((_nova_u >> 24) & 0xFF); \
     (b)->len += 4; \
 } while (0)
 
 #define NOVA_WB_WRITE_BE_32(b, v) do { \
     _nova_write_buffer_check_live(b); \
     _nova_write_buffer_reserve(b, 4); \
-    uint32_t u = (uint32_t)(v); \
-    (b)->data[(b)->len + 0] = (nova_byte)((u >> 24) & 0xFF); \
-    (b)->data[(b)->len + 1] = (nova_byte)((u >> 16) & 0xFF); \
-    (b)->data[(b)->len + 2] = (nova_byte)((u >> 8) & 0xFF); \
-    (b)->data[(b)->len + 3] = (nova_byte)(u & 0xFF); \
+    uint32_t _nova_u = (uint32_t)(v); \
+    (b)->data[(b)->len + 0] = (nova_byte)((_nova_u >> 24) & 0xFF); \
+    (b)->data[(b)->len + 1] = (nova_byte)((_nova_u >> 16) & 0xFF); \
+    (b)->data[(b)->len + 2] = (nova_byte)((_nova_u >> 8) & 0xFF); \
+    (b)->data[(b)->len + 3] = (nova_byte)(_nova_u & 0xFF); \
     (b)->len += 4; \
 } while (0)
 
 #define NOVA_WB_WRITE_LE_64(b, v) do { \
     _nova_write_buffer_check_live(b); \
     _nova_write_buffer_reserve(b, 8); \
-    uint64_t u = (uint64_t)(v); \
+    uint64_t _nova_u = (uint64_t)(v); \
     for (int _i = 0; _i < 8; ++_i) \
-        (b)->data[(b)->len + _i] = (nova_byte)((u >> (_i * 8)) & 0xFF); \
+        (b)->data[(b)->len + _i] = (nova_byte)((_nova_u >> (_i * 8)) & 0xFF); \
     (b)->len += 8; \
 } while (0)
 
 #define NOVA_WB_WRITE_BE_64(b, v) do { \
     _nova_write_buffer_check_live(b); \
     _nova_write_buffer_reserve(b, 8); \
-    uint64_t u = (uint64_t)(v); \
+    uint64_t _nova_u = (uint64_t)(v); \
     for (int _i = 0; _i < 8; ++_i) \
-        (b)->data[(b)->len + _i] = (nova_byte)((u >> ((7 - _i) * 8)) & 0xFF); \
+        (b)->data[(b)->len + _i] = (nova_byte)((_nova_u >> ((7 - _i) * 8)) & 0xFF); \
     (b)->len += 8; \
 } while (0)
 
