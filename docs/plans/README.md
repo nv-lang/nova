@@ -21,6 +21,7 @@
 | 07 | [07-as-cast-saturation.md](07-as-cast-saturation.md) | `as`-cast saturation для float→int + spec D54 narrowing semantics | ✅ выполнено |
 | 08 | [08-from-into-conversions.md](08-from-into-conversions.md) | `From`/`Into` framework + char/byte/bool + strict if-cond + conversions.md | активный, не начат |
 | 09 | [09-clang-migration.md](09-clang-migration.md) | Миграция Windows-сборки с MSVC на Clang/LLVM (10-15% perf) | активный, не начат |
+| 10 | [10-pgo-integration.md](10-pgo-integration.md) | PGO integration (stub, после плана 09) — 15-30% perf на hot path | stub / future |
 
 ## Связанные директории
 

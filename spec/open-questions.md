@@ -4680,6 +4680,82 @@ streaming, parallel-tuple — для fan-out 2..N).
 
 ---
 
+## Q-build-pgo. Profile-Guided Optimization для C-backend
+
+**Контекст.** Nova C-backend через `compiler-codegen` сейчас не
+интегрирован с PGO. Прирост от PGO в production-компиляторах
+обычно 15-30% на hot path'ах (rustc bootstrap +12-14%, Chrome
+core rendering +15-25%). Это **самая большая** «бесплатная»
+оптимизация после LTO для backend-программ.
+
+**Зависит от:**
+
+- **Plan 09 (Clang migration)** должен быть завершён до PGO
+  работы. На MSVC PGO существует, но слабее: Clang/LLVM имеет
+  IR-based профили (более точные), instrumentation flags
+  (`-fprofile-generate`, `-fprofile-use`), tooling (`llvm-profdata`).
+
+**Открытые вопросы:**
+
+1. **AutoFDO vs обычный PGO?**
+   - Обычный PGO (`-fprofile-generate`) — инструментирует binary
+     счётчиками, training run медленнее обычного, но точнее.
+   - AutoFDO (`-fprofile-sample-use`) — использует `perf` sampling,
+     training run без overhead'а, но менее точные профили
+     (sampling на ~100kHz).
+   AutoFDO проще для CI (не нужен инструментированный binary),
+   обычный PGO даёт чуть больше прироста. **Не решено.**
+
+2. **Profile в репо или нет?**
+   - **За хранение:** training run может занимать минуты, удобно
+     закоммитить готовый профиль.
+   - **Против:** профили платформо-специфичные (x86-64-v3 vs ARM),
+     устаревают при изменении кода, blow up репозиторий.
+   - **Cargo (Rust)** — рекомендует **не коммитить**. Программист
+     сам делает training run.
+   - Решается при написании полного плана.
+
+3. **PGO как часть `nova build` или отдельный workflow?**
+   - **Integrated:** `nova build --pgo` делает three-step pipeline
+     автоматически (instrument → user training run → use). Удобно,
+     но скрывает магию.
+   - **Manual:** программист сам пишет три команды
+     (`--pgo-instrument`, run, `--pgo-use`). Гибче для CI.
+   - Скорее всего **оба** (default — manual, `--pgo` shorthand для
+     стандартного workflow).
+
+4. **Каков канонический training workload?**
+   - User-defined — программист передаёт свой workload
+     (`nova build --pgo-train="./bench/representative.sh"`).
+   - Auto-generated — Nova prepare'ит из tests/benchmarks
+     автоматически.
+   - **Рекомендация:** оба пути; для stdlib-разработки используем
+     `bench/` suite (план 09 Ф.6).
+
+5. **PGO для stdlib и user-кода — раздельно или один профиль?**
+   - **Один профиль** — проще, но если stdlib обновляется чаще
+     user-кода, профиль устаревает.
+   - **Раздельно** — stdlib имеет свой PGO профиль (один раз
+     обновляется при release), user-код имеет свой.
+   - Скорее всего сначала **один профиль** (простота),
+     `cargo pgo`-style refinement позже.
+
+**Не open question:** само решение «использовать PGO» — да,
+очевидно полезно. Open это **как** интегрировать.
+
+**Связь:**
+- [Plan 09](../docs/plans/09-clang-migration.md) — Clang migration,
+  prerequisite.
+- [Plan 10](../docs/plans/10-pgo-integration.md) — stub для PGO
+  работы. Полный план будет написан после плана 09.
+- [docs/simplifications.md] → `[P-no-pgo-integration]` — пометка
+  про текущее отсутствие.
+
+**Когда закроется:** после реализации Plan 10 (PGO integration)
+с benchmark'ами показывающими ≥10% прирост vs `--release` без PGO.
+
+---
+
 ## Финальное напоминание
 
 Прежде чем продолжать **дизайн**, прочитай:
