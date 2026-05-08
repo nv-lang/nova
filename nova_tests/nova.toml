@@ -11,7 +11,7 @@
 #   syntax/       — pattern matching, methods, closures, ...
 #   effects/      — Fail / handlers / forbid / realtime
 #   concurrency/  — supervised / parallel for / cancel_scope / Time
-#   runtime/      — From/Into, Mem effect, Buffer, Option/Result
+#   runtime/      — From/Into, Mem effect, StringBuilder/WriteBuffer/ReadBuffer, Option/Result
 #   modules/      — cross-module integration
 #
 # Каждый файл — отдельный модуль `nova_tests.<group>.<file>` с
