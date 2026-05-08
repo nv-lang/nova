@@ -90,6 +90,9 @@ impl Interpreter {
                         body: match &fd.body {
                             FnBody::Expr(e) => ClosureBody::Expr(e.clone()),
                             FnBody::Block(b) => ClosureBody::Block(b.clone()),
+                            // D82: external fn — interp не реализован для них
+                            // (interp удалён, оставляем panic как safety-fallback).
+                            FnBody::External => panic!("interp does not support external fn"),
                         },
                         env: self.globals.clone(),
                         receiver: None,

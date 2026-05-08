@@ -31,6 +31,9 @@ pub enum TokenKind {
     KwImport,
     KwUse,
     KwExport,
+    /// D82: external fn — runtime-implemented в nova_rt/*.h.
+    /// Только в std.runtime.* whitelisted namespace.
+    KwExternal,
     KwFn,
     KwType,
     KwProtocol,
@@ -140,6 +143,7 @@ impl TokenKind {
             TokenKind::KwImport => "`import`",
             TokenKind::KwUse => "`use`",
             TokenKind::KwExport => "`export`",
+            TokenKind::KwExternal => "`external`",
             TokenKind::KwFn => "`fn`",
             TokenKind::KwType => "`type`",
             TokenKind::KwProtocol => "`protocol`",

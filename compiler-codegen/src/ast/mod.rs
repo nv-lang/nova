@@ -36,6 +36,9 @@ pub enum Item {
 #[derive(Debug, Clone)]
 pub struct FnDecl {
     pub is_export: bool,
+    /// D82: external fn — реализована в nova_rt/*.h. Body отсутствует
+    /// (FnBody::External). Только в std.runtime.* whitelisted.
+    pub is_external: bool,
     pub name: String,
     /// Receiver — для методов через `@`. None у свободных функций.
     pub receiver: Option<Receiver>,
@@ -79,6 +82,8 @@ pub enum FnBody {
     Expr(Expr),
     /// `{ stmts; ...; expr? }`
     Block(Block),
+    /// D82: `external fn` — body отсутствует, реализация в nova_rt.
+    External,
 }
 
 #[derive(Debug, Clone)]

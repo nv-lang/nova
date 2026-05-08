@@ -1477,3 +1477,126 @@ Plan 04 = split унифицированного Buffer (Q-buffer закрыт 2
 Урок: spec-changes сделали отдельным этапом и отдельным коммитом —
 если codegen потом сломается, спека уже зафиксирована и можно
 обсуждать без риска что текст и код разъедутся.
+
+
+================================================================================
+2026-05-08 Plan 04 Этап 2-5: codegen + runtime + tests
+================================================================================
+
+Этап 2 (codegen):
+
+1. Lexer: KwExternal token; mapping "external" => KwExternal.
+
+2. Parser: external modifier в parse_item между `export` и `fn`. Если
+   external — body должен отсутствовать (compile error если есть).
+   parse_fn принимает (is_export, is_external).
+
+3. AST: FnDecl.is_external: bool field; FnBody::External вариант для
+   функций без тела.
+
+4. Codegen:
+   - emit_fn skip'ает external fn (return Ok рано) — никакого Nova
+     body не эмитится.
+   - emit_fn_forward_decl skip'ает тоже.
+   - Match arms по FnBody::External — везде {} или unreachable!.
+
+5. Dispatch для built-in opaque-типов (StringBuilder/WriteBuffer/
+   ReadBuffer):
+   - record_schemas insert empty maps (для type lookup).
+   - method_receivers insert все unambiguous-name методы (append,
+     write_*, read_*, try_read_*, position, remaining, ...).
+   - Common names (new/from/with_capacity/into/clone/len/capacity)
+     dispatch'атся через receiver-type check в emit_call (как Buffer).
+
+6. Overload by argument type для external fn:
+   - types::mod не enforce'ит duplicate top-level name для external
+     (т.к. dispatch делается в codegen по arg-type).
+   - emit_call для StringBuilder.from / append: проверяет infer_expr_
+     c_type первого арга — nova_str → _from_str/_append_str,
+     иначе → _from_char/_append_char.
+
+7. infer_expr_c_type для всех методов трёх built-in типов:
+   - StringBuilder: new/with_capacity/from → Nova_StringBuilder*,
+     append → nova_unit, into → nova_str.
+   - WriteBuffer: new/with_capacity/from → Nova_WriteBuffer*,
+     write_* → nova_unit, into → NovaArray_nova_byte*.
+   - ReadBuffer: from → Nova_ReadBuffer*, position/remaining → nova_int,
+     has_remaining → nova_bool, remaining_bytes → NovaArray_nova_byte*,
+     read_byte/u8 → nova_byte, read_iN/uN → nova_int, read_fN → nova_f64,
+     try_read_* → Nova_Result*.
+
+Этап 3 (runtime):
+
+1. nova_rt/string_builder.h:
+   - Nova_StringBuilder struct: data/len/cap/consumed.
+   - _nova_utf8_encode helper для char→bytes (1-4 byte).
+   - static_new/with_capacity/from_str/from_char.
+   - method_append_str/append_char (overload по C-name suffix).
+   - method_len/capacity/clone/into.
+   - Nova_str_static_from_char(cp) — для D73 char.into() → str.
+
+2. nova_rt/write_buffer.h:
+   - Nova_WriteBuffer struct: data/len/cap/consumed.
+   - 18 numeric × LE/BE write helpers через макросы
+     NOVA_WB_WRITE_LE/BE_16/32/64.
+   - f32/f64 — IEEE 754 bit-cast через memcpy float ↔ uint32/64.
+   - method_len/capacity/clone/into.
+
+3. nova_rt/read_buffer.h:
+   - Nova_ReadBuffer struct: data/len/pos (view над bytes).
+   - **Auto-derive pattern (Plan 04 ключевая фича):** одна
+     _nova_rb_read_uN_LE/BE_raw функция (возвращает nova_bool +
+     out param) → две Nova-обёртки:
+     - @read_* (Fail-form) через _nova_read_buffer_throw_
+       unexpected_end на short-read.
+     - @try_read_* (Result-form) через _nova_rb_make_err.
+   - 18 numeric × LE/BE pairs (Fail + Try) — итого 36 wrappers,
+     но C-кода в 2x меньше через макросы.
+   - f32/f64 try-form: bit-cast double → int64 для упаковки в
+     Result.Ok(nova_int).
+   - Bootstrap-ограничение: ReadBufferError через nova_str message
+     "ReadBuffer.UnexpectedEnd: wanted N, available M". Когда
+     fail-frame mechanism расширится на void* payload, wrappers
+     обновятся для структурированного Nova_ReadBufferError*.
+
+4. nova_rt/nova_rt.h: include всех трёх новых header'ов после
+   buffer.h (Q-buffer REPLACED, но buffer.h оставлен для
+   backward compat — тесты buffer.nv продолжают работать).
+
+Этап 4 (тесты):
+
+41 новых тестов:
+- string_builder.nv: 15 тестов (create/with_capacity/from/append str/
+  char/UTF-8 multi-byte/auto-grow/100-raz hot loop/clone/into).
+- write_buffer.nv: 14 тестов (write_byte/u8/u32_le/be byte order
+  verify/u64/u16/i32 negative/auto-grow/clone/into).
+- read_buffer.nv: 12 тестов (cursor metadata/read_byte advance/
+  round-trip u32/u16/i32 LE+BE/multi-value sequence/try_read Ok/Err/
+  read_bytes slice/remaining_bytes).
+
+Все 41 проходят.
+
+Этап 5 (финализация):
+
+Регрессия-чек: все существующие тесты проходят:
+- buffer.nv 15/15 (Q-buffer compat preserved)
+- channels.nv 10/10
+- auto_derive.nv 6/6
+- from_into_basic.nv 26/26
+- result_methods.nv 20/20
+- unwrap_or.nv 15/15
+- for_iter_implicit.nv 2/2
+- for_iter_tuple.nv 2/2
+- strict_if_bool.nv 9/9
+- as_cast_restrictions.nv 6/6
+
+std/runtime/builtins.nv теперь parses & codegens — все external fn
+skipped, output пустой (правильно).
+
+Урок: dispatch table pattern через receiver-type check + name-match
+достаточен для opaque built-in типов. Полный overload-by-arg-type
+(Q-overloading) пока только whitelisted для external — этого хватает
+для StringBuilder/WriteBuffer/ReadBuffer. Когда понадобятся
+user-defined overloaded методы, вернёмся к Q-overloading.
+
+Plan 04 закрыт полностью.

@@ -372,6 +372,65 @@ impl CEmitter {
                 ("Buffer".to_string(), true));
         }
 
+        // Plan 04: register built-in opaque types (StringBuilder/WriteBuffer/
+        // ReadBuffer) as known type names so type_ref_to_c maps them to
+        // Nova_<T>*. We register empty schemas because their layout is
+        // opaque (defined в nova_rt/*.h, не в Nova-source).
+        {
+            self.record_schemas.insert("StringBuilder".to_string(), HashMap::new());
+            self.record_schemas.insert("WriteBuffer".to_string(), HashMap::new());
+            self.record_schemas.insert("ReadBuffer".to_string(), HashMap::new());
+
+            // Register method names to receivers. Names like `append`,
+            // `write_*`, `read_*`, `try_read_*`, `position`, `remaining`,
+            // `has_remaining`, `remaining_bytes` — not commonly shadowed.
+            // Common names (`new`, `from`, `with_capacity`, `into`, `clone`,
+            // `len`, `capacity`) — dispatched via receiver-type check in
+            // emit_call (special-case), не регистрируем здесь.
+            for m in &["append"] {
+                self.method_receivers.insert(m.to_string(),
+                    ("StringBuilder".to_string(), true));
+            }
+            // WriteBuffer methods: write_byte/write_bytes + 18 numeric × LE/BE.
+            for m in &[
+                "write_byte", "write_bytes",
+                "write_u8", "write_i8",
+                "write_u16_le", "write_u16_be", "write_u32_le", "write_u32_be",
+                "write_u64_le", "write_u64_be",
+                "write_i16_le", "write_i16_be", "write_i32_le", "write_i32_be",
+                "write_i64_le", "write_i64_be",
+                "write_f32_le", "write_f32_be", "write_f64_le", "write_f64_be",
+            ] {
+                self.method_receivers.insert(m.to_string(),
+                    ("WriteBuffer".to_string(), true));
+            }
+            // ReadBuffer methods: position/remaining/has_remaining/remaining_bytes
+            // + read_* (Fail-form) + try_read_* (Result-form).
+            for m in &[
+                "position", "remaining", "has_remaining", "remaining_bytes",
+                "read_byte", "read_bytes",
+                "read_u8", "read_i8",
+                "read_u16_le", "read_u16_be", "read_u32_le", "read_u32_be",
+                "read_u64_le", "read_u64_be",
+                "read_i16_le", "read_i16_be", "read_i32_le", "read_i32_be",
+                "read_i64_le", "read_i64_be",
+                "read_f32_le", "read_f32_be", "read_f64_le", "read_f64_be",
+                "try_read_byte", "try_read_bytes",
+                "try_read_u8", "try_read_i8",
+                "try_read_u16_le", "try_read_u16_be",
+                "try_read_u32_le", "try_read_u32_be",
+                "try_read_u64_le", "try_read_u64_be",
+                "try_read_i16_le", "try_read_i16_be",
+                "try_read_i32_le", "try_read_i32_be",
+                "try_read_i64_le", "try_read_i64_be",
+                "try_read_f32_le", "try_read_f32_be",
+                "try_read_f64_le", "try_read_f64_be",
+            ] {
+                self.method_receivers.insert(m.to_string(),
+                    ("ReadBuffer".to_string(), true));
+            }
+        }
+
         self.emit_preamble();
 
         // 1. Type declarations first (structs/unions needed by fn signatures)
@@ -1695,6 +1754,8 @@ impl CEmitter {
         match &f.body {
             FnBody::Expr(e) => self.scan_expr_fwd(e, h, s),
             FnBody::Block(b) => self.scan_block_fwd(b, h, s),
+            // D82: external fn — тела нет, scan'ить нечего.
+            FnBody::External => Ok(()),
         }
     }
 
@@ -2075,6 +2136,11 @@ impl CEmitter {
     // ---- forward declarations ----
 
     fn emit_fn_forward_decl(&mut self, f: &FnDecl) -> Result<(), String> {
+        // D82: external fn — forward decl не нужен (реализация в nova_rt/*.h
+        // уже включена через preamble #include).
+        if f.is_external {
+            return Ok(());
+        }
         if f.name == "main" {
             return Ok(());
         }
@@ -2592,6 +2658,9 @@ impl CEmitter {
             FnBody::Block(block) => {
                 self.emit_block_stmts(block, &ret_c)?;
             }
+            // D82: external fn — body заэмичен в nova_rt; здесь игнорируем
+            // (вызов будет диспатчен через external dispatch table).
+            FnBody::External => {}
         }
         self.expected_record_type = saved_expected;
         // Restore params
@@ -2677,6 +2746,8 @@ impl CEmitter {
                     self.line("return NULL;");
                 }
             }
+            // D82: external — wrapper-эмиттер не вызывается для external fn.
+            FnBody::External => {}
         }
         // Restore param types
         for (name, prev) in saved {
@@ -2692,6 +2763,11 @@ impl CEmitter {
     }
 
     fn emit_fn(&mut self, f: &FnDecl) -> Result<(), String> {
+        // D82: external fn — Nova body отсутствует, реализация в nova_rt/.
+        // Skip emit'инг полностью: dispatch на C-функцию делается в emit_call.
+        if f.is_external {
+            return Ok(());
+        }
         if f.name == "main" {
             return self.emit_nova_main(f);
         }
@@ -2773,6 +2849,9 @@ impl CEmitter {
             FnBody::Block(block) => {
                 self.emit_block_stmts(block, &ret)?;
             }
+            // D82: external — этот path не должен вызываться для external fn,
+            // т.к. emit_fn skip'ает их раньше. Safety-fallback.
+            FnBody::External => {}
         }
         self.expected_record_type = saved_expected;
         self.indent = 0;
@@ -2811,6 +2890,8 @@ impl CEmitter {
             FnBody::Block(block) => {
                 self.emit_block_stmts(block, "nova_unit")?;
             }
+            // D82: main() не может быть external. Safety-fallback.
+            FnBody::External => {}
         }
         self.indent = 0;
         self.line("}");
@@ -4424,6 +4505,86 @@ impl CEmitter {
                             _ => {}
                         }
                     }
+                    // Plan 04: built-in StringBuilder methods.
+                    if obj_ty == "Nova_StringBuilder*" {
+                        let obj_c = self.emit_expr(obj)?;
+                        match method.as_str() {
+                            "len"      => return Ok(format!("Nova_StringBuilder_method_len({})", obj_c)),
+                            "capacity" => return Ok(format!("Nova_StringBuilder_method_capacity({})", obj_c)),
+                            "clone"    => return Ok(format!("Nova_StringBuilder_method_clone({})", obj_c)),
+                            "into"     => return Ok(format!("Nova_StringBuilder_method_into({})", obj_c)),
+                            "append" => {
+                                // Overload: append(str) vs append(char).
+                                if let Some(arg) = args.first() {
+                                    let arg_ty = self.infer_expr_c_type(arg);
+                                    let v = self.emit_expr(arg)?;
+                                    let suffix = if arg_ty == "nova_str" {
+                                        "str"
+                                    } else if matches!(&arg.kind, ExprKind::CharLit(_))
+                                        || arg_ty == "nova_char" {
+                                        "char"
+                                    } else {
+                                        "char"
+                                    };
+                                    return Ok(format!(
+                                        "Nova_StringBuilder_method_append_{}({}, {})",
+                                        suffix, obj_c, v));
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    // Plan 04: built-in WriteBuffer methods.
+                    if obj_ty == "Nova_WriteBuffer*" {
+                        let obj_c = self.emit_expr(obj)?;
+                        match method.as_str() {
+                            "len"      => return Ok(format!("Nova_WriteBuffer_method_len({})", obj_c)),
+                            "capacity" => return Ok(format!("Nova_WriteBuffer_method_capacity({})", obj_c)),
+                            "clone"    => return Ok(format!("Nova_WriteBuffer_method_clone({})", obj_c)),
+                            "into"     => return Ok(format!("Nova_WriteBuffer_method_into({})", obj_c)),
+                            // write_byte / write_bytes / write_uN_le/be — single-arg.
+                            m if m.starts_with("write_") => {
+                                if let Some(arg) = args.first() {
+                                    let v = self.emit_expr(arg)?;
+                                    return Ok(format!(
+                                        "Nova_WriteBuffer_method_{}({}, {})",
+                                        method, obj_c, v));
+                                } else {
+                                    return Err(format!(
+                                        "WriteBuffer.{} requires one argument", method));
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    // Plan 04: built-in ReadBuffer methods.
+                    if obj_ty == "Nova_ReadBuffer*" {
+                        let obj_c = self.emit_expr(obj)?;
+                        match method.as_str() {
+                            "position"        => return Ok(format!("Nova_ReadBuffer_method_position({})", obj_c)),
+                            "remaining"       => return Ok(format!("Nova_ReadBuffer_method_remaining({})", obj_c)),
+                            "remaining_bytes" => return Ok(format!("Nova_ReadBuffer_method_remaining_bytes({})", obj_c)),
+                            "has_remaining" => {
+                                if let Some(arg) = args.first() {
+                                    let v = self.emit_expr(arg)?;
+                                    return Ok(format!(
+                                        "Nova_ReadBuffer_method_has_remaining({}, {})", obj_c, v));
+                                }
+                            }
+                            // read_* (Fail-form) и try_read_* (Result-form):
+                            m if m.starts_with("read_") || m.starts_with("try_read_") => {
+                                let mut call_args = vec![obj_c.clone()];
+                                for a in args.iter() {
+                                    call_args.push(self.emit_expr(a)?);
+                                }
+                                return Ok(format!(
+                                    "Nova_ReadBuffer_method_{}({})",
+                                    method,
+                                    call_args.join(", ")));
+                            }
+                            _ => {}
+                        }
+                    }
                 }
                 // 0a-channel. Built-in Channel static method (D79).
                 if let ExprKind::Ident(name) = &obj.kind {
@@ -4434,7 +4595,7 @@ impl CEmitter {
                         }
                     }
                 }
-                // 0a. Built-in Buffer static methods (Q-buffer).
+                // 0a. Built-in Buffer static methods (Q-buffer — REPLACED by Plan 04).
                 if let ExprKind::Ident(name) = &obj.kind {
                     if name == "Buffer" {
                         match method.as_str() {
@@ -4461,6 +4622,64 @@ impl CEmitter {
                                 }
                             }
                             _ => {}
+                        }
+                    }
+                }
+                // 0a2. Plan 04: Built-in StringBuilder/WriteBuffer/ReadBuffer
+                // static-методы. Dispatch на C-runtime функции.
+                if let ExprKind::Ident(name) = &obj.kind {
+                    if name == "StringBuilder" {
+                        match method.as_str() {
+                            "new" => return Ok("Nova_StringBuilder_static_new()".to_string()),
+                            "with_capacity" => {
+                                if let Some(arg) = args.first() {
+                                    let v = self.emit_expr(arg)?;
+                                    return Ok(format!("Nova_StringBuilder_static_with_capacity({})", v));
+                                }
+                            }
+                            "from" => {
+                                // Overload: from(str) vs from(char). Differ by C-fn name suffix.
+                                if let Some(arg) = args.first() {
+                                    let arg_ty = self.infer_expr_c_type(arg);
+                                    let v = self.emit_expr(arg)?;
+                                    if arg_ty == "nova_str" {
+                                        return Ok(format!("Nova_StringBuilder_static_from_str({})", v));
+                                    } else if matches!(&arg.kind, ExprKind::CharLit(_))
+                                        || arg_ty == "nova_char" {
+                                        return Ok(format!("Nova_StringBuilder_static_from_char({})", v));
+                                    } else {
+                                        // Fallback: char-as-int (bootstrap convention).
+                                        return Ok(format!("Nova_StringBuilder_static_from_char({})", v));
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    if name == "WriteBuffer" {
+                        match method.as_str() {
+                            "new" => return Ok("Nova_WriteBuffer_static_new()".to_string()),
+                            "with_capacity" => {
+                                if let Some(arg) = args.first() {
+                                    let v = self.emit_expr(arg)?;
+                                    return Ok(format!("Nova_WriteBuffer_static_with_capacity({})", v));
+                                }
+                            }
+                            "from" => {
+                                if let Some(arg) = args.first() {
+                                    let v = self.emit_expr(arg)?;
+                                    return Ok(format!("Nova_WriteBuffer_static_from_bytes({})", v));
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    if name == "ReadBuffer" {
+                        if method == "from" {
+                            if let Some(arg) = args.first() {
+                                let v = self.emit_expr(arg)?;
+                                return Ok(format!("Nova_ReadBuffer_static_from_bytes({})", v));
+                            }
                         }
                     }
                 }
@@ -4832,6 +5051,56 @@ impl CEmitter {
                             }
                         }
                         _ => {}
+                    }
+                }
+                // Plan 04: built-in StringBuilder/WriteBuffer/ReadBuffer (Path-form).
+                if parts.len() == 2 && parts[0] == "StringBuilder" {
+                    match parts[1].as_str() {
+                        "new" => return Ok("Nova_StringBuilder_static_new()".to_string()),
+                        "with_capacity" => {
+                            if let Some(arg) = args.first() {
+                                let v = self.emit_expr(arg)?;
+                                return Ok(format!("Nova_StringBuilder_static_with_capacity({})", v));
+                            }
+                        }
+                        "from" => {
+                            if let Some(arg) = args.first() {
+                                let arg_ty = self.infer_expr_c_type(arg);
+                                let v = self.emit_expr(arg)?;
+                                if arg_ty == "nova_str" {
+                                    return Ok(format!("Nova_StringBuilder_static_from_str({})", v));
+                                } else {
+                                    return Ok(format!("Nova_StringBuilder_static_from_char({})", v));
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                if parts.len() == 2 && parts[0] == "WriteBuffer" {
+                    match parts[1].as_str() {
+                        "new" => return Ok("Nova_WriteBuffer_static_new()".to_string()),
+                        "with_capacity" => {
+                            if let Some(arg) = args.first() {
+                                let v = self.emit_expr(arg)?;
+                                return Ok(format!("Nova_WriteBuffer_static_with_capacity({})", v));
+                            }
+                        }
+                        "from" => {
+                            if let Some(arg) = args.first() {
+                                let v = self.emit_expr(arg)?;
+                                return Ok(format!("Nova_WriteBuffer_static_from_bytes({})", v));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                if parts.len() == 2 && parts[0] == "ReadBuffer" {
+                    if parts[1] == "from" {
+                        if let Some(arg) = args.first() {
+                            let v = self.emit_expr(arg)?;
+                            return Ok(format!("Nova_ReadBuffer_static_from_bytes({})", v));
+                        }
                     }
                 }
                 // Check if first segment is a known effect
@@ -6948,6 +7217,70 @@ impl CEmitter {
                             _ => "nova_int".into(),
                         };
                     }
+                    // Plan 04: built-in StringBuilder/WriteBuffer/ReadBuffer
+                    // static-method type inference.
+                    if let ExprKind::Ident(n) = &obj.kind {
+                        if n == "StringBuilder" {
+                            return match method.as_str() {
+                                "new" | "with_capacity" | "from" => "Nova_StringBuilder*".into(),
+                                _ => "nova_int".into(),
+                            };
+                        }
+                        if n == "WriteBuffer" {
+                            return match method.as_str() {
+                                "new" | "with_capacity" | "from" => "Nova_WriteBuffer*".into(),
+                                _ => "nova_int".into(),
+                            };
+                        }
+                        if n == "ReadBuffer" {
+                            return match method.as_str() {
+                                "from" => "Nova_ReadBuffer*".into(),
+                                _ => "nova_int".into(),
+                            };
+                        }
+                    }
+                    // Plan 04: instance-method type inference.
+                    if obj_ty == "Nova_StringBuilder*" {
+                        return match method.as_str() {
+                            "len" | "capacity" => "nova_int".into(),
+                            "clone" => "Nova_StringBuilder*".into(),
+                            "into" => "nova_str".into(),
+                            "append" => "nova_unit".into(),
+                            _ => "nova_int".into(),
+                        };
+                    }
+                    if obj_ty == "Nova_WriteBuffer*" {
+                        return match method.as_str() {
+                            "len" | "capacity" => "nova_int".into(),
+                            "clone" => "Nova_WriteBuffer*".into(),
+                            "into" => "NovaArray_nova_byte*".into(),
+                            m if m.starts_with("write_") => "nova_unit".into(),
+                            _ => "nova_int".into(),
+                        };
+                    }
+                    if obj_ty == "Nova_ReadBuffer*" {
+                        return match method.as_str() {
+                            "position" | "remaining" => "nova_int".into(),
+                            "has_remaining" => "nova_bool".into(),
+                            "remaining_bytes" => "NovaArray_nova_byte*".into(),
+                            // Fail-form read_*: возвращает unboxed T (через
+                            // Fail-throw на error). Тип зависит от method.
+                            "read_byte" | "read_u8" => "nova_byte".into(),
+                            "read_i8" => "nova_int".into(),
+                            "read_bytes" => "NovaArray_nova_byte*".into(),
+                            "read_u16_le" | "read_u16_be"
+                            | "read_u32_le" | "read_u32_be"
+                            | "read_u64_le" | "read_u64_be"
+                            | "read_i16_le" | "read_i16_be"
+                            | "read_i32_le" | "read_i32_be"
+                            | "read_i64_le" | "read_i64_be" => "nova_int".into(),
+                            "read_f32_le" | "read_f32_be"
+                            | "read_f64_le" | "read_f64_be" => "nova_f64".into(),
+                            // Try-form: Result[T, ReadBufferError].
+                            m if m.starts_with("try_read_") => "Nova_Result*".into(),
+                            _ => "nova_int".into(),
+                        };
+                    }
                     // D26 prelude: NovaOpt_T method type inference.
                     if obj_ty.starts_with("NovaOpt_") {
                         let elem_ty = obj_ty.strip_prefix("NovaOpt_")
@@ -7102,6 +7435,25 @@ impl CEmitter {
                         if eff == "Buffer" {
                             return match method_name.as_str() {
                                 "new" | "with_capacity" | "from" => "Nova_Buffer*".into(),
+                                _ => "nova_int".into(),
+                            };
+                        }
+                        // Plan 04: built-in opaque static methods.
+                        if eff == "StringBuilder" {
+                            return match method_name.as_str() {
+                                "new" | "with_capacity" | "from" => "Nova_StringBuilder*".into(),
+                                _ => "nova_int".into(),
+                            };
+                        }
+                        if eff == "WriteBuffer" {
+                            return match method_name.as_str() {
+                                "new" | "with_capacity" | "from" => "Nova_WriteBuffer*".into(),
+                                _ => "nova_int".into(),
+                            };
+                        }
+                        if eff == "ReadBuffer" {
+                            return match method_name.as_str() {
+                                "from" => "Nova_ReadBuffer*".into(),
                                 _ => "nova_int".into(),
                             };
                         }

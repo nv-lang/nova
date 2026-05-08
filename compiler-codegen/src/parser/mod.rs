@@ -242,8 +242,23 @@ impl Parser {
 
     fn parse_item(&mut self) -> Result<Item, Diagnostic> {
         let is_export = self.eat(&TokenKind::KwExport).is_some();
+        // D82: `external` modifier — между `export` и `fn`. Только для fn.
+        let is_external = self.eat(&TokenKind::KwExternal).is_some();
+        if is_external {
+            // Только `fn` допустимо после `external`.
+            if !matches!(self.peek().kind, TokenKind::KwFn) {
+                let span = self.peek().span;
+                return Err(Diagnostic::new(
+                    format!(
+                        "`external` is only valid before `fn`, got {}",
+                        self.peek().kind.name()
+                    ),
+                    span,
+                ));
+            }
+        }
         match self.peek().kind {
-            TokenKind::KwFn => Ok(Item::Fn(self.parse_fn(is_export)?)),
+            TokenKind::KwFn => Ok(Item::Fn(self.parse_fn(is_export, is_external)?)),
             TokenKind::KwType => Ok(Item::Type(self.parse_type_decl(is_export)?)),
             TokenKind::KwLet => Ok(Item::Let(self.parse_let_decl()?)),
             TokenKind::KwConst => Ok(Item::Const(self.parse_const_decl(is_export)?)),
@@ -263,7 +278,7 @@ impl Parser {
 
     // ─── fn ──────────────────────────────────────────────────────────────
 
-    fn parse_fn(&mut self, is_export: bool) -> Result<FnDecl, Diagnostic> {
+    fn parse_fn(&mut self, is_export: bool, is_external: bool) -> Result<FnDecl, Diagnostic> {
         let start = self.peek().span;
         self.expect(&TokenKind::KwFn)?;
 
@@ -399,14 +414,37 @@ impl Parser {
             None
         };
 
-        // Тело: `=> expr` или `{ block }`
-        let body = self.parse_fn_body()?;
-        let end_span = match &body {
-            FnBody::Expr(e) => e.span,
-            FnBody::Block(b) => b.span,
+        // Тело: `=> expr` или `{ block }`. Для `external fn` — тело
+        // отсутствует (D82); следующий токен должен быть Newline/Eof.
+        let (body, end_span) = if is_external {
+            // Body должен отсутствовать.
+            match self.peek().kind {
+                TokenKind::FatArrow | TokenKind::LBrace => {
+                    let span = self.peek().span;
+                    return Err(Diagnostic::new(
+                        format!(
+                            "external function `{}` cannot have a body",
+                            name
+                        ),
+                        span,
+                    ));
+                }
+                _ => {}
+            }
+            let last_span = self.tokens[self.pos.saturating_sub(1)].span;
+            (FnBody::External, last_span)
+        } else {
+            let b = self.parse_fn_body()?;
+            let s = match &b {
+                FnBody::Expr(e) => e.span,
+                FnBody::Block(bk) => bk.span,
+                FnBody::External => unreachable!(),
+            };
+            (b, s)
         };
         Ok(FnDecl {
             is_export,
+            is_external,
             name,
             receiver,
             generics: fn_generics,

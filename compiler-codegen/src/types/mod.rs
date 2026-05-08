@@ -69,10 +69,17 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
                     None => fd.name.clone(),
                 };
                 if !names.insert(key.clone()) {
-                    errors.push(Diagnostic::new(
-                        format!("duplicate top-level name `{}`", key),
-                        fd.span,
-                    ));
+                    // D82 + Plan 04: external fn разрешает overload по типу
+                    // аргумента (StringBuilder.from(s) / StringBuilder.from(c)).
+                    // Dispatch — special-case в codegen для built-in opaque-типов.
+                    // User-defined external запрещён (whitelist `std.runtime.*`),
+                    // поэтому проверка на is_external достаточна.
+                    if !fd.is_external {
+                        errors.push(Diagnostic::new(
+                            format!("duplicate top-level name `{}`", key),
+                            fd.span,
+                        ));
+                    }
                 }
                 env.fns.insert(key, fd.clone());
             }
@@ -146,6 +153,9 @@ fn has_throw_in_fn(f: &FnDecl) -> bool {
     match &f.body {
         FnBody::Expr(e) => has_throw_in_expr(e),
         FnBody::Block(b) => has_throw_in_block(b),
+        // D82: external fn — тела нет; throw'ы декларируются через
+        // Fail[E] effect-аннотацию в сигнатуре, не в теле.
+        FnBody::External => false,
     }
 }
 

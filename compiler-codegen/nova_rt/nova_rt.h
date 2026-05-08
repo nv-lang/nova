@@ -186,8 +186,13 @@ typedef struct { char _dummy; } nova_unit;
 /* ---- Fibers / spawn (Phase 5) ---- */
 #include "fibers.h"
 
-/* ---- Buffer — Q-buffer (mutable byte accumulator) ---- */
+/* ---- Buffer — Q-buffer (mutable byte accumulator, REPLACED by Plan 04) ---- */
 #include "buffer.h"
+
+/* ---- Plan 04: split Buffer на три специализированных типа ---- */
+#include "string_builder.h"
+#include "write_buffer.h"
+#include "read_buffer.h"
 
 /* ---- Channels (D79) — coordination между fiber'ами ---- */
 #include "channels.h"

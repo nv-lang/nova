@@ -1,0 +1,179 @@
+// write_buffer.nv — Plan 04: WriteBuffer binary serialization buffer.
+//
+// WriteBuffer заменяет binary-side унифицированного Buffer (Q-buffer
+// REPLACED). Append-only, endianness explicit (LE/BE) для multi-byte.
+//
+// API:
+//   WriteBuffer.new(), WriteBuffer.with_capacity(n)
+//   WriteBuffer.from(b []byte)
+//   wb.write_byte(v), wb.write_bytes(src)
+//   wb.write_u8/i8/u16_le/be/u32_le/be/u64_le/be/i*_le/be (18 methods)
+//   wb.write_f32_le/be/f64_le/be (4 methods)
+//   wb.len(), wb.capacity(), wb.clone()
+//   wb.into() -> []byte (infallible)
+
+module nova_tests.runtime.write_buffer
+
+
+// ================================================================
+// SECTION 1: создание
+// ================================================================
+
+test "WriteBuffer.new() — empty" {
+    let wb = WriteBuffer.new()
+    assert(wb.len() == 0)
+    assert(wb.capacity() >= 16)
+}
+
+test "WriteBuffer.with_capacity(128)" {
+    let wb = WriteBuffer.with_capacity(128)
+    assert(wb.len() == 0)
+    assert(wb.capacity() >= 128)
+}
+
+
+// ================================================================
+// SECTION 2: write_byte / write_bytes
+// ================================================================
+
+test "write_byte — single bytes" {
+    let mut wb = WriteBuffer.new()
+    wb.write_byte(65)    // 'A'
+    wb.write_byte(66)    // 'B'
+    assert(wb.len() == 2)
+}
+
+test "write_u8 — alias of write_byte" {
+    let mut wb = WriteBuffer.new()
+    wb.write_u8(0xFF)
+    wb.write_u8(0x00)
+    assert(wb.len() == 2)
+}
+
+
+// ================================================================
+// SECTION 3: endianness — LE/BE write_u32 round-trip via @into
+// ================================================================
+
+test "write_u32_le 0xDEADBEEF — LE byte order" {
+    let mut wb = WriteBuffer.new()
+    wb.write_u32_le(0xDEADBEEF)
+    let arr = wb.into()
+    // LE: lowest byte first → EF AD DE (Wait! 0xDEADBEEF = DE AD BE EF)
+    // LE order: EF BE AD DE.
+    assert(arr.len == 4)
+    assert(arr[0] == 0xEF)
+    assert(arr[1] == 0xBE)
+    assert(arr[2] == 0xAD)
+    assert(arr[3] == 0xDE)
+}
+
+test "write_u32_be 0xDEADBEEF — BE byte order" {
+    let mut wb = WriteBuffer.new()
+    wb.write_u32_be(0xDEADBEEF)
+    let arr = wb.into()
+    // BE: most-significant first → DE AD BE EF
+    assert(arr.len == 4)
+    assert(arr[0] == 0xDE)
+    assert(arr[1] == 0xAD)
+    assert(arr[2] == 0xBE)
+    assert(arr[3] == 0xEF)
+}
+
+test "write_u16_le / be" {
+    let mut wb_le = WriteBuffer.new()
+    wb_le.write_u16_le(0x1234)
+    let a_le = wb_le.into()
+    assert(a_le[0] == 0x34)
+    assert(a_le[1] == 0x12)
+
+    let mut wb_be = WriteBuffer.new()
+    wb_be.write_u16_be(0x1234)
+    let a_be = wb_be.into()
+    assert(a_be[0] == 0x12)
+    assert(a_be[1] == 0x34)
+}
+
+test "write_u64_le 8 bytes" {
+    let mut wb = WriteBuffer.new()
+    wb.write_u64_le(0x0102030405060708)
+    let arr = wb.into()
+    assert(arr.len == 8)
+    assert(arr[0] == 0x08)
+    assert(arr[7] == 0x01)
+}
+
+test "write_u64_be 8 bytes" {
+    let mut wb = WriteBuffer.new()
+    wb.write_u64_be(0x0102030405060708)
+    let arr = wb.into()
+    assert(arr.len == 8)
+    assert(arr[0] == 0x01)
+    assert(arr[7] == 0x08)
+}
+
+
+// ================================================================
+// SECTION 4: signed integers
+// ================================================================
+
+test "write_i32_le — negative value" {
+    let mut wb = WriteBuffer.new()
+    wb.write_i32_le(-1)
+    let arr = wb.into()
+    // -1 = 0xFFFFFFFF на all 32 bits
+    assert(arr[0] == 0xFF)
+    assert(arr[1] == 0xFF)
+    assert(arr[2] == 0xFF)
+    assert(arr[3] == 0xFF)
+}
+
+
+// ================================================================
+// SECTION 5: capacity grow
+// ================================================================
+
+test "auto-grow при переполнении" {
+    let mut wb = WriteBuffer.with_capacity(4)
+    wb.write_u32_le(0x11223344)     // 4 bytes — fits
+    wb.write_u32_le(0x55667788)     // 4 more — needs grow
+    assert(wb.len() == 8)
+    assert(wb.capacity() >= 8)
+}
+
+
+// ================================================================
+// SECTION 6: clone
+// ================================================================
+
+test "clone независим" {
+    let mut a = WriteBuffer.new()
+    a.write_u32_be(0x12345678)
+    let mut b = a.clone()
+    b.write_u32_be(0xAABBCCDD)
+    assert(a.len() == 4)
+    assert(b.len() == 8)
+}
+
+
+// ================================================================
+// SECTION 7: into → []byte
+// ================================================================
+
+test "into() пустой буфер" {
+    let wb = WriteBuffer.new()
+    let arr = wb.into()
+    assert(arr.len == 0)
+}
+
+test "into() возвращает все накопленные bytes" {
+    let mut wb = WriteBuffer.new()
+    wb.write_byte(0x11)
+    wb.write_byte(0x22)
+    wb.write_byte(0x33)
+    let arr = wb.into()
+    assert(arr.len == 3)
+    assert(arr[0] == 0x11)
+    assert(arr[1] == 0x22)
+    assert(arr[2] == 0x33)
+}
