@@ -37,14 +37,12 @@ module std.checksums.crc32
 // Полином 0xEDB88320 — reversed standard CRC-32 (IEEE 802.3).
 fn table_value(i u8) -> u32 {
     let mut c = i as u32
-    let mut k = 0
-    while k < 8 {
+    for k in 0..8 {
         c = if c & 1 == 1 {
             0xEDB88320 ^ (c >> 1)
         } else {
             c >> 1
         }
-        k += 1
     }
     c
 }

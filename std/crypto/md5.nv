@@ -180,8 +180,7 @@ fn Md5 mut @process_block(block []byte) -> () {
     let mut d = @d
 
     // 64 rounds in 4 groups of 16.
-    let mut k = 0
-    while k < 64 {
+    for k in 0..64 {
         let f u32 = if k < 16 {
             (b & c) | ((b ^ 0xFFFFFFFF) & d)               // F: (B & C) | (~B & D)
         } else if k < 32 {
@@ -209,7 +208,6 @@ fn Md5 mut @process_block(block []byte) -> () {
         b = (b + rotl32(sum, s_constant(k))) & 0xFFFFFFFF
         a = temp
 
-        k += 1
     }
 
     @a = (@a + a) & 0xFFFFFFFF

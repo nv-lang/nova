@@ -286,8 +286,7 @@ export fn Ulid.from(s str) Fail[ParseUlidError] -> Self {
     // Эквивалентно: shift через все 16 chars, последние 16 бит идут в r_lo.
     let mut full_lo u64 = 0
     let mut full_hi u64 = 0
-    let mut j = 0
-    while j < 16 {
+    for j in 0..16 {
         let v = decode_char_or_throw(s, 10 + j)
         // Сдвигаем 80-битное значение влево на 5, добавляем v в младшие 5.
         // 80 бит = (full_hi << 16) | full_lo, но удобнее иметь две u64 и
@@ -296,7 +295,6 @@ export fn Ulid.from(s str) Fail[ParseUlidError] -> Self {
         let new_hi = (full_hi << 5) | (full_lo >> 59)
         full_lo = new_lo & 0xFFFFFFFFFFFFFFFF        // u64 mask (no-op в u64)
         full_hi = new_hi
-        j += 1
     }
 
     // Теперь 80 бит = full_hi (старшие 16 бит) + full_lo (64 бита).

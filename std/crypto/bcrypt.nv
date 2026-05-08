@@ -125,8 +125,7 @@ fn bcrypt_kdf(password []byte, salt []byte, cost int) -> []byte {
     while i < 32 { bytes.push(digest[i]); i += 1 }
 
     // Iterate `rounds` times — экспоненциальная стоимость по cost.
-    let mut k = 0
-    while k < rounds {
+    for k in 0..rounds {
         let mut s = Sha256.new()
         s.update(bytes)
         s.update(salt)
@@ -135,7 +134,6 @@ fn bcrypt_kdf(password []byte, salt []byte, cost int) -> []byte {
         let mut j = 0
         while j < 32 { new_bytes.push(d[j]); j += 1 }
         bytes = new_bytes
-        k += 1
     }
     // Берём первые 23 байта (как bcrypt — 184 бита output)
     let mut out []byte = []

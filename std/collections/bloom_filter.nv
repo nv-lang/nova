@@ -158,12 +158,10 @@ test "false positive rate приемлемый для small set" {
     }
     // Сколько false positives на 100 неинсёртенных?
     let mut false_pos = 0
-    let mut j = 50
-    while j < 150 {
+    for j in 50..150 {
         if bf.contains("item-" + str.from(j)) {
             false_pos += 1
         }
-        j += 1
     }
     // С m=1024, k=4, n=50 — false-positive rate << 50%
     assert(false_pos < 50)

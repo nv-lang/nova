@@ -54,10 +54,8 @@ export fn HmacSha256.compute(key []byte, message []byte) -> [32]byte {
     let mut outer = Sha256.new()
     outer.update(outer_pad)
     let mut inner_bytes []byte = []
-    let mut j = 0
-    while j < SHA256_OUTPUT_SIZE {
+    for j in 0..SHA256_OUTPUT_SIZE {
         inner_bytes.push(inner_digest[j])
-        j += 1
     }
     outer.update(inner_bytes)
     outer.finalize()

@@ -121,14 +121,12 @@ fn parse_scheme(s str) Fail[ParseUrlError] -> (str, str) {
                 _ => ()
             }
             // Остальные — letter/digit/+/-/.
-            let mut j = 1
-            while j < scheme.len {
+            for j in 1..scheme.len {
                 match scheme.char_at(j) {
                     Some(c) if !is_scheme_char(c) =>
                         throw InvalidScheme { value: scheme }
                     _ => ()
                 }
-                j += 1
             }
             (scheme.to_lower(), s.slice(i + 1, s.len))
         }

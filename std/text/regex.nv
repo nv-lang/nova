@@ -553,8 +553,7 @@ fn try_match(re Regex, text str, start_pos int) -> Option[int] {
         while k < n { next[k] = false; k += 1 }
 
         // Step every active state
-        let mut idx = 0
-        while idx < n {
+        for idx in 0..n {
             if current[idx] {
                 if matches_class(re.states[idx], c) {
                     let out = step_out(re.states[idx])
@@ -563,7 +562,6 @@ fn try_match(re Regex, text str, start_pos int) -> Option[int] {
                     }
                 }
             }
-            idx += 1
         }
 
         // Swap

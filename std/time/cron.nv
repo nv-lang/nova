@@ -176,14 +176,12 @@ fn dedup_sort(xs []int) -> []int {
     let mut sorted = xs
     let n = sorted.len
     for i in 0..n {
-        let mut j = 0
-        while j < n - 1 - i {
+        for j in 0..n - 1 - i {
             if sorted[j] > sorted[j + 1] {
                 let tmp = sorted[j]
                 sorted[j] = sorted[j + 1]
                 sorted[j + 1] = tmp
             }
-            j += 1
         }
     }
     let mut out []int = []
