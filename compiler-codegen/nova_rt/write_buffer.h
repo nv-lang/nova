@@ -92,6 +92,30 @@ static inline nova_unit Nova_WriteBuffer_method_write_bytes(Nova_WriteBuffer* b,
     return NOVA_UNIT;
 }
 
+/* Plan 04 Этап 6: text → UTF-8 bytes append.
+ * @write_char(c char): UTF-8 encode codepoint в 1-4 bytes.
+ * @write_str(s str):   копирует UTF-8 bytes из nova_str.
+ *
+ * Используется для смешанных text+binary use-case'ов (URL
+ * percent-decoding и т.п.) — replace для Buffer.add_char/add_str. */
+static inline nova_unit Nova_WriteBuffer_method_write_char(Nova_WriteBuffer* b, nova_int cp) {
+    _nova_write_buffer_check_live(b);
+    /* UTF-8 encode codepoint cp в 1-4 байта в b->data. */
+    _nova_write_buffer_reserve(b, 4);
+    int n = _nova_utf8_encode(b->data + b->len, cp);
+    b->len += n;
+    return NOVA_UNIT;
+}
+
+static inline nova_unit Nova_WriteBuffer_method_write_str(Nova_WriteBuffer* b, nova_str s) {
+    _nova_write_buffer_check_live(b);
+    if (s.len == 0) return NOVA_UNIT;
+    _nova_write_buffer_reserve(b, (int64_t)s.len);
+    memcpy(b->data + b->len, s.ptr, s.len);
+    b->len += (int64_t)s.len;
+    return NOVA_UNIT;
+}
+
 /* ────── 18 numeric × LE/BE × write helpers ─────────────────────────────
  *
  * Все принимают nova_int (для u/i 8-32, signedness handled by codegen)

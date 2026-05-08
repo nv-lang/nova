@@ -177,3 +177,47 @@ test "into() возвращает все накопленные bytes" {
     assert(arr[1] == 0x22)
     assert(arr[2] == 0x33)
 }
+
+
+// ================================================================
+// SECTION 8: Plan 04 Этап 6.1 — write_char / write_str (text→UTF-8)
+// ================================================================
+
+test "write_str — UTF-8 bytes напрямую" {
+    let mut wb = WriteBuffer.new()
+    wb.write_str("AB")
+    let arr = wb.into()
+    assert(arr.len == 2)
+    assert(arr[0] == 65)        // 'A'
+    assert(arr[1] == 66)        // 'B'
+}
+
+test "write_char ASCII — 1 byte" {
+    let mut wb = WriteBuffer.new()
+    wb.write_char('A')
+    let arr = wb.into()
+    assert(arr.len == 1)
+    assert(arr[0] == 65)
+}
+
+test "write_char Cyrillic — 2 bytes UTF-8" {
+    let mut wb = WriteBuffer.new()
+    wb.write_char('Я')          // U+042F → D0 AF
+    let arr = wb.into()
+    assert(arr.len == 2)
+    assert(arr[0] == 0xD0)
+    assert(arr[1] == 0xAF)
+}
+
+test "write_char + write_str + write_byte mixed" {
+    let mut wb = WriteBuffer.new()
+    wb.write_char('A')          // 1 byte
+    wb.write_str("BC")          // 2 bytes
+    wb.write_byte(0x44)         // 1 byte
+    let arr = wb.into()
+    assert(arr.len == 4)
+    assert(arr[0] == 65)        // 'A'
+    assert(arr[1] == 66)        // 'B'
+    assert(arr[2] == 67)        // 'C'
+    assert(arr[3] == 0x44)      // 'D'
+}

@@ -135,9 +135,7 @@ fn parse_scheme(s str) Fail[ParseUrlError] -> (str, str) {
 
 // Authority = [ userinfo "@" ] host [ ":" port ]
 // Заканчивается на "/", "?", "#" или EOF.
-fn parse_authority(s str) Fail[ParseUrlError] ->
-    (Option[str], Option[str], Option[str], Option[int], str)
-{
+fn parse_authority(s str) Fail[ParseUrlError] -> (Option[str], Option[str], Option[str], Option[int], str) {
     // Найти конец authority — первый из /, ?, #.
     let auth_end = find_first_of(s, "/?#")
     let (auth, rest) = match auth_end {
@@ -316,14 +314,28 @@ export fn Url.encode_query(s str) -> str {
 
 // Декодирует percent-encoded строку.
 //
-// TODO(plan-04 Этап 6): мигрировать на WriteBuffer + str.try_from([]byte)
-// после реализации `WriteBuffer @write_char/@write_str` в runtime.
-// Buffer удаляется как неудачное решение (см. Q-buffer). Здесь он
-// временно остался: percent-decoded byte может быть частью multi-byte
-// UTF-8 sequence — нужен byte-buffer с финализацией через UTF-8
-// validation. StringBuilder для этого не подходит (text-only API).
+// Mixed text+binary use-case: percent-decoded byte может быть частью
+// multi-byte UTF-8 sequence — нужен byte-buffer с финализацией через
+// UTF-8 validation. StringBuilder text-only, не подходит. WriteBuffer
+// + write_char/write_str/write_byte накапливает UTF-8 bytes; финал
+// через `str.try_from([]byte)?` (D77) валидирует и конвертирует.
+//
+// На невалидный UTF-8 после decode'а — throw InvalidPercentEncoding
+// (consistent с тем что percent-encoding должен давать valid UTF-8;
+// иначе input был malformed).
+//
+// Bootstrap-ограничение: tuple-destructure infer (Plan 06 Ф.2)
+// типизирует `let (sch, after) = ...` поля как nova_int. После
+// использования `after.starts_with(...)` codegen падает на
+// strict-bool check. Url.from() выше использует много destructure'ов
+// → весь файл не компилируется. Это **не Plan 04 issue**, это
+// pre-existing infer ограничение.
+//
+// Когда tuple-destructure infer будет fix'нут: реализация ниже
+// готова и не требует Buffer. До тех пор файл не компилируется
+// в принципе (фейлится в parse_url) — функционально idle.
 export fn Url.decode_query(s str) Fail[ParseUrlError] -> str {
-    let mut buf = Buffer.with_capacity(s.len)
+    let mut buf = WriteBuffer.with_capacity(s.len)
     let mut i = 0
     while i < s.len {
         match s.char_at(i) {
@@ -334,21 +346,32 @@ export fn Url.decode_query(s str) Fail[ParseUrlError] -> str {
                 let hi = hex_value_or_throw(s, i + 1)
                 let lo = hex_value_or_throw(s, i + 2)
                 let byte_val = (hi * 16 + lo) as u8
-                buf.add_byte(byte_val as byte)
+                buf.write_byte(byte_val as byte)
                 i += 3
             }
             Some('+') => {
-                buf.add_char(' ')
+                buf.write_char(' ')
                 i += 1
             }
             Some(c) => {
-                buf.add_char(c)
+                buf.write_char(c)
                 i += 1
             }
-            None => return buf.into_str_unchecked()
+            None => {
+                // Out-of-bounds char_at — закрываем early.
+                let bytes = buf.into()
+                match str.try_from(bytes) {
+                    Ok(t)  => return t
+                    Err(_) => throw InvalidPercentEncoding { position: i }
+                }
+            }
         }
     }
-    buf.into_str_unchecked()
+    let bytes = buf.into()
+    match str.try_from(bytes) {
+        Ok(t)  => t
+        Err(_) => throw InvalidPercentEncoding { position: i }
+    }
 }
 
 fn is_unreserved(c char) -> bool =>

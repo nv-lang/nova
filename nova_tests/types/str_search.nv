@@ -362,26 +362,33 @@ test "split: trailing separator" {
 // ================================================================
 // Codegen-маппинг `[]byte` → `NovaArray_nova_byte*` с реальным uint8_t[]
 // (не nova_int слотами). Тест проверяет что round-trip через
-// bytes() / for-in / Buffer работает.
+// bytes() / for-in / WriteBuffer + str.try_from работает.
+//
+// Plan 04 Этап 6: Buffer удалён. Replaces:
+//   - Buffer.from(bs).into_str_unchecked() → str.try_from(bs)? (D77)
+//   - Buffer.with_capacity + add_byte       → WriteBuffer + write_byte
 
-test "bytes: round-trip через Buffer" {
+test "bytes: round-trip через str.try_from" {
     let original = "Hello, мир!"
     let bs = original.bytes()
-    // Восстановим строку через Buffer.from(bytes) → into_str_unchecked.
-    let buf = Buffer.from(bs)
-    let recon = buf.into_str_unchecked()
+    // Восстановим строку: bs → str.try_from(bs) → str. UTF-8 валидный
+    // (исходник был str), поэтому Ok.
+    let recon = match str.try_from(bs) {
+        Ok(s)  => s
+        Err(_) => ""    // unreachable — original was valid UTF-8
+    }
     assert(recon == original)
 }
 
-test "bytes: extreme values 0..255 через Buffer" {
+test "bytes: extreme values 0..255 через WriteBuffer" {
     // Если []byte был int64-erasure, 0xFF мог бы потеряться при
     // приведении (signed sign-extend). С packed uint8_t[] сохраняется
     // битово-точно.
-    let buf = Buffer.with_capacity(3)
-    buf.add_byte(0xFF)
-    buf.add_byte(0x00)
-    buf.add_byte(0x7F)
-    let bs = buf.into()
+    let mut wb = WriteBuffer.with_capacity(3)
+    wb.write_byte(0xFF)
+    wb.write_byte(0x00)
+    wb.write_byte(0x7F)
+    let bs = wb.into()
     assert(bs.len == 3)
 }
 

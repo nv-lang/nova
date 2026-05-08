@@ -362,46 +362,10 @@ impl CEmitter {
             self.effect_schemas.insert("Mem".to_string(), mem_schema);
         }
 
-        // Pre-register Buffer as a built-in record type with associated methods
-        // (Q-buffer). Runtime impl in nova_rt/buffer.h. Methods registered in
-        // method_receivers so emit_call routes Buffer.new() / buf.add_str() /
-        // buf.into() / buf.try_into() etc. to the corresponding C functions.
-        //
-        // Note: `Buffer.from` is registered with overloads handled by the
-        // dispatch logic in emit_call (different runtime fns for str/[]byte
-        // arguments), since bootstrap's method_receivers is single-key —
-        // see Q-overloading. We special-case the dispatch directly.
-        {
-            // record_schemas: Buffer has private fields (data/len/cap/consumed),
-            // user code shouldn't touch them. We register with empty schema so
-            // type lookup works but field access stays opaque.
-            self.record_schemas.insert("Buffer".to_string(), HashMap::new());
-
-            // Register methods. Static methods: new, with_capacity, from.
-            // Instance methods: add_str/add_bytes/add_byte/add_char, len,
-            // capacity, clone, into, try_into, into_str_unchecked.
-            // method_receivers maps name -> (type, is_instance). Conflicts
-            // with user-defined methods of the same name on other types are
-            // possible: existing Nova_T_method_X dispatch wins for declared
-            // user methods (registered later). For Buffer-only methods like
-            // add_str, add_bytes, into_str_unchecked — no conflict.
-            //
-            // We do NOT register `new`, `with_capacity`, `from`, `len`,
-            // `capacity`, `clone`, `into`, `try_into` here, because those
-            // names are commonly shadowed by user types. Instead, dispatch
-            // is special-cased in emit_call for receiver-typed Buffer*.
-            // Only the unambiguous-name methods we register normally:
-            self.method_receivers.insert("add_str".to_string(),
-                ("Buffer".to_string(), true));
-            self.method_receivers.insert("add_bytes".to_string(),
-                ("Buffer".to_string(), true));
-            self.method_receivers.insert("add_byte".to_string(),
-                ("Buffer".to_string(), true));
-            self.method_receivers.insert("add_char".to_string(),
-                ("Buffer".to_string(), true));
-            self.method_receivers.insert("into_str_unchecked".to_string(),
-                ("Buffer".to_string(), true));
-        }
+        // Plan 04 Этап 6: Buffer удалён из языка (REMOVED). Заменён на
+        // StringBuilder/WriteBuffer/ReadBuffer split. Старая Q-buffer
+        // регистрация (record_schemas + method_receivers для add_*/
+        // into_str_unchecked) — удалена.
 
         // Plan 04: register built-in opaque types (StringBuilder/WriteBuffer/
         // ReadBuffer) as known type names so type_ref_to_c maps them to
@@ -422,9 +386,12 @@ impl CEmitter {
                 self.method_receivers.insert(m.to_string(),
                     ("StringBuilder".to_string(), true));
             }
-            // WriteBuffer methods: write_byte/write_bytes + 18 numeric × LE/BE.
+            // WriteBuffer methods: write_byte/write_bytes + write_char/write_str
+            // (text→UTF-8 для смешанных text+binary use-case'ов, Plan 04 Этап 6.1)
+            // + 18 numeric × LE/BE.
             for m in &[
                 "write_byte", "write_bytes",
+                "write_char", "write_str",
                 "write_u8", "write_i8",
                 "write_u16_le", "write_u16_be", "write_u32_le", "write_u32_be",
                 "write_u64_le", "write_u64_be",
@@ -4825,28 +4792,8 @@ impl CEmitter {
                             _ => {}
                         }
                     }
-                    // Q-buffer: built-in methods on Nova_Buffer*.
-                    if obj_ty == "Nova_Buffer*" {
-                        let obj_c = self.emit_expr(obj)?;
-                        match method.as_str() {
-                            "len" => return Ok(format!("Nova_Buffer_method_len({})", obj_c)),
-                            "capacity" => return Ok(format!("Nova_Buffer_method_capacity({})", obj_c)),
-                            "clone" => return Ok(format!("Nova_Buffer_method_clone({})", obj_c)),
-                            "into" => return Ok(format!("Nova_Buffer_method_into({})", obj_c)),
-                            "try_into" => return Ok(format!("Nova_Buffer_method_try_into({})", obj_c)),
-                            "into_str_unchecked" =>
-                                return Ok(format!("Nova_Buffer_method_into_str_unchecked({})", obj_c)),
-                            "add_str" | "add_bytes" | "add_byte" | "add_char" => {
-                                if let Some(arg) = args.first() {
-                                    let v = self.emit_expr(arg)?;
-                                    return Ok(format!(
-                                        "Nova_Buffer_method_{}({}, {})",
-                                        method, obj_c, v));
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
+                    // Plan 04 Этап 6: Buffer removed. Use StringBuilder /
+                    // WriteBuffer / ReadBuffer instead.
                     // Plan 04: built-in StringBuilder methods.
                     if obj_ty == "Nova_StringBuilder*" {
                         let obj_c = self.emit_expr(obj)?;
@@ -4937,36 +4884,8 @@ impl CEmitter {
                         }
                     }
                 }
-                // 0a. Built-in Buffer static methods (Q-buffer — REPLACED by Plan 04).
-                if let ExprKind::Ident(name) = &obj.kind {
-                    if name == "Buffer" {
-                        match method.as_str() {
-                            "new" => return Ok("Nova_Buffer_static_new()".to_string()),
-                            "with_capacity" => {
-                                if let Some(arg) = args.first() {
-                                    let v = self.emit_expr(arg)?;
-                                    return Ok(format!("Nova_Buffer_static_with_capacity({})", v));
-                                }
-                            }
-                            "from" => {
-                                // Dispatch by argument type: str → from_str, []byte → from_bytes.
-                                if let Some(arg) = args.first() {
-                                    let arg_ty = self.infer_expr_c_type(arg);
-                                    let v = self.emit_expr(arg)?;
-                                    if arg_ty == "nova_str" {
-                                        return Ok(format!("Nova_Buffer_static_from_str({})", v));
-                                    } else if arg_ty == "NovaArray_nova_byte*" {
-                                        return Ok(format!("Nova_Buffer_static_from_bytes({})", v));
-                                    } else {
-                                        return Err(format!(
-                                            "Buffer.from(...) expects str or []byte, got {}", arg_ty));
-                                    }
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-                }
+                // Plan 04 Этап 6: Buffer удалён (REMOVED). Use StringBuilder
+                // (text) / WriteBuffer (binary) / ReadBuffer (cursor).
                 // 0a2. Plan 04: Built-in StringBuilder/WriteBuffer/ReadBuffer
                 // static-методы. Dispatch на C-runtime функции.
                 if let ExprKind::Ident(name) = &obj.kind {
@@ -5267,17 +5186,39 @@ impl CEmitter {
                         // want_instance: true unless obj is Ident(known-type).
                         let want_instance = !matches!(&obj.kind, ExprKind::Ident(n)
                             if self.method_overloads.keys().any(|(t, _)| t == n));
-                        let key = (rt, method.clone());
+                        let key = (rt.clone(), method.clone());
                         if let Some(overloads) = self.method_overloads.get(&key).cloned() {
                             let candidates: Vec<MethodSig> = overloads.into_iter()
                                 .filter(|s| s.is_instance == want_instance)
                                 .collect();
                             if !candidates.is_empty() {
+                                // Generic receiver (Stack[T], etc.): args боксируются
+                                // в void*. Без этого вызов методов на generic типе
+                                // даёт type-mismatch в C (param void*, arg int/str).
+                                let is_generic_recv = self.generic_types.contains(&rt);
                                 let mut arg_strs = Vec::new();
                                 let mut arg_types = Vec::new();
                                 for a in args {
-                                    arg_types.push(self.infer_expr_c_type(a));
-                                    arg_strs.push(self.emit_expr(a)?);
+                                    let aty = self.infer_expr_c_type(a);
+                                    let v = self.emit_expr(a)?;
+                                    if is_generic_recv {
+                                        // Box arg в void* (паттерн как в legacy
+                                        // single-key path).
+                                        if aty == "nova_str" {
+                                            let heap_tmp = self.fresh_tmp();
+                                            self.line(&format!("nova_str* {} = (nova_str*)nova_alloc(sizeof(nova_str));", heap_tmp));
+                                            self.line(&format!("*{} = {};", heap_tmp, v));
+                                            arg_strs.push(format!("(void*)({})", heap_tmp));
+                                        } else if aty.ends_with('*') || aty == "void*" {
+                                            arg_strs.push(format!("(void*)({})", v));
+                                        } else {
+                                            arg_strs.push(format!("(void*)(intptr_t)({})", v));
+                                        }
+                                        arg_types.push("void*".to_string());
+                                    } else {
+                                        arg_strs.push(v);
+                                        arg_types.push(aty);
+                                    }
                                 }
                                 // Plan 11 Ф.9.3: override-precedence Own > Delegated.
                                 // Strict-match candidates сначала; затем — если
@@ -5383,6 +5324,12 @@ impl CEmitter {
                     if let Some(arg) = args.first() {
                         let arg_ty = self.infer_expr_c_type(arg);
                         let v = self.emit_expr(arg)?;
+                        // Plan 04 Этап 6: str.try_from([]byte) → Result[str, _].
+                        // Validates UTF-8 + конвертирует в nova_str. Используется
+                        // для финализации mixed text+binary в WriteBuffer.
+                        if parts[0] == "str" && arg_ty == "NovaArray_nova_byte*" {
+                            return Ok(format!("Nova_str_static_try_from_bytes({})", v));
+                        }
                         // str → numeric / bool: используем парсеры.
                         if arg_ty == "nova_str" {
                             let target = parts[0].as_str();
@@ -5499,33 +5446,8 @@ impl CEmitter {
                         }
                     }
                 }
-                // Q-buffer: built-in Buffer static methods (Path-form).
-                if parts.len() == 2 && parts[0] == "Buffer" {
-                    match parts[1].as_str() {
-                        "new" => return Ok("Nova_Buffer_static_new()".to_string()),
-                        "with_capacity" => {
-                            if let Some(arg) = args.first() {
-                                let v = self.emit_expr(arg)?;
-                                return Ok(format!("Nova_Buffer_static_with_capacity({})", v));
-                            }
-                        }
-                        "from" => {
-                            if let Some(arg) = args.first() {
-                                let arg_ty = self.infer_expr_c_type(arg);
-                                let v = self.emit_expr(arg)?;
-                                if arg_ty == "nova_str" {
-                                    return Ok(format!("Nova_Buffer_static_from_str({})", v));
-                                } else if arg_ty == "NovaArray_nova_byte*" {
-                                    return Ok(format!("Nova_Buffer_static_from_bytes({})", v));
-                                } else {
-                                    return Err(format!(
-                                        "Buffer.from(...) expects str or []byte, got {}", arg_ty));
-                                }
-                            }
-                        }
-                        _ => {}
-                    }
-                }
+                // Plan 04 Этап 6: Buffer removed. Path-form для
+                // StringBuilder/WriteBuffer/ReadBuffer ниже.
                 // Plan 04: built-in StringBuilder/WriteBuffer/ReadBuffer (Path-form).
                 if parts.len() == 2 && parts[0] == "StringBuilder" {
                     match parts[1].as_str() {
@@ -7800,25 +7722,8 @@ impl CEmitter {
                             _ => "nova_int".into(),
                         };
                     }
-                    // Q-buffer: built-in Buffer methods.
-                    if let ExprKind::Ident(n) = &obj.kind {
-                        if n == "Buffer" {
-                            return match method.as_str() {
-                                "new" | "with_capacity" | "from" => "Nova_Buffer*".into(),
-                                _ => "nova_int".into(),
-                            };
-                        }
-                    }
-                    if obj_ty == "Nova_Buffer*" {
-                        return match method.as_str() {
-                            "len" | "capacity" => "nova_int".into(),
-                            "clone" => "Nova_Buffer*".into(),
-                            "into" => "NovaArray_nova_byte*".into(),
-                            "try_into" | "into_str_unchecked" => "nova_str".into(),
-                            "add_str" | "add_bytes" | "add_byte" | "add_char" => "nova_unit".into(),
-                            _ => "nova_int".into(),
-                        };
-                    }
+                    // Plan 04 Этап 6: Buffer removed. StringBuilder/WriteBuffer/
+                    // ReadBuffer infer ниже.
                     // Plan 04: built-in StringBuilder/WriteBuffer/ReadBuffer
                     // static-method type inference.
                     if let ExprKind::Ident(n) = &obj.kind {
@@ -8055,13 +7960,8 @@ impl CEmitter {
                         if eff == "Channel" && method_name == "new" {
                             return "Nova_Channel*".into();
                         }
-                        // Q-buffer: Buffer static methods.
-                        if eff == "Buffer" {
-                            return match method_name.as_str() {
-                                "new" | "with_capacity" | "from" => "Nova_Buffer*".into(),
-                                _ => "nova_int".into(),
-                            };
-                        }
+                        // Plan 04 Этап 6: Buffer removed. StringBuilder/
+                        // WriteBuffer/ReadBuffer effect-schema ниже.
                         // Plan 04: built-in opaque static methods.
                         if eff == "StringBuilder" {
                             return match method_name.as_str() {

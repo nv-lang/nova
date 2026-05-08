@@ -101,21 +101,22 @@ test "match с char literal patterns" {
 }
 
 // ================================================================
-// SECTION 5: char as Buffer.add_char arg
+// SECTION 5: char as StringBuilder.append arg
+// (Plan 04 Этап 6: Buffer удалён, заменён на StringBuilder.)
 // ================================================================
 
-test "Buffer.add_char with char literals" {
-    let mut buf = Buffer.new()
-    buf.add_char('h')
-    buf.add_char('i')
-    let s = buf.try_into()
+test "StringBuilder.append with char literals" {
+    let mut sb = StringBuilder.new()
+    sb.append('h')
+    sb.append('i')
+    let s = sb.into()
     assert(s == "hi")
 }
 
-test "Buffer.add_char with Unicode codepoint" {
-    let mut buf = Buffer.new()
-    buf.add_char('\u{410}')        // Cyrillic 'А' — 2 bytes UTF-8
-    assert(buf.len() == 2)
+test "StringBuilder.append with Unicode codepoint" {
+    let mut sb = StringBuilder.new()
+    sb.append('\u{410}')           // Cyrillic 'А' — 2 bytes UTF-8
+    assert(sb.len() == 2)
 }
 
 // ================================================================

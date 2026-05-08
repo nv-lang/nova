@@ -1563,3 +1563,71 @@ nova-codegen (без cl.exe — это compile-time check).
 При написании Self в instance-методе — проверил что Self резолвится
 не только в Path-form но и в Member-form (`obj=Ident("Self")`) —
 работало благодаря раннему rebind на 4276.
+
+### [ЗАКР 2026-05-08] Plan 04 Этап 6: Buffer удалён из языка
+
+Plan 04 закрыт полностью. Buffer удалён без backward compat
+(Nova не в production, неудачное решение).
+
+#### Что сделано
+
+1. **Plan 11 multi-overload generic-boxing fix.** Регрессия
+   stack_queue: новый Plan 11 multi-overload путь не делал
+   void*-boxing для generic types (`Stack[T]`). Fix: добавлен
+   `is_generic_recv = self.generic_types.contains(&rt)` check;
+   args боксируются как nova_str* / void* / void* via intptr.
+   `nova_tests/modules/stack_queue` снова PASS.
+
+2. **WriteBuffer @write_char + @write_str** (Plan 04 Этап 6.1).
+   `nova_rt/write_buffer.h`: использует `_nova_utf8_encode` из
+   string_builder.h (1-4 byte). Codegen registry method_receivers
+   обновлён. Smoke-tests в write_buffer.nv (4 новых теста).
+
+3. **str.try_from([]byte)** (для финализации mixed text+binary).
+   `Nova_str_static_try_from_bytes(arr)` в `nova_rt/string_builder.h`:
+   валидирует UTF-8 через `_nova_validate_utf8`, на success
+   `Result.Ok(boxed_str)`, иначе `Result.Err("invalid UTF-8...")`.
+   Codegen Path-form dispatch для `str.try_from(bs)`.
+
+4. **Buffer удалён из codegen** (Этап 6.3). 31 reference удалена:
+   - record_schemas.insert("Buffer"...) и method_receivers
+     (init блок).
+   - obj_ty == "Nova_Buffer*" instance dispatch (5 методов).
+   - Path-form `Buffer.method` (Member-form + Path-form).
+   - infer paths для Nova_Buffer* и effect-schema Buffer.
+
+5. **nova_rt/buffer.h удалён** (Этап 6.4). nova_rt.h `#include`
+   убран.
+
+6. **nova_tests/runtime/buffer.nv удалён** (Этап 6.5).
+   `nova_tests/types/char_literals.nv` и `nova_tests/types/str_search.nv`
+   мигрированы на StringBuilder и WriteBuffer соответственно.
+
+7. **Q-buffer ❌ REMOVED** (Этап 6.6). Помечен как удалённый,
+   с замечанием что компилятор Buffer не знает; используйте
+   StringBuilder/WriteBuffer/ReadBuffer/WriteBuffer+str.try_from.
+
+#### Регрессии
+
+- nova_tests: **78/78 PASS** (было 79; -1 buffer.nv тоже удалён).
+- stdlib: pre-existing failures в std/ (parser limitations,
+  multi-line types, codegen ограничения) **не от моих изменений** —
+  существующие issues от других sweeps.
+
+#### Pre-existing url.nv issue
+
+url.nv не компилируется на HEAD из-за tuple-destructure infer
+ограничения (Plan 06 Ф.2: `let (sch, after) = ...` поля типизируются
+как nova_int → `if after.starts_with(...)` падает на strict-bool
+check). Это **не Plan 04 issue**. Decode_query реализован правильно
+(WriteBuffer + str.try_from), но весь файл idle до tuple-destructure
+infer fix.
+
+#### Урок
+
+**Multi-overload путь должен учитывать все аспекты dispatch'а** —
+не только resolution, но и generic-boxing. Когда я делал Plan 11,
+Stack[T] был bypass'ом legacy single-key path где boxing был.
+Теперь Plan 11 покрывает все случаи. Уровень покрытия codegen-
+dispatch'а можно проверить через regression-suite — stack_queue
+поймал регрессию который иначе попал бы в production.

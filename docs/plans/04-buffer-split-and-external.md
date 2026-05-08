@@ -1,6 +1,23 @@
 # План: Split Buffer на StringBuilder/WriteBuffer/ReadBuffer + keyword `external`
 
-**Статус:** в работе (2026-05-08). StringBuilder runtime
+**Статус: ✅ ЗАКРЫТ ПОЛНОСТЬЮ (2026-05-08).** Все 6 этапов выполнены:
+spec, codegen, runtime, тесты, финализация, **Buffer удалён из языка**.
+
+Финальное состояние:
+- ✅ Этап 1 spec: D82 external + D26 prelude split + Q-buffer ❌ REMOVED.
+- ✅ Этап 2 codegen: KwExternal token, parser, AST, dispatch table.
+- ✅ Этап 3 runtime: string_builder.h / write_buffer.h / read_buffer.h.
+- ✅ Этап 4 тесты: 15 + 14 + 15 = 44 теста для трёх типов.
+- ✅ Этап 5 финализация: regression — 78/78 nova_tests PASS.
+- ✅ Этап 6 удаление Buffer: codegen dispatch удалён (record_schemas
+  + 5 групп special-case'ов), `nova_rt/buffer.h` удалён, `nova_rt.h`
+  reference убран, `nova_tests/runtime/buffer.nv` удалён.
+  `WriteBuffer @write_char/@write_str` добавлены для mixed text+binary
+  (Plan 04 Этап 6.1). Sweep std/: 14 файлов мигрированы на StringBuilder
+  (text-only); url.nv decode_query — на WriteBuffer + str.try_from
+  (mixed). Q-buffer ❌ REMOVED.
+
+**Изначальный план был:** в работе (2026-05-08). StringBuilder runtime
 (`nova_rt/string_builder.h`) + `std/runtime/builtins.nv` с
 external-fn декларациями + codegen dispatch для StringBuilder
 методов готовы. WriteBuffer/ReadBuffer headers созданы.

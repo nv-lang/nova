@@ -53,6 +53,13 @@ export external fn WriteBuffer.from(b []byte)              -> Self
 export external fn WriteBuffer mut @write_byte(v byte)     -> ()
 export external fn WriteBuffer mut @write_bytes(src []byte) -> ()
 
+// Plan 04 Этап 6: text → UTF-8 bytes для смешанных text+binary
+// use-case'ов (percent-decoding URL, multi-byte sequences).
+// StringBuilder text-only; WriteBuffer + write_char/write_str
+// единообразно накапливает UTF-8 bytes.
+export external fn WriteBuffer mut @write_char(c char)     -> ()
+export external fn WriteBuffer mut @write_str(s str)       -> ()
+
 export external fn WriteBuffer mut @write_u8(v u8)         -> ()
 export external fn WriteBuffer mut @write_i8(v i8)         -> ()
 export external fn WriteBuffer mut @write_u16_le(v u16)    -> ()

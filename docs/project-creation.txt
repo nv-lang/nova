@@ -1807,3 +1807,51 @@ Multi-anonymous detection: проверено напрямую через nova-c
 
 Урок: расширение тестов даёт уверенность в крайних случаях
 (arity overload, Self в Member-form, override на anon embed).
+
+
+================================================================================
+2026-05-08 Plan 04 Этап 6: Buffer удалён из языка полностью
+================================================================================
+
+Plan 04 закрыт ВСЕЙ. Buffer удалён без backward compat.
+
+Регрессия фикс: Plan 11 multi-overload путь не делал void*-boxing
+для generic types (Stack[T]). Stack[T].push("a") передавал
+nova_str вместо void*. Fix: is_generic_recv check + boxing.
+
+Этап 6.1: WriteBuffer @write_char + @write_str.
+- Use _nova_utf8_encode (shared с StringBuilder).
+- method_receivers registry обновлён.
+- 4 новых теста в write_buffer.nv.
+
+Этап 6.2: url.nv decode_query → WriteBuffer + str.try_from.
+- Nova_str_static_try_from_bytes в string_builder.h.
+- Codegen Path-form dispatch для str.try_from([]byte).
+- Pre-existing tuple-destructure infer issue в url.nv blocks
+  full compile — не Plan 04 issue.
+
+Этап 6.3: Buffer удалён из codegen (31 reference):
+- record_schemas + method_receivers init блок.
+- obj_ty == "Nova_Buffer*" instance dispatch.
+- Path-form Buffer (Member + Path).
+- infer paths для Nova_Buffer* и effect-schema.
+
+Этап 6.4: nova_rt/buffer.h удалён + nova_rt.h reference убран.
+
+Этап 6.5: nova_tests/runtime/buffer.nv удалён.
+char_literals.nv и str_search.nv мигрированы на
+StringBuilder и WriteBuffer.
+
+Этап 6.6: Q-buffer ❌ REMOVED. Помечен в open-questions.md.
+
+Тесты: 78/78 PASS на nova_tests (было 79 до удаления buffer.nv).
+Stdlib failures в run_tests -IncludeStdlib — pre-existing
+(parser bugs, multi-line types), не от моих изменений.
+
+Урок: multi-overload путь должен учитывать generic-boxing.
+Когда я писал Plan 11, обходил legacy single-key path где
+boxing был; теперь Plan 11 покрывает все случаи через
+is_generic_recv check. Regression-suite (stack_queue)
+поймал то что в production имело бы серьёзные последствия.
+
+Plan 04 закрыт. Все 6 этапов выполнены.

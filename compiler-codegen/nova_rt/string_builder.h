@@ -166,6 +166,71 @@ static inline nova_str Nova_StringBuilder_method_into(Nova_StringBuilder* b) {
     return s;
 }
 
+/* Validate UTF-8 bytes. Returns 1 if valid, 0 otherwise.
+ * Используется в `str.try_from([]byte)` (D77). */
+static inline nova_bool _nova_validate_utf8(const nova_byte* data, int64_t len) {
+    int64_t i = 0;
+    while (i < len) {
+        nova_byte c = data[i];
+        if (c < 0x80) {
+            i++;
+        } else if ((c & 0xE0) == 0xC0) {
+            if (i + 1 >= len) return 0;
+            if ((data[i + 1] & 0xC0) != 0x80) return 0;
+            if (c < 0xC2) return 0;             /* overlong */
+            i += 2;
+        } else if ((c & 0xF0) == 0xE0) {
+            if (i + 2 >= len) return 0;
+            if ((data[i + 1] & 0xC0) != 0x80) return 0;
+            if ((data[i + 2] & 0xC0) != 0x80) return 0;
+            if (c == 0xE0 && data[i + 1] < 0xA0) return 0;  /* overlong */
+            if (c == 0xED && data[i + 1] >= 0xA0) return 0; /* surrogate */
+            i += 3;
+        } else if ((c & 0xF8) == 0xF0) {
+            if (i + 3 >= len) return 0;
+            if ((data[i + 1] & 0xC0) != 0x80) return 0;
+            if ((data[i + 2] & 0xC0) != 0x80) return 0;
+            if ((data[i + 3] & 0xC0) != 0x80) return 0;
+            if (c == 0xF0 && data[i + 1] < 0x90) return 0;  /* overlong */
+            if (c == 0xF4 && data[i + 1] >= 0x90) return 0; /* > U+10FFFF */
+            if (c > 0xF4) return 0;
+            i += 4;
+        } else {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+/* Helper: box nova_str в heap-allocated nova_str* для упаковки в
+ * Result.Ok (boxed payload, читается через `let s = r.unwrap_or(...)`
+ * в Nova-коде где Result-payload = nova_int slot). */
+static inline void* nova_box_str(nova_str s) {
+    nova_str* p = (nova_str*)nova_alloc(sizeof(nova_str));
+    *p = s;
+    return (void*)p;
+}
+
+/* str.try_from([]byte) -> Result[str, ParseStrError].
+ * Validates UTF-8; на success возвращает Ok(str), иначе Err(msg).
+ * Используется для финализации mixed text+binary в WriteBuffer →
+ * str (через D77 try_from). */
+static inline Nova_Result* Nova_str_static_try_from_bytes(NovaArray_nova_byte* arr) {
+    if (!_nova_validate_utf8(arr->data, arr->len)) {
+        return nova_make_Result_Err((nova_str){
+            .ptr = "invalid UTF-8 byte sequence",
+            .len = 26,
+        });
+    }
+    /* Copy bytes into a fresh nul-terminated buffer (str-API expects
+     * stable storage; arr->data может быть переиспользован). */
+    char* buf = (char*)nova_alloc((size_t)arr->len + 1);
+    if (arr->len > 0) memcpy(buf, arr->data, (size_t)arr->len);
+    buf[arr->len] = '\0';
+    nova_str s = (nova_str){.ptr = buf, .len = (size_t)arr->len};
+    return nova_make_Result_Ok((nova_int)(intptr_t)nova_box_str(s));
+}
+
 /* str.from(c char) — UTF-8 encode 1-4 bytes из codepoint в новый nova_str.
  * Размещён здесь т.к. использует _nova_utf8_encode. */
 static inline nova_str Nova_str_static_from_char(nova_int cp) {
