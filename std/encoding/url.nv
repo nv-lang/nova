@@ -220,8 +220,7 @@ fn is_scheme_char(c char) -> bool =>
 
 export fn Url @into() -> str {
     let mut buf = StringBuilder.with_capacity(64)
-    buf.append(@scheme)
-    buf.append(":")
+    buf = buf + @scheme + ":"
 
     if @host != None {
         buf.append("//")

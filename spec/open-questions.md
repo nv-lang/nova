@@ -4315,6 +4315,91 @@ reference / type mismatch при включённом `-Wstrict-prototypes`).
 
 ---
 
+## Q-match-unit-arms-in-expr. Bootstrap-codegen: `match` в expression-position с unit-arms
+
+**Контекст.** Когда `match`-выражение стоит в expression-position
+(`let r = match expr { ... }`), а тело какой-то arm'ы содержит
+**только unit-возвращающие statements** (например `assert(...)`,
+`println(...)`), bootstrap-codegen эмитит C-код с **void mismatch** —
+функция `nova_assert` возвращает unit (`void`), но codegen ожидает
+`nova_int` или `nova_str` value.
+
+**Симптом.** При компиляции:
+```
+error C2440: невозможно преобразование "void" в "nova_int"
+```
+
+**Где встречается.** Обнаружено реальной работой со stdlib:
+- `nova_tests/runtime/error_runtime_error.nv` — 4 места
+  (IndexOutOfBounds / TypeMismatch / AssertFailed / NoHandler).
+- `std/collections/hashmap.nv` — 4 места (проверки Occupied/Some).
+
+**Workaround.** Переписать на `if let Pattern = expr { stmts;
+assert(...) }` — `if let` это **statement-form**, нет mismatch.
+
+**Что нужно для закрытия.** Codegen должен распознавать unit-result
+match-arms и:
+- Либо завернуть в block-expr с явным `()` return.
+- Либо detect'ить void в C и эмитить как statement, а не expression.
+- Либо в type-checker'е требовать всем arm'ам совпадающий не-unit
+  тип, если match в expr-position (более строгая семантика).
+
+**Status.** Не закрыто. Workaround достаточен для bootstrap, но
+ограничивает идиоматический Nova-код. После полного codegen rewrite
+(Plan 02) — закрыть.
+
+**Связь:** Plan 02 (codegen-c-backend), [D19](decisions/03-syntax.md#d19)
+(match-arms `=>`), Q-pattern-mut (ниже — связанное ограничение).
+
+---
+
+## Q-pattern-mut. Bootstrap-codegen: `mut` в pattern не парсится
+
+**Контекст.** В match/let-pattern'ах нельзя использовать `mut`-модификатор:
+
+```nova
+match result.get("section") {
+    Some(mut section_map) => {       // ✗ parse error
+        section_map.insert("k", "v")
+    }
+    None => ()
+}
+```
+
+Парсер не распознаёт `Some(mut x)` — ожидает identifier, а не keyword.
+
+**Workaround.** Переписать на `if let` с отдельным `let mut`:
+
+```nova
+if let Some(section_map_immut) = result.get("section") {
+    let mut section_map = section_map_immut
+    section_map.insert("k", "v")
+}
+```
+
+**Где встречается.** Реально нужно при работе с Option/Result
+обёртками над mutable коллекциями. В `std/encoding/ini.nv`
+переписано workaround'ом при миграции.
+
+**Что нужно для закрытия.** Расширить parser pattern-grammar:
+```
+pattern = ['mut'] (identifier | constructor-pattern | record-pattern
+                  | tuple-pattern | wildcard | literal)
+```
+
+`mut` в pattern должен создавать mutable binding (как `let mut x =
+expr`) — это compile-time annotation, runtime-поведение не меняется.
+
+**Status.** Не закрыто. Workaround (отдельный `let mut`) рабочий, но
+многословный. Низкий приоритет — после Plan 02 (codegen rewrite) или
+при type-checker rewrite.
+
+**Связь:** Q-match-unit-arms-in-expr (родственное bootstrap-
+ограничение), [D33](decisions/03-syntax.md#d33) (let/const/mut/readonly),
+Plan 02.
+
+---
+
 ## Q-overloading. Перегрузка функций / методов по типу аргументов ⚠️ PARTIALLY CLOSED (2026-05-08)
 
 > **Variant 1 (ad-hoc) ✅ закрыт Plan'ом 11** для **методов** (со
