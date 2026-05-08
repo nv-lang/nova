@@ -58,12 +58,12 @@ fn str_runtime() -> Vec<RuntimeFn> {
             module: "std.runtime.string",
             receiver: Some("str"),
             is_static: false, is_mut: false,
-            name: "char_len",
+            name: "len",
             params: &[],
             return_ty: "int",
             effects: &[],
             c_name: "nova_str_char_len",
-            doc: "Длина строки в codepoint'ах (D26 школа B). O(n) — обходит UTF-8.",
+            doc: "Длина строки в codepoint'ах (D26: базовая len = codepoints). O(n).",
         },
         RuntimeFn {
             module: "std.runtime.string",
@@ -225,10 +225,10 @@ fn str_runtime() -> Vec<RuntimeFn> {
             is_static: false, is_mut: false,
             name: "chars",
             params: &[],
-            return_ty: "[]int",
+            return_ty: "[]char",
             effects: &[],
             c_name: "nova_str_chars",
-            doc: "Codepoints как []int (eager bootstrap; production будет Iter[char]).",
+            doc: "Codepoints как []char (eager). Future: Iter[char] для лениво.",
         },
         RuntimeFn {
             module: "std.runtime.string",
@@ -500,29 +500,29 @@ fn string_builder_runtime() -> Vec<RuntimeFn> {
     let recv = Some("StringBuilder");
     vec![
         RuntimeFn { module: m, receiver: recv, is_static: true,  is_mut: false,
-            name: "new", params: &[], return_ty: "StringBuilder", effects: &[],
+            name: "new", params: &[], return_ty: "Self", effects: &[],
             c_name: "Nova_StringBuilder_static_new",
             doc: "Создать пустой StringBuilder с initial capacity 16." },
         RuntimeFn { module: m, receiver: recv, is_static: true,  is_mut: false,
-            name: "with_capacity", params: &[("n", "int")], return_ty: "StringBuilder", effects: &[],
+            name: "with_capacity", params: &[("n", "int")], return_ty: "Self", effects: &[],
             c_name: "Nova_StringBuilder_static_with_capacity",
             doc: "Создать StringBuilder с pre-allocated capacity n." },
         RuntimeFn { module: m, receiver: recv, is_static: true,  is_mut: false,
-            name: "from", params: &[("s", "str")], return_ty: "StringBuilder", effects: &[],
+            name: "from", params: &[("s", "str")], return_ty: "Self", effects: &[],
             c_name: "Nova_StringBuilder_static_from_str",
             doc: "Создать StringBuilder из существующей строки (copy)." },
         RuntimeFn { module: m, receiver: recv, is_static: true,  is_mut: false,
-            name: "from", params: &[("c", "char")], return_ty: "StringBuilder", effects: &[],
+            name: "from", params: &[("c", "char")], return_ty: "Self", effects: &[],
             c_name: "Nova_StringBuilder_static_from_char",
             doc: "Создать StringBuilder из одного codepoint (UTF-8 encode 1-4 байта)." },
         RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: true,
-            name: "append", params: &[("s", "str")], return_ty: "()", effects: &[],
+            name: "append", params: &[("s", "str")], return_ty: "Self", effects: &[],
             c_name: "Nova_StringBuilder_method_append_str",
-            doc: "Append UTF-8 bytes из str. Append-only, capacity grow 2x." },
+            doc: "Append UTF-8 bytes из str. Возвращает self для chaining (Ф.9.1)." },
         RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: true,
-            name: "append", params: &[("c", "char")], return_ty: "()", effects: &[],
+            name: "append", params: &[("c", "char")], return_ty: "Self", effects: &[],
             c_name: "Nova_StringBuilder_method_append_char",
-            doc: "Append codepoint как UTF-8 (1-4 байта)." },
+            doc: "Append codepoint как UTF-8 (1-4 байта). Возвращает self для chaining." },
         RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: false,
             name: "len", params: &[], return_ty: "int", effects: &[],
             c_name: "Nova_StringBuilder_method_len",
@@ -532,7 +532,7 @@ fn string_builder_runtime() -> Vec<RuntimeFn> {
             c_name: "Nova_StringBuilder_method_capacity",
             doc: "Allocated capacity в байтах (>= len)." },
         RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: false,
-            name: "clone", params: &[], return_ty: "StringBuilder", effects: &[],
+            name: "clone", params: &[], return_ty: "Self", effects: &[],
             c_name: "Nova_StringBuilder_method_clone",
             doc: "Создать независимую копию (deep copy buffer)." },
         RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: false,
@@ -547,41 +547,41 @@ fn write_buffer_runtime() -> Vec<RuntimeFn> {
     let m = "std.runtime.write_buffer";
     let recv = Some("WriteBuffer");
     let mut v: Vec<RuntimeFn> = Vec::new();
-    // Создание.
+    // Создание (Self для единообразия — Plan 13 Ф.9.1).
     v.push(RuntimeFn { module: m, receiver: recv, is_static: true, is_mut: false,
-        name: "new", params: &[], return_ty: "WriteBuffer", effects: &[],
+        name: "new", params: &[], return_ty: "Self", effects: &[],
         c_name: "Nova_WriteBuffer_static_new",
         doc: "Создать пустой WriteBuffer." });
     v.push(RuntimeFn { module: m, receiver: recv, is_static: true, is_mut: false,
-        name: "with_capacity", params: &[("n", "int")], return_ty: "WriteBuffer", effects: &[],
+        name: "with_capacity", params: &[("n", "int")], return_ty: "Self", effects: &[],
         c_name: "Nova_WriteBuffer_static_with_capacity",
         doc: "Создать WriteBuffer с pre-allocated capacity." });
     v.push(RuntimeFn { module: m, receiver: recv, is_static: true, is_mut: false,
-        name: "from", params: &[("b", "[]byte")], return_ty: "WriteBuffer", effects: &[],
+        name: "from", params: &[("b", "[]byte")], return_ty: "Self", effects: &[],
         c_name: "Nova_WriteBuffer_static_from",
         doc: "Создать WriteBuffer из существующих байт." });
-    // Базовые write.
+    // Базовые write. Все mut @write_* возвращают Self для chaining (Ф.9.1).
     v.push(RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: true,
-        name: "write_byte", params: &[("v", "byte")], return_ty: "()", effects: &[],
+        name: "write_byte", params: &[("v", "byte")], return_ty: "Self", effects: &[],
         c_name: "Nova_WriteBuffer_method_write_byte",
-        doc: "Append один byte." });
+        doc: "Append один byte. Returns self for chaining." });
     v.push(RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: true,
-        name: "write_bytes", params: &[("src", "[]byte")], return_ty: "()", effects: &[],
+        name: "write_bytes", params: &[("src", "[]byte")], return_ty: "Self", effects: &[],
         c_name: "Nova_WriteBuffer_method_write_bytes",
-        doc: "Append массив байт (memcpy)." });
+        doc: "Append массив байт (memcpy). Returns self." });
     v.push(RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: true,
-        name: "write_zero", params: &[("n", "int")], return_ty: "()", effects: &[],
+        name: "write_zero", params: &[("n", "int")], return_ty: "Self", effects: &[],
         c_name: "Nova_WriteBuffer_method_write_zero",
-        doc: "Append n нулевых байт (memset)." });
+        doc: "Append n нулевых байт (memset). Returns self." });
     // Text → UTF-8 bytes (Plan 04 Этап 6.1).
     v.push(RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: true,
-        name: "write_char", params: &[("c", "char")], return_ty: "()", effects: &[],
+        name: "write_char", params: &[("c", "char")], return_ty: "Self", effects: &[],
         c_name: "Nova_WriteBuffer_method_write_char",
-        doc: "UTF-8 encode codepoint (1-4 байта). Mixed text+binary." });
+        doc: "UTF-8 encode codepoint (1-4 байта). Returns self." });
     v.push(RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: true,
-        name: "write_str", params: &[("s", "str")], return_ty: "()", effects: &[],
+        name: "write_str", params: &[("s", "str")], return_ty: "Self", effects: &[],
         c_name: "Nova_WriteBuffer_method_write_str",
-        doc: "Append UTF-8 байты из str (memcpy)." });
+        doc: "Append UTF-8 байты из str (memcpy). Returns self." });
     // 18 numeric × LE/BE.
     let numeric_specs: Vec<(&'static str, &'static str, &'static str)> = vec![
         ("write_u8",     "u8",  "1 byte unsigned, без endianness."),
@@ -610,7 +610,7 @@ fn write_buffer_runtime() -> Vec<RuntimeFn> {
         );
         let params_static: &'static [(&'static str, &'static str)] = Box::leak(Box::new([("v", *arg_ty)]));
         v.push(RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: true,
-            name, params: params_static, return_ty: "()", effects: &[],
+            name, params: params_static, return_ty: "Self", effects: &[],
             c_name: c_name_static, doc });
     }
     // Финализация / read-only.
@@ -623,7 +623,7 @@ fn write_buffer_runtime() -> Vec<RuntimeFn> {
         c_name: "Nova_WriteBuffer_method_capacity",
         doc: "Allocated capacity в байтах." });
     v.push(RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: false,
-        name: "clone", params: &[], return_ty: "WriteBuffer", effects: &[],
+        name: "clone", params: &[], return_ty: "Self", effects: &[],
         c_name: "Nova_WriteBuffer_method_clone",
         doc: "Создать независимую копию (deep copy buffer)." });
     v.push(RuntimeFn { module: m, receiver: recv, is_static: false, is_mut: false,
@@ -640,9 +640,9 @@ fn read_buffer_runtime() -> Vec<RuntimeFn> {
     let m = "std.runtime.read_buffer";
     let recv = Some("ReadBuffer");
     let mut v: Vec<RuntimeFn> = Vec::new();
-    // Создание.
+    // Создание (Self — Plan 13 Ф.9.1 unification).
     v.push(RuntimeFn { module: m, receiver: recv, is_static: true, is_mut: false,
-        name: "from", params: &[("b", "[]byte")], return_ty: "ReadBuffer", effects: &[],
+        name: "from", params: &[("b", "[]byte")], return_ty: "Self", effects: &[],
         c_name: "Nova_ReadBuffer_static_from",
         doc: "Создать ReadBuffer из []byte (view, no copy)." });
     // Cursor metadata (read-only).

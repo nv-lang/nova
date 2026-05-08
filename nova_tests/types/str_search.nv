@@ -190,29 +190,25 @@ test "rfind is case-sensitive" {
 
 test "len: ASCII — codepoints == bytes" {
     let s = "hello"
-    assert(s.len == 5)             // 5 codepoints
+    assert(s.len == 5)             // 5 codepoints (member access, school B)
     assert(s.byte_len() == 5)      // 5 bytes
-    assert(s.char_len() == 5)      // alias of len
 }
 
 test "len: Cyrillic — codepoints != bytes" {
     let s = "Привет"               // 6 codepoints, 12 bytes (2 byte/char UTF-8)
     assert(s.len == 6)             // school B: codepoints
     assert(s.byte_len() == 12)     // bytes
-    assert(s.char_len() == 6)
 }
 
 test "len: emoji — 4 байта на codepoint" {
     let s = "ab😀cd"                // 5 codepoints, 4 ASCII + 4 emoji = 8 bytes
     assert(s.len == 5)
     assert(s.byte_len() == 8)
-    assert(s.char_len() == 5)
 }
 
 test "len: empty string" {
     assert("".len == 0)
     assert("".byte_len() == 0)
-    assert("".char_len() == 0)
 }
 
 test "len for mixed content" {
@@ -221,7 +217,6 @@ test "len for mixed content" {
                                    // Cyrillic: 6*2 = 12 bytes; total bytes = 16
     assert(s.len == 10)            // codepoints
     assert(s.byte_len() == 16)     // bytes
-    assert(s.char_len() == 10)
 }
 
 // ================================================================

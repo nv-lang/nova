@@ -74,58 +74,51 @@ static inline void _nova_write_buffer_check_live(Nova_WriteBuffer* b) {
     nova_assert(!b->consumed, "write buffer consumed: cannot mutate after @into");
 }
 
-/* @write_byte(v byte) — append single byte. v passed as nova_int (sign-ext); LSB used. */
-static inline nova_unit Nova_WriteBuffer_method_write_byte(Nova_WriteBuffer* b, nova_int v) {
+/* @write_byte(v byte) -> Self — append byte; returns self for chaining (Ф.9.1). */
+static inline Nova_WriteBuffer* Nova_WriteBuffer_method_write_byte(Nova_WriteBuffer* b, nova_int v) {
     _nova_write_buffer_check_live(b);
     _nova_write_buffer_reserve(b, 1);
     b->data[b->len++] = (nova_byte)(v & 0xFF);
-    return NOVA_UNIT;
+    return b;
 }
 
-/* @write_bytes(src []byte) — copy of input bytes. */
-static inline nova_unit Nova_WriteBuffer_method_write_bytes(Nova_WriteBuffer* b, NovaArray_nova_byte* src) {
+/* @write_bytes(src []byte) -> Self — copy input; returns self. */
+static inline Nova_WriteBuffer* Nova_WriteBuffer_method_write_bytes(Nova_WriteBuffer* b, NovaArray_nova_byte* src) {
     _nova_write_buffer_check_live(b);
-    if (src->len == 0) return NOVA_UNIT;
+    if (src->len == 0) return b;
     _nova_write_buffer_reserve(b, src->len);
     memcpy(b->data + b->len, src->data, (size_t)src->len);
     b->len += src->len;
-    return NOVA_UNIT;
+    return b;
 }
 
-/* Plan 12 acceptance: @write_zero(n int) — append n null bytes.
- * Тест что добавление новой external fn в builtins.nv + runtime impl
- * работает без правки Rust-codegen'а (registry-driven dispatch). */
-static inline nova_unit Nova_WriteBuffer_method_write_zero(Nova_WriteBuffer* b, nova_int n) {
+/* @write_zero(n int) -> Self — append n null bytes; returns self. */
+static inline Nova_WriteBuffer* Nova_WriteBuffer_method_write_zero(Nova_WriteBuffer* b, nova_int n) {
     _nova_write_buffer_check_live(b);
-    if (n <= 0) return NOVA_UNIT;
+    if (n <= 0) return b;
     _nova_write_buffer_reserve(b, n);
     memset(b->data + b->len, 0, (size_t)n);
     b->len += n;
-    return NOVA_UNIT;
+    return b;
 }
 
 /* Plan 04 Этап 6: text → UTF-8 bytes append.
- * @write_char(c char): UTF-8 encode codepoint в 1-4 bytes.
- * @write_str(s str):   копирует UTF-8 bytes из nova_str.
- *
- * Используется для смешанных text+binary use-case'ов (URL
- * percent-decoding и т.п.) — replace для Buffer.add_char/add_str. */
-static inline nova_unit Nova_WriteBuffer_method_write_char(Nova_WriteBuffer* b, nova_int cp) {
+ * @write_char(c char) -> Self / @write_str(s str) -> Self. */
+static inline Nova_WriteBuffer* Nova_WriteBuffer_method_write_char(Nova_WriteBuffer* b, nova_int cp) {
     _nova_write_buffer_check_live(b);
-    /* UTF-8 encode codepoint cp в 1-4 байта в b->data. */
     _nova_write_buffer_reserve(b, 4);
     int n = _nova_utf8_encode(b->data + b->len, cp);
     b->len += n;
-    return NOVA_UNIT;
+    return b;
 }
 
-static inline nova_unit Nova_WriteBuffer_method_write_str(Nova_WriteBuffer* b, nova_str s) {
+static inline Nova_WriteBuffer* Nova_WriteBuffer_method_write_str(Nova_WriteBuffer* b, nova_str s) {
     _nova_write_buffer_check_live(b);
-    if (s.len == 0) return NOVA_UNIT;
+    if (s.len == 0) return b;
     _nova_write_buffer_reserve(b, (int64_t)s.len);
     memcpy(b->data + b->len, s.ptr, s.len);
     b->len += (int64_t)s.len;
-    return NOVA_UNIT;
+    return b;
 }
 
 /* ────── 18 numeric × LE/BE × write helpers ─────────────────────────────
@@ -136,18 +129,18 @@ static inline nova_unit Nova_WriteBuffer_method_write_str(Nova_WriteBuffer* b, n
  * nova_f64 (== double).
  */
 
-/* u8 / i8 — без endianness (1 байт). */
-static inline nova_unit Nova_WriteBuffer_method_write_u8(Nova_WriteBuffer* b, nova_int v) {
+/* u8 / i8 — без endianness (1 байт). Все returns Self (Ф.9.1). */
+static inline Nova_WriteBuffer* Nova_WriteBuffer_method_write_u8(Nova_WriteBuffer* b, nova_int v) {
     _nova_write_buffer_check_live(b);
     _nova_write_buffer_reserve(b, 1);
     b->data[b->len++] = (nova_byte)(v & 0xFF);
-    return NOVA_UNIT;
+    return b;
 }
-static inline nova_unit Nova_WriteBuffer_method_write_i8(Nova_WriteBuffer* b, nova_int v) {
+static inline Nova_WriteBuffer* Nova_WriteBuffer_method_write_i8(Nova_WriteBuffer* b, nova_int v) {
     _nova_write_buffer_check_live(b);
     _nova_write_buffer_reserve(b, 1);
     b->data[b->len++] = (nova_byte)(v & 0xFF);
-    return NOVA_UNIT;
+    return b;
 }
 
 /* Helper macros для 16/32/64 bit писем. */
@@ -209,46 +202,46 @@ static inline nova_unit Nova_WriteBuffer_method_write_i8(Nova_WriteBuffer* b, no
     (b)->len += 8; \
 } while (0)
 
-/* u16 / i16 / u32 / i32 / u64 / i64 — все варианты. */
-static inline nova_unit Nova_WriteBuffer_method_write_u16_le(Nova_WriteBuffer* b, nova_int v) { NOVA_WB_WRITE_LE_16(b, v); return NOVA_UNIT; }
-static inline nova_unit Nova_WriteBuffer_method_write_u16_be(Nova_WriteBuffer* b, nova_int v) { NOVA_WB_WRITE_BE_16(b, v); return NOVA_UNIT; }
-static inline nova_unit Nova_WriteBuffer_method_write_i16_le(Nova_WriteBuffer* b, nova_int v) { NOVA_WB_WRITE_LE_16(b, v); return NOVA_UNIT; }
-static inline nova_unit Nova_WriteBuffer_method_write_i16_be(Nova_WriteBuffer* b, nova_int v) { NOVA_WB_WRITE_BE_16(b, v); return NOVA_UNIT; }
-static inline nova_unit Nova_WriteBuffer_method_write_u32_le(Nova_WriteBuffer* b, nova_int v) { NOVA_WB_WRITE_LE_32(b, v); return NOVA_UNIT; }
-static inline nova_unit Nova_WriteBuffer_method_write_u32_be(Nova_WriteBuffer* b, nova_int v) { NOVA_WB_WRITE_BE_32(b, v); return NOVA_UNIT; }
-static inline nova_unit Nova_WriteBuffer_method_write_i32_le(Nova_WriteBuffer* b, nova_int v) { NOVA_WB_WRITE_LE_32(b, v); return NOVA_UNIT; }
-static inline nova_unit Nova_WriteBuffer_method_write_i32_be(Nova_WriteBuffer* b, nova_int v) { NOVA_WB_WRITE_BE_32(b, v); return NOVA_UNIT; }
-static inline nova_unit Nova_WriteBuffer_method_write_u64_le(Nova_WriteBuffer* b, nova_int v) { NOVA_WB_WRITE_LE_64(b, v); return NOVA_UNIT; }
-static inline nova_unit Nova_WriteBuffer_method_write_u64_be(Nova_WriteBuffer* b, nova_int v) { NOVA_WB_WRITE_BE_64(b, v); return NOVA_UNIT; }
-static inline nova_unit Nova_WriteBuffer_method_write_i64_le(Nova_WriteBuffer* b, nova_int v) { NOVA_WB_WRITE_LE_64(b, v); return NOVA_UNIT; }
-static inline nova_unit Nova_WriteBuffer_method_write_i64_be(Nova_WriteBuffer* b, nova_int v) { NOVA_WB_WRITE_BE_64(b, v); return NOVA_UNIT; }
+/* u16 / i16 / u32 / i32 / u64 / i64 — все варианты, returns Self. */
+static inline Nova_WriteBuffer* Nova_WriteBuffer_method_write_u16_le(Nova_WriteBuffer* b, nova_int v) { NOVA_WB_WRITE_LE_16(b, v); return b; }
+static inline Nova_WriteBuffer* Nova_WriteBuffer_method_write_u16_be(Nova_WriteBuffer* b, nova_int v) { NOVA_WB_WRITE_BE_16(b, v); return b; }
+static inline Nova_WriteBuffer* Nova_WriteBuffer_method_write_i16_le(Nova_WriteBuffer* b, nova_int v) { NOVA_WB_WRITE_LE_16(b, v); return b; }
+static inline Nova_WriteBuffer* Nova_WriteBuffer_method_write_i16_be(Nova_WriteBuffer* b, nova_int v) { NOVA_WB_WRITE_BE_16(b, v); return b; }
+static inline Nova_WriteBuffer* Nova_WriteBuffer_method_write_u32_le(Nova_WriteBuffer* b, nova_int v) { NOVA_WB_WRITE_LE_32(b, v); return b; }
+static inline Nova_WriteBuffer* Nova_WriteBuffer_method_write_u32_be(Nova_WriteBuffer* b, nova_int v) { NOVA_WB_WRITE_BE_32(b, v); return b; }
+static inline Nova_WriteBuffer* Nova_WriteBuffer_method_write_i32_le(Nova_WriteBuffer* b, nova_int v) { NOVA_WB_WRITE_LE_32(b, v); return b; }
+static inline Nova_WriteBuffer* Nova_WriteBuffer_method_write_i32_be(Nova_WriteBuffer* b, nova_int v) { NOVA_WB_WRITE_BE_32(b, v); return b; }
+static inline Nova_WriteBuffer* Nova_WriteBuffer_method_write_u64_le(Nova_WriteBuffer* b, nova_int v) { NOVA_WB_WRITE_LE_64(b, v); return b; }
+static inline Nova_WriteBuffer* Nova_WriteBuffer_method_write_u64_be(Nova_WriteBuffer* b, nova_int v) { NOVA_WB_WRITE_BE_64(b, v); return b; }
+static inline Nova_WriteBuffer* Nova_WriteBuffer_method_write_i64_le(Nova_WriteBuffer* b, nova_int v) { NOVA_WB_WRITE_LE_64(b, v); return b; }
+static inline Nova_WriteBuffer* Nova_WriteBuffer_method_write_i64_be(Nova_WriteBuffer* b, nova_int v) { NOVA_WB_WRITE_BE_64(b, v); return b; }
 
-/* f32 / f64 — IEEE 754 bit-cast. */
-static inline nova_unit Nova_WriteBuffer_method_write_f32_le(Nova_WriteBuffer* b, nova_f64 v) {
+/* f32 / f64 — IEEE 754 bit-cast, returns Self. */
+static inline Nova_WriteBuffer* Nova_WriteBuffer_method_write_f32_le(Nova_WriteBuffer* b, nova_f64 v) {
     float f = (float)v;
     uint32_t u;
     memcpy(&u, &f, 4);
     NOVA_WB_WRITE_LE_32(b, u);
-    return NOVA_UNIT;
+    return b;
 }
-static inline nova_unit Nova_WriteBuffer_method_write_f32_be(Nova_WriteBuffer* b, nova_f64 v) {
+static inline Nova_WriteBuffer* Nova_WriteBuffer_method_write_f32_be(Nova_WriteBuffer* b, nova_f64 v) {
     float f = (float)v;
     uint32_t u;
     memcpy(&u, &f, 4);
     NOVA_WB_WRITE_BE_32(b, u);
-    return NOVA_UNIT;
+    return b;
 }
-static inline nova_unit Nova_WriteBuffer_method_write_f64_le(Nova_WriteBuffer* b, nova_f64 v) {
+static inline Nova_WriteBuffer* Nova_WriteBuffer_method_write_f64_le(Nova_WriteBuffer* b, nova_f64 v) {
     uint64_t u;
     memcpy(&u, &v, 8);
     NOVA_WB_WRITE_LE_64(b, u);
-    return NOVA_UNIT;
+    return b;
 }
-static inline nova_unit Nova_WriteBuffer_method_write_f64_be(Nova_WriteBuffer* b, nova_f64 v) {
+static inline Nova_WriteBuffer* Nova_WriteBuffer_method_write_f64_be(Nova_WriteBuffer* b, nova_f64 v) {
     uint64_t u;
     memcpy(&u, &v, 8);
     NOVA_WB_WRITE_BE_64(b, u);
-    return NOVA_UNIT;
+    return b;
 }
 
 /* @len() / @capacity(). */

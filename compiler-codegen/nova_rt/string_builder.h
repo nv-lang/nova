@@ -113,23 +113,23 @@ static inline Nova_StringBuilder* Nova_StringBuilder_static_from_char(nova_int c
     return b;
 }
 
-/* @append(s str) — copy UTF-8 bytes from s. */
-static inline nova_unit Nova_StringBuilder_method_append_str(Nova_StringBuilder* b, nova_str s) {
+/* @append(s str) -> Self — copy UTF-8 bytes; returns self for chaining. */
+static inline Nova_StringBuilder* Nova_StringBuilder_method_append_str(Nova_StringBuilder* b, nova_str s) {
     _nova_string_builder_check_live(b);
-    if (s.len == 0) return NOVA_UNIT;
+    if (s.len == 0) return b;
     _nova_string_builder_reserve(b, (int64_t)s.len);
     memcpy(b->data + b->len, s.ptr, s.len);
     b->len += (int64_t)s.len;
-    return NOVA_UNIT;
+    return b;
 }
 
-/* @append(c char) — UTF-8 encode 1-4 bytes from codepoint. */
-static inline nova_unit Nova_StringBuilder_method_append_char(Nova_StringBuilder* b, nova_int cp) {
+/* @append(c char) -> Self — UTF-8 encode 1-4 bytes; returns self for chaining. */
+static inline Nova_StringBuilder* Nova_StringBuilder_method_append_char(Nova_StringBuilder* b, nova_int cp) {
     _nova_string_builder_check_live(b);
     _nova_string_builder_reserve(b, 4);
     int n = _nova_utf8_encode(b->data + b->len, cp);
     b->len += n;
-    return NOVA_UNIT;
+    return b;
 }
 
 /* @len() -> int. */

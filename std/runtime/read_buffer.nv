@@ -10,7 +10,7 @@ module std.runtime.read_buffer
 // ─── ReadBuffer ───
 
 // Создать ReadBuffer из []byte (view, no copy).
-export external fn ReadBuffer.from(b []byte) -> ReadBuffer
+export external fn ReadBuffer.from(b []byte) -> Self
 
 // Текущий offset cursor'а в байтах.
 export external fn ReadBuffer @position() -> int
