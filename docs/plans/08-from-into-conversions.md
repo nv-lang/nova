@@ -1,7 +1,17 @@
 # План 08: `From`/`Into` framework + сводная конверсионная инфраструктура
 
-**Статус:** активный, не начат.
+**Статус:** ✅ почти выполнено (2026-05-08); Ф.6 отложен.
 **Дата создания:** 2026-05-08.
+
+**Результат:**
+- Ф.1+Ф.2 — runtime helpers + bootstrap-table (commit `cb045108f`)
+- Ф.3 — 4-way auto-derive synthesis (commit `c6e2c087c`)
+- Ф.4 — strict `if cond: bool` (commit `515aa1406`)
+- Ф.5 — as-cast restrictions (commit `27efacc35`)
+- Ф.7 — spec D54 расширение + `spec/conversions.md` (этот коммит)
+- ❌ Ф.6 — generic-bound enforcement (требует полного type-checker'а;
+  отложен до полноценной фазы рефакторинга)
+
 **Зависимости:**
 - [D54](../../spec/decisions/03-syntax.md#d54) — `as` оператор.
 - [D73](../../spec/decisions/08-runtime.md#d73) — `From`/`Into` protocol-pair.

@@ -1314,3 +1314,41 @@ silently разрешал всё. Теперь — compile error с suggestion'�
 - newtype-alias identity
 
 71/71 nova_tests PASS, без регрессий.
+
+
+================================================================================
+2026-05-08 Plan 08 Ф.7: spec D54 + conversions.md
+================================================================================
+
+Финальный шаг плана 08 — spec docs.
+
+Изменения:
+
+1. spec/decisions/03-syntax.md D54 расширен:
+   - Раздел «Запрещённые as-cast'ы для char/byte/bool» с таблицей
+     запрещённых пар + suggestions + прецеденты (Rust/Swift/Kotlin/Java).
+   - Раздел «Strict if cond: bool / while cond: bool» с прецедентами.
+
+2. spec/conversions.md (новый, ~280 строк) — сводная страница:
+   - 3 механизма (as / from / try_from)
+   - Numeric ↔ numeric (widening + narrowing с saturation для float)
+   - Numeric ↔ str (parse / format)
+   - Char / Byte / []byte / str
+   - Bool ↔ всё (включая запрещённое int → bool)
+   - Newtype ↔ underlying
+   - Sum-variant ↔ int (discriminant)
+   - Strict if/while cond: bool
+   - Запрещённые конверсии — таблица
+   - Auto-derive 4-way (D73)
+   - Прецеденты по языкам (6 языков)
+   - Bootstrap status
+
+3. docs/plans/08-from-into-conversions.md status: 5/6 фаз закрыты,
+   Ф.6 (generic-bound enforcement) отложен до фазы рефакторинга
+   type-checker'а.
+
+Не сделано в плане 08:
+- Ф.6: generic-bound [T Into[X]] enforcement — требует полного
+  type-checker'а с trait-resolution. Отложен.
+- Compile-error suggestions с file:line:col — TBD при добавлении
+  diagnostic'ов.

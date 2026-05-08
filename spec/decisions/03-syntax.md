@@ -2099,6 +2099,50 @@ let code = NotFound as int    // 404
 - **int → Sum через `as`** — type-небезопасно (число может не
   попасть в варианты). Только через pattern match (см. D52).
 
+#### Запрещённые `as`-cast'ы для char/byte/bool
+
+Рrune `as`-cast'ов где seemingly-numeric mappingвыражает unsafe
+семантику. Программист должен использовать `try_from` (с
+range-check'ом) или explicit comparison:
+
+| Запрещено через `as` | Альтернатива |
+|---|---|
+| `int as char`, `iN/uN as char` | `char.try_from(n)?` (range 0..0x10FFFF, не surrogate) |
+| `char as byte` | `byte.try_from(c)?` (fails если codepoint > 0xFF) |
+| `int/byte/f64/etc as bool` | `n != 0` (или `n != 0.0`) |
+| `str as int/i32/f64/bool/char` | `T.try_from(s)?` (parse) |
+| `int/f64/bool/char as str` | `str.from(v)` (format) |
+
+**Исключение для char-литералов:** `'A' as byte`, `'A' as int`,
+`'A' as u8` разрешены — программист видит codepoint буквально на
+write-time, range-check не нужен.
+
+**Прецеденты.** Rust требует `char::from_u32(n)` (Result), не `n as
+char`. Swift `Character.init(extendedGraphemeClusterLiteral)` — нет
+прямого `n as Character`. Kotlin `n.toChar()` существует но deprecated
+для unsafe usage. Java `(char)n` — narrow с silent overflow (UB-class).
+Nova выбирает Rust-стиль strict.
+
+**Bool-restrictions** — то же из Rust/Swift/Kotlin: `if cond` требует
+bool, `n as bool` — explicit ошибка с suggestion. Это закрывает
+известный bug-class C/JavaScript/Python.
+
+#### Strict `if cond: bool` / `while cond: bool`
+
+`if cond { ... }`, `while cond { ... }`, `cond1 && cond2`,
+`cond1 || cond2` — **cond обязан быть `bool`**. C-стиль truthy-int
+(`if a` где `a: int`) запрещён.
+
+```nova
+let n int = 5
+if n { ... }          // ❌ compile error: cond must be bool
+if n != 0 { ... }     // ✅ explicit comparison
+```
+
+**Прецеденты.** Rust/Swift/Kotlin/Go (если игнорировать nil-check
+shortcut) — все требуют bool. Python/C/JavaScript разрешают truthy —
+известный bug-class.
+
 #### `is` — runtime type-check
 
 `is` работает в **двух сценариях**:
