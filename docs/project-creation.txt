@@ -1279,3 +1279,38 @@ Bootstrap-ограничения:
 - Negative cases (compile-error на bad usage) — проверяются вручную
   через `nova-codegen check`, не в test-runner.
 - Compile-error suggestions ("use n != 0 for truthy-int") — TBD в Ф.7.
+
+
+================================================================================
+2026-05-08 Plan 08 Ф.5: as-cast restrictions для char/byte/bool
+================================================================================
+
+D54 запрещает ряд `as`-cast'ов из-за неочевидной семантики. Bootstrap
+silently разрешал всё. Теперь — compile error с suggestion'ом
+использовать try_from или explicit comparison.
+
+Запрещённые пары (compile error):
+- int as char       → char.try_from(n)?
+- char as byte      → byte.try_from(c)?  (исключение: CharLit)
+- int as bool       → n != 0
+- str as T          → T.try_from(s)?
+- T as str          → str.from(v)
+
+Исключение для CharLit: 'A' as byte, 'A' as int, 'A' as u8 разрешены
+(программист видит codepoint буквально, существующий stdlib использует).
+
+Реализация:
+- `check_as_cast_allowed(src_nova, tgt_nova, inner_kind)` в emit_c.rs.
+- Detection через TypeRef::Named target (Nova-имя), не C-имя — char
+  и int имеют одинаковый nova_int.
+- Helper nova_type_name_from_c reused (план 08 Ф.3).
+
+Тесты (nova_tests/syntax/as_cast_restrictions.nv, 6 positive):
+- CharLit как byte/int/u8
+- byte → int widening
+- int → byte wraparound (план 05)
+- f64 → int saturation (план 07)
+- bool → int (D54: bool это {0,1})
+- newtype-alias identity
+
+71/71 nova_tests PASS, без регрессий.

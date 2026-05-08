@@ -1,0 +1,65 @@
+// as_cast_restrictions.nv — Plan 08 Ф.5: as-cast restrictions для
+// char/byte/bool. Раздел allowed-cases.
+//
+// Запрещённые `as`-cast'ы (compile-error):
+//   - int as char     → char.try_from(n)?
+//   - char as byte    → byte.try_from(c)?  (за исключением CharLit)
+//   - int as bool     → n != 0
+//   - str as T        → T.try_from(s)?
+//   - T as str        → str.from(v)
+//
+// Negative tests (что цепляются compile-error'ом) — ручная проверка
+// через `nova-codegen check`, не в test-runner.
+//
+// Этот файл — positive smoke: разрешённые cast'ы продолжают работать.
+
+module nova_tests.syntax.as_cast_restrictions
+
+
+test "char-literal as byte/int/u8 — разрешено (program ставит codepoint буквально)" {
+    let a = 'A' as byte
+    let b = 'A' as int
+    let c = 'A' as u8
+    assert(a as int == 65)
+    assert(b == 65)
+    assert(c as int == 65)
+}
+
+
+test "byte → int (widening) — разрешено" {
+    let b byte = 65
+    let n = b as int
+    assert(n == 65)
+}
+
+
+test "int → byte (narrowing wraparound) — разрешено (план 05)" {
+    let big int = 1111
+    let b = big as byte
+    assert(b as int == 87)  // 1111 mod 256
+}
+
+
+test "f64 → int (saturation) — разрешено (план 07)" {
+    let f f64 = 100.5
+    let n = f as int
+    assert(n == 100)
+}
+
+
+test "bool → int — разрешено (D54: bool это {0,1})" {
+    let t = true
+    let f = false
+    assert(t as int == 1)
+    assert(f as int == 0)
+}
+
+
+type RestrictionsMyInt alias int
+
+
+test "newtype-alias as underlying — identity (план 05)" {
+    let x RestrictionsMyInt = 42 as RestrictionsMyInt
+    let n int = x as int
+    assert(n == 42)
+}

@@ -3530,9 +3530,25 @@ impl CEmitter {
                 //   - out-of-range negative → INT_MIN / 0 (для unsigned)
                 //   - NaN → 0
                 //   - ±Infinity → границы
+                //
+                // Plan 08 Ф.5: as-cast restrictions для char/byte/bool.
+                // По D54 запрещены: int as char (use char.try_from), int as bool
+                // (use n != 0), char as byte (use byte.try_from), str ↔ T (use
+                // str.from / T.try_from). Detection через original Nova-имя
+                // target'а (TypeRef::Named path), не через C-имя — char и int
+                // имеют одинаковый C-тип nova_int.
+                let target_nova = if let TypeRef::Named { path, .. } = ty {
+                    path.last().cloned()
+                } else { None };
+                let inner_c_ty_for_check = self.infer_expr_c_type(inner);
+                // Получим Nova-имя источника для restrictions check.
+                let src_nova = Self::nova_type_name_from_c(&inner_c_ty_for_check);
+                if let Some(tgt_nova) = target_nova.as_deref() {
+                    Self::check_as_cast_allowed(&src_nova, tgt_nova, &inner.kind)?;
+                }
                 let target_c = self.type_ref_to_c(ty)
                     .map_err(|e| format!("as-cast type error: {}", e))?;
-                let inner_c_ty = self.infer_expr_c_type(inner);
+                let inner_c_ty = inner_c_ty_for_check;
                 let v = self.emit_expr(inner)?;
 
                 let src_suffix = match inner_c_ty.as_str() {
@@ -6519,6 +6535,69 @@ impl CEmitter {
     fn struct_name_from_c_type(c_ty: &str) -> Option<String> {
         let trimmed = c_ty.trim_end_matches('*').trim();
         trimmed.strip_prefix("Nova_").map(|s| s.to_string())
+    }
+
+    /// Plan 08 Ф.5: as-cast restrictions для char/byte/bool.
+    /// По D54 запрещены конверсии где как-cast даёт неочевидную или
+    /// небезопасную семантику. Для них — compile error с suggestion'ом
+    /// использовать `try_from` или explicit comparison.
+    ///
+    /// Conservative: если src не определён (void*) или target не в
+    /// special-cases — пропускаем (legacy backward-compat).
+    fn check_as_cast_allowed(
+        src_nova: &str,
+        tgt_nova: &str,
+        inner_kind: &ExprKind,
+    ) -> Result<(), String> {
+        // Спецслучай: CharLit. inner это литерал 'A'/'B'/etc — он уже
+        // имеет nova_int представление, но семантически это char.
+        // **Char-literals разрешены к as-cast в любой numeric** —
+        // программист видит codepoint буквально, range-check не нужен.
+        // `'A' as byte`, `'A' as int`, `'A' as u8` — все OK.
+        if matches!(inner_kind, ExprKind::CharLit(_)) {
+            return Ok(());
+        }
+        let src = src_nova;
+
+        // Запрещённые пары:
+        let banned: &[(&str, &str, &str)] = &[
+            // (src, tgt, suggestion)
+            ("int",  "char", "use `char.try_from(n)?` (range-checked, returns Result[char, _])"),
+            ("i32",  "char", "use `char.try_from(n)?`"),
+            ("i64",  "char", "use `char.try_from(n)?`"),
+            ("u32",  "char", "use `char.try_from(n)?`"),
+            ("u64",  "char", "use `char.try_from(n)?`"),
+            ("char", "byte", "use `byte.try_from(c)?` (fails if codepoint > 0xFF)"),
+            ("int",  "bool", "use explicit comparison (`n != 0` for truthy-int)"),
+            ("i8",   "bool", "use `n != 0`"),
+            ("i16",  "bool", "use `n != 0`"),
+            ("i32",  "bool", "use `n != 0`"),
+            ("i64",  "bool", "use `n != 0`"),
+            ("u8",   "bool", "use `n != 0`"),
+            ("u16",  "bool", "use `n != 0`"),
+            ("u32",  "bool", "use `n != 0`"),
+            ("u64",  "bool", "use `n != 0`"),
+            ("byte", "bool", "use `n != 0`"),
+            ("f64",  "bool", "use `f != 0.0`"),
+            ("f32",  "bool", "use `f != 0.0`"),
+            ("str",  "int",  "use `int.try_from(s)?` (parses decimal)"),
+            ("str",  "i32",  "use `i32.try_from(s)?`"),
+            ("str",  "f64",  "use `f64.try_from(s)?`"),
+            ("str",  "bool", "use `bool.try_from(s)?`"),
+            ("int",  "str",  "use `str.from(n)`"),
+            ("f64",  "str",  "use `str.from(f)`"),
+            ("bool", "str",  "use `str.from(b)`"),
+            ("char", "str",  "use `str.from(c)` (UTF-8 encode)"),
+        ];
+        for (s, t, hint) in banned {
+            if &src == s && &tgt_nova == t {
+                return Err(format!(
+                    "`as`-cast `{} as {}` запрещён: {}.",
+                    src, tgt_nova, hint
+                ));
+            }
+        }
+        Ok(())
     }
 
     /// Plan 08 Ф.4: strict bool-check для `if cond` / `while cond`.
