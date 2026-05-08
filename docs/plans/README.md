@@ -23,6 +23,7 @@
 | 09 | [09-clang-migration.md](09-clang-migration.md) | Миграция Windows-сборки с MSVC на Clang/LLVM (10-15% perf) | активный, не начат |
 | 10 | [10-pgo-integration.md](10-pgo-integration.md) | PGO integration (stub, после плана 09) — 15-30% perf на hot path | stub / future |
 | 11 | [11-method-values-and-overload.md](11-method-values-and-overload.md) | Method values + overload по типу аргумента (закрывает Q-overloading вариант 1) | частично закрыт (Ф.1-Ф.3+Ф.4.5+Ф.6+Ф.7), осталось Ф.4+Ф.5+Ф.8 |
+| 12 | [12-builtins-driven-codegen.md](12-builtins-driven-codegen.md) | builtins.nv-driven external dispatch (закрывает Q-codegen-builtins-cleanup, single source of truth для external sigs) | pending (после Plan 04 Этап 6) |
 
 ## Связанные директории
 

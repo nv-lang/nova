@@ -4297,8 +4297,9 @@ reference / type mismatch при включённом `-Wstrict-prototypes`).
 - Этот cleanup — после Этапа 6 или параллельно.
 
 **Связь:** [D82](decisions/08-runtime.md#d82) (single source of truth
-правило), Plan 04 Этап 6, Q-overloading (overload-resolution тоже
-читает из AST builtins.nv).
+правило), [Plan 12](../docs/plans/12-builtins-driven-codegen.md)
+(этот cleanup — план), Plan 04 Этап 6 (предшествует), Q-overloading
+(overload-resolution тоже читает из AST builtins.nv).
 
 ---
 
