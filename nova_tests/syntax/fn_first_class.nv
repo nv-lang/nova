@@ -199,6 +199,50 @@ test "две именованные fn в compose" {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// Plan 14 Ф.4: fn-поле в record + вызов через `obj.f(x)`
+// ──────────────────────────────────────────────────────────────────────────
+
+type Op {
+    name str
+    f fn(int) -> int
+}
+
+test "fn-поле в record + вызов через obj.f(x)" {
+    let op = Op { name: "inc", f: (x) => x + 1 }
+    assert(op.f(0) == 1)
+    assert(op.f(41) == 42)
+    assert(op.name == "inc")
+}
+
+test "fn-поле в record — две разные fn" {
+    let inc_op = Op { name: "inc", f: (x) => x + 1 }
+    let dbl_op = Op { name: "dbl", f: (x) => x * 2 }
+    assert(inc_op.f(5) == 6)
+    assert(dbl_op.f(5) == 10)
+    assert(inc_op.f(0) == 1)
+    assert(dbl_op.f(0) == 0)
+}
+
+type BinOp {
+    name str
+    f fn(int, int) -> int
+}
+
+test "fn-поле arity 2 — несколько параметров" {
+    let add_op = BinOp { name: "+", f: (a, b) => a + b }
+    let mul_op = BinOp { name: "*", f: (a, b) => a * b }
+    assert(add_op.f(3, 4) == 7)
+    assert(mul_op.f(3, 4) == 12)
+}
+
+test "fn-поле + free fn (Plan 14 Ф.3)" {
+    // `top_inc` (Ф.3 free-fn-as-value) можно положить в record-поле.
+    let op = Op { name: "top_inc", f: top_inc }
+    assert(op.f(10) == 11)
+    assert(op.f(99) == 100)
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // BOOTSTRAP-GAP — спека D35/D69 это покрывает, в bootstrap-codegen ещё нет.
 // Раскомменчивать по мере реализации:
 //
@@ -206,12 +250,6 @@ test "две именованные fn в compose" {
 //        fn Box.zero() -> Self => Self { v: 0 }
 //        let make = Box.zero; let b = make()
 //      → cм. method_values.nv комментарий про routing через ExternalRegistry.
-//
-//   3) fn-поле в record + вызов через `(@f)(x)` или `obj.f(x)`:
-//        type Op { f fn(int) -> int }
-//        let op = Op { f: (x) => x + 1 }
-//        op.f(5)
-//      → codegen генерирует `nova_self->f(x)` вместо closure-call.
 //
 //   4) []fn(...) -> R массив функций (pipeline / index dispatch):
 //        let pipeline []fn(int) -> int = [(x) => x+1, (x) => x*2]

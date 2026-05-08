@@ -1,0 +1,91 @@
+// const_complex.nv — Plan 14 Ф.2: const с runtime-init expression.
+//
+// До Ф.2: emit_const_decl принимал только Int/Float/Bool/Str/Char/Unary
+// (constexpr). Record-литералы, calls, и т.д. падали с
+// `non-constant expression in const declaration`.
+//
+// После Ф.2: non-trivial const'ы desugar'ятся в lazy-init геттер
+// `static <Ty> nova_const_<name>(void) { ... if not init then init ...
+// return value }`. На use-site `Ident(name)` для lazy const'ов эмитится
+// `nova_const_<name>()`.
+
+module nova_tests.syntax.const_complex
+
+
+// === 1. Const с record-литералом ===
+
+type Point { x f64, y f64 }
+
+const ORIGIN Point = Point { x: 0.0, y: 0.0 }
+const UNIT_X Point = Point { x: 1.0, y: 0.0 }
+
+test "const с record-литералом" {
+    assert(ORIGIN.x == 0.0)
+    assert(ORIGIN.y == 0.0)
+    assert(UNIT_X.x == 1.0)
+}
+
+
+// === 2. Const с D55 coercion (без имени типа) ===
+
+const ZERO_POINT Point = { x: 0.0, y: 0.0 }
+const FAR_POINT Point = { x: 100.0, y: 200.0 }
+
+test "const с D55 record-coercion" {
+    assert(ZERO_POINT.x == 0.0)
+    assert(FAR_POINT.x == 100.0)
+    assert(FAR_POINT.y == 200.0)
+}
+
+
+// === 3. Const с вызовом функции ===
+
+fn make_point(a f64, b f64) -> Point => Point { x: a, y: b }
+
+const COMPUTED Point = make_point(7.0, 14.0)
+
+test "const с function call" {
+    assert(COMPUTED.x == 7.0)
+    assert(COMPUTED.y == 14.0)
+}
+
+
+// === 4. Const используется в expression ===
+
+const FACTOR Point = Point { x: 2.0, y: 3.0 }
+
+fn scale(p Point) -> Point => Point { x: p.x * FACTOR.x, y: p.y * FACTOR.y }
+
+test "lazy const использован в fn body" {
+    let p = scale(Point { x: 5.0, y: 10.0 })
+    assert(p.x == 10.0)
+    assert(p.y == 30.0)
+}
+
+
+// === 5. Несколько обращений к одному lazy const ===
+
+const SHARED Point = Point { x: 42.0, y: 84.0 }
+
+test "lazy const повторное обращение — кеш" {
+    // Первое обращение — инициализирует.
+    let a = SHARED.x
+    // Второе — читает кеш.
+    let b = SHARED.x
+    assert(a == 42.0)
+    assert(b == 42.0)
+    assert(a == b)
+}
+
+
+// === 6. Простые const'ы (constexpr) — должны остаться как const ===
+
+const SIMPLE_INT int = 42
+const SIMPLE_F64 f64 = 3.14
+const SIMPLE_BOOL bool = true
+
+test "простые const'ы — обычная константа без lazy" {
+    assert(SIMPLE_INT == 42)
+    assert(SIMPLE_F64 == 3.14)
+    assert(SIMPLE_BOOL)
+}
