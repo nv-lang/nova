@@ -177,18 +177,18 @@ fn TomlParser mut @parse_key() Fail[ParseTomlError] -> str {
 }
 
 fn TomlParser mut @parse_bare_key() -> str {
-    let mut buf = Buffer.new()
+    let mut buf = StringBuilder.new()
     let mut done = false
     while !done {
         match @peek() {
             Some(c) if is_bare_key_char(c) => {
-                buf.add_char(c)
+                buf.append(c)
                 @advance()
             }
             _ => { done = true }
         }
     }
-    buf.into_str_unchecked()
+    buf.into()
 }
 
 fn is_bare_key_char(c char) -> bool {
@@ -239,7 +239,7 @@ fn is_num_start(c char) -> bool =>
 
 fn TomlParser mut @parse_basic_string() Fail[ParseTomlError] -> str {
     @advance()          // open "
-    let mut buf = Buffer.new()
+    let mut buf = StringBuilder.new()
     let mut done = false
     while !done {
         match @advance() {
@@ -247,19 +247,19 @@ fn TomlParser mut @parse_basic_string() Fail[ParseTomlError] -> str {
             Some('"') => { done = true }
             Some('\\') => {
                 match @advance() {
-                    Some('n') => buf.add_char('\n')
-                    Some('r') => buf.add_char('\r')
-                    Some('t') => buf.add_char('\t')
-                    Some('"') => buf.add_char('"')
-                    Some('\\') => buf.add_char('\\')
+                    Some('n') => buf.append('\n')
+                    Some('r') => buf.append('\r')
+                    Some('t') => buf.append('\t')
+                    Some('"') => buf.append('"')
+                    Some('\\') => buf.append('\\')
                     Some(c) => throw InvalidString { line: @line, reason: "unknown escape" }
                     None    => throw UnexpectedEof { line: @line }
                 }
             }
-            Some(c) => buf.add_char(c)
+            Some(c) => buf.append(c)
         }
     }
-    buf.into_str_unchecked()
+    buf.into()
 }
 
 

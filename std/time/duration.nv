@@ -196,17 +196,17 @@ export fn Duration @into_human() -> str {
     if @is_zero() { return "0s" }
 
     let p = @parts()
-    let mut buf = Buffer.new()
+    let mut buf = StringBuilder.new()
     let sign = if @nanos < 0 { "-" } else { "" }
-    buf.add_str(sign)
+    buf.append(sign)
 
     let mut started = false
-    if p.days > 0 { buf.add_str(str.from(p.days)); buf.add_str("d "); started = true }
-    if p.hours > 0 || started { buf.add_str(str.from(p.hours)); buf.add_str("h "); started = true }
-    if p.minutes > 0 || started { buf.add_str(str.from(p.minutes)); buf.add_str("min "); started = true }
-    if p.seconds > 0 || started { buf.add_str(str.from(p.seconds)); buf.add_str("s") }
+    if p.days > 0 { buf.append(str.from(p.days)); buf.append("d "); started = true }
+    if p.hours > 0 || started { buf.append(str.from(p.hours)); buf.append("h "); started = true }
+    if p.minutes > 0 || started { buf.append(str.from(p.minutes)); buf.append("min "); started = true }
+    if p.seconds > 0 || started { buf.append(str.from(p.seconds)); buf.append("s") }
 
-    let result = buf.into_str_unchecked()
+    let result = buf.into()
     result.trim()
 }
 

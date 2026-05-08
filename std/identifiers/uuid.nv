@@ -197,31 +197,31 @@ export fn Uuid @hash() -> u64 => @hi ^ @lo
 //
 // Round-trip: Uuid.from(u.into()) == u для любой валидной Uuid.
 export fn Uuid @into() -> str {
-    let mut buf = Buffer.with_capacity(36)
+    let mut buf = StringBuilder.with_capacity(36)
 
     // 4 байта hi MSB → 8 hex
     write_hex_u32(buf, (@hi >> 32) as u32)
-    buf.add_char('-')
+    buf.append('-')
     // 2 байта hi (биты 16..31) → 4 hex
     write_hex_u16(buf, ((@hi >> 16) & 0xFFFF) as u16)
-    buf.add_char('-')
+    buf.append('-')
     // 2 байта hi (биты 0..15) → 4 hex (содержит version в старших 4 битах)
     write_hex_u16(buf, (@hi & 0xFFFF) as u16)
-    buf.add_char('-')
+    buf.append('-')
     // 2 байта lo MSB → 4 hex (содержит variant в старших 2 битах)
     write_hex_u16(buf, (@lo >> 48) as u16)
-    buf.add_char('-')
+    buf.append('-')
     // 6 байт lo младшие
     write_hex_u32(buf, ((@lo >> 16) & 0xFFFFFFFF) as u32)
     write_hex_u16(buf, (@lo & 0xFFFF) as u16)
 
-    buf.into_str_unchecked()
+    buf.into()
 }
 
 fn write_hex_u32(buf mut Buffer, v u32) {
     let mut shift = 28
     while shift >= 0 {
-        buf.add_char(hex_digit(((v >> shift) & 0xF) as u8))
+        buf.append(hex_digit(((v >> shift) & 0xF) as u8))
         shift -= 4
     }
 }
@@ -229,7 +229,7 @@ fn write_hex_u32(buf mut Buffer, v u32) {
 fn write_hex_u16(buf mut Buffer, v u16) {
     let mut shift = 12
     while shift >= 0 {
-        buf.add_char(hex_digit(((v >> shift) & 0xF) as u8))
+        buf.append(hex_digit(((v >> shift) & 0xF) as u8))
         shift -= 4
     }
 }

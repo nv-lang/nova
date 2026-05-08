@@ -157,14 +157,14 @@ fn Parser mut @parse_quantified() Fail[CompileError] -> RegexNode {
 fn Parser mut @parse_braced_quantifier(atom RegexNode) Fail[CompileError] -> RegexNode {
     let start = @pos
     @advance()                           // {
-    let mut n_str = Buffer.new()
+    let mut n_str = StringBuilder.new()
     loop {
         match @peek() {
-            Some(c) if c >= '0' && c <= '9' => { n_str.add_char(c); @advance() }
+            Some(c) if c >= '0' && c <= '9' => { n_str.append(c); @advance() }
             _ => break
         }
     }
-    let min_str = n_str.into_str_unchecked()
+    let min_str = n_str.into()
     if min_str.len == 0 { throw InvalidQuantifier { position: start } }
     let min = match int.try_from(min_str) {
         Ok(n)  => n
@@ -173,14 +173,14 @@ fn Parser mut @parse_braced_quantifier(atom RegexNode) Fail[CompileError] -> Reg
 
     let max = if @peek() == Some(',') {
         @advance()
-        let mut m_str = Buffer.new()
+        let mut m_str = StringBuilder.new()
         loop {
             match @peek() {
-                Some(c) if c >= '0' && c <= '9' => { m_str.add_char(c); @advance() }
+                Some(c) if c >= '0' && c <= '9' => { m_str.append(c); @advance() }
                 _ => break
             }
         }
-        let m = m_str.into_str_unchecked()
+        let m = m_str.into()
         if m.len == 0 { -1 }       // {n,} — unbounded
         else {
             match int.try_from(m) {

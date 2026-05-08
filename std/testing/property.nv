@@ -166,14 +166,13 @@ export fn StrGen.default() -> StrGen =>
 
 export fn StrGen @generate() Random -> str {
     let len = (Random.u64() as int).abs() % (@max_len + 1)
-    let mut buf = Buffer.new()
+    let mut buf = StringBuilder.new()
     for i in 0..len {
-        // Печатные ASCII: 32..126
-        let c = (32 + ((Random.u64() as int).abs() % 95))
-        buf.add_byte(c as byte)
+        // Печатные ASCII: 32..126 — каждый valid 1-byte UTF-8 char
+        let c = (32 + ((Random.u64() as int).abs() % 95)) as char
+        buf.append(c)
     }
-    // unsafe — мы знаем что генерация всегда даёт valid UTF-8
-    buf.into_str_unchecked()
+    buf.into()
 }
 
 export fn StrGen @shrink(value str) -> Iter[str] {

@@ -77,16 +77,16 @@ export fn Diff.compute(a []str, b []str) -> []DiffOp {
 
 // Pretty-print: "+" для insert, "-" для delete, " " для equal
 export fn Diff.format(ops []DiffOp) -> str {
-    let mut buf = Buffer.new()
+    let mut buf = StringBuilder.new()
     for op in ops {
         match op {
-            Equal(s) => { buf.add_char(' '); buf.add_str(s) }
-            Insert(s) => { buf.add_char('+'); buf.add_str(s) }
-            Delete(s) => { buf.add_char('-'); buf.add_str(s) }
+            Equal(s) => { buf.append(' '); buf.append(s) }
+            Insert(s) => { buf.append('+'); buf.append(s) }
+            Delete(s) => { buf.append('-'); buf.append(s) }
         }
-        buf.add_char('\n')
+        buf.append('\n')
     }
-    buf.into_str_unchecked()
+    buf.into()
 }
 
 

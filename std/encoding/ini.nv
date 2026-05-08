@@ -81,15 +81,15 @@ export fn Ini.parse(s str) Fail[ParseIniError] -> HashMap[str, HashMap[str, str]
 
 // Сериализация обратно в INI.
 export fn Ini.encode(data HashMap[str, HashMap[str, str]]) -> str {
-    let mut buf = Buffer.with_capacity(256)
+    let mut buf = StringBuilder.with_capacity(256)
     // Сначала top-level ("")
     match data.get("") {
         Some(top) => {
             for entry in top.entries() {
-                buf.add_str(entry.0)
-                buf.add_str(" = ")
-                buf.add_str(entry.1)
-                buf.add_char('\n')
+                buf.append(entry.0)
+                buf.append(" = ")
+                buf.append(entry.1)
+                buf.append('\n')
             }
         }
         None => ()
@@ -97,19 +97,19 @@ export fn Ini.encode(data HashMap[str, HashMap[str, str]]) -> str {
     // Потом sections
     for entry in data.entries() {
         if entry.0 == "" { continue }
-        buf.add_char('\n')
-        buf.add_char('[')
-        buf.add_str(entry.0)
-        buf.add_char(']')
-        buf.add_char('\n')
+        buf.append('\n')
+        buf.append('[')
+        buf.append(entry.0)
+        buf.append(']')
+        buf.append('\n')
         for kv in entry.1.entries() {
-            buf.add_str(kv.0)
-            buf.add_str(" = ")
-            buf.add_str(kv.1)
-            buf.add_char('\n')
+            buf.append(kv.0)
+            buf.append(" = ")
+            buf.append(kv.1)
+            buf.append('\n')
         }
     }
-    buf.into_str_unchecked()
+    buf.into()
 }
 
 

@@ -191,7 +191,7 @@ export fn Ulid @ge(other Ulid) -> bool => @gt(other) || @eq(other)
 // Возвращает 26-символьную Crockford-Base32 строку.
 // Round-trip: Ulid.from(u.into()) == u.
 export fn Ulid @into() -> str {
-    let mut buf = Buffer.with_capacity(26)
+    let mut buf = StringBuilder.with_capacity(26)
 
     // 48-бит timestamp → 10 chars (10 × 5 = 50 бит, padding 2 нулевых
     // в старших). Т.е. для timestamp нужно value < 2^48 — гарантировано
@@ -200,7 +200,7 @@ export fn Ulid @into() -> str {
     let mut shift = 45
     while shift >= 0 {
         let val = ((ts >> shift) & 0x1F) as u8
-        buf.add_char(encode_char(val))
+        buf.append(encode_char(val))
         shift -= 5
     }
 
@@ -244,11 +244,11 @@ export fn Ulid @into() -> str {
                 ((r_lo >> shift2) & 0x1F) as u8
             }
         }
-        buf.add_char(encode_char(val))
+        buf.append(encode_char(val))
         shift2 -= 5
     }
 
-    buf.into_str_unchecked()
+    buf.into()
 }
 
 

@@ -163,32 +163,32 @@ const BCRYPT_ALPHABET str = "./ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvw
 
 
 fn bcrypt_base64_encode(data []byte) -> str {
-    let mut buf = Buffer.with_capacity(data.len * 4 / 3 + 4)
+    let mut buf = StringBuilder.with_capacity(data.len * 4 / 3 + 4)
     let mut i = 0
     while i + 2 < data.len {
         let b0 = data[i] as u32
         let b1 = data[i + 1] as u32
         let b2 = data[i + 2] as u32
         let triple = (b0 << 16) | (b1 << 8) | b2
-        buf.add_char(alphabet_char(((triple >> 18) & 0x3F) as int))
-        buf.add_char(alphabet_char(((triple >> 12) & 0x3F) as int))
-        buf.add_char(alphabet_char(((triple >> 6) & 0x3F) as int))
-        buf.add_char(alphabet_char((triple & 0x3F) as int))
+        buf.append(alphabet_char(((triple >> 18) & 0x3F) as int))
+        buf.append(alphabet_char(((triple >> 12) & 0x3F) as int))
+        buf.append(alphabet_char(((triple >> 6) & 0x3F) as int))
+        buf.append(alphabet_char((triple & 0x3F) as int))
         i += 3
     }
     let remaining = data.len - i
     if remaining == 1 {
         let b0 = data[i] as u32
-        buf.add_char(alphabet_char(((b0 >> 2) & 0x3F) as int))
-        buf.add_char(alphabet_char(((b0 << 4) & 0x3F) as int))
+        buf.append(alphabet_char(((b0 >> 2) & 0x3F) as int))
+        buf.append(alphabet_char(((b0 << 4) & 0x3F) as int))
     } else if remaining == 2 {
         let b0 = data[i] as u32
         let b1 = data[i + 1] as u32
-        buf.add_char(alphabet_char(((b0 >> 2) & 0x3F) as int))
-        buf.add_char(alphabet_char((((b0 << 4) | (b1 >> 4)) & 0x3F) as int))
-        buf.add_char(alphabet_char(((b1 << 2) & 0x3F) as int))
+        buf.append(alphabet_char(((b0 >> 2) & 0x3F) as int))
+        buf.append(alphabet_char((((b0 << 4) | (b1 >> 4)) & 0x3F) as int))
+        buf.append(alphabet_char(((b1 << 2) & 0x3F) as int))
     }
-    buf.into_str_unchecked()
+    buf.into()
 }
 
 

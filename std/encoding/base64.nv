@@ -113,7 +113,7 @@ fn encode_with(data []byte, alphabet fn(u8) -> char, with_padding bool) -> str {
     let remainder = n - chunks * 3
     let out_len = chunks * 4 + (if remainder > 0 { 4 } else { 0 })
 
-    let mut buf = Buffer.with_capacity(out_len)
+    let mut buf = StringBuilder.with_capacity(out_len)
 
     // Полные chunks по 3 байта = 24 бита = 4 × 6 бит.
     for i in 0..chunks {
@@ -123,35 +123,35 @@ fn encode_with(data []byte, alphabet fn(u8) -> char, with_padding bool) -> str {
         let b2 = data[base + 2] as u32
         let triple = (b0 << 16) | (b1 << 8) | b2
 
-        buf.add_char(alphabet(((triple >> 18) & 0x3F) as u8))
-        buf.add_char(alphabet(((triple >> 12) & 0x3F) as u8))
-        buf.add_char(alphabet(((triple >> 6) & 0x3F) as u8))
-        buf.add_char(alphabet((triple & 0x3F) as u8))
+        buf.append(alphabet(((triple >> 18) & 0x3F) as u8))
+        buf.append(alphabet(((triple >> 12) & 0x3F) as u8))
+        buf.append(alphabet(((triple >> 6) & 0x3F) as u8))
+        buf.append(alphabet((triple & 0x3F) as u8))
     }
 
     // Хвост: 1 или 2 байта.
     if remainder == 1 {
         let b0 = data[chunks * 3] as u32
         let triple = b0 << 16
-        buf.add_char(alphabet(((triple >> 18) & 0x3F) as u8))
-        buf.add_char(alphabet(((triple >> 12) & 0x3F) as u8))
+        buf.append(alphabet(((triple >> 18) & 0x3F) as u8))
+        buf.append(alphabet(((triple >> 12) & 0x3F) as u8))
         if with_padding {
-            buf.add_char('=')
-            buf.add_char('=')
+            buf.append('=')
+            buf.append('=')
         }
     } else if remainder == 2 {
         let b0 = data[chunks * 3] as u32
         let b1 = data[chunks * 3 + 1] as u32
         let triple = (b0 << 16) | (b1 << 8)
-        buf.add_char(alphabet(((triple >> 18) & 0x3F) as u8))
-        buf.add_char(alphabet(((triple >> 12) & 0x3F) as u8))
-        buf.add_char(alphabet(((triple >> 6) & 0x3F) as u8))
+        buf.append(alphabet(((triple >> 18) & 0x3F) as u8))
+        buf.append(alphabet(((triple >> 12) & 0x3F) as u8))
+        buf.append(alphabet(((triple >> 6) & 0x3F) as u8))
         if with_padding {
-            buf.add_char('=')
+            buf.append('=')
         }
     }
 
-    buf.into_str_unchecked()
+    buf.into()
 }
 
 

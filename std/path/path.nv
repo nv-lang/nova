@@ -14,25 +14,25 @@ module std.path.path
 
 
 export fn Path.join(...parts []str) -> str {
-    let mut buf = Buffer.new()
+    let mut buf = StringBuilder.new()
     let mut first = true
     for part in parts {
         if part.len == 0 { continue }
-        if !first && !buf.into_str_unchecked().ends_with("/") && !part.starts_with("/") {
+        if !first && !buf.into().ends_with("/") && !part.starts_with("/") {
             // Реальный buf нельзя так читать; используем альтернативу:
         }
         // Упрощённо: всегда вставляем "/" между непустыми частями
-        if !first { buf.add_char('/') }
+        if !first { buf.append('/') }
         // Strip ведущий "/" если уже есть separator
         let cleaned = if !first && part.starts_with("/") {
             part.slice(1, part.len)
         } else {
             part
         }
-        buf.add_str(cleaned)
+        buf.append(cleaned)
         first = false
     }
-    buf.into_str_unchecked()
+    buf.into()
 }
 
 // Родительская директория. None если path не имеет родителя.
@@ -92,15 +92,15 @@ export fn Path.normalize(p str) -> str {
             stack.push(part)
         }
     }
-    let mut buf = Buffer.new()
-    if absolute { buf.add_char('/') }
+    let mut buf = StringBuilder.new()
+    if absolute { buf.append('/') }
     let mut first = true
     for s in stack {
-        if !first { buf.add_char('/') }
-        buf.add_str(s)
+        if !first { buf.append('/') }
+        buf.append(s)
         first = false
     }
-    let result = buf.into_str_unchecked()
+    let result = buf.into()
     if result.len == 0 { "." } else { result }
 }
 

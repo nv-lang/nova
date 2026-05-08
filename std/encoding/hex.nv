@@ -29,14 +29,14 @@ export fn Hex.encode_upper(data []byte) -> str =>
     encode_with(data, true)
 
 fn encode_with(data []byte, upper bool) -> str {
-    let mut buf = Buffer.with_capacity(data.len * 2)
+    let mut buf = StringBuilder.with_capacity(data.len * 2)
     for b in data {
         let hi = (b as int) / 16
         let lo = (b as int) % 16
-        buf.add_char(digit(hi as u8, upper))
-        buf.add_char(digit(lo as u8, upper))
+        buf.append(digit(hi as u8, upper))
+        buf.append(digit(lo as u8, upper))
     }
-    buf.into_str_unchecked()
+    buf.into()
 }
 
 fn digit(n u8, upper bool) -> char =>

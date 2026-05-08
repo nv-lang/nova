@@ -25,12 +25,12 @@ module std.text.markdown_minimal
 
 
 export fn Markdown.to_html(md str) -> str {
-    let mut buf = Buffer.with_capacity(md.len * 2)
+    let mut buf = StringBuilder.with_capacity(md.len * 2)
     let lines = md.split("\n")
     let mut i = 0
     let mut in_code_block = false
     let mut in_list = false
-    let mut paragraph = Buffer.new()
+    let mut paragraph = StringBuilder.new()
 
     while i < lines.len {
         let line = lines[i]
@@ -38,13 +38,13 @@ export fn Markdown.to_html(md str) -> str {
         // Code block fence
         if line.starts_with("```") {
             if in_code_block {
-                buf.add_str("</code></pre>\n")
+                buf.append("</code></pre>\n")
                 in_code_block = false
             } else {
                 flush_paragraph(buf, paragraph)
-                paragraph = Buffer.new()
-                if in_list { buf.add_str("</ul>\n"); in_list = false }
-                buf.add_str("<pre><code>")
+                paragraph = StringBuilder.new()
+                if in_list { buf.append("</ul>\n"); in_list = false }
+                buf.append("<pre><code>")
                 in_code_block = true
             }
             i += 1
@@ -52,8 +52,8 @@ export fn Markdown.to_html(md str) -> str {
         }
 
         if in_code_block {
-            buf.add_str(escape_html(line))
-            buf.add_char('\n')
+            buf.append(escape_html(line))
+            buf.append('\n')
             i += 1
             continue
         }
@@ -61,16 +61,16 @@ export fn Markdown.to_html(md str) -> str {
         // Heading
         if line.starts_with("#") {
             flush_paragraph(buf, paragraph)
-            paragraph = Buffer.new()
-            if in_list { buf.add_str("</ul>\n"); in_list = false }
+            paragraph = StringBuilder.new()
+            if in_list { buf.append("</ul>\n"); in_list = false }
             let mut level = 0
             while level < 6 && line.char_at(level) == Some('#') {
                 level += 1
             }
             let text = line.slice(level, line.len).trim()
-            buf.add_str("<h" + str.from(level) + ">")
-            buf.add_str(render_inline(text))
-            buf.add_str("</h" + str.from(level) + ">\n")
+            buf.append("<h" + str.from(level) + ">")
+            buf.append(render_inline(text))
+            buf.append("</h" + str.from(level) + ">\n")
             i += 1
             continue
         }
@@ -78,14 +78,14 @@ export fn Markdown.to_html(md str) -> str {
         // Bullet list item
         if line.starts_with("- ") || line.starts_with("* ") {
             flush_paragraph(buf, paragraph)
-            paragraph = Buffer.new()
+            paragraph = StringBuilder.new()
             if !in_list {
-                buf.add_str("<ul>\n")
+                buf.append("<ul>\n")
                 in_list = true
             }
-            buf.add_str("<li>")
-            buf.add_str(render_inline(line.slice(2, line.len)))
-            buf.add_str("</li>\n")
+            buf.append("<li>")
+            buf.append(render_inline(line.slice(2, line.len)))
+            buf.append("</li>\n")
             i += 1
             continue
         }
@@ -93,34 +93,34 @@ export fn Markdown.to_html(md str) -> str {
         // Empty line — paragraph break
         if line.trim().len == 0 {
             flush_paragraph(buf, paragraph)
-            paragraph = Buffer.new()
-            if in_list { buf.add_str("</ul>\n"); in_list = false }
+            paragraph = StringBuilder.new()
+            if in_list { buf.append("</ul>\n"); in_list = false }
             i += 1
             continue
         }
 
         // Regular paragraph line
-        if paragraph.len() > 0 { paragraph.add_char(' ') }
-        paragraph.add_str(line)
+        if paragraph.len() > 0 { paragraph.append(' ') }
+        paragraph.append(line)
         i += 1
     }
 
     // Flush последнего
     flush_paragraph(buf, paragraph)
-    if in_list { buf.add_str("</ul>\n") }
-    if in_code_block { buf.add_str("</code></pre>\n") }
+    if in_list { buf.append("</ul>\n") }
+    if in_code_block { buf.append("</code></pre>\n") }
 
-    buf.into_str_unchecked()
+    buf.into()
 }
 
 
 fn flush_paragraph(buf mut Buffer, paragraph Buffer) -> () {
     if paragraph.len() > 0 {
-        let text = paragraph.clone().into_str_unchecked()
+        let text = paragraph.clone().into()
         if text.trim().len > 0 {
-            buf.add_str("<p>")
-            buf.add_str(render_inline(text.trim()))
-            buf.add_str("</p>\n")
+            buf.append("<p>")
+            buf.append(render_inline(text.trim()))
+            buf.append("</p>\n")
         }
     }
 }
@@ -128,7 +128,7 @@ fn flush_paragraph(buf mut Buffer, paragraph Buffer) -> () {
 
 // Inline parsing: **bold**, *italic*, `code`, [text](url)
 fn render_inline(s str) -> str {
-    let mut buf = Buffer.with_capacity(s.len)
+    let mut buf = StringBuilder.with_capacity(s.len)
     let mut i = 0
     while i < s.len {
         let c = match s.char_at(i) { Some(ch) => ch, None => break }
@@ -139,9 +139,9 @@ fn render_inline(s str) -> str {
             let mut end = start
             while end < s.len && s.char_at(end) != Some('`') { end += 1 }
             if end < s.len {
-                buf.add_str("<code>")
-                buf.add_str(escape_html(s.slice(start, end)))
-                buf.add_str("</code>")
+                buf.append("<code>")
+                buf.append(escape_html(s.slice(start, end)))
+                buf.append("</code>")
                 i = end + 1
                 continue
             }
@@ -156,9 +156,9 @@ fn render_inline(s str) -> str {
                 end += 1
             }
             if end + 1 < s.len {
-                buf.add_str("<strong>")
-                buf.add_str(escape_html(s.slice(start, end)))
-                buf.add_str("</strong>")
+                buf.append("<strong>")
+                buf.append(escape_html(s.slice(start, end)))
+                buf.append("</strong>")
                 i = end + 2
                 continue
             }
@@ -170,9 +170,9 @@ fn render_inline(s str) -> str {
             let mut end = start
             while end < s.len && s.char_at(end) != Some('*') { end += 1 }
             if end < s.len {
-                buf.add_str("<em>")
-                buf.add_str(escape_html(s.slice(start, end)))
-                buf.add_str("</em>")
+                buf.append("<em>")
+                buf.append(escape_html(s.slice(start, end)))
+                buf.append("</em>")
                 i = end + 1
                 continue
             }
@@ -189,11 +189,11 @@ fn render_inline(s str) -> str {
                             Some(close_paren) => {
                                 let text = s.slice(i + 1, close_bracket)
                                 let url = s.slice(close_bracket + 2, close_paren)
-                                buf.add_str("<a href=\"")
-                                buf.add_str(escape_html(url))
-                                buf.add_str("\">")
-                                buf.add_str(escape_html(text))
-                                buf.add_str("</a>")
+                                buf.append("<a href=\"")
+                                buf.append(escape_html(url))
+                                buf.append("\">")
+                                buf.append(escape_html(text))
+                                buf.append("</a>")
                                 i = close_paren + 1
                                 continue
                             }
@@ -206,10 +206,10 @@ fn render_inline(s str) -> str {
         }
 
         // Литерал
-        buf.add_char(c)
+        buf.append(c)
         i += 1
     }
-    buf.into_str_unchecked()
+    buf.into()
 }
 
 
@@ -224,17 +224,17 @@ fn find_in(s str, target char, start int) -> Option[int] {
 
 
 fn escape_html(s str) -> str {
-    let mut buf = Buffer.with_capacity(s.len)
+    let mut buf = StringBuilder.with_capacity(s.len)
     for c in s.chars() {
         match c {
-            '<' => buf.add_str("&lt;")
-            '>' => buf.add_str("&gt;")
-            '&' => buf.add_str("&amp;")
-            '"' => buf.add_str("&quot;")
-            _   => buf.add_char(c)
+            '<' => buf.append("&lt;")
+            '>' => buf.append("&gt;")
+            '&' => buf.append("&amp;")
+            '"' => buf.append("&quot;")
+            _   => buf.append(c)
         }
     }
-    buf.into_str_unchecked()
+    buf.into()
 }
 
 
