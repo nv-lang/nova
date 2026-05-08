@@ -1,0 +1,74 @@
+// as_cast.nv — D54 `as`-cast в codegen.
+//
+// План 05: `as` теперь эмитит явный C-cast, а не no-op. Тесты
+// проверяют:
+//   - narrowing (int → byte / int → i32) — wraparound
+//   - identity (byte → int / int → f64)
+//   - truncate (f64 → int)
+//   - newtype ↔ underlying — no-op в C, корректный тип в Nova
+
+module nova_tests.syntax.as_cast
+
+
+// Newtype для последнего теста.
+type CastUserId alias int
+
+
+test "as byte: narrowing с wraparound" {
+    let a int = 1111
+    let b = a as byte
+    // 1111 mod 256 = 87
+    assert(b as int == 87)
+}
+
+
+test "as byte: chain с bitwise (mask + cast)" {
+    let n int = 0xFFFF
+    let lo = (n & 0xFF) as byte
+    assert(lo as int == 0xFF)
+}
+
+
+test "as i32 from int: wraparound старших бит" {
+    let big int = 0x100000001
+    let small = big as i32
+    // младшие 32 бита = 1
+    assert(small as int == 1)
+}
+
+
+test "as f64 from int: identity" {
+    let n int = 42
+    let f = n as f64
+    assert(f == 42.0)
+}
+
+
+test "as int from f64: truncate (не round)" {
+    let f f64 = 3.7
+    let n = f as int
+    assert(n == 3)
+}
+
+
+test "newtype-alias as underlying: identity" {
+    let id CastUserId = 42 as CastUserId
+    let n int = id as int
+    assert(n == 42)
+}
+
+
+test "as byte: zero-byte preserved" {
+    let z int = 256
+    let b = z as byte
+    // 256 mod 256 = 0
+    assert(b as int == 0)
+}
+
+
+test "as byte: negative wraps to 0..255" {
+    let neg int = -1
+    let b = neg as byte
+    // -1 wraps to 255 (0xFF) under unsigned semantics.
+    assert(b as int == 255)
+}

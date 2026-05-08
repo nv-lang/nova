@@ -3397,9 +3397,16 @@ impl CEmitter {
                 }
             }
 
-            ExprKind::As(inner, _ty) => {
-                // Type cast — emit without cast for now (types are compatible in C)
-                self.emit_expr(inner)
+            ExprKind::As(inner, ty) => {
+                // D54: `expr as T` эмитит явный C-cast `((c_ty)(expr))`.
+                // - numeric narrowing → wraparound (C-style truncate младших битов)
+                // - int → f64 / f64 → int → C handles
+                // - newtype ↔ underlying → idempotent (одинаковое C-представление)
+                // План 05.
+                let c_ty = self.type_ref_to_c(ty)
+                    .map_err(|e| format!("as-cast type error: {}", e))?;
+                let v = self.emit_expr(inner)?;
+                Ok(format!("(({})({}))", c_ty, v))
             }
 
             ExprKind::Is(inner, ty) => {
@@ -6416,6 +6423,12 @@ impl CEmitter {
                 "nova_int".into()
             }
             ExprKind::Is(_, _) => "nova_bool".into(),
+            ExprKind::As(_, ty) => {
+                // D54: тип `expr as T` — это T, не type-of(expr).
+                // Без этого `let b = a as byte` infer'ил бы тип b как nova_int
+                // (тип a) вместо nova_byte. План 05.
+                self.type_ref_to_c(ty).unwrap_or_else(|_| "nova_int".into())
+            }
             ExprKind::For { .. } => "nova_unit".into(),
             ExprKind::ParallelFor { body, .. } => {
                 // D71: array-mode when trailing exists, unit otherwise.
