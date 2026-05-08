@@ -68,10 +68,8 @@ export fn Diff.compute(a []str, b []str) -> []DiffOp {
 
     // Reverse
     let mut ops []DiffOp = []
-    let mut k = ops_rev.len - 1
-    while k >= 0 {
+    for k in (0..ops_rev.len).reverse() {
         ops.push(ops_rev[k])
-        k -= 1
     }
     ops
 }

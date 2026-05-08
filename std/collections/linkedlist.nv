@@ -37,10 +37,8 @@ export fn LinkedList[T].new() => Empty
 // Из массива — fold справа налево.
 export fn LinkedList[T].from_array(xs []T) -> Self {
     let mut acc = Empty
-    let mut i = xs.len - 1
-    while i >= 0 {
+    for i in (0..xs.len).reverse() {
         acc = Cons(xs[i], acc)
-        i -= 1
     }
     acc
 }

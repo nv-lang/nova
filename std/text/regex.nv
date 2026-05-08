@@ -373,10 +373,8 @@ fn Compiler mut @compile_node(node RegexNode, out_state int) -> int {
         NConcat(items) => {
             // Compile right-to-left так чтобы каждое item вело в start следующего
             let mut current = out_state
-            let mut i = items.len - 1
-            while i >= 0 {
+            for i in (0..items.len).reverse() {
                 current = @compile_node(items[i], current)
-                i -= 1
             }
             current
         }
@@ -386,11 +384,9 @@ fn Compiler mut @compile_node(node RegexNode, out_state int) -> int {
             if alts.len == 1 { return @compile_node(alts[0], out_state) }
             // Compile все ветви, объединяем через Split
             let mut start = @compile_node(alts[alts.len - 1], out_state)
-            let mut i = alts.len - 2
-            while i >= 0 {
+            for i in (0..alts.len - 1).reverse() {
                 let branch = @compile_node(alts[i], out_state)
                 start = @add(SSplit { out1: branch, out2: start })
-                i -= 1
             }
             start
         }
