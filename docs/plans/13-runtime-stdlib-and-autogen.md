@@ -22,8 +22,10 @@ Acceptance — добавить новый method тремя правками (r
   файлах (cosmetic fix, делается первым, ~30мин).
 - `StringBuilder mut @append` возвращает `Self` (chaining).
 - Все `WriteBuffer mut @write_*` возвращают `Self` (chaining).
-- StringBuilder получает оператор `+` как алиас `@append` (str + char).
-- `str + str` явно через `@concat` в registry (не invisible intrinsic).
+- StringBuilder получает оператор `+` как `@plus(s str)` / `@plus(c char)`
+  — alias на `@append` (mutates left, returns Self).
+- str получает оператор `+` как `@plus(other str) -> str` —
+  alias на `@concat` (явно в registry, не invisible intrinsic).
 - `str @char_len` → `@len` (D26 spec говорит просто `len`).
 - `str @chars() -> []int` → `-> []char` (char first-class).
 - ReadBuffer получает `@read_char` / `@read_str(n)` + Result-формы;
@@ -545,6 +547,24 @@ RuntimeFn { module: "std.runtime.string_builder",
 выявились неудачные сигнатуры/имена и недостатки форматирования.
 Ф.9 — прицельные правки реестра + emitter'а.
 
+### Current state vs target (sanity-check 2026-05-08)
+
+Подтверждённый ревью список расхождений в текущих `std/runtime/*.nv`
+которые Ф.9 должна исправить:
+
+| Файл | Сейчас | Должно быть после Ф.9 |
+|---|---|---|
+| `string_builder.nv` | `mut @append(s str) -> ()` | `mut @append(s str) -> Self` |
+| `string_builder.nv` | (нет `@plus`) | `mut @plus(s str) -> Self`, `mut @plus(c char) -> Self` (alias на `@append`) |
+| `write_buffer.nv` | `mut @write_byte(v byte) -> ()` | `mut @write_byte(v byte) -> Self` (и все 24 `@write_*`) |
+| `string.nv` | `@char_len() -> int` | `@len() -> int` |
+| `string.nv` | (нет `@plus`) | `@plus(other str) -> str` (alias на `@concat`) |
+| Все .nv | декларации вплотную | пустая строка между группами `// doc + external fn` (Ф.9.0) |
+
+Эти расхождения — **доказательство** что Ф.9 ещё не выполнялась
+(только Ф.1-Ф.3 + Ф.8 closed). Каждая sub-фаза Ф.9.1-Ф.9.5 закрывает
+одну строку таблицы выше; Ф.9.0 закрывает строку «формат».
+
 ### Что меняется
 
 #### 1. Mutating-методы возвращают `Self` (для chaining)
@@ -589,8 +609,8 @@ wb.write_u32_be(magic).write_u16_be(version).write_bytes(payload)
 **Добавить в registry** для StringBuilder:
 ```nova
 // `sb + s` — синоним sb.append(s). Mutates sb, возвращает sb.
-fn StringBuilder mut @op_add(s str)  -> Self
-fn StringBuilder mut @op_add(c char) -> Self
+fn StringBuilder mut @plus(s str)  -> Self
+fn StringBuilder mut @plus(c char) -> Self
 ```
 
 Это **алиас** — codegen для оператора `+` на StringBuilder receiver
@@ -845,10 +865,10 @@ fix, проверяется детерминизмом regen + manual eyeball'о
 5. Прогнать тесты.
 
 **Ф.9.2 — `+` алиас для StringBuilder + str (~1ч)**
-1. В registry добавить `@op_add` записи для StringBuilder и str.
+1. В registry добавить `@plus` записи для StringBuilder и str.
 2. В codegen — для оператора `+` lookup в registry по
-   `(receiver, "op_add")` (или по special method name).
-3. Если `op_add` не найден — fallback на существующие intrinsics
+   `(receiver, "plus")` (или по special method name).
+3. Если `plus` не найден — fallback на существующие intrinsics
    (для `int + int`, etc.).
 4. Regen.
 
@@ -926,7 +946,7 @@ fix, проверяется детерминизмом regen + manual eyeball'о
    у lhs нет `let mut sb = ...` — type-checker должен принять, но
    возможны edge cases.
 2. **`+` ambiguity.** Когда `sb + s` — какой из двух registry entry
-   выбрать (`StringBuilder.@op_add(str)` vs `StringBuilder.@op_add(char)`)?
+   выбрать (`StringBuilder.@plus(str)` vs `StringBuilder.@plus(char)`)?
    Параметр-type mangling (Plan 11 Ф.3). Без него — collision,
    нужно single overload или явное разделение в codegen.
 3. **`char_len` rename ломает existing user-код.** Сейчас в std/
@@ -939,5 +959,5 @@ fix, проверяется детерминизмом regen + manual eyeball'о
 
 ### Зависимости Ф.9
 
-- ✅ Ф.8 (per-type декомпозиция; иначе не куда добавлять `op_add`).
-- ✅ Plan 11 Ф.3 (parameter-type mangling) для overloaded `op_add(str)`/`op_add(char)`.
+- ✅ Ф.8 (per-type декомпозиция; иначе не куда добавлять `plus`).
+- ✅ Plan 11 Ф.3 (parameter-type mangling) для overloaded `plus(str)`/`plus(char)`.
