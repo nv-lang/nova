@@ -1,0 +1,474 @@
+# План 11: Method values + overload resolution
+
+**Статус:** активный, не начат.
+**Дата создания:** 2026-05-08.
+**Зависимости:**
+- [D35](../../spec/decisions/03-syntax.md#d35) — методы через `@`/`.`.
+- [D22](../../spec/decisions/03-syntax.md#d22) — функции/лямбды.
+- [D20](../../spec/decisions/03-syntax.md#d20) — function type syntax.
+- [D46](../../spec/decisions/03-syntax.md#d46) — operator overloading
+  (specific case).
+- [D73](../../spec/decisions/08-runtime.md#d73) — `From`/`Into`
+  multi-defines (specific case).
+- [Q-overloading](../../spec/open-questions.md#q-overloading) —
+  закрывается частично.
+
+---
+
+## Проблема
+
+**Две связанные spec-feature не реализованы в bootstrap-codegen:**
+
+### 1. Method values (как first-class values)
+
+Spec ([syntax.md:762-770](../../spec/syntax.md), D35) описывает:
+
+```nova
+acc.balance()              // вызов
+acc.balance                // bound method value, тип fn() -> money
+Account.@balance           // unbound, тип fn(Account) -> money
+Account.new                // static, тип fn(str) -> Account
+```
+
+**Реальность:** `acc.balance` без скобок в bootstrap-codegen
+**не работает** — нет специальной обработки для «метод как value».
+Программист может только **вызвать** метод, не сохранить.
+
+```nova
+let f = acc.balance        // ❌ скорее всего compile error или
+                            //    некорректный codegen
+let m = nums.map(double)   // ❌ если double это метод/named fn,
+                            //    не работает как value
+```
+
+### 2. Overload по типу аргумента
+
+[Q-overloading](../../spec/open-questions.md#q-overloading) описывает
+текущее состояние:
+
+| Ось перегрузки | Bootstrap | Прецеденты |
+|---|---|---|
+| **По receiver-типу** (`fn int @m()` vs `fn str @m()`) | ✅ Работает | Rust impl |
+| **По типу результата** (D73/D77) | ✅ Работает | Haskell |
+| **По типу аргумента** (`fn T @m(s str)` vs `fn T @m(b []byte)`) | ❌ Last-wins | Java/Swift |
+| **По arity** (разное число аргументов) | ❌ Last-wins | C# |
+
+Причина: `method_receivers: HashMap<name, (recv_ty, is_instance)>`
+имеет ключ **только из имени метода**. Re-define переписывает.
+
+Это блокирует:
+
+```nova
+fn Buffer mut @write(s str) -> () => ...
+fn Buffer mut @write(b []byte) -> () => ...   // ← перезаписывает первое в bootstrap
+
+let buf = Buffer.new()
+buf.write("hello")           // ✓ или ✗ — зависит от порядка
+buf.write([0xDE, 0xAD])      // ✗ если первое было write(str)
+```
+
+D73 имеет специальное исключение — `T.from(V1)` и `T.from(V2)`
+**различаются** по arg-type через специальный dispatch. Но **только
+для `from`/`into`/`try_from`/`try_into`** (D73 4-way auto-derive).
+Для произвольных методов — не работает.
+
+### Связанность задач
+
+Method values и overload — **связаны** потому что:
+
+```nova
+type T {}
+fn T @m(s str) -> int => ...
+fn T @m(b []byte) -> int => ...
+
+let f = t.@m            // ← КАКОЙ метод? str-версия или []byte?
+```
+
+Если **только один** метод с именем `m` — `t.@m` это однозначное
+method value. Если **два** перегруженных — нужен **disambiguation**:
+
+```nova
+let f1 = t.@m as fn(str) -> int        // явная aннотация
+let f2 = t.@m as fn([]byte) -> int     // другая
+```
+
+Поэтому method values **должны** учитывать overload-resolution. Один
+план покрывает обе темы.
+
+---
+
+## Цель
+
+После плана 11:
+
+- ✅ `acc.balance` (без скобок) работает как bound method value,
+  тип `fn() -> money`.
+- ✅ `Account.@balance` работает как unbound method value,
+  тип `fn(Account) -> money`.
+- ✅ `Account.new` работает как static method value,
+  тип `fn(str) -> Account`.
+- ✅ Overload по типу аргумента: `Buffer @write(str)` vs
+  `Buffer @write([]byte)` различаются на call-site по типу
+  аргумента.
+- ✅ Overload по arity: `Logger @log(msg)` vs `Logger @log(level, msg)`.
+- ✅ Disambiguation через type annotation: `let f = t.@m as fn(str) -> int`.
+- ✅ Method values и overload работают совместно.
+
+---
+
+## Не цель
+
+- **Generic-bound based dispatch** (`fn @m[T Encodable](v T)`).
+  Это план для после реализации generic bounds enforcement
+  (план 08 Ф.6).
+- **Variance / subtyping** в overload-resolution. Nova не имеет
+  subtyping (D1 — no inheritance), это упрощает.
+- **Implicit conversions** при overload-resolution (как в C++).
+  Мы не применяем `int → f64` чтобы matching'нуть `f(f64)` вместо
+  `f(int)`. Strict matching типов.
+- **Полное Q-overloading закрытие.** Q описывает 4 варианта (1 ad-hoc,
+  2 D73-style, 3 разные имена, 4 protocol-based). План 11 закрывает
+  только **вариант 1** (ad-hoc). Вариант 4 (protocol-based) — будущее.
+
+---
+
+## Что делаем
+
+### Ф.1 — Расширить method registry в codegen
+
+В `compiler-codegen/src/codegen/emit_c.rs`:
+
+```rust
+// Старое:
+method_receivers: HashMap<String, (String, bool)>;
+// key = method_name, value = (receiver_type, is_instance)
+// → last-wins при overload
+
+// Новое:
+method_receivers: HashMap<String, Vec<MethodSig>>;
+struct MethodSig {
+    receiver_type: String,
+    is_instance: bool,
+    param_types: Vec<String>,
+    return_type: String,
+    is_mut: bool,
+    effects: Vec<String>,
+}
+```
+
+При regis'тре нового метода — добавляем в `Vec`, не replace'им.
+
+### Ф.2 — Overload resolution на call-site
+
+При `obj.method(args)` или `Type.method(args)` codegen:
+
+1. Найти все signatures для `method` в registry.
+2. Filter по receiver type (matches `obj`'s type).
+3. Filter по arity (matches `args.len()`).
+4. Filter по argument types (strict match с `infer_expr_c_type(arg)` для каждого).
+5. Если **ровно один** matches — эмитить вызов.
+6. Если **>1** matches — **ambiguity error** с suggestion'ом disambiguate
+   через `as fn(...)` annotation.
+7. Если **0** matches — error «no matching overload, available: <list>».
+
+```rust
+fn resolve_overload(
+    method_name: &str,
+    receiver_ty: &str,
+    arg_types: &[String],
+) -> Result<&MethodSig, ResolveError> {
+    let candidates: Vec<&MethodSig> = self.method_receivers
+        .get(method_name)
+        .into_iter()
+        .flatten()
+        .filter(|sig| sig.receiver_type == receiver_ty)
+        .filter(|sig| sig.param_types.len() == arg_types.len())
+        .filter(|sig| sig.param_types.iter().zip(arg_types).all(|(a, b)| a == b))
+        .collect();
+
+    match candidates.len() {
+        0 => Err(no_match(method_name, receiver_ty, arg_types, available)),
+        1 => Ok(candidates[0]),
+        _ => Err(ambiguous(method_name, candidates)),
+    }
+}
+```
+
+### Ф.3 — C-side mangling для перегруженных методов
+
+Сейчас codegen эмитит `Nova_T_method_name(...)`. С overload —
+несколько функций с одним именем не уживутся в C. Нужен **name
+mangling** по сигнатуре:
+
+```c
+// Nova:
+//   fn Buffer mut @write(s str) -> ()
+//   fn Buffer mut @write(b []byte) -> ()
+
+// C output:
+void Nova_Buffer_method_write_str(Nova_Buffer* self, nova_str s);
+void Nova_Buffer_method_write_NovaArray_nova_byte(Nova_Buffer* self, NovaArray_nova_byte* b);
+```
+
+Mangling: `<original>_<param_type_1>_<param_type_2>_...`. Для unique
+signatures — unique C names.
+
+При вызове на call-site — codegen знает выбранный `MethodSig`,
+эмитит mangled name.
+
+### Ф.4 — Method values как first-class
+
+Когда видим `obj.method` без скобок (или `Type.@method`,
+`Type.method`):
+
+1. Определить kind:
+   - `obj.method` → **bound method value**.
+   - `Type.@method` → **unbound** (явный `@` после точки).
+   - `Type.method` → **static method value**.
+
+2. Получить overloads (как Ф.2).
+
+3. Если **один** match (по контексту — typed binding или передача
+   в параметр известного типа) — эмитить function pointer.
+
+4. Если **несколько** — ambiguity, требовать `as fn(...)` annotation.
+
+Эмиссия в C (для bound):
+
+```c
+// Nova: let f = acc.balance
+// C output:
+typedef struct {
+    nova_money (*fn_ptr)(Account*);
+    Account* self;
+} BoundMethod_Account_balance;
+
+BoundMethod_Account_balance f = {
+    .fn_ptr = Nova_Account_method_balance,
+    .self = acc
+};
+
+// Вызов f():
+nova_money m = f.fn_ptr(f.self);
+```
+
+Это **closure-as-struct** — pointer + captured self. Стандартный pattern для closures в C.
+
+Для **unbound** и **static** — просто function pointer:
+
+```c
+// let g = Account.@balance
+nova_money (*g)(Account*) = Nova_Account_method_balance;
+
+// let h = Account.new
+Account* (*h)(nova_str) = Nova_Account_static_new;
+```
+
+### Ф.5 — Type annotation для disambiguation
+
+```nova
+let f = t.@m                                  // ambiguous (два overload'а)
+let f = t.@m as fn(str) -> int                // disambiguated
+let f fn(str) -> int = t.@m                   // через let-annotation, тоже работает
+```
+
+Codegen использует **target type** из контекста — let-annotation,
+type cast, parameter type — чтобы выбрать конкретный overload.
+
+### Ф.6 — Update spec
+
+#### Ф.6.1 — D35 расширение
+
+Добавить раздел «Перегрузка методов»:
+
+```markdown
+### Overload по типу аргумента и arity
+
+Несколько определений одного метода на одном receiver-типе различаются
+по сигнатуре (тип параметров и/или arity):
+
+\`\`\`nova
+fn Buffer mut @write(s str) -> ()
+fn Buffer mut @write(b []byte) -> ()
+fn Buffer mut @write(c char) -> ()
+\`\`\`
+
+Resolution на call-site по статическим типам аргументов:
+
+\`\`\`nova
+buf.write("hello")        // → @write(str)
+buf.write([0xDE, 0xAD])   // → @write([]byte)
+buf.write('A')             // → @write(char)
+\`\`\`
+
+При ambiguity — compile error с suggestion'ом disambiguate через
+`as fn(...)` annotation.
+
+Strict matching типов: no implicit conversions. `buf.write(42)` где
+`42 int` — error если нет `@write(int)`. Программист пишет
+`buf.write(42 as char)` или `buf.write(int.to_str(42))`.
+```
+
+#### Ф.6.2 — Q-overloading закрытие
+
+Помечен ✅ CLOSED by D35 extension (Variant 1 ad-hoc overload по
+типу аргумента). Variant 4 (protocol-based) остаётся отдельным
+будущим Q.
+
+#### Ф.6.3 — D22 / D20 — method values
+
+D22 уже описывает (строки 762-770 syntax.md). Добавить cross-link
+на D35-extension.
+
+### Ф.7 — Тесты
+
+`nova_tests/syntax/method_values.nv`:
+- `acc.balance` (bound) — сохранение, повторный вызов.
+- `Account.@balance` (unbound) — вызов с явным self.
+- `Account.new` (static) — вызов как функция.
+- Method value передан в `nums.map(int.@to_str)`.
+- Bound method переживает scope-exit (если runtime поддерживает).
+
+`nova_tests/syntax/overload.nv`:
+- `@write(str)` vs `@write([]byte)` — call-site dispatch.
+- Arity overload: `@log(msg)` vs `@log(level, msg)`.
+- Ambiguity error при `t.@m` без context'а.
+- Disambiguation через `as fn(...) -> ...`.
+- Strict matching: `@m(int)` не подбирается для `m(42 as f64)`.
+
+### Ф.8 — Sweep std
+
+Проверить кандидаты на использование overload вместо `_str`/`_bytes`
+суффиксов:
+- `std/encoding/base64.nv` — может быть `encode(str)` / `encode([]byte)`.
+- `std/crypto/*.nv` — `update(str)` vs `update([]byte)`.
+
+Sweep — **отдельный коммит после плана 11**, не блокер. Существующие
+имена с суффиксами продолжат работать.
+
+---
+
+## Acceptance criteria
+
+- ✅ `acc.balance` без скобок — bound method value, тип `fn() -> money`.
+- ✅ Method value передаётся в higher-order функцию (`map`, `filter`).
+- ✅ `Buffer @write(str)` и `Buffer @write([]byte)` сосуществуют,
+  call-site dispatch работает.
+- ✅ Arity overload: `@log(msg)` vs `@log(level, msg)`.
+- ✅ Ambiguity error с suggestion'ом disambiguate.
+- ✅ Strict argument-type matching, no implicit conversions.
+- ✅ Все существующие тесты PASS (нет регрессий — `method_receivers`
+  переход на `Vec<MethodSig>` не должен ломать single-overload код).
+- ✅ Spec обновлён: D35 раздел «Перегрузка методов»,
+  Q-overloading ✅ CLOSED.
+
+---
+
+## Trade-offs / упрощения
+
+### No implicit conversions в overload resolution
+
+C++ применяет implicit conversions (`int → double`) при resolve.
+Это вводит **subtle behavior** — `f(42)` может выбрать `f(double)`
+вместо `f(int)` если программист добавит overload позже.
+
+Nova **не делает этого**. Strict argument-type match. Если программист
+хочет конверсию — пишет `f(42 as f64)`. AI-friendly: один путь, нет
+скрытых dispatch правил.
+
+### Bound method value через struct (а не closure)
+
+Bound method = pointer + self. Можно реализовать через **closure**
+(C-функция с captured environment), но это потребует heap-allocated
+closure structs и call-site indirection через interface. **Дешевле:**
+struct из 2 полей, call-site вызывает `f.fn_ptr(f.self)` напрямую.
+
+Trade-off: bound method не можно передать в interface ожидающий
+plain `fn() -> T`. Требует **closure adapter** — отдельная задача
+если понадобится.
+
+### Mangling по полным C-type именам
+
+Альтернатива — короткие hashes (`Nova_Buffer_method_write_a3f2`).
+Plus читаемость в C-output. Минус — длинные имена для array/generic
+типов (`NovaArray_NovaTuple2_nova_int_nova_str`). Решаем в пользу
+читаемости.
+
+### Не делаем generic-bound dispatch (Q-overloading вариант 4)
+
+Protocol-based dispatch (`fn @m[T Encodable](v T)`) — это **другой
+механизм**. Требует:
+- Generic-bound enforcement в type-checker (план 08 Ф.6).
+- Protocol method-table generation в codegen.
+
+Это **отдельный план 12** (или включить в план 08 расширение).
+План 11 — только ad-hoc overload.
+
+---
+
+## План работ
+
+1. **Ф.1** — `method_receivers` переход на `Vec<MethodSig>` (~80 строк Rust).
+2. **Ф.2** — `resolve_overload` функция (~100 строк Rust).
+3. **Ф.3** — name mangling для overloaded methods (~50 строк).
+4. **Ф.4** — method values как first-class (bound/unbound/static)
+   (~150 строк codegen, +runtime struct definitions).
+5. **Ф.5** — type annotation для disambiguation (~30 строк, integrate
+   с existing type inference).
+6. **Ф.6** — spec D35 раздел + Q-overloading закрыть (~100 строк
+   markdown).
+7. **Ф.7** — тесты (~150 строк .nv).
+8. **Ф.8** — sweep std (отдельный коммит).
+
+---
+
+## Оценка
+
+**~660 строк изменений** (Rust + markdown + тесты).
+**1.5-2 дня** компилятор-агента.
+
+Самая сложная часть — **Ф.4 method values** (bound = pointer + self
+struct, lifetimes для self в C). Может потребовать GC integration
+(self должен outlive bound method value).
+
+---
+
+## Связь с другими планами
+
+- [Plan 06](06-iter-protocol-codegen.md) — `Iter[T]` protocol;
+  не зависит, можно делать параллельно. Iterator methods (например
+  `m.values()`) — в общем path с method values.
+- [Plan 08](08-from-into-conversions.md) — `From`/`Into` 4-way
+  auto-derive. Это **специальный случай overload** (по результирующему
+  типу через D77 dispatch). План 11 расширяет на любые методы.
+- [Plan 12 (будущий)](12-protocol-dispatch.md) — protocol-based
+  dispatch (Q-overloading вариант 4). После Ф.6 плана 08
+  (generic-bound enforcement) + плана 11 (ad-hoc overload).
+
+---
+
+## Что разблокирует
+
+- **Method values как first-class** — необходимо для функционального
+  стиля (`nums.map(int.@to_str)`, callback'и, higher-order).
+- **Overload по типу аргумента** — `Buffer @write(str/[]byte/char)`
+  без `_str`/`_bytes` суффиксов. Чище API.
+- **Closure-style usage** методов — `let counter = obj.next` сохраняет
+  bound method для повторных вызовов.
+- **AI-first method-as-value** — LLM пишет естественный код без
+  workaround'ов.
+
+---
+
+## Ссылки
+
+- [spec/syntax.md строки 762-770](../../spec/syntax.md) — описание
+  bound/unbound/static method values.
+- [spec/decisions/03-syntax.md → D35](../../spec/decisions/03-syntax.md#d35)
+  — методы, расширяется в Ф.6.
+- [spec/decisions/03-syntax.md → D46](../../spec/decisions/03-syntax.md#d46)
+  — operator overloading (specific case, остаётся как есть).
+- [spec/open-questions.md → Q-overloading](../../spec/open-questions.md#q-overloading)
+  — закрывается этим планом частично (Variant 1).
+- `compiler-codegen/src/codegen/emit_c.rs` — `method_receivers`,
+  `into_targets`, метод-resolution paths.
