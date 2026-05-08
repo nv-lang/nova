@@ -158,7 +158,7 @@ fn Parser mut @parse_braced_quantifier(atom RegexNode) Fail[CompileError] -> Reg
     let start = @pos
     @advance()                           // {
     let mut n_str = Buffer.new()
-    while true {
+    loop {
         match @peek() {
             Some(c) if c >= '0' && c <= '9' => { n_str.add_char(c); @advance() }
             _ => break
@@ -174,7 +174,7 @@ fn Parser mut @parse_braced_quantifier(atom RegexNode) Fail[CompileError] -> Reg
     let max = if @peek() == Some(',') {
         @advance()
         let mut m_str = Buffer.new()
-        while true {
+        loop {
             match @peek() {
                 Some(c) if c >= '0' && c <= '9' => { m_str.add_char(c); @advance() }
                 _ => break

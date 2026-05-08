@@ -289,7 +289,7 @@ fn TomlParser mut @parse_number() Fail[ParseTomlError] -> TomlValue {
     if @peek() == Some('-') || @peek() == Some('+') { @advance() }
     let mut has_dot = false
     let mut has_exp = false
-    while true {
+    loop {
         match @peek() {
             Some(c) if c >= '0' && c <= '9' => { @advance() }
             Some('.') if !has_dot && !has_exp => { has_dot = true; @advance() }

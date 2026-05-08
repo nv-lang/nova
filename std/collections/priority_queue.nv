@@ -82,7 +82,7 @@ fn PriorityQueue[T] mut @sift_up(idx int) -> () {
 fn PriorityQueue[T] mut @sift_down(idx int) -> () {
     let mut i = idx
     let n = @items.len
-    while true {
+    loop {
         let left = 2 * i + 1
         let right = 2 * i + 2
         let mut smallest = i
