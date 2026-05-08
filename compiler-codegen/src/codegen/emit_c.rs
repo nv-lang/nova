@@ -12,6 +12,11 @@ pub struct MethodSig {
     pub return_c_type: String,
     pub is_instance: bool,
     pub is_external: bool,
+    /// Plan 11 Ф.9.2: D39 anonymous embed `use _ Type` auto-генерирует
+    /// прокси методы. Override-precedence: Own (declared прямо на receiver'е)
+    /// побеждает Delegated (auto-proxy). Резолвер фильтрует Delegated если
+    /// есть совпадающий Own.
+    pub is_delegated: bool,
     /// Mangled C name. Для single-overload — `Nova_T_method_m` /
     /// `Nova_T_static_m`. Для overloaded — с `_<param_type1>_<...>` суффиксом.
     pub c_name: String,
@@ -72,6 +77,10 @@ pub struct CEmitter {
     /// (Ф.2). Single-key `method_receivers` остаётся для backward compat —
     /// single-overload пути ссылаются на него.
     method_overloads: HashMap<(String, String), Vec<MethodSig>>,
+    /// D39 / Plan 11 Ф.9: embed-поля per record-type.
+    /// Key = wrapper type name; value = list of (field_name, embedded_type_name,
+    /// is_anonymous). Используется для auto-proxy generation после AST-walk fn-items.
+    embed_fields: HashMap<String, Vec<(String, String, bool)>>,
     /// Plan 06 Ф.3: для каждого типа Coll с методом `mut @iter() -> IterT`
     /// запоминаем имя IterT. Используется в for-in: при `for x in coll`
     /// (где `coll: Coll`) вставляем implicit `.iter()` и emit'им loop
@@ -172,6 +181,7 @@ impl CEmitter {
             effect_schemas: HashMap::new(),
             method_receivers: HashMap::new(),
             method_overloads: HashMap::new(),
+            embed_fields: HashMap::new(),
             all_methods: HashSet::new(),
             iter_returns: HashMap::new(),
             from_targets: HashMap::new(),
@@ -468,6 +478,42 @@ impl CEmitter {
             }
         }
 
+        // 1b2. D39 / Plan 11 Ф.9: collect embed-fields per record-type.
+        // Используется на 1d для генерации auto-proxy methods.
+        for item in &module.items {
+            if let Item::Type(t) = item {
+                if let TypeDeclKind::Record(fields) = &t.kind {
+                    let mut embeds: Vec<(String, String, bool)> = Vec::new();
+                    // Plan 11 Ф.9.4: multi-anonymous detection. Подсчитать
+                    // count anonymous embeds per embedded-type — если ≥2
+                    // одного типа → compile error (нет alias'а для disambig).
+                    let mut anon_counts: HashMap<String, usize> = HashMap::new();
+                    for f in fields {
+                        if !f.is_embed { continue; }
+                        let embedded_ty_name = match &f.ty {
+                            TypeRef::Named { path, .. } => path.join("_"),
+                            _ => continue,
+                        };
+                        if f.embed_anonymous {
+                            *anon_counts.entry(embedded_ty_name.clone()).or_insert(0) += 1;
+                        }
+                        embeds.push((f.name.clone(), embedded_ty_name, f.embed_anonymous));
+                    }
+                    for (ty_name, count) in &anon_counts {
+                        if *count > 1 {
+                            return Err(format!(
+                                "type `{}`: multiple anonymous embeds of `{}`; \
+                                 use named alias `use <name> {}` to disambiguate",
+                                t.name, ty_name, ty_name));
+                        }
+                    }
+                    if !embeds.is_empty() {
+                        self.embed_fields.insert(t.name.clone(), embeds);
+                    }
+                }
+            }
+        }
+
         // 1c. Pre-populate method_receivers so emit_call can route obj.method() correctly
         for item in &module.items {
             if let Item::Fn(f) = item {
@@ -526,6 +572,7 @@ impl CEmitter {
                         return_c_type,
                         is_instance,
                         is_external: f.is_external,
+                        is_delegated: false,    // own declaration
                         c_name,
                     };
                     self.method_overloads.entry(key).or_default().push(sig);
@@ -587,6 +634,62 @@ impl CEmitter {
             }
         }
 
+        // 1c2. D39 / Plan 11 Ф.9: register auto-proxy delegated methods.
+        // Для каждого record-type с embed-полями: для каждого метода
+        // embedded-типа (instance) добавить Delegated MethodSig в registry
+        // wrapper'а. Override-precedence (Own > Delegated) применяется на
+        // call-site в resolve_overload (Ф.9.3). Multi-anonymous detection
+        // уже сделан в 1b2.
+        let embed_keys: Vec<String> = self.embed_fields.keys().cloned().collect();
+        for wrapper_type in embed_keys {
+            let embeds = self.embed_fields.get(&wrapper_type).cloned().unwrap_or_default();
+            for (field_name, embedded_ty, _is_anon) in &embeds {
+                // Найти все instance-методы embedded-типа.
+                let embedded_methods: Vec<(String, MethodSig)> = self.method_overloads.iter()
+                    .filter(|((t, _), _)| t == embedded_ty)
+                    .flat_map(|((_, m), sigs)| sigs.iter().map(move |s| (m.clone(), s.clone())))
+                    .filter(|(_, s)| s.is_instance && !s.is_delegated)
+                    .collect();
+                for (method_name, base_sig) in embedded_methods {
+                    // Сгенерировать proxy MethodSig.
+                    let key = (wrapper_type.clone(), method_name.clone());
+                    let existing_count = self.method_overloads.get(&key)
+                        .map(|v| v.len()).unwrap_or(0);
+                    let base_c = format!("Nova_{}_method_{}", wrapper_type, method_name);
+                    let proxy_c_name = if existing_count == 0 {
+                        base_c
+                    } else {
+                        let suffix = base_sig.param_c_types.iter()
+                            .map(|t| t.replace('*', "_p")
+                                      .replace(' ', "_")
+                                      .replace('[', "_arr_")
+                                      .replace(']', ""))
+                            .collect::<Vec<_>>()
+                            .join("_");
+                        if suffix.is_empty() { base_c } else { format!("{}__{}", base_c, suffix) }
+                    };
+                    let proxy_sig = MethodSig {
+                        param_c_types: base_sig.param_c_types.clone(),
+                        return_c_type: base_sig.return_c_type.clone(),
+                        is_instance: true,
+                        is_external: false,
+                        is_delegated: true,
+                        c_name: proxy_c_name,
+                    };
+                    self.method_overloads.entry(key).or_default().push(proxy_sig);
+                    // all_methods (для Plan 06 Iter[T] dispatch).
+                    self.all_methods.insert((wrapper_type.clone(), method_name.clone()));
+                    // method_receivers backward compat — single-key, last-wins
+                    // OK поскольку wrapper_type registered как owner of method.
+                    if !self.method_receivers.contains_key(&method_name) {
+                        self.method_receivers.insert(method_name.clone(),
+                            (wrapper_type.clone(), true));
+                    }
+                    let _ = field_name; // используется при emit (ниже)
+                }
+            }
+        }
+
         // 1d. Pre-populate generic_fns/generic_types sets for type-erased call site handling
         for item in &module.items {
             if let Item::Fn(f) = item {
@@ -634,6 +737,9 @@ impl CEmitter {
                 self.emit_fn(f)?;
             }
         }
+
+        // 4b. D39 / Plan 11 Ф.9: emit auto-proxy method bodies for embeds.
+        self.emit_embed_proxies()?;
 
         // 5. Test function definitions
         {
@@ -2430,6 +2536,106 @@ impl CEmitter {
         }
 
         self.effect_schemas.insert(name.to_string(), schema);
+        Ok(())
+    }
+
+    /// D39 / Plan 11 Ф.9: эмитит auto-proxy методы для wrapper-типов с
+    /// embed'ами. Для каждого Delegated MethodSig в `method_overloads`
+    /// генерирует C-функцию которая делегирует на embedded-объекта
+    /// через `nova_self->field`.
+    ///
+    /// Override-precedence: если есть Own MethodSig с тем же ключом и
+    /// param_c_types, Delegated пропускается (skip — собственный метод
+    /// уже эмитен в emit_fn).
+    fn emit_embed_proxies(&mut self) -> Result<(), String> {
+        // Snapshot ключей чтобы избежать borrow-конфликта.
+        let wrapper_types: Vec<String> = self.embed_fields.keys().cloned().collect();
+        for wrapper_type in wrapper_types {
+            let embeds = self.embed_fields.get(&wrapper_type).cloned().unwrap_or_default();
+            // Collect все методы wrapper'а и разделить на Own / Delegated.
+            // Pair (method_name, param_types) → ключ для override-detection.
+            let all_overloads: Vec<((String, String), MethodSig)> = self.method_overloads.iter()
+                .filter(|((t, _), _)| t == &wrapper_type)
+                .flat_map(|(k, sigs)| sigs.iter().map(move |s| (k.clone(), s.clone())))
+                .collect();
+            for ((_, method_name), sig) in &all_overloads {
+                if !sig.is_delegated { continue; }
+                // Plan 11 Ф.9.3: override-precedence. Если есть Own с тем же
+                // method_name и param_c_types — пропустить delegated.
+                let has_own_override = all_overloads.iter().any(|((_, mn), s)|
+                    mn == method_name
+                    && !s.is_delegated
+                    && s.param_c_types == sig.param_c_types);
+                if has_own_override {
+                    // Plan 11 Ф.9.5: lint warning "possible infinite recursion"
+                    // если own-method вызывает себя без явного base-call'а
+                    // (anonymous embed не даёт имени). Emit'им stderr-warning;
+                    // конкретная detection в bootstrap'е minimal (любой own
+                    // override с тем же signature — потенциальный риск).
+                    if embeds.iter().any(|(_, _, anon)| *anon) {
+                        eprintln!(
+                            "warning: type `{}` overrides delegated method `{}({})`; \
+                             anonymous embed has no name for explicit base-call — \
+                             possible infinite recursion",
+                            wrapper_type, method_name,
+                            sig.param_c_types.join(", "));
+                    }
+                    continue;
+                }
+                // Найти подходящий embed: тот в котором этот method есть
+                // как Own (не Delegated).
+                let mut target_field: Option<(String, String)> = None;
+                for (fname, embedded_ty, _) in &embeds {
+                    let found = self.method_overloads.get(&(embedded_ty.clone(), method_name.clone()))
+                        .map(|sigs| sigs.iter().any(|s|
+                            !s.is_delegated && s.param_c_types == sig.param_c_types))
+                        .unwrap_or(false);
+                    if found {
+                        target_field = Some((fname.clone(), embedded_ty.clone()));
+                        break;
+                    }
+                }
+                let (field_name, embedded_ty) = match target_field {
+                    Some(t) => t,
+                    None => continue,    // не нашли base — skip
+                };
+                // Найти base-method's c_name (mangled).
+                let base_c_name = self.method_overloads.get(&(embedded_ty.clone(), method_name.clone()))
+                    .and_then(|sigs| sigs.iter()
+                        .find(|s| !s.is_delegated && s.param_c_types == sig.param_c_types)
+                        .map(|s| s.c_name.clone()));
+                let base_c_name = match base_c_name {
+                    Some(n) => n,
+                    None => continue,
+                };
+                // Build params + arg names.
+                let mut param_decls: Vec<String> = vec![format!("Nova_{}* nova_self", wrapper_type)];
+                let mut arg_names: Vec<String> = Vec::new();
+                for (i, ty) in sig.param_c_types.iter().enumerate() {
+                    param_decls.push(format!("{} arg{}", ty, i));
+                    arg_names.push(format!("arg{}", i));
+                }
+                // Forward decl + body.
+                self.line(&format!("static {} {}({});",
+                    sig.return_c_type, sig.c_name, param_decls.join(", ")));
+                self.line(&format!("static {} {}({}) {{",
+                    sig.return_c_type, sig.c_name, param_decls.join(", ")));
+                self.indent += 1;
+                let field_mangled = Self::mangle_field_name(&field_name);
+                let mut call_args = vec![format!("nova_self->{}", field_mangled)];
+                call_args.extend(arg_names);
+                if sig.return_c_type == "nova_unit" {
+                    self.line(&format!("{}({});", base_c_name, call_args.join(", ")));
+                    self.line("return NOVA_UNIT;");
+                } else {
+                    self.line(&format!("return {}({});",
+                        base_c_name, call_args.join(", ")));
+                }
+                self.indent -= 1;
+                self.line("}");
+                self.line("");
+            }
+        }
         Ok(())
     }
 
@@ -5073,16 +5279,26 @@ impl CEmitter {
                                     arg_types.push(self.infer_expr_c_type(a));
                                     arg_strs.push(self.emit_expr(a)?);
                                 }
-                                let chosen = if candidates.len() == 1 {
-                                    Some(candidates[0].clone())
+                                // Plan 11 Ф.9.3: override-precedence Own > Delegated.
+                                // Strict-match candidates сначала; затем — если
+                                // matches содержит Own, отфильтровать Delegated.
+                                let strict: Vec<MethodSig> = if candidates.len() == 1 {
+                                    candidates.clone()
                                 } else {
                                     candidates.iter()
                                         .filter(|s| s.param_c_types.len() == arg_types.len())
                                         .filter(|s| s.param_c_types.iter().zip(arg_types.iter())
                                             .all(|(w, g)| w == g))
-                                        .next()
                                         .cloned()
+                                        .collect()
                                 };
+                                let pool: Vec<MethodSig> = {
+                                    let owns: Vec<MethodSig> = strict.iter()
+                                        .filter(|s| !s.is_delegated)
+                                        .cloned().collect();
+                                    if !owns.is_empty() { owns } else { strict }
+                                };
+                                let chosen = pool.into_iter().next();
                                 if let Some(sig) = chosen {
                                     if want_instance {
                                         let obj_c = self.emit_expr(obj)?;
@@ -7487,7 +7703,9 @@ impl CEmitter {
                                 .filter(|s| s.is_instance == want_inst)
                                 .collect();
                             if !candidates.is_empty() {
-                                // Single → return its return_c_type.
+                                // Plan 11 Ф.9.3: override-precedence Own > Delegated.
+                                // Single → return its return_c_type (no override
+                                // conflict possible).
                                 if candidates.len() == 1 {
                                     return candidates[0].return_c_type.clone();
                                 }
@@ -7495,12 +7713,18 @@ impl CEmitter {
                                 let arg_types: Vec<String> = args.iter()
                                     .map(|a| self.infer_expr_c_type(a))
                                     .collect();
-                                let chosen = candidates.iter()
+                                let strict: Vec<&MethodSig> = candidates.iter().copied()
                                     .filter(|s| s.param_c_types.len() == arg_types.len())
                                     .filter(|s| s.param_c_types.iter().zip(arg_types.iter())
                                         .all(|(w, g)| w == g))
-                                    .next();
-                                if let Some(sig) = chosen {
+                                    .collect();
+                                let pool: Vec<&MethodSig> = {
+                                    let owns: Vec<&MethodSig> = strict.iter()
+                                        .filter(|s| !s.is_delegated)
+                                        .copied().collect();
+                                    if !owns.is_empty() { owns } else { strict }
+                                };
+                                if let Some(sig) = pool.first() {
                                     return sig.return_c_type.clone();
                                 }
                                 // 0 matches — fallback на старую логику ниже.

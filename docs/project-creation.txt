@@ -1696,3 +1696,67 @@ single-key, не сломав существующее. Все 169 тестов 
 Plan 11 Ф.4 (method values как first-class) — отложен. Требует
 runtime struct BoundMethod + GC integration + adapter для higher-
 order. Отдельная сессия.
+
+
+================================================================================
+2026-05-08 Plan 11 Ф.9: D39 anonymous embed `use _ Type`
+================================================================================
+
+D39 (embed/delegation) ранее не был реализован в bootstrap-парсере —
+keyword `use` пропускался как import. Plan 11 Ф.9 добавляет полную
+реализацию named + anonymous embed.
+
+Что сделано:
+
+1. Ф.9.1 Parser:
+   - parse_record_fields распознаёт `use name Type` (named) и
+     `use _ Type` (anonymous) формы.
+   - Anonymous имя — synthesized `__embed_<TypeName>`.
+
+2. Ф.9.2 AST + MethodSig:
+   - RecordField.is_embed: bool + embed_anonymous: bool.
+   - MethodSig.is_delegated для override-precedence.
+   - embed_fields: HashMap<TypeName, Vec<(field, embedded_type, is_anon)>>.
+
+3. Ф.9 Auto-proxy generation:
+   - Pre-pass: для каждого embed-поля каждого record'а — для каждого
+     Own-метода embedded-типа добавить Delegated MethodSig.
+   - emit_embed_proxies (отдельный pass после fn-emit'ов): эмитит
+     C-функции-делегаторы `Nova_Wrapper_method_X(self) →
+     Nova_Embedded_method_X(self->field)`.
+
+4. Ф.9.3 Override-precedence Own > Delegated:
+   - В emit_call (instance + static) и infer paths: после strict-match
+     arg-types, фильтр pool на Own (Delegated wins только если Own нет).
+
+5. Ф.9.4 Multi-anonymous detection:
+   - Declaration-time error если ≥2 anonymous embeds одного типа в
+     одном record'е (нет alias'а для disambig).
+
+6. Ф.9.5 Lint warning:
+   - При detect Own-override на Delegated в anonymous embed:
+     stderr-warning о невозможности base-call'а.
+
+Тесты:
+- anonymous_embed.nv — 3 теста (named auto-proxy, anonymous auto-proxy,
+  override Own wins). PASS.
+- Полная регрессия 17 файлов: 175/175 PASS.
+
+Spec D39 обновлён: Bootstrap-status секция.
+
+Урок: auto-proxy через separate emit pass + override-precedence в
+shared dispatch path. Delegated регистрируются в общем
+method_overloads; эмиттинг C-кода — отдельный proход после Own
+fn-emit'ов. Resolution унифицирован для Own/Delegated через
+priority-фильтр. Тот же pattern что для overload в Ф.1-Ф.3 — common
+path with priority.
+
+После Ф.9 Plan 11 покрывает:
+- Ф.1-Ф.3 ad-hoc overload (методы)
+- Ф.4.5 Self in expression position
+- Ф.6 spec D35 + Q-overloading partial closure
+- Ф.9 anonymous embed + override-precedence
+- Ф.9.4-9.5 multi-anon detection + recursion lint
+
+Не сделано: Ф.4 (method values first-class), Ф.5 (disambiguation
+`as fn(...)`), Ф.7 (полные тесты как в плане), Ф.8 (sweep std).

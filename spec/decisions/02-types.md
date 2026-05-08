@@ -2008,6 +2008,32 @@ Trade-off anonymous vs named: anonymous теряет `@<name>.method()`
 - **Rust composition** — нет anonymous embed; программист пишет
   field + manual delegation. Nova `use _` экономит boilerplate.
 
+### Bootstrap status (2026-05-08)
+
+Реализовано в bootstrap-codegen ([Plan 11](../../docs/plans/11-method-values-and-overload.md) Ф.9):
+
+- ✅ Parser: `use name Type` (named embed) и `use _ Type` (anonymous).
+  Anonymous имя поля — синтетическое `__embed_<TypeName>`.
+- ✅ AST: `RecordField.is_embed: bool`, `RecordField.embed_anonymous: bool`.
+- ✅ Codegen auto-proxy generation: `embed_fields` registry per record-type;
+  для каждого Own-метода embedded-типа эмитится Delegated MethodSig +
+  C-функция, которая делегирует через `nova_self->field`.
+- ✅ Override-precedence (Own > Delegated) в emit_call и infer paths
+  (Plan 11 Ф.9.3). Strict-match candidates сначала, затем фильтр Own.
+- ✅ Multi-anonymous detection: declaration-time error если ≥2
+  anonymous embeds одного типа в одном record'е (Plan 11 Ф.9.4).
+- ✅ Lint warning `possible infinite recursion`: при detect own-method
+  override на anonymous embed — stderr-warning о невозможности
+  base-call'а (Plan 11 Ф.9.5).
+
+Bootstrap-ограничения:
+
+- C-name mangling по param-types: для overloaded delegated proxy
+  имена с suffix'ом `__<types>`, как для own overload.
+- Generic embed (`use map HashMap[K, V]` в generic wrapper) — работает
+  для конкретных type-параметров; full generic monomorphization —
+  открытый вопрос.
+
 ---
 
 ## D32. Семантика передачи параметров

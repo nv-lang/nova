@@ -606,13 +606,42 @@ impl Parser {
             } else if self.eat(&TokenKind::KwMut).is_some() {
                 mutable = true;
             }
-            let (name, name_span) = self.parse_ident()?;
+            // D39 / Plan 11 Ф.9: `use name Type` (named embed) или
+            // `use _ Type` (anonymous embed).
+            let is_embed = self.eat(&TokenKind::KwUse).is_some();
+            let (name, name_span, anonymous) = if is_embed {
+                // После `use` ожидаем ident (alias name) или `_` для anonymous.
+                let (n, sp) = self.parse_ident()?;
+                if n == "_" {
+                    // Anonymous: имя пока пустое, заполним после parse_type
+                    // синтетическим `__embed_<TypeName>`.
+                    (String::new(), sp, true)
+                } else {
+                    (n, sp, false)
+                }
+            } else {
+                let (n, sp) = self.parse_ident()?;
+                (n, sp, false)
+            };
             let ty = self.parse_type()?;
+            // Synthesize anonymous embed name на основе типа (для уникальности
+            // в record-схеме и доступа). По convention: `__embed_<TypeName>`.
+            let final_name = if anonymous {
+                let type_name = match &ty {
+                    TypeRef::Named { path, .. } => path.join("_"),
+                    _ => "Anon".to_string(),
+                };
+                format!("__embed_{}", type_name)
+            } else {
+                name
+            };
             fields.push(RecordField {
-                name,
+                name: final_name,
                 ty: ty.clone(),
                 readonly,
                 mutable,
+                is_embed,
+                embed_anonymous: anonymous,
                 span: name_span.merge(ty.span()),
             });
             // запятая или newline

@@ -1,0 +1,95 @@
+// anonymous_embed.nv — Plan 11 Ф.9: D39 anonymous embed `use _ Type`.
+//
+// `use name Type` — named embed (доступ через @name.method).
+// `use _ Type`    — anonymous embed (auto-proxy без alias).
+//
+// Override-precedence: Own > Delegated — wrapper-метод побеждает.
+// Multi-anonymous one type → compile error.
+
+module nova_tests.syntax.anonymous_embed
+
+
+// ─── Базовый named embed ───
+
+type Account {
+    bal int
+}
+
+export fn Account.acc_new(b int) -> Self =>
+    Self { bal: b }
+
+export fn Account @balance() -> int =>
+    @bal
+
+
+type AuditedAccount {
+    use account Account
+    audit_log_count int
+}
+
+
+test "named embed: auto-proxy" {
+    let a = Account.acc_new(100)
+    let aa = AuditedAccount { account: a, audit_log_count: 0 }
+    // Auto-proxy: aa.balance() делегирует на aa.account.balance().
+    assert(aa.balance() == 100)
+}
+
+
+// ─── Anonymous embed ───
+
+type Counter {
+    cnt_value int
+}
+
+export fn Counter.cnt_new(v int) -> Self =>
+    Self { cnt_value: v }
+
+export fn Counter @value() -> int =>
+    @cnt_value
+
+
+type LoggingCounter {
+    use _ Counter
+    log_count int
+}
+
+
+test "anonymous embed: auto-proxy без alias" {
+    // Anonymous embed: name field — synthesized как `__embed_Counter`.
+    // Программист обращается через wrapper'а методы напрямую.
+    let inner = Counter.cnt_new(42)
+    let lc = LoggingCounter { __embed_Counter: inner, log_count: 0 }
+    assert(lc.value() == 42)
+}
+
+
+// ─── Override Own > Delegated ───
+
+type Inner {
+    inner_val int
+}
+
+export fn Inner.inner_new(v int) -> Self =>
+    Self { inner_val: v }
+
+export fn Inner @get() -> int =>
+    @inner_val
+
+
+type Wrapper {
+    use inner Inner
+    extra int
+}
+
+// Override: Wrapper.@get побеждает Inner.@get auto-proxy.
+export fn Wrapper @get() -> int =>
+    @inner.inner_val + @extra
+
+
+test "override Own wins over Delegated" {
+    let i = Inner.inner_new(10)
+    let w = Wrapper { inner: i, extra: 5 }
+    // Wrapper.@get активен → 10 + 5 == 15, не 10 (delegated).
+    assert(w.get() == 15)
+}

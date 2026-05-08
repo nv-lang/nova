@@ -115,6 +115,16 @@ pub struct RecordField {
     pub ty: TypeRef,
     pub readonly: bool,
     pub mutable: bool,
+    /// D39 / Plan 11 Ф.9: `use name Type` (named embed) или
+    /// `use _ Type` (anonymous embed). Auto-proxy методы генерируются
+    /// codegen'ом; override-precedence: own > delegated.
+    /// Для anonymous embed `name` устанавливается в синтетический
+    /// `__embed_<TypeName>` (доступ только через auto-proxy, не через
+    /// `@<name>.method`).
+    pub is_embed: bool,
+    /// Если true — embed был объявлен как `use _ Type` (без alias);
+    /// `name` — синтетический. Используется для multi-anonymous detection.
+    pub embed_anonymous: bool,
     pub span: Span,
 }
 

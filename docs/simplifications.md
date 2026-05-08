@@ -1493,3 +1493,37 @@ runtime). Plan 11 Ф.4.
 существующие 169 тестов проходят без изменений; новый функционал
 работает через новый путь. Это **safe-rollout pattern**: новая
 инфраструктура поверх старой, миграция отдельная задача.
+
+### [ЗАКР 2026-05-08] Plan 11 Ф.9: D39 anonymous embed `use _ Type`
+
+Реализация D39 в bootstrap-codegen с anonymous embed (`use _ Type`)
++ override-precedence (Own > Delegated).
+
+- **Ф.9.1 Parser:** `use name Type` (named) и `use _ Type` (anon).
+  Anonymous имя поля — синтезированное `__embed_<TypeName>`.
+- **Ф.9.2 AST + MethodSig.is_delegated:** RecordField.is_embed +
+  embed_anonymous, MethodSig.is_delegated, embed_fields registry.
+- **Ф.9 Auto-proxy generation:** pre-pass регистрирует Delegated
+  MethodSig для каждого Own-метода embedded-типа; emit_embed_proxies
+  эмитит C-функцию-делегатор `Nova_Wrapper_method_X(self) →
+  Nova_Embedded_method_X(self->field)`.
+- **Ф.9.3 Override-precedence Own > Delegated:** в emit_call и infer
+  paths, после strict-match — фильтр pool на Own (Delegated wins
+  только если Own нет).
+- **Ф.9.4 Multi-anonymous detection:** declaration-time error если
+  ≥2 anonymous embeds одного типа.
+- **Ф.9.5 Lint warning:** stderr-warning при detect Own-override на
+  Delegated в anonymous embed (невозможен `@<base>.method()` call).
+
+Тесты: anonymous_embed.nv (3 теста) — named auto-proxy, anonymous
+auto-proxy, override Own wins. **175/175 PASS** на full regression
+(17 файлов).
+
+Spec D39 обновлён: добавлена Bootstrap-status секция.
+
+**Урок:** **auto-proxy через отдельный emit-pass + override-precedence
+в shared dispatch path**. Delegated регистрируются в общем
+`method_overloads`, эмиттинг C-кода — отдельный pass после Own
+fn-emit'ов. Resolution унифицирован для Own/Delegated через
+priority-фильтр. Тот же pattern что для overload в Ф.1-Ф.3 —
+**common path с priority**.
