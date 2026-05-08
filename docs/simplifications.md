@@ -1879,3 +1879,141 @@ extensibility без runtime FS dependency.
 содержит ~50 entries которые формируются программно (`format!`).
 Для `&'static str` lifetime — leak'аем, один-time alloc. Альтернатива
 (static lookup table) — тысячи строк boilerplate'а.
+
+
+### Plan 13 Ф.9 — API polish, читаемость auto-gen, Self everywhere (2026-05-08)
+
+После завершения Ф.8 ревью сгенерированных `std/runtime/*.nv` файлов
+выявило 6 unfortunate API-decisions, которые лучше зафиксировать
+до того как пользовательский код устаканится. Ф.9 — точечные правки:
+
+#### Ф.9.0 — пустые строки между методами в auto-gen
+
+Renderer добавляет `\n\n` после каждой `// doc + external fn` пары
+(было `\n`). Файлы стали читаться как нормальные spec-документы.
+
+Проблема старого формата: 24+ `external fn` подряд без визуальных
+групп — глаз теряется. Diff-review был мучительным.
+
+#### Ф.9.1 — Self-return everywhere для chaining
+
+Mutating-методы (`@append`, `@write_*`) и creation-static (`new`,
+`from`, `with_capacity`) — теперь все возвращают `Self`. Единый
+паттерн на opaque types вместо «здесь Self, тут явный тип».
+
+```nova
+// Было: read_buffer.nv
+export external fn StringBuilder.new() -> StringBuilder
+export external fn StringBuilder mut @append(s str) -> ()
+
+// Стало:
+export external fn StringBuilder.new() -> Self
+export external fn StringBuilder mut @append(s str) -> Self
+```
+
+Chaining работает: `sb.append("hello ").append(name).append("!")`.
+C-side: `Nova_<T>_method_*` возвращают `Nova_<T>*` self-pointer
+(тот же receiver, без аллокации). `void`-returning функции стали
+identity функции с return value — backward-compat для statement-style
+вызовов сохраняется.
+
+#### Ф.9.3 — str.@char_len → str.@len, []char первоклассный
+
+D26 spec говорит «s.len — длина в codepoint'ах». Имя `@char_len`
+отражало реализацию (codepoint = char), но противоречило spec.
+Переименовано в `@len` (C-name `nova_str_char_len` сохранён).
+
+`str.@chars() -> []int` → `-> []char` — char стал first-class type
+в API, eager allocation как минимум (lazy `Iter[char]` — future).
+
+#### Ф.9.4 — read_char/read_str для парсинга текста
+
+ReadBuffer покрывал только числовые типы. Для HTTP headers, CSV,
+text-протоколов нужны codepoint-методы:
+
+```nova
+fn ReadBuffer mut @read_char()      Fail[ReadBufferError] -> char
+fn ReadBuffer mut @read_str(n int)  Fail[ReadBufferError] -> str
+```
+
+Plus Result-формы `try_read_char` / `try_read_str(n)`.
+
+`ReadBufferError` расширен вариантом `InvalidUtf8 { position }` —
+distinct ошибка от `UnexpectedEnd` (мусорный байт vs неполная sequence).
+
+C-runtime получил helper `_nova_rb_decode_utf8_one(p, avail, *cp,
+*consumed)` — общий UTF-8 декодер. Используется в read_char,
+read_str, try_read_char, try_read_str — DRY.
+
+#### Ф.9.5 — отмена auto-derive try_read_* из Plan 12 Ф.4.5
+
+Plan 12 Ф.4.5 предлагал: компилятор синтезирует `@try_read_X()` из
+`@read_X() Fail[E]`. Отменено в Ф.9.5 по 3 причинам:
+
+1. **Hidden magic.** В registry/.nv видна только Fail-форма, но IDE
+   автокомплит показывает try_read_X неоткуда. AI-генерируемому коду
+   ещё сложнее.
+2. **Edge cases.** UTF-8 ошибки (Ф.9.4) делают universal правило
+   хрупким — synth должен мапить и UnexpectedEnd, и InvalidUtf8.
+3. **D82 single source of truth.** Auto-derive противоречит принципу
+   «всё что компилятор знает — видно в registry».
+
+В runtime_registry все 17 пар read_*/try_read_* (16 numeric + char +
+str) явно перечислены. C-функции тоже две (Fail + Result).
+
+D73 From↔Into auto-derive **остаётся** — симметричное правило в D73,
+не зависит от Plan 12 Ф.4.5.
+
+Plan 12 Ф.4.5 помечен ❌ ОТМЕНЕНО, spec D82 обновлён.
+
+#### Бонус: str.from(int) regression fix
+
+После Ф.8 в registry появился `str.from(c char)`, что засветило `from`
+в `method_receivers` и сломало dispatch для `str.from(int_val)` —
+codegen эмитил `Nova_str_static_from(v)` без mangling-suffix'а, а
+реальная C-функция называется `Nova_str_static_from_char`.
+
+Fix: routing через method_overloads с поиском подходящего overload'а
+по C-типу аргумента. Если match — sig.c_name. Иначе fallback на legacy
+`nova_int_to_str(v)`. Применено в обеих точках emit_c.rs.
+
+#### Бонус: hashmap.nv `&T` borrow → plain field
+
+`std/collections/hashmap.nv` использовал `map_ref &HashMap[K, V]` —
+`&T` borrow запрещён в Nova (D43, см. spec/decisions/05-memory.md:63).
+Поле переименовано в `map HashMap[K, V]` (короче, без borrow). GC
+держит мапу живой через field-reference.
+
+#### Что отложено
+
+**Ф.9.2 — оператор `+` как alias** (`StringBuilder + str` → `@append`,
+`str + str` → `@concat`). Требует careful routing через
+method_overloads и parameter-type mangling. Риск регрессий в 78
+тестах. Перенесено в следующую сессию.
+
+#### Total numbers (после Ф.9)
+
+- Registry entries: **161** (было 157 — +4 от Ф.9.4 read_char/str
+  пар).
+- Auto-generated .nv файлов: **6** (без изменений).
+- Handwritten в `std/runtime/`: **0**.
+- Self-return mutating/creation методов: **30+** (вместо `()`/тип).
+
+#### Урок
+
+**Plan rev iterations работают.** Ф.9 — это «после ревью
+сгенерированного» этап. Без regen → review → fix цикла файлы
+выглядели бы хуже. AI-friendly auto-gen означает что один этап
+не финализирует API — нужен полный round-trip с ревью.
+
+**Self vs explicit type — единый паттерн лучше микрооптимизации.**
+Изначально creation-static возвращали `WriteBuffer` (явный тип),
+а instance-mut → `Self`. Ревью показало: непоследовательно.
+Унификация на Self (везде в opaque-context) убрала когнитивную
+нагрузку.
+
+**Auto-derive symmetry rule (D73 ↔ Plan 12 Ф.4.5).** D73 From↔Into —
+симметричное правило: synthesized метод имеет ту же семантику. Plan
+12 Ф.4.5 try_read auto-derive — асимметричное (Fail vs Result, разная
+семантика для caller'а). Симметричные правила выживают, асимметричные
+становятся source of bugs.

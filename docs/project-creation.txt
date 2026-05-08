@@ -2023,3 +2023,117 @@ sources где их несколько. Box::leak для 'static str из comput
 
 Plan 13 закрыт полностью (MVP + Ф.8). Ф.4 (special-case removal
 для str/math) остается deferred.
+
+
+====================================================================
+Plan 13 Ф.9 — API polish + Self everywhere (2026-05-08)
+====================================================================
+
+После завершения Ф.8 ревью .nv файлов выявило шесть API-issue'ов.
+Ф.9 — точечные правки реестра + emitter'а + spec.
+
+Что сделано (5 sub-фаз закрыты, одна deferred):
+
+Ф.9.0 — Renderer: пустые строки между методами в auto-gen .nv.
+Format `\n\n` после каждой `// doc + external fn` группы. Файлы
+стали читаемыми (24+ deklaration'ов больше не сливались в стену
+текста). Commit 940c58f041.
+
+Ф.9.1 — Self-return everywhere для opaque types:
+  - StringBuilder mut @append(s|c) -> Self (chaining).
+  - WriteBuffer mut @write_byte/_bytes/_zero/_char/_str -> Self.
+  - WriteBuffer mut @write_uN_le/be / iN_le/be / fN_le/be -> Self
+    (все 18+ overload'ов).
+  - StringBuilder/WriteBuffer/ReadBuffer.new/from/with_capacity -> Self.
+  - StringBuilder/WriteBuffer @clone -> Self.
+
+В static-context Self = receiver-type, в instance — self-pointer.
+Везде "Self" — единый паттерн (вместо «здесь Self, тут явный тип»).
+
+C-runtime: соответствующие `Nova_<T>_method_*` возвращают `Nova_<T>*`
+self pointer (без аллокации) вместо nova_unit. `void`-функции стали
+identity функции с return — backward-compat для statement-style вызовов
+сохраняется (return value просто игнорируется).
+
+Commit 529f97806b объединяет Ф.9.1 + Ф.9.3 (8 files, +130 -142).
+
+Ф.9.3 — str API renames:
+  - str @char_len() → @len() (D26 spec говорит просто `len`).
+  - str @chars() -> []int → -> []char (char first-class).
+
+C-имя `nova_str_char_len` сохранено (trampoline-free). Tests
+обновлены: nova_tests/types/str_search.nv больше не использует
+`s.char_len()` — везде `s.len` (member access).
+
+Ф.9.4 — ReadBuffer codepoint-уровневые reads:
+  - mut @read_char()       Fail[ReadBufferError] -> char
+  - mut @try_read_char()   -> Result[char, ReadBufferError]
+  - mut @read_str(n int)   Fail[ReadBufferError] -> str (n codepoints)
+  - mut @try_read_str(n)   -> Result[str, ReadBufferError]
+
+C-runtime: общий UTF-8 декодер `_nova_rb_decode_utf8_one(p, avail,
+*cp, *consumed)` — возвращает 1=ok, 0=UnexpectedEnd, -1=InvalidUtf8.
+Используется во всех 4 функциях.
+
+ReadBufferError расширен вариантом `InvalidUtf8 { position int }` —
+distinct от UnexpectedEnd. Сообщения:
+  - "ReadBuffer.UnexpectedEnd: wanted N, available M"
+  - "ReadBuffer.InvalidUtf8: position P"
+
+Bootstrap-ограничение по D26 (Result зашит на nova_int Ok/nova_str Err)
+сохраняется.
+
+Ф.9.5 — отмена auto-derive try_read_* из Plan 12 Ф.4.5:
+
+Plan 12 Ф.4.5 предлагал: компилятор синтезирует `@try_read_X()` из
+`@read_X() Fail[E]`. Отменено по 3 причинам:
+
+1. Hidden magic — IDE автокомплит видит try_read_X неоткуда.
+2. Edge cases — UTF-8 ошибки делают universal правило хрупким.
+3. D82 single source of truth — auto-derive противоречит принципу.
+
+В runtime_registry все 17 пар read_*/try_read_* явно прописаны.
+Codegen-side синтез никогда не был реализован — отмена no-op.
+Plan 12 Ф.4.5 помечен ❌ ОТМЕНЕНО, spec D82 обновлён.
+
+D73 From↔Into auto-derive остаётся (симметричное правило).
+
+Commit 94bc22b3c3 объединяет Ф.9.4 + Ф.9.5 + spec правки (5 files,
++201 -3).
+
+Бонус-фиксы по дороге:
+
+1. str.from(int) regression. После Plan 13 Ф.8 в registry появился
+   `str.from(c char)` → method_receivers `from` засвечен → codegen
+   ошибочно эмитил `Nova_str_static_from(v)` без mangling. Fix:
+   routing через method_overloads с C-type арг-match'ингом.
+
+2. std/collections/hashmap.nv: `map_ref &HashMap[K, V]` запрещённый
+   `&T` borrow (D43). Переименовано в `map HashMap[K, V]` (короче, GC
+   держит alive через field-ref).
+
+Commit 726e19c07d (2 files, +36 -15).
+
+Что отложено:
+
+Ф.9.2 — оператор `+` как alias (`StringBuilder + str` → @append,
+`str + str` → @concat). Требует careful routing через method_overloads
++ parameter-type mangling. Риск регрессий. Deferred to next session.
+
+Total numbers (после Ф.9):
+  - Registry: 161 entries (+4 от Ф.9.4).
+  - Auto-generated .nv: 6 (без изменений).
+  - Handwritten в std/runtime/: 0.
+  - Self-return методов: 30+ (mut + creation-static).
+
+Тесты: 78/78 PASS. Determinism --check OK.
+
+Урок:
+  - Plan rev iterations нужны. Auto-gen без review→fix цикла даёт
+    sub-optimal API.
+  - Self-unification > микрооптимизация. Везде Self в opaque-context
+    лучше «здесь Self, тут тип».
+  - Symmetric auto-derive (D73 From↔Into) выживает, asymmetric (Plan
+    12 Ф.4.5 read↔try_read) — нет.
+
+Plan 13 после Ф.9: ✅ ЗАКРЫТ кроме Ф.9.2 (deferred).

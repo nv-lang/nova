@@ -16,24 +16,30 @@ ExternalRegistry (codegen) загружает 4 per-type файла через `
 Acceptance — добавить новый method тремя правками (registry + .c + regen)
 работает (write_zero verified в Plan 12; принцип сохранён).
 
-**Ф.9 (API polish, добавлен 2026-05-08):** ⏳ pending. Прицельные
-правки реестра + emitter'а после ревью текущих сгенерированных файлов:
-- ⚡ **Ф.9.0 (priority):** пустые строки между методами в auto-gen
-  файлах (cosmetic fix, делается первым, ~30мин).
-- `StringBuilder mut @append` возвращает `Self` (chaining).
-- Все `WriteBuffer mut @write_*` возвращают `Self` (chaining).
-- StringBuilder получает оператор `+` как `@plus(s str)` / `@plus(c char)`
-  — alias на `@append` (mutates left, returns Self).
-- str получает оператор `+` как `@plus(other str) -> str` —
-  alias на `@concat` (явно в registry, не invisible intrinsic).
-- `str @char_len` → `@len` (D26 spec говорит просто `len`).
-- `str @chars() -> []int` → `-> []char` (char first-class).
-- ReadBuffer получает `@read_char` / `@read_str(n)` + Result-формы;
-  `ReadBufferError.InvalidUtf8 { position }` для невалидного UTF-8.
-- **Auto-derive `try_read_*` из `read_*` отменён** (Plan 12 Ф.4.5 ❌).
-  Все формы — явно в registry. D73 From↔Into остаётся.
-- Renderer: пустая строка между методами в auto-gen .nv для читаемости.
-См. Ф.9 ниже.
+**Ф.9 (API polish, добавлен 2026-05-08):** ✅ ЗАКРЫТ кроме Ф.9.2 (deferred).
+- ✅ **Ф.9.0** — пустые строки между методами в auto-gen (commit 940c58f041).
+- ✅ **Ф.9.1** — Self-return для StringBuilder/WriteBuffer mut +
+  унификация static (`new`/`from`/`with_capacity`/`clone` тоже Self).
+  C-runtime обновлён: `Nova_<T>_method_*` возвращают `Nova_<T>*` self
+  pointer (без аллокации).
+- ✅ **Ф.9.3** — `str @char_len` → `@len` (D26 spec); `chars` → `[]char`
+  (char first-class).
+- ✅ **Ф.9.4** — ReadBuffer `@read_char` / `@read_str(n)` + try-формы +
+  `ReadBufferError.InvalidUtf8 { position }`. C-runtime helper
+  `_nova_rb_decode_utf8_one` для общей UTF-8 декодинг-логики.
+- ✅ **Ф.9.5** — `try_read_*` явно в registry (16 numeric + 2 text пар);
+  Plan 12 Ф.4.5 (auto-derive) ❌ ОТМЕНЕНО, spec D82 обновлён.
+  Codegen-side синтез никогда не был реализован — отмена no-op.
+- ⏳ **Ф.9.2** — оператор `+` как alias `@plus`/`@concat` для
+  StringBuilder/str. **DEFERRED to next session** (требует careful
+  routing через method_overloads + parameter mangling, риск регрессий).
+
+Бонус-фиксы по дороге:
+- ✅ str.from(int) regression: routing через method_overloads вместо
+  ошибочного method_receivers-existence-check.
+- ✅ std/collections/hashmap.nv: `&T` borrow → plain field; `map_ref` → `map`.
+
+После Ф.9: 78/78 nova_tests PASS. См. подробности ниже в Ф.9.
 
 Acceptance:
 - ✅ Detrminism: `emit-runtime-stubs --check` после регена → no diff.
