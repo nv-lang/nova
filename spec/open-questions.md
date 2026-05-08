@@ -4101,6 +4101,15 @@ runtime-marker pattern), Q-effect-polymorphism.
 
 ## Q-keywords-as-fields. Можно ли использовать keyword как имя поля?
 
+> ✅ **CLOSED by [D83](decisions/03-syntax.md#d83)** (2026-05-08)
+> вариантом 1 — keywords строго запрещены как identifier'ы.
+> Без escape-механизма (Rust `r#`, Swift backticks отвергнуты как
+> overkill для bootstrap'а; могут быть добавлены после v1.0 если
+> накопится FFI-боль).
+>
+> Sweep задача: `std/collections/queue.nv` — поле `in []T`
+> переименовать в `input` или `inputs`.
+
 **Контекст.** std/collections/queue.nv использует `in` как имя поля:
 
 ```nova
@@ -4113,7 +4122,7 @@ export type Queue[T] {
 Bootstrap-парсер падает на `in` field-declaration:
 `expected identifier, got 'in'`.
 
-**Варианты:**
+**Варианты (на момент обсуждения):**
 1. **Запретить keywords как identifiers вообще.** Все keywords —
    зарезервированы. Программист переименовывает (`input`, `inq`).
    Самый простой, согласован с большинством языков (Rust/Go/Java).
@@ -4123,10 +4132,11 @@ Bootstrap-парсер падает на `in` field-declaration:
 3. **Raw-identifier escape.** `r#in` — keyword как ident через префикс.
    Прецедент: Rust `r#fn`, `r#move`.
 
-**Предложение:** **1** — простой и согласованный default. Программист
-переименовывает поле (`input` / `inputs`). queue.nv нужно поправить.
+**Принятое решение:** Вариант 1, зафиксирован в
+[D83](decisions/03-syntax.md#d83).
 
-**Связь:** [D30](decisions/03-syntax.md#d30) (naming convention).
+**Связь:** [D30](decisions/03-syntax.md#d30) (naming convention),
+[D83](decisions/03-syntax.md#d83) (closing decision).
 
 ---
 

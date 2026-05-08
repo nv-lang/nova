@@ -31,6 +31,7 @@
 | [D59](#d59-array-tuple-и-позиционные-partial-patterns) | Array, tuple и позиционные partial patterns (`[]`, `[r]`, `[_, ..]`, `Cons(..)`) |
 | [D60](#d60-spread-в-литералах-arr-record) | Spread `...x` в литералах: массив `[1, ...arr, 2]` и record `{ ...obj, field: v }` |
 | [D69](#d69-variadic-параметры-через-items-t) | Variadic-параметры через `...items []T` |
+| [D83](#d83-keywords-строго-запрещены-как-identifierы) | Keywords строго запрещены как identifier'ы (закрывает Q-keywords-as-fields) |
 
 ---
 
@@ -2998,3 +2999,165 @@ implementation и spec.
 
 D69 фиксирует variadic как полноценную фичу языка и приводит сигнатуру
 `print` к `fn print(...items []any) Io -> ()`.
+
+---
+
+## D83. Keywords строго запрещены как identifier'ы
+
+### Что
+Зарезервированные слова языка (`fn`, `type`, `let`, `mut`, `if`, `for`,
+`while`, `in`, `match`, `use`, `import`, `export`, и др.) **не могут**
+использоваться как имена переменных, полей, параметров, типов,
+методов, импортов или любых других user-defined identifier'ов.
+**Никаких escape-механизмов** не предусмотрено.
+
+Закрывает [Q-keywords-as-fields](../open-questions.md#q-keywords-as-fields)
+вариантом 1 (строгий запрет).
+
+### Правило
+
+#### Полный список зарезервированных слов
+
+**Декларации:** `module`, `import`, `use`, `export`, `external`, `fn`,
+`type`, `protocol`, `effect`, `handler`, `alias`.
+
+**Bindings:** `let`, `const`, `mut`, `readonly`.
+
+**Control flow:** `if`, `else`, `match`, `for`, `while`, `loop`, `in`,
+`return`, `break`, `continue`.
+
+**Effects/concurrency:** `with`, `throw`, `interrupt`, `forbid`,
+`realtime`, `spawn`, `supervised`, `parallel`, `detach`, `cancel_scope`.
+
+**Operators (как слова):** `as`, `is`, `and`, `or`, `not`.
+
+**Литералы:** `true`, `false`.
+
+**Test:** `test`.
+
+**Special:** `Self` (D66), `_` (wildcard / discard).
+
+#### Что запрещено
+
+```nova
+// все следующие — compile error «expected identifier, got keyword `X`»
+
+let if = 5                          // ✗
+let mut while = 0                   // ✗
+
+type Queue[T] {
+    in []T                          // ✗ — «expected identifier, got `in`»
+}
+
+fn process(match int) -> int =>     // ✗ — параметр не может быть `match`
+    match * 2
+
+fn export() -> int                  // ✗ — `export` зарезервировано
+
+import std.use                      // ✗ — `use` в module path
+```
+
+#### Что разрешено
+
+**Зарезервированные identifier'ы** (D26 prelude — `Self`, `any`,
+`Never`, `Option`, `Some`, `None`, `Result`, `Ok`, `Err`, `Error`,
+`int`, `f64`, etc.) — это **обычные имена** в prelude scope, не
+keyword'ы. Программист может **переопределить локально** (см.
+[overview.md](../overview.md) «Зарезервированные identifier'ы»),
+но это анти-паттерн (lint выдаёт warning).
+
+```nova
+let int_array []int = [1, 2, 3]    // ✓ — `int_array` обычный identifier
+fn shadow() {
+    let int = "string"              // ⚠️ shadow's prelude name (warning, не error)
+    println(int)
+}
+```
+
+#### Контекстуальные keywords — отвергнуто
+
+Альтернатива из Swift/C# (`async`, `var`, `dynamic` контекстные —
+keyword только в специфичных позициях, иначе обычные identifier'ы)
+**не принимается** в Nova. Все keyword'ы — глобально зарезервированы.
+
+#### Escape-механизм (`r#identifier`, `` `identifier` ``) — отвергнуто
+
+Альтернативы:
+- **Rust-style** `r#fn` — raw identifier через `r#` префикс.
+- **C#-style** `@class` — verbatim identifier.
+- **Swift/Kotlin** `` `class` `` — backticks.
+
+В Nova **сейчас не предусмотрены**. Программист переименовывает
+поле/переменную если оно конфликтует с keyword.
+
+Когда **может** появиться: если накопится боль FFI с C-библиотеками
+у которых функция называется `match`, или ORM/JSON-данные с keyword-
+полями. До v1.0 — не вводим, после v1.0 — отдельный D-decision
+(вероятно `r#identifier` Rust-style).
+
+**Backtick'и `` `...` ``** в Nova **уже заняты** для tagged template
+literals (D48 raw strings) — Swift-style `` `identifier` `` создаст
+конфликт.
+
+### Почему
+
+1. **Простота парсера.** Один-проход рекурсивного спуска, никакого
+   lookahead'а для разрешения «keyword vs identifier».
+
+2. **AI-friendly.** LLM **никогда не путается** между keyword и
+   identifier. Никаких escape-форм для запоминания.
+
+3. **Читаемость.** Программист видит `if` — control flow. Видит
+   `class` — class. Никаких `if` как имени переменной.
+
+4. **Прецедент мейнстрима.** Java, Go, C, Python — все строго
+   запрещают. Default ожидание программиста.
+
+5. **Future-proof по версии.** Без escape — добавление нового
+   keyword'а это явный breaking change, программист видит compile
+   error и переименовывает (как Rust 2018/2021 editions).
+
+### Что отвергнуто
+
+- **Контекстуальные keywords** (Swift/C# style). Сложнее парсер,
+  AI-unfriendly. Прецедент Swift: contextual keywords постепенно
+  становятся глобальными.
+
+- **`r#identifier` (Rust-style).** Полезен для FFI, но не приоритет
+  в bootstrap'е. Можно добавить позже без breaking change.
+
+- **`@identifier` (C#-style).** В Nova `@` занято (D35 self-method/field).
+
+- **`` `identifier` `` (Swift/Kotlin).** Backtick'и заняты для raw
+  strings (D48). Конфликт.
+
+- **Только-в-полях ослабление** (например `mut in []T` разрешено
+  поскольку `in` контекстный для `for x in iter`). Отвергнуто —
+  специальное правило для одного keyword'а нарушает D9.
+
+### Связь
+
+- [Q-keywords-as-fields](../open-questions.md#q-keywords-as-fields) —
+  закрывается этим D-decision.
+- [D29](07-modules.md#d29) — module/import grammar.
+- [D30](#d30) — naming convention. D83 — жёсткое правило поверх D30.
+- [D48](#d48-tagged-template-literals) — backtick'и заняты.
+- [D26](08-runtime.md#d26) — prelude names — это identifier'ы, не
+  keyword'ы.
+
+### Цена
+
+- **Sweep `std/collections/queue.nv`** — поле `in []T` переименовать
+  в `input` или `inputs`.
+- **Будущая FFI работа** будет требовать обёртки если C-функция
+  называется так же как Nova-keyword. Не блокер.
+
+### Эволюция
+
+До D83 вопрос был open в Q-keywords-as-fields с тремя вариантами.
+D83 закрывает вопрос окончательно — Java/Go/C/Python style строгий
+запрет, без escape.
+
+Если когда-либо в будущем (v1.0+) накопится FFI-боль — отдельный
+D-decision вводящий `r#identifier` Rust-style. До v1.0 — строгий
+запрет без escape.
