@@ -1243,3 +1243,39 @@ TextMate-grammar — работает автоматически для любо
 language-configuration.json (bracket pairs объявлены). Аналоги для
 других IDE — отдельные plugin'ы (rainbow-delimiters / BracketHighlighter
 / rainbow.vim).
+
+
+================================================================================
+2026-05-08 Plan 08 Ф.4: strict if cond:bool в codegen
+================================================================================
+
+D54 требует чтобы `if cond` имел cond: bool, не truthy-int (Rust/
+Swift/Kotlin convention). Раньше `if int_value { ... }` silently
+компилировался — C принимает int как truthy. Закрывает silent-bug
+class.
+
+Изменения:
+
+1. emit_if_expr и While arm: check_bool_condition(cond_ty) — error
+   если cond_ty в списке ОЧЕВИДНО non-bool (nova_int, nova_f64,
+   nova_str, и т.п.). Conservative: type-neutral (void*, unknown
+   user types) — пропускаем.
+
+2. Bonus prerequisite fixes (необходимы для strict-check):
+   - infer Unary: !x → nova_bool, -x → operand type
+   - infer Block: тип trailing-expression
+   - infer closure-call (Ident в fn_param_sigs): ret_ty из sig
+   - let pred = (n int) -> bool => ... — Lambda's return_type
+     аннотация теперь учитывается при registration
+
+Тесты (nova_tests/syntax/strict_if_bool.nv, 9 positive-тестов):
+- bool literal / comparison / unary ! / && || /
+  block-expr cond / while с bool /
+  fn-call возвращающий bool / closure-call возвращающий bool
+
+70/70 nova_tests PASS, без регрессий.
+
+Bootstrap-ограничения:
+- Negative cases (compile-error на bad usage) — проверяются вручную
+  через `nova-codegen check`, не в test-runner.
+- Compile-error suggestions ("use n != 0 for truthy-int") — TBD в Ф.7.

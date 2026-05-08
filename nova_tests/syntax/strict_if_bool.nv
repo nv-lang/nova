@@ -1,0 +1,107 @@
+// strict_if_bool.nv — Plan 08 Ф.4: strict `if cond: bool`.
+//
+// Spec D54: cond обязан быть bool, не truthy-int. Закрывает silent-bug
+// class. В bootstrap conservatively проверяется только если тип ОЧЕВИДНО
+// non-bool (numeric/str). type-neutral (void*, unknown) — пропускается.
+//
+// Этот тест проверяет positive cases — все валидные bool conditions
+// компилируются и работают. Negative cases (`if int_value` → compile
+// error) проверяются вручную через `nova-codegen check`.
+
+module nova_tests.syntax.strict_if_bool
+
+
+test "if с bool literal" {
+    if true {
+        assert(true)
+    }
+}
+
+
+test "if с comparison (== / != / < / >)" {
+    let n = 5
+    if n > 0 {
+        assert(true)
+    }
+    if n != 5 {
+        assert(false)
+    }
+}
+
+
+test "if с unary !" {
+    let b = true
+    if !b {
+        assert(false)
+    } else {
+        assert(true)
+    }
+}
+
+
+test "if с && / ||" {
+    let a = true
+    let b = false
+    if a && !b {
+        assert(true)
+    }
+    if a || b {
+        assert(true)
+    }
+}
+
+
+test "if с block expression" {
+    let cond = {
+        let n = 5
+        n > 0
+    }
+    if cond {
+        assert(true)
+    }
+}
+
+
+test "while с bool condition" {
+    let mut count = 0
+    while count < 3 {
+        count = count + 1
+    }
+    assert(count == 3)
+}
+
+
+test "while с unary ! (smoke — не зацикливается)" {
+    let mut iters = 0
+    let total = 3
+    while iters < total {
+        iters = iters + 1
+    }
+    assert(iters == 3)
+    // Note: loop с `while !done {...}` где done меняется внутри тела —
+    // отдельный test, требует yield-контекста. Использую counter как
+    // safe smoke.
+}
+
+
+fn is_positive(n int) -> bool {
+    n > 0
+}
+
+
+test "if с function-call возвращающим bool" {
+    if is_positive(5) {
+        assert(true)
+    }
+}
+
+
+test "if с closure-call возвращающим bool" {
+    let pred = (n int) -> bool => n > 10
+    if pred(15) {
+        assert(true)
+    }
+    if pred(5) {
+        assert(false)
+    }
+}

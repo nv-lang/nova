@@ -2991,16 +2991,21 @@ impl CEmitter {
                 }
                 self.line(&format!("{} {} = {};", ty_c, binding, val));
                 // If RHS is a lambda, register the binding in fn_param_sigs so inc(5) works
-                if let ExprKind::Lambda { params, .. } = &decl.value.kind {
+                if let ExprKind::Lambda { params, return_type, .. } = &decl.value.kind {
                     let param_c_tys: Vec<String> = params.iter().map(|p| {
                         if let Some(ty) = &p.ty { self.type_ref_to_c(ty).unwrap_or_else(|_| "nova_int".into()) }
                         else { "nova_int".into() }
                     }).collect();
-                    // Infer return type from declared fn type or default to nova_int
-                    let ret_c = if let Some(TypeRef::Func { return_type, .. }) = decl.ty.as_ref() {
-                        return_type.as_ref().map(|rt| self.type_ref_to_c(rt).unwrap_or_else(|_| "nova_int".into()))
+                    // Infer return type: priority — let-annotation > lambda annotation > default.
+                    let ret_c = if let Some(TypeRef::Func { return_type: rt, .. }) = decl.ty.as_ref() {
+                        rt.as_ref().map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".into()))
                             .unwrap_or_else(|| "nova_int".into())
-                    } else { "nova_int".into() };
+                    } else if let Some(rt) = return_type {
+                        // Plan 08 Ф.4 prerequisite: lambda с явной `-> T`-аннотацией.
+                        self.type_ref_to_c(rt).unwrap_or_else(|_| "nova_int".into())
+                    } else {
+                        "nova_int".into()
+                    };
                     self.fn_param_sigs.insert(binding.clone(), (param_c_tys, ret_c));
                 }
                 // If RHS is a call to a function that returns fn(...), propagate closure sig to binding
@@ -3396,6 +3401,9 @@ impl CEmitter {
             }
 
             ExprKind::While { cond, body } => {
+                // Plan 08 Ф.4: strict bool-check.
+                let cond_ty = self.infer_expr_c_type(cond);
+                Self::check_bool_condition(&cond_ty, "while")?;
                 let cond_val = self.emit_expr(cond)?;
                 let tmp = self.fresh_tmp_named("while");
                 self.line(&format!("nova_unit {};", tmp));
@@ -5021,6 +5029,12 @@ impl CEmitter {
         then: &Block,
         else_: Option<&ElseBranch>,
     ) -> Result<String, String> {
+        // Plan 08 Ф.4: strict `if cond: bool`. Spec D54: cond обязан быть
+        // bool, не truthy-int (Rust/Swift/Kotlin прецедент). Закрывает
+        // silent-bug class. Conservative — error только если ОЧЕВИДНО
+        // non-bool (numeric/str). type-neutral (void*) — пропускаем.
+        let cond_ty = self.infer_expr_c_type(cond);
+        Self::check_bool_condition(&cond_ty, "if")?;
         // Infer result type from then-block (if any trailing), default nova_unit
         let if_ty = if else_.is_none() {
             "nova_unit".into()
@@ -6507,6 +6521,23 @@ impl CEmitter {
         trimmed.strip_prefix("Nova_").map(|s| s.to_string())
     }
 
+    /// Plan 08 Ф.4: strict bool-check для `if cond` / `while cond`.
+    /// Возвращает Err если `cond_ty` ОЧЕВИДНО non-bool (numeric/string/...).
+    /// Type-neutral (`void*`, unknown) — пропускаем (conservative).
+    fn check_bool_condition(cond_ty: &str, ctx: &str) -> Result<(), String> {
+        let definitely_non_bool = matches!(cond_ty,
+            "nova_int" | "nova_f64" | "nova_f32" | "nova_str" | "nova_byte"
+            | "int8_t" | "int16_t" | "int32_t" | "int64_t"
+            | "uint8_t" | "uint16_t" | "uint32_t" | "uint64_t");
+        if definitely_non_bool {
+            return Err(format!(
+                "{} condition must be `bool`, got `{}`. \
+                Hint: use explicit comparison (e.g. `n != 0` for truthy-int).",
+                ctx, cond_ty));
+        }
+        Ok(())
+    }
+
     /// Plan 08 Ф.3: convert C-type back to Nova-type name для lookup'ов в
     /// from_targets / try_from_targets (которые хранят Nova-имена).
     /// `nova_int` → `int`, `nova_str` → `str`, `Nova_Wrapper*` → `Wrapper`.
@@ -6572,6 +6603,21 @@ impl CEmitter {
                     }
                 }
             },
+            // Plan 08 Ф.4 prerequisite: правильный infer для unary
+            // (нужен strict bool-check). `!x` всегда даёт bool;
+            // `-x` сохраняет тип operand'а.
+            ExprKind::Unary { op, operand } => match op {
+                UnOp::Not => "nova_bool".into(),
+                UnOp::Neg => self.infer_expr_c_type(operand),
+            },
+            // Plan 08 Ф.4: Block — тип trailing expression.
+            ExprKind::Block(b) => {
+                if let Some(t) = &b.trailing {
+                    self.infer_expr_c_type(t)
+                } else {
+                    "nova_unit".into()
+                }
+            }
             ExprKind::RecordLit { type_name: Some(name), .. } => {
                 let raw_name = name.join("_");
                 let struct_name = if raw_name == "Self" {
@@ -6654,7 +6700,16 @@ impl CEmitter {
                         return format!("Nova_{}*", type_name);
                     }
                     let key = format!("fn_ret_{}", name);
-                    self.var_types.get(&key).cloned().unwrap_or_else(|| "nova_int".into())
+                    if let Some(t) = self.var_types.get(&key).cloned() {
+                        return t;
+                    }
+                    // Plan 08 Ф.4 prerequisite: closure-call (fn-параметр)
+                    // имеет ret_ty в fn_param_sigs. Без этого `pred(x)` где
+                    // `pred fn(int) -> bool` инфер'ится как nova_int.
+                    if let Some((_, ret_ty)) = self.fn_param_sigs.get(name) {
+                        return ret_ty.clone();
+                    }
+                    "nova_int".into()
                 } else if let ExprKind::Member { obj, name: method } = &func.kind {
                     // D38 array-static-method: `[]T.new()` / `[]T.with_capacity(n)`
                     // → NovaArray_<T>*. obj — Path(["__array", "<T>"]).
