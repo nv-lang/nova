@@ -49,10 +49,8 @@ export fn Deque[T] mut @pop_back() -> Option[T] {
     let last_idx = @items.len - 1
     let value = @items[last_idx]
     let mut new_items []T = []
-    let mut i = 0
-    while i < last_idx {
+    for i in 0..last_idx {
         new_items.push(@items[i])
-        i += 1
     }
     @items = new_items
     Some(value)

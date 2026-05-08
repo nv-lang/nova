@@ -47,10 +47,8 @@ export fn PriorityQueue[T] mut @pop() -> Option[T] {
     }
     // Удаляем последний элемент (используем вспомогательный массив).
     let mut new_items []T = []
-    let mut i = 0
-    while i < last {
+    for i in 0..last {
         new_items.push(@items[i])
-        i += 1
     }
     @items = new_items
     if @items.len > 0 {

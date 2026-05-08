@@ -39,11 +39,9 @@ export fn HmacSha256.compute(key []byte, message []byte) -> [32]byte {
     // Step 2: ipad / opad
     let mut inner_pad []byte = []byte.with_capacity(SHA256_BLOCK_SIZE)
     let mut outer_pad []byte = []byte.with_capacity(SHA256_BLOCK_SIZE)
-    let mut i = 0
-    while i < SHA256_BLOCK_SIZE {
+    for i in 0..SHA256_BLOCK_SIZE {
         inner_pad.push(((key_block[i] as int) ^ 0x36) as byte)
         outer_pad.push(((key_block[i] as int) ^ 0x5C) as byte)
-        i += 1
     }
 
     // Step 3: inner hash = H(ipad || message)
@@ -84,10 +82,8 @@ export fn HmacSha256.verify(key []byte, message []byte, expected [32]byte) -> bo
 // в diff; результат 0 ⇔ равны. Без early-exit на различие.
 fn constant_time_eq(a [32]byte, b [32]byte) -> bool {
     let mut diff int = 0
-    let mut i = 0
-    while i < 32 {
+    for i in 0..32 {
         diff = diff | ((a[i] as int) ^ (b[i] as int))
-        i += 1
     }
     diff == 0
 }

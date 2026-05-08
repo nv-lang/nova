@@ -107,8 +107,7 @@ fn sort_copy(xs []f64) -> []f64 {
     let mut sorted []f64 = []
     for x in xs { sorted.push(x) }
     let n = sorted.len
-    let mut i = 0
-    while i < n {
+    for i in 0..n {
         let mut j = 0
         while j < n - 1 - i {
             if sorted[j] > sorted[j + 1] {
@@ -118,7 +117,6 @@ fn sort_copy(xs []f64) -> []f64 {
             }
             j += 1
         }
-        i += 1
     }
     sorted
 }
@@ -256,10 +254,8 @@ test "streaming: equivalent one-shot" {
 test "streaming: больших чисел не теряет точность" {
     // Welford устойчив к large magnitudes — наивный sum/count - mean^2 теряет точность.
     let mut acc = Stats.streaming()
-    let mut i = 0
-    while i < 1000 {
+    for i in 0..1000 {
         acc.add(1_000_000.0 + (i as f64))
-        i += 1
     }
     // Variance последовательности 0..999 = sum((i - 499.5)^2) / 999 = 83416.667
     let v = acc.variance()

@@ -58,12 +58,10 @@ export fn BloomFilter.optimal(expected_n int, false_pos_rate f64) -> Self {
 export fn BloomFilter mut @insert(s str) -> () {
     let h1 = hash1(s)
     let h2 = hash2(s)
-    let mut i = 0
-    while i < @num_hashes {
+    for i in 0..@num_hashes {
         let bit_idx = ((h1 + (i as u64) * h2) as int) % @bits_size
         let safe_idx = if bit_idx < 0 { bit_idx + @bits_size } else { bit_idx }
         @set_bit(safe_idx)
-        i += 1
     }
 }
 
@@ -155,10 +153,8 @@ test "optimal sizing" {
 
 test "false positive rate приемлемый для small set" {
     let mut bf = BloomFilter.new(1024, 4)
-    let mut i = 0
-    while i < 50 {
+    for i in 0..50 {
         bf.insert("item-" + str.from(i))
-        i += 1
     }
     // Сколько false positives на 100 неинсёртенных?
     let mut false_pos = 0

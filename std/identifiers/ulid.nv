@@ -267,11 +267,9 @@ export fn Ulid.from(s str) Fail[ParseUlidError] -> Self {
 
     // Парсим timestamp (48 бит)
     let mut ts u64 = 0
-    let mut i = 0
-    while i < 10 {
+    for i in 0..10 {
         let v = decode_char_or_throw(s, i)
         ts = (ts << 5) | (v as u64)
-        i += 1
     }
 
     // Старшие 2 бита timestamp должны быть 0 (после 10 chars × 5 = 50 бит).

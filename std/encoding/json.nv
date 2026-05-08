@@ -216,15 +216,13 @@ fn is_hex_digit(c char) -> bool =>
     is_digit(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
 
 fn Lexer mut @read_keyword(kw str, t Token, line int, col int) Fail[ParseJsonError] -> TokenWithPos {
-    let mut i = 0
-    while i < kw.len {
+    for i in 0..kw.len {
         let expected = kw.char_at(i)
         let actual = @peek()
         if Some(expected.unwrap_or(' ')) != actual {
             throw UnexpectedChar { line: @line, col: @col, found: actual.unwrap_or(' ') }
         }
         @advance()
-        i += 1
     }
     { tok: t, line, col }
 }
@@ -291,8 +289,7 @@ fn Lexer mut @read_unicode_escape() Fail[ParseJsonError] -> str {
 
 fn Lexer mut @read_hex_quad() Fail[ParseJsonError] -> str {
     let mut hex = ""
-    let mut i = 0
-    while i < 4 {
+    for i in 0..4 {
         match @advance() {
             None => throw UnexpectedEof { line: @line, col: @col }
             Some(c) if is_hex_digit(c) => { hex = hex + str.from(c) }
@@ -300,7 +297,6 @@ fn Lexer mut @read_hex_quad() Fail[ParseJsonError] -> str {
                 line: @line, col: @col, hex: hex + str.from(c)
             }
         }
-        i += 1
     }
     hex
 }

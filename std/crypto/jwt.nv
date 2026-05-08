@@ -96,10 +96,8 @@ export fn Jwt.decode_hs256(secret []byte, token str) Fail[JwtError] -> JsonValue
 
     // Constant-time compare
     let mut diff = 0
-    let mut i = 0
-    while i < 32 {
+    for i in 0..32 {
         diff = diff | ((expected_mac[i] as int) ^ (actual_sig[i] as int))
-        i += 1
     }
     if diff != 0 { throw InvalidSignature }
 

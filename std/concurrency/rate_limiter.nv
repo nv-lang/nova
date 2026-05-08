@@ -77,10 +77,8 @@ test "burst в пределах capacity" {
     with Time = fixed_ms(0) {
         let mut bucket = TokenBucket.new(5, 1.0)        // 1 token/sec, burst=5
         // 5 запросов подряд — все проходят
-        let mut i = 0
-        while i < 5 {
+        for i in 0..5 {
             assert(bucket.try_acquire())
-            i += 1
         }
         // 6-й — отказ
         assert(!bucket.try_acquire())

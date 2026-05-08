@@ -167,12 +167,10 @@ export fn StrGen.default() -> StrGen =>
 export fn StrGen @generate() Random -> str {
     let len = (Random.u64() as int).abs() % (@max_len + 1)
     let mut buf = Buffer.new()
-    let mut i = 0
-    while i < len {
+    for i in 0..len {
         // Печатные ASCII: 32..126
         let c = (32 + ((Random.u64() as int).abs() % 95))
         buf.add_byte(c as byte)
-        i += 1
     }
     // unsafe — мы знаем что генерация всегда даёт valid UTF-8
     buf.into_str_unchecked()
@@ -207,10 +205,8 @@ export fn ArrayGen[T].default(elem Generator[T]) -> ArrayGen[T] =>
 export fn ArrayGen[T] @generate() Random -> []T {
     let len = (Random.u64() as int).abs() % (@max_len + 1)
     let mut result []T = []
-    let mut i = 0
-    while i < len {
+    for i in 0..len {
         result.push(@elem.generate())
-        i += 1
     }
     result
 }
@@ -322,8 +318,7 @@ export fn property_with[T](
     body fn(T) Fail[PropertyFailed] -> (),
     cfg PropertyConfig,
 ) Random Fail[PropertyFailed] -> () {
-    let mut i = 0
-    while i < cfg.num_tests {
+    for i in 0..cfg.num_tests {
         let value = gen.generate()
         match run_once(body, value) {
             Pass => ()
@@ -337,7 +332,6 @@ export fn property_with[T](
                 }
             }
         }
-        i += 1
     }
 }
 

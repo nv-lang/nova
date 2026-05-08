@@ -139,10 +139,8 @@ export fn Md5 mut @finalize() -> [16]byte {
         @buffer.push(0x00)
     }
     // 8 байт длины в битах LE
-    let mut i = 0
-    while i < 8 {
+    for i in 0..8 {
         @buffer.push(((total_bits >> (i * 8)) & 0xFF) as byte)
-        i += 1
     }
 
     // Process remaining blocks.
@@ -172,10 +170,8 @@ export fn Md5 mut @finalize() -> [16]byte {
 fn Md5 mut @process_block(block []byte) -> () {
     // Read 16 little-endian u32 words.
     let mut m [16]u32 = [0; 16]
-    let mut i = 0
-    while i < 16 {
+    for i in 0..16 {
         m[i] = read_le_u32(block, i * 4)
-        i += 1
     }
 
     let mut a = @a

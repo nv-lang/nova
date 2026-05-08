@@ -181,8 +181,7 @@ fn Sha256 mut @process_block(block []byte) -> () {
     let mut hh = @h[7]
 
     // 3. Main loop
-    let mut i = 0
-    while i < 64 {
+    for i in 0..64 {
         let s1 = rotr32(e, 6) ^ rotr32(e, 11) ^ rotr32(e, 25)
         let ch = (e & f) ^ ((e ^ 0xFFFFFFFF) & g)
         let temp1 = (hh + s1 + ch + k_constant(i) + w[i]) & 0xFFFFFFFF
@@ -198,7 +197,6 @@ fn Sha256 mut @process_block(block []byte) -> () {
         c = b
         b = a
         a = (temp1 + temp2) & 0xFFFFFFFF
-        i += 1
     }
 
     // 4. Add to state

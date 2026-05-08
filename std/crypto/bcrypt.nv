@@ -148,10 +148,8 @@ fn bcrypt_kdf(password []byte, salt []byte, cost int) -> []byte {
 fn constant_time_eq(a []byte, b []byte) -> bool {
     if a.len != b.len { return false }
     let mut diff = 0
-    let mut i = 0
-    while i < a.len {
+    for i in 0..a.len {
         diff = diff | ((a[i] as int) ^ (b[i] as int))
-        i += 1
     }
     diff == 0
 }

@@ -59,10 +59,8 @@ export fn Lru[K, V] mut @put(k K, v V) -> () {
         @store.remove(evicted)
         // Удаляем последний элемент из order
         let mut new_order []K = []
-        let mut i = 0
-        while i < @order.len - 1 {
+        for i in 0..@order.len - 1 {
             new_order.push(@order[i])
-            i += 1
         }
         @order = new_order
     }
