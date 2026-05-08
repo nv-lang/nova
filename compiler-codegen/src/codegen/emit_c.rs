@@ -52,6 +52,11 @@ pub struct CEmitter {
     /// Используется в for-in для Iter[T] dispatch: проверяем
     /// `all_methods.contains((iter_struct, "next"))`.
     all_methods: HashSet<(String, String)>,
+    /// Plan 06 Ф.3: для каждого типа Coll с методом `mut @iter() -> IterT`
+    /// запоминаем имя IterT. Используется в for-in: при `for x in coll`
+    /// (где `coll: Coll`) вставляем implicit `.iter()` и emit'им loop
+    /// против IterT.
+    iter_returns: HashMap<String, String>,
     /// D73 v2 auto-derive: target_type → list of source_types for which
     /// `target.from(src V)` is explicitly defined. Used to synthesize
     /// `v.into()` for V via target.from when no explicit `@into` exists.
@@ -147,6 +152,7 @@ impl CEmitter {
             effect_schemas: HashMap::new(),
             method_receivers: HashMap::new(),
             all_methods: HashSet::new(),
+            iter_returns: HashMap::new(),
             from_targets: HashMap::new(),
             into_targets: HashMap::new(),
             try_from_targets: HashMap::new(),
@@ -409,6 +415,16 @@ impl CEmitter {
                         if let Some(TypeRef::Named { path, .. }) = &f.return_type {
                             if !path.is_empty() {
                                 self.into_targets.insert(recv.type_name.clone(), path.join("_"));
+                            }
+                        }
+                    }
+                    // Plan 06 Ф.3: instance-method `mut @iter() -> IterT` —
+                    // запоминаем `Coll → IterT` для implicit .iter() в for-in.
+                    if is_instance && f.name == "iter" {
+                        if let Some(TypeRef::Named { path, .. }) = &f.return_type {
+                            if !path.is_empty() {
+                                self.iter_returns.insert(
+                                    recv.type_name.clone(), path.join("_"));
                             }
                         }
                     }
@@ -5319,6 +5335,32 @@ impl CEmitter {
             }
         }
 
+        // Plan 06 Ф.3: implicit `.iter()` для коллекций.
+        // Если у типа НЕТ метода `next` (значит это не Iter), но ЕСТЬ
+        // метод `iter` — синтезируем call: `for x in coll` →
+        // `for x in coll.iter()` и дёргаемся обратно. Без infinite loop:
+        // у получаемого результата ДОЛЖЕН быть `next` (иначе error).
+        if !iter_struct.is_empty()
+            && self.all_methods.contains(&(iter_struct.clone(), "iter".to_string()))
+        {
+            // Synthesize Member-call: iter.iter()
+            let iter_call = Expr {
+                kind: ExprKind::Call {
+                    func: Box::new(Expr {
+                        kind: ExprKind::Member {
+                            obj: Box::new(iter.clone()),
+                            name: "iter".to_string(),
+                        },
+                        span: iter.span,
+                    }),
+                    args: Vec::new(),
+                    trailing_block: None,
+                },
+                span: iter.span,
+            };
+            return self.emit_for(pattern, &iter_call, body);
+        }
+
         Err(format!("for-in: unsupported iterator type '{}' — only Range and Array are supported", arr_ty))
     }
 
@@ -6861,6 +6903,14 @@ impl CEmitter {
                         }
                     }
                     let obj_ty = self.infer_expr_c_type(obj);
+                    // Plan 06 Ф.3: `coll.iter()` → registered IterT type.
+                    if method == "iter" {
+                        let coll_type = obj_ty.trim_start_matches("Nova_")
+                            .trim_end_matches('*').trim().to_string();
+                        if let Some(iter_t) = self.iter_returns.get(&coll_type) {
+                            return format!("Nova_{}*", iter_t);
+                        }
+                    }
                     // D79: Channel static + instance methods.
                     if let ExprKind::Ident(n) = &obj.kind {
                         if n == "Channel" {

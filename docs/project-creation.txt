@@ -1384,3 +1384,34 @@ Bootstrap-ограничения:
   через nova_int slot). Для (str, int) / (int, Custom) нужен
   полный element-type infer (отложено).
 - Nested patterns `((a, b), c)` пока не поддержаны.
+
+
+================================================================================
+2026-05-08 Plan 06 Ф.3: implicit .iter() для коллекций
+================================================================================
+
+D58 говорит: `for x in collection` вызывает `collection.iter().next()`
+в цикле. Bootstrap'е требовалось писать `for x in coll.iter()`
+явно. План 06 Ф.3 закрывает этот gap — все 3 фазы плана 06 закрыты.
+
+Реализация:
+
+1. Новый registry iter_returns: HashMap<TypeName, IterTypeName>
+   — заполняется при AST-walk для `mut @iter() -> IterT`.
+
+2. emit_for Case 4: если у iter-expr есть метод `iter` (через
+   all_methods), synthesize'им iter.iter() Member-call и
+   рекурсивно дёргаем emit_for. Result — Nova_<IterT>* — имеет
+   next() (через Plan 06 Ф.1 Case 3 dispatch) → loop работает.
+
+3. infer_expr_c_type для Member-call: `coll.iter()` → lookup в
+   iter_returns → Nova_<IterT>*. Без infer Case 3 не сработал бы
+   (default'ил в nova_int).
+
+Тесты (nova_tests/syntax/for_iter_implicit.nv, 2 теста):
+- for x in coll (implicit .iter())
+- for x in coll.iter() (legacy форма)
+
+73/73 nova_tests PASS, без регрессий.
+
+Plan 06 закрыт полностью (Ф.1 + Ф.2 + Ф.3).

@@ -1,0 +1,72 @@
+// for_iter_implicit.nv — Plan 06 Ф.3: implicit `.iter()` для коллекций.
+//
+// `for x in coll` где coll имеет `mut @iter() -> IterT` — codegen
+// автоматически вставляет `.iter()` и итерируется по результату.
+// Раньше требовалось писать `for x in coll.iter()` явно.
+//
+// Поведение по D58: «`for x in collection`-синтаксис вызывает
+// `collection.iter().next()` в цикле».
+
+module nova_tests.syntax.for_iter_implicit
+
+
+// Custom коллекция с iter() методом.
+type MyList {
+    a int
+    b int
+    c int
+}
+
+
+// Iterator для MyList.
+type MyListIter {
+    src       MyList
+    mut step  int
+}
+
+
+export fn MyListIter mut @next() -> Option[int] {
+    let v = if @step == 0 { @src.a }
+        else if @step == 1 { @src.b }
+        else if @step == 2 { @src.c }
+        else { -1 }
+    if @step >= 3 {
+        None
+    } else {
+        @step = @step + 1
+        Some(v)
+    }
+}
+
+
+// Plan 06 Ф.3 trigger: MyList имеет iter() возвращающий MyListIter.
+export fn MyList @iter() -> MyListIter {
+    MyListIter { src: @, step: 0 }
+}
+
+
+export fn MyList.new(a int, b int, c int) -> MyList {
+    MyList { a: a, b: b, c: c }
+}
+
+
+test "for-in с implicit .iter()" {
+    let lst = MyList.new(10, 20, 30)
+    let mut sum = 0
+    // Раньше требовалось: `for x in lst.iter()`.
+    // После Plan 06 Ф.3: `for x in lst` — codegen вставляет .iter() сам.
+    for x in lst {
+        sum = sum + x
+    }
+    assert(sum == 60)
+}
+
+
+test "for-in с явным .iter() (legacy форма продолжает работать)" {
+    let lst = MyList.new(1, 2, 3)
+    let mut count = 0
+    for _ in lst.iter() {
+        count = count + 1
+    }
+    assert(count == 3)
+}
