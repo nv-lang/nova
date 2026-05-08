@@ -1047,3 +1047,199 @@ Bootstrap-ограничения:
   surprising conversion paths).
 
 
+================================================================================
+2026-05-08 Spec/compiler cleanup: or/and/not keyword aliases удалены
+================================================================================
+
+В D49 (statement separator) фиксировались boolean-операторы в виде
+"||/&&/or/and/not" — keyword'ы as alias'ы для символьных операторов.
+Анализ показал:
+
+- В nova_tests/ — ноль использований keyword-формы (or/and/not).
+- В std/ — единственный матч в строковом литерале test-name'а.
+- Lexer обоих компиляторов (codegen + bootstrap) парсил KwAnd/KwOr/KwNot,
+  parser принимал и keyword, и символьную форму.
+- Алиасы нарушают D9 «один очевидный путь» / D40 «один способ».
+
+Удаление:
+- compiler-codegen/src/lexer/{mod.rs,token.rs} — удалены KwAnd/KwOr/KwNot
+  из identifier-маппинга, enum, display.
+- compiler-codegen/src/parser/mod.rs — упрощены parse_or, parse_and,
+  parse_unary (`Bang | KwNot` → `Bang`).
+- compiler-bootstrap/* — те же 6 правок симметрично.
+- spec/decisions/03-syntax.md — D49 переписан: "||/&&/or/and" → "||/&&".
+
+Финальный grep KwAnd|KwOr|KwNot — ноль матчей. cargo check прошёл оба
+компилятора чисто. or/and/not теперь обычные identifier'ы.
+
+Урок: выявить keyword-алиасы можно через grep "Kw<X>" в lexer +
+проверка реальных использований в .nv корпусе. Если ноль реальных
+употреблений — алиас мёртвый, можно удалять без breaking change.
+
+
+================================================================================
+2026-05-08 Plan 04 зафиксирован: Buffer split на StringBuilder/WriteBuffer/ReadBuffer
+================================================================================
+
+Текущий унифицированный Buffer (Q-buffer ✅) смешивает text-domain и
+binary-domain в одном типе. Обсуждение через несколько итераций
+naming/семантики (add_*/append_*/write_*/put_*) выявило что главное —
+не naming, а **разделение типов**.
+
+Финальная архитектура (зафиксирована в docs/plans/04-buffer-split-and-external.md):
+
+- StringBuilder — UTF-8 string accumulator. @into() -> str infallible
+  (UTF-8 invariant поддерживается каждым @append).
+- WriteBuffer — binary serialization. @write_byte/@write_bytes + 18
+  endianness writes (u8/i8/u16/u32/u64/i16/i32/i64/f32/f64 × LE/BE).
+  @into() -> []byte.
+- ReadBuffer — binary read cursor. View над []byte. Pair @read_*
+  (Fail[ReadBufferError]) / @try_read_* (Result), auto-derive на C-runtime
+  уровне.
+
+Plus:
+- Новый keyword `external` для stdlib runtime-implemented функций.
+  external только для функций; типы (StringBuilder/WriteBuffer/ReadBuffer)
+  built-in opaque как примитивы.
+- str.from(c char) — UTF-8 encode codepoint в str через D73 auto-pair.
+- ReadBuffer.@into() — Nova-функция с throw'ом, блокирует D73 auto-derive.
+- D30 расширение: «полные слова, не сокращения», `len`/`iter` mainstream
+  exceptions.
+
+Делать после Plan 08 (D73+D77 4-way auto-derive infrastructure уже
+работает + 18 числовых типов registered — Plan 04 переиспользует).
+
+Урок: длинная итерация дизайна (10+ поворотов в naming) показала что
+«как назвать» — вторично; «какие домены/типы» — первично. Когда
+зафиксировали split на 3 типа, naming решился сам (StringBuilder.@append,
+WriteBuffer.@write_*, ReadBuffer.@read_*).
+
+
+================================================================================
+2026-05-08 Build pipeline: build_c.ps1 + build_c.sh wrappers
+================================================================================
+
+Текущее состояние pipeline `.nv → .exe` было задокументировано
+**частично и с ошибками**:
+
+- compiler-codegen/README.md упоминал `build_c.bat` (он существует с
+  поддержкой gc=malloc|rc|boehm), но в форме которая не работала бы
+  (`build_c.bat hello.nv` — bat принимает .c, не .nv).
+- GCC command в README указывал `-Inova_rt` (неправильный path —
+  codegen эмитит `#include "nova_rt/nova_rt.h"`, нужен `-I.`).
+- MSVC pipeline (через vcvars64.bat) был только в run_tests.ps1, не
+  в README.
+- Top-level README'и не упоминали build pipeline вообще.
+
+Создано:
+
+1. compiler-codegen/build_c.ps1 — Windows wrapper (.nv → .c → .exe
+   one-shot). Опции -Run, -Output, -KeepC, -VCVarsPath. Протестирован
+   end-to-end на hello.nv (Hello, Nova! работает) + error-path
+   (broken.nv даёт unresolved symbol с понятной диагностикой).
+
+2. compiler-codegen/build_c.sh — Linux/Mac wrapper, симметричный .ps1.
+   Опции --run, -o, --keep-c, --cc gcc|clang. Bash syntax-checked.
+
+3. Существующий build_c.bat оставлен — другая роль (принимает .c +
+   gc=malloc|rc|boehm для GC backend выбора). Документирован в README
+   как advanced.
+
+4. compiler-codegen/README.md переписан: walkthrough'и Win/Linux/Mac,
+   разделение ролей трёх wrapper'ов, CLI-флаги compile, известные
+   ограничения, batch через run_tests.ps1.
+
+5. Top-level README.md и README.ru.md — добавлены разделы «Building
+   from source» / «Сборка из исходников» с краткими командами и
+   ссылкой на compiler-codegen/README.md.
+
+Урок: документация build-pipeline критична для onboarding'а. Найденные
+ошибки (-Inova_rt, упоминание build_c.bat в неправильном контексте)
+жили в README ~год без detection — нужны end-to-end тесты walkthrough'ов
+из README, не только сами компиляторы.
+
+
+================================================================================
+2026-05-08 Editor support: sublime + vim/neovim + emacs plugin'ы
+================================================================================
+
+До этой задачи в editors/ был только VSCode plugin. Добавлены plugin'ы
+для остальных популярных IDE.
+
+Сделано:
+
+1. VSCode-семья (Cursor, VSCodium) — те же files что VSCode, просто
+   документированы как fork'и с указанием путей extension'а.
+
+2. Sublime Text (editors/sublime/) — переиспользует
+   editors/vscode/syntaxes/nova.tmLanguage.json напрямую (Sublime
+   парсит TextMate через тот же Oniguruma regex что VSCode). README
+   с symlink-инструкциями для Windows/Linux/Mac.
+
+3. TextMate (macOS) — упомянут в editors/README.md, путь установки
+   через Bundles directory. Файлы переиспользует от VSCode.
+
+4. Vim/Neovim (editors/vim/) — handcrafted плагин:
+   - syntax/nova.vim — `syntax keyword`-based подсветка (~150 строк).
+   - ftdetect/nova.vim — ассоциация *.nv → filetype=nova.
+   - ftplugin/nova.vim — comment-string, indent settings.
+   - README с установкой native + plugin manager (vim-plug, packer,
+     lazy.nvim).
+
+5. Emacs (editors/emacs/) — nova-mode.el (single-file major-mode):
+   - nova-mode-syntax-table — comment syntax, string delimiters.
+   - nova-keywords-* константы по категориям.
+   - nova-prelude-types / nova-effects / nova-primitive-types.
+   - nova-font-lock-keywords — regex-based highlighting.
+   - auto-mode-alist для автоассоциации .nv.
+   - Optional rainbow-delimiters integration.
+   - README с install via load-file / require / use-package /
+     straight.el.
+
+6. editors/README.md — общий index по всем IDE с table:
+   - Поддерживаемые редакторы (8 шт через 4 plugin'а).
+   - Не поддерживаемые (JetBrains, Zed, Helix — требуют tree-sitter
+     или native plugin'ы).
+   - Source-of-truth для keyword'ов: lexer.rs функция
+     lex_ident_or_keyword.
+   - Roadmap: LSP-сервер > tree-sitter grammar > JetBrains plugin.
+
+7. Sync VSCode подсветки — обнаружены и исправлены рассинхроны с
+   current spec:
+   - Удалены: resume keyword (отменён в D61), String/HashMap/HashSet/
+     Mutex/RwLock/Atomic/Iterator/Duration/etc (не в prelude по D26),
+     money (не примитив), Logger/Router/CurrentAdmin/CurrentUser
+     (user-defined из old examples).
+   - Добавлены: protocol keyword, external keyword (Plan 04 forward),
+     RuntimeError, CancelToken, TryFrom, TryInto, StringBuilder/
+     WriteBuffer/ReadBuffer/ReadBufferError (Plan 04), Detach/Blocking/
+     Mem effects.
+
+8. VSCode README исправлен — пути установки указывали на несуществующий
+   `\.vscode\nova-extension`, заменено на корректный `editors\vscode`.
+   Расширен раздел про синхронизацию со spec'ом.
+
+9. Bracket pair colorization рекомендации добавлены во все 4 IDE
+   READMEs:
+   - VSCode: settings.json snippet с bracketPairColorization +
+     guides.bracketPairs + per-Nova settings.
+   - Vim: rainbow / rainbow-delimiters.nvim plugin'ы + indentLine.
+   - Emacs: rainbow-delimiters package + auto-hook в nova-mode.
+   - Sublime: BracketHighlighter + Rainbow Brackets.
+
+10. Top-level README.md и README.ru.md — раздел «Editor support» /
+    «Поддержка редакторов» расширен таблицей всех 4 plugin'ов с
+    ссылкой на editors/README.md.
+
+Урок: TextMate-grammar для VSCode переиспользуется в Sublime/TextMate
+без изменений (Oniguruma compatible). Для Vim/Emacs нужен handcrafted
+формат. tree-sitter — современный стандарт (Zed/Helix/Neovim 0.5+/
+GitHub web), но требует separate проекта ~10-20ч; не делано в MVP.
+Источник истины для keyword'ов — lexer.rs, чтобы все plugin'ы могли
+sync'нуться против одного файла.
+
+Bracket pair colorization это **VSCode-нативная фича**, не часть
+TextMate-grammar — работает автоматически для любого языка через
+language-configuration.json (bracket pairs объявлены). Аналоги для
+других IDE — отдельные plugin'ы (rainbow-delimiters / BracketHighlighter
+/ rainbow.vim).
