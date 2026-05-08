@@ -113,6 +113,10 @@ let f2 = t.@m as fn([]byte) -> int     // другая
 - ✅ Overload по arity: `Logger @log(msg)` vs `Logger @log(level, msg)`.
 - ✅ Disambiguation через type annotation: `let f = t.@m as fn(str) -> int`.
 - ✅ Method values и overload работают совместно.
+- ✅ `Self.method(...)` в expression position работает (D66
+  расширение): `fn Account.new() -> Self => Self.with_initial(0)`.
+- ✅ `Self { ... }` literal работает (D66): `fn Box[T].of(v T) -> Self
+  => Self { value: v }`.
 
 ---
 
@@ -264,6 +268,57 @@ nova_money (*g)(Account*) = Nova_Account_method_balance;
 Account* (*h)(nova_str) = Nova_Account_static_new;
 ```
 
+### Ф.4.5 — `Self.method(...)` в expression position
+
+D66 описывает `Self` как «текущий тип» в любом методе. В **type
+position** (return type, parameter type) — уже работает в bootstrap'е.
+В **expression position** (call-site) — **не работает**:
+
+```nova
+type Account { balance money }
+
+fn Account.new() -> Self => Self.with_initial(0)
+//                          ^^^^^^^^^^^^^^^^^^^^
+//                          ↑ Self.method(...) — call current type's static
+//                            Сейчас в codegen: ошибка либо incorrect emission
+
+fn Account.with_initial(amount money) -> Self =>
+    Self { balance: amount }
+//  ^^^^^^^^^^^^^^^^^^^^^^^^
+//  ↑ Self { ... } literal — тоже expression position
+```
+
+Нужен **resolver** который при встрече `Self` в:
+- **Call expression** (`Self.make(...)`): резолвит в `<current_type>.make(...)`.
+- **Literal** (`Self { ... }`): резолвит в `<current_type> { ... }`.
+- **Static method ref** (`Self.@balance`): резолвит как unbound method
+  value (см. Ф.4).
+
+Алгоритм: как `current_receiver_type` уже используется для type-position
+(`-> Self` в emit_c.rs:659-666), но расширить на expression-position.
+
+**Use-cases (мотивирующие):**
+
+1. **Default → parameterized constructor:**
+   ```nova
+   fn HashMap[K, V].new() -> Self => Self.with_capacity(16)
+   ```
+
+2. **Generic constructor DRY:**
+   ```nova
+   fn Box[T].of(v T) -> Self => Self { value: v }
+   ```
+
+3. **Builder pattern с self.method'ами:**
+   ```nova
+   fn Builder.empty() -> Self => Self.with_default()
+   fn Builder.with_default() -> Self => Self { ... }
+   ```
+
+Это **прецедент Rust** (`impl Foo { fn make() -> Self { Self::new(2) } }`)
+и Swift (`Self.method()`). Spec D66 разрешает; реализация — расширение
+этого плана.
+
 ### Ф.5 — Type annotation для disambiguation
 
 ```nova
@@ -335,6 +390,15 @@ D22 уже описывает (строки 762-770 syntax.md). Добавить
 - Ambiguity error при `t.@m` без context'а.
 - Disambiguation через `as fn(...) -> ...`.
 - Strict matching: `@m(int)` не подбирается для `m(42 as f64)`.
+
+`nova_tests/syntax/self_in_expr.nv`:
+- `Self.method(args)` в static-методе резолвится в `<type>.method(args)`.
+- `Self { fields }` literal резолвится в `<type> { fields }`.
+- `Self.@method` в static-method — unbound method value.
+- Generic-types: `Box[T].of` использует `Self { value: v }` корректно
+  (Self ≡ `Box[T]`, не `Box`).
+- Self в overload context: `Self.from(2)` выбирает overload по
+  `int`-параметру.
 
 ### Ф.8 — Sweep std
 
@@ -413,12 +477,14 @@ Protocol-based dispatch (`fn @m[T Encodable](v T)`) — это **другой
 3. **Ф.3** — name mangling для overloaded methods (~50 строк).
 4. **Ф.4** — method values как first-class (bound/unbound/static)
    (~150 строк codegen, +runtime struct definitions).
-5. **Ф.5** — type annotation для disambiguation (~30 строк, integrate
+5. **Ф.4.5** — `Self.method(...)` и `Self { ... }` в expression
+   position (~50 строк codegen).
+6. **Ф.5** — type annotation для disambiguation (~30 строк, integrate
    с existing type inference).
-6. **Ф.6** — spec D35 раздел + Q-overloading закрыть (~100 строк
+7. **Ф.6** — spec D35 раздел + Q-overloading закрыть (~100 строк
    markdown).
-7. **Ф.7** — тесты (~150 строк .nv).
-8. **Ф.8** — sweep std (отдельный коммит).
+8. **Ф.7** — тесты (~150 строк .nv).
+9. **Ф.8** — sweep std (отдельный коммит).
 
 ---
 
