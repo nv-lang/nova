@@ -21,8 +21,7 @@
 - [spec/effects.md](spec/effects.md) — система эффектов (базовое введение)
 - [spec/open-questions.md](spec/open-questions.md) — нерешённые вопросы
 - [spec/decisions/](spec/decisions/) — журнал дизайн-решений с эволюцией
-- [compiler-bootstrap/](compiler-bootstrap/) — treewalk-интерпретатор (Rust)
-- [compiler-codegen/](compiler-codegen/) — C-бэкенд компилятор (Rust → C → нативный бинарь)
+- [compiler-codegen/](compiler-codegen/) — компилятор Nova (Rust): парсер, type-checker, treewalk-интерпретатор, C-backend codegen
 
 ## Из чего следует всё остальное
 
@@ -61,11 +60,13 @@ fn map_audio(samples []f32, gain f32) -> []f32 =>
 ## Статус
 
 Активная разработка. Спецификация стабильна по ключевым областям (эффекты,
-handlers, синтаксис, память, конкуренция). Существуют два компилятора:
+handlers, синтаксис, память, конкуренция). Один компилятор:
 
-- **compiler-bootstrap** — treewalk-интерпретатор, запускает все spec-тесты
-- **compiler-codegen** — компилирует Nova в C через нативный runtime (эффекты,
-  файберы, GC); используется для проверки реализации против спецификации
+- **compiler-codegen** — Rust-реализация с парсером, type-checker'ом,
+  treewalk-интерпретатором и C-backend codegen'ом. Компилирует Nova в C
+  через нативный runtime (эффекты, файберы, GC); используется как для
+  интерактивных запусков (`run`, `test`), так и для нативной компиляции
+  (`compile`).
 
 ## Лицензия
 

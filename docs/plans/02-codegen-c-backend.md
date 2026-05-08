@@ -1,7 +1,10 @@
 # Plan 02 — Nova C Backend (compiler-codegen)
 
 Компиляция Nova в нативный бинарь через C как промежуточное представление.
-Рабочая директория: `compiler-codegen/` (копия `compiler-bootstrap/`, изолирована).
+Рабочая директория: `compiler-codegen/` — единственный компилятор Nova
+(parser/type-checker/interp/codegen в одном crate'е). До 2026-05-08
+существовал отдельный `compiler-bootstrap/` (treewalk-only); удалён
+после того как codegen поглотил его функциональность.
 
 ## Архитектурный принцип: GC за интерфейсом
 

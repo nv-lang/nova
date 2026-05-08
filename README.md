@@ -25,8 +25,7 @@ programming with verifiable LLM-written code).
 - [spec/effects.md](spec/effects.md) — effect system (introduction)
 - [spec/open-questions.md](spec/open-questions.md) — unresolved questions
 - [spec/decisions/](spec/decisions/) — design decision log with rationale
-- [compiler-bootstrap/](compiler-bootstrap/) — treewalk interpreter (Rust)
-- [compiler-codegen/](compiler-codegen/) — C-backend compiler (Rust → C → native)
+- [compiler-codegen/](compiler-codegen/) — Nova compiler (Rust): parser, type-checker, treewalk interpreter, C-backend codegen
 
 ## What follows from a single idea
 
@@ -65,11 +64,12 @@ programmer writes nothing special. See [spec/decisions/05-memory.md#d6](spec/dec
 ## Status
 
 Active development. The specification is stable across core features (effects,
-handlers, syntax, memory, concurrency). Two compilers exist:
+handlers, syntax, memory, concurrency). Single compiler:
 
-- **compiler-bootstrap** — treewalk interpreter, runs all spec tests
-- **compiler-codegen** — compiles Nova to C via a native runtime (effects,
-  fibers, GC); used for benchmarking and validation against the spec
+- **compiler-codegen** — Rust implementation with parser, type-checker,
+  treewalk interpreter, and C-backend codegen. Compiles Nova to C via a
+  native runtime (effects, fibers, GC); used for both interactive runs
+  (`run`, `test`) and native compilation (`compile`).
 
 ## License
 

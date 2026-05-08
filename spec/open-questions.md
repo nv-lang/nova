@@ -208,9 +208,9 @@ type Db effect {
 **String API** не зафиксирован. В `nova_tests/` и `examples/`
 используются `s.len`, `s.contains(sub)`, `s.starts_with(p)`,
 `s.ends_with(p)`, `s.to_lower()`, `s.to_upper()`, `s.trim()` — все
-работают в bootstrap'е (`compiler-bootstrap/src/interp/stdlib.rs`),
-но это **bootstrap-факт**, не часть спеки. Production-компилятор
-должен ориентироваться на формальный список.
+работают в `compiler-codegen` runtime, но это **implementation-факт**,
+не часть спеки. Production-компилятор должен ориентироваться на
+формальный список.
 
 **Escape sequences** в string literals (`"\n"`, `"\t"`, `"\""`,
 `"\\"`) — в bootstrap'е поддержаны, в спеке упоминаются только

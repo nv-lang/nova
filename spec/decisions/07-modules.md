@@ -494,8 +494,7 @@ error: module declaration does not match file path
 
 ```
 nova-lang/
-├── compiler-bootstrap/      Rust — первая реализация (treewalk-interp)
-├── compiler-codegen/        Rust + C runtime — bootstrap codegen
+├── compiler-codegen/        Rust компилятор: парсер, type-checker, treewalk-interp + C-codegen
 ├── std/                     стандартная библиотека Nova (.nv)
 │   ├── collections/         hashmap, set, deque, vec, queue, ...
 │   ├── crypto/              md5, sha1, sha256, hmac, jwt, bcrypt
