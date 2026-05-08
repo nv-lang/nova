@@ -2194,3 +2194,111 @@ levels — выбор overload'а. Прецедент: TypeScript type assertion
   - C-имя метода = invisible intrinsic не хуже visible declaration в
     registry. Inline emit того же C-вызова сохранён для performance,
     но связь через registry делает API discoverable.
+
+---
+
+## Plan 17 — Q-resolutions (2026-05-08, ✅ ЗАКРЫТ)
+
+- **Что упрощено:** в spec'е было 11 полу-открытых Q-вопросов, для
+  которых de-facto-поведение существовало (или решение было
+  очевидно), но не зафиксировано формально. Plan 17 закрыл 6 из них
+  прямой правкой decisions/*.md — теперь LLM-генерируемый код имеет
+  однозначный referer для:
+    - `@clone()` — shallow по умолчанию (D26),
+    - style coercion с D55 — permissive с таблицей рекомендаций,
+    - Built-in API для `[]T` — формальный список встроенного vs
+      stdlib-расширений (D38),
+    - `@method` vs `method()` в protocol-блоках — обе формы валидны (D53),
+    - keyword-as-fields — строгий запрет (D83, уже было),
+    - string interpolation `${...}` — JS-style sugar над str.from
+      (D44; design CLOSED, codegen open).
+- **DEFER-rationale.** Для оставшихся 5 Q (pipe-operator, fail-coercion,
+  default-generic, numeric-coercion, static-method-protocol) добавлен
+  явный rationale «почему сейчас не делаем» + trigger для пересмотра.
+  Это дисциплинирует — Q без объяснения = висящий TODO; Q с trigger
+  знает «когда вернуться».
+- **Audit-fail.** Plan 17 утверждал, что string interpolation
+  «работает де-факто в codegen». При прогоне regression-теста
+  оказалось — codegen **не разворачивает** `${x}` в обычных
+  строковых литералах; `"${x}"` сохраняется как сырая 4-codepoint
+  строка. Spec-фиксация скорректирована («design CLOSED, codegen
+  NOT YET IMPLEMENTED»), регрессия удалена. Урок: empirical check
+  перед фиксацией — даже когда «очевидно работает».
+- **Регрессия:** добавлен `nova_tests/runtime/clone_semantics.nv`
+  (5 тестов на shallow-семантику record + StringBuilder/WriteBuffer
+  deep). 86/86 nova_tests PASS.
+- **Файлы:** spec/decisions/{02,03,08}-*.md, spec/syntax.md,
+  spec/open-questions.md, docs/plans/17-q-resolutions.md,
+  docs/plans/README.md, nova_tests/runtime/clone_semantics.nv.
+
+---
+
+## Plan 17 Ф.4 — string interpolation полная реализация (2026-05-08)
+
+- **Что упрощено в use-site:** `"hello, ${name}, age=${n}"` теперь
+  работает в bootstrap'е через все слои компилятора. Программисту
+  больше не нужно писать `"hello, " + name + ", age=" + str.from(n)`
+  с ручным `str.from`. Это самая частая операция в форматирующем
+  коде.
+- **StringBuilder-based emit, не цепочка `+`.** Один `+` в hot loop
+  даёт O(N²); StringBuilder с pre-size estimate — O(N). Codegen
+  делает right-thing-by-default — программист пишет короче и без
+  performance-trap'а одновременно. Sub-expressions внутри `${...}`
+  диспатчатся per-type: `nova_bool` → "true"/"false", `nova_f64` →
+  `%g`, `CharLit` → UTF-8 encode, user-тип через D73 `@into()->str`.
+- **Sentinel-байт `\x01` для escape `\$`.** Lexer кладёт SOH+`$`
+  при встрече `\${` чтобы parser отличил literal-`${` от
+  interpolation-`${`. SOH в обычном Nova-коде не встречается
+  (control char). Альтернативы (отдельные TokenKind для частей,
+  compound token) — overkill для одной фичи.
+- **Audit-fail исправлен.** Изначально Plan 17 утверждал «codegen
+  разворачивает де-факто» — оказалось ложным. Empirical check
+  выявил → реализовали полный стек. Урок: spec без empirical
+  verification = potential lie.
+- **Sub-lex/sub-parse expressions внутри строки.** Парсер при
+  встрече `${...}` запускает на содержимом отдельный
+  `Lexer::new(expr_src) + Parser::parse_expr()`. Поддержаны nested
+  `{}` через depth-counter; пустое `${}` — compile error.
+- **Const-инициализатор guard.** `static const nova_str FOO =
+  "${expr}"` запрещён через явный compile error «not allowed in
+  const initialiser» — StringBuilder требует runtime аллокаций.
+  Тесты запретного кейса не нужны (это compile-time guard).
+- **Регрессия:** `nova_tests/types/string_interpolation.nv` — 13
+  тестов: int / negative / str / bool / f64 / char-литерал /
+  multi / expression in `${}` / escape `\${` / большая строка
+  (12 интерполяций) через StringBuilder. 87/87 nova_tests PASS.
+- **Файлы:** lexer/parser/ast/codegen/interp + spec/decisions +
+  open-questions.md + nova_tests/types/string_interpolation.nv.
+
+---
+
+## Plan 14 Ф.3 — free fn as first-class value (2026-05-08, ✅ ЗАКРЫТ)
+
+- **Что упрощено в use-site:** `let f = inc` и `xs.map(inc)` теперь
+  работают без обёртки в lambda. До Ф.3 код `xs.map(inc)` ломался
+  с linker-ошибкой (несовместимые типы Nova fn-pointer ≠ closure-struct);
+  программисту приходилось писать `xs.map((x) => inc(x))` с явным шумом.
+- **Реестр user_fn_sigs + thunk-генерация.** Каждая top-level fn без
+  receiver и без generics автоматически получает (param_c_types, ret_c)
+  записанный в реестре. При первом use-as-value codegen эмитит envless
+  thunk-adapter `nova_fn_<name>_thunk(void* env, args...) { (void)env;
+  return nova_fn_<name>(args...); }` — adapter принимает `env` (для
+  closure-протокола) и игнорирует его (free fn без захвата). Дедупликация
+  через `emitted_fn_thunks: HashSet<String>` — N use-sites одной fn
+  делят один thunk.
+- **Closure-литерал на use-site.** Вместо raw fn-pointer на use-site
+  alloc'ается `NovaClos_X*` с `fn = &thunk, env = NULL`. Это совместимо
+  со всеми callers (HOF принимающие `void*`, fn_param_sigs-driven
+  calls через NOVA_CLOS_CALL_* macro).
+- **Direct calls не ломаются.** `inc(5)` идёт через `emit_call` без
+  `emit_expr` на `Ident(inc)`, поэтому остаётся `nova_fn_inc(5)`.
+- **Generic fn fallback.** Generic functions не регистрируются в
+  user_fn_sigs (sig зависит от мономорфизации) — для них fallback на
+  raw fn-pointer (старое поведение).
+- **Известное ограничение:** flat var_types в bootstrap (нет scope).
+  Local `let dbl = ...` в одном тесте затмевает global `fn dbl` в другом.
+  Тесты используют `top_inc`/`top_dbl` чтобы избежать конфликта.
+- **Регрессия:** nova_tests/syntax/fn_first_class.nv — добавлено 5
+  тестов на free-fn-as-value. 87/87 nova_tests PASS (без регрессий).
+- **Файлы:** compiler-codegen/src/codegen/emit_c.rs (+95 строк),
+  nova_tests/syntax/fn_first_class.nv (+50 строк), plan 14 status.

@@ -25,6 +25,10 @@
 | 11 | [11-method-values-and-overload.md](11-method-values-and-overload.md) | Method values + overload по типу аргумента (закрывает Q-overloading вариант 1) | ✅ ЗАКРЫТ (Ф.8 sweep std — optional, не блокер) |
 | 12 | [12-builtins-driven-codegen.md](12-builtins-driven-codegen.md) | builtins.nv-driven external dispatch (Q-codegen-builtins-cleanup) | ✅ ЗАКРЫТ (Ф.6 type-checker gate отложен; Ф.4.5 auto-derive ❌ ОТМЕНЕНО Plan 13 Ф.9.5) |
 | 13 | [13-runtime-stdlib-and-autogen.md](13-runtime-stdlib-and-autogen.md) | Runtime stdlib (str/math) + auto-gen std/runtime/*.nv (read-only projection реестра компилятора) | ✅ ЗАКРЫТ (включая Ф.9.2 `+` через `@plus` body + Ф.9.6 bag-fix `StringBuilder.@len` codepoints); user-defined `@plus` routing отложен до method_overloads expansion |
+| 14 | [14-stdlib-codegen-gaps.md](14-stdlib-codegen-gaps.md) | Закрыть codegen-gap'ы блокирующие std/* (Iter[T] element-type, const non-trivial, free-fn-as-value, fn-в-record, D69 variadic, cross-file resolve, `int as char` literal) | частично (Ф.3 free-fn-as-value ✅; остальные Ф.1/Ф.2/Ф.4/Ф.5/Ф.6/Ф.7 — open) |
+| 15 | [15-generic-bounds-enforcement.md](15-generic-bounds-enforcement.md) | D72 generic bounds `[T Protocol]` enforcement в type-checker'е | активный, не начат |
+| 16 | [16-capability-enforcement.md](16-capability-enforcement.md) | D63 `forbid` + D64 `realtime` compile-time capability checks (закрытие spec-vs-impl drift) | активный, не начат |
+| 17 | [17-q-resolutions.md](17-q-resolutions.md) | Закрыть полу-открытые Q (string interpolation, clone semantics, array API, и др.) | ✅ ЗАКРЫТ (включая Ф.4 — string interpolation полная реализация: lexer/parser/AST/codegen StringBuilder/interp; 13 regression-тестов) |
 
 ## Связанные директории
 

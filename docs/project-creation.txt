@@ -2373,3 +2373,275 @@ Determinism `emit-runtime-stubs --check` → no diff после регена.
     contract. Их **не надо отображать 1:1**. Правильное именование
     методов важнее простоты реализации (`return b->len;` лаконично,
     но семантически неверно).
+
+
+================================================================
+Plan 17 — Q-resolutions (2026-05-08, ✅ ЗАКРЫТ)
+================================================================
+
+Цель: закрыть полу-открытые Q-вопросы в spec'е через прямые правки
+decisions/*.md (без кода компилятора). Spec без формального ответа =
+LLM не знает «что верно»; закрытие Q улучшает AI-first без
+implementation-цены.
+
+Закрытые Q (6 штук):
+
+1. Q-clone-semantics — D26 расширен секцией «`@clone()` shallow по
+   умолчанию». Поля копируются, managed-references share'ятся.
+   Исключение: StringBuilder/WriteBuffer @clone() deep по семантике
+   accumulator-типа. Для record/коллекций программист пишет
+   @deep_clone() вручную. Регрессия: nova_tests/runtime/
+   clone_semantics.nv (5 тестов на shared/independent ref).
+
+2. Q-style-coercion — D55 расширен секцией «когда coerce, когда
+   явно». Permissive: оба валидны. Линтер-рекомендация: coerce в
+   позициях с явным типом (let T = ..., -> T, fn(x T)), явный
+   конструктор для match с unit-альтернативой и nested {{...}}.
+
+3. Q-array-api — D38 расширен «Built-in API для `[]T`». Минимальный
+   built-in (len/cap/is_empty, [i]/get, push/pop, iter/for, static
+   new/with_capacity/filled). Stdlib extensions через D35
+   (map/filter/fold/any/all/first/last в std/collections/vec.nv).
+   Slicing xs[a..b] остаётся отложенным (Q-array-slicing).
+
+4. Q-keywords-as-fields — уже был CLOSED через D83; Plan 17 только
+   подтвердил.
+
+5. Q-protocol-method-prefix — D53 расширен. Обе формы валидны:
+   `hash() -> u64` и `@hash() -> u64`. mut-методы обязательно с @.
+   std/testing/property.nv использует голую форму без проблем.
+
+6. Q-string-interpolation — частично. **Design CLOSED** через D44
+   (sugar над str.from + конкатенация), но в bootstrap-codegen
+   **не реализовано** — `"${x}"` сохраняется как сырая строка.
+   Исходное предположение Plan 17 «работает де-факто» оказалось
+   неверным. Регрессия не добавлена; codegen-task — отдельная
+   будущая работа (Q-string-interpolation-codegen).
+
+Defer-rationale (5 Q):
+
+- Q-pipe-operator — DEFERRED to v0.5+. Trailing-block + method-chain
+  покрывают use-case'ы.
+- Q-fail-coercion — DEFERRED, нужен дизайн (auto-coerce типов
+  ошибок при ?).
+- Q-default-generic — DEFERRED, ждёт generic Complex/Vector/Matrix.
+- Q-numeric-coercion — DEFERRED, ждёт JsonValue.
+- Q-static-method-protocol — DEFERRED, ждёт Plan 15 generic bounds.
+
+Файлы:
+  spec/decisions/03-syntax.md (D44 + D38 secs)
+  spec/decisions/02-types.md (D55 + D53 secs)
+  spec/decisions/08-runtime.md (D26 sec)
+  spec/syntax.md (string-interpolation tutorial)
+  spec/open-questions.md (6 CLOSED + 5 DEFERRED статусы)
+  docs/plans/17-q-resolutions.md (статус + retrospective table)
+  docs/plans/README.md (статус)
+  nova_tests/runtime/clone_semantics.nv (новый)
+
+Регрессия: 86/86 nova_tests PASS (было 85, +1 clone_semantics).
+
+Урок:
+  - **Audit перед фиксацией.** План утверждал «string interpolation
+    работает де-факто», но codegen этого не делает. `${x}` в обычных
+    строковых литералах остаётся сырым. Перед fixation в spec нужно
+    эмпирически проверять — иначе LLM получит ложное «что верно».
+  - **DEFER-rationale ценнее «open»**. Q без объяснения почему
+    отложено = висящий TODO. Q с trigger'ом для пересмотра —
+    дисциплинирует решение «когда вернуться».
+
+================================================================
+Plan 17 Ф.4 — string interpolation codegen (2026-05-08, ✅ ЗАКРЫТ)
+================================================================
+
+После Ф.1 audit'а оказалось, что claim «codegen разворачивает ${expr}
+де-факто» неверный — codegen вообще не обрабатывал ${} в обычных
+строковых литералах. Ф.4 закрыла этот gap полной реализацией.
+
+Реализация — все слои компилятора:
+
+1. Lexer (compiler-codegen/src/lexer/mod.rs):
+   - Escape `\$` → sentinel `\x01$` (SOH + `$`).
+   - SOH в обычном Nova-коде не встречается (control char), поэтому
+     может быть использован как маркер «следующий `$` буквальный».
+
+2. AST (compiler-codegen/src/ast/mod.rs):
+   - `pub enum InterpStrPart { Lit(String), Expr(Box<Expr>) }`.
+   - `ExprKind::InterpolatedStr { parts: Vec<InterpStrPart> }`.
+
+3. Parser (compiler-codegen/src/parser/mod.rs):
+   - `desugar_string_interpolation(raw, span)` после
+     `TokenKind::Str(s)` в expr-position. Сканирует raw на ${...}
+     с учётом SOH-escape. Каждый ${expr} sub-lex/sub-parse'ится через
+     `Lexer::new(expr_src) + Parser::with_src(...)`. Balanced {}
+     внутри expr поддерживается. Empty ${} — compile error.
+   - Pattern-position и test-name остаются raw `Literal::Str(s)` —
+     там interpolation не имеет смысла.
+
+4. Codegen (compiler-codegen/src/codegen/emit_c.rs):
+   - `emit_interpolated_str(parts)` эмитит:
+       Nova_StringBuilder* sb = Nova_StringBuilder_static_with_capacity(N);
+       Nova_StringBuilder_method_append_str(sb, /* literal или
+           per-fragment dispatch'ed expr-as-str */);
+       ... (для каждой части)
+       nova_str result = Nova_StringBuilder_method_into(sb);
+   - N = точная сумма длин литералов + 16 байт * количество expr-частей.
+   - Per-fragment dispatch по infer_expr_c_type:
+       nova_str          → pass-through.
+       nova_bool         → nova_bool_to_str ("true"/"false").
+       nova_f64          → nova_f64_to_str (snprintf %g).
+       ExprKind::CharLit → nova_char_to_str (UTF-8 encode).
+       User-T с @into()->str (D73 into_targets) → Nova_T_method_into.
+       Fallback          → nova_int_to_str.
+   - Одна аллокация на итоговый buffer; нет O(N²) от цепочки `+`.
+   - Для const-инициализатора: compile error «not allowed in const»
+     (StringBuilder требует runtime alloc).
+   - В infer_print_helper / infer_expr_c_type добавлен пасс-чёрв
+     для InterpolatedStr (все возвращают nova_str).
+
+5. Interp (compiler-codegen/src/interp/mod.rs):
+   - eval каждой части, конкатенация через format!("{}", value).
+
+Тесты — nova_tests/types/string_interpolation.nv (13 тестов):
+  - int / negative int / str / bool / f64 / char-литерал в ${'A'} /
+    multi-interpolation / expression `${a + b}` / single-only `${x}` /
+    punctuation вокруг / escape `\${` / большая строка через
+    StringBuilder (12 интерполяций).
+
+Регрессия: 87/87 nova_tests PASS (было 86, +1 string_interpolation).
+
+Известное ограничение (Q-char-tracking-in-interpolation):
+  let c = 'A'; "${c}" — печатает codepoint-число, не символ. Bootstrap
+  codegen не отслеживает char-vs-int через var-types — char хранится
+  как nova_int. Workaround: char-литерал прямо в ${'A'} или явный
+  str.from(c). Future task.
+
+Урок:
+  - Empirical check перед фиксацией. Изначальный план 17 утверждал
+    «работает де-факто» — это было неверно. После audit'а пришлось
+    реализовывать с нуля.
+  - StringBuilder-based emit > цепочка `+`. Pre-size estimate из
+    компиляции делает performance деградацию pathological-цепочек
+    невозможной (O(N) вместо O(N²)).
+  - Sub-lex/sub-parse в parser — естественная техника для nested
+    DSL'ей внутри строковых литералов. Не нужно расширять lexer
+    специальными режимами.
+  - Sentinel-байт SOH (\x01) — чистый способ передать escape-метку
+    из lexer в parser без расширения TokenKind. Альтернативы:
+    добавить отдельные токены StrPart/ExprStart/StrEnd (overkill для
+    одной фичи), или использовать compound token (ломает однородность).
+
+Файлы изменены (4 файла исходников + 1 spec + 1 test + 3 docs):
+  compiler-codegen/src/lexer/mod.rs
+    (escape \$ → sentinel SOH+$, ~10 строк)
+  compiler-codegen/src/ast/mod.rs
+    (InterpStrPart enum + ExprKind::InterpolatedStr вариант, ~12 строк)
+  compiler-codegen/src/parser/mod.rs
+    (desugar_string_interpolation + InterpPart helper, ~120 строк)
+  compiler-codegen/src/codegen/emit_c.rs
+    (emit_interpolated_str + 4 пасс-чёрв в match'ах, ~95 строк)
+  compiler-codegen/src/interp/mod.rs
+    (eval InterpolatedStr через format!, ~17 строк)
+  spec/decisions/03-syntax.md (D44 bootstrap-status updated)
+  spec/open-questions.md (Q-string-interpolation → CLOSED)
+  nova_tests/types/string_interpolation.nv (новый, 13 тестов)
+  docs/plans/17-q-resolutions.md (Ф.4 retrospective)
+  docs/plans/README.md (статус)
+
+================================================================
+Plan 14 Ф.3 — free-fn-as-value (2026-05-08, ✅ ЗАКРЫТ)
+================================================================
+
+Задача: дать `let f = inc` и `xs.map(inc)` работать в codegen
+(пока работают только lambda-формы `let f = (x) => inc(x)`).
+Spec D22+D35 это покрывает, codegen — нет.
+
+Корень: emit_c.rs:3580 для Ident(name) где name — user fn эмитил
+сырой fn-pointer `nova_fn_<name>`. Callers (HOF / fn_param_sigs-driven
+calls через NOVA_CLOS_CALL_*) ждут closure-struct {fn, env}. Тип
+несовместим — linker error или wrong call.
+
+Реализация (~95 строк в emit_c.rs):
+
+1. Реестр user_fn_sigs: HashMap<name, (param_c_tys, ret_c)>.
+   Заполняется при emit_fn_decl_forward для top-level fn без
+   receiver/generics.
+
+2. emitted_fn_thunks: HashSet<name> для дедупликации thunk'а.
+
+3. emit_free_fn_value(name) — если sig известна, эмитит:
+   - thunk (envless adapter):
+       static <ret> nova_fn_<name>_thunk(void* env, args...) {
+           (void)env;
+           return nova_fn_<name>(args...);
+       }
+     один раз (deduped через emitted_fn_thunks).
+   - на use-site: alloc'ает NovaClos_X*, fn=&thunk, env=NULL,
+     возвращает (void*)tmp.
+
+4. Ident-path в emit_expr: если is_user_fn && !is_local_var —
+   пробует emit_free_fn_value; fallback на raw nova_fn_<name>.
+
+5. Let-decl path: при `let f = inc` (RHS — Ident, не local var,
+   sig в user_fn_sigs) копирует sig в fn_param_sigs[`f`]. Тогда
+   `f(x)` идёт через NOVA_CLOS_CALL_* macro.
+
+Не ломается:
+- Direct calls `inc(5)` идут через emit_call → infer_func_c_name
+  → nova_fn_inc(...). emit_expr на Ident(inc) тут не вызывается.
+- Generic functions — НЕ регистрируются в user_fn_sigs (sig
+  зависит от инстанциации) — fallback.
+
+Тесты — nova_tests/syntax/fn_first_class.nv (+5 новых):
+  - free fn name as value — let-binding
+  - free fn name as value — передача в HOF
+  - две free fn в HOF — независимые (проверяет thunk-дедупликацию)
+  - free fn в compose с lambda
+  - две именованные fn в compose
+
+Все 17/17 в файле PASS. Full nova_tests 87/87 PASS — без регрессий.
+
+Известное ограничение bootstrap'а: flat var_types (нет scoping'а).
+Local `let dbl = ...` в одном тесте затмевает global `fn dbl` в
+другом. Тесты используют top_inc/top_dbl чтобы избежать конфликта.
+Real fix — scope в bootstrap codegen — отдельная задача.
+
+Файлы:
+  compiler-codegen/src/codegen/emit_c.rs (+95 строк)
+  nova_tests/syntax/fn_first_class.nv (+ ~50 строк тестов)
+  docs/plans/14-stdlib-codegen-gaps.md (Ф.3 → ЗАКРЫТ)
+  docs/plans/README.md (статус plan 14 → частично)
+
+Урок:
+- Thunk-pattern для adapt'инга API из другой sig — стандартная
+  техника в C codegen. Один env-параметр + cast'ы дают bridge
+  между «прямая C function» и «closure-таб {fn, env}».
+- Дедупликация через HashSet проста и эффективна; thunk на
+  N use-sites эмитится один раз.
+- Symmetric language features нужно реализовывать proactively.
+  Раньше (pre-Ф.3) код `xs.map(inc)` падал с непонятной ошибкой
+  компиляции после линкера; теперь работает «само собой».
+
+================================================================
+2026-05-09: Verification — std/ + examples/ после Ф.3
+================================================================
+
+После Plan 17 + Plan 14 Ф.3 — прогон с -IncludeStdlib:
+
+  nova_tests/   : 87/87 PASS (без регрессий, +5 fn_first_class +13
+                  string_interpolation +5 clone_semantics)
+  std/          : 90/137 в overall — 87 + 3 std PASS = same as before
+                  (Ф.3 не добавила std passes, потому что фактический
+                  blocker для std — Ф.1/Ф.2/Ф.4/Ф.5/Ф.6/Ф.7, не Ф.3).
+                  Регрессий нет.
+  examples/     : 0/20 — все падают на DAVNICH ошибках:
+                  - 11× module-path mismatch (D29 strict).
+                  - 4× устаревший синтаксис `Type*`/`mut *self`.
+                  - 1× orm_decorators.nv:66 — строковый литерал
+                    "${rest.until(\" WHERE \")}" — двойная кавычка
+                    внутри `${}`. Это **architectural limitation**
+                    string-interpolation: lexer закрывает строку на
+                    первой `"`. Все языки с interpolation требуют
+                    либо single-quote escape, либо raw-strings.
+                  - Остальное — устаревшая грамматика.
+
+Examples — archaic test code, не блокеры. После Ф.3 регрессий нет.
