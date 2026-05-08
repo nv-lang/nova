@@ -24,6 +24,10 @@ Acceptance — добавить новый method тремя правками (r
 - `str + str` явно через `@concat` в registry (не invisible intrinsic).
 - `str @char_len` → `@len` (D26 spec говорит просто `len`).
 - `str @chars() -> []int` → `-> []char` (char first-class).
+- ReadBuffer получает `@read_char` / `@read_str(n)` + Result-формы;
+  `ReadBufferError.InvalidUtf8 { position }` для невалидного UTF-8.
+- **Auto-derive `try_read_*` из `read_*` отменён** (Plan 12 Ф.4.5 ❌).
+  Все формы — явно в registry. D73 From↔Into остаётся.
 - Renderer: пустая строка между методами в auto-gen .nv для читаемости.
 См. Ф.9 ниже.
 
@@ -651,7 +655,113 @@ first-class:
 C-уровне. Plan 13 Ф.9 предписывает **`[]char`** как minimum;
 переход на `Iter[char]` — future Q.
 
-#### 6. Форматирование: пустая строка между методами
+#### 6. ReadBuffer: добавить `read_char` / `read_str(n)` + явные `try_*` формы
+
+**Контекст.** ReadBuffer сейчас покрывает только числовые типы
+(`read_byte`, `read_uN_le/be`, `read_iN_*`, `read_fN_*`). Для парсинга
+текстовых форматов (HTTP headers, CSV, простые protocols) нужны
+codepoint-уровневые операции:
+
+- **`@read_char`** — один codepoint (UTF-8 1-4 байта). Throw'ит
+  `ReadBufferError.UnexpectedEnd` если буфер пуст или содержит
+  неполную UTF-8 sequence.
+- **`@read_str(n int)`** — `n` **codepoint'ов** (variable byte length).
+  Throw'ит `UnexpectedEnd` если меньше `n` полных codepoint'ов в
+  remaining bytes.
+
+**Новые декларации в registry:**
+
+```nova
+// Один codepoint (UTF-8 1-4 байта). Throw'ит UnexpectedEnd.
+fn ReadBuffer mut @read_char()      Fail[ReadBufferError] -> char
+
+// Result-форма для @read_char.
+fn ReadBuffer mut @try_read_char()  -> Result[char, ReadBufferError]
+
+// n codepoint'ов. Throw'ит UnexpectedEnd если меньше n полных
+// codepoint'ов в буфере.
+fn ReadBuffer mut @read_str(n int)      Fail[ReadBufferError] -> str
+
+// Result-форма для @read_str.
+fn ReadBuffer mut @try_read_str(n int)  -> Result[str, ReadBufferError]
+```
+
+**C-side новых функций:**
+- `Nova_ReadBuffer_method_read_char` — UTF-8 decode одного codepoint'а
+  на текущей позиции, advance position.
+- `Nova_ReadBuffer_method_try_read_char` — то же, но возвращает
+  `NovaResult_char_ReadBufferError`.
+- `Nova_ReadBuffer_method_read_str` — UTF-8 walk на `n` codepoint'ов,
+  возвращает `nova_str` (slice в виде новой `str`-структуры — копия
+  байт или view, решает реализатор).
+- `Nova_ReadBuffer_method_try_read_str` — то же, Result-форма.
+
+**Ошибки UTF-8.** Невалидный UTF-8 в буфере при `read_char` /
+`read_str` — это **не** `UnexpectedEnd`. Нужен дополнительный
+вариант `ReadBufferError`:
+
+```nova
+type ReadBufferError
+    | UnexpectedEnd { wanted int, available int }
+    | InvalidUtf8 { position int }       // ← новый
+```
+
+Throw'ится когда декодер встретил байт не из valid UTF-8 sequence
+до того как набрал `n` codepoint'ов. Альтернатива — replace на U+FFFD
+silently, но это плохо для бинарных протоколов где невалидность —
+сигнал ошибки протокола.
+
+#### 6.5 Отмена auto-derive `try_read_*` из `read_*`
+
+**Plan 12 Ф.4.5** ранее ввёл правило: компилятор синтезирует
+`@try_read_X() -> Result[X, E]` из `@read_X() Fail[E] -> X` без явной
+декларации. Это правило **отменяется в Plan 13 Ф.9**.
+
+**Причины отмены:**
+
+1. **Hidden magic.** Программист видит в registry / в `read_buffer.nv`
+   только Fail-форму, но при autocomplete'е в IDE появляется
+   `try_read_X` неоткуда. AI-генерируемому коду тоже сложнее — он
+   опирается на видимые декларации, не на скрытые правила.
+2. **Edge cases.** UTF-8 ошибки в `read_char`/`read_str` (см. п.6)
+   делают правило хрупким: synthesized `try_read_str(n)` нужно
+   корректно мапить и `UnexpectedEnd`, и `InvalidUtf8` варианты.
+   Если правило универсальное — оно должно покрывать все edge cases;
+   если нет — какие-то методы synthesized, какие-то нет, путаница.
+3. **D82 single source of truth.** Auto-derive противоречит принципу
+   «всё что компилятор умеет — видно в registry». Skip-derived формы
+   были «invisible» — они не лежат в `runtime_implemented` реестре,
+   только синтезируются на лету. Отмена правила восстанавливает
+   симметрию.
+
+**Что меняется:**
+
+- `runtime_registry.rs` получает **по две записи** на каждый
+  `read_*` метод: Fail-form + Result-form. Дублирование, но явное.
+- C-side: **по две функции** `Nova_ReadBuffer_method_read_X` (Fail) и
+  `Nova_ReadBuffer_method_try_read_X` (Result). Сейчас обе уже есть
+  в runtime (Plan 04 Ф.3 — auto-derive было только на Nova-уровне),
+  так что на C-стороне ничего не меняется.
+- `external_registry.rs` (compiler): убрать code-path который
+  синтезирует Nova-AST для `try_read_X`. Если он эмитит обёртку — она
+  теперь вычитывается из registry как обычная декларация.
+- `std/runtime/read_buffer.nv` (auto-gen): после Ф.9 содержит обе
+  формы для каждого `read_*` метода, явно.
+
+**Что НЕ меняется:**
+
+- **D73 From↔Into auto-derive остаётся.** Если в registry есть
+  `T.from(s S) -> Self`, компилятор синтезирует `s.into() -> T` —
+  это симметричное правило, прописанное в D73, не зависит от
+  Plan 12 Ф.4.5.
+- **D77 как spec концепция остаётся** — Result-форма параллельна
+  Fail-форме семантически. Просто декларации **обе явно**, без
+  скрытого синтеза.
+
+**Plan 12 Ф.4.5 status:** ❌ ОТМЕНЕНО. Cross-link на это решение
+добавляется в spec D82 + Plan 12 (отдельным коммитом).
+
+#### 7. Форматирование: пустая строка между методами
 
 **Сейчас (math.nv пример):**
 ```nova
@@ -724,7 +834,38 @@ fix, проверяется детерминизмом regen + manual eyeball'о
 5. Обновить D26 если нужно — проверить что spec и реализация теперь
    совпадают.
 
-**Ф.9.4 — Formatting empty lines (~30мин)**
+**Ф.9.4 — ReadBuffer: read_char / read_str + InvalidUtf8 (~2ч)**
+1. Расширить тип `ReadBufferError` вариантом `InvalidUtf8 { position int }`.
+2. В `nova_rt/read_buffer.h/.c` добавить четыре C-функции:
+   `Nova_ReadBuffer_method_read_char` (Fail-form),
+   `Nova_ReadBuffer_method_try_read_char` (Result-form),
+   `Nova_ReadBuffer_method_read_str` (Fail-form, n int),
+   `Nova_ReadBuffer_method_try_read_str` (Result-form, n int).
+3. Разделить UTF-8 decode логику в utility (`utf8_decode_one(ptr, len,
+   out_codepoint, out_consumed)`).
+4. В `runtime_registry.rs` добавить четыре записи + проверить что
+   `ReadBufferError` import в `read_buffer.nv` корректен.
+5. Regen `std/runtime/read_buffer.nv`.
+6. Тест: парсинг строки из binary buffer (`UTF-8 hello`, multi-byte
+   sequences, edge — неполная sequence на конце буфера).
+
+**Ф.9.5 — Отмена auto-derive try_read_* из Plan 12 Ф.4.5 (~1.5ч)**
+1. В `runtime_registry.rs` добавить **явные** Result-form записи для
+   всех существующих `read_*` методов (по одной паре на каждый).
+   Список: `read_byte`, `read_uN_le/be`, `read_iN_le/be`,
+   `read_fN_le/be` (~17 пар) + новые из Ф.9.4 (`read_char`,
+   `read_str`).
+2. В `external_registry.rs` убрать синтез Nova-AST для `try_read_*`.
+3. Убрать compile-error «auto-derived from @read_X; remove from
+   builtins.nv» — теперь явная декларация **обязательна**, а не
+   запрещена.
+4. Spec правки:
+   - D82 Diagnostics: убрать случай «User объявил auto-derived форму»
+     для read/write pattern.
+   - Plan 12 Ф.4.5 пометить ❌ ОТМЕНЕНО, cross-link на Plan 13 Ф.9.5.
+5. Regen `std/runtime/read_buffer.nv`.
+
+**Ф.9.6 — Formatting empty lines (~30мин)**
 1. Renderer в emit-runtime-stubs: empty line между методами.
 2. Regen всех 6 файлов.
 3. Round-trip determinism check (двойной регенерации даёт пустой
@@ -741,9 +882,18 @@ fix, проверяется детерминизмом regen + manual eyeball'о
 - [ ] `s.len` работает (вместо `s.char_len`); старое имя удалено или
       deprecated с warning.
 - [ ] `let cs []char = "hello".chars()` компилируется.
+- [ ] `rb.read_char()` работает: один codepoint UTF-8 → char.
+- [ ] `rb.read_str(5)` возвращает 5 codepoint'ов как `str`.
+- [ ] `rb.try_read_char()` / `rb.try_read_str(5)` возвращают
+      `Result[..., ReadBufferError]`.
+- [ ] `ReadBufferError.InvalidUtf8 { position }` бросается на
+      невалидной UTF-8 sequence.
+- [ ] **Auto-derive `try_read_*` отменён:** в `read_buffer.nv` явно
+      присутствуют обе формы для каждого read-метода (Fail и Result);
+      компилятор не синтезирует обёртки.
 - [ ] Все 6 файлов в std/runtime/ имеют пустую строку между
       методами; double-regen → no diff.
-- [ ] 78/78 тестов проходят.
+- [ ] 78/78 тестов проходят (включая новые тесты на read_char/read_str).
 
 ### Risks Ф.9
 
