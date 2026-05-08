@@ -16,6 +16,17 @@ ExternalRegistry (codegen) загружает 4 per-type файла через `
 Acceptance — добавить новый method тремя правками (registry + .c + regen)
 работает (write_zero verified в Plan 12; принцип сохранён).
 
+**Ф.9 (API polish, добавлен 2026-05-08):** ⏳ pending. Прицельные
+правки реестра + emitter'а после ревью текущих сгенерированных файлов:
+- `StringBuilder mut @append` возвращает `StringBuilder` (chaining).
+- Все `WriteBuffer mut @write_*` возвращают `Self` (chaining).
+- StringBuilder получает оператор `+` как алиас `@append` (str + char).
+- `str + str` явно через `@concat` в registry (не invisible intrinsic).
+- `str @char_len` → `@len` (D26 spec говорит просто `len`).
+- `str @chars() -> []int` → `-> []char` (char first-class).
+- Renderer: пустая строка между методами в auto-gen .nv для читаемости.
+См. Ф.9 ниже.
+
 Acceptance:
 - ✅ Detrminism: `emit-runtime-stubs --check` после регена → no diff.
 - ✅ Round-trip: registry содержит 44 функции; .nv файлы валидны
@@ -519,3 +530,241 @@ RuntimeFn { module: "std.runtime.string_builder",
 3. **`include_str!("../../../std/runtime/builtins.nv")` в
    `external_registry.rs`** — нужно заменить на множественный
    include или прямое чтение реестра. См. Ф.8.5.
+
+---
+
+## Ф.9 — API polish + formatting (2026-05-08, после Ф.8)
+
+**Контекст.** После Ф.8 все 6 файлов auto-gen, но при ревью registry
+выявились неудачные сигнатуры/имена и недостатки форматирования.
+Ф.9 — прицельные правки реестра + emitter'а.
+
+### Что меняется
+
+#### 1. Mutating-методы возвращают `Self` (для chaining)
+
+**Сейчас:**
+```nova
+export external fn StringBuilder mut @append(s str) -> ()
+export external fn WriteBuffer  mut @write_byte(v byte) -> ()
+export external fn WriteBuffer  mut @write_u32_be(v u32) -> ()
+// ... все @write_*
+```
+
+**Станет:**
+```nova
+export external fn StringBuilder mut @append(s str) -> StringBuilder
+export external fn WriteBuffer  mut @write_byte(v byte) -> Self
+export external fn WriteBuffer  mut @write_u32_be(v u32) -> Self
+// ... все @write_*
+```
+
+Для StringBuilder: явный `-> StringBuilder` (без Self для clarity на
+public API). Для WriteBuffer: `Self` — короче и единообразно для всех
+24 `@write_*` методов.
+
+**Use-case:** chaining без промежуточных переменных:
+```nova
+sb.append("hello ").append(name).append("!")
+wb.write_u32_be(magic).write_u16_be(version).write_bytes(payload)
+```
+
+**C-side изменения:**
+- `nova_str` для StringBuilder: возвращать `Nova_StringBuilder*`
+  (тот же `self`, не копия).
+- WriteBuffer: возвращать `Nova_WriteBuffer*` (тот же `self`).
+- `ReadBuffer @read_*` **не меняется** — там return-type это значение
+  (`u16`, `byte`, etc.), а не Self. Self для read-методов был бы
+  бессмыслен.
+
+#### 2. StringBuilder: операторный алиас `+` → `@append`
+
+**Добавить в registry** для StringBuilder:
+```nova
+// `sb + s` — синоним sb.append(s). Mutates sb, возвращает sb.
+fn StringBuilder mut @op_add(s str)  -> StringBuilder
+fn StringBuilder mut @op_add(c char) -> StringBuilder
+```
+
+Это **алиас** — codegen для оператора `+` на StringBuilder receiver
+эмитит вызов того же `Nova_StringBuilder_method_append`. Отдельной
+C-функции не нужно. В реестре `c_name` тот же (`Nova_StringBuilder_method_append`),
+но запись новая (отдельный module + receiver lookup для оператора).
+
+**Нюанс:** оператор `+` на StringBuilder mutates left-hand operand.
+Это отступление от обычной семантики `+` (immutable, allocation), но
+оправдано: StringBuilder сам по себе — mutation-builder, копирующий
+`+` был бы O(n²) regression. См. Q-stringbuilder-op-add — open
+question нужно ли это вообще, или оставить только `@append`. Решение
+— делать, потому что AI-friendly: знакомый `+` без learning curve.
+
+#### 3. str: алиас `+` → `@concat`
+
+**Сейчас:** `s1 + s2` для `str` — special-case intrinsic в codegen
+(прямой call `nova_str_concat`).
+
+**После Ф.9:** добавить в registry **явное** объявление:
+```nova
+// Конкатенация строк. O(a+b) — новая аллокация.
+fn str @concat(other str) -> str
+```
+
+И оператор `+` на str-receiver — алиас на `@concat`. Codegen
+для `s1 + s2` эмитит `Nova_str_method_concat(s1, s2)`. Старое имя
+`nova_str_concat` либо переименовать, либо trampoline (решает
+реализатор).
+
+**Зачем:** убрать «invisible runtime knowledge» — конкатенация
+строк должна быть видна в registry, как и любой другой method.
+Закрывает дыру в D82 single-source принципе для str.
+
+#### 4. str API rename: `@char_len` → `@len`
+
+D26 говорит «s.len — длина в codepoint'ах, базовая длина строки».
+Текущее имя `@char_len` отражает реализацию (codepoint = char), но
+противоречит D26 spec'у.
+
+**Изменение:**
+- `@char_len` → `@len` в registry.
+- C-имя `nova_str_char_len` → `nova_str_len` (или оставить старое
+  как trampoline на новое — решает реализатор).
+- `@byte_len` остаётся (явное имя для O(1) byte-length, FFI use-case).
+
+#### 5. str API уточнение: `@chars() -> []char`
+
+**Сейчас (если в registry):** `fn str @chars() -> []int` (или
+`Iter[int]`). Кодпоинты возвращаются как `int` — это bootstrap-
+compromise, потому что `char` тип ещё не везде поддержан
+(Q-char-literals).
+
+**После Ф.9:** `fn str @chars() -> []char`. Тип `char` теперь
+first-class:
+- Переход на `[]char` для возврата codepoint sequence.
+- Если внутри codegen есть assumption «codepoint = nova_int» —
+  она остаётся (внутреннее представление char это nova_int 32-bit),
+  но API возвращает `char`-typed элементы.
+
+**Альтернатива:** `Iter[char]` вместо `[]char` для lazy walking.
+Решает реализатор; если выбрать `[]char` — eager allocation, проще
+для bootstrap; `Iter[char]` lazier, но требует state-machine на
+C-уровне. Plan 13 Ф.9 предписывает **`[]char`** как minimum;
+переход на `Iter[char]` — future Q.
+
+#### 6. Форматирование: пустая строка между методами
+
+**Сейчас (math.nv пример):**
+```nova
+// Квадратный корень. NaN на отрицательном.
+export external fn f64 @sqrt() -> f64
+// Кубический корень.
+export external fn f64 @cbrt() -> f64
+// Модуль (|x|).
+export external fn f64 @abs() -> f64
+```
+
+**Станет:**
+```nova
+// Квадратный корень. NaN на отрицательном.
+export external fn f64 @sqrt() -> f64
+
+// Кубический корень.
+export external fn f64 @cbrt() -> f64
+
+// Модуль (|x|).
+export external fn f64 @abs() -> f64
+```
+
+Пустая строка между каждой группой `// doc-comment + external fn`.
+Делает файлы читаемыми при code-review (методы визуально разделены).
+
+**Edge case:** для `read_*`/`try_read_*` пар пустая строка тоже
+**между парой** (после Result-формы), не внутри:
+```nova
+// u16 big-endian. Throw'ит ReadBufferError при недостатке байт.
+export external fn ReadBuffer mut @read_u16_be() Fail[ReadBufferError] -> u16
+
+// u16 big-endian. Result-форма (Ok(value) или Err(UnexpectedEnd)).
+export external fn ReadBuffer mut @try_read_u16_be() -> Result[u16, ReadBufferError]
+
+// u32 little-endian. Throw'ит ReadBufferError при недостатке байт.
+export external fn ReadBuffer mut @read_u32_le() Fail[ReadBufferError] -> u32
+```
+
+**Реализация:** в emit_runtime_stubs renderer — `format!("{}\n\n",
+external_fn_decl)` вместо `format!("{}\n", ...)`. Один тривиальный
+fix, проверяется детерминизмом regen + manual eyeball'ом.
+
+### Этапы Ф.9
+
+**Ф.9.1 — Mutating-методы Self (~1.5ч)**
+1. В registry изменить return_ty для StringBuilder mut методов и
+   всех WriteBuffer mut методов.
+2. В nova_rt/string_builder.c, write_buffer.c — изменить return type
+   на `Nova_<T>*`, return self в конце функции.
+3. Type-checker: убедиться что existing user-код не ломается (был
+   `sb.append(s)` как statement → теперь method-call с returned-but-
+   ignored value, валидно).
+4. Regen std/runtime/string_builder.nv + write_buffer.nv.
+5. Прогнать тесты.
+
+**Ф.9.2 — `+` алиас для StringBuilder + str (~1ч)**
+1. В registry добавить `@op_add` записи для StringBuilder и str.
+2. В codegen — для оператора `+` lookup в registry по
+   `(receiver, "op_add")` (или по special method name).
+3. Если `op_add` не найден — fallback на существующие intrinsics
+   (для `int + int`, etc.).
+4. Regen.
+
+**Ф.9.3 — str API renames (~30мин)**
+1. `char_len` → `len` в registry.
+2. `chars` return-type → `[]char`.
+3. C-side: переименовать или trampoline.
+4. Regen.
+5. Обновить D26 если нужно — проверить что spec и реализация теперь
+   совпадают.
+
+**Ф.9.4 — Formatting empty lines (~30мин)**
+1. Renderer в emit-runtime-stubs: empty line между методами.
+2. Regen всех 6 файлов.
+3. Round-trip determinism check (двойной регенерации даёт пустой
+   diff).
+
+### Acceptance Ф.9
+
+- [ ] `sb.append("a").append("b").append("c")` компилируется и
+      работает.
+- [ ] `wb.write_u32_be(x).write_u16_be(y)` компилируется и работает.
+- [ ] `sb + "text"` эквивалентно `sb.append("text")`.
+- [ ] `s1 + s2` после Ф.9.2 явно резолвится через `Nova_str_method_concat`,
+      registry содержит запись.
+- [ ] `s.len` работает (вместо `s.char_len`); старое имя удалено или
+      deprecated с warning.
+- [ ] `let cs []char = "hello".chars()` компилируется.
+- [ ] Все 6 файлов в std/runtime/ имеют пустую строку между
+      методами; double-regen → no diff.
+- [ ] 78/78 тестов проходят.
+
+### Risks Ф.9
+
+1. **Existing user-код использует `sb.append(s)` как statement.** После
+   изменения return-type на StringBuilder, это всё ещё валидно
+   (return-value просто игнорируется). Не ломает. **Но**:
+   `mut`-receiver + non-`()` return может вести себя странно если
+   у lhs нет `let mut sb = ...` — type-checker должен принять, но
+   возможны edge cases.
+2. **`+` ambiguity.** Когда `sb + s` — какой из двух registry entry
+   выбрать (`StringBuilder.@op_add(str)` vs `StringBuilder.@op_add(char)`)?
+   Параметр-type mangling (Plan 11 Ф.3). Без него — collision,
+   нужно single overload или явное разделение в codegen.
+3. **`char_len` rename ломает existing user-код.** Сейчас в std/
+   используется `s.char_len`? Grep до изменения; миграция сразу в
+   том же коммите.
+4. **`[]char` vs `[]int`.** Если codegen эмитит boxed pointer'ы
+   (Plan 13 Ф.1 inventory отметил это для `NovaArray_nova_int`), то
+   `[]char` тоже unboxed-нельзя. Нужен `NovaArray_nova_char` (или
+   reuse `nova_int` через alias). Реализатор решает.
+
+### Зависимости Ф.9
+
+- ✅ Ф.8 (per-type декомпозиция; иначе не куда добавлять `op_add`).
+- ✅ Plan 11 Ф.3 (parameter-type mangling) для overloaded `op_add(str)`/`op_add(char)`.
