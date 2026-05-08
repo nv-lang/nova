@@ -1,8 +1,16 @@
 # План: Split Buffer на StringBuilder/WriteBuffer/ReadBuffer + keyword `external`
 
-**Статус:** активный, не начат (зафиксирован 2026-05-08).
-**Делать после:** [Plan 08](08-from-into-conversions.md) **и**
-[Plan 11](11-method-values-and-overload.md). Причины:
+**Статус:** в работе (2026-05-08). StringBuilder runtime
+(`nova_rt/string_builder.h`) + `std/runtime/builtins.nv` с
+external-fn декларациями + codegen dispatch для StringBuilder
+методов готовы. WriteBuffer/ReadBuffer headers созданы.
+**Преректы обоих планов 08 и 11 на нужном уровне:**
+- Plan 08: Ф.1-Ф.5+Ф.7 закрыты (4-way auto-derive, str.from/char.try_from
+  работают).
+- Plan 11: Ф.1-Ф.3+Ф.4.5+Ф.6 закрыты (overload по arg-типу, mangling,
+  Self в expression).
+
+**Изначальные зависимости (для истории):**
 
 ### Зависимости от плана 08 (большая часть закрыта 2026-05-08)
 
