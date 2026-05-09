@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 # План 18: Stdlib roadmap для Nova
 
-**Статус:** утверждён as-is (2026-05-09), Q1–Q8 открыты — отслеживаются в [18-stdlib-roadmap.draft.md](18-stdlib-roadmap.draft.md) до решения. Новые ревизии через .draft.md → перенос сюда.
+> ⚠️ **СТАТУС: DRAFT, не финализирован.** Не использовать как авторитет
+> для реализации. Q1–Q8 открыты (см. ниже) — требуют решения перед
+> утверждением плана. Финализация = снятие этого баннера + переход
+> статуса в "active" в [README.md](README.md).
+
 **Дата создания:** 2026-05-09 (rev 3, переосмысление под spec/decisions).
 **Цель:** определить, что из stdlib Rust/Go нужно Nova под backend/CLI нишу, расставить приоритеты P0/P1/P2 и зафиксировать дизайн-решения **поверх** built-in эффектов и concurrency-примитивов спеки. Не план реализации — план направления.
 
@@ -103,20 +107,23 @@ HTTP/2/3, WebSocket, gRPC, image/audio, full IANA tz, ssh/ftp/smtp, advanced tem
 
 ---
 
-## Открытые вопросы (отслеживаются в .draft.md)
+## Открытые вопросы (требуют решения перед финализацией)
 
-Полные формулировки и контекст — в [18-stdlib-roadmap.draft.md](18-stdlib-roadmap.draft.md). Краткий список:
+**Q1.** Как технически расширять built-in эффекты в std-модуле? Spec не пишет явно — `type Fs effect { ... }` в `std.fs` либо переопределяет, либо добавляет операции? Возможно через embed `type FsExt effect { use _ Fs, ... }` (D39 для эффектов?).
 
-- **Q1.** Механизм расширения built-in эффектов в std-модуле (embed через `use _ Fs`?)
-- **Q2.** `std.os` — отдельный эффект или часть `Io`?
-- **Q3.** Default handler'ы — граница `nova_rt/` vs `std/`?
-- **Q4.** Errors — per-domain (`IoError`/`FsError`) или общая иерархия?
-- **Q5.** Накопленные блокеры std/ — Plan 19 или extension Plan 14?
-- **Q6.** `printf`-style `fmt()` нужен ли при наличии interpolation?
-- **Q7.** Auto-derive `str.from` для record/sum в D73 — записано ли явно?
-- **Q8.** Расширение existing effect через std — нужен ли D-блок в spec?
+**Q2.** `std.os` — отдельный эффект `Os` (более узкая capability) или операции встраиваются в `Io`? Spec не специфицирует.
 
-После решения каждого — апдейт основного файла, draft удаляется когда все Q закрыты.
+**Q3.** Effect handlers для production — где-то должны быть default handler'ы (real_fs, real_net, real_time). Кто их предоставляет — runtime (`nova_rt/`) или std? Граница ответственности?
+
+**Q4.** Errors — единый `IoError`/`FsError`/`NetError` per-domain или иерархия общих enum'ов? Spec любит `Fail[E]` с конкретным E.
+
+**Q5.** Что делать с накопленными блокерами std/? Открыть Plan 19 или расширять Plan 14? Это влияет на расписание перед стартом P0 stdlib работы.
+
+**Q6.** `std.fmt.fmt(template str, ...args)` — нужен ли printf-style вообще, если есть string interpolation? Interpolation хватает для статических templates; printf нужен только для динамических (i18n, log formatters). Можно отложить в P1 или вообще не делать.
+
+**Q7.** Auto-derive `str.from` для пользовательских record/sum — есть ли явное правило в D73? D70 говорил про auto-derive по структуре; миграция в D73 переносит поведение, но в самой D73 не уверен что записано explicitly. Нужно проверить.
+
+**Q8.** Расширение существующего effect (`Fs`, `Net`, `Time`) через std-модуль — это revolutionary дизайн? Spec явно не описывает. Если механизма нет — нужно либо открыть D-блок, либо все ops размещать в одном месте (built-in spec).
 
 ---
 
