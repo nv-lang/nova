@@ -154,7 +154,13 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
 /// `method_table`: для каждого concrete-типа — методы (по имени), для
 /// проверки "type T satisfies protocol P".
 struct BoundCtx<'a> {
+    /// Plan 15 D53 strict: только protocol-kind типов. Effect-kind
+    /// сюда не попадает — effects не разрешены как D72 bounds.
     protocol_specs: HashMap<String, &'a [EffectMethod]>,
+    /// Plan 15 D53 strict: effect-kind типы. Используется для
+    /// дифференциированного error-сообщения, если их пытаются
+    /// использовать как bound («`Db` is an effect, not a protocol»).
+    effect_decls: HashMap<String, &'a TypeDecl>,
     fn_decls: HashMap<String, &'a FnDecl>,
     method_table: HashMap<String, HashMap<String, Vec<&'a FnDecl>>>,
 }
@@ -165,11 +171,21 @@ impl<'a> BoundCtx<'a> {
         let mut fn_decls: HashMap<String, &FnDecl> = HashMap::new();
         let mut method_table: HashMap<String, HashMap<String, Vec<&FnDecl>>> = HashMap::new();
 
+        let mut effect_decls: HashMap<String, &TypeDecl> = HashMap::new();
         for item in &module.items {
             match item {
                 Item::Type(t) => {
-                    if let TypeDeclKind::Effect(methods) = &t.kind {
-                        protocol_specs.insert(t.name.clone(), methods.as_slice());
+                    // Plan 15 D53 strict: protocol-kind → eligible как
+                    // bound (D72); effect-kind → отдельный registry для
+                    // диагностики «used as bound but it's an effect».
+                    match &t.kind {
+                        TypeDeclKind::Protocol(methods) => {
+                            protocol_specs.insert(t.name.clone(), methods.as_slice());
+                        }
+                        TypeDeclKind::Effect(_) => {
+                            effect_decls.insert(t.name.clone(), t);
+                        }
+                        _ => {}
                     }
                 }
                 Item::Fn(f) => {
@@ -188,18 +204,27 @@ impl<'a> BoundCtx<'a> {
             }
         }
 
-        BoundCtx { protocol_specs, fn_decls, method_table }
+        BoundCtx { protocol_specs, effect_decls, fn_decls, method_table }
     }
 
     fn check_module(&self, module: &Module, errors: &mut Vec<Diagnostic>) {
         for item in &module.items {
-            if let Item::Fn(f) = item {
-                let mut scope: HashMap<String, TypeRef> = HashMap::new();
-                // Регистрируем параметры функции с их типами.
-                for p in &f.params {
-                    scope.insert(p.name.clone(), p.ty.clone());
+            match item {
+                Item::Fn(f) => {
+                    let mut scope: HashMap<String, TypeRef> = HashMap::new();
+                    // Регистрируем параметры функции с их типами.
+                    for p in &f.params {
+                        scope.insert(p.name.clone(), p.ty.clone());
+                    }
+                    self.walk_fn_body(f, &mut scope, errors);
                 }
-                self.walk_fn_body(f, &mut scope, errors);
+                Item::Test(t) => {
+                    // Plan 15: тесты тоже могут содержать generic-вызовы
+                    // c bounds — обходим их body со свежим scope.
+                    let mut scope: HashMap<String, TypeRef> = HashMap::new();
+                    self.walk_block(&t.body, &mut scope, errors);
+                }
+                _ => {}
             }
         }
     }
@@ -512,6 +537,25 @@ impl<'a> BoundCtx<'a> {
             TypeRef::Named { path, .. } if path.len() == 1 => path[0].clone(),
             _ => return, // complex bounds (Hashable[K], etc.) — отдельная задача
         };
+        // Plan 15 D53 strict: bound должен быть protocol-kind. Если
+        // имя зарегистрировано как effect-kind — это spec violation
+        // (D72: bounds require protocols). R5.3-style diagnostic.
+        if let Some(eff_decl) = self.effect_decls.get(&bound_name) {
+            let _ = eff_decl;
+            errors.push(Diagnostic::new(
+                format!(
+                    "type `{}` is an effect, not a protocol — generic bounds \
+                     require protocol-types (D72/D53). Hint: declare `{}` as \
+                     `type {} protocol {{ ... }}` if structural-contract semantics \
+                     is intended; effects are runtime-dispatched capabilities and \
+                     can only appear in effect-rows `(...) {} -> ...`, not as \
+                     `[T {}]` bounds.",
+                    bound_name, bound_name, bound_name, bound_name, bound_name,
+                ),
+                span,
+            ));
+            return;
+        }
         let concrete_name = match concrete {
             TypeRef::Named { path, .. } if path.len() == 1 => path[0].clone(),
             // Array/Tuple/Func — пока пропускаем (не обрабатываем составные T).
@@ -527,8 +571,9 @@ impl<'a> BoundCtx<'a> {
             return;
         }
         let Some(spec_methods) = self.protocol_specs.get(&bound_name) else {
-            // Bound — не зарегистрирован protocol. Может быть type alias /
-            // record. Пока пропускаем — formal check'а не делаем.
+            // Bound — не зарегистрирован ни как protocol, ни как effect.
+            // Может быть type alias / record / unknown. Пока пропускаем —
+            // formal check'а не делаем (best-effort permissive).
             return;
         };
         let empty: HashMap<String, Vec<&FnDecl>> = HashMap::new();
