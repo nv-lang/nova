@@ -287,7 +287,9 @@ impl Parser {
         // generic param. Первый idеntifier синтезируется из bracket'ов
         // как "[]<elem>" (один логический name).
         let (first_ident, first_span);
-        let mut generics_first: Vec<TypeRef> = Vec::new();
+        // Plan 15 (D72): generic-параметры в форме declaration (с optional
+        // bound) до момента disambiguation между receiver и free fn.
+        let mut generics_first_decl: Vec<GenericParam> = Vec::new();
         if matches!(self.peek().kind, TokenKind::LBracket)
             && matches!(self.peek_at(1).kind, TokenKind::RBracket)
         {
@@ -312,15 +314,17 @@ impl Parser {
             first_span = sp;
             // Если за ним `[`, `<`, `mut`, `@` или `.` — это receiver.
             if matches!(self.peek().kind, TokenKind::LBracket) {
-                // `Type[T] @method` или `funcName[T](...)` — посмотрим что дальше после `]`.
-                // В bootstrap'е делаем простое разрешение: парсим generics, потом смотрим.
-                generics_first = self.parse_type_args()?;
+                // Plan 15 (D72): generic params могут быть либо declaration
+                // (free fn — `fn name[T Hashable]`) либо instantiation
+                // (receiver — `fn TypeName[T] @method`). Парсим как
+                // declaration-form (с optional bound), потом disambiguation.
+                generics_first_decl = self.parse_generic_decl_params()?;
             }
         }
 
         let receiver: Option<Receiver>;
         let name: String;
-        let mut fn_generics: Vec<String> = Vec::new();
+        let mut fn_generics: Vec<GenericParam> = Vec::new();
         let receiver_mut: bool;
 
         if matches!(self.peek().kind, TokenKind::KwMut)
@@ -339,9 +343,11 @@ impl Parser {
                 self.bump();
                 ReceiverKind::Static
             };
+            // Receiver — instantiation context, bounds запрещены.
+            let recv_generics = Self::generic_params_to_type_refs(generics_first_decl)?;
             receiver = Some(Receiver {
                 type_name: first_ident.clone(),
-                generics: generics_first,
+                generics: recv_generics,
                 kind,
                 mutable: receiver_mut,
                 span: first_span,
@@ -350,9 +356,10 @@ impl Parser {
             name = n;
         } else if matches!(self.peek().kind, TokenKind::At) {
             self.bump();
+            let recv_generics = Self::generic_params_to_type_refs(generics_first_decl)?;
             receiver = Some(Receiver {
                 type_name: first_ident.clone(),
-                generics: generics_first,
+                generics: recv_generics,
                 kind: ReceiverKind::Instance,
                 mutable: false,
                 span: first_span,
@@ -361,9 +368,10 @@ impl Parser {
             name = n;
         } else if matches!(self.peek().kind, TokenKind::Dot) {
             self.bump();
+            let recv_generics = Self::generic_params_to_type_refs(generics_first_decl)?;
             receiver = Some(Receiver {
                 type_name: first_ident.clone(),
-                generics: generics_first,
+                generics: recv_generics,
                 kind: ReceiverKind::Static,
                 mutable: false,
                 span: first_span,
@@ -371,51 +379,18 @@ impl Parser {
             let (n, _) = self.parse_ident()?;
             name = n;
         } else {
-            // Свободная функция: `fn name[T](...)`. В этом случае `generics_first`
-            // — это generics функции, а `first_ident` — имя.
+            // Свободная функция: `fn name[T](...)`. В этом случае
+            // `generics_first_decl` — это generics функции (с optional
+            // bounds), а `first_ident` — имя.
             receiver = None;
             name = first_ident;
-            // generics_first собран как `Vec<TypeRef>`, но для свободной функции
-            // нам нужны имена. Преобразуем (требуем чтобы каждый был Named без generics).
-            for g in generics_first {
-                if let TypeRef::Named { path, generics, .. } = g {
-                    if generics.is_empty() && path.len() == 1 {
-                        fn_generics.push(path.into_iter().next().unwrap());
-                    } else {
-                        return Err(Diagnostic::new(
-                            "function generic parameter must be a simple identifier",
-                            start,
-                        ));
-                    }
-                } else {
-                    return Err(Diagnostic::new(
-                        "function generic parameter must be a simple identifier",
-                        start,
-                    ));
-                }
-            }
+            fn_generics.extend(generics_first_decl);
         }
 
         // Если у метода есть свои generics (D42 model B): `fn Repo[T] @bulk_load[K](...)`
         if receiver.is_some() && matches!(self.peek().kind, TokenKind::LBracket) {
-            let method_generics_refs = self.parse_type_args()?;
-            for g in method_generics_refs {
-                if let TypeRef::Named { path, generics, .. } = g {
-                    if generics.is_empty() && path.len() == 1 {
-                        fn_generics.push(path.into_iter().next().unwrap());
-                    } else {
-                        return Err(Diagnostic::new(
-                            "method generic parameter must be a simple identifier",
-                            start,
-                        ));
-                    }
-                } else {
-                    return Err(Diagnostic::new(
-                        "method generic parameter must be a simple identifier",
-                        start,
-                    ));
-                }
-            }
+            let method_generics_decl = self.parse_generic_decl_params()?;
+            fn_generics.extend(method_generics_decl);
         }
 
         // (params)
@@ -564,26 +539,13 @@ impl Parser {
         self.expect(&TokenKind::KwType)?;
         let (name, _) = self.parse_ident()?;
 
-        // generics: Repo[T, U] или Repo[T Hashable, V] (bounds D72).
-        // В bootstrap'е bound — просто identifier после имени параметра,
-        // парсится и игнорируется (нет typecheck'а на satisfaction).
-        let mut generics: Vec<String> = Vec::new();
-        if self.eat(&TokenKind::LBracket).is_some() {
-            loop {
-                let (n, _) = self.parse_ident()?;
-                generics.push(n);
-                // Optional bound: `T Hashable`, `T Ord`. Bootstrap игнорирует —
-                // production type-checker (D72) проверит satisfaction.
-                if matches!(self.peek().kind, TokenKind::Ident(_)) {
-                    let _ = self.parse_ident()?;
-                }
-                if self.eat(&TokenKind::Comma).is_none() {
-                    break;
-                }
-                self.skip_newlines();
-            }
-            self.expect(&TokenKind::RBracket)?;
-        }
+        // Plan 15 (D72): generics в форме `[T]` или `[T Hashable]`.
+        // Bound — protocol-тип, проверяется в type-checker'е на use-site.
+        let generics: Vec<GenericParam> = if matches!(self.peek().kind, TokenKind::LBracket) {
+            self.parse_generic_decl_params()?
+        } else {
+            Vec::new()
+        };
 
         // Тело типа может идти на следующей строке для multi-line sum'ов
         // и эффектов. Skip newlines перед body.
@@ -759,18 +721,12 @@ impl Parser {
         self.skip_newlines();
         while !matches!(self.peek().kind, TokenKind::RBrace) {
             let (name, name_span) = self.parse_ident()?;
-            // generics
-            let mut generics: Vec<String> = Vec::new();
-            if self.eat(&TokenKind::LBracket).is_some() {
-                loop {
-                    let (n, _) = self.parse_ident()?;
-                    generics.push(n);
-                    if self.eat(&TokenKind::Comma).is_none() {
-                        break;
-                    }
-                }
-                self.expect(&TokenKind::RBracket)?;
-            }
+            // Plan 15 (D72): generics — declaration form с optional bounds.
+            let generics: Vec<GenericParam> = if matches!(self.peek().kind, TokenKind::LBracket) {
+                self.parse_generic_decl_params()?
+            } else {
+                Vec::new()
+            };
             self.expect(&TokenKind::LParen)?;
             let mut params = Vec::new();
             while !matches!(self.peek().kind, TokenKind::RParen) {
@@ -978,6 +934,73 @@ impl Parser {
         }
         self.expect(&TokenKind::RBracket)?;
         Ok(args)
+    }
+
+    /// Plan 15 (D72): parse generic-DECLARATION params `[name [bound], ...]`.
+    ///
+    /// Используется для declaration-сайтов: free fn `[T Hashable]`,
+    /// type decl `type HashMap[K Hashable, V]`, method-extra-generics
+    /// `fn Repo[T] @bulk[K Ord]`, effect-method generics.
+    ///
+    /// Каждый параметр — простой identifier (имя), за которым может
+    /// идти optional bound (любой тип, обычно protocol). Bound парсится
+    /// если следующий после имени токен НЕ `,`/`]` (т.е. что-то ещё).
+    ///
+    /// Forward-references проверяются ниже type-checker'ом
+    /// (текущий список параметров доступен только слева направо).
+    fn parse_generic_decl_params(&mut self) -> Result<Vec<GenericParam>, Diagnostic> {
+        self.expect(&TokenKind::LBracket)?;
+        let mut params = Vec::new();
+        self.skip_newlines();
+        while !matches!(self.peek().kind, TokenKind::RBracket) {
+            let (name, name_span) = self.parse_ident()?;
+            // Bound: если следующий токен — не `,` и не `]`, парсим как тип.
+            let bound = if matches!(self.peek().kind, TokenKind::Comma | TokenKind::RBracket) {
+                None
+            } else {
+                Some(self.parse_type()?)
+            };
+            let end_span = bound.as_ref().map(|t| t.span()).unwrap_or(name_span);
+            params.push(GenericParam {
+                name,
+                bound,
+                span: name_span.merge(end_span),
+            });
+            if self.eat(&TokenKind::Comma).is_none() {
+                break;
+            }
+            self.skip_newlines();
+        }
+        self.expect(&TokenKind::RBracket)?;
+        Ok(params)
+    }
+
+    /// Plan 15 (D72): convert `Vec<GenericParam>` → `Vec<TypeRef>` для
+    /// receiver / instantiation context. Все params обязаны быть простыми
+    /// именами без bound (bound допустим только в declaration).
+    fn generic_params_to_type_refs(params: Vec<GenericParam>) -> Result<Vec<TypeRef>, Diagnostic> {
+        let mut out = Vec::with_capacity(params.len());
+        for p in params {
+            if let Some(b) = p.bound {
+                return Err(Diagnostic::new(
+                    format!(
+                        "generic bound `{}` не разрешён в receiver/instantiation context — \
+                         bounds допустимы только в declaration `[T Bound]`",
+                        match &b {
+                            TypeRef::Named { path, .. } => path.join("."),
+                            _ => "<complex>".to_string(),
+                        }
+                    ),
+                    b.span(),
+                ));
+            }
+            out.push(TypeRef::Named {
+                path: vec![p.name],
+                generics: Vec::new(),
+                span: p.span,
+            });
+        }
+        Ok(out)
     }
 
     /// D38 turbofish disambiguation в expression-position. Caller — на токене

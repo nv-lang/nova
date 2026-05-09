@@ -2495,7 +2495,7 @@ impl CEmitter {
         // Generic free functions: emit erased forward decl (void* params, void* return)
         if !f.generics.is_empty() && f.receiver.is_none() {
             let mangled = self.mangle_fn(f);
-            let type_params: HashSet<String> = f.generics.iter().cloned().collect();
+            let type_params: HashSet<String> = f.generics.iter().map(|g| g.name.clone()).collect();
             let params_str = if f.params.is_empty() {
                 "void".to_string()
             } else {
@@ -2586,7 +2586,7 @@ impl CEmitter {
         if !t.generics.is_empty() {
             if let TypeDeclKind::Record(fields) = &t.kind {
                 // Collect type parameter names to identify erased fields
-                let type_params: HashSet<String> = t.generics.iter().cloned().collect();
+                let type_params: HashSet<String> = t.generics.iter().map(|g| g.name.clone()).collect();
                 // Emit erased struct: type-param fields become void*, others keep concrete type
                 let mut field_c_pairs: Vec<(String, String)> = Vec::new();
                 for f in fields {
@@ -3205,7 +3205,7 @@ impl CEmitter {
     /// All type parameters map to void*. The body is emitted with type params erased.
     fn emit_generic_fn_erased(&mut self, f: &FnDecl) -> Result<(), String> {
         let mangled = self.mangle_fn(f);
-        let type_params: HashSet<String> = f.generics.iter().cloned().collect();
+        let type_params: HashSet<String> = f.generics.iter().map(|g| g.name.clone()).collect();
         // Build param types: bare T → void*, generic record T[U] → Nova_T*
         let param_c_tys: Vec<String> = f.params.iter().map(|p| {
             match &p.ty {

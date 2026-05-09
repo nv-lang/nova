@@ -42,7 +42,8 @@ pub struct FnDecl {
     pub name: String,
     /// Receiver — для методов через `@`. None у свободных функций.
     pub receiver: Option<Receiver>,
-    pub generics: Vec<String>, // [T, U] параметры
+    /// Plan 15 (D72): `[T]` или `[T Hashable]` — имя + optional bound.
+    pub generics: Vec<GenericParam>,
     pub params: Vec<Param>,
     pub effects: Vec<TypeRef>, // эффекты между `)` и `->`
     pub return_type: Option<TypeRef>,
@@ -81,6 +82,28 @@ pub struct Param {
     pub is_variadic: bool,
 }
 
+/// Plan 15 (D72): generic-параметр с optional bound.
+///
+/// `[T]` — `GenericParam { name: "T", bound: None }`.
+/// `[T Hashable]` — `GenericParam { name: "T", bound: Some(Hashable_TypeRef) }`.
+///
+/// Bound — это protocol-тип ([D72](spec/decisions/02-types.md#d72)).
+/// Запрещены forward-references: имя в bound должно быть объявлено
+/// раньше в том же `[...]` или в окружающем type-context.
+#[derive(Debug, Clone)]
+pub struct GenericParam {
+    pub name: String,
+    pub bound: Option<TypeRef>,
+    pub span: Span,
+}
+
+impl GenericParam {
+    /// Helper для legacy кода: если bound не нужен.
+    pub fn unbounded(name: String, span: Span) -> Self {
+        Self { name, bound: None, span }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum FnBody {
     /// `=> expr`
@@ -95,7 +118,8 @@ pub enum FnBody {
 pub struct TypeDecl {
     pub is_export: bool,
     pub name: String,
-    pub generics: Vec<String>,
+    /// Plan 15 (D72): `[K Hashable, V]` — имена + optional bounds.
+    pub generics: Vec<GenericParam>,
     pub kind: TypeDeclKind,
     pub span: Span,
 }
@@ -153,7 +177,8 @@ pub enum SumVariantKind {
 #[derive(Debug, Clone)]
 pub struct EffectMethod {
     pub name: String,
-    pub generics: Vec<String>,
+    /// Plan 15 (D72): generic-параметры на effect/protocol method.
+    pub generics: Vec<GenericParam>,
     pub params: Vec<Param>,
     pub effects: Vec<TypeRef>,
     pub return_type: Option<TypeRef>,
