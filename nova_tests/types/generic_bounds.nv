@@ -15,14 +15,19 @@
 module nova_tests.types.generic_bounds
 
 
-// Single-method protocol (без Self чтобы не упереться в pre-existing
-// codegen issue с Self в protocol-vtable).
+// Plan 15 D53 strict: protocol/effect разделены в AST. Codegen эмитит
+// vtable только для effect-kind; protocol — compile-time-only. Это
+// попутно фиксит pre-existing Self-bug — `Self` в protocol-методе
+// больше не ломает codegen потому что type_ref_to_c для protocol-
+// методов вообще не вызывается.
+
 type GbHashable protocol {
     hash() -> u64
+    eq(other Self) -> bool
 }
 
 
-// Второй protocol — методы только с primitives.
+// Второй protocol — методы с primitives.
 type GbCountable protocol {
     count() -> int
 }
@@ -36,6 +41,9 @@ type GbUser {
 
 
 export fn GbUser @hash() -> u64 => @id
+
+
+export fn GbUser @eq(other GbUser) -> bool => @id == other.id
 
 
 export fn GbUser @count() -> int => @id as int
