@@ -1,0 +1,99 @@
+// generic_bounds.nv — Plan 15 (D72): generic bounds enforcement.
+//
+// `[T Hashable]` — bound на generic-параметре. Type-checker валидирует
+// что concrete-T удовлетворяет protocol-bound'у на use-site.
+//
+// Тесты в этом файле проверяют что **type-check проходит** при satisfied
+// bound'ах — runtime-роль generic-erased функций здесь второстепенна.
+// (Codegen monomorphization для generic-fn с body — отдельная задача;
+// все тесты здесь конструируют value и передают в generic fn, но
+// результат ignore'ится.)
+//
+// Negative tests (compile-error при non-satisfied bound) — отдельный
+// файл `tmp_*.nv`, проверяется вручную через `nova-codegen check`.
+
+module nova_tests.types.generic_bounds
+
+
+// Single-method protocol (без Self чтобы не упереться в pre-existing
+// codegen issue с Self в protocol-vtable).
+type GbHashable protocol {
+    hash() -> u64
+}
+
+
+// Второй protocol — методы только с primitives.
+type GbCountable protocol {
+    count() -> int
+}
+
+
+// Concrete тип с реализацией обоих required methods.
+type GbUser {
+    id   u64
+    name str
+}
+
+
+export fn GbUser @hash() -> u64 => @id
+
+
+export fn GbUser @count() -> int => @id as int
+
+
+// Generic fn с bound. Bound-проверка в type-checker'е (Plan 15).
+fn require_hashable[T GbHashable](x T) -> T => x
+
+
+test "bound satisfied — GbUser имеет hash() → type-check OK" {
+    let user = GbUser { id: 42 as u64, name: "alice" }
+    let _ = require_hashable(user)   // type-checker валидирует bound
+    assert(true)
+}
+
+
+// Multi-bound: два generic'а с одним и тем же bound.
+fn require_two_hashable[A GbHashable, B GbHashable](a A, _b B) -> A => a
+
+
+test "multi-bound — оба satisfied" {
+    let u = GbUser { id: 7 as u64, name: "x" }
+    let v = GbUser { id: 8 as u64, name: "y" }
+    let _ = require_two_hashable(u, v)
+    assert(true)
+}
+
+
+// No-bound generic — обычный generic, без D72-проверок.
+fn identity_no_bound[T](x T) -> T => x
+
+
+test "no-bound generic — компилируется как раньше" {
+    let u = GbUser { id: 1 as u64, name: "n" }
+    let _ = identity_no_bound(u)
+    assert(true)
+}
+
+
+// Mixed: один с bound (GbHashable), второй без.
+fn lookup_or_bound[K GbHashable, V](_key K, fallback V) -> V => fallback
+
+
+test "mixed bound — один с bound, другой без" {
+    let key = GbUser { id: 1 as u64, name: "k" }
+    let r = lookup_or_bound(key, 99)
+    // r — int (primitive), roundtrip через void* работает (intptr_t).
+    assert(r == 99)
+}
+
+
+// Multiple distinct protocols.
+fn require_countable[T GbCountable](x T) -> T => x
+
+
+test "different bound — GbCountable vs GbHashable" {
+    let u = GbUser { id: 5 as u64, name: "o" }
+    let _ = require_countable(u)   // GbUser имеет @count → OK
+    let _ = require_hashable(u)    // GbUser имеет @hash → OK
+    assert(true)
+}
