@@ -29,6 +29,7 @@
 | 15 | [15-generic-bounds-enforcement.md](15-generic-bounds-enforcement.md) | D72 generic bounds `[T Protocol]` enforcement в type-checker'е | активный (Ф.1/Ф.2/Ф.3 ✅; Ф.4 partial — positive tests; Ф.5 spec — pending) |
 | 16 | [16-capability-enforcement.md](16-capability-enforcement.md) | D63 `forbid` + D64 `realtime` compile-time capability checks (закрытие spec-vs-impl drift) | активный, не начат |
 | 17 | [17-q-resolutions.md](17-q-resolutions.md) | Закрыть полу-открытые Q (string interpolation, clone semantics, array API, и др.) | ✅ ЗАКРЫТ (включая Ф.4 — string interpolation полная реализация: lexer/parser/AST/codegen StringBuilder/interp; 13 regression-тестов) |
+| 18 | [18-stdlib-roadmap.md](18-stdlib-roadmap.md) | Stdlib gap-анализ Rust/Go → Nova: P0/P1/P2 приоритизация под backend/CLI нишу + зафиксированные дизайн-решения (libuv, rustls, M:N-aware sync) | proposal, не начат |
 
 ## Связанные директории
 
