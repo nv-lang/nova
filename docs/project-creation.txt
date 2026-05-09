@@ -3005,3 +3005,100 @@ raw `&Expr`. emit_call/emit_call_with_trailing signatures изменены
 - **emit_array_lit reuse** (D60 spread) — самое элегантное решение:
   variadic args = синтезированный ArrayLit, эмиссия — не наша
   забота, существующий путь обрабатывает `[a, ...arr, c]`.
+
+
+================================================================================
+Plan 15 Ф.1+Ф.2+Ф.3 — D72 generic bounds enforcement (2026-05-09)
+================================================================================
+
+Реализовано три фазы Plan 15 за один заход:
+
+**Ф.1 (AST + parser):** до этого синтаксис `[T Hashable]` отвергался
+парсером (`error: expected ']', got identifier`). Несмотря на то, что
+изначальный план файла говорил «парсер принимает», практика была иной.
+
+  AST:
+  - Новый struct `GenericParam { name, bound: Option<TypeRef>, span }`.
+  - `FnDecl.generics` / `TypeDecl.generics` / `EffectMethod.generics`:
+    `Vec<String>` → `Vec<GenericParam>`.
+
+  Parser:
+  - `parse_generic_decl_params`: новая функция для declaration-сайтов
+    (free fn, type decl, method-extra-generics, effect method). Парсит
+    `[name [bound], ...]` где bound — `parse_type` если следующий
+    после имени токен не `,`/`]`.
+  - `generic_params_to_type_refs`: helper-конвертер для receiver context
+    (где bounds запрещены).
+  - parse_fn использует declaration-form парсер; после disambiguation
+    (по `@/.` после `]`) — receiver case конвертирует в `Vec<TypeRef>`,
+    free fn — keeps `Vec<GenericParam>`.
+
+  Mechanical refactor: codegen-side `type_params: HashSet<String>`
+  построен через `g.name.clone()` (2 sites).
+
+**Ф.2 (ProtocolSpec registry):** `BoundCtx::build` собирает:
+  - `protocol_specs`: name → required EffectMethods для каждого
+    `TypeDeclKind::Effect`-типа (D62: protocol/effect единая форма).
+  - `fn_decls`: имя → top-level free fn.
+  - `method_table`: type_name → method_name → fn-decls.
+
+**Ф.3 (use-site enforcement + R5.3 diagnostic):**
+  - `walk_module → walk_fn_body → walk_block → walk_stmt → walk_expr`
+    с mutable `scope: HashMap<String, TypeRef>` — local var-types
+    вычисляются inline через let-binding inference + parameter types.
+  - `check_call_bounds` на каждом Call-узле:
+    - Извлекает callee имя из `Ident` или `TurboFish.base`.
+    - Если callee — top-level fn с generics+bounds:
+        - Turbofish → explicit type-args → bindings.
+        - Иначе simple inference из позиционных args через `infer_arg_ty`.
+    - Для каждого bounded `[T Protocol]` сверяет concrete-T's
+      method_table[T] с protocol_specs[Protocol].name+arity.
+  - На mismatch → R5.3-style diagnostic:
+    ```
+    type `User` does not satisfy `Hashable` bound (in call to
+      `dedup[T Hashable]`).
+
+      `Hashable` requires:
+        hash() -> u64
+
+      `User` is missing: hash() -> u64
+
+      fix: добавить недостающие методы для типа `User`. См.
+        spec/decisions/02-types.md#d72.
+    ```
+
+**Тесты** (`nova_tests/types/generic_bounds.nv`) — 5 positive:
+  - bound satisfied (single fn);
+  - multi-bound (две generic'а one bound);
+  - no-bound generic (не ломаем существующий path);
+  - mixed (один с bound, один без);
+  - different bound (GbCountable vs GbHashable).
+
+  Negative tests (compile-error при non-satisfied) — manual через
+  `nova-codegen check` + cleanup tmp file. В test-runner не входят
+  потому что test-runner ждёт PASS/FAIL, не compile-error.
+
+**Прогон:** nova_tests **92/92 PASS** (91 baseline + generic_bounds).
+
+**Не сделано в этом проходе:**
+- D53 разделение Protocol vs Effect в AST — все `protocol`/`effect`
+  попадают в `TypeDeclKind::Effect`. BoundCtx сейчас permissively
+  принимает любой Effect-kind как potential bound. Strict D53
+  compliance — отдельная задача (option A — флаг is_protocol_kind,
+  option B — split AST variants).
+- Self в protocol-методах падает в codegen (vtable-emit issue) —
+  pre-existing bug, тесты обходят простыми протоколами.
+- Method calls с generic bounds (`obj.method[T Hashable]()`) — пока
+  пропускаются (только free-fn calls).
+- Bound на ассоциированном типе / parameterized protocol — open question.
+
+Урок:
+- Plan-файлы могут содержать inaccurate premises ("парсер принимает").
+  Reality-check экспериментом (компилируется ли простейший пример) на
+  раннем этапе exposes такие ошибки и сэкономил бы часы.
+- ProtocolSpec + method_table walk — структурно простая фича, но walk
+  через все ExprKind variants даёт ~150 строк boilerplate. Stable API
+  (visitor pattern) сильно упростил бы.
+- R5.3 diagnostic format заметно лучше generic'а ("не удовлетворяет
+  bound") — программист сразу видит что недостаёт и где править.
+  AI-first ergonomics в действии.
