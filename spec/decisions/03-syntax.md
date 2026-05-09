@@ -2524,6 +2524,15 @@ range-check'ом) или explicit comparison:
 `'A' as u8` разрешены — программист видит codepoint буквально на
 write-time, range-check не нужен.
 
+**Исключение для int-литералов → char:** `0x41 as char`, `65 as char`
+разрешены, если литерал — compile-time-known integer в валидном
+Unicode-диапазоне `U+0..=U+10FFFF` исключая surrogate range
+`U+D800..=U+DFFF`. Range-check выполняется статически в checker'е,
+runtime `Fail` не нужен. Off-range литерал — compile error с указанием
+конкретного codepoint (не generic suggestion). Для **переменных** типа
+`int` правило прежнее — нужен `char.try_from(n)?`. Введено в Plan 14
+Ф.7 (2026-05-09).
+
 **Прецеденты.** Rust требует `char::from_u32(n)` (Result), не `n as
 char`. Swift `Character.init(extendedGraphemeClusterLiteral)` — нет
 прямого `n as Character`. Kotlin `n.toChar()` существует но deprecated

@@ -8005,6 +8005,33 @@ impl CEmitter {
         if matches!(inner_kind, ExprKind::CharLit(_)) {
             return Ok(());
         }
+        // Plan 14 Ф.7: IntLit → char для compile-time-known литералов.
+        // По D54 `int as char` запрещён (suggested `char.try_from(n)?`),
+        // но для **литерала** в валидном Unicode-диапазоне range-check
+        // тривиален и checker может его выполнить статически:
+        //   - n ∈ [0, 0x10FFFF]
+        //   - n ∉ [0xD800, 0xDFFF] (surrogate range — invalid scalar)
+        // Off-range литерал → compile error с точным сообщением (вместо
+        // generic «use try_from»).
+        if let ExprKind::IntLit(n) = *inner_kind {
+            if tgt_nova == "char" {
+                if n < 0 || n > 0x10FFFF {
+                    return Err(format!(
+                        "`as`-cast `{} as char` запрещён: codepoint 0x{:X} \
+                        вне диапазона U+0..=U+10FFFF.",
+                        n, n
+                    ));
+                }
+                if (0xD800..=0xDFFF).contains(&n) {
+                    return Err(format!(
+                        "`as`-cast `{} as char` запрещён: codepoint U+{:04X} \
+                        в surrogate range (U+D800..=U+DFFF) — не valid Unicode scalar.",
+                        n, n
+                    ));
+                }
+                return Ok(());
+            }
+        }
         let src = src_nova;
 
         // Запрещённые пары:
