@@ -24,3 +24,4 @@
 | Промпт | Что делает |
 |---|---|
 | [regen-runtime.md](regen-runtime.md) | Регенерирует `std/runtime/*.nv` из `runtime_registry.rs` (Plan 13 Ф.3). |
+| [continue-plan-14.md](continue-plan-14.md) | Передача контекста для продолжения Plan 14 (оставшиеся фазы Ф.1/Ф.5/Ф.6/Ф.7) — для start новой сессии другим агентом. |
