@@ -1173,7 +1173,7 @@ log.log(2, "ok")          // → @log(int, str) — arity 2
 
 **Strict matching типов: no implicit conversions.** `buf.write(42)`
 где `42 int` — error если нет `@write(int)`. Программист пишет
-`buf.write(42 as char)` или `buf.write(int.to_str(42))`.
+`buf.write(42 as char)` или `buf.write(str.from(42))`.
 
 При ambiguity (≥2 кандидатов после фильтрации) — compile error
 с suggestion'ом disambiguate через `as fn(...)` annotation:
@@ -1253,7 +1253,7 @@ let acc2 = mk(7)
 
 ```nova
 let nums = [1, 2, 3]
-let pairs = nums.map(int.@to_str)   // unbound: применяет to_str к каждому
+let negated = nums.map(int.@neg)    // unbound: применяет @neg к каждому
 let total = nums.fold(0, acc.@add)  // bound: добавляет каждый num к acc
 ```
 
