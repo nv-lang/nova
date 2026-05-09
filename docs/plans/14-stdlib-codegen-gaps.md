@@ -331,30 +331,53 @@ ast/mod.rs}` (~150 строк).
 
 ---
 
-## Ф.7 — `int as char` для compile-time-known литералов
+## Ф.7 — `int as char` для compile-time-known литералов ✅ ЗАКРЫТ (2026-05-09, spec-only)
 
-**Что:** [D54](../../spec/decisions/03-syntax.md#d54) запрещает
-`int as char`. Нужно `char.try_from(n)?`. Раздражает в hot loops где
-литерал заведомо валиден:
+**Что:** [D54](../../spec/decisions/03-syntax.md#d54) запрещал
+`int as char`, требовал `char.try_from(n)?`. Раздражало в местах, где
+литерал заведомо валиден.
 
-```nova
-let c = 0x41 as char         // ❌ запрещено
-let c = char.try_from(0x41)?  // ✅ но ? нужен Fail в сигнатуре
-```
+**Реализация:**
 
-**Что делать:** ослабить D54 — для `IntLit n` где `n ∈ 0..0x10FFFF`
-исключая surrogate range (0xD800..0xDFFF) — разрешить `as char` без
-runtime-check'а. Type-checker validity знает на compile-time.
+1. **`check_as_cast_allowed`** в [`emit_c.rs`](../../compiler-codegen/src/codegen/emit_c.rs):
+   после CharLit-исключения добавлена ветка `IntLit(n) → char`:
+   - `n ∈ [0, 0x10FFFF]` (валидный Unicode-диапазон),
+   - `n ∉ [0xD800, 0xDFFF]` (surrogate range — invalid scalar),
+   - off-range → compile error с **конкретным codepoint** в сообщении
+     (не generic suggestion).
+2. **Spec D54** — добавлен абзац-исключение «для int-литералов → char»
+   в существующий D54, без нового D-номера (edge-case).
+3. **Codegen output** — без изменений: `((nova_int)(n))` (no-op cast,
+   nova_char и nova_int одинаковы в C).
 
-**Затронутые std-файлы:** `identifiers/ulid.nv` обходит через try_from;
-`testing/property.nv` (Char generator).
+**Файлы:**
+- `compiler-codegen/src/codegen/emit_c.rs` — ~25 строк в
+  `check_as_cast_allowed`.
+- `spec/decisions/03-syntax.md` D54 — абзац исключения.
 
-**Файлы:** `compiler-codegen/src/types/checker.rs` (`as`-validation,
-~10 строк) + spec-update `spec/decisions/03-syntax.md` D54 (исключение
-для compile-time-known литералов).
+**Тесты:** `nova_tests/syntax/as_cast_char_literal.nv` — 8 тестов:
+decimal/hex/binary/underscore literals, ASCII, NUL/DEL, кириллица,
+U+10FFFF (граница), U+D7FF/U+E000 (вокруг surrogate). Negative-cases
+(U+110000, U+D800) — ручная проверка `nova-codegen compile`.
 
-**Тесты:**
-- `nova_tests/syntax/as_cast_char_literal.nv` (новый, ~5 тестов).
+Прогон: **89/89 PASS** (88 baseline + 1 new).
+
+**⚠️ Std-эффект — ноль.** Изначальный план обещал юнблок 4 файлов
+(uuid/ulid/base64/hex/property), но ВСЕ они используют паттерн
+`('0' as int + n as int) as char` — не чистый IntLit. Ф.7 строго
+literal-only, поэтому эти файлы остаются заблокированными.
+
+**Что нужно для std/-юнблока (отдельные задачи):**
+- **Ф.7-bis** (extend): распознавать паттерн `(CharLit + IntExpr) as
+  char` (~30-50 строк, binary-pattern recognition).
+- **Refactor std/**: `char.try_from(n)?` с `?`-propagation в
+  `identifiers/{uuid,ulid}.nv`, `encoding/{base64,hex}.nv`.
+- **Revolutionary D54**: снять `int as char` запрет полностью (как
+  C/Kotlin).
+
+**Решение пользователя (2026-05-09):** оставить Ф.7 в strict
+literal-only варианте. Ф.7-bis или refactor — отдельной задачей если
+нужны эти файлы. Spec-correctness > unblock-std в этом раунде.
 
 ---
 
@@ -366,7 +389,7 @@ runtime-check'а. Type-checker validity знает на compile-time.
 | **Ф.2** const non-trivial | ✅ ЗАКРЫТ | ~140 строк, 6 тестов | — |
 | **Ф.3** free-fn-as-value | ✅ ЗАКРЫТ | ~95 строк, 5 тестов | — |
 | **Ф.4** fn-в-record | ✅ ЗАКРЫТ | ~50 строк, 4 тестов | — |
-| **Ф.7** `int as char` literal | средний | ~10 строк, 1 час | нет |
+| **Ф.7** `int as char` literal | ✅ ЗАКРЫТ (spec-only) | ~25 строк, 8 тестов | — |
 | **Ф.6** D69 variadic | средний | ~150 строк, 2 дня | нет |
 | **Ф.5** cross-file resolve | низкий ROI / высокая стоимость | ~500 строк, 1 неделя | Ф.1-Ф.4 |
 

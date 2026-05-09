@@ -2764,3 +2764,80 @@ std-файлах.
 - Ф.2 + Ф.3 + Ф.4 = больше **closure-related gaps**: free-fn-as-value
   (Ф.3), fn-в-record (Ф.4), lazy-init вызов (Ф.2 — по сути «const как
   thunk»). Все три объединены через NOVA_CLOS_CALL_* infrastructure.
+
+
+================================================================================
+Plan 14 Ф.7 — int-литерал as char (2026-05-09, ✅ ЗАКРЫТ — spec-only)
+================================================================================
+
+Релакс D54 для compile-time-known int-литералов в `as char`. Раньше
+`0x41 as char` был запрещён, требовал `char.try_from(0x41)?` (с Fail
+в сигнатуре) — шум там, где value заведомо валиден. После Ф.7:
+
+  let nul = 0 as char            // OK
+  let a = 0x41 as char           // OK (== 'A')
+  let cyr = 0x0410 as char       // OK (== 'А')
+  let max = 0x10FFFF as char     // OK (граница)
+
+Range-check выполняется статически:
+  - n ∈ [0, 0x10FFFF] — разрешено;
+  - n ∉ [0xD800, 0xDFFF] (surrogate range) — обязательно.
+  - off-range → compile error с **конкретным codepoint** в сообщении
+    (не generic «use try_from»).
+
+Что **не** изменилось:
+  - `n as char` где `n: int` — переменная, не литерал — по-прежнему
+    запрещён. Спецслучай только для IntLit-узла AST.
+  - `(arithmetic-expression) as char` — например, `('0' as int + n) as
+    char` — **не** покрывается. Это не литерал, а вычисленное
+    выражение; bounds-проверка требовала бы integer-range-analysis.
+
+Реализация (~25 строк):
+  compiler-codegen/src/codegen/emit_c.rs — `check_as_cast_allowed`:
+    после CharLit-исключения добавлена ветка `IntLit(n)` → если target
+    = char и n в валидном диапазоне без surrogate — return Ok;
+    иначе — explicit error с указанием codepoint.
+
+Spec:
+  spec/decisions/03-syntax.md → D54 — добавлен абзац-исключение «для
+  int-литералов → char», без нового D-номера. Edge-case в существующем
+  D54.
+
+Тесты:
+  nova_tests/syntax/as_cast_char_literal.nv — 8 положительных тестов:
+    decimal/hex/binary/underscore-литералы, ASCII boundary,
+    NUL/DEL, кириллица (U+0410), верхняя граница (U+10FFFF), границы
+    surrogate (U+D7FF / U+E000).
+  Negative cases (out-of-range U+110000, surrogate U+D800) — ручная
+  проверка через `nova-codegen compile` (compile-error). В test-runner
+  не добавлены, потому что test-runner ожидает PASS/FAIL не
+  compile-error.
+
+Прогон: nova_tests 89/89 PASS (88 baseline + 1 new файл).
+
+Std-эффект — **нулевой**, и это важный урок:
+
+  Изначальный план обещал юнблок 4 файлов (uuid/ulid/base64/hex),
+  но они **все** используют паттерн `('0' as int + n as int) as char`,
+  не чистый литерал. Ф.7 строго literal-only, поэтому std/ остаётся
+  заблокированным. Ф.7 закрывает spec-gap (`0x41 as char` теперь
+  работает), но не разблокирует ожидаемые файлы.
+
+  Чтобы юнблокировать std/, нужно либо:
+    - расширить exception до `(CharLit + IntExpr) as char` (отдельная
+      Ф.7-bis, ~30-50 строк, требует binary-pattern recognition);
+    - либо рефактор std/identifiers/* и std/encoding/{base64,hex}.nv
+      под `char.try_from(n)?` с `?`-propagation;
+    - либо снять D54 ограничение полностью (revolutionary, как в
+      C/Kotlin).
+
+  По выбору пользователя — оставлено как есть (option A), spec
+  фиксирует strict literal-only. Reroute std/ — отдельная задача.
+
+Урок:
+- План оценивал «4 файлов разблокируются» по поверхностному `grep
+  "as char"`. На самом деле блокирующий паттерн в этих файлах — не
+  literal, а arithmetic. Plan 14 Ф.7 формально завершён, но retro-
+  оценка ROI: spec-correctness вместо unblock-std.
+- В будущем при оценке «сколько файлов разблокирует фикс» — смотреть
+  не только грепом, а **реальное контекстное использование**.
