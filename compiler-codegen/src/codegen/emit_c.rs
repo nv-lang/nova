@@ -20,6 +20,10 @@ pub struct MethodSig {
     /// Mangled C name. Для single-overload — `Nova_T_method_m` /
     /// `Nova_T_static_m`. Для overloaded — с `_<param_type1>_<...>` суффиксом.
     pub c_name: String,
+    /// Plan 14 Ф.6 (D69): true если последний параметр variadic
+    /// (`...items []T`). На call-site emit_call collects args[N-1..]
+    /// в синтезированный ArrayLit и передаёт как последний аргумент.
+    pub variadic_last: bool,
 }
 
 pub struct CEmitter {
@@ -140,6 +144,15 @@ pub struct CEmitter {
     /// `xs.map(inc)` — нужно знать sig чтобы построить thunk и closure.
     /// Обновляется при register_fn в первом проходе.
     user_fn_sigs: HashMap<String, (Vec<String>, String)>,
+    /// Plan 14 Ф.6 (D69): set of variadic-fn names. На call-site
+    /// `emit_call` для имени из этого set'а собирает args[N-1..] в
+    /// синтезированный ArrayLit и передаёт как последний аргумент.
+    user_fn_variadic: HashSet<String>,
+    /// Plan 14 Ф.6: guard от infinite-recursion в `emit_call`. После
+    /// преобразования variadic args → ArrayLit мы recurse'имся в
+    /// `emit_call` с новыми args; флаг говорит recursion'у пропустить
+    /// variadic-routing-check (он уже сделан).
+    suppress_variadic_routing: bool,
     /// Plan 14 Ф.3: имена user fn'ов, для которых уже эмитнут thunk
     /// (envless adapter `static <ret> nova_fn_<name>_thunk(void* env, args)
     /// { return nova_fn_<name>(args); }`). Дедупликация — несколько
@@ -251,6 +264,8 @@ impl CEmitter {
             expected_record_type: None,
             fn_param_sigs: HashMap::new(),
             user_fn_sigs: HashMap::new(),
+            user_fn_variadic: HashSet::new(),
+            suppress_variadic_routing: false,
             emitted_fn_thunks: HashSet::new(),
             lazy_consts: HashSet::new(),
             record_field_fn_sigs: HashMap::new(),
@@ -582,6 +597,11 @@ impl CEmitter {
                             format!("{}__{}", base_c_name, suffix)
                         }
                     };
+                    // Plan 14 Ф.6: variadic-флаг — true если последний
+                    // параметр is_variadic. Только последний валиден
+                    // (parser проверяет position constraint).
+                    let variadic_last = f.params.last()
+                        .map(|p| p.is_variadic).unwrap_or(false);
                     let sig = MethodSig {
                         param_c_types,
                         return_c_type,
@@ -589,6 +609,7 @@ impl CEmitter {
                         is_external: f.is_external,
                         is_delegated: false,    // own declaration
                         c_name,
+                        variadic_last,
                     };
                     self.method_overloads.entry(key).or_default().push(sig);
                     // D73 v2 auto-derive registry:
@@ -690,6 +711,9 @@ impl CEmitter {
                         is_external: false,
                         is_delegated: true,
                         c_name: proxy_c_name,
+                        // Plan 14 Ф.6: proxy наследует variadic-флаг
+                        // от исходного метода (тот же signature).
+                        variadic_last: base_sig.variadic_last,
                     };
                     self.method_overloads.entry(key).or_default().push(proxy_sig);
                     // all_methods (для Plan 06 Iter[T] dispatch).
@@ -2129,7 +2153,7 @@ impl CEmitter {
             }
             ExprKind::Call { func, args, .. } => {
                 self.scan_expr_fwd(func, h, s)?;
-                for a in args { self.scan_expr_fwd(a, h, s)?; }
+                for a in args { self.scan_expr_fwd(a.expr(), h, s)?; }
             }
             ExprKind::Binary { left, right, .. } => {
                 self.scan_expr_fwd(left, h, s)?;
@@ -2342,7 +2366,7 @@ impl CEmitter {
             ExprKind::Unary { operand, .. } => Self::collect_idents_expr(operand, out),
             ExprKind::Call { func, args, .. } => {
                 Self::collect_idents_expr(func, out);
-                for a in args { Self::collect_idents_expr(a, out); }
+                for a in args { Self::collect_idents_expr(a.expr(), out); }
             }
             ExprKind::Member { obj, .. } => Self::collect_idents_expr(obj, out),
             ExprKind::Index { obj, index } => {
@@ -2546,6 +2570,10 @@ impl CEmitter {
                 .map(|p| self.type_ref_to_c(&p.ty).unwrap_or_else(|_| "nova_int".into()))
                 .collect();
             self.user_fn_sigs.insert(f.name.clone(), (param_c_tys, ret.clone()));
+            // Plan 14 Ф.6: регистрация variadic-флага.
+            if f.params.last().map(|p| p.is_variadic).unwrap_or(false) {
+                self.user_fn_variadic.insert(f.name.clone());
+            }
         }
         self.line(&format!("static {} {}({});", ret, mangled, params));
         Ok(())
@@ -3696,7 +3724,7 @@ impl CEmitter {
                         // If RHS is a call to a generic fn returning a tuple, infer element types from args
                         if let Some(&arity) = self.generic_fn_tuple_arity.get(fname.as_str()) {
                             let elem_tys: Vec<String> = args.iter().take(arity)
-                                .map(|a| self.infer_expr_c_type(a))
+                                .map(|a| self.infer_expr_c_type(a.expr()))
                                 .collect();
                             if elem_tys.len() == arity {
                                 self.tuple_element_types.insert(binding.clone(), elem_tys);
@@ -4647,7 +4675,7 @@ impl CEmitter {
 
     /// Wrapper for emit_call that handles trailing blocks.
     /// A trailing block is emitted as a static C function and passed as an extra argument.
-    fn emit_call_with_trailing(&mut self, func: &Expr, args: &[Expr], trailing: Option<&TrailingBlock>) -> Result<String, String> {
+    fn emit_call_with_trailing(&mut self, func: &Expr, args: &[CallArg], trailing: Option<&TrailingBlock>) -> Result<String, String> {
         // D38 turbofish: type_args в bootstrap прозрачны для codegen
         // (monomorphization идёт по call-site / receiver). Распакуем
         // base, чтобы downstream-логика (mangling имени, signature
@@ -4714,7 +4742,7 @@ impl CEmitter {
             // Emit the call with closure pointer as extra arg
             let func_c = self.infer_func_c_name(func);
             let mut arg_strs: Vec<String> = Vec::new();
-            for a in args { arg_strs.push(self.emit_expr(a)?); }
+            for a in args { arg_strs.push(self.emit_expr(a.expr())?); }
             arg_strs.push(format!("(void*)({})", clos_tmp));
             return Ok(format!("{}({})", func_c, arg_strs.join(", ")));
         }
@@ -4782,7 +4810,63 @@ impl CEmitter {
         Ok(())
     }
 
-    fn emit_call(&mut self, func: &Expr, args: &[Expr]) -> Result<String, String> {
+    fn emit_call(&mut self, func: &Expr, args: &[CallArg]) -> Result<String, String> {
+        // Plan 14 Ф.6 (D69): variadic-routing.
+        //
+        // Если вызываемая fn имеет variadic-параметр на последней позиции
+        // — args[regular_arity..] собираются в синтезированный ArrayLit
+        // (с поддержкой `...spread` через ArrayElem::Spread, который уже
+        // умеет emit_array_lit для D60).
+        //
+        // Затем перепишем args: первые `regular_arity` штук как-есть,
+        // плюс один синтезированный аргумент (массив). Дальше обычный
+        // emit-flow.
+        //
+        // Если fn НЕ variadic, но args содержит `Spread` — compile error.
+        let variadic_arity: Option<usize> = self.lookup_variadic_arity(func);
+        if let Some(regular_arity) = variadic_arity {
+            // Гард: больше regular args чем у fn — undefined behavior.
+            // (variadic-args начинаются с regular_arity-индекса.)
+            if args.len() < regular_arity {
+                return Err(format!(
+                    "variadic call: ожидалось минимум {} regular-аргумента(ов), получено {}",
+                    regular_arity, args.len()));
+            }
+            // Variadic-position args собираем в ArrayLit.
+            let var_elems: Vec<ArrayElem> = args[regular_arity..].iter().map(|a| match a {
+                CallArg::Item(e) => ArrayElem::Item(e.clone()),
+                CallArg::Spread(e) => ArrayElem::Spread(e.clone()),
+            }).collect();
+            let synth_array = Expr {
+                kind: ExprKind::ArrayLit(var_elems),
+                span: func.span,
+            };
+            let mut new_args: Vec<CallArg> = args[..regular_arity].to_vec();
+            new_args.push(CallArg::Item(synth_array));
+            // Spread в regular-position — error.
+            for (i, a) in new_args.iter().enumerate() {
+                if i < regular_arity && a.is_spread() {
+                    return Err("spread (...) разрешён только в variadic-позиции".into());
+                }
+            }
+            // Recurse с переписанными args (variadic-флаг очищен через
+            // synthesized array — fn видит обычный []T parameter).
+            let saved = std::mem::replace(&mut self.suppress_variadic_routing, true);
+            let result = self.emit_call(func, &new_args);
+            self.suppress_variadic_routing = saved;
+            return result;
+        }
+        // Non-variadic call: spread args не разрешены.
+        if !self.suppress_variadic_routing {
+            for a in args {
+                if a.is_spread() {
+                    return Err(format!(
+                        "spread (...) на call-site разрешён только для variadic-fn (D69). \
+                         Функция `{}` не variadic.",
+                        Self::expr_to_display(func)));
+                }
+            }
+        }
         // Special case: println / print builtins
         if let ExprKind::Ident(name) = &func.kind {
             if name == "println" || name == "print" {
@@ -4797,7 +4881,8 @@ impl CEmitter {
             // compilation для debug_assert (например, через NDEBUG-style
             // пре-процессор или codegen-флаг).
             if name == "assert" || name == "debug_assert" {
-                if let Some(cond_expr) = args.first() {
+                if let Some(cond_arg) = args.first() {
+                    let cond_expr = cond_arg.expr();
                     let cond_val = self.emit_expr(cond_expr)?;
                     let cond_text = Self::expr_to_display(cond_expr);
                     let escaped_text = Self::escape_c_str(&cond_text);
@@ -4813,7 +4898,7 @@ impl CEmitter {
         if let ExprKind::Ident(name) = &func.kind {
             if let Some((param_tys, ret_ty)) = self.fn_param_sigs.get(name).cloned() {
                 let mut arg_strs = Vec::new();
-                for a in args { arg_strs.push(self.emit_expr(a)?); }
+                for a in args { arg_strs.push(self.emit_expr(a.expr())?); }
                 // Determine which NovaClos macro to use based on (params, ret) types
                 let macro_name = Self::clos_call_macro(&param_tys, &ret_ty);
                 return match macro_name {
@@ -4883,7 +4968,7 @@ impl CEmitter {
                         if let Some((param_tys, ret_ty)) = self.record_field_fn_sigs.get(&key).cloned() {
                             let o = self.emit_expr(obj)?;
                             let mut arg_strs = Vec::new();
-                            for a in args { arg_strs.push(self.emit_expr(a)?); }
+                            for a in args { arg_strs.push(self.emit_expr(a.expr())?); }
                             let field_mangled = Self::mangle_field_name(method);
                             let f_expr = format!("({}->{})", o, field_mangled);
                             let macro_name = Self::clos_call_macro(&param_tys, &ret_ty);
@@ -4936,7 +5021,7 @@ impl CEmitter {
                             }
                             "with_capacity" => {
                                 if let Some(arg) = args.first() {
-                                    let v = self.emit_expr(arg)?;
+                                    let v = self.emit_expr(arg.expr())?;
                                     return Ok(format!("nova_array_new_{}({})", arr_suffix, v));
                                 }
                             }
@@ -4958,7 +5043,7 @@ impl CEmitter {
                             }
                             "bind" => {
                                 if let Some(parent_arg) = args.first() {
-                                    let parent_c = self.emit_expr(parent_arg)?;
+                                    let parent_c = self.emit_expr(parent_arg.expr())?;
                                     return Ok(format!(
                                         "(nova_cancel_token_bind({}, {}), NOVA_UNIT)",
                                         obj_c, parent_c
@@ -4983,7 +5068,7 @@ impl CEmitter {
                                 "Nova_Option_method_is_none_{}({})", elem_ty, obj_c)),
                             "unwrap_or" => {
                                 if let Some(arg) = args.first() {
-                                    let v = self.emit_expr(arg)?;
+                                    let v = self.emit_expr(arg.expr())?;
                                     return Ok(format!(
                                         "Nova_Option_method_unwrap_or_{}({}, {})",
                                         elem_ty, obj_c, v));
@@ -5004,7 +5089,7 @@ impl CEmitter {
                             // Some(v) → v, None → f() (zero-arg closure).
                             "unwrap_or_else" => {
                                 if let Some(arg) = args.first() {
-                                    let f = self.emit_expr(arg)?;
+                                    let f = self.emit_expr(arg.expr())?;
                                     let tmp = self.fresh_tmp();
                                     self.line(&format!("NovaOpt_{} {} = {};", elem_ty, tmp, obj_c));
                                     let result = self.fresh_tmp();
@@ -5029,7 +5114,7 @@ impl CEmitter {
                             // Some(v) → Some(f(v)), None → None.
                             "map" => {
                                 if let Some(arg) = args.first() {
-                                    let f = self.emit_expr(arg)?;
+                                    let f = self.emit_expr(arg.expr())?;
                                     let tmp = self.fresh_tmp();
                                     self.line(&format!("NovaOpt_{} {} = {};", elem_ty, tmp, obj_c));
                                     let out = self.fresh_tmp();
@@ -5059,7 +5144,7 @@ impl CEmitter {
                             // Some(v) → Ok(v), None → Err(e).
                             "ok_or" => {
                                 if let Some(arg) = args.first() {
-                                    let e = self.emit_expr(arg)?;
+                                    let e = self.emit_expr(arg.expr())?;
                                     let tmp = self.fresh_tmp();
                                     self.line(&format!("NovaOpt_{} {} = {};", elem_ty, tmp, obj_c));
                                     let out = self.fresh_tmp();
@@ -5113,7 +5198,7 @@ impl CEmitter {
                             }
                             "unwrap_or" => {
                                 if let Some(arg) = args.first() {
-                                    let v = self.emit_expr(arg)?;
+                                    let v = self.emit_expr(arg.expr())?;
                                     return Ok(format!(
                                         "Nova_Result_method_unwrap_or({}, {})", obj_c, v));
                                 }
@@ -5122,7 +5207,7 @@ impl CEmitter {
                             // f(e), Ok(v) → v. f это closure (nova_str → nova_int).
                             "unwrap_or_else" => {
                                 if let Some(arg) = args.first() {
-                                    let f = self.emit_expr(arg)?;
+                                    let f = self.emit_expr(arg.expr())?;
                                     let tmp = self.fresh_tmp();
                                     self.line(&format!("Nova_Result* {} = {};", tmp, obj_c));
                                     let result = self.fresh_tmp();
@@ -5146,7 +5231,7 @@ impl CEmitter {
                             // Err(e) → Err(e). f это closure (nova_int → nova_int).
                             "map" => {
                                 if let Some(arg) = args.first() {
-                                    let f = self.emit_expr(arg)?;
+                                    let f = self.emit_expr(arg.expr())?;
                                     let tmp = self.fresh_tmp();
                                     self.line(&format!("Nova_Result* {} = {};", tmp, obj_c));
                                     let out = self.fresh_tmp();
@@ -5171,7 +5256,7 @@ impl CEmitter {
                             // Ok остаётся. f это closure (nova_str → nova_str).
                             "map_err" => {
                                 if let Some(arg) = args.first() {
-                                    let f = self.emit_expr(arg)?;
+                                    let f = self.emit_expr(arg.expr())?;
                                     let tmp = self.fresh_tmp();
                                     self.line(&format!("Nova_Result* {} = {};", tmp, obj_c));
                                     let out = self.fresh_tmp();
@@ -5214,7 +5299,7 @@ impl CEmitter {
                         match method.as_str() {
                             "send" => {
                                 if let Some(arg) = args.first() {
-                                    let v = self.emit_expr(arg)?;
+                                    let v = self.emit_expr(arg.expr())?;
                                     self.line(&format!(
                                         "nova_channel_send({}, (nova_int)({}));",
                                         obj_c, v));
@@ -5223,7 +5308,7 @@ impl CEmitter {
                             }
                             "try_send" => {
                                 if let Some(arg) = args.first() {
-                                    let v = self.emit_expr(arg)?;
+                                    let v = self.emit_expr(arg.expr())?;
                                     return Ok(format!(
                                         "nova_channel_try_send({}, (nova_int)({}))",
                                         obj_c, v));
@@ -5262,8 +5347,8 @@ impl CEmitter {
                                 let mut arg_strs = Vec::new();
                                 let mut arg_types = Vec::new();
                                 for a in args {
-                                    arg_types.push(self.infer_expr_c_type(a));
-                                    arg_strs.push(self.emit_expr(a)?);
+                                    arg_types.push(self.infer_expr_c_type(a.expr()));
+                                    arg_strs.push(self.emit_expr(a.expr())?);
                                 }
                                 let chosen = if candidates.len() == 1 {
                                     Some(&candidates[0])
@@ -5290,7 +5375,7 @@ impl CEmitter {
                 if let ExprKind::Ident(name) = &obj.kind {
                     if name == "Channel" && method == "new" {
                         if let Some(arg) = args.first() {
-                            let v = self.emit_expr(arg)?;
+                            let v = self.emit_expr(arg.expr())?;
                             return Ok(format!("nova_channel_new({})", v));
                         }
                     }
@@ -5310,8 +5395,8 @@ impl CEmitter {
                             let mut arg_strs = Vec::new();
                             let mut arg_types = Vec::new();
                             for a in args {
-                                arg_types.push(self.infer_expr_c_type(a));
-                                arg_strs.push(self.emit_expr(a)?);
+                                arg_types.push(self.infer_expr_c_type(a.expr()));
+                                arg_strs.push(self.emit_expr(a.expr())?);
                             }
                             let chosen = if candidates.len() == 1 {
                                 Some(&candidates[0])
@@ -5337,13 +5422,13 @@ impl CEmitter {
                 if let ExprKind::Ident(name) = &obj.kind {
                     if name == "f64" && method == "from_bits" {
                         if let Some(arg) = args.first() {
-                            let v = self.emit_expr(arg)?;
+                            let v = self.emit_expr(arg.expr())?;
                             return Ok(format!("nova_f64_from_bits({})", v));
                         }
                     }
                     if name == "int" && method == "to_bits" {
                         if let Some(arg) = args.first() {
-                            let v = self.emit_expr(arg)?;
+                            let v = self.emit_expr(arg.expr())?;
                             return Ok(format!("nova_int_from_f64_bits({})", v));
                         }
                     }
@@ -5355,7 +5440,7 @@ impl CEmitter {
                 if let ExprKind::Ident(prim) = &obj.kind {
                     if prim == "str" && method == "from" {
                         if let Some(arg) = args.first() {
-                            let arg_ty = self.infer_expr_c_type(arg);
+                            let arg_ty = self.infer_expr_c_type(arg.expr());
                             let arg_type = arg_ty.trim_start_matches("Nova_").trim_end_matches('*').to_string();
                             // Plan 11: try multi-overload registry first.
                             let key = ("str".to_string(), "from".to_string());
@@ -5363,7 +5448,7 @@ impl CEmitter {
                                 let static_overloads: Vec<MethodSig> = overloads.into_iter()
                                     .filter(|s| !s.is_instance).collect();
                                 if !static_overloads.is_empty() {
-                                    let v = self.emit_expr(arg)?;
+                                    let v = self.emit_expr(arg.expr())?;
                                     let chosen = static_overloads.iter()
                                         .find(|s| s.param_c_types.len() == 1
                                             && s.param_c_types[0] == arg_ty);
@@ -5374,11 +5459,11 @@ impl CEmitter {
                             }
                             if let Some(into_target) = self.into_targets.get(&arg_type) {
                                 if into_target == "str" {
-                                    let v = self.emit_expr(arg)?;
+                                    let v = self.emit_expr(arg.expr())?;
                                     return Ok(format!("Nova_{}_method_into({})", arg_type, v));
                                 }
                             }
-                            let v = self.emit_expr(arg)?;
+                            let v = self.emit_expr(arg.expr())?;
                             return Ok(if arg_ty == "nova_str" {
                                 v
                             } else {
@@ -5402,7 +5487,7 @@ impl CEmitter {
                         // Emit args immediately and return full call
                         let mut arg_strs = Vec::new();
                         for a in args {
-                            arg_strs.push(self.emit_expr(a)?);
+                            arg_strs.push(self.emit_expr(a.expr())?);
                         }
                         return Ok(format!("Nova_{}_{}({})", eff, method, arg_strs.join(", ")));
                     }
@@ -5417,14 +5502,14 @@ impl CEmitter {
                         "get" => {
                             let obj_c = self.emit_expr(obj)?;
                             let mut arg_strs = vec![obj_c];
-                            for a in args { arg_strs.push(self.emit_expr(a)?); }
+                            for a in args { arg_strs.push(self.emit_expr(a.expr())?); }
                             return Ok(format!("nova_array_get_{}({})", elem_ty, arg_strs.join(", ")));
                         }
                         "push" => {
                             let obj_c = self.emit_expr(obj)?;
                             if elem_ty == "nova_int" && args.len() == 1 {
-                                let arg_ty = self.infer_expr_c_type(&args[0]);
-                                let arg_c = self.emit_expr(&args[0])?;
+                                let arg_ty = self.infer_expr_c_type(args[0].expr());
+                                let arg_c = self.emit_expr(args[0].expr())?;
                                 if arg_ty == "nova_str" {
                                     // Box nova_str as pointer stored as nova_int
                                     let stmp = self.fresh_tmp();
@@ -5443,7 +5528,7 @@ impl CEmitter {
                                 }
                             } else {
                                 let mut arg_strs = vec![obj_c];
-                                for a in args { arg_strs.push(self.emit_expr(a)?); }
+                                for a in args { arg_strs.push(self.emit_expr(a.expr())?); }
                                 self.line(&format!("nova_array_push_{}({});", elem_ty, arg_strs.join(", ")));
                             }
                             return Ok("NOVA_UNIT".into());
@@ -5465,7 +5550,7 @@ impl CEmitter {
                     if let Some(c_fn) = Self::f64_method_to_c(method) {
                         let obj_c = self.emit_expr(obj)?;
                         let mut arg_strs = vec![obj_c];
-                        for a in args { arg_strs.push(self.emit_expr(a)?); }
+                        for a in args { arg_strs.push(self.emit_expr(a.expr())?); }
                         return Ok(format!("{}({})", c_fn, arg_strs.join(", ")));
                     }
                 }
@@ -5476,7 +5561,7 @@ impl CEmitter {
                     if let Some(c_fn) = Self::int_method_to_c(method) {
                         let obj_c = self.emit_expr(obj)?;
                         let mut arg_strs = vec![obj_c];
-                        for a in args { arg_strs.push(self.emit_expr(a)?); }
+                        for a in args { arg_strs.push(self.emit_expr(a.expr())?); }
                         return Ok(format!("{}({})", c_fn, arg_strs.join(", ")));
                     }
                 }
@@ -5485,7 +5570,7 @@ impl CEmitter {
                     if let Some(rt_fn) = Self::str_method_to_rt(method) {
                         let obj_c = self.emit_expr(obj)?;
                         let mut arg_strs = vec![obj_c];
-                        for a in args { arg_strs.push(self.emit_expr(a)?); }
+                        for a in args { arg_strs.push(self.emit_expr(a.expr())?); }
                         return Ok(format!("{}({})", rt_fn, arg_strs.join(", ")));
                     }
                 }
@@ -5495,7 +5580,7 @@ impl CEmitter {
                 if obj_ty.starts_with("NovaVtable_") && obj_ty.ends_with('*') {
                     let obj_c = self.emit_expr(obj)?;
                     let mut arg_strs = vec![format!("{obj}->ctx", obj = obj_c)];
-                    for a in args { arg_strs.push(self.emit_expr(a)?); }
+                    for a in args { arg_strs.push(self.emit_expr(a.expr())?); }
                     return Ok(format!("{obj}->{method}({args})",
                         obj = obj_c, method = method, args = arg_strs.join(", ")));
                 }
@@ -5503,7 +5588,7 @@ impl CEmitter {
                 // 4b. If object type is void* (unknown generic stub), the method call is
                 //     undefined — emit NULL to prevent calls to undeclared functions.
                 if obj_ty == "void*" {
-                    for a in args { let _ = self.emit_expr(a)?; }
+                    for a in args { let _ = self.emit_expr(a.expr())?; }
                     return Ok("NULL".into());
                 }
 
@@ -5598,8 +5683,8 @@ impl CEmitter {
                                 let mut arg_strs = Vec::new();
                                 let mut arg_types = Vec::new();
                                 for a in args {
-                                    let aty = self.infer_expr_c_type(a);
-                                    let v = self.emit_expr(a)?;
+                                    let aty = self.infer_expr_c_type(a.expr());
+                                    let v = self.emit_expr(a.expr())?;
                                     if is_generic_recv {
                                         // Box arg в void* (паттерн как в legacy
                                         // single-key path).
@@ -5663,8 +5748,8 @@ impl CEmitter {
                         for a in args {
                             if is_generic_type {
                                 // Generic receiver: box args to void*
-                                let arg_ty = self.infer_expr_c_type(a);
-                                let v = self.emit_expr(a)?;
+                                let arg_ty = self.infer_expr_c_type(a.expr());
+                                let v = self.emit_expr(a.expr())?;
                                 if arg_ty == "nova_str" {
                                     let heap_tmp = self.fresh_tmp();
                                     self.line(&format!("nova_str* {} = (nova_str*)nova_alloc(sizeof(nova_str));", heap_tmp));
@@ -5676,14 +5761,14 @@ impl CEmitter {
                                     arg_strs.push(format!("(void*)(intptr_t)({})", v));
                                 }
                             } else {
-                                arg_strs.push(self.emit_expr(a)?);
+                                arg_strs.push(self.emit_expr(a.expr())?);
                             }
                         }
                         return Ok(format!("Nova_{}_method_{}({})", type_name, method, arg_strs.join(", ")));
                     } else {
                         // Static method: obj is the type name (Ident), not a value
                         let mut arg_strs = Vec::new();
-                        for a in args { arg_strs.push(self.emit_expr(a)?); }
+                        for a in args { arg_strs.push(self.emit_expr(a.expr())?); }
                         return Ok(format!("Nova_{}_static_{}({})", type_name, method, arg_strs.join(", ")));
                     }
                 }
@@ -5712,7 +5797,7 @@ impl CEmitter {
                 // D79: built-in Channel static method (Path-form).
                 if parts.len() == 2 && parts[0] == "Channel" && parts[1] == "new" {
                     if let Some(arg) = args.first() {
-                        let v = self.emit_expr(arg)?;
+                        let v = self.emit_expr(arg.expr())?;
                         return Ok(format!("nova_channel_new({})", v));
                     }
                 }
@@ -5721,8 +5806,8 @@ impl CEmitter {
                 // через runtime helper'ы из nova_rt/conv.h.
                 if parts.len() == 2 && parts[1] == "try_from" {
                     if let Some(arg) = args.first() {
-                        let arg_ty = self.infer_expr_c_type(arg);
-                        let v = self.emit_expr(arg)?;
+                        let arg_ty = self.infer_expr_c_type(arg.expr());
+                        let v = self.emit_expr(arg.expr())?;
                         // Plan 04 Этап 6: str.try_from([]byte) → Result[str, _].
                         // Validates UTF-8 + конвертирует в nova_str. Используется
                         // для финализации mixed text+binary в WriteBuffer.
@@ -5812,13 +5897,13 @@ impl CEmitter {
                 // bits, f64.from_bits(bits) → восстанавливает double.
                 if parts.len() == 2 && parts[0] == "f64" && parts[1] == "from_bits" {
                     if let Some(arg) = args.first() {
-                        let v = self.emit_expr(arg)?;
+                        let v = self.emit_expr(arg.expr())?;
                         return Ok(format!("nova_f64_from_bits({})", v));
                     }
                 }
                 if parts.len() == 2 && parts[0] == "int" && parts[1] == "to_bits" {
                     if let Some(arg) = args.first() {
-                        let v = self.emit_expr(arg)?;
+                        let v = self.emit_expr(arg.expr())?;
                         return Ok(format!("nova_int_from_f64_bits({})", v));
                     }
                 }
@@ -5826,14 +5911,15 @@ impl CEmitter {
                 // bool → str / char → str / f64 → str.
                 if parts.len() == 2 && parts[1] == "from" {
                     if let Some(arg) = args.first() {
-                        let arg_ty = self.infer_expr_c_type(arg);
-                        let v = self.emit_expr(arg)?;
+                        let arg_expr = arg.expr();
+                        let arg_ty = self.infer_expr_c_type(arg_expr);
+                        let v = self.emit_expr(arg_expr)?;
                         if parts[0] == "str" {
                             // CharLit detection — ДО numeric, потому что
                             // char хранится как nova_int (одно представление).
                             // emit_expr_c_type для CharLit даёт "nova_int",
                             // но семантика char→str ≠ int→str.
-                            if let ExprKind::CharLit(_) = &arg.kind {
+                            if let ExprKind::CharLit(_) = &arg_expr.kind {
                                 return Ok(format!("nova_char_to_str({})", v));
                             }
                             match arg_ty.as_str() {
@@ -5866,8 +5952,8 @@ impl CEmitter {
                             let mut arg_strs = Vec::new();
                             let mut arg_types = Vec::new();
                             for a in args {
-                                arg_types.push(self.infer_expr_c_type(a));
-                                arg_strs.push(self.emit_expr(a)?);
+                                arg_types.push(self.infer_expr_c_type(a.expr()));
+                                arg_strs.push(self.emit_expr(a.expr())?);
                             }
                             let chosen = if candidates.len() == 1 {
                                 Some(&candidates[0])
@@ -5902,7 +5988,7 @@ impl CEmitter {
                     // falling back to builtin.
                     if parts[0] == "str" && parts[1] == "from" {
                         if let Some(arg) = args.first() {
-                            let arg_ty = self.infer_expr_c_type(arg);
+                            let arg_ty = self.infer_expr_c_type(arg.expr());
                             let arg_type = arg_ty.trim_start_matches("Nova_").trim_end_matches('*').to_string();
                             // Plan 11: try multi-overload registry first — strict
                             // arg-type match resolves between overloads (e.g. char vs int).
@@ -5913,7 +5999,7 @@ impl CEmitter {
                                 let static_overloads: Vec<MethodSig> = overloads.into_iter()
                                     .filter(|s| !s.is_instance).collect();
                                 if !static_overloads.is_empty() {
-                                    let v = self.emit_expr(arg)?;
+                                    let v = self.emit_expr(arg.expr())?;
                                     let chosen = static_overloads.iter()
                                         .find(|s| s.param_c_types.len() == 1
                                             && s.param_c_types[0] == arg_ty);
@@ -5925,11 +6011,11 @@ impl CEmitter {
                             // Auto-derive: V has @into() -> str?
                             if let Some(into_target) = self.into_targets.get(&arg_type) {
                                 if into_target == "str" {
-                                    let v = self.emit_expr(arg)?;
+                                    let v = self.emit_expr(arg.expr())?;
                                     return Ok(format!("Nova_{}_method_into({})", arg_type, v));
                                 }
                             }
-                            let v = self.emit_expr(arg)?;
+                            let v = self.emit_expr(arg.expr())?;
                             return Ok(if arg_ty == "nova_str" {
                                 v
                             } else {
@@ -5956,8 +6042,8 @@ impl CEmitter {
                             let mut arg_strs = Vec::new();
                             let mut arg_types = Vec::new();
                             for a in args {
-                                arg_types.push(self.infer_expr_c_type(a));
-                                arg_strs.push(self.emit_expr(a)?);
+                                arg_types.push(self.infer_expr_c_type(a.expr()));
+                                arg_strs.push(self.emit_expr(a.expr())?);
                             }
                             // Single-overload: short-circuit.
                             let chosen = if static_overloads.len() == 1 {
@@ -5986,7 +6072,7 @@ impl CEmitter {
                         // Strict match: type_name must equal parts[0].
                         if type_name == parts[0] {
                             let mut arg_strs = Vec::new();
-                            for a in args { arg_strs.push(self.emit_expr(a)?); }
+                            for a in args { arg_strs.push(self.emit_expr(a.expr())?); }
                             return Ok(format!("Nova_{}_static_{}({})", type_name, method_name, arg_strs.join(", ")));
                         }
                     }
@@ -5994,12 +6080,12 @@ impl CEmitter {
                     // exists, but `fn V @into() -> T` is defined where v: V.
                     if method_name == "from" && args.len() == 1 {
                         let target = parts[0].clone();
-                        let arg_ty = self.infer_expr_c_type(&args[0]);
+                        let arg_ty = self.infer_expr_c_type(args[0].expr());
                         let arg_type = arg_ty.trim_start_matches("Nova_").trim_end_matches('*').to_string();
                         // Check that V has @into() -> T defined.
                         if let Some(into_target) = self.into_targets.get(&arg_type) {
                             if into_target == &target {
-                                let v = self.emit_expr(&args[0])?;
+                                let v = self.emit_expr(args[0].expr())?;
                                 return Ok(format!("Nova_{}_method_into({})", arg_type, v));
                             }
                         }
@@ -6022,8 +6108,8 @@ impl CEmitter {
         //     иначе fallback на NovaOpt_nova_int (legacy).
         if func_c == "nova_make_Option_Some" && args.len() == 1 {
             let arg = &args[0];
-            let arg_ty = self.infer_expr_c_type(arg);
-            let arg_v = self.emit_expr(arg)?;
+            let arg_ty = self.infer_expr_c_type(arg.expr());
+            let arg_v = self.emit_expr(arg.expr())?;
             // Erased generic? — оставляем legacy путь (через
             // нижеследующий nova_make_Option_Some helper). Это покрывает
             // generic fns где T = void* и arg уже cast'нут в (void*).
@@ -6059,9 +6145,9 @@ impl CEmitter {
         let mut arg_strs = Vec::new();
         for a in args {
             let arg_ty = if is_option_or_result_ok_ctor || is_generic_call {
-                self.infer_expr_c_type(a)
+                self.infer_expr_c_type(a.expr())
             } else { String::new() };
-            let v = self.emit_expr(a)?;
+            let v = self.emit_expr(a.expr())?;
             if is_generic_call {
                 // For generic (void*-erased) functions: nova_str must be boxed as pointer
                 if arg_ty == "nova_str" {
@@ -6089,7 +6175,7 @@ impl CEmitter {
         Ok(format!("{}({})", func_c, arg_strs.join(", ")))
     }
 
-    fn emit_println(&mut self, args: &[Expr], newline: bool) -> Result<String, String> {
+    fn emit_println(&mut self, args: &[CallArg], newline: bool) -> Result<String, String> {
         // We emit a statement-expression block that prints each arg.
         // Since emit_expr returns a C expression, we use a GNU statement-expr ({ ... value })
         // or just emit statements and return NOVA_UNIT.
@@ -6098,7 +6184,13 @@ impl CEmitter {
         self.line(&format!("nova_unit {};", tmp));
         self.line("{");
         self.indent += 1;
-        for arg in args {
+        for call_arg in args {
+            // Plan 14 Ф.6: print/println всё ещё special-case;
+            // spread в нём пока не поддержан (отдельная задача).
+            if call_arg.is_spread() {
+                return Err("spread (...) в println/print пока не поддержан".into());
+            }
+            let arg = call_arg.expr();
             let val = self.emit_expr(arg)?;
             // Detect type by AST node to pick correct print helper
             let print_call = self.make_print_call(arg, &val)?;
@@ -7621,7 +7713,7 @@ impl CEmitter {
             ExprKind::Unary { operand, .. } => Self::collect_free_idents(operand, out),
             ExprKind::Call { func, args, .. } => {
                 Self::collect_free_idents(func, out);
-                for a in args { Self::collect_free_idents(a, out); }
+                for a in args { Self::collect_free_idents(a.expr(), out); }
             }
             ExprKind::Member { obj, .. } => Self::collect_free_idents(obj, out),
             ExprKind::Index { obj, index } => { Self::collect_free_idents(obj, out); Self::collect_free_idents(index, out); }
@@ -8212,6 +8304,64 @@ impl CEmitter {
         trimmed.strip_prefix("Nova_").map(|s| s.to_string())
     }
 
+    /// Plan 14 Ф.6 (D69): возвращает `regular_arity` (число
+    /// non-variadic параметров) если вызываемая fn variadic,
+    /// иначе None. Поддерживает:
+    ///   - top-level user fn (по `user_fn_variadic` / `user_fn_sigs`);
+    ///   - method calls (по `method_overloads` → `MethodSig.variadic_last`).
+    /// Если variadic_last == true, regular_arity = total - 1.
+    /// Generic fn'ы / dynamically-resolved closure calls пропускаются.
+    fn lookup_variadic_arity(&self, func: &Expr) -> Option<usize> {
+        // 1. Top-level user fn: `name(...)` где name — известный variadic.
+        if let ExprKind::Ident(name) = &func.kind {
+            if self.suppress_variadic_routing { return None; }
+            if self.user_fn_variadic.contains(name) {
+                let total = self.user_fn_sigs.get(name).map(|(p, _)| p.len())?;
+                return Some(total.saturating_sub(1));
+            }
+        }
+        // 2. Method call: `obj.method(...)` или `Type.method(...)`.
+        if self.suppress_variadic_routing { return None; }
+        let recv_method: Option<(String, String)> = match &func.kind {
+            ExprKind::Path(parts) if parts.len() == 2 => {
+                Some((parts[0].clone(), parts[1].clone()))
+            }
+            ExprKind::Member { obj, name } => {
+                match &obj.kind {
+                    ExprKind::Ident(n) if self.method_overloads.keys().any(|(t, _)| t == n) => {
+                        Some((n.clone(), name.clone()))
+                    }
+                    _ => {
+                        let obj_ty = self.infer_expr_c_type(obj);
+                        let trimmed = obj_ty.trim_start_matches("Nova_")
+                            .trim_end_matches('*').trim().to_string();
+                        if !trimmed.is_empty() && trimmed != "void" {
+                            Some((trimmed, name.clone()))
+                        } else {
+                            None
+                        }
+                    }
+                }
+            }
+            _ => None,
+        };
+        if let Some((rt, mn)) = recv_method {
+            if let Some(sigs) = self.method_overloads.get(&(rt, mn)) {
+                // Variadic — single-overload (multiple variadic overloads
+                // ambiguous; в MVP не поддерживаем). Берём первый.
+                if let Some(sig) = sigs.first() {
+                    if sig.variadic_last {
+                        // Receiver method: param_c_types НЕ включает self.
+                        // Для instance method: regular_arity = param_c_types.len() - 1.
+                        // Для static method: тоже param_c_types.len() - 1.
+                        return Some(sig.param_c_types.len().saturating_sub(1));
+                    }
+                }
+            }
+        }
+        None
+    }
+
     /// Plan 14 Ф.1: sanitize C-type для использования в identifier
     /// `NovaOpt_<sanitized>` / `_NovaTuple<...>` / etc.
     ///
@@ -8589,7 +8739,7 @@ impl CEmitter {
                                 }
                                 // Multi → strict match по arg-types.
                                 let arg_types: Vec<String> = args.iter()
-                                    .map(|a| self.infer_expr_c_type(a))
+                                    .map(|a| self.infer_expr_c_type(a.expr()))
                                     .collect();
                                 let strict: Vec<&MethodSig> = candidates.iter().copied()
                                     .filter(|s| s.param_c_types.len() == arg_types.len())
@@ -8622,7 +8772,7 @@ impl CEmitter {
                         // Иначе — legacy NovaOpt_nova_int.
                         if type_name == "Option" || type_name == "NovaOpt_nova_int" {
                             if name == "Some" && !args.is_empty() {
-                                let arg_ty = self.infer_expr_c_type(&args[0]);
+                                let arg_ty = self.infer_expr_c_type(args[0].expr());
                                 if !arg_ty.is_empty() && arg_ty != "void*" {
                                     let sanitized = Self::sanitize_for_novaopt(&arg_ty);
                                     return format!("NovaOpt_{}", sanitized);
@@ -9167,7 +9317,10 @@ impl CEmitter {
             }
             ExprKind::Call { func, args, .. } => {
                 let fn_name = Self::expr_to_display(func);
-                let arg_strs: Vec<String> = args.iter().map(Self::expr_to_display).collect();
+                let arg_strs: Vec<String> = args.iter().map(|a| {
+                    let inner = Self::expr_to_display(a.expr());
+                    if a.is_spread() { format!("...{}", inner) } else { inner }
+                }).collect();
                 format!("{}({})", fn_name, arg_strs.join(", "))
             }
             ExprKind::Unary { op, operand } => {

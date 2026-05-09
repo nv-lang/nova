@@ -312,7 +312,19 @@ impl Interpreter {
                 func,
                 args,
                 trailing_block,
-            } => self.eval_call(func, args, trailing_block.as_ref(), env, expr.span),
+            } => {
+                // Plan 14 Ф.6: interp пока не поддерживает variadic spread.
+                // Spread args собираются в массив (если фn variadic) — но в
+                // interp пока fallback'имся на error если spread present.
+                if args.iter().any(|a| a.is_spread()) {
+                    return Err(Diagnostic::new(
+                        "spread (...) на call-site пока не поддержан в interp (Plan 14 Ф.6 — codegen-only)",
+                        expr.span,
+                    ));
+                }
+                let plain: Vec<Expr> = args.iter().map(|a| a.expr().clone()).collect();
+                self.eval_call(func, &plain, trailing_block.as_ref(), env, expr.span)
+            }
             ExprKind::Try(inner) => {
                 let result = self.eval_expr(inner, env)?;
                 match result {

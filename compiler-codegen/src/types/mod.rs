@@ -225,7 +225,7 @@ fn has_throw_in_expr(e: &Expr) -> bool {
             has_throw_in_expr(left) || has_throw_in_expr(right),
         ExprKind::Unary { operand, .. } => has_throw_in_expr(operand),
         ExprKind::Call { func, args, .. } =>
-            has_throw_in_expr(func) || args.iter().any(has_throw_in_expr),
+            has_throw_in_expr(func) || args.iter().any(|a| has_throw_in_expr(a.expr())),
         ExprKind::Member { obj, .. } => has_throw_in_expr(obj),
         ExprKind::Index { obj, index } =>
             has_throw_in_expr(obj) || has_throw_in_expr(index),
