@@ -2639,7 +2639,6 @@ effect (handler-substitution). Если **нет** — это либо runtime-m
 | `Iter[T]` | нет (конкретный итератор) | нет | `protocol` | for-in / collect через D58 |
 | `From[T]` / `Into[T]` | нет | нет | `protocol` | conversion ([D73](08-runtime.md#d73)) |
 | `TryFrom[T,E]` | нет | нет | `protocol` | fallible conversion ([D77](08-runtime.md#d77)) |
-| `ToStr` (replaced → D73) | нет | нет | `protocol` | string conversion |
 | **Resource-capabilities (effects)** | | | | |
 | `Db` | соединение к БД | нет | `effect` | mock в тестах через `with Db = ...` |
 | `Net` | сокет/HTTP-клиент | нет | `effect` | recorded responses |

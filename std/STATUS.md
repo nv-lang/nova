@@ -12,19 +12,19 @@
 
 Запуск через `.\run_tests.ps1 -IncludeStdlib`.
 
-## Текущий статус (2026-05-09, post-Plan 14 Ф.7)
+## Текущий статус (2026-05-09, post-Plan 14 Ф.1+Ф.6, paused)
 
-- **type-check (`nova check`):** 50/50 PASS — type-checker мягче codegen.
-- **compile→exe:** 3/50 PASS — основная масса упирается в codegen-gaps.
-- Авторитетная roadmap по разблокировке: [docs/plans/14-stdlib-codegen-gaps.md](../docs/plans/14-stdlib-codegen-gaps.md).
-  Закрыто: Ф.2 (const non-trivial), Ф.3 (free-fn-as-value), Ф.4 (fn-в-record),
-  Ф.7 (`int as char` literal-only).
-  Остаются: **Ф.1** (Iter[T] element-type), **Ф.5** (cross-file resolve),
-  **Ф.6** (D69 variadic).
+- **nova_tests:** 91/91 PASS.
+- **std type-check (`nova check`):** 50/50 PASS — type-checker мягче codegen.
+- **std compile→exe:** требует sweep после Ф.1+Ф.6 (Option[T] full refactor + variadic). Изначальные 3/50 могли подняться, но вскрылись новые блокеры — см. ниже.
+- Plan 14 paused: ✅ Ф.1, Ф.2, Ф.3, Ф.4, Ф.6, Ф.7. Остаётся **Ф.5** (cross-file resolve, низкий ROI) — [docs/plans/14-stdlib-codegen-gaps.md](../docs/plans/14-stdlib-codegen-gaps.md).
+- **Накопленные блокеры std/** (вскрылись после Ф.1) — generic specialization, array-type mangling, Fail-method return propagation, protocol-bound dispatch (D72, нужен Plan 15), tuple type system, Ф.7-bis. Описаны в Plan 14, секция «Накопленные блокеры std/». Каждый — отдельная задача, возможно объединение в Plan 19.
 - Stdlib roadmap (что писать после разблокировки): [docs/plans/18-stdlib-roadmap.md](../docs/plans/18-stdlib-roadmap.md).
 
 Список ниже — историческая хронология раундов 1-5 (закрытые блокеры) +
 оставшиеся группы блокеров для приоритезации новых compiler-задач.
+**Группы B-M ниже могут быть частично устаревшими** (после Ф.1/Ф.6) — нужен
+полный прогон `.\run_tests.ps1 -IncludeStdlib` для актуализации.
 
 ## Закрытые блокеры
 

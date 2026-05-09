@@ -11,7 +11,7 @@ static-состояния.
 | [D13](#d13-panic-vs-эффекты-что-не-является-эффектом) | Panic vs эффекты: что НЕ является эффектом |
 | [D26](#d26-базовая-stdlib-и-prelude) | Базовая stdlib и prelude |
 | [D41](#d41-static-функции-есть-static-состояния-нет) | Static-функции есть, static-состояния нет |
-| [D70](#d70-tostr-protocol--to_str-метод--free-function-tostrv) | ⚠️ REPLACED → D73. `ToStr` protocol + `@to_str()` (историческая справка) |
+| [D70](#d70-tostr-protocol--replaced--d73) | ⚠️ REPLACED → D73 (migration map only) |
 | [D73](#d73-from--into-protocol-пара-с-авто-выводом) | `From` / `Into` protocol-пара с авто-выводом |
 | [D74](#d74-математические-операции-на-числовых-типах--instance-методы) | Математические операции на числовых типах — instance-методы |
 | [D77](#d77-tryfrom--tryinto-protocol-пара-расширение-d73-для-fallible-конверсий) | `TryFrom` / `TryInto` — расширение D73 для fallible-конверсий |
@@ -994,247 +994,41 @@ fn main() {
 
 ---
 
-## D70. `ToStr` protocol + `@to_str()` метод + free function `to_str(v)`
+## D70. `ToStr` protocol — REPLACED → D73
 
-> ⚠️ **REPLACED → [D73](#d73-from--into-protocol-пара-с-авто-выводом).**
-> `ToStr` отменён как отдельный protocol — конверсия в строку это
-> частный случай `From`/`Into`-механизма из D73. Вместо `@to_str()` /
-> `ToStr` пишется `fn str.from(v X) -> Self` (или `fn X @into() -> str`),
-> и компилятор автоматически даёт обе формы вызова: `str.from(v)`
-> и `v.into()`. String interpolation `"${v}"` использует `str.from(v)`
-> внутри. См. D73 для полной семантики и [«Эволюция»](#d70-эволюция)
-> ниже про переход.
->
-> Раздел сохранён как историческая справка; в живом коде D70-механизм
-> не используется.
+> ⚠️ **REPLACED → [D73](#d73-from--into-protocol-пара-с-авто-выводом)
+> (2026-05-06).** Полное содержание D70 (ToStr protocol, @to_str() метод,
+> free function to_str(v), auto-derive по структуре) удалено для устранения
+> дублирования. Историческая запись об эволюции — в
+> [decisions/history/evolution.md](history/evolution.md) →
+> «`ToStr` protocol: D70 формализует to_str()».
 
-### Что
-Универсальный механизм конверсии значения в строку:
-
-1. **`ToStr`** — protocol с одним методом `@to_str() -> str`.
-2. **`@to_str()`** — метод на типе, реализует представление в строку.
-3. **`to_str(v)`** — свободная функция в prelude, sugar над `v.to_str()`.
-
-Все встроенные типы (`int`, `str`, `bool`, `float`, `()`,
-record/sum-комбинации) реализуют `ToStr` автоматически (auto-derive
-по структуре). Программист может override на своих типах через обычный
-`@`-метод.
-
-### Правило
-
-#### Декларация protocol'а в prelude
-
-```nova
-type ToStr protocol {
-    to_str() -> str
-}
-```
-
-#### Builtin реализации (auto-derive)
-
-Все базовые типы реализуют `ToStr` автоматически — программист **не
-пишет** `@to_str()` для:
-
-| Тип | Формат |
-|---|---|
-| `int` (любой size) | десятичное число: `42`, `-100` |
-| `float` (f32/f64) | как Rust `Display`: `3.14`, `-0.5` |
-| `bool` | `true` / `false` |
-| `str` | сама строка (без кавычек) |
-| `()` (unit) | `()` |
-| `[]T` (где T: ToStr) | `[a, b, c]` (элементы через `to_str`) |
-| `(A, B, ...)` tuple | `(a, b, ...)` |
-| record `T { f1, f2 }` | `T { f1: ..., f2: ... }` |
-| sum-variant `Foo(x)` | `Foo(x)` |
-| sum-variant `Bar` (unit) | `Bar` |
-
-Auto-derive работает рекурсивно — записи и sum-варианты
-форматируются через `to_str()` своих полей/аргументов.
-
-#### Override на пользовательском типе
-
-```nova
-type UserId u64
-
-fn UserId @to_str() -> str => "user#${@}"
-
-let id = UserId(42)
-to_str(id)              // "user#42" (через override)
-"id is ${id}"           // "id is user#42" (string interpolation также через ToStr)
-```
-
-#### Free function `to_str`
-
-```nova
-fn to_str[T: ToStr](v T) -> str => v.to_str()
-```
-
-Это единственная универсальная точка для получения строкового
-представления. Внутри `print`/`println` и string interpolation
-используется именно `to_str(v)`.
-
-#### Compile-time enforcement
-
-`ToStr`-bound — обычный generic-bound:
-
-```nova
-fn debug_log[T: ToStr](label str, v T) Log -> () =>
-    Log.info("${label} = ${to_str(v)}")
-```
-
-Если программист объявил `type MyType { ... }` и НЕ реализовал
-`@to_str()`, и тип не подпадает под auto-derive — `to_str(my)`
-вызовет compile error «`MyType` does not implement `ToStr`».
-
-В практике auto-derive покрывает большинство случаев, поэтому
-явное объявление `@to_str()` нужно только для **кастомного формата**
-(как `UserId` выше).
-
-#### Связь со string interpolation
-
-Любой `${expr}` в string-литерале — sugar над `to_str(expr)`:
-
-```nova
-"id=${user_id}"          // ≡ "id=" + to_str(user_id)
-"point=(${x}, ${y})"     // → "point=(3, 4)"
-```
-
-Тип `expr` должен реализовывать `ToStr` (обычно auto-derive).
-
-### Семантика auto-derive
-
-Компилятор генерирует **default `@to_str()`** для:
-
-- **Record**: `T { f1: v1, f2: v2 }` → `"T { f1: ${to_str(v1)}, f2: ${to_str(v2)} }"`
-  - Поля выводятся в порядке объявления (D52).
-- **Sum-variant**: `Foo(x, y)` → `"Foo(${to_str(x)}, ${to_str(y)})"`
-- **Sum-unit-variant**: `Red` → `"Red"`
-- **Tuple**: `(a, b, c)` → `"(${to_str(a)}, ${to_str(b)}, ${to_str(c)})"`
-- **Array**: `[a, b, c]` → `"[${to_str(a)}, ${to_str(b)}, ${to_str(c)}]"`
-- **Newtype**: тот же что и underlying — `type UserId u64` без override
-  → `to_str(UserId(42))` = `"42"`. Override меняет.
-
-Все элементы рекурсивно требуют `ToStr`. Если хоть один не реализует —
-compile error на месте использования.
-
-### Почему
-
-1. **AI-friendly default** — программист пишет `to_str(v)` или `"${v}"`
-   и получает работу для любого типа. Не нужно реализовывать `Show`-
-   trait вручную.
-
-2. **Compile-time enforcement** — `ToStr`-bound в функциях
-   (`fn f[T: ToStr]`) даёт явный контракт. LLM/compiler ловит
-   несоответствие до runtime'а.
-
-3. **Override через стандартный `@`-метод** — не новый синтаксис.
-   Если auto-derive формат не подходит — пишешь `fn T @to_str()` как
-   обычный метод.
-
-4. **Один protocol, не два** (как Rust `Display`/`Debug`) — D40
-   «один способ». Если когда-то понадобится debug-формат — отдельный
-   D-блок (`Debug` protocol с `@to_debug()`), но не сейчас.
-
-5. **Имя `ToStr` буквальное** — описывает что делает (converts to
-   `str`). Не путается с UI-кодом (как `Display`/`Show`).
-
-6. **Symmetric с возможным расширением:**
-   - `ToStr` → `to_str() -> str`
-   - `ToJson` (если понадобится) → `to_json() -> Json`
-   - `ToBytes` → `to_bytes() -> []u8`
-
-   Единое naming convention.
-
-### Что отвергнуто
-
-- **`Display` имя** (как Rust). Слишком общее, конфликтует с UI/HTML
-  кодом (`fn Slide @display()`). `ToStr` описательнее.
-- **`Show` имя** (Haskell/OCaml). Конфликтует с UI (`popup.show()`).
-- **`Stringer` имя** (Go). Метод в Go называется `String()`; у нас
-  метод `to_str()` — несоответствие.
-- **Без protocol'а, только free function `to_str(any)`**. Без bound'а
-  нет compile-time enforcement; программист может забыть реализовать
-  override и получит auto-derive вместо ожидаемого формата.
-- **Два protocol'а `ToStr` + `Debug`** (как Rust). У Nova нет
-  отдельной debug-семантики на уровне prelude. Если понадобится —
-  отдельный D-блок.
-- **Универсальный `@cast[X]` метод** (был рассмотрен и отвергнут):
-  - `[X]` синтаксически объявляет generic-параметр (D16), не target —
-    конфликт грамматики.
-  - Return-type dispatch требует typeclass-механизма, которого в Nova
-    пока нет.
-  - Каждая конверсия — отдельный protocol с уникальным именем
-    (`ToStr`, `ToJson`) — D46 overloading по имени работает естественно.
-
-### Связь
-
-- [D26](#d26-базовая-stdlib-и-prelude) — `to_str(v)` в prelude,
-  `print`/`println` через variadic ([D69](03-syntax.md#d69)).
-- [D35](03-syntax.md#d35) — `@`-методы.
-- [D40](01-philosophy.md#d40) — «один способ» (один protocol, не два).
-- [D42 (REVISED)](02-types.md#d42) / [D53](02-types.md#d53) /
-  [D62](04-effects.md#d62) — `protocol` для структурных контрактов.
-- [D46](03-syntax.md#d46) — overloading методов по имени.
-- [D69](03-syntax.md#d69) — variadic `print(...items []any)` использует
-  `to_str` для каждого элемента.
-
-### Эволюция
-
-В bootstrap-stdlib функция `to_str(v)` существовала как Native-функция,
-работающая на любом значении через Rust-side `format!("{}", v)` (то
-есть auto-derive прямо на runtime-уровне). Но **формальной декларации
-`ToStr` protocol'а в спеке не было** — это был implementation-факт.
-
-D70 формализует:
-1. `ToStr` protocol с методом `@to_str()` — стандартная декларация.
-2. Auto-derive для всех встроенных + record/sum типов.
-3. Override через обычный `@to_str()` метод.
-4. Free function `to_str[T: ToStr](v T) -> str` — публичный API.
-5. String interpolation `"${expr}"` — sugar над `to_str(expr)`.
-
-Альтернативы рассмотрены и отвергнуты:
-- `Display`/`Show`/`Stringer` имена — конфликты с UI-кодом или
-  inconsistency с именем метода.
-- Универсальный `@cast[X]` — синтаксический конфликт с generic-
-  параметрами и нет return-type dispatch'а в Nova.
-- Без protocol'а — нет compile-time enforcement.
-
-#### v3 (2026-05-06) — REPLACED → D73
-
-D70 отменён как отдельный механизм. Конверсия в строку — частный
-случай универсального `From`/`Into`-механизма из D73:
+### Migration map (D70 → D73)
 
 | Старая форма (D70) | Новая форма (D73) |
 |---|---|
+| `type ToStr protocol { to_str() -> str }` | удалено — protocol больше не нужен |
 | `fn UserId @to_str() -> str => ...` | `fn str.from(u UserId) -> Self => ...` |
 | `to_str(user)` | `str.from(user)` |
-| `user.@to_str()` | `user.into()` (`Into[str]` авто-выведен из `From`) |
-| `"${user}"` (через `to_str`) | `"${user}"` (через `str.from`) |
+| `user.@to_str()` | `user.into()` (Into[str] авто-выведен из From) |
+| `"${user}"` (через to_str) | `"${user}"` (через str.from, без изменения синтаксиса) |
+| `fn f[T: ToStr](v T)` | `fn f[T Into[str]](v T)` (если bound нужен) |
 
-**Почему замена сделана:**
+**Auto-derive для встроенных типов и record/sum** перенесён из D70 на
+`str.from`: stdlib pre-registers `str.from(int)`, `str.from(bool)`,
+`str.from(f64)`, `str.from(<any record>)`, `str.from(<any sum>)`. Newtype
+без override делегирует к underlying-типу.
 
-1. **Дублирование механизмов.** D70 + D73 решают **одну задачу**
-   («конверсия значения в другой тип») разными способами.
-   Конверсия в `str` — частный случай конверсии в любой тип.
-2. **Принцип «один очевидный путь» (D9).** Программист не должен
-   выбирать между `to_str` и `into[str]` для одного и того же.
-3. **Methods on primitives (D35).** Расширение D35 явно позволяет
-   `fn str.from(...)` — раньше это было неочевидно. С этим
-   `str.from` становится естественным конструктором.
-4. **AI-friendly.** LLM генерирует `str.from(x)` единообразно с
-   любой другой конверсией, без специального правила «для строк
-   используй to_str».
+**Почему замена:** D70 + D73 решали одну задачу разными способами.
+Конверсия в `str` — частный случай конверсии в любой тип. Принцип
+«один очевидный путь» (D9) требует единого механизма. См. также D40
+(philosophy «один способ»).
 
-**Как мигрировать:** заменить `@to_str() -> str` на `str.from(v Self)`
-(switching method body to `static-method-on-str`), либо `@into() -> str`
-(оставить body на receiver-типе). Free function `to_str(v)` —
-вызовы заменяются на `str.from(v)`. String interpolation работает
-автоматически (компилятор использует `str.from`).
-
-**Auto-derive для встроенных типов и record/sum** — переносится из
-D70 на `str.from`: stdlib pre-registers `str.from(int)`, `str.from(bool)`,
-`str.from(f64)`, `str.from(<any record>)`, `str.from(<any sum>)` — те
-же типы что в D70 авто-derive'ились.
+<!-- BEGIN: legacy D70 body REMOVED 2026-05-09 — see history/evolution.md -->
+<!-- Удалены устаревшие примеры: type ToStr protocol declaration, builtin
+     auto-derive table, override examples, evolution prose. Migration map
+     выше + ссылка на evolution.md покрывают всю нужную информацию. -->
+<!-- END: legacy D70 body REMOVED -->
 
 ---
 
@@ -1664,9 +1458,10 @@ let id = UserId.from(s)         // ok, throw сам пробрасывается
    (`Celsius.to_fahrenheit`, `User.parse_json`). Единый protocol даёт
    общий контракт.
 
-2. **Согласовано с `ToStr` (D70).** D70 уже использует ту же форму:
-   protocol с одним методом + free function в prelude (`to_str(v)`).
-   D73 повторяет паттерн для конверсий: `From` + `into`.
+2. **Замещает старый `ToStr` (D70 REPLACED → D73).** D70 использовал ту же форму
+   (protocol с одним методом + free function в prelude), но только для
+   конверсии в `str`. D73 обобщает паттерн на любые конверсии: `From` +
+   `into`. Конверсия в `str` — частный случай D73, не отдельный механизм.
 
 3. **`Self` универсален (D66).** `Self` в protocol-методе делает
    объявление коротким — не нужно повторять имя типа. До D66 `From[T]`
@@ -1748,7 +1543,7 @@ let id = UserId.from(s)         // ok, throw сам пробрасывается
   D73 для остальных типов.
 - [04-effects.md → D67](04-effects.md#d67) — `from` с throw через
   `Fail` следует общим правилам `?`.
-- [08-runtime.md → D70](#d70-tostr-protocol--to_str-метод--free-function-tostrv)
+- [08-runtime.md → D70](#d70-tostr-protocol--replaced--d73)
   — REPLACED → D73; конверсия в `str` это частный случай D73.
 - [D26](#d26-базовая-stdlib-и-prelude) — `From`, `Into` в prelude.
 

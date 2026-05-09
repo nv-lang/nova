@@ -81,7 +81,22 @@ Nova позиционируется как backend/CLI/system-альтернат
 ## Зафиксированные дизайн-решения (2026-05-09)
 
 1. **HTTP-клиент и server в одном модуле** `std.http` (как Go `net/http`) — упрощает discoverability.
-2. **`std.sync` API проектируется сразу под M:N scheduler** (work-stealing на v0.4+). Реализация на старте — single-threaded (waiter-queue без атомиков), но сигнатуры и семантика — M:N-correct. Atomic-fallback добавится при переходе на M:N без слома пользовательского кода.
+2. **`std.sync` — M:N-готовый API сразу, упрощённая single-thread реализация на bootstrap.**
+
+   **Что сейчас:** все fiber'ы крутятся на одном OS-потоке через minicoro. Mutex тривиален: если один fiber взял замок, другой ждёт; атомики не нужны.
+
+   **Что в v0.4+:** M:N scheduler, fiber'ы по нескольким OS-потокам, реальная concurrency между fiber'ами на разных потоках. Нужны atomic CAS и memory ordering.
+
+   **Выбор:**
+
+   | Вариант | Сейчас | При M:N |
+   |---|---|---|
+   | A. Простой API | `lock.with(...)`, `mut counter` под замком | **Ломается user-код** — нужно переписать на `Atomic[i64]` |
+   | B. M:N-готовый API | `Atomic[i64].fetch_add(1)`, `Mutex[T]` с memory ordering | Меняется только impl, **API стабилен** |
+
+   Берём **B**. Сейчас чуть многословнее, зато при M:N пользовательский код не ломается. Реализация атомиков на bootstrap может быть наивной (без CAS — поскольку нет реальной concurrency), API уже M:N-correct.
+
+   Затронутые типы: `Mutex[T]`, `RwLock[T]`, `Atomic[I]` (int/bool/ptr), `Channel[T]`, `WaitGroup`, `Once[T]`, `Semaphore`.
 3. **`fmt` — compiler-generated default Debug** для всех типов. Явный override через **protocol**-impl (механизм nova, аналог Swift, не Rust traits). Macros — отложить.
 4. **TLS — bundled mbedTLS** (C-нативная, статически линкуется в runtime). rustls не подходит: codegen pipeline = Nova → C → MSVC/clang, а rustls — Rust-крейт (потребовал бы cargo в build chain). mbedTLS: ~50KB, CMake-сборка кладётся рядом с libuv, Apache 2.0. Альтернатива на будущее — BoringSSL (production-grade, но Bazel-сборка сложнее). Wrapped-OpenSSL не подходит: на Windows системный OpenSSL почти никогда не установлен → AOT-бинарь не запустится.
 5. **C-слой для IO/Net — libuv** как dependency (cross-platform: epoll/IOCP/kqueue под капотом). Не патчим (правило "сторонние библиотеки не трогать" из [project-philosophy.md](../project-philosophy.md) §4) — обёртки только в наших runtime-файлах. Экономия 6+ месяцев vs ручной event-loop.
@@ -93,27 +108,32 @@ Nova позиционируется как backend/CLI/system-альтернат
 
 ## Зависимость: разблокировка codegen
 
-P0 модули нельзя начинать пока codegen не пропускает базовые конструкции stdlib. Реальный статус — **50/50 type-check PASS, 3/50 compile PASS** (per [14-stdlib-codegen-gaps.md](14-stdlib-codegen-gaps.md)). [STATUS.md](../../std/STATUS.md) устарел и говорит "0/43" — обновить после следующего раунда багфиксов.
+**Pass-rate сегодня (2026-05-09):** 91/91 nova_tests PASS.
 
-**Что должно быть закрыто до старта P0 (для сверки):**
+**Plan 14 закрыт почти полностью** (paused):
+- ✅ Ф.1 (Option[T] full refactor) — коммит 304ec2b, тест `for_iter_typed.nv`
+- ✅ Ф.2 (const non-trivial)
+- ✅ Ф.3 (free-fn-as-value)
+- ✅ Ф.4 (fn-в-record)
+- ✅ Ф.6 (D69 variadic + spread) — коммит 6a54922, тест `variadic.nv`
+- ✅ Ф.7 (`int as char` literal-only)
+- ❌ Ф.5 (cross-file resolve) — низкий ROI / высокая стоимость, единственный открытый
 
-Из [14-stdlib-codegen-gaps.md](14-stdlib-codegen-gaps.md) — открыто:
-- **Ф.1** — `Iter[T]` element-type generalization (group A в STATUS: bloom_filter, crc32, cron, range, semver, semver_range; +F: ulid)
-- **Ф.5** — cross-file resolution для compile-mode (15+ файлов с `import std.X`)
-- **Ф.6** — D69 variadic + spread (`path/path.nv`)
+**Накопленные блокеры std/** (открыты после прод-grade Ф.1 + Ф.6, не входят в Plan 14, см. [14-stdlib-codegen-gaps.md](14-stdlib-codegen-gaps.md) → раздел «Накопленные блокеры std/»):
 
-Из [std/STATUS.md](../../std/STATUS.md) — НЕ покрыто Plan 14:
-- **Group B** (самый большой) — pattern composition `,` в tuple/list patterns: csv, hashmap, ini, json, jwt, toml
-- **Group E** — generic `[T]` в неподдерживаемых позициях: vec, lru, priority_queue
-- **Group G** — fixed arrays: hmac
-- **Group H** — `\x` escape в str literal: base64
-- **Group I** — top-level expr вне fn: md5, sha256
-- **Group J** — match-arm syntax: sql, diff, bcrypt
-- **Group K** — match-arm в uuid, const expr в uuid_v3_v5
-- **Group L** — CC-FAIL (codegen ОК, MSVC нет): fnv, hex, rate_limiter, snowflake, statistics
-- **Group M** — misc: set, linkedlist, glob, markdown_minimal, path, queue, regex, sha1, url, deque
+| Блокер | Затронутые std-файлы | Природа |
+|---|---|---|
+| Generic specialization при monomorphization | `collections/set.nv` | Abstract `Iter[T]` erasure |
+| Array-type mangling | `collections/vec.nv` | `Nova_[]T*` вместо `NovaArray_<T>*` |
+| Fail-method return-type propagation | `collections/range.nv` | `step_by(3)` infer'ится как `nova_int` |
+| Protocol-bound dispatch (D72) | `collections/hashmap.nv` | Generic-erased `K.eq(key)` — это блокер для Plan 15 |
+| infer fallback для нестандартных iter | `text/diff.nv`, `crypto/bcrypt.nv` | `nova_int` fallback |
+| Ф.7-bis (binary-pattern `(CharLit + IntExpr) as char`) | `identifiers/{uuid,ulid}`, `encoding/{base64,hex}` | Ф.7 strict literal-only |
+| Tuple типизация — mixed types | `HashMap[K,V]`, `Iter[(K,V)]` | `_NovaTupleN` hardcoded на nova_int |
 
-Закрытие даст ~35-40 файлов в PASS — после этого можно начинать P0 stdlib работу.
+Каждый — отдельная задача. Возможно объединение в **Plan 19** "stdlib-blockers-round-2" или открытие отдельных планов под каждый паттерн — это работа codegen-агента.
+
+После закрытия `hashmap.nv` (через Plan 15 D72 enforcement) и tuple-types откроется большая часть encoding/data модулей. После этого имеет смысл начинать P0 stdlib (`std.fs`, `std.io`, `std.net`).
 
 ---
 
@@ -121,7 +141,7 @@ P0 модули нельзя начинать пока codegen не пропус
 
 - [std/](../../std/) — корень stdlib, добавлять новые модули здесь
 - [std/STATUS.md](../../std/STATUS.md) — статус компиляции (требует обновления)
-- [14-stdlib-codegen-gaps.md](14-stdlib-codegen-gaps.md) — фазы Ф.1, Ф.5, Ф.6 ещё открыты
+- [14-stdlib-codegen-gaps.md](14-stdlib-codegen-gaps.md) — paused: Ф.1/Ф.2/Ф.3/Ф.4/Ф.6/Ф.7 ✅, остался Ф.5 + накопленные блокеры std/
 - [compiler-codegen/src/codegen/runtime_registry.rs](../../compiler-codegen/src/codegen/runtime_registry.rs) — реестр C-runtime функций; новые intrinsic'и регистрировать сюда
 - [compiler-codegen/nova_rt/](../../compiler-codegen/nova_rt/) — место для libuv-обёрток (свои `.c/.h`, **не править** `minicoro.h` и Boehm)
 - [docs/project-creation.txt](../project-creation.txt) и [docs/simplifications.md](../simplifications.md) — обновлять после каждой крупной задачи

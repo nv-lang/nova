@@ -3074,7 +3074,7 @@ Rust println!("{name}")
 
 В bootstrap-парсере Nova — конкатенация через `+`:
 ```nova
-let s = "Hello " + name + ", you are " + age.to_str()
+let s = "Hello " + name + ", you are " + str.from(age)
 ```
 
 **Статус.** Не зафиксировано в спеке. Bootstrap не парсит интерполяцию.
@@ -3082,7 +3082,7 @@ let s = "Hello " + name + ", you are " + age.to_str()
 ### За
 
 - Читаемость, особенно для длинных строк.
-- Меньше boilerplate (`+` и `to_str()`).
+- Меньше boilerplate (`+` и `str.from(...)`).
 - Универсальная фича — все программисты ожидают.
 
 ### Против
@@ -3094,8 +3094,8 @@ let s = "Hello " + name + ", you are " + age.to_str()
   с интерполированными частями?).
 - **AI-friendly формат.** `${...}` — популярно (JS), но `\(...)` (Swift),
   `{...}` (Python) — все разные. Нужно выбрать один синтаксис.
-- **Type coercion.** `"${n}"` для int — implicit `to_str()`?
-  Или требовать явный? Если implicit — есть ли trait `Display`?
+- **Type coercion.** `"${n}"` для int — implicit `str.from(n)` (D73)?
+  Или требовать явный? (Plan 17 закрыл это: `${expr}` — sugar над `str.from(expr)`.)
 
 ### Альтернативы синтаксиса
 
