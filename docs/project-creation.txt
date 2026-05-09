@@ -3174,3 +3174,75 @@ Spec (spec/decisions/02-types.md):
   запрашивает type_ref_to_c для protocol-методов, поэтому Self-bug
   испарился сам. Когда правильная архитектура убирает баги, а не
   добавляет hacks.
+
+
+================================================================================
+Plan 16 — D63 forbid + D64 realtime capability enforcement (2026-05-09 → 10)
+================================================================================
+
+**Spec-vs-impl drift fix:** парсер принимал `forbid X { body }` и
+`realtime { body }`, но codegen эмитил body как plain block без
+проверок. Теперь semantic-гарантии работают.
+
+**Архитектура:** `CapabilityCtx` в types/mod.rs рядом с `BoundCtx`
+(Plan 15 pattern). State-стек:
+  - forbidden_stack: Vec<HashSet<String>>
+  - realtime_active / realtime_nogc: bool
+  - with_handler_stack: Vec<String>
+
+walk_module → walk_fn_body → walk_block → walk_stmt → walk_expr с
+push/pop state'а на forbid/realtime/with блоках.
+
+**Реализованные phase'ы (Ф.1-Ф.9):**
+
+1. CapabilityCtx infrastructure + visitor (~150 строк).
+2. Forbid intersection: callee.effects ∩ forbidden_union → R5.3 error.
+3. Realtime suspend: Net/Fs/Db/Time/Blocking → R5.3 error.
+4. Realtime nogc: alloc-fn whitelist (`[]T.new`, `StringBuilder.new`,
+   `HashMap.new`, `str.from`, etc.) → R5.3 error.
+5. `@realtime` / `@realtime nogc` атрибут (D64 §3697 sugar): новый
+   `RealtimeAttr` enum в AST + parser (`parse_realtime_attr` ловит
+   `KwRealtime` keyword) + type-checker инициализирует state.
+6. forbid-handler-ban: `with X = ...` внутри `forbid X` → R5.3 error
+   (D63 §3473).
+7. Negative-test infrastructure: `// EXPECT_COMPILE_ERROR <pattern>`
+   маркер в `.nv` header, runner ожидает codegen-fail с substring match.
+   ~46 строк в run_tests.ps1.
+8. Тесты: 5 negative в `nova_tests/negative_capability/` + расширение
+   `nova_tests/effects/forbid_realtime.nv` (+@realtime atomic tests).
+9. Spec D63 implementation note в `04-effects.md`.
+
+**Path-extraction nuance:** `[]T.method()` парсер строит как
+`Member { obj: Path(["__array", T]), name }`. Type-checker
+extract'ит как `["[]T", method]` для nogc-detection.
+
+**Прогон:** nova_tests **97/97 PASS** (92 baseline + 5 negative-capability).
+
+**WIP recovery story:** Plan 16 Ф.1-Ф.6 был написан, но build
+заблокирован Windows Defender'ом (real-time scan интерферировал с
+cargo'е quote-build). После reboot recovery-script подобрал
+unstaged изменения в WIP-commit `be953d6` ("WIP, не проверено").
+После reboot:
+  - fix1: `b.effect_name.last()` → match `b.effect: TypeRef::Named`
+    (поле было переименовано раньше, моё код использовал старое).
+  - fix2: `Ident("realtime")` → `KwRealtime` (lexer делает realtime
+    keyword'ом, не Ident'ом).
+  - fix3: path-extractor для `Member { obj: Path }` (`[]T.method`
+    case).
+  - fix4: тест `with c = Counter { ... }` исправлен на правильный
+    syntax `with Counter = handler { body }`.
+
+Урок:
+- **Recovery scripts важны.** Без сохранения unstaged work был бы
+  потерян 657-line WIP. Single point of failure (AV interrupt) +
+  recovery = прогресс не теряется.
+- **Pre-merge verification miss.** В обычном workflow build verified
+  до commit'а; recovery-script bypass'ил это. Нужен post-recovery
+  build-verification step (TODO для recovery-procedure).
+- **Lexer keywords vs idents.** Парсеру важно различать
+  KwRealtime/Ident — easily missed bug.
+- **R5.3 ergonomics в action:** error message с обоснованием +
+  hint'ом + spec-link заметно лучше generic'а.
+- **Path-form variants для call'ов** (Path / Member / Ident) — каждый
+  парсер-shape требует своего handler'а в check'ах. Visitor pattern
+  плосок, но callee resolution разнообразный.

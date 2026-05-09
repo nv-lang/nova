@@ -1,9 +1,19 @@
 # План 16: Capability enforcement — `forbid` и `realtime` compile-time checks
 
-**Статус:** активный, не начат.
+**Статус:** ✅ **ЗАКРЫТ** (2026-05-10). Ф.1-Ф.9 реализованы;
+nova_tests **97/97 PASS** (92 baseline + 6 positive forbid_realtime +
+5 negative-capability).
 **Дата создания:** 2026-05-08.
 **Зависимости:** [D63](../../spec/decisions/04-effects.md#d63),
 [D64](../../spec/decisions/04-effects.md#d64) уже описывают синтаксис.
+
+> **Архитектурное уточнение vs изначальный план:** план 16 предлагал
+> ставить enforcement в codegen (`emit_c.rs:EmitContext`), но Plan 15
+> установил precedent для check'ов в type-checker'е (`types/mod.rs::BoundCtx`).
+> Реализовано там же — `CapabilityCtx` рядом с `BoundCtx`, тот же
+> visitor-pattern с push/pop state'ом. Codegen остался без изменений
+> (Forbid/Realtime эмитятся как обычный block — runtime барьер
+> отдельная задача).
 
 ---
 
@@ -77,72 +87,150 @@ fn realtime_audio(buf []f32) -> () =>
 
 ## Фазы
 
-### Ф.1 — Effect-context tracking в codegen
+### Ф.1 — Capability context в type-checker'е ✅ ЗАКРЫТ (2026-05-10)
 
-**Файлы:** `compiler-codegen/src/codegen/emit_c.rs`.
+**Файлы:** `compiler-codegen/src/types/mod.rs`.
 
-Добавить в `EmitContext`:
+Реализовано как `CapabilityCtx<'a>` рядом с `BoundCtx<'a>` (Plan 15
+pattern). State через `CapState`:
 ```rust
-forbidden_effects: Vec<HashSet<String>>,   // stack — forbid-блоки
-realtime_active: bool,
-realtime_nogc: bool,
+struct CapState {
+    forbidden_stack: Vec<HashSet<String>>,
+    realtime_active: bool,
+    realtime_nogc: bool,
+    with_handler_stack: Vec<String>,
+}
 ```
 
-Push/pop при входе/выходе из forbid/realtime блока.
+`forbidden_stack` — стек set'ов forbidden-эффектов от вложенных
+`forbid` блоков. `union_forbidden()` берёт union всех уровней
+(forbid внутри forbid → union, см. D63).
 
-**Объём:** ~30 строк.
+Walk_module → walk_fn_body → walk_block → walk_stmt → walk_expr с
+mutable state. На входе/выходе из:
+- `ExprKind::Forbid { effects, body }` — push/pop forbidden-set;
+- `ExprKind::Realtime { nogc, body }` — set/restore realtime_active +
+  nogc флагов;
+- `ExprKind::With { bindings, body }` — push/pop with_handler_stack
+  (для D63 forbid-handler-ban).
 
-### Ф.2 — Check на каждом call-site
+Также top-level fn с `RealtimeAttr::Realtime|RealtimeNogc`
+оборачивает body в realtime-context (Ф.5 sugar).
 
-При эмите `ExprKind::Call`:
+**Объём:** ~150 строк (visitor + state mgmt).
 
-1. Резолвнуть callee → его прямые эффекты (из `fn_effects` map'а).
-2. Для каждого активного forbidden-set'а — пересечение.
-3. Если пересечение непустое — emit `Err(...)` с структурированным
-   сообщением (showing source span, forbidden set, callee effect).
-4. Realtime: если callee имеет один из suspend-effects — error.
-5. Realtime nogc: если callee — alloc'ирующий (по списку:
-   `[]T_new`, `Nova_X_new` где X — record, `nova_str_concat`, etc.) —
-   error.
+### Ф.2 — Forbid intersection check ✅ ЗАКРЫТ (2026-05-10)
 
-**Объём:** ~120 строк включая эффект-список и error-formatting.
+`check_capabilities_at` на каждом ExprKind::Call:
 
-### Ф.3 — Допустимые исключения
+1. Извлекаем `path: Vec<String>` из func.kind:
+   - `ExprKind::Path(parts)` → as-is.
+   - `ExprKind::Member { obj: Path([..]), name }` → flat join (или
+     special-case `[]T.method` через `Path(["__array", T])`).
+   - `ExprKind::Member { obj: Ident, name }` → `[ident, name]`.
+   - `ExprKind::Ident(n)` → `[n]`.
+2. Для path длины 2: если head — registered effect-type → check
+   forbid-intersection (D63) + suspend-effect (D64).
+3. Для free-fn (path.len 1) или method (path.len 2 в method_table) —
+   `check_callee_effects`: для каждого `eff` в `callee.effects`:
+   - intersection с forbidden_union → R5.3 error «requires effect X,
+     forbidden by enclosing forbid block».
+   - realtime + suspend-effect → R5.3 error «cannot suspend in
+     realtime».
 
-Внутри forbid/realtime разрешено вызывать:
+**Объём:** ~80 строк.
 
-- Функции **без эффектов** (полностью pure) — всегда ok.
-- Функции эффектов которые **не в forbidden set'е**.
-- Для realtime — `region.alloc()` (arena-allocations).
-- Для realtime — `try_recv`/`try_send` (non-blocking channel ops).
+### Ф.3 — Realtime suspend checks ✅ ЗАКРЫТ (2026-05-10)
 
-Вынести в whitelist по mind-model spec'а.
+`realtime_suspend_effect` whitelist: `Net | Fs | Db | Time |
+Blocking`. Любой callee (effect-op или fn) с этими эффектами внутри
+realtime — R5.3 error с hint'ом «use try_recv / non-blocking
+alternative».
 
-**Объём:** ~40 строк.
+**Объём:** ~10 строк (set + check).
 
-### Ф.4 — Тесты
+### Ф.4 — Realtime nogc alloc-fn enumeration ✅ ЗАКРЫТ (2026-05-10)
 
-`nova_tests/effects/forbid_realtime.nv` уже существует (PASS), но
-проверяет только parser. Расширить:
+`nogc_blacklisted_call(path: &[String])`:
+- `[]T.new` / `[]T.with_capacity` (T — element type).
+- `StringBuilder | WriteBuffer | ReadBuffer.{new,with_capacity,from}`.
+- `Channel.{new,with_capacity}`.
+- `HashMap | Set | Vec | Deque | LinkedList | Lru | BloomFilter.{new,with_capacity}`.
+- `str.from`.
 
-- Negative test: `forbid Net { http_get(url) }` — должна быть
-  compile-error.
-- Negative test: `realtime nogc { let xs = []int.new() }` — error.
-- Positive test: `forbid Db { compute_pure(x) }` — ok.
-- Positive test: `realtime { region { let xs = arena.alloc(...) } }` — ok.
+При realtime_nogc + matching call → R5.3 error «cannot allocate
+inside `realtime nogc` block (D64). Hint: use region {} for arena
+allocations».
 
-Учитывая что existing-test PASS — добавить как `_negative_test "..." {
-EXPECT_COMPILE_ERROR ... }` или отдельный набор `nova_tests/effects/forbid_negative.nv`
-с phantom-функциями (тестировать через codegen-driver, не через runtime).
+Не покрывается (явно в коде помечено как TODO):
+- User-defined record-конструкторы `Foo.new()` (требовал бы effect-row
+  inference чтобы flag'ать heap-alloc'ирующих).
+- Транзитивные alloc'ы через chains pure-fn → alloc-fn.
 
-**Объём:** ~10 тестов; нужен инфра для negative-tests (если ещё нет).
+**Объём:** ~30 строк (whitelist + check).
 
-### Ф.5 — Spec уточнение
+### Ф.5 — `@realtime` attribute (D64 sugar §3697) ✅ ЗАКРЫТ (2026-05-10)
 
-После реализации возможно нужно дописать в [D62](../../spec/decisions/04-effects.md#d62)
-точную семантику transitive vs direct effects в forbid-scope. Сейчас
-spec говорит «warning для транзитивных» — закрепить как
-configurable.
+AST: новый `RealtimeAttr { None | Realtime | RealtimeNogc }` enum;
+`FnDecl.realtime_attr: RealtimeAttr` поле.
+
+Parser: `parse_realtime_attr()` ловит `@realtime` / `@realtime nogc`
+префикс перед `fn`. Использует `KwRealtime` keyword (lexer).
+
+Type-checker: `check_module` оборачивает body fn'а с
+`realtime_attr=Realtime|RealtimeNogc` в realtime-context (init state
+с realtime_active=true и nogc=true для RealtimeNogc).
+
+**Объём:** ~30 строк (AST + parser + check_module init).
+
+### Ф.6 — Forbid-handler ban (D63 §3473) ✅ ЗАКРЫТ (2026-05-10)
+
+При `ExprKind::With { bindings, body }`: для каждого binding'а берём
+имя effect'а из `b.effect: TypeRef::Named { path, .. }` (last
+segment). Если оно в `state.union_forbidden()` — R5.3 error «cannot
+install handler for `X` inside `forbid X` block (D63): forbid is
+impenetrable».
+
+**Объём:** ~20 строк.
+
+### Ф.7 — Negative-test infrastructure ✅ ЗАКРЫТ (2026-05-10)
+
+`run_tests.ps1` — добавлен scan первых 30 строк .nv на маркер
+`// EXPECT_COMPILE_ERROR <pattern>`. Если найден:
+- Codegen ожидается с **non-zero** exit.
+- Stderr должен содержать `<pattern>` (substring).
+- Иначе — NEG-NO-ERROR / NEG-WRONG-MSG fail.
+
+Файл с маркером не компилируется в .c → .exe и не запускается.
+
+**Объём:** ~46 строк в run_tests.ps1.
+
+### Ф.8 — Тесты ✅ ЗАКРЫТ (2026-05-10)
+
+Расширен `nova_tests/effects/forbid_realtime.nv` (+41 строк):
+- `forbid + pure_fn` — type-check OK.
+- `@realtime fn rt_compute()` — body работает как realtime.
+- `@realtime nogc fn rt_nogc_compute()` — pure body OK.
+
+Новые `nova_tests/negative_capability/` (5 файлов, по 1 EXPECT_COMPILE_ERROR
+маркеру каждый):
+1. `forbid_effect_call.nv` — fn с effect внутри forbid.
+2. `forbid_handler_ban.nv` — `with X = ...` внутри `forbid X`.
+3. `realtime_suspend.nv` — Net.* в realtime.
+4. `realtime_attr_suspend.nv` — `@realtime fn` использует Time.sleep.
+5. `realtime_nogc_alloc.nv` — `[]int.new()` в realtime nogc.
+
+Прогон: nova_tests **97/97 PASS**.
+
+### Ф.9 — Spec implementation note ✅ ЗАКРЫТ (2026-05-10)
+
+`spec/decisions/04-effects.md` D63: добавлен раздел «Реализация в
+bootstrap (2026-05-09, Plan 16 Ф.1-Ф.6)» с описанием
+`CapabilityCtx`, walk pattern, forbid-handler-ban механизм.
+
+D62 «прямые vs транзитивные» — без правок (текущий permissive подход
+консистентен с warning-уровнем спека). Полное transitive tracking —
+отдельный план (требует effect-row inference).
 
 ---
 
@@ -159,13 +247,21 @@ configurable.
 
 ---
 
-## Оценка
+## Оценка (factual, после реализации)
 
-~200 строк + 10 negative-тестов = **2-3 дня**.
+- AST: ~15 строк (`RealtimeAttr` enum + `FnDecl.realtime_attr`).
+- Parser: ~46 строк (`parse_realtime_attr` + integration в parse_item/fn).
+- Type-checker (`CapabilityCtx`): ~492 строки (visitor + check + helpers).
+- Test infra (`run_tests.ps1`): ~46 строк (EXPECT_COMPILE_ERROR scan).
+- Tests: 1 extended + 5 new negative.
+- Spec: ~19 строк (D63 implementation note).
 
-Главный challenging momento — **negative-test infrastructure**. Если
-её нет, потратить день на её создание (driver принимает `// expect-error
-E0144` маркер в .nv-файле, гоняет codegen, сверяет error-code и span).
+**Итого: ~657 строк** core + ~80 строк tests + ~19 спека.
+
+Реальный путь занял ~3 сессии: Plan 16 Ф.1-Ф.6 написан, AV
+заблокировал build, recovery-script сохранил work как WIP commit
+`be953d6`, после reboot fixed 3 corner case bug'а (`effect_name`,
+`KwRealtime`, `Member<Path>` paths) и dochi sync'нут.
 
 ---
 
