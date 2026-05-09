@@ -186,6 +186,26 @@ pub struct CEmitter {
     /// Plan 14 std-fix: контролирует только эмит SRC-комментариев. Source
     /// в `annotation_source` остаётся для line:col в ошибках.
     annotation_enabled: bool,
+    /// Plan 14 Ф.1: typedef'ы NovaOpt_<T> для T без NOVA_ARRAY_DECL в
+    /// runtime — эмитятся лениво при первом упоминании в type_ref_to_c.
+    ///
+    /// Buffer накапливает строки typedef'ов в registration order
+    /// (нижние слои — innermost — регистрируются первыми, что даёт
+    /// правильный topological order: NovaOpt_X должен быть до
+    /// NovaOpt_NovaOpt_X в файле).
+    ///
+    /// На preamble эмитится маркер `/*__NOVAOPT_TYPEDEFS__*/`. После
+    /// полного emit_module маркер заменяется содержимым буфера —
+    /// типы попадают в file scope сразу после tuple-typedef'ов.
+    ///
+    /// Interior mutability: используется из `&self`-методов
+    /// (type_ref_to_c, infer_expr_c_type).
+    novaopt_typedefs_buf: std::cell::RefCell<String>,
+    /// Set sanitized-имён NovaOpt_<X> которые уже эмитированы в
+    /// `novaopt_typedefs_buf` (для dedup'а). Pre-populated в `new()`
+    /// из `NOVA_ARRAY_DECL` списка в `nova_rt/array.h` — runtime их
+    /// уже даёт, не нужен duplicate typedef.
+    novaopt_decls_seen: std::cell::RefCell<std::collections::HashSet<String>>,
 }
 
 impl CEmitter {
@@ -244,6 +264,20 @@ impl CEmitter {
             current_parfor_slot: None,
             annotation_source: None,
             annotation_enabled: false,
+            // Plan 14 Ф.1: NovaOpt_<T> lazy-decl. Pre-populated с T-ками,
+            // которые `nova_rt/array.h` уже декларирует через NOVA_ARRAY_DECL.
+            // Для прочих — typedef эмитится в novaopt_typedefs_buf и
+            // splice'ится через маркер /*__NOVAOPT_TYPEDEFS__*/.
+            novaopt_typedefs_buf: std::cell::RefCell::new(String::new()),
+            novaopt_decls_seen: {
+                let mut s = std::collections::HashSet::new();
+                s.insert("nova_int".to_string());
+                s.insert("nova_byte".to_string());
+                s.insert("nova_bool".to_string());
+                s.insert("nova_str".to_string());
+                s.insert("nova_f64".to_string());
+                std::cell::RefCell::new(s)
+            },
         }
     }
 
@@ -740,6 +774,21 @@ impl CEmitter {
         }
 
         self.emit_main_wrapper(module);
+
+        // Plan 14 Ф.1: splice NovaOpt_<T> typedefs в позицию маркера.
+        // К этому моменту все type_ref_to_c-вызовы (включая в bodies)
+        // отработали и заполнили novaopt_typedefs_buf в правильном
+        // topological order.
+        let typedefs = self.novaopt_typedefs_buf.borrow().clone();
+        let replacement = if typedefs.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "/* Plan 14 Ф.1: lazy NovaOpt_<T> typedef'ы — для T без \
+                 NOVA_ARRAY_DECL в runtime. Order: registration */\n{}",
+                typedefs)
+        };
+        self.out = self.out.replace("/*__NOVAOPT_TYPEDEFS__*/", &replacement);
         Ok(self.out)
     }
 
@@ -788,6 +837,12 @@ impl CEmitter {
             let fields: String = (0..n).map(|i| format!("nova_int f{};", i)).collect::<Vec<_>>().join(" ");
             self.line(&format!("typedef struct {{ {} }} _NovaTuple{};", fields, n));
         }
+        self.line("");
+        // Plan 14 Ф.1: маркер для splice'а typedef'ов NovaOpt_<T> (для T
+        // без NOVA_ARRAY_DECL в runtime). Заполняется в `register_novaopt_decl`
+        // в registration order (innermost first); splice'ится в финальный
+        // `out` через `replace` после полного emit_module.
+        self.line("/*__NOVAOPT_TYPEDEFS__*/");
         self.line("");
     }
 
@@ -960,7 +1015,45 @@ impl CEmitter {
                     // Без этой ветки fallback вёл к `Nova_char*` (struct ptr) → invalid C
                     // (`Nova_char` undefined и коллизия с C keyword `char`).
                     "char" => Ok("nova_int".into()),
-                    "Option" => Ok("NovaOpt_nova_int".into()),
+                    "Option" => {
+                        // Plan 14 Ф.1: Option[T] правильно типизирован
+                        // через generic. Для T без NOVA_ARRAY_DECL в
+                        // runtime — typedef эмитится лениво в preamble
+                        // (emit_lazy_novaopt_decls).
+                        //
+                        // Fallback на NovaOpt_nova_int (legacy int-stomp):
+                        //   - no generics specified;
+                        //   - inner T = void* (generic erased);
+                        //   - inner T = Nova_<X>* где X — type-param
+                        //     (нет struct/sum decl) — generic-erased.
+                        if let Some(inner) = generics.first() {
+                            let inner_c = self.type_ref_to_c(inner)?;
+                            if inner_c == "void*" {
+                                return Ok("NovaOpt_nova_int".into());
+                            }
+                            // Detect type-param: Nova_<X>* где X не в
+                            // record_schemas / sum_schemas / generic_types.
+                            // Это означает X — type-param метода/типа,
+                            // а не реальный struct.
+                            if let Some(x) = inner_c
+                                .strip_suffix('*')
+                                .and_then(|s| s.trim().strip_prefix("Nova_"))
+                            {
+                                let is_concrete_type =
+                                    self.record_schemas.contains_key(x)
+                                    || self.sum_schemas.contains_key(x)
+                                    || self.generic_types.contains(x);
+                                if !is_concrete_type {
+                                    return Ok("NovaOpt_nova_int".into());
+                                }
+                            }
+                            let sanitized = Self::sanitize_for_novaopt(&inner_c);
+                            self.register_novaopt_decl(&sanitized, &inner_c);
+                            Ok(format!("NovaOpt_{}", sanitized))
+                        } else {
+                            Ok("NovaOpt_nova_int".into())
+                        }
+                    }
                     "Result" => Ok("Nova_Result*".into()),
                     "Self" => {
                         // Self resolves to current receiver type
@@ -3694,6 +3787,16 @@ impl CEmitter {
                 // not function calls in Nova but need `nova_make_Color_Red()` in C.
                 if let Some((type_name, fields)) = self.find_variant(name) {
                     if fields.is_empty() {
+                        // Plan 14 Ф.1: `None` — typed compound literal по
+                        // current_fn_return_ty. Иначе — legacy nova_make.
+                        if name == "None" {
+                            let opt_ty: String = self.current_fn_return_ty.as_ref()
+                                .filter(|t| t.starts_with("NovaOpt_"))
+                                .cloned()
+                                .unwrap_or_else(|| "NovaOpt_nova_int".into());
+                            return Ok(format!(
+                                "(({}){{.tag = NOVA_TAG_Option_None}})", opt_ty));
+                        }
                         return Ok(format!("nova_make_{}_{}()", type_name, name));
                     }
                 }
@@ -4156,9 +4259,16 @@ impl CEmitter {
                 let val = self.emit_expr(inner)?;
                 let try_tmp = self.fresh_tmp();
                 if inner_ty.starts_with("NovaOpt_") {
-                    // Option?: if None, return None; else extract value
+                    // Option?: if None, return None; else extract value.
+                    // Plan 14 Ф.1: typed early-return None — текст compound
+                    // literal'а соответствует current_fn_return_ty (= тип
+                    // контейнера, в который мы возвращаем).
+                    let none_expr: String = self.current_fn_return_ty.as_ref()
+                        .filter(|t| t.starts_with("NovaOpt_"))
+                        .map(|t| format!("(({}){{.tag = NOVA_TAG_Option_None}})", t))
+                        .unwrap_or_else(|| "nova_make_Option_None()".to_string());
                     self.line(&format!("{} {} = {};", inner_ty, try_tmp, val));
-                    self.line(&format!("if ({}.tag == NOVA_TAG_Option_None) {{ return nova_make_Option_None(); }}", try_tmp));
+                    self.line(&format!("if ({}.tag == NOVA_TAG_Option_None) {{ return {}; }}", try_tmp, none_expr));
                     Ok(format!("({}.value)", try_tmp))
                 } else if inner_ty == "Nova_Result*" {
                     // Result?: if Err, propagate Err; else extract Ok value
@@ -5902,6 +6012,42 @@ impl CEmitter {
             _ => self.emit_expr(func)?,
         };
 
+        // Plan 14 Ф.1: Option_Some/None — proper-typed compound literal.
+        // Раньше эмитились через runtime helper `nova_make_Option_Some(v)`
+        // → возвращает NovaOpt_nova_int независимо от T. Теперь —
+        // compound literal `((NovaOpt_<T_sanitized>){.tag=Some, .value=(v)})`
+        // с реальным T извлечённым:
+        //   - для Some(v): T = тип arg'а;
+        //   - для None: T = current_fn_return_ty (если NovaOpt_<X>),
+        //     иначе fallback на NovaOpt_nova_int (legacy).
+        if func_c == "nova_make_Option_Some" && args.len() == 1 {
+            let arg = &args[0];
+            let arg_ty = self.infer_expr_c_type(arg);
+            let arg_v = self.emit_expr(arg)?;
+            // Erased generic? — оставляем legacy путь (через
+            // нижеследующий nova_make_Option_Some helper). Это покрывает
+            // generic fns где T = void* и arg уже cast'нут в (void*).
+            let is_erased = matches!(&func.kind, ExprKind::Ident(name)
+                if self.generic_fns.contains(name.as_str()));
+            if !is_erased && !arg_ty.is_empty() && arg_ty != "void*" {
+                let sanitized = Self::sanitize_for_novaopt(&arg_ty);
+                self.register_novaopt_decl(&sanitized, &arg_ty);
+                return Ok(format!(
+                    "((NovaOpt_{}){{.tag = NOVA_TAG_Option_Some, .value = ({})}})",
+                    sanitized, arg_v));
+            }
+            // Fallback (erased/unknown arg-type): legacy helper.
+            return Ok(format!("nova_make_Option_Some({})", arg_v));
+        }
+        if func_c == "nova_make_Option_None" && args.is_empty() {
+            // None — T берётся из current_fn_return_ty если это NovaOpt_<X>.
+            let opt_ty: String = self.current_fn_return_ty.as_ref()
+                .filter(|t| t.starts_with("NovaOpt_"))
+                .cloned()
+                .unwrap_or_else(|| "NovaOpt_nova_int".into());
+            return Ok(format!(
+                "(({}){{.tag = NOVA_TAG_Option_None}})", opt_ty));
+        }
         // Option/Result_Ok constructors use nova_int storage; nested struct args must be heap-boxed.
         // Result_Err takes nova_str directly. User-defined sum types have proper typed fields.
         let is_option_or_result_ok_ctor = func_c == "nova_make_Option_Some"
@@ -6383,30 +6529,63 @@ impl CEmitter {
                 self.line(&format!("nova_unit {};", result_tmp));
                 self.line("for (;;) {");
                 self.indent += 1;
-                // _opt = Nova_<T>_method_next(it)
-                // По bootstrap-конвенции Result/Option payload — nova_int.
-                // Реальный elem_ty determined by method_receivers schema —
-                // сейчас просто берём nova_int (для простых iter'ов это OK).
+                // Plan 14 Ф.1: правильно типизированный NovaOpt_<T>.
+                //
+                // method_overloads[(iter_struct, "next")].return_c_type
+                // теперь отражает реальный NovaOpt_<T> (после рефактора
+                // type_ref_to_c). Используем его как тип container'а
+                // и берём поле .value напрямую как T (без cast'а).
+                //
+                // Tuple-pattern destructure (Pattern::Tuple) — payload
+                // boxed как nova_int с intptr_t-cast'ом в tuple-pointer.
+                // Это рабочий legacy-путь, оставляем для tuple-iter'ов
+                // которые используют generic-erased `Option[(K,V)]` (с
+                // nova_int box) — обычный путь для HashMap.iter() etc.
+                let next_sig = self.method_overloads
+                    .get(&(iter_type.clone(), "next".to_string()))
+                    .and_then(|sigs| sigs.first()).cloned();
+                let opt_c_ty = next_sig.as_ref()
+                    .map(|s| s.return_c_type.clone())
+                    .unwrap_or_else(|| "NovaOpt_nova_int".to_string());
+                let elem_c_ty = opt_c_ty.strip_prefix("NovaOpt_")
+                    .map(str::to_string)
+                    .unwrap_or_else(|| "nova_int".to_string());
                 self.line(&format!(
-                    "NovaOpt_nova_int {} = Nova_{}_method_next({});",
-                    opt_tmp, iter_type, it_tmp));
+                    "{} {} = Nova_{}_method_next({});",
+                    opt_c_ty, opt_tmp, iter_type, it_tmp));
                 self.line(&format!(
                     "if ({}.tag == NOVA_TAG_Option_None) break;", opt_tmp));
-                // Plan 06 Ф.2: tuple-pattern destructure для `for (k, v) in ...`.
-                // Если pattern это Pattern::Tuple, _opt.value — boxed
-                // _NovaTupleN* pointer (Option payload — nova_int slot).
-                // Casting (intptr_t) → tuple-pointer → destructure через
-                // ->fN access.
                 if let Pattern::Tuple(parts, _) = pattern {
                     let arity = parts.len();
-                    self.line(&format!(
-                        "_NovaTuple{} {} = ({}.value == 0) ? (_NovaTuple{}){{0}} : *((_NovaTuple{}*)(intptr_t)({}.value));",
-                        arity, binding, opt_tmp, arity, arity, opt_tmp));
+                    if elem_c_ty == format!("_NovaTuple{}", arity) {
+                        // Plan 14 Ф.1: NovaOpt_<_NovaTuple_N> хранит tuple
+                        // как value напрямую (struct в struct). Direct
+                        // copy через `_NovaTupleN binding = opt.value;`.
+                        self.line(&format!(
+                            "_NovaTuple{} {} = {}.value;",
+                            arity, binding, opt_tmp));
+                    } else if elem_c_ty == "nova_int" {
+                        // Legacy путь: payload — nova_int box, intptr_t
+                        // cast'ом превращается в _NovaTupleN*.
+                        self.line(&format!(
+                            "_NovaTuple{} {} = ({}.value == 0) ? (_NovaTuple{}){{0}} : *((_NovaTuple{}*)(intptr_t)({}.value));",
+                            arity, binding, opt_tmp, arity, arity, opt_tmp));
+                    } else if elem_c_ty == format!("_NovaTuple{}_p", arity)
+                        || elem_c_ty == format!("_NovaTuple{}*", arity)
+                    {
+                        // Pointer-typed tuple: `*opt.value` для destructure.
+                        self.line(&format!(
+                            "_NovaTuple{} {} = ({}.value == NULL) ? (_NovaTuple{}){{0}} : *({}.value);",
+                            arity, binding, opt_tmp, arity, opt_tmp));
+                    } else {
+                        return Err(format!(
+                            "for-in tuple-pattern: непонятный elem-type `{}`", elem_c_ty));
+                    }
                     self.pattern_destructure_tuple(pattern, &binding, false)?;
                 } else {
                     self.line(&format!(
-                        "nova_int {} = {}.value;", binding, opt_tmp));
-                    self.var_types.insert(binding.clone(), "nova_int".to_string());
+                        "{} {} = {}.value;", elem_c_ty, binding, opt_tmp));
+                    self.var_types.insert(binding.clone(), elem_c_ty);
                 }
 
                 for stmt in &body.stmts {
@@ -6987,14 +7166,27 @@ impl CEmitter {
                     VariantPatternKind::Unit => Ok(base),
                     VariantPatternKind::Tuple { patterns, .. } => {
                         let mut cond = base;
+                        // Plan 14 Ф.1: payload-types для recursive
+                        // pattern_cond. Если scr_ty = NovaOpt_<X>, то
+                        // scr.value: X. Регистрируем temp в var_types
+                        // (по точной строке field expr'а) перед recursion'ом
+                        // чтобы recursive pattern_cond смог увидеть тип.
+                        let mut tmp_registrations: Vec<String> = Vec::new();
                         for (i, p) in patterns.iter().enumerate() {
                             let field = if is_opt {
-                                // Inner Option value is nova_int; if sub-pattern is also Option,
-                                // wrap in pointer cast so recursive call uses -> accessor
                                 let raw = format!("{}.value", scr);
                                 let sub_is_opt_variant = matches!(p, Pattern::Variant { path, .. } if path.last().map_or(false, |n| n == "Some" || n == "None"));
                                 if sub_is_opt_variant {
-                                    format!("((NovaOpt_nova_int*)({}))", raw)
+                                    let sub_t = scr_ty.strip_prefix("NovaOpt_");
+                                    if let Some(sub_ty) = sub_t.filter(|t| t.starts_with("NovaOpt_")) {
+                                        // Typed direct value — register для
+                                        // recursive lookup и оставить как есть.
+                                        self.var_types.insert(raw.clone(), sub_ty.to_string());
+                                        tmp_registrations.push(raw.clone());
+                                        raw
+                                    } else {
+                                        format!("((NovaOpt_nova_int*)({}))", raw)
+                                    }
                                 } else {
                                     raw
                                 }
@@ -7021,6 +7213,10 @@ impl CEmitter {
                             if sub != "true" {
                                 cond = format!("({} && {})", cond, sub);
                             }
+                        }
+                        // Plan 14 Ф.1: cleanup временных регистраций.
+                        for k in &tmp_registrations {
+                            self.var_types.remove(k);
                         }
                         Ok(cond)
                     }
@@ -7132,17 +7328,43 @@ impl CEmitter {
 
                         // Check if scrutinee has a boxed inner Option type
                         let scr_inner_ty = self.option_inner_types.get(scr).cloned();
+                        // Plan 14 Ф.1: temp-registrations для recursive
+                        // pattern_bind_typed (как в pattern_cond).
+                        let mut tmp_registrations: Vec<String> = Vec::new();
                         for (i, p) in patterns.iter().enumerate() {
                             let sub_is_opt_variant = matches!(p, Pattern::Variant { path, .. } if path.last().map_or(false, |n| n == "Some" || n == "None"));
                             let (field, field_ty, is_boxed_inner) = if is_opt {
                                 let raw = format!("{}.value", scr);
+                                // Plan 14 Ф.1: Option-payload type — strip
+                                // "NovaOpt_" из scr_ty чтобы получить
+                                // реальный T (nova_bool, NovaOpt_nova_int,
+                                // _NovaTuple2, Nova_Foo*, etc.).
+                                let t_from_scr = scr_ty.strip_prefix("NovaOpt_")
+                                    .map(str::to_string);
                                 if sub_is_opt_variant {
-                                    // Inner is a boxed Option pointer; use pointer-cast form for sub-pattern
-                                    (format!("((NovaOpt_nova_int*)({}))", raw), "NovaOpt_nova_int*".into(), true)
+                                    // Inner — Option-typed (nested). Используем
+                                    // sub_t если оно тоже NovaOpt_*; иначе legacy
+                                    // pointer-cast форма.
+                                    if let Some(sub_t) = t_from_scr.as_ref()
+                                        .filter(|t| t.starts_with("NovaOpt_"))
+                                    {
+                                        // Direct value access — register
+                                        // type для recursive pattern_bind_typed.
+                                        self.var_types.insert(raw.clone(), sub_t.clone());
+                                        tmp_registrations.push(raw.clone());
+                                        (raw, sub_t.clone(), false)
+                                    } else {
+                                        (format!("((NovaOpt_nova_int*)({}))", raw),
+                                         "NovaOpt_nova_int*".into(), true)
+                                    }
                                 } else if let Some(ref inner_ty) = scr_inner_ty {
                                     // Scrutinee has a boxed struct inner type; deref to get value
                                     let deref_ty = inner_ty.trim_end_matches('*').to_string();
                                     (format!("(*({})({}))", inner_ty, raw), deref_ty, false)
+                                } else if let Some(t) = t_from_scr {
+                                    // Plan 14 Ф.1: typed payload — bind с
+                                    // реальным T вместо nova_int.
+                                    (raw, t, false)
                                 } else {
                                     (raw, "nova_int".into(), false)
                                 }
@@ -7183,6 +7405,11 @@ impl CEmitter {
                             } else {
                                 self.pattern_bind_typed(p, &field)?;
                             }
+                        }
+                        // Plan 14 Ф.1: cleanup временных регистраций
+                        // (после recursive pattern_bind_typed).
+                        for k in &tmp_registrations {
+                            self.var_types.remove(k);
                         }
                     }
                     VariantPatternKind::Unit => {}
@@ -7985,6 +8212,38 @@ impl CEmitter {
         trimmed.strip_prefix("Nova_").map(|s| s.to_string())
     }
 
+    /// Plan 14 Ф.1: sanitize C-type для использования в identifier
+    /// `NovaOpt_<sanitized>` / `_NovaTuple<...>` / etc.
+    ///
+    /// `*` → `_p`, ` ` → `_`, `[` → `_arr_`, `]` → empty.
+    fn sanitize_for_novaopt(c_ty: &str) -> String {
+        c_ty.replace('*', "_p")
+            .replace(' ', "_")
+            .replace('[', "_arr_")
+            .replace(']', "")
+    }
+
+    /// Plan 14 Ф.1: register typedef NovaOpt_<sanitized> { int tag; <c_ty> value; }
+    ///
+    /// Idempotent — каждый `sanitized` эмитится один раз. Pre-decl'нутые
+    /// в runtime (`nova_int / nova_byte / nova_bool / nova_str / nova_f64`)
+    /// помечены как seen в `new()` и пропускаются.
+    ///
+    /// Order — registration (insertion) order. recursive type_ref_to_c
+    /// registers innermost types раньше outer'а, что даёт правильный
+    /// topological order: `NovaOpt_X` стоит до `NovaOpt_NovaOpt_X` в
+    /// файле (последний зависит от первого).
+    fn register_novaopt_decl(&self, sanitized: &str, c_ty: &str) {
+        let mut seen = self.novaopt_decls_seen.borrow_mut();
+        if seen.contains(sanitized) { return; }
+        seen.insert(sanitized.to_string());
+        let line = format!(
+            "typedef struct NovaOpt_{} {{ int tag; {} value; }} NovaOpt_{};\n",
+            sanitized, c_ty, sanitized);
+        self.novaopt_typedefs_buf.borrow_mut().push_str(&line);
+    }
+
+
     /// Plan 08 Ф.5: as-cast restrictions для char/byte/bool.
     /// По D54 запрещены конверсии где как-cast даёт неочевидную или
     /// небезопасную семантику. Для них — compile error с suggestion'ом
@@ -8220,6 +8479,16 @@ impl CEmitter {
                 if let Some((type_name, fields)) = self.find_variant(name) {
                     if fields.is_empty() {
                         if type_name == "Option" || type_name == "NovaOpt_nova_int" {
+                            // Plan 14 Ф.1: None infer'ится по контексту
+                            // current_fn_return_ty (если NovaOpt_<X>),
+                            // иначе legacy NovaOpt_nova_int.
+                            if name == "None" {
+                                if let Some(t) = self.current_fn_return_ty.as_ref() {
+                                    if t.starts_with("NovaOpt_") {
+                                        return t.clone();
+                                    }
+                                }
+                            }
                             return "NovaOpt_nova_int".into();
                         }
                         return format!("Nova_{}*", type_name);
@@ -8348,8 +8617,24 @@ impl CEmitter {
                     }
                     // Variant constructor call: Some(x), None, etc. → return option/sum type
                     if let Some((type_name, _)) = self.find_variant(name) {
-                        // Built-in Option → NovaOpt_nova_int; user sum types → Nova_T*
+                        // Plan 14 Ф.1: Some(x) infer как NovaOpt_<T>, где T = тип аргумента.
+                        // None infer'ится по контексту current_fn_return_ty (если NovaOpt_<X>).
+                        // Иначе — legacy NovaOpt_nova_int.
                         if type_name == "Option" || type_name == "NovaOpt_nova_int" {
+                            if name == "Some" && !args.is_empty() {
+                                let arg_ty = self.infer_expr_c_type(&args[0]);
+                                if !arg_ty.is_empty() && arg_ty != "void*" {
+                                    let sanitized = Self::sanitize_for_novaopt(&arg_ty);
+                                    return format!("NovaOpt_{}", sanitized);
+                                }
+                            }
+                            if name == "None" {
+                                if let Some(t) = self.current_fn_return_ty.as_ref() {
+                                    if t.starts_with("NovaOpt_") {
+                                        return t.clone();
+                                    }
+                                }
+                            }
                             return "NovaOpt_nova_int".into();
                         }
                         return format!("Nova_{}*", type_name);
