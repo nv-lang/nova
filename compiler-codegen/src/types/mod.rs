@@ -832,10 +832,15 @@ impl<'a> CapabilityCtx<'a> {
             ExprKind::With { bindings, body } => {
                 // Plan 16 D63: установка handler'а для forbidden-эффекта
                 // внутри forbid-блока — compile error.
+                //
+                // WithBinding.effect: TypeRef. Для названия эффекта
+                // берём последний segment Named-path (e.g. `std.io.Net`
+                // → "Net"). Non-Named TypeRefs (Array/Tuple/Func/etc.) —
+                // невалидны для эффект-handler'ов, пропускаем.
                 let pushed: Vec<String> = bindings.iter()
-                    .filter_map(|b| {
-                        let n = b.effect_name.last()?.clone();
-                        Some(n)
+                    .filter_map(|b| match &b.effect {
+                        TypeRef::Named { path, .. } if !path.is_empty() => path.last().cloned(),
+                        _ => None,
                     })
                     .collect();
                 let forbidden = state.union_forbidden();
@@ -980,14 +985,23 @@ impl<'a> CapabilityCtx<'a> {
     /// state'ом, не вызывая check'ов на собственном узле.
     fn check_capabilities_at(&self, e: &Expr, state: &CapState, errors: &mut Vec<Diagnostic>) {
         let ExprKind::Call { func, .. } = &e.kind else { return; };
-        // Path-form: `Type.method` или `Effect.op`.
+        // Path-form: `Type.method`, `Effect.op` или `[]T.method`.
+        // Для `[]T.method()` парсер строит Member{obj: Path(["__array", T]), name}.
         let path: Vec<String> = match &func.kind {
             ExprKind::Path(parts) => parts.clone(),
             ExprKind::Member { obj, name } => {
-                if let ExprKind::Ident(n) = &obj.kind {
-                    vec![n.clone(), name.clone()]
-                } else {
-                    return; // dynamic member-call; не resolve'им
+                match &obj.kind {
+                    ExprKind::Ident(n) => vec![n.clone(), name.clone()],
+                    // `[]T.method`: Path(["__array","T"]) → ["[]T", method].
+                    ExprKind::Path(parts) if parts.len() == 2 && parts[0] == "__array" => {
+                        vec![format!("[]{}", parts[1]), name.clone()]
+                    }
+                    ExprKind::Path(parts) => {
+                        let mut v = parts.clone();
+                        v.push(name.clone());
+                        v
+                    }
+                    _ => return, // dynamic member-call; не resolve'им
                 }
             }
             ExprKind::Ident(n) => vec![n.clone()],

@@ -11,8 +11,8 @@ type Counter effect {
 
 test "with Counter внутри forbid Counter — error" {
     let _ = forbid Counter {
-        with c = Counter { next() => 42 } {
-            c.next()
+        with Counter = Counter { next() => 42 } {
+            Counter.next()
         }
     }
     assert(true)

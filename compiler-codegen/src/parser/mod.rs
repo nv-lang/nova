@@ -292,20 +292,20 @@ impl Parser {
     /// Plan 16 (D64 §3697): parse `@realtime` или `@realtime nogc`
     /// атрибут перед fn-declaration. Возвращает RealtimeAttr::None
     /// если префикса нет.
+    ///
+    /// `realtime` — keyword (TokenKind::KwRealtime), `nogc` — обычный
+    /// identifier (не keyword в lexer'е).
     fn parse_realtime_attr(&mut self) -> Result<RealtimeAttr, Diagnostic> {
         if !matches!(self.peek().kind, TokenKind::At) {
             return Ok(RealtimeAttr::None);
         }
-        // Look ahead: должно быть `@` затем Ident("realtime").
-        let TokenKind::Ident(ref name) = self.peek_at(1).kind else {
-            return Ok(RealtimeAttr::None);
-        };
-        if name != "realtime" {
+        // Look ahead: должно быть `@` затем `realtime` keyword.
+        if !matches!(self.peek_at(1).kind, TokenKind::KwRealtime) {
             return Ok(RealtimeAttr::None);
         }
         self.bump(); // @
         self.bump(); // realtime
-        // Optional `nogc` modifier.
+        // Optional `nogc` modifier (Ident, не keyword).
         let nogc = if let TokenKind::Ident(ref n) = self.peek().kind {
             if n == "nogc" {
                 self.bump();
