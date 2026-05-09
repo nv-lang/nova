@@ -867,6 +867,31 @@ type Iter[T] protocol {
 См. также [Q-protocol-method-prefix](../open-questions.md#q-protocol-method-prefix)
 (closed этой секцией).
 
+#### Реализация в bootstrap (2026-05-09)
+
+Plan 15 D53 strict-mode (Plan 15 Ф.5) ввёл различие protocol/effect
+на уровне AST. Раньше оба keyword'а маршрутизировались в один
+`TypeDeclKind::Effect(Vec<EffectMethod>)`, что нарушало D72:
+любой method-bag тип permissively принимался как generic-bound.
+
+**Текущее состояние:**
+
+- `TypeDeclKind::Protocol(Vec<EffectMethod>)` — для `type X protocol {…}`.
+- `TypeDeclKind::Effect(Vec<EffectMethod>)` — для `type X effect {…}`.
+- Парсер маршрутизирует по ключевому слову (отдельные match-arm).
+- Codegen эмитит vtable **только** для Effect-kind. Protocol —
+  compile-time-only; type_ref_to_c для protocol-методов не
+  вызывается. Это попутно зафиксировало pre-existing bug: `Self` в
+  protocol-методе раньше ломал codegen (искал несуществующий
+  `Nova_Self*`).
+- Type-checker (D72 enforcement) регистрирует **только**
+  Protocol-kind в `protocol_specs`. Попытка использовать Effect
+  как bound — compile error c hint'ом «`X` is an effect, not a
+  protocol — declare as `type X protocol {…}`».
+- Анонимные protocol-литералы в позиции типа (`fn close(c protocol {
+  close() -> () })`, §628 этой секции) — пока **не реализованы** в
+  bootstrap'е; требует нового `TypeRef::Protocol(...)` variant'а.
+
 ---
 
 ## D55. Literal coercion в позиции с явным типом: sum-конструкторы и record-литералы

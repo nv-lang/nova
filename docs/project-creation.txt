@@ -3102,3 +3102,75 @@ Plan 15 Ф.1+Ф.2+Ф.3 — D72 generic bounds enforcement (2026-05-09)
 - R5.3 diagnostic format заметно лучше generic'а ("не удовлетворяет
   bound") — программист сразу видит что недостаёт и где править.
   AI-first ergonomics в действии.
+
+
+================================================================================
+Plan 15 Ф.5 — D53 strict-mode: split Protocol vs Effect (2026-05-09)
+================================================================================
+
+После Ф.1-Ф.4 BoundCtx остался permissive — принимал любой method-bag
+тип как potential bound, что нарушало D72 (спек: bound = только
+protocol-тип, не effect). Ф.5 закрыла дыру через split AST variants —
+option B (полное разделение, prod-grade).
+
+Изменения:
+
+AST (ast/mod.rs):
+- Удалил preemptive флаг is_protocol_kind: bool (option A не пошла).
+- Новый variant TypeDeclKind::Protocol(Vec<EffectMethod>) рядом с
+  существующим Effect(...). EffectMethod reuse'ится для обоих.
+
+Parser (parser/mod.rs):
+- parse_type_decl: split match-arm `KwEffect | KwProtocol` в две
+  отдельные ветки. Каждое keyword возвращает свой variant.
+
+Codegen (codegen/emit_c.rs:2644):
+- match на TypeDeclKind: Effect → emit_effect_type как было; Protocol
+  → пустой arm Ok(()) (vtable не нужен — compile-time контракт).
+- **Bonus**: попутно фиксит pre-existing Self-bug. Раньше `Self` в
+  protocol-методе ломал codegen потому что type_ref_to_c искал
+  несуществующий `Nova_Self*`. Без vtable-emit'а для protocols
+  type_ref_to_c для protocol-методов вообще не вызывается.
+
+Type-checker (types/mod.rs):
+- BoundCtx struct: новый effect_decls: HashMap<String, &TypeDecl>
+  для диагностики «used as bound but it's an effect».
+- BoundCtx::build: split match — Protocol → protocol_specs;
+  Effect → effect_decls. Effect больше не registered как potential
+  bound.
+- check_satisfaction: bound-name в effect_decls → R5.3 error
+  «type `X` is an effect, not a protocol — generic bounds require
+  protocol-types (D72/D53). Hint: declare `X` as `type X protocol
+  {…}`...».
+- walk_module: теперь обходит и Item::Test(_), не только Item::Fn(_)
+  (без этого тестовые bound-violations не ловились — баг найден
+  при negative-test'е).
+
+Lints (lints.rs):
+- collect_protocol_names: scan через TypeDeclKind::Protocol(_)
+  (раньше был disabled comment'ом потому что split'а не было).
+
+Tests (nova_tests/types/generic_bounds.nv):
+- Bonus restore: `eq(other Self) -> bool` в GbHashable. Раньше
+  обходили Self из-за codegen-bug'а; теперь работает.
+
+Spec (spec/decisions/02-types.md):
+- D53 секция: добавлена реализационная заметка с описанием split'а,
+  codegen-skip для protocols, BoundCtx Protocol-only.
+
+Тесты: nova_tests 92/92 PASS. Negative manual: effect-as-bound →
+ожидаемая R5.3 ошибка.
+
+Не покрыто: D53 §628 анонимные protocol-литералы в позиции типа
+(`fn close(c protocol { close() -> () })`) — отдельная задача, требует
+нового TypeRef::Protocol(...) variant'а + parser-extension.
+
+Урок:
+- **walk-coverage**. Изначально walk_module обходил только Item::Fn,
+  тесты не walk'ались, negative-test silently passed. Reality-check
+  (negative test действительно errors out) поймал. После добавления
+  Item::Test — corrected.
+- **Bonus-fix'ы при правильном дизайне** — codegen больше не
+  запрашивает type_ref_to_c для protocol-методов, поэтому Self-bug
+  испарился сам. Когда правильная архитектура убирает баги, а не
+  добавляет hacks.

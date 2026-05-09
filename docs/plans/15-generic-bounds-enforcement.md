@@ -164,11 +164,41 @@ inference):
 
 **Объём:** ~10 тестов.
 
-### Ф.5 — Spec-уточнение если нужно
+### Ф.5 — D53 strict-mode: split Protocol vs Effect ✅ ЗАКРЫТ (2026-05-09)
 
-После реализации могут всплыть углы (multi-arity overload методов,
-default-методы protocol'а, parameterized protocol bounds). Записать в
-spec / open-questions если найдём.
+После Ф.1-Ф.4 BoundCtx был permissive — принимал любой method-bag
+тип как potential bound, что нарушало D72. Ф.5 закрыла эту дыру
+через split AST variants.
+
+**Реализация:**
+
+- AST: `TypeDeclKind::Effect(...)` остался для `effect`-keyword;
+  новый `TypeDeclKind::Protocol(Vec<EffectMethod>)` для
+  `protocol`-keyword.
+- Parser (`parse_type_decl`): split arm `KwEffect | KwProtocol` в
+  две отдельные ветки.
+- Codegen (`emit_type_decl`): Effect — emit vtable как было; Protocol
+  — пропускаем эмиссию (compile-time-only). Бонус: попутно фиксит
+  pre-existing **Self-bug** — `Self` в protocol-методе раньше ломал
+  vtable (искал `Nova_Self*`); без vtable-emit'а type_ref_to_c для
+  protocol-методов не вызывается.
+- BoundCtx: новый `effect_decls: HashMap<String, &TypeDecl>` —
+  для дифференциированного error-сообщения. `protocol_specs`
+  регистрирует **только** `TypeDeclKind::Protocol`. В
+  `check_satisfaction` — bound-name в `effect_decls` → R5.3 error.
+- Lints (`collect_protocol_names`): scan через
+  `TypeDeclKind::Protocol(_)`.
+- `walk_module` — теперь обходит и `Item::Test(_)`.
+
+**Тесты:**
+- `nova_tests/types/generic_bounds.nv` — bonus: восстановлен `eq(other
+  Self) -> bool` в `GbHashable`.
+- Negative: ручная проверка `[T MyEffect]` → R5.3 error.
+
+**Объём:** ~70 строк.
+
+**Не покрыто:** анонимные protocol-литералы в позиции типа (D53 §628)
+— отдельная задача.
 
 ---
 
