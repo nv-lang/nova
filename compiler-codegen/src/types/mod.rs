@@ -6,7 +6,7 @@
 //! интерпретации (treewalk не требует всего).
 
 use crate::ast::*;
-use crate::diag::Diagnostic;
+use crate::diag::{Diagnostic, Span};
 use std::collections::{HashMap, HashSet};
 
 /// Очень упрощённая система типов для bootstrap'а.
@@ -127,10 +127,485 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
         }
     }
 
+    // Plan 15 (D72): generic bounds enforcement.
+    //
+    // Собираем protocol_specs (методы каждого protocol-типа) и
+    // method_table (методы каждого concrete-типа). Затем ходим по
+    // всем call-сайтам в bodies, для generic-вызовов с bounds
+    // проверяем satisfaction concrete-аргументов.
+    let bound_ctx = BoundCtx::build(module);
+    bound_ctx.check_module(module, &mut errors);
+
     if errors.is_empty() {
         Ok(env)
     } else {
         Err(errors)
+    }
+}
+
+/// Plan 15 (D72): registry для bound enforcement.
+///
+/// `protocol_specs`: для каждого `type Foo protocol { ... }` — список
+/// required methods (TypeDeclKind::Effect; в Nova protocol/effect единая
+/// форма по D62).
+///
+/// `fn_decls`: top-level fn-декларации (для resolve вызова по имени).
+///
+/// `method_table`: для каждого concrete-типа — методы (по имени), для
+/// проверки "type T satisfies protocol P".
+struct BoundCtx<'a> {
+    protocol_specs: HashMap<String, &'a [EffectMethod]>,
+    fn_decls: HashMap<String, &'a FnDecl>,
+    method_table: HashMap<String, HashMap<String, Vec<&'a FnDecl>>>,
+}
+
+impl<'a> BoundCtx<'a> {
+    fn build(module: &'a Module) -> Self {
+        let mut protocol_specs = HashMap::new();
+        let mut fn_decls: HashMap<String, &FnDecl> = HashMap::new();
+        let mut method_table: HashMap<String, HashMap<String, Vec<&FnDecl>>> = HashMap::new();
+
+        for item in &module.items {
+            match item {
+                Item::Type(t) => {
+                    if let TypeDeclKind::Effect(methods) = &t.kind {
+                        protocol_specs.insert(t.name.clone(), methods.as_slice());
+                    }
+                }
+                Item::Fn(f) => {
+                    if let Some(recv) = &f.receiver {
+                        method_table
+                            .entry(recv.type_name.clone())
+                            .or_default()
+                            .entry(f.name.clone())
+                            .or_default()
+                            .push(f);
+                    } else {
+                        fn_decls.insert(f.name.clone(), f);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        BoundCtx { protocol_specs, fn_decls, method_table }
+    }
+
+    fn check_module(&self, module: &Module, errors: &mut Vec<Diagnostic>) {
+        for item in &module.items {
+            if let Item::Fn(f) = item {
+                let mut scope: HashMap<String, TypeRef> = HashMap::new();
+                // Регистрируем параметры функции с их типами.
+                for p in &f.params {
+                    scope.insert(p.name.clone(), p.ty.clone());
+                }
+                self.walk_fn_body(f, &mut scope, errors);
+            }
+        }
+    }
+
+    fn walk_fn_body(&self, f: &FnDecl, scope: &mut HashMap<String, TypeRef>, errors: &mut Vec<Diagnostic>) {
+        match &f.body {
+            FnBody::Expr(e) => self.walk_expr(e, scope, errors),
+            FnBody::Block(b) => self.walk_block(b, scope, errors),
+            FnBody::External => {}
+        }
+    }
+
+    fn walk_block(&self, b: &Block, scope: &mut HashMap<String, TypeRef>, errors: &mut Vec<Diagnostic>) {
+        // Сохраняем snapshot для bindings которые let'аются в этом блоке —
+        // чтобы вернуть scope после блока (block-out shadowing semantics).
+        let mut snapshot: Vec<(String, Option<TypeRef>)> = Vec::new();
+        for s in &b.stmts {
+            if let Stmt::Let(d) = s {
+                if let Some(name) = pattern_simple_name(&d.pattern) {
+                    snapshot.push((name.clone(), scope.get(&name).cloned()));
+                }
+            }
+        }
+        for s in &b.stmts {
+            self.walk_stmt(s, scope, errors);
+        }
+        if let Some(t) = &b.trailing {
+            self.walk_expr(t, scope, errors);
+        }
+        // Восстановим shadowed bindings (block-out).
+        for (n, prev) in snapshot {
+            match prev {
+                Some(t) => { scope.insert(n, t); }
+                None => { scope.remove(&n); }
+            }
+        }
+    }
+
+    fn walk_stmt(&self, s: &Stmt, scope: &mut HashMap<String, TypeRef>, errors: &mut Vec<Diagnostic>) {
+        match s {
+            Stmt::Expr(e) => self.walk_expr(e, scope, errors),
+            Stmt::Let(d) => {
+                self.walk_expr(&d.value, scope, errors);
+                // Регистрируем simple-Ident pattern с inferred типом.
+                if let Some(name) = pattern_simple_name(&d.pattern) {
+                    let inferred = d.ty.clone()
+                        .or_else(|| Self::infer_arg_ty(&d.value, scope));
+                    if let Some(t) = inferred {
+                        scope.insert(name, t);
+                    }
+                }
+            }
+            Stmt::Assign { target, value, .. } => {
+                self.walk_expr(target, scope, errors);
+                self.walk_expr(value, scope, errors);
+            }
+            Stmt::Return { value, .. } => {
+                if let Some(v) = value { self.walk_expr(v, scope, errors); }
+            }
+            Stmt::Throw { value, .. } => self.walk_expr(value, scope, errors),
+            Stmt::Break(_) | Stmt::Continue(_) => {}
+        }
+    }
+
+    fn walk_expr(&self, e: &Expr, scope: &mut HashMap<String, TypeRef>, errors: &mut Vec<Diagnostic>) {
+        // Проверяем сам call перед рекурсией в args (порядок не важен).
+        self.check_call_bounds(e, scope, errors);
+        match &e.kind {
+            ExprKind::Call { func, args, trailing_block } => {
+                self.walk_expr(func, scope, errors);
+                for a in args {
+                    self.walk_expr(a.expr(), scope, errors);
+                }
+                if let Some(tb) = trailing_block {
+                    self.walk_block(&tb.body, scope, errors);
+                }
+            }
+            ExprKind::TurboFish { base, .. } => self.walk_expr(base, scope, errors),
+            ExprKind::Binary { left, right, .. } => {
+                self.walk_expr(left, scope, errors);
+                self.walk_expr(right, scope, errors);
+            }
+            ExprKind::Unary { operand, .. } => self.walk_expr(operand, scope, errors),
+            ExprKind::Try(inner) => self.walk_expr(inner, scope, errors),
+            ExprKind::Coalesce(a, b) => {
+                self.walk_expr(a, scope, errors);
+                self.walk_expr(b, scope, errors);
+            }
+            ExprKind::As(e, _) => self.walk_expr(e, scope, errors),
+            ExprKind::Is(e, _) => self.walk_expr(e, scope, errors),
+            ExprKind::Member { obj, .. } => self.walk_expr(obj, scope, errors),
+            ExprKind::Index { obj, index } => {
+                self.walk_expr(obj, scope, errors);
+                self.walk_expr(index, scope, errors);
+            }
+            ExprKind::If { cond, then, else_ } => {
+                self.walk_expr(cond, scope, errors);
+                self.walk_block(then, scope, errors);
+                if let Some(eb) = else_ {
+                    match eb {
+                        ElseBranch::Block(b) => self.walk_block(b, scope, errors),
+                        ElseBranch::If(e) => self.walk_expr(e, scope, errors),
+                    }
+                }
+            }
+            ExprKind::IfLet { scrutinee, then, else_, .. } => {
+                self.walk_expr(scrutinee, scope, errors);
+                self.walk_block(then, scope, errors);
+                if let Some(eb) = else_ {
+                    match eb {
+                        ElseBranch::Block(b) => self.walk_block(b, scope, errors),
+                        ElseBranch::If(e) => self.walk_expr(e, scope, errors),
+                    }
+                }
+            }
+            ExprKind::Match { scrutinee, arms } => {
+                self.walk_expr(scrutinee, scope, errors);
+                for arm in arms {
+                    if let Some(g) = &arm.guard { self.walk_expr(g, scope, errors); }
+                    match &arm.body {
+                        MatchArmBody::Expr(e) => self.walk_expr(e, scope, errors),
+                        MatchArmBody::Block(b) => self.walk_block(b, scope, errors),
+                    }
+                }
+            }
+            ExprKind::Block(b) => self.walk_block(b, scope, errors),
+            ExprKind::ArrayLit(elems) => {
+                for el in elems {
+                    match el {
+                        ArrayElem::Item(e) | ArrayElem::Spread(e) => self.walk_expr(e, scope, errors),
+                    }
+                }
+            }
+            ExprKind::TupleLit(elems) => {
+                for e in elems { self.walk_expr(e, scope, errors); }
+            }
+            ExprKind::RecordLit { fields, .. } => {
+                for f in fields {
+                    if let Some(v) = &f.value { self.walk_expr(v, scope, errors); }
+                }
+            }
+            ExprKind::TaggedTemplate { tag, args, .. } => {
+                self.walk_expr(tag, scope, errors);
+                for a in args { self.walk_expr(a, scope, errors); }
+            }
+            ExprKind::InterpolatedStr { parts } => {
+                for p in parts {
+                    if let InterpStrPart::Expr(e) = p {
+                        self.walk_expr(e, scope, errors);
+                    }
+                }
+            }
+            ExprKind::Lambda { body, .. } => self.walk_expr(body, scope, errors),
+            ExprKind::Spawn(body) => self.walk_expr(body, scope, errors),
+            ExprKind::Supervised(body) | ExprKind::Detach(body) => self.walk_block(body, scope, errors),
+            ExprKind::CancelScope { body, .. } => self.walk_block(body, scope, errors),
+            ExprKind::Forbid { body, .. } => self.walk_block(body, scope, errors),
+            ExprKind::Realtime { body, .. } => self.walk_block(body, scope, errors),
+            ExprKind::ParallelFor { iter, body, .. } => {
+                self.walk_expr(iter, scope, errors);
+                self.walk_block(body, scope, errors);
+            }
+            ExprKind::For { iter, body, .. } => {
+                self.walk_expr(iter, scope, errors);
+                self.walk_block(body, scope, errors);
+            }
+            ExprKind::While { cond, body } => {
+                self.walk_expr(cond, scope, errors);
+                self.walk_block(body, scope, errors);
+            }
+            ExprKind::WhileLet { scrutinee, body, .. } => {
+                self.walk_expr(scrutinee, scope, errors);
+                self.walk_block(body, scope, errors);
+            }
+            ExprKind::Loop { body } => self.walk_block(body, scope, errors),
+            ExprKind::Range { start, end, .. } => {
+                self.walk_expr(start, scope, errors);
+                self.walk_expr(end, scope, errors);
+            }
+            ExprKind::Throw(e) => self.walk_expr(e, scope, errors),
+            ExprKind::Interrupt(opt) => {
+                if let Some(e) = opt { self.walk_expr(e, scope, errors); }
+            }
+            ExprKind::With { body, .. } => self.walk_block(body, scope, errors),
+            // Литералы / ident'ы / handler-литералы — без рекурсии в bound-проверке.
+            ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::BoolLit(_)
+            | ExprKind::StrLit(_) | ExprKind::CharLit(_) | ExprKind::UnitLit
+            | ExprKind::Ident(_) | ExprKind::Path(_) | ExprKind::SelfAccess
+            | ExprKind::HandlerLit { .. } => {}
+        }
+    }
+
+    /// Plan 15 Ф.3: проверить bound'ы на конкретном call-site.
+    ///
+    /// Если callee — top-level fn с generics+bounds, и есть turbofish
+    /// type_args (или возможна простая inference из args) — проверить
+    /// что concrete-T удовлетворяет bound'у.
+    fn check_call_bounds(
+        &self,
+        e: &Expr,
+        scope: &HashMap<String, TypeRef>,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        let ExprKind::Call { func, args, .. } = &e.kind else { return; };
+        // Распакуем turbofish, чтобы добраться до базового идентификатора.
+        let (base, type_args): (&Expr, &[TypeRef]) = match &func.kind {
+            ExprKind::TurboFish { base, type_args } => (base, type_args.as_slice()),
+            _ => (func.as_ref(), &[][..]),
+        };
+        let fn_name = match &base.kind {
+            ExprKind::Ident(n) => n.clone(),
+            _ => return, // методы и т.п. — отдельная задача
+        };
+        let Some(callee) = self.fn_decls.get(&fn_name).copied() else { return; };
+        // Bounds присутствуют?
+        let has_bounds = callee.generics.iter().any(|g| g.bound.is_some());
+        if !has_bounds { return; }
+        // Сматчим concrete T. Стратегия:
+        //   - turbofish — explicit type_args[i] для callee.generics[i].
+        //   - иначе simple inference: для каждого param с TypeRef::Named{path:[T]}
+        //     где T — generic-param, тип arg'а на той же позиции = concrete T.
+        let mut bindings: HashMap<String, TypeRef> = HashMap::new();
+        if !type_args.is_empty() {
+            for (i, gp) in callee.generics.iter().enumerate() {
+                if let Some(t) = type_args.get(i) {
+                    bindings.insert(gp.name.clone(), t.clone());
+                }
+            }
+        } else {
+            // Simple inference из позиционных args.
+            for (i, param) in callee.params.iter().enumerate() {
+                let Some(call_arg) = args.get(i) else { continue; };
+                let arg_expr = call_arg.expr();
+                if let Some(t_name) = Self::param_generic_name(&param.ty, &callee.generics) {
+                    if let Some(arg_ty) = Self::infer_arg_ty(arg_expr, scope) {
+                        bindings.entry(t_name).or_insert(arg_ty);
+                    }
+                }
+            }
+        }
+        // Для каждого bounded generic — проверить.
+        for gp in &callee.generics {
+            let Some(bound) = &gp.bound else { continue; };
+            let Some(concrete) = bindings.get(&gp.name) else {
+                // Inference не удалась — пропускаем (best-effort).
+                // Strict-mode мог бы требовать explicit turbofish.
+                continue;
+            };
+            self.check_satisfaction(
+                concrete, bound, &gp.name, &fn_name, e.span, errors,
+            );
+        }
+    }
+
+    /// Если param's TypeRef — простой `Named{path: [T]}` где T в
+    /// списке generics, вернуть имя T. Иначе None.
+    fn param_generic_name(ty: &TypeRef, generics: &[GenericParam]) -> Option<String> {
+        let TypeRef::Named { path, generics: g, .. } = ty else { return None; };
+        if path.len() != 1 || !g.is_empty() { return None; }
+        if generics.iter().any(|gp| gp.name == path[0]) {
+            Some(path[0].clone())
+        } else {
+            None
+        }
+    }
+
+    /// Минимальная inference типа argument'а — best-effort на основе
+    /// синтаксической формы и текущего scope (let-bindings).
+    fn infer_arg_ty(e: &Expr, scope: &HashMap<String, TypeRef>) -> Option<TypeRef> {
+        match &e.kind {
+            ExprKind::Ident(name) => scope.get(name).cloned(),
+            ExprKind::RecordLit { type_name: Some(name), .. } => Some(TypeRef::Named {
+                path: name.clone(),
+                generics: Vec::new(),
+                span: e.span,
+            }),
+            ExprKind::ArrayLit(elems) => {
+                // []T — element type from first element.
+                let inner = elems.iter().find_map(|el| match el {
+                    ArrayElem::Item(it) | ArrayElem::Spread(it) => Self::infer_arg_ty(it, scope),
+                });
+                inner.map(|t| TypeRef::Array(Box::new(t), e.span))
+            }
+            ExprKind::IntLit(_) => Some(TypeRef::Named {
+                path: vec!["int".to_string()], generics: vec![], span: e.span }),
+            ExprKind::FloatLit(_) => Some(TypeRef::Named {
+                path: vec!["f64".to_string()], generics: vec![], span: e.span }),
+            ExprKind::BoolLit(_) => Some(TypeRef::Named {
+                path: vec!["bool".to_string()], generics: vec![], span: e.span }),
+            ExprKind::StrLit(_) | ExprKind::InterpolatedStr { .. } => Some(TypeRef::Named {
+                path: vec!["str".to_string()], generics: vec![], span: e.span }),
+            ExprKind::CharLit(_) => Some(TypeRef::Named {
+                path: vec!["char".to_string()], generics: vec![], span: e.span }),
+            _ => None,
+        }
+    }
+
+    /// Plan 15 Ф.3: проверить, что concrete-тип удовлетворяет bound'у
+    /// (protocol-типу). При несоответствии — R5.3 diagnostic.
+    fn check_satisfaction(
+        &self,
+        concrete: &TypeRef,
+        bound: &TypeRef,
+        type_param_name: &str,
+        fn_name: &str,
+        span: Span,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        let bound_name = match bound {
+            TypeRef::Named { path, .. } if path.len() == 1 => path[0].clone(),
+            _ => return, // complex bounds (Hashable[K], etc.) — отдельная задача
+        };
+        let concrete_name = match concrete {
+            TypeRef::Named { path, .. } if path.len() == 1 => path[0].clone(),
+            // Array/Tuple/Func — пока пропускаем (не обрабатываем составные T).
+            _ => return,
+        };
+        // Built-in primitives автоматически удовлетворяют ничему — у нас
+        // нет registry их методов в method_table. Skip (best-effort).
+        if matches!(concrete_name.as_str(),
+            "int" | "i8" | "i16" | "i32" | "i64"
+            | "u8" | "u16" | "u32" | "u64"
+            | "f32" | "f64" | "bool" | "char" | "byte"
+            | "str" | "any") {
+            return;
+        }
+        let Some(spec_methods) = self.protocol_specs.get(&bound_name) else {
+            // Bound — не зарегистрирован protocol. Может быть type alias /
+            // record. Пока пропускаем — formal check'а не делаем.
+            return;
+        };
+        let empty: HashMap<String, Vec<&FnDecl>> = HashMap::new();
+        let concrete_methods = self.method_table.get(&concrete_name).unwrap_or(&empty);
+        let mut missing: Vec<String> = Vec::new();
+        for required in *spec_methods {
+            // Match по имени и arity. Полная sig-сверка с Self→T —
+            // дальнейшая задача (Ф.5).
+            let found = concrete_methods.get(&required.name).map(|fns| {
+                fns.iter().any(|f| f.params.len() == required.params.len())
+            }).unwrap_or(false);
+            if !found {
+                let sig = render_method_sig(&required.name, &required.params, &required.return_type);
+                missing.push(sig);
+            }
+        }
+        if !missing.is_empty() {
+            // R5.3 структурированный AI-first diagnostic.
+            let mut msg = format!(
+                "type `{}` does not satisfy `{}` bound (in call to `{}[{} {}]`).\n\n  `{}` requires:\n",
+                concrete_name, bound_name, fn_name, type_param_name, bound_name, bound_name);
+            for required in *spec_methods {
+                msg.push_str(&format!(
+                    "    {}\n",
+                    render_method_sig(&required.name, &required.params, &required.return_type)));
+            }
+            msg.push_str(&format!("\n  `{}` is missing: {}\n", concrete_name, missing.join(", ")));
+            msg.push_str(&format!(
+                "\n  fix: добавить недостающие методы для типа `{}`. \
+                 См. spec/decisions/02-types.md#d72.",
+                concrete_name));
+            errors.push(Diagnostic::new(msg, span));
+        }
+    }
+}
+
+/// Plan 15: extract simple identifier-name из Pattern. Используется
+/// для регистрации let-bindings в scope (только Pattern::Ident; complex
+/// patterns — tuple/variant — пропускаются).
+fn pattern_simple_name(p: &Pattern) -> Option<String> {
+    match p {
+        Pattern::Ident { name, .. } => Some(name.clone()),
+        _ => None,
+    }
+}
+
+/// Render method signature `name(p1 T1, p2 T2) -> Ret` — для diagnostic'а.
+fn render_method_sig(name: &str, params: &[Param], ret: &Option<TypeRef>) -> String {
+    let p_strs: Vec<String> = params.iter().map(|p| {
+        format!("{} {}", p.name, render_type_ref(&p.ty))
+    }).collect();
+    let r = ret.as_ref().map(|t| format!(" -> {}", render_type_ref(t))).unwrap_or_default();
+    format!("{}({}){}", name, p_strs.join(", "), r)
+}
+
+fn render_type_ref(t: &TypeRef) -> String {
+    match t {
+        TypeRef::Named { path, generics, .. } => {
+            if generics.is_empty() {
+                path.join(".")
+            } else {
+                let g: Vec<String> = generics.iter().map(render_type_ref).collect();
+                format!("{}[{}]", path.join("."), g.join(", "))
+            }
+        }
+        TypeRef::Array(inner, _) => format!("[]{}", render_type_ref(inner)),
+        TypeRef::FixedArray(n, inner, _) => format!("[{}]{}", n, render_type_ref(inner)),
+        TypeRef::Tuple(items, _) => {
+            let s: Vec<String> = items.iter().map(render_type_ref).collect();
+            format!("({})", s.join(", "))
+        }
+        TypeRef::Func { params, return_type, .. } => {
+            let p: Vec<String> = params.iter().map(render_type_ref).collect();
+            let r = return_type.as_ref().map(|t| format!(" -> {}", render_type_ref(t))).unwrap_or_default();
+            format!("fn({}){}", p.join(", "), r)
+        }
+        TypeRef::Unit(_) => "()".to_string(),
     }
 }
 
