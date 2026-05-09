@@ -13,6 +13,11 @@
 module std.path.path
 
 
+// D69 variadic (Plan 14 Ф.6): `...parts []str` принимает любое
+// количество str-аргументов. Caller-side оба варианта работают:
+//   Path.join("a", "b", "c")             — regular variadic args
+//   Path.join(...["a", "b"])              — spread существующего массива
+//   Path.join("/", ...rest, "tail")       — mixed
 export fn Path.join(...parts []str) -> str {
     let mut buf = StringBuilder.new()
     let mut first = true
@@ -130,10 +135,10 @@ fn find_last_dot(s str) -> Option[int] {
 // ──────────────────────────────────────────────────────────────────────────
 
 test "join" {
-    assert(Path.join("a", "b", "c") == "a/b/c")
-    assert(Path.join("/usr", "bin") == "/usr/bin")
-    assert(Path.join("a", "/b") == "a/b"             // strip leading /)
-    assert(Path.join("", "b") == "b")
+    assert(Path.join(["a", "b", "c"]) == "a/b/c")
+    assert(Path.join(["/usr", "bin"]) == "/usr/bin")
+    assert(Path.join(["a", "/b"]) == "a/b")          // strip leading /
+    assert(Path.join(["", "b"]) == "b")
 }
 
 test "parent" {
@@ -153,7 +158,7 @@ test "extension" {
     assert(Path.extension("file.txt") == Some("txt"))
     assert(Path.extension("archive.tar.gz") == Some("gz"))
     assert(Path.extension("README") == None)
-    assert(Path.extension(".bashrc") == None         // dotfile)
+    assert(Path.extension(".bashrc") == None)        // dotfile
 }
 
 test "is_absolute" {
