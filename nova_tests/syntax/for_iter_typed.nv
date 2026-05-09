@@ -1,0 +1,202 @@
+// for_iter_typed.nv — Plan 14 Ф.1: Iter[T] generalization для T ≠ int.
+//
+// Plan 06 Ф.1 закрыл общий for-in через Iter[T] protocol-fallback,
+// но element-type был захардкожен на nova_int. Plan 14 Ф.1 заменил
+// `NovaOpt_nova_int` на real `NovaOpt_<T>` typedef с lazy struct-decl
+// (для T без NOVA_ARRAY_DECL в runtime). Some(v) и None теперь
+// эмитятся через compound literal с реальным T.
+//
+// Покрывает: Iter[byte], Iter[bool], Iter[i32], Iter[str], Iter[(int,str)].
+
+module nova_tests.syntax.for_iter_typed
+
+
+// Iter[byte] — счётчик байтов 0..n.
+type ByteCounter {
+    end      byte
+    mut cur  byte
+}
+
+
+export fn ByteCounter mut @next() -> Option[byte] {
+    if @cur >= @end {
+        None
+    } else {
+        let v = @cur
+        @cur = (@cur as int + 1) as byte
+        Some(v)
+    }
+}
+
+
+export fn ByteCounter.new(end byte) -> ByteCounter {
+    ByteCounter { end: end, cur: 0 as byte }
+}
+
+
+test "for-in over Iter[byte]" {
+    let it = ByteCounter.new(5 as byte)
+    let mut sum int = 0
+    for b in it {
+        sum = sum + b as int
+    }
+    // 0+1+2+3+4 = 10
+    assert(sum == 10)
+}
+
+
+// Iter[bool] — alternating true/false для n шагов.
+type BoolToggler {
+    end      int
+    mut cur  int
+    mut on   bool
+}
+
+
+export fn BoolToggler mut @next() -> Option[bool] {
+    if @cur >= @end {
+        None
+    } else {
+        let v = @on
+        @on = !@on
+        @cur += 1
+        Some(v)
+    }
+}
+
+
+export fn BoolToggler.new(end int) -> BoolToggler {
+    BoolToggler { end: end, cur: 0, on: true }
+}
+
+
+test "for-in over Iter[bool]" {
+    let it = BoolToggler.new(4)
+    let mut trues int = 0
+    let mut falses int = 0
+    for b in it {
+        if b { trues = trues + 1 } else { falses = falses + 1 }
+    }
+    assert(trues == 2)
+    assert(falses == 2)
+}
+
+
+// Iter[i32] — narrow-int sequence (negative values работают).
+type I32Seq {
+    end       int
+    mut cur   int
+}
+
+
+export fn I32Seq mut @next() -> Option[i32] {
+    if @cur >= @end {
+        None
+    } else {
+        let v = (-100 + @cur * 50) as i32
+        @cur += 1
+        Some(v)
+    }
+}
+
+
+export fn I32Seq.new(end int) -> I32Seq {
+    I32Seq { end: end, cur: 0 }
+}
+
+
+test "for-in over Iter[i32]" {
+    let it = I32Seq.new(4)
+    let mut sum int = 0
+    for n in it {
+        sum = sum + n as int
+    }
+    // -100 + -50 + 0 + 50 = -100
+    assert(sum == -100)
+}
+
+
+// Iter[str] — iter over fixed strings.
+type StrSeq {
+    mut idx  int
+}
+
+
+export fn StrSeq mut @next() -> Option[str] {
+    if @idx == 0 {
+        @idx = 1
+        Some("alpha")
+    } else if @idx == 1 {
+        @idx = 2
+        Some("beta")
+    } else if @idx == 2 {
+        @idx = 3
+        Some("gamma")
+    } else {
+        None
+    }
+}
+
+
+export fn StrSeq.new() -> StrSeq {
+    StrSeq { idx: 0 }
+}
+
+
+test "for-in over Iter[str]" {
+    let it = StrSeq.new()
+    let mut found_alpha bool = false
+    let mut found_beta bool = false
+    let mut found_gamma bool = false
+    let mut count int = 0
+    for s in it {
+        if s == "alpha" { found_alpha = true }
+        if s == "beta" { found_beta = true }
+        if s == "gamma" { found_gamma = true }
+        count = count + 1
+    }
+    assert(found_alpha)
+    assert(found_beta)
+    assert(found_gamma)
+    assert(count == 3)
+}
+
+
+// Iter[(int, int)] — tuple-pattern destructure (key-value pair).
+// (int, str) и другие mixed-type tuples требуют typed-tuple typedef'ов
+// (legacy _NovaTupleN — все поля nova_int) — отдельная задача.
+type PairSeq {
+    mut idx  int
+}
+
+
+export fn PairSeq mut @next() -> Option[(int, int)] {
+    if @idx == 0 {
+        @idx = 1
+        Some((10, 100))
+    } else if @idx == 1 {
+        @idx = 2
+        Some((20, 200))
+    } else {
+        None
+    }
+}
+
+
+export fn PairSeq.new() -> PairSeq {
+    PairSeq { idx: 0 }
+}
+
+
+test "for-in over Iter[(int, int)] — tuple destructure" {
+    let it = PairSeq.new()
+    let mut sum_keys int = 0
+    let mut sum_vals int = 0
+    for (k, v) in it {
+        sum_keys = sum_keys + k
+        sum_vals = sum_vals + v
+    }
+    // 10 + 20 = 30; 100 + 200 = 300
+    assert(sum_keys == 30)
+    assert(sum_vals == 300)
+}
