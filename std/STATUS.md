@@ -10,9 +10,21 @@
 *должен* выглядеть в зрелом Nova, но bootstrap-codegen в текущей
 итерации не покрывает все используемые фичи.
 
-Запуск через `.\run_tests.ps1 -IncludeStdlib`. **Сейчас: 0 из 43
-компилируется.** Это ожидаемо — список причин ниже, для приоритезации
-будущих compiler-задач.
+Запуск через `.\run_tests.ps1 -IncludeStdlib`.
+
+## Текущий статус (2026-05-09, post-Plan 14 Ф.7)
+
+- **type-check (`nova check`):** 50/50 PASS — type-checker мягче codegen.
+- **compile→exe:** 3/50 PASS — основная масса упирается в codegen-gaps.
+- Авторитетная roadmap по разблокировке: [docs/plans/14-stdlib-codegen-gaps.md](../docs/plans/14-stdlib-codegen-gaps.md).
+  Закрыто: Ф.2 (const non-trivial), Ф.3 (free-fn-as-value), Ф.4 (fn-в-record),
+  Ф.7 (`int as char` literal-only).
+  Остаются: **Ф.1** (Iter[T] element-type), **Ф.5** (cross-file resolve),
+  **Ф.6** (D69 variadic).
+- Stdlib roadmap (что писать после разблокировки): [docs/plans/18-stdlib-roadmap.md](../docs/plans/18-stdlib-roadmap.md).
+
+Список ниже — историческая хронология раундов 1-5 (закрытые блокеры) +
+оставшиеся группы блокеров для приоритезации новых compiler-задач.
 
 ## Закрытые блокеры
 
