@@ -429,6 +429,16 @@ impl Parser {
             }
         }
         self.expect(&TokenKind::RParen)?;
+        // Plan 14 Ф.6 (D69): variadic-параметр обязан быть последним.
+        // Если variadic не на последней позиции — compile error.
+        for (i, p) in params.iter().enumerate() {
+            if p.is_variadic && i != params.len() - 1 {
+                return Err(Diagnostic::new(
+                    format!("variadic-параметр `{}` должен быть последним в списке (D69)", p.name),
+                    p.span,
+                ));
+            }
+        }
 
         // Effects: до `->` или до тела
         let effects = self.parse_effects_until_arrow_or_body()?;
@@ -481,6 +491,10 @@ impl Parser {
     }
 
     fn parse_param(&mut self) -> Result<Param, Diagnostic> {
+        // Plan 14 Ф.6 (D69): `...` префикс перед именем — variadic param.
+        // Только последний param в списке может быть variadic; check
+        // выполняется в parse_fn после сбора всех params'ов.
+        let is_variadic = self.eat(&TokenKind::DotDotDot).is_some();
         let (name, name_span) = self.parse_ident()?;
         // D6: mut-маркер на параметре говорит, что внутри fn значение
         // можно мутировать. В bootstrap'е GC + reference-семантика делают
@@ -490,10 +504,18 @@ impl Parser {
             self.bump();
         }
         let ty = self.parse_type()?;
+        // D69 constraint: тип variadic-param обязан быть `[]T` (TypeRef::Array).
+        if is_variadic && !matches!(ty, TypeRef::Array(..)) {
+            return Err(Diagnostic::new(
+                format!("variadic-параметр `{}` должен иметь тип `[]T` (массив)", name),
+                ty.span(),
+            ));
+        }
         Ok(Param {
             name,
             ty: ty.clone(),
             span: name_span.merge(ty.span()),
+            is_variadic,
         })
     }
 
@@ -1484,10 +1506,19 @@ impl Parser {
                 }
                 TokenKind::LParen => {
                     self.bump();
-                    let mut args = Vec::new();
+                    let mut args: Vec<CallArg> = Vec::new();
                     self.skip_newlines();
                     while !matches!(self.peek().kind, TokenKind::RParen) {
-                        args.push(self.parse_expr()?);
+                        // Plan 14 Ф.6 (D69): `...expr` в call-args — spread.
+                        // Mirroring parse_array_lit pattern: check DotDotDot
+                        // BEFORE parse_expr (parse_expr не понимает `...`
+                        // как prefix-operator).
+                        if self.eat(&TokenKind::DotDotDot).is_some() {
+                            let inner = self.parse_expr()?;
+                            args.push(CallArg::Spread(inner));
+                        } else {
+                            args.push(CallArg::Item(self.parse_expr()?));
+                        }
                         if self.eat(&TokenKind::Comma).is_some() {
                             self.skip_newlines();
                         } else {

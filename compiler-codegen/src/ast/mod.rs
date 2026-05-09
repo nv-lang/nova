@@ -74,6 +74,11 @@ pub struct Param {
     pub name: String,
     pub ty: TypeRef,
     pub span: Span,
+    /// Plan 14 Ф.6 (D69): `...name Type` — variadic-параметр. Только
+    /// последний param может быть variadic; тип обязан быть `[]T`.
+    /// Caller'ы могут передать N args (которые collected'ятся в []T)
+    /// или `...arr` (spread в variadic position).
+    pub is_variadic: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -348,7 +353,10 @@ pub enum ExprKind {
     // Вызовы
     Call {
         func: Box<Expr>,
-        args: Vec<Expr>,
+        /// Plan 14 Ф.6 (D69): `Vec<CallArg>` где `CallArg::Item(Expr)`
+        /// для обычного аргумента и `CallArg::Spread(Expr)` для `...e`.
+        /// Spread разрешён только в variadic-position (codegen check).
+        args: Vec<CallArg>,
         /// trailing-block: D43
         trailing_block: Option<TrailingBlock>,
     },
@@ -496,6 +504,30 @@ pub enum ArrayElem {
     Item(Expr),
     /// `...expr` spread (D60)
     Spread(Expr),
+}
+
+/// Plan 14 Ф.6 (D69): аргумент вызова. Зеркально к `ArrayElem`.
+/// `Spread` разрешён только в variadic-position на call-site
+/// (codegen в emit_call валидирует).
+#[derive(Debug, Clone)]
+pub enum CallArg {
+    /// Обычный аргумент.
+    Item(Expr),
+    /// `...expr` — spread в variadic-position.
+    Spread(Expr),
+}
+
+impl CallArg {
+    /// Достать выражение независимо от kind'а.
+    pub fn expr(&self) -> &Expr {
+        match self {
+            CallArg::Item(e) | CallArg::Spread(e) => e,
+        }
+    }
+
+    pub fn is_spread(&self) -> bool {
+        matches!(self, CallArg::Spread(_))
+    }
 }
 
 #[derive(Debug, Clone)]
