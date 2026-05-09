@@ -38,6 +38,8 @@ venv/
 
 # Локальные настройки Claude Code
 .claude/settings.local.json
+.claude/worktrees/
+.claude/scheduled_tasks.lock
 
 # Личные рабочие материалы
 docs/.sessions/
