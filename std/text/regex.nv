@@ -623,7 +623,7 @@ export fn Regex @find_all(text str) -> [](int, int) {
                 results.push((start, end))
                 if end > start { start = end } else { start += 1 }
             }
-            None => start += 1
+            None => { start += 1 }
         }
     }
     results
@@ -710,7 +710,7 @@ test "repeat {n}" {
     let r = Regex.compile("a{3}")
     assert(r.matches("aaa"))
     assert(!r.matches("aa"))
-    assert(!r.matches("aaaa")        // в matches требуем полное совпадение)
+    assert(!r.matches("aaaa"))       // в matches требуем полное совпадение
 }
 
 test "repeat {n,m}" {

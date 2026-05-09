@@ -131,9 +131,9 @@ test "try_acquire_n: атомарность" {
     }
 
     with Time = fixed_ms(0) {
-        assert(bucket.try_acquire_n(3)               // ok)
-        assert(!bucket.try_acquire_n(3)               // нет 3, отказ)
-        assert(bucket.try_acquire_n(2)                // ровно 2 — ok)
-        assert(!bucket.try_acquire_n(1)               // empty)
+        assert(bucket.try_acquire_n(3))              // ok
+        assert(!bucket.try_acquire_n(3))             // нет 3, отказ
+        assert(bucket.try_acquire_n(2))              // ровно 2 — ok
+        assert(!bucket.try_acquire_n(1))             // empty
     }
 }

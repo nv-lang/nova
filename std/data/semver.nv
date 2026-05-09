@@ -604,7 +604,7 @@ test "compare: build metadata игнорируется (semver § 10)" {
     let b = Version.from("1.0.0+build.2")
     // Имеют одинаковый precedence, но структурно разные.
     assert(a.eq_precedence(b))
-    assert(!a.eq(b)            // структурное @eq различает build)
+    assert(!a.eq(b))           // структурное @eq различает build
     assert(!a.lt(b))
     assert(!b.lt(a))
 }
@@ -612,8 +612,8 @@ test "compare: build metadata игнорируется (semver § 10)" {
 test "is_stable: только не-pre с major >= 1" {
     assert(Version.from("1.0.0").is_stable())
     assert(Version.from("2.5.10").is_stable())
-    assert(!Version.from("0.9.0").is_stable()       // 0.x.y — нестабильное)
-    assert(!Version.from("1.0.0-alpha").is_stable() // pre-release)
+    assert(!Version.from("0.9.0").is_stable())      // 0.x.y — нестабильное
+    assert(!Version.from("1.0.0-alpha").is_stable()) // pre-release
 }
 
 test "D73: Version.from + .into() работают парно" {

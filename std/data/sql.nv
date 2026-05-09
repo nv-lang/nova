@@ -348,11 +348,7 @@ test "Sql.concat — fragments compose with args preserved" {
 }
 
 test "Sql.builder — fluent WHERE composition" {
-    let q = Sql.builder(sql`SELECT * FROM users WHERE 1 = 1`)
-        .where_eq("status", "active")
-        .where_in("role", ["admin", "user"])
-        .set_suffix(sql`ORDER BY created_at DESC LIMIT 10`)
-        .build()
+    let q = Sql.builder(sql`SELECT * FROM users WHERE 1 = 1`).where_eq("status", "active").where_in("role", ["admin", "user"]).set_suffix(sql`ORDER BY created_at DESC LIMIT 10`).build()
 
     assert(q.template.contains("AND status = ?"))
     assert(q.template.contains("AND role IN (?, ?)"))

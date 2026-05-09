@@ -65,9 +65,10 @@ export fn Ini.parse(s str) Fail[ParseIniError] -> HashMap[str, HashMap[str, str]
                     value_raw
                 }
                 match result.get(current_section) {
-                    Some(mut section_map) => {
-                        section_map.insert(key, value)
-                        result.insert(current_section, section_map)
+                    Some(section_map) => {
+                        let mut sm = section_map
+                        sm.insert(key, value)
+                        result.insert(current_section, sm)
                     }
                     None => ()    // unreachable: создали выше
                 }

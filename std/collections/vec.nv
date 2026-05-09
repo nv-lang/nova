@@ -102,8 +102,8 @@ test "fold sums elements" {
 
 test "any/all on empty array" {
     let v []int = []
-    assert(!v.any((x) => x > 0)              // ни одного → false)
-    assert(v.all((x) => x > 0)                // вакуумная истина → true)
+    assert(!v.any((x) => x > 0))             // ни одного → false
+    assert(v.all((x) => x > 0))               // вакуумная истина → true
 }
 
 test "first/last" {

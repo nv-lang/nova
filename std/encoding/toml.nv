@@ -83,7 +83,7 @@ fn TomlParser mut @advance() -> Option[char] {
     let c = @peek()
     match c {
         Some('\n') => { @line += 1; @col = 1 }
-        Some(_)    => @col += 1
+        Some(_)    => { @col += 1 }
         None       => ()
     }
     if c != None { @pos += 1 }

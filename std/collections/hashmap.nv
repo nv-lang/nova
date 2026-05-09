@@ -445,7 +445,7 @@ test "rehash on growth" {
         m.insert(i, i * 2)
     }
     assert(m.len() == 100)
-    assert(m.capacity() >= 128       // достаточно для 100 при 0.75 load)
+    assert(m.capacity() >= 128)      // достаточно для 100 при 0.75 load
     for i in 0..100 {
         assert(m.get(i) == Some(i * 2))
     }

@@ -23,8 +23,8 @@ module std.collections.queue
 // pop забирает с конца `out`. Когда `out` пуст, переливаем `in` в
 // `out` в обратном порядке.
 export type Queue[T] {
-    mut in  []T
-    mut out []T
+    mut inbox  []T
+    mut outbox []T
 }
 
 
@@ -34,10 +34,10 @@ export type Queue[T] {
 
 // D55: имя Queue[T] из `-> Queue[T]`.
 export fn Queue[T].new() -> Queue[T] =>
-    { in: [], out: [] }
+    { inbox: [], outbox: [] }
 
 export fn Queue[T].with_capacity(cap int) -> Queue[T] =>
-    { in: []T.with_capacity(cap), out: []T.with_capacity(cap) }
+    { inbox: []T.with_capacity(cap), outbox: []T.with_capacity(cap) }
 
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -45,10 +45,10 @@ export fn Queue[T].with_capacity(cap int) -> Queue[T] =>
 // ──────────────────────────────────────────────────────────────────────────
 
 export fn Queue[T] @len() -> int =>
-    @in.len + @out.len
+    @inbox.len + @outbox.len
 
 export fn Queue[T] @is_empty() -> bool =>
-    @in.is_empty && @out.is_empty
+    @inbox.is_empty && @outbox.is_empty
 
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -57,7 +57,7 @@ export fn Queue[T] @is_empty() -> bool =>
 
 // Положить в очередь — всегда в `in`. O(1) амортизированно.
 export fn Queue[T] mut @push(item T) -> () =>
-    @in.push(item)
+    @inbox.push(item)
 
 // Забрать из очереди (FIFO). Если `out` пуст — перелить `in` в
 // обратном порядке. O(1) амортизированно.
@@ -65,35 +65,35 @@ export fn Queue[T] mut @push(item T) -> () =>
 // D55: Some/None в return-position сохранены явно — match-arms с
 // unit-альтернативой, [Q-style-coercion](../spec/open-questions.md).
 export fn Queue[T] mut @pop() -> Option[T] {
-    if @out.is_empty {
+    if @outbox.is_empty {
         // Перелить `in` в `out` в обратном порядке.
         loop {
-            match @in.pop() {
-                Some(x) => @out.push(x)
+            match @inbox.pop() {
+                Some(x) => @outbox.push(x)
                 None    => break
             }
         }
     }
-    @out.pop()
+    @outbox.pop()
 }
 
 // Просмотреть голову без удаления.
 // `last()` — метод-расширение на []T (stdlib_vec.nv через D35).
 export fn Queue[T] @peek() -> Option[T] {
-    if !@out.is_empty {
-        @out.last()
-    } else if !@in.is_empty {
+    if !@outbox.is_empty {
+        @outbox.last()
+    } else if !@inbox.is_empty {
         // Голова находится в `in[0]` (она «дальше всего» от выхода
         // тоже, но ещё не перелита).
-        @in.get(0)
+        @inbox.get(0)
     } else {
         None
     }
 }
 
 export fn Queue[T] mut @clear() -> () {
-    @in.clear()
-    @out.clear()
+    @inbox.clear()
+    @outbox.clear()
 }
 
 
@@ -131,7 +131,7 @@ test "peek doesn't remove" {
     let mut q = Queue[int].new()
     q.push(42)
     assert(q.peek() == Some(42))
-    assert(q.peek() == Some(42)              // повторно — то же значение)
+    assert(q.peek() == Some(42))             // повторно — то же значение
     assert(q.len() == 1)
     assert(q.pop() == Some(42))
     assert(q.peek() == None)

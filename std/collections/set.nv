@@ -124,7 +124,7 @@ export fn Set[T] @iter() => @map.keys()
 test "insert returns true for new, false for existing" {
     let mut s = Set[int].new()
     assert(s.insert(1) == true)
-    assert(s.insert(1) == false      // повтор)
+    assert(s.insert(1) == false)     // повтор
     assert(s.insert(2) == true)
     assert(s.len() == 2)
 }

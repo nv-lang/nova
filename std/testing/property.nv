@@ -90,9 +90,11 @@ export fn assert_prop_msg(cond bool, msg str) Fail[PropertyFailed] -> () {
 //
 // Реализаторы — обычные record'ы или модули. Используют Random
 // эффект через standard handler.
+// NB: bootstrap-parser принимает effect/protocol методы без `@`-префикса.
+// (Spec D35 описывает `@method` для instance, но protocol-form проще.)
 export type Generator[T] protocol {
-    @generate() Random -> T
-    @shrink(value T) -> Iter[T]
+    generate() Random -> T
+    shrink(value T) -> Iter[T]
 }
 
 
@@ -195,11 +197,13 @@ export type ArrayGen[T] {
     readonly max_len int
 }
 
-export fn ArrayGen[T].new(elem Generator[T], max_len int) -> ArrayGen[T] =>
+export fn ArrayGen[T].new(elem Generator[T], max_len int) -> ArrayGen[T] => {
     ArrayGen[T] { elem, max_len }
+}
 
-export fn ArrayGen[T].default(elem Generator[T]) -> ArrayGen[T] =>
+export fn ArrayGen[T].default(elem Generator[T]) -> ArrayGen[T] => {
     ArrayGen[T].new(elem, 32)
+}
 
 export fn ArrayGen[T] @generate() Random -> []T {
     let len = (Random.u64() as int).abs() % (@max_len + 1)
@@ -256,13 +260,11 @@ fn run_once[T](body fn(T) Fail[PropertyFailed] -> (), value T) -> RunResult {
 // рекурсивно: на каждом шаге пробуем все shrink-варианты, берём
 // первый который тоже падает, и шринкаем его дальше. Останавливаемся
 // когда варианты исчерпаны или достигли лимита.
-fn shrink_loop[T](
-    gen Generator[T],
-    body fn(T) Fail[PropertyFailed] -> (),
-    initial T,
-    initial_failure PropertyFailed,
-    max_steps int,
-) -> (T, PropertyFailed) {
+fn shrink_loop[T](gen Generator[T],
+                  body fn(T) Fail[PropertyFailed] -> (),
+                  initial T,
+                  initial_failure PropertyFailed,
+                  max_steps int) -> (T, PropertyFailed) {
     let mut current = initial
     let mut current_failure = initial_failure
     let mut steps = 0
@@ -301,20 +303,16 @@ fn shrink_loop[T](
 //
 // Использует Random эффект из контекста — для детерминизма в CI
 // оборачивай в `with Random = seeded(seed) { property(...) }`.
-export fn property[T](
-    gen Generator[T],
-    body fn(T) Fail[PropertyFailed] -> (),
-) Random Fail[PropertyFailed] -> () {
+export fn property[T](gen Generator[T],
+                      body fn(T) Fail[PropertyFailed] -> ()) Random Fail[PropertyFailed] -> () {
     property_with(gen, body, PropertyConfig.default())
 }
 
 
 // Расширенная версия с явной конфигурацией.
-export fn property_with[T](
-    gen Generator[T],
-    body fn(T) Fail[PropertyFailed] -> (),
-    cfg PropertyConfig,
-) Random Fail[PropertyFailed] -> () {
+export fn property_with[T](gen Generator[T],
+                            body fn(T) Fail[PropertyFailed] -> (),
+                            cfg PropertyConfig) Random Fail[PropertyFailed] -> () {
     for i in 0..cfg.num_tests {
         let value = gen.generate()
         match run_once(body, value) {

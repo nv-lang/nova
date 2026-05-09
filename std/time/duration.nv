@@ -495,9 +495,9 @@ test "measure: длительность action'а" {
 test "elapsed / time_until" {
     with Time = fixed_ms(5000) {
         let earlier = Timestamp.from_unix_secs(2)
-        assert(earlier.elapsed() == 3.seconds()    // 5s - 2s)
+        assert(earlier.elapsed() == 3.seconds())   // 5s - 2s
 
         let later = Timestamp.from_unix_secs(10)
-        assert(later.time_until() == 5.seconds()   // 10s - 5s)
+        assert(later.time_until() == 5.seconds())  // 10s - 5s
     }
 }
