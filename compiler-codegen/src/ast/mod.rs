@@ -130,8 +130,16 @@ pub enum TypeDeclKind {
     Record(Vec<RecordField>),
     /// `type Name | A | B(int) | C { x int }` (D52)
     Sum(Vec<SumVariant>),
-    /// `type Name effect { signatures }`
+    /// `type Name effect { signatures }` — capability с runtime
+    /// vtable + handler-dispatch. Использование в позиции эффекта
+    /// `(...) Eff -> ...` или через handler stack.
     Effect(Vec<EffectMethod>),
+    /// `type Name protocol { signatures }` — структурный контракт
+    /// (D53). Compile-time проверка satisfaction; нет runtime vtable.
+    /// Используется как:
+    ///   - bound в generic params `[T Protocol]` (D72);
+    ///   - тип значения (existential), `fn f(x Hashable) -> ...`.
+    Protocol(Vec<EffectMethod>),
     /// `type NewType u64` — newtype (D52)
     Newtype(TypeRef),
     /// `type Name alias OtherType` (D52)

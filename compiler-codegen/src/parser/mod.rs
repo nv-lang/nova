@@ -555,17 +555,29 @@ impl Parser {
         // `{ fields }` | `| variant | variant` | `TYPE` (newtype) |
         // начинается с `|` для sum.
         //
-        // (TypeDeclKind::Effect содержит методы effect-типа. По D62
-        // protocol-форма синтаксически идентична effect-форме —
-        // различие program-based, type checker'а это касается.
-        // В bootstrap'е оба попадают в TypeDeclKind::Effect.)
+        // Plan 15 D53 strict: protocol/effect — отдельные kind'ы
+        // несмотря на синтаксическое сходство. По D62 тело идентично
+        // (parse_effect_methods переиспользуется), но семантика
+        // разная:
+        //   - effect: capability с runtime vtable + handler-dispatch.
+        //   - protocol: compile-time структурный контракт; usage как
+        //     bound (D72) и тип-значение.
+        // Codegen эмитит vtable только для Effect-kind. BoundCtx
+        // (D72 enforcement) регистрирует только Protocol-kind.
         let kind = match self.peek().kind {
-            TokenKind::KwEffect | TokenKind::KwProtocol => {
+            TokenKind::KwEffect => {
                 self.bump();
                 self.expect(&TokenKind::LBrace)?;
                 let methods = self.parse_effect_methods()?;
                 self.expect(&TokenKind::RBrace)?;
                 TypeDeclKind::Effect(methods)
+            }
+            TokenKind::KwProtocol => {
+                self.bump();
+                self.expect(&TokenKind::LBrace)?;
+                let methods = self.parse_effect_methods()?;
+                self.expect(&TokenKind::RBrace)?;
+                TypeDeclKind::Protocol(methods)
             }
             TokenKind::KwAlias => {
                 self.bump();
