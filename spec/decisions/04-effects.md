@@ -3625,6 +3625,25 @@ effect-list  = type-ref { ',' type-ref }
     прямых эффектов callee'ев.
 - **Спека**: D63 + R6 ссылка на D63.
 
+#### Реализация в bootstrap (2026-05-09, Plan 16 Ф.1-Ф.6)
+
+Compile-time enforcement реализован в `compiler-codegen/src/types/mod.rs`
+через `CapabilityCtx`. Walk модуля проходит fn-bodies + test-bodies со
+state'ом `forbidden_stack: Vec<HashSet<String>>`. На входе/выходе из
+`ExprKind::Forbid { effects, body }` push/pop. На каждом call-site
+union forbidden-стека пересекается с callee.effects → R5.3 error.
+
+Forbid-handler-ban (D63 §3473): `ExprKind::With { bindings, body }`
+проверяет, что устанавливаемые handler'ы не пересекаются с
+forbidden_union. Иначе error «cannot install handler for `X` inside
+`forbid X` block».
+
+Pure-fn (callee.effects пустой) — всегда OK.
+
+Транзитивные эффекты (callee → callee → effect) пока **не trace'ятся**
+(D62 говорит — warning). Закроется после полного effect-row inference
+(отдельный план).
+
 ---
 
 ## D64. `realtime { body }` — гарантия не-приостановки

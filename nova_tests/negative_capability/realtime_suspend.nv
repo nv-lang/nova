@@ -1,0 +1,19 @@
+// EXPECT_COMPILE_ERROR suspend-effect `Net`
+//
+// Plan 16 Ф.3 (D64): вызов fn'а с suspend-effect (Net/Fs/Db/Time/Blocking)
+// внутри realtime-блока — compile error.
+
+module nova_tests.negative_capability.realtime_suspend
+
+type Net effect {
+    fetch(url str) -> str
+}
+
+fn http_get(url str) Net -> str => Net.fetch(url)
+
+test "realtime блокирует http_get" {
+    let _ = realtime {
+        http_get("/api")
+    }
+    assert(true)
+}

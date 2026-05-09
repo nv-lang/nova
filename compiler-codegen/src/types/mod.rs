@@ -136,6 +136,17 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
     let bound_ctx = BoundCtx::build(module);
     bound_ctx.check_module(module, &mut errors);
 
+    // Plan 16 (D63 forbid + D64 realtime): capability enforcement.
+    //
+    // Walk fn bodies + tests, отслеживая forbidden-effects стек +
+    // realtime-флаг. На каждом Call-сайте — проверка intersect'а
+    // callee.effects с forbidden-set; в realtime — Net/Fs/Db/Time
+    // suspend-effects запрещены; в `realtime nogc` — alloc-fn'ы
+    // запрещены. Установка handler'а для forbidden-эффекта внутри
+    // forbid-блока — error.
+    let cap_ctx = CapabilityCtx::build(module);
+    cap_ctx.check_module(module, &mut errors);
+
     if errors.is_empty() {
         Ok(env)
     } else {
@@ -617,6 +628,487 @@ fn pattern_simple_name(p: &Pattern) -> Option<String> {
     match p {
         Pattern::Ident { name, .. } => Some(name.clone()),
         _ => None,
+    }
+}
+
+// ============================================================================
+// Plan 16 (D63 forbid + D64 realtime): capability enforcement.
+// ============================================================================
+
+/// Plan 16: набор "suspend"-эффектов которые нельзя использовать внутри
+/// `realtime { ... }` блоков (D64). Эти эффекты по семантике могут
+/// приостановить fiber'а в production-runtime'е.
+fn realtime_suspend_effect(name: &str) -> bool {
+    matches!(name, "Net" | "Fs" | "Db" | "Time" | "Blocking")
+}
+
+/// Plan 16: hardcoded whitelist callee-name'ов, которые **аллоцируют**
+/// в managed heap (и потому запрещены в `realtime nogc { ... }`).
+/// Идентификация по mangled C-name pattern + по высокоуровневым
+/// `Type.method` (e.g. `[]int.new`, `StringBuilder.new`).
+///
+/// **Не покрывается** этим whitelist'ом:
+/// - User-defined record-конструкторы `Foo.new()` если они alloc'ят
+///   через nova_alloc — codegen всегда heap-боксит record-литералы,
+///   так что фактически любой record-литерал «аллоцирующий». Но
+///   detection требует bigger inference. Conservative — флагуем
+///   только статические fabric-методы.
+/// - `str.from(non-str)` если требует concat'а — пока считаем
+///   все `str.from`-вызовы "alloc'ирующими".
+fn nogc_blacklisted_call(callee_path: &[String]) -> bool {
+    if callee_path.len() != 2 { return false; }
+    let ty = callee_path[0].as_str();
+    let m = callee_path[1].as_str();
+    // Array constructors: `[]T.new` / `[]T.with_capacity`.
+    if ty.starts_with("[]") && matches!(m, "new" | "with_capacity") { return true; }
+    // Builder/buffer constructors.
+    if matches!(ty, "StringBuilder" | "WriteBuffer" | "ReadBuffer")
+        && matches!(m, "new" | "with_capacity" | "from") { return true; }
+    // Channel constructor.
+    if ty == "Channel" && matches!(m, "new" | "with_capacity") { return true; }
+    // Map/Set/Vec/Deque etc.
+    if matches!(ty, "HashMap" | "Set" | "Vec" | "Deque" | "LinkedList" | "Lru" | "BloomFilter")
+        && matches!(m, "new" | "with_capacity") { return true; }
+    // str.from: format/conversion может alloc'ать.
+    if ty == "str" && m == "from" { return true; }
+    false
+}
+
+/// Plan 16: registry для capability enforcement.
+struct CapabilityCtx<'a> {
+    /// Top-level free fn-декларации (для resolve вызова по имени).
+    fn_decls: HashMap<String, &'a FnDecl>,
+    /// Plan 15 reuse: type → method_name → fn-decls.
+    method_table: HashMap<String, HashMap<String, Vec<&'a FnDecl>>>,
+    /// Effect-type name registry (для distinguish'а effect-call vs ordinary).
+    effect_decls: HashMap<String, &'a TypeDecl>,
+}
+
+/// Plan 16: capability state передаётся через walk как mutable.
+/// Push/pop при входе/выходе из forbid/realtime блоков.
+#[derive(Default, Clone)]
+struct CapState {
+    /// Stack forbidden-effects-set'ов от вложенных `forbid` блоков.
+    /// Effect разрешён если он не в **union'е** этих set'ов.
+    /// (Forbid внутри forbid — union, см. D63.)
+    forbidden_stack: Vec<HashSet<String>>,
+    /// True если мы внутри `realtime { ... }` (или `realtime nogc`).
+    /// Suspend-effects (Net/Fs/Db/Time/Blocking) запрещены.
+    realtime_active: bool,
+    /// True если мы внутри `realtime nogc { ... }`. Дополнительно к
+    /// realtime_active запрещены alloc-вызовы.
+    realtime_nogc: bool,
+    /// Stack handlers, установленных через `with X = ... { ... }`.
+    /// Используется для D63 forbid-handler-ban: `with X` внутри
+    /// `forbid X` — compile error.
+    with_handler_stack: Vec<String>,
+}
+
+impl CapState {
+    /// Union forbidden-set'ов всех уровней стека.
+    fn union_forbidden(&self) -> HashSet<String> {
+        let mut out = HashSet::new();
+        for s in &self.forbidden_stack { out.extend(s.iter().cloned()); }
+        out
+    }
+}
+
+impl<'a> CapabilityCtx<'a> {
+    fn build(module: &'a Module) -> Self {
+        let mut fn_decls: HashMap<String, &FnDecl> = HashMap::new();
+        let mut method_table: HashMap<String, HashMap<String, Vec<&FnDecl>>> = HashMap::new();
+        let mut effect_decls: HashMap<String, &TypeDecl> = HashMap::new();
+        for item in &module.items {
+            match item {
+                Item::Type(t) => {
+                    if matches!(t.kind, TypeDeclKind::Effect(_)) {
+                        effect_decls.insert(t.name.clone(), t);
+                    }
+                }
+                Item::Fn(f) => {
+                    if let Some(recv) = &f.receiver {
+                        method_table
+                            .entry(recv.type_name.clone())
+                            .or_default()
+                            .entry(f.name.clone())
+                            .or_default()
+                            .push(f);
+                    } else {
+                        fn_decls.insert(f.name.clone(), f);
+                    }
+                }
+                _ => {}
+            }
+        }
+        CapabilityCtx { fn_decls, method_table, effect_decls }
+    }
+
+    fn check_module(&self, module: &Module, errors: &mut Vec<Diagnostic>) {
+        for item in &module.items {
+            match item {
+                Item::Fn(f) => {
+                    let mut state = CapState::default();
+                    // Plan 16 Ф.5: @realtime атрибут оборачивает body
+                    // в realtime[+nogc] контекст.
+                    match f.realtime_attr {
+                        RealtimeAttr::None => {}
+                        RealtimeAttr::Realtime => state.realtime_active = true,
+                        RealtimeAttr::RealtimeNogc => {
+                            state.realtime_active = true;
+                            state.realtime_nogc = true;
+                        }
+                    }
+                    self.walk_fn_body(f, &mut state, errors);
+                }
+                Item::Test(t) => {
+                    let mut state = CapState::default();
+                    self.walk_block(&t.body, &mut state, errors);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn walk_fn_body(&self, f: &FnDecl, state: &mut CapState, errors: &mut Vec<Diagnostic>) {
+        match &f.body {
+            FnBody::Expr(e) => self.walk_expr(e, state, errors),
+            FnBody::Block(b) => self.walk_block(b, state, errors),
+            FnBody::External => {}
+        }
+    }
+
+    fn walk_block(&self, b: &Block, state: &mut CapState, errors: &mut Vec<Diagnostic>) {
+        for s in &b.stmts {
+            self.walk_stmt(s, state, errors);
+        }
+        if let Some(t) = &b.trailing {
+            self.walk_expr(t, state, errors);
+        }
+    }
+
+    fn walk_stmt(&self, s: &Stmt, state: &mut CapState, errors: &mut Vec<Diagnostic>) {
+        match s {
+            Stmt::Expr(e) => self.walk_expr(e, state, errors),
+            Stmt::Let(d) => self.walk_expr(&d.value, state, errors),
+            Stmt::Assign { target, value, .. } => {
+                self.walk_expr(target, state, errors);
+                self.walk_expr(value, state, errors);
+            }
+            Stmt::Return { value, .. } => {
+                if let Some(v) = value { self.walk_expr(v, state, errors); }
+            }
+            Stmt::Throw { value, .. } => self.walk_expr(value, state, errors),
+            Stmt::Break(_) | Stmt::Continue(_) => {}
+        }
+    }
+
+    fn walk_expr(&self, e: &Expr, state: &mut CapState, errors: &mut Vec<Diagnostic>) {
+        // Сначала проверяем сам узел (call-bound checks), потом
+        // погружаемся внутрь с обновлённым state'ом для блочных
+        // конструкций (forbid/realtime/with).
+        self.check_capabilities_at(e, state, errors);
+        match &e.kind {
+            ExprKind::Forbid { effects, body } => {
+                // Push forbidden-set, walk, pop.
+                let names: HashSet<String> = effects.iter()
+                    .filter_map(|t| match t {
+                        TypeRef::Named { path, .. } if path.len() == 1 => Some(path[0].clone()),
+                        _ => None,
+                    })
+                    .collect();
+                state.forbidden_stack.push(names);
+                self.walk_block(body, state, errors);
+                state.forbidden_stack.pop();
+            }
+            ExprKind::Realtime { nogc, body } => {
+                let prev_active = state.realtime_active;
+                let prev_nogc = state.realtime_nogc;
+                state.realtime_active = true;
+                state.realtime_nogc = state.realtime_nogc || *nogc;
+                self.walk_block(body, state, errors);
+                state.realtime_active = prev_active;
+                state.realtime_nogc = prev_nogc;
+            }
+            ExprKind::With { bindings, body } => {
+                // Plan 16 D63: установка handler'а для forbidden-эффекта
+                // внутри forbid-блока — compile error.
+                let pushed: Vec<String> = bindings.iter()
+                    .filter_map(|b| {
+                        let n = b.effect_name.last()?.clone();
+                        Some(n)
+                    })
+                    .collect();
+                let forbidden = state.union_forbidden();
+                for n in &pushed {
+                    if forbidden.contains(n) {
+                        errors.push(Diagnostic::new(
+                            format!(
+                                "cannot install handler for `{}` inside `forbid {}` block (D63): \
+                                 forbid is impenetrable — code in body cannot escape sandbox \
+                                 via `with X = …`.",
+                                n, n
+                            ),
+                            e.span,
+                        ));
+                    }
+                    state.with_handler_stack.push(n.clone());
+                }
+                self.walk_block(body, state, errors);
+                for _ in &pushed { state.with_handler_stack.pop(); }
+            }
+            ExprKind::Call { func, args, trailing_block } => {
+                self.walk_expr(func, state, errors);
+                for a in args { self.walk_expr(a.expr(), state, errors); }
+                if let Some(tb) = trailing_block {
+                    self.walk_block(&tb.body, state, errors);
+                }
+            }
+            ExprKind::TurboFish { base, .. } => self.walk_expr(base, state, errors),
+            ExprKind::Binary { left, right, .. } => {
+                self.walk_expr(left, state, errors);
+                self.walk_expr(right, state, errors);
+            }
+            ExprKind::Unary { operand, .. } => self.walk_expr(operand, state, errors),
+            ExprKind::Try(inner) => self.walk_expr(inner, state, errors),
+            ExprKind::Coalesce(a, b) => {
+                self.walk_expr(a, state, errors);
+                self.walk_expr(b, state, errors);
+            }
+            ExprKind::As(e, _) => self.walk_expr(e, state, errors),
+            ExprKind::Is(e, _) => self.walk_expr(e, state, errors),
+            ExprKind::Member { obj, .. } => self.walk_expr(obj, state, errors),
+            ExprKind::Index { obj, index } => {
+                self.walk_expr(obj, state, errors);
+                self.walk_expr(index, state, errors);
+            }
+            ExprKind::If { cond, then, else_ } => {
+                self.walk_expr(cond, state, errors);
+                self.walk_block(then, state, errors);
+                if let Some(eb) = else_ {
+                    match eb {
+                        ElseBranch::Block(b) => self.walk_block(b, state, errors),
+                        ElseBranch::If(e) => self.walk_expr(e, state, errors),
+                    }
+                }
+            }
+            ExprKind::IfLet { scrutinee, then, else_, .. } => {
+                self.walk_expr(scrutinee, state, errors);
+                self.walk_block(then, state, errors);
+                if let Some(eb) = else_ {
+                    match eb {
+                        ElseBranch::Block(b) => self.walk_block(b, state, errors),
+                        ElseBranch::If(e) => self.walk_expr(e, state, errors),
+                    }
+                }
+            }
+            ExprKind::Match { scrutinee, arms } => {
+                self.walk_expr(scrutinee, state, errors);
+                for arm in arms {
+                    if let Some(g) = &arm.guard { self.walk_expr(g, state, errors); }
+                    match &arm.body {
+                        MatchArmBody::Expr(e) => self.walk_expr(e, state, errors),
+                        MatchArmBody::Block(b) => self.walk_block(b, state, errors),
+                    }
+                }
+            }
+            ExprKind::Block(b) => self.walk_block(b, state, errors),
+            ExprKind::ArrayLit(elems) => {
+                for el in elems {
+                    match el {
+                        ArrayElem::Item(e) | ArrayElem::Spread(e) => self.walk_expr(e, state, errors),
+                    }
+                }
+            }
+            ExprKind::TupleLit(elems) => {
+                for e in elems { self.walk_expr(e, state, errors); }
+            }
+            ExprKind::RecordLit { fields, .. } => {
+                for f in fields {
+                    if let Some(v) = &f.value { self.walk_expr(v, state, errors); }
+                }
+            }
+            ExprKind::TaggedTemplate { tag, args, .. } => {
+                self.walk_expr(tag, state, errors);
+                for a in args { self.walk_expr(a, state, errors); }
+            }
+            ExprKind::InterpolatedStr { parts } => {
+                for p in parts {
+                    if let InterpStrPart::Expr(e) = p {
+                        self.walk_expr(e, state, errors);
+                    }
+                }
+            }
+            ExprKind::Lambda { body, .. } => self.walk_expr(body, state, errors),
+            ExprKind::Spawn(body) => self.walk_expr(body, state, errors),
+            ExprKind::Supervised(body) | ExprKind::Detach(body) => self.walk_block(body, state, errors),
+            ExprKind::CancelScope { body, .. } => self.walk_block(body, state, errors),
+            ExprKind::ParallelFor { iter, body, .. } => {
+                self.walk_expr(iter, state, errors);
+                self.walk_block(body, state, errors);
+            }
+            ExprKind::For { iter, body, .. } => {
+                self.walk_expr(iter, state, errors);
+                self.walk_block(body, state, errors);
+            }
+            ExprKind::While { cond, body } => {
+                self.walk_expr(cond, state, errors);
+                self.walk_block(body, state, errors);
+            }
+            ExprKind::WhileLet { scrutinee, body, .. } => {
+                self.walk_expr(scrutinee, state, errors);
+                self.walk_block(body, state, errors);
+            }
+            ExprKind::Loop { body } => self.walk_block(body, state, errors),
+            ExprKind::Range { start, end, .. } => {
+                self.walk_expr(start, state, errors);
+                self.walk_expr(end, state, errors);
+            }
+            ExprKind::Throw(e) => self.walk_expr(e, state, errors),
+            ExprKind::Interrupt(opt) => {
+                if let Some(e) = opt { self.walk_expr(e, state, errors); }
+            }
+            // Литералы / ident'ы / handler-литералы — без рекурсии.
+            ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::BoolLit(_)
+            | ExprKind::StrLit(_) | ExprKind::CharLit(_) | ExprKind::UnitLit
+            | ExprKind::Ident(_) | ExprKind::Path(_) | ExprKind::SelfAccess
+            | ExprKind::HandlerLit { .. } => {}
+        }
+    }
+
+    /// Plan 16 Ф.2-Ф.4: проверка capability-rules на конкретном узле.
+    /// Сейчас — только для Call'ов; forbid/realtime/with управляют
+    /// state'ом, не вызывая check'ов на собственном узле.
+    fn check_capabilities_at(&self, e: &Expr, state: &CapState, errors: &mut Vec<Diagnostic>) {
+        let ExprKind::Call { func, .. } = &e.kind else { return; };
+        // Path-form: `Type.method` или `Effect.op`.
+        let path: Vec<String> = match &func.kind {
+            ExprKind::Path(parts) => parts.clone(),
+            ExprKind::Member { obj, name } => {
+                if let ExprKind::Ident(n) = &obj.kind {
+                    vec![n.clone(), name.clone()]
+                } else {
+                    return; // dynamic member-call; не resolve'им
+                }
+            }
+            ExprKind::Ident(n) => vec![n.clone()],
+            _ => return,
+        };
+        // 1. Effect-op call: `Effect.op(...)` где Effect — registered effect-type.
+        if path.len() == 2 {
+            let head = &path[0];
+            if self.effect_decls.contains_key(head) {
+                self.check_forbid_intersection(head, state, e.span, errors);
+                if state.realtime_active && realtime_suspend_effect(head) {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "cannot use suspend-effect `{}` inside `realtime` block (D64): \
+                             {}.{} may suspend the fiber. Hint: extract the effectful work \
+                             out of `realtime` block, or use non-blocking alternative \
+                             (e.g. `Channel.try_recv` instead of `Channel.recv`).",
+                            head, head, &path[1]
+                        ),
+                        e.span,
+                    ));
+                }
+            }
+        }
+        // 2. Free-fn call: lookup callee.effects.
+        if path.len() == 1 {
+            if let Some(callee) = self.fn_decls.get(&path[0]) {
+                self.check_callee_effects(callee, &path[0], state, e.span, errors);
+            }
+        }
+        // 3. Method call: `Type.method` или `obj.method` — lookup в method_table.
+        // (Только receiver-Path формы; instance-method через obj.method
+        // требует type-инференции, отложен.)
+        if path.len() == 2 {
+            if let Some(methods) = self.method_table.get(&path[0]) {
+                if let Some(fns) = methods.get(&path[1]) {
+                    for callee in fns {
+                        self.check_callee_effects(callee, &format!("{}.{}", path[0], path[1]), state, e.span, errors);
+                    }
+                }
+            }
+        }
+        // 4. Plan 16 Ф.4: nogc alloc-fn check.
+        if state.realtime_nogc && nogc_blacklisted_call(&path) {
+            errors.push(Diagnostic::new(
+                format!(
+                    "cannot allocate inside `realtime nogc` block (D64): `{}` allocates \
+                     on managed heap. Hint: use `region {{ ... }}` for arena-allocations, \
+                     or move the allocation outside the `realtime nogc` block.",
+                    path.join(".")
+                ),
+                e.span,
+            ));
+        }
+    }
+
+    /// Plan 16 Ф.2: проверка пересечения callee.effects с union forbidden-стека.
+    fn check_callee_effects(
+        &self,
+        callee: &FnDecl,
+        callee_label: &str,
+        state: &CapState,
+        span: Span,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        // Pure — всегда OK.
+        if callee.effects.is_empty() && state.forbidden_stack.is_empty() && !state.realtime_active {
+            return;
+        }
+        let forbidden = state.union_forbidden();
+        for eff in &callee.effects {
+            let TypeRef::Named { path, .. } = eff else { continue; };
+            if path.is_empty() { continue; }
+            let name = &path[0];
+            // Forbid check.
+            if forbidden.contains(name) {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "function `{}` requires effect `{}`, forbidden by enclosing \
+                         `forbid {}` block (D63). Hint: pure code inside `forbid` is OK; \
+                         to use `{}`, restructure to compute effect-free results inside \
+                         and apply effects outside the sandbox.",
+                        callee_label, name, name, name
+                    ),
+                    span,
+                ));
+            }
+            // Realtime check.
+            if state.realtime_active && realtime_suspend_effect(name) {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "function `{}` requires suspend-effect `{}`, cannot be called \
+                         inside `realtime` block (D64). Hint: realtime guarantees \
+                         no fiber-suspension; effects {} block.",
+                        callee_label, name,
+                        "Net/Fs/Db/Time/Blocking suspend the fiber and are forbidden inside realtime"
+                    ),
+                    span,
+                ));
+            }
+        }
+    }
+
+    /// Plan 16 D63: единичная проверка effect'a против forbidden-стека.
+    fn check_forbid_intersection(
+        &self,
+        eff_name: &str,
+        state: &CapState,
+        span: Span,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        let forbidden = state.union_forbidden();
+        if forbidden.contains(eff_name) {
+            errors.push(Diagnostic::new(
+                format!(
+                    "use of effect `{}` is forbidden by enclosing `forbid {}` block (D63).",
+                    eff_name, eff_name
+                ),
+                span,
+            ));
+        }
     }
 }
 

@@ -1,0 +1,19 @@
+// EXPECT_COMPILE_ERROR cannot install handler for `Counter` inside `forbid Counter`
+//
+// Plan 16 Ф.6 (D63): forbid непреодолим — установка handler'а для
+// forbidden-эффекта внутри forbid-блока компилятор ловит как ошибку.
+
+module nova_tests.negative_capability.forbid_handler_ban
+
+type Counter effect {
+    next() -> int
+}
+
+test "with Counter внутри forbid Counter — error" {
+    let _ = forbid Counter {
+        with c = Counter { next() => 42 } {
+            c.next()
+        }
+    }
+    assert(true)
+}

@@ -70,3 +70,44 @@ test "realtime в expression position" {
     }
     assert(r == 100)
 }
+
+
+// Plan 16: pure-fn внутри forbid — OK (нет effects, нет conflict'а).
+fn pure_double(x int) -> int => x * 2
+
+test "forbid с pure-fn внутри — type-check OK" {
+    let r = forbid Counter, Fail {
+        pure_double(21)
+    }
+    assert(r == 42)
+}
+
+
+// Plan 16 Ф.5: @realtime атрибут на функции (D64 §3697).
+@realtime
+fn rt_compute(n int) -> int {
+    let mut sum = 0
+    let mut i = 0
+    while i < n {
+        sum += i
+        i += 1
+    }
+    sum
+}
+
+test "@realtime attribute — body работает как realtime block" {
+    let s = rt_compute(10)
+    // 0+1+2+...+9 = 45
+    assert(s == 45)
+}
+
+
+// Plan 16 Ф.5 + Ф.4: @realtime nogc — то же + alloc-ban.
+@realtime nogc
+fn rt_nogc_compute(x int, y int) -> int {
+    x + y
+}
+
+test "@realtime nogc attribute — pure body OK" {
+    assert(rt_nogc_compute(7, 8) == 15)
+}

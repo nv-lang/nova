@@ -39,6 +39,26 @@ $inputs | Sort-Object FullName | ForEach-Object {
     }
     if ($Filter -and $display -notlike "*$Filter*") { return }
 
+    # Plan 16 Ф.7: negative-test markers.
+    #
+    # Файл с заголовочным маркером
+    #   // EXPECT_COMPILE_ERROR <pattern>
+    # на одной из первых 30 строк — ожидается **codegen-fail** с
+    # сообщением, содержащим <pattern> (substring case-insensitive).
+    # Если codegen прошёл — это test failure (expected error not raised).
+    # Файл также не компилируется .c → .exe и не запускается.
+    #
+    # Pattern может содержать пробелы — он берётся всё после
+    # `EXPECT_COMPILE_ERROR ` до конца строки.
+    $expect_pattern = $null
+    $head = Get-Content -Path $nv -TotalCount 30 -ErrorAction SilentlyContinue
+    foreach ($ln in $head) {
+        if ($ln -match '//\s*EXPECT_COMPILE_ERROR\s+(.+?)\s*$') {
+            $expect_pattern = $matches[1]
+            break
+        }
+    }
+
     # .c file is emitted next to .nv by the codegen, regardless of source dir.
     $c_file = Join-Path $_.Directory.FullName "$name.c"
     # Уникальный exe name через display (group__file), чтобы избежать
@@ -48,7 +68,31 @@ $inputs | Sort-Object FullName | ForEach-Object {
 
     # Step 1: codegen .nv -> .c
     $cg_out = & $codegen compile $nv 2>&1
-    if ($LASTEXITCODE -ne 0) {
+    $cg_exit = $LASTEXITCODE
+
+    if ($expect_pattern) {
+        # Negative test path: ожидается compile-error.
+        if ($cg_exit -eq 0) {
+            $results += [PSCustomObject]@{
+                Name=$display; Status="NEG-NO-ERROR";
+                Detail="expected `// EXPECT_COMPILE_ERROR $expect_pattern` but codegen succeeded"
+            }
+            $fail++; return
+        }
+        $cg_text = ($cg_out -join " ")
+        if ($cg_text -notmatch [regex]::Escape($expect_pattern)) {
+            $snippet = if ($cg_text.Length -gt 150) { $cg_text.Substring(0,150) } else { $cg_text }
+            $results += [PSCustomObject]@{
+                Name=$display; Status="NEG-WRONG-MSG";
+                Detail="expected pattern '$expect_pattern' not found in: $snippet"
+            }
+            $fail++; return
+        }
+        $results += [PSCustomObject]@{Name=$display; Status="PASS"; Detail="(negative)"}
+        $pass++; return
+    }
+
+    if ($cg_exit -ne 0) {
         $results += [PSCustomObject]@{Name=$display; Status="CODEGEN-FAIL"; Detail=($cg_out -join " " | ForEach-Object { if ($_.Length -gt 100) { $_.Substring(0,100) } else { $_ } })}
         $fail++; return
     }

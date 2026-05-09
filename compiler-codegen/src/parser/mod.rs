@@ -257,8 +257,21 @@ impl Parser {
                 ));
             }
         }
+        // Plan 16 (D64 §3697): `@realtime` / `@realtime nogc` префикс
+        // перед `fn`. Эквивалент оборачивания body в `realtime { ... }`.
+        // Парсим в RealtimeAttr enum, передаём в parse_fn.
+        let realtime_attr = self.parse_realtime_attr()?;
+        if !matches!(realtime_attr, RealtimeAttr::None)
+            && !matches!(self.peek().kind, TokenKind::KwFn)
+        {
+            let span = self.peek().span;
+            return Err(Diagnostic::new(
+                "`@realtime` is only valid before `fn`",
+                span,
+            ));
+        }
         match self.peek().kind {
-            TokenKind::KwFn => Ok(Item::Fn(self.parse_fn(is_export, is_external)?)),
+            TokenKind::KwFn => Ok(Item::Fn(self.parse_fn(is_export, is_external, realtime_attr)?)),
             TokenKind::KwType => Ok(Item::Type(self.parse_type_decl(is_export)?)),
             TokenKind::KwLet => Ok(Item::Let(self.parse_let_decl()?)),
             TokenKind::KwConst => Ok(Item::Const(self.parse_const_decl(is_export)?)),
@@ -276,9 +289,37 @@ impl Parser {
         }
     }
 
+    /// Plan 16 (D64 §3697): parse `@realtime` или `@realtime nogc`
+    /// атрибут перед fn-declaration. Возвращает RealtimeAttr::None
+    /// если префикса нет.
+    fn parse_realtime_attr(&mut self) -> Result<RealtimeAttr, Diagnostic> {
+        if !matches!(self.peek().kind, TokenKind::At) {
+            return Ok(RealtimeAttr::None);
+        }
+        // Look ahead: должно быть `@` затем Ident("realtime").
+        let TokenKind::Ident(ref name) = self.peek_at(1).kind else {
+            return Ok(RealtimeAttr::None);
+        };
+        if name != "realtime" {
+            return Ok(RealtimeAttr::None);
+        }
+        self.bump(); // @
+        self.bump(); // realtime
+        // Optional `nogc` modifier.
+        let nogc = if let TokenKind::Ident(ref n) = self.peek().kind {
+            if n == "nogc" {
+                self.bump();
+                true
+            } else { false }
+        } else { false };
+        // Skip newline после атрибута, чтобы `fn` шёл на следующей строке.
+        self.skip_newlines();
+        Ok(if nogc { RealtimeAttr::RealtimeNogc } else { RealtimeAttr::Realtime })
+    }
+
     // ─── fn ──────────────────────────────────────────────────────────────
 
-    fn parse_fn(&mut self, is_export: bool, is_external: bool) -> Result<FnDecl, Diagnostic> {
+    fn parse_fn(&mut self, is_export: bool, is_external: bool, realtime_attr: RealtimeAttr) -> Result<FnDecl, Diagnostic> {
         let start = self.peek().span;
         self.expect(&TokenKind::KwFn)?;
 
@@ -462,6 +503,7 @@ impl Parser {
             return_type,
             body,
             span: start.merge(end_span),
+            realtime_attr,
         })
     }
 

@@ -49,6 +49,21 @@ pub struct FnDecl {
     pub return_type: Option<TypeRef>,
     pub body: FnBody,
     pub span: Span,
+    /// Plan 16 (D64 sugar §3697): `@realtime` атрибут перед `fn`.
+    /// Эквивалентен оборачиванию body в `realtime { ... }`. Type-checker
+    /// (CapabilityCtx) применяет realtime-проверки ко всему телу fn.
+    pub realtime_attr: RealtimeAttr,
+}
+
+/// Plan 16: вид `@realtime` атрибута на функции (D64 §3697).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RealtimeAttr {
+    /// Без атрибута.
+    None,
+    /// `@realtime` — body обёрнут в `realtime { ... }` контекст.
+    Realtime,
+    /// `@realtime nogc` — body обёрнут в `realtime nogc { ... }`.
+    RealtimeNogc,
 }
 
 /// Receiver метода.
