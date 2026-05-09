@@ -512,6 +512,35 @@ user-defined теги. См. [D48](../03-syntax.md#d48).
 **Отвергнуто.** Создаёт ambiguity со строковыми литералами. Tag
 всегда явный. См. [D48](../03-syntax.md#d48).
 
+### `??=` null-coalescing assignment
+**Отвергнуто.** Десахар `a ??= e` ≡ `a = a ?? e` в JS/TS работает,
+потому что `T | null` — один тип, и `??` возвращает `T | null` (когда
+RHS — тоже `T | null`). В Nova `a` имеет фиксированный тип binding'а
+`Option[T]`, а `??` (D67) **разворачивает** Option в `T`:
+
+```nova
+let mut a Option[int] = None
+let b int = a ?? 5      // ✅ b: int
+
+a ??= 5                  // ❌ десахар: a = a ?? 5 → LHS Option[int], RHS int
+```
+
+Альтернативная семантика «set-if-None» (`a ??= e ≡ if a is None { a =
+Some(e) }`) работала бы, но это **не симметрично** с прочими compound-
+ops (`+=`, `-=`, ...): обычные compound — `a OP= e ≡ a = a OP e`, а
+гипотетический `??=` стал бы исключением с собственной semantics.
+Лишний keyword/синтаксис ради одного редкого паттерна, который и так
+читаемо пишется через `if let`:
+
+```nova
+if let None = a { a = Some(5) }
+// или:
+a = a.or(Some(5))
+```
+
+См. [D67](../04-effects.md#d67) (`??` оператор), [D49](../03-syntax.md#d49)
+(compound-assign).
+
 ---
 
 ## Concurrency

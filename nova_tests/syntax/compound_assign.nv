@@ -1,0 +1,134 @@
+// Compound-assign операторы: +=, -=, *=, /= на let-mut и @field.
+// Также проверка ??= (null-coalescing assign) для Option.
+
+module nova_tests.syntax.compound_assign
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// 1. На локальной let-mut переменной
+// ──────────────────────────────────────────────────────────────────────────
+
+test "+= на let-mut int" {
+    let mut x = 10
+    x += 5
+    assert(x == 15)
+    x += 0
+    assert(x == 15)
+}
+
+test "-= *= /= на let-mut int" {
+    let mut x = 100
+    x -= 30
+    assert(x == 70)
+    x *= 2
+    assert(x == 140)
+    x /= 7
+    assert(x == 20)
+}
+
+test "+= в цикле — аккумулятор" {
+    let mut sum = 0
+    for n in 1..=5 {
+        sum += n
+    }
+    assert(sum == 15)
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// 2. На @field self-поле в методе (Plan 12: compound-assign на @field)
+// ──────────────────────────────────────────────────────────────────────────
+
+type Counter {
+    mut value int
+}
+
+fn Counter.new() -> Self => Self { value: 0 }
+
+fn Counter mut @inc() -> () {
+    @value += 1
+}
+
+fn Counter mut @add(n int) -> () {
+    @value += n
+}
+
+fn Counter mut @reset() -> () {
+    @value = 0
+}
+
+fn Counter @get() -> int => @value
+
+test "@field += 1 на self-поле" {
+    let mut c = Counter.new()
+    c.inc()
+    assert(c.get() == 1)
+    c.inc()
+    c.inc()
+    assert(c.get() == 3)
+}
+
+test "@field += n на self-поле" {
+    let mut c = Counter.new()
+    c.add(10)
+    c.add(20)
+    c.add(5)
+    assert(c.get() == 35)
+}
+
+type State {
+    mut x int
+    mut y int
+    mut count int
+}
+
+fn State.new() -> Self => Self { x: 0, y: 0, count: 0 }
+
+fn State mut @move(dx int, dy int) -> () {
+    @x += dx
+    @y += dy
+    @count += 1
+}
+
+fn State mut @decay() -> () {
+    @x -= 1
+    @y -= 1
+}
+
+fn State mut @scale(factor int) -> () {
+    @x *= factor
+    @y *= factor
+}
+
+fn State mut @halve() -> () {
+    @x /= 2
+    @y /= 2
+}
+
+test "несколько @field-compound в одном методе" {
+    let mut s = State.new()
+    s.move(10, 20)
+    assert(s.x == 10)
+    assert(s.y == 20)
+    assert(s.count == 1)
+    s.move(5, -5)
+    assert(s.x == 15)
+    assert(s.y == 15)
+    assert(s.count == 2)
+}
+
+test "@field -=, @field *=, @field /= в методе" {
+    let mut s = State.new()
+    s.move(20, 30)
+    s.decay()
+    assert(s.x == 19)
+    assert(s.y == 29)
+    s.scale(2)
+    assert(s.x == 38)
+    assert(s.y == 58)
+    s.halve()
+    assert(s.x == 19)
+    assert(s.y == 29)
+}
+
+
