@@ -2841,3 +2841,91 @@ Std-эффект — **нулевой**, и это важный урок:
   оценка ROI: spec-correctness вместо unblock-std.
 - В будущем при оценке «сколько файлов разблокирует фикс» — смотреть
   не только грепом, а **реальное контекстное использование**.
+
+
+================================================================================
+Plan 14 Ф.1 — Option[T] full refactor (2026-05-09, ✅ ЗАКРЫТ)
+================================================================================
+
+**Изначальная задача (узкая):** generalize Iter[T] element-type — заменить
+hardcoded `nova_int` на реальный T в for-loop binding.
+
+**Реальная задача (широкая, как делать прод-grade):** `Option[T]` в
+codegen всегда был `NovaOpt_nova_int` (legacy int-stomp). Чтобы Iter[T]
+работал для любого T (str, bool, byte, tuples), пришлось переписать
+ВСЮ Option-эмиссию.
+
+7 правок в emit_c.rs (~250 строк):
+
+1. `type_ref_to_c(Option[T])` → `NovaOpt_<sanitized T>` (через generic).
+   Generic-erased (type-param без struct-decl) и void* остаются на
+   legacy NovaOpt_nova_int.
+2. **Lazy NovaOpt_<T> typedef через marker+splice**:
+   - В preamble эмитится sentinel `/*__NOVAOPT_TYPEDEFS__*/`.
+   - `register_novaopt_decl` (RefCell<String>) append'ит typedef в
+     registration order — innermost types первыми → topological
+     correct (NovaOpt_X эмитится до NovaOpt_NovaOpt_X).
+   - После `emit_module` финальный `replace(marker, buf)`.
+   - Pre-decl'нутые в `nova_rt/array.h` (nova_int/byte/bool/str/f64)
+     пропускаются — typedef уже в runtime.
+3. **Some(v) / None constructors** → compound literal:
+     `((NovaOpt_<T>){.tag = NOVA_TAG_Option_Some, .value = (v)})`
+     `((NovaOpt_<T>){.tag = NOVA_TAG_Option_None})`
+   T извлекается:
+   - `Some(v)`: тип arg'а через infer_expr_c_type;
+   - `None`: current_fn_return_ty (если NovaOpt_<X>), иначе legacy.
+4. `?`-оператор (`Try`) — typed early-return None compound literal.
+5. **Pattern-match (`pattern_cond` + `pattern_bind_typed`)** —
+   nested-Option (`match Some(Some(Some(n)))`) теперь работает через
+   direct value access (`scr.value.value.value`). Реализовано через
+   temporary registrations в `var_types` (по точной строке field-
+   expr'а), cleanup после recursion'а.
+6. `emit_for` (Iter[T]) — использует `MethodSig.return_c_type` (теперь
+   корректно `NovaOpt_<T>`) для container declaration и binding.
+   Tuple-pattern destructure поддерживает `_NovaTupleN value` (direct),
+   `_NovaTupleN*` pointer (deref'ом), и legacy nova_int box.
+7. `infer_expr_c_type` Some/None — теперь возвращает `NovaOpt_<T>`,
+   не legacy.
+
+**Тесты:** nova_tests/syntax/for_iter_typed.nv — 5 тестов:
+  - Iter[byte] (`@cur += 1` через byte-arithmetic);
+  - Iter[bool] (strict bool-check на binding);
+  - Iter[i32] (narrow-int с negative values);
+  - Iter[str] (struct-typed payload через NovaOpt_nova_str);
+  - Iter[(int,int)] (tuple-pattern destructure).
+
+Бонус: `match_advanced` triple-nested `Some(Some(Some(42)))` теперь
+корректно matches через typed payload (раньше работало через ad-hoc
+`((NovaOpt_nova_int*)(value))` cast'ы).
+
+Прогон: nova_tests **90/90 PASS** (89 baseline + 1 new файл).
+
+**Std/-эффект (smoke):**
+
+Ф.1 закрыла ровно `Option[T]` generalization. Std/ файлы блокированы
+на **других** gap'ах:
+  - set.nv: abstract Nova_Iter* без concrete next (Ф.5 territory).
+  - vec.nv: broken type-name Nova_[]T* (mangling fix).
+  - range.nv: (0..).step_by(3) infer'ится как nova_int (Fail-method
+    return type не propagated).
+  - hashmap.nv: generic-erased K.eq(key) → strict bool-check fail.
+  - diff.nv, bcrypt.nv: infer fallback для нестандартных iter-выражений.
+
+Эти gap'ы — отдельные задачи (generic specialization, mangling, type-
+inference improvements). Ф.1 свою часть закрыла полностью.
+
+Урок:
+- "Делай прод-grade" → когда узкий фикс упирается в архитектурное
+  ограничение (Option всегда NovaOpt_nova_int), правильно сделать
+  ВЕСЬ refactor а не локальный work-around. Локальный путь (cast int
+  в byte/bool) работал бы для primitive scalars, но Iter[str] и
+  Iter[(K,V)] всё равно остались бы broken. Прод-grade путь покрывает
+  всё.
+- Marker+splice pattern для late-emitted typedefs — chistiy подход
+  для зависимостей, обнаруживаемых ходе emit'а. Альтернативой был бы
+  pre-pass для сбора всех TypeRef-ов, но он удвоил бы работу.
+- Topological order через registration-order работает на свойстве
+  recursive type_ref_to_c: inner types регистрируются первыми. Это
+  гарантирует NovaOpt_X эмит'ся до NovaOpt_NovaOpt_X.
+- @cur += 1 (compound assign на @-field) работает после Plan 13
+  bonus'а compound_assign — подтверждено в новом тесте.
