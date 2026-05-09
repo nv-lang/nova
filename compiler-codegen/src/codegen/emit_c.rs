@@ -2644,6 +2644,14 @@ impl CEmitter {
             TypeDeclKind::Effect(methods) => {
                 self.emit_effect_type(&t.name, methods)?;
             }
+            // Plan 15 D53 strict: protocols — compile-time-only
+            // структурные контракты (D72 bound checking). Vtable не
+            // нужен — нет runtime-dispatch'а. Skip emission.
+            // Бонус: попутно фиксит pre-existing codegen-bug, где
+            // Self в protocol-методе ломал vtable (Nova_Self*
+            // undefined). Без vtable type_ref_to_c для protocol-методов
+            // вообще не вызывается.
+            TypeDeclKind::Protocol(_) => {}
         }
         Ok(())
     }

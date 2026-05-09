@@ -53,24 +53,20 @@ fn collect_effect_names(m: &Module) -> HashSet<String> {
 
 /// Собирает имена user-defined protocols: `type X protocol { ... }`.
 /// Также включает встроенные prelude protocols.
+///
+/// Plan 15 D53 strict: после split'а `TypeDeclKind::Protocol(_)` —
+/// scan'имся по нему напрямую (раньше было закомменчено потому что
+/// все protocols/effects попадали в Effect-variant).
 fn collect_protocol_names(m: &Module) -> HashSet<String> {
-    // Bootstrap-парсер представляет `type X protocol { ... }` через
-    // отдельный TypeDeclKind? Проверка в коде ниже — пока через
-    // собирание известных имён.
     let mut names: HashSet<String> = [
         "Hashable", "Ord", "Eq", "Iter", "From", "Into",
         "TryFrom", "TryInto", "ToStr",
     ].iter().map(|s| s.to_string()).collect();
-    // User-defined: parser хранит protocol через TypeDeclKind::Effect
-    // (D53 unification), но различает по флагу `is_effect` который
-    // в bootstrap'е отсутствует. Прокси: скан items не покрывает
-    // user protocols. Достаточно встроенных.
     for item in &m.items {
         if let Item::Type(td) = item {
-            // В bootstrap-AST `protocol` пока эффективно не отличается
-            // от `effect`. Если будущая ревизия добавит TypeDeclKind::Protocol,
-            // здесь проверка обновится.
-            let _ = td;
+            if matches!(td.kind, TypeDeclKind::Protocol(_)) {
+                names.insert(td.name.clone());
+            }
         }
     }
     names
