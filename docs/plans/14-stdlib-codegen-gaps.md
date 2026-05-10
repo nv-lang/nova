@@ -404,16 +404,40 @@ sum_all(1, ...middle, 5)                       // mixed (D60-style)
 declaration + body, regular args, empty (variadic-position пустая),
 spread, mixed, regular+variadic комбинация, instance-method с variadic.
 
-Прогон: nova_tests **91/91 PASS** (90 baseline + 1 new файл).
+Прогон: nova_tests **91/91 PASS** (90 baseline + 1 new файл) **через `run_tests.ps1` (codegen → C → exe)**.
 
 **Std-эффект:** `std/path/path.nv` `Path.join(parts []str)` → `Path.join(...parts []str)`.
 Caller-side оба варианта работают (regular + spread).
 
+**⚠️ Verification gap, обнаруженный 2026-05-10:**
+
+Production-pipeline (`run_tests.ps1` через C-codegen + cl.exe) даёт
+**91/91 PASS**. Но `nova-codegen test variadic.nv` (interp-mode)
+даёт **7/7 FAIL**. Interp-mode не поддерживает variadic: `eval_call`
+не collect'ит args[regular_arity..] в `Value::Array(...)` для
+variadic-fn (codegen этот шаг делает синтезируя ArrayLit; interp
+его не делает).
+
+Я (другой агент) проверял **только** через `run_tests.ps1` и
+интерпретировал PASS как полное закрытие D69. **Это была ошибка
+verification-практики:** Nova имеет два канала исполнения тестов
+(codegen + interp), а я гонял только один. На interp Plan 14 Ф.6
+закрыт **частично**: только `?`-spread ban (compile-error при
+попытке spread). Collection-mode (variadic-fn вызвана с regular
+args) в interp падает.
+
 **Известные ограничения:**
-- Interpreter (`nova-codegen run`) пока не поддерживает spread
-  (compile-error при попытке) — отдельная задача.
-- print/println остаются special-case (миграция на variadic — отдельная задача).
-- Multiple variadic-overloads ambiguous и не поддержаны (только single overload variadic).
+- **Interp-mode не поддерживает variadic collection** — отдельная
+  задача Plan 14 Ф.6-bis (~30 строк в `interp/mod.rs::eval_call`:
+  detection variadic-fn по `FnDecl.params.last().is_variadic`, сбор
+  args[regular_arity..] в `Value::Array(...)` перед binding'ом).
+- print/println остаются special-case (миграция на variadic —
+  отдельная задача).
+- Multiple variadic-overloads ambiguous и не поддержаны (только
+  single overload variadic).
+- **Verification practice TODO:** добавить в CI / pre-commit hook'е
+  параллельный прогон `nova-codegen test` для всех `nova_tests/**.nv`
+  чтобы interp-mode-bug'и ловились.
 
 ---
 
@@ -498,7 +522,7 @@ extension (Ф.7-bis, Ф.8 tuple-types, etc.).
 | **Ф.3** free-fn-as-value | ✅ ЗАКРЫТ | ~95 строк, 5 тестов | — |
 | **Ф.4** fn-в-record | ✅ ЗАКРЫТ | ~50 строк, 4 тестов | — |
 | **Ф.7** `int as char` literal | ✅ ЗАКРЫТ (spec-only) | ~25 строк, 8 тестов | — |
-| **Ф.6** D69 variadic | ✅ ЗАКРЫТ | ~500 строк (с CallArg refactor), 7 тестов | — |
+| **Ф.6** D69 variadic | ⚠️ codegen ЗАКРЫТ, interp partial (Ф.6-bis pending) | ~500 строк (с CallArg refactor), 7 тестов | — |
 | **Ф.5** cross-file resolve | низкий ROI / высокая стоимость | ~500 строк, 1 неделя | Ф.1-Ф.4 |
 
 **Реализованный порядок:** Ф.7 → Ф.1 → Ф.6 (выполнено).

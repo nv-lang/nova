@@ -3246,3 +3246,43 @@ unstaged изменения в WIP-commit `be953d6` ("WIP, не проверен
 - **Path-form variants для call'ов** (Path / Member / Ident) — каждый
   парсер-shape требует своего handler'а в check'ах. Visitor pattern
   плосок, но callee resolution разнообразный.
+
+
+================================================================================
+Plan 14 Ф.6 verification gap (обнаружено 2026-05-10)
+================================================================================
+
+После закрытия Plan 14 Ф.6 (D69 variadic) пользователь обнаружил:
+codegen pipeline (`run_tests.ps1` → C → cl.exe → exe) даёт 91/91
+PASS, но `nova-codegen test variadic.nv` (interp-mode) даёт **7/7
+FAIL**.
+
+**Корень:** interp's `eval_call` не collect'ит args[regular_arity..]
+в Value::Array для variadic-fn. Codegen этот шаг делает синтезируя
+ArrayLit; interp пропускает. Я (другой агент) делал partial shim:
+spread args отвергаются compile-error'ом, но collection-mode не
+реализован.
+
+**Verification miss:** Plan 14 Ф.6 был помечен как ✅ ЗАКРЫТ по
+результату `run_tests.ps1` (codegen pipeline). Я не запустил
+`nova-codegen test` (interp pipeline). Nova имеет два канала
+исполнения тестов; я гонял только один.
+
+**Status update:** Plan 14 Ф.6 → ⚠️ codegen-only ЗАКРЫТ. Interp
+fix вынесен в **Ф.6-bis** (~30 строк в `interp/mod.rs::eval_call`):
+detect variadic-fn по `FnDecl.params.last().is_variadic`, собрать
+positional args в Value::Array.
+
+**Lesson — verification practice:**
+- Nova имеет 2 test-pipeline'а (codegen + interp). Production-codegen
+  + bootstrap-interp.
+- Production CI / pre-commit hook должен гонять оба:
+    + `run_tests.ps1` (current, only codegen).
+    + `cargo run -- test nova_tests/**/*.nv` (interp, missing).
+- Без interp-проверки interp-bug'и проскальзывают (как этот).
+- TODO: добавить interp-pass в pre-commit / CI.
+
+Это **второй verification miss за две сессии** — первый был «парсер
+принимает [T Hashable]» в Plan 15 (план врал, я не проверил
+экспериментом). Common pattern: **проверять premises plan'ов
+эмпирически**, не верить тексту.
