@@ -33,6 +33,7 @@
 | [D69](#d69-variadic-параметры-через-items-t) | Variadic-параметры через `...items []T` |
 | [D83](#d83-keywords-строго-запрещены-как-identifierы) | Keywords строго запрещены как identifier'ы (закрывает Q-keywords-as-fields) |
 | [D88](#d88-default-значения-generic-параметров) | Default-значения generic-параметров: `[T = int]`, `[T Bound = Default]` |
+| [D90](#d90-defer-и-errdefer--scope-level-cleanup-statement) | `defer` и `errdefer` — scope-level cleanup statement |
 
 ---
 
@@ -4050,3 +4051,359 @@ DEFERRED до появления реального consumer'а. Триггер 
 Migration: ~10 примеров `Handler[E]` в spec/, где требуется
 `Handler[E, IRT]` для interrupt-делающих handler'ов. См.
 [D87 миграция](04-effects.md#d87).
+
+---
+
+## D90. `defer` и `errdefer` — scope-level cleanup statement
+
+> **Закрывает** [Q20 «Нужен ли defer?»](../open-questions.md#q20).
+
+### Что
+Два keyword-statement'а для **отложенного выполнения** при выходе из
+текущего scope'а:
+
+1. **`defer <body>`** — выполнить `<body>` при **любом** exit'е из
+   enclosing scope (normal flow, `return`, `throw`, `interrupt`,
+   panic).
+2. **`errdefer <body>`** — выполнить `<body>` **только** при exit'е
+   через ошибку (`throw`/`panic`). При normal exit или `return`
+   `errdefer` **не** выполняется.
+
+Назначение — детерминированный cleanup (close, unlock, rollback)
+в языке без RAII-destructor'ов (D6 managed heap — нет detrministic
+destruction; см. цена [D6](05-memory.md#d6)).
+
+### Правило
+
+#### Грамматика
+
+```
+statement = ...
+          | 'defer'    body
+          | 'errdefer' body
+
+body = expression
+     | block             // { stmt1; stmt2; ... }
+```
+
+`body` — обычное выражение или block. Никаких params, никаких
+`=>` — это **statement**, не closure.
+
+#### Примеры
+
+**Простой `defer`:**
+
+```nova
+fn read_config(path str) Fs Fail -> Config {
+    let file = Fs.open(path)
+    defer file.close()                  // выполнится на exit из fn
+    let raw = file.read_all()
+    Config.parse(raw)
+}
+```
+
+**Block-form:**
+
+```nova
+fn process() Db Log -> () {
+    defer {
+        Log.info("done processing")
+        Metrics.record_completion()
+    }
+    Db.exec(...)
+}
+```
+
+**Несколько `defer` — LIFO (последний defer'нутый — первый выполнится):**
+
+```nova
+fn nested() Fs -> () {
+    defer println("3")          // выполнится последним
+    defer println("2")
+    defer println("1")          // выполнится первым
+    // exit prints: 1, 2, 3
+}
+```
+
+**Scope-level (не function-level):**
+
+```nova
+fn process() Fs Log -> () {
+    let log_file = Fs.open("app.log")
+    defer log_file.close()              // выход из fn
+
+    if condition {
+        let temp = Fs.create_temp()
+        defer temp.cleanup()            // выход из if-блока
+        write_to(temp)
+    }   // <- здесь выполняется temp.cleanup()
+
+    // <- здесь выполняется log_file.close() при exit из fn
+}
+```
+
+**`errdefer` — откат при ошибке:**
+
+```nova
+fn create_user(data UserData) Fail[Db] Db -> User {
+    let user = Db.insert_user(data)
+    errdefer Db.delete_user(user.id)    // откат если что-то дальше упадёт
+
+    let profile = Db.insert_profile(user, data)
+    errdefer Db.delete_profile(profile.id)
+
+    Db.send_welcome(user.email)         // если throw — оба delete сработают
+                                         // в LIFO порядке (delete_profile, потом delete_user)
+
+    user                                 // normal exit — errdefer'ы НЕ выполняются
+}
+```
+
+**Комбинированно — `defer` + `errdefer`:**
+
+```nova
+fn transaction() Fail Db -> Receipt {
+    Db.begin()
+    defer Log.info("transaction finished")    // ВСЕГДА
+    errdefer Db.rollback()                     // только при throw
+
+    let r = do_work()
+    Db.commit()
+    r
+}
+// normal exit: Db.commit() → Log.info(...)
+// throw exit:  Db.rollback() → Log.info(...)
+```
+
+#### Семантика
+
+**1. Scope-level.** `defer`/`errdefer` привязаны к **enclosing
+block** (function body, `if`/`else` branch, `for` body, `with`-block,
+`supervised`-body, etc.). Выполняются при exit'е именно этого scope'а.
+
+**2. LIFO order.** Несколько `defer`'ов выполняются в обратном
+порядке регистрации (последний `defer` — первый выполняется).
+
+**3. Eager argument evaluation.** Аргументы `defer`-выражения
+вычисляются **в момент `defer`**, тело — откладывается:
+
+```nova
+let i = 5
+defer println(i)            // i = 5 захвачено сейчас
+let i_new = 100             // другая переменная (immutable)
+// exit prints: 5
+```
+
+Для **mut**-переменной с теми же captures-правилами:
+
+```nova
+let mut counter = 0
+defer println(counter)      // counter — захвачен по reference (как closure)
+counter = 42
+// exit prints: 42
+```
+
+Это симметрично closure-семантике D32 (managed heap, mut-captures
+through reference).
+
+**4. Defer body — infallible.** Тело `defer`/`errdefer` **не должно**
+иметь `Fail`-эффект:
+
+```nova
+defer file.close()                              // ✅ если close infallible
+defer parse_config()?                            // ❌ ? requires Fail
+```
+
+Если cleanup может упасть — программист **обязан** suppress'ить:
+
+```nova
+defer {
+    with Fail = handler {
+        fail(e) { Log.error("cleanup failed: ${e}"); interrupt () }
+    } {
+        risky_cleanup()
+    }
+}
+```
+
+Это сознательно — language **запрещает** скрытое поглощение ошибок.
+Если упало — программист видит в коде.
+
+**5. Defer body — no-suspend.** В теле `defer`/`errdefer` **запрещены**
+suspend-операции: `Time.sleep`, `Net.*`, `Fs.*` (если читают/пишут
+большие объёмы), `Channel.recv` (blocking-форма), `parallel for`,
+`spawn`. Это compile error.
+
+Причина — cleanup должен быть **быстрым**. Suspend в defer делает
+exit-семантику scope'а непредсказуемой.
+
+Sync-операции с эффектами (`Db.exec` для быстрого SQL, `Log.info`)
+— разрешены.
+
+**6. `return` / `throw` / `break` / `continue` в defer-body — запрещены.**
+Нельзя exit'ить enclosing scope через defer — defer **сам** часть
+exit-процесса. Compile error.
+
+**7. `errdefer` запускается на:**
+- `throw err` (любой `Fail[E]`).
+- `panic(msg)` — пока fiber не умер.
+- `interrupt v` — **нет**, это normal control flow (с точки зрения
+  errdefer scope'а — exit «успешный»).
+- `exit(code, msg)` — **нет**, exit гасит процесс без cleanup'ов
+  (D13).
+
+**8. `defer` запускается на:**
+- Normal exit (последнее выражение block'а вычислено).
+- `return`.
+- `throw err`.
+- `panic(msg)` — пока fiber не умер.
+- `interrupt v` — да (exit scope'а, неважно как).
+- `exit(code, msg)` — **нет** (D13: exit без cleanup'ов).
+
+### Почему
+
+#### Зачем нужен defer в Nova
+
+В Nova **нет deterministic destructor'ов** ([D6](05-memory.md#d6):
+managed heap + GC). RAII Rust/C++ невозможен. Без `defer` resource
+cleanup (file.close, unlock, rollback) пишется через **handler-блоки**
+с copy-pasted error-paths:
+
+```nova
+// Без defer — verbose:
+fn create_user(data UserData) Fail Db -> User {
+    let user = Db.insert_user(data)
+    let mut profile_id Option[int] = None
+    with Fail = handler Fail {
+        fail(e) {
+            if let Some(pid) = profile_id { Db.delete_profile(pid) }
+            Db.delete_user(user.id)
+            throw e
+        }
+    } {
+        let profile = Db.insert_profile(user, data)
+        profile_id = Some(profile.id)
+        Db.send_welcome(user.email)
+    }
+    user
+}
+```
+
+Десятки строк boilerplate. С `defer`/`errdefer` — 6 строк
+(см. пример выше). Это **значительная** экономия.
+
+#### Прецеденты
+
+| Язык | Конструкция | Scope-level? | errdefer? |
+|---|---|---|---|
+| Go | `defer expr` | function-level | нет |
+| Swift | `defer { body }` | scope-level | нет |
+| Zig | `defer expr; errdefer expr` | scope-level | **да** |
+| D | `scope(exit/success/failure) expr` | scope-level | да + extra |
+
+Nova берёт **Zig-style**: scope-level + `errdefer`. Не function-level
+(Go), потому что Nova имеет вложенные scope'ы с богатой семантикой
+(`if`, `for`, `with`, `supervised`, `cancel_scope`) — function-level
+ограничивал бы. Не D-style `scope(success)` — редко нужно, можно
+писать обычным кодом перед exit'ом.
+
+#### Почему scope-level, не function-level
+
+Function-level (Go) накапливает все defer'ы в стеке функции:
+```go
+func f() {
+    if cond {
+        temp := create()
+        defer temp.cleanup()        // выполнится в КОНЦЕ func, не на exit if
+    }
+    long_running_work()              // temp висит всё это время
+}
+```
+
+В Nova scope-level позволяет **локальный** cleanup, что часто
+естественнее.
+
+#### Почему eager argument evaluation
+
+Если бы аргументы вычислялись lazy:
+```nova
+let mut i = 0
+defer println(i)
+i = 42
+// exit: print 42 (хотел печатать 0?)
+```
+
+Это **regular** для closure-семантики, но **сюрприз** для programmer'а
+ожидающего «defer фиксирует значение тогда же».
+
+Eager arguments + lazy closures (через captures) — баланс. Это путь
+Go (которому 15 лет программистской практики симпатизируют).
+
+#### Почему infallible body
+
+Допустим, defer-body может падать:
+```nova
+fn process() Fail -> () {
+    defer file.close()              // что если close бросает?
+    throw OrderError
+}
+// exit: throw OrderError → cleanup → file.close throws → ???
+```
+
+Double-throw — невозможно представить корректно. Языки решают
+по-разному (suppress, abort, accumulate exceptions). Все плохо.
+
+Nova **запрещает** failable cleanup — программист обязан handle
+явно. Это согласовано с D40 «один очевидный путь».
+
+#### Почему no-suspend
+
+`defer Time.sleep(1.second())` в exit-path означает scope живёт
+лишнюю секунду. Это catastrophic для structured concurrency: parent
+scope ждёт defer'ов всех детей, scheduling непредсказуем.
+
+Принцип «cleanup быстрый» защищает от accidental hangs.
+
+### Что отвергнуто
+
+- **Function-level defer (Go-style)** — слабее scope-level, ограничивает
+  локальный cleanup.
+- **`successdefer`** (D `scope(success)`) — редкий case, обычный код
+  перед exit покрывает.
+- **`defer` без `errdefer`** — `errdefer` критичен для transactions,
+  без него boilerplate тот же что и без `defer`. Включаем сразу.
+- **Lazy argument evaluation** — surprise factor, eager — стандарт
+  Go/Swift/Zig/D.
+- **Failable defer body** — double-throw невозможно сделать корректно.
+- **`defer return X`** — нельзя hijack exit-значение через defer.
+- **`recover` (Go)** — поглощение panic из defer. Сложная семантика,
+  не нужно в Nova (panic — смерть fiber'а, D13).
+
+### Связь
+
+- [D6](05-memory.md#d6) — managed heap без RAII, мотивирует
+  потребность в `defer`.
+- [D13](08-runtime.md#d13) — `panic` / `exit` семантика. `defer`
+  выполняется при panic пока fiber жив; **не** выполняется при
+  `exit` (D13: exit гасит процесс без cleanup'ов).
+- [D22](#d22-closure-light-и-full-fn) — closure семантика; defer
+  использует те же mut-capture правила.
+- [D32](02-types.md#d32) — managed-heap captures, base для defer
+  captures.
+- [D85](04-effects.md#d85) — `?`/`!!`; в теле defer запрещены (требуют
+  `Fail`, defer body infallible).
+- [D91](06-concurrency.md#d91) — Channel revision; defer `tx.close()`
+  — main use-case для defer в concurrency.
+- [Q20](../open-questions.md#q20) — закрыто этим D-блоком.
+
+### Bootstrap-status
+
+- 🟡 **Не реализовано.** Spec фиксирует семантику. Реализация
+  parser/codegen — отдельный план (Plan 21+).
+- Парсер: keyword `defer` / `errdefer`, statement-level.
+- Type-checker: проверка infallible body (no `Fail`), no-suspend,
+  no-return/throw/break/continue из body.
+- Codegen: scope-stack defer-callbacks, on-exit invocation в LIFO.
+  Для `errdefer` — invoke только если exit через `throw` (через
+  NovaFailFrame catch).
+

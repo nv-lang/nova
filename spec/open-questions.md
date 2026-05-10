@@ -910,7 +910,15 @@ weak'ом помечается противоположная сторона. А
 
 ---
 
-## Q20. Нужен ли `defer`?
+## Q20. Нужен ли `defer`? ✅ ЗАКРЫТО (2026-05-10) [D90](decisions/03-syntax.md#d90)
+
+> **Закрыт D90** (2026-05-10): добавлены `defer` и `errdefer` как
+> scope-level cleanup statement'ы. Семантика — Zig-style:
+> scope-level (не function-level), LIFO, eager arguments, infallible
+> body, no-suspend. `errdefer` запускается только на throw/panic-exit.
+> Решение мотивировано отсутствием RAII в Nova ([D6](decisions/05-memory.md#d6)
+> managed heap) — без `defer` resource cleanup пишется через
+> handler-блоки, что многословно.
 
 **Контекст.** Слово `defer` присутствует в подсветке VSCode-расширения
 ([editors/vscode/syntaxes/nova.tmLanguage.json](../editors/vscode/syntaxes/nova.tmLanguage.json),
