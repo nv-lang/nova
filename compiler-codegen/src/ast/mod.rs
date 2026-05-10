@@ -109,13 +109,18 @@ pub struct Param {
 pub struct GenericParam {
     pub name: String,
     pub bound: Option<TypeRef>,
+    /// Plan 19 C10 (D88): default-значение generic-параметра.
+    /// Используется когда вызывающий код не указал T явно и
+    /// inference из аргументов не дал результат. Для `[T = f64]`
+    /// или `[T Bound = Default]`.
+    pub default: Option<TypeRef>,
     pub span: Span,
 }
 
 impl GenericParam {
     /// Helper для legacy кода: если bound не нужен.
     pub fn unbounded(name: String, span: Span) -> Self {
-        Self { name, bound: None, span }
+        Self { name, bound: None, default: None, span }
     }
 }
 

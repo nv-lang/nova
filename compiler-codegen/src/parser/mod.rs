@@ -1008,22 +1008,56 @@ impl Parser {
         self.skip_newlines();
         while !matches!(self.peek().kind, TokenKind::RBracket) {
             let (name, name_span) = self.parse_ident()?;
-            // Bound: если следующий токен — не `,` и не `]`, парсим как тип.
-            let bound = if matches!(self.peek().kind, TokenKind::Comma | TokenKind::RBracket) {
+            // Bound: если следующий токен — не `,`, `]`, `=`, парсим как тип.
+            let bound = if matches!(
+                self.peek().kind,
+                TokenKind::Comma | TokenKind::RBracket | TokenKind::Eq
+            ) {
                 None
             } else {
                 Some(self.parse_type()?)
             };
-            let end_span = bound.as_ref().map(|t| t.span()).unwrap_or(name_span);
+            // Plan 19, C10 (D88): default-значение generic'а через `=`.
+            // Грамматика: `name [bound] [= default]`. Если `=` после
+            // bound (или после name если bound отсутствует) — парсим
+            // default-тип.
+            let default = if self.eat(&TokenKind::Eq).is_some() {
+                Some(self.parse_type()?)
+            } else {
+                None
+            };
+            let end_span = default
+                .as_ref()
+                .map(|t| t.span())
+                .or_else(|| bound.as_ref().map(|t| t.span()))
+                .unwrap_or(name_span);
             params.push(GenericParam {
                 name,
                 bound,
+                default,
                 span: name_span.merge(end_span),
             });
             if self.eat(&TokenKind::Comma).is_none() {
                 break;
             }
             self.skip_newlines();
+        }
+        // D88 constraint: параметры с default'ом должны идти после
+        // обязательных. Проверяем после сборки.
+        let mut seen_default = false;
+        for p in &params {
+            if p.default.is_some() {
+                seen_default = true;
+            } else if seen_default {
+                return Err(Diagnostic::new(
+                    format!(
+                        "generic-параметр без default'а `{}` следует после параметра с default — \
+                         параметры с default'ом должны идти последними (D88)",
+                        p.name
+                    ),
+                    p.span,
+                ));
+            }
         }
         self.expect(&TokenKind::RBracket)?;
         Ok(params)
@@ -1046,6 +1080,13 @@ impl Parser {
                         }
                     ),
                     b.span(),
+                ));
+            }
+            if let Some(d) = p.default {
+                return Err(Diagnostic::new(
+                    "generic default не разрешён в receiver/instantiation context — \
+                     defaults допустимы только в declaration `[T = Default]` (D88)".to_string(),
+                    d.span(),
                 ));
             }
             out.push(TypeRef::Named {
@@ -4071,6 +4112,87 @@ mod tests {
         assert_eq!(m.items.len(), 1);
         let Item::Fn(f) = &m.items[0] else { panic!() };
         assert_eq!(f.name, "foo");
+    }
+
+    // ─── Plan 19, C10 (D88): default generic params ───────────────
+
+    #[test]
+    fn generic_default_simple() {
+        let m = parse_or_panic(
+            "fn run[T = int](a T) -> T => a\n"
+        );
+        let Item::Fn(f) = &m.items[0] else { panic!() };
+        assert_eq!(f.generics.len(), 1);
+        assert_eq!(f.generics[0].name, "T");
+        assert!(f.generics[0].default.is_some());
+    }
+
+    #[test]
+    fn generic_default_with_bound() {
+        let m = parse_or_panic(
+            "fn run[T Numeric = f64](a T) -> T => a\n"
+        );
+        let Item::Fn(f) = &m.items[0] else { panic!() };
+        assert_eq!(f.generics.len(), 1);
+        assert!(f.generics[0].bound.is_some());
+        assert!(f.generics[0].default.is_some());
+    }
+
+    #[test]
+    fn generic_default_must_be_after_required() {
+        // [T = int, U] — error: required after default.
+        let result = parse("fn bad[T = int, U](x T, y U) -> T => x\n");
+        assert!(result.is_err(), "params with default must precede defaults");
+        let err = result.unwrap_err();
+        assert!(
+            err.message.contains("default"),
+            "error should mention default ordering, got: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn generic_default_on_type() {
+        let m = parse_or_panic(
+            "type Complex[T = f64] { re T, im T }\n"
+        );
+        let Item::Type(t) = &m.items[0] else { panic!() };
+        assert_eq!(t.generics.len(), 1);
+        assert!(t.generics[0].default.is_some());
+    }
+
+    // ─── Plan 19, C9 (D87): Handler[E, IRT] ──────────────────────
+
+    #[test]
+    fn handler_two_param_generic() {
+        // `Handler[Logger, int]` — двухпараметрический generic
+        // (E + IRT). Парсер trustы любое количество type-args через
+        // обычный type-parsing path.
+        let m = parse_or_panic(
+            "fn make_h() -> Handler[Logger, int] => some_handler\n"
+        );
+        let Item::Fn(f) = &m.items[0] else { panic!() };
+        let Some(TypeRef::Named { path, generics, .. }) = &f.return_type else {
+            panic!("expected named return type, got {:?}", f.return_type);
+        };
+        assert_eq!(path, &vec!["Handler".to_string()]);
+        assert_eq!(generics.len(), 2);
+    }
+
+    #[test]
+    fn handler_single_param_default_irt() {
+        // `Handler[E]` ≡ `Handler[E, Never]` через D88 default.
+        // Парсится как одноаргументный generic (default подставляется
+        // в monomorphization, а не на parse-стадии).
+        let m = parse_or_panic(
+            "fn make_h() -> Handler[Logger] => some_handler\n"
+        );
+        let Item::Fn(f) = &m.items[0] else { panic!() };
+        let Some(TypeRef::Named { path, generics, .. }) = &f.return_type else {
+            panic!()
+        };
+        assert_eq!(path, &vec!["Handler".to_string()]);
+        assert_eq!(generics.len(), 1);
     }
 
     // ─── Plan 19, C4: trailing parsing ─────────────────────────────
