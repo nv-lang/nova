@@ -22,14 +22,16 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use value::*;
 
-/// Plan 19, C4: конвертирует новый `Trailing` в legacy `TrailingBlock`
-/// для interpreter eval-path'а (старый eval_call принимает старый тип).
+/// Plan 19, C4-C5: конвертирует `Trailing::Block` /
+/// `Trailing::LegacyBlockWithParams` в legacy `TrailingBlock` для
+/// interpreter eval-path'а (старый `eval_call` принимает старый тип).
 ///
 /// - `Trailing::Block(b)` → `TrailingBlock { params: [], body: b }`.
 /// - `Trailing::LegacyBlockWithParams(tb)` → возвращает копию `tb`.
-/// - `Trailing::Fn(_)` → `None`. Семантику trailing-fn в interp
-///   реализует C5; до этого парсер может произвести `Trailing::Fn`,
-///   но runtime упадёт с `unreachable!()` в eval_call (для testing).
+/// - `Trailing::Fn(_)` → **не должен попадать сюда**: C5 конвертирует
+///   trailing-fn в synthetic `ExprKind::ClosureFull` ещё до вызова
+///   этого helper'а (см. Call eval branch). Возвращаем `None`
+///   как defensive fallback (не должно срабатывать в нормальном flow).
 fn trailing_to_legacy_for_interp(t: &crate::ast::Trailing) -> Option<crate::ast::TrailingBlock> {
     match t {
         crate::ast::Trailing::Block(b) => Some(crate::ast::TrailingBlock {
@@ -38,13 +40,7 @@ fn trailing_to_legacy_for_interp(t: &crate::ast::Trailing) -> Option<crate::ast:
             span: b.span,
         }),
         crate::ast::Trailing::LegacyBlockWithParams(tb) => Some((**tb).clone()),
-        crate::ast::Trailing::Fn(_) => {
-            // Plan 19, C5 wires это. Сейчас (C4) trailing-fn производит
-            // парсер, но в runtime не доходит — существующие тесты не
-            // используют новый синтаксис. Если сюда дойдёт — вылетит
-            // unreachable, что и ловит regression.
-            None
-        }
+        crate::ast::Trailing::Fn(_) => None,
     }
 }
 
@@ -370,20 +366,39 @@ impl Interpreter {
                 trailing,
             } => {
                 // Plan 14 Ф.6-bis (D69): handle spread + variadic в interp.
-                // Plan 19, C4: trailing теперь enum (Block | Fn |
-                // LegacyBlockWithParams). Конвертируем в legacy
-                // TrailingBlock для существующего eval_call (он
-                // ожидает старый тип). После C5 (interp eval для
-                // ClosureFull) trailing-fn получит свой path.
+                // Plan 19, C5: trailing разбираем здесь же.
                 //
-                // Для текущей фазы (C4) trailing-fn заворачивается в
-                // closure и передаётся как обычный args-element. Это
-                // даст функциональную эквивалентность со старым
-                // механизмом.
-                let legacy_tb = trailing
-                    .as_ref()
+                // Случаи:
+                // - `Trailing::Block` / `LegacyBlockWithParams` —
+                //   передаются в legacy `eval_call` через старый
+                //   `TrailingBlock` (тот сам создаст Closure-value
+                //   и добавит в args).
+                // - `Trailing::Fn` — закрытие создаётся прямо здесь
+                //   и добавляется в args как обычный CallArg::Item
+                //   (новый Expr с ExprKind::ClosureFull). Затем eval
+                //   через тот же путь без trailing.
+                //
+                // Pre-rewrite: если Trailing::Fn — конвертируем в
+                // synthetic ClosureFull-аргумент и удаляем trailing.
+                let (effective_args, effective_trailing): (Vec<CallArg>, Option<&crate::ast::Trailing>) =
+                    if let Some(crate::ast::Trailing::Fn(sb)) = trailing.as_ref() {
+                        // Сборка synthetic Expr с ClosureFull.
+                        let sb_clone = sb.clone();
+                        let closure_expr = Expr::new(
+                            ExprKind::ClosureFull(sb_clone),
+                            sb.span,
+                        );
+                        let mut args_extended = args.clone();
+                        args_extended.push(CallArg::Item(closure_expr));
+                        (args_extended, None)
+                    } else {
+                        (args.clone(), trailing.as_ref())
+                    };
+
+                let legacy_tb = effective_trailing
                     .and_then(trailing_to_legacy_for_interp);
 
+                let args = &effective_args;
                 if !args.iter().any(|a| a.is_spread()) {
                     let plain: Vec<Expr> = args.iter().map(|a| a.expr().clone()).collect();
                     self.eval_call(func, &plain, legacy_tb.as_ref(), env, expr.span)
@@ -633,15 +648,53 @@ impl Interpreter {
                 };
                 Ok(Flow::Value(Value::Closure(Rc::new(closure))))
             }
-            // Plan 19, C1: новые closure-узлы добавлены в AST. Парсер
-            // ещё их не создаёт (C2/C3 будут парсить `|x|` и `fn(...)`).
-            // Реализация interp eval — фаза C5.
-            ExprKind::ClosureLight { .. } | ExprKind::ClosureFull(_) => {
-                unreachable!(
-                    "closure-light / closure-full should not reach interp \
-                     in Plan 19 dual-mode C1 — parser does not produce these \
-                     nodes yet (C2/C3 will enable them, C5 wires interp)"
-                )
+            // Plan 19, C5: closure-light eval.
+            // `|x| body` — создаёт `Closure` runtime-value с
+            // captured env. Тело — bare expression или block;
+            // оба покрыты `ClosureBody` (общий enum в AST).
+            //
+            // Receiver (`@`) захватывается из env как у старой Lambda
+            // — для closure'ов внутри методов.
+            ExprKind::ClosureLight { params, body } => {
+                let closure = Closure {
+                    params: params.iter().map(|p| p.name.clone()).collect(),
+                    body: body.clone(),
+                    env: env.clone(),
+                    receiver: env.lookup("@"),
+                    // closure-light не поддерживает variadic
+                    // (D69 — variadic только в named fn / closure-full).
+                    variadic_last: false,
+                };
+                Ok(Flow::Value(Value::Closure(Rc::new(closure))))
+            }
+            // Plan 19, C5: closure-full eval.
+            // `fn(x int) Effects -> R body` — то же что named fn
+            // без имени. Параметры извлекаются по именам (типы
+            // erasure'ятся в interp). Тело — `FnBody::Expr` или
+            // `FnBody::Block`, конвертируется в `ClosureBody`.
+            //
+            // Variadic поддерживается (D69).
+            ExprKind::ClosureFull(sb) => {
+                let body = match &sb.body {
+                    FnBody::Expr(e) => ClosureBody::Expr(Box::new(e.clone())),
+                    FnBody::Block(b) => ClosureBody::Block(b.clone()),
+                    FnBody::External => unreachable!(
+                        "closure-full cannot be `external` — only named fn"
+                    ),
+                };
+                let variadic_last = sb
+                    .params
+                    .last()
+                    .map(|p| p.is_variadic)
+                    .unwrap_or(false);
+                let closure = Closure {
+                    params: sb.params.iter().map(|p| p.name.clone()).collect(),
+                    body,
+                    env: env.clone(),
+                    receiver: env.lookup("@"),
+                    variadic_last,
+                };
+                Ok(Flow::Value(Value::Closure(Rc::new(closure))))
             }
             ExprKind::Block(b) => self.exec_block_flow(b, env),
             ExprKind::ArrayLit(elems) => {

@@ -3788,6 +3788,42 @@ impl CEmitter {
                     };
                     self.fn_param_sigs.insert(binding.clone(), (param_c_tys, ret_c));
                 }
+                // Plan 19, C5: closure-light в let-биндинге. Параметры
+                // untyped, типы выводятся из контекста. Bootstrap — без
+                // глубокого inference: если есть `let f fn(...) -> R = |x|...`
+                // аннотация, берём типы оттуда; иначе все params/ret
+                // дефолтятся в nova_int. Это позволяет `let zero = || 0;
+                // zero()` корректно резолвиться через NOVA_CLOS_CALL_*.
+                if let ExprKind::ClosureLight { params, .. } = &decl.value.kind {
+                    let arity = params.len();
+                    let (param_c_tys, ret_c) = if let Some(TypeRef::Func { params: anno_params, return_type: anno_ret, .. }) = decl.ty.as_ref() {
+                        let ptys: Vec<String> = anno_params.iter()
+                            .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".into()))
+                            .collect();
+                        let rty = anno_ret.as_ref()
+                            .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".into()))
+                            .unwrap_or_else(|| "nova_int".into());
+                        (ptys, rty)
+                    } else {
+                        // Без annotation: дефолт nova_int для arity и
+                        // ret. Bidirectional inference из first-use —
+                        // C6 фаза Plan 19; здесь — bootstrap fallback.
+                        let ptys: Vec<String> = (0..arity).map(|_| "nova_int".to_string()).collect();
+                        (ptys, "nova_int".to_string())
+                    };
+                    self.fn_param_sigs.insert(binding.clone(), (param_c_tys, ret_c));
+                }
+                // Plan 19, C5: closure-full в let-биндинге. Типы
+                // параметров и return явные — берём из FnSigBody.
+                if let ExprKind::ClosureFull(sb) = &decl.value.kind {
+                    let param_c_tys: Vec<String> = sb.params.iter()
+                        .map(|p| self.type_ref_to_c(&p.ty).unwrap_or_else(|_| "nova_int".into()))
+                        .collect();
+                    let ret_c = sb.return_type.as_ref()
+                        .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".into()))
+                        .unwrap_or_else(|| "nova_unit".into());
+                    self.fn_param_sigs.insert(binding.clone(), (param_c_tys, ret_c));
+                }
                 // If RHS is a call to a function that returns fn(...), propagate closure sig to binding
                 if let ExprKind::Call { func, args, .. } = &decl.value.kind {
                     // D38: turbofish прозрачен — смотрим под него.
@@ -4144,11 +4180,26 @@ impl CEmitter {
             }
 
             ExprKind::Call { func, args, trailing } => {
-                // Plan 19, C4: trailing-конструкция теперь enum
-                // (Block | Fn | LegacyBlockWithParams). Codegen для
-                // trailing-fn реализуется в C5. До этого конвертируем
-                // в legacy TrailingBlock через helper для совместимости
-                // с emit_call_with_trailing (он принимает старый тип).
+                // Plan 19, C5: trailing разбираем три варианта.
+                // - `Block` / `LegacyBlockWithParams` — конвертируем в
+                //   legacy `TrailingBlock` для emit_call_with_trailing.
+                // - `Fn(sb)` — pre-rewrite: вставляем synthetic
+                //   ClosureFull-аргумент в конец `args`, trailing
+                //   обнуляем. Codegen дальше обработает как обычный
+                //   closure-аргумент.
+                if let Some(crate::ast::Trailing::Fn(sb)) = trailing.as_ref() {
+                    let closure_expr = Expr::new(
+                        ExprKind::ClosureFull(sb.clone()),
+                        sb.span,
+                    );
+                    let mut args_extended = args.clone();
+                    args_extended.push(CallArg::Item(closure_expr));
+                    return self.emit_call_with_trailing(
+                        func,
+                        &args_extended,
+                        None,
+                    );
+                }
                 let legacy_tb = trailing.as_ref().and_then(|t| match t {
                     crate::ast::Trailing::Block(b) => Some(crate::ast::TrailingBlock {
                         params: Vec::new(),
@@ -4156,11 +4207,9 @@ impl CEmitter {
                         span: b.span,
                     }),
                     crate::ast::Trailing::LegacyBlockWithParams(tb) => Some((**tb).clone()),
-                    // C5 реализует codegen-path для trailing-fn.
-                    // Парсер C4 может его создать, но кодеген ещё не
-                    // готов: нет тестов с этим синтаксисом, поэтому
-                    // unreachable безопасен.
-                    crate::ast::Trailing::Fn(_) => None,
+                    crate::ast::Trailing::Fn(_) => unreachable!(
+                        "Trailing::Fn handled above by pre-rewrite"
+                    ),
                 });
                 self.emit_call_with_trailing(func, args, legacy_tb.as_ref())
             }
@@ -4521,14 +4570,63 @@ impl CEmitter {
             ExprKind::Lambda { params, body, return_type, .. } => {
                 self.emit_lambda(params, body, None, return_type.as_ref())
             }
-            // Plan 19, C1: новые closure-узлы добавлены в AST, но
-            // парсер ещё их не создаёт (C2/C3 их подключают). Codegen
-            // получит реализацию в составе финальной фазы Plan 19.
-            ExprKind::ClosureLight { .. } | ExprKind::ClosureFull(_) => {
-                unreachable!(
-                    "closure-light / closure-full should not reach codegen \
-                     in Plan 19 dual-mode C1 — parser does not produce these \
-                     nodes yet (C2/C3 will enable them)"
+            // Plan 19, C5: closure-light codegen — конвертируем в
+            // legacy `LambdaParam`/`Expr` и переиспользуем
+            // emit_lambda. ClosureLight params не имеют типов, поэтому
+            // emit_lambda выводит их через context_param_tys (`None`)
+            // или дефолт `nova_int`. Block-body заворачивается в
+            // `Expr(Block)`.
+            ExprKind::ClosureLight { params, body } => {
+                // Конвертация ClosureLightParam → LambdaParam (типы None).
+                let legacy_params: Vec<LambdaParam> = params
+                    .iter()
+                    .map(|p| LambdaParam {
+                        name: p.name.clone(),
+                        ty: None,
+                        span: p.span,
+                    })
+                    .collect();
+                // Тело — bare expr или block. Block заворачиваем
+                // в `Expr::Block(...)`, чтобы emit_lambda ожидал Expr.
+                let body_expr: Expr = match body {
+                    crate::ast::ClosureBody::Expr(e) => (**e).clone(),
+                    crate::ast::ClosureBody::Block(b) => Expr::new(
+                        ExprKind::Block(b.clone()),
+                        b.span,
+                    ),
+                };
+                self.emit_lambda(&legacy_params, &body_expr, None, None)
+            }
+            // Plan 19, C5: closure-full codegen — типизированный
+            // closure аналогичен named fn без имени. Конвертируем
+            // params (с типами) в `LambdaParam` (с Some(ty)) и
+            // переиспользуем emit_lambda. FnBody::Expr → Expr,
+            // FnBody::Block → Expr(Block).
+            ExprKind::ClosureFull(sb) => {
+                let legacy_params: Vec<LambdaParam> = sb
+                    .params
+                    .iter()
+                    .map(|p| LambdaParam {
+                        name: p.name.clone(),
+                        ty: Some(p.ty.clone()),
+                        span: p.span,
+                    })
+                    .collect();
+                let body_expr: Expr = match &sb.body {
+                    FnBody::Expr(e) => e.clone(),
+                    FnBody::Block(b) => Expr::new(
+                        ExprKind::Block(b.clone()),
+                        b.span,
+                    ),
+                    FnBody::External => unreachable!(
+                        "closure-full cannot be `external` — only named fn"
+                    ),
+                };
+                self.emit_lambda(
+                    &legacy_params,
+                    &body_expr,
+                    None,
+                    sb.return_type.as_ref(),
                 )
             }
             ExprKind::With { bindings, body } => {

@@ -1,0 +1,142 @@
+// closure_rev.nv — Plan 19 D22-rev runtime тесты.
+//
+// Покрывает новый синтаксис closure-light `|x|`, closure-full
+// `fn(...)`, trailing-fn `f(args) fn(p) body`. Должен парситься,
+// type-check'аться, codegen'иться и исполняться идентично старому
+// `(x) =>` синтаксису (dual-mode C2-C12 в Plan 19).
+
+module nova_tests.syntax.closure_rev
+
+// ─── closure-light как значение ──────────────────────────────────────
+
+fn make_adder(n int) -> fn(int) -> int {
+    |x| x + n
+}
+
+fn apply_twice(f fn(int) -> int, x int) -> int {
+    f(f(x))
+}
+
+fn compose(f fn(int) -> int, g fn(int) -> int) -> fn(int) -> int {
+    |x| f(g(x))
+}
+
+test "closure-light: захват параметра функции" {
+    let add5 = make_adder(5)
+    let add10 = make_adder(10)
+    assert(add5(3) == 8)
+    assert(add10(3) == 13)
+}
+
+test "closure-light: независимые closure'ы" {
+    let a = make_adder(1)
+    let b = make_adder(100)
+    assert(a(0) == 1)
+    assert(b(0) == 100)
+}
+
+test "closure-light: функция как параметр" {
+    let r = apply_twice(|x| x * 2, 3)
+    assert(r == 12)
+}
+
+test "closure-light: композиция" {
+    let inc = |x| x + 1
+    let dbl = |x| x * 2
+    let f = compose(inc, dbl)
+    // f(3) = inc(dbl(3)) = inc(6) = 7
+    assert(f(3) == 7)
+}
+
+// ─── closure-light: блок-форма ───────────────────────────────────────
+
+test "closure-light: block-форма с let'ами" {
+    let f = |x| {
+        let y = x * 2
+        y + 1
+    }
+    assert(f(3) == 7)
+    assert(f(5) == 11)
+}
+
+// ─── closure-light: no-arg `||` ──────────────────────────────────────
+
+fn call_zero(f fn() -> int) -> int {
+    f()
+}
+
+test "closure-light: no-arg ||" {
+    let zero = || 0
+    assert(zero() == 0)
+    assert(call_zero(|| 42) == 42)
+}
+
+// ─── closure-light: wildcard `_` ─────────────────────────────────────
+
+fn map_constant(xs []int, f fn(int) -> int) -> []int {
+    let out = []int.new()
+    for x in xs {
+        out.push(f(x))
+    }
+    out
+}
+
+test "closure-light: wildcard игнорирует параметр" {
+    let zeros = map_constant([1, 2, 3], |_| 0)
+    assert(zeros[0] == 0)
+    assert(zeros[1] == 0)
+    assert(zeros[2] == 0)
+}
+
+// ─── closure-full с явными типами ────────────────────────────────────
+
+test "closure-full: типизированный с => expr" {
+    let inc = fn(x int) -> int => x + 1
+    assert(inc(5) == 6)
+}
+
+test "closure-full: типизированный с { block }" {
+    let f = fn(x int, y int) -> int {
+        let s = x + y
+        s * 2
+    }
+    assert(f(3, 4) == 14)
+}
+
+// ─── closure-light: захват immutable ─────────────────────────────────
+
+test "closure-light: захват immutable переменной" {
+    let n = 10
+    let times_n = |x| x * n
+    assert(times_n(3) == 30)
+    assert(times_n(7) == 70)
+}
+
+// Mut-capture (`let mut x = 0; let f = || { x += 1 }`) с
+// автоматической shared-cell семантикой — отдельная фича, которая
+// никогда не работала в bootstrap codegen (env копирует value, не
+// shared reference). Tracked в Q-mut-capture-codegen для отдельного
+// commit'а после Plan 19. Spec D32 (managed-heap captures) требует
+// что Plan 19 полностью раскроет эту семантику; имплементация —
+// фаза C16.
+
+// ─── trailing-fn ────────────────────────────────────────────────────
+
+fn dummy_with_pred(value int, pred fn(int) -> bool) -> bool {
+    pred(value)
+}
+
+test "trailing-fn: expr-body" {
+    let r = dummy_with_pred(5) fn(x int) -> bool => x > 0
+    assert(r == true)
+    let q = dummy_with_pred(-3) fn(x int) -> bool => x > 0
+    assert(q == false)
+}
+
+test "trailing-fn: block-body" {
+    let r = dummy_with_pred(7) fn(x int) -> bool {
+        let doubled = x * 2
+        doubled > 10
+    }
+    assert(r == true)
+}
