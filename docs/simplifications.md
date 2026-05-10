@@ -2804,3 +2804,47 @@ comma-expression `(call(args), (nova_int)0LL)`. До этого Throw
 
 - ✅ ЗАКРЫТ.
 - Tests: 98/98 PASS, никаких регрессий.
+
+---
+
+## 2026-05-10 (продолжение 3) — D84 overloading свободных функций (оси 1, 2, 4)
+
+### Что упрощено / закрыто
+
+**1. Единый overload mechanism для методов и free-functions.**
+До этого Plan 11 покрывал только методы (с receiver'ом), а
+free-functions имели жёсткий запрет на duplicate name. После D84 +
+этой реализации — оба пути используют один и тот же registry
+(`method_overloads` с sentinel-key `("", name)` для free-fn).
+
+**2. Type-checker ModuleEnv.fns переведён на Vec<FnDecl>.** Раньше
+single FnDecl (last-wins при duplicate). Теперь корректно хранит
+все overloads. BoundCtx и CapabilityCtx тоже обновлены под Vec.
+
+### Trade-offs (известные ограничения)
+
+- **Q-overload-result-type (D84 ось 3) — НЕ реализовано в codegen.**
+  Type-checker регистрирует overloads с разным return-type, но при
+  call-site resolve без expected-type propagation возникает
+  ambiguity. Реализация требует переделки emit_expr на context-driven
+  type-resolve. Отложено отдельной задачей.
+- **Q-overload-generic-vs-concrete (D84 правило «concrete > generic»)** —
+  type-checker не различает generic и concrete signatures, считает
+  одинаковые arg-shapes как duplicate. Тоже отдельная задача.
+
+### Файлы
+
+- `compiler-codegen/src/types/mod.rs` — ModuleEnv.fns Vec, BoundCtx
+  и CapabilityCtx обновлены, typeref_equal helper.
+- `compiler-codegen/src/codegen/emit_c.rs` — pass 1c регистрация
+  free-functions, mangle_fn для free-fn, call-site overload-resolve.
+- `nova_tests/syntax/overload_free_fn.nv` — 8 тестов на оси 1, 2, 4.
+- `spec/decisions/10-overloading.md` — Bootstrap-status updated:
+  free-functions ✅, добавлена пометка ⚠️ для result-type.
+
+### Status
+
+- D84 оси 1, 2, 4 для free-functions: ✅ ЗАКРЫТ.
+- Tests: ✅ 99/99 PASS (98 предыдущих + новый overload_free_fn).
+- D84 ось 3 (result-type): 🟡 Q-overload-result-type — отдельная задача.
+- D84 generic vs concrete: 🟡 Q-overload-generic-vs-concrete — отдельная задача.

@@ -3550,3 +3550,53 @@ nv_exit.
 statement+dummy потому что в тестах использовался только в
 branching contexts. Без выхода в тернарные контексты (?? coalesce,
 conditional) баг был незаметен — но был.
+
+================================================================
+2026-05-10 (продолжение). D84 overloading свободных функций (оси 1, 2, 4)
+================================================================
+
+Закрыл D84 Bootstrap-status ⚠️ для free-functions. Теперь overload
+работает не только для методов (Plan 11), но и для свободных
+функций — единый mechanism через method_overloads registry с
+sentinel-key ("", name).
+
+**Type-checker:**
+- ModuleEnv.fns теперь Vec<FnDecl> (было single FnDecl).
+- Запрет на duplicate name снят для free-functions; запрещено только
+  точное дублирование signature (arity + arg-types + return-type).
+- BoundCtx и CapabilityCtx обновлены для Vec<&FnDecl> с резолвом по
+  arity/проверкой всех overloads.
+
+**Codegen:**
+- Регистрация free-functions в method_overloads с sentinel-key.
+- mangle_fn для free-fn: тот же путь через registry.
+- Call-site: если в registry multi-overload, резолвим через filter
+  (arity + arg-types strict matching).
+
+**Тесты:** 8 тестов в nova_tests/syntax/overload_free_fn.nv. 99/99 PASS.
+
+**Known limitation — Q-overload-result-type:**
+
+Overload по return-type (ось 3 D84) НЕ работает в bootstrap-codegen.
+Type-checker регистрирует такие overloads, но codegen не делает
+expected-type propagation — при ambiguity по arg-types ошибка.
+Реализация требует context-driven resolve через let-аннотации,
+return-position, argument-types. Отложено как Q-overload-result-type.
+
+**Lesson sentinel-key:**
+
+Использование sentinel-key `("", name)` в существующем
+method_overloads HashMap позволило **не вводить** второй registry
+для free-functions. Resolve логика (mangle_fn, call-site filter)
+получилась identical для методов и free-fn — изменение только в
+ключе. Это **системно правильное** решение: единый mechanism,
+меньше кода. Альтернатива (отдельный free_fn_overloads HashMap)
+дублировала бы 50+ строк resolve-логики.
+
+**Что не сделано (отдельная задача):**
+- Q-overload-result-type — context-driven resolve по return-type.
+  Требует expected-type propagation через emit_expr (currently
+  bottom-up без context). Большая правка.
+- Overload generic + concrete (D84 правило «concrete > generic»):
+  type-checker этого не различает, считает duplicate. Q-overload-
+  generic-vs-concrete на будущее.
