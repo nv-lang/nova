@@ -1,7 +1,76 @@
 # План 19: Closure & error-ops & handler-rev — миграция на `|x|` + `fn(...)` + `!!` + `Handler[E, IRT]`
 
-**Статус:** 🟡 **DRAFT — implementation pending**.
+**Статус:** ✅ **ЗАКРЫТ** (2026-05-10). C1–C14 реализованы; C16
+(mut-capture codegen) трекается отдельно как post-Plan-19 задача.
 **Дата создания:** 2026-05-10.
+**Дата закрытия:** 2026-05-10.
+
+## Retro
+
+Реализация прошла за один день в 14 коммитах (C1–C14):
+
+| Коммит | Тема | Статус |
+|---|---|---|
+| C1 (`85901b3`) | AST: ClosureLight + ClosureFull + Trailing + FnSigBody | ✅ |
+| C2 (`245ec29`) | Parser closure-light `\|x\|` / `\|\|` / `\|_\|` | ✅ + 11 lib-tests |
+| C3 (`d1c24ea`) | Parser closure-full `fn(...)` без имени | ✅ + 8 lib-tests |
+| C4 (`1f73952`) | Parser trailing-fn + Trailing enum | ✅ + 5 lib-tests |
+| C5 (`77c741b`) | Interp + codegen runtime для new closure-узлов | ✅ + 1 nova_test |
+| C6 | Type-check bidirectional inference | DEFERRED (минимум в C5; полный — отдельная задача после type-checker'а) |
+| C7 (`25214a6`) | Postfix `!!` + D85 семантика `?` | ✅ + 1 nova_test |
+| C8 (`fdca989`) | Handler-лямбда `\|err\|` (D31-rev, interp-side) | ✅ |
+| C9+C10 (`4bd8ea6`) | `Handler[E, IRT]` (D87) + default generic params (D88) | ✅ + 6 lib-tests |
+| C11 (`0a2fd2a`) | Миграция nova_tests на новый синтаксис | ✅ |
+| C12 (`306de4f`) | Миграция std + examples | ✅ |
+| C13 (`335b907`) | Удаление старой `(params) =>` lambda + legacy trailing | ✅ |
+| C14 (`0761d52`) | Corner-case regression-тесты | ✅ + 4 nova_tests |
+| C15 | Docs retro (этот) | ✅ |
+| C16 | Mut-capture codegen heap-cells | TODO (отдельный PR) |
+
+### Финальные метрики
+
+- **Lib-тесты:** 65/65 PASS (35 baseline + 30 новых для Plan 19).
+- **nova_tests codegen:** 102/102 PASS (99 baseline + 3 новых файла:
+  closure_rev.nv, postfix_bang_bang.nv, closure_corner_cases.nv).
+- **std/ type-check:** 49/50 (1 baseline-fail json.nv не связан с
+  Plan 19, существующее ограничение match-arm + `+=`).
+- **Изменено файлов:** ~50 в spec/ + ~40 nova_tests + std + examples.
+
+### Обнаруженные баги в существующем коде (починено попутно)
+
+Применяя production-grade подход (cм. feedback_codegen_bugs):
+- **let-stored closure call** (`let zero = || 0; zero()`) — раньше
+  падал в codegen с link error на `nova_fn_zero`. Починено в C5
+  через регистрацию ClosureLight/Full в `fn_param_sigs`.
+- **Trailing-fn в expr-body** требует pre-rewrite в codegen — closure
+  не теряется как arg. Починено в C5.
+- **Disambiguation `||` boolean OR vs no-arg closure** — добавлен
+  специальный path в parse_primary (Pipe/PipePipe только в
+  expression-start position). Старый `assert(!!true)` в
+  basics/operators.nv продолжает работать (parse_unary handles
+  prefix `!!`).
+
+### Отложено
+
+- **C16: Mut-capture codegen** — `let mut x = 0; let f = || { x += 1 }`.
+  Сейчас env копирует value, не shared reference. Production-grade
+  fix: переключить storage mut-captured переменных на heap-allocated
+  cells (`nova_int*`), reads/writes через `*ptr`. Требует analyse-pass
+  + рефактор reads/writes. Tracked как Q-mut-capture-codegen.
+- **C8 codegen handler-лямбда** — `with X = |err| body` через C-codegen
+  не реализован (handler в `emit_with` ожидает NovaVtable struct).
+  Interp-side D31-rev работает; codegen полная поддержка — отдельная
+  задача (требует синтез handler-литерала из closure'а).
+- **Effect inference на named fn** — отказ от R1, см. D22-rev
+  ([D22](../../spec/decisions/03-syntax.md#d22-closure-light--и-full-fn)).
+- **Bidirectional inference HOF arg → closure-light** — частичное
+  через let-аннотацию работает (C5). Production-grade требует полного
+  type-checker'а; bootstrap fallback (default `nova_int`) работает
+  для основных паттернов.
+
+---
+
+## Архитектурные решения, принятые в ходе implementation
 **Зависимости:**
 - Closure-rev: [D22 rev](../../spec/decisions/03-syntax.md#d22-closure-light--и-full-fn),
   [D40 rev](../../spec/decisions/03-syntax.md#d40-тело-функции--для-одного-выражения--для-блока),

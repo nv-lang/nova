@@ -3600,3 +3600,47 @@ method_overloads HashMap позволило **не вводить** второй
 - Overload generic + concrete (D84 правило «concrete > generic»):
   type-checker этого не различает, считает duplicate. Q-overload-
   generic-vs-concrete на будущее.
+
+==============================================================================
+2026-05-10. Plan 19 (Closure-rev + error-ops + handler-rev) ЗАКРЫТ.
+==============================================================================
+
+Plan 19 — фундаментальный grammar-rewrite: переход с лямбды
+`(params) => expr` на двухуровневый closure (`|x|` light + `fn(...)`
+full), добавление postfix `!!` (D85), миграция handler-лямбды на
+`|x|` (D31-rev), параметризация `Handler[E, IRT]` (D87), default
+generic params (D88).
+
+Реализация — за один день в 14 атомарных коммитах (C1–C14):
+
+C1 (`85901b3`): AST новые узлы.
+C2 (`245ec29`): Parser closure-light `|x|` + 11 lib-tests.
+C3 (`d1c24ea`): Parser closure-full `fn(...)` + 8 lib-tests.
+C4 (`1f73952`): Parser trailing-fn + Trailing enum + 5 lib-tests.
+C5 (`77c741b`): Interp + codegen runtime для new узлов.
+C7 (`25214a6`): Postfix `!!` + D85.
+C8 (`fdca989`): Handler-лямбда D31-rev (interp).
+C9+C10 (`4bd8ea6`): Handler[E, IRT] + default generic params + 6 lib-tests.
+C11 (`0a2fd2a`): Миграция nova_tests.
+C12 (`306de4f`): Миграция std + examples (33 файла).
+C13 (`335b907`): Удаление старой grammar.
+C14 (`0761d52`): Corner-case regression-тесты.
+
+Финальный baseline: 65/65 lib + 102/102 nova_tests + 49/50 std.
+
+Production-grade подход (feedback_codegen_bugs). Попутно починили
+existing bugs:
+- let-stored closure call (раньше резолвился как named fn).
+- Trailing-fn pre-rewrite в codegen.
+- Disambiguation `||`/logical OR по позиции токена.
+
+Отложено:
+- C6: bidirectional inference HOF arg → closure-light (требует
+  полного type-checker'а; bootstrap fallback в C5 через let-
+  аннотацию работает).
+- C8 codegen handler-лямбда (handler в emit_with ожидает
+  NovaVtable struct, нужен синтез handler-литерала).
+- C16: mut-capture codegen (heap-cells для shared mutable).
+
+Урок: dual-mode (C1–C12) позволил инкрементальную миграцию без
+big-bang regression'ов. C13 удалил старую grammar чисто.

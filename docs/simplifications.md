@@ -2848,3 +2848,42 @@ single FnDecl (last-wins при duplicate). Теперь корректно хр
 - Tests: ✅ 99/99 PASS (98 предыдущих + новый overload_free_fn).
 - D84 ось 3 (result-type): 🟡 Q-overload-result-type — отдельная задача.
 - D84 generic vs concrete: 🟡 Q-overload-generic-vs-concrete — отдельная задача.
+
+---
+
+## 2026-05-10 — Plan 19 ЗАКРЫТ (closure-rev + error-ops + handler-rev)
+
+### Что упростилось в языке
+
+**До Plan 19:**
+- Лямбды через `(params) => expr` — strictly one-expression body.
+- Block-форма для closure запрещена → выносить в named fn ради
+  `let y = ...`.
+- Trailing-block с params через `{ x => body }` — отдельная
+  грамматика (D43-old), параметры через `=>`.
+- `?` имел двойную семантику (D67): для Result через Fail-эффект,
+  для Option через ранний return.
+- `Handler[E]` без второго параметра — нельзя выразить interrupt
+  семантику в типе.
+
+**После Plan 19:**
+- Двухуровневый closure: `|x| body` (light, untyped) + `fn(x T) -> R body`
+  (full, typed). Block-form поддерживается natively.
+- `f(args) { block }` — DSL-trailing БЕЗ params; `f(args) fn(p) body` —
+  trailing-fn С params.
+- `?` — унифицированный early-return для Option/Result (D85).
+- `!!` — throw-стиль через Fail (D85).
+- `??` — coalesce (D86, выделен из D4).
+- `Handler[E, IRT]` — interrupt return type явно в сигнатуре (D87).
+- Default generic params: `[T = int]` (D88).
+- handler-лямбда `with E = |err| body` (D31-rev).
+
+### 14 коммитов C1-C14, baseline 65/65 lib + 102/102 nova_tests
+
+Detailed retro в docs/plans/19-closure-and-error-ops.md.
+
+### Отложено
+
+- C16: mut-capture codegen.
+- C6: bidirectional inference HOF arg → closure.
+- Codegen handler-лямбда (D31-rev codegen-side).
