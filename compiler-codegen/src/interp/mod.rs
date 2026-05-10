@@ -85,6 +85,9 @@ impl Interpreter {
                         Some(r) => format!("{}.{}", r.type_name, fd.name),
                         None => fd.name.clone(),
                     };
+                    // Plan 14 Ф.6-bis: variadic_last из FnDecl.
+                    let variadic_last = fd.params.last()
+                        .map(|p| p.is_variadic).unwrap_or(false);
                     let closure = Closure {
                         params: fd.params.iter().map(|p| p.name.clone()).collect(),
                         body: match &fd.body {
@@ -96,6 +99,7 @@ impl Interpreter {
                         },
                         env: self.globals.clone(),
                         receiver: None,
+                        variadic_last,
                     };
                     self.globals.define(key, Value::Closure(Rc::new(closure)));
                 }
@@ -203,22 +207,48 @@ impl Interpreter {
         args: &[Value],
         span: Span,
     ) -> Result<Flow, Diagnostic> {
-        if closure.params.len() != args.len() {
-            return Err(Diagnostic::new(
-                format!(
-                    "argument count mismatch: expected {}, got {}",
-                    closure.params.len(),
-                    args.len()
-                ),
-                span,
-            ));
-        }
+        // Plan 14 Ф.6-bis (D69): variadic-fn — собираем
+        // args[regular_arity..] в Value::Array и передаём как
+        // последний param. Caller'у не нужно знать об упаковке.
         let env = Env::new_child(&closure.env);
         if let Some(recv) = &closure.receiver {
             env.define("@", recv.clone());
         }
-        for (name, value) in closure.params.iter().zip(args.iter()) {
-            env.define(name.clone(), value.clone());
+        if closure.variadic_last && !closure.params.is_empty() {
+            let regular_arity = closure.params.len() - 1;
+            if args.len() < regular_arity {
+                return Err(Diagnostic::new(
+                    format!(
+                        "variadic call: expected at least {} regular arg(s), got {}",
+                        regular_arity, args.len()
+                    ),
+                    span,
+                ));
+            }
+            // Bind regular params.
+            for (name, value) in closure.params[..regular_arity].iter()
+                .zip(args[..regular_arity].iter())
+            {
+                env.define(name.clone(), value.clone());
+            }
+            // Pack rest into Value::Array, bind as last param.
+            let rest: Vec<Value> = args[regular_arity..].to_vec();
+            let arr = Value::Array(std::rc::Rc::new(std::cell::RefCell::new(rest)));
+            env.define(closure.params[regular_arity].clone(), arr);
+        } else {
+            if closure.params.len() != args.len() {
+                return Err(Diagnostic::new(
+                    format!(
+                        "argument count mismatch: expected {}, got {}",
+                        closure.params.len(),
+                        args.len()
+                    ),
+                    span,
+                ));
+            }
+            for (name, value) in closure.params.iter().zip(args.iter()) {
+                env.define(name.clone(), value.clone());
+            }
         }
         let flow = match &closure.body {
             ClosureBody::Expr(e) => self.eval_expr(e, &env)?,
@@ -313,17 +343,67 @@ impl Interpreter {
                 args,
                 trailing_block,
             } => {
-                // Plan 14 Ф.6: interp пока не поддерживает variadic spread.
-                // Spread args собираются в массив (если фn variadic) — но в
-                // interp пока fallback'имся на error если spread present.
-                if args.iter().any(|a| a.is_spread()) {
-                    return Err(Diagnostic::new(
-                        "spread (...) на call-site пока не поддержан в interp (Plan 14 Ф.6 — codegen-only)",
-                        expr.span,
-                    ));
+                // Plan 14 Ф.6-bis (D69): handle spread + variadic в interp.
+                //
+                // Если spread args нет — fast path: преобразуем CallArg
+                // → Expr и вызываем существующий eval_call.
+                // Если есть spread — pre-eval'аем все args в Vec<Value>
+                // (раскрывая spread из Value::Array), затем dispatch'имся
+                // в call_value напрямую.
+                //
+                // Polный variadic-collect (regular args → array param)
+                // делает `call_closure_flow` через `closure.variadic_last`.
+                if !args.iter().any(|a| a.is_spread()) {
+                    let plain: Vec<Expr> = args.iter().map(|a| a.expr().clone()).collect();
+                    self.eval_call(func, &plain, trailing_block.as_ref(), env, expr.span)
+                } else {
+                    // Pre-eval с unfolding spread'ов.
+                    let mut arg_values: Vec<Value> = Vec::with_capacity(args.len());
+                    for a in args {
+                        match a {
+                            CallArg::Item(e) => arg_values.push(self.eval_expr_value(e, env)?),
+                            CallArg::Spread(e) => {
+                                let v = self.eval_expr_value(e, env)?;
+                                match v {
+                                    Value::Array(arr) => {
+                                        for item in arr.borrow().iter() {
+                                            arg_values.push(item.clone());
+                                        }
+                                    }
+                                    other => return Err(Diagnostic::new(
+                                        format!("spread (...) requires array, got `{}`", other.type_name()),
+                                        e.span,
+                                    )),
+                                }
+                            }
+                        }
+                    }
+                    // trailing-block — преобразуем в closure-аргумент.
+                    if let Some(tb) = trailing_block {
+                        let closure = Closure {
+                            params: tb.params.iter().map(|p| p.name.clone()).collect(),
+                            body: ClosureBody::Block(tb.body.clone()),
+                            env: env.clone(),
+                            receiver: env.lookup("@"),
+                            variadic_last: false,
+                        };
+                        arg_values.push(Value::Closure(Rc::new(closure)));
+                    }
+                    // Plan 14 Ф.6-bis: dispatch.
+                    // Для `obj.method(...)` нам нужен receiver-bound closure
+                    // через try_member_call (instance-метод lookup в
+                    // globals по `Type.method`). Для остального — call_value.
+                    if let ExprKind::Member { obj, name } = &func.kind {
+                        let recv_v = self.eval_expr_value(obj, env)?;
+                        // Native + result/option/closure methods через
+                        // try_member_call_values (новая helper).
+                        if let Some(out) = self.try_member_call_values(&recv_v, name, &arg_values, expr.span)? {
+                            return Ok(Flow::Value(out));
+                        }
+                    }
+                    let callee = self.eval_expr_value(func, env)?;
+                    Ok(Flow::Value(self.call_value(callee, &arg_values, expr.span)?))
                 }
-                let plain: Vec<Expr> = args.iter().map(|a| a.expr().clone()).collect();
-                self.eval_call(func, &plain, trailing_block.as_ref(), env, expr.span)
             }
             ExprKind::Try(inner) => {
                 let result = self.eval_expr(inner, env)?;
@@ -517,6 +597,8 @@ impl Interpreter {
                     body: ClosureBody::Expr((**body).clone()),
                     env: env.clone(),
                     receiver: env.lookup("@"),
+                    // Lambdas не variadic в bootstrap'е.
+                    variadic_last: false,
                 };
                 Ok(Flow::Value(Value::Closure(Rc::new(closure))))
             }
@@ -807,6 +889,7 @@ impl Interpreter {
                 body: ClosureBody::Block(tb.body.clone()),
                 env: env.clone(),
                 receiver: env.lookup("@"),
+                variadic_last: false,
             };
             arg_values.push(Value::Closure(Rc::new(closure)));
         }
@@ -875,6 +958,70 @@ impl Interpreter {
                 }
             }
         }
+        Ok(None)
+    }
+
+    /// Plan 14 Ф.6-bis: вариант `try_member_call` который принимает
+    /// уже-evaluated args (Vec<Value>). Используется в spread-path
+    /// `ExprKind::Call`, где args pre-eval'ятся для unfolding'а
+    /// `...arr`. Логика identical try_member_call но без
+    /// `eval_args(...)`-шагов.
+    ///
+    /// Ограничение: native methods через stdlib::try_native_method
+    /// требуют `&[Expr]`, не Vec<Value>. Поэтому native-path тут
+    /// пропущен — для array-spread в native methods (rare) caller
+    /// должен использовать non-spread форму.
+    fn try_member_call_values(
+        &self,
+        recv: &Value,
+        method: &str,
+        arg_values: &[Value],
+        span: Span,
+    ) -> Result<Option<Value>, Diagnostic> {
+        // Result/Option built-in methods — могут принять pre-evaluated args.
+        if let Value::Variant { name, payload, .. } = recv {
+            if let Some(out) = self.try_result_option_method_values(
+                name, payload, method, arg_values, span,
+            )? {
+                return Ok(Some(out));
+            }
+        }
+        // User-defined Type.method lookup в globals.
+        let type_name = match recv {
+            Value::Record { type_name: Some(tn), .. } => Some(tn.clone()),
+            Value::Variant { type_name: Some(tn), .. } => Some(tn.clone()),
+            _ => None,
+        };
+        if let Some(tn) = type_name {
+            let key = format!("{}.{}", tn, method);
+            if let Some(closure_val) = self.globals.lookup(&key) {
+                if let Value::Closure(closure) = closure_val {
+                    let mut new_closure = (*closure).clone();
+                    new_closure.receiver = Some(recv.clone());
+                    return Ok(Some(self.call_closure(&new_closure, arg_values, span)?));
+                } else {
+                    let mut with_recv = vec![recv.clone()];
+                    with_recv.extend_from_slice(arg_values);
+                    return Ok(Some(self.call_value(closure_val, &with_recv, span)?));
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    /// Plan 14 Ф.6-bis: Result/Option methods с pre-evaluated args.
+    /// Простая stub-обёртка — большинство prelude-методов на Result/
+    /// Option (unwrap_or, map, etc.) — single-arg, в которые spread
+    /// не имеет смысла. Если future требует поддержки — расширить.
+    fn try_result_option_method_values(
+        &self,
+        _name: &str,
+        _payload: &VariantPayload,
+        _method: &str,
+        _arg_values: &[Value],
+        _span: Span,
+    ) -> Result<Option<Value>, Diagnostic> {
+        // Spread в Result/Option methods не предусмотрен — сразу None.
         Ok(None)
     }
 

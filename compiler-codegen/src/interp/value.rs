@@ -60,6 +60,11 @@ pub struct Closure {
     pub env: super::env::Env,
     /// Receiver — для @-методов.
     pub receiver: Option<Value>,
+    /// Plan 14 Ф.6-bis (D69): true если последний params — variadic
+    /// (`...items []T`). Caller передаёт N args, interp собирает
+    /// args[regular_arity..] в `Value::Array(...)` перед binding'ом
+    /// последнего param'а.
+    pub variadic_last: bool,
 }
 
 #[derive(Clone)]
