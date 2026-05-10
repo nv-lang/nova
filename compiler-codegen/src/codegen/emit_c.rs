@@ -3830,7 +3830,9 @@ impl CEmitter {
                 } else {
                     self.infer_expr_c_type(&decl.value)
                 };
-                let val = self.emit_expr(&decl.value)?;
+                // target-type-aware emit: для typed-integer ty_c литералы внутри
+                // Binary получают native-typed cast вместо ((nova_int)NLL).
+                let val = self.emit_expr_with_target_type(&decl.value, &ty_c)?;
                 // For pointer types: the emitted tmp expression already carries the type.
                 // Just declare the binding with the right type.
                 self.var_types.insert(binding.clone(), ty_c.clone());
@@ -4078,6 +4080,73 @@ impl CEmitter {
     }
 
     // ---- expressions ----
+
+    /// Emit `expr` zная c-тип цели. Если target — typed-integer
+    /// (uint8/16/32/64, int8/16/32), литералы (IntLit/CharLit) и операнды
+    /// integer-арифметических Binary/Unary получают «нативный» суффикс/cast:
+    /// `((uint32_t)NU)` вместо стандартного `((nova_int)NLL)`.
+    ///
+    /// Для не-typed-integer target или non-арифметического выражения —
+    /// fallback в обычный `emit_expr`. Это **обёртка**, не замена.
+    ///
+    /// Используется в let-binding с известным `ty_c`, в `emit_block_into`
+    /// (trailing — известен ty блока), и `emit_if_expr` для `else if`
+    /// ветки (известен if_ty).
+    fn emit_expr_with_target_type(&mut self, expr: &Expr, target_ty_c: &str) -> Result<String, String> {
+        // Только typed-integer target пропагируем — для nova_int/struct/etc.
+        // обычный emit_expr уже корректен.
+        if !Self::is_typed_integer(target_ty_c) {
+            return self.emit_expr(expr);
+        }
+        match &expr.kind {
+            ExprKind::IntLit(n) => Ok(Self::emit_typed_int_literal(*n, target_ty_c)),
+            ExprKind::CharLit(cp) => Ok(Self::emit_typed_int_literal(*cp as i64, target_ty_c)),
+            ExprKind::Unary { op: UnOp::Neg, operand } => {
+                if let ExprKind::IntLit(n) = &operand.kind {
+                    return Ok(Self::emit_typed_int_literal(-*n, target_ty_c));
+                }
+                // Иначе рекурсивно с тем же target.
+                let inner = self.emit_expr_with_target_type(operand, target_ty_c)?;
+                Ok(format!("(-{})", inner))
+            }
+            ExprKind::Binary { op, left, right } => {
+                // Пропагируем target только для integer-арифметики/побитовых/сдвигов.
+                // Сравнения (Eq/Neq/Lt/...) и logic (And/Or) — bool result; их operand'ы
+                // могут быть разных типов и не должны получать typed-cast.
+                let is_integer_arith = matches!(op,
+                    BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod
+                    | BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor
+                    | BinOp::Shl | BinOp::Shr
+                );
+                if !is_integer_arith {
+                    return self.emit_expr(expr);
+                }
+                // Если operand'ы — non-integer типы (например str + str), fallback.
+                // Проверяем по infer_expr_c_type: если any side — не nova_int/typed-int/void*,
+                // обычный emit_expr корректнее обработает special-cases.
+                let lty = self.infer_expr_c_type(left);
+                let rty = self.infer_expr_c_type(right);
+                let lhs_ok = lty == "nova_int" || Self::is_typed_integer(&lty) || lty == "void*";
+                let rhs_ok = rty == "nova_int" || Self::is_typed_integer(&rty) || rty == "void*";
+                if !lhs_ok || !rhs_ok {
+                    return self.emit_expr(expr);
+                }
+                let l = self.emit_expr_with_target_type(left, target_ty_c)?;
+                let r = self.emit_expr_with_target_type(right, target_ty_c)?;
+                let op_str = match op {
+                    BinOp::Add => "+",  BinOp::Sub => "-",
+                    BinOp::Mul => "*",  BinOp::Div => "/",
+                    BinOp::Mod => "%",
+                    BinOp::BitAnd => "&", BinOp::BitOr => "|",
+                    BinOp::BitXor => "^",
+                    BinOp::Shl => "<<", BinOp::Shr => ">>",
+                    _ => unreachable!(),
+                };
+                Ok(format!("({} {} {})", l, op_str, r))
+            }
+            _ => self.emit_expr(expr),
+        }
+    }
 
     fn emit_expr(&mut self, expr: &Expr) -> Result<String, String> {
         match &expr.kind {
@@ -6843,7 +6912,8 @@ impl CEmitter {
             Some(ElseBranch::If(e)) => {
                 self.line("} else {");
                 self.indent += 1;
-                let v = self.emit_expr(e)?;
+                // target-type-aware: literal-cleanup для typed-int if-result.
+                let v = self.emit_expr_with_target_type(e, &if_ty)?;
                 let ity = if_ty.clone();
                 Self::emit_assign_typed(self, &tmp, &ity, &v);
                 self.indent -= 1;
@@ -6859,7 +6929,9 @@ impl CEmitter {
             self.emit_stmt(stmt)?;
         }
         if let Some(trailing) = &block.trailing {
-            let v = self.emit_expr(trailing)?;
+            // target-type-aware emit: для typed-integer ty литералы в Binary
+            // получают «нативный» suffix вместо ((nova_int)NLL).
+            let v = self.emit_expr_with_target_type(trailing, ty)?;
             Self::emit_assign_typed(self, tmp, ty, &v);
         } else {
             Self::emit_zero_assign(self, tmp, ty);
