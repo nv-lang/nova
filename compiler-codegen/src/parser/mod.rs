@@ -1675,6 +1675,23 @@ impl Parser {
                     let span = expr.span;
                     expr = Expr::new(ExprKind::Try(Box::new(expr)), span);
                 }
+                // Plan 19, C7 (D85): `expr!!` postfix-throw оператор.
+                // Лексер не объединяет `!!` в один токен (было бы
+                // конфликтно с prefix `!!cond` = `!(!cond)`); вместо
+                // этого парсер ловит два Bang подряд в postfix-position.
+                // В postfix `expr` уже распарсен как operand, поэтому
+                // `expr!!` однозначно postfix-throw.
+                //
+                // На Some(v)/Ok(v) разворачивает; на None/Err(e)
+                // бросает через Fail[E].
+                TokenKind::Bang
+                    if matches!(self.peek_at(1).kind, TokenKind::Bang) =>
+                {
+                    self.bump(); // first '!'
+                    self.bump(); // second '!'
+                    let span = expr.span;
+                    expr = Expr::new(ExprKind::Bang(Box::new(expr)), span);
+                }
                 TokenKind::Question2 => {
                     self.bump();
                     let right = self.parse_unary()?;

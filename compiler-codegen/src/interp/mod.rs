@@ -490,6 +490,52 @@ impl Interpreter {
                     other => Ok(other),
                 }
             }
+            // Plan 19, C7 (D85): postfix `!!` — throw-стиль для
+            // Result/Option. На Some(v)/Ok(v) разворачивает; на
+            // None/Err(e) бросает через Fail[E].
+            //
+            // В отличие от `?` (Try), `!!` использует Throw flow —
+            // ошибка ловится handler'ом `Fail[E]` в with-блоке (а не
+            // ранним return'ом из enclosing fn). Это даёт две формы
+            // обработки: `?` для Result-style fn-сигнатуры, `!!` для
+            // throw-style + with-handler.
+            ExprKind::Bang(inner) => {
+                let result = self.eval_expr(inner, env)?;
+                match result {
+                    Flow::Throw(err) => Ok(Flow::Throw(err)),
+                    Flow::Value(v) => {
+                        if let Value::Variant { name, payload, .. } = &v {
+                            match (name.as_str(), payload) {
+                                ("Ok", VariantPayload::Tuple(items)) if items.len() == 1 => {
+                                    return Ok(Flow::Value(items[0].clone()));
+                                }
+                                ("Err", VariantPayload::Tuple(items)) if items.len() == 1 => {
+                                    // `expr!!` на Err(e): throw e через
+                                    // Fail-эффект. Runtime ловит
+                                    // в активном Fail-handler'е.
+                                    return Ok(Flow::Throw(items[0].clone()));
+                                }
+                                ("Some", VariantPayload::Tuple(items)) if items.len() == 1 => {
+                                    return Ok(Flow::Value(items[0].clone()));
+                                }
+                                ("None", VariantPayload::Unit) => {
+                                    // `Option!!` бросает RuntimeNoneError
+                                    // (D85 prelude unit-тип).
+                                    let none_err = Value::Variant {
+                                        type_name: Some("RuntimeNoneError".to_string()),
+                                        name: "RuntimeNoneError".to_string(),
+                                        payload: VariantPayload::Unit,
+                                    };
+                                    return Ok(Flow::Throw(none_err));
+                                }
+                                _ => {}
+                            }
+                        }
+                        Ok(Flow::Value(v))
+                    }
+                    other => Ok(other),
+                }
+            }
             ExprKind::Coalesce(a, b) => {
                 let av = self.eval_expr(a, env)?;
                 match av {

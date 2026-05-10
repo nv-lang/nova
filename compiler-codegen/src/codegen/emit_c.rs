@@ -2496,7 +2496,7 @@ impl CEmitter {
                 Self::collect_idents_expr(l, out);
                 Self::collect_idents_expr(r, out);
             }
-            ExprKind::Try(e) | ExprKind::As(e, _) | ExprKind::Is(e, _) => {
+            ExprKind::Try(e) | ExprKind::Bang(e) | ExprKind::As(e, _) | ExprKind::Is(e, _) => {
                 Self::collect_idents_expr(e, out);
             }
             ExprKind::Interrupt(Some(v)) => Self::collect_idents_expr(v, out),
@@ -4448,6 +4448,44 @@ impl CEmitter {
                 } else {
                     // Unknown type: emit as-is with comment
                     Ok(format!("({} /* ? */)", val))
+                }
+            }
+
+            // Plan 19, C7 (D85): postfix `!!` — throw-стиль.
+            //
+            // На Some(v)/Ok(v) — разворачивает в `v`.
+            // На None — `nova_throw(RuntimeNoneError)` (longjmp в
+            //   ближайший Fail-handler).
+            // На Err(e) — `nova_throw(e)`.
+            //
+            // В отличие от `?` (early-return обёртки в caller), `!!`
+            // использует runtime Fail-эффект через nova_throw / setjmp.
+            // Caller должен иметь активный Fail-handler в скоупе
+            // (через `with Fail = ...`) или Fail в effect-row, иначе
+            // runtime ошибка станет fatal.
+            ExprKind::Bang(inner) => {
+                let inner_ty = self.infer_expr_c_type(inner);
+                let val = self.emit_expr(inner)?;
+                let bang_tmp = self.fresh_tmp();
+                if inner_ty.starts_with("NovaOpt_") {
+                    // Option!!: на None бросаем RuntimeNoneError.
+                    self.line(&format!("{} {} = {};", inner_ty, bang_tmp, val));
+                    self.line(&format!(
+                        "if ({}.tag == NOVA_TAG_Option_None) {{ nova_throw_runtime_none_error(); }}",
+                        bang_tmp
+                    ));
+                    Ok(format!("({}.value)", bang_tmp))
+                } else if inner_ty == "Nova_Result*" {
+                    // Result!!: на Err бросаем error value через
+                    // generic nova_throw.
+                    self.line(&format!("Nova_Result* {} = {};", bang_tmp, val));
+                    self.line(&format!(
+                        "if ({}->tag == NOVA_TAG_Result_Err) {{ nova_throw_value({}->payload.Err._0); }}",
+                        bang_tmp, bang_tmp
+                    ));
+                    Ok(format!("({}->payload.Ok._0)", bang_tmp))
+                } else {
+                    Ok(format!("({} /* !! */)", val))
                 }
             }
 

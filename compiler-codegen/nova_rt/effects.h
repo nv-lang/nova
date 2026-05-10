@@ -61,6 +61,33 @@ static inline void nova_throw(nova_str msg) {
 #define NOVA_CATCH(frame) (nova_fail_pop(), (frame).error_msg)
 #define NOVA_THROW(msg)   nova_throw(nova_str_from_cstr(msg))
 
+/* Plan 19, C7 (D85): postfix `!!` runtime helpers.
+ *
+ * `expr!!` на None бросает RuntimeNoneError (D85 prelude unit-тип,
+ * фиксированное сообщение).
+ */
+static inline void nova_throw_runtime_none_error(void) {
+    nova_throw(nova_str_from_cstr("RuntimeNoneError"));
+}
+
+/* Plan 19, C7 (D85): `expr!!` на Err(e) — бросает значение `e` через
+ * Fail-эффект. Для bootstrap'а: если `e` — record `Error { msg str }`,
+ * извлекаем msg; иначе — generic placeholder. В production-runtime
+ * это будет typed throw через ErrorBox с runtime-type-info, но
+ * bootstrap довольствуется string-based throw. Конкретный generated
+ * C-код для `Err(e)!!` приводит сам к нужному типу: `Err(Error{...})`
+ * передаётся через типизированный `nova_throw_str(e.msg)`.
+ *
+ * Generic helper для не-string Err — fallback к фиксированной строке.
+ */
+static inline void nova_throw_str(nova_str msg) {
+    nova_throw(msg);
+}
+
+/* Generic value throw: для bootstrap-stage Err(e) приведём к
+ * placeholder-сообщению. Production-runtime заменит на typed throw. */
+#define nova_throw_value(v) nova_throw(nova_str_from_cstr("Result::Err"))
+
 /* `?` operator stub — in generated code:
  *   result = expr_that_might_throw();
  *   (expr itself calls nova_throw if it fails, so ? is a no-op at call site)

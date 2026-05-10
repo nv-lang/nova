@@ -412,6 +412,13 @@ pub enum ExprKind {
     },
     /// `expr?` — пробрасывание Fail (D25/D65)
     Try(Box<Expr>),
+    /// `expr!!` — throw-стиль для Result/Option (D85, Plan 19 C7).
+    ///
+    /// На `Some(v)` / `Ok(v)`: разворачивает в `v`.
+    /// На `None` / `Err(e)`: бросает через `Fail[E]` (для Option —
+    /// `RuntimeNoneError`). Внешняя fn должна иметь `Fail[E]` в
+    /// effect-row, иначе compile error.
+    Bang(Box<Expr>),
     /// `expr ?? default` — coalesce
     Coalesce(Box<Expr>, Box<Expr>),
     /// `expr as Type`

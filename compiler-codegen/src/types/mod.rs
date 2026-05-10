@@ -372,7 +372,7 @@ impl<'a> BoundCtx<'a> {
                 self.walk_expr(right, scope, errors);
             }
             ExprKind::Unary { operand, .. } => self.walk_expr(operand, scope, errors),
-            ExprKind::Try(inner) => self.walk_expr(inner, scope, errors),
+            ExprKind::Try(inner) | ExprKind::Bang(inner) => self.walk_expr(inner, scope, errors),
             ExprKind::Coalesce(a, b) => {
                 self.walk_expr(a, scope, errors);
                 self.walk_expr(b, scope, errors);
@@ -965,7 +965,7 @@ impl<'a> CapabilityCtx<'a> {
                 self.walk_expr(right, state, errors);
             }
             ExprKind::Unary { operand, .. } => self.walk_expr(operand, state, errors),
-            ExprKind::Try(inner) => self.walk_expr(inner, state, errors),
+            ExprKind::Try(inner) | ExprKind::Bang(inner) => self.walk_expr(inner, state, errors),
             ExprKind::Coalesce(a, b) => {
                 self.walk_expr(a, state, errors);
                 self.walk_expr(b, state, errors);
@@ -1359,6 +1359,8 @@ fn has_throw_in_expr(e: &Expr) -> bool {
     match &e.kind {
         ExprKind::Throw(_) => true,
         ExprKind::Try(inner) => has_throw_in_expr(inner),
+        // Plan 19, C7 (D85): `!!` тоже может бросить (`Err`/`None`).
+        ExprKind::Bang(inner) => has_throw_in_expr(inner),
         ExprKind::Binary { left, right, .. } =>
             has_throw_in_expr(left) || has_throw_in_expr(right),
         ExprKind::Unary { operand, .. } => has_throw_in_expr(operand),
