@@ -3238,3 +3238,29 @@ Plan 15 (generic bounds, D72) фазы Ф.1-Ф.3, Ф.5 уже реализова
 **D89 `EXPECT_COMPILE_ERROR`** — proven tool для negative-coverage без custom-харнеса. Pattern — substring через `regex.escape`. Workflow: запустил codegen на тестовом .nv, посмотрел текст ошибки, выбрал uniquely-identifying substring («does not satisfy», «is an effect, not a protocol»). Все 3 теста matchнулись с первой попытки.
 
 **Plan-spec-vs-bootstrap reality.** План Ф.4 предполагал «anonymous protocol bound (если spec позволяет inline)» — но bootstrap-парсер не поддерживает. Правильное решение — документировать gap явно («not supported in bootstrap, see D53 §628»), не пытаться расширить парсер ad-hoc. Аналогично forward-dep: тест есть, но чекер permissive — это документировано в комментариях и retro.
+
+---
+
+## 2026-05-10 (продолжение 10) — Plan 20 Ф.1 (lexer keyword reservation)
+
+### Что закрыто
+
+Первая фаза Plan 20 (D90 implementation): `defer` и `errdefer` зарезервированы как keyword-токены в lexer'е. Полностью изолированная фаза — токены добавлены, но грамматикой не используются.
+
+### Trade-offs
+
+Закоммитил **отдельно** от планируемого атомарного PR Ф.1-Ф.6 — Ф.1 обратно совместима (не ломает существующий код). Negative-тесты подтверждают что reservation работает. Incremental progress без риска отката.
+
+### Файлы
+
+- `compiler-codegen/src/lexer/token.rs` — TokenKind::KwDefer/KwErrDefer.
+- `compiler-codegen/src/lexer/mod.rs` — keyword recognizer.
+- `spec/decisions/03-syntax.md` D83 — keyword список расширен «Cleanup: defer, errdefer».
+- `nova_tests/negative_capability/defer_keyword_reserved.nv` — negative.
+- `nova_tests/negative_capability/errdefer_keyword_reserved.nv` — negative.
+
+### Status
+
+- Plan 20 Ф.1: ✅ ЗАКРЫТО (commit 75673d7).
+- Plan 20 Ф.2-Ф.6: 🟡 не начато (атомарный PR в будущей сессии).
+- Tests: ✅ 122/122 PASS.

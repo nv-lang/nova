@@ -4074,3 +4074,31 @@ Plan 15 (`docs/plans/15-generic-bounds-enforcement.md`) фазы Ф.1-Ф.3,
 **Тесты:** 91 → 123 pass (после добавления 3-х negative + 6
 существующих негативных capability + ряда других, число выросло).
 Все PASS, 0 FAIL.
+
+================================================================
+2026-05-10 (продолжение 10). Plan 20 Ф.1 — lexer keyword reservation
+================================================================
+
+Начата реализация Plan 20 (D90 defer/errdefer). Первая фаза —
+lexer-only: `defer` и `errdefer` → `KwDefer`/`KwErrDefer` токены.
+
+**Файлы:**
+- `compiler-codegen/src/lexer/token.rs` — TokenKind варианты + display.
+- `compiler-codegen/src/lexer/mod.rs` — keyword recognizer.
+- `spec/decisions/03-syntax.md` D83 — список keywords расширен
+  категорией Cleanup.
+- 2 negative-теста через EXPECT_COMPILE_ERROR (defer/errdefer как
+  identifier → compile error).
+
+**Тесты:** 122/122 PASS (было 120 + 2 новых).
+
+**Lesson — Ф.1 отдельным коммитом, не в атомарном PR.**
+
+Plan 20 заявлял Ф.1-Ф.6 как атомарный PR. Но Ф.1 (lexer-only)
+**обратно совместима**: токены добавлены, не используются грамматикой,
+существующий код не ломается. Negative-тесты подтверждают изоляцию.
+Отдельный коммит — incremental progress без риска отката.
+
+Ф.2+ остаются атомарными между собой (parser → type-check → codegen
++ interp + positive-тесты — всё ломает/добавляет функциональность
+одновременно).
