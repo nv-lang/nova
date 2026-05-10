@@ -3442,3 +3442,72 @@ D22 `(params) =>` прожила несколько ревизий и казал
 - C-codegen для `exit` — отдельная задача.
 - C-codegen для overloading свободных функций (D84 Bootstrap-status: ⚠️).
 - `paradigm.md` (Q8) переписать с нуля — не делалось.
+
+================================================================
+2026-05-10 (продолжение). C-codegen для panic + exit — production-grade
+================================================================
+
+Закрыл одну из открытых follow-up из предыдущей записи: C-codegen
+для exit (и заодно для panic — panic тоже не был покрыт в codegen,
+только в interp; в .nv-коде никто не использовал, поэтому баг не
+проявлялся).
+
+**Что сделано:**
+
+1. **Runtime (compiler-codegen/nova_rt/effects.h):**
+   - `nv_panic(nova_str msg)` — D13 «смерть текущего fiber'а».
+     Routing идентичен nova_assert: внутри fiber'а — longjmp до
+     nearest NovaFailFrame (на стеке fiber'а, не пересекает
+     mco-boundary); на main+test → longjmp в test-runner с
+     "panic: <msg>" (буфер аллоцируется через nova_alloc); иначе —
+     stderr + abort.
+   - `nv_exit(nova_int code, nova_str msg)` — D13 «смерть процесса».
+     НЕ routes через fail-frame (handler'ом не перехватывается). В
+     тестах routes через NovaTestFrame с "exit(N): <msg>"; в production
+     — exit(code). Не вызывает cleanup/destructor'ы (как C exit, Go
+     os.Exit, Rust std::process::exit).
+
+2. **Codegen (emit_c.rs):** special-case в emit_call после
+   println/print/assert. Эмитируется через **comma-expression**
+   `(nv_panic(msg), (nova_int)0LL)` и аналогично для exit. Это
+   решает фундаментальную проблему Never-функций в expression-
+   position: void C-сигнатура vs требование cast-target в caller'е.
+
+   **Почему comma-expression, не statement+dummy:** statement-паттерн
+   (как у Throw — `self.line(...) + Ok("0LL")`) **ломает short-circuit**
+   родительских конструкций. Конкретно ?? coalesce (D86) emit'ится в
+   тернарник `cond ? value : RHS`, и если RHS эмитируется как
+   statement выше тернарника, panic выполнится eagerly. Comma-
+   expression — inline expression, выполняется только когда родитель
+   реально evaluates это выражение.
+
+3. **Тесты (nova_tests/runtime/panic_exit.nv):** 10 тестов:
+   компиляция Never в expression-position, panic/exit в if-else
+   ветках, ?? panic / ?? exit как unwrap-or-die идиомы, разные
+   exit-code'ы, пустые msg'и.
+
+4. **Test-suite:** 98/98 PASS (97 предыдущих + новый panic_exit).
+
+**Lesson — comma-expression vs statement+dummy для Never:**
+
+Существующий ExprKind::Throw в codegen использует statement+dummy
+паттерн через self.line(). Это **работает только когда родитель —
+branching construct** (if-else, match — каждая ветка имеет свой
+line buffer). В тернарных контекстах (?? coalesce, conditional
+expression) statement выполняется eagerly, нарушая семантику
+короткого замыкания.
+
+Comma-expression `(call(args), 0)` — корректное системное решение
+для всех Never-вызовов. **Throw тоже стоит мигрировать** —
+проверка показала, что в тестах нет ?? throw use-case'ов, но
+теоретически тот же баг есть. Можно оставить как Q-throw-comma
+для будущей работы.
+
+**Что не сделано:**
+- type-checker про panic/exit явно не знает (как и про assert) —
+  обрабатывается в codegen special-case. Это существующее упрощение
+  bootstrap-types, не часть этой задачи.
+- exit с custom-cleanup (atexit-style) — на v1.0+, сейчас exit
+  гасит без cleanup как stdlib C exit().
+- ExprKind::Throw миграция на comma-expression — Q-throw-comma,
+  отдельная задача.

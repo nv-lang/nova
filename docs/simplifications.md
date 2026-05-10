@@ -2724,5 +2724,53 @@ error-ops, риски и DoD дополнены.
 - Spec: ✅ ЗАКРЫТ.
 - Tests: 97/97 PASS после всех правок.
 - Implementation Plan 19 (включает D85 ?/!!): 🟡 DRAFT.
-- C-codegen для `exit`: 🟡 TODO (отдельная задача).
+- C-codegen для `exit`: ✅ ЗАКРЫТО (см. секцию ниже от 2026-05-10).
 - C-codegen overloading свободных функций: 🟡 TODO (D84 Bootstrap-status: ⚠️).
+
+---
+
+## 2026-05-10 (продолжение) — C-codegen для panic + exit (production-grade)
+
+### Что упрощено / закрыто
+
+**1. panic + exit в C-codegen.** Закрывает следствие D13 «два уровня
+катастрофы»: обе функции prelude'а теперь работают и в interp, и в
+C-codegen. До этого `panic` был только в interp (никем в .nv не
+использовался — баг не проявлялся), `exit` был добавлен только в
+interp вчерашним коммитом C2.
+
+**2. Comma-expression паттерн для Never.** Существующий ExprKind::Throw
+использует statement+dummy через self.line() — это работает в
+branching contexts (if/match) но **ломает short-circuit** в тернарных
+(?? coalesce). Для panic/exit взял другой паттерн —
+`(nv_panic(msg), (nova_int)0LL)` через C comma-operator. Это
+**inline expression** без нарушения семантики родительских конструкций.
+Throw тоже стоит мигрировать — Q-throw-comma на будущее.
+
+### Trade-offs
+
+- **type-checker про panic/exit не знает** — обрабатывается в codegen
+  special-case (как и assert). Это существующее упрощение bootstrap-
+  types, не относится к этой задаче. Закрыть когда понадобится full
+  type-check свободных функций.
+- **exit без cleanup** — гасит процесс как C exit() / Go os.Exit без
+  defer'ов / destructor'ов / handler'ов. На v1.0+ можно добавить
+  atexit-style hook для критических cleanup'ов (закрыть файлы, flush
+  логов).
+
+### Файлы
+
+- `compiler-codegen/nova_rt/effects.h` — `nv_panic` + `nv_exit`
+  функции с production-grade routing.
+- `compiler-codegen/src/codegen/emit_c.rs` — special-case для
+  `panic(msg)` и `exit(code, msg)` через comma-expression.
+- `nova_tests/runtime/panic_exit.nv` — 10 тестов (компиляция,
+  if-else, ?? panic/exit, разные exit-code'ы, пустые msg'и).
+
+### Status
+
+- C-codegen: ✅ ЗАКРЫТ.
+- Tests: ✅ 98/98 PASS (включая новый panic_exit).
+- Open: Q-throw-comma — миграция Throw codegen на comma-expression
+  паттерн (тот же баг с ?? throw, никем не используется в .nv но
+  технически broken).
