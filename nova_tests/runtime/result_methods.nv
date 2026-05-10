@@ -48,7 +48,7 @@ test "Result.unwrap_or — Err(_) → default" {
 
 test "Result.unwrap_or_else — Ok(v) skips closure" {
     let r Result[int, str] = Ok(123)
-    let v = r.unwrap_or_else((e str) -> int => 0)
+    let v = r.unwrap_or_else(fn(e str) -> int => 0)
     assert(v == 123)
 }
 
@@ -57,7 +57,7 @@ test "Result.unwrap_or_else — Err(e) calls closure" {
     let r Result[int, str] = Err("e1")
     // (Использование e.len ломает bootstrap-inference для closure-param,
     // см. Q-closure-param-inference; покрытие — interp-only.)
-    let v = r.unwrap_or_else((e str) -> int => 42)
+    let v = r.unwrap_or_else(fn(e str) -> int => 42)
     assert(v == 42)
 }
 
@@ -88,7 +88,7 @@ test "Result.map_err — Err(e) → Err(f(e))" {
     // Closure-arg type должен быть аннотирован явно — bootstrap-codegen
     // не делает inference для closure-параметра по сигнатуре method'а
     // (Q-closure-param-inference).
-    let r2 = r.map_err((e str) -> str => "wrapped: " + e)
+    let r2 = r.map_err(fn(e str) -> str => "wrapped: " + e)
     assert(r2.is_err())
     // Полная проверка содержимого Err — через chain ?, см. ниже тест
     // "chain через ?" (Fail-handler ловит и возвращает строку).
@@ -97,7 +97,7 @@ test "Result.map_err — Err(e) → Err(f(e))" {
 
 test "Result.map_err — Ok(v) passes through" {
     let r Result[int, str] = Ok(42)
-    let r2 = r.map_err((e str) -> str => "X")
+    let r2 = r.map_err(fn(e str) -> str => "X")
     assert(r2.is_ok())
     assert(r2.unwrap_or(0) == 42)
 }
@@ -181,7 +181,7 @@ test "Option.unwrap_or_else — None calls closure" {
 
 test "Option.map — Some(v) → Some(f(v))" {
     let s Option[int] = Some(5)
-    let s2 = s.map((x int) -> int => x * 2)
+    let s2 = s.map(fn(x int) -> int => x * 2)
     assert(s2.is_some())
     assert(s2.unwrap_or(0) == 10)
 }
@@ -189,7 +189,7 @@ test "Option.map — Some(v) → Some(f(v))" {
 
 test "Option.map — None → None" {
     let n Option[int] = None
-    let n2 = n.map((x int) -> int => x + 1)
+    let n2 = n.map(fn(x int) -> int => x + 1)
     assert(n2.is_none())
 }
 

@@ -59,7 +59,7 @@ test "lambda inline" {
 }
 
 test "lambda passed as argument" {
-    let apply = (f fn(int) -> int, x int) => f(x)
+    let apply = fn(f fn(int) -> int, x int) -> int => f(x)
     assert(apply(|n| n * 10, 5) == 50)
 }
 
@@ -70,7 +70,7 @@ test "closure captures variable" {
 }
 
 test "lambda with explicit param type" {
-    let halve = (x int) => x / 2
+    let halve = fn(x int) -> int => x / 2
     assert(halve(20) == 10)
 }
 
@@ -80,6 +80,6 @@ test "function returns unit" {
 }
 
 test "higher-order: map-like" {
-    let twice = (n int) => n * 2
+    let twice = fn(n int) -> int => n * 2
     assert(twice(5) == 10)
 }

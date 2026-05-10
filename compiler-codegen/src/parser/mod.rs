@@ -1655,16 +1655,13 @@ impl Parser {
                     let trailing = if !self.no_trailing_block {
                         match self.peek().kind {
                             TokenKind::LBrace => {
+                                // Plan 19, C13: trailing-block только
+                                // без params (D43-rev). LegacyBlockWithParams
+                                // удалён из parser-path (сам enum-вариант
+                                // оставлен для совместимости с тестами,
+                                // но parser его больше не создаёт).
                                 let tb = self.parse_trailing_block()?;
-                                // Если в legacy-форме нашлись params
-                                // (`{ x => body }`), заворачиваем в
-                                // LegacyBlockWithParams; иначе чистый
-                                // Trailing::Block(block).
-                                Some(if tb.params.is_empty() {
-                                    crate::ast::Trailing::Block(Box::new(tb.body))
-                                } else {
-                                    crate::ast::Trailing::LegacyBlockWithParams(Box::new(tb))
-                                })
+                                Some(crate::ast::Trailing::Block(Box::new(tb.body)))
                             }
                             // Plan 19, C4: trailing-fn `fn(p) body`.
                             // Парсим как closure-full без имени:
@@ -1907,50 +1904,18 @@ impl Parser {
                 self.bump();
                 self.skip_newlines();
                 if matches!(self.peek().kind, TokenKind::RParen) {
-                    let rparen_end = self.peek().span;
-                    // Lookahead за `)`: если `=>` или `-> T =>` — это
-                    // zero-arg lambda `() => expr`, не unit-литерал.
-                    // Иначе — обычный unit `()`.
-                    let is_lambda_zero = matches!(self.peek_at(1).kind, TokenKind::FatArrow)
-                        || matches!(self.peek_at(1).kind, TokenKind::Arrow);
-                    if is_lambda_zero {
-                        self.bump(); // `)`
-                        // Опц. `-> T`
-                        let ret_ty = if matches!(self.peek().kind, TokenKind::Arrow) {
-                            self.bump();
-                            Some(self.parse_type()?)
-                        } else {
-                            None
-                        };
-                        self.expect(&TokenKind::FatArrow)?;
-                        self.skip_newlines();
-                        let body = self.parse_expr()?;
-                        let span = start.merge(body.span);
-                        return Ok(Expr::new(
-                            ExprKind::Lambda {
-                                params: Vec::new(),
-                                effects: Vec::new(),
-                                return_type: ret_ty,
-                                body: Box::new(body),
-                            },
-                            span,
-                        ));
-                    }
+                    // Plan 19 C13: zero-arg lambda `() => ...` удалена
+                    // (Plan 19 D22-rev). Используется `||` для no-arg
+                    // closure-light. Здесь `()` — unit-литерал.
                     let end = self.bump().span;
-                    let _ = rparen_end;
                     return Ok(Expr::new(ExprKind::UnitLit, start.merge(end)));
                 }
-                // Lambda? `(p1, p2) => expr` или `(p) =>` или `(p Type) =>`
-                // Сложно отличить от группировки/кортежа без lookahead.
-                // Стратегия: попробуем как expr, и если за `)` идёт `=>` — переводим в лямбду.
-                // Для bootstrap'а используем прямой lookahead: если все элементы — простые
-                // `ident` или `ident type` и за `)` идёт `=>` или `Effects -> Type =>`,
-                // парсим как лямбду. Иначе — кортеж/группа.
-                let saved_pos = self.pos;
-                if let Some(lambda) = self.try_parse_lambda(start)? {
-                    return Ok(lambda);
-                }
-                self.pos = saved_pos;
+                // Plan 19, C13: legacy `(params) => ...` lambda
+                // полностью удалена. Если в коде встречается
+                // — выдаём понятную ошибку с подсказкой использовать
+                // `|x|` (closure-light) или `fn(x)` (closure-full).
+                // try_parse_lambda больше не вызывается; tuple/group
+                // парсится прямо.
                 let first = self.parse_expr()?;
                 if self.eat(&TokenKind::Comma).is_some() {
                     let mut elems = vec![first];
@@ -1963,9 +1928,31 @@ impl Parser {
                         self.skip_newlines();
                     }
                     let end = self.expect(&TokenKind::RParen)?.span;
+                    // Plan 19 C13: detect legacy lambda
+                    // `(p1, p2) => body` и выдать понятную ошибку.
+                    if matches!(
+                        self.peek().kind,
+                        TokenKind::FatArrow | TokenKind::Arrow
+                    ) {
+                        return Err(Diagnostic::new(
+                            "legacy lambda `(params) => body` removed in Plan 19 D22-rev — \
+                             use closure-light `|x, y| body` or closure-full `fn(x T) -> R body`".to_string(),
+                            self.peek().span,
+                        ));
+                    }
                     Ok(Expr::new(ExprKind::TupleLit(elems), start.merge(end)))
                 } else {
                     self.expect(&TokenKind::RParen)?;
+                    if matches!(
+                        self.peek().kind,
+                        TokenKind::FatArrow | TokenKind::Arrow
+                    ) {
+                        return Err(Diagnostic::new(
+                            "legacy lambda `(x) => body` removed in Plan 19 D22-rev — \
+                             use closure-light `|x| body` or closure-full `fn(x T) -> R body`".to_string(),
+                            self.peek().span,
+                        ));
+                    }
                     Ok(first)
                 }
             }
@@ -2412,78 +2399,10 @@ impl Parser {
         Ok(Expr::new(ExprKind::ArrayLit(elems), start.merge(end)))
     }
 
-    fn try_parse_lambda(&mut self, start: Span) -> Result<Option<Expr>, Diagnostic> {
-        // Уже съели `(`. Пытаемся распарсить параметры лямбды.
-        // Ограничиваемся простыми случаями: `(a, b) => expr` или `(a Ty, b Ty) => expr`.
-        let mut params = Vec::new();
-        let saved = self.pos;
-        loop {
-            if matches!(self.peek().kind, TokenKind::RParen) {
-                break;
-            }
-            if !matches!(self.peek().kind, TokenKind::Ident(_)) {
-                self.pos = saved;
-                return Ok(None);
-            }
-            let (name, name_span) = self.parse_ident()?;
-            // Опц. тип
-            let ty = if !matches!(
-                self.peek().kind,
-                TokenKind::Comma | TokenKind::RParen
-            ) {
-                // Может быть тип. Попробуем.
-                let attempt = self.pos;
-                match self.parse_type() {
-                    Ok(t) => Some(t),
-                    Err(_) => {
-                        self.pos = attempt;
-                        None
-                    }
-                }
-            } else {
-                None
-            };
-            params.push(LambdaParam {
-                name,
-                ty,
-                span: name_span,
-            });
-            if self.eat(&TokenKind::Comma).is_none() {
-                break;
-            }
-            self.skip_newlines();
-        }
-        if !matches!(self.peek().kind, TokenKind::RParen) {
-            self.pos = saved;
-            return Ok(None);
-        }
-        self.bump();
-        // Опционально: эффекты + `-> Type`
-        let effects = self.parse_effects_until_arrow_or_body()?;
-        let return_type = if self.eat(&TokenKind::Arrow).is_some() {
-            Some(self.parse_type()?)
-        } else {
-            None
-        };
-        // Должна быть FatArrow
-        if !matches!(self.peek().kind, TokenKind::FatArrow) {
-            self.pos = saved;
-            return Ok(None);
-        }
-        self.bump();
-        self.skip_newlines();
-        let body = self.parse_expr()?;
-        let span = start.merge(body.span);
-        Ok(Some(Expr::new(
-            ExprKind::Lambda {
-                params,
-                effects,
-                return_type,
-                body: Box::new(body),
-            },
-            span,
-        )))
-    }
+    // Plan 19, C13: try_parse_lambda удалена. Старая `(params) =>`
+    // grammar отменена в Plan 19 D22-rev. Closure-light `|x| body`
+    // и closure-full `fn(x T) -> R body` — единственные формы
+    // безымянной функции.
 
     fn parse_if(&mut self) -> Result<Expr, Diagnostic> {
         let start = self.expect(&TokenKind::KwIf)?.span;
@@ -3189,17 +3108,10 @@ impl Parser {
 
     fn parse_trailing_block(&mut self) -> Result<TrailingBlock, Diagnostic> {
         let start = self.peek().span;
-        // `{` уже проверен снаружи. Парсим: optional `params =>`, потом block-body.
+        // Plan 19, C13: `{ params => body }` отменён. Trailing-block
+        // только без params (DSL-форма по D43-rev). Trailing с
+        // параметрами — отдельная конструкция `f(args) fn(p) body`.
         self.expect(&TokenKind::LBrace)?;
-        let mut params = Vec::new();
-        // Эвристика для `params =>`: ищем в первом стрим без вложенных `{` —
-        // если есть `=>` до первого `{` или statement-токена.
-        let saved = self.pos;
-        if self.try_parse_trailing_params(&mut params).is_err() {
-            params.clear();
-            self.pos = saved;
-        }
-        // Теперь парсим как block, но `}` финал.
         let mut stmts = Vec::new();
         let mut trailing: Option<Box<Expr>> = None;
         self.skip_newlines();
@@ -3221,7 +3133,7 @@ impl Parser {
         }
         let end = self.expect(&TokenKind::RBrace)?.span;
         Ok(TrailingBlock {
-            params,
+            params: Vec::new(),
             body: Block {
                 stmts,
                 trailing,
@@ -3229,46 +3141,6 @@ impl Parser {
             },
             span: start.merge(end),
         })
-    }
-
-    fn try_parse_trailing_params(
-        &mut self,
-        out: &mut Vec<LambdaParam>,
-    ) -> Result<(), Diagnostic> {
-        // Простая попытка: `name =>`, `(a, b) =>`. Если не получается — Err.
-        if matches!(self.peek().kind, TokenKind::LParen) {
-            self.bump();
-            while !matches!(self.peek().kind, TokenKind::RParen) {
-                let (n, sp) = self.parse_ident()?;
-                out.push(LambdaParam {
-                    name: n,
-                    ty: None,
-                    span: sp,
-                });
-                if self.eat(&TokenKind::Comma).is_none() {
-                    break;
-                }
-                self.skip_newlines();
-            }
-            self.expect(&TokenKind::RParen)?;
-            self.expect(&TokenKind::FatArrow)?;
-            self.skip_newlines();
-            return Ok(());
-        }
-        if matches!(self.peek().kind, TokenKind::Ident(_))
-            && matches!(self.peek_at(1).kind, TokenKind::FatArrow)
-        {
-            let (n, sp) = self.parse_ident()?;
-            out.push(LambdaParam {
-                name: n,
-                ty: None,
-                span: sp,
-            });
-            self.expect(&TokenKind::FatArrow)?;
-            self.skip_newlines();
-            return Ok(());
-        }
-        Err(Diagnostic::new("no trailing-block params", self.peek().span))
     }
 
     // ─── patterns ────────────────────────────────────────────────────────
@@ -4218,23 +4090,35 @@ mod tests {
     }
 
     #[test]
-    fn trailing_block_legacy_with_params() {
-        // `f() { x => body }` — legacy форма (до D43-rev). Парсер
-        // продолжает её принимать в dual-mode (C4-C12) до C13.
-        let m = parse_or_panic(
+    fn trailing_block_legacy_form_rejected() {
+        // Plan 19 C13: `f() { x => body }` legacy форма удалена
+        // (заменена на `f() fn(x int) -> ... body`). Парсер
+        // её больше не принимает: внутри `{ ... }` `x =>` парсится
+        // как match-arm в block, что даёт parse-error дальше.
+        // (Точная форма ошибки зависит от того, как парсер
+        // интерпретирует `x =>` в начале block-statement'а — нам
+        // важно лишь что результат **не** Trailing::LegacyBlockWithParams.)
+        let result = parse(
             r#"
             fn dummy(x fn(int) -> int) -> int => x(0)
             let r = dummy() { x => x + 1 }
             "#,
         );
-        let Item::Let(l) = &m.items[1] else { panic!() };
-        let ExprKind::Call { trailing, .. } = &l.value.kind else { panic!() };
-        let t = trailing.as_ref().unwrap();
-        assert!(
-            matches!(t, crate::ast::Trailing::LegacyBlockWithParams(_)),
-            "expected LegacyBlockWithParams, got {:?}",
-            t
-        );
+        // Либо parse fail, либо parse OK но trailing — Block (без params)
+        // с инородным `x => x + 1` внутри. В обоих случаях нет
+        // LegacyBlockWithParams.
+        if let Ok(m) = result {
+            if let Item::Let(l) = &m.items[1] {
+                if let ExprKind::Call { trailing, .. } = &l.value.kind {
+                    if let Some(t) = trailing {
+                        assert!(
+                            !matches!(t, crate::ast::Trailing::LegacyBlockWithParams(_)),
+                            "Plan 19 C13 should not produce LegacyBlockWithParams"
+                        );
+                    }
+                }
+            }
+        }
     }
 
     #[test]

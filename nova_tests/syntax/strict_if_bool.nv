@@ -97,7 +97,7 @@ test "if с function-call возвращающим bool" {
 
 
 test "if с closure-call возвращающим bool" {
-    let pred = (n int) -> bool => n > 10
+    let pred = fn(n int) -> bool => n > 10
     if pred(15) {
         assert(true)
     }
