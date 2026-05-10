@@ -22,6 +22,32 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use value::*;
 
+/// Plan 19, C4: конвертирует новый `Trailing` в legacy `TrailingBlock`
+/// для interpreter eval-path'а (старый eval_call принимает старый тип).
+///
+/// - `Trailing::Block(b)` → `TrailingBlock { params: [], body: b }`.
+/// - `Trailing::LegacyBlockWithParams(tb)` → возвращает копию `tb`.
+/// - `Trailing::Fn(_)` → `None`. Семантику trailing-fn в interp
+///   реализует C5; до этого парсер может произвести `Trailing::Fn`,
+///   но runtime упадёт с `unreachable!()` в eval_call (для testing).
+fn trailing_to_legacy_for_interp(t: &crate::ast::Trailing) -> Option<crate::ast::TrailingBlock> {
+    match t {
+        crate::ast::Trailing::Block(b) => Some(crate::ast::TrailingBlock {
+            params: Vec::new(),
+            body: (**b).clone(),
+            span: b.span,
+        }),
+        crate::ast::Trailing::LegacyBlockWithParams(tb) => Some((**tb).clone()),
+        crate::ast::Trailing::Fn(_) => {
+            // Plan 19, C5 wires это. Сейчас (C4) trailing-fn производит
+            // парсер, но в runtime не доходит — существующие тесты не
+            // используют новый синтаксис. Если сюда дойдёт — вылетит
+            // unreachable, что и ловит regression.
+            None
+        }
+    }
+}
+
 /// Исполнительный контекст: топ-левел декларации модуля + текущая среда +
 /// handler-стек.
 pub struct Interpreter {
@@ -341,21 +367,26 @@ impl Interpreter {
             ExprKind::Call {
                 func,
                 args,
-                trailing_block,
+                trailing,
             } => {
                 // Plan 14 Ф.6-bis (D69): handle spread + variadic в interp.
+                // Plan 19, C4: trailing теперь enum (Block | Fn |
+                // LegacyBlockWithParams). Конвертируем в legacy
+                // TrailingBlock для существующего eval_call (он
+                // ожидает старый тип). После C5 (interp eval для
+                // ClosureFull) trailing-fn получит свой path.
                 //
-                // Если spread args нет — fast path: преобразуем CallArg
-                // → Expr и вызываем существующий eval_call.
-                // Если есть spread — pre-eval'аем все args в Vec<Value>
-                // (раскрывая spread из Value::Array), затем dispatch'имся
-                // в call_value напрямую.
-                //
-                // Polный variadic-collect (regular args → array param)
-                // делает `call_closure_flow` через `closure.variadic_last`.
+                // Для текущей фазы (C4) trailing-fn заворачивается в
+                // closure и передаётся как обычный args-element. Это
+                // даст функциональную эквивалентность со старым
+                // механизмом.
+                let legacy_tb = trailing
+                    .as_ref()
+                    .and_then(trailing_to_legacy_for_interp);
+
                 if !args.iter().any(|a| a.is_spread()) {
                     let plain: Vec<Expr> = args.iter().map(|a| a.expr().clone()).collect();
-                    self.eval_call(func, &plain, trailing_block.as_ref(), env, expr.span)
+                    self.eval_call(func, &plain, legacy_tb.as_ref(), env, expr.span)
                 } else {
                     // Pre-eval с unfolding spread'ов.
                     let mut arg_values: Vec<Value> = Vec::with_capacity(args.len());
@@ -379,7 +410,7 @@ impl Interpreter {
                         }
                     }
                     // trailing-block — преобразуем в closure-аргумент.
-                    if let Some(tb) = trailing_block {
+                    if let Some(tb) = legacy_tb.as_ref() {
                         let closure = Closure {
                             params: tb.params.iter().map(|p| p.name.clone()).collect(),
                             body: ClosureBody::Block(tb.body.clone()),

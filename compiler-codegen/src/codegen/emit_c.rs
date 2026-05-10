@@ -4143,8 +4143,26 @@ impl CEmitter {
                 self.emit_block_expr(block)
             }
 
-            ExprKind::Call { func, args, trailing_block } => {
-                self.emit_call_with_trailing(func, args, trailing_block.as_ref())
+            ExprKind::Call { func, args, trailing } => {
+                // Plan 19, C4: trailing-конструкция теперь enum
+                // (Block | Fn | LegacyBlockWithParams). Codegen для
+                // trailing-fn реализуется в C5. До этого конвертируем
+                // в legacy TrailingBlock через helper для совместимости
+                // с emit_call_with_trailing (он принимает старый тип).
+                let legacy_tb = trailing.as_ref().and_then(|t| match t {
+                    crate::ast::Trailing::Block(b) => Some(crate::ast::TrailingBlock {
+                        params: Vec::new(),
+                        body: (**b).clone(),
+                        span: b.span,
+                    }),
+                    crate::ast::Trailing::LegacyBlockWithParams(tb) => Some((**tb).clone()),
+                    // C5 реализует codegen-path для trailing-fn.
+                    // Парсер C4 может его создать, но кодеген ещё не
+                    // готов: нет тестов с этим синтаксисом, поэтому
+                    // unreachable безопасен.
+                    crate::ast::Trailing::Fn(_) => None,
+                });
+                self.emit_call_with_trailing(func, args, legacy_tb.as_ref())
             }
 
             ExprKind::Member { obj, name } => {
@@ -6885,7 +6903,7 @@ impl CEmitter {
                         span: iter.span,
                     }),
                     args: Vec::new(),
-                    trailing_block: None,
+                    trailing: None,
                 },
                 span: iter.span,
             };

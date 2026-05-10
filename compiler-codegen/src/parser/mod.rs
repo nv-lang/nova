@@ -1603,13 +1603,44 @@ impl Parser {
                         }
                     }
                     let end = self.expect(&TokenKind::RParen)?.span;
-                    // trailing block? Skip when inside match-scrutinee context
-                    // (see no_trailing_block flag) — `match f(x) { ... }` should
-                    // be parsed as `match` over `f(x)`, not `f(x){...}` call-with-block.
-                    let trailing_block = if matches!(self.peek().kind, TokenKind::LBrace)
-                        && !self.no_trailing_block
-                    {
-                        Some(self.parse_trailing_block()?)
+                    // Trailing-конструкция после `)`. Plan 19 D43-rev:
+                    // - `{` → trailing-block (без params), либо legacy
+                    //   `{ x => body }` (с params, до миграции).
+                    // - `fn` → trailing-fn `f(args) fn(p) body`.
+                    // Skip when inside match-scrutinee context
+                    // (see no_trailing_block flag) — `match f(x) { ... }`
+                    // should be parsed as `match` over `f(x)`, not
+                    // `f(x){...}` call-with-block.
+                    let trailing = if !self.no_trailing_block {
+                        match self.peek().kind {
+                            TokenKind::LBrace => {
+                                let tb = self.parse_trailing_block()?;
+                                // Если в legacy-форме нашлись params
+                                // (`{ x => body }`), заворачиваем в
+                                // LegacyBlockWithParams; иначе чистый
+                                // Trailing::Block(block).
+                                Some(if tb.params.is_empty() {
+                                    crate::ast::Trailing::Block(Box::new(tb.body))
+                                } else {
+                                    crate::ast::Trailing::LegacyBlockWithParams(Box::new(tb))
+                                })
+                            }
+                            // Plan 19, C4: trailing-fn `fn(p) body`.
+                            // Парсим как closure-full без имени:
+                            // переиспользуем parse_closure_full и
+                            // распаковываем результат в FnSigBody.
+                            TokenKind::KwFn => {
+                                let fn_start = self.peek().span;
+                                let cf_expr = self.parse_closure_full(fn_start)?;
+                                let ExprKind::ClosureFull(sb) = cf_expr.kind else {
+                                    unreachable!(
+                                        "parse_closure_full must produce ExprKind::ClosureFull"
+                                    );
+                                };
+                                Some(crate::ast::Trailing::Fn(sb))
+                            }
+                            _ => None,
+                        }
                     } else {
                         None
                     };
@@ -1618,7 +1649,7 @@ impl Parser {
                         ExprKind::Call {
                             func: Box::new(expr),
                             args,
-                            trailing_block,
+                            trailing,
                         },
                         span,
                     );
@@ -4023,5 +4054,100 @@ mod tests {
         assert_eq!(m.items.len(), 1);
         let Item::Fn(f) = &m.items[0] else { panic!() };
         assert_eq!(f.name, "foo");
+    }
+
+    // ─── Plan 19, C4: trailing parsing ─────────────────────────────
+
+    #[test]
+    fn trailing_block_no_params() {
+        // `f() { body }` — DSL-форма (D43-rev).
+        let m = parse_or_panic(
+            r#"
+            fn dummy(x fn() -> int) -> int => x()
+            let r = dummy() {
+                42
+            }
+            "#,
+        );
+        // dummy — Item 0, let — Item 1.
+        let Item::Let(l) = &m.items[1] else {
+            panic!("expected let at items[1], got {:?}", m.items[1]);
+        };
+        let ExprKind::Call { trailing, .. } = &l.value.kind else { panic!() };
+        let t = trailing.as_ref().unwrap();
+        assert!(matches!(t, crate::ast::Trailing::Block(_)));
+    }
+
+    #[test]
+    fn trailing_block_legacy_with_params() {
+        // `f() { x => body }` — legacy форма (до D43-rev). Парсер
+        // продолжает её принимать в dual-mode (C4-C12) до C13.
+        let m = parse_or_panic(
+            r#"
+            fn dummy(x fn(int) -> int) -> int => x(0)
+            let r = dummy() { x => x + 1 }
+            "#,
+        );
+        let Item::Let(l) = &m.items[1] else { panic!() };
+        let ExprKind::Call { trailing, .. } = &l.value.kind else { panic!() };
+        let t = trailing.as_ref().unwrap();
+        assert!(
+            matches!(t, crate::ast::Trailing::LegacyBlockWithParams(_)),
+            "expected LegacyBlockWithParams, got {:?}",
+            t
+        );
+    }
+
+    #[test]
+    fn trailing_fn_typed_expr_body() {
+        // `f() fn(x) => x > 0` — D43-rev trailing-fn.
+        let m = parse_or_panic(
+            r#"
+            fn dummy(x fn(int) -> bool) -> bool => x(1)
+            let r = dummy() fn(x int) -> bool => x > 0
+            "#,
+        );
+        let Item::Let(l) = &m.items[1] else { panic!() };
+        let ExprKind::Call { trailing, .. } = &l.value.kind else { panic!() };
+        let t = trailing.as_ref().unwrap();
+        let crate::ast::Trailing::Fn(sb) = t else {
+            panic!("expected Trailing::Fn, got {:?}", t);
+        };
+        assert_eq!(sb.params.len(), 1);
+        assert!(matches!(sb.body, FnBody::Expr(_)));
+    }
+
+    #[test]
+    fn trailing_fn_block_body() {
+        let m = parse_or_panic(
+            r#"
+            fn dummy(x fn(int, int) -> int) -> int => x(1, 2)
+            let r = dummy() fn(a int, b int) -> int {
+                let s = a + b
+                s * 2
+            }
+            "#,
+        );
+        let Item::Let(l) = &m.items[1] else { panic!() };
+        let ExprKind::Call { trailing, .. } = &l.value.kind else { panic!() };
+        let t = trailing.as_ref().unwrap();
+        let crate::ast::Trailing::Fn(sb) = t else { panic!() };
+        assert_eq!(sb.params.len(), 2);
+        assert!(matches!(sb.body, FnBody::Block(_)));
+    }
+
+    #[test]
+    fn trailing_fn_with_effects() {
+        let m = parse_or_panic(
+            r#"
+            fn dummy(x fn(int) Db -> int) Db -> int => x(1)
+            let r = dummy() fn(n int) Db -> int => n
+            "#,
+        );
+        let Item::Let(l) = &m.items[1] else { panic!() };
+        let ExprKind::Call { trailing, .. } = &l.value.kind else { panic!() };
+        let t = trailing.as_ref().unwrap();
+        let crate::ast::Trailing::Fn(sb) = t else { panic!() };
+        assert_eq!(sb.effects.len(), 1);
     }
 }

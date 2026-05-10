@@ -405,8 +405,10 @@ pub enum ExprKind {
         /// для обычного аргумента и `CallArg::Spread(Expr)` для `...e`.
         /// Spread разрешён только в variadic-position (codegen check).
         args: Vec<CallArg>,
-        /// trailing-block: D43
-        trailing_block: Option<TrailingBlock>,
+        /// trailing-конструкция (D43-rev, Plan 19): либо `{ block }`
+        /// (без params, DSL), либо `fn(p) body` (с params), либо
+        /// legacy `{ x => body }` до миграции (C13 удалит legacy).
+        trailing: Option<Trailing>,
     },
     /// `expr?` — пробрасывание Fail (D25/D65)
     Try(Box<Expr>),
@@ -712,14 +714,22 @@ pub struct TrailingBlock {
 ///
 /// Старая форма `f(args) { x => body }` (с параметрами через `=>`
 /// внутри `{...}`) после Plan 19 **отменена**. Во время dual-mode
-/// (C2–C12) parser продолжает поддерживать через legacy
-/// [`TrailingBlock`]; после C13 эта поддержка удаляется.
+/// (C2–C12) parser продолжает поддерживать через
+/// [`Trailing::LegacyBlockWithParams`]; после миграции (C11/C12)
+/// и удаления (C13) этот вариант исчезает.
 #[derive(Debug, Clone)]
 pub enum Trailing {
-    /// `f(args) { block }` — DSL без params.
-    Block(Block),
-    /// `f(args) fn(p) Effects? -> R? body` — trailing closure-full.
-    Fn(FnSigBody),
+    /// `f(args) { block }` — DSL без params (D43-rev).
+    /// Boxed чтобы избежать infinite-size в recursive типе ExprKind.
+    Block(Box<Block>),
+    /// `f(args) fn(p) Effects? -> R? body` — trailing closure-full
+    /// (D43-rev). Boxed по той же причине.
+    Fn(Box<FnSigBody>),
+    /// **DEPRECATED, dual-mode only.** Старая форма
+    /// `f(args) { x => body }` или `{ (a, b) => body }`. Парсер
+    /// сохраняет её для backward-compat до C12 (миграция) и C13
+    /// (удаление варианта).
+    LegacyBlockWithParams(Box<TrailingBlock>),
 }
 
 impl Trailing {
@@ -727,6 +737,7 @@ impl Trailing {
         match self {
             Trailing::Block(b) => b.span,
             Trailing::Fn(f) => f.span,
+            Trailing::LegacyBlockWithParams(tb) => tb.span,
         }
     }
 }

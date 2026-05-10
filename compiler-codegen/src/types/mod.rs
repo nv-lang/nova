@@ -344,13 +344,26 @@ impl<'a> BoundCtx<'a> {
         // Проверяем сам call перед рекурсией в args (порядок не важен).
         self.check_call_bounds(e, scope, errors);
         match &e.kind {
-            ExprKind::Call { func, args, trailing_block } => {
+            ExprKind::Call { func, args, trailing } => {
                 self.walk_expr(func, scope, errors);
                 for a in args {
                     self.walk_expr(a.expr(), scope, errors);
                 }
-                if let Some(tb) = trailing_block {
-                    self.walk_block(&tb.body, scope, errors);
+                if let Some(t) = trailing {
+                    match t {
+                        crate::ast::Trailing::Block(b) => self.walk_block(b, scope, errors),
+                        crate::ast::Trailing::LegacyBlockWithParams(tb) => {
+                            self.walk_block(&tb.body, scope, errors)
+                        }
+                        crate::ast::Trailing::Fn(sb) => {
+                            // Trailing-fn body: Expr или Block.
+                            match &sb.body {
+                                FnBody::Expr(e) => self.walk_expr(e, scope, errors),
+                                FnBody::Block(b) => self.walk_block(b, scope, errors),
+                                FnBody::External => {}
+                            }
+                        }
+                    }
                 }
             }
             ExprKind::TurboFish { base, .. } => self.walk_expr(base, scope, errors),
@@ -926,11 +939,21 @@ impl<'a> CapabilityCtx<'a> {
                 self.walk_block(body, state, errors);
                 for _ in &pushed { state.with_handler_stack.pop(); }
             }
-            ExprKind::Call { func, args, trailing_block } => {
+            ExprKind::Call { func, args, trailing } => {
                 self.walk_expr(func, state, errors);
                 for a in args { self.walk_expr(a.expr(), state, errors); }
-                if let Some(tb) = trailing_block {
-                    self.walk_block(&tb.body, state, errors);
+                if let Some(t) = trailing {
+                    match t {
+                        crate::ast::Trailing::Block(b) => self.walk_block(b, state, errors),
+                        crate::ast::Trailing::LegacyBlockWithParams(tb) => {
+                            self.walk_block(&tb.body, state, errors)
+                        }
+                        crate::ast::Trailing::Fn(sb) => match &sb.body {
+                            FnBody::Expr(e) => self.walk_expr(e, state, errors),
+                            FnBody::Block(b) => self.walk_block(b, state, errors),
+                            FnBody::External => {}
+                        },
+                    }
                 }
             }
             ExprKind::TurboFish { base, .. } => self.walk_expr(base, state, errors),
