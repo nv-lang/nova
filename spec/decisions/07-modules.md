@@ -262,13 +262,13 @@ fn Account.from_db_row(row DbRow) Fail -> Account => ...   // приватная
 
 // ── Методы инстанса ───────────────────────────────────────────────
 export fn Account @balance() => @balance                   // публичный
-export fn Account mut @deposit(amount money) {             // публичный
-    @validate_amount(amount)?
+export fn Account mut @deposit(amount money) Fail {        // публичный
+    @validate_amount(amount)
     @balance += amount
 }
 
-fn Account @validate_amount(amount money) =>               // приватный
-    amount > 0 && amount < money.MAX
+fn Account @validate_amount(amount money) Fail =>          // приватный
+    if amount <= 0 || amount >= money.MAX { throw InvalidAmount }
 
 // ── Протоколы ─────────────────────────────────────────────────────
 export type Hashable protocol {
