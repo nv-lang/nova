@@ -3835,3 +3835,160 @@ const-init path).
 - `emit_expr` для in-function let'ов тоже мог бы передавать target-тип
   для consistency. Сейчас работает через C-implicit conversion и не
   даёт unsafe-результата. Cleanup, не bug — отложен.
+
+================================================================
+2026-05-11 (продолжение). codegen-баг #3 в crc32.nv — type promotion в Binary
+================================================================
+
+Третий codegen-баг этой серии (после fnv-баг'ов #1 и #2), снова в
+`std/checksums/`. User указал на crc32-функцию:
+```nova
+fn table_value(i u8) -> u32 {
+    let mut c = i as u32
+    for k in 0..8 {
+        c = if c & 1 == 1 { 0xEDB88320 ^ (c >> 1) } else { c >> 1 }
+    }
+    c
+}
+```
+эмитилось так:
+```c
+nova_int _nv_if_1;  // ← должно быть uint32_t
+```
+
+Причина — в `infer_expr_c_type` для `Binary` integer-операций:
+```rust
+let lt = self.infer_expr_c_type(left);
+let rt = self.infer_expr_c_type(right);
+if lt == "nova_f64" || rt == "nova_f64" { "nova_f64" } else { lt }
+```
+Просто `lt`. Для `0xEDB88320 ^ (c >> 1)`: `lt = infer(IntLit) = nova_int`,
+`rt = infer(c >> 1) = u32`. Возвращалось `lt = nova_int`. `emit_if_expr`
+инферил тип tmp'а из этого и объявлял `nova_int _nv_if_1`.
+
+**Что сделано:**
+
+Promotion-rule в Binary integer-branch: если один operand — typed integer
+(`u8/u16/u32/u64`, `i8/i16/i32`), а другой — `nova_int` (т.е. дефолтный
+IntLit), результат — **typed**. Симметрично для left/right.
+
+Helper `is_typed_integer(ty) -> bool` — predicate для типизированных integer'ов
+(всё кроме `nova_int`/`int64_t`, потому что они — дефолт IntLit, должны
+"уступать" более конкретным).
+
+После fix:
+```c
+uint32_t _nv_if_1;  // ← правильно
+if (...) {
+    _nv_if_1 = (uint32_t)((((nova_int)3988292384LL) ^ (c >> ((nova_int)1LL))));
+}
+```
+Внутренние литералы (`((nova_int)NLL)`) не трогали — implicit C-conversion на
+assignment безопасен. Главное — **внешний tmp типизирован правильно**, и
+дальше всё течёт без потери типа.
+
+**Trade-offs / границы фикса:**
+
+- **Только в `infer_expr_c_type` для Binary.** Не трогали `emit_expr` (там
+  Binary всё ещё эмитит `nova_int` литералы). Можно было thread'ить
+  target-type рекурсивно как в `emit_const_expr_typed`, но это значительно
+  больший рефакторинг с большим риском регрессий.
+- **Simple promotion rule (1 typed + 1 nova_int → typed).** Не покрывает
+  полный C-promotion: `u32 & u8` → берём `lt` (левый), полагаясь на
+  implicit narrow/widen. В реальном коде такие случаи редки и safety
+  не нарушают.
+- **`nova_int`/`int64_t` сознательно "не-typed":** их роль — быть
+  дефолтным IntLit'ом и уступать.
+
+**Тесты:** lib 65/65, nova_tests 120/120, std/checksums 2/2 PASS.
+
+**Lesson — stdlib работает как fuzzer.** Три codegen-бага подряд именно
+в `std/checksums/*.nv`. Stdlib пишется на real Nova и использует все
+edge-cases (typed const'ы, u32-арифметика, hex-литералы, bitwise mix).
+Каждый «странный фрагмент сгенерированного C» в stdlib — реальный баг
+codegen'а который otherwise might остаться незамеченным. Из этого
+следует: **stdlib coverage важнее самих stdlib-тестов** — даже если тест
+проходит, отчётливо проверять что генерируемый C **выглядит правильно**.
+Альтернатива: «golden c-file» тесты для key-stdlib функций (рассмотреть).
+
+================================================================
+2026-05-10 (продолжение 8). D90 (defer/errdefer) + D91 (Channel revision)
+================================================================
+
+Два связанных spec-блока, оба про "deterministic cleanup в managed-
+heap language без destructor'ов".
+
+**D90 — defer/errdefer (закрывает Q20):**
+
+Zig-style scope-level cleanup statements. Семантика:
+- Scope-level (не function-level как Go) — привязан к enclosing
+  block.
+- LIFO order — последний defer'нутый первым выполняется.
+- `defer` запускается на любом exit (normal, return, throw, panic,
+  interrupt); `errdefer` только на throw/panic.
+- НЕ запускается на exit(N, msg) — D13 exit гасит процесс без
+  cleanup'ов.
+- Eager argument evaluation, lazy closure captures (как Go).
+- Body infallible (no Fail), no-suspend, no-return/throw/break/
+  continue из body.
+
+Use-case — transactions:
+```nova
+fn create_user(data UserData) Fail Db -> User {
+    let user = Db.insert_user(data)
+    errdefer Db.delete_user(user.id)
+    let profile = Db.insert_profile(user, data)
+    errdefer Db.delete_profile(profile.id)
+    Db.send_welcome(user.email)
+    user
+}
+```
+
+Без defer/errdefer этот pattern — 10+ строк через handler-блок.
+С defer — 6 строк, читаемо.
+
+**D91 — Channel revision (уточняет D79):**
+
+Capability-split: `Channel[T].new(cap) -> (Sender[T], Receiver[T])`,
+Rust mpsc-style.
+
+- Sender protocol: send, try_send, close.
+- Receiver protocol: recv -> Option[T] (None = closed+drained), try_recv.
+- Close — **explicit** через `defer tx.close()` (D90). Не auto-on-drop
+  как Rust — в Nova нет deterministic destructor'ов (D6 managed heap).
+- `clone()` не нужен — managed heap делает sender shared автоматически.
+- select { msg <- rx => ... } работает через Receiver.
+
+Зачем split: type-safety capabilities (producer не recv'ит,
+consumer не send'ит), API чище (функция возвращает «только читать»
+через Receiver-only тип), передача в spawn (только нужная capability).
+
+Прецеденты: Rust mpsc, Tokio mpsc, JS MessageChannel, Python
+multiprocessing.Pipe — все split. Go, OCaml 5 Eio — Go-style. Nova
+переходит к доминирующей Rust-модели.
+
+**Lessons:**
+
+- **«Defer и Channel-rev — связанные решения».** Channel-rev требует
+  explicit close → требует defer. Заведены параллельно (2 D-блока)
+  но реализуются последовательно (D90 → D91 → Plan 22 implementation).
+
+- **Auto-on-drop не работает в managed-heap-language.** Rust ownership
+  обеспечивает deterministic destruction; Nova GC — нет. Pattern
+  «GC-finalizer для close» — антипаттерн (flaky тесты, hanging
+  receivers).
+
+- **Capability-split — естественная идиома для concurrency primitives.**
+  Lock/Pipe/Process.spawn/HttpServer.bind/Db.transaction — все
+  это «factory возвращает кортеж capability-objects».
+
+**Bootstrap-status:**
+- D90: 🟡 не реализовано. Парсер keyword'ов, type-check (infallible
+  body, no-suspend), codegen (scope-stack defer-callbacks, LIFO
+  invocation, throw-path detection для errdefer).
+- D91: 🟡 не реализовано. Breaking change для nova_rt/channels.h,
+  миграция nova_tests/runtime/channels.nv. Plan 22+.
+
+**Что НЕ сделано в этой сессии:**
+- Реализация D90 / D91 — оба только в spec.
+- Pilot-тесты — bootstrap не поддерживает defer/D91 API.

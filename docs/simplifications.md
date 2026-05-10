@@ -3024,3 +3024,98 @@ static uint32_t Nova_Fnv_static_hash32(...) {
 - ✅ ЗАКРЫТ.
 - Tests: ✅ lib 65/65, nova_tests 120/120, std/checksums 2/2 PASS.
 - Lesson: «code generator с типизированным IR — но IntLit без target-типа в emit'е». Любой code-gen, который compile'ит typed source → нетипизированный target language (C), должен везде, где есть target-type-info, эмитить native-typed литералы. Особенно для unsigned/signed мостов. Если IR теряет тип к моменту emit'а (как было) — баг неизбежен на edge-cases (overflow, large hex constants, u64 ≥ 2^63).
+
+---
+
+## 2026-05-11 (продолжение) — codegen: typed-integer promotion в Binary infer
+
+### Что починено
+
+В `std/checksums/crc32.nv` функция:
+```nova
+fn table_value(i u8) -> u32 {
+    let mut c = i as u32
+    for k in 0..8 {
+        c = if c & 1 == 1 { 0xEDB88320 ^ (c >> 1) } else { c >> 1 }
+    }
+    c
+}
+```
+эмитила:
+```c
+nova_int _nv_if_1;  // ← должно быть uint32_t
+if (...) {
+    _nv_if_1 = (nova_int)((((nova_int)3988292384LL) ^ (c >> ((nova_int)1LL))));
+}
+```
+
+Объяснение: `emit_if_expr` определяет тип tmp-переменной через `infer_expr_c_type(then.trailing)`. Trailing — это `0xEDB88320 ^ (c >> 1)` — `Binary{BitXor, IntLit, ...}`. Logic в `Binary` brunch'е был: вернуть `lt` (left type). А `lt = infer(IntLit) = "nova_int"`. → tmp тоже `nova_int`.
+
+### Fix
+
+В `infer_expr_c_type` для `Binary` integer-операций добавлена **typed-integer promotion**: если один из операндов — typed integer (`uint8/16/32/64_t`, `int8/16/32_t`), а другой — `nova_int` (т.е. дефолтный IntLit), результат — **typed integer**, не nova_int. Это правило симметрично для left/right.
+
+Helper `is_typed_integer(ty) -> bool` для предиката (включает все signed/unsigned кроме `nova_int`/`int64_t`, т.к. это и есть дефолт).
+
+После fix:
+```c
+uint32_t _nv_if_1;  // ← правильно
+if (...) {
+    _nv_if_1 = (uint32_t)((((nova_int)3988292384LL) ^ (c >> ((nova_int)1LL))));
+}
+```
+Литералы внутри XOR/shift остаются `((nova_int)NLL)` (это safe — implicit C-conversion при assignment к u32). Главное — outer tmp типизирован правильно.
+
+### Trade-offs
+
+- **Promotion правило простое (1 typed + 1 nova_int → typed).** Не покрывает все edge-cases full C-promotion. Если оба операнда typed разной ширины (например `u32 & u8`) — берём `lt` (левый), полагаясь на implicit C narrow/widen. В реальном коде такие случаи редки.
+- **Литералы внутри Binary остаются nova_int.** Можно было thread'ить target-type рекурсивно (как в `emit_const_expr_typed` из предыдущего фикса) и эмитить `((uint32_t)NU)` сразу. Но это много больше работы и риска регрессий — текущий подход «typed outer + literal cast'ится на assign» работает и проще.
+- **`int64_t`/`nova_int` сознательно не считаются "typed":** их роль — быть дефолтным IntLit'ом, должны "уступать" более конкретным типам.
+
+### Файлы
+
+- `compiler-codegen/src/codegen/emit_c.rs` — `is_typed_integer` helper, promotion правило в `Binary` ветке `infer_expr_c_type`.
+
+### Status
+
+- ✅ ЗАКРЫТ.
+- Tests: ✅ lib 65/65, nova_tests 120/120, std/checksums 2/2 PASS.
+- Lesson — третий codegen-баг этой серии в `std/checksums/*.nv`: stdlib **показателен**. Stdlib пишется на real Nova, использует все edge-cases (typed const'ы, u32-арифметика, hex-литералы). Каждый «странный фрагмент сгенерированного C» в stdlib — реальный баг кодогена. Stdlib де-факто работает как fuzzer.
+
+---
+
+## 2026-05-10 (продолжение 8) — D90 (defer/errdefer) + D91 (Channel revision)
+
+### Что зафиксировано
+
+**D90 — defer/errdefer:**
+
+Zig-style scope-level cleanup statements. Закрывает Q20 «Нужен ли defer?» Мотивирован отсутствием RAII в Nova (D6 managed heap, нет destructor'ов): без `defer` resource cleanup пишется через handler-блоки, что многословно (10+ строк boilerplate на transactions).
+
+**D91 — Channel revision:**
+
+Уточняет D79: API меняется с Go-style (один Channel объект) на Rust mpsc-style (`Channel.new(cap) -> (Sender, Receiver)`). Capability-split: producer не может recv, consumer не может send. Close — explicit через `defer tx.close()` (D90), не auto-on-drop.
+
+### Trade-offs
+
+- **D90 body infallible.** Если cleanup может упасть — программист обязан handle явно через handler-блок. Double-throw невозможно сделать корректно.
+- **D90 no-suspend.** Cleanup быстрый — иначе exit-семантика scope'а непредсказуема.
+- **D91 explicit close.** В Nova нет destructor'ов; auto-on-drop через GC flaky. Программист обязан `tx.close()` (идиома — `defer`). Отличие от Rust mpsc.
+- **D91 sender.clone() не нужен.** Managed heap shared by default.
+
+### Файлы
+
+- `spec/decisions/03-syntax.md` — D90.
+- `spec/decisions/06-concurrency.md` — D91, D79 помечен «частично уточнено D91».
+- `spec/open-questions.md` — Q20 закрыто → D90.
+
+### Status
+
+- D90: ✅ spec. 🟡 Implementation — Plan 21+.
+- D91: ✅ spec. 🟡 Implementation — Plan 22+. Breaking change для nova_rt/channels.h, миграция тестов.
+
+### Открытые задачи
+
+- Plan 21 — defer/errdefer implementation.
+- Plan 22 — Channel revision implementation.
+- Sequential: Plan 21 → Plan 22 (D91 использует defer).
