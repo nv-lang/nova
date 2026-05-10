@@ -545,8 +545,58 @@ impl CEmitter {
         }
 
         // 1c. Pre-populate method_receivers so emit_call can route obj.method() correctly
+        // Plus D84: register free-functions в method_overloads с sentinel-key
+        // ("", name) — единый mechanism для overload resolution.
         for item in &module.items {
             if let Item::Fn(f) = item {
+                // === D84: free-function overload registration ===
+                if f.receiver.is_none() {
+                    let param_c_types: Vec<String> = f.params.iter()
+                        .map(|p| self.type_ref_to_c(&p.ty)
+                            .unwrap_or_else(|_| "nova_int".into()))
+                        .collect();
+                    let return_c_type = match &f.return_type {
+                        Some(t) => self.type_ref_to_c(t)
+                            .unwrap_or_else(|_| "nova_int".into()),
+                        None => "nova_unit".into(),
+                    };
+                    // Sentinel-key: пустая строка вместо receiver-type.
+                    // Не конфликтует с user-types (имена ≠ пустой строке).
+                    let key = ("".to_string(), f.name.clone());
+                    let existing_count = self.method_overloads.get(&key)
+                        .map(|v| v.len()).unwrap_or(0);
+                    let base_c_name = format!("nova_fn_{}", f.name);
+                    let c_name = if existing_count == 0 {
+                        base_c_name.clone()
+                    } else {
+                        // Mangling по param-types (тот же sanitize что для методов).
+                        let suffix = param_c_types.iter()
+                            .map(|t| t.replace('*', "_p")
+                                      .replace(' ', "_")
+                                      .replace('[', "_arr_")
+                                      .replace(']', ""))
+                            .collect::<Vec<_>>()
+                            .join("_");
+                        if suffix.is_empty() {
+                            base_c_name.clone()
+                        } else {
+                            format!("{}__{}", base_c_name, suffix)
+                        }
+                    };
+                    let variadic_last = f.params.last()
+                        .map(|p| p.is_variadic).unwrap_or(false);
+                    let sig = MethodSig {
+                        param_c_types,
+                        return_c_type,
+                        is_instance: false,    // free-function: not instance
+                        is_external: f.is_external,
+                        is_delegated: false,
+                        c_name,
+                        variadic_last,
+                    };
+                    self.method_overloads.entry(key).or_default().push(sig);
+                    continue;
+                }
                 if let Some(recv) = &f.receiver {
                     let is_instance = matches!(recv.kind, ReceiverKind::Instance);
                     self.method_receivers.insert(
@@ -3039,6 +3089,23 @@ impl CEmitter {
                 ReceiverKind::Static   => format!("Nova_{}_static_{}", recv.type_name, f.name),
             }
         } else {
+            // D84: free-function — тот же путь через registry с sentinel-key
+            // ("", name). Если несколько overloads — резолвим по param C-типам
+            // этого FnDecl'а и возвращаем mangled c_name.
+            let key = ("".to_string(), f.name.clone());
+            if let Some(overloads) = self.method_overloads.get(&key) {
+                if overloads.len() > 1 {
+                    let want_params: Vec<String> = f.params.iter()
+                        .map(|p| self.type_ref_to_c(&p.ty)
+                            .unwrap_or_else(|_| "nova_int".into()))
+                        .collect();
+                    for sig in overloads {
+                        if sig.param_c_types == want_params {
+                            return sig.c_name.clone();
+                        }
+                    }
+                }
+            }
             format!("nova_fn_{}", f.name)
         }
     }
@@ -4984,7 +5051,50 @@ impl CEmitter {
                 if let Some((type_name, _)) = self.find_variant(name) {
                     format!("nova_make_{}_{}", type_name, name)
                 } else {
-                    format!("nova_fn_{}", name)
+                    // D84: free-function overload resolution. Если в registry
+                    // несколько overloads — резолвим по статическим типам args.
+                    let key = ("".to_string(), name.clone());
+                    let overloads = self.method_overloads.get(&key).cloned();
+                    if let Some(overloads) = overloads {
+                        if overloads.len() > 1 {
+                            // Соберём C-типы аргументов через infer_expr_c_type.
+                            let arg_c_types: Vec<String> = args.iter()
+                                .map(|a| self.infer_expr_c_type(a.expr()))
+                                .collect();
+                            // Filter по arity + param-types (strict matching,
+                            // как в resolve_overload для методов).
+                            let matches: Vec<&MethodSig> = overloads.iter()
+                                .filter(|sig| sig.param_c_types.len() == arg_c_types.len())
+                                .filter(|sig| sig.param_c_types.iter()
+                                    .zip(arg_c_types.iter())
+                                    .all(|(want, got)| want == got))
+                                .collect();
+                            match matches.len() {
+                                1 => matches[0].c_name.clone(),
+                                0 => return Err(format!(
+                                    "no matching overload for `{}({})` — \
+                                     candidates: {}",
+                                    name,
+                                    arg_c_types.join(", "),
+                                    overloads.iter()
+                                        .map(|s| format!("{}({})", name, s.param_c_types.join(", ")))
+                                        .collect::<Vec<_>>().join(" | "))),
+                                _ => return Err(format!(
+                                    "ambiguous overload for `{}({})` — multiple candidates match: {}",
+                                    name,
+                                    arg_c_types.join(", "),
+                                    matches.iter()
+                                        .map(|s| s.c_name.clone())
+                                        .collect::<Vec<_>>().join(" | "))),
+                            }
+                        } else {
+                            // Single overload — короткое имя (backward compat).
+                            format!("nova_fn_{}", name)
+                        }
+                    } else {
+                        // Не зарегистрирована в registry (тесты, prelude builtins).
+                        format!("nova_fn_{}", name)
+                    }
                 }
             }
             ExprKind::Member { obj, name: method } => {

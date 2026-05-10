@@ -37,10 +37,16 @@ pub enum Ty {
 }
 
 /// Результат проверки модуля — карта имён top-level → тип.
+///
+/// **D84 overloading:** `fns` хранит **Vec** для каждого имени, потому
+/// что одно имя может иметь несколько перегрузок (методы с одним именем
+/// на одном receiver-type, free-functions с разными signatures, разные
+/// `From[X]`). Резолв на call-site по argument-types — ответственность
+/// codegen / bound-checker.
 #[derive(Debug, Default)]
 pub struct ModuleEnv {
     pub types: HashMap<String, TypeDecl>,
-    pub fns: HashMap<String, FnDecl>,
+    pub fns: HashMap<String, Vec<FnDecl>>,
     pub consts: HashMap<String, ConstDecl>,
 }
 
@@ -93,23 +99,49 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
                     Some(r) => format!("{}.{}", r.type_name, fd.name),
                     None => fd.name.clone(),
                 };
-                // Plan 11 Ф.1-Ф.3: ad-hoc overload по типу аргумента.
-                // Один method-name на одном receiver-type может иметь несколько
-                // signatures, различающихся param types и/или arity. Codegen
-                // (method_overloads registry) резолвит на call-site по
-                // статическим типам args. Поэтому duplicate (key) разрешён
-                // для методов с receiver'ом — отдельные signatures.
+                // D84: overload по любой из четырёх осей (receiver-type,
+                // arg-types, result-type, arity). Под одним именем может
+                // быть несколько overloads, различающихся sig'ами; codegen
+                // и bound-checker резолвят call-site по argument-types.
                 //
-                // Free functions (без receiver'а) — overload не разрешён
-                // (нет established паттерна для resolution в bootstrap'е).
-                let is_method = fd.receiver.is_some();
-                if !names.insert(key.clone()) && !is_method && !fd.is_external {
+                // Запрещено только **точное дублирование signature**
+                // (одинаковые arity + одинаковые arg-types) — это была бы
+                // ambiguity без возможности резолва. Проверка ниже.
+                names.insert(key.clone()); // names — для конфликтов с типами/const'ами
+                let entry = env.fns.entry(key.clone()).or_default();
+                // D84: overload-disambiguation по любой из четырёх осей.
+                // Точное дублирование запрещено — это требует одновременного
+                // совпадения **arity + arg-types + return-type** (плюс
+                // receiver-type, который уже включён в `key`). Если хоть одна
+                // ось различается — overload валиден.
+                let new_arg_tys: Vec<&TypeRef> = fd.params.iter().map(|p| &p.ty).collect();
+                let dup_existing = entry.iter().find(|existing| {
+                    // Arity + arg-types одинаковы?
+                    let args_equal = existing.params.len() == fd.params.len()
+                        && existing.params.iter().zip(new_arg_tys.iter())
+                            .all(|(p, new_ty)| typeref_equal(&p.ty, new_ty));
+                    if !args_equal { return false; }
+                    // Return-type одинаков? (None / None или Some/Some equal).
+                    match (&existing.return_type, &fd.return_type) {
+                        (None, None) => true,
+                        (Some(a), Some(b)) => typeref_equal(a, b),
+                        _ => false,
+                    }
+                });
+                if let Some(prev) = dup_existing {
                     errors.push(Diagnostic::new(
-                        format!("duplicate top-level name `{}`", key),
+                        format!(
+                            "duplicate definition `{}` with same signature \
+                             (overload requires distinct param types, arity, или return type — \
+                             см. D84); previous definition has identical params and return type",
+                            key
+                        ),
                         fd.span,
                     ));
+                    let _ = prev; // silence unused
+                } else {
+                    entry.push(fd.clone());
                 }
-                env.fns.insert(key, fd.clone());
             }
             Item::Const(cd) => {
                 if !names.insert(cd.name.clone()) {
@@ -126,6 +158,9 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
             }
         }
     }
+
+    // (typeref_equal — helper для D84 duplicate-signature detection,
+    // определён в конце файла.)
 
     // Plan 15 (D72): generic bounds enforcement.
     //
@@ -172,14 +207,18 @@ struct BoundCtx<'a> {
     /// дифференциированного error-сообщения, если их пытаются
     /// использовать как bound («`Db` is an effect, not a protocol»).
     effect_decls: HashMap<String, &'a TypeDecl>,
-    fn_decls: HashMap<String, &'a FnDecl>,
+    /// D84: HashMap → Vec<&FnDecl> чтобы хранить multiple overloads
+    /// одного имени (методы и свободные функции). Резолв в check_call_bounds —
+    /// фильтр по arity. Полный type-based resolve остаётся за codegen (где
+    /// есть type-инфер аргументов).
+    fn_decls: HashMap<String, Vec<&'a FnDecl>>,
     method_table: HashMap<String, HashMap<String, Vec<&'a FnDecl>>>,
 }
 
 impl<'a> BoundCtx<'a> {
     fn build(module: &'a Module) -> Self {
         let mut protocol_specs = HashMap::new();
-        let mut fn_decls: HashMap<String, &FnDecl> = HashMap::new();
+        let mut fn_decls: HashMap<String, Vec<&FnDecl>> = HashMap::new();
         let mut method_table: HashMap<String, HashMap<String, Vec<&FnDecl>>> = HashMap::new();
 
         let mut effect_decls: HashMap<String, &TypeDecl> = HashMap::new();
@@ -208,7 +247,8 @@ impl<'a> BoundCtx<'a> {
                             .or_default()
                             .push(f);
                     } else {
-                        fn_decls.insert(f.name.clone(), f);
+                        // D84: свободные функции тоже могут иметь overloads.
+                        fn_decls.entry(f.name.clone()).or_default().push(f);
                     }
                 }
                 _ => {}
@@ -449,7 +489,20 @@ impl<'a> BoundCtx<'a> {
             ExprKind::Ident(n) => n.clone(),
             _ => return, // методы и т.п. — отдельная задача
         };
-        let Some(callee) = self.fn_decls.get(&fn_name).copied() else { return; };
+        // D84: fn_decls — Vec<&FnDecl>. Резолв overload по arity (то, что
+        // bound-checker может определить без full type-inference).
+        // Если несколько overloads подходят по arity — bound-checker не
+        // делает разрешение (это работа codegen, у которого есть type-info).
+        // Bound-проверка пропускается; codegen ловит ambiguity на своём
+        // уровне.
+        let Some(overloads) = self.fn_decls.get(&fn_name) else { return; };
+        let arity_matches: Vec<&&FnDecl> = overloads.iter()
+            .filter(|f| f.params.len() == args.len())
+            .collect();
+        let callee: &FnDecl = match arity_matches.as_slice() {
+            [single] => *single,
+            _ => return, // нет однозначной overload по arity — пропускаем
+        };
         // Bounds присутствуют?
         let has_bounds = callee.generics.iter().any(|g| g.bound.is_some());
         if !has_bounds { return; }
@@ -677,7 +730,9 @@ fn nogc_blacklisted_call(callee_path: &[String]) -> bool {
 /// Plan 16: registry для capability enforcement.
 struct CapabilityCtx<'a> {
     /// Top-level free fn-декларации (для resolve вызова по имени).
-    fn_decls: HashMap<String, &'a FnDecl>,
+    /// D84: Vec<&FnDecl> для multi-overload — все overloads имени.
+    /// Capability check ходит по всем overloads (см. check_capabilities_at).
+    fn_decls: HashMap<String, Vec<&'a FnDecl>>,
     /// Plan 15 reuse: type → method_name → fn-decls.
     method_table: HashMap<String, HashMap<String, Vec<&'a FnDecl>>>,
     /// Effect-type name registry (для distinguish'а effect-call vs ordinary).
@@ -715,7 +770,7 @@ impl CapState {
 
 impl<'a> CapabilityCtx<'a> {
     fn build(module: &'a Module) -> Self {
-        let mut fn_decls: HashMap<String, &FnDecl> = HashMap::new();
+        let mut fn_decls: HashMap<String, Vec<&FnDecl>> = HashMap::new();
         let mut method_table: HashMap<String, HashMap<String, Vec<&FnDecl>>> = HashMap::new();
         let mut effect_decls: HashMap<String, &TypeDecl> = HashMap::new();
         for item in &module.items {
@@ -734,7 +789,8 @@ impl<'a> CapabilityCtx<'a> {
                             .or_default()
                             .push(f);
                     } else {
-                        fn_decls.insert(f.name.clone(), f);
+                        // D84: свободные функции тоже могут иметь overloads.
+                        fn_decls.entry(f.name.clone()).or_default().push(f);
                     }
                 }
                 _ => {}
@@ -1027,9 +1083,18 @@ impl<'a> CapabilityCtx<'a> {
             }
         }
         // 2. Free-fn call: lookup callee.effects.
+        // D84: fn_decls — Vec<&FnDecl>. Без полного type-resolve в
+        // bound-checker'е невозможно выбрать конкретную overload —
+        // проверяем эффекты у **всех** overloads (consistent с тем что
+        // делает method_table-ветка ниже). False-positive если разные
+        // overloads имеют разные эффекты — в реальных API маловероятно
+        // (overloads обычно отличаются типом аргумента, не эффектами),
+        // но если случится — программист дисамбигуирует через cast.
         if path.len() == 1 {
-            if let Some(callee) = self.fn_decls.get(&path[0]) {
-                self.check_callee_effects(callee, &path[0], state, e.span, errors);
+            if let Some(overloads) = self.fn_decls.get(&path[0]) {
+                for callee in overloads.iter() {
+                    self.check_callee_effects(callee, &path[0], state, e.span, errors);
+                }
             }
         }
         // 3. Method call: `Type.method` или `obj.method` — lookup в method_table.
@@ -1347,6 +1412,52 @@ pub fn ty_of_ref(tr: &TypeRef) -> Ty {
                 .collect(),
         },
         TypeRef::Unit(_) => Ty::Unit,
+    }
+}
+
+/// D84: structural equality для TypeRef (игнорирует Span'ы).
+///
+/// Используется для detection дублированных signatures свободных
+/// функций — "точное совпадение" arity + arg-types запрещено как
+/// ambiguous overload без возможности резолва.
+///
+/// Не использует PartialEq/Eq derive потому что TypeRef содержит
+/// Span'ы (позиции в исходнике), которые отличаются у разных
+/// определений того же типа.
+fn typeref_equal(a: &TypeRef, b: &TypeRef) -> bool {
+    match (a, b) {
+        (
+            TypeRef::Named { path: pa, generics: ga, .. },
+            TypeRef::Named { path: pb, generics: gb, .. },
+        ) => {
+            pa == pb
+                && ga.len() == gb.len()
+                && ga.iter().zip(gb.iter()).all(|(x, y)| typeref_equal(x, y))
+        }
+        (TypeRef::Array(ia, _), TypeRef::Array(ib, _)) => typeref_equal(ia, ib),
+        (TypeRef::FixedArray(na, ia, _), TypeRef::FixedArray(nb, ib, _)) => {
+            na == nb && typeref_equal(ia, ib)
+        }
+        (TypeRef::Tuple(ea, _), TypeRef::Tuple(eb, _)) => {
+            ea.len() == eb.len()
+                && ea.iter().zip(eb.iter()).all(|(x, y)| typeref_equal(x, y))
+        }
+        (
+            TypeRef::Func { params: pa, return_type: ra, effects: ea, .. },
+            TypeRef::Func { params: pb, return_type: rb, effects: eb, .. },
+        ) => {
+            pa.len() == pb.len()
+                && pa.iter().zip(pb.iter()).all(|(x, y)| typeref_equal(x, y))
+                && match (ra.as_deref(), rb.as_deref()) {
+                    (Some(x), Some(y)) => typeref_equal(x, y),
+                    (None, None) => true,
+                    _ => false,
+                }
+                && ea.len() == eb.len()
+                && ea.iter().zip(eb.iter()).all(|(x, y)| typeref_equal(x, y))
+        }
+        (TypeRef::Unit(_), TypeRef::Unit(_)) => true,
+        _ => false,
     }
 }
 

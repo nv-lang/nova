@@ -161,10 +161,16 @@ param-types suffix: `Nova_T_method_m__nova_str`, `Nova_T_method_m__nova_int`.
 - ✅ **arity** overload (`@log(msg)` vs `@log(level, msg)`).
 - ✅ Одноимённые методы на разных типах (`Box1.make()` vs `Box2.make()`)
   не конфликтуют — multi-key registry `(type, name) → Vec<Sig>`.
-- ⚠️ **Free-functions** (без receiver'а) — overload **разрешён по D84**,
-  но реализация в bootstrap-codegen на момент принятия D84 ещё не
-  расширена. Раньше (Plan 11) был запрет; теперь снят, ожидается
-  обновление codegen.
+- ✅ **Free-functions** (без receiver'а) — overload работает (2026-05-10):
+  тот же `method_overloads` registry с sentinel-key `("", name)`,
+  C-mangling по param-types. Резолв на call-site по статическим типам
+  args. Тест: `nova_tests/syntax/overload_free_fn.nv`.
+- ⚠️ **Result-type overload** (ось 3 D84) — type-checker регистрирует
+  overloads с разным return-type, но codegen на call-site **не делает**
+  expected-type propagation: при двух кандидатах с одинаковыми
+  arg-types и разным return-type возникает ambiguity error. Реализация
+  требует context-driven resolve через let-аннотации, return-position,
+  argument-types вызывающей функции. Отложено как Q-overload-result-type.
 - ✅ **Method values** как first-class (`let f = obj.@m`, `Type.@m`) —
   Plan 11 Ф.4. См. D35 «Method values».
 - ✅ **Disambiguation через `as fn(...)`** для overloaded method values —

@@ -1,0 +1,87 @@
+// overload_free_fn.nv — D84: overloading свободных функций
+// (без receiver-типа).
+//
+// Spec: spec/decisions/10-overloading.md → D84.
+//
+// До D84 (Plan 11) свободные функции **не могли** иметь overloads —
+// дубликат имени был compile-error. D84 снял запрет: тот же mangling-
+// механизм что для методов работает и для свободных функций.
+//
+// Резолв на call-site по статическим типам аргументов:
+// - Фильтр 1: arity matches.
+// - Фильтр 2: arg-types matches (subtype/equal).
+// - Фильтр 3: result-type из контекста (если есть).
+// - Фильтр 4: самый специфичный матч (concrete > generic, etc.).
+
+module nova_tests.syntax.overload_free_fn
+
+
+// ───── Overload по типу аргумента ─────
+
+fn describe(n int) -> str { "int: ${n}" }
+fn describe(s str) -> str { "str: ${s}" }
+fn describe(b bool) -> str { if b { "bool: true" } else { "bool: false" } }
+
+
+test "overload по int" {
+    assert(describe(42) == "int: 42")
+}
+
+
+test "overload по str" {
+    assert(describe("hello") == "str: hello")
+}
+
+
+test "overload по bool" {
+    assert(describe(true) == "bool: true")
+    assert(describe(false) == "bool: false")
+}
+
+
+// ───── Overload по арности ─────
+
+fn greet(name str) -> str { "Hello, ${name}!" }
+fn greet(name str, lang str) -> str {
+    if lang == "ru" { "Привет, ${name}!" }
+    else { "Hello, ${name}!" }
+}
+
+
+test "overload по арности — 1 arg" {
+    assert(greet("Alice") == "Hello, Alice!")
+}
+
+
+test "overload по арности — 2 args" {
+    assert(greet("Bob", "ru") == "Привет, Bob!")
+    assert(greet("Carol", "en") == "Hello, Carol!")
+}
+
+
+// ───── Overload по типу результата (через контекст) — TODO ─────
+//
+// D84 ось 3: result-type overload. Требует expected-type propagation
+// в codegen (бутстрап пока не имеет — ось 3 для свободных функций
+// отложена). Type-check проходит (в registry), но codegen ambiguous.
+// См. open follow-up в Q-overload-result-type.
+//
+// Пример (когда ось 3 будет реализована):
+//   fn convert(n int) -> str { "as str: ${n}" }
+//   fn convert(n int) -> bool { n != 0 }
+//   let s str = convert(42)    // → str overload
+//   let b bool = convert(0)    // → bool overload
+
+
+// ───── Mix: разные оси перегрузки в одном модуле ─────
+
+fn render(n int) -> str { "int=${n}" }
+fn render(s str) -> str { "str='${s}'" }
+fn render(n int, prefix str) -> str { "${prefix}: ${n}" }
+
+
+test "mix overloads — by type and by arity" {
+    assert(render(1) == "int=1")
+    assert(render("x") == "str='x'")
+    assert(render(99, "score") == "score: 99")
+}
