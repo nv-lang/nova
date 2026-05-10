@@ -3119,3 +3119,57 @@ Zig-style scope-level cleanup statements. Закрывает Q20 «Нужен л
 - Plan 21 — defer/errdefer implementation.
 - Plan 22 — Channel revision implementation.
 - Sequential: Plan 21 → Plan 22 (D91 использует defer).
+
+---
+
+## 2026-05-11 (продолжение) — codegen: typed-integer promotion в Binary infer
+
+### Что починено
+
+В `std/checksums/crc32.nv` функция:
+```nova
+fn table_value(i u8) -> u32 {
+    let mut c = i as u32
+    for k in 0..8 {
+        c = if c & 1 == 1 { 0xEDB88320 ^ (c >> 1) } else { c >> 1 }
+    }
+    c
+}
+```
+эмитила:
+```c
+nova_int _nv_if_1;  // ← должно быть uint32_t
+```
+
+Причина: `emit_if_expr` берёт тип tmp'а из `infer_expr_c_type(then.trailing)`. Trailing — `0xEDB88320 ^ (c >> 1)` — Binary. Logic в Binary-branch'е был «вернуть lt» (левый тип). `lt = infer(IntLit) = nova_int`. → tmp = `nova_int`.
+
+### Fix
+
+Promotion-rule в Binary-integer branch'е `infer_expr_c_type`: если один operand — typed integer (u8/u16/u32/u64/i8/i16/i32), а другой — `nova_int` (дефолт IntLit), результат — typed-integer. Симметрично для left/right.
+
+Helper `is_typed_integer(ty) -> bool` — predicate (`nova_int`/`int64_t` сознательно НЕ включены — они дефолт IntLit'а, должны "уступать").
+
+После fix:
+```c
+uint32_t _nv_if_1;  // ← правильно
+if (...) {
+    _nv_if_1 = (uint32_t)((((nova_int)3988292384LL) ^ (c >> ((nova_int)1LL))));
+}
+```
+Внутренние литералы оставлены `((nova_int)NLL)` — implicit C-conversion на assignment безопасен. Главное — outer tmp типизирован.
+
+### Trade-offs
+
+- **Простое правило (1 typed + 1 nova_int → typed)**, не полный C-promotion. `u32 & u8` (оба typed) → берём lt (левый). Safety не нарушает.
+- **Не трогали `emit_expr`** — литералы внутри Binary остаются nova_int. Можно было thread'ить target-type рекурсивно как в const-fix, но это больший рефакторинг и риск регрессий. Текущий подход проще.
+- **`int64_t`/`nova_int` сознательно "не-typed":** их роль — уступать конкретным типам.
+
+### Файлы
+
+- `compiler-codegen/src/codegen/emit_c.rs` — promotion rule в Binary-branch'е, `is_typed_integer` helper.
+
+### Status
+
+- ✅ ЗАКРЫТ.
+- Tests: ✅ lib 65/65, nova_tests 120/120, std/checksums 2/2 PASS.
+- Lesson — **stdlib работает как fuzzer codegen'а**. Три codegen-бага этой сессии — все в `std/checksums/*.nv`. Stdlib пишется на real Nova, использует все edge-cases (typed const'ы, hex-литералы, u32-арифметика, bitwise). Каждый «странный фрагмент C» в stdlib — реальный баг кодогена. Тесты могут PASS через C-implicit conversions, но это маскирует bugs. Регулярно читать generated stdlib C — не только assert'ы тестов.
