@@ -429,6 +429,15 @@ impl<'a> BoundCtx<'a> {
                 }
             }
             ExprKind::Lambda { body, .. } => self.walk_expr(body, scope, errors),
+            // Plan 19, C1: новые closure-узлы — парсер C2/C3 будет их
+            // создавать. Type-check для них реализован в C6
+            // (bidirectional inference). До C2 — unreachable.
+            ExprKind::ClosureLight { .. } | ExprKind::ClosureFull(_) => {
+                unreachable!(
+                    "closure-light / closure-full reached BoundCtx walk in \
+                     Plan 19 C1 — parser does not produce these yet"
+                )
+            }
             ExprKind::Spawn(body) => self.walk_expr(body, scope, errors),
             ExprKind::Supervised(body) | ExprKind::Detach(body) => self.walk_block(body, scope, errors),
             ExprKind::CancelScope { body, .. } => self.walk_block(body, scope, errors),
@@ -1000,6 +1009,13 @@ impl<'a> CapabilityCtx<'a> {
                 }
             }
             ExprKind::Lambda { body, .. } => self.walk_expr(body, state, errors),
+            // Plan 19, C1: новые closure-узлы реализуются в C6.
+            ExprKind::ClosureLight { .. } | ExprKind::ClosureFull(_) => {
+                unreachable!(
+                    "closure-light / closure-full reached CapabilityCtx walk \
+                     in Plan 19 C1 — parser does not produce these yet"
+                )
+            }
             ExprKind::Spawn(body) => self.walk_expr(body, state, errors),
             ExprKind::Supervised(body) | ExprKind::Detach(body) => self.walk_block(body, state, errors),
             ExprKind::CancelScope { body, .. } => self.walk_block(body, state, errors),

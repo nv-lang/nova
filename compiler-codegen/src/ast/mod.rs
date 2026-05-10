@@ -472,13 +472,47 @@ pub enum ExprKind {
     },
 
     // Функции и handlers
-    /// `(a, b) => expr` — лямбда (D22, строго `=> expr`)
+    /// `(a, b) => expr` — лямбда (D22, строго `=> expr`).
+    ///
+    /// **DEPRECATED — Plan 19** заменяет на [`ExprKind::ClosureLight`]
+    /// (untyped `|x| body`) и [`ExprKind::ClosureFull`] (typed
+    /// `fn(...) ...`). Старый узел остаётся для backward-compat
+    /// до завершения миграции (C11–C13 в Plan 19 retro).
     Lambda {
         params: Vec<LambdaParam>,
         effects: Vec<TypeRef>,
         return_type: Option<TypeRef>,
         body: Box<Expr>,
     },
+    /// closure-light — `|x| body` (D22-rev, Plan 19).
+    ///
+    /// Untyped lightweight closure. Параметры — только имена (типы
+    /// выводятся из контекста использования: HOF-arg, annotated let,
+    /// return-position, first-use inference). Тело — bare expression
+    /// или block.
+    ///
+    /// Эффекты в сигнатуре **не пишутся** — наследуются из ambient
+    /// effect-set parent fn'а + активных with-блоков.
+    ///
+    /// `||` для no-arg, `|_|` для wildcard (D59 расширение).
+    ClosureLight {
+        params: Vec<ClosureLightParam>,
+        body: ClosureBody,
+    },
+    /// closure-full — `fn(x int) Effects -> R body` (D22-rev, Plan 19).
+    ///
+    /// Анонимная типизированная fn-форма. Идентична named fn без имени
+    /// (по спецификации D22-rev). Используется когда нужны типы
+    /// параметров, return-type или эффекты — то, чего не может
+    /// closure-light.
+    ///
+    /// Тело — `=> expr` (FnBody::Expr) или `{ block }` (FnBody::Block).
+    /// `external` запрещён (только для named fn).
+    ///
+    /// Содержимое в `Box<FnSigBody>` чтобы избежать infinite-size в
+    /// recursive типе `ExprKind` (FnSigBody содержит FnBody который
+    /// содержит Expr).
+    ClosureFull(Box<FnSigBody>),
     /// `with X = handler { ... }` — D11
     With {
         bindings: Vec<WithBinding>,
@@ -596,6 +630,41 @@ pub struct LambdaParam {
     pub span: Span,
 }
 
+/// Параметр closure-light (Plan 19, D22-rev).
+///
+/// В отличие от [`LambdaParam`] и [`Param`] — **тип не пишется**.
+/// Closure-light всегда untyped; типы выводятся из контекста.
+/// Wildcard `_` разрешён как имя (D59 расширение): означает «параметр
+/// требуется по арности, но не используется в теле».
+#[derive(Debug, Clone)]
+pub struct ClosureLightParam {
+    /// Имя параметра. `"_"` — wildcard.
+    pub name: String,
+    pub span: Span,
+}
+
+/// Тело closure-light (Plan 19, D22-rev).
+///
+/// Closure-light не использует `=>` в синтаксисе — после `|...|` сразу
+/// идёт либо expression, либо block. AST разделяет два случая для
+/// прозрачной поддержки `return`/`break`/`continue` в block-форме.
+#[derive(Debug, Clone)]
+pub enum ClosureBody {
+    /// `|x| x + 1` — bare expression
+    Expr(Box<Expr>),
+    /// `|x| { stmts; expr }` — block-форма
+    Block(Block),
+}
+
+impl ClosureBody {
+    pub fn span(&self) -> Span {
+        match self {
+            ClosureBody::Expr(e) => e.span,
+            ClosureBody::Block(b) => b.span,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct WithBinding {
     pub effect: TypeRef,
@@ -630,6 +699,51 @@ pub enum HandlerMethodBody {
 pub struct TrailingBlock {
     pub params: Vec<LambdaParam>, // [] если без params
     pub body: Block,
+    pub span: Span,
+}
+
+/// Trailing-конструкция при вызове функции (Plan 19, D43-rev).
+///
+/// После `f(args)` может идти:
+/// - `{ block }` — без параметров (DSL-форма: `with_timeout`,
+///   `retry`, `transaction`). См. [`Trailing::Block`].
+/// - `fn(p) body` — с параметрами, идентично closure-full без
+///   имени. См. [`Trailing::Fn`].
+///
+/// Старая форма `f(args) { x => body }` (с параметрами через `=>`
+/// внутри `{...}`) после Plan 19 **отменена**. Во время dual-mode
+/// (C2–C12) parser продолжает поддерживать через legacy
+/// [`TrailingBlock`]; после C13 эта поддержка удаляется.
+#[derive(Debug, Clone)]
+pub enum Trailing {
+    /// `f(args) { block }` — DSL без params.
+    Block(Block),
+    /// `f(args) fn(p) Effects? -> R? body` — trailing closure-full.
+    Fn(FnSigBody),
+}
+
+impl Trailing {
+    pub fn span(&self) -> Span {
+        match self {
+            Trailing::Block(b) => b.span,
+            Trailing::Fn(f) => f.span,
+        }
+    }
+}
+
+/// Сигнатура+тело анонимной fn — общий стержень для
+/// [`ExprKind::ClosureFull`] и [`Trailing::Fn`] (Plan 19).
+///
+/// Поля повторяют [`FnDecl`] минус `is_export`/`is_external`/`name`/
+/// `receiver`/`generics`/`realtime_attr`. Generics на closure-full
+/// в bootstrap не поддерживаются (rank-2 polymorphism — Q-открытый);
+/// если потребуется — расширить структуру отдельно.
+#[derive(Debug, Clone)]
+pub struct FnSigBody {
+    pub params: Vec<Param>,
+    pub effects: Vec<TypeRef>,
+    pub return_type: Option<TypeRef>,
+    pub body: FnBody,
     pub span: Span,
 }
 

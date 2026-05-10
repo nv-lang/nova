@@ -91,7 +91,7 @@ impl Interpreter {
                     let closure = Closure {
                         params: fd.params.iter().map(|p| p.name.clone()).collect(),
                         body: match &fd.body {
-                            FnBody::Expr(e) => ClosureBody::Expr(e.clone()),
+                            FnBody::Expr(e) => ClosureBody::Expr(Box::new(e.clone())),
                             FnBody::Block(b) => ClosureBody::Block(b.clone()),
                             // D82: external fn — interp не реализован для них
                             // (interp удалён, оставляем panic как safety-fallback).
@@ -594,13 +594,23 @@ impl Interpreter {
             } => {
                 let closure = Closure {
                     params: params.iter().map(|p| p.name.clone()).collect(),
-                    body: ClosureBody::Expr((**body).clone()),
+                    body: ClosureBody::Expr(Box::new((**body).clone())),
                     env: env.clone(),
                     receiver: env.lookup("@"),
                     // Lambdas не variadic в bootstrap'е.
                     variadic_last: false,
                 };
                 Ok(Flow::Value(Value::Closure(Rc::new(closure))))
+            }
+            // Plan 19, C1: новые closure-узлы добавлены в AST. Парсер
+            // ещё их не создаёт (C2/C3 будут парсить `|x|` и `fn(...)`).
+            // Реализация interp eval — фаза C5.
+            ExprKind::ClosureLight { .. } | ExprKind::ClosureFull(_) => {
+                unreachable!(
+                    "closure-light / closure-full should not reach interp \
+                     in Plan 19 dual-mode C1 — parser does not produce these \
+                     nodes yet (C2/C3 will enable them, C5 wires interp)"
+                )
             }
             ExprKind::Block(b) => self.exec_block_flow(b, env),
             ExprKind::ArrayLit(elems) => {

@@ -67,11 +67,11 @@ pub struct Closure {
     pub variadic_last: bool,
 }
 
-#[derive(Clone)]
-pub enum ClosureBody {
-    Expr(Expr),
-    Block(Block),
-}
+// `ClosureBody` переехал в `ast::ClosureBody` (Plan 19, C1) — единый
+// источник истины для тела closure-light. Закрытие в interp хранит
+// тело как клон AST-узла; выбор между Expr/Block решается на стадии
+// AST.
+pub use crate::ast::ClosureBody;
 
 pub struct NativeFn {
     pub name: String,

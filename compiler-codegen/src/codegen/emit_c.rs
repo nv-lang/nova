@@ -4503,6 +4503,16 @@ impl CEmitter {
             ExprKind::Lambda { params, body, return_type, .. } => {
                 self.emit_lambda(params, body, None, return_type.as_ref())
             }
+            // Plan 19, C1: новые closure-узлы добавлены в AST, но
+            // парсер ещё их не создаёт (C2/C3 их подключают). Codegen
+            // получит реализацию в составе финальной фазы Plan 19.
+            ExprKind::ClosureLight { .. } | ExprKind::ClosureFull(_) => {
+                unreachable!(
+                    "closure-light / closure-full should not reach codegen \
+                     in Plan 19 dual-mode C1 — parser does not produce these \
+                     nodes yet (C2/C3 will enable them)"
+                )
+            }
             ExprKind::With { bindings, body } => {
                 self.emit_with(bindings, body)
             }
