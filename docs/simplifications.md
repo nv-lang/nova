@@ -2771,6 +2771,36 @@ Throw тоже стоит мигрировать — Q-throw-comma на буду
 
 - C-codegen: ✅ ЗАКРЫТ.
 - Tests: ✅ 98/98 PASS (включая новый panic_exit).
-- Open: Q-throw-comma — миграция Throw codegen на comma-expression
-  паттерн (тот же баг с ?? throw, никем не используется в .nv но
-  технически broken).
+- ~Open~ Q-throw-comma — ✅ ЗАКРЫТО (см. секцию ниже).
+
+---
+
+## 2026-05-10 (продолжение 2) — Q-throw-comma: Throw на comma-expression
+
+### Что упрощено / закрыто
+
+**Системность codegen-паттерна для Never-функций.** Все три Never-вызова
+(panic, exit, throw) теперь эмитируются через **один** паттерн —
+comma-expression `(call(args), (nova_int)0LL)`. До этого Throw
+использовал отличающийся statement+dummy паттерн через self.line(),
+что создавало латентный баг с short-circuit в `?? throw` (никем не
+использовалось в .nv → не проявлялось).
+
+### Trade-offs
+
+- **Никаких** — comma-expression строго лучше для Never в expression-
+  position. Statement+dummy остался только в случаях, где нужен
+  именно statement-level эффект (например, NovaInterrupt — эмиттит
+  `nova_interrupt(...)` как statement; там это правильно потому что
+  родитель — block-level).
+
+### Файлы
+
+- `compiler-codegen/src/codegen/emit_c.rs` — ExprKind::Throw мигрирован.
+- `nova_tests/syntax/throw_in_expression.nv` — SECTION 3 (3 теста на
+  short-circuit ?? throw).
+
+### Status
+
+- ✅ ЗАКРЫТ.
+- Tests: 98/98 PASS, никаких регрессий.
