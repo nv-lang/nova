@@ -5499,6 +5499,127 @@ core rendering +15-25%). Это **самая большая** «бесплатн
 
 ---
 
+## Q-keyword-symmetry. Симметрия keyword'ов в declaration и literal: `effect`/`protocol` vs `handler`
+
+**Контекст.** Сейчас Nova использует **разные keyword'ы** для
+declaration и literal-формы одной сущности:
+
+```nova
+// Declaration:
+type Cron effect   { run() -> () }
+type Fan  protocol { run() -> () }
+
+// Literal (только для effect):
+let h = handler Cron { run() => () }       // keyword `handler`, не `effect`
+let p = ???                                 // для protocol — нет literal-формы вообще
+```
+
+Возникает вопрос: **унифицировать ли** keyword'ы — использовать
+`effect`/`protocol` и в declaration, и в literal-position?
+
+```nova
+// Предложение:
+let h = effect Cron   { run() => () }      // keyword `effect`
+let p = protocol Fan  { run() => () }      // новый — anonymous protocol-литерал
+```
+
+**Развилка 1 — `effect` vs `handler` для литерала эффекта:**
+
+- **(A) Оставить `handler` (текущее).** Точнее в expression-position:
+  чтение `let h = handler Logger { ... }` сразу говорит «это
+  **обработчик** эффекта, не сам эффект». `effect Logger { ... }`
+  может вводить в заблуждение: «это значение типа эффекта Logger?»
+- **(B) Переименовать на `effect`.** Симметрия с declaration
+  (`effect` ≡ `effect`). Breaking change, нужен migration sweep по
+  всем тестам и spec'у.
+
+**Развилка 2 — anonymous protocol-литералы:**
+
+- **(C) Не делать (текущее).** Protocol реализуется через **типы с
+  методами**. Идиома Rust/Go/Swift — они **сознательно** отвергли
+  anonymous protocol-impls. Аргумент: размывает AI-first locality
+  (R5.1) — реализации «спрятаны» в expression-position, не
+  находятся grep'ом.
+- **(D) Делать `protocol Fan { run() => () }`.** Аналог Kotlin
+  `object : Runnable { ... }` / Java anonymous classes. Удобно для
+  ad-hoc реализаций без объявления отдельного типа. Расширяет язык.
+
+**Прецеденты:**
+
+| Язык | Effect-literal/handler | Anonymous protocol/interface |
+|---|---|---|
+| Nova (current) | `handler X { ... }` | нет |
+| Koka | `with handler X { ... }` | нет |
+| Eff | `handler { ... }` | нет |
+| Java | — (нет effect system) | `new Runnable() { ... }` ✓ |
+| Kotlin | — (нет effect system) | `object : Runnable { ... }` ✓ |
+| Rust | — (нет effect system) | **нет** (только `impl Trait for Type`) |
+| Go | — (нет effect system) | **нет** (только конкретные типы) |
+| Swift | — (нет effect system) | **нет** (только `extension Type: Protocol`) |
+| TypeScript | — | object-literal удовлетворяет interface структурно ✓ |
+| OCaml | — | **нет** (только functor/module) |
+
+Для **effect-литералов** прецеденты не помогают — Koka/Eff используют
+свой keyword `handler`, как Nova сейчас. Для **anonymous protocol**
+картина расколота: Kotlin/Java/TS — за, Rust/Go/Swift/OCaml — против.
+Большинство **новых** языков (Rust, Swift, Go) сознательно
+**отвергают** anonymous impl-блоки.
+
+**Аргументы в Nova-контексте:**
+
+1. **AI-first locality (R5.1).** Anonymous protocol-impl затрудняет
+   поиск реализаций — программист (или LLM) не может grep'ом найти
+   все impls protocol'а если часть из них в expression-position.
+2. **Цена в symbols.** Anonymous-impl экономит ~2-3 строки vs
+   `type X {} + fn X @m()`. Это малая выгода.
+3. **Симметрия в declaration↔literal — слабый аргумент.** В Rust
+   `struct X { f: int }` объявление и `X { f: 42 }` литерал тоже
+   не имеют symmetric keyword'ов (нет `struct X { f: 42 }` в
+   expression-position). Так делают **большинство** языков.
+4. **`handler` keyword — узкий и точный.** Не пересекается ни с чем,
+   парсер прост.
+
+**Объём работ:**
+
+- (B) переименование `handler` → `effect` в literal: правка lexer,
+  парсер, ~30+ тестов в `nova_tests/`, ~10 spec-документов, AST-узел,
+  codegen, interp. **Среднее изменение.**
+- (D) добавление `protocol X { ... }` литерала: новый AST-узел
+  `ProtocolLit`, парсер, type-checker (структурная проверка
+  соответствия protocol'у), codegen (синтез anonymous-типа +
+  методов). **Большое изменение.**
+
+**Варианты комбинаций:**
+
+| # | Effect-literal | Anon protocol | Объём | Net |
+|---|---|---|---|---|
+| 1 | `handler` (A) | нет (C) | 0 | статус-кво |
+| 2 | `effect` (B) | нет (C) | средний | симметрия без новой фичи |
+| 3 | `handler` (A) | `protocol` (D) | большой | новая фича без переименования |
+| 4 | `effect` (B) | `protocol` (D) | большой+ | полная симметрия |
+
+**Предложение.** Отложить до:
+
+1. Появления **реального use-case** для anonymous protocol-impl —
+   если в реальном Nova-коде окажется частая боль «приходится
+   объявлять одноразовый тип ради одного метода», то (D) приобретает
+   смысл.
+2. **v1.0-аудит keyword'ов** — комплексный пересмотр всех keyword'ов
+   языка перед стабилизацией. Тогда симметрия (B) рассматривается
+   вместе с другими keyword-вопросами.
+
+До тех пор — статус-кво (вариант 1: `handler` + no anon protocol).
+
+**Связь:**
+- [D42](decisions/02-types.md#d42), [D53](decisions/02-types.md#d53)
+  — protocol как структурный контракт.
+- [D61](decisions/04-effects.md#d61) — `handler` keyword в литерале.
+- [D10](decisions/01-philosophy.md#d10), R5.1 — AI-first locality.
+- Q23 — группировка методов (`methods Type { ... }`-блок) — другая
+  related фича про синтаксис методов.
+
+---
+
 ## Финальное напоминание
 
 Прежде чем продолжать **дизайн**, прочитай:
