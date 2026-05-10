@@ -5536,13 +5536,25 @@ let p = protocol Fan  { run() => () }      // новый — anonymous protocol-
 **Развилка 2 — anonymous protocol-литералы:**
 
 - **(C) Не делать (текущее).** Protocol реализуется через **типы с
-  методами**. Идиома Rust/Go/Swift — они отвергли anonymous
-  protocol-impls. Аргумент: protocols обычно **reusable** (живут
-  как named-типы); anonymous-форма экономит мало в типичных
-  случаях.
+  методами**. Идиома Rust/Go/Swift. Аргумент: для **reusable**
+  протоколов (Hashable, Iter) named-форма естественна; anonymous-
+  форма экономит мало в этих случаях.
 - **(D) Делать `protocol Fan { run() => () }`.** Аналог Kotlin
-  `object : Runnable { ... }` / Java anonymous classes. Удобно для
-  ad-hoc реализаций без объявления отдельного типа. Расширяет язык.
+  `object : Runnable { ... }` / Java anonymous classes / TS
+  object-literal. Удобно для **one-off** реализаций без объявления
+  отдельного типа.
+
+**Уточнение:** protocols в Nova **бывают двух типов** use-case:
+- **Reusable** (Hashable, Iter, From, Into) — лучше named-форма.
+  Тип нужен в bound'ах, generic-сигнатурах, документации.
+- **One-off** (Channel-style factory results, see use-case ниже) —
+  выигрывают anonymous-форму. Тип нужен только как return-type
+  factory-функции.
+
+Old assumption «protocols обычно reusable» — **частично верна**.
+Для большинства protocols (~80%) да. Но **structural-pattern**
+«factory возвращает interface-implementations» делает one-off
+случай **частым** в concurrency- и I/O-API.
 
 **Важная аналогия:** Nova **уже** имеет anonymous protocol-impl —
 это `handler Logger { ... }` для эффектов. Эффект структурно тот же
@@ -5663,21 +5675,76 @@ let p = protocol Fan  { run() => () }      // новый — anonymous protocol-
 | 3 | `handler` (A) | `protocol` (D) | большой | новая фича без переименования |
 | 4 | `effect` (B) | `protocol` (D) | большой+ | полная симметрия |
 
-**Предложение.** Отложить до:
+**Конкретный use-case — Channel-style factory (обнаружен 2026-05-10):**
 
-1. Появления **реального use-case** для anonymous protocol-impl —
-   частая боль «приходится объявлять одноразовый тип ради одного-двух
-   методов». Если такой use-case будет — (D) приобретает смысл,
-   потому что симметрия с уже существующим `handler X { ... }`
-   литералом естественна.
-2. **v1.0-аудит keyword'ов** — комплексный пересмотр всех keyword'ов
-   языка перед стабилизацией. Тогда симметрия (B) рассматривается
-   вместе с другими keyword-вопросами.
+Канонический паттерн «factory возвращает несколько связанных
+interface'ов с общим скрытым state»:
 
-До тех пор — статус-кво (вариант 1: `handler` + no anon protocol).
-Это **прагматическое** решение, не философское: anonymous-форма для
-протоколов **не запрещена принципиально**, просто пока приоритет
-ниже из-за reusable-природы protocol-импл в типичном Nova-коде.
+```nova
+type Channel[T] {}
+type ChanReader[T] protocol { recv() -> T }
+type ChanSender[T] protocol { send(v T) -> T }
+
+fn Channel[T].new() -> (ChanReader[T], ChanSender[T]) {
+    let state = ChannelState[T] { ... }
+    let r = protocol ChanReader[T] {
+        recv() -> T => state.recv()
+    }
+    let s = protocol ChanSender[T] {
+        send(v T) -> T => state.send(v)
+    }
+    (r, s)
+}
+```
+
+Без anonymous protocol-литерала нужно объявить **два named-типа**
+(`ChannelReader[T]`, `ChannelSender[T]`) с явными методами +
+обернуть. Цена — **~3-4 лишних строки** и два типа в namespace
+которые **больше нигде не используются** (полностью one-off).
+
+**Сравнение с другими языками для этого use-case:**
+
+| Язык | Boilerplate | Эквивалент |
+|---|---|---|
+| Nova-named (текущее) | средний | два named-типа + методы + constructor |
+| Nova-anonymous (D) | **минимальный** | как в примере выше |
+| Kotlin | минимальный | `object : ChanReader<T> { override fun recv() = ... }` |
+| TypeScript | минимальный | object-literal удовлетворяет structurally |
+| Rust | большой | внутренние `struct ReaderImpl<T>` + `impl Trait` |
+| Go | большой | named-типы `readerImpl`, `senderImpl` |
+| Swift | большой | type-erasing wrapper или внешние structs |
+
+Use-case — **прямое противоречие** аргументу «D40 один путь»:
+named-path работает, но **дороже на каждый Channel-style API**. В
+`std/collections/channel.nv` (когда появится) этот pattern будет
+центральным. Аналогично для других sync-primitives:
+
+- `Lock.new() -> (Locker, Unlocker)` — два interface'а.
+- `Pipe.new() -> (PipeReader, PipeWriter)`.
+- `Event.new() -> (EventNotifier, EventSubscriber)`.
+- `Db.transaction() -> (TxReader, TxWriter, TxCommit)`.
+
+Это **не маргинальный** случай — это базовый паттерн для concurrency-
+и I/O-API.
+
+**Предложение (обновлено).** Use-case есть, не «когда-нибудь
+появится». Текущая дилемма:
+
+1. **Если приоритет — минимальный bootstrap** — статус-кво
+   (named-типы), документировать через guide «как писать Channel-
+   style API в Nova». Стоимость в каждом stdlib-API — 3-4 строки.
+2. **Если приоритет — идиоматический stdlib** — реализовать (D)
+   до начала Plan 18 (stdlib roadmap). Channel-API и другие
+   sync-primitives получают чистый идиом.
+
+Решение между (1) и (2) зависит от того, **когда** начнётся
+реальная stdlib работа. Если она через 2-3 сессии — (2) разумно
+сделать **сейчас**. Если откладывается — статус-кво до v1.0-аудита.
+
+До решения — статус-кво (вариант 1: `handler` + no anon protocol).
+Anonymous-форма для протоколов **не запрещена принципиально** —
+просто пока не реализована. Use-case Channel-style зафиксирован
+как сильный аргумент для приоритезации.
 
 **Связь:**
 - [D42](decisions/02-types.md#d42), [D53](decisions/02-types.md#d53)
