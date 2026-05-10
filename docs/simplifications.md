@@ -3173,3 +3173,30 @@ if (...) {
 - ✅ ЗАКРЫТ.
 - Tests: ✅ lib 65/65, nova_tests 120/120, std/checksums 2/2 PASS.
 - Lesson — **stdlib работает как fuzzer codegen'а**. Три codegen-бага этой сессии — все в `std/checksums/*.nv`. Stdlib пишется на real Nova, использует все edge-cases (typed const'ы, hex-литералы, u32-арифметика, bitwise). Каждый «странный фрагмент C» в stdlib — реальный баг кодогена. Тесты могут PASS через C-implicit conversions, но это маскирует bugs. Регулярно читать generated stdlib C — не только assert'ы тестов.
+
+---
+
+## 2026-05-10 (продолжение 9) — Plan 20 + Plan 21 (DRAFT планы реализации)
+
+### Что зафиксировано
+
+Implementation roadmaps для D90/D91 заведены как DRAFT-планы.
+
+**Plan 20** — D90 (defer/errdefer): 7 фаз lexer/parser/type-check/codegen/interp/тесты/spec. Атомарный PR Ф.1-Ф.6. Объём ~1500 строк.
+
+**Plan 21** — D91 (Channel revision): 7 фаз nova_rt/codegen/type-check/select/migration/negative/spec. Зависит от Plan 20.
+
+### Trade-offs
+
+- **DRAFT планы вместо немедленной реализации.** Spec крупных design-изменений требует реализации в несколько сессий (Plan 19 был ~14 коммитов). Trade-off: spec и codebase расходятся пока impl не сделан. Mitigation: Bootstrap-status 🟡 в D-блоках сигнализирует «spec ahead of code».
+
+### Файлы
+
+- `docs/plans/20-defer-implementation.md`.
+- `docs/plans/21-channel-revision-implementation.md`.
+- `docs/plans/README.md` — обновлён индекс.
+
+### Status
+
+- Plan 20: 🟡 DRAFT.
+- Plan 21: 🟡 DRAFT (зависит от Plan 20).

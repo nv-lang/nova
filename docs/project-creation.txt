@@ -3992,3 +3992,29 @@ multiprocessing.Pipe — все split. Go, OCaml 5 Eio — Go-style. Nova
 **Что НЕ сделано в этой сессии:**
 - Реализация D90 / D91 — оба только в spec.
 - Pilot-тесты — bootstrap не поддерживает defer/D91 API.
+
+================================================================
+2026-05-10 (продолжение 9). Plan 20 + Plan 21 — DRAFT планы реализации
+================================================================
+
+После фиксации D90/D91 в spec — заведены implementation roadmaps:
+
+**Plan 20 — D90 (defer/errdefer) implementation:** 7 фаз (lexer,
+parser, type-check, codegen, interp, тесты, spec uplift). Ф.1-Ф.6
+атомарный PR. Объём ~1500 строк суммарно.
+
+**Plan 21 — D91 (Channel revision):** 7 фаз (nova_rt split, codegen
+factory + dispatch, type-check Sender/Receiver protocols, select
+revision на Receiver, migration тестов, negative-тесты, spec uplift).
+**Зависит от Plan 20** — defer необходим для idiomatic close.
+
+Оба плана DRAFT, не начаты. plans/README.md обновлён.
+
+**Lesson:** «реализовать spec за сессию» — нереально для крупных
+design-изменений. Plan 19 (closure-rev + D85) был ~14 коммитов,
+многосессионный. Plan 20/21 — такого же масштаба. Правильный подход:
+spec в одну сессию, implementation plan туда же, реальная реализация —
+отдельные сессии по фазам.
+
+**Что НЕ сделано в текущей сессии:** сама реализация Plan 20/21
+(spec'ы и планы готовы, ждут implementation сессий).
