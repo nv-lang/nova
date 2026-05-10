@@ -1,0 +1,32 @@
+// EXPECT_COMPILE_ERROR does not satisfy
+//
+// Plan 15 Ф.4 (D72): тип, не имеющий required-методов protocol'а,
+// передаётся в generic-fn с этим protocol'ом как bound. Type-checker
+// (BoundCtx::check_satisfaction) обязан отвергнуть на use-site с
+// R5.3-style сообщением «type X does not satisfy P bound».
+//
+// Spec: spec/decisions/02-types.md → D72 «Generic bounds».
+
+module nova_tests.negative_capability.bound_not_satisfied_rejected
+
+
+type BnsHashable protocol {
+    hash() -> u64
+    eq(other Self) -> bool
+}
+
+
+// Тип БЕЗ @hash() и без @eq() — не удовлетворяет BnsHashable.
+type BnsPlain {
+    name str
+}
+
+
+fn require_hashable[T BnsHashable](x T) -> T => x
+
+
+test "bound not satisfied — compile error (negative)" {
+    let p = BnsPlain { name: "x" }
+    let _ = require_hashable(p)   // ❌ BnsPlain не имеет hash()/eq()
+    assert(true)
+}

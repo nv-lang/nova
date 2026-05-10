@@ -1,0 +1,36 @@
+// EXPECT_COMPILE_ERROR does not satisfy
+//
+// Plan 15 Ф.4 (D72): protocol требует метод с конкретной арностью —
+// concrete-тип имеет метод с тем же именем, но другой арностью. Bound
+// check'ер (BoundCtx::check_satisfaction) матчит по имени + арности
+// (полная sig-сверка с Self→T substitution — будущая фаза), и должен
+// отвергнуть.
+//
+// Spec: spec/decisions/02-types.md → D72.
+
+module nova_tests.negative_capability.bound_missing_method_rejected
+
+
+type BmmCountable protocol {
+    count() -> int
+}
+
+
+type BmmBag {
+    items str
+}
+
+
+// Метод с тем же именем, но другой арностью (1 вместо 0): не
+// удовлетворяет требованию `count()` без параметров.
+export fn BmmBag @count(extra int) -> int => extra
+
+
+fn require_countable[T BmmCountable](x T) -> T => x
+
+
+test "wrong arity — compile error (negative)" {
+    let b = BmmBag { items: "a,b,c" }
+    let _ = require_countable(b)   // ❌ count(int) ≠ count()
+    assert(true)
+}

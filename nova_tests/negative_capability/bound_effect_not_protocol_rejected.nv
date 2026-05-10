@@ -1,0 +1,32 @@
+// EXPECT_COMPILE_ERROR is an effect, not a protocol
+//
+// Plan 15 Ф.5 (D53/D72 strict): effect-kind тип нельзя использовать как
+// generic bound. Bounds — структурный контракт (protocol), а effect —
+// runtime-dispatched capability. BoundCtx должен отвергнуть с
+// R5.3-style сообщением «type X is an effect, not a protocol».
+//
+// Spec: spec/decisions/02-types.md → D53/D72.
+
+module nova_tests.negative_capability.bound_effect_not_protocol_rejected
+
+
+// Effect-kind тип (D53): декларирован через `effect`, не `protocol`.
+type BefLogger effect {
+    log(msg str) -> ()
+}
+
+
+type BefData {
+    payload str
+}
+
+
+// ❌ BefLogger — effect, не protocol; не годится для [T BefLogger].
+fn require_logger[T BefLogger](x T) -> T => x
+
+
+test "effect used as bound — compile error (negative)" {
+    let d = BefData { payload: "hi" }
+    let _ = require_logger(d)
+    assert(true)
+}

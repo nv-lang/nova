@@ -105,3 +105,45 @@ test "different bound — GbCountable vs GbHashable" {
     let _ = require_hashable(u)    // GbUser имеет @hash → OK
     assert(true)
 }
+
+
+// Plan 15 Ф.4: forward-dependency bound — bound на V ссылается на
+// предыдущий generic-параметр K. Парсер принимает `[K Bound1, V
+// Bound2[K]]` (bound — обычный TypeRef через parse_type, который
+// допускает type-args). BoundCtx::check_satisfaction для
+// параметризованных bound'ов сейчас permissive (early-return для
+// non-single-name path) — это закрывается отдельной задачей. Тест
+// фиксирует что парсер + текущий чекер пропускают валидный код.
+type GbFromKey[T] protocol {
+    from_key(t T) -> Self
+}
+
+
+type GbKey {
+    raw u64
+}
+
+
+type GbValue {
+    derived u64
+}
+
+
+export fn GbKey @hash() -> u64 => @raw
+
+
+export fn GbKey @eq(other GbKey) -> bool => @raw == other.raw
+
+
+export fn GbValue @from_key(k GbKey) -> GbValue => GbValue { derived: k.raw }
+
+
+fn pair_forward[K GbHashable, V GbFromKey[K]](k K, v V) -> V => v
+
+
+test "forward-dependency — bound[V] ссылается на K" {
+    let k = GbKey { raw: 100 as u64 }
+    let v = GbValue { derived: 0 as u64 }
+    let _ = pair_forward(k, v)
+    assert(true)
+}
