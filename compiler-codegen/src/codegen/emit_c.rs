@@ -9052,6 +9052,17 @@ impl CEmitter {
         }
     }
 
+    /// Returns true для C-целочисленных типов, явно несущих ширину/знак
+    /// (uint8_t..uint64_t, int8_t..int32_t). `nova_int` (= int64_t) сюда
+    /// **не** входит — это дефолтный тип IntLit'а, и его роль как раз
+    /// в том, чтобы быть «promotable» к более типизированному операнду.
+    fn is_typed_integer(ty: &str) -> bool {
+        matches!(ty,
+            "uint8_t" | "uint16_t" | "uint32_t" | "uint64_t" |
+            "int8_t" | "int16_t" | "int32_t"
+        )
+    }
+
     /// Returns true for C types that are passed by value (use `.` accessor, not `->`).
     fn is_value_type(ty: &str) -> bool {
         if ty.starts_with("_NovaTuple") && !ty.ends_with('*') {
@@ -9083,14 +9094,30 @@ impl CEmitter {
                 BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::Le
                 | BinOp::Gt | BinOp::Ge | BinOp::And | BinOp::Or => "nova_bool".into(),
                 _ => {
-                    // If either operand is f64, result is f64
                     let lt = self.infer_expr_c_type(left);
                     let rt = self.infer_expr_c_type(right);
+                    // f64 побеждает: float-арифметика — результат f64.
                     if lt == "nova_f64" || rt == "nova_f64" {
-                        "nova_f64".into()
-                    } else {
-                        lt
+                        return "nova_f64".into();
                     }
+                    // Integer promotion: если один из операндов — typed
+                    // integer (u8/u16/u32/u64/i8/i16/i32), а другой —
+                    // `nova_int` (дефолт IntLit или int64-context), типизированный
+                    // выигрывает. Это исправляет случаи вроде
+                    //   let c u32 = ...; 0xEDB88320 ^ c >> 1
+                    // где IntLit давал nova_int, и весь XOR терял u32.
+                    // Симметрично для left/right. Если оба typed — берём lt
+                    // (левый); правильный C-promotion разрешит cast'ами на
+                    // emit_assign_typed.
+                    let lt_is_typed_int = Self::is_typed_integer(&lt);
+                    let rt_is_typed_int = Self::is_typed_integer(&rt);
+                    if lt_is_typed_int && rt == "nova_int" {
+                        return lt;
+                    }
+                    if rt_is_typed_int && lt == "nova_int" {
+                        return rt;
+                    }
+                    lt
                 }
             },
             // Plan 08 Ф.4 prerequisite: правильный infer для unary
