@@ -2887,3 +2887,21 @@ Detailed retro в docs/plans/19-closure-and-error-ops.md.
 - C16: mut-capture codegen.
 - C6: bidirectional inference HOF arg → closure.
 - Codegen handler-лямбда (D31-rev codegen-side).
+
+---
+
+## 2026-05-10 (продолжение 5) — D84 negative-тесты
+
+### Что закрыто
+
+D84 codegen бросает три типа compile error'ов («duplicate signature», «no matching overload», «ambiguous overload»), но **ни один не тестировался**. Аудит тестов вскрыл этот gap; заведены три negative-теста через `EXPECT_COMPILE_ERROR` marker:
+
+- `nova_tests/negative_capability/overload_duplicate_signature.nv` — две функции с identical sig.
+- `nova_tests/negative_capability/overload_no_match.nv` — вызов `handle(true)` где есть `handle(int)` и `handle(str)`.
+- `nova_tests/negative_capability/overload_ambiguous.nv` — две overloads с одинаковыми arg-types и разным return-type (фиксирует Q-overload-result-type ⚠️).
+
+### Status
+
+- ✅ ЗАКРЫТО.
+- 3/3 negative-тестов PASS.
+- Когда Q-overload-result-type будет закрыт — `overload_ambiguous.nv` нужно переделать в positive (let-аннотация выбирает overload).
