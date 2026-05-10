@@ -5675,32 +5675,35 @@ Old assumption «protocols обычно reusable» — **частично вер
 | 3 | `handler` (A) | `protocol` (D) | большой | новая фича без переименования |
 | 4 | `effect` (B) | `protocol` (D) | большой+ | полная симметрия |
 
-**Конкретный use-case — Channel-style factory (обнаружен 2026-05-10):**
+**Конкретный use-case — capability-split factory pattern (обнаружен 2026-05-10):**
 
 Канонический паттерн «factory возвращает несколько связанных
-interface'ов с общим скрытым state»:
+interface'ов с общим скрытым state», каждый interface — отдельный
+**capability** на одну сущность.
+
+**Пример (гипотетический):**
 
 ```nova
-type Channel[T] {}
-type ChanReader[T] protocol { recv() -> T }
-type ChanSender[T] protocol { send(v T) -> T }
+// Гипотетический Lock с capability-split:
+type Locker   protocol { lock() -> () }
+type Unlocker protocol { unlock() -> () }
 
-fn Channel[T].new() -> (ChanReader[T], ChanSender[T]) {
-    let state = ChannelState[T] { ... }
-    let r = protocol ChanReader[T] {
-        recv() -> T => state.recv()
+fn Lock.new() -> (Locker, Unlocker) {
+    let state = MutexState { ... }
+    let l = protocol Locker {
+        lock() -> () => state.lock()
     }
-    let s = protocol ChanSender[T] {
-        send(v T) -> T => state.send(v)
+    let u = protocol Unlocker {
+        unlock() -> () => state.unlock()
     }
-    (r, s)
+    (l, u)
 }
 ```
 
 Без anonymous protocol-литерала нужно объявить **два named-типа**
-(`ChannelReader[T]`, `ChannelSender[T]`) с явными методами +
-обернуть. Цена — **~3-4 лишних строки** и два типа в namespace
-которые **больше нигде не используются** (полностью one-off).
+(`LockerImpl`, `UnlockerImpl`) с явными методами + обернуть. Цена —
+**~3-4 лишних строки** и два типа в namespace которые **больше нигде
+не используются** (полностью one-off).
 
 **Сравнение с другими языками для этого use-case:**
 
@@ -5708,24 +5711,37 @@ fn Channel[T].new() -> (ChanReader[T], ChanSender[T]) {
 |---|---|---|
 | Nova-named (текущее) | средний | два named-типа + методы + constructor |
 | Nova-anonymous (D) | **минимальный** | как в примере выше |
-| Kotlin | минимальный | `object : ChanReader<T> { override fun recv() = ... }` |
+| Kotlin | минимальный | `object : Locker { override fun lock() = ... }` |
 | TypeScript | минимальный | object-literal удовлетворяет structurally |
-| Rust | большой | внутренние `struct ReaderImpl<T>` + `impl Trait` |
-| Go | большой | named-типы `readerImpl`, `senderImpl` |
+| Rust | большой | внутренние `struct LockerImpl` + `impl Trait` |
+| Go | большой | named-типы `lockerImpl`, `unlockerImpl` |
 | Swift | большой | type-erasing wrapper или внешние structs |
 
 Use-case — **прямое противоречие** аргументу «D40 один путь»:
-named-path работает, но **дороже на каждый Channel-style API**. В
-`std/collections/channel.nv` (когда появится) этот pattern будет
-центральным. Аналогично для других sync-primitives:
+named-path работает, но **дороже на каждый capability-split API**.
 
-- `Lock.new() -> (Locker, Unlocker)` — два interface'а.
-- `Pipe.new() -> (PipeReader, PipeWriter)`.
-- `Event.new() -> (EventNotifier, EventSubscriber)`.
-- `Db.transaction() -> (TxReader, TxWriter, TxCommit)`.
+**Замечание о текущем Channel в Nova:** Nova уже имеет `Channel[T]`
+([D79](decisions/06-concurrency.md#d79)), но по **Go-модели** — один
+объект, у которого есть и `send`, и `recv`. Это **другая** модель,
+не capability-split.
 
-Это **не маргинальный** случай — это базовый паттерн для concurrency-
-и I/O-API.
+**Capability-split** (вторая модель из Rust/Python/TS) — отдельная
+дизайн-задача. Если когда-нибудь в Nova появится отдельный
+`split_channel()` API (по образцу `tokio::sync::mpsc`,
+`MessageChannel` JS, `multiprocessing.Pipe` Python) — anon protocol
+будет идиомой.
+
+**Реалистичные кандидаты в Plan 18 stdlib:**
+
+- `Process.spawn(cmd) -> (Stdin, Stdout, Stderr)` — child-process с
+  тремя capabilities.
+- `HttpServer.bind() -> (Acceptor, ShutdownHandle)` — слушатель +
+  capability для graceful shutdown.
+- `Db.transaction() -> (TxReader, TxWriter, Commit)` — три role'а в
+  транзакции.
+
+Эти API **точно** появятся в зрелой stdlib. Тогда anon protocol —
+естественная идиома.
 
 **Предложение (обновлено).** Use-case есть, не «когда-нибудь
 появится». Текущая дилемма:
