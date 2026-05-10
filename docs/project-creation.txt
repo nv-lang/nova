@@ -3269,9 +3269,16 @@ spread args отвергаются compile-error'ом, но collection-mode не
 исполнения тестов; я гонял только один.
 
 **Status update:** Plan 14 Ф.6 → ⚠️ codegen-only ЗАКРЫТ. Interp
-fix вынесен в **Ф.6-bis** (~30 строк в `interp/mod.rs::eval_call`):
-detect variadic-fn по `FnDecl.params.last().is_variadic`, собрать
-positional args в Value::Array.
+fix вынесен в **Ф.6-bis** (~170 строк в `interp/{mod.rs, value.rs}`):
+detect variadic-fn по `FnDecl.params.last().is_variadic` + new field
+`Closure.variadic_last`, собрать positional args в Value::Array;
+spread unfolding в eval_call с pre-eval путём; новые helpers
+`try_member_call_values` + stub `try_result_option_method_values`.
+
+**Ф.6-bis закрыт 2026-05-10:**
+- `nova-codegen test variadic.nv`: 0/7 → 7/7 PASS.
+- `run_tests.ps1`: 97/97 PASS, без regression'ов.
+- Plan 14 Ф.6 → ✅ (codegen + interp).
 
 **Lesson — verification practice:**
 - Nova имеет 2 test-pipeline'а (codegen + interp). Production-codegen

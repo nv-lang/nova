@@ -409,35 +409,43 @@ spread, mixed, regular+variadic комбинация, instance-method с variadi
 **Std-эффект:** `std/path/path.nv` `Path.join(parts []str)` → `Path.join(...parts []str)`.
 Caller-side оба варианта работают (regular + spread).
 
-**⚠️ Verification gap, обнаруженный 2026-05-10:**
+**Verification history (2026-05-10):**
 
-Production-pipeline (`run_tests.ps1` через C-codegen + cl.exe) даёт
-**91/91 PASS**. Но `nova-codegen test variadic.nv` (interp-mode)
-даёт **7/7 FAIL**. Interp-mode не поддерживает variadic: `eval_call`
-не collect'ит args[regular_arity..] в `Value::Array(...)` для
-variadic-fn (codegen этот шаг делает синтезируя ArrayLit; interp
-его не делает).
+Изначально Ф.6 был помечен ✅ ЗАКРЫТ по результату `run_tests.ps1`
+(codegen pipeline, 91/91 PASS), но `nova-codegen test variadic.nv`
+(interp-mode) давал 7/7 FAIL. Это был verification miss — Nova
+имеет два канала исполнения тестов (codegen + interp), а я гонял
+только один.
 
-Я (другой агент) проверял **только** через `run_tests.ps1` и
-интерпретировал PASS как полное закрытие D69. **Это была ошибка
-verification-практики:** Nova имеет два канала исполнения тестов
-(codegen + interp), а я гонял только один. На interp Plan 14 Ф.6
-закрыт **частично**: только `?`-spread ban (compile-error при
-попытке spread). Collection-mode (variadic-fn вызвана с regular
-args) в interp падает.
+**Ф.6-bis (interp variadic) — закрыт 2026-05-10:**
+
+`compiler-codegen/src/interp/{mod.rs, value.rs}` (~170 строк):
+1. `Closure { variadic_last: bool }` поле, инициализируется из
+   `FnDecl.params.last().is_variadic` при registration.
+2. `call_closure_flow`: detect variadic_last → split args на
+   regular[..arity-1] + rest[arity-1..]. Pack rest в `Value::Array`,
+   bind как последний param.
+3. `ExprKind::Call`: split на non-spread (existing path) и spread.
+   Spread path pre-eval'ирует args, разворачивает `...arr` через
+   iter() over Value::Array, dispatch'ит через
+   `try_member_call_values` для Member-form или `call_value`.
+4. `try_member_call_values` + `try_result_option_method_values` —
+   analogs существующих method-dispatch с pre-evaluated args.
+
+После фикса:
+- `nova-codegen test variadic.nv`: **7/7 PASS** в interp.
+- `run_tests.ps1`: **97/97 PASS** в codegen, без регрессий.
 
 **Известные ограничения:**
-- **Interp-mode не поддерживает variadic collection** — отдельная
-  задача Plan 14 Ф.6-bis (~30 строк в `interp/mod.rs::eval_call`:
-  detection variadic-fn по `FnDecl.params.last().is_variadic`, сбор
-  args[regular_arity..] в `Value::Array(...)` перед binding'ом).
 - print/println остаются special-case (миграция на variadic —
   отдельная задача).
 - Multiple variadic-overloads ambiguous и не поддержаны (только
   single overload variadic).
 - **Verification practice TODO:** добавить в CI / pre-commit hook'е
   параллельный прогон `nova-codegen test` для всех `nova_tests/**.nv`
-  чтобы interp-mode-bug'и ловились.
+  чтобы interp-mode-bug'и ловились автоматически. Текущий interp
+  baseline 43/92 PASS — pre-existing limitations (concurrency/
+  effects/runtime), не связаны с D69.
 
 ---
 
@@ -522,7 +530,7 @@ extension (Ф.7-bis, Ф.8 tuple-types, etc.).
 | **Ф.3** free-fn-as-value | ✅ ЗАКРЫТ | ~95 строк, 5 тестов | — |
 | **Ф.4** fn-в-record | ✅ ЗАКРЫТ | ~50 строк, 4 тестов | — |
 | **Ф.7** `int as char` literal | ✅ ЗАКРЫТ (spec-only) | ~25 строк, 8 тестов | — |
-| **Ф.6** D69 variadic | ⚠️ codegen ЗАКРЫТ, interp partial (Ф.6-bis pending) | ~500 строк (с CallArg refactor), 7 тестов | — |
+| **Ф.6** D69 variadic | ✅ ЗАКРЫТ (codegen + interp Ф.6-bis 2026-05-10) | ~670 строк (CallArg refactor + interp variadic), 7 тестов | — |
 | **Ф.5** cross-file resolve | низкий ROI / высокая стоимость | ~500 строк, 1 неделя | Ф.1-Ф.4 |
 
 **Реализованный порядок:** Ф.7 → Ф.1 → Ф.6 (выполнено).
