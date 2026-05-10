@@ -2934,3 +2934,32 @@ D84 codegen бросает три типа compile error'ов («duplicate signa
 - ✅ ЗАКРЫТ.
 - Tests: ✅ 111/111 PASS (108 предыдущих + 3 новых pilot).
 - Open: `nova test` CLI на Nova — будет реализовать D89 одинаково; gap до тех пор — `run_tests.ps1` единственная реализация.
+
+---
+
+## 2026-05-10 (продолжение 7) — D89 EXPECT_STDERR + split stdout/stderr
+
+### Что упрощено / закрыто
+
+**Естественный gap в D89.** Вчера зафиксировали 4 маркера, `EXPECT_STDERR` оставили как «будущее расширение». Через день — добавили как 5-й, потому что:
+- POSIX-конвенция различает stdout/stderr, тесты должны тоже.
+- Симметрия с `EXPECT_STDOUT` естественная.
+- Раньше `EXPECT_STDOUT` де-факто проверял combined-вывод (через `2>&1`), теперь точно — только stdout.
+- 30 минут работы, закрывает gap пока контекст свежий.
+
+### Trade-offs
+
+- **Breaking change для `EXPECT_STDOUT`:** ранее combined → теперь только stdout. Один существующий тест (`stdout_hello.nv` — `println` пишет в stdout) не сломался. Other test-runners (если появятся) должны учесть.
+- **`EXPECT_RUNTIME_PANIC` остался combined.** Logically panic пишет в stderr, но runner проверяет любой поток для устойчивости — это spec-важно (mitigates future runtime changes которые могут перенаправить panic).
+
+### Файлы
+
+- `spec/decisions/09-tooling.md` — D89 расширен до 5 маркеров.
+- `run_tests.ps1` — split stdout/stderr, EXPECT_STDERR ветка.
+- `docs/test-conventions.md` — секция «5. EXPECT_STDERR» + уточнение EXPECT_STDOUT.
+- `nova_tests/expected_runtime/stderr_panic.nv` — pilot-тест.
+
+### Status
+
+- ✅ ЗАКРЫТ.
+- Tests: ✅ 120/120 PASS (предыдущие + новый stderr_panic).

@@ -3710,3 +3710,40 @@ big-bang regression'ов. C13 удалил старую grammar чисто.
 - `EXPECT_TIMEOUT_MS N` — для performance-тестов.
 - `nova test` CLI на Nova — будет реализовать D89 маркеры
   одинаково с run_tests.ps1.
+
+================================================================
+2026-05-10 (продолжение 7). D89 — EXPECT_STDERR + split stdout/stderr
+================================================================
+
+Расширение D89 до 5 маркеров — добавлен `EXPECT_STDERR <pattern>`
+симметрично `EXPECT_STDOUT`. До этого stdout/stderr сливались в один
+поток через `2>&1`, EXPECT_STDOUT де-факто проверял combined-вывод —
+неточность и асимметрия.
+
+**Что сделано:**
+
+1. Spec: D89 расширен с 4 до 5 маркеров. EXPECT_STDOUT уточнён
+   «только stdout, не stderr». Новый EXPECT_STDERR — «только stderr,
+   любой exit code».
+2. run_tests.ps1: split через `2>$stderr_file`. Раздельные
+   $stdout_text / $stderr_text. $combined_text оставлен для
+   EXPECT_RUNTIME_PANIC (panic пишет в stderr, но runner проверяет
+   любой поток для устойчивости) и RUN-FAIL диагностики.
+3. Pilot-тест nova_tests/expected_runtime/stderr_panic.nv через
+   panic("custom stderr message") — stderr содержит pattern,
+   exit ненулевой (но EXPECT_STDERR его не проверяет).
+4. docs/test-conventions.md — добавлена секция «5. EXPECT_STDERR»
+   с примером, отличиями от EXPECT_RUNTIME_PANIC.
+
+**Breaking change:** EXPECT_STDOUT раньше принимал combined,
+теперь только stdout. У нас был один такой тест (stdout_hello.nv),
+не сломался (`println` пишет в stdout).
+
+**Тест-suite:** 120/120 PASS.
+
+**Lesson:** «Закрыл задачу N, открыли use-case для N+1». EXPECT_STDERR
+я в D89 (вчерашний коммит) **сознательно** оставил как «future
+расширение», но в тот же день user спросил «а как же stderr?» и
+became clear что у нас в реальности нужно. Время-приоритет — сразу
+расширить, пока контекст свежий, не ждать «реального use-case». 30
+минут работы, закрывает естественный gap.
