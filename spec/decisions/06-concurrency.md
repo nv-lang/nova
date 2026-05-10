@@ -11,9 +11,10 @@ structured-concurrency примитивы есть в языке, и как па
 | [D50](#d50-concurrency-model-spawn-detach-blocking) | Concurrency model: `spawn`, `detach`, `Blocking` |
 | [D71](#d71-bootstrap-concurrency-runtime) | Bootstrap concurrency runtime: cooperative scheduler, `Time.sleep` yield-point, capture-by-value |
 | [D75](#d75-cancel_scope--ручная-структурная-отмена) | `cancel_scope { tok => ... }` — ручная структурная отмена (реализовано) |
-| [D79](#d79-channels--coordination-между-fiber-ами) | `Channel[T]` — coordination между fiber'ами, `select { ... }` |
+| [D79](#d79-channels--coordination-между-fiber-ами) | ⚠️ Уточнено [D91](#d91): `Channel[T]` (старая Go-style модель — один объект, send+recv на нём) |
 | [D80](#d80-handler-scoping-per-fiber) | Handler scoping per-fiber — `with X = handler` локален для fiber'а, наследуется через spawn |
 | [D80](#d80-handler-scoping-per-fiber) | Handler scoping per-fiber — `with X = h` биндинги изолированы между fibers |
+| [D91](#d91-channel-revision--capability-split-на-sender--receiver) | `Channel` revision: capability-split на `Sender[T]` / `Receiver[T]` (Rust mpsc-style) |
 
 ---
 
@@ -1124,6 +1125,14 @@ fail-fast при внешнем сигнале). Разделение делае
 
 ## D79. Channels — coordination между fiber'ами
 
+> ⚠️ **Частично уточнено [D91](#d91)** (2026-05-10):
+> Модель API изменена с Go-style (один `Channel[T]` объект с
+> `send`/`recv`) на Rust mpsc-style (`(tx, rx) = Channel[T].new()` —
+> capability-split на `Sender[T]` и `Receiver[T]`). Это **breaking
+> change** API. Остальное в D79 (capacity-bounded buffer, owner-actor
+> pattern, отказ от Mutex/Atomic, `select` через channels) остаётся.
+> Старая формулировка ниже сохранена для исторического контекста.
+
 ### Что
 `Channel[T]` — типизированный канал для передачи значений между
 fiber'ами с blocking-семантикой. **First-class value** (не effect),
@@ -1828,3 +1837,296 @@ TLS-globals **без** per-fiber изоляции — handler одного fiber
 `mco_resume` + `nova_register_effect_storage` registry. D80
 формализует invariant в spec'е (тесты:
 `nova_tests/concurrency/per_fiber_handlers.nv` — 4 случая).
+
+---
+
+## D91. Channel revision — capability-split на `Sender` / `Receiver`
+
+> **Уточняет** [D79](#d79-channels--coordination-между-fiber-ами) —
+> модель API меняется с Go-style (один объект с `send`/`recv`) на
+> Rust mpsc-style (capability-split). Остальное D79 (buffer,
+> owner-actor pattern, `select`) сохраняется.
+
+### Что
+
+`Channel[T].new(capacity)` возвращает **пару** объектов с разными
+**capabilities**:
+
+```nova
+let (tx, rx) = Channel[int].new(4)
+tx.send(10)
+let v = rx.recv()
+defer tx.close()                    // close — обязателен, см. D90
+```
+
+- **`Sender[T]`** — capability «отправлять в канал». Методы: `send`,
+  `try_send`, `close`.
+- **`Receiver[T]`** — capability «получать из канала». Методы: `recv`,
+  `try_recv`.
+
+Внутренний state (buffer, sync) **скрыт** — не доступен напрямую,
+только через capabilities.
+
+### Правило
+
+#### API — типы
+
+```nova
+// Sender capability:
+type Sender[T] protocol {
+    send(v T) -> ()                              // blocking если буфер полон
+    try_send(v T) -> bool                         // true если отправлено, false если буфер полон
+    close() -> ()                                  // закрыть канал (idempotent)
+}
+
+// Receiver capability:
+type Receiver[T] protocol {
+    recv() -> Option[T]                            // blocking; None = closed+drained
+    try_recv() -> Option[T]                        // None = пусто (НЕ означает closed)
+}
+```
+
+`Sender` и `Receiver` — **protocols**. Конкретная реализация скрыта
+внутри `Channel.new`. Это аналогично Rust `Sender`/`Receiver` как
+конкретным типам — Nova предпочла protocol-подход для абстракции
+(хочешь свой `Sender` impl — реализуй protocol).
+
+#### Factory
+
+```nova
+fn Channel[T].new(capacity int) -> (Sender[T], Receiver[T])
+```
+
+`capacity = 0` — unbuffered channel (rendezvous: send блокирует
+пока recv не примет; так же как D79).
+
+#### Close semantics
+
+**Explicit close.** Nova не имеет deterministic destructor'ов
+([D6](05-memory.md#d6) managed heap), поэтому **auto-on-drop**
+(как Rust mpsc) **не работает predictably** — GC соберёт sender
+«когда-нибудь», receiver висит непредсказуемо.
+
+Решение: программист обязан **явно** вызвать `tx.close()`. Идиома —
+через [D90](03-syntax.md#d90) `defer`:
+
+```nova
+fn run_pipeline() Net -> () {
+    let (tx, rx) = Channel[Job].new(10)
+    defer tx.close()                              // гарантированный close
+
+    supervised {
+        spawn { for j in jobs { tx.send(j) } }
+        spawn { while let Some(j) = rx.recv() { process(j) } }
+    }
+}   // <- tx.close() сработает; rx.recv() в spawn'е получит None и завершится
+```
+
+`close()` — **idempotent**: повторный вызов не error.
+
+После close:
+- `tx.send(v)` — panic (нельзя слать в closed canal). Strict для
+  defensive programming.
+- `tx.try_send(v)` — возвращает `false`.
+- `rx.recv()` — возвращает `Some(v)` пока буфер не пуст; потом `None`.
+- `rx.try_recv()` — то же.
+
+#### Sender clone — не нужен
+
+В Rust `Sender` cloneable: `let tx2 = tx.clone()` (mpsc). В Nova
+**через managed heap** все captures share один `tx`:
+
+```nova
+let (tx, rx) = Channel[Job].new(10)
+supervised {
+    spawn { tx.send(...) }                        // оба захватывают тот же tx
+    spawn { tx.send(...) }                        // через managed reference
+}
+defer tx.close()
+```
+
+Это работает потому что `Sender` (как любой managed object) — shared
+по умолчанию. **`clone()` не нужен** — добавим если появится
+performance use-case (per-thread inbox для cache-locality).
+
+#### `select` после revision
+
+Текущий `select` D79 работает через Channel-объект; в D91 — через
+Receiver:
+
+```nova
+let (_, rx_a) = Channel[int].new(0)
+let (_, rx_b) = Channel[int].new(0)
+
+select {
+    msg <- rx_a       => process_a(msg)
+    msg <- rx_b       => process_b(msg)
+    timeout(5.seconds()) => default_action()
+}
+```
+
+`<-` оператор читает из `Receiver[T]`. Семантика без изменений
+(non-deterministic выбор при множественной готовности; полная
+семантика — D79 раздел «`select`»).
+
+### Почему
+
+#### Зачем capability-split
+
+В Go-style (D79 текущий) `Channel[T]` имеет и `send`, и `recv` на
+одном объекте. Это удобно для simple случаев, но **проблематично**
+в концurrency-патернах:
+
+1. **Producer/consumer.** Producer должен **только** слать, consumer
+   **только** получать. С Go-style — оба могут случайно вызвать `recv`/
+   `send` на чужой стороне, типы это не запрещают.
+
+2. **Передача в spawn.** Хочется передать в spawn только sender-
+   capability (`spawn { for x in source { tx.send(x) } }`), без
+   возможности recv'ить. С Go-style нельзя — передаётся весь объект.
+
+3. **API дизайн.** Функция возвращает «вы можете только читать из
+   этого» — нужен Receiver-only тип. Go-style не даёт.
+
+Capability-split решает все три.
+
+#### Прецеденты
+
+| Язык | Модель |
+|---|---|
+| Go | один `chan T` с send/recv |
+| **Rust mpsc** | `(Sender<T>, Receiver<T>)` через `channel()` |
+| **Tokio mpsc** | то же |
+| Python `Queue` | один объект (Go-style) |
+| Python `multiprocessing.Pipe` | `(conn1, conn2)` (split) |
+| JS `MessageChannel` | `(port1, port2)` (split) |
+| OCaml 5 `Eio.Stream` | один объект (Go-style) |
+
+Capability-split — **доминирующая модель** в Rust ecosystem. Nova
+переходит на неё, потому что:
+- Type-safety capabilities в сигнатуре функции.
+- Структурное совпадение с Rust — programmers familiar.
+
+#### Почему close — explicit, не auto-on-drop
+
+В Rust auto-on-drop работает благодаря **deterministic destruction**
+(ownership). Когда последний `Sender` уходит из scope —
+`drop::drop()` вызывается **немедленно**, канал закрывается, receiver
+видит None.
+
+В Nova нет destructor'ов ([D6](05-memory.md#d6)). GC соберёт sender
+**когда-нибудь** — может через 100ms, может через 10s. Если auto-
+on-drop завязан на GC-сборку:
+
+```nova
+{
+    let (tx, rx) = Channel[int].new(4)
+    tx.send(42)
+    // tx уходит из scope здесь
+}
+// rx видит close — когда? Зависит от GC. Тесты flaky.
+```
+
+Это **неприемлемо**. Closing должно быть **детерминированным** —
+от него зависят receiver'ы.
+
+Решение: **explicit close** через `defer tx.close()` ([D90](03-syntax.md#d90)).
+`defer` выполняется при exit'е scope'а, deterministically. Идиома:
+
+```nova
+fn pipeline() Net -> () {
+    let (tx, rx) = Channel[Job].new(10)
+    defer tx.close()                              // в каждой функции, где tx уходит из scope
+    // ...
+}
+```
+
+#### Почему `recv() -> Option[T]`, не `Fail[Closed] -> T`
+
+Closed-channel — **не ошибка**. Это валидный исход «source закончился».
+Receiver-loop через `while let Some(x) = rx.recv() { ... }`
+идиоматичен: цикл сам завершается на close.
+
+Если бы `recv` бросал — каждый receiver-loop обёрнут handler'ом,
+шум. `Option[T]` композируется с `?` и `match`, не требует
+дополнительных эффектов.
+
+Это согласовано с Rust mpsc `recv() -> Result<T, RecvError>` —
+семантически то же, но Result там в Rust-context, в Nova
+`Option[T]` чище (нет специального `RecvError` типа).
+
+### Migration от D79 (Go-style)
+
+**Было (D79):**
+
+```nova
+let ch = Channel[int].new(4)
+ch.send(10)
+let v = ch.recv()
+ch.close()
+```
+
+**Стало (D91):**
+
+```nova
+let (tx, rx) = Channel[int].new(4)
+defer tx.close()
+tx.send(10)
+let v = rx.recv()
+```
+
+**Изменения:**
+1. `Channel.new(N)` возвращает `(Sender, Receiver)`, не `Channel`.
+2. `send` через `tx`, `recv` через `rx`.
+3. `close` через `tx.close()` (или `defer tx.close()`).
+4. `Channel[T]` как type-аннотация **не используется** в коде — есть
+   только `Sender[T]` и `Receiver[T]`.
+
+**Что нужно мигрировать:**
+- `std/` — нет существующих `Channel`-API.
+- `nova_tests/runtime/channels.nv` — переписать все тесты.
+- Bootstrap `nova_rt/channels.h` — переделать API: state-struct
+  + sender/receiver wrappers.
+- `select { msg <- ch => ... }` — поменять `ch` на `rx`.
+
+Реализация — отдельный план (Plan 22+).
+
+### Что отвергнуто
+
+- **Auto-on-drop (Rust-style).** Не работает в managed heap без
+  deterministic destruction. См. «Почему close — explicit».
+- **`recv() Fail[Closed] -> T`.** Closed — не ошибка, валидный исход.
+  `Option[T]` композируется чище.
+- **Sender.clone() в bootstrap.** В Nova managed-heap делает sender
+  shared by default; clone не нужен. Если появится use-case
+  (per-thread cache-locality) — добавим.
+- **Сохранить Go-style как альтернативу.** Два API для одной задачи —
+  нарушение D40 «один очевидный путь». Полная замена D79 →
+  D91-семантика.
+- **Многотиповые каналы (broadcast, oneshot, watch как в Tokio).**
+  Не в bootstrap. mpsc — основной use-case. Остальные — расширения
+  позже.
+
+### Связь
+
+- [D79](#d79-channels--coordination-между-fiber-ами) — частично
+  пересмотрено. API меняется, остальное (buffer, owner-actor pattern,
+  `select`) сохраняется.
+- [D14](#d14-fiber-runtime--невидимая-инфраструктура), [D50](#d50-concurrency-model-spawn-detach-blocking) —
+  fiber-runtime для blocking send/recv.
+- [D6](05-memory.md#d6) — managed heap, мотивирует **explicit close**
+  (нет destructor'ов).
+- [D90](03-syntax.md#d90) — `defer` для гарантированного close.
+- [D85](04-effects.md#d85) — `?` для composing `recv() -> Option[T]`.
+- [Q-keyword-symmetry](../open-questions.md#q-keyword-symmetry) —
+  capability-split factory как use-case для anonymous protocol-impl.
+
+### Bootstrap-status
+
+- 🟡 **Spec фиксирует семантику.** Реализация — отдельный план
+  (Plan 22+), после D90 (defer) поддержки.
+- Текущий nova_rt/channels.h реализует **старую** D79-модель. После
+  Plan 22 — переделка под D91.
+- Существующие тесты `nova_tests/runtime/channels.nv` мигрируются
+  в рамках Plan 22.
+
