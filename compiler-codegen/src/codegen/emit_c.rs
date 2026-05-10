@@ -948,8 +948,12 @@ impl CEmitter {
             }
         }
         // General case: emit as static const with initialiser expression
-        // (covers int/bool/etc.)
-        match self.emit_const_expr(&c.value) {
+        // (covers int/bool/etc.). Передаём ty_c как target для integer-
+        // литералов, чтобы emit правильный suffix/cast (например u32-const
+        // получит `(uint32_t)NU`, не `((nova_int)NLL)` — последнее вызывает
+        // implementation-defined signed→unsigned conversion для значений
+        // вне диапазона int64, баг был замечен в std/checksums/fnv.nv).
+        match self.emit_const_expr_typed(&c.value, Some(&ty_c)) {
             Ok(val) => {
                 self.line(&format!("static const {} {} = {};", ty_c, c.name, val));
                 // Регистрируем тип const'а в var_types, чтобы Ident(name) на
@@ -1026,8 +1030,63 @@ impl CEmitter {
         Ok(())
     }
 
+    /// Эмит integer-литерала с правильным C-типом (suffix + cast).
+    ///
+    /// Для unsigned-целевых типов важно эмитить unsigned-литерал
+    /// (`U` / `ULL` suffix), иначе signed `(nova_int)<N>LL` cast в
+    /// беззнаковый — implementation-defined для значений вне диапазона
+    /// int64 (например 0xCBF29CE484222325 как FNV-64 offset).
+    fn emit_typed_int_literal(n: i64, ty_c: &str) -> String {
+        match ty_c {
+            "uint8_t" | "uint16_t" | "uint32_t" => {
+                // Unsigned 32-bit и меньше: U-suffix + cast к точному типу.
+                // n хранится как i64; для отрицательных значений или > i32::MAX
+                // используем явное приведение через хеш-bit-pattern.
+                format!("(({}){}U)", ty_c, n as u32)
+            }
+            "uint64_t" => {
+                // ULL-suffix; используем bit-pattern u64 чтобы корректно
+                // передать значения, не помещающиеся в i64 (FNV-64 и т.п.).
+                format!("(({})0x{:X}ULL)", ty_c, n as u64)
+            }
+            "int8_t" | "int16_t" | "int32_t" => {
+                format!("(({}){})", ty_c, n as i32)
+            }
+            // nova_int (= int64_t), int64_t — default LL-suffix.
+            _ => format!("(({}){}LL)", ty_c, n),
+        }
+    }
+
     /// Emit a constant expression — like emit_expr but without side-effect statements.
     /// Used for file-scope const initialisers.
+    ///
+    /// `target_ty_c` (если задан) — c-тип целевого const'а. Для integer-литералов
+    /// используется чтобы выбрать правильный suffix/cast (unsigned vs signed).
+    fn emit_const_expr_typed(&mut self, expr: &Expr, target_ty_c: Option<&str>) -> Result<String, String> {
+        match &expr.kind {
+            ExprKind::IntLit(n) => {
+                let ty_c = target_ty_c.unwrap_or("nova_int");
+                Ok(Self::emit_typed_int_literal(*n, ty_c))
+            }
+            ExprKind::CharLit(cp) => {
+                let ty_c = target_ty_c.unwrap_or("nova_int");
+                Ok(Self::emit_typed_int_literal(*cp as i64, ty_c))
+            }
+            ExprKind::Unary { op: UnOp::Neg, operand } => {
+                // `-IntLit` → typed-literal с минусом. ВАЖНО: для unsigned-типа
+                // негативный литерал в const'е концептуально некорректен (заворот),
+                // оставляем как есть (программист сам отвечает).
+                if let ExprKind::IntLit(n) = &operand.kind {
+                    let ty_c = target_ty_c.unwrap_or("nova_int");
+                    return Ok(Self::emit_typed_int_literal(-*n, ty_c));
+                }
+                let inner = self.emit_const_expr_typed(operand, target_ty_c)?;
+                Ok(format!("(-({}))", inner))
+            }
+            _ => self.emit_const_expr(expr),
+        }
+    }
+
     fn emit_const_expr(&mut self, expr: &Expr) -> Result<String, String> {
         match &expr.kind {
             ExprKind::IntLit(n) => Ok(format!("((nova_int){}LL)", n)),
