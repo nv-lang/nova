@@ -1,6 +1,9 @@
 # План 15: Generic bounds enforcement (D72)
 
-**Статус:** активный, в работе с 2026-05-09.
+**Статус:** ✅ ЗАКРЫТ (2026-05-11). Все фазы Ф.1-Ф.5 реализованы; Ф.4
+тесты — 6 позитивных + 3 негативных покрывают satisfied bounds,
+multi-bound, mixed, forward-dependency и compile-error на use-site при
+несоответствии (включая D53 effect-as-bound rejection).
 **Дата создания:** 2026-05-08.
 **Зависимости:** [D72](../../spec/decisions/02-types.md#d72) уже описывает
 `[T Protocol]` синтаксис.
@@ -150,19 +153,42 @@ inference):
 
 **Объём:** ~150 строк + diagnostic templates.
 
-### Ф.4 — Тесты
+### Ф.4 — Тесты ✅ ЗАКРЫТ (2026-05-11)
 
-`nova_tests/types/generic_bounds.nv` (новый):
+`nova_tests/types/generic_bounds.nv` — 6 позитивных тестов:
 
-- `dedup[Hashable]` на типе с/без `@hash()` + `@eq()`.
-- Multi-bound: `[T Hashable, K Ord]`.
-- Forward dependency: `[K Hashable, V From[K]]`.
-- Anonymous protocol bound: `[T protocol { @lt(o Self) -> bool }]`
-  (если spec позволяет inline).
-- Negative tests (manual через `check`-mode): ожидаемый compile-error
-  при несоответствии.
+- bound satisfied — `GbUser` имеет `@hash()` + `@eq()` → OK
+- multi-bound — `[A GbHashable, B GbHashable]` оба satisfied
+- no-bound generic — `[T]` без bound'а компилируется как раньше
+- mixed bound — `[K GbHashable, V]` один с bound'ом, другой без
+- different bound — `GbCountable` vs `GbHashable` на одном типе
+- forward-dependency — `[K GbHashable, V GbFromKey[K]]` парсер
+  принимает (через `parse_type`); чекер для параметризованных bound'ов
+  permissive (early-return для non-single-name path) — это закрывается
+  отдельной задачей.
 
-**Объём:** ~10 тестов.
+`nova_tests/negative_capability/` — 3 negative-теста (через D89
+`EXPECT_COMPILE_ERROR` маркер):
+
+- `bound_not_satisfied_rejected.nv` — тип без `@hash()`/`@eq()`
+  передаётся в `[T BnsHashable]` → «type X does not satisfy P bound».
+- `bound_missing_method_rejected.nv` — метод с тем же именем но другой
+  арностью (`count(int)` vs `count()`) → «does not satisfy» (BoundCtx
+  матчит по name + arity; полная sig-сверка с `Self → T` — будущая
+  фаза).
+- `bound_effect_not_protocol_rejected.nv` — effect-kind тип
+  (`type BefLogger effect { ... }`) используется как bound `[T BefLogger]`
+  → R5.3 «type X is an effect, not a protocol» (D53 strict, Ф.5).
+
+**Не покрыто (не поддерживается парсером bootstrap):**
+
+- Anonymous protocol bound `[T protocol { @lt(o Self) -> bool }]` —
+  `parse_type` не принимает `protocol` keyword в позиции типа (matches
+  только Named/Array/Tuple/Func). Отложено до отдельной задачи
+  (требует расширения грамматики типов; D53 §628 анонимные
+  protocol-литералы).
+
+**Итого:** 6 позитивных + 3 негативных = 9 тестов покрытия Plan 15.
 
 ### Ф.5 — D53 strict-mode: split Protocol vs Effect ✅ ЗАКРЫТ (2026-05-09)
 

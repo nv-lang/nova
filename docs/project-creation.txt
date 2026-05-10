@@ -4018,3 +4018,59 @@ spec в одну сессию, implementation plan туда же, реальна
 
 **Что НЕ сделано в текущей сессии:** сама реализация Plan 20/21
 (spec'ы и планы готовы, ждут implementation сессий).
+
+================================================================
+2026-05-11. Plan 15 Ф.4 — negative-тесты для generic bounds (D72)
+================================================================
+
+Plan 15 (`docs/plans/15-generic-bounds-enforcement.md`) фазы Ф.1-Ф.3,
+Ф.5 уже были реализованы; Ф.4 покрывала только позитивные кейсы
+(satisfied bound, multi-bound, mixed, different bound). Закрыта дыра —
+добавлены **negative-тесты compile-error при несоответствии**.
+
+**Что добавлено:**
+
+`nova_tests/negative_capability/` — 3 файла через D89
+`EXPECT_COMPILE_ERROR <pattern>` маркер:
+
+- **`bound_not_satisfied_rejected.nv`** — тип без `@hash()`/`@eq()`
+  передаётся в `fn[T BnsHashable]` → «type X does not satisfy P
+  bound» (R5.3 diagnostic с перечислением missing методов).
+- **`bound_missing_method_rejected.nv`** — метод с тем же именем
+  но другой арностью (`@count(int)` vs required `count()`) →
+  «does not satisfy» (BoundCtx::check_satisfaction матчит по name +
+  arity; полная sig-сверка с `Self → T` substitution — будущая
+  фаза, не блокер).
+- **`bound_effect_not_protocol_rejected.nv`** — effect-kind тип
+  (`type BefLogger effect { ... }`) используется как bound →
+  «is an effect, not a protocol» (D53 strict, Ф.5).
+
+`nova_tests/types/generic_bounds.nv` — добавлен 6-й позитивный тест:
+
+- **forward-dependency** `[K GbHashable, V GbFromKey[K]]` — bound
+  на `V` параметризован предыдущим generic'ом `K`. Парсер
+  принимает (через `parse_type` который допускает type-args в
+  TypeRef::Named). Чекер для параметризованных bound'ов сейчас
+  permissive (early-return для non-single-name path: см.
+  `BoundCtx::check_satisfaction` line 627 — `// complex bounds
+  (Hashable[K], etc.) — отдельная задача`). Тест фиксирует что
+  парсер + текущий чекер пропускают валидный код.
+
+**Что НЕ добавлено (не поддерживается парсером bootstrap):**
+
+- **Anonymous protocol bound** `[T protocol { @lt(o Self) -> bool }]` —
+  `parse_type` отвергает keyword `protocol` в позиции типа
+  (`expected type, got protocol`). D53 §628 анонимные
+  protocol-литералы — отложено до отдельной задачи (требует
+  расширения грамматики типов).
+
+**Lesson:** D89 `EXPECT_COMPILE_ERROR` substring-pattern сильно
+упрощает negative-тесты — раньше требовалась ручная проверка через
+`nova-codegen check`. Тест содержит сам себя (тело `test {}` не
+выполняется потому что codegen не доходит до .c), pattern matchится
+с реальным текстом BoundCtx через regex.escape. Все 3 теста
+прошли с первой попытки patterns.
+
+**Тесты:** 91 → 123 pass (после добавления 3-х negative + 6
+существующих негативных capability + ряда других, число выросло).
+Все PASS, 0 FAIL.

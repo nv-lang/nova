@@ -3200,3 +3200,41 @@ Implementation roadmaps для D90/D91 заведены как DRAFT-планы.
 
 - Plan 20: 🟡 DRAFT.
 - Plan 21: 🟡 DRAFT (зависит от Plan 20).
+
+---
+
+## 2026-05-11 — Plan 15 Ф.4 retro (closing negative-test gap)
+
+### Что зафиксировано
+
+Plan 15 (generic bounds, D72) фазы Ф.1-Ф.3, Ф.5 уже реализованы; Ф.4 тесты покрывали только позитивные кейсы (5 файлов в `nova_tests/types/generic_bounds.nv`). Добавлены недостающие:
+
+- **3 negative-теста** через D89 `EXPECT_COMPILE_ERROR` маркер:
+  - `bound_not_satisfied_rejected.nv` — тип без required-методов протокола → «type X does not satisfy P bound».
+  - `bound_missing_method_rejected.nv` — метод с правильным именем, но другой арностью → «does not satisfy» (BoundCtx матчит по name + arity).
+  - `bound_effect_not_protocol_rejected.nv` — effect-kind тип как bound → «is an effect, not a protocol» (D53 strict Ф.5).
+- **1 позитивный тест** — forward-dependency `[K Hashable, V From[K]]`. Парсер принимает (через `parse_type` который допускает type-args), чекер permissive для параметризованных bound'ов (early-return для non-single-name path).
+
+### Trade-offs
+
+- **Anonymous protocol bound** `[T protocol { ... }]` не добавлен — `parse_type` не принимает keyword `protocol` в позиции типа. Откладывается до отдельной задачи (D53 §628 inline protocol-литералы).
+- **Wrong-return-type** не тестируется как отдельный кейс — текущий BoundCtx match'ит по name + arity, return type игнорируется. Полная sig-сверка с `Self → T` substitution — будущая фаза. Negative `bound_missing_method_rejected` фиксирует arity-mismatch, что покрывает большую часть случаев.
+
+### Файлы
+
+- `nova_tests/negative_capability/bound_not_satisfied_rejected.nv` (новый).
+- `nova_tests/negative_capability/bound_missing_method_rejected.nv` (новый).
+- `nova_tests/negative_capability/bound_effect_not_protocol_rejected.nv` (новый).
+- `nova_tests/types/generic_bounds.nv` — добавлен forward-dependency тест (5 → 6 тестов).
+- `docs/plans/15-generic-bounds-enforcement.md` — Ф.4 retro, статус ✅ ЗАКРЫТ.
+
+### Status
+
+- ✅ ЗАКРЫТ. Plan 15 целиком закрыт.
+- Tests: 123/123 PASS (включая 3 новых negative + 1 новый positive).
+
+### Lesson
+
+**D89 `EXPECT_COMPILE_ERROR`** — proven tool для negative-coverage без custom-харнеса. Pattern — substring через `regex.escape`. Workflow: запустил codegen на тестовом .nv, посмотрел текст ошибки, выбрал uniquely-identifying substring («does not satisfy», «is an effect, not a protocol»). Все 3 теста matchнулись с первой попытки.
+
+**Plan-spec-vs-bootstrap reality.** План Ф.4 предполагал «anonymous protocol bound (если spec позволяет inline)» — но bootstrap-парсер не поддерживает. Правильное решение — документировать gap явно («not supported in bootstrap, see D53 §628»), не пытаться расширить парсер ad-hoc. Аналогично forward-dep: тест есть, но чекер permissive — это документировано в комментариях и retro.
