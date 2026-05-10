@@ -94,6 +94,12 @@ pub struct Handler {
     pub effect: String,
     pub methods: HashMap<String, HandlerMethod>,
     pub env: super::env::Env,
+    /// Plan 19, C8 (D31-rev): handler-лямбда `|err| body` в позиции
+    /// `with EffectName = ...` — sugar над handler-литералом для
+    /// эффекта с одной операцией. Closure хранится здесь и
+    /// перенаправляется на единственный handler-method при
+    /// invoke_handler_op.
+    pub lambda: Option<std::rc::Rc<Closure>>,
 }
 
 impl Value {

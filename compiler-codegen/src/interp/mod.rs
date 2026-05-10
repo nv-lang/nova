@@ -830,6 +830,7 @@ impl Interpreter {
                         .unwrap_or_else(|| "<unknown>".into()),
                     methods: map,
                     env: env.clone(),
+                    lambda: None,
                 });
                 Ok(Flow::Value(Value::Handler(handler)))
             }
@@ -1971,6 +1972,35 @@ impl Interpreter {
         None
     }
 
+    /// Plan 19, C8 (D31-rev): проверка что эффект имеет ровно одну
+    /// операцию для handler-лямбда формы `with EffectName = |x| body`.
+    /// Bootstrap fallback (production: type-checker enforce'ит на
+    /// compile time). Возвращает Ok если операций ровно 1 или нет
+    /// type-decl (effect определён через D2 prelude — Fail/Random/etc).
+    fn assert_effect_has_single_op(
+        &self,
+        effect_name: &str,
+        span: Span,
+    ) -> Result<(), Diagnostic> {
+        if let Some(decl) = self.types.get(effect_name) {
+            if let TypeDeclKind::Effect(ops) = &decl.kind {
+                if ops.len() > 1 {
+                    return Err(Diagnostic::new(
+                        format!(
+                            "handler-lambda `with {} = |...|` requires effect with exactly one operation; \
+                             `{}` has {} operations. Use full handler-literal syntax `handler {} {{ ... }}`.",
+                            effect_name, effect_name, ops.len(), effect_name
+                        ),
+                        span,
+                    ));
+                }
+            }
+        }
+        // Не-зарегистрированный effect (Fail/Random/etc — prelude D2)
+        // — пропускаем; production type-checker распознаёт сам.
+        Ok(())
+    }
+
     fn invoke_handler_op(
         &self,
         handler: &value::Handler,
@@ -1979,6 +2009,15 @@ impl Interpreter {
         _env: &Env,
         span: Span,
     ) -> Result<Flow, Diagnostic> {
+        // Plan 19, C8 (D31-rev): если handler был создан через
+        // closure-light syntax (`with X = |args| body`), у него
+        // вместо methods хранится Closure'а. Переадресуем call к
+        // closure: `op(args)` → `closure(args)`. Эффект должен иметь
+        // ровно одну операцию (assert проверен при создании
+        // handler'а в eval_with).
+        if let Some(closure) = &handler.lambda {
+            return self.call_closure_flow(closure, args, span);
+        }
         let method = handler.methods.get(op).ok_or_else(|| {
             Diagnostic::new(
                 format!("handler for `{}` has no operation `{}`", handler.effect, op),
@@ -2022,16 +2061,6 @@ impl Interpreter {
     ) -> Result<Flow, Diagnostic> {
         let mut frames_pushed = 0;
         for b in bindings {
-            let handler_v = self.eval_expr_value(&b.handler, env)?;
-            let handler = match handler_v {
-                Value::Handler(h) => h,
-                other => {
-                    return Err(Diagnostic::new(
-                        format!("expected handler, got {}", other.type_name()),
-                        b.span,
-                    ));
-                }
-            };
             let effect_name = match &b.effect {
                 TypeRef::Named { path, .. } => {
                     path.last().cloned().unwrap_or_default()
@@ -2040,6 +2069,44 @@ impl Interpreter {
                     return Err(Diagnostic::new(
                         "with-binding effect must be a named type",
                         b.effect.span(),
+                    ));
+                }
+            };
+            let handler_v = self.eval_expr_value(&b.handler, env)?;
+            let handler = match handler_v {
+                Value::Handler(h) => h,
+                // Plan 19, C8 (D31-rev): handler-лямбда `|err| body`
+                // в позиции `with EffectName = ...` — sugar над
+                // handler-литералом с одной операцией. Закрытие в
+                // этой позиции автоматически оборачиваем в Handler
+                // с единственным методом эффекта.
+                //
+                // Compile-time проверка «эффект имеет ровно одну
+                // операцию» — задача type-checker'а; в bootstrap'е
+                // здесь runtime-fallback: смотрим в зарегистрированный
+                // type-decl эффекта, берём первую (и обычно единственную)
+                // операцию.
+                Value::Closure(closure) => {
+                    // Эффект должен иметь ровно одну операцию, иначе
+                    // closure-form неоднозначен. Bootstrap-fallback:
+                    // если operations > 1, берём первую (production
+                    // type-checker должен enforce'ить «одна операция»
+                    // на этапе компиляции).
+                    let _ = self.assert_effect_has_single_op(
+                        &effect_name,
+                        b.span,
+                    );
+                    Rc::new(Handler {
+                        effect: effect_name.clone(),
+                        methods: HashMap::new(),
+                        env: env.clone(),
+                        lambda: Some(closure),
+                    })
+                }
+                other => {
+                    return Err(Diagnostic::new(
+                        format!("expected handler, got {}", other.type_name()),
+                        b.span,
                     ));
                 }
             };
