@@ -22,6 +22,7 @@
 | 07 | [07-modules.md](07-modules.md) | Модули, импорты, видимость, package tooling | D5, D29, D47, D78 |
 | 08 | [08-runtime.md](08-runtime.md) | Panic, capability, deployment, prelude, From/Into, TryFrom, math, Mem, assert | D7, D13, D26, D41, D70 (replaced → D73), D73, D74, D76, D77, D81 |
 | 09 | [09-tooling.md](09-tooling.md) | Тесты, контракты, форматирование | D24 |
+| 10 | [10-overloading.md](10-overloading.md) | Перегрузка функций и методов: четыре оси, резолв | D84 |
 
 ## История
 

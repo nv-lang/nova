@@ -532,6 +532,7 @@ match @buckets[idx] {
   (`0xFF`, `1_000`, негативные) — используются для discriminants.
 - [03-syntax.md → D46](03-syntax.md#d46) — `|` в operator
   overloading (`@or`) — разрешается компилятором по контексту.
+  Полная семантика overloading — [D84](10-overloading.md#d84).
 
 ### Открытые вопросы
 - **Литералы как sum-варианты** (TS-style `| "open" | "closed"`) —
@@ -1901,8 +1902,8 @@ fn Set[T] mut @insert(item T) -> bool {
 }
 ```
 
-Resolution через **call-site overload resolution** ([D35 «Перегрузка
-методов»](03-syntax.md#d35)) с **override-precedence**: own-method
+Resolution через **call-site overload resolution**
+([D84](10-overloading.md#d84)) с **override-precedence**: own-method
 (определённый напрямую на receiver) **wins** over delegated (через
 `use`).
 
@@ -1980,7 +1981,7 @@ type Wallet {
 ##### Резолвинг — общий механизм overload
 
 Anonymous embed **не вводит** специальных правил в компилятор.
-Resolution использует **тот же** `resolve_overload` ([D35](03-syntax.md#d35))
+Resolution использует **тот же** `resolve_overload` ([D84](10-overloading.md#d84))
 с двумя расширениями:
 
 1. **Анонимные embed-методы** регистрируются в overload registry с
@@ -2137,7 +2138,7 @@ simple wrappers где явное имя поля бессмысленно (`use
 не нужен».
 
 Resolution для anonymous через **lazy mechanism** — общий call-site
-overload-resolution ([D35 «Перегрузка методов»](03-syntax.md#d35))
+overload-resolution ([D84](10-overloading.md#d84))
 с **override-precedence** (own-method wins over delegated). Никаких
 declaration-time проверок collision'ов. Это упрощает компилятор —
 один путь для named и anonymous.
