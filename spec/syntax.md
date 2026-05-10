@@ -96,7 +96,7 @@ let user = User {
 
 // 3. Перед .method() (chain)
 let result = list
-    .filter() { x => x > 0 }
+    .filter(|x| x > 0)
     .sum()
 
 // 4. Перед ? (error propagation)
@@ -180,44 +180,83 @@ fn log_event(e Event) Log            // -> () можно опускать
 fn save(u User) Fail Db            // эффекты + dropped -> ()
 ```
 
-## Trailing-block — блок-аргумент за скобками вызова
+## Closure: light `|...|` и full `fn(...)`
 
-Если последний параметр функции — `fn(...) -> T`, блок-аргумент можно
-вынести за `(...)`. Это **не лямбда** (лямбда строго `(params) => expr`,
-без блок-формы; см. [D22](decisions/03-syntax.md#d22)) — это
-**trailing-block** ([D43](decisions/03-syntax.md#d43)). **`()` обязательны**
-даже без других аргументов:
+В Nova две формы closure ([D22](decisions/03-syntax.md#d22-closure-light--и-full-fn)):
 
+**closure-light** — компактная untyped форма, тело bare expr или block:
+```nova
+let inc   = |x| x + 1
+let zero  = || 0
+let block = |x| { let y = x*2; y + 1 }
+let any   = |_| 0                            // wildcard
+
+list.filter(|x| x > 0)
+list.fold(0, |acc, x| acc + x)
+m.get_or_insert("k", || 0)
+spawn(|| compute())
+```
+
+`|...|` валиден **только когда контекст однозначно задаёт сигнатуру**
+(параметр fn-call'а, annotated let, return-position, first-use
+inference). Без контекста — переключайся на `fn(...)`.
+
+**closure-full** — типизированная форма, идентична named fn без имени.
+Тело `=> expr` или `{ block }`:
+```nova
+let typed    = fn(x int) -> int => x * 2
+let block    = fn(x int, y int) -> int { let z = x+y; z * 2 }
+let with_eff = fn(req Request) Db Log -> Response { process(req) }
+```
+
+Эффекты в closure-light **не пишутся** — они наследуются из ambient
+effect-set (= эффекты enclosing-функции ∪ активные `with`-блоки).
+Если тело closure'а использует эффект, недоступный в parent'е —
+compile error. Closure-full объявляет эффекты явно, как named fn.
+
+## Trailing — блок/функция-аргумент за скобками вызова
+
+Если последний параметр функции — функционального типа, аргумент можно
+вынести за `()` вызова в одну из двух форм:
+
+**trailing-block** — для callback'ов **без параметров** (DSL):
 ```nova
 with_timeout(2.seconds) {
     Db.exec(sql`UPDATE counters SET v = v + 1`)
 }
 
-list.filter() { x => x > 0 }
-list.fold(0) { (acc, x) => acc + x }
+retry(3) {
+    Net.get(url)
+}
+```
+
+**trailing-fn** — для callback'ов **с параметрами**, синтаксис
+идентичен closure-full без имени:
+```nova
+list.filter() fn(x) => x > 0
+list.fold(0) fn(acc, x) { acc + x }
+list.map() fn(s str) Fail -> int { parse(s)? }
 ```
 
 **Правила:**
-- `{` на той же строке, что `)`. Перенос между ними запрещён.
-- Параметры через `=>`: `{ x => stmts; expr }`, `{ (a, b) => stmts; expr }`,
-  `{ stmts; expr }` (без параметров).
-- Тело — block-body: множество statement'ов плюс опциональное финальное
-  выражение, как у блок-формы `fn`.
-- Тип последнего параметра должен быть функциональным.
+- `{` (для trailing-block) или `fn` (для trailing-fn) на той же
+  строке, что `)`. Перенос запрещён.
+- `()` обязательны (даже пустые).
+- Тип последнего параметра — функциональный.
 - Один trailing на вызов.
+- `|...|` (closure-light) **в trailing-position запрещён** —
+  передавай через args (`f(|x| body)`) или используй `fn(...)`.
 
-`spawn` — keyword-конструкция, не функция, поэтому не подчиняется правилу D43.
-Его синтаксис описан отдельно ниже.
+`spawn` — keyword-конструкция, не функция, поэтому не подчиняется
+правилу D43. Его синтаксис описан отдельно ниже.
 
-Короткие лямбды (одно выражение) — в скобках, через `=> expr`:
-```nova
-list.filter((x) => x > 0)            // короткая inline-лямбда
-m.get_or_insert("k", () => 0)        // короткая inline-лямбда
-```
+**Когда trailing-fn vs closure-light в args:**
+- `f(|x| body)` — компактнее для one-liner'ов.
+- `f(args) fn(x) { ... }` — лучше для длинных тел с `let`'ами,
+  визуально маркирует «это блок-аргумент к вызову».
 
-Когда нужен блок с `let`'ами и несколькими statement'ами — выносить
-через trailing-block, не лямбду (лямбда строго `=> expr`,
-[D22](decisions/03-syntax.md#d22)). Подробно — [D43](decisions/03-syntax.md#d43).
+Подробно — [D22](decisions/03-syntax.md#d22-closure-light--и-full-fn),
+[D43](decisions/03-syntax.md#d43-trailing-block--без-params-fnp-body-с-params).
 
 ## Тело функции: `=>` для выражения, `{}` для блока
 
@@ -400,6 +439,7 @@ f64.try_parse(s str) -> Option[f64]
 - `Result[T, E]`, `Ok(v)`, `Err(e)` — sum-тип
 - `Error` — record `{ msg str }` для `throw err`
 - `RuntimeError` — sum bottom-уровневых runtime-ошибок
+- `RuntimeNoneError` — unit-тип, бросается через `expr!!` на `Option` ([D85](decisions/04-effects.md#d85))
 - `Handler[E]` — first-class тип handler'а эффекта
 - `From[T]` — protocol со static-методом `from(v T) -> Self`
   ([D73](decisions/08-runtime.md#d73))
@@ -982,7 +1022,7 @@ serve({ port: 9000, host: "127.0.0.1", max_conn: 16, timeout: 5.seconds() })
 
 ## Эффекты в сигнатуре
 
-Любое нечистое действие — эффект, объявляется между `)` и `->`:
+Любое взаимодействие с внешним миром — эффект, объявляется между `)` и `->`:
 
 ```nova
 fn double(x int) -> int                          // чистая
@@ -991,14 +1031,27 @@ fn save(u User) Fail Db Log -> ()              // три эффекта
 fn fetch(url str) Net Fail -> Response   // сеть + async + ошибки
 ```
 
-`?` — пробрасывание ошибки, работает в функциях с `Fail`:
+**`?` и `!!`** — два постфиксных оператора для `Option`/`Result`
+([D85](decisions/04-effects.md#d85)):
+
+- `expr?` — ранний return обёртки (нужен `-> Option/Result`).
+- `expr!!` — throw через `Fail[E]` (нужен `Fail[E]` в сигнатуре).
 
 ```nova
-fn pipeline(s str) Fail -> int {
+// throw-стиль через !!
+fn pipeline(s str) Fail[ParseError] -> int {
+    let n = parse(s)!!
+    let doubled = n * 2
+    validate(doubled)!!
+    doubled
+}
+
+// return-стиль через ?
+fn pipeline_r(s str) -> Result[int, ParseError] {
     let n = parse(s)?
     let doubled = n * 2
     validate(doubled)?
-    doubled
+    Ok(doubled)
 }
 ```
 
@@ -1065,7 +1118,7 @@ test "complex flow" {
     with Logger = collect_into(buf),
          Db = in_memory,
          Time = fixed(t0) {
-        process_order(o)?
+        process_order(o)
     }
     assert(buf.contains("processed"))
 }
@@ -1359,8 +1412,8 @@ for url in urls {
 использовать `.map()`, не `for`:
 
 ```nova
-let names []str = users.map((u) => u.name)
-let names []str = users.map() { u => u.name }      // trailing-block
+let names []str = users.map(|u| u.name)
+let names []str = users.map() fn(u) => u.name      // trailing-fn
 ```
 
 Сводка:
@@ -1368,7 +1421,7 @@ let names []str = users.map() { u => u.name }      // trailing-block
 | Форма | Тип | Семантика |
 |---|---|---|
 | `for x in iter { body }` | `unit` | statement, side-effects |
-| `iter.map((x) => body)` | `[]T` | sequential map |
+| `iter.map(\|x\| body)` | `[]T` | sequential map |
 | `parallel for x in iter { body }` (body has trailing) | `[]T` | parallel map (fan-out) |
 | `parallel for x in iter { body }` (no trailing) | `unit` | parallel side-effect loop |
 
@@ -1510,7 +1563,9 @@ fn handle(r Request) Db Log -> Response =>
     process(r)             // если panic — fiber умирает, runtime вернёт 500
 ```
 
-В синхронной программе без fiber'ов (CLI/скрипт) panic = exit процесса.
-В серверной — смерть только текущего fiber'а.
+`panic` — это смерть **fiber'а**, не процесса. В сервере падает только
+текущий запрос, остальное работает. Если нужно гарантированно гасить
+процесс — отдельная функция `exit(code int, msg str) -> Never`
+([D13](decisions/08-runtime.md#d13)).
 
 Подробно — [revolutionary.md R11](revolutionary.md), [D13](decisions/08-runtime.md#d13).

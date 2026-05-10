@@ -83,7 +83,7 @@ arena-allocations:
 fn map_audio(samples []f32, gain f32) -> []f32 =>
     realtime nogc {
         region {
-            samples.map() { x => x * gain }
+            samples.map(|x| x * gain)
         }
     }
 

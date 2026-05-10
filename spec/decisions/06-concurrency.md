@@ -604,12 +604,12 @@ for url in urls {
 ```
 
 Если нужен **sequential map** (собрать массив результатов
-последовательно) — использовать `iter.map((x) => body)`:
+последовательно) — использовать `iter.map(|x| body)`:
 
 ```nova
-let names []str = users.map((u) => u.name)
-// или с trailing-block:
-let names []str = users.map() { u => u.name }
+let names []str = users.map(|u| u.name)
+// или с trailing-fn (для длинных тел):
+let names []str = users.map() fn(u) => u.name
 ```
 
 **`parallel for` — expression** (тип `[]T`). Тело — функция от элемента
@@ -624,7 +624,7 @@ let responses []Response = parallel for url in urls { fetch(url) }
 | Форма | Тип | Семантика |
 |---|---|---|
 | `for x in iter { body }` | `unit` | statement, side-effects |
-| `iter.map((x) => body)` | `[]T` | sequential map |
+| `iter.map(\|x\| body)` | `[]T` | sequential map |
 | `parallel for x in iter { body }` (body has trailing) | `[]T` | parallel map (fan-out) |
 | `parallel for x in iter { body }` (no trailing) | `unit` | parallel side-effect loop |
 

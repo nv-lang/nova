@@ -635,7 +635,28 @@ operator overloading.
 
 ---
 
-## Q19. Trailing-block синтаксис `expr { x => body }` — общий механизм или фиксированные примитивы?
+## Q19. ЗАКРЫТО (2026-05-10) — Trailing-block синтаксис `expr { x => body }`
+
+**Статус: закрыто.** Решено ревизией Closure-rev (Plan 19,
+[D43 rev](decisions/03-syntax.md#d43-trailing-block--без-params-fnp-body-с-params)):
+
+- **Trailing-block** (`f(args) { block }`) — разрешён **только** для
+  callback'ов **без параметров** (DSL-форма: `with_timeout`, `retry`,
+  `transaction`, `region`, `supervised`).
+- **Trailing-fn** (`f(args) fn(p) body`) — для callback'ов с params,
+  идентично closure-full без имени.
+- Старая форма `f(args) { x => body }` (с параметрами через `=>`)
+  **отменена**.
+- Ответ на исходный вопрос Q19: «общий механизм», но в двух чётких
+  формах для разных случаев — `{ block }` для no-params, `fn(p) body`
+  для with-params.
+
+Вопрос остаётся в файле как **исторический контекст** — показывает
+эволюцию от Kotlin-style `{ x => body }` к Rust-style разделению.
+
+---
+
+## Q19 (исторический контекст). Trailing-block синтаксис `expr { x => body }` — общий механизм или фиксированные примитивы?
 
 **Контекст.** В коде Nova используется паттерн «функция/конструкция +
 блок в качестве последнего аргумента»:
@@ -655,7 +676,7 @@ supervised {                              // trailing block
 }
 
 with Db = real_db {                       // блок после with
-    transfer(alice, bob, 100)?
+    transfer(alice, bob, 100)
 }
 
 region {                                  // блок region (D6)
@@ -915,7 +936,7 @@ weak'ом помечается противоположная сторона. А
    ```nova
    fn with_file[T](path str, body fn(File) Fail[IoError] -> T)
        Fail[IoError] -> T {
-       let f = File.open(path)?
+       let f = File.open(path)!!       // Result[File, IoError] → throw IoError
        let result = body(f)            // если throw — handler ловит выше
        f.close()                        // обычное закрытие
        result
@@ -4487,24 +4508,26 @@ Plan 02.
 
 ---
 
-## Q-overloading. Перегрузка функций / методов по типу аргументов ⚠️ PARTIALLY CLOSED (2026-05-08)
+## Q-overloading. Перегрузка функций / методов по типу аргументов ✅ CLOSED by [D84](decisions/10-overloading.md#d84)
 
-> **Variant 1 (ad-hoc) ✅ закрыт Plan'ом 11** для **методов** (со
-> receiver'ом). Multi-overload registry в bootstrap-codegen +
-> strict resolution по статическим типам args + C-name mangling.
-> См. [D35 раздел «Перегрузка методов»](decisions/03-syntax.md#d35).
+> **Закрыт D84** (2026-05-10). Полная семантика: четыре оси
+> (receiver-тип, типы аргументов, тип результата, арность); правила
+> резолва — самый специфичный матч, concrete > generic, non-variadic >
+> variadic, args-фильтр перед result-фильтром, ambiguity → compile
+> error с hint'ом. Распространяется на свободные функции, методы и
+> static-функции на типе.
 >
-> **Free-functions (без receiver'а)** — overload остаётся **не
-> разрешён**: дубликат имени по-прежнему compile error в
-> `types::check_module`. Это сознательный choice: для свободных
-> функций в bootstrap'е нет established dispatch path'а; программист
-> пишет разные имена (`parse_int`, `parse_float`).
+> **Реализация в bootstrap-codegen:**
+> - Methods (с receiver'ом) — ✅ работает (Plan 11): multi-overload
+>   registry + strict resolution + C-name mangling.
+> - Free-functions (без receiver'а) — ✅ разрешено по D84, codegen
+>   будет расширен через тот же mangling-механизм.
+> - Method values + disambiguation через `as fn(...)` — ✅ Plan 11 Ф.4/Ф.5.
 >
-> **Variant 4 (protocol-based dispatch)** — отложен до Plan'а 12
-> (после Plan'а 08 Ф.6 generic-bound enforcement).
->
-> Остаётся открытым: variant 4 (protocol-based), method values
-> (Plan 11 Ф.4), disambiguation через `as fn(...)` (Plan 11 Ф.5).
+> **Variant 4 (protocol-based dispatch)** — параллельный путь, не
+> отменяющий D84: используется когда расширяемость через protocol
+> предпочтительнее ad-hoc перегрузки. Описан как идиоматичный путь в
+> D84 «Что отвергнуто».
 
 
 

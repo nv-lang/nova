@@ -10,7 +10,7 @@
 | [D16](#d16-дженерики-через-t-не-t) | Дженерики через `[T]`, не `<T>` |
 | [D19](#d19-match-arms-через--не--) | Match-arms через `=>`, не `->` |
 | [D20](#d20--вместо-void-и-сводка-стрелок) | `()` вместо `void` + сводка стрелок |
-| [D22](#d22-анонимная-функция--только-лямбда--тело-именованной--тоже-) | Анонимная функция — только лямбда `=>`, тело именованной — тоже `=>` |
+| [D22](#d22-closure-light--и-full-fn) | Closure: light `\|...\|` и full `fn(...)` |
 | [D23](#d23-return--только-для-раннего-выхода) | `return` — только для раннего выхода |
 | [D27](#d27-синтаксис-массивов-t-префикс-nt-фиксированные) | Синтаксис массивов: `[]T` префикс, `[N]T` фиксированные |
 | [D30](#d30-стиль-именования) | Стиль именования |
@@ -20,7 +20,7 @@
 | [D37](#d37-доступ-к-полям-name-для-record-n-для-позиционных-и-кортежей) | Доступ к полям: `.name` для record, `.N` для позиционных |
 | [D38](#d38-создание-массивов-и-turbofish-для-дженериков) | Создание массивов и turbofish для дженериков |
 | [D40](#d40-тело-функции--для-одного-выражения--для-блока) | Тело функции: `=>` для одного выражения, `{}` для блока |
-| [D43](#d43-trailing-block-с-обязательными-) | Trailing-block с обязательными `()` |
+| [D43](#d43-trailing-block--без-params-fnp-body-с-params) | Trailing: `{ block }` без params, `fn(p) body` с params |
 | [D44](#d44-числовые-литералы) | Числовые литералы |
 | [D45](#d45-inferred-return-type-для-expression-body) | Inferred return type для expression-body |
 | [D46](#d46-перегрузка-операторов-через--методы) | Перегрузка операторов через `@`-методы |
@@ -116,7 +116,7 @@ match shape {
     Square { s } => s * s
 }
 
-let inc = (x) => x + 1
+let inc = |x| x + 1
 fn double(x int) -> int => x * 2
 ```
 
@@ -175,7 +175,8 @@ block      = '{' { statement } [ expression ] '}'
 
 ### Связь
 - [D20](#d20--вместо-void-и-сводка-стрелок) — сводная таблица стрелок.
-- [D22](#d22) — лямбда строго `(params) => expr`.
+- [D22](#d22-closure-light--и-full-fn) — closure-light `|x|` без `=>`,
+  closure-full `fn(...)` подчиняется D40 как named fn.
 - [D40](#d40-тело-функции--для-одного-выражения--для-блока) — общий
   закон «`=>` и `{}` не сочетаются» и match-arm как **единственное
   исключение**.
@@ -271,25 +272,28 @@ type Server { handler (Request) -> Response }  // ✗
    ambiguity (разные приоритеты parsing). Nova с её парсером ближе
    к Rust/Go.
 
-#### Не путать с лямбдой
+#### Не путать с closure
 
 **Function type** (тип) — `fn(int) -> bool`.
-**Lambda value** (выражение) — `(x) => x > 0`.
+**Closure value** (выражение) — `|x| x > 0` (light) или `fn(x int) -> bool => x > 0` (full).
 
 ```nova
 // Тип: fn(int) -> bool
-let pred fn(int) -> bool = (x) => x > 0
-//        ^^^^^^^^^^^^^^^^^      ^^^^^^^^^^^^^
-//        type annotation         lambda value
+let pred fn(int) -> bool = |x| x > 0
+//        ^^^^^^^^^^^^^^^^^      ^^^^^^^^^^^^
+//        type annotation         closure-light value
 
-// fn() в выражении (анонимная функция) запрещён по D22:
-let f = fn(x) => x + 1   // ✗ — анонимной fn нет, см. D22
-let f = (x) => x + 1     // ✓ — лямбда
+// closure-full — анонимная fn (см. D22):
+let pred fn(int) -> bool = fn(x int) -> bool => x > 0   // closure-full
+let pred fn(int) -> bool = fn(x int) -> bool { x > 0 }  // closure-full block
 ```
 
-D22 запрещает **анонимные функции через `fn`**, но **type syntax
-требует `fn` префикс**. Это **не противоречие** — `fn` в типе
-играет роль «type-marker», как `[]` для array-types.
+`fn` встречается в трёх ролях, различимых по контексту:
+- **Декларация** — `fn name(...) ...` (top-level statement-position).
+- **Тип** — `fn(int) -> bool` (в type-annotation position).
+- **Closure-full** — `fn(x int) -> bool => body` (в expression-position).
+
+См. [D22](#d22-closure-light--и-full-fn) для closure-light vs full.
 
 ### Почему
 
@@ -311,127 +315,314 @@ D22 запрещает **анонимные функции через `fn`**, н
 
 ### Связь
 - [D19](#d19-match-arms-через--не--) — match-arm через `=>`.
-- [D22](#d22-анонимная-функция--только-лямбда--тело-именованной--тоже-)
+- [D22](#d22-closure-light--и-full-fn)
   — пересмотр: `=` больше не используется для тел функций.
 
 ### Эволюция
-Ранее `=` отделял тело именованной функции (`fn f() = expr`). [D22](#d22-анонимная-функция--только-лямбда--тело-именованной--тоже-)
+Ранее `=` отделял тело именованной функции (`fn f() = expr`). [D22](#d22-closure-light--и-full-fn)
 перенёс эту роль на `=>`, чтобы убрать дублирующий синтаксис. `=`
 теперь — только присваивание.
 
 ---
 
-## D22. Анонимная функция — только лямбда `(params) => expr`, тело именованной — `=> expr` или `{ block }`
+## D22. Closure: light `|...|` и full `fn(...)`
 
 ### Что
-В Nova **нет анонимной формы `fn`**. Функция без имени = лямбда
-`(params) Effects? -> Type? => expr`. **Лямбда — строго одно
-выражение**: `=> { block }` для лямбд **запрещён**.
+В Nova две взаимодополняющие формы closure:
 
-Тело именованной функции — две взаимоисключающие формы (D40): `=> expr`
-(одно выражение) или `{ block }` (последовательность statement'ов).
-`=` остаётся только для `let x = ...`.
+1. **closure-light** — `|params| body` — компактная untyped форма.
+   Без типов параметров, без `-> T`, без эффектов. Тело — bare
+   expression ИЛИ block.
+2. **closure-full** — `fn(params T) Effects -> Type body` —
+   типизированная форма, идентичная named fn без имени. Тело —
+   `=> expr` или `{ block }`, как у named fn ([D40](#d40-тело-функции--для-одного-выражения--для-блока)).
+
+Эти формы **не пересекаются**: как только нужен хоть один тип
+параметра, return-type или эффект — переключаемся на `fn(...)`.
+`|...|` — **только** untyped.
+
+Тело именованной функции остаётся как было: `=> expr` или `{ block }`
+(D40). `=` — только для `let`.
 
 ### Правило
 
-```nova
-// анонимная — лямбда, строго (params) => expr
-let inc = (x) => x + 1
-let mid = (req Request) Db Log Fail -> Response =>
-    Response.ok()
+#### closure-light
 
-// многострочный match — это всё ещё одно выражение, ОК
-let classify = (n) => match n {
-    0           => "zero"
-    n if n > 0  => "positive"
-    _           => "negative"
+```nova
+let inc   = |x| x + 1                              // expr-body
+let zero  = || 0                                    // no params
+let block = |x| { let y = x*2; y + 1 }              // block-body
+let any   = |_| 0                                   // wildcard
+
+list.filter(|x| x > 0)                              // closure-arg
+list.fold(0, |acc, x| acc + x)                      // multiple params
+list.map(|_| 42)                                    // ignore element
+spawn(|| compute())                                  // no-arg closure-arg
+```
+
+Грамматика:
+
+```
+closure-light = '|' params? '|' (expression | block)
+params        = identifier { ',' identifier }
+identifier    = name | '_'
+```
+
+В closure-light **запрещено**:
+
+```nova
+|x int| x + 1            // ❌ типы параметров — переключайся на fn(x int)
+|x| -> int { ... }       // ❌ return-type — переключайся на fn(x) -> int
+|x| Db -> R { ... }      // ❌ эффекты — переключайся на fn(x) Db -> R
+|x| => x + 1             // ❌ нет `=>` в closure-light, body начинается сразу
+```
+
+#### closure-full
+
+```nova
+let typed    = fn(x int) -> int => x * 2
+let block    = fn(x int, y int) -> int { let z = x+y; z * 2 }
+let with_eff = fn(req Request) Db Log -> Response { process(req) }
+let void     = fn(s str) Log { Log.info(s) }
+```
+
+Грамматика идентична named fn без имени:
+
+```
+closure-full = 'fn' '(' params ')' [ effects ] [ '->' type ] body
+body         = '=>' expression | block
+params       = param { ',' param }
+param        = identifier type            // тип обязателен
+```
+
+#### Inference и context-sensitivity
+
+closure-light валиден **только когда контекст однозначно задаёт
+сигнатуру**. Источники контекста:
+
+1. **Параметр fn-call'а**: `list.filter(|x| x > 0)` — sig из `filter`'а.
+2. **Annotated let**: `let f fn(int) -> int = |x| x + 1`.
+3. **Return-position**: `fn make() -> fn(int) -> int => |x| x + 1`.
+4. **Tuple-position при typed return**: `(|x| ...)` если parent
+   объявил `-> (fn(int) -> int, ...)`.
+5. **First-use inference** (Rust-семантика):
+   ```nova
+   let f = |x| x + 1
+   f(5)                    // first use фиксирует x: int → sig: fn(int) -> int
+   f(3.14)                 // ❌ ошибка: sig уже зафиксирован
+   ```
+
+Если контекст недостаточен (closure-light нигде не используется):
+
+```nova
+let f = |x| x + 1           // ❌ cannot infer signature
+```
+
+→ либо использовать `f` далее, либо переключиться на closure-full:
+
+```nova
+let f = fn(x int) -> int => x + 1
+```
+
+#### Эффекты
+
+closure-light **никогда не пишет эффекты** в сигнатуре. Эффекты,
+реально используемые в теле closure-light, должны:
+- быть подмножеством contextual-sig'а, И
+- покрываться **ambient effect-set** в точке создания closure'а
+  (= эффекты enclosing-функции ∪ активные `with`-блоки).
+
+```nova
+fn process(users []User) Db -> []Result =>
+    users.map(|u| Db.find(u.id))                   // Db: ✅ есть в parent
+
+fn pure(xs []int) -> int =>
+    xs.fold(0, |acc, x| acc + x)                   // эффектов нет — ✅
+
+fn no_db(users []User) -> []Result =>              // Db в parent НЕТ
+    users.map(|u| Db.find(u.id))                   // ❌ Db не доступен
+```
+
+closure-full эффекты пишет явно — она «полная» по сигнатуре:
+
+```nova
+fn make_handler() -> fn(Request) Db -> Response =>
+    fn(req) Db -> Response { process(req) }
+```
+
+Эффекты на named fn остаются обязательными — D62/R1 «эффекты всегда
+видны в сигнатуре» не ослабляется. Inference применим только к
+closure-light, потому что closure-light не пересекает границу модуля.
+
+#### Captures
+
+Closure захватывает свободные переменные **по ссылке через scope**.
+Никаких `move` / `&mut` / lifetime — это не нужно благодаря
+managed-heap ([D32](02-types.md#d32), [D62](04-effects.md#d62)).
+
+- **Примитивы** (`int`, `bool`, `f64`, …) — copy-by-value.
+- **Объекты** (record, sum-type, array) — managed-reference,
+  shared с enclosing scope.
+- **`let mut` переменные** — closure модифицирует **тот же slot**;
+  изменения видны снаружи и между вызовами closure'а.
+- **Escape** — если closure уезжает за пределы создавшей fn,
+  захваченные переменные автоматически живут в managed-heap.
+
+```nova
+fn make_counter() -> fn() -> int {
+    let mut count = 0
+    || { count = count + 1; count }
 }
 
-// именованная — `=> expr` для одного выражения
-fn double(x int) -> int => x * 2
+let f = make_counter()
+let g = make_counter()
+f()    // 1   ← каждый вызов make_counter создаёт свежий scope
+f()    // 2
+g()    // 1   ← у g свой count, не shared с f
+```
 
-// именованная — `{ block }` для нескольких statement'ов (D40)
-fn process(req Request) Db -> Response {
-    let user = load(req)?
-    build_response(user)
+Несколько closure'ов, созданных в одном scope, **разделяют** capture:
+
+```nova
+fn make_counter() -> (fn() -> int, fn(int) -> int, fn() -> int) {
+    let mut count = 0
+    (
+        || { count = count + 1; count },
+        |a| { count = count + a; count },
+        || count,
+    )
+}
+
+let (f1, f2, f3) = make_counter()
+f1()    // 1   ← все три closure'а share один count
+f1()    // 2
+f2(5)   // 7
+f3()    // 7
+```
+
+#### Free-variable resolution
+
+Свободные переменные резолвятся через **lexical scoping** на момент
+**создания** closure'а. Параметр одного closure'а **не виден** в теле
+другого:
+
+```nova
+let mut count = 0
+(|a| count += a, || a)                              // ❌ `a` undefined в `|| a`
+//                  ^
+//                  parameter of previous closure, not in scope here
+```
+
+#### Body-type matching
+
+Тип тела closure (выводимый или явный) должен совпадать с ожидаемым
+return-type из contextual sig:
+
+```nova
+fn make() -> (fn() -> int, fn(int) -> int) =>
+    (|| 0, |a| count += a)
+//          ^^^^^^^^^^^^^ ❌ `count += a` returns `()`, sig expects `int`
+//                          fix: |a| { count += a; count }
+```
+
+#### `return` в closure-light
+
+`return` в `|x| { ... }` выходит **из самого closure**, не из
+enclosing fn. Это согласовано с D43 (`return` в trailing-block выходит
+из блока):
+
+```nova
+let find = |xs []int| {
+    for x in xs {
+        if x > 100 { return Some(x) }                // выход ИЗ closure
+    }
+    None
 }
 ```
 
-Скобки вокруг параметров **обязательны всегда**: `x => x + 1`
-запрещён, пишем `(x) => x + 1`.
+#### Wildcard `_` в параметрах
 
-Запрещено:
+`_` валиден как имя параметра в closure-light, closure-full и named fn —
+«параметр обязателен по арности, не используется в теле»
+(расширение [D59](#d59-array-tuple-и-позиционные-partial-patterns)):
 
 ```nova
-fn() => 0                        // нет анонимной fn
-let f = fn(x) => x + 1           // то же
-fn double(x int) -> int = x * 2  // = вместо => в теле
-x => x + 1                       // без скобок
-
-// лямбда не имеет блок-формы:
-let f = (x) => { let y = x * 2; y + 1 }   // запрещено: => { block }
-// → нужно либо вынести в named fn, либо упростить до одного выражения:
-let f = (x) => x * 2 + 1                  // одно выражение
-fn f(x int) -> int {                       // или named fn с блоком
-    let y = x * 2
-    y + 1
-}
-
-// именованная функция — `=>` и `{}` не сочетаются:
-fn double(x int) -> int => { x * 2 }     // запрещено: => { block }
-fn double(x int) -> int { => x * 2 }     // запрещено: { => expr }
+list.map(|_| 42)
+fn handle(req Request, _meta Meta) Db -> Response { ... }
+fn(_x int, y int) -> int => y * 2
 ```
 
 ### Почему
 
-1. **Один символ — тело любой функции.** Семантически «параметры → тело»
-   = одна вещь, разделять по «есть ли имя» — историческая случайность.
-2. **`=` имеет одну роль** — присваивание; `let x = 5` ↔ `fn f() => expr`
-   развязаны.
-3. **Параллель с match-arm укрепляется** — везде `=>`.
-4. **AI-first.** Меньше форм, меньше путаницы у LLM.
-5. **Лямбда без блок-формы** — лямбды компактны по природе. Если нужен
-   блок с `let` и statement'ами — это явный признак, что код пора
-   выносить в named fn. Лямбда остаётся «значение-функция в одной
-   строке выражения», без скрытого императива.
+1. **Освобождение `=>`.** В Nova `=>` — маркер тела (named fn,
+   handler-method) и match-arm. Использование `=>` в лямбдах создавало
+   перегрузку и запрещало блок-форму. Closure-light с `|...|` убирает
+   перегрузку: `=>` остаётся только для тела/arm.
+2. **Two-level: light vs full.** Untyped one-liner'ы (`filter`, `map`,
+   `fold`) получают компактный синтаксис. Typed/effect-aware closures
+   пишутся полной формой `fn(...)`, идентичной named fn — нет
+   специальной грамматики anonymous-typed.
+3. **Парсер коммитится за один токен.** `|...|` в expression-position
+   решается мгновенно (binary `|` без LHS невозможен). Старый
+   `(params) =>` требовал unbounded look-ahead.
+4. **Trailing и closure ортогональны.** closure-light **только** в
+   expression-position. Trailing — через `fn(...)` или zero-param `{}`
+   ([D43](#d43-trailing-block--без-params-fnp-body-с-params)). Парсер не путает.
+5. **Anonymous fn возвращается.** D22-old запрещала `fn(...)` без
+   имени; новая D22 разрешает её как closure-full.
+6. **Блок-форма для closure-light.** `|x| { stmts; expr }` теперь
+   разрешено — старая D22 явно запрещала `=> { block }`, что заставляло
+   выносить любую closure с `let` в named fn.
+7. **Captures без `move`/lifetime.** Managed-heap ([D32](02-types.md#d32))
+   делает escape автоматическим.
 
 ### Что отвергнуто
 
-- **Два синтаксиса** (`fn name() = body` + `(x) => body`) — нарушает
-  «один символ — одна роль».
-- **Унификация на `=`** — ломает match-arm, путает с присваиванием в
-  guard'ах.
-- **Анонимная `fn` для случаев с эффектами** — провоцирует
-  case-зависимый выбор синтаксиса.
-- **`=> { block }` для лямбд (Kotlin/JS-стиль).** Делало бы лямбды
-  «маленькими функциями с императивом», стирало бы границу между
-  «значение-выражение» и «именованная функция». Если нужен блок —
-  нужен `fn name(...) { ... }`.
+- **`(x) => expr`** (D22-old) — перегружает `=>`, требует unbounded
+  look-ahead, не имеет блок-формы.
+- **`x => expr`** без скобок (JS-style) — не решает look-ahead для
+  multi-param случая, оставляет `=>` перегруженным.
+- **`fn(...)` без типов** (overlap с `|...|`) — две взаимозаменяемых
+  формы создают выбор без правила. Граница «типы есть → `fn`, нет → `|...|`»
+  чёткая.
+- **Effect inference на named fn** — отказ от R1 «эффекты всегда видны
+  в сигнатуре». Inference допустим только для closure-light.
+- **`move`-keyword / lifetime-маркеры** — managed-heap автоматизирует
+  escape.
+- **Implicit `it`** — нелокальный reasoning, плохо для AI.
+- **Trailing closure через `|x|`** — `func(args) |x| body` создавал
+  ambiguity с binary `|`. Trailing с params — только через `fn(...)`,
+  см. [D43](#d43-trailing-block--без-params-fnp-body-с-params).
+- **`=> { block }` для closure-light** — closure-light не использует
+  `=>` вообще. Тело всегда либо bare expression, либо block.
 
 ### Связь
 - [D19](#d19-match-arms-через--не--), [D20](#d20--вместо-void-и-сводка-стрелок)
-  — устраняет дублирование стрелок. Match-arm — единственное исключение
-  из правила «`=>` и `{}` не сочетаются».
-- [D40](#d40-тело-функции--для-одного-выражения--для-блока) —
-  общий закон «`=>` и `{}` не сочетаются» для `fn` / лямбд /
-  handler-method'ов.
-- [D43](#d43-trailing-block-с-обязательными-) — trailing-block
-  (`f(args) { ... }`) — отдельная конструкция, не лямбда.
-- [04-effects.md → D31](04-effects.md#d31) — handler-method имеет
-  две формы (`=> expr` или `{ block }`), как `fn`; не лямбда.
-- [02-types.md → D18](02-types.md#d18) — тот же принцип «не плодить
-  специальные сущности».
+  — `=>` остаётся в match-arm как маркер «начало результата».
+- [D40](#d40-тело-функции--для-одного-выражения--для-блока) — правило
+  «`=>` и `{}` не сочетаются» применяется к named fn, closure-full,
+  handler-method. closure-light имеет отдельную грамматику.
+- [D43](#d43-trailing-block--без-params-fnp-body-с-params) — trailing с params
+  через `fn(...)`, без params — `{ block }`. `|...|` в trailing-position
+  запрещён.
+- [04-effects.md → D31](04-effects.md#d31) — handler-method, как fn,
+  имеет две формы тела.
+- [D62](04-effects.md#d62) — closure-light наследует ambient
+  effect-set.
+- [02-types.md → D32](02-types.md#d32) — captures через managed-heap.
 
 ### Эволюция
 Пересмотр D20: `=` исключён из «тел функций», его роль принял `=>`.
-~100 примеров `fn ... =` обновлены.
 
-Ревизия (2026-05): «лямбда строго `(params) => expr`, без блок-формы».
-Раньше D22+D40 допускали `(params) => { block }` для лямбд через
-сочетание правил. Теперь сочетание `=>` и `{}` запрещено везде:
-лямбда — одно выражение; блок-форма — только у `fn` (без `=>`),
-у trailing-block ([D43](#d43-trailing-block-с-обязательными-)) и
-у handler-method ([04-effects.md → D31](04-effects.md#d31)).
+Ревизия (2026-05-1): «лямбда строго `(params) => expr`, без блок-формы».
+
+Ревизия (2026-05-10): полная замена `(params) =>` на two-level
+closure: `|x|` (light, untyped) + `fn(...)` (full, typed). Триггер —
+семантический перегруз `=>`, look-ahead в парсере, запрет блок-формы
+лямбды, унификация с trailing-block. Anonymous-fn запрет (D22-old)
+снимается — `fn(...)` без имени = closure-full. Block-форма closure
+возвращается. Migration: ~30 примеров в spec/, патч parser/interp,
+план — [docs/plans/19-closure-and-error-ops.md](../../docs/plans/19-closure-and-error-ops.md).
 
 ---
 
@@ -462,7 +653,7 @@ fn classify(x int) -> str {
 
 fn process(req Request) Db Fail -> Response {
     if req.method == "GET" { return next(req) }
-    do_work(req)?
+    do_work(req)
 }
 
 // =>-тело: одно выражение, return не нужен
@@ -497,17 +688,18 @@ fn classify(x int) -> str =>
 ```
 
 Семантика:
-- `return` в лямбде — лямбда не имеет блок-формы ([D22](#d22)) и
-  её тело — одно выражение, поэтому `return` в лямбде физически
-  невозможен. Если нужен ранний выход — это уже named fn с
-  блок-формой.
+- `return` в closure-light (`|x| body`) — выходит **из самого closure**,
+  не из enclosing fn ([D22](#d22-closure-light--и-full-fn)). Аналогично
+  `return` в trailing-block.
+- `return` в closure-full (`fn(...) body`) — выходит из closure
+  (точно как named fn).
 - `return` в match-arm — match-arm тоже строго `pattern => expr`
   ([D40](#d40-тело-функции--для-одного-выражения--для-блока)),
   поэтому `return` в arm тоже отсутствует. Если в arm нужен
   ранний выход — match вынесен в блок-форму fn, и `return`
   стоит после match'а.
 - `return` в `with`-блоке (block-body) — выходит из enclosing-функции.
-- `return` в trailing-block ([D43](#d43-trailing-block-с-обязательными-)) —
+- `return` в trailing-block ([D43](#d43-trailing-block--без-params-fnp-body-с-params)) —
   выходит из самого блока (это блок, не лямбда), не из enclosing fn.
 
 ### Почему
@@ -536,10 +728,11 @@ fn classify(x int) -> str =>
   блок-формы.
 
 ### Связь
-- [D22](#d22) — лямбда строго `(params) => expr`; `return` в
-  лямбде невозможен.
+- [D22](#d22-closure-light--и-full-fn) — `return` в closure-light
+  и closure-full выходит из самого closure, не из enclosing fn.
 - [D19](#d19-match-arms-через--не--) — match-arm строго
-  `pattern => expr`; `return` в arm невозможен.
+  `pattern => expr` или `pattern => { block }`; `return` в arm
+  выходит из enclosing fn (т.к. arm не функция).
 - [D40](#d40-тело-функции--для-одного-выражения--для-блока) — `=>`
   и `{}` не сочетаются; guard-цепочки требуют блок-формы.
 
@@ -791,7 +984,7 @@ const GREETING = "hello"
 
 // let — runtime
 let now = Time.now()
-let user = Db.find(user_id)?
+let user = Db.find(user_id) ?? throw UserNotFound(user_id)
 
 // let mut
 let mut counter = 0
@@ -1146,69 +1339,13 @@ Generic'и: `[T]` после имени типа (`fn Vec[T] @len()`) и/или 
 - [01-philosophy.md → D1](01-philosophy.md#d1) — методы как часть
   парадигмы `protocols + data`.
 
-### Перегрузка методов по типу аргумента и arity (Plan 11)
+### Перегрузка методов
 
-Несколько определений одного метода на одном receiver-типе различаются
-по сигнатуре (типы параметров и/или arity):
-
-```nova
-fn Buffer mut @write(s str) -> ()
-fn Buffer mut @write(b []byte) -> ()
-fn Buffer mut @write(c char) -> ()
-
-fn Logger @log(msg str) -> ()
-fn Logger @log(level int, msg str) -> ()         // arity overload
-```
-
-Resolution на call-site по **статическим типам** аргументов:
-
-```nova
-buf.write("hello")        // → @write(str)
-buf.write([0xDE, 0xAD])   // → @write([]byte)
-buf.write('A')            // → @write(char)
-
-log.log("ok")             // → @log(str) — arity 1
-log.log(2, "ok")          // → @log(int, str) — arity 2
-```
-
-**Strict matching типов: no implicit conversions.** `buf.write(42)`
-где `42 int` — error если нет `@write(int)`. Программист пишет
-`buf.write(42 as char)` или `buf.write(str.from(42))`.
-
-При ambiguity (≥2 кандидатов после фильтрации) — compile error
-с suggestion'ом disambiguate через `as fn(...)` annotation:
-
-```nova
-let f = t.@m as fn(str) -> int
-```
-
-#### Bootstrap-status (Plan 11)
-
-- ✅ **static** overload по типу аргумента (`T.from(int)` vs `T.from(str)`)
-  работает в bootstrap-codegen через `method_overloads` registry +
-  C-name mangling по param types.
-- ✅ **instance** overload по типу аргумента (`@write(str)` vs
-  `@write([]byte)`) работает.
-- ✅ **arity** overload (`@log(msg)` vs `@log(level, msg)`).
-- ✅ Одноимённые методы на разных типах (`Box1.make()` vs `Box2.make()`)
-  не конфликтуют — multi-key registry `(type, name) → Vec<Sig>`.
-- ✅ Free-functions (без receiver'а) — overload **не разрешён** (нет
-  established паттерна resolution для bootstrap'а; программист пишет
-  разные имена).
-- ✅ Method values как first-class (`let f = obj.@m`, `Type.@m`) —
-  закрыт (Plan 11 Ф.4). Bound = closure {fn_ptr, captured_self};
-  unbound = closure {fn_ptr, _empty_env}, fn принимает self явно.
-  Backed by `NovaClosBase` runtime layout для arbitrary signatures.
-- ✅ Disambiguation через `as fn(...)` annotation для overloaded
-  method values — закрыт (Plan 11 Ф.5). Type annotation на let-binding
-  определяет какой overload выбрать (param-types match).
-
-#### C-name mangling
-
-Первая overload использует короткое имя (backward-compat):
-`Nova_T_method_m` / `Nova_T_static_m`. Вторая+ — с param-types
-suffix: `Nova_T_method_m__nova_str`, `Nova_T_method_m__nova_int`.
-Mangling: `<original>__<param_type_1>_<param_type_2>_...`.
+Полная семантика перегрузки методов (по типу аргумента, arity,
+mangling, bootstrap-status, ambiguity, disambiguation) — в
+[D84](10-overloading.md#d84). Здесь лишь напоминание: метод может
+быть перегружен несколькими сигнатурами на одном receiver-типе, резолв
+выполняется по статическим типам аргументов.
 
 ### Method values (Plan 11 Ф.4)
 
@@ -1421,8 +1558,8 @@ let zeros = []u8.filled(0, 1024)
 Turbofish — те же `[T]`, без `::`:
 
 ```nova
-fn parse[T](s str) Fail -> T => ...
-let n = parse[int]("42")?
+fn parse[T](s str) -> Result[T, ParseError] => ...
+let n = parse[int]("42")?            // в Result-возвращающей функции
 
 let c = Cache[str, int].new()
 let buckets = []Slot[K, V].with_capacity(16)
@@ -1538,8 +1675,12 @@ h.push(42)                // прокси к data.push
 ### Что
 Два **взаимоисключающих** способа задать тело именованной функции:
 `=> expr` (ровно одно выражение) или `{ stmt; ...; expr }` (блок).
-Общий закон: **`=>` и `{}` не сочетаются**. Распространяется на `fn`,
-лямбды ([D22](#d22)) и handler-method ([04-effects.md → D31](04-effects.md#d31)).
+Общий закон: **`=>` и `{}` не сочетаются**. Распространяется на `fn`
+(named и closure-full), handler-method.
+
+**Closure-light (`|x| body`)** — отдельная грамматика
+([D22](#d22-closure-light--и-full-fn)): тело — bare expression ИЛИ
+block, **без `=>`**. D40 к ней не применяется.
 
 **Единственное исключение — match-arm** ([D19](#d19-match-arms-через--не--)):
 arm может быть `pattern => expr` или `pattern => { block }` (Rust-стиль).
@@ -1552,29 +1693,33 @@ Indentation **не значим**.
 ### Правило
 
 ```
-fn-decl    = 'fn' name '(' params ')' [effects] ['->' type] body
-body       = '=>' expression | block
-block      = '{' { statement } [ expression ] '}'
-lambda     = '(' params ')' [effects] ['->' type] '=>' expression
-match-arm  = pattern [ guard ] '=>' ( expression | block )       // исключение
+fn-decl       = 'fn' name '(' params ')' [effects] ['->' type] body
+closure-full  = 'fn'      '(' params ')' [effects] ['->' type] body
+body          = '=>' expression | block
+block         = '{' { statement } [ expression ] '}'
+closure-light = '|' params? '|' (expression | block)              // без =>
+match-arm     = pattern [ guard ] '=>' ( expression | block )     // исключение
 ```
 
-Кроме match-arm, везде, где есть `=>`, после него идёт **ровно одно
-выражение**. Ни `fn f() => { ... }`, ни `fn f() { => x }`, ни
-`(x) => { stmt; expr }` — запрещены.
+Везде, где есть `=>` (named fn, closure-full, handler-method), после
+него идёт **ровно одно выражение**. Ни `fn f() => { ... }`, ни
+`fn f() { => x }`, ни `fn(x) => { stmt; expr }` — запрещены.
+Closure-light `=>` вообще не использует.
 
 Симметрия по контекстам:
 
-| Контекст       | `=> expr` (одно выражение)     | `{ block }` (блок)                | `=> { block }` |
-|----------------|---------------------------------|------------------------------------|----------------|
-| `fn name(...)` | ✅                               | ✅                                  | ❌              |
-| Лямбда         | ✅                               | ❌ (нет блок-формы у лямбд, [D22](#d22)) | ❌    |
-| Match-arm      | ✅                               | —                                  | ✅ ([D19](#d19-match-arms-через--не--), исключение) |
-| Handler-method | ✅                               | ✅ (`op(p) { block }`, без `=>`)    | ❌              |
+| Контекст                       | `=> expr` | `{ block }` | `=> { block }` |
+|--------------------------------|-----------|-------------|----------------|
+| `fn name(...)` (named fn)      | ✅         | ✅           | ❌              |
+| `fn(...)` (closure-full)       | ✅         | ✅           | ❌              |
+| `\|...\|` (closure-light)        | ❌ (нет `=>`) | ✅       | —              |
+| Match-arm                      | ✅         | —           | ✅ ([D19](#d19-match-arms-через--не--)) |
+| Handler-method                 | ✅         | ✅ (без `=>`) | ❌            |
 
 Если нужно несколько statement'ов:
-- для `fn` — использовать блок-форму `fn f(...) { stmt; ...; expr }`;
-- для лямбды — переписать в named fn (лямбда блок-формы не имеет, [D22](#d22));
+- для `fn` (named) и closure-full — блок-форма `{ stmt; ...; expr }`;
+- для closure-light — block-форма прямо в `|x| { stmt; expr }`
+  ([D22](#d22-closure-light--и-full-fn));
 - для match-arm — `pattern => { stmt; expr }` ([D19](#d19-match-arms-через--не--));
 - для handler-method — блок-форма без `=>`: `op(p) { stmt; expr }`
   ([04-effects.md → D31](04-effects.md#d31)).
@@ -1636,7 +1781,7 @@ fn area(r f64) -> f64 {
   становится багом.
 - **Явные `{}`** — ноль двусмысленности для форматера, линтера, LSP.
 - **Граница `fn` vs лямбда видна по форме.** Блок-тело может иметь
-  только `fn name(...) { ... }`, [trailing-block](#d43-trailing-block-с-обязательными-)
+  только `fn name(...) { ... }`, [trailing-block](#d43-trailing-block--без-params-fnp-body-с-params)
   и [handler-method](04-effects.md#d31). Лямбда — никогда.
 
 ### Что отвергнуто
@@ -1651,15 +1796,16 @@ fn area(r f64) -> f64 {
   природу (всегда требует `=>` как маркер) и потому делает исключение.
 
 ### Связь
-- [D22](#d22) — лямбда строго `(params) => expr`.
+- [D22](#d22-closure-light--и-full-fn) — closure-light `|x|` имеет
+  отдельную грамматику (bare expr или block, без `=>`); closure-full
+  `fn(...)` подчиняется D40 как named fn.
 - [D19](#d19-match-arms-через--не--) — match-arm: `pattern => expr`
   или `pattern => { block }` (единственное исключение из правила
   «`=>` и `{}` не сочетаются»).
 - [D23](#d23-return--только-для-раннего-выхода) — guard-clauses
   через `return` требуют блок-формы.
-- [D43](#d43-trailing-block-с-обязательными-) — trailing-block
-  имеет свою грамматику `f(args) { [params =>] stmts; expr }` и
-  не подчиняется правилу `=>` ↔ `{}` (это не лямбда).
+- [D43](#d43-trailing-block--без-params-fnp-body-с-params) — trailing-block (без
+  params) — `f(args) { block }`; trailing-fn (с params) — `f(args) fn(p) body`.
 - [04-effects.md → D31](04-effects.md#d31) — handler-method
   имеет две формы (`=> expr` или `{ block }`), как `fn`.
 - [D45](#d45-inferred-return-type-для-expression-body) — inference
@@ -1667,20 +1813,40 @@ fn area(r f64) -> f64 {
 - [D49](#d49-statement-separator-и-парсинг-выражений) — `{}` правит
   newline-разделители.
 
+### Эволюция
+Ревизия (2026-05-10): правило «`=>` и `{}` не сочетаются» больше не
+применяется к closure-light (`|x|`), у которой своя грамматика без `=>`.
+Изначально правило покрывало «лямбды» как единый класс; после
+перехода на two-level closure ([D22](#d22-closure-light--и-full-fn))
+«лямбды» расщепились на closure-light (отдельная грамматика) и
+closure-full (`fn(...)`, подчиняется D40 как named fn).
+
 ---
 
-## D43. Trailing-block с обязательными `()`
+## D43. Trailing: `{ block }` без params, `fn(p) body` с params
 
 ### Что
-Если последний параметр функции — функционального типа, **блок-аргумент**
-может быть вынесен за `()` вызова. Это **не лямбда** (лямбда строго
-`(params) => expr`, [D22](#d22)) — это **trailing-block**, своя
-синтаксическая конструкция с собственной грамматикой. Скобки `()`
-всегда обязательны; `{` должна быть на той же строке, что и `)`.
+Если последний параметр функции — функционального типа, аргумент-функция
+может быть вынесен **за `()` вызова** в одну из двух форм:
+
+- **trailing-block** — `f(args) { block }` — для callback'ов **без
+  параметров** (DSL-форма: `with_timeout`, `retry`, `transaction`).
+- **trailing-fn** — `f(args) fn(params) body` — для callback'ов
+  **с параметрами**. Синтаксис идентичен closure-full
+  ([D22](#d22-closure-light--и-full-fn)) без имени.
+
+Скобки `()` вызова всегда обязательны; trailing-форма должна начинаться
+на той же строке, что `)`.
+
+`|...|` (closure-light) **в trailing-position запрещён** — для
+callback'ов с params используется `fn(...)`, иначе ambiguity с
+binary `|`. Closure-light с параметрами передаётся через args:
+`f(|x| body)`.
 
 ### Правило
 
 ```nova
+// trailing-block — без параметров (DSL)
 with_timeout(2.seconds) {
     Db.exec(sql`UPDATE counters SET v = v + 1`)
 }
@@ -1689,49 +1855,60 @@ retry(3) {
     Net.get(url)
 }
 
-list.filter() { x => x > 0 }
-list.fold(0) { (acc, x) => acc + x }
+transaction(db) { ... }
+
+// trailing-fn — с параметрами; обе формы тела
+list.filter() fn(x) => x > 0                            // expr-body
+list.fold(0) fn(acc, x) { acc + x }                      // block-body
+list.map() fn(s str) Fail -> int { parse(s)? }           // typed + effects
+
+// closure-light — в args, не в trailing
+list.filter(|x| x > 0)
+list.fold(0, |acc, x| acc + x)
 ```
 
 Грамматика:
 
 ```
-call           = primary '(' args ')' [ trailing-block ]
-trailing-block = '{' [ params '=>' ] block-body '}'
+call           = primary '(' args ')' [ trailing ]
+trailing       = trailing-block | trailing-fn
+trailing-block = '{' block-body '}'
+trailing-fn    = 'fn' '(' params ')' [ effects ] [ '->' type ] body
+body           = '=>' expression | block
 block-body     = { statement } [ expression ]
-params         = identifier | '(' identifier { ',' identifier } ')'
 ```
 
-Trailing-block — отдельная конструкция, не покрывается правилом
-«`=>` и `{}` не сочетаются» из [D40](#d40-тело-функции--для-одного-выражения--для-блока):
-здесь `params =>` — это **разделитель параметров и тела** внутри блока,
-не «тело-лямбда». Если параметров нет, `=>` отсутствует.
+Trailing-fn идентична closure-full ([D22](#d22-closure-light--и-full-fn)).
+Параметры пишутся как у named fn — `(x int, y int)`, типы опциональны
+если выводятся из ожидаемой сигнатуры callee.
 
 Правила:
-1. **`()` обязательны** — `{` должна идти после `)`.
-2. **`{` на той же строке** — перенос между `)` и `{` запрещён,
-   иначе парсер не свяжет с вызовом выше.
-3. **Тип последнего параметра — функциональный.** Иначе ошибка
-   типизации.
+1. **`()` обязательны** — trailing должен следовать сразу после `)`.
+2. **На той же строке** — для trailing-block `{` сразу после `)`;
+   для trailing-fn `fn` сразу после `)`. Перенос строки между ними
+   запрещён.
+3. **Тип последнего параметра — функциональный.** Иначе type error.
 4. **Один trailing на вызов.**
-5. **Параметры через `=>`:** `{ stmts; expr }` без params, `{ x => stmts; expr }` —
-   один без скобок, `{ (a, b) => stmts; expr }` — несколько.
-6. **Implicit `it` запрещён** — параметр всегда именован.
-7. **Method chain** — те же правила: `list.filter() { x => x > 0 }`.
-8. **Тело — block-body**: множество statement'ов плюс опциональное
-   финальное выражение (как у блок-формы `fn`).
+5. **`|...|` (closure-light) в trailing-position запрещён** — пишется
+   `fn(...)` или передаётся через args вызова.
+6. **Trailing-block — без параметров.** Если callback требует параметры
+   — использовать trailing-fn (`fn(p) ...`) или закрытие в args.
+7. **Implicit `it` запрещён** — параметр всегда именован.
+8. **Method chain** — те же правила: `list.filter() fn(x) => x > 0`.
 
-> **`spawn` — исключение.** `spawn` — keyword-конструкция, не вызов функции,
-> поэтому не подчиняется D43. Его синтаксис: `spawn expr`, где `expr` — любое
-> выражение: вызов функции (`spawn foo()`), блок (`spawn { body }`), и т.д.
-> `spawn() { body }` — **запрещено** (пустые скобки без смысла вводят в заблуждение).
+> **`spawn` — исключение.** `spawn` — keyword-конструкция, не вызов
+> функции, поэтому не подчиняется D43. Его синтаксис: `spawn expr`,
+> где `expr` — любое выражение: вызов функции (`spawn foo()`), блок
+> (`spawn { body }`), и т.д. `spawn() { body }` — **запрещено**
+> (пустые скобки без смысла вводят в заблуждение).
 
 Дисамбигуация с record-литералом:
 
 ```nova
-let u = User { name: "alice" }       // record (имя типа, без ())
-fn_call(arg) { name: "alice" }       // trailing-block (после `)`)
-fn_call(arg, User { name: "a" })     // record внутри args
+let u = User { name: "alice" }                  // record (имя типа, без ())
+fn_call(arg) { name: "alice" }                  // trailing-block (после `)`)
+fn_call(arg) fn(x) => x.value                    // trailing-fn
+fn_call(arg, User { name: "a" })                // record внутри args
 ```
 
 Многие language primitives становятся обычными функциями stdlib:
@@ -1744,21 +1921,27 @@ fn retry[T](attempts int, body fn() Fail -> T) Fail -> T
 
 Keyword-блоки **остаются** (без `()`): `with X = h { ... }`,
 `parallel for x in xs { ... }`, `region { ... }`, `match`/`if`/`for`/`while`.
-Различие с trailing-block — наличие `()`.
+Различие с trailing — наличие `()`.
 
 ### Почему
 
 1. **`()` обязательны** — локальный парсер без type-directed parsing.
    Kotlin/Swift вынуждены смотреть на тип, чтобы различить trailing
    и record-литерал.
-2. **`{` на той же строке** — иначе ambiguity со следующим
-   statement-блоком.
-3. **Implicit `it` отвергнут** — нелокальный reasoning, плохо для AI.
-4. **Не лямбда.** Лямбда — `(params) => expr` (одно выражение,
-   [D22](#d22)). Trailing-block может содержать `let`'ы, циклы и
-   несколько statement'ов — это семантически блок, не значение-функция.
-   Грамматическое разделение делает разницу видимой и для парсера,
-   и для читателя.
+2. **trailing-fn = closure-full без имени.** Симметрия — программист
+   учит одну грамматику параметров. Парсер коммитится за `fn`-keyword
+   после `)`, никаких ambiguity.
+3. **Closure-light не в trailing.** `func() |x| body` создавал
+   ambiguity с binary `|` в expression-position. Запрет даёт парсеру
+   мгновенный ответ: `|...|` → closure-light в args; `fn(...)` после
+   `)` → trailing-fn; `{...}` после `)` → trailing-block.
+4. **Trailing-block — DSL-ниша.** Для `with_timeout`/`retry`/`transaction`
+   нет параметров callback'а, и `{ block }` визуально маркирует
+   «здесь начинается тело DSL'а».
+5. **Не closure-литерал внутри `()`.** Closure-light с params
+   передаётся через args (`f(|x| ...)`), trailing — для последнего
+   функционального параметра. Программист выбирает по форме (длина
+   тела, наличие `let`'ов).
 
 ### Что отвергнуто
 
@@ -1768,28 +1951,39 @@ Keyword-блоки **остаются** (без `()`): `with X = h { ... }`,
 - **Implicit `it`** — нелокальный reasoning.
 - **`do { body }` keyword** — лишнее ключевое слово.
 - **Indentation-significant** — конфликт с [D40](#d40-тело-функции--для-одного-выражения--для-блока).
-- **Trailing-block = лямбда** (как было до 2026-05). Сейчас
-  переклассифицировано в самостоятельную грамматику: лямбда — строго
-  выражение-значение, trailing-block — блок-аргумент к вызову.
+- **Trailing-block = лямбда** (до 2026-05) — переклассифицировано в
+  самостоятельную грамматику.
+- **Trailing-block с параметрами через `{ x => body }`** (до 2026-05-10) —
+  заменено на trailing-fn (`fn(x) ...`) для симметрии с closure-full.
+- **Trailing closure через `|x|`** — `func(args) |x| body` создавал
+  ambiguity с binary `|` в expression-position; `fn(...)` решает за
+  один токен.
 
 ### Связь
-- [D22](#d22) — лямбда строго `(params) => expr`; trailing-block
-  отдельная конструкция, не лямбда.
+- [D22](#d22-closure-light--и-full-fn) — closure-light в args через
+  `|x|`; trailing-fn идентична closure-full без имени.
 - [D40](#d40-тело-функции--для-одного-выражения--для-блока) —
-  правило «`=>` и `{}` не сочетаются» не распространяется на
-  trailing-block: `params =>` здесь разделитель внутри блока.
+  trailing-fn body подчиняется правилу `=>` ↔ `{}` как named fn;
+  trailing-block — block-only (без `=>`).
 - [04-effects.md](04-effects.md) — handler-блоки `with X = h { ... }`
-  — keyword-блок, не trailing-block.
+  — keyword-блок, не trailing.
+- [06-concurrency.md](06-concurrency.md) — `parallel for`, `supervised`,
+  `race`, `select` — keyword-блоки.
 
 ### Эволюция
 Ревизия (2026-05): переименование «trailing-lambda» → «trailing-block».
 Раньше форма `f(args) { params => body }` называлась лямбдой и
-конфликтовала с правилом «лямбда = одно выражение». Сейчас это
-самостоятельная грамматика; синтаксис **не изменился**, изменилась
-только классификация и формулировка.
-  остаются keyword'ами.
-- [06-concurrency.md](06-concurrency.md) — `parallel for`, `supervised`,
-  `race`, `select` — keyword-блоки.
+конфликтовала с правилом «лямбда = одно выражение». Тогда же
+переклассифицировано в самостоятельную грамматику.
+
+Ревизия (2026-05-10): trailing расщеплён на **trailing-block** (без
+params, для DSL) и **trailing-fn** (с params, через `fn(...)`). Старая
+форма `f(args) { x => body }` отменена. Триггер — переход closure
+на two-level (`|x|` + `fn(...)`, [D22](#d22-closure-light--и-full-fn));
+старая форма с `=>` внутри `{}` после `)` создавала путаницу с новым
+правилом «`=>` не используется в closure-light». Симметрия trailing-fn
+↔ closure-full даёт парсеру и программисту одно правило вместо двух.
+Migration: ~10 примеров trailing с params в spec/.
 
 ---
 
@@ -2091,8 +2285,12 @@ fn Vector @times(other Vector) -> f64 => // dot product
 
 - **Через `protocol/trait`** (Rust `impl Add`, Swift) — избыточно.
 - **Custom-операторы (Scala/C++)** — нечитаемый код.
-- **Свободные функции (`fn plus(a, b)`)** — overloading создаёт
-  unification-ambiguity.
+- **Свободные функции (`fn plus(a, b)`) для операторов** —
+  unification-ambiguity при резолве `a + b`. Overloading свободных
+  функций по типам аргументов сам по себе разрешён
+  ([D84](10-overloading.md#d84)), но привязка операторов к
+  receiver-методам (`@plus`/`@times`) однозначнее: компилятор знает,
+  где искать реализацию.
 - **Перегрузка `&&`/`||`** — нарушает short-circuit.
 - **Auto-derive `@eq`/`@lt`** — отдельный механизм, не часть D46.
 
@@ -2229,8 +2427,8 @@ let a = 1; let b = 2; foo(a, b)  // ; для одной строки (редко
 3. **Перед `.`** (method chain) и **перед `?`** (error propagation):
    ```nova
    let r = list
-       .filter() { x => x > 0 }
-       .map() { x => x * 2 }
+       .filter(|x| x > 0)
+       .map(|x| x * 2)
        .sum()
    ```
 4. **После `,`** в списках.
@@ -2326,7 +2524,7 @@ let x = foo(                 // ✅ открытая ( игнорирует newl
 )
 ```
 
-Trailing-block: `)` и `{` на одной строке ([D43](#d43-trailing-block-с-обязательными-)).
+Trailing-block: `)` и `{` на одной строке ([D43](#d43-trailing-block--без-params-fnp-body-с-params)).
 
 Match-arms — `,` или `\n` оба разделяют:
 
@@ -2396,7 +2594,7 @@ primary       = literal | identifier | '(' expr ')' | block | if | match | ...
 ### Связь
 - [D40](#d40-тело-функции--для-одного-выражения--для-блока) — внутри
   `{}` newlines разделяют statement'ы.
-- [D43](#d43-trailing-block-с-обязательными-) — `)` и `{` на одной
+- [D43](#d43-trailing-block--без-params-fnp-body-с-params) — `)` и `{` на одной
   строке как частный случай.
 - [D45](#d45-inferred-return-type-для-expression-body) — последнее
   выражение блока становится возвратом через newline-разделитель.
