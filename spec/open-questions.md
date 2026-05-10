@@ -4596,6 +4596,88 @@ specific case), [D53](decisions/02-types.md#d53) (protocols как
 
 ---
 
+## Q-overload-result-type. Result-type overload (ось 3 D84) — отложено
+
+> ⏸ **DEFERRED** (2026-05-10). Производная от
+> [D84](decisions/10-overloading.md#d84-перегрузка-функций-и-методов-четыре-оси-резолв-по-самому-специфичному-матчу) —
+> ось 3 (по типу результата) частично реализована: type-checker
+> регистрирует overloads с разным return-type, но codegen на call-site
+> **не делает** expected-type propagation.
+> **Trigger:** реальный use-case в stdlib, где single-target `Into[T]`
+> через D73 + ось 1 не покрывает (например `T.@into() -> X` vs
+> `T.@into() -> Y` — multi-target конверсии для одного receiver'а).
+
+**Контекст.** [D84](decisions/10-overloading.md#d84-перегрузка-функций-и-методов-четыре-оси-резолв-по-самому-специфичному-матчу)
+заявляет четыре оси перегрузки. Оси 1 (receiver-type), 2 (arg-types),
+4 (arity) — реализованы в bootstrap-codegen (Plan 11 + 2026-05-10
+free-fn extension). **Ось 3 (result-type) — частично:**
+
+```nova
+fn Celsius @into() -> Fahrenheit => ...
+fn Celsius @into() -> Kelvin     => ...
+
+let f Fahrenheit = c.into()       // должно резолвиться в первый
+let k Kelvin     = c.into()       // должно резолвиться во второй
+```
+
+**Что работает:**
+- Type-checker допускает обе декларации (overload по возврату — валидно
+  по D84).
+- Mangling даёт уникальные C-имена.
+
+**Что не работает:**
+- При `c.into()` codegen не смотрит на ожидаемый тип из контекста
+  (let-аннотация, return-position, тип параметра, поле record-литерала).
+- Если кандидатов несколько с одинаковыми arg-types и разными return-
+  type — **ambiguity error**, даже когда контекст однозначно задаёт тип.
+
+**Что нужно для реализации.**
+
+Codegen на каждом call-site должен:
+1. Вытащить **expected type** из контекста выражения (let-annotation,
+   return-position, argument-type вызывающей функции, поле
+   record-литерала).
+2. Применить как **фильтр 3** в D84 resolve: отбросить кандидатов с
+   несовместимым return-type.
+3. Если после фильтра остался один — выбрать его.
+4. Если несколько / ноль — fallback на текущую ambiguity error.
+
+Это требует **bidirectional type inference** через выражения: типы
+текут не только bottom-up (из аргументов), но и top-down (из контекста).
+
+**Workaround сейчас.** Вместо instance-method overload по возврату —
+static-функции с разными именами:
+
+```nova
+fn Fahrenheit.from(c Celsius) -> Self => ...
+fn Kelvin.from(c Celsius) -> Self => ...
+
+// Вместо `c.into()`:
+let f = Fahrenheit.from(c)
+let k = Kelvin.from(c)
+```
+
+Это работает потому что `T.from(...)` overload'ится по **receiver-типу**
+(ось 1), которая полностью реализована.
+
+**Альтернативно** — `Into[T]` ([D73](decisions/08-runtime.md#d73))
+работает в bootstrap'е через **single-target** конверсию + контекст из
+let-аннотации. Multi-target Into — пока не покрывается.
+
+**Когда разморозить.** Реальный use-case в stdlib, где обходной путь
+(static-функции / single-target Into) не работает или требует много
+дублирования. Например:
+- `Vec[T] @into() -> List[T]` vs `Vec[T] @into() -> Set[T]`.
+- `Json @into() -> User` vs `Json @into() -> Order` (но это уже
+  из плохого дизайна — лучше `User.from_json(j)`).
+
+**Связь:** [D84](decisions/10-overloading.md#d84-перегрузка-функций-и-методов-четыре-оси-резолв-по-самому-специфичному-матчу)
+(основное определение четырёх осей), [D73](decisions/08-runtime.md#d73)
+(`Into[T]` — частный случай через single-target), Plan 11 (bootstrap
+для осей 1, 2, 4).
+
+---
+
 ## Q-clone-semantics. `@clone()` — shallow или deep / рекурсивно?
 
 > ✅ **CLOSED by [D26 → «`@clone()` — shallow по умолчанию»](decisions/08-runtime.md#d26)**
@@ -5273,8 +5355,8 @@ trailing-block-стилю ([D43](decisions/03-syntax.md#d43)):
 
 ```nova
 let (a, b) = parallel(
-    () => compute_a(),
-    () => compute_b(),
+    || compute_a(),
+    || compute_b(),
 )
 ```
 

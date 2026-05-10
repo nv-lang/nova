@@ -90,8 +90,10 @@ that's enough.
 
 `parallel for` is structured concurrency: all requests run in
 parallel, the scope waits for all of them, the tail is cancelled on
-error. The same `Http.get` works in a regular loop and in
-`parallel for` — without changing the signature.
+error and `throw` propagates to the caller via the `Fail` effect —
+the same error-handling mechanism as in synchronous code. The same
+`Http.get` works in a regular loop and in `parallel for` — without
+changing the signature.
 
 ### 3. Deterministic random in tests
 
