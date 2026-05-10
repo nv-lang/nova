@@ -109,6 +109,34 @@ let x = c.into()                    // ❌ нет ожидаемого типа
 let x Fahrenheit = c.into()         // ✅ контекст из аннотации
 ```
 
+#### Turbofish не обходит concrete
+
+Вызов `f[T_value](args)` — turbofish задаёт значение generic-параметра,
+но **не меняет** правила резолва. Concrete-перегрузка для конкретного
+типа доминирует над generic-перегрузкой даже при явном turbofish.
+
+**Следствие:** `f[u8](7)` ≡ `f(7 as u8)`. Обе формы резолвятся в одну и
+ту же overload — concrete если она существует, иначе generic с `T = u8`.
+
+```nova
+fn job[T Numeric = f64](a T) => a * 10        // generic
+fn job(a u8) Fail => throw "error"             // concrete u8
+
+job(7 as u8)        // → throw "error" (concrete)
+job[u8](7)          // → throw "error" (concrete, не generic)
+job(5.0)            // → 50.0 (generic, T = f64)
+job(7)              // → 70 (generic, T = int — нет concrete для int)
+```
+
+Это согласовано с принципом «concrete побеждает generic» (фильтр 4
+выше): автор API, объявивший concrete-перегрузку, делает это
+**специально** — generic-версия для этого типа обходится. Turbofish
+не обходит этот контракт.
+
+**Когда нужна именно generic для конкретного типа** при существующей
+concrete — переименовать generic или вынести её в отдельный модуль.
+В Nova нет специального синтаксиса «вызови именно generic».
+
 #### Mangling
 
 Компилятор использует name mangling для C-emit: каждая перегрузка
@@ -301,3 +329,8 @@ Variadic — это «catch-all» на произвольную арность; 
   механизм для свободных функций и static-функций.
 - **D73** ввёл context-driven dispatch для `@into()`. D84 формализует
   это как ось 3 общего правила.
+- **2026-05-10**: добавлен раздел «Turbofish не обходит concrete» —
+  уточнение что `f[T_value](args)` ≡ `f(arg as T_value)`, обе формы
+  резолвятся одинаково и concrete-перегрузка доминирует. Триггер —
+  обсуждение D87/D88 (specialization для конкретного типа vs generic
+  с default).

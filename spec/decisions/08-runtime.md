@@ -685,7 +685,7 @@ naming convention, по аналогии с примитивами. Исполь
 
 | Эффект | Resource | Тестовый handler |
 |---|---|---|
-| `Fail[E]` | error reporter | `with Fail[E] = (e) => ...` |
+| `Fail[E]` | error reporter | `with Fail[E] = \|e\| ...` |
 | `Io` | stdout/stderr | mock-stdout |
 | `Net` | сеть (HTTP/socket) | recorded responses |
 | `Db` | соединение к БД | in-memory db |
@@ -1217,12 +1217,12 @@ fn parse_message(b []byte) Fail[Utf8Error] -> Message {
 
 // (2) Catch handler'ом — Result-стиль через with-handler:
 let r Result[str, Utf8Error] =
-    with Fail[Utf8Error] = (e) => interrupt Err(e) {
+    with Fail[Utf8Error] = |e| interrupt Err(e) {
         Ok(str.from(b))
     }
 
 // (3) Default-fallback через with-handler:
-let s str = with Fail[Utf8Error] = (_) => interrupt "[invalid utf-8]" {
+let s str = with Fail[Utf8Error] = |_| interrupt "[invalid utf-8]" {
     str.from(b)
 }
 ```
@@ -1923,7 +1923,7 @@ type TryInto[T, E] protocol {
    fn u64.from(s str) Fail[ParseIntError] -> Self => ...
    // Синтезируется:
    fn u64.try_from(s str) -> Result[Self, ParseIntError] =>
-       with Fail[ParseIntError] = (e) => interrupt Err(e) {
+       with Fail[ParseIntError] = |e| interrupt Err(e) {
            Ok(Self.from(s))
        }
    ```

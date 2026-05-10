@@ -32,6 +32,7 @@
 | [D60](#d60-spread-в-литералах-arr-record) | Spread `...x` в литералах: массив `[1, ...arr, 2]` и record `{ ...obj, field: v }` |
 | [D69](#d69-variadic-параметры-через-items-t) | Variadic-параметры через `...items []T` |
 | [D83](#d83-keywords-строго-запрещены-как-identifierы) | Keywords строго запрещены как identifier'ы (закрывает Q-keywords-as-fields) |
+| [D88](#d88-default-значения-generic-параметров) | Default-значения generic-параметров: `[T = int]`, `[T Bound = Default]` |
 
 ---
 
@@ -3900,3 +3901,152 @@ D83 закрывает вопрос окончательно — Java/Go/C/Pytho
 Если когда-либо в будущем (v1.0+) накопится FFI-боль — отдельный
 D-decision вводящий `r#identifier` Rust-style. До v1.0 — строгий
 запрет без escape.
+
+---
+
+## D88. Default-значения generic-параметров
+
+### Что
+Generic-параметры могут иметь **default-значение** через `[T = Default]`
+или с bound'ом `[T Bound = Default]`. Default используется когда
+компилятор не может вывести параметр из аргументов и программист не
+указал его явно.
+
+Закрывает [Q-default-generic](../open-questions.md#q-default-generic).
+Триггер принятия — [D87](04-effects.md#d87) (`Handler[E, IRT = Never]`).
+
+### Правило
+
+#### Базовый синтаксис
+
+```nova
+type Complex[T = f64] {
+    re T
+    im T
+}
+
+// Старые вызовы продолжают работать без [T]:
+let z = Complex.from(2.0)             // T выводится как f64 (из default + arg)
+let z Complex = Complex.new(1.0, 2.0)  // тип Complex без скобок ≡ Complex[f64]
+
+// Новые — с явным параметром:
+let z32 Complex[f32] = Complex.new(1.0_f32, 2.0_f32)
+```
+
+#### С bound'ом
+
+```nova
+fn run[T Numeric = int](a T) -> T => a + 1
+
+run(5)                          // T = int (вывод из аргумента)
+run(5.0)                        // T = f64 (вывод из аргумента)
+run[i64](5)                     // T = i64 (явно)
+```
+
+Грамматика для одного параметра: `name [bound] [= default]`.
+
+#### Семантика
+
+| Случай | Что происходит |
+|---|---|
+| Аргументы дают информацию о `T` | Inference побеждает default |
+| Аргументов нет / `T` не выводится / нет явной аннотации | Используется default |
+| Программист указал `[T_value]` явно | Default игнорируется |
+
+```nova
+fn first[T = int](xs []T) -> Option[T] { ... }
+
+first([1, 2, 3])                // T = int (вывод из []int)
+first[]([])                     // ERROR: empty array, T не выводится
+                                //        default не применяется (тип элемента
+                                //        не из argument-type)
+first[str]([])                  // T = str (явно)
+```
+
+#### Несколько параметров
+
+Параметры с default'ом **должны идти после** обязательных:
+
+```nova
+type HashMap[K, V, S = DefaultHasher] { ... }       // ✅
+type Bad[T = f64, U] { ... }                         // ❌ обязательный после default'а
+```
+
+Все default'ы могут быть опущены частично:
+```nova
+let m HashMap[str, int] = ...                        // S = DefaultHasher
+let m HashMap[str, int, FxHasher] = ...              // S явно
+```
+
+#### Default — это тип, не выражение
+
+```nova
+type X[T = f64] { ... }              // ✅ default = тип
+type Y[N = 10] { ... }               // ❌ const-generic — отдельная фича, не входит
+```
+
+В D88 default — **только тип**. Const-generic (значения как параметры
+типа) — отдельная задача, не покрывается.
+
+#### Default через bound
+
+```nova
+type Sorted[T Ord = int] { ... }        // T должен реализовать Ord; если не указан — int
+
+fn sort[T Ord = int](xs []T) -> []T => ...
+```
+
+Default-тип **должен** удовлетворять bound'у — компилятор проверяет
+это при объявлении.
+
+### Почему
+
+1. **Backward-compat.** Добавление generic к существующему типу/функции
+   = breaking change без default'ов. С default'ами — ноль ломаний:
+   ```nova
+   // Раньше:
+   type Complex { re f64, im f64 }
+
+   // Теперь generic, но старый код работает:
+   type Complex[T = f64] { re T, im T }
+   let z = Complex.from(2.0)            // ← без правок
+   ```
+2. **Default — не выбор для программиста.** Это сокращённая запись,
+   не два пути с разной семантикой. Нарушения D9 «один очевидный путь»
+   нет — программист либо не пишет параметр (получает default), либо
+   пишет (получает явное значение).
+3. **Прецеденты:** Rust (`Vec<T, A: Allocator = Global>`),
+   C++ (`template<typename T = int>`), TypeScript (`Foo<T = string>`).
+4. **Realistic consumer.** [D87](04-effects.md#d87) `Handler[E, IRT = Never]` —
+   главный практический use-case в Nova prelude.
+
+### Что отвергнуто
+
+- **`[T default int]`** keyword-форма — длиннее, без выгоды.
+- **Const-generic в default'е** (`[N = 10]`) — отдельная фича,
+  отложена.
+- **Forward-references** в default'е (`[T = SelfType]`) — запрет: тип
+  должен быть уже объявлен в момент парсинга generic-списка.
+- **Default-параметры функции** (`fn f(x int = 0)`) — отдельная задача
+  и **отвергнута** ([history/rejected.md](history/rejected.md)) в пользу
+  опции-record + spread. D88 касается **только** generic-параметров типа.
+
+### Связь
+
+- [D16](#d16-дженерики-через-t-не-t) — синтаксис `[T]`.
+- [D72](02-types.md#d72) — generic bounds (`[T Hashable]`); D88
+  расширяет до `[T Hashable = SomeDefault]`.
+- [D52](02-types.md#d52) — newtype/alias; D88 дополняет alias-механику
+  (alias для конкретной инстанции, default — для самой частой).
+- [D87](04-effects.md#d87) — `Handler[E, IRT = Never]` главный consumer.
+
+### Эволюция
+
+Зафиксировано 2026-05-10. Раньше — открытый вопрос
+[Q-default-generic](../open-questions.md#q-default-generic), помечен
+DEFERRED до появления реального consumer'а. Триггер — D87
+параметризация `Handler` interrupt-типом.
+
+Migration: ~10 примеров `Handler[E]` в spec/, где требуется
+`Handler[E, IRT]` для interrupt-делающих handler'ов. См.
+[D87 миграция](04-effects.md#d87).

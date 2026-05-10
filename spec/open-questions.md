@@ -758,7 +758,7 @@ trailing block (`with_lock`, `with_resource`, `with_timeout`).
    ещё одна синтаксическая роль `{`, которая увеличивает поверхность.
 
 `.recover { err => ... }` в [examples/audit.nv](examples/audit.nv) был
-**ошибкой** — заменён на handler `with Fail[E] = (err) => ... { ... }`.
+**ошибкой** — заменён на handler `with Fail[E] = |err| ... { ... }`.
 
 ### Приоритет
 
@@ -2807,12 +2807,12 @@ log время выполнения).
 
 ```nova
 fn try_parse(s str) -> Option[int] =>
-    with Fail[ParseError] = (_) => None {
-        Some(parse(s)?)
+    with Fail[ParseError] = |_| interrupt None {
+        Some(parse(s)!!)
     }
 ```
 
-Здесь `(_) => None` — handler-лямбда без `resume`. Если бизнес-код
+Здесь `|_| interrupt None` — handler-лямбда. Если бизнес-код
 бросает — handler возвращает `None`, и **весь with-блок** даёт
 `None`.
 
@@ -3623,7 +3623,18 @@ type Float protocol {
 
 ---
 
-## Q-default-generic. Default-значения generic-параметров
+## Q-default-generic. Default-значения generic-параметров ✅ ЗАКРЫТО (2026-05-10)
+
+> ✅ **ЗАКРЫТО → [D88](decisions/03-syntax.md#d88-default-значения-generic-параметров)** (2026-05-10).
+> Триггер — [D87](decisions/04-effects.md#d87-handlere-irt--параметризация-handler-типом-interruptа)
+> `Handler[E, IRT = Never]`: тип handler'а должен сообщать о
+> возможности `interrupt`, но обратная совместимость требует
+> `Handler[E] ≡ Handler[E, Never]` через default. Это и есть real
+> consumer, которого ждали.
+>
+> Принят синтаксис из текущего раздела as-is: `[T = f64]`,
+> `[T Bound = Default]`, обязательные параметры до опциональных.
+> Содержимое ниже — историческое описание перед закрытием.
 
 > ⏸ **DEFERRED — nice-to-have** (Plan 17 Ф.3, 2026-05-08).
 > **Rationale:** прецеденты есть (Rust, C++, TS), синтаксис чистый

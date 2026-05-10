@@ -768,12 +768,12 @@ fn idempotent_by(tx_id str, real Handler[Db]) -> Handler[Db] => handler Db {
 и повторяющий вызов:
 
 ```nova
-fn retry(max_attempts int, real Handler[Net]) -> Handler[Net] => handler Net {
+fn retry(max_attempts int, real Handler[Net]) -> Handler[Net, Response] => handler Net {
     get(url) {
         let mut attempt = 0
         loop {
             match try_fail[NetError] { real.get(url) } {
-                Ok(resp) => interrupt resp
+                Ok(resp) => interrupt resp           // IRT = Response
                 Err(_) if attempt < max_attempts => {
                     Time.sleep(backoff(attempt))
                     attempt += 1
