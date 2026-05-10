@@ -4467,16 +4467,24 @@ impl CEmitter {
                 Ok("NOVA_UNIT".into())
             }
             ExprKind::Throw(value) => {
-                // D25/D65: throw в expression-position. Тип Never — control
-                // никогда не вернётся. Эмитируем effect-call Nova_Fail_fail
-                // как statement, потом dummy zero-литерал нужного типа,
-                // чтобы C-выражение было валидным. Тип-target не известен
-                // здесь точно — берём nova_int (cast'ы в caller сделают
-                // остальное).
+                // D25/D65/D85: throw в expression-position. Тип Never —
+                // control никогда не вернётся. Эмитируем effect-call
+                // Nova_Fail_fail через comma-expression
+                // `(Nova_Fail_fail(v), (nova_int)0LL)` — dummy nova_int нужного
+                // типа для совместимости с C-каст'ами в caller'е.
+                //
+                // **Важно:** comma-expression, не statement+dummy через
+                // self.line() — потому что statement+dummy ломает short-circuit
+                // семантику родительских конструкций (?? coalesce → тернарник
+                // `cond ? value : RHS`; conditional expression). С statement
+                // throw выполнялся бы eagerly, **до** проверки cond.
+                // Comma-expression — inline expression, выполняется только
+                // когда родитель реально evaluates это выражение.
+                //
+                // Закрывает Q-throw-comma (тот же паттерн что для nv_panic /
+                // nv_exit — см. special-case в emit_call).
                 let v = self.emit_expr(value)?;
-                self.line(&format!("Nova_Fail_fail({});", v));
-                // Unreachable, но возвращаем синтаксически валидный dummy.
-                Ok("((nova_int)0LL)".to_string())
+                Ok(format!("(Nova_Fail_fail({}), (nova_int)0LL)", v))
             }
             ExprKind::Forbid { body, .. } => {
                 // forbid X { body } — in bootstrap, emit body as plain block (no runtime check)

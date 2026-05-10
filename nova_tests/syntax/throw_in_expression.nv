@@ -82,3 +82,66 @@ test "throw before fall-through — happy path" {
     }
     assert(got == 8)
 }
+
+// ================================================================
+// SECTION 3: throw как RHS в ?? coalesce (short-circuit семантика)
+//
+// Закрывает Q-throw-comma: до этого ExprKind::Throw эмитировался через
+// statement+dummy паттерн (self.line(...) + Ok("0LL")). Это работало в
+// branching contexts (if/match), но **ломало short-circuit** в тернарных:
+// `?? throw` desugar'ится в C-тернарник `cond ? value : RHS`, и при
+// statement+dummy throw выполнялся бы **eagerly**, до проверки cond.
+//
+// Миграция на comma-expression `(Nova_Fail_fail(v), 0)` — inline expression,
+// выполняется только когда родитель реально evaluates RHS. Эти тесты
+// верифицируют что Some-ветка НЕ вызывает throw.
+// ================================================================
+
+test "?? throw — Some-ветка НЕ выполняет throw (short-circuit)" {
+    let mut caught_msg = ""
+    with Fail = handler Fail {
+        fail(msg) {
+            caught_msg = msg
+            interrupt ()
+        }
+    } {
+        let opt = Some(42)
+        let v = opt ?? throw "should not throw"
+        assert(v == 42)
+    }
+    // Throw НЕ вызвался — handler не сработал, caught_msg пуст.
+    assert(caught_msg == "")
+}
+
+
+test "?? throw — None-ветка реально бросает" {
+    let mut caught_msg = ""
+    with Fail = handler Fail {
+        fail(msg) {
+            caught_msg = msg
+            interrupt ()
+        }
+    } {
+        let opt Option[int] = None
+        let _v = opt ?? throw "expected Some"
+    }
+    assert(caught_msg == "expected Some")
+}
+
+
+test "?? throw в цепочке lookup'ов" {
+    let mut last_thrown = ""
+    with Fail = handler Fail {
+        fail(msg) {
+            last_thrown = msg
+            interrupt ()
+        }
+    } {
+        // Все Some — throw'ов не должно быть.
+        let a = Some(1) ?? throw "a is None"
+        let b = Some(2) ?? throw "b is None"
+        let c = Some(3) ?? throw "c is None"
+        assert(a + b + c == 6)
+    }
+    assert(last_thrown == "")
+}
