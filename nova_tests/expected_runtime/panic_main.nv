@@ -1,0 +1,15 @@
+// EXPECT_RUNTIME_PANIC explicit panic
+//
+// D89 (spec/decisions/09-tooling.md): EXPECT_RUNTIME_PANIC маркер.
+// Test-runner ожидает что exe скомпилируется, запустится и упадёт с
+// panic, чьё сообщение содержит указанный pattern.
+//
+// Проверяем минимальный сценарий: panic("explicit panic") в main →
+// runtime print "panic: explicit panic\n" + abort.
+
+module nova_tests.expected_runtime.panic_main
+
+
+fn main() Io -> () {
+    panic("explicit panic")
+}

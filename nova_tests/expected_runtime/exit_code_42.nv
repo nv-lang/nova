@@ -1,0 +1,13 @@
+// EXPECT_EXIT_CODE 42
+//
+// D89: EXPECT_EXIT_CODE маркер. Test-runner ожидает что exe
+// завершится с конкретным exit code.
+//
+// Проверяем D13 exit() — гасит весь процесс с указанным кодом.
+
+module nova_tests.expected_runtime.exit_code_42
+
+
+fn main() Io -> () {
+    exit(42, "intentional exit with code 42")
+}
