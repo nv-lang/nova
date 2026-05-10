@@ -30,6 +30,11 @@
 | 16 | [16-capability-enforcement.md](16-capability-enforcement.md) | D63 `forbid` + D64 `realtime` compile-time capability checks (закрытие spec-vs-impl drift) | ✅ ЗАКРЫТ (Ф.1-Ф.9 ✅; 97/97 PASS включая 5 negative-tests) |
 | 17 | [17-q-resolutions.md](17-q-resolutions.md) | Закрыть полу-открытые Q (string interpolation, clone semantics, array API, и др.) | ✅ ЗАКРЫТ (включая Ф.4 — string interpolation полная реализация: lexer/parser/AST/codegen StringBuilder/interp; 13 regression-тестов) |
 | 18 | [18-stdlib-roadmap.md](18-stdlib-roadmap.md) | Stdlib gap-анализ Rust/Go → Nova: P0/P1/P2 приоритизация под backend/CLI нишу + зафиксированные дизайн-решения (libuv, rustls, M:N-aware sync) | proposal, не начат |
+| 20 | [20-defer-implementation.md](20-defer-implementation.md) | D90 implementation: `defer` и `errdefer` scope-level cleanup statements | 🟡 DRAFT, не начат |
+| 21 | [21-channel-revision-implementation.md](21-channel-revision-implementation.md) | D91 implementation: Channel revision на capability-split (Rust mpsc-style); зависит от Plan 20 | 🟡 DRAFT, не начат |
+
+> Plan 19 — see `19-closure-and-error-ops.md` (closure-rev + D85 error-ops).
+> Plan 20 и 21 — последовательные (Plan 21 зависит от Plan 20).
 
 ## Связанные директории
 
