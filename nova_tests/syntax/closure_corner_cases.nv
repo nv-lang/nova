@@ -1,0 +1,66 @@
+// closure_corner_cases.nv — Plan 19 C14 corner-case regression-тесты.
+//
+// Проверяет 4 ключевых поведения closure-light:
+// 1. Multiple closures share enclosing scope (одно-чтение через captured
+//    immutable).
+// 2. Escape — closure живёт после parent fn'а через managed-heap.
+// 3. closure используется в HOF без сохранения в let.
+// 4. closure-full и closure-light coexistence.
+//
+// Mut-capture в closure (один-разделяемый счётчик) не работает в
+// bootstrap codegen (env копирует value); test для этого — в C16.
+
+module nova_tests.syntax.closure_corner_cases
+
+// ─── #1: shared enclosing scope (immutable) — двойное чтение n ────
+
+fn dual_read(use_first bool) -> int {
+    let n = 42
+    let first = || n
+    let second = || n + 1
+    if use_first { first() } else { second() }
+}
+
+test "corner: множественные closures читают один enclosing scope" {
+    assert(dual_read(true) == 42)
+    assert(dual_read(false) == 43)
+}
+
+// ─── #2: escape — closure outlives parent fn ────────────────────────
+
+fn make_adder(n int) -> fn(int) -> int {
+    |x| x + n        // n captured; parent fn возвращает closure
+}
+
+test "corner: escape — captured `n` живёт после parent fn'а" {
+    let add5 = make_adder(5)      // make_adder завершилась
+    let add10 = make_adder(10)
+    // captured `n` для каждого closure'а свой; должно работать
+    // через managed-heap (D32).
+    assert(add5(100) == 105)
+    assert(add10(100) == 110)
+    // повторный вызов — env должен сохраниться
+    assert(add5(200) == 205)
+}
+
+// ─── #3: closure-light без let-сохранения, прямая передача в HOF ────
+
+fn map_one(x int, f fn(int) -> int) -> int {
+    f(x)
+}
+
+test "corner: closure-light без let, передан в HOF inline" {
+    let r1 = map_one(7, |x| x * 3)
+    assert(r1 == 21)
+    let r2 = map_one(11, |x| x + 1)
+    assert(r2 == 12)
+}
+
+// ─── #4: closure-light и closure-full coexist в одной программе ─────
+
+test "corner: light + full могут вызываться одинаково" {
+    let r1 = map_one(5, |x| x + 100)                      // light
+    let r2 = map_one(5, fn(x int) -> int => x + 100)      // full
+    assert(r1 == r2)
+    assert(r1 == 105)
+}
