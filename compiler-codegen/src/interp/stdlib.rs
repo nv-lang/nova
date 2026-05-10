@@ -47,6 +47,34 @@ pub fn install(env: &Env) {
             }),
         })),
     );
+    // exit(code int, msg str) -> Never — D13: смерть всего процесса.
+    // В test-runner'е перехватывается как fail теста (через NativeError);
+    // в production-runtime гасит процесс с указанным exit code.
+    env.define(
+        "exit",
+        Value::Native(Rc::new(NativeFn {
+            name: "exit".into(),
+            func: Box::new(|args| {
+                let code = match args.first() {
+                    Some(Value::Int(c)) => *c,
+                    _ => return Err(NativeError {
+                        message: "exit: expected (int, str)".into(),
+                    }),
+                };
+                let msg = match args.get(1) {
+                    Some(Value::Str(s)) => s.clone(),
+                    _ => return Err(NativeError {
+                        message: "exit: expected (int, str)".into(),
+                    }),
+                };
+                // В interp-mode (тесты, скрипты) — отдаём как ошибку,
+                // чтобы test-runner мог сообщить о провале с кодом и сообщением.
+                Err(NativeError {
+                    message: format!("exit({}): {}", code, msg),
+                })
+            }),
+        })),
+    );
     env.define(
         "assert",
         Value::Native(Rc::new(NativeFn {
