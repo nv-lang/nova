@@ -20,7 +20,7 @@ runner его читает, **переворачивает** обычную ло
 
 ---
 
-## 4 стандартных маркера
+## 5 стандартных маркеров
 
 ### 1. `EXPECT_COMPILE_ERROR <pattern>`
 
@@ -117,11 +117,12 @@ fn main() Io -> () {
 
 ### 4. `EXPECT_STDOUT <pattern>`
 
-Проверяет, что **stdout** exe содержит `<pattern>` (substring).
+Проверяет, что **только stdout** (не stderr) exe содержит `<pattern>`
+(substring).
 
 **Когда использовать:**
 - Golden-file тесты для format/print-логики.
-- Проверка что program вывела ожидаемое сообщение.
+- Проверка что program вывела ожидаемое сообщение в stdout.
 - Smoke-тесты hello-world уровня.
 
 **Пример:**
@@ -139,9 +140,57 @@ fn main() Io -> () {
 **Поведение runner'а:**
 - Codegen + компиляция проходят.
 - Exe запускается (любой exit code OK — тест на **вывод**, не на код).
-- Stdout должен содержать `hello world` (substring match).
+- **Только stdout** должен содержать `hello world` (substring match).
+  Если pattern в stderr — тест **не** проходит. Для проверки stderr —
+  отдельный маркер `EXPECT_STDERR`.
 
 **Если pattern не найден** — `NEG-WRONG-STDOUT`.
+
+---
+
+### 5. `EXPECT_STDERR <pattern>`
+
+Проверяет, что **только stderr** (не stdout) exe содержит `<pattern>`
+(substring).
+
+**Когда использовать:**
+- Проверка warning'ов / diagnostic-сообщений в stderr.
+- Тесты `panic(msg)` без жёсткой привязки к exit-коду
+  (`EXPECT_RUNTIME_PANIC` дополнительно требует ненулевой exit).
+- Проверка `exit(N, msg)` сообщения (вместе с `EXPECT_EXIT_CODE`
+  это сделать нельзя — один маркер на файл, поэтому используют один
+  или другой).
+- Проверка output `Logger`-handler'ов, пишущих в stderr.
+
+**Пример:**
+
+```nova
+// EXPECT_STDERR custom stderr message
+
+module nova_tests.expected_runtime.stderr_panic
+
+fn main() Io -> () {
+    panic("custom stderr message")
+}
+```
+
+**Поведение runner'а:**
+- Codegen + компиляция проходят.
+- Exe запускается (любой exit code OK — тест на **вывод**, не на код).
+- **Только stderr** должен содержать pattern. Если в stdout — тест
+  не проходит.
+
+**Если pattern не найден** — `NEG-WRONG-STDERR`.
+
+**Отличие от `EXPECT_RUNTIME_PANIC`:**
+- `EXPECT_RUNTIME_PANIC` требует **ненулевой exit code** + pattern
+  в любом потоке (panic-сообщение).
+- `EXPECT_STDERR` принимает **любой exit code**, но pattern должен
+  быть **именно в stderr**.
+
+Для panic-тестов обычно используют `EXPECT_RUNTIME_PANIC` (он
+проверяет два инварианта). `EXPECT_STDERR` — когда нужна только
+проверка вывода, без требования к exit code'у.
 
 ---
 

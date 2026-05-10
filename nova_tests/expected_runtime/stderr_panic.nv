@@ -1,0 +1,15 @@
+// EXPECT_STDERR custom stderr message
+//
+// D89: EXPECT_STDERR маркер. Test-runner ожидает что **только stderr**
+// (не stdout) содержит указанный pattern. Любой exit code допустим.
+//
+// Используем panic("...") который пишет в stderr через nv_panic (D13).
+// EXPECT_STDERR отличается от EXPECT_RUNTIME_PANIC тем, что НЕ требует
+// ненулевой exit code — проверяется только содержимое stderr.
+
+module nova_tests.expected_runtime.stderr_panic
+
+
+fn main() Io -> () {
+    panic("custom stderr message")
+}

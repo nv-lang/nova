@@ -64,13 +64,14 @@ $inputs | Sort-Object FullName | ForEach-Object {
     #
     # Поддерживаемые маркеры (substring-pattern или integer):
     #   // EXPECT_COMPILE_ERROR <pattern>  — codegen упал с pattern
-    #   // EXPECT_RUNTIME_PANIC <pattern>  — exe упал с panic, msg содержит pattern
+    #   // EXPECT_RUNTIME_PANIC <pattern>  — exe упал с panic, stderr содержит pattern
     #   // EXPECT_EXIT_CODE <N>            — exe завершился с exit code = N
-    #   // EXPECT_STDOUT <pattern>         — stdout содержит pattern
+    #   // EXPECT_STDOUT <pattern>         — только stdout содержит pattern
+    #   // EXPECT_STDERR <pattern>         — только stderr содержит pattern
     #
     # Один маркер на файл (берём первый найденный в первых 30 строках).
     # Маркеры взаимоисключающие.
-    $expect_kind = $null      # 'compile_error' | 'runtime_panic' | 'exit_code' | 'stdout'
+    $expect_kind = $null      # 'compile_error' | 'runtime_panic' | 'exit_code' | 'stdout' | 'stderr'
     $expect_arg  = $null      # substring или int (для exit_code)
     $head = Get-Content -Path $nv -TotalCount 30 -ErrorAction SilentlyContinue
     foreach ($ln in $head) {
@@ -85,6 +86,9 @@ $inputs | Sort-Object FullName | ForEach-Object {
         }
         if ($ln -match '//\s*EXPECT_STDOUT\s+(.+?)\s*$') {
             $expect_kind = 'stdout'; $expect_arg = $matches[1]; break
+        }
+        if ($ln -match '//\s*EXPECT_STDERR\s+(.+?)\s*$') {
+            $expect_kind = 'stderr'; $expect_arg = $matches[1]; break
         }
     }
 
@@ -145,13 +149,25 @@ $inputs | Sort-Object FullName | ForEach-Object {
     }
 
     # Step 3: run
-    $run_out = & $exe_file 2>&1
+    # D89: stdout и stderr — разные потоки, EXPECT_STDOUT и EXPECT_STDERR
+    # проверяют их независимо. Используем временный stderr-файл и
+    # читаем оба после выполнения.
+    $stderr_file = "$tmp_dir\$exe_safe.stderr.txt"
+    $stdout_out = & $exe_file 2>$stderr_file
     $run_exit = $LASTEXITCODE
-    $run_text = ($run_out -join " ")
+    $stdout_text = if ($stdout_out) { ($stdout_out -join " ") } else { "" }
+    $stderr_text = if (Test-Path $stderr_file) { (Get-Content $stderr_file -Raw -ErrorAction SilentlyContinue) } else { "" }
+    if (-not $stderr_text) { $stderr_text = "" }
+    # Combined для маркеров, которые исторически проверяют любой поток
+    # (EXPECT_RUNTIME_PANIC: panic пишет в stderr через nv_panic, но
+    # технически совместимы с любыми источниками; берём оба для
+    # резистентности).
+    $combined_text = "$stdout_text $stderr_text"
 
     # D89: runtime-маркеры обрабатываются после run.
     if ($expect_kind -eq 'runtime_panic') {
-        # Ожидается ненулевой exit + panic-сообщение содержит pattern.
+        # Ожидается ненулевой exit + panic-сообщение в любом потоке
+        # (panic пишет в stderr, но проверяем combined на устойчивость).
         if ($run_exit -eq 0) {
             $results += [PSCustomObject]@{
                 Name=$display; Status="NEG-NO-PANIC";
@@ -159,8 +175,8 @@ $inputs | Sort-Object FullName | ForEach-Object {
             }
             $fail++; return
         }
-        if ($run_text -notmatch [regex]::Escape($expect_arg)) {
-            $snippet = if ($run_text.Length -gt 150) { $run_text.Substring(0,150) } else { $run_text }
+        if ($combined_text -notmatch [regex]::Escape($expect_arg)) {
+            $snippet = if ($combined_text.Length -gt 150) { $combined_text.Substring(0,150) } else { $combined_text }
             $results += [PSCustomObject]@{
                 Name=$display; Status="NEG-WRONG-PANIC";
                 Detail="expected panic pattern '$expect_arg' not found in: $snippet"
@@ -183,22 +199,37 @@ $inputs | Sort-Object FullName | ForEach-Object {
         $pass++; return
     }
     if ($expect_kind -eq 'stdout') {
-        # Любой exit code OK; ожидается substring в stdout.
-        if ($run_text -notmatch [regex]::Escape($expect_arg)) {
-            $snippet = if ($run_text.Length -gt 150) { $run_text.Substring(0,150) } else { $run_text }
+        # Любой exit code OK; ожидается substring ТОЛЬКО в stdout (не stderr).
+        if ($stdout_text -notmatch [regex]::Escape($expect_arg)) {
+            $snippet = if ($stdout_text.Length -gt 150) { $stdout_text.Substring(0,150) } else { $stdout_text }
             $results += [PSCustomObject]@{
                 Name=$display; Status="NEG-WRONG-STDOUT";
-                Detail="expected stdout pattern '$expect_arg' not found in: $snippet"
+                Detail="expected stdout pattern '$expect_arg' not found in stdout: $snippet"
             }
             $fail++; return
         }
         $results += [PSCustomObject]@{Name=$display; Status="PASS"; Detail="(stdout)"}
         $pass++; return
     }
+    if ($expect_kind -eq 'stderr') {
+        # Любой exit code OK; ожидается substring ТОЛЬКО в stderr (не stdout).
+        if ($stderr_text -notmatch [regex]::Escape($expect_arg)) {
+            $snippet = if ($stderr_text.Length -gt 150) { $stderr_text.Substring(0,150) } else { $stderr_text }
+            $results += [PSCustomObject]@{
+                Name=$display; Status="NEG-WRONG-STDERR";
+                Detail="expected stderr pattern '$expect_arg' not found in stderr: $snippet"
+            }
+            $fail++; return
+        }
+        $results += [PSCustomObject]@{Name=$display; Status="PASS"; Detail="(stderr)"}
+        $pass++; return
+    }
 
     # Default path: ожидается успешный run (exit code 0).
     if ($run_exit -ne 0) {
-        $results += [PSCustomObject]@{Name=$display; Status="RUN-FAIL"; Detail=(($run_out | Select-Object -Last 3) -join " | ")}
+        # Для RUN-FAIL диагностики берём combined-вывод (stdout + stderr).
+        $detail = ($combined_text -split "[\r\n]" | Where-Object { $_ } | Select-Object -Last 3) -join " | "
+        $results += [PSCustomObject]@{Name=$display; Status="RUN-FAIL"; Detail=$detail}
         $fail++; return
     }
 

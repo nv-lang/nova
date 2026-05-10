@@ -219,21 +219,28 @@ test-runner (текущий `run_tests.ps1`, будущий `nova test`, CI-
 | Маркер | Аргумент | Поведение test-runner'а |
 |---|---|---|
 | `EXPECT_COMPILE_ERROR` | substring-pattern | codegen должен **завершиться с ненулевым exit code** и сообщение содержит pattern |
-| `EXPECT_RUNTIME_PANIC` | substring-pattern | exe скомпилировался, **запустился** и упал с panic; сообщение panic содержит pattern |
+| `EXPECT_RUNTIME_PANIC` | substring-pattern | exe скомпилировался, **запустился** и упал с panic; **stderr** содержит pattern (panic пишет в stderr) |
 | `EXPECT_EXIT_CODE` | целое число `N` | exe скомпилировался, запустился и завершился с **exit code = N** |
-| `EXPECT_STDOUT` | substring-pattern | exe запустился (любой exit code) и его **stdout** содержит pattern |
+| `EXPECT_STDOUT` | substring-pattern | exe запустился (любой exit code) и его **stdout** (только stdout, не stderr) содержит pattern |
+| `EXPECT_STDERR` | substring-pattern | exe запустился (любой exit code) и его **stderr** (только stderr, не stdout) содержит pattern |
 
 **Семантика логики:**
 - При наличии маркера логика test-runner'а **переворачивается**:
   обычное «codegen succeeded → pass» становится «codegen failed
   ожидаемым образом → pass».
 - При несоответствии (codegen не упал когда ждали error, или упал
-  не с тем pattern, или exe вернул не тот exit code, или stdout не
-  содержит pattern) — test **fails**.
+  не с тем pattern, или exe вернул не тот exit code, или нужный
+  поток не содержит pattern) — test **fails**.
 - Файл с `EXPECT_COMPILE_ERROR` **не компилируется** в exe и
   **не запускается** (предполагается невалидный код).
 - Файл с `EXPECT_RUNTIME_PANIC` / `EXPECT_EXIT_CODE` / `EXPECT_STDOUT`
-  компилируется и запускается, runner смотрит на runtime-результат.
+  / `EXPECT_STDERR` компилируется и запускается, runner смотрит на
+  runtime-результат.
+- **stdout и stderr — разные потоки.** `EXPECT_STDOUT pattern`
+  сматчит pattern **только** если он в stdout; `EXPECT_STDERR
+  pattern` — только если в stderr. Для проверки combined-вывода
+  (любой поток) используйте `EXPECT_RUNTIME_PANIC` (для panic'ов,
+  которые идут в stderr).
 
 #### Pattern-matching
 
@@ -357,16 +364,23 @@ Comment-маркер — **простой и достаточный** патте
 - Swift test-toolkit: `// expected-error {{pattern}}`.
 - Go errorcheck: `// ERROR pattern`.
 
-#### Почему 4 маркера, не больше
+#### Почему 5 маркеров, не больше
 
 Минимум, покрывающий 95% test-сценариев:
 - Compile-time errors → `EXPECT_COMPILE_ERROR`.
 - Runtime panics (D13) → `EXPECT_RUNTIME_PANIC`.
 - Process-exit codes (D13 exit) → `EXPECT_EXIT_CODE`.
-- Output-content tests (golden-files, format) → `EXPECT_STDOUT`.
+- Output-content tests stdout → `EXPECT_STDOUT`.
+- Output-content tests stderr → `EXPECT_STDERR`.
+
+stdout/stderr — два независимых маркера, потому что POSIX-конвенция
+разделяет потоки: stdout — для data, stderr — для diagnostics. Тесты
+должны различать. Combined-проверка (без разделения) не нужна — для
+panic'ов есть специализированный `EXPECT_RUNTIME_PANIC`.
 
 Что **может быть добавлено** позже, при появлении use-cases:
-- `EXPECT_STDERR pattern` — вывод в stderr (для warnings, dev-info).
+- `EXPECT_NO_STDERR` — exe не должен ничего писать в stderr (нет
+  warning'ов).
 - `EXPECT_LINT_WARNING pattern` — lint без error.
 - `EXPECT_TIMEOUT_MS N` — exe должен **не** превысить N мс.
 - `EXPECT_NO_OUTPUT` — exe не должен ничего выводить.
@@ -410,7 +424,9 @@ Comment-маркер — **простой и достаточный** патте
   `nova_tests/negative_capability/`.
 - ✅ **`EXPECT_RUNTIME_PANIC`** — реализовано (2026-05-10).
 - ✅ **`EXPECT_EXIT_CODE`** — реализовано (2026-05-10).
-- ✅ **`EXPECT_STDOUT`** — реализовано (2026-05-10).
+- ✅ **`EXPECT_STDOUT`** — реализовано (2026-05-10). Только stdout
+  (после split'а stdout/stderr).
+- ✅ **`EXPECT_STDERR`** — реализовано (2026-05-10). Только stderr.
 
 Future runner'ы (`nova test` CLI, `cargo test` для interp-mode,
 CI-плагины) должны переиспользовать эту конвенцию. Реализацию для
@@ -419,7 +435,7 @@ CI-плагины) должны переиспользовать эту конв
 ### Цена
 
 1. **Нужно поддерживать в каждом runner'е.** Если появится `nova test`
-   на Nova самом — реализовать 4 маркера обязательно. Не сложно
+   на Nova самом — реализовать 5 маркеров обязательно. Не сложно
    (substring-match + condition negation), но **обязательно**.
 2. **Маркер — plain comment**, парсер про него не знает. Если автор
    опечатался (`EXPECT_COMPILE_EROR` без R) — runner проигнорирует,
