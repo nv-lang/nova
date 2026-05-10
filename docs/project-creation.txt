@@ -3747,3 +3747,91 @@ big-bang regression'ов. C13 удалил старую grammar чисто.
 became clear что у нас в реальности нужно. Время-приоритет — сразу
 расширить, пока контекст свежий, не ждать «реального use-case». 30
 минут работы, закрывает естественный gap.
+
+================================================================
+2026-05-11. codegen-баги в std/checksums/fnv.nv — типизация const'ов
+================================================================
+
+User указал на странную строку в сгенерированном fnv.c:
+```c
+static uint32_t Nova_Fnv_static_hash32(...) {
+    nova_int h = FNV1A_32_OFFSET;  // FNV1A_32_OFFSET — u32 const
+```
+Объявлен `let mut h = FNV1A_32_OFFSET`, ожидался тип u32 (как у const'а),
+а в C сгенерирован `nova_int` (= int64_t). Это работало по chance — для u32
+значений в диапазоне `2166136261 < 2^32`, и арифметика в широких типах в C
+неявно сужается. Но это **тикающая бомба**: для u64-const'ов вроде
+`FNV1A_64_OFFSET = 0xCBF29CE484222325` cast `nova_int → uint64_t` для
+значений вне int64 даёт implementation-defined в C99.
+
+Двойной диагноз: (1) `infer_expr_c_type(Ident)` для const'ов фолбэкался на
+`nova_int`; (2) `emit_const_expr` для IntLit всегда давал `((nova_int)NLL)`
+без учёта target-типа const'а.
+
+**Что сделано:**
+
+1. **Баг 1 — use-site type-inference let'а из const'а.** В
+   `emit_const_decl` добавлен `self.var_types.insert(c.name, ty_c)` для
+   non-lazy ветки (lazy-const уже регистрировал через `emit_lazy_const`).
+   Теперь `infer_expr_c_type(Ident("FNV1A_32_OFFSET"))` возвращает
+   `uint32_t`, а не fallback `nova_int`. `let mut h = FNV1A_32_OFFSET`
+   получает `uint32_t h = ...`.
+
+2. **Баг 2 — IntLit в const-init без target-типа.** Добавлены два
+   helper'а:
+   - `emit_typed_int_literal(n: i64, ty_c: &str) -> String` — эмитит
+     литерал с правильным suffix/cast: `uint32_t → (uint32_t)NU`,
+     `uint64_t → (uint64_t)0xNULL` (через u64 bit-pattern), signed →
+     `(<ty>)N`, default `nova_int → ((nova_int)NLL)`.
+   - `emit_const_expr_typed(expr, target_ty_c)` — версия `emit_const_expr`
+     которая для IntLit/CharLit/`Unary{Neg,IntLit}` использует
+     `emit_typed_int_literal` с переданным target'ом, иначе делегирует в
+     обычный `emit_const_expr`.
+
+   `emit_const_decl` теперь вызывает `emit_const_expr_typed(value, Some(&ty_c))`.
+
+3. **До/после fnv.c:**
+   ```c
+   // До:
+   static const uint32_t FNV1A_32_OFFSET = ((nova_int)2166136261LL);
+   static const uint64_t FNV1A_64_OFFSET = ((nova_int)-3750763034362895579LL);
+   nova_int h = FNV1A_32_OFFSET;
+
+   // После:
+   static const uint32_t FNV1A_32_OFFSET = ((uint32_t)2166136261U);
+   static const uint64_t FNV1A_64_OFFSET = ((uint64_t)0xCBF29CE484222325ULL);
+   uint32_t h = FNV1A_32_OFFSET;
+   ```
+
+**Trade-offs / границы фикса:**
+
+- **Только const-init**, не runtime expressions (`emit_expr` оставлен).
+  In-function `let x u32 = 5` пройдёт `((nova_int)5LL) → uint32_t x` через
+  C-implicit conversion — это не undefined. Проблема была именно в
+  file-scope const-init где `((nova_int)-3750763034362895579LL) →
+  (uint64_t)` вне int64 — implementation-defined.
+- Char-литералы для u8/u16/u32 OK — Unicode codepoint ≤ 0x10FFFF умещается.
+- Negative IntLit (`Unary{Neg, IntLit}`) обработан как 1 синтаксическая
+  единица. Для unsigned target — программист сам отвечает за заворот
+  (это редкий случай).
+
+**Тесты:** lib 65/65, nova_tests 120/120, std/checksums 2/2 PASS.
+
+**Lesson — IR должен таскать target-type до emit'а.** Этот класс багов
+неизбежен для любого compiler'а который генерит untyped-target (C) из
+typed-source (Nova) и теряет тип в emit-фазе. Когда у нас в IR есть
+полный `c.ty`, но в `emit_const_expr` он не передаётся — мы делаем
+unsigned/signed мост вслепую. Правило: **любой path, эмитящий literal в
+typed-context, должен иметь доступ к target-type**. Это локальный паттерн
+"thread target-type through emit-recursion", и его стоит применять
+везде где есть target-type (record-init с typed fields, type-annotated
+let'ы, etc — но это already работает в основном, баг был именно в
+const-init path).
+
+**Что не сделано (потенциальные следующие задачи):**
+- Полная name-resolution фаза в типчекере (отдельный баг — `let r = 1 |
+  undefined_var` пропускается до C-compile-stage). Закрыт как known
+  gap в Plan 19 retro, отдельная задача.
+- `emit_expr` для in-function let'ов тоже мог бы передавать target-тип
+  для consistency. Сейчас работает через C-implicit conversion и не
+  даёт unsafe-результата. Cleanup, не bug — отложен.

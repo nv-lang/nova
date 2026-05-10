@@ -2963,3 +2963,64 @@ D84 codegen бросает три типа compile error'ов («duplicate signa
 
 - ✅ ЗАКРЫТ.
 - Tests: ✅ 120/120 PASS (предыдущие + новый stderr_panic).
+
+---
+
+## 2026-05-11 — codegen: const u32/u64 type-inference + native-typed integer literals (FNV bug)
+
+### Что починено
+
+В `std/checksums/fnv.nv` user заметил неожиданный C-вывод:
+```c
+nova_int h = FNV1A_32_OFFSET;  // FNV1A_32_OFFSET — u32 const
+```
+— переменная инициализируется из u32-const'а, но получает тип `nova_int` (int64). И сами const'ы инициализированы как `((nova_int)NLL)` — signed-cast в unsigned, что **implementation-defined** для значений вне диапазона int64 (например FNV-64 offset `0xCBF29CE484222325` представляется как отрицательный `-3750763034362895579LL`).
+
+Два связанных бага в codegen:
+
+**Баг 1 — use-site inference let'а из const'а.** `infer_expr_c_type(Ident(name))` смотрел только в `var_types`, но обычные (non-lazy) const'ы туда не регистрировались (только lazy через `emit_lazy_const`). Fallback — `"nova_int"`. Fix: после успешного `emit_const_decl` регистрируем `c.name → ty_c` в `var_types`, чтобы Ident на use-site инферился с правильным c-типом.
+
+**Баг 2 — integer literals в const-init без учёта target-типа.** `emit_const_expr` всегда эмитил `((nova_int)NLL)` независимо от типа const'а. Для unsigned-целевых типов это implementation-defined conversion. Fix: новый `emit_const_expr_typed(expr, target_ty_c)` + helper `emit_typed_int_literal(n, ty_c)` — эмитят правильный suffix/cast по c-типу:
+- `uint32_t` → `((uint32_t)NU)` (через `n as u32`)
+- `uint64_t` → `((uint64_t)0xNULL)` (bit-pattern u64, чтобы корректно представить значения вне i64)
+- `int32_t/int16_t/int8_t` → `((int32_t)N)` 
+- по умолчанию (`nova_int`, `int64_t`) — `((<ty>)NLL)` (старое поведение, не сломано)
+
+`emit_const_decl` передаёт `ty_c` в `emit_const_expr_typed` как ожидаемый тип.
+
+### До/после
+
+```c
+// До:
+static const uint32_t FNV1A_32_OFFSET = ((nova_int)2166136261LL);
+static const uint64_t FNV1A_64_OFFSET = ((nova_int)-3750763034362895579LL);
+static uint32_t Nova_Fnv_static_hash32(...) {
+    nova_int h = FNV1A_32_OFFSET;  // ← неправильный тип
+    ...
+}
+
+// После:
+static const uint32_t FNV1A_32_OFFSET = ((uint32_t)2166136261U);
+static const uint64_t FNV1A_64_OFFSET = ((uint64_t)0xCBF29CE484222325ULL);
+static uint32_t Nova_Fnv_static_hash32(...) {
+    uint32_t h = FNV1A_32_OFFSET;  // ← правильный тип
+    ...
+}
+```
+
+### Trade-offs
+
+- **Локальный fix:** только `emit_const_expr_typed` для const-init. `emit_expr` (runtime expressions) не трогали — там `((nova_int)NLL)` остаётся как есть. Это OK: in-function integer literals неявно конвертятся в target-тип через C-implicit conversions; проблема была только в file-scope const-init где cast → unsigned давал implementation-defined для overflow-значений.
+- **Lazy-const'ы** уже регистрировались в `var_types` (через `emit_lazy_const`), это значит баг был только в non-lazy ветке. Fix симметризовал поведение.
+- **Char-литералы:** `emit_typed_int_literal(cp as i64, ty_c)` — codepoint конвертится через i64, для u8/u16/u32 это OK (codepoint ≤ 0x10FFFF помещается в u32).
+
+### Файлы
+
+- `compiler-codegen/src/codegen/emit_c.rs` — `emit_typed_int_literal`, `emit_const_expr_typed`, регистрация const'ов в `var_types`.
+- `std/checksums/fnv.c` — regenerated с правильными типами (артефакт верификации, не commited).
+
+### Status
+
+- ✅ ЗАКРЫТ.
+- Tests: ✅ lib 65/65, nova_tests 120/120, std/checksums 2/2 PASS.
+- Lesson: «code generator с типизированным IR — но IntLit без target-типа в emit'е». Любой code-gen, который compile'ит typed source → нетипизированный target language (C), должен везде, где есть target-type-info, эмитить native-typed литералы. Особенно для unsigned/signed мостов. Если IR теряет тип к моменту emit'а (как было) — баг неизбежен на edge-cases (overflow, large hex constants, u64 ≥ 2^63).
