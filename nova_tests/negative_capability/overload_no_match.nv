@@ -1,0 +1,24 @@
+// EXPECT_COMPILE_ERROR no matching overload
+//
+// D84: вызов свободной overloaded-функции с типом, не покрытым ни
+// одной overload, должен давать compile error «no matching overload»
+// с перечислением кандидатов.
+//
+// Spec: spec/decisions/10-overloading.md → D84 «Резолв на call-site».
+
+module nova_tests.negative_capability.overload_no_match
+
+
+fn handle(n int) -> str { "int: ${n}" }
+fn handle(s str) -> str { "str: ${s}" }
+
+
+fn caller() -> str {
+    handle(true)    // ❌ no overload для bool
+}
+
+
+test "no matching overload — compile error (negative)" {
+    let _ = caller()
+    assert(true)
+}

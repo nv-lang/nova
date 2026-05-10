@@ -1,0 +1,19 @@
+// EXPECT_COMPILE_ERROR duplicate definition
+//
+// D84: точное дублирование signature свободной функции запрещено.
+// Две функции с одинаковыми arity + arg-types + return-type — не
+// валидный overload (нет осей, по которым резолвить).
+//
+// Spec: spec/decisions/10-overloading.md → D84.
+
+module nova_tests.negative_capability.overload_duplicate_signature
+
+
+fn process(n int) -> str { "first: ${n}" }
+fn process(n int) -> str { "second: ${n}" }    // ❌ duplicate sig
+
+
+test "duplicate signature — compile error (negative)" {
+    // Не должен достигаться: type-check падает выше.
+    assert(true)
+}
