@@ -3293,3 +3293,152 @@ spread unfolding в eval_call с pre-eval путём; новые helpers
 принимает [T Hashable]» в Plan 15 (план врал, я не проверил
 экспериментом). Common pattern: **проверять premises plan'ов
 эмпирически**, не верить тексту.
+
+
+==============================================================================
+2026-05-10. Closure-rev: переход на `|x|` + `fn(...)` (Plan 19).
+==============================================================================
+
+**Триггер:** пользователь поднял вопрос «перечитай спеку и исследуй
+вопрос синтаксиса лямбды у нас и у других языков, особенно Rust». В
+сессии прошли ~7 итераций обсуждения, итог — переход на двухуровневый
+closure-синтаксис.
+
+**Что изменилось:**
+
+1. **closure-light** `|x| body` — компактная untyped форма для
+   one-liner'ов и block-форм. `||` для no-arg, `|_|` для wildcard.
+   Эффекты не пишутся, наследуются из ambient effect-set = эффекты
+   parent fn ∪ активные `with`-блоки.
+
+2. **closure-full** `fn(x int) Effects -> R body` — типизированная
+   форма, идентична named fn без имени. D22-old запрет «нет анонимной
+   `fn`-формы» снят. Тело `=> expr` или `{ block }`.
+
+3. **Trailing** расщеплён:
+   - `f(args) { block }` — без params (DSL).
+   - `f(args) fn(p) body` — с params (= closure-full без имени).
+   - Старая `f(args) { x => body }` отменена.
+   - `f(args) |x| body` запрещён (ambiguity с binary OR).
+
+4. **Captures** через managed-heap, без `move`/lifetime. Multiple
+   closures на один `let mut` разделяют capture (interp реализует
+   через Rc-shared Env). Escape автоматический.
+
+**Файлы изменены:**
+
+- `spec/decisions/03-syntax.md` — D22, D40, D43 переписаны.
+- `spec/syntax.md` — секция Trailing/Closure переписана.
+- `spec/effects.md`, `spec/revolutionary.md`, `spec/overview.md` —
+  примеры обновлены.
+- `spec/decisions/04-effects.md`, `05-memory.md`, `06-concurrency.md`,
+  `08-runtime.md` — точечные правки.
+- `spec/decisions/closure-rev2026-05-DRAFT.md` — DRAFT-зеркало
+  (удалить после Plan 19 Ф.9).
+- `docs/plans/19-closure-and-error-ops.md` — план миграции parser/interp/codegen (closure-rev + D85 error-ops в одном атомарном PR).
+
+**Status:**
+
+- Spec-changes: ✅ ЗАКРЫТ.
+- Plan 19 implementation: 🟡 DRAFT. Parser/interp/codegen не тронуты.
+- Existing nova_tests используют старый синтаксис; миграция в Ф.8.
+
+**Lesson — переоценка фундаментальных решений:**
+
+D22 `(params) =>` прожила несколько ревизий и казалась устаканенной.
+При сравнении с Rust выявилось три структурных проблемы:
+
+1. `=>` перегружен (тело named fn, тело лямбды, match-arm,
+   handler-method, разделитель trailing-params).
+2. Парсер требовал unbounded look-ahead на `(` чтобы решить «group vs
+   lambda».
+3. Запрет `=> { block }` для лямбды создавал corner case'ы — любую
+   closure с `let` нужно было выносить в named fn.
+
+Переход на `|x|` + `fn(...)` решает все три. Урок: **«устаканенное»
+решение стоит периодически передоказывать в свете эволюции языка**.
+Особенно для основной грамматики.
+
+================================================================
+2026-05-10. Sweep — формулировки эффектов + D84 overloading + D85 ?/!! + exit
+================================================================
+
+Длинная сессия по чистке спеки и крупным design-решениям.
+
+**Изменения в спеке:**
+
+1. **Центральная формулировка эффектов** (overview.md, effects.md,
+   01-philosophy.md): «Всё нечистое — эффект» заменено на конкретное
+   перечисление + операционное определение через границу «прямые
+   эффекты в сигнатуре, транзитивные не тащатся (искл. Fail)».
+2. **`effect` vs `protocol` правило** (overview.md, effects.md,
+   D62 правило 4): три угла зрения — slogan «как делать» vs «что
+   умеет значение», развёртка через примеры реализаций, тест-критерий
+   «подменяешь в тесте — effect, нет — protocol». Q1+Q2 sniff-тест
+   свёрнут к одному правилу.
+3. **Роли throw / Fail[E] / handler** (effects.md, revolutionary.md):
+   throw — синтаксис языка, Fail[E] — эффект-контракт без полей,
+   handler — то, что перехватывает (захватывает state из окружения
+   как замыкание).
+4. **D4 «три формы handler-а»** (04-effects.md): для Fail (Never-операция)
+   разрешены только interrupt v и throw err. Форма «return value»
+   запрещена — type-checker это проверяет.
+
+**Новые D-блоки:**
+
+5. **D84. Перегрузка функций и методов** (`spec/decisions/10-overloading.md`):
+   - Новый файл, 4 оси перегрузки (receiver, args, result, arity).
+   - Резолв: самый специфичный матч, concrete > generic, non-variadic
+     > variadic, ambiguity → compile error.
+   - Распространяется на свободные функции (Plan 11 запрет снят).
+   - Q-overloading закрыт, материал из D35 перенесён.
+6. **D85. `?` / `!!` — унифицированное поведение** (04-effects.md):
+   - **D67 отменён.** `expr?` теперь всегда return-стиль (для обоих
+     Option и Result), `?` отвязан от Fail.
+   - `expr!!` — новый постфиксный throw-оператор. Result → throw E,
+     Option → throw RuntimeNoneError.
+   - Программист на месте использования выбирает стиль обработки.
+   - `??` остаётся как coalesce (D86 — параллельный decision).
+   - `!!` (двойной) выбран вместо `!` (одиночный) — последний занят
+     под boolean not, парсер чище без правил про пробелы.
+7. **`RuntimeNoneError`** в prelude (D26): новый unit-тип для `expr!!`
+   на Option. Отдельный от RuntimeError (разные категории).
+
+**`exit(code, msg)` — отдельная функция от panic:**
+
+8. Добавлено в prelude (D26): `fn exit(code int, msg str) -> Never`.
+   D13 уточнён: panic — fiber-уровень, exit — process-уровень.
+   Раньше формулировка «в CLI panic = exit процесса» сливала уровни
+   — теперь разведены.
+9. В bootstrap interp (`stdlib.rs`) `exit` зарегистрирован как
+   native function. C-codegen — отдельная задача.
+
+**Plans:**
+
+10. `docs/plans/19-closure-rev.md` → `19-closure-and-error-ops.md`.
+    Раз D85 тоже меняет expression-grammar и требует ту же миграцию
+    тестов — объединил с closure-rev в один атомарный PR. Ф.10
+    (parser postfix `!!` + смена семантики `?`), Ф.8 расширен
+    (8a closure + 8b error-ops), Ф.9 расширен (4 closure + 6
+    error-ops corner cases).
+
+**Миграция примеров:**
+
+11. Все `?` в обзорных документах (overview/syntax/effects/revolutionary)
+    и decisions проверены и приведены в соответствие с D85. В
+    revolutionary.md пример `transfer` переписан через локальный
+    `Fail[TransferError]` с информативной ошибкой `AccountNotFound(id)`.
+
+**Cross-references:**
+
+12. D35 → D84, D67 → D85, `D46/Q-overloading` → D84 во всех
+    decision-файлах + open-questions.md.
+
+**Тесты:** 97/97 PASS после всех правок (interp + spec).
+
+**Открытые follow-up:**
+- Plan 19 implementation (атомарный PR Ф.1–Ф.5+Ф.10+Ф.8) — большая
+  задача.
+- C-codegen для `exit` — отдельная задача.
+- C-codegen для overloading свободных функций (D84 Bootstrap-status: ⚠️).
+- `paradigm.md` (Q8) переписать с нуля — не делалось.

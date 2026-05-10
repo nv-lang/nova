@@ -2592,3 +2592,137 @@ levels — выбор overload'а. Прецедент: TypeScript type assertion
 - nova_tests/syntax/fn_first_class.nv — +50 строк тестов.
 - docs/plans/14-stdlib-codegen-gaps.md — Ф.2/Ф.4 retro + table.
 - docs/plans/README.md — статус.
+
+---
+
+## 2026-05-10 — Closure-rev: `|x|` + `fn(...)` (Plan 19, spec-only)
+
+### Что и почему
+
+D22 заменена с `(params) =>` на двухуровневый closure:
+- `|x| body` — closure-light (untyped, контекст определяет sig).
+- `fn(x int) -> R body` — closure-full (типизированная, идентична
+  named fn без имени).
+
+Сразу убирается:
+- Перегруз `=>` (был: тело named fn + лямбды + match-arm +
+  handler-method + trailing-params; стал: тело named fn / closure-full
+  + match-arm + handler-method).
+- Unbounded look-ahead на `(` в expression-position (group vs lambda).
+- Запрет блок-формы лямбды `(x) => { ... }` — closure-light теперь
+  поддерживает block-форму нативно: `|x| { stmts; expr }`.
+- Ambient-effect inference для closure-light: эффекты не пишутся,
+  наследуются от parent fn + active `with`-blocks.
+- Запрет анонимной `fn`-формы — теперь `fn(...)` без имени это
+  closure-full, симметрично named fn.
+
+### Trailing расщеплён
+
+- `f(args) { block }` — без params (DSL).
+- `f(args) fn(p) body` — с params (closure-full без имени).
+- Старая `f(args) { x => body }` отменена.
+
+### Captures упрощены
+
+- Никаких `move`, `&mut`, lifetime'ов.
+- Через managed-heap (D32) — captures работают автоматически, escape
+  переезжает на heap прозрачно.
+- Multiple closures на одну `let mut` переменную разделяют capture.
+
+### Trade-offs
+
+- Effect inference оставлен **только для closure-light** — named fn
+  обязана объявлять эффекты в сигнатуре (R1 не ослабляется).
+- Closure-full обязана иметь типы параметров — нет overlap с
+  closure-light, граница чёткая.
+- `||` для no-arg closure (Rust-style); парсер различает от binary
+  OR по позиции (expression-start vs after-operand).
+
+### Файлы
+
+- spec/decisions/03-syntax.md — D22, D40, D43 переписаны.
+- spec/syntax.md, spec/effects.md, spec/revolutionary.md — примеры.
+- spec/decisions/{04,05,06,08}-*.md — точечные правки.
+- spec/decisions/closure-rev2026-05-DRAFT.md — DRAFT-зеркало.
+- docs/plans/19-closure-and-error-ops.md — план реализации (closure-rev + D85 error-ops в одном атомарном PR).
+
+### Status
+
+- Spec: ✅ ЗАКРЫТ.
+- Implementation: 🟡 Plan 19 DRAFT (parser/interp/codegen TODO).
+
+---
+
+## 2026-05-10 — Sweep: эффекты-формулировки + D84 overloading + D85 ?/!! + exit
+
+### Что упрощено
+
+**1. Один оператор — одна семантика (D85).** Раньше D67: `?` имел
+**две разные семантики** в зависимости от типа — для Result через
+Fail (engaged эффект), для Option через ранний return (без эффекта).
+Это «признанное напряжение» в D67 на деле было кривым обоснованием:
+ничего философского, просто два разных оператора впихнули в один
+символ ради краткости. **D85 разводит:** `?` всегда return-стиль
+(для обоих Option/Result), `!!` всегда throw-стиль. Программист
+выбирает стиль на месте использования.
+
+**2. `effect` vs `protocol` через одно правило.** D62 правило 4
+имел два sniff-вопроса (Q1 «resource-capability?» + Q2
+«continuation-capture?») с длинными объяснениями через внутренние
+термины. Свернули к **одному** проверяемому правилу: «хочется в
+тесте подменить handler — это effect, нет — protocol». `Fail` под
+него подходит без отдельного «особого случая» (catch-handler в
+тесте — это и есть подмена).
+
+**3. Overloading свободных функций (D84).** Раньше Plan 11 запрещал
+дубликат имён для свободных функций, разрешая методы и `From[T]`.
+Несимметрично без обоснования. **D84 снял запрет** — единый механизм
+для receiver-методов, static-функций и свободных функций. Один файл
+`spec/decisions/10-overloading.md` собирает все 4 оси перегрузки в
+одно правило (раньше D35/D46/D73/Plan 11 — разрозненно).
+
+**4. `panic` vs `exit` разведены.** Раньше формулировка «в CLI panic =
+exit процесса» сливала уровни — один и тот же `panic("foo")` вёл
+себя по-разному в разных средах. **D13 уточнён + новая `exit(code,
+msg)`:** panic — fiber-уровень, exit — process-уровень. Программист
+выбирает между ними.
+
+### Trade-offs (что усложнилось)
+
+- **Цена миграции stdlib (D85).** Все `parse(s)?` в `Fail[E] -> T`
+  функциях перестают работать. Десятки-сотни мест, каждое требует
+  смыслового решения (переход на `!!` или смена сигнатуры на
+  `-> Result`). Окупается чистотой дизайна.
+- **`!!` — новый оператор для запоминания.** Раньше был только `?`
+  и `??`, теперь добавился `!!`. Но взамен: каждый оператор делает
+  **одно**, без двух семантик одного символа. Чище для AI/LLM
+  (предсказуемее) и для людей (видишь `!!` — сразу понимаешь
+  «throw, серьёзно»).
+
+### Файлы
+
+**Новые:**
+- `spec/decisions/10-overloading.md` (D84).
+
+**Spec — крупные:** `spec/overview.md`, `spec/effects.md`,
+`spec/syntax.md`, `spec/revolutionary.md`, `spec/decisions/04-effects.md`
+(D67 отменён + D85 + D86 + D62 правило 4 свёрнуто), `spec/decisions/08-runtime.md`
+(D26 prelude: `exit` + `RuntimeNoneError`; D13 panic vs exit).
+
+**Spec — точечные:** `spec/decisions/{01,02,03,07}*.md` —
+cross-refs D35→D84, D67→D85, формулировки.
+
+**Plans:** `docs/plans/19-closure-rev.md` →
+`19-closure-and-error-ops.md` — добавлены Ф.10 + Ф.8b + Ф.9
+error-ops, риски и DoD дополнены.
+
+**Implementation:** `compiler-codegen/src/interp/stdlib.rs` —
+`exit` native function.
+
+### Status
+
+- Spec: ✅ ЗАКРЫТ.
+- Tests: 97/97 PASS после всех правок.
+- Implementation Plan 19 (включает D85 ?/!!): 🟡 DRAFT.
+- C-codegen для `exit`: 🟡 TODO (отдельная задача).
+- C-codegen overloading свободных функций: 🟡 TODO (D84 Bootstrap-status: ⚠️).
