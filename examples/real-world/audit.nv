@@ -106,7 +106,7 @@ fn action_from_route(method str, pattern str) -> str {
         .trim_prefix("/")
 
     // Найдём первую сущность и (опциональный) verb — пропускаем {param}.
-    let segments = p.split("/").filter((s) => s != "" && !s.starts_with("{"))
+    let segments = p.split("/").filter(|s| s != "" && !s.starts_with("{"))
     let entity = segments.get(0).unwrap_or("")
     let verb_explicit = segments.get(1).unwrap_or("")
 
@@ -144,14 +144,14 @@ fn target_from_route(pattern str) Router -> (str, str) {
 
     // Сущность — первый непараметрический сегмент.
     let kind = p.split("/")
-        .find((s) => s != "" && !s.starts_with("{"))
+        .find(|s| s != "" && !s.starts_with("{"))
         .map(singularize)
         .unwrap_or("")
 
     // ID — первый непустой URL-param, исключая wildcard.
     let id = Router.url_params()
-        .find((name, value) => value != "" && name != "*")
-        .map((_, value) => value)
+        .find(|name, value| value != "" && name != "*")
+        .map(|_, value| value)
         .unwrap_or("")
 
     (kind, id)
@@ -206,7 +206,7 @@ fn sanitize_payload(raw []u8) -> Json =>
 fn redact_secrets(obj Json) -> Json =>
     match obj {
         Json.Object(fields) => Json.Object(
-            fields.map((k, v) => (k, if is_secret_key(k) { json`"***"` } else { v }))
+            fields.map(|k, v| (k, if is_secret_key(k) { json`"***"` } else { v }))
         )
         other => other
     }
@@ -304,7 +304,7 @@ fn write_audit(e AuditEntryInternal) Db Log -> () {
     // `=> expr` (D22), поэтому handler-тело вынесено в named fn
     // `log_audit_failure`. Не вызываем resume — блок завершается после
     // handler'а.
-    with Fail[Error] = (err) => interrupt log_audit_failure(e, err) {
+    with Fail[Error] = |err| interrupt log_audit_failure(e, err) {
         with_timeout(2.seconds) {
             let ip_value = if e.ip != "" && e.ip != "<nil>" { Some(e.ip) } else { None }
             Db.exec(sql`
@@ -317,7 +317,7 @@ fn write_audit(e AuditEntryInternal) Db Log -> () {
     }
 }
 
-fn log_audit_failure(e AuditEntryInternal, err Error) Log -> () =>
+fn log_audit_failure(e AuditEntryInternal, err Error) Log -> ||
     Log.warn("admin audit: insert failed", {
         "admin_id": e.admin_id,
         "action":   e.action,
@@ -369,11 +369,11 @@ fn query_audit(p ListParams) Db Fail -> []AuditEntry {
         LEFT JOIN users u ON u.id = a.admin_id
         WHERE 1=1
     """)
-        .when(p.admin_id,  (v) => "AND a.admin_id = ?",  v)
-        .when(p.action,    (v) => "AND a.action = ?",    v)
-        .when(p.target_id, (v) => "AND a.target_id = ?", v)
-        .when(p.from,      (v) => "AND a.created_at >= ?", v)
-        .when(p.to,        (v) => "AND a.created_at <= ?", v)
+        .when(p.admin_id,  |v| "AND a.admin_id = ?",  v)
+        .when(p.action,    |v| "AND a.action = ?",    v)
+        .when(p.target_id, |v| "AND a.target_id = ?", v)
+        .when(p.from,      |v| "AND a.created_at >= ?", v)
+        .when(p.to,        |v| "AND a.created_at <= ?", v)
         .append("ORDER BY a.created_at DESC LIMIT ? OFFSET ?", [p.limit, p.offset])
 
     // QueryBuilder.build() возвращает уже собранный Sql (template + args).
@@ -434,7 +434,7 @@ test "audit middleware: пишет запись для успешного POST" 
          Detach = SyncDetach,
          Time = fixed(2026-04-30T10:00:00) {
 
-        let next = (req) => Response.ok(json`{}`)
+        let next = |req| Response.ok(json`{}`)
         let mw = audit_middleware(next)
 
         mw(Request.post("/users/42/ban", json`{"reason": "spam"}`))
@@ -454,7 +454,7 @@ test "audit middleware: НЕ пишет для 4xx" {
          CurrentAdmin = fixed_admin("admin-uuid"),
          Detach = SyncDetach {
 
-        let next = (req) => Response.error(403, "forbidden")
+        let next = |req| Response.error(403, "forbidden")
         let mw = audit_middleware(next)
 
         mw(Request.delete("/users/42", []))

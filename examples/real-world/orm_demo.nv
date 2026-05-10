@@ -160,9 +160,9 @@ export fn Repo[T] @insert(value T) Db Fail[RepoError] -> u64 {
 
     // Собираем имена и значения отдельно. Имена — статические идентификаторы
     // (не пользовательский ввод), значения — параметры.
-    let names_csv = cols.map((c) => c.name).join(", ")
-    let placeholders = cols.map((_) => "?").join(", ")
-    let args []SqlValue = cols.map((c) => c.value)
+    let names_csv = cols.map(|c| c.name).join(", ")
+    let placeholders = cols.map(|_| "?").join(", ")
+    let args []SqlValue = cols.map(|c| c.value)
 
     let q Sql = {
         template: "INSERT INTO ${@table} (${names_csv}) VALUES (${placeholders}) RETURNING id",
@@ -181,8 +181,8 @@ export fn Repo[T] @update(value T) Db Fail[RepoError] -> bool {
     let cols = @to_columns(value)
     if cols.len == 0 { throw Inconsistent("empty UPDATE") }
 
-    let assigns = cols.map((c) => "${c.name} = ?").join(", ")
-    let mut args []SqlValue = cols.map((c) => c.value)
+    let assigns = cols.map(|c| "${c.name} = ?").join(", ")
+    let mut args []SqlValue = cols.map(|c| c.value)
     args.push(I(@id_of(value) as i64))
 
     let q Sql = {
@@ -200,8 +200,8 @@ export fn Repo[T] @update(value T) Db Fail[RepoError] -> bool {
 export fn Repo[T] @update_versioned(value T, expected_version i64)
     Db Fail[RepoError] -> () {
     let cols = @to_columns(value)
-    let assigns = cols.map((c) => "${c.name} = ?").join(", ")
-    let mut args []SqlValue = cols.map((c) => c.value)
+    let assigns = cols.map(|c| "${c.name} = ?").join(", ")
+    let mut args []SqlValue = cols.map(|c| c.value)
     args.push(I(@id_of(value) as i64))
     args.push(I(expected_version))
 
@@ -353,7 +353,7 @@ export fn users_repo() -> Repo[User] =>
         table:      "users",
         from_row:   row_to_user,
         to_columns: user_to_columns,
-        id_of:      (u) => u.id as u64,
+        id_of:      |u| u.id as u64,
     }
 
 fn row_to_user(row DbRow) Fail[RepoError] -> User {
@@ -391,7 +391,7 @@ export fn posts_repo() -> Repo[Post] =>
         table:      "posts",
         from_row:   row_to_post,
         to_columns: post_to_columns,
-        id_of:      (p) => p.id as u64,
+        id_of:      |p| p.id as u64,
     }
 
 fn row_to_post(row DbRow) Fail[RepoError] -> Post {
@@ -438,7 +438,7 @@ export fn posts_of_many(user_ids []UserId) Db Fail[RepoError] -> HashMap[UserId,
     let posts = posts_repo().bulk_load(
         "user_id",
         user_ids,
-        (uid) => I(uid as i64),
+        |uid| I(uid as i64),
     )
 
     let mut grouped = HashMap[UserId, []Post].new()
@@ -471,7 +471,7 @@ export fn transfer_balance(from_id UserId, to_id UserId, amount i64)
     Db Fail[RepoError] -> () {
     if amount <= 0 { throw Inconsistent("amount must be positive") }
 
-    Db.in_transaction(() => {
+    Db.in_transaction(|| {
         let repo = users_repo()
         let from = repo.find_by_id(from_id as u64)
         let to   = repo.find_by_id(to_id as u64)
@@ -516,7 +516,7 @@ fn in_memory_db_handler(storage mut HashMap[u64, DbRow]) -> Handler[Db] => handl
             }
         } else if q.template.contains("WHERE id IN") {
             // SELECT WHERE id IN (?, ?, ...) — bulk_load
-            let ids []u64 = q.args.map((a) => match a {
+            let ids []u64 = q.args.map(|a| match a {
                 I(n) => n as u64
                 _    => 0
             })
@@ -589,7 +589,7 @@ test "find_by_id returns the user" {
 test "find_by_id throws NotFound for missing id" {
     let mut storage = HashMap[u64, DbRow].new()
     with Db = in_memory_db_handler(storage),
-         Fail[RepoError] = (e) => interrupt e {
+         Fail[RepoError] = |e| interrupt e {
         let r = users_repo().find_by_id(999)
         match r {
             NotFound => ()                   // ожидаемый исход
@@ -635,7 +635,7 @@ test "bulk_load — anti-N+1 для списка id'ов" {
         let users = users_repo().bulk_load(
             "id",
             [1 as UserId, 2 as UserId, 3 as UserId],
-            (uid) => I(uid as i64),
+            |uid| I(uid as i64),
         )
         assert users.len == 3
     }
@@ -660,7 +660,7 @@ test "transfer rolls back on throw" {
             }
         }
     },
-         Fail[RepoError] = (e) => interrupt Some(e) {
+         Fail[RepoError] = |e| interrupt Some(e) {
         transfer_balance(1 as UserId, 2 as UserId, 50)
         None                                  // throw'а не было
     }
@@ -688,7 +688,7 @@ test "update_versioned throws Conflict on version mismatch" {
         exec(q)            => 0             // ← 0 affected → Conflict
         in_transaction(b)  => b()
     },
-         Fail[RepoError] = (e) => interrupt Some(e) {
+         Fail[RepoError] = |e| interrupt Some(e) {
         let repo = users_repo()
         let u = repo.find_by_id(1)
         let updated = { ...u, balance: 999 }

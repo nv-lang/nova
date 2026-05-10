@@ -176,7 +176,7 @@ test "decode: неправильный secret → InvalidSignature" {
     claims_m.insert("sub", Str("u1"))
     let token = Jwt.encode_hs256(secret, Object(claims_m))
 
-    let r = with Fail[JwtError] = (e) => interrupt Some(e) {
+    let r = with Fail[JwtError] = |e| interrupt Some(e) {
         let _ = Jwt.decode_hs256("wrong".bytes(), token)
         None
     }
@@ -187,7 +187,7 @@ test "decode: неправильный secret → InvalidSignature" {
 }
 
 test "decode: неправильный формат → InvalidFormat" {
-    let r = with Fail[JwtError] = (e) => interrupt Some(e) {
+    let r = with Fail[JwtError] = |e| interrupt Some(e) {
         let _ = Jwt.decode_hs256("secret".bytes(), "not-a-jwt")
         None
     }
@@ -203,7 +203,7 @@ test "validate: expired token" {
     m.insert("exp", Num(1000.0))         // expired at 1000s = 1_000_000ms
     let token = Jwt.encode_hs256(secret, Object(m))
 
-    let r = with Time = fixed_ms(2_000_000), Fail[JwtError] = (e) => interrupt Some(e) {
+    let r = with Time = fixed_ms(2_000_000), Fail[JwtError] = |e| interrupt Some(e) {
         let _ = Jwt.validate_hs256(secret, token)
         None
     }
@@ -219,7 +219,7 @@ test "validate: not yet valid (nbf в будущем)" {
     m.insert("nbf", Num(5000.0))          // valid с 5000s
     let token = Jwt.encode_hs256(secret, Object(m))
 
-    let r = with Time = fixed_ms(1_000_000), Fail[JwtError] = (e) => interrupt Some(e) {
+    let r = with Time = fixed_ms(1_000_000), Fail[JwtError] = |e| interrupt Some(e) {
         let _ = Jwt.validate_hs256(secret, token)
         None
     }

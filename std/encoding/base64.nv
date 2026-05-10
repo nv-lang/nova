@@ -316,7 +316,7 @@ test "URL-safe round-trip" {
 }
 
 test "decode: ошибка — нечётная длина без padding в strict mode" {
-    let r = with Fail[Base64Error] = (e) => interrupt Some(e) {
+    let r = with Fail[Base64Error] = |e| interrupt Some(e) {
         let _ = Base64.decode("abc")            // 3 символа — не кратно 4
         None
     }
@@ -327,7 +327,7 @@ test "decode: ошибка — нечётная длина без padding в str
 }
 
 test "decode: ошибка — невалидный символ" {
-    let r = with Fail[Base64Error] = (e) => interrupt Some(e) {
+    let r = with Fail[Base64Error] = |e| interrupt Some(e) {
         let _ = Base64.decode("Zm$=")            // $ не в alphabet
         None
     }

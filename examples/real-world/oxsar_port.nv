@@ -43,12 +43,12 @@ type Router {
 // строк настройки. Здесь — стек handler'ов, каждый закрывает свой
 // аспект. Никаких middleware-функций как обёрток.
 fn run_server(port int) Net Io Fail -> () {
-    // handler-лямбда `(err) => recover_http(err)` (D31): тело вынесено
+    // handler-лямбда `|err| recover_http(err)` (D31): тело вынесено
     // в named fn, потому что лямбда строго `=> expr` (D22).
     with Logger = json_logger,
          Trace = otel_tracer,
          Time = system_time,
-         Fail[HttpError] = (err) => interrupt recover_http(err) {
+         Fail[HttpError] = |err| interrupt recover_http(err) {
 
         // CORS, request-id, real-ip — это handler'ы вокруг основного
         // обработчика, не middleware-цепочка.
@@ -86,7 +86,7 @@ fn recover_http(err HttpError) Logger -> Response {
 // Если хочется явный лог panic'ов — handler `Panic` (зарезервирован,
 // см. D13) перехватывает на границе:
 //
-//   with Panic = (p) => Log.error("crash: ${p}") { serve_request(req) }
+//   with Panic = |p| Log.error("crash: ${p}") { serve_request(req) }
 
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -213,11 +213,11 @@ export fn phalanx(req Request)
     let galaxy = q.get("target_galaxy")
         .ok_or(PhalanxError.MissingGalaxy)?
         .parse[int]()
-        .map_err((_) => PhalanxError.InvalidGalaxy)?
+        .map_err(|_| PhalanxError.InvalidGalaxy)?
     let system = q.get("target_system")
         .ok_or(PhalanxError.MissingSystem)?
         .parse[int]()
-        .map_err((_) => PhalanxError.InvalidSystem)?
+        .map_err(|_| PhalanxError.InvalidSystem)?
 
     let user_id = CurrentUser.id().ok_or(Unauthorized)?
     let scans = phalanx_scan(user_id, source, galaxy, system)

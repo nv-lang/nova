@@ -259,7 +259,7 @@ test "Range as function argument" {
 
 test "inclusive overflow throws" {
     // Range.inclusive(_, int.MAX) → throw OverflowError
-    let r = with Fail[OverflowError] = (e) => interrupt None {
+    let r = with Fail[OverflowError] = |e| interrupt None {
         Some(Range.inclusive(0, int.MAX))
     }
     assert(r == None)
@@ -308,7 +308,7 @@ test "step_by step >= end-start gives single element" {
 }
 
 test "step_by zero step throws" {
-    let r = with Fail[OverflowError] = (e) => interrupt None {
+    let r = with Fail[OverflowError] = |e| interrupt None {
         let it = (0..10).step_by(0)
         Some(it)
     }
@@ -316,7 +316,7 @@ test "step_by zero step throws" {
 }
 
 test "step_by negative step throws" {
-    let r = with Fail[OverflowError] = (e) => interrupt None {
+    let r = with Fail[OverflowError] = |e| interrupt None {
         let it = (0..10).step_by(-1)
         Some(it)
     }

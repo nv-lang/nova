@@ -80,7 +80,7 @@ export fn []T @last() -> Option[T] =>
 
 test "map preserves length and applies function" {
     let v []int = [1, 2, 3]
-    let doubled = v.map((x) => x * 2)
+    let doubled = v.map(|x| x * 2)
     assert(doubled.len == 3)
     assert(doubled.get(0) == Some(2))
     assert(doubled.get(2) == Some(6))
@@ -88,7 +88,7 @@ test "map preserves length and applies function" {
 
 test "filter keeps matching elements" {
     let v []int = [1, 2, 3, 4, 5]
-    let even = v.filter((x) => x % 2 == 0)
+    let even = v.filter(|x| x % 2 == 0)
     assert(even.len == 2)
     assert(even.get(0) == Some(2))
     assert(even.get(1) == Some(4))
@@ -96,14 +96,14 @@ test "filter keeps matching elements" {
 
 test "fold sums elements" {
     let v []int = [1, 2, 3, 4]
-    let sum = v.fold(0) { (acc, x) => acc + x }
+    let sum = v.fold(0) { |acc, x| acc + x }
     assert(sum == 10)
 }
 
 test "any/all on empty array" {
     let v []int = []
-    assert(!v.any((x) => x > 0))             // ни одного → false
-    assert(v.all((x) => x > 0))               // вакуумная истина → true
+    assert(!v.any(|x| x > 0))             // ни одного → false
+    assert(v.all(|x| x > 0))               // вакуумная истина → true
 }
 
 test "first/last" {

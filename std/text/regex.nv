@@ -765,7 +765,7 @@ test "no catastrophic backtracking — ключевое отличие от PCRE
 }
 
 test "compile: unclosed group" {
-    let r = with Fail[CompileError] = (e) => interrupt Some(e) {
+    let r = with Fail[CompileError] = |e| interrupt Some(e) {
         let _ = Regex.compile("(abc")
         None
     }
@@ -776,7 +776,7 @@ test "compile: unclosed group" {
 }
 
 test "compile: unclosed class" {
-    let r = with Fail[CompileError] = (e) => interrupt Some(e) {
+    let r = with Fail[CompileError] = |e| interrupt Some(e) {
         let _ = Regex.compile("[abc")
         None
     }

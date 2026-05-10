@@ -416,7 +416,7 @@ test "from: I/L → 1, O → 0 (Crockford ambiguity)" {
 }
 
 test "from: ошибка — неправильная длина" {
-    let r = with Fail[ParseUlidError] = (e) => interrupt Some(e) {
+    let r = with Fail[ParseUlidError] = |e| interrupt Some(e) {
         let _ = Ulid.from("too-short")
         None
     }
@@ -428,7 +428,7 @@ test "from: ошибка — неправильная длина" {
 
 test "from: ошибка — невалидный символ (U)" {
     // U исключён из Crockford alphabet.
-    let r = with Fail[ParseUlidError] = (e) => interrupt Some(e) {
+    let r = with Fail[ParseUlidError] = |e| interrupt Some(e) {
         let _ = Ulid.from("UAAAAAAAAAAAAAAAAAAAAAAAAA")     // 26 chars, но 'U' невалид
         None
     }

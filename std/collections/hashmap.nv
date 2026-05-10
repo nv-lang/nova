@@ -199,7 +199,7 @@ export fn HashMap[K, V] mut @clear() {
 // Если ключ есть — возвращает Some/Ok. Иначе вставляет default()
 // и возвращает его.
 //
-// Полезный паттерн для счётчиков: `m.get_or_insert(key, () => 0) + 1`.
+// Полезный паттерн для счётчиков: `m.get_or_insert(key, || 0) + 1`.
 export fn HashMap[K, V] mut @get_or_insert(key K, default fn() -> V) -> V {
     if let Some(v) = @get(key) {
         return v
@@ -423,7 +423,7 @@ test "get_or_insert with counter pattern" {
     let words = ["foo", "bar", "foo", "baz", "foo", "bar"]
 
     for w in words {
-        let prev = counts.get_or_insert(w, () => 0)
+        let prev = counts.get_or_insert(w, || 0)
         counts.insert(w, prev + 1)
     }
 

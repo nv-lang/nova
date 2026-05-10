@@ -485,7 +485,7 @@ test "deadline_in + is_past через Time-handler" {
 
 test "measure: длительность action'а" {
     with Time = fixed_ms(1000) {
-        let (result, elapsed) = measure(() => 42)
+        let (result, elapsed) = measure(|| 42)
         assert(result == 42)
         // С fixed_ms всегда возвращает то же — elapsed = 0
         assert(elapsed == Duration.ZERO)

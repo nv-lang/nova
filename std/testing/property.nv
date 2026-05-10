@@ -249,7 +249,7 @@ type RunResult
 
 // Прогнать body один раз, поймав Fail.
 fn run_once[T](body fn(T) Fail[PropertyFailed] -> (), value T) -> RunResult {
-    with Fail[PropertyFailed] = (e) => interrupt Fail(e) {
+    with Fail[PropertyFailed] = |e| interrupt Fail(e) {
         body(value)
         Pass
     }
@@ -402,7 +402,7 @@ test "shrinking демо: ищем минимальный counterexample" {
     let mut min_size = 9999
 
     with Random = seeded(99) {
-        with Fail[PropertyFailed] = (e) => interrupt () {
+        with Fail[PropertyFailed] = |e| interrupt () {
             property(gen) { xs =>
                 // Намеренно ложное свойство: «все элементы > 0»
                 let mut all_pos = true

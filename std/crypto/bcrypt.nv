@@ -275,7 +275,7 @@ test "формат hash правильный" {
 }
 
 test "ошибка: cost вне диапазона" {
-    let r = with Random = seeded(0), Fail[BcryptError] = (e) => interrupt Some(e) {
+    let r = with Random = seeded(0), Fail[BcryptError] = |e| interrupt Some(e) {
         let _ = Bcrypt.hash("x", 1)
         None
     }
@@ -288,7 +288,7 @@ test "ошибка: cost вне диапазона" {
 test "ошибка: пароль > 72 байта" {
     let mut long = ""
     for i in 0..100 { long = long + "a" }
-    let r = with Random = seeded(0), Fail[BcryptError] = (e) => interrupt Some(e) {
+    let r = with Random = seeded(0), Fail[BcryptError] = |e| interrupt Some(e) {
         let _ = Bcrypt.hash(long, 4)
         None
     }

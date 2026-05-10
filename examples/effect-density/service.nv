@@ -71,7 +71,7 @@ export fn transfer_money(
 fn do_transfer(req TransferRequest) -> Transfer {
     validate_amount(req.amount)
 
-    Db.in_transaction(() => {
+    Db.in_transaction(|| {
         let from = repo.account_get(req.from)
         let to   = repo.account_get(req.to)
 
@@ -109,7 +109,7 @@ fn do_transfer(req TransferRequest) -> Transfer {
 //
 // validate_amount — Fail[TransferError]. Других эффектов нет.
 // Один эффект — рекордно мало для прикладного кода.
-fn validate_amount(m Money) Fail[TransferError] -> () =>
+fn validate_amount(m Money) Fail[TransferError] -> ||
     if m.amount <= 0 { throw NonPositiveAmount }
 
 

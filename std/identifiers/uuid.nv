@@ -396,7 +396,7 @@ test "from: case-insensitive hex" {
 }
 
 test "from: ошибка — неправильная длина" {
-    let r = with Fail[ParseUuidError] = (e) => interrupt Some(e) {
+    let r = with Fail[ParseUuidError] = |e| interrupt Some(e) {
         let _ = Uuid.from("too-short")
         None
     }
@@ -407,7 +407,7 @@ test "from: ошибка — неправильная длина" {
 }
 
 test "from: ошибка — отсутствует дефис" {
-    let r = with Fail[ParseUuidError] = (e) => interrupt Some(e) {
+    let r = with Fail[ParseUuidError] = |e| interrupt Some(e) {
         let _ = Uuid.from("550e8400xe29b-41d4-a716-446655440000")
         None
     }
@@ -418,7 +418,7 @@ test "from: ошибка — отсутствует дефис" {
 }
 
 test "from: ошибка — не-hex символ" {
-    let r = with Fail[ParseUuidError] = (e) => interrupt Some(e) {
+    let r = with Fail[ParseUuidError] = |e| interrupt Some(e) {
         let _ = Uuid.from("550e8400-e29b-41d4-a716-44665544000Z")
         None
     }

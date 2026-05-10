@@ -112,7 +112,7 @@ fn parse_one_comparator(s str) Fail[ParseRangeError] -> []Comparator {
 
 fn parse_version(s str) Fail[ParseRangeError] -> Version {
     // Используем std.semver.Version.from, преобразуем ParseVersionError в наш.
-    let r = with Fail[ParseVersionError] = (e) => interrupt Err(e) {
+    let r = with Fail[ParseVersionError] = |e| interrupt Err(e) {
         Ok(Version.from(s))
     }
     match r {

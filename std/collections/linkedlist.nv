@@ -191,21 +191,21 @@ test "reverse" {
 
 test "map applies function preserving structure" {
     let l = LinkedList[int].from_array([1, 2, 3])
-    let doubled = l.map((x) => x * 2)
+    let doubled = l.map(|x| x * 2)
     assert(doubled.head() == Some(2))
     assert(doubled.length() == 3)
 }
 
 test "filter removes non-matching" {
     let l = LinkedList[int].from_array([1, 2, 3, 4, 5])
-    let even = l.filter((x) => x % 2 == 0)
+    let even = l.filter(|x| x % 2 == 0)
     assert(even.length() == 2)
     assert(even.head() == Some(2))
 }
 
 test "fold sums" {
     let l = LinkedList[int].from_array([1, 2, 3, 4])
-    let sum = l.fold(0) { (acc, x) => acc + x }
+    let sum = l.fold(0) { |acc, x| acc + x }
     assert(sum == 10)
 }
 

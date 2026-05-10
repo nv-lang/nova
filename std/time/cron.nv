@@ -263,7 +263,7 @@ test "parse: list" {
 }
 
 test "parse: ошибка — out of range" {
-    let r = with Fail[ParseCronError] = (e) => interrupt Some(e) {
+    let r = with Fail[ParseCronError] = |e| interrupt Some(e) {
         let _ = Cron.parse("0 25 * * *")          // hour > 23
         None
     }
@@ -274,7 +274,7 @@ test "parse: ошибка — out of range" {
 }
 
 test "parse: ошибка — wrong field count" {
-    let r = with Fail[ParseCronError] = (e) => interrupt Some(e) {
+    let r = with Fail[ParseCronError] = |e| interrupt Some(e) {
         let _ = Cron.parse("0 0 0")
         None
     }

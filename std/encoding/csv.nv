@@ -141,7 +141,7 @@ test "parse: multiline в quoted field" {
 }
 
 test "parse: ошибка — незакрытая quote" {
-    let r = with Fail[ParseCsvError] = (e) => interrupt Some(e) {
+    let r = with Fail[ParseCsvError] = |e| interrupt Some(e) {
         let _ = Csv.parse("\"unterminated")
         None
     }

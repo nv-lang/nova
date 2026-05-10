@@ -227,7 +227,7 @@ test "min_max" {
 }
 
 test "ошибка: пустой ввод" {
-    let r = with Fail[StatsError] = (e) => interrupt Some(e) {
+    let r = with Fail[StatsError] = |e| interrupt Some(e) {
         let _ = Stats.mean([])
         None
     }

@@ -468,7 +468,7 @@ test "round-trip: с userinfo" {
 }
 
 test "parse: ошибка — пустой ввод" {
-    let r = with Fail[ParseUrlError] = (e) => interrupt Some(e) {
+    let r = with Fail[ParseUrlError] = |e| interrupt Some(e) {
         let _ = Url.from("")
         None
     }
@@ -479,7 +479,7 @@ test "parse: ошибка — пустой ввод" {
 }
 
 test "parse: ошибка — нет scheme" {
-    let r = with Fail[ParseUrlError] = (e) => interrupt Some(e) {
+    let r = with Fail[ParseUrlError] = |e| interrupt Some(e) {
         let _ = Url.from("example.com/path")          // нет ":"
         None
     }
@@ -490,7 +490,7 @@ test "parse: ошибка — нет scheme" {
 }
 
 test "parse: ошибка — порт не число" {
-    let r = with Fail[ParseUrlError] = (e) => interrupt Some(e) {
+    let r = with Fail[ParseUrlError] = |e| interrupt Some(e) {
         let _ = Url.from("http://example.com:abc/")
         None
     }
@@ -501,7 +501,7 @@ test "parse: ошибка — порт не число" {
 }
 
 test "parse: ошибка — порт > 65535" {
-    let r = with Fail[ParseUrlError] = (e) => interrupt Some(e) {
+    let r = with Fail[ParseUrlError] = |e| interrupt Some(e) {
         let _ = Url.from("http://example.com:99999/")
         None
     }
@@ -534,7 +534,7 @@ test "decode_query: round-trip" {
 }
 
 test "decode_query: ошибка — обрезанное %X" {
-    let r = with Fail[ParseUrlError] = (e) => interrupt Some(e) {
+    let r = with Fail[ParseUrlError] = |e| interrupt Some(e) {
         let _ = Url.decode_query("abc%2")             // обрезано
         None
     }

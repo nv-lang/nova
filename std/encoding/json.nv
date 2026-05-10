@@ -784,7 +784,7 @@ test "parse: surrogate pair (emoji)" {
 }
 
 test "parse: ошибка — неизвестный токен" {
-    let r = with Fail[ParseJsonError] = (e) => interrupt Some(e) {
+    let r = with Fail[ParseJsonError] = |e| interrupt Some(e) {
         let _ = Json.parse("xyz")
         None
     }
@@ -795,7 +795,7 @@ test "parse: ошибка — неизвестный токен" {
 }
 
 test "parse: ошибка — незакрытая string" {
-    let r = with Fail[ParseJsonError] = (e) => interrupt Some(e) {
+    let r = with Fail[ParseJsonError] = |e| interrupt Some(e) {
         let _ = Json.parse("\"unclosed")
         None
     }
@@ -806,7 +806,7 @@ test "parse: ошибка — незакрытая string" {
 }
 
 test "parse: ошибка — trailing content" {
-    let r = with Fail[ParseJsonError] = (e) => interrupt Some(e) {
+    let r = with Fail[ParseJsonError] = |e| interrupt Some(e) {
         let _ = Json.parse("42 garbage")
         None
     }
@@ -817,7 +817,7 @@ test "parse: ошибка — trailing content" {
 }
 
 test "parse: ошибка — duplicate key" {
-    let r = with Fail[ParseJsonError] = (e) => interrupt Some(e) {
+    let r = with Fail[ParseJsonError] = |e| interrupt Some(e) {
         let _ = Json.parse("{\"a\": 1, \"a\": 2}")
         None
     }
@@ -828,7 +828,7 @@ test "parse: ошибка — duplicate key" {
 }
 
 test "parse: ошибка — bad number" {
-    let r = with Fail[ParseJsonError] = (e) => interrupt Some(e) {
+    let r = with Fail[ParseJsonError] = |e| interrupt Some(e) {
         let _ = Json.parse("01")           // leading zero запрещён в JSON
         None
     }

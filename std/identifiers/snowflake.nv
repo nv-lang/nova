@@ -122,7 +122,7 @@ test "parse: round-trip компонентов" {
 }
 
 test "ошибка — невалидный machine_id" {
-    let r = with Fail[SnowflakeError] = (e) => interrupt Some(e) {
+    let r = with Fail[SnowflakeError] = |e| interrupt Some(e) {
         let _ = SnowflakeGen.new(2000)
         None
     }
@@ -135,7 +135,7 @@ test "ошибка — невалидный machine_id" {
 test "ошибка — clock backwards" {
     let mut gen = SnowflakeGen.new(0)
     let _ = with Time = fixed_ms(2000) { gen.next() }
-    let r = with Time = fixed_ms(1000), Fail[SnowflakeError] = (e) => interrupt Some(e) {
+    let r = with Time = fixed_ms(1000), Fail[SnowflakeError] = |e| interrupt Some(e) {
         let _ = gen.next()
         None
     }

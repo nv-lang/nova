@@ -129,7 +129,7 @@ test "decode: case-insensitive" {
 }
 
 test "decode: ошибка — нечётная длина" {
-    let r = with Fail[ParseHexError] = (e) => interrupt Some(e) {
+    let r = with Fail[ParseHexError] = |e| interrupt Some(e) {
         let _ = Hex.decode("abc")
         None
     }
@@ -140,7 +140,7 @@ test "decode: ошибка — нечётная длина" {
 }
 
 test "decode: ошибка — невалидный символ" {
-    let r = with Fail[ParseHexError] = (e) => interrupt Some(e) {
+    let r = with Fail[ParseHexError] = |e| interrupt Some(e) {
         let _ = Hex.decode("abXY")
         None
     }

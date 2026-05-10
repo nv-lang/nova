@@ -80,7 +80,7 @@ export fn RetryPolicy @execute[T, E](body fn() Fail[E] -> T) Time Random Fail[E]
     let mut last_error Option[E] = None
 
     while attempt < @max_attempts && result == None {
-        let r = with Fail[E] = (e) => interrupt Err(e) {
+        let r = with Fail[E] = |e| interrupt Err(e) {
             Ok(body())
         }
         match r {
@@ -157,7 +157,7 @@ fn apply_jitter(j Jitter, d Duration) Random -> Duration => match j {
 test "execute: первая попытка успешна" {
     let policy = RetryPolicy.exponential(3)
     with Time = fixed_ms(0), Random = seeded(0) {
-        let result = policy.execute(() => 42)
+        let result = policy.execute(|| 42)
         assert(result == 42)
     }
 }
@@ -166,7 +166,7 @@ test "execute: retry до успеха" {
     let policy = RetryPolicy.fixed(5, 10.millis())
     let mut attempts = 0
     with Time = fixed_ms(0), Random = seeded(0) {
-        let result = policy.execute(() => {
+        let result = policy.execute(|| {
             attempts += 1
             if attempts < 3 { throw "transient" }
             "success"
@@ -179,8 +179,8 @@ test "execute: retry до успеха" {
 test "execute: исчерпание попыток" {
     let policy = RetryPolicy.fixed(3, 10.millis())
     let r = with Time = fixed_ms(0), Random = seeded(0),
-                Fail[str] = (e) => interrupt Some(e) {
-        let _ = policy.execute(() => {
+                Fail[str] = |e| interrupt Some(e) {
+        let _ = policy.execute(|| {
             throw "always fails"
             ""
         })
@@ -236,9 +236,9 @@ test "AI-first: тесты retry полностью детерминирован
     let policy = RetryPolicy.exponential(3)
     let mut count = 0
     with Time = fixed_ms(0), Random = seeded(123) {
-        let r = with Fail[str] = (e) => interrupt None {
+        let r = with Fail[str] = |e| interrupt None {
             count += 1
-            Some(policy.execute(() => {
+            Some(policy.execute(|| {
                 count += 1
                 if count < 4 { throw "fail" }
                 "ok"

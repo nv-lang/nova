@@ -161,7 +161,7 @@ test "parse: quoted values" {
 }
 
 test "parse: ошибка — невалидная line" {
-    let r = with Fail[ParseIniError] = (e) => interrupt Some(e) {
+    let r = with Fail[ParseIniError] = |e| interrupt Some(e) {
         let _ = Ini.parse("[s]\nbroken-line-no-equals\n")
         None
     }
@@ -172,7 +172,7 @@ test "parse: ошибка — невалидная line" {
 }
 
 test "parse: ошибка — незакрытая section" {
-    let r = with Fail[ParseIniError] = (e) => interrupt Some(e) {
+    let r = with Fail[ParseIniError] = |e| interrupt Some(e) {
         let _ = Ini.parse("[unclosed\nk = v\n")
         None
     }

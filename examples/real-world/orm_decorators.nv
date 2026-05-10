@@ -140,7 +140,7 @@ export fn with_read_replica(primary Handler[Db], replica Handler[Db]) -> Handler
     in_transaction(b) {
         // Внутри транзакции — всё через primary. Подменяем Db
         // вложенным handler'ом, который делегирует только primary.
-        primary.in_transaction(() => with Db = primary { b() })
+        primary.in_transaction(|| with Db = primary { b() })
     }
 }
 
@@ -265,7 +265,7 @@ test "read-replica: внутри transaction всё на primary" {
         capturing_handler(primary_log),
         capturing_handler(replica_log),
     ) {
-        Db.in_transaction(() => {
+        Db.in_transaction(|| {
             Db.query(sql`SELECT 1`)            // должен пойти на primary
             Db.exec(sql`UPDATE users SET name = ${"alice"} WHERE id = ${1}`)
             ()

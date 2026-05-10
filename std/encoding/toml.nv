@@ -468,7 +468,7 @@ test "parse: comments игнорируются" {
 }
 
 test "parse: ошибка — незакрытая string" {
-    let r = with Fail[ParseTomlError] = (e) => interrupt Some(e) {
+    let r = with Fail[ParseTomlError] = |e| interrupt Some(e) {
         let _ = Toml.parse("k = \"unclosed")
         None
     }
