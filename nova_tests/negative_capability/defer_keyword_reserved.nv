@@ -1,0 +1,17 @@
+// EXPECT_COMPILE_ERROR defer
+//
+// D90/D83: `defer` — зарезервированный keyword (см. D90 cleanup
+// statements). Использование как identifier (имя переменной, поля,
+// функции) — compile error.
+//
+// Этот тест проверяет что Ф.1 Plan 20 (lexer reservation) работает:
+// `defer` распознаётся как KwDefer-токен, не как Ident. Парсер
+// видит KwDefer там где ожидался Ident → ошибка.
+
+module nova_tests.negative_capability.defer_keyword_reserved
+
+
+fn use_defer_as_var() -> int {
+    let defer = 42       // ❌ defer — keyword, не identifier
+    defer
+}

@@ -74,6 +74,12 @@ pub enum TokenKind {
     KwAnd,
     KwOr,
     KwNot,
+    /// D90: scope-level cleanup statement. `defer body` запускается на
+    /// любом exit (normal/return/throw/panic/interrupt).
+    KwDefer,
+    /// D90: error-only cleanup. `errdefer body` запускается только на
+    /// throw/panic-exit, не на normal/return/interrupt.
+    KwErrDefer,
 
     // Пунктуация
     LParen,
@@ -183,6 +189,8 @@ impl TokenKind {
             TokenKind::KwAnd => "`and`",
             TokenKind::KwOr => "`or`",
             TokenKind::KwNot => "`not`",
+            TokenKind::KwDefer => "`defer`",
+            TokenKind::KwErrDefer => "`errdefer`",
             TokenKind::LParen => "`(`",
             TokenKind::RParen => "`)`",
             TokenKind::LBracket => "`[`",
