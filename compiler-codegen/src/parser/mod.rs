@@ -1906,11 +1906,169 @@ impl Parser {
             TokenKind::KwHandler => self.parse_handler_lit(),
             TokenKind::KwForbid => self.parse_forbid(),
             TokenKind::KwRealtime => self.parse_realtime(),
+            // Plan 19, C2: closure-light `|x| body` / `||` / `|_|`.
+            // В expression-position (parse_primary) `|` всегда означает
+            // начало closure-light. В infix-position он остаётся
+            // bitwise OR (см. parse_bit_or в parser-цепочке).
+            TokenKind::Pipe => self.parse_closure_light_with_params(start),
+            // `||` — closure-light без параметров. Disambiguation от
+            // logical-OR работает по позиции: в expression-position
+            // (start) `||` всегда no-arg closure; в infix-position —
+            // logical-OR (см. parse_logical_or).
+            TokenKind::PipePipe => self.parse_closure_light_no_params(start),
             other => Err(Diagnostic::new(
                 format!("unexpected {} in expression", other.name()),
                 start,
             )),
         }
+    }
+
+    /// Plan 19, C2: парсит closure-light с параметрами.
+    ///
+    /// Ожидает текущим токеном `|`. После `|` идут идентификаторы
+    /// (имена параметров, разделённые запятой), затем закрывающий `|`,
+    /// затем тело — bare expression или block.
+    ///
+    /// Wildcard `_` разрешён как имя параметра (D59 расширение).
+    /// Типы параметров **запрещены** — closure-light всегда untyped.
+    /// Если нужны типы — программист использует closure-full
+    /// (`fn(x int) ...`, см. parse_closure_full).
+    fn parse_closure_light_with_params(&mut self, start: Span) -> Result<Expr, Diagnostic> {
+        // Съедаем открывающий `|`
+        let open = self.expect(&TokenKind::Pipe)?.span;
+        self.skip_newlines();
+
+        let mut params = Vec::new();
+        // Пустой `|...|` без параметров — некорректно, программист
+        // должен писать `||`. Однако `|_|` валиден (один wildcard).
+        if !matches!(self.peek().kind, TokenKind::Pipe) {
+            loop {
+                let p = self.parse_closure_light_param()?;
+                params.push(p);
+                self.skip_newlines();
+                if self.eat(&TokenKind::Comma).is_none() {
+                    break;
+                }
+                self.skip_newlines();
+            }
+        }
+        // Закрывающий `|`. Если параметров нет — это была ошибка
+        // программиста (`||` ловится отдельной веткой), здесь сразу
+        // expect — даст понятную диагностику.
+        let _close = self.expect(&TokenKind::Pipe).map_err(|d| {
+            // Делаем сообщение чётче: подсказываем форму записи.
+            let mut d = d;
+            d.message = format!(
+                "{} (in closure-light parameter list — `|x|`, `|x, y|`, `|_|`, или `||` для no-arg)",
+                d.message
+            );
+            d
+        })?;
+        let _ = open;
+        self.parse_closure_light_body(start, params)
+    }
+
+    /// Plan 19, C2: парсит closure-light без параметров (`|| body`).
+    ///
+    /// Текущий токен — `||` (двойной pipe). Тело — bare expression
+    /// или block, как у обычной closure-light.
+    fn parse_closure_light_no_params(&mut self, start: Span) -> Result<Expr, Diagnostic> {
+        // Съедаем `||` целиком.
+        let _ = self.expect(&TokenKind::PipePipe)?;
+        self.parse_closure_light_body(start, Vec::new())
+    }
+
+    /// Парсит один параметр closure-light: имя или wildcard `_`.
+    /// Типы запрещены — если программист написал `|x int|`, парсер
+    /// даёт явную ошибку с подсказкой переключиться на closure-full.
+    fn parse_closure_light_param(&mut self) -> Result<crate::ast::ClosureLightParam, Diagnostic> {
+        let tok = self.peek().clone();
+        let (name, span) = match &tok.kind {
+            // В лексере Nova `_` парсится как `Ident("_")` (lexer/mod.rs:417);
+            // wildcard и обычный identifier различаются по строковому значению.
+            TokenKind::Ident(s) => {
+                self.bump();
+                (s.clone(), tok.span)
+            }
+            _ => {
+                return Err(Diagnostic::new(
+                    format!(
+                        "expected closure-light parameter name (identifier or `_`), got {}",
+                        tok.kind.name()
+                    ),
+                    tok.span,
+                ))
+            }
+        };
+        // Параметр не должен иметь тип (это было бы closure-full).
+        // Если за именем идёт type-ish токен — даём понятную ошибку.
+        if self.is_closure_light_type_after_name() {
+            return Err(Diagnostic::new(
+                "closure-light parameters are untyped — use `fn(x T)` syntax for typed closures (closure-full)".to_string(),
+                self.peek().span,
+            ));
+        }
+        Ok(crate::ast::ClosureLightParam { name, span })
+    }
+
+    /// Эвристика «после имени параметра идёт тип»: первый токен,
+    /// который выглядит как начало type-expression. Используется
+    /// для генерации хорошей ошибки в parse_closure_light_param.
+    ///
+    /// Знаем что после имени допустимы только: `,` (следующий param)
+    /// или `|` (закрытие списка). Всё остальное — type-like.
+    fn is_closure_light_type_after_name(&self) -> bool {
+        !matches!(
+            self.peek().kind,
+            TokenKind::Comma | TokenKind::Pipe
+        )
+    }
+
+    /// Общая часть: после съеденного `|...|` парсит тело closure'а.
+    /// Тело — `Block` (если следующий токен `{`) или bare `Expr`.
+    fn parse_closure_light_body(
+        &mut self,
+        start: Span,
+        params: Vec<crate::ast::ClosureLightParam>,
+    ) -> Result<Expr, Diagnostic> {
+        // closure-light не использует `=>` — это часть «освобождения
+        // `=>` от роли лямбда-стрелки» (D22-rev). Если программист
+        // написал `|x| => expr`, даём явную ошибку.
+        if matches!(self.peek().kind, TokenKind::FatArrow) {
+            let span = self.peek().span;
+            return Err(Diagnostic::new(
+                "closure-light body starts immediately after `|...|`, no `=>` is used (D22-rev). Drop the `=>` or use a named fn / `fn(...)` if you need `=>`".to_string(),
+                span,
+            ));
+        }
+        // Block-форма: `|x| { stmts; expr }`.
+        // В отличие от parse_primary, здесь НЕ применяем
+        // record-литерал-эвристику — `|x| { name: ... }` это
+        // block-body с record-литералом внутри был бы крайне редким
+        // паттерном; для consistency block-форма всегда побеждает.
+        if matches!(self.peek().kind, TokenKind::LBrace) {
+            let block = self.parse_block()?;
+            let span = start.merge(block.span);
+            return Ok(Expr::new(
+                ExprKind::ClosureLight {
+                    params,
+                    body: crate::ast::ClosureBody::Block(block),
+                },
+                span,
+            ));
+        }
+        // Expression-форма: `|x| expr`. Тело — одно выражение.
+        // Как у старой Lambda, парсим через parse_expr (полный
+        // pratt-парсер).
+        let body = self.parse_expr()?;
+        let span = start.merge(body.span);
+        Ok(Expr::new(
+            ExprKind::ClosureLight {
+                params,
+                body: crate::ast::ClosureBody::Expr(Box::new(body)),
+            },
+            span,
+        ))
     }
 
     /// Эвристика: `{` перед нами — это начало record-литерала?
@@ -3522,5 +3680,153 @@ mod tests {
             "#,
         );
         assert_eq!(m.items.len(), 1);
+    }
+
+    // ─── Plan 19, C2: closure-light parsing ────────────────────────
+
+    /// Helper: ищет верхнеуровневое closure-light выражение в первом
+    /// `let`-биндинге модуля. Используется в тестах ниже.
+    fn first_let_closure_light(m: &Module) -> (&Vec<crate::ast::ClosureLightParam>, &crate::ast::ClosureBody) {
+        let Item::Let(l) = &m.items[0] else {
+            panic!("expected first item to be `let`, got {:?}", m.items[0]);
+        };
+        let ExprKind::ClosureLight { params, body } = &l.value.kind else {
+            panic!(
+                "expected ClosureLight in let value, got {:?}",
+                l.value.kind
+            );
+        };
+        (params, body)
+    }
+
+    #[test]
+    fn closure_light_one_param_expr() {
+        let m = parse_or_panic("let inc = |x| x + 1\n");
+        let (params, body) = first_let_closure_light(&m);
+        assert_eq!(params.len(), 1);
+        assert_eq!(params[0].name, "x");
+        assert!(matches!(body, crate::ast::ClosureBody::Expr(_)));
+    }
+
+    #[test]
+    fn closure_light_no_params() {
+        let m = parse_or_panic("let zero = || 0\n");
+        let (params, body) = first_let_closure_light(&m);
+        assert!(params.is_empty());
+        assert!(matches!(body, crate::ast::ClosureBody::Expr(_)));
+    }
+
+    #[test]
+    fn closure_light_wildcard_param() {
+        let m = parse_or_panic("let any = |_| 42\n");
+        let (params, _body) = first_let_closure_light(&m);
+        assert_eq!(params.len(), 1);
+        assert_eq!(params[0].name, "_");
+    }
+
+    #[test]
+    fn closure_light_multi_params() {
+        let m = parse_or_panic("let add = |a, b| a + b\n");
+        let (params, _body) = first_let_closure_light(&m);
+        assert_eq!(params.len(), 2);
+        assert_eq!(params[0].name, "a");
+        assert_eq!(params[1].name, "b");
+    }
+
+    #[test]
+    fn closure_light_block_body() {
+        let m = parse_or_panic(
+            r#"
+            let f = |x| {
+                let y = x * 2
+                y + 1
+            }
+            "#,
+        );
+        let (params, body) = first_let_closure_light(&m);
+        assert_eq!(params.len(), 1);
+        assert_eq!(params[0].name, "x");
+        assert!(matches!(body, crate::ast::ClosureBody::Block(_)));
+    }
+
+    #[test]
+    fn closure_light_no_params_block_body() {
+        let m = parse_or_panic(
+            r#"
+            let g = || {
+                let x = 10
+                x * x
+            }
+            "#,
+        );
+        let (params, body) = first_let_closure_light(&m);
+        assert!(params.is_empty());
+        assert!(matches!(body, crate::ast::ClosureBody::Block(_)));
+    }
+
+    #[test]
+    fn closure_light_in_call_arg() {
+        // Closure-light внутри args вызова — частый use-case (HOF).
+        let m = parse_or_panic("let r = list.filter(|x| x > 0)\n");
+        let Item::Let(l) = &m.items[0] else { panic!() };
+        // r = ExprKind::Call { ... args: [Closure...] }
+        let ExprKind::Call { args, .. } = &l.value.kind else {
+            panic!("expected Call, got {:?}", l.value.kind);
+        };
+        assert_eq!(args.len(), 1);
+        let CallArg::Item(arg_expr) = &args[0] else { panic!() };
+        assert!(matches!(arg_expr.kind, ExprKind::ClosureLight { .. }));
+    }
+
+    #[test]
+    fn closure_light_typed_param_rejected() {
+        // |x int| — невалидно, типы только в closure-full.
+        let result = parse("let bad = |x int| x + 1\n");
+        assert!(result.is_err(), "typed param must be rejected in closure-light");
+        let err = result.unwrap_err();
+        assert!(
+            err.message.contains("untyped") || err.message.contains("fn(x T)"),
+            "error message should hint at closure-full, got: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn closure_light_arrow_in_body_rejected() {
+        // |x| => expr — невалидно (D22-rev: closure-light не использует =>).
+        let result = parse("let bad = |x| => x + 1\n");
+        assert!(result.is_err(), "`|x| => expr` must be rejected");
+        let err = result.unwrap_err();
+        assert!(
+            err.message.contains("=>") || err.message.contains("D22-rev") || err.message.contains("closure-light body"),
+            "error message should explain `=>` is not used, got: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn closure_light_does_not_break_binary_or() {
+        // `|` в infix-position — binary OR, не closure.
+        // 5 | 2 — bitwise OR, должно дать значение 7 (но мы парсим, не вычисляем).
+        let m = parse_or_panic("let r = 5 | 2\n");
+        let Item::Let(l) = &m.items[0] else { panic!() };
+        // Должен быть Binary, не ClosureLight.
+        assert!(
+            matches!(l.value.kind, ExprKind::Binary { .. }),
+            "expected Binary OR, got {:?}",
+            l.value.kind
+        );
+    }
+
+    #[test]
+    fn closure_light_does_not_break_logical_or() {
+        // `||` в infix-position — logical OR, не no-arg closure.
+        let m = parse_or_panic("let r = true || false\n");
+        let Item::Let(l) = &m.items[0] else { panic!() };
+        assert!(
+            matches!(l.value.kind, ExprKind::Binary { .. }),
+            "expected logical OR (Binary), got {:?}",
+            l.value.kind
+        );
     }
 }
