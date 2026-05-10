@@ -5536,13 +5536,58 @@ let p = protocol Fan  { run() => () }      // новый — anonymous protocol-
 **Развилка 2 — anonymous protocol-литералы:**
 
 - **(C) Не делать (текущее).** Protocol реализуется через **типы с
-  методами**. Идиома Rust/Go/Swift — они **сознательно** отвергли
-  anonymous protocol-impls. Аргумент: размывает AI-first locality
-  (R5.1) — реализации «спрятаны» в expression-position, не
-  находятся grep'ом.
+  методами**. Идиома Rust/Go/Swift — они отвергли anonymous
+  protocol-impls. Аргумент: protocols обычно **reusable** (живут
+  как named-типы); anonymous-форма экономит мало в типичных
+  случаях.
 - **(D) Делать `protocol Fan { run() => () }`.** Аналог Kotlin
   `object : Runnable { ... }` / Java anonymous classes. Удобно для
   ad-hoc реализаций без объявления отдельного типа. Расширяет язык.
+
+**Важная аналогия:** Nova **уже** имеет anonymous protocol-impl —
+это `handler Logger { ... }` для эффектов. Эффект структурно тот же
+контракт (набор методов с сигнатурами) что и protocol. Различия:
+
+| | Effect | Protocol |
+|---|---|---|
+| Структура контракта | методы (operations) | методы |
+| Anonymous literal | `handler X { ... }` ✅ есть | нет (текущее) |
+| Применяется в | `with X = h { ... }` | parameter / generic-bound |
+| Типичный use-case | **one-off** (mock в тесте, transaction) | **reusable** (Hashable, Iter) |
+
+Реальная причина разной идиомы — **частота one-off vs reusable
+использования**, не философское различие. Для эффектов anonymous-
+форма окупается, потому что handler'ы почти всегда одноразовые.
+Для протоколов экономия меньше — программист один раз пишет
+`type MyIter` и переиспользует.
+
+**Слабые аргументы (отвергнутые при анализе):**
+
+- ~~«Реализации спрятаны, не находятся grep'ом»~~ — найдутся через
+  `grep "protocol Fan"`. То же что для `handler X`.
+- ~~«Размывает AI-first locality»~~ — closures уже приняты в Nova
+  (D22 closure-light/full); anonymous protocol — обобщение closure
+  на multi-method, та же категория.
+- ~~«Captures complexity»~~ — managed heap (D6) разрешает капчуры
+  для closures, для protocol-литералов та же семантика.
+
+**Реальный аргумент против (D):**
+
+- **D40 «один очевидный путь».** Если protocol чаще reusable
+  (named-type идиома лучше), anonymous-форма добавляет **второй**
+  путь без существенной новой выразительности — анти-паттерн Nova.
+- **Прецедент Swift.** Языки с **extension**-системой (Swift)
+  обходятся без anonymous-impl. Nova-методы (`fn Type @method`)
+  работают как extensions — Swift-подобная модель.
+
+**Реальный аргумент за (D):**
+
+- **Симметрия с handler-литералом** — оба «inline implementation
+  of a method-contract». Текущая асимметрия неестественна.
+- **Multi-method ad-hoc** удобен для случаев когда нужно реализовать
+  protocol с 2-3 методами разово (closures покрывают только
+  single-method case).
+- **Прецеденты Kotlin/Java/TS** — устоявшийся паттерн.
 
 **Прецеденты:**
 
@@ -5562,8 +5607,28 @@ let p = protocol Fan  { run() => () }      // новый — anonymous protocol-
 Для **effect-литералов** прецеденты не помогают — Koka/Eff используют
 свой keyword `handler`, как Nova сейчас. Для **anonymous protocol**
 картина расколота: Kotlin/Java/TS — за, Rust/Go/Swift/OCaml — против.
-Большинство **новых** языков (Rust, Swift, Go) сознательно
-**отвергают** anonymous impl-блоки.
+
+**Почему мейнстрим без anonymous protocol-impl** — разные причины,
+не один отвергнутый аргумент:
+
+- **Rust** — невозможно из-за ownership/borrow-checker (нужен
+  concrete type на стадии анализа). К Nova **не применимо** (нет
+  ownership).
+- **Go** — методы требуют named receiver-типа (Go-специфика). Можно
+  через `var r Runner = (myStruct{}).func()` обходные пути. К Nova
+  применимо частично (метод привязан к типу через `fn Type @m`).
+- **Swift** — `extension Type: Protocol { ... }` достаточно
+  идиоматичен, нет потребности в anonymous. Nova близка к Swift
+  (extension-style методы).
+- **OCaml** — functor/module system покрывает похожие use-cases.
+
+**Почему мейнстрим с anonymous** (Kotlin/Java):
+
+- **Java** — исторически (до 1.8 нет lambdas, anonymous classes
+  были **единственным** способом передать callback).
+- **Kotlin** — унаследовал, оставил для multi-method контрактов.
+- **TypeScript** — структурная типизация делает любой object-литерал
+  потенциальной impl интерфейса автоматически.
 
 **Аргументы в Nova-контексте:**
 
@@ -5601,14 +5666,18 @@ let p = protocol Fan  { run() => () }      // новый — anonymous protocol-
 **Предложение.** Отложить до:
 
 1. Появления **реального use-case** для anonymous protocol-impl —
-   если в реальном Nova-коде окажется частая боль «приходится
-   объявлять одноразовый тип ради одного метода», то (D) приобретает
-   смысл.
+   частая боль «приходится объявлять одноразовый тип ради одного-двух
+   методов». Если такой use-case будет — (D) приобретает смысл,
+   потому что симметрия с уже существующим `handler X { ... }`
+   литералом естественна.
 2. **v1.0-аудит keyword'ов** — комплексный пересмотр всех keyword'ов
    языка перед стабилизацией. Тогда симметрия (B) рассматривается
    вместе с другими keyword-вопросами.
 
 До тех пор — статус-кво (вариант 1: `handler` + no anon protocol).
+Это **прагматическое** решение, не философское: anonymous-форма для
+протоколов **не запрещена принципиально**, просто пока приоритет
+ниже из-за reusable-природы protocol-импл в типичном Nova-коде.
 
 **Связь:**
 - [D42](decisions/02-types.md#d42), [D53](decisions/02-types.md#d53)
