@@ -1916,6 +1916,15 @@ impl Parser {
             // (start) `||` всегда no-arg closure; в infix-position —
             // logical-OR (см. parse_logical_or).
             TokenKind::PipePipe => self.parse_closure_light_no_params(start),
+            // Plan 19, C3: closure-full `fn(x int) Effects -> R body` —
+            // анонимная типизированная fn в expression-position. В
+            // отличие от item-level `fn name(...)`, имени нет —
+            // следующий токен после `fn` обязан быть `(`.
+            //
+            // Type-expression `fn(int) -> bool` парсится отдельно
+            // через parse_type, не сюда; в expression-position
+            // type-expr не появляется.
+            TokenKind::KwFn => self.parse_closure_full(start),
             other => Err(Diagnostic::new(
                 format!("unexpected {} in expression", other.name()),
                 start,
@@ -2067,6 +2076,90 @@ impl Parser {
                 params,
                 body: crate::ast::ClosureBody::Expr(Box::new(body)),
             },
+            span,
+        ))
+    }
+
+    /// Plan 19, C3: парсит closure-full — анонимную типизированную fn.
+    ///
+    /// Грамматика идентична named fn без имени:
+    /// ```text
+    /// closure-full = 'fn' '(' params ')' [ effects ] [ '->' type ] body
+    /// body         = '=>' expression | block
+    /// ```
+    ///
+    /// Где `params` — обычные `Param` с типами (как у named fn).
+    /// **Generics на closure-full в bootstrap не поддерживаются** —
+    /// rank-2 polymorphism это открытый вопрос (см. Q-rank2 / D61).
+    /// Если после `fn` идёт `[`, парсер даст понятную ошибку.
+    ///
+    /// Тело — `=> expr` или `{ block }`, переиспользует parse_fn_body.
+    fn parse_closure_full(&mut self, start: Span) -> Result<Expr, Diagnostic> {
+        // Съедаем `fn`.
+        let _ = self.expect(&TokenKind::KwFn)?;
+
+        // Запрещаем generics: `fn[T](x T) -> T => x` не поддерживается
+        // в bootstrap'е. Если потребуется — отдельный D-decision.
+        if matches!(self.peek().kind, TokenKind::LBracket) {
+            return Err(Diagnostic::new(
+                "generics on closure-full are not supported in bootstrap (rank-2 polymorphism, see Q-rank2). Use a named fn or workaround through erasure".to_string(),
+                self.peek().span,
+            ));
+        }
+
+        // (params) — переиспользуем существующий parse_param.
+        self.expect(&TokenKind::LParen)?;
+        self.skip_newlines();
+        let mut params = Vec::new();
+        while !matches!(self.peek().kind, TokenKind::RParen) {
+            params.push(self.parse_param()?);
+            self.skip_newlines();
+            if !matches!(self.peek().kind, TokenKind::RParen) {
+                self.expect(&TokenKind::Comma)?;
+                self.skip_newlines();
+            }
+        }
+        self.expect(&TokenKind::RParen)?;
+
+        // Variadic check (D69): variadic-параметр обязан быть последним.
+        for (i, p) in params.iter().enumerate() {
+            if p.is_variadic && i != params.len() - 1 {
+                return Err(Diagnostic::new(
+                    format!("variadic-параметр `{}` должен быть последним в списке (D69)", p.name),
+                    p.span,
+                ));
+            }
+        }
+
+        // Effects между `)` и (`->` | body).
+        let effects = self.parse_effects_until_arrow_or_body()?;
+        let return_type = if self.eat(&TokenKind::Arrow).is_some() {
+            Some(self.parse_type()?)
+        } else {
+            None
+        };
+
+        // Тело — `=> expr` или `{ block }`. Переиспользуем parse_fn_body.
+        let body = self.parse_fn_body()?;
+        let body_span = match &body {
+            FnBody::Expr(e) => e.span,
+            FnBody::Block(b) => b.span,
+            FnBody::External => unreachable!(
+                "closure-full cannot be `external` — only named fns can; \
+                 parse_fn_body would have returned External only for top-level \
+                 external fn parsing path"
+            ),
+        };
+        let span = start.merge(body_span);
+
+        Ok(Expr::new(
+            ExprKind::ClosureFull(Box::new(crate::ast::FnSigBody {
+                params,
+                effects,
+                return_type,
+                body,
+                span,
+            })),
             span,
         ))
     }
@@ -3828,5 +3921,107 @@ mod tests {
             "expected logical OR (Binary), got {:?}",
             l.value.kind
         );
+    }
+
+    // ─── Plan 19, C3: closure-full parsing ─────────────────────────
+
+    /// Helper: достаёт closure-full из первого let'а.
+    fn first_let_closure_full(m: &Module) -> &crate::ast::FnSigBody {
+        let Item::Let(l) = &m.items[0] else {
+            panic!("expected first item to be `let`, got {:?}", m.items[0]);
+        };
+        let ExprKind::ClosureFull(sb) = &l.value.kind else {
+            panic!(
+                "expected ClosureFull in let value, got {:?}",
+                l.value.kind
+            );
+        };
+        sb
+    }
+
+    #[test]
+    fn closure_full_typed_expr_body() {
+        let m = parse_or_panic("let f = fn(x int) -> int => x * 2\n");
+        let sb = first_let_closure_full(&m);
+        assert_eq!(sb.params.len(), 1);
+        assert_eq!(sb.params[0].name, "x");
+        assert!(sb.return_type.is_some());
+        assert!(matches!(sb.body, FnBody::Expr(_)));
+    }
+
+    #[test]
+    fn closure_full_typed_block_body() {
+        let m = parse_or_panic(
+            r#"
+            let f = fn(x int, y int) -> int {
+                let z = x + y
+                z * 2
+            }
+            "#,
+        );
+        let sb = first_let_closure_full(&m);
+        assert_eq!(sb.params.len(), 2);
+        assert!(matches!(sb.body, FnBody::Block(_)));
+    }
+
+    #[test]
+    fn closure_full_with_effects() {
+        let m = parse_or_panic(
+            "let mid = fn(req int) Db Log -> int => req + 1\n",
+        );
+        let sb = first_let_closure_full(&m);
+        assert_eq!(sb.effects.len(), 2);
+        assert!(sb.return_type.is_some());
+    }
+
+    #[test]
+    fn closure_full_no_params() {
+        let m = parse_or_panic("let pure = fn() -> int => 42\n");
+        let sb = first_let_closure_full(&m);
+        assert!(sb.params.is_empty());
+        assert!(sb.return_type.is_some());
+    }
+
+    #[test]
+    fn closure_full_no_return_type() {
+        let m = parse_or_panic("let logger = fn(s str) Log { let x = s }\n");
+        let sb = first_let_closure_full(&m);
+        assert_eq!(sb.params.len(), 1);
+        assert!(sb.return_type.is_none());
+        assert_eq!(sb.effects.len(), 1);
+    }
+
+    #[test]
+    fn closure_full_generics_rejected() {
+        let result = parse("let f = fn[T](x T) -> T => x\n");
+        assert!(result.is_err(), "generics on closure-full must be rejected in bootstrap");
+        let err = result.unwrap_err();
+        assert!(
+            err.message.contains("generics") || err.message.contains("rank-2"),
+            "error should mention generics/rank-2, got: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn closure_full_in_call_arg() {
+        let m = parse_or_panic(
+            "let r = list.map(fn(x int) -> int => x * 2)\n",
+        );
+        let Item::Let(l) = &m.items[0] else { panic!() };
+        let ExprKind::Call { args, .. } = &l.value.kind else {
+            panic!("expected Call, got {:?}", l.value.kind);
+        };
+        let CallArg::Item(arg_expr) = &args[0] else { panic!() };
+        assert!(matches!(arg_expr.kind, ExprKind::ClosureFull(_)));
+    }
+
+    #[test]
+    fn closure_full_does_not_break_named_fn() {
+        // top-level `fn foo()` всё ещё parses нормально — это item, не expr.
+        let m = parse_or_panic("fn foo(x int) -> int => x + 1\n");
+        assert_eq!(m.items.len(), 1);
+        let Item::Fn(f) = &m.items[0] else { panic!() };
+        assert_eq!(f.name, "foo");
     }
 }
