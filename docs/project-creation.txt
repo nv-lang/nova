@@ -3644,3 +3644,69 @@ existing bugs:
 
 Урок: dual-mode (C1–C12) позволил инкрементальную миграцию без
 big-bang regression'ов. C13 удалил старую grammar чисто.
+
+================================================================
+2026-05-10 (продолжение 6). D89 — EXPECT_* test-маркеры (Вариант C)
+================================================================
+
+Унификация test-tooling-конвенций. До D89 был только один маркер
+(`EXPECT_COMPILE_ERROR`, Plan 16 Ф.7), документирован только в
+комментарии скрипта. Альтернативные test-runner'ы могли изобрести
+свои механизмы (`@expect_error` атрибут, YAML manifest, etc.).
+
+**Что сделано (Вариант C — spec + полная реализация сразу):**
+
+1. **D89 в spec/decisions/09-tooling.md** — нормативный D-блок с
+   4 стандартными маркерами:
+   - `EXPECT_COMPILE_ERROR <pattern>` — codegen failure (был с Plan 16).
+   - `EXPECT_RUNTIME_PANIC <pattern>` — exe запустился, упал с panic.
+   - `EXPECT_EXIT_CODE <N>` — exe вернул конкретный exit code.
+   - `EXPECT_STDOUT <pattern>` — stdout содержит pattern.
+
+   Маркеры взаимоисключающие (один на файл), substring-match,
+   case-sensitive. Test-runner Nova-conformant обязан реализовать
+   все 4. Custom-маркеры допустимы, но имена `EXPECT_*`
+   зарезервированы.
+
+2. **run_tests.ps1** — реализация всех 4 маркеров. Диспетчер
+   `$expect_kind` + per-kind логика с диагностикой (NEG-NO-ERROR,
+   NEG-WRONG-MSG, NEG-NO-PANIC, NEG-WRONG-PANIC, NEG-WRONG-EXIT,
+   NEG-WRONG-STDOUT).
+
+3. **Cleanup жёстких путей в run_tests.ps1** — заодно. Раньше пути
+   были `d:\Sources\nova-lang\...` (не работал на чужих машинах,
+   в CI). Теперь все пути относительно `$PSScriptRoot` с
+   env-var override (NOVA_CODEGEN, NOVA_RT_DIR, etc.). vcvars64.bat
+   ищется через vswhere если не задан явно.
+
+4. **Pilot-тесты в nova_tests/expected_runtime/** — по одному на
+   каждый из 3 новых маркеров. Smoke-test для verify реализации.
+
+5. **docs/test-conventions.md** — практический guide для авторов
+   тестов.
+
+**Тест-suite:** 111/111 PASS (108 предыдущих + 3 новых pilot).
+
+**Lessons:**
+
+- **«Tooling-конвенция в комментарии скрипта» — антипаттерн.** Никто
+  не знает про неё кроме автора. Любая alternative реализация
+  выдумает своё → fragmentation. Стандартизировать в spec — единый
+  contract для всех runner'ов.
+
+- **Comment-маркеры > атрибут языка для test-only фич.** Test-маркеры
+  используются в ~5% файлов. Загрязнять core-language ради этого —
+  over-engineering. Comment + spec — простой и достаточный паттерн
+  (Rust/Swift/Go так и делают).
+
+- **«Заодно почистить пути» — нормально, если в той же области.**
+  Cleanup путей run_tests.ps1 тематически связан с D89 (test-tooling
+  portability — часть test-tooling spec'а). Не разбивать на отдельный
+  коммит.
+
+**Что не сделано (отдельные задачи на будущее):**
+- `EXPECT_STDERR pattern` — для stderr.
+- `EXPECT_LINT_WARNING pattern` — для будущего nova lint.
+- `EXPECT_TIMEOUT_MS N` — для performance-тестов.
+- `nova test` CLI на Nova — будет реализовать D89 маркеры
+  одинаково с run_tests.ps1.

@@ -2905,3 +2905,32 @@ D84 codegen бросает три типа compile error'ов («duplicate signa
 - ✅ ЗАКРЫТО.
 - 3/3 negative-тестов PASS.
 - Когда Q-overload-result-type будет закрыт — `overload_ambiguous.nv` нужно переделать в positive (let-аннотация выбирает overload).
+
+---
+
+## 2026-05-10 (продолжение 6) — D89 EXPECT_* маркеры (Вариант C)
+
+### Что упрощено / закрыто
+
+**1. Унификация test-tooling-конвенций.** До D89 был только один маркер (`EXPECT_COMPILE_ERROR`, Plan 16 Ф.7), документирован только в комментарии скрипта. Любой alternative test-runner мог бы изобрести свой механизм → fragmentation. D89 фиксирует **4 стандартных маркера** (compile error, runtime panic, exit code, stdout) как часть Nova-conformant tooling'а.
+
+**2. Cleanup путей в run_tests.ps1.** Раньше пути захардкожены `d:\Sources\nova-lang\...` — скрипт не работал на чужих машинах и в CI. Теперь все пути относительно `$PSScriptRoot` с env-var override; vcvars64.bat ищется через vswhere. Можно clone'нуть репо в любой каталог и запускать.
+
+### Trade-offs
+
+- **Comment-маркер vs first-class директива.** Выбрали comment-маркер (как Rust/Swift/Go), не атрибут языка (как TypeScript `@ts-expect-error`). Trade-off: парсер про маркер не знает (опечатка `EXPECT_COMPILE_EROR` без R пройдёт незаметно). Mitigation — linter может предупреждать о похожих на маркер опечатках.
+- **Один маркер на файл.** Не поддерживается multi-marker. Force'ит разделение тестов по сценариям — лучше для читаемости и точности диагностики.
+- **Pattern — substring, не regex.** Проще писать, но менее точно.
+
+### Файлы
+
+- `spec/decisions/09-tooling.md` — D89 нормативный D-блок.
+- `run_tests.ps1` — реализация всех 4 маркеров + cleanup путей.
+- `docs/test-conventions.md` — практический guide для авторов тестов.
+- `nova_tests/expected_runtime/` — 3 pilot-теста (по одному на новый маркер).
+
+### Status
+
+- ✅ ЗАКРЫТ.
+- Tests: ✅ 111/111 PASS (108 предыдущих + 3 новых pilot).
+- Open: `nova test` CLI на Nova — будет реализовать D89 одинаково; gap до тех пор — `run_tests.ps1` единственная реализация.
