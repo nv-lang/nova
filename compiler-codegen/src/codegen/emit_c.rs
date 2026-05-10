@@ -1224,7 +1224,19 @@ impl CEmitter {
                 _ => return Err("non-named effect in with binding".into()),
             };
             if effect_name == "Fail" { has_fail = true; }
-            let handler_val = self.emit_expr(&binding.handler)?;
+            // Plan 19, C8 codegen (D31-rev): handler-лямбда
+            // `with EffectName = |args| body` — sugar над handler-
+            // литералом для эффектов с одной операцией. Десугаризуем
+            // ClosureLight/ClosureFull в синтетический HandlerLit
+            // перед emit_expr.
+            let handler_val = if let Some((effect_path, lit_expr)) =
+                self.desugar_handler_lambda(&binding.effect, &binding.handler)?
+            {
+                let _ = effect_path; // подсветим для clippy
+                self.emit_expr(&lit_expr)?
+            } else {
+                self.emit_expr(&binding.handler)?
+            };
             let prev_var = self.fresh_tmp();
             self.line(&format!(
                 "NovaVtable_{eff}* {prev} = _nova_handler_{eff};",
@@ -1314,6 +1326,107 @@ impl CEmitter {
         self.line("nova_interrupt_pop();");
 
         Ok(result_tmp)
+    }
+
+    /// Plan 19, C8 codegen (D31-rev): desugar handler-лямбды
+    /// `with EffectName = |args| body` в синтетический HandlerLit
+    /// с одной операцией. Возвращает Some((effect-path, synthetic
+    /// HandlerLit-Expr)) если binding.handler — closure-light/full;
+    /// иначе None (вызывающий код использует обычный emit_expr).
+    ///
+    /// Логика:
+    /// 1. Если handler не закрытие — None.
+    /// 2. Вытащить effect-name path.
+    /// 3. Из effect_schemas найти единственную операцию эффекта
+    ///    (если операций > 1, возвращаем None — компилятор type-checker
+    ///    эту ситуацию обнаружит на seamntic-стадии; здесь fallback
+    ///    на обычный emit, который выдаст codegen-error).
+    /// 4. Синтезировать HandlerMethod с params/body из closure'а.
+    /// 5. Обернуть в ExprKind::HandlerLit.
+    fn desugar_handler_lambda(
+        &self,
+        effect: &TypeRef,
+        handler: &Expr,
+    ) -> Result<Option<(Vec<String>, Expr)>, String> {
+        let effect_path = match effect {
+            TypeRef::Named { path, .. } => path.clone(),
+            _ => return Ok(None),
+        };
+        let eff_key = effect_path.join("_");
+
+        // Извлекаем params и body в форме HandlerMethod.
+        let (handler_params, handler_body): (
+            Vec<HandlerMethodParam>,
+            HandlerMethodBody,
+        ) = match &handler.kind {
+            ExprKind::ClosureLight { params, body } => {
+                let p: Vec<HandlerMethodParam> = params
+                    .iter()
+                    .map(|cp| HandlerMethodParam {
+                        name: cp.name.clone(),
+                        ty: None,
+                        span: cp.span,
+                    })
+                    .collect();
+                let b = match body {
+                    crate::ast::ClosureBody::Expr(e) => HandlerMethodBody::Expr((**e).clone()),
+                    crate::ast::ClosureBody::Block(blk) => HandlerMethodBody::Block(blk.clone()),
+                };
+                (p, b)
+            }
+            ExprKind::ClosureFull(sb) => {
+                let p: Vec<HandlerMethodParam> = sb
+                    .params
+                    .iter()
+                    .map(|fp| HandlerMethodParam {
+                        name: fp.name.clone(),
+                        ty: Some(fp.ty.clone()),
+                        span: fp.span,
+                    })
+                    .collect();
+                let b = match &sb.body {
+                    FnBody::Expr(e) => HandlerMethodBody::Expr(e.clone()),
+                    FnBody::Block(blk) => HandlerMethodBody::Block(blk.clone()),
+                    FnBody::External => return Ok(None),
+                };
+                (p, b)
+            }
+            _ => return Ok(None),
+        };
+
+        // Находим единственную операцию эффекта.
+        let op_name = if let Some(schema) = self.effect_schemas.get(&eff_key) {
+            if schema.len() != 1 {
+                // Не sugar-applicable: > 1 операции или 0.
+                return Ok(None);
+            }
+            schema.keys().next().cloned().unwrap_or_default()
+        } else {
+            // Эффект не в schemas (ещё не был обработан) —
+            // безопасный fallback: пропустить sugar, обычный emit_expr
+            // даст более понятную диагностику.
+            return Ok(None);
+        };
+
+        // Синтезируем HandlerMethod с захваченным span (берём span
+        // самого handler-выражения — он покрывает всё закрытие).
+        let synth_method = HandlerMethod {
+            name: op_name,
+            params: handler_params,
+            body: handler_body,
+            span: handler.span,
+        };
+
+        // Оборачиваем в HandlerLit.
+        let lit_expr = Expr::new(
+            ExprKind::HandlerLit {
+                effect_name: effect_path.clone(),
+                methods: vec![synth_method],
+            },
+            handler.span,
+        );
+
+        Ok(Some((effect_path, lit_expr)))
     }
 
     fn emit_handler_lit(
@@ -2197,7 +2310,17 @@ impl CEmitter {
             }
             ExprKind::With { bindings, body } => {
                 for b in bindings {
-                    self.scan_expr_fwd(&b.handler, h, s)?;
+                    // Plan 19, C8 codegen (D31-rev): handler-лямбда
+                    // должна быть desugar'ена на pre-scan в синтетический
+                    // HandlerLit, иначе h-counter rassinch'нется
+                    // и forward-decls не совпадут с emit_with-side.
+                    if let Some((_, lit_expr)) =
+                        self.desugar_handler_lambda(&b.effect, &b.handler)?
+                    {
+                        self.scan_expr_fwd(&lit_expr, h, s)?;
+                    } else {
+                        self.scan_expr_fwd(&b.handler, h, s)?;
+                    }
                 }
                 self.scan_block_fwd(body, h, s)?;
             }

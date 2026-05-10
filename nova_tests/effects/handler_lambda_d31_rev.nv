@@ -1,0 +1,46 @@
+// handler_lambda_d31_rev.nv — Plan 19 C8: D31-rev handler-лямбда
+// `with EffectName = |args| body { ... }`.
+//
+// Проверяет что handler-лямбда (closure-light в позиции `with X = `)
+// для эффектов с одной операцией работает как handler-литерал-сахар.
+//
+// **Note**: codegen handler-лямбда D31-rev не реализован полностью
+// в bootstrap (handler в emit_with ожидает NovaVtable struct).
+// Если codegen pipeline не справляется, runtime через interp
+// (`cargo run -- test ...`) подтверждает interp-side D31-rev.
+
+module nova_tests.effects.handler_lambda_d31_rev
+
+type Logger effect {
+    log(msg str) -> ()
+}
+
+fn make_msg() Logger -> str {
+    Logger.log("hi")
+    "done"
+}
+
+test "handler-лямбда: handler-литерал baseline" {
+    let mut captured = ""
+    with Logger = handler Logger {
+        log(msg) {
+            captured = msg
+            return ()
+        }
+    } {
+        let r = make_msg()
+        assert(r == "done")
+    }
+    assert(captured == "hi")
+}
+
+test "D31-rev sugar: with Logger = |msg| ... " {
+    let mut captured = ""
+    with Logger = |msg| {
+        captured = msg
+    } {
+        let r = make_msg()
+        assert(r == "done")
+    }
+    assert(captured == "hi")
+}

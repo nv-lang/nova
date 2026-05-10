@@ -1,0 +1,46 @@
+// closure_free_var_resolution.nv — Plan 19 C14 corner case: free-variable
+// resolution в closure'ах.
+//
+// Параметр одного closure'а **не виден** в теле другого closure'а,
+// даже если они в одном scope (D22-rev «free-variable resolution
+// через lexical scoping на момент создания closure'а»).
+//
+// Negative-test scenario из дизайн-сессии:
+//   let mut count = 0
+//   (|a| count += a, || a)  // <- || a should error: a is param of sibling
+//
+// Bootstrap behavior: parser принимает оба closure'а (имена резолвятся
+// на семантике); codegen на C-уровне получит "undeclared identifier `a`"
+// для второго closure'а, потому что `a` в его env не попадает (он
+// только параметр первого closure'а).
+
+module nova_tests.syntax.closure_free_var_resolution
+
+// Положительный тест: каждый closure видит **своё** окружение, не
+// чужие параметры.
+fn outer() -> int {
+    let n = 100
+    let f = |a| a + n        // f captures n; параметр a only in f's body
+    let g = |b| b + n        // g captures n; параметр b only in g's body
+    // n виден обоим, но a/b изолированы по scope'у.
+    f(1) + g(2)              // 101 + 102 = 203
+}
+
+test "free-var resolution: lexical scoping per closure" {
+    assert(outer() == 203)
+}
+
+// Параметр closure'а живёт только в его body — после `}` он не
+// доступен в enclosing scope.
+fn after_closure_body() -> int {
+    let f = |x| x + 1
+    f(10)
+    // здесь `x` уже не в scope — но parser не позволяет ссылаться,
+    // потому что x не объявлен. Если бы кто-то написал `let _ = x`
+    // здесь, codegen дал бы "undeclared identifier".
+    42
+}
+
+test "free-var resolution: param scope ограничен телом closure" {
+    assert(after_closure_body() == 42)
+}

@@ -1,0 +1,44 @@
+// generic_default_d88.nv — Plan 19 D88: default-значения generic-параметров.
+//
+// Bootstrap-уровень: parser принимает `[T = int]`, AST хранит default.
+// Bootstrap-codegen type-erases all generics в nova_int — поэтому
+// runtime-substitution неявно работает для int-defaults. Production
+// type-checker (Q-d87-d88-typecheck-enforcement) добавит явную
+// substitution rule.
+//
+// Тесты ниже проверяют что:
+// 1. Функция с `[T = int]` парсится и работает с явным аргументом.
+// 2. Type-decl с `[T = int]` парсится.
+// 3. Bound + default `[T Numeric = f64]` форма парсится.
+
+module nova_tests.types.generic_default_d88
+
+// `[T = int]` — параметр с default-типом.
+fn identity_with_default[T = int](x T) -> T => x
+
+test "generic default: вызов с явным аргументом (T выводится)" {
+    // T выводится из аргумента 42 → T = int. Default не нужен.
+    let r = identity_with_default(42)
+    assert(r == 42)
+}
+
+test "generic default: вызов с другим типом (default переопределяется)" {
+    // T выводится из строки → T = str.
+    let s = identity_with_default("hello")
+    assert(s == "hello")
+}
+
+// Type-decl с default — parser принимает (codegen работает только с
+// явно проинстанцированным `Pair[int]`).
+type Pair[T = int] {
+    first T
+    second T
+}
+
+// Bound + default
+fn double_value[T Numeric = int](x T) -> T => x
+
+test "generic default with bound: parser принимает `[T Bound = Default]`" {
+    let r = double_value(7)
+    assert(r == 7)
+}
