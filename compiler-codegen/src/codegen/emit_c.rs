@@ -943,6 +943,7 @@ impl CEmitter {
                     "static const nova_str {} = {{(const char*)\"{}\" , {}}};",
                     c.name, escaped, len
                 ));
+                self.var_types.insert(c.name.clone(), ty_c.clone());
                 return Ok(());
             }
         }
@@ -951,6 +952,11 @@ impl CEmitter {
         match self.emit_const_expr(&c.value) {
             Ok(val) => {
                 self.line(&format!("static const {} {} = {};", ty_c, c.name, val));
+                // Регистрируем тип const'а в var_types, чтобы Ident(name) на
+                // use-site инферился с правильным c-типом (например u32-const,
+                // используемый как `let mut h = FOO`, должен дать `uint32_t h`,
+                // а не nova_int — баг был замечен в std/checksums/fnv.nv).
+                self.var_types.insert(c.name.clone(), ty_c.clone());
                 Ok(())
             }
             Err(_) => {
