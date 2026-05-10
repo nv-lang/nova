@@ -82,7 +82,7 @@ fn with_resource_naive(id int, t Tracker, body fn(int) -> int) -> int {
 
 test "happy path: tracker увеличен на open + close без throw" {
     let t = Tracker { opened: 0, closed: 0 }
-    let result = with_resource_safe(7, t) { id => use_resource(id, 5) }
+    let result = with_resource_safe(7, t) fn(id int) -> int => use_resource(id, 5)
     assert(result == 35)
     assert(t.opened == 1)
     assert(t.closed == 1)
@@ -90,7 +90,7 @@ test "happy path: tracker увеличен на open + close без throw" {
 
 test "with_resource_naive: happy path тоже работает" {
     let t = Tracker { opened: 0, closed: 0 }
-    let result = with_resource_naive(3, t) { id => use_resource(id, 4) }
+    let result = with_resource_naive(3, t) fn(id int) -> int => use_resource(id, 4)
     assert(result == 12)
     assert(t.opened == 1)
     assert(t.closed == 1)
@@ -110,7 +110,7 @@ test "with_resource_naive: throw в body — closed НЕ инкрементир�
             interrupt 0
         }
     } {
-        with_resource_naive(5, t) { id => use_resource(id, -1) }
+        with_resource_naive(5, t) fn(id int) -> int => use_resource(id, -1)
     }
     assert(caught_msg == "negative amount")
     assert(t.opened == 1)
@@ -126,7 +126,7 @@ test "with_resource_safe: throw в body — cleanup вызывается + re-th
             interrupt 0
         }
     } {
-        with_resource_safe(9, t) { id => use_resource(id, -1) }
+        with_resource_safe(9, t) fn(id int) -> int => use_resource(id, -1)
         // throw из body → внутренний handler в with_resource_safe ловит,
         // closed инкрементируется, и re-throw наружу. Внешний handler
         // ловит уже после cleanup'а.

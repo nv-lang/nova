@@ -54,21 +54,21 @@ fn all(xs []int, pred fn(int) -> bool) -> bool {
 
 test "map_int double" {
     let xs = [1, 2, 3]
-    let ys = map_int(xs, (x) => x * 2)
+    let ys = map_int(xs, |x| x * 2)
     assert(ys[0] == 2)
     assert(ys[2] == 6)
 }
 
 test "map_int square" {
     let xs = [1, 2, 3, 4]
-    let ys = map_int(xs, (x) => x * x)
+    let ys = map_int(xs, |x| x * x)
     assert(ys[0] == 1)
     assert(ys[3] == 16)
 }
 
 test "filter_int evens" {
     let xs = [1, 2, 3, 4, 5, 6]
-    let evens = filter_int(xs, (x) => x % 2 == 0)
+    let evens = filter_int(xs, |x| x % 2 == 0)
     assert(evens.len == 3)
     assert(evens[0] == 2)
     assert(evens[2] == 6)
@@ -76,7 +76,7 @@ test "filter_int evens" {
 
 test "filter_int gt 10" {
     let xs = [5, 15, 8, 25, 3]
-    let big = filter_int(xs, (x) => x > 10)
+    let big = filter_int(xs, |x| x > 10)
     assert(big.len == 2)
     assert(big[0] == 15)
     assert(big[1] == 25)
@@ -84,44 +84,44 @@ test "filter_int gt 10" {
 
 test "fold_int sum" {
     let xs = [1, 2, 3, 4, 5]
-    let s = fold_int(xs, 0, (acc, x) => acc + x)
+    let s = fold_int(xs, 0, |acc, x| acc + x)
     assert(s == 15)
 }
 
 test "fold_int product" {
     let xs = [1, 2, 3, 4]
-    let p = fold_int(xs, 1, (acc, x) => acc * x)
+    let p = fold_int(xs, 1, |acc, x| acc * x)
     assert(p == 24)
 }
 
 test "fold_int max" {
     let xs = [3, 1, 4, 1, 5, 9, 2, 6]
-    let m = fold_int(xs, 0, (acc, x) => if x > acc { x } else { acc })
+    let m = fold_int(xs, 0, |acc, x| if x > acc { x } else { acc })
     assert(m == 9)
 }
 
 test "count_if positive" {
     let xs = [1, -1, 2, -2, 3, -3, 4]
-    let n = count_if(xs, (x) => x > 0)
+    let n = count_if(xs, |x| x > 0)
     assert(n == 4)
 }
 
 test "any" {
     let xs = [1, 2, 3]
-    assert(any(xs, (x) => x == 2))
-    assert(!any(xs, (x) => x == 99))
+    assert(any(xs, |x| x == 2))
+    assert(!any(xs, |x| x == 99))
 }
 
 test "all" {
     let xs = [2, 4, 6]
-    assert(all(xs, (x) => x % 2 == 0))
-    assert(!all(xs, (x) => x > 4))
+    assert(all(xs, |x| x % 2 == 0))
+    assert(!all(xs, |x| x > 4))
 }
 
 test "композиция HOF: map потом filter" {
     let xs = [1, 2, 3, 4, 5]
-    let squared = map_int(xs, (x) => x * x)
-    let big = filter_int(squared, (x) => x > 5)
+    let squared = map_int(xs, |x| x * x)
+    let big = filter_int(squared, |x| x > 5)
     assert(big.len == 3)
     assert(big[0] == 9)
 }
@@ -129,7 +129,7 @@ test "композиция HOF: map потом filter" {
 test "HOF с захватом переменной" {
     let threshold = 3
     let xs = [1, 2, 3, 4, 5]
-    let above = filter_int(xs, (x) => x > threshold)
+    let above = filter_int(xs, |x| x > threshold)
     assert(above.len == 2)
     assert(above[0] == 4)
 }

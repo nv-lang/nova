@@ -19,15 +19,15 @@ test "trailing-block без параметров" {
     assert(v == 15)
 }
 
-test "trailing-block с одним параметром" {
-    let v = run_with(7) { n =>
+test "trailing-fn с одним параметром (D43-rev)" {
+    let v = run_with(7) fn(n int) -> int {
         n * n
     }
     assert(v == 49)
 }
 
-test "trailing-block с несколькими параметрами" {
-    let v = run_two(3, 4) { (a, b) =>
+test "trailing-fn с несколькими параметрами (D43-rev)" {
+    let v = run_two(3, 4) fn(a int, b int) -> int {
         a * a + b * b
     }
     assert(v == 25)
@@ -43,8 +43,8 @@ test "trailing-block с let'ами внутри" {
     assert(v == 51)
 }
 
-test "trailing-block с if внутри" {
-    let v = run_with(5) { n =>
+test "trailing-fn с if внутри" {
+    let v = run_with(5) fn(n int) -> int {
         if n > 0 {
             n * 2
         } else {

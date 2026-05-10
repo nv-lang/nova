@@ -6,7 +6,7 @@
 module nova_tests.syntax.closures
 
 fn make_adder(n int) -> fn(int) -> int {
-    (x) => x + n
+    |x| x + n
 }
 
 fn apply_twice(f fn(int) -> int, x int) -> int {
@@ -14,7 +14,7 @@ fn apply_twice(f fn(int) -> int, x int) -> int {
 }
 
 fn compose(f fn(int) -> int, g fn(int) -> int) -> fn(int) -> int {
-    (x) => f(g(x))
+    |x| f(g(x))
 }
 
 test "closure захватывает параметр функции" {
@@ -33,33 +33,38 @@ test "независимые closure'ы не влияют друг на друг
 }
 
 test "функция как параметр" {
-    let r = apply_twice((x) => x * 2, 3)
+    let r = apply_twice(|x| x * 2, 3)
     assert(r == 12)
 }
 
 test "lambda inline на let" {
-    let sq = (x) => x * x
+    let sq = |x| x * x
     assert(sq(7) == 49)
     assert(sq(0) == 0)
 }
 
 test "композиция функций" {
-    let inc = (x) => x + 1
-    let dbl = (x) => x * 2
+    let inc = |x| x + 1
+    let dbl = |x| x * 2
     let f = compose(inc, dbl)
     assert(f(3) == 7)
 }
 
 test "closure захватывает локальную let" {
     let factor = 3
-    let mul = (x) => x * factor
+    let mul = |x| x * factor
     assert(mul(4) == 12)
 }
 
 test "closure возвращается из block" {
+    // Note: после `let n = 42` в block'е `|x| x + n` неоднозначно
+    // для парсера (без явного `;` или newline-disambig он трактует
+    // как продолжение `n = 42 | x | x + n` bitwise OR). Делаем явный
+    // wrap чтобы parser видел closure начало expression-start.
     let f = {
         let n = 42
-        (x) => x + n
+        let inner = |x| x + n
+        inner
     }
     assert(f(8) == 50)
 }

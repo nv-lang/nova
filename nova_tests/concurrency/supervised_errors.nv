@@ -212,7 +212,7 @@ test "supervised: early-stop pattern via shared error flag" {
 //     требует cancellation propagation, не реализовано.
 //
 //     // НЕ РАБОТАЕТ:
-//     // with Fail = (msg) => caught = true {
+//     // with Fail = |msg| caught = true {
 //     //     supervised {
 //     //         spawn { throw "from fiber" }   // ← abort, не catch
 //     //     }

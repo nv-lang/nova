@@ -3,7 +3,7 @@
 // Покрывает новый синтаксис closure-light `|x|`, closure-full
 // `fn(...)`, trailing-fn `f(args) fn(p) body`. Должен парситься,
 // type-check'аться, codegen'иться и исполняться идентично старому
-// `(x) =>` синтаксису (dual-mode C2-C12 в Plan 19).
+// `|x|` синтаксису (dual-mode C2-C12 в Plan 19).
 
 module nova_tests.syntax.closure_rev
 

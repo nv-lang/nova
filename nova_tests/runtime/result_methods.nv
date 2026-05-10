@@ -66,7 +66,7 @@ test "Result.unwrap_or_else — Err(e) calls closure" {
 
 test "Result.map — Ok(v) → Ok(f(v))" {
     let r Result[int, str] = Ok(10)
-    let r2 = r.map((x) => x * 2)
+    let r2 = r.map(|x| x * 2)
     assert(r2.is_ok())
     assert(r2.unwrap_or(0) == 20)
 }
@@ -74,7 +74,7 @@ test "Result.map — Ok(v) → Ok(f(v))" {
 
 test "Result.map — Err(e) passes through" {
     let r Result[int, str] = Err("E")
-    let r2 = r.map((x) => x + 1)
+    let r2 = r.map(|x| x + 1)
     assert(r2.is_err())
     // Err-payload не извлекаем числовой path'ом (nova_str через NovaOpt
     // боксируется); проверяем only is_err.
@@ -165,14 +165,14 @@ test "Result.err — Err(e) → Some(e), Ok → None" {
 
 test "Option.unwrap_or_else — Some(v) skips closure" {
     let s Option[int] = Some(7)
-    let v = s.unwrap_or_else(() => 0)
+    let v = s.unwrap_or_else(|| 0)
     assert(v == 7)
 }
 
 
 test "Option.unwrap_or_else — None calls closure" {
     let n Option[int] = None
-    let v = n.unwrap_or_else(() => 99)
+    let v = n.unwrap_or_else(|| 99)
     assert(v == 99)
 }
 

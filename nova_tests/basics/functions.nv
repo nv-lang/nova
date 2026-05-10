@@ -52,20 +52,20 @@ test "multiple parameters" {
 }
 
 test "lambda inline" {
-    let inc = (x) => x + 1
+    let inc = |x| x + 1
     assert(inc(5) == 6)
-    let mul = (a, b) => a * b
+    let mul = |a, b| a * b
     assert(mul(3, 4) == 12)
 }
 
 test "lambda passed as argument" {
     let apply = (f fn(int) -> int, x int) => f(x)
-    assert(apply((n) => n * 10, 5) == 50)
+    assert(apply(|n| n * 10, 5) == 50)
 }
 
 test "closure captures variable" {
     let n = 100
-    let add_n = (x) => x + n
+    let add_n = |x| x + n
     assert(add_n(7) == 107)
 }
 
