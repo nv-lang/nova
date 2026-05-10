@@ -176,6 +176,73 @@ static inline void nova_assert(nova_bool cond, const char* expr_str) {
     }
 }
 
+/* nv_panic(msg) — D13: смерть текущего fiber'а.
+ *
+ * Routing идентичен nova_assert (общая семантика «runtime termination»):
+ * внутри fiber'а — longjmp до ближайшего NovaFailFrame (остаётся на
+ * stack'е fiber'а, не пересекает mco-boundary); на main flow с тест-
+ * frame'ом — longjmp в тест-runner с сообщением; иначе — stderr + abort.
+ *
+ * `nv_panic` не возвращается (тип Never в Nova). C-сигнатура void,
+ * потому что longjmp/abort не возвращаются по определению.
+ *
+ * См. spec/decisions/08-runtime.md → D13 (panic — fiber-уровень). */
+static inline void nv_panic(nova_str msg) {
+    if (nova_in_fiber() && _nova_fail_top) {
+        _nova_fail_top->error_msg = msg;
+        longjmp(_nova_fail_top->jmp, 1);
+    }
+    if (_nova_test_frame) {
+        /* Аллоцируем буфер, чтобы сообщение пережило stack frame caller'а.
+         * msg.ptr может указывать на stack-temporary (literal в test-функции). */
+        char* buf = (char*)nova_alloc(msg.len + 8);
+        memcpy(buf, "panic: ", 7);
+        if (msg.len > 0) memcpy(buf + 7, msg.ptr, msg.len);
+        buf[msg.len + 7] = 0;
+        _nova_test_frame->fail_msg = buf;
+        longjmp(_nova_test_frame->jmp, 1);
+    }
+    fwrite("panic: ", 1, 7, stderr);
+    if (msg.len > 0) fwrite(msg.ptr, 1, msg.len, stderr);
+    fwrite("\n", 1, 1, stderr);
+    abort();
+}
+
+/* nv_exit(code, msg) — D13: смерть всего процесса.
+ *
+ * exit это финальная точка — НЕ routes через fail-frame (handler-ом не
+ * перехватывается). Не вызывает defer'ы / destructor'ы / handler'ы:
+ * процесс гасится с указанным exit code, стек не разворачивается
+ * (как C exit, Go os.Exit, Rust std::process::exit).
+ *
+ * Исключение — тесты: в тест-frame'е перехватываем через longjmp,
+ * чтобы один exit не убил всю прогонку. Это деталь test-runner'а,
+ * не часть языкового контракта.
+ *
+ * `nv_exit` не возвращается (тип Never в Nova).
+ *
+ * См. spec/decisions/08-runtime.md → D13 (exit — process-уровень). */
+static inline void nv_exit(nova_int code, nova_str msg) {
+    if (_nova_test_frame) {
+        /* Format: "exit(N): msg" — аллоцируем достаточный буфер.
+         * 32 байт хватит на "exit(<int64>): " + null. */
+        size_t cap = msg.len + 32;
+        char* buf = (char*)nova_alloc(cap);
+        int written = snprintf(buf, cap, "exit(%lld): %.*s",
+                               (long long)code, (int)msg.len,
+                               msg.len > 0 ? msg.ptr : "");
+        if (written < 0) buf[0] = 0;
+        _nova_test_frame->fail_msg = buf;
+        longjmp(_nova_test_frame->jmp, 1);
+    }
+    /* Production-runtime: msg в stderr (если непустой) + exit(code). */
+    if (msg.len > 0) {
+        fwrite(msg.ptr, 1, msg.len, stderr);
+        fwrite("\n", 1, 1, stderr);
+    }
+    exit((int)code);
+}
+
 /* ---- Generic effect handler vtable ---- *
  *
  * Each effect type is represented as a pointer to a struct of function

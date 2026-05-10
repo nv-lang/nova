@@ -4897,6 +4897,41 @@ impl CEmitter {
                     return Ok(format!("nova_assert({}, \"{}\")", cond_val, escaped_text));
                 }
             }
+            // panic(msg str) -> Never — D13: смерть текущего fiber'а.
+            // Routes через NovaFailFrame внутри fiber'а, через NovaTestFrame
+            // в тестах, иначе — stderr + abort. См. nv_panic в effects.h.
+            //
+            // Эмитируется через comma-expression `(nv_panic(msg), 0)` —
+            // правая часть — dummy nova_int нужного типа для совместимости
+            // с C-каст'ами в caller'е. nv_panic имеет C-сигнатуру void и
+            // никогда не возвращается (longjmp/abort), но C требует
+            // value-expression для cast-target — comma operator решает это
+            // без нарушения short-circuit семантики родительских конструкций
+            // (?? coalesce, тернарник): nv_panic вызывается только когда
+            // выражение реально evaluates, не безусловно как у statement+dummy.
+            if name == "panic" {
+                if args.len() != 1 {
+                    return Err(format!(
+                        "panic expects 1 argument (msg str), got {}",
+                        args.len()));
+                }
+                let msg_val = self.emit_expr(args[0].expr())?;
+                return Ok(format!("(nv_panic({}), (nova_int)0LL)", msg_val));
+            }
+            // exit(code int, msg str) -> Never — D13: смерть всего процесса.
+            // НЕ перехватывается handler'ом. В тестах routes через NovaTestFrame
+            // (test-runner-level), в production — exit(code). См. nv_exit.
+            // Тот же comma-expression паттерн что и для panic.
+            if name == "exit" {
+                if args.len() != 2 {
+                    return Err(format!(
+                        "exit expects 2 arguments (code int, msg str), got {}",
+                        args.len()));
+                }
+                let code_val = self.emit_expr(args[0].expr())?;
+                let msg_val = self.emit_expr(args[1].expr())?;
+                return Ok(format!("(nv_exit({}, {}), (nova_int)0LL)", code_val, msg_val));
+            }
         }
 
         // Mangle user-defined function calls: `foo(...)` → `nova_fn_foo(...)`
