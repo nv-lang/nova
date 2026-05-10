@@ -1,0 +1,14 @@
+// EXPECT_COMPILE_ERROR closure-light body
+//
+// Plan 19 D22-rev: closure-light body начинается **сразу** после
+// `|...|`, без `=>`. `=>` зарезервирован для тела named fn,
+// match-arm и handler-method. Если программист написал
+// `|x| => body` (как в JS-стиле), парсер выдаёт явную ошибку
+// с подсказкой убрать `=>`.
+
+module nova_tests.negative_capability.closure_arrow_in_body_rejected
+
+test "`|x| => body` отвергается (нет `=>` в closure-light)" {
+    let bad = |x| => x + 1
+    assert(bad(5) == 6)
+}

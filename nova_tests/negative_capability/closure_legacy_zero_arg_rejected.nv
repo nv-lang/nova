@@ -1,0 +1,12 @@
+// EXPECT_COMPILE_ERROR unexpected `=>`
+//
+// Plan 19 C13: старая zero-arg lambda `() => expr` удалена в
+// D22-rev. `()` теперь — unit-литерал; следующий `=>` отвергается
+// парсером как unexpected token. Используется `|| expr`.
+
+module nova_tests.negative_capability.closure_legacy_zero_arg_rejected
+
+test "legacy `() => expr` rejected" {
+    let zero = () => 0
+    assert(zero() == 0)
+}

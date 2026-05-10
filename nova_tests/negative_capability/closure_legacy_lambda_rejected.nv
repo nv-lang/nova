@@ -1,0 +1,12 @@
+// EXPECT_COMPILE_ERROR legacy lambda
+//
+// Plan 19 C13: старая lambda-форма `(params) => body` удалена в
+// D22-rev. Парсер выдаёт compile error с подсказкой использовать
+// `|x|` (closure-light) или `fn(x T) -> R body` (closure-full).
+
+module nova_tests.negative_capability.closure_legacy_lambda_rejected
+
+test "legacy `(x) => body` rejected" {
+    let inc = (x) => x + 1
+    assert(inc(5) == 6)
+}

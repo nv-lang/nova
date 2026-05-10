@@ -1,0 +1,13 @@
+// EXPECT_COMPILE_ERROR generics
+//
+// Plan 19 C3: closure-full `fn(...)` без имени НЕ поддерживает
+// generics в bootstrap (rank-2 polymorphism, см. Q-rank2). Если
+// нужны generic'и — использовать named fn, либо обходить через
+// erasure.
+
+module nova_tests.negative_capability.closure_full_generics_rejected
+
+test "closure-full с `[T]` отвергается" {
+    let f = fn[T](x T) -> T => x
+    assert(f(42) == 42)
+}
