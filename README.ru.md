@@ -49,7 +49,7 @@ handler'ом**. Отсюда автоматически:
 ```nova
 fn map_audio(samples []f32, gain f32) -> []f32 =>
     realtime {
-        samples.map((x) => x * gain)   // без GC, без suspension
+        samples.map(|x| x * gain)      // без GC, без suspension
     }
 ```
 

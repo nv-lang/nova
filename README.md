@@ -53,7 +53,7 @@ violation is a compile-time error:
 ```nova
 fn map_audio(samples []f32, gain f32) -> []f32 =>
     realtime {
-        samples.map((x) => x * gain)   // no GC, no suspension
+        samples.map(|x| x * gain)      // no GC, no suspension
     }
 ```
 
