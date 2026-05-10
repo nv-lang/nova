@@ -1,4 +1,4 @@
-# План 19: Closure & error-ops — миграция на `|x|` + `fn(...)` + `!!`
+# План 19: Closure & error-ops & handler-rev — миграция на `|x|` + `fn(...)` + `!!` + `Handler[E, IRT]`
 
 **Статус:** 🟡 **DRAFT — implementation pending**.
 **Дата создания:** 2026-05-10.
@@ -7,8 +7,14 @@
   [D40 rev](../../spec/decisions/03-syntax.md#d40-тело-функции--для-одного-выражения--для-блока),
   [D43 rev](../../spec/decisions/03-syntax.md#d43-trailing-block--без-params-fnp-body-с-params).
 - Error-ops: [D85](../../spec/decisions/04-effects.md#d85-операторы--и--унифицированное-поведение-для-result-и-option-throw-стиль-через-)
-  (`?` / `!!`), [D86](../../spec/decisions/04-effects.md) (`??`),
+  (`?` / `!!`), [D86](../../spec/decisions/04-effects.md#d86--coalesce-оператор-fallback-для-resultoption) (`??`),
   [D67 отменён](../../spec/decisions/04-effects.md#d67--оператор-семантика-для-result-через-fail-для-option-через-ранний-return).
+- Handler-rev: [D31 rev](../../spec/decisions/04-effects.md#d31-handler-лямбда-для-эффектов-с-одной-операцией)
+  (handler-лямбда на `|x|`),
+  [D87](../../spec/decisions/04-effects.md#d87-handlere-irt--параметризация-handler-типом-interruptа)
+  (`Handler[E, IRT]`),
+  [D88](../../spec/decisions/03-syntax.md#d88-default-значения-generic-параметров)
+  (default generic params, `IRT = Never`).
 
 ---
 
@@ -333,6 +339,81 @@ ExprKind::BangBang { expr: Box<Expr>, span: Span }     // NEW
 - C-codegen: `RuntimeNoneError` как unit-тип — простая `void*`-метка
   или enum-tag без полей.
 
+### Ф.11. Handler-лямбда мигрирует на `|x|` (D31-rev)
+
+Handler-лямбда [D31](../../spec/decisions/04-effects.md#d31-handler-лямбда-для-эффектов-с-одной-операцией)
+переезжает с `(params) => expr` на `|params| body`. Сахар теперь:
+
+```nova
+with Fail[Error] = |err| interrupt log_and_default(err) { ... }
+```
+
+**Парсер:**
+- В позиции `with EffectName = ...`: новый case'ом — closure-light
+  (`|...|`) интерпретируется как handler-лямбда (компилятор смотрит
+  на ожидаемый `Handler[E]` и unify'ит).
+- В этой позиции closure-full с handler-семантикой (`fn(args) body`)
+  не вводится — для много-операционных эффектов требуется
+  `handler EffectName { ... }` literal.
+
+**Type-checker:**
+- Проверяет что эффект имеет ровно одну операцию.
+- Параметры `|params|` сопоставляются с параметрами этой операции по
+  позиции, типы выводятся из effect-декларации.
+
+**Тело — bare expr или block** (как у closure-light D22).
+
+### Ф.12. `Handler[E, IRT]` параметризация (D87)
+
+Тип `Handler` получает второй generic-параметр. Зависит от Ф.13
+(default generic).
+
+**Парсер:**
+- `Handler[E]` → парсится как `Handler[E, Never]` (через D88 default).
+- `Handler[E, T]` → второй параметр — тип interrupt'а.
+- В type-position и в return-type функций.
+
+**Type-checker:**
+- Inference IRT из тела handler-литерала: supertype всех
+  `interrupt v` выражений, `Never` если их нет.
+- Compile error: `Handler[E, Never]` содержит `interrupt`.
+- Compile error: `interrupt v` где `typeof(v)` несовместим с явно
+  объявленным IRT.
+- Unification IRT с типом with-блока (`W`) при использовании в `with`.
+
+**Codegen:**
+- `Handler` runtime-структура без изменений (IRT — type-erasure'ится в
+  runtime).
+- Compile-time проверки — целиком в type-checker'е.
+
+### Ф.13. Default generic params (D88)
+
+Поддержка `[T = Default]` и `[T Bound = Default]` в генерике
+объявлений (типов и функций).
+
+**Лексер:** `=` уже есть как token, без изменений.
+
+**Парсер:**
+- В generic-list `[name [bound] [= default]]`. После `=` — type-expr.
+- Constraint: после параметра с default не может быть параметр без
+  default (compile error).
+
+**Type-checker / inference:**
+- При monomorphization, если `T` не выведен из аргументов и не указан
+  явно — подставить `Default`.
+- Проверка: `Default ⊑ Bound` (если bound есть) — compile error
+  иначе.
+
+**Codegen:**
+- Default-параметры monomorphize'ются как обычные generics с
+  подставленным значением. Без runtime-overhead.
+
+**Migration:**
+- `Handler[E]` в существующих сигнатурах ≡ `Handler[E, Never]`.
+  Старый код продолжает работать без правок.
+- Места где handler делает `interrupt` — мигрировать на `Handler[E, IRT]`
+  (~10 мест, см. spec migration в коммите).
+
 ---
 
 ## Порядок исполнения
@@ -349,8 +430,11 @@ ExprKind::BangBang { expr: Box<Expr>, span: Span }     // NEW
 | Ф.8 | Миграция existing nova_tests, stdlib, docs (closure + error-ops) | both | Ф.5, Ф.10 | **A** (одновременно) | nova_tests passes |
 | Ф.9 | Новые corner-case regression-тесты (closure + error-ops) | both | Ф.7, Ф.10 | post-A | new tests pass |
 | Ф.10 | Parser postfix `!!` + смена семантики `?` (D85) | error-ops | — | **A** | parse-tests + runtime |
+| Ф.11 | Handler-лямбда мигрирует на `\|x\|` (D31-rev) | handler | Ф.2 | **A** | parse + runtime |
+| Ф.12 | `Handler[E, IRT]` параметризация (D87) | handler | Ф.13 | **A** | type-check |
+| Ф.13 | Default generic params (D88) | generics | — | **A** | parse + type-check |
 
-**A** = входит в атомарный PR (Ф.1–Ф.5 + Ф.8 + Ф.10 одновременно).
+**A** = входит в атомарный PR (Ф.1–Ф.5 + Ф.8 + Ф.10–Ф.13 одновременно).
 Эти фазы должны мерджиться вместе, иначе либо парсер сломан, либо
 тесты сломаны на момент мерджа.
 

@@ -2,44 +2,144 @@
 
 # Nova
 
-Язык программирования с **одной центральной абстракцией**
-(алгебраические эффекты + handler'ы) и **одним killer use-case**
-(AI-first программирование с верифицируемым кодом от LLM).
+```nova
+fn process_order(o Order) Db Net Time Fail -> Receipt
+```
 
-## Главный тезис
+Прочитав одну эту строчку, ты знаешь что функция:
 
-> **Nova — это язык, в котором LLM может писать код, который человек
-> может доверять, потому что эффекты делают всё видимым, контракты
-> делают всё проверяемым, а handler'ы делают всё тестируемым.**
+- ходит в **базу данных** (`Db`)
+- делает **сетевые запросы** (`Net`)
+- читает **время** (`Time`) — значит её результат зависит от часов
+- может **бросить ошибку** (`Fail`)
+- и больше **ничего**: не пишет файлы, не читает stdin, не использует
+  random — иначе это было бы в сигнатуре.
 
-## Содержание
+Это **алгебраические эффекты** — идея из академического языка Koka,
+доведённая до прикладного состояния. Когда побочные действия видны в
+типе, ревью становится локальным: можно проверить функцию не читая её
+тело и тела всех её вызовов.
 
-- [spec/overview.md](spec/overview.md) — главные идеи, что заимствует у кого, tooling
-- [spec/revolutionary.md](spec/revolutionary.md) — **флагманские возможности**:
-  effects + handlers, AI-first дизайн, контракты, time-travel debugging
-- [spec/syntax.md](spec/syntax.md) — примеры синтаксиса
-- [spec/effects.md](spec/effects.md) — система эффектов (базовое введение)
-- [spec/open-questions.md](spec/open-questions.md) — нерешённые вопросы
-- [spec/decisions/](spec/decisions/) — журнал дизайн-решений с эволюцией
-- [compiler-codegen/](compiler-codegen/) — компилятор Nova (Rust): парсер, type-checker, treewalk-интерпретатор, C-backend codegen
+> **Главная ставка Nova:** код будут писать всё чаще LLM, а ревьюить —
+> люди. Языки, спроектированные до AI-эпохи, оптимизированы под
+> обратную пропорцию. Nova — первый язык, явно оптимизированный под
+> пару «LLM пишет, человек ревьюит».
 
-## Из чего следует всё остальное
+## Покажи код
 
-Одна идея: **всё нечистое — эффект, любой эффект перехватывается
-handler'ом**. Отсюда автоматически:
+### 1. Эффект → handler → тест без моков
 
-- Тесты без моков (handler-подмена)
-- Транзакции, undo/redo, snapshot (handler `Db`)
-- Capability security (`forbid X { ... }` запрещает эффект в скоупе)
-- Time-travel debugging (запись handler-вызовов)
-- Детерминированный repro (handler'ы `Time`+`Random` с фиксацией)
-- Supervision как в Erlang (`supervised { spawn ... }` + restart strategy)
-- LLM-безопасный код (побочные действия видны в типе)
+```nova
+// Объявляем эффект — контракт операций, без полей
+type Db effect {
+    query(q Sql) -> []Row
+    exec(q Sql)  -> ()
+}
+
+// Бизнес-логика: эффект Db в сигнатуре, реализация неизвестна
+fn transfer(from u64, to u64, amount money) Db Fail -> () {
+    let src = Db.query(sql`SELECT * FROM accounts WHERE id = ${from}`)
+    if src[0].balance < amount { throw InsufficientFunds }
+    Db.exec(sql`UPDATE accounts SET balance = balance - ${amount} WHERE id = ${from}`)
+    Db.exec(sql`UPDATE accounts SET balance = balance + ${amount} WHERE id = ${to}`)
+}
+
+// Production: реальный handler
+fn main() Io Fail -> () =>
+    with Db = postgres("postgres://...") {
+        transfer(1, 2, 100)
+    }
+
+// Тест: тот же код, in-memory handler, никаких моков
+test "transfer moves money" {
+    let mem = in_memory_db([
+        Account { id: 1, balance: 500 },
+        Account { id: 2, balance: 0 },
+    ])
+    with Db = mem {
+        transfer(1, 2, 100)
+        assert(mem.get(1).balance == 400)
+        assert(mem.get(2).balance == 100)
+    }
+}
+```
+
+Один и тот же `transfer` работает в проде и в тесте — потому что
+реализация `Db` подставляется через `with`, а не зашита в код. Никакого
+DI-фреймворка, никакой mock-библиотеки.
+
+### 2. Параллелизм без `async`/`await`
+
+```nova
+fn check_all(urls []str) Net Fail -> []HealthStatus =>
+    parallel for url in urls {
+        let resp = Http.get(url)!!
+        HealthStatus { url, code: resp.status, latency: resp.elapsed }
+    }
+```
+
+Тип возврата — `[]HealthStatus`, не `Future<[]HealthStatus>`. **Цвета
+функции не существует** — `Http.get` не объявлена async/sync, она
+объявляет эффект `Net Fail` в сигнатуре, и этого достаточно.
+
+`parallel for` — structured concurrency: все запросы летят параллельно,
+scope ждёт всех, при ошибке хвост отменяется. Та же `Http.get` работает
+и в обычном цикле, и в `parallel for` — без изменений сигнатуры.
+
+### 3. Детерминированный random в тесте
+
+```nova
+fn pick_winner(participants []str) Random -> str =>
+    participants[Random.range(0, participants.len())]
+
+test "winner is deterministic with seed" {
+    let people = ["alice", "bob", "carol", "dave"]
+    with Random = seed(42) {
+        assert(pick_winner(people) == "carol")
+        assert(pick_winner(people) == "alice")
+    }
+}
+```
+
+`Random` — обычный эффект. В проде — настоящий генератор; в тесте —
+фиксированный seed, и результат **воспроизводим**. Никаких
+`MockRandom`, никаких patch'ей. Тот же `pick_winner` работает в обоих
+случаях.
+
+### 4. Контракты — градиент от Go до F\*
+
+```nova
+fn withdraw(mut acc Account, amount money) Fail -> ()
+    requires amount > 0
+    requires acc.balance >= amount
+    ensures  acc.balance == old(acc.balance) - amount
+=>
+    acc.balance -= amount
+```
+
+Контракты **опциональны**. Без них код работает как в Go. С ними
+компилятор пытается доказать инварианты статически (как F\* / Dafny);
+что не может доказать — превращает в runtime-проверку в debug-режиме
+и убирает в release.
+
+Один и тот же язык покрывает спектр от скрипта до критичного к
+корректности кода — пишешь столько контрактов, сколько нужно.
+
+## Что следует из одной идеи
+
+| Возможность | Как получается из effect+handler |
+|---|---|
+| Тесты без моков | Подмена handler'а через `with` |
+| Транзакции | Handler `Db` буферизует операции, коммитит в конце scope'а |
+| Capability security | `forbid Net, Fs { ... }` запрещает эффект — compile error |
+| Time-travel debugging | Запись handler-вызовов → replay |
+| Erlang-style supervision | `supervised { spawn ... }` + restart-стратегия handler'а |
+| LLM-безопасный код | Побочные действия видны в сигнатуре функции |
 
 ## Память: managed по умолчанию, real-time opt-in
 
 **Программист пишет, GC работает.** Никаких префиксов памяти в обычном
-коде. Циклы освобождаются автоматически. Современный concurrent GC даёт
+коде. Циклы освобождаются автоматически. Современный concurrent GC —
 паузы <1ms.
 
 Для real-time зон (звук, торговля, embedded) — блок `realtime { ... }`.
@@ -55,12 +155,34 @@ fn map_audio(samples []f32, gain f32) -> []f32 =>
 
 Для perf-критичного кода компилятор использует **escape analysis** —
 не утекающие значения остаются на стеке без аллокаций. Программист не
-пишет ничего особого. См. [spec/decisions/05-memory.md#d6](spec/decisions/05-memory.md#d6).
+пишет ничего особого.
+
+## Что выкинуто из обычных языков
+
+- **Заголовочные файлы, `package`/`module` дуализм** — один файл = модуль.
+- **`null`** — только `Option[T]`.
+- **Невидимые исключения** — только эффект `Fail[E]`, видимый в сигнатуре.
+- **`async`/`await` keyword'ы** — suspension это ambient runtime, эффекты в типах: `Net`, `Io`, `Db`.
+- **Перегрузка операторов на произвольные типы** — только стандартные через `@plus`, `@times`, ...
+- **Макросы как препроцессор** — только typed comptime (как Zig).
+- **Глобальное mutable state** — `mut` поля/параметры локально, или специализированные state-эффекты с именем (`Counter`, `Cache`).
+- **DI через рефлексию** — зависимости в эффектах или параметрах.
+- **Mock-библиотеки** — handler'ы из языка.
+
+## Содержание
+
+- [spec/overview.md](spec/overview.md) — главные идеи, что заимствует у кого, tooling
+- [spec/revolutionary.md](spec/revolutionary.md) — **флагманские возможности**: effects + handlers, AI-first дизайн, контракты, time-travel debugging
+- [spec/syntax.md](spec/syntax.md) — примеры синтаксиса
+- [spec/effects.md](spec/effects.md) — система эффектов (базовое введение)
+- [spec/open-questions.md](spec/open-questions.md) — нерешённые вопросы
+- [spec/decisions/](spec/decisions/) — журнал дизайн-решений с эволюцией
+- [compiler-codegen/](compiler-codegen/) — компилятор Nova (Rust): парсер, type-checker, treewalk-интерпретатор, C-backend codegen
 
 ## Статус
 
-Активная разработка. Спецификация стабильна по ключевым областям (эффекты,
-handlers, синтаксис, память, конкуренция). Один компилятор:
+Активная разработка. Спецификация стабильна по ключевым областям
+(эффекты, handlers, синтаксис, память, конкуренция). Один компилятор:
 
 - **compiler-codegen** — Rust-реализация с парсером, type-checker'ом,
   treewalk-интерпретатором и C-backend codegen'ом. Компилирует Nova в C

@@ -2,53 +2,156 @@
 
 # Nova
 
-A programming language with **one central abstraction**
-(algebraic effects + handlers) and **one killer use-case** (AI-first
-programming with verifiable LLM-written code).
+```nova
+fn process_order(o Order) Db Net Time Fail -> Receipt
+```
+
+Reading this single line, you know the function:
+
+- talks to the **database** (`Db`)
+- makes **network requests** (`Net`)
+- reads **the clock** (`Time`) — so its result depends on time
+- can **throw an error** (`Fail`)
+- and **nothing else**: it doesn't write files, read stdin, or use
+  randomness — otherwise it would be in the signature.
+
+This is **algebraic effects** — an idea from the academic language
+Koka, brought to a practical form. When side effects are visible in
+the type, review becomes local: you can verify a function without
+reading its body or the bodies of all the things it calls.
+
+> **Nova's main bet:** more and more code will be written by LLMs,
+> but humans will still review it. Languages designed before the AI
+> era are optimized for the opposite ratio. Nova is the first
+> language explicitly optimized for the «LLM writes, human reviews»
+> pair.
 
 > ⚠️ The full language specification is currently only available in
-> Russian. See [spec/decisions/](spec/decisions/) and [spec/](spec/). This
-> README gives an English overview of the core ideas.
+> Russian. See [spec/decisions/](spec/decisions/) and [spec/](spec/).
+> This README gives an English overview of the core ideas.
 
-## Core thesis
+## Show me the code
 
-> **Nova is a language in which an LLM can write code a human can
-> trust — because effects make everything visible, contracts make
-> everything verifiable, and handlers make everything testable.**
+### 1. Effect → handler → tests without mocks
 
-## Contents
+```nova
+// Declare an effect — a contract of operations, no fields
+type Db effect {
+    query(q Sql) -> []Row
+    exec(q Sql)  -> ()
+}
 
-- [spec/overview.md](spec/overview.md) — main ideas, what is borrowed from where, tooling
-- [spec/revolutionary.md](spec/revolutionary.md) — **flagship features**:
-  effects + handlers, AI-first design, contracts, time-travel debugging
-- [spec/syntax.md](spec/syntax.md) — syntax examples
-- [spec/effects.md](spec/effects.md) — effect system (introduction)
-- [spec/open-questions.md](spec/open-questions.md) — unresolved questions
-- [spec/decisions/](spec/decisions/) — design decision log with rationale
-- [compiler-codegen/](compiler-codegen/) — Nova compiler (Rust): parser, type-checker, treewalk interpreter, C-backend codegen
+// Business logic: Db effect in the signature, implementation unknown
+fn transfer(from u64, to u64, amount money) Db Fail -> () {
+    let src = Db.query(sql`SELECT * FROM accounts WHERE id = ${from}`)
+    if src[0].balance < amount { throw InsufficientFunds }
+    Db.exec(sql`UPDATE accounts SET balance = balance - ${amount} WHERE id = ${from}`)
+    Db.exec(sql`UPDATE accounts SET balance = balance + ${amount} WHERE id = ${to}`)
+}
+
+// Production: real handler
+fn main() Io Fail -> () =>
+    with Db = postgres("postgres://...") {
+        transfer(1, 2, 100)
+    }
+
+// Test: same code, in-memory handler, no mocks at all
+test "transfer moves money" {
+    let mem = in_memory_db([
+        Account { id: 1, balance: 500 },
+        Account { id: 2, balance: 0 },
+    ])
+    with Db = mem {
+        transfer(1, 2, 100)
+        assert(mem.get(1).balance == 400)
+        assert(mem.get(2).balance == 100)
+    }
+}
+```
+
+The same `transfer` runs in production and in tests — because the
+`Db` implementation is supplied via `with`, not hard-wired in the
+code. No DI framework, no mocking library.
+
+### 2. Concurrency without `async`/`await`
+
+```nova
+fn check_all(urls []str) Net Fail -> []HealthStatus =>
+    parallel for url in urls {
+        let resp = Http.get(url)!!
+        HealthStatus { url, code: resp.status, latency: resp.elapsed }
+    }
+```
+
+The return type is `[]HealthStatus`, not `Future<[]HealthStatus>`.
+**Function colour does not exist** — `Http.get` is not declared
+async/sync, it declares the `Net Fail` effect in its signature, and
+that's enough.
+
+`parallel for` is structured concurrency: all requests run in
+parallel, the scope waits for all of them, the tail is cancelled on
+error. The same `Http.get` works in a regular loop and in
+`parallel for` — without changing the signature.
+
+### 3. Deterministic random in tests
+
+```nova
+fn pick_winner(participants []str) Random -> str =>
+    participants[Random.range(0, participants.len())]
+
+test "winner is deterministic with seed" {
+    let people = ["alice", "bob", "carol", "dave"]
+    with Random = seed(42) {
+        assert(pick_winner(people) == "carol")
+        assert(pick_winner(people) == "alice")
+    }
+}
+```
+
+`Random` is an ordinary effect. In production — a real generator;
+in tests — a fixed seed, and the result is **reproducible**. No
+`MockRandom`, no patches. The same `pick_winner` works in both
+cases.
+
+### 4. Contracts — a gradient from Go to F\*
+
+```nova
+fn withdraw(mut acc Account, amount money) Fail -> ()
+    requires amount > 0
+    requires acc.balance >= amount
+    ensures  acc.balance == old(acc.balance) - amount
+=>
+    acc.balance -= amount
+```
+
+Contracts are **optional**. Without them the code runs as in Go.
+With them, the compiler tries to prove invariants statically (like
+F\* / Dafny); what it can't prove is turned into a runtime check in
+debug mode and stripped in release.
+
+The same language covers a spectrum from a script to
+correctness-critical code — write as many contracts as you need.
 
 ## What follows from a single idea
 
-One idea: **anything impure is an effect, any effect is intercepted by
-a handler**. From that, the following fall out automatically:
-
-- Tests without mocks (handler substitution)
-- Transactions, undo/redo, snapshot (handler `Db`)
-- Capability security (`forbid X { ... }` blocks an effect in a scope)
-- Time-travel debugging (record handler calls)
-- Deterministic repro (handlers `Time` + `Random` with fixed seed)
-- Erlang-style supervision (`supervised { spawn ... }` + restart strategy)
-- LLM-safe code (side effects are visible in the type signature)
+| Feature | How it falls out of effect+handler |
+|---|---|
+| Tests without mocks | Handler substitution via `with` |
+| Transactions | A `Db` handler buffers operations, commits at scope exit |
+| Capability security | `forbid Net, Fs { ... }` blocks an effect — compile error |
+| Time-travel debugging | Record handler calls → replay |
+| Erlang-style supervision | `supervised { spawn ... }` + handler restart strategy |
+| LLM-safe code | Side effects are visible in the function signature |
 
 ## Memory: managed by default, real-time opt-in
 
-**The programmer writes, the GC works.** No memory prefixes in regular
-code. Cycles are reclaimed automatically. A modern concurrent GC keeps
-pauses below 1ms.
+**The programmer writes, the GC works.** No memory prefixes in
+regular code. Cycles are reclaimed automatically. A modern
+concurrent GC keeps pauses below 1ms.
 
 For real-time zones (audio, trading, embedded) — a `realtime { ... }`
-block. Inside it the compiler guarantees no suspension and no GC pauses;
-violation is a compile-time error:
+block. Inside it the compiler guarantees no suspension and no GC
+pauses; violation is a compile-time error:
 
 ```nova
 fn map_audio(samples []f32, gain f32) -> []f32 =>
@@ -59,23 +162,46 @@ fn map_audio(samples []f32, gain f32) -> []f32 =>
 
 For perf-critical code the compiler uses **escape analysis** —
 non-escaping values stay on the stack with no allocations. The
-programmer writes nothing special. See [spec/decisions/05-memory.md#d6](spec/decisions/05-memory.md#d6).
+programmer writes nothing special.
+
+## What's removed from typical languages
+
+- **Header files, `package`/`module` dualism** — one file is one module.
+- **`null`** — only `Option[T]`.
+- **Invisible exceptions** — only the `Fail[E]` effect, visible in the signature.
+- **`async`/`await` keywords** — suspension is ambient runtime, effects in types: `Net`, `Io`, `Db`.
+- **Operator overloading on arbitrary types** — only standard ones via `@plus`, `@times`, ...
+- **Macros as preprocessor** — only typed comptime (Zig-style).
+- **Global mutable state** — `mut` fields/parameters locally, or named state effects (`Counter`, `Cache`).
+- **DI through reflection** — dependencies in effects or parameters.
+- **Mocking libraries** — handlers from the language itself.
+
+## Contents
+
+- [spec/overview.md](spec/overview.md) — main ideas, what is borrowed from where, tooling
+- [spec/revolutionary.md](spec/revolutionary.md) — **flagship features**: effects + handlers, AI-first design, contracts, time-travel debugging
+- [spec/syntax.md](spec/syntax.md) — syntax examples
+- [spec/effects.md](spec/effects.md) — effect system (introduction)
+- [spec/open-questions.md](spec/open-questions.md) — unresolved questions
+- [spec/decisions/](spec/decisions/) — design decision log with rationale
+- [compiler-codegen/](compiler-codegen/) — Nova compiler (Rust): parser, type-checker, treewalk interpreter, C-backend codegen
 
 ## Status
 
-Active development. The specification is stable across core features (effects,
-handlers, syntax, memory, concurrency). Single compiler:
+Active development. The specification is stable across core features
+(effects, handlers, syntax, memory, concurrency). Single compiler:
 
-- **compiler-codegen** — Rust implementation with parser, type-checker,
-  treewalk interpreter, and C-backend codegen. Compiles Nova to C via a
-  native runtime (effects, fibers, GC); used for both interactive runs
-  (`run`, `test`) and native compilation (`compile`).
+- **compiler-codegen** — Rust implementation with parser,
+  type-checker, treewalk interpreter, and C-backend codegen.
+  Compiles Nova to C via a native runtime (effects, fibers, GC);
+  used for both interactive runs (`run`, `test`) and native
+  compilation (`compile`).
 
 ## Building from source
 
 The pipeline is two-stage: `nova-codegen` produces `.c`, a native C
-compiler links it with the runtime (`nova_rt/`). Wrapper scripts make
-this a single command:
+compiler links it with the runtime (`nova_rt/`). Wrapper scripts
+make this a single command:
 
 ```powershell
 # Windows (requires MSVC Build Tools)
