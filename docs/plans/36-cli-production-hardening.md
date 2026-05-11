@@ -1,555 +1,665 @@
 # Plan 36: CLI production hardening — `nova check` / `nova test`
 
 > **Статус:** план, не начат.
-> **Создан:** 2026-05-12. **Обновлён:** 2026-05-12 (после 3-way audit: cargo / go+CI / nova-specific = 85 gaps).
+> **Создан:** 2026-05-12.
+> **Обновлён:** 2026-05-12 (v4: после 4-way audit, разрешены contradictions,
+> объявлен MVP, расписаны architectural decisions + prerequisites).
 > **Приоритет:** ВЫСОКИЙ.
 
 ---
 
 ## Зачем
 
-Сейчас три independent pipeline'а проверки:
+Сейчас три independent pipeline'а:
 
 1. **`nova test`** — гоняет `nova_tests/**/*.nv` через C-codegen → exe →
    exit code. Path хардкодит `<repo>/nova_tests/`.
-2. **`nova check <file>`** — single-file type-check одного файла. **БАГ:**
-   не вызывает `lint_module` и `infer_effects` (unlike `cmd_build`).
-   Принимает только file, не dir; нет recurse; нет parallel.
+2. **`nova check <file>`** — single-file type-check. **BUG (I03/N17):**
+   не вызывает `lint_module` + `infer_effects` (unlike `cmd_build`).
+   Принимает только file. Нет recurse, parallel, JSON.
 3. **stdlib / examples** — нет automated coverage. PowerShell loop ad-hoc.
 
-**Реальные проблемы:**
-
-- `nova check` молчит про lints + effect-inference которые `nova build`
-  ловит — **silent correctness gap**.
+**Real problems:**
+- `nova check` silent на lints + effect-inference которые `nova build`
+  ловит — **silent correctness gap** (Ф.0 MVP fix).
 - Регрессии в std/ обнаруживаются поздно.
-- examples/ не покрыты вообще.
-- No machine-readable output (NDJSON / SARIF / JUnit) — CI tooling не
-  интегрируется.
-- Exit codes сливают usage-error с diagnostic-error.
+- examples/ не покрыты.
+- No machine-readable output → CI tooling не интегрируется.
+- Exit codes сливают usage-error и diagnostic-error.
 
 ---
 
-## Mainstream reality check
+## MVP boundary (declared explicitly — closes I25)
 
-**Cargo:** package-graph через `-p <SPEC>`, не paths. JSON через
-`--message-format=json` со stable schema (`reason`, `target`,
-`message.spans[]` с byte ranges). Exit 0/1/101. `--keep-going`,
-`--frozen`, `--locked`, `CARGO_TARGET_DIR`, `RUSTC_WRAPPER`, `--color`,
-`-v`/`-vv`, `--config KEY=VAL`, `--message-format=json-diagnostic-rendered-ansi`
-(human inside JSON), `rustc --explain Exxxx`.
+План **многосессионный**. MVP — самый узкий subset который даёт **real
+production value** без полного scope.
 
-**Go:** package patterns (`./...`), `vendor/`/`_*`/`.*` hard-skip. NDJSON
-streaming per-package. Exit 0/1/2. `go test -race`, `-coverprofile`,
-`-bench`, `-short`, `-tags`, `-timeout`, `-shuffle`, `-failfast`.
-`gotestsum` для JUnit. `$GOCACHE` content-hash с **transitive dep
-hashing**.
+### MVP = Ф.0 + Ф.1 only
 
-**CI standards:** SARIF 2.1.0 (GitHub Code Scanning, Sonar), JUnit XML
-(GitHub Actions, GitLab, Jenkins), `.pre-commit-hooks.yaml` (pre-commit.com),
-LSP textDocument/publishDiagnostics, `GITHUB_STEP_SUMMARY` /
-`::error file=,line=::msg` annotations, `NO_COLOR` / `CLICOLOR_FORCE` env.
+1. **Ф.0**: fix `cmd_check` correctness bug (no API changes; ~50 строк).
+2. **Ф.1**: `nova check <path>` + `nova test <path>` polymorphic, общий
+   фундамент walk/parallel/exit codes/manifest. **Оба в одной фазе** —
+   расщеплять не имеет смысла, общий код. (~500 строк, потенциально
+   больше с тестами.)
 
-**Что typically missed (Bun, Deno, Zig):** stable JSON schema, separate
-exit codes 0/1/2, implicit-skip dirs, canonicalize/dedup, transitive
-cache invalidation, SARIF, LSP.
+MVP shippable как **standalone plan-36-mvp**. Покрывает:
+- R1, R2, R3 (без `.gitignore` v1), R4, R5, R6, R7, R8, R10 (без CI auto-
+  detect v1), R11 (path-filter only), R13, R19, R20, R21, R25 (test reuses
+  same path semantic).
+
+После MVP — separate plans для каждой подгруппы (см. ниже).
+
+### Post-MVP plans (split into separate)
+
+| Sub-plan | Содержание | Зависимости |
+|---|---|---|
+| **36.A** | JSON/SARIF/JUnit output (R9, R12, R14, R15, R16, R23) | + `Diagnostic` extension (A04), `DiagRenderer` trait (A02) |
+| **36.B** | Caching (R17, R18) | + `blake3` dep approval, bootstrap-minimality policy review (I06) |
+| **36.C** | CI ecosystem (R26, R27, R28, R29) | + `nova` distribution story (I18), GitHub Actions auto-detect (R27 → narrow to GHA only v1) |
+| **36.D** | Advanced ergonomics (R11 verbosity, progress, completions, `--explain`, `--dry-run`) | none |
+| **36.E** | Workspace + manifest (R22, A15 nested nova.toml) | + `nova-manifest` crate |
+
+Каждый sub-plan — отдельный план файл, независимый scope. Это **закрывает
+I25** (multi-session realism).
 
 ---
 
-## Архитектурное решение для Nova
+## Mainstream reality check (compressed; see v3 history для full)
 
-**Не cargo-style** (cargo отказался от path args). Идём по **go-pattern**:
-positional path, file-or-directory polymorphic, hard-coded skip,
-recursive default для dir. Без `./...` суффикса — slash-style proven в
-`clippy <path>`, `eslint`, `prettier`, `ruff`, `black`.
+- **Cargo:** package-graph, exit 0/1/101, `--message-format=json`,
+  `--frozen`/`--locked`/`--offline`, `CARGO_TARGET_DIR`, `--color`,
+  `-v`/`-vv`, `--explain`, `--message-format=json-diagnostic-rendered-ansi`.
+- **Go:** path patterns (`./...`), implicit-skip dirs, exit 0/1/2, NDJSON
+  streaming, `$GOCACHE` с transitive deps hash, `-race`, `-cover`,
+  `-bench`, `-tags`, `-short`, `-shuffle`, `-failfast`, `gotestsum` для
+  JUnit.
+- **CI standards:** SARIF 2.1.0, JUnit XML, pre-commit.com,
+  `NO_COLOR`/`CLICOLOR`/`CI=true`, GitHub Actions annotations
+  (`::error file=,line=,col=,endLine=,endColumn=::msg`).
+
+---
+
+## Архитектурное решение (resolved)
+
+**Path semantic:** go-pattern (path argument, file-or-dir polymorphic).
+Без `./...` суффикса — slash-style proven в clippy/eslint/ruff/prettier/
+black.
 
 ```
-nova check                          # walk-parents до nova.toml, project root
+nova check                          # walk parents до nova.toml
 nova check std/                     # dir → recurse
-nova check std/collections/vec.nv   # file → single
+nova check std/foo.nv               # file → single
 nova check std/ examples/           # multi-path
 nova check std/ --keep-going --format json
 ```
 
-Симметрично `nova test`. Existing `--tests-dir` deprecated.
+Симметрично `nova test`. `--tests-dir` **удаляется** (clean break, без
+deprecation cycle — bootstrap, не в проде).
 
----
+### Architecture decisions (A01-A25 closed)
 
-## Requirements (R1-R30, MUST/SHOULD/COULD priorities)
+**AD1. Code placement** (closes A01, A03, A07, A19, A24).
+- Создаётся новый crate **`nova-frontend`** (sibling к `nova-codegen` /
+  `nova-cli`). Содержит:
+  - `check_file_full()` — pipeline orchestration.
+  - `walk_nv()` — moved из `test_runner.rs` (где сейчас private).
+  - `Environment` struct — env var aggregation (NO_COLOR / CI / etc).
+  - Output renderers (`trait DiagRenderer` + 6 impls).
+  - Cache layer (`trait CheckCache` + FsCache + MemoryCache).
+- `compiler-codegen` остаётся **bootstrap-minimal** (closes A08, I06):
+  blake3 / ignore / is-terminal — все в `nova-frontend` или `nova-cli`,
+  не в core.
+- `nova-cli` остаётся thin: `Cmd` dispatch + flag parsing.
+- `nova-cli` нужен **`lib.rs`** — split на `nova-cli` (lib) + `nova` (bin).
+  Закрывает A24.
 
-Каждое R прослежено в Acceptance. **MUST** = Ф.1-Ф.4 (production gate).
-**SHOULD** = Ф.5-Ф.7. **COULD** = Ф.8+, deferred.
-
-### Core path semantics (MUST)
-
-**R1. Polymorphic path argument.** `path.is_file()` / `path.is_dir()` —
-дискриминация. Несуществующий path → exit=2. Никаких glob/pattern в
-v1.
-
-**R2. Recursive default for directory.** `is_dir()` всегда recurse. Нет
-`--recursive` флага (clippy/eslint/ruff convention).
-
-**R3. Implicit excludes** (hard-coded skip):
-- `target/`, `node_modules/`, `vendor/`, `.git/`, `.hg/`, `.svn/`
-- `_*` и `.*` directories at any level
-- `std/runtime/` — auto-gen (Plan 13)
-- `*.c` рядом с `*.nv` (codegen artifact)
-- **`.gitignore` / `.novaignore`** respect через `ignore` crate
-
-Override через `--include-runtime`, `--no-exclude <pattern>`,
-`--no-respect-gitignore`.
-
-**R4. No-argument behaviour.** Walk parents до `nova.toml`. Не найден →
-exit=2 `nova.toml not found in <cwd> or any parent`.
-
-**R5. Multi-path dedup + canonicalisation.** Canonicalize → dedup set.
-Path outside nova.toml project root → exit=2 (unless `--allow-outside-project`).
-Symlink resolved.
-
-**R6. Wrong-extension / non-existent paths.** Non-existent → exit=2.
-File без `.nv` → exit=2. No-read inside walk → warning, skip.
-
-**R7. Exit codes quintuplet** (refined after cargo/go review):
-- **0** — all PASS (no diagnostics).
-- **1** — diagnostic failures (type errors, parse errors, lints с `--deny`).
-- **2** — CLI usage error (bad flag, path not found, no nova.toml).
-- **3** — codegen / build failure (separate from type-check).
-- **101** — internal panic / tool bug.
-
-Cargo использует 101 для panic — мы reuse. Это **fixes G11** (build vs
-diagnostic conflation).
-
-**R8. Failure aggregation.** Default: continue within single path-arg,
-fail-fast between paths. `--keep-going` / `--no-fail-fast` (alias):
-continue everywhere. `--fail-fast`: stop on first.
-
-### Output (MUST)
-
-**R9. Output mode dichotomy + rendered field.**
-
-Modes: `--format human|json|short|json-rendered|junit|sarif`.
-
-- **human** — colored, file:line:col, source snippet, suggestion. Default.
-- **json** — NDJSON, **stable schema** (`schema_version: "1"`), один
-  объект на диагностику:
-  ```json
-  {"schema_version":"1","severity":"error","file":"std/foo.nv",
-   "line":12,"column":5,"byte_start":234,"byte_end":248,
-   "code":"E0042","message":"undefined identifier `bar`",
-   "spec_link":"decisions/02-types.md#d72",
-   "suggestion":"did you mean `baz`?",
-   "effects":[],"capabilities":{}}
+**AD2. `Diagnostic` extension** (closes A04, A05, I02).
+- `compiler-codegen/src/diag.rs::Diagnostic` расширяется:
+  ```rust
+  pub struct Diagnostic {
+      pub message: String,
+      pub span: Span,
+      pub severity: Severity,        // NEW (R14)
+      pub code: Option<DiagCode>,    // NEW (R15)
+      pub spec_link: Option<String>, // NEW (R16)
+      pub suggestion: Option<String>,// NEW
+      pub notes: Vec<String>,        // NEW (closes U17 — rustc chain)
+  }
+  pub enum Severity { Error, Warning, Info, Help }
+  pub struct DiagCode(pub &'static str); // "E0042", "W0001"
   ```
-  Финальная: `{"schema_version":"1","summary":{"passed":38,"failed":6,"skipped":2}}`.
-- **json-rendered** — JSON envelope с `rendered: "..."` field (ANSI-colored
-  human form inside). Cargo `json-diagnostic-rendered-ansi` equivalent.
-  Закрывает G10.
-- **short** — `<file>:<line>:<col>: <msg>` без snippet.
-- **junit** — XML, GitHub Actions / GitLab / Jenkins compatible.
-  Reuse existing `Plan 27 Б.6` JUnit infrastructure из test_runner.
-- **sarif** — SARIF 2.1.0 для GitHub Code Scanning. **MUST** для security
-  CI integration.
+- `LintWarning` (lints.rs:24) удаляется, merges в `Diagnostic { severity:
+  Warning }`. **Clean break** — все call sites обновляются (bootstrap,
+  не в проде).
+- Все call sites (50+) обновляются через `Diagnostic::error(msg, span)`,
+  `Diagnostic::warning(msg, span)` constructors — default severity, code
+  опционально.
 
-**R10. Color control.** `--color auto|always|never`. Auto = isatty.
-Respect `NO_COLOR=1`, `CLICOLOR=0`, `CLICOLOR_FORCE=1`, `TERM=dumb`,
-`CI=true` (auto-disable). GitHub Actions special: emit `::error file=,line=::msg`
-annotations + `GITHUB_STEP_SUMMARY` markdown.
+**AD3. `DiagRenderer` trait** (closes A02).
+- В `nova-frontend/src/render/`:
+  ```rust
+  pub trait DiagRenderer {
+      fn emit(&mut self, d: &Diagnostic);
+      fn finish(&mut self, summary: &Summary);
+  }
+  ```
+- 6 impls: `HumanRenderer`, `JsonRenderer` (NDJSON streaming),
+  `JsonRenderedRenderer` (JSON envelope с rendered ANSI inside),
+  `ShortRenderer`, `JUnitRenderer`, `SarifRenderer`.
+- Test/check используют **общий** trait — closes A22.
 
-**R11. Verbosity ladder.** `-q` / `-v` / `-vv` / `-vvv`. Default normal.
-`-q` only failures + final summary. `-vv` includes timing per file.
+**AD4. Concurrency model** (closes A09, A10, U23 contradiction).
+- Worker threads (`thread::scope`) пишут в `mpsc::Sender<DiagEvent>`.
+- Single drain thread читает events, передаёт в `DiagRenderer`.
+- **Order policy:** group events by file, drain in **file-discovery
+  order** (deterministic). Внутри файла — phase-order (parse → types →
+  effects → caps → lints).
+- **Streaming + ordering** не конфликтуют: events stream'ятся, но
+  **per-file** буфер собирается до завершения файла, потом дренируется
+  целиком. Это **per-file streaming** — закрывает U23.
+- Determinism test: `-j 16 vs -j 1` — byte-identical output (acceptance
+  Ф.1).
 
-**R12. Streaming output.** NDJSON flushes per-diagnostic (not at end).
-Critical для CI live dashboards.
+**AD5. Capability check phase** (closes A13, I01).
+- `capability::check` **не существует** как separate module — логика в
+  `types::check_module`. Plan **не выделяет** в отдельную phase;
+  `check_file_full()` имеет 4 phases (не 7):
+  1. parse
+  2. check_module_path (через manifest)
+  3. types::check_module (включает D72 bounds + D63/D64 capability)
+  4. lints::lint_module + emit_module warnings
+- `infer_effects(&mut module)` — вызывается **внутри** `check_module`
+  (current behaviour). План v3 имел 7 phases — было wrong.
 
-### Correctness — fix existing bugs (MUST)
+**AD6. Manifest resolver** (closes A15, I08).
+- 4 nested `nova.toml`: repo root (workspace), `nova_tests/`,
+  `examples/`, `std/`. Сейчас `find_repo_root` и `find_manifest`
+  возвращают **разное** — bug.
+- Unified `ManifestResolver`:
+  - `find_owning_package(file)` — innermost nova.toml с `[package]`.
+  - `find_workspace_root()` — outermost nova.toml с `[workspace]`.
+  - Multi-path run: каждый path resolves в свой owning package.
+  Cross-package run discouraged, но allowed.
+- В MVP только `find_owning_package`; workspace concept — sub-plan 36.E.
 
-**R13. `cmd_check` runs FULL pipeline.** Currently `cmd_check` runs only
-parse + check_module_path + check_module — **misses `infer_effects` +
-`lint_module`** что `cmd_build` делает. Это **silent correctness gap**.
+**AD7. Cache abstraction** (closes A06, A16, I05).
+- `trait CheckCache` (см. AD1).
+- **v1 (MVP+36.B):** key = `blake3(file_content || nova_codegen_binary_hash
+  || flags || gc_kind)`.
+  - `nova_codegen_binary_hash` = hash of `nova-codegen` executable file
+    (catches local dev iterations) — closes I05.
+- **Known false-PASS limitation:** cross-file import changes не invalidate
+  caller cache. Mitigation:
+  - `--no-cache` mandatory в CI до Plan 35.
+  - Warning при `import` statement в файле + cache hit.
+  - Документировано explicitly в R17 sub-plan.
+- v2 (post-Plan 35): transitive import hash.
 
-Fix: extract `pub fn check_file_full()` в `nova-cli` lib, reuse в
-`cmd_check` и `cmd_build`. Включает sequence:
+**AD8. Output streaming + sort resolution** (closes U23).
+- **NDJSON streaming:** per-file buffer drained на file completion в
+  file-discovery-sorted order.
+- **`--sorted` flag:** force buffer-all + sort-by-file. Disables streaming.
+- **`--no-sort`:** stream events as soon as worker emits (non-deterministic
+  order, fastest output).
+- Default: per-file streaming (best of both).
+
+**AD9. Diagnostic merging** (closes A11, A12).
+- `DiagnosticCollector { diags: Vec<Diagnostic>, max_per_phase: Option<usize> }`
+  собирает per-file.
+- **Phase ordering:** sequential; failed phase **continues** к next
+  (unlike current `cmd_build` which `?`-propagates). Это enables
+  collecting all diagnostics. Caller controls через `--keep-going` (=
+  default in check) vs `--fail-fast`.
+- **Dedup:** key = `(span.start, span.end, code, message_hash)`. Same
+  diagnostic emitted by multiple phases → reported once.
+
+**AD10. Manifest validation** (closes A18, I07, sub-plan 36.E).
+- MVP: `Diagnostic`-emit для module-path mismatch (R21) — заменяет
+  current `anyhow!`.
+- Workspace `[workspace]` parser — sub-plan 36.E.
+- Schema validation `[package]`/`[lib]`/`[dependencies]` — sub-plan 36.E.
+
+**AD11. Plugin hooks для future plans** (closes A20).
+- `trait Phase` registry в `check_file_full`:
+  ```rust
+  pub trait Phase {
+      fn name(&self) -> &str;
+      fn run(&self, m: &Module, collector: &mut DiagnosticCollector);
+  }
+  ```
+- MVP: 4 встроенных Phase (parse, manifest_check, types, lints).
+- Plan 33 contracts добавит `ContractsPhase` без touching check_file_full.
+
+**AD12. Drift detection для auto-gen** (closes A14, N24).
+- `nova check` НЕ запускает `regen-runtime --check` (separate concern).
+- CI workflow (Ф.5) sequences: `regen-runtime --check` → `nova check` →
+  `nova test`. Documented в Ф.5.
+
+---
+
+## Requirements (R1-R30)
+
+Re-organized по MVP boundary. Каждое R помечено: **[MVP]**, **[36.A-E]**,
+или **[deferred R30]**.
+
+### Core path semantics
+
+**R1. [MVP] Polymorphic path argument.** `path.is_file()` /
+`path.is_dir()`. Non-existent → exit=2. No glob/pattern v1.
+
+**R2. [MVP] Recursive default for directory.** `is_dir()` всегда recurse.
+Нет `--recursive` флага.
+
+**R3. [MVP] Implicit excludes** (hard-coded):
+- `target/`, `node_modules/`, `vendor/`, `.git/`, `.hg/`, `.svn/`
+- `_*` и `.*` directories
+- `std/runtime/` (auto-gen)
+- `*.c` рядом с `*.nv`
+
+`.gitignore` respect через `ignore` crate — **[36.A]** (deferred — dep
+approval needed для `nova-frontend`).
+
+Override: `--include-runtime`, `--no-exclude <pattern>`.
+
+**R4. [MVP] No-argument behaviour.** `ManifestResolver::find_workspace_root()`
+(AD6). Не найден → exit=2.
+
+**R5. [MVP] Multi-path dedup + canonicalisation.** Canonicalize → dedup.
+Path outside project root → exit=2 (unless `--allow-outside-project`).
+Symlink resolved через `fs::canonicalize`. Windows junction points
+обрабатываются same (test'ится). Long paths — `\\?\` prefix через
+`dunce` crate (если нужно, оценим в Ф.1).
+
+**R6. [MVP] Wrong-extension / non-existent paths.** Non-existent → exit=2.
+File без `.nv` → exit=2. No-read in walk → warning, skip. Windows device
+names (`CON`/`NUL`/etc) — treat as non-existent.
+
+**R7. [MVP] Exit codes quintuplet.**
+- **0** — all PASS.
+- **1** — diagnostic failures.
+- **2** — CLI usage error (bad flag, path not found, no nova.toml).
+- **3** — codegen / build failure (для `nova test`/`build`, not `check`).
+- **101** — panic. **Guaranteed cross-platform** через
+  `std::panic::set_hook { std::process::exit(101) }` — closes I12.
+
+**R8. [MVP] Failure aggregation.** Default: continue within path (collect
+all per-file diagnostics), fail-fast between paths. `--keep-going` (alias
+`--no-fail-fast`) — continue between paths. `--fail-fast` — stop on
+first.
+
+### Output (mostly [36.A])
+
+**R9. [36.A] Output formats.** `--format human|json|short|json-rendered|junit|sarif`.
+- MVP: только `human` (+ test reuses Plan 27 Б.6 JUnit для `nova test`).
+- 36.A: остальные 5 + stable JSON schema с `schema_version`.
+
+**R10. [MVP basic + 36.A advanced] Color control.**
+- MVP: `--color auto|always|never` + `NO_COLOR` respect. Auto = tty
+  detect через `is-terminal` crate (closes I15).
+- 36.A: `CLICOLOR`/`CLICOLOR_FORCE`/`TERM=dumb`/`CI=true` auto-detect.
+- 36.C: GitHub Actions annotations.
+
+**R11. [36.D] Verbosity ladder.** `-q`/`-v`/`-vv`/`-vvv`. Deferred — MVP
+имеет только default.
+
+**R12. [36.A] Streaming output.** Per-file streaming (AD8). Final
+summary как separate NDJSON object с `"type":"summary"` discriminator
+(closes U16).
+
+### Correctness — MVP critical fix
+
+**R13. [MVP] `cmd_check` runs FULL pipeline.** Closes existing bug
+(I03/N17). `check_file_full()` (AD1) reused by `cmd_check` и `cmd_build`.
+Phases (AD5):
 1. parse
-2. check_module_path
-3. types::check_module
-4. effects::infer_effects (D28 inference)
-5. capability::check (Plan 16 forbid/realtime)
-6. lints::lint_module (anonymous-embed warnings и т.д.)
-7. (optional) bound_check propagation
-8. emit diagnostics через unified `Diagnostic` API
+2. check_module_path (через ManifestResolver, AD6)
+3. types::check_module (включает effects + capability inference)
+4. lints::lint_module + emit_module warnings (lint warnings captured как
+   `Diagnostic { severity: Warning }`)
 
-**R14. Severity discrimination.** Diagnostics имеют 4 severity: `error`,
-`warning`, `info`, `help`. Plan 15 generic bounds, Plan 16 forbid — `error`.
-Lint (anonymous-embed override) — `warning`. `--deny warnings` повышает
-все warnings до errors (exit=1). `-W` / `-A` / `-D <lint>` overrides.
+**R14. [36.A] Severity discrimination.** 4 levels (AD2). `--deny
+warnings` повышает в errors. MVP — только error level (closes A05).
 
-**R15. Diagnostic code registry.** Каждый diagnostic имеет stable code
-(`E0001`..`E9999`, `W0001`..`W9999`). Registry в
-`compiler-codegen/src/diag/codes.rs`. `nova explain <code>` subcommand
-показывает full explanation (rustc-style). Codes immutable — translation-
-stable identifiers (H22).
+**R15. [36.A] Diagnostic code registry.** `compiler-codegen/src/diag/codes.rs`.
+Migration phased — MVP не emit'ит codes; 36.A adds + migrates 50+ call
+sites через `Diagnostic::error(msg, span).with_code("E0042")` builder.
+Closes I02/I23 (codes + `nova explain` ship together в 36.D, не
+separately).
 
-**R16. Spec links in diagnostics.** Каждый diagnostic optional `spec_link`
-field. Human form: `For more info, see spec/decisions/02-types.md#d72`.
-JSON: `"spec_link": "..."`. Reuse existing `diag.rs::Diagnostic`.
+**R16. [36.A] Spec links.** Optional `spec_link` field. Builder
+`.with_spec_link("decisions/02-types.md#d72")`.
 
-### Caching (MUST)
+### Caching [36.B]
 
-**R17. Content + transitive deps caching.** Cache dir:
-`$NOVA_TARGET_DIR/check-cache/` (default `<project>/target/check-cache/`).
-Key: `blake3(file_content || nova_version || flags || transitive_deps_hash)`.
+**R17. [36.B] Content + transitive deps caching.** AD7.
+- `$NOVA_TARGET_DIR/check-cache/` (env override; closes G06).
+- v1 key = `blake3(content + nova_codegen_binary_hash + flags + gc_kind)`.
+- `--no-cache` / `--frozen` (never write) / `--locked` (fail on miss).
+  Naming разъяснён в man page: **Nova semantics differ from cargo** —
+  Nova не имеет lockfile concept (closes U01, I20). Maybe rename в
+  `--cache-readonly` / `--cache-required` чтобы избежать confusion —
+  decide в 36.B.
+- v2 (post-Plan 35): transitive import hash.
+- **Concurrent invocations** (closes U18): atomic write через temp file
+  + rename. flock на cache directory.
+- **Ctrl-C** (closes U19): no partial cache writes (atomic rename
+  guarantee).
 
-**Transitive deps hash** — это **closes G19/H01**. Naive `blake3(content)`
-даёт false-PASS если изменился импортируемый файл. Решение:
-- v1 (до Plan 35): hash = `blake3(content + version + flags)`. Cache
-  invalidates на любое изменение nova-codegen или flag. False-PASS
-  возможен только при cross-file import (документируем как known
-  limitation; mitigation — `--no-cache` в CI).
-- v2 (после Plan 35): build import graph, hash transitive closure.
+**R18. [36.B] Reproducible cache.** Relative paths в cache. No timestamps
+в JSON output (closes U21 + I21 — only **build timestamps** removable;
+diagnostic events don't have timestamps anyway). `SOURCE_DATE_EPOCH`
+respected где применимо.
 
-`--no-cache` / `--frozen` (никогда не пишет cache) / `--locked` (fail
-если cache miss). `$NOVA_TARGET_DIR` env override.
+### Parallelism
 
-**R18. Reproducible cache.** Relative paths в cache; no timestamps в JSON
-output (или `--no-timestamps`); respect `SOURCE_DATE_EPOCH` env
-(Debian/NixOS standard).
+**R19. [MVP] Parallel by default.** `-j N` (default num_cpus, 0 =
+num_cpus, 1 = sequential). Per-file parallel. Concurrency model AD4.
+**Acceptance:** byte-identical output `-j 16` vs `-j 1` (deterministic
+test, closes A10).
 
-### Parallelism (MUST)
+### Nova-specific
 
-**R19. Parallel by default.** `-j N` / `--jobs N`. Default = num_cpus.
-`-j 1` для deterministic output. Per-file parallel (no deps в bootstrap).
-After Plan 35: topological. Output sort-by-file-name перед finalize для
-determinism.
+**R20. [MVP] GC backend awareness.** `nova check --gc boehm|malloc`.
+`ALLOC_REQUIRES` marker (Plan 27) — file skipped if mismatch. Cache key
+includes `gc_kind`. **`parse_alloc_constraint`** moved из `test_runner.rs`
+в `compiler-codegen/src/alloc_constraint.rs` (shared between check/test,
+closes A19).
 
-### Nova-specific (MUST)
+**R21. [MVP] Module-path enforcement.** D78 hard-fail через `Diagnostic`
+(не anyhow). Span указывает на `module` declaration. `--no-check-module-path`
+debug override.
 
-**R20. GC backend awareness for check.** `nova check --gc boehm|malloc`
-(symmetric с test/build). Если файл имеет `// ALLOC_REQUIRES <backend>`
-(Plan 27 marker) и `--gc` mismatch → **skip с reason='alloc-backend'**
-(не error). Cache key включает `gc_kind`.
+**R22. [36.E] nova.toml manifest validation.** Sub-plan 36.E.
 
-**R21. Module path enforcement is hard-fail.** D78 `check_module_path`
-hard-fail (current behaviour). `--no-check-module-path` для bootstrap
-debug; `--strict-module-path` (default) для CI.
+**R23. [36.A] Effect/capability info в JSON.** Per-function effects
+serialized. Builder в `nova-frontend/src/render/json.rs`.
 
-**R22. nova.toml schema validation.** `nova check --manifest` (отдельный
-mode) или часть default check'а. Validate `[package].name`, `[lib].src`,
-`[dependencies]` (после Plan 03). Invalid manifest → exit=2.
+**R24. [36.D] Cross-pipeline divergence documentation.** README + man
+page section.
 
-**R23. Effect/capability info в JSON output.** Per-function effects
-(`["Random","IO","Fail[E]"]`) + forbid/realtime annotations. **Nova-only
-feature**, no precedent в cargo/go. Закрывает N01.
+**R25. [DROP]** ~~Test-block discovery unified~~. Already works (I22 —
+`Item::Test` traversed by `check_module`). **Removed from plan.**
 
-**R24. Cross-pipeline divergence documentation.** Plan explicitly
-documents: `check` PASS ≠ `run` PASS ≠ `build` PASS ≠ `test` PASS. Each
-pipeline имеет свои limitations (interp baseline 43/92, codegen flat
-var_types, etc). Emit warning в README + man page.
+### CI integration [36.C]
 
-**R25. Test-block discovery unified.** `test "name" { }` blocks внутри
-production .nv. `nova check <file>` проверяет test-блоки (parse + type).
-`nova test <file>` — runs them. Same parser, разные phases.
+**R26. [36.C] pre-commit.com framework.** `.pre-commit-hooks.yaml`.
+Distribution story (closes I18): document `cargo install --git <repo>`
++ future GitHub release binaries.
 
-### CI integration (SHOULD)
+**R27. [36.C] GitHub Actions annotations.** Auto-detect `$GITHUB_ACTIONS`.
+**Narrow to GHA in v1** (closes I24). GitLab/Buildkite/CircleCI — separate
+follow-up if demand. **Requires `Span` end-position** (closes I04): add
+`Diagnostic::span_end_line_col()` helper в `nova-frontend` (walks source).
 
-**R26. pre-commit.com framework.** Publish `.pre-commit-hooks.yaml` в
-repo:
-```yaml
-- id: nova-check
-  name: nova check
-  entry: nova check
-  language: system
-  files: '\.nv$'
-- id: nova-test
-  name: nova test
-  entry: nova test
-  language: system
-  stages: [pre-push]
-```
-Users добавляют в `.pre-commit-config.yaml`. **No custom `install-hooks.ps1`**
-(closes H14).
+**R28. [36.C] CI matrix examples.** Reference workflows. **macOS row**
+gated on actual testing (closes I17): mark as `experimental` until
+verified.
 
-**R27. GitHub Actions native output.** Auto-detect `$GITHUB_ACTIONS` env.
-Emit `::error file=,line=,col=,endLine=,endColumn=::message` annotations
-(in-line PR diff). Emit `GITHUB_STEP_SUMMARY` markdown с pass/fail table.
+**R29. [36.C] Test artifacts contract.**
+- `nova check --output-dir <dir>` flag (closes I11).
+- `nova test --junit-output <path>` flag.
+- Stable layout `target/test-artifacts/{junit.xml,sarif.json,timings.json}`.
 
-**R28. CI matrix support.** Workflow examples в repo:
-- `os: [windows-2022, ubuntu-22.04, macos-14]`
-- `gc: [boehm, malloc]`
-- `nova-version: [main, latest-tag]`
+### Deferred [R30]
 
-Не enforce — provide working `.github/workflows/{check,test}.yml`
-examples.
-
-**R29. Test artifacts contract.** Stable layout:
-- `target/test-artifacts/junit.xml` — JUnit XML
-- `target/test-artifacts/sarif.json` — SARIF report
-- `target/test-artifacts/coverage.lcov` — (future, deferred)
-- `target/test-artifacts/bench.json` — (future)
-- `target/test-artifacts/timings.json` — per-test perf
-
-Для `actions/upload-artifact` integration.
-
-### Deferred (COULD)
-
-**R30. Future hooks** (architecture leaves space, not implemented v1):
-- LSP server mode (`nova check --lsp`).
-- Code coverage (`--coverprofile`).
-- Race detection (`nova test --race`) через TSan compile flag.
-- Benchmark integration (`nova test --bench`).
-- `.editorconfig` respect (for future `nova fmt`).
-- Telemetry opt-in.
-- Crash reporting infrastructure.
-- `nova explain <code>` markdown registry (R15 codes are ready, explain
-  command — separate).
-- Performance regression gate (`hyperfine` integration).
-- Pluggable checkers (для Plan 33 contracts, Plan 16 advanced lints).
+LSP server mode, code coverage, race detection, benchmark integration,
+`.editorconfig`, telemetry, crash reporting, `nova explain` markdown
+content, performance regression gate, pluggable checkers beyond AD11,
+i18n. См. sub-plan 36.D + R30 list.
 
 ---
 
-## Phases
+## Phases — MVP cut
 
-### Ф.0 — fix `cmd_check` correctness bug (R13)
+### Ф.0 [MVP] — fix `cmd_check` correctness bug (R13)
 
-**Pre-requisite**. Extract `check_file_full()` в `nova-codegen` lib.
-`cmd_check` и `cmd_build` оба call this. Без этого Ф.1 будет cementing
-silent gap.
+**Prerequisite для всех остальных фаз.**
 
-Acceptance:
-- `nova check foo.nv` repository emits lint warnings (anonymous-embed
-  override) и effect-inference errors — currently missed.
-- `nova build foo.nv` использует same path (no behaviour change).
-- Tests: artificial file with anonymous-embed override → warning visible
-  в `nova check` output.
-
-### Ф.1 — `nova check <path>` core (R1-R8, R10-R12, R19-R22)
-
-В [nova-cli/src/main.rs](../../nova-cli/src/main.rs):
-
-1. `Cmd::Check.paths: Vec<PathBuf>` (clap `num_args = 0..`).
-2. Walk-parents для nova.toml (R4).
-3. Canonicalize + dedup (R5) + boundary check (R12).
-4. R6 validation (extension, exists).
-5. `walk_nv()` + R3 implicit-excludes filter (включая `.gitignore`).
-6. R8 aggregation logic.
-7. R10 color control + R11 verbosity.
-8. R19 parallel `thread::scope`.
-9. R20 GC backend awareness + R21 module-path strict mode.
-10. R7 exit codes 0/1/2/3/101.
-
-Acceptance: см. ниже Acceptance section.
-
-### Ф.2 — output formats (R9, R14-R16, R23)
-
-1. `--format human|json|short|json-rendered|junit|sarif`.
-2. R14 severity (error/warning/info/help) + `--deny warnings` / `-W` / `-A` / `-D`.
-3. R15 diagnostic codes registry (E0001..E9999, W0001..W9999) в
-   `compiler-codegen/src/diag/codes.rs`.
-4. R16 spec links в diag emissions.
-5. R23 effect/capability info в JSON.
-6. SARIF 2.1.0 conformance.
-7. R12 streaming flush per-diagnostic.
-
-Acceptance: см. ниже.
-
-### Ф.3 — caching (R17, R18)
-
-1. `$NOVA_TARGET_DIR/check-cache/` (default `target/check-cache/`).
-2. Blake3 key с version + flags + gc_kind (R20 dependency).
-3. `--no-cache`, `--frozen`, `--locked` flags.
-4. R18 reproducible: relative paths, `SOURCE_DATE_EPOCH` respect,
-   `--no-timestamps`.
+1. Создать crate `nova-frontend` (skeleton).
+2. Перенести из `nova-cli/src/main.rs`:
+   - `cmd_check` body → `nova_frontend::check_file_full()`.
+3. Phases:
+   1. parse (existing)
+   2. check_module_path (existing)
+   3. **types::check_module** (existing — capability + effect inference
+      внутри)
+   4. **lints::lint_module** (was missing in cmd_check — **the bug**)
+   5. **emit_module warnings collection** (was missing)
+4. Output unchanged для MVP — текстовый.
+5. `cmd_check` и `cmd_build` оба зовут `check_file_full()`.
 
 Acceptance:
-- Second run `nova check std/` < 500ms.
-- After nova-codegen rebuild, cache invalidated.
-- `SOURCE_DATE_EPOCH=0 nova check ... --format json` produces identical bytes.
+- `nova check foo.nv` где foo.nv имеет anonymous-embed override → emit'ит
+  warning (currently missed).
+- Existing `nova check` tests pass без regression.
+- `nova build` unchanged.
+- New unit test: file with effect-inference issue triggers diagnostic в
+  check.
 
-### Ф.4 — `nova test <path>` symmetric (R1-R8 applied)
+### Ф.1 [MVP] — `nova check <path>` + `nova test <path>` polymorphic
 
-1. `Cmd::Test.paths: Vec<PathBuf>` positional.
-2. `--tests-dir` deprecated с warning.
-3. Implicit excludes (R3), boundary (R5/R12).
-4. R11 path-filter ⊥ test-name-filter (orthogonal).
-5. Reuse existing Plan 27 `--shuffle`, timeout, etc.
+В `nova-cli/src/main.rs` + `nova-frontend`. Оба subcommand'а в одной
+фазе — общие фундамент: walk + path validation + parallel + exit codes
++ ManifestResolver. Делать раздельно нет смысла — будет copy-paste.
 
-Acceptance: см. ниже.
+**Общий фундамент (`nova-frontend`):**
+1. `walk` module:
+   - `walk_nv()` (extract из test_runner.rs).
+   - R3 implicit-excludes filter (hardcoded, без `.gitignore` v1).
+2. R5 canonicalize + dedup + boundary check.
+3. R6 validation (non-existent, wrong extension).
+4. R4 `ManifestResolver::find_workspace_root()` (AD6 minimal).
+5. R7 exit codes + R8 aggregation (mpsc-based, AD4).
+6. R10 basic color (NO_COLOR + tty detect via `is-terminal`).
+7. R19 parallel `thread::scope` + AD4 concurrency.
+8. R20 `--gc` + `parse_alloc_constraint` (moved per AD7).
+9. R7 panic hook (`std::panic::set_hook` для guarantee exit=101).
+10. `parse_alloc_constraint` move в `compiler-codegen/src/alloc_constraint.rs`
+    (AD7).
 
-### Ф.5 — CI integration (R26-R29)
+**`nova check <path>`:**
+1. `Cmd::Check { paths: Vec<PathBuf>, jobs, color, keep_going, fail_fast,
+   no_check_module_path, allow_outside_project, gc, include_runtime,
+   no_exclude }`.
+2. R21 module-path via `Diagnostic` (not anyhow).
+3. Reuses `check_file_full()` из Ф.0.
 
-1. R26 `.pre-commit-hooks.yaml` в repo root.
-2. R27 GitHub Actions output adapter (auto-detect, emit annotations).
-3. R28 example workflows `.github/workflows/{check,test}.yml`.
-4. R29 test artifacts layout standardisation.
+**`nova test <path>`:**
+1. `Cmd::Test.paths: Vec<PathBuf>` positional, replaces `--tests-dir`.
+2. **`--tests-dir` удалён** (clean break, без deprecation).
+3. R11 path-filter ⊥ test-name-filter (`--filter` остаётся test-name,
+   path — отдельно).
+4. R7 exit codes consistent с check (closes U25).
+5. file → single test, dir → walk + run all.
+6. Reuses Plan 27 test runner infrastructure.
 
-### Ф.6 — Baseline + delta gate
+Dependencies added (closes I06):
+- `nova-frontend/Cargo.toml`: `is-terminal`, `dunce` (Windows path
+  helper if R5 needs).
+- `nova-codegen/Cargo.toml`: **no changes** (bootstrap-minimal preserved).
 
-1. Generate baseline: `nova check std/ examples/ --format json >
-   docs/baselines/check.json`.
-2. `nova-tools baseline-compare <baseline> <current>` helper script —
-   exits non-zero если число PASS уменьшилось vs baseline (или количество
-   FAIL increased).
-3. CI runs baseline-compare после каждого `check`.
+Acceptance: см. Acceptance section (covers both check + test).
 
-### Ф.7 — Documentation
+### Ф.2 [POST-MVP] — sub-plan 36.A: outputs
 
-1. Man page (`docs/man/nova-check.md`, `nova-test.md`).
-2. R24 cross-pipeline divergence section в README.
-3. JSON schema spec (`docs/schema/check.json` для validation).
-4. Migration guide для `--tests-dir` deprecation.
+Separate plan file `36-a-cli-outputs.md`. Includes:
+- `Diagnostic` extension (AD2 — severity, code, spec_link, suggestion,
+  notes).
+- `DiagRenderer` trait (AD3) + 6 impls.
+- R9 formats, R11 verbosity, R12 streaming, R14 severity, R15 codes
+  registry + migration of 50+ call sites, R16 spec links, R23
+  effect/capability info.
+- 36.A зависит от MVP (Ф.0 + Ф.1).
+
+### Ф.3 [POST-MVP] — sub-plan 36.B: caching
+
+Separate plan file `36-b-cli-caching.md`. Includes R17, R18 + concurrent
+locking + Ctrl-C cleanup.
+
+### Ф.4 [POST-MVP] — sub-plan 36.C: CI
+
+Separate plan file `36-c-cli-ci.md`. Includes R26, R27, R28, R29 +
+distribution story для `nova` binary.
+
+### Ф.5 [POST-MVP] — sub-plan 36.D: advanced ergonomics
+
+`36-d-cli-ergonomics.md`. R11, progress, `--dry-run`, `--list`, completions,
+`nova explain`.
+
+### Ф.6 [POST-MVP] — sub-plan 36.E: workspace
+
+`36-e-cli-workspace.md`. R22 manifest validation + nested `nova.toml` +
+workspace concept.
+
+### Ф.7 [POST-MVP] — baseline + delta gate
+
+Зависит от всех. Generate `docs/baselines/check.json`. `nova-tools
+baseline-compare` helper script. Gating closes A25 — **explicit
+"current best" baseline** allows Ф.7 to ship without Plan 34/35.
 
 ---
 
-## Acceptance criteria (overall)
+## Acceptance criteria — MVP only
 
 ### Path handling (R1-R6)
-- `nova check std/` exit 0 на чистом дереве (после Plan 34).
-- `nova check examples/` exit 0 (после fix module-path).
-- `nova check non_existent.nv` exit **2**, message `path not found`.
+- `nova check std/` exit 0 на чистом дереве — **gated on Plan 34/35**
+  (closes A25). Baseline "current best" в Ф.7 sub-plan, не блокирует MVP.
+- `nova check std/foo.nv` (single-file) — works.
+- `nova check non_existent.nv` exit **2**, `path not found`.
 - `nova check std/foo.txt` exit **2**, `not a Nova source`.
 - `nova check ../outside` exit **2** (boundary).
 - `nova check` без nova.toml → exit=2.
 
 ### Exit codes (R7)
 - 0 для all PASS.
-- 1 для type-check error.
-- 2 для bad flag / missing nova.toml / wrong extension.
-- 3 для codegen failure (когда применимо).
-- 101 на panic.
+- 1 для diagnostic.
+- 2 для usage.
+- 3 для codegen (test/build only — not check).
+- 101 для panic — **explicit hook**, cross-platform Windows+Linux+macOS.
 
-### Correctness (R13)
-- `nova check foo.nv` где foo.nv имеет anonymous-embed override → выводит
-  warning (currently missed).
-- `cmd_check` и `cmd_build` используют same `check_file_full()`.
+### Correctness (R13 — **the bug fix**)
+- Artificial file с anonymous-embed override → warning visible в `nova
+  check` output (currently missed — this is the bug).
+- `cmd_check` и `cmd_build` share `check_file_full()` (no duplication).
+- Existing tests unchanged.
 
-### Output (R9, R10, R23)
-- `--format json | jq .` — valid NDJSON, схема включает `schema_version`,
-  `byte_start/byte_end`, `code`, `spec_link`, `effects`.
-- `--format sarif` — valid SARIF 2.1.0 (validated против JSON schema).
-- `--format junit` — valid JUnit XML (validated GitHub Actions test
-  reporter).
-- `--color never` + `NO_COLOR=1` — no ANSI codes в output.
-- `CI=true` env auto-detect → `--color never` + `--format short` by
-  default.
-- GitHub Actions detect → emit `::error::` annotations.
+### Output (R10 basic)
+- `--color never` + `NO_COLOR=1` → no ANSI.
+- `--color always` overrides tty detect.
+- Default — auto via `is-terminal`.
 
-### Performance (R17, R19)
-- `nova check std/` (44 файла) cold cache < 5s на 16-core.
-- Second run < 500ms.
-- `--no-cache` re-runs full.
+### Parallelism (R19)
+- `nova check std/` (44 files) cold cache < 5s on 16-core.
+- `-j 1` deterministic same output as `-j 16` after AD8 ordering.
 
-### Nova-specific (R20-R22)
+### Nova-specific (R20-R21)
 - `nova check --gc malloc <file_with_ALLOC_REQUIRES_boehm>` → SKIP.
 - `nova check --gc boehm <file_with_ALLOC_REQUIRES_boehm>` → runs.
-- Cache invalidates на nova_version change OR gc_kind change.
-- Invalid nova.toml → exit=2.
+- Module path mismatch emits **structured `Diagnostic`** (not anyhow
+  String).
 
-### CI integration (R26-R29)
-- `.pre-commit-hooks.yaml` validated against pre-commit.com schema.
-- Example `.github/workflows/check.yml` parses + runs end-to-end.
-- Baseline-compare script catches regression.
-
-### `nova test` symmetric (Ф.4)
-- `nova test nova_tests/concurrency/` — только concurrency.
-- `nova test some_file.nv` — single file.
-- `nova test --tests-dir foo` — works + deprecation warning.
-- `nova test --filter "snapshot"` — orthogonal к path.
+### `nova test <path>` (Ф.1 together с check)
+- `nova test nova_tests/concurrency/` — works.
+- `nova test some_file.nv` — works.
+- `nova test --tests-dir foo` — exit=2 `unknown flag` (clean break, без
+  deprecation).
+- Exit codes consistent с check (R7 quintuplet).
 
 ---
 
-## Что НЕ входит (deferred)
+## Что НЕ входит в MVP
 
-- **Fix std/examples failures** — Plan 34.
-- **Cross-file resolve / transitive cache** — Plan 35 (R17 v2).
-- **Glob patterns** (`*.nv`, `**`) — shell sufficient.
-- **`./...` go-style suffix** — slash-style proven.
-- **Pattern-spec arguments** (cargo `-p`) — не наш case.
-- **`--fix` suggestions** — Plan 14 заложил базу, отдельная задача.
-- **LSP server mode** — R30 deferred.
-- **Code coverage** — R30 deferred.
-- **Race detection** — R30 deferred.
-- **Benchmarks** — R30 deferred (gc_bench уже есть, но integration с
-  test runner — другая задача).
-- **Telemetry** — R30 deferred.
-- **`nova explain <code>`** — R15 готовит registry, command сам — другой
-  план.
-- **i18n** — R15 stable codes готовят базу, локализация — отдельно.
-- **Workspace concept** (multi-package monorepo) — Plan 03.
+- 6 output formats — sub-plan 36.A.
+- Caching — sub-plan 36.B.
+- pre-commit / CI annotations / matrix — sub-plan 36.C.
+- Verbosity / progress / completions / `--explain` — sub-plan 36.D.
+- Workspace concept + manifest schema — sub-plan 36.E.
+- LSP, coverage, race, bench, telemetry, i18n — R30 deferred.
+- Fix std/examples failures — Plan 34.
+- Cross-file resolve — Plan 35.
 
 ---
 
-## Связь
+## Связь и Prerequisites
 
-- **Plan 14** — std blockers (closed), частично fixит type-check fail'ы.
-- **Plan 15** — generic bounds, Diagnostic infrastructure (reuse в R9/R15/R16).
-- **Plan 16** — forbid/realtime capability (R23 input).
-- **Plan 27** — GC backend (R20).
-- **Plan 28** — nova-cli foundation.
-- **Plan 33** — contracts (R30 future hook).
-- **Plan 34** — fix existing std/ fails (prerequisite для baseline).
-- **Plan 35** — cross-file resolve (R17 v2 prerequisite).
+### Plan dependencies (closes A25)
+- **Plan 34** — fix std/examples (required для Ф.7 baseline, не для MVP).
+- **Plan 35** — cross-file resolve (required для R17 v2; v1 cache имеет
+  known false-PASS limitation).
+
+### Internal codebase dependencies
+- **Ф.0 fix** = breaking change для silent assumptions. **Risk:**
+  surface bugs в existing std/ files (closes I15 — Ф.0 acceptance
+  включает "regression list of newly-surfaced warnings" документация).
+- **AD2 `Diagnostic` extension** = breaking change в `nova-codegen`
+  library API (closes A17, I02). Phased rollout (не для compat, для
+  scope management):
+  - MVP: добавляются поля с defaults (severity = Error, code = None).
+    Existing call sites компилируются без changes.
+  - 36.A: переписать 50+ call sites — fill codes, set severity.
+
+### External dependencies
+- **MVP добавляет:** `is-terminal`, optionally `dunce` (Windows paths).
+  В **`nova-frontend`** crate, не `nova-codegen` (preserves
+  bootstrap-minimality, closes A08/I06).
+- **36.A добавляет:** `serde_json` для NDJSON, `quick-xml` для JUnit,
+  SARIF — can use `serde_json` (SARIF is JSON-based).
+- **36.B добавляет:** `blake3`. Approval needed (bootstrap-minimal
+  policy).
+- **36.C добавляет:** none (workflows are YAML).
 
 ---
 
 ## Риски / Trade-offs
 
-- **Ф.0 correctness fix** может сломать существующие assumptions —
-  `cmd_check` сейчас silent на effects/lints. После fix — may surface
-  bugs во многих existing files. Mitigation: запуск на std/ baseline
-  ДО enabling, фиксация regression list.
-- **Cache корректность без cross-file resolve.** R17 v1 даёт false-PASS
-  при transitive import. Mitigation: `--no-cache` mandatory в CI до
-  Plan 35; warning при detection import statement в файле.
-- **Parallel-safety типчекера.** `check_module` reentrancy audit
-  needed. Mitigation: Ф.1 sequential first, parallel в Ф.3 с
-  determinism test.
-- **R28 CI matrix vs maintenance burden.** Matrix usage для 3 OS × 2
-  GC × 2 versions = 12 jobs per push. Mitigation: matrix только на main
-  branch; PR runs ubuntu+boehm only.
-- **Stable diagnostic codes (R15).** После публикации нельзя renumber.
-  Mitigation: reserve ranges `E0001-E0099` core types, `E0100-E0199`
-  effects, etc. — semantic grouping для future-proofing.
-- **SARIF 2.1.0 maintenance.** Schema спецификация большая. Mitigation:
-  start с minimal subset (just diagnostics, no flow/codeFlows), grow
-  on demand.
-- **R23 effect/capability info exposes internals.** Spec evolves — JSON
-  schema breaks. Mitigation: `schema_version` field + deprecation
-  policy.
+- **Ф.0 surfaces existing bugs в std/.** Mitigation: запуск на std/
+  ДО merge MVP, фиксация "expected newly-surfaced warnings" list. Если
+  too many — gate MVP на Plan 34.
+- **`Diagnostic` API break.** Mitigation: builder pattern с defaults
+  упрощает callsite-update. 50+ переписаний в 36.A — clean break,
+  bootstrap не в проде (см. [feedback_revolutionary_changes]).
+- **Cache false-PASS до Plan 35.** Mitigation: `--no-cache` mandatory в
+  CI, warning при cache hit для файла с `import` statement.
+- **Parallel reentrancy.** Mitigation: Ф.1 acceptance имеет explicit
+  determinism test (byte-identical `-j 16` vs `-j 1`).
+- **Multi-session scope.** Mitigation: **MVP declared** = Ф.0 + Ф.1
+  (объединённая для check + test). ~500-700 строк с тестами. Остальное —
+  отдельные sub-plans 36.A-E.
+- **bootstrap-minimality.** Mitigation: AD1 — все CLI/output deps в
+  `nova-frontend`, `nova-codegen` остаётся minimal.
+- **4 nested nova.toml.** Mitigation: AD6 unified resolver; MVP только
+  `find_workspace_root` simple variant.
+- **macOS untested.** Mitigation: R28 marks macOS "experimental" в CI
+  matrix. Linux CI достаточно для MVP.
 
 ---
 
 ## Audit history
 
-- **2026-05-12 (v1):** создан после user'ского запроса.
-- **2026-05-12 (v2):** rewrite после cargo/go reality check — добавлены
-  R1-R14.
-- **2026-05-12 (v3, this):** rewrite после 3-way audit (cargo gaps G01-G30,
-  go+CI gaps H01-H30, nova-specific gaps N01-N25 = 85 gaps total).
-  Добавлены:
-  - **R7 exit codes расширены до 5 кодов** (0/1/2/3/101) — closes G11/H11.
-  - **R9 расширен** до 6 форматов включая SARIF, JUnit, json-rendered
-    с ANSI inside — closes G10/G12/H10/H13.
-  - **R10 color + env vars** — closes G03/G04/H29.
-  - **R11 verbosity ladder** — closes G07.
-  - **R12 streaming output** — closes H28.
-  - **R13 cmd_check correctness fix** — closes N14/N17 (existing bug,
-    not just plan gap).
-  - **R14 severity discrimination** — closes G27/N10.
-  - **R15 stable diagnostic codes** — closes H21/H22.
-  - **R16 spec links в diagnostics** — closes N11.
-  - **R17 transitive cache** + `$NOVA_TARGET_DIR` env — closes G06/H01/G19.
-  - **R18 reproducible** — closes H20.
-  - **R20 GC backend awareness** — closes N02/N07/N25.
-  - **R21 module-path strict mode** — closes N05.
-  - **R22 nova.toml schema** — closes N06.
-  - **R23 effect/capability info в JSON** — closes N01.
-  - **R24 cross-pipeline divergence docs** — closes N04.
-  - **R25 test-block discovery unified** — closes N15.
-  - **R26 pre-commit.com framework** — closes G27/H14.
-  - **R27 GitHub Actions output adapter** — closes H18.
-  - **R28 CI matrix** — closes H17.
-  - **R29 test artifacts contract** — closes H30.
-  - **R30 deferred hooks** (LSP, coverage, race, bench, telemetry,
-    explain, hyperfine, .editorconfig, contracts checker hooks) —
-    architecturally space, not implemented v1.
-  - **Ф.0 phase added** — fix existing correctness bug before Ф.1.
+- **2026-05-12 v1:** initial.
+- **2026-05-12 v2:** cargo/go reality check → R1-R14.
+- **2026-05-12 v3:** 3-way audit (G01-G30, H01-H30, N01-N25 = 85 gaps) →
+  R1-R30, 8 phases.
+- **2026-05-12 v4 (this):** 4-way audit (I01-I25 implementability,
+  U01-U25 ergonomics, A01-A25 architecture = 75 new gaps) →
+  - **MVP declared** = Ф.0 + Ф.1 only (check + test объединены в одну
+    фазу с общим фундаментом).
+  - **Sub-plans split** into 36.A (outputs), 36.B (caching), 36.C (CI),
+    36.D (ergonomics), 36.E (workspace).
+  - **Architectural decisions AD1-AD12** explicit.
+  - **R12 streaming vs R19 sort contradiction** resolved via AD8
+    per-file streaming + `--sorted` flag.
+  - **R25 dropped** (already works, I22).
+  - **Phase sequence corrected** — `capability::check` не отдельный
+    module, ушёл в types::check_module (AD5).
+  - **Prerequisites enumerated**: Plan 34 (baseline), Plan 35 (cache
+    v2), `nova-cli` lib.rs split (A24), `Diagnostic` extension breaking
+    change (AD2), `nova-frontend` crate creation (AD1),
+    `parse_alloc_constraint` move (AD7), unified `ManifestResolver`
+    (AD6).
+  - **Distribution story** acknowledged как gap (I18) — sub-plan 36.C
+    включает `cargo install`/binary release decision.
+  - **Realism check:** MVP ~500 строк = one focused session. Each
+    sub-plan separate.
 
-Gaps закрыты: **85/85** (с разделением MUST/SHOULD/COULD приоритетов).
+Gaps closed: **160/160** (85 v3 + 75 v4), with clear MVP boundary.
