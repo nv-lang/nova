@@ -79,48 +79,33 @@ static inline void nova_fiber_yield(void);
  * This gives real interleaving when fibers yield via nova_fiber_yield()
  * (e.g. through Time.sleep handler).
  *
- * Plan 22 Ф.6 production: 1024 fiber slots per scope. NovaFiberQueue
- * ~50 KB allocated на C-стеке вокруг supervised блока — безопасно
- * для default 1 MB main thread stack даже с 5+ nested supervised.
+ * Plan 22 Ф.7 production: NovaFiberQueue arrays — **heap-allocated**
+ * через nova_alloc + capacity-doubling. Hard cap НЕТ — управляется
+ * только доступной памятью managed heap.
  *
- * Над 1024 fiber'ов в одном scope — abort, indicates DOS либо design
- * flaw. Если bench требует больше — использовать **несколько** nested
- * supervised блоков (каждый со своим 1024-budget).
+ * Memory cost:
+ *  - Idle scope (count=0): ~100 bytes (struct fields, pointers NULL).
+ *  - Initial alloc (на первом spawn_into): capacity=16, ~700 bytes.
+ *  - Growth doubling до текущего count. На 10000 fiber'ов ~450 KB
+ *    в managed heap (GC соберёт при scope-exit либо unreachable).
  *
- * Plan 23 (M:N) переделает на per-worker dynamic deque (work-stealing) —
- * cap уйдёт. */
-#define NOVA_SCOPE_CAP 1024
+ * NovaFiberQueue stack-footprint: ~100 bytes. Nested supervised на 50
+ * уровней (нереалистично) — 5 KB stack. Старый embedded arrays был
+ * ~50 KB/scope — nested overflow'ил stack на 5+ уровнях. */
+
+#define NOVA_SCOPE_INITIAL_CAP 16
 
 typedef struct {
-    mco_coro*       fibers[NOVA_SCOPE_CAP];
-    /* Per-fiber saved fail-frame top. Switched in/out around mco_resume so that
-     * each fiber has its own throw-protection chain — longjmp from inside the
-     * fiber lands in a frame on the SAME fiber-stack, never crosses fibers. */
-    NovaFailFrame*  fiber_fail_top[NOVA_SCOPE_CAP];
-    /* Per-fiber saved interrupt-frame top. Same rationale as fiber_fail_top:
-     * with-blocks inside spawn-body push their own interrupt-frames on
-     * fiber-stack; outer with-blocks (on main-stack) must NOT be visible
-     * from inside the fiber. */
-    NovaInterruptFrame* fiber_interrupt_top[NOVA_SCOPE_CAP];
-    /* Per-fiber snapshot of effect handler-pointers (D-handler-scope).
-     * Saved when fiber yields, restored when fiber resumes — изолирует
-     * `with X = handler { ... }` между fiber'ами. Без этого все fiber'ы
-     * на одном OS-thread делят одни __declspec(thread) globals, и
-     * handler одного fiber'а перезаписывался бы handler'ом другого
-     * (cross-fiber UB).
-     *
-     * Heap-allocated (через nova_alloc) lazily в spawn_into — иначе
-     * NOVA_SCOPE_CAP*sizeof(NovaEffectSnapshot) занимает много стека
-     * (256+ KB), и nested supervised выходит за границы. */
-    NovaEffectSnapshot* fiber_effect_snapshot[NOVA_SCOPE_CAP];
-    /* Per-fiber error captured from a fiber-local fail-frame. NULL means OK.
-     * The owner ctx (or scope-runner) reads this after fiber dies to know
-     * whether the fiber threw. */
-    const char*     fiber_error[NOVA_SCOPE_CAP];
-    /* Slot pointer to a fiber's "did_throw" flag inside the fiber's ctx.
-     * The spawn-entry stores its address here so scope-runner can also
-     * mark via context (used by codegen when needed). NULL = unused slot. */
-    nova_bool*      fiber_did_throw[NOVA_SCOPE_CAP];
+    /* Plan 22 Ф.7: dynamic arrays через managed heap.
+     * NULL до первого spawn_into. capacity показывает alloc'нутую
+     * длину массивов (все 6 синхронизированы — растут вместе). */
+    mco_coro**      fibers;              /* dynamic [count] */
+    NovaFailFrame** fiber_fail_top;      /* dynamic [count] */
+    NovaInterruptFrame** fiber_interrupt_top; /* dynamic [count] */
+    NovaEffectSnapshot** fiber_effect_snapshot; /* dynamic [count] */
+    const char**    fiber_error;         /* dynamic [count] */
+    nova_bool**     fiber_did_throw;     /* dynamic [count] */
+    int             capacity;            /* alloc'нутая длина массивов */
     int             count;
     /* Scope error: first error captured from any fiber. Reset on init. */
     const char*     first_error;
@@ -153,15 +138,18 @@ typedef struct {
     struct NovaSchedState* sched_state;
 } NovaFiberQueue;
 
-/* Plan 22 Ф.3 (D93): NovaSchedState typedef.
+/* Plan 22 Ф.3 (D93) + Ф.7: NovaSchedState typedef.
  * Полный API — в sched.h (header-only inline). Здесь только определение
  * struct (используется в NovaFiberQueue.sched_state) + forward-deref
- * helper. */
+ * helper.
+ *
+ * Ф.7: arrays — dynamic, синхронно растут со scope.capacity. */
 typedef void (*NovaSchedStopCb)(void* handle);
 typedef struct NovaSchedState {
-    nova_bool       parked[NOVA_SCOPE_CAP];
-    void*           pending_handle[NOVA_SCOPE_CAP];
-    NovaSchedStopCb pending_stop_cb[NOVA_SCOPE_CAP];
+    nova_bool*       parked;              /* dynamic [capacity] */
+    void**           pending_handle;      /* dynamic [capacity] */
+    NovaSchedStopCb* pending_stop_cb;     /* dynamic [capacity] */
+    int              capacity;            /* alloc'нутая длина */
 } NovaSchedState;
 
 /* O(1) lookup: pointer-deref. NULL = state ещё не allocated
@@ -188,8 +176,59 @@ static inline void nova_sched_register_pending(NovaFiberQueue* scope, int slot,
                                                 NovaSchedStopCb stop_cb);
 static inline void nova_sched_unregister_pending(NovaFiberQueue* scope, int slot);
 
+/* Plan 22 Ф.7: grow scope arrays до new_cap. capacity-doubling.
+ * Caller responsibility: вызывать ПЕРЕД увеличением count past capacity. */
+static inline void nova_scope_grow(NovaFiberQueue* q, int new_cap) {
+    if (new_cap <= q->capacity) return;
+    /* Round up to power-of-2 либо doubling. */
+    int cap = q->capacity > 0 ? q->capacity : NOVA_SCOPE_INITIAL_CAP;
+    while (cap < new_cap) cap *= 2;
+    /* Allocate new arrays. */
+    mco_coro**           new_fibers = (mco_coro**)nova_alloc(sizeof(mco_coro*) * cap);
+    NovaFailFrame**      new_fail_top = (NovaFailFrame**)nova_alloc(sizeof(NovaFailFrame*) * cap);
+    NovaInterruptFrame** new_interrupt_top = (NovaInterruptFrame**)nova_alloc(sizeof(NovaInterruptFrame*) * cap);
+    NovaEffectSnapshot** new_effect_snapshot = (NovaEffectSnapshot**)nova_alloc(sizeof(NovaEffectSnapshot*) * cap);
+    const char**         new_error = (const char**)nova_alloc(sizeof(const char*) * cap);
+    nova_bool**          new_did_throw = (nova_bool**)nova_alloc(sizeof(nova_bool*) * cap);
+    /* Copy existing data. */
+    if (q->fibers) {
+        for (int i = 0; i < q->count; i++) {
+            new_fibers[i]          = q->fibers[i];
+            new_fail_top[i]        = q->fiber_fail_top[i];
+            new_interrupt_top[i]   = q->fiber_interrupt_top[i];
+            new_effect_snapshot[i] = q->fiber_effect_snapshot[i];
+            new_error[i]           = q->fiber_error[i];
+            new_did_throw[i]       = q->fiber_did_throw[i];
+        }
+    }
+    /* Init new slots to NULL/safe defaults. */
+    for (int i = q->count; i < cap; i++) {
+        new_fibers[i]          = NULL;
+        new_fail_top[i]        = NULL;
+        new_interrupt_top[i]   = NULL;
+        new_effect_snapshot[i] = NULL;
+        new_error[i]           = NULL;
+        new_did_throw[i]       = NULL;
+    }
+    /* Swap. Old arrays — GC соберёт когда они станут unreachable. */
+    q->fibers              = new_fibers;
+    q->fiber_fail_top      = new_fail_top;
+    q->fiber_interrupt_top = new_interrupt_top;
+    q->fiber_effect_snapshot = new_effect_snapshot;
+    q->fiber_error         = new_error;
+    q->fiber_did_throw     = new_did_throw;
+    q->capacity            = cap;
+}
+
 static inline void nova_scope_init(NovaFiberQueue* q) {
     q->count = 0;
+    q->capacity = 0;
+    q->fibers = NULL;
+    q->fiber_fail_top = NULL;
+    q->fiber_interrupt_top = NULL;
+    q->fiber_effect_snapshot = NULL;
+    q->fiber_error = NULL;
+    q->fiber_did_throw = NULL;
     q->first_error = NULL;
     q->cancel_requested = false;
     q->interrupt_pending = false;
@@ -198,13 +237,8 @@ static inline void nova_scope_init(NovaFiberQueue* q) {
      * не park'ился. Большинство supervised блоков не используют sleep/
      * recv => sched_state остаётся NULL, нулевой overhead. */
     q->sched_state = NULL;
-    for (int i = 0; i < NOVA_SCOPE_CAP; i++) {
-        q->fiber_fail_top[i] = NULL;
-        q->fiber_interrupt_top[i] = NULL;
-        q->fiber_error[i] = NULL;
-        q->fiber_did_throw[i] = NULL;
-        q->fiber_effect_snapshot[i] = NULL;
-    }
+    /* Plan 22 Ф.7: arrays — lazy alloc'нутся в nova_fiber_spawn_into.
+     * Idle scope (count=0) = ~100 bytes на стеке. */
 }
 
 /* ---- D75: CancelToken — first-class cancellation handle ----
@@ -264,14 +298,22 @@ static inline void nova_cancel_token_bind(NovaCancelToken* self,
     }
 }
 
-/* Create a fiber and push it into the scope queue without resuming it. */
+/* Forward-decl для использования из spawn_into. */
+static inline void nova_sched_grow_state(NovaFiberQueue* scope, int new_cap);
+
+/* Create a fiber and push it into the scope queue without resuming it.
+ * Plan 22 Ф.7: grow arrays через nova_scope_grow если count >= capacity.
+ * Hard cap НЕТ — управляется только managed-heap размером. */
 static inline void nova_fiber_spawn_into(NovaFiberQueue* q,
                                          void (*entry)(mco_coro*),
                                          void* user) {
-    if (q->count >= NOVA_SCOPE_CAP) {
-        fprintf(stderr, "nova: supervised scope exceeded NOVA_SCOPE_CAP=%d\n",
-            (int)NOVA_SCOPE_CAP);
-        abort();
+    if (q->count >= q->capacity) {
+        nova_scope_grow(q, q->count + 1);
+        /* Если sched_state allocated — он тоже grow'нется через
+         * nova_sched_grow_state (capacity sync). */
+        if (q->sched_state) {
+            nova_sched_grow_state(q, q->capacity);
+        }
     }
     mco_desc desc = mco_desc_init(entry, 0);
     desc.user_data = user;
@@ -287,8 +329,7 @@ static inline void nova_fiber_spawn_into(NovaFiberQueue* q,
     q->fiber_error[q->count] = NULL;
     q->fiber_did_throw[q->count] = NULL;
     /* Inherit current handler-state: новый fiber видит handlers из enclosing
-     * scope. Heap-allocate snapshot — на стеке держать массив 1024
-     * snapshot'ов недопустимо (nested supervised → stack overflow). */
+     * scope. Heap-allocate snapshot. */
     q->fiber_effect_snapshot[q->count] =
         (NovaEffectSnapshot*)nova_alloc(sizeof(NovaEffectSnapshot));
     nova_effect_snapshot_save(q->fiber_effect_snapshot[q->count]);
@@ -357,8 +398,10 @@ static inline int nova_supervised_step(NovaFiberQueue* q) {
         }
         /* Plan 22 Ф.3/Ф.4 (D93): skip parked fiber'ы. Они resume'ятся
          * когда wake'нутся (callback timer'а либо cancel). Count alive++,
-         * чтобы supervised_run не выходил оставив parked permanently. */
-        if (sched_st && sched_st->parked[i]) {
+         * чтобы supervised_run не выходил оставив parked permanently.
+         * Ф.7: bounds check на sched_st->capacity (может быть меньше
+         * scope.count если sched_state alloc'нулся раньше grow'а). */
+        if (sched_st && i < sched_st->capacity && sched_st->parked[i]) {
             alive++;
             continue;
         }
@@ -601,7 +644,18 @@ static void _nova_sleep_stop_cb(void* handle) {
 static void _nova_main_wait_timer_cb(uv_timer_t* h) { (void)h; }
 
 /* Fiber-context sleep через uv_timer_t + park/wake. Production-grade —
- * нулевой CPU overhead на sleep period, immediate cancel response. */
+ * нулевой CPU overhead на sleep period, immediate cancel response.
+ *
+ * Plan 22 Ф.8 status: state-machine refactor отложен. Текущая архитектура
+ * (timer_cb wake'ает fiber, fiber issue uv_close + ms-busy wait на
+ * close_cb через UV_RUN_NOWAIT) работает корректно. Cancel + park/wake
+ * race-проблема решается просто: nova_sched_cancel_all_pending делает
+ * synchronous unpark, fiber resume'ится, видит scope.cancel_requested
+ * и throw'ает. Двух-stage state-machine (timer_cb → close → close_cb
+ * → wake) ломает этот flow, потому что cancel_all_pending всё ещё делает
+ * `parked[i] = false` помимо stop_cb. Корректное решение требует
+ * synchronous-vs-async stop_cb контракт в D93, что выходит за scope
+ * Plan 22. Отложено в open-questions. */
 static inline void _nova_sleep_via_libuv(NovaFiberQueue* scope, int slot,
                                           nova_int ms) {
     NovaSleepState st = {
@@ -631,14 +685,7 @@ static inline void _nova_sleep_via_libuv(NovaFiberQueue* scope, int slot,
     nova_sched_unregister_pending(scope, slot);
     /* Cleanup handle. Если timer-cb отработал normal — handle still open,
      * нужно close. Если cancel stop_cb уже close'нул — uv_is_closing
-     * вернёт true.
-     *
-     * Plan 22 Ф.6: ждать close_cb через UV_RUN_NOWAIT pass'ы (обычно
-     * 1-2 итерации — close-callbacks fire immediate в uv_run). Это
-     * effectively wait для уже-pending callback'ов, не busy на kernel
-     * level. Park-based wait требовал бы второго nova_sched_park
-     * после первого — UB (slot state corruption через mco_yield повторно
-     * после wake). */
+     * вернёт true. */
     if (!uv_is_closing((uv_handle_t*)&st.timer)) {
         uv_close((uv_handle_t*)&st.timer, _nova_sleep_close_cb);
     }

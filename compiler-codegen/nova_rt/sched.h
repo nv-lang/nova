@@ -36,12 +36,39 @@ extern "C" {
 
 /* ─── Park/wake state allocation ──────────────────────────────── */
 
-/* Lookup-or-create state for given scope. Production-grade: lazy
- * heap-alloc через nova_alloc при первом park/register-pending.
- *
- * Allocation cost: ~50 KB (3 arrays × NOVA_SCOPE_CAP), но **только**
- * для scope'ов где реально park'аются fiber'ы (sleep/recv). Обычно
- * supervised блок не имеет park'ов и state не allocates. */
+/* Plan 22 Ф.7: grow sched_state arrays до new_cap (синхронизируется
+ * с scope.capacity). Internal API. */
+static inline void nova_sched_grow_state(NovaFiberQueue* scope, int new_cap) {
+    if (!scope || !scope->sched_state) return;
+    NovaSchedState* st = scope->sched_state;
+    if (new_cap <= st->capacity) return;
+    int cap = st->capacity > 0 ? st->capacity : NOVA_SCOPE_INITIAL_CAP;
+    while (cap < new_cap) cap *= 2;
+    /* Allocate new arrays. */
+    nova_bool*       new_parked = (nova_bool*)nova_alloc(sizeof(nova_bool) * cap);
+    void**           new_handle = (void**)nova_alloc(sizeof(void*) * cap);
+    NovaSchedStopCb* new_stop_cb = (NovaSchedStopCb*)nova_alloc(sizeof(NovaSchedStopCb) * cap);
+    /* Copy existing + init new. */
+    for (int i = 0; i < cap; i++) {
+        if (i < st->capacity && st->parked) {
+            new_parked[i] = st->parked[i];
+            new_handle[i] = st->pending_handle[i];
+            new_stop_cb[i] = st->pending_stop_cb[i];
+        } else {
+            new_parked[i] = false;
+            new_handle[i] = NULL;
+            new_stop_cb[i] = NULL;
+        }
+    }
+    st->parked = new_parked;
+    st->pending_handle = new_handle;
+    st->pending_stop_cb = new_stop_cb;
+    st->capacity = cap;
+}
+
+/* Lookup-or-create state for given scope. Production-grade Ф.7: lazy
+ * heap-alloc + arrays sized под scope.capacity (которая растёт через
+ * nova_scope_grow + nova_sched_grow_state в spawn_into). */
 static inline NovaSchedState* nova_sched_get_state(NovaFiberQueue* scope) {
     if (!scope) return NULL;
     if (scope->sched_state) return scope->sched_state;
@@ -50,12 +77,14 @@ static inline NovaSchedState* nova_sched_get_state(NovaFiberQueue* scope) {
         fprintf(stderr, "nova: nova_sched_get_state: nova_alloc failed\n");
         abort();
     }
-    for (int i = 0; i < NOVA_SCOPE_CAP; i++) {
-        st->parked[i] = false;
-        st->pending_handle[i] = NULL;
-        st->pending_stop_cb[i] = NULL;
-    }
+    st->parked = NULL;
+    st->pending_handle = NULL;
+    st->pending_stop_cb = NULL;
+    st->capacity = 0;
     scope->sched_state = st;
+    /* Grow до текущего scope.capacity (обычно ≥ NOVA_SCOPE_INITIAL_CAP). */
+    int target = scope->capacity > 0 ? scope->capacity : NOVA_SCOPE_INITIAL_CAP;
+    nova_sched_grow_state(scope, target);
     return st;
 }
 
@@ -94,14 +123,14 @@ static inline void nova_sched_park(NovaFiberQueue* scope, int slot) {
 static inline void nova_sched_wake(NovaFiberQueue* scope, int slot) {
     if (!scope || slot < 0 || slot >= scope->count) return;
     NovaSchedState* st = nova_sched_find_state(scope);
-    if (st) st->parked[slot] = false;
+    if (st && slot < st->capacity) st->parked[slot] = false;
 }
 
 /* True если fiber в slot сейчас parked. */
 static inline nova_bool nova_sched_is_parked(NovaFiberQueue* scope, int slot) {
     if (!scope || slot < 0 || slot >= scope->count) return false;
     NovaSchedState* st = nova_sched_find_state(scope);
-    return st && st->parked[slot];
+    return st && slot < st->capacity && st->parked[slot];
 }
 
 /* ─── Cancel-integration ──────────────────────────────────────── */
@@ -111,8 +140,11 @@ static inline nova_bool nova_sched_is_parked(NovaFiberQueue* scope, int slot) {
 static inline void nova_sched_register_pending(NovaFiberQueue* scope, int slot,
                                                 void* handle,
                                                 NovaSchedStopCb stop_cb) {
-    if (!scope || slot < 0 || slot >= NOVA_SCOPE_CAP) return;
+    if (!scope || slot < 0) return;
     NovaSchedState* st = nova_sched_get_state(scope);
+    if (slot >= st->capacity) {
+        nova_sched_grow_state(scope, slot + 1);
+    }
     st->pending_handle[slot] = handle;
     st->pending_stop_cb[slot] = stop_cb;
 }
@@ -120,9 +152,9 @@ static inline void nova_sched_register_pending(NovaFiberQueue* scope, int slot,
 /* Снять регистрацию. Должно вызываться ПОСЛЕ wake (любой — normal либо
  * cancel), перед cancel-check. Idempotent. */
 static inline void nova_sched_unregister_pending(NovaFiberQueue* scope, int slot) {
-    if (!scope || slot < 0 || slot >= NOVA_SCOPE_CAP) return;
+    if (!scope || slot < 0) return;
     NovaSchedState* st = nova_sched_find_state(scope);
-    if (st) {
+    if (st && slot < st->capacity) {
         st->pending_handle[slot] = NULL;
         st->pending_stop_cb[slot] = NULL;
     }
@@ -135,7 +167,11 @@ static inline void nova_sched_unregister_pending(NovaFiberQueue* scope, int slot
 static inline void nova_sched_cancel_all_pending(NovaFiberQueue* scope) {
     NovaSchedState* st = nova_sched_find_state(scope);
     if (!st) return;
-    for (int i = 0; i < scope->count; i++) {
+    /* Iterate min(scope->count, st->capacity). Если spawn_into добавил
+     * slots но sched-state ещё не grow'нулся — нечего отменять (никто
+     * не park'ался). */
+    int n = scope->count < st->capacity ? scope->count : st->capacity;
+    for (int i = 0; i < n; i++) {
         if (st->pending_stop_cb[i] && st->pending_handle[i]) {
             st->pending_stop_cb[i](st->pending_handle[i]);
         }
@@ -161,7 +197,8 @@ static inline int nova_sched_count_parked(NovaFiberQueue* scope) {
     NovaSchedState* st = nova_sched_find_state(scope);
     if (!st) return 0;
     int count = 0;
-    for (int i = 0; i < scope->count; i++) {
+    int n = scope->count < st->capacity ? scope->count : st->capacity;
+    for (int i = 0; i < n; i++) {
         if (scope->fibers[i] != NULL
             && mco_status(scope->fibers[i]) != MCO_DEAD
             && st->parked[i]) {
