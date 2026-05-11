@@ -15,7 +15,7 @@ structured-concurrency примитивы есть в языке, и как па
 | [D80](#d80-handler-scoping-per-fiber) | Handler scoping per-fiber — `with X = handler` локален для fiber'а, наследуется через spawn |
 | [D80](#d80-handler-scoping-per-fiber) | Handler scoping per-fiber — `with X = h` биндинги изолированы между fibers |
 | [D91](#d91-channel-revision--capability-split-на-chanwriter--chanreader) | `Channel` revision: capability-split на `ChanWriter[T]` / `ChanReader[T]`; `send`→`bool`; `tx.clone()` multi-writer ✅ |
-| [D94](#d94-select--multiplexed-channel-operations) | `select { ... }` — финальный синтаксис: `Some(v) = rx.recv() =>`, `Time.after(d)` для timeout 🟡 план |
+| [D94](#d94-select--multiplexed-channel-operations) | `select { ... }` — финальный синтаксис: `Some(v) = rx =>`, `Time.after(ms)` для timeout ✅ реализован |
 
 ---
 
@@ -2518,9 +2518,20 @@ throw'ы в D50 fire-and-forget — должны быть logged, не abort. П
 
 ## D94. `select { ... }` — multiplexed channel operations
 
-> **Введён:** Plan 31 (2026-05-11). **Статус:** 🟡 план, не реализован.
+> **Введён:** Plan 31 (2026-05-11). **Статус:** ✅ реализован (2026-05-11).
 > **Уточняет** [D79](#d79-channels--coordination-между-fiber-ами) —
 > финализирует синтаксис и семантику `select`.
+>
+> **Реализованный синтаксис** (bootstrap, Plan 31):
+> - `Some(v) = rx => { }` — recv с binding
+> - `_ = rx => { }` — recv wildcard (срабатывает на Some и None/closed)
+> - `tx.send(val) => { }` — send arm
+> - `Some(v) = rx if guard => { }` — recv с guard
+> - `_ => { }` — default (non-blocking)
+>
+> **Не реализовано в bootstrap:**
+> - `None = rx => { }` — отдельный arm для закрытого канала (только wildcard `_ = rx`)
+> - Panic "select: all channels closed" при all-closed без default (Ф.6 todo)
 
 ### Что
 
