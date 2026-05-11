@@ -5878,6 +5878,58 @@ Spec должен явно описать:
 
 ---
 
+## Q-errdefer-handler. errdefer + user-installed Fail handler — кто перехватит throw первым?
+
+**Контекст.** D90 errdefer cleanup срабатывает на throw-path через
+NovaFailFrame setjmp/longjmp. Codegen эмитит local `_defer_BID_ff`
+вокруг блока с errdefer; throw → nova_throw → longjmp на
+`_nova_fail_top`. Если `_nova_fail_top` — это наш local frame,
+errdefer запускается, потом frame pop'нут и `nova_throw(msg)` пробрасывает
+дальше.
+
+**Проблема.** `with Fail = handler Fail { fail(msg) { ... } } { body }`
+устанавливает user handler в `_nova_handler_Fail` (thread-local
+pointer). `Nova_Fail_fail(msg)` dispatch'ит **сначала** на user
+handler, а **только при NULL** падает на default → `nova_throw`. Если
+user handler делает `interrupt v` (выход из with-block с value), он
+longjmp'ит на NovaInterruptFrame — **минуя** наш local fail-frame.
+Errdefer **никогда не сработает**, хотя block был purged через
+abnormal exit.
+
+**Сценарий** (не работает):
+
+```nova
+with Fail = handler Fail {
+    fail(_msg) { interrupt () }
+} {
+    let _ = {
+        errdefer { rollback() }   // НЕ срабатывает!
+        throw "error"
+    }
+}
+```
+
+**Возможные решения:**
+- (a) errdefer должен ловить НЕ только nova_throw, но и любой
+  abnormal exit (interrupt, return-up). Требует чтобы local frame
+  стоял **ниже** user handler в стеке dispatch'а — но handler
+  dispatch синхронный, не jmp.
+- (b) errdefer body runs только при unhandled throw, где Fail
+  доходит до default path. Это означает что cleanup при handled
+  exception **не происходит** — приемлемо ли это?
+- (c) Throw сначала всегда longjmp'ит на ближайший fail-frame
+  (наш local), и оттуда вызывает handler. Требует пересмотра
+  как handler-dispatch работает.
+
+Не закрыто — нужен дизайн-pass. Bootstrap-impl: errdefer работает
+только на unhandled-throw path (через default fail-frame). Test
+`syntax/errdefer_basic.nv` покрывает только normal-exit семантику.
+
+**Связь:** D90 (defer/errdefer), D25/D62/D65 (Fail effect), D31-rev
+(handler dispatch).
+
+---
+
 ## Финальное напоминание
 
 Прежде чем продолжать **дизайн**, прочитай:

@@ -1,0 +1,59 @@
+// errdefer_basic.nv — Plan 20 D90 positive-тесты для `errdefer`.
+//
+// Семантика: errdefer выполняется ТОЛЬКО на error-exit пути.
+// На normal exit — НЕ выполняется (вот тут проверяем).
+//
+// Throw-path test для errdefer требует unhandled throw,
+// который доходит до nova_throw → setjmp `_defer_BID_ff.jmp`.
+// Однако `with Fail = handler ...` устанавливает user handler,
+// который перехватывает Fail.fail dispatch **раньше** local
+// fail-frame'а. Этот edge case с handler+errdefer — отдельная
+// семантическая проблема, отложена. См. open-questions.
+
+module nova_tests.syntax.errdefer_basic
+
+
+// ───── errdefer НЕ срабатывает на normal exit ─────
+
+test "errdefer не срабатывает на normal trailing exit" {
+    let mut cleaned_up = 0
+    let result = {
+        errdefer { cleaned_up = cleaned_up + 1 }
+        42
+    }
+    assert(result == 42)
+    // errdefer не вызвался — счётчик остался 0.
+    assert(cleaned_up == 0)
+}
+
+
+test "defer + errdefer: normal exit — только defer срабатывает" {
+    let mut defer_count = 0
+    let mut errdefer_count = 0
+    let result = {
+        defer { defer_count = defer_count + 1 }
+        errdefer { errdefer_count = errdefer_count + 1 }
+        7
+    }
+    assert(result == 7)
+    assert(defer_count == 1)
+    assert(errdefer_count == 0)
+}
+
+
+// ───── errdefer и порядок registration не влияют на normal exit ─────
+
+test "несколько errdefer-ов: ни один не срабатывает на normal exit" {
+    let mut a = 0
+    let mut b = 0
+    let mut c = 0
+    let _ = {
+        errdefer { a = 1 }
+        errdefer { b = 1 }
+        errdefer { c = 1 }
+        0
+    }
+    assert(a == 0)
+    assert(b == 0)
+    assert(c == 0)
+}
