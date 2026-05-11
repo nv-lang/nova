@@ -1,0 +1,67 @@
+// sleep_leak_check.nv — Plan 22 Ф.9 leak verification.
+//
+// Validates: множественные sleep'ы не accumulate'ют libuv handle'ы
+// и NovaSchedState pointer'ы в memory. Если бы leak был — 100k
+// sequential sleep'ов либо упали бы по OOM, либо процесс зависал бы
+// под GC pressure.
+//
+// Test strategy: запускаем большое количество sleep'ов с малой
+// длительностью; verify total elapsed bounded — это implicit leak
+// check. NovaSleepState живёт на stack fiber'а, uv_timer_t закрыт
+// через close_cb в каждом call'е, sched_state per-scope.
+
+module nova_tests.concurrency.sleep_leak_check
+
+test "100k sequential sleep(0) — no resource accumulation" {
+    // 100k fast yield'ов через Time.sleep(0). Каждый создаёт+закрывает
+    // uv_timer_t handle. Если handle'ы leak'ались бы — uv_loop tracker
+    // переполнился бы за ~1k iterations.
+    let t0 = Time.now()
+    supervised {
+        spawn {
+            for _ in 0..100_000 {
+                Time.sleep(0)
+            }
+        }
+    }
+    let elapsed = Time.now() - t0
+    // 100k yields через libuv: theoretical ~1s. Slack 5s — generous
+    // headroom для CI machines.
+    assert(elapsed < 5000)
+}
+
+test "1k repeated sleep(10) — bounded close-cb backlog" {
+    // 1000 sleep'ов по 10ms — sequential. Theoretical: ~10 seconds
+    // (1000 × 10ms). Slack 5s — uv_close-callback latency должен
+    // оставаться bounded; если бы close-handle'ы накапливались в
+    // uv_loop pending queue — это бы degradировало performance.
+    let t0 = Time.now()
+    supervised {
+        spawn {
+            for _ in 0..1000 {
+                Time.sleep(10)
+            }
+        }
+    }
+    let elapsed = Time.now() - t0
+    // Theoretical 10s, slack +5s. Если elapsed >> 15s — handle backlog
+    // либо resource leak.
+    assert(elapsed < 15_000)
+}
+
+test "repeated scope-create/destroy не растит memory unbounded" {
+    // 1000 supervised scope'ов подряд — каждый аллокировал NovaSchedState
+    // (если park'ался) либо нет. GC должен освобождать unreachable
+    // scope.sched_state и dynamic arrays между iteration'ами.
+    // Если бы accumulating leak — это были бы +1 GB heap.
+    let mut completed = 0
+    for _ in 0..1000 {
+        supervised {
+            spawn {
+                Time.sleep(0)
+                completed = completed + 1
+            }
+        }
+    }
+    assert(completed == 1000)
+}

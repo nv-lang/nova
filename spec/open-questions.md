@@ -5878,55 +5878,205 @@ Spec должен явно описать:
 
 ---
 
-## Q-errdefer-handler. errdefer + user-installed Fail handler — кто перехватит throw первым?
+## Q-cancel_scope-lambda-syntax. Унификация `cancel_scope { tok => ... }` с trailing-fn
 
-**Контекст.** D90 errdefer cleanup срабатывает на throw-path через
-NovaFailFrame setjmp/longjmp. Codegen эмитит local `_defer_BID_ff`
-вокруг блока с errdefer; throw → nova_throw → longjmp на
-`_nova_fail_top`. Если `_nova_fail_top` — это наш local frame,
-errdefer запускается, потом frame pop'нут и `nova_throw(msg)` пробрасывает
-дальше.
-
-**Проблема.** `with Fail = handler Fail { fail(msg) { ... } } { body }`
-устанавливает user handler в `_nova_handler_Fail` (thread-local
-pointer). `Nova_Fail_fail(msg)` dispatch'ит **сначала** на user
-handler, а **только при NULL** падает на default → `nova_throw`. Если
-user handler делает `interrupt v` (выход из with-block с value), он
-longjmp'ит на NovaInterruptFrame — **минуя** наш local fail-frame.
-Errdefer **никогда не сработает**, хотя block был purged через
-abnormal exit.
-
-**Сценарий** (не работает):
+**Контекст.** Сейчас `cancel_scope` — keyword-конструкция со специальным
+синтаксисом ([D75](decisions/06-concurrency.md#d75)):
 
 ```nova
-with Fail = handler Fail {
-    fail(_msg) { interrupt () }
-} {
-    let _ = {
-        errdefer { rollback() }   // НЕ срабатывает!
-        throw "error"
-    }
+cancel_scope { tok =>
+    spawn { do_thing(tok) }
+    spawn { do_other(tok) }
 }
 ```
 
-**Возможные решения:**
-- (a) errdefer должен ловить НЕ только nova_throw, но и любой
-  abnormal exit (interrupt, return-up). Требует чтобы local frame
-  стоял **ниже** user handler в стеке dispatch'а — но handler
-  dispatch синхронный, не jmp.
-- (b) errdefer body runs только при unhandled throw, где Fail
-  доходит до default path. Это означает что cleanup при handled
-  exception **не происходит** — приемлемо ли это?
-- (c) Throw сначала всегда longjmp'ит на ближайший fail-frame
-  (наш local), и оттуда вызывает handler. Требует пересмотра
-  как handler-dispatch работает.
+Здесь `tok =>` — это не lambda-arrow, а **scope-introduced token binding**.
+Token `tok` имеет тип `CancelToken` и доступен внутри блока для
+передачи в spawn / для последующего `tok.cancel()` снаружи.
 
-Не закрыто — нужен дизайн-pass. Bootstrap-impl: errdefer работает
-только на unhandled-throw path (через default fail-frame). Test
-`syntax/errdefer_basic.nv` покрывает только normal-exit семантику.
+Это согласовано с другими keyword-scope конструкциями в Nova:
+- `supervised { ... }` — keyword-block без token
+- `parallel for x in iter { ... }` — keyword-for
+- `forbid X { ... }` — keyword-capability
+- `with_timeout(5.s) { ... }` — keyword-block с param
+- `cancel_scope { tok => ... }` — keyword-block с token
 
-**Связь:** D90 (defer/errdefer), D25/D62/D65 (Fail effect), D31-rev
-(handler dispatch).
+### Предложение: унификация на trailing-fn (D43)
+
+`cancel_scope` мог бы быть **обычной функцией prelude** с handler-param:
+
+```nova
+fn cancel_scope[T](body fn(CancelToken) Fail -> T) Fail -> T
+```
+
+Вызов через trailing-fn (D43):
+```nova
+cancel_scope() fn(tok) {
+    spawn { do_thing(tok) }
+    spawn { do_other(tok) }
+}
+```
+
+### Плюсы
+
+- **Единообразие.** Один pattern «trailing-fn с params» вместо
+  special-cased keyword-syntax для `cancel_scope`.
+- **AI-генерация safer.** LLM знает trailing-fn pattern из `list.map(...) fn(x) { ... }`,
+  не нужно учить ещё один edge-case.
+- **First-class.** `cancel_scope` можно передавать как value
+  (`let cs = cancel_scope`), что невозможно с keyword'ом.
+- **Парсер проще.** Нет special-casing для `cancel_scope` token —
+  обычный fn-call.
+
+### Минусы
+
+- **Token leak.** `tok` теперь lambda-параметр, не scope-binding —
+  его можно сохранить в outer `let mut t = ...; cancel_scope() fn(tok) { t = tok }`
+  и использовать после exit'а из scope'а. Compile-time enforce
+  «tok доступен только внутри scope'а» теряется. Mitigation —
+  либо runtime-check (cancel'нуть уже мёртвый scope = error), либо
+  ownership-rules (token не Copyable, потребитель owns).
+- **Codegen overhead.** Сейчас `cancel_scope` — keyword с custom
+  codegen (token-init + scope-bind за один шаг). При обычной fn-call
+  нужно либо inline'ить body (compiler optimization), либо overhead
+  от dynamic dispatch closure'а.
+- **Асимметрия со `supervised` / `parallel for` / `forbid`.** Если
+  унифицировать **только** `cancel_scope` — оно станет outlier'ом
+  среди keyword'ов. Если унифицировать **все** — это **большой
+  refactor structured concurrency** (отдельный D-блок).
+
+### Связанные конструкции для унификации
+
+Если идти этим путём, тот же rationale применяется к:
+
+```nova
+// Текущий → trailing-fn:
+supervised { ... }              → supervised() fn() { ... }
+parallel for x in iter { ... }  → parallel_for(iter) fn(x) { ... }
+forbid Net { ... }              → forbid([Net]) fn() { ... }   // принимает list of effects?
+with_timeout(5.s) { ... }       → with_timeout(5.s) fn() { ... }  // уже совместимо!
+race { a, b }                   → race([a, b])                     // values, не block
+```
+
+`with_timeout` уже **близок** к trailing-block paradigm — он принимает
+duration param. `cancel_scope` идёт следующим natural candidate'ом
+для унификации.
+
+### Что не решено
+
+1. **Compile-time token-scope enforcement** — есть ли способ
+   сохранить «tok недоступен вне scope'а» без keyword-syntax? Возможно
+   через linear type / borrow checker аналог.
+2. **Codegen efficiency** — компилятор должен inline'ить trailing-fn
+   тело чтобы избежать closure overhead. Это требует guarantee от
+   спеки.
+3. **Breaking change для existing code.** Текущий `cancel_scope { tok => ... }`
+   используется в `nova_tests/concurrency/cancel_scope_test.nv` и
+   `cancel_stress_test.nv` — нужна миграция либо backward-compat
+   period.
+4. **Все keyword-scope конструкции одновременно или только `cancel_scope`?**
+   Симметрия требует **все**, но это significant breaking change
+   для всей structured-concurrency surface.
+
+### Прецеденты
+
+- **Kotlin** — `synchronized(lock) { body }` это **обычная функция**
+  `inline fun synchronized(lock: Any, block: () -> R): R`. Trailing
+  lambda is the norm.
+- **Swift** — `withCheckedContinuation { continuation in ... }` —
+  обычная функция, trailing closure with param.
+- **Scala** — `Using.resource(r) { res => ... }` — function call.
+- **Rust** — `thread::scope(|s| { ... })` — function call с closure-param.
+- **Go** — нет analog'а (нет structured concurrency primitives).
+
+Все прецеденты используют **function + closure-param**, не keyword.
+Это аргумент в пользу унификации Nova'ы.
+
+### Статус
+
+**Открытый вопрос.** Plan 22 (2026-05-11) сохранил keyword-syntax
+status quo. Если решим унифицировать — это **breaking change**
+уровня D-блока, требует миграции всех structured-concurrency keyword'ов
+одновременно.
+
+**Связь:**
+- [D43](decisions/03-syntax.md#d43) — trailing-fn syntax.
+- [D75](decisions/06-concurrency.md#d75) — текущий `cancel_scope` keyword.
+- [D50](decisions/06-concurrency.md#d50) — `supervised`/`parallel for`/`spawn`
+  keyword'ы (одна team — либо все унифицируются, либо все остаются).
+- [Q-keyword-symmetry](#q-keyword-symmetry) — related concern про
+  symmetry keyword'ов declaration/literal.
+
+---
+
+## Q-D93-sync-async-stop. Sync-vs-async stop_cb contract в D93 API
+
+**Контекст.** D93 park/wake API определяет `NovaCancelStopCb` —
+callback, который вызывается из `nova_cancel_token_cancel` через
+`nova_sched_cancel_all_pending`. После stop_cb idempotent loop
+делает `parked[i] = false` (synchronous unpark) — fiber resumes
+immediate, видит `cancel_requested = true`, throw'ает.
+
+**Текущее предположение:** stop_cb выполняется **synchronously** —
+после возврата из stop_cb всё необходимое для cleanup'а handle'а
+уже сделано. Под этим предположением `parked[i] = false`
+сразу после stop_cb безопасен.
+
+Это **верно для sleep handle с текущей Ф.4/Ф.6 реализацией**:
+stop_cb делает `uv_timer_stop + uv_close(close_cb)`, но fiber всё
+равно делает busy-wait через `uv_run NOWAIT` пока close_cb не
+выполнится — поэтому handle уже фактически освобождён к моменту
+возврата stop_cb.
+
+**Проблема — Plan 22 Ф.8 (close-cb state machine):**
+
+Production-grade refactor хотел убрать busy-loop wait и сделать
+park ждать close_cb напрямую (без второго park'а). Архитектура:
+timer_cb инициирует close (НЕ wake), close_cb делает wake. Один
+park на весь lifecycle. Stop_cb (для cancel) тоже только initiates
+close — не делает synchronous wait.
+
+Это сломало контракт с `cancel_all_pending`: после stop_cb он
+делает `parked[i] = false`, fiber resume'ится **до** close_cb, и
+sanity-check (`stage == CLOSED`) abort'ит. Откат к Ф.6 версии.
+
+**Что нужно:** D93 должен **формализовать** sync-vs-async stop_cb
+semantic, чтобы cancel_all_pending мог различать:
+
+```c
+typedef enum {
+    NOVA_STOP_SYNC,    /* handle полностью freed после stop_cb return */
+    NOVA_STOP_ASYNC,   /* stop_cb лишь инициировал close; ждём wake'а от backend */
+} NovaStopMode;
+
+typedef NovaStopMode (*NovaCancelStopCb)(void* handle);
+```
+
+`cancel_all_pending` для `SYNC` делает `parked[i] = false` сразу;
+для `ASYNC` — оставляет parked, полагается на backend wake (uv close_cb).
+
+**Use-cases:**
+
+- **Sleep handle** (Plan 22 Ф.8) — ASYNC: stop_cb инициирует
+  `uv_close`, wake придёт из close_cb.
+- **Channel waitlist** (Plan 21 Ф.1) — SYNC: stop_cb отвязывает
+  waitlist node, handle (waitlist node) полностью убран immediate.
+- **Socket read** (Plan 23+ `std.net`) — ASYNC: stop_cb делает
+  `uv_read_stop` + `uv_close`, wake из close_cb.
+- **File read** (Plan 23+ `std.fs`) — ASYNC: stop_cb делает
+  `uv_cancel` на in-flight `uv_fs_t`, wake из request callback.
+
+**Status (2026-05-11).** Plan 22 Ф.8 — DEFERRED. Прототип
+выявил проблему, откат к Ф.6 семантике. Текущая ms-busy-loop на
+close_cb (через `uv_run NOWAIT`) — pragmatically acceptable (1-2
+iterations typical), не блокер production deployment.
+
+**Когда фиксировать.** Перед Plan 21 (Channel) реализацией. Каналы
+требуют чёткого SYNC контракта; sleep и socket — ASYNC. Без
+формального enum смешать оба в одном API — UB.
+
+**Связь:** Plan 22 Ф.8 (deferred), Plan 21 channel waitlist,
+Plan 23 socket-read/file-read, D93 spec.
 
 ---
 
