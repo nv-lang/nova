@@ -3957,28 +3957,30 @@ impl CEmitter {
         }
         let failframe_var = format!("_defer_{}_ff", block_id);
         let failframe_popped_var = format!("_defer_{}_ff_popped", block_id);
-        if has_errdefer {
-            self.line(&format!("int {} = 0;", failframe_popped_var));
-            self.line(&format!("NovaFailFrame {};", failframe_var));
-            self.line(&format!("nova_fail_push(&{});", failframe_var));
-            self.line(&format!("if (setjmp({}.jmp) != 0) {{", failframe_var));
+        // Plan 20 Ф.8 follow-up (3): fail-frame нужен ВСЕГДА когда есть
+        // defer (любой), не только когда есть errdefer. Spec D90 п.8:
+        // defer fires on throw. Без local fail-frame'а throw скипает
+        // scope с longjmp'ом, defer cleanup пропускается.
+        // На fail-path: invoke ALL defers (LIFO; defer + errdefer оба
+        // fire on error exit), pop fail-frame, re-throw outer.
+        let _has_errdefer = has_errdefer; // suppress unused warning
+        self.line(&format!("int {} = 0;", failframe_popped_var));
+        self.line(&format!("NovaFailFrame {};", failframe_var));
+        self.line(&format!("nova_fail_push(&{});", failframe_var));
+        self.line(&format!("if (setjmp({}.jmp) != 0) {{", failframe_var));
+        self.indent += 1;
+        for entry in entries.iter().rev() {
+            self.line(&format!("if ({}) {{", entry.active_var));
             self.indent += 1;
-            // Throw path: invoke ALL defers (LIFO; both `defer` и `errdefer`
-            // fire on error exit), затем pop fail-frame и re-throw для
-            // следующего outer fail-frame.
-            for entry in entries.iter().rev() {
-                self.line(&format!("if ({}) {{", entry.active_var));
-                self.indent += 1;
-                let _ = self.emit_defer_body_void(&entry.body);
-                self.indent -= 1;
-                self.line("}");
-            }
-            self.line("nova_fail_pop();");
-            self.line(&format!("{} = 1;", failframe_popped_var));
-            self.line(&format!("nova_throw({}.error_msg);", failframe_var));
+            let _ = self.emit_defer_body_void(&entry.body);
             self.indent -= 1;
             self.line("}");
         }
+        self.line("nova_fail_pop();");
+        self.line(&format!("{} = 1;", failframe_popped_var));
+        self.line(&format!("nova_throw({}.error_msg);", failframe_var));
+        self.indent -= 1;
+        self.line("}");
         // Plan 20 Ф.8 (2): interrupt-path cleanup для `defer`.
         // По D90 п.8 `defer` запускается на ВСЕХ exit'ах, включая
         // `interrupt v` (когда outer handler делает interrupt → longjmp
@@ -4050,11 +4052,9 @@ impl CEmitter {
             self.indent -= 1;
             self.line("}");
         }
-        if scope.needs_failframe {
-            // Skip повторный pop, если early-exit cleanup уже сделал pop
-            // (установил failframe_popped_var = 1).
-            self.line(&format!("if (!{}) {{ nova_fail_pop(); }}", scope.failframe_popped_var));
-        }
+        // Fail-frame теперь всегда push'нут (Plan 20 Ф.8 follow-up).
+        // Skip повторный pop, если early-exit cleanup уже сделал pop.
+        self.line(&format!("if (!{}) {{ nova_fail_pop(); }}", scope.failframe_popped_var));
         // Plan 20 Ф.8 (2): pop interrupt-frame (всегда push'нут когда has_defer).
         self.line(&format!("if (!{}) {{ nova_interrupt_pop(); }}", scope.intframe_popped_var));
     }
@@ -4097,11 +4097,9 @@ impl CEmitter {
             // ONLY the innermost loop scope gets the pop (we walk just one).
             // Outer scopes remain active, will pop normally at their own
             // leave_defer_scope.
-            if scope.needs_failframe {
-                self.line("nova_fail_pop();");
-                // Mark frame as popped so leave_defer_scope skips another pop.
-                self.line(&format!("{} = 1;", scope.failframe_popped_var));
-            }
+            // Fail-frame теперь всегда push'нут (Ф.8 follow-up).
+            self.line("nova_fail_pop();");
+            self.line(&format!("{} = 1;", scope.failframe_popped_var));
             // Plan 20 Ф.8 (2): pop interrupt-frame для early-exit тоже.
             self.line("nova_interrupt_pop();");
             self.line(&format!("{} = 1;", scope.intframe_popped_var));

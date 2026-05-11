@@ -1,0 +1,55 @@
+// defer_nested_in_body.nv — Plan 20 gap-check (2): defer/errdefer
+// внутри defer body.
+//
+// Spec D90 не обсуждает явно. Defer body — это обычный block, в
+// нём могут быть statements включая еще один defer. Семантика:
+// nested defer регистрируется в scope DEFER-BODY (не parent scope),
+// fires при exit из defer body.
+//
+// Это nested scope: при invocation outer defer body (на exit из
+// parent scope), inner defer body должен fire на выходе из inner
+// defer scope. То есть scope-cascade двухуровневый.
+
+module nova_tests.syntax.defer_nested_in_body
+
+
+// ───── defer внутри block внутри defer body ─────
+//
+// Используем block-expression в defer body — внутри неё свой defer.
+
+test "defer внутри nested block в defer body" {
+    let mut outer_tick = 0
+    let mut inner_tick = 0
+    let _ = {
+        defer {
+            // Внутри outer defer body — inner block с defer.
+            let _ = {
+                defer { inner_tick = inner_tick + 1 }
+                42
+            }
+            outer_tick = outer_tick + 1
+        }
+        100
+    }
+    assert(outer_tick == 1)
+    assert(inner_tick == 1)
+}
+
+
+// ───── defer в loop body внутри defer body ─────
+
+test "defer в for-loop body внутри defer body" {
+    let mut outer_tick = 0
+    let mut loop_tick = 0
+    let _ = {
+        defer {
+            for _i in 0..3 {
+                defer { loop_tick = loop_tick + 1 }
+            }
+            outer_tick = outer_tick + 1
+        }
+        0
+    }
+    assert(outer_tick == 1)
+    assert(loop_tick == 3)
+}

@@ -51,7 +51,11 @@ static inline void nova_throw(nova_str msg) {
         _nova_fail_top->error_msg = msg;
         longjmp(_nova_fail_top->jmp, 1);
     }
-    /* No handler: abort */
+    /* No handler: abort. Plan 20 Ф.8 follow-up: flush stdout перед
+     * abort'ом, чтобы defer cleanup print'ы (буферизованные) попали
+     * в output. Без этого defer-cleanup print видно в exit-code, но
+     * не в stdout (теряется при abort). */
+    fflush(stdout);
     fprintf(stderr, "nova: unhandled Fail: %.*s\n",
         (int)msg.len, msg.ptr);
     abort();
