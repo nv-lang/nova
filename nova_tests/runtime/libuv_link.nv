@@ -1,15 +1,17 @@
-// libuv_link.nv — Plan 22 Ф.1 smoke-test.
+// libuv_link.nv — Plan 22 Ф.1 + Ф.2 smoke-test.
 //
-// Validates: libuv vendored submodule собирается, libuv.lib линкуется
-// в test exe без runtime ошибок. Не вызывает libuv API напрямую —
-// Plan 22 Ф.2+ добавит реальное использование. Здесь только проверка
-// что link succeeds.
+// Validates:
+//   - Ф.1: libuv vendored submodule собирается, libuv.lib линкуется
+//     в test exe без link errors.
+//   - Ф.2: codegen emit_main вызывает nova_evloop_init() в prelude
+//     и nova_evloop_close() в эпилоге — без crash'а / abort'а.
+//     PASS этого теста подтверждает что lifecycle отрабатывает чисто.
 //
 // Этот файл должен PASS:
-//   - с NOVA_USE_LIBUV=0 (libuv not linked) → no-op printout
-//   - с NOVA_USE_LIBUV=1 либо libuv.lib present (auto) → no-op printout
-// В обоих случаях output идентичен — Ф.1 проверяет именно link-step,
-// не runtime функциональность.
+//   - с NOVA_USE_LIBUV=0 (libuv stubs) → init/close = no-op
+//   - с NOVA_USE_LIBUV=1 либо libuv.lib present (auto) → uv_default_loop
+//     init + uv_loop_close в эпилоге.
+// В обоих случаях output идентичен.
 
 module nova_tests.runtime.libuv_link
 

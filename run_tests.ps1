@@ -253,13 +253,16 @@ $inputs | Sort-Object FullName | ForEach-Object {
     # headers/libs (Clang на Windows использует MSVC ABI + linker).
     $obj_dir = "$tmp_dir\$exe_safe-obj"
     New-Item -ItemType Directory -Force -Path $obj_dir | Out-Null
+    # Plan 22 Ф.2: eventloop.c добавляется в линковку только если libuv
+    # активирован — иначе .c содержит stub функции, не используется.
+    $evloop_src = if ($use_libuv) { "`"$rt_dir\eventloop.c`"" } else { "" }
     if ($use_clang) {
         # Clang GCC-style: -o для output, -I для includes. -nologo нет —
         # Clang не верболен. `--target` явный чтобы избежать сюрпризов на
         # mixed-installer окружениях. Linker — lld-link (идёт с LLVM).
-        $cl_cmd = "`"$clang`" --target=x86_64-pc-windows-msvc $clang_flags -I `"$cg_inc_dir`" $libuv_link_args_clang -o `"$exe_file`" `"$c_file`" `"$rt_dir\alloc.c`" `"$rt_dir\effects.c`" `"$rt_dir\fibers.c`""
+        $cl_cmd = "`"$clang`" --target=x86_64-pc-windows-msvc $clang_flags -I `"$cg_inc_dir`" $libuv_link_args_clang -o `"$exe_file`" `"$c_file`" `"$rt_dir\alloc.c`" `"$rt_dir\effects.c`" `"$rt_dir\fibers.c`" $evloop_src"
     } else {
-        $cl_cmd = "cl.exe /nologo /W0 $msvc_flags /I `"$cg_inc_dir`" /Fo`"$obj_dir\\`" /Fe`"$exe_file`" `"$c_file`" `"$rt_dir\alloc.c`" `"$rt_dir\effects.c`" `"$rt_dir\fibers.c`" $libuv_link_args"
+        $cl_cmd = "cl.exe /nologo /W0 $msvc_flags /I `"$cg_inc_dir`" /Fo`"$obj_dir\\`" /Fe`"$exe_file`" `"$c_file`" `"$rt_dir\alloc.c`" `"$rt_dir\effects.c`" `"$rt_dir\fibers.c`" $evloop_src $libuv_link_args"
     }
     $cl_out = cmd /c "`"$vcvars`" && $cl_cmd" 2>&1
     if ($LASTEXITCODE -ne 0) {

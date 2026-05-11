@@ -214,4 +214,10 @@ typedef struct { char _dummy; } nova_unit;
 /* ---- Channels (D79) — coordination между fiber'ами ---- */
 #include "channels.h"
 
+/* ---- Plan 22 Ф.2: глобальный uv_loop_t lifecycle ---- */
+/* Подключается всегда. Под #ifdef NOVA_USE_LIBUV даёт реальный API,
+ * иначе — stub. Это позволяет codegen эмитить nova_evloop_init() в
+ * main-prelude независимо от того, активирован libuv или нет. */
+#include "eventloop.h"
+
 #endif /* NOVA_RT_H */
