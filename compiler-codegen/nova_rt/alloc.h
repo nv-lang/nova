@@ -29,4 +29,10 @@ size_t nova_gc_free_count(void);
 size_t nova_gc_live_count(void);
 void   nova_gc_reset_stats(void);
 
+/* Plan 32: GC introspection API exposed to Nova via std.runtime.gc.
+ * nova_gc_heap_size  : текущий размер heap в bytes (0 под malloc — honest sentinel)
+ * nova_gc_collect    : принудительный сбор (no-op под malloc) */
+size_t nova_gc_heap_size(void);
+void   nova_gc_collect(void);
+
 #endif /* NOVA_RT_ALLOC_H */

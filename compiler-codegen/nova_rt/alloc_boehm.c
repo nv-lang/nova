@@ -60,3 +60,7 @@ size_t nova_gc_alloc_count(void) { return _alloc_count; }
 size_t nova_gc_free_count(void)  { return 0; /* conservative: GC freed count unavailable */ }
 size_t nova_gc_live_count(void)  { return _alloc_count; /* upper bound; GC may have freed some */ }
 void   nova_gc_reset_stats(void) { _alloc_count = 0; }
+
+/* Plan 32: introspection — under Boehm full GC support. */
+size_t nova_gc_heap_size(void) { return GC_get_heap_size(); }
+void   nova_gc_collect(void)   { GC_gcollect(); }

@@ -5500,6 +5500,48 @@ NovaSpawnCtx) невидимо для GC. При grow() NovaFiberQueue (≥32 fi
 
 
 ================================================================================
+2026-05-12 Plan 32: GC introspection API (std.runtime.gc)
+================================================================================
+
+Существующие GC-тесты (gc_correctness, gc_bench) проверяли только что live-
+объекты не collected преждевременно. Под --gc malloc они тоже PASS — нет
+способа отличить «GC работает» от «memory leak'ает».
+
+API в namespace `gc.*` (зарезервировано как builtin identifier):
+  gc.heap_size()    -> int    bytes; 0 если backend без introspection
+  gc.live_count()   -> int    upper bound (alloc_count под Boehm)
+  gc.alloc_count()  -> int    монотонный счётчик с старта
+  gc.collect()                принудительный сбор (no-op под malloc)
+  gc.reset_stats()            сброс счётчиков
+
+Реализация:
+1. nova_rt/alloc.h — declarations nova_gc_heap_size + nova_gc_collect.
+2. nova_rt/alloc.c — malloc backend: heap_size=0 (honest unsupported),
+   collect = no-op.
+3. nova_rt/alloc_boehm.c — heap_size = GC_get_heap_size(), collect =
+   GC_gcollect().
+4. emit_c.rs:
+   - emit_call: hard-coded если obj == Ident("gc") → emit nova_gc_*(...).
+   - infer_expr_c_type: gc.* → nova_int.
+   - collect/reset_stats — unit-return через comma-expression
+     (nova_gc_collect(), (nova_int)0LL) — паттерн как у nv_panic/nv_exit.
+5. types/mod.rs — "gc" добавлен в builtins HashSet (иначе undefined identifier).
+
+Тесты:
+- nova_tests/concurrency/gc_introspection.nv (6 sanity тестов, любой backend).
+- nova_tests/concurrency/gc_differential.nv (2 differential теста).
+
+Differential результаты под --gc boehm (доказательство что GC работает):
+  baseline=64 KB, peak после 100k Junk = 348 KB, после collect = 348 KB.
+  Без GC было бы 3.2 MB. 10 раундов × 50k allocs: max_heap = 348 KB
+  (вместо ожидаемых 16 MB при linear leak).
+
+Под --gc malloc оба differential теста early-return через `if heap_size() == 0`.
+
+Acceptance: 179/179 PASS (malloc + boehm).
+
+
+================================================================================
 2026-05-12 Warning routing: CEmitter.warnings — без утечки в stderr
 ================================================================================
 

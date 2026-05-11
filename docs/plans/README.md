@@ -41,6 +41,8 @@
 | 29 | [29-repo-layout.md](29-repo-layout.md) | Реорганизация корня: `compiler-codegen/` → `compiler/`, `nova-cli/` → `cli/`. Nova-пакеты (nova_tests/, std/) не переименовываются — D78 риск. | план, не начат, низкий приоритет |
 | 30 | [30-channel-improvements.md](30-channel-improvements.md) | Channel improvements: `send`→`bool` (no panic on closed) + multi-writer (`tx.clone()` + `writer_count` ref-count). Зависит от Plan 21. | план, не начат |
 | 31 | [31-channel-select.md](31-channel-select.md) | `select` — multiplexed channel receive: ожидание на N каналах одновременно, пробуждение по первому готовому. Парсер + runtime SelectWaiter + codegen. | ✅ ЗАКРЫТ (Ф.1-6 ✅; all-closed panic реализован; 173/174 PASS) |
+| 32 | [32-gc-introspection.md](32-gc-introspection.md) | `std.runtime.gc` introspection API (`heap_size`, `live_count`, `alloc_count`, `collect`, `reset_stats`) для differential GC-тестов и production memory pressure observability. | ✅ ЗАКРЫТ (Ф.1-Ф.4 ✅; 179/179 PASS malloc+boehm; differential: heap bounded 348 KB под Boehm на 500k allocs vs ожидаемых 16 MB при leak) |
+| 33 | [33-contracts-implementation.md](33-contracts-implementation.md) | D24 контракты: `requires`/`ensures`/`invariant` + magic-имена (`result`/`old`/`.is_ok`) + `@must_verify`/`@unverified` + Z3 SMT + handler-state через `pure_view`. Закрывает Q-contract-dsl. | план, не начат |
 
 > Plan 19 — see `19-closure-and-error-ops.md` (closure-rev + D85 error-ops).
 > Plan 20 и 21 — последовательные (Plan 21 зависит от Plan 20).

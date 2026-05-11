@@ -1430,6 +1430,9 @@ impl NameResCtx {
             // Built-in functions (см. codegen::emit_c.rs special-cases).
             "assert", "debug_assert", "print", "println",
             "panic", "exit",
+            // Plan 32: GC introspection namespace (std.runtime.gc).
+            // Используется как `gc.heap_size()`, `gc.collect()` и т.д.
+            "gc",
             // Default Fail-effect type (D65 placeholder).
             "Fail",
             // Detach effect-type для detach {} expression (D50).

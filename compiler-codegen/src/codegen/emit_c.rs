@@ -6543,6 +6543,31 @@ impl CEmitter {
                             return Ok(format!("nova_int_from_f64_bits({})", v));
                         }
                     }
+                    // Plan 32: GC introspection API — std.runtime.gc.
+                    // Хардкод как `gc.*` для namespace-style dispatch (без
+                    // receiver-type, args без self).
+                    if name == "gc" {
+                        match method.as_str() {
+                            "heap_size" if args.is_empty() => {
+                                return Ok("((nova_int)nova_gc_heap_size())".to_string());
+                            }
+                            "live_count" if args.is_empty() => {
+                                return Ok("((nova_int)nova_gc_live_count())".to_string());
+                            }
+                            "alloc_count" if args.is_empty() => {
+                                return Ok("((nova_int)nova_gc_alloc_count())".to_string());
+                            }
+                            "collect" if args.is_empty() => {
+                                // unit-return: comma-expression для совместимости
+                                // с expression-position (как nv_panic).
+                                return Ok("(nova_gc_collect(), (nova_int)0LL)".to_string());
+                            }
+                            "reset_stats" if args.is_empty() => {
+                                return Ok("(nova_gc_reset_stats(), (nova_int)0LL)".to_string());
+                            }
+                            _ => {}
+                        }
+                    }
                 }
                 // 0. Built-in primitive static methods (D35 + D73).
                 //    `str.from(x)` — string conversion (replaces old D70 to_str).
@@ -10392,6 +10417,14 @@ impl CEmitter {
                         if n == "ReadBuffer" {
                             return match method.as_str() {
                                 "from" => "Nova_ReadBuffer*".into(),
+                                _ => "nova_int".into(),
+                            };
+                        }
+                        // Plan 32: gc.* introspection — type inference.
+                        if n == "gc" {
+                            return match method.as_str() {
+                                "heap_size" | "live_count" | "alloc_count" => "nova_int".into(),
+                                "collect" | "reset_stats" => "nova_int".into(), // unit comma-expr
                                 _ => "nova_int".into(),
                             };
                         }
