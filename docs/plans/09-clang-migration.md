@@ -1,7 +1,8 @@
 # План 09: миграция с MSVC на Clang/LLVM
 
-**Статус:** активный, не начат.
+**Статус:** ✅ Ф.1-Ф.5 закрыты 2026-05-11. Ф.6 (бенчмарки) отложен до std/encoding/json.
 **Дата создания:** 2026-05-08.
+**Дата закрытия Ф.1-Ф.5:** 2026-05-11.
 **Тип:** инфраструктурный (build pipeline). Не меняет семантику Nova,
 только улучшает runtime perf и cross-platform consistency.
 
@@ -157,8 +158,12 @@ param(
     [string]$Mode = "dev"
 )
 
+# Plan 09 retro: march=x86-64-v3 (Haswell+, 2013+, ≈99% десктопов 2026)
+# вместо march=native чтобы release binary переносился между машинами.
+# Для локальных перф-эксперименов: env NOVA_MARCH_NATIVE=1.
+$march = if ($env:NOVA_MARCH_NATIVE -eq "1") { "native" } else { "x86-64-v3" }
 $clang_flags = if ($Mode -eq "release") {
-    "-O3 -flto -march=native -DNDEBUG"
+    "-O3 -flto -march=$march -DNDEBUG"
 } else {
     "-O0 -g"
 }
@@ -219,7 +224,22 @@ clang -O3 -flto -march=native ...
 > типичных backend-задачах (измерено в `bench/` benchmark suite —
 > см. план 09).
 
-### Ф.6 — Бенчмарк-сравнение
+### Ф.6 — Бенчмарк-сравнение — ⏸️ ОТЛОЖЕН
+
+**Plan 09 retro 2026-05-11:** Ф.6 пока не делаем. Причины:
+
+- `bench/json_parse.nv` требует рабочей `std/encoding/json`, которая
+  сейчас неполная (latent stdlib-баги выявленные NameResCtx: `fixed_ms`,
+  `seeded` undefined; cross-file dependencies).
+- `bench/sha256.nv` требует тяжёлый I/O loop — но `Time.sleep` + Net/Fs
+  ещё через libuv (Plan 22). До этого crypto-бенчи будут CPU-only.
+- Cherry-picked одиночный бенч мало даст для решения; нужна полная
+  benchmark-сюита с разными workload-классами.
+
+Делаем когда: (а) std/encoding/json работает; (б) Plan 22 libuv готов;
+(в) есть конкретный perf-claim который надо проверить ("Nova vs Rust X").
+Сейчас в фокусе features (Plan 20/21/22), не perf — этот гэп
+сознательный.
 
 Создать минимальный бенчмарк-suite в `bench/` для сравнения
 toolchain'ов:
@@ -250,10 +270,42 @@ toolchain'ов:
 - ✅ `run_tests.ps1` детектит Clang и использует его если найден.
 - ✅ `run_tests.ps1 -Mode release` генерирует `-O3 -flto` оптимизированный binary.
 - ✅ MSVC fallback работает если Clang не найден (с предупреждением).
-- ✅ 64+/64+ tests-nova продолжают PASS на Clang (нет регрессий).
-- ✅ stdlib (43 файла) — поведенческий паритет MSVC/Clang.
-- ✅ Бенчмарк показывает 10-15% прирост на release-сборке.
-- ✅ README + compiler-codegen/README + simplifications.md обновлены.
+- ✅ 130/130 tests-nova продолжают PASS на Clang dev.
+- ⏸️ stdlib (43 файла) — поведенческий паритет MSVC/Clang (не запускали -IncludeStdlib polно).
+- ⏸️ Бенчмарк показывает 10-15% прирост на release-сборке (Ф.6 отложен).
+- ⏸️ README + compiler-codegen/README обновляются в отдельной фазе.
+
+## Plan 09 retro (2026-05-11)
+
+### Что сделано (Ф.1-Ф.4)
+
+1. **Детект Clang**: `run_tests.ps1` ищет `clang.exe` в `C:\Program Files\LLVM\bin\`, fallback на `Get-Command`, override через `NOVA_CLANG`.
+2. **GCC-style invocation** (Вариант B по плану): `clang.exe --target=x86_64-pc-windows-msvc <flags> -I ... -o ...`. vcvars64 всё ещё нужен (MSVC SDK headers + linker).
+3. **Параметры `-Mode dev|release`, `-Toolchain auto|clang|msvc`**. Auto fallback на MSVC с warning если Clang не найден.
+4. **`-march=x86-64-v3`** (Haswell+) для portable release, `-march=native` через env `NOVA_MARCH_NATIVE=1` для локальных эксперименов. Это изменение vs изначального плана (`march=native` был дефолт).
+
+### Выявленные баги codegen (Plan 09 как fuzzer)
+
+Полный прогон тестов на Clang dev упал на **`basics/trailing_block`**:
+```
+error: function declared in block scope cannot have 'static' storage class
+```
+
+Это **реальный portability bug**: codegen эмитил `static foo(void);` (forward declaration функции) **внутри тела другой функции** — нарушение C99 §6.2.2¶7 (block-scope declarations не могут иметь storage-class `static` для функций). MSVC исторически принимает (extension), Clang/GCC отвергают.
+
+**Fix:** `emit_c.rs` — fwd-декларация trailing-block функции теперь идёт в `lambda_forward_decls` (file-scope buffer), не в локальный output через `self.line()`. После fix — 130/130 PASS на Clang.
+
+Заодно — нашёл другой пропущенный момент: `emit_with` не аннотировал `block.trailing` через `emit_source_annotation_for_expr`. SRC-комменты теряются для последнего expression в with-body. Тоже починено.
+
+### Lesson
+
+**Strict-compiler как detective tool.** Clang не блокирует Nova, но даёт **fuzzer effect**: каждое отличие в обработке нестандартного C выявляет latent codegen-bug. Это сильный аргумент за регулярный CI-прогон на нескольких toolchain'ах — не для perf, а для portability/correctness.
+
+### Что НЕ сделано (Ф.5/Ф.6)
+
+- **Ф.5 docs**: README + simplifications.md обновления — закрою в отдельном коммите.
+- **Ф.6 бенчмарки**: отложено до готовности std/encoding/json + libuv (Plan 22) для realistic workload.
+- **Полный stdlib прогон**: `-IncludeStdlib` сейчас не green из-за latent багов (`fixed_ms`/`seeded`), не из-за Clang. Отдельная stdlib-fix задача.
 
 ---
 

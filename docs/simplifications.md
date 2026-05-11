@@ -3322,3 +3322,51 @@ type-inference). До этого — bootstrap convention достаточен.
 - Tests: ✅ cargo test --lib 65/65, nova_tests 121/121 PASS (120 baseline + 1 negative).
 - Roadmap: расширение до Capitalized-проверки — после self-host
   compiler, не в bootstrap.
+
+---
+
+## 2026-05-11 — Plan 09 Ф.1-Ф.4: Clang toolchain в run_tests.ps1
+
+### Что упрощено / закрыто
+
+Реализован Plan 09 Ф.1-Ф.4 (`docs/plans/09-clang-migration.md`):
+LLVM 22.1.5 поставлен через `winget install LLVM.LLVM`, `run_tests.ps1`
+получил параметры `-Toolchain auto|clang|msvc` и `-Mode dev|release`.
+По умолчанию — Clang если найден, иначе MSVC с warning'ом.
+
+### Изменения относительно плана
+
+- **march = x86-64-v3 (вместо `native`).** Изначальный план предлагал `march=native`. Сменил: `native` не переносится между CPU, для distributable binary нужен **portable march**. v3 = Haswell+ (2013+), покрывает ≈99% десктопов 2026. `native` доступен через env `NOVA_MARCH_NATIVE=1` для локальных перф-эксперименов.
+- **Ф.6 (бенчмарки) отложен.** Не делаем сейчас: bench/json_parse требует std/encoding/json (неполная), sha256 требует tight I/O (libuv Plan 22). Делаем когда есть готовый realistic workload + конкретный perf-claim. В фокусе features (Plan 20/21/22), не perf.
+- **Ф.5 docs (README) — частично:** docs/plans/09 retro обновлён, README.md / compiler-codegen/README.md — отдельная doc-задача.
+
+### Trade-offs
+
+- **MSVC fallback оставлен.** Не enforce'им Clang — кто-то может работать без LLVM (особенно на CI/cloud-VMs без install прав). Warning сообщает что perf на 10-15% хуже.
+- **`-Wno-everything` для Clang.** Codegen эмитит много типичных warnings (unused-result, sign-compare, parenthesis) которые не баги; муссировать их в test-runner'е не нужно. На самом деле hide'им сигнал — отдельная задача почистить codegen warning-free.
+- **Не удалили MSVC-workarounds в codegen.** План явно сохраняет 8+ обходок в emit_c.rs (compound literals, ≥1 struct field, etc.) — Clang это принимает, удаление потребовало бы условного codegen'а. Stays as-is.
+
+### Plan 09 как fuzzer (сюрприз)
+
+Полный прогон тестов на Clang выявил **2 реальных codegen-бага**:
+
+1. **block-scope `static` fwd-decl** (`basics/trailing_block`): codegen эмитил `static foo(void);` внутри тела функции — нарушение C99 §6.2.2¶7. MSVC принимает (extension), Clang/GCC отвергают. Fix: fwd-декларация в `lambda_forward_decls` (file-scope buffer).
+
+2. **SRC annotation gap в with-body**: `emit_with` не вызывал `emit_source_annotation_for_expr(trailing)` — SRC-комменты терялись для последнего expression в with-body. Fix: добавлена аннотация.
+
+### Lesson
+
+**Strict-compiler как detective tool.** Каждое отличие в обработке нестандартного C выявляет latent codegen-bug. Сильный аргумент за CI-прогон на нескольких toolchain'ах (MSVC + Clang + позже GCC на Linux) — не для perf, а для **portability/correctness**. Если бы переход на Clang случился через год (на Linux CI), эти баги всплыли бы в более болезненной форме.
+
+### Файлы
+
+- `run_tests.ps1` — параметры -Toolchain/-Mode, детект Clang, fallback на MSVC.
+- `compiler-codegen/src/codegen/emit_c.rs` — fix #1 (fwd-decl file-scope), fix #2 (SRC annotation в emit_with).
+- `docs/plans/09-clang-migration.md` — retro Plan 09 + Ф.6 отложен.
+
+### Status
+
+- ✅ Ф.1-Ф.4 ЗАКРЫТЫ.
+- ⏸️ Ф.5 (README docs) — частично, отдельная задача.
+- ⏸️ Ф.6 (benchmarks) — отложен до std/json + libuv готовности.
+- Tests: Clang dev 130/130 PASS, MSVC dev (regression) 130/130 PASS.

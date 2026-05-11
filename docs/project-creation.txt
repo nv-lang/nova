@@ -4166,3 +4166,100 @@ ExprKind::Ident, но не проверяли наличие имени в scope
   на stdlib обнажил несуществующие `fixed_ms`/`seeded` — баги
   которые до этого silent'или потому что -IncludeStdlib редко
   запускался полностью.
+
+================================================================
+2026-05-11. Plan 09 Ф.1-Ф.4 — Clang/LLVM toolchain в run_tests.ps1
+================================================================
+
+Plan 09 (`docs/plans/09-clang-migration.md`) был «активный, не начат»
+с 2026-05-08. Сегодня реализованы Ф.1-Ф.4 (детект + invocation +
+build modes + MSVC fallback) — open до Ф.5 (docs) и Ф.6 (бенчмарки
+отложены до std/encoding/json).
+
+**Что сделано:**
+
+1. **LLVM 22.1.5 установлен** через `winget install LLVM.LLVM` —
+   silent install, без UAC prompt'а. Установился в
+   `C:\Program Files\LLVM\bin\`. Включает clang.exe, clang-cl.exe,
+   lld-link.exe, lldb.exe.
+
+2. **Детект Clang в run_tests.ps1.** Параметр `-Toolchain
+   auto|clang|msvc`. Auto-detect путей: `NOVA_CLANG` env, затем
+   стандартные пути LLVM, затем `Get-Command clang.exe`. Если
+   Clang не найден — fallback на MSVC с warning'ом.
+
+3. **GCC-style invocation** (Вариант B по плану):
+   ```
+   clang.exe --target=x86_64-pc-windows-msvc <flags> -I ... -o ... <sources>
+   ```
+   vcvars64.bat всё ещё нужен для MSVC SDK headers + linker (Clang
+   на Windows использует MSVC ABI).
+
+4. **Параметр `-Mode dev|release`:**
+   - dev: `-O0 -g -Wno-everything` — быстрая компиляция, debug
+     info, без оптимизаций. Дефолт для TDD-итераций.
+   - release: `-O3 -flto -march=$march -DNDEBUG -Wno-everything` —
+     production-perf. Default march — `x86-64-v3` (Haswell+, 2013+,
+     ≈99% десктопов 2026), portable между машинами. `march=native`
+     через env `NOVA_MARCH_NATIVE=1` для локальных perf-эксперименов.
+
+5. **MSVC mode** также получил `-Mode dev|release` (`/Od /Zi` vs
+   `/O2 /DNDEBUG`) для consistency.
+
+**Plan 09 как fuzzer — нашёл 2 codegen-бага:**
+
+Полный прогон тестов на Clang dev упал на **`basics/trailing_block`**:
+```
+error: function declared in block scope cannot have 'static' storage class
+```
+Это **реальный portability bug**: codegen эмитил
+`static foo(void);` (forward declaration функции) внутри **тела
+другой функции** — нарушение C99 §6.2.2¶7 (block-scope declarations
+не могут иметь storage-class `static` для функций). MSVC исторически
+принимает (extension), Clang/GCC отвергают.
+
+**Fix #1 (trailing-block fwd-decl):** `emit_c.rs` — fwd-декларация
+trailing-block функции теперь идёт в `lambda_forward_decls`
+(file-scope buffer), не в локальный output через `self.line()`.
+
+**Fix #2 (SRC annotation в with-body):** Заодно нашёл что
+`emit_with` не аннотировал `block.trailing` через
+`emit_source_annotation_for_expr`. SRC-комменты теряются для
+последнего expression в with-body (`Logger.log("b")` без
+`/* SRC: ... */`). Тоже починено.
+
+**Тесты:**
+- Clang dev: 130/130 PASS.
+- MSVC dev (regression): 130/130 PASS — нет деградации.
+- Build modes: release-сборка на Clang работает (smoke-test через
+  один файл).
+
+**Скорректировано в plane:**
+
+- **Ф.6 (бенчмарки) отложен.** Не делаем сейчас — `bench/json_parse`
+  требует std/encoding/json (неполный из-за stdlib багов), `sha256`
+  требует tight I/O (libuv Plan 22 ещё в работе). Cherry-picked
+  single бенч мало даст для решения. Делаем когда: (а) json работает;
+  (б) Plan 22 готов; (в) есть конкретный perf-claim для проверки.
+- **march = x86-64-v3 (вместо native).** Изначальный план предлагал
+  `march=native` — это не portable между машинами. Сменил на
+  v3 (Haswell+) для portable release, native через env-var.
+
+**Lesson — strict-compiler как detective tool.**
+
+Clang не блокирует Nova, но даёт **fuzzer effect**: каждое отличие
+в обработке нестандартного C выявляет latent codegen-bug. Это
+сильный аргумент за регулярный CI-прогон на нескольких toolchain'ах
+(MSVC + Clang) — не для perf, а для **portability/correctness**.
+
+В одном прогоне найдены 2 baseline-бага которые MSVC принимал годами.
+Если бы переход на Clang случился позже (когда добавлен Linux CI),
+это всплыло бы в более болезненной форме.
+
+**Не сделано (Ф.5 + Ф.6):**
+
+- README.md / compiler-codegen/README.md — обновление с
+  рекомендованным toolchain'ом + примером `release` build (отдельная
+  doc-задача).
+- Бенчмарк-сюита и реальное измерение «10-15% perf claim'а» — после
+  std/json + libuv готовности.
