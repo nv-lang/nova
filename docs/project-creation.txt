@@ -4885,3 +4885,77 @@ Plan 26 «~95%». CI-grade = timeout + isolation + JSON output
 - ffaa15ae plan: Plan 26 (11 фаз)
 - b5361abe plan-26: production-grade test-runner (Ф.1-Ф.11)
 - 5fd16a40 plan-26 fix: run_tests.ps1 quoting
+
+
+═══════════════════════════════════════════════════════════════════
+Plan 25 honest pass + Plan 27 GC switch — 2026-05-11 evening
+
+После Plan 22 Ф.8 user спросил «всё сделано как для прода? есть
+что в Go/Rust лучше? что можно сейчас исправить?» — попросил быстрые
+wins.
+
+**Что планировал делать (A + C):**
+- A: Fast-path Time.sleep(0) — bypass uv_timer полностью.
+- C: uv_timer_t pool — переиспользование handle'ов.
+
+**Что выяснилось:**
+
+(1) **A уже implemented в коде.** _nova_time_default_sleep для
+    ms <= 0 идёт через nova_fiber_yield() (mco_yield + cancel check)
+    либо nova_supervised_step() — НЕ создаёт uv_timer. Verified.
+
+(2) **C отменён.** libuv handle после uv_close не reusable. Pool of
+    handles = no save без timing wheel rewrite (недели работы, premature).
+
+(3) **Обнаружена настоящая production проблема:** compiler-codegen/
+    nova_rt/alloc.c — Phase-0 plain malloc без GC. nova_release —
+    no-op. **Объекты leak forever.** CLI tools работают только
+    потому что процессы short-lived. Long-running server упадёт OOM.
+
+    spec/overview.md заявлял «паузы <1ms» как factual claim — это
+    overclaim, **дизайн-цель** а не текущее состояние.
+
+**Что сделал:**
+
+(a) nova_tests/concurrency/memory_growth_check.nv — bench PASS под
+    malloc (short workloads работают), под Boehm покажет bounded
+    live_count.
+
+(b) Plan 25 G3 split на G3a (default malloc) + G3b (GC pause
+    measurement). Use-case matrix: «Single-host server low traffic»
+    переведён ✅ → ❌ blocked G3a (был mis-claim в hardening retro).
+
+(c) **Plan 27 (новый): GC switch — Boehm как default.**
+    - alloc_boehm.c уже готов в репо.
+    - **vcpkg gc.lib уже vendored** в compiler-codegen/vcpkg_installed/.
+    - Ф.1 (~1 день): --gc flag, malloc default.
+    - Ф.2-Ф.4: verify Boehm + pause bench + switch default.
+    - Ф.5: Linux/macOS packaging.
+
+(d) spec/overview.md: «паузы <1ms» помечено как **целевые** + ссылка
+    на Plan 25 G3 для текущего состояния.
+
+**Что НЕ сделал:** реализация Plan 27 (Boehm switch в test_runner)
+— отдельная задача, ~1 день. User параллельно работает над Plan 26
+hardening, не пересекаемся.
+
+**Lessons:**
+
+(1) **«Closing simplifications»** не значит «всё production-grade».
+    Plan 22 hardening Ф.7-Ф.10 был scheduler/runtime, не memory.
+    Memory mgmt — самый базовый prod requirement — остался Phase-0
+    malloc. Не выявлено в первой версии Plan 25. Нашли когда user
+    попросил «что можно сейчас исправить?».
+
+(2) **Honest claims в spec'е важны.** overview.md «<1ms» без
+    disclaimer'а звучало как factual. Drift с decisions/05-memory.md
+    (там корректно goal).
+
+(3) **vcpkg already vendored gc.lib** — plus для Plan 27. Не нужен
+    external setup.
+
+(4) **Mis-claim поправлен:** «Single-host server production-grade»
+    в Plan 25 первой версии было wrong. Server long-lived, leaks
+    накапливаются.
+
+Commit: d2c6a7b3 plan-25 honest pass + plan-27 GC switch

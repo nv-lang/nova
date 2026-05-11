@@ -3710,3 +3710,50 @@ Verification:
   имеет PS quoting + parallel race issues). Individual filter PASS.
 
 Commit: e94d2bc9 plan-22 Ф.8: close-cb state-machine + D93 sync/async stop_cb contract
+
+
+═══════════════════════════════════════════════════════════════════
+Plan 25 honest pass: default malloc-only обнаружено — 2026-05-11
+
+После Plan 22 hardening + Plan 25 первой версии user задал simple
+вопрос: «всё сделано как для прода?». Honest re-read code выявил
+самое большое production упрощение которое **не было в Plan 25**:
+
+| Упрощение | Реальность |
+|---|---|
+| **Default alloc backend** | compiler-codegen/nova_rt/alloc.c — plain malloc, нет GC, nova_release — no-op |
+| **Memory mgmt в коде** | Объекты создаются, **никогда не освобождаются** |
+| **Use-case "single-host server production-grade"** в Plan 25 матрице | **WRONG.** Server long-lived, leaks накапливаются → OOM |
+| **spec/overview.md "паузы <1ms"** | Без disclaimer — звучало factual. На самом деле **дизайн-цель** (decisions/05-memory.md correctly помечает как v1.0+ goal) |
+
+**Что сделано:**
+
+(a) Plan 25 G3 split на G3a/G3b:
+    - G3a (новый, **высокий приоритет**): default malloc-only — production blocker.
+    - G3b: GC pause measurement — после G3a.
+
+(b) Use-case matrix скорректирован — «Single-host server low traffic»
+    ✅ → ❌ blocked G3a.
+
+(c) **Plan 27 (новый): GC switch.** Boehm GC как default.
+    - alloc_boehm.c уже готов в репо.
+    - vcpkg gc.lib + gc.h уже vendored в
+      compiler-codegen/vcpkg_installed/x64-windows-static/.
+    - 5 фаз: flag → verify → bench → switch default → cross-platform.
+
+(d) spec/overview.md "<1ms" → "**целевые** <1ms p99" + ссылка на
+    Plan 25 G3 для текущего состояния.
+
+(e) nova_tests/concurrency/memory_growth_check.nv — bench PASS под
+    malloc (short workloads ok), будет показывать bounded live_count
+    под Boehm.
+
+**Lessons:**
+
+- **Hardening pass не покрывает всё.** Plan 22 Ф.7-Ф.10 был scheduler/
+  runtime hardening, memory mgmt остался Phase-0.
+- **Default settings важны.** Boehm готов в коде, но default остался
+  malloc — никто не использовал Boehm в тестах.
+- **vcpkg vendored** = clean path к решению. Plan 27 ~1 день работы.
+
+Commit: d2c6a7b3 plan-25 honest pass + plan-27 GC switch
