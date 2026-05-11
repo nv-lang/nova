@@ -220,4 +220,9 @@ typedef struct { char _dummy; } nova_unit;
  * main-prelude независимо от того, активирован libuv или нет. */
 #include "eventloop.h"
 
+/* ---- Plan 22 Ф.3 (D93): нормативный park/wake API ---- */
+/* Header-only inline (всё через NovaFiberQueue поля). Подключается
+ * после fibers.h (NovaFiberQueue должна быть полным типом). */
+#include "sched.h"
+
 #endif /* NOVA_RT_H */

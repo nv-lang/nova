@@ -85,7 +85,7 @@ Write-Host "libuv: $($src_all.Count) source files" -ForegroundColor Cyan
 #   /c          — compile only, no link.
 #   /nologo     — quiet.
 #   /W0         — suppress all warnings (libuv source has many; we don't patch).
-#   /MD         — multi-thread DLL runtime (matches Nova tests).
+#   /MT         — multi-thread static CRT (matches cl.exe default для Nova tests).
 #   /O2         — optimize for speed (release perf).
 #   /D_WIN32_WINNT=0x0602 — Windows 8 baseline (libuv requires).
 #   /DWIN32_LEAN_AND_MEAN — minimal windows.h.
@@ -97,7 +97,7 @@ $inc_pub  = Join-Path $libuv_dir "include"
 $inc_src  = Join-Path $libuv_dir "src"
 $inc_win  = Join-Path $libuv_dir "src\win"
 
-$compile_flags = "/c /nologo /W0 /MD /O2 /D_WIN32_WINNT=0x0602 /DWIN32_LEAN_AND_MEAN /DBUILDING_UV_SHARED=0 /I `"$inc_pub`" /I `"$inc_src`" /I `"$inc_win`""
+$compile_flags = "/c /nologo /W0 /MT /O2 /D_WIN32_WINNT=0x0602 /DWIN32_LEAN_AND_MEAN /DBUILDING_UV_SHARED=0 /I `"$inc_pub`" /I `"$inc_src`" /I `"$inc_win`""
 $obj_flag = "/Fo`"$obj_dir\\`""
 
 # Write response file (cl.exe @file.rsp) — bypass cmd.exe 8191-char limit.

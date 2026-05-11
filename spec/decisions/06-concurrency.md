@@ -2130,3 +2130,172 @@ let v = rx.recv()
 - Существующие тесты `nova_tests/runtime/channels.nv` мигрируются
   в рамках Plan 22.
 
+
+---
+
+## D93. Park/wake — нормативный runtime primitive для блокирующих операций
+
+> **Введён:** Plan 22 Ф.3 (2026-05-11).
+> **Реализация:** `compiler-codegen/nova_rt/sched.h` (header-only inline).
+
+### Что
+
+Runtime exposes стандартный API через `nova_rt/sched.h` для park/wake
+fiber'ов. Любая блокирующая операция в runtime'е (Time.sleep, Channel.recv,
+socket-read, file-read) **обязана** использовать этот API. Это
+contract на котором держится unified event-loop driven scheduling
+(Plan 22 Ф.4+), Channel D91 (Plan 21), и любые будущие IO operations
+(Plan 23+ std.net/std.fs).
+
+### API surface
+
+```c
+/* ─── Park / wake ───────────────────── */
+void      nova_sched_park(NovaFiberQueue* scope, int slot);
+void      nova_sched_wake(NovaFiberQueue* scope, int slot);
+nova_bool nova_sched_is_parked(NovaFiberQueue* scope, int slot);
+
+/* ─── Cancel-integration ───────────── */
+typedef void (*NovaCancelStopCb)(void* handle);
+void nova_sched_register_pending(NovaFiberQueue* scope, int slot,
+                                  void* handle, NovaCancelStopCb stop_cb);
+void nova_sched_unregister_pending(NovaFiberQueue* scope, int slot);
+
+/* ─── Introspection ────────────────── */
+int nova_sched_count_alive(NovaFiberQueue* scope);
+int nova_sched_count_parked(NovaFiberQueue* scope);
+int nova_sched_count_ready(NovaFiberQueue* scope);
+```
+
+### Семантика
+
+**1. Park atomic-with-yield.** `nova_sched_park` ставит `parked[slot] = true`
+и сразу делает `mco_yield`. Race-window нулевой — single-thread bootstrap
+обеспечивает это естественно. Под M:N ([Plan 23](../../docs/plans/23-mn-runtime-roadmap.md))
+потребуется memory fence перед yield'ом.
+
+**2. Wake idempotent.** Повторный wake без park'а между ними — no-op.
+Это упрощает callback'и: libuv `uv_close` cleanup может вызвать wake
+после нормального wake, нужно быть устойчивыми.
+
+**3. Wake безопасен из libuv-callback'а.** Callback'и выполняются в
+`uv_run` под main-thread. В этот момент никакой fiber не resume'ен —
+ставить `parked[slot] = false` безопасно без atomic-операций.
+
+**4. Scheduler skips parked.** `nova_supervised_step` пропускает
+`parked[i]` slot'ы (но считает их alive, чтобы scheduler не выходил
+раньше времени). Когда нет ready-fiber'ов и есть parked — main-loop
+будет уходить в `uv_run UV_RUN_ONCE` (Plan 22 Ф.4 добавит этот path).
+
+**5. Cancel-during-park.** Любая операция, паркующая fiber, **обязана**
+зарегистрировать handle через `nova_sched_register_pending`. При
+`cancel_token_cancel` scope's pending'ы проходятся, для каждого:
+1. Вызывается зарегистрированный `stop_cb(handle)` — он закрывает
+   libuv handle / unlink'ает waiter / отменяет request.
+2. Сразу снимается `parked[slot] = false` (механизм
+   автоматический в `cancel_token_cancel`).
+3. На следующем `supervised_step` fiber resume'ится, видит
+   `scope->cancel_requested` и throw'ает.
+
+Это **единственный** способ корректно прервать blocking-операцию.
+Плата за нерегистрацию — fiber виснет навсегда при cancel.
+
+**6. Multiple pending per slot — запрещено в bootstrap.** Slot держит
+один (handle, stop_cb) — достаточно для всех known use-cases (один
+fiber = одна блокирующая операция в момент времени). Если будущая
+операция потребует multi-handle (например `select` на N receiver'ах) —
+расширение через `pending_handle_list[]` со cap'ом.
+
+### Контракт пользователя API
+
+**Любая** операция, использующая park/wake, следует паттерну:
+
+```c
+NovaXxxState st = { ... };
+nova_xxx_init_handle(&st.handle);
+
+/* (1) Регистрация для cancel-wake — ОБЯЗАТЕЛЬНО ПЕРЕД park'ом. */
+nova_sched_register_pending(_nova_active_scope, _nova_active_slot,
+                             &st.handle, _nova_xxx_stop_cb);
+
+/* (2) Park: scheduler не resume'ит, пока кто-то не вызовет wake. */
+nova_sched_park(_nova_active_scope, _nova_active_slot);
+/* ← control возвращается сюда после wake (callback либо cancel). */
+
+/* (3) Cleanup + cancel-check. */
+nova_sched_unregister_pending(_nova_active_scope, _nova_active_slot);
+if (st.handle_active) {
+    nova_xxx_close_handle(&st.handle);
+}
+if (_nova_active_scope && _nova_active_scope->cancel_requested) {
+    nova_throw(nova_str_from_cstr("scope cancelled"));
+}
+```
+
+Воспроизводится для:
+- **Plan 22 Ф.4**: `Time.sleep` → `uv_timer_t` + `uv_timer_stop` stop_cb.
+- **Plan 21 Ф.1+**: `Channel.recv`/`send` → waitlist node + waitlist-remove stop_cb.
+- **Plan 23+ `std.net`**: `TcpStream.read` → `uv_read_start` + `uv_read_stop` stop_cb.
+- **Plan 23+ `std.fs`**: `File.read` → `uv_fs_t` + `uv_cancel` stop_cb.
+
+### Почему
+
+Без D93 каждый блокирующий primitive писал бы свою park/wake логику.
+В bootstrap'е до Plan 22 sleep делал busy-yield ([D71](#d71-bootstrap-concurrency-runtime),
+секция Time.sleep), `Channel.recv` — busy-spin на буфере. Cancel
+работал через cooperative yield-check в `nova_fiber_yield` — это
+терпимо для busy-yield, но **не работает** при настоящем park'е (на
+yield-point нет потому что fiber suspend'ит на libuv handle).
+
+D93 фиксирует **единый mechanism**:
+- Park = выход из ready-queue.
+- Wake = возврат в ready-queue.
+- Cancel = generic stop_cb, прерывает любой pending handle.
+
+Любая будущая блокирующая операция через тот же contract = автоматически
+cancel-aware, автоматически CPU-idle при ожидании, автоматически
+интегрируется с event loop. Это **revolutionary** изменение —
+unifies сейчас раздроблённые blocking-mechanism'ы.
+
+### Связь
+
+- [D14](#d14-fiber-runtime--невидимая-инфраструктура) — fiber-runtime
+  обоснование. Park/wake — implementation primitive для невидимого Async.
+- [D50](#d50-concurrency-model-spawn-detach-blocking) — `Blocking`
+  effect; D93 не покрывает (Blocking использует OS-thread pool, не park).
+- [D71](#d71-bootstrap-concurrency-runtime) — bootstrap scheduler.
+  D93 — расширение D71 park-state. Update'ится в Plan 22 Ф.6 с указанием
+  на D93 как точку перехода с busy-yield на event-loop driven.
+- [D75](#d75-cancel_scope--tok--ручная-структурная-отмена) —
+  cancel_scope. D93 описывает как cancel прерывает blocking-операции
+  через generic stop_cb mechanism (вместо cooperative yield-check).
+- [D79](#d79-channels--coordination-между-fiber-ами),
+  [D91](#d91-channel-revision--capability-split-на-sender--receiver) —
+  Channel `recv`/`send` будут реализованы через D93 API в Plan 21.
+- [D80](#d80-handler-scoping-per-fiber) — per-fiber handler scoping.
+  D93 park/wake не меняет handler state (snapshot уже per-fiber).
+
+### Эволюция
+
+- **Pre-Plan 22:** sleep, channel recv — busy-yield либо busy-spin.
+  Cancel — cooperative через `nova_fiber_yield` re-check.
+- **Plan 22 Ф.3:** введён D93 API. NovaFiberQueue расширен `parked[]`,
+  `pending_handle[]`, `pending_stop_cb[]`. cancel_token_cancel
+  итерируется по pending_stop_cb.
+- **Plan 22 Ф.4:** Time.sleep переходит на D93 (`uv_timer_t` park-on-timer).
+  `nova_supervised_run` расширяется: idle → `uv_run UV_RUN_ONCE`.
+- **Plan 21:** Channel.recv/send переходят на D93 (waitlist + stop_cb).
+- **Plan 23+ (std.net, std.fs):** socket-read, file-read через D93.
+- **Plan 23 (M:N):** park/wake становится cross-worker. Wake может
+  идти из worker B в fiber на worker A через `uv_async_t` queue.
+
+### Bootstrap-status
+
+- ✅ **Header-only API** в `nova_rt/sched.h`.
+- ✅ **NovaFiberQueue** расширен `parked[]`, `pending_handle[]`,
+  `pending_stop_cb[]`.
+- ✅ **nova_supervised_step** skips parked.
+- ✅ **nova_cancel_token_cancel** проходит по pending_stop_cb.
+- 🟡 **Real usage** — добавится в Plan 22 Ф.4 (Time.sleep), Plan 21
+  (Channel), Plan 23+ (IO).
+- 🟡 **`nova_supervised_run` idle uv_run** — в Plan 22 Ф.4.
