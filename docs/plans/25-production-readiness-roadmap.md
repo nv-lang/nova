@@ -104,39 +104,76 @@ benchmark показывает <10% overhead на typical workloads.
 
 ---
 
-### G3. Concurrent GC pauses не measured
+### G3. Memory management — главное упрощение runtime'а
 
-**Что.** Boehm GC (alloc_boehm.c) — stop-the-world mark-and-sweep.
-Pause time зависит от heap size. В spec/overview.md заявлено
-«паузы <1ms» — **не verified никакими benchmark'ами**.
+**Что обнаружено (2026-05-11 honest pass):** дефолтный `alloc.c` —
+**plain malloc без GC и без RC**. Объекты создаются через `nova_alloc`
+(= `malloc`) и **никогда не освобождаются**. `nova_release` — no-op.
+Codegen НЕ генерирует RC retain/release calls.
+
+Это значит: **любой long-running процесс упадёт по OOM**. Работает
+только потому что CLI tools и тесты — короткие процессы.
+
+В spec/decisions/05-memory.md заявлено: «Concurrent GC с pauses <1ms»
+— это **цель дизайна**, не текущая реализация (явно помечено как
+«MVP/v1.0+ roadmap»). Но в `spec/overview.md` чуть путаннее («паузы
+<1ms» без подписи "цель") — нужно sync'нуть.
+
+#### G3a. Default malloc-only — реальный production blocker
 
 **Сравнение.**
-- Go: concurrent GC с goal sub-millisecond pauses (Go 1.5+ tri-color
-  concurrent mark-and-sweep). Production-tested на multi-GB heaps.
-- Java ZGC / Shenandoah: <1ms pause guaranteed на multi-TB heaps.
-- Rust: no GC (RAII + ownership) — нет проблемы.
+- Go: concurrent GC sub-ms pauses, production-grade на день один.
+- Rust: no GC (RAII), нет проблемы.
+- Java ZGC/Shenandoah: <1ms на multi-TB heaps.
+- Nova **сейчас**: leak forever.
 
-**Импакт.**
-- На 1 GB heap Boehm может давать pauses 10-100ms. Для real-time
-  (audio, gaming, trading) — неприемлемо.
-- Для backend latency tail (p99.9) — добавляет jitter.
+**Что есть в репо:**
+- `alloc_boehm.c` — Boehm GC implementation (готов, требует vcpkg gc.lib).
+  **vcpkg уже установлен** в `compiler-codegen/vcpkg_installed/x64-windows-static/`
+  — gc.lib доступен. Не подключён к test_runner.
+- `alloc_rc.c` — RC implementation (готов **как backend**, но codegen
+  НЕ inserts `nova_retain`/`nova_release` — это нужно делать в каждой
+  copy/move/scope-exit). RC backend бесполезен без codegen support.
 
 **Blocker до closing'а:**
-- **Шаг 1** (дешёвый): GC pause benchmark на realistic workload
-  (10k objects, 100k objects, 1M objects). Verify или **falsify**
-  «<1ms» claim. Скорректировать spec.
-- **Шаг 2** (дорогой): если Boehm не fit — заменить на concurrent GC.
-  Опции: portable concurrent mark-sweep (GHC RTS GC borrowable?),
-  свой incremental GC, либо переход на RC (alloc_rc.c уже стоит
-  как option).
+
+**Шаг 1 (быстро, ~1 день):** добавить `--gc=malloc|boehm` flag в
+test-all. Default остаётся malloc для compatibility. Сделать Boehm
+opt-in через build flag. Verify что Boehm work'ает (test alloc_count
+vs live_count после workload — должен decrease).
+
+**Шаг 2 (средне, ~3 дня):** сделать Boehm GC **default** для всех
+non-realtime workloads. Realtime блоки (`realtime nogc { }`) остаются
+на arena allocator (region API, отдельный план).
+
+**Шаг 3 (долго, недели):** RC codegen — `nova_retain` на каждый
+copy/return-from-function, `nova_release` на scope-exit. Более
+production-grade для real-time (no pauses), но cycle-leaks. Это
+**альтернативная стратегия** Boehm — выбор после benchmarks.
 
 **Acceptance:**
-- Benchmark suite: GC pauses p50/p99/p99.9 на 10k/100k/1M objects.
-- Spec обновлён реальными числами вместо «<1ms».
-- Если работаем на real-time: pause <1ms p99 гарантированно.
+- `memory_growth_check` тест показывает `live_count` ограниченный
+  под Boehm (был ~unbounded под malloc).
+- Long-running stress (1M iter создания-разрушения objects) не
+  растёт linearly в memory.
 
-**Status:** Шаг 1 можно сделать сразу, ~1 день работы. Шаг 2 — после
-шага 1, по результатам.
+#### G3b. GC pause time не measured
+
+**Зависит от G3a.** Если default GC — Boehm: измерить pause
+distribution на realistic workloads (10k/100k/1M objects).
+Если pauses слишком велики (>10ms p99 на 1 GB) — рассматривать
+альтернативные GC (RC, custom incremental).
+
+**Текущее spec заявление в `spec/decisions/05-memory.md`:**
+«Concurrent GC, паузы <1ms p99» — **goal**, не текущее состояние.
+Spec корректно помечает это как «v1.0+ дизайн-цель».
+
+В `spec/overview.md` ту же фразу без disclaimer'а — **нужен
+honest update** "паузы <1ms — целевое требование, текущая реализация
+upper bound TBD после G3a".
+
+**Status:** G3a в работе (этот retro fixes documentation, runtime
+implementation — отдельный план Plan 27).
 
 ---
 
@@ -276,7 +313,8 @@ Sequential sleep workloads чуть медленнее, concurrent workloads
 |---|---|---|---|---|
 | G1 | Single-threaded scheduler | [Plan 23](23-mn-runtime-roadmap.md) | **Высокий** | Multi-core unblock |
 | G2 | Fixed fiber stacks | TBD после Plan 23 | Средний | 1M fibers target |
-| G3 | GC pauses не measured | Шаг 1 — бенчмарк (~1 день); Шаг 2 — TBD | Средний | Real-time / latency tail |
+| **G3a** | **Default malloc-only (leaks forever)** | Plan 27 (новый) — Boehm switch | **Высокий** | **Long-running processes падают по OOM** |
+| G3b | GC pause time не measured | После G3a | Средний | Real-time / latency tail |
 | G4 | Linux smoke | Plan 22 Ф.11 (нужен env) | **Высокий** | Deployment gate |
 | G5 | Preemption budget | TBD после Plan 23 | Средний | Long-compute fairness |
 | G6 | Cancel propagation | Связан с G5 | Низкий | Pure-compute cancel UX |
@@ -290,13 +328,17 @@ Sequential sleep workloads чуть медленнее, concurrent workloads
 
 | Use case | Status | Что блокирует |
 |---|---|---|
-| Single-core CLI tool / script | ✅ **Production-grade** | — |
-| Single-host server (low traffic) | ✅ Production-grade | — |
+| Single-core CLI tool / script (короткое время жизни) | ✅ **Production-grade** | — |
+| Single-host server (low traffic) | ❌ Blocked | **G3a (memory leaks forever под default malloc)** |
 | Linux deployment | ⏸ Blocked | G4 (Linux smoke) |
-| Multi-core backend server | ❌ Blocked | G1 (M:N runtime) |
-| 1M+ concurrent connections | ❌ Blocked | G1 + G2 (stacks) |
-| Real-time (audio, gaming, trading) | ❌ Blocked | G3 (GC pauses verified <1ms) |
+| Multi-core backend server | ❌ Blocked | G1 (M:N) + **G3a (GC)** |
+| 1M+ concurrent connections | ❌ Blocked | G1 + G2 (stacks) + **G3a** |
+| Real-time (audio, gaming, trading) | ❌ Blocked | **G3a (GC)** + G3b (pauses verified <1ms) |
 | Hard-real-time | ❌ Не цель | — (Nova не RT-OS) |
+
+**Honest summary:** Текущий runtime — **только short-lived процессы**
+(CLI tools, build scripts, тесты). Любой server / daemon / long-running
+worker упадёт через минуты-часы под нагрузкой из-за memory leaks.
 
 **Реалистичный честный summary для README:**
 
@@ -310,26 +352,30 @@ Sequential sleep workloads чуть медленнее, concurrent workloads
 
 ## Что делать дальше — приоритизация
 
-**Quick wins (дни-недели):**
+**Срочное (production blocker):**
 
-1. **G3 Шаг 1** — GC pause benchmark suite. Дешево, даёт honest spec
-   numbers вместо unverified «<1ms». ~1 день.
-2. **G4** — Linux smoke setup в WSL. ~1-2 дня. Удалит самый
-   embarrassing gap (cross-platform code never tested).
+1. **G3a (Plan 27 — GC switch)** — переключить default на Boehm GC.
+   vcpkg gc.lib уже available в репо. Без этого Nova **не usable**
+   для любых long-running workloads.
+
+**Quick wins после G3a (дни-недели):**
+
+2. **G3b** — GC pause measurement (после G3a имеет смысл).
+3. **G4** — Linux smoke setup в WSL. ~1-2 дня. Cross-platform code
+   never tested на Linux.
 
 **Большие задачи (недели-месяцы):**
 
-3. **Plan 23 (M:N runtime, = G1)** — самый большой рычаг. После него
+4. **Plan 23 (M:N runtime, = G1)** — самый большой рычаг. После него
    Nova competitive на multi-core. См. отдельный roadmap.
-4. **G5/G6 preemption** — после Plan 23, потому что M:N меняет
+5. **G5/G6 preemption** — после Plan 23, потому что M:N меняет
    scheduling fundamentally.
 
 **Низкоприоритетное (после v1.0):**
 
-5. **G2** (growable stacks) — переход на stackless либо custom
+6. **G2** (growable stacks) — переход на stackless либо custom
    stack-growth. Большая работа, маленький impact для bootstrap
    нишы (CLI / mid-traffic backend).
-6. **G7** (Ф.8 close-cb) — micro-overhead, fix перед Plan 21.
 
 ---
 

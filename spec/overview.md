@@ -48,12 +48,14 @@
    .NET), интерпретатор (как Python). Один и тот же исходник.
 2. **Память: managed по умолчанию (современный concurrent GC),
    regions opt-in для real-time.** Программист пишет код без префиксов
-   памяти — циклы освобождаются автоматически, паузы <1ms. Escape
-   analysis оставляет на стеке всё, что не утекает (без GC overhead).
+   памяти — циклы освобождаются автоматически, **целевые** паузы <1ms p99
+   (см. [decisions/05-memory.md#d6](decisions/05-memory.md#d6) — это
+   дизайн-цель, текущее состояние bootstrap-runtime'а в
+   [docs/plans/25-production-readiness-roadmap.md#g3](../docs/plans/25-production-readiness-roadmap.md#g3-memory-management--главное-упрощение-runtimeа)).
+   Escape analysis оставляет на стеке всё, что не утекает (без GC overhead).
    Для real-time зон (звук, торговля, embedded) — блок `realtime nogc { }`
    ([D64](decisions/04-effects.md#d64)), внутри `region { }` для arena-
-   allocations. См.
-   [decisions/05-memory.md#d6](decisions/05-memory.md#d6).
+   allocations.
 3. **Структурная типизация + вывод типов везде.**
 4. **Protocols + data вместо классов.** Никакого наследования. Структурные
    контракты через `protocol` (см. [decisions/01-philosophy.md#d1](decisions/01-philosophy.md#d1), [decisions/02-types.md#d42](decisions/02-types.md#d42)).
