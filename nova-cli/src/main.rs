@@ -514,10 +514,8 @@ fn cmd_test(
                 .unwrap_or(&paths.tests_dir)
                 .display()
         );
-        if libuv.is_some() {
-            eprintln!("libuv: enabled");
-        } else {
-            eprintln!("libuv: disabled");
+        if libuv.is_none() {
+            eprintln!("warning: libuv not found — concurrency tests will fail");
         }
     }
 

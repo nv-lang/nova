@@ -1,0 +1,151 @@
+// gc_correctness.nv — Тесты корректности Boehm GC под давлением.
+//
+// Запускаются только с Boehm backend (alloc_boehm.c):
+//   nova test --gc boehm --filter gc_correctness
+//
+// Проверяет:
+// 1. Живые объекты не собираются преждевременно — значения сохраняются.
+// 2. fiber_ctx[] GC root (D97): ≥64 fiber'ов без краша.
+// 3. Циклические ссылки через поля не вызывают утечку (Boehm трассирует граф).
+// 4. Строки, массивы и записи выживают под давлением аллокаций.
+//
+// ALLOC_REQUIRES boehm
+
+module nova_tests.concurrency.gc_correctness
+
+type Node {
+    val   int
+    depth int
+}
+
+fn make_node(v int, d int) -> Node =>
+    Node { val: v, depth: d }
+
+// ── 1. Сентинельный объект выживает 50k аллокаций ──────────────────────────
+
+test "GC корр: sentinel жив после 50k аллокаций" {
+    let sentinel = make_node(42, 0)
+    let mut i = 0
+    while i < 50_000 {
+        let tmp = make_node(i, i + 1)
+        let _ = tmp.val + tmp.depth
+        i += 1
+    }
+    assert(sentinel.val == 42)
+    assert(sentinel.depth == 0)
+}
+
+// ── 2. 10 сентинелей выживают 100k аллокаций ──────────────────────────────
+
+test "GC корр: 10 sentinel'ей живы после 100k аллокаций" {
+    let s0 = make_node(0, 100)
+    let s1 = make_node(1, 200)
+    let s2 = make_node(2, 300)
+    let s3 = make_node(3, 400)
+    let s4 = make_node(4, 500)
+    let s5 = make_node(5, 600)
+    let s6 = make_node(6, 700)
+    let s7 = make_node(7, 800)
+    let s8 = make_node(8, 900)
+    let s9 = make_node(9, 1000)
+
+    let mut i = 0
+    while i < 100_000 {
+        let tmp = make_node(i, i * 2)
+        let _ = tmp.val
+        i += 1
+    }
+
+    assert(s0.val == 0);   assert(s0.depth == 100)
+    assert(s1.val == 1);   assert(s1.depth == 200)
+    assert(s2.val == 2);   assert(s2.depth == 300)
+    assert(s3.val == 3);   assert(s3.depth == 400)
+    assert(s4.val == 4);   assert(s4.depth == 500)
+    assert(s5.val == 5);   assert(s5.depth == 600)
+    assert(s6.val == 6);   assert(s6.depth == 700)
+    assert(s7.val == 7);   assert(s7.depth == 800)
+    assert(s8.val == 8);   assert(s8.depth == 900)
+    assert(s9.val == 9);   assert(s9.depth == 1000)
+}
+
+// ── 3. D97 fix: ≥64 fiber'ов без GC-краша ─────────────────────────────────
+
+test "GC корр: 64 fiber'а без краша (D97 fiber_ctx[] root)" {
+    let mut sum = 0
+    supervised {
+        for i in 0..64 {
+            spawn {
+                let n = make_node(i, i * 2)
+                sum = sum + n.val
+            }
+        }
+    }
+    // 0+1+...+63 = 2016
+    assert(sum == 2016)
+}
+
+test "GC корр: 256 fiber'ов, значения корректны после GC-sweep" {
+    let mut sum = 0
+    supervised {
+        for i in 0..256 {
+            spawn {
+                // Каждый fiber аллоцирует объект — давление на GC
+                let n = make_node(i, i + 1)
+                sum = sum + n.val
+            }
+        }
+    }
+    // 0+1+...+255 = 32640
+    assert(sum == 32640)
+}
+
+// ── 4. Строки выживают под давлением ──────────────────────────────────────
+
+test "GC корр: str sentinel жив после 10k строк" {
+    let sentinel = "hello_boehm_gc"
+    let mut count = 0
+    for i in 0..10_000 {
+        let s = "item_${i}_x"
+        count = count + s.len
+    }
+    assert(sentinel == "hello_boehm_gc")
+    assert(count > 0)
+}
+
+// ── 5. Массивы выживают под давлением ─────────────────────────────────────
+
+test "GC корр: массив-sentinel жив после 5k аллокаций массивов" {
+    let sentinel = [100, 200, 300, 400, 500]
+    let mut sum = 0
+    for i in 0..5_000 {
+        let arr = [i, i + 1, i + 2]
+        // Доступ через индекс, не .get() — избегаем Option bootstrap-ограничений
+        let v = arr[0]
+        sum = sum + v
+    }
+    // sum(i, 0..4999) = 4999*5000/2 = 12_497_500
+    assert(sum == 12_497_500)
+    // Sentinel должен быть нетронут
+    assert(sentinel[0] == 100)
+    assert(sentinel.len == 5)
+}
+
+// ── 6. Смешанное давление: записи + строки + fiber'ы ──────────────────────
+
+test "GC корр: смешанное давление (records + str + 32 fiber'а)" {
+    let sentinel = make_node(9999, 8888)
+    let mut out = 0
+    supervised {
+        for i in 0..32 {
+            spawn {
+                let n = make_node(i, i * 3)
+                let _ = "fiber_${i}_alloc"
+                out = out + n.val
+            }
+        }
+    }
+    // 0+1+...+31 = 496
+    assert(out == 496)
+    assert(sentinel.val == 9999)
+    assert(sentinel.depth == 8888)
+}

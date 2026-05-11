@@ -1,0 +1,98 @@
+// gc_bench.nv — Bench-тест скорости GC аллокаций.
+//
+// Запускать с обоими бэкендами для сравнения:
+//   nova test --gc malloc --filter gc_bench
+//   nova test --gc boehm  --filter gc_bench
+//
+// Не содержит ALLOC_REQUIRES — работает с любым backend'ом.
+// Все тесты проверяют корректность результата; скорость наблюдается
+// через "slowest tests" в Summary (--format text).
+//
+// Предполагаемые результаты:
+//   malloc:  быстрее (нет GC-overhead), но объекты не освобождаются.
+//   boehm:   чуть медленнее, heap bounded.
+
+module nova_tests.concurrency.gc_bench
+
+type Obj { a int, b int, c int }
+
+fn make_obj(a int, b int, c int) -> Obj =>
+    Obj { a, b, c }
+
+// ── Bench 1: 100k простых аллокаций ────────────────────────────────────────
+
+test "bench: 100k record-аллокаций, сумма корректна" {
+    let mut sum = 0
+    for i in 0..100_000 {
+        let o = make_obj(i, i + 1, i + 2)
+        sum = sum + o.a
+    }
+    // sum(i, 0..99_999) = 99999 * 100000 / 2 = 4_999_950_000
+    assert(sum == 4_999_950_000)
+}
+
+// ── Bench 2: 50k строковых аллокаций ───────────────────────────────────────
+
+test "bench: 50k str-аллокаций через interpolation" {
+    let mut count = 0
+    for i in 0..50_000 {
+        let s = "item_${i}"
+        count = count + s.len
+    }
+    // Все строки "item_N" имеют длину ≥ 6 — count > 300k
+    assert(count > 300_000)
+}
+
+// ── Bench 3: 100 fiber'ов с аллокациями ────────────────────────────────────
+
+test "bench: 100 fiber'ов × 10 аллокаций каждый" {
+    let mut total = 0
+    supervised {
+        for i in 0..100 {
+            spawn {
+                let mut local = 0
+                for j in 0..10 {
+                    let o = make_obj(i, j, i + j)
+                    local = local + o.a + o.c
+                }
+                total = total + local
+            }
+        }
+    }
+    // o.a=i, o.c=i+j; local = sum over j=0..9: (i + i+j) = sum(2i+j) = 20i + 45
+    // total = sum over i=0..99: 20i + 45 = 20*4950 + 45*100 = 99_000 + 4_500 = 103_500
+    assert(total == 103_500)
+}
+
+// ── Bench 4: смешанные аллокации (записи + массивы + строки) ───────────────
+
+test "bench: 100k смешанных аллокаций" {
+    let mut sum = 0
+    for i in 0..100_000 {
+        let o = make_obj(i, i * 2, i * 3)
+        let arr = [o.a, o.b, o.c]
+        let mv = arr.get(1)
+        let v = match mv {
+            Some(n) => n
+            None    => 0
+        }
+        sum = sum + v
+    }
+    // sum(i*2, 0..99999) = 2 * sum(i, 0..99999) = 2 * 4_999_950_000 = 9_999_900_000
+    assert(sum == 9_999_900_000)
+}
+
+// ── Bench 5: давление на heap — объекты выживают ───────────────────────────
+
+test "bench: объект-sentinel жив после 1M аллокаций" {
+    let sentinel = make_obj(777_777, 888_888, 999_999)
+    let mut discarded = 0
+    for i in 0..1_000_000 {
+        let o = make_obj(i, i, i)
+        discarded = discarded + o.a
+    }
+    assert(sentinel.a == 777_777)
+    assert(sentinel.b == 888_888)
+    assert(sentinel.c == 999_999)
+    assert(discarded > 0)
+}
