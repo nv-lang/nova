@@ -551,7 +551,10 @@ fn cp1251_to_char(c: u8) -> char {
 }
 
 /// Plan 22: конфигурация libuv для линковки в test-exe.
-/// None = libuv не активирован → busy-yield fallback. Some = include
+/// Plan 22 F2: libuv mandatory. detect_or_build_libuv больше не возвращает
+/// None — panic'ит если libuv не build'ится. Option<&'a LibuvConfig> в
+/// BuildOpts остаётся для API gradual transition, но в реальном flow
+/// всегда Some(_).
 /// path + library file + extra runtime sources.
 #[derive(Clone)]
 pub struct LibuvConfig {
@@ -855,6 +858,17 @@ impl Outcome {
         matches!(self, Outcome::Pass { .. })
     }
 
+    /// Plan 26 Ф.17 #1: override elapsed для retry cumulative-time.
+    /// Per-attempt run_one() имеет свой start; в JSON/JUnit summary
+    /// нужно показать **общее** время от первого attempt до последнего.
+    pub fn with_elapsed(self, elapsed: Duration) -> Self {
+        match self {
+            Outcome::Pass { detail, .. } => Outcome::Pass { detail, elapsed },
+            Outcome::Fail { stage, .. } => Outcome::Fail { stage, elapsed },
+            Outcome::Timeout { .. } => Outcome::Timeout { elapsed },
+        }
+    }
+
     /// Короткий лейбл для табличного output'а.
     pub fn label(&self) -> &'static str {
         match self {
@@ -949,7 +963,9 @@ pub struct TestBuildOpts<'a> {
     pub tmp_dir: &'a Path,
     pub display: &'a str,
     pub keep_artifacts: bool,
-    /// Plan 22: libuv config (None = busy-yield fallback).
+    /// Plan 22 F2: libuv config. После detect_or_build_libuv всегда Some(_)
+    /// в normal flow — failure → process exit. Option сохранён для
+    /// API gradual transition / test mocks.
     pub libuv: Option<&'a LibuvConfig>,
     /// Plan 26 Ф.1: per-test timeout. Применяется ко всем child-процессам
     /// (cc + run). Default 60 s — long-running тесты должны override через
@@ -1287,7 +1303,20 @@ pub fn run_one(opts: &TestBuildOpts) -> Outcome {
                 }
             }
         }
-        Some(ExpectMarker::CompileError(_)) => unreachable!("handled earlier"),
+        Some(ExpectMarker::CompileError(_)) => {
+            // Plan 26 Ф.17 #2: CompileError должен быть handled до Step 2
+            // (раздел EXPECT_COMPILE_ERROR в начале run_one). Если control
+            // flow дошёл сюда — invariant нарушен (future refactor мог
+            // забыть early-return). Лучше явный Fail чем panic в worker,
+            // который poison'ит mutex и обрушивает прогон.
+            Outcome::Fail {
+                stage: Stage::Codegen {
+                    error: "internal: CompileError marker reached runtime phase \
+                            (run_one early-return invariant violated)".to_string(),
+                },
+                elapsed: start.elapsed(),
+            }
+        }
         None => {
             // Default path: ожидается exit 0.
             if exit != 0 {
@@ -1392,13 +1421,44 @@ use std::sync::atomic::{AtomicBool, Ordering};
 /// summary.
 static CANCELLED: AtomicBool = AtomicBool::new(false);
 
-/// Установить SIGINT/Ctrl+C handler. Idempotent — повторные вызовы no-op.
+/// Установить SIGINT/Ctrl+C handler. Idempotent — повторные вызовы
+/// корректно ждут завершения первого install'а.
 /// Внутри handler'а: atomic flag, **никаких** allocations (signal-safety
 /// rules).
+///
+/// Plan 26 Ф.17 #3: 3-state machine для thread-safe idempotency.
+/// Состояния: 0 = not started, 1 = installing, 2 = installed.
+/// Без этого 2 одновременных вызова `swap(true)` могли вернуться **до**
+/// того как первый закончил unsafe-блок.
 pub fn install_cancel_handler() {
-    static INSTALLED: AtomicBool = AtomicBool::new(false);
-    if INSTALLED.swap(true, Ordering::SeqCst) {
-        return;
+    use std::sync::atomic::AtomicU8;
+    const STATE_NEW: u8 = 0;
+    const STATE_INSTALLING: u8 = 1;
+    const STATE_DONE: u8 = 2;
+    static STATE: AtomicU8 = AtomicU8::new(STATE_NEW);
+
+    // Пытаемся claim install slot: NEW → INSTALLING.
+    match STATE.compare_exchange(
+        STATE_NEW,
+        STATE_INSTALLING,
+        Ordering::SeqCst,
+        Ordering::SeqCst,
+    ) {
+        Ok(_) => {
+            // Мы owner — продолжаем install.
+        }
+        Err(STATE_DONE) => {
+            // Уже установлен — return.
+            return;
+        }
+        Err(_) => {
+            // STATE_INSTALLING — другой thread в процессе. Spin до DONE
+            // (install сам должен закончиться за микросекунды).
+            while STATE.load(Ordering::SeqCst) != STATE_DONE {
+                std::hint::spin_loop();
+            }
+            return;
+        }
     }
     #[cfg(target_os = "windows")]
     {
@@ -1435,6 +1495,9 @@ pub fn install_cancel_handler() {
             signal(SIGTERM, handler);
         }
     }
+    // Plan 26 Ф.17 #3: mark install complete — concurrent callers spinning
+    // на STATE_INSTALLING выйдут.
+    STATE.store(STATE_DONE, Ordering::SeqCst);
 }
 
 /// Проверить установлен ли cancel-флаг. Worker thread'ы вызывают перед
@@ -1546,23 +1609,28 @@ pub fn default_jobs() -> usize {
         .unwrap_or(1)
 }
 
-/// Plan 22: auto-detect libuv submodule в rt_dir/libuv. Если submodule
-/// initialized И libuv.lib built — возвращает LibuvConfig.
-/// Если submodule нет — None (Time.sleep работает через busy-yield).
-/// Если submodule есть но .lib нет — пытается собрать через
-/// `build_libuv_lib()`.
+/// Plan 22 F2: libuv MANDATORY. Auto-detect libuv submodule в rt_dir/libuv.
+/// Если submodule initialized И libuv.lib built — возвращает LibuvConfig.
+/// Если submodule нет либо build fails — eprintln + std::process::exit(1).
+/// Plan 22 R7 «no busy-loops anywhere» absolute: no fallback path.
 pub fn detect_or_build_libuv(rt_dir: &Path, repo_root: &Path,
                               vcvars: Option<&Path>) -> Option<LibuvConfig> {
     let libuv_dir = rt_dir.join("libuv");
     let include_dir = libuv_dir.join("include");
     let uv_h = include_dir.join("uv.h");
     if !uv_h.is_file() {
-        // Submodule не initialized.
-        return None;
+        eprintln!(
+            "nova: FATAL libuv submodule not initialized at {}.\n\
+             Plan 22 F2: libuv is mandatory. Run:\n\
+             \tgit submodule update --init compiler-codegen/nova_rt/libuv",
+            libuv_dir.display()
+        );
+        std::process::exit(1);
     }
     let eventloop_src = rt_dir.join("eventloop.c");
     if !eventloop_src.is_file() {
-        return None;
+        eprintln!("nova: FATAL eventloop.c not found at {}", eventloop_src.display());
+        std::process::exit(1);
     }
     let cache_dir = repo_root.join("target").join("libuv-cache");
     let lib_name = if cfg!(target_os = "windows") { "libuv.lib" } else { "libuv.a" };
@@ -1577,8 +1645,13 @@ pub fn detect_or_build_libuv(rt_dir: &Path, repo_root: &Path,
     // Build libuv lazy при первом запуске.
     eprintln!("nova: libuv not built, building (one-time, ~30 sec)...");
     if let Err(e) = build_libuv_lib(&libuv_dir, &cache_dir, vcvars) {
-        eprintln!("nova: failed to build libuv: {} (Time.sleep будет работать через busy-yield)", e);
-        return None;
+        eprintln!(
+            "nova: FATAL failed to build libuv: {}\n\
+             Plan 22 F2: libuv is mandatory. Check vcvars64.bat, \
+             cl.exe / clang availability, and libuv submodule integrity.",
+            e
+        );
+        std::process::exit(1);
     }
     if lib_file.is_file() {
         Some(LibuvConfig {
@@ -1587,7 +1660,11 @@ pub fn detect_or_build_libuv(rt_dir: &Path, repo_root: &Path,
             eventloop_src,
         })
     } else {
-        None
+        eprintln!(
+            "nova: FATAL libuv build succeeded but {} not found",
+            lib_file.display()
+        );
+        std::process::exit(1);
     }
 }
 
@@ -1799,6 +1876,12 @@ fn display_name(path: &Path, base: &Path, is_stdlib: bool) -> String {
 
 /// JSON-escape для строк. Минимальный — обрабатывает контрольные символы.
 /// `serde_json` не подключаем (extra dependency не нужна для одной функции).
+///
+/// Plan 26 Ф.17 #12: вход `&str` гарантирует valid UTF-8 (Rust invariant),
+/// поэтому surrogate halves невозможны — non-BMP chars (эмодзи) выходят
+/// как raw UTF-8 bytes что валидно по JSON spec (RFC 8259 §7). Также
+/// дополнительно escape'аем `<` `>` `&` для HTML-embed safety (некоторые
+/// CI dashboards рендерят JSON прямо в HTML page).
 fn json_escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 8);
     for c in s.chars() {
@@ -1808,9 +1891,16 @@ fn json_escape(s: &str) -> String {
             '\n' => out.push_str("\\n"),
             '\r' => out.push_str("\\r"),
             '\t' => out.push_str("\\t"),
+            '\u{0008}' => out.push_str("\\b"),
+            '\u{000C}' => out.push_str("\\f"),
             c if (c as u32) < 0x20 => {
                 out.push_str(&format!("\\u{:04x}", c as u32));
             }
+            // U+2028 LINE SEPARATOR и U+2029 PARAGRAPH SEPARATOR —
+            // валидны в JSON но ломают eval'd JavaScript (исторический
+            // gotcha). Escape'аем как `\u20xx`. Cargo делает то же.
+            '\u{2028}' => out.push_str("\\u2028"),
+            '\u{2029}' => out.push_str("\\u2029"),
             c => out.push(c),
         }
     }
@@ -2093,6 +2183,13 @@ pub fn run_all(opts: TestAllOpts) -> Result<Summary> {
                 // fails. Реальные test-fail'ы (expectation mismatch, codegen
                 // error) НЕ retry'им — иначе false-PASS. Только AV-class.
                 // Exponential backoff: 100ms, 200ms, 400ms.
+                //
+                // Plan 26 Ф.17 #1: cumulative elapsed для отчёта. Per-attempt
+                // run_one() сбрасывает свой start; в JSON/JUnit нужно
+                // показать **общее** время от начала первого attempt'а
+                // до конца последнего — иначе CI вводит в заблуждение
+                // («тест занял 30s», а реально 60s+backoff×2).
+                let retry_start = Instant::now();
                 let mut outcome = run_one(&test_opts);
                 for attempt in 1..=retries {
                     if !is_transient_fail(&outcome) {
@@ -2115,6 +2212,12 @@ pub fn run_all(opts: TestAllOpts) -> Result<Summary> {
                         }
                         break;
                     }
+                }
+                // Plan 26 Ф.17 #1: override elapsed cumulative от первого
+                // attempt'а до завершения (включая backoffs). Иначе CI
+                // видит только последний run-time.
+                if retries > 0 {
+                    outcome = outcome.with_elapsed(retry_start.elapsed());
                 }
 
                 // Streaming output: Quiet — только FAIL; Normal/Verbose — все.
@@ -2449,6 +2552,45 @@ mod tests {
         match parse_expect(src) {
             Some(ExpectMarker::RuntimePanic(p)) => assert_eq!(p, "index out of bounds"),
             other => panic!("expected RuntimePanic, got {:?}", other),
+        }
+    }
+
+    // ---------- Plan 26 Ф.17 #11: civil_from_days regression tests ----------
+
+    #[test]
+    fn civil_from_days_epoch() {
+        // Unix epoch 1970-01-01.
+        assert_eq!(civil_from_days(0), (1970, 1, 1));
+    }
+
+    #[test]
+    fn civil_from_days_y2k() {
+        // 2000-01-01 = 10957 дней с epoch.
+        assert_eq!(civil_from_days(10957), (2000, 1, 1));
+    }
+
+    #[test]
+    fn civil_from_days_leap_year_29_feb() {
+        // 2000 leap year → 29 Feb валидно. 10957 + 31 + 28 = 11016.
+        assert_eq!(civil_from_days(11016), (2000, 2, 29));
+        // Следующий день — 1 Mar.
+        assert_eq!(civil_from_days(11017), (2000, 3, 1));
+    }
+
+    #[test]
+    fn civil_from_days_recent() {
+        // 2024-01-15 = 19737 дней с epoch.
+        assert_eq!(civil_from_days(19737), (2024, 1, 15));
+    }
+
+    // ---------- Plan 26 Ф.16 #10: duplicate marker first-wins ----------
+
+    #[test]
+    fn parse_expect_duplicate_first_wins() {
+        let src = "// EXPECT_EXIT_CODE 1\n// EXPECT_STDOUT hello\ntest {}\n";
+        match parse_expect(src) {
+            Some(ExpectMarker::ExitCode(1)) => {}
+            other => panic!("expected ExitCode(1) (first), got {:?}", other),
         }
     }
 
