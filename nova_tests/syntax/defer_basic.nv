@@ -1,0 +1,50 @@
+// defer_basic.nv — Plan 20 D90 positive-тесты для `defer`.
+//
+// Семантика: scope-local cleanup, LIFO порядок, выполняется на ВСЕХ
+// exit-путях (trailing, early return). Defer body захватывает
+// mut local'и by-mutable-reference (через closure-like capture).
+
+module nova_tests.syntax.defer_basic
+
+
+// ───── Single defer: cleanup на trailing exit (block-expr) ─────
+
+test "defer срабатывает на trailing block-exit" {
+    let mut counter = 0
+    let result = {
+        defer { counter = counter + 1 }
+        42
+    }
+    assert(result == 42)
+    // defer должен сработать перед выходом из block-expr,
+    // т.е. counter уже = 1 после block.
+    assert(counter == 1)
+}
+
+
+// ───── LIFO порядок: несколько defers ─────
+
+test "несколько defers выполняются в LIFO" {
+    let mut order_a = 0
+    let mut order_b = 0
+    let mut order_c = 0
+    let mut step = 0
+    let _ = {
+        defer {
+            step = step + 1
+            order_a = step       // A — последний (registered first)
+        }
+        defer {
+            step = step + 1
+            order_b = step       // B — второй
+        }
+        defer {
+            step = step + 1
+            order_c = step       // C — первый (registered last)
+        }
+        0
+    }
+    assert(order_c == 1)
+    assert(order_b == 2)
+    assert(order_a == 3)
+}
