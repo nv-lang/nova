@@ -489,6 +489,7 @@ fn cmd_test_build(
         libuv: libuv.as_ref(),
         timeout: std::time::Duration::from_secs(timeout_secs),
         gc_kind,
+        verbosity: test_runner::Verbosity::Normal,
     };
     let status = test_runner::run_one(&opts);
     let label = status.label();
@@ -604,6 +605,9 @@ fn cmd_test_all(
         rerun_failed,
         retries,
         gc_kind,
+        list_only: false,
+        filter_from: None,
+        shuffle_seed: None,
     };
     let summary = test_runner::run_all(opts)?;
     test_runner::print_summary(&summary, format);

@@ -5391,3 +5391,77 @@ recv-арм, send-арм, default-арм, guard-условия, timeout чере
 сценарии. Все 11 проходят. Регрессия: 171/172 PASS (memory_footprint_test — pre-existing fail).
 
 Commits: a5003d6b0, 78743a290, aef65ae9c
+
+================================================================================
+Plan 27 Ф.6 + Б.2-Б.8 — production-grade test-runner polish (2026-05-11)
+================================================================================
+
+После Plan 27 Ф.1-Ф.4 (GC switch) закрыты все оставшиеся polish-фазы
+test-runner'а. Реализация в compiler-codegen/src/test_runner.rs + nova-cli.
+
+**Ф.6 — ALLOC_REQUIRES / ALLOC_EXCLUDES маркеры:**
+
+Два новых маркера в заголовке теста управляют запуском на GC-backend:
+  // ALLOC_REQUIRES boehm   → тест только на Boehm backend
+  // ALLOC_EXCLUDES malloc  → пропустить на malloc
+
+Новые типы: `GcKindTag` (tag-enum без данных, для AllocConstraint),
+`AllocConstraint`, `SkipReason`. Новый вариант `Outcome::Skipped`.
+`parse_alloc_constraint()` читает первые 30 строк файла.
+В начале `run_one()`: проверка constraint → ранний return Skipped.
+Summary отдельно считает skip: "PASS: N  FAIL: M  SKIP: K (alloc-backend)".
+
+**Б.2 — EXPECT_TIMEOUT_MS per-test timeout:**
+
+`parse_timeout_ms()` — новая функция, читает `// EXPECT_TIMEOUT_MS N` из
+первых 30 строк. В `run_one()` `effective_timeout = parse_timeout_ms(&src).unwrap_or(opts.timeout)`.
+Все `opts.timeout` в run_one() заменены на `effective_timeout`.
+
+**Б.3 — captured stdout/stderr при --verbose:**
+
+`Outcome::Pass` расширен полями `captured_stdout: Option<String>`,
+`captured_stderr: Option<String>`, `retries: u32`. Все эти поля Some(_)
+только при Verbosity::Verbose, иначе None (не тратим память).
+Closure `make_pass` в run_one() собирает все поля в одном месте.
+`emit_event` при verbose: после PASS-строки печатает захваченный stdout/stderr.
+
+**Б.4 — Slowest tests report (top 10):**
+
+В конце Text summary, если тестов > 10:
+  ===== SLOWEST TESTS (top 10) =====
+    29.236s  concurrency/select_closed_test
+    26.457s  concurrency/sleep_leak_check
+    ...
+
+Skipped тесты из отчёта исключены.
+
+**Б.5 — --list / --filter-from:**
+
+`TestAllOpts`: новые поля `list_only: bool`, `filter_from: Option<&Path>`.
+`--list`: после фильтрации печатает имена тестов, возвращает пустой Summary.
+`--filter-from <path>`: читает файл, exact-match по display name. Удобно
+для CI sharding: `nova test --list | split -l 50 - shard- && nova test --filter-from shard-aa`.
+
+**Б.6 — Retry count в JUnit XML:**
+
+`Outcome::Pass { retries: u32, .. }`. При retries > 0 в JUnit:
+  <testcase name="..." time="...">
+    <system-out>retried 1 time(s) before pass</system-out>
+  </testcase>
+Retried tests с первого attempt — обычный self-closing `<testcase .../>`.
+
+**Б.7 — --shuffle [SEED]:**
+
+`TestAllOpts.shuffle_seed: Option<u64>`. 0 = случайный seed (SystemTime nanos).
+xorshift64 PRNG (~15 строк, без extra deps) + Fisher-Yates shuffle.
+При shuffle: eprintln!("nova: shuffling N tests with seed S").
+
+**Б.8 — nova-cli wiring:**
+
+`Cmd::Test` в nova-cli: добавлены `--list`, `--filter-from <path>`,
+`--shuffle [SEED]` (Option<Option<u64>> — 0 аргументов = random seed,
+1 аргумент = fixed seed). `TestBuildOpts` в cmd_test_build: `verbosity: Normal`.
+
+**Результат:** 171/171 PASS (3 fail — Plan 31 in-progress, pre-existing).
+Новые возможности проверены: --list, slowest report в Summary.
+

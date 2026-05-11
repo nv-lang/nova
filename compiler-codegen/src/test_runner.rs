@@ -665,6 +665,14 @@ impl GcKind {
             GcKind::Boehm  => "alloc_boehm.c",
         }
     }
+
+    /// Конвертирует в GcKindTag (без данных) для AllocConstraint проверки.
+    pub fn tag(self) -> GcKindTag {
+        match self {
+            GcKind::Malloc => GcKindTag::Malloc,
+            GcKind::Boehm  => GcKindTag::Boehm,
+        }
+    }
 }
 
 /// Параметры сборки одного теста.
@@ -936,6 +944,96 @@ pub fn compile_c_to_exe(
     Ok(opts.exe_file.to_path_buf())
 }
 
+// ---------- Plan 27 Ф.6 / Б.2-Б.7: AllocConstraint + helper parsers ----------
+
+/// Tag-enum без данных — используется в AllocConstraint чтобы избежать
+/// circular dep между AllocConstraint и GcKind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GcKindTag { Malloc, Boehm }
+
+impl GcKindTag {
+    fn parse(s: &str) -> Option<Self> {
+        match s.trim() {
+            "malloc" => Some(GcKindTag::Malloc),
+            "boehm"  => Some(GcKindTag::Boehm),
+            _ => None,
+        }
+    }
+    pub fn as_str(self) -> &'static str {
+        match self { GcKindTag::Malloc => "malloc", GcKindTag::Boehm => "boehm" }
+    }
+}
+
+/// Из заголовка теста: `// ALLOC_REQUIRES boehm` / `// ALLOC_EXCLUDES malloc`.
+#[derive(Debug, Clone, Copy)]
+pub enum AllocConstraint { None, Requires(GcKindTag), Excludes(GcKindTag) }
+
+impl AllocConstraint {
+    pub fn allows(self, gc: GcKindTag) -> bool {
+        match self {
+            AllocConstraint::None => true,
+            AllocConstraint::Requires(t) => gc == t,
+            AllocConstraint::Excludes(t) => gc != t,
+        }
+    }
+}
+
+/// Причина пропуска теста.
+#[derive(Debug, Clone)]
+pub enum SkipReason {
+    AllocBackend { constraint: AllocConstraint, actual: GcKindTag },
+}
+
+impl SkipReason {
+    fn description(&self) -> String {
+        match self {
+            SkipReason::AllocBackend { constraint, actual } => match constraint {
+                AllocConstraint::Requires(t) => format!(
+                    "requires gc={} but running with gc={}", t.as_str(), actual.as_str()
+                ),
+                AllocConstraint::Excludes(t) => format!(
+                    "excluded for gc={} (running with gc={})", t.as_str(), actual.as_str()
+                ),
+                AllocConstraint::None => "skipped (no constraint — bug)".to_string(),
+            }
+        }
+    }
+}
+
+/// Читает первые 30 строк файла и ищет `// ALLOC_REQUIRES <tag>` или
+/// `// ALLOC_EXCLUDES <tag>`. Возвращает AllocConstraint::None если маркер не найден.
+pub fn parse_alloc_constraint(src: &str) -> AllocConstraint {
+    for line in src.lines().take(30) {
+        let t = line.trim();
+        if let Some(rest) = t.strip_prefix("// ALLOC_REQUIRES") {
+            if let Some(tag) = GcKindTag::parse(rest) {
+                return AllocConstraint::Requires(tag);
+            }
+        } else if let Some(rest) = t.strip_prefix("// ALLOC_EXCLUDES") {
+            if let Some(tag) = GcKindTag::parse(rest) {
+                return AllocConstraint::Excludes(tag);
+            }
+        }
+    }
+    AllocConstraint::None
+}
+
+/// Читает первые 30 строк файла и ищет `// EXPECT_TIMEOUT_MS <N>`.
+/// Возвращает Duration если найдено и N > 0.
+pub fn parse_timeout_ms(src: &str) -> Option<Duration> {
+    for line in src.lines().take(30) {
+        let t = line.trim();
+        if let Some(rest) = t.strip_prefix("// EXPECT_TIMEOUT_MS") {
+            if let Ok(ms) = rest.trim().parse::<u64>() {
+                if ms > 0 {
+                    return Some(Duration::from_millis(ms));
+                }
+            }
+        }
+    }
+    None
+}
+
 // ---------- Plan 26 Ф.6: Outcome — typed test result ----------
 
 /// Результат одного теста. Production-grade: typed stages вместо
@@ -944,11 +1042,21 @@ pub fn compile_c_to_exe(
 pub enum Outcome {
     /// Тест прошёл. `detail` опционален — обычно «», но для negative-
     /// тестов содержит контекстную метку вроде «(negative)» / «(stdout)».
-    Pass { detail: String, elapsed: Duration },
+    /// `captured_stdout/stderr` заполняются только при Verbosity::Verbose.
+    /// `retries` — количество повторных попыток до успеха (0 = с первой).
+    Pass {
+        detail: String,
+        elapsed: Duration,
+        captured_stdout: Option<String>,
+        captured_stderr: Option<String>,
+        retries: u32,
+    },
     /// Не прошёл. `stage` указывает на этап провала.
     Fail { stage: Stage, elapsed: Duration },
     /// Превысил `--timeout` — child killed.
     Timeout { elapsed: Duration },
+    /// Пропущен из-за AllocConstraint несоответствия (Plan 27 Ф.6).
+    Skipped { reason: SkipReason, elapsed: Duration },
 }
 
 /// Этап на котором тест упал. Структурно: `Codegen`/`Cc`/`Run` —
@@ -997,14 +1105,29 @@ impl Outcome {
         matches!(self, Outcome::Pass { .. })
     }
 
+    pub fn is_skipped(&self) -> bool {
+        matches!(self, Outcome::Skipped { .. })
+    }
+
     /// Plan 26 Ф.17 #1: override elapsed для retry cumulative-time.
     /// Per-attempt run_one() имеет свой start; в JSON/JUnit summary
     /// нужно показать **общее** время от первого attempt до последнего.
     pub fn with_elapsed(self, elapsed: Duration) -> Self {
         match self {
-            Outcome::Pass { detail, .. } => Outcome::Pass { detail, elapsed },
+            Outcome::Pass { detail, captured_stdout, captured_stderr, retries, .. } =>
+                Outcome::Pass { detail, elapsed, captured_stdout, captured_stderr, retries },
             Outcome::Fail { stage, .. } => Outcome::Fail { stage, elapsed },
             Outcome::Timeout { .. } => Outcome::Timeout { elapsed },
+            Outcome::Skipped { reason, .. } => Outcome::Skipped { reason, elapsed },
+        }
+    }
+
+    /// Записывает retry count в Pass. На не-Pass вариантах — no-op.
+    pub fn with_retries(self, retries: u32) -> Self {
+        match self {
+            Outcome::Pass { detail, elapsed, captured_stdout, captured_stderr, .. } =>
+                Outcome::Pass { detail, elapsed, captured_stdout, captured_stderr, retries },
+            other => other,
         }
     }
 
@@ -1013,6 +1136,7 @@ impl Outcome {
         match self {
             Outcome::Pass { .. } => "PASS",
             Outcome::Timeout { .. } => "TIMEOUT",
+            Outcome::Skipped { .. } => "SKIP",
             Outcome::Fail { stage, .. } => match stage {
                 Stage::Codegen { .. } => "CODEGEN-FAIL",
                 Stage::Cc { .. } => "CC-FAIL",
@@ -1038,6 +1162,7 @@ impl Outcome {
         match self {
             Outcome::Pass { detail, .. } => detail.clone(),
             Outcome::Timeout { elapsed } => format!("killed after {}ms", elapsed.as_millis()),
+            Outcome::Skipped { reason, .. } => reason.description(),
             Outcome::Fail { stage, .. } => match stage {
                 Stage::Codegen { error } | Stage::Cc { error } | Stage::Run { error } => {
                     error.chars().take(150).collect()
@@ -1052,7 +1177,8 @@ impl Outcome {
         match self {
             Outcome::Pass { elapsed, .. }
             | Outcome::Fail { elapsed, .. }
-            | Outcome::Timeout { elapsed } => *elapsed,
+            | Outcome::Timeout { elapsed }
+            | Outcome::Skipped { elapsed, .. } => *elapsed,
         }
     }
 }
@@ -1116,12 +1242,13 @@ pub struct TestBuildOpts<'a> {
     /// в normal flow — failure → process exit. Option сохранён для
     /// API gradual transition / test mocks.
     pub libuv: Option<&'a LibuvConfig>,
-    /// Plan 26 Ф.1: per-test timeout. Применяется ко всем child-процессам
-    /// (cc + run). Default 60 s — long-running тесты должны override через
-    /// `--timeout` или (TODO Plan 27) per-test маркер.
+    /// Plan 26 Ф.1: global timeout. Per-test `EXPECT_TIMEOUT_MS` (Б.2)
+    /// может переопределить для конкретного теста. Default 60 s.
     pub timeout: Duration,
     /// Plan 27 Ф.1: GC backend. Propagates to BuildOpts → build_command.
     pub gc_kind: GcKind,
+    /// Plan 27 Б.3: verbosity — при Verbose захватываем stdout/stderr PASS.
+    pub verbosity: Verbosity,
 }
 
 /// Plan 26 Ф.2: unique tmp subdir per test. Хеш от display даёт
@@ -1179,21 +1306,46 @@ pub fn run_one(opts: &TestBuildOpts) -> Outcome {
         Ok(s) => s,
         Err(e) => {
             return Outcome::Fail {
-                stage: Stage::Codegen {
-                    error: format!("read: {}", e),
-                },
+                stage: Stage::Codegen { error: format!("read: {}", e) },
                 elapsed: start.elapsed(),
             }
         }
     };
+
+    // Plan 27 Ф.6: AllocConstraint — check before any build work.
+    let alloc_constraint = parse_alloc_constraint(&src);
+    if !alloc_constraint.allows(opts.gc_kind.tag()) {
+        return Outcome::Skipped {
+            reason: SkipReason::AllocBackend {
+                constraint: alloc_constraint,
+                actual: opts.gc_kind.tag(),
+            },
+            elapsed: start.elapsed(),
+        };
+    }
+
+    // Plan 27 Б.2: per-test timeout override via EXPECT_TIMEOUT_MS.
+    let effective_timeout = parse_timeout_ms(&src).unwrap_or(opts.timeout);
+
+    // Plan 27 Б.3: capture stdout/stderr на PASS при --verbose.
+    let verbose = matches!(opts.verbosity, Verbosity::Verbose);
+
     let expect = parse_expect(&src);
-    // Helper closures для поиска маркеров в Vec.
     let find_compile_error = || expect.iter().find_map(|m| if let ExpectMarker::CompileError(p) = m { Some(p) } else { None });
     let find_cc_error      = || expect.iter().find_map(|m| if let ExpectMarker::CcError(p)      = m { Some(p) } else { None });
     let find_runtime_panic = || expect.iter().find_map(|m| if let ExpectMarker::RuntimePanic(p) = m { Some(p) } else { None });
     let find_exit_code     = || expect.iter().find_map(|m| if let ExpectMarker::ExitCode(n)     = m { Some(*n) } else { None });
     let find_stdout        = || expect.iter().filter_map(|m| if let ExpectMarker::Stdout(p)     = m { Some(p.as_str()) } else { None }).collect::<Vec<_>>();
     let find_stderr        = || expect.iter().filter_map(|m| if let ExpectMarker::Stderr(p)     = m { Some(p.as_str()) } else { None }).collect::<Vec<_>>();
+
+    // Helper: build a Pass outcome with optional verbose capture.
+    let make_pass = |detail: String, elapsed: Duration, out: Option<&str>, err: Option<&str>| Outcome::Pass {
+        detail,
+        elapsed,
+        captured_stdout: if verbose { out.map(|s| s.to_string()) } else { None },
+        captured_stderr: if verbose { err.map(|s| s.to_string()) } else { None },
+        retries: 0,
+    };
 
     // Step 1: codegen.
     let codegen_result = codegen_to_c(opts.nv_file, &src);
@@ -1203,18 +1355,13 @@ pub fn run_one(opts: &TestBuildOpts) -> Outcome {
         return match codegen_result {
             Ok(_) => Outcome::Fail {
                 stage: Stage::Expectation {
-                    mismatch: ExpectMismatch::NoCompileError {
-                        expected_pat: pat.clone(),
-                    },
+                    mismatch: ExpectMismatch::NoCompileError { expected_pat: pat.clone() },
                 },
                 elapsed: start.elapsed(),
             },
             Err(msg) => {
                 if msg.contains(pat) {
-                    Outcome::Pass {
-                        detail: "(negative)".to_string(),
-                        elapsed: start.elapsed(),
-                    }
+                    make_pass("(negative)".to_string(), start.elapsed(), None, None)
                 } else {
                     Outcome::Fail {
                         stage: Stage::Expectation {
@@ -1239,37 +1386,24 @@ pub fn run_one(opts: &TestBuildOpts) -> Outcome {
 
     let c_file = opts.nv_file.with_extension("c");
     if !c_file.is_file() {
-        return Outcome::Fail {
-            stage: Stage::NoCFile,
-            elapsed: start.elapsed(),
-        };
+        return Outcome::Fail { stage: Stage::NoCFile, elapsed: start.elapsed() };
     }
 
     // Step 2 — isolated tmp subdir per test (Plan 26 Ф.2).
-    // Plan 26 Ф.16 #1: RAII guard — cleanup на любом return-path
-    // (включая panic). Replace 4 manual `remove_dir_all` cleanup-sites
-    // на один Drop.
+    // RAII guard: cleanup гарантирован на любом return-path (Plan 26 Ф.16 #1).
     let subdir_path = test_subdir(opts.tmp_dir, opts.display);
     let subdir_guard = match TempSubdir::new(subdir_path, opts.keep_artifacts) {
         Ok(g) => g,
         Err(e) => {
             return Outcome::Fail {
-                stage: Stage::Cc {
-                    error: format!("mkdir subdir: {}", e),
-                },
+                stage: Stage::Cc { error: format!("mkdir subdir: {}", e) },
                 elapsed: start.elapsed(),
             };
         }
     };
     let subdir = subdir_guard.path();
 
-    // exe_name локально — display может содержать /; используем basename
-    // .nv для exe filename, остальная isolation через subdir.
-    let basename = opts
-        .nv_file
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("test");
+    let basename = opts.nv_file.file_stem().and_then(|s| s.to_str()).unwrap_or("test");
     let exe_name = if cfg!(target_os = "windows") {
         format!("{}.exe", basename)
     } else {
@@ -1277,14 +1411,11 @@ pub fn run_one(opts: &TestBuildOpts) -> Outcome {
     };
     let exe_file = subdir.join(&exe_name);
     // Windows: lld-link cannot overwrite a locked exe (AV / previous run handle).
-    // Remove stale artifact before compiling so the linker always creates a fresh file.
     let _ = std::fs::remove_file(&exe_file);
     let obj_dir = subdir.join("obj");
     if let Err(e) = std::fs::create_dir_all(&obj_dir) {
         return Outcome::Fail {
-            stage: Stage::Cc {
-                error: format!("mkdir obj_dir: {}", e),
-            },
+            stage: Stage::Cc { error: format!("mkdir obj_dir: {}", e) },
             elapsed: start.elapsed(),
         };
     }
@@ -1299,12 +1430,8 @@ pub fn run_one(opts: &TestBuildOpts) -> Outcome {
         libuv: opts.libuv,
         gc_kind: opts.gc_kind,
     };
-    // Plan 26 Ф.1: timeout для cc. cl.exe / clang обычно <30s, 60s достаточно.
-    // Если cc сам зависает (редко, но бывает при OOM swap) — kill + CcFail.
-    //
-    // Windows file-lock retry: lld-link fails with "cannot open output file *.exe"
-    // when AV or Explorer holds a handle on the previous exe. Retry up to 3 times
-    // with 250 ms back-off — handle is usually released quickly.
+
+    // Windows file-lock retry (lld-link "cannot open output file *.exe").
     const CC_LOCK_RETRIES: u32 = 3;
     const CC_LOCK_DELAY_MS: u64 = 250;
 
@@ -1314,27 +1441,20 @@ pub fn run_one(opts: &TestBuildOpts) -> Outcome {
         let mut attempt = 0u32;
         loop {
             let cmd = build_command(opts.toolchain, &build_opts);
-            last_captured = match run_with_timeout(cmd, opts.timeout) {
+            last_captured = match run_with_timeout(cmd, effective_timeout) {
                 Ok(o) => o,
                 Err(e) => {
                     return Outcome::Fail {
-                        stage: Stage::Cc {
-                            error: format!("spawn cc: {}", e),
-                        },
+                        stage: Stage::Cc { error: format!("spawn cc: {}", e) },
                         elapsed: start.elapsed(),
                     }
                 }
             };
             last_status = match last_captured.status {
                 Some(s) => s,
-                None => {
-                    return Outcome::Timeout { elapsed: start.elapsed() };
-                }
+                None => return Outcome::Timeout { elapsed: start.elapsed() },
             };
-            if last_status.success() {
-                break 'cc (last_captured, last_status);
-            }
-            // Detect Windows linker file-lock error and retry.
+            if last_status.success() { break 'cc (last_captured, last_status); }
             let combined_peek = format!(
                 "{}{}",
                 bytes_to_string(&last_captured.stdout),
@@ -1344,9 +1464,7 @@ pub fn run_one(opts: &TestBuildOpts) -> Outcome {
                 && combined_peek.contains(".exe");
             if is_file_lock && attempt < CC_LOCK_RETRIES {
                 attempt += 1;
-                std::thread::sleep(std::time::Duration::from_millis(
-                    CC_LOCK_DELAY_MS * attempt as u64,
-                ));
+                std::thread::sleep(Duration::from_millis(CC_LOCK_DELAY_MS * attempt as u64));
                 continue;
             }
             break 'cc (last_captured, last_status);
@@ -1365,18 +1483,13 @@ pub fn run_one(opts: &TestBuildOpts) -> Outcome {
             .take(3)
             .collect();
         let detail = if errs.is_empty() {
-            let trimmed: String = combined.chars().take(200).collect();
-            trimmed.replace('\n', " | ")
+            combined.chars().take(200).collect::<String>().replace('\n', " | ")
         } else {
             errs.join(" | ")
         };
-        // EXPECT_CC_ERROR: CC failure is expected — check pattern.
         if let Some(pat) = find_cc_error() {
             return if pat.is_empty() || combined.contains(pat.as_str()) {
-                Outcome::Pass {
-                    detail: "(negative-cc)".to_string(),
-                    elapsed: start.elapsed(),
-                }
+                make_pass("(negative-cc)".to_string(), start.elapsed(), None, None)
             } else {
                 Outcome::Fail {
                     stage: Stage::Expectation {
@@ -1389,19 +1502,15 @@ pub fn run_one(opts: &TestBuildOpts) -> Outcome {
                 }
             };
         }
-        // Cleanup через subdir_guard Drop.
         return Outcome::Fail {
             stage: Stage::Cc { error: detail },
             elapsed: start.elapsed(),
         };
     }
-    // EXPECT_CC_ERROR but CC succeeded.
     if let Some(pat) = find_cc_error() {
         return Outcome::Fail {
             stage: Stage::Expectation {
-                mismatch: ExpectMismatch::NoCcError {
-                    expected_pat: pat.clone(),
-                },
+                mismatch: ExpectMismatch::NoCcError { expected_pat: pat.clone() },
             },
             elapsed: start.elapsed(),
         };
@@ -1409,21 +1518,16 @@ pub fn run_one(opts: &TestBuildOpts) -> Outcome {
 
     // Step 3 — run с timeout.
     let mut run_cmd = Command::new(&exe_file);
-    // Plan 26 Ф.7: force UTF-8 locale для child-процесса (Unix).
-    // На Windows runtime сам работает в UTF-8 через chcp 65001 (см. build_command).
     #[cfg(not(target_os = "windows"))]
     {
         run_cmd.env("LC_ALL", "C.UTF-8");
         run_cmd.env("LANG", "C.UTF-8");
     }
-    let run_captured = match run_with_timeout(run_cmd, opts.timeout) {
+    let run_captured = match run_with_timeout(run_cmd, effective_timeout) {
         Ok(o) => o,
         Err(e) => {
-            // Cleanup через subdir_guard Drop.
             return Outcome::Fail {
-                stage: Stage::Run {
-                    error: format!("spawn exe: {}", e),
-                },
+                stage: Stage::Run { error: format!("spawn exe: {}", e) },
                 elapsed: start.elapsed(),
             };
         }
@@ -1432,29 +1536,17 @@ pub fn run_one(opts: &TestBuildOpts) -> Outcome {
     let stderr = bytes_to_string(&run_captured.stderr);
     let run_status = match run_captured.status {
         Some(s) => s,
-        None => {
-            // Timeout — критический результат для тестов вроде sleep_leak_check.
-            // Cleanup через subdir_guard Drop.
-            return Outcome::Timeout {
-                elapsed: start.elapsed(),
-            };
-        }
+        None => return Outcome::Timeout { elapsed: start.elapsed() },
     };
     let exit = run_status.code().unwrap_or(-1);
 
-    // Step 4: проверка EXPECT-маркеров (multi-marker: все должны выполниться).
-    //
-    // Порядок: сначала RUNTIME_PANIC (определяет exit), затем EXIT_CODE,
-    // затем STDOUT/STDERR-паттерны. Если маркеров нет — ожидается exit 0.
+    // Step 4: check EXPECT-маркеры (multi-marker: все должны выполниться).
     let outcome = {
-        // RUNTIME_PANIC: exit != 0 + panic-pattern в stdout/stderr.
         if let Some(pat) = find_runtime_panic() {
             if exit == 0 {
                 Outcome::Fail {
                     stage: Stage::Expectation {
-                        mismatch: ExpectMismatch::NoPanic {
-                            expected_pat: pat.clone(),
-                        },
+                        mismatch: ExpectMismatch::NoPanic { expected_pat: pat.clone() },
                     },
                     elapsed: start.elapsed(),
                 }
@@ -1469,7 +1561,6 @@ pub fn run_one(opts: &TestBuildOpts) -> Outcome {
                     elapsed: start.elapsed(),
                 }
             } else {
-                // Panic check passed — still check STDOUT/STDERR patterns если есть.
                 let stdout_pats = find_stdout();
                 let stderr_pats = find_stderr();
                 let mut fail: Option<Outcome> = None;
@@ -1503,50 +1594,34 @@ pub fn run_one(opts: &TestBuildOpts) -> Outcome {
                         }
                     }
                 }
-                fail.unwrap_or_else(|| Outcome::Pass {
-                    detail: "(runtime-panic)".to_string(),
-                    elapsed: start.elapsed(),
+                fail.unwrap_or_else(|| {
+                    make_pass("(runtime-panic)".to_string(), start.elapsed(), Some(&stdout), Some(&stderr))
                 })
             }
         } else if let Some(n) = find_exit_code() {
             if exit != n {
                 Outcome::Fail {
                     stage: Stage::Expectation {
-                        mismatch: ExpectMismatch::WrongExit {
-                            expected: n,
-                            got: exit,
-                        },
+                        mismatch: ExpectMismatch::WrongExit { expected: n, got: exit },
                     },
                     elapsed: start.elapsed(),
                 }
             } else {
-                Outcome::Pass {
-                    detail: format!("(exit-code {})", n),
-                    elapsed: start.elapsed(),
-                }
+                make_pass(format!("(exit-code {})", n), start.elapsed(), Some(&stdout), Some(&stderr))
             }
         } else {
-            // No panic/exit-code marker.
             let stdout_pats = find_stdout();
             let stderr_pats = find_stderr();
             let has_content_marker = !stdout_pats.is_empty() || !stderr_pats.is_empty();
 
             if !has_content_marker && exit != 0 {
-                // Default path: no marker at all — expect exit 0.
-                let last_lines: Vec<&str> = stdout
-                    .lines()
-                    .chain(stderr.lines())
-                    .rev()
-                    .take(3)
-                    .collect();
+                let last_lines: Vec<&str> = stdout.lines().chain(stderr.lines()).rev().take(3).collect();
                 let detail = last_lines.into_iter().rev().collect::<Vec<_>>().join(" | ");
                 Outcome::Fail {
                     stage: Stage::Run { error: detail },
                     elapsed: start.elapsed(),
                 }
             } else {
-                // EXPECT_STDOUT / EXPECT_STDERR: check patterns, any exit code allowed
-                // (preserves old single-marker semantics: EXPECT_STDERR on panic process).
                 let mut fail: Option<Outcome> = None;
                 for spat in &stdout_pats {
                     if !stdout.contains(spat) {
@@ -1578,9 +1653,9 @@ pub fn run_one(opts: &TestBuildOpts) -> Outcome {
                         }
                     }
                 }
-                fail.unwrap_or_else(|| Outcome::Pass {
-                    detail: if has_content_marker { "(stdout/stderr)".to_string() } else { String::new() },
-                    elapsed: start.elapsed(),
+                fail.unwrap_or_else(|| {
+                    let label = if has_content_marker { "(stdout/stderr)".to_string() } else { String::new() };
+                    make_pass(label, start.elapsed(), Some(&stdout), Some(&stderr))
                 })
             }
         }
@@ -1657,6 +1732,14 @@ pub struct TestAllOpts<'a> {
     pub retries: u32,
     /// Plan 27 Ф.1: GC backend. Propagated to every TestBuildOpts → BuildOpts.
     pub gc_kind: GcKind,
+    /// Plan 27 Б.5: перечислить тесты без запуска (--list).
+    pub list_only: bool,
+    /// Plan 27 Б.5: фильтровать тесты из файла (--filter-from <path>).
+    /// Exact-match по display name, один тест на строку.
+    pub filter_from: Option<&'a Path>,
+    /// Plan 27 Б.7: seed для Fisher-Yates shuffle (--shuffle [SEED]).
+    /// None = не перемешивать. 0 = случайный seed из system time.
+    pub shuffle_seed: Option<u64>,
 }
 
 // ---------- Plan 26 Ф.13: graceful Ctrl+C ----------
@@ -2087,7 +2170,56 @@ fn collect_c_files(dir: &Path, out: &mut Vec<PathBuf>, recursive: bool) -> Resul
 pub struct Summary {
     pub pass: usize,
     pub fail: usize,
+    /// Plan 27 Ф.6: тесты пропущенные из-за AllocConstraint.
+    /// Не входят в pass/fail — отдельная категория.
+    pub skip: usize,
     pub results: Vec<(String, Status)>,
+}
+
+// ---------- Plan 27 Б.7: xorshift64 PRNG + Fisher-Yates shuffle ----------
+
+/// xorshift64 — минимальный PRNG без extra deps.
+/// Период 2^64-1. Достаточно для shuffling тест-листа.
+struct Xorshift64(u64);
+
+impl Xorshift64 {
+    fn new(seed: u64) -> Self {
+        // Seed 0 запрещён в xorshift; используем любое non-zero fallback.
+        Xorshift64(if seed == 0 { 0xDEAD_BEEF_CAFE_1337 } else { seed })
+    }
+
+    fn next(&mut self) -> u64 {
+        let mut x = self.0;
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        self.0 = x;
+        x
+    }
+
+    /// Случайное число в [0, n).
+    fn next_usize(&mut self, n: usize) -> usize {
+        if n <= 1 { return 0; }
+        (self.next() % n as u64) as usize
+    }
+}
+
+/// Fisher-Yates shuffle slice на месте.
+fn shuffle<T>(slice: &mut [T], rng: &mut Xorshift64) {
+    let n = slice.len();
+    for i in (1..n).rev() {
+        let j = rng.next_usize(i + 1);
+        slice.swap(i, j);
+    }
+}
+
+/// Seed из system time для --shuffle без аргумента.
+fn random_seed() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(1)
 }
 
 /// Рекурсивный обход директории, возвращает все .nv файлы.
@@ -2157,35 +2289,57 @@ fn json_escape(s: &str) -> String {
 
 /// Emit one line per test event в соответствии с `format`. Streaming —
 /// output flush'ится сразу после каждой строки.
-fn emit_event(format: OutputFormat, idx: usize, total: usize, name: &str, outcome: &Outcome) {
-    let mut stdout = std::io::stdout().lock();
+/// Б.3: при verbose — печатает захваченный stdout/stderr для Pass.
+fn emit_event(format: OutputFormat, idx: usize, total: usize, name: &str, outcome: &Outcome, verbosity: Verbosity) {
+    let mut out = std::io::stdout().lock();
     match format {
         OutputFormat::Text => {
             let label = outcome.label();
             let detail = outcome.detail();
             if detail.is_empty() {
-                let _ = writeln!(stdout, "{:<14} {}", label, name);
+                let _ = writeln!(out, "{:<14} {}", label, name);
             } else {
                 let trunc: String = detail.chars().take(120).collect();
-                let _ = writeln!(stdout, "{:<14} {}  # {}", label, name, trunc);
+                let _ = writeln!(out, "{:<14} {}  # {}", label, name, trunc);
+            }
+            // Б.3: verbose — dump captured output after Pass line.
+            if matches!(verbosity, Verbosity::Verbose) {
+                if let Outcome::Pass { captured_stdout, captured_stderr, .. } = outcome {
+                    if let Some(s) = captured_stdout {
+                        if !s.is_empty() {
+                            let _ = writeln!(out, "  stdout: {}", s.trim_end());
+                        }
+                    }
+                    if let Some(s) = captured_stderr {
+                        if !s.is_empty() {
+                            let _ = writeln!(out, "  stderr: {}", s.trim_end());
+                        }
+                    }
+                }
             }
         }
         OutputFormat::Json => {
-            let status = if outcome.is_pass() { "pass" } else if matches!(outcome, Outcome::Timeout { .. }) { "timeout" } else { "fail" };
-            let stage = match outcome {
-                Outcome::Pass { .. } => "",
+            let status = match outcome {
+                Outcome::Pass { .. }    => "pass",
                 Outcome::Timeout { .. } => "timeout",
+                Outcome::Skipped { .. } => "skip",
+                Outcome::Fail { .. }    => "fail",
+            };
+            let stage = match outcome {
+                Outcome::Pass { .. }    => "",
+                Outcome::Timeout { .. } => "timeout",
+                Outcome::Skipped { .. } => "skip",
                 Outcome::Fail { stage, .. } => match stage {
-                    Stage::Codegen { .. } => "codegen",
-                    Stage::Cc { .. } => "cc",
-                    Stage::Run { .. } => "run",
-                    Stage::NoCFile => "no-c-file",
-                    Stage::Expectation { .. } => "expectation",
+                    Stage::Codegen { .. }    => "codegen",
+                    Stage::Cc { .. }         => "cc",
+                    Stage::Run { .. }        => "run",
+                    Stage::NoCFile           => "no-c-file",
+                    Stage::Expectation { .. }=> "expectation",
                 },
             };
             let detail = outcome.detail();
             let _ = writeln!(
-                stdout,
+                out,
                 "{{\"event\":\"finished\",\"test\":\"{}\",\"status\":\"{}\",\"stage\":\"{}\",\"elapsed_ms\":{},\"detail\":\"{}\"}}",
                 json_escape(name),
                 status,
@@ -2195,25 +2349,29 @@ fn emit_event(format: OutputFormat, idx: usize, total: usize, name: &str, outcom
             );
         }
         OutputFormat::Tap => {
-            // TAP-13: `ok N - name` или `not ok N - name`.
-            let _ = if outcome.is_pass() {
-                writeln!(stdout, "ok {} - {}", idx + 1, name)
-            } else {
-                let detail = outcome.detail();
-                if detail.is_empty() {
-                    writeln!(stdout, "not ok {} - {}", idx + 1, name)
-                } else {
-                    writeln!(stdout, "not ok {} - {} # {}", idx + 1, name, detail)
+            // TAP-13: skip → "ok N - name # SKIP reason".
+            let _ = match outcome {
+                Outcome::Pass { .. } => writeln!(out, "ok {} - {}", idx + 1, name),
+                Outcome::Skipped { .. } => {
+                    let detail = outcome.detail();
+                    writeln!(out, "ok {} - {} # SKIP {}", idx + 1, name, detail)
+                }
+                _ => {
+                    let detail = outcome.detail();
+                    if detail.is_empty() {
+                        writeln!(out, "not ok {} - {}", idx + 1, name)
+                    } else {
+                        writeln!(out, "not ok {} - {} # {}", idx + 1, name, detail)
+                    }
                 }
             };
         }
         OutputFormat::Junit => {
-            // JUnit XML — batch format. Per-test events не emit'им; всё
-            // строится в print_summary через cumulative results.
+            // JUnit XML — batch format. Per-test events не stream'им.
         }
     }
-    let _ = stdout.flush();
-    let _ = (idx, total); // suppress unused warning для text/tap путей
+    let _ = out.flush();
+    let _ = (idx, total);
 }
 
 /// Plan 26 Ф.14: XML-escape для атрибутов / содержимого JUnit XML.
@@ -2298,26 +2456,22 @@ fn save_results(path: &Path, records: &[ResultRecord]) -> std::io::Result<()> {
 }
 
 pub fn run_all(opts: TestAllOpts) -> Result<Summary> {
-    // Plan 26 Ф.13: install Ctrl+C handler один раз. Worker'ы проверят
-    // is_cancelled() перед каждым тестом и graceful exit'нут.
+    // Plan 26 Ф.13: install Ctrl+C handler один раз.
     install_cancel_handler();
-    // Tests-dir обязателен; stdlib-dir — опционален.
+
+    // Collect .nv files.
     let mut inputs: Vec<(PathBuf, /*is_stdlib*/ bool)> = Vec::new();
     let mut tests_files = Vec::new();
     walk_nv(opts.tests_dir, &mut tests_files)?;
-    for p in tests_files {
-        inputs.push((p, false));
-    }
+    for p in tests_files { inputs.push((p, false)); }
     if opts.include_stdlib {
         if let Some(stdlib) = opts.stdlib_dir {
             let mut stdlib_files = Vec::new();
             walk_nv(stdlib, &mut stdlib_files)?;
-            for p in stdlib_files {
-                inputs.push((p, true));
-            }
+            for p in stdlib_files { inputs.push((p, true)); }
         }
     }
-    // Сортировка по relative path — стабильный порядок.
+    // Стабильный порядок по пути — shuffle потом переопределит если нужно.
     inputs.sort_by(|a, b| a.0.cmp(&b.0));
 
     std::fs::create_dir_all(opts.tmp_dir)
@@ -2325,8 +2479,7 @@ pub fn run_all(opts: TestAllOpts) -> Result<Summary> {
 
     // Plan 26 Ф.10: --rerun-failed pre-load list.
     let rerun_set: Option<std::collections::HashSet<String>> = if opts.rerun_failed {
-        let path = opts
-            .results_file
+        let path = opts.results_file
             .ok_or_else(|| anyhow!("--rerun-failed requires --results-file"))?;
         let prev = load_results(path);
         if prev.is_empty() {
@@ -2335,38 +2488,54 @@ pub fn run_all(opts: TestAllOpts) -> Result<Summary> {
                 path.display()
             ));
         }
-        Some(
-            prev.iter()
-                .filter(|r| !r.passed)
-                .map(|r| r.name.clone())
-                .collect(),
-        )
+        Some(prev.iter().filter(|r| !r.passed).map(|r| r.name.clone()).collect())
     } else {
         None
     };
 
-    // Собираем job-list (display + nv_path + base) после filter/rerun.
+    // Plan 27 Б.5: --filter-from exact-match set.
+    let filter_from_set: Option<std::collections::HashSet<String>> = if let Some(p) = opts.filter_from {
+        let text = std::fs::read_to_string(p)
+            .map_err(|e| anyhow!("--filter-from: cannot read {}: {}", p.display(), e))?;
+        Some(text.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect())
+    } else {
+        None
+    };
+
+    // Build job list applying all filters.
     let mut jobs: Vec<(String, PathBuf)> = Vec::new();
     for (nv_path, is_stdlib) in &inputs {
-        let base = if *is_stdlib {
-            opts.stdlib_dir.unwrap_or(opts.tests_dir)
-        } else {
-            opts.tests_dir
-        };
+        let base = if *is_stdlib { opts.stdlib_dir.unwrap_or(opts.tests_dir) } else { opts.tests_dir };
         let display = display_name(nv_path, base, *is_stdlib);
         if let Some(filter) = opts.filter {
-            if !display.contains(filter) {
-                continue;
-            }
+            if !display.contains(filter) { continue; }
+        }
+        if let Some(set) = &filter_from_set {
+            if !set.contains(&display) { continue; }
         }
         if let Some(set) = &rerun_set {
-            if !set.contains(&display) {
-                continue;
-            }
+            if !set.contains(&display) { continue; }
         }
         jobs.push((display, nv_path.clone()));
     }
+
+    // Plan 27 Б.7: shuffle если задан seed.
+    if let Some(raw_seed) = opts.shuffle_seed {
+        let seed = if raw_seed == 0 { random_seed() } else { raw_seed };
+        eprintln!("nova: shuffling {} tests with seed {}", jobs.len(), seed);
+        let mut rng = Xorshift64::new(seed);
+        shuffle(&mut jobs, &mut rng);
+    }
+
     let total = jobs.len();
+
+    // Plan 27 Б.5: --list — print names без запуска.
+    if opts.list_only {
+        for (display, _) in &jobs {
+            println!("{}", display);
+        }
+        return Ok(Summary { pass: 0, fail: 0, skip: 0, results: Vec::new() });
+    }
 
     // TAP-13 header.
     if opts.format == OutputFormat::Tap {
@@ -2375,8 +2544,7 @@ pub fn run_all(opts: TestAllOpts) -> Result<Summary> {
         let _ = std::io::stdout().flush();
     }
 
-    // Plan 26 Ф.3: параллельный прогон. Используем std::thread::scope —
-    // нет extra dependencies. Round-robin распределение через atomic-counter.
+    // Plan 26 Ф.3: параллельный прогон через std::thread::scope.
     let jobs_arc = std::sync::Arc::new(jobs);
     let next_idx = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let results_mutex = std::sync::Arc::new(std::sync::Mutex::new(
@@ -2403,18 +2571,9 @@ pub fn run_all(opts: TestAllOpts) -> Result<Summary> {
             let gc_kind = opts.gc_kind;
 
             s.spawn(move || loop {
-                // Plan 26 Ф.13: cooperative cancellation. При Ctrl+C
-                // worker'ы выходят на следующей итерации, не забирая
-                // новые тесты. Уже запущенный child-процесс получит
-                // KILL по wait_with_timeout-таймауту (но это редкий
-                // case — обычно child'ы быстрые).
-                if is_cancelled() {
-                    return;
-                }
+                if is_cancelled() { return; }
                 let idx = next_idx.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                if idx >= jobs.len() {
-                    return;
-                }
+                if idx >= jobs.len() { return; }
                 let (display, nv_path) = &jobs[idx];
                 let test_opts = TestBuildOpts {
                     nv_file: nv_path,
@@ -2428,60 +2587,46 @@ pub fn run_all(opts: TestAllOpts) -> Result<Summary> {
                     libuv: libuv_ref,
                     timeout,
                     gc_kind,
+                    verbosity,
                 };
-                // Plan 26 Ф.12: retry loop для transient AV/linker race
-                // fails. Реальные test-fail'ы (expectation mismatch, codegen
-                // error) НЕ retry'им — иначе false-PASS. Только AV-class.
+                // Plan 26 Ф.12: retry для transient AV/linker race fails.
                 // Exponential backoff: 100ms, 200ms, 400ms.
-                //
-                // Plan 26 Ф.17 #1: cumulative elapsed для отчёта. Per-attempt
-                // run_one() сбрасывает свой start; в JSON/JUnit нужно
-                // показать **общее** время от начала первого attempt'а
-                // до конца последнего — иначе CI вводит в заблуждение
-                // («тест занял 30s», а реально 60s+backoff×2).
+                // Plan 26 Ф.17 #1: cumulative elapsed.
                 let retry_start = Instant::now();
                 let mut outcome = run_one(&test_opts);
+                let mut retry_count = 0u32;
                 for attempt in 1..=retries {
-                    if !is_transient_fail(&outcome) {
-                        break;
-                    }
-                    let backoff = std::time::Duration::from_millis(100 * (1 << (attempt - 1)));
+                    if !is_transient_fail(&outcome) { break; }
+                    let backoff = Duration::from_millis(100 * (1 << (attempt - 1)));
                     std::thread::sleep(backoff);
                     outcome = run_one(&test_opts);
                     if outcome.is_pass() {
-                        // Сообщаем что retry помог — DX-сигнал что есть AV-race.
-                        // В JSON-mode не emit'им (был бы duplicate event).
+                        retry_count = attempt;
+                        // DX-сигнал: retry помог — есть AV-race.
                         if matches!(format, OutputFormat::Text) {
-                            let mut stdout = std::io::stdout().lock();
-                            let _ = writeln!(
-                                stdout,
-                                "  ↻ retry-{} passed: {}",
-                                attempt, display
-                            );
-                            let _ = stdout.flush();
+                            let mut sout = std::io::stdout().lock();
+                            let _ = writeln!(sout, "  ↻ retry-{} passed: {}", attempt, display);
+                            let _ = sout.flush();
                         }
                         break;
                     }
                 }
-                // Plan 26 Ф.17 #1: override elapsed cumulative от первого
-                // attempt'а до завершения (включая backoffs). Иначе CI
-                // видит только последний run-time.
                 if retries > 0 {
                     outcome = outcome.with_elapsed(retry_start.elapsed());
                 }
+                // Plan 27 Б.6: записываем retry count в Pass outcome.
+                if retry_count > 0 {
+                    outcome = outcome.with_retries(retry_count);
+                }
 
-                // Streaming output: Quiet — только FAIL; Normal/Verbose — все.
+                // Streaming output: Quiet — только FAIL (не Skipped); Normal/Verbose — все.
                 let should_emit = match verbosity {
-                    Verbosity::Quiet => !outcome.is_pass(),
+                    Verbosity::Quiet => !outcome.is_pass() && !outcome.is_skipped(),
                     Verbosity::Normal | Verbosity::Verbose => true,
                 };
                 if should_emit {
-                    emit_event(format, idx, jobs.len(), display, &outcome);
+                    emit_event(format, idx, jobs.len(), display, &outcome, verbosity);
                 }
-                // Plan 26 Ф.15: graceful poisoned-recovery. Worker
-                // panic в другом thread'е → mutex poisoned. Восстанавливаем
-                // guard через `into_inner` poison'а — наш test-result
-                // структурно не зависит от состояния прерванного worker'а.
                 let mut guard = match results_mutex.lock() {
                     Ok(g) => g,
                     Err(poisoned) => poisoned.into_inner(),
@@ -2491,10 +2636,7 @@ pub fn run_all(opts: TestAllOpts) -> Result<Summary> {
         }
     });
 
-    // Reassemble в порядке job-index (parallel threads complete вразнобой).
-    // Plan 26 Ф.15 fix: graceful unwrap вместо panic. `scope()` гарантирует
-    // join, но defensive guard на случай если внутренний invariant ломается
-    // (например, future refactor добавит spawn вне scope).
+    // Reassemble в порядке job-index.
     let mutex_inner = match std::sync::Arc::try_unwrap(results_mutex) {
         Ok(m) => m,
         Err(arc) => {
@@ -2503,20 +2645,12 @@ pub fn run_all(opts: TestAllOpts) -> Result<Summary> {
                  worker leak; returning partial results",
                 std::sync::Arc::strong_count(&arc) - 1
             );
-            // Не можем take inner; вернём empty results — runner закроется чисто.
-            return Ok(Summary {
-                pass: 0,
-                fail: 0,
-                results: Vec::new(),
-            });
+            return Ok(Summary { pass: 0, fail: 0, skip: 0, results: Vec::new() });
         }
     };
     let mut indexed = match mutex_inner.into_inner() {
         Ok(v) => v,
-        Err(poison) => {
-            eprintln!("warning: results mutex poisoned, recovering partial results");
-            poison.into_inner()
-        }
+        Err(poison) => { eprintln!("warning: results mutex poisoned, recovering"); poison.into_inner() }
     };
     indexed.sort_by_key(|(idx, _, _)| *idx);
     let results: Vec<(String, Outcome)> = indexed
@@ -2526,18 +2660,18 @@ pub fn run_all(opts: TestAllOpts) -> Result<Summary> {
 
     let mut pass = 0usize;
     let mut fail = 0usize;
+    let mut skip = 0usize;
     for (_, s) in &results {
-        if s.is_pass() {
-            pass += 1;
-        } else {
-            fail += 1;
-        }
+        if s.is_pass() { pass += 1; }
+        else if s.is_skipped() { skip += 1; }
+        else { fail += 1; }
     }
 
-    // Plan 26 Ф.10: save results на диск для следующего --rerun-failed.
+    // Plan 26 Ф.10: save results. Skip'ы не сохраняем (not pass/fail).
     if let Some(path) = opts.results_file {
         let records: Vec<ResultRecord> = results
             .iter()
+            .filter(|(_, o)| !o.is_skipped())
             .map(|(name, outcome)| ResultRecord {
                 name: name.clone(),
                 passed: outcome.is_pass(),
@@ -2549,11 +2683,7 @@ pub fn run_all(opts: TestAllOpts) -> Result<Summary> {
         }
     }
 
-    Ok(Summary {
-        pass,
-        fail,
-        results,
-    })
+    Ok(Summary { pass, fail, skip, results })
 }
 
 /// Вывод финального summary. Per-test events уже отстримлены в run_all.
@@ -2562,16 +2692,14 @@ pub fn run_all(opts: TestAllOpts) -> Result<Summary> {
 /// summary-event, TAP — `# pass/fail` комментарий.
 /// Plan 26 Ф.8: всё в stdout (cargo/go test convention).
 pub fn print_summary(summary: &Summary, format: OutputFormat) {
-    let mut stdout = std::io::stdout().lock();
+    let mut out = std::io::stdout().lock();
     match format {
         OutputFormat::Text => {
-            let _ = writeln!(stdout);
-            let _ = writeln!(stdout, "===== SUMMARY =====");
+            let _ = writeln!(out);
+            let _ = writeln!(out, "===== SUMMARY =====");
             let mut had_fail = false;
             for (name, status) in &summary.results {
-                if status.is_pass() {
-                    continue;
-                }
+                if status.is_pass() || status.is_skipped() { continue; }
                 had_fail = true;
                 let label = status.label();
                 let detail = status.detail();
@@ -2581,88 +2709,138 @@ pub fn print_summary(summary: &Summary, format: OutputFormat) {
                     let trunc: String = detail.chars().take(120).collect();
                     format!("{:<14} {}  # {}", label, name, trunc)
                 };
-                let _ = writeln!(stdout, "{}", line);
+                let _ = writeln!(out, "{}", line);
             }
-            if had_fail {
-                let _ = writeln!(stdout);
+            if had_fail { let _ = writeln!(out); }
+
+            // Plan 27 Ф.6: skip count.
+            if summary.skip > 0 {
+                let _ = writeln!(out, "PASS: {}  FAIL: {}  SKIP: {} (alloc-backend)",
+                    summary.pass, summary.fail, summary.skip);
+            } else {
+                let _ = writeln!(out, "PASS: {}  FAIL: {}", summary.pass, summary.fail);
             }
-            let _ = writeln!(stdout, "PASS: {}  FAIL: {}", summary.pass, summary.fail);
+
+            // Plan 27 Б.4: slowest tests — top 10 если тестов > 10.
+            let runnable: Vec<(&str, Duration)> = summary.results.iter()
+                .filter(|(_, o)| !o.is_skipped())
+                .map(|(name, o)| (name.as_str(), o.elapsed()))
+                .collect();
+            if runnable.len() > 10 {
+                let mut by_time = runnable.clone();
+                by_time.sort_by(|a, b| b.1.cmp(&a.1));
+                let _ = writeln!(out);
+                let _ = writeln!(out, "===== SLOWEST TESTS (top 10) =====");
+                for (name, elapsed) in by_time.iter().take(10) {
+                    let _ = writeln!(out, "  {:.3}s  {}", elapsed.as_secs_f64(), name);
+                }
+            }
         }
         OutputFormat::Json => {
-            // Plan 26 Ф.16 #11: failed-list в summary event. CI dashboard'у
-            // удобно достать имена failed/timeout тестов из одного event'а
-            // без grep'а по всем `finished` events. Имена exact-match с
-            // events выше (display-name).
+            // Plan 26 Ф.16 #11: failed-list в summary event.
             let total_ms: u128 = summary.results.iter().map(|(_, o)| o.elapsed().as_millis()).sum();
             let failed_names: Vec<String> = summary
-                .results
-                .iter()
-                .filter(|(_, o)| !o.is_pass())
+                .results.iter()
+                .filter(|(_, o)| !o.is_pass() && !o.is_skipped())
                 .map(|(name, _)| format!("\"{}\"", json_escape(name)))
                 .collect();
             let _ = writeln!(
-                stdout,
-                "{{\"event\":\"summary\",\"pass\":{},\"fail\":{},\"elapsed_ms\":{},\"failed\":[{}]}}",
-                summary.pass, summary.fail, total_ms,
+                out,
+                "{{\"event\":\"summary\",\"pass\":{},\"fail\":{},\"skip\":{},\"elapsed_ms\":{},\"failed\":[{}]}}",
+                summary.pass, summary.fail, summary.skip, total_ms,
                 failed_names.join(",")
             );
         }
         OutputFormat::Tap => {
-            let _ = writeln!(stdout, "# pass {}", summary.pass);
-            let _ = writeln!(stdout, "# fail {}", summary.fail);
+            let _ = writeln!(out, "# pass {}", summary.pass);
+            let _ = writeln!(out, "# fail {}", summary.fail);
+            if summary.skip > 0 {
+                let _ = writeln!(out, "# skip {}", summary.skip);
+            }
         }
         OutputFormat::Junit => {
-            // JUnit XML batch output. Schema: <testsuites><testsuite>
-            // <testcase>. Failures emit'ятся как <failure type="..."
-            // message="..."/> child element.
-            let total_s: f64 = summary.results.iter()
-                .map(|(_, o)| o.elapsed().as_secs_f64()).sum();
+            // JUnit XML batch. Schema: <testsuites><testsuite><testcase>.
+            // Skipped → <skipped/>. Pass with retry → <system-out>.
+            let non_skip: Vec<(&String, &Outcome)> = summary.results.iter()
+                .filter(|(_, o)| !o.is_skipped())
+                .map(|(n, o)| (n, o))
+                .collect();
+            let total_s: f64 = non_skip.iter().map(|(_, o)| o.elapsed().as_secs_f64()).sum();
             let timestamp = chrono_like_iso8601();
-            let _ = writeln!(stdout, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>");
-            let _ = writeln!(stdout,
-                "<testsuites name=\"nova_tests\" tests=\"{}\" failures=\"{}\" time=\"{:.3}\">",
-                summary.results.len(), summary.fail, total_s);
-            let _ = writeln!(stdout,
-                "  <testsuite name=\"nova_tests\" tests=\"{}\" failures=\"{}\" time=\"{:.3}\" timestamp=\"{}\">",
-                summary.results.len(), summary.fail, total_s, xml_escape(&timestamp));
-            for (name, outcome) in &summary.results {
-                // Split classname.testname по последнему `/`.
+            let _ = writeln!(out, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>");
+            let _ = writeln!(out,
+                "<testsuites name=\"nova_tests\" tests=\"{}\" failures=\"{}\" skipped=\"{}\" time=\"{:.3}\">",
+                non_skip.len(), summary.fail, summary.skip, total_s);
+            let _ = writeln!(out,
+                "  <testsuite name=\"nova_tests\" tests=\"{}\" failures=\"{}\" skipped=\"{}\" time=\"{:.3}\" timestamp=\"{}\">",
+                non_skip.len(), summary.fail, summary.skip, total_s, xml_escape(&timestamp));
+            // Skipped tests first (per JUnit convention, any order is fine though).
+            for (name, outcome) in summary.results.iter().filter(|(_, o)| o.is_skipped()) {
                 let (classname, testname) = match name.rfind('/') {
                     Some(idx) => (&name[..idx], &name[idx + 1..]),
                     None => ("", name.as_str()),
                 };
                 let elapsed_s = outcome.elapsed().as_secs_f64();
-                if outcome.is_pass() {
-                    let _ = writeln!(stdout,
-                        "    <testcase classname=\"{}\" name=\"{}\" time=\"{:.3}\"/>",
-                        xml_escape(classname), xml_escape(testname), elapsed_s);
-                } else {
-                    let stage = match outcome {
-                        Outcome::Timeout { .. } => "timeout",
-                        Outcome::Fail { stage, .. } => match stage {
-                            Stage::Codegen { .. } => "codegen",
-                            Stage::Cc { .. } => "cc",
-                            Stage::Run { .. } => "run",
-                            Stage::NoCFile => "no-c-file",
-                            Stage::Expectation { .. } => "expectation",
-                        },
-                        _ => "unknown",
-                    };
-                    let detail = outcome.detail();
-                    let _ = writeln!(stdout,
-                        "    <testcase classname=\"{}\" name=\"{}\" time=\"{:.3}\">",
-                        xml_escape(classname), xml_escape(testname), elapsed_s);
-                    let _ = writeln!(stdout,
-                        "      <failure type=\"{}\" message=\"{}\"/>",
-                        xml_escape(stage), xml_escape(&detail));
-                    let _ = writeln!(stdout, "    </testcase>");
+                let detail = outcome.detail();
+                let _ = writeln!(out,
+                    "    <testcase classname=\"{}\" name=\"{}\" time=\"{:.3}\">",
+                    xml_escape(classname), xml_escape(testname), elapsed_s);
+                let _ = writeln!(out, "      <skipped message=\"{}\"/>", xml_escape(&detail));
+                let _ = writeln!(out, "    </testcase>");
+            }
+            for (name, outcome) in &non_skip {
+                let (classname, testname) = match name.rfind('/') {
+                    Some(idx) => (&name[..idx], &name[idx + 1..]),
+                    None => ("", name.as_str()),
+                };
+                let elapsed_s = outcome.elapsed().as_secs_f64();
+                match outcome {
+                    Outcome::Pass { retries, .. } => {
+                        if *retries > 0 {
+                            // Б.6: retry count visible in JUnit.
+                            let _ = writeln!(out,
+                                "    <testcase classname=\"{}\" name=\"{}\" time=\"{:.3}\">",
+                                xml_escape(classname), xml_escape(testname), elapsed_s);
+                            let _ = writeln!(out,
+                                "      <system-out>retried {} time(s) before pass</system-out>",
+                                retries);
+                            let _ = writeln!(out, "    </testcase>");
+                        } else {
+                            let _ = writeln!(out,
+                                "    <testcase classname=\"{}\" name=\"{}\" time=\"{:.3}\"/>",
+                                xml_escape(classname), xml_escape(testname), elapsed_s);
+                        }
+                    }
+                    Outcome::Fail { .. } | Outcome::Timeout { .. } => {
+                        let stage_str = match outcome {
+                            Outcome::Timeout { .. } => "timeout",
+                            Outcome::Fail { stage, .. } => match stage {
+                                Stage::Codegen { .. }    => "codegen",
+                                Stage::Cc { .. }         => "cc",
+                                Stage::Run { .. }        => "run",
+                                Stage::NoCFile           => "no-c-file",
+                                Stage::Expectation { .. }=> "expectation",
+                            },
+                            _ => "unknown",
+                        };
+                        let detail = outcome.detail();
+                        let _ = writeln!(out,
+                            "    <testcase classname=\"{}\" name=\"{}\" time=\"{:.3}\">",
+                            xml_escape(classname), xml_escape(testname), elapsed_s);
+                        let _ = writeln!(out,
+                            "      <failure type=\"{}\" message=\"{}\"/>",
+                            xml_escape(stage_str), xml_escape(&detail));
+                        let _ = writeln!(out, "    </testcase>");
+                    }
+                    // Skipped already handled above.
+                    _ => {}
                 }
             }
-            let _ = writeln!(stdout, "  </testsuite>");
-            let _ = writeln!(stdout, "</testsuites>");
+            let _ = writeln!(out, "  </testsuite>");
+            let _ = writeln!(out, "</testsuites>");
         }
     }
-    let _ = stdout.flush();
+    let _ = out.flush();
 }
 
 /// Best-effort ISO-8601 timestamp без extra deps. Format: YYYY-MM-DDTHH:MM:SS.

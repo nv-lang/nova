@@ -118,6 +118,16 @@ enum Cmd {
         /// Reserved for Plan 27 — currently accepted but has no effect.
         #[arg(long, value_parser = ["boehm", "malloc"])]
         gc: Option<String>,
+        /// List collected tests without running them.
+        #[arg(long)]
+        list: bool,
+        /// Path to a file containing test names (one per line) to run (exact display-name match).
+        #[arg(long = "filter-from")]
+        filter_from: Option<PathBuf>,
+        /// Shuffle test execution order. Optional seed value; omit for random seed.
+        /// Example: --shuffle 42  or  --shuffle (random seed).
+        #[arg(long, num_args = 0..=1, value_name = "SEED")]
+        shuffle: Option<Option<u64>>,
     },
     /// Build and run a single Nova test file (used by IDE / CI for one-shot debug).
     #[command(name = "test-build")]
@@ -448,6 +458,9 @@ fn cmd_test(
     keep_artifacts: bool,
     tests_dir_override: Option<&Path>,
     gc: &str,
+    list_only: bool,
+    filter_from: Option<&Path>,
+    shuffle: Option<Option<u64>>,
 ) -> Result<()> {
     if timeout_secs == 0 {
         bail!("--timeout must be >= 1 second");
@@ -537,6 +550,12 @@ fn cmd_test(
     }
 
     let gc_kind = test_runner::GcKind::parse(gc)?;
+    // --shuffle: None = no shuffle, Some(None) = random seed, Some(Some(n)) = fixed seed
+    let shuffle_seed: Option<u64> = match shuffle {
+        None => None,
+        Some(None) => Some(0),      // 0 = random seed (resolved in run_all)
+        Some(Some(n)) => Some(n),
+    };
     let tmp_dir = default_tmp_dir();
     let opts = test_runner::TestAllOpts {
         tests_dir: &tests_dir,
@@ -559,6 +578,9 @@ fn cmd_test(
         rerun_failed,
         retries,
         gc_kind,
+        list_only,
+        filter_from,
+        shuffle_seed,
     };
 
     let summary = test_runner::run_all(opts)?;
@@ -623,6 +645,7 @@ fn cmd_test_build(
         libuv: libuv.as_ref(),
         timeout: Duration::from_secs(timeout_secs),
         gc_kind,
+        verbosity: test_runner::Verbosity::Normal,
     };
 
     test_runner::install_cancel_handler();
@@ -707,6 +730,7 @@ fn main() -> ExitCode {
             filter, jobs, format, mode, toolchain, vcvars, clang, timeout,
             verbose, quiet, results_file, rerun_failed, retries,
             include_stdlib, keep_artifacts, tests_dir, gc,
+            list, filter_from, shuffle,
         } => cmd_test(
             filter.as_deref(),
             jobs,
@@ -725,6 +749,9 @@ fn main() -> ExitCode {
             keep_artifacts,
             tests_dir.as_deref(),
             gc.as_deref().unwrap_or("boehm"),
+            list,
+            filter_from.as_deref(),
+            shuffle,
         ),
         Cmd::TestBuild { file, mode, toolchain, vcvars, clang, timeout, keep_artifacts, gc } => cmd_test_build(
             &file,
