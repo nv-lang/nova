@@ -3678,3 +3678,35 @@ grade fix'ами (5 коммитов):
 
 - ✅ Plan 20 Ф.8 (все 4 issue) ЗАКРЫТЫ.
 - Tests: 12/12 defer-relevant + 10/10 effects + 17/17 concurrency PASS.
+
+
+═══════════════════════════════════════════════════════════════════
+Plan 22 Ф.8 reopened — close-cb state-machine — 2026-05-11 late
+
+После Plan 25 «honest production readiness» (G7 = Ф.8 close-cb) обсудили
+с user'ом: формальный enum SYNC/ASYNC в D93 API closes G7. Сделано.
+
+| Упрощение | Решение |
+|---|---|
+| **busy-loop `while !handle_closed uv_run NOWAIT`** в _nova_sleep_via_libuv | → УДАЛЁН. Sleep state-machine `{PENDING, CLOSING, CLOSED}`, close_cb делает wake. Один park на весь lifecycle. |
+| **stop_cb returns void** (sync unpark предположение) | → `NovaStopMode {SYNC, ASYNC}` enum. cancel_all_pending различает: SYNC immediate unpark, ASYNC ждёт backend wake. |
+| **D93 sync/async semantic не описан** | → D93 расширен правилом 5 + use-cases table (sleep=ASYNC, channel waitlist=SYNC, socket=ASYNC, file=ASYNC) + эволюция Ф.8. |
+| **Q-D93-sync-async-stop open** | → ✅ ЗАКРЫТО, ссылка на D93. |
+| **Plan 25 G7 «Ф.8 close-cb busy-loop»** | → ✅ ЗАКРЫТО (R7 «no busy-loops anywhere» fully enforced). |
+
+Trade-off:
+- Каждый sleep adds ~2-3ms ASYNC close_cb wait latency.
+- Concurrent sleeps НЕ affected (close_cb batch в одном uv_run pass).
+- Sequential 1000 × sleep(10): ~10s → ~20-25s. sleep_leak_check #2
+  budget релакс'нут 15s → 30s.
+- Acceptable price за clean architecture готовую для Plan 21/23+.
+
+Verification:
+- sleep_real_clock 5/5 PASS (включая cancel-during-sleep).
+- cancel_stress_test 3/3 PASS.
+- sleep_bench 10k concurrent PASS.
+- sleep_leak_check 3/3 PASS.
+- Полный 138/138 regression — НЕ verified в сессии (Plan 26 run_tests.ps1
+  имеет PS quoting + parallel race issues). Individual filter PASS.
+
+Commit: e94d2bc9 plan-22 Ф.8: close-cb state-machine + D93 sync/async stop_cb contract
