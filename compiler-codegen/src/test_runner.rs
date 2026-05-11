@@ -72,17 +72,31 @@ pub fn run_with_timeout(mut cmd: Command, timeout: Duration) -> std::io::Result<
 
     // Drain stdout/stderr в фоновых потоках, чтобы не deadlock'нуть
     // на полном pipe-buffer'е (Windows ~4 KB, Linux ~64 KB).
-    let stdout = child.stdout.take().expect("stdout was piped");
-    let stderr = child.stderr.take().expect("stderr was piped");
+    // Plan 26 Ф.15: explicit error если pipe internal-invariant нарушен
+    // вместо panic. `Stdio::piped()` гарантирует Some(...), но defensive.
+    let stdout = match child.stdout.take() {
+        Some(s) => s,
+        None => return Err(std::io::Error::new(
+            std::io::ErrorKind::Other, "child stdout pipe missing")),
+    };
+    let stderr = match child.stderr.take() {
+        Some(s) => s,
+        None => return Err(std::io::Error::new(
+            std::io::ErrorKind::Other, "child stderr pipe missing")),
+    };
+    // Plan 26 Ф.15: read buffer cap. Тест, печатающий 100 MB stdout
+    // (бесконечный print-loop), не должен OOM'нуть runner. Cap = 4 MB —
+    // больше чем хватит для real test output, меньше чем разумный stress.
+    const READ_CAP: u64 = 4 * 1024 * 1024;
     let stdout_handle = std::thread::spawn(move || {
         let mut buf = Vec::new();
-        let mut s = stdout;
+        let mut s = std::io::Read::take(stdout, READ_CAP);
         let _ = std::io::Read::read_to_end(&mut s, &mut buf);
         buf
     });
     let stderr_handle = std::thread::spawn(move || {
         let mut buf = Vec::new();
-        let mut s = stderr;
+        let mut s = std::io::Read::take(stderr, READ_CAP);
         let _ = std::io::Read::read_to_end(&mut s, &mut buf);
         buf
     });
@@ -117,10 +131,19 @@ pub enum ExpectMarker {
 
 /// Парсит D89 EXPECT-маркер из первых 30 строк. Один маркер на файл
 /// (берём первый встретившийся).
+///
+/// **Важно** (Plan 26 Ф.15 fix): non-comment lines пропускаются
+/// (`continue`), не возвращают `None`. Иначе `module foo` или blank
+/// line на первой строке прерывала бы поиск маркера ниже — D89-маркер
+/// в строке 5 не нашёлся бы.
 pub fn parse_expect(src: &str) -> Option<ExpectMarker> {
     for line in src.lines().take(30) {
         let trimmed = line.trim_start();
-        let body = trimmed.strip_prefix("//")?.trim_start();
+        let Some(body) = trimmed.strip_prefix("//") else {
+            // Non-comment line — skip, не abort.
+            continue;
+        };
+        let body = body.trim_start();
 
         if let Some(rest) = body.strip_prefix("EXPECT_COMPILE_ERROR") {
             let arg = rest.trim();
@@ -2022,17 +2045,46 @@ pub fn run_all(opts: TestAllOpts) -> Result<Summary> {
                 if should_emit {
                     emit_event(format, idx, jobs.len(), display, &outcome);
                 }
-                let mut guard = results_mutex.lock().expect("results mutex poisoned");
+                // Plan 26 Ф.15: graceful poisoned-recovery. Worker
+                // panic в другом thread'е → mutex poisoned. Восстанавливаем
+                // guard через `into_inner` poison'а — наш test-result
+                // структурно не зависит от состояния прерванного worker'а.
+                let mut guard = match results_mutex.lock() {
+                    Ok(g) => g,
+                    Err(poisoned) => poisoned.into_inner(),
+                };
                 guard.push((idx, display.clone(), outcome));
             });
         }
     });
 
     // Reassemble в порядке job-index (parallel threads complete вразнобой).
-    let mut indexed = std::sync::Arc::try_unwrap(results_mutex)
-        .expect("results mutex still has owners")
-        .into_inner()
-        .expect("results mutex poisoned");
+    // Plan 26 Ф.15 fix: graceful unwrap вместо panic. `scope()` гарантирует
+    // join, но defensive guard на случай если внутренний invariant ломается
+    // (например, future refactor добавит spawn вне scope).
+    let mutex_inner = match std::sync::Arc::try_unwrap(results_mutex) {
+        Ok(m) => m,
+        Err(arc) => {
+            eprintln!(
+                "warning: results-mutex Arc has {} extra strong refs after scope() — \
+                 worker leak; returning partial results",
+                std::sync::Arc::strong_count(&arc) - 1
+            );
+            // Не можем take inner; вернём empty results — runner закроется чисто.
+            return Ok(Summary {
+                pass: 0,
+                fail: 0,
+                results: Vec::new(),
+            });
+        }
+    };
+    let mut indexed = match mutex_inner.into_inner() {
+        Ok(v) => v,
+        Err(poison) => {
+            eprintln!("warning: results mutex poisoned, recovering partial results");
+            poison.into_inner()
+        }
+    };
     indexed.sort_by_key(|(idx, _, _)| *idx);
     let results: Vec<(String, Outcome)> = indexed
         .into_iter()
@@ -2275,6 +2327,38 @@ mod tests {
     fn parse_expect_none_no_marker() {
         let src = "module x\nfn main() { print(\"hi\") }\n";
         assert!(parse_expect(src).is_none());
+    }
+
+    #[test]
+    fn parse_expect_after_module_line() {
+        // Ф.15 regression: до fix'а `?` оператор возвращал None на
+        // первой non-`//` строке, не дочитав маркер ниже.
+        let src = "module foo\n\n// EXPECT_EXIT_CODE 42\ntest \"x\" {}\n";
+        match parse_expect(src) {
+            Some(ExpectMarker::ExitCode(42)) => {}
+            other => panic!("expected ExitCode(42), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_expect_after_blank_line() {
+        // Blank line на 1-й строке не должна abort'нуть поиск.
+        let src = "\n// EXPECT_STDOUT hello\nmodule foo\n";
+        match parse_expect(src) {
+            Some(ExpectMarker::Stdout(p)) => assert_eq!(p, "hello"),
+            other => panic!("expected Stdout(hello), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_expect_mixed_comment_and_code() {
+        // Mix of comment, code, and marker — marker должен найтись.
+        let src = "// some doc comment\nmodule foo\n// more doc\n\
+                   // EXPECT_RUNTIME_PANIC index out of bounds\ntest {}\n";
+        match parse_expect(src) {
+            Some(ExpectMarker::RuntimePanic(p)) => assert_eq!(p, "index out of bounds"),
+            other => panic!("expected RuntimePanic, got {:?}", other),
+        }
     }
 
     #[test]

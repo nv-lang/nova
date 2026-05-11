@@ -1,6 +1,6 @@
 # План 26: hardening test-runner до cargo/go-test уровня
 
-**Статус:** ✅ Ф.1-Ф.4, Ф.6-Ф.14 ЗАКРЫТЫ 2026-05-11. Ф.5 (caching) отложен.
+**Статус:** ✅ Ф.1-Ф.4, Ф.6-Ф.15 ЗАКРЫТЫ 2026-05-11. Ф.5 (caching) отложен.
 **Дата создания:** 2026-05-11.
 **Тип:** инфраструктурный (DX + CI). Не меняет семантику Nova, улучшает test-runner до production-grade.
 
@@ -393,6 +393,21 @@ CLI: `--retries 0|2|N`. Default 0 (для local dev — sharp signal). CI рек
 Idempotent install — повторные вызовы no-op (важно для интеграционных тестов).
 
 Ф.13 объём: ~60 строк (cross-platform signal handler + worker poll).
+
+### Ф.15 — Production hardening (graceful unwrap, parse_expect bug, buffer cap)
+
+**Production review** после Ф.1-Ф.14 выявил 3 reliability-issue:
+
+1. **`parse_expect` early-return bug.** Refactor от `if let Some(...) = strip_prefix("//")` к `let body = ... .strip_prefix("//")?;` ввёл regression: первая non-`//` строка (например `module foo`) делала `?`→`return None`, не дочитав маркер ниже. Fix: `let Some(body) = strip_prefix else { continue }`. Добавлено 3 regression-теста: marker-after-module, marker-after-blank, mixed-comment-code.
+
+2. **`expect("results mutex still has owners")` / `expect("results mutex poisoned")` / `expect("stdout was piped")`** — panic в production runner'е = silent crash. Заменены на graceful recovery:
+   - `Arc::try_unwrap` fail → warning + empty Summary.
+   - `Mutex::lock` poisoned → recover via `into_inner()`.
+   - `child.stdout.take()` None → `io::Error` вместо `expect`.
+
+3. **No stdout buffer cap** — бесконечно печатающий тест OOM'нул бы runner. `read_to_end` → `Read::take(4MB).read_to_end`. 4MB больше чем хватит для real test output, меньше чем разумный stress.
+
+Ф.15 объём: ~40 строк fix + 3 unit-теста.
 
 ### Ф.14 — JUnit XML output
 
