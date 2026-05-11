@@ -46,7 +46,7 @@ uv_loop_t* nova_evloop(void) {
     return _evloop;
 }
 
-nova_bool nova_evloop_is_initialized(void) {
+bool nova_evloop_is_initialized(void) {
     return _evloop_state == 1;
 }
 

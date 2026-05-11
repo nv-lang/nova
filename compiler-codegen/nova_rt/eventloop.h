@@ -20,12 +20,11 @@
 #ifdef NOVA_USE_LIBUV
 
 #include <uv.h>
+#include <stdbool.h>   /* для bool без circular include nova_rt.h */
 
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-#include "nova_rt.h"
 
 /* Get the default loop. Lazy-initializes on first call.
  * Не возвращает NULL — на ошибке программа abort'ает. */
@@ -40,8 +39,9 @@ void nova_evloop_init(void);
  * nova_evloop() возвращает NULL и пишет warning. */
 void nova_evloop_close(void);
 
-/* True если nova_evloop_init был вызван и close ещё не произошёл. */
-nova_bool nova_evloop_is_initialized(void);
+/* True если nova_evloop_init был вызван и close ещё не произошёл.
+ * Returns bool (== nova_bool). */
+bool nova_evloop_is_initialized(void);
 
 /* Introspection: количество активных libuv-handle'ов (для тестов). */
 int nova_evloop_active_handles(void);
@@ -53,13 +53,15 @@ int nova_evloop_active_handles(void);
 #else  /* !NOVA_USE_LIBUV */
 
 /* Stub когда libuv не включён (Ф.1 default — libuv есть в build chain,
- * но runtime может его не использовать). Все функции no-op. */
+ * но runtime может его не использовать). Все функции no-op.
+ * Используем bool (stdbool.h) вместо nova_bool — избегаем circular
+ * include nova_rt.h → fibers.h → eventloop.h → nova_rt.h. */
 
-#include "nova_rt.h"
+#include <stdbool.h>
 
 static inline void nova_evloop_init(void) { }
 static inline void nova_evloop_close(void) { }
-static inline nova_bool nova_evloop_is_initialized(void) { return false; }
+static inline bool nova_evloop_is_initialized(void) { return false; }
 static inline int  nova_evloop_active_handles(void) { return 0; }
 
 #endif /* NOVA_USE_LIBUV */

@@ -34,6 +34,16 @@
 /* effects.h is included by nova_rt.h before fibers.h, so NovaFailFrame
  * and _nova_fail_top are visible here. */
 
+/* Plan 22 Ф.4: libuv для uv_timer_t sleep + uv_run idle.
+ * eventloop.h обычно подключается из nova_rt.h ПОСЛЕ fibers.h, но
+ * нам надо здесь — supervised_run использует nova_evloop(). Подключаем
+ * напрямую — header-guard защитит от re-entry. */
+#ifdef NOVA_USE_LIBUV
+#include <uv.h>
+#include "eventloop.h"
+#endif
+
+
 
 /* Run a fiber to completion and return its result.
  * entry      : the generated spawn wrapper function
@@ -121,6 +131,48 @@ typedef struct {
     nova_int        interrupt_value;
 } NovaFiberQueue;
 
+/* Plan 22 Ф.3 (D93): NovaSchedState typedef + extern globals.
+ * Полный API — в sched.h (header-only inline). Здесь только typedef и
+ * extern declarations чтобы supervised_step мог использовать
+ * nova_sched_find_state. */
+typedef void (*NovaSchedStopCb)(void* handle);
+typedef struct {
+    NovaFiberQueue* scope;
+    nova_bool       parked[NOVA_SCOPE_CAP];
+    void*           pending_handle[NOVA_SCOPE_CAP];
+    NovaSchedStopCb pending_stop_cb[NOVA_SCOPE_CAP];
+} NovaSchedState;
+
+#define NOVA_SCHED_STATE_CAP 16
+extern NovaSchedState _nova_sched_states[NOVA_SCHED_STATE_CAP];
+extern int            _nova_sched_state_count;
+
+static inline NovaSchedState* nova_sched_find_state(NovaFiberQueue* scope) {
+    if (!scope) return NULL;
+    for (int i = 0; i < _nova_sched_state_count; i++) {
+        if (_nova_sched_states[i].scope == scope) return &_nova_sched_states[i];
+    }
+    return NULL;
+}
+
+/* Forward declarations: full implementations в sched.h (header-only).
+ * Декларируем здесь чтобы supervised_run/_step и _nova_sleep_via_libuv
+ * могли вызвать sched-функции (sched.h подключается ПОСЛЕ fibers.h
+ * в nova_rt.h). NovaSchedStopCb уже определён выше с NovaSchedState. */
+static inline NovaSchedState* nova_sched_get_state(NovaFiberQueue* scope);
+static inline void nova_sched_drop_state(NovaFiberQueue* scope);
+static inline void nova_sched_cancel_all_pending(NovaFiberQueue* scope);
+static inline int  nova_sched_count_alive(NovaFiberQueue* scope);
+static inline int  nova_sched_count_parked(NovaFiberQueue* scope);
+static inline int  nova_sched_count_ready(NovaFiberQueue* scope);
+static inline void nova_sched_park(NovaFiberQueue* scope, int slot);
+static inline void nova_sched_wake(NovaFiberQueue* scope, int slot);
+static inline nova_bool nova_sched_is_parked(NovaFiberQueue* scope, int slot);
+static inline void nova_sched_register_pending(NovaFiberQueue* scope, int slot,
+                                                void* handle,
+                                                NovaSchedStopCb stop_cb);
+static inline void nova_sched_unregister_pending(NovaFiberQueue* scope, int slot);
+
 static inline void nova_scope_init(NovaFiberQueue* q) {
     q->count = 0;
     q->first_error = NULL;
@@ -160,6 +212,10 @@ static inline void nova_cancel_token_cancel(NovaCancelToken* t) {
     if (!t || !t->scope) return;
     if (t->scope->cancel_requested) return;   /* idempotent */
     t->scope->cancel_requested = true;
+    /* Plan 22 Ф.4 (D93): wake all parked fiber'ов через registered
+     * stop_cb's. Это immediate (не дожидаемся следующего yield-point
+     * — fiber вообще park'ом без yield'ов). */
+    nova_sched_cancel_all_pending(t->scope);
     /* Walk linked tokens and cancel them too — kill-switch composition. */
     for (int i = 0; i < t->linked_count; i++) {
         NovaCancelToken* other = t->linked[i];
@@ -269,12 +325,22 @@ static inline int nova_supervised_step(NovaFiberQueue* q) {
      * наружу. */
     NovaEffectSnapshot outer_effects;
     nova_effect_snapshot_save(&outer_effects);
+    /* Plan 22 Ф.3/Ф.4: lookup sched-state (если есть parked fiber'ы).
+     * NULL значит никто не park'ился — старая логика unchanged. */
+    NovaSchedState* sched_st = nova_sched_find_state(q);
     for (int i = 0; i < q->count; i++) {
         mco_coro* co = q->fibers[i];
         if (co == NULL) continue;
         if (mco_status(co) == MCO_DEAD) {
             mco_destroy(co);
             q->fibers[i] = NULL;
+            continue;
+        }
+        /* Plan 22 Ф.3/Ф.4 (D93): skip parked fiber'ы. Они resume'ятся
+         * когда wake'нутся (callback timer'а либо cancel). Count alive++,
+         * чтобы supervised_run не выходил оставив parked permanently. */
+        if (sched_st && sched_st->parked[i]) {
+            alive++;
             continue;
         }
         /* Switch fail-top + interrupt-top to fiber's saved chains.
@@ -322,10 +388,31 @@ static inline int nova_supervised_step(NovaFiberQueue* q) {
 
 /* Round-robin run: resume each live fiber until all are dead.
  * After all fibers complete, if any threw — re-throw on main-flow.
+ *
+ * Plan 22 Ф.4: когда все живые fiber'ы parked (никто не ready), idle —
+ * uv_run UV_RUN_ONCE. Это блокирует main-thread в kernel-wait'е до
+ * ближайшего libuv-события (наш timer's callback пробудит fiber). Так
+ * scheduler не жжёт CPU busy-loop'ом.
  */
 static inline void nova_supervised_run(NovaFiberQueue* q) {
-    int alive;
-    do { alive = nova_supervised_step(q); } while (alive > 0);
+    for (;;) {
+        int alive = nova_supervised_step(q);
+        if (alive == 0) break;
+        /* alive > 0: либо есть ready fiber'ы (step resume'ил кого-то и
+         * counter увеличен), либо ВСЕ alive = parked (никого не
+         * resume'или, только counted++). Различим: если ready=0 и
+         * parked>0 → idle в uv_run UV_RUN_ONCE. */
+#ifdef NOVA_USE_LIBUV
+        int parked = nova_sched_count_parked(q);
+        if (parked > 0 && parked == alive) {
+            /* Все alive parked. Spin до libuv-события (наш sleep timer
+             * либо stop_cb из cancel). */
+            uv_run(nova_evloop(), UV_RUN_ONCE);
+        }
+#endif
+    }
+    /* Cleanup sched-state for этого scope'а (если был alloc'ом). */
+    nova_sched_drop_state(q);
     const char* err = q->first_error;
     nova_bool pending = q->interrupt_pending;
     nova_int  ivalue  = q->interrupt_value;
@@ -406,11 +493,93 @@ static inline void _nova_native_sleep_ms(int64_t ms) {
 }
 #endif
 
+/* ─── Plan 22 Ф.4: libuv-based fiber-sleep (NOVA_USE_LIBUV) ─── */
+#ifdef NOVA_USE_LIBUV
+/* uv.h + eventloop.h уже подключены выше в этом файле. */
+
+/* State для one-shot uv_timer_t sleep на fiber'е. Живёт на стеке
+ * fiber-coroutine'ы (caller frame). */
+typedef struct {
+    NovaFiberQueue* scope;
+    int             slot;
+    uv_timer_t      timer;
+    nova_bool       handle_closed;   /* set by _nova_sleep_close_cb */
+} NovaSleepState;
+
+/* Timer fired: wake parked fiber. Handle remains open until close_cb. */
+static void _nova_sleep_timer_cb(uv_timer_t* h) {
+    NovaSleepState* st = (NovaSleepState*)h->data;
+    nova_sched_wake(st->scope, st->slot);
+}
+
+/* Handle closed — caller cleanup wait может exit'нуть. */
+static void _nova_sleep_close_cb(uv_handle_t* h) {
+    NovaSleepState* st = (NovaSleepState*)h->data;
+    st->handle_closed = true;
+}
+
+/* stop_cb для cancel-integration. Idempotent — handle может уже быть
+ * closing'ом из timer_cb path. */
+static void _nova_sleep_stop_cb(void* handle) {
+    uv_timer_t* timer = (uv_timer_t*)handle;
+    if (!uv_is_closing((uv_handle_t*)timer)) {
+        uv_timer_stop(timer);
+        uv_close((uv_handle_t*)timer, _nova_sleep_close_cb);
+    }
+}
+
+/* Fiber-context sleep через uv_timer_t + park/wake. Production-grade —
+ * нулевой CPU overhead на sleep period, immediate cancel response. */
+static inline void _nova_sleep_via_libuv(NovaFiberQueue* scope, int slot,
+                                          nova_int ms) {
+    NovaSleepState st = {
+        .scope = scope,
+        .slot  = slot,
+        .handle_closed = false,
+    };
+    int rc = uv_timer_init(nova_evloop(), &st.timer);
+    if (rc != 0) {
+        fprintf(stderr, "nova: uv_timer_init failed: %s\n", uv_strerror(rc));
+        return;  /* fallback на busy-yield ниже не нужен — это runtime bug */
+    }
+    st.timer.data = &st;
+    rc = uv_timer_start(&st.timer, _nova_sleep_timer_cb, (uint64_t)ms, 0);
+    if (rc != 0) {
+        fprintf(stderr, "nova: uv_timer_start failed: %s\n", uv_strerror(rc));
+        uv_close((uv_handle_t*)&st.timer, NULL);
+        return;
+    }
+    /* Register для cancel-wake (D93). */
+    nova_sched_register_pending(scope, slot, &st.timer, _nova_sleep_stop_cb);
+    /* Park: scheduler skip'нет нас пока wake не вернёт parked=false. */
+    nova_sched_park(scope, slot);
+    /* Возврат сюда после wake: либо timer_cb fired, либо cancel сделал
+     * stop_cb (закрыл timer) + cancel_all_pending unpark'нул нас. */
+    nova_sched_unregister_pending(scope, slot);
+    /* Cleanup handle. Если timer-cb отработал normal — handle still open,
+     * нужно close. Если cancel stop_cb уже close'нул — uv_is_closing
+     * вернёт true. */
+    if (!uv_is_closing((uv_handle_t*)&st.timer)) {
+        uv_close((uv_handle_t*)&st.timer, _nova_sleep_close_cb);
+    }
+    /* Wait для close_cb fire. Под bootstrap нет multi-thread — close_cb
+     * fire'ает в ближайшем uv_run NOWAIT pass'е. Обычно 1-2 итерации. */
+    while (!st.handle_closed) {
+        uv_run(nova_evloop(), UV_RUN_NOWAIT);
+    }
+}
+#endif /* NOVA_USE_LIBUV */
+
 /* Default impl: context-sensitive sleep (D71).
- *  - In fiber → yield-loop until ms elapsed (each yield checks scope-cancel).
+ *  - In fiber + NOVA_USE_LIBUV: park-on-uv_timer (Plan 22 Ф.4, D93)
+ *  - In fiber (no libuv): busy-yield-loop (legacy fallback)
  *  - On main inside supervised body → drain queue once per yield, then check.
  *  - Else (top-level, no scope) → native OS sleep (no scheduler to yield to).
- * `ms <= 0` → single yield (compatibility with `Time.sleep(0)` idiom). */
+ *
+ * `ms <= 0` → single yield (compatibility with `Time.sleep(0)` idiom).
+ *
+ * Main + top-level ветки **пока** на busy-yield/native-sleep — D92
+ * (Plan 22 Ф.5) выровняет их через implicit main-scope. */
 static inline nova_unit _nova_time_default_sleep(nova_int ms) {
     if (ms <= 0) {
         if (mco_running()) {
@@ -420,20 +589,33 @@ static inline nova_unit _nova_time_default_sleep(nova_int ms) {
         }
         return NOVA_UNIT;
     }
-    int64_t deadline = _nova_monotonic_ms() + (int64_t)ms;
     if (mco_running()) {
-        /* Cooperative wait: yield repeatedly until deadline. Each yield gives
-         * other fibers a chance to run; cancel-check happens inside yield. */
+#ifdef NOVA_USE_LIBUV
+        /* Plan 22 Ф.4 (D93): production path через park-on-uv_timer. */
+        if (_nova_active_scope && _nova_active_slot >= 0) {
+            _nova_sleep_via_libuv(_nova_active_scope, _nova_active_slot, ms);
+            return NOVA_UNIT;
+        }
+        /* Edge case: fiber без scope (shouldn't happen в bootstrap'е, но
+         * defensive). Fall through to legacy busy-yield. */
+#endif
+        /* Legacy: busy-yield until deadline. Сохраняется для не-libuv
+         * сборок (NOVA_USE_LIBUV=0) и для edge cases где fiber без scope. */
+        int64_t deadline = _nova_monotonic_ms() + (int64_t)ms;
         while (_nova_monotonic_ms() < deadline) {
             nova_fiber_yield();
         }
     } else if (_nova_active_scope) {
-        /* Main flow inside a scope: drain queue per pass until deadline. */
+        /* Main flow inside a scope: drain queue per pass until deadline.
+         * Plan 22 Ф.5 заменит на uv_run + main-scope main-step. */
+        int64_t deadline = _nova_monotonic_ms() + (int64_t)ms;
         while (_nova_monotonic_ms() < deadline) {
             nova_supervised_step(_nova_active_scope);
         }
     } else {
-        /* Top-level, no scheduler — fall back to native sleep. */
+        /* Top-level, no scheduler — fall back to native sleep.
+         * Plan 22 Ф.5: D92 implicit main-scope обернёт main, эта ветка
+         * станет unreachable в normal flow. */
         _nova_native_sleep_ms((int64_t)ms);
     }
     return NOVA_UNIT;

@@ -225,4 +225,20 @@ typedef struct { char _dummy; } nova_unit;
  * после fibers.h (NovaFiberQueue должна быть полным типом). */
 #include "sched.h"
 
+/* Plan 22 Ф.4: Windows headers подтянутые libuv (rpcndr.h, etc.)
+ * захламляют namespace макросами типа `small`, `interface` и т.д.
+ * Это collides с Nova-generated кодом (e.g. `int32_t small = ...`).
+ * Undef'им известные коллизии чтобы generated .c компилировался. */
+#ifdef NOVA_USE_LIBUV
+#  ifdef small
+#    undef small
+#  endif
+#  ifdef interface
+#    undef interface
+#  endif
+#  ifdef ERROR
+#    undef ERROR
+#  endif
+#endif
+
 #endif /* NOVA_RT_H */

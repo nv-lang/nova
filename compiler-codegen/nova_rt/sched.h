@@ -34,30 +34,9 @@ extern "C" {
 #endif
 
 /* ─── Park/wake state (side-table) ─────────────────────────────── */
-
-typedef void (*NovaSchedStopCb)(void* handle);
-
-typedef struct {
-    NovaFiberQueue* scope;        /* owner — для lookup; NULL = empty slot */
-    nova_bool       parked[NOVA_SCOPE_CAP];
-    void*           pending_handle[NOVA_SCOPE_CAP];
-    NovaSchedStopCb pending_stop_cb[NOVA_SCOPE_CAP];
-} NovaSchedState;
-
-#define NOVA_SCHED_STATE_CAP 16
-
-/* Globals: storage + count. Один extern, одно definition (см. fibers.c). */
-extern NovaSchedState _nova_sched_states[NOVA_SCHED_STATE_CAP];
-extern int            _nova_sched_state_count;
-
-/* Lookup state by scope. Returns NULL если не существует. */
-static inline NovaSchedState* nova_sched_find_state(NovaFiberQueue* scope) {
-    if (!scope) return NULL;
-    for (int i = 0; i < _nova_sched_state_count; i++) {
-        if (_nova_sched_states[i].scope == scope) return &_nova_sched_states[i];
-    }
-    return NULL;
-}
+/* NovaSchedState typedef + nova_sched_find_state — в fibers.h
+ * (forward-declared там для использования из nova_supervised_step).
+ * Здесь — оставшийся API. */
 
 /* Lookup-or-create state for given scope. */
 static inline NovaSchedState* nova_sched_get_state(NovaFiberQueue* scope) {

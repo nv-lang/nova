@@ -1508,16 +1508,25 @@ Bootstrap-status: `Channel` base реализован (раунд 5);
 ### `Time.sleep(ms)`
 
 Yield-point. По D62 — обычная функция, callable откуда угодно (Async ambient).
-В bootstrap'е (D71) — context-sensitive:
+Семантика: блокирует текущий fiber на не менее чем `ms` миллисекунд.
 
-| Контекст | Эффект |
+**Реализация (Plan 22 Ф.4):** под капотом — libuv `uv_timer_t`. Fiber
+паркуется через park/wake API ([D93](decisions/06-concurrency.md#d93))
+до срабатывания timer-callback'а. Scheduler в это время резюмит других
+fiber'ов либо идёт в `uv_run UV_RUN_ONCE` (kernel-wait, CPU idle).
+
+| Контекст | Реализация |
 |---|---|
-| Внутри fiber-body (spawn) | suspend — scheduler крутит других |
-| Вне fiber, внутри `supervised` body | один pass очереди (main-yield) |
-| Полностью вне scope | no-op |
+| Внутри fiber-body (spawn) внутри supervised | park-on-`uv_timer_t` (D93) — CPU idle, реальное время |
+| Вне fiber, внутри `supervised` body | drain queue пока deadline не пройдёт (Plan 22 Ф.5 → libuv-driven main) |
+| Полностью вне scope | native OS sleep (Plan 22 Ф.5 → implicit main-scope, libuv) |
 
-В bootstrap'е `ms` игнорируется (timer-wheel'а нет). Любое `Time.sleep(N)` =
-один cooperative yield.
+Cancel ([D75](decisions/06-concurrency.md#d75)) прерывает sleep
+**немедленно** через generic `stop_cb` mechanism (D93): cancel-token
+закрывает таймер и wake'ает parked fiber, который throw'ает `"scope
+cancelled"`. Не нужно ждать срабатывания timer'а.
+
+`Time.sleep(0)` — fast yield (один scheduler-pass, ~µs).
 
 ## Тестирование без моков
 

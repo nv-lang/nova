@@ -1,0 +1,80 @@
+// sleep_real_clock.nv — Plan 22 Ф.4 wall-clock validation.
+//
+// Validates: Time.sleep через uv_timer_t (под NOVA_USE_LIBUV) реально
+// ждёт ms миллисекунд, не более чем slack. Тесты используют
+// Time.now() для измерения elapsed.
+
+module nova_tests.concurrency.sleep_real_clock
+
+// Slack 200ms даёт CI-стабильность.
+const SLACK_MS int = 200
+
+test "sleep waits at least ms (fiber-context)" {
+    supervised {
+        spawn {
+            let t0 = Time.now()
+            Time.sleep(100)
+            let elapsed = Time.now() - t0
+            assert(elapsed >= 100)
+            assert(elapsed < 100 + SLACK_MS)
+        }
+    }
+}
+
+test "many fibers sleep concurrently, not sequentially" {
+    let t0 = Time.now()
+    supervised {
+        spawn { Time.sleep(100) }
+        spawn { Time.sleep(100) }
+        spawn { Time.sleep(100) }
+        spawn { Time.sleep(100) }
+    }
+    let elapsed = Time.now() - t0
+    // Все 4 fiber'а спят параллельно — итого ~100ms, не 400ms.
+    assert(elapsed >= 100)
+    assert(elapsed < 100 + SLACK_MS)
+}
+
+test "cancel during long sleep wakes immediately" {
+    let t0 = Time.now()
+    cancel_scope { tok =>
+        spawn {
+            Time.sleep(10000)  // 10 sec — должен быть отменён
+        }
+        spawn {
+            Time.sleep(50)
+            tok.cancel()
+        }
+    }
+    let elapsed = Time.now() - t0
+    // 10 sec sleep должен прерваться через ~50ms + slack.
+    assert(elapsed < 50 + SLACK_MS)
+}
+
+test "Time.sleep(0) is fast yield" {
+    let t0 = Time.now()
+    supervised {
+        spawn {
+            // 100 yield'ов должны завершиться очень быстро.
+            for _ in 0..100 {
+                Time.sleep(0)
+            }
+        }
+    }
+    let elapsed = Time.now() - t0
+    assert(elapsed < SLACK_MS)
+}
+
+test "sleep handler override works (mock)" {
+    let mut calls = 0
+    let mock = handler Time {
+        sleep(ms) { calls += 1; return () }
+        now()     => 12345
+    }
+    with Time = mock {
+        Time.sleep(1000)
+        Time.sleep(2000)
+        Time.sleep(3000)
+    }
+    assert(calls == 3)
+}
