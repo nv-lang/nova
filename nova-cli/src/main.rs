@@ -365,9 +365,12 @@ fn cmd_build(
 
     let mut emitter = nova_codegen::codegen::CEmitter::new();
     emitter.set_source_for_annotations(src.clone());
-    let c_code = emitter
+    let (c_code, warnings) = emitter
         .emit_module(&module)
         .map_err(|e| anyhow!("codegen error: {}", e))?;
+    for w in &warnings {
+        eprintln!("{}", w);
+    }
 
     // determine output path
     let exe_stem = path.file_stem().unwrap_or_default();

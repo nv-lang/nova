@@ -224,6 +224,11 @@ pub struct CEmitter {
     /// из `NOVA_ARRAY_DECL` списка в `nova_rt/array.h` — runtime их
     /// уже даёт, не нужен duplicate typedef.
     novaopt_decls_seen: std::cell::RefCell<std::collections::HashSet<String>>,
+    /// Accumulated lint warnings from codegen (e.g. anonymous-embed override).
+    /// Returned from emit_module instead of printed directly to stderr,
+    /// so test runner can route them to captured_stderr rather than leaking
+    /// to the terminal.
+    warnings: Vec<String>,
     /// Plan 20 Ф.4: stack of active defer/errdefer scopes during emission.
     /// Each block that contains a `defer`/`errdefer` stmt pushes a `DeferScope`
     /// on entry and pops on exit. `Stmt::Return`/`Break`/`Continue` walk the
@@ -366,6 +371,7 @@ impl CEmitter {
             defer_scopes: Vec::new(),
             defer_block_counter: 0,
             var_boxed: HashMap::new(),
+            warnings: Vec::new(),
         }
     }
 
@@ -440,7 +446,7 @@ impl CEmitter {
         self.line(&format!("/* SRC: {}{} */", safe, suffix));
     }
 
-    pub fn emit_module(mut self, module: &Module) -> Result<String, String> {
+    pub fn emit_module(mut self, module: &Module) -> Result<(String, Vec<String>), String> {
         // Pre-populate sum_schemas with built-in Option and Result types.
         {
             let mut opt_variants = HashMap::new();
@@ -939,7 +945,7 @@ impl CEmitter {
                 typedefs)
         };
         self.out = self.out.replace("/*__NOVAOPT_TYPEDEFS__*/", &replacement);
-        Ok(self.out)
+        Ok((self.out, self.warnings))
     }
 
     /// Mangle a test name and append a numeric suffix to guarantee uniqueness.
@@ -3149,16 +3155,15 @@ impl CEmitter {
                 if has_own_override {
                     // Plan 11 Ф.9.5: lint warning "possible infinite recursion"
                     // если own-method вызывает себя без явного base-call'а
-                    // (anonymous embed не даёт имени). Emit'им stderr-warning;
-                    // конкретная detection в bootstrap'е minimal (любой own
-                    // override с тем же signature — потенциальный риск).
+                    // (anonymous embed не даёт имени). Накапливаем в warnings
+                    // (не eprintln!) — test runner направит в captured_stderr.
                     if embeds.iter().any(|(_, _, anon)| *anon) {
-                        eprintln!(
+                        self.warnings.push(format!(
                             "warning: type `{}` overrides delegated method `{}({})`; \
                              anonymous embed has no name for explicit base-call — \
                              possible infinite recursion",
                             wrapper_type, method_name,
-                            sig.param_c_types.join(", "));
+                            sig.param_c_types.join(", ")));
                     }
                     continue;
                 }

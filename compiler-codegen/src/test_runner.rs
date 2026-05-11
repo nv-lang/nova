@@ -1339,6 +1339,25 @@ pub fn run_one(opts: &TestBuildOpts) -> Outcome {
     let find_stderr        = || expect.iter().filter_map(|m| if let ExpectMarker::Stderr(p)     = m { Some(p.as_str()) } else { None }).collect::<Vec<_>>();
 
     // Helper: build a Pass outcome with optional verbose capture.
+    // codegen_warnings_str is prepended to err (if non-empty) so warnings appear
+    // in captured_stderr and in EXPECT_STDERR matching without leaking to terminal.
+    let make_pass_with_cg_warn = |detail: String, elapsed: Duration, out: Option<&str>, err: Option<&str>, cg_warn: &str| {
+        let merged_err = if cg_warn.is_empty() {
+            err.map(|s| s.to_string())
+        } else {
+            Some(match err {
+                Some(s) if !s.is_empty() => format!("{}\n{}", cg_warn, s),
+                _ => cg_warn.to_string(),
+            })
+        };
+        Outcome::Pass {
+            detail,
+            elapsed,
+            captured_stdout: if verbose { out.map(|s| s.to_string()) } else { None },
+            captured_stderr: if verbose { merged_err } else { None },
+            retries: 0,
+        }
+    };
     let make_pass = |detail: String, elapsed: Duration, out: Option<&str>, err: Option<&str>| Outcome::Pass {
         detail,
         elapsed,
@@ -1348,11 +1367,19 @@ pub fn run_one(opts: &TestBuildOpts) -> Outcome {
     };
 
     // Step 1: codegen.
+    // codegen_to_c returns Ok(warnings) on success, Err(msg) on compile error.
+    // Warnings are lint messages (e.g. anonymous-embed override) that belong in
+    // captured_stderr rather than leaking to the terminal.
     let codegen_result = codegen_to_c(opts.nv_file, &src);
+    let codegen_warnings: Vec<String> = match &codegen_result {
+        Ok(ws) => ws.clone(),
+        Err(_) => vec![],
+    };
+    let cg_warn_str: String = codegen_warnings.join("\n");
 
     // EXPECT_COMPILE_ERROR — handled на этапе codegen.
     if let Some(pat) = find_compile_error() {
-        return match codegen_result {
+        return match &codegen_result {
             Ok(_) => Outcome::Fail {
                 stage: Stage::Expectation {
                     mismatch: ExpectMismatch::NoCompileError { expected_pat: pat.clone() },
@@ -1367,7 +1394,7 @@ pub fn run_one(opts: &TestBuildOpts) -> Outcome {
                         stage: Stage::Expectation {
                             mismatch: ExpectMismatch::WrongCompileMsg {
                                 expected_pat: pat.clone(),
-                                got: msg,
+                                got: msg.clone(),
                             },
                         },
                         elapsed: start.elapsed(),
@@ -1595,7 +1622,7 @@ pub fn run_one(opts: &TestBuildOpts) -> Outcome {
                     }
                 }
                 fail.unwrap_or_else(|| {
-                    make_pass("(runtime-panic)".to_string(), start.elapsed(), Some(&stdout), Some(&stderr))
+                    make_pass_with_cg_warn("(runtime-panic)".to_string(), start.elapsed(), Some(&stdout), Some(&stderr), &cg_warn_str)
                 })
             }
         } else if let Some(n) = find_exit_code() {
@@ -1607,7 +1634,7 @@ pub fn run_one(opts: &TestBuildOpts) -> Outcome {
                     elapsed: start.elapsed(),
                 }
             } else {
-                make_pass(format!("(exit-code {})", n), start.elapsed(), Some(&stdout), Some(&stderr))
+                make_pass_with_cg_warn(format!("(exit-code {})", n), start.elapsed(), Some(&stdout), Some(&stderr), &cg_warn_str)
             }
         } else {
             let stdout_pats = find_stdout();
@@ -1655,7 +1682,7 @@ pub fn run_one(opts: &TestBuildOpts) -> Outcome {
                 }
                 fail.unwrap_or_else(|| {
                     let label = if has_content_marker { "(stdout/stderr)".to_string() } else { String::new() };
-                    make_pass(label, start.elapsed(), Some(&stdout), Some(&stderr))
+                    make_pass_with_cg_warn(label, start.elapsed(), Some(&stdout), Some(&stderr), &cg_warn_str)
                 })
             }
         }
@@ -1665,8 +1692,10 @@ pub fn run_one(opts: &TestBuildOpts) -> Outcome {
     outcome
 }
 
-/// Codegen .nv → .c. Возвращает Err(rendered-error-string) если type-check / codegen упали.
-fn codegen_to_c(path: &Path, src: &str) -> Result<(), String> {
+/// Codegen .nv → .c. Возвращает Ok(warnings) на успех, Err(rendered-error-string) на ошибку.
+/// Warnings (напр. anonymous-embed lint) возвращаются caller'у для routing в captured_stderr,
+/// вместо прямого eprintln! который утекал бы в терминал при параллельном запуске тестов.
+fn codegen_to_c(path: &Path, src: &str) -> Result<Vec<String>, String> {
     let mut module = parser::parse(src).map_err(|d| d.render(src, &path.to_string_lossy()))?;
     manifest::check_module_path(path, &module.name).map_err(|s| s.to_string())?;
     types::check_module(&module).map_err(|errs| {
@@ -1679,7 +1708,7 @@ fn codegen_to_c(path: &Path, src: &str) -> Result<(), String> {
 
     let mut emitter = CEmitter::new();
     emitter.set_source_for_annotations(src.to_string());
-    let c_code = emitter
+    let (c_code, warnings) = emitter
         .emit_module(&module)
         .map_err(|e| format!("codegen error: {}", e))?;
     let out_path = path.with_extension("c");
@@ -1690,7 +1719,7 @@ fn codegen_to_c(path: &Path, src: &str) -> Result<(), String> {
             e
         )
     })?;
-    Ok(())
+    Ok(warnings)
 }
 
 // ---------- test-all: walk + summary ----------

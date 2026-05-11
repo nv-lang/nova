@@ -289,9 +289,12 @@ fn cmd_compile(path: &PathBuf, output: Option<&std::path::Path>, annotate_source
     if !annotate_source {
         emitter.disable_source_annotations();
     }
-    let c_code = emitter
+    let (c_code, warnings) = emitter
         .emit_module(&module)
         .map_err(|e| anyhow!("codegen error: {}", e))?;
+    for w in &warnings {
+        eprintln!("{}", w);
+    }
 
     let out_path = match output {
         Some(p) => p.to_path_buf(),
