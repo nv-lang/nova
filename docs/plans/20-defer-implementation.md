@@ -320,3 +320,98 @@ NovaFailFrame integration).
   в defer body (Fail).
 - [D13](../../spec/decisions/08-runtime.md#d13) — `exit` не
   запускает defer'ы.
+
+---
+
+## Production-grade hardening (Ф.8) — после первичного закрытия Plan 20
+
+> **Статус:** в работе (2026-05-11, продолжение).
+> **Контекст:** Plan 20 Ф.1-Ф.7 закрыт, но при retro обнаружены упрощения,
+> отвечающие критерию «не production-grade». Эта фаза закрывает их все.
+
+### 4 issue для закрытия
+
+**(1) Type-check enforcement: handler-method для Never-op обязан exit-control.**
+
+Spec D61 (стр. 1430-1434) требует: handler-method для `fail() -> Never`
+ОБЯЗАН закончиться `interrupt v` или `throw err` (нет значения типа
+Never для return). Сейчас type-checker не enforce'ит это — runtime
+ловит nonspec handler через safety net (`Nova_Fail_fail` делает
+`nova_throw` после handler-return). Фикс: добавить compile-error
+проверку в `types/mod.rs` при analyse'е handler-литералов для
+эффектов с Never-операциями.
+
+**(2) Defer/errdefer на interrupt-path.**
+
+D90 п.8: «defer запускается на любом exit'е, включая interrupt».
+Текущий codegen интегрирует defer cleanup в `leave_defer_scope`
+(normal exit) и в NovaFailFrame setjmp (throw-path). На
+interrupt-path (longjmp на NovaInterruptFrame, минуя оба) defer
+cleanup НЕ запускается. Фикс: интегрировать defer cleanup через
+NovaInterruptFrame setjmp wrapper аналогично errdefer pattern, либо
+эмитить cleanup перед каждой interrupt-jump эмиссией.
+
+**(3) Loop-body integration в 19+ inline-iteration сайтов.**
+
+Только `emit_for` (range case) переписан на `emit_loop_body_inline`.
+Остальные 19+ сайтов с `for stmt in &body.stmts { emit_stmt }`
+(for-in-array, while, while-let, loop, match-arm/if-branch bodies,
+spawn/supervised body) — legacy inline-iteration. Defer внутри
+них **не зарегистрируется** в DeferScope. Фикс: переписать все
+сайты через `emit_loop_body_inline` (или общий
+`emit_block_inline_stmts`).
+
+**(4) D65 правило 3: re-throw в handler skip current frame.**
+
+Когда `throw err` происходит внутри handler-body, runtime должен
+dispatch'нуться на OUTER handler (skip current — иначе infinite
+recursion). Сейчас `Nova_Fail_fail` всегда смотрит на
+`_nova_handler_Fail`, который при re-throw указывает на тот же
+handler. Фикс: emit_with codegen должен сохранять prev handler в
+local, и handler-impl (codegen `_nova_handler_lit_N_impl_Fail_fail`)
+эмитит swap `_nova_handler_Fail = saved_prev` в prologue, restore
+в epilogue. Альтернатива: runtime tracking handler-stack с явным
+skip-current.
+
+### Зависимости
+
+- (4) — самая глубокая (codegen emit_with + runtime). Блокирует
+  positive-тесты для errdefer-on-rethrow (`syntax/errdefer_throw.nv`).
+- (2) — отдельный codegen path, не блокирует другие.
+- (3) — механическая работа, не блокирует.
+- (1) — type-check addition, после неё nonspec handler'ы в тестах
+  отвергаются.
+
+### Порядок исполнения
+
+1. **(1) Type-check** — изолированный, отлавливает nonspec handler'ы
+   в новых тестах (catch errors early).
+2. **(3) Loop-body** — механический рефакторинг + positive-тесты
+   для каждого паттерна (if-branch, while, match-arm, etc.).
+3. **(4) D65 re-throw** — codegen emit_with rewrite + Nova_Fail_fail
+   адаптация. После — позитив-тест для errdefer-on-rethrow.
+4. **(2) Defer-on-interrupt** — InterruptFrame integration в
+   emit_with codegen + позитив-тест.
+
+### Positive-тесты для каждого fix'а
+
+- (1): negative-тест `negative_capability/fail_handler_no_exit_control_rejected.nv`
+  с handler-method без interrupt/throw — должен fail compile.
+- (3): positive-тесты `syntax/defer_in_*.nv` для каждого паттерна
+  (if-branch, while, while-let, match-arm, supervised body, etc.).
+- (4): `syntax/errdefer_rethrow.nv` — errdefer срабатывает между
+  inner-handler-rethrow и outer-handler.
+- (2): `syntax/defer_on_interrupt.nv` — defer срабатывает на
+  interrupt-path; errdefer корректно skip'ается (это handled exit).
+
+### Definition of Done (Ф.8)
+
+- [ ] Type-check rejection для handler-without-exit (D61 enforcement).
+- [ ] Все 19+ inline-iteration сайтов переписаны на emit_loop_body_inline.
+- [ ] Positive-тесты defer-in-* для каждого block-pattern.
+- [ ] D65 re-throw работает: errdefer срабатывает между inner-handler-rethrow
+  и outer-handler-catch.
+- [ ] Defer срабатывает на interrupt-path; errdefer корректно skip.
+- [ ] Все existing тесты PASS, ноль regressions.
+- [ ] Spec D90 обновлён: Bootstrap-status описывает interrupt-path coverage.
+- [ ] simplifications.md retro: Ф.8 hardening закрыл 4 упрощения.
