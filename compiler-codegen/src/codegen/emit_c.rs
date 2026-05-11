@@ -144,6 +144,11 @@ pub struct CEmitter {
     /// `xs.map(inc)` — нужно знать sig чтобы построить thunk и closure.
     /// Обновляется при register_fn в первом проходе.
     user_fn_sigs: HashMap<String, (Vec<String>, String)>,
+    /// Bidirectional inference: maps (callee_name, param_index) → inner closure
+    /// signature (param_types, ret_type) when the HOF parameter at that position
+    /// has type `fn(T...) -> R`. Populated during register_fn pass; consulted in
+    /// emit_call when a ClosureLight argument needs its parameter types inferred.
+    hof_param_fn_sigs: HashMap<(String, usize), (Vec<String>, String)>,
     /// Plan 14 Ф.6 (D69): set of variadic-fn names. На call-site
     /// `emit_call` для имени из этого set'а собирает args[N-1..] в
     /// синтезированный ArrayLit и передаёт как последний аргумент.
@@ -328,6 +333,7 @@ impl CEmitter {
             expected_record_type: None,
             fn_param_sigs: HashMap::new(),
             user_fn_sigs: HashMap::new(),
+            hof_param_fn_sigs: HashMap::new(),
             user_fn_variadic: HashSet::new(),
             suppress_variadic_routing: false,
             emitted_fn_thunks: HashSet::new(),
@@ -2911,6 +2917,23 @@ impl CEmitter {
                 .map(|p| self.type_ref_to_c(&p.ty).unwrap_or_else(|_| "nova_int".into()))
                 .collect();
             self.user_fn_sigs.insert(f.name.clone(), (param_c_tys, ret.clone()));
+            // Bidirectional inference: for each fn-typed parameter, record the
+            // inner closure signature so ClosureLight call-site args can infer
+            // their parameter types without explicit annotations.
+            for (idx, p) in f.params.iter().enumerate() {
+                if let TypeRef::Func { params: fp, return_type, .. } = &p.ty {
+                    let inner_ptys: Vec<String> = fp.iter()
+                        .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".into()))
+                        .collect();
+                    let inner_rty = return_type.as_ref()
+                        .map(|rt| self.type_ref_to_c(rt).unwrap_or_else(|_| "nova_int".into()))
+                        .unwrap_or_else(|| "nova_unit".into());
+                    self.hof_param_fn_sigs.insert(
+                        (f.name.clone(), idx),
+                        (inner_ptys, inner_rty),
+                    );
+                }
+            }
             // Plan 14 Ф.6: регистрация variadic-флага.
             if f.params.last().map(|p| p.is_variadic).unwrap_or(false) {
                 self.user_fn_variadic.insert(f.name.clone());
@@ -7190,8 +7213,42 @@ impl CEmitter {
         let is_generic_call = if let ExprKind::Ident(name) = &func.kind {
             self.generic_fns.contains(name.as_str())
         } else { false };
+        // Bidirectional inference: extract callee name for HOF context lookup.
+        let callee_name_for_hof: Option<String> = match &func.kind {
+            ExprKind::Ident(n) if !is_generic_call => Some(n.clone()),
+            _ => None,
+        };
         let mut arg_strs = Vec::new();
-        for a in args {
+        for (arg_idx, a) in args.iter().enumerate() {
+            let a: &CallArg = a;
+            // Bidirectional inference: if this arg is an untyped ClosureLight,
+            // look up the HOF's declared parameter type at this position and
+            // pass it as context_param_tys to emit_lambda so `|x| x + 1` infers
+            // `x: T` from the callee's signature rather than defaulting to nova_int.
+            if let ExprKind::ClosureLight { params, body } = &a.expr().kind {
+                if let Some(ref cname) = callee_name_for_hof {
+                    if let Some(inner_sig) = self.hof_param_fn_sigs.get(&(cname.clone(), arg_idx)).cloned() {
+                        let legacy_params: Vec<LambdaParam> = params
+                            .iter()
+                            .map(|p| LambdaParam { name: p.name.clone(), ty: None, span: p.span })
+                            .collect();
+                        let body_expr: Expr = match body {
+                            crate::ast::ClosureBody::Expr(e) => (**e).clone(),
+                            crate::ast::ClosureBody::Block(b) => Expr::new(
+                                ExprKind::Block(b.clone()),
+                                b.span,
+                            ),
+                        };
+                        // Build context_param_tys: [(c_type, "")] per inner param.
+                        let ctx: Vec<(String, String)> = inner_sig.0.iter()
+                            .map(|t| (t.clone(), String::new()))
+                            .collect();
+                        let v = self.emit_lambda(&legacy_params, &body_expr, Some(&ctx), None)?;
+                        arg_strs.push(v);
+                        continue;
+                    }
+                }
+            }
             let arg_ty = if is_option_or_result_ok_ctor || is_generic_call {
                 self.infer_expr_c_type(a.expr())
             } else { String::new() };
