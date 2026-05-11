@@ -1,6 +1,6 @@
 # План 26: hardening test-runner до cargo/go-test уровня
 
-**Статус:** ✅ Ф.1-Ф.4, Ф.6-Ф.11 ЗАКРЫТЫ 2026-05-11. Ф.5 (caching) отложен.
+**Статус:** ✅ Ф.1-Ф.4, Ф.6-Ф.14 ЗАКРЫТЫ 2026-05-11. Ф.5 (caching) отложен.
 **Дата создания:** 2026-05-11.
 **Тип:** инфраструктурный (DX + CI). Не меняет семантику Nova, улучшает test-runner до production-grade.
 
@@ -365,6 +365,60 @@ let inner = if cfg!(target_os = "windows") {
 **Решение.** Использовать `Start-Process` с RedirectStandardError либо просто `cmd /c "nova-codegen test-all ..."` — cmd не имеет PS-trap'ов.
 
 Ф.11 объём: 5-10 строк.
+
+### Ф.12 — Flaky-retry (`--retries N`)
+
+**Текущая проблема.** На Windows под Defender'ом transient `lld-link: cannot open output file` (AV держит handle на свежем .exe). Real bug — не Nova code, а environment race. Без retry — false-FAIL в CI.
+
+**Решение.** В worker-loop run_all обернуть `run_one()` в retry. **Только для transient-class fails** — `cargo-nextest`-style classifier:
+- `Stage::Cc { error: "cannot open output file" }` → retry.
+- `Stage::Cc { error: "permission denied" / "os error 5/32" }` → retry.
+- `Stage::Run { error: "access is denied" }` → retry.
+- Все остальные (codegen, expectation, real run-fail) → НЕ retry.
+
+Exponential backoff: 100ms, 200ms, 400ms. После retry — log `↻ retry-N passed: <name>` в text-mode (DX-сигнал что AV есть). В JSON — silently retry.
+
+CLI: `--retries 0|2|N`. Default 0 (для local dev — sharp signal). CI рекомендация `--retries 2`.
+
+Ф.12 объём: ~70 строк (helper `is_transient_fail` + loop в worker).
+
+### Ф.13 — Graceful Ctrl+C
+
+**Текущая проблема.** Ctrl+C во время прогона → main thread'у SIGINT приходит, но child cc/exe **zombi**'ются. Worker'ы продолжают spawn новые тесты пока сам runtime не завершится.
+
+**Решение.** Cross-platform signal handler через raw Win32 `SetConsoleCtrlHandler` (Windows) / POSIX `signal(SIGINT/SIGTERM)` (Unix). Atomic `CANCELLED` flag. Worker'ы проверяют `is_cancelled()` перед каждым тестом — graceful exit, partial summary.
+
+Уже запущенные child'ы убиваются по timeout-mechanism'у Ф.1 (KILL автоматически).
+
+Idempotent install — повторные вызовы no-op (важно для интеграционных тестов).
+
+Ф.13 объём: ~60 строк (cross-platform signal handler + worker poll).
+
+### Ф.14 — JUnit XML output
+
+**Текущая проблема.** GitHub Actions, GitLab CI, Jenkins, Azure DevOps, TeamCity — все они нативно парсят **JUnit XML** для test reports. Наши `text` / `json` / `tap` формы требуют custom-parser'ов на стороне CI.
+
+**Решение.** Добавить `--format junit`. Структура (стандартный JUnit XML):
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="nova_tests" tests="143" failures="0" time="91.082">
+  <testsuite name="nova_tests" tests="143" failures="0" time="91.082" timestamp="2026-05-11T12:42:47">
+    <testcase classname="basics" name="literals" time="11.774"/>
+    <testcase classname="syntax" name="errdefer_throw" time="2.314">
+      <failure type="expectation" message="expected exit code 42, got 0"/>
+    </testcase>
+  </testsuite>
+</testsuites>
+```
+
+- `classname` = path-before-last-slash, `name` = basename. Это работает с GitHub Actions test grouping.
+- `failure type` = stage (codegen/cc/run/no-c-file/expectation/timeout).
+- `message` — детали (escape'нутые через `xml_escape`).
+- `timestamp` — ISO-8601 через own `civil_from_days` (Howard Hinnant algorithm — без `chrono` deps).
+
+JUnit — **batch format**, per-test events не emit'ятся (XML требует cumulative `<testsuite>` wrapper). `emit_event` для `Junit` no-op'ит; вся XML emit'ится в `print_summary`.
+
+Ф.14 объём: ~100 строк (XML escape + civil_from_days + Junit branch в print_summary).
 
 ---
 

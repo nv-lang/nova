@@ -263,7 +263,9 @@ Common flags (identical names in `.ps1` PascalCase and `.sh` kebab-case):
 .\run_tests.ps1 -Mode release                 # -O3 -flto compilation
 .\run_tests.ps1 -Toolchain clang              # force toolchain
 .\run_tests.ps1 -Jobs 4 -Timeout 60           # parallel + timeout
-.\run_tests.ps1 -Format json                  # CI-friendly output
+.\run_tests.ps1 -Format json                  # JSON events (one per line)
+.\run_tests.ps1 -Format junit > results.xml   # JUnit XML for CI parsers
+.\run_tests.ps1 -Retries 2                    # retry transient AV/race fails
 .\run_tests.ps1 -RerunFailed                  # only failed-last-time
 ```
 

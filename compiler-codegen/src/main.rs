@@ -148,6 +148,10 @@ enum Cmd {
         /// в --results-file.
         #[arg(long = "rerun-failed")]
         rerun_failed: bool,
+        /// Plan 26 Ф.12: количество retry для transient AV/race fail'ов
+        /// (e.g., 'cannot open output file'). 0 = no retry. CI default 2.
+        #[arg(long, default_value_t = 0)]
+        retries: u32,
     },
 }
 
@@ -184,8 +188,8 @@ fn main() -> ExitCode {
         Cmd::DumpRuntime => cmd_dump_runtime(),
         Cmd::TestBuild { file, mode, toolchain, vcvars, clang, cg_include, rt_dir, tmp_dir, display, keep_artifacts, timeout } =>
             cmd_test_build(&file, &mode, &toolchain, vcvars.as_deref(), clang.as_deref(), cg_include.as_deref(), rt_dir.as_deref(), tmp_dir.as_deref(), display.as_deref(), keep_artifacts, timeout),
-        Cmd::TestAll { tests_dir, stdlib_dir, include_stdlib, filter, mode, toolchain, vcvars, clang, cg_include, rt_dir, tmp_dir, keep_artifacts, timeout, jobs, format, verbose, quiet, results_file, rerun_failed } =>
-            cmd_test_all(&tests_dir, &stdlib_dir, include_stdlib, filter.as_deref(), &mode, &toolchain, vcvars.as_deref(), clang.as_deref(), cg_include.as_deref(), rt_dir.as_deref(), tmp_dir.as_deref(), keep_artifacts, timeout, jobs, &format, verbose, quiet, results_file.as_deref(), rerun_failed),
+        Cmd::TestAll { tests_dir, stdlib_dir, include_stdlib, filter, mode, toolchain, vcvars, clang, cg_include, rt_dir, tmp_dir, keep_artifacts, timeout, jobs, format, verbose, quiet, results_file, rerun_failed, retries } =>
+            cmd_test_all(&tests_dir, &stdlib_dir, include_stdlib, filter.as_deref(), &mode, &toolchain, vcvars.as_deref(), clang.as_deref(), cg_include.as_deref(), rt_dir.as_deref(), tmp_dir.as_deref(), keep_artifacts, timeout, jobs, &format, verbose, quiet, results_file.as_deref(), rerun_failed, retries),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -513,6 +517,7 @@ fn cmd_test_all(
     quiet: bool,
     results_file: Option<&Path>,
     rerun_failed: bool,
+    retries: u32,
 ) -> Result<()> {
     let mode = test_runner::Mode::parse(mode)?;
     let pref = test_runner::ToolchainPref::parse(toolchain)?;
@@ -586,6 +591,7 @@ fn cmd_test_all(
         cache_dir: None, // Ф.5 — не реализовано, оставлен крючок в opts.
         results_file,
         rerun_failed,
+        retries,
     };
     let summary = test_runner::run_all(opts)?;
     test_runner::print_summary(&summary, format);

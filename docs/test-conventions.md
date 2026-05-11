@@ -43,10 +43,11 @@ per-test timeout, JSON output) живёт в Rust в
 | `-Toolchain auto\|clang\|msvc\|gcc` | `--toolchain ...` | Compiler. Default: auto (Clang → MSVC → GCC) |
 | `-Timeout <secs>` | `--timeout <secs>` | Per-test timeout. Default 60 |
 | `-Jobs <N>` | `--jobs <N>` | Parallel workers. 0 = num_cpus |
-| `-Format text\|json\|tap` | `--format ...` | Output format. Default text |
+| `-Format text\|json\|tap\|junit` | `--format ...` | Output format. Default text |
 | `-Verbose` / `-Quiet` | `--verbose` / `--quiet` | Verbosity |
 | `-ResultsFile <path>` | `--results-file <path>` | Куда сохранить per-test JSON |
 | `-RerunFailed` | `--rerun-failed` | Прогнать только тесты которые fail/timeout в results-file |
+| `-Retries <N>` | `--retries <N>` | Retry transient (AV-race) fails. CI default 2 |
 | `-KeepArtifacts` | `--keep-artifacts` | Не удалять .exe/.obj после прогона |
 
 ### Примеры
@@ -67,9 +68,26 @@ per-test timeout, JSON output) живёт в Rust в
 .\run_tests.ps1 -Mode release
 ```
 
-**JSON output для CI**:
+**JSON output для custom CI parser'ов**:
 ```bash
 ./run_tests.sh --format json --results-file ci-results.jsonl
+```
+
+**JUnit XML для CI** (GitHub Actions / GitLab CI / Jenkins / Azure DevOps):
+```bash
+./run_tests.sh --format junit --retries 2 > test-results.xml
+```
+Стандартный JUnit XML schema — нативно парсится всеми mainstream CI:
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="nova_tests" tests="143" failures="0" time="91.082">
+  <testsuite tests="143" failures="0" time="91.082" timestamp="2026-05-11T12:42:47">
+    <testcase classname="basics" name="literals" time="0.234"/>
+    <testcase classname="syntax" name="bad_test" time="0.514">
+      <failure type="expectation" message="expected exit 42, got 0"/>
+    </testcase>
+  </testsuite>
+</testsuites>
 ```
 Каждая строка — событие:
 ```json
@@ -151,10 +169,20 @@ Env-override paths:
 transient `lld-link: cannot open output file` ошибки — AV держит
 handle на свежесгенерированном `.exe` пока соседний worker пытается
 linkать. Workarounds:
+- **`--retries 2`** (Plan 26 Ф.12) — transient AV/race fails автоматически
+  ретраятся. Real test fails не ретраятся (только classifier по
+  error-сигнатурам). Это recommended setting для CI.
 - `--jobs 1 --timeout 60` — sequential (стабильно, но медленнее).
 - **AV exclusion** для `target/`, `$TEMP/nova_tests/` — снимает
-  bottleneck.
+  bottleneck полностью.
 - В CI без Defender'а (Linux runners) parallel работает корректно.
+
+### Graceful cancellation
+
+`Ctrl+C` во время прогона: worker'ы graceful exit на следующем тесте
+(не забирают новые jobs из queue). Уже запущенные child-процессы
+получат KILL по `--timeout`. Summary показывает что было выполнено
+до cancel'а.
 
 См. [Plan 26 retro](plans/26-test-runner-hardening.md) для деталей.
 

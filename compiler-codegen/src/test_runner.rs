@@ -1273,6 +1273,113 @@ pub struct TestAllOpts<'a> {
     /// Если true: фильтровать только тесты которые были fail/timeout
     /// в `results_file`. Если results_file нет или unreadable — error.
     pub rerun_failed: bool,
+    /// Plan 26 Ф.12: количество retry для **transient** fail'ов
+    /// (AV-race `cannot open output file`, etc.). 0 = no retry.
+    /// Default 0 в CLI, типичное значение для CI = 2.
+    pub retries: u32,
+}
+
+// ---------- Plan 26 Ф.13: graceful Ctrl+C ----------
+
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// Global cancellation flag. Set'ится из signal-handler'а при Ctrl+C
+/// (SIGINT) и проверяется worker thread'ами перед каждым тестом.
+/// Если true — worker'ы возвращают сразу, run_all возвращает partial
+/// summary.
+static CANCELLED: AtomicBool = AtomicBool::new(false);
+
+/// Установить SIGINT/Ctrl+C handler. Idempotent — повторные вызовы no-op.
+/// Внутри handler'а: atomic flag, **никаких** allocations (signal-safety
+/// rules).
+pub fn install_cancel_handler() {
+    static INSTALLED: AtomicBool = AtomicBool::new(false);
+    if INSTALLED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        // SetConsoleCtrlHandler via raw Win32. Signature:
+        //   BOOL WINAPI HandlerRoutine(DWORD dwCtrlType);
+        // Возвращает TRUE = handled, FALSE = next handler.
+        type PhandlerRoutine = unsafe extern "system" fn(u32) -> i32;
+        extern "system" {
+            fn SetConsoleCtrlHandler(handler: PhandlerRoutine, add: i32) -> i32;
+        }
+        unsafe extern "system" fn handler(_ctrl_type: u32) -> i32 {
+            CANCELLED.store(true, Ordering::SeqCst);
+            1 // TRUE — handled, не пускаем дефолтному terminate'у завершить
+              // процесс мгновенно, дадим workers cleanup.
+        }
+        unsafe {
+            SetConsoleCtrlHandler(handler, 1);
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        // POSIX signal через `libc::signal`. Минимальный handler —
+        // только atomic store.
+        extern "C" {
+            fn signal(signum: i32, handler: extern "C" fn(i32)) -> usize;
+        }
+        const SIGINT: i32 = 2;
+        const SIGTERM: i32 = 15;
+        extern "C" fn handler(_sig: i32) {
+            CANCELLED.store(true, Ordering::SeqCst);
+        }
+        unsafe {
+            signal(SIGINT, handler);
+            signal(SIGTERM, handler);
+        }
+    }
+}
+
+/// Проверить установлен ли cancel-флаг. Worker thread'ы вызывают перед
+/// каждым тестом — если true, прекращают забирать новые jobs.
+pub fn is_cancelled() -> bool {
+    CANCELLED.load(Ordering::SeqCst)
+}
+
+/// Reset cancel-флага для unit-тестов.
+#[cfg(test)]
+fn reset_cancelled_for_test() {
+    CANCELLED.store(false, Ordering::SeqCst);
+}
+
+/// Plan 26 Ф.12: classify whether outcome looks like transient AV/race
+/// failure которую стоит retry'нуть. Real test fails (expectation mismatch,
+/// codegen error) — НЕ retry'им, это были бы false-PASS.
+pub fn is_transient_fail(outcome: &Outcome) -> bool {
+    match outcome {
+        Outcome::Fail { stage, .. } => match stage {
+            // Linker race: lld-link / cl.exe не может открыть .exe потому
+            // что AV держит handle от свежей сборки соседнего worker'а.
+            // Также: `cannot open input file` (.obj locked).
+            Stage::Cc { error } => {
+                let e = error.to_lowercase();
+                e.contains("cannot open output file")
+                    || e.contains("cannot open input file")
+                    || e.contains("being used by another process")
+                    || e.contains("permission denied")
+                    || e.contains("access is denied")
+                    || e.contains("os error 5")
+                    || e.contains("os error 32")  // ERROR_SHARING_VIOLATION
+            }
+            // Run-fail: AV может также блокировать запуск exe.
+            Stage::Run { error } => {
+                let e = error.to_lowercase();
+                e.contains("being used by another process")
+                    || e.contains("access is denied")
+                    || e.contains("os error 5")
+                    || e.contains("os error 32")
+            }
+            // Codegen errors, expectation mismatches, NoCFile — real fails.
+            _ => false,
+        },
+        // Timeout — потенциально transient (heavy load), но обычно реальный hang.
+        // Не retry'им по умолчанию — пользователь явно увидит и решит.
+        _ => false,
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1280,6 +1387,10 @@ pub enum OutputFormat {
     Text,
     Json,
     Tap,
+    /// Plan 26 Ф.14: JUnit XML — стандарт CI (GitHub Actions, GitLab,
+    /// Jenkins, Azure DevOps, TeamCity). Emit'ится только в summary
+    /// (per-test events не stream'ятся; XML требует cumulative aggregate).
+    Junit,
 }
 
 impl OutputFormat {
@@ -1288,7 +1399,8 @@ impl OutputFormat {
             "text" => Ok(OutputFormat::Text),
             "json" => Ok(OutputFormat::Json),
             "tap" => Ok(OutputFormat::Tap),
-            _ => Err(anyhow!("unknown format `{}` (expected text|json|tap)", s)),
+            "junit" => Ok(OutputFormat::Junit),
+            _ => Err(anyhow!("unknown format `{}` (expected text|json|tap|junit)", s)),
         }
     }
 }
@@ -1654,9 +1766,34 @@ fn emit_event(format: OutputFormat, idx: usize, total: usize, name: &str, outcom
                 }
             };
         }
+        OutputFormat::Junit => {
+            // JUnit XML — batch format. Per-test events не emit'им; всё
+            // строится в print_summary через cumulative results.
+        }
     }
     let _ = stdout.flush();
     let _ = (idx, total); // suppress unused warning для text/tap путей
+}
+
+/// Plan 26 Ф.14: XML-escape для атрибутов / содержимого JUnit XML.
+/// Минимальный — &<>"' и control chars.
+fn xml_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 8);
+    for c in s.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&apos;"),
+            c if (c as u32) < 0x20 && c != '\n' && c != '\r' && c != '\t' => {
+                // XML 1.0 не допускает control chars кроме \n\r\t.
+                out.push(' ');
+            }
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 /// Plan 26 Ф.10: загрузить ResultRecord'ы из JSON. Простой format
@@ -1720,6 +1857,9 @@ fn save_results(path: &Path, records: &[ResultRecord]) -> std::io::Result<()> {
 }
 
 pub fn run_all(opts: TestAllOpts) -> Result<Summary> {
+    // Plan 26 Ф.13: install Ctrl+C handler один раз. Worker'ы проверят
+    // is_cancelled() перед каждым тестом и graceful exit'нут.
+    install_cancel_handler();
     // Tests-dir обязателен; stdlib-dir — опционален.
     let mut inputs: Vec<(PathBuf, /*is_stdlib*/ bool)> = Vec::new();
     let mut tests_files = Vec::new();
@@ -1818,8 +1958,17 @@ pub fn run_all(opts: TestAllOpts) -> Result<Summary> {
             let mode = opts.mode;
             let timeout = opts.timeout;
             let keep_artifacts = opts.keep_artifacts;
+            let retries = opts.retries;
 
             s.spawn(move || loop {
+                // Plan 26 Ф.13: cooperative cancellation. При Ctrl+C
+                // worker'ы выходят на следующей итерации, не забирая
+                // новые тесты. Уже запущенный child-процесс получит
+                // KILL по wait_with_timeout-таймауту (но это редкий
+                // case — обычно child'ы быстрые).
+                if is_cancelled() {
+                    return;
+                }
                 let idx = next_idx.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 if idx >= jobs.len() {
                     return;
@@ -1837,7 +1986,33 @@ pub fn run_all(opts: TestAllOpts) -> Result<Summary> {
                     libuv: libuv_ref,
                     timeout,
                 };
-                let outcome = run_one(&test_opts);
+                // Plan 26 Ф.12: retry loop для transient AV/linker race
+                // fails. Реальные test-fail'ы (expectation mismatch, codegen
+                // error) НЕ retry'им — иначе false-PASS. Только AV-class.
+                // Exponential backoff: 100ms, 200ms, 400ms.
+                let mut outcome = run_one(&test_opts);
+                for attempt in 1..=retries {
+                    if !is_transient_fail(&outcome) {
+                        break;
+                    }
+                    let backoff = std::time::Duration::from_millis(100 * (1 << (attempt - 1)));
+                    std::thread::sleep(backoff);
+                    outcome = run_one(&test_opts);
+                    if outcome.is_pass() {
+                        // Сообщаем что retry помог — DX-сигнал что есть AV-race.
+                        // В JSON-mode не emit'им (был бы duplicate event).
+                        if matches!(format, OutputFormat::Text) {
+                            let mut stdout = std::io::stdout().lock();
+                            let _ = writeln!(
+                                stdout,
+                                "  ↻ retry-{} passed: {}",
+                                attempt, display
+                            );
+                            let _ = stdout.flush();
+                        }
+                        break;
+                    }
+                }
 
                 // Streaming output: Quiet — только FAIL; Normal/Verbose — все.
                 let should_emit = match verbosity {
@@ -1940,8 +2115,91 @@ pub fn print_summary(summary: &Summary, format: OutputFormat) {
             let _ = writeln!(stdout, "# pass {}", summary.pass);
             let _ = writeln!(stdout, "# fail {}", summary.fail);
         }
+        OutputFormat::Junit => {
+            // JUnit XML batch output. Schema: <testsuites><testsuite>
+            // <testcase>. Failures emit'ятся как <failure type="..."
+            // message="..."/> child element.
+            let total_s: f64 = summary.results.iter()
+                .map(|(_, o)| o.elapsed().as_secs_f64()).sum();
+            let timestamp = chrono_like_iso8601();
+            let _ = writeln!(stdout, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>");
+            let _ = writeln!(stdout,
+                "<testsuites name=\"nova_tests\" tests=\"{}\" failures=\"{}\" time=\"{:.3}\">",
+                summary.results.len(), summary.fail, total_s);
+            let _ = writeln!(stdout,
+                "  <testsuite name=\"nova_tests\" tests=\"{}\" failures=\"{}\" time=\"{:.3}\" timestamp=\"{}\">",
+                summary.results.len(), summary.fail, total_s, xml_escape(&timestamp));
+            for (name, outcome) in &summary.results {
+                // Split classname.testname по последнему `/`.
+                let (classname, testname) = match name.rfind('/') {
+                    Some(idx) => (&name[..idx], &name[idx + 1..]),
+                    None => ("", name.as_str()),
+                };
+                let elapsed_s = outcome.elapsed().as_secs_f64();
+                if outcome.is_pass() {
+                    let _ = writeln!(stdout,
+                        "    <testcase classname=\"{}\" name=\"{}\" time=\"{:.3}\"/>",
+                        xml_escape(classname), xml_escape(testname), elapsed_s);
+                } else {
+                    let stage = match outcome {
+                        Outcome::Timeout { .. } => "timeout",
+                        Outcome::Fail { stage, .. } => match stage {
+                            Stage::Codegen { .. } => "codegen",
+                            Stage::Cc { .. } => "cc",
+                            Stage::Run { .. } => "run",
+                            Stage::NoCFile => "no-c-file",
+                            Stage::Expectation { .. } => "expectation",
+                        },
+                        _ => "unknown",
+                    };
+                    let detail = outcome.detail();
+                    let _ = writeln!(stdout,
+                        "    <testcase classname=\"{}\" name=\"{}\" time=\"{:.3}\">",
+                        xml_escape(classname), xml_escape(testname), elapsed_s);
+                    let _ = writeln!(stdout,
+                        "      <failure type=\"{}\" message=\"{}\"/>",
+                        xml_escape(stage), xml_escape(&detail));
+                    let _ = writeln!(stdout, "    </testcase>");
+                }
+            }
+            let _ = writeln!(stdout, "  </testsuite>");
+            let _ = writeln!(stdout, "</testsuites>");
+        }
     }
     let _ = stdout.flush();
+}
+
+/// Best-effort ISO-8601 timestamp без extra deps. Format: YYYY-MM-DDTHH:MM:SS.
+/// На systems где SystemTime accuracy ≥1 s — достаточно для JUnit timestamp.
+fn chrono_like_iso8601() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let secs = SystemTime::now().duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs()).unwrap_or(0);
+    // Простой Y/M/D разбор. Не handlим leap seconds, UTC always.
+    let days = (secs / 86400) as i64;
+    let h = ((secs % 86400) / 3600) as u32;
+    let m = ((secs % 3600) / 60) as u32;
+    let s = (secs % 60) as u32;
+    // Days since 1970-01-01. Простое вычисление Y/M/D через
+    // алгоритм Howard Hinnant (civil_from_days).
+    let (y, mo, d) = civil_from_days(days);
+    format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}", y, mo, d, h, m, s)
+}
+
+/// Howard Hinnant's civil_from_days — стандартный алгоритм
+/// для конверсии days-since-epoch → (year, month, day) без libc/chrono.
+fn civil_from_days(z: i64) -> (i32, u32, u32) {
+    let z = z + 719468;
+    let era = if z >= 0 { z } else { z - 146096 } / 146097;
+    let doe = (z - era * 146097) as u64; // [0, 146096]
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365; // [0, 399]
+    let y = yoe as i32 + (era as i32) * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
+    let mp = (5 * doy + 2) / 153; // [0, 11]
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32; // [1, 31]
+    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32; // [1, 12]
+    let y = if m <= 2 { y + 1 } else { y };
+    (y, m, d)
 }
 
 #[cfg(test)]

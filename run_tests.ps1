@@ -22,15 +22,17 @@ param(
     [int]$Timeout = 60,
     # Plan 26 Ф.3: количество параллельных worker'ов. 0 = num_cpus.
     [int]$Jobs = 0,
-    # Plan 26 Ф.4: output format.
-    [ValidateSet("text", "json", "tap")]
+    # Plan 26 Ф.4 + Ф.14: output format.
+    [ValidateSet("text", "json", "tap", "junit")]
     [string]$Format = "text",
     # Plan 26 Ф.9: verbose/quiet.
     [switch]$Verbose,
     [switch]$Quiet,
     # Plan 26 Ф.10: results-file path + --rerun-failed.
     [string]$ResultsFile = "",
-    [switch]$RerunFailed
+    [switch]$RerunFailed,
+    # Plan 26 Ф.12: retry transient AV/race fails. 0 = no retry, 2 = CI default.
+    [int]$Retries = 0
 )
 
 $ErrorActionPreference = "Continue"
@@ -82,6 +84,7 @@ if ($Verbose)        { $cli_args += "--verbose" }
 if ($Quiet)          { $cli_args += "--quiet" }
 if ($ResultsFile)    { $cli_args += @("--results-file", $ResultsFile) }
 if ($RerunFailed)    { $cli_args += "--rerun-failed" }
+if ($Retries -gt 0)  { $cli_args += @("--retries", $Retries) }
 if ($vcvars -and (Test-Path $vcvars)) {
     $cli_args += @("--vcvars", $vcvars)
 }
