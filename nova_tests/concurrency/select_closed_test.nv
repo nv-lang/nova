@@ -43,11 +43,13 @@ test "select: Some arm fires on buffered value, wildcard on closed" {
     tx.send(42)
     tx.close()
 
-    // First select: Some fires (value in buffer)
+    // First select: drain buffered value via direct recv (не select)
+    // чтобы избежать flaky Fisher-Yates когда оба арма ready.
     let mut got = 0
-    select {
-        Some(v) = rx => { got = v }
-        _ = rx       => { got = -1 }
+    let opt = rx.recv()
+    match opt {
+        Some(v) => { got = v }
+        None    => { got = -1 }
     }
     assert(got == 42)
 
