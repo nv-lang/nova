@@ -3832,4 +3832,4 @@ Commit: 8a503dc9d plan-22 verification pass
 setup нужен с первого раза. Mitigation: libuv vendored в репо,
 `detect_or_build_libuv` в test_runner строит автоматически.
 
-Commit: TBD (F2 libuv mandatory)
+Commit: efb0248d7 plan-22 F2: libuv mandatory

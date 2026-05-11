@@ -5064,4 +5064,4 @@ User decision «нет других вариантов» = немедленно 
 conditional code paths. Оставлять dead `#else` branches «на всякий
 случай» — это active maintenance burden, не safety net.
 
-Commit: TBD (F2 libuv mandatory)
+Commit: efb0248d7 plan-22 F2: libuv mandatory
