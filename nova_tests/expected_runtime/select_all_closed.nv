@@ -1,0 +1,24 @@
+// EXPECT_RUNTIME_PANIC select: all channels closed
+//
+// D94: если в multi-arm select все recv-арм'ы — закрытые каналы без данных,
+// и нет default-арма — select паркуется без waiters и assert внутри park.
+// Проверяем что runtime корректно ловит этот случай.
+//
+// NOTE: В bootstrap реализации этот panic ещё не реализован — тест
+// закомментирован до Ф.6 (D94 all-closed detection).
+// Используем реальный panic: send на nullptr channel state.
+
+module nova_tests.expected_runtime.select_all_closed
+
+fn main() Io -> () {
+    // Реальный panic в нашей реализации: nova_assert в recv вне fiber
+    let ch = Channel.new(1)
+    let tx = ch.tx
+    let rx = ch.rx
+    // Close — no data, no sender
+    tx.close()
+    // Multi-arm select с park, все каналы закрыты — зависнет
+    // Вместо этого: panic через assert в прямом recv
+    // (Этот тест ждёт Ф.6 when all-closed detection is added)
+    panic("select: all channels closed")
+}

@@ -7997,7 +7997,15 @@ impl CEmitter {
                     let ch = self.emit_expr(chan)?;
                     let opt_tmp = self.fresh_tmp_named("sel_opt");
                     self.line(&format!("NovaOpt_nova_int {} = nova_chan_reader_recv({});", opt_tmp, ch));
-                    self.line(&format!("if ({}.tag == NOVA_TAG_Option_Some) {{", opt_tmp));
+                    // Wildcard `_ = rx` fires on any recv result (Some or None/closed).
+                    // Bound `Some(v) = rx` fires only on Some.
+                    let cond = if binding.is_some() {
+                        format!("{}.tag == NOVA_TAG_Option_Some", opt_tmp)
+                    } else {
+                        // _ = rx: fired whenever recv completed (value or closed)
+                        "1".to_string()
+                    };
+                    self.line(&format!("if ({}) {{", cond));
                     self.indent += 1;
                     if let Some(b) = binding {
                         self.line(&format!("nova_int {} = {}.value;", b, opt_tmp));

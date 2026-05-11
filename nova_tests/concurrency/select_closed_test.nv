@@ -1,0 +1,123 @@
+// select_closed_test.nv — Plan 31 (D94): closed-channel и cancel_scope.
+//
+// Тесты покрывают сценарии с закрытыми каналами и cancel_scope.
+// В текущей реализации D94 select различает ready/not-ready арм,
+// но не различает Some(v) от None (closed) в dispatch — это
+// намеренное упрощение bootstrap (None-arm планируется отдельно).
+
+module nova_tests.concurrency.select_closed_test
+
+// ================================================================
+// SECTION 1: Wildcard arm при наличии данных и при закрытом канале
+// ================================================================
+
+test "select: wildcard recv fires when channel has data" {
+    // _ = rx matches any ready recv (closed or with value)
+    let ch = Channel.new(1)
+    let tx = ch.tx
+    let rx = ch.rx
+    tx.send(99)
+    let mut fired = false
+    select {
+        _ = rx => { fired = true }
+    }
+    assert(fired)
+}
+
+test "select: wildcard recv fires when channel already closed" {
+    let ch = Channel.new(1)
+    let tx = ch.tx
+    let rx = ch.rx
+    tx.close()
+    let mut fired = false
+    select {
+        _ = rx => { fired = true }
+    }
+    assert(fired)
+}
+
+test "select: Some arm fires on buffered value, wildcard on closed" {
+    let ch = Channel.new(2)
+    let tx = ch.tx
+    let rx = ch.rx
+    tx.send(42)
+    tx.close()
+
+    // First select: Some fires (value in buffer)
+    let mut got = 0
+    select {
+        Some(v) = rx => { got = v }
+        _ = rx       => { got = -1 }
+    }
+    assert(got == 42)
+
+    // Second select: wildcard fires (closed, empty)
+    let mut closed_fired = false
+    select {
+        _ = rx => { closed_fired = true }
+    }
+    assert(closed_fired)
+}
+
+// ================================================================
+// SECTION 2: cancel_scope + select
+// ================================================================
+
+test "select: data wins cancel_scope race" {
+    // Data arrives immediately; scope cancel comes much later.
+    // Expect select to fire with the data, no error.
+    let ch = Channel.new(1)
+    let tx = ch.tx
+    let rx = ch.rx
+    let mut branch = 0
+    let mut error_seen = false
+
+    with Fail = handler Fail {
+        fail(_msg) {
+            error_seen = true
+            interrupt ()
+        }
+    } {
+        cancel_scope { tok =>
+            spawn {
+                tx.send(77)
+                Time.sleep(500)
+                tok.cancel()
+            }
+            spawn {
+                select {
+                    Some(v) = rx              => { branch = v }
+                    Some(_) = Time.after(200) => { branch = -1 }
+                }
+            }
+        }
+    }
+    assert(!error_seen)
+    assert(branch == 77)
+}
+
+// ================================================================
+// SECTION 3: multi-channel с одним закрытым
+// ================================================================
+
+test "select: open channel wins over closed channel" {
+    // ch1 open with data, ch2 closed → Some arm on ch1 fires
+    let ch1 = Channel.new(1)
+    let ch2 = Channel.new(1)
+    let tx1 = ch1.tx
+    let tx2 = ch2.tx
+    let rx1 = ch1.rx
+    let rx2 = ch2.rx
+
+    tx1.send(55)
+    tx2.close()
+
+    let mut result = 0
+    select {
+        Some(v) = rx1 => { result = v }
+        _ = rx2       => { result = -1 }
+    }
+    // rx1 has data → fires first (or both ready, either is valid)
+    // Assert that we got a valid result (either data or closed fires)
+    assert(result == 55 || result == -1)
+}
