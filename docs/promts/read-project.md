@@ -6,6 +6,13 @@
 
 ---
 
+## 0. Корневой конфиг (`nova.toml`)
+
+`nova.toml` — workspace-конфиг Nova. Содержит `[workspace]` с members (std/, examples/, nova_tests/).
+Читай первым — это точка входа в структуру проекта.
+
+---
+
 ## 1. Спека языка (`spec/`)
 
 ```
@@ -26,10 +33,10 @@ spec/decisions/           — все D-блоки (01-philosophy ... 09-tooling)
 
 Читай таблицу планов целиком — статусы меняются. Активные и высокоприоритетные:
 
-- **Plan 27** (`27-gc-switch.md`) — GC switch: Boehm как default. **Высокий приоритет, не начат.**
+- **Plan 27** (`27-gc-switch.md`) — GC switch: Boehm как default. **Ф.1-Ф.4 выполнены.** Boehm — default GC.
+- **Plan 31** (`31-select-statement.md`) — `select` statement (мультиплексирование каналов). В работе.
 - **Plan 19** (`19-closure-and-error-ops.md`) — closure-rev + D85 error-ops.
 - **Plan 20** (`20-defer-implementation.md`) — `defer`/`errdefer`.
-- **Plan 21** (`21-channel-revision-implementation.md`) — Channel revision.
 
 Прочитай план(ы) релевантные задаче целиком.
 
@@ -44,25 +51,30 @@ spec/decisions/           — все D-блоки (01-philosophy ... 09-tooling)
 
 ```sh
 # собрать nova CLI (один раз или после изменений компилятора)
-cd nova-cli && cargo build && cd ..
+cd compiler-codegen && cargo build --release && cd ..
+cd nova-cli && cargo build --release && cd ..
 
-# запустить все тесты
-nova-cli/target/debug/nova test
+# запустить все тесты (release build — в ~70 sec на 16 ядрах)
+nova-cli/target/release/nova test
 
 # subset / rerun / sequential
-nova-cli/target/debug/nova test --filter X
-nova-cli/target/debug/nova test --rerun-failed
-nova-cli/target/debug/nova test --jobs 1
+nova-cli/target/release/nova test --filter X
+nova-cli/target/release/nova test --rerun-failed
+nova-cli/target/release/nova test --jobs 1
 
 # скомпилировать / запустить один файл
-nova-cli/target/debug/nova build nova_tests/basics/literals.nv
-nova-cli/target/debug/nova run   nova_tests/basics/literals.nv
-nova-cli/target/debug/nova check nova_tests/basics/literals.nv
+nova-cli/target/release/nova build nova_tests/basics/literals.nv
+nova-cli/target/release/nova run   nova_tests/basics/literals.nv
+nova-cli/target/release/nova check nova_tests/basics/literals.nv
 
 # регенерировать runtime stubs
-nova-cli/target/debug/nova regen-runtime
-nova-cli/target/debug/nova regen-runtime --check
+nova-cli/target/release/nova regen-runtime
+nova-cli/target/release/nova regen-runtime --check
 ```
+
+**ВАЖНО: использовать release-сборку.** Debug-сборка nova-cli/nova-codegen существенно медленнее
+из-за инициализации vcvars (6 sec) которая происходит на каждый test-build в debug-режиме.
+В release-сборке vcvars кэшируется один раз, каждый тест занимает ~2-3 сек.
 
 ---
 
@@ -71,10 +83,10 @@ nova-cli/target/debug/nova regen-runtime --check
 Перед началом работы прогони тесты чтобы знать baseline:
 
 ```sh
-nova-cli/target/debug/nova test
+nova-cli/target/release/nova test
 ```
 
-Запомни N/N PASS — не сломай регрессию.
+Baseline: **171/171 PASS**. Не сломай регрессию.
 
 ---
 
