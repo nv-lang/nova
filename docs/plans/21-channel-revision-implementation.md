@@ -1,151 +1,483 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 # План 21: D91 implementation — Channel revision (capability-split)
 
-**Статус:** 🟡 **DRAFT — implementation pending**.
+**Статус:** 🟡 **PRODUCTION PLAN — implementation ready**.
 **Дата создания:** 2026-05-10.
+**Обновлён:** 2026-05-11 (production-grade rewrite после Plan 22 completion).
 **Зависимости:**
 - [D91](../../spec/decisions/06-concurrency.md#d91-channel-revision--capability-split-на-sender--receiver) — нормативная спецификация.
-- [Plan 20](20-defer-implementation.md) — `defer` для idiomatic `defer tx.close()`.
-- [D79](../../spec/decisions/06-concurrency.md#d79-channels--coordination-между-fiberами) — текущая Go-style модель, которую пересматриваем.
+- [Plan 20](20-defer-implementation.md) — ✅ закрыт; `defer` доступен.
+- [Plan 22](22-sleep-libuv-integration.md) — ✅ закрыт; park/wake API
+  (`nova_rt/sched.h`) доступен. `_nova_active_scope` / `_nova_active_slot`
+  thread-locals задокументированы и используются.
 
-**Связь с Plan 22:** формально независим, но архитектурно опирается
-на **park/wake primitive** (`nova_rt/sched.h`), который вводит Plan 22.
-Если Plan 22 завершён — `send`/`recv` сразу реализуются через API
-(`nova_sched_park`/`nova_sched_wake`/`nova_sched_register_pending`),
-cancel-during-recv работает автоматически через stop_cb mechanism.
-Если Plan 22 ещё не сделан — Plan 21 реализует `send`/`recv` через
-busy-yield D79-семантики; рефакторинг на API-driven park/wake —
-follow-up после Plan 22. **Рекомендуемый порядок: Plan 22 → Plan 21.**
-См. [«Интеграция с Plan 22»](#интеграция-с-plan-22) ниже.
+**Без упрощений.** Plan 22 закрыт → реализуем `send`/`recv` сразу через
+production park/wake API. Busy-yield fallback не допускается (R7 Plan 22:
+«no busy-loops anywhere»).
+
+**select — не в Plan 21.** Парсер `select` не существует; его реализация
+требует отдельного grammar + codegen (~400-600 строк). Вынесен в Plan 28
+(TBD). Plan 21 реализует Ф.1-Ф.6 полностью; `select` после revision
+будет в отдельном плане.
 
 ---
 
 ## Цель
 
-Реализовать D91 — переписать Channel API на Rust mpsc-style
-(capability-split: `Channel.new(cap) -> (Sender, Receiver)`).
-Breaking change для существующих тестов и nova_rt. Production-grade:
-без упрощений, полное покрытие capabilities, миграция всех use-site'ов.
+Реализовать D91 — переписать Channel API с Go-style (один объект с
+`send`/`recv`) на Rust mpsc-style (capability-split:
+`Channel.new(cap) -> (Sender[T], Receiver[T])`). Production-grade через
+park/wake: blocking `send`/`recv` не busy-loop'ят. Cancel-during-recv
+работает автоматически через D93 stop_cb.
 
 ---
 
-## Декомпозиция
+## Архитектурные решения (зафиксированы до реализации)
 
-### Ф.1. nova_rt — split state vs wrappers
+### A1. WaiterList — heap-allocated, не stack
 
-**Что:** Переделать `nova_rt/channels.h`:
-
+В псевдокоде Plan 22 draft'а использовался stack-allocated `ChannelWaiter`:
 ```c
-// Hidden state (бывший Nova_Channel):
-typedef struct { ... } Nova_ChannelState;
-
-// Capability wrappers — публичные:
-typedef struct { Nova_ChannelState* state; } Nova_Sender;
-typedef struct { Nova_ChannelState* state; } Nova_Receiver;
-
-// Factory возвращает tuple (через struct-by-value или через 2-out-pointer):
-typedef struct { Nova_Sender* tx; Nova_Receiver* rx; } Nova_ChannelPair;
-Nova_ChannelPair nova_channel_new(int64_t capacity);
-
-// Capability-методы:
-void                   nova_sender_send(Nova_Sender*, nova_int);
-nova_bool              nova_sender_try_send(Nova_Sender*, nova_int);
-void                   nova_sender_close(Nova_Sender*);
-NovaOpt_nova_int       nova_receiver_recv(Nova_Receiver*);
-NovaOpt_nova_int       nova_receiver_try_recv(Nova_Receiver*);
+ChannelWaiter w = { .scope = sc, .slot = sl, .next = st->recv_waiters };
+st->recv_waiters = &w;
+nova_sched_park(sc, sl);  // <-- yield! w на стеке уже недействителен?
 ```
 
-State разделена от capabilities. Sender и Receiver — wrapper struct'ы,
-каждый share'ит `Nova_ChannelState*`. Это эквивалентно Rust `Arc<Inner>`
-паттерну, но через managed heap (без RC, GC соберёт когда оба
-wrapper'а unreachable).
+**Проблема:** `mco_yield` переключает coroutine-стек. После yield
+stack-frame fiber'а suspended, `&w` формально валиден (minicoro
+сохраняет весь стек), но это хрупко и UB-prone под M:N (Plan 23).
 
-**Park/wake реализация — два варианта:**
+**Решение A1 (production):** `ChannelWaiter` аллоцируется через
+`nova_alloc` (heap). GC соберёт когда никто не держит. После wake —
+явный unlink из waitlist (idempotent). Это паттерн Plan 22 eventloop.c
+(uv_timer_t через heap).
 
-- **Если Plan 22 завершён** (рекомендуемо): `send`/`recv` блокировка
-  через `nova_sched_park`/`nova_sched_wake` API из `nova_rt/sched.h`,
-  waitlist'ы recv/send-waiter'ов в `Nova_ChannelState`, cancel-integration
-  через `nova_sched_register_pending` + stop_cb. См.
-  [«Интеграция с Plan 22»](#интеграция-с-plan-22) для полного псевдокода.
+```c
+typedef struct ChannelWaiter {
+    NovaFiberQueue*      scope;
+    int                  slot;
+    Nova_ChannelState*   channel;  /* обратная ссылка для unlink в stop_cb */
+    bool                 is_recv;  /* recv-waiter или send-waiter */
+    nova_int             send_val; /* если send-waiter: значение для отправки */
+    struct ChannelWaiter* next;
+} ChannelWaiter;
+```
 
-- **Если Plan 22 не сделан**: bootstrap-fallback на busy-yield D79-
-  семантику (`while (empty) nova_fiber_yield()`). Менее эффективно,
-  cancel виден на следующем yield-pass'е, но семантически корректно.
-  Рефакторинг на API — follow-up после Plan 22.
+### A2. stop_cb — SYNC для channel (не ASYNC)
 
-**Файлы:**
-- `compiler-codegen/nova_rt/channels.h` — переписать.
-- Возможно `nova_rt/channels.c` если part-functions требуют out-of-header.
+Sleep stop_cb (Plan 22 Ф.8) — ASYNC, потому что `uv_close` асинхронен.
+Channel stop_cb — **SYNC**: убираем waiter из list (O(n) но list короток)
+и сразу wake. Нет async backend.
 
-**Объём:** ~250 строк (под Plan 22 API) либо ~200 строк (без, проще
-реализация без waitlist'ов).
-
-### Ф.2. Codegen — Channel literals и method dispatch
-
-**Что:** В `emit_c.rs`:
-
-1. **`Channel[T].new(N)`** — special-case вызова. Возвращает tuple
-   `(Sender[T], Receiver[T])`. Tuple-destructuring через
-   `let (tx, rx) = Channel.new(...)` — уже работает (D17 tuple).
-
-2. **Метод-dispatch** на Sender/Receiver — через тот же mechanism
-   что для других типов (Plan 11). `tx.send(v)` →
-   `Nova_Sender_method_send(tx, v)`.
-
-3. **Type-инференция** для tuple-destructuring — `tx` имеет тип
-   `Sender[T]`, `rx` — `Receiver[T]`. Должны корректно
-   propagate'нуться в bound checks.
-
-**Файлы:**
-- `compiler-codegen/src/codegen/emit_c.rs` — special-case для
-  `Channel.new`, dispatch на Sender/Receiver.
-
-**Объём:** ~200 строк.
-
-### Ф.3. Type-checker — protocol Sender / Receiver registration
-
-**Что:** Зарегистрировать `Sender[T]` и `Receiver[T]` как built-in
-protocols (как `Iter[T]`, `Hashable`, `From[T]`).
-
-`Channel[T]` сам по себе — это **factory namespace**, не type.
-`Channel.new(N)` — единственный API. Type `Channel[T]` в expression-
-position теперь **запрещён** (compile error).
-
-**Файлы:**
-- `compiler-codegen/src/types/mod.rs` — добавить built-in protocols
-  Sender/Receiver. Снять `Channel[T]` из value-types.
-
-**Объём:** ~80 строк.
-
-### Ф.4. `select` revision — через Receiver
-
-**Что:** Парсер и codegen для `select`:
-
-```nova
-select {
-    msg <- rx_a  => process_a(msg)
-    msg <- rx_b  => process_b(msg)
-    timeout(5.seconds()) => default
+```c
+static NovaStopMode _nova_channel_waiter_stop_cb(void* handle) {
+    ChannelWaiter* w = (ChannelWaiter*)handle;
+    /* unlink из recv_waiters или send_waiters: */
+    _nova_channel_waiter_unlink(w);
+    /* wake вызовет nova_sched_cancel_all_pending → SYNC → unpark immediate */
+    return NOVA_STOP_SYNC;
 }
 ```
 
-`<-` оператор в pattern-position читает из `Receiver[T]`. Раньше
-читал из `Channel[T]` — обновить grammar и dispatch.
+### A3. _nova_active_scope / _nova_active_slot — готовые thread-locals
 
-**Файлы:**
-- `compiler-codegen/src/parser/mod.rs` — парсер select.
-- `compiler-codegen/src/codegen/emit_c.rs` — emit select.
+`fibers.h` экспортирует:
+```c
+__declspec(thread) extern NovaFiberQueue* _nova_active_scope;
+__declspec(thread) extern int             _nova_active_slot;
+```
 
-**Объём:** ~150 строк.
+`nova_receiver_recv` и `nova_sender_send` используют их напрямую.
+Вызов из не-fiber контекста → abort с FATAL message.
 
-### Ф.5. Миграция nova_tests/runtime/channels.nv
+### A4. Nova_ChannelPair — struct для tuple-return из Channel.new
 
-**Что:** Переписать все тесты под новый API:
+Codegen не поддерживает multiple-return напрямую в C ABI. Используем
+struct-by-value (оба поля — pointer'ы, помещаются в 2 регистра):
 
+```c
+typedef struct { Nova_Sender* tx; Nova_Receiver* rx; } Nova_ChannelPair;
+Nova_ChannelPair nova_channel_new(int64_t capacity);
+```
+
+В emit_c.rs: `Channel.new(cap)` → `nova_channel_new(cap)`. Tuple-
+destructuring `let (tx, rx) = Channel.new(cap)` раскрывается в:
+```c
+Nova_ChannelPair _ch_pair_N = nova_channel_new(cap);
+Nova_Sender* tx = _ch_pair_N.tx;
+Nova_Receiver* rx = _ch_pair_N.rx;
+```
+
+### A5. Full-buffer send — park (не busy-yield)
+
+`nova_sender_send` на полном буфере park'ает через sched API.
+`nova_receiver_recv` при wake проверяет буфер и снимает send-waiter
+(аналогично Go chan).
+
+### A6. select — Plan 28 (не Plan 21)
+
+`select` требует парсер и codegen которых не существует. Plan 21
+не включает select. Существующие тесты не используют select.
+
+---
+
+## Фазы
+
+### Ф.1 — nova_rt/channels.h: capability-split + park/wake
+
+**Файл:** `compiler-codegen/nova_rt/channels.h` — полная замена.
+
+**Структуры:**
+
+```c
+/* ChannelWaiter — heap-allocated (A1). */
+typedef struct ChannelWaiter {
+    NovaFiberQueue*      scope;
+    int                  slot;
+    Nova_ChannelState*   channel;
+    bool                 is_recv;
+    nova_int             send_val;
+    struct ChannelWaiter* next;
+} ChannelWaiter;
+
+typedef struct Nova_ChannelState {
+    nova_int*     buf;
+    int64_t       cap;
+    int64_t       head;
+    int64_t       count;
+    bool          closed;
+    ChannelWaiter* recv_waiters;   /* fibers waiting for data */
+    ChannelWaiter* send_waiters;   /* fibers waiting for space (full buffer) */
+} Nova_ChannelState;
+
+typedef struct { Nova_ChannelState* state; } Nova_Sender;
+typedef struct { Nova_ChannelState* state; } Nova_Receiver;
+typedef struct { Nova_Sender* tx; Nova_Receiver* rx; } Nova_ChannelPair;
+```
+
+**nova_channel_new:**
+```c
+static inline Nova_ChannelPair nova_channel_new(int64_t capacity) {
+    Nova_ChannelState* st = nova_alloc(sizeof(Nova_ChannelState));
+    int64_t actual = capacity > 0 ? capacity : 1;  /* rendezvous = cap 1 */
+    st->buf          = nova_alloc(actual * sizeof(nova_int));
+    st->cap          = actual;
+    st->head         = 0;
+    st->count        = 0;
+    st->closed       = false;
+    st->recv_waiters = NULL;
+    st->send_waiters = NULL;
+    Nova_Sender*   tx = nova_alloc(sizeof(Nova_Sender));
+    Nova_Receiver* rx = nova_alloc(sizeof(Nova_Receiver));
+    tx->state = st;
+    rx->state = st;
+    return (Nova_ChannelPair){ .tx = tx, .rx = rx };
+}
+```
+
+**stop_cb + unlink:**
+```c
+static inline void _nova_channel_waiter_unlink(ChannelWaiter* w) {
+    if (!w->channel) return;
+    Nova_ChannelState* st = w->channel;
+    ChannelWaiter** head = w->is_recv ? &st->recv_waiters : &st->send_waiters;
+    ChannelWaiter* prev = NULL;
+    ChannelWaiter* cur  = *head;
+    while (cur) {
+        if (cur == w) {
+            if (prev) prev->next = cur->next;
+            else      *head      = cur->next;
+            w->channel = NULL;  /* sentinel: unlinked */
+            return;
+        }
+        prev = cur; cur = cur->next;
+    }
+}
+
+static NovaStopMode _nova_channel_waiter_stop_cb(void* handle) {
+    ChannelWaiter* w = (ChannelWaiter*)handle;
+    _nova_channel_waiter_unlink(w);
+    return NOVA_STOP_SYNC;  /* A2: channel cancel — synchronous */
+}
+```
+
+**nova_receiver_recv:**
+```c
+static inline NovaOpt_nova_int nova_receiver_recv(Nova_Receiver* rx) {
+    Nova_ChannelState* st = rx->state;
+    /* Fast path: data already available */
+    if (st->count > 0) goto _take;
+    if (st->closed) goto _closed;
+
+    /* Slow path: park until data or close */
+    {
+        NovaFiberQueue* sc = _nova_active_scope;
+        int             sl = _nova_active_slot;
+        if (!sc || sl < 0) {
+            fprintf(stderr, "nova: recv outside fiber context\n"); abort();
+        }
+        while (st->count == 0 && !st->closed) {
+            ChannelWaiter* w = nova_alloc(sizeof(ChannelWaiter));
+            w->scope   = sc; w->slot = sl;
+            w->channel = st; w->is_recv = true;
+            w->send_val= 0;  w->next = st->recv_waiters;
+            st->recv_waiters = w;
+
+            nova_sched_register_pending(sc, sl, w, _nova_channel_waiter_stop_cb);
+            nova_sched_park(sc, sl);
+            nova_sched_unregister_pending(sc, sl);
+
+            if (sc->cancel_requested) {
+                nova_throw(nova_str_from_cstr("scope cancelled"));
+            }
+        }
+    }
+    if (st->count == 0) goto _closed;
+
+_take: {
+        nova_int v = st->buf[st->head];
+        st->head = (st->head + 1) % st->cap;
+        st->count--;
+        /* Wake first send-waiter if any */
+        if (st->send_waiters) {
+            ChannelWaiter* w = st->send_waiters;
+            st->send_waiters = w->next;
+            w->channel = NULL;
+            /* push waiter's value into buffer */
+            int64_t tail = (st->head + st->count) % st->cap;
+            st->buf[tail] = w->send_val;
+            st->count++;
+            nova_sched_wake(w->scope, w->slot);
+        }
+        return (NovaOpt_nova_int){ .tag = NOVA_TAG_Option_Some, .value = v };
+    }
+_closed:
+    return (NovaOpt_nova_int){ .tag = NOVA_TAG_Option_None, .value = 0 };
+}
+```
+
+**nova_sender_send:**
+```c
+static inline void nova_sender_send(Nova_Sender* tx, nova_int v) {
+    Nova_ChannelState* st = tx->state;
+    if (st->closed) {
+        nova_throw(nova_str_from_cstr("send on closed channel"));
+    }
+    /* Fast path: space available */
+    if (st->count < st->cap) goto _push;
+
+    /* Slow path: park until space */
+    {
+        NovaFiberQueue* sc = _nova_active_scope;
+        int             sl = _nova_active_slot;
+        if (!sc || sl < 0) {
+            fprintf(stderr, "nova: send outside fiber context\n"); abort();
+        }
+        while (st->count >= st->cap && !st->closed) {
+            ChannelWaiter* w = nova_alloc(sizeof(ChannelWaiter));
+            w->scope    = sc; w->slot = sl;
+            w->channel  = st; w->is_recv = false;
+            w->send_val = v;  w->next = st->send_waiters;
+            st->send_waiters = w;
+
+            nova_sched_register_pending(sc, sl, w, _nova_channel_waiter_stop_cb);
+            nova_sched_park(sc, sl);
+            nova_sched_unregister_pending(sc, sl);
+
+            if (sc->cancel_requested) {
+                nova_throw(nova_str_from_cstr("scope cancelled"));
+            }
+        }
+        if (st->closed) {
+            nova_throw(nova_str_from_cstr("send on closed channel"));
+        }
+        /* recv уже push'нул наш v в буфер (A5: recv-side commit) */
+        return;
+    }
+
+_push: {
+        int64_t tail = (st->head + st->count) % st->cap;
+        st->buf[tail] = v;
+        st->count++;
+        /* Wake first recv-waiter if any */
+        if (st->recv_waiters) {
+            ChannelWaiter* w = st->recv_waiters;
+            st->recv_waiters = w->next;
+            w->channel = NULL;
+            nova_sched_wake(w->scope, w->slot);
+        }
+    }
+}
+```
+
+**try_send / try_recv / close — без park:**
+```c
+static inline nova_bool nova_sender_try_send(Nova_Sender* tx, nova_int v) {
+    Nova_ChannelState* st = tx->state;
+    if (st->closed || st->count >= st->cap) return 0;
+    int64_t tail = (st->head + st->count) % st->cap;
+    st->buf[tail] = v; st->count++;
+    if (st->recv_waiters) {
+        ChannelWaiter* w = st->recv_waiters;
+        st->recv_waiters = w->next;
+        w->channel = NULL;
+        nova_sched_wake(w->scope, w->slot);
+    }
+    return 1;
+}
+
+static inline NovaOpt_nova_int nova_sender_try_recv_forbidden(void) {
+    fprintf(stderr, "nova: Sender.recv() — capability error\n"); abort();
+}
+
+static inline NovaOpt_nova_int nova_receiver_try_recv(Nova_Receiver* rx) {
+    Nova_ChannelState* st = rx->state;
+    if (st->count == 0) {
+        return (NovaOpt_nova_int){ .tag = NOVA_TAG_Option_None, .value = 0 };
+    }
+    nova_int v = st->buf[st->head];
+    st->head = (st->head + 1) % st->cap;
+    st->count--;
+    if (st->send_waiters) {
+        ChannelWaiter* w = st->send_waiters;
+        st->send_waiters = w->next;
+        w->channel = NULL;
+        int64_t tail = (st->head + st->count) % st->cap;
+        st->buf[tail] = w->send_val;
+        st->count++;
+        nova_sched_wake(w->scope, w->slot);
+    }
+    return (NovaOpt_nova_int){ .tag = NOVA_TAG_Option_Some, .value = v };
+}
+
+static inline void nova_sender_close(Nova_Sender* tx) {
+    Nova_ChannelState* st = tx->state;
+    if (st->closed) return;
+    st->closed = true;
+    /* Wake all recv-waiters — они увидят closed+empty → None */
+    while (st->recv_waiters) {
+        ChannelWaiter* w = st->recv_waiters;
+        st->recv_waiters = w->next;
+        w->channel = NULL;
+        nova_sched_wake(w->scope, w->slot);
+    }
+    /* Wake all send-waiters — они увидят closed → throw */
+    while (st->send_waiters) {
+        ChannelWaiter* w = st->send_waiters;
+        st->send_waiters = w->next;
+        w->channel = NULL;
+        nova_sched_wake(w->scope, w->slot);
+    }
+}
+
+static inline nova_int nova_channel_state_len(Nova_ChannelState* st) {
+    return (nova_int)st->count;
+}
+static inline nova_int nova_channel_state_capacity(Nova_ChannelState* st) {
+    return (nova_int)st->cap;
+}
+static inline nova_bool nova_channel_state_is_closed(Nova_ChannelState* st) {
+    return (nova_bool)st->closed;
+}
+```
+
+**Объём:** ~220 строк.
+
+---
+
+### Ф.2 — emit_c.rs: Channel.new + Sender/Receiver dispatch
+
+**Что изменить:**
+
+1. **`Channel.new(cap)`** — возвращает `Nova_ChannelPair`. Tuple-
+   destructuring `let (tx, rx) = Channel.new(cap)` разворачивается:
+   ```c
+   Nova_ChannelPair _ch_N = nova_channel_new(cap);
+   Nova_Sender* tx = _ch_N.tx;
+   Nova_Receiver* rx = _ch_N.rx;
+   ```
+   Здесь `N` — уникальный счётчик (как `_nova_clos_N`).
+
+2. **type inference** — `tx` → `Nova_Sender*`, `rx` → `Nova_Receiver*`.
+   В `infer_c_type`: специальный case для `Channel.new`.
+
+3. **Method dispatch Sender:**
+   - `tx.send(v)` → `nova_sender_send(tx, (nova_int)(v))`
+   - `tx.try_send(v)` → `nova_sender_try_send(tx, (nova_int)(v))`
+   - `tx.close()` → `nova_sender_close(tx)`
+
+4. **Method dispatch Receiver:**
+   - `rx.recv()` → `nova_receiver_recv(rx)`
+   - `rx.try_recv()` → `nova_receiver_try_recv(rx)`
+
+5. **Auxiliary Receiver methods через state pointer:**
+   - `rx.len()` → `nova_channel_state_len(rx->state)`
+   - `rx.capacity()` → `nova_channel_state_capacity(rx->state)`
+   - `rx.is_closed()` → `nova_channel_state_is_closed(rx->state)`
+
+   (len/capacity/is_closed — через Receiver, не через Sender, потому
+   что они read-only introspection. В тестах использовались на `ch`
+   — теперь на `rx`. Если нужны на `tx` — добавим симметрично.)
+
+6. **Старый `Nova_Channel*` dispatch — удалить** (D79 compat убираем
+   полностью; тесты мигрируют в Ф.5).
+
+**Ключевые места в emit_c.rs:**
+
+- ~L6299: блок `if obj_ty == "Nova_Channel*"` → заменить на
+  `Nova_Sender*` / `Nova_Receiver*` ветки.
+- ~L6379: `Channel.new` special case → emit `nova_channel_new`.
+- ~L6800: Path-form `Channel::new` → то же.
+- ~L9952: type inference для Channel → Sender*/Receiver*.
+- ~L10211: Path-form type → `Nova_ChannelPair`.
+
+**Новая логика tuple-destructuring для Channel.new:**
+
+Если LHS — tuple pattern `(a, b)` и RHS — `Channel.new(cap)`:
+```rust
+// emit_assign для let (tx, rx) = Channel.new(cap):
+let tmp = format!("_ch_pair_{}", self.unique_id());
+out.push_str(&format!("Nova_ChannelPair {} = nova_channel_new({});\n", tmp, cap_c));
+out.push_str(&format!("Nova_Sender* {} = {}.tx;\n", tx_name, tmp));
+out.push_str(&format!("Nova_Receiver* {} = {}.rx;\n", rx_name, tmp));
+```
+
+**Объём:** ~180 строк изменений в emit_c.rs.
+
+---
+
+### Ф.3 — types/mod.rs: Sender/Receiver как built-in types
+
+**Что:**
+
+1. Добавить `"Sender"` и `"Receiver"` в список known built-in types
+   (рядом с `"Channel"`, `"Iter"`, etc.).
+
+2. `Channel[T]` в value-position — compile error: «Channel — factory
+   namespace, не type. Используй Sender[T] или Receiver[T]».
+
+3. Method validation для Sender/Receiver:
+   - `Sender`: разрешены `send`, `try_send`, `close`.
+   - `Receiver`: разрешены `recv`, `try_recv`, `len`, `capacity`,
+     `is_closed`.
+   - Если вызван `tx.recv()` или `rx.send()` → compile error
+     (capability violation).
+
+**Объём:** ~80 строк в types/mod.rs.
+
+---
+
+### Ф.4 — nova_tests/runtime/channels.nv: миграция на D91
+
+**Все тесты переписываются с Go-style на capability-split.**
+
+Паттерн замены:
 ```nova
 // Было:
 let ch = Channel.new(4)
 ch.send(10)
 let v = ch.recv()
+ch.close()
 
 // Стало:
 let (tx, rx) = Channel.new(4)
@@ -154,247 +486,179 @@ tx.send(10)
 let v = rx.recv()
 ```
 
-Объём тестов в `channels.nv` — ~200 строк. Большая часть переписки
-mechanical.
+**Специфика:**
+- `ch.len()` / `ch.capacity()` / `ch.is_closed()` → `rx.len()` /
+  `rx.capacity()` / `rx.is_closed()`.
+- `ch.try_send(v)` → `tx.try_send(v)`.
+- `ch.try_recv()` → `rx.try_recv()`.
+- `while let Some(v) = ch.recv()` → `while let Some(v) = rx.recv()`.
+- `ch.close()` → `tx.close()` (через defer).
 
-**Зависимость от Plan 20:** Без `defer`'а пришлось бы вызывать
-`tx.close()` явно в конце каждого теста — не катастрофа, но `defer`
-делает миграцию идиоматичной.
+**Добавить concurrent-тесты** (Plan 22 дал park/wake — теперь можем):
 
-**Файлы:**
-- `nova_tests/runtime/channels.nv`.
+```nova
+test "channel: concurrent send+recv via spawn" {
+    let (tx, rx) = Channel.new(1)
+    defer tx.close()
+    let mut received = 0
+    supervised {
+        spawn {
+            tx.send(42)
+        }
+        spawn {
+            let v = rx.recv()
+            received = v.unwrap_or(-1)
+        }
+    }
+    assert(received == 42)
+}
 
-**Объём:** ~200 строк edits.
+test "channel: producer-consumer pipeline" {
+    let (tx, rx) = Channel.new(4)
+    defer tx.close()
+    let mut sum = 0
+    supervised {
+        spawn {
+            for i in 1..=5 {
+                tx.send(i)
+            }
+        }
+        spawn {
+            while let Some(v) = rx.recv() {
+                sum = sum + v
+            }
+        }
+    }
+    assert(sum == 15)
+}
 
-### Ф.6. Тесты на capability-isolation
+test "channel: cancel during recv" {
+    let (tx, rx) = Channel.new(1)
+    defer tx.close()
+    let mut cancelled = false
+    supervised {
+        spawn {
+            // recv на пустом канале — park'ается
+            let _ = rx.recv()  // должен проснуться от cancel
+        }
+    }
+    // supervised закрывается после cancel → rx.recv() бросает
+    // (тест проверяет что нет hang'а)
+}
+```
 
-**Что:** Новые negative-тесты что:
-- `tx.recv()` — compile error (`Sender` не имеет recv).
-- `rx.send(v)` — compile error.
-- Использование `Channel[T]` как value — compile error.
+**Объём:** ~220 строк (200 миграция + 60 новые тесты).
 
-**Файлы:**
-- `nova_tests/negative_capability/channel_sender_no_recv.nv`.
-- `nova_tests/negative_capability/channel_receiver_no_send.nv`.
-- `nova_tests/negative_capability/channel_type_as_value.nv`.
+---
 
-**Объём:** ~60 строк.
+### Ф.5 — negative тесты capability-isolation
 
-### Ф.7. Spec uplift + docs
+**Новые файлы** (compile-must-fail тесты):
 
-**Что:**
-- D91 Bootstrap-status: 🟡 → ✅.
-- D79 — пометка «полностью пересмотрено D91» (вместо «частично»).
-- Cross-refs в `effects.md`, `syntax.md`, `revolutionary.md` если
-  есть Channel-примеры по старому API.
+`nova_tests/negative/channel_sender_no_recv.nv`:
+```nova
+// EXPECT: error
+module nova_tests.negative.channel_sender_no_recv
+test "sender cannot recv" {
+    let (tx, _rx) = Channel.new(1)
+    let _ = tx.recv()  // Sender не имеет метода recv
+}
+```
+
+`nova_tests/negative/channel_receiver_no_send.nv`:
+```nova
+// EXPECT: error
+module nova_tests.negative.channel_receiver_no_send
+test "receiver cannot send" {
+    let (_tx, rx) = Channel.new(1)
+    rx.send(1)  // Receiver не имеет метода send
+}
+```
+
+`nova_tests/negative/channel_type_as_value.nv`:
+```nova
+// EXPECT: error
+module nova_tests.negative.channel_type_as_value
+test "Channel[T] as value is forbidden" {
+    let ch: Channel[int] = Channel.new(1)  // Channel — не тип
+}
+```
 
 **Объём:** ~30 строк.
 
 ---
 
-## Интеграция с Plan 22
+### Ф.6 — spec uplift
 
-Plan 22 (`Time.sleep` через libuv) вводит **нормативный park/wake API**
-в `nova_rt/sched.h` (см. [Plan 22 «Park/wake API»](22-sleep-libuv-integration.md#parkwake-api---нормативный-primitive)):
+**D91 Bootstrap-status:** 🟡 → ✅.
 
-```c
-void      nova_sched_park(NovaFiberQueue* scope, int slot);
-void      nova_sched_wake(NovaFiberQueue* scope, int slot);
-nova_bool nova_sched_is_parked(NovaFiberQueue* scope, int slot);
-void      nova_sched_register_pending(NovaFiberQueue* scope, int slot,
-                                       void* handle, NovaCancelStopCb stop_cb);
-void      nova_sched_unregister_pending(NovaFiberQueue* scope, int slot);
-```
+**D79** — обновить статус: «Полностью пересмотрено D91. Старый API
+(nova_channel_send/recv) удалён из runtime. Миграция завершена.»
 
-`Channel.send`/`recv` — блокирующая операция, fiber ждёт внешнего
-события (приход данных / освобождение буфера / close). Опирается
-на API напрямую:
+**Plan 21 статус:** 🟡 → ✅.
 
-```c
-/* Channel state расширяется waitlist'ами. */
-typedef struct ChannelWaiter {
-    NovaFiberQueue* scope;
-    int             slot;
-    struct ChannelWaiter* next;
-} ChannelWaiter;
-
-typedef struct {
-    /* ...buffer fields... */
-    ChannelWaiter* recv_waiters;     /* fiber'ы parked в recv */
-    ChannelWaiter* send_waiters;     /* fiber'ы parked в send (full buffer) */
-    nova_bool      closed;
-} Nova_ChannelState;
-
-/* stop_cb для cancel-wake: убрать waiter из chain. */
-static void _nova_channel_recv_stop_cb(void* handle) {
-    ChannelWaiter* w = (ChannelWaiter*)handle;
-    /* unlink w from its channel's recv_waiters chain (idempotent) */
-    /* ...impl... */
-}
-
-NovaOpt_nova_int nova_receiver_recv(Nova_Receiver* rx) {
-    Nova_ChannelState* st = rx->state;
-    NovaFiberQueue*    sc = _nova_active_scope;
-    int                sl = _nova_active_slot;
-
-    while (st->count == 0 && !st->closed) {
-        ChannelWaiter w = { .scope = sc, .slot = sl, .next = st->recv_waiters };
-        st->recv_waiters = &w;
-
-        nova_sched_register_pending(sc, sl, &w, _nova_channel_recv_stop_cb);
-        nova_sched_park(sc, sl);
-        nova_sched_unregister_pending(sc, sl);
-
-        if (sc && sc->cancel_requested) {
-            nova_throw(nova_str_from_cstr("scope cancelled"));
-        }
-    }
-    if (st->count == 0 && st->closed) return NOVA_OPT_NONE;
-    return NOVA_OPT_SOME(buffer_pop(st));
-}
-
-/* Sender side — будит первого recv-waiter'а после push'а. */
-void nova_sender_send(Nova_Sender* tx, nova_int v) {
-    Nova_ChannelState* st = tx->state;
-    /* ...handle full-buffer parking аналогично... */
-    buffer_push(st, v);
-    if (st->recv_waiters) {
-        ChannelWaiter* w = st->recv_waiters;
-        st->recv_waiters = w->next;
-        nova_sched_wake(w->scope, w->slot);
-    }
-}
-
-/* close — будит всех recv-waiter'ов (они увидят closed + empty → None). */
-void nova_sender_close(Nova_Sender* tx) {
-    Nova_ChannelState* st = tx->state;
-    if (st->closed) return;
-    st->closed = true;
-    while (st->recv_waiters) {
-        ChannelWaiter* w = st->recv_waiters;
-        st->recv_waiters = w->next;
-        nova_sched_wake(w->scope, w->slot);
-    }
-}
-```
-
-**Cancel-during-recv** работает автоматически — `cancel()` Plan 22 R4
-итерируется по `pending_stop_cb` всех slot'ов scope'а и вызывает
-зарегистрированный stop_cb (наш `_nova_channel_recv_stop_cb`), потом
-wake. Никакой Channel-специфичной интеграции с CancelToken не нужно.
-
-**Решение по порядку:**
-
-1. **Plan 22 завершён до Plan 21** (рекомендуемо): Plan 21 Ф.1
-   реализует `send`/`recv` сразу через API из `sched.h`. Production-
-   grade с самого начала, cancel-during-recv работает immediate.
-
-2. **Plan 21 идёт первым** или параллельно: Plan 21 Ф.1 реализует
-   `send`/`recv` через busy-yield (текущая D79-семантика); cancel
-   виден на следующем yield-pass. Рефакторинг на API-driven park/wake
-   — follow-up после Plan 22. Это **два прохода** через channels.h,
-   но user-семантика совпадает.
-
-3. **Cancel-during-recv** — без Plan 22 "best-effort" (cancel на
-   следующем yield); с Plan 22 — immediate. Spec D91 явно cancel-
-   семантику не описывает, оба варианта формально валидны.
-
-**Рекомендуемый порядок:** Plan 22 → Plan 21. Plan 22 ставит
-архитектурный фундамент (park/wake API + libuv-driven scheduler),
-Plan 21 опирается на стабильный contract без переделок.
-
----
-
-## ⚠️ Атомарность фаз
-
-**Ф.1-Ф.6 — атомарный PR.** Промежуточные состояния нелегальны:
-- nova_rt новый, codegen старый: linker fail.
-- Codegen на split, тесты на Go-style: 0 PASS.
-- select на старом ch: не парсится против Receiver.
-
-**Зависит от Plan 20** — defer должен быть реализован до Plan 21
-(или одновременно), иначе миграция channels.nv требует `tx.close()`
-руками — будет noise.
-
-Ф.7 — отдельный коммит после.
+**Объём:** ~20 строк в spec.
 
 ---
 
 ## Порядок исполнения
 
-| # | Фаза | Зависимости | Атом? |
+| # | Фаза | Файл | Атом? |
 |---|---|---|---|
-| Ф.1 | nova_rt — split state/wrappers | — | **A** |
-| Ф.2 | Codegen — Channel.new + dispatch | Ф.1 | **A** |
-| Ф.3 | Type-checker — register protocols | Ф.2 | **A** |
-| Ф.4 | select revision | Ф.3 | **A** |
-| Ф.5 | Migration of nova_tests | Ф.2-Ф.4, Plan 20 | **A** |
-| Ф.6 | Negative тесты | Ф.3, Ф.5 | **A** |
-| Ф.7 | Spec uplift | Ф.6 | post-A |
+| Ф.1 | channels.h — новый runtime | `nova_rt/channels.h` | **A** |
+| Ф.2 | emit_c.rs — dispatch + tuple-destructuring | `emit_c.rs` | **A** |
+| Ф.3 | types/mod.rs — Sender/Receiver built-ins | `types/mod.rs` | **A** |
+| Ф.4 | channels.nv migration + concurrent tests | `nova_tests/runtime/channels.nv` | **A** |
+| Ф.5 | negative capability тесты | `nova_tests/negative/*.nv` | **A** |
+| Ф.6 | spec uplift | `spec/decisions/06-concurrency.md`, этот план | post-A |
+
+Ф.1-Ф.5 — атомарный набор (broken intermediate states). Ф.6 — после PASS.
 
 ---
 
-## Риски
+## Риски и mitigation
 
-1. **Tuple-return for Channel.new.** Codegen для функций возвращающих
-   tuple — есть в Nova (D17). Но `Channel.new` возвращает tuple
-   из **pointer'ов на разные типы** (`Sender*`, `Receiver*`). Что
-   требует careful struct-emit. **Mitigation:** test с простым
-   `fn f() -> (A*, B*)` отдельно, потом распространить.
-
-2. **Backward compat — нет.** Старые `nova_rt/channels.h` symbols
-   (`nova_channel_send` etc.) удаляются. Если есть пользовательский
-   код, использующий их — сломается. **Mitigation:** breaking change,
-   bootstrap-этап позволяет (D-policy «не бойся переделок»).
-
-3. **State sharing через managed heap.** Sender и Receiver share
-   `Nova_ChannelState*`. В Nova GC collect'ит, когда оба unreachable.
-   Что если один live, другой собран? **Mitigation:** GC видит через
-   `state`-pointer что state ещё referenced — collected только когда
-   **оба** wrapper'а unreachable. Это стандартная GC-семантика для
-   shared sub-objects.
-
-4. **`close()` после close.** Idempotent — повторный close OK.
-   **Mitigation:** в nova_sender_close проверка `state->closed`
-   уже стоит (D79).
-
-5. **`send` после close.** Spec D91 — panic. **Mitigation:** в emit
-   `nova_sender_send` — assert + nv_panic.
-
-6. **`select` после revision сложнее.** Раньше `select` работал с
-   одним типом (`Channel[T]`), теперь — с `Receiver[T]` который
-   protocol. Может потребовать dynamic dispatch. **Mitigation:**
-   bootstrap может ограничить `select` arms до конкретных Receiver
-   реализаций (через runtime); полный generic-select — отдельный
-   риск.
+| # | Риск | Mitigation |
+|---|---|---|
+| R1 | Tuple-destructuring `let (tx, rx) = Channel.new(...)` не поддержан в emit_c | Проверить emit_assign для tuple LHS + ChannelPair RHS; special-case если нужно |
+| R2 | `_nova_active_scope` NULL при recv из не-fiber (main-flow) | abort с FATAL — не silent; тесты запускаются в supervised → всегда в fiber context |
+| R3 | send-waiter commit in recv (A5 race) | Single-threaded cooperative → нет race; в M:N (Plan 23) потребует atomic |
+| R4 | WaiterList unlink O(n) при cancel с 1000 waiters | List короткий в реальных программах; O(n) acceptable до Plan 23 |
+| R5 | Concurrent тесты hang если producer/consumer в одном supervised | Тестировать с ненулевым буфером; unbuffered (cap=0) требует interleave — добавить Time.sleep(0) yield |
+| R6 | len/capacity/is_closed на tx не нужны? | По D91 — только Receiver имеет introspection; если тест требует на tx — добавить симметрично |
 
 ---
 
 ## Definition of Done
 
-- [ ] Ф.1-Ф.6 атомарный PR замерджен; полный test-suite **0
-  regressions** на migrated channels.nv.
-- [ ] 3 negative-теста проходят (sender/receiver capability isolation
-  + Channel-as-value запрет).
+- [ ] Ф.1-Ф.5 PASS: 156 базовых + все channel тесты зелёные.
+- [ ] 3 negative-теста PASS (EXPECT: error — compile fail).
+- [ ] Concurrent тесты (producer-consumer, cancel-during-recv) PASS.
+- [ ] R7 Plan 22 «no busy-loops» — channels.h не содержит `while ... nova_fiber_yield()`.
 - [ ] D91 Bootstrap-status ✅.
-- [ ] D79 переоформлен как полностью устаревший.
-- [ ] Запись в `docs/project-creation.txt` + `docs/simplifications.md`.
-- [ ] discussion-log в private обновлён.
+- [ ] Retro в `docs/project-creation.txt` + `docs/simplifications.md`.
 
 ---
 
 ## Связь с другими планами
 
-- [Plan 20](20-defer-implementation.md) — **должен быть завершён до
-  Plan 21** (defer необходим для idiomatic close).
-- [D91 spec](../../spec/decisions/06-concurrency.md#d91-channel-revision--capability-split-на-sender--receiver).
-- [D79](../../spec/decisions/06-concurrency.md#d79-channels--coordination-между-fiberами)
-  — старая Go-style модель, пересматриваемая.
-- [D90](../../spec/decisions/03-syntax.md#d90-defer-и-errdefer--scope-level-cleanup-statement)
-  — defer для close.
-- [D6](../../spec/decisions/05-memory.md#d6) — managed heap, GC
-  для shared state.
-- [Q-keyword-symmetry](../../spec/open-questions.md#q-keyword-symmetry)
-  — capability-split factory как use-case для anon protocol-impl
-  (Plan 21 может выявить реальную боль если named-types путь будет
-  громоздкий).
+- [Plan 20](20-defer-implementation.md) — ✅; `defer tx.close()` работает.
+- [Plan 22](22-sleep-libuv-integration.md) — ✅; park/wake API стабилен.
+- [Plan 23](23-mn-runtime-roadmap.md) — M:N; channels.h использует
+  `_nova_active_scope` (thread-local) → под M:N нужен per-worker scope
+  context. WaiterList unlink должен стать lock-free или mutex-guarded.
+- **Plan 28 (TBD)** — `select { msg <- rx => ... }` после D91 migration.
+  Требует: парсер `select`, codegen multi-arm recv, timeout arm integration
+  с libuv timer.
+- [D91 spec](../../spec/decisions/06-concurrency.md#d91-channel-revision--capability-split-на-sender--receiver) — нормативная семантика.
+- [D93](../../spec/decisions/06-concurrency.md) — park/wake contract.
+
+---
+
+## История
+
+- **2026-05-10** — draft создан (pre-Plan 22).
+- **2026-05-11** — production rewrite: Plan 22 закрыт, busy-yield fallback
+  удалён, реальный park/wake API, WaiterList heap-allocated (A1),
+  stop_cb SYNC (A2), _nova_active_scope (A3), Nova_ChannelPair (A4),
+  select вынесен в Plan 28, concurrent тесты добавлены в Ф.4.
