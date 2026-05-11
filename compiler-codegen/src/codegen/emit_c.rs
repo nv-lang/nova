@@ -219,6 +219,57 @@ pub struct CEmitter {
     /// из `NOVA_ARRAY_DECL` списка в `nova_rt/array.h` — runtime их
     /// уже даёт, не нужен duplicate typedef.
     novaopt_decls_seen: std::cell::RefCell<std::collections::HashSet<String>>,
+    /// Plan 20 Ф.4: stack of active defer/errdefer scopes during emission.
+    /// Each block that contains a `defer`/`errdefer` stmt pushes a `DeferScope`
+    /// on entry and pops on exit. `Stmt::Return`/`Break`/`Continue` walk the
+    /// stack to invoke pending defers in LIFO before the actual jump.
+    /// `errdefer` cleanup is gated on a per-scope `is_error` flag set by
+    /// `setjmp`-handled fail-frame.
+    defer_scopes: Vec<DeferScope>,
+    /// Plan 20 Ф.4: monotonic block-ID counter for stable, unique C names
+    /// (`_defer_<BLKID>_<N>_active`, `_defer_cleanup_<BLKID>`, etc.).
+    defer_block_counter: usize,
+}
+
+/// Plan 20 Ф.4: per-defer-stmt entry — tracks one `defer { ... }` or
+/// `errdefer { ... }` statement registered inside a block.
+#[derive(Clone)]
+struct DeferEntry {
+    /// C variable name of the `int` activation flag. Initialized to 0
+    /// at block start; set to 1 inline at the defer's textual position
+    /// (so partial-init exits run only defers that already executed).
+    active_var: String,
+    /// `true` if this is `errdefer` (runs only on error-exit), `false`
+    /// for plain `defer` (runs on every exit path).
+    is_errdefer: bool,
+    /// AST body to re-emit at cleanup point. AST stores defer body as
+    /// arbitrary `Expr` (parser wraps `defer { ... }` in ExprKind::Block).
+    body: Expr,
+}
+
+/// Plan 20 Ф.4: per-block defer state. One scope per block that contains
+/// at least one defer/errdefer.
+#[derive(Clone)]
+#[allow(dead_code)] // fields used in upcoming Ф.4 subphases (early-exit cleanup, throw-path)
+struct DeferScope {
+    /// Unique block ID for naming.
+    block_id: usize,
+    /// All defer/errdefer entries registered in this block, in textual order.
+    /// Cleanup walks this in reverse for LIFO semantics.
+    entries: Vec<DeferEntry>,
+    /// Running index into `entries` — incremented each time emit_stmt
+    /// reaches a Defer/ErrDefer and activates its flag.
+    next_idx: usize,
+    /// `true` if the scope has at least one `errdefer` — triggers
+    /// NovaFailFrame setjmp wrapper so throw-path can detect error exit.
+    needs_failframe: bool,
+    /// Name of the C `int` "is_error" flag, valid when `needs_failframe`.
+    is_error_var: String,
+    /// Name of the C NovaFailFrame variable when `needs_failframe`.
+    failframe_var: String,
+    /// `true` if this scope is loop-body — break/continue stop here
+    /// rather than walking outer scopes.
+    is_loop_body: bool,
 }
 
 impl CEmitter {
@@ -293,6 +344,8 @@ impl CEmitter {
                 s.insert("nova_f64".to_string());
                 std::cell::RefCell::new(s)
             },
+            defer_scopes: Vec::new(),
+            defer_block_counter: 0,
         }
     }
 
@@ -1351,6 +1404,7 @@ impl CEmitter {
             self.emit_stmt(stmt)?;
         }
         if let Some(trailing) = &body.trailing {
+            self.emit_source_annotation_for_expr(trailing);
             let trail_ty = self.infer_expr_c_type(trailing);
             let tv = self.emit_expr(trailing)?;
             if trail_ty == "nova_int" || trail_ty == "nova_bool" {
@@ -3796,7 +3850,166 @@ impl CEmitter {
 
     // ---- block / statements ----
 
+    // ---- Plan 20 Ф.4: defer/errdefer codegen helpers ----
+
+    /// Scan a block for any `defer`/`errdefer` stmts (non-recursive — defers
+    /// in nested blocks have their own scope). Used to decide whether to set
+    /// up defer-state for this block at all (fast-path otherwise).
+    fn block_has_defers(block: &Block) -> (bool, bool) {
+        let mut has_defer = false;
+        let mut has_errdefer = false;
+        for s in &block.stmts {
+            match s {
+                Stmt::Defer { .. } => has_defer = true,
+                Stmt::ErrDefer { .. } => { has_defer = true; has_errdefer = true; }
+                _ => {}
+            }
+        }
+        (has_defer, has_errdefer)
+    }
+
+    /// Push a new defer scope onto the stack and emit its prologue:
+    /// declaration of activation flags (zero-init), and the NovaFailFrame
+    /// setjmp wrapper for errdefer-bearing blocks. Returns block_id.
+    fn enter_defer_scope(&mut self, block: &Block, is_loop_body: bool) -> usize {
+        let (has_defer, has_errdefer) = Self::block_has_defers(block);
+        if !has_defer {
+            return 0;
+        }
+        self.defer_block_counter += 1;
+        let block_id = self.defer_block_counter;
+        let mut entries: Vec<DeferEntry> = Vec::new();
+        let mut idx = 0usize;
+        for s in &block.stmts {
+            if let Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. } = s {
+                let is_err = matches!(s, Stmt::ErrDefer { .. });
+                let var = format!("_defer_{}_{}_active", block_id, idx);
+                entries.push(DeferEntry {
+                    active_var: var.clone(),
+                    is_errdefer: is_err,
+                    body: body.clone(),
+                });
+                self.line(&format!("int {} = 0;", var));
+                idx += 1;
+            }
+        }
+        let is_error_var = format!("_defer_{}_is_error", block_id);
+        let failframe_var = format!("_defer_{}_ff", block_id);
+        if has_errdefer {
+            self.line(&format!("int {} = 0;", is_error_var));
+            self.line(&format!("NovaFailFrame {};", failframe_var));
+            self.line(&format!("nova_fail_push(&{});", failframe_var));
+            self.line(&format!("if (setjmp({}.jmp) != 0) {{", failframe_var));
+            self.indent += 1;
+            // Throw path: invoke defers (LIFO) with is_error=1 then re-throw.
+            self.line(&format!("{} = 1;", is_error_var));
+            for entry in entries.iter().rev() {
+                self.line(&format!("if ({}) {{", entry.active_var));
+                self.indent += 1;
+                if entry.is_errdefer {
+                    // errdefer always runs on error path
+                }
+                let _ = self.emit_defer_body_void(&entry.body);
+                self.indent -= 1;
+                self.line("}");
+            }
+            self.line(&format!("nova_fail_pop();"));
+            self.line(&format!("nova_throw({}.error_msg);", failframe_var));
+            self.indent -= 1;
+            self.line("}");
+        }
+        self.defer_scopes.push(DeferScope {
+            block_id,
+            entries,
+            next_idx: 0,
+            needs_failframe: has_errdefer,
+            is_error_var,
+            failframe_var,
+            is_loop_body,
+        });
+        block_id
+    }
+
+    /// Emit cleanup for the current top defer scope (normal-exit path):
+    /// invokes each entry's body in LIFO. Skips `errdefer` entries since
+    /// is_error=0 on normal exit. Pops fail-frame if present, and pops
+    /// the scope from the stack.
+    fn leave_defer_scope(&mut self, block_id: usize) {
+        if block_id == 0 {
+            return;
+        }
+        let scope = self.defer_scopes.pop().expect("defer_scopes balanced");
+        debug_assert_eq!(scope.block_id, block_id);
+        for entry in scope.entries.iter().rev() {
+            if entry.is_errdefer {
+                continue;
+            }
+            self.line(&format!("if ({}) {{", entry.active_var));
+            self.indent += 1;
+            let _ = self.emit_defer_body_void(&entry.body);
+            self.indent -= 1;
+            self.line("}");
+        }
+        if scope.needs_failframe {
+            self.line("nova_fail_pop();");
+        }
+    }
+
+    /// Emit defer-cleanup for an early exit (return/break/continue) walking
+    /// scopes from innermost outward. `stop_at_loop` means walk only inner
+    /// scopes up to (but not including) the first loop-body scope — used by
+    /// break/continue. `stop_at_loop=false` means walk ALL scopes — used by
+    /// return.
+    fn emit_early_exit_cleanup(&mut self, stop_at_loop: bool) {
+        let scopes = self.defer_scopes.clone();
+        for scope in scopes.iter().rev() {
+            for entry in scope.entries.iter().rev() {
+                if entry.is_errdefer {
+                    continue;
+                }
+                self.line(&format!("if ({}) {{", entry.active_var));
+                self.indent += 1;
+                let _ = self.emit_defer_body_void(&entry.body);
+                self.indent -= 1;
+                self.line("}");
+            }
+            if scope.needs_failframe {
+                self.line("nova_fail_pop();");
+            }
+            if stop_at_loop && scope.is_loop_body {
+                break;
+            }
+        }
+    }
+
+    /// Emit a defer/errdefer body as void-effect statements (no result value,
+    /// no return). Used to splice defer body code into the cleanup-cascade.
+    /// The body itself was already verified in Ф.3 to be infallible (no Fail,
+    /// no suspend, no top-level return/break/continue/throw), so we can emit
+    /// raw stmts + trailing-as-void.
+    fn emit_defer_body_void(&mut self, body: &Expr) -> Result<(), String> {
+        match &body.kind {
+            // Common case: parser wraps `defer { ... }` body in ExprKind::Block.
+            ExprKind::Block(b) => {
+                for stmt in &b.stmts {
+                    self.emit_stmt(stmt)?;
+                }
+                if let Some(trailing) = &b.trailing {
+                    let v = self.emit_expr(trailing)?;
+                    self.line(&format!("(void)({});", v));
+                }
+            }
+            // Fallback: treat body as a single expression.
+            _ => {
+                let v = self.emit_expr(body)?;
+                self.line(&format!("(void)({});", v));
+            }
+        }
+        Ok(())
+    }
+
     fn emit_block_stmts(&mut self, block: &Block, ret_ty: &str) -> Result<(), String> {
+        let block_id = self.enter_defer_scope(block, false);
         for stmt in &block.stmts {
             self.emit_stmt(stmt)?;
         }
@@ -3805,12 +4018,20 @@ impl CEmitter {
             let val = self.emit_expr(trailing)?;
             if ret_ty == "nova_unit" {
                 self.line(&format!("{};", val));
+                self.leave_defer_scope(block_id);
                 self.line("return NOVA_UNIT;");
             } else {
-                self.line(&format!("return {};", val));
+                // Stash result in a tmp so defer cleanup runs *before* the return.
+                let tmp = self.fresh_tmp();
+                self.line(&format!("{} {} = {};", ret_ty, tmp, val));
+                self.leave_defer_scope(block_id);
+                self.line(&format!("return {};", tmp));
             }
         } else if ret_ty == "nova_unit" {
+            self.leave_defer_scope(block_id);
             self.line("return NOVA_UNIT;");
+        } else {
+            self.leave_defer_scope(block_id);
         }
         Ok(())
     }
@@ -4077,17 +4298,18 @@ impl CEmitter {
                     self.line(&format!("Nova_Fail_fail(nova_int_to_str((nova_int)({})));", val));
                 }
             }
-            // D90 Plan 20 Ф.2: парсер принимает defer/errdefer, но codegen
-            // пока не реализует scope-stack invocation (Ф.4). Эмитим как
-            // no-op + warning через source-annotation. Compile-time
-            // проверки (no Fail, no suspend, no exit-control) — Ф.3.
-            // Use-site файлы будут просто игнорировать cleanup до
-            // полной реализации Ф.4-Ф.6.
-            //
-            // TODO Ф.4: scope-stack defer-callbacks, LIFO on exit,
-            //          NovaFailFrame integration для errdefer throw-detection.
+            // D90 Plan 20 Ф.4: defer/errdefer codegen. Активация флага в
+            // позиции defer/errdefer; cleanup инвоцируется в leave_defer_scope
+            // (для normal-exit) и в setjmp-fail-handler (для throw-path).
+            // enter_defer_scope уже декларировал `int _defer_BID_N_active = 0`.
+            // Здесь — просто переключаем флаг и инкрементим next_idx.
             Stmt::Defer { .. } | Stmt::ErrDefer { .. } => {
-                // No-op в текущей фазе. См. Plan 20 Ф.4.
+                let scope = self.defer_scopes.last_mut()
+                    .expect("defer/errdefer outside defer scope (enter_defer_scope missed?)");
+                let idx = scope.next_idx;
+                let var = scope.entries[idx].active_var.clone();
+                scope.next_idx += 1;
+                self.line(&format!("{} = 1;", var));
             }
         }
         Ok(())
@@ -5245,9 +5467,16 @@ impl CEmitter {
             self.indent = old_indent;
             // Append to deferred_impls
             let _ = write!(self.deferred_impls, "\n{}", block_body);
-            // Emit a forward declaration for the body function
-            let fwd = format!("static {} {}({});", ret_c_ty, fn_name, body_param_list);
-            self.line(&fwd);
+            // Emit a forward declaration for the body function.
+            // ВАЖНО: fwd-декларация должна быть **file-scope**, не внутри
+            // функции — Clang/GCC корректно отвергают `static foo(void);`
+            // в block scope (C99 §6.2.2¶7: block-scope decl со storage-class
+            // `static` для функций не допускается). MSVC исторически принимает,
+            // но это не portable. Кладём в `lambda_forward_decls` — тот же
+            // буфер что и для closure-lambda fwd-декл'ов, эмитится file-scope
+            // перед всеми fn-телами.
+            let fwd = format!("static {} {}({});\n", ret_c_ty, fn_name, body_param_list);
+            self.lambda_forward_decls.push_str(&fwd);
 
             // Wrap in a NovaClos_XX struct so fn_param_sigs call mechanism works
             let clos_struct = Self::clos_struct_name(&param_c_tys, &ret_c_ty);
