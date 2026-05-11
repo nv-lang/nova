@@ -5466,6 +5466,78 @@ xorshift64 PRNG (~15 строк, без extra deps) + Fisher-Yates shuffle.
 Новые возможности проверены: --list, slowest report в Summary.
 
 ================================================================================
+2026-05-12 D97: fiber_ctx[] — GC root для SpawnCtx в NovaFiberQueue
+================================================================================
+
+Корневая причина: mco_coro (minicoro stack) выделяется через calloc, а не
+GC_malloc — Boehm не сканирует его. Поле mco_coro::user_data (указатель на
+NovaSpawnCtx) невидимо для GC. При grow() NovaFiberQueue (≥32 fiber'ов)
+давление на heap вызывает GC-sweep, который собирал живые SpawnCtx → crash.
+
+Решение: добавлен void** fiber_ctx в NovaFiberQueue (GC-managed массив,
+синхронизированный с fibers[]) — хранит SpawnCtx-указатели прямо на heap,
+видимом сборщику.
+
+Изменения в nova_rt/fibers.h:
+
+1. Новое поле void** fiber_ctx между fibers[] и fiber_fail_top[].
+   Комментарий обновлён с «6 синхронизированы» на «7 синхронизированы».
+
+2. nova_scope_grow: выделяет new_ctx через nova_alloc, копирует, зануляет
+   новые слоты, свопает q->fiber_ctx = new_ctx. Аналогично 5 другим
+   динамическим массивам.
+
+3. nova_scope_init: q->fiber_ctx = NULL при инициализации.
+
+4. nova_fiber_spawn_into: q->fiber_ctx[q->count] = user — записывает
+   SpawnCtx сразу после mco_coro, пока fiber не начал выполнение.
+
+5. nova_supervised_step (два места — early MCO_DEAD и post-resume MCO_DEAD):
+   q->fiber_ctx[i] = NULL — освобождает GC root когда fiber завершился.
+
+Тест memory_footprint_test.nv восстановлен до 1000 fiber'ов (был урезан
+до 500 как workaround). Сумма 0..1000 = 499_500 проверяется корректно.
+
+
+================================================================================
+2026-05-12 Warning routing: CEmitter.warnings — без утечки в stderr
+================================================================================
+
+In-process codegen (codegen_to_c запускается в том же процессе что тест-
+раннер), поэтому eprintln!() внутри CEmitter писал прямо в stderr процесса —
+предупреждения анонимного embedding просачивались между строками PASS/FAIL
+параллельного вывода тестов.
+
+Решение: аккумуляция в Vec<String> вместо прямой печати.
+
+Изменения:
+
+1. emit_c.rs:
+   - Добавлено поле warnings: Vec<String> в CEmitter.
+   - eprintln! в anonymous-embed override lint заменён на
+     self.warnings.push(format!("warning: ...")).
+   - emit_module возвращает Result<(String, Vec<String>), String>
+     вместо Result<String, String>.
+
+2. test_runner.rs:
+   - codegen_to_c: Result<(), String> → Result<Vec<String>, String>,
+     destructure (c_code, warnings) из emit_module, возвращает Ok(warnings).
+   - run_one: извлекает codegen_warnings через match &codegen_result,
+     собирает в cg_warn_str.
+   - Новый make_pass_with_cg_warn closure: prepend cg_warn_str в
+     captured_stderr только в --verbose режиме.
+   - Все make_pass вызовы с реальными stdout/stderr заменены на
+     make_pass_with_cg_warn.
+
+3. main.rs (nova-codegen CLI) и nova-cli/src/main.rs:
+   - Destructure (c_code, warnings), печатают warnings через eprintln!
+     (для CLI это правильно, не тест-раннер).
+
+Результат: parallel test output чист — предупреждения видны только в
+--verbose режиме под секцией stderr конкретного теста.
+
+
+================================================================================
 ПЛАН 31 Ф.6: SELECT ALL-CLOSED PANIC (2026-05-12)
 ================================================================================
 
