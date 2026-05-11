@@ -6356,6 +6356,7 @@ impl CEmitter {
                             "len"       => return Ok(format!("nova_chan_writer_len({})", obj_c)),
                             "capacity"  => return Ok(format!("nova_chan_writer_capacity({})", obj_c)),
                             "is_closed" => return Ok(format!("nova_chan_writer_is_closed({})", obj_c)),
+                            "clone"     => return Ok(format!("nova_chan_writer_clone({})", obj_c)),
                             _ => {}
                         }
                     }
@@ -10075,6 +10076,7 @@ impl CEmitter {
                             "try_send"         => "nova_bool".into(),
                             "is_closed"        => "nova_bool".into(),
                             "len" | "capacity" => "nova_int".into(),
+                            "clone"            => "Nova_ChanWriter*".into(),
                             _ => "nova_int".into(),
                         };
                     }

@@ -127,16 +127,16 @@ let tx2 = tx.clone()   // новый ChanWriter на тот же буфер
 ## Фазы
 
 ### Ф.1: `send` → `bool`
-- [ ] channels.h: возврат `nova_bool`, убрать throw
-- [ ] emit_c.rs: type inference `send` → `"nova_bool"`
-- [ ] channels.nv: новые тесты
-- [ ] regression: все тесты зелёные
+- [x] channels.h: возврат `nova_bool`, убрать throw
+- [x] emit_c.rs: type inference `send` → `"nova_bool"`
+- [x] channels.nv: новые тесты (Секция 7, 3 теста)
+- [x] regression: 159/159 PASS
 
 ### Ф.2: Multi-writer (tx.clone())
-- [ ] channels.h: `writer_count` + `nova_chan_writer_clone` + новый `close`
-- [ ] emit_c.rs: dispatch `clone` на ChanWriter
-- [ ] channels.nv: fan-in тест, clone/close тест
-- [ ] regression: все тесты зелёные
+- [x] channels.h: `writer_count` + `nova_chan_writer_clone` + новый `close`
+- [x] emit_c.rs: dispatch `clone` на ChanWriter + infer_expr_c_type → `"Nova_ChanWriter*"`
+- [x] channels.nv: fan-in тест, clone/close тесты (Секция 8, 3 теста)
+- [x] regression: зелёные
 
 ### Ф.3: Spec uplift + retro
 - [ ] D91 Bootstrap-status: пометить Improvement 1+2 ✅

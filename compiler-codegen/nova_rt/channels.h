@@ -57,6 +57,7 @@ struct Nova_ChannelState {
     int64_t        head;
     int64_t        count;
     bool           closed;
+    int32_t        writer_count;  /* ref-count: channel closes when all writers call close() */
     ChannelWaiter* recv_waiters;  /* fibers parked waiting for data */
     ChannelWaiter* send_waiters;  /* fibers parked waiting for space */
 };
@@ -107,6 +108,7 @@ static inline Nova_ChannelPair nova_channel_new(int64_t capacity) {
     st->head         = 0;
     st->count        = 0;
     st->closed       = false;
+    st->writer_count = 1;
     st->recv_waiters = NULL;
     st->send_waiters = NULL;
     Nova_ChanWriter*   tx = (Nova_ChanWriter*)nova_alloc(sizeof(Nova_ChanWriter));
@@ -267,6 +269,8 @@ static inline nova_bool nova_chan_writer_try_send(Nova_ChanWriter* tx, nova_int 
 static inline void nova_chan_writer_close(Nova_ChanWriter* tx) {
     Nova_ChannelState* st = tx->state;
     if (st->closed) return;
+    st->writer_count--;
+    if (st->writer_count > 0) return;  /* other writers still alive */
     st->closed = true;
     while (st->recv_waiters) {
         ChannelWaiter* w = st->recv_waiters;
@@ -280,6 +284,14 @@ static inline void nova_chan_writer_close(Nova_ChanWriter* tx) {
         w->channel = NULL;
         nova_sched_wake(w->scope, w->slot);
     }
+}
+
+/* Plan 30 Ф.2: clone creates a second writer sharing the same channel state. */
+static inline Nova_ChanWriter* nova_chan_writer_clone(Nova_ChanWriter* tx) {
+    tx->state->writer_count++;
+    Nova_ChanWriter* clone = (Nova_ChanWriter*)nova_alloc(sizeof(Nova_ChanWriter));
+    clone->state = tx->state;
+    return clone;
 }
 
 static inline nova_int   nova_chan_writer_len(Nova_ChanWriter* tx)       { return (nova_int)tx->state->count;  }
