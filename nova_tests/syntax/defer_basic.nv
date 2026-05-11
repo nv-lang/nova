@@ -48,3 +48,37 @@ test "несколько defers выполняются в LIFO" {
     assert(order_b == 2)
     assert(order_a == 3)
 }
+
+
+// ───── Defer + early return из nested block ─────
+//
+// Defer body захватывает mut local'и из outer scope (closure-like).
+// Помним: Nova не имеет references, поэтому defer body работает с
+// outer mut local'ями напрямую.
+
+test "defer срабатывает при early return из nested block" {
+    let mut counter = 0
+    let result = {
+        defer { counter = counter + 1 }
+        // Симулируем early return через trailing if-then-else;
+        // в обоих ветках мы покидаем block, и defer должен сработать.
+        if true { 99 } else { 42 }
+    }
+    assert(result == 99)
+    assert(counter == 1)
+}
+
+
+// ───── Defer + многократная регистрация в loop ─────
+//
+// Если defer находится в loop body, он должен срабатывать на каждой
+// итерации. Проверка через counter, который должен быть равен
+// числу итераций.
+
+test "defer срабатывает на каждой итерации for-loop" {
+    let mut tick = 0
+    for _ in 0..5 {
+        defer { tick = tick + 1 }
+    }
+    assert(tick == 5)
+}
