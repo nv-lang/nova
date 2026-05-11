@@ -246,7 +246,7 @@ Timer callback отправляет значение и закрывает write
 ## Commits
 
 - `a5003d6b0` — Ф.3: lexer KwSelect + AST + parser + emit_select codegen
-- (Ф.6) — SelectSlot.wildcard + all-closed pre-check + select_all_closed.nv реальный тест
+- `e0630a48e` — Ф.6: SelectSlot.wildcard + all-closed pre-check + select_all_closed.nv реальный тест
 - `78743a290` — Ф.1/2: channels.h SelectCtx runtime + Time.after + тесты WIP
 - `aef65ae9c` — Ф.5: spawn capture fix (collect_idents/free/bound для Select)
 - `9710a9795` — Ф.6: closed-channel tests + wildcard fast-path fix + negative test
