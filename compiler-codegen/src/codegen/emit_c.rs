@@ -3815,6 +3815,9 @@ impl CEmitter {
         self.line("int main(void) {");
         self.indent += 1;
         self.line("nova_gc_init();");
+        // Plan 22 Ф.2: глобальный event loop. Под NOVA_USE_LIBUV даёт
+        // настоящий uv_default_loop, иначе — stub no-op. Idempotent.
+        self.line("nova_evloop_init();");
         // Per-fiber handler scoping: register all built-in effect-storage
         // addresses so nova_supervised_step может save/restore их в
         // per-fiber snapshot. Без этой регистрации fiber-snapshot был бы
@@ -3826,6 +3829,10 @@ impl CEmitter {
         // объявленного `type X effect { }`.
         self.emit_user_effect_registrations();
         self.line("nova_fn_main_impl();");
+        // Plan 22 Ф.2: graceful shutdown event loop'а перед GC shutdown.
+        // Закрывает active handles, drain pending callbacks. Под stub'ом —
+        // no-op.
+        self.line("nova_evloop_close();");
         self.line("nova_gc_shutdown();");
         self.line("return 0;");
         self.indent -= 1;
@@ -3940,6 +3947,11 @@ impl CEmitter {
         }
         let scope = self.defer_scopes.pop().expect("defer_scopes balanced");
         debug_assert_eq!(scope.block_id, block_id);
+        // Entries: emit `if (active) { body; active = 0; }` — `= 0` чтобы
+        // долгий-jump throw-handler (если он сработает после этой точки)
+        // не вызвал defer повторно. Само-by-this-point throw уже не может
+        // случиться внутри этого block scope (мы покидаем его), но defer
+        // body выше могло иметь nested setjmp/longjmp.
         for entry in scope.entries.iter().rev() {
             if entry.is_errdefer {
                 continue;
@@ -3947,11 +3959,14 @@ impl CEmitter {
             self.line(&format!("if ({}) {{", entry.active_var));
             self.indent += 1;
             let _ = self.emit_defer_body_void(&entry.body);
+            self.line(&format!("{} = 0;", entry.active_var));
             self.indent -= 1;
             self.line("}");
         }
         if scope.needs_failframe {
-            self.line("nova_fail_pop();");
+            // Если early-exit cleanup уже pop'нул fail-frame и установил
+            // is_error_var = 2, пропускаем повторный pop.
+            self.line(&format!("if ({} != 2) {{ nova_fail_pop(); }}", scope.is_error_var));
         }
     }
 
@@ -3960,6 +3975,15 @@ impl CEmitter {
     /// scopes up to (but not including) the first loop-body scope — used by
     /// break/continue. `stop_at_loop=false` means walk ALL scopes — used by
     /// return.
+    /// Emit defer-cleanup for an early exit:
+    ///   - return: walk ALL scopes (fn-level exit; ALL leave_defer_scope's
+    ///     remaining cleanup will NOT run, so pop fail-frames manually).
+    ///   - break/continue: walk ONLY the innermost loop-body scope (the C
+    ///     `break`/`continue` exits one loop level — outer scopes remain
+    ///     active and clean themselves up later via their own leave_defer_scope).
+    ///
+    /// In both cases we DEACTIVATE the defer flag (`= 0`) so that the eventual
+    /// leave_defer_scope or fail-frame longjmp handler doesn't re-invoke.
     fn emit_early_exit_cleanup(&mut self, stop_at_loop: bool) {
         let scopes = self.defer_scopes.clone();
         for scope in scopes.iter().rev() {
@@ -3970,16 +3994,43 @@ impl CEmitter {
                 self.line(&format!("if ({}) {{", entry.active_var));
                 self.indent += 1;
                 let _ = self.emit_defer_body_void(&entry.body);
+                self.line(&format!("{} = 0;", entry.active_var));
                 self.indent -= 1;
                 self.line("}");
             }
+            // For return: pop fail-frames as we go (control will never reach
+            // leave_defer_scope of these scopes again). For break/continue:
+            // ONLY the innermost loop scope gets the pop (we walk just one).
+            // Outer scopes remain active, will pop normally at their own
+            // leave_defer_scope.
             if scope.needs_failframe {
                 self.line("nova_fail_pop();");
+                // Mark frame as popped so leave_defer_scope skips another pop.
+                // We use the is_error_var as a sentinel: setting it to 2 means
+                // "already popped — skip everything".
+                self.line(&format!("{} = 2;", scope.is_error_var));
             }
             if stop_at_loop && scope.is_loop_body {
                 break;
             }
         }
+    }
+
+    /// Emit a loop-body block (for/while/loop): integrates defer-scope around
+    /// the body so defer/errdefer на каждой итерации correctly runs (LIFO,
+    /// throw-path through NovaFailFrame). is_loop_body=true: break/continue
+    /// в нашей собственной body — local, не пересекают loop boundary.
+    fn emit_loop_body_inline(&mut self, body: &Block) -> Result<(), String> {
+        let block_id = self.enter_defer_scope(body, true);
+        for stmt in &body.stmts {
+            self.emit_stmt(stmt)?;
+        }
+        if let Some(trailing) = &body.trailing {
+            let v = self.emit_expr(trailing)?;
+            self.line(&format!("(void)({});", v));
+        }
+        self.leave_defer_scope(block_id);
+        Ok(())
     }
 
     /// Emit a defer/errdefer body as void-effect statements (no result value,
@@ -4274,15 +4325,41 @@ impl CEmitter {
                 self.line(&format!("{} {} {};", tgt, op_str, val));
             }
             Stmt::Return { value, .. } => {
+                // Plan 20 Ф.4: emit defer cleanup for ALL outer scopes before
+                // returning (return is functional-level exit — walks ALL).
+                // If no defers active, this is a no-op.
                 if let Some(v) = value {
                     let val = self.emit_expr(v)?;
-                    self.line(&format!("return {};", val));
+                    if self.defer_scopes.is_empty() {
+                        self.line(&format!("return {};", val));
+                    } else {
+                        // Stash result in a tmp so defer bodies can't see
+                        // it / mutate it.
+                        let ty = self.current_fn_return_ty.clone().unwrap_or_else(|| "nova_int".to_string());
+                        let tmp = self.fresh_tmp();
+                        self.line(&format!("{} {} = {};", ty, tmp, val));
+                        self.emit_early_exit_cleanup(/*stop_at_loop=*/false);
+                        self.line(&format!("return {};", tmp));
+                    }
                 } else {
+                    if !self.defer_scopes.is_empty() {
+                        self.emit_early_exit_cleanup(/*stop_at_loop=*/false);
+                    }
                     self.line("return NOVA_UNIT;");
                 }
             }
-            Stmt::Break(_) => self.line("break;"),
-            Stmt::Continue(_) => self.line("continue;"),
+            Stmt::Break(_) => {
+                if !self.defer_scopes.is_empty() {
+                    self.emit_early_exit_cleanup(/*stop_at_loop=*/true);
+                }
+                self.line("break;");
+            }
+            Stmt::Continue(_) => {
+                if !self.defer_scopes.is_empty() {
+                    self.emit_early_exit_cleanup(/*stop_at_loop=*/true);
+                }
+                self.line("continue;");
+            }
             Stmt::Throw { value, .. } => {
                 // `throw expr` desugars to `Fail.fail(expr)` — operation of the
                 // built-in `Fail` effect (D25/D62/D65). Compiler dispatches via
@@ -5538,6 +5615,7 @@ impl CEmitter {
 
     /// Emit block statements and trailing expression with explicit return type.
     fn emit_block_stmts_trailing(&mut self, block: &Block, ret_ty: &str) -> Result<(), String> {
+        let block_id = self.enter_defer_scope(block, false);
         for stmt in &block.stmts {
             self.emit_stmt(stmt)?;
         }
@@ -5545,11 +5623,16 @@ impl CEmitter {
             let v = self.emit_expr(trailing)?;
             if ret_ty == "nova_unit" {
                 self.line(&format!("{};", v));
+                self.leave_defer_scope(block_id);
                 self.line("return NOVA_UNIT;");
             } else {
-                self.line(&format!("return {};", v));
+                let tmp = self.fresh_tmp();
+                self.line(&format!("{} {} = {};", ret_ty, tmp, v));
+                self.leave_defer_scope(block_id);
+                self.line(&format!("return {};", tmp));
             }
         } else {
+            self.leave_defer_scope(block_id);
             if ret_ty == "nova_unit" {
                 self.line("return NOVA_UNIT;");
             }
@@ -7168,6 +7251,7 @@ impl CEmitter {
 
     /// Emit a block's statements and assign its trailing value (or NOVA_UNIT) into `tmp`.
     fn emit_block_into(&mut self, tmp: &str, ty: &str, block: &Block) -> Result<(), String> {
+        let block_id = self.enter_defer_scope(block, false);
         for stmt in &block.stmts {
             self.emit_stmt(stmt)?;
         }
@@ -7179,6 +7263,8 @@ impl CEmitter {
         } else {
             Self::emit_zero_assign(self, tmp, ty);
         }
+        // Cleanup AFTER assigning result (defer should not affect tmp).
+        self.leave_defer_scope(block_id);
         Ok(())
     }
 
@@ -7318,6 +7404,7 @@ impl CEmitter {
         self.var_types.insert(tmp.clone(), block_ty.clone());
         self.line("{");
         self.indent += 1;
+        let block_id = self.enter_defer_scope(block, false);
         for stmt in &block.stmts {
             self.emit_stmt(stmt)?;
         }
@@ -7329,6 +7416,9 @@ impl CEmitter {
             let bty = block_ty.clone();
             Self::emit_zero_assign(self, &tmp, &bty);
         }
+        // Defer cleanup AFTER assigning result tmp (defer body не влияет
+        // на значение block-expr).
+        self.leave_defer_scope(block_id);
         self.indent -= 1;
         self.line("}");
         Ok(tmp)
@@ -7355,13 +7445,9 @@ impl CEmitter {
             // user shouldn't mutate it) — fits by-value capture.
             let prev_ty = self.var_types.insert(binding.clone(), "nova_int".to_string());
             let was_mut = self.var_mutable.remove(&binding);
-            for stmt in &body.stmts {
-                self.emit_stmt(stmt)?;
-            }
-            if let Some(trailing) = &body.trailing {
-                let v = self.emit_expr(trailing)?;
-                self.line(&format!("(void)({});", v));
-            }
+            // Plan 20 Ф.4: defer/errdefer внутри loop body должен выполняться
+            // на каждой итерации (LIFO, fail-frame throw-path).
+            self.emit_loop_body_inline(body)?;
             // Restore prior state.
             match prev_ty {
                 Some(t) => { self.var_types.insert(binding.clone(), t); }
