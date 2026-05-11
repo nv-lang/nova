@@ -1,0 +1,42 @@
+// defer_with_closure_callback.nv — Plan 20 + closure capture combo:
+// defer body вызывает closure'у которая mutates outer mut local через
+// capture. Это типичный паттерн "callback в defer".
+
+module nova_tests.syntax.defer_with_closure_callback
+
+
+fn run_with_cleanup(cleanup fn(int) -> int) -> int {
+    defer { let _ = cleanup(7) }
+    42
+}
+
+
+test "defer вызывает closure callback с capture'ом mut local" {
+    let mut last_val = 0
+    let r = run_with_cleanup(|v| {
+        last_val = v
+        v * 10
+    })
+    assert(r == 42)
+    // Closure call'ится из defer (cleanup), capture'ит last_val
+    // через pointer, обновляет original.
+    assert(last_val == 7)
+}
+
+
+test "defer + closure: counter увеличивается каждый вызов" {
+    let mut count = 0
+    let _ = run_with_cleanup(|_v| {
+        count = count + 1
+        count
+    })
+    let _ = run_with_cleanup(|_v| {
+        count = count + 1
+        count
+    })
+    let _ = run_with_cleanup(|_v| {
+        count = count + 1
+        count
+    })
+    assert(count == 3)
+}
