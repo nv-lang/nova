@@ -14,7 +14,7 @@ structured-concurrency примитивы есть в языке, и как па
 | [D79](#d79-channels--coordination-между-fiber-ами) | ⚠️ Уточнено [D91](#d91): `Channel[T]` (старая Go-style модель — один объект, send+recv на нём) |
 | [D80](#d80-handler-scoping-per-fiber) | Handler scoping per-fiber — `with X = handler` локален для fiber'а, наследуется через spawn |
 | [D80](#d80-handler-scoping-per-fiber) | Handler scoping per-fiber — `with X = h` биндинги изолированы между fibers |
-| [D91](#d91-channel-revision--capability-split-на-sender--receiver) | `Channel` revision: capability-split на `ChanWriter[T]` / `ChanReader[T]` (Rust mpsc-style) ✅ |
+| [D91](#d91-channel-revision--capability-split-на-chanwriter--chanreader) | `Channel` revision: capability-split на `ChanWriter[T]` / `ChanReader[T]`; `send`→`bool`; `tx.clone()` multi-writer ✅ |
 
 ---
 
@@ -1873,7 +1873,7 @@ TLS-globals **без** per-fiber изоляции — handler одного fiber
 
 ---
 
-## D91. Channel revision — capability-split на `Sender` / `Receiver`
+## D91. Channel revision — capability-split на `ChanWriter` / `ChanReader`
 
 > **Уточняет** [D79](#d79-channels--coordination-между-fiber-ами) —
 > модель API меняется с Go-style (один объект с `send`/`recv`) на
@@ -1892,9 +1892,9 @@ let v = rx.recv()
 defer tx.close()                    // close — обязателен, см. D90
 ```
 
-- **`Sender[T]`** — capability «отправлять в канал». Методы: `send`,
-  `try_send`, `close`.
-- **`Receiver[T]`** — capability «получать из канала». Методы: `recv`,
+- **`ChanWriter[T]`** — capability «отправлять в канал». Методы: `send`,
+  `try_send`, `close`, `clone`.
+- **`ChanReader[T]`** — capability «получать из канала». Методы: `recv`,
   `try_recv`.
 
 Внутренний state (buffer, sync) **скрыт** — не доступен напрямую,
@@ -1905,29 +1905,33 @@ defer tx.close()                    // close — обязателен, см. D90
 #### API — типы
 
 ```nova
-// Sender capability:
-type Sender[T] protocol {
-    send(v T) -> ()                              // blocking если буфер полон
-    try_send(v T) -> bool                         // true если отправлено, false если буфер полон
-    close() -> ()                                  // закрыть канал (idempotent)
+// Writer capability:
+type ChanWriter[T] protocol {
+    send(v T) -> bool                             // true если послал; false если канал закрыт
+    try_send(v T) -> bool                         // true если послал, false если полон или закрыт
+    close() -> ()                                 // закрыть (idempotent; ref-counted при clone)
+    clone() -> ChanWriter[T]                      // дополнительный writer на тот же буфер
 }
 
-// Receiver capability:
-type Receiver[T] protocol {
-    recv() -> Option[T]                            // blocking; None = closed+drained
-    try_recv() -> Option[T]                        // None = пусто (НЕ означает closed)
+// Reader capability:
+type ChanReader[T] protocol {
+    recv() -> Option[T]                           // blocking; None = closed+drained
+    try_recv() -> Option[T]                       // None = пусто (НЕ означает closed)
 }
 ```
 
-`Sender` и `Receiver` — **protocols**. Конкретная реализация скрыта
-внутри `Channel.new`. Это аналогично Rust `Sender`/`Receiver` как
-конкретным типам — Nova предпочла protocol-подход для абстракции
-(хочешь свой `Sender` impl — реализуй protocol).
+`ChanWriter` и `ChanReader` — **protocols**. Конкретная реализация скрыта
+внутри `Channel.new`. Типы-аннотации в сигнатурах функций:
+
+```nova
+fn fill(tx ChanWriter[int], items []int) { ... }
+fn drain(rx ChanReader[int]) -> int { ... }
+```
 
 #### Factory
 
 ```nova
-fn Channel[T].new(capacity int) -> (Sender[T], Receiver[T])
+fn Channel[T].new(capacity int) -> (ChanWriter[T], ChanReader[T])
 ```
 
 `capacity = 0` — unbuffered channel (rendezvous: send блокирует
@@ -1958,49 +1962,66 @@ fn run_pipeline() Net -> () {
 `close()` — **idempotent**: повторный вызов не error.
 
 После close:
-- `tx.send(v)` — panic (нельзя слать в closed canal). Strict для
-  defensive programming.
+- `tx.send(v)` — возвращает `false` (канал закрыт). Не panic — программист
+  может проверить результат: `if !tx.send(v) { /* канал закрыт */ }`.
 - `tx.try_send(v)` — возвращает `false`.
 - `rx.recv()` — возвращает `Some(v)` пока буфер не пуст; потом `None`.
 - `rx.try_recv()` — то же.
 
-#### Sender clone — не нужен
+#### Multi-writer: tx.clone()
 
-В Rust `Sender` cloneable: `let tx2 = tx.clone()` (mpsc). В Nova
-**через managed heap** все captures share один `tx`:
+`ChanWriter` поддерживает `clone()` — создаёт дополнительный writer
+на тот же буфер с ref-count семантикой:
 
 ```nova
 let (tx, rx) = Channel[Job].new(10)
+let tx2 = tx.clone()
 supervised {
-    spawn { tx.send(...) }                        // оба захватывают тот же tx
-    spawn { tx.send(...) }                        // через managed reference
+    spawn { tx.send(1);  tx.close() }
+    spawn { tx2.send(2); tx2.close() }
+    spawn { while let Some(v) = rx.recv() { process(v) } }
 }
-defer tx.close()
 ```
 
-Это работает потому что `Sender` (как любой managed object) — shared
-по умолчанию. **`clone()` не нужен** — добавим если появится
-performance use-case (per-thread inbox для cache-locality).
+**Семантика close с несколькими writers:** канал закрывается только
+когда **все** writers вызвали `close()`. Внутри — ref-count
+(`writer_count`): `Channel.new` инициализирует в 1, `clone()`
+инкрементирует, `close()` декрементирует и закрывает при 0.
+
+Идиома для spawn-fan-in:
+```nova
+let (tx, rx) = Channel[int].new(8)
+supervised {
+    for item in work_items {
+        let worker_tx = tx.clone()
+        spawn { worker_tx.send(process(item)); worker_tx.close() }
+    }
+    tx.close()                                    // close «корневого» writer'а
+    spawn { while let Some(v) = rx.recv() { collect(v) } }
+}
+```
+
+> **Managed heap и captures.** Без `clone()` два `spawn` могут захватить
+> один `tx` через managed reference — оба могут слать. Но `close()`
+> первого spawn'а закрыл бы канал для второго. `clone()` решает это:
+> каждый spawn держит свою capability и закрывает её независимо.
 
 #### `select` после revision
 
-Текущий `select` D79 работает через Channel-объект; в D91 — через
-Receiver:
+`select` работает через `ChanReader` (Plan 31, не реализован):
 
 ```nova
 let (_, rx_a) = Channel[int].new(0)
 let (_, rx_b) = Channel[int].new(0)
 
 select {
-    msg <- rx_a       => process_a(msg)
-    msg <- rx_b       => process_b(msg)
-    timeout(5.seconds()) => default_action()
+    Some(v) = rx_a.recv() => process_a(v)
+    Some(v) = rx_b.recv() => process_b(v)
+    _ = Time.sleep(5.0)   => default_action()
 }
 ```
 
-`<-` оператор читает из `Receiver[T]`. Семантика без изменений
-(non-deterministic выбор при множественной готовности; полная
-семантика — D79 раздел «`select`»).
+Синтаксис и D94-решение — в [Plan 31](../../docs/plans/31-channel-select.md).
 
 ### Почему
 
@@ -2109,11 +2130,11 @@ let v = rx.recv()
 ```
 
 **Изменения:**
-1. `Channel.new(N)` возвращает `(Sender, Receiver)`, не `Channel`.
+1. `Channel.new(N)` возвращает `(ChanWriter, ChanReader)`, не `Channel`.
 2. `send` через `tx`, `recv` через `rx`.
 3. `close` через `tx.close()` (или `defer tx.close()`).
 4. `Channel[T]` как type-аннотация **не используется** в коде — есть
-   только `Sender[T]` и `Receiver[T]`.
+   только `ChanWriter[T]` и `ChanReader[T]`.
 
 **Что нужно мигрировать:**
 - `std/` — нет существующих `Channel`-API.
@@ -2130,9 +2151,8 @@ let v = rx.recv()
   deterministic destruction. См. «Почему close — explicit».
 - **`recv() Fail[Closed] -> T`.** Closed — не ошибка, валидный исход.
   `Option[T]` композируется чище.
-- **Sender.clone() в bootstrap.** В Nova managed-heap делает sender
-  shared by default; clone не нужен. Если появится use-case
-  (per-thread cache-locality) — добавим.
+- **Auto-close по GC.** Не работает — GC недетерминирован, explicit
+  `tx.close()` обязателен (см. «Почему close — explicit»).
 - **Сохранить Go-style как альтернативу.** Два API для одной задачи —
   нарушение D40 «один очевидный путь». Полная замена D79 →
   D91-семантика.
