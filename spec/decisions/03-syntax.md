@@ -4400,12 +4400,32 @@ scope ждёт defer'ов всех детей, scheduling непредсказу
 
 ### Bootstrap-status
 
-- 🟡 **Не реализовано.** Spec фиксирует семантику. Реализация
-  parser/codegen — отдельный план (Plan 21+).
-- Парсер: keyword `defer` / `errdefer`, statement-level.
-- Type-checker: проверка infallible body (no `Fail`), no-suspend,
-  no-return/throw/break/continue из body.
-- Codegen: scope-stack defer-callbacks, on-exit invocation в LIFO.
-  Для `errdefer` — invoke только если exit через `throw` (через
-  NovaFailFrame catch).
+- ✅ **Реализовано** (Plan 20, 2026-05-11). Все 7 фаз закрыты:
+  - Ф.1 Лексер: keyword'ы `defer`/`errdefer` (commit 75673d7).
+  - Ф.2 Парсер + AST: `Stmt::Defer { body }`, `Stmt::ErrDefer { body }`
+    (commit 380b457).
+  - Ф.3 Type-checker constraints (revised: **Вариант 3, local control
+    разрешён**, commit fdb53be + 3faf9f0):
+    * `throw`/`?`/`!!`/`interrupt`/suspend-effects — всегда запрещены.
+    * `return`/`break`/`continue` — запрещены **только на top-level
+      defer body**; внутри nested fn-литерала/loop — разрешены.
+  - Ф.4 Codegen: per-scope DeferScope с активационными флагами;
+    NovaFailFrame setjmp wrapper для errdefer throw-path с
+    longjmp re-throw; integration во все emit_block_* paths;
+    early-exit cleanup для return/break/continue
+    (commits 94151c3 + b058968).
+  - Ф.5 Interp: per-scope defer-stack, LIFO invocation, errdefer
+    skip non-error exit (commit c96f7f3).
+  - Ф.6 Positive-тесты: `syntax/defer_basic.nv` (4 теста: trailing,
+    LIFO, early-return, loop-iter), `syntax/errdefer_basic.nv`
+    (3 теста: normal-exit, defer+errdefer combo, multiple errdefer)
+    (commits c57d098 + 4cd8abe + 24196f2).
+  - Ф.7 Spec uplift: текущий блок.
+- Известное ограничение: **errdefer на throw-path с user-installed
+  `with Fail = handler ...`** не срабатывает, потому что user
+  handler перехватывает Fail.fail dispatch ДО local fail-frame'а
+  (см. Q-errdefer-handler в open-questions.md). Errdefer работает
+  на unhandled-throw путях (default fail-frame). Корректное
+  взаимодействие с handler требует пересмотра handler-dispatch
+  семантики.
 
