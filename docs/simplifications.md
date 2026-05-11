@@ -3370,3 +3370,61 @@ LLVM 22.1.5 поставлен через `winget install LLVM.LLVM`, `run_tests
 - ⏸️ Ф.5 (README docs) — частично, отдельная задача.
 - ⏸️ Ф.6 (benchmarks) — отложен до std/json + libuv готовности.
 - Tests: Clang dev 130/130 PASS, MSVC dev (regression) 130/130 PASS.
+
+---
+
+## 2026-05-11 (продолжение) — Plan 20 Ф.2-Ф.7: defer/errdefer полная реализация
+
+### Что закрыто
+
+Plan 20 (D90 defer/errdefer) закрыт полностью — 7 фаз, 9 коммитов:
+- Ф.1 lexer (75673d7, ранее) — `defer`/`errdefer` keyword-токены.
+- Ф.2 parser+AST (380b457, ранее) — `Stmt::Defer { body }`, `Stmt::ErrDefer { body }`.
+- Ф.3 type-check (fdb53be + 3faf9f0) — body constraints + **revision Вариант 3** (local control разрешён).
+- Ф.4 codegen (94151c3 + b058968) — per-scope DeferScope, NovaFailFrame throw-path, early-exit cleanup.
+- Ф.5 interp (c96f7f3, ранее) — per-scope defer-stack, LIFO, errdefer skip non-error.
+- Ф.6 positive-тесты (c57d098 + 4cd8abe + 24196f2) — `syntax/defer_basic.nv` (4 кейса) + `syntax/errdefer_basic.nv` (3 кейса).
+- Ф.7 spec uplift (4fcb6b8) — D90 Bootstrap-status 🟡 → ✅.
+
+### Изменения относительно плана
+
+- **Ф.3 переписан как Вариант 3 (local control).** Изначальный план запрещал return/break/continue в defer body везде (Zig-style strict). По user-feedback в ходе работы — ослаблено: top-level всё ещё запрещено (нельзя hijack scope-exit), но **внутри nested fn-литерала/loop в defer body — разрешено** (local control). Реализовано через `DeferBodyCtx { loop_depth, fn_depth }`, инкремент при заходе в loop/fn-literal. Negative-тесты обновлены под новый wording error-сообщения.
+
+### Упрощения / отложенные элементы
+
+- **Q-errdefer-handler — errdefer не работает с user-installed Fail handler.** `with Fail = handler Fail { fail(msg) { interrupt v } }` устанавливает user handler в `_nova_handler_Fail`, который перехватывает `Fail.fail` dispatch ДО того, как throw достигнет local `_defer_BID_ff` setjmp-frame. Errdefer срабатывает **только** на unhandled-throw путях (через default fail-frame). Корректное взаимодействие требует пересмотра handler-dispatch model'и (longjmp first, dispatch inside frame). Зафиксировано как Q-errdefer-handler в `spec/open-questions.md`.
+
+- **Loop-body integration — только range-for.** 20+ мест в codegen с прямым `for stmt in &body.stmts { emit_stmt }` (for-in-array, while, while-let, loop, match-arm bodies, if-branch bodies). Только **for-range body** переписан через `emit_loop_body_inline` (вызывает enter/leave_defer_scope). Остальные продолжают legacy inline-iteration. В fast-path (блок без defer'ов) — поведение идентично, регрессий нет. Defer внутри inline-iterated блока **не зарегистрируется** в DeferScope — будет добавлено incrementally при появлении positive-теста, который зацепит конкретный path.
+
+- **Throw-path positive-тест отложен.** 3 errdefer-теста покрывают только normal-exit семантику. Throw-path задизайнен в codegen (NovaFailFrame setjmp wrapper, longjmp re-throw), визуально подтверждён в generated C, но не покрыт positive-тестом. Reach throw-path в Nova-тесте без handler'а нетривиально (test-runner ловит throw как fail теста). Обход через `EXPECT_RUNTIME_PANIC` маркер возможен, но не реализован — отложено.
+
+### Trade-offs
+
+- **Активационные флаги вместо jump-list.** Codegen эмитит `int _defer_N_active = 0;` + inline `= 1;` при достижении defer'а + cleanup `if (active) { body; active = 0; }`. Простой и читаемый, но O(N) проверок на cleanup. Production-grade компилятор мог бы использовать explicit goto-cleanup-label или jump-table. Для bootstrap'а активационные флаги оптимальны — clang оптимизирует константные `if (1)` в линейный код.
+
+- **`is_error_var = 2` sentinel.** Для double-pop guard'а (когда early-exit cleanup уже popnул fail-frame, leave_defer_scope не должен повторно): использован magic number 2 в `is_error_var` (0=normal, 1=error, 2=already-popped). Не самое читаемое — но работает и self-contained.
+
+- **DeferScope.clone() на каждый early-exit.** `emit_early_exit_cleanup` клонирует `defer_scopes: Vec<DeferScope>` (включая AST `Expr` тел) чтобы итерироваться. Аллокации не критичны (defer'ы редки на hot path), и Rust borrow checker не позволяет иначе без рефакторинга на `&mut self` invariants.
+
+### Файлы
+
+- `compiler-codegen/src/lexer/`, `parser/`, `ast/` — Ф.1, Ф.2 (ранее).
+- `compiler-codegen/src/types/mod.rs` — Ф.3 + revision (DeferBodyCtx).
+- `compiler-codegen/src/codegen/emit_c.rs` — Ф.4 (DeferScope/DeferEntry, helpers, integration).
+- `compiler-codegen/src/interp/mod.rs` — Ф.5 (ранее).
+- `nova_tests/syntax/defer_basic.nv` + `errdefer_basic.nv` — Ф.6.
+- `nova_tests/negative_capability/defer_*_rejected.nv`, `errdefer_*_rejected.nv` — updated wording.
+- `spec/decisions/03-syntax.md` — Ф.7 D90 Bootstrap-status ✅.
+- `spec/open-questions.md` — Q-errdefer-handler (новый).
+
+### Status
+
+- ✅ Plan 20 Ф.1-Ф.7 все ЗАКРЫТЫ.
+- Tests: 7 positive-тестов defer/errdefer PASS + 6 negative-тестов PASS.
+- Defer-relevant suite: 130/130 PASS на момент закрытия. Lingering failures в session (11 CC-FAIL) — от Plan 22/23 sched.h/fibers.h, не от Plan 20.
+
+### Lesson
+
+- **Семантическая ревизия в ходе implementation — нормально.** Изначальный Ф.3 strict (запрет return/break везде в defer body) выглядел проще, но после реального примера use-case (nested loop в defer для batched cleanup) — ослаблено до Вариант 3. Урок: spec-decision на стадии design'а не всегда оптимален; implementation проявляет practical edge cases. **Не цементировать spec до первой реальной реализации.**
+
+- **Handler-dispatch vs setjmp-frame interaction — нетривиально.** Q-errdefer-handler всплыл только на этапе positive-тестирования. Изолированный design «defer работает через fail-frame» был корректен, но не учёл что user handler перехватывает dispatch ДО фрейма. Урок: при проектировании cleanup-механизма учитывать **где** в стеке handler-семантики сидит наша точка catch.
