@@ -1831,16 +1831,78 @@ impl Interpreter {
 
     pub fn exec_block_flow(&self, block: &Block, env: &Env) -> Result<Flow, Diagnostic> {
         let local = Env::new_child(env);
+        // D90 Plan 20 Ф.5: per-scope defer-stack. defer/errdefer body
+        // регистрируется при выполнении соответствующего statement'а
+        // (eager registration). На exit (любой Flow::*) — invoke LIFO.
+        // ErrDefer — только если is_error_exit.
+        let mut defers: Vec<(Expr, /*is_errdefer*/ bool)> = Vec::new();
+
+        let mut exit_flow: Option<Flow> = None;
         for stmt in &block.stmts {
-            match self.exec_stmt(stmt, &local)? {
-                Flow::Value(_) => {}
-                other => return Ok(other),
+            // Spec: defer/errdefer регистрируется eagerly — body
+            // запоминается, но не выполняется до exit'а. Аргументы
+            // body — closure-captures из текущего env (lazy при invoke).
+            match stmt {
+                Stmt::Defer { body, .. } => {
+                    defers.push((body.clone(), false));
+                    continue;
+                }
+                Stmt::ErrDefer { body, .. } => {
+                    defers.push((body.clone(), true));
+                    continue;
+                }
+                _ => {}
+            }
+            match self.exec_stmt(stmt, &local) {
+                Ok(Flow::Value(_)) => {}
+                Ok(other) => { exit_flow = Some(other); break; }
+                Err(diag) => {
+                    // Even on hard error, invoke defer'ы (best-effort cleanup).
+                    self.run_defers(&defers, /*is_error_exit*/ true, &local);
+                    return Err(diag);
+                }
             }
         }
-        if let Some(t) = &block.trailing {
-            return self.eval_expr(t, &local);
+        // Trailing expression — выполнить только если не было раннего exit'а.
+        let result_flow = if exit_flow.is_some() {
+            exit_flow.unwrap()
+        } else if let Some(t) = &block.trailing {
+            match self.eval_expr(t, &local) {
+                Ok(f) => f,
+                Err(diag) => {
+                    self.run_defers(&defers, /*is_error_exit*/ true, &local);
+                    return Err(diag);
+                }
+            }
+        } else {
+            Flow::Value(Value::Unit)
+        };
+
+        // Invoke defer'ы LIFO. is_error_exit = (Flow::Throw).
+        let is_error_exit = matches!(result_flow, Flow::Throw(_));
+        self.run_defers(&defers, is_error_exit, &local);
+        Ok(result_flow)
+    }
+
+    /// D90 Plan 20 Ф.5: invoke defer'ов LIFO.
+    /// - `defer` body — выполняется при любом exit'е.
+    /// - `errdefer` body — выполняется только если `is_error_exit`
+    ///   (Flow::Throw, hard panic-error).
+    ///
+    /// Если defer body сам throw'нёт — body checker'ом (Ф.3) запрещает
+    /// throw в body. На runtime это не должно произойти на well-typed
+    /// code. Но если случится (например через native call) — поглощаем
+    /// (нельзя propagate из defer, иначе масштабирующая ошибка).
+    fn run_defers(&self, defers: &[(Expr, bool)], is_error_exit: bool, env: &Env) {
+        for (body, is_errdefer) in defers.iter().rev() {
+            if *is_errdefer && !is_error_exit {
+                continue; // errdefer skip на normal exit
+            }
+            // Best-effort: ошибки в defer body silently игнорируем.
+            // Type-check (Ф.3) запрещает Fail/throw/return/break в body,
+            // так что well-typed программы сюда не попадают.
+            let _ = self.eval_expr(body, env);
         }
-        Ok(Flow::Value(Value::Unit))
     }
 
     fn exec_stmt(&self, stmt: &Stmt, env: &Env) -> Result<Flow, Diagnostic> {
