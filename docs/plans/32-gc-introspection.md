@@ -1,5 +1,9 @@
 # Plan 32: GC introspection API (`gc.heap_size()` / `gc.collect()`)
 
+> **Статус:** Ф.1 ✅. Ф.2 ✅. Ф.4 ✅. Ф.3 (std/runtime/gc.nv auto-gen) и
+> Ф.5 (spec D26 prelude) — добавлены 2026-05-12 audit fix.
+> **Создан:** 2026-05-12. **Обновлён:** 2026-05-12.
+
 ## Контекст
 
 Текущие GC-тесты (`gc_correctness.nv`, `gc_bench.nv`) проверяют только

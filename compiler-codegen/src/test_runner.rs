@@ -638,6 +638,28 @@ pub struct LibuvConfig {
     pub eventloop_src: PathBuf,  /* nova_rt/eventloop.c */
 }
 
+/// Plan 27 Ф.D (audit 2026-05-12): Boehm GC paths resolved at startup.
+///
+/// На Windows: vcpkg-installed gc.lib + atomic_ops.lib + headers.
+/// Lookup order:
+///   1. `$NOVA_GC_LIB_DIR` + `$NOVA_GC_INCLUDE_DIR` env override (CI/custom).
+///   2. Local vcpkg: `<cg_include>/vcpkg_installed/x64-windows-static/`.
+///   3. Global vcpkg: `$VCPKG_ROOT/installed/x64-windows-static/`.
+///
+/// На Linux/macOS: system libgc через `-lgc` (path-less). `include_dir`
+/// проверяется только для diagnostic-hint'а (`/usr/include/gc.h` etc.).
+///
+/// Если backend = Boehm и detection fail → `detect_boehm` возвращает None
+/// с graceful eprintln-hint'ом (см. resolve_gc_or_exit).
+#[derive(Clone)]
+pub struct BoehmConfig {
+    /// Headers path (для `-I`). На Linux/macOS может быть None (system include).
+    pub include_dir: Option<PathBuf>,
+    /// Library directory (для `-L`/MSVC `/link <dir>\gc.lib`). На Linux/macOS
+    /// = None → линкер ищет в system path через `-lgc`.
+    pub lib_dir: Option<PathBuf>,
+}
+
 /// GC backend selection. Wired through BuildOpts → build_command.
 /// Malloc = plain malloc, no GC (internal/benchmark only — any loop that
 /// allocates will OOM eventually; not for production use).
@@ -713,17 +735,31 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
     let rt_fibers = opts.rt_dir.join("fibers.c");
     let march = march_flag();
 
-    // Plan 27 Ф.1: Boehm vcpkg paths (x64-windows-static). Only used on Windows;
-    // on Linux/macOS the system libgc is used (no vcpkg).
-    // cg_include is compiler-codegen/ root, so vcpkg_installed lives alongside nova_rt/.
-    let vcpkg_include = opts.cg_include
-        .join("vcpkg_installed")
-        .join("x64-windows-static")
-        .join("include");
-    let vcpkg_lib = opts.cg_include
-        .join("vcpkg_installed")
-        .join("x64-windows-static")
-        .join("lib");
+    // Plan 27 Ф.1+Ф.D: Boehm paths resolved via detect_boehm (env overrides
+    // + local vcpkg + global vcpkg). На Linux/macOS Some(BoehmConfig) с
+    // include_dir=Some из system path, lib_dir=None — линкер через -lgc.
+    // Под Windows detect_boehm всегда даёт both Some(...).
+    // Если backend = Malloc → cfg = None, paths не используются.
+    let boehm_cfg = if opts.gc_kind == GcKind::Boehm {
+        detect_boehm(opts.cg_include)
+    } else {
+        None
+    };
+    // Legacy fallback path (для случаев когда detect_boehm вернул None и
+    // mistake'нно дошли до build_command — например тест прямо вызывает
+    // build_command минуя resolve_gc_or_exit). Оставляем как safety-net.
+    let vcpkg_include = boehm_cfg.as_ref()
+        .and_then(|c| c.include_dir.clone())
+        .unwrap_or_else(|| opts.cg_include
+            .join("vcpkg_installed")
+            .join("x64-windows-static")
+            .join("include"));
+    let vcpkg_lib = boehm_cfg.as_ref()
+        .and_then(|c| c.lib_dir.clone())
+        .unwrap_or_else(|| opts.cg_include
+            .join("vcpkg_installed")
+            .join("x64-windows-static")
+            .join("lib"));
 
     // Plan 22: libuv linkage. Если libuv config present — добавляем
     // eventloop.c в sources, -DNOVA_USE_LIBUV=1, libuv include, libuv.lib
@@ -804,7 +840,7 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                     }
                 }
             }
-            // Plan 27 Ф.1: Boehm link flags for Clang.
+            // Plan 27 Ф.1+Ф.D: Boehm link flags for Clang.
             if opts.gc_kind == GcKind::Boehm {
                 #[cfg(target_os = "windows")]
                 {
@@ -815,6 +851,21 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                 }
                 #[cfg(not(target_os = "windows"))]
                 {
+                    // Linux/macOS: если detect_boehm нашёл non-system path
+                    // (например Homebrew /opt/homebrew или env override) —
+                    // передаём явно. Иначе linker ищет в system path через -lgc.
+                    if let Some(cfg) = &boehm_cfg {
+                        if let Some(inc) = &cfg.include_dir {
+                            // Передаём только если non-default (не /usr/include).
+                            let s = inc.to_string_lossy();
+                            if !s.starts_with("/usr/include") {
+                                c.arg("-I").arg(inc);
+                            }
+                        }
+                        if let Some(lib) = &cfg.lib_dir {
+                            c.arg("-L").arg(lib);
+                        }
+                    }
                     c.arg("-lgc");
                     #[cfg(target_os = "linux")]
                     c.arg("-lpthread");
@@ -905,8 +956,19 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
             c.arg(&rt_alloc);
             c.arg(&rt_effects);
             c.arg(&rt_fibers);
-            // Plan 27 Ф.1: Boehm link flags for GCC (system libgc).
+            // Plan 27 Ф.1+Ф.D: Boehm link flags for GCC.
             if opts.gc_kind == GcKind::Boehm {
+                if let Some(cfg) = &boehm_cfg {
+                    if let Some(inc) = &cfg.include_dir {
+                        let s = inc.to_string_lossy();
+                        if !s.starts_with("/usr/include") {
+                            c.arg("-I").arg(inc);
+                        }
+                    }
+                    if let Some(lib) = &cfg.lib_dir {
+                        c.arg("-L").arg(lib);
+                    }
+                }
                 c.arg("-lgc");
                 #[cfg(target_os = "linux")]
                 c.arg("-lpthread");
@@ -926,6 +988,8 @@ pub fn compile_c_to_exe(
     opts: &BuildOpts,
     timeout: Duration,
 ) -> anyhow::Result<PathBuf> {
+    // Plan 27 Ф.D: graceful exit если backend = Boehm и libgc не найден.
+    let _ = resolve_gc_or_exit(opts.gc_kind, opts.cg_include);
     let cmd = build_command(tc, opts);
     let out = run_with_timeout(cmd, timeout)
         .map_err(|e| anyhow!("spawn compiler: {}", e))?;
@@ -2028,6 +2092,176 @@ pub fn detect_or_build_libuv(rt_dir: &Path, repo_root: &Path,
     }
 }
 
+/// Plan 27 Ф.D (audit 2026-05-12): detect Boehm GC installation with
+/// graceful fallback. Returns Some(config) если найден, None — иначе
+/// (caller вызывает resolve_gc_or_exit для honest exit).
+///
+/// **Lookup order:**
+///
+/// 1. `$NOVA_GC_LIB_DIR` (+ optional `$NOVA_GC_INCLUDE_DIR`) — CI/custom override.
+/// 2. **Windows:**
+///    a. Local vcpkg: `<cg_include>/vcpkg_installed/x64-windows-static/`.
+///    b. Global vcpkg: `$VCPKG_ROOT/installed/x64-windows-static/`.
+/// 3. **Linux:** проверяет `gc.h` в стандартных paths — если найден, возвращает
+///    Some({include_dir: Some, lib_dir: None}). Иначе None.
+/// 4. **macOS:** Homebrew (`/opt/homebrew/include/gc.h` на Apple Silicon или
+///    `/usr/local/include/gc.h` на Intel).
+pub fn detect_boehm(cg_include: &Path) -> Option<BoehmConfig> {
+    // 1. Env override (highest priority).
+    if let Ok(lib_dir_env) = std::env::var("NOVA_GC_LIB_DIR") {
+        let lib_dir = PathBuf::from(&lib_dir_env);
+        let include_dir = std::env::var("NOVA_GC_INCLUDE_DIR")
+            .ok()
+            .map(PathBuf::from);
+        return Some(BoehmConfig {
+            include_dir,
+            lib_dir: Some(lib_dir),
+        });
+    }
+
+    // 2. Windows: vcpkg paths.
+    #[cfg(target_os = "windows")]
+    {
+        // 2a. Local vcpkg (current behaviour).
+        let local_inc = cg_include
+            .join("vcpkg_installed")
+            .join("x64-windows-static")
+            .join("include");
+        let local_lib = cg_include
+            .join("vcpkg_installed")
+            .join("x64-windows-static")
+            .join("lib");
+        if local_lib.join("gc.lib").is_file() {
+            return Some(BoehmConfig {
+                include_dir: Some(local_inc),
+                lib_dir: Some(local_lib),
+            });
+        }
+        // 2b. Global vcpkg via VCPKG_ROOT.
+        if let Ok(vcpkg_root) = std::env::var("VCPKG_ROOT") {
+            let global_inc = PathBuf::from(&vcpkg_root)
+                .join("installed")
+                .join("x64-windows-static")
+                .join("include");
+            let global_lib = PathBuf::from(&vcpkg_root)
+                .join("installed")
+                .join("x64-windows-static")
+                .join("lib");
+            if global_lib.join("gc.lib").is_file() {
+                return Some(BoehmConfig {
+                    include_dir: Some(global_inc),
+                    lib_dir: Some(global_lib),
+                });
+            }
+        }
+        return None;
+    }
+
+    // 3. Linux: system libgc — проверяем header через известные paths.
+    #[cfg(target_os = "linux")]
+    {
+        let _ = cg_include;  // silence unused warning
+        let candidates = [
+            "/usr/include/gc.h",
+            "/usr/include/gc/gc.h",
+            "/usr/local/include/gc.h",
+        ];
+        for c in candidates {
+            if std::path::Path::new(c).is_file() {
+                // lib_dir None → linker finds via -lgc в standard path.
+                let inc = std::path::Path::new(c).parent().map(PathBuf::from);
+                return Some(BoehmConfig {
+                    include_dir: inc,
+                    lib_dir: None,
+                });
+            }
+        }
+        return None;
+    }
+
+    // 4. macOS: Homebrew paths.
+    #[cfg(target_os = "macos")]
+    {
+        let _ = cg_include;
+        let candidates = [
+            "/opt/homebrew/include/gc.h",   // Apple Silicon
+            "/usr/local/include/gc.h",      // Intel
+        ];
+        for c in candidates {
+            if std::path::Path::new(c).is_file() {
+                let p = std::path::Path::new(c);
+                let inc = p.parent().map(PathBuf::from);
+                let lib = p.parent()
+                    .and_then(|d| d.parent())
+                    .map(|prefix| prefix.join("lib"));
+                return Some(BoehmConfig {
+                    include_dir: inc,
+                    lib_dir: lib,
+                });
+            }
+        }
+        return None;
+    }
+
+    #[allow(unreachable_code)]
+    None
+}
+
+/// Plan 27 Ф.D: если backend = Boehm, проверяет наличие через detect_boehm.
+/// На fail печатает platform-specific install hint и завершает процесс.
+/// Возвращает Some(BoehmConfig) если backend = Boehm и detection OK,
+/// None если backend = Malloc (Boehm не нужен).
+pub fn resolve_gc_or_exit(gc: GcKind, cg_include: &Path) -> Option<BoehmConfig> {
+    if gc != GcKind::Boehm {
+        return None;
+    }
+    if let Some(cfg) = detect_boehm(cg_include) {
+        return Some(cfg);
+    }
+    // Honest fatal с platform-specific hint.
+    #[cfg(target_os = "windows")]
+    eprintln!(
+        "nova: FATAL Boehm GC (gc.lib) not found.\n\
+         \n\
+         Lookup order tried:\n\
+           1. $NOVA_GC_LIB_DIR env var\n\
+           2. {}\\vcpkg_installed\\x64-windows-static\\lib\\gc.lib\n\
+           3. $VCPKG_ROOT\\installed\\x64-windows-static\\lib\\gc.lib\n\
+         \n\
+         To fix:\n\
+           cd compiler-codegen\n\
+           vcpkg install bdwgc:x64-windows-static\n\
+         \n\
+         Or use --gc malloc for benchmarks (no GC, leaks).",
+        cg_include.display()
+    );
+    #[cfg(target_os = "linux")]
+    eprintln!(
+        "nova: FATAL Boehm GC (libgc) not found.\n\
+         \n\
+         Header `gc.h` not present in /usr/include, /usr/local/include.\n\
+         \n\
+         To fix:\n\
+           sudo apt install libgc-dev        # Debian/Ubuntu\n\
+           sudo dnf install gc-devel         # Fedora/RHEL\n\
+           sudo pacman -S gc                 # Arch\n\
+         \n\
+         Or use --gc malloc for benchmarks (no GC, leaks)."
+    );
+    #[cfg(target_os = "macos")]
+    eprintln!(
+        "nova: FATAL Boehm GC (libgc) not found.\n\
+         \n\
+         Header `gc.h` not present in /opt/homebrew/include or /usr/local/include.\n\
+         \n\
+         To fix:\n\
+           brew install bdw-gc\n\
+         \n\
+         Or use --gc malloc for benchmarks (no GC, leaks)."
+    );
+    std::process::exit(1);
+}
+
 /// Plan 22 Ф.1: compile libuv source files в libuv.lib / libuv.a.
 /// Кэшируется в repo_root/target/libuv-cache/ через VERSION stamp.
 fn build_libuv_lib(libuv_dir: &Path, cache_dir: &Path,
@@ -2487,6 +2721,11 @@ fn save_results(path: &Path, records: &[ResultRecord]) -> std::io::Result<()> {
 pub fn run_all(opts: TestAllOpts) -> Result<Summary> {
     // Plan 26 Ф.13: install Ctrl+C handler один раз.
     install_cancel_handler();
+
+    // Plan 27 Ф.D (audit 2026-05-12): early Boehm detection с graceful exit
+    // если backend = Boehm и gc.lib/libgc не найден. Без этого юзер получает
+    // cryptic linker error для каждого теста.
+    let _ = resolve_gc_or_exit(opts.gc_kind, opts.cg_include);
 
     // Collect .nv files.
     let mut inputs: Vec<(PathBuf, /*is_stdlib*/ bool)> = Vec::new();

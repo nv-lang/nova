@@ -175,6 +175,16 @@ upper bound TBD после G3a".
 **Status:** G3a в работе (этот retro fixes documentation, runtime
 implementation — отдельный план Plan 27).
 
+**Update 2026-05-12 (audit):** Plan 27 Ф.4 ✅ ЗАКРЫТА — default backend
+переключён на Boehm (`GcKind::default()` = Boehm в `test_runner.rs:649`;
+`nova-cli/src/main.rs:752,765` — `gc.as_deref().unwrap_or("boehm")`).
+Acceptance criteria выполнены: `memory_growth_check` PASS, Plan 32
+`gc_differential.nv` показывает bounded heap (348 KB на 500k allocs
+vs ожидаемых 16 MB при linear leak). **G3a closed.** Остаются:
+- G3b (pause measurement) — Plan 27 Ф.3 reopened, см. audit-section
+  плана 27.
+- Plan 27 Ф.5 (Linux libgc detect) — отдельный gap, см. там же.
+
 ---
 
 ### G4. Linux smoke test (Plan 22 Ф.11 deferred)

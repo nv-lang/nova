@@ -5500,6 +5500,67 @@ NovaSpawnCtx) невидимо для GC. При grow() NovaFiberQueue (≥32 fi
 
 
 ================================================================================
+2026-05-12 Plan 27 + 32 audit fixes (7 задач из honest review)
+================================================================================
+
+Audit'ом Plan 27/30/31/32 выявлены недозакрытые фазы / drift в docs. 7 задач:
+
+**A. Plan 32 Ф.3 — handwritten std/runtime/gc.nv.**
+Auto-gen registry не подходит (gc — namespace, не type). Создан handwritten
+doc-stub `std/runtime/gc.nv` — описывает API, dispatch остаётся hard-coded в
+emit_c.rs (как panic/exit).
+
+**B. Plan 32 Ф.5 — spec D26 prelude.**
+Добавлена секция в `spec/decisions/08-runtime.md` после Plan 13 секции —
+описывает namespace `gc.*`, semantics per backend, precedent'ы (Go/Java/
+Python/.NET).
+
+**C. Plan 31 README pass-rate.**
+Обновлён с stale 173/174 на 179/179 (после D97 memory_footprint fix).
+
+**D. Plan 27 detect_boehm() с graceful fallback.**
+Был хардкодный vcpkg path в build_command. Новый pub fn `detect_boehm()` +
+`resolve_gc_or_exit()` в test_runner.rs:
+- `$NOVA_GC_LIB_DIR` env override (CI/custom).
+- Windows: local vcpkg → global vcpkg (`$VCPKG_ROOT`).
+- Linux: `/usr/include/gc.h`, `/usr/local/include/gc.h`.
+- macOS: `/opt/homebrew/include/gc.h`, `/usr/local/include/gc.h`.
+
+На fail — graceful eprintln с platform-specific install hint
+(`vcpkg install bdwgc:x64-windows-static` / `apt install libgc-dev` /
+`brew install bdw-gc`) и exit(1). Вызывается из `run_all` и
+`compile_c_to_exe`.
+
+**E. Plan 25 G3a status sync.**
+В Plan 25 G3a добавлен update-block: «✅ ЗАКРЫТ Plan 27 Ф.4 (default=Boehm)
+2026-05-11». Раньше Plan 27 README говорил closes G3a, но Plan 25 свою
+сторону не обновил.
+
+**F. Plan 27 Ф.3 pause measurement в spec/overview.md.**
+Создан `nova_tests/concurrency/gc_pause_bench.nv` — 3 workloads (10k/100k/1M
+records × N rounds). Через `Time.now()` + `gc.collect()`.
+
+`spec/overview.md:51` — placeholder "целевые паузы <1ms p99" заменён measured
+числами: на x86_64-v3 Windows debug-build max < 16ms на all workloads (upper
+bound через GetTickCount64 gran 15.6ms). Hi-res measurement отложено.
+
+**G. Plan 27 Ф.5 Linux libgc detect + hint.**
+Включён в detect_boehm() (см. D). Linux ветка проверяет system paths,
+graceful hint с `apt`/`dnf`/`pacman` install commands.
+
+**Бонус: gc_no_leak.nv (запрос пользователя «память не течёт»).**
+4 теста stable-heap через N циклов { allocate; gc.collect() } + проверка
+`heap_size` growth < baseline/2. Результаты:
+- 20 циклов × 10k records: max_growth = **0 bytes**
+- 10 циклов × 5k nested records: max_growth = **0 bytes**
+- 15 циклов × 5k mixed (records + strings): max_growth = **0 bytes**
+- 10 циклов × 32 fiber'а: max_growth = **0 bytes** (D97 SpawnCtx GC root)
+
+**Под malloc:** 178 PASS + 3 SKIP (gc_correctness, gc_pause_bench, gc_no_leak).
+**Под boehm:** 181/181 PASS.
+
+
+================================================================================
 2026-05-12 Plan 32: GC introspection API (std.runtime.gc)
 ================================================================================
 

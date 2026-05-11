@@ -899,6 +899,43 @@ f32 — built-in типы из prelude. `std/runtime/*.nv` — read-only artefac
 
 См. [docs/plans/13-runtime-stdlib-and-autogen.md](../../docs/plans/13-runtime-stdlib-and-autogen.md).
 
+### GC introspection — `std.runtime.gc` (Plan 32)
+
+Namespace `gc.*` доступен для runtime-инспекции и явного управления GC:
+
+```nova
+let h = gc.heap_size()       // bytes; 0 если backend без introspection
+let n = gc.live_count()      // приблизительное число live-объектов
+let a = gc.alloc_count()     // монотонный счётчик с старта
+gc.collect()                 // принудительный сбор (no-op под malloc)
+gc.reset_stats()             // сброс счётчиков
+```
+
+**Без import** — `gc` — встроенный namespace (как `panic` / `exit`).
+Документация в [`std/runtime/gc.nv`](../../std/runtime/gc.nv); фактический
+dispatch — hard-coded в `compiler-codegen/src/codegen/emit_c.rs` (special-
+case для `gc.<method>()` member-call'ов).
+
+**Semantics per backend:**
+
+| API | malloc | boehm |
+|---|---|---|
+| `heap_size()` | 0 (honest «не поддерживается») | `GC_get_heap_size()` |
+| `live_count()` | `alloc - free` | `alloc_count` (upper bound) |
+| `alloc_count()` | counter | counter |
+| `collect()` | no-op | `GC_gcollect()` |
+| `reset_stats()` | zero counters | zero counters |
+
+`heap_size() == 0` — honest sentinel; differential-тесты могут
+использовать `if gc.heap_size() == 0 { ... skip ... }`.
+
+**Прецеденты:** Go `runtime.GC()` / `runtime.ReadMemStats`, Java
+`System.gc()` / `Runtime.totalMemory()`, Python `gc.collect()` /
+`gc.get_stats()`, .NET `GC.Collect()` / `GC.GetTotalMemory()`. Nova
+следует convention.
+
+См. [docs/plans/32-gc-introspection.md](../../docs/plans/32-gc-introspection.md).
+
 ---
 
 ## D41. Static-функции есть, static-состояния нет

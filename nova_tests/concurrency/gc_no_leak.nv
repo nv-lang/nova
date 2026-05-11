@@ -1,0 +1,173 @@
+// gc_no_leak.nv — проверка отсутствия утечек памяти под Boehm GC.
+//
+// **Метод:** N циклов { allocate K short-lived objects; gc.collect() }.
+// Между измерениями heap_size после warm-up должен оставаться **stable**
+// (не растёт). Если есть leak — heap растёт линейно с числом итераций.
+//
+// **Что отличает от gc_differential.nv:** тот тест демонстрирует bounded
+// heap для одного workload. Этот — **проверяет stability через много
+// циклов**, как стресс-тест leak detection. На leak heap будет расти
+// неограниченно.
+//
+// Под --gc malloc тест skipped (без introspection API leak не виден через
+// heap_size).
+//
+// ALLOC_REQUIRES boehm
+
+module nova_tests.concurrency.gc_no_leak
+
+type Junk { a int, b int, c int, d int }
+
+fn make_junk(i int) -> Junk =>
+    Junk { a: i, b: i + 1, c: i + 2, d: i + 3 }
+
+type Wrap { item Junk, count int }
+
+fn make_wrap(i int) -> Wrap =>
+    Wrap { item: make_junk(i), count: i }
+
+// ── 1. Stable heap после warmup ────────────────────────────────────────
+
+test "gc no-leak: heap stable после 20 циклов × 10k allocs (records)" {
+    // Warm-up: первые 3 цикла прогревают heap, не учитываем.
+    for _ in 0..3 {
+        for i in 0..10_000 {
+            let _ = make_junk(i)
+        }
+        gc.collect()
+    }
+    let baseline = gc.heap_size()
+
+    // 20 измерительных циклов
+    let mut max_growth = 0
+    for cycle in 0..20 {
+        for i in 0..10_000 {
+            let _ = make_junk(i)
+        }
+        gc.collect()
+        let h = gc.heap_size()
+        if h > baseline {
+            let growth = h - baseline
+            if growth > max_growth {
+                max_growth = growth
+            }
+        }
+        let _ = cycle
+    }
+
+    println("baseline=${baseline} max_growth=${max_growth} bytes")
+
+    // Acceptance: growth не должен превышать 50% baseline'а.
+    // 50% — щедрая граница (Boehm может удерживать heap ~2x peak).
+    // Linear leak давал бы growth = N × 10k × 32b ≈ 6.4 MB за 20 циклов.
+    let bound = baseline / 2
+    assert(max_growth < bound)
+}
+
+// ── 2. Stable heap для nested records ──────────────────────────────────
+
+test "gc no-leak: heap stable с nested records (10 циклов × 5k Wrap)" {
+    for _ in 0..3 {
+        for i in 0..5_000 {
+            let _ = make_wrap(i)
+        }
+        gc.collect()
+    }
+    let baseline = gc.heap_size()
+
+    let mut max_growth = 0
+    for cycle in 0..10 {
+        for i in 0..5_000 {
+            let _ = make_wrap(i)
+        }
+        gc.collect()
+        let h = gc.heap_size()
+        if h > baseline {
+            let growth = h - baseline
+            if growth > max_growth {
+                max_growth = growth
+            }
+        }
+        let _ = cycle
+    }
+
+    println("nested baseline=${baseline} max_growth=${max_growth} bytes")
+    let bound = baseline / 2
+    assert(max_growth < bound)
+}
+
+// ── 3. Stable heap при alternating workload (записи + строки) ──────────
+
+test "gc no-leak: stable heap при mixed alloc (15 циклов × 5k)" {
+    for _ in 0..3 {
+        for i in 0..5_000 {
+            let _ = make_junk(i)
+            let _ = "item_${i}_alloc"
+        }
+        gc.collect()
+    }
+    let baseline = gc.heap_size()
+
+    let mut max_growth = 0
+    for cycle in 0..15 {
+        for i in 0..5_000 {
+            let _ = make_junk(i)
+            let _ = "item_${i}_alloc"
+        }
+        gc.collect()
+        let h = gc.heap_size()
+        if h > baseline {
+            let growth = h - baseline
+            if growth > max_growth {
+                max_growth = growth
+            }
+        }
+        let _ = cycle
+    }
+
+    println("mixed baseline=${baseline} max_growth=${max_growth} bytes")
+    let bound = baseline / 2
+    assert(max_growth < bound)
+}
+
+// ── 4. Stable heap с fiber'ами (давление + GC roots через D97 fiber_ctx[]) ──
+
+test "gc no-leak: stable heap при fiber-allocations (10 циклов × 32 fiber'а)" {
+    for _ in 0..3 {
+        supervised {
+            for i in 0..32 {
+                spawn {
+                    let _ = make_junk(i)
+                }
+            }
+        }
+        gc.collect()
+    }
+    let baseline = gc.heap_size()
+
+    let mut max_growth = 0
+    for cycle in 0..10 {
+        supervised {
+            for i in 0..32 {
+                spawn {
+                    let _ = make_junk(i)
+                }
+            }
+        }
+        gc.collect()
+        let h = gc.heap_size()
+        if h > baseline {
+            let growth = h - baseline
+            if growth > max_growth {
+                max_growth = growth
+            }
+        }
+        let _ = cycle
+    }
+
+    println("fibers baseline=${baseline} max_growth=${max_growth} bytes")
+    // Для fiber'ов чуть более щедрая граница — minicoro stack'и
+    // (~64 KB каждый) могут pool'иться отдельно от GC heap.
+    let bound = baseline
+    assert(max_growth < bound)
+}

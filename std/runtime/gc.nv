@@ -1,0 +1,42 @@
+// std/runtime/gc.nv — GC introspection API (Plan 32).
+//
+// **Не auto-gen** — этот модуль документирует hard-coded namespace `gc.*`
+// который dispatched через compiler-codegen/src/codegen/emit_c.rs
+// (special-case как `panic()`/`exit()`). См. ниже список доступных функций.
+//
+// Использование:
+//
+//   let h = gc.heap_size()       // bytes; 0 если backend без introspection
+//   let n = gc.live_count()      // приблизительное число live-объектов
+//   let a = gc.alloc_count()     // монотонный счётчик с старта
+//   gc.collect()                 // принудительный сбор (no-op под malloc)
+//   gc.reset_stats()             // сброс счётчиков
+//
+// **Semantics per backend:**
+//
+// | API              | malloc                           | boehm                    |
+// |------------------|----------------------------------|--------------------------|
+// | heap_size()      | 0 (honest "not supported")       | GC_get_heap_size()       |
+// | live_count()     | alloc_count - free_count         | alloc_count (upper bound)|
+// | alloc_count()    | monotonic counter                | monotonic counter        |
+// | collect()        | no-op                            | GC_gcollect()            |
+// | reset_stats()    | zero counters                    | zero counters            |
+//
+// **`heap_size() == 0`** — honest sentinel «backend не поддерживает».
+// Тесты могут использовать `if gc.heap_size() == 0 { ... skip ... }`
+// для differential-behaviour, либо marker `// ALLOC_REQUIRES boehm`
+// для жёсткого скипа.
+//
+// **`gc.collect()`** — тяжёлая операция (full mark-sweep под Boehm).
+// Не использовать в hot path. Назначение — manual API для diagnostic
+// и явной разгрузки перед blocking I/O.
+//
+// **Прецеденты в других языках:**
+//   - Go:     `runtime.GC()`, `runtime.ReadMemStats(&ms); ms.HeapAlloc`
+//   - Java:   `System.gc()`, `Runtime.getRuntime().totalMemory()`
+//   - Python: `gc.collect()`, `gc.get_stats()`
+//   - .NET:   `GC.Collect()`, `GC.GetTotalMemory(false)`
+//
+// Реализация: см. Plan 32 docs/plans/32-gc-introspection.md.
+
+module std.runtime.gc

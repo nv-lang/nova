@@ -1,0 +1,74 @@
+// gc_pause_bench.nv — Plan 27 Ф.3 / Ф.F (audit 2026-05-12).
+//
+// **Observable GC pause через Time.now()** для уточнения spec/overview.md
+// "целевые паузы <1ms p99" — заменить placeholder на measured numbers.
+//
+// **Ограничение:** Time.now() на Windows = GetTickCount64 с 15.6ms gran.
+// На Linux/macOS = CLOCK_MONOTONIC через uv_hrtime, nanosecond gran.
+// Поэтому Windows может видеть pause = 0ms (внутри тика) либо ≥15ms.
+//
+// **Метод:** N раундов { allocate K; t0=now(); gc.collect(); t1=now(); }.
+// Считаем max delta в ms. Если max == 0 на Windows — это **upper bound
+// guarantee** "p99 < 15ms" (внутри одного GetTickCount64 тика).
+//
+// **Workloads:**
+//   small  =  10k objects per round (~256 KB heap pressure)
+//   medium = 100k objects per round (~2.5 MB)
+//   large  =   1M objects per round (~25 MB)
+//
+// **Ожидаемые числа на x86_64-v3 Windows (debug build Boehm):**
+//   small  max_pause_ms = 0  (внутри тика) → p99 < 15.6ms
+//   medium max_pause_ms ≤ 15
+//   large  max_pause_ms ≤ 100
+//
+// Это **observability test** — не fail unless pause абсурдно велик.
+//
+// ALLOC_REQUIRES boehm
+
+module nova_tests.concurrency.gc_pause_bench
+
+type Obj { a int, b int, c int }
+
+fn make_obj(i int) -> Obj =>
+    Obj { a: i, b: i + 1, c: i + 2 }
+
+// Возвращает max-pause из N раундов (миллисекунды).
+fn run_rounds(rounds int, per_round int) -> int {
+    let mut max_pause = 0
+    let mut sum_pause = 0
+    for _ in 0..rounds {
+        for i in 0..per_round {
+            let _ = make_obj(i)
+        }
+        let t0 = Time.now()
+        gc.collect()
+        let t1 = Time.now()
+        let pause = t1 - t0
+        if pause > max_pause {
+            max_pause = pause
+        }
+        sum_pause = sum_pause + pause
+    }
+    let avg = sum_pause / rounds
+    let h = gc.heap_size()
+    println("  ${rounds} rounds × ${per_round}: max=${max_pause}ms avg=${avg}ms heap=${h}b")
+    max_pause
+}
+
+test "gc pause bench: small workload (10k × 20)" {
+    let max_pause_ms = run_rounds(20, 10_000)
+    // На Windows max_pause_ms == 0 → pause < 15.6ms (gran)
+    // Sanity: <1000ms (= 1s)
+    assert(max_pause_ms < 1_000)
+}
+
+test "gc pause bench: medium workload (100k × 10)" {
+    let max_pause_ms = run_rounds(10, 100_000)
+    assert(max_pause_ms < 5_000)
+}
+
+test "gc pause bench: large workload (1M × 3)" {
+    let max_pause_ms = run_rounds(3, 1_000_000)
+    // Sanity: 30 секунд должно хватить даже под медленным debug-build Boehm.
+    assert(max_pause_ms < 30_000)
+}

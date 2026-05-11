@@ -46,16 +46,31 @@
 
 1. **Один язык — три режима компиляции:** AOT (как Go/Rust), JIT (как
    .NET), интерпретатор (как Python). Один и тот же исходник.
-2. **Память: managed по умолчанию (современный concurrent GC),
-   regions opt-in для real-time.** Программист пишет код без префиксов
-   памяти — циклы освобождаются автоматически, **целевые** паузы <1ms p99
-   (см. [decisions/05-memory.md#d6](decisions/05-memory.md#d6) — это
-   дизайн-цель, текущее состояние bootstrap-runtime'а в
-   [docs/plans/25-production-readiness-roadmap.md#g3](../docs/plans/25-production-readiness-roadmap.md#g3-memory-management--главное-упрощение-runtimeа)).
+2. **Память: managed по умолчанию (current: Boehm conservative GC; v1.0+:
+   concurrent GC), regions opt-in для real-time.** Программист пишет код без
+   префиксов памяти — циклы освобождаются автоматически. **Текущее состояние
+   bootstrap-runtime'а** ([Plan 27](../docs/plans/27-gc-switch.md), default
+   с 2026-05-11): Boehm GC, measured pauses (см.
+   `nova_tests/concurrency/gc_pause_bench.nv`) на x86_64-v3 Windows debug-build:
+   - 10k objects × 20 rounds: max < 16ms, p99 ≈ avg ≈ 0ms (внутри тика
+     GetTickCount64 — Windows timer gran 15.6ms).
+   - 100k objects × 10 rounds: max < 16ms.
+   - 1M objects × 3 rounds: max < 16ms.
+
+   Это **upper bounds через low-res timer**; реальные pauses скорее всего
+   меньше. Hi-res measurement (uv_hrtime) — отдельная задача после bootstrap.
+
+   **Дизайн-цель v1.0+:** concurrent GC, p99 < 1ms на типичных workloads
+   ([decisions/05-memory.md#d6](decisions/05-memory.md#d6),
+   [Plan 25 G3b](../docs/plans/25-production-readiness-roadmap.md#g3-memory-management--главное-упрощение-runtimeа)).
+
    Escape analysis оставляет на стеке всё, что не утекает (без GC overhead).
    Для real-time зон (звук, торговля, embedded) — блок `realtime nogc { }`
    ([D64](decisions/04-effects.md#d64)), внутри `region { }` для arena-
    allocations.
+
+   **Introspection API** ([Plan 32](../docs/plans/32-gc-introspection.md)):
+   `gc.heap_size()`, `gc.collect()`, `gc.live_count()` доступны без import.
 3. **Структурная типизация + вывод типов везде.**
 4. **Protocols + data вместо классов.** Никакого наследования. Структурные
    контракты через `protocol` (см. [decisions/01-philosophy.md#d1](decisions/01-philosophy.md#d1), [decisions/02-types.md#d42](decisions/02-types.md#d42)).
