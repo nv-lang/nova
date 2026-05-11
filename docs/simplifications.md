@@ -4036,3 +4036,28 @@ Commits: d49111281, 98586c954, 19d6fb79e, e728608a7
 Commits: 31207daab
 
 Commits: 88504b87c, 106e64c33
+
+### Plan 31 D94: select — channel multiplexing (2026-05-11)
+
+**Nova получила `select { }`** — Go-style channel multiplexing. Архитектурные решения:
+
+**SelectWaiter layout-compatibility** — `SelectWaiter` первые 6 полей совпадают с
+`ChannelWaiter`. Это позволяет каналу будить select-waiter через тот же
+`nova_sched_wake(w->scope, w->slot)` без runtime type dispatch. Park/wake работает
+через существующий channel wake path без изменений.
+
+**Fisher-Yates для fairness** — `nova_select_try_immediate()` перемешивает порядок
+проверки армов через xorshift32 с seed от адреса ctx. Честный случайный выбор без
+дополнительных структур.
+
+**Time.after как канал** — `Nova_Time_after(ms)` возвращает `Nova_ChanReader*`.
+Timeout-арм `Some(_) = Time.after(50)` синтаксически неотличим от recv-арма. Таймер
+один раз создаёт канал, отправляет значение, закрывает writer — timeout прозрачен
+для select runtime.
+
+**Spawn capture fix** — три функции обхода AST (`collect_idents_expr`,
+`collect_free_idents`, `collect_bound_names_expr`) не обходили `ExprKind::Select`.
+Переменные внутри select-армов не захватывались spawn-closure. Добавлен обход
+`SelectOp::Recv { binding }` как bound name (не free), `chan`/`value` как referenced.
+
+Commits: a5003d6b0, 78743a290, aef65ae9c

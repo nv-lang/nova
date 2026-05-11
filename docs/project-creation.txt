@@ -5346,3 +5346,48 @@ Commits: 88504b87c, 106e64c33
 **Результат:** 171/171 PASS с Boehm как default GC. ~85 сек на полный прогон.
 
 Commits: 31207daab, d651c923e
+
+**Plan 31 D94: select — мультиплексированные channel-операции (2026-05-11)**
+
+Nova получила `select { }` — структурированный аналог Go select с полным набором возможностей:
+recv-арм, send-арм, default-арм, guard-условия, timeout через `Time.after(ms)`.
+
+Реализация в 5 фазах:
+
+1. **Лексер** (`lexer/mod.rs`): добавлен `"select" => TokenKind::KwSelect`. Без этого
+   `select { }` парсился как идентификатор за блоком.
+
+2. **AST** (`ast/mod.rs`): `SelectArm { op: SelectOp, guard: Option<Expr>, body: Block }`,
+   `SelectOp::Recv { binding: Option<String>, chan }` / `SelectOp::Send { chan, value }` /
+   `SelectOp::Default`. `ExprKind::Select { arms: Vec<SelectArm> }`.
+
+3. **Парсер** (`parser/mod.rs`): `parse_select()` / `parse_select_op()` распознаёт
+   `Some(v) = expr => { }`, `expr.send(val) => { }`, `_ => { }`, guard `if <expr>`.
+
+4. **Рантайм C** (`nova_rt/channels.h`):
+   - `SelectCtx` — центральная структура: массив `SelectSlot[8]` (arm descriptors),
+     результат выбора `which`, recv-значение `recv_val`, `scope`/`slot` для park.
+   - `SelectWaiter` — layout-compatible с `ChannelWaiter` (первые 6 полей идентичны),
+     что позволяет каналу будить select-waiter через тот же `nova_sched_wake`.
+   - `nova_select_try_immediate()` — Fisher-Yates shuffle (xorshift32 RNG) для
+     fairness, проверяет все enabled-арм без блокировки.
+   - `nova_select_park()` — регистрирует `SelectWaiter` на каждый enabled channel,
+     паркует файбер, при пробуждении снимает остальные waiters.
+   - `Nova_Time_after(ms)` — создаёт `Channel(cap=1)`, запускает `uv_timer`, по
+     срабатыванию отправляет значение и закрывает writer. Возвращает rx-конец.
+
+5. **Codegen** (`emit_c.rs`): `emit_select()` генерирует `SelectCtx`, вызовы
+   `nova_select_set_recv/set_send`, `nova_select_try_immediate`. Одноарменный recv
+   без default использует fast-path `nova_chan_reader_recv`. `infer_expr_c_type`
+   распознаёт `Time.after` → `Nova_ChanReader*`, `Nova_ChannelPair` добавлен в
+   `is_value_type()` и в таблицу field-типов (`.tx` / `.rx`).
+
+   Критичный баг-фикс в spawn-capture: `collect_idents_expr`, `collect_free_idents`,
+   `collect_bound_names_expr` — все три функции расширены для обхода
+   `ExprKind::Select { arms }`. Без этого переменные вроде `rx` внутри select-армов
+   не попадали в список захватов spawn-closure, вызывая `error: undeclared identifier`.
+
+**Тесты** (`nova_tests/concurrency/select_test.nv`): 11 тестов, охватывающих все
+сценарии. Все 11 проходят. Регрессия: 171/172 PASS (memory_footprint_test — pre-existing fail).
+
+Commits: a5003d6b0, 78743a290, aef65ae9c
