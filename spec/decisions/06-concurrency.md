@@ -2299,3 +2299,149 @@ unifies сейчас раздроблённые blocking-mechanism'ы.
 - 🟡 **Real usage** — добавится в Plan 22 Ф.4 (Time.sleep), Plan 21
   (Channel), Plan 23+ (IO).
 - 🟡 **`nova_supervised_run` idle uv_run** — в Plan 22 Ф.4.
+
+---
+
+## D92. Top-level `main` как implicit supervised scope
+
+> **Введён:** Plan 22 Ф.5 (2026-05-11).
+> **Реализация:** `compiler-codegen/src/codegen/emit_c.rs` (emit_main_wrapper)
+> + `nova_rt/fibers.h` (nova_supervised_drain_main_scope).
+
+### Что
+
+Каждый `fn main()` codegen'ится с **implicit supervised scope** —
+`NovaFiberQueue _nova_main_scope` обёрнутый вокруг user-body. Это
+унифицирует runtime-семантику: внутри main user-code всегда имеет
+`_nova_active_scope != NULL`, как любая функция внутри supervised-блока.
+
+### Правила
+
+**Правило 1 — `_nova_active_scope` всегда non-NULL в user-code.** Все
+блокирующие операции (Time.sleep, Channel.recv, IO) опираются на это
+для park/wake API ([D93](#d93-park-wake--нормативный-runtime-primitive-для-блокирующих-операций)).
+
+**Правило 2 — drain до quiescence.** Main-body завершается → emit_main
+вызывает `nova_supervised_drain_main_scope(&_nova_main_scope)`. Этот
+drain работает пока есть alive fiber'ы:
+- Detach-fiber'ы ([D50](#d50-concurrency-model-spawn-detach-blocking))
+  доработают.
+- Pending libuv-handle'ы (Plan 22 Ф.4 sleep'ы) отстреливают callback'и.
+- Все fiber'ы пробуждённые callback'ами после main-body завершаются.
+
+После quiescence — `nova_evloop_close()` → `nova_gc_shutdown()` → `return 0`.
+
+**Правило 3 — error propagation.** Throw в main-body → propagates как
+обычно (через D85 `Fail` mechanism, либо panic). Throw в detach-fiber
+**после** main-body — **logged to stderr**, но процесс завершается
+exit code 0. Это согласовано с D50 fire-and-forget семантикой detach'а:
+detach не имеет owner для re-throw, и abort процесса из-за detach-error
+неприемлем (другие detach'ы могут быть корректны).
+
+**Правило 4 — `exit(code, msg)` bypass'ит drain.** D13 `exit()` гасит
+процесс **немедленно**, без drain, без cleanup'ов. Это согласовано с
+D90 §8 (`exit` обходит defer'ы): catastrophic shutdown, не graceful.
+
+**Правило 5 — `detach` в top-level кладёт fiber в main-scope.** До D92
+top-level detach был `SyncDetach` (inline-исполнение). После D92 — fiber
+в implicit main-scope, доживёт до drain'а. **Это поведенческое изменение,
+breaking change** для кода полагавшегося на inline'ность top-level detach.
+
+**Правило 6 — `_nova_active_slot = -1` означает main-flow.** Slot −1
+не индексирует fiber-array (там `count >= 0` fiber'ов). Park/wake API
+не работает с slot −1 (main-flow не может park'нуться через mco_yield —
+нет coroutine'ы). Top-level `Time.sleep` остаётся через busy-yield
+(supervised_step) либо через native sleep, не park-on-uv_timer.
+
+**Правило 7 (future, не реализуется в Plan 22):** SIGINT/Ctrl+C через
+`uv_signal_t` отменяет main-scope cancel-token, fiber'ы получают
+cooperative cancel. Optional extension, отдельный план если потребуется.
+
+### Семантика codegen
+
+`emit_main_wrapper` эмитит:
+
+```c
+int main(void) {
+    nova_gc_init();
+    nova_evloop_init();
+    /* effect-storage registration ... */
+
+    /* D92: implicit main-scope. */
+    NovaFiberQueue _nova_main_scope;
+    nova_scope_init(&_nova_main_scope);
+    _nova_active_scope = &_nova_main_scope;
+    _nova_active_slot  = -1;
+
+    nova_fn_main_impl();
+
+    /* D92: drain detach'ов / pending fiber'ов до quiescence. */
+    nova_supervised_drain_main_scope(&_nova_main_scope);
+
+    _nova_active_scope = NULL;
+    _nova_active_slot  = -1;
+
+    nova_evloop_close();
+    nova_gc_shutdown();
+    return 0;
+}
+```
+
+### Почему
+
+До D92 top-level main не имел scope — `_nova_active_scope = NULL`.
+Это создавало корзину edge cases:
+- `Time.sleep` на top-level → kernel-blocking (Plan 22 Ф.4 не мог
+  использовать park/wake без scope).
+- `detach` на top-level → inline execution (SyncDetach), не настоящий
+  fire-and-forget.
+- Будущие IO operations (Plan 23+ `std.net`) на top-level — не
+  работают через park/wake API, требовали бы special-case.
+
+D92 устраняет эти edge cases одним решением: main всегда внутри scope.
+User-code не видит разницы (семантика sleep / detach / IO одинакова
+из любого контекста). Runtime simplifies — нет двух кодопутей для
+fiber-context vs main-context.
+
+### Что отвергнуто
+
+**(a) Эволюция D71 без нового D-блока.** Изменение значимое —
+behavioural breaking change для detach. Заслуживает отдельного
+D-номера для discoverability.
+
+**(b) Не оборачивать main в scope, оставить top-level kernel-blocking.**
+Это сохранило бы простоту, но рассыпает Plan 22 Ф.4 цель — единый
+event-loop driven scheduler. Под Plan 18 (std.net) все IO operations
+требовали бы special-case для top-level. Нежелательно.
+
+**(c) Implicit scope с full `nova_supervised_run` (re-throw fiber-errors).**
+Re-throw на main-flow после main-body завершён = abort. Detach-fiber
+throw'ы в D50 fire-and-forget — должны быть logged, не abort. Поэтому
+**drain-no-throw** variant (`nova_supervised_drain_main_scope`).
+
+### Связь
+
+- [D13](08-runtime.md#d13) — `panic` / `exit` семантика. D92
+  Правило 4: `exit()` bypass'ит drain.
+- [D50](#d50-concurrency-model-spawn-detach-blocking) — `detach`
+  fire-and-forget. D92 Правило 3 + 5: detach-throw logged not abort'ed.
+- [D71](#d71-bootstrap-concurrency-runtime) — bootstrap scheduler.
+  D92 расширяет: main всегда в scope.
+- [D75](#d75-cancel_scope--tok--ручная-структурная-отмена) — cancel_scope.
+  D92 Правило 7 (future): SIGINT через main-scope cancel.
+- [D90](03-syntax.md#d90) — `defer` / `errdefer`. D92 Правило 4:
+  `exit()` обходит defer'ы (согласовано с D90 §8).
+- [D93](#d93-park-wake--нормативный-runtime-primitive-для-блокирующих-операций)
+  — park/wake API. D92 обеспечивает `_nova_active_scope != NULL` в
+  user-code, что необходимо для park/wake.
+
+### Bootstrap-status
+
+- ✅ Codegen `emit_main_wrapper` оборачивает в implicit scope.
+- ✅ Runtime `nova_supervised_drain_main_scope` drain до quiescence.
+- ✅ Detach behavior change verified (no regression в `detach_test.nv`).
+- 🟡 **SIGINT handler** (Правило 7) — future extension.
+- 🟡 **Top-level `Time.sleep` через uv_timer** (Правило 6 не работает) —
+  всё ещё busy-yield / native sleep. Под D92 это OK потому что
+  `_nova_active_slot = -1` детектируется в `_nova_time_default_sleep`
+  как "main-flow, не fiber".

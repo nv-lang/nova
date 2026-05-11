@@ -3828,7 +3828,23 @@ impl CEmitter {
         // дополнительные nova_register_effect_storage(...) для каждого
         // объявленного `type X effect { }`.
         self.emit_user_effect_registrations();
+        // Plan 22 Ф.5 (D92): implicit main-scope. Top-level main теперь
+        // имеет supervised-like scope для detach'ей, pending timer'ов и
+        // background fiber'ов. Они доработают до quiescence перед exit.
+        // _nova_active_slot = -1 означает "main-flow, не fiber".
+        self.line("NovaFiberQueue _nova_main_scope; nova_scope_init(&_nova_main_scope);");
+        self.line("_nova_active_scope = &_nova_main_scope;");
+        self.line("_nova_active_slot  = -1;");
         self.line("nova_fn_main_impl();");
+        // D92: drain implicit main-scope до quiescence перед exit.
+        // Detach'ы / pending fiber'ы пробуждённые callback'ами после
+        // main-body доработают. Не используем nova_supervised_run потому
+        // что он re-throws fiber-errors на main-flow (которого уже нет),
+        // вызывая abort. Используем drain-no-throw variant — fiber-throw'ы
+        // в detach'ах logged but не abort'ят процесс (D50 fire-and-forget).
+        self.line("nova_supervised_drain_main_scope(&_nova_main_scope);");
+        self.line("_nova_active_scope = NULL;");
+        self.line("_nova_active_slot  = -1;");
         // Plan 22 Ф.2: graceful shutdown event loop'а перед GC shutdown.
         // Закрывает active handles, drain pending callbacks. Под stub'ом —
         // no-op.

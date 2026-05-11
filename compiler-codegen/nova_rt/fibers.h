@@ -386,6 +386,33 @@ static inline int nova_supervised_step(NovaFiberQueue* q) {
     return alive;
 }
 
+/* Plan 22 Ф.5 (D92): drain implicit main-scope to quiescence without
+ * re-throwing fiber errors. Detach-fiber'ы в top-level main могут
+ * throw'нуть после main-body — но re-throw на main-flow (который
+ * уже завершён) приведёт к abort. Семантика D50 «detach = fire-and-
+ * forget» означает что такие throws logged but не abort'ят процесс.
+ *
+ * Если fiber-error appears — printf to stderr (диагностика), но
+ * нормальный exit. */
+static inline void nova_supervised_drain_main_scope(NovaFiberQueue* q) {
+    for (;;) {
+        int alive = nova_supervised_step(q);
+        if (alive == 0) break;
+#ifdef NOVA_USE_LIBUV
+        int parked = nova_sched_count_parked(q);
+        if (parked > 0 && parked == alive) {
+            uv_run(nova_evloop(), UV_RUN_ONCE);
+        }
+#endif
+    }
+    nova_sched_drop_state(q);
+    if (q->first_error) {
+        fprintf(stderr, "nova: detach-fiber error after main: %s\n",
+                q->first_error);
+    }
+    q->count = 0;
+}
+
 /* Round-robin run: resume each live fiber until all are dead.
  * After all fibers complete, if any threw — re-throw on main-flow.
  *
