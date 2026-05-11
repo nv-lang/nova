@@ -90,11 +90,12 @@ pub enum ContractKind {
 }
 
 /// Plan 33.1 (D24 §49): режим верификации контрактов функции.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum VerifyMode {
     /// Без атрибута. SMT пытается доказать; недоказанное в release —
     /// compile error (R20), пока программист не пометит явно
     /// `@unverified` или не добавит hint'ов.
+    #[default]
     Default,
     /// `@must_verify` — SMT обязан доказать. Unknown → compile error
     /// даже в debug.
@@ -110,7 +111,7 @@ pub enum VerifyMode {
 /// Выводится в Ф.2 через SCC по call-graph (как `const fn` в Rust).
 /// Атрибут `@pure` — assertion программиста; расхождение с выведенным —
 /// compile error.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Purity {
     /// Чистая функция: нет effects в сигнатуре, все вызываемые —
     /// тоже pure. Можно использовать в контрактах других функций
@@ -120,6 +121,7 @@ pub enum Purity {
     Effectful,
     /// Не определено (до запуска Ф.2 inference). Парсер выставляет
     /// это значение если `@pure` не указан явно.
+    #[default]
     Unknown,
 }
 
@@ -916,6 +918,13 @@ pub enum BinOp {
     Ge,
     And,
     Or,
+    /// Plan 33.1 (D24): `==>` импликация. `A ==> B` ≡ `!A || B`.
+    /// Используется только в контрактах (Ф.2 проверит, что Implies
+    /// не появляется в обычном коде — это compile error).
+    Implies,
+    /// Plan 33.1 (D24): `<==>` эквивалентность. `A <==> B` ≡ `A == B` для bool.
+    /// Используется только в контрактах.
+    Iff,
     /// Bitwise (D-operators в spec/03-syntax.md). Применимы только к int.
     BitAnd,
     BitOr,

@@ -1566,6 +1566,10 @@ impl Interpreter {
             (Ge, Value::Float(a), Value::Float(b)) => Ok(Value::Bool(a >= b)),
             (And, Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(*a && *b)),
             (Or, Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(*a || *b)),
+            // Plan 33.1 (D24): импликация и эквивалентность.
+            // Семантически `A ==> B` ≡ `!A || B`; `A <==> B` ≡ `A == B` для bool.
+            (Implies, Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(!*a || *b)),
+            (Iff, Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(*a == *b)),
             _ => Err(Diagnostic::new(
                 format!(
                     "cannot apply {:?} to {} and {}",

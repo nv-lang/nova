@@ -1,0 +1,89 @@
+// Plan 33.1 Ф.1: базовый парсинг контрактов requires/ensures.
+//
+// Проверяем что:
+// 1. requires/ensures парсятся после сигнатуры.
+// 2. @must_verify / @unverified / @verify_timeout / @pure парсятся как атрибуты.
+// 3. Функции без контрактов продолжают работать (backward-compat).
+
+module nova_tests.contracts.parse_basic
+
+// Без контрактов — backward-compat (как до Plan 33.1).
+fn double(x int) -> int => x * 2
+
+// Простой requires.
+fn positive(x int) -> int
+    requires x > 0
+=> x
+
+// requires + ensures.
+fn abs(x int) -> int
+    requires x >= 0
+    ensures result >= 0
+=> x
+
+// Несколько requires/ensures.
+fn withdraw(balance int, amount int) -> int
+    requires amount > 0
+    requires balance >= amount
+    ensures result >= 0
+    ensures result == balance - amount
+=> balance - amount
+
+// `old(...)` в ensures.
+fn increment(x int) -> int
+    ensures result == old(x) + 1
+=> x + 1
+
+// `==>` импликация.
+fn safe_divide(a int, b int) -> int
+    requires b != 0
+    ensures b > 0 ==> result >= 0
+=> a / b
+
+// Атрибут @must_verify.
+@must_verify
+fn must_double(x int) -> int
+    requires x > 0
+    ensures result == x * 2
+=> x * 2
+
+// Атрибут @unverified.
+@unverified
+fn unverified_fn(x int) -> int
+    requires x > 0
+=> x
+
+// Атрибут @pure.
+@pure
+fn pure_add(a int, b int) -> int => a + b
+
+// Атрибут @verify_timeout.
+@verify_timeout(5000)
+fn slow_proof(x int) -> int
+    requires x > 0
+    ensures result > 0
+=> x + 1
+
+// Комбинация атрибутов.
+@pure
+@must_verify
+fn must_pure(x int) -> int
+    requires x > 0
+    ensures result > 0
+=> x + 1
+
+test "parsing works" {
+    // Сам факт компиляции — это и есть тест парсера.
+    // Type-check + verify в последующих фазах 33.1.
+    assert(double(5) == 10)
+    assert(positive(3) == 3)
+    assert(abs(7) == 7)
+    assert(withdraw(100, 30) == 70)
+    assert(increment(4) == 5)
+    assert(safe_divide(10, 2) == 5)
+    assert(must_double(3) == 6)
+    assert(unverified_fn(5) == 5)
+    assert(pure_add(2, 3) == 5)
+    assert(slow_proof(1) == 2)
+    assert(must_pure(1) == 2)
+}

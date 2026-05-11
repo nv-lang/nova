@@ -8,6 +8,26 @@ use crate::ast::*;
 use crate::diag::{Diagnostic, Span};
 use crate::lexer::{Token, TokenKind};
 
+/// Plan 33.1 (D24): contract-related атрибуты, собранные перед `fn`.
+///
+/// Передаются из `parse_item` в `parse_fn`. По умолчанию — все поля
+/// в `Default`/`None`/`Unknown` (backward-compat для функций без
+/// контрактов и атрибутов).
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ContractAttrs {
+    pub verify_mode: VerifyMode,
+    pub verify_timeout_ms: Option<u32>,
+    pub purity: Purity,
+}
+
+impl ContractAttrs {
+    pub(crate) fn is_empty(&self) -> bool {
+        matches!(self.verify_mode, VerifyMode::Default)
+            && self.verify_timeout_ms.is_none()
+            && matches!(self.purity, Purity::Unknown)
+    }
+}
+
 pub struct Parser {
     tokens: Vec<Token>,
     pos: usize,
@@ -263,6 +283,7 @@ impl Parser {
         let realtime_attr = self.parse_realtime_attr()?;
         if !matches!(realtime_attr, RealtimeAttr::None)
             && !matches!(self.peek().kind, TokenKind::KwFn)
+            && !matches!(self.peek().kind, TokenKind::At)
         {
             let span = self.peek().span;
             return Err(Diagnostic::new(
@@ -270,8 +291,22 @@ impl Parser {
                 span,
             ));
         }
+        // Plan 33.1 (D24): `@must_verify` / `@unverified` / `@verify_timeout(ms)` /
+        // `@pure` — contract-related атрибуты перед `fn`. Парсятся
+        // отдельно от `@realtime`, могут идти в любом порядке.
+        // Не keyword'ы в лексере (контекстный разбор).
+        let contract_attrs = self.parse_contract_attrs()?;
+        if !contract_attrs.is_empty()
+            && !matches!(self.peek().kind, TokenKind::KwFn)
+        {
+            let span = self.peek().span;
+            return Err(Diagnostic::new(
+                "contract attributes (`@must_verify` / `@unverified` / `@verify_timeout` / `@pure`) are only valid before `fn`",
+                span,
+            ));
+        }
         match self.peek().kind {
-            TokenKind::KwFn => Ok(Item::Fn(self.parse_fn(is_export, is_external, realtime_attr)?)),
+            TokenKind::KwFn => Ok(Item::Fn(self.parse_fn(is_export, is_external, realtime_attr, contract_attrs)?)),
             TokenKind::KwType => Ok(Item::Type(self.parse_type_decl(is_export)?)),
             TokenKind::KwLet => Ok(Item::Let(self.parse_let_decl()?)),
             TokenKind::KwConst => Ok(Item::Const(self.parse_const_decl(is_export)?)),
@@ -317,9 +352,131 @@ impl Parser {
         Ok(if nogc { RealtimeAttr::RealtimeNogc } else { RealtimeAttr::Realtime })
     }
 
+    /// Plan 33.1 (D24): contract-related атрибуты перед fn-declaration.
+    ///
+    /// Поддерживаемые:
+    /// - `@must_verify` — SMT обязан доказать (D24 §50).
+    /// - `@unverified` — отказ от SMT, всегда runtime fallback в debug,
+    ///   стирается в release (D24 §53).
+    /// - `@verify_timeout(N)` — локальный override SMT-timeout в ms.
+    /// - `@pure` — assertion что функция чистая (использование в контрактах
+    ///   composition через 33.2).
+    ///
+    /// Контекстный разбор: keyword'ов в лексере нет, парсер ищет
+    /// `@` + Ident в position перед `fn`.
+    fn parse_contract_attrs(&mut self) -> Result<ContractAttrs, Diagnostic> {
+        let mut attrs = ContractAttrs::default();
+        loop {
+            if !matches!(self.peek().kind, TokenKind::At) {
+                break;
+            }
+            // Look ahead: `@` затем Ident с одним из contract-keyword'ов.
+            let next_name = match &self.peek_at(1).kind {
+                TokenKind::Ident(n) => n.clone(),
+                _ => break, // не идентификатор после `@` — выходим
+            };
+            match next_name.as_str() {
+                "must_verify" => {
+                    if !matches!(attrs.verify_mode, VerifyMode::Default) {
+                        let span = self.peek().span;
+                        return Err(Diagnostic::new(
+                            "duplicate or conflicting verify mode attribute",
+                            span,
+                        ));
+                    }
+                    self.bump(); // @
+                    self.bump(); // must_verify
+                    attrs.verify_mode = VerifyMode::MustVerify;
+                }
+                "unverified" => {
+                    if !matches!(attrs.verify_mode, VerifyMode::Default) {
+                        let span = self.peek().span;
+                        return Err(Diagnostic::new(
+                            "duplicate or conflicting verify mode attribute",
+                            span,
+                        ));
+                    }
+                    self.bump(); // @
+                    self.bump(); // unverified
+                    attrs.verify_mode = VerifyMode::Unverified;
+                }
+                "verify_timeout" => {
+                    if attrs.verify_timeout_ms.is_some() {
+                        let span = self.peek().span;
+                        return Err(Diagnostic::new(
+                            "duplicate `@verify_timeout` attribute",
+                            span,
+                        ));
+                    }
+                    self.bump(); // @
+                    self.bump(); // verify_timeout
+                    self.expect(&TokenKind::LParen)?;
+                    let ms = match self.peek().kind {
+                        TokenKind::Int(n) if n > 0 => {
+                            let v = n as u32;
+                            self.bump();
+                            v
+                        }
+                        _ => {
+                            let span = self.peek().span;
+                            return Err(Diagnostic::new(
+                                "`@verify_timeout(N)` expects positive integer milliseconds",
+                                span,
+                            ));
+                        }
+                    };
+                    self.expect(&TokenKind::RParen)?;
+                    attrs.verify_timeout_ms = Some(ms);
+                }
+                "pure" => {
+                    if matches!(attrs.purity, Purity::Pure) {
+                        let span = self.peek().span;
+                        return Err(Diagnostic::new(
+                            "duplicate `@pure` attribute",
+                            span,
+                        ));
+                    }
+                    self.bump(); // @
+                    self.bump(); // pure
+                    attrs.purity = Purity::Pure;
+                }
+                _ => break, // unknown @-name — не contract-attr, выходим
+            }
+            self.skip_newlines();
+        }
+        Ok(attrs)
+    }
+
+    /// Plan 33.1 (D24): парсит блок `requires <expr>` / `ensures <expr>`
+    /// после сигнатуры функции, перед телом (`=>` / `{`).
+    ///
+    /// Контекстный разбор: `requires` / `ensures` — обычные Ident'ы в
+    /// лексере, парсер распознаёт их в позиции после return-type до `=>`/`{`.
+    /// Один контракт на строке; разделение по newline.
+    fn parse_contracts(&mut self) -> Result<Vec<Contract>, Diagnostic> {
+        let mut contracts = Vec::new();
+        loop {
+            // Пропустить newlines между контрактами.
+            self.skip_newlines();
+            let kind = match &self.peek().kind {
+                TokenKind::Ident(n) if n == "requires" => ContractKind::Requires,
+                TokenKind::Ident(n) if n == "ensures" => ContractKind::Ensures,
+                _ => break,
+            };
+            let start = self.peek().span;
+            self.bump(); // requires / ensures
+            // Запрещено в external fn — диагностика на уровне parse_fn
+            // (мы тут не знаем is_external). Сейчас просто парсим expr.
+            let expr = self.parse_expr()?;
+            let span = start.merge(expr.span);
+            contracts.push(Contract { kind, expr, span });
+        }
+        Ok(contracts)
+    }
+
     // ─── fn ──────────────────────────────────────────────────────────────
 
-    fn parse_fn(&mut self, is_export: bool, is_external: bool, realtime_attr: RealtimeAttr) -> Result<FnDecl, Diagnostic> {
+    fn parse_fn(&mut self, is_export: bool, is_external: bool, realtime_attr: RealtimeAttr, contract_attrs: ContractAttrs) -> Result<FnDecl, Diagnostic> {
         let start = self.peek().span;
         self.expect(&TokenKind::KwFn)?;
 
@@ -464,6 +621,22 @@ impl Parser {
             None
         };
 
+        // Plan 33.1 (D24): contracts после сигнатуры, до тела.
+        // `requires <expr>` / `ensures <expr>` на отдельных строках.
+        let contracts = self.parse_contracts()?;
+        // external fn не может иметь контрактов в 33.1.
+        // (В 33.3 будет `@trusted` external — отдельный путь.)
+        if is_external && !contracts.is_empty() {
+            let span = contracts[0].span;
+            return Err(Diagnostic::new(
+                format!(
+                    "external function `{}` cannot have contracts in Plan 33.1 (use `@trusted` in Plan 33.3 when available)",
+                    name
+                ),
+                span,
+            ));
+        }
+
         // Тело: `=> expr` или `{ block }`. Для `external fn` — тело
         // отсутствует (D82); следующий токен должен быть Newline/Eof.
         let (body, end_span) = if is_external {
@@ -504,12 +677,13 @@ impl Parser {
             body,
             span: start.merge(end_span),
             realtime_attr,
-            // Plan 33.1: contracts будут заполнены в следующей фазе
-            // парсером после сигнатуры. Сейчас — пустые (backward-compat).
-            contracts: Vec::new(),
-            verify_mode: crate::ast::VerifyMode::Default,
-            verify_timeout_ms: None,
-            purity: crate::ast::Purity::Unknown,
+            // Plan 33.1 (D24): contracts + verify attributes.
+            // Backward-compat: пустой Vec для функций без контрактов;
+            // Default verify_mode / Unknown purity для функций без атрибутов.
+            contracts,
+            verify_mode: contract_attrs.verify_mode,
+            verify_timeout_ms: contract_attrs.verify_timeout_ms,
+            purity: contract_attrs.purity,
         })
     }
 
@@ -1172,7 +1346,33 @@ impl Parser {
     // ─── expressions ─────────────────────────────────────────────────────
 
     pub fn parse_expr(&mut self) -> Result<Expr, Diagnostic> {
-        self.parse_or()
+        self.parse_implication()
+    }
+
+    /// Plan 33.1 (D24): `==>` (impl) и `<==>` (iff) — приоритет ниже `||`,
+    /// правоассоциативные. Используются в контрактах. Семантика:
+    /// - `A ==> B` ≡ `!A || B`.
+    /// - `A <==> B` ≡ `A == B` (только для bool).
+    fn parse_implication(&mut self) -> Result<Expr, Diagnostic> {
+        let left = self.parse_or()?;
+        // Right-associative: if we see ==> or <==>, recurse for right side.
+        let op = match self.peek().kind {
+            TokenKind::Implies => BinOp::Implies,
+            TokenKind::Iff => BinOp::Iff,
+            _ => return Ok(left),
+        };
+        self.bump();
+        self.skip_newlines();
+        let right = self.parse_implication()?;
+        let span = left.span.merge(right.span);
+        Ok(Expr::new(
+            ExprKind::Binary {
+                op,
+                left: Box::new(left),
+                right: Box::new(right),
+            },
+            span,
+        ))
     }
 
     fn parse_or(&mut self) -> Result<Expr, Diagnostic> {

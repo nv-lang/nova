@@ -1,0 +1,12 @@
+// EXPECT_COMPILE_ERROR duplicate or conflicting verify mode attribute
+//
+// Plan 33.1 Ф.1 (D24): @must_verify и @unverified взаимоисключающие;
+// два @must_verify подряд — тоже ошибка.
+
+module nova_tests.contracts.parse_duplicate_verify_mode
+
+@must_verify
+@unverified
+fn conflicting(x int) -> int
+    requires x > 0
+=> x

@@ -132,6 +132,12 @@ pub enum TokenKind {
     Shr,
     FatArrow,
     Arrow,
+    /// Plan 33.1 (D24): `==>` — логическая импликация в контрактах.
+    /// `A ==> B` ≡ `!A || B`. Правоассоциативный, приоритет ниже `||`.
+    Implies,
+    /// Plan 33.1 (D24): `<==>` — логическая эквивалентность в контрактах.
+    /// `A <==> B` ≡ `A == B` для bool. Приоритет такой же как `==>`.
+    Iff,
 
     // Структурные
     Newline,
@@ -236,6 +242,8 @@ impl TokenKind {
             TokenKind::Shr => "`>>`",
             TokenKind::FatArrow => "`=>`",
             TokenKind::Arrow => "`->`",
+            TokenKind::Implies => "`==>`",
+            TokenKind::Iff => "`<==>`",
             TokenKind::Newline => "newline",
             TokenKind::Eof => "end of file",
         }

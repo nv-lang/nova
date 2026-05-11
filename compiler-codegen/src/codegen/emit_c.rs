@@ -4893,6 +4893,13 @@ impl CEmitter {
                         };
                     }
                 }
+                // Plan 33.1 (D24): импликация/эквивалентность — sugar.
+                // `A ==> B` → `(!A || B)`; `A <==> B` → `(A == B)`.
+                match op {
+                    BinOp::Implies => return Ok(format!("((!({})) || ({}))", l, r)),
+                    BinOp::Iff => return Ok(format!("(({}) == ({}))", l, r)),
+                    _ => {}
+                }
                 let op_str = match op {
                     BinOp::Add => "+",  BinOp::Sub => "-",
                     BinOp::Mul => "*",  BinOp::Div => "/",
@@ -4904,6 +4911,7 @@ impl CEmitter {
                     BinOp::BitAnd => "&", BinOp::BitOr => "|",
                     BinOp::BitXor => "^",
                     BinOp::Shl => "<<", BinOp::Shr => ">>",
+                    BinOp::Implies | BinOp::Iff => unreachable!("handled above"),
                 };
                 Ok(format!("({} {} {})", l, op_str, r))
             }
@@ -7391,7 +7399,8 @@ impl CEmitter {
             ExprKind::InterpolatedStr { .. } => "nova_print_str",
             ExprKind::Binary { op, .. } => match op {
                 BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::Le
-                | BinOp::Gt | BinOp::Ge | BinOp::And | BinOp::Or => "nova_print_bool",
+                | BinOp::Gt | BinOp::Ge | BinOp::And | BinOp::Or
+                | BinOp::Implies | BinOp::Iff => "nova_print_bool",
                 _ => "nova_print_int",
             },
             ExprKind::Ident(name) => {
@@ -10083,7 +10092,8 @@ impl CEmitter {
             ExprKind::TupleLit(elems) => format!("_NovaTuple{}", elems.len()),
             ExprKind::Binary { op, left, right } => match op {
                 BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::Le
-                | BinOp::Gt | BinOp::Ge | BinOp::And | BinOp::Or => "nova_bool".into(),
+                | BinOp::Gt | BinOp::Ge | BinOp::And | BinOp::Or
+                | BinOp::Implies | BinOp::Iff => "nova_bool".into(),
                 _ => {
                     let lt = self.infer_expr_c_type(left);
                     let rt = self.infer_expr_c_type(right);
@@ -10868,6 +10878,8 @@ impl CEmitter {
                     BinOp::Mul => "*", BinOp::Div => "/",
                     BinOp::Mod => "%",
                     BinOp::And => "&&", BinOp::Or => "||",
+                    // Plan 33.1: ==> / <==> для display (диагностика).
+                    BinOp::Implies => "==>", BinOp::Iff => "<==>",
                     BinOp::BitAnd => "&", BinOp::BitOr => "|",
                     BinOp::BitXor => "^",
                     BinOp::Shl => "<<", BinOp::Shr => ">>",

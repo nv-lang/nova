@@ -114,8 +114,15 @@ impl<'a> Lexer<'a> {
             },
             b'=' => match self.peek_at(1) {
                 Some(b'=') => {
-                    self.pos += 2;
-                    TokenKind::EqEq
+                    // Plan 33.1 (D24): `==>` — импликация (3 байта),
+                    // имеет приоритет над `==` (2 байта).
+                    if self.peek_at(2) == Some(b'>') {
+                        self.pos += 3;
+                        TokenKind::Implies
+                    } else {
+                        self.pos += 2;
+                        TokenKind::EqEq
+                    }
                 }
                 Some(b'>') => {
                     self.pos += 2;
@@ -172,8 +179,15 @@ impl<'a> Lexer<'a> {
             },
             b'<' => match self.peek_at(1) {
                 Some(b'=') => {
-                    self.pos += 2;
-                    TokenKind::Le
+                    // Plan 33.1 (D24): `<==>` — эквивалентность (4 байта),
+                    // имеет приоритет над `<=` (2 байта).
+                    if self.peek_at(2) == Some(b'=') && self.peek_at(3) == Some(b'>') {
+                        self.pos += 4;
+                        TokenKind::Iff
+                    } else {
+                        self.pos += 2;
+                        TokenKind::Le
+                    }
                 }
                 Some(b'<') => {
                     self.pos += 2;
