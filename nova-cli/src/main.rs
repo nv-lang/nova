@@ -187,6 +187,15 @@ fn path_hash(path: &Path) -> String {
     format!("{:016x}", h.finish())
 }
 
+/// RAII guard: removes a tmp directory on drop (best-effort, errors ignored).
+struct TmpDirGuard<'a>(&'a Path);
+
+impl Drop for TmpDirGuard<'_> {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(self.0);
+    }
+}
+
 // ---------- subcommand implementations ----------
 
 fn check_module_path(path: &Path, module: &nova_codegen::ast::Module) -> Result<()> {
@@ -296,13 +305,14 @@ fn cmd_build(
         bail!("output path is a directory: {}", final_exe.display());
     }
 
-    // write .c to a unique tmp dir
+    // write .c to a unique tmp dir; cleaned up on any exit path via Drop
     let hash = path_hash(&path);
-    let tmp = default_tmp_dir().join(format!("build-{}", &hash[..12]));
-    std::fs::create_dir_all(&tmp)
+    let tmp_path = default_tmp_dir().join(format!("build-{}", &hash[..hash.len().min(12)]));
+    std::fs::create_dir_all(&tmp_path)
         .map_err(|e| anyhow!("create tmp dir: {}", e))?;
-    let c_file = tmp.join(format!("{}.c", exe_stem.to_string_lossy()));
-    let exe_file = tmp.join(&exe_name);
+    let _tmp_guard = TmpDirGuard(&tmp_path);
+    let c_file = tmp_path.join(format!("{}.c", exe_stem.to_string_lossy()));
+    let exe_file = tmp_path.join(&exe_name);
     std::fs::write(&c_file, &c_code)
         .map_err(|e| anyhow!("write .c file: {}", e))?;
 
@@ -328,7 +338,7 @@ fn cmd_build(
     let build_opts = test_runner::BuildOpts {
         c_file: &c_file,
         exe_file: &exe_file,
-        obj_dir: &tmp,
+        obj_dir: &tmp_path,
         cg_include: &paths.cg_include,
         rt_dir: &paths.rt_dir,
         mode,
@@ -344,9 +354,6 @@ fn cmd_build(
     std::fs::rename(&exe_file, &final_exe)
         .or_else(|_| std::fs::copy(&exe_file, &final_exe).map(|_| ()))
         .map_err(|e| anyhow!("move executable: {}", e))?;
-
-    // clean up tmp
-    let _ = std::fs::remove_dir_all(&tmp);
 
     println!("built: {}", final_exe.display());
     Ok(())
@@ -436,6 +443,9 @@ fn cmd_test(
     let tests_dir = tests_dir_override
         .map(Path::to_path_buf)
         .unwrap_or(paths.tests_dir);
+    if !tests_dir.is_dir() {
+        bail!("tests directory not found: {}", tests_dir.display());
+    }
     let stdlib_dir_opt = if include_stdlib {
         Some(paths.stdlib_dir.as_path())
     } else {
@@ -446,6 +456,9 @@ fn cmd_test(
     let results_path: PathBuf = results_file
         .map(Path::to_path_buf)
         .unwrap_or(paths.default_results_file);
+    if results_path.is_dir() {
+        bail!("results file path is a directory: {}", results_path.display());
+    }
     if let Some(parent) = results_path.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|e| anyhow!("cannot create results dir {}: {}", parent.display(), e))?;
