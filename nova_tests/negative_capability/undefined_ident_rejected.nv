@@ -1,0 +1,14 @@
+// EXPECT_COMPILE_ERROR undefined identifier
+//
+// Name-resolution фаза в типчекере: использование необъявленного
+// идентификатора в expr-position должно ловиться compile-time
+// (до codegen / cc-этапа). Без этой проверки код доходил до
+// C-компилятора и фейлил с малочитаемой ошибкой
+// "undeclared identifier".
+
+module nova_tests.negative_capability.undefined_ident_rejected
+
+test "undefined ident должен ловиться typechecker'ом" {
+    let r = 1 | undefined_var
+    assert(r == 1)
+}
