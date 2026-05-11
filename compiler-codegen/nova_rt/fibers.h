@@ -129,8 +129,9 @@ static inline void nova_fiber_yield(void);
 typedef struct {
     /* Plan 22 Ф.7: dynamic arrays через managed heap.
      * NULL до первого spawn_into. capacity показывает alloc'нутую
-     * длину массивов (все 6 синхронизированы — растут вместе). */
+     * длину массивов (все 7 синхронизированы — растут вместе). */
     mco_coro**      fibers;              /* dynamic [count] */
+    void**          fiber_ctx;           /* dynamic [count] — GC root для SpawnCtx */
     NovaFailFrame** fiber_fail_top;      /* dynamic [count] */
     NovaInterruptFrame** fiber_interrupt_top; /* dynamic [count] */
     NovaEffectSnapshot** fiber_effect_snapshot; /* dynamic [count] */
@@ -238,6 +239,7 @@ static inline void nova_scope_grow(NovaFiberQueue* q, int new_cap) {
     while (cap < new_cap) cap *= 2;
     /* Allocate new arrays. */
     mco_coro**           new_fibers = (mco_coro**)nova_alloc(sizeof(mco_coro*) * cap);
+    void**               new_ctx    = (void**)nova_alloc(sizeof(void*) * cap);
     NovaFailFrame**      new_fail_top = (NovaFailFrame**)nova_alloc(sizeof(NovaFailFrame*) * cap);
     NovaInterruptFrame** new_interrupt_top = (NovaInterruptFrame**)nova_alloc(sizeof(NovaInterruptFrame*) * cap);
     NovaEffectSnapshot** new_effect_snapshot = (NovaEffectSnapshot**)nova_alloc(sizeof(NovaEffectSnapshot*) * cap);
@@ -247,6 +249,7 @@ static inline void nova_scope_grow(NovaFiberQueue* q, int new_cap) {
     if (q->fibers) {
         for (int i = 0; i < q->count; i++) {
             new_fibers[i]          = q->fibers[i];
+            new_ctx[i]             = q->fiber_ctx[i];
             new_fail_top[i]        = q->fiber_fail_top[i];
             new_interrupt_top[i]   = q->fiber_interrupt_top[i];
             new_effect_snapshot[i] = q->fiber_effect_snapshot[i];
@@ -257,6 +260,7 @@ static inline void nova_scope_grow(NovaFiberQueue* q, int new_cap) {
     /* Init new slots to NULL/safe defaults. */
     for (int i = q->count; i < cap; i++) {
         new_fibers[i]          = NULL;
+        new_ctx[i]             = NULL;
         new_fail_top[i]        = NULL;
         new_interrupt_top[i]   = NULL;
         new_effect_snapshot[i] = NULL;
@@ -265,6 +269,7 @@ static inline void nova_scope_grow(NovaFiberQueue* q, int new_cap) {
     }
     /* Swap. Old arrays — GC соберёт когда они станут unreachable. */
     q->fibers              = new_fibers;
+    q->fiber_ctx           = new_ctx;
     q->fiber_fail_top      = new_fail_top;
     q->fiber_interrupt_top = new_interrupt_top;
     q->fiber_effect_snapshot = new_effect_snapshot;
@@ -277,6 +282,7 @@ static inline void nova_scope_init(NovaFiberQueue* q) {
     q->count = 0;
     q->capacity = 0;
     q->fibers = NULL;
+    q->fiber_ctx = NULL;
     q->fiber_fail_top = NULL;
     q->fiber_interrupt_top = NULL;
     q->fiber_effect_snapshot = NULL;
@@ -377,7 +383,8 @@ static inline void nova_fiber_spawn_into(NovaFiberQueue* q,
         abort();
     }
     _nova_gc_add_fiber_roots(co);
-    q->fibers[q->count] = co;
+    q->fibers[q->count]    = co;
+    q->fiber_ctx[q->count] = user;            /* GC root: SpawnCtx reachable via managed array */
     q->fiber_fail_top[q->count] = NULL;       /* fresh fiber: empty fail-stack */
     q->fiber_interrupt_top[q->count] = NULL;  /* and empty interrupt-stack */
     q->fiber_error[q->count] = NULL;
@@ -448,7 +455,8 @@ static inline int nova_supervised_step(NovaFiberQueue* q) {
         if (mco_status(co) == MCO_DEAD) {
             _nova_gc_remove_fiber_roots(co);
             mco_destroy(co);
-            q->fibers[i] = NULL;
+            q->fibers[i]    = NULL;
+            q->fiber_ctx[i] = NULL;  /* release SpawnCtx GC root */
             continue;
         }
         /* Plan 22 Ф.3/Ф.4 (D93): skip parked fiber'ы. Они resume'ятся
@@ -496,7 +504,8 @@ static inline int nova_supervised_step(NovaFiberQueue* q) {
         if (mco_status(co) == MCO_DEAD) {
             _nova_gc_remove_fiber_roots(co);
             mco_destroy(co);
-            q->fibers[i] = NULL;
+            q->fibers[i]    = NULL;
+            q->fiber_ctx[i] = NULL;  /* release SpawnCtx GC root */
         } else {
             alive++;
         }

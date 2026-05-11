@@ -8,10 +8,9 @@
 // Test strategy: supervised блоки с N fiber'ами без park'а — должны
 // завершаться быстро, нет abort'а.
 //
-// N=500 выбран как стабильный предел для Boehm GC на Windows:
-// 1000 fiber'ов × 56 KB стека = 56 MB live во время scan двух тестов
-// (Boehm scan'ит все живые mco_coro стеки при каждой коллекции).
-// 500 = 28 MB — в пределах нормы для Boehm conservative scan.
+// D97 fix: SpawnCtx хранится в fiber_ctx[] (GC-managed array) —
+// Boehm видит все live SpawnCtx через NovaFiberQueue.fiber_ctx[],
+// не допускает преждевременную сборку.
 
 module nova_tests.concurrency.memory_footprint_test
 
@@ -30,18 +29,18 @@ test "100 idle supervised scopes — no sched_state allocations" {
     assert(completed == 100)
 }
 
-test "500 idle spawns не allocate sched_state" {
-    // Stress 500 fiber'ов без park'а. Если sched_state allocates
-    // для каждого — это +25 MB heap (зависит от реализации).
-    // N=500 безопасен для Boehm GC conservative scan на Windows.
+test "1000 idle spawns не allocate sched_state" {
+    // Stress 1000 fiber'ов без park'а. SpawnCtx хранится в GC-managed
+    // fiber_ctx[] массиве (D97 fix) — Boehm видит все live contexts,
+    // GC не собирает их пока fiber не завершится.
     let mut sum = 0
     supervised {
-        for i in 0..500 {
+        for i in 0..1000 {
             spawn {
                 sum = sum + i
             }
         }
     }
-    // Sum 0..500 = 124_750.
-    assert(sum == 124_750)
+    // Sum 0..1000 = 499_500.
+    assert(sum == 499_500)
 }
