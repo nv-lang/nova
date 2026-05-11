@@ -4829,3 +4829,59 @@ busy-loop'ов anywhere. D93 контракт готов для будущих c
 реализаций.
 
 Commit: e94d2bc9 plan-22 Ф.8: close-cb state-machine + D93 sync/async stop_cb contract
+
+================================================================
+2026-05-11. Plan 26 Ф.1-Ф.11 — production-grade test-runner
+================================================================
+
+После production review test-runner'а (Plan 24 foundation) против
+`cargo test` / `go test` выявлены 11 пробелов до cargo/go-grade.
+Plan 26 закрывает 10 из 11 в одной сессии.
+
+**Сделано (10 фаз):**
+
+- Ф.1 per-test timeout (default 60s, --timeout). Cross-platform через
+  wait_with_timeout + background drain threads для stdout/stderr.
+- Ф.2 unique tmp subdir per test (tmp_dir/t-<hash>/). Решает state
+  leakage между тестами; precondition для Ф.3.
+- Ф.3 parallel execution (--jobs N). std::thread::scope +
+  Arc<AtomicUsize> round-robin. No extra deps.
+- Ф.4 structured output (--format text|json|tap). JSON для CI parser'ов,
+  TAP-13 для legacy. Hand-rolled escape (no serde_json).
+- Ф.6 Status → Outcome refactor — typed stages для JSON-mapping.
+- Ф.7 UTF-8 codepage force (chcp 65001 / LC_ALL=C.UTF-8).
+- Ф.8 unified stdout (cargo convention).
+- Ф.9 --verbose / --quiet.
+- Ф.10 --rerun-failed через --results-file.
+- Ф.11 .ps1 cleanup: `& $codegen @cli_args` + Continue mode
+  (Start-Process ломал quoting путей с пробелами).
+
+**Отложено:** Ф.5 test caching — hash invariant sensitive (false-positive
+cache hit опасен). Делается с CI workflow.
+
+**Plan 26 как fuzzer:**
+- 9 hanging тестов которые до Ф.1 блокировали бы runner forever
+  (deep_gc, deep_spawn, fiber_throw, read_buffer, plus_operator,
+  read_text, from_into_derive, records, str_search). С Plan 26 — все
+  PASS при --timeout 60.
+- errdefer_throw flaky → fixed Ф.2 (per-test isolation).
+- overload_method_values CC-FAIL от MSVC banner → fixed Ф.7.
+
+**Финальный прогон Windows Clang dev --jobs 8 --timeout 60:**
+
+  PASS: 143  FAIL: 0  TIMEOUT: 0
+
+**Lib tests:** `cargo test --lib` 77/77 PASS.
+
+**Lesson — production-grade непрерывная шкала.** Plan 24 «80%»,
+Plan 26 «~95%». CI-grade = timeout + isolation + JSON output
+(~250 строк), parallel/cache/rerun-failed — DX-комфорт.
+
+**Lesson — stress-test парадокс.** Parallel execution с timeout сразу
+выявил 9 ранее «PASS» тестов которые на самом деле зависали. Runner
+был infinite-patient, CI report фальшиво «зелёный».
+
+**Commits:**
+- ffaa15ae plan: Plan 26 (11 фаз)
+- b5361abe plan-26: production-grade test-runner (Ф.1-Ф.11)
+- 5fd16a40 plan-26 fix: run_tests.ps1 quoting

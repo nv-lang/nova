@@ -1,7 +1,162 @@
-# Test conventions — `EXPECT_*` маркеры
+# Test conventions
 
-Практический guide для авторов тестов Nova. Нормативная спецификация —
-[D89 в spec/decisions/09-tooling.md](../spec/decisions/09-tooling.md#d89).
+Практический guide для авторов и пользователей тестов Nova.
+Нормативная спецификация D89 EXPECT-маркеров —
+[spec/decisions/09-tooling.md](../spec/decisions/09-tooling.md#d89).
+Test-runner — [Plan 24](plans/24-cross-platform-test-runner.md) +
+[Plan 26](plans/26-test-runner-hardening.md).
+
+---
+
+## Как запускать тесты
+
+### Quick start
+
+**Windows (PowerShell):**
+```powershell
+cd compiler-codegen
+cargo build
+cd ..
+.\run_tests.ps1
+```
+
+**Linux / macOS (bash):**
+```bash
+cd compiler-codegen && cargo build && cd ..
+./run_tests.sh
+```
+
+Оба wrapper'а — тонкие shim'ы над `nova-codegen test-all`. Логика
+runner'а (детект toolchain'а, EXPECT-маркеры, parallel scheduler,
+per-test timeout, JSON output) живёт в Rust в
+[compiler-codegen/src/test_runner.rs](../compiler-codegen/src/test_runner.rs).
+
+### Параметры
+
+Те же флаги работают в `.ps1` (с `PascalCase`) и `.sh` (с `--kebab-case`):
+
+| .ps1 | .sh | Что |
+|---|---|---|
+| `-Filter <substr>` | `--filter <substr>` | Прогнать только тесты содержащие substring |
+| `-IncludeStdlib` | `--include-stdlib` | Добавить `std/*.nv` к `nova_tests/*.nv` |
+| `-Mode dev\|release` | `--mode dev\|release` | dev (default) или release с `-O3 -flto` |
+| `-Toolchain auto\|clang\|msvc\|gcc` | `--toolchain ...` | Compiler. Default: auto (Clang → MSVC → GCC) |
+| `-Timeout <secs>` | `--timeout <secs>` | Per-test timeout. Default 60 |
+| `-Jobs <N>` | `--jobs <N>` | Parallel workers. 0 = num_cpus |
+| `-Format text\|json\|tap` | `--format ...` | Output format. Default text |
+| `-Verbose` / `-Quiet` | `--verbose` / `--quiet` | Verbosity |
+| `-ResultsFile <path>` | `--results-file <path>` | Куда сохранить per-test JSON |
+| `-RerunFailed` | `--rerun-failed` | Прогнать только тесты которые fail/timeout в results-file |
+| `-KeepArtifacts` | `--keep-artifacts` | Не удалять .exe/.obj после прогона |
+
+### Примеры
+
+**Дефолтный прогон** (всё параллельно через Clang):
+```powershell
+.\run_tests.ps1
+```
+
+**Только подмножество** (TDD-loop):
+```powershell
+.\run_tests.ps1 -Filter syntax/closure
+.\run_tests.ps1 -Filter "negative_capability/"
+```
+
+**Release-сборка** (с оптимизациями для perf-проверки):
+```powershell
+.\run_tests.ps1 -Mode release
+```
+
+**JSON output для CI**:
+```bash
+./run_tests.sh --format json --results-file ci-results.jsonl
+```
+Каждая строка — событие:
+```json
+{"event":"finished","test":"basics/literals","status":"pass","stage":"","elapsed_ms":234,"detail":""}
+{"event":"summary","pass":140,"fail":1,"elapsed_ms":45678}
+```
+
+**TAP-13 output** (для legacy harnesses):
+```bash
+./run_tests.sh --format tap | tee results.tap
+```
+
+**TDD: перезапустить только упавшие**:
+```powershell
+.\run_tests.ps1                     # первый прогон — записывает results-file автоматически если -RerunFailed когда-то использовался
+.\run_tests.ps1 -RerunFailed         # только бывшие fail-ы; намного быстрее
+```
+
+Или явно:
+```bash
+./run_tests.sh --results-file target/last-test-results.json
+# правишь код...
+./run_tests.sh --results-file target/last-test-results.json --rerun-failed
+```
+
+**Sequential** (для отладки race conditions):
+```powershell
+.\run_tests.ps1 -Jobs 1
+```
+
+**Долгие benchmark-тесты** (override default 60s timeout):
+```powershell
+.\run_tests.ps1 -Timeout 300 -Filter concurrency/sleep_leak
+```
+
+**Принудительный MSVC** (если хотите тестить под MSVC ABI):
+```powershell
+.\run_tests.ps1 -Toolchain msvc
+```
+
+### Запуск одного теста
+
+Для отладки удобно вызывать `nova-codegen test-build` напрямую — он
+собирает + запускает один `.nv` файл без overhead'а walkdir/parallel:
+
+```powershell
+.\compiler-codegen\target\debug\nova-codegen.exe test-build .\nova_tests\basics\literals.nv `
+    --toolchain clang --timeout 30 --keep-artifacts
+```
+
+`--keep-artifacts` оставляет `.exe`/`.obj` в `$TEMP/nova_tests/t-<hash>/`
+для пост-mortem отладки. Без флага артефакты удаляются после прогона.
+
+### Toolchain setup
+
+**Windows:**
+- **Clang (recommended):** `winget install LLVM.LLVM`
+- **MSVC fallback:** установить Visual Studio Build Tools (нужен и
+  для Clang — даёт MSVC SDK headers + linker).
+
+**Linux:**
+- `apt install clang` или `dnf install clang` (Ubuntu/Fedora).
+- GCC обычно уже установлен.
+
+**macOS:**
+- Clang идёт с Xcode CLI tools: `xcode-select --install`.
+
+Env-override paths:
+- `NOVA_CLANG` — путь к `clang.exe`/`clang`.
+- `NOVA_GCC` — путь к `gcc`.
+- `NOVA_VCVARS` — путь к `vcvars64.bat` (Windows).
+- `NOVA_CODEGEN` — путь к `nova-codegen.exe` (обычно target/debug).
+- `NOVA_MARCH_NATIVE=1` — `-march=native` вместо `-march=x86-64-v3`
+  для release-сборки (не переносится между CPU).
+
+### Известные limitations на Windows
+
+При `--jobs > 1` под активным **Windows Defender** возможны
+transient `lld-link: cannot open output file` ошибки — AV держит
+handle на свежесгенерированном `.exe` пока соседний worker пытается
+linkать. Workarounds:
+- `--jobs 1 --timeout 60` — sequential (стабильно, но медленнее).
+- **AV exclusion** для `target/`, `$TEMP/nova_tests/` — снимает
+  bottleneck.
+- В CI без Defender'а (Linux runners) parallel работает корректно.
+
+См. [Plan 26 retro](plans/26-test-runner-hardening.md) для деталей.
 
 ---
 

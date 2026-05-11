@@ -236,6 +236,64 @@ interpreter), `cargo run -- check file.nv` (type-check only),
 Full guide, options, known limitations:
 [compiler-codegen/README.md](compiler-codegen/README.md).
 
+## Running tests
+
+After `cargo build`, run the full test suite via the cross-platform
+wrappers:
+
+```powershell
+# Windows
+.\run_tests.ps1
+```
+
+```sh
+# Linux / macOS
+./run_tests.sh
+```
+
+Both wrappers are thin shims over `nova-codegen test-all` — the actual
+runner (toolchain detection, EXPECT-marker parsing, parallel scheduler,
+per-test timeout, JSON/TAP output, `--rerun-failed`) lives in Rust at
+[compiler-codegen/src/test_runner.rs](compiler-codegen/src/test_runner.rs).
+
+Common flags (identical names in `.ps1` PascalCase and `.sh` kebab-case):
+
+```powershell
+.\run_tests.ps1 -Filter syntax/closure        # subset of tests
+.\run_tests.ps1 -Mode release                 # -O3 -flto compilation
+.\run_tests.ps1 -Toolchain clang              # force toolchain
+.\run_tests.ps1 -Jobs 4 -Timeout 60           # parallel + timeout
+.\run_tests.ps1 -Format json                  # CI-friendly output
+.\run_tests.ps1 -RerunFailed                  # only failed-last-time
+```
+
+```sh
+./run_tests.sh --filter basics --mode release
+./run_tests.sh --jobs 8 --format tap
+./run_tests.sh --include-stdlib               # include std/* alongside nova_tests/*
+```
+
+Single-test debugging (no walkdir, no parallel overhead):
+
+```sh
+./compiler-codegen/target/debug/nova-codegen test-build nova_tests/basics/literals.nv \
+    --toolchain clang --keep-artifacts
+```
+
+Toolchain setup:
+- **Windows:** `winget install LLVM.LLVM` (Clang, recommended) +
+  Visual Studio Build Tools (MSVC SDK + linker, required by Clang too).
+- **Linux:** `apt install clang` or `dnf install clang`; GCC usually
+  pre-installed.
+- **macOS:** `xcode-select --install` (Apple Clang).
+
+Auto-detection picks Clang first, then MSVC (Windows) or GCC (Linux).
+Override with `-Toolchain clang|msvc|gcc` or via env-vars
+(`NOVA_CLANG`, `NOVA_GCC`, `NOVA_VCVARS`).
+
+Full reference of test-runner flags, EXPECT-markers, troubleshooting:
+[docs/test-conventions.md](docs/test-conventions.md).
+
 ## Editor support
 
 Syntax highlighting plugins for several editors are in

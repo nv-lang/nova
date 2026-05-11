@@ -413,9 +413,16 @@ panic'ов есть специализированный `EXPECT_RUNTIME_PANIC`.
   D89 — общий тестовый tooling.
 - `docs/test-conventions.md` — практический guide для авторов тестов
   (как писать каждый тип маркера, типичные паттерны).
-- `run_tests.ps1` — текущая реализация D89 для Windows + MSVC. Был
-  заведён в Plan 16 Ф.7 для capability-enforcement, расширен до
-  полного набора D89-маркеров.
+- `run_tests.ps1` — Windows wrapper над `nova-codegen test-all`.
+  Был заведён в Plan 16 Ф.7 для capability-enforcement, расширен до
+  полного набора D89-маркеров. После [Plan 24](../../docs/plans/24-cross-platform-test-runner.md) — thin shim.
+- `run_tests.sh` — Linux/macOS wrapper над тем же `test-all`.
+- `compiler-codegen/src/test_runner.rs` — каноническая реализация D89
+  парсера и pipeline'а (codegen + cc + run + check). Production-grade
+  hardening — [Plan 26](../../docs/plans/26-test-runner-hardening.md):
+  per-test timeout (`--timeout`), parallel execution (`--jobs`), structured
+  output (`--format json|tap|text`), `--rerun-failed`, per-test isolation,
+  UTF-8 codepage force.
 
 ### Bootstrap-status
 
