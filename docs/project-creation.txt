@@ -5309,3 +5309,40 @@ Commits: d49111281, 98586c954, 19d6fb79e, e728608a7
 Plan-30.md: добавлен Ф.4 с описанием исправлений и таблицей tech debt (T1-T3).
 
 Commits: 88504b87c, 106e64c33
+
+**Plan 27 Ф.3-Ф.4: vcvars caching + Boehm GC default + fiber fix (2026-05-11)**
+
+Три отдельные проблемы, решённые в одном блоке работы:
+
+1. **vcvars per-test bottleneck (16-28 сек → 3 сек на тест)**
+
+   `call vcvars64.bat` вызывался внутри каждой тестовой компиляции через
+   `cmd /c "chcp 65001 > nul && call vcvars > nul && clang ..."`.
+   На этой машине bat занимает ~6.2 сек.
+
+   Решение: `capture_vcvars_env(vcvars: &Path) -> Vec<(OsString, OsString)>` —
+   запускает `cmd /c "call vcvars > nul && set"`, парсит вывод `set` в
+   `Vec<(OsString, OsString)>`. Результат хранится в `Toolchain::Clang { env, .. }` и
+   `Toolchain::Msvc { env, .. }`. Каждая компиляция: `Command::new(compiler).env_clear().envs(&snapshot)`.
+
+   vcvars вызывается один раз при `detect_toolchain()`. Весь тест-прогон (171 тест):
+   ~85 сек вместо 28+ мин.
+
+2. **"Too many root sets" crash с Boehm + 10k fibers**
+
+   `GC_add_roots()` per-fiber регистрировал стек каждого файбера как GC root.
+   Boehm имеет внутренний лимит ~128 root-set entries. 10k файберов → crash.
+
+   Решение: `_nova_gc_add_fiber_roots`/`_nova_gc_remove_fiber_roots` стали no-op.
+   Введён `NOVA_GC_BOEHM` define (не `GC_THREADS`) для защищённых Boehm-специфичных
+   путей. Nova single-threaded (cooperative minicoro + libuv) — GC_THREADS не нужен.
+   `alloc_boehm.c`: убран `#define GC_THREADS`.
+
+3. **GcKind::Boehm стал default (Plan 27 Ф.4)**
+
+   `GcKind` enum: `#[default]` перенесён с `Malloc` на `Boehm`. CLI дефолты обновлены:
+   `--gc` без аргумента = boehm во всех командах (test, build, regen-runtime).
+
+**Результат:** 171/171 PASS с Boehm как default GC. ~85 сек на полный прогон.
+
+Commits: 31207daab, d651c923e

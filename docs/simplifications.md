@@ -4018,4 +4018,21 @@ Commits: d49111281, 98586c954, 19d6fb79e, e728608a7
 - [T2] WaiterList — singly-linked, O(n) unlink. Достаточно сейчас; под нагрузкой заменить на doubly-linked.
 - [T3] `try_recv().is_none()` не различимо в Nova без `rx.is_closed()` — API неудобен. После generics можно добавить `TryRecvResult` в Nova type system.
 
+### Plan 27 Ф.3-Ф.4: vcvars caching + Boehm default + fiber root fix (2026-05-11)
+
+**vcvars per-test overhead** — `call vcvars64.bat` (~6.2 сек) вызывался внутри
+каждой компиляции через `cmd /c`. Упрощение: `capture_vcvars_env()` запускает bat
+один раз, парсит `set` → `Vec<(OsString,OsString)>`, хранит в `Toolchain` enum.
+Каждая компиляция: `env_clear().envs(&snapshot)`. 16-28 сек/тест → 3 сек/тест.
+
+**GC root set limit** — `GC_add_roots()` per-fiber бил в лимит Boehm (~128 entries)
+при 10k файберов ("Too many root sets"). Упрощение: `_nova_gc_add_fiber_roots` /
+`_nova_gc_remove_fiber_roots` стали no-op. `NOVA_GC_BOEHM` define вместо `GC_THREADS`
+(GC_THREADS включал stop-the-world → конфликт с minicoro context switch → deadlock).
+
+**GcKind default** — `#[default]` перенесён с `Malloc` на `Boehm`. Все CLI дефолты
+обновлены. 171/171 PASS с Boehm как production GC.
+
+Commits: 31207daab
+
 Commits: 88504b87c, 106e64c33
