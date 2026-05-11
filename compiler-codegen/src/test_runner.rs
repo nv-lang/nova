@@ -35,7 +35,11 @@ use std::os::windows::process::CommandExt;
 /// между опросами), для тестов в диапазоне 100 ms — 60 s overhead < 1%.
 pub fn wait_with_timeout(child: &mut Child, timeout: Duration) -> std::io::Result<Option<ExitStatus>> {
     let start = Instant::now();
-    let poll_interval = Duration::from_millis(10);
+    // Plan 26 Ф.16 #8: adaptive poll backoff. 1ms → 2 → 5 → 10 → 25 → 50 ms.
+    // На fast тестах (<10ms) overhead был 100% c fixed 10ms; теперь <1ms
+    // на первой итерации. Для long тестов экономим CPU 5× через 50ms cap.
+    let poll_steps_ms = [1, 2, 5, 10, 25, 50];
+    let mut step = 0usize;
     loop {
         if let Some(status) = child.try_wait()? {
             return Ok(Some(status));
@@ -47,8 +51,30 @@ pub fn wait_with_timeout(child: &mut Child, timeout: Duration) -> std::io::Resul
             let _ = child.wait();
             return Ok(None);
         }
-        std::thread::sleep(poll_interval);
+        let poll_ms = poll_steps_ms[step.min(poll_steps_ms.len() - 1)];
+        std::thread::sleep(Duration::from_millis(poll_ms));
+        step = (step + 1).min(poll_steps_ms.len() - 1);
     }
+}
+
+/// Plan 26 Ф.16 #2: join thread с safety-timeout. Возвращает результат
+/// если поток закончил в течение `timeout`, иначе detach + empty default.
+/// Cross-platform через mpsc channel — std::thread::JoinHandle не
+/// предоставляет timed join.
+fn join_with_timeout(
+    handle: std::thread::JoinHandle<Vec<u8>>,
+    timeout: Duration,
+) -> Vec<u8> {
+    use std::sync::mpsc;
+    // Re-wrap join'а в отдельном thread'е → result через channel.
+    // Если channel.recv_timeout вернул Err — оригинальный поток detach'нут
+    // (он живёт до конца process'а, но мы не блокированы).
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let result = handle.join().unwrap_or_default();
+        let _ = tx.send(result);
+    });
+    rx.recv_timeout(timeout).unwrap_or_default()
 }
 
 /// Капчуренный output после run с timeout. Заменяет `Output` из
@@ -87,24 +113,37 @@ pub fn run_with_timeout(mut cmd: Command, timeout: Duration) -> std::io::Result<
     // Plan 26 Ф.15: read buffer cap. Тест, печатающий 100 MB stdout
     // (бесконечный print-loop), не должен OOM'нуть runner. Cap = 4 MB —
     // больше чем хватит для real test output, меньше чем разумный stress.
+    // Plan 26 Ф.16 #9: при переполнении добавляем truncation marker —
+    // silent truncate скрывал бы важные ошибки в конце stdout.
     const READ_CAP: u64 = 4 * 1024 * 1024;
+    const TRUNC_MARKER: &[u8] = b"\n... (output truncated at 4 MB)\n";
     let stdout_handle = std::thread::spawn(move || {
         let mut buf = Vec::new();
         let mut s = std::io::Read::take(stdout, READ_CAP);
         let _ = std::io::Read::read_to_end(&mut s, &mut buf);
+        if buf.len() as u64 == READ_CAP {
+            buf.extend_from_slice(TRUNC_MARKER);
+        }
         buf
     });
     let stderr_handle = std::thread::spawn(move || {
         let mut buf = Vec::new();
         let mut s = std::io::Read::take(stderr, READ_CAP);
         let _ = std::io::Read::read_to_end(&mut s, &mut buf);
+        if buf.len() as u64 == READ_CAP {
+            buf.extend_from_slice(TRUNC_MARKER);
+        }
         buf
     });
 
     let status = wait_with_timeout(&mut child, timeout)?;
-    // join'имся даже если killed — pipe закроется и read_to_end вернётся.
-    let stdout_bytes = stdout_handle.join().unwrap_or_default();
-    let stderr_bytes = stderr_handle.join().unwrap_or_default();
+    // Plan 26 Ф.16 #2: thread join с safety-timeout. После kill child'а
+    // pipe должен закрыться → read_to_end вернётся. На Windows
+    // TerminateProcess не всегда закрывает pipe handles немедленно;
+    // если drain thread висит — лучше потерять часть output'а чем
+    // hang'нуть runner. 500ms — generous для real-world Windows close.
+    let stdout_bytes = join_with_timeout(stdout_handle, Duration::from_millis(500));
+    let stderr_bytes = join_with_timeout(stderr_handle, Duration::from_millis(500));
     Ok(CapturedOutput {
         status,
         stdout: stdout_bytes,
@@ -136,7 +175,13 @@ pub enum ExpectMarker {
 /// (`continue`), не возвращают `None`. Иначе `module foo` или blank
 /// line на первой строке прерывала бы поиск маркера ниже — D89-маркер
 /// в строке 5 не нашёлся бы.
+///
+/// Plan 26 Ф.16 #10: warning при duplicate markers — silent ignore
+/// второго маркера скрывал бы intent author'а (например пользователь
+/// добавил EXPECT_STDOUT поверх EXPECT_EXIT_CODE и думает что оба
+/// работают). Возвращаем первый + stderr warning.
 pub fn parse_expect(src: &str) -> Option<ExpectMarker> {
+    let mut found: Option<ExpectMarker> = None;
     for line in src.lines().take(30) {
         let trimmed = line.trim_start();
         let Some(body) = trimmed.strip_prefix("//") else {
@@ -145,35 +190,40 @@ pub fn parse_expect(src: &str) -> Option<ExpectMarker> {
         };
         let body = body.trim_start();
 
-        if let Some(rest) = body.strip_prefix("EXPECT_COMPILE_ERROR") {
+        let parsed: Option<ExpectMarker> = if let Some(rest) = body.strip_prefix("EXPECT_COMPILE_ERROR") {
             let arg = rest.trim();
-            if !arg.is_empty() {
-                return Some(ExpectMarker::CompileError(arg.to_string()));
-            }
+            (!arg.is_empty()).then(|| ExpectMarker::CompileError(arg.to_string()))
         } else if let Some(rest) = body.strip_prefix("EXPECT_RUNTIME_PANIC") {
             let arg = rest.trim();
-            if !arg.is_empty() {
-                return Some(ExpectMarker::RuntimePanic(arg.to_string()));
-            }
+            (!arg.is_empty()).then(|| ExpectMarker::RuntimePanic(arg.to_string()))
         } else if let Some(rest) = body.strip_prefix("EXPECT_EXIT_CODE") {
-            let arg = rest.trim();
-            if let Ok(n) = arg.parse::<i32>() {
-                return Some(ExpectMarker::ExitCode(n));
-            }
+            rest.trim().parse::<i32>().ok().map(ExpectMarker::ExitCode)
         } else if let Some(rest) = body.strip_prefix("EXPECT_STDOUT") {
             let arg = rest.trim();
-            if !arg.is_empty() {
-                return Some(ExpectMarker::Stdout(arg.to_string()));
-            }
+            (!arg.is_empty()).then(|| ExpectMarker::Stdout(arg.to_string()))
         } else if let Some(rest) = body.strip_prefix("EXPECT_STDERR") {
             let arg = rest.trim();
-            if !arg.is_empty() {
-                return Some(ExpectMarker::Stderr(arg.to_string()));
+            (!arg.is_empty()).then(|| ExpectMarker::Stderr(arg.to_string()))
+        } else {
+            None
+        };
+
+        if let Some(marker) = parsed {
+            if found.is_some() {
+                // Plan 26 Ф.16 #10: duplicate marker — warning. Берём
+                // первый. `stderr` потому что parse_expect вызывается
+                // и в lib-тестах, где stderr collected → не засоряем stdout.
+                eprintln!(
+                    "warning: duplicate D89 EXPECT marker — first one wins, ignoring second: {:?}",
+                    marker
+                );
+            } else {
+                found = Some(marker);
             }
         }
         // strip_prefix не сработал — следующая строка.
     }
-    None
+    found
 }
 
 // ---------- toolchain detection ----------
@@ -921,6 +971,39 @@ fn test_subdir(global_tmp: &Path, display: &str) -> PathBuf {
     global_tmp.join(format!("t-{:016x}", h.finish()))
 }
 
+/// Plan 26 Ф.16 #1: RAII guard для tmp subdirectory. Cleanup
+/// гарантирован на любом return-path (включая panic), не только
+/// на single happy-path в конце `run_one`. Mimics `tempfile::TempDir`
+/// design без extra dep.
+///
+/// `keep` field — escape hatch для `--keep-artifacts`: при true
+/// cleanup пропускается.
+struct TempSubdir {
+    path: PathBuf,
+    keep: bool,
+}
+
+impl TempSubdir {
+    fn new(path: PathBuf, keep: bool) -> std::io::Result<Self> {
+        std::fs::create_dir_all(&path)?;
+        Ok(TempSubdir { path, keep })
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for TempSubdir {
+    fn drop(&mut self) {
+        if !self.keep {
+            // best-effort cleanup; ошибки игнорируем (AV-handle leaks
+            // одиночно безопасны — next run re-create'ит через hash).
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+}
+
 /// Запустить codegen + cc + run + check для одного .nv.
 /// Production-grade: per-test isolation + timeout. Возвращает `Outcome`.
 pub fn run_one(opts: &TestBuildOpts) -> Outcome {
@@ -989,15 +1072,22 @@ pub fn run_one(opts: &TestBuildOpts) -> Outcome {
     }
 
     // Step 2 — isolated tmp subdir per test (Plan 26 Ф.2).
-    let subdir = test_subdir(opts.tmp_dir, opts.display);
-    if let Err(e) = std::fs::create_dir_all(&subdir) {
-        return Outcome::Fail {
-            stage: Stage::Cc {
-                error: format!("mkdir subdir: {}", e),
-            },
-            elapsed: start.elapsed(),
-        };
-    }
+    // Plan 26 Ф.16 #1: RAII guard — cleanup на любом return-path
+    // (включая panic). Replace 4 manual `remove_dir_all` cleanup-sites
+    // на один Drop.
+    let subdir_path = test_subdir(opts.tmp_dir, opts.display);
+    let subdir_guard = match TempSubdir::new(subdir_path, opts.keep_artifacts) {
+        Ok(g) => g,
+        Err(e) => {
+            return Outcome::Fail {
+                stage: Stage::Cc {
+                    error: format!("mkdir subdir: {}", e),
+                },
+                elapsed: start.elapsed(),
+            };
+        }
+    };
+    let subdir = subdir_guard.path();
 
     // exe_name локально — display может содержать /; используем basename
     // .nv для exe filename, остальная isolation через subdir.
@@ -1048,10 +1138,8 @@ pub fn run_one(opts: &TestBuildOpts) -> Outcome {
     let cc_status = match cc_captured.status {
         Some(s) => s,
         None => {
-            // cc timeout — редкость, но возможно.
-            if !opts.keep_artifacts {
-                let _ = std::fs::remove_dir_all(&subdir);
-            }
+            // cc timeout — редкость, но возможно. Cleanup через
+            // subdir_guard Drop при возврате.
             return Outcome::Timeout {
                 elapsed: start.elapsed(),
             };
@@ -1074,9 +1162,7 @@ pub fn run_one(opts: &TestBuildOpts) -> Outcome {
         } else {
             errs.join(" | ")
         };
-        if !opts.keep_artifacts {
-            let _ = std::fs::remove_dir_all(&subdir);
-        }
+        // Cleanup через subdir_guard Drop.
         return Outcome::Fail {
             stage: Stage::Cc { error: detail },
             elapsed: start.elapsed(),
@@ -1095,9 +1181,7 @@ pub fn run_one(opts: &TestBuildOpts) -> Outcome {
     let run_captured = match run_with_timeout(run_cmd, opts.timeout) {
         Ok(o) => o,
         Err(e) => {
-            if !opts.keep_artifacts {
-                let _ = std::fs::remove_dir_all(&subdir);
-            }
+            // Cleanup через subdir_guard Drop.
             return Outcome::Fail {
                 stage: Stage::Run {
                     error: format!("spawn exe: {}", e),
@@ -1112,9 +1196,7 @@ pub fn run_one(opts: &TestBuildOpts) -> Outcome {
         Some(s) => s,
         None => {
             // Timeout — критический результат для тестов вроде sleep_leak_check.
-            if !opts.keep_artifacts {
-                let _ = std::fs::remove_dir_all(&subdir);
-            }
+            // Cleanup через subdir_guard Drop.
             return Outcome::Timeout {
                 elapsed: start.elapsed(),
             };
@@ -1229,9 +1311,7 @@ pub fn run_one(opts: &TestBuildOpts) -> Outcome {
         }
     };
 
-    if !opts.keep_artifacts {
-        let _ = std::fs::remove_dir_all(&subdir);
-    }
+    // Cleanup через subdir_guard Drop (RAII).
     outcome
 }
 
@@ -2156,11 +2236,22 @@ pub fn print_summary(summary: &Summary, format: OutputFormat) {
             let _ = writeln!(stdout, "PASS: {}  FAIL: {}", summary.pass, summary.fail);
         }
         OutputFormat::Json => {
+            // Plan 26 Ф.16 #11: failed-list в summary event. CI dashboard'у
+            // удобно достать имена failed/timeout тестов из одного event'а
+            // без grep'а по всем `finished` events. Имена exact-match с
+            // events выше (display-name).
             let total_ms: u128 = summary.results.iter().map(|(_, o)| o.elapsed().as_millis()).sum();
+            let failed_names: Vec<String> = summary
+                .results
+                .iter()
+                .filter(|(_, o)| !o.is_pass())
+                .map(|(name, _)| format!("\"{}\"", json_escape(name)))
+                .collect();
             let _ = writeln!(
                 stdout,
-                "{{\"event\":\"summary\",\"pass\":{},\"fail\":{},\"elapsed_ms\":{}}}",
-                summary.pass, summary.fail, total_ms
+                "{{\"event\":\"summary\",\"pass\":{},\"fail\":{},\"elapsed_ms\":{},\"failed\":[{}]}}",
+                summary.pass, summary.fail, total_ms,
+                failed_names.join(",")
             );
         }
         OutputFormat::Tap => {
