@@ -2156,15 +2156,19 @@ let v = rx.recv()
 
 ### Bootstrap-status
 
-- ✅ **Реализовано в Plan 21** (2026-05-11).
+- ✅ **Реализовано в Plan 21** (2026-05-11). **Улучшено в Plan 30** (2026-05-11).
 - `nova_rt/channels.h` — D91 capability-split: `Nova_ChanWriter*` / `Nova_ChanReader*`,
   park/wake через D93 sched API, heap-allocated waiters (safe под M:N Plan 23).
 - `emit_c.rs` — `Channel.new(cap)` → `Nova_ChannelPair`, dispatch по типу объекта.
-- `nova_tests/runtime/channels.nv` — 17 тестов: FIFO, ring-buffer, closed-channel,
+- `nova_tests/runtime/channels.nv` — 23 теста: FIFO, ring-buffer, closed-channel,
   try_send/try_recv, while-let, concurrent spawn, producer-consumer, ping-pong,
-  передача `ChanWriter[T]`/`ChanReader[T]` в функции.
+  передача `ChanWriter[T]`/`ChanReader[T]` в функции; send→bool тесты; fan-in тесты.
 - Негативные тесты: `channel_sender_no_recv`, `channel_receiver_no_send` (EXPECT_CC_ERROR).
-- `select` — вынесен в Plan 28 (нет parser-поддержки).
+- **Plan 30 Ф.1** (2026-05-11): `send()` возвращает `nova_bool` — `false` если канал
+  закрыт, не бросает; `assert(tx.send(v))` и `let ok = tx.send(v)` работают.
+- **Plan 30 Ф.2** (2026-05-11): `tx.clone()` — multi-writer ref-count (`writer_count`
+  в `Nova_ChannelState`); канал закрывается только когда все writers вызвали `close()`.
+- `select` — вынесен в Plan 31 (отдельный план с runtime SelectWaiter).
 
 
 ---

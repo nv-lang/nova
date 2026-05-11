@@ -5218,4 +5218,38 @@ capability-split: `Channel.new(cap)` возвращает `(ChanWriter[T], ChanR
 
 **Результат:** 156/156 PASS (все тесты кроме transient lld-lock).
 
+================================================================================
+ПЛАН 30 — Channel Improvements: send→bool + multi-writer (tx.clone())
+================================================================================
+
+**Задача:** Два улучшения channel API после Plan 21.
+
+**Improvement 1: send → bool** (Ф.1)
+
+Раньше `nova_chan_writer_send()` делал `nova_throw()` на закрытый канал —
+неожиданный panic. Теперь возвращает `nova_bool`: `true` если послал,
+`false` если канал закрыт. В parking loop: если после wake `st->closed` →
+`return 0` вместо throw.
+
+emit_c.rs: infer_expr_c_type для `"send"` на `Nova_ChanWriter*` → `"nova_bool"`.
+Это позволяет `assert(tx.send(v))` и `let ok = tx.send(v)`.
+
+**Improvement 2: Multi-writer tx.clone()** (Ф.2)
+
+`writer_count: int32_t` в `Nova_ChannelState`. Инициализируется в 1.
+`nova_chan_writer_clone(tx)` — инкрементирует `writer_count`, создаёт новый
+`Nova_ChanWriter*` с тем же `state`. `nova_chan_writer_close(tx)` —
+декрементирует; закрывает канал (помечает `closed=true`, будит waiters)
+только при `writer_count == 0`.
+
+emit_c.rs: dispatch `"clone"` на `Nova_ChanWriter*` → `nova_chan_writer_clone()`;
+`infer_expr_c_type` `"clone"` → `"Nova_ChanWriter*"`.
+
+**Новые тесты (channels.nv):**
+  - Секция 7 (3 теста): send-after-close → false; send в открытый → true;
+    возвращаемое значение используется как bool
+  - Секция 8 (3 теста): clone/not-close-original; порядок close; fan-in pipeline
+
+**Результат:** 159/159 PASS.
+
 Commit: 60e226da6 codegen+parser: closure mut-capture heap-promotion + D49 fix
