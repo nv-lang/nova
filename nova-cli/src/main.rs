@@ -114,6 +114,10 @@ enum Cmd {
         /// Path to nova_tests/ directory (default: auto from nova.toml root).
         #[arg(long = "tests-dir")]
         tests_dir: Option<PathBuf>,
+        /// GC backend: 'boehm' (default after Plan 27) or 'malloc' (no GC, internal only).
+        /// Reserved for Plan 27 — currently accepted but has no effect.
+        #[arg(long, value_parser = ["boehm", "malloc"])]
+        gc: Option<String>,
     },
     /// Build and run a single Nova test file (used by IDE / CI for one-shot debug).
     #[command(name = "test-build")]
@@ -137,6 +141,10 @@ enum Cmd {
         /// Keep .c / .exe / .obj build artifacts after the run.
         #[arg(long = "keep-artifacts")]
         keep_artifacts: bool,
+        /// GC backend: 'boehm' (default after Plan 27) or 'malloc' (no GC, internal only).
+        /// Reserved for Plan 27 — currently accepted but has no effect.
+        #[arg(long, value_parser = ["boehm", "malloc"])]
+        gc: Option<String>,
     },
     /// Regenerate std/runtime/*.nv stubs from the runtime registry.
     #[command(name = "regen-runtime")]
@@ -184,6 +192,32 @@ fn resolve_paths(repo: &Path) -> RepoPaths {
         rt_dir: repo.join("compiler-codegen").join("nova_rt"),
         default_results_file: repo.join("target").join("last-test-results.json"),
     }
+}
+
+// ---------- ANSI colors ----------
+// Minimal ANSI — no extra deps. Disabled when stdout/stderr is not a tty
+// or when NO_COLOR env var is set (https://no-color.org).
+
+fn colors_enabled() -> bool {
+    if std::env::var_os("NO_COLOR").is_some() {
+        return false;
+    }
+    // On Windows, ANSI is supported in Windows Terminal / modern conhost.
+    // Check TERM or just always enable — worst case: harmless escape codes.
+    true
+}
+
+fn red(s: &str) -> String {
+    if colors_enabled() { format!("\x1b[31m{}\x1b[0m", s) } else { s.to_string() }
+}
+fn yellow(s: &str) -> String {
+    if colors_enabled() { format!("\x1b[33m{}\x1b[0m", s) } else { s.to_string() }
+}
+fn green(s: &str) -> String {
+    if colors_enabled() { format!("\x1b[32m{}\x1b[0m", s) } else { s.to_string() }
+}
+fn bold(s: &str) -> String {
+    if colors_enabled() { format!("\x1b[1m{}\x1b[0m", s) } else { s.to_string() }
 }
 
 // ---------- helpers ----------
@@ -251,7 +285,7 @@ fn cmd_check(path: &Path) -> Result<()> {
             .collect();
         anyhow!("{}", msgs.join("\n"))
     })?;
-    println!("ok: {}", path.display());
+    println!("{} {}", green("ok:"), path.display());
     Ok(())
 }
 
@@ -316,7 +350,7 @@ fn cmd_build(
     nova_codegen::types::infer_effects(&mut module);
     for w in nova_codegen::lints::lint_module(&module) {
         let (line, col) = nova_codegen::diag::byte_to_line_col(&src, w.diag.span.start);
-        eprintln!("warning: {}:{}:{}: {} [{}]", path.display(), line, col, w.diag.message, w.rule);
+        eprintln!("{} {}:{}:{}: {} [{}]", bold(&yellow("warning:")), path.display(), line, col, w.diag.message, w.rule);
     }
 
     let mut emitter = nova_codegen::codegen::CEmitter::new();
@@ -396,7 +430,7 @@ fn cmd_build(
         .or_else(|_| std::fs::copy(&exe_file, &final_exe).map(|_| ()))
         .map_err(|e| anyhow!("move executable: {}", e))?;
 
-    println!("built: {} ({:.2}s)", final_exe.display(), build_start.elapsed().as_secs_f64());
+    println!("{} {} ({:.2}s)", green("built:"), final_exe.display(), build_start.elapsed().as_secs_f64());
     Ok(())
 }
 
@@ -607,10 +641,10 @@ fn cmd_test_build(
     let elapsed = outcome.elapsed();
     let detail = outcome.detail();
     if outcome.is_pass() {
-        println!("{} {} ({:.2}s)", label, display, elapsed.as_secs_f64());
+        println!("{} {} ({:.2}s)", green(label), display, elapsed.as_secs_f64());
         Ok(())
     } else {
-        eprintln!("{} {} ({:.2}s)", label, display, elapsed.as_secs_f64());
+        eprintln!("{} {} ({:.2}s)", bold(&red(label)), display, elapsed.as_secs_f64());
         if !detail.is_empty() {
             eprintln!("{}", detail);
         }
@@ -682,7 +716,7 @@ fn main() -> ExitCode {
         Cmd::Test {
             filter, jobs, format, mode, toolchain, vcvars, clang, timeout,
             verbose, quiet, results_file, rerun_failed, retries,
-            include_stdlib, keep_artifacts, tests_dir,
+            include_stdlib, keep_artifacts, tests_dir, gc: _gc,
         } => cmd_test(
             filter.as_deref(),
             jobs,
@@ -701,7 +735,7 @@ fn main() -> ExitCode {
             keep_artifacts,
             tests_dir.as_deref(),
         ),
-        Cmd::TestBuild { file, mode, toolchain, vcvars, clang, timeout, keep_artifacts } => cmd_test_build(
+        Cmd::TestBuild { file, mode, toolchain, vcvars, clang, timeout, keep_artifacts, gc: _gc } => cmd_test_build(
             &file,
             &mode,
             &toolchain,
@@ -715,7 +749,7 @@ fn main() -> ExitCode {
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("error: {}", e);
+            eprintln!("{} {}", bold(&red("error:")), e);
             ExitCode::FAILURE
         }
     }
