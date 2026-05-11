@@ -4418,14 +4418,18 @@ scope ждёт defer'ов всех детей, scheduling непредсказу
     skip non-error exit (commit c96f7f3).
   - Ф.6 Positive-тесты: `syntax/defer_basic.nv` (4 теста: trailing,
     LIFO, early-return, loop-iter), `syntax/errdefer_basic.nv`
-    (3 теста: normal-exit, defer+errdefer combo, multiple errdefer)
-    (commits c57d098 + 4cd8abe + 24196f2).
+    (3 теста: normal-exit, defer+errdefer combo, multiple errdefer),
+    `syntax/errdefer_throw.nv` (4 теста: throw + non-interrupt handler,
+    throw + interrupt handler — корректное skip errdefer, LIFO
+    на throw-path, defer+errdefer combo на throw-path).
   - Ф.7 Spec uplift: текущий блок.
-- Известное ограничение: **errdefer на throw-path с user-installed
-  `with Fail = handler ...`** не срабатывает, потому что user
-  handler перехватывает Fail.fail dispatch ДО local fail-frame'а
-  (см. Q-errdefer-handler в open-questions.md). Errdefer работает
-  на unhandled-throw путях (default fail-frame). Корректное
-  взаимодействие с handler требует пересмотра handler-dispatch
-  семантики.
+- **errdefer + handler interaction — корректно по Fail-strict (D65).**
+  Когда handler НЕ делает `interrupt`, после handler return
+  `Nova_Fail_fail` всё равно вызывает `nova_throw(msg)` для unwind
+  (D65 fail-strict — fail() never resumes). Это unwind ловит local
+  `_defer_BID_ff` setjmp-frame → errdefer срабатывает → fail-frame
+  pop'нут → `nova_throw` пробрасывается в outer fail-frame. Когда
+  handler делает `interrupt v` — это **handled normally exit** для
+  inner scope (longjmp на InterruptFrame, минуя fail-frame), и
+  errdefer **корректно не срабатывает** — это не error-path.
 

@@ -233,7 +233,6 @@ pub struct CEmitter {
 
 /// Plan 20 Ф.4: per-defer-stmt entry — tracks one `defer { ... }` or
 /// `errdefer { ... }` statement registered inside a block.
-#[derive(Clone)]
 struct DeferEntry {
     /// C variable name of the `int` activation flag. Initialized to 0
     /// at block start; set to 1 inline at the defer's textual position
@@ -249,8 +248,6 @@ struct DeferEntry {
 
 /// Plan 20 Ф.4: per-block defer state. One scope per block that contains
 /// at least one defer/errdefer.
-#[derive(Clone)]
-#[allow(dead_code)] // fields used in upcoming Ф.4 subphases (early-exit cleanup, throw-path)
 struct DeferScope {
     /// Unique block ID for naming.
     block_id: usize,
@@ -263,10 +260,12 @@ struct DeferScope {
     /// `true` if the scope has at least one `errdefer` — triggers
     /// NovaFailFrame setjmp wrapper so throw-path can detect error exit.
     needs_failframe: bool,
-    /// Name of the C `int` "is_error" flag, valid when `needs_failframe`.
-    is_error_var: String,
     /// Name of the C NovaFailFrame variable when `needs_failframe`.
     failframe_var: String,
+    /// Name of the C `int` "fail-frame popped" flag (set to 1 by
+    /// early-exit cleanup so leave_defer_scope skips the second
+    /// `nova_fail_pop()`). Valid when `needs_failframe`.
+    failframe_popped_var: String,
     /// `true` if this scope is loop-body — break/continue stop here
     /// rather than walking outer scopes.
     is_loop_body: bool,
@@ -3835,6 +3834,12 @@ impl CEmitter {
         self.line("NovaFiberQueue _nova_main_scope; nova_scope_init(&_nova_main_scope);");
         self.line("_nova_active_scope = &_nova_main_scope;");
         self.line("_nova_active_slot  = -1;");
+        // Plan 22 Ф.10: SIGINT handler — Ctrl+C → cancel main-scope →
+        // graceful shutdown. Под no-libuv stub'ом — no-op. Под libuv
+        // регистрирует uv_signal_t на SIGINT.
+        self.line("#ifdef NOVA_USE_LIBUV");
+        self.line("nova_evloop_install_sigint(&_nova_main_scope);");
+        self.line("#endif");
         self.line("nova_fn_main_impl();");
         // D92: drain implicit main-scope до quiescence перед exit.
         // Detach'ы / pending fiber'ы пробуждённые callback'ами после
@@ -3916,27 +3921,26 @@ impl CEmitter {
                 idx += 1;
             }
         }
-        let is_error_var = format!("_defer_{}_is_error", block_id);
         let failframe_var = format!("_defer_{}_ff", block_id);
+        let failframe_popped_var = format!("_defer_{}_ff_popped", block_id);
         if has_errdefer {
-            self.line(&format!("int {} = 0;", is_error_var));
+            self.line(&format!("int {} = 0;", failframe_popped_var));
             self.line(&format!("NovaFailFrame {};", failframe_var));
             self.line(&format!("nova_fail_push(&{});", failframe_var));
             self.line(&format!("if (setjmp({}.jmp) != 0) {{", failframe_var));
             self.indent += 1;
-            // Throw path: invoke defers (LIFO) with is_error=1 then re-throw.
-            self.line(&format!("{} = 1;", is_error_var));
+            // Throw path: invoke ALL defers (LIFO; both `defer` и `errdefer`
+            // fire on error exit), затем pop fail-frame и re-throw для
+            // следующего outer fail-frame.
             for entry in entries.iter().rev() {
                 self.line(&format!("if ({}) {{", entry.active_var));
                 self.indent += 1;
-                if entry.is_errdefer {
-                    // errdefer always runs on error path
-                }
                 let _ = self.emit_defer_body_void(&entry.body);
                 self.indent -= 1;
                 self.line("}");
             }
-            self.line(&format!("nova_fail_pop();"));
+            self.line("nova_fail_pop();");
+            self.line(&format!("{} = 1;", failframe_popped_var));
             self.line(&format!("nova_throw({}.error_msg);", failframe_var));
             self.indent -= 1;
             self.line("}");
@@ -3946,8 +3950,8 @@ impl CEmitter {
             entries,
             next_idx: 0,
             needs_failframe: has_errdefer,
-            is_error_var,
             failframe_var,
+            failframe_popped_var,
             is_loop_body,
         });
         block_id
@@ -3980,9 +3984,9 @@ impl CEmitter {
             self.line("}");
         }
         if scope.needs_failframe {
-            // Если early-exit cleanup уже pop'нул fail-frame и установил
-            // is_error_var = 2, пропускаем повторный pop.
-            self.line(&format!("if ({} != 2) {{ nova_fail_pop(); }}", scope.is_error_var));
+            // Skip повторный pop, если early-exit cleanup уже сделал pop
+            // (установил failframe_popped_var = 1).
+            self.line(&format!("if (!{}) {{ nova_fail_pop(); }}", scope.failframe_popped_var));
         }
     }
 
@@ -4001,8 +4005,13 @@ impl CEmitter {
     /// In both cases we DEACTIVATE the defer flag (`= 0`) so that the eventual
     /// leave_defer_scope or fail-frame longjmp handler doesn't re-invoke.
     fn emit_early_exit_cleanup(&mut self, stop_at_loop: bool) {
-        let scopes = self.defer_scopes.clone();
-        for scope in scopes.iter().rev() {
+        // Plan cleanup без clone(): сначала вытаскиваем scopes из
+        // self.defer_scopes (mem::take заменяет на пустой Vec, освобождая
+        // borrow), iterate over них, emit, потом возвращаем обратно.
+        // Это позволяет вызывать &mut-методы (self.line, emit_defer_body_void)
+        // внутри loop'а без borrow conflict.
+        let scopes = std::mem::take(&mut self.defer_scopes);
+        'outer: for scope in scopes.iter().rev() {
             for entry in scope.entries.iter().rev() {
                 if entry.is_errdefer {
                     continue;
@@ -4022,14 +4031,16 @@ impl CEmitter {
             if scope.needs_failframe {
                 self.line("nova_fail_pop();");
                 // Mark frame as popped so leave_defer_scope skips another pop.
-                // We use the is_error_var as a sentinel: setting it to 2 means
-                // "already popped — skip everything".
-                self.line(&format!("{} = 2;", scope.is_error_var));
+                self.line(&format!("{} = 1;", scope.failframe_popped_var));
             }
             if stop_at_loop && scope.is_loop_body {
-                break;
+                break 'outer;
             }
         }
+        // Восстанавливаем scopes — early-exit cleanup НЕ pop'ает scopes из
+        // стека (это разные операции; pop scope происходит только в
+        // leave_defer_scope).
+        self.defer_scopes = scopes;
     }
 
     /// Emit a loop-body block (for/while/loop): integrates defer-scope around
