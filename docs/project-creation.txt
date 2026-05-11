@@ -5721,3 +5721,37 @@ Plan 33 (D24 контракты) разбит на 33.1/33.2/33.3 с decision po
   Ф.3 — SMT IR + Z3 backend trait + driver.
   Ф.4 — codegen runtime fallback + zero-cost release gate + nova_rt/contracts.
 
+
+
+================================================================================
+2026-05-12 Plan 33.1 Ф.2: ContractCtx — базовые правила контрактов
+================================================================================
+
+Минимальный type-check pass для 33.1. Полная type-проверка expr-типа =
+bool, flow-аналитика для result.value/error под guard'ом — отложены до
+Ф.3 (где сделаны вместе с SMT-кодировкой).
+
+Что проверяется в Ф.2:
+
+1. **`result` в `requires`** → compile error «`result` is not available
+   in `requires` (only in `ensures`)». Семантика: значение ещё не вычислено.
+
+2. **`old(...)` в `requires`** → compile error «`old(...)` is not
+   available in `requires` (only in `ensures`)». Семантика: нет «до».
+
+3. **Composition** (вызов другой top-level fn в контракте) → error
+   «calling user function `foo` in contracts is not supported in Plan
+   33.1 (composition with `@pure` functions — Plan 33.2)».
+
+Реализация: `ContractCtx::build(module)` собирает имена top-level fn,
+`check_module` ходит по контрактам каждой fn, `walk_expr` рекурсивно
+обходит выражения с флагом `in_ensures`.
+
+Тесты: 3 negative — typecheck_result_in_requires, typecheck_old_in_requires,
+typecheck_composition. Все дают ожидаемые compile errors.
+
+Regression: 188/188 PASS (185 + 3 новых negative-теста).
+
+Дальше: Ф.3 (SMT IR + Z3 backend) — после неё добавим полную type-проверку
+контрактов через SMT-кодировку.
+

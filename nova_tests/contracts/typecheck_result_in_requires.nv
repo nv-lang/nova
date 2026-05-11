@@ -1,0 +1,9 @@
+// EXPECT_COMPILE_ERROR `result` is not available in `requires`
+//
+// Plan 33.1 Ф.2 (D24): `result` доступен только в `ensures`.
+
+module nova_tests.contracts.typecheck_result_in_requires
+
+fn bad(x int) -> int
+    requires result > 0
+=> x

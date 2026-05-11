@@ -220,6 +220,16 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
     let name_res = NameResCtx::build(module);
     name_res.check_module(module, &mut errors);
 
+    // Plan 33.1 Ф.2 (D24): contract checking + purity inference.
+    // Минимальный pass: проверка базовых правил для контрактов:
+    // - `result` запрещён в `requires`;
+    // - `old(...)` запрещён в `requires`;
+    // - composition (вызов другой fn в контракте) запрещён в 33.1
+    //   (будет разрешён для @pure в 33.2).
+    // Полная type-checking + SMT — в Ф.3.
+    let contract_ctx = ContractCtx::build(module);
+    contract_ctx.check_module(module, &mut errors);
+
     if errors.is_empty() {
         Ok(env)
     } else {
@@ -3135,5 +3145,141 @@ fn call_target_name(e: &Expr) -> Option<String> {
             }
         }
         _ => None,
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Plan 33.1 Ф.2 (D24): ContractCtx — проверка базовых правил контрактов.
+//
+// Минимальный pass для 33.1. Полная type-проверка (контракт должен быть
+// bool, result.value под guard'ом, и т.д.) — в Ф.3 вместе с SMT-кодировкой.
+//
+// Базовые правила (33.1):
+// 1. `result` запрещён в `requires` (значения ещё нет).
+// 2. `old(...)` запрещён в `requires` (нет «до»).
+// 3. composition: вызов другой fn в контракте — error в 33.1 (Plan 33.2
+//    разрешит для @pure функций).
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Контекст контракт-проверок. Накапливает имена top-level fn (для
+/// детекции composition в 33.1 как error).
+struct ContractCtx {
+    fn_names: HashSet<String>,
+}
+
+impl ContractCtx {
+    fn build(module: &Module) -> Self {
+        let mut fn_names = HashSet::new();
+        for item in &module.items {
+            if let Item::Fn(fd) = item {
+                fn_names.insert(fd.name.clone());
+            }
+        }
+        Self { fn_names }
+    }
+
+    fn check_module(&self, module: &Module, errors: &mut Vec<Diagnostic>) {
+        for item in &module.items {
+            if let Item::Fn(fd) = item {
+                self.check_fn(fd, errors);
+            }
+        }
+    }
+
+    fn check_fn(&self, fd: &FnDecl, errors: &mut Vec<Diagnostic>) {
+        for contract in &fd.contracts {
+            match contract.kind {
+                ContractKind::Requires => {
+                    self.check_requires_expr(&contract.expr, errors);
+                }
+                ContractKind::Ensures => {
+                    self.check_ensures_expr(&contract.expr, errors);
+                }
+            }
+        }
+    }
+
+    /// `requires`: запрещены `result` и `old(...)`.
+    fn check_requires_expr(&self, e: &Expr, errors: &mut Vec<Diagnostic>) {
+        self.walk_expr(e, errors, /*in_ensures*/ false);
+    }
+
+    /// `ensures`: `result`/`old(...)` разрешены; composition запрещён в 33.1.
+    fn check_ensures_expr(&self, e: &Expr, errors: &mut Vec<Diagnostic>) {
+        self.walk_expr(e, errors, /*in_ensures*/ true);
+    }
+
+    fn walk_expr(&self, e: &Expr, errors: &mut Vec<Diagnostic>, in_ensures: bool) {
+        match &e.kind {
+            ExprKind::Ident(n) => {
+                if n == "result" && !in_ensures {
+                    errors.push(Diagnostic::new(
+                        "`result` is not available in `requires` (only in `ensures`)",
+                        e.span,
+                    ));
+                }
+            }
+            ExprKind::Call { func, args, .. } => {
+                // Detect `old(...)` — special-cased call.
+                if let ExprKind::Ident(name) = &func.kind {
+                    if name == "old" {
+                        if !in_ensures {
+                            errors.push(Diagnostic::new(
+                                "`old(...)` is not available in `requires` (only in `ensures`)",
+                                e.span,
+                            ));
+                        }
+                        // Walk old() arg ONCE; it's a snapshot of pre-state,
+                        // not a composition.
+                        for a in args {
+                            self.walk_expr(a.expr(), errors, in_ensures);
+                        }
+                        return;
+                    }
+                    // Composition: вызов другой top-level fn в контракте.
+                    if self.fn_names.contains(name) {
+                        errors.push(Diagnostic::new(
+                            format!(
+                                "calling user function `{}` in contracts is not supported in Plan 33.1 \
+                                 (composition with `@pure` functions — Plan 33.2)",
+                                name
+                            ),
+                            e.span,
+                        ));
+                    }
+                }
+                // Walk callee + args.
+                self.walk_expr(func, errors, in_ensures);
+                for a in args {
+                    self.walk_expr(a.expr(), errors, in_ensures);
+                }
+            }
+            ExprKind::Binary { left, right, .. } => {
+                self.walk_expr(left, errors, in_ensures);
+                self.walk_expr(right, errors, in_ensures);
+            }
+            ExprKind::Unary { operand, .. } => {
+                self.walk_expr(operand, errors, in_ensures);
+            }
+            ExprKind::Member { obj, .. } => {
+                self.walk_expr(obj, errors, in_ensures);
+            }
+            ExprKind::Index { obj, index } => {
+                self.walk_expr(obj, errors, in_ensures);
+                self.walk_expr(index, errors, in_ensures);
+            }
+            ExprKind::As(inner, _) | ExprKind::Is(inner, _) => {
+                self.walk_expr(inner, errors, in_ensures);
+            }
+            ExprKind::Try(inner) | ExprKind::Bang(inner) => {
+                self.walk_expr(inner, errors, in_ensures);
+            }
+            ExprKind::Coalesce(l, r) => {
+                self.walk_expr(l, errors, in_ensures);
+                self.walk_expr(r, errors, in_ensures);
+            }
+            // Литералы, paths, и прочее — не интересно для базовых правил.
+            _ => {}
+        }
     }
 }

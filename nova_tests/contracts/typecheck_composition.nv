@@ -1,0 +1,12 @@
+// EXPECT_COMPILE_ERROR calling user function `helper` in contracts is not supported in Plan 33.1
+//
+// Plan 33.1 Ф.2 (D24): composition (вызов другой fn в контракте) разрешён
+// в Plan 33.2 только для `@pure` функций. В 33.1 — error.
+
+module nova_tests.contracts.typecheck_composition
+
+fn helper(x int) -> int => x + 1
+
+fn caller(x int) -> int
+    requires helper(x) > 0
+=> x
