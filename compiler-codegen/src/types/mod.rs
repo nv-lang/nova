@@ -182,6 +182,20 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
     let cap_ctx = CapabilityCtx::build(module);
     cap_ctx.check_module(module, &mut errors);
 
+    // D90 Plan 20 Ф.3: defer/errdefer body constraints.
+    //
+    // Body запрещает:
+    //  - exit-control (return/throw/break/continue) — нельзя hijack
+    //    exit семантику scope'а.
+    //  - Fail-эффект (?/!!/throw) — double-throw невозможно сделать
+    //    корректно. throw обнаруживается через AST-walk; ?/!! — в codegen
+    //    они desugar'ятся в throw, поэтому достаточно catch throw.
+    //  - suspend-операции (Net.*, Fs.*, Db.*, Time.sleep, parallel for,
+    //    spawn, supervised, select) — defer должен быть быстрым cleanup.
+    //
+    // Walks по всем bodies всех функций. Spec — D90.
+    check_defer_bodies(module, &mut errors);
+
     // Name-resolution фаза: статический поиск undefined идентификаторов
     // в expr-position. Запускается ПОСЛЕ BoundCtx/CapabilityCtx, чтобы
     // более фундаментальные ошибки (signatures/effects) приходили первыми.
@@ -2147,3 +2161,485 @@ fn typeref_equal(a: &TypeRef, b: &TypeRef) -> bool {
     }
 }
 
+// ============================================================================
+// D90 Plan 20 Ф.3: defer/errdefer body constraints
+// ============================================================================
+//
+// Body запрещает три категории конструкций:
+//
+// 1. **Exit-control:** `return`, `throw`, `break`, `continue` нельзя
+//    использовать в defer body — defer часть exit-процесса, не может
+//    hijack его. Compile error: «defer body cannot use ... — это
+//    нарушит exit семантику scope'а».
+//
+// 2. **Fail-effect:** `?`, `!!`, `throw` desugar'ятся в throw через
+//    эффект Fail. Defer body должно быть infallible — double-throw
+//    невозможно сделать корректно. Detection через AST-walk
+//    (ExprKind::Throw, ExprKind::Try, ExprKind::Bang).
+//
+// 3. **Suspend operations:** Net.*, Fs.*, Db.*, Time.sleep,
+//    Channel.recv (blocking), parallel for, spawn, supervised, select.
+//    Defer должен быть быстрым cleanup — suspend делает exit-семантику
+//    непредсказуемой. Detection: AST-форма (ParallelFor, Spawn,
+//    Supervised) + callee.effects intersect с SUSPEND_EFFECTS списком.
+
+/// Эффекты, которые считаются suspend в контексте defer body.
+/// Это approximation для bootstrap — D90 spec говорит «cleanup быстрый»,
+/// безопаснее запретить целую группу чем пытаться различить
+/// blocking vs non-blocking варианты для каждого эффекта.
+const SUSPEND_EFFECT_NAMES: &[&str] = &[
+    "Net", "Fs", "Db", "Time",
+];
+
+/// AST-формы которые сами по себе считаются suspend (даже если effects
+/// не объявлены).
+fn is_suspend_expr_kind(kind: &ExprKind) -> bool {
+    matches!(kind,
+        ExprKind::ParallelFor { .. }
+        | ExprKind::Spawn(_)
+        | ExprKind::Supervised(_)
+        | ExprKind::Detach(_)
+        | ExprKind::CancelScope { .. }
+    )
+}
+
+/// Walk модуля: для каждого defer/errdefer statement в bodies функций
+/// и тестах — проверить body constraints.
+fn check_defer_bodies(module: &Module, errors: &mut Vec<Diagnostic>) {
+    // Lookup callee effects: fn_name -> effects (для suspend detection).
+    let mut fn_effects: HashMap<String, Vec<TypeRef>> = HashMap::new();
+    for item in &module.items {
+        if let Item::Fn(f) = item {
+            let key = match &f.receiver {
+                Some(r) => format!("{}.{}", r.type_name, f.name),
+                None => f.name.clone(),
+            };
+            fn_effects.entry(key).or_default().extend(f.effects.iter().cloned());
+        }
+    }
+
+    // Walk bodies функций и тестов.
+    for item in &module.items {
+        match item {
+            Item::Fn(f) => {
+                if let FnBody::Block(b) = &f.body {
+                    walk_block_for_defers(b, &fn_effects, errors);
+                } else if let FnBody::Expr(e) = &f.body {
+                    walk_expr_for_defers(e, &fn_effects, errors);
+                }
+            }
+            Item::Test(t) => {
+                walk_block_for_defers(&t.body, &fn_effects, errors);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Walk block: для каждого Stmt::Defer/ErrDefer — проверить body;
+/// рекурсивно walk остальные stmts (там может быть вложенный block с
+/// defer'ами).
+fn walk_block_for_defers(b: &Block, fn_effects: &HashMap<String, Vec<TypeRef>>, errors: &mut Vec<Diagnostic>) {
+    for s in &b.stmts {
+        match s {
+            Stmt::Defer { body, .. } => {
+                check_defer_body(body, /*is_errdefer*/ false, fn_effects, errors);
+            }
+            Stmt::ErrDefer { body, .. } => {
+                check_defer_body(body, /*is_errdefer*/ true, fn_effects, errors);
+            }
+            Stmt::Let(decl) => walk_expr_for_defers(&decl.value, fn_effects, errors),
+            Stmt::Expr(e) => walk_expr_for_defers(e, fn_effects, errors),
+            Stmt::Assign { target, value, .. } => {
+                walk_expr_for_defers(target, fn_effects, errors);
+                walk_expr_for_defers(value, fn_effects, errors);
+            }
+            Stmt::Return { value, .. } => {
+                if let Some(v) = value { walk_expr_for_defers(v, fn_effects, errors); }
+            }
+            Stmt::Throw { value, .. } => walk_expr_for_defers(value, fn_effects, errors),
+            Stmt::Break(_) | Stmt::Continue(_) => {}
+        }
+    }
+    if let Some(t) = &b.trailing {
+        walk_expr_for_defers(t, fn_effects, errors);
+    }
+}
+
+/// Walk expression: рекурсивно ищем вложенные блоки с defer'ами.
+/// Сам по себе expression не проверяется — только nested blocks.
+fn walk_expr_for_defers(e: &Expr, fn_effects: &HashMap<String, Vec<TypeRef>>, errors: &mut Vec<Diagnostic>) {
+    match &e.kind {
+        ExprKind::Block(b) => walk_block_for_defers(b, fn_effects, errors),
+        ExprKind::If { cond, then, else_ } => {
+            walk_expr_for_defers(cond, fn_effects, errors);
+            walk_block_for_defers(then, fn_effects, errors);
+            if let Some(ElseBranch::Block(b)) = else_ { walk_block_for_defers(b, fn_effects, errors); }
+            if let Some(ElseBranch::If(e2)) = else_ { walk_expr_for_defers(e2, fn_effects, errors); }
+        }
+        ExprKind::IfLet { scrutinee, then, else_, .. } => {
+            walk_expr_for_defers(scrutinee, fn_effects, errors);
+            walk_block_for_defers(then, fn_effects, errors);
+            if let Some(ElseBranch::Block(b)) = else_ { walk_block_for_defers(b, fn_effects, errors); }
+            if let Some(ElseBranch::If(e2)) = else_ { walk_expr_for_defers(e2, fn_effects, errors); }
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            walk_expr_for_defers(scrutinee, fn_effects, errors);
+            for a in arms {
+                match &a.body {
+                    MatchArmBody::Expr(e2) => walk_expr_for_defers(e2, fn_effects, errors),
+                    MatchArmBody::Block(b) => walk_block_for_defers(b, fn_effects, errors),
+                }
+                if let Some(g) = &a.guard { walk_expr_for_defers(g, fn_effects, errors); }
+            }
+        }
+        ExprKind::For { iter, body, .. } | ExprKind::ParallelFor { iter, body, .. } => {
+            walk_expr_for_defers(iter, fn_effects, errors);
+            walk_block_for_defers(body, fn_effects, errors);
+        }
+        ExprKind::While { cond, body } => {
+            walk_expr_for_defers(cond, fn_effects, errors);
+            walk_block_for_defers(body, fn_effects, errors);
+        }
+        ExprKind::WhileLet { scrutinee, body, .. } => {
+            walk_expr_for_defers(scrutinee, fn_effects, errors);
+            walk_block_for_defers(body, fn_effects, errors);
+        }
+        ExprKind::Loop { body } => walk_block_for_defers(body, fn_effects, errors),
+        ExprKind::With { body, .. } | ExprKind::Forbid { body, .. }
+        | ExprKind::Realtime { body, .. } | ExprKind::Supervised(body)
+        | ExprKind::Detach(body) | ExprKind::CancelScope { body, .. } => {
+            walk_block_for_defers(body, fn_effects, errors);
+        }
+        ExprKind::Call { func, args, trailing } => {
+            walk_expr_for_defers(func, fn_effects, errors);
+            for a in args {
+                walk_expr_for_defers(a.expr(), fn_effects, errors);
+            }
+            if let Some(tr) = trailing {
+                match tr {
+                    Trailing::Block(b) => walk_block_for_defers(b, fn_effects, errors),
+                    Trailing::Fn(fsb) => {
+                        if let FnBody::Block(b) = &fsb.body { walk_block_for_defers(b, fn_effects, errors); }
+                        else if let FnBody::Expr(e2) = &fsb.body { walk_expr_for_defers(e2, fn_effects, errors); }
+                    }
+                    Trailing::LegacyBlockWithParams(tb) => {
+                        walk_block_for_defers(&tb.body, fn_effects, errors);
+                    }
+                }
+            }
+        }
+        ExprKind::Spawn(body) => walk_expr_for_defers(body, fn_effects, errors),
+        ExprKind::Binary { left, right, .. } => {
+            walk_expr_for_defers(left, fn_effects, errors);
+            walk_expr_for_defers(right, fn_effects, errors);
+        }
+        ExprKind::Unary { operand, .. } => walk_expr_for_defers(operand, fn_effects, errors),
+        ExprKind::Try(e2) | ExprKind::Bang(e2) | ExprKind::Throw(e2) => {
+            walk_expr_for_defers(e2, fn_effects, errors);
+        }
+        ExprKind::Coalesce(a, b) => {
+            walk_expr_for_defers(a, fn_effects, errors);
+            walk_expr_for_defers(b, fn_effects, errors);
+        }
+        ExprKind::As(e2, _) | ExprKind::Is(e2, _) => walk_expr_for_defers(e2, fn_effects, errors),
+        ExprKind::Member { obj, .. } | ExprKind::Index { obj, .. } => walk_expr_for_defers(obj, fn_effects, errors),
+        ExprKind::TurboFish { base, .. } => walk_expr_for_defers(base, fn_effects, errors),
+        ExprKind::Lambda { body, .. } | ExprKind::Interrupt(Some(body)) => walk_expr_for_defers(body, fn_effects, errors),
+        ExprKind::Range { start, end, .. } => {
+            walk_expr_for_defers(start, fn_effects, errors);
+            walk_expr_for_defers(end, fn_effects, errors);
+        }
+        ExprKind::ArrayLit(elems) => {
+            for el in elems {
+                match el {
+                    ArrayElem::Item(e2) | ArrayElem::Spread(e2) => walk_expr_for_defers(e2, fn_effects, errors),
+                }
+            }
+        }
+        ExprKind::TupleLit(elems) => {
+            for el in elems { walk_expr_for_defers(el, fn_effects, errors); }
+        }
+        ExprKind::RecordLit { fields, .. } => {
+            for f in fields {
+                if let Some(v) = &f.value { walk_expr_for_defers(v, fn_effects, errors); }
+            }
+        }
+        // Лямбды closure-full: body внутри FnSigBody.
+        ExprKind::ClosureFull(fsb) => {
+            if let FnBody::Block(b) = &fsb.body { walk_block_for_defers(b, fn_effects, errors); }
+            else if let FnBody::Expr(e2) = &fsb.body { walk_expr_for_defers(e2, fn_effects, errors); }
+        }
+        ExprKind::ClosureLight { body, .. } => {
+            match body {
+                ClosureBody::Expr(e2) => walk_expr_for_defers(e2, fn_effects, errors),
+                ClosureBody::Block(b) => walk_block_for_defers(b, fn_effects, errors),
+            }
+        }
+        // Простые узлы без вложенных блоков.
+        _ => {}
+    }
+}
+
+/// Body constraint check: exit-control, Fail-effect, suspend.
+fn check_defer_body(body: &Expr, is_errdefer: bool, fn_effects: &HashMap<String, Vec<TypeRef>>, errors: &mut Vec<Diagnostic>) {
+    let kw = if is_errdefer { "errdefer" } else { "defer" };
+    check_defer_body_inner(body, kw, fn_effects, errors);
+}
+
+fn check_defer_body_inner(e: &Expr, kw: &str, fn_effects: &HashMap<String, Vec<TypeRef>>, errors: &mut Vec<Diagnostic>) {
+    // Сначала проверяем узел сам по себе.
+    match &e.kind {
+        // Exit-control: throw expression-form (D85 redirected via Fail).
+        ExprKind::Throw(_) => {
+            errors.push(Diagnostic::new(
+                format!("`throw` is not allowed inside `{}` body (D90): defer body must be infallible — \
+                         it cannot raise errors. If cleanup may fail, wrap with `with Fail = ...` handler.", kw),
+                e.span,
+            ));
+        }
+        // ? и !! desugar в throw → запрещены по той же причине (no Fail).
+        ExprKind::Try(_) => {
+            errors.push(Diagnostic::new(
+                format!("`?` operator is not allowed inside `{}` body (D90): defer body must be infallible — \
+                         `?` requires Fail effect.", kw),
+                e.span,
+            ));
+        }
+        ExprKind::Bang(_) => {
+            errors.push(Diagnostic::new(
+                format!("`!!` operator is not allowed inside `{}` body (D90): defer body must be infallible — \
+                         `!!` requires Fail effect.", kw),
+                e.span,
+            ));
+        }
+        // Interrupt — досрочный exit with-блока, hijack'ит scope exit-семантику.
+        ExprKind::Interrupt(_) => {
+            errors.push(Diagnostic::new(
+                format!("`interrupt` is not allowed inside `{}` body (D90): defer body cannot hijack scope exit.", kw),
+                e.span,
+            ));
+        }
+        // Suspend constructs by AST-form.
+        ExprKind::Spawn(_) | ExprKind::Supervised(_) | ExprKind::Detach(_)
+        | ExprKind::CancelScope { .. } | ExprKind::ParallelFor { .. } => {
+            errors.push(Diagnostic::new(
+                format!("suspend operation (`spawn`/`supervised`/`detach`/`cancel_scope`/`parallel for`) \
+                         is not allowed inside `{}` body (D90): defer must be fast cleanup.", kw),
+                e.span,
+            ));
+        }
+        // Call с suspend-эффектами (callee.effects ∩ SUSPEND_EFFECT_NAMES).
+        ExprKind::Call { func, .. } => {
+            if let Some(callee_name) = call_target_name(func) {
+                if let Some(effs) = fn_effects.get(&callee_name) {
+                    for ef in effs {
+                        if let TypeRef::Named { path, .. } = ef {
+                            if let Some(name) = path.last() {
+                                if SUSPEND_EFFECT_NAMES.contains(&name.as_str()) {
+                                    errors.push(Diagnostic::new(
+                                        format!("call to `{}` requires suspend-effect `{}`, not allowed inside `{}` body (D90): \
+                                                 defer must be fast cleanup.",
+                                                callee_name, name, kw),
+                                        e.span,
+                                    ));
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            // Also: built-in effect ops `Time.sleep`, `Net.get`, etc. —
+            // обнаруживаются по member-path первого identifier'а.
+            if let ExprKind::Member { obj, .. } = &func.kind {
+                if let ExprKind::Ident(head) = &obj.kind {
+                    if SUSPEND_EFFECT_NAMES.contains(&head.as_str()) {
+                        errors.push(Diagnostic::new(
+                            format!("operation `{}.{}` (effect `{}`) is not allowed inside `{}` body (D90): \
+                                     defer must be fast cleanup.",
+                                    head,
+                                    match &func.kind { ExprKind::Member { name, .. } => name.as_str(), _ => "" },
+                                    head, kw),
+                            e.span,
+                        ));
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+
+    // Рекурсивно вглубь — вложенные scope (block, if, etc.) подчиняются тем же
+    // ограничениям, т.к. они часть defer body.
+    walk_defer_subexprs(e, kw, fn_effects, errors);
+}
+
+fn walk_defer_subexprs(e: &Expr, kw: &str, fn_effects: &HashMap<String, Vec<TypeRef>>, errors: &mut Vec<Diagnostic>) {
+    match &e.kind {
+        ExprKind::Block(b) => check_defer_body_block(b, kw, fn_effects, errors),
+        ExprKind::If { cond, then, else_ } => {
+            check_defer_body_inner(cond, kw, fn_effects, errors);
+            check_defer_body_block(then, kw, fn_effects, errors);
+            match else_ {
+                Some(ElseBranch::Block(b)) => check_defer_body_block(b, kw, fn_effects, errors),
+                Some(ElseBranch::If(e2)) => check_defer_body_inner(e2, kw, fn_effects, errors),
+                None => {}
+            }
+        }
+        ExprKind::IfLet { scrutinee, then, else_, .. } => {
+            check_defer_body_inner(scrutinee, kw, fn_effects, errors);
+            check_defer_body_block(then, kw, fn_effects, errors);
+            match else_ {
+                Some(ElseBranch::Block(b)) => check_defer_body_block(b, kw, fn_effects, errors),
+                Some(ElseBranch::If(e2)) => check_defer_body_inner(e2, kw, fn_effects, errors),
+                None => {}
+            }
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            check_defer_body_inner(scrutinee, kw, fn_effects, errors);
+            for a in arms {
+                match &a.body {
+                    MatchArmBody::Expr(e2) => check_defer_body_inner(e2, kw, fn_effects, errors),
+                    MatchArmBody::Block(b) => check_defer_body_block(b, kw, fn_effects, errors),
+                }
+                if let Some(g) = &a.guard { check_defer_body_inner(g, kw, fn_effects, errors); }
+            }
+        }
+        ExprKind::For { iter, body, .. } => {
+            check_defer_body_inner(iter, kw, fn_effects, errors);
+            check_defer_body_block(body, kw, fn_effects, errors);
+        }
+        ExprKind::While { cond, body } => {
+            check_defer_body_inner(cond, kw, fn_effects, errors);
+            check_defer_body_block(body, kw, fn_effects, errors);
+        }
+        ExprKind::WhileLet { scrutinee, body, .. } => {
+            check_defer_body_inner(scrutinee, kw, fn_effects, errors);
+            check_defer_body_block(body, kw, fn_effects, errors);
+        }
+        ExprKind::Loop { body } => check_defer_body_block(body, kw, fn_effects, errors),
+        ExprKind::With { body, .. } | ExprKind::Forbid { body, .. }
+        | ExprKind::Realtime { body, .. } => {
+            check_defer_body_block(body, kw, fn_effects, errors);
+        }
+        ExprKind::Call { func, args, trailing } => {
+            check_defer_body_inner(func, kw, fn_effects, errors);
+            for a in args { check_defer_body_inner(a.expr(), kw, fn_effects, errors); }
+            if let Some(tr) = trailing {
+                match tr {
+                    Trailing::Block(b) => check_defer_body_block(b, kw, fn_effects, errors),
+                    Trailing::Fn(fsb) => {
+                        if let FnBody::Block(b) = &fsb.body { check_defer_body_block(b, kw, fn_effects, errors); }
+                        else if let FnBody::Expr(e2) = &fsb.body { check_defer_body_inner(e2, kw, fn_effects, errors); }
+                    }
+                    Trailing::LegacyBlockWithParams(tb) => {
+                        check_defer_body_block(&tb.body, kw, fn_effects, errors);
+                    }
+                }
+            }
+        }
+        ExprKind::Binary { left, right, .. } => {
+            check_defer_body_inner(left, kw, fn_effects, errors);
+            check_defer_body_inner(right, kw, fn_effects, errors);
+        }
+        ExprKind::Unary { operand, .. } => check_defer_body_inner(operand, kw, fn_effects, errors),
+        ExprKind::Coalesce(a, b) => {
+            check_defer_body_inner(a, kw, fn_effects, errors);
+            check_defer_body_inner(b, kw, fn_effects, errors);
+        }
+        ExprKind::As(e2, _) | ExprKind::Is(e2, _) => check_defer_body_inner(e2, kw, fn_effects, errors),
+        ExprKind::Member { obj, .. } | ExprKind::Index { obj, .. } => check_defer_body_inner(obj, kw, fn_effects, errors),
+        ExprKind::TurboFish { base, .. } => check_defer_body_inner(base, kw, fn_effects, errors),
+        ExprKind::Range { start, end, .. } => {
+            check_defer_body_inner(start, kw, fn_effects, errors);
+            check_defer_body_inner(end, kw, fn_effects, errors);
+        }
+        ExprKind::ArrayLit(elems) => {
+            for el in elems {
+                match el {
+                    ArrayElem::Item(e2) | ArrayElem::Spread(e2) => check_defer_body_inner(e2, kw, fn_effects, errors),
+                }
+            }
+        }
+        ExprKind::TupleLit(elems) => {
+            for el in elems { check_defer_body_inner(el, kw, fn_effects, errors); }
+        }
+        ExprKind::RecordLit { fields, .. } => {
+            for f in fields {
+                if let Some(v) = &f.value { check_defer_body_inner(v, kw, fn_effects, errors); }
+            }
+        }
+        // Lambda/closure bodies — это отдельный scope для defer'а
+        // (defer внутри lambda относится к scope lambda, не parent).
+        // Не проверяем — это уже не defer body, а его callees, которые
+        // могут быть call'аны откуда угодно. Лямбда сама **может** быть
+        // call'нута асинхронно — но это не defer issue, это её caller's
+        // concern.
+        ExprKind::Lambda { .. } | ExprKind::ClosureLight { .. } | ExprKind::ClosureFull(_) => {}
+        // Suspend / Throw / Interrupt — уже flagged выше в check_defer_body_inner.
+        _ => {}
+    }
+}
+
+fn check_defer_body_block(b: &Block, kw: &str, fn_effects: &HashMap<String, Vec<TypeRef>>, errors: &mut Vec<Diagnostic>) {
+    for s in &b.stmts {
+        match s {
+            Stmt::Return { span, .. } => {
+                errors.push(Diagnostic::new(
+                    format!("`return` is not allowed inside `{}` body (D90): defer body cannot hijack scope exit.", kw),
+                    *span,
+                ));
+            }
+            Stmt::Break(span) => {
+                errors.push(Diagnostic::new(
+                    format!("`break` is not allowed inside `{}` body (D90): defer body cannot hijack scope exit.", kw),
+                    *span,
+                ));
+            }
+            Stmt::Continue(span) => {
+                errors.push(Diagnostic::new(
+                    format!("`continue` is not allowed inside `{}` body (D90): defer body cannot hijack scope exit.", kw),
+                    *span,
+                ));
+            }
+            Stmt::Throw { span, .. } => {
+                errors.push(Diagnostic::new(
+                    format!("`throw` is not allowed inside `{}` body (D90): defer body must be infallible.", kw),
+                    *span,
+                ));
+            }
+            Stmt::Let(decl) => check_defer_body_inner(&decl.value, kw, fn_effects, errors),
+            Stmt::Expr(e) => check_defer_body_inner(e, kw, fn_effects, errors),
+            Stmt::Assign { target, value, .. } => {
+                check_defer_body_inner(target, kw, fn_effects, errors);
+                check_defer_body_inner(value, kw, fn_effects, errors);
+            }
+            // Nested defer/errdefer — это OK. Это новый scope (block),
+            // defer'ы внутри регистрируются для этого внутреннего scope'а,
+            // не для родительского. Их body тоже проверяется — но через
+            // основной walk (check_defer_bodies проходит по всем bodies).
+            Stmt::Defer { body, .. } => check_defer_body(body, false, fn_effects, errors),
+            Stmt::ErrDefer { body, .. } => check_defer_body(body, true, fn_effects, errors),
+        }
+    }
+    if let Some(t) = &b.trailing {
+        check_defer_body_inner(t, kw, fn_effects, errors);
+    }
+}
+
+/// Извлечь имя callee если выражение — call target (Ident или Type.method).
+fn call_target_name(e: &Expr) -> Option<String> {
+    match &e.kind {
+        ExprKind::Ident(n) => Some(n.clone()),
+        ExprKind::Path(parts) if parts.len() >= 2 => Some(parts.join(".")),
+        ExprKind::Member { obj, name } => {
+            if let ExprKind::Ident(head) = &obj.kind {
+                Some(format!("{}.{}", head, name))
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}

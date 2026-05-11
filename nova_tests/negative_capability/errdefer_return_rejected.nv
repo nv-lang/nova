@@ -1,0 +1,14 @@
+// EXPECT_COMPILE_ERROR `return` is not allowed inside `errdefer` body
+//
+// D90 Ф.3: errdefer body не должно hijack scope exit. Same constraints
+// что и defer.
+
+module nova_tests.negative_capability.errdefer_return_rejected
+
+
+fn f() -> int {
+    errdefer {
+        return 42       // ❌ return в errdefer body
+    }
+    7
+}

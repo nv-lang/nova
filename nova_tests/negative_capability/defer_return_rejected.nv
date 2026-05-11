@@ -1,0 +1,14 @@
+// EXPECT_COMPILE_ERROR `return` is not allowed inside `defer` body
+//
+// D90 Ф.3: defer body не должен hijack scope exit-семантику. `return`
+// в body — compile error.
+
+module nova_tests.negative_capability.defer_return_rejected
+
+
+fn f() -> int {
+    defer {
+        return 42       // ❌ return в defer body
+    }
+    7
+}

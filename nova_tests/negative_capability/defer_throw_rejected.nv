@@ -1,0 +1,14 @@
+// EXPECT_COMPILE_ERROR `throw` is not allowed inside `defer` body
+//
+// D90 Ф.3: defer body должно быть infallible (no Fail-effect). `throw`
+// в body — compile error.
+
+module nova_tests.negative_capability.defer_throw_rejected
+
+
+fn f() Fail -> int {
+    defer {
+        throw "boom"    // ❌ throw в defer body
+    }
+    7
+}
