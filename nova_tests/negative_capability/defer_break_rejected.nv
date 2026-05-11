@@ -1,7 +1,8 @@
-// EXPECT_COMPILE_ERROR `break` is not allowed inside `defer` body
+// EXPECT_COMPILE_ERROR `break` is not allowed at the top level of `defer` body
 //
-// D90 Ф.3: defer body не должно hijack scope exit. `break` в body —
-// compile error.
+// D90 Ф.3 (Вариант 3): top-level `break` в defer body запрещён —
+// он hijack'нул бы окружающий loop. `break` внутри nested loop в
+// defer body — разрешён (local control).
 
 module nova_tests.negative_capability.defer_break_rejected
 

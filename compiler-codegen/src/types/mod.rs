@@ -2384,10 +2384,28 @@ fn walk_expr_for_defers(e: &Expr, fn_effects: &HashMap<String, Vec<TypeRef>>, er
 /// Body constraint check: exit-control, Fail-effect, suspend.
 fn check_defer_body(body: &Expr, is_errdefer: bool, fn_effects: &HashMap<String, Vec<TypeRef>>, errors: &mut Vec<Diagnostic>) {
     let kw = if is_errdefer { "errdefer" } else { "defer" };
-    check_defer_body_inner(body, kw, fn_effects, errors);
+    // D90 Plan 20 Ф.3 (revised): Вариант 3 — return/break/continue разрешены
+    // только внутри nested loop/fn-literal в defer body (local control). На
+    // top-level defer body они запрещены — нельзя hijack scope-exit
+    // окружающей функции/цикла.
+    //
+    // Ctx tracks: loop-nesting depth (break/continue ok если >0), fn-literal
+    // depth (return ok если >0).
+    let ctx = DeferBodyCtx { loop_depth: 0, fn_depth: 0 };
+    check_defer_body_inner(body, kw, fn_effects, &ctx, errors);
 }
 
-fn check_defer_body_inner(e: &Expr, kw: &str, fn_effects: &HashMap<String, Vec<TypeRef>>, errors: &mut Vec<Diagnostic>) {
+#[derive(Clone, Copy)]
+struct DeferBodyCtx {
+    /// Текущая глубина loop'ов (for/while/loop) внутри defer body. Если >0,
+    /// `break`/`continue` локальны — разрешены.
+    loop_depth: usize,
+    /// Текущая глубина fn-литералов (closure/lambda) внутри defer body. Если
+    /// >0, `return` локален — разрешён (relates только к ближайшему fn).
+    fn_depth: usize,
+}
+
+fn check_defer_body_inner(e: &Expr, kw: &str, fn_effects: &HashMap<String, Vec<TypeRef>>, ctx: &DeferBodyCtx, errors: &mut Vec<Diagnostic>) {
     // Сначала проверяем узел сам по себе.
     match &e.kind {
         // Exit-control: throw expression-form (D85 redirected via Fail).
@@ -2472,102 +2490,112 @@ fn check_defer_body_inner(e: &Expr, kw: &str, fn_effects: &HashMap<String, Vec<T
 
     // Рекурсивно вглубь — вложенные scope (block, if, etc.) подчиняются тем же
     // ограничениям, т.к. они часть defer body.
-    walk_defer_subexprs(e, kw, fn_effects, errors);
+    walk_defer_subexprs(e, kw, fn_effects, ctx, errors);
 }
 
-fn walk_defer_subexprs(e: &Expr, kw: &str, fn_effects: &HashMap<String, Vec<TypeRef>>, errors: &mut Vec<Diagnostic>) {
+fn walk_defer_subexprs(e: &Expr, kw: &str, fn_effects: &HashMap<String, Vec<TypeRef>>, ctx: &DeferBodyCtx, errors: &mut Vec<Diagnostic>) {
     match &e.kind {
-        ExprKind::Block(b) => check_defer_body_block(b, kw, fn_effects, errors),
+        ExprKind::Block(b) => check_defer_body_block(b, kw, fn_effects, ctx, errors),
         ExprKind::If { cond, then, else_ } => {
-            check_defer_body_inner(cond, kw, fn_effects, errors);
-            check_defer_body_block(then, kw, fn_effects, errors);
+            check_defer_body_inner(cond, kw, fn_effects, ctx, errors);
+            check_defer_body_block(then, kw, fn_effects, ctx, errors);
             match else_ {
-                Some(ElseBranch::Block(b)) => check_defer_body_block(b, kw, fn_effects, errors),
-                Some(ElseBranch::If(e2)) => check_defer_body_inner(e2, kw, fn_effects, errors),
+                Some(ElseBranch::Block(b)) => check_defer_body_block(b, kw, fn_effects, ctx, errors),
+                Some(ElseBranch::If(e2)) => check_defer_body_inner(e2, kw, fn_effects, ctx, errors),
                 None => {}
             }
         }
         ExprKind::IfLet { scrutinee, then, else_, .. } => {
-            check_defer_body_inner(scrutinee, kw, fn_effects, errors);
-            check_defer_body_block(then, kw, fn_effects, errors);
+            check_defer_body_inner(scrutinee, kw, fn_effects, ctx, errors);
+            check_defer_body_block(then, kw, fn_effects, ctx, errors);
             match else_ {
-                Some(ElseBranch::Block(b)) => check_defer_body_block(b, kw, fn_effects, errors),
-                Some(ElseBranch::If(e2)) => check_defer_body_inner(e2, kw, fn_effects, errors),
+                Some(ElseBranch::Block(b)) => check_defer_body_block(b, kw, fn_effects, ctx, errors),
+                Some(ElseBranch::If(e2)) => check_defer_body_inner(e2, kw, fn_effects, ctx, errors),
                 None => {}
             }
         }
         ExprKind::Match { scrutinee, arms } => {
-            check_defer_body_inner(scrutinee, kw, fn_effects, errors);
+            check_defer_body_inner(scrutinee, kw, fn_effects, ctx, errors);
             for a in arms {
                 match &a.body {
-                    MatchArmBody::Expr(e2) => check_defer_body_inner(e2, kw, fn_effects, errors),
-                    MatchArmBody::Block(b) => check_defer_body_block(b, kw, fn_effects, errors),
+                    MatchArmBody::Expr(e2) => check_defer_body_inner(e2, kw, fn_effects, ctx, errors),
+                    MatchArmBody::Block(b) => check_defer_body_block(b, kw, fn_effects, ctx, errors),
                 }
-                if let Some(g) = &a.guard { check_defer_body_inner(g, kw, fn_effects, errors); }
+                if let Some(g) = &a.guard { check_defer_body_inner(g, kw, fn_effects, ctx, errors); }
             }
         }
         ExprKind::For { iter, body, .. } => {
-            check_defer_body_inner(iter, kw, fn_effects, errors);
-            check_defer_body_block(body, kw, fn_effects, errors);
+            check_defer_body_inner(iter, kw, fn_effects, ctx, errors);
+            let inner = DeferBodyCtx { loop_depth: ctx.loop_depth + 1, fn_depth: ctx.fn_depth };
+            check_defer_body_block(body, kw, fn_effects, &inner, errors);
         }
         ExprKind::While { cond, body } => {
-            check_defer_body_inner(cond, kw, fn_effects, errors);
-            check_defer_body_block(body, kw, fn_effects, errors);
+            check_defer_body_inner(cond, kw, fn_effects, ctx, errors);
+            let inner = DeferBodyCtx { loop_depth: ctx.loop_depth + 1, fn_depth: ctx.fn_depth };
+            check_defer_body_block(body, kw, fn_effects, &inner, errors);
         }
         ExprKind::WhileLet { scrutinee, body, .. } => {
-            check_defer_body_inner(scrutinee, kw, fn_effects, errors);
-            check_defer_body_block(body, kw, fn_effects, errors);
+            check_defer_body_inner(scrutinee, kw, fn_effects, ctx, errors);
+            let inner = DeferBodyCtx { loop_depth: ctx.loop_depth + 1, fn_depth: ctx.fn_depth };
+            check_defer_body_block(body, kw, fn_effects, &inner, errors);
         }
-        ExprKind::Loop { body } => check_defer_body_block(body, kw, fn_effects, errors),
+        ExprKind::Loop { body } => {
+            let inner = DeferBodyCtx { loop_depth: ctx.loop_depth + 1, fn_depth: ctx.fn_depth };
+            check_defer_body_block(body, kw, fn_effects, &inner, errors);
+        }
         ExprKind::With { body, .. } | ExprKind::Forbid { body, .. }
         | ExprKind::Realtime { body, .. } => {
-            check_defer_body_block(body, kw, fn_effects, errors);
+            check_defer_body_block(body, kw, fn_effects, ctx, errors);
         }
         ExprKind::Call { func, args, trailing } => {
-            check_defer_body_inner(func, kw, fn_effects, errors);
-            for a in args { check_defer_body_inner(a.expr(), kw, fn_effects, errors); }
+            check_defer_body_inner(func, kw, fn_effects, ctx, errors);
+            for a in args { check_defer_body_inner(a.expr(), kw, fn_effects, ctx, errors); }
             if let Some(tr) = trailing {
                 match tr {
-                    Trailing::Block(b) => check_defer_body_block(b, kw, fn_effects, errors),
+                    Trailing::Block(b) => check_defer_body_block(b, kw, fn_effects, ctx, errors),
                     Trailing::Fn(fsb) => {
-                        if let FnBody::Block(b) = &fsb.body { check_defer_body_block(b, kw, fn_effects, errors); }
-                        else if let FnBody::Expr(e2) = &fsb.body { check_defer_body_inner(e2, kw, fn_effects, errors); }
+                        // Trailing fn-literal `fn { ... }` — это лямбда; return
+                        // внутри неё локален для лямбды, а не для defer body.
+                        let inner = DeferBodyCtx { loop_depth: ctx.loop_depth, fn_depth: ctx.fn_depth + 1 };
+                        if let FnBody::Block(b) = &fsb.body { check_defer_body_block(b, kw, fn_effects, &inner, errors); }
+                        else if let FnBody::Expr(e2) = &fsb.body { check_defer_body_inner(e2, kw, fn_effects, &inner, errors); }
                     }
                     Trailing::LegacyBlockWithParams(tb) => {
-                        check_defer_body_block(&tb.body, kw, fn_effects, errors);
+                        let inner = DeferBodyCtx { loop_depth: ctx.loop_depth, fn_depth: ctx.fn_depth + 1 };
+                        check_defer_body_block(&tb.body, kw, fn_effects, &inner, errors);
                     }
                 }
             }
         }
         ExprKind::Binary { left, right, .. } => {
-            check_defer_body_inner(left, kw, fn_effects, errors);
-            check_defer_body_inner(right, kw, fn_effects, errors);
+            check_defer_body_inner(left, kw, fn_effects, ctx, errors);
+            check_defer_body_inner(right, kw, fn_effects, ctx, errors);
         }
-        ExprKind::Unary { operand, .. } => check_defer_body_inner(operand, kw, fn_effects, errors),
+        ExprKind::Unary { operand, .. } => check_defer_body_inner(operand, kw, fn_effects, ctx, errors),
         ExprKind::Coalesce(a, b) => {
-            check_defer_body_inner(a, kw, fn_effects, errors);
-            check_defer_body_inner(b, kw, fn_effects, errors);
+            check_defer_body_inner(a, kw, fn_effects, ctx, errors);
+            check_defer_body_inner(b, kw, fn_effects, ctx, errors);
         }
-        ExprKind::As(e2, _) | ExprKind::Is(e2, _) => check_defer_body_inner(e2, kw, fn_effects, errors),
-        ExprKind::Member { obj, .. } | ExprKind::Index { obj, .. } => check_defer_body_inner(obj, kw, fn_effects, errors),
-        ExprKind::TurboFish { base, .. } => check_defer_body_inner(base, kw, fn_effects, errors),
+        ExprKind::As(e2, _) | ExprKind::Is(e2, _) => check_defer_body_inner(e2, kw, fn_effects, ctx, errors),
+        ExprKind::Member { obj, .. } | ExprKind::Index { obj, .. } => check_defer_body_inner(obj, kw, fn_effects, ctx, errors),
+        ExprKind::TurboFish { base, .. } => check_defer_body_inner(base, kw, fn_effects, ctx, errors),
         ExprKind::Range { start, end, .. } => {
-            check_defer_body_inner(start, kw, fn_effects, errors);
-            check_defer_body_inner(end, kw, fn_effects, errors);
+            check_defer_body_inner(start, kw, fn_effects, ctx, errors);
+            check_defer_body_inner(end, kw, fn_effects, ctx, errors);
         }
         ExprKind::ArrayLit(elems) => {
             for el in elems {
                 match el {
-                    ArrayElem::Item(e2) | ArrayElem::Spread(e2) => check_defer_body_inner(e2, kw, fn_effects, errors),
+                    ArrayElem::Item(e2) | ArrayElem::Spread(e2) => check_defer_body_inner(e2, kw, fn_effects, ctx, errors),
                 }
             }
         }
         ExprKind::TupleLit(elems) => {
-            for el in elems { check_defer_body_inner(el, kw, fn_effects, errors); }
+            for el in elems { check_defer_body_inner(el, kw, fn_effects, ctx, errors); }
         }
         ExprKind::RecordLit { fields, .. } => {
             for f in fields {
-                if let Some(v) = &f.value { check_defer_body_inner(v, kw, fn_effects, errors); }
+                if let Some(v) = &f.value { check_defer_body_inner(v, kw, fn_effects, ctx, errors); }
             }
         }
         // Lambda/closure bodies — это отдельный scope для defer'а
@@ -2582,26 +2610,39 @@ fn walk_defer_subexprs(e: &Expr, kw: &str, fn_effects: &HashMap<String, Vec<Type
     }
 }
 
-fn check_defer_body_block(b: &Block, kw: &str, fn_effects: &HashMap<String, Vec<TypeRef>>, errors: &mut Vec<Diagnostic>) {
+fn check_defer_body_block(b: &Block, kw: &str, fn_effects: &HashMap<String, Vec<TypeRef>>, ctx: &DeferBodyCtx, errors: &mut Vec<Diagnostic>) {
     for s in &b.stmts {
         match s {
-            Stmt::Return { span, .. } => {
-                errors.push(Diagnostic::new(
-                    format!("`return` is not allowed inside `{}` body (D90): defer body cannot hijack scope exit.", kw),
-                    *span,
-                ));
+            Stmt::Return { span, value } => {
+                // Вариант 3 (D90): return локален только внутри nested fn-литерала.
+                if ctx.fn_depth == 0 {
+                    errors.push(Diagnostic::new(
+                        format!("`return` is not allowed at the top level of `{}` body (D90): defer body cannot hijack scope exit of the enclosing function. \
+                                 (Local `return` inside nested `fn`/closure внутри defer body разрешён.)", kw),
+                        *span,
+                    ));
+                }
+                if let Some(v) = value {
+                    check_defer_body_inner(v, kw, fn_effects, ctx, errors);
+                }
             }
             Stmt::Break(span) => {
-                errors.push(Diagnostic::new(
-                    format!("`break` is not allowed inside `{}` body (D90): defer body cannot hijack scope exit.", kw),
-                    *span,
-                ));
+                if ctx.loop_depth == 0 {
+                    errors.push(Diagnostic::new(
+                        format!("`break` is not allowed at the top level of `{}` body (D90): defer body cannot hijack the enclosing loop. \
+                                 (Local `break` inside nested loop разрешён.)", kw),
+                        *span,
+                    ));
+                }
             }
             Stmt::Continue(span) => {
-                errors.push(Diagnostic::new(
-                    format!("`continue` is not allowed inside `{}` body (D90): defer body cannot hijack scope exit.", kw),
-                    *span,
-                ));
+                if ctx.loop_depth == 0 {
+                    errors.push(Diagnostic::new(
+                        format!("`continue` is not allowed at the top level of `{}` body (D90): defer body cannot hijack the enclosing loop. \
+                                 (Local `continue` inside nested loop разрешён.)", kw),
+                        *span,
+                    ));
+                }
             }
             Stmt::Throw { span, .. } => {
                 errors.push(Diagnostic::new(
@@ -2609,11 +2650,11 @@ fn check_defer_body_block(b: &Block, kw: &str, fn_effects: &HashMap<String, Vec<
                     *span,
                 ));
             }
-            Stmt::Let(decl) => check_defer_body_inner(&decl.value, kw, fn_effects, errors),
-            Stmt::Expr(e) => check_defer_body_inner(e, kw, fn_effects, errors),
+            Stmt::Let(decl) => check_defer_body_inner(&decl.value, kw, fn_effects, ctx, errors),
+            Stmt::Expr(e) => check_defer_body_inner(e, kw, fn_effects, ctx, errors),
             Stmt::Assign { target, value, .. } => {
-                check_defer_body_inner(target, kw, fn_effects, errors);
-                check_defer_body_inner(value, kw, fn_effects, errors);
+                check_defer_body_inner(target, kw, fn_effects, ctx, errors);
+                check_defer_body_inner(value, kw, fn_effects, ctx, errors);
             }
             // Nested defer/errdefer — это OK. Это новый scope (block),
             // defer'ы внутри регистрируются для этого внутреннего scope'а,
@@ -2624,7 +2665,7 @@ fn check_defer_body_block(b: &Block, kw: &str, fn_effects: &HashMap<String, Vec<
         }
     }
     if let Some(t) = &b.trailing {
-        check_defer_body_inner(t, kw, fn_effects, errors);
+        check_defer_body_inner(t, kw, fn_effects, ctx, errors);
     }
 }
 
