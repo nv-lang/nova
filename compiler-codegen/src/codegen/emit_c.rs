@@ -266,6 +266,13 @@ struct DeferScope {
     /// early-exit cleanup so leave_defer_scope skips the second
     /// `nova_fail_pop()`). Valid when `needs_failframe`.
     failframe_popped_var: String,
+    /// Plan 20 Ф.8 (2): name of C NovaInterruptFrame variable. Always
+    /// present when any defer is in the block — defers run on interrupt-
+    /// path тоже (D90 п.8).
+    intframe_var: String,
+    /// Plan 20 Ф.8 (2): name of C `int` "interrupt-frame popped" flag
+    /// (set to 1 by early-exit cleanup / interrupt-path handler).
+    intframe_popped_var: String,
     /// `true` if this scope is loop-body — break/continue stop here
     /// rather than walking outer scopes.
     is_loop_body: bool,
@@ -3965,6 +3972,37 @@ impl CEmitter {
             self.indent -= 1;
             self.line("}");
         }
+        // Plan 20 Ф.8 (2): interrupt-path cleanup для `defer`.
+        // По D90 п.8 `defer` запускается на ВСЕХ exit'ах, включая
+        // `interrupt v` (когда outer handler делает interrupt → longjmp
+        // на NovaInterruptFrame, минуя fail-frame).
+        // Эмитим local interrupt-frame setjmp wrapper, который перехватывает
+        // interrupt longjmp, запускает `defer` cleanup (НЕ errdefer — это
+        // handled exit), pop'ает interrupt-frame и re-interrupt'ит с тем
+        // же value, чтобы outer interrupt-frame получил value.
+        let intframe_var = format!("_defer_{}_if", block_id);
+        let intframe_popped_var = format!("_defer_{}_if_popped", block_id);
+        self.line(&format!("int {} = 0;", intframe_popped_var));
+        self.line(&format!("NovaInterruptFrame {};", intframe_var));
+        self.line(&format!("nova_interrupt_push(&{});", intframe_var));
+        self.line(&format!("if (setjmp({}.jmp) != 0) {{", intframe_var));
+        self.indent += 1;
+        // Interrupt path: invoke only `defer` (skip `errdefer` — handled exit).
+        for entry in entries.iter().rev() {
+            if entry.is_errdefer { continue; }
+            self.line(&format!("if ({}) {{", entry.active_var));
+            self.indent += 1;
+            let _ = self.emit_defer_body_void(&entry.body);
+            self.indent -= 1;
+            self.line("}");
+        }
+        self.line("nova_interrupt_pop();");
+        self.line(&format!("{} = 1;", intframe_popped_var));
+        // Re-interrupt с тем же value через nova_interrupt — find outer
+        // interrupt frame and longjmp туда с captured value.
+        self.line(&format!("nova_interrupt({}.value);", intframe_var));
+        self.indent -= 1;
+        self.line("}");
         self.defer_scopes.push(DeferScope {
             block_id,
             entries,
@@ -3972,6 +4010,8 @@ impl CEmitter {
             needs_failframe: has_errdefer,
             failframe_var,
             failframe_popped_var,
+            intframe_var,
+            intframe_popped_var,
             is_loop_body,
         });
         block_id
@@ -4008,6 +4048,8 @@ impl CEmitter {
             // (установил failframe_popped_var = 1).
             self.line(&format!("if (!{}) {{ nova_fail_pop(); }}", scope.failframe_popped_var));
         }
+        // Plan 20 Ф.8 (2): pop interrupt-frame (всегда push'нут когда has_defer).
+        self.line(&format!("if (!{}) {{ nova_interrupt_pop(); }}", scope.intframe_popped_var));
     }
 
     /// Emit defer-cleanup for an early exit (return/break/continue) walking
@@ -4053,6 +4095,9 @@ impl CEmitter {
                 // Mark frame as popped so leave_defer_scope skips another pop.
                 self.line(&format!("{} = 1;", scope.failframe_popped_var));
             }
+            // Plan 20 Ф.8 (2): pop interrupt-frame для early-exit тоже.
+            self.line("nova_interrupt_pop();");
+            self.line(&format!("{} = 1;", scope.intframe_popped_var));
             if stop_at_loop && scope.is_loop_body {
                 break 'outer;
             }
