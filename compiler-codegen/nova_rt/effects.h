@@ -209,17 +209,19 @@ static inline void nova_assert(nova_bool cond, const char* expr_str) {
 
 /* nv_panic(msg) — D13: смерть текущего fiber'а.
  *
- * Routing идентичен nova_assert (общая семантика «runtime termination»):
- * внутри fiber'а — longjmp до ближайшего NovaFailFrame (остаётся на
- * stack'е fiber'а, не пересекает mco-boundary); на main flow с тест-
- * frame'ом — longjmp в тест-runner с сообщением; иначе — stderr + abort.
+ * Routing: fail-frame первым (не зависит от fiber-контекста — defer/errdefer
+ * на main flow тоже должны отработать); затем тест-frame; иначе stderr + abort.
+ *
+ * Ранее был guard `nova_in_fiber()` перед fail-frame — это не позволяло
+ * errdefer'ам срабатывать на panic() на main flow. Теперь симметрично
+ * с nova_throw: fail-frame проверяется первым всегда.
  *
  * `nv_panic` не возвращается (тип Never в Nova). C-сигнатура void,
  * потому что longjmp/abort не возвращаются по определению.
  *
  * См. spec/decisions/08-runtime.md → D13 (panic — fiber-уровень). */
 static inline void nv_panic(nova_str msg) {
-    if (nova_in_fiber() && _nova_fail_top) {
+    if (_nova_fail_top) {
         _nova_fail_top->error_msg = msg;
         longjmp(_nova_fail_top->jmp, 1);
     }
