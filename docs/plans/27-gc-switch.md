@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 # План 27: GC switch + test-runner polish
 
-> **Статус:** план, не начат.
+> **Статус:** в работе. Ф.1 ✅ (2026-05-11).
 > **Создан:** 2026-05-11. **Обновлён:** 2026-05-11 (production audit pass).
 > **Приоритет:** ВЫСОКИЙ — текущий default `alloc.c` (plain malloc)
 > делает Nova **непригодным** для long-running workloads.
