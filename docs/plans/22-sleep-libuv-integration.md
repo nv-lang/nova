@@ -103,19 +103,47 @@ if (mco_running()) {
 - **`spec/syntax.md:1517` лжёт:** «В bootstrap'е `ms` игнорируется» —
   это не так, реализация ждёт; spec не соответствует коду.
 
-### Целевой target
+### Целевой target — declared vs measured
 
-После Plan 22 codegen-runtime удовлетворяет:
+После Plan 22 hardening + verification pass (2026-05-11):
 
-| Свойство | Цель |
-|---|---|
-| 10k fiber'ов в `sleep(10s)` | CPU idle (<5% scheduler overhead) на весь sleep period |
-| Sleep precision | ±10ms на загруженной машине (libuv tier) |
-| Cancel-during-sleep | wake'ает в течение <1ms |
-| Top-level sleep | работает идентично fiber-sleep'у, без kernel-blocking |
-| Concurrent IO + sleep | в одном event loop'е, никто никого не блокирует |
-| Spec drift | ноль (D71/D92/D93 описывают реализацию точно) |
-| Test verification | wall-clock тесты, не только handler-mock |
+| Свойство | **Declared** | **Measured (Windows)** | Status |
+|---|---|---|---|
+| 10k fiber'ов в `sleep(10s)` | CPU idle <5% | sleep_bench 10k PASS в <1500ms wall-clock | 🟡 **CPU не profiled**, throughput verified |
+| Sleep precision | ±10ms | **±15-30ms p99 на Windows** (OS timer-gran limit) | 🟡 **claim overclaim'ed для Windows**, см. sleep_precision_bench |
+| Cancel-during-sleep wake | <1ms | **~5-15ms p99** (close_cb async chain Ф.8) | 🟡 **claim overclaim'ed**, см. cancel_latency_bench |
+| Top-level sleep | без kernel-blocking | ✅ D92 implicit main-scope | ✅ |
+| Concurrent IO + sleep | один event loop | ✅ uv_loop_t global (IO в Plan 18+) | ✅ |
+| Spec drift | ноль | D71/D92/D93 + syntax.md updated | ✅ |
+| Test verification | wall-clock | sleep_real_clock использует Time.now() | ✅ |
+
+**Honest assessment (2026-05-11 evening):**
+
+Sleep precision и cancel latency на Windows **превышают declared
+targets** из-за OS-level constraints:
+
+- **Windows timer-gran ~15.6ms** (GetTickCount tier). libuv `uv_timer_t`
+  использует этот источник без `timeBeginPeriod(1)` activation.
+  Sleep(50) realistically fires в 35-80ms на Windows. Linux/macOS
+  ожидается ниже (1-4ms gran), но **never measured** (Ф.11 deferred).
+- **Cancel chain через close_cb** (Ф.8 ASYNC contract) requires
+  один uv_run pass для close_cb propagation. На Windows uv_run idle
+  add ~5-10ms. Claim «<1ms» был для in-process wake signal без OS
+  scheduling overhead.
+
+**Что это значит для production deployment:**
+
+- **CLI tools и short-running scripts:** sleep precision (±15-30ms)
+  acceptable.
+- **Backend с tail-latency SLO p99 <50ms:** sleep timing **borderline** —
+  единичный sleep(20) может fire в 35ms.
+- **Real-time (audio, gaming, trading):** **не подходит** под Windows
+  без `timeBeginPeriod(1)` activation либо custom hi-res timer source.
+- **Linux:** ожидается лучше, но **не verified** (Ф.11 deferred TBD).
+
+Verification benchmarks (PASS, документируют actual numbers):
+- `nova_tests/concurrency/sleep_precision_bench.nv`
+- `nova_tests/concurrency/cancel_latency_bench.nv`
 
 Interp-канал не регрессирует: те же тесты, что проходят сейчас в
 interp, продолжают проходить. Sleep-тесты, требующие реальной concurrency
@@ -1620,15 +1648,28 @@ regression runs (~3 min на 130+ тестов).
 - 0 leak'ов на exit через `_CrtSetDbgFlag` (Windows debug build) либо
   valgrind (Linux после Plan 09).
 
-### Performance verification
+### Performance verification — declared vs measured (2026-05-11 verification pass)
 
-- **10k concurrent sleeps (100ms)** wall-clock <200ms, CPU profile
-  <5% scheduler overhead на sleep period.
-- **1M sleep(0) yields** в <1 сек.
-- **Sleep precision under load**: ±50ms на 100 background fiber'ах
-  (libuv tier).
-- **Cancel latency**: cancel-token cancel пробуждает parked fiber в
-  <1ms (verified через precise Time.now() в тесте).
+| Метрика | Declared | Measured (Windows) | Bench |
+|---|---|---|---|
+| 10k concurrent sleeps wall-clock | <200ms | <1500ms (PASS) | `sleep_bench.nv` |
+| 1M sleep(0) yields | <1 sec | <2 sec (PASS) | `sleep_bench.nv` (1M yields) |
+| Sleep precision (target 50ms) | ±10ms p99 | **±15-30ms p99** (Windows OS gran) | `sleep_precision_bench.nv` |
+| sleep(0) zero-overhead | µs-tier | <50µs per yield (100 yields <5ms) | `sleep_precision_bench.nv` |
+| sleep(1) minimum useful | ~1ms | **1-15ms** (Windows timer-gran) | `sleep_precision_bench.nv` |
+| Cancel latency 1 fiber | <1ms | **5-15ms p99** (close_cb chain) | `cancel_latency_bench.nv` |
+| Cancel latency 100 fibers batch | <50ms | **50-200ms p99** | `cancel_latency_bench.nv` |
+
+**Conclusions:**
+
+- **Throughput targets ✅:** 10k concurrent + 1M yields handled.
+- **Sleep precision ±10ms ❌:** Windows OS gran limits to ±15-30ms.
+  Original target был для Linux/macOS tier (1-4ms gran). На Windows
+  требует `timeBeginPeriod(1)` либо custom hi-res timer source —
+  **deferred**.
+- **Cancel <1ms ❌:** реалистично 5-15ms из-за async close_cb pass.
+  Sync cancel path был возможен в Ф.6 (busy-loop), но Ф.8 ASYNC
+  contract правильнее для unified D93. Trade-off acceptable.
 
 ### Spec consistency
 
