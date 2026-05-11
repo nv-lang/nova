@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-# План 27: GC switch — Boehm как default allocator
+# План 27: GC switch + test-runner polish
 
 > **Статус:** план, не начат.
 > **Создан:** 2026-05-11.
 > **Приоритет:** ВЫСОКИЙ — текущий default `alloc.c` (plain malloc)
 > делает Nova **непригодным** для long-running workloads.
 > **Зависит от:** —
-> **Открыт:** Plan 25 G3a.
+> **Открыт:** Plan 25 G3a; Plan 26 production review.
+>
+> **Структура:** Часть A — GC switch (D6 compliance, основная цель).
+> Часть B — test-runner polish (carry-over из Plan 26 review).
 
 ---
 
@@ -179,6 +182,228 @@ regressions) — сделать default GC.
 
 **Объём:** ~50 строк build invoker.
 
+### Ф.6 — ALLOC_REQUIRES / ALLOC_EXCLUDES маркеры
+
+**Что:** не все тесты имеют смысл на всех 3 backends:
+
+- `concurrency/deep_gc.nv` — **только boehm** (тестирует cycle collection).
+- `concurrency/sleep_leak_check.nv` — **только boehm** (memory leak detection).
+- `basics/*.nv` — **все backends** (basic correctness).
+- Будущие RC-specific тесты — **только rc**.
+
+Решение — расширить D89 двумя маркерами (per-file аннотация):
+
+```nova
+// ALLOC_REQUIRES boehm
+test "cycle collection works" { ... }
+```
+
+Test-runner skip'ает с status `SKIP-ALLOC` если current `--gc` не
+match. Семантика:
+
+- `ALLOC_REQUIRES <backend>` — тест запускается **только** на этом
+  backend'е, на других skipped.
+- `ALLOC_EXCLUDES <backend>` — тест skipped на указанном backend'е,
+  запускается на остальных.
+
+D89 spec обновить с двумя новыми маркерами.
+
+**Файлы:**
+- `compiler-codegen/src/test_runner.rs` — `parse_expect` расширяется
+  или отдельный `parse_alloc_constraint`; новый `Status::SkippedAlloc`
+  variant.
+- `spec/decisions/09-tooling.md` D89 — секция «6. ALLOC_REQUIRES /
+  7. ALLOC_EXCLUDES».
+- `docs/test-conventions.md` — примеры use-case.
+
+**Acceptance:**
+- Тест `concurrency/deep_gc` skipped на `--gc malloc`, runs на
+  `--gc boehm`.
+- Полный прогон `--gc malloc` и `--gc boehm` оба green (учитывая
+  skips).
+
+**Объём:** ~60 строк (parser + skip-logic + status variant).
+
+---
+
+## Часть B — test-runner polish (carry-over из Plan 26)
+
+После Plan 26 closure (~99% production-grade) осталось 7 polish-задач
+из cargo-nextest / go test parity. Они **независимы от GC**, но
+включены в этот же план для одного логического milestone.
+
+### Б.1 — Ф.5 test caching (carry-over Plan 26)
+
+Hash-based test caching в `target/test-cache/<hash>/`. Cache key:
+
+- SHA-256 от `.nv` source.
+- mtime всех `nova_rt/*.c` + `nova_rt/*.h`.
+- mtime `nova-codegen.exe`.
+- Toolchain (clang/msvc/gcc) + mode (dev/release) + alloc backend
+  (важно — boehm vs malloc разные binary).
+- libuv enabled/disabled.
+
+Cache hit → пропустить codegen + cc, сразу use cached `.exe`.
+
+CLI: `--no-cache` (force rebuild), `--cache-dir <path>` (override).
+Default: `--no-cache` (CI safe; explicit opt-in для local TDD).
+
+**Sensitivity high** — false-positive cache hit (когда invariant
+нарушен) даёт «PASS» когда должен FAIL. Поэтому disabled-by-default.
+
+Объём: ~150 строк.
+
+### Б.2 — EXPECT_TIMEOUT_MS per-test marker
+
+Сейчас все тесты используют global `--timeout`. Real-world test'ы
+имеют разные SLA:
+
+- `basics/literals` — 5s хватит (только codegen+cc overhead).
+- `concurrency/sleep_leak_check` — 15s budget на bench-loop.
+
+Решение — D89 8-й маркер `EXPECT_TIMEOUT_MS <N>`:
+
+```nova
+// EXPECT_TIMEOUT_MS 30000
+test "long bench" { ... }
+```
+
+Per-test override `opts.timeout` в `run_one`. CLI `--timeout` остаётся
+fallback для тестов без маркера.
+
+Польза: можно ставить `--timeout 5` глобально (real hang'и видны
+немедленно), а long-running тесты сами override'ят.
+
+Объём: ~30 строк.
+
+### Б.3 — `--verbose` capture stdout PASS-тестов
+
+Сейчас `Verbosity::Verbose` — маркер без эффекта (см. `TODO` comment
+в `test_runner.rs`). Реализация:
+
+- `run_one` сохраняет `stdout`/`stderr` в `Outcome::Pass {
+  captured_stdout: Option<String>, captured_stderr: Option<String> }`.
+- `print_summary` в `--verbose` показывает captured для PASS-тестов.
+
+Аналог `go test -v` (показывает `t.Logf`) и `cargo test --nocapture`.
+
+Объём: ~30 строк + расширение Outcome enum (backwards-compatible).
+
+### Б.4 — Slow tests report
+
+В конце прогона `--format text` показывать top-10 самых медленных:
+
+```
+===== SLOWEST TESTS =====
+  3.214s  concurrency/sleep_real_clock
+  2.103s  std/checksums/fnv
+  ...
+```
+
+Аналог `cargo test --report-time` / `go test -v` (per-test elapsed).
+Помогает identify candidates для optimization.
+
+Объём: ~20 строк (sort by elapsed, take 10, format).
+
+### Б.5 — `--list` + `--filter-from` для CI sharding
+
+`nova-codegen test-all --list` — выводит все тесты по одному на строку,
+без запуска. CI делит между runner'ами:
+
+```bash
+./run_tests.sh --list | awk "NR % 4 == 0" > shard-0.txt
+./run_tests.sh --filter-from shard-0.txt --format junit
+```
+
+`--filter-from <file>` — новый flag, читает имена тестов из файла,
+прогоняет только их (exact-match, не substring как `--filter`).
+
+При scale 5000+ тестов (когда будет self-host) — необходимо для
+CI parallel runners.
+
+Объём: ~40 строк.
+
+### Б.6 — Retry count в JUnit XML
+
+Если `--retries 2` и тест PASS после retry — это **информация для
+CI report**. JUnit support'ит через custom attribute либо
+`<system-out>`-комментарий:
+
+```xml
+<testcase classname="basics" name="literals" time="0.234">
+  <system-out>retried 1 time before pass</system-out>
+</testcase>
+```
+
+CI dashboards (GitHub Actions, GitLab) показывают это как warning —
+сигнал что flaky tests появляются.
+
+`Outcome::Pass { retries: u32 }`. Если `retries > 0` — emit
+`<system-out>`.
+
+Объём: ~15 строк.
+
+### Б.7 — TempSubdir Drop pattern
+
+Сейчас `tmp_dir/t-<hash>/` создаётся явно + cleanup явно в конце
+`run_one`. Если worker panic'ит до cleanup — directory orphan'ится.
+`cargo` использует `tempfile` crate с Drop trait — automatic cleanup.
+
+Но `tempfile` — extra dependency (~50 KB binary). Для bootstrap
+compiler'а лишнее. Own `TempSubdir` с Drop ~30 строк:
+
+```rust
+struct TempSubdir(PathBuf);
+impl Drop for TempSubdir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+```
+
+Plus `--keep-artifacts` через `std::mem::forget` или `into_path()`
+escape hatch.
+
+Объём: ~30 строк.
+
+### Б.8 — `--shuffle [SEED]` для flakiness detection
+
+Сейчас `inputs.sort_by(|a, b| a.0.cmp(&b.0))` — детерминированный
+alphabetical. Flaky тесты, проявляющиеся только на определённом
+ordering (test1 leak'ит state, test2 fail'ит), мы **не найдём**.
+
+`cargo-nextest --seed N` shuffle тесты для flakiness detection.
+
+CLI: `--shuffle [SEED]`. SEED=0 — random (system time), N — explicit
+seed для reproducibility.
+
+Implementation: xorshift PRNG (~10 строк) + Fisher-Yates shuffle
+(~10 строк). Без extra deps.
+
+Объём: ~30 строк.
+
+### Б.9 — Slow-tests reporting через JSON output
+
+Дополнительно — `--format json` уже включает `elapsed_ms` в каждом
+event'е. CI parser'ы могут сами top-N извлечь. В text-mode (Б.4) для
+local dev — встроено.
+
+### Acceptance criteria часть B
+
+- ✅ `--cache-dir target/test-cache` — переиспользование между прогонами,
+  10× speedup при unchanged sources.
+- ✅ `EXPECT_TIMEOUT_MS 30000` в `.nv` overrides `--timeout`.
+- ✅ `-v` показывает stdout PASS-тестов.
+- ✅ Text-mode summary включает SLOWEST TESTS список.
+- ✅ `--list` + `--filter-from` для CI sharding.
+- ✅ JUnit `<testcase>` помечает retried tests через `<system-out>`.
+- ✅ Tmp directory cleanup при panic worker'а.
+- ✅ `--shuffle [SEED]` для flakiness detection.
+
+### Объём части B
+
+~330 строк Rust + ~50 строк tests + ~30 строк docs.
+
 ## Risks / Trade-offs
 
 **R1. Boehm conservative tracing** — на 64-bit machine ложные roots
@@ -210,10 +435,16 @@ workloads. Под M:N (Plan 23) потребует tuning.
 
 ## Что НЕ входит
 
-- **RC codegen** (alloc_rc.c с retain/release inserting) — Plan 28
-  если потребуется альтернатива Boehm.
+- **RC codegen** (alloc_rc.c с retain/release inserting в codegen) —
+  Plan 28 если потребуется альтернатива Boehm. (`alloc_rc.c` runtime
+  есть, но codegen его не использует.)
 - **Concurrent GC custom** — годами работы, после v1.0.
-- **realtime nogc { }** arena allocator — Plan TBD, partial implementation.
+- **realtime nogc { }** arena allocator — Plan TBD, partial
+  implementation.
+- **Linux/macOS smoke-test** test-runner'а — отложен до access (Plan
+  26 known limitation).
+- **GitHub Actions CI workflow** — отдельная задача, но Plan 27 готовит
+  всё для matrix: 3 OS × 2 alloc backends = 6 runners.
 
 ## Связь
 
