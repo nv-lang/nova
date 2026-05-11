@@ -1,22 +1,21 @@
 // sleep_bench.nv — Plan 22 Ф.6 bench: scheduler throughput.
 //
-// Validates: 10k concurrent fiber'ов в Time.sleep(100) завершаются
-// быстро (~100ms wall-clock), не последовательно (10k×100=1000s).
-// Это критический smoke-test что park/wake mechanism scale'ится.
-//
-// 1M sleep(0) yields в <1 секунды — throughput.
+// Validates production-grade scheduler: park/wake через uv_timer_t
+// scales до тысяч fiber'ов без CPU burn, throughput sleep(0) yield'ов
+// сравним с тривиальными loop'ами.
 //
 // Slack'и широкие для CI-стабильности.
 
 module nova_tests.concurrency.sleep_bench
 
-test "500 concurrent sleeps complete in <500ms" {
-    // NOVA_SCOPE_CAP = 1024, оставляем headroom. 500 fiber'ов × sleep(100) —
-    // theoretical ~100ms, slack 5× (500ms). Validates scheduler scales,
-    // park/wake не жжёт CPU.
+// 1000 concurrent sleep'ов через park/wake. Theoretical: ~100ms
+// wall-clock (все спят параллельно). Если scheduler busy-loop'ит —
+// это бы было 1000×100ms = 100s. Production-grade: ~100-300ms.
+// NOVA_SCOPE_CAP=1024 даёт headroom для 1000.
+test "1000 concurrent sleeps в <500ms (production-scale)" {
     let t0 = Time.now()
     supervised {
-        for _ in 0..500 {
+        for _ in 0..1000 {
             spawn { Time.sleep(100) }
         }
     }
@@ -24,15 +23,20 @@ test "500 concurrent sleeps complete in <500ms" {
     assert(elapsed < 500)
 }
 
-test "100k sleep(0) yields в <1 секунды (throughput)" {
+// Yield-throughput bench: 1M Time.sleep(0) калибрует scheduler hot path.
+// Каждый sleep(0) — один nova_fiber_yield + scheduler-tick. На i7 это
+// должно быть ~10-50M op/sec.
+test "1M sleep(0) yields в <2 секунды (throughput)" {
     let t0 = Time.now()
     supervised {
         spawn {
-            for _ in 0..100_000 {
+            for _ in 0..1_000_000 {
                 Time.sleep(0)
             }
         }
     }
     let elapsed = Time.now() - t0
-    assert(elapsed < 1000)
+    // Slack 2× от ожидаемого; failure означает scheduler-tick overhead
+    // > 2 µs (deep degradation).
+    assert(elapsed < 2000)
 }

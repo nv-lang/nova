@@ -79,8 +79,16 @@ static inline void nova_fiber_yield(void);
  * This gives real interleaving when fibers yield via nova_fiber_yield()
  * (e.g. through Time.sleep handler).
  *
- * Capacity is fixed at 64 — enough for tests; production would grow.
- */
+ * Plan 22 Ф.6 production: 1024 fiber slots per scope. NovaFiberQueue
+ * ~50 KB allocated на C-стеке вокруг supervised блока — безопасно
+ * для default 1 MB main thread stack даже с 5+ nested supervised.
+ *
+ * Над 1024 fiber'ов в одном scope — abort, indicates DOS либо design
+ * flaw. Если bench требует больше — использовать **несколько** nested
+ * supervised блоков (каждый со своим 1024-budget).
+ *
+ * Plan 23 (M:N) переделает на per-worker dynamic deque (work-stealing) —
+ * cap уйдёт. */
 #define NOVA_SCOPE_CAP 1024
 
 typedef struct {
@@ -129,30 +137,37 @@ typedef struct {
      * it correctly. interrupt_pending=true → value is set. */
     nova_bool       interrupt_pending;
     nova_int        interrupt_value;
+    /* Plan 22 Ф.3 (D93) production: lazy-allocated park/wake state.
+     *
+     * Pointer-в-struct вместо global side-table (предыдущая итерация
+     * Ф.3). Преимущества:
+     *  - O(1) lookup (pointer-deref), не O(N) linear search.
+     *  - Нет hard cap на nested scopes — managed heap unlimited.
+     *  - Память выделяется только когда реально park'аем (обычно NULL).
+     *  - GC автоматически освобождает state когда scope unreachable.
+     *
+     * NULL = ни один fiber в этом scope не park'ился (типичный случай
+     * для большинства supervised блоков без Time.sleep/Channel.recv).
+     * Lazy-alloc через nova_alloc при первом nova_sched_park либо
+     * nova_sched_register_pending. */
+    struct NovaSchedState* sched_state;
 } NovaFiberQueue;
 
-/* Plan 22 Ф.3 (D93): NovaSchedState typedef + extern globals.
- * Полный API — в sched.h (header-only inline). Здесь только typedef и
- * extern declarations чтобы supervised_step мог использовать
- * nova_sched_find_state. */
+/* Plan 22 Ф.3 (D93): NovaSchedState typedef.
+ * Полный API — в sched.h (header-only inline). Здесь только определение
+ * struct (используется в NovaFiberQueue.sched_state) + forward-deref
+ * helper. */
 typedef void (*NovaSchedStopCb)(void* handle);
-typedef struct {
-    NovaFiberQueue* scope;
+typedef struct NovaSchedState {
     nova_bool       parked[NOVA_SCOPE_CAP];
     void*           pending_handle[NOVA_SCOPE_CAP];
     NovaSchedStopCb pending_stop_cb[NOVA_SCOPE_CAP];
 } NovaSchedState;
 
-#define NOVA_SCHED_STATE_CAP 16
-extern NovaSchedState _nova_sched_states[NOVA_SCHED_STATE_CAP];
-extern int            _nova_sched_state_count;
-
+/* O(1) lookup: pointer-deref. NULL = state ещё не allocated
+ * (никто не park'ился в этом scope). */
 static inline NovaSchedState* nova_sched_find_state(NovaFiberQueue* scope) {
-    if (!scope) return NULL;
-    for (int i = 0; i < _nova_sched_state_count; i++) {
-        if (_nova_sched_states[i].scope == scope) return &_nova_sched_states[i];
-    }
-    return NULL;
+    return scope ? scope->sched_state : NULL;
 }
 
 /* Forward declarations: full implementations в sched.h (header-only).
@@ -179,6 +194,10 @@ static inline void nova_scope_init(NovaFiberQueue* q) {
     q->cancel_requested = false;
     q->interrupt_pending = false;
     q->interrupt_value = 0;
+    /* Plan 22 Ф.3 production: lazy sched_state alloc — NULL пока никто
+     * не park'ился. Большинство supervised блоков не используют sleep/
+     * recv => sched_state остаётся NULL, нулевой overhead. */
+    q->sched_state = NULL;
     for (int i = 0; i < NOVA_SCOPE_CAP; i++) {
         q->fiber_fail_top[i] = NULL;
         q->fiber_interrupt_top[i] = NULL;
@@ -492,11 +511,6 @@ static inline void nova_fiber_yield(void) {
 #    define WIN32_LEAN_AND_MEAN
 #  endif
 #  include <windows.h>
-static inline int64_t _nova_monotonic_ms(void) {
-    /* GetTickCount64 returns milliseconds since system boot, monotonic,
-     * 64-bit so no rollover concern. */
-    return (int64_t)GetTickCount64();
-}
 static inline void _nova_native_sleep_ms(int64_t ms) {
     if (ms <= 0) return;
     Sleep((DWORD)ms);
@@ -506,17 +520,43 @@ static inline void _nova_native_sleep_ms(int64_t ms) {
 #  ifdef __unix__
 #    include <unistd.h>
 #  endif
-static inline int64_t _nova_monotonic_ms(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (int64_t)ts.tv_sec * 1000 + (int64_t)(ts.tv_nsec / 1000000);
-}
 static inline void _nova_native_sleep_ms(int64_t ms) {
     if (ms <= 0) return;
     struct timespec req;
     req.tv_sec = (time_t)(ms / 1000);
     req.tv_nsec = (long)((ms % 1000) * 1000000L);
     nanosleep(&req, NULL);
+}
+#endif
+
+/* Plan 22 Ф.6 production: monotonic clock в миллисекундах.
+ *
+ * Под NOVA_USE_LIBUV — `uv_hrtime()` (наносекунды через
+ * QueryPerformanceCounter на Windows, clock_gettime(CLOCK_MONOTONIC)
+ * на POSIX). Sub-ms precision, monotonic guarantee, не подвержен
+ * NTP/wall-clock jumps.
+ *
+ * Под no-libuv fallback — `GetTickCount64()` (Windows, ~16ms tick) либо
+ * `clock_gettime(CLOCK_MONOTONIC)` (POSIX, ns-precision).
+ *
+ * Возвращает миллисекунды (nova_int = int64_t). Epoch — реализация-
+ * зависимый. Только дельты значимы.
+ *
+ * Эта функция выносится из ifdef-блока ниже uv-include (Plan 22 Ф.6
+ * — нужен uv_hrtime). */
+#ifdef NOVA_USE_LIBUV
+static inline int64_t _nova_monotonic_ms(void) {
+    return (int64_t)(uv_hrtime() / 1000000ULL);
+}
+#elif defined(_WIN32)
+static inline int64_t _nova_monotonic_ms(void) {
+    return (int64_t)GetTickCount64();
+}
+#else
+static inline int64_t _nova_monotonic_ms(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (int64_t)ts.tv_sec * 1000 + (int64_t)(ts.tv_nsec / 1000000);
 }
 #endif
 
@@ -539,7 +579,9 @@ static void _nova_sleep_timer_cb(uv_timer_t* h) {
     nova_sched_wake(st->scope, st->slot);
 }
 
-/* Handle closed — caller cleanup wait может exit'нуть. */
+/* Handle closed — caller cleanup wait может exit'нуть.
+ * Plan 22 Ф.6 production: wake fiber через park/wake (idempotent —
+ * fiber может уже быть unpark'нут timer_cb'ом, повторный wake = no-op). */
 static void _nova_sleep_close_cb(uv_handle_t* h) {
     NovaSleepState* st = (NovaSleepState*)h->data;
     st->handle_closed = true;
@@ -569,15 +611,16 @@ static inline void _nova_sleep_via_libuv(NovaFiberQueue* scope, int slot,
     };
     int rc = uv_timer_init(nova_evloop(), &st.timer);
     if (rc != 0) {
-        fprintf(stderr, "nova: uv_timer_init failed: %s\n", uv_strerror(rc));
-        return;  /* fallback на busy-yield ниже не нужен — это runtime bug */
+        fprintf(stderr, "nova: FATAL uv_timer_init failed: %s\n", uv_strerror(rc));
+        abort();  /* Plan 22 Ф.6: timer_init fails только при OOM либо
+                   * loop corruption — это runtime bug, не recoverable. */
     }
     st.timer.data = &st;
     rc = uv_timer_start(&st.timer, _nova_sleep_timer_cb, (uint64_t)ms, 0);
     if (rc != 0) {
-        fprintf(stderr, "nova: uv_timer_start failed: %s\n", uv_strerror(rc));
+        fprintf(stderr, "nova: FATAL uv_timer_start failed: %s\n", uv_strerror(rc));
         uv_close((uv_handle_t*)&st.timer, NULL);
-        return;
+        abort();
     }
     /* Register для cancel-wake (D93). */
     nova_sched_register_pending(scope, slot, &st.timer, _nova_sleep_stop_cb);
@@ -588,12 +631,17 @@ static inline void _nova_sleep_via_libuv(NovaFiberQueue* scope, int slot,
     nova_sched_unregister_pending(scope, slot);
     /* Cleanup handle. Если timer-cb отработал normal — handle still open,
      * нужно close. Если cancel stop_cb уже close'нул — uv_is_closing
-     * вернёт true. */
+     * вернёт true.
+     *
+     * Plan 22 Ф.6: ждать close_cb через UV_RUN_NOWAIT pass'ы (обычно
+     * 1-2 итерации — close-callbacks fire immediate в uv_run). Это
+     * effectively wait для уже-pending callback'ов, не busy на kernel
+     * level. Park-based wait требовал бы второго nova_sched_park
+     * после первого — UB (slot state corruption через mco_yield повторно
+     * после wake). */
     if (!uv_is_closing((uv_handle_t*)&st.timer)) {
         uv_close((uv_handle_t*)&st.timer, _nova_sleep_close_cb);
     }
-    /* Wait для close_cb fire. Под bootstrap нет multi-thread — close_cb
-     * fire'ает в ближайшем uv_run NOWAIT pass'е. Обычно 1-2 итерации. */
     while (!st.handle_closed) {
         uv_run(nova_evloop(), UV_RUN_NOWAIT);
     }
@@ -621,20 +669,26 @@ static inline nova_unit _nova_time_default_sleep(nova_int ms) {
     }
     if (mco_running()) {
 #ifdef NOVA_USE_LIBUV
-        /* Plan 22 Ф.4 (D93): production path через park-on-uv_timer. */
-        if (_nova_active_scope && _nova_active_slot >= 0) {
-            _nova_sleep_via_libuv(_nova_active_scope, _nova_active_slot, ms);
-            return NOVA_UNIT;
+        /* Plan 22 Ф.4 (D93): production path через park-on-uv_timer.
+         * После D92 (Plan 22 Ф.5) _nova_active_scope всегда non-NULL
+         * в user-code; fiber без scope — это runtime bug. */
+        if (!_nova_active_scope || _nova_active_slot < 0) {
+            fprintf(stderr,
+                "nova: FATAL Time.sleep called in fiber without active scope "
+                "(D92 invariant violated)\n");
+            abort();
         }
-        /* Edge case: fiber без scope (shouldn't happen в bootstrap'е, но
-         * defensive). Fall through to legacy busy-yield. */
-#endif
-        /* Legacy: busy-yield until deadline. Сохраняется для не-libuv
-         * сборок (NOVA_USE_LIBUV=0) и для edge cases где fiber без scope. */
+        _nova_sleep_via_libuv(_nova_active_scope, _nova_active_slot, ms);
+        return NOVA_UNIT;
+#else
+        /* No-libuv build: busy-yield-loop fallback. Только когда
+         * NOVA_USE_LIBUV=0 — компиляция без libuv (опциональная).
+         * Production-default — с libuv (R7 «no busy-loops»). */
         int64_t deadline = _nova_monotonic_ms() + (int64_t)ms;
         while (_nova_monotonic_ms() < deadline) {
             nova_fiber_yield();
         }
+#endif
     } else if (_nova_active_scope) {
         /* Main flow inside a scope (D92 implicit либо explicit supervised):
          * drain queue + bounded uv_run пока deadline не пройдёт.
@@ -683,11 +737,14 @@ static inline nova_unit _nova_time_default_sleep(nova_int ms) {
 #endif
         }
     } else {
-        /* Top-level, no scheduler — fall back to native sleep.
-         * Plan 22 Ф.5 (D92): эта ветка unreachable в normal flow
-         * (emit_main всегда устанавливает main-scope). Оставляем как
-         * defensive fallback для tests / corner cases. */
-        _nova_native_sleep_ms((int64_t)ms);
+        /* Plan 22 Ф.6: top-level вне any scope. После D92 emit_main
+         * всегда устанавливает implicit main-scope, эта ветка
+         * unreachable в normal flow. Если попали сюда — runtime bug
+         * (например Time.sleep в C-static initializer до main). */
+        fprintf(stderr,
+            "nova: FATAL Time.sleep called outside any scope — D92 "
+            "invariant violated. _nova_active_scope == NULL in user-code.\n");
+        abort();
     }
     return NOVA_UNIT;
 }

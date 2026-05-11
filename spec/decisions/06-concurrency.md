@@ -952,6 +952,25 @@ bootstrap-codegen (`compiler-codegen/`):
   тестов), `detach_test.nv` (13), `parallel_for.nv` (12), `main_yield.nv`
   (11). Полный suite в `nova_tests/concurrency/`.
 
+### Эволюция
+
+- **2026-05-06:** D71 introduced — bootstrap busy-yield + cooperative
+  cancellation через `nova_fiber_yield` re-check.
+- **Plan 22 Ф.4 (2026-05-11):** scheduler становится libuv-event-loop
+  driven. `Time.sleep` через park-on-`uv_timer_t` (см.
+  [D93](#d93-park-wake--нормативный-runtime-primitive-для-блокирующих-операций))
+  — CPU idle на sleep period вместо busy-yield. `nova_supervised_run`
+  idle через `uv_run UV_RUN_ONCE` когда все живые fiber'ы parked.
+- **Plan 22 Ф.5 (2026-05-11):** top-level main оборачивается в implicit
+  supervised scope (см. [D92](#d92-top-level-main-как-implicit-supervised-scope))
+  — `_nova_active_scope` всегда non-NULL в user-code.
+- **Plan 22 Ф.6 (2026-05-11):** park/wake state production-grade lazy
+  pointer-в-`NovaFiberQueue` (Вариант B) — O(1) lookup, нет cap'а на
+  nested scopes, память выделяется только когда реально park'аем.
+- **Plan 23 (M:N, milestone v1.0+):** scheduler становится work-stealing
+  per-worker, park/wake API D93 расширяется на cross-worker wake через
+  `uv_async_t`.
+
 ---
 
 ## D75. `cancel_scope { tok => ... }` — ручная структурная отмена
@@ -1082,6 +1101,13 @@ fail-fast при внешнем сигнале). Разделение делае
 - [D50](#d50-concurrency-model-spawn-detach-blocking) — concurrency model.
 - [D71](#d71-bootstrap-concurrency-runtime) — `cancel_requested` flag,
   cooperative cancellation propagation. D75 надстраивается над ним.
+- [D93](#d93-park-wake--нормативный-runtime-primitive-для-блокирующих-операций)
+  — park/wake API. `cancel()` через `nova_sched_cancel_all_pending`
+  пробуждает parked-fiber'ов **immediate** через generic stop_cb
+  mechanism (Plan 22 Ф.4). Раньше cancel ждал следующего yield-point'а
+  внутри `nova_fiber_yield`; теперь fiber может быть park'нут на
+  `uv_timer_t` без yield-point'ов до срабатывания timer'а, и cancel
+  всё равно срабатывает сразу.
 
 ### Реализация (2026-05-06)
 
@@ -1654,6 +1680,13 @@ emit_c.rs` эмитит без `static` начиная с 2026-05-07 (commit
   invariant, который семантика D61 уже подразумевала.
 - [D71](#d71-bootstrap-concurrency-runtime) — bootstrap runtime;
   снапшот save/restore реализован в `nova_supervised_step` (2026-05-07).
+- [D92](#d92-top-level-main-как-implicit-supervised-scope) — implicit
+  main-scope. D80 handler-snapshot работает одинаково внутри main-scope
+  и любого supervised блока (D92 делает main симметричным).
+- [D93](#d93-park-wake--нормативный-runtime-primitive-для-блокирующих-операций)
+  — park/wake API. Park'нутый fiber сохраняет свой handler-snapshot
+  (per-fiber invariant D80) до wake'а, callback от libuv не видит
+  чужие handlers — он работает на main-thread context'е до resume.
 - [D75](#d75) — `cancel_scope` использует тот же per-scope state pattern.
 
 ### Производительность и roadmap оптимизации

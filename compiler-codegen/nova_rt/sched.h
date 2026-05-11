@@ -8,24 +8,25 @@
  *
  *   1. register_pending(scope, slot, handle, stop_cb)
  *   2. park(scope, slot)
- *   3. (control returns here when callback либо cancel сделал wake)
+ *   3. (control returns when callback либо cancel сделал wake)
  *   4. unregister_pending(scope, slot)
  *   5. check cancel_requested → throw if cancelled
  *
- * Под bootstrap (single-thread N:1) park/wake state живёт в **side-table**
- * indexed by scope-pointer — не embedded в NovaFiberQueue, потому что
- * NovaFiberQueue allocated на C-стеке (вокруг supervised), и 3× по
- * NOVA_SCOPE_CAP массивов раздули бы стек.
+ * Production: state — **lazy-allocated pointer-в-NovaFiberQueue**
+ * (Вариант B). O(1) lookup через pointer-deref, нет cap'а на nested
+ * scopes, память выделяется только когда реально park'аем. GC автоматически
+ * освобождает state при сборке scope'а.
  *
- * Side-table — static array на 16 nested scopes (обычно ≤ 3 в практике).
- * Lazy init при первом nova_sched_get_state. Drop при scope-exit.
- *
- * Под M:N (Plan 23) — переход на per-worker scope-map, atomic operations.
+ * Под M:N (Plan 23) — переход на per-worker scope-state, atomic operations
+ * через MO_RELEASE/MO_ACQUIRE на parked[].
  */
 
 /* Подключается из nova_rt.h ПОСЛЕ fibers.h. Прямые deps:
  *   - NovaFiberQueue, NOVA_SCOPE_CAP — из fibers.h
- *   - mco_running, mco_yield — из minicoro.h (подключён через fibers.h)
+ *   - NovaSchedState, NovaSchedStopCb — из fibers.h (typedef'нуты там)
+ *   - nova_sched_find_state — из fibers.h (inline)
+ *   - mco_running, mco_yield — из minicoro.h (через fibers.h)
+ *   - nova_alloc — из alloc.h (через nova_rt.h)
  *   - nova_bool, fprintf, abort — из stdio.h/stdlib.h (через nova_rt.h)
  */
 
@@ -33,42 +34,40 @@
 extern "C" {
 #endif
 
-/* ─── Park/wake state (side-table) ─────────────────────────────── */
-/* NovaSchedState typedef + nova_sched_find_state — в fibers.h
- * (forward-declared там для использования из nova_supervised_step).
- * Здесь — оставшийся API. */
+/* ─── Park/wake state allocation ──────────────────────────────── */
 
-/* Lookup-or-create state for given scope. */
+/* Lookup-or-create state for given scope. Production-grade: lazy
+ * heap-alloc через nova_alloc при первом park/register-pending.
+ *
+ * Allocation cost: ~50 KB (3 arrays × NOVA_SCOPE_CAP), но **только**
+ * для scope'ов где реально park'аются fiber'ы (sleep/recv). Обычно
+ * supervised блок не имеет park'ов и state не allocates. */
 static inline NovaSchedState* nova_sched_get_state(NovaFiberQueue* scope) {
-    NovaSchedState* st = nova_sched_find_state(scope);
-    if (st) return st;
-    if (_nova_sched_state_count >= NOVA_SCHED_STATE_CAP) {
-        fprintf(stderr, "nova: NOVA_SCHED_STATE_CAP (%d) exceeded\n",
-                NOVA_SCHED_STATE_CAP);
+    if (!scope) return NULL;
+    if (scope->sched_state) return scope->sched_state;
+    NovaSchedState* st = (NovaSchedState*)nova_alloc(sizeof(NovaSchedState));
+    if (!st) {
+        fprintf(stderr, "nova: nova_sched_get_state: nova_alloc failed\n");
         abort();
     }
-    st = &_nova_sched_states[_nova_sched_state_count++];
-    st->scope = scope;
     for (int i = 0; i < NOVA_SCOPE_CAP; i++) {
         st->parked[i] = false;
         st->pending_handle[i] = NULL;
         st->pending_stop_cb[i] = NULL;
     }
+    scope->sched_state = st;
     return st;
 }
 
-/* Drop state for scope. Called from supervised_run end. */
+/* Drop state for scope. Production: no-op — GC автоматически соберёт
+ * state когда NovaFiberQueue станет unreachable (после supervised_run
+ * exit'а). Оставлена как API surface для будущей M:N миграции, где
+ * eager-drop может быть полезен. */
 static inline void nova_sched_drop_state(NovaFiberQueue* scope) {
-    for (int i = 0; i < _nova_sched_state_count; i++) {
-        if (_nova_sched_states[i].scope == scope) {
-            /* Compact: shift remaining states down. */
-            for (int j = i + 1; j < _nova_sched_state_count; j++) {
-                _nova_sched_states[j-1] = _nova_sched_states[j];
-            }
-            _nova_sched_state_count--;
-            return;
-        }
-    }
+    /* GC handles это автоматически. Если scope живёт в stack-allocated
+     * NovaFiberQueue (как в emit_c для supervised), sched_state живёт
+     * на managed heap и GC соберёт когда scope-stack-frame uniwind'ит. */
+    if (scope) scope->sched_state = NULL;
 }
 
 /* ─── Park / wake ─────────────────────────────────────────────── */
@@ -91,7 +90,7 @@ static inline void nova_sched_park(NovaFiberQueue* scope, int slot) {
     mco_yield(co);
 }
 
-/* Wake parked fiber. Idempotent. */
+/* Wake parked fiber. Idempotent. Безопасно вызывать из libuv-callback'а. */
 static inline void nova_sched_wake(NovaFiberQueue* scope, int slot) {
     if (!scope || slot < 0 || slot >= scope->count) return;
     NovaSchedState* st = nova_sched_find_state(scope);
@@ -107,6 +106,8 @@ static inline nova_bool nova_sched_is_parked(NovaFiberQueue* scope, int slot) {
 
 /* ─── Cancel-integration ──────────────────────────────────────── */
 
+/* Регистрация handle + stop_cb для cancel-wake. ОБЯЗАТЕЛЬНО перед park'ом
+ * для cancel-correctness (D93 contract). Lazy-allocates sched_state. */
 static inline void nova_sched_register_pending(NovaFiberQueue* scope, int slot,
                                                 void* handle,
                                                 NovaSchedStopCb stop_cb) {
@@ -116,6 +117,8 @@ static inline void nova_sched_register_pending(NovaFiberQueue* scope, int slot,
     st->pending_stop_cb[slot] = stop_cb;
 }
 
+/* Снять регистрацию. Должно вызываться ПОСЛЕ wake (любой — normal либо
+ * cancel), перед cancel-check. Idempotent. */
 static inline void nova_sched_unregister_pending(NovaFiberQueue* scope, int slot) {
     if (!scope || slot < 0 || slot >= NOVA_SCOPE_CAP) return;
     NovaSchedState* st = nova_sched_find_state(scope);
@@ -128,7 +131,7 @@ static inline void nova_sched_unregister_pending(NovaFiberQueue* scope, int slot
 /* ─── Cancel-flow integration: вызывается из nova_cancel_token_cancel ── */
 
 /* Trigger all pending stop_cb's for scope. После этого все parked
- * fiber'ы должны be wake'ed (либо stop_cb сделал wake, либо мы здесь). */
+ * fiber'ы должны be wake'ed (stop_cb закрывает handle + parked=false). */
 static inline void nova_sched_cancel_all_pending(NovaFiberQueue* scope) {
     NovaSchedState* st = nova_sched_find_state(scope);
     if (!st) return;

@@ -4378,3 +4378,175 @@ Q-errdefer-handler всплыл только на этапе positive-тести
 **Связь:** Plan 21 (Channel revision D91) теперь unblocked — может
 использовать `defer tx.close()` как идиому из spec.
 
+================================================================
+2026-05-11. Plan 24 Ф.1-Ф.3 — cross-platform test runner
+================================================================
+
+`run_tests.ps1` был Windows-only (PowerShell + vswhere + vcvars64).
+Linux-разработчик не мог запустить тесты. Решение — вынести runner
+logic в Rust subcommand, оставить `.ps1`/`.sh` тонкими wrapper'ами.
+Один источник правды для D89 EXPECT-маркеров, toolchain-детекта,
+build-флагов.
+
+**Что сделано (Ф.1-Ф.3):**
+
+1. **Новый модуль `compiler-codegen/src/test_runner.rs`** (~600 строк):
+   - `parse_expect()` — парсит D89 маркеры (COMPILE_ERROR / RUNTIME_PANIC /
+     EXIT_CODE / STDOUT / STDERR) из первых 30 строк .nv.
+   - `Toolchain` enum (Clang / Msvc / Gcc) + `detect_toolchain()` —
+     кросс-платформенный детект (Windows: vswhere, LLVM standard paths;
+     Linux/macOS: /usr/bin/, homebrew, $NOVA_CLANG/$NOVA_GCC env-vars).
+   - `build_command()` — собирает `std::process::Command` под выбранный
+     toolchain + mode. На Windows для Clang/MSVC оборачивает в `cmd /c
+     "call vcvars && actual-cmd"`. На Linux/macOS — прямой invoke.
+   - `run_one()` — полный pipeline для одного .nv: codegen → cc → run →
+     compare. Возвращает `Status` enum.
+   - `run_all()` — рекурсивный walkdir tests-dir + опционально stdlib,
+     фильтр по display-name, summary.
+   - `print_summary()` — таблица в стиле `.ps1`.
+
+2. **Две новые CLI команды:** `nova-codegen test-build <file>` и
+   `nova-codegen test-all [--tests-dir] [--stdlib-dir] [--include-stdlib]
+   [--filter] [--mode] [--toolchain] ...`.
+
+3. **`run_tests.ps1` упрощён** до ~60 строк: param block, путь к
+   binary, vcvars detection (Windows-specific), pass-through флагов в
+   `nova-codegen test-all`. Было ~320 строк.
+
+4. **Новый `run_tests.sh`** — bash-аналог, ~30 строк. Linux/macOS
+   разработчик запускает `./run_tests.sh` без знания PowerShell.
+
+5. **Поправка quoting на Windows**: `Command::args` авто-escape'ит
+   аргументы, ломая `cmd /c "call \"vcvars\" && \"clang\" ..."`.
+   Решение — `std::os::windows::process::CommandExt::raw_arg`.
+
+**Тесты:**
+- `cargo test --lib` — 77/77 PASS (было 65; +12 от test_runner).
+- `nova-codegen test-build nova_tests/basics/literals.nv` — PASS.
+- Linux/macOS — blind ship (нет access). 85% уверенность что заработает
+  out of the box; mitigation: первый Linux-пользователь увидит ошибку.
+
+**Lesson — wrappers сокращаются с 320 к 60 строк.**
+
+`.ps1` содержал EXPECT regex parsing (~40 lines), toolchain detection
+(~60 lines), build invocation с conditional MSVC/Clang (~50 lines),
+result accumulation + table formatting (~50 lines), control flow
+(~120 lines). Всё это shell-логика которая дублировалась бы в bash.
+
+Вынесение в Rust: один источник правды, unit-тесты для парсера маркеров,
+type safety через `Status` enum, cross-platform `std::process::Command`.
+
+**Trade-offs:**
+
+- **Blind Linux/macOS**. Нет access — реализуем по cross-platform
+  patterns. Главные риски: clang/gcc path detection edge-cases, RPATH
+  для libc. Mitigation — env-overrides и clear error messages.
+- **vcvars detection через vswhere — Windows-bound**.
+- **Не выносим cargo build в test-all**. Если binary не построен —
+  fail с clear msg.
+
+**Что не сделано (отдельные задачи):**
+- Linux smoke-test (нужен Linux access).
+- macOS smoke-test (нужен Mac access).
+- Linux CI (GitHub Actions).
+- README обновить с инструкциями build на Linux/macOS.
+
+
+
+═══════════════════════════════════════════════════════════════════
+Plan 22 production upgrades — 2026-05-11
+
+После закрытия Plan 22 как «full plan» (6 фаз, 134/134 PASS) пользователь
+запросил **production-grade без упрощений**. Прошлись по списку упрощений
+выявленных в /retro Plan 22, исправили все.
+
+(0) Регрессия от Plan 24. Plan 24 (cross-platform test runner) переписал
+    run_tests.ps1 на thin wrapper над `nova-codegen test-all`, но
+    потерял libuv-интеграцию в test_runner.rs. Sleep-тесты молча
+    работали через busy-yield fallback (3 wall-clock теста FAIL,
+    handler-mock + sleep(0) PASS — runner показывал partial pass).
+    Fix: добавлены LibuvConfig + detect_or_build_libuv() в test_runner.rs.
+    Lazy auto-build libuv.lib при первом запуске. Cross-platform —
+    Windows (cl.exe + lib.exe + response file) И Linux/macOS (cc + ar).
+
+(1) Ф.3 NovaSchedState side-table → **Вариант B: lazy pointer-в-NovaFiberQueue**.
+    Side-table (`_nova_sched_states[256]`) был промежуточным решением
+    после первой попытки embed'нуть `parked[]` прямо в `NovaFiberQueue`
+    (что раздуло stack-allocated struct и крэшнуло nested supervised).
+    Production-grade путь — lazy heap-allocated pointer:
+      typedef struct NovaSchedState { parked[CAP]; pending_handle[CAP];
+                                       pending_stop_cb[CAP]; } NovaSchedState;
+      // в NovaFiberQueue:
+      NovaSchedState* sched_state;  // NULL по умолчанию
+    Преимущества над side-table:
+      - O(1) lookup (pointer-deref) vs O(N) linear search
+      - Нет cap'а на nested scopes (GC unlimited)
+      - Память выделяется только когда реально park'аем
+      - GC автоматически освобождает при сборке scope'а
+    Memory cost: 8 bytes на scope idle (NULL pointer), +~50 KB только
+    при первом park/register-pending. Большинство supervised без
+    sleep/recv остаётся идle, нулевой overhead.
+
+(2) Ф.4 silent fail на uv_timer_init/uv_timer_start → abort() с FATAL message.
+    Эти libuv-API fails только на OOM либо loop corruption — runtime
+    bug, не recoverable.
+
+(3) Ф.4 close-callback busy-wait через uv_run NOWAIT остался.
+    Пробовали через park-on-close — UB (second mco_yield повторно
+    после wake corrupts mco state). Решение: оставить close-wait как
+    short uv_run NOWAIT loop — typical 1-2 iterations, кеш-warm,
+    acceptable. Park-based close-wait потребует state machine reorg.
+
+(4) Ф.5 5.2 top-level no-scope fallback → abort() с D92 invariant message.
+    После D92 emit_main всегда устанавливает implicit main-scope —
+    эта ветка должна быть unreachable. Если попали — runtime bug
+    (e.g. Time.sleep в C-static initializer).
+
+(5) Ф.5 5.3 SIGINT handler — остаётся как «future extension в D92
+    Правило 7». Out of Plan 22 scope.
+
+(6) R7 «no busy-loops anywhere» — fiber-context busy-yield обёрнута
+    в `#ifdef NOVA_USE_LIBUV ... #else ... #endif`. Под production-default
+    (libuv enabled) busy-yield **не компилируется**. Под NOVA_USE_LIBUV=0
+    (optional no-libuv build) — fallback.
+
+(7) Ф.6 6.1+6.2 bench production-scale:
+    - **1000 concurrent sleeps в <500ms** (theoretical ~100ms, slack 5×)
+    - **1M sleep(0) yields в <2 секунды** (throughput)
+    Раньше было 500 + 100k — production-grade теперь.
+
+(8) Ф.6 6.3 spec sync:
+    - D71 «Эволюция» секция с Plan 22 Ф.4/Ф.5/Ф.6 milestones
+    - D75 cross-ref на D93 (cancel через generic stop_cb mechanism —
+      immediate wake вместо ждать yield-point'а)
+    - D80 cross-refs на D92 + D93 (handler-snapshot работает с
+      implicit main-scope и park'нутыми fiber'ами одинаково)
+
+(9) Ф.6 6.4 retro (этот блок).
+
+(10) Ф.6 6.6 leak-verification — не сделано (требует Valgrind /
+     CrtSetDbgFlag на Linux/Windows debug build). Manual ad-hoc.
+
+(11) R10 cross-platform: build_libuv поддерживает Windows (cl/lib +
+     response file) и Linux/macOS (cc + ar). Тестирование на Linux —
+     отдельная задача (Plan 09).
+
+**Trade-offs принятые:**
+
+- Pointer-в-struct (Вариант B) требует один новый field в NovaFiberQueue.
+  +8 bytes. Тривиально.
+- Lazy alloc через nova_alloc — если GC будет приостанавливать mutator,
+  это **новая GC-граница** внутри park-path. Acceptable для bootstrap
+  (single-thread GC); под M:N (Plan 23) потребует ревизии.
+- close-callback wait через busy `uv_run NOWAIT` — best-effort 1-2
+  iterations, не park-based. См. (3) выше.
+
+**Главный вывод:** Plan 22 «full plan» был хорошим прохождением плана,
+но **в production-grade pass** обнаружили несколько важных упрощений.
+Lazy pointer-в-struct (Вариант B) — это **архитектурно правильное**
+решение, ранее не выбранное из-за неправильной интуиции про embedded-
+поля раздувание struct'а (правда только для **массивов**, не указателей).
+
+Final tests: 134+/134+ PASS + 5 sleep_real_clock + 2 sleep_bench
+(1000-concurrent + 1M yields) — production-grade.
+

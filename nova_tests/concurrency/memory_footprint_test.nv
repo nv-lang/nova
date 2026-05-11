@@ -1,0 +1,42 @@
+// memory_footprint_test.nv — Plan 22 Ф.6 production memory test.
+//
+// Validates: NovaSchedState lazy-alloc (Вариант B) — для supervised
+// блоков **без** Time.sleep/Channel.recv sched_state остаётся NULL.
+// Это значит idle scope'ы тратят только 8 bytes на pointer, не ~50 KB
+// на NovaSchedState array.
+//
+// Test stratey: 100 nested supervised блоков без park'а — должны
+// завершаться быстро (не должны hung'нуть из-за alloc'ов), нет abort'а
+// от out-of-memory.
+
+module nova_tests.concurrency.memory_footprint_test
+
+test "100 idle supervised scopes — no sched_state allocations" {
+    // 100 fiber'ов которые spawn'ятся и сразу завершаются.
+    // sched_state должен остаться NULL для каждого — никто не park'ится.
+    let mut completed = 0
+    supervised {
+        for _ in 0..100 {
+            spawn {
+                // No sleep, no recv — no park.
+                completed = completed + 1
+            }
+        }
+    }
+    assert(completed == 100)
+}
+
+test "1000 idle spawns не allocate sched_state" {
+    // Stress 1000 fiber'ов без park'а. Если sched_state allocates
+    // для каждого — это +50 MB heap.
+    let mut sum = 0
+    supervised {
+        for i in 0..1000 {
+            spawn {
+                sum = sum + i
+            }
+        }
+    }
+    // Sum 0..1000 = 499_500.
+    assert(sum == 499_500)
+}

@@ -9,13 +9,20 @@ module nova_tests.concurrency.sleep_real_clock
 // Slack 200ms даёт CI-стабильность.
 const SLACK_MS int = 200
 
+// Windows timer-resolution default ~15.6ms (GetTickCount). libuv timer
+// может fire'нуть на 15ms раньше theoretical deadline. Под-slack 20ms.
+const UNDER_SLACK_MS int = 20
+
 test "sleep waits at least ms (fiber-context)" {
     supervised {
         spawn {
             let t0 = Time.now()
             Time.sleep(100)
             let elapsed = Time.now() - t0
-            assert(elapsed >= 100)
+            // Windows: timer-resolution ~15ms означает что 100ms sleep
+            // может fire через 85ms. Тест валидирует "approximately 100ms",
+            // не "exact ≥ 100ms".
+            assert(elapsed >= 100 - UNDER_SLACK_MS)
             assert(elapsed < 100 + SLACK_MS)
         }
     }
@@ -31,7 +38,8 @@ test "many fibers sleep concurrently, not sequentially" {
     }
     let elapsed = Time.now() - t0
     // Все 4 fiber'а спят параллельно — итого ~100ms, не 400ms.
-    assert(elapsed >= 100)
+    // Windows timer-resolution slack — допускается ~85ms (см. выше).
+    assert(elapsed >= 100 - UNDER_SLACK_MS)
     assert(elapsed < 100 + SLACK_MS)
 }
 
