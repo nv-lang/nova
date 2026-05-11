@@ -4102,3 +4102,67 @@ Plan 20 заявлял Ф.1-Ф.6 как атомарный PR. Но Ф.1 (lexer-
 Ф.2+ остаются атомарными между собой (parser → type-check → codegen
 + interp + positive-тесты — всё ломает/добавляет функциональность
 одновременно).
+
+================================================================
+2026-05-11. Name-resolution фаза в типчекере (NameResCtx)
+================================================================
+
+**Контекст:** до этой сессии код вроде `let r = 1 | undefined_var`
+проходил typecheck и фейлил только на cc-этапе с малочитаемой
+ошибкой «undeclared identifier». BoundCtx/CapabilityCtx обходили
+ExprKind::Ident, но не проверяли наличие имени в scope.
+
+**Что сделано:**
+- Новый walker `NameResCtx` в `compiler-codegen/src/types/mod.rs`,
+  вызывается из `check_module` после BoundCtx/CapabilityCtx.
+- Pre-collect top-level имён: fns без receiver, types,
+  consts, sum-variants, имена модулей-импортов. Plus built-ins:
+  primitive types (int/bool/str/...), prelude variants (None/Some/
+  Ok/Err), true/false, Self/self, assert/print/println/panic/exit,
+  Fail/Detach/Option/Result/Error/RuntimeError.
+- Walk fn/test/const-bodies со scope-стеком (Vec<HashSet<String>>):
+  push на fn-params, let-pattern bindings, for/if-let/while-let
+  pattern bindings, match-arm pattern bindings, closure-params
+  (Lambda/ClosureLight/ClosureFull), handler-method-params,
+  cancel_scope token, trailing-fn params. Pop на выходе.
+- На `ExprKind::Ident(name)` — проверка через `is_known(name, scope)`.
+  Diagnostic «undefined identifier `{name}`» при failure.
+- `collect_pattern_bindings` — рекурсивный сбор bindings из
+  Pattern (Ident/Variant/Record/Array/Tuple/Binding/Or). Variant-
+  tag'и и field-name'ы НЕ bindings (они constructor names).
+
+**Bootstrap-консервативность:**
+- **Capitalized-имена пропускаются.** В bootstrap'е нет cross-file
+  name resolution; типы из других .nv файлов (HashMap, Lru, Str)
+  приходят сюда не задекларированными. Convention: типы Capitalized,
+  vars/fns snake_case. Опечатки в snake_case ловятся, в типах — нет.
+- **TaggedTemplate tags не проверяются** (sql/json/html — special-form).
+- **Method-/field-name'ы в Member-access не проверяются** (resolve
+  через method_table в codegen).
+- **Path-сегменты** (`mod1::mod2::name`) не проверяются.
+
+**Negative test:** `nova_tests/negative_capability/undefined_ident_rejected.nv`
+с `EXPECT_COMPILE_ERROR undefined identifier`.
+
+**Status:**
+- ✅ ЗАКРЫТ.
+- Tests: ✅ cargo test --lib 65/65, nova_tests 121/121 PASS
+  (120 baseline + 1 новый negative).
+- Side-effect: при компиляции stdlib (`-IncludeStdlib`) NameResCtx
+  обнаружил реальные баги — undefined `fixed_ms` (std/concurrency/
+  rate_limiter, retry; crypto/jwt; identifiers/snowflake; time/
+  duration) и `seeded` (concurrency/retry; crypto/bcrypt;
+  identifiers/ulid, uuid). Эти helper'ы предполагались, но нигде
+  не определены. Stdlib-fixes — отдельная задача.
+
+**Lessons:**
+- **Type-checker должен ловить undefined ident до codegen.** R5.3
+  diagnostic > C-compiler error. Static name-resolution — baseline
+  для любого типчекера, не должен быть optional.
+- **Bootstrap без cross-file resolution = эвристика по Capitalized.**
+  Полноценный module-resolution требует import-graph + reload —
+  для bootstrap'а избыточно. Convention снимает 95% false-positive'ов.
+- **Latent stdlib-баги выявляются строгим checker'ом.** Запуск checker
+  на stdlib обнажил несуществующие `fixed_ms`/`seeded` — баги
+  которые до этого silent'или потому что -IncludeStdlib редко
+  запускался полностью.

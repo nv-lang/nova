@@ -1477,6 +1477,12 @@ impl NameResCtx {
                 if let Some(v) = value { self.walk_expr(v, scope, errors); }
             }
             Stmt::Throw { value, .. } => self.walk_expr(value, scope, errors),
+            // D90 (Plan 20): defer/errdefer body — обычный expr в текущем
+            // scope. Bindings внутри body локальны их собственным under-scope'ам;
+            // на верхнем уровне defer не вводит новых имён.
+            Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. } => {
+                self.walk_expr(body, scope, errors);
+            }
             Stmt::Break(_) | Stmt::Continue(_) => {}
         }
     }

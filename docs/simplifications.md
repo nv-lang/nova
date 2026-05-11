@@ -3264,3 +3264,61 @@ Plan 15 (generic bounds, D72) фазы Ф.1-Ф.3, Ф.5 уже реализова
 - Plan 20 Ф.1: ✅ ЗАКРЫТО (commit 75673d7).
 - Plan 20 Ф.2-Ф.6: 🟡 не начато (атомарный PR в будущей сессии).
 - Tests: ✅ 122/122 PASS.
+
+---
+
+## 2026-05-11: name-resolution фаза в типчекере (NameResCtx)
+
+### Что упрощено
+
+NameResCtx ловит undefined идентификаторы в expr-position, но
+**пропускает Capitalized-имена**. Точечно НЕ проверяются:
+
+1. **Cross-file types/variants (Capitalized).** `HashMap[K,V].new()`
+   в std/collections/lru.nv использует `HashMap` без import — типов
+   нет в текущем модуле. Эвристика: имя начинается с заглавной → known.
+2. **TaggedTemplate tags** (sql / json / html). Special-form syntax.
+3. **Member access name** (`obj.method`, `obj.field`) — резолв через
+   method_table / record_schemas в codegen.
+4. **Path-сегменты** (`module::name`) — first segment не валидируется.
+5. **Generic-params в TypeRef** — type-position, не expr.
+
+### Почему
+
+- **Bootstrap не имеет cross-file name resolution.** Имена из других
+  .nv файлов попадают сюда не задекларированными. Полноценный
+  import-graph + module-loader — большая инфраструктура; для
+  bootstrap'а заменена convention'ом «Capitalized = type/variant».
+- **Method-resolution требует type-inference.** `obj.method` — тип
+  obj может быть generic-param, чужой type, или primitive с
+  встроенным методом. Не делаем в name-resolution фазе.
+
+### Trade-offs
+
+- ✅ Ловятся **snake_case опечатки** (`undefined_var`, `fixed_ms`,
+  `seeded`) — самый частый класс ошибок в expr-position.
+- ❌ Опечатки в **Capitalized** именах (`HashMpa` вместо `HashMap`)
+  НЕ ловятся. Это компилятор подсветит на cc-этапе через
+  «undeclared type» — все ещё неудобно, но менее частый случай.
+- ❌ Method-typos (`xs.lenghth` вместо `xs.length`) НЕ ловятся.
+  Это **отложено** до полноценного type-inference / method-table-aware
+  фазы (требует bidirectional inference).
+
+### Когда закрывать
+
+Полноценное cross-file name resolution планируется в self-hosted
+compiler'е (после Plan 22+, когда появятся stable module-loader +
+type-inference). До этого — bootstrap convention достаточен.
+
+### Файлы
+
+- `compiler-codegen/src/types/mod.rs` — `NameResCtx` (lines ~1255–1670):
+  build/check_module/walk_fn/walk_block/walk_stmt/walk_expr/
+  walk_trailing/collect_pattern_bindings/is_known.
+
+### Status
+
+- ✅ ЗАКРЫТ (как bootstrap-фаза).
+- Tests: ✅ cargo test --lib 65/65, nova_tests 121/121 PASS (120 baseline + 1 negative).
+- Roadmap: расширение до Capitalized-проверки — после self-host
+  compiler, не в bootstrap.
