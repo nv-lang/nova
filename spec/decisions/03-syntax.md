@@ -4416,20 +4416,40 @@ scope ждёт defer'ов всех детей, scheduling непредсказу
     (commits 94151c3 + b058968).
   - Ф.5 Interp: per-scope defer-stack, LIFO invocation, errdefer
     skip non-error exit (commit c96f7f3).
-  - Ф.6 Positive-тесты: `syntax/defer_basic.nv` (4 теста: trailing,
-    LIFO, early-return, loop-iter), `syntax/errdefer_basic.nv`
-    (3 теста: normal-exit, defer+errdefer combo, multiple errdefer),
-    `syntax/errdefer_throw.nv` (4 теста: throw + non-interrupt handler,
-    throw + interrupt handler — корректное skip errdefer, LIFO
-    на throw-path, defer+errdefer combo на throw-path).
+  - Ф.6 Positive-тесты: defer_basic.nv, errdefer_basic.nv,
+    errdefer_throw.nv (interrupt handler).
   - Ф.7 Spec uplift: текущий блок.
-- **errdefer + handler interaction — корректно по Fail-strict (D65).**
-  Когда handler НЕ делает `interrupt`, после handler return
-  `Nova_Fail_fail` всё равно вызывает `nova_throw(msg)` для unwind
-  (D65 fail-strict — fail() never resumes). Это unwind ловит local
-  `_defer_BID_ff` setjmp-frame → errdefer срабатывает → fail-frame
-  pop'нут → `nova_throw` пробрасывается в outer fail-frame. Когда
-  handler делает `interrupt v` — это **handled normally exit** для
-  inner scope (longjmp на InterruptFrame, минуя fail-frame), и
-  errdefer **корректно не срабатывает** — это не error-path.
+  - **Ф.8 Production-grade hardening** (2026-05-11, commits e04ca85d
+    + 61af5af4 + 007bb9ba + d913aa08 + 33c1e050):
+    * (1) Type-check enforcement D61 §1430-1434: handler-method для
+      эффект-операции с return type `Never` ОБЯЗАН закончиться
+      `interrupt`/`throw`/`panic`/`exit`. Static analysis в
+      `check_handler_never_ops` + helpers (`expr_diverges`,
+      `block_diverges`). Покрывает Fail.fail + user-defined effects
+      с Never-методами.
+    * (2) Defer/errdefer на interrupt-path: codegen эмитит local
+      NovaInterruptFrame setjmp wrapper аналогично fail-frame.
+      На interrupt — invoke только `defer` (skip `errdefer` —
+      это handled exit), pop interrupt-frame, re-interrupt с
+      тем же value.
+    * (3) Loop/branch body defer integration: while/loop/while-let/
+      for-in-array/for-in-iter/else-branch/match-arm — все эмитят
+      defer scope (раньше только for-range body был покрыт).
+    * (4) D65 правило 3 (re-throw): NovaVtable_Fail.prev = outer
+      handler; Nova_Fail_fail на время handler-body invocation
+      swap'ает _nova_handler_Fail = current->prev, восстанавливает
+      после. Throw в handler-body dispatch'ится на outer (skip
+      current frame — нет infinite recursion).
+
+  Все 12 positive + 6 negative defer-relevant тестов PASS.
+
+#### Известные ограничения
+
+- **Suspend (Db/Net/Fs/Time/spawn) в defer body** — compile error
+  (Ф.3). Это spec-compliant strict ограничение, не gap.
+- **`exit(code, msg)`** не запускает defer'ы (D13: exit гасит процесс
+  без cleanup'ов) — by design.
+- **Cleanup на `panic(msg)`** — для bootstrap'а purposefully простой:
+  если fiber жив, defer тоже срабатывает через fail-frame
+  longjmp-path (panic dispatch'ится через nova_throw).
 

@@ -4654,3 +4654,93 @@ Commits:
 - cd55cf2 plan-22 Ф.10 SIGINT через uv_signal_t
 - a4321d7 plan-22 Ф.9 leak-check + Ф.8/Ф.11 deferred + Q-D93-sync-async-stop
 
+
+═══════════════════════════════════════════════════════════════════════
+Сессия 2026-05-11 (продолжение 2) — Plan 20 Ф.8: production-grade
+hardening (все 4 упрощения закрыты)
+═══════════════════════════════════════════════════════════════════════
+
+**Контекст.** После retro Plan 20 (закрытого как ✅) обнаружены 4
+упрощения которые не отвечали критерию production-grade. Ф.8 закрыла
+все: 5 коммитов, ~750 строк codegen + ~290 строк type-check + 16
+positive-тестов.
+
+**5 коммитов:**
+
+1. `e04ca85d` план Ф.8 в docs/plans (4 issue + DoD).
+2. `61af5af4` Ф.8 (1) type-check Never-op enforcement.
+3. `007bb9ba` Ф.8 (3) loop/branch body defer integration (7 сайтов).
+4. `d913aa08` Ф.8 (4) D65 правило 3: re-throw skip current frame.
+5. `33c1e050` Ф.8 (2) defer/errdefer на interrupt-path.
+
+**Что закрыто:**
+
+(1) **Type-check D61 §1430-1434.** Handler-method для Never-операции
+(Fail.fail) обязан закончиться interrupt/throw/panic/exit. Static
+analysis в check_handler_never_ops. Покрывает if/match с все ветками
+diverging. Negative-test отвергает handler без exit-control.
+
+(2) **Defer/errdefer на interrupt-path.** По D90 п.8 defer запускается
+на ВСЕХ exit'ах, включая interrupt. Codegen эмитит local NovaInterruptFrame
+setjmp wrapper аналогично fail-frame: на interrupt invoke defer (skip
+errdefer как handled exit), pop interrupt-frame, re-interrupt с тем же
+value. DeferScope расширен intframe_var/intframe_popped_var.
+
+(3) **Loop/branch body defer integration.** Расширил Ф.4 integration
+на 7 inline-iteration сайтов: while/loop/while-let/for-in-array/for-in-iter/
+else-branch/match-arm-block. Все используют emit_loop_body_inline (для
+loop) или enter_defer_scope/leave_defer_scope (для branch). Defer
+внутри них теперь регистрируется в DeferScope.
+
+(4) **D65 правило 3 (re-throw).** NovaVtable_Fail расширен полем prev
+(outer handler на момент install'а). Codegen emit_with устанавливает
+vtable->prev перед install. Runtime Nova_Fail_fail на время handler-body
+invocation swap'ает _nova_handler_Fail = current->prev, восстанавливает
+после. Throw в handler-body dispatch'ится на outer (skip current frame).
+
+**16 positive-тестов:**
+
+- `defer_in_blocks.nv` (9): while/loop/for-in-array body defer per
+  итерация; else-branch fires когда выполняется; match-arm fires только
+  для matched arm; nested defer scopes LIFO.
+- `errdefer_rethrow.nv` (3): inner re-throw → outer dispatch; 3-level
+  re-throw; errdefer + re-throw + outer interrupt — errdefer skip.
+- `defer_on_interrupt.nv` (4): defer fires на interrupt-path; errdefer
+  skip на interrupt; combo (defer+errdefer + interrupt) — только defer;
+  LIFO для multiple defer'ов.
+
+**Trade-offs (зафиксированы в simplifications.md):**
+
+- handler-stack через prev pointer (+8 байт к vtable) — простой
+  embedded подход вместо thread-local stack'а.
+- NovaInterruptFrame push на каждый defer scope — две jmp_buf на
+  scope если есть errdefer. Bootstrap-OK; production может объединить.
+- (prev: NULL) только для эффекта "Fail" — hardcoded на bootstrap-stage.
+  Production generalize'ит на любой effect с Never-операцией.
+- emit_defer_body_void повторяется в fail-path и interrupt-path
+  cleanup cascades (~2x generated C). Production может factor через
+  helper-function.
+
+**Lessons:**
+
+- Spec нарушения скрываются под runtime safety nets — type-check
+  важнее runtime fallback'а для production-grade.
+- Runtime cleanup-machinery требует cooperation от ВСЕХ codegen paths
+  (inline iteration в 19+ сайтах оставались legacy без proper coverage).
+- Handler-stack семантика D65 п.3 нетривиальна: spec → runtime
+  не одно-к-одному.
+- interrupt и throw — независимые exit-механизмы, defer должен
+  interception'нуть оба отдельно (FailFrame + InterruptFrame).
+
+**Тесты после Ф.8:**
+
+- 12/12 defer-relevant PASS (включая 16 новых positive-кейсов).
+- 10/10 effects PASS (handler-stack не сломал regular dispatch).
+- 17/17 concurrency PASS (interrupt-frame stack balanced).
+
+**Plan 20 теперь действительно production-grade:**
+
+- Все 4 упрощения закрыты.
+- 6 negative + 12 positive defer-тестов проходят.
+- Spec D90 Bootstrap-status расширен Ф.8 secции.
+- Q-errdefer-handler removed как mythical.

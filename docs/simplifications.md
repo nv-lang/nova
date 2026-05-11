@@ -3556,3 +3556,125 @@ Commits:
 - 8c1da32 Ф.7 heap-allocated arrays
 - cd55cf2 Ф.10 SIGINT через uv_signal_t
 - a4321d7 Ф.9 leak-check + Ф.8/Ф.11 deferred + Q-D93-sync-async-stop
+
+---
+
+## 2026-05-11 (продолжение) — Plan 20 Ф.8: production-grade hardening
+
+### Что закрыто
+
+Все 4 упрощения обнаруженные при retro Plan 20 — закрыты production-
+grade fix'ами (5 коммитов):
+
+- `e04ca85d` план Ф.8 (записан в docs/plans/20-defer-implementation.md).
+- `61af5af4` Ф.8 (1) type-check Never-op enforcement.
+- `007bb9ba` Ф.8 (3) loop/branch body defer integration (7 block-сайтов).
+- `d913aa08` Ф.8 (4) D65 правило 3: re-throw в handler skips current frame.
+- `33c1e050` Ф.8 (2) defer/errdefer на interrupt-path через InterruptFrame.
+
+### Что было упрощено в Plan 20 и почему закрыто сейчас
+
+1. **Q-errdefer-handler mythical issue** — было записано как
+   ограничение, оказалось — правильная Fail-strict семантика.
+   Удалено из open-questions (предыдущий retro, commit 24196f2).
+
+2. **Type-check для D61 §1430-1434** — handler-method для
+   Never-операции должен закончиться exit-control'ом. Раньше
+   gap: type-checker не enforce'ил, runtime ловил через safety
+   net (после handler return → nova_throw). Закрыто Ф.8 (1):
+   static analysis в `check_handler_never_ops` + helpers
+   `expr_diverges`/`block_diverges`/`stmt_diverges`. Negative-
+   test `fail_handler_no_exit_rejected.nv` отвергается на
+   compile-stage с явным error message.
+
+3. **Loop-body integration в 19+ inline-iteration сайтов** — раньше
+   только for-range body был переписан на `emit_loop_body_inline`.
+   Defer внутри while/loop/while-let/for-in-array/for-in-iter/else-
+   branch/match-arm-block не регистрировался в DeferScope.
+   Закрыто Ф.8 (3): все эти 7 сайтов теперь эмитят defer scope.
+   Positive-тесты `defer_in_blocks.nv` (9 кейсов).
+
+4. **D65 правило 3 re-throw** — `throw err` внутри handler-body
+   снова попадал на тот же handler → infinite recursion. Раньше
+   не реализовано в runtime. Закрыто Ф.8 (4): NovaVtable_Fail.prev
+   хранит outer handler; Nova_Fail_fail swap'ает на prev на время
+   invocation. Positive-тесты `errdefer_rethrow.nv` (3 кейса
+   включая 3-уровневый re-throw).
+
+5. **Defer/errdefer на interrupt-path** — раньше defer не запускался
+   когда handler делал `interrupt v` (longjmp на NovaInterruptFrame,
+   минуя fail-frame и leave_defer_scope). По D90 п.8 defer должен
+   срабатывать на ВСЕХ exit'ах. Закрыто Ф.8 (2): codegen эмитит
+   local NovaInterruptFrame setjmp wrapper для каждого defer scope,
+   на interrupt — invoke только defer (skip errdefer как handled
+   exit), pop interrupt-frame, re-interrupt с тем же value.
+   Positive-тесты `defer_on_interrupt.nv` (4 кейса).
+
+### Trade-offs
+
+- **handler-stack через prev pointer (D65 п.3)** — добавляет 8 байт
+  к NovaVtable_Fail. Альтернатива — thread-local handler-stack — была
+  бы dynamic-alloc-heavy. Prev pointer fix size, embedded в vtable.
+
+- **NovaInterruptFrame push на каждый defer scope** — overhead две
+  jmp_buf на scope (fail-frame + interrupt-frame если errdefer + defer).
+  Для bootstrap'а приемлемо; production-уровень оптимизации может
+  combine оба frame'а в один conditional setjmp.
+
+- **(prev: NULL) для не-Fail effects** — codegen hardcoded инициализирует
+  prev только для эффектов имя которых "Fail". Production-уровень
+  generalize'ит на любой effect с Never-операцией через runtime-mapping
+  effect-name → has-prev-field. Bootstrap-stage OK.
+
+- **emit_defer_body_void для interrupt-path** — тот же helper что для
+  fail-path. Body клонируется implicit'ом emit_defer_body_void (re-emit
+  AST). Эффект size of generated C: ~2x для блоков с >1 defer (cleanup
+  cascade повторяется в fail и interrupt branches). Production-уровень
+  factor через generated cleanup function. Bootstrap-stage OK.
+
+### Lessons
+
+- **Spec нарушения часто скрыты под runtime safety nets.** D61
+  §1430-1434 «handler для Never-op обязан exit-control» нарушалось
+  тестами (handler без interrupt) — runtime ловил через дополнительный
+  nova_throw после handler return. Это работало по факту, но семантика
+  скрывала bugs. Type-check enforcement важен для production grade —
+  компилятор должен отлавливать spec-нарушения до runtime.
+
+- **runtime cleanup-machinery требует cooperation от ВСЕХ codegen
+  paths.** Plan 20 Ф.4 покрывал только основные emit_block_* helpers,
+  inline iteration в 19+ сайтах оставались legacy. Defer внутри них
+  silently не работал. Урок: при введении новой sema-конструкции —
+  проверить ВСЕ места эмиссии block'ов, не только наиболее популярные.
+
+- **handler-stack semantics нетривиальна.** D65 правило 3 «re-throw
+  skips current frame» — лёгкое правило в спеке, но требует prev-pointer
+  в vtable + swap-on-invoke в runtime. Без этого user видит infinite
+  recursion stack overflow. Spec → runtime semantics не всегда одно-к-
+  одному.
+
+- **interrupt и throw — разные паттерны exit, но оба нужны для defer.**
+  Спека D90 определяет defer как «cleanup на ANY exit». В реализации
+  это значит **два** независимых setjmp/longjmp механизма (FailFrame +
+  InterruptFrame), и каждый должен interception'нуть defer body
+  отдельно. Один объединённый mechanism — упрощение, не работает.
+
+### Файлы
+
+- `compiler-codegen/nova_rt/effects.h` — NovaVtable_Fail.prev + Nova_Fail_fail swap.
+- `compiler-codegen/src/codegen/emit_c.rs` — DeferScope расширен intframe_var/popped;
+  enter_defer_scope эмитит interrupt-frame setjmp wrapper; emit_with
+  устанавливает vtable->prev; 7 inline-iteration сайтов переписаны
+  на emit_loop_body_inline / enter_defer_scope.
+- `compiler-codegen/src/types/mod.rs` — check_handler_never_ops + helpers.
+- `nova_tests/negative_capability/fail_handler_no_exit_rejected.nv` — negative.
+- `nova_tests/syntax/defer_in_blocks.nv` — positive (9 кейсов).
+- `nova_tests/syntax/errdefer_rethrow.nv` — positive (3 кейса).
+- `nova_tests/syntax/defer_on_interrupt.nv` — positive (4 кейса).
+- `spec/decisions/03-syntax.md` — D90 Bootstrap-status расширен Ф.8.
+- `docs/plans/20-defer-implementation.md` — Ф.8 план.
+
+### Status
+
+- ✅ Plan 20 Ф.8 (все 4 issue) ЗАКРЫТЫ.
+- Tests: 12/12 defer-relevant + 10/10 effects + 17/17 concurrency PASS.
