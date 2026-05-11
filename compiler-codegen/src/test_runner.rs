@@ -172,24 +172,25 @@ pub enum ExpectMarker {
     Stderr(String),
 }
 
-/// Парсит D89 EXPECT-маркер из первых 30 строк. Один маркер на файл
-/// (берём первый встретившийся).
+/// Парсит D89 EXPECT-маркеры из первых 30 строк.
 ///
-/// **Важно** (Plan 26 Ф.15 fix): non-comment lines пропускаются
-/// (`continue`), не возвращают `None`. Иначе `module foo` или blank
-/// line на первой строке прерывала бы поиск маркера ниже — D89-маркер
-/// в строке 5 не нашёлся бы.
+/// Возвращает все маркеры в порядке появления. Несколько маркеров разных
+/// типов поддерживаются одновременно (например `EXPECT_RUNTIME_PANIC` +
+/// `EXPECT_STDOUT` для тестов где defer fires перед panic).
 ///
-/// Plan 26 Ф.16 #10: warning при duplicate markers — silent ignore
-/// второго маркера скрывал бы intent author'а (например пользователь
-/// добавил EXPECT_STDOUT поверх EXPECT_EXIT_CODE и думает что оба
-/// работают). Возвращаем первый + stderr warning.
-pub fn parse_expect(src: &str) -> Option<ExpectMarker> {
-    let mut found: Option<ExpectMarker> = None;
+/// Ограничения совместимости: не более одного `COMPILE_ERROR` и не более
+/// одного `CC_ERROR` (дублирование этих двух выдаёт warning и берёт первый).
+/// `RUNTIME_PANIC`, `STDOUT`, `STDERR`, `EXIT_CODE` — можно несколько,
+/// хотя на практике больше одного `RUNTIME_PANIC` или `EXIT_CODE` не имеет
+/// смысла (проверяется только один exit-code/panic-pattern).
+///
+/// **Важно**: non-comment lines пропускаются (`continue`), не прерывают
+/// поиск — маркер в строке 5 находится даже если строка 1 = `module foo`.
+pub fn parse_expect(src: &str) -> Vec<ExpectMarker> {
+    let mut found: Vec<ExpectMarker> = Vec::new();
     for line in src.lines().take(30) {
         let trimmed = line.trim_start();
         let Some(body) = trimmed.strip_prefix("//") else {
-            // Non-comment line — skip, не abort.
             continue;
         };
         let body = body.trim_start();
@@ -216,19 +217,26 @@ pub fn parse_expect(src: &str) -> Option<ExpectMarker> {
         };
 
         if let Some(marker) = parsed {
-            if found.is_some() {
-                // Plan 26 Ф.16 #10: duplicate marker — warning. Берём
-                // первый. `stderr` потому что parse_expect вызывается
-                // и в lib-тестах, где stderr collected → не засоряем stdout.
+            // Each marker type is only kept once (first-wins for same type),
+            // but different types can coexist.
+            // Exception: STDOUT and STDERR can appear multiple times (all patterns checked).
+            let is_dup = match &marker {
+                ExpectMarker::CompileError(_) => found.iter().any(|m| matches!(m, ExpectMarker::CompileError(_))),
+                ExpectMarker::CcError(_)      => found.iter().any(|m| matches!(m, ExpectMarker::CcError(_))),
+                ExpectMarker::RuntimePanic(_) => found.iter().any(|m| matches!(m, ExpectMarker::RuntimePanic(_))),
+                ExpectMarker::ExitCode(_)     => found.iter().any(|m| matches!(m, ExpectMarker::ExitCode(_))),
+                // STDOUT and STDERR allow multiple patterns.
+                ExpectMarker::Stdout(_) | ExpectMarker::Stderr(_) => false,
+            };
+            if is_dup {
                 eprintln!(
-                    "warning: duplicate D89 EXPECT marker — first one wins, ignoring second: {:?}",
+                    "warning: duplicate D89 EXPECT marker (type already present) — ignoring: {:?}",
                     marker
                 );
             } else {
-                found = Some(marker);
+                found.push(marker);
             }
         }
-        // strip_prefix не сработал — следующая строка.
     }
     found
 }
@@ -1180,12 +1188,19 @@ pub fn run_one(opts: &TestBuildOpts) -> Outcome {
         }
     };
     let expect = parse_expect(&src);
+    // Helper closures для поиска маркеров в Vec.
+    let find_compile_error = || expect.iter().find_map(|m| if let ExpectMarker::CompileError(p) = m { Some(p) } else { None });
+    let find_cc_error      = || expect.iter().find_map(|m| if let ExpectMarker::CcError(p)      = m { Some(p) } else { None });
+    let find_runtime_panic = || expect.iter().find_map(|m| if let ExpectMarker::RuntimePanic(p) = m { Some(p) } else { None });
+    let find_exit_code     = || expect.iter().find_map(|m| if let ExpectMarker::ExitCode(n)     = m { Some(*n) } else { None });
+    let find_stdout        = || expect.iter().filter_map(|m| if let ExpectMarker::Stdout(p)     = m { Some(p.as_str()) } else { None }).collect::<Vec<_>>();
+    let find_stderr        = || expect.iter().filter_map(|m| if let ExpectMarker::Stderr(p)     = m { Some(p.as_str()) } else { None }).collect::<Vec<_>>();
 
     // Step 1: codegen.
     let codegen_result = codegen_to_c(opts.nv_file, &src);
 
     // EXPECT_COMPILE_ERROR — handled на этапе codegen.
-    if let Some(ExpectMarker::CompileError(pat)) = &expect {
+    if let Some(pat) = find_compile_error() {
         return match codegen_result {
             Ok(_) => Outcome::Fail {
                 stage: Stage::Expectation {
@@ -1327,7 +1342,7 @@ pub fn run_one(opts: &TestBuildOpts) -> Outcome {
             errs.join(" | ")
         };
         // EXPECT_CC_ERROR: CC failure is expected — check pattern.
-        if let Some(ExpectMarker::CcError(pat)) = &expect {
+        if let Some(pat) = find_cc_error() {
             return if pat.is_empty() || combined.contains(pat.as_str()) {
                 Outcome::Pass {
                     detail: "(negative-cc)".to_string(),
@@ -1352,7 +1367,7 @@ pub fn run_one(opts: &TestBuildOpts) -> Outcome {
         };
     }
     // EXPECT_CC_ERROR but CC succeeded.
-    if let Some(ExpectMarker::CcError(pat)) = &expect {
+    if let Some(pat) = find_cc_error() {
         return Outcome::Fail {
             stage: Stage::Expectation {
                 mismatch: ExpectMismatch::NoCcError {
@@ -1398,9 +1413,13 @@ pub fn run_one(opts: &TestBuildOpts) -> Outcome {
     };
     let exit = run_status.code().unwrap_or(-1);
 
-    // Step 4: проверка EXPECT-маркера.
-    let outcome = match &expect {
-        Some(ExpectMarker::RuntimePanic(pat)) => {
+    // Step 4: проверка EXPECT-маркеров (multi-marker: все должны выполниться).
+    //
+    // Порядок: сначала RUNTIME_PANIC (определяет exit), затем EXIT_CODE,
+    // затем STDOUT/STDERR-паттерны. Если маркеров нет — ожидается exit 0.
+    let outcome = {
+        // RUNTIME_PANIC: exit != 0 + panic-pattern в stdout/stderr.
+        if let Some(pat) = find_runtime_panic() {
             if exit == 0 {
                 Outcome::Fail {
                     stage: Stage::Expectation {
@@ -1421,18 +1440,51 @@ pub fn run_one(opts: &TestBuildOpts) -> Outcome {
                     elapsed: start.elapsed(),
                 }
             } else {
-                Outcome::Pass {
+                // Panic check passed — still check STDOUT/STDERR patterns если есть.
+                let stdout_pats = find_stdout();
+                let stderr_pats = find_stderr();
+                let mut fail: Option<Outcome> = None;
+                for spat in &stdout_pats {
+                    if !stdout.contains(spat) {
+                        fail = Some(Outcome::Fail {
+                            stage: Stage::Expectation {
+                                mismatch: ExpectMismatch::WrongStdout {
+                                    expected_pat: spat.to_string(),
+                                    got: stdout.clone(),
+                                },
+                            },
+                            elapsed: start.elapsed(),
+                        });
+                        break;
+                    }
+                }
+                if fail.is_none() {
+                    for spat in &stderr_pats {
+                        if !stderr.contains(spat) {
+                            fail = Some(Outcome::Fail {
+                                stage: Stage::Expectation {
+                                    mismatch: ExpectMismatch::WrongStderr {
+                                        expected_pat: spat.to_string(),
+                                        got: stderr.clone(),
+                                    },
+                                },
+                                elapsed: start.elapsed(),
+                            });
+                            break;
+                        }
+                    }
+                }
+                fail.unwrap_or_else(|| Outcome::Pass {
                     detail: "(runtime-panic)".to_string(),
                     elapsed: start.elapsed(),
-                }
+                })
             }
-        }
-        Some(ExpectMarker::ExitCode(n)) => {
-            if exit != *n {
+        } else if let Some(n) = find_exit_code() {
+            if exit != n {
                 Outcome::Fail {
                     stage: Stage::Expectation {
                         mismatch: ExpectMismatch::WrongExit {
-                            expected: *n,
+                            expected: n,
                             got: exit,
                         },
                     },
@@ -1444,68 +1496,14 @@ pub fn run_one(opts: &TestBuildOpts) -> Outcome {
                     elapsed: start.elapsed(),
                 }
             }
-        }
-        Some(ExpectMarker::Stdout(pat)) => {
-            if !stdout.contains(pat) {
-                Outcome::Fail {
-                    stage: Stage::Expectation {
-                        mismatch: ExpectMismatch::WrongStdout {
-                            expected_pat: pat.clone(),
-                            got: stdout,
-                        },
-                    },
-                    elapsed: start.elapsed(),
-                }
-            } else {
-                Outcome::Pass {
-                    detail: "(stdout)".to_string(),
-                    elapsed: start.elapsed(),
-                }
-            }
-        }
-        Some(ExpectMarker::Stderr(pat)) => {
-            if !stderr.contains(pat) {
-                Outcome::Fail {
-                    stage: Stage::Expectation {
-                        mismatch: ExpectMismatch::WrongStderr {
-                            expected_pat: pat.clone(),
-                            got: stderr,
-                        },
-                    },
-                    elapsed: start.elapsed(),
-                }
-            } else {
-                Outcome::Pass {
-                    detail: "(stderr)".to_string(),
-                    elapsed: start.elapsed(),
-                }
-            }
-        }
-        Some(ExpectMarker::CompileError(_)) => {
-            // CompileError handled до Step 2 (early-return). Invariant violation.
-            Outcome::Fail {
-                stage: Stage::Codegen {
-                    error: "internal: CompileError marker reached runtime phase \
-                            (run_one early-return invariant violated)".to_string(),
-                },
-                elapsed: start.elapsed(),
-            }
-        }
-        Some(ExpectMarker::CcError(_)) => {
-            // CcError handled при CC failure (early-return). If we're here, CC succeeded
-            // but we expected it to fail — already handled above via NoCcError return.
-            // This arm is unreachable in practice but needed for exhaustiveness.
-            Outcome::Fail {
-                stage: Stage::Codegen {
-                    error: "internal: CcError marker reached runtime phase \
-                            (CC succeeded but error was expected)".to_string(),
-                },
-                elapsed: start.elapsed(),
-            }
-        }
-        None => {
-            // Default path: ожидается exit 0.
-            if exit != 0 {
+        } else {
+            // No panic/exit-code marker — check STDOUT/STDERR patterns, expect exit 0.
+            let stdout_pats = find_stdout();
+            let stderr_pats = find_stderr();
+            let has_stdout_stderr_marker = !stdout_pats.is_empty() || !stderr_pats.is_empty();
+
+            // Exit check: if no stdout/stderr marker either, require exit 0.
+            if exit != 0 && !has_stdout_stderr_marker {
                 let last_lines: Vec<&str> = stdout
                     .lines()
                     .chain(stderr.lines())
@@ -1518,10 +1516,58 @@ pub fn run_one(opts: &TestBuildOpts) -> Outcome {
                     elapsed: start.elapsed(),
                 }
             } else {
-                Outcome::Pass {
-                    detail: String::new(),
-                    elapsed: start.elapsed(),
+                // Check all stdout patterns.
+                let mut fail: Option<Outcome> = None;
+                for spat in &stdout_pats {
+                    if !stdout.contains(spat) {
+                        fail = Some(Outcome::Fail {
+                            stage: Stage::Expectation {
+                                mismatch: ExpectMismatch::WrongStdout {
+                                    expected_pat: spat.to_string(),
+                                    got: stdout.clone(),
+                                },
+                            },
+                            elapsed: start.elapsed(),
+                        });
+                        break;
+                    }
                 }
+                // Check all stderr patterns.
+                if fail.is_none() {
+                    for spat in &stderr_pats {
+                        if !stderr.contains(spat) {
+                            fail = Some(Outcome::Fail {
+                                stage: Stage::Expectation {
+                                    mismatch: ExpectMismatch::WrongStderr {
+                                        expected_pat: spat.to_string(),
+                                        got: stderr.clone(),
+                                    },
+                                },
+                                elapsed: start.elapsed(),
+                            });
+                            break;
+                        }
+                    }
+                }
+                // If stdout/stderr-only markers and exit != 0 — still fail
+                // (stdout/stderr markers without panic = expect clean exit).
+                if fail.is_none() && exit != 0 && has_stdout_stderr_marker {
+                    let last_lines: Vec<&str> = stdout
+                        .lines()
+                        .chain(stderr.lines())
+                        .rev()
+                        .take(3)
+                        .collect();
+                    let detail = last_lines.into_iter().rev().collect::<Vec<_>>().join(" | ");
+                    fail = Some(Outcome::Fail {
+                        stage: Stage::Run { error: detail },
+                        elapsed: start.elapsed(),
+                    });
+                }
+                fail.unwrap_or_else(|| Outcome::Pass {
+                    detail: if has_stdout_stderr_marker { "(stdout/stderr)".to_string() } else { String::new() },
+                    elapsed: start.elapsed(),
+                })
             }
         }
     };
@@ -2642,10 +2688,14 @@ fn civil_from_days(z: i64) -> (i32, u32, u32) {
 mod tests {
     use super::*;
 
+    fn first_marker(src: &str) -> Option<ExpectMarker> {
+        parse_expect(src).into_iter().next()
+    }
+
     #[test]
     fn parse_expect_compile_error() {
         let src = "// EXPECT_COMPILE_ERROR undefined identifier\nmodule x\n";
-        match parse_expect(src) {
+        match first_marker(src) {
             Some(ExpectMarker::CompileError(p)) => assert_eq!(p, "undefined identifier"),
             other => panic!("expected CompileError, got {:?}", other),
         }
@@ -2654,7 +2704,7 @@ mod tests {
     #[test]
     fn parse_expect_runtime_panic() {
         let src = "// EXPECT_RUNTIME_PANIC index out of bounds\nmodule x\n";
-        match parse_expect(src) {
+        match first_marker(src) {
             Some(ExpectMarker::RuntimePanic(p)) => assert_eq!(p, "index out of bounds"),
             other => panic!("expected RuntimePanic, got {:?}", other),
         }
@@ -2663,7 +2713,7 @@ mod tests {
     #[test]
     fn parse_expect_exit_code() {
         let src = "// EXPECT_EXIT_CODE 42\nmodule x\n";
-        match parse_expect(src) {
+        match first_marker(src) {
             Some(ExpectMarker::ExitCode(n)) => assert_eq!(n, 42),
             other => panic!("expected ExitCode, got {:?}", other),
         }
@@ -2672,7 +2722,7 @@ mod tests {
     #[test]
     fn parse_expect_stdout() {
         let src = "// EXPECT_STDOUT hello\nmodule x\n";
-        match parse_expect(src) {
+        match first_marker(src) {
             Some(ExpectMarker::Stdout(p)) => assert_eq!(p, "hello"),
             other => panic!("expected Stdout, got {:?}", other),
         }
@@ -2681,19 +2731,31 @@ mod tests {
     #[test]
     fn parse_expect_stderr() {
         let src = "// EXPECT_STDERR panic\nmodule x\n";
-        match parse_expect(src) {
+        match first_marker(src) {
             Some(ExpectMarker::Stderr(p)) => assert_eq!(p, "panic"),
             other => panic!("expected Stderr, got {:?}", other),
         }
     }
 
     #[test]
-    fn parse_expect_first_marker_wins() {
-        let src = "// EXPECT_EXIT_CODE 1\n// EXPECT_STDOUT hi\nmodule x\n";
-        match parse_expect(src) {
-            Some(ExpectMarker::ExitCode(1)) => {}
-            other => panic!("expected ExitCode(1), got {:?}", other),
-        }
+    fn parse_expect_multi_marker() {
+        // RUNTIME_PANIC + STDOUT работают вместе — оба маркера собираются.
+        let src = "// EXPECT_RUNTIME_PANIC nova: unhandled Fail: bang\n\
+                   // EXPECT_STDOUT DEFER_FIRED\nmodule x\n";
+        let markers = parse_expect(src);
+        assert_eq!(markers.len(), 2, "expected 2 markers, got {:?}", markers);
+        assert!(matches!(&markers[0], ExpectMarker::RuntimePanic(p) if p == "nova: unhandled Fail: bang"));
+        assert!(matches!(&markers[1], ExpectMarker::Stdout(p) if p == "DEFER_FIRED"));
+    }
+
+    #[test]
+    fn parse_expect_multiple_stdout() {
+        // Несколько EXPECT_STDOUT-паттернов — все собираются.
+        let src = "// EXPECT_STDOUT line1\n// EXPECT_STDOUT line2\nmodule x\n";
+        let markers = parse_expect(src);
+        assert_eq!(markers.len(), 2);
+        assert!(matches!(&markers[0], ExpectMarker::Stdout(p) if p == "line1"));
+        assert!(matches!(&markers[1], ExpectMarker::Stdout(p) if p == "line2"));
     }
 
     #[test]
@@ -2704,13 +2766,13 @@ mod tests {
             src.push_str("\n");
         }
         src.push_str("// EXPECT_EXIT_CODE 7\n");
-        assert!(parse_expect(&src).is_none());
+        assert!(parse_expect(&src).is_empty());
     }
 
     #[test]
     fn parse_expect_none_no_marker() {
         let src = "module x\nfn main() { print(\"hi\") }\n";
-        assert!(parse_expect(src).is_none());
+        assert!(parse_expect(src).is_empty());
     }
 
     #[test]
@@ -2718,7 +2780,7 @@ mod tests {
         // Ф.15 regression: до fix'а `?` оператор возвращал None на
         // первой non-`//` строке, не дочитав маркер ниже.
         let src = "module foo\n\n// EXPECT_EXIT_CODE 42\ntest \"x\" {}\n";
-        match parse_expect(src) {
+        match first_marker(src) {
             Some(ExpectMarker::ExitCode(42)) => {}
             other => panic!("expected ExitCode(42), got {:?}", other),
         }
@@ -2728,7 +2790,7 @@ mod tests {
     fn parse_expect_after_blank_line() {
         // Blank line на 1-й строке не должна abort'нуть поиск.
         let src = "\n// EXPECT_STDOUT hello\nmodule foo\n";
-        match parse_expect(src) {
+        match first_marker(src) {
             Some(ExpectMarker::Stdout(p)) => assert_eq!(p, "hello"),
             other => panic!("expected Stdout(hello), got {:?}", other),
         }
@@ -2739,7 +2801,7 @@ mod tests {
         // Mix of comment, code, and marker — marker должен найтись.
         let src = "// some doc comment\nmodule foo\n// more doc\n\
                    // EXPECT_RUNTIME_PANIC index out of bounds\ntest {}\n";
-        match parse_expect(src) {
+        match first_marker(src) {
             Some(ExpectMarker::RuntimePanic(p)) => assert_eq!(p, "index out of bounds"),
             other => panic!("expected RuntimePanic, got {:?}", other),
         }
