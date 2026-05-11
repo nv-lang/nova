@@ -504,6 +504,12 @@ impl Parser {
             body,
             span: start.merge(end_span),
             realtime_attr,
+            // Plan 33.1: contracts будут заполнены в следующей фазе
+            // парсером после сигнатуры. Сейчас — пустые (backward-compat).
+            contracts: Vec::new(),
+            verify_mode: crate::ast::VerifyMode::Default,
+            verify_timeout_ms: None,
+            purity: crate::ast::Purity::Unknown,
         })
     }
 

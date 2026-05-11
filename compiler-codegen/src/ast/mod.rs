@@ -1,8 +1,9 @@
 //! Типы AST.
 //!
 //! Минималистичный набор: всё что нужно для bootstrap'а Nova-on-Nova.
-//! Не все фичи парсятся в детальном виде — `comptime`, contracts,
-//! attributes пропускаются на уровне парсера.
+//! Plan 33.1: добавлены контракты (`Contract`, `VerifyMode`, `Purity`) —
+//! AST-узлы готовы; парсер/typecheck/SMT расширения — в последующих
+//! фазах [Plan 33.1](../../../docs/plans/33.1-contracts-core.md).
 
 use crate::diag::Span;
 
@@ -53,6 +54,73 @@ pub struct FnDecl {
     /// Эквивалентен оборачиванию body в `realtime { ... }`. Type-checker
     /// (CapabilityCtx) применяет realtime-проверки ко всему телу fn.
     pub realtime_attr: RealtimeAttr,
+    /// Plan 33.1 (D24): контракты после сигнатуры, до тела.
+    /// Пустой вектор у функций без контрактов (backward-compat).
+    pub contracts: Vec<Contract>,
+    /// Plan 33.1 (D24): режим верификации контрактов.
+    /// `@must_verify` / `@unverified` / default.
+    pub verify_mode: VerifyMode,
+    /// Plan 33.1 (D24 §35): `@verify_timeout(ms)` — локальный override
+    /// для SMT-таймаута. None = глобальный default (2000ms).
+    pub verify_timeout_ms: Option<u32>,
+    /// Plan 33.1 (D24): `@pure` — assertion что функция чистая.
+    /// Реальная purity выводится в Ф.2 через SCC по call-graph;
+    /// если выведенная не соответствует объявленной — compile error.
+    pub purity: Purity,
+}
+
+/// Plan 33.1 (D24): один контракт-clause функции.
+#[derive(Debug, Clone)]
+pub struct Contract {
+    pub kind: ContractKind,
+    pub expr: Expr,
+    pub span: Span,
+}
+
+/// Plan 33.1: вид контракта (`requires` vs `ensures`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContractKind {
+    /// `requires <bool-expr>` — предусловие. Проверяется на входе.
+    /// `result`/`old(...)` запрещены.
+    Requires,
+    /// `ensures <bool-expr>` — постусловие. Проверяется на выходе.
+    /// Доступны `result`, `result.is_ok`/`.is_err`/`.value`/`.error`,
+    /// `old(expr)` для значений до вызова.
+    Ensures,
+}
+
+/// Plan 33.1 (D24 §49): режим верификации контрактов функции.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VerifyMode {
+    /// Без атрибута. SMT пытается доказать; недоказанное в release —
+    /// compile error (R20), пока программист не пометит явно
+    /// `@unverified` или не добавит hint'ов.
+    Default,
+    /// `@must_verify` — SMT обязан доказать. Unknown → compile error
+    /// даже в debug.
+    MustVerify,
+    /// `@unverified` — отказ от SMT-доказательства заранее. В debug —
+    /// runtime check; в release — контракт стирается (no-op).
+    Unverified,
+}
+
+/// Plan 33.1: чистота функции (для использования в контрактах
+/// через composition в 33.2 + ghost в 33.3).
+///
+/// Выводится в Ф.2 через SCC по call-graph (как `const fn` в Rust).
+/// Атрибут `@pure` — assertion программиста; расхождение с выведенным —
+/// compile error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Purity {
+    /// Чистая функция: нет effects в сигнатуре, все вызываемые —
+    /// тоже pure. Можно использовать в контрактах других функций
+    /// (composition — Plan 33.2).
+    Pure,
+    /// Effectful. Использование в контрактах запрещено.
+    Effectful,
+    /// Не определено (до запуска Ф.2 inference). Парсер выставляет
+    /// это значение если `@pure` не указан явно.
+    Unknown,
 }
 
 /// Plan 16: вид `@realtime` атрибута на функции (D64 §3697).
