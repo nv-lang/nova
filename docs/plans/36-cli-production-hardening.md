@@ -99,19 +99,43 @@ deprecation cycle — bootstrap, не в проде).
 ### Architecture decisions (A01-A25 closed)
 
 **AD1. Code placement** (closes A01, A03, A07, A19, A24).
-- Создаётся новый crate **`nova-frontend`** (sibling к `nova-codegen` /
-  `nova-cli`). Содержит:
-  - `check_file_full()` — pipeline orchestration.
-  - `walk_nv()` — moved из `test_runner.rs` (где сейчас private).
-  - `Environment` struct — env var aggregation (NO_COLOR / CI / etc).
-  - Output renderers (`trait DiagRenderer` + 6 impls).
-  - Cache layer (`trait CheckCache` + FsCache + MemoryCache).
-- `compiler-codegen` остаётся **bootstrap-minimal** (closes A08, I06):
-  blake3 / ignore / is-terminal — все в `nova-frontend` или `nova-cli`,
-  не в core.
-- `nova-cli` остаётся thin: `Cmd` dispatch + flag parsing.
-- `nova-cli` нужен **`lib.rs`** — split на `nova-cli` (lib) + `nova` (bin).
-  Закрывает A24.
+
+**Решение: split `nova-cli` на `lib` + `bin`** (без отдельного crate
+`nova-cli (lib)`). Прагматичный compromise — bootstrap не в проде, нет
+third-party reuse pipeline'а.
+
+Структура после Ф.0:
+```
+nova-cli/
+├── Cargo.toml          # объявляет и lib и bin
+└── src/
+    ├── lib.rs          # pub fn check_file_full(), walk_nv(), и т.д.
+    │                   # + pub mod render { Diagnostic renderers }
+    │                   # + pub mod cache { trait CheckCache + impls }
+    │                   # + pub struct Environment (env vars aggregation)
+    └── main.rs         # thin Cmd dispatch, парсит args, зовёт lib
+```
+
+`Cargo.toml`:
+```toml
+[lib]
+name = "nova_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "nova"
+path = "src/main.rs"
+```
+
+- **`compiler-codegen`** остаётся **bootstrap-minimal** (closes A08, I06):
+  blake3 / ignore / is-terminal — все в `nova-cli`, не в core.
+- **`nova-cli` lib** содержит: `check_file_full()`, `walk_nv()` (moved
+  из `test_runner.rs`), `Environment`, output renderers (`trait
+  DiagRenderer` + 6 impls), cache layer (`trait CheckCache` + FsCache
+  + MemoryCache).
+- **`nova-cli` bin** остаётся thin: `Cmd` dispatch + flag parsing.
+- Один итоговый бинарь `nova.exe` — lib статически линкуется в bin.
+- Unit-тесты в `lib.rs` через `#[cfg(test)]` — закрывает A24.
 
 **AD2. `Diagnostic` extension** (closes A04, A05, I02).
 - `compiler-codegen/src/diag.rs::Diagnostic` расширяется:
@@ -136,7 +160,7 @@ deprecation cycle — bootstrap, не в проде).
   опционально.
 
 **AD3. `DiagRenderer` trait** (closes A02).
-- В `nova-frontend/src/render/`:
+- В `nova-cli (lib)/src/render/`:
   ```rust
   pub trait DiagRenderer {
       fn emit(&mut self, d: &Diagnostic);
@@ -257,7 +281,7 @@ Re-organized по MVP boundary. Каждое R помечено: **[MVP]**, **[3
 - `*.c` рядом с `*.nv`
 
 `.gitignore` respect через `ignore` crate — **[36.A]** (deferred — dep
-approval needed для `nova-frontend`).
+approval needed для `nova-cli (lib)`).
 
 Override: `--include-runtime`, `--no-exclude <pattern>`.
 
@@ -372,7 +396,7 @@ debug override.
 **R22. [36.E] nova.toml manifest validation.** Sub-plan 36.E.
 
 **R23. [36.A] Effect/capability info в JSON.** Per-function effects
-serialized. Builder в `nova-frontend/src/render/json.rs`.
+serialized. Builder в `nova-cli (lib)/src/render/json.rs`.
 
 **R24. [36.D] Cross-pipeline divergence documentation.** README + man
 page section.
@@ -389,7 +413,7 @@ Distribution story (closes I18): document `cargo install --git <repo>`
 **R27. [36.C] GitHub Actions annotations.** Auto-detect `$GITHUB_ACTIONS`.
 **Narrow to GHA in v1** (closes I24). GitLab/Buildkite/CircleCI — separate
 follow-up if demand. **Requires `Span` end-position** (closes I04): add
-`Diagnostic::span_end_line_col()` helper в `nova-frontend` (walks source).
+`Diagnostic::span_end_line_col()` helper в `nova-cli (lib)` (walks source).
 
 **R28. [36.C] CI matrix examples.** Reference workflows. **macOS row**
 gated on actual testing (closes I17): mark as `experimental` until
@@ -415,9 +439,9 @@ i18n. См. sub-plan 36.D + R30 list.
 
 **Prerequisite для всех остальных фаз.**
 
-1. Создать crate `nova-frontend` (skeleton).
+1. Создать crate `nova-cli (lib)` (skeleton).
 2. Перенести из `nova-cli/src/main.rs`:
-   - `cmd_check` body → `nova_frontend::check_file_full()`.
+   - `cmd_check` body → `nova_cli::check_file_full()`.
 3. Phases:
    1. parse (existing)
    2. check_module_path (existing)
@@ -438,11 +462,11 @@ Acceptance:
 
 ### Ф.1 [MVP] — `nova check <path>` + `nova test <path>` polymorphic
 
-В `nova-cli/src/main.rs` + `nova-frontend`. Оба subcommand'а в одной
+В `nova-cli/src/main.rs` + `nova-cli (lib)`. Оба subcommand'а в одной
 фазе — общие фундамент: walk + path validation + parallel + exit codes
 + ManifestResolver. Делать раздельно нет смысла — будет copy-paste.
 
-**Общий фундамент (`nova-frontend`):**
+**Общий фундамент (`nova-cli (lib)`):**
 1. `walk` module:
    - `walk_nv()` (extract из test_runner.rs).
    - R3 implicit-excludes filter (hardcoded, без `.gitignore` v1).
@@ -474,7 +498,7 @@ Acceptance:
 6. Reuses Plan 27 test runner infrastructure.
 
 Dependencies added (closes I06):
-- `nova-frontend/Cargo.toml`: `is-terminal`, `dunce` (Windows path
+- `nova-cli (lib)/Cargo.toml`: `is-terminal`, `dunce` (Windows path
   helper if R5 needs).
 - `nova-codegen/Cargo.toml`: **no changes** (bootstrap-minimal preserved).
 
@@ -600,7 +624,7 @@ baseline-compare` helper script. Gating closes A25 — **explicit
 
 ### External dependencies
 - **MVP добавляет:** `is-terminal`, optionally `dunce` (Windows paths).
-  В **`nova-frontend`** crate, не `nova-codegen` (preserves
+  В **`nova-cli (lib)`** crate, не `nova-codegen` (preserves
   bootstrap-minimality, closes A08/I06).
 - **36.A добавляет:** `serde_json` для NDJSON, `quick-xml` для JUnit,
   SARIF — can use `serde_json` (SARIF is JSON-based).
@@ -626,7 +650,7 @@ baseline-compare` helper script. Gating closes A25 — **explicit
   (объединённая для check + test). ~500-700 строк с тестами. Остальное —
   отдельные sub-plans 36.A-E.
 - **bootstrap-minimality.** Mitigation: AD1 — все CLI/output deps в
-  `nova-frontend`, `nova-codegen` остаётся minimal.
+  `nova-cli (lib)`, `nova-codegen` остаётся minimal.
 - **4 nested nova.toml.** Mitigation: AD6 unified resolver; MVP только
   `find_workspace_root` simple variant.
 - **macOS untested.** Mitigation: R28 marks macOS "experimental" в CI
@@ -654,7 +678,7 @@ baseline-compare` helper script. Gating closes A25 — **explicit
     module, ушёл в types::check_module (AD5).
   - **Prerequisites enumerated**: Plan 34 (baseline), Plan 35 (cache
     v2), `nova-cli` lib.rs split (A24), `Diagnostic` extension breaking
-    change (AD2), `nova-frontend` crate creation (AD1),
+    change (AD2), `nova-cli (lib)` crate creation (AD1),
     `parse_alloc_constraint` move (AD7), unified `ManifestResolver`
     (AD6).
   - **Distribution story** acknowledged как gap (I18) — sub-plan 36.C
