@@ -294,6 +294,7 @@ fn cmd_build(
     if timeout_secs == 0 {
         bail!("--timeout must be >= 1 second");
     }
+    let build_start = std::time::Instant::now();
     let repo = find_repo_root()?;
     let paths = resolve_paths(&repo);
 
@@ -395,7 +396,7 @@ fn cmd_build(
         .or_else(|_| std::fs::copy(&exe_file, &final_exe).map(|_| ()))
         .map_err(|e| anyhow!("move executable: {}", e))?;
 
-    println!("built: {}", final_exe.display());
+    println!("built: {} ({:.2}s)", final_exe.display(), build_start.elapsed().as_secs_f64());
     Ok(())
 }
 
@@ -498,6 +499,13 @@ fn cmd_test(
         .unwrap_or(paths.default_results_file);
     if results_path.is_dir() {
         bail!("results file path is a directory: {}", results_path.display());
+    }
+    if rerun_failed && !results_path.is_file() {
+        bail!(
+            "--rerun-failed requires a previous results file at {}\n\
+             Run `nova test` first to generate it.",
+            results_path.display()
+        );
     }
     if let Some(parent) = results_path.parent() {
         std::fs::create_dir_all(parent)
