@@ -3497,3 +3497,62 @@ Trade-offs:
   Park-based вариант = UB (повторный mco_yield после wake).
 - SIGINT handler через uv_signal_t — отложен в D92 Правило 7 (future).
 - Leak verification — manual; CI Valgrind отдельной задачей.
+
+
+═══════════════════════════════════════════════════════════════════
+Plan 22 hardening Ф.7-Ф.11 — 2026-05-11
+
+После production pass'а (37dd1a6) — дополнительный hardening для
+high-load / long-running. 5 фаз, 3 реализованы, 2 deferred с clear
+blockers.
+
+| Фаза | Что | Status | Trade-off |
+|---|---|---|---|
+| **Ф.7** Heap-allocated NovaFiberQueue/NovaSchedState arrays | ✅ Done | +6 nova_alloc per scope-grow (micro-overhead, acceptable) |
+| **Ф.8** Close-cb state machine | ⏸ Deferred | D93 sync-vs-async stop_cb contract нужен (Q-D93-sync-async-stop) |
+| **Ф.9** Leak verification bench | ✅ Done | Implicit через bounded-time, не automated CRT/Valgrind |
+| **Ф.10** SIGINT handler через uv_signal_t | ✅ Done | Только main-scope; nested supervised через cancel_requested chain |
+| **Ф.11** Linux smoke verification | ⏸ Deferred TBD | Нет Linux env; build_libuv готов, never tested |
+
+**Главные решения:**
+
+- **Ф.7 — capacity-doubling вместо fixed cap.** Раньше `NOVA_SCOPE_CAP=1024`
+  как hard limit на fiber'ов в scope (DoS-vulnerable + nested supervised
+  stack-overflow). Теперь pointer'ы + capacity field, grow через
+  managed nova_alloc от initial=16 doubling. Idle scope ~100 bytes
+  стека (было ~50 KB embedded array). Unlimited nested. sleep_bench
+  upscaled 1000 → 10k concurrent.
+
+- **Ф.8 deferred — нашли блокирующий design issue в D93.** Прототип
+  state-machine `{PENDING, CLOSING, CLOSED}` логически корректен,
+  но `cancel_all_pending` делает synchronous `parked[i] = false`
+  после stop_cb. Sleep handle требует ASYNC close-wait —
+  cancel race'ит close_cb, fiber resume'ится до final state → sanity-
+  check abort. Откат к Ф.6. Открыт Q-D93-sync-async-stop: enum
+  SYNC vs ASYNC в `NovaCancelStopCb`, Plan 21 (channels) требует SYNC,
+  sleep/socket — ASYNC. Перед каналами фиксируется.
+
+- **Ф.9 — bounded-time как leak-proxy.** 100k uv_timer create+close
+  + 1k repeated sleep + 1000 scope-cycle. Если leak — runaway
+  accumulation overflows time bound (5s/15s/timely). Не automated
+  CRT, но pragmatic confidence для bootstrap.
+
+- **Ф.10 — uv_unref на signal handle.** Signal handler passive, не
+  должен держать loop alive. После set'а cancel_requested +
+  cancel_all_pending → handler возвращается, parked fiber'ы wake'ются
+  immediate, defer/errdefer → scope-drain → process exits cleanly.
+
+- **Ф.11 deferred TBD.** Cross-platform build infra готова, но Windows-
+  only dev-loop. Откладывается до Linux deployment trigger либо
+  параллельно с Plan 18 std.net validation.
+
+**Главный вывод:** Production-grade для Windows закрыт. Оставшиеся
+deferred фазы имеют **формализованные blockers**, не неопределённость:
+Ф.8 → Q-D93-sync-async-stop; Ф.11 → Linux env access.
+
+Final tests: 138/138 nova_tests + sleep_leak_check 3/3 PASS.
+
+Commits:
+- 8c1da32 Ф.7 heap-allocated arrays
+- cd55cf2 Ф.10 SIGINT через uv_signal_t
+- a4321d7 Ф.9 leak-check + Ф.8/Ф.11 deferred + Q-D93-sync-async-stop

@@ -4550,3 +4550,107 @@ Lazy pointer-в-struct (Вариант B) — это **архитектурно 
 Final tests: 134+/134+ PASS + 5 sleep_real_clock + 2 sleep_bench
 (1000-concurrent + 1M yields) — production-grade.
 
+═══════════════════════════════════════════════════════════════════
+Plan 22 hardening Ф.7-Ф.11 — 2026-05-11
+
+После закрытия Plan 22 «production pass» (commit 37dd1a6, 138/138
+PASS + lazy NovaSchedState + uv_hrtime) пользователь запросил
+дополнительный hardening pass — закрыть 5 trade-off'ов выявленных
+для high-load / long-running deployment. Фазы Ф.7-Ф.11.
+
+(Ф.7) Heap-allocated NovaFiberQueue + NovaSchedState arrays.
+Убрал `NOVA_SCOPE_CAP=1024` fixed-array cap. 6 arrays в NovaFiberQueue
+(fibers, fiber_fail_top, fiber_interrupt_top, fiber_effect_snapshot,
+fiber_error, fiber_did_throw) + 3 в NovaSchedState (parked,
+pending_handle, pending_stop_cb) теперь pointer'ы + capacity field.
+nova_scope_grow / nova_sched_grow_state — capacity-doubling от 16.
+Memory: idle scope ~100 bytes на стеке (был ~50 KB embedded array).
+Nested supervised — unlimited (раньше 5+ уровней давали stack overflow).
+sleep_bench upscaled 1000 → 10k concurrent: PASS в <1500ms.
+
+(Ф.8) Close-cb state machine — DEFERRED.
+Попытка: timer_cb инициирует close (НЕ wake), close_cb wake'ает.
+Один park на весь lifecycle, убирает busy ms-wait через uv_run NOWAIT.
+Прототип реализован — sleep_real_clock FAIL'ит: cancel_all_pending
+делает `parked[i] = false` после stop_cb (synchronous unpark contract);
+async-close-wait в новом дизайне ломает sync-предположение,
+fiber resume'ится до close_cb → sanity-abort. Откат к Ф.6 версии.
+Корень проблемы — D93 не различает sync vs async stop_cb. Открыт
+Q-D93-sync-async-stop в open-questions.md: enum `{NOVA_STOP_SYNC,
+NOVA_STOP_ASYNC}`, channel waitlist — SYNC, sleep/socket — ASYNC.
+Перед Plan 21 (Channel) нужно формализовать. Текущая ms-busy на
+close_cb — pragmatically acceptable (1-2 iter typical).
+
+(Ф.9) Leak verification — sleep_leak_check.nv.
+3 теста через bounded-time assertions:
+  - 100k sequential Time.sleep(0): create+close uv_timer 100k раз,
+    elapsed <5s (если handle'ы leak — uv_loop tracker переполнился
+    бы за ~1k iter).
+  - 1k repeated Time.sleep(10): close-cb backlog bounded в <15s.
+  - 1000 scope-create/destroy + inner spawn+sleep(0): GC корректно
+    освобождает scope.sched_state + dynamic arrays.
+Все 3 PASS. Не automated через CRT/Valgrind (требует platform-
+specific), но bounded-time даёт implicit confidence.
+
+(Ф.10) SIGINT handler через uv_signal_t.
+nova_evloop_install_sigint(main_scope) устанавливает uv_signal_t
+на SIGINT (=2 POSIX, валиден на Windows через libuv). Callback set'ит
+main_scope->cancel_requested + вызывает nova_sched_cancel_all_pending
+— parked fiber'ы (Time.sleep) wake immediate через generic stop_cb
+mechanism (D93). На yield-point бросают "scope cancelled" →
+defer/errdefer → graceful shutdown. uv_unref на handle — signal
+handler passive, не держит loop alive. emit_main prelude install'ит
+один раз (idempotent). D92 Правило 7 ✅ closed.
+Automated test не делается — нет signal-stdlib в Nova; manual verify
+описан в Ф.10 секции плана.
+
+(Ф.11) Linux smoke — DEFERRED TBD.
+Cross-platform build_libuv (Windows cl/lib + Linux/macOS cc/ar)
+готов теоретически, но never tested на Linux. Отложено до Linux
+deployment либо параллельно с Plan 18 std.net validation.
+
+Параллельная работа (не Plan 22 hardening, но в том же pass'е):
+- **Plan 24 implementation** (cd55cf2 → 51b61a5): test-build /
+  test-all subcommands в `nova-codegen`, run_tests.ps1 переписан
+  thin wrapper (409 → 71 строк), новый run_tests.sh для Linux/macOS.
+  Streaming progress сохранён.
+- **Plan 20 errdefer-throw fix** (153ac2b): errdefer корректно
+  срабатывает на throw-path даже когда user `with Fail = handler`
+  активен. Через D65 fail-strict (`fail()` never resumes — после
+  handler return всё равно `nova_throw` → local fail-frame
+  setjmp → errdefer). 4 новых positive-теста в errdefer_throw.nv.
+  Закрыто старое ограничение в D90 «Эволюция» + Q-errdefer-handler.
+
+**Trade-offs принятые:**
+
+- Ф.7 heap-arrays: +6 nova_alloc per `nova_scope_grow` invocation
+  (вместо одного embedded struct). Под managed-heap GC это всё ещё
+  cheap, но микро-overhead на scope-creation. Acceptable.
+- Ф.8 deferred: ms-busy wait на close_cb остался. На high-load
+  (10k+ concurrent sleeps) добавляет ~1-2 uv_run iter latency.
+  Если профилирование Plan 23+ покажет — фиксируется через D93
+  enum (Q-D93-sync-async-stop).
+- Ф.10 SIGINT: только main-scope, не nested supervised. Если внутри
+  long-running supervised блока Ctrl+C — main-scope cancel пробрасывается
+  через scope.cancel_requested chain (раздельные supervised'ы
+  получают propagated cancel когда parent main-scope cancel'ится
+  на yield-point parent'а).
+- Ф.11 deferred: production Linux deployment может потребовать
+  Linux-specific tweaks (path separators, errno mapping). Не блокер
+  для Windows-only deployment.
+
+**Главный вывод:** Plan 22 теперь **production-grade для Windows**.
+Hard cap NOVA_SCOPE_CAP убран (Ф.7), graceful Ctrl+C (Ф.10),
+leak-bounded (Ф.9). Linux validation (Ф.11) и close-cb cleanup (Ф.8)
+— будущие задачи с чётко описанными blockers и acceptance criteria.
+
+Final tests: 138/138 nova_tests PASS + sleep_leak_check 3/3 PASS
+(running отдельно из-за timing, добавлен после регресса).
+
+Commits:
+- 51b61a5 plan-24 implementation (test-build/test-all + .ps1/.sh wrappers)
+- 153ac2b plan-20 errdefer-throw fix (codegen + spec + 4 тестов)
+- 8c1da32 plan-22 Ф.7 heap-allocated arrays
+- cd55cf2 plan-22 Ф.10 SIGINT через uv_signal_t
+- a4321d7 plan-22 Ф.9 leak-check + Ф.8/Ф.11 deferred + Q-D93-sync-async-stop
+
