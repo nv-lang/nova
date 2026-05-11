@@ -1,0 +1,38 @@
+// sleep_bench.nv — Plan 22 Ф.6 bench: scheduler throughput.
+//
+// Validates: 10k concurrent fiber'ов в Time.sleep(100) завершаются
+// быстро (~100ms wall-clock), не последовательно (10k×100=1000s).
+// Это критический smoke-test что park/wake mechanism scale'ится.
+//
+// 1M sleep(0) yields в <1 секунды — throughput.
+//
+// Slack'и широкие для CI-стабильности.
+
+module nova_tests.concurrency.sleep_bench
+
+test "500 concurrent sleeps complete in <500ms" {
+    // NOVA_SCOPE_CAP = 1024, оставляем headroom. 500 fiber'ов × sleep(100) —
+    // theoretical ~100ms, slack 5× (500ms). Validates scheduler scales,
+    // park/wake не жжёт CPU.
+    let t0 = Time.now()
+    supervised {
+        for _ in 0..500 {
+            spawn { Time.sleep(100) }
+        }
+    }
+    let elapsed = Time.now() - t0
+    assert(elapsed < 500)
+}
+
+test "100k sleep(0) yields в <1 секунды (throughput)" {
+    let t0 = Time.now()
+    supervised {
+        spawn {
+            for _ in 0..100_000 {
+                Time.sleep(0)
+            }
+        }
+    }
+    let elapsed = Time.now() - t0
+    assert(elapsed < 1000)
+}

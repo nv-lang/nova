@@ -555,6 +555,9 @@ static void _nova_sleep_stop_cb(void* handle) {
     }
 }
 
+/* No-op timer callback для main-flow uv_run waits (Plan 22 Ф.6). */
+static void _nova_main_wait_timer_cb(uv_timer_t* h) { (void)h; }
+
 /* Fiber-context sleep через uv_timer_t + park/wake. Production-grade —
  * нулевой CPU overhead на sleep period, immediate cancel response. */
 static inline void _nova_sleep_via_libuv(NovaFiberQueue* scope, int slot,
@@ -633,16 +636,57 @@ static inline nova_unit _nova_time_default_sleep(nova_int ms) {
             nova_fiber_yield();
         }
     } else if (_nova_active_scope) {
-        /* Main flow inside a scope: drain queue per pass until deadline.
-         * Plan 22 Ф.5 заменит на uv_run + main-scope main-step. */
+        /* Main flow inside a scope (D92 implicit либо explicit supervised):
+         * drain queue + bounded uv_run пока deadline не пройдёт.
+         * Plan 22 Ф.6: вместо busy-loop'а — drain ready, потом uv_run
+         * с bounded timeout до deadline. CPU idle когда нет ready fiber'ов. */
         int64_t deadline = _nova_monotonic_ms() + (int64_t)ms;
         while (_nova_monotonic_ms() < deadline) {
-            nova_supervised_step(_nova_active_scope);
+            int alive = nova_supervised_step(_nova_active_scope);
+            if (alive == 0) {
+                /* Никого нет — просто ждём оставшееся время. */
+                int64_t remaining = deadline - _nova_monotonic_ms();
+                if (remaining > 0) {
+#ifdef NOVA_USE_LIBUV
+                    /* uv_run UV_RUN_ONCE с pending timer на остаток
+                     * blocks main-thread в kernel-wait'е. Если уже есть
+                     * pending libuv-handle (наш timer) — uv_run возвращается
+                     * когда он сработает. Без pending — мы создаём timer
+                     * на remaining ms. */
+                    uv_timer_t main_wait;
+                    uv_timer_init(nova_evloop(), &main_wait);
+                    uv_timer_start(&main_wait, _nova_main_wait_timer_cb,
+                                    (uint64_t)remaining, 0);
+                    uv_run(nova_evloop(), UV_RUN_ONCE);
+                    uv_timer_stop(&main_wait);
+                    uv_close((uv_handle_t*)&main_wait, NULL);
+                    /* close handle через NOWAIT pass. */
+                    uv_run(nova_evloop(), UV_RUN_NOWAIT);
+#else
+                    _nova_native_sleep_ms(remaining);
+#endif
+                }
+            }
+#ifdef NOVA_USE_LIBUV
+            else {
+                /* Есть alive fiber'ы — может быть parked. Поспать через
+                 * uv_run UV_RUN_NOWAIT (быстро вернётся если нет события). */
+                int parked = nova_sched_count_parked(_nova_active_scope);
+                if (parked > 0 && parked == alive) {
+                    /* Все parked — ждать libuv event. */
+                    int64_t remaining = deadline - _nova_monotonic_ms();
+                    if (remaining > 0) {
+                        uv_run(nova_evloop(), UV_RUN_ONCE);
+                    }
+                }
+            }
+#endif
         }
     } else {
         /* Top-level, no scheduler — fall back to native sleep.
-         * Plan 22 Ф.5: D92 implicit main-scope обернёт main, эта ветка
-         * станет unreachable в normal flow. */
+         * Plan 22 Ф.5 (D92): эта ветка unreachable в normal flow
+         * (emit_main всегда устанавливает main-scope). Оставляем как
+         * defensive fallback для tests / corner cases. */
         _nova_native_sleep_ms((int64_t)ms);
     }
     return NOVA_UNIT;
