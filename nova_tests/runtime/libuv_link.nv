@@ -1,0 +1,20 @@
+// libuv_link.nv — Plan 22 Ф.1 smoke-test.
+//
+// Validates: libuv vendored submodule собирается, libuv.lib линкуется
+// в test exe без runtime ошибок. Не вызывает libuv API напрямую —
+// Plan 22 Ф.2+ добавит реальное использование. Здесь только проверка
+// что link succeeds.
+//
+// Этот файл должен PASS:
+//   - с NOVA_USE_LIBUV=0 (libuv not linked) → no-op printout
+//   - с NOVA_USE_LIBUV=1 либо libuv.lib present (auto) → no-op printout
+// В обоих случаях output идентичен — Ф.1 проверяет именно link-step,
+// не runtime функциональность.
+
+module nova_tests.runtime.libuv_link
+
+// EXPECT_STDOUT libuv link smoke ok
+
+fn main() Io -> () {
+    println("libuv link smoke ok")
+}

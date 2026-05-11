@@ -1,0 +1,4 @@
+[submodule "compiler-codegen/nova_rt/libuv"]
+	path = compiler-codegen/nova_rt/libuv
+	url = https://github.com/libuv/libuv.git
+	branch = v1.x

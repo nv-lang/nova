@@ -111,6 +111,35 @@ if ($use_clang) {
 
 New-Item -ItemType Directory -Force -Path $tmp_dir | Out-Null
 
+# Plan 22 Ф.1: libuv vendored через git submodule (nova_rt/libuv/).
+# Build libuv.lib через build_libuv.ps1 → target/libuv-cache/libuv.lib.
+# Если cache есть — линкуем; иначе fall back на runtime без libuv
+# (после Plan 22 Ф.4 libuv станет обязательным, сейчас — opt-in).
+# Override через NOVA_USE_LIBUV: "0" = disable forcing, "1" = require и fail если нет.
+$libuv_cache = Join-Path $repo_root "target\libuv-cache"
+$libuv_lib   = Join-Path $libuv_cache "libuv.lib"
+$libuv_inc   = Join-Path $repo_root "compiler-codegen\nova_rt\libuv\include"
+$use_libuv = $false
+if ($env:NOVA_USE_LIBUV -eq "0") {
+    $use_libuv = $false
+} elseif (Test-Path $libuv_lib) {
+    $use_libuv = $true
+} elseif ($env:NOVA_USE_LIBUV -eq "1") {
+    Write-Host "ERROR: NOVA_USE_LIBUV=1 but libuv.lib not found. Run .\build_libuv.ps1 first." -ForegroundColor Red
+    exit 1
+}
+if ($use_libuv) {
+    # Windows system libs required by libuv (см. их CMakeLists.txt).
+    $libuv_syslibs = "ws2_32.lib iphlpapi.lib psapi.lib userenv.lib user32.lib shell32.lib ole32.lib uuid.lib advapi32.lib dbghelp.lib"
+    $libuv_link_args = "`"$libuv_lib`" $libuv_syslibs /I `"$libuv_inc`" /DNOVA_USE_LIBUV=1"
+    $libuv_link_args_clang = "`"$libuv_lib`" -lws2_32 -liphlpapi -lpsapi -luserenv -luser32 -lshell32 -lole32 -luuid -ladvapi32 -ldbghelp -I `"$libuv_inc`" -DNOVA_USE_LIBUV=1"
+    Write-Host "libuv: enabled (cache at $libuv_lib)" -ForegroundColor Cyan
+} else {
+    $libuv_link_args = ""
+    $libuv_link_args_clang = ""
+    Write-Host "libuv: disabled (run build_libuv.ps1 to enable)" -ForegroundColor Yellow
+}
+
 $pass = 0; $fail = 0
 $results = @()
 
@@ -228,9 +257,9 @@ $inputs | Sort-Object FullName | ForEach-Object {
         # Clang GCC-style: -o для output, -I для includes. -nologo нет —
         # Clang не верболен. `--target` явный чтобы избежать сюрпризов на
         # mixed-installer окружениях. Linker — lld-link (идёт с LLVM).
-        $cl_cmd = "`"$clang`" --target=x86_64-pc-windows-msvc $clang_flags -I `"$cg_inc_dir`" -o `"$exe_file`" `"$c_file`" `"$rt_dir\alloc.c`" `"$rt_dir\effects.c`" `"$rt_dir\fibers.c`""
+        $cl_cmd = "`"$clang`" --target=x86_64-pc-windows-msvc $clang_flags -I `"$cg_inc_dir`" $libuv_link_args_clang -o `"$exe_file`" `"$c_file`" `"$rt_dir\alloc.c`" `"$rt_dir\effects.c`" `"$rt_dir\fibers.c`""
     } else {
-        $cl_cmd = "cl.exe /nologo /W0 $msvc_flags /I `"$cg_inc_dir`" /Fo`"$obj_dir\\`" /Fe`"$exe_file`" `"$c_file`" `"$rt_dir\alloc.c`" `"$rt_dir\effects.c`" `"$rt_dir\fibers.c`""
+        $cl_cmd = "cl.exe /nologo /W0 $msvc_flags /I `"$cg_inc_dir`" /Fo`"$obj_dir\\`" /Fe`"$exe_file`" `"$c_file`" `"$rt_dir\alloc.c`" `"$rt_dir\effects.c`" `"$rt_dir\fibers.c`" $libuv_link_args"
     }
     $cl_out = cmd /c "`"$vcvars`" && $cl_cmd" 2>&1
     if ($LASTEXITCODE -ne 0) {
