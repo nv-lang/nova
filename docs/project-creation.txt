@@ -5253,3 +5253,35 @@ emit_c.rs: dispatch `"clone"` на `Nova_ChanWriter*` → `nova_chan_writer_clon
 **Результат:** 159/159 PASS.
 
 Commit: 60e226da6 codegen+parser: closure mut-capture heap-promotion + D49 fix
+
+================================================================================
+ПЛАН 20 FOLLOW-UP + BIDIRECTIONAL HOF INFERENCE (2026-05-11)
+================================================================================
+
+**C6 закрыто: bidirectional inference HOF arg → closure**
+
+`|x| x + 1` при передаче в HOF с `fn(T) -> R` параметром раньше дефолтил `x`
+в `nova_int`. Теперь codegen выводит тип из сигнатуры HOF.
+
+Реализация:
+- `hof_param_fn_sigs: HashMap<(fn_name, param_idx), (inner_ptys, ret_ty)>` — новое поле
+  в `CEmitter`. Заполняется при `register_fn` для каждого `fn`-типизированного параметра.
+- В `emit_call`: если аргумент — `ClosureLight`, ищем `hof_param_fn_sigs[(callee, idx)]`
+  и передаём найденный контекст в `emit_lambda` как `context_param_tys`.
+- `map(arr, |x| x > 0)` → `x` получает тип `nova_bool` если HOF задан как `fn(bool) -> bool`.
+
+Новый тест: `nova_tests/syntax/closure_bidir_inference.nv` — bool/str параметры,
+двухпараметровые HOF, захват + инферированный тип.
+
+**Plan 20 gap: multi-marker EXPECT + nv_panic fail-frame routing**
+
+1. `parse_expect` теперь возвращает `Vec<ExpectMarker>` — `EXPECT_RUNTIME_PANIC +
+   EXPECT_STDOUT` работают вместе. `defer_throw_single.nv` реально проверяет оба.
+
+2. `nv_panic` убрал guard `nova_in_fiber()` перед fail-frame — `panic()` на main
+   flow теперь проходит через errdefer cleanup. `errdefer_on_panic.nv`: ERRDEFER_FIRED
+   в stdout + panic pattern в stderr — PASS.
+
+**Результат:** 161/161 PASS.
+
+Commits: d49111281, 98586c954, 19d6fb79e, e728608a7

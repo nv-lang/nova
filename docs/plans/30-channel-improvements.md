@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 # План 30: Channel improvements — send→bool + multi-writer
 
-**Статус:** 🟡 план, не начат.
+**Статус:** ✅ закрыт (2026-05-11).
 **Дата создания:** 2026-05-11.
 **Зависимости:**
 - [Plan 21](21-channel-revision-implementation.md) — ✅ закрыт; D91 capability-split реализован.
@@ -139,9 +139,9 @@ let tx2 = tx.clone()   // новый ChanWriter на тот же буфер
 - [x] regression: зелёные
 
 ### Ф.3: Spec uplift + retro
-- [ ] D91 Bootstrap-status: пометить Improvement 1+2 ✅
-- [ ] docs/project-creation.txt + docs/simplifications.md retro
-- [ ] commit
+- [x] D91 Bootstrap-status: пометить Improvement 1+2 ✅
+- [x] docs/project-creation.txt + docs/simplifications.md retro
+- [x] commit
 
 ---
 

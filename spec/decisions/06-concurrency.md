@@ -15,6 +15,7 @@ structured-concurrency примитивы есть в языке, и как па
 | [D80](#d80-handler-scoping-per-fiber) | Handler scoping per-fiber — `with X = handler` локален для fiber'а, наследуется через spawn |
 | [D80](#d80-handler-scoping-per-fiber) | Handler scoping per-fiber — `with X = h` биндинги изолированы между fibers |
 | [D91](#d91-channel-revision--capability-split-на-chanwriter--chanreader) | `Channel` revision: capability-split на `ChanWriter[T]` / `ChanReader[T]`; `send`→`bool`; `tx.clone()` multi-writer ✅ |
+| [D94](#d94-select--multiplexed-channel-operations) | `select { ... }` — финальный синтаксис: `Some(v) = rx.recv() =>`, `Time.after(d)` для timeout 🟡 план |
 
 ---
 
@@ -88,11 +89,12 @@ race {
     fetch(url_b),
 }
 
-// select — ожидание любого из событий (полная семантика — D79)
+// select — ожидание любого из событий (финальный синтаксис — D94)
+let t = Time.after(5.0)
 select {
-    msg <- channel_a => process(msg),
-    msg <- channel_b => process(msg),
-    timeout(5.seconds()) => default_value,
+    Some(msg) = channel_a.recv() => { process(msg) }
+    Some(msg) = channel_b.recv() => { process(msg) }
+    None      = t.recv()         => { default_value }
 }
 
 // cancel_scope — ручное управление отменой
@@ -1207,15 +1209,15 @@ fn Channel[T] @capacity() -> int             // фиксированный, из
 
 | Operation | Closed + buffer empty | Closed + buffer non-empty |
 |---|---|---|
-| `send(v)` | panic ("send on closed channel") | panic |
-| `try_send(v)` | false | false |
-| `recv()` | None | Some(item) — дренаж |
-| `try_recv()` | None | Some(item) — дренаж |
+| `send(v)` | `false` (Plan 30 Ф.1) | `false` |
+| `try_send(v)` | `false` | `false` |
+| `recv()` | `None` | `Some(item)` — дренаж |
+| `try_recv()` | `None` | `Some(item)` — дренаж |
 
-**`send` на closed channel — panic, не throw.** Это programming error
-(как двойной free), не recoverable runtime condition. Закрывать channel
-должен **producer** (или координирующая сторона), и после close никто
-не должен отправлять — это invariant программы. По D13 — panic.
+**`send` на closed channel возвращает `false`, не panic** (Plan 30 Ф.1, D91).
+Caller сам решает что делать с `false`. Это recoverable — не programming error.
+Закрытый канал — нормальное runtime состояние (producer закрыл, pipeline
+продолжает).
 
 **`recv` после close**: дренаж буфера, потом None. Receivers могут
 безопасно итерировать `while let Some(v) = ch.recv() { ... }` без
@@ -1239,85 +1241,52 @@ fn process(ch Channel[Request]) Db -> () {
 
 #### `select { ... }` — мультиплексирование
 
+> ⚠️ **УСТАРЕВШИЙ синтаксис** (`msg <- ch`, `timeout(expr) =>`) заменён D94.
+> Финальный синтаксис — см. [D94](#d94-select--multiplexed-channel-operations).
+
 ```nova
+// D94 финальный синтаксис:
+let timeout = Time.after(5.0)
 select {
-    msg <- ch_a       => process_a(msg)
-    msg <- ch_b       => process_b(msg)
-    timeout(5.seconds()) => default_action()
+    Some(msg) = rx_a.recv() => { process_a(msg) }
+    Some(msg) = rx_b.recv() => { process_b(msg) }
+    None      = timeout.recv() => { default_action() }
 }
 ```
-
-**Грамматика:**
-
-```
-select-expr   = 'select' '{' select-arm+ '}'
-select-arm    = recv-arm | timeout-arm
-recv-arm      = pattern '<-' expr '=>' arm-body
-timeout-arm   = 'timeout' '(' expr ')' '=>' arm-body
-```
-
-**`<-`** — recv-операция в pattern-position select-арма (только там).
-Не general operator.
 
 **Семантика:**
 
-1. Запускается **все** recv-операции одновременно. Блокирует пока
-   ≥ 1 готов (есть значение в буфере или закрыт), либо timeout
-   истёк.
-2. Если **несколько** готовы одновременно — выбор **non-deterministic**
-   (runtime может round-robin / random / FIFO). Программист **не
-   должен** полагаться на конкретный порядок.
-3. **Closed channel в recv-арме** → возвращает None, арм-pattern
-   match'ится (например, `None => break`).
-4. **Без timeout-case** — `select` может блокировать бесконечно
-   (если все каналы пусты и не закрываются).
-5. **Один timeout-case** — обязательное-уникальное ограничение.
-   Несколько timeout — compile error.
+1. Проверяет каждый arm в псевдослучайном порядке (Fisher-Yates). Если
+   ≥1 готов немедленно — выполняет первый найденный без park'а.
+2. Иначе — паркует fiber, регистрирует waiter для каждого arm. Первый
+   готовый будит fiber; остальные waiters unlinked.
+3. Если **несколько** готовы одновременно — выбор **non-deterministic**.
+   Программист **не должен** полагаться на конкретный порядок.
+4. **Closed channel** → `rx.recv()` возвращает `None` немедленно; arm
+   считается ready. Матчится `None`-паттерном.
+5. **Без default** и все каналы закрыты — panic "select: all channels closed".
 
-Pattern в recv-арме — **обычный pattern** на `Option[T]` (channel
-type). Programmer обычно пишет `Some(msg)` или `None`:
-
-```nova
-select {
-    Some(msg) <- ch_a => process(msg)
-    None      <- ch_a => break               // ch_a закрылся
-    Some(req) <- ch_b => handle(req)
-    timeout(1.second()) => log_idle()
-}
-```
-
-Сокращение `msg <- ch_a` (без `Some(...)`) валидно если все ветки
-ждут только Some-вариантов:
-
-```nova
-select {
-    msg <- ch_a => process(msg)              // подразумевает Some(msg); None игнорируется
-    msg <- ch_b => process(msg)
-}
-```
-
-Если все каналы закрылись и нет timeout-case — `select` panic
-("all channels closed in select without timeout"). Программист либо
-обрабатывает None явно, либо ставит timeout.
+Timeout — через `Time.after(d)` возвращающий `ChanReader[()]` (обычный
+recv arm, никакого специального синтаксиса).
 
 #### Канонические patterns
 
 **Producer/consumer:**
 
 ```nova
-fn pipeline(input Channel[Request]) Db -> () {
-    let processed = Channel[Response].new(100)
+fn pipeline(input ChanReader[Request]) Db -> () {
+    let (processed_tx, processed_rx) = Channel.new(100)
 
     spawn {
         while let Some(req) = input.recv() {
             let resp = process(req)
-            processed.send(resp)
+            processed_tx.send(resp)
         }
-        processed.close()
+        processed_tx.close()
     }
 
     spawn {
-        while let Some(resp) = processed.recv() {
+        while let Some(resp) = processed_rx.recv() {
             Db.exec(resp.persist_sql)
         }
     }
@@ -1327,30 +1296,31 @@ fn pipeline(input Channel[Request]) Db -> () {
 **Fan-out:**
 
 ```nova
-let work = Channel[Task].new(0)
+let (work_tx, work_rx) = Channel.new(0)
 for i in 0..10 {
+    let rx = work_rx   // capture by value
     spawn {
-        while let Some(task) = work.recv() {
+        while let Some(task) = rx.recv() {
             task.run()
         }
     }
 }
 for t in tasks {
-    work.send(t)
+    work_tx.send(t)
 }
-work.close()
+work_tx.close()
 ```
 
-**Worker pool с graceful shutdown:**
+**Worker pool с graceful shutdown (D94 select):**
 
 ```nova
-let work = Channel[Task].new(0)
-let shutdown = Channel[()].new(1)
+let (work_tx, work_rx) = Channel.new(0)
+let (stop_tx, stop_rx) = Channel.new(1)
 
 spawn {
     select {
-        Some(task) <- work        => task.run()
-        Some(_)    <- shutdown    => return ()
+        Some(task) = work_rx.recv() => { task.run() }
+        Some(_)    = stop_rx.recv() => { return () }
     }
 }
 ```
@@ -1361,7 +1331,7 @@ spawn {
 - `send` на полный буфер — yield, продолжается когда recv освобождает место
 - `recv` на пустой — yield, продолжается когда send добавит
 - Memory ordering тривиальна (single thread)
-- Round-robin между select-armами
+- Fisher-Yates shuffle между select-armами (псевдослучайный, LCG)
 
 В production-runtime (D14 future):
 - Memory-barriers / atomic counters для buffer indexes
@@ -1394,9 +1364,9 @@ fn counter_actor(input Channel[CounterMsg], output Channel[int]) {
 
 ### Почему
 
-1. **Закрывает реальный пробел spec'и.** D14/D50 упоминали `select { msg
-   <- ch_a => ... }` как пример с подразумеваемым Channel[T], но без
-   формальной декларации. D79 формализует.
+1. **Закрывает реальный пробел spec'и.** D14/D50 упоминали `select`
+   как structured-concurrency primitive без формальной декларации.
+   D79 формализует; D94 фиксирует финальный синтаксис.
 
 2. **Production-correctness.** В preemptive runtime (D14) shared `mut`
    между fiber'ами — UB. Channels единственный safe primitive по
@@ -1436,9 +1406,10 @@ fn counter_actor(input Channel[CounterMsg], output Channel[int]) {
   Если кому-то реально нужен Mutex — может реализовать через channel
   (token-channel вместимостью 1).
 
-- **`<-` как general operator.** `recv` через method `.recv()` для
-  consistency с другими method-based API. `<-` только в pattern-position
-  select-арма — синтаксический сахар, не expression.
+- **`<-` как recv-оператор в select.** Отвергнут в D94 — заменён
+  на `Some(v) = rx.recv() =>`. Причина: `<-` вводил новый оператор
+  только для select; `= rx.recv()` согласуется с `while let Some(v) = rx.recv()`
+  (уже в языке) — никаких новых операторов.
 
 - **Unbounded channels по умолчанию.** Bounded channel явно — лучшая
   practice для backpressure. `Channel[T].new(0)` для unbuffered;
@@ -1460,9 +1431,8 @@ fn counter_actor(input Channel[CounterMsg], output Channel[int]) {
    проще: single-threaded queue + yield. Production — серьёзная
    реализация.
 
-2. **`select` в parser.** Новая конструкция: `select { pattern <- expr
-   => body, timeout(d) => body }`. Compiler-codegen агент займётся
-   когда D79 будет принят.
+2. **`select` в parser.** Новая конструкция: `select { pattern = rx.recv() => body }`.
+   Реализация — Plan 31 (D94). Синтаксис финализирован.
 
 3. **Closed-channel panic vs throw.** Send на closed — panic. Это
    осознанный выбор: programmer error, не recoverable. Альтернатива
@@ -2141,7 +2111,7 @@ let v = rx.recv()
 - `nova_tests/runtime/channels.nv` — переписать все тесты.
 - Bootstrap `nova_rt/channels.h` — переделать API: state-struct
   + sender/receiver wrappers.
-- `select { msg <- ch => ... }` — поменять `ch` на `rx`.
+- `select { ... }` — синтаксис заменён на D94 (`Some(v) = rx.recv() =>`), см. Plan 31.
 
 Реализация — отдельный план (Plan 22+).
 
@@ -2543,3 +2513,114 @@ throw'ы в D50 fire-and-forget — должны быть logged, не abort. П
   всё ещё busy-yield / native sleep. Под D92 это OK потому что
   `_nova_active_slot = -1` детектируется в `_nova_time_default_sleep`
   как "main-flow, не fiber".
+
+---
+
+## D94. `select { ... }` — multiplexed channel operations
+
+> **Введён:** Plan 31 (2026-05-11). **Статус:** 🟡 план, не реализован.
+> **Уточняет** [D79](#d79-channels--coordination-между-fiber-ами) —
+> финализирует синтаксис и семантику `select`.
+
+### Что
+
+`select` ожидает сразу несколько channel-операций, пробуждается по
+первому готовому arm'у.
+
+```nova
+select {
+    Some(v) = rx1.recv()    => { process(v) }
+    Some(v) = rx2.recv()    => { process(v) }
+    None    = rx1.recv()    => { break }           // rx1 закрылся
+    _       = tx.send(val)  => { /* sent */ }      // send arm
+    default                 => { /* non-blocking */ }
+}
+```
+
+**Грамматика:**
+
+```
+select-expr  = 'select' '{' NL* select-arm+ '}'
+select-arm   = channel-arm | default-arm
+channel-arm  = pattern '=' (recv-op | send-op) guard? '=>' arm-body NL*
+recv-op      = expr '.' 'recv' '(' ')'
+send-op      = expr '.' 'send' '(' expr ')'
+guard        = 'if' expr
+default-arm  = 'default' '=>' arm-body NL*
+arm-body     = block | stmt
+```
+
+Синтаксис `pattern = rx.recv()` согласуется с `while let Some(v) = rx.recv()`
+(уже в языке). Оператор `<-` не вводится (отвергнут).
+
+### Timeout через `Time.after(d)`
+
+Специального `timeout` arm'а нет — timeout через обычный recv arm:
+
+```nova
+let t = Time.after(1.0)     // ChanReader[()] закрывается через 1 сек
+select {
+    Some(v) = rx.recv()  => { process(v) }
+    None    = t.recv()   => { log_idle() }    // timeout сработал
+}
+```
+
+`Time.after(d) -> ChanReader[()]` — функция в stdlib/eventloop.
+Select не знает про "timeout" специально.
+
+### Правило
+
+1. **Guard evaluation** — `if <expr>` после паттерна делает arm disabled если false.
+2. **Immediate check** — проверяет все enabled arms в псевдослучайном порядке
+   (Fisher-Yates). Если ≥1 ready — выполняет без park'а.
+3. **Park** — если ни один не ready и нет `default`: регистрирует waiter для
+   каждого arm, паркует fiber.
+4. **Wake** — первый готовый arm будит fiber; остальные waiters unlinked.
+   `done`-флаг предотвращает double-wake при одновременной готовности.
+5. **Fairness** — Fisher-Yates shuffle на каждой итерации (нет starvation).
+6. **`default`** — если присутствует: шаг 2 всегда succeeds (не паркуем).
+7. **Все каналы закрыты + нет default** → panic "select: all channels closed".
+8. **cancel_scope** — отменяет все pending waiters, fiber просыпается,
+   проверяет `cancel_requested`.
+
+### Arm guards
+
+```nova
+select {
+    Some(v) = rx.recv() if v > 0 => { process(v) }   // arm активен только если v > 0
+    Some(v) = rx.recv()           => { skip(v) }
+}
+```
+
+Guard — pre-condition (arm disabled если false). Аналог `if` в Rust Tokio `select!`.
+Go не поддерживает guards в select.
+
+### Почему
+
+1. **Ключевой primitive для fan-in.** Без select нельзя элегантно объединить
+   несколько producers в одном consumer'е.
+2. **`Time.after(d)` вместо `timeout(expr)`** — timeout как обычный channel
+   (Go-style `time.After`). Нет специального синтаксиса, нет special-casing
+   в runtime.
+3. **`=` вместо `<-`** — согласованность с `while let Some(v) = rx.recv()`.
+   Один оператор recv по всему языку.
+4. **Fisher-Yates shuffle** — fairness (Go использует то же). Нет starvation
+   при постоянно-готовых arms.
+
+### Что отвергнуто
+
+- **`<-` оператор в select** — нарушает consistency; отдельный оператор
+  только для select (было в D79, удалено).
+- **`timeout(expr) =>` arm** — special-casing в грамматике и runtime
+  ради того, что решается обычным `Time.after(d)` channel'ом.
+- **Biased mode** — детерминированный выбор arm'а (Tokio `biased`).
+  Достигается через `--jobs 1` + фиксированный seed в тестах.
+- **Вложенный select запрещён** — излишнее ограничение; снято.
+
+### Bootstrap-status
+
+- 🟡 Runtime: Plan 31 Ф.1 — `SelectCtx`, `SelectWaiter`, `nova_select_*` API
+- 🟡 Send arm: Plan 31 Ф.2
+- 🟡 Parser + codegen: Plan 31 Ф.3
+- 🟡 Arm guards: Plan 31 Ф.4
+- 🟡 `Time.after(d)` + тесты: Plan 31 Ф.5

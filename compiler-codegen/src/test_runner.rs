@@ -1300,30 +1300,60 @@ pub fn run_one(opts: &TestBuildOpts) -> Outcome {
         libuv: opts.libuv,
         gc_kind: opts.gc_kind,
     };
-    let cmd = build_command(opts.toolchain, &build_opts);
     // Plan 26 Ф.1: timeout для cc. cl.exe / clang обычно <30s, 60s достаточно.
     // Если cc сам зависает (редко, но бывает при OOM swap) — kill + CcFail.
-    let cc_captured = match run_with_timeout(cmd, opts.timeout) {
-        Ok(o) => o,
-        Err(e) => {
-            return Outcome::Fail {
-                stage: Stage::Cc {
-                    error: format!("spawn cc: {}", e),
-                },
-                elapsed: start.elapsed(),
-            }
-        }
-    };
-    let cc_status = match cc_captured.status {
-        Some(s) => s,
-        None => {
-            // cc timeout — редкость, но возможно. Cleanup через
-            // subdir_guard Drop при возврате.
-            return Outcome::Timeout {
-                elapsed: start.elapsed(),
+    //
+    // Windows file-lock retry: lld-link fails with "cannot open output file *.exe"
+    // when AV or Explorer holds a handle on the previous exe. Retry up to 3 times
+    // with 250 ms back-off — handle is usually released quickly.
+    const CC_LOCK_RETRIES: u32 = 3;
+    const CC_LOCK_DELAY_MS: u64 = 250;
+
+    let (cc_captured, cc_status) = 'cc: {
+        let mut last_captured;
+        let mut last_status;
+        let mut attempt = 0u32;
+        loop {
+            let cmd = build_command(opts.toolchain, &build_opts);
+            last_captured = match run_with_timeout(cmd, opts.timeout) {
+                Ok(o) => o,
+                Err(e) => {
+                    return Outcome::Fail {
+                        stage: Stage::Cc {
+                            error: format!("spawn cc: {}", e),
+                        },
+                        elapsed: start.elapsed(),
+                    }
+                }
             };
+            last_status = match last_captured.status {
+                Some(s) => s,
+                None => {
+                    return Outcome::Timeout { elapsed: start.elapsed() };
+                }
+            };
+            if last_status.success() {
+                break 'cc (last_captured, last_status);
+            }
+            // Detect Windows linker file-lock error and retry.
+            let combined_peek = format!(
+                "{}{}",
+                bytes_to_string(&last_captured.stdout),
+                bytes_to_string(&last_captured.stderr)
+            );
+            let is_file_lock = combined_peek.contains("cannot open output file")
+                && combined_peek.contains(".exe");
+            if is_file_lock && attempt < CC_LOCK_RETRIES {
+                attempt += 1;
+                std::thread::sleep(std::time::Duration::from_millis(
+                    CC_LOCK_DELAY_MS * attempt as u64,
+                ));
+                continue;
+            }
+            break 'cc (last_captured, last_status);
         }
     };
+
     if !cc_status.success() {
         let combined = format!(
             "{}{}",
