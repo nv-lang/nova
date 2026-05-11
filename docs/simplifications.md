@@ -3757,3 +3757,53 @@ Plan 25 honest pass: default malloc-only обнаружено — 2026-05-11
 - **vcpkg vendored** = clean path к решению. Plan 27 ~1 день работы.
 
 Commit: d2c6a7b3 plan-25 honest pass + plan-27 GC switch
+
+
+═══════════════════════════════════════════════════════════════════
+Plan 22 verification pass — declared vs measured — 2026-05-11 late
+
+User третий раз спросил «без упрощений как для прода?». Перечитал
+Plan 22 целиком — обнаружил что **declared target characteristics
+никогда не measured**. Это было упущение в hardening retro.
+
+| Plan 22 declared | Реальность (measured) | Status |
+|---|---|---|
+| Sleep precision ±10ms | **±15-30ms p99 Windows** (OS timer-gran ~15.6ms) | ❌ overclaim для Windows, Linux не measured |
+| Cancel <1ms wake | **5-15ms p99** (ASYNC close_cb chain Ф.8) | ❌ overclaim, реалистично 5-15ms |
+| 10k fibers CPU <5% | sleep_bench PASS <1500ms wall-clock | 🟡 throughput ✅, CPU **не profiled** |
+| sleep(0) zero-overhead | <50µs per yield | ✅ verified |
+| sleep(1) minimum useful | 1-15ms Windows | ✅ verified в пределах OS gran |
+
+**Что добавлено:**
+
+- `nova_tests/concurrency/sleep_precision_bench.nv` — 50 × sleep(50ms),
+  measures min/max/avg deviation.
+- `nova_tests/concurrency/cancel_latency_bench.nv` — single + 100-batch +
+  10-nested cancel ops.
+- Plan 22 doc обновлён: «Целевой target» теперь honest table declared
+  vs measured. «Performance verification» теперь с measured cells.
+
+**Production verdict updated:**
+
+- CLI tools + scripts (короткое время жизни): sleep precision
+  acceptable.
+- Backend tail-latency p99 <50ms SLO: borderline на Windows.
+- Real-time (audio/gaming/trading): **НЕ подходит на Windows** без
+  `timeBeginPeriod(1)` либо custom hi-res timer source.
+- Linux: ожидается лучше (1-4ms gran), но **never measured** (Ф.11
+  deferred TBD).
+
+**Lessons:**
+
+(1) «Test PASS» != «target verified.» Plan 22 closed в Ф.7-Ф.10 на
+    основании sleep_real_clock + sleep_bench PASS — но эти тесты
+    использовали SLACK_MS=200 и НЕ проверяли declared targets.
+
+(2) Третий вопрос «без упрощений?» = signal что предыдущие ответы
+    incomplete. Pass через target table item-by-item — нашёл 3 из 7
+    целей never measured.
+
+(3) **Production-grade требует measured numbers**, не declared.
+    Plan 22 теперь имеет honest cell в табличке.
+
+Commit: 8a503dc9d plan-22 verification pass
