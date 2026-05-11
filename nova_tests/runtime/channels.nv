@@ -255,3 +255,35 @@ test "channel: relay — Receiver → Sender pipeline через функцию"
     let s = drain_channel(rx2)
     assert(s == 12)
 }
+
+// ── Секция 7: send → bool (Plan 30 Ф.1) ──────────────────────────
+
+test "channel: send после close возвращает false, не паникует" {
+    let (tx, _rx) = Channel.new(2)
+    assert(tx.send(1))
+    tx.close()
+    assert(!tx.send(99))
+}
+
+test "channel: send в открытый канал возвращает true" {
+    let (tx, rx) = Channel.new(4)
+    assert(tx.send(10))
+    assert(tx.send(20))
+    assert(tx.send(30))
+    tx.close()
+    let a = rx.recv() ?? -1
+    let b = rx.recv() ?? -1
+    let c = rx.recv() ?? -1
+    assert(a == 10)
+    assert(b == 20)
+    assert(c == 30)
+}
+
+test "channel: send возвращаемое значение можно использовать как bool" {
+    let (tx, _rx) = Channel.new(1)
+    let ok = tx.send(42)
+    assert(ok)
+    tx.close()
+    let ok2 = tx.send(0)
+    assert(!ok2)
+}

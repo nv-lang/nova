@@ -206,12 +206,11 @@ static inline nova_bool  nova_chan_reader_is_closed(Nova_ChanReader* rx) { retur
 
 /* ── Sender ────────────────────────────────────────────────────── */
 
-static inline void nova_chan_writer_send(Nova_ChanWriter* tx, nova_int v) {
+/* Returns true if value was sent, false if channel is closed (Plan 30 Ф.1). */
+static inline nova_bool nova_chan_writer_send(Nova_ChanWriter* tx, nova_int v) {
     Nova_ChannelState* st = tx->state;
 
-    if (st->closed) {
-        nova_throw(nova_str_from_cstr("send on closed channel"));
-    }
+    if (st->closed) return 0;
 
     if (st->count < st->cap) goto _push;
 
@@ -241,11 +240,9 @@ static inline void nova_chan_writer_send(Nova_ChanWriter* tx, nova_int v) {
                 nova_throw(nova_str_from_cstr("scope cancelled"));
             }
         }
-        if (st->closed) {
-            nova_throw(nova_str_from_cstr("send on closed channel"));
-        }
+        if (st->closed) return 0;
         /* recv-side committed our value into buffer already (A5) */
-        return;
+        return 1;
     }
 
 _push: {
@@ -253,6 +250,7 @@ _push: {
         st->buf[tail] = v;
         st->count++;
         _nova_channel_wake_recv(st);
+        return 1;
     }
 }
 

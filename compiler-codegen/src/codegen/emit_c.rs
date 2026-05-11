@@ -1423,7 +1423,8 @@ impl CEmitter {
         // Body executes in the normal path
         self.line("{");
         self.indent += 1;
-        // Emit block statements; if there's a trailing expr use it as the int result
+        // Emit block statements with defer scope; if there's a trailing expr use it as the int result
+        let with_block_id = self.enter_defer_scope(body, false);
         for stmt in &body.stmts {
             self.emit_stmt(stmt)?;
         }
@@ -1440,6 +1441,7 @@ impl CEmitter {
         } else {
             self.line(&format!("{} = ((nova_int)0LL);", result_tmp));
         }
+        self.leave_defer_scope(with_block_id);
         self.indent -= 1;
         self.line("}");
 
@@ -1764,6 +1766,7 @@ impl CEmitter {
                     }
                 }
                 HandlerMethodBody::Block(b) => {
+                    let hm_block_id = self.enter_defer_scope(b, false);
                     for stmt in &b.stmts {
                         self.emit_stmt(stmt)?;
                     }
@@ -1772,6 +1775,7 @@ impl CEmitter {
                         .unwrap_or(false);
                     if let Some(trailing) = &b.trailing {
                         let v = self.emit_expr(trailing)?;
+                        self.leave_defer_scope(hm_block_id);
                         if ret_ty == "nova_unit" {
                             self.line(&format!("(void)({}); return NOVA_UNIT;", v));
                         } else if v == "NOVA_UNIT" {
@@ -1782,10 +1786,13 @@ impl CEmitter {
                             self.line(&format!("return {};", v));
                         }
                     } else if last_is_return {
+                        self.leave_defer_scope(hm_block_id);
                         // Explicit return already emitted — no additional return needed.
                     } else if ret_ty == "nova_unit" {
+                        self.leave_defer_scope(hm_block_id);
                         self.line("return NOVA_UNIT;");
                     } else {
+                        self.leave_defer_scope(hm_block_id);
                         // No trailing expr: body likely ended with interrupt/throw (unreachable).
                         // Emit a zero return to satisfy the C type checker.
                         let zero = Self::zero_literal_for_type(&ret_ty);
@@ -2085,7 +2092,8 @@ impl CEmitter {
         // Activate scope: spawn inside body routes into queue.
         let prev = std::mem::replace(&mut self.current_scope_queue, Some(queue_var.clone()));
 
-        // Emit body statements (trailing value is discarded — supervised yields unit).
+        // Emit body statements with defer scope (supervised body can contain defer).
+        let block_id = self.enter_defer_scope(body, false);
         for stmt in &body.stmts {
             self.emit_stmt(stmt)?;
         }
@@ -2093,6 +2101,7 @@ impl CEmitter {
             let v = self.emit_expr(trailing)?;
             self.line(&format!("(void)({});", v));
         }
+        self.leave_defer_scope(block_id);
 
         // Restore scope state.
         self.current_scope_queue = prev;
@@ -2148,6 +2157,7 @@ impl CEmitter {
 
         let prev = std::mem::replace(&mut self.current_scope_queue, Some(queue_var.clone()));
 
+        let block_id = self.enter_defer_scope(body, false);
         for stmt in &body.stmts {
             self.emit_stmt(stmt)?;
         }
@@ -2155,6 +2165,7 @@ impl CEmitter {
             let v = self.emit_expr(trailing)?;
             self.line(&format!("(void)({});", v));
         }
+        self.leave_defer_scope(block_id);
 
         self.current_scope_queue = prev;
         self.line(&format!("nova_supervised_run(&{});", queue_var));
@@ -2390,6 +2401,7 @@ impl CEmitter {
         // Wrap in a C block so any locals introduced by the body don't leak.
         self.line("{");
         self.indent += 1;
+        let block_id = self.enter_defer_scope(body, false);
         for stmt in &body.stmts {
             self.emit_stmt(stmt)?;
         }
@@ -2397,6 +2409,7 @@ impl CEmitter {
             let v = self.emit_expr(trailing)?;
             self.line(&format!("(void)({});", v));
         }
+        self.leave_defer_scope(block_id);
         self.indent -= 1;
         self.line("}");
         Ok("NOVA_UNIT".to_string())
@@ -5536,11 +5549,13 @@ impl CEmitter {
                 self.line(&format!("if ({}) {{", cond));
                 self.indent += 1;
                 self.pattern_bind_typed(pattern, &scr_tmp)?;
+                let then_block_id = self.enter_defer_scope(then, false);
                 for stmt in &then.stmts { self.emit_stmt(stmt)?; }
                 if let Some(trailing) = &then.trailing {
                     let v = self.emit_expr(trailing)?;
                     self.line(&format!("{} = {};", result_tmp, v));
                 }
+                self.leave_defer_scope(then_block_id);
                 self.indent -= 1;
                 match else_ {
                     Some(ElseBranch::Block(b)) => {
@@ -6321,10 +6336,9 @@ impl CEmitter {
                             "send" => {
                                 if let Some(arg) = args.first() {
                                     let v = self.emit_expr(arg.expr())?;
-                                    self.line(&format!(
-                                        "nova_chan_writer_send({}, (nova_int)({}));",
+                                    return Ok(format!(
+                                        "nova_chan_writer_send({}, (nova_int)({}))",
                                         obj_c, v));
-                                    return Ok("NOVA_UNIT".into());
                                 }
                             }
                             "try_send" => {
@@ -10056,7 +10070,8 @@ impl CEmitter {
                     // D91: Sender capability method return types.
                     if obj_ty == "Nova_ChanWriter*" {
                         return match method.as_str() {
-                            "send" | "close"   => "nova_unit".into(),
+                            "send"             => "nova_bool".into(),
+                            "close"            => "nova_unit".into(),
                             "try_send"         => "nova_bool".into(),
                             "is_closed"        => "nova_bool".into(),
                             "len" | "capacity" => "nova_int".into(),
