@@ -10,10 +10,12 @@
  *
  * nova_retain / nova_release are no-ops — GC handles everything automatically.
  *
- * Stat functions (_alloc_count, etc.): nova_gc_live_count / nova_gc_free_count
- * are approximations — exact live count requires finalizer cooperation which
- * Boehm does not provide. Use GC_get_heap_size() as a proxy for tests.
- */
+ * Contract: nova_alloc MUST return zeroed memory. GC_malloc already satisfies
+ * this (Boehm API guarantee). No memset needed.
+ *
+ * Stat functions: nova_gc_live_count / nova_gc_free_count are approximations —
+ * exact live count requires finalizer cooperation which Boehm does not provide.
+ * _alloc_count is an upper bound; GC may have freed some objects since. */
 
 #include "alloc.h"
 
@@ -23,7 +25,6 @@
 
 #include <stdio.h>
 #include <stdint.h>
-#include <string.h>
 
 /* Monotonic alloc counter — incremented on every nova_alloc call.
  * Used by nova_gc_alloc_count() and nova_gc_reset_stats(). */
@@ -45,7 +46,6 @@ void* nova_alloc(size_t size) {
         fprintf(stderr, "nova: out of memory\n");
         abort();
     }
-    memset(p, 0, size);
     _alloc_count++;
     return p;
 }

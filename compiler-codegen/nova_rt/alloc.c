@@ -1,5 +1,9 @@
 /* nova_rt/alloc.c — Phase-0 implementation: plain malloc, no GC.
- * To switch GC: replace this file only. The codegen never calls malloc directly. */
+ * To switch GC: replace this file only. The codegen never calls malloc directly.
+ *
+ * Contract: nova_alloc MUST return zeroed memory. Codegen assumes zero-init
+ * (see emit_c.rs: record/closure/spawn-context fields set by assignment only).
+ * Use calloc, not malloc. */
 
 #include "alloc.h"
 #include <stdlib.h>
@@ -12,7 +16,7 @@ void nova_gc_init(void)     { _alloc_count = 0; _free_count = 0; }
 void nova_gc_shutdown(void) {}
 
 void* nova_alloc(size_t size) {
-    void* p = malloc(size);
+    void* p = calloc(1, size);
     if (!p) {
         fprintf(stderr, "nova: out of memory\n");
         abort();

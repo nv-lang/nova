@@ -4,7 +4,13 @@
 #include <stddef.h>
 
 /* GC interface — единственная точка контакта кодогенератора с памятью.
- * Реализация в alloc.c. Для смены GC — меняется только alloc.c. */
+ * Реализация в alloc.c. Для смены GC — меняется только alloc.c.
+ *
+ * CONTRACT: nova_alloc MUST return zeroed memory. Codegen assumes zero-init
+ * (record/closure/spawn-context fields are set by named assignment only;
+ * unset fields must not contain garbage). All implementations must satisfy
+ * this: alloc.c uses calloc, alloc_rc.c uses malloc+memset, alloc_boehm.c
+ * relies on GC_malloc (Boehm API guarantee). */
 
 void  nova_gc_init(void);
 void  nova_gc_shutdown(void);
