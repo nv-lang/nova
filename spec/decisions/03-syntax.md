@@ -4242,9 +4242,39 @@ exit-семантику scope'а непредсказуемой.
 Sync-операции с эффектами (`Db.exec` для быстрого SQL, `Log.info`)
 — разрешены.
 
-**6. `return` / `throw` / `break` / `continue` в defer-body — запрещены.**
-Нельзя exit'ить enclosing scope через defer — defer **сам** часть
-exit-процесса. Compile error.
+**6. Top-level `return` / `throw` / `break` / `continue` в defer-body —
+запрещены (Вариант 3 — Plan 20 Ф.3 revised).** Нельзя hijack scope-exit
+окружающей функции/цикла через defer — defer **сам** часть exit-процесса.
+
+Локальный control разрешён, **только** внутри вложенных конструкций:
+
+- `return` — разрешён внутри **nested fn-литерала** в defer body
+  (`return` локален к этому fn-литералу, не к enclosing fn).
+- `break` / `continue` — разрешены внутри **nested loop** (for/while/loop)
+  в defer body (локальны к этому loop'у, не к enclosing).
+- `throw` / `?` / `!!` / `interrupt` — **всегда** запрещены на любом
+  уровне (defer body должен оставаться infallible — пункт 4).
+
+```nova
+defer {
+    for x in items {
+        if x.bad { break }          // ✅ local break в nested loop
+    }
+    return 0                         // ❌ top-level return — hijack scope exit
+}
+
+defer {
+    let cleanup_fn = || {
+        if early_done { return }     // ✅ local return в nested fn-literal
+        do_more()
+    }
+    cleanup_fn()
+}
+```
+
+Type-check: `DeferBodyCtx { loop_depth, fn_depth }` инкрементируется
+при заходе в nested loop/fn-literal; проверка > 0 на каждом
+return/break/continue.
 
 **7. `errdefer` запускается на:**
 - `throw err` (любой `Fail[E]`).
@@ -4441,7 +4471,23 @@ scope ждёт defer'ов всех детей, scheduling непредсказу
       после. Throw в handler-body dispatch'ится на outer (skip
       current frame — нет infinite recursion).
 
+  Ф.8 positive-тесты:
+    * `syntax/defer_in_blocks.nv` (9 кейсов) — defer внутри
+      while/loop/for-in-array body, else-branch, match-arm-block,
+      nested defer scopes (LIFO между inner/outer).
+    * `syntax/errdefer_rethrow.nv` (3 кейса) — re-throw из inner
+      handler → outer (1-level и 3-level); errdefer + outer interrupt
+      → errdefer корректно skip.
+    * `syntax/defer_on_interrupt.nv` (4 кейса) — defer fires на
+      interrupt-path; errdefer skip; defer+errdefer combo; LIFO для
+      multiple defer'ов.
+
+  Ф.8 negative-тест:
+    * `negative_capability/fail_handler_no_exit_rejected.nv` —
+      handler `fail()` без exit-control → compile error.
+
   Все 12 positive + 6 negative defer-relevant тестов PASS.
+  10/10 effects + 17/17 concurrency без регрессий после Ф.8.
 
 #### Известные ограничения
 
