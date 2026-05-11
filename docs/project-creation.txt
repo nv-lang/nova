@@ -5285,3 +5285,27 @@ Commit: 60e226da6 codegen+parser: closure mut-capture heap-promotion + D49 fix
 **Результат:** 161/161 PASS.
 
 Commits: d49111281, 98586c954, 19d6fb79e, e728608a7
+
+**Plan 30 post-close review — production-grade channel API fixes (2026-05-11)**
+
+После закрытия Plan 30 проведён анализ channels API vs Rust/Go. Найдены и
+исправлены реальные дефекты (commit 88504b87c):
+
+- **Б1 double-close** — повторный `close(tx)` на одном handle декрементировал
+  `writer_count` повторно → преждевременное закрытие канала при наличии clone.
+  Исправление: поле `writer_closed bool` в `Nova_ChanWriter`, guard по нему.
+
+- **Б2 abort() на recv/send вне fiber** — заменено на `nova_throw()`, убраны
+  `<stdio.h>/<stdlib.h>` из channels.h.
+
+- **Н1 try_recv/try_send не различали EMPTY от CLOSED** — добавлен трёхвариантный
+  `NovaChanTryResult {OK, EMPTY, CLOSED}`. Nova API не меняется; emit_c.rs
+  конвертирует в `bool`/`Option`; разграничение через `rx.is_closed()`.
+
+- **Н2 Channel.new(0) тихо создавал capacity=1** — теперь `nova_throw(...)`.
+
+Секция 9 channels.nv: 5 новых тестов (Б1 double-close idempotent, Б1 clone,
+Н1 try_recv empty-open vs empty-closed, Н1 drain after close, Н1 try_send closed).
+Plan-30.md: добавлен Ф.4 с описанием исправлений и таблицей tech debt (T1-T3).
+
+Commits: 88504b87c, 106e64c33

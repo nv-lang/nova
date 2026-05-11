@@ -4001,3 +4001,21 @@ HOF с параметром `fn(T) -> R` раньше дефолтил тип `x
 161/161 PASS (1 флейк `cancel_stress_test` — lld-link file-lock, не код).
 
 Commits: d49111281, 98586c954, 19d6fb79e, e728608a7
+
+### Plan 30 post-close: channel API production review (2026-05-11)
+
+Проведён анализ channels.h vs Rust `mpsc` и Go `chan`. Найдены 2 баги + 2 улучшения.
+
+**Что исправлено:**
+- `Nova_ChanWriter.writer_closed bool` — guard двойного close на одном handle.
+- `nova_throw()` вместо `abort()` при recv/send вне fiber context.
+- `NovaChanTryResult {NOVA_CHAN_TRY_OK, NOVA_CHAN_TRY_EMPTY, NOVA_CHAN_TRY_CLOSED}` —
+  трёхвариантный результат для `try_recv`/`try_send` (в Nova API прозрачно).
+- `Channel.new(0)` → `nova_throw(...)` вместо silent capacity=1.
+
+**Оставшийся tech debt (намеренно):**
+- [T1] `writer_count` — `int32_t`, не atomic. Достаточно для 1:N; M:N (Plan 23) потребует `_Atomic int32_t`.
+- [T2] WaiterList — singly-linked, O(n) unlink. Достаточно сейчас; под нагрузкой заменить на doubly-linked.
+- [T3] `try_recv().is_none()` не различимо в Nova без `rx.is_closed()` — API неудобен. После generics можно добавить `TryRecvResult` в Nova type system.
+
+Commits: 88504b87c, 106e64c33
