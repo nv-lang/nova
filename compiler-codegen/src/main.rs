@@ -2,7 +2,7 @@
 
 use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 #[derive(Parser)]
@@ -50,6 +50,80 @@ enum Cmd {
     },
     /// Plan 13: распечатать registry runtime-функций для sanity.
     DumpRuntime,
+    /// Plan 24: cross-platform test runner — сборка одного .nv в .exe
+    /// и проверка EXPECT-маркера (D89). Заменяет per-file логику из
+    /// run_tests.ps1.
+    TestBuild {
+        file: PathBuf,
+        /// dev (по умолчанию) | release.
+        #[arg(long, default_value = "dev")]
+        mode: String,
+        /// auto (по умолчанию) | clang | msvc | gcc.
+        #[arg(long, default_value = "auto")]
+        toolchain: String,
+        /// Путь к vcvars64.bat (Windows). Auto-detect через vswhere.
+        #[arg(long)]
+        vcvars: Option<PathBuf>,
+        /// Путь к clang.exe (override auto-detect).
+        #[arg(long)]
+        clang: Option<PathBuf>,
+        /// Путь к compiler-codegen/ (для include nova_rt headers).
+        /// По умолчанию вычисляется из layout репо.
+        #[arg(long = "cg-include")]
+        cg_include: Option<PathBuf>,
+        /// Путь к compiler-codegen/nova_rt/ (alloc.c/effects.c/fibers.c).
+        #[arg(long = "rt-dir")]
+        rt_dir: Option<PathBuf>,
+        /// Tmp директория для .exe/.obj артефактов.
+        #[arg(long = "tmp-dir")]
+        tmp_dir: Option<PathBuf>,
+        /// Display name (override; по умолчанию — basename файла).
+        #[arg(long)]
+        display: Option<String>,
+        /// Сохранить .c / .exe / .obj артефакты после прогона.
+        #[arg(long = "keep-artifacts")]
+        keep_artifacts: bool,
+    },
+    /// Plan 24: рекурсивный прогон всех .nv в `--tests-dir`. Заменяет
+    /// run_tests.ps1 целиком; .ps1 / .sh wrapper'ы вызывают эту команду.
+    TestAll {
+        /// Корень nova_tests/ (рекурсивный поиск .nv).
+        #[arg(long = "tests-dir", default_value = "nova_tests")]
+        tests_dir: PathBuf,
+        /// Корень std/ — добавляется если --include-stdlib.
+        #[arg(long = "stdlib-dir", default_value = "std")]
+        stdlib_dir: PathBuf,
+        /// Включить std/* файлы в прогон.
+        #[arg(long = "include-stdlib")]
+        include_stdlib: bool,
+        /// Фильтр по display-name (substring).
+        #[arg(long)]
+        filter: Option<String>,
+        /// dev | release.
+        #[arg(long, default_value = "dev")]
+        mode: String,
+        /// auto | clang | msvc | gcc.
+        #[arg(long, default_value = "auto")]
+        toolchain: String,
+        /// Путь к vcvars64.bat (Windows).
+        #[arg(long)]
+        vcvars: Option<PathBuf>,
+        /// Путь к clang.exe.
+        #[arg(long)]
+        clang: Option<PathBuf>,
+        /// Путь к compiler-codegen/.
+        #[arg(long = "cg-include")]
+        cg_include: Option<PathBuf>,
+        /// Путь к compiler-codegen/nova_rt/.
+        #[arg(long = "rt-dir")]
+        rt_dir: Option<PathBuf>,
+        /// Tmp директория. По умолчанию $TEMP/nova_tests или /tmp/nova_tests.
+        #[arg(long = "tmp-dir")]
+        tmp_dir: Option<PathBuf>,
+        /// Сохранить .exe/.obj артефакты.
+        #[arg(long = "keep-artifacts")]
+        keep_artifacts: bool,
+    },
 }
 
 /// Запустить lint-проходы и вывести warning'и в stderr.
@@ -83,6 +157,10 @@ fn main() -> ExitCode {
         Cmd::EmitRuntimeStubs { root, check } =>
             cmd_emit_runtime_stubs(&root, check),
         Cmd::DumpRuntime => cmd_dump_runtime(),
+        Cmd::TestBuild { file, mode, toolchain, vcvars, clang, cg_include, rt_dir, tmp_dir, display, keep_artifacts } =>
+            cmd_test_build(&file, &mode, &toolchain, vcvars.as_deref(), clang.as_deref(), cg_include.as_deref(), rt_dir.as_deref(), tmp_dir.as_deref(), display.as_deref(), keep_artifacts),
+        Cmd::TestAll { tests_dir, stdlib_dir, include_stdlib, filter, mode, toolchain, vcvars, clang, cg_include, rt_dir, tmp_dir, keep_artifacts } =>
+            cmd_test_all(&tests_dir, &stdlib_dir, include_stdlib, filter.as_deref(), &mode, &toolchain, vcvars.as_deref(), clang.as_deref(), cg_include.as_deref(), rt_dir.as_deref(), tmp_dir.as_deref(), keep_artifacts),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -296,4 +374,181 @@ fn cmd_dump_runtime() -> Result<()> {
         }
     }
     Ok(())
+}
+
+// ---------- Plan 24: cross-platform test runner ----------
+
+use nova_codegen::test_runner;
+
+fn default_repo_root() -> PathBuf {
+    // Если запущен из корня репо (cwd = nova-lang) — `.`. Если из любого
+    // другого места — пользователь передаст явные --tests-dir / --cg-include.
+    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+}
+
+fn default_tmp_dir() -> PathBuf {
+    if cfg!(target_os = "windows") {
+        if let Some(temp) = std::env::var_os("TEMP") {
+            return PathBuf::from(temp).join("nova_tests");
+        }
+    }
+    if let Some(tmpdir) = std::env::var_os("TMPDIR") {
+        return PathBuf::from(tmpdir).join("nova_tests");
+    }
+    PathBuf::from("/tmp/nova_tests")
+}
+
+#[allow(clippy::too_many_arguments)]
+fn cmd_test_build(
+    file: &PathBuf,
+    mode: &str,
+    toolchain: &str,
+    vcvars: Option<&Path>,
+    clang: Option<&Path>,
+    cg_include: Option<&Path>,
+    rt_dir: Option<&Path>,
+    tmp_dir: Option<&Path>,
+    display: Option<&str>,
+    keep_artifacts: bool,
+) -> Result<()> {
+    let mode = test_runner::Mode::parse(mode)?;
+    let pref = test_runner::ToolchainPref::parse(toolchain)?;
+    let repo_root = default_repo_root();
+    let cg_include_buf = cg_include
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| repo_root.join("compiler-codegen"));
+    let rt_dir_buf = rt_dir
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| repo_root.join("compiler-codegen").join("nova_rt"));
+    let tmp_dir_buf = tmp_dir.map(Path::to_path_buf).unwrap_or_else(default_tmp_dir);
+    std::fs::create_dir_all(&tmp_dir_buf)
+        .map_err(|e| anyhow!("create tmp_dir {}: {}", tmp_dir_buf.display(), e))?;
+
+    let tc_opts = test_runner::ToolchainOpts {
+        pref,
+        explicit_clang: clang,
+        explicit_vcvars: vcvars,
+    };
+    let tc = test_runner::detect_toolchain(&tc_opts)?;
+
+    let display_owned = match display {
+        Some(d) => d.to_string(),
+        None => file
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "<unknown>".to_string()),
+    };
+    // Plan 22: auto-detect libuv (как в test-all).
+    let libuv = test_runner::detect_or_build_libuv(
+        &rt_dir_buf,
+        &repo_root,
+        vcvars,
+    );
+    let opts = test_runner::TestBuildOpts {
+        nv_file: file,
+        toolchain: &tc,
+        mode,
+        cg_include: &cg_include_buf,
+        rt_dir: &rt_dir_buf,
+        tmp_dir: &tmp_dir_buf,
+        display: &display_owned,
+        keep_artifacts,
+        libuv: libuv.as_ref(),
+    };
+    let status = test_runner::run_one(&opts);
+    let label = status.label();
+    let detail = status.detail();
+    if detail.is_empty() {
+        println!("{:<14} {}", label, display_owned);
+    } else {
+        println!("{:<14} {}  # {}", label, display_owned, detail);
+    }
+    if status.is_pass() {
+        Ok(())
+    } else {
+        Err(anyhow!("test failed: {}", display_owned))
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn cmd_test_all(
+    tests_dir: &PathBuf,
+    stdlib_dir: &PathBuf,
+    include_stdlib: bool,
+    filter: Option<&str>,
+    mode: &str,
+    toolchain: &str,
+    vcvars: Option<&Path>,
+    clang: Option<&Path>,
+    cg_include: Option<&Path>,
+    rt_dir: Option<&Path>,
+    tmp_dir: Option<&Path>,
+    keep_artifacts: bool,
+) -> Result<()> {
+    let mode = test_runner::Mode::parse(mode)?;
+    let pref = test_runner::ToolchainPref::parse(toolchain)?;
+    let repo_root = default_repo_root();
+    let cg_include_buf = cg_include
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| repo_root.join("compiler-codegen"));
+    let rt_dir_buf = rt_dir
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| repo_root.join("compiler-codegen").join("nova_rt"));
+    let tmp_dir_buf = tmp_dir.map(Path::to_path_buf).unwrap_or_else(default_tmp_dir);
+
+    let tc_opts = test_runner::ToolchainOpts {
+        pref,
+        explicit_clang: clang,
+        explicit_vcvars: vcvars,
+    };
+    let tc = test_runner::detect_toolchain(&tc_opts)?;
+
+    eprintln!(
+        "Toolchain: {}, mode={:?}, tests-dir={}",
+        tc.name(),
+        mode,
+        tests_dir.display()
+    );
+
+    // Plan 22: auto-detect libuv. Если submodule initialized И lib built —
+    // используется в линковке (Time.sleep через uv_timer_t). Если submodule
+    // initialized но lib не built — lazy-build при первом запуске. Если
+    // submodule отсутствует — None (Time.sleep через busy-yield fallback).
+    let libuv = test_runner::detect_or_build_libuv(
+        &rt_dir_buf,
+        &repo_root,
+        vcvars,
+    );
+    if libuv.is_some() {
+        eprintln!("libuv: enabled");
+    } else {
+        eprintln!("libuv: disabled (Time.sleep через busy-yield fallback)");
+    }
+
+    let stdlib_dir_opt = if include_stdlib {
+        Some(stdlib_dir.as_path())
+    } else {
+        None
+    };
+    let opts = test_runner::TestAllOpts {
+        tests_dir,
+        stdlib_dir: stdlib_dir_opt,
+        include_stdlib,
+        filter,
+        mode,
+        toolchain: tc,
+        cg_include: &cg_include_buf,
+        rt_dir: &rt_dir_buf,
+        tmp_dir: &tmp_dir_buf,
+        keep_artifacts,
+        libuv,
+    };
+    let summary = test_runner::run_all(opts)?;
+    test_runner::print_summary(&summary);
+
+    if summary.fail > 0 {
+        Err(anyhow!("{} test(s) failed", summary.fail))
+    } else {
+        Ok(())
+    }
 }

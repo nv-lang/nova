@@ -10,6 +10,7 @@ pub mod lexer;
 pub mod lints;
 pub mod manifest;
 pub mod parser;
+pub mod test_runner;
 pub mod types;
 
 pub use diag::{Diagnostic, Span};
