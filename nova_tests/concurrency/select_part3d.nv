@@ -1,0 +1,13 @@
+module nova_tests.concurrency.select_part3d
+
+test "match with None arm returning unit" {
+    let ch = Channel.new(1)
+    ch.tx.send(77)
+    let opt = ch.rx.recv()
+    let mut got = 0
+    match opt {
+        Some(v) => { got = v }
+        None    => { got = 0 }
+    }
+    assert(got == 77)
+}

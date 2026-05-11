@@ -1,0 +1,61 @@
+module nova_tests.concurrency.select_part1
+
+test "select single recv: value from channel" {
+    let ch = Channel.new(1)
+    let tx = ch.tx
+    let rx = ch.rx
+    supervised {
+        spawn {
+            tx.send(42)
+        }
+        spawn {
+            let mut got = 0
+            select {
+                Some(v) = rx => { got = v }
+            }
+            assert(got == 42)
+        }
+    }
+}
+
+test "select recv with default: default when channel empty" {
+    let ch = Channel.new(1)
+    let rx = ch.rx
+    let mut branch = 0
+    select {
+        Some(_) = rx => { branch = 1 }
+        _            => { branch = 2 }
+    }
+    assert(branch == 2)
+}
+
+test "select recv with default: data path when channel has value" {
+    let ch = Channel.new(1)
+    let tx = ch.tx
+    let rx = ch.rx
+    tx.send(7)
+    let mut branch = 0
+    select {
+        Some(v) = rx => { branch = v }
+        _            => { branch = -1 }
+    }
+    assert(branch == 7)
+}
+
+test "select multi-arm: receives from whichever channel has data" {
+    let ch1 = Channel.new(1)
+    let ch2 = Channel.new(1)
+    let tx1 = ch1.tx
+    let tx2 = ch2.tx
+    let rx1 = ch1.rx
+    let rx2 = ch2.rx
+
+    tx2.send(99)
+
+    let mut result = 0
+    select {
+        Some(v) = rx1 => { result = v }
+        Some(v) = rx2 => { result = v }
+    }
+    assert(result == 99)
+}

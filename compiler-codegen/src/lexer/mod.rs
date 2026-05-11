@@ -416,6 +416,7 @@ impl<'a> Lexer<'a> {
             "realtime" => TokenKind::KwRealtime,
             "defer" => TokenKind::KwDefer,
             "errdefer" => TokenKind::KwErrDefer,
+            "select" => TokenKind::KwSelect,
             _ => TokenKind::Ident(text.to_string()),
         };
         Ok(Token::new(kind, span))

@@ -513,8 +513,9 @@ impl CEmitter {
         // via `with Time = handler Time { sleep(ms) {...} now() {...} } { body }`.
         {
             let mut time_schema: HashMap<String, (Vec<String>, String)> = HashMap::new();
-            time_schema.insert("sleep".to_string(), (vec!["nova_int".into()], "nova_unit".into()));
-            time_schema.insert("now".to_string(),   (vec![],                   "nova_int".into()));
+            time_schema.insert("sleep".to_string(), (vec!["nova_int".into()],    "nova_unit".into()));
+            time_schema.insert("now".to_string(),   (vec![],                      "nova_int".into()));
+            time_schema.insert("after".to_string(), (vec!["nova_int".into()],    "Nova_ChanReader*".into()));
             self.effect_schemas.insert("Time".to_string(), time_schema);
         }
 
@@ -2801,6 +2802,20 @@ impl CEmitter {
             ExprKind::Supervised(b) => Self::collect_idents_block(b, out),
             ExprKind::Detach(b) => Self::collect_idents_block(b, out),
             ExprKind::CancelScope { body, .. } => Self::collect_idents_block(body, out),
+            ExprKind::Select { arms } => {
+                for arm in arms {
+                    match &arm.op {
+                        SelectOp::Recv { chan, .. } => Self::collect_idents_expr(chan, out),
+                        SelectOp::Send { chan, value } => {
+                            Self::collect_idents_expr(chan, out);
+                            Self::collect_idents_expr(value, out);
+                        }
+                        SelectOp::Default => {}
+                    }
+                    if let Some(g) = &arm.guard { Self::collect_idents_expr(g, out); }
+                    Self::collect_idents_block(&arm.body, out);
+                }
+            }
             _ => {}
         }
     }
@@ -7974,7 +7989,7 @@ impl CEmitter {
                     let ch = self.emit_expr(chan)?;
                     let opt_tmp = self.fresh_tmp_named("sel_opt");
                     self.line(&format!("NovaOpt_nova_int {} = nova_chan_reader_recv({});", opt_tmp, ch));
-                    self.line(&format!("if ({}.is_some) {{", opt_tmp));
+                    self.line(&format!("if ({}.tag == NOVA_TAG_Option_Some) {{", opt_tmp));
                     self.indent += 1;
                     if let Some(b) = binding {
                         self.line(&format!("nova_int {} = {}.value;", b, opt_tmp));
@@ -8042,10 +8057,6 @@ impl CEmitter {
             }
         }
 
-        let scope_expr = "nova_current_scope()";
-        let slot_tmp = self.fresh_tmp_named("sel_slot");
-        self.line(&format!("int {} = nova_scope_alloc_slot({});", slot_tmp, scope_expr));
-
         let mut ch_idx = 0usize;
         for (i, arm) in arms.iter().enumerate() {
             let guard_val = if let Some(g) = &arm.guard {
@@ -8082,8 +8093,8 @@ impl CEmitter {
         } else {
             self.line(&format!("if (!{}) {{", imm_tmp));
             self.indent += 1;
-            self.line(&format!("{}.scope = {};", ctx_tmp, scope_expr));
-            self.line(&format!("{}.slot = {};", ctx_tmp, slot_tmp));
+            self.line(&format!("{}.scope = _nova_active_scope;", ctx_tmp));
+            self.line(&format!("{}.slot = _nova_active_slot;", ctx_tmp));
             self.line(&format!("nova_select_park(&{});", ctx_tmp));
             self.indent -= 1;
             self.line("}");
@@ -9068,6 +9079,20 @@ impl CEmitter {
                 for s in &body.stmts { Self::collect_free_idents_stmt(s, out); }
                 if let Some(t) = &body.trailing { Self::collect_free_idents(t, out); }
             }
+            ExprKind::Select { arms } => {
+                for arm in arms {
+                    match &arm.op {
+                        SelectOp::Recv { chan, .. } => Self::collect_free_idents(chan, out),
+                        SelectOp::Send { chan, value } => {
+                            Self::collect_free_idents(chan, out);
+                            Self::collect_free_idents(value, out);
+                        }
+                        SelectOp::Default => {}
+                    }
+                    if let Some(g) = &arm.guard { Self::collect_free_idents(g, out); }
+                    Self::collect_free_idents_block(&arm.body, out);
+                }
+            }
             _ => {}
         }
     }
@@ -9958,7 +9983,8 @@ impl CEmitter {
             "nova_int" | "nova_f64" | "nova_f32" | "nova_bool" |
             "nova_str" | "nova_unit" | "nova_byte" |
             "int32_t" | "int16_t" | "int8_t" |
-            "uint64_t" | "uint32_t" | "uint16_t" | "uint8_t"
+            "uint64_t" | "uint32_t" | "uint16_t" | "uint8_t" |
+            "Nova_ChannelPair"
         )
     }
 
@@ -10297,6 +10323,10 @@ impl CEmitter {
                     if let ExprKind::Ident(n) = &obj.kind {
                         if n == "Channel" && method == "new" {
                             return "Nova_ChannelPair".into();
+                        }
+                        // D94 (Plan 31): Time.after(ms) → Nova_ChanReader*.
+                        if n == "Time" && method == "after" {
+                            return "Nova_ChanReader*".into();
                         }
                     }
                     // D91: Sender capability method return types.
@@ -10711,6 +10741,14 @@ impl CEmitter {
                 // Unknown generic stub (void*): field access returns void*
                 if obj_ty == "void*" {
                     return "void*".into();
+                }
+                // D91 (Plan 21): Nova_ChannelPair field types.
+                if obj_ty == "Nova_ChannelPair" {
+                    return match name.as_str() {
+                        "tx" => "Nova_ChanWriter*".into(),
+                        "rx" => "Nova_ChanReader*".into(),
+                        _ => "nova_int".into(),
+                    };
                 }
                 // Field type lookup from record schema
                 let struct_name = obj_ty

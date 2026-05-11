@@ -1,0 +1,236 @@
+// select.nv — Plan 31 (D94): multiplexed channel operations.
+//
+// Tests cover:
+//   - Single recv arm (fast path)
+//   - Recv with default (non-blocking)
+//   - Multi-arm recv (fairness / interleave)
+//   - Send arm
+//   - Guard arms
+//   - Timeout via Time.after
+
+module nova_tests.concurrency.select_test
+
+// ================================================================
+// SECTION 1: single recv arm
+// ================================================================
+
+test "select single recv: value from channel" {
+    let ch = Channel.new(1)
+    let tx = ch.tx
+    let rx = ch.rx
+    supervised {
+        spawn {
+            tx.send(42)
+        }
+        spawn {
+            let mut got = 0
+            select {
+                Some(v) = rx => { got = v }
+            }
+            assert(got == 42)
+        }
+    }
+}
+
+test "select recv with default: default when channel empty" {
+    let ch = Channel.new(1)
+    let rx = ch.rx
+    let mut branch = 0
+    select {
+        Some(_) = rx => { branch = 1 }
+        _            => { branch = 2 }
+    }
+    assert(branch == 2)
+}
+
+test "select recv with default: data path when channel has value" {
+    let ch = Channel.new(1)
+    let tx = ch.tx
+    let rx = ch.rx
+    tx.send(7)
+    let mut branch = 0
+    select {
+        Some(v) = rx => { branch = v }
+        _            => { branch = -1 }
+    }
+    assert(branch == 7)
+}
+
+// ================================================================
+// SECTION 2: multi-arm select (interleave)
+// ================================================================
+
+test "select multi-arm: receives from whichever channel has data" {
+    let ch1 = Channel.new(1)
+    let ch2 = Channel.new(1)
+    let tx1 = ch1.tx
+    let tx2 = ch2.tx
+    let rx1 = ch1.rx
+    let rx2 = ch2.rx
+
+    tx2.send(99)   // ch2 has data, ch1 empty
+
+    let mut result = 0
+    select {
+        Some(v) = rx1 => { result = v }
+        Some(v) = rx2 => { result = v }
+    }
+    assert(result == 99)
+}
+
+test "select multi-arm: fairness — both channels get served" {
+    // Producer sends N items to each channel; consumer select'ит из обоих.
+    // Asserting that total received = N*2 and both channels contributed.
+    let n = 50
+    let ch1 = Channel.new(n)
+    let ch2 = Channel.new(n)
+    let tx1 = ch1.tx
+    let tx2 = ch2.tx
+    let rx1 = ch1.rx
+    let rx2 = ch2.rx
+
+    let mut from1 = 0
+    let mut from2 = 0
+
+    supervised {
+        // Fill both channels
+        spawn {
+            let mut i = 0
+            while i < n {
+                tx1.send(1)
+                tx2.send(2)
+                i += 1
+            }
+        }
+        // Drain via select
+        spawn {
+            let mut total = 0
+            while total < n * 2 {
+                select {
+                    Some(v) = rx1 => {
+                        from1 += 1
+                        let _ = v
+                    }
+                    Some(v) = rx2 => {
+                        from2 += 1
+                        let _ = v
+                    }
+                }
+                total += 1
+            }
+        }
+    }
+    // Both channels contributed — fairness holds
+    assert(from1 > 0)
+    assert(from2 > 0)
+    assert(from1 + from2 == n * 2)
+}
+
+// ================================================================
+// SECTION 3: send arm
+// ================================================================
+
+test "select send arm: sends to channel with space" {
+    let ch = Channel.new(1)
+    let tx = ch.tx
+    let rx = ch.rx
+    let mut sent = 0
+    select {
+        tx.send(77) => { sent = 1 }
+        _           => { sent = -1 }
+    }
+    assert(sent == 1)
+    let opt = rx.recv()
+    let mut got = 0
+    match opt {
+        Some(v) => { got = v }
+        None    => { got = -1 }
+    }
+    assert(got == 77)
+}
+
+// ================================================================
+// SECTION 4: guard arms
+// ================================================================
+
+test "select guard: disabled arm skips to default" {
+    let ch = Channel.new(1)
+    ch.tx.send(10)
+    let rx = ch.rx
+    let enabled = false
+    let mut branch = 0
+    select {
+        Some(v) = rx if enabled => { branch = v }
+        _                       => { branch = -1 }
+    }
+    assert(branch == -1)
+}
+
+test "select guard: enabled arm receives value" {
+    let ch = Channel.new(1)
+    ch.tx.send(10)
+    let rx = ch.rx
+    let enabled = true
+    let mut branch = 0
+    select {
+        Some(v) = rx if enabled => { branch = v }
+        _                       => { branch = -1 }
+    }
+    assert(branch == 10)
+}
+
+// ================================================================
+// SECTION 5: timeout via Time.after
+// ================================================================
+
+test "select timeout: fires when channel stays empty" {
+    let ch = Channel.new(1)
+    let rx = ch.rx
+    let mut branch = 0
+    supervised {
+        spawn {
+            select {
+                Some(_) = rx               => { branch = 1 }
+                Some(_) = Time.after(50)   => { branch = 2 }
+            }
+        }
+    }
+    assert(branch == 2)
+}
+
+test "select timeout: data wins over timeout" {
+    let ch = Channel.new(1)
+    let tx = ch.tx
+    let rx = ch.rx
+    let mut branch = 0
+    supervised {
+        spawn {
+            tx.send(99)
+            select {
+                Some(v) = rx               => { branch = v }
+                Some(_) = Time.after(200)  => { branch = -1 }
+            }
+        }
+    }
+    assert(branch == 99)
+}
+
+test "select timeout: producer wins race before timeout" {
+    let ch = Channel.new(1)
+    let tx = ch.tx
+    let rx = ch.rx
+    let mut branch = 0
+    supervised {
+        spawn {
+            Time.sleep(10)
+            tx.send(55)
+        }
+        spawn {
+            select {
+                Some(v) = rx               => { branch = v }
+                Some(_) = Time.after(500)  => { branch = -1 }
+            }
+        }
+    }
+    assert(branch == 55)
+}
