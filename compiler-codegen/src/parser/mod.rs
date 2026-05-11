@@ -3078,6 +3078,21 @@ impl Parser {
                 let span = start.merge(value.span);
                 Ok(StmtOrExpr::Stmt(Stmt::Throw { value, span }))
             }
+            // D90: `defer body` — scope-level cleanup. body — expression
+            // (включая block-expression `{ ... }`).
+            TokenKind::KwDefer => {
+                self.bump();
+                let body = self.parse_expr()?;
+                let span = start.merge(body.span);
+                Ok(StmtOrExpr::Stmt(Stmt::Defer { body, span }))
+            }
+            // D90: `errdefer body` — cleanup только на throw/panic-exit.
+            TokenKind::KwErrDefer => {
+                self.bump();
+                let body = self.parse_expr()?;
+                let span = start.merge(body.span);
+                Ok(StmtOrExpr::Stmt(Stmt::ErrDefer { body, span }))
+            }
             _ => {
                 let expr = self.parse_expr()?;
                 // Assignment?

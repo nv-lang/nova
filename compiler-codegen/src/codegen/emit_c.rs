@@ -319,7 +319,9 @@ impl CEmitter {
             Stmt::Expr(e) => e.span,
             Stmt::Assign { span, .. }
             | Stmt::Return { span, .. }
-            | Stmt::Throw { span, .. } => *span,
+            | Stmt::Throw { span, .. }
+            | Stmt::Defer { span, .. }
+            | Stmt::ErrDefer { span, .. } => *span,
             Stmt::Break(s) | Stmt::Continue(s) => *s,
         }
     }
@@ -4074,6 +4076,18 @@ impl CEmitter {
                 } else {
                     self.line(&format!("Nova_Fail_fail(nova_int_to_str((nova_int)({})));", val));
                 }
+            }
+            // D90 Plan 20 Ф.2: парсер принимает defer/errdefer, но codegen
+            // пока не реализует scope-stack invocation (Ф.4). Эмитим как
+            // no-op + warning через source-annotation. Compile-time
+            // проверки (no Fail, no suspend, no exit-control) — Ф.3.
+            // Use-site файлы будут просто игнорировать cleanup до
+            // полной реализации Ф.4-Ф.6.
+            //
+            // TODO Ф.4: scope-stack defer-callbacks, LIFO on exit,
+            //          NovaFailFrame integration для errdefer throw-detection.
+            Stmt::Defer { .. } | Stmt::ErrDefer { .. } => {
+                // No-op в текущей фазе. См. Plan 20 Ф.4.
             }
         }
         Ok(())

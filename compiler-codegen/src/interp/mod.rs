@@ -1880,6 +1880,16 @@ impl Interpreter {
                 let v = self.eval_expr_value(value, env)?;
                 Ok(Flow::Throw(v))
             }
+            // D90 Plan 20 Ф.2: парсер принимает defer/errdefer, но interp
+            // пока не реализует scope-stack invocation (Ф.5). No-op:
+            // выражения не выполняются до Ф.5.
+            //
+            // TODO Ф.5: per-scope Vec<DeferEntry>, invoke LIFO на exit
+            //          (Flow::Return / Flow::Throw / Flow::Break / normal).
+            //          ErrDefer — флаг is_error_exit, invoke только если true.
+            Stmt::Defer { .. } | Stmt::ErrDefer { .. } => {
+                Ok(Flow::Value(Value::Unit))
+            }
         }
     }
 

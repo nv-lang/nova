@@ -337,6 +337,12 @@ impl<'a> BoundCtx<'a> {
             }
             Stmt::Throw { value, .. } => self.walk_expr(value, scope, errors),
             Stmt::Break(_) | Stmt::Continue(_) => {}
+            // D90 Plan 20 Ф.2: body парсится, walk'аем — bound-checker
+            // получит call'ы внутри body. Body-constraint проверки
+            // (no Fail, no suspend, no exit-control) добавляются в Ф.3.
+            Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. } => {
+                self.walk_expr(body, scope, errors);
+            }
         }
     }
 
@@ -880,6 +886,12 @@ impl<'a> CapabilityCtx<'a> {
             }
             Stmt::Throw { value, .. } => self.walk_expr(value, state, errors),
             Stmt::Break(_) | Stmt::Continue(_) => {}
+            // D90 Plan 20 Ф.2: проверяем capability'и внутри body
+            // defer'а. Полные constraints (no Fail/suspend/exit-control)
+            // — Ф.3.
+            Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. } => {
+                self.walk_expr(body, state, errors);
+            }
         }
     }
 
@@ -1352,6 +1364,12 @@ fn has_throw_in_stmt(s: &Stmt) -> bool {
             true
         }
         Stmt::Break(_) | Stmt::Continue(_) => false,
+        // D90: defer/errdefer body **запрещают** throw внутри (Ф.3
+        // body-constraint). Throw в body — compile error. Поэтому
+        // body не считается throw-носителем — он отдельный scope с
+        // ограничением. Если в body throw обнаружен — Ф.3 даст
+        // отдельную compile error раньше этой проверки.
+        Stmt::Defer { .. } | Stmt::ErrDefer { .. } => false,
     }
 }
 

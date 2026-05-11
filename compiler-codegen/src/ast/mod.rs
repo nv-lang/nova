@@ -305,6 +305,18 @@ pub enum Stmt {
         value: Expr,
         span: Span,
     },
+    /// D90: `defer body` — выполнить body при любом exit из enclosing
+    /// scope (normal/return/throw/panic/interrupt). НЕ на exit(N, msg).
+    Defer {
+        body: Expr,
+        span: Span,
+    },
+    /// D90: `errdefer body` — выполнить body только при exit через
+    /// throw/panic. На normal/return/interrupt НЕ выполняется.
+    ErrDefer {
+        body: Expr,
+        span: Span,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
