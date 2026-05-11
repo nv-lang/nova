@@ -36,6 +36,31 @@
 
 **Ф.5 test caching** — отложен. Hash invariant sensitive (нужно правильно включить source + nova_rt mtime + nova-codegen version + toolchain flags + libuv state). False-positive cache hit опасен — тест может «PASS» когда должен FAIL. Сделаем когда CI workflow появится: на CI cache не нужен, для local TDD можно добавить позже.
 
+### Windows parallel-on-AV fragility (open issue)
+
+После реализации Ф.3 + Ф.7 multiple full-runs показали **flaky behavior на Windows под Windows Defender**:
+
+| Run | jobs | timeout | PASS | TIMEOUT | FAIL |
+|---|---|---|---|---|---|
+| #1 (cold) | 8 | 30 | 128 | 9 | 0 |
+| #3 (warm) | 8 | 30 | 88 | ~30 | 0 |
+| #4 (warm) | 4 | 60 | 11 | 0 | 2 |
+
+Симптомы:
+- `lld-link: cannot open output file ... .exe` — AV держит handle на свежем .exe.
+- `'vswhere.exe' is not recognized` — некоторые тесты модифицируют PATH (`cancel_stress_test` запускает subprocess'ы с env).
+- В parallel run прогон **обрывается** после 10-13 успешных тестов — похоже на `Stdio::piped()` resource exhaustion (open file handles) когда 8 child-процессов конкурируют.
+
+Root cause требует дополнительного investigation. Workarounds:
+- `--jobs 1` (sequential) — стабильно проходит, но без speedup.
+- `--jobs 2 --timeout 90` — компромисс, медленнее но без AV-race.
+- В CI без Defender'а (Linux runners) parallel должен работать корректно.
+
+Дополнительные TODO для production CI (Plan 27 candidates):
+1. **Retry mechanism** при transient «file in use» error'ах (3 ретрая с exponential backoff).
+2. **Limit Stdio::piped buffer size** или drain в файл вместо memory.
+3. **`Defender exclusion`** для `target/` и tmp_dir в setup.md инструкциях.
+
 ### Lesson
 
 **Параллельный runner проявил несколько latent багов** в самом язык/runtime:

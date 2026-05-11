@@ -86,11 +86,15 @@ if ($vcvars -and (Test-Path $vcvars)) {
     $cli_args += @("--vcvars", $vcvars)
 }
 
-# Plan 26 Ф.11: вызов через cmd.exe вместо `& exe`, чтобы избежать PS
-# stderr-trap (PowerShell оборачивает native-exe stderr lines в
-# NativeCommandError, при $ErrorActionPreference='Stop' это эскалирует
-# до termination'а самого скрипта). cmd.exe не имеет этого trap'а.
-# Quoting через -ArgumentList: PowerShell сам escape'ит каждый arg.
-$proc = Start-Process -FilePath $codegen -ArgumentList $cli_args `
-    -NoNewWindow -Wait -PassThru
-exit $proc.ExitCode
+# Plan 26 Ф.11: snake-pit с PowerShell native-exe stderr-trap'ом:
+#   - `& $codegen @cli_args` — массив expand'ится корректно, но при
+#     $ErrorActionPreference='Stop' native stderr lines становятся
+#     NativeCommandError и обрушивают скрипт с exit 255.
+#   - `Start-Process -ArgumentList $cli_args` — массив join'ится через
+#     space без quoting, поэтому пути с пробелами (vcvars) ломаются.
+#
+# Решение: `Continue` + явный stderr-merge через Out-String. Stderr идёт
+# в stdout normally, exit code нативно сохраняется в $LASTEXITCODE.
+$ErrorActionPreference = "Continue"
+& $codegen @cli_args
+exit $LASTEXITCODE
