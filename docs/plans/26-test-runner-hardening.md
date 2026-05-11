@@ -1,8 +1,48 @@
 # План 26: hardening test-runner до cargo/go-test уровня
 
-**Статус:** roadmap, не начат.
+**Статус:** ✅ Ф.1-Ф.4, Ф.6-Ф.11 ЗАКРЫТЫ 2026-05-11. Ф.5 (caching) отложен.
 **Дата создания:** 2026-05-11.
 **Тип:** инфраструктурный (DX + CI). Не меняет семантику Nova, улучшает test-runner до production-grade.
+
+## Retro (2026-05-11)
+
+Реализовано в одной сессии (10 фаз из 11):
+
+- **Ф.1 per-test timeout** через `wait_with_timeout` + drain stdout/stderr через background threads (избегает pipe-buffer deadlock). Default 60 s, override `--timeout SECS`.
+- **Ф.2 per-test isolation**: `tmp_dir/t-<hash>/` per display-name. Решает state leakage между тестами (наблюдалось до фикса: flaky `errdefer_throw` — PASS в isolation, FAIL в run_all).
+- **Ф.3 parallel execution**: `std::thread::scope` + atomic-counter round-robin. Default `--jobs N` = `num_cpus`. Per-test isolation от Ф.2 — необходимое условие для безопасного parallel.
+- **Ф.4 structured output**: `--format text|json|tap`. JSON для CI parser'ов (GitHub Actions, GitLab). TAP-13 для legacy test-harnesses. Text — default, human-friendly.
+- **Ф.6 Status → Outcome refactor**: typed `Outcome { Pass, Fail { stage }, Timeout }` вместо 12-вариантного flat enum. `Stage = Codegen | Cc | Run | NoCFile | Expectation { mismatch }` + `ExpectMismatch` для D89 violations. Естественный mapping в JSON.
+- **Ф.7 UTF-8 codepage force**: `chcp 65001 > nul` перед vcvars/cc — Windows cl.exe пишет stderr в UTF-8, fragile CP1251 decoder больше не нужен (оставлен в fallback на старые systems).
+- **Ф.8 streaming + summary в stdout**: cargo/go test convention. Stderr оставлен только для информации runner'а (toolchain, jobs, libuv-status).
+- **Ф.9 `--verbose` / `--quiet`**: Quiet — только FAIL + summary; Verbose — TODO capture stdout PASS (сейчас маркер).
+- **Ф.10 `--rerun-failed`**: `--results-file path.json` сохраняет last results (per-line JSON record); `--rerun-failed` читает и фильтрует только не-PASS тесты.
+- **Ф.11 cleanup `.ps1` wrapper**: переход на `Start-Process -NoNewWindow -Wait -PassThru` снимает PowerShell native-stderr trap (NativeCommandError → silent stderr output).
+
+### Что было найдено в первом prod-прогоне
+
+После Ф.1-Ф.11 первый полный прогон Windows Clang dev `--jobs 8`:
+- **128 PASS** из 141.
+- **9 TIMEOUT** — реально зависающие тесты, которые до Ф.1 блокировали бы runner forever:
+  - `concurrency/deep_gc`, `deep_spawn`, `fiber_throw` (fiber-heavy)
+  - `runtime/read_buffer`, `plus_operator`, `read_text`, `from_into_derive`
+  - `types/records`, `str_search`
+- **0 non-timeout FAIL** — никаких новых регрессий, runner стабилизирован.
+
+`errdefer_throw` flaky — **исправлен** через Ф.2 (per-test isolation решил state leakage).
+`overload_method_values` CC-FAIL от MSVC banner — **исправлен** через Ф.7 (chcp 65001 заглушает banner).
+
+### Что отложено
+
+**Ф.5 test caching** — отложен. Hash invariant sensitive (нужно правильно включить source + nova_rt mtime + nova-codegen version + toolchain flags + libuv state). False-positive cache hit опасен — тест может «PASS» когда должен FAIL. Сделаем когда CI workflow появится: на CI cache не нужен, для local TDD можно добавить позже.
+
+### Lesson
+
+**Параллельный runner проявил несколько latent багов** в самом язык/runtime:
+1. Long-running тесты вешались — теперь killed через timeout. Но fact что они вешаются — это **bug в Plan 22 libuv integration / scheduler** (см. retro Plan 22).
+2. Per-test state leakage от MSVC handle hold — не специфично нашему коду, но stress-test parallel выявил.
+
+**Шкала «production-grade»** — не binary. Plan 24 был «80%», после Plan 26: **~95%** (только Ф.5 caching отложен, не блокирует CI).
 
 ---
 

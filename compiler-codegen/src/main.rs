@@ -83,6 +83,9 @@ enum Cmd {
         /// Сохранить .c / .exe / .obj артефакты после прогона.
         #[arg(long = "keep-artifacts")]
         keep_artifacts: bool,
+        /// Plan 26 Ф.1: timeout на child-процесс в секундах. Default 60.
+        #[arg(long, default_value_t = 60)]
+        timeout: u64,
     },
     /// Plan 24: рекурсивный прогон всех .nv в `--tests-dir`. Заменяет
     /// run_tests.ps1 целиком; .ps1 / .sh wrapper'ы вызывают эту команду.
@@ -123,6 +126,28 @@ enum Cmd {
         /// Сохранить .exe/.obj артефакты.
         #[arg(long = "keep-artifacts")]
         keep_artifacts: bool,
+        /// Plan 26 Ф.1: timeout на child-процесс в секундах. Default 60.
+        #[arg(long, default_value_t = 60)]
+        timeout: u64,
+        /// Plan 26 Ф.3: количество параллельных worker'ов. 0 = num_cpus.
+        #[arg(long, default_value_t = 0)]
+        jobs: usize,
+        /// Plan 26 Ф.4: text (default, human) | json | tap.
+        #[arg(long, default_value = "text")]
+        format: String,
+        /// Plan 26 Ф.9: показывать output PASS-тестов тоже.
+        #[arg(long, short = 'v')]
+        verbose: bool,
+        /// Plan 26 Ф.9: только FAIL + summary.
+        #[arg(long, short = 'q')]
+        quiet: bool,
+        /// Plan 26 Ф.10: файл для last-results.json (для --rerun-failed).
+        #[arg(long = "results-file")]
+        results_file: Option<PathBuf>,
+        /// Plan 26 Ф.10: прогнать только тесты которые fail/timeout
+        /// в --results-file.
+        #[arg(long = "rerun-failed")]
+        rerun_failed: bool,
     },
 }
 
@@ -157,10 +182,10 @@ fn main() -> ExitCode {
         Cmd::EmitRuntimeStubs { root, check } =>
             cmd_emit_runtime_stubs(&root, check),
         Cmd::DumpRuntime => cmd_dump_runtime(),
-        Cmd::TestBuild { file, mode, toolchain, vcvars, clang, cg_include, rt_dir, tmp_dir, display, keep_artifacts } =>
-            cmd_test_build(&file, &mode, &toolchain, vcvars.as_deref(), clang.as_deref(), cg_include.as_deref(), rt_dir.as_deref(), tmp_dir.as_deref(), display.as_deref(), keep_artifacts),
-        Cmd::TestAll { tests_dir, stdlib_dir, include_stdlib, filter, mode, toolchain, vcvars, clang, cg_include, rt_dir, tmp_dir, keep_artifacts } =>
-            cmd_test_all(&tests_dir, &stdlib_dir, include_stdlib, filter.as_deref(), &mode, &toolchain, vcvars.as_deref(), clang.as_deref(), cg_include.as_deref(), rt_dir.as_deref(), tmp_dir.as_deref(), keep_artifacts),
+        Cmd::TestBuild { file, mode, toolchain, vcvars, clang, cg_include, rt_dir, tmp_dir, display, keep_artifacts, timeout } =>
+            cmd_test_build(&file, &mode, &toolchain, vcvars.as_deref(), clang.as_deref(), cg_include.as_deref(), rt_dir.as_deref(), tmp_dir.as_deref(), display.as_deref(), keep_artifacts, timeout),
+        Cmd::TestAll { tests_dir, stdlib_dir, include_stdlib, filter, mode, toolchain, vcvars, clang, cg_include, rt_dir, tmp_dir, keep_artifacts, timeout, jobs, format, verbose, quiet, results_file, rerun_failed } =>
+            cmd_test_all(&tests_dir, &stdlib_dir, include_stdlib, filter.as_deref(), &mode, &toolchain, vcvars.as_deref(), clang.as_deref(), cg_include.as_deref(), rt_dir.as_deref(), tmp_dir.as_deref(), keep_artifacts, timeout, jobs, &format, verbose, quiet, results_file.as_deref(), rerun_failed),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -410,6 +435,7 @@ fn cmd_test_build(
     tmp_dir: Option<&Path>,
     display: Option<&str>,
     keep_artifacts: bool,
+    timeout_secs: u64,
 ) -> Result<()> {
     let mode = test_runner::Mode::parse(mode)?;
     let pref = test_runner::ToolchainPref::parse(toolchain)?;
@@ -438,12 +464,7 @@ fn cmd_test_build(
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| "<unknown>".to_string()),
     };
-    // Plan 22: auto-detect libuv (как в test-all).
-    let libuv = test_runner::detect_or_build_libuv(
-        &rt_dir_buf,
-        &repo_root,
-        vcvars,
-    );
+    let libuv = test_runner::detect_or_build_libuv(&rt_dir_buf, &repo_root, vcvars);
     let opts = test_runner::TestBuildOpts {
         nv_file: file,
         toolchain: &tc,
@@ -454,6 +475,7 @@ fn cmd_test_build(
         display: &display_owned,
         keep_artifacts,
         libuv: libuv.as_ref(),
+        timeout: std::time::Duration::from_secs(timeout_secs),
     };
     let status = test_runner::run_one(&opts);
     let label = status.label();
@@ -484,9 +506,25 @@ fn cmd_test_all(
     rt_dir: Option<&Path>,
     tmp_dir: Option<&Path>,
     keep_artifacts: bool,
+    timeout_secs: u64,
+    jobs: usize,
+    format: &str,
+    verbose: bool,
+    quiet: bool,
+    results_file: Option<&Path>,
+    rerun_failed: bool,
 ) -> Result<()> {
     let mode = test_runner::Mode::parse(mode)?;
     let pref = test_runner::ToolchainPref::parse(toolchain)?;
+    let format = test_runner::OutputFormat::parse(format)?;
+    let verbosity = if quiet {
+        test_runner::Verbosity::Quiet
+    } else if verbose {
+        test_runner::Verbosity::Verbose
+    } else {
+        test_runner::Verbosity::Normal
+    };
+    let jobs = if jobs == 0 { test_runner::default_jobs() } else { jobs };
     let repo_root = default_repo_root();
     let cg_include_buf = cg_include
         .map(Path::to_path_buf)
@@ -503,26 +541,25 @@ fn cmd_test_all(
     };
     let tc = test_runner::detect_toolchain(&tc_opts)?;
 
-    eprintln!(
-        "Toolchain: {}, mode={:?}, tests-dir={}",
-        tc.name(),
-        mode,
-        tests_dir.display()
-    );
+    // Plan 26 Ф.8: information messages в stderr (как у cargo); per-test
+    // events и summary — в stdout. Wrappers смогут просто прогонять stdout.
+    if format == test_runner::OutputFormat::Text {
+        eprintln!(
+            "Toolchain: {}, mode={:?}, jobs={}, tests-dir={}",
+            tc.name(),
+            mode,
+            jobs,
+            tests_dir.display()
+        );
+    }
 
-    // Plan 22: auto-detect libuv. Если submodule initialized И lib built —
-    // используется в линковке (Time.sleep через uv_timer_t). Если submodule
-    // initialized но lib не built — lazy-build при первом запуске. Если
-    // submodule отсутствует — None (Time.sleep через busy-yield fallback).
-    let libuv = test_runner::detect_or_build_libuv(
-        &rt_dir_buf,
-        &repo_root,
-        vcvars,
-    );
-    if libuv.is_some() {
-        eprintln!("libuv: enabled");
-    } else {
-        eprintln!("libuv: disabled (Time.sleep через busy-yield fallback)");
+    let libuv = test_runner::detect_or_build_libuv(&rt_dir_buf, &repo_root, vcvars);
+    if format == test_runner::OutputFormat::Text {
+        if libuv.is_some() {
+            eprintln!("libuv: enabled");
+        } else {
+            eprintln!("libuv: disabled (Time.sleep через busy-yield fallback)");
+        }
     }
 
     let stdlib_dir_opt = if include_stdlib {
@@ -542,9 +579,16 @@ fn cmd_test_all(
         tmp_dir: &tmp_dir_buf,
         keep_artifacts,
         libuv,
+        timeout: std::time::Duration::from_secs(timeout_secs),
+        jobs,
+        format,
+        verbosity,
+        cache_dir: None, // Ф.5 — не реализовано, оставлен крючок в opts.
+        results_file,
+        rerun_failed,
     };
     let summary = test_runner::run_all(opts)?;
-    test_runner::print_summary(&summary);
+    test_runner::print_summary(&summary, format);
 
     if summary.fail > 0 {
         Err(anyhow!("{} test(s) failed", summary.fail))

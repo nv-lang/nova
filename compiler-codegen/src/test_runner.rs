@@ -18,10 +18,86 @@ use crate::manifest;
 use crate::parser;
 use crate::types;
 use anyhow::{anyhow, Result};
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Child, Command, ExitStatus, Stdio};
+use std::time::{Duration, Instant};
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
+
+// ---------- Plan 26 Ф.1: per-test timeout ----------
+
+/// Запускает `child` и ждёт завершения с timeout. Возвращает:
+/// - `Ok(Some(status))` — child завершился до timeout;
+/// - `Ok(None)` — timeout, child killed (best-effort).
+///
+/// Кросс-платформенно через poll-loop `try_wait`. Дёшево (10 ms sleep
+/// между опросами), для тестов в диапазоне 100 ms — 60 s overhead < 1%.
+pub fn wait_with_timeout(child: &mut Child, timeout: Duration) -> std::io::Result<Option<ExitStatus>> {
+    let start = Instant::now();
+    let poll_interval = Duration::from_millis(10);
+    loop {
+        if let Some(status) = child.try_wait()? {
+            return Ok(Some(status));
+        }
+        if start.elapsed() >= timeout {
+            // Best-effort kill. На Windows TerminateProcess, на Unix SIGKILL.
+            let _ = child.kill();
+            // Дренируем zombie, иначе fd-leak.
+            let _ = child.wait();
+            return Ok(None);
+        }
+        std::thread::sleep(poll_interval);
+    }
+}
+
+/// Капчуренный output после run с timeout. Заменяет `Output` из
+/// `Command::output()` — там нет варианта «убит по таймауту».
+pub struct CapturedOutput {
+    pub status: Option<ExitStatus>,  // None = timeout
+    pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>,
+    pub elapsed: Duration,
+}
+
+/// Стандартный `Command::output()` блокирует вечно если child зависает.
+/// Эта функция запускает child + читает stdout/stderr через pipes +
+/// убивает по таймауту. Threads нужны потому что piped stdout/stderr
+/// надо drain'ить параллельно (full pipe-buffer = deadlock).
+pub fn run_with_timeout(mut cmd: Command, timeout: Duration) -> std::io::Result<CapturedOutput> {
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+    let start = Instant::now();
+    let mut child = cmd.spawn()?;
+
+    // Drain stdout/stderr в фоновых потоках, чтобы не deadlock'нуть
+    // на полном pipe-buffer'е (Windows ~4 KB, Linux ~64 KB).
+    let stdout = child.stdout.take().expect("stdout was piped");
+    let stderr = child.stderr.take().expect("stderr was piped");
+    let stdout_handle = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let mut s = stdout;
+        let _ = std::io::Read::read_to_end(&mut s, &mut buf);
+        buf
+    });
+    let stderr_handle = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let mut s = stderr;
+        let _ = std::io::Read::read_to_end(&mut s, &mut buf);
+        buf
+    });
+
+    let status = wait_with_timeout(&mut child, timeout)?;
+    // join'имся даже если killed — pipe закроется и read_to_end вернётся.
+    let stdout_bytes = stdout_handle.join().unwrap_or_default();
+    let stderr_bytes = stderr_handle.join().unwrap_or_default();
+    Ok(CapturedOutput {
+        status,
+        stdout: stdout_bytes,
+        stderr: stderr_bytes,
+        elapsed: start.elapsed(),
+    })
+}
 
 // ---------- D89 EXPECT-маркеры ----------
 
@@ -508,8 +584,11 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                         libuv_args.push_str(&format!(" -l{}", &syslib.replace(".lib", "")));
                     }
                 }
+                // Plan 26 Ф.7: chcp 65001 ставит UTF-8 codepage в текущем
+                // cmd.exe — cl/clang будут писать stderr в UTF-8, не в CP1251.
+                // `> nul` подавляет «Active code page: 65001» line.
                 let inner = format!(
-                    "\"call \"{}\" && \"{}\" {} -I \"{}\"{} -o \"{}\" \"{}\" \"{}\" \"{}\" \"{}\"\"",
+                    "\"chcp 65001 > nul && call \"{}\" > nul && \"{}\" {} -I \"{}\"{} -o \"{}\" \"{}\" \"{}\" \"{}\" \"{}\"\"",
                     vcv.display(),
                     clang_str,
                     flags.join(" "),
@@ -590,8 +669,11 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                     libuv_args.push_str(&format!(" {}", syslib));
                 }
             }
+            // Plan 26 Ф.7: chcp 65001 → UTF-8 в текущем cmd. cl.exe выдаст
+            // stderr в UTF-8, no need для CP1251 decoder. `> nul` подавляет
+            // «Active code page: 65001» и vcvars banner.
             let inner = format!(
-                "\"call \"{}\" && cl.exe /nologo /W0 {}{} /I \"{}\" /Fo\"{}\\\\\" /Fe\"{}\" \"{}\" \"{}\" \"{}\" \"{}\"\"",
+                "\"chcp 65001 > nul && call \"{}\" > nul && cl.exe /nologo /W0 {}{} /I \"{}\" /Fo\"{}\\\\\" /Fe\"{}\" \"{}\" \"{}\" \"{}\" \"{}\"\"",
                 vcvars.display(), flags, libuv_args, inc, obj, out, cfile, rt1, rt2, rt3,
             );
             let mut c = Command::new("cmd");
@@ -643,62 +725,147 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
     }
 }
 
-// ---------- pipeline ----------
+// ---------- Plan 26 Ф.6: Outcome — typed test result ----------
 
-/// Результат одного теста.
+/// Результат одного теста. Production-grade: typed stages вместо
+/// 12-вариантного enum'а. Один источник правды для label/detail/JSON.
 #[derive(Debug, Clone)]
-pub enum Status {
-    Pass(String),                  // detail (e.g. "(negative)" or "")
-    CodegenFail(String),
-    NoCFile,
-    CcFail(String),
-    RunFail(String),
-    NegNoError(String),
-    NegWrongMsg(String),
-    NegNoPanic(String),
-    NegWrongPanic(String),
-    NegWrongExit(String),
-    NegWrongStdout(String),
-    NegWrongStderr(String),
+pub enum Outcome {
+    /// Тест прошёл. `detail` опционален — обычно «», но для negative-
+    /// тестов содержит контекстную метку вроде «(negative)» / «(stdout)».
+    Pass { detail: String, elapsed: Duration },
+    /// Не прошёл. `stage` указывает на этап провала.
+    Fail { stage: Stage, elapsed: Duration },
+    /// Превысил `--timeout` — child killed.
+    Timeout { elapsed: Duration },
 }
 
-impl Status {
+/// Этап на котором тест упал. Структурно: `Codegen`/`Cc`/`Run` —
+/// инфраструктура; `Expectation` — несоответствие D89 EXPECT-маркеру.
+#[derive(Debug, Clone)]
+pub enum Stage {
+    /// Codegen .nv → .c упал (для тестов БЕЗ EXPECT_COMPILE_ERROR).
+    Codegen { error: String },
+    /// .c сгенерирован, но cc (clang/cl/gcc) упал.
+    Cc { error: String },
+    /// Exe запустился, но exit != 0 (для тестов БЕЗ EXPECT-маркера).
+    Run { error: String },
+    /// Codegen эмитнул `.c` но файл отсутствует на диске (codegen bug).
+    NoCFile,
+    /// EXPECT-маркер не выполнен: codegen прошёл хотя ожидался error,
+    /// или runtime не упал/упал не так как ожидалось.
+    Expectation { mismatch: ExpectMismatch },
+}
+
+/// Конкретный mismatch EXPECT-маркера. Один-к-одному с `ExpectMarker`,
+/// плюс «succeeded when fail expected» варианты.
+#[derive(Debug, Clone)]
+pub enum ExpectMismatch {
+    /// `EXPECT_COMPILE_ERROR <pat>`, но codegen succeeded.
+    NoCompileError { expected_pat: String },
+    /// `EXPECT_COMPILE_ERROR <pat>`, codegen упал но без pat.
+    WrongCompileMsg { expected_pat: String, got: String },
+    /// `EXPECT_RUNTIME_PANIC <pat>`, но exit=0.
+    NoPanic { expected_pat: String },
+    /// `EXPECT_RUNTIME_PANIC <pat>`, exit!=0 но без pat.
+    WrongPanic { expected_pat: String, got: String },
+    /// `EXPECT_EXIT_CODE <N>`, но exit != N.
+    WrongExit { expected: i32, got: i32 },
+    /// `EXPECT_STDOUT <pat>` не найден.
+    WrongStdout { expected_pat: String, got: String },
+    /// `EXPECT_STDERR <pat>` не найден.
+    WrongStderr { expected_pat: String, got: String },
+}
+
+impl Outcome {
     pub fn is_pass(&self) -> bool {
-        matches!(self, Status::Pass(_))
+        matches!(self, Outcome::Pass { .. })
     }
+
+    /// Короткий лейбл для табличного output'а.
     pub fn label(&self) -> &'static str {
         match self {
-            Status::Pass(_) => "PASS",
-            Status::CodegenFail(_) => "CODEGEN-FAIL",
-            Status::NoCFile => "NO-C-FILE",
-            Status::CcFail(_) => "CC-FAIL",
-            Status::RunFail(_) => "RUN-FAIL",
-            Status::NegNoError(_) => "NEG-NO-ERROR",
-            Status::NegWrongMsg(_) => "NEG-WRONG-MSG",
-            Status::NegNoPanic(_) => "NEG-NO-PANIC",
-            Status::NegWrongPanic(_) => "NEG-WRONG-PANIC",
-            Status::NegWrongExit(_) => "NEG-WRONG-EXIT",
-            Status::NegWrongStdout(_) => "NEG-WRONG-STDOUT",
-            Status::NegWrongStderr(_) => "NEG-WRONG-STDERR",
+            Outcome::Pass { .. } => "PASS",
+            Outcome::Timeout { .. } => "TIMEOUT",
+            Outcome::Fail { stage, .. } => match stage {
+                Stage::Codegen { .. } => "CODEGEN-FAIL",
+                Stage::Cc { .. } => "CC-FAIL",
+                Stage::Run { .. } => "RUN-FAIL",
+                Stage::NoCFile => "NO-C-FILE",
+                Stage::Expectation { mismatch } => match mismatch {
+                    ExpectMismatch::NoCompileError { .. } => "NEG-NO-ERROR",
+                    ExpectMismatch::WrongCompileMsg { .. } => "NEG-WRONG-MSG",
+                    ExpectMismatch::NoPanic { .. } => "NEG-NO-PANIC",
+                    ExpectMismatch::WrongPanic { .. } => "NEG-WRONG-PANIC",
+                    ExpectMismatch::WrongExit { .. } => "NEG-WRONG-EXIT",
+                    ExpectMismatch::WrongStdout { .. } => "NEG-WRONG-STDOUT",
+                    ExpectMismatch::WrongStderr { .. } => "NEG-WRONG-STDERR",
+                },
+            },
         }
     }
-    pub fn detail(&self) -> &str {
+
+    /// Детальная human-readable строка (для table output + FAIL summary).
+    pub fn detail(&self) -> String {
         match self {
-            Status::Pass(s)
-            | Status::CodegenFail(s)
-            | Status::CcFail(s)
-            | Status::RunFail(s)
-            | Status::NegNoError(s)
-            | Status::NegWrongMsg(s)
-            | Status::NegNoPanic(s)
-            | Status::NegWrongPanic(s)
-            | Status::NegWrongExit(s)
-            | Status::NegWrongStdout(s)
-            | Status::NegWrongStderr(s) => s,
-            Status::NoCFile => "",
+            Outcome::Pass { detail, .. } => detail.clone(),
+            Outcome::Timeout { elapsed } => format!("killed after {}ms", elapsed.as_millis()),
+            Outcome::Fail { stage, .. } => match stage {
+                Stage::Codegen { error } | Stage::Cc { error } | Stage::Run { error } => {
+                    error.chars().take(150).collect()
+                }
+                Stage::NoCFile => String::new(),
+                Stage::Expectation { mismatch } => mismatch.detail(),
+            },
+        }
+    }
+
+    pub fn elapsed(&self) -> Duration {
+        match self {
+            Outcome::Pass { elapsed, .. }
+            | Outcome::Fail { elapsed, .. }
+            | Outcome::Timeout { elapsed } => *elapsed,
         }
     }
 }
+
+impl ExpectMismatch {
+    fn detail(&self) -> String {
+        match self {
+            ExpectMismatch::NoCompileError { expected_pat } => format!(
+                "expected `// EXPECT_COMPILE_ERROR {}` but codegen succeeded",
+                expected_pat
+            ),
+            ExpectMismatch::WrongCompileMsg { expected_pat, got } => {
+                let snippet: String = got.chars().take(120).collect();
+                format!("expected pattern '{}' not found in: {}", expected_pat, snippet)
+            }
+            ExpectMismatch::NoPanic { expected_pat } => format!(
+                "expected `// EXPECT_RUNTIME_PANIC {}` but exe succeeded (exit=0)",
+                expected_pat
+            ),
+            ExpectMismatch::WrongPanic { expected_pat, got } => {
+                let snippet: String = got.chars().take(120).collect();
+                format!("expected panic pattern '{}' not found in: {}", expected_pat, snippet)
+            }
+            ExpectMismatch::WrongExit { expected, got } => {
+                format!("expected exit code {}, got {}", expected, got)
+            }
+            ExpectMismatch::WrongStdout { expected_pat, got } => {
+                let snippet: String = got.chars().take(120).collect();
+                format!("expected stdout pattern '{}' not found in: {}", expected_pat, snippet)
+            }
+            ExpectMismatch::WrongStderr { expected_pat, got } => {
+                let snippet: String = got.chars().take(120).collect();
+                format!("expected stderr pattern '{}' not found in: {}", expected_pat, snippet)
+            }
+        }
+    }
+}
+
+/// Backward-compat alias чтобы старые call-sites внутри тестов работали.
+/// Постепенно убрать; на момент Plan 26 main.rs использует `Outcome` напрямую.
+pub type Status = Outcome;
 
 pub struct TestBuildOpts<'a> {
     pub nv_file: &'a Path,
@@ -711,14 +878,40 @@ pub struct TestBuildOpts<'a> {
     pub keep_artifacts: bool,
     /// Plan 22: libuv config (None = busy-yield fallback).
     pub libuv: Option<&'a LibuvConfig>,
+    /// Plan 26 Ф.1: per-test timeout. Применяется ко всем child-процессам
+    /// (cc + run). Default 60 s — long-running тесты должны override через
+    /// `--timeout` или (TODO Plan 27) per-test маркер.
+    pub timeout: Duration,
 }
 
-/// Запустить codegen + cc + run + check для одного .nv. Не печатает —
-/// возвращает Status.
-pub fn run_one(opts: &TestBuildOpts) -> Status {
+/// Plan 26 Ф.2: unique tmp subdir per test. Хеш от display даёт
+/// воспроизводимый, но collision-resistant id. Решает:
+/// 1. State leakage между тестами (AV-handle hold, leftover .obj).
+/// 2. Возможность parallel execution (Ф.3) — каждый worker в своей
+///    директории, no races.
+fn test_subdir(global_tmp: &Path, display: &str) -> PathBuf {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::Hasher;
+    let mut h = DefaultHasher::new();
+    h.write(display.as_bytes());
+    // 64-bit hash в hex; collision probability ~2^-32 для 130 тестов.
+    global_tmp.join(format!("t-{:016x}", h.finish()))
+}
+
+/// Запустить codegen + cc + run + check для одного .nv.
+/// Production-grade: per-test isolation + timeout. Возвращает `Outcome`.
+pub fn run_one(opts: &TestBuildOpts) -> Outcome {
+    let start = Instant::now();
     let src = match std::fs::read_to_string(opts.nv_file) {
         Ok(s) => s,
-        Err(e) => return Status::CodegenFail(format!("read: {}", e)),
+        Err(e) => {
+            return Outcome::Fail {
+                stage: Stage::Codegen {
+                    error: format!("read: {}", e),
+                },
+                elapsed: start.elapsed(),
+            }
+        }
     };
     let expect = parse_expect(&src);
 
@@ -727,47 +920,83 @@ pub fn run_one(opts: &TestBuildOpts) -> Status {
 
     // EXPECT_COMPILE_ERROR — handled на этапе codegen.
     if let Some(ExpectMarker::CompileError(pat)) = &expect {
-        match codegen_result {
-            Ok(_) => {
-                return Status::NegNoError(format!(
-                    "expected `// EXPECT_COMPILE_ERROR {}` but codegen succeeded",
-                    pat
-                ))
-            }
+        return match codegen_result {
+            Ok(_) => Outcome::Fail {
+                stage: Stage::Expectation {
+                    mismatch: ExpectMismatch::NoCompileError {
+                        expected_pat: pat.clone(),
+                    },
+                },
+                elapsed: start.elapsed(),
+            },
             Err(msg) => {
                 if msg.contains(pat) {
-                    return Status::Pass("(negative)".to_string());
+                    Outcome::Pass {
+                        detail: "(negative)".to_string(),
+                        elapsed: start.elapsed(),
+                    }
+                } else {
+                    Outcome::Fail {
+                        stage: Stage::Expectation {
+                            mismatch: ExpectMismatch::WrongCompileMsg {
+                                expected_pat: pat.clone(),
+                                got: msg,
+                            },
+                        },
+                        elapsed: start.elapsed(),
+                    }
                 }
-                let snippet: String = msg.chars().take(150).collect();
-                return Status::NegWrongMsg(format!(
-                    "expected pattern '{}' not found in: {}",
-                    pat, snippet
-                ));
             }
-        }
+        };
     }
 
     if let Err(msg) = codegen_result {
-        let snippet: String = msg.chars().take(100).collect();
-        return Status::CodegenFail(snippet);
+        return Outcome::Fail {
+            stage: Stage::Codegen { error: msg },
+            elapsed: start.elapsed(),
+        };
     }
 
     let c_file = opts.nv_file.with_extension("c");
     if !c_file.is_file() {
-        return Status::NoCFile;
+        return Outcome::Fail {
+            stage: Stage::NoCFile,
+            elapsed: start.elapsed(),
+        };
     }
 
-    // Step 2: compile .c -> .exe.
-    let exe_safe = opts.display.replace(['/', '\\'], "__");
+    // Step 2 — isolated tmp subdir per test (Plan 26 Ф.2).
+    let subdir = test_subdir(opts.tmp_dir, opts.display);
+    if let Err(e) = std::fs::create_dir_all(&subdir) {
+        return Outcome::Fail {
+            stage: Stage::Cc {
+                error: format!("mkdir subdir: {}", e),
+            },
+            elapsed: start.elapsed(),
+        };
+    }
+
+    // exe_name локально — display может содержать /; используем basename
+    // .nv для exe filename, остальная isolation через subdir.
+    let basename = opts
+        .nv_file
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("test");
     let exe_name = if cfg!(target_os = "windows") {
-        format!("{}.exe", exe_safe)
+        format!("{}.exe", basename)
     } else {
-        exe_safe.clone()
+        basename.to_string()
     };
-    let exe_file = opts.tmp_dir.join(&exe_name);
-    let obj_dir = opts.tmp_dir.join(format!("{}-obj", exe_safe));
+    let exe_file = subdir.join(&exe_name);
+    let obj_dir = subdir.join("obj");
     if let Err(e) = std::fs::create_dir_all(&obj_dir) {
-        return Status::CcFail(format!("mkdir obj_dir: {}", e));
+        return Outcome::Fail {
+            stage: Stage::Cc {
+                error: format!("mkdir obj_dir: {}", e),
+            },
+            elapsed: start.elapsed(),
+        };
     }
 
     let build_opts = BuildOpts {
@@ -779,16 +1008,37 @@ pub fn run_one(opts: &TestBuildOpts) -> Status {
         mode: opts.mode,
         libuv: opts.libuv,
     };
-    let mut cmd = build_command(opts.toolchain, &build_opts);
-    let cc_output = match cmd.output() {
+    let cmd = build_command(opts.toolchain, &build_opts);
+    // Plan 26 Ф.1: timeout для cc. cl.exe / clang обычно <30s, 60s достаточно.
+    // Если cc сам зависает (редко, но бывает при OOM swap) — kill + CcFail.
+    let cc_captured = match run_with_timeout(cmd, opts.timeout) {
         Ok(o) => o,
-        Err(e) => return Status::CcFail(format!("spawn: {}", e)),
+        Err(e) => {
+            return Outcome::Fail {
+                stage: Stage::Cc {
+                    error: format!("spawn cc: {}", e),
+                },
+                elapsed: start.elapsed(),
+            }
+        }
     };
-    if !cc_output.status.success() {
+    let cc_status = match cc_captured.status {
+        Some(s) => s,
+        None => {
+            // cc timeout — редкость, но возможно.
+            if !opts.keep_artifacts {
+                let _ = std::fs::remove_dir_all(&subdir);
+            }
+            return Outcome::Timeout {
+                elapsed: start.elapsed(),
+            };
+        }
+    };
+    if !cc_status.success() {
         let combined = format!(
             "{}{}",
-            bytes_to_string(&cc_output.stdout),
-            bytes_to_string(&cc_output.stderr)
+            bytes_to_string(&cc_captured.stdout),
+            bytes_to_string(&cc_captured.stderr)
         );
         let errs: Vec<&str> = combined
             .lines()
@@ -801,66 +1051,135 @@ pub fn run_one(opts: &TestBuildOpts) -> Status {
         } else {
             errs.join(" | ")
         };
-        return Status::CcFail(detail);
+        if !opts.keep_artifacts {
+            let _ = std::fs::remove_dir_all(&subdir);
+        }
+        return Outcome::Fail {
+            stage: Stage::Cc { error: detail },
+            elapsed: start.elapsed(),
+        };
     }
 
-    // Step 3: run.
-    let run_output = match Command::new(&exe_file).output() {
+    // Step 3 — run с timeout.
+    let mut run_cmd = Command::new(&exe_file);
+    // Plan 26 Ф.7: force UTF-8 locale для child-процесса (Unix).
+    // На Windows runtime сам работает в UTF-8 через chcp 65001 (см. build_command).
+    #[cfg(not(target_os = "windows"))]
+    {
+        run_cmd.env("LC_ALL", "C.UTF-8");
+        run_cmd.env("LANG", "C.UTF-8");
+    }
+    let run_captured = match run_with_timeout(run_cmd, opts.timeout) {
         Ok(o) => o,
-        Err(e) => return Status::RunFail(format!("spawn: {}", e)),
+        Err(e) => {
+            if !opts.keep_artifacts {
+                let _ = std::fs::remove_dir_all(&subdir);
+            }
+            return Outcome::Fail {
+                stage: Stage::Run {
+                    error: format!("spawn exe: {}", e),
+                },
+                elapsed: start.elapsed(),
+            };
+        }
     };
-    let stdout = bytes_to_string(&run_output.stdout);
-    let stderr = bytes_to_string(&run_output.stderr);
-    let exit = run_output.status.code().unwrap_or(-1);
+    let stdout = bytes_to_string(&run_captured.stdout);
+    let stderr = bytes_to_string(&run_captured.stderr);
+    let run_status = match run_captured.status {
+        Some(s) => s,
+        None => {
+            // Timeout — критический результат для тестов вроде sleep_leak_check.
+            if !opts.keep_artifacts {
+                let _ = std::fs::remove_dir_all(&subdir);
+            }
+            return Outcome::Timeout {
+                elapsed: start.elapsed(),
+            };
+        }
+    };
+    let exit = run_status.code().unwrap_or(-1);
 
     // Step 4: проверка EXPECT-маркера.
-    let status = match &expect {
+    let outcome = match &expect {
         Some(ExpectMarker::RuntimePanic(pat)) => {
             if exit == 0 {
-                Status::NegNoPanic(format!(
-                    "expected `// EXPECT_RUNTIME_PANIC {}` but exe succeeded (exit=0)",
-                    pat
-                ))
+                Outcome::Fail {
+                    stage: Stage::Expectation {
+                        mismatch: ExpectMismatch::NoPanic {
+                            expected_pat: pat.clone(),
+                        },
+                    },
+                    elapsed: start.elapsed(),
+                }
             } else if !stderr.contains(pat) && !stdout.contains(pat) {
-                let snippet: String = format!("{} {}", stdout, stderr)
-                    .chars()
-                    .take(150)
-                    .collect();
-                Status::NegWrongPanic(format!(
-                    "expected panic pattern '{}' not found in: {}",
-                    pat, snippet
-                ))
+                Outcome::Fail {
+                    stage: Stage::Expectation {
+                        mismatch: ExpectMismatch::WrongPanic {
+                            expected_pat: pat.clone(),
+                            got: format!("{} {}", stdout, stderr),
+                        },
+                    },
+                    elapsed: start.elapsed(),
+                }
             } else {
-                Status::Pass("(runtime-panic)".to_string())
+                Outcome::Pass {
+                    detail: "(runtime-panic)".to_string(),
+                    elapsed: start.elapsed(),
+                }
             }
         }
         Some(ExpectMarker::ExitCode(n)) => {
             if exit != *n {
-                Status::NegWrongExit(format!("expected exit code {}, got {}", n, exit))
+                Outcome::Fail {
+                    stage: Stage::Expectation {
+                        mismatch: ExpectMismatch::WrongExit {
+                            expected: *n,
+                            got: exit,
+                        },
+                    },
+                    elapsed: start.elapsed(),
+                }
             } else {
-                Status::Pass(format!("(exit-code {})", n))
+                Outcome::Pass {
+                    detail: format!("(exit-code {})", n),
+                    elapsed: start.elapsed(),
+                }
             }
         }
         Some(ExpectMarker::Stdout(pat)) => {
             if !stdout.contains(pat) {
-                let snippet: String = stdout.chars().take(150).collect();
-                Status::NegWrongStdout(format!(
-                    "expected stdout pattern '{}' not found in: {}",
-                    pat, snippet
-                ))
+                Outcome::Fail {
+                    stage: Stage::Expectation {
+                        mismatch: ExpectMismatch::WrongStdout {
+                            expected_pat: pat.clone(),
+                            got: stdout,
+                        },
+                    },
+                    elapsed: start.elapsed(),
+                }
             } else {
-                Status::Pass("(stdout)".to_string())
+                Outcome::Pass {
+                    detail: "(stdout)".to_string(),
+                    elapsed: start.elapsed(),
+                }
             }
         }
         Some(ExpectMarker::Stderr(pat)) => {
             if !stderr.contains(pat) {
-                let snippet: String = stderr.chars().take(150).collect();
-                Status::NegWrongStderr(format!(
-                    "expected stderr pattern '{}' not found in: {}",
-                    pat, snippet
-                ))
+                Outcome::Fail {
+                    stage: Stage::Expectation {
+                        mismatch: ExpectMismatch::WrongStderr {
+                            expected_pat: pat.clone(),
+                            got: stderr,
+                        },
+                    },
+                    elapsed: start.elapsed(),
+                }
             } else {
-                Status::Pass("(stderr)".to_string())
+                Outcome::Pass {
+                    detail: "(stderr)".to_string(),
+                    elapsed: start.elapsed(),
+                }
             }
         }
         Some(ExpectMarker::CompileError(_)) => unreachable!("handled earlier"),
@@ -874,18 +1193,23 @@ pub fn run_one(opts: &TestBuildOpts) -> Status {
                     .take(3)
                     .collect();
                 let detail = last_lines.into_iter().rev().collect::<Vec<_>>().join(" | ");
-                Status::RunFail(detail)
+                Outcome::Fail {
+                    stage: Stage::Run { error: detail },
+                    elapsed: start.elapsed(),
+                }
             } else {
-                Status::Pass(String::new())
+                Outcome::Pass {
+                    detail: String::new(),
+                    elapsed: start.elapsed(),
+                }
             }
         }
     };
 
     if !opts.keep_artifacts {
-        let _ = std::fs::remove_file(&exe_file);
-        let _ = std::fs::remove_dir_all(&obj_dir);
+        let _ = std::fs::remove_dir_all(&subdir);
     }
-    status
+    outcome
 }
 
 /// Codegen .nv → .c. Возвращает Err(rendered-error-string) если type-check / codegen упали.
@@ -931,6 +1255,80 @@ pub struct TestAllOpts<'a> {
     pub keep_artifacts: bool,
     /// Plan 22: libuv path (None = auto-detect через rt_dir/libuv).
     pub libuv: Option<LibuvConfig>,
+    /// Plan 26 Ф.1: timeout на каждый child-процесс. Default 60 s.
+    pub timeout: Duration,
+    /// Plan 26 Ф.3: количество worker-threads для параллельного прогона.
+    /// 1 = sequential (legacy mode). Default `num_cpus()`.
+    pub jobs: usize,
+    /// Plan 26 Ф.4: формат output. `Text` (default) — human-friendly,
+    /// `Json` (one event per line) — для CI parser'ов, `Tap` — TAP-13.
+    pub format: OutputFormat,
+    /// Plan 26 Ф.9: verbose/quiet mode.
+    pub verbosity: Verbosity,
+    /// Plan 26 Ф.5: путь к test-cache (None = cache disabled).
+    pub cache_dir: Option<&'a Path>,
+    /// Plan 26 Ф.10: путь к last-results.json — для --rerun-failed.
+    /// None = не писать results на диск.
+    pub results_file: Option<&'a Path>,
+    /// Если true: фильтровать только тесты которые были fail/timeout
+    /// в `results_file`. Если results_file нет или unreadable — error.
+    pub rerun_failed: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutputFormat {
+    Text,
+    Json,
+    Tap,
+}
+
+impl OutputFormat {
+    pub fn parse(s: &str) -> Result<Self> {
+        match s {
+            "text" => Ok(OutputFormat::Text),
+            "json" => Ok(OutputFormat::Json),
+            "tap" => Ok(OutputFormat::Tap),
+            _ => Err(anyhow!("unknown format `{}` (expected text|json|tap)", s)),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Verbosity {
+    /// `--quiet` — print только FAIL lines + summary.
+    Quiet,
+    /// Default — print per-test PASS/FAIL + summary.
+    Normal,
+    /// `--verbose` — то же + stdout/stderr child процессов на PASS.
+    /// (TODO: реальная capture-stdout, сейчас только маркер.)
+    Verbose,
+}
+
+impl Verbosity {
+    pub fn parse(s: &str) -> Result<Self> {
+        match s {
+            "quiet" => Ok(Verbosity::Quiet),
+            "normal" => Ok(Verbosity::Normal),
+            "verbose" => Ok(Verbosity::Verbose),
+            _ => Err(anyhow!("unknown verbosity `{}` (quiet|normal|verbose)", s)),
+        }
+    }
+}
+
+/// Plan 26 Ф.10: serializable record для last-results.json. Структура
+/// stable, чтобы старые results-files оставались читаемы при minor-bumps.
+#[derive(Debug, Clone)]
+pub struct ResultRecord {
+    pub name: String,
+    pub passed: bool,
+    pub elapsed_ms: u128,
+}
+
+/// Helper: best-effort `num_cpus()` без extra-deps. Stable API в std 1.59+.
+pub fn default_jobs() -> usize {
+    std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
 }
 
 /// Plan 22: auto-detect libuv submodule в rt_dir/libuv. Если submodule
@@ -1184,6 +1582,143 @@ fn display_name(path: &Path, base: &Path, is_stdlib: bool) -> String {
     s
 }
 
+/// JSON-escape для строк. Минимальный — обрабатывает контрольные символы.
+/// `serde_json` не подключаем (extra dependency не нужна для одной функции).
+fn json_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 8);
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => {
+                out.push_str(&format!("\\u{:04x}", c as u32));
+            }
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// Emit one line per test event в соответствии с `format`. Streaming —
+/// output flush'ится сразу после каждой строки.
+fn emit_event(format: OutputFormat, idx: usize, total: usize, name: &str, outcome: &Outcome) {
+    let mut stdout = std::io::stdout().lock();
+    match format {
+        OutputFormat::Text => {
+            let label = outcome.label();
+            let detail = outcome.detail();
+            if detail.is_empty() {
+                let _ = writeln!(stdout, "{:<14} {}", label, name);
+            } else {
+                let trunc: String = detail.chars().take(120).collect();
+                let _ = writeln!(stdout, "{:<14} {}  # {}", label, name, trunc);
+            }
+        }
+        OutputFormat::Json => {
+            let status = if outcome.is_pass() { "pass" } else if matches!(outcome, Outcome::Timeout { .. }) { "timeout" } else { "fail" };
+            let stage = match outcome {
+                Outcome::Pass { .. } => "",
+                Outcome::Timeout { .. } => "timeout",
+                Outcome::Fail { stage, .. } => match stage {
+                    Stage::Codegen { .. } => "codegen",
+                    Stage::Cc { .. } => "cc",
+                    Stage::Run { .. } => "run",
+                    Stage::NoCFile => "no-c-file",
+                    Stage::Expectation { .. } => "expectation",
+                },
+            };
+            let detail = outcome.detail();
+            let _ = writeln!(
+                stdout,
+                "{{\"event\":\"finished\",\"test\":\"{}\",\"status\":\"{}\",\"stage\":\"{}\",\"elapsed_ms\":{},\"detail\":\"{}\"}}",
+                json_escape(name),
+                status,
+                stage,
+                outcome.elapsed().as_millis(),
+                json_escape(&detail),
+            );
+        }
+        OutputFormat::Tap => {
+            // TAP-13: `ok N - name` или `not ok N - name`.
+            let _ = if outcome.is_pass() {
+                writeln!(stdout, "ok {} - {}", idx + 1, name)
+            } else {
+                let detail = outcome.detail();
+                if detail.is_empty() {
+                    writeln!(stdout, "not ok {} - {}", idx + 1, name)
+                } else {
+                    writeln!(stdout, "not ok {} - {} # {}", idx + 1, name, detail)
+                }
+            };
+        }
+    }
+    let _ = stdout.flush();
+    let _ = (idx, total); // suppress unused warning для text/tap путей
+}
+
+/// Plan 26 Ф.10: загрузить ResultRecord'ы из JSON. Простой format
+/// (один record на строку) — не нужен serde_json.
+fn load_results(path: &Path) -> Vec<ResultRecord> {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() || !line.starts_with('{') {
+            continue;
+        }
+        // Парсим: {"name":"...","passed":true,"elapsed_ms":123}
+        // Минималистично через manual split — без regex/serde_json.
+        let name = extract_json_str(line, "\"name\":\"");
+        let passed_str = extract_json_field(line, "\"passed\":");
+        let elapsed_str = extract_json_field(line, "\"elapsed_ms\":");
+        if let (Some(name), Some(passed), Some(elapsed)) = (name, passed_str, elapsed_str) {
+            let passed = passed.trim() == "true";
+            let elapsed_ms = elapsed.trim_end_matches('}').trim().parse::<u128>().unwrap_or(0);
+            out.push(ResultRecord {
+                name,
+                passed,
+                elapsed_ms,
+            });
+        }
+    }
+    out
+}
+
+fn extract_json_str(line: &str, key: &str) -> Option<String> {
+    let idx = line.find(key)?;
+    let rest = &line[idx + key.len()..];
+    let end = rest.find('"')?;
+    Some(rest[..end].to_string())
+}
+
+fn extract_json_field(line: &str, key: &str) -> Option<String> {
+    let idx = line.find(key)?;
+    let rest = &line[idx + key.len()..];
+    let end = rest.find(',').unwrap_or_else(|| rest.find('}').unwrap_or(rest.len()));
+    Some(rest[..end].to_string())
+}
+
+fn save_results(path: &Path, records: &[ResultRecord]) -> std::io::Result<()> {
+    let mut s = String::new();
+    for r in records {
+        s.push_str(&format!(
+            "{{\"name\":\"{}\",\"passed\":{},\"elapsed_ms\":{}}}\n",
+            json_escape(&r.name),
+            r.passed,
+            r.elapsed_ms,
+        ));
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, s)
+}
+
 pub fn run_all(opts: TestAllOpts) -> Result<Summary> {
     // Tests-dir обязателен; stdlib-dir — опционален.
     let mut inputs: Vec<(PathBuf, /*is_stdlib*/ bool)> = Vec::new();
@@ -1207,7 +1742,30 @@ pub fn run_all(opts: TestAllOpts) -> Result<Summary> {
     std::fs::create_dir_all(opts.tmp_dir)
         .map_err(|e| anyhow!("create tmp_dir: {}", e))?;
 
-    let mut results: Vec<(String, Status)> = Vec::new();
+    // Plan 26 Ф.10: --rerun-failed pre-load list.
+    let rerun_set: Option<std::collections::HashSet<String>> = if opts.rerun_failed {
+        let path = opts
+            .results_file
+            .ok_or_else(|| anyhow!("--rerun-failed requires --results-file"))?;
+        let prev = load_results(path);
+        if prev.is_empty() {
+            return Err(anyhow!(
+                "--rerun-failed: results file {} empty or unreadable",
+                path.display()
+            ));
+        }
+        Some(
+            prev.iter()
+                .filter(|r| !r.passed)
+                .map(|r| r.name.clone())
+                .collect(),
+        )
+    } else {
+        None
+    };
+
+    // Собираем job-list (display + nv_path + base) после filter/rerun.
+    let mut jobs: Vec<(String, PathBuf)> = Vec::new();
     for (nv_path, is_stdlib) in &inputs {
         let base = if *is_stdlib {
             opts.stdlib_dir.unwrap_or(opts.tests_dir)
@@ -1220,34 +1778,91 @@ pub fn run_all(opts: TestAllOpts) -> Result<Summary> {
                 continue;
             }
         }
-
-        let test_opts = TestBuildOpts {
-            nv_file: nv_path,
-            toolchain: &opts.toolchain,
-            mode: opts.mode,
-            cg_include: opts.cg_include,
-            rt_dir: opts.rt_dir,
-            tmp_dir: opts.tmp_dir,
-            display: &display,
-            keep_artifacts: opts.keep_artifacts,
-            libuv: opts.libuv.as_ref(),
-        };
-        let status = run_one(&test_opts);
-        // Plan 22 production: streaming progress + explicit flush. Без
-        // этого background-task buffering держит output до завершения,
-        // и при kill'е процесса не видно где остановились.
-        let label = status.label();
-        let detail = status.detail();
-        if detail.is_empty() {
-            eprintln!("{:<14} {}", label, display);
-        } else {
-            let trunc: String = detail.chars().take(120).collect();
-            eprintln!("{:<14} {}  # {}", label, display, trunc);
+        if let Some(set) = &rerun_set {
+            if !set.contains(&display) {
+                continue;
+            }
         }
-        use std::io::Write;
-        let _ = std::io::stderr().flush();
-        results.push((display, status));
+        jobs.push((display, nv_path.clone()));
     }
+    let total = jobs.len();
+
+    // TAP-13 header.
+    if opts.format == OutputFormat::Tap {
+        println!("TAP version 13");
+        println!("1..{}", total);
+        let _ = std::io::stdout().flush();
+    }
+
+    // Plan 26 Ф.3: параллельный прогон. Используем std::thread::scope —
+    // нет extra dependencies. Round-robin распределение через atomic-counter.
+    let jobs_arc = std::sync::Arc::new(jobs);
+    let next_idx = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let results_mutex = std::sync::Arc::new(std::sync::Mutex::new(
+        Vec::<(usize, String, Outcome)>::with_capacity(total),
+    ));
+
+    let workers = std::cmp::max(1, opts.jobs).min(total.max(1));
+    std::thread::scope(|s| {
+        for _ in 0..workers {
+            let jobs = std::sync::Arc::clone(&jobs_arc);
+            let next_idx = std::sync::Arc::clone(&next_idx);
+            let results_mutex = std::sync::Arc::clone(&results_mutex);
+            let format = opts.format;
+            let verbosity = opts.verbosity;
+            let toolchain = &opts.toolchain;
+            let libuv_ref = opts.libuv.as_ref();
+            let tmp_dir = opts.tmp_dir;
+            let cg_include = opts.cg_include;
+            let rt_dir = opts.rt_dir;
+            let mode = opts.mode;
+            let timeout = opts.timeout;
+            let keep_artifacts = opts.keep_artifacts;
+
+            s.spawn(move || loop {
+                let idx = next_idx.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                if idx >= jobs.len() {
+                    return;
+                }
+                let (display, nv_path) = &jobs[idx];
+                let test_opts = TestBuildOpts {
+                    nv_file: nv_path,
+                    toolchain,
+                    mode,
+                    cg_include,
+                    rt_dir,
+                    tmp_dir,
+                    display,
+                    keep_artifacts,
+                    libuv: libuv_ref,
+                    timeout,
+                };
+                let outcome = run_one(&test_opts);
+
+                // Streaming output: Quiet — только FAIL; Normal/Verbose — все.
+                let should_emit = match verbosity {
+                    Verbosity::Quiet => !outcome.is_pass(),
+                    Verbosity::Normal | Verbosity::Verbose => true,
+                };
+                if should_emit {
+                    emit_event(format, idx, jobs.len(), display, &outcome);
+                }
+                let mut guard = results_mutex.lock().expect("results mutex poisoned");
+                guard.push((idx, display.clone(), outcome));
+            });
+        }
+    });
+
+    // Reassemble в порядке job-index (parallel threads complete вразнобой).
+    let mut indexed = std::sync::Arc::try_unwrap(results_mutex)
+        .expect("results mutex still has owners")
+        .into_inner()
+        .expect("results mutex poisoned");
+    indexed.sort_by_key(|(idx, _, _)| *idx);
+    let results: Vec<(String, Outcome)> = indexed
+        .into_iter()
+        .map(|(_, name, outcome)| (name, outcome))
+        .collect();
 
     let mut pass = 0usize;
     let mut fail = 0usize;
@@ -1258,6 +1873,22 @@ pub fn run_all(opts: TestAllOpts) -> Result<Summary> {
             fail += 1;
         }
     }
+
+    // Plan 26 Ф.10: save results на диск для следующего --rerun-failed.
+    if let Some(path) = opts.results_file {
+        let records: Vec<ResultRecord> = results
+            .iter()
+            .map(|(name, outcome)| ResultRecord {
+                name: name.clone(),
+                passed: outcome.is_pass(),
+                elapsed_ms: outcome.elapsed().as_millis(),
+            })
+            .collect();
+        if let Err(e) = save_results(path, &records) {
+            eprintln!("warning: failed to save results file {}: {}", path.display(), e);
+        }
+    }
+
     Ok(Summary {
         pass,
         fail,
@@ -1265,37 +1896,52 @@ pub fn run_all(opts: TestAllOpts) -> Result<Summary> {
     })
 }
 
-/// Вывод summary в стиле run_tests.ps1 — табличный.
+/// Вывод финального summary. Per-test events уже отстримлены в run_all.
 ///
-/// Plan 22 production: per-test progress уже отстримлен в run_all через
-/// eprintln+flush, здесь только итог + повтор FAIL-ов для быстрого
-/// scanning'а (PASS строк уже видно из streaming-output'а). */
-pub fn print_summary(summary: &Summary) {
-    use std::io::Write;
-    println!();
-    println!("===== SUMMARY =====");
-    // Повторим FAIL-строки для быстрого сканирования (PASS уже отстримлены).
-    let mut had_fail = false;
-    for (name, status) in &summary.results {
-        if status.is_pass() {
-            continue;
+/// Plan 26 Ф.4: формат влияет — Text печатает таблицу, JSON финальный
+/// summary-event, TAP — `# pass/fail` комментарий.
+/// Plan 26 Ф.8: всё в stdout (cargo/go test convention).
+pub fn print_summary(summary: &Summary, format: OutputFormat) {
+    let mut stdout = std::io::stdout().lock();
+    match format {
+        OutputFormat::Text => {
+            let _ = writeln!(stdout);
+            let _ = writeln!(stdout, "===== SUMMARY =====");
+            let mut had_fail = false;
+            for (name, status) in &summary.results {
+                if status.is_pass() {
+                    continue;
+                }
+                had_fail = true;
+                let label = status.label();
+                let detail = status.detail();
+                let line = if detail.is_empty() {
+                    format!("{:<14} {}", label, name)
+                } else {
+                    let trunc: String = detail.chars().take(120).collect();
+                    format!("{:<14} {}  # {}", label, name, trunc)
+                };
+                let _ = writeln!(stdout, "{}", line);
+            }
+            if had_fail {
+                let _ = writeln!(stdout);
+            }
+            let _ = writeln!(stdout, "PASS: {}  FAIL: {}", summary.pass, summary.fail);
         }
-        had_fail = true;
-        let label = status.label();
-        let detail = status.detail();
-        let line = if detail.is_empty() {
-            format!("{:<14} {}", label, name)
-        } else {
-            let trunc: String = detail.chars().take(120).collect();
-            format!("{:<14} {}  # {}", label, name, trunc)
-        };
-        println!("{}", line);
+        OutputFormat::Json => {
+            let total_ms: u128 = summary.results.iter().map(|(_, o)| o.elapsed().as_millis()).sum();
+            let _ = writeln!(
+                stdout,
+                "{{\"event\":\"summary\",\"pass\":{},\"fail\":{},\"elapsed_ms\":{}}}",
+                summary.pass, summary.fail, total_ms
+            );
+        }
+        OutputFormat::Tap => {
+            let _ = writeln!(stdout, "# pass {}", summary.pass);
+            let _ = writeln!(stdout, "# fail {}", summary.fail);
+        }
     }
-    if had_fail {
-        println!();
-    }
-    println!("PASS: {}  FAIL: {}", summary.pass, summary.fail);
-    let _ = std::io::stdout().flush();
+    let _ = stdout.flush();
 }
 
 #[cfg(test)]
