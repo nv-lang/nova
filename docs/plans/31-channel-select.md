@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 # План 31: `select` — multiplexed channel operations
 
-**Статус:** 🟡 план, не начат (обновлён 2026-05-11 — production-grade revision).
+**Статус:** 🟡 план, не начат (обновлён 2026-05-11 — production-grade revision v2).
 **Дата создания:** 2026-05-11.
 **Зависимости:**
 - [Plan 21](21-channel-revision-implementation.md) — ✅ закрыт; D91 capability-split реализован.
@@ -32,6 +32,7 @@
 | псевдослучайный выбор | ✅ Ф.1 | ✅ (Fisher-Yates) | random |
 | arm guards (if cond) | ✅ Ф.4 | ❌ | ✅ |
 | cancel_scope integration | ✅ через stop_cb | — | через token |
+| race-free wake (CAS-like) | ✅ `done` flag | ✅ selectdone | ✅ |
 | biased mode | ❌ пост-bootstrap | ❌ | ✅ |
 
 ---
@@ -49,6 +50,26 @@ select {
 }
 ```
 
+**Грамматика:**
+
+```
+select-expr     = 'select' '{' NL* select-arm+ '}'
+select-arm      = channel-arm | default-arm
+channel-arm     = pattern '=' (recv-op | send-op) guard? '=>' arm-body NL*
+recv-op         = expr '.' 'recv' '(' ')'
+send-op         = expr '.' 'send' '(' expr ')'
+guard           = 'if' expr
+default-arm     = 'default' '=>' arm-body NL*
+arm-body        = block | stmt
+```
+
+Синтаксис `pattern = rx.recv()` / `pattern = tx.send(val)` — обычное
+присваивание-матч (аналог `let pat = expr`). Это не новый оператор `<-`,
+что согласуется с `while let Some(v) = rx.recv()` (уже в языке).
+
+**ВАЖНО:** Spec D79/D91 содержит устаревший синтаксис `msg <- ch` — он
+**ЗАМЕНЯЕТСЯ** этим. D94 фиксирует финальный синтаксис.
+
 ### Timeout через `Time.after(d)`
 
 Специального `timeout` arm'а **нет** — timeout реализуется через `Time.after(d)`,
@@ -62,8 +83,10 @@ select {
 }
 ```
 
-Это Go-style (`time.After(d)` возвращает `<-chan time.Time`) — элегантнее
-чем специальный синтаксис, select не знает про "timeout" специально.
+Это Go-style (`time.After(d)` возвращает `<-chan time.Time`). Select не знает
+про "timeout" специально — он просто recv на обычном канале. Это устраняет
+специальный `timeout(expr) =>` синтаксис из старого spec D79 (который требовал
+особой грамматики и runtime-интеграции).
 
 ### Arm guards
 
@@ -75,7 +98,12 @@ select {
 ```
 
 Guard — опциональное `if <expr>` после pattern. Arm пропускается
-(treated as not-ready) если guard false.
+(treated as not-ready) если guard false. Guard вычисляется **после** получения
+значения, но **до** commit'а — если guard false, значение возвращается в буфер.
+
+**Различие от Go:** Go не имеет guards в select. Rust Tokio `select!` имеет
+`if <precond>` до операции (pre-condition, не post-receive guard). Nova следует
+Rust: guard вычисляется как pre-condition, arm считается disabled.
 
 ### Closed channel
 
@@ -97,27 +125,34 @@ select {
 
 ## Семантика
 
-1. **Проверка immediate availability** — до park'а проверяем каждый arm
+1. **Guard evaluation** — до immediate-check вычисляем guard для каждого arm.
+   Disabled arms (guard=false) пропускаются полностью.
+
+2. **Immediate availability check** — проверяем каждый enabled arm
    в псевдослучайном порядке (Fisher-Yates shuffle). Если ≥1 ready —
    выполняем первый найденный (без park'а).
 
-2. **Park** — если ни один не ready: регистрируем все waiters, паркуем
-   fiber.
+3. **All-closed check** — если все enabled arms — recv на closed channel
+   (count==0, closed=true) и нет default → panic "select: all channels closed".
 
-3. **Wake** — когда любой arm готов: вызывает `nova_select_wake()`,
-   который записывает `which` и будит fiber. Остальные waiters unlinked
-   через `nova_select_cancel_others()`.
+4. **Park** — если ни один не ready: устанавливаем `done=false`, регистрируем
+   SelectWaiter для каждого enabled arm, паркуем fiber.
 
-4. **Fairness** — псевдослучайный порядок проверки (Fisher-Yates) на
+5. **Wake** — когда любой arm готов: вызывает wake-callback, который атомарно
+   (CAS `done`: false→true) записывает `which` и будит fiber. Остальные
+   SelectWaiter'ы unlinkуются из channel-waiter-list'ов через
+   `nova_select_cancel_others()`.
+
+6. **Fairness** — псевдослучайный порядок проверки (Fisher-Yates) на
    каждой итерации. При нескольких ready одновременно — один из них
    выбирается случайно, без starvation.
 
-5. **cancel_scope** — если scope отменяется во время park'а:
+7. **cancel_scope** — если scope отменяется во время park'а:
    `nova_sched_cancel_all_pending` вызывает stop_cb для каждого
-   SelectWaiter arm'а, все unlinkуются, fiber просыпается и проверяет
+   SelectWaiter'а, все unlinkуются, fiber просыпается и проверяет
    `cancel_requested`.
 
-6. **default arm** — если присутствует: шаг 1 (immediate check) всегда
+8. **default arm** — если присутствует: шаг 2 (immediate check) всегда
    succeeds (default ready если все остальные not-ready). Никогда
    не park'аем.
 
@@ -125,10 +160,10 @@ select {
 
 ## Архитектура
 
-### Runtime: SelectCtx (channels.h)
+### Runtime: SelectCtx + SelectWaiter (channels.h)
 
 ```c
-/* Один arm в select. */
+/* Один arm select: описывает channel + тип операции. */
 typedef struct SelectArm {
     Nova_ChannelState* channel;
     bool               is_recv;        /* true = recv, false = send */
@@ -136,52 +171,127 @@ typedef struct SelectArm {
     bool               guard;          /* arm active? (guard evaluation result) */
 } SelectArm;
 
-/* Контекст всего select-выражения. */
+/* Контекст всего select-выражения.
+ * Heap-alloc arms/waiters: разные select имеют разное N, известное
+ * в compile time для конкретного select, но struct универсальный. */
 typedef struct SelectCtx {
     SelectArm*      arms;              /* heap-alloc, n элементов */
     int             n;                 /* число arm'ов */
-    int             which;             /* индекс сработавшего arm (-1 = default/none) */
+    volatile int    which;             /* индекс сработавшего arm (-1 = none yet) */
+    volatile bool   done;              /* CAS-флаг: true = arm уже выбран */
     nova_int        recv_val;          /* принятое значение (recv arm) */
     bool            recv_is_some;      /* true = Some(v), false = None */
     NovaFiberQueue* scope;
     int             slot;
-    /* Per-arm waiter, heap-alloc: */
-    ChannelWaiter** waiters;           /* waiters[i] = NULL если arm неактивен */
+    SelectWaiter**  waiters;           /* heap-alloc, n элементов; NULL если arm неактивен */
 } SelectCtx;
+
+/* Waiter для одного arm в select. Расширяет ChannelWaiter back-pointer'ом
+ * на SelectCtx — нужен для wake: один arm будит весь select. */
+typedef struct SelectWaiter {
+    /* Поля совместимые с ChannelWaiter (первые N полей идентичны
+     * для safe cast в channel-waiter-list). */
+    NovaFiberQueue*    scope;
+    int                slot;
+    Nova_ChannelState* channel;   /* NULL = unlinked */
+    bool               is_recv;
+    nova_int           send_val;
+    struct SelectWaiter* next;    /* для channel-waiter-list */
+    /* Select-specific: */
+    SelectCtx*         ctx;       /* back-pointer на owner SelectCtx */
+    int                arm_idx;   /* который arm этот waiter представляет */
+} SelectWaiter;
 ```
 
-**Почему heap-alloc arms, не фиксированный N:**
-Разные `select` имеют разное число arm'ов — N известен в compile time
-для каждого конкретного select, но struct должен быть универсальным.
-Codegen аллоцирует `arms` и `waiters` через `nova_alloc`.
+**Почему `volatile bool done` а не атомик:**
+Runtime — single-threaded cooperative. CAS не нужен. `done` флаг предотвращает
+double-wake при одновременной готовности нескольких arm'ов (между immediate-check
+и park нет yielding, но в send/recv wake два arm'а могут fire между yield-cycles).
+`volatile` чтобы компилятор не оптимизировал read в `nova_select_wake`.
+
+**Несовместимость типов SelectWaiter/ChannelWaiter:**
+`SelectWaiter` НЕ является `ChannelWaiter` — это отдельный тип.
+Channel-wake API (`_nova_channel_wake_recv`) работает с `ChannelWaiter*`.
+Поэтому в channels.h нужен отдельный `SelectWaiter` list в `Nova_ChannelState`:
+
+```c
+struct Nova_ChannelState {
+    /* ... существующие поля ... */
+    ChannelWaiter*  recv_waiters;
+    ChannelWaiter*  send_waiters;
+    SelectWaiter*   select_recv_waiters;  /* Ф.1: select-specific */
+    SelectWaiter*   select_send_waiters;  /* Ф.2: select-specific */
+};
+```
+
+Альтернатива (union-waiter) сложнее — отдельные lists проще и безопаснее.
 
 ### API (channels.h)
 
 ```c
-/* Инициализация. */
+/* Инициализация SelectCtx. Аллоцирует arms[] и waiters[] через nova_alloc. */
 void nova_select_init(SelectCtx* ctx, int n,
                       NovaFiberQueue* scope, int slot);
 
-/* Настройка arm'а до select. */
+/* Настройка arm'а до немедленной проверки. guard=false → arm disabled. */
 void nova_select_set_recv(SelectCtx* ctx, int i,
                           Nova_ChanReader* rx, bool guard);
 void nova_select_set_send(SelectCtx* ctx, int i,
                           Nova_ChanWriter* tx, nova_int val, bool guard);
 
-/* Попытка немедленного выполнения (без park). Shuffle порядок.
+/* Попытка немедленного выполнения (без park). Fisher-Yates shuffle порядок.
  * Returns true если arm сработал (ctx->which, ctx->recv_val заполнены). */
 bool nova_select_try_immediate(SelectCtx* ctx);
 
-/* Регистрация всех waiters + park. После возврата — ctx->which готов. */
+/* Регистрация SelectWaiter'ов для всех enabled arms + park.
+ * После возврата — ctx->which ≥ 0 (или -1 если cancel).
+ * Вызывает nova_select_cancel_others() до возврата. */
 void nova_select_park(SelectCtx* ctx);
 
-/* Вызывается из wake-callback arm'а: записывает which, будит fiber. */
+/* Wake-callback: атомарно (done: false→true) записывает which, recv_val,
+ * recv_is_some; будит fiber. Idempotent — второй вызов игнорируется.
+ * Вызывается из channel's send/recv/close path при обнаружении SelectWaiter. */
 void nova_select_wake(SelectCtx* ctx, int which,
                       nova_int recv_val, bool recv_is_some);
 
-/* Отменяет все waiters кроме which. */
+/* Отменяет все SelectWaiter'ы кроме which.
+ * Unlinkует из channel's select_recv/send_waiters lists.
+ * Вызывается автоматически внутри nova_select_park после wake. */
 void nova_select_cancel_others(SelectCtx* ctx, int which);
+
+/* stop_cb для cancel_scope integration.
+ * Вызывается из nova_sched_cancel_all_pending для каждого SelectWaiter.
+ * Unlinkует waiter, если ctx->done — no-op (другой arm уже fired). */
+NovaStopMode nova_select_waiter_stop_cb(void* handle);
 ```
+
+### Интеграция wake в channel-path
+
+Когда `nova_chan_writer_send` или `nova_chan_reader_recv` завершает операцию,
+они проверяют не только обычный `recv_waiters`/`send_waiters`, но и
+`select_recv_waiters`/`select_send_waiters`:
+
+```c
+/* В _nova_channel_wake_recv (вызывается после push в буфер): */
+static inline void _nova_channel_wake_recv(Nova_ChannelState* st) {
+    /* Сначала обычные waiters: */
+    if (st->recv_waiters) { ... existing code ... return; }
+    /* Затем select-waiters: */
+    if (st->select_recv_waiters) {
+        SelectWaiter* sw = st->select_recv_waiters;
+        /* Unlink: */
+        st->select_recv_waiters = sw->next;
+        sw->channel = NULL;
+        /* Передать значение из буфера: */
+        nova_int v = st->buf[st->head];
+        st->head = (st->head + 1) % st->cap;
+        st->count--;
+        nova_select_wake(sw->ctx, sw->arm_idx, v, /*is_some=*/true);
+    }
+}
+```
+
+Аналогично в `nova_chan_writer_close` — будит select-recv-waiters с `is_some=false`.
 
 ### Codegen pattern
 
@@ -203,16 +313,15 @@ select {
     nova_select_set_recv(&_sc, 1, rx2, /*guard=*/true);
 
     bool _has_default = true;
-    bool _done = nova_select_try_immediate(&_sc);
-    if (!_done && !_has_default) {
+    if (!nova_select_try_immediate(&_sc) && !_has_default) {
         nova_select_park(&_sc);
-        _done = true;
     }
 
-    if (_sc.which == 0 && _sc.recv_is_some) {
+    int _which = _sc.which;
+    if (_sc.done && _which == 0 && _sc.recv_is_some) {
         nova_int v = _sc.recv_val;
         /* body1 */
-    } else if (_sc.which == 1 && _sc.recv_is_some) {
+    } else if (_sc.done && _which == 1 && _sc.recv_is_some) {
         nova_int v = _sc.recv_val;
         /* body2 */
     } else {
@@ -221,47 +330,92 @@ select {
 }
 ```
 
+**"All channels closed" panic:**
+
+```c
+    /* После try_immediate: если all arms closed и нет default → panic. */
+    if (!_sc.done && !_has_default) {
+        /* check: все enabled recv arms закрыты и пусты */
+        bool _all_closed = true;
+        for (int _i = 0; _i < _sc.n; _i++) {
+            if (!_sc.arms[_i].guard) continue;
+            if (_sc.arms[_i].is_recv &&
+                (_sc.arms[_i].channel->count > 0 || !_sc.arms[_i].channel->closed))
+                { _all_closed = false; break; }
+        }
+        if (_all_closed) nv_panic("select: all channels closed");
+        nova_select_park(&_sc);
+    }
+```
+
+Фактически этот детект встроен в `nova_select_park` — если после регистрации
+всех waiters обнаруживается что каналы уже закрыты (между immediate-check и
+park) → `nova_select_wake` уже был вызван с правильным which.
+
 ### Fisher-Yates shuffle для fairness
 
 ```c
-/* nova_select_try_immediate внутри: */
-int order[n];
+/* Внутри nova_select_try_immediate: */
+int order[n];  /* VLA: n известен в compile time, но функция принимает ctx->n */
 for (int i = 0; i < n; i++) order[i] = i;
-/* Fisher-Yates: */
 for (int i = n - 1; i > 0; i--) {
-    int j = nova_rand_u32() % (i + 1);
+    int j = (int)(nova_rand_u32() % (uint32_t)(i + 1));
     int tmp = order[i]; order[i] = order[j]; order[j] = tmp;
 }
 for (int k = 0; k < n; k++) {
     int i = order[k];
     if (!ctx->arms[i].guard) continue;
-    /* check if ready: count > 0 (recv) or space (send) or closed */
-    ...
+    /* check if ready... */
 }
 ```
 
-`nova_rand_u32()` — простой LCG (seed из `uv_hrtime()`), достаточен
-для fairness в bootstrap.
+**`nova_rand_u32()` — LCG, глобальный seed:**
+
+```c
+/* channels.h (или nova_rt.h): */
+static uint32_t _nova_rand_state = 0;
+
+/* Инициализируется один раз при первом call или явно из eventloop init.
+ * Не thread-safe — OK для single-threaded cooperative runtime (Plan 23 заменит). */
+static inline void nova_rand_seed(uint64_t seed) {
+    _nova_rand_state = (uint32_t)(seed ^ (seed >> 32));
+    if (!_nova_rand_state) _nova_rand_state = 1;
+}
+static inline uint32_t nova_rand_u32(void) {
+    if (!_nova_rand_state) nova_rand_seed((uint64_t)uv_hrtime());
+    _nova_rand_state = _nova_rand_state * 1664525u + 1013904223u; /* Numerical Recipes LCG */
+    return _nova_rand_state;
+}
+```
+
+Инициализация seed из `uv_hrtime()` — lazy при первом вызове. Достаточно
+для fairness; под M:N (Plan 23) заменяется на per-thread xorshift64.
 
 ### Time.after(d) — timeout через channel
 
 ```c
-/* nova_rt/time.h или eventloop.h: */
+/* eventloop.h: */
 Nova_ChanReader* nova_time_after(double seconds);
 ```
 
-Создаёт `ChanReader[()]` + `uv_timer_t`. Через `seconds` секунд:
-- timer callback делает `nova_chan_writer_send` в internal tx
-- затем `nova_chan_writer_close(tx)`
+Создаёт `ChanReader[()]` + `uv_timer_t` с one-shot. Через `seconds` секунд:
+1. timer callback: `nova_chan_writer_send(internal_tx, 0)`
+2. `nova_chan_writer_close(internal_tx)`
 
-Результат: `rx.recv()` возвращает `Some(())` через d секунд, потом `None`.
+Результат: `rx.recv()` возвращает `Some(0)` через d секунд, потом `None`.
 Select использует это как обычный recv arm — никакой специальной интеграции.
+
+**Lifetime:** `Nova_ChanReader*` возвращается вызывающему. `uv_timer_t`
+держится в `uv_default_loop()`. Если receiver дропнут до срабатывания — timer
+всё равно сработает (benign: send в closed channel → false, no-op). GC соберёт
+ChanReader и underlying ChannelState после последней ссылки.
 
 ---
 
 ## Парсер
 
-Новый keyword `select` в лексере. `parse_select()` строит:
+Новый keyword `select` в лексере (`TokenKind::KwSelect`). `parse_select()`
+строит `ExprKind::Select { arms }`:
 
 ```rust
 pub struct SelectArm {
@@ -269,84 +423,100 @@ pub struct SelectArm {
     pub op:    SelectOp,         // Recv(expr) | Send(expr, expr) | Default
     pub guard: Option<Box<Expr>>,
     pub body:  Block,
+    pub span:  Span,
 }
 
 pub enum SelectOp {
-    Recv(Box<Expr>),             // rx.recv()
-    Send(Box<Expr>, Box<Expr>),  // tx.send(val)
+    Recv(Box<Expr>),             // rx — выражение типа ChanReader[T]
+    Send(Box<Expr>, Box<Expr>),  // tx, val — tx типа ChanWriter[T]
     Default,
 }
 
-pub struct ExprSelect {
-    pub arms: Vec<SelectArm>,
-    pub span: Span,
-}
+// ExprKind::Select добавляется в ast/mod.rs:
+Select {
+    arms: Vec<SelectArm>,
+},
 ```
+
+**parse_select() логика:**
+1. Expect `KwSelect`, `LBrace`
+2. Loop: peek `RBrace` → done; peek `KwDefault` → parse default arm
+3. Иначе: parse pattern (`parse_pattern()`), expect `Eq`, parse recv/send op
+   (lookahead: ident `.` `recv` `(` `)` vs ident `.` `send` `(` expr `)`),
+   optional guard (`KwIf` expr), `FatArrow` (`=>`), parse block
 
 ---
 
 ## Type-checker
 
-- Каждый `op` в arm проверяется на тип объекта: `Recv` — только на
-  `ChanReader[T]`, `Send` — только на `ChanWriter[T]`.
-- Pattern проверяется против `Option[T]` для recv, `bool` для send.
-- Не более одного `default` arm — compile error.
-- `Default` arm должен быть последним — compile error иначе.
-- guard expression — тип `bool`.
+- `Recv(rx_expr)`: `rx_expr` должен иметь тип `ChanReader[T]` → паттерн проверяется против `Option[T]`
+- `Send(tx_expr, val_expr)`: `tx_expr` — `ChanWriter[T]`, `val_expr` — `T` → паттерн против `bool`
+- `Default`: нет channel-операции, паттерн игнорируется
+- Не более одного `Default` arm — compile error
+- `Default` arm должен быть последним — compile error
+- `if guard`: тип `bool`
+- Arm body: все arms должны иметь одинаковый тип (как match)
+- Нет send И recv на одном канале в одном select — разрешено (разные arms)
 
 ---
 
 ## Ограничения bootstrap
 
-- **send arm в select**: Ф.2 — реализуем, но требует `send_waiters`
-  в SelectCtx. Полезно отложить на Ф.2 если Ф.1 (recv-only) уже даёт
-  ценность.
-- **arm guards**: Ф.4 — опциональны, не блокируют core select.
-- **biased mode** — не реализуем в bootstrap. Tokio-style детерминизм
-  для тестов достигается через `--jobs 1` + фиксированный seed.
-- **вложенный select** — не поддерживается в bootstrap (сложная отмена
-  вложенных SelectCtx). Compile error.
-- **Time.after(d)** — Ф.5; требует новой функции в eventloop.h.
+- **biased mode** — не реализуем. Tokio-style детерминизм для тестов
+  достигается через `--jobs 1` + фиксированный seed.
+- **вложенный select** — разрешён (SelectCtx stack-allocated,
+  вложение безопасно). Нет ограничений на глубину.
+- **select в realtime блоке** — compile error (park не разрешён в realtime).
+- **нулевой select** (`select {}`) — compile error "empty select".
+- **единственный arm без default** — корректно, блокирует до готовности.
 
 ---
 
 ## Фазы
 
-### Ф.1: Runtime + recv-only select
-- [ ] `channels.h`: `SelectCtx`, `SelectArm`, `nova_select_init/set_recv/
-  try_immediate/park/wake/cancel_others`
-- [ ] Fisher-Yates shuffle + `nova_rand_u32()` (LCG, seed из uv_hrtime)
-- [ ] stop_cb для cancel_scope integration
-- [ ] `sched.h`: изменений нет — park/wake API используется как есть
+### Ф.1: Runtime + recv-only select (без guards, без send arm)
+- [ ] `channels.h`: добавить `SelectArm`, `SelectWaiter`, `SelectCtx`
+- [ ] `channels.h`: добавить `select_recv_waiters` / `select_send_waiters` в `Nova_ChannelState`
+- [ ] `channels.h`: `nova_select_init / set_recv / try_immediate / park / wake / cancel_others`
+- [ ] `channels.h`: интеграция wake в `_nova_channel_wake_recv` + `nova_chan_writer_close`
+- [ ] `channels.h`: `nova_rand_u32()` LCG + lazy seed из uv_hrtime()
+- [ ] `channels.h`: `nova_select_waiter_stop_cb` для cancel_scope
+- [ ] Тест runtime (C-level unit test в channels.c или inline): recv select работает
 
 ### Ф.2: Send arm в select
-- [ ] `nova_select_set_send()` + send-waiter логика в SelectCtx
-- [ ] Codegen: send arm dispatch
+- [ ] `nova_select_set_send()` + SelectWaiter для send arm
+- [ ] Интеграция wake в `_nova_channel_wake_send` (проверка select_send_waiters)
+- [ ] `nova_select_cancel_others`: unlink из обоих lists (recv + send)
+- [ ] Тест: select между tx.send и rx.recv
 
 ### Ф.3: Парсер + codegen (recv-only + default)
-- [ ] Новый keyword `select` в лексере
-- [ ] `parse_select()` в parser/mod.rs
-- [ ] AST: `ExprKind::Select { arms: Vec<SelectArm> }`
-- [ ] type-checker: проверки arm-типов, один default, last default
-- [ ] `emit_select()` в emit_c.rs
-- [ ] Dispatch по `_sc.which` + pattern binding
+- [ ] Лексер: `TokenKind::KwSelect`, mapping `"select"` → `KwSelect`
+- [ ] AST: `ExprKind::Select { arms: Vec<SelectArm> }`, `SelectOp`, `SelectArm`
+- [ ] Parser: `parse_select()` — pattern, `=`, recv-op, guard?, `=>`, block
+- [ ] Type-checker: arm-type checks, один default, last default
+- [ ] `emit_select()` в emit_c.rs: init, set_recv, try_immediate, park, dispatch
+- [ ] Dispatch по `_sc.which` + pattern binding (Some/None/wildcard)
+- [ ] Codegen send arm: `nova_select_set_send()` в emit
 
 ### Ф.4: Arm guards
-- [ ] Parser: `if <expr>` после pattern в select arm
+- [ ] Parser: `if <expr>` после pattern (перед `=>`)
 - [ ] Codegen: guard evaluation → `nova_select_set_recv(..., guard_val)`
 
 ### Ф.5: Time.after(d) + тесты + spec
-- [ ] `nova_rt/eventloop.h` или `time.h`: `nova_time_after(double)`
-- [ ] emit_c.rs: dispatch `Time.after(d)` → `Nova_ChanReader*`
+- [ ] `nova_rt/eventloop.h`: `nova_time_after(double seconds)` — uv_timer_t + internal channel
+- [ ] `emit_c.rs`: dispatch `Time.after(d)` → `Nova_ChanReader*` (static method)
 - [ ] `nova_tests/concurrency/select.nv`:
-  - fan-in: два rx, один select, assert LIFO-free sum
+  - fan-in: два rx, один select, assert LIFO-free (оба arm'а срабатывают)
   - closed channel arm: None-match triggers break
-  - default arm: non-blocking poll
-  - timeout: Time.after(0.1) + assert fired
+  - default arm: non-blocking poll (channel empty → default fires)
+  - timeout: Time.after(0.05) + assert fired перед данными
   - send arm: select между tx.send и rx.recv
   - guards: arm с guard=false пропускается
   - cancel_scope: select отменяется при cancel
-- [ ] D94 в `spec/decisions/06-concurrency.md`
+- [ ] D94 в `spec/decisions/06-concurrency.md`:
+  - Заменить устаревший `msg <- ch` синтаксис на `Some(v) = rx.recv()`
+  - Заменить `timeout(expr) =>` на `Time.after(d)` idiom
+  - Добавить таблицу Grammar, семантику, примеры
 - [ ] Regression: все тесты зелёные
 
 ---
@@ -355,13 +525,14 @@ pub struct ExprSelect {
 
 - `select { Some(v) = rx1.recv() => {...} Some(v) = rx2.recv() => {...} }`
   компилируется и корректно работает
-- Пробуждается ровно по одному arm'у, остальные unlinked
+- Пробуждается ровно по одному arm'у (`done` флаг предотвращает double-wake),
+  остальные SelectWaiter'ы unlinked
 - `default` arm работает как non-blocking try
 - `None = rx.recv()` arm срабатывает на closed channel
 - Send arm работает: `_ = tx.send(v) => {}`
-- Arm guards работают: `if cond` пропускает arm
+- Arm guards работают: `if cond` делает arm disabled
 - Timeout через `Time.after(d)` работает как обычный recv arm
 - Fairness: Fisher-Yates shuffle (нет starvation на многочисленных тестах)
-- cancel_scope отменяет все pending select waiters
+- cancel_scope отменяет все pending SelectWaiter'ы
 - Все существующие тесты зелёные (0 regressions)
-- D94 зафиксирован в spec
+- D94 зафиксирован в spec; устаревший синтаксис `<-` удалён из D79/D91
