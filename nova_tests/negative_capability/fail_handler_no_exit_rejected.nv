@@ -1,0 +1,25 @@
+// EXPECT_COMPILE_ERROR handler-method `Fail.fail` обрабатывает операцию с возвращаемым типом `Never`
+//
+// D61 §1430-1434 (revised by Plan 20 Ф.8): handler-method для эффект-
+// операции с return type `Never` ОБЯЗАН закончиться через
+// `interrupt v`, `throw err`, `panic(...)` или `exit(...)`. Нельзя
+// завершить normally — нет значения типа `Never` для return.
+//
+// Этот тест проверяет, что handler без exit-control отвергается
+// type-checker'ом.
+
+module nova_tests.negative_capability.fail_handler_no_exit_rejected
+
+
+test "handler без exit-control должен fail compile" {
+    let mut x = 0
+    with Fail = handler Fail {
+        fail(_msg) {
+            // ❌ Нет interrupt / throw / panic / exit — body completes
+            //    normally. По D61 это compile error.
+            x = x + 1
+        }
+    } {
+        throw "boom"
+    }
+}

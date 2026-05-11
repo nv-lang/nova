@@ -196,6 +196,20 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
     // Walks по всем bodies всех функций. Spec — D90.
     check_defer_bodies(module, &mut errors);
 
+    // D61 §1430-1434 / D90 Ф.8 (1): handler-method для эффект-операции
+    // с return type `Never` ОБЯЗАН закончиться exit-control'ом
+    // (`interrupt v` или `throw err` / `panic` / `exit`). Иначе нет
+    // значения типа Never для возврата — handler не может законно
+    // завершиться normally.
+    //
+    // Применяется к: Fail.fail (built-in, return Never), любым
+    // user-defined effect-operations с return type Never.
+    //
+    // Walks все handler-литералы в module, проверяет для каждого
+    // method'а, является ли соответствующая operation Never-возврат-
+    // ной, и если да — body должен diverge (static analysis).
+    check_handler_never_ops(module, &mut errors);
+
     // Name-resolution фаза: статический поиск undefined идентификаторов
     // в expr-position. Запускается ПОСЛЕ BoundCtx/CapabilityCtx, чтобы
     // более фундаментальные ошибки (signatures/effects) приходили первыми.
@@ -2201,6 +2215,339 @@ fn is_suspend_expr_kind(kind: &ExprKind) -> bool {
         | ExprKind::Detach(_)
         | ExprKind::CancelScope { .. }
     )
+}
+
+/// D90 Ф.8 (1): walk модуля, для каждого `HandlerLit { methods }`
+/// проверяет, что methods обрабатывающие Never-operations завершаются
+/// exit-control'ом.
+///
+/// Never-operation = operation, чей return type — `Never`. Handler-method
+/// для такой operation не может завершиться normally (нет значения типа
+/// Never). По D61 (стр. 1430-1434) body обязан `interrupt v`, `throw err`,
+/// `panic(...)` или `exit(...)`.
+///
+/// Bootstrap-stage: знаем что built-in `Fail.fail(value) -> Never` —
+/// единственная Never-operation в prelude. Hardcoded effect_name="Fail",
+/// method_name="fail". User-defined effects с Never-methods будут покрыты
+/// общей effect-schema-аналитикой (Plan 25+).
+fn check_handler_never_ops(module: &Module, errors: &mut Vec<Diagnostic>) {
+    // Сбор: какие user-defined effect-methods имеют return type Never.
+    // Bootstrap: только Fail.fail — встроенный. User effects парсятся
+    // через TypeDecl::Effect — анализируем их EffectMethod.return_type.
+    let mut never_ops: HashSet<(String, String)> = HashSet::new();
+    // Always-true: built-in Fail.fail.
+    never_ops.insert(("Fail".to_string(), "fail".to_string()));
+    // User-defined effects.
+    for item in &module.items {
+        if let Item::Type(td) = item {
+            if let TypeDeclKind::Effect(methods) = &td.kind {
+                for m in methods {
+                    if let Some(rt) = &m.return_type {
+                        if type_ref_is_never(rt) {
+                            never_ops.insert((td.name.clone(), m.name.clone()));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // Walk all expressions, найдём HandlerLit'ы.
+    for item in &module.items {
+        match item {
+            Item::Fn(f) => {
+                if let FnBody::Block(b) = &f.body {
+                    walk_block_for_handler_lits(b, &never_ops, errors);
+                } else if let FnBody::Expr(e) = &f.body {
+                    walk_expr_for_handler_lits(e, &never_ops, errors);
+                }
+            }
+            Item::Test(t) => walk_block_for_handler_lits(&t.body, &never_ops, errors),
+            _ => {}
+        }
+    }
+}
+
+fn type_ref_is_never(t: &TypeRef) -> bool {
+    if let TypeRef::Named { path, .. } = t {
+        if let Some(last) = path.last() {
+            return last == "Never";
+        }
+    }
+    false
+}
+
+/// Walk block recursively: ищет HandlerLit, проверяет never-ops.
+fn walk_block_for_handler_lits(b: &Block, never_ops: &HashSet<(String, String)>, errors: &mut Vec<Diagnostic>) {
+    for s in &b.stmts {
+        match s {
+            Stmt::Let(decl) => walk_expr_for_handler_lits(&decl.value, never_ops, errors),
+            Stmt::Expr(e) => walk_expr_for_handler_lits(e, never_ops, errors),
+            Stmt::Assign { target, value, .. } => {
+                walk_expr_for_handler_lits(target, never_ops, errors);
+                walk_expr_for_handler_lits(value, never_ops, errors);
+            }
+            Stmt::Return { value, .. } => {
+                if let Some(v) = value { walk_expr_for_handler_lits(v, never_ops, errors); }
+            }
+            Stmt::Throw { value, .. } => walk_expr_for_handler_lits(value, never_ops, errors),
+            Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. } => {
+                walk_expr_for_handler_lits(body, never_ops, errors);
+            }
+            Stmt::Break(_) | Stmt::Continue(_) => {}
+        }
+    }
+    if let Some(t) = &b.trailing { walk_expr_for_handler_lits(t, never_ops, errors); }
+}
+
+fn walk_expr_for_handler_lits(e: &Expr, never_ops: &HashSet<(String, String)>, errors: &mut Vec<Diagnostic>) {
+    match &e.kind {
+        ExprKind::HandlerLit { effect_name, methods } => {
+            // effect_name — Vec<String>, последний компонент = effect's last name.
+            let eff_last = effect_name.last().cloned().unwrap_or_default();
+            for m in methods {
+                let key = (eff_last.clone(), m.name.clone());
+                if never_ops.contains(&key) {
+                    if !handler_body_diverges(&m.body) {
+                        errors.push(Diagnostic::new(
+                            format!(
+                                "handler-method `{}.{}` обрабатывает операцию с возвращаемым типом `Never` \
+                                 (D61 §1430-1434, D65): body обязан завершиться через `interrupt v`, \
+                                 `throw err`, `panic(...)` или `exit(...)`. Нельзя завершить handler-method \
+                                 normally — нет значения типа `Never` для return.",
+                                eff_last, m.name
+                            ),
+                            m.span,
+                        ));
+                    }
+                }
+            }
+            // Также recurse в bodies handler-методов (могут содержать nested
+            // HandlerLit).
+            for m in methods {
+                match &m.body {
+                    HandlerMethodBody::Expr(ex) => walk_expr_for_handler_lits(ex, never_ops, errors),
+                    HandlerMethodBody::Block(b) => walk_block_for_handler_lits(b, never_ops, errors),
+                }
+            }
+        }
+        // Recurse в остальные expr-kinds (используем существующий walk
+        // через ExprKind::Block + остальные expressions).
+        ExprKind::Block(b) => walk_block_for_handler_lits(b, never_ops, errors),
+        ExprKind::With { bindings, body } => {
+            for bd in bindings { walk_expr_for_handler_lits(&bd.handler, never_ops, errors); }
+            walk_block_for_handler_lits(body, never_ops, errors);
+        }
+        ExprKind::If { cond, then, else_ } => {
+            walk_expr_for_handler_lits(cond, never_ops, errors);
+            walk_block_for_handler_lits(then, never_ops, errors);
+            match else_ {
+                Some(ElseBranch::Block(b)) => walk_block_for_handler_lits(b, never_ops, errors),
+                Some(ElseBranch::If(e2)) => walk_expr_for_handler_lits(e2, never_ops, errors),
+                None => {}
+            }
+        }
+        ExprKind::IfLet { scrutinee, then, else_, .. } => {
+            walk_expr_for_handler_lits(scrutinee, never_ops, errors);
+            walk_block_for_handler_lits(then, never_ops, errors);
+            match else_ {
+                Some(ElseBranch::Block(b)) => walk_block_for_handler_lits(b, never_ops, errors),
+                Some(ElseBranch::If(e2)) => walk_expr_for_handler_lits(e2, never_ops, errors),
+                None => {}
+            }
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            walk_expr_for_handler_lits(scrutinee, never_ops, errors);
+            for a in arms {
+                match &a.body {
+                    MatchArmBody::Expr(ex) => walk_expr_for_handler_lits(ex, never_ops, errors),
+                    MatchArmBody::Block(b) => walk_block_for_handler_lits(b, never_ops, errors),
+                }
+                if let Some(g) = &a.guard { walk_expr_for_handler_lits(g, never_ops, errors); }
+            }
+        }
+        ExprKind::For { iter, body, .. } => {
+            walk_expr_for_handler_lits(iter, never_ops, errors);
+            walk_block_for_handler_lits(body, never_ops, errors);
+        }
+        ExprKind::While { cond, body } | ExprKind::WhileLet { scrutinee: cond, body, .. } => {
+            walk_expr_for_handler_lits(cond, never_ops, errors);
+            walk_block_for_handler_lits(body, never_ops, errors);
+        }
+        ExprKind::Loop { body } => walk_block_for_handler_lits(body, never_ops, errors),
+        ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. } => {
+            walk_block_for_handler_lits(body, never_ops, errors);
+        }
+        ExprKind::Supervised(b) | ExprKind::Detach(b) => walk_block_for_handler_lits(b, never_ops, errors),
+        ExprKind::Spawn(ex) => walk_expr_for_handler_lits(ex, never_ops, errors),
+        ExprKind::CancelScope { body, .. } => walk_block_for_handler_lits(body, never_ops, errors),
+        ExprKind::ParallelFor { iter, body, .. } => {
+            walk_expr_for_handler_lits(iter, never_ops, errors);
+            walk_block_for_handler_lits(body, never_ops, errors);
+        }
+        ExprKind::Call { func, args, trailing } => {
+            walk_expr_for_handler_lits(func, never_ops, errors);
+            for a in args { walk_expr_for_handler_lits(a.expr(), never_ops, errors); }
+            if let Some(tr) = trailing {
+                match tr {
+                    Trailing::Block(b) => walk_block_for_handler_lits(b, never_ops, errors),
+                    Trailing::Fn(fsb) => match &fsb.body {
+                        FnBody::Block(b) => walk_block_for_handler_lits(b, never_ops, errors),
+                        FnBody::Expr(e2) => walk_expr_for_handler_lits(e2, never_ops, errors),
+                        FnBody::External => {}
+                    },
+                    Trailing::LegacyBlockWithParams(tb) => walk_block_for_handler_lits(&tb.body, never_ops, errors),
+                }
+            }
+        }
+        ExprKind::Binary { left, right, .. } => {
+            walk_expr_for_handler_lits(left, never_ops, errors);
+            walk_expr_for_handler_lits(right, never_ops, errors);
+        }
+        ExprKind::Unary { operand, .. } => walk_expr_for_handler_lits(operand, never_ops, errors),
+        ExprKind::Coalesce(a, b) => {
+            walk_expr_for_handler_lits(a, never_ops, errors);
+            walk_expr_for_handler_lits(b, never_ops, errors);
+        }
+        ExprKind::As(e2, _) | ExprKind::Is(e2, _) => walk_expr_for_handler_lits(e2, never_ops, errors),
+        ExprKind::Member { obj, .. } | ExprKind::Index { obj, .. } | ExprKind::TurboFish { base: obj, .. } => {
+            walk_expr_for_handler_lits(obj, never_ops, errors);
+        }
+        ExprKind::Range { start, end, .. } => {
+            walk_expr_for_handler_lits(start, never_ops, errors);
+            walk_expr_for_handler_lits(end, never_ops, errors);
+        }
+        ExprKind::ArrayLit(elems) => {
+            for el in elems {
+                match el {
+                    ArrayElem::Item(e2) | ArrayElem::Spread(e2) => walk_expr_for_handler_lits(e2, never_ops, errors),
+                }
+            }
+        }
+        ExprKind::TupleLit(elems) => { for el in elems { walk_expr_for_handler_lits(el, never_ops, errors); } }
+        ExprKind::RecordLit { fields, .. } => {
+            for f in fields { if let Some(v) = &f.value { walk_expr_for_handler_lits(v, never_ops, errors); } }
+        }
+        ExprKind::Throw(v) | ExprKind::Try(v) | ExprKind::Bang(v) | ExprKind::Interrupt(Some(v)) => {
+            walk_expr_for_handler_lits(v, never_ops, errors);
+        }
+        ExprKind::Interrupt(None) => {}
+        ExprKind::Lambda { body, .. } => walk_expr_for_handler_lits(body, never_ops, errors),
+        ExprKind::ClosureLight { body, .. } => match body {
+            ClosureBody::Expr(e2) => walk_expr_for_handler_lits(e2, never_ops, errors),
+            ClosureBody::Block(b) => walk_block_for_handler_lits(b, never_ops, errors),
+        },
+        ExprKind::ClosureFull(fsb) => match &fsb.body {
+            FnBody::Block(b) => walk_block_for_handler_lits(b, never_ops, errors),
+            FnBody::Expr(e2) => walk_expr_for_handler_lits(e2, never_ops, errors),
+            FnBody::External => {}
+        },
+        // Interpolated string — recurse в её parts (могут содержать expressions).
+        ExprKind::InterpolatedStr { parts } => {
+            for p in parts {
+                if let InterpStrPart::Expr(e2) = p {
+                    walk_expr_for_handler_lits(e2, never_ops, errors);
+                }
+            }
+        }
+        // TaggedTemplate имеет args со sub-expressions — но bootstrap-stage
+        // редко используется; для completeness'а добавим shallow walk.
+        ExprKind::TaggedTemplate { .. } => {}
+        // Leaf expressions — nothing to recurse into.
+        ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::CharLit(_) | ExprKind::StrLit(_)
+        | ExprKind::BoolLit(_) | ExprKind::Ident(_) | ExprKind::Path(_) | ExprKind::UnitLit
+        | ExprKind::SelfAccess => {}
+    }
+}
+
+/// Static analysis: завершается ли handler-method body через exit-control?
+///
+/// Exit-control = `interrupt`, `throw`, `panic(...)`, `exit(...)` —
+/// expressions/stmts которые гарантированно НЕ возвращают control в
+/// caller операции (Never-returning).
+///
+/// Bootstrap conservative: проверяем самые частые паттерны:
+///   - Expr body = exit-control expression.
+///   - Block body = последний stmt/trailing — exit-control.
+///   - Conditional structures (if/match) — ВСЕ ветки exit-control.
+///
+/// Если не уверены — возвращаем `false` (нечасто-используемый граничный
+/// случай → программист обязан явно exit'нуть).
+fn handler_body_diverges(body: &HandlerMethodBody) -> bool {
+    match body {
+        HandlerMethodBody::Expr(e) => expr_diverges(e),
+        HandlerMethodBody::Block(b) => block_diverges(b),
+    }
+}
+
+fn expr_diverges(e: &Expr) -> bool {
+    match &e.kind {
+        // Direct exit-control.
+        ExprKind::Interrupt(_) | ExprKind::Throw(_) => true,
+        // panic(...) / exit(...) — Never-returning builtins (D13).
+        ExprKind::Call { func, .. } => {
+            if let ExprKind::Ident(name) = &func.kind {
+                matches!(name.as_str(), "panic" | "exit")
+            } else {
+                false
+            }
+        }
+        // Conditional: все ветки должны diverge.
+        ExprKind::If { then, else_, .. } => {
+            block_diverges(then)
+                && match else_ {
+                    Some(ElseBranch::Block(b)) => block_diverges(b),
+                    Some(ElseBranch::If(e2)) => expr_diverges(e2),
+                    None => false, // нет else — fall-through possible
+                }
+        }
+        ExprKind::IfLet { then, else_, .. } => {
+            block_diverges(then)
+                && match else_ {
+                    Some(ElseBranch::Block(b)) => block_diverges(b),
+                    Some(ElseBranch::If(e2)) => expr_diverges(e2),
+                    None => false,
+                }
+        }
+        ExprKind::Match { arms, .. } => {
+            !arms.is_empty()
+                && arms.iter().all(|a| match &a.body {
+                    MatchArmBody::Expr(ex) => expr_diverges(ex),
+                    MatchArmBody::Block(b) => block_diverges(b),
+                })
+        }
+        // Block-as-expr.
+        ExprKind::Block(b) => block_diverges(b),
+        // Loop без condition — diverges (если нет break).
+        ExprKind::Loop { .. } => true,
+        _ => false,
+    }
+}
+
+fn block_diverges(b: &Block) -> bool {
+    // Сначала проверим: есть ли в block.stmts unconditional throw/return/etc
+    // на верхнем уровне? Это early-diverge.
+    for s in &b.stmts {
+        if stmt_diverges(s) {
+            return true;
+        }
+    }
+    // Иначе — проверка trailing expression.
+    if let Some(t) = &b.trailing {
+        return expr_diverges(t);
+    }
+    false
+}
+
+fn stmt_diverges(s: &Stmt) -> bool {
+    match s {
+        Stmt::Return { .. } | Stmt::Throw { .. } => true,
+        Stmt::Expr(e) => expr_diverges(e),
+        // Break/Continue exit'ят loop, не handler-fn — не diverge для
+        // handler-purposes (handler body должен иметь exit к caller'у
+        // операции, не к outer loop).
+        Stmt::Break(_) | Stmt::Continue(_) => false,
+        _ => false,
+    }
 }
 
 /// Walk модуля: для каждого defer/errdefer statement в bodies функций
