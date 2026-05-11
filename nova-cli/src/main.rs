@@ -44,11 +44,11 @@ enum Cmd {
         /// Output binary path (default: <name>[.exe] next to source).
         #[arg(short = 'o')]
         output: Option<PathBuf>,
-        /// dev (default) | release
-        #[arg(long, default_value = "dev")]
+        /// Build mode: 'dev' (unoptimized) or 'release' (optimized).
+        #[arg(long, default_value = "dev", value_parser = ["dev", "release"])]
         mode: String,
-        /// auto (default) | clang | msvc | gcc
-        #[arg(long, default_value = "auto")]
+        /// C compiler to use.
+        #[arg(long, default_value = "auto", value_parser = ["auto", "clang", "msvc", "gcc"])]
         toolchain: String,
         /// Path to vcvars64.bat (Windows, auto-detected via vswhere).
         #[arg(long)]
@@ -68,14 +68,14 @@ enum Cmd {
         /// Number of parallel workers (0 = num_cpus, default 0).
         #[arg(long, default_value_t = 0)]
         jobs: usize,
-        /// text (default) | json | tap | junit
-        #[arg(long, default_value = "text")]
+        /// Output format: 'text', 'json', 'tap', or 'junit'.
+        #[arg(long, default_value = "text", value_parser = ["text", "json", "tap", "junit"])]
         format: String,
-        /// dev (default) | release
-        #[arg(long, default_value = "dev")]
+        /// Build mode: 'dev' (unoptimized) or 'release' (optimized).
+        #[arg(long, default_value = "dev", value_parser = ["dev", "release"])]
         mode: String,
-        /// auto (default) | clang | msvc | gcc
-        #[arg(long, default_value = "auto")]
+        /// C compiler to use.
+        #[arg(long, default_value = "auto", value_parser = ["auto", "clang", "msvc", "gcc"])]
         toolchain: String,
         /// Path to vcvars64.bat (Windows, auto-detected via vswhere).
         #[arg(long)]
@@ -195,6 +195,9 @@ fn check_module_path(path: &Path, module: &nova_codegen::ast::Module) -> Result<
 }
 
 fn cmd_check(path: &Path) -> Result<()> {
+    if !path.is_file() {
+        bail!("file not found: {}", path.display());
+    }
     let src = read_file(path)?;
     let path_str = path.to_string_lossy();
     let module = nova_codegen::parser::parse(&src)
@@ -212,6 +215,9 @@ fn cmd_check(path: &Path) -> Result<()> {
 }
 
 fn cmd_run(path: &Path) -> Result<()> {
+    if !path.is_file() {
+        bail!("file not found: {}", path.display());
+    }
     let src = read_file(path)?;
     let path_str = path.to_string_lossy();
     let module = nova_codegen::parser::parse(&src)
@@ -243,11 +249,14 @@ fn cmd_build(
     clang: Option<&Path>,
     timeout_secs: u64,
 ) -> Result<()> {
+    if timeout_secs == 0 {
+        bail!("--timeout must be >= 1 second");
+    }
     let repo = find_repo_root()?;
     let paths = resolve_paths(&repo);
 
     let path = path.canonicalize()
-        .unwrap_or_else(|_| path.to_path_buf());
+        .map_err(|e| anyhow!("cannot resolve path {}: {}", path.display(), e))?;
     let src = read_file(&path)?;
     let path_str = path.to_string_lossy();
 
@@ -264,7 +273,7 @@ fn cmd_build(
     nova_codegen::types::infer_effects(&mut module);
     for w in nova_codegen::lints::lint_module(&module) {
         let (line, col) = nova_codegen::diag::byte_to_line_col(&src, w.diag.span.start);
-        eprintln!("{}:{}:{}: {} [{}]", path.display(), line, col, w.diag.message, w.rule);
+        eprintln!("warning: {}:{}:{}: {} [{}]", path.display(), line, col, w.diag.message, w.rule);
     }
 
     let mut emitter = nova_codegen::codegen::CEmitter::new();
@@ -283,6 +292,9 @@ fn cmd_build(
     let final_exe = output
         .map(Path::to_path_buf)
         .unwrap_or_else(|| path.with_file_name(&exe_name));
+    if final_exe.is_dir() {
+        bail!("output path is a directory: {}", final_exe.display());
+    }
 
     // write .c to a unique tmp dir
     let hash = path_hash(&path);
@@ -358,6 +370,17 @@ fn cmd_test(
     keep_artifacts: bool,
     tests_dir_override: Option<&Path>,
 ) -> Result<()> {
+    if timeout_secs == 0 {
+        bail!("--timeout must be >= 1 second");
+    }
+    if let Some(f) = filter {
+        if f.is_empty() {
+            bail!("--filter cannot be empty");
+        }
+    }
+    if verbose && quiet {
+        bail!("cannot use --verbose and --quiet simultaneously");
+    }
     let repo = find_repo_root()?;
     let paths = resolve_paths(&repo);
 
@@ -424,7 +447,8 @@ fn cmd_test(
         .map(Path::to_path_buf)
         .unwrap_or(paths.default_results_file);
     if let Some(parent) = results_path.parent() {
-        let _ = std::fs::create_dir_all(parent);
+        std::fs::create_dir_all(parent)
+            .map_err(|e| anyhow!("cannot create results dir {}: {}", parent.display(), e))?;
     }
 
     let tmp_dir = default_tmp_dir();

@@ -1167,6 +1167,9 @@ pub fn run_one(opts: &TestBuildOpts) -> Outcome {
         basename.to_string()
     };
     let exe_file = subdir.join(&exe_name);
+    // Windows: lld-link cannot overwrite a locked exe (AV / previous run handle).
+    // Remove stale artifact before compiling so the linker always creates a fresh file.
+    let _ = std::fs::remove_file(&exe_file);
     let obj_dir = subdir.join("obj");
     if let Err(e) = std::fs::create_dir_all(&obj_dir) {
         return Outcome::Fail {
