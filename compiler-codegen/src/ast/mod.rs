@@ -496,6 +496,10 @@ pub enum ExprKind {
     Loop {
         body: Block,
     },
+    /// `select { Some(v) = rx.recv() => body, _ => default }` --- D94
+    Select {
+        arms: Vec<SelectArm>,
+    },
 
     // Функции и handlers
     /// `(a, b) => expr` — лямбда (D22, строго `=> expr`).
@@ -804,6 +808,29 @@ pub enum MatchArmBody {
     Expr(Expr),
     /// `pattern => { block }` — единственное исключение из D40 (D19)
     Block(Block),
+}
+
+/// One arm of a `select` expression --- D94.
+#[derive(Debug, Clone)]
+pub struct SelectArm {
+    pub op: SelectOp,
+    pub guard: Option<Expr>,
+    pub body: Block,
+    pub span: Span,
+}
+
+/// Channel operation in a select arm --- D94.
+#[derive(Debug, Clone)]
+pub enum SelectOp {
+    Recv {
+        binding: Option<String>,
+        chan: Box<Expr>,
+    },
+    Send {
+        chan: Box<Expr>,
+        value: Box<Expr>,
+    },
+    Default,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

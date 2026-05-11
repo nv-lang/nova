@@ -915,6 +915,10 @@ impl Interpreter {
                 let s = parts.join("");
                 Ok(Flow::Value(Value::Str(s)))
             }
+            ExprKind::Select { .. } => Err(Diagnostic::new(
+                "`select` requires the compiled runtime (not available in bootstrap interpreter)",
+                expr.span,
+            )),
         }
     }
 

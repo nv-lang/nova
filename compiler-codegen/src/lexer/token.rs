@@ -80,6 +80,8 @@ pub enum TokenKind {
     /// D90: error-only cleanup. `errdefer body` запускается только на
     /// throw/panic-exit, не на normal/return/interrupt.
     KwErrDefer,
+    /// D94: multiplexed channel operation.
+    KwSelect,
 
     // Пунктуация
     LParen,
@@ -191,6 +193,7 @@ impl TokenKind {
             TokenKind::KwNot => "`not`",
             TokenKind::KwDefer => "`defer`",
             TokenKind::KwErrDefer => "`errdefer`",
+            TokenKind::KwSelect => "`select`",
             TokenKind::LParen => "`(`",
             TokenKind::RParen => "`)`",
             TokenKind::LBracket => "`[`",

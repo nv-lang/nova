@@ -520,6 +520,20 @@ impl<'a> BoundCtx<'a> {
                 self.walk_block(body, scope, errors);
             }
             ExprKind::Loop { body } => self.walk_block(body, scope, errors),
+            ExprKind::Select { arms } => {
+                for arm in arms {
+                    match &arm.op {
+                        SelectOp::Recv { chan, .. } => self.walk_expr(chan, scope, errors),
+                        SelectOp::Send { chan, value } => {
+                            self.walk_expr(chan, scope, errors);
+                            self.walk_expr(value, scope, errors);
+                        }
+                        SelectOp::Default => {}
+                    }
+                    if let Some(g) = &arm.guard { self.walk_expr(g, scope, errors); }
+                    self.walk_block(&arm.body, scope, errors);
+                }
+            }
             ExprKind::Range { start, end, .. } => {
                 self.walk_expr(start, scope, errors);
                 self.walk_expr(end, scope, errors);
@@ -1117,6 +1131,20 @@ impl<'a> CapabilityCtx<'a> {
                 self.walk_block(body, state, errors);
             }
             ExprKind::Loop { body } => self.walk_block(body, state, errors),
+            ExprKind::Select { arms } => {
+                for arm in arms {
+                    match &arm.op {
+                        SelectOp::Recv { chan, .. } => self.walk_expr(chan, state, errors),
+                        SelectOp::Send { chan, value } => {
+                            self.walk_expr(chan, state, errors);
+                            self.walk_expr(value, state, errors);
+                        }
+                        SelectOp::Default => {}
+                    }
+                    if let Some(g) = &arm.guard { self.walk_expr(g, state, errors); }
+                    self.walk_block(&arm.body, state, errors);
+                }
+            }
             ExprKind::Range { start, end, .. } => {
                 self.walk_expr(start, state, errors);
                 self.walk_expr(end, state, errors);
@@ -1654,6 +1682,31 @@ impl NameResCtx {
                 scope.pop();
             }
             ExprKind::Loop { body } => self.walk_block(body, scope, errors),
+            ExprKind::Select { arms } => {
+                for arm in arms {
+                    match &arm.op {
+                        SelectOp::Recv { binding, chan } => {
+                            self.walk_expr(chan, scope, errors);
+                            let mut bindings: HashSet<String> = HashSet::new();
+                            if let Some(b) = binding { bindings.insert(b.clone()); }
+                            scope.push(bindings);
+                            if let Some(g) = &arm.guard { self.walk_expr(g, scope, errors); }
+                            self.walk_block(&arm.body, scope, errors);
+                            scope.pop();
+                        }
+                        SelectOp::Send { chan, value } => {
+                            self.walk_expr(chan, scope, errors);
+                            self.walk_expr(value, scope, errors);
+                            if let Some(g) = &arm.guard { self.walk_expr(g, scope, errors); }
+                            self.walk_block(&arm.body, scope, errors);
+                        }
+                        SelectOp::Default => {
+                            if let Some(g) = &arm.guard { self.walk_expr(g, scope, errors); }
+                            self.walk_block(&arm.body, scope, errors);
+                        }
+                    }
+                }
+            }
 
             ExprKind::Block(b) => self.walk_block(b, scope, errors),
 
@@ -2062,6 +2115,14 @@ fn has_throw_in_expr(e: &Expr) -> bool {
             has_throw_in_expr(scrutinee) || has_throw_in_block(body),
         ExprKind::For { iter, body, .. } => has_throw_in_expr(iter) || has_throw_in_block(body),
         ExprKind::Loop { body } => has_throw_in_block(body),
+        ExprKind::Select { arms } => arms.iter().any(|a| {
+            (match &a.op {
+                SelectOp::Recv { chan, .. } => has_throw_in_expr(chan),
+                SelectOp::Send { chan, value } => has_throw_in_expr(chan) || has_throw_in_expr(value),
+                SelectOp::Default => false,
+            }) || a.guard.as_ref().map_or(false, has_throw_in_expr)
+              || has_throw_in_block(&a.body)
+        }),
         ExprKind::Block(b) => has_throw_in_block(b),
         ExprKind::Lambda { .. } => false,
             // Lambda has its own scope; throw inside lambda — её эффекты, не текущей fn.
@@ -2374,6 +2435,20 @@ fn walk_expr_for_handler_lits(e: &Expr, never_ops: &HashSet<(String, String)>, e
             walk_block_for_handler_lits(body, never_ops, errors);
         }
         ExprKind::Loop { body } => walk_block_for_handler_lits(body, never_ops, errors),
+        ExprKind::Select { arms } => {
+            for arm in arms {
+                match &arm.op {
+                    SelectOp::Recv { chan, .. } => walk_expr_for_handler_lits(chan, never_ops, errors),
+                    SelectOp::Send { chan, value } => {
+                        walk_expr_for_handler_lits(chan, never_ops, errors);
+                        walk_expr_for_handler_lits(value, never_ops, errors);
+                    }
+                    SelectOp::Default => {}
+                }
+                if let Some(g) = &arm.guard { walk_expr_for_handler_lits(g, never_ops, errors); }
+                walk_block_for_handler_lits(&arm.body, never_ops, errors);
+            }
+        }
         ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. } => {
             walk_block_for_handler_lits(body, never_ops, errors);
         }
@@ -2653,6 +2728,20 @@ fn walk_expr_for_defers(e: &Expr, fn_effects: &HashMap<String, Vec<TypeRef>>, er
             walk_block_for_defers(body, fn_effects, errors);
         }
         ExprKind::Loop { body } => walk_block_for_defers(body, fn_effects, errors),
+        ExprKind::Select { arms } => {
+            for arm in arms {
+                match &arm.op {
+                    SelectOp::Recv { chan, .. } => walk_expr_for_defers(chan, fn_effects, errors),
+                    SelectOp::Send { chan, value } => {
+                        walk_expr_for_defers(chan, fn_effects, errors);
+                        walk_expr_for_defers(value, fn_effects, errors);
+                    }
+                    SelectOp::Default => {}
+                }
+                if let Some(g) = &arm.guard { walk_expr_for_defers(g, fn_effects, errors); }
+                walk_block_for_defers(&arm.body, fn_effects, errors);
+            }
+        }
         ExprKind::With { body, .. } | ExprKind::Forbid { body, .. }
         | ExprKind::Realtime { body, .. } | ExprKind::Supervised(body)
         | ExprKind::Detach(body) | ExprKind::CancelScope { body, .. } => {
@@ -2889,6 +2978,20 @@ fn walk_defer_subexprs(e: &Expr, kw: &str, fn_effects: &HashMap<String, Vec<Type
         ExprKind::Loop { body } => {
             let inner = DeferBodyCtx { loop_depth: ctx.loop_depth + 1, fn_depth: ctx.fn_depth };
             check_defer_body_block(body, kw, fn_effects, &inner, errors);
+        }
+        ExprKind::Select { arms } => {
+            for arm in arms {
+                match &arm.op {
+                    SelectOp::Recv { chan, .. } => check_defer_body_inner(chan, kw, fn_effects, ctx, errors),
+                    SelectOp::Send { chan, value } => {
+                        check_defer_body_inner(chan, kw, fn_effects, ctx, errors);
+                        check_defer_body_inner(value, kw, fn_effects, ctx, errors);
+                    }
+                    SelectOp::Default => {}
+                }
+                if let Some(g) = &arm.guard { check_defer_body_inner(g, kw, fn_effects, ctx, errors); }
+                check_defer_body_block(&arm.body, kw, fn_effects, ctx, errors);
+            }
         }
         ExprKind::With { body, .. } | ExprKind::Forbid { body, .. }
         | ExprKind::Realtime { body, .. } => {

@@ -5082,6 +5082,10 @@ impl CEmitter {
                 self.emit_match(scrutinee, arms)
             }
 
+            ExprKind::Select { arms } => {
+                self.emit_select(arms)
+            }
+
             ExprKind::Range { start, end, inclusive } => {
                 // Range emitted as a struct literal — stdlib not linked in Phase 1
                 // Just produce a placeholder that compiles
@@ -7949,6 +7953,168 @@ impl CEmitter {
             }
         }
         Ok(())
+    }
+
+
+    /// Emit `select { ... }` expression --- D94.
+    fn emit_select(&mut self, arms: &[crate::ast::SelectArm]) -> Result<String, String> {
+        use crate::ast::SelectOp;
+
+        let n_ch: usize = arms.iter().filter(|a| !matches!(a.op, SelectOp::Default)).count();
+        let has_default = arms.iter().any(|a| matches!(a.op, SelectOp::Default));
+        let result_tmp = self.fresh_tmp_named("sel");
+        self.line(&format!("nova_unit {};", result_tmp));
+        self.var_types.insert(result_tmp.clone(), "nova_unit".to_string());
+
+        // --- Single-arm fast path ---
+        if n_ch == 1 && !has_default {
+            let arm = arms.iter().find(|a| !matches!(a.op, SelectOp::Default)).unwrap();
+            match &arm.op {
+                SelectOp::Recv { binding, chan } => {
+                    let ch = self.emit_expr(chan)?;
+                    let opt_tmp = self.fresh_tmp_named("sel_opt");
+                    self.line(&format!("NovaOpt_nova_int {} = nova_chan_reader_recv({});", opt_tmp, ch));
+                    self.line(&format!("if ({}.is_some) {{", opt_tmp));
+                    self.indent += 1;
+                    if let Some(b) = binding {
+                        self.line(&format!("nova_int {} = {}.value;", b, opt_tmp));
+                        self.var_types.insert(b.clone(), "nova_int".to_string());
+                    }
+                    if let Some(g) = &arm.guard {
+                        let gv = self.emit_expr(g)?;
+                        self.line(&format!("if ({}) {{", gv));
+                        self.indent += 1;
+                    }
+                    let block_id = self.enter_defer_scope(&arm.body, false);
+                    for stmt in &arm.body.stmts { self.emit_stmt(stmt)?; }
+                    if let Some(tr) = &arm.body.trailing { let _ = self.emit_expr(tr)?; }
+                    self.leave_defer_scope(block_id);
+                    if arm.guard.is_some() {
+                        self.indent -= 1;
+                        self.line("}");
+                    }
+                    self.indent -= 1;
+                    self.line("}");
+                }
+                SelectOp::Send { chan, value } => {
+                    let ch = self.emit_expr(chan)?;
+                    let v = self.emit_expr(value)?;
+                    self.line(&format!("nova_chan_writer_send({}, {});", ch, v));
+                    if let Some(g) = &arm.guard {
+                        let gv = self.emit_expr(g)?;
+                        self.line(&format!("if ({}) {{", gv));
+                        self.indent += 1;
+                    }
+                    let block_id = self.enter_defer_scope(&arm.body, false);
+                    for stmt in &arm.body.stmts { self.emit_stmt(stmt)?; }
+                    if let Some(tr) = &arm.body.trailing { let _ = self.emit_expr(tr)?; }
+                    self.leave_defer_scope(block_id);
+                    if arm.guard.is_some() {
+                        self.indent -= 1;
+                        self.line("}");
+                    }
+                }
+                SelectOp::Default => unreachable!(),
+            }
+            return Ok(result_tmp);
+        }
+
+        // --- Full SelectCtx path ---
+        let ctx_tmp = self.fresh_tmp_named("sel_ctx");
+        self.line(&format!("SelectCtx {} = nova_select_init({});", ctx_tmp, n_ch));
+
+        // Emit channel exprs upfront
+        let mut ch_map: Vec<(usize, String)> = Vec::new();
+        let mut sv_map: std::collections::HashMap<usize, String> = Default::default();
+        for (i, arm) in arms.iter().enumerate() {
+            match &arm.op {
+                SelectOp::Recv { chan, .. } => {
+                    let ch = self.emit_expr(chan)?;
+                    ch_map.push((i, ch));
+                }
+                SelectOp::Send { chan, value } => {
+                    let ch = self.emit_expr(chan)?;
+                    let v = self.emit_expr(value)?;
+                    ch_map.push((i, ch));
+                    sv_map.insert(i, v);
+                }
+                SelectOp::Default => {}
+            }
+        }
+
+        let scope_expr = "nova_current_scope()";
+        let slot_tmp = self.fresh_tmp_named("sel_slot");
+        self.line(&format!("int {} = nova_scope_alloc_slot({});", slot_tmp, scope_expr));
+
+        let mut ch_idx = 0usize;
+        for (i, arm) in arms.iter().enumerate() {
+            let guard_val = if let Some(g) = &arm.guard {
+                self.emit_expr(g)?
+            } else {
+                "1".to_string()
+            };
+            match &arm.op {
+                SelectOp::Recv { .. } => {
+                    let ch = &ch_map.iter().find(|(idx, _)| *idx == i).unwrap().1;
+                    self.line(&format!(
+                        "nova_select_set_recv(&{ctx}, {n}, {ch}, {guard});",
+                        ctx = ctx_tmp, n = ch_idx, ch = ch, guard = guard_val
+                    ));
+                    ch_idx += 1;
+                }
+                SelectOp::Send { .. } => {
+                    let ch = &ch_map.iter().find(|(idx, _)| *idx == i).unwrap().1;
+                    let val = sv_map.get(&i).cloned().unwrap_or_else(|| "0".to_string());
+                    self.line(&format!(
+                        "nova_select_set_send(&{ctx}, {n}, {ch}, {val}, {guard});",
+                        ctx = ctx_tmp, n = ch_idx, ch = ch, guard = guard_val
+                    ));
+                    ch_idx += 1;
+                }
+                SelectOp::Default => {}
+            }
+        }
+
+        let imm_tmp = self.fresh_tmp_named("sel_imm");
+        self.line(&format!("int {} = nova_select_try_immediate(&{});", imm_tmp, ctx_tmp));
+        if has_default {
+            self.line(&format!("if (!{}) {{ {}.which = -2; }}", imm_tmp, ctx_tmp));
+        } else {
+            self.line(&format!("if (!{}) {{", imm_tmp));
+            self.indent += 1;
+            self.line(&format!("{}.scope = {};", ctx_tmp, scope_expr));
+            self.line(&format!("{}.slot = {};", ctx_tmp, slot_tmp));
+            self.line(&format!("nova_select_park(&{});", ctx_tmp));
+            self.indent -= 1;
+            self.line("}");
+        }
+
+        let which = format!("{}.which", ctx_tmp);
+        let mut ch_idx2 = 0usize;
+        let mut first = true;
+        for arm in arms.iter() {
+            let cond = match &arm.op {
+                SelectOp::Recv { .. } => { let c = format!("({} == {})", which, ch_idx2); ch_idx2 += 1; c }
+                SelectOp::Send { .. } => { let c = format!("({} == {})", which, ch_idx2); ch_idx2 += 1; c }
+                SelectOp::Default => format!("({} == -2)", which),
+            };
+            let kw = if first { "if" } else { "} else if" };
+            first = false;
+            self.line(&format!("{} ({}) {{", kw, cond));
+            self.indent += 1;
+            if let SelectOp::Recv { binding: Some(b), .. } = &arm.op {
+                self.line(&format!("nova_int {} = {}.recv_val;", b, ctx_tmp));
+                self.var_types.insert(b.clone(), "nova_int".to_string());
+            }
+            let block_id = self.enter_defer_scope(&arm.body, false);
+            for stmt in &arm.body.stmts { self.emit_stmt(stmt)?; }
+            if let Some(tr) = &arm.body.trailing { let _ = self.emit_expr(tr)?; }
+            self.leave_defer_scope(block_id);
+            self.indent -= 1;
+        }
+        if !first { self.line("}"); }
+
+        Ok(result_tmp)
     }
 
     /// Produce a C expression that coerces `val` from `from_ty` to `to_ty` when types differ.

@@ -1993,6 +1993,7 @@ impl Parser {
             TokenKind::KwHandler => self.parse_handler_lit(),
             TokenKind::KwForbid => self.parse_forbid(),
             TokenKind::KwRealtime => self.parse_realtime(),
+            TokenKind::KwSelect => self.parse_select(),
             // Plan 19, C2: closure-light `|x| body` / `||` / `|_|`.
             // В expression-position (parse_primary) `|` всегда означает
             // начало closure-light. В infix-position он остаётся
@@ -2994,6 +2995,84 @@ impl Parser {
             ExprKind::Forbid { effects, body },
             start.merge(end),
         ))
+    }
+
+    /// `select { arm* }` --- D94 multiplexed channel operation.
+    fn parse_select(&mut self) -> Result<Expr, Diagnostic> {
+        let start = self.expect(&TokenKind::KwSelect)?.span;
+        self.expect(&TokenKind::LBrace)?;
+        let mut arms: Vec<SelectArm> = Vec::new();
+        self.skip_newlines();
+        while !matches!(self.peek().kind, TokenKind::RBrace) {
+            let arm_start = self.peek().span;
+            let op = self.parse_select_op()?;
+            let guard = if matches!(self.peek().kind, TokenKind::KwIf) {
+                self.bump();
+                Some(self.parse_expr()?)
+            } else {
+                None
+            };
+            self.expect(&TokenKind::FatArrow)?;
+            self.skip_newlines();
+            let body = self.parse_block()?;
+            let arm_span = arm_start.merge(body.span);
+            arms.push(SelectArm { op, guard, body, span: arm_span });
+            self.eat(&TokenKind::Comma);
+            self.skip_newlines();
+        }
+        let end = self.expect(&TokenKind::RBrace)?.span;
+        Ok(Expr::new(ExprKind::Select { arms }, start.merge(end)))
+    }
+
+    fn parse_select_op(&mut self) -> Result<SelectOp, Diagnostic> {
+        // `Some(ident) = expr` --- recv arm with binding
+        if matches!(self.peek().kind, TokenKind::Ident(ref s) if s == "Some") {
+            let saved = self.pos;
+            self.bump();
+            if matches!(self.peek().kind, TokenKind::LParen) {
+                self.bump();
+                if let TokenKind::Ident(binding_s) = self.peek().kind.clone() {
+                    self.bump();
+                    if matches!(self.peek().kind, TokenKind::RParen) {
+                        self.bump();
+                        if matches!(self.peek().kind, TokenKind::Eq) {
+                            self.bump();
+                            let chan = self.parse_expr()?;
+                            return Ok(SelectOp::Recv { binding: Some(binding_s), chan: Box::new(chan) });
+                        }
+                    }
+                }
+            }
+            self.pos = saved;
+        }
+        // `_ = expr` recv arm or `_` default arm
+        if matches!(self.peek().kind, TokenKind::Ident(ref s) if s == "_") {
+            let saved = self.pos;
+            self.bump();
+            if matches!(self.peek().kind, TokenKind::Eq) {
+                self.bump();
+                let chan = self.parse_expr()?;
+                return Ok(SelectOp::Recv { binding: None, chan: Box::new(chan) });
+            }
+            self.pos = saved;
+            self.bump();
+            return Ok(SelectOp::Default);
+        }
+        // Send arm: `chan.send(value)`
+        let chan = self.parse_primary()?;
+        self.expect(&TokenKind::Dot)?;
+        let method_span = self.peek().span;
+        match &self.peek().kind {
+            TokenKind::Ident(s) if s == "send" => { self.bump(); }
+            _ => return Err(Diagnostic::new(
+                "select send arm: expected `.send(value)` after channel expression".to_string(),
+                method_span,
+            )),
+        }
+        self.expect(&TokenKind::LParen)?;
+        let value = self.parse_expr()?;
+        self.expect(&TokenKind::RParen)?;
+        Ok(SelectOp::Send { chan: Box::new(chan), value: Box::new(value) })
     }
 
     /// `realtime [nogc] { body }` — гарантия не-приостановки (D64).
