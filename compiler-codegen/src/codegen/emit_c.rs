@@ -229,6 +229,13 @@ pub struct CEmitter {
     /// Plan 20 Ф.4: monotonic block-ID counter for stable, unique C names
     /// (`_defer_<BLKID>_<N>_active`, `_defer_cleanup_<BLKID>`, etc.).
     defer_block_counter: usize,
+    /// Closure mut-capture heap-box registry. Maps variable name → C box-pointer
+    /// variable name (`_box_<name>`). When a mut local is captured by a closure,
+    /// it is heap-promoted: a `T* _box_x = nova_alloc(sizeof(T)); *_box_x = x;`
+    /// is emitted, followed by `#define x (*_box_x)` so all subsequent caller-side
+    /// reads/writes go through the box. The closure env stores `_box_x` directly
+    /// (no dangling-ptr risk on escape). Cleared and #undef'd at function exit.
+    var_boxed: HashMap<String, String>,
 }
 
 /// Plan 20 Ф.4: per-defer-stmt entry — tracks one `defer { ... }` or
@@ -352,6 +359,7 @@ impl CEmitter {
             },
             defer_scopes: Vec::new(),
             defer_block_counter: 0,
+            var_boxed: HashMap::new(),
         }
     }
 
@@ -3541,6 +3549,7 @@ impl CEmitter {
         }
         self.var_types.remove("nova_self");
         self.current_receiver_type = None;
+        self.flush_boxed_vars();
         self.indent -= 1;
         self.line("}");
         self.line("");
@@ -3632,6 +3641,7 @@ impl CEmitter {
                 None => { self.var_types.remove(&name); }
             }
         }
+        self.flush_boxed_vars();
         self.indent -= 1;
         self.line("}");
         self.line("");
@@ -3730,6 +3740,8 @@ impl CEmitter {
             FnBody::External => {}
         }
         self.expected_record_type = saved_expected;
+        // Undef any heap-promoted mut-captures so macros don't leak to sibling fns.
+        self.flush_boxed_vars();
         self.indent = 0;
         self.line("}");
         self.line("");
@@ -3769,6 +3781,7 @@ impl CEmitter {
             // D82: main() не может быть external. Safety-fallback.
             FnBody::External => {}
         }
+        self.flush_boxed_vars();
         self.indent = 0;
         self.line("}");
         self.line("");
@@ -4602,6 +4615,11 @@ impl CEmitter {
                         }
                         return Ok(format!("nova_make_{}_{}()", type_name, name));
                     }
+                }
+                // Heap-promoted mut-capture: dereference the box pointer.
+                // Avoids #define which corrupts struct field access (foo->name).
+                if let Some(box_var) = self.var_boxed.get(name) {
+                    return Ok(format!("(*{})", box_var));
                 }
                 // Capture access inside spawn-entry body. By-pointer → `(*_c->name)`,
                 // by-value → `_c->name` (T field, no deref).
@@ -6296,15 +6314,15 @@ impl CEmitter {
                             _ => {}
                         }
                     }
-                    // D79: built-in Channel methods.
-                    if obj_ty == "Nova_Channel*" {
+                    // D91 (Plan 21): Sender capability methods.
+                    if obj_ty == "Nova_ChanWriter*" {
                         let obj_c = self.emit_expr(obj)?;
                         match method.as_str() {
                             "send" => {
                                 if let Some(arg) = args.first() {
                                     let v = self.emit_expr(arg.expr())?;
                                     self.line(&format!(
-                                        "nova_channel_send({}, (nova_int)({}));",
+                                        "nova_chan_writer_send({}, (nova_int)({}));",
                                         obj_c, v));
                                     return Ok("NOVA_UNIT".into());
                                 }
@@ -6313,19 +6331,29 @@ impl CEmitter {
                                 if let Some(arg) = args.first() {
                                     let v = self.emit_expr(arg.expr())?;
                                     return Ok(format!(
-                                        "nova_channel_try_send({}, (nova_int)({}))",
+                                        "nova_chan_writer_try_send({}, (nova_int)({}))",
                                         obj_c, v));
                                 }
                             }
-                            "recv" => return Ok(format!("nova_channel_recv({})", obj_c)),
-                            "try_recv" => return Ok(format!("nova_channel_try_recv({})", obj_c)),
                             "close" => {
-                                self.line(&format!("nova_channel_close({});", obj_c));
+                                self.line(&format!("nova_chan_writer_close({});", obj_c));
                                 return Ok("NOVA_UNIT".into());
                             }
-                            "is_closed" => return Ok(format!("nova_channel_is_closed({})", obj_c)),
-                            "len" => return Ok(format!("nova_channel_len({})", obj_c)),
-                            "capacity" => return Ok(format!("nova_channel_capacity({})", obj_c)),
+                            "len"       => return Ok(format!("nova_chan_writer_len({})", obj_c)),
+                            "capacity"  => return Ok(format!("nova_chan_writer_capacity({})", obj_c)),
+                            "is_closed" => return Ok(format!("nova_chan_writer_is_closed({})", obj_c)),
+                            _ => {}
+                        }
+                    }
+                    // D91 (Plan 21): Receiver capability methods.
+                    if obj_ty == "Nova_ChanReader*" {
+                        let obj_c = self.emit_expr(obj)?;
+                        match method.as_str() {
+                            "recv"      => return Ok(format!("nova_chan_reader_recv({})", obj_c)),
+                            "try_recv"  => return Ok(format!("nova_chan_reader_try_recv({})", obj_c)),
+                            "len"       => return Ok(format!("nova_chan_reader_len({})", obj_c)),
+                            "capacity"  => return Ok(format!("nova_chan_reader_capacity({})", obj_c)),
+                            "is_closed" => return Ok(format!("nova_chan_reader_is_closed({})", obj_c)),
                             _ => {}
                         }
                     }
@@ -6374,7 +6402,9 @@ impl CEmitter {
                     // WriteBuffer/ReadBuffer удалён. Все вызовы идут через
                     // registry-driven путь выше (Plan 12 Ф.3).
                 }
-                // 0a-channel. Built-in Channel static method (D79).
+                // D91 (Plan 21): Channel.new — returns Nova_ChannelPair.
+                // Tuple-destructuring handled in emit_let/emit_assign.
+                // Here emit as plain call; type inference returns Nova_ChannelPair.
                 if let ExprKind::Ident(name) = &obj.kind {
                     if name == "Channel" && method == "new" {
                         if let Some(arg) = args.first() {
@@ -6797,7 +6827,7 @@ impl CEmitter {
                     parts.clone()
                 };
                 let parts: &[String] = &parts;
-                // D79: built-in Channel static method (Path-form).
+                // D91 (Plan 21): Channel.new — Path-form.
                 if parts.len() == 2 && parts[0] == "Channel" && parts[1] == "new" {
                     if let Some(arg) = args.first() {
                         let v = self.emit_expr(arg.expr())?;
@@ -8041,6 +8071,47 @@ impl CEmitter {
     // ---- tuple destructure ----
 
     fn emit_tuple_destructure(&mut self, pats: &[Pattern], value: &Expr) -> Result<(), String> {
+        // D91 (Plan 21): special-case for `let (tx, rx) = Channel.new(cap)`.
+        // Channel.new returns Nova_ChannelPair {tx: Nova_ChanWriter*, rx: Nova_ChanReader*},
+        // not a _NovaTuple2. Must be handled before the general case.
+        let is_channel_new = match &value.kind {
+            ExprKind::Call { func, .. } => {
+                let f = func.unwrap_turbofish();
+                match &f.kind {
+                    ExprKind::Member { obj, name } => {
+                        name == "new" && matches!(&obj.kind, ExprKind::Ident(n) if n == "Channel")
+                    }
+                    ExprKind::Path(parts) => {
+                        parts.len() == 2 && parts[0] == "Channel" && parts[1] == "new"
+                    }
+                    _ => false,
+                }
+            }
+            _ => false,
+        };
+        if is_channel_new && pats.len() == 2 {
+            let tmp = self.fresh_tmp();
+            let cap_expr = if let ExprKind::Call { args, .. } = &value.kind {
+                if let Some(a) = args.first() { self.emit_expr(a.expr())? } else { "0".into() }
+            } else { "0".into() };
+            self.line(&format!("Nova_ChannelPair {} = nova_channel_new({});", tmp, cap_expr));
+            let elem_types = ["Nova_ChanWriter*", "Nova_ChanReader*"];
+            let fields     = ["tx", "rx"];
+            for (i, pat) in pats.iter().enumerate() {
+                match pat {
+                    Pattern::Wildcard(_) => {}
+                    Pattern::Ident { name, .. } => {
+                        self.var_types.insert(name.clone(), elem_types[i].to_string());
+                        self.line(&format!("{} {} = {}.{};", elem_types[i], name, tmp, fields[i]));
+                    }
+                    _ => return Err(format!(
+                        "nested pattern in Channel.new destructure not supported: {:?}", pat
+                    )),
+                }
+            }
+            return Ok(());
+        }
+
         match &value.kind {
             ExprKind::TupleLit(elems) => {
                 // Direct pairing: let (a, b) = (x, y) — emit each binding separately
@@ -8678,6 +8749,12 @@ impl CEmitter {
         format!("_nv_tmp_{}", n)
     }
 
+    /// Clear the heap-promoted var_boxed registry at function exit.
+    /// No #undef needed — var_boxed uses ExprKind::Ident rewriting, not macros.
+    fn flush_boxed_vars(&mut self) {
+        self.var_boxed.clear();
+    }
+
     /// Сгенерировать temporary name с **семантической ролью** в имени:
     /// `_nv_<role>_<n>` (например `_nv_scr_0`, `_nv_match_3`,
     /// `_nv_matched_2`). Понятнее чем сырой `_nova_tmp42` при чтении
@@ -8882,9 +8959,14 @@ impl CEmitter {
             } else { None }
         }).collect();
 
-        // Emit body into lambda_impls using a temp output buffer
+        // Emit body into lambda_impls using a temp output buffer.
+        // Save and clear var_boxed: the lambda body is a separate C function,
+        // so caller-scope heap-promotion (#define tricks) must not bleed in.
+        // Instead we register mut-captures as `_env->name` in var_boxed so
+        // ExprKind::Ident resolves them to `(*_env->name)` without macros.
         let old_out = std::mem::take(&mut self.out);
         let old_indent = self.indent;
+        let saved_var_boxed = std::mem::take(&mut self.var_boxed);
         self.indent = 0;
 
         // Env struct declaration
@@ -8892,15 +8974,15 @@ impl CEmitter {
         // Body function implementation
         self.line(&format!("static {} {}({}) {{", ret_c_ty, body_name, body_params_str));
         self.indent = 1;
-        // Unpack env. Для mut-captures — `#define name (*_env->name)` чтобы
-        // и reads и writes в body шли через pointer (D32: mut-captures
-        // by-reference). Immutable — обычный local copy. `#undef` после
-        // body, чтобы macro не утек в file scope.
+        // Unpack env. Mut-captures: register `name → _env->name` in var_boxed
+        // so ExprKind::Ident emits `(*_env->name)` — pointer-safe, no #define.
+        // Immutable captures: local copy (no aliasing needed).
         if !free_vars.is_empty() {
             self.line(&format!("{}* _env = ({}*)_env_ptr;", env_name, env_name));
             for ((name, ty), is_mut) in free_vars.iter().zip(&free_var_is_mut) {
                 if *is_mut {
-                    self.line(&format!("#define {} (*_env->{})", name, name));
+                    // Register in var_boxed as "_env->name" so Ident emits (*_env->name).
+                    self.var_boxed.insert(name.clone(), format!("_env->{}", name));
                 } else {
                     self.line(&format!("{} {} = _env->{};", ty, name, name));
                 }
@@ -8913,17 +8995,13 @@ impl CEmitter {
         } else {
             self.line(&format!("return {};", body_val));
         }
-        // Undefine mut-capture macros чтобы они не leak'нули в следующие fn'ы.
-        for ((name, _ty), is_mut) in free_vars.iter().zip(&free_var_is_mut) {
-            if *is_mut {
-                self.line(&format!("#undef {}", name));
-            }
-        }
         self.indent = 0;
         self.line("}");
         self.line("");
         let impl_str = std::mem::replace(&mut self.out, old_out);
         self.indent = old_indent;
+        // Restore caller-scope var_boxed (lambda body used its own set of entries).
+        self.var_boxed = saved_var_boxed;
         self.lambda_impls.push_str(&impl_str);
 
         // Restore params and fn_param_sigs
@@ -8940,17 +9018,37 @@ impl CEmitter {
             }
         }
 
-        // At the call site: allocate env + NovaClos_XX struct
+        // At the call site: allocate env + NovaClos_XX struct.
+        // Mut-captures are heap-promoted: the local is replaced by a heap box
+        // so the closure can safely outlive the declaring scope (escape safety).
+        // If a mut var is already boxed (from a prior closure in the same fn),
+        // we reuse the existing box — all closures over the same var share state.
         let env_tmp = self.fresh_tmp();
         let clos_tmp = self.fresh_tmp();
         self.line(&format!("{}* {} = ({}*)nova_alloc(sizeof({}));", env_name, env_tmp, env_name, env_name));
-        for ((name, _ty), is_mut) in free_vars.iter().zip(&free_var_is_mut) {
+        for ((name, ty), is_mut) in free_vars.iter().zip(&free_var_is_mut) {
             if *is_mut {
-                // Mut capture: сохраняем address-of, чтобы writes из closure
-                // body шли в original mut local в caller'е.
-                self.line(&format!("{}->{} = &{};", env_tmp, name, name));
+                let box_var = if let Some(existing) = self.var_boxed.get(name) {
+                    // Already heap-promoted by an earlier closure in this fn — reuse.
+                    existing.clone()
+                } else {
+                    // First capture of this mut var: promote to heap box.
+                    let bv = format!("_box_{}", name);
+                    // Allocate box and copy current stack value into it.
+                    // Use the plain name here (before var_boxed is set) so the
+                    // emit_expr for `name` still resolves to the stack variable.
+                    self.line(&format!("{}* {} = ({}*)nova_alloc(sizeof({}));", ty, bv, ty, ty));
+                    self.line(&format!("*{} = {};", bv, name));
+                    // Register in var_boxed: from this point on, ExprKind::Ident
+                    // for `name` emits `(*_box_name)` instead of bare `name`,
+                    // keeping caller reads/writes in sync with the closure's env ptr.
+                    self.var_boxed.insert(name.clone(), bv.clone());
+                    bv
+                };
+                // Env stores the box pointer — safe even if closure escapes scope.
+                self.line(&format!("{}->{} = {};", env_tmp, name, box_var));
             } else {
-                // Immutable: snapshot value.
+                // Immutable: snapshot value (no escape risk).
                 self.line(&format!("{}->{} = {};", env_tmp, name, name));
             }
         }
@@ -9949,21 +10047,28 @@ impl CEmitter {
                             return format!("Nova_{}*", iter_t);
                         }
                     }
-                    // D79: Channel static + instance methods.
+                    // D91 (Plan 21): Channel.new → Nova_ChannelPair.
                     if let ExprKind::Ident(n) = &obj.kind {
-                        if n == "Channel" {
-                            return match method.as_str() {
-                                "new" => "Nova_Channel*".into(),
-                                _ => "nova_int".into(),
-                            };
+                        if n == "Channel" && method == "new" {
+                            return "Nova_ChannelPair".into();
                         }
                     }
-                    if obj_ty == "Nova_Channel*" {
+                    // D91: Sender capability method return types.
+                    if obj_ty == "Nova_ChanWriter*" {
                         return match method.as_str() {
-                            "send" | "close" => "nova_unit".into(),
-                            "try_send" | "is_closed" => "nova_bool".into(),
-                            "recv" | "try_recv" => "NovaOpt_nova_int".into(),
+                            "send" | "close"   => "nova_unit".into(),
+                            "try_send"         => "nova_bool".into(),
+                            "is_closed"        => "nova_bool".into(),
                             "len" | "capacity" => "nova_int".into(),
+                            _ => "nova_int".into(),
+                        };
+                    }
+                    // D91: Receiver capability method return types.
+                    if obj_ty == "Nova_ChanReader*" {
+                        return match method.as_str() {
+                            "recv" | "try_recv" => "NovaOpt_nova_int".into(),
+                            "is_closed"         => "nova_bool".into(),
+                            "len" | "capacity"  => "nova_int".into(),
                             _ => "nova_int".into(),
                         };
                     }
@@ -10208,9 +10313,9 @@ impl CEmitter {
                     if parts.len() == 2 {
                         let eff = &parts[0];
                         let method_name = &parts[1];
-                        // D79: Channel.new(cap) — Path-form.
+                        // D91 (Plan 21): Channel.new(cap) — Path-form.
                         if eff == "Channel" && method_name == "new" {
-                            return "Nova_Channel*".into();
+                            return "Nova_ChannelPair".into();
                         }
                         // Plan 04 Этап 6: Buffer removed. StringBuilder/
                         // WriteBuffer/ReadBuffer effect-schema ниже.

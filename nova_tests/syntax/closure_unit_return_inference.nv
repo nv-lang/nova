@@ -1,0 +1,57 @@
+// closure_unit_return_inference.nv — Plan 20 follow-up: codegen
+// infers closure return type из body. Без этого fix'а closure без
+// annotation defaulted к `nova_int`, что ломало compilation для
+// side-effect-only callbacks.
+
+module nova_tests.syntax.closure_unit_return_inference
+
+
+// HOF callback с unit-return.
+fn run_callback(cb fn() -> ()) -> int {
+    cb()
+    42
+}
+
+
+test "no-arg closure с side-effect-only body (unit return)" {
+    let mut fired = false
+    let r = run_callback(|| {
+        fired = true
+    })
+    assert(r == 42)
+    assert(fired)
+}
+
+
+fn run_with_int(x int, cb fn(int) -> ()) -> int {
+    cb(x)
+    x * 2
+}
+
+
+test "one-arg closure с side-effect-only body" {
+    let mut got = 0
+    let r = run_with_int(21, |v| {
+        got = v
+    })
+    assert(r == 42)
+    assert(got == 21)
+}
+
+
+// defer + callback-without-return — естественный паттерн "cleanup
+// callback". Plan 20 use case.
+fn process(cleanup fn() -> ()) -> int {
+    defer { cleanup() }
+    100
+}
+
+
+test "defer + closure callback с unit-return" {
+    let mut cleaned = false
+    let r = process(|| {
+        cleaned = true
+    })
+    assert(r == 100)
+    assert(cleaned)
+}

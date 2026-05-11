@@ -1172,11 +1172,22 @@ impl Parser {
     fn parse_or(&mut self) -> Result<Expr, Diagnostic> {
         let mut left = self.parse_and()?;
         loop {
-            // D49 newline-tolerance: leading `||` / `or` after newline
-            // continues the expression. Save position to roll back if not.
+            // D49 newline-tolerance: `or` keyword after newline continues the
+            // expression (`a\nor b`). We do NOT extend this to `||` because
+            // `||` is also the no-arg closure syntax (`|| body`). Allowing a
+            // newline before `||` would mis-parse:
+            //   let x = 42
+            //   || closure_body   ← new closure, not binary-OR continuation
+            // Use `or` for multi-line logical-OR instead.
             let saved_pos = self.pos;
             if matches!(self.peek().kind, TokenKind::Newline) {
                 self.skip_newlines();
+                // Only `or` keyword is safe to continue after a newline.
+                // `||` after a newline is a new closure expression, not binary OR.
+                if !matches!(self.peek().kind, TokenKind::KwOr) {
+                    self.pos = saved_pos;
+                    break;
+                }
             }
             if !matches!(self.peek().kind, TokenKind::PipePipe | TokenKind::KwOr) {
                 self.pos = saved_pos;

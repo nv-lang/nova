@@ -1,0 +1,70 @@
+// closure_mut_capture_escape.nv — mut-capture heap promotion.
+//
+// Проверяет что closure с mut-capture корректно работает при escape
+// (closure переживает scope переменной). Без heap-promotion env хранит
+// &stack_var → dangling ptr после возврата функции.
+//
+// После фикса: mut local при захвате closure'ом перемещается на heap
+// (nova_alloc box), caller читает/пишет через #define, closure хранит
+// указатель на box — safe при escape.
+
+module nova_tests.syntax.closure_mut_capture_escape
+
+
+// ─── Case 1: closure escapes fn scope (classic dangling-ptr case) ────
+
+fn make_counter() -> fn() -> int {
+    let mut count = 0
+    || {
+        count += 1
+        count
+    }
+}
+
+test "escaped closure с mut-capture считает корректно" {
+    let counter = make_counter()
+    // При каждом вызове counter должен увеличивать count в своём box.
+    assert(counter() == 1)
+    assert(counter() == 2)
+    assert(counter() == 3)
+}
+
+
+// ─── Case 2: два closure'а захватывают одну mut переменную ───────────
+
+fn make_pair() -> (fn() -> int, fn() -> int) {
+    let mut n = 0
+    let inc = || { n += 1; n }
+    let get = || n
+    (inc, get)
+}
+
+test "два closure'а разделяют один mut-box" {
+    let pair = make_pair()
+    let inc = pair.0
+    let get = pair.1
+    // Оба closure'а должны видеть одно значение через shared box.
+    assert(get() == 0)
+    inc()
+    assert(get() == 1)
+    inc()
+    inc()
+    assert(get() == 3)
+}
+
+
+// ─── Case 3: closure не escape'ит (HOF callback) — регрессия ─────────
+
+fn run_callback_mut(cb fn(int) -> ()) -> int {
+    cb(42)
+    42
+}
+
+test "mut-capture через HOF (не escape) — регрессия" {
+    let mut got = 0
+    let r = run_callback_mut(|v| {
+        got = v
+    })
+    assert(r == 42)
+    assert(got == 42)
+}

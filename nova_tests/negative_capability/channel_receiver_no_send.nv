@@ -1,0 +1,11 @@
+// EXPECT_CC_ERROR
+//
+// D91 (Plan 21): ChanReader не имеет метода send — capability isolation.
+// rx имеет тип Nova_ChanReader*, у которого нет send в emit_c dispatch.
+
+module nova_tests.negative_capability.channel_receiver_no_send
+
+test "receiver cannot send" {
+    let (_tx, rx) = Channel.new(1)
+    rx.send(1)
+}

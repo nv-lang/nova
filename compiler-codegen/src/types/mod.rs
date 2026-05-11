@@ -786,7 +786,7 @@ fn nogc_blacklisted_call(callee_path: &[String]) -> bool {
     // Builder/buffer constructors.
     if matches!(ty, "StringBuilder" | "WriteBuffer" | "ReadBuffer")
         && matches!(m, "new" | "with_capacity" | "from") { return true; }
-    // Channel constructor.
+    // D91 (Plan 21): Channel.new allocates Nova_ChannelState + Sender + Receiver + buf.
     if ty == "Channel" && matches!(m, "new" | "with_capacity") { return true; }
     // Map/Set/Vec/Deque etc.
     if matches!(ty, "HashMap" | "Set" | "Vec" | "Deque" | "LinkedList" | "Lru" | "BloomFilter")
