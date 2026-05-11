@@ -6009,7 +6009,16 @@ status quo. Если решим унифицировать — это **breaking
 
 ---
 
-## Q-D93-sync-async-stop. Sync-vs-async stop_cb contract в D93 API
+## Q-D93-sync-async-stop. Sync-vs-async stop_cb contract в D93 API ✅ ЗАКРЫТО
+
+> **Закрыто:** Plan 22 Ф.8 (2026-05-11) — `NovaStopMode` enum
+> `{SYNC, ASYNC}` добавлен в D93 API. `nova_sched_cancel_all_pending`
+> различает: SYNC → unpark immediate, ASYNC → ждёт backend wake.
+> Sleep stop_cb стал ASYNC, close-wait busy-loop удалён из
+> `_nova_sleep_via_libuv`. Подробно — [D93](decisions/06-concurrency.md#d93)
+> + Plan 22 Ф.8 секция. Историческая запись сохранена ниже.
+
+
 
 **Контекст.** D93 park/wake API определяет `NovaCancelStopCb` —
 callback, который вызывается из `nova_cancel_token_cancel` через

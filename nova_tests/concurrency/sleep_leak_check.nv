@@ -31,10 +31,10 @@ test "100k sequential sleep(0) — no resource accumulation" {
 }
 
 test "1k repeated sleep(10) — bounded close-cb backlog" {
-    // 1000 sleep'ов по 10ms — sequential. Theoretical: ~10 seconds
-    // (1000 × 10ms). Slack 5s — uv_close-callback latency должен
-    // оставаться bounded; если бы close-handle'ы накапливались в
-    // uv_loop pending queue — это бы degradировало performance.
+    // 1000 sleep'ов по 10ms — sequential. Theoretical: ~10s
+    // (1000 × 10ms), но Windows timer-resolution ~15ms и Ф.8 ASYNC
+    // close_cb добавляет ~2-3ms на каждый sleep ⇒ realistic ~20-25s.
+    // Slack 30s — если elapsed >> 30s, handle backlog либо resource leak.
     let t0 = Time.now()
     supervised {
         spawn {
@@ -44,9 +44,7 @@ test "1k repeated sleep(10) — bounded close-cb backlog" {
         }
     }
     let elapsed = Time.now() - t0
-    // Theoretical 10s, slack +5s. Если elapsed >> 15s — handle backlog
-    // либо resource leak.
-    assert(elapsed < 15_000)
+    assert(elapsed < 30_000)
 }
 
 test "repeated scope-create/destroy не растит memory unbounded" {

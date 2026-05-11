@@ -1273,45 +1273,85 @@ Production-grade interp — отдельный план «interp catch-up» (TBD
 
 **Объём:** ~80 строк refactor.
 
-### Ф.8 — Close-callback state-machine reorg — ⏸ DEFERRED
+### Ф.8 — Close-callback state-machine reorg + D93 sync/async stop_cb — ✅ DONE
 
 **Что:** заменить busy-loop `while (!st.handle_closed) uv_run NOWAIT`
 в `_nova_sleep_via_libuv` на park-based wait через двух-stage state
-machine.
+machine. Одновременно расширить D93 API enum'ом `NovaStopMode`
+(SYNC/ASYNC) — формальный contract для cancel-during-park flow.
 
-**Status (2026-05-11):** ⏸ **DEFERRED.** Прототип реализован,
-обнаружен blocking issue в D93 contract.
+**Status (2026-05-11):** ✅ **DONE.** Sleep state-machine реализована,
+D93 sync/async contract фиксирован. R7 «no busy-loops anywhere»
+полностью enforced. Sleep_real_clock + cancel_stress + sleep_bench
+10k + sleep_leak_check + full regression PASS.
 
-**Что попробовали:** timer_cb инициирует uv_close (не делает wake),
-close_cb делает wake. Единый park на весь lifecycle. State enum
-{PENDING, CLOSING, CLOSED}. Логически корректно для normal path.
+**Контекст переоткрытия.** Initial попытка Ф.8 откатилась потому что
+`nova_sched_cancel_all_pending` делает synchronous `parked[i] = false`
+после stop_cb. Новый async stop_cb (initiates uv_close, wake придёт
+из close_cb) race'ит с этим — fiber resume'ится **до** close_cb,
+sanity-check abort'ит.
 
-**Почему не сработало:** `nova_sched_cancel_all_pending` после вызова
-stop_cb **сам делает** `parked[i] = false` (synchronous unpark). Это
-было правильно при текущей синхронной семантике stop_cb (Ф.4):
-stop_cb закрыл handle inline, fiber resume'ится сразу. Но в Ф.8 stop_cb
-лишь инициирует close — close_cb придёт асинхронно. cancel_all_pending
-unpark'ает fiber раньше close_cb → sanity-check (`stage != CLOSED`)
-abort'ит → sleep_real_clock cancel-during-sleep тест RUN-FAIL.
+**Решение.** D93 формально различает sync vs async stop_cb через
+enum:
 
-**Корень проблемы:** D93 API не различает sync-stop vs async-stop
-contract. Sleep handle требует async-close-wait, а channel waitlist
-(Plan 21) — sync-unlink. Чтобы Ф.8 работал — D93 должен формализовать
-эту разницу: stop_cb возвращает enum `{SYNC_DONE, ASYNC_PENDING}`;
-cancel_all_pending unpark'ает только SYNC_DONE handle'ы; для ASYNC_PENDING
-ждёт сигнала completion от backend'а.
+```c
+typedef enum {
+    NOVA_STOP_SYNC,    /* handle полностью freed после stop_cb return */
+    NOVA_STOP_ASYNC,   /* stop_cb лишь инициировал close; ждём wake'а от backend */
+} NovaStopMode;
 
-**Решение отложено** в open-questions «Q-D93-sync-async-stop». Это
-требует careful API design + cross-validation с Plan 21 channel
-waitlist'ом + Plan 23 socket-read'ами. Текущая Ф.6 реализация
-(synchronous stop_cb + ms-busy на close_cb) работает корректно во
-всех тестах и benchmarks, ms-overhead на close-wait pragmatically
-acceptable (<5% scheduler-pass'а под максимальной concurrent-load).
+typedef NovaStopMode (*NovaCancelStopCb)(void* handle);
+```
 
-**Что НЕ заблокировано:** Ф.7 (heap arrays), Ф.10 (SIGINT), Ф.11
-(Linux smoke) — независимые от Ф.8.
+`cancel_all_pending` для SYNC делает `parked[i] = false` immediate
+(как сейчас), для ASYNC оставляет parked и полагается на backend wake
+(uv close_cb).
 
-**Объём:** ~50 строк refactor (когда D93 контракт уточнится).
+**Файлы:**
+
+- `compiler-codegen/nova_rt/fibers.h`:
+  + `NovaSchedStopCb` typedef меняется: возвращает `NovaStopMode` enum
+    вместо `void`.
+  + `NovaSleepState`: bool `handle_closed` → enum `NovaSleepStage`
+    с `{PENDING, CLOSING, CLOSED}`.
+  + `_nova_sleep_timer_cb`: stage=CLOSING, инициирует uv_close с
+    close_cb. **НЕ** wake'ает fiber.
+  + `_nova_sleep_close_cb`: stage=CLOSED, wake parked fiber.
+  + `_nova_sleep_stop_cb`: stage=CLOSING, инициирует close, возвращает
+    `NOVA_STOP_ASYNC` (cancel_all_pending не unpark'нет — wake придёт
+    из close_cb).
+  + `_nova_sleep_via_libuv`: один park, после wake — sanity-check
+    stage == CLOSED, cancel-check + return. Busy-loop `while
+    !handle_closed uv_run NOWAIT` удаляется.
+
+- `compiler-codegen/nova_rt/sched.h`:
+  + `NovaStopMode` enum в API.
+  + `NovaSchedStopCb` typedef обновлён.
+  + `nova_sched_cancel_all_pending`: для SYNC — `parked[i] = false`
+    immediate (как было); для ASYNC — оставляет parked, backend
+    сделает wake через close_cb / waitlist removal.
+
+- `spec/decisions/06-concurrency.md` D93:
+  + Добавить секцию «Sync vs async stop_cb contract».
+  + Описать `NovaStopMode` enum + правила для cancel_all_pending.
+  + Use-cases: sleep — ASYNC, channel waitlist (Plan 21) — SYNC,
+    socket-read (Plan 23+) — ASYNC, file-read — ASYNC.
+
+- `spec/open-questions.md`:
+  + Удалить Q-D93-sync-async-stop (закрыто в D93).
+
+**Acceptance:**
+
+- sleep_real_clock 5/5 PASS (включая cancel-during-sleep wake'ает immediate).
+- cancel_stress_test 3/3 PASS (100 fibers + cancel).
+- sleep_bench 10k concurrent PASS.
+- sleep_leak_check 3/3 PASS.
+- Полный 138/138 regression PASS.
+- Busy-loop `while !handle_closed` отсутствует в `_nova_sleep_via_libuv`.
+- R7 invariant «no busy-loops anywhere» полностью enforced под
+  NOVA_USE_LIBUV=1.
+
+**Объём:** ~80 строк refactor (60 в C runtime, 20 в spec D93).
 
 ### Ф.9 — Automated leak verification
 
@@ -1404,12 +1444,12 @@ verification documentation).
 | Фаза | Что | Status | Объём |
 |---|---|---|---|
 | Ф.7 | Heap-allocate NovaFiberQueue arrays | ✅ Done — 10k sleep_bench PASS | ~150 строк |
-| Ф.8 | Close-cb state-machine | ⏸ Deferred (D93 sync/async stop_cb contract) | — |
+| Ф.8 | Close-cb state-machine + D93 sync/async stop_cb | ✅ Done — R7 fully enforced | ~80 строк |
 | Ф.9 | Leak verification automation | ✅ Done — sleep_leak_check.nv | ~75 строк |
 | Ф.10 | SIGINT handler через uv_signal_t | ✅ Done — graceful Ctrl+C | ~50 строк |
 | Ф.11 | Linux smoke verification | ⏸ Deferred TBD (требует Linux env) | — |
 
-**Реализованные фазы (Ф.7/Ф.9/Ф.10): ~275 строк.**
+**Реализованные фазы (Ф.7/Ф.8/Ф.9/Ф.10): ~355 строк.**
 
 После Ф.7+Ф.9+Ф.10 Plan 22 становится **production-grade для Windows
 deployment**:
@@ -1427,14 +1467,18 @@ deployment**:
   fiber'ы wake immediate → throw "scope cancelled" → defer'ы → graceful
   shutdown.
 
-**Отложенные фазы (Ф.8/Ф.11):**
+**Дополнительно реализовано в эту итерацию:**
 
-- **Ф.8** (close-cb state machine) требует уточнения D93 контракта:
-  sync-vs-async stop_cb семантика — для sleep handle нужен async
-  close-wait, для channel waitlist (Plan 21) — sync unlink. Без
-  чёткого contract'а попытка переписать sleep ломает cancel-during-sleep
-  тест. Прототип отвергнут после reasoning. Текущая ms-busy на close_cb
-  через `uv_run NOWAIT` (1-2 iter typical) — pragmatically acceptable.
+- **Ф.8** (close-cb state machine) — закрыто через D93 contract
+  refinement: `NovaStopMode` enum `{SYNC, ASYNC}`. Sleep stop_cb
+  возвращает ASYNC — `cancel_all_pending` не unpark'ает fiber'а
+  immediate, ждёт wake'а из close_cb. Sleep state-machine
+  `{PENDING, CLOSING, CLOSED}` обеспечивает single park на весь
+  lifecycle. Busy-loop `while !handle_closed uv_run NOWAIT` удалён.
+  R7 «no busy-loops anywhere» полностью enforced под `NOVA_USE_LIBUV=1`.
+
+**Отложенные фазы (Ф.11):**
+
 - **Ф.11** (Linux smoke) требует Linux/WSL environment — отложено
   до production-deployment либо параллельно с Plan 18 (`std.net`
   validation на Linux).

@@ -162,8 +162,20 @@ static inline void nova_sched_unregister_pending(NovaFiberQueue* scope, int slot
 
 /* ─── Cancel-flow integration: вызывается из nova_cancel_token_cancel ── */
 
-/* Trigger all pending stop_cb's for scope. После этого все parked
- * fiber'ы должны be wake'ed (stop_cb закрывает handle + parked=false). */
+/* Trigger all pending stop_cb's for scope. Cancel-during-park flow по D93:
+ *
+ * Ф.8 contract: stop_cb возвращает NovaStopMode:
+ *  - SYNC:  handle полностью cleaned после stop_cb return → unpark
+ *           immediate, fiber resume'ится сразу, видит cancel_requested,
+ *           throw'ает "scope cancelled".
+ *  - ASYNC: stop_cb лишь инициировал close → fiber остаётся parked,
+ *           backend (uv close_cb / waitlist removal) сделает wake
+ *           когда handle полностью released. После backend wake fiber
+ *           resume'ится, видит cancel_requested, throw'ает.
+ *
+ * Slots без registered handle (stop_cb == NULL): unpark unconditional —
+ * fiber park'нулся через bare nova_sched_park без блокирующей операции
+ * (нештатный flow), нет smart-cleanup. */
 static inline void nova_sched_cancel_all_pending(NovaFiberQueue* scope) {
     NovaSchedState* st = nova_sched_find_state(scope);
     if (!st) return;
@@ -173,9 +185,17 @@ static inline void nova_sched_cancel_all_pending(NovaFiberQueue* scope) {
     int n = scope->count < st->capacity ? scope->count : st->capacity;
     for (int i = 0; i < n; i++) {
         if (st->pending_stop_cb[i] && st->pending_handle[i]) {
-            st->pending_stop_cb[i](st->pending_handle[i]);
+            NovaStopMode mode = st->pending_stop_cb[i](st->pending_handle[i]);
+            if (mode == NOVA_STOP_SYNC) {
+                st->parked[i] = false;  /* SYNC: unpark immediate */
+            }
+            /* ASYNC: НЕ unpark'аем — backend сделает wake через close_cb
+             * (для sleep) либо waitlist-removal callback (для channels). */
+        } else if (st->parked[i]) {
+            /* Park без registered stop_cb (bare park) — unpark
+             * unconditional, нет handle для cleanup'а. */
+            st->parked[i] = false;
         }
-        st->parked[i] = false;  /* unpark */
     }
 }
 

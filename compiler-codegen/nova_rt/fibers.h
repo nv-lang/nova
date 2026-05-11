@@ -138,13 +138,35 @@ typedef struct {
     struct NovaSchedState* sched_state;
 } NovaFiberQueue;
 
-/* Plan 22 Ф.3 (D93) + Ф.7: NovaSchedState typedef.
+/* Plan 22 Ф.3 (D93) + Ф.7 + Ф.8: NovaSchedState typedef.
  * Полный API — в sched.h (header-only inline). Здесь только определение
  * struct (используется в NovaFiberQueue.sched_state) + forward-deref
  * helper.
  *
- * Ф.7: arrays — dynamic, синхронно растут со scope.capacity. */
-typedef void (*NovaSchedStopCb)(void* handle);
+ * Ф.7: arrays — dynamic, синхронно растут со scope.capacity.
+ *
+ * Ф.8: stop_cb возвращает NovaStopMode — sync vs async wake contract.
+ * SYNC: handle полностью cleaned после stop_cb return; cancel_all_pending
+ *       делает immediate unpark, fiber resume'ится сразу.
+ * ASYNC: stop_cb лишь инициировал close; wake придёт от backend
+ *        (uv close_cb для sleep/socket/file). cancel_all_pending
+ *        НЕ делает unpark — fiber остаётся parked до backend wake.
+ *
+ * Use-cases (по типам пробуждающихся handle'ов):
+ *  - sleep (Plan 22 Ф.4+Ф.8): ASYNC — stop_cb инициирует uv_close,
+ *    wake из close_cb.
+ *  - channel waitlist (Plan 21): SYNC — stop_cb отвязывает node
+ *    inline, handle (waitlist node) убран immediately.
+ *  - socket read (Plan 23+): ASYNC — uv_read_stop + uv_close,
+ *    wake из close_cb.
+ *  - file read (Plan 23+): ASYNC — uv_cancel на uv_fs_t, wake из
+ *    request callback. */
+typedef enum {
+    NOVA_STOP_SYNC  = 0,   /* handle freed после stop_cb return; unpark immediate */
+    NOVA_STOP_ASYNC = 1,   /* close initiated; wake придёт от backend, парк сохраняется */
+} NovaStopMode;
+
+typedef NovaStopMode (*NovaSchedStopCb)(void* handle);
 typedef struct NovaSchedState {
     nova_bool*       parked;              /* dynamic [capacity] */
     void**           pending_handle;      /* dynamic [capacity] */
@@ -607,61 +629,93 @@ static inline int64_t _nova_monotonic_ms(void) {
 #ifdef NOVA_USE_LIBUV
 /* uv.h + eventloop.h уже подключены выше в этом файле. */
 
-/* State для one-shot uv_timer_t sleep на fiber'е. Живёт на стеке
- * fiber-coroutine'ы (caller frame). */
+/* Plan 22 Ф.8: state-machine для sleep'а. Убирает busy-loop
+ * `while !handle_closed uv_run NOWAIT` через async-close contract
+ * D93 (stop_cb возвращает ASYNC, wake придёт из close_cb).
+ *
+ * Lifecycle:
+ *   normal path:
+ *     START → uv_timer_init/start → stage=PENDING → register_pending → park
+ *     (timer fires)
+ *       → _nova_sleep_timer_cb: stage=CLOSING, uv_close(close_cb)
+ *         (НЕ wake — fiber всё ещё parked)
+ *       (close_cb fires асинхронно в ближайшем uv_run pass'е)
+ *       → _nova_sleep_close_cb: stage=CLOSED, wake parked fiber
+ *       → fiber resumes, sanity-check stage == CLOSED, unregister + return
+ *
+ *   cancel path:
+ *     cancel_all_pending → _nova_sleep_stop_cb: stage=CLOSING,
+ *         uv_timer_stop + uv_close(close_cb), return ASYNC
+ *       (cancel_all_pending видит ASYNC → НЕ unpark'ает)
+ *       (close_cb fires асинхронно)
+ *       → _nova_sleep_close_cb: stage=CLOSED, wake parked fiber
+ *       → fiber resumes, scope->cancel_requested == true → throw
+ *
+ * Ключевая идея: один park, никто не wake'ает fiber пока handle полностью
+ * не closed. R7 «no busy-loops anywhere» полностью enforced. */
+
+typedef enum {
+    NOVA_SLEEP_PENDING = 0,   /* timer armed, fiber parked */
+    NOVA_SLEEP_CLOSING = 1,   /* uv_close issued, awaiting close_cb */
+    NOVA_SLEEP_CLOSED  = 2,   /* close_cb fired — safe to wake fiber */
+} NovaSleepStage;
+
 typedef struct {
     NovaFiberQueue* scope;
     int             slot;
     uv_timer_t      timer;
-    nova_bool       handle_closed;   /* set by _nova_sleep_close_cb */
+    NovaSleepStage  stage;
 } NovaSleepState;
 
-/* Timer fired: wake parked fiber. Handle remains open until close_cb. */
+/* Forward-decl close_cb для использования в timer_cb / stop_cb. */
+static void _nova_sleep_close_cb(uv_handle_t* h);
+
+/* Timer fired: инициировать close. НЕ wake'аем fiber — wake придёт из
+ * close_cb когда handle полностью released. */
 static void _nova_sleep_timer_cb(uv_timer_t* h) {
     NovaSleepState* st = (NovaSleepState*)h->data;
+    if (st->stage != NOVA_SLEEP_PENDING) {
+        return;  /* race с cancel stop_cb — handle уже closing */
+    }
+    st->stage = NOVA_SLEEP_CLOSING;
+    uv_close((uv_handle_t*)h, _nova_sleep_close_cb);
+}
+
+/* Close completed — handle fully released. Wake parked fiber. */
+static void _nova_sleep_close_cb(uv_handle_t* h) {
+    NovaSleepState* st = (NovaSleepState*)h->data;
+    st->stage = NOVA_SLEEP_CLOSED;
     nova_sched_wake(st->scope, st->slot);
 }
 
-/* Handle closed — caller cleanup wait может exit'нуть.
- * Plan 22 Ф.6 production: wake fiber через park/wake (idempotent —
- * fiber может уже быть unpark'нут timer_cb'ом, повторный wake = no-op). */
-static void _nova_sleep_close_cb(uv_handle_t* h) {
-    NovaSleepState* st = (NovaSleepState*)h->data;
-    st->handle_closed = true;
-}
-
-/* stop_cb для cancel-integration. Idempotent — handle может уже быть
- * closing'ом из timer_cb path. */
-static void _nova_sleep_stop_cb(void* handle) {
+/* stop_cb для cancel-integration (D93 Ф.8 ASYNC contract).
+ * Идемпотентен — handle может уже быть closing'ом из timer_cb path.
+ * Возвращает NOVA_STOP_ASYNC — cancel_all_pending НЕ unpark'нет нас,
+ * wake придёт из close_cb. */
+static NovaStopMode _nova_sleep_stop_cb(void* handle) {
     uv_timer_t* timer = (uv_timer_t*)handle;
-    if (!uv_is_closing((uv_handle_t*)timer)) {
+    NovaSleepState* st = (NovaSleepState*)timer->data;
+    if (st->stage == NOVA_SLEEP_PENDING) {
+        st->stage = NOVA_SLEEP_CLOSING;
         uv_timer_stop(timer);
         uv_close((uv_handle_t*)timer, _nova_sleep_close_cb);
     }
+    /* else: timer_cb уже инициировал close — wake придёт из close_cb. */
+    return NOVA_STOP_ASYNC;
 }
 
 /* No-op timer callback для main-flow uv_run waits (Plan 22 Ф.6). */
 static void _nova_main_wait_timer_cb(uv_timer_t* h) { (void)h; }
 
-/* Fiber-context sleep через uv_timer_t + park/wake. Production-grade —
- * нулевой CPU overhead на sleep period, immediate cancel response.
- *
- * Plan 22 Ф.8 status: state-machine refactor отложен. Текущая архитектура
- * (timer_cb wake'ает fiber, fiber issue uv_close + ms-busy wait на
- * close_cb через UV_RUN_NOWAIT) работает корректно. Cancel + park/wake
- * race-проблема решается просто: nova_sched_cancel_all_pending делает
- * synchronous unpark, fiber resume'ится, видит scope.cancel_requested
- * и throw'ает. Двух-stage state-machine (timer_cb → close → close_cb
- * → wake) ломает этот flow, потому что cancel_all_pending всё ещё делает
- * `parked[i] = false` помимо stop_cb. Корректное решение требует
- * synchronous-vs-async stop_cb контракт в D93, что выходит за scope
- * Plan 22. Отложено в open-questions. */
+/* Fiber-context sleep через uv_timer_t + park/wake — Ф.8 state-machine.
+ * Production-grade: нулевой CPU overhead, immediate cancel, никаких
+ * busy-loop'ов. R7 fully enforced. */
 static inline void _nova_sleep_via_libuv(NovaFiberQueue* scope, int slot,
                                           nova_int ms) {
     NovaSleepState st = {
         .scope = scope,
         .slot  = slot,
-        .handle_closed = false,
+        .stage = NOVA_SLEEP_PENDING,
     };
     int rc = uv_timer_init(nova_evloop(), &st.timer);
     if (rc != 0) {
@@ -676,21 +730,23 @@ static inline void _nova_sleep_via_libuv(NovaFiberQueue* scope, int slot,
         uv_close((uv_handle_t*)&st.timer, NULL);
         abort();
     }
-    /* Register для cancel-wake (D93). */
+    /* Register для cancel-wake (D93). stop_cb тоже initiates close — wake
+     * придёт из close_cb. */
     nova_sched_register_pending(scope, slot, &st.timer, _nova_sleep_stop_cb);
-    /* Park: scheduler skip'нет нас пока wake не вернёт parked=false. */
+    /* Ф.8: один park на весь lifecycle. Wake придёт ТОЛЬКО когда close_cb
+     * выполнен (stage == CLOSED). До этого момента fiber parked даже если
+     * timer_cb fired (timer_cb лишь инициирует close, не делает wake). */
     nova_sched_park(scope, slot);
-    /* Возврат сюда после wake: либо timer_cb fired, либо cancel сделал
-     * stop_cb (закрыл timer) + cancel_all_pending unpark'нул нас. */
+    /* Возврат: stage == CLOSED, handle полностью released, busy-loop wait
+     * не нужен. */
     nova_sched_unregister_pending(scope, slot);
-    /* Cleanup handle. Если timer-cb отработал normal — handle still open,
-     * нужно close. Если cancel stop_cb уже close'нул — uv_is_closing
-     * вернёт true. */
-    if (!uv_is_closing((uv_handle_t*)&st.timer)) {
-        uv_close((uv_handle_t*)&st.timer, _nova_sleep_close_cb);
-    }
-    while (!st.handle_closed) {
-        uv_run(nova_evloop(), UV_RUN_NOWAIT);
+    /* Sanity: stage должен быть CLOSED. Если что-то wake'нуло раньше —
+     * runtime bug либо protocol violation D93. */
+    if (st.stage != NOVA_SLEEP_CLOSED) {
+        fprintf(stderr,
+            "nova: FATAL sleep wake before close_cb (stage=%d) — D93 protocol bug\n",
+            (int)st.stage);
+        abort();
     }
 }
 #endif /* NOVA_USE_LIBUV */

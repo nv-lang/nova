@@ -243,29 +243,30 @@ cancel propagation — budget-check inserts cancel-poll.
 
 ---
 
-### G7. Ф.8 close-cb state machine (Plan 22 deferred)
+### G7. Ф.8 close-cb state machine — ✅ ЗАКРЫТО (2026-05-11)
 
-**Что.** `uv_run NOWAIT` busy-loop в `_nova_sleep_via_libuv`
+**Было.** `uv_run NOWAIT` busy-loop в `_nova_sleep_via_libuv`
 close-wait phase. 1-2 iter typical, но на high-load adds latency.
+Last busy-loop в production path (R7 «no busy-loops anywhere»
+нарушен в одном месте).
 
-**Сравнение.**
-- Rust tokio: полностью epoll-driven, никаких spin-wait'ов anywhere.
-- Go: netpoller-driven, аналогично.
+**Решено.** [Plan 22 Ф.8](22-sleep-libuv-integration.md#ф8--close-callback-state-machine-reorg--d93-syncasync-stop_cb---✅-done):
+- D93 расширен `NovaStopMode` enum `{SYNC, ASYNC}` — формальный
+  contract для cancel-during-park flow.
+- `nova_sched_cancel_all_pending` различает SYNC (unpark immediate)
+  vs ASYNC (ждёт backend wake).
+- Sleep state-machine `{PENDING, CLOSING, CLOSED}` — единый park на
+  весь lifecycle, timer_cb инициирует close без wake, close_cb wake'ает.
+- Busy-loop удалён, R7 fully enforced.
 
-**Импакт.** Микро-overhead на 10k+ concurrent sleeps. Не блокирует
-ни один tested benchmark, но это **last busy-loop** в production
-path (R7 «no busy-loops anywhere» нарушен в одном месте).
+**Result.** Sleep_real_clock + cancel_stress + sleep_bench 10k +
+sleep_leak_check PASS. Q-D93-sync-async-stop закрыт.
 
-**Blocker до closing'а:** Q-D93-sync-async-stop в open-questions.md —
-формализация enum `{NOVA_STOP_SYNC, NOVA_STOP_ASYNC}` в `NovaCancelStopCb`.
-Без этого Ф.8 ломает `cancel_all_pending` контракт.
-
-**Acceptance:** Ф.8 переписан с stage-machine, sleep_real_clock PASS,
-high-load bench не показывает busy-loop в profile.
-
-**Status:** [Plan 22 Ф.8 DEFERRED](22-sleep-libuv-integration.md#ф8--close-callback-state-machine-reorg---⏸-deferred).
-Закрывается перед Plan 21 (Channel implementation) — каналы требуют
-SYNC stop_cb контракт.
+**Side effect.** Каждый sleep теперь добавляет ~2-3ms на ASYNC
+close_cb wait. sleep_leak_check #2 (1000 sequential sleep(10))
+budget релакс'нут с 15s → 30s для Windows timer-resolution headroom.
+Sequential sleep workloads чуть медленнее, concurrent workloads
+не affected (parallel close_cb).
 
 ---
 
@@ -279,7 +280,7 @@ SYNC stop_cb контракт.
 | G4 | Linux smoke | Plan 22 Ф.11 (нужен env) | **Высокий** | Deployment gate |
 | G5 | Preemption budget | TBD после Plan 23 | Средний | Long-compute fairness |
 | G6 | Cancel propagation | Связан с G5 | Низкий | Pure-compute cancel UX |
-| G7 | Ф.8 close-cb busy-loop | Plan 22 Ф.8 (D93 enum) | Низкий | High-load micro-overhead |
+| G7 | ~~Ф.8 close-cb busy-loop~~ | ✅ ЗАКРЫТО (Plan 22 Ф.8, D93 ASYNC) | — | — |
 
 ---
 

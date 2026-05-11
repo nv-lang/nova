@@ -2188,8 +2188,14 @@ void      nova_sched_park(NovaFiberQueue* scope, int slot);
 void      nova_sched_wake(NovaFiberQueue* scope, int slot);
 nova_bool nova_sched_is_parked(NovaFiberQueue* scope, int slot);
 
-/* ─── Cancel-integration ───────────── */
-typedef void (*NovaCancelStopCb)(void* handle);
+/* ─── Cancel-integration (Plan 22 Ф.8 sync/async contract) ──── */
+typedef enum {
+    NOVA_STOP_SYNC  = 0,   /* handle полностью freed после return; unpark immediate */
+    NOVA_STOP_ASYNC = 1,   /* close initiated; wake придёт от backend (close_cb / waitlist) */
+} NovaStopMode;
+
+typedef NovaStopMode (*NovaCancelStopCb)(void* handle);
+
 void nova_sched_register_pending(NovaFiberQueue* scope, int slot,
                                   void* handle, NovaCancelStopCb stop_cb);
 void nova_sched_unregister_pending(NovaFiberQueue* scope, int slot);
@@ -2220,18 +2226,38 @@ int nova_sched_count_ready(NovaFiberQueue* scope);
 раньше времени). Когда нет ready-fiber'ов и есть parked — main-loop
 будет уходить в `uv_run UV_RUN_ONCE` (Plan 22 Ф.4 добавит этот path).
 
-**5. Cancel-during-park.** Любая операция, паркующая fiber, **обязана**
-зарегистрировать handle через `nova_sched_register_pending`. При
-`cancel_token_cancel` scope's pending'ы проходятся, для каждого:
-1. Вызывается зарегистрированный `stop_cb(handle)` — он закрывает
-   libuv handle / unlink'ает waiter / отменяет request.
-2. Сразу снимается `parked[slot] = false` (механизм
-   автоматический в `cancel_token_cancel`).
-3. На следующем `supervised_step` fiber resume'ится, видит
-   `scope->cancel_requested` и throw'ает.
+**5. Cancel-during-park — sync/async stop_cb contract (Plan 22 Ф.8).**
+
+Любая операция, паркующая fiber, **обязана** зарегистрировать handle
+через `nova_sched_register_pending`. stop_cb возвращает `NovaStopMode`:
+
+**SYNC** — handle полностью cleaned после stop_cb return. Используется
+когда cleanup synchronous (отвязать waitlist-node, освободить buffer):
+1. Вызывается `stop_cb(handle)` → cleanup inline, возвращает SYNC.
+2. `cancel_all_pending` сразу делает `parked[slot] = false` —
+   fiber resume'ится на ближайшем `supervised_step`.
+3. Fiber видит `scope->cancel_requested == true` → throw `"scope cancelled"`.
+
+**ASYNC** — stop_cb лишь **инициировал** close, wake придёт от backend
+(uv close_cb / waitlist callback). Используется когда cleanup
+asynchronous (uv_close на handle с close_cb, uv_cancel на request):
+1. Вызывается `stop_cb(handle)` → инициирует close, возвращает ASYNC.
+2. `cancel_all_pending` **НЕ** unpark'ает — fiber остаётся parked.
+3. Backend выполняет cleanup → callback fires → ставит final state +
+   `nova_sched_wake(scope, slot)`.
+4. Fiber resume'ится, видит `cancel_requested` → throw.
 
 Это **единственный** способ корректно прервать blocking-операцию.
 Плата за нерегистрацию — fiber виснет навсегда при cancel.
+
+**Use-cases:**
+
+| Backend | Mode | Reason |
+|---|---|---|
+| Sleep (uv_timer_t) | ASYNC | uv_close требует close_cb pass |
+| Channel waitlist | SYNC | отвязка node inline, no async cleanup |
+| Socket read (uv_tcp_t) | ASYNC | uv_read_stop + uv_close → close_cb |
+| File read (uv_fs_t) | ASYNC | uv_cancel async на request |
 
 **6. Multiple pending per slot — запрещено в bootstrap.** Slot держит
 один (handle, stop_cb) — достаточно для всех known use-cases (один
@@ -2314,11 +2340,20 @@ unifies сейчас раздроблённые blocking-mechanism'ы.
   Cancel — cooperative через `nova_fiber_yield` re-check.
 - **Plan 22 Ф.3:** введён D93 API. NovaFiberQueue расширен `parked[]`,
   `pending_handle[]`, `pending_stop_cb[]`. cancel_token_cancel
-  итерируется по pending_stop_cb.
+  итерируется по pending_stop_cb. Stop_cb тип — `void (*)(void*)`,
+  unpark всегда synchronous после stop_cb (предположение).
 - **Plan 22 Ф.4:** Time.sleep переходит на D93 (`uv_timer_t` park-on-timer).
   `nova_supervised_run` расширяется: idle → `uv_run UV_RUN_ONCE`.
-- **Plan 21:** Channel.recv/send переходят на D93 (waitlist + stop_cb).
-- **Plan 23+ (std.net, std.fs):** socket-read, file-read через D93.
+  Sleep close-wait через ms-busy `uv_run NOWAIT` loop (~1-2 iter).
+- **Plan 22 Ф.7:** sched_state arrays → heap-allocated с capacity-doubling.
+  NOVA_SCOPE_CAP cap ушёл.
+- **Plan 22 Ф.8:** stop_cb тип расширен — возвращает `NovaStopMode`
+  enum `{SYNC, ASYNC}`. Sleep stop_cb теперь ASYNC: stop_cb инициирует
+  uv_close, wake приходит из close_cb (не synchronous из cancel_all_pending).
+  Это убирает ms-busy close-wait loop из sleep'а (R7 «no busy-loops
+  anywhere» полностью enforced). Channel waitlist (Plan 21) — SYNC.
+- **Plan 21:** Channel.recv/send переходят на D93 (waitlist + SYNC stop_cb).
+- **Plan 23+ (std.net, std.fs):** socket-read, file-read — ASYNC stop_cb.
 - **Plan 23 (M:N):** park/wake становится cross-worker. Wake может
   идти из worker B в fiber на worker A через `uv_async_t` queue.
 
@@ -2326,12 +2361,15 @@ unifies сейчас раздроблённые blocking-mechanism'ы.
 
 - ✅ **Header-only API** в `nova_rt/sched.h`.
 - ✅ **NovaFiberQueue** расширен `parked[]`, `pending_handle[]`,
-  `pending_stop_cb[]`.
+  `pending_stop_cb[]` (Ф.7: heap-allocated с capacity-doubling).
 - ✅ **nova_supervised_step** skips parked.
 - ✅ **nova_cancel_token_cancel** проходит по pending_stop_cb.
-- 🟡 **Real usage** — добавится в Plan 22 Ф.4 (Time.sleep), Plan 21
-  (Channel), Plan 23+ (IO).
-- 🟡 **`nova_supervised_run` idle uv_run** — в Plan 22 Ф.4.
+- ✅ **Sync/async stop_cb contract** (Ф.8) — `NovaStopMode` enum,
+  cancel_all_pending различает SYNC (unpark immediate) vs ASYNC
+  (ждёт backend wake).
+- ✅ **Time.sleep** через D93 (Ф.4 register/park; Ф.8 ASYNC close_cb wake).
+- 🟡 **Channel waitlist** (Plan 21) — SYNC stop_cb, ждёт реализации.
+- 🟡 **std.net/std.fs IO** (Plan 23+) — ASYNC stop_cb, ждёт реализации.
 
 ---
 
