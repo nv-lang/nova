@@ -1,4 +1,18 @@
-param([string]$Filter = "", [switch]$IncludeStdlib)
+param(
+    [string]$Filter = "",
+    [switch]$IncludeStdlib,
+    # Plan 09: build mode. `dev` (default) — fast compile, debug info, no opts.
+    # `release` — Clang `-O3 -flto -march=x86-64-v3 -DNDEBUG` для benchmarks/prod.
+    # March'ем выбран x86-64-v3 (Haswell+, 2013+, ≈99% десктопов 2026) чтобы
+    # release-сборки переносились между машинами. `march=native` для локальных
+    # перф-эксперименов — через env NOVA_MARCH_NATIVE=1.
+    [ValidateSet("dev", "release")]
+    [string]$Mode = "dev",
+    # Plan 09: принудительный выбор toolchain'а. По умолчанию — auto-detect
+    # (Clang если найден, иначе MSVC fallback). Для CI / бенчмарков fix toolchain.
+    [ValidateSet("auto", "clang", "msvc")]
+    [string]$Toolchain = "auto"
+)
 
 $ErrorActionPreference = "Continue"
 
@@ -15,6 +29,8 @@ $cg_inc_dir = if ($env:NOVA_INCLUDE)    { $env:NOVA_INCLUDE }    else { Join-Pat
 
 # vcvars: override через NOVA_VCVARS, иначе пытаемся найти через vswhere.
 # vswhere — стандартная утилита, поставляется с любой VS Installer'ом.
+# vcvars нужен и для MSVC (cl.exe), и для Clang на Windows (MSVC SDK
+# headers + linker через MSVC ABI). Без него не работает ни один путь.
 if ($env:NOVA_VCVARS) {
     $vcvars = $env:NOVA_VCVARS
 } else {
@@ -26,6 +42,71 @@ if ($env:NOVA_VCVARS) {
         Write-Host "ERROR: vcvars64.bat not found. Set NOVA_VCVARS env-var or install Visual Studio Build Tools." -ForegroundColor Red
         exit 1
     }
+}
+
+# Plan 09: детект toolchain'а. Clang/LLVM на Windows ставится через
+# `winget install LLVM.LLVM`, ставится в `C:\Program Files\LLVM\bin\`.
+# Override через NOVA_CLANG env-var (путь к clang.exe).
+$clang = $null
+if ($Toolchain -ne "msvc") {
+    if ($env:NOVA_CLANG -and (Test-Path $env:NOVA_CLANG)) {
+        $clang = $env:NOVA_CLANG
+    } else {
+        $candidates = @(
+            "C:\Program Files\LLVM\bin\clang.exe",
+            "C:\Program Files (x86)\LLVM\bin\clang.exe"
+        )
+        foreach ($c in $candidates) {
+            if (Test-Path $c) { $clang = $c; break }
+        }
+        if (-not $clang) {
+            $g = Get-Command clang.exe -ErrorAction SilentlyContinue
+            if ($g) { $clang = $g.Source }
+        }
+    }
+}
+
+# Резолв actual toolchain после auto-detect + fallback logic.
+# `clang` — preferred (Plan 09: 10-15% perf vs MSVC); `msvc` — fallback.
+$use_clang = $false
+if ($Toolchain -eq "clang") {
+    if (-not $clang) {
+        Write-Host "ERROR: -Toolchain clang requested but clang.exe not found. Install LLVM (winget install LLVM.LLVM) or set NOVA_CLANG." -ForegroundColor Red
+        exit 1
+    }
+    $use_clang = $true
+} elseif ($Toolchain -eq "msvc") {
+    $use_clang = $false
+} else {
+    # auto: prefer Clang, fall back to MSVC with warning.
+    if ($clang) {
+        $use_clang = $true
+    } else {
+        Write-Host "WARNING: Clang not found, using MSVC cl.exe (~10-15% slower runtime). Install LLVM for better perf: winget install LLVM.LLVM" -ForegroundColor Yellow
+        $use_clang = $false
+    }
+}
+
+# Build flags зависят от Mode. dev — быстрая компиляция, debug info;
+# release — оптимизация с LTO + portable march (x86-64-v3 = Haswell+ 2013).
+# `NOVA_MARCH_NATIVE=1` переключает на `-march=native` для локальных
+# perf-экспериментов (не переносится между CPU).
+$march = if ($env:NOVA_MARCH_NATIVE -eq "1") { "native" } else { "x86-64-v3" }
+if ($use_clang) {
+    $clang_flags = if ($Mode -eq "release") {
+        "-O3 -flto -march=$march -DNDEBUG -Wno-everything"
+    } else {
+        "-O0 -g -Wno-everything"
+    }
+    Write-Host "Toolchain: Clang ($clang), mode=$Mode, flags=$clang_flags" -ForegroundColor Cyan
+} else {
+    # MSVC: /Od для dev (no opts), /O2 для release. /W0 уже отключает warnings.
+    $msvc_flags = if ($Mode -eq "release") {
+        "/O2 /DNDEBUG"
+    } else {
+        "/Od /Zi"
+    }
+    Write-Host "Toolchain: MSVC cl.exe, mode=$Mode, flags=$msvc_flags" -ForegroundColor Cyan
 }
 
 New-Item -ItemType Directory -Force -Path $tmp_dir | Out-Null
@@ -135,12 +216,22 @@ $inputs | Sort-Object FullName | ForEach-Object {
         $fail++; return
     }
 
-    # Step 2: compile .c -> .exe via MSVC.
+    # Step 2: compile .c -> .exe.
     # Используем per-test obj-каталог, чтобы избежать коллизий имён
     # (test `effects/effects.c` иначе перезапишет runtime `effects.obj`).
+    # Plan 09: Clang (`clang.exe --target=x86_64-pc-windows-msvc`) или MSVC
+    # cl.exe в зависимости от $use_clang. Оба требуют vcvars64 для MSVC SDK
+    # headers/libs (Clang на Windows использует MSVC ABI + linker).
     $obj_dir = "$tmp_dir\$exe_safe-obj"
     New-Item -ItemType Directory -Force -Path $obj_dir | Out-Null
-    $cl_cmd = "cl.exe /nologo /W0 /I `"$cg_inc_dir`" /Fo`"$obj_dir\\`" /Fe`"$exe_file`" `"$c_file`" `"$rt_dir\alloc.c`" `"$rt_dir\effects.c`" `"$rt_dir\fibers.c`""
+    if ($use_clang) {
+        # Clang GCC-style: -o для output, -I для includes. -nologo нет —
+        # Clang не верболен. `--target` явный чтобы избежать сюрпризов на
+        # mixed-installer окружениях. Linker — lld-link (идёт с LLVM).
+        $cl_cmd = "`"$clang`" --target=x86_64-pc-windows-msvc $clang_flags -I `"$cg_inc_dir`" -o `"$exe_file`" `"$c_file`" `"$rt_dir\alloc.c`" `"$rt_dir\effects.c`" `"$rt_dir\fibers.c`""
+    } else {
+        $cl_cmd = "cl.exe /nologo /W0 $msvc_flags /I `"$cg_inc_dir`" /Fo`"$obj_dir\\`" /Fe`"$exe_file`" `"$c_file`" `"$rt_dir\alloc.c`" `"$rt_dir\effects.c`" `"$rt_dir\fibers.c`""
+    }
     $cl_out = cmd /c "`"$vcvars`" && $cl_cmd" 2>&1
     if ($LASTEXITCODE -ne 0) {
         $errs = ($cl_out | Where-Object { $_ -match "error" } | Select-Object -First 3) -join " | "
