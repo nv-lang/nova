@@ -189,11 +189,17 @@ fn path_hash(path: &Path) -> String {
 
 // ---------- subcommand implementations ----------
 
+fn check_module_path(path: &Path, module: &nova_codegen::ast::Module) -> Result<()> {
+    nova_codegen::manifest::check_module_path(path, &module.name)
+        .map_err(|msg| anyhow!("{}", msg))
+}
+
 fn cmd_check(path: &Path) -> Result<()> {
     let src = read_file(path)?;
     let path_str = path.to_string_lossy();
     let module = nova_codegen::parser::parse(&src)
         .map_err(|d| anyhow!("{}", d.render(&src, &path_str)))?;
+    check_module_path(path, &module)?;
     nova_codegen::types::check_module(&module).map_err(|errs| {
         let msgs: Vec<String> = errs
             .iter()
@@ -210,6 +216,7 @@ fn cmd_run(path: &Path) -> Result<()> {
     let path_str = path.to_string_lossy();
     let module = nova_codegen::parser::parse(&src)
         .map_err(|d| anyhow!("{}", d.render(&src, &path_str)))?;
+    check_module_path(path, &module)?;
     nova_codegen::types::check_module(&module).map_err(|errs| {
         let msgs: Vec<String> = errs
             .iter()
@@ -247,6 +254,7 @@ fn cmd_build(
     // parse + typecheck + codegen
     let mut module = nova_codegen::parser::parse(&src)
         .map_err(|d| anyhow!("{}", d.render(&src, &path_str)))?;
+    check_module_path(&path, &module)?;
     nova_codegen::types::check_module(&module).map_err(|errs| {
         let msgs: Vec<String> = errs.iter()
             .map(|d| d.render(&src, &path_str))
@@ -254,6 +262,10 @@ fn cmd_build(
         anyhow!("{}", msgs.join("\n"))
     })?;
     nova_codegen::types::infer_effects(&mut module);
+    for w in nova_codegen::lints::lint_module(&module) {
+        let (line, col) = nova_codegen::diag::byte_to_line_col(&src, w.diag.span.start);
+        eprintln!("{}:{}:{}: {} [{}]", path.display(), line, col, w.diag.message, w.rule);
+    }
 
     let mut emitter = nova_codegen::codegen::CEmitter::new();
     emitter.set_source_for_annotations(src.clone());
