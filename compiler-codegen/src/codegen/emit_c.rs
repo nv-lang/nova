@@ -2637,6 +2637,14 @@ impl CEmitter {
                 out.insert(token_name.clone());
                 Self::collect_bound_names_block(body, out);
             }
+            ExprKind::Select { arms } => {
+                for arm in arms {
+                    if let SelectOp::Recv { binding: Some(b), .. } = &arm.op {
+                        out.insert(b.clone());
+                    }
+                    Self::collect_bound_names_block(&arm.body, out);
+                }
+            }
             _ => {}
         }
     }

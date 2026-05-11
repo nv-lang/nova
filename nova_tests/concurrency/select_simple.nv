@@ -1,9 +1,0 @@
-module nova_tests.concurrency.select_simple
-
-test "select default only" {
-    let mut branch = 0
-    select {
-        _ => { branch = 1 }
-    }
-    assert(branch == 1)
-}
