@@ -1,0 +1,31 @@
+// defer_in_generic.nv — Plan 20 follow-up: defer внутри generic fn body.
+//
+// generic fn'ы эмитятся через emit_generic_fn_erased. До follow-up'а
+// inline-iteration не вызывал enter_defer_scope → defer внутри generic
+// fn panic'ил codegen ("defer/errdefer outside defer scope"). Fix:
+// добавил enter/leave_defer_scope в emit_generic_fn_erased.
+
+module nova_tests.syntax.defer_in_generic
+
+
+fn do_with_defer[T](x T) -> T {
+    defer { let _ = 42 }
+    x
+}
+
+
+// Тест-кейс: defer внутри generic fn должен компилироваться и работать.
+// Мы не можем здесь проверить side-effect (closure capture mut не
+// проходит через generic erasure), но при отсутствии bug'а codegen
+// просто compile + run без panic'а.
+
+test "defer в generic fn body компилируется и run'ится" {
+    let result = do_with_defer(42)
+    assert(result == 42)
+}
+
+
+test "defer в generic fn body — другой тип" {
+    let result = do_with_defer("hello")
+    assert(result == "hello")
+}

@@ -3603,6 +3603,10 @@ impl CEmitter {
                 emit_erased_return(self, &val, &val_ty);
             }
             FnBody::Block(block) => {
+                // Plan 20 Ф.8 follow-up: defer scope для generic-erased fn body.
+                // Без этого defer/errdefer внутри generic fn panic'ит codegen
+                // ("defer/errdefer outside defer scope").
+                let block_id = self.enter_defer_scope(block, false);
                 for stmt in &block.stmts {
                     self.emit_stmt(stmt)?;
                 }
@@ -3610,8 +3614,11 @@ impl CEmitter {
                     self.emit_source_annotation_for_expr(trailing);
                     let val_ty = self.infer_expr_c_type(trailing);
                     let val = self.emit_expr(trailing)?;
+                    // Cleanup ДО return (defer body не должен влиять на val).
+                    self.leave_defer_scope(block_id);
                     emit_erased_return(self, &val, &val_ty);
                 } else {
+                    self.leave_defer_scope(block_id);
                     self.line("return NULL;");
                 }
             }

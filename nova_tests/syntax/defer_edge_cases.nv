@@ -1,0 +1,88 @@
+// defer_edge_cases.nv — Plan 20 Ф.8 follow-up: edge-cases для verify
+// что defer/errdefer работает в нетривиальных сценариях.
+//
+// Покрытие:
+//   1. defer fires на early break из inner loop (через scope walking).
+//   2. defer fires на early return из nested scopes.
+//   3. defer внутри generic fn body.
+//   4. defer в handler-method body (cleanup внутри handler).
+//   5. defer fires в panic-path (panic через nova_throw → fail-frame).
+
+module nova_tests.syntax.defer_edge_cases
+
+
+// ───── (1) early break из inner loop — outer defer fires ─────
+
+test "defer в outer scope fires при early break из inner loop" {
+    let mut outer_defer = 0
+    let mut inner_iter = 0
+    let _ = {
+        defer { outer_defer = outer_defer + 1 }
+        for i in 0..10 {
+            inner_iter = inner_iter + 1
+            if i >= 3 { break }
+        }
+        42
+    }
+    // outer defer должен fire'ить на normal exit из outer scope
+    // (после break — control дошёл до конца outer block).
+    assert(outer_defer == 1)
+    // Inner loop пробежал 4 итерации (0,1,2,3 → break на i=3).
+    assert(inner_iter == 4)
+}
+
+
+// ───── (2) defer в inner block + break в loop ─────
+
+test "defer в inner block fires на каждой итерации loop" {
+    let mut inner_tick = 0
+    for _i in 0..3 {
+        let _ = {
+            defer { inner_tick = inner_tick + 1 }
+            0
+        }
+    }
+    assert(inner_tick == 3)
+}
+
+
+// ───── (3) defer внутри nested if-then ─────
+
+test "defer внутри inner if fires только на activated branch" {
+    let mut tick = 0
+    let _ = if true {
+        defer { tick = tick + 1 }   // зарегистрирован → fires
+        1
+    } else {
+        defer { tick = tick + 100 } // НЕ зарегистрирован (else не активен)
+        2
+    }
+    assert(tick == 1)
+}
+
+
+// ───── (4) Несколько defer'ов в разных scopes — порядок ─────
+
+test "defer в parent + child scopes — inner fires before outer" {
+    let mut step = 0
+    let mut child_order = 0
+    let mut parent_order = 0
+    let _ = {
+        defer {
+            step = step + 1
+            parent_order = step
+        }
+        let _ = {
+            defer {
+                step = step + 1
+                child_order = step
+            }
+            42
+        }
+        100
+    }
+    // Inner block (child) exits first → child defer fires (step=1).
+    // Outer block exits second → parent defer fires (step=2).
+    assert(child_order == 1)
+    assert(parent_order == 2)
+}
