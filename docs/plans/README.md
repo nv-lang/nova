@@ -34,10 +34,13 @@
 | 21 | [21-channel-revision-implementation.md](21-channel-revision-implementation.md) | D91 implementation: Channel revision на capability-split (Rust mpsc-style); зависит от Plan 20 | 🟡 DRAFT, не начат |
 | 22 | [22-sleep-libuv-integration.md](22-sleep-libuv-integration.md) | `Time.sleep` через libuv `uv_timer_t` + унифицированный event-loop в scheduler'е; D92 implicit main-scope + D93 park/wake API. Открывает дорогу для Plan 18 P0 stdlib и Plan 21 Channel revision. | ✅ ЗАКРЫТ (Ф.1-Ф.6 ✅; 134/134 PASS + 5 sleep + 2 bench) |
 | 23 | [23-mn-runtime-roadmap.md](23-mn-runtime-roadmap.md) | M:N runtime — архитектурный roadmap (thread pool + work-stealing + concurrent GC + TLS migration). Зависит от Plan 22/21/18-P0. Открывает Q-mn-* в open-questions. | roadmap, v1.0+ milestone |
+| 24 | [24-cross-platform-test-runner.md](24-cross-platform-test-runner.md) | `nova-codegen test-build`/`test-all` subcommands — единая логика runner'а в Rust, run_tests.ps1/.sh thin wrappers | ✅ ЗАКРЫТ (Ф.1-Ф.3 ✅; Linux smoke — отдельно) |
+| 25 | [25-production-readiness-roadmap.md](25-production-readiness-roadmap.md) | Honest gap analysis vs Go/Rust: 7 gaps (M:N, growable stacks, GC pauses, Linux smoke, preemption, cancel propagation, Ф.8 close-cb) с blockers и acceptance criteria | roadmap, не начат |
 
 > Plan 19 — see `19-closure-and-error-ops.md` (closure-rev + D85 error-ops).
 > Plan 20 и 21 — последовательные (Plan 21 зависит от Plan 20).
 > Plan 22 — самостоятельный, не блокирует Plan 20/21.
+> Plan 25 — gap analysis vs Go/Rust state-of-the-art; не план-исполнения, а honest assessment.
 
 ## Связанные директории
 
