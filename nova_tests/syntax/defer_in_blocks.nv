@@ -1,0 +1,134 @@
+// defer_in_blocks.nv — Plan 20 Ф.8 (3): positive-тесты для defer/errdefer
+// внутри различных block-emission контекстов.
+//
+// Plan 20 Ф.4 покрывал только fn-body + range-for-body + emit_block_into/
+// emit_block_expr. Ф.8 (3) расширяет integration на остальные block-сайты:
+// while/loop/while-let/for-in-array/for-in-iter bodies, else-branch,
+// match-arm blocks. Каждый — отдельный test'кейс.
+
+module nova_tests.syntax.defer_in_blocks
+
+
+// ───── defer внутри while body — каждая итерация ─────
+
+test "defer внутри while body срабатывает на каждой итерации" {
+    let mut tick = 0
+    let mut i = 0
+    while i < 3 {
+        defer { tick = tick + 1 }
+        i = i + 1
+    }
+    assert(tick == 3)
+}
+
+
+// ───── defer внутри loop body — каждая итерация ─────
+
+test "defer внутри loop body срабатывает на каждой итерации" {
+    let mut tick = 0
+    let mut i = 0
+    loop {
+        defer { tick = tick + 1 }
+        i = i + 1
+        if i >= 4 { break }
+    }
+    assert(tick == 4)
+}
+
+
+// ───── defer внутри for-in-array body — каждая итерация ─────
+
+test "defer внутри for-in-array body срабатывает на каждой итерации" {
+    let mut tick = 0
+    let xs = [1, 2, 3, 4, 5]
+    for _x in xs {
+        defer { tick = tick + 1 }
+    }
+    assert(tick == 5)
+}
+
+
+// ───── defer внутри else-branch ─────
+
+test "defer внутри else-branch срабатывает на exit ветки" {
+    let mut tick = 0
+    let _ = if false { 0 } else {
+        defer { tick = tick + 1 }
+        42
+    }
+    assert(tick == 1)
+}
+
+
+test "defer внутри else-branch НЕ срабатывает на then-branch" {
+    let mut tick = 0
+    let _ = if true { 100 } else {
+        defer { tick = tick + 1 }
+        42
+    }
+    // else не выполнялся, defer не зарегистрировался → не fired.
+    assert(tick == 0)
+}
+
+
+// ───── defer внутри match-arm block ─────
+
+test "defer внутри match-arm block срабатывает на exit ветки" {
+    let mut tick = 0
+    let n = 5
+    let _ = match n {
+        5 => {
+            defer { tick = tick + 1 }
+            "five"
+        }
+        _ => "other"
+    }
+    assert(tick == 1)
+}
+
+
+test "defer внутри другой match-arm НЕ срабатывает" {
+    let mut tick = 0
+    let n = 1
+    let _ = match n {
+        5 => {
+            defer { tick = tick + 1 }    // эта ветка не выполняется
+            "five"
+        }
+        _ => "other"
+    }
+    assert(tick == 0)
+}
+
+
+// ───── Nested: defer в outer + defer в inner block ─────
+
+test "nested defer scopes — независимые LIFO" {
+    let mut outer_tick = 0
+    let mut inner_tick = 0
+    let mut order = 0
+    let mut outer_order = 0
+    let mut inner_order = 0
+    let _ = {
+        defer {
+            order = order + 1
+            outer_order = order
+            outer_tick = outer_tick + 1
+        }
+        // Inner block — defer'ы fired при exit из inner ДО outer.
+        let _ = {
+            defer {
+                order = order + 1
+                inner_order = order
+                inner_tick = inner_tick + 1
+            }
+            0
+        }
+        1
+    }
+    assert(inner_tick == 1)
+    assert(outer_tick == 1)
+    // inner defer fired first (раньше из scope), outer — second.
+    assert(inner_order == 1)
+    assert(outer_order == 2)
+}

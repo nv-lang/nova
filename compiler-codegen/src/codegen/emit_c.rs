@@ -4936,9 +4936,9 @@ impl CEmitter {
                 self.line(&format!("nova_unit {};", tmp));
                 self.line(&format!("while ({}) {{", cond_val));
                 self.indent += 1;
-                for stmt in &body.stmts {
-                    self.emit_stmt(stmt)?;
-                }
+                // Plan 20 Ф.4/Ф.8: defer/errdefer внутри loop body
+                // регистрируется на каждой итерации (is_loop_body=true).
+                self.emit_loop_body_inline(body)?;
                 self.indent -= 1;
                 self.line("}");
                 self.line(&format!("{} = NOVA_UNIT;", tmp));
@@ -4950,9 +4950,7 @@ impl CEmitter {
                 self.line(&format!("nova_unit {};", tmp));
                 self.line("for (;;) {");
                 self.indent += 1;
-                for stmt in &body.stmts {
-                    self.emit_stmt(stmt)?;
-                }
+                self.emit_loop_body_inline(body)?;
                 self.indent -= 1;
                 self.line("}");
                 self.line(&format!("{} = NOVA_UNIT;", tmp));
@@ -5463,11 +5461,16 @@ impl CEmitter {
                     Some(ElseBranch::Block(b)) => {
                         self.line("} else {");
                         self.indent += 1;
+                        // Plan 20 Ф.4/Ф.8: else-branch body — defer scope.
+                        // Trailing value присваивается ПОСЛЕ defer cleanup
+                        // (defer body не должен влиять на результат branch).
+                        let block_id = self.enter_defer_scope(b, false);
                         for stmt in &b.stmts { self.emit_stmt(stmt)?; }
                         if let Some(trailing) = &b.trailing {
                             let v = self.emit_expr(trailing)?;
                             self.line(&format!("{} = {};", result_tmp, v));
                         }
+                        self.leave_defer_scope(block_id);
                         self.indent -= 1;
                         self.line("}");
                     }
@@ -5503,10 +5506,8 @@ impl CEmitter {
                 let cond = self.pattern_cond(pattern, &scr_tmp)?;
                 self.line(&format!("if (!({cond})) break;"));
                 self.pattern_bind_typed(pattern, &scr_tmp)?;
-                for stmt in &body.stmts { self.emit_stmt(stmt)?; }
-                if let Some(trailing) = &body.trailing {
-                    let _ = self.emit_expr(trailing)?;
-                }
+                // Plan 20 Ф.4/Ф.8: defer внутри while-let body на каждой итерации.
+                self.emit_loop_body_inline(body)?;
                 self.indent -= 1;
                 self.line("}");
                 self.line(&format!("{} = NOVA_UNIT;", loop_tmp));
@@ -7526,13 +7527,8 @@ impl CEmitter {
                 self.line(&format!("{} {} = {}->data[{}];", elem_ty, binding, arr_tmp, idx_tmp));
             }
             self.var_types.insert(binding.clone(), elem_ty);
-            for stmt in &body.stmts {
-                self.emit_stmt(stmt)?;
-            }
-            if let Some(trailing) = &body.trailing {
-                let v = self.emit_expr(trailing)?;
-                self.line(&format!("(void)({});", v));
-            }
+            // Plan 20 Ф.4/Ф.8: for-in-array body defer/errdefer integration.
+            self.emit_loop_body_inline(body)?;
             self.indent -= 1;
             self.line("}");
             self.line(&format!("{} = NOVA_UNIT;", result_tmp));
@@ -7621,13 +7617,9 @@ impl CEmitter {
                     self.var_types.insert(binding.clone(), elem_c_ty);
                 }
 
-                for stmt in &body.stmts {
-                    self.emit_stmt(stmt)?;
-                }
-                if let Some(trailing) = &body.trailing {
-                    let v = self.emit_expr(trailing)?;
-                    self.line(&format!("(void)({});", v));
-                }
+                // Plan 20 Ф.4/Ф.8: for-in-iter (Iter[T] protocol) body
+                // defer/errdefer integration на каждой итерации.
+                self.emit_loop_body_inline(body)?;
 
                 self.indent -= 1;
                 self.line("}");
@@ -7764,6 +7756,9 @@ impl CEmitter {
                 self.line(&format!("{} = {};", result_tmp, assignment));
             }
             MatchArmBody::Block(b) => {
+                // Plan 20 Ф.4/Ф.8: match-arm body — defer scope.
+                // Trailing value присваивается ПОСЛЕ defer cleanup.
+                let block_id = self.enter_defer_scope(b, false);
                 for stmt in &b.stmts {
                     self.emit_stmt(stmt)?;
                 }
@@ -7773,6 +7768,7 @@ impl CEmitter {
                     let assignment = self.coerce_for_assignment(&v, &val_ty, &result_ty);
                     self.line(&format!("{} = {};", result_tmp, assignment));
                 }
+                self.leave_defer_scope(block_id);
             }
         }
         Ok(())
