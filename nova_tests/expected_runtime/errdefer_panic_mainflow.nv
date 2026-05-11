@@ -1,0 +1,18 @@
+// EXPECT_RUNTIME_PANIC nova: unhandled Fail: kaboom
+// EXPECT_STDOUT CLEANUP_DONE
+//
+// nv_panic fix (Plan 20): errdefer срабатывает на panic() на main flow
+// (вне fiber контекста). До fix'а `nova_in_fiber()` guard не пускал
+// через fail-frame — errdefer не срабатывал. После fix'а fail-frame
+// проверяется первым независимо от fiber-контекста.
+
+module nova_tests.expected_runtime.errdefer_panic_mainflow
+
+
+fn main() Io -> () {
+    let _ = {
+        errdefer { println("CLEANUP_DONE") }
+        panic("kaboom")
+        0
+    }
+}

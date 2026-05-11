@@ -1,0 +1,13 @@
+// EXPECT_RUNTIME_PANIC nova: unhandled Fail: crash
+// EXPECT_STDOUT DEFER_RUNS
+//
+// nv_panic fix: defer (не errdefer) тоже срабатывает на panic() на
+// main flow. defer срабатывает на любом exit — panic, throw, normal.
+
+module nova_tests.expected_runtime.defer_panic_mainflow
+
+
+fn main() Io -> () {
+    defer { println("DEFER_RUNS") }
+    panic("crash")
+}

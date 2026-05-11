@@ -1,0 +1,18 @@
+// EXPECT_RUNTIME_PANIC nova: unhandled Fail: done
+// EXPECT_STDOUT FIRST
+// EXPECT_STDOUT SECOND
+// EXPECT_STDOUT THIRD
+//
+// multi-EXPECT: test-runner проверяет несколько EXPECT_STDOUT паттернов
+// одновременно с EXPECT_RUNTIME_PANIC. До fix'а только первый маркер
+// проверялся. После fix'а все паттерны из Vec<ExpectMarker> проверяются.
+
+module nova_tests.expected_runtime.multi_expect_stdout
+
+
+fn main() Io -> () {
+    defer { println("FIRST") }
+    defer { println("SECOND") }
+    defer { println("THIRD") }
+    panic("done")
+}

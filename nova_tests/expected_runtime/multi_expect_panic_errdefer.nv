@@ -1,0 +1,22 @@
+// EXPECT_RUNTIME_PANIC nova: unhandled Fail: end
+// EXPECT_STDOUT ERRDEFER_A
+// EXPECT_STDOUT ERRDEFER_B
+// EXPECT_STDOUT DEFER_C
+//
+// multi-marker: RUNTIME_PANIC + три EXPECT_STDOUT паттерна одновременно.
+// Проверяет что Vec<ExpectMarker> обрабатывается полностью:
+// все три stdout-паттерна должны присутствовать в выводе.
+// defer + errdefer порядок: errdefer LIFO (B затем A), затем defer C.
+
+module nova_tests.expected_runtime.multi_expect_panic_errdefer
+
+
+fn main() Io -> () {
+    defer { println("DEFER_C") }
+    let _ = {
+        errdefer { println("ERRDEFER_A") }
+        errdefer { println("ERRDEFER_B") }
+        panic("end")
+        0
+    }
+}

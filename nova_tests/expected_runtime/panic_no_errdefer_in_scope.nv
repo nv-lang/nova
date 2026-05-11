@@ -1,0 +1,20 @@
+// EXPECT_RUNTIME_PANIC panic: out
+//
+// Негативный тест для nv_panic fix: errdefer в outer scope НЕ
+// срабатывает если panic происходит ПОСЛЕ выхода из errdefer-блока.
+// errdefer регистрируется только в своём блоке — scope-bound.
+// Если блок завершился нормально, errdefer не срабатывает при
+// последующем panic.
+
+module nova_tests.expected_runtime.panic_no_errdefer_in_scope
+
+
+fn main() Io -> () {
+    // Этот блок завершается нормально — errdefer НЕ должен сработать.
+    let _ = {
+        errdefer { println("SHOULD_NOT_PRINT") }
+        42  // нормальный exit из блока
+    }
+    // Panic после завершения errdefer-блока — errdefer уже не активен.
+    panic("out")
+}
