@@ -400,12 +400,7 @@ fn cmd_build(
     let tc = test_runner::detect_toolchain(&tc_opts)?;
 
     // detect libuv
-    let vcvars_path = match &tc {
-        test_runner::Toolchain::Clang { vcvars, .. } => vcvars.as_deref(),
-        test_runner::Toolchain::Msvc { vcvars } => Some(vcvars.as_path()),
-        test_runner::Toolchain::Gcc { .. } => None,
-    };
-    let libuv = test_runner::detect_or_build_libuv(&paths.rt_dir, &repo, vcvars_path);
+    let libuv = test_runner::detect_or_build_libuv(&paths.rt_dir, &repo, tc.vcvars_path());
 
     test_runner::install_cancel_handler();
 
@@ -487,17 +482,10 @@ fn cmd_test(
     };
     let tc = test_runner::detect_toolchain(&tc_opts)?;
 
-    // extract vcvars before tc is moved into TestAllOpts
-    let vcvars_from_tc: Option<PathBuf> = match &tc {
-        test_runner::Toolchain::Clang { vcvars, .. } => vcvars.clone(),
-        test_runner::Toolchain::Msvc { vcvars } => Some(vcvars.clone()),
-        test_runner::Toolchain::Gcc { .. } => None,
-    };
-
     let libuv = test_runner::detect_or_build_libuv(
         &paths.rt_dir,
         &repo,
-        vcvars_from_tc.as_deref(),
+        tc.vcvars_path(),
     );
 
     if format == test_runner::OutputFormat::Text {
@@ -611,12 +599,7 @@ fn cmd_test_build(
     };
     let tc = test_runner::detect_toolchain(&tc_opts)?;
 
-    let vcvars_path = match &tc {
-        test_runner::Toolchain::Clang { vcvars, .. } => vcvars.as_deref(),
-        test_runner::Toolchain::Msvc { vcvars } => Some(vcvars.as_path()),
-        test_runner::Toolchain::Gcc { .. } => None,
-    };
-    let libuv = test_runner::detect_or_build_libuv(&paths.rt_dir, &repo, vcvars_path);
+    let libuv = test_runner::detect_or_build_libuv(&paths.rt_dir, &repo, tc.vcvars_path());
 
     let display = path
         .strip_prefix(&paths.tests_dir)
@@ -741,7 +724,7 @@ fn main() -> ExitCode {
             include_stdlib,
             keep_artifacts,
             tests_dir.as_deref(),
-            gc.as_deref().unwrap_or("malloc"),
+            gc.as_deref().unwrap_or("boehm"),
         ),
         Cmd::TestBuild { file, mode, toolchain, vcvars, clang, timeout, keep_artifacts, gc } => cmd_test_build(
             &file,
@@ -751,7 +734,7 @@ fn main() -> ExitCode {
             clang.as_deref(),
             timeout,
             keep_artifacts,
-            gc.as_deref().unwrap_or("malloc"),
+            gc.as_deref().unwrap_or("boehm"),
         ),
         Cmd::RegenRuntime { check } => cmd_regen_runtime(check),
     };

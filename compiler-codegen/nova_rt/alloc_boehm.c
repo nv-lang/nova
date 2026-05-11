@@ -19,8 +19,7 @@
 
 #include "alloc.h"
 
-/* Boehm GC requires GC_THREADS on Windows for thread-safety */
-#define GC_THREADS
+/* Nova is single-threaded (libuv + cooperative minicoro). No GC_THREADS needed. */
 #include <gc.h>
 
 #include <stdio.h>

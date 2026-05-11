@@ -86,9 +86,8 @@ enum Cmd {
         /// Plan 26 Ф.1: timeout на child-процесс в секундах. Default 60.
         #[arg(long, default_value_t = 60)]
         timeout: u64,
-        /// Plan 27 Ф.1: GC backend. malloc = plain malloc (default, internal/bench only).
-        /// boehm = Boehm-Demers-Weiser conservative tracing GC.
-        #[arg(long, value_parser = ["malloc", "boehm"], default_value = "malloc")]
+        /// Plan 27 Ф.4: GC backend. boehm = Boehm GC (default). malloc = plain malloc (bench only).
+        #[arg(long, value_parser = ["boehm", "malloc"], default_value = "boehm")]
         gc: String,
     },
     /// Plan 24: рекурсивный прогон всех .nv в `--tests-dir`. Заменяет
@@ -156,9 +155,8 @@ enum Cmd {
         /// (e.g., 'cannot open output file'). 0 = no retry. CI default 2.
         #[arg(long, default_value_t = 0)]
         retries: u32,
-        /// Plan 27 Ф.1: GC backend. malloc = plain malloc (default, internal/bench only).
-        /// boehm = Boehm-Demers-Weiser conservative tracing GC.
-        #[arg(long, value_parser = ["malloc", "boehm"], default_value = "malloc")]
+        /// Plan 27 Ф.4: GC backend. boehm = Boehm GC (default). malloc = plain malloc (bench only).
+        #[arg(long, value_parser = ["boehm", "malloc"], default_value = "boehm")]
         gc: String,
     },
 }

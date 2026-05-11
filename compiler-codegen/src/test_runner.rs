@@ -18,6 +18,7 @@ use crate::manifest;
 use crate::parser;
 use crate::types;
 use anyhow::{anyhow, Result};
+use std::ffi::OsString;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
@@ -279,12 +280,17 @@ impl ToolchainPref {
     }
 }
 
-/// Конкретный детектированный toolchain. Несёт пути к компилятору
-/// и (на Windows для Clang/MSVC) к vcvars64.bat.
+/// Конкретный детектированный toolchain. На Windows vcvars env захвачен
+/// один раз при detect_toolchain — передаётся напрямую в Command::envs(),
+/// избегая повторного вызова vcvars64.bat (~7 sec) на каждом тесте.
 #[derive(Debug, Clone)]
 pub enum Toolchain {
-    Clang { clang: PathBuf, vcvars: Option<PathBuf> },
-    Msvc { vcvars: PathBuf },
+    /// `env`: vcvars64 env snapshot (Windows), empty on Linux/macOS.
+    /// `vcvars`: path retained for detect_or_build_libuv (one-time build).
+    Clang { clang: PathBuf, env: Vec<(OsString, OsString)>, vcvars: Option<PathBuf> },
+    /// `env`: vcvars64 env snapshot.
+    /// `vcvars`: path retained for detect_or_build_libuv (one-time build).
+    Msvc { env: Vec<(OsString, OsString)>, vcvars: Option<PathBuf> },
     Gcc { gcc: PathBuf },
 }
 
@@ -294,6 +300,16 @@ impl Toolchain {
             Toolchain::Clang { .. } => "clang",
             Toolchain::Msvc { .. } => "msvc",
             Toolchain::Gcc { .. } => "gcc",
+        }
+    }
+
+    /// Path to vcvars64.bat, if any. Used only by detect_or_build_libuv
+    /// (one-time build) — not used for per-test compilation.
+    pub fn vcvars_path(&self) -> Option<&Path> {
+        match self {
+            Toolchain::Clang { vcvars, .. } => vcvars.as_deref(),
+            Toolchain::Msvc { vcvars, .. } => vcvars.as_deref(),
+            Toolchain::Gcc { .. } => None,
         }
     }
 }
@@ -419,6 +435,39 @@ fn find_vcvars(explicit: Option<&Path>) -> Option<PathBuf> {
     None
 }
 
+/// Capture the environment produced by vcvars64.bat once.
+/// Returns key-value pairs suitable for `Command::envs()`.
+/// Calling vcvars once at startup and passing its env directly to clang/cl
+/// avoids the ~7-second `call vcvars64.bat` overhead on every compile.
+#[cfg(target_os = "windows")]
+fn capture_vcvars_env(vcvars: &Path) -> Result<Vec<(OsString, OsString)>> {
+    let inner = format!(
+        "\"call \"{}\" > nul && set\"",
+        vcvars.display()
+    );
+    let mut cmd = Command::new("cmd");
+    cmd.raw_arg("/c").raw_arg(&inner);
+    let out = cmd.output().map_err(|e| anyhow!("spawn cmd: {}", e))?;
+    if !out.status.success() {
+        return Err(anyhow!("vcvars64.bat failed (exit {:?})", out.status.code()));
+    }
+    let stdout = bytes_to_string(&out.stdout);
+    let mut vars: Vec<(OsString, OsString)> = Vec::new();
+    for line in stdout.lines() {
+        if let Some(eq) = line.find('=') {
+            let key = &line[..eq];
+            let val = &line[eq + 1..];
+            vars.push((OsString::from(key), OsString::from(val)));
+        }
+    }
+    Ok(vars)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn capture_vcvars_env(_vcvars: &Path) -> Result<Vec<(OsString, OsString)>> {
+    Ok(vec![])
+}
+
 pub struct ToolchainOpts<'a> {
     pub pref: ToolchainPref,
     pub explicit_clang: Option<&'a Path>,
@@ -430,6 +479,16 @@ pub fn detect_toolchain(opts: &ToolchainOpts) -> Result<Toolchain> {
     let vcvars = find_vcvars(opts.explicit_vcvars);
     let gcc = find_gcc_path();
 
+    // Capture vcvars env once. On non-Windows this is a no-op.
+    // The ~7s call vcvars64.bat cost is paid here once, not per-test.
+    let vcvars_env: Option<Vec<(OsString, OsString)>> = if let Some(ref v) = vcvars {
+        let env = capture_vcvars_env(v)
+            .map_err(|e| anyhow!("vcvars64.bat capture failed: {}", e))?;
+        Some(env)
+    } else {
+        None
+    };
+
     let try_clang = || -> Result<Toolchain> {
         let clang = clang.clone().ok_or_else(|| {
             anyhow!(
@@ -440,7 +499,7 @@ pub fn detect_toolchain(opts: &ToolchainOpts) -> Result<Toolchain> {
                  Or set NOVA_CLANG to clang.exe path."
             )
         })?;
-        if cfg!(target_os = "windows") && vcvars.is_none() {
+        if cfg!(target_os = "windows") && vcvars_env.is_none() {
             return Err(anyhow!(
                 "clang on Windows requires vcvars64.bat for MSVC SDK headers/libs. \
                  Install Visual Studio Build Tools, or set NOVA_VCVARS."
@@ -448,6 +507,7 @@ pub fn detect_toolchain(opts: &ToolchainOpts) -> Result<Toolchain> {
         }
         Ok(Toolchain::Clang {
             clang,
+            env: vcvars_env.clone().unwrap_or_default(),
             vcvars: vcvars.clone(),
         })
     };
@@ -455,13 +515,13 @@ pub fn detect_toolchain(opts: &ToolchainOpts) -> Result<Toolchain> {
         if !cfg!(target_os = "windows") {
             return Err(anyhow!("MSVC toolchain unavailable on non-Windows OS"));
         }
-        let vcvars = vcvars.clone().ok_or_else(|| {
+        let env = vcvars_env.clone().ok_or_else(|| {
             anyhow!(
                 "vcvars64.bat not found. Install Visual Studio Build Tools, \
                  or set NOVA_VCVARS to vcvars64.bat path."
             )
         })?;
-        Ok(Toolchain::Msvc { vcvars })
+        Ok(Toolchain::Msvc { env, vcvars: vcvars.clone() })
     };
     let try_gcc = || -> Result<Toolchain> {
         let gcc = gcc.clone().ok_or_else(|| {
@@ -581,11 +641,12 @@ pub struct LibuvConfig {
 /// GC backend selection. Wired through BuildOpts → build_command.
 /// Malloc = plain malloc, no GC (internal/benchmark only — any loop that
 /// allocates will OOM eventually; not for production use).
-/// Boehm = Boehm-Demers-Weiser conservative tracing GC (default after Plan 27 Ф.4).
+/// Plan 27 Ф.4: Boehm is the default GC backend.
+/// Malloc kept for runtime benchmarks/development (--gc malloc).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum GcKind {
-    #[default]
     Malloc,
+    #[default]
     Boehm,
 }
 
@@ -664,7 +725,7 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
     let libuv_lib = opts.libuv.map(|c| c.lib_file.clone());
 
     match tc {
-        Toolchain::Clang { clang, vcvars } => {
+        Toolchain::Clang { clang, env, .. } => {
             // GCC-style flags. Target явный (msvc/linux/darwin).
             let target = if cfg!(target_os = "windows") {
                 "--target=x86_64-pc-windows-msvc"
@@ -689,175 +750,113 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
             if !target.is_empty() {
                 flags.insert(0, target.to_string());
             }
-            // Plan 27 Ф.1: Boehm requires GC_THREADS define.
+            // Plan 27 R4: NOVA_GC_BOEHM activates GC root registration in fibers.h.
+            // We do NOT pass -DGC_THREADS: Nova is single-threaded (libuv + cooperative
+            // minicoro), so Boehm's thread-stop API is not needed or safe to use.
             if opts.gc_kind == GcKind::Boehm {
-                flags.push("-DGC_THREADS".to_string());
+                flags.push("-DNOVA_GC_BOEHM".to_string());
             }
-            let inc = opts.cg_include.display().to_string();
-            let out = opts.exe_file.display().to_string();
-            let cfile = opts.c_file.display().to_string();
-            let rt1 = rt_alloc.display().to_string();
-            let rt2 = rt_effects.display().to_string();
-            let rt3 = rt_fibers.display().to_string();
 
-            if let Some(vcv) = vcvars {
-                // Windows: cmd /c "call "vcvars" && "clang" ...".
-                // ВАЖНО: используем raw_arg, чтобы Rust не escape'ил наши
-                // внутренние кавычки. Обычный `Command::args` обернёт
-                // строку в свои кавычки, ломая вложенный quoting.
-                let clang_str = clang.display().to_string();
-                // Plan 22: libuv args.
-                let mut libuv_args = String::new();
-                if let (Some(inc_path), Some(lib_path), Some(evloop)) =
-                    (&libuv_include, &libuv_lib, &libuv_eventloop)
-                {
-                    libuv_args.push_str(&format!(
-                        " -DNOVA_USE_LIBUV=1 -I \"{}\" \"{}\" \"{}\"",
-                        inc_path.display(),
-                        evloop.display(),
-                        lib_path.display(),
-                    ));
-                    #[cfg(target_os = "windows")]
-                    for syslib in LIBUV_WIN_SYSLIBS {
-                        libuv_args.push_str(&format!(" -l{}", &syslib.replace(".lib", "")));
-                    }
+            // Direct clang invocation with pre-captured vcvars env.
+            // On Windows: env snapshot from capture_vcvars_env() at detect_toolchain() time.
+            // Saves ~7s per test by avoiding `call vcvars64.bat` on every compile.
+            let mut c = Command::new(clang);
+            if !env.is_empty() {
+                // Replace process env with the vcvars snapshot so clang sees
+                // INCLUDE, LIB, PATH from VS Build Tools without re-running the bat.
+                c.env_clear().envs(env.iter().cloned());
+            }
+            for f in &flags {
+                if !f.is_empty() {
+                    c.arg(f);
                 }
-                // Plan 27 Ф.1: Boehm link flags for Clang on Windows.
-                // gc.lib must precede atomic_ops.lib (link order matters).
-                let mut boehm_args = String::new();
-                if opts.gc_kind == GcKind::Boehm {
-                    boehm_args.push_str(&format!(
-                        " -I \"{}\" -L \"{}\" -lgc -latomic_ops",
-                        vcpkg_include.display(),
-                        vcpkg_lib.display(),
-                    ));
-                }
-                // Plan 26 Ф.7: chcp 65001 ставит UTF-8 codepage в текущем
-                // cmd.exe — cl/clang будут писать stderr в UTF-8, не в CP1251.
-                // `> nul` подавляет «Active code page: 65001» line.
-                let inner = format!(
-                    "\"chcp 65001 > nul && call \"{}\" > nul && \"{}\" {} -I \"{}\"{}{}  -o \"{}\" \"{}\" \"{}\" \"{}\" \"{}\"\"",
-                    vcv.display(),
-                    clang_str,
-                    flags.join(" "),
-                    inc,
-                    libuv_args,
-                    boehm_args,
-                    out,
-                    cfile,
-                    rt1,
-                    rt2,
-                    rt3,
-                );
-                let mut c = Command::new("cmd");
+            }
+            c.arg("-I").arg(opts.cg_include);
+            // Plan 22 libuv (cross-platform).
+            if let (Some(inc_path), Some(lib_path), Some(evloop)) =
+                (&libuv_include, &libuv_lib, &libuv_eventloop)
+            {
+                c.arg("-DNOVA_USE_LIBUV=1");
+                c.arg("-I").arg(inc_path);
+                // Windows: libuv link via -L/-l flags (env has LIB set by vcvars).
                 #[cfg(target_os = "windows")]
                 {
-                    c.raw_arg("/c").raw_arg(&inner);
+                    c.arg(lib_path);
+                    c.arg(evloop);
+                    for syslib in LIBUV_WIN_SYSLIBS {
+                        c.arg(format!("-l{}", syslib.replace(".lib", "")));
+                    }
                 }
                 #[cfg(not(target_os = "windows"))]
                 {
-                    c.args(["/c", &inner]);
-                }
-                c
-            } else {
-                // Linux/macOS: прямой invoke.
-                let mut c = Command::new(clang);
-                for f in &flags {
-                    if !f.is_empty() {
-                        c.arg(f);
-                    }
-                }
-                c.arg("-I").arg(opts.cg_include);
-                // Plan 22 libuv (cross-platform).
-                if let (Some(inc_path), Some(lib_path), Some(evloop)) =
-                    (&libuv_include, &libuv_lib, &libuv_eventloop)
-                {
-                    c.arg("-DNOVA_USE_LIBUV=1");
-                    c.arg("-I").arg(inc_path);
                     c.arg(lib_path);
                     c.arg(evloop);
-                    #[cfg(any(target_os = "linux", target_os = "macos"))]
                     for syslib in LIBUV_UNIX_SYSLIBS {
                         c.arg(syslib);
                     }
                 }
-                c.arg("-o").arg(opts.exe_file);
-                c.arg(opts.c_file);
-                c.arg(&rt_alloc);
-                c.arg(&rt_effects);
-                c.arg(&rt_fibers);
-                // Plan 27 Ф.1: Boehm link flags for Clang on Linux/macOS.
-                // System libgc; on Linux also needs -lpthread (GC_THREADS).
-                if opts.gc_kind == GcKind::Boehm {
+            }
+            // Plan 27 Ф.1: Boehm link flags for Clang.
+            if opts.gc_kind == GcKind::Boehm {
+                #[cfg(target_os = "windows")]
+                {
+                    c.arg("-I").arg(&vcpkg_include);
+                    c.arg("-L").arg(&vcpkg_lib);
+                    c.arg("-lgc");
+                    c.arg("-latomic_ops");
+                }
+                #[cfg(not(target_os = "windows"))]
+                {
                     c.arg("-lgc");
                     #[cfg(target_os = "linux")]
                     c.arg("-lpthread");
                 }
-                c
             }
+            c.arg("-o").arg(opts.exe_file);
+            c.arg(opts.c_file);
+            c.arg(&rt_alloc);
+            c.arg(&rt_effects);
+            c.arg(&rt_fibers);
+            c
         }
-        Toolchain::Msvc { vcvars } => {
-            // MSVC cl.exe — только Windows. Всегда через vcvars.
-            let flags = match opts.mode {
-                Mode::Dev => "/Od /Zi",
-                Mode::Release => "/O2 /DNDEBUG",
-            };
-            let inc = opts.cg_include.display().to_string();
-            let obj = opts.obj_dir.display().to_string();
-            let out = opts.exe_file.display().to_string();
-            let cfile = opts.c_file.display().to_string();
-            let rt1 = rt_alloc.display().to_string();
-            let rt2 = rt_effects.display().to_string();
-            let rt3 = rt_fibers.display().to_string();
-            // Plan 22: libuv args для cl.exe.
-            let mut libuv_args = String::new();
+        Toolchain::Msvc { env, .. } => {
+            // cl.exe с pre-captured vcvars env (no bat overhead per compile).
+            let mut c = Command::new("cl.exe");
+            c.env_clear().envs(env.iter().cloned());
+            match opts.mode {
+                Mode::Dev => { c.args(["/nologo", "/W0", "/Od", "/Zi"]); }
+                Mode::Release => { c.args(["/nologo", "/W0", "/O2", "/DNDEBUG"]); }
+            }
+            // Plan 27 R4: NOVA_GC_BOEHM (not GC_THREADS) for single-threaded Boehm.
+            if opts.gc_kind == GcKind::Boehm {
+                c.arg("/DNOVA_GC_BOEHM");
+                c.arg(format!("/I\"{}\"", vcpkg_include.display()));
+            }
+            c.arg(format!("/I\"{}\"", opts.cg_include.display()));
+            c.arg(format!("/Fo\"{}\\\\\"", opts.obj_dir.display()));
+            c.arg(format!("/Fe\"{}\"", opts.exe_file.display()));
+            // Plan 22: libuv for MSVC.
             if let (Some(inc_path), Some(lib_path), Some(evloop)) =
                 (&libuv_include, &libuv_lib, &libuv_eventloop)
             {
-                libuv_args.push_str(&format!(
-                    " /DNOVA_USE_LIBUV=1 /I \"{}\" \"{}\" \"{}\"",
-                    inc_path.display(),
-                    evloop.display(),
-                    lib_path.display(),
-                ));
+                c.arg("/DNOVA_USE_LIBUV=1");
+                c.arg(format!("/I\"{}\"", inc_path.display()));
+                c.arg(evloop);
+                c.arg(lib_path);
                 #[cfg(target_os = "windows")]
                 for syslib in LIBUV_WIN_SYSLIBS {
-                    libuv_args.push_str(&format!(" {}", syslib));
+                    c.arg(syslib);
                 }
             }
-            // Plan 27 Ф.1: Boehm link flags for MSVC.
-            // /DGC_THREADS in compile section; gc.lib + atomic_ops.lib in /link section.
-            // MSVC requires all /link args after source files — built into inner string.
-            let boehm_compile_flags = if opts.gc_kind == GcKind::Boehm {
-                format!(" /DGC_THREADS /I \"{}\"", vcpkg_include.display())
-            } else {
-                String::new()
-            };
-            let boehm_link_flags = if opts.gc_kind == GcKind::Boehm {
-                format!(
-                    " /link \"{}\\gc.lib\" \"{}\\atomic_ops.lib\"",
-                    vcpkg_lib.display(),
-                    vcpkg_lib.display(),
-                )
-            } else {
-                String::new()
-            };
-            // Plan 26 Ф.7: chcp 65001 → UTF-8 в текущем cmd. cl.exe выдаст
-            // stderr в UTF-8, no need для CP1251 decoder. `> nul` подавляет
-            // «Active code page: 65001» и vcvars banner.
-            let inner = format!(
-                "\"chcp 65001 > nul && call \"{}\" > nul && cl.exe /nologo /W0 {}{}{} /I \"{}\" /Fo\"{}\\\\\" /Fe\"{}\" \"{}\" \"{}\" \"{}\" \"{}\"{}\"",
-                vcvars.display(), flags, libuv_args, boehm_compile_flags,
-                inc, obj, out, cfile, rt1, rt2, rt3, boehm_link_flags,
-            );
-            let mut c = Command::new("cmd");
-            #[cfg(target_os = "windows")]
-            {
-                c.raw_arg("/c").raw_arg(&inner);
-            }
-            #[cfg(not(target_os = "windows"))]
-            {
-                c.args(["/c", &inner]);
+            c.arg(opts.c_file);
+            c.arg(&rt_alloc);
+            c.arg(&rt_effects);
+            c.arg(&rt_fibers);
+            // Plan 27 Ф.1: Boehm link flags for MSVC (after sources, before /link).
+            if opts.gc_kind == GcKind::Boehm {
+                c.arg("/link");
+                c.arg(format!("\"{}\\gc.lib\"", vcpkg_lib.display()));
+                c.arg(format!("\"{}\\atomic_ops.lib\"", vcpkg_lib.display()));
             }
             c
         }
@@ -875,9 +874,9 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                     c.arg("-w");
                 }
             }
-            // Plan 27 Ф.1: Boehm GC_THREADS define (compile-time).
+            // Plan 27 R4: NOVA_GC_BOEHM (not GC_THREADS) for single-threaded Boehm.
             if opts.gc_kind == GcKind::Boehm {
-                c.arg("-DGC_THREADS");
+                c.arg("-DNOVA_GC_BOEHM");
             }
             c.arg("-I").arg(opts.cg_include);
             // Plan 22 libuv (Linux).

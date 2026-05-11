@@ -49,7 +49,30 @@
 #include <uv.h>
 #include "eventloop.h"
 
+/* Plan 27 R4: Boehm GC + minicoro fiber stacks.
+ *
+ * Suspended fiber stacks are off the OS stack — Boehm's conservative scanner
+ * would miss pointers stored in them. GC_add_roots per-fiber hits Boehm's
+ * internal root-set limit (128 entries) with many fibers.
+ *
+ * Solution: disable GC around the supervised scheduler loop. Nova is
+ * single-threaded (cooperative minicoro + libuv), so GC only runs inside
+ * nova_alloc. By disabling GC for the duration of a scheduler tick, all
+ * fiber stacks remain live and scannable when GC eventually runs (after
+ * re-enable). GC_enable() triggers a collection if one was pending.
+ *
+ * GC_disable/GC_enable are reference-counted and always safe to call. */
+#ifdef NOVA_GC_BOEHM
+#  include <gc.h>
+#  define _NOVA_GC_DISABLE()  GC_disable()
+#  define _NOVA_GC_ENABLE()   GC_enable()
+#else
+#  define _NOVA_GC_DISABLE()  ((void)0)
+#  define _NOVA_GC_ENABLE()   ((void)0)
+#endif
 
+static inline void _nova_gc_add_fiber_roots(mco_coro* co)    { (void)co; }
+static inline void _nova_gc_remove_fiber_roots(mco_coro* co) { (void)co; }
 
 /* Run a fiber to completion and return its result.
  * entry      : the generated spawn wrapper function
@@ -65,11 +88,13 @@ static inline void nova_fiber_run(void (*entry)(mco_coro*), void* user) {
         fprintf(stderr, "nova: fiber create failed (%d)\n", (int)r);
         abort();
     }
+    _nova_gc_add_fiber_roots(co);
     r = mco_resume(co);
     if (r != MCO_SUCCESS) {
         fprintf(stderr, "nova: fiber resume failed (%d)\n", (int)r);
         abort();
     }
+    _nova_gc_remove_fiber_roots(co);
     mco_destroy(co);
     /* result is already stored in user->result by the entry function */
 }
@@ -351,6 +376,7 @@ static inline void nova_fiber_spawn_into(NovaFiberQueue* q,
         fprintf(stderr, "nova: fiber create failed (%d)\n", (int)r);
         abort();
     }
+    _nova_gc_add_fiber_roots(co);
     q->fibers[q->count] = co;
     q->fiber_fail_top[q->count] = NULL;       /* fresh fiber: empty fail-stack */
     q->fiber_interrupt_top[q->count] = NULL;  /* and empty interrupt-stack */
@@ -420,6 +446,7 @@ static inline int nova_supervised_step(NovaFiberQueue* q) {
         mco_coro* co = q->fibers[i];
         if (co == NULL) continue;
         if (mco_status(co) == MCO_DEAD) {
+            _nova_gc_remove_fiber_roots(co);
             mco_destroy(co);
             q->fibers[i] = NULL;
             continue;
@@ -467,6 +494,7 @@ static inline int nova_supervised_step(NovaFiberQueue* q) {
             abort();
         }
         if (mco_status(co) == MCO_DEAD) {
+            _nova_gc_remove_fiber_roots(co);
             mco_destroy(co);
             q->fibers[i] = NULL;
         } else {
