@@ -1497,13 +1497,13 @@ pub fn run_one(opts: &TestBuildOpts) -> Outcome {
                 }
             }
         } else {
-            // No panic/exit-code marker — check STDOUT/STDERR patterns, expect exit 0.
+            // No panic/exit-code marker.
             let stdout_pats = find_stdout();
             let stderr_pats = find_stderr();
-            let has_stdout_stderr_marker = !stdout_pats.is_empty() || !stderr_pats.is_empty();
+            let has_content_marker = !stdout_pats.is_empty() || !stderr_pats.is_empty();
 
-            // Exit check: if no stdout/stderr marker either, require exit 0.
-            if exit != 0 && !has_stdout_stderr_marker {
+            if !has_content_marker && exit != 0 {
+                // Default path: no marker at all — expect exit 0.
                 let last_lines: Vec<&str> = stdout
                     .lines()
                     .chain(stderr.lines())
@@ -1516,7 +1516,8 @@ pub fn run_one(opts: &TestBuildOpts) -> Outcome {
                     elapsed: start.elapsed(),
                 }
             } else {
-                // Check all stdout patterns.
+                // EXPECT_STDOUT / EXPECT_STDERR: check patterns, any exit code allowed
+                // (preserves old single-marker semantics: EXPECT_STDERR on panic process).
                 let mut fail: Option<Outcome> = None;
                 for spat in &stdout_pats {
                     if !stdout.contains(spat) {
@@ -1532,7 +1533,6 @@ pub fn run_one(opts: &TestBuildOpts) -> Outcome {
                         break;
                     }
                 }
-                // Check all stderr patterns.
                 if fail.is_none() {
                     for spat in &stderr_pats {
                         if !stderr.contains(spat) {
@@ -1549,23 +1549,8 @@ pub fn run_one(opts: &TestBuildOpts) -> Outcome {
                         }
                     }
                 }
-                // If stdout/stderr-only markers and exit != 0 — still fail
-                // (stdout/stderr markers without panic = expect clean exit).
-                if fail.is_none() && exit != 0 && has_stdout_stderr_marker {
-                    let last_lines: Vec<&str> = stdout
-                        .lines()
-                        .chain(stderr.lines())
-                        .rev()
-                        .take(3)
-                        .collect();
-                    let detail = last_lines.into_iter().rev().collect::<Vec<_>>().join(" | ");
-                    fail = Some(Outcome::Fail {
-                        stage: Stage::Run { error: detail },
-                        elapsed: start.elapsed(),
-                    });
-                }
                 fail.unwrap_or_else(|| Outcome::Pass {
-                    detail: if has_stdout_stderr_marker { "(stdout/stderr)".to_string() } else { String::new() },
+                    detail: if has_content_marker { "(stdout/stderr)".to_string() } else { String::new() },
                     elapsed: start.elapsed(),
                 })
             }

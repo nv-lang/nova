@@ -1,0 +1,57 @@
+// stress_100k_ints.nv — pure int loop, zero allocations.
+//
+// Базовый sanity check что Boehm backend не ломает простые программы
+// без аллокаций. Под любым alloc backend int-арифметика должна давать
+// правильный результат и не аллоцировать ничего лишнего.
+
+module nova_tests.gc.stress_100k_ints
+
+test "100k int loop — zero allocations" {
+    Mem.reset()
+    let before = Mem.alloc_count()
+    let mut sum = 0
+    let mut i = 0
+    while i < 100_000 {
+        sum = sum + i
+        i = i + 1
+    }
+    let after = Mem.alloc_count()
+    // sum = n*(n-1)/2 where n=100000 → 4999950000
+    assert(sum == 4999950000)
+    // Pure int loop: no heap allocations.
+    assert(after - before == 0)
+}
+
+test "100k bool loop — zero allocations" {
+    Mem.reset()
+    let before = Mem.alloc_count()
+    let mut flag = false
+    let mut i = 0
+    while i < 100_000 {
+        flag = !flag
+        i += 1
+    }
+    let after = Mem.alloc_count()
+    // 100000 iterations (even) → flag ends as false.
+    assert(flag == false)
+    assert(after - before == 0)
+}
+
+test "fibonacci 40 — no allocations, correct result" {
+    Mem.reset()
+    let before = Mem.alloc_count()
+    // Iterative fib to avoid exponential time.
+    let mut a = 0
+    let mut b = 1
+    let mut i = 0
+    while i < 40 {
+        let tmp = a + b
+        a = b
+        b = tmp
+        i += 1
+    }
+    // fib(40) = 102334155 (0-indexed: fib(40) where fib(0)=0, fib(1)=1)
+    assert(a == 102334155)
+    let after = Mem.alloc_count()
+    assert(after - before == 0)
+}
