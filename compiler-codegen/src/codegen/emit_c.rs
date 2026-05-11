@@ -8819,11 +8819,27 @@ impl CEmitter {
         let env_name = format!("nova_lambda_{}_env", id);
         let body_name = format!("nova_lambda_{}_body", id);
 
-        // Build env struct fields
+        // Plan 20 follow-up: mut-captures хранятся как pointer'ы в env,
+        // чтобы writes из closure body обновляли original mut local в caller'е
+        // (D32-spec mut-capture by-reference). Immutable captures — by value
+        // (snapshot). Mutability detection: var_mutable set.
+        let free_var_is_mut: Vec<bool> = free_vars.iter()
+            .map(|(n, _)| self.var_mutable.contains(n))
+            .collect();
+
+        // Build env struct fields. Mut fields = pointer type.
         let env_fields: String = if free_vars.is_empty() {
             "int _dummy;".to_string() // avoid empty struct (UB in C)
         } else {
-            free_vars.iter().map(|(n, ty)| format!("{} {};", ty, n)).collect::<Vec<_>>().join(" ")
+            free_vars.iter().zip(&free_var_is_mut)
+                .map(|((n, ty), is_mut)| {
+                    if *is_mut {
+                        format!("{}* {};", ty, n)        // pointer for mut
+                    } else {
+                        format!("{} {};", ty, n)         // value for immutable
+                    }
+                })
+                .collect::<Vec<_>>().join(" ")
         };
 
         // Body function signature: takes void* env + params
@@ -8864,11 +8880,18 @@ impl CEmitter {
         // Body function implementation
         self.line(&format!("static {} {}({}) {{", ret_c_ty, body_name, body_params_str));
         self.indent = 1;
-        // Unpack env
+        // Unpack env. Для mut-captures — `#define name (*_env->name)` чтобы
+        // и reads и writes в body шли через pointer (D32: mut-captures
+        // by-reference). Immutable — обычный local copy. `#undef` после
+        // body, чтобы macro не утек в file scope.
         if !free_vars.is_empty() {
             self.line(&format!("{}* _env = ({}*)_env_ptr;", env_name, env_name));
-            for (name, ty) in &free_vars {
-                self.line(&format!("{} {} = _env->{};", ty, name, name));
+            for ((name, ty), is_mut) in free_vars.iter().zip(&free_var_is_mut) {
+                if *is_mut {
+                    self.line(&format!("#define {} (*_env->{})", name, name));
+                } else {
+                    self.line(&format!("{} {} = _env->{};", ty, name, name));
+                }
             }
         }
         let body_val = self.emit_expr(body)?;
@@ -8877,6 +8900,12 @@ impl CEmitter {
             self.line("return NOVA_UNIT;");
         } else {
             self.line(&format!("return {};", body_val));
+        }
+        // Undefine mut-capture macros чтобы они не leak'нули в следующие fn'ы.
+        for ((name, _ty), is_mut) in free_vars.iter().zip(&free_var_is_mut) {
+            if *is_mut {
+                self.line(&format!("#undef {}", name));
+            }
         }
         self.indent = 0;
         self.line("}");
@@ -8903,8 +8932,15 @@ impl CEmitter {
         let env_tmp = self.fresh_tmp();
         let clos_tmp = self.fresh_tmp();
         self.line(&format!("{}* {} = ({}*)nova_alloc(sizeof({}));", env_name, env_tmp, env_name, env_name));
-        for (name, _ty) in &free_vars {
-            self.line(&format!("{}->{} = {};", env_tmp, name, name));
+        for ((name, _ty), is_mut) in free_vars.iter().zip(&free_var_is_mut) {
+            if *is_mut {
+                // Mut capture: сохраняем address-of, чтобы writes из closure
+                // body шли в original mut local в caller'е.
+                self.line(&format!("{}->{} = &{};", env_tmp, name, name));
+            } else {
+                // Immutable: snapshot value.
+                self.line(&format!("{}->{} = {};", env_tmp, name, name));
+            }
         }
         self.line(&format!("{}* {} = ({}*)nova_alloc(sizeof({}));", clos_struct, clos_tmp, clos_struct, clos_struct));
         self.line(&format!("{}->{} = ({})({});", clos_tmp, "fn", Self::clos_fn_ty(&param_c_tys, &ret_c_ty), body_name));

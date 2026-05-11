@@ -1,0 +1,24 @@
+// closure_capture_through_fnparam.nv — closure capture mut local
+// при передаче closure'а через fn-typed параметр в другую функцию.
+//
+// Это базовый use-case для HOF (map/filter/...) и callback-style
+// API. Без этого закрытия с capture'ами не работают как функция
+// первого класса.
+
+module nova_tests.syntax.closure_capture_through_fnparam
+
+
+fn invoker(tap fn(int) -> int) -> int {
+    tap(99)
+}
+
+
+test "closure capture mut local through fn-typed param" {
+    let mut tapped = 0
+    let r = invoker(|v| {
+        tapped = v
+        v
+    })
+    assert(r == 99)
+    assert(tapped == 99)
+}
