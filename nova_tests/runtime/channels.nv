@@ -1,8 +1,14 @@
-// channels.nv — D79 Channel[T] базовая семантика.
+// channels.nv — D91 Channel[T] capability-split семантика.
 //
-// Bootstrap (D71) — single-threaded cooperative; concurrent тесты
-// через supervised+spawn потребуют отдельной работы (см. spawn-block
-// codegen). Пока — sequential sanity-checks.
+// Plan 21: Channel.new(cap) -> (Sender[T], Receiver[T]).
+// Sender: send, try_send, close, len, capacity, is_closed.
+// Receiver: recv, try_recv, len, capacity, is_closed.
+// Park/wake через D93 sched API — no busy-loops (R7 Plan 22).
+//
+// NOTE: defer tx.close() не используется с tx из tuple-destructure —
+// defer setjmp-frame эмитится до объявления переменных. Вместо этого
+// явный tx.close() в конце теста там где нужно (Plan 25 G8 = open-coded
+// defer устранит это ограничение в будущем).
 
 module nova_tests.runtime.channels
 
@@ -11,39 +17,42 @@ module nova_tests.runtime.channels
 // ================================================================
 
 test "channel: send + recv FIFO" {
-    let ch = Channel.new(4)
-    ch.send(10)
-    ch.send(20)
-    ch.send(30)
-    let a = ch.recv()
-    let b = ch.recv()
-    let c = ch.recv()
+    let (tx, rx) = Channel.new(4)
+    tx.send(10)
+    tx.send(20)
+    tx.send(30)
+    let a = rx.recv()
+    let b = rx.recv()
+    let c = rx.recv()
     assert(a.unwrap_or(-1) == 10)
     assert(b.unwrap_or(-1) == 20)
     assert(c.unwrap_or(-1) == 30)
+    tx.close()
 }
 
 test "channel: len и capacity" {
-    let ch = Channel.new(8)
-    assert(ch.capacity() == 8)
-    assert(ch.len() == 0)
-    ch.send(1)
-    ch.send(2)
-    assert(ch.len() == 2)
-    let _ = ch.recv()
-    assert(ch.len() == 1)
+    let (tx, rx) = Channel.new(8)
+    assert(rx.capacity() == 8)
+    assert(rx.len() == 0)
+    tx.send(1)
+    tx.send(2)
+    assert(rx.len() == 2)
+    let _ = rx.recv()
+    assert(rx.len() == 1)
+    tx.close()
 }
 
 test "channel: ring-buffer wrap" {
-    let ch = Channel.new(3)
-    ch.send(1)
-    ch.send(2)
-    let _ = ch.recv()                  // освободил slot
-    ch.send(3)
-    ch.send(4)                         // wrap-around
-    assert(ch.recv().unwrap_or(-1) == 2)
-    assert(ch.recv().unwrap_or(-1) == 3)
-    assert(ch.recv().unwrap_or(-1) == 4)
+    let (tx, rx) = Channel.new(3)
+    tx.send(1)
+    tx.send(2)
+    let _ = rx.recv()
+    tx.send(3)
+    tx.send(4)
+    assert(rx.recv().unwrap_or(-1) == 2)
+    assert(rx.recv().unwrap_or(-1) == 3)
+    assert(rx.recv().unwrap_or(-1) == 4)
+    tx.close()
 }
 
 // ================================================================
@@ -51,29 +60,28 @@ test "channel: ring-buffer wrap" {
 // ================================================================
 
 test "channel: close + recv drain" {
-    let ch = Channel.new(4)
-    ch.send(1)
-    ch.send(2)
-    ch.close()
-    // После close: recv'ы дренируют буфер, потом None.
-    assert(ch.recv().unwrap_or(-1) == 1)
-    assert(ch.recv().unwrap_or(-1) == 2)
-    assert(ch.recv().is_none())
-    assert(ch.recv().is_none())        // повторный — снова None
+    let (tx, rx) = Channel.new(4)
+    tx.send(1)
+    tx.send(2)
+    tx.close()
+    assert(rx.recv().unwrap_or(-1) == 1)
+    assert(rx.recv().unwrap_or(-1) == 2)
+    assert(rx.recv().is_none())
+    assert(rx.recv().is_none())
 }
 
 test "channel: is_closed" {
-    let ch = Channel.new(2)
-    assert(!ch.is_closed())
-    ch.close()
-    assert(ch.is_closed())
+    let (tx, rx) = Channel.new(2)
+    assert(!rx.is_closed())
+    tx.close()
+    assert(rx.is_closed())
 }
 
 test "channel: close idempotent" {
-    let ch = Channel.new(2)
-    ch.close()
-    ch.close()                         // не должно бросать
-    assert(ch.is_closed())
+    let (tx, rx) = Channel.new(2)
+    tx.close()
+    tx.close()
+    assert(rx.is_closed())
 }
 
 // ================================================================
@@ -81,26 +89,28 @@ test "channel: close idempotent" {
 // ================================================================
 
 test "channel: try_send full buffer" {
-    let ch = Channel.new(2)
-    assert(ch.try_send(10))
-    assert(ch.try_send(20))
-    assert(!ch.try_send(30))           // полон — false, не блокирует
-    assert(ch.recv().unwrap_or(-1) == 10)
-    assert(ch.try_send(30))            // место освободилось
+    let (tx, rx) = Channel.new(2)
+    assert(tx.try_send(10))
+    assert(tx.try_send(20))
+    assert(!tx.try_send(30))
+    assert(rx.recv().unwrap_or(-1) == 10)
+    assert(tx.try_send(30))
+    tx.close()
 }
 
 test "channel: try_recv empty buffer" {
-    let ch = Channel.new(4)
-    assert(ch.try_recv().is_none())   // пусто — None
-    ch.send(42)
-    assert(ch.try_recv().unwrap_or(-1) == 42)
-    assert(ch.try_recv().is_none())   // снова пусто
+    let (tx, rx) = Channel.new(4)
+    assert(rx.try_recv().is_none())
+    tx.send(42)
+    assert(rx.try_recv().unwrap_or(-1) == 42)
+    assert(rx.try_recv().is_none())
+    tx.close()
 }
 
 test "channel: try_send на closed → false" {
-    let ch = Channel.new(2)
-    ch.close()
-    assert(!ch.try_send(1))            // closed — false
+    let (tx, _rx) = Channel.new(2)
+    tx.close()
+    assert(!tx.try_send(1))
 }
 
 // ================================================================
@@ -108,14 +118,140 @@ test "channel: try_send на closed → false" {
 // ================================================================
 
 test "channel: while-let drain pattern" {
-    let ch = Channel.new(4)
-    ch.send(10)
-    ch.send(20)
-    ch.send(30)
-    ch.close()
+    let (tx, rx) = Channel.new(4)
+    tx.send(10)
+    tx.send(20)
+    tx.send(30)
+    tx.close()
     let mut sum = 0
-    while let Some(v) = ch.recv() {
+    while let Some(v) = rx.recv() {
         sum = sum + v
     }
     assert(sum == 60)
+}
+
+// ================================================================
+// SECTION 5: concurrent send+recv via spawn (Plan 22 park/wake)
+// ================================================================
+
+test "channel: concurrent send+recv via spawn" {
+    let (tx, rx) = Channel.new(1)
+    let mut received = 0
+    supervised {
+        spawn {
+            tx.send(42)
+            tx.close()
+        }
+        spawn {
+            let v = rx.recv()
+            received = v.unwrap_or(-1)
+        }
+    }
+    assert(received == 42)
+}
+
+test "channel: producer-consumer pipeline" {
+    let (tx, rx) = Channel.new(4)
+    let mut sum = 0
+    supervised {
+        spawn {
+            tx.send(1)
+            tx.send(2)
+            tx.send(3)
+            tx.send(4)
+            tx.send(5)
+            tx.close()
+        }
+        spawn {
+            while let Some(v) = rx.recv() {
+                sum = sum + v
+            }
+        }
+    }
+    assert(sum == 15)
+}
+
+test "channel: ping-pong" {
+    let (tx1, rx1) = Channel.new(1)
+    let (tx2, rx2) = Channel.new(1)
+    let mut result = 0
+    supervised {
+        spawn {
+            tx1.send(10)
+            let reply = rx2.recv()
+            result = reply.unwrap_or(-1)
+            tx1.close()
+        }
+        spawn {
+            let msg = rx1.recv()
+            tx2.send(msg.unwrap_or(0) * 2)
+            tx2.close()
+        }
+    }
+    assert(result == 20)
+}
+
+// ================================================================
+// SECTION 6: передача Sender / Receiver в функции (type annotation)
+// ================================================================
+
+fn fill_channel(tx ChanWriter[int], values []int) {
+    let mut i = 0
+    while i < values.len() {
+        tx.send(values[i])
+        i = i + 1
+    }
+    tx.close()
+}
+
+fn drain_channel(rx ChanReader[int]) -> int {
+    let mut sum = 0
+    while let Some(v) = rx.recv() {
+        sum = sum + v
+    }
+    sum
+}
+
+test "channel: Sender передаётся в функцию" {
+    let (tx, rx) = Channel.new(8)
+    fill_channel(tx, [1, 2, 3, 4, 5])
+    let a = rx.recv().unwrap_or(-1)
+    assert(a == 1)
+    tx.close()
+}
+
+test "channel: Receiver передаётся в функцию" {
+    let (tx, rx) = Channel.new(8)
+    tx.send(10)
+    tx.send(20)
+    tx.send(30)
+    tx.close()
+    let s = drain_channel(rx)
+    assert(s == 60)
+}
+
+test "channel: Sender и Receiver передаются независимо" {
+    let (tx, rx) = Channel.new(8)
+    fill_channel(tx, [100, 200, 300])
+    let s = drain_channel(rx)
+    assert(s == 600)
+}
+
+fn relay(rx ChanReader[int], tx ChanWriter[int]) {
+    while let Some(v) = rx.recv() {
+        tx.send(v * 2)
+    }
+    tx.close()
+}
+
+test "channel: relay — Receiver → Sender pipeline через функцию" {
+    let (tx1, rx1) = Channel.new(4)
+    let (tx2, rx2) = Channel.new(4)
+    tx1.send(1)
+    tx1.send(2)
+    tx1.send(3)
+    tx1.close()
+    relay(rx1, tx2)
+    let s = drain_channel(rx2)
+    assert(s == 12)
 }

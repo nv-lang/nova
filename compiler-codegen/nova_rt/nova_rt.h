@@ -211,19 +211,16 @@ typedef struct { char _dummy; } nova_unit;
  * в C-output codegen'а. См. docs/plans/13-runtime-stdlib-and-autogen.md.
  */
 
-/* ---- Channels (D79) — coordination между fiber'ами ---- */
-#include "channels.h"
-
 /* ---- Plan 22 Ф.2: глобальный uv_loop_t lifecycle ---- */
-/* Подключается всегда. Под #ifdef NOVA_USE_LIBUV даёт реальный API,
- * иначе — stub. Это позволяет codegen эмитить nova_evloop_init() в
- * main-prelude независимо от того, активирован libuv или нет. */
 #include "eventloop.h"
 
 /* ---- Plan 22 Ф.3 (D93): нормативный park/wake API ---- */
-/* Header-only inline (всё через NovaFiberQueue поля). Подключается
- * после fibers.h (NovaFiberQueue должна быть полным типом). */
+/* После fibers.h (NovaFiberQueue полный тип). */
 #include "sched.h"
+
+/* ---- Plan 21 (D91): capability-split Channels ---- */
+/* После sched.h — channels.h использует nova_sched_park/wake/register. */
+#include "channels.h"
 
 /* Plan 22 Ф.4: Windows headers подтянутые libuv (rpcndr.h, etc.)
  * захламляют namespace макросами типа `small`, `interface` и т.д.

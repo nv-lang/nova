@@ -14,7 +14,7 @@ structured-concurrency примитивы есть в языке, и как па
 | [D79](#d79-channels--coordination-между-fiber-ами) | ⚠️ Уточнено [D91](#d91): `Channel[T]` (старая Go-style модель — один объект, send+recv на нём) |
 | [D80](#d80-handler-scoping-per-fiber) | Handler scoping per-fiber — `with X = handler` локален для fiber'а, наследуется через spawn |
 | [D80](#d80-handler-scoping-per-fiber) | Handler scoping per-fiber — `with X = h` биндинги изолированы между fibers |
-| [D91](#d91-channel-revision--capability-split-на-sender--receiver) | `Channel` revision: capability-split на `Sender[T]` / `Receiver[T]` (Rust mpsc-style) |
+| [D91](#d91-channel-revision--capability-split-на-sender--receiver) | `Channel` revision: capability-split на `ChanWriter[T]` / `ChanReader[T]` (Rust mpsc-style) ✅ |
 
 ---
 
@@ -2156,12 +2156,15 @@ let v = rx.recv()
 
 ### Bootstrap-status
 
-- 🟡 **Spec фиксирует семантику.** Реализация — отдельный план
-  (Plan 22+), после D90 (defer) поддержки.
-- Текущий nova_rt/channels.h реализует **старую** D79-модель. После
-  Plan 22 — переделка под D91.
-- Существующие тесты `nova_tests/runtime/channels.nv` мигрируются
-  в рамках Plan 22.
+- ✅ **Реализовано в Plan 21** (2026-05-11).
+- `nova_rt/channels.h` — D91 capability-split: `Nova_ChanWriter*` / `Nova_ChanReader*`,
+  park/wake через D93 sched API, heap-allocated waiters (safe под M:N Plan 23).
+- `emit_c.rs` — `Channel.new(cap)` → `Nova_ChannelPair`, dispatch по типу объекта.
+- `nova_tests/runtime/channels.nv` — 17 тестов: FIFO, ring-buffer, closed-channel,
+  try_send/try_recv, while-let, concurrent spawn, producer-consumer, ping-pong,
+  передача `ChanWriter[T]`/`ChanReader[T]` в функции.
+- Негативные тесты: `channel_sender_no_recv`, `channel_receiver_no_send` (EXPECT_CC_ERROR).
+- `select` — вынесен в Plan 28 (нет parser-поддержки).
 
 
 ---
