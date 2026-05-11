@@ -152,3 +152,40 @@ let tx2 = tx.clone()   // новый ChanWriter на тот же буфер
 - Канал закрывается только когда все writers вызвали `close()`
 - Все существующие тесты продолжают проходить
 - Новые тесты: send-after-close → false, fan-in pipeline
+
+---
+
+## Ф.4: Post-close review (2026-05-11)
+
+После закрытия плана проведён анализ channels API относительно Rust/Go.
+Найдены и исправлены реальные дефекты (коммит `88504b87c`).
+
+### Исправлено
+
+**Б1 — double-close одного writer портил writer_count.**
+Guard `if (st->closed)` не защищал per-writer — второй вызов `close(tx)` на
+том же handle декрементировал `writer_count` повторно, закрывая канал раньше
+времени для других clones. Исправление: поле `writer_closed bool` в
+`Nova_ChanWriter`, guard по нему.
+
+**Б2 — recv/send вне fiber context вызывали `abort()`.**
+В Go это паника (recoverable), в Rust — паника через unwind. Заменено на
+`nova_throw()`. Убраны `<stdio.h>` / `<stdlib.h>` из channels.h.
+
+**Н1 — `try_recv`/`try_send` не различали "пусто" от "закрыт".**
+Оба случая возвращали `false`/`None`. Caller не мог понять, ждать ли данных
+или канал уже закрыт. Добавлен `NovaChanTryResult {OK, EMPTY, CLOSED}`.
+Nova API не меняется (emit_c.rs конвертирует в `bool`/`Option`);
+caller использует `rx.is_closed()` для различения после `None`.
+
+**Н2 — `Channel.new(0)` тихо создавал capacity=1.**
+Теперь `nova_throw("Channel.new: capacity must be >= 1")`. Nova каналы
+всегда buffered; capacity=0 (rendezvous) не поддерживается.
+
+### Оставшийся tech debt
+
+| # | Проблема | Когда чинить |
+|---|----------|-------------|
+| T1 | `writer_count` — `int32_t`, не atomic | Plan 23 (M:N threading) |
+| T2 | WaiterList — singly-linked, O(n) unlink при cancel | при нагрузочных тестах |
+| T3 | `try_recv` None не различим без `is_closed()` в Nova коде | после generics/type system |
