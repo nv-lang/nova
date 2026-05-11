@@ -1,4 +1,4 @@
-// EXPECT_RUNTIME_PANIC panic: PANIC_MSG
+// EXPECT_RUNTIME_PANIC nova: unhandled Fail: PANIC_MSG
 // EXPECT_STDOUT ERRDEFER_FIRED
 //
 // Plan 20 gap-check (4): errdefer fires на panic-path.
