@@ -46,6 +46,16 @@ bool nova_evloop_is_initialized(void);
 /* Introspection: количество активных libuv-handle'ов (для тестов). */
 int nova_evloop_active_handles(void);
 
+/* Plan 22 Ф.10: install SIGINT handler. Передаваем pointer на main-scope
+ * cancel-flag (NovaFiberQueue.cancel_requested) — handler ставит его в
+ * true, fiber'ы на yield-point бросают "scope cancelled", defer'ы
+ * отрабатывают, graceful shutdown.
+ *
+ * Вызывать ОДИН раз из emit_main prelude после установки _nova_main_scope.
+ * Idempotent (второй вызов — no-op). */
+struct NovaFiberQueue;  /* forward */
+void nova_evloop_install_sigint(struct NovaFiberQueue* main_scope);
+
 #ifdef __cplusplus
 }
 #endif
@@ -63,6 +73,11 @@ static inline void nova_evloop_init(void) { }
 static inline void nova_evloop_close(void) { }
 static inline bool nova_evloop_is_initialized(void) { return false; }
 static inline int  nova_evloop_active_handles(void) { return 0; }
+/* SIGINT handler stub (no-libuv): no-op. */
+struct NovaFiberQueue;  /* forward */
+static inline void nova_evloop_install_sigint(struct NovaFiberQueue* main_scope) {
+    (void)main_scope;
+}
 
 #endif /* NOVA_USE_LIBUV */
 

@@ -108,4 +108,53 @@ int nova_evloop_active_handles(void) {
     return count;
 }
 
+/* Plan 22 Ф.10: SIGINT handler — graceful Ctrl+C → cancel main-scope.
+ *
+ * uv_signal_t handle регистрируется на SIGINT. При получении сигнала
+ * callback ставит `cancel_requested = true` на main-scope. Все fiber'ы
+ * на next yield-point бросают "scope cancelled" → unwind → defer'ы →
+ * graceful exit.
+ *
+ * NB: Это работает **только** для fiber'ов внутри scope (D92 implicit
+ * либо explicit supervised). Top-level main-flow exit'ит через scope-
+ * drain после main-body, scope.cancel_requested срабатывает на pending
+ * detach'ах. */
+#include "nova_rt.h"  /* для NovaFiberQueue (тут нужен complete type) */
+
+static uv_signal_t _sigint_handle;
+static int         _sigint_installed = 0;
+static NovaFiberQueue* _sigint_target = NULL;
+
+static void _sigint_cb(uv_signal_t* handle, int signum) {
+    (void)handle;
+    (void)signum;
+    if (_sigint_target) {
+        _sigint_target->cancel_requested = true;
+        /* Plan 22 Ф.10: cancel-wake parked fiber'ов immediate через
+         * generic stop_cb mechanism (D93). */
+        nova_sched_cancel_all_pending(_sigint_target);
+        fprintf(stderr, "\nnova: SIGINT received — initiating graceful shutdown\n");
+    }
+}
+
+void nova_evloop_install_sigint(struct NovaFiberQueue* main_scope) {
+    if (_sigint_installed) return;
+    if (!main_scope) return;
+    _sigint_target = (NovaFiberQueue*)main_scope;
+    if (uv_signal_init(nova_evloop(), &_sigint_handle) != 0) {
+        fprintf(stderr, "nova: uv_signal_init failed — SIGINT graceful shutdown disabled\n");
+        return;
+    }
+    /* SIGINT = 2 (POSIX standard, valid on Windows тоже через uv_signal). */
+    if (uv_signal_start(&_sigint_handle, _sigint_cb, 2) != 0) {
+        fprintf(stderr, "nova: uv_signal_start failed — SIGINT graceful shutdown disabled\n");
+        uv_close((uv_handle_t*)&_sigint_handle, NULL);
+        return;
+    }
+    /* unref'аем handle — он не должен держать loop alive. Loop exit'нет
+     * когда все обычные handles закрыты, signal handler — passive. */
+    uv_unref((uv_handle_t*)&_sigint_handle);
+    _sigint_installed = 1;
+}
+
 #endif /* NOVA_USE_LIBUV */
