@@ -25,19 +25,17 @@ Workflow добавления новой runtime fn (например `f64.@cbrt
 
 1. Добавить запись в `src/codegen/runtime_registry.rs` (`RuntimeFn { ... }`).
 2. Реализовать в `nova_rt/<module>.c` (или wrapper к libc).
-3. Регенерировать stubs из корня nova-lang. Удобный shortcut:
+3. Регенерировать stubs из корня nova-lang:
+   ```sh
+   nova regen-runtime
    ```
-   regen_runtime.bat        # cmd / Windows Terminal
-   .\regen_runtime.ps1       # PowerShell
-   ```
-   Под капотом:
+   Или через nova-codegen напрямую:
    `compiler-codegen\target\debug\nova-codegen.exe emit-runtime-stubs --root .`
 4. Закоммитить все три (registry + .c + .nv).
 
 **Проверка drift'а** (registry vs существующие .nv-файлы):
-```
-regen_runtime.bat --check
-.\regen_runtime.ps1 --check
+```sh
+nova regen-runtime --check
 ```
 Используется в CI / pre-commit hook'е для предотвращения manual edit'ов.
 
@@ -269,14 +267,16 @@ cargo build
 
 ### Batch-прогон тестов
 
-`run_tests.ps1` в корне репозитория делает то же самое для всех `.nv`
+`nova test` из корня репозитория делает то же самое для всех `.nv`
 в `nova_tests/`:
 
-```powershell
-.\run_tests.ps1                       # все
-.\run_tests.ps1 -Filter "buffer"      # только buffer-тесты
-.\run_tests.ps1 -IncludeStdlib        # плюс std/*.nv
+```sh
+nova test                         # все
+nova test --filter buffer         # только buffer-тесты
+nova test --include-stdlib        # плюс std/*.nv
 ```
+
+Собрать `nova` CLI: `cd nova-cli && cargo build && cd ..`
 
 ### Известные ограничения
 

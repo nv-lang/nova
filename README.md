@@ -201,25 +201,27 @@ Active development. The specification is stable across core features
 
 ## Building from source
 
-The pipeline is two-stage: `nova-codegen` produces `.c`, a native C
-compiler links it with the runtime (`nova_rt/`). Wrapper scripts
-make this a single command:
-
-```powershell
-# Windows (requires MSVC Build Tools)
-cd compiler-codegen
-cargo build
-.\build_c.ps1 path\to\hello.nv -Run
-```
+Build the `nova` CLI, then use it to compile Nova programs:
 
 ```sh
-# Linux / Mac (requires gcc or clang)
-cd compiler-codegen
-cargo build
-./build_c.sh path/to/hello.nv --run
+# build nova CLI (requires Rust + Cargo)
+cd nova-cli && cargo build && cd ..
+
+# compile a Nova file to a native binary
+nova-cli/target/debug/nova build path/to/hello.nv
+
+# run via interpreter (no native compilation)
+nova-cli/target/debug/nova run path/to/hello.nv
+
+# type-check only
+nova-cli/target/debug/nova check path/to/hello.nv
 ```
 
-Without the wrapper:
+The pipeline is two-stage: `nova-codegen` (internal) produces `.c`, a
+native C compiler links it with the runtime (`nova_rt/`). `nova build`
+orchestrates this automatically.
+
+Manual pipeline (without `nova` CLI):
 
 ```sh
 cd compiler-codegen
@@ -229,50 +231,33 @@ gcc path/to/hello.c nova_rt/alloc.c nova_rt/effects.c nova_rt/fibers.c \
 ./hello
 ```
 
-There are also non-codegen modes: `cargo run -- run file.nv` (treewalk
-interpreter), `cargo run -- check file.nv` (type-check only),
-`cargo run -- test file.nv` (run `test "..."` blocks via interpreter).
-
 Full guide, options, known limitations:
 [compiler-codegen/README.md](compiler-codegen/README.md).
 
 ## Running tests
 
-After `cargo build`, run the full test suite via the cross-platform
-wrappers:
-
-```powershell
-# Windows
-.\run_tests.ps1
-```
+Build `nova` CLI, then run the full test suite:
 
 ```sh
-# Linux / macOS
-./run_tests.sh
+# build nova CLI (one-time, or after changes)
+cd nova-cli && cargo build && cd ..
+
+# run all tests
+nova-cli/target/debug/nova test
 ```
 
-Both wrappers are thin shims over `nova-codegen test-all` — the actual
-runner (toolchain detection, EXPECT-marker parsing, parallel scheduler,
-per-test timeout, JSON/TAP output, `--rerun-failed`) lives in Rust at
-[compiler-codegen/src/test_runner.rs](compiler-codegen/src/test_runner.rs).
-
-Common flags (identical names in `.ps1` PascalCase and `.sh` kebab-case):
-
-```powershell
-.\run_tests.ps1 -Filter syntax/closure        # subset of tests
-.\run_tests.ps1 -Mode release                 # -O3 -flto compilation
-.\run_tests.ps1 -Toolchain clang              # force toolchain
-.\run_tests.ps1 -Jobs 4 -Timeout 60           # parallel + timeout
-.\run_tests.ps1 -Format json                  # JSON events (one per line)
-.\run_tests.ps1 -Format junit > results.xml   # JUnit XML for CI parsers
-.\run_tests.ps1 -Retries 2                    # retry transient AV/race fails
-.\run_tests.ps1 -RerunFailed                  # only failed-last-time
-```
+Common flags:
 
 ```sh
-./run_tests.sh --filter basics --mode release
-./run_tests.sh --jobs 8 --format tap
-./run_tests.sh --include-stdlib               # include std/* alongside nova_tests/*
+nova test --filter syntax/closure        # subset of tests
+nova test --mode release                 # -O3 -flto compilation
+nova test --toolchain clang              # force toolchain
+nova test --jobs 4 --timeout 60          # parallel + timeout
+nova test --format json                  # JSON events (one per line)
+nova test --format junit > results.xml   # JUnit XML for CI parsers
+nova test --retries 2                    # retry transient AV/race fails
+nova test --rerun-failed                 # only failed-last-time
+nova test --include-stdlib               # include std/* alongside nova_tests/*
 ```
 
 Single-test debugging (no walkdir, no parallel overhead):
@@ -290,7 +275,7 @@ Toolchain setup:
 - **macOS:** `xcode-select --install` (Apple Clang).
 
 Auto-detection picks Clang first, then MSVC (Windows) or GCC (Linux).
-Override with `-Toolchain clang|msvc|gcc` or via env-vars
+Override with `--toolchain clang|msvc|gcc` or via env-vars
 (`NOVA_CLANG`, `NOVA_GCC`, `NOVA_VCVARS`).
 
 Full reference of test-runner flags, EXPECT-markers, troubleshooting:

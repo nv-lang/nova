@@ -37,6 +37,8 @@
 | 24 | [24-cross-platform-test-runner.md](24-cross-platform-test-runner.md) | `nova-codegen test-build`/`test-all` subcommands — единая логика runner'а в Rust, run_tests.ps1/.sh thin wrappers | ✅ ЗАКРЫТ (Ф.1-Ф.3 ✅; Linux smoke — отдельно) |
 | 25 | [25-production-readiness-roadmap.md](25-production-readiness-roadmap.md) | Honest gap analysis vs Go/Rust: gaps (M:N, growable stacks, **G3a default malloc-only**, G3b GC pauses, Linux smoke, preemption, cancel propagation) с blockers и acceptance criteria. G7 ✅ closed (Ф.8). | roadmap, не начат |
 | 27 | [27-gc-switch.md](27-gc-switch.md) | **GC switch: Boehm как default** (Plan 25 G3a closer). vcpkg gc.lib уже vendored. Ф.1 add --gc flag (default malloc) → Ф.4 switch к Boehm после bench. **Production blocker для long-running workloads.** | план, не начат, **высокий приоритет** |
+| 28 | [28-nova-cli.md](28-nova-cli.md) | `nova` CLI binary — единая точка входа для пользователя (`nova test/build/run/check/regen-runtime`). Заменяет run_tests.ps1/.sh и regen_runtime.ps1. nova-codegen остаётся внутренним инструментом. | ✅ ЗАКРЫТ (Ф.0-7 ✅; nova-cli/ crate, все субкоманды, скрипты удалены) |
+| 29 | [29-repo-layout.md](29-repo-layout.md) | Реорганизация корня: `compiler-codegen/` → `compiler/`, `nova-cli/` → `cli/`. Nova-пакеты (nova_tests/, std/) не переименовываются — D78 риск. | план, не начат, низкий приоритет |
 
 > Plan 19 — see `19-closure-and-error-ops.md` (closure-rev + D85 error-ops).
 > Plan 20 и 21 — последовательные (Plan 21 зависит от Plan 20).

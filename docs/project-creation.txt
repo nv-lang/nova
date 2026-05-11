@@ -5065,3 +5065,52 @@ conditional code paths. Оставлять dead `#else` branches «на всяк
 случай» — это active maintenance burden, не safety net.
 
 Commit: efb0248d7 plan-22 F2: libuv mandatory
+
+================================================================================
+PLAN 28 — nova CLI binary (2026-05-11)
+================================================================================
+
+**Проблема:** `run_tests.ps1` постоянно глючит — PowerShell
+output-buffering, NativeCommandError stderr-trapping, quoting путей
+с пробелами. `run_tests.sh` работает лучше, но оба — костыли.
+Мировая практика: один CLI-бинарь языка (go, cargo, zig).
+
+**Архитектура:**
+
+  nova test          → test_runner::run_all()    (path dep, no subprocess)
+  nova build foo.nv  → CEmitter + compile_c_to_exe
+  nova run foo.nv    → interp::Interpreter
+  nova check foo.nv  → parser + types
+  nova regen-runtime → codegen::runtime_registry
+
+**Что создано:**
+
+1. `nova-cli/` crate — `nova` binary. Standalone, не Rust workspace.
+   Cargo.toml: path dep nova_codegen, clap 4, anyhow.
+
+2. `test_runner::compile_c_to_exe()` — pub fn, обёртка над приватным
+   `build_command + run_with_timeout`.
+
+3. `find_repo_root()` — walk-up CWD ища `nova.toml` (как cargo ищет
+   Cargo.toml). Fail с понятным сообщением.
+
+4. Default results-file: `{repo}/target/last-test-results.json`.
+
+**Что удалено:**
+
+- `run_tests.ps1` (104 строки)
+- `run_tests.sh` (43 строки)
+- `regen_runtime.ps1`
+- `regen_runtime.bat`
+
+**Ограничение `--gc`:** `malloc` = plain malloc без GC — internal
+режим для runtime-разработчиков (benchmark Boehm vs malloc). Не
+документируется пользователю. После Plan 27 Ф.4 default = boehm.
+
+**Lesson:**
+PowerShell-обёртки над Rust-бинарями создают хрупкий boundary.
+NativeCommandError wrapping stderr в ErrorRecord — фундаментальный
+баг модели, не фиксируется патчами. Правильное решение — удалить
+обёртки, реализовать логику в Rust напрямую.
+
+Commits: plan-28 nova CLI

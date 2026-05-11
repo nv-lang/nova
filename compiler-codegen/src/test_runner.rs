@@ -158,6 +158,10 @@ pub fn run_with_timeout(mut cmd: Command, timeout: Duration) -> std::io::Result<
 pub enum ExpectMarker {
     /// codegen error содержит pattern.
     CompileError(String),
+    /// C-compiler (cc/clang/cl) error содержит pattern.
+    /// Используется для capability-isolation тестов (D91): Nova codegen
+    /// успешен, но C-компилятор выдаёт ошибку (no member, undeclared id).
+    CcError(String),
     /// exe exit != 0 + stderr содержит pattern.
     RuntimePanic(String),
     /// exit code == N (любой stdout/stderr).
@@ -193,6 +197,9 @@ pub fn parse_expect(src: &str) -> Option<ExpectMarker> {
         let parsed: Option<ExpectMarker> = if let Some(rest) = body.strip_prefix("EXPECT_COMPILE_ERROR") {
             let arg = rest.trim();
             (!arg.is_empty()).then(|| ExpectMarker::CompileError(arg.to_string()))
+        } else if let Some(rest) = body.strip_prefix("EXPECT_CC_ERROR") {
+            let arg = rest.trim();
+            Some(ExpectMarker::CcError(arg.to_string()))
         } else if let Some(rest) = body.strip_prefix("EXPECT_RUNTIME_PANIC") {
             let arg = rest.trim();
             (!arg.is_empty()).then(|| ExpectMarker::RuntimePanic(arg.to_string()))
@@ -801,6 +808,34 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
     }
 }
 
+/// Plan 28 Ф.0: публичная обёртка над `build_command` + `run_with_timeout`.
+/// Используется из `nova-cli` (`nova build`) минуя subprocess.
+///
+/// Компилирует `opts.c_file` → `opts.exe_file` через выбранный toolchain.
+/// Возвращает путь к exe на success, anyhow::Error на fail.
+pub fn compile_c_to_exe(
+    tc: &Toolchain,
+    opts: &BuildOpts,
+    timeout: Duration,
+) -> anyhow::Result<PathBuf> {
+    let cmd = build_command(tc, opts);
+    let out = run_with_timeout(cmd, timeout)
+        .map_err(|e| anyhow!("spawn compiler: {}", e))?;
+    let ok = out.status.map(|s| s.success()).unwrap_or(false);
+    if !ok {
+        let stderr = bytes_to_string(&out.stderr);
+        let stdout = bytes_to_string(&out.stdout);
+        let detail = if stderr.is_empty() { stdout } else { stderr };
+        let reason = if out.status.is_none() {
+            format!("compiler timed out after {:.1}s", timeout.as_secs_f64())
+        } else {
+            format!("compiler error:\n{}", detail.trim())
+        };
+        return Err(anyhow!("{}", reason));
+    }
+    Ok(opts.exe_file.to_path_buf())
+}
+
 // ---------- Plan 26 Ф.6: Outcome — typed test result ----------
 
 /// Результат одного теста. Production-grade: typed stages вместо
@@ -841,6 +876,10 @@ pub enum ExpectMismatch {
     NoCompileError { expected_pat: String },
     /// `EXPECT_COMPILE_ERROR <pat>`, codegen упал но без pat.
     WrongCompileMsg { expected_pat: String, got: String },
+    /// `EXPECT_CC_ERROR <pat>`, но CC succeeded.
+    NoCcError { expected_pat: String },
+    /// `EXPECT_CC_ERROR <pat>`, CC упал но без pat.
+    WrongCcMsg { expected_pat: String, got: String },
     /// `EXPECT_RUNTIME_PANIC <pat>`, но exit=0.
     NoPanic { expected_pat: String },
     /// `EXPECT_RUNTIME_PANIC <pat>`, exit!=0 но без pat.
@@ -882,6 +921,8 @@ impl Outcome {
                 Stage::Expectation { mismatch } => match mismatch {
                     ExpectMismatch::NoCompileError { .. } => "NEG-NO-ERROR",
                     ExpectMismatch::WrongCompileMsg { .. } => "NEG-WRONG-MSG",
+                    ExpectMismatch::NoCcError { .. } => "NEG-NO-CC-ERROR",
+                    ExpectMismatch::WrongCcMsg { .. } => "NEG-WRONG-CC-MSG",
                     ExpectMismatch::NoPanic { .. } => "NEG-NO-PANIC",
                     ExpectMismatch::WrongPanic { .. } => "NEG-WRONG-PANIC",
                     ExpectMismatch::WrongExit { .. } => "NEG-WRONG-EXIT",
@@ -945,6 +986,14 @@ impl ExpectMismatch {
             ExpectMismatch::WrongStderr { expected_pat, got } => {
                 let snippet: String = got.chars().take(120).collect();
                 format!("expected stderr pattern '{}' not found in: {}", expected_pat, snippet)
+            }
+            ExpectMismatch::NoCcError { expected_pat } => format!(
+                "expected `// EXPECT_CC_ERROR {}` but CC succeeded",
+                expected_pat
+            ),
+            ExpectMismatch::WrongCcMsg { expected_pat, got } => {
+                let snippet: String = got.chars().take(120).collect();
+                format!("expected CC error pattern '{}' not found in: {}", expected_pat, snippet)
             }
         }
     }
@@ -1178,9 +1227,39 @@ pub fn run_one(opts: &TestBuildOpts) -> Outcome {
         } else {
             errs.join(" | ")
         };
+        // EXPECT_CC_ERROR: CC failure is expected — check pattern.
+        if let Some(ExpectMarker::CcError(pat)) = &expect {
+            return if pat.is_empty() || combined.contains(pat.as_str()) {
+                Outcome::Pass {
+                    detail: "(negative-cc)".to_string(),
+                    elapsed: start.elapsed(),
+                }
+            } else {
+                Outcome::Fail {
+                    stage: Stage::Expectation {
+                        mismatch: ExpectMismatch::WrongCcMsg {
+                            expected_pat: pat.clone(),
+                            got: detail,
+                        },
+                    },
+                    elapsed: start.elapsed(),
+                }
+            };
+        }
         // Cleanup через subdir_guard Drop.
         return Outcome::Fail {
             stage: Stage::Cc { error: detail },
+            elapsed: start.elapsed(),
+        };
+    }
+    // EXPECT_CC_ERROR but CC succeeded.
+    if let Some(ExpectMarker::CcError(pat)) = &expect {
+        return Outcome::Fail {
+            stage: Stage::Expectation {
+                mismatch: ExpectMismatch::NoCcError {
+                    expected_pat: pat.clone(),
+                },
+            },
             elapsed: start.elapsed(),
         };
     }
@@ -1304,15 +1383,23 @@ pub fn run_one(opts: &TestBuildOpts) -> Outcome {
             }
         }
         Some(ExpectMarker::CompileError(_)) => {
-            // Plan 26 Ф.17 #2: CompileError должен быть handled до Step 2
-            // (раздел EXPECT_COMPILE_ERROR в начале run_one). Если control
-            // flow дошёл сюда — invariant нарушен (future refactor мог
-            // забыть early-return). Лучше явный Fail чем panic в worker,
-            // который poison'ит mutex и обрушивает прогон.
+            // CompileError handled до Step 2 (early-return). Invariant violation.
             Outcome::Fail {
                 stage: Stage::Codegen {
                     error: "internal: CompileError marker reached runtime phase \
                             (run_one early-return invariant violated)".to_string(),
+                },
+                elapsed: start.elapsed(),
+            }
+        }
+        Some(ExpectMarker::CcError(_)) => {
+            // CcError handled при CC failure (early-return). If we're here, CC succeeded
+            // but we expected it to fail — already handled above via NoCcError return.
+            // This arm is unreachable in practice but needed for exhaustiveness.
+            Outcome::Fail {
+                stage: Stage::Codegen {
+                    error: "internal: CcError marker reached runtime phase \
+                            (CC succeeded but error was expected)".to_string(),
                 },
                 elapsed: start.elapsed(),
             }

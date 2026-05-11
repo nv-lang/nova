@@ -12,70 +12,61 @@ Test-runner — [Plan 24](plans/24-cross-platform-test-runner.md) +
 
 ### Quick start
 
-**Windows (PowerShell):**
-```powershell
-cd compiler-codegen
-cargo build
-cd ..
-.\run_tests.ps1
+```sh
+# build nova CLI (one-time, or after changes to compiler)
+cd nova-cli && cargo build && cd ..
+
+# run all tests
+nova-cli/target/debug/nova test
 ```
 
-**Linux / macOS (bash):**
-```bash
-cd compiler-codegen && cargo build && cd ..
-./run_tests.sh
-```
-
-Оба wrapper'а — тонкие shim'ы над `nova-codegen test-all`. Логика
-runner'а (детект toolchain'а, EXPECT-маркеры, parallel scheduler,
+Логика runner'а (детект toolchain'а, EXPECT-маркеры, parallel scheduler,
 per-test timeout, JSON output) живёт в Rust в
 [compiler-codegen/src/test_runner.rs](../compiler-codegen/src/test_runner.rs).
 
 ### Параметры
 
-Те же флаги работают в `.ps1` (с `PascalCase`) и `.sh` (с `--kebab-case`):
-
-| .ps1 | .sh | Что |
-|---|---|---|
-| `-Filter <substr>` | `--filter <substr>` | Прогнать только тесты содержащие substring |
-| `-IncludeStdlib` | `--include-stdlib` | Добавить `std/*.nv` к `nova_tests/*.nv` |
-| `-Mode dev\|release` | `--mode dev\|release` | dev (default) или release с `-O3 -flto` |
-| `-Toolchain auto\|clang\|msvc\|gcc` | `--toolchain ...` | Compiler. Default: auto (Clang → MSVC → GCC) |
-| `-Timeout <secs>` | `--timeout <secs>` | Per-test timeout. Default 60 |
-| `-Jobs <N>` | `--jobs <N>` | Parallel workers. 0 = num_cpus |
-| `-Format text\|json\|tap\|junit` | `--format ...` | Output format. Default text |
-| `-Verbose` / `-Quiet` | `--verbose` / `--quiet` | Verbosity |
-| `-ResultsFile <path>` | `--results-file <path>` | Куда сохранить per-test JSON |
-| `-RerunFailed` | `--rerun-failed` | Прогнать только тесты которые fail/timeout в results-file |
-| `-Retries <N>` | `--retries <N>` | Retry transient (AV-race) fails. CI default 2 |
-| `-KeepArtifacts` | `--keep-artifacts` | Не удалять .exe/.obj после прогона |
+| Флаг | Что |
+|---|---|
+| `--filter <substr>` | Прогнать только тесты содержащие substring |
+| `--include-stdlib` | Добавить `std/*.nv` к `nova_tests/*.nv` |
+| `--mode dev\|release` | dev (default) или release с `-O3 -flto` |
+| `--toolchain auto\|clang\|msvc\|gcc` | Compiler. Default: auto (Clang → MSVC → GCC) |
+| `--timeout <secs>` | Per-test timeout. Default 60 |
+| `--jobs <N>` | Parallel workers. 0 = num_cpus |
+| `--format text\|json\|tap\|junit` | Output format. Default text |
+| `--verbose` / `--quiet` | Verbosity |
+| `--results-file <path>` | Куда сохранить per-test JSON |
+| `--rerun-failed` | Прогнать только тесты которые fail/timeout в results-file |
+| `--retries <N>` | Retry transient (AV-race) fails. CI default 2 |
+| `--keep-artifacts` | Не удалять .exe/.obj после прогона |
 
 ### Примеры
 
 **Дефолтный прогон** (всё параллельно через Clang):
-```powershell
-.\run_tests.ps1
+```sh
+nova test
 ```
 
 **Только подмножество** (TDD-loop):
-```powershell
-.\run_tests.ps1 -Filter syntax/closure
-.\run_tests.ps1 -Filter "negative_capability/"
+```sh
+nova test --filter syntax/closure
+nova test --filter "negative_capability/"
 ```
 
 **Release-сборка** (с оптимизациями для perf-проверки):
-```powershell
-.\run_tests.ps1 -Mode release
+```sh
+nova test --mode release
 ```
 
 **JSON output для custom CI parser'ов**:
-```bash
-./run_tests.sh --format json --results-file ci-results.jsonl
+```sh
+nova test --format json --results-file ci-results.jsonl
 ```
 
 **JUnit XML для CI** (GitHub Actions / GitLab CI / Jenkins / Azure DevOps):
-```bash
-./run_tests.sh --format junit --retries 2 > test-results.xml
+```sh
+nova test --format junit --retries 2 > test-results.xml
 ```
 Стандартный JUnit XML schema — нативно парсится всеми mainstream CI:
 ```xml
@@ -96,36 +87,36 @@ per-test timeout, JSON output) живёт в Rust в
 ```
 
 **TAP-13 output** (для legacy harnesses):
-```bash
-./run_tests.sh --format tap | tee results.tap
+```sh
+nova test --format tap | tee results.tap
 ```
 
 **TDD: перезапустить только упавшие**:
-```powershell
-.\run_tests.ps1                     # первый прогон — записывает results-file автоматически если -RerunFailed когда-то использовался
-.\run_tests.ps1 -RerunFailed         # только бывшие fail-ы; намного быстрее
+```sh
+nova test                     # первый прогон — результаты пишутся в target/last-test-results.json
+nova test --rerun-failed       # только бывшие fail-ы; намного быстрее
 ```
 
-Или явно:
-```bash
-./run_tests.sh --results-file target/last-test-results.json
+Явный путь к results-file:
+```sh
+nova test --results-file target/last-test-results.json
 # правишь код...
-./run_tests.sh --results-file target/last-test-results.json --rerun-failed
+nova test --results-file target/last-test-results.json --rerun-failed
 ```
 
 **Sequential** (для отладки race conditions):
-```powershell
-.\run_tests.ps1 -Jobs 1
+```sh
+nova test --jobs 1
 ```
 
 **Долгие benchmark-тесты** (override default 60s timeout):
-```powershell
-.\run_tests.ps1 -Timeout 300 -Filter concurrency/sleep_leak
+```sh
+nova test --timeout 300 --filter concurrency/sleep_leak
 ```
 
 **Принудительный MSVC** (если хотите тестить под MSVC ABI):
-```powershell
-.\run_tests.ps1 -Toolchain msvc
+```sh
+nova test --toolchain msvc
 ```
 
 ### Запуск одного теста
@@ -450,6 +441,7 @@ Nova ближе к Rust/Swift/Go — comment-маркер на уровне test
 ## Ссылки
 
 - [D89 в spec/decisions/09-tooling.md](../spec/decisions/09-tooling.md#d89) — нормативная спецификация.
-- [run_tests.ps1](../run_tests.ps1) — текущая Windows + MSVC реализация.
+- [nova-cli/src/main.rs](../nova-cli/src/main.rs) — `nova test` CLI entry point.
+- [compiler-codegen/src/test_runner.rs](../compiler-codegen/src/test_runner.rs) — runner implementation.
 - [nova_tests/negative_capability/](../nova_tests/negative_capability/) — примеры `EXPECT_COMPILE_ERROR`.
 - [nova_tests/expected_runtime/](../nova_tests/expected_runtime/) — примеры остальных трёх маркеров.
