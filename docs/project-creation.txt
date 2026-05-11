@@ -5029,3 +5029,39 @@ User третий раз спросил «всё сделано по плану 
     картина что реально работает где.
 
 Commit: 8a503dc9d plan-22 verification pass: measured numbers vs declared targets
+
+---
+
+## Plan 22 F2 — libuv mandatory (2026-05-11)
+
+**Контекст:** Plan 22 производственный pass закрыт, но в коде оставался
+мёртвый `#else`-ветки под `NOVA_USE_LIBUV=0` (busy-yield fallback).
+User decision: «libuv — нормально и правильно, других вариантов не предусматриваем».
+
+**Что сделано:**
+
+- `fibers.h`: Удалены все `#ifdef NOVA_USE_LIBUV` / `#else` ветки
+  в scheduler (supervised_run, supervised_drain_main_scope) и в
+  sleep implementation. Добавлен `#ifndef NOVA_USE_LIBUV / #error` —
+  no-libuv build теперь не компилируется с понятным сообщением.
+- Удалены: `_nova_monotonic_ms()`, `_nova_native_sleep_ms()` (Windows
+  Sleep / POSIX nanosleep wrappers) — заменены на libuv-based
+  `_nova_sleep_via_libuv` + `uv_hrtime` для Time.now().
+- `test_runner.rs`: `libuv: None` graceful fallback удалён — build
+  failure при libuv setup → abort с FATAL message.
+- Plan 22 doc: добавлена секция F2 с verbatim user decision,
+  trade-off таблицей и acceptance criteria.
+- Plan 25: добавлена секция F2 libuv mandatory как architectural
+  decision закрывающий последнее R7-нарушение (no busy-loops = absolute).
+
+**Результат:**
+- Regression: 156 / 156 PASS (все nova_tests codegen).
+- R7 «no busy-loops anywhere» — теперь абсолютный, не «default».
+- Один code path, нет dead branches, нет `#ifdef` в scheduler.
+
+**Lesson:**
+User decision «нет других вариантов» = немедленно закрыть все
+conditional code paths. Оставлять dead `#else` branches «на всякий
+случай» — это active maintenance burden, не safety net.
+
+Commit: TBD (F2 libuv mandatory)

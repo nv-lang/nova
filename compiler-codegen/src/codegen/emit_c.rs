@@ -3868,12 +3868,9 @@ impl CEmitter {
         self.line("NovaFiberQueue _nova_main_scope; nova_scope_init(&_nova_main_scope);");
         self.line("_nova_active_scope = &_nova_main_scope;");
         self.line("_nova_active_slot  = -1;");
-        // Plan 22 Ф.10: SIGINT handler — Ctrl+C → cancel main-scope →
-        // graceful shutdown. Под no-libuv stub'ом — no-op. Под libuv
-        // регистрирует uv_signal_t на SIGINT.
-        self.line("#ifdef NOVA_USE_LIBUV");
+        // Plan 22 Ф.10 + F2: SIGINT handler — Ctrl+C → cancel main-scope →
+        // graceful shutdown. libuv mandatory (Plan 22 F2), без #ifdef.
         self.line("nova_evloop_install_sigint(&_nova_main_scope);");
-        self.line("#endif");
         self.line("nova_fn_main_impl();");
         // D92: drain implicit main-scope до quiescence перед exit.
         // Detach'ы / pending fiber'ы пробуждённые callback'ами после
@@ -8789,14 +8786,29 @@ impl CEmitter {
             }
         }).collect();
 
-        // Determine return type. Приоритет: явная аннотация `-> T` > context > nova_int.
+        // Determine return type.
+        // Приоритет: явная annotation `-> T` > context > inference из body > nova_int.
+        //
+        // Plan 20 follow-up (closure return type inference): closure'ы вроде
+        // `|| { side_effect() }` без annotation должны inferить return type
+        // из body. Без этого codegen эмитил `nova_int` по дефолту, и closure
+        // c side-effect-only body (тип unit) ломал compilation:
+        //     error: returning 'nova_unit' from a function with incompatible
+        //     result type 'nova_int'
+        // Это блокировало естественный паттерн callback-без-возврата для HOF
+        // (map для side effects, defer { cleanup_callback() }, и т.д.).
         let ret_c_ty = if let Some(rt) = return_type_ann {
             self.type_ref_to_c(rt).unwrap_or_else(|_| "nova_int".into())
         } else if let Some(ctx) = context_param_tys {
             ctx.first().and_then(|(_, ret)| if !ret.is_empty() { Some(ret.clone()) } else { None })
-                .unwrap_or_else(|| "nova_int".into())
+                .unwrap_or_else(|| {
+                    // Context был задан (например HOF), но return-type
+                    // не указан — infer из body.
+                    self.infer_lambda_return_type_with_params(body, params, &param_c_tys)
+                })
         } else {
-            "nova_int".into()
+            // Ни annotation, ни context — infer из body.
+            self.infer_lambda_return_type_with_params(body, params, &param_c_tys)
         };
 
         // Detect free variables: idents in body that are NOT lambda params
@@ -9604,6 +9616,38 @@ impl CEmitter {
             "int32_t" | "int16_t" | "int8_t" |
             "uint64_t" | "uint32_t" | "uint16_t" | "uint8_t"
         )
+    }
+
+    /// Plan 20 follow-up: infer return type для lambda body, временно
+    /// регистрируя params в `var_types` чтобы `infer_expr_c_type` мог найти
+    /// их. Делает restore после.
+    ///
+    /// Используется когда у lambda нет явной annotation/context для return
+    /// type — fallback на infer из тела. Поддерживает естественный паттерн
+    /// `|| { side_effect() }` который должен вернуть `nova_unit`, а не
+    /// hardcoded `nova_int` default.
+    fn infer_lambda_return_type_with_params(
+        &mut self,
+        body: &Expr,
+        params: &[LambdaParam],
+        param_c_tys: &[String],
+    ) -> String {
+        let saved: Vec<(String, Option<String>)> = params.iter().zip(param_c_tys)
+            .map(|(p, ty)| (p.name.clone(), self.var_types.insert(p.name.clone(), ty.clone())))
+            .collect();
+        let inferred = self.infer_expr_c_type(body);
+        // Restore.
+        for (name, prev) in saved {
+            match prev {
+                Some(old) => { self.var_types.insert(name, old); }
+                None => { self.var_types.remove(&name); }
+            }
+        }
+        if inferred.is_empty() {
+            "nova_int".into()
+        } else {
+            inferred
+        }
     }
 
     fn infer_expr_c_type(&self, expr: &Expr) -> String {

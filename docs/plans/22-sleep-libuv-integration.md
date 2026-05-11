@@ -1513,6 +1513,76 @@ deployment**:
 
 ---
 
+## F2 — libuv mandatory (2026-05-11 user decision)
+
+**Что:** Удалить опциональность libuv. NOVA_USE_LIBUV становится
+mandatory build flag. Все `#else` busy-yield fallback ветки в
+`fibers.h` удалены. test_runner.rs больше не имеет `libuv: None` path —
+если detect_or_build_libuv fails → abort, не graceful degradation.
+
+**User decision (verbatim):**
+
+> «libuv - это нормально и правильно, др вариантов мы сейчас не предусматриваем»
+
+**Закрывает оставшееся упрощение Plan 22:**
+
+| # | Что было | После F2 |
+|---|---|---|
+| #3 «busy-yield branch ещё в коде» под NOVA_USE_LIBUV=0 | dead `#else` ветки в `_nova_time_default_sleep` + monotonic_ms + native_sleep_ms | Удалены. `#error` в fibers.h при отсутствии NOVA_USE_LIBUV. |
+| #4 «NOVA_USE_LIBUV=0 build never tested» | Возможно broken, никто не проверял | Не существует больше — единственный supported build. |
+| test_runner `libuv: None` fallback | Silent degradation при libuv build failure | abort с FATAL message — пользователь fix env. |
+
+**Trade-off:**
+- **Pro:** R7 «no busy-loops anywhere» — абсолютный, не «default». Один code path. Нет dead branches. Тестировать нужно один build.
+- **Con:** Нет fallback если vcpkg / vcvars сломаны. Setup нужен с первого раза.
+- **Mitigation:** vcpkg + libuv source уже vendored в репо (test_runner builds libuv.lib автоматически). Setup = `cargo build` без extra steps в default Windows MSVC/Clang.
+
+**Файлы:**
+- `compiler-codegen/nova_rt/fibers.h` — удалены `#else` ветки, добавлен `#error` если NOVA_USE_LIBUV не defined.
+- `compiler-codegen/src/test_runner.rs` — removed `libuv: None` graceful fallback; build failure → abort.
+
+**Acceptance:** sleep_real_clock + sleep_bench + cancel_stress PASS под mandatory libuv. No-libuv build не компилируется (`#error` fires).
+
+---
+
+## F1 — main-flow sleep refactor — ⏸ REVERTED (deferred)
+
+**Status (2026-05-11):** ⏸ Прототип реализован, **откатился** из-за hang
+в parallel test run. Deferred до архитектурного refactor'а main-flow
+через D93 idle hook (Plan 23+ либо отдельная задача).
+
+**Initial идея:** унифицировать main-flow и fiber-flow через один D93
+park/wake path. **Невозможно** — main-flow физически не coroutine
+(нет mco_running). Park/wake требуют fiber context.
+
+**Что попробовали:** main-flow ad-hoc `uv_timer_t main_wait` использует
+state-machine `{PENDING, FIRED, CLOSED}` с proper `uv_close(&handle, close_cb)`
+вместо `uv_close(handle, NULL) + uv_run NOWAIT pass`.
+
+**Что НЕ сработало:** при parallel test runs main-flow sleep застрял
+на ~71-м тесте. Возможные причины:
+- Race в `uv_run UV_RUN_ONCE` loop при другой libuv activity в loop'е.
+- close_cb может никогда не fire'нуть если loop уже idle с другими handles.
+- Поведение под уже-завершившимся supervised scope (детач'и etc).
+
+Не имея понимания exact root cause, проще откатить — это не R7
+violation сама по себе (NOWAIT не блокирует), это акceptable
+cleanup pattern.
+
+**Что вернули:** simple `uv_close(NULL) + uv_run NOWAIT` (один pass).
+Это **технически не close_cb leak** — handle освобождается в следующем
+`uv_run` pass на ближайшем event либо при exit через `nova_evloop_close`
+walk-and-close mechanism.
+
+**Реальное решение F1:** main-flow sleep требует архитектурного
+**uv_idle_t hook** integration — scheduler работает через idle CB
+который автоматически вызывает supervised_step. Тогда main-flow sleep
+становится pure `uv_run UV_RUN_DEFAULT` пока timer fire'нет. Но это
+~150+ строк refactor + понимание libuv idle/check phases — отдельная
+задача после Plan 22.
+
+---
+
 ## Зафиксированные production-decisions
 
 **R1.** ✅ **libuv — vendored через git submodule в `nova_rt/libuv/`.**

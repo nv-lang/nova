@@ -34,14 +34,20 @@
 /* effects.h is included by nova_rt.h before fibers.h, so NovaFailFrame
  * and _nova_fail_top are visible here. */
 
-/* Plan 22 Ф.4: libuv для uv_timer_t sleep + uv_run idle.
- * eventloop.h обычно подключается из nova_rt.h ПОСЛЕ fibers.h, но
- * нам надо здесь — supervised_run использует nova_evloop(). Подключаем
- * напрямую — header-guard защитит от re-entry. */
-#ifdef NOVA_USE_LIBUV
+/* Plan 22 Ф.4 + F2 (2026-05-11): libuv MANDATORY. NOVA_USE_LIBUV должен
+ * быть определён в build flags (-DNOVA_USE_LIBUV=1). No-libuv build
+ * больше не поддерживается — busy-yield fallback нарушал R7 «no busy-loops»
+ * и был conscious shortcut. Решение Plan 22: libuv — обязательная зависимость.
+ *
+ * Сборка без libuv остановится тут — `#error` указывает где fix:
+ * test_runner.rs должен всегда detect_or_build_libuv и pass через build_command. */
+#ifndef NOVA_USE_LIBUV
+#  error "Plan 22 F2: NOVA_USE_LIBUV is mandatory. " \
+          "Build chain must -DNOVA_USE_LIBUV=1 + link libuv.lib. " \
+          "See test_runner.rs detect_or_build_libuv()."
+#endif
 #include <uv.h>
 #include "eventloop.h"
-#endif
 
 
 
@@ -482,12 +488,10 @@ static inline void nova_supervised_drain_main_scope(NovaFiberQueue* q) {
     for (;;) {
         int alive = nova_supervised_step(q);
         if (alive == 0) break;
-#ifdef NOVA_USE_LIBUV
         int parked = nova_sched_count_parked(q);
         if (parked > 0 && parked == alive) {
             uv_run(nova_evloop(), UV_RUN_ONCE);
         }
-#endif
     }
     nova_sched_drop_state(q);
     if (q->first_error) {
@@ -513,14 +517,12 @@ static inline void nova_supervised_run(NovaFiberQueue* q) {
          * counter увеличен), либо ВСЕ alive = parked (никого не
          * resume'или, только counted++). Различим: если ready=0 и
          * parked>0 → idle в uv_run UV_RUN_ONCE. */
-#ifdef NOVA_USE_LIBUV
         int parked = nova_sched_count_parked(q);
         if (parked > 0 && parked == alive) {
             /* Все alive parked. Spin до libuv-события (наш sleep timer
              * либо stop_cb из cancel). */
             uv_run(nova_evloop(), UV_RUN_ONCE);
         }
-#endif
     }
     /* Cleanup sched-state for этого scope'а (если был alloc'ом). */
     nova_sched_drop_state(q);
@@ -566,67 +568,20 @@ static inline void nova_fiber_yield(void) {
  * NovaFiberQueue to be complete. Declarations are in effects.h.
  */
 
-/* Monotonic wall clock in milliseconds. Used by Nova_Time_now and as
- * the timing source for Nova_Time_sleep's yield-loop. Resolution is
- * platform-dependent but at least 1ms. Implemented inline so each TU
- * gets its own copy — fine since the call is cheap and the function
- * is small. */
-#ifdef _WIN32
-#  ifndef WIN32_LEAN_AND_MEAN
-#    define WIN32_LEAN_AND_MEAN
-#  endif
-#  include <windows.h>
-static inline void _nova_native_sleep_ms(int64_t ms) {
-    if (ms <= 0) return;
-    Sleep((DWORD)ms);
-}
-#else
-#  include <time.h>
-#  ifdef __unix__
-#    include <unistd.h>
-#  endif
-static inline void _nova_native_sleep_ms(int64_t ms) {
-    if (ms <= 0) return;
-    struct timespec req;
-    req.tv_sec = (time_t)(ms / 1000);
-    req.tv_nsec = (long)((ms % 1000) * 1000000L);
-    nanosleep(&req, NULL);
-}
-#endif
-
-/* Plan 22 Ф.6 production: monotonic clock в миллисекундах.
+/* Plan 22 Ф.6 + F2: monotonic clock в миллисекундах.
  *
- * Под NOVA_USE_LIBUV — `uv_hrtime()` (наносекунды через
- * QueryPerformanceCounter на Windows, clock_gettime(CLOCK_MONOTONIC)
- * на POSIX). Sub-ms precision, monotonic guarantee, не подвержен
- * NTP/wall-clock jumps.
- *
- * Под no-libuv fallback — `GetTickCount64()` (Windows, ~16ms tick) либо
- * `clock_gettime(CLOCK_MONOTONIC)` (POSIX, ns-precision).
+ * libuv mandatory (см. `#error` в начале fibers.h). uv_hrtime() —
+ * наносекунды через QueryPerformanceCounter на Windows,
+ * clock_gettime(CLOCK_MONOTONIC) на POSIX. Sub-ms precision,
+ * monotonic guarantee, не подвержен NTP/wall-clock jumps.
  *
  * Возвращает миллисекунды (nova_int = int64_t). Epoch — реализация-
- * зависимый. Только дельты значимы.
- *
- * Эта функция выносится из ifdef-блока ниже uv-include (Plan 22 Ф.6
- * — нужен uv_hrtime). */
-#ifdef NOVA_USE_LIBUV
+ * зависимый. Только дельты значимы. */
 static inline int64_t _nova_monotonic_ms(void) {
     return (int64_t)(uv_hrtime() / 1000000ULL);
 }
-#elif defined(_WIN32)
-static inline int64_t _nova_monotonic_ms(void) {
-    return (int64_t)GetTickCount64();
-}
-#else
-static inline int64_t _nova_monotonic_ms(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (int64_t)ts.tv_sec * 1000 + (int64_t)(ts.tv_nsec / 1000000);
-}
-#endif
 
-/* ─── Plan 22 Ф.4: libuv-based fiber-sleep (NOVA_USE_LIBUV) ─── */
-#ifdef NOVA_USE_LIBUV
+/* ─── Plan 22 Ф.4: libuv-based fiber-sleep ─── */
 /* uv.h + eventloop.h уже подключены выше в этом файле. */
 
 /* Plan 22 Ф.8: state-machine для sleep'а. Убирает busy-loop
@@ -704,7 +659,8 @@ static NovaStopMode _nova_sleep_stop_cb(void* handle) {
     return NOVA_STOP_ASYNC;
 }
 
-/* No-op timer callback для main-flow uv_run waits (Plan 22 Ф.6). */
+/* No-op timer callback для main-flow uv_run waits (Plan 22 Ф.6).
+ * F1 reverted: state-machine refactor вызывал hang в parallel runs. */
 static void _nova_main_wait_timer_cb(uv_timer_t* h) { (void)h; }
 
 /* Fiber-context sleep через uv_timer_t + park/wake — Ф.8 state-machine.
@@ -749,18 +705,14 @@ static inline void _nova_sleep_via_libuv(NovaFiberQueue* scope, int slot,
         abort();
     }
 }
-#endif /* NOVA_USE_LIBUV */
 
-/* Default impl: context-sensitive sleep (D71).
- *  - In fiber + NOVA_USE_LIBUV: park-on-uv_timer (Plan 22 Ф.4, D93)
- *  - In fiber (no libuv): busy-yield-loop (legacy fallback)
- *  - On main inside supervised body → drain queue once per yield, then check.
- *  - Else (top-level, no scope) → native OS sleep (no scheduler to yield to).
+/* Default impl: context-sensitive sleep (D71 + Plan 22 F2 libuv mandatory).
+ *  - In fiber: park-on-uv_timer (Plan 22 Ф.4, D93)
+ *  - On main inside supervised body → drain queue + bounded uv_run.
+ *  - Else (top-level, no scope) → FATAL abort (D92 implicit main-scope
+ *    invariant violated).
  *
- * `ms <= 0` → single yield (compatibility with `Time.sleep(0)` idiom).
- *
- * Main + top-level ветки **пока** на busy-yield/native-sleep — D92
- * (Plan 22 Ф.5) выровняет их через implicit main-scope. */
+ * `ms <= 0` → single yield (compatibility with `Time.sleep(0)` idiom). */
 static inline nova_unit _nova_time_default_sleep(nova_int ms) {
     if (ms <= 0) {
         if (mco_running()) {
@@ -771,7 +723,6 @@ static inline nova_unit _nova_time_default_sleep(nova_int ms) {
         return NOVA_UNIT;
     }
     if (mco_running()) {
-#ifdef NOVA_USE_LIBUV
         /* Plan 22 Ф.4 (D93): production path через park-on-uv_timer.
          * После D92 (Plan 22 Ф.5) _nova_active_scope всегда non-NULL
          * в user-code; fiber без scope — это runtime bug. */
@@ -783,33 +734,26 @@ static inline nova_unit _nova_time_default_sleep(nova_int ms) {
         }
         _nova_sleep_via_libuv(_nova_active_scope, _nova_active_slot, ms);
         return NOVA_UNIT;
-#else
-        /* No-libuv build: busy-yield-loop fallback. Только когда
-         * NOVA_USE_LIBUV=0 — компиляция без libuv (опциональная).
-         * Production-default — с libuv (R7 «no busy-loops»). */
-        int64_t deadline = _nova_monotonic_ms() + (int64_t)ms;
-        while (_nova_monotonic_ms() < deadline) {
-            nova_fiber_yield();
-        }
-#endif
     } else if (_nova_active_scope) {
         /* Main flow inside a scope (D92 implicit либо explicit supervised):
          * drain queue + bounded uv_run пока deadline не пройдёт.
          * Plan 22 Ф.6: вместо busy-loop'а — drain ready, потом uv_run
-         * с bounded timeout до deadline. CPU idle когда нет ready fiber'ов. */
+         * с bounded timeout до deadline. CPU idle когда нет ready fiber'ов.
+         *
+         * F1 reverted (2026-05-11): попытка proper close_cb state-machine
+         * вызвала hang в parallel test runs (race с другими event-loop
+         * activities). Откат к simple uv_close(NULL) + NOWAIT pass —
+         * не R7 violation (NOWAIT не блокирует), это known acceptable
+         * cleanup pattern. F1 откладывается до архитектурного refactor'а
+         * main-flow через D93 idle hook (Plan 23+). */
         int64_t deadline = _nova_monotonic_ms() + (int64_t)ms;
         while (_nova_monotonic_ms() < deadline) {
             int alive = nova_supervised_step(_nova_active_scope);
             if (alive == 0) {
-                /* Никого нет — просто ждём оставшееся время. */
+                /* Никого нет — просто ждём оставшееся время через
+                 * uv_run UV_RUN_ONCE с pending timer на остаток. */
                 int64_t remaining = deadline - _nova_monotonic_ms();
                 if (remaining > 0) {
-#ifdef NOVA_USE_LIBUV
-                    /* uv_run UV_RUN_ONCE с pending timer на остаток
-                     * blocks main-thread в kernel-wait'е. Если уже есть
-                     * pending libuv-handle (наш timer) — uv_run возвращается
-                     * когда он сработает. Без pending — мы создаём timer
-                     * на remaining ms. */
                     uv_timer_t main_wait;
                     uv_timer_init(nova_evloop(), &main_wait);
                     uv_timer_start(&main_wait, _nova_main_wait_timer_cb,
@@ -819,15 +763,9 @@ static inline nova_unit _nova_time_default_sleep(nova_int ms) {
                     uv_close((uv_handle_t*)&main_wait, NULL);
                     /* close handle через NOWAIT pass. */
                     uv_run(nova_evloop(), UV_RUN_NOWAIT);
-#else
-                    _nova_native_sleep_ms(remaining);
-#endif
                 }
-            }
-#ifdef NOVA_USE_LIBUV
-            else {
-                /* Есть alive fiber'ы — может быть parked. Поспать через
-                 * uv_run UV_RUN_NOWAIT (быстро вернётся если нет события). */
+            } else {
+                /* Есть alive fiber'ы — может быть parked. */
                 int parked = nova_sched_count_parked(_nova_active_scope);
                 if (parked > 0 && parked == alive) {
                     /* Все parked — ждать libuv event. */
@@ -837,7 +775,6 @@ static inline nova_unit _nova_time_default_sleep(nova_int ms) {
                     }
                 }
             }
-#endif
         }
     } else {
         /* Plan 22 Ф.6: top-level вне any scope. После D92 emit_main

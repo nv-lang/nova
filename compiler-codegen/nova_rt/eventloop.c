@@ -13,7 +13,10 @@
  * станет per-worker, эта реализация сменится.
  */
 
-#ifdef NOVA_USE_LIBUV
+/* Plan 22 F2: NOVA_USE_LIBUV mandatory — `#error` если не defined. */
+#ifndef NOVA_USE_LIBUV
+#  error "Plan 22 F2: NOVA_USE_LIBUV is mandatory."
+#endif
 
 #include "eventloop.h"
 #include <stdio.h>
@@ -156,5 +159,3 @@ void nova_evloop_install_sigint(struct NovaFiberQueue* main_scope) {
     uv_unref((uv_handle_t*)&_sigint_handle);
     _sigint_installed = 1;
 }
-
-#endif /* NOVA_USE_LIBUV */

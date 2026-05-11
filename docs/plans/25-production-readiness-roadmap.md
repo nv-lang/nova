@@ -305,6 +305,64 @@ budget релакс'нут с 15s → 30s для Windows timer-resolution headro
 Sequential sleep workloads чуть медленнее, concurrent workloads
 не affected (parallel close_cb).
 
+### G8. Open-coded defer (Go 1.14+ style)
+
+**Сейчас.** Plan 20 Ф.4/Ф.8 closures defer/errdefer cleanup через
+`setjmp`/`longjmp` пары:
+- На каждый scope с defer'ом эмитим `NovaFailFrame` + `NovaInterruptFrame`,
+  два push/pop в thread-local stack + setjmp (сохраняет ~200 байт
+  jmp_buf и регистров).
+- Cleanup-cascade на throw реализован через cascading longjmp (каждый
+  scope re-throws после своего cleanup'а).
+- Throw-path и normal-path делят один setjmp wrapper.
+
+**Cost.** На каждый вход в scope с defer:
+- 2× setjmp (jmp_buf save) + 2× push (TLS write).
+- На exit: 2× pop. **Даже если throw никогда не происходит.**
+- Hot loops с defer внутри (например `for _ in items { defer cleanup() }`)
+  накапливают этот cost на каждой итерации.
+
+Семантически корректно, но измеримо медленнее zero-cost Rust Drop
+или Go 1.14+ open-coded defer.
+
+**Go 1.14 решение (PGO + statically-allocated slots).** Компилятор
+делает inline-анализ:
+1. Определяет max-depth defer stack для функции статически (через
+   AST walk).
+2. Аллоцирует boolean flags в stack frame ("defer N active").
+3. На `defer body` — устанавливает flag.
+4. На exit (normal/return/panic/...) — inline эмитит проверку flags
+   + cleanup-code прямо в exit-pathway. Без setjmp/longjmp.
+5. Panic-path использует **unwind frame metadata** (Go stack unwinder)
+   для invocation cleanup'ов вместо longjmp.
+
+**Production benefit:** open-coded defer **zero-cost when not fired**
+(идентично hand-written cleanup), 30%+ ускорение Go workloads
+(measured в Go 1.14 release notes).
+
+**Trade-off для Nova:**
+- Refactor codegen `enter_defer_scope`/`leave_defer_scope` на flag-based.
+- Throw-path требует другой механизм: либо emit-cleanup-в-каждой-exit-
+  pathway (code duplication), либо stack-walk unwinder (требует
+  frame-pointer + debug info, доп. complexity).
+- Panic-path: NovaFailFrame можно оставить как top-level fn-frame, но
+  с inline-cleanup перед re-throw.
+
+**Status.** Plan 20 Ф.4/Ф.8 semantically complete (нулевые регрессии,
+27 positive + 6 negative tests). Performance overhead приемлемый для
+bootstrap. G8 — future codegen optimization, **отдельный план**
+(оценка 1-2 недели работы, требует benchmarks для measure'а реального
+impact'а на realistic workloads).
+
+**Когда делать.** После Plan 18 (stdlib) — когда есть realistic benchmark
+с defer'ами (file I/O cleanup, channel close, transaction rollback)
+для measure'а реального cost'а. Если cost <2% — не приоритет; если
+>10% — закрытие приоритетное.
+
+**Связь:** [D90](../../spec/decisions/03-syntax.md#d90) — defer spec
+(семантика unchanged); [Plan 20 Ф.4 codegen](20-defer-implementation.md#ф4-codegen--scope-stack-defer-callbacks)
+— текущая реализация через setjmp.
+
 ---
 
 ## Сводная таблица
@@ -319,6 +377,7 @@ Sequential sleep workloads чуть медленнее, concurrent workloads
 | G5 | Preemption budget | TBD после Plan 23 | Средний | Long-compute fairness |
 | G6 | Cancel propagation | Связан с G5 | Низкий | Pure-compute cancel UX |
 | G7 | ~~Ф.8 close-cb busy-loop~~ | ✅ ЗАКРЫТО (Plan 22 Ф.8, D93 ASYNC) | — | — |
+| G8 | Open-coded defer (Go 1.14+) | TBD после Plan 18 + benchmarks | Низкий | Hot-loop defer overhead (oценка 2-10%) |
 
 ---
 

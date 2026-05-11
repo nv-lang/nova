@@ -17,7 +17,10 @@
  * будет per-worker loop. До тех пор — один глобальный.
  */
 
-#ifdef NOVA_USE_LIBUV
+/* Plan 22 F2: NOVA_USE_LIBUV mandatory. Stub branch удалён. */
+#ifndef NOVA_USE_LIBUV
+#  error "Plan 22 F2: NOVA_USE_LIBUV is mandatory (см. fibers.h)."
+#endif
 
 #include <uv.h>
 #include <stdbool.h>   /* для bool без circular include nova_rt.h */
@@ -59,26 +62,5 @@ void nova_evloop_install_sigint(struct NovaFiberQueue* main_scope);
 #ifdef __cplusplus
 }
 #endif
-
-#else  /* !NOVA_USE_LIBUV */
-
-/* Stub когда libuv не включён (Ф.1 default — libuv есть в build chain,
- * но runtime может его не использовать). Все функции no-op.
- * Используем bool (stdbool.h) вместо nova_bool — избегаем circular
- * include nova_rt.h → fibers.h → eventloop.h → nova_rt.h. */
-
-#include <stdbool.h>
-
-static inline void nova_evloop_init(void) { }
-static inline void nova_evloop_close(void) { }
-static inline bool nova_evloop_is_initialized(void) { return false; }
-static inline int  nova_evloop_active_handles(void) { return 0; }
-/* SIGINT handler stub (no-libuv): no-op. */
-struct NovaFiberQueue;  /* forward */
-static inline void nova_evloop_install_sigint(struct NovaFiberQueue* main_scope) {
-    (void)main_scope;
-}
-
-#endif /* NOVA_USE_LIBUV */
 
 #endif /* NOVA_RT_EVENTLOOP_H */

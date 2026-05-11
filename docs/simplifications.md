@@ -3807,3 +3807,29 @@ Plan 22 целиком — обнаружил что **declared target character
     Plan 22 теперь имеет honest cell в табличке.
 
 Commit: 8a503dc9d plan-22 verification pass
+
+---
+
+## Plan 22 F2 — libuv mandatory (2026-05-11)
+
+**Решение:** User decision «libuv — нормально и правильно, других
+вариантов не предусматриваем» → удалить conditional build paths.
+
+**Упрощения закрыты:**
+
+| # | Упрощение | Статус |
+|---|---|---|
+| busy-yield `#else` ветки | dead code при NOVA_USE_LIBUV=1 | ✅ Удалены |
+| `_nova_native_sleep_ms` / `_nova_monotonic_ms` | Windows/POSIX платформенный код | ✅ Удалены, заменены uv_hrtime |
+| `libuv: None` graceful fallback | test_runner silent degradation | ✅ Удалён → abort |
+| `#ifdef NOVA_USE_LIBUV` в scheduler | условная libuv integration | ✅ Удалены — libuv always-on |
+
+**Diff:** 135 строк удалено, 93 добавлено. Net -42 строки в runtime.
+
+**Regression:** 156 / 156 PASS.
+
+**Trade-off принят:** нет fallback если vcpkg/vcvars сломаны →
+setup нужен с первого раза. Mitigation: libuv vendored в репо,
+`detect_or_build_libuv` в test_runner строит автоматически.
+
+Commit: TBD (F2 libuv mandatory)
