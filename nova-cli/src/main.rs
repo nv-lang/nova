@@ -56,9 +56,12 @@ enum Cmd {
         /// Path to clang.exe (override auto-detect).
         #[arg(long)]
         clang: Option<PathBuf>,
-        /// Compiler timeout in seconds (default: 60).
-        #[arg(long, default_value_t = 60)]
+        /// Compiler timeout in seconds (default: 120).
+        #[arg(long, default_value_t = 120)]
         timeout: u64,
+        /// Keep .c / .exe / .obj build artifacts after the build.
+        #[arg(long = "keep-artifacts")]
+        keep_artifacts: bool,
     },
     /// Run all Nova tests in nova_tests/.
     Test {
@@ -111,6 +114,29 @@ enum Cmd {
         /// Path to nova_tests/ directory (default: auto from nova.toml root).
         #[arg(long = "tests-dir")]
         tests_dir: Option<PathBuf>,
+    },
+    /// Build and run a single Nova test file (used by IDE / CI for one-shot debug).
+    #[command(name = "test-build")]
+    TestBuild {
+        file: PathBuf,
+        /// Build mode: 'dev' (unoptimized) or 'release' (optimized).
+        #[arg(long, default_value = "dev", value_parser = ["dev", "release"])]
+        mode: String,
+        /// C compiler to use.
+        #[arg(long, default_value = "auto", value_parser = ["auto", "clang", "msvc", "gcc"])]
+        toolchain: String,
+        /// Path to vcvars64.bat (Windows, auto-detected via vswhere).
+        #[arg(long)]
+        vcvars: Option<PathBuf>,
+        /// Path to clang.exe (override auto-detect).
+        #[arg(long)]
+        clang: Option<PathBuf>,
+        /// Timeout in seconds (default: 60).
+        #[arg(long, default_value_t = 60)]
+        timeout: u64,
+        /// Keep .c / .exe / .obj build artifacts after the run.
+        #[arg(long = "keep-artifacts")]
+        keep_artifacts: bool,
     },
     /// Regenerate std/runtime/*.nv stubs from the runtime registry.
     #[command(name = "regen-runtime")]
@@ -188,11 +214,17 @@ fn path_hash(path: &Path) -> String {
 }
 
 /// RAII guard: removes a tmp directory on drop (best-effort, errors ignored).
-struct TmpDirGuard<'a>(&'a Path);
+/// Set `keep = true` to skip cleanup (--keep-artifacts).
+struct TmpDirGuard<'a> {
+    path: &'a Path,
+    keep: bool,
+}
 
 impl Drop for TmpDirGuard<'_> {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(self.0);
+        if !self.keep {
+            let _ = std::fs::remove_dir_all(self.path);
+        }
     }
 }
 
@@ -257,6 +289,7 @@ fn cmd_build(
     vcvars: Option<&Path>,
     clang: Option<&Path>,
     timeout_secs: u64,
+    keep_artifacts: bool,
 ) -> Result<()> {
     if timeout_secs == 0 {
         bail!("--timeout must be >= 1 second");
@@ -300,7 +333,12 @@ fn cmd_build(
     };
     let final_exe = output
         .map(Path::to_path_buf)
-        .unwrap_or_else(|| path.with_file_name(&exe_name));
+        .unwrap_or_else(|| {
+            // Place output next to CWD, not next to the source file (predictable).
+            std::env::current_dir()
+                .unwrap_or_else(|_| path.parent().unwrap_or(&path).to_path_buf())
+                .join(&exe_name)
+        });
     if final_exe.is_dir() {
         bail!("output path is a directory: {}", final_exe.display());
     }
@@ -310,7 +348,7 @@ fn cmd_build(
     let tmp_path = default_tmp_dir().join(format!("build-{}", &hash[..hash.len().min(12)]));
     std::fs::create_dir_all(&tmp_path)
         .map_err(|e| anyhow!("create tmp dir: {}", e))?;
-    let _tmp_guard = TmpDirGuard(&tmp_path);
+    let _tmp_guard = TmpDirGuard { path: &tmp_path, keep: keep_artifacts };
     let c_file = tmp_path.join(format!("{}.c", exe_stem.to_string_lossy()));
     let exe_file = tmp_path.join(&exe_name);
     std::fs::write(&c_file, &c_code)
@@ -333,6 +371,8 @@ fn cmd_build(
         test_runner::Toolchain::Gcc { .. } => None,
     };
     let libuv = test_runner::detect_or_build_libuv(&paths.rt_dir, &repo, vcvars_path);
+
+    test_runner::install_cancel_handler();
 
     // compile .c → .exe
     let build_opts = test_runner::BuildOpts {
@@ -497,6 +537,79 @@ fn cmd_test(
     }
 }
 
+fn cmd_test_build(
+    path: &Path,
+    mode: &str,
+    toolchain: &str,
+    vcvars: Option<&Path>,
+    clang: Option<&Path>,
+    timeout_secs: u64,
+    keep_artifacts: bool,
+) -> Result<()> {
+    if timeout_secs == 0 {
+        bail!("--timeout must be >= 1 second");
+    }
+    if !path.is_file() {
+        bail!("file not found: {}", path.display());
+    }
+    let repo = find_repo_root()?;
+    let paths = resolve_paths(&repo);
+
+    let mode = test_runner::Mode::parse(mode)?;
+    let pref = test_runner::ToolchainPref::parse(toolchain)?;
+    let tc_opts = test_runner::ToolchainOpts {
+        pref,
+        explicit_clang: clang,
+        explicit_vcvars: vcvars,
+    };
+    let tc = test_runner::detect_toolchain(&tc_opts)?;
+
+    let vcvars_path = match &tc {
+        test_runner::Toolchain::Clang { vcvars, .. } => vcvars.as_deref(),
+        test_runner::Toolchain::Msvc { vcvars } => Some(vcvars.as_path()),
+        test_runner::Toolchain::Gcc { .. } => None,
+    };
+    let libuv = test_runner::detect_or_build_libuv(&paths.rt_dir, &repo, vcvars_path);
+
+    let display = path
+        .strip_prefix(&paths.tests_dir)
+        .or_else(|_| path.strip_prefix(&repo))
+        .unwrap_or(path)
+        .with_extension("")
+        .to_string_lossy()
+        .replace('\\', "/");
+
+    let tmp_dir = default_tmp_dir();
+    let opts = test_runner::TestBuildOpts {
+        nv_file: path,
+        toolchain: &tc,
+        mode,
+        cg_include: &paths.cg_include,
+        rt_dir: &paths.rt_dir,
+        tmp_dir: &tmp_dir,
+        display: &display,
+        keep_artifacts,
+        libuv: libuv.as_ref(),
+        timeout: Duration::from_secs(timeout_secs),
+    };
+
+    test_runner::install_cancel_handler();
+    let outcome = test_runner::run_one(&opts);
+    let label = outcome.label();
+    let elapsed = outcome.elapsed();
+    let detail = outcome.detail();
+    if outcome.is_pass() {
+        println!("{} {} ({:.2}s)", label, display, elapsed.as_secs_f64());
+        Ok(())
+    } else {
+        eprintln!("{} {} ({:.2}s)", label, display, elapsed.as_secs_f64());
+        if !detail.is_empty() {
+            eprintln!("{}", detail);
+        }
+        Err(anyhow!("test failed"))
+    }
+}
+
 fn cmd_regen_runtime(check: bool) -> Result<()> {
     let repo = find_repo_root()?;
     use nova_codegen::codegen::runtime_registry;
@@ -548,7 +661,7 @@ fn main() -> ExitCode {
     let result = match cli.cmd {
         Cmd::Check { file } => cmd_check(&file),
         Cmd::Run { file } => cmd_run(&file),
-        Cmd::Build { file, output, mode, toolchain, vcvars, clang, timeout } => cmd_build(
+        Cmd::Build { file, output, mode, toolchain, vcvars, clang, timeout, keep_artifacts } => cmd_build(
             &file,
             output.as_deref(),
             &mode,
@@ -556,6 +669,7 @@ fn main() -> ExitCode {
             vcvars.as_deref(),
             clang.as_deref(),
             timeout,
+            keep_artifacts,
         ),
         Cmd::Test {
             filter, jobs, format, mode, toolchain, vcvars, clang, timeout,
@@ -578,6 +692,15 @@ fn main() -> ExitCode {
             include_stdlib,
             keep_artifacts,
             tests_dir.as_deref(),
+        ),
+        Cmd::TestBuild { file, mode, toolchain, vcvars, clang, timeout, keep_artifacts } => cmd_test_build(
+            &file,
+            &mode,
+            &toolchain,
+            vcvars.as_deref(),
+            clang.as_deref(),
+            timeout,
+            keep_artifacts,
         ),
         Cmd::RegenRuntime { check } => cmd_regen_runtime(check),
     };
