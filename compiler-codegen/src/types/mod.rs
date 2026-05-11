@@ -182,6 +182,16 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
     let cap_ctx = CapabilityCtx::build(module);
     cap_ctx.check_module(module, &mut errors);
 
+    // Name-resolution фаза: статический поиск undefined идентификаторов
+    // в expr-position. Запускается ПОСЛЕ BoundCtx/CapabilityCtx, чтобы
+    // более фундаментальные ошибки (signatures/effects) приходили первыми.
+    //
+    // Без этой фазы код вроде `let r = 1 | undefined_var` проходил
+    // typecheck и падал только на cc-этапе с малочитаемой ошибкой
+    // "необъявленный идентификатор". См. NameResCtx ниже.
+    let name_res = NameResCtx::build(module);
+    name_res.check_module(module, &mut errors);
+
     if errors.is_empty() {
         Ok(env)
     } else {
@@ -1247,6 +1257,609 @@ impl<'a> CapabilityCtx<'a> {
                 span,
             ));
         }
+    }
+}
+
+// ============================================================================
+// Name-resolution фаза.
+//
+// Pre-collects top-level имена (fns/types/consts/variants/built-ins) +
+// walk fn/test bodies со scope-стеком. На `ExprKind::Ident(name)`
+// проверяет, что `name` в (текущий scope ∪ top-level ∪ built-ins).
+// Иначе — diagnostic «undefined identifier`.
+//
+// **Конкервативная стратегия**: лучше пропустить undefined чем
+// false-positive. Случаи, где не проверяем:
+//   - `obj.method(args)` / `Type.method(args)` — method-имена resolve'ятся
+//     через method_table (могут быть на любом типе).
+//   - `obj.field` / `Record { field: val }` — поля, не идентификаторы.
+//   - Path-сегменты `mod1::mod2::name` (intermediate — модули, не expr).
+//   - Tagged-template tags.
+//   - Generic-params в TypeRef (это типы, не expressions).
+//   - Sum-variant tag в pattern (`Some(x)` — constructor name, не expr).
+// ============================================================================
+
+/// Plan 19+: статическая проверка undefined идентификаторов.
+struct NameResCtx {
+    /// Все top-level имена модуля (fns без receiver, types, consts,
+    /// variant-имена). Receiver-методы НЕ включаются — они вызываются
+    /// как `obj.method(...)` или `Type.method(...)`, что обходит Ident.
+    top_level: HashSet<String>,
+    /// Built-in имена, доступные в любом scope без объявления:
+    /// primitive types, prelude variants (None/Some/Ok/Err), bool
+    /// литералы (true/false), builtin functions (assert/print/...),
+    /// special idents (Self).
+    builtins: HashSet<String>,
+    /// Имена модулей-импортов и их aliases. Используется чтобы не
+    /// падать на `Module.func(...)` — head identifier — модуль.
+    /// Включает также собственное имя модуля (last segment) на случай
+    /// self-reference.
+    module_names: HashSet<String>,
+}
+
+impl NameResCtx {
+    fn build(module: &Module) -> Self {
+        let mut top_level: HashSet<String> = HashSet::new();
+        let mut module_names: HashSet<String> = HashSet::new();
+
+        // Имена импортированных модулей: для `import a.b.c` — добавляем
+        // последний segment "c" (head'ом expr-path'а). Если есть alias —
+        // alias. Также все intermediate-segments на всякий случай.
+        for imp in &module.imports {
+            if let Some(alias) = &imp.alias {
+                module_names.insert(alias.clone());
+            }
+            if let Some(last) = imp.path.last() {
+                module_names.insert(last.clone());
+            }
+            // Intermediate segments (head of compound path).
+            if let Some(head) = imp.path.first() {
+                module_names.insert(head.clone());
+            }
+        }
+        // Собственное имя модуля (head) — на случай self-reference.
+        if let Some(head) = module.name.first() {
+            module_names.insert(head.clone());
+        }
+        if let Some(last) = module.name.last() {
+            module_names.insert(last.clone());
+        }
+
+        for item in &module.items {
+            match item {
+                Item::Fn(fd) => {
+                    // Только free-functions (без receiver) валидны как
+                    // bare-ident expression `foo()`. Методы вызываются
+                    // через `obj.method` или `Type.method`.
+                    if fd.receiver.is_none() {
+                        top_level.insert(fd.name.clone());
+                    }
+                }
+                Item::Type(td) => {
+                    top_level.insert(td.name.clone());
+                    // Variant-имена sum-типов: `Some(x)`, `Red`, etc. —
+                    // могут использоваться как ident в expr-position
+                    // (unit-variant как `let c = Red`) или как call'и
+                    // (`Square(5)` — Call с base=Ident("Square")).
+                    if let TypeDeclKind::Sum(variants) = &td.kind {
+                        for v in variants {
+                            top_level.insert(v.name.clone());
+                        }
+                    }
+                }
+                Item::Const(cd) => {
+                    top_level.insert(cd.name.clone());
+                }
+                Item::Let(_) | Item::Test(_) => {}
+            }
+        }
+
+        let builtins: HashSet<String> = [
+            // Numeric primitives.
+            "int", "i8", "i16", "i32", "i64",
+            "u8", "u16", "u32", "u64",
+            "f32", "f64", "uint", "size",
+            // Other primitives.
+            "bool", "str", "byte", "char", "unit", "Never", "any",
+            // Boolean literals (parsed как Ident в bool-context кое-где).
+            "true", "false",
+            // Special idents.
+            "Self", "self",
+            // Prelude variants Option / Result / Error / RuntimeError.
+            "None", "Some", "Ok", "Err",
+            "Option", "Result", "Error",
+            "DivByZero", "Overflow", "IndexOutOfBounds",
+            "TypeMismatch", "AssertFailed", "NoHandler",
+            "RuntimeError",
+            // Built-in functions (см. codegen::emit_c.rs special-cases).
+            "assert", "debug_assert", "print", "println",
+            "panic", "exit",
+            // Default Fail-effect type (D65 placeholder).
+            "Fail",
+            // Detach effect-type для detach {} expression (D50).
+            "Detach",
+            // CancelToken — bind name в cancel_scope { tok => ... } (D75)
+            // регистрируется отдельно во время walk; в общий builtin
+            // не добавляем.
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+
+        NameResCtx { top_level, builtins, module_names }
+    }
+
+    fn check_module(&self, module: &Module, errors: &mut Vec<Diagnostic>) {
+        for item in &module.items {
+            match item {
+                Item::Fn(f) => self.walk_fn(f, errors),
+                Item::Test(t) => {
+                    let mut scope: Vec<HashSet<String>> = vec![HashSet::new()];
+                    self.walk_block(&t.body, &mut scope, errors);
+                }
+                Item::Const(c) => {
+                    // Const value — выражение, выполняется без scope'а.
+                    let mut scope: Vec<HashSet<String>> = vec![HashSet::new()];
+                    self.walk_expr(&c.value, &mut scope, errors);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn walk_fn(&self, f: &FnDecl, errors: &mut Vec<Diagnostic>) {
+        // External — нет тела.
+        if matches!(f.body, FnBody::External) { return; }
+        let mut scope: Vec<HashSet<String>> = vec![HashSet::new()];
+        let mut frame: HashSet<String> = HashSet::new();
+        // Receiver: self/Self доступны через builtins; нет нужды добавлять.
+        if let Some(_recv) = &f.receiver {
+            frame.insert("self".to_string());
+        }
+        for p in &f.params {
+            frame.insert(p.name.clone());
+        }
+        // Generic-params могут использоваться в expr-position? — Нет
+        // (по spec). Но безопасно их добавить чтобы не флагать False+
+        // если parser/codegen где-то их так трактует.
+        for g in &f.generics {
+            frame.insert(g.name.clone());
+        }
+        scope.push(frame);
+        match &f.body {
+            FnBody::Expr(e) => self.walk_expr(e, &mut scope, errors),
+            FnBody::Block(b) => self.walk_block(b, &mut scope, errors),
+            FnBody::External => {}
+        }
+        scope.pop();
+    }
+
+    fn walk_block(
+        &self,
+        b: &Block,
+        scope: &mut Vec<HashSet<String>>,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        scope.push(HashSet::new());
+        for s in &b.stmts {
+            self.walk_stmt(s, scope, errors);
+        }
+        if let Some(t) = &b.trailing {
+            self.walk_expr(t, scope, errors);
+        }
+        scope.pop();
+    }
+
+    fn walk_stmt(
+        &self,
+        s: &Stmt,
+        scope: &mut Vec<HashSet<String>>,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        match s {
+            Stmt::Expr(e) => self.walk_expr(e, scope, errors),
+            Stmt::Let(d) => {
+                // Right-side вычисляется в текущем scope (let не
+                // рекурсивный). Затем pattern-bindings добавляются в
+                // текущий frame.
+                self.walk_expr(&d.value, scope, errors);
+                let mut bindings: HashSet<String> = HashSet::new();
+                self.collect_pattern_bindings(&d.pattern, &mut bindings);
+                if let Some(top) = scope.last_mut() {
+                    for n in bindings { top.insert(n); }
+                }
+            }
+            Stmt::Assign { target, value, .. } => {
+                self.walk_expr(target, scope, errors);
+                self.walk_expr(value, scope, errors);
+            }
+            Stmt::Return { value, .. } => {
+                if let Some(v) = value { self.walk_expr(v, scope, errors); }
+            }
+            Stmt::Throw { value, .. } => self.walk_expr(value, scope, errors),
+            Stmt::Break(_) | Stmt::Continue(_) => {}
+        }
+    }
+
+    fn walk_expr(
+        &self,
+        e: &Expr,
+        scope: &mut Vec<HashSet<String>>,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        match &e.kind {
+            ExprKind::Ident(name) => {
+                if !self.is_known(name, scope) {
+                    errors.push(Diagnostic::new(
+                        format!("undefined identifier `{}`", name),
+                        e.span,
+                    ));
+                }
+            }
+            // Path-form `Module.func` / `Type.method`: head — модуль или
+            // type (не expr-binding). Не проверяем — это работа codegen
+            // (resolve через method_table / effect_decls). Consistent с
+            // подходом BoundCtx/CapabilityCtx.
+            ExprKind::Path(_) => {}
+            // SelfAccess — `@field` или `@method`. Не Ident.
+            ExprKind::SelfAccess => {}
+
+            // Литералы.
+            ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::BoolLit(_)
+            | ExprKind::StrLit(_) | ExprKind::CharLit(_) | ExprKind::UnitLit => {}
+
+            ExprKind::InterpolatedStr { parts } => {
+                for p in parts {
+                    if let InterpStrPart::Expr(e) = p {
+                        self.walk_expr(e, scope, errors);
+                    }
+                }
+            }
+
+            ExprKind::Call { func, args, trailing } => {
+                // Special-case: если func — bare Ident, может быть
+                // variant-constructor (`Square(5)`) — top_level.contains.
+                // is_known покрывает оба варианта (fn + variant).
+                self.walk_expr(func, scope, errors);
+                for a in args {
+                    self.walk_expr(a.expr(), scope, errors);
+                }
+                if let Some(t) = trailing {
+                    self.walk_trailing(t, scope, errors);
+                }
+            }
+            ExprKind::TurboFish { base, .. } => self.walk_expr(base, scope, errors),
+            ExprKind::Try(inner) | ExprKind::Bang(inner) => {
+                self.walk_expr(inner, scope, errors)
+            }
+            ExprKind::Coalesce(a, b) => {
+                self.walk_expr(a, scope, errors);
+                self.walk_expr(b, scope, errors);
+            }
+            ExprKind::As(e, _) | ExprKind::Is(e, _) => self.walk_expr(e, scope, errors),
+            ExprKind::Binary { left, right, .. } => {
+                self.walk_expr(left, scope, errors);
+                self.walk_expr(right, scope, errors);
+            }
+            ExprKind::Unary { operand, .. } => self.walk_expr(operand, scope, errors),
+
+            // Member-access: проверяем obj (это expr), но НЕ name (field/method).
+            ExprKind::Member { obj, .. } => self.walk_expr(obj, scope, errors),
+            ExprKind::Index { obj, index } => {
+                self.walk_expr(obj, scope, errors);
+                self.walk_expr(index, scope, errors);
+            }
+
+            ExprKind::If { cond, then, else_ } => {
+                self.walk_expr(cond, scope, errors);
+                self.walk_block(then, scope, errors);
+                if let Some(eb) = else_ {
+                    match eb {
+                        ElseBranch::Block(b) => self.walk_block(b, scope, errors),
+                        ElseBranch::If(e) => self.walk_expr(e, scope, errors),
+                    }
+                }
+            }
+            ExprKind::IfLet { pattern, scrutinee, then, else_ } => {
+                self.walk_expr(scrutinee, scope, errors);
+                // Pattern-bindings — в scope только для then-branch.
+                let mut bindings: HashSet<String> = HashSet::new();
+                self.collect_pattern_bindings(pattern, &mut bindings);
+                scope.push(bindings);
+                self.walk_block(then, scope, errors);
+                scope.pop();
+                if let Some(eb) = else_ {
+                    match eb {
+                        ElseBranch::Block(b) => self.walk_block(b, scope, errors),
+                        ElseBranch::If(e) => self.walk_expr(e, scope, errors),
+                    }
+                }
+            }
+            ExprKind::Match { scrutinee, arms } => {
+                self.walk_expr(scrutinee, scope, errors);
+                for arm in arms {
+                    let mut bindings: HashSet<String> = HashSet::new();
+                    self.collect_pattern_bindings(&arm.pattern, &mut bindings);
+                    scope.push(bindings);
+                    if let Some(g) = &arm.guard {
+                        self.walk_expr(g, scope, errors);
+                    }
+                    match &arm.body {
+                        MatchArmBody::Expr(e) => self.walk_expr(e, scope, errors),
+                        MatchArmBody::Block(b) => self.walk_block(b, scope, errors),
+                    }
+                    scope.pop();
+                }
+            }
+            ExprKind::For { pattern, iter, body } => {
+                self.walk_expr(iter, scope, errors);
+                let mut bindings: HashSet<String> = HashSet::new();
+                self.collect_pattern_bindings(pattern, &mut bindings);
+                scope.push(bindings);
+                self.walk_block(body, scope, errors);
+                scope.pop();
+            }
+            ExprKind::ParallelFor { pattern, iter, body } => {
+                self.walk_expr(iter, scope, errors);
+                let mut bindings: HashSet<String> = HashSet::new();
+                self.collect_pattern_bindings(pattern, &mut bindings);
+                scope.push(bindings);
+                self.walk_block(body, scope, errors);
+                scope.pop();
+            }
+            ExprKind::While { cond, body } => {
+                self.walk_expr(cond, scope, errors);
+                self.walk_block(body, scope, errors);
+            }
+            ExprKind::WhileLet { pattern, scrutinee, body } => {
+                self.walk_expr(scrutinee, scope, errors);
+                let mut bindings: HashSet<String> = HashSet::new();
+                self.collect_pattern_bindings(pattern, &mut bindings);
+                scope.push(bindings);
+                self.walk_block(body, scope, errors);
+                scope.pop();
+            }
+            ExprKind::Loop { body } => self.walk_block(body, scope, errors),
+
+            ExprKind::Block(b) => self.walk_block(b, scope, errors),
+
+            ExprKind::ArrayLit(elems) => {
+                for el in elems {
+                    match el {
+                        ArrayElem::Item(e) | ArrayElem::Spread(e) => {
+                            self.walk_expr(e, scope, errors);
+                        }
+                    }
+                }
+            }
+            ExprKind::TupleLit(elems) => {
+                for e in elems { self.walk_expr(e, scope, errors); }
+            }
+            ExprKind::RecordLit { fields, .. } => {
+                for f in fields {
+                    match &f.value {
+                        Some(v) => self.walk_expr(v, scope, errors),
+                        None => {
+                            // Shorthand `{ name }` (D52 field punning):
+                            // `name` — это ident, который должен быть
+                            // в scope.
+                            if !f.is_spread && !self.is_known(&f.name, scope) {
+                                errors.push(Diagnostic::new(
+                                    format!("undefined identifier `{}`", f.name),
+                                    f.span,
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Tagged-template: tag — это специальный DSL-marker
+            // (sql, json, html, ...). В bootstrap'е tag-функция
+            // игнорируется (parts конкатенируются), но в production
+            // tag — это runtime-функция/macro. Не проверяем tag как
+            // Ident — это special-form syntax, не обычный expr-call.
+            // Args (`${expr}` интерполяции) — обычные expressions.
+            ExprKind::TaggedTemplate { args, .. } => {
+                for a in args { self.walk_expr(a, scope, errors); }
+            }
+
+            // Lambda (legacy) / closure-light / closure-full — params
+            // push'ятся как новый scope frame.
+            ExprKind::Lambda { params, body, .. } => {
+                let mut frame: HashSet<String> = HashSet::new();
+                for p in params { frame.insert(p.name.clone()); }
+                scope.push(frame);
+                self.walk_expr(body, scope, errors);
+                scope.pop();
+            }
+            ExprKind::ClosureLight { params, body } => {
+                let mut frame: HashSet<String> = HashSet::new();
+                for p in params {
+                    if p.name != "_" { frame.insert(p.name.clone()); }
+                }
+                scope.push(frame);
+                match body {
+                    crate::ast::ClosureBody::Expr(e) => self.walk_expr(e, scope, errors),
+                    crate::ast::ClosureBody::Block(b) => self.walk_block(b, scope, errors),
+                }
+                scope.pop();
+            }
+            ExprKind::ClosureFull(sb) => {
+                let mut frame: HashSet<String> = HashSet::new();
+                for p in &sb.params { frame.insert(p.name.clone()); }
+                scope.push(frame);
+                match &sb.body {
+                    FnBody::Expr(e) => self.walk_expr(e, scope, errors),
+                    FnBody::Block(b) => self.walk_block(b, scope, errors),
+                    FnBody::External => {}
+                }
+                scope.pop();
+            }
+
+            ExprKind::With { bindings, body } => {
+                // Effect-handler vals — обычные expressions.
+                for b in bindings {
+                    self.walk_expr(&b.handler, scope, errors);
+                }
+                self.walk_block(body, scope, errors);
+            }
+            ExprKind::HandlerLit { methods, .. } => {
+                // Каждый method — handler-op с собственным scope params.
+                for m in methods {
+                    let mut frame: HashSet<String> = HashSet::new();
+                    for p in &m.params { frame.insert(p.name.clone()); }
+                    scope.push(frame);
+                    match &m.body {
+                        HandlerMethodBody::Expr(e) => self.walk_expr(e, scope, errors),
+                        HandlerMethodBody::Block(b) => self.walk_block(b, scope, errors),
+                    }
+                    scope.pop();
+                }
+            }
+            ExprKind::Interrupt(opt) => {
+                if let Some(e) = opt { self.walk_expr(e, scope, errors); }
+            }
+            ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. } => {
+                self.walk_block(body, scope, errors);
+            }
+            ExprKind::Range { start, end, .. } => {
+                self.walk_expr(start, scope, errors);
+                self.walk_expr(end, scope, errors);
+            }
+            ExprKind::Spawn(body) => self.walk_expr(body, scope, errors),
+            ExprKind::Supervised(body) | ExprKind::Detach(body) => {
+                self.walk_block(body, scope, errors);
+            }
+            ExprKind::CancelScope { token_name, body } => {
+                let mut frame: HashSet<String> = HashSet::new();
+                frame.insert(token_name.clone());
+                scope.push(frame);
+                self.walk_block(body, scope, errors);
+                scope.pop();
+            }
+            ExprKind::Throw(inner) => self.walk_expr(inner, scope, errors),
+        }
+    }
+
+    fn walk_trailing(
+        &self,
+        t: &crate::ast::Trailing,
+        scope: &mut Vec<HashSet<String>>,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        match t {
+            crate::ast::Trailing::Block(b) => self.walk_block(b, scope, errors),
+            crate::ast::Trailing::LegacyBlockWithParams(tb) => {
+                let mut frame: HashSet<String> = HashSet::new();
+                for p in &tb.params { frame.insert(p.name.clone()); }
+                scope.push(frame);
+                self.walk_block(&tb.body, scope, errors);
+                scope.pop();
+            }
+            crate::ast::Trailing::Fn(sb) => {
+                let mut frame: HashSet<String> = HashSet::new();
+                for p in &sb.params { frame.insert(p.name.clone()); }
+                scope.push(frame);
+                match &sb.body {
+                    FnBody::Expr(e) => self.walk_expr(e, scope, errors),
+                    FnBody::Block(b) => self.walk_block(b, scope, errors),
+                    FnBody::External => {}
+                }
+                scope.pop();
+            }
+        }
+    }
+
+    /// Собрать все bindings из pattern (только names, без проверки
+    /// variant-tag'ов или field-name'ов — это constructor/field
+    /// references, не expr-bindings).
+    fn collect_pattern_bindings(&self, p: &Pattern, out: &mut HashSet<String>) {
+        match p {
+            Pattern::Wildcard(_) => {}
+            Pattern::Literal(_, _) => {}
+            Pattern::Ident { name, .. } => {
+                // Edge-case: Pattern::Ident { name: "Some" } — это
+                // unit-variant Some? Нет, парсер emit'ит Variant { path:
+                // ["Some"], kind: Unit }. Здесь — настоящий binding.
+                // Но если имя совпадает с известным variant — считаем
+                // это variant-pattern, не binding (D52 семантика
+                // pattern-matching). Также Capitalized-имена в bootstrap
+                // — это всегда type/variant (cross-file), не binding.
+                let is_variant_like = self.builtins.contains(name)
+                    || self.top_level.contains(name)
+                    || name.chars().next().map(|c| c.is_ascii_uppercase()).unwrap_or(false);
+                if !is_variant_like {
+                    out.insert(name.clone());
+                }
+            }
+            Pattern::Variant { kind, .. } => {
+                // path = variant-tag — не binding.
+                match kind {
+                    VariantPatternKind::Unit => {}
+                    VariantPatternKind::Tuple { patterns, .. } => {
+                        for sub in patterns {
+                            self.collect_pattern_bindings(sub, out);
+                        }
+                    }
+                }
+            }
+            Pattern::Record { fields, .. } => {
+                for f in fields {
+                    match &f.pattern {
+                        Some(sub) => self.collect_pattern_bindings(sub, out),
+                        // Shorthand `{ name }` — name — это binding
+                        // (одновременно field-name и bound variable).
+                        None => { out.insert(f.name.clone()); }
+                    }
+                }
+            }
+            Pattern::Array { elems, .. } => {
+                for el in elems {
+                    match el {
+                        ArrayPatternElem::Item(sub) => self.collect_pattern_bindings(sub, out),
+                        ArrayPatternElem::Rest => {}
+                        ArrayPatternElem::RestBind(name) => { out.insert(name.clone()); }
+                    }
+                }
+            }
+            Pattern::Tuple(elems, _) => {
+                for sub in elems { self.collect_pattern_bindings(sub, out); }
+            }
+            Pattern::Binding { name, inner, .. } => {
+                out.insert(name.clone());
+                self.collect_pattern_bindings(inner, out);
+            }
+            Pattern::Or { alternatives, .. } => {
+                // По spec все alternatives имеют одинаковый набор
+                // bindings; берём из первого. (Bootstrap-семантика — см.
+                // ast::Pattern::Or doc.)
+                if let Some(first) = alternatives.first() {
+                    self.collect_pattern_bindings(first, out);
+                }
+            }
+        }
+    }
+
+    fn is_known(&self, name: &str, scope: &[HashSet<String>]) -> bool {
+        if self.builtins.contains(name) { return true; }
+        if self.top_level.contains(name) { return true; }
+        if self.module_names.contains(name) { return true; }
+        for frame in scope.iter().rev() {
+            if frame.contains(name) { return true; }
+        }
+        // Bootstrap-консервативность: имена начинающиеся с заглавной
+        // буквы по convention — типы / variants / модули. Bootstrap
+        // не имеет cross-file name resolution, поэтому ident вроде
+        // `HashMap` (из другого .nv файла) приходит сюда не задекларированным.
+        // Чтобы не флагать такие cross-file типы как undefined,
+        // пропускаем Capitalized-ident'ы. Опечатки в lowercase
+        // именах (snake_case convention для vars/fns) — настоящие
+        // undefined и будут ловиться.
+        if let Some(c) = name.chars().next() {
+            if c.is_ascii_uppercase() { return true; }
+        }
+        false
     }
 }
 
