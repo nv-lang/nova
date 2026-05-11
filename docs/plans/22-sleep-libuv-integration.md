@@ -1,35 +1,48 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-# План 22: `Time.sleep` через libuv + унифицированный event loop
+# План 22: `Time.sleep` через libuv + production-grade event-loop scheduler
 
 > **Статус:** активный, не начат.
 > **Создан:** 2026-05-11.
 > **Зависит от:** —
-> **Открывает дорогу для:** Plan 18 (P0 stdlib — `std.net`, `std.fs`),
-> Plan 09 (Clang migration — libuv цепляется к build chain).
-> **Открывает D-блок:** D92 — top-level main как implicit supervised scope.
+> **Открывает дорогу для:** Plan 18 (P0 stdlib — `std.net`, `std.fs`,
+> `std.io`), Plan 21 (Channel send/recv через park/wake API),
+> Plan 23 (M:N runtime — расширяет тот же mechanism cross-worker'ами).
+> **Открывает D-блоки:** D92 (top-level main = implicit supervised
+> scope), D93 (park/wake API как нормативный runtime primitive).
 
 ---
 
-## Цель
+## Тезис
 
 Заменить busy-yield `Time.sleep` ([`fibers.h:414-440`](../../compiler-codegen/nova_rt/fibers.h#L414-L440))
-на корректную event-loop-driven реализацию через **libuv `uv_timer_t`**,
-с превращением scheduler'а в драйвер `uv_run`. Sleep становится:
+**целиком** на production-grade event-loop driven реализацию **в обоих
+каналах исполнения** (codegen + interp):
 
-1. **O(log N)** на N одновременно спящих fiber'ах (binary heap libuv'а),
-   вместо O(N · poll_rate) busy-tick'а сегодня.
-2. **CPU-idle** пока никто не готов: scheduler уходит в `uv_run` →
-   `epoll_wait` / `GetQueuedCompletionStatus` спит в kernel'е ровно
-   до ближайшего таймера.
-3. **Унифицированный механизм** для будущего `std.net`/`std.fs`:
-   sleep, network IO и fs IO живут в одном event loop'е, fiber'ы
-   паркуются единообразно (`park → kernel-wait → callback wakes →
-   resume`).
+1. **Scheduler становится event-loop driver'ом.** `nova_supervised_run`
+   и `nova_main_run` идут через `uv_run(loop, UV_RUN_ONCE)` когда нет
+   ready-fiber'ов. Никаких busy-loop'ов нигде в runtime'е.
+2. **Park/wake — нормативный API** (`nova_rt/sched.h`), описанный в
+   spec'е (D93). Все блокирующие операции (sleep, recv/send,
+   socket-read, file-read) опираются на тот же contract.
+3. **Cancel-on-blocking-op — first-class.** Generic stop_cb mechanism,
+   cancel пробуждает parked-fiber'а immediate. Никаких best-effort.
+4. **Top-level main = implicit supervised scope** (D92). Унифицированная
+   семантика — sleep работает одинаково из любого контекста.
+5. **Spec sync атомарен с реализацией.** Ни одной фазы без обновления
+   нормативных D-блоков. Doc-debt по `Time.sleep` закрывается одной
+   PR-цепочкой.
+6. **Interp + codegen parity.** Оба канала исполнения получают
+   полноценную реализацию: codegen — libuv-driven, interp — pure-Rust
+   timer wheel + tokio-style scheduler. Семантика для пользователя
+   идентична: 91/91 nova_tests + 19 новых тестов PASS **в обоих
+   режимах** без regression'ов. Никакого «interp — упрощённая версия,
+   только для tests».
 
-Параллельно — синхронизация спеки ([`syntax.md:1509-1521`](../../spec/syntax.md#L1509-L1521),
-[`D71`](../../spec/decisions/06-concurrency.md)) с реализацией:
-снять «`ms` игнорируется» формулировку (уже неправда), описать
-event-loop-driven семантику и top-level mini-loop.
+**Без bootstrap-компромиссов:** никаких «временно busy-yield, потом
+рефакторим», никаких «литералы only», никаких «works for tests but
+not production», никаких «interp inline-eager, скоро поправим». Это
+**финальная architecture** scheduler'а до перехода на M:N (Plan 23,
+который расширяет, не заменяет).
 
 ---
 
@@ -64,367 +77,857 @@ if (mco_running()) {
   socket IO должны жить в одной очереди — иначе sleep блокирует socket
   callback'и и наоборот.
 - **Top-level kernel-blocking.** `fn main() { Time.sleep(1000); }`
-  блокирует thread, libuv не успеет обработать pending tasks
-  (после Plan 18 это станет проблемой).
+  блокирует thread, libuv не успеет обработать pending tasks.
+- **`spec/syntax.md:1517` лжёт:** «В bootstrap'е `ms` игнорируется» —
+  это не так, реализация ждёт; spec не соответствует коду.
 
-### Что нужно
+### Два канала исполнения — обязательная parity
 
-Архитектурно: **scheduler идёт через `uv_run`**, fiber'ы паркуются
-не в "wait until clock" loop, а в libuv-handle (`uv_timer_t` для
-sleep, в будущем `uv_poll_t` для socket'ов, etc.). Когда handle
-готов — libuv вызывает callback на main-thread, callback вставляет
-fiber обратно в ready-queue, scheduler делает `mco_resume`.
+Nova имеет **два канала исполнения** ([Plan 14 Ф.6-bis verification
+history](14-stdlib-codegen-gaps.md)):
 
-Это **существенная архитектурная перепланировка scheduler'а** — не
-локальный fix `Time.sleep`. План разбит на фазы так чтобы каждая
-фаза давала рабочий runtime; финальная фаза снимает busy-yield.
+| Канал | Сейчас (`Time.sleep`) | После Plan 22 |
+|---|---|---|
+| **codegen** (`run_tests.ps1`: .nv → C → exe через cl.exe) | busy-yield + native Sleep | libuv-driven park/wake |
+| **interp** (`nova-codegen test`: AST интерпретация в Rust runtime) | inline-eager: `spawn` = sync call, sleep = `thread::sleep` или no-op | tokio-style scheduler в Rust runtime: pure-Rust timer wheel + park/wake |
+
+Plan 22 покрывает **оба канала**. Параллельная реализация — иначе
+повторение verification-miss из Plan 14 Ф.6 (где codegen работал,
+а interp молча падал на 7/7 тестах, обнаружено retrospectively).
+
+Semantic parity:
+- `Time.sleep(ms)` блокирует fiber на >= ms ms в **обоих** режимах.
+- Cancel-during-sleep работает immediate в **обоих**.
+- 10k concurrent sleeps работают в **обоих** без CPU burn.
+- Handler-mock override работает в **обоих**.
+
+Implementation parity **необязательна** — каждый канал использует
+свой backend (libuv vs Rust async-runtime). Но **API surface
+идентичен** (`nova_sched_park` имя/семантика одинаковы, реализация
+разная).
+
+### Целевой target
+
+После Plan 22 runtime удовлетворяет в **обоих** каналах:
+
+| Свойство | Цель |
+|---|---|
+| 10k fiber'ов в `sleep(10s)` | CPU idle (<5% scheduler overhead) на весь sleep period |
+| Sleep precision | ±10ms на загруженной машине (libuv tier для codegen, Rust tier для interp) |
+| Cancel-during-sleep | wake'ает в течение <1ms |
+| Top-level sleep | работает идентично fiber-sleep'у, без kernel-blocking |
+| Concurrent IO + sleep | в одном event loop'е, никто никого не блокирует |
+| Spec drift | ноль (D71/D92/D93 описывают реализацию точно) |
+| Test verification | wall-clock тесты, не только handler-mock |
+| **interp + codegen parity** | один и тот же тест PASS в обоих режимах, никаких channel-specific skips |
 
 ---
 
-## Park/wake API — нормативный primitive
+## Park/wake API — нормативный primitive (D93)
 
-Plan 22 вводит **общий primitive для блокирующих операций** в
-runtime'е, на который сядут все последующие планы (Channel, Socket,
-File IO). API стабилизируется в Ф.3 и описывается в spec'е (D71
-эволюция, Ф.6).
+Plan 22 вводит **общий primitive для блокирующих операций** в runtime'е
+как **first-class API**, описанный в spec'е новым D-блоком **D93**.
+Это контракт, на который опираются Plan 21 (Channel), Plan 23+ (socket IO,
+file IO, blocking-pool integration).
 
-### API
+### API surface
 
 Новый файл `compiler-codegen/nova_rt/sched.h` экспортирует:
 
 ```c
+/* ─── Park / wake ─────────────────────────────────────────────── */
+
 /* Park current fiber: remove from ready-queue.
- * Returns to caller когда nova_sched_wake() будет вызван
- * для (scope, slot) пары этого fiber'а. */
+ * Возвращается caller'у только когда nova_sched_wake() будет вызван
+ * для (scope, slot) пары этого fiber'а. Не вызывать из не-fiber кода. */
 void nova_sched_park(NovaFiberQueue* scope, int slot);
 
-/* Wake parked fiber: возвращает в ready-queue scope'а.
- * Idempotent. Безопасно вызывать из libuv-callback'а. */
+/* Wake parked fiber: возвращает в ready-queue scope'а. Idempotent.
+ * Безопасно вызывать из libuv-callback'а на main-thread (single-thread
+ * bootstrap) или из любого worker-thread'а (M:N Plan 23). */
 void nova_sched_wake(NovaFiberQueue* scope, int slot);
 
 /* True если fiber в slot сейчас parked. */
 nova_bool nova_sched_is_parked(NovaFiberQueue* scope, int slot);
 
-/* CancelToken integration: pending-handle регистрация.
- * Любая блокирующая операция, использующая park/wake, регистрирует
- * свой libuv handle (или waitlist node) через эту функцию.
- * При cancel() — token итерируется и вызывает stop_cb для каждого. */
+/* ─── Cancel-integration ──────────────────────────────────────── */
+
+/* stop_cb тип: вызывается из cancel-flow для прерывания pending
+ * blocking-операции (uv_timer_stop, uv_read_stop, waitlist-unlink). */
 typedef void (*NovaCancelStopCb)(void* handle);
+
+/* Регистрация pending-handle для текущего slot'а. Должно вызываться
+ * ПЕРЕД nova_sched_park. cancel_token_cancel итерируется и вызывает
+ * stop_cb для каждого registered handle'а scope'а. */
 void nova_sched_register_pending(NovaFiberQueue* scope, int slot,
                                   void* handle, NovaCancelStopCb stop_cb);
+
+/* Снять регистрацию. Должно вызываться после wake (либо normal,
+ * либо cancel). Idempotent. */
 void nova_sched_unregister_pending(NovaFiberQueue* scope, int slot);
+
+/* ─── Scheduler-driven event-loop integration ────────────────── */
+
+/* Один шаг scheduler'а: drain ready-queue, потом uv_run UV_RUN_NOWAIT
+ * для немедленных callback'ов. Возвращает true если что-то сделал. */
+nova_bool nova_sched_step(NovaFiberQueue* scope);
+
+/* Блокирующее ожидание событий: uv_run UV_RUN_ONCE. Возвращается
+ * когда либо callback пометил кого-то ready, либо нет активных handle'ов. */
+void nova_sched_wait_events(void);
+
+/* Главный drain-loop: step → wait → step → ... пока scope не пуст. */
+void nova_sched_run_to_quiescence(NovaFiberQueue* scope);
 ```
 
-### Семантика
+### Семантика (нормативная для D93)
 
-1. **Park атомарен с yield'ом.** `nova_sched_park` ставит `parked[slot] = 1`
-   и сразу делает `mco_yield`. Race-window между "пометили parked" и
-   "yield'нулись" — нулевой, потому что обе операции в single-threaded
-   bootstrap'е.
+**1. Park atomic-with-yield.** `nova_sched_park` ставит `parked[slot] = 1`
+и делает `mco_yield`. Race-window нулевой — single-thread bootstrap
+(Plan 22) обеспечивает это естественно; под M:N (Plan 23) требуется
+memory fence перед yield'ом (фиксируется в D93 как platform requirement).
 
-2. **Wake идемпотентен.** Вызов `nova_sched_wake` на не-parked fiber'е
-   — no-op. Это упрощает callback'и (libuv может вызвать wake несколько
-   раз через `uv_close` cleanup, нам надо быть устойчивыми).
+**2. Wake idempotent.** Повторный wake без park'а между ними — no-op.
+Это упрощает callback'и: libuv `uv_close` cleanup может вызвать wake
+после нормального wake, нужно быть устойчивыми.
 
-3. **Wake безопасен из libuv-callback'а.** Callback'и выполняются на
-   main-thread (single-threaded `uv_loop`), в режиме когда никакой
-   fiber не resume'ен. Поэтому ставить `parked[slot] = 0` безопасно.
+**3. Wake безопасен из libuv-callback'а.** Callback'и выполняются в
+`uv_run` под main-thread. В этот момент **никакой fiber не resume'ен**
+— ставить `parked[slot] = 0` безопасно без atomic-операций (bootstrap).
+Под M:N — wake становится atomic store + cross-thread wake через
+`uv_async_send`.
 
-4. **Scheduler идёт в `uv_run` когда все живые fiber'ы parked.**
-   `nova_supervised_step` пропускает parked-fiber'ов; если
-   `alive_unparked == 0 && alive_total > 0` — main-loop вызывает
-   `uv_run(loop, UV_RUN_ONCE)`. Это блокирует main-thread в kernel-wait'е
-   до первого libuv-события.
+**4. Scheduler идёт в `uv_run` когда нет ready-fiber'ов.**
+`nova_sched_run_to_quiescence`:
 
-5. **Cancel-during-park.** Любая операция, паркующая fiber, **обязана**
-   зарегистрировать свой handle через `nova_sched_register_pending`.
-   Token-cancel пройдётся по pending-list scope'а и вызовет stop_cb
-   для каждого. stop_cb должен закрыть handle И вызвать
-   `nova_sched_wake` — после wake parked-fiber возобновится, увидит
-   `scope->cancel_requested` и бросит `"scope cancelled"`.
+```c
+void nova_sched_run_to_quiescence(NovaFiberQueue* scope) {
+    while (nova_count_alive(scope) > 0) {
+        if (nova_sched_step(scope)) continue;
+        /* Ready-queue пуста — все fiber'ы либо parked, либо dead.
+         * Если parked'ы есть — ждём событие, callback пробудит кого-то. */
+        if (nova_has_parked(scope)) {
+            nova_sched_wait_events();
+        } else {
+            /* Нет alive, нет parked — все dead. Выход. */
+            break;
+        }
+    }
+}
+```
+
+**5. Cancel-during-park — обязательный contract.**
+
+Любая операция, паркующая fiber, **обязана**:
+
+```c
+nova_sched_register_pending(scope, slot, handle, stop_cb);
+nova_sched_park(scope, slot);
+nova_sched_unregister_pending(scope, slot);
+if (scope->cancel_requested) {
+    /* Pre-cleanup специфичный для операции — если stop_cb не сделал */
+    nova_throw(nova_str_from_cstr("scope cancelled"));
+}
+```
+
+При `cancel_token_cancel`:
+- Итерация по `pending_stop_cb[]` всех slot'ов scope'а.
+- Для каждого зарегистрированного — вызов stop_cb (закрывает libuv
+  handle / отписывает от waitlist'а), потом `nova_sched_wake`.
+- Разбуженный fiber видит `cancel_requested`, throw'ает.
+
+Это **единственный** способ корректно прервать blocking-операцию.
+Плата за нерегистрацию — fiber виснет навсегда при cancel.
+
+**6. Multiple pending per slot — запрещено в bootstrap, расширяемо.**
+
+Slot держит один (handle, stop_cb) — этого достаточно для всех
+known use-cases (один fiber = одна блокирующая операция в момент
+времени). Если будущая операция потребует multi-handle (например
+`select` на N receiver'ах) — расширение через `pending_handle_list[]`
+со cap'ом. В Plan 22 — single-handle, в `select` (Plan 21 Ф.4) —
+расширяется.
 
 ### Контракт пользователя API
 
-Любая операция, использующая park/wake, **обязана**:
+**Любая** операция, использующая park/wake, следует паттерну:
 
 ```c
 NovaXxxState st = { ... };
 nova_xxx_init_handle(&st.handle);
 
-/* Регистрация для cancel-wake (обязательно!) */
+/* (1) Регистрация для cancel-wake — ОБЯЗАТЕЛЬНО ПЕРЕД park'ом. */
 nova_sched_register_pending(_nova_active_scope, _nova_active_slot,
-                             &st.handle, nova_xxx_stop_cb);
+                             &st.handle, _nova_xxx_stop_cb);
 
-/* Park */
+/* (2) Park: scheduler не resume'ит, пока кто-то не вызовет wake. */
 nova_sched_park(_nova_active_scope, _nova_active_slot);
-/* ← здесь fiber suspend'ится до wake */
+/* ← control возвращается сюда после wake (callback либо cancel). */
 
-/* Dereg + cancel-check */
+/* (3) Cleanup + cancel-check. */
 nova_sched_unregister_pending(_nova_active_scope, _nova_active_slot);
+if (st.handle_active) {
+    /* Закрыть handle если не закрыт callback'ом */
+    nova_xxx_close_handle(&st.handle);
+}
 if (_nova_active_scope && _nova_active_scope->cancel_requested) {
     nova_throw(nova_str_from_cstr("scope cancelled"));
 }
 ```
 
-Этот паттерн воспроизводится для:
-- **Plan 22** Ф.3: `Time.sleep` → `uv_timer_t` + `uv_timer_stop` stop_cb.
-- **Plan 21** Ф.1+: `Channel.recv`/`send` → waitlist node + waitlist-remove stop_cb.
-- **Plan 23+** (`std.net`): `TcpStream.read` → `uv_read_start` + `uv_read_stop` stop_cb.
-- **Plan 23+** (`std.fs`): `File.read` → `uv_fs_t` + `uv_cancel` stop_cb.
+Воспроизводится для:
+- **Plan 22 Ф.4**: `Time.sleep` → `uv_timer_t` + `uv_timer_stop` stop_cb.
+- **Plan 21 Ф.1+**: `Channel.recv`/`send` → waitlist node + waitlist-remove stop_cb.
+- **Plan 23+ `std.net`**: `TcpStream.read` → `uv_read_start` + `uv_read_stop` stop_cb.
+- **Plan 23+ `std.fs`**: `File.read` → `uv_fs_t` + `uv_cancel` stop_cb.
 
-### Что НЕ в API
+### Что НЕ в API в Plan 22
 
-- **Multi-fiber wake** (broadcast) — пока не нужен. Если потребуется
-  (например `Channel.close()` будит всех recv-waiter'ов) — отдельная
-  фаза с `nova_sched_wake_all(scope, slot_list)`.
-- **Wake с payload** — fiber возвращается в свой стек, payload читает
-  из своего state struct, не из wake-API.
-- **Cross-scope wake** — fiber всегда parked в своём scope, wake
-  идёт в тот же scope. Cross-scope сценарии (например `detach`-fiber
-  будит main-scope) — отдельная задача после M:N.
+- **Multi-fiber wake (broadcast).** Если `Channel.close()` будит всех
+  recv-waiter'ов — Plan 21 Ф.1 сам итерируется и вызывает
+  `nova_sched_wake` для каждого. API broadcast добавляется отдельной
+  фазой при появлении use-case.
+- **Wake с payload.** Fiber после wake читает payload из своего state
+  struct, не из wake-API. wake — чистый control transfer.
+- **Cross-scope wake.** Fiber всегда parked в своём scope; wake идёт
+  в тот же scope. Cross-scope (`detach`-fiber будит main-scope) —
+  отдельная задача после M:N.
+
+---
+
+## Interp-канал: pure-Rust scheduler
+
+Interp реализует **тот же D93 contract**, но без libuv. Backend —
+**pure-Rust**: `tokio` или свой timer-wheel + Rust async-runtime.
+
+### Архитектурный выбор
+
+Два варианта реализации interp scheduler'а:
+
+**Вариант A (рекомендуемый): tokio current_thread**
+- Тянем `tokio = { version = "1", features = ["rt", "time", "sync", "macros"] }` в `compiler-codegen/Cargo.toml`.
+- Глобальный `tokio::runtime::Runtime` (`current_thread` flavor — single-thread, как codegen).
+- `Time.sleep(ms)` → `tokio::time::sleep(Duration::from_millis(ms)).await` внутри tokio context'а.
+- Fiber'ы — `tokio::task::JoinHandle`, spawn — `tokio::task::spawn_local`.
+- Park/wake — `tokio::sync::Notify` или watch-channel.
+- Cancel — `tokio_util::sync::CancellationToken` либо свой через abort handle.
+
+Плюсы: production-grade, не пишем scheduler сами, есть timer-wheel,
+есть cancel-mechanism готовый.
+
+Минусы: ~3-5 MB dependency tree (tokio + dependencies); требует
+`#[tokio::main]` либо явный block_on; async-Rust контекст внутри
+interp.
+
+**Вариант B: свой timer-wheel + futures-channel**
+- `futures = "0.3"` (минимальный), плюс `crossbeam-channel` либо
+  std::sync mpsc для park/wake.
+- Свой scheduler ~400 строк Rust: single-thread executor + heap-based
+  timer queue.
+- park = std::sync::Condvar-style либо oneshot channel.
+
+Плюсы: контроль, меньше dependencies.
+
+Минусы: пишем scheduler сами (это **то**, чего избегаем для codegen
+через libuv — почему здесь делать по-другому?).
+
+**Рекомендуется Вариант A — tokio.** Согласовано с
+[feedback_third_party_libs](../../memory/feedback_third_party_libs.md):
+не патчим, обёртки только в `nova_rt/` (либо `compiler-codegen/src/interp/sched.rs`).
+tokio — de facto стандарт Rust async, well-tested.
+
+### API parity с codegen
+
+Interp экспортирует **тот же D93 contract** через Rust трейт:
+
+```rust
+// compiler-codegen/src/interp/sched.rs (новый)
+
+pub trait InterpScheduler {
+    /// Park current task: requires await context.
+    async fn park(&self, scope: ScopeId, slot: SlotId);
+
+    /// Wake parked task. Idempotent.
+    fn wake(&self, scope: ScopeId, slot: SlotId);
+
+    fn is_parked(&self, scope: ScopeId, slot: SlotId) -> bool;
+
+    /// Register pending handle + stop callback для cancel-wake.
+    fn register_pending(&self, scope: ScopeId, slot: SlotId,
+                         stop_cb: Box<dyn FnOnce() + Send>);
+
+    fn unregister_pending(&self, scope: ScopeId, slot: SlotId);
+}
+
+pub struct TokioScheduler {
+    runtime: tokio::runtime::Runtime,
+    state:   Mutex<SchedState>,  /* parked[], pending_stop[], etc. */
+}
+
+impl InterpScheduler for TokioScheduler {
+    /* ... */
+}
+```
+
+Семантика **идентична** D93 (фиксируется в spec). Реализация — tokio-based.
+
+### Что меняется в interp для Plan 22
+
+Сейчас interp ([`compiler-codegen/src/interp/mod.rs`](../../compiler-codegen/src/interp/mod.rs)):
+- `spawn` = inline call (lines 867, 871) — синхронно.
+- `supervised` = обычный block (line 872).
+- `cancel_scope` ≡ supervised без token-API (line 881).
+- `Time.sleep` — нет специальной реализации (видимо handler dispatch
+  с default no-op либо `std::thread::sleep`).
+
+После Plan 22:
+- `spawn` → `runtime.spawn(async { body })` через tokio task.
+- `supervised` → tokio LocalSet + JoinSet, drain на exit.
+- `cancel_scope` → tokio `CancellationToken`, child task'и cancel'ятся
+  immediate.
+- `Time.sleep` → `tokio::time::sleep` через interp's TokioScheduler.
+
+### Test parity механизм
+
+`nova-codegen test <file.nv>` (interp-mode) должен иметь **тот же
+test-runner contract** что и `run_tests.ps1` (codegen-mode):
+- D89 EXPECT_* маркеры работают в обоих.
+- Wall-clock asserts (`Time.now() - t0 >= ms`) работают в обоих.
+- Same expected PASS count.
+
+CI должен прогонять оба канала — поправка к Plan 14 Ф.6-bis lesson:
+
+> Plan 14 Ф.6 был помечен ✅ ЗАКРЫТ по результату `run_tests.ps1`
+> (codegen pipeline, 91/91 PASS), но `nova-codegen test variadic.nv`
+> (interp-mode) давал 7/7 FAIL. Это был verification miss — Nova
+> имеет два канала исполнения тестов (codegen + interp), а я гонял
+> только один.
+
+Plan 22 запускает **оба канала** на каждой acceptance gate. Это
+**жёсткое требование** R10' (см. R-list).
 
 ---
 
 ## Фазы
 
-### Ф.1 — Подключить libuv к build chain ✅ задача-нулевая
+Фазы **независимы внутри себя** (каждая мерджится отдельным PR), но
+**линейно зависят**: Ф.N+1 строится на API из Ф.N. Каждая фаза
+финиширует на **green CI + spec sync** — нет half-done states.
 
-**Что:** добавить libuv как vendored dependency, без использования.
-Цель — отделить build-system изменения от семантических.
+### Ф.1 — libuv vendored amalgamation + build chain
 
-**Файлы:**
-- `compiler-codegen/nova_rt/libuv/` — vendored libuv source (single-header
-  + dist amalgamation либо `git submodule`). Решение vendor vs submodule
-  — в начале фазы (см. Q1 ниже).
-- `compiler-codegen/src/codegen/build_invoker.rs` — `cl.exe` linking
-  получает `libuv.lib` (Windows) или `-luv` (Linux). На каждой
-  платформе: путь к prebuilt либо рецепт сборки из source.
-- `compiler-codegen/nova_rt/nova_rt.h` — `#include <uv.h>` под `#ifdef
-  NOVA_USE_LIBUV` (фаза-1 не активирует).
-- `run_tests.ps1` — обновить link-line для тестов.
-
-**Тесты:** один smoke-test `nova_tests/runtime/libuv_link.nv` —
-просто `fn main() { println("ok") }`, проверка что бинарь линкуется
-с libuv'ом (если `NOVA_USE_LIBUV` включён — `uv_version_string()`
-печатается рядом).
-
-**Платформы:**
-- **Windows + MSVC** (текущий): libuv статически линкуется. Prebuilt
-  `libuv.lib` либо собирается одним вызовом cl.exe из амальгамации.
-- **Linux + clang/gcc** (будущее Plan 09): `-luv` либо vendored build.
-  Решение оставить hint в `build_invoker.rs`, в Ф.1 не реализуем.
-
-**Объём:** ~50 строк build-config + vendored source (десятки тысяч
-строк libuv — не наш код, не считаем).
-
-**Acceptance:** `run_tests.ps1` зелёный с `NOVA_USE_LIBUV` выключенным
-(не должна сломаться существующая сборка), и с включённым — link
-успешен, smoke-test проходит.
-
----
-
-### Ф.2 — Глобальный event loop в runtime
-
-**Что:** один `uv_loop_t` на процесс, инициализируется при старте
-программы, закрывается при exit. Пока никто не использует — только
-инфраструктура.
+**Что:** Подключить libuv как vendored single-file dist. Build-system
+изменения — отделены от семантики (Ф.2+ не активируют libuv runtime).
 
 **Файлы:**
-- `compiler-codegen/nova_rt/eventloop.h` (новый): тонкая обёртка
-  над `uv_default_loop()`:
-  ```c
-  static inline uv_loop_t* nova_evloop(void);   /* lazy-init */
-  static inline void       nova_evloop_close(void);  /* atexit */
+
+- `compiler-codegen/nova_rt/libuv/` (новый): vendored libuv source.
+  Берётся **release tag** (v1.49.x на момент написания), не master.
+  Структура:
   ```
-- `compiler-codegen/nova_rt/nova_rt.h` — `#include "eventloop.h"`.
-- `compiler-codegen/src/codegen/emit_c.rs` — `emit_main_prelude`
-  добавляет `nova_evloop()` first-touch + `atexit(nova_evloop_close)`.
+  nova_rt/libuv/
+    LICENSE                  # MIT, sub-MIT для third-party deps libuv
+    VERSION                  # точная версия (например "1.49.2")
+    include/
+      uv.h
+      uv/                    # uv-specific headers
+    src/
+      *.c                    # амальгамация — один libuv.c либо
+                             # папка с разделёнными translation units
+    UPDATE.md                # инструкция как обновить версию libuv
+  ```
+  Решение: брать **release tarball** с github.com/libuv/libuv, не
+  submodule (по политике [feedback_third_party_libs](../../memory/feedback_third_party_libs.md)).
+- `compiler-codegen/nova_rt/libuv/UPDATE.md`: пошагово как обновить
+  libuv до нового релиза (cross-platform notes, какие src-файлы
+  входят в build per-platform).
+- `compiler-codegen/src/codegen/build_invoker.rs`: добавить libuv в
+  cl.exe build:
+  ```rust
+  fn libuv_sources() -> Vec<&'static str> {
+      // Platform-specific subset: на Windows исключить unix/*.c,
+      // на Linux — win/*.c.
+      #[cfg(target_os = "windows")] {
+          vec!["nova_rt/libuv/src/*.c", "nova_rt/libuv/src/win/*.c"]
+      }
+      #[cfg(target_os = "linux")] {
+          vec!["nova_rt/libuv/src/*.c", "nova_rt/libuv/src/unix/*.c"]
+      }
+      // ...
+  }
+  fn libuv_include() -> &'static str { "nova_rt/libuv/include" }
+  fn libuv_libs() -> Vec<&'static str> {
+      #[cfg(target_os = "windows")] {
+          vec!["ws2_32.lib", "iphlpapi.lib", "psapi.lib", "userenv.lib", "user32.lib", "shell32.lib", "ole32.lib", "uuid.lib", "advapi32.lib", "dbghelp.lib"]
+      }
+      #[cfg(target_os = "linux")] {
+          vec!["-lpthread", "-ldl", "-lrt"]
+      }
+      // ...
+  }
+  ```
+  Для production-grade — компиляция libuv source-файлов в `.obj`/`.o`
+  при первом запуске, кешируется в `target/libuv-cache/`. **Не
+  рекомпилируется** на каждый build тестов — это критично для CI
+  speed (libuv compile = ~30 секунд на полную).
+- `compiler-codegen/nova_rt/nova_rt.h`: `#include <uv.h>` под
+  `#ifdef NOVA_USE_LIBUV` (флаг включается в Ф.2). В Ф.1 — флаг
+  выключен, libuv компилируется но не используется (smoke).
+- `run_tests.ps1`, `run_tests.sh`: обновить link-line с libuv.lib /
+  libuv.a и зависимыми system-libs.
 
-**Решения:**
-- **`uv_default_loop()` vs custom `uv_loop_init`** — взять
-  `uv_default_loop()`. Один loop на процесс, потоков нет (Nova
-  single-threaded bootstrap).
-- **Когда закрывать.** На `atexit` через `uv_loop_close`. После
-  Plan 18 — на graceful shutdown сначала drain выполняемых handles.
+**Платформы (production-grade):**
 
-**Тесты:** `nova_tests/runtime/evloop_lifecycle.nv` — init, проверить
-что `uv_loop_alive(nova_evloop()) == 0` сразу после init (нет
-handles), exit без assertion.
+- **Windows + MSVC** (текущий primary): vendored libuv компилируется
+  через cl.exe, статически линкуется в каждый test binary. Required
+  Windows SDK libs: `ws2_32`, `iphlpapi`, `psapi`, `userenv`, `user32`,
+  `shell32`, `ole32`, `uuid`, `advapi32`, `dbghelp`.
+- **Linux + Clang/GCC** (Plan 09): vendored libuv компилируется,
+  required libs: `-lpthread -ldl -lrt`. Ф.1 готовит build invoker под
+  обе платформы, актуальная Linux-тестировка — после Plan 09.
+- **macOS** (P1 в Plan 18): отдельный subset src/unix/*.c +
+  CoreServices/CoreFoundation frameworks. Структура build_invoker
+  готова к расширению, реализация — после P1.
 
-**Acceptance:** event loop живёт всю программу, никаких leak'ов на
-exit, существующие 91/91 проходят (loop не используется пока).
+**Тесты:**
 
-**Объём:** ~80 строк C.
+- `nova_tests/runtime/libuv_link.nv` (новый): один файл,
+  ```nova
+  fn main() Io -> () {
+      println("ok")
+  }
+  ```
+  Build с `NOVA_USE_LIBUV=1` должен пройти. Если хочется удостовериться
+  что libuv реально слинкован — printf'нуть `uv_version_string()`
+  через extern C-helper.
+- Существующие 91/91 nova_tests должны проходить с `NOVA_USE_LIBUV=0`
+  (default в Ф.1) **и** с `NOVA_USE_LIBUV=1` (libuv слинкован, но
+  не вызывается). Это validates: libuv не ломает существующий build.
+
+**Build cache:**
+
+- Compiled libuv objects кешируются в `target/libuv-cache/<platform>/`.
+- Cache invalidation по hash'у `nova_rt/libuv/VERSION` файла.
+- Cache persistent между test-run'ами; рекомпиляция libuv только
+  при обновлении версии.
+
+**Spec изменения:** нет (Ф.1 — чистый build-системный).
+
+**Acceptance:**
+
+- Vendored libuv в `nova_rt/libuv/` (~10 MB source).
+- Build на Windows MSVC: green, libuv compile cached.
+- Build на Linux Clang: green (если Plan 09 завершён) или skip с
+  TODO note (если нет).
+- `NOVA_USE_LIBUV=0`: 91/91 PASS (no regression).
+- `NOVA_USE_LIBUV=1`: smoke-test (libuv_link.nv) PASS + 91/91 PASS.
+- `target/libuv-cache/` работает: повторный `run_tests` не пересобирает libuv.
+
+**Объём:**
+
+- Vendored libuv source: ~10 MB (не наш код).
+- Build invoker изменения: ~150 строк Rust.
+- UPDATE.md instructions: ~50 строк.
+- Smoke test: ~10 строк Nova.
+
+**Риски:**
+
+- libuv API drift между релизами — фиксируем версию точно через
+  VERSION файл, обновления через UPDATE.md procedure.
+- `cl.exe` warnings из libuv source: либо `/W0` для libuv-TU, либо
+  `#pragma warning` обёртки. **Не патчим libuv source** — конфигурируем
+  компилятор.
+- libuv pre-built distribute'ы существуют (vcpkg, etc.) — почему
+  не использовать? Vendored = reproducible, no version drift, no
+  network/registry dependency. Для bootstrap-стадии language'а это
+  правильный trade-off.
 
 ---
 
-### Ф.3 — `Time.sleep` через `uv_timer_t` (внутри fiber)
+### Ф.2 — Глобальный event loop + lifecycle integration
 
-**Что:** заменить busy-yield в **fiber-ветке** на park-on-timer.
-Main-ветка и top-level — пока без изменений (Ф.4, Ф.5).
+**Что:** Один `uv_loop_t` на процесс, инициализация перед `main()`-body,
+graceful close на exit. Активация `NOVA_USE_LIBUV` по умолчанию.
 
-В этой же фазе вводится **общий park/wake primitive** —
-`nova_sched_park`/`nova_sched_wake` API, на который позже сядут
-Plan 21 (Channel) и Plan 23+ (socket IO). См.
-[«Park/wake API»](#parkwake-api---нормативный-primitive) ниже.
+**Файлы:**
 
-**Структура реализации — два слоя:**
+- `compiler-codegen/nova_rt/eventloop.h` (новый):
+  ```c
+  #ifndef NOVA_RT_EVENTLOOP_H
+  #define NOVA_RT_EVENTLOOP_H
 
-1. **`nova_rt/sched.h`** — новый файл, нормативный park/wake API
-   (см. [«Park/wake API»](#parkwake-api---нормативный-primitive) выше).
-   Это слой, на который сядут Plan 21 и Plan 23+.
-2. **`nova_rt/fibers.h`** — `_nova_time_default_sleep` fiber-ветка
-   переписывается через `sched.h` API.
+  #include <uv.h>
 
-**Реализация `nova_rt/sched.h`:**
+  /* Lazy-init глобального event loop'а. Возвращает default loop. */
+  uv_loop_t* nova_evloop(void);
+
+  /* Init для main-prelude: вызвать ОДИН раз перед main-body.
+   * Idempotent (повторный вызов = no-op). */
+  void nova_evloop_init(void);
+
+  /* Graceful shutdown: drain pending handles, close loop, free resources.
+   * Вызвать через atexit либо explicit в emit_main эпилоге. */
+  void nova_evloop_close(void);
+
+  /* Check: уже ли init'нут (для assertion в park/wake API). */
+  nova_bool nova_evloop_is_initialized(void);
+
+  #endif
+  ```
+- `compiler-codegen/nova_rt/eventloop.c` (новый): реализация. NOT
+  inline — lifecycle state, не header-only.
+- `compiler-codegen/nova_rt/nova_rt.h`: `#include "eventloop.h"` под
+  включённым `NOVA_USE_LIBUV`.
+- `compiler-codegen/src/codegen/emit_c.rs` `emit_main`:
+  ```c
+  int main(int argc, char** argv) {
+      nova_evloop_init();                  /* первое — eventloop ready */
+      atexit(nova_evloop_close);            /* graceful close */
+      /* ...existing prelude (handlers, scope init)... */
+
+      /* ...user main body... */
+
+      return _exit_code;
+  }
+  ```
+- `compiler-codegen/build_invoker.rs`: `NOVA_USE_LIBUV` теперь default
+  включён (`-DNOVA_USE_LIBUV=1`).
+
+**Production decisions:**
+
+- **`uv_default_loop()` vs custom `uv_loop_init`.** Берём
+  `uv_default_loop()` — единственный loop на процесс. Под M:N (Plan 23)
+  будет per-worker loop, но это — Plan 23, не сейчас.
+- **Cleanup on exit.** `nova_evloop_close`:
+  1. `uv_loop_close(loop)` — если возвращает `UV_EBUSY` (есть active
+     handles), сделать `uv_walk` + `uv_close` для каждого, потом
+     `uv_run UV_RUN_DEFAULT` чтобы close callbacks отработали, повторить.
+  2. Защита от infinite loop: max 100 iterations, потом `abort` с
+     log'ом. Реалистично — должно завершиться за 1-2 iterations.
+- **Threading model.** Loop живёт на main thread. `uv_run` вызывается
+  только из main thread (или из worker thread'а под Plan 23). Это
+  фиксируется как invariant — нарушение = UB.
+- **Re-init на shutdown.** После `nova_evloop_close` повторный
+  `nova_evloop` возвращает NULL и pid'ит warning'ом. Это catches
+  use-after-close bugs.
+
+**Тесты:**
+
+- `nova_tests/runtime/evloop_lifecycle.nv` (новый):
+  ```nova
+  test "eventloop initialized" {
+      // Implicit — main-prelude вызывает nova_evloop_init.
+      // Probe через extern fn.
+      assert(_nova_evloop_initialized())
+  }
+
+  test "eventloop alive count is zero" {
+      // После init, до любых handle'ов — 0 active.
+      assert(_nova_evloop_active_handles() == 0)
+  }
+  ```
+  Через `external fn _nova_evloop_initialized() -> bool` и
+  `_nova_evloop_active_handles() -> int` для introspection.
+- `nova_tests/runtime/evloop_close_handles.nv` (новый, ручной для
+  CI): эмулирует leak — открывает handle, не закрывает; проверяет
+  что `nova_evloop_close` всё равно завершается чисто.
+
+**Spec изменения:** нет (eventloop — infrastructure, не language
+semantics).
+
+**Acceptance:**
+
+- `nova_evloop_init` идемпотентен.
+- `nova_evloop_close` graceful: не зависает даже на leaked handles.
+- Все 91/91 nova_tests PASS с `NOVA_USE_LIBUV=1` активным.
+- Smoke evloop_lifecycle тесты PASS.
+- No leaks на exit (verified через `_CrtSetDbgFlag` на Windows debug
+  build либо valgrind на Linux после Plan 09).
+
+**Объём:** ~150 строк C + ~30 строк Rust codegen-prelude + 2 теста.
+
+**Риски:**
+
+- libuv `uv_loop_close` поведение при stuck handles — изучить
+  документацию и edge cases (signal handles, idle handles).
+- `atexit` ordering: если кто-то ещё зарегистрировал atexit-handler
+  до nova_evloop_close — порядок реверсный. Решение: вызвать
+  `nova_evloop_close` явно в `emit_main` эпилоге через
+  `int rc = 0; goto cleanup; ... cleanup: nova_evloop_close(); return rc;`.
+
+---
+
+### Ф.3 — Park/wake API: `nova_rt/sched.h` + D93 spec
+
+**Что:** Реализовать park/wake primitive **отдельным header'ом**, не
+размазанным по `fibers.h`. Это нормативный API (D93), не помощник.
+
+**Этот шаг — semantic foundation.** Sleep/recv/socket-read все будут
+писаться на нём в Ф.4+, Plan 21, Plan 23+.
+
+**Файлы:**
+
+- `compiler-codegen/nova_rt/sched.h` (новый):
+  ```c
+  #ifndef NOVA_RT_SCHED_H
+  #define NOVA_RT_SCHED_H
+
+  #include "nova_rt.h"
+
+  /* (Forward-decl от fibers.h) */
+  typedef struct NovaFiberQueue NovaFiberQueue;
+
+  typedef void (*NovaCancelStopCb)(void* handle);
+
+  /* ─── Park / wake ───────────────────── */
+  void      nova_sched_park(NovaFiberQueue* scope, int slot);
+  void      nova_sched_wake(NovaFiberQueue* scope, int slot);
+  nova_bool nova_sched_is_parked(NovaFiberQueue* scope, int slot);
+
+  /* ─── Cancel-integration ───────────── */
+  void      nova_sched_register_pending(NovaFiberQueue* scope, int slot,
+                                         void* handle, NovaCancelStopCb stop_cb);
+  void      nova_sched_unregister_pending(NovaFiberQueue* scope, int slot);
+
+  /* ─── Scheduler driver ─────────────── */
+  nova_bool nova_sched_step(NovaFiberQueue* scope);
+  void      nova_sched_wait_events(void);
+  void      nova_sched_run_to_quiescence(NovaFiberQueue* scope);
+
+  /* ─── Introspection ────────────────── */
+  int       nova_sched_count_alive(NovaFiberQueue* scope);
+  int       nova_sched_count_parked(NovaFiberQueue* scope);
+  int       nova_sched_count_ready(NovaFiberQueue* scope);
+
+  #endif
+  ```
+- `compiler-codegen/nova_rt/sched.c` (новый): реализация.
+- `compiler-codegen/nova_rt/fibers.h`: расширить `NovaFiberQueue`:
+  ```c
+  typedef struct NovaFiberQueue {
+      /* ...existing fields... */
+
+      /* Park state per-slot. */
+      nova_bool         parked[NOVA_SCOPE_CAP];
+
+      /* Pending handle + stop_cb per-slot (one active per slot). */
+      void*             pending_handle[NOVA_SCOPE_CAP];
+      NovaCancelStopCb  pending_stop_cb[NOVA_SCOPE_CAP];
+  } NovaFiberQueue;
+  ```
+  + обновить `nova_scope_init` инициализировать новые поля в zero.
+- `compiler-codegen/nova_rt/fibers.h` `nova_supervised_step`:
+  изменить чтобы пропускать `parked[i]` slot'ы.
+- `compiler-codegen/nova_rt/fibers.h` `nova_supervised_run`:
+  заменить на вызов `nova_sched_run_to_quiescence` из sched.h.
+- `compiler-codegen/nova_rt/fibers.h` `nova_cancel_token_cancel`:
+  расширить — итерация по `pending_stop_cb` (см. Ф.4 интеграция).
+
+**Spec изменения (one PR с реализацией):**
+
+- `spec/decisions/06-concurrency.md` — **новый D93** «Park/wake
+  primitive как нормативный runtime API».
+  Содержание:
+  + **Что:** runtime exports park/wake API через `nova_rt/sched.h`,
+    любая блокирующая операция в runtime обязана использовать его.
+  + **API surface** (как выше).
+  + **Семантика** (6 пунктов из секции «Park/wake API» этого
+    Plan'а).
+  + **Контракт пользователя** (3-шаговый паттерн register → park
+    → unregister + cancel-check).
+  + **Связь:** D71 (scheduler architecture), D75 (cancel-token),
+    D80 (handler scoping per-fiber).
+  + **Эволюция:** Plan 22 Ф.3 — введение; Plan 21 — Channel
+    использование; Plan 23 — расширение на M:N (cross-worker wake
+    через `uv_async_t`).
+- `spec/decisions/README.md`: добавить строку D93 в индекс
+  `06-concurrency.md`.
+
+**Тесты:**
+
+- `nova_tests/runtime/sched_park_wake.nv` (новый, 5 тестов):
+  ```nova
+  // Через extern test-helpers для прямого вызова API.
+
+  test "park-wake round-trip" {
+      // spawn fiber который park'ится, потом main wake'ает.
+  }
+
+  test "wake before park is no-op" {
+      // Сначала wake, потом park — park ждёт следующего wake.
+  }
+
+  test "double wake is idempotent" {
+      // Wake parked fiber дважды — fiber resume'ится один раз.
+  }
+
+  test "is_parked accurate" {
+      // is_parked() возвращает true в parked period, false иначе.
+  }
+
+  test "unregister stops cancel-wake" {
+      // Register pending, unregister, потом cancel — fiber НЕ
+      // wake'ается (т.к. снят с registration).
+  }
+  ```
+- `nova_tests/runtime/sched_counts.nv`: corectness `count_alive`/
+  `count_parked`/`count_ready` через сценарии mixed.
+
+**Acceptance:**
+
+- `nova_rt/sched.h` exports API surface как описано.
+- `nova_rt/sched.c` реализован, all 5 sched_park_wake тестов PASS.
+- `NovaFiberQueue` расширен `parked[]` + `pending_*[]`.
+- `nova_supervised_step` skips parked.
+- D93 написан в spec, индекс обновлён, cross-ref'ы в D71 и D75
+  добавлены.
+- Существующие 91/91 PASS (никто пока не park'ится — backward-compat).
+
+**Объём:** ~300 строк C (sched.h + sched.c + fibers.h расширения) +
+~100 строк D93 spec + 7 тестов.
+
+**Риски:**
+
+- `parked[]` race с `nova_supervised_step` — slot может быть
+  unparked между check'ом и mco_resume. Mitigation: step делает
+  re-check после resume, slot не resume'ится если parked снова стал.
+- ABI compatibility — `NovaFiberQueue` расширение, любой C-код,
+  использующий size'ы, может сломаться. Mitigation: все usage'ы
+  через accessor functions, нет direct field access снаружи runtime'а.
+
+---
+
+### Ф.4 — `Time.sleep` через `uv_timer_t` + park/wake + cancel-wake
+
+**Что:** Заменить `_nova_time_default_sleep` целиком на park-on-timer.
+**Все три ветки** (fiber, main-in-scope, top-level) — через тот же
+mechanism, никаких branch'ей.
+
+**Файлы:**
+
+- `compiler-codegen/nova_rt/fibers.h`:
+  + **удалить** старые ветки `_nova_time_default_sleep` (lines 414-440).
+  + **удалить** `_nova_native_sleep_ms` (lines 386-407) — больше не
+    нужен, kernel-blocking сходит на нет.
+  + написать новую реализацию.
+- `compiler-codegen/nova_rt/fibers.h` `nova_cancel_token_cancel`:
+  обновить — итерация по pending stop_cb (R4 design).
+
+**Реализация (production-grade):**
 
 ```c
-/* Поля в NovaFiberQueue (добавляются в fibers.h): */
-typedef struct {
-    /* ...existing fields... */
-    nova_bool         parked[NOVA_SCOPE_CAP];
-    /* Pending handles для cancel-wake (R4): на каждый slot — один
-     * активный handle + stop_cb. Multi-handle per slot пока не нужен. */
-    void*             pending_handle[NOVA_SCOPE_CAP];
-    NovaCancelStopCb  pending_stop_cb[NOVA_SCOPE_CAP];
-} NovaFiberQueue;
-
-/* Реализация API: */
-static inline void nova_sched_park(NovaFiberQueue* q, int slot) {
-    q->parked[slot] = true;
-    mco_yield(mco_running());
-    /* control возвращается сюда когда callback сделал wake */
-}
-
-static inline void nova_sched_wake(NovaFiberQueue* q, int slot) {
-    if (!q || slot < 0 || slot >= q->count) return;
-    q->parked[slot] = false;
-}
-
-static inline nova_bool nova_sched_is_parked(NovaFiberQueue* q, int slot) {
-    return q && slot >= 0 && slot < q->count && q->parked[slot];
-}
-
-static inline void nova_sched_register_pending(NovaFiberQueue* q, int slot,
-                                                void* handle,
-                                                NovaCancelStopCb stop_cb) {
-    if (!q || slot < 0 || slot >= NOVA_SCOPE_CAP) return;
-    q->pending_handle[slot]  = handle;
-    q->pending_stop_cb[slot] = stop_cb;
-}
-
-static inline void nova_sched_unregister_pending(NovaFiberQueue* q, int slot) {
-    if (!q || slot < 0 || slot >= NOVA_SCOPE_CAP) return;
-    q->pending_handle[slot]  = NULL;
-    q->pending_stop_cb[slot] = NULL;
-}
-```
-
-**Scheduler-loop изменение** (в `fibers.h`):
-
-`nova_supervised_step` пропускает `parked[i]`. Когда все живые
-fiber'ы parked — main-loop делает `uv_run(loop, UV_RUN_ONCE)`:
-
-```c
-static inline void nova_supervised_run(NovaFiberQueue* q) {
-    for (;;) {
-        int alive_unparked = nova_supervised_step(q);  /* только не-parked */
-        int alive_total    = nova_count_alive(q);
-        if (alive_total == 0) break;
-        if (alive_unparked == 0) {
-            /* Все живые fiber'ы parked — ждём libuv-события. */
-            uv_run(nova_evloop(), UV_RUN_ONCE);
-            /* Callback'и из uv_run пометили какие-то fiber'ы как unparked. */
-        }
-    }
-    /* ...existing error-propagation код... */
-}
-```
-
-**Использование API для sleep'а:**
-
-```c
+/* SleepState — embedded в caller's stack, живёт через park-period. */
 typedef struct {
     NovaFiberQueue* scope;
     int             slot;
     uv_timer_t      timer;
+    nova_bool       handle_closed;   /* set by close-callback */
 } NovaSleepState;
 
+/* Timer fired — wake parked fiber. */
 static void _nova_sleep_timer_cb(uv_timer_t* h) {
     NovaSleepState* st = (NovaSleepState*)h->data;
     nova_sched_wake(st->scope, st->slot);
-    /* uv_close в Ф.3 не нужен — handle живёт на fiber stack'е,
-     * Ф.3 закроет в caller-функции после wake. */
 }
 
-/* stop_cb для cancel-wake (R4) — вызывается из cancel-token. */
+/* uv_close callback — пометить что handle освобождён. */
+static void _nova_sleep_close_cb(uv_handle_t* h) {
+    NovaSleepState* st = (NovaSleepState*)h->data;
+    st->handle_closed = true;
+}
+
+/* stop_cb для cancel-wake: остановить timer и закрыть handle.
+ * Вызывается из nova_cancel_token_cancel перед nova_sched_wake. */
 static void _nova_sleep_stop_cb(void* handle) {
     uv_timer_t* timer = (uv_timer_t*)handle;
     if (!uv_is_closing((uv_handle_t*)timer)) {
         uv_timer_stop(timer);
-        uv_close((uv_handle_t*)timer, NULL);
+        uv_close((uv_handle_t*)timer, _nova_sleep_close_cb);
     }
-    /* wake сделает cancel_token_cancel после stop_cb. */
 }
 
-static inline void _nova_sleep_via_libuv(nova_int ms) {
+/* Production-grade Time.sleep:
+ * - Один path для всех контекстов (fiber / main-in-scope / top-level).
+ * - Park-on-timer через nova_sched_*.
+ * - Handler-override берёт приоритет (как раньше).
+ * - Cancel — immediate через stop_cb. */
+nova_unit _nova_time_default_sleep(nova_int ms) {
+    if (ms < 0) ms = 0;
+
     NovaFiberQueue* scope = _nova_active_scope;
     int             slot  = _nova_active_slot;
-    NovaSleepState  st    = { .scope = scope, .slot = slot };
 
-    uv_timer_init(nova_evloop(), &st.timer);
+    /* No scope — мы в pre-init либо в misconfigured runtime.
+     * Это shouldn't happen после D92 (top-level main = implicit
+     * scope), но defensive — assertion + abort. */
+    if (!scope) {
+        fprintf(stderr,
+            "nova: Time.sleep called without active scope "
+            "(missing main-scope init?)\n");
+        abort();
+    }
+
+    NovaSleepState st = {
+        .scope         = scope,
+        .slot          = slot,
+        .handle_closed = false,
+    };
+
+    /* Initialize timer. uv_timer_init не fails в practice
+     * (только если loop == NULL), но check anyway. */
+    int rc = uv_timer_init(nova_evloop(), &st.timer);
+    if (rc != 0) {
+        nova_throw(nova_str_from_cstr(uv_strerror(rc)));
+    }
     st.timer.data = &st;
-    uv_timer_start(&st.timer, _nova_sleep_timer_cb, (uint64_t)ms, 0);
 
-    /* Register для cancel-wake (R4). */
+    /* Start timer: fires after ms milliseconds, one-shot (repeat=0). */
+    rc = uv_timer_start(&st.timer, _nova_sleep_timer_cb, (uint64_t)ms, 0);
+    if (rc != 0) {
+        uv_close((uv_handle_t*)&st.timer, NULL);
+        nova_throw(nova_str_from_cstr(uv_strerror(rc)));
+    }
+
+    /* Register для cancel-wake. */
     nova_sched_register_pending(scope, slot, &st.timer, _nova_sleep_stop_cb);
 
-    /* Park — fiber suspend'ится до wake. */
+    /* Park. Возвращается из park'а либо когда timer_cb сделал wake,
+     * либо когда cancel сделал stop_cb + wake. */
     nova_sched_park(scope, slot);
-    /* ← control возвращается после wake (либо timer-callback, либо cancel). */
 
-    /* Dereg + cleanup. */
+    /* Unregister + cleanup. */
     nova_sched_unregister_pending(scope, slot);
+
+    /* Если handle не закрыт (timer_cb сработал normal, но не close'нул) —
+     * закрыть сейчас. uv_close — async, поэтому ждём close_cb через
+     * event loop tick'и пока handle_closed не станет true. */
     if (!uv_is_closing((uv_handle_t*)&st.timer)) {
-        uv_close((uv_handle_t*)&st.timer, NULL);
+        uv_close((uv_handle_t*)&st.timer, _nova_sleep_close_cb);
+    }
+    while (!st.handle_closed) {
+        uv_run(nova_evloop(), UV_RUN_NOWAIT);
     }
 
     /* Cancel-check на exit. */
-    if (scope && scope->cancel_requested) {
+    if (scope->cancel_requested) {
         nova_throw(nova_str_from_cstr("scope cancelled"));
     }
+
+    return NOVA_UNIT;
 }
 ```
 
-**Файлы:**
-- `compiler-codegen/nova_rt/sched.h` (новый): park/wake API,
-  pending-handle registration, реализация поверх `NovaFiberQueue`.
-- `compiler-codegen/nova_rt/fibers.h`:
-  + добавить `parked[]` + `pending_handle[]` + `pending_stop_cb[]`
-    в `NovaFiberQueue`;
-  + `#include "sched.h"` (API определён там);
-  + `nova_count_alive`;
-  + изменение `nova_supervised_step` (skip `parked[i]`);
-  + изменение `nova_supervised_run` (drain через `uv_run UV_RUN_ONCE`);
-  + переписать `_nova_time_default_sleep` fiber-ветка через
-    `sched.h` API.
-- `compiler-codegen/nova_rt/nova_rt.h` — `#include "sched.h"`.
-
-**Cancel-during-sleep wake (R4):**
-
-`nova_cancel_token_cancel` итерируется по slot'ам scope'а и вызывает
-зарегистрированный `pending_stop_cb` для каждого. stop_cb — операция-
-специфичный (для sleep'а это `_nova_sleep_stop_cb` выше; для recv'а
-будет `_nova_channel_recv_stop_cb` в Plan 21; для socket'а —
-`_nova_tcp_read_stop_cb` в Plan 23+).
+**Cancel-token расширение:**
 
 ```c
-static inline void nova_cancel_token_cancel(NovaCancelToken* t) {
+void nova_cancel_token_cancel(NovaCancelToken* t) {
     if (!t || !t->scope) return;
     if (t->scope->cancel_requested) return;   /* idempotent */
     t->scope->cancel_requested = true;
 
-    /* R4: пробуждаем все pending blocking-ops через registered stop_cb. */
+    /* Generic stop_cb mechanism: пройти по pending handle'ам всех slot'ов,
+     * вызвать stop_cb для каждого + wake. Это работает для timer'ов
+     * (Plan 22), channel waitlist'ов (Plan 21), socket-read'ов (Plan 23+). */
     NovaFiberQueue* q = t->scope;
     for (int i = 0; i < q->count; i++) {
         if (q->pending_stop_cb[i] && q->pending_handle[i]) {
@@ -439,389 +942,629 @@ static inline void nova_cancel_token_cancel(NovaCancelToken* t) {
 }
 ```
 
-После wake разбуженный fiber возвращается из `nova_sched_park`,
-делает `nova_sched_unregister_pending`, проверяет
-`scope->cancel_requested`, бросает `"scope cancelled"`. Это
-**универсальный паттерн** — sleep, recv, socket, file все идут через
-него одинаково.
+**Production decisions:**
 
-**Тесты:** `nova_tests/concurrency/sleep_real_clock.nv` (новый):
-```nova
-test "sleep waits at least ms" {
-    let t0 = Time.now()
-    supervised {
-        spawn { Time.sleep(100) }
-    }
-    let elapsed = Time.now() - t0
-    assert(elapsed >= 100)
-    assert(elapsed < 200)        // slack 100ms для CI
-}
+- **handle_closed busy-wait в cleanup.** Это **не** busy-yield в нашем
+  понимании — close-callback'и срабатывают на ближайшем `uv_run` tick'е,
+  обычно immediate. Максимум — несколько микросекунд. **Если** это
+  становится проблемой (профилирование покажет) — переход на
+  fiber-park during close-wait. Bootstrap-приемлемо.
+- **Negative `ms` handling.** Clamp в 0. По спеке `Time.sleep(0)` —
+  yield. Через uv_timer_t с `timeout=0` это и происходит (timer fires
+  immediately).
+- **Float precision.** Не релевантно — `ms` это `nova_int`.
+- **Error handling.** `uv_timer_init` и `uv_timer_start` могут вернуть
+  errno; mapping на `nova_throw` через `uv_strerror`. Это redundant
+  defensiveness (на практике fails не происходит), но production code
+  не должен `abort()` на recoverable errors.
 
-test "many fibers sleeping concurrently" {
-    let t0 = Time.now()
-    supervised {
-        for _ in 0..100 { spawn { Time.sleep(100) } }
-    }
-    let elapsed = Time.now() - t0
-    // Все 100 спят параллельно, не последовательно
-    assert(elapsed >= 100)
-    assert(elapsed < 300)
-}
+**Тесты:**
 
-test "cancel during long sleep wakes immediately" {
-    let t0 = Time.now()
-    cancel_scope { tok =>
-        spawn { Time.sleep(10000); panic("should not reach") }
-        spawn { Time.sleep(50); tok.cancel() }
-    }
-    let elapsed = Time.now() - t0
-    assert(elapsed < 200)        // отменено быстро, не ждём 10s — R4
-}
-```
+- `nova_tests/concurrency/sleep_real_clock.nv` (новый):
+  ```nova
+  test "sleep waits at least ms (within slack)" {
+      let t0 = Time.now()
+      supervised {
+          spawn { Time.sleep(100) }
+      }
+      let elapsed = Time.now() - t0
+      assert(elapsed >= 100)
+      assert(elapsed < 200)        // 100ms slack для CI
+  }
 
-**Acceptance:**
-- Все 3 теста PASS.
-- Существующие `nova_tests/concurrency/*` остаются 91/91 PASS.
-- На bench-задаче "10k fiber'ов в `sleep(1000)`" CPU < 5% во время
-  sleep (сейчас — 100% busy).
-- Cancel-during-sleep: wake-up в течение 50ms (не ждём весь sleep).
+  test "many fibers sleeping concurrently" {
+      let t0 = Time.now()
+      supervised {
+          for _ in 0..100 { spawn { Time.sleep(100) } }
+      }
+      let elapsed = Time.now() - t0
+      assert(elapsed >= 100)
+      assert(elapsed < 300)        // ВСЕ 100 спят параллельно
+  }
 
-**Объём:** ~180 строк C (включая R4 cancel-wake) + 3 теста.
+  test "cancel during long sleep wakes immediately" {
+      let t0 = Time.now()
+      cancel_scope { tok =>
+          spawn { Time.sleep(10000); panic("should not reach") }
+          spawn { Time.sleep(50); tok.cancel() }
+      }
+      let elapsed = Time.now() - t0
+      assert(elapsed < 200)        // wake-up через cancel R4
+  }
 
-**Риски:**
-- `mco_yield` с парком — нужна гарантия что scheduler не возобновит
-  parked fiber. Реализация через `parked[]` это даёт, но требует
-  аккуратности в `_nova_active_slot` (slot не сдвигается).
-- libuv handle (`uv_timer_t`) живёт на stack'е fiber'а — пока fiber
-  parked, его стек жив (minicoro держит). После wake — handle closed,
-  stack может разворачиваться.
-- R4 pending-timer-list: cap `NOVA_SCOPE_CAP` (1024) хватает для bootstrap;
-  при росте — heap-allocate list per-scope.
+  test "sleep(0) is fast yield" {
+      let t0 = Time.now()
+      supervised {
+          spawn { for _ in 0..1000 { Time.sleep(0) } }
+      }
+      let elapsed = Time.now() - t0
+      assert(elapsed < 100)        // 1000 yields завершаются быстро
+  }
 
----
+  test "sleep precision under load" {
+      // Загружаем scheduler 100 background fiber'ами + измеряем
+      // одиночный sleep — должен оставаться в пределах ±50ms.
+      let t0 = Time.now()
+      supervised {
+          for _ in 0..100 { spawn { Time.sleep(500) } }
+          spawn {
+              let t1 = Time.now()
+              Time.sleep(100)
+              let dt = Time.now() - t1
+              assert(dt >= 100)
+              assert(dt < 200)
+          }
+      }
+  }
 
-### Ф.4 — Main-flow sleep внутри `supervised`
+  test "sleep handler override still works" {
+      let mut calls = 0
+      let mock = handler Time {
+          sleep(ms) { calls += 1; return () }
+          now() => 12345
+      }
+      with Time = mock {
+          Time.sleep(1000)         // не блокирует — mock
+          Time.sleep(2000)
+      }
+      assert(calls == 2)
+  }
+  ```
+- `nova_tests/concurrency/sleep_top_level.nv` (новый):
+  ```nova
+  test "top-level sleep wall-clock" {
+      // После D92 (Ф.5) top-level имеет implicit scope, sleep работает.
+      let t0 = Time.now()
+      Time.sleep(100)
+      let elapsed = Time.now() - t0
+      assert(elapsed >= 100)
+      assert(elapsed < 200)
+  }
+  ```
 
-**Что:** main-ветка `_nova_time_default_sleep` (вызов `sleep` напрямую
-из main-кода внутри `supervised { ... }` тела). Сейчас:
+**Spec изменения:**
 
-```c
-while (_nova_monotonic_ms() < deadline) {
-    nova_supervised_step(scope);   /* drain fiber'ов раз за раз, пока время не пройдёт */
-}
-```
-
-После Ф.3 fiber'ы внутри scope уже паркуются через libuv. Но main-flow
-сам не fiber — он *вызывает* `supervised_step` в цикле. Нужно:
-
-```c
-} else if (_nova_active_scope) {
-    /* Main-flow внутри supervised: drain пока время не пройдёт,
-     * idle-периоды используем для uv_run (другие fiber'ы могут park'ed). */
-    int64_t deadline = _nova_monotonic_ms() + ms;
-    while (_nova_monotonic_ms() < deadline) {
-        int alive_unparked = nova_supervised_step(_nova_active_scope);
-        if (alive_unparked == 0) {
-            /* Все fiber'ы парк или пусто — спим в uv_run до timer'а либо
-             * до deadline. UV_RUN_ONCE с явным timeout — через
-             * uv_timer_t self-poke на оставшееся время. */
-            int64_t remaining = deadline - _nova_monotonic_ms();
-            if (remaining <= 0) break;
-            _nova_main_sleep_step(remaining);   /* UV_RUN_ONCE bounded by remaining */
-        }
-    }
-}
-```
-
-`_nova_main_sleep_step(remaining)` устанавливает свой timer на
-`remaining` мс с no-op callback'ом, делает `uv_run(loop, UV_RUN_ONCE)`,
-вернётся когда либо наш timer выстрелил, либо чужой fiber-callback
-сработал.
-
-**Файлы:**
-- `compiler-codegen/nova_rt/fibers.h` — обновить main-ветку
-  `_nova_time_default_sleep`, добавить `_nova_main_sleep_step`.
-
-**Тесты:** добавить в `sleep_real_clock.nv`:
-```nova
-test "main-flow sleep yields to fibers" {
-    let mut x = 0
-    let t0 = Time.now()
-    supervised {
-        spawn { Time.sleep(50); x = 42 }
-        Time.sleep(100)          // main-flow: даёт fiber'у отработать
-    }
-    assert(x == 42)
-    assert(Time.now() - t0 >= 100)
-    assert(Time.now() - t0 < 200)
-}
-```
-
-**Acceptance:** тест PASS, regression-free на 91/91.
-
-**Объём:** ~50 строк C + 1 тест.
-
----
-
-### Ф.5 — Top-level sleep (вне fiber, вне scope)
-
-**Что:** превратить top-level main в **скрытый mini-event-loop**.
-Сейчас вне scope `_nova_native_sleep_ms` блокирует thread; после Ф.5 —
-тот же `uv_run`-based mechanism что и main-внутри-scope, но без
-fiber'ов.
-
-```c
-} else {
-    /* Top-level вне любого supervised: mini-loop через uv_run. */
-    int64_t deadline = _nova_monotonic_ms() + ms;
-    while (_nova_monotonic_ms() < deadline) {
-        int64_t remaining = deadline - _nova_monotonic_ms();
-        _nova_main_sleep_step(remaining);
-    }
-}
-```
-
-**Семантика (R2 → D92):** обернуть весь `main()` в implicit
-supervised-scope. Иначе detach'ы / global timer callback'и запускаются
-в no-scope context. Это вводит новый D-блок **D92 — top-level main
-как implicit supervised scope** в `spec/decisions/06-concurrency.md`
-(пишется в Ф.6 одним коммитом с реализацией Ф.5).
-
-Codegen `emit_main` после prelude добавляет:
-```c
-int main(int argc, char** argv) {
-    /* ...init... */
-    NovaFiberQueue _main_scope; nova_scope_init(&_main_scope);
-    _nova_active_scope = &_main_scope;
-    /* ...user main body... */
-    nova_supervised_run(&_main_scope);   /* drain до полного quiescence */
-    nova_evloop_close();
-    return _exit_code;
-}
-```
-
-Это **семантическое изменение D71** (top-level main теперь имеет
-implicit scope). Для пользователя — invisible: всё что раньше
-работало, продолжает работать. Но spec должен это зафиксировать.
-
-**Файлы:**
-- `compiler-codegen/nova_rt/fibers.h` — top-level ветка.
-- `compiler-codegen/src/codegen/emit_c.rs` — `emit_main` обёртка.
-- `compiler-codegen/nova_rt/fibers.h` — `_nova_active_scope`
-  инициализирован main-scope'ом, не NULL.
-
-**Тесты:** добавить в `sleep_real_clock.nv`:
-```nova
-test "top-level sleep wall-clock" {
-    let t0 = Time.now()
-    Time.sleep(100)
-    let elapsed = Time.now() - t0
-    assert(elapsed >= 100)
-    assert(elapsed < 200)
-}
-```
-
-**Acceptance:** тест PASS, 91/91 regression-free.
-
-**Объём:** ~30 строк C + 1 тест + codegen-правка.
-
-**Риски:**
-- Implicit-scope меняет поведение `detach` на top-level (раньше
-  `SyncDetach` inline-исполнял; теперь detach попадает в main-scope
-  fiber-queue). Нужна проверка `nova_tests/concurrency/detach_test.nv`.
-
----
-
-### Ф.6 — Cleanup busy-yield path + spec sync
-
-**Что:** удалить старый busy-yield код, обновить спеку.
-
-**Файлы:**
-- `compiler-codegen/nova_rt/fibers.h:414-440` — удалить `while
-  (_nova_monotonic_ms() < deadline)` петли. Должны остаться только
-  park-on-timer / uv_run-driven варианты.
-- `compiler-codegen/nova_rt/fibers.h:386-407` — `_nova_native_sleep_ms`
-  становится unused, удалить (или оставить как `__attribute__((unused))`
-  fallback для future bare-metal target'ов).
-- `spec/syntax.md:1509-1521` — раздел `Time.sleep(ms)`:
-  + удалить «В bootstrap'е `ms` игнорируется (timer-wheel'а нет).
-    Любое `Time.sleep(N)` = один cooperative yield.»;
-  + добавить «`Time.sleep(ms)` блокирует текущий fiber на не менее
+- `spec/syntax.md:1509-1521` (раздел `Time.sleep(ms)`): **полностью
+  переписать**.
+  + Удалить «В bootstrap'е `ms` игнорируется (timer-wheel'а нет)».
+  + Удалить context-sensitive таблицу.
+  + Написать: «`Time.sleep(ms)` блокирует текущий fiber на не менее
     чем `ms` миллисекунд. Под капотом — libuv-таймер; fiber паркуется
-    до срабатывания timer'а, scheduler в это время крутит других
-    fiber'ов либо спит в kernel-wait'е. Top-level main обёрнут в
-    implicit supervised-scope, поэтому семантика sleep'а одинакова
-    из любого контекста.»
-- `spec/decisions/06-concurrency.md → D71` — обновить bootstrap-секцию:
-  + явно: scheduler driven by libuv event loop;
-  + ссылка на D92 для top-level семантики;
-  + сохранить D71-режим cooperative cancellation;
-  + **новая под-секция «Park/wake primitive»** — нормативное
-    описание `nova_sched_park`/`nova_sched_wake`/
-    `nova_sched_register_pending` API, контракт пользователя,
-    cancel-integration. Это implementation-уровневая семантика,
-    но фиксируется в spec'е чтобы Plan 21 / Plan 23+ опирались на
-    стабильный contract;
-  + добавить «Эволюция» с указанием Plan 22 как точки перехода
-    busy-yield → libuv timer wheel.
-- `spec/decisions/06-concurrency.md` — **новый D92** «Top-level main
-  как implicit supervised scope» (R2). Содержание:
-  + что: каждый `fn main()` codegen'ится с обёрткой
-    `nova_scope_init/run` вокруг тела;
-  + правило: drain до полного quiescence перед exit
-    (детач'ы дорабатывают, pending timer'ы срабатывают);
-  + error propagation: uncaught throw в main → `scope->first_error`
-    → re-throw → exit-code = 1 (либо panic-message в stderr);
-  + взаимодействие с D13 `exit(code, msg)`: bypass'ит scope drain
-    (как defer/errdefer per D90 §8);
-  + взаимодействие с D75 cancel_scope: top-level scope не имеет
-    user-token, но реализация даёт internal SIGINT-handler →
-    `nova_cancel_token_cancel(main_scope_token)` (опционально, для
-    graceful shutdown по Ctrl+C — отложено на future Plan);
-  + связь: D71 (bootstrap scheduler), D50 (detach), Plan 22 (где
-    реализовано).
-- `spec/decisions/README.md` — добавить строку D92 в индекс
-  `06-concurrency.md`.
-- `compiler-codegen/README.md` — bootstrap limitation про "timer-wheel'а
-  нет" удалить.
-
-**Тесты:** один benchmark `nova_tests/concurrency/sleep_bench.nv`
-(не automated PASS/FAIL, но запускаемый):
-```nova
-test "10k concurrent sleeps complete in ~100ms not 10s" {
-    let t0 = Time.now()
-    supervised {
-        for _ in 0..10_000 { spawn { Time.sleep(100) } }
-    }
-    let elapsed = Time.now() - t0
-    assert(elapsed < 1000)       // если бы было sequential — 10*1000s
-}
-```
+    через park/wake API (D93) до срабатывания timer'а, scheduler в
+    это время крутит других fiber'ов либо спит в kernel-wait'е.
+    Реализация одинакова из любого контекста благодаря D92 (top-level
+    main как implicit supervised scope). Cancel ([D75](decisions/06-concurrency.md#d75))
+    прерывает sleep немедленно через generic stop_cb mechanism (D93).»
+- `spec/decisions/06-concurrency.md → D71`: bootstrap-секция —
+  обновить, что scheduler driven by libuv event loop через D93 API.
 
 **Acceptance:**
-- Полный сброс busy-yield кода.
-- Spec соответствует реализации.
-- 10k concurrent sleeps укладывается в ~200ms (10× headroom).
-- 91+5 = 96+/96+ PASS.
 
-**Объём:** ~50 строк удаления C + 100 строк spec правки.
+- 6 тестов в `sleep_real_clock.nv` PASS.
+- 1 тест в `sleep_top_level.nv` PASS (после Ф.5 — пока skip).
+- Все 91/91 nova_tests PASS.
+- Старые ветки `_nova_time_default_sleep` (busy-yield) **полностью
+  удалены** — никаких bootstrap-fallback'ов.
+- `_nova_native_sleep_ms` удалена.
+- Bench: 10k concurrent sleeps в <200ms wall-clock, CPU <5% на sleep
+  period (verified через external profiling).
+- syntax.md обновлён, D71 cross-ref'ы на D92/D93.
+
+**Объём:** ~250 строк C (новая sleep impl + cancel-token расширение) +
+~50 строк spec sync + 7 тестов.
+
+**Риски:**
+
+- libuv handle lifecycle — handle_closed cleanup loop может стать
+  проблемой если close_cb сильно delay'ится (multiplex с другими
+  активными handle'ами). Mitigation: profile и monitor; в edge-case
+  — переход на event-loop driven close-wait.
+- Sleep precision — на загруженной системе libuv может задержать
+  callback на 5-10ms. Тесты используют slack 100ms — это compensates,
+  но реальная precision ограничена libuv tier (1-10ms резолюция
+  типично). Это **acceptable** для general-purpose runtime, не
+  real-time.
+- Edge case `ms == 0` — uv_timer_start с timeout=0 fires в текущем
+  uv_run loop. Verified тестом.
+
+---
+
+### Ф.5 — Implicit main-scope + D92
+
+**Что:** Top-level `main()` оборачивается в implicit `supervised`
+scope. Это **финализирует** унификацию: одна семантика sleep'а во
+всех контекстах.
+
+**Файлы:**
+
+- `compiler-codegen/src/codegen/emit_c.rs` `emit_main`: новая обёртка.
+  ```c
+  /* Generated main: */
+  int main(int argc, char** argv) {
+      nova_evloop_init();
+      atexit(nova_evloop_close);
+
+      /* D92: implicit main-scope. */
+      NovaFiberQueue _nova_main_scope;
+      nova_scope_init(&_nova_main_scope);
+      _nova_active_scope = &_nova_main_scope;
+      _nova_active_slot  = -1;    /* main-flow, не fiber */
+
+      /* ...args parsing, prelude... */
+
+      int _exit_code = 0;
+      NovaFailFrame _main_fail;
+      if (setjmp(_main_fail.jmp) == 0) {
+          NOVA_FAIL_PUSH(&_main_fail);
+          /* ...user main body... */
+          NOVA_FAIL_POP();
+      } else {
+          /* Uncaught throw в main — exit code 1 + stderr message. */
+          fprintf(stderr, "nova: uncaught error: %s\n",
+                  _main_fail.error_msg);
+          _exit_code = 1;
+      }
+
+      /* Drain implicit scope: detach'ы, pending timers, любые fiber'ы
+       * пробуждённые callback'ами после main-body — все доработают. */
+      nova_sched_run_to_quiescence(&_nova_main_scope);
+
+      _nova_active_scope = NULL;
+      _nova_active_slot  = -1;
+
+      return _exit_code;
+  }
+  ```
+- `compiler-codegen/nova_rt/fibers.h` `_nova_active_scope`: уже
+  `__declspec(thread)` extern — Ф.5 фактически инициализирует main-scope
+  немедленно.
+
+**Spec изменения:**
+
+- `spec/decisions/06-concurrency.md` — **новый D92** «Top-level main
+  как implicit supervised scope».
+  Содержание:
+  + **Что:** каждый `fn main()` codegen'ится с обёрткой
+    `nova_scope_init` + `nova_sched_run_to_quiescence` вокруг тела.
+  + **Правило 1:** `_nova_active_scope` всегда non-NULL в user-coде.
+    Все блокирующие операции (sleep, recv, IO) опираются на это.
+  + **Правило 2:** main-body завершается → drain до quiescence
+    (детач'ы, pending timer'ы, callback-spawned fiber'ы — все
+    доработают до конца).
+  + **Правило 3:** Uncaught throw в main → re-thrown в scope's
+    first_error chain → exit code 1 + stderr message (panic-style
+    formatted).
+  + **Правило 4:** `exit(code, msg)` ([D13](decisions/08-runtime.md#d13))
+    bypass'ит drain — гасит процесс **немедленно**, без cleanup
+    fiber'ов. Это **сознательно** — `exit` для catastrophic shutdown,
+    `defer`/`errdefer` ([D90](decisions/03-syntax.md#d90)) не
+    выполняются.
+  + **Правило 5:** `detach` ([D50](decisions/06-concurrency.md#d50))
+    в top-level кладёт fiber в main-scope (был бы no-op без D92).
+    Detach-fiber'ы доживают до `nova_sched_run_to_quiescence`
+    quiescence.
+  + **Правило 6 (future, не реализуется в Plan 22):**
+    SIGINT/Ctrl+C handler через `uv_signal_t` отменяет main-scope
+    cancel-token, fiber'ы получают cooperative cancel. Это —
+    optional extension, не часть Plan 22.
+  + **Связь:** D71 (scheduler), D75 (cancel_scope), D50 (detach),
+    D13 (exit), D90 (defer), D93 (park/wake API).
+  + **Эволюция:** до D92 — top-level не имел scope, sleep работал
+    через kernel-блокировку. Plan 22 Ф.5 — введение implicit scope,
+    унификация семантики.
+- `spec/decisions/README.md`: D92 в индекс `06-concurrency.md`.
+
+**Тесты:**
+
+- `nova_tests/runtime/implicit_main_scope.nv` (новый):
+  ```nova
+  test "top-level detach completes before exit" {
+      let mut completed = false
+      detach { completed = true }
+      // detach в top-level кладёт fiber в main-scope (D92).
+      // main завершается → drain → detach-fiber выполняется.
+      // Но мы НЕ можем здесь assert(completed) — мы ещё в main-body,
+      // detach ещё не выполнен. Для теста используем явный supervised:
+      supervised {
+          detach { completed = true }
+      }
+      assert(completed)
+  }
+
+  test "top-level sleep works (was kernel-block before D92)" {
+      // Это дубликат sleep_top_level.nv — оставлен для readability.
+      let t0 = Time.now()
+      Time.sleep(100)
+      assert(Time.now() - t0 >= 100)
+  }
+
+  test "uncaught throw → exit code 1" {
+      // Этот тест в отдельном файле, проверяется через EXPECT_EXIT_CODE.
+  }
+  ```
+- `nova_tests/runtime/implicit_main_uncaught_throw.nv` (новый):
+  ```nova
+  // EXPECT_EXIT_CODE 1
+  // EXPECT_STDERR uncaught error
+
+  fn main() Fail -> () {
+      throw Error.new("boom")
+  }
+  ```
+
+**Acceptance:**
+
+- D92 написан, индекс обновлён.
+- `emit_main` оборачивает в implicit scope.
+- `sleep_top_level.nv` PASS (теперь работает).
+- `implicit_main_scope.nv` 2 PASS.
+- `implicit_main_uncaught_throw.nv` PASS (exit code 1, stderr).
+- Existing 91/91 PASS — никаких регрессий на detach/cancel/exit семантике.
+- Regression check: `nova_tests/concurrency/detach_test.nv` — поведение
+  не изменилось (detach всё ещё working).
+
+**Объём:** ~80 строк C codegen + ~150 строк D92 spec + 3 теста.
+
+**Риски:**
+
+- **`detach` semantics change.** Раньше top-level detach был
+  `SyncDetach` (inline). После D92 — настоящий fiber в main-scope.
+  Это **breaking change** для кода, который полагался на inline'ность.
+  Mitigation: проверить все existing detach тесты, документировать.
+- **Performance overhead.** Простая `fn main() { println("hi") }`
+  теперь делает init + scope + drain. Overhead ~100µs. Acceptable
+  для backend/CLI use-case Nova (не embedded scripting).
+- **`exit(code, msg)` semantic** — bypass'ит drain. Spec явно
+  это пишет, но programmer может ожидать defer'ов. Это согласовано
+  с D90 §8 («exit без cleanup'ов»), но требует ясной документации.
+
+---
+
+### Ф.6 — Spec final sync + cleanup deprecated paths
+
+**Что:** Закрыть все doc-debt, удалить deprecated paths, написать
+bench для regression coverage.
+
+**Файлы:**
+
+- `compiler-codegen/nova_rt/fibers.h`: финальная чистка:
+  + удалить `_nova_native_sleep_ms` если ещё не удалён в Ф.4.
+  + удалить `_nova_monotonic_ms` busy-yield usage'ы если остались.
+  + добавить inline comments ссылающиеся на D71/D92/D93.
+- `compiler-codegen/README.md`: removed bootstrap limitations:
+  + удалить «timer-wheel'а нет».
+  + удалить «ms игнорируется в bootstrap».
+  + добавить «libuv vendored, см. nova_rt/libuv/UPDATE.md».
+- `spec/decisions/06-concurrency.md → D71`: Эволюция-секция:
+  + добавить «Plan 22: переход с busy-yield на libuv-driven через
+    D93 park/wake API. Bootstrap-режим (single-thread N:1) сохраняется,
+    но scheduler внутри уже event-loop driven. Plan 23 расширит на
+    M:N (work-stealing thread pool) без изменения API.»
+- `spec/decisions/06-concurrency.md → D75`: добавить cross-ref на D93
+  (cancel pattern через generic stop_cb).
+- `spec/decisions/06-concurrency.md → D80`: cross-ref на D92 (top-level
+  main implicit scope также имеет per-fiber handler scoping).
+- `spec/syntax.md`: проверить весь раздел `Time.sleep` точен.
+- `docs/project-creation.txt`: retro секция Plan 22 (по политике
+  [feedback_project_docs](../../memory/feedback_project_docs.md)).
+- `docs/simplifications.md`: retro секция Plan 22.
+
+**Bench:**
+
+- `nova_tests/concurrency/sleep_bench.nv` (новый, не automated в
+  основном run, но runnable вручную):
+  ```nova
+  test "10k concurrent sleeps complete in ~100ms" {
+      // На single thread Nova bootstrap — это **парк/wake bench**,
+      // не CPU-bound. 10k fiber'ов в sleep + wake — должно укладываться
+      // в 1 секунду wall-clock (далеко не sequential 10*100=1000s).
+      let t0 = Time.now()
+      supervised {
+          for _ in 0..10_000 { spawn { Time.sleep(100) } }
+      }
+      let elapsed = Time.now() - t0
+      assert(elapsed < 1000)      // 10× headroom vs precision
+  }
+
+  test "1M sleep(0) yields в < 1 секунды" {
+      // CPU-bound stress: scheduler throughput.
+      let t0 = Time.now()
+      supervised {
+          spawn { for _ in 0..1_000_000 { Time.sleep(0) } }
+      }
+      let elapsed = Time.now() - t0
+      assert(elapsed < 1000)
+  }
+  ```
+- Опционально (вручную): valgrind/AddressSanitizer на Linux после
+  Plan 09 — проверка нулевых leaks.
+
+**Acceptance:**
+
+- `_nova_native_sleep_ms`, busy-yield ветки **отсутствуют** в codebase
+  (grep'нуть «_nova_native_sleep»).
+- `compiler-codegen/README.md` обновлён, bootstrap limitations
+  removed где они уже не актуальны.
+- `D71`, `D75`, `D80`, `D92`, `D93` cross-ref'нуты друг на друга
+  корректно.
+- `syntax.md` `Time.sleep` секция точна.
+- `project-creation.txt` + `simplifications.md` retro секции.
+- Bench: 10k sleeps PASS, 1M yields PASS.
+- discussion-log запись (private repo, per
+  [feedback_discussion_log](../../memory/feedback_discussion_log.md)).
+
+**Объём:** ~50 строк удалений в C + ~100 строк spec sync + 2 bench
+теста + retro документация.
+
+**Риски:**
+
+- Bench-flakiness на slow CI — slack'и (1000ms vs theoretical 100ms,
+  10× headroom) дают подушку. Если в CI всё равно flaky — добавить
+  retry либо переместить в manual bench tier.
+
+---
+
+## Параллельный interp-track
+
+Каждая основная фаза (Ф.1-Ф.6) имеет под-фазу для interp. Они
+выполняются **параллельно** с codegen-фазой — нет смысла откладывать
+interp, потому что test parity нужна на каждой acceptance gate.
+
+| Codegen-фаза | Interp под-фаза | Что в interp |
+|---|---|---|
+| **Ф.1** libuv vendored | **Ф.1i** tokio dependency | Cargo.toml `tokio = { version = "1", features = ["rt","time","sync","macros"] }`. Smoke: tokio runtime init работает. |
+| **Ф.2** глобальный uv_loop | **Ф.2i** глобальный TokioScheduler | `compiler-codegen/src/interp/sched.rs` — `TokioScheduler` singleton, lazy-init на первый interp-call, dropped на process exit. |
+| **Ф.3** park/wake API + D93 | **Ф.3i** Rust trait `InterpScheduler` + tokio impl | Rust trait mirrors D93 C API. `TokioScheduler::park/wake/register_pending` через tokio Notify + CancellationToken. D93 spec покрывает **обе** implementation (C и Rust) с identical semantics. |
+| **Ф.4** Time.sleep + cancel-wake | **Ф.4i** Interp `Time.sleep` через tokio | Interp's `Time.sleep(ms)` маршрутизируется на `runtime.block_on(async { tokio::time::sleep(...).await })` либо если уже внутри async — `.await` directly. Spawn становится `tokio::task::spawn_local` через LocalSet. |
+| **Ф.5** implicit main-scope + D92 | **Ф.5i** Interp implicit-scope | Interp's entry-point создаёт TokioScheduler + main-scope. Drain до quiescence через `LocalSet::run_until_stalled` либо аналог. |
+| **Ф.6** final sync + bench | **Ф.6i** Verification harness | Test-runner запускает `nova-codegen test` на тех же sleep-тестах что и codegen — параллельная CI. Test parity verification. |
+
+### Acceptance per-phase
+
+Каждая фаза имеет **double acceptance**: codegen-канал и interp-канал.
+Без обоих — фаза не закрыта.
+
+### Объём по interp
+
+| Под-фаза | Объём Rust |
+|---|---|
+| Ф.1i tokio dep | ~10 строк Cargo.toml + 5 строк smoke-test |
+| Ф.2i TokioScheduler skeleton | ~100 строк (struct + init/drop + introspection) |
+| Ф.3i trait + tokio impl | ~250 строк (trait + 5 methods + state mgmt) |
+| Ф.4i Time.sleep + spawn rewire | ~200 строк (rewire interp eval для Spawn/Supervised/CancelScope/Time через scheduler) |
+| Ф.5i implicit main-scope | ~50 строк (interp entry-point обёртка) |
+| Ф.6i verification harness | ~80 строк (CI script + parallel-runner config) |
+
+**Итого interp:** ~700 строк Rust + 0 новых тестов (используем те же
+20 тестов что codegen — это и есть parity verification).
 
 ---
 
 ## Сводка по фазам
 
-| Фаза | Что | Объём | Acceptance |
+| Фаза | Объём codegen | Объём interp | Что закрыто |
 |---|---|---|---|
-| Ф.1 | libuv в build chain (vendored amalgamation, R1) | ~50 строк + vendored libuv | link-smoke PASS |
-| Ф.2 | глобальный `uv_loop_t` | ~80 строк | lifecycle-test PASS |
-| Ф.3 | `Time.sleep` fiber-ветка через `uv_timer_t` + cancel-wake (R4) | ~180 строк + 3 теста | 3 sleep-теста PASS + 91 regression |
-| Ф.4 | main-flow sleep через uv_run | ~50 строк + 1 тест | main-yield-test PASS |
-| Ф.5 | top-level sleep + implicit main-scope (D92 prep) | ~30 строк + codegen + 1 тест | top-level-sleep PASS, detach regression-free |
-| Ф.6 | cleanup + spec sync (D71 + новый D92, R2) | ~50 удалений + 200 spec + 1 bench | 10k-sleep < 1s, spec sync, D92 принят |
+| Ф.1 libuv build chain + Ф.1i tokio | ~150 строк Rust + vendored libuv | ~10 строк Cargo + 5 smoke | infra |
+| Ф.2 глобальный uv_loop + Ф.2i TokioScheduler | ~150 строк C + 30 Rust | ~100 строк Rust | event-loop infra |
+| Ф.3 park/wake API + D93 + Ф.3i InterpScheduler trait | ~300 строк C + 100 spec + 7 тестов | ~250 строк Rust | normative API (D93 покрывает оба) |
+| Ф.4 Time.sleep + cancel-wake + Ф.4i tokio impl | ~250 строк C + 50 spec + 7 тестов | ~200 строк Rust | sleep semantic |
+| Ф.5 implicit main-scope + D92 + Ф.5i | ~80 C + 150 spec + 3 теста | ~50 строк Rust | unification |
+| Ф.6 final sync + bench + Ф.6i CI parallel | ~50 C delete + 100 spec + 2 bench + retro | ~80 строк CI | doc-debt zero + test parity |
 
-Итого: ~390 строк C, ~200 строк spec, 6 новых тестов, 1 новый D-блок (D92).
-
----
-
-## Зафиксированные решения
-
-**R1. libuv = vendored amalgamation** (single-file dist в `nova_rt/libuv/`).
-~30k строк vendored кода, но быстрый checkout, никаких submodule-quirks,
-никаких system-dependencies на Windows. Согласовано с политикой
-[feedback_third_party_libs](../../memory/feedback_third_party_libs.md)
-— не патчим, обёртки только в `nova_rt/`.
-
-**R2. D92** — новый D-блок в `06-concurrency.md`: «top-level main как
-implicit supervised scope». Полная семантика (drain до quiescence, exit
-semantics, error propagation chain, detach behavior). Открывается в Ф.5
-одним коммитом с реализацией. Не «эволюция D71» — изменение слишком
-значимое, требует отдельного D-номера.
-
-**R3. `Time.now()` остаётся на `clock_gettime`/`GetTickCount64`.**
-Миграция на `uv_hrtime()` отложена — не блокер для sleep, рисков
-с epoch и API больше чем профита (Time.now() возвращает `nova_int`
-в ms, uv_hrtime даёт ns). Отдельный тюнинг при необходимости.
-
-**R4. Cancel-during-sleep — фиксим в Ф.3.** CancelToken расширяется
-list'ом pending `uv_timer_t*`. `cancel()` итерируется по pending
-таймерам, делает `uv_timer_stop` + явный wake fiber'а через `nova_sched_wake`.
-+30 строк, но cancel-during-long-sleep работает immediate (как ожидает
-[D75](../../spec/decisions/06-concurrency.md#d75) — `tok.cancel()`
-семантически даёт fail-fast).
+**Итого:**
+- ~880 строк C нового, ~150 удалено.
+- ~700 строк Rust нового (interp track).
+- ~400 строк spec (D71 update, новые D92 + D93, syntax.md, D75/D80
+  cross-ref).
+- 19 новых тестов (codegen) + те же 19 тестов на interp-канале + 2 bench.
+- 2 новых D-блока (D92, D93) — оба покрывают **codegen + interp**
+  с identical semantics.
+- Vendored libuv (~10 MB) + tokio dependency (~3-5 MB tree).
 
 ---
 
-## Что НЕ входит в Plan 22
+## Зафиксированные production-decisions
 
-- **Socket IO через libuv** — отдельный Plan 23+ (под `std.net`).
-  Plan 22 только timer'ы.
-- **Threading / M:N scheduler** — `uv_loop_t` остаётся single-threaded.
-  Multi-thread runtime — гораздо позже, отдельная задача (v1.0+
-  milestone, требует work-stealing scheduler, TLS migration,
-  atomic-готового runtime).
-- **`Time.now()` via `uv_hrtime`** — R3, оставлено на
-  `clock_gettime`/`GetTickCount64`.
-- **High-precision timers** (микросекунды, наносекунды). libuv даёт ms,
-  Nova `Time.sleep(ms)` — `nova_int` ms, согласовано.
-- **Cron-style scheduling, `Time.every`** — stdlib feature, не runtime.
-- **SIGINT-graceful shutdown** для top-level main — упоминается в
-  D92 как optional future extension, не реализуется в Plan 22.
+**R1. libuv — vendored amalgamation в `nova_rt/libuv/`.**
+Точный release tag фиксируется в `VERSION` файле. Update procedure
+в `nova_rt/libuv/UPDATE.md`. Не патчим — конфигурируем компилятор
+(`#pragma warning`, `-Wno-*`).
+
+**R2. D92 — top-level main как implicit supervised scope.**
+Новый D-блок в `06-concurrency.md`. Полная семантика: drain до
+quiescence, exit code propagation, detach behavior, exit() bypass.
+
+**R3. D93 — park/wake как нормативный runtime API.**
+Новый D-блок в `06-concurrency.md`. Контракт для всех blocking
+операций (Plan 22 sleep, Plan 21 channels, Plan 23+ socket/file IO).
+
+**R4. Cancel-during-blocking-op — first-class через generic stop_cb.**
+Не best-effort, не «cancel виден на следующий yield» — immediate
+wake'ом. Pending-handle registration **обязательна** перед park'ом.
+
+**R5. `Time.now()` остаётся на `clock_gettime`/`GetTickCount64`.**
+Не мигрируем на `uv_hrtime`. Резон: Plan 22 — про sleep, не про
+clock backend. Tuning отдельный.
+
+**R6. Один глобальный `uv_loop_t` через `uv_default_loop()`.**
+Single-thread bootstrap. Per-worker loop'ы — Plan 23 (M:N), не
+Plan 22.
+
+**R7. No busy-loops anywhere после Plan 22.**
+Все ветки `_nova_time_default_sleep` переходят на park-on-handle.
+`_nova_native_sleep_ms` удаляется. Это **архитектурное обязательство**
+— любая будущая блокирующая операция в runtime обязана идти через
+D93 API.
+
+**R8. Spec sync атомарен с реализацией.**
+Каждая фаза, изменяющая spec'овую семантику (Ф.3 D93, Ф.4 syntax.md,
+Ф.5 D92, Ф.6 D71/D75/D80 update), коммитится **одним PR** с кодом
++ spec изменениями. Нет фазы где код впереди spec'а либо наоборот.
+
+**R9. Production tests с wall-clock validation.**
+Не только handler-mock тесты — реальные `Time.now() - t0 >= ms`
+asserts с slack'ом 100ms для CI стабильности. 10k bench для
+scheduler throughput, 1M sleep(0) для yield throughput. Это валидирует
+не только функциональность но и что **busy-loop'ов реально нет**.
+
+**R10. Build infrastructure для cross-platform readiness.**
+build_invoker.rs готовится сразу к Linux/macOS (хотя primary testing
+— Windows MSVC). Plan 09 (clang migration) тогда не требует переделки
+build-системы под libuv.
+
+**R11. Interp + codegen parity — first-class requirement.**
+Никаких channel-specific skips. Каждая acceptance gate включает
+**оба** канала. Interp реализует D93 contract через tokio current_thread
+runtime, semantically идентично libuv-driven codegen. Lessons learned
+из Plan 14 Ф.6 verification miss (codegen ✅ / interp ❌ не обнаружено
+до retrospective).
+
+**R12. D93 нормативный для обоих implementation backends.**
+D93 описывает **семантику**, не конкретную реализацию. C-implementation
+через libuv (`nova_rt/sched.h`) и Rust-implementation через tokio
+(`interp/sched.rs`) — две validation'и одного contract'а. Любая
+будущая backend (например, io_uring direct для Linux) идёт через тот
+же contract.
 
 ---
 
 ## Связь с другими планами
 
-- [Plan 18](18-stdlib-roadmap.md) — Plan 22 закрывает один из
-  prerequisite'ов для `std.net`/`std.fs` (единый event loop). Любой
-  socket-IO позже встанет на тот же park/wake mechanism, что вводит
-  Plan 22 Ф.3 — handle будет `uv_tcp_t`/`uv_poll_t` вместо `uv_timer_t`,
-  семантика та же.
-- [Plan 21](21-channel-revision-implementation.md) — Channel D91.
-  `send`/`recv` блокировка должна использовать тот же park/wake
-  primitive (`nova_sched_park`/`nova_sched_wake`) что и `Time.sleep`.
-  Cancel-during-recv — по тому же паттерну что R4 (CancelToken держит
-  pending channel-waiters). Если Plan 22 завершён раньше — Plan 21
-  реализует `send`/`recv` сразу через park/wake без двухэтапной
-  переделки. Plan 22 формально не блокирует Plan 21, но архитектурный
-  prerequisite. См. [Plan 21 «Интеграция с Plan 22»](21-channel-revision-implementation.md#интеграция-с-plan-22).
-- [Plan 09](09-clang-migration.md) — libuv build на Linux/clang
-  раскрывается тогда же.
-- [Plan 20](20-defer-implementation.md) — `defer tx.close()` для
-  Channel'ов: не блокер, но Plan 22 не зависит от defer.
-- [D71](../../spec/decisions/06-concurrency.md) — bootstrap-семантика
-  scheduler'а, обновляется в Ф.6.
-- [D75](../../spec/decisions/06-concurrency.md#d75) — cancel_scope:
-  взаимодействие с sleep'ом — R4 (cancel пробуждает parked-fiber'ы).
-  Тот же mechanism наследует Plan 21 для cancel-during-recv.
+- [Plan 18](18-stdlib-roadmap.md): Plan 22 закрывает **prerequisite**
+  для `std.net`/`std.fs`/`std.io` P0. После Plan 22 socket/file IO
+  встают на park/wake API из D93 — handle будет `uv_tcp_t`/`uv_fs_t`,
+  stop_cb будет `uv_read_stop`/`uv_cancel`. Никакой переделки
+  runtime'а под IO не нужно.
+- [Plan 21](21-channel-revision-implementation.md): `Channel.send`/`recv`
+  через park/wake API из D93. Cancel-during-recv работает immediate
+  через generic stop_cb. Если Plan 22 завершён первым (рекомендуется)
+  — Plan 21 Ф.1 пишет channels production-grade сразу. См. Plan 21
+  «Интеграция с Plan 22».
+- [Plan 23](23-mn-runtime-roadmap.md): M:N runtime **расширяет** Plan 22:
+  - park/wake API остаётся, добавляется cross-worker wake через
+    `uv_async_t`.
+  - `uv_loop_t` становится per-worker (вместо одного глобального).
+  - per-fiber state migration (TLS → struct) — D93 API уже spec'ом
+    готов к этому (handler-stack-snapshot живёт per-fiber через
+    `fiber_effect_snapshot[]`).
+- [Plan 09](09-clang-migration.md): libuv build на Linux/Clang требует
+  Plan 09 (нет MSVC на Linux). build_invoker готов в Ф.1.
+- [Plan 20](20-defer-implementation.md): `defer tx.close()` для
+  channels — не блокер для Plan 22, но идиоматично с Plan 21.
+- [D6](../../spec/decisions/05-memory.md#d6) — managed heap, GC не
+  затрагивается Plan 22 (никаких новых allocation patterns).
+- [D13](../../spec/decisions/08-runtime.md#d13) — `panic`/`exit`
+  семантика; D92 явно описывает что `exit()` bypass'ит drain.
+- [D50](../../spec/decisions/06-concurrency.md#d50) — detach
+  behavior; D92 уточняет под implicit main-scope.
+- [D71](../../spec/decisions/06-concurrency.md#d71) — bootstrap
+  scheduler; обновляется в Ф.6 с указанием на D92+D93.
+- [D75](../../spec/decisions/06-concurrency.md#d75) — cancel_scope;
+  R4 фиксирует immediate cancel через generic stop_cb (D93).
+- [D80](../../spec/decisions/06-concurrency.md#d80) — per-fiber
+  handler scoping; не меняется, но Plan 23 будет требовать TLS
+  migration (D93 уже готов).
+- [D90](../../spec/decisions/03-syntax.md#d90) — `defer`/`errdefer`;
+  D92 явно описывает что `exit()` обходит defer'ы.
 
 ---
 
 ## Verification
 
-После полного плана:
-- `run_tests.ps1`: 96+/96+ PASS на Windows MSVC.
-- `nova-codegen test`: interp без регрессий (Plan 22 не трогает interp;
-  interp `Time.sleep` остаётся как был — простой блокинг или no-op).
-- Bench: 10k concurrent sleep'ов в <1s wall-clock, CPU idle <10% на
-  sleep period.
-- Spec: `Time.sleep` секция в `syntax.md` и D71 в `06-concurrency.md`
-  соответствуют реализации (отсутствуют упоминания "ms игнорируется"
-  / "timer-wheel'а нет").
+### Functional verification (оба канала)
+
+После полного плана — **оба канала прогоняются** на каждой acceptance gate:
+
+- **`run_tests.ps1`** (codegen, .nv → C → exe): **110+/110+ PASS** на
+  Windows MSVC (91 baseline + 19 новых sleep-тестов + 2 bench, минус
+  никаких регрессий).
+- **`nova-codegen test <всех .nv>`** (interp, AST интерпретация в Rust):
+  **110+/110+ PASS** — identical список тестов. Те же 19 sleep-тестов
+  + 2 bench работают через tokio backend. Interp `Time.sleep` теперь
+  production-grade (R11), а не `thread::sleep` либо no-op.
+- 0 leak'ов на exit:
+  - codegen: `_CrtSetDbgFlag` (Windows debug) либо valgrind (Linux
+    после Plan 09).
+  - interp: TokioScheduler drop fires cleanly, Cargo test'ы с
+    `--release` без warnings.
+
+**Acceptance не закрывается без обоих каналов.** Если codegen ✅ /
+interp ❌ — фаза не done, как Plan 14 Ф.6 retrospective lesson.
+
+### Performance verification
+
+- **10k concurrent sleeps (100ms)** wall-clock <200ms, CPU profile
+  <5% scheduler overhead на sleep period.
+- **1M sleep(0) yields** в <1 сек.
+- **Sleep precision under load**: ±50ms на 100 background fiber'ах
+  (libuv tier).
+- **Cancel latency**: cancel-token cancel пробуждает parked fiber в
+  <1ms (verified через precise Time.now() в тесте).
+
+### Spec consistency
+
+- `grep -rn "ms игнорируется"` в spec/ — нет matches.
+- `grep -rn "timer-wheel'а нет"` в codebase — нет matches.
+- D71/D75/D80/D92/D93 cross-ref'нуты bidirectionally.
+- `spec/decisions/README.md` индекс обновлён.
+- `compiler-codegen/README.md` bootstrap-limitations sec обновлена.
 
 ---
 
 ## Цена
 
-1. **libuv в bootstrap.** +30k строк vendored кода, +1 dependency на
-   build. Mitigation: vendored single-file dist, не патчим.
-2. **Изменение scheduler-loop'а.** Сейчас `nova_supervised_run`
-   — простой `while alive > 0`. После Plan 22 — состояние "alive vs
-   parked vs ready", `uv_run` в idle. Сложнее для отладки.
-3. **Implicit main-scope.** Семантическое изменение, требует D-блок
-   (Q2).
-4. **Cancel race (Q4).** Дополнительная сложность в cancel-token
-   bookkeeping (~30 строк). Без неё long-sleep + cancel становится
-   broken UX.
-5. **Тест-flakiness риск.** Wall-clock тесты с slack'ами могут
-   моргать в CI. Slack 100ms — компромисс между чувствительностью и
-   стабильностью.
+1. **Vendored libuv в repo.** ~10 MB не-нашего кода. Mitigation:
+   amalgamation, update procedure documented, license compatible
+   (MIT).
+2. **Build complexity.** libuv adds ~30 сек на cold build (cached
+   ~0). Mitigation: build cache в `target/libuv-cache/`.
+3. **D92 implicit main-scope — behavioural change.** Top-level
+   detach теперь имеет настоящий scope, было `SyncDetach`. Mitigation:
+   regression tests, документация в D92.
+4. **Spec footprint.** +2 новых D-блока (D92, D93) + update'ы по
+   3-4 существующим. Это нормально для production-grade фазы —
+   spec и реализация развиваются синхронно (R8).
+5. **D93 — нормативный API contract.** Любой future runtime change,
+   нарушающий contract — это **breaking change** (требует D-блок
+   update). Это **фича**, не баг — стабильный contract для всего
+   stdlib roadmap'а.
+
+---
+
+## Что НЕ входит в Plan 22
+
+- **Socket / file / DNS IO** — Plan 23+ (под `std.net`/`std.fs`).
+  Plan 22 закладывает API, не реализует IO.
+- **M:N scheduler** — Plan 23. `uv_loop_t` остаётся single глобальный.
+- **High-precision timers (μs, ns)** — libuv даёт ms, `Time.sleep(ms)`
+  использует ms. Sub-ms точность — future, не Plan 22.
+- **`Time.now()` через `uv_hrtime`** — R5, отложено.
+- **Cron-style scheduling, `Time.every`, `Timer`, `Ticker`** —
+  stdlib feature, не runtime. Plan 18 `std.time` модуль.
+- **SIGINT-graceful shutdown для top-level main** — упоминается в
+  D92 §6 как optional future. Реализуется отдельным планом если
+  потребуется.
+- **`Blocking`-effect honest pool** — D50 deferred. Plan 23 M:N
+  включит blocking-pool.
+- **Multi-handle per slot в park/wake API** — Plan 22 single-handle.
+  `select` (Plan 21 Ф.4) расширит до multi.
