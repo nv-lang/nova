@@ -315,10 +315,19 @@ static inline void nv_exit(nova_int code, nova_str msg) {
  * User override: `with Fail = (msg) => handler_body { body }` — D31
  * single-op handler-lambda sugar. Works automatically because Fail is
  * a regular effect.
+ *
+ * Plan 20 Ф.8 (4): D65 правило 3 «re-throw skip current frame». Когда
+ * `throw err` происходит ВНУТРИ handler-body, runtime должен dispatch'нуться
+ * на OUTER handler (skip current — иначе infinite recursion). Поле `prev`
+ * хранит outer handler на момент install'а — Nova_Fail_fail на время
+ * invocation handler-body временно swap'ает _nova_handler_Fail = prev,
+ * восстанавливает после. Codegen emit_with инициализирует vtable->prev
+ * перед install'ом.
  */
-typedef struct {
-    void*     ctx;
-    nova_unit (*fail)(void* _ctx, nova_str msg);
+typedef struct NovaVtable_Fail {
+    void*                       ctx;
+    nova_unit                  (*fail)(void* _ctx, nova_str msg);
+    struct NovaVtable_Fail*      prev;  /* outer handler, для D65 re-throw */
 } NovaVtable_Fail;
 
 #ifdef _MSC_VER
@@ -332,10 +341,20 @@ extern __thread NovaVtable_Fail* _nova_handler_Fail;
  * the error in captured state), THEN we longjmp to the nearest fail-frame
  * — Fail-strict semantics (D65): fail() never resumes the caller.
  * Without handler → nova_throw directly (longjmp to fail-frame; abort
- * with message if no frame). */
+ * with message if no frame).
+ *
+ * Plan 20 Ф.8 (4): на время handler.fail invocation временно ставим
+ * _nova_handler_Fail = current->prev — если в handler-body встретится
+ * `throw err`, он dispatch'ится на outer handler (D65 правило 3).
+ * Восстанавливаем после return. */
 static inline nova_unit Nova_Fail_fail(nova_str msg) {
     if (_nova_handler_Fail) {
-        _nova_handler_Fail->fail(_nova_handler_Fail->ctx, msg);
+        NovaVtable_Fail* current = _nova_handler_Fail;
+        _nova_handler_Fail = current->prev;        /* swap для re-throw */
+        current->fail(current->ctx, msg);
+        _nova_handler_Fail = current;              /* restore (если handler
+                                                       завершился normally
+                                                       без exit-control) */
         /* Handler returned — by D65 Fail-strict, fail() is `Never` from the
          * caller's perspective. Force unwind to the nearest fail-frame so
          * caller code after the throw doesn't execute. */

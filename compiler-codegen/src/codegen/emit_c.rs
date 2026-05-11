@@ -1361,6 +1361,16 @@ impl CEmitter {
                 "NovaVtable_{eff}* {prev} = _nova_handler_{eff};",
                 eff = effect_name, prev = prev_var
             ));
+            // Plan 20 Ф.8 (4): D65 правило 3 — vtable->prev = outer handler.
+            // Nova_Fail_fail swap'ает _nova_handler_Fail = current->prev на
+            // время invocation, чтобы re-throw в handler-body dispatch'ился
+            // на outer handler (skip current frame).
+            if effect_name == "Fail" {
+                self.line(&format!(
+                    "{hv}->prev = {prev};",
+                    hv = handler_val, prev = prev_var
+                ));
+            }
             self.line(&format!(
                 "_nova_handler_{eff} = {hv};",
                 eff = effect_name, hv = handler_val
@@ -1643,6 +1653,16 @@ impl CEmitter {
             let fn_name = format!("{}_impl_{}_{}", handler_id, eff, m.name);
             self.line(&format!("{vt}->{method} = {fn};",
                 vt = vtable_var, method = m.name, fn = fn_name));
+        }
+        // Plan 20 Ф.8 (4): vtable->prev initialized to NULL here.
+        // Будет перезаписан в `with X = h { ... }` codegen перед install'ом
+        // (см. emit_with: `h->prev = _nova_handler_X; _nova_handler_X = h;`).
+        // Для эффектов БЕЗ `prev` поля (не Fail-shaped) это noop — мы
+        // эмитим `prev = NULL` только для встроенных Fail-like vtables.
+        // Bootstrap-stage: hardcoded на эффект "Fail" — единственный с
+        // prev в runtime.
+        if eff == "Fail" {
+            self.line(&format!("{vt}->prev = NULL;", vt = vtable_var));
         }
 
         // ---- Emit forward declarations into deferred_impls (file scope) ----
