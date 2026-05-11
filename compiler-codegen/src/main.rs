@@ -86,6 +86,10 @@ enum Cmd {
         /// Plan 26 Ф.1: timeout на child-процесс в секундах. Default 60.
         #[arg(long, default_value_t = 60)]
         timeout: u64,
+        /// Plan 27 Ф.1: GC backend. malloc = plain malloc (default, internal/bench only).
+        /// boehm = Boehm-Demers-Weiser conservative tracing GC.
+        #[arg(long, value_parser = ["malloc", "boehm"], default_value = "malloc")]
+        gc: String,
     },
     /// Plan 24: рекурсивный прогон всех .nv в `--tests-dir`. Заменяет
     /// run_tests.ps1 целиком; .ps1 / .sh wrapper'ы вызывают эту команду.
@@ -152,6 +156,10 @@ enum Cmd {
         /// (e.g., 'cannot open output file'). 0 = no retry. CI default 2.
         #[arg(long, default_value_t = 0)]
         retries: u32,
+        /// Plan 27 Ф.1: GC backend. malloc = plain malloc (default, internal/bench only).
+        /// boehm = Boehm-Demers-Weiser conservative tracing GC.
+        #[arg(long, value_parser = ["malloc", "boehm"], default_value = "malloc")]
+        gc: String,
     },
 }
 
@@ -186,10 +194,10 @@ fn main() -> ExitCode {
         Cmd::EmitRuntimeStubs { root, check } =>
             cmd_emit_runtime_stubs(&root, check),
         Cmd::DumpRuntime => cmd_dump_runtime(),
-        Cmd::TestBuild { file, mode, toolchain, vcvars, clang, cg_include, rt_dir, tmp_dir, display, keep_artifacts, timeout } =>
-            cmd_test_build(&file, &mode, &toolchain, vcvars.as_deref(), clang.as_deref(), cg_include.as_deref(), rt_dir.as_deref(), tmp_dir.as_deref(), display.as_deref(), keep_artifacts, timeout),
-        Cmd::TestAll { tests_dir, stdlib_dir, include_stdlib, filter, mode, toolchain, vcvars, clang, cg_include, rt_dir, tmp_dir, keep_artifacts, timeout, jobs, format, verbose, quiet, results_file, rerun_failed, retries } =>
-            cmd_test_all(&tests_dir, &stdlib_dir, include_stdlib, filter.as_deref(), &mode, &toolchain, vcvars.as_deref(), clang.as_deref(), cg_include.as_deref(), rt_dir.as_deref(), tmp_dir.as_deref(), keep_artifacts, timeout, jobs, &format, verbose, quiet, results_file.as_deref(), rerun_failed, retries),
+        Cmd::TestBuild { file, mode, toolchain, vcvars, clang, cg_include, rt_dir, tmp_dir, display, keep_artifacts, timeout, gc } =>
+            cmd_test_build(&file, &mode, &toolchain, vcvars.as_deref(), clang.as_deref(), cg_include.as_deref(), rt_dir.as_deref(), tmp_dir.as_deref(), display.as_deref(), keep_artifacts, timeout, &gc),
+        Cmd::TestAll { tests_dir, stdlib_dir, include_stdlib, filter, mode, toolchain, vcvars, clang, cg_include, rt_dir, tmp_dir, keep_artifacts, timeout, jobs, format, verbose, quiet, results_file, rerun_failed, retries, gc } =>
+            cmd_test_all(&tests_dir, &stdlib_dir, include_stdlib, filter.as_deref(), &mode, &toolchain, vcvars.as_deref(), clang.as_deref(), cg_include.as_deref(), rt_dir.as_deref(), tmp_dir.as_deref(), keep_artifacts, timeout, jobs, &format, verbose, quiet, results_file.as_deref(), rerun_failed, retries, &gc),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -440,6 +448,7 @@ fn cmd_test_build(
     display: Option<&str>,
     keep_artifacts: bool,
     timeout_secs: u64,
+    gc: &str,
 ) -> Result<()> {
     let mode = test_runner::Mode::parse(mode)?;
     let pref = test_runner::ToolchainPref::parse(toolchain)?;
@@ -469,6 +478,7 @@ fn cmd_test_build(
             .unwrap_or_else(|| "<unknown>".to_string()),
     };
     let libuv = test_runner::detect_or_build_libuv(&rt_dir_buf, &repo_root, vcvars);
+    let gc_kind = test_runner::GcKind::parse(gc)?;
     let opts = test_runner::TestBuildOpts {
         nv_file: file,
         toolchain: &tc,
@@ -480,6 +490,7 @@ fn cmd_test_build(
         keep_artifacts,
         libuv: libuv.as_ref(),
         timeout: std::time::Duration::from_secs(timeout_secs),
+        gc_kind,
     };
     let status = test_runner::run_one(&opts);
     let label = status.label();
@@ -518,6 +529,7 @@ fn cmd_test_all(
     results_file: Option<&Path>,
     rerun_failed: bool,
     retries: u32,
+    gc: &str,
 ) -> Result<()> {
     let mode = test_runner::Mode::parse(mode)?;
     let pref = test_runner::ToolchainPref::parse(toolchain)?;
@@ -572,6 +584,7 @@ fn cmd_test_all(
     } else {
         None
     };
+    let gc_kind = test_runner::GcKind::parse(gc)?;
     let opts = test_runner::TestAllOpts {
         tests_dir,
         stdlib_dir: stdlib_dir_opt,
@@ -592,6 +605,7 @@ fn cmd_test_all(
         results_file,
         rerun_failed,
         retries,
+        gc_kind,
     };
     let summary = test_runner::run_all(opts)?;
     test_runner::print_summary(&summary, format);

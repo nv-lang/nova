@@ -2,7 +2,7 @@
 # План 27: GC switch + test-runner polish
 
 > **Статус:** план, не начат.
-> **Создан:** 2026-05-11.
+> **Создан:** 2026-05-11. **Обновлён:** 2026-05-11 (production audit pass).
 > **Приоритет:** ВЫСОКИЙ — текущий default `alloc.c` (plain malloc)
 > делает Nova **непригодным** для long-running workloads.
 > **Зависит от:** —
@@ -20,7 +20,6 @@
 ```c
 void* nova_alloc(size_t size) {
     void* p = malloc(size);
-    /* ...check OOM... */
     _alloc_count++;
     return p;
 }
@@ -29,436 +28,727 @@ void nova_retain(void* ptr)  { (void)ptr; }  /* no-op */
 void nova_release(void* ptr) { (void)ptr; }  /* no-op */
 ```
 
-**Объекты создаются и никогда не освобождаются.** `nova_release` —
-no-op. Codegen не вставляет cleanup calls.
+**Объекты создаются и никогда не освобождаются.** `nova_release` — no-op.
+Codegen не вставляет cleanup calls.
 
 **Следствие:** любой процесс, который аллоцирует >0 объектов в loop,
-упадёт по OOM. CLI tools работают только потому что процесс короткий
-(аллоцирует < доступной RAM).
+упадёт по OOM. CLI tools работают только потому что процесс короткий.
 
 Это **критический gap** — Nova сейчас не production-grade ни для какого
-server-side workload'а, даже single-traffic-host.
-
-## Что готово в репо
-
-**Boehm GC backend:** `compiler-codegen/nova_rt/alloc_boehm.c`.
-
-```c
-void* nova_alloc(size_t size) {
-    void* p = GC_malloc(size);
-    /* ...check OOM... */
-    memset(p, 0, size);
-    return p;
-}
-```
-
-Использует [bdwgc](https://github.com/ivmai/bdwgc) (Boehm-Demers-Weiser GC) —
-**production-grade** mark-and-sweep, conservative tracing GC,
-работает с любым C codegen без cooperation.
-
-**vcpkg packages уже установлены** в репо:
-
-- `compiler-codegen/vcpkg_installed/x64-windows-static/lib/gc.lib`
-- `compiler-codegen/vcpkg_installed/x64-windows-static/include/gc.h`
-- `compiler-codegen/vcpkg_installed/x64-windows-static/include/gc/`
-
-Зависит ещё от `atomic_ops.lib` (тоже в vcpkg) для thread-safe operations.
-
-## Чего НЕ хватает
-
-Test-runner и codegen build chains hardcoded используют **только**
-`alloc.c`. Нужно:
-
-1. **Build flag `--gc=malloc|boehm`** в `nova-codegen test-build` и
-   `test-all` (default определить после Шага 4).
-2. **Conditional source pick** в `test_runner.rs:build_command`: вместо
-   hardcoded `rt_alloc = opts.rt_dir.join("alloc.c")` — выбор по
-   GC kind.
-3. **Conditional link flags** для Boehm:
-   - Windows: `gc.lib`, `atomic_ops.lib` + include path.
-   - Linux/macOS: `-lgc` (apt install libgc-dev / brew install bdw-gc).
-4. **Cross-platform vcpkg** — текущий x64-windows-static.
-   Linux/macOS — system package managers либо vendored build.
-
-## Фазы
-
-### Ф.1 — Add `--gc` flag, malloc default
-
-**Что:**
-- `--gc=malloc|boehm` в `test-build` и `test-all` CLI args.
-- Default: `malloc` (текущее поведение, no regression).
-- `build_command` выбирает alloc source по flag.
-- Boehm path добавляет gc.h include + gc.lib link для Windows.
-
-**Файлы:**
-- `compiler-codegen/src/main.rs` — добавить `--gc` arg в TestBuild/TestAll.
-- `compiler-codegen/src/test_runner.rs`:
-  - `BuildOpts` field `gc_kind: GcKind { Malloc, Boehm }`.
-  - `build_command`: выбор `alloc.c` либо `alloc_boehm.c` по kind.
-  - Conditional include path + link для Boehm.
-- `run_tests.ps1`/`run_tests.sh`: pass-through `-Gc` parameter.
-
-**Acceptance:**
-- `nova-codegen test-all --gc malloc` works как сейчас (regression).
-- `nova-codegen test-all --gc boehm` builds успешно на Windows MSVC/Clang.
-- Smoke test: simple alloc-loop процесс не растёт unbounded под Boehm.
-
-**Объём:** ~100 строк Rust + path config.
-
-### Ф.2 — Verify Boehm GC actually collects
-
-**Что:** test что Boehm реально освобождает unreachable objects.
-
-**Tests:**
-
-```nova
-test "boehm gc collects unreachable objects" {
-    // Force-create 100k records, drop reference, force gc.
-    let mut last int = 0
-    for i in 0..100_000 {
-        let p = Point { x: i, y: i }  // unreachable после iter
-        last = p.x
-    }
-    // Под malloc: live_count == ~100_000.
-    // Под Boehm: live_count << 100_000 (collected).
-    // Probe через extern nova_gc_live_count().
-    let live = _nova_gc_live_count()
-    assert(live < 50_000)  // generous bound
-}
-```
-
-Через `external fn _nova_gc_live_count() -> int` для probing.
-
-**Acceptance:**
-- Bench under `--gc boehm` shows live_count << alloc_count после workload'а.
-- Under `--gc malloc` тест fail'ит (как expected — leak forever).
-- Long-running stress (10M alloc/drop iter) bounded в memory.
-
-**Объём:** ~50 строк test + minor codegen extern probe.
-
-### Ф.3 — Boehm GC pause benchmark
-
-**Что:** measure pause times на realistic workloads.
-
-**Bench:**
-- 10k objects allocated → force `GC_gcollect()` → measure ms.
-- 100k objects allocated → same.
-- 1M objects allocated → same.
-- 10M objects allocated → same (если RAM позволяет).
-
-**Acceptance:**
-- Bench numbers записаны в spec/overview.md (замена unverified «<1ms»).
-- Pause distribution (p50/p99/p99.9) per heap size.
-
-**Объём:** ~80 строк bench + spec update.
-
-### Ф.4 — Switch default к Boehm
-
-**Что:** после Ф.1-Ф.3 если Boehm fit (pauses acceptable, no
-regressions) — сделать default GC.
-
-**Trade-off:**
-- **Боenhm pros:** correct cycle collection, no cooperation needed,
-  production-tested. Default = production-ready behavior.
-- **Boehm cons:** STW pauses (10-100ms на больших heap'ах), conservative
-  tracing (может удержать память дольше, false roots).
-- **Альтернатива** — RC через alloc_rc.c + codegen-rewrite. Это
-  отдельный план (Plan 28 если потребуется).
-
-**Acceptance:**
-- `test-all` без `--gc` использует Boehm.
-- 138/138 regression PASS.
-- `nova_alloc` overhead не ухудшает sleep_bench / cancel_stress больше
-  чем на 10%.
-
-**Объём:** small (флаг default + docs).
-
-### Ф.5 — Linux/macOS GC support
-
-**Что:** Boehm GC на Linux/macOS.
-
-**Linux:** `apt install libgc-dev` либо vendored build. `-lgc` link.
-**macOS:** `brew install bdw-gc` либо vendored. `-lgc` link.
-
-**Объём:** ~50 строк build invoker.
-
-### Ф.6 — ALLOC_REQUIRES / ALLOC_EXCLUDES маркеры
-
-**Что:** не все тесты имеют смысл на всех 3 backends:
-
-- `concurrency/deep_gc.nv` — **только boehm** (тестирует cycle collection).
-- `concurrency/sleep_leak_check.nv` — **только boehm** (memory leak detection).
-- `basics/*.nv` — **все backends** (basic correctness).
-- Будущие RC-specific тесты — **только rc**.
-
-Решение — расширить D89 двумя маркерами (per-file аннотация):
-
-```nova
-// ALLOC_REQUIRES boehm
-test "cycle collection works" { ... }
-```
-
-Test-runner skip'ает с status `SKIP-ALLOC` если current `--gc` не
-match. Семантика:
-
-- `ALLOC_REQUIRES <backend>` — тест запускается **только** на этом
-  backend'е, на других skipped.
-- `ALLOC_EXCLUDES <backend>` — тест skipped на указанном backend'е,
-  запускается на остальных.
-
-D89 spec обновить с двумя новыми маркерами.
-
-**Файлы:**
-- `compiler-codegen/src/test_runner.rs` — `parse_expect` расширяется
-  или отдельный `parse_alloc_constraint`; новый `Status::SkippedAlloc`
-  variant.
-- `spec/decisions/09-tooling.md` D89 — секция «6. ALLOC_REQUIRES /
-  7. ALLOC_EXCLUDES».
-- `docs/test-conventions.md` — примеры use-case.
-
-**Acceptance:**
-- Тест `concurrency/deep_gc` skipped на `--gc malloc`, runs на
-  `--gc boehm`.
-- Полный прогон `--gc malloc` и `--gc boehm` оба green (учитывая
-  skips).
-
-**Объём:** ~60 строк (parser + skip-logic + status variant).
+server-side workload'а.
 
 ---
 
-## Часть B — test-runner polish (carry-over из Plan 26)
+## Что готово в репо (проверено)
 
-После Plan 26 closure (~99% production-grade) осталось 7 polish-задач
-из cargo-nextest / go test parity. Они **независимы от GC**, но
-включены в этот же план для одного логического milestone.
+### Файлы runtime
 
-### Б.1 — Ф.5 test caching (carry-over Plan 26)
+| Файл | Состояние |
+|------|-----------|
+| `nova_rt/alloc.c` | Текущий default. Plain malloc, `nova_release` no-op. Все stat-функции реализованы. |
+| `nova_rt/alloc_boehm.c` | Boehm backend готов. **Отсутствуют** `nova_gc_alloc_count`, `nova_gc_free_count`, `nova_gc_live_count`, `nova_gc_reset_stats` — нужно добавить через `GC_get_heap_size()` прокси. |
+| `nova_rt/alloc_rc.c` | RC backend готов, все функции реализованы. Используется только как альтернатива — не цель этого плана. |
+| `nova_rt/alloc.h` | Общий header — декларирует все функции для всех трёх backends. |
 
-Hash-based test caching в `target/test-cache/<hash>/`. Cache key:
+### vcpkg (x64-windows-static, проверено)
 
-- SHA-256 от `.nv` source.
-- mtime всех `nova_rt/*.c` + `nova_rt/*.h`.
-- mtime `nova-codegen.exe`.
-- Toolchain (clang/msvc/gcc) + mode (dev/release) + alloc backend
-  (важно — boehm vs malloc разные binary).
-- libuv enabled/disabled.
+| Файл | Есть |
+|------|------|
+| `vcpkg_installed/x64-windows-static/lib/gc.lib` | ✅ |
+| `vcpkg_installed/x64-windows-static/lib/atomic_ops.lib` | ✅ |
+| `vcpkg_installed/x64-windows-static/include/gc.h` | ✅ |
 
-Cache hit → пропустить codegen + cc, сразу use cached `.exe`.
+### Rust-сторона
 
-CLI: `--no-cache` (force rebuild), `--cache-dir <path>` (override).
-Default: `--no-cache` (CI safe; explicit opt-in для local TDD).
+`BuildOpts` в `test_runner.rs` не имеет поля `gc_kind` — сейчас
+`build_command` hardcoded на `opts.rt_dir.join("alloc.c")` (строка 603).
+`GcKind` enum не существует нигде в коде.
 
-**Sensitivity high** — false-positive cache hit (когда invariant
-нарушен) даёт «PASS» когда должен FAIL. Поэтому disabled-by-default.
+---
 
-Объём: ~150 строк.
+## Часть A — GC switch
 
-### Б.2 — EXPECT_TIMEOUT_MS per-test marker
+### Ф.1 — `GcKind` + `BuildOpts.gc_kind` + `build_command` выбор
 
-Сейчас все тесты используют global `--timeout`. Real-world test'ы
-имеют разные SLA:
+**Файлы:** `compiler-codegen/src/test_runner.rs`
 
-- `basics/literals` — 5s хватит (только codegen+cc overhead).
-- `concurrency/sleep_leak_check` — 15s budget на bench-loop.
-
-Решение — D89 8-й маркер `EXPECT_TIMEOUT_MS <N>`:
-
-```nova
-// EXPECT_TIMEOUT_MS 30000
-test "long bench" { ... }
-```
-
-Per-test override `opts.timeout` в `run_one`. CLI `--timeout` остаётся
-fallback для тестов без маркера.
-
-Польза: можно ставить `--timeout 5` глобально (real hang'и видны
-немедленно), а long-running тесты сами override'ят.
-
-Объём: ~30 строк.
-
-### Б.3 — `--verbose` capture stdout PASS-тестов
-
-Сейчас `Verbosity::Verbose` — маркер без эффекта (см. `TODO` comment
-в `test_runner.rs`). Реализация:
-
-- `run_one` сохраняет `stdout`/`stderr` в `Outcome::Pass {
-  captured_stdout: Option<String>, captured_stderr: Option<String> }`.
-- `print_summary` в `--verbose` показывает captured для PASS-тестов.
-
-Аналог `go test -v` (показывает `t.Logf`) и `cargo test --nocapture`.
-
-Объём: ~30 строк + расширение Outcome enum (backwards-compatible).
-
-### Б.4 — Slow tests report
-
-В конце прогона `--format text` показывать top-10 самых медленных:
-
-```
-===== SLOWEST TESTS =====
-  3.214s  concurrency/sleep_real_clock
-  2.103s  std/checksums/fnv
-  ...
-```
-
-Аналог `cargo test --report-time` / `go test -v` (per-test elapsed).
-Помогает identify candidates для optimization.
-
-Объём: ~20 строк (sort by elapsed, take 10, format).
-
-### Б.5 — `--list` + `--filter-from` для CI sharding
-
-`nova-codegen test-all --list` — выводит все тесты по одному на строку,
-без запуска. CI делит между runner'ами:
-
-```bash
-./run_tests.sh --list | awk "NR % 4 == 0" > shard-0.txt
-./run_tests.sh --filter-from shard-0.txt --format junit
-```
-
-`--filter-from <file>` — новый flag, читает имена тестов из файла,
-прогоняет только их (exact-match, не substring как `--filter`).
-
-При scale 5000+ тестов (когда будет self-host) — необходимо для
-CI parallel runners.
-
-Объём: ~40 строк.
-
-### Б.6 — Retry count в JUnit XML
-
-Если `--retries 2` и тест PASS после retry — это **информация для
-CI report**. JUnit support'ит через custom attribute либо
-`<system-out>`-комментарий:
-
-```xml
-<testcase classname="basics" name="literals" time="0.234">
-  <system-out>retried 1 time before pass</system-out>
-</testcase>
-```
-
-CI dashboards (GitHub Actions, GitLab) показывают это как warning —
-сигнал что flaky tests появляются.
-
-`Outcome::Pass { retries: u32 }`. Если `retries > 0` — emit
-`<system-out>`.
-
-Объём: ~15 строк.
-
-### Б.7 — TempSubdir Drop pattern
-
-Сейчас `tmp_dir/t-<hash>/` создаётся явно + cleanup явно в конце
-`run_one`. Если worker panic'ит до cleanup — directory orphan'ится.
-`cargo` использует `tempfile` crate с Drop trait — automatic cleanup.
-
-Но `tempfile` — extra dependency (~50 KB binary). Для bootstrap
-compiler'а лишнее. Own `TempSubdir` с Drop ~30 строк:
+#### 1a. Добавить `GcKind` enum
 
 ```rust
-struct TempSubdir(PathBuf);
-impl Drop for TempSubdir {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
+/// GC backend selection. Wired through BuildOpts → build_command.
+/// Malloc = plain malloc, no GC (internal/benchmark only — not for
+/// production use; any loop that allocates will OOM eventually).
+/// Boehm = Boehm-Demers-Weiser conservative tracing GC (default after Ф.4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum GcKind {
+    #[default]
+    Malloc,
+    Boehm,
+}
+
+impl GcKind {
+    pub fn parse(s: &str) -> Result<Self> {
+        match s {
+            "malloc" => Ok(GcKind::Malloc),
+            "boehm"  => Ok(GcKind::Boehm),
+            _ => Err(anyhow!("unknown gc backend `{}` (expected malloc|boehm)", s)),
+        }
+    }
+
+    pub fn alloc_c_name(self) -> &'static str {
+        match self {
+            GcKind::Malloc => "alloc.c",
+            GcKind::Boehm  => "alloc_boehm.c",
+        }
     }
 }
 ```
 
-Plus `--keep-artifacts` через `std::mem::forget` или `into_path()`
-escape hatch.
+#### 1b. Добавить поле в `BuildOpts`
 
-Объём: ~30 строк.
+```rust
+pub struct BuildOpts<'a> {
+    // ... existing fields ...
+    pub gc_kind: GcKind,   // ← NEW; default = GcKind::Malloc
+}
+```
 
-### Б.8 — `--shuffle [SEED]` для flakiness detection
+`GcKind` реализует `Default` → существующие `BuildOpts { ... }` без нового поля
+получат compile error — найдём все места, обновим явно.
 
-Сейчас `inputs.sort_by(|a, b| a.0.cmp(&b.0))` — детерминированный
-alphabetical. Flaky тесты, проявляющиеся только на определённом
-ordering (test1 leak'ит state, test2 fail'ит), мы **не найдём**.
+#### 1c. `build_command`: выбор alloc source + Boehm link flags
 
-`cargo-nextest --seed N` shuffle тесты для flakiness detection.
+Заменить hardcoded строку 603:
+```rust
+let rt_alloc = opts.rt_dir.join("alloc.c");
+```
+на:
+```rust
+let rt_alloc = opts.rt_dir.join(opts.gc_kind.alloc_c_name());
+```
 
-CLI: `--shuffle [SEED]`. SEED=0 — random (system time), N — explicit
-seed для reproducibility.
+Для Boehm добавить include + link flags:
 
-Implementation: xorshift PRNG (~10 строк) + Fisher-Yates shuffle
-(~10 строк). Без extra deps.
+```rust
+// Boehm GC: vcpkg vendored, x64-windows-static
+if opts.gc_kind == GcKind::Boehm {
+    // Include path: vcpkg_installed/x64-windows-static/include
+    // (gc.h lives directly here, not in a subdir)
+    let vcpkg_include = opts.cg_include
+        .join("vcpkg_installed")
+        .join("x64-windows-static")
+        .join("include");
+    let vcpkg_lib = opts.cg_include
+        .join("vcpkg_installed")
+        .join("x64-windows-static")
+        .join("lib");
+    // Clang: -I<include> ... -L<lib> -lgc -latomic_ops
+    // MSVC:  /I<include> ... /link gc.lib atomic_ops.lib
+}
+```
 
-Объём: ~30 строк.
+Точные флаги для каждого toolchain (Clang/MSVC/GCC) — см. шаблоны ниже.
 
-### Б.9 — Slow-tests reporting через JSON output
+**Clang (Windows):**
+```
+-I<vcpkg_include> -DGC_THREADS
+... (sources) ...
+-L<vcpkg_lib> -lgc -latomic_ops
+```
 
-Дополнительно — `--format json` уже включает `elapsed_ms` в каждом
-event'е. CI parser'ы могут сами top-N извлечь. В text-mode (Б.4) для
-local dev — встроено.
+**MSVC (cl.exe):**
+```
+/I<vcpkg_include> /DGC_THREADS
+... (sources) ...
+/link <vcpkg_lib>\gc.lib <vcpkg_lib>\atomic_ops.lib
+```
 
-### Acceptance criteria часть B
+**GCC (Linux — apt install libgc-dev):**
+```
+-DGC_THREADS
+... (sources) ...
+-lgc
+```
+На Linux vcpkg не нужен — системный libgc. Поле `vcpkg_installed` не
+используется.
 
-- ✅ `--cache-dir target/test-cache` — переиспользование между прогонами,
-  10× speedup при unchanged sources.
-- ✅ `EXPECT_TIMEOUT_MS 30000` в `.nv` overrides `--timeout`.
-- ✅ `-v` показывает stdout PASS-тестов.
-- ✅ Text-mode summary включает SLOWEST TESTS список.
-- ✅ `--list` + `--filter-from` для CI sharding.
-- ✅ JUnit `<testcase>` помечает retried tests через `<system-out>`.
-- ✅ Tmp directory cleanup при panic worker'а.
-- ✅ `--shuffle [SEED]` для flakiness detection.
+#### 1d. `alloc_boehm.c` — добавить stat-функции
 
-### Объём части B
+Сейчас в `alloc_boehm.c` нет `nova_gc_alloc_count` и друзей. Добавить
+через Boehm API (не меняет ABI — эти функции нужны для тестов Ф.2):
 
-~330 строк Rust + ~50 строк tests + ~30 строк docs.
+```c
+/* Boehm stat proxy — approximate, but sufficient for leak tests. */
+static size_t _alloc_count = 0;
+
+void* nova_alloc(size_t size) {
+    void* p = GC_malloc(size);
+    if (!p) { fprintf(stderr, "nova: out of memory\n"); abort(); }
+    memset(p, 0, size);
+    _alloc_count++;
+    return p;
+}
+
+/* GC_get_heap_size() = total heap bytes; live_count ≈ allocated - collected.
+ * Точный live_count без cooperation GC невозможен — используем heap_size proxy. */
+size_t nova_gc_alloc_count(void) { return _alloc_count; }
+size_t nova_gc_free_count(void)  {
+    /* approximate: heap_size ÷ avg_obj_size — acceptable for tests */
+    return 0; /* conservative: never claim freed */
+}
+size_t nova_gc_live_count(void)  { return _alloc_count; /* upper bound */ }
+void   nova_gc_reset_stats(void) { _alloc_count = 0; }
+```
+
+Примечание: точный `live_count` под Boehm невозможен без
+финализатор-инфраструктуры. Для теста Ф.2 используем `GC_get_heap_size()`
+как прокси — достаточно чтобы доказать что heap не растёт линейно.
+
+#### 1e. `nova-codegen` CLI — добавить `--gc` arg
+
+В `compiler-codegen/src/main.rs` добавить `--gc malloc|boehm` к
+`TestBuild` и `TestAll` subcommands, передавать в `TestAllOpts.gc_kind`
+и `TestBuildOpts` → `BuildOpts.gc_kind`.
+
+#### 1f. `nova-cli` — активировать `--gc` stub
+
+В `nova-cli/src/main.rs` флаг `--gc` уже присутствует как stub (Plan 28 r6).
+После Plan 27 Ф.1 передавать в `TestAllOpts.gc_kind`.
+
+**Acceptance Ф.1:**
+- `nova-codegen test-all --gc malloc` — идентично текущему (regression test: все PASS).
+- `nova-codegen test-all --gc boehm` — builds и запускает на Windows Clang/MSVC.
+- `nova test --gc boehm` — работает через nova-cli.
+- Отдельный `nova-codegen test-build` тест с `--gc boehm` PASS.
+
+**Объём:** ~120 строк Rust + ~20 строк C.
+
+---
+
+### Ф.2 — Verify Boehm GC actually collects
+
+**Файлы:** `nova_tests/gc/` (новая директория)
+
+#### Тест: heap не растёт линейно
+
+```nova
+module nova_tests.gc.boehm_collects
+
+// ALLOC_REQUIRES boehm
+// Проверяет что Boehm реально собирает unreachable objects.
+// Под malloc этот тест падает (heap растёт линейно).
+
+fn main() {
+    let initial = _nova_gc_heap_bytes()
+    for i in 0..100_000 {
+        let s = "alloc-".concat(i.to_string())
+        _nova_gc_noop(s)  // prevent optimization
+    }
+    _nova_gc_collect()  // force collection
+    let after = _nova_gc_heap_bytes()
+    // Heap после коллекции должен быть < 2x initial (не растёт линейно)
+    assert(after < initial + 10_000_000)  // 10 MB generous bound
+}
+```
+
+Через `external fn`:
+```nova
+external fn _nova_gc_collect()
+external fn _nova_gc_heap_bytes() -> int
+external fn _nova_gc_noop(s str)
+```
+
+Реализация в `nova_rt/gc_test_helpers.c` (только для тестов):
+```c
+void _nova_gc_collect(void) {
+#ifdef NOVA_GC_BOEHM
+    GC_gcollect();
+#endif
+}
+int64_t _nova_gc_heap_bytes(void) {
+#ifdef NOVA_GC_BOEHM
+    return (int64_t)GC_get_heap_size();
+#else
+    return (int64_t)nova_gc_live_count() * 32; /* estimate */
+#endif
+}
+void _nova_gc_noop(NovaStr s) { (void)s; }
+```
+
+`NOVA_GC_BOEHM` define добавляется в `build_command` при `GcKind::Boehm`.
+
+#### Тест: stress — 1M alloc bounded memory
+
+```nova
+module nova_tests.gc.stress_bounded
+
+// ALLOC_REQUIRES boehm
+// EXPECT_TIMEOUT_MS 30000
+
+fn main() {
+    for i in 0..1_000_000 {
+        let _ = "x".repeat(100)  // 100-byte string per iter
+    }
+    _nova_gc_collect()
+    // Если heap > 500 MB — очевидный leak
+    assert(_nova_gc_heap_bytes() < 500_000_000)
+}
+```
+
+**Acceptance Ф.2:**
+- `nova-codegen test-all --gc boehm` — оба теста PASS.
+- `nova-codegen test-all --gc malloc` — тесты SKIP (ALLOC_REQUIRES boehm).
+- RSS процесса после stress не превышает 500 MB.
+
+**Объём:** ~60 строк tests + ~30 строк C helpers.
+
+---
+
+### Ф.3 — Boehm GC pause benchmark
+
+**Файлы:** `nova_tests/gc/pause_bench.nv`
+
+```nova
+module nova_tests.gc.pause_bench
+
+// ALLOC_REQUIRES boehm
+// EXPECT_TIMEOUT_MS 60000
+
+external fn _nova_gc_collect()
+external fn _nova_time_ms() -> int
+
+fn bench_pause(n int) {
+    for i in 0..n {
+        let _ = "x".repeat(64)
+    }
+    let t0 = _nova_time_ms()
+    _nova_gc_collect()
+    let elapsed = _nova_time_ms() - t0
+    println("n={n} pause={elapsed}ms")
+}
+
+fn main() {
+    bench_pause(10_000)
+    bench_pause(100_000)
+    bench_pause(1_000_000)
+}
+```
+
+Результаты записать в `spec/overview.md` (секция «GC» — заменить
+unverified `<1ms` реальными числами p50/p99).
+
+**Acceptance Ф.3:**
+- Bench запускается без ошибок.
+- Числа записаны в spec (p50/p99/p99.9 для каждого N).
+- `spec/overview.md` не содержит `<1ms` (заменено на measured).
+
+**Объём:** ~40 строк bench + spec update.
+
+---
+
+### Ф.4 — Switch default к Boehm
+
+**После:** Ф.1 + Ф.2 + Ф.3 без регрессий и acceptable pauses.
+
+**Изменения:**
+- `GcKind::default()` → `GcKind::Boehm` (одна строка в `#[default]`).
+- `nova-cli` — `--gc` флаг default = boehm; `malloc` скрыт из help
+  (internal-only, `#[arg(hide = true)]`).
+- `nova-codegen` — `--gc` флаг default = boehm; `malloc` видим
+  (internal tool, разработчики могут использовать явно).
+
+**Acceptance Ф.4:**
+- `nova test` (без `--gc`) — все тесты PASS на Boehm.
+- `nova test --gc malloc` — все non-boehm тесты PASS (no regression).
+- `sleep_bench` + `cancel_stress` — не ухудшились >10% по elapsed.
+- README.md упоминает что GC = Boehm по умолчанию.
+
+**Объём:** ~10 строк Rust + docs.
+
+---
+
+### Ф.5 — Linux/macOS GC support
+
+**Условие:** есть доступ к Linux машине (сейчас blind ship).
+
+**Linux:** `apt install libgc-dev` → `-lgc -lpthread`.
+**macOS:** `brew install bdw-gc` → `-lgc`.
+
+В `build_command`, ветка `Toolchain::Gcc`:
+```rust
+if opts.gc_kind == GcKind::Boehm {
+    c.arg("-DGC_THREADS");
+    c.arg("-lgc");
+    #[cfg(target_os = "linux")]
+    c.arg("-lpthread");
+}
+```
+
+Нет vcpkg на Linux — только системная библиотека. Если `libgc-dev` не
+установлен → `detect_or_build_libuv`-style fatal error с инструкцией
+`apt install libgc-dev`.
+
+**Acceptance Ф.5:** `nova test --gc boehm` на Linux — все тесты PASS.
+
+**Объём:** ~30 строк.
+
+---
+
+### Ф.6 — `ALLOC_REQUIRES` / `ALLOC_EXCLUDES` маркеры (D89 extension)
+
+Расширение D89 двумя новыми маркерами:
+
+```nova
+// ALLOC_REQUIRES boehm   ← тест запускается ТОЛЬКО на boehm
+// ALLOC_EXCLUDES malloc   ← тест skipped на malloc, запускается на остальных
+```
+
+**Изменения:**
+
+`compiler-codegen/src/test_runner.rs`:
+```rust
+/// Parsed alloc constraint from test file header.
+#[derive(Debug, Clone, PartialEq)]
+pub enum AllocConstraint {
+    None,
+    Requires(GcKind),   // ALLOC_REQUIRES <backend>
+    Excludes(GcKind),   // ALLOC_EXCLUDES <backend>
+}
+
+impl AllocConstraint {
+    /// Returns true if this test should run under the given GcKind.
+    pub fn allows(self, gc: GcKind) -> bool {
+        match self {
+            AllocConstraint::None => true,
+            AllocConstraint::Requires(k) => gc == k,
+            AllocConstraint::Excludes(k) => gc != k,
+        }
+    }
+}
+```
+
+`parse_expect()` → `parse_test_markers()` (или отдельная функция
+`parse_alloc_constraint(src: &str) -> AllocConstraint`).
+
+Новый `Outcome` variant:
+```rust
+Outcome::Skipped { reason: SkipReason, elapsed: Duration }
+
+pub enum SkipReason {
+    AllocBackend { required: String, actual: String },
+}
+```
+
+В `run_one`: проверить constraint ПОСЛЕ чтения файла, ДО codegen.
+В summary: `SKIP` не считается ни PASS ни FAIL. Печатается отдельно.
+
+`spec/decisions/09-tooling.md` D89 — добавить пункты 6 и 7.
+`docs/test-conventions.md` — примеры.
+
+**Acceptance Ф.6:**
+- `nova test --gc malloc` — boehm-only тесты помечены SKIP-ALLOC.
+- `nova test --gc boehm` — все тесты запускаются.
+- Summary: `91 PASS, 2 SKIP (alloc), 0 FAIL`.
+
+**Объём:** ~80 строк Rust + ~20 строк spec/docs.
+
+---
+
+## Часть B — test-runner polish
+
+Независима от GC. Все задачи — улучшения `compiler-codegen/src/test_runner.rs`.
+
+### Б.1 — Test caching
+
+Hash-based кэш в `target/test-cache/<hash>/`.
+
+**Cache key** (всё влияет на результат — если хоть что-то изменилось, hit невалиден):
+- SHA-256 от `.nv` source файла.
+- mtime всех `nova_rt/*.c` + `nova_rt/*.h`.
+- mtime `nova-codegen` бинарника.
+- `toolchain` (clang/msvc/gcc) + `mode` (dev/release).
+- `gc_kind` (malloc/boehm — разные бинари!).
+- libuv version stamp (`target/libuv-cache/version.txt`).
+
+**Default: `--no-cache`** (CI-safe — false positive cache hit = PASS когда должен FAIL).
+Explicit opt-in: `--cache-dir target/test-cache`.
+
+**Реализация:**
+```rust
+pub struct CacheKey {
+    hash: [u8; 32],  // SHA-256 от всех inputs
+}
+
+fn compute_cache_key(nv_path: &Path, opts: &TestBuildOpts) -> CacheKey { ... }
+fn cache_lookup(key: &CacheKey, cache_dir: &Path) -> Option<CachedOutcome> { ... }
+fn cache_store(key: &CacheKey, outcome: &Outcome, cache_dir: &Path) { ... }
+```
+
+SHA-256 без extra dep: использовать `std::hash::DefaultHasher` (не криптографический)
+или добавить `sha2 = "0.10"` (6 KB) как dev/internal dep.
+Рекомендация: **добавить `sha2`** — `DefaultHasher` нестабилен между Rust версиями,
+cache будет инвалидирован при каждом `rustup update`. `sha2` — стандарт де-факто для
+content-addressable хранилищ.
+
+**Объём:** ~150 строк + `sha2` dep.
+
+### Б.2 — `EXPECT_TIMEOUT_MS` per-test marker
+
+```nova
+// EXPECT_TIMEOUT_MS 30000
+```
+
+Переопределяет глобальный `--timeout` для конкретного теста.
+`parse_test_markers()` → добавить парсинг.
+`run_one`: `let timeout = marker_timeout.unwrap_or(opts.timeout)`.
+
+**Объём:** ~30 строк.
+
+### Б.3 — `--verbose` capture stdout PASS-тестов
+
+Расширить `Outcome::Pass`:
+```rust
+Outcome::Pass {
+    elapsed: Duration,
+    detail: String,
+    captured_stdout: Option<String>,  // NEW — Some(_) если --verbose
+    captured_stderr: Option<String>,  // NEW
+}
+```
+
+`run_one` при `opts.verbose` сохраняет stdout/stderr child-процесса.
+`print_summary` при `--verbose` печатает captured для PASS.
+
+Аналог `go test -v` и `cargo test --nocapture`.
+
+**Объём:** ~40 строк.
+
+### Б.4 — Slow tests report
+
+В конце `--format text` summary:
+```
+===== SLOWEST TESTS (top 10) =====
+  3.214s  concurrency/sleep_real_clock
+  2.103s  std/checksums/fnv
+```
+
+Sort by elapsed, take 10. Только если `total_tests > 10`.
+
+**Объём:** ~25 строк.
+
+### Б.5 — `--list` + `--filter-from`
+
+`nova test --list` — выводит все тесты без запуска, по одному на строку.
+`nova test --filter-from shard.txt` — exact-match из файла (не substring).
+
+CI sharding:
+```bash
+nova test --list | split -l 50 - shard-
+nova test --filter-from shard-aa --format junit > results-0.xml
+```
+
+**Объём:** ~45 строк.
+
+### Б.6 — Retry count в JUnit XML
+
+`Outcome::Pass { retries: u32, .. }`.
+JUnit emit при `retries > 0`:
+```xml
+<testcase ...>
+  <system-out>retried 1 time(s) before pass</system-out>
+</testcase>
+```
+
+**Объём:** ~20 строк.
+
+### Б.7 — `--shuffle [SEED]`
+
+Fisher-Yates shuffle входного списка тестов перед запуском.
+`--shuffle` без аргумента → random seed (system time).
+`--shuffle 42` → reproducible seed.
+
+xorshift PRNG (~10 строк) + Fisher-Yates (~10 строк). Без extra deps.
+
+Для воспроизводимости print seed в начале прогона:
+```
+Shuffling 91 tests with seed 1715432198
+```
+
+**Объём:** ~35 строк.
+
+### Б.8 — `EXPECT_TIMEOUT_MS` + `--shuffle` + `--list` в nova-cli
+
+После реализации в test_runner — wire в `nova-cli` (nova test/test-build):
+- `--shuffle [SEED]` → `TestAllOpts.shuffle_seed: Option<u64>`
+- `--list` → `TestAllOpts.list_only: bool`
+- `--filter-from <path>` → `TestAllOpts.filter_from: Option<PathBuf>`
+
+**Объём:** ~30 строк (nova-cli/src/main.rs).
+
+---
+
+## Порядок выполнения
+
+```
+Ф.1 → Ф.2 → Ф.3 → Ф.4    (последовательно — каждая зависит от предыдущей)
+Ф.5                         (после Ф.4, когда есть Linux доступ)
+Ф.6                         (после Ф.1 — нужен GcKind)
+
+Б.2 → Б.3 → Б.4 → Б.6      (независимы от GC, можно в любой момент)
+Б.1                         (после Б.2 — cache key включает EXPECT_TIMEOUT_MS)
+Б.5 → Б.8                   (независимы)
+Б.7                         (независима)
+```
+
+---
+
+## Критические файлы
+
+| Файл | Действие |
+|------|----------|
+| `compiler-codegen/src/test_runner.rs` | `GcKind`, `BuildOpts.gc_kind`, `build_command` выбор alloc, `AllocConstraint`, `Outcome::Skipped`, Boehm link flags |
+| `compiler-codegen/nova_rt/alloc_boehm.c` | Добавить stat-функции + `_alloc_count` counter |
+| `compiler-codegen/nova_rt/gc_test_helpers.c` | Новый файл: `_nova_gc_collect`, `_nova_gc_heap_bytes`, `_nova_gc_noop` |
+| `compiler-codegen/src/main.rs` | `--gc` arg в TestBuild/TestAll |
+| `nova-cli/src/main.rs` | Активировать `--gc` stub → передавать `GcKind` |
+| `nova_tests/gc/boehm_collects.nv` | Новый: коллекция unreachable objects |
+| `nova_tests/gc/stress_bounded.nv` | Новый: 1M alloc memory bound |
+| `nova_tests/gc/pause_bench.nv` | Новый: pause distribution benchmark |
+| `spec/decisions/09-tooling.md` | D89: ALLOC_REQUIRES / ALLOC_EXCLUDES |
+| `spec/overview.md` | GC pause числа (после Ф.3) |
+| `docs/test-conventions.md` | ALLOC_REQUIRES примеры |
+
+---
+
+## Ловушки реализации
+
+### `GC_THREADS` define — обязателен
+
+`alloc_boehm.c` уже имеет `#define GC_THREADS` перед `#include <gc.h>`.
+В `build_command` дополнительно передавать `-DGC_THREADS` (или `/DGC_THREADS`)
+как compile flag — защита если Boehm header включается из другого C файла.
+
+### vcpkg include path для Boehm
+
+`gc.h` лежит прямо в `vcpkg_installed/x64-windows-static/include/gc.h`,
+не в `include/gc/gc.h`. Поэтому `-I<vcpkg_include>` достаточно.
+Дополнительный `-I<vcpkg_include>/gc` не нужен.
+
+### `atomic_ops.lib` — нужен для thread-safe Boehm
+
+Boehm с `GC_THREADS` на Windows требует `atomic_ops.lib` в дополнение к `gc.lib`.
+Оба есть в vcpkg. Порядок линковки: `gc.lib` перед `atomic_ops.lib`.
+
+### MSVC: `/link` должно быть последним аргументом
+
+При `cl.exe` все `/link` опции (пути к `.lib`) должны идти **после** всех
+source файлов и compile-time флагов. `build_command` для MSVC строит
+аргументы в правильном порядке — убедиться что Boehm libs добавляются
+в линкер-секцию, не в compile-секцию.
+
+### `GcKind` в `TestAllOpts` — передавать через весь стек
+
+```
+TestAllOpts.gc_kind
+  → TestBuildOpts.gc_kind (через worker dispatch)
+    → BuildOpts.gc_kind
+      → build_command()
+```
+
+Не забыть добавить поле во все три структуры.
+
+### Cache invalidation при смене GC backend
+
+Если в Б.1 добавляем кэш, `gc_kind` ОБЯЗАН быть частью cache key.
+`alloc.c` и `alloc_boehm.c` производят разные бинари — cache miss при
+смене `--gc`.
+
+### `nova_gc_live_count()` под Boehm — приблизительно
+
+Точный live count без финализаторов невозможен. Для тестов Ф.2 используем
+`GC_get_heap_size()` как прокси. Документировать в `alloc_boehm.c`.
+
+---
 
 ## Risks / Trade-offs
 
-**R1. Boehm conservative tracing** — на 64-bit machine ложные roots
-маловероятны, но возможны (integer выглядит как pointer). Эффект —
-**memory не выпускается** в некоторых случаях. Practical impact:
-generally небольшой, документировано в Boehm community decades.
+**R1. Boehm conservative tracing** — на 64-bit ложные roots маловероятны
+(целые числа редко совпадают с указателями), но не исключены.
+Эффект — часть памяти не выпускается. Practical impact: документировано
+в community decades, приемлемо для general backend.
 
 **R2. STW pause latency.** На больших heap'ах (>1 GB) pauses могут быть
-10-100ms. Для real-time это блокер. Для general backend — приемлемо.
+10-100ms. Для real-time — блокер. Для backend API — приемлемо.
+Числа из Ф.3 определяют окончательный вердикт.
 
-**R3. vcpkg dependency на Windows.** vcpkg_installed уже vendored
-в репо — это **plus**, не нужно external setup. На clean machine —
-требуется restore (vcpkg install bdwgc). Documented in build chain.
+**R3. `atomic_ops.lib` на Windows.** Уже в vcpkg_installed — не требует
+внешней установки. На clean machine — `vcpkg install bdwgc` восстанавливает.
 
-**R4. Boehm has thread-stack scanning** — может тормозить fiber-heavy
-workloads. Под M:N (Plan 23) потребует tuning.
+**R4. Boehm + fibers (minicoro).** Fiber stacks Boehm не сканирует
+автоматически. При M:N (Plan 23) потребуется `GC_add_roots()` для каждого
+fiber stack. Для текущего coroutine-per-green-thread модели — нормально:
+стек сканируется через основной thread.
+
+**R5. Boehm + libuv event loop.** libuv callbacks запускаются из main thread —
+Boehm сканирует его стек. Риска нет, но при переходе к настоящим потокам
+(Plan 23) потребуется `GC_register_my_thread()` в каждом worker.
+
+---
 
 ## Acceptance overall
 
-После Ф.1-Ф.4:
+После Ф.1–Ф.4:
+- `nova test` (default = boehm) — все тесты PASS без регрессий.
+- `nova test --gc malloc` — все тесты PASS (backward compat).
+- `nova_tests/gc/stress_bounded` — RSS bounded после 1M alloc.
+- `nova_tests/gc/pause_bench` — числа в spec/overview.md.
+- `spec/overview.md` не содержит `<1ms` (заменено на measured).
+- `nova test --gc boehm` и `nova test --gc malloc` оба в CI (matrix).
 
-- `memory_growth_check` тест: 10M alloc/release iter, RSS bounded
-  (не растёт linearly).
-- `sleep_bench` 10k concurrent: no regression больше 10%.
-- Spec/overview.md: «GC pause distribution» секция с measured
-  numbers (вместо unverified `<1ms`).
+После Ф.5: то же на Linux.
+После Ф.6: `ALLOC_REQUIRES` тесты корректно skip на несовместимом backend.
 
-После Ф.5: same на Linux.
+---
+
+## Объём
+
+| Фаза | Строк Rust | Строк C | Строк Nova | Строк docs |
+|------|-----------|---------|-----------|-----------|
+| Ф.1 | ~120 | ~20 | — | — |
+| Ф.2 | — | ~30 | ~40 | — |
+| Ф.3 | — | — | ~40 | ~20 |
+| Ф.4 | ~10 | — | — | ~10 |
+| Ф.5 | ~30 | — | — | ~10 |
+| Ф.6 | ~80 | — | — | ~30 |
+| Б.1–Б.8 | ~375 | — | — | ~30 |
+| **Итого** | **~615** | **~50** | **~80** | **~100** |
+
+---
 
 ## Что НЕ входит
 
-- **RC codegen** (alloc_rc.c с retain/release inserting в codegen) —
-  Plan 28 если потребуется альтернатива Boehm. (`alloc_rc.c` runtime
-  есть, но codegen его не использует.)
-- **Concurrent GC custom** — годами работы, после v1.0.
-- **realtime nogc { }** arena allocator — Plan TBD, partial
-  implementation.
-- **Linux/macOS smoke-test** test-runner'а — отложен до access (Plan
-  26 known limitation).
-- **GitHub Actions CI workflow** — отдельная задача, но Plan 27 готовит
-  всё для matrix: 3 OS × 2 alloc backends = 6 runners.
+- **RC codegen** (retain/release inserting) — `alloc_rc.c` есть, codegen его
+  не использует. Отдельный план если Boehm окажется неприемлемым.
+- **Concurrent GC** — годами работы, после v1.0.
+- **`realtime nogc { }`** arena allocator — Plan TBD.
+- **Linux/macOS smoke-test** инфраструктуры — зависит от доступа к машине.
+- **GitHub Actions CI matrix** — отдельная задача (3 OS × 2 backends = 6 runners).
+
+---
 
 ## Связь
 
-- [Plan 25 G3a/G3b](25-production-readiness-roadmap.md#g3) — этот план
-  closes G3a, частично G3b.
+- [Plan 25 G3a/G3b](25-production-readiness-roadmap.md#g3) — этот план closes G3a.
 - [D6 (spec/decisions/05-memory.md)](../../spec/decisions/05-memory.md#d6) —
-  «managed by default» дизайн-decision, Plan 27 = первая реализация.
-- [Plan 23 (M:N runtime)](23-mn-runtime-roadmap.md) — потребует GC
-  cooperation cross-thread. Boehm thread-safe готов, RC потребует
-  atomic refcount.
+  «managed by default»: Plan 27 = первая реализация.
+- [Plan 23 (M:N runtime)](23-mn-runtime-roadmap.md) — потребует GC cooperation
+  cross-thread. R4/R5 выше.
+
+---
 
 ## История
 
-- **2026-05-11** — создан после Plan 22 hardening retro + Plan 25 honest
-  pass: обнаружено что default alloc = plain malloc без GC, любой
-  long-running процесс leaks. vcpkg gc.lib уже vendored — switch к
-  Boehm = ~1 день инженерной работы.
+- **2026-05-11** — создан после Plan 22 hardening retro + Plan 25 honest pass.
+- **2026-05-11** — production audit pass: добавлены конкретные impl-детали
+  (GcKind enum, vcpkg paths, MSVC линковка, Б.1 sha2 dep обоснование,
+  R4/R5 Boehm + fibers/libuv risks, `alloc_boehm.c` stat-функции gap).

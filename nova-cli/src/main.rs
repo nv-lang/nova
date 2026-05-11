@@ -418,6 +418,7 @@ fn cmd_build(
         rt_dir: &paths.rt_dir,
         mode,
         libuv: libuv.as_ref(),
+        gc_kind: test_runner::GcKind::default(),
     };
     test_runner::compile_c_to_exe(&tc, &build_opts, Duration::from_secs(timeout_secs))?;
 
@@ -451,6 +452,7 @@ fn cmd_test(
     include_stdlib: bool,
     keep_artifacts: bool,
     tests_dir_override: Option<&Path>,
+    gc: &str,
 ) -> Result<()> {
     if timeout_secs == 0 {
         bail!("--timeout must be >= 1 second");
@@ -546,6 +548,7 @@ fn cmd_test(
             .map_err(|e| anyhow!("cannot create results dir {}: {}", parent.display(), e))?;
     }
 
+    let gc_kind = test_runner::GcKind::parse(gc)?;
     let tmp_dir = default_tmp_dir();
     let opts = test_runner::TestAllOpts {
         tests_dir: &tests_dir,
@@ -567,6 +570,7 @@ fn cmd_test(
         results_file: Some(&results_path),
         rerun_failed,
         retries,
+        gc_kind,
     };
 
     let summary = test_runner::run_all(opts)?;
@@ -587,6 +591,7 @@ fn cmd_test_build(
     clang: Option<&Path>,
     timeout_secs: u64,
     keep_artifacts: bool,
+    gc: &str,
 ) -> Result<()> {
     if timeout_secs == 0 {
         bail!("--timeout must be >= 1 second");
@@ -621,6 +626,7 @@ fn cmd_test_build(
         .to_string_lossy()
         .replace('\\', "/");
 
+    let gc_kind = test_runner::GcKind::parse(gc)?;
     let tmp_dir = default_tmp_dir();
     let opts = test_runner::TestBuildOpts {
         nv_file: path,
@@ -633,6 +639,7 @@ fn cmd_test_build(
         keep_artifacts,
         libuv: libuv.as_ref(),
         timeout: Duration::from_secs(timeout_secs),
+        gc_kind,
     };
 
     test_runner::install_cancel_handler();
@@ -716,7 +723,7 @@ fn main() -> ExitCode {
         Cmd::Test {
             filter, jobs, format, mode, toolchain, vcvars, clang, timeout,
             verbose, quiet, results_file, rerun_failed, retries,
-            include_stdlib, keep_artifacts, tests_dir, gc: _gc,
+            include_stdlib, keep_artifacts, tests_dir, gc,
         } => cmd_test(
             filter.as_deref(),
             jobs,
@@ -734,8 +741,9 @@ fn main() -> ExitCode {
             include_stdlib,
             keep_artifacts,
             tests_dir.as_deref(),
+            gc.as_deref().unwrap_or("malloc"),
         ),
-        Cmd::TestBuild { file, mode, toolchain, vcvars, clang, timeout, keep_artifacts, gc: _gc } => cmd_test_build(
+        Cmd::TestBuild { file, mode, toolchain, vcvars, clang, timeout, keep_artifacts, gc } => cmd_test_build(
             &file,
             &mode,
             &toolchain,
@@ -743,6 +751,7 @@ fn main() -> ExitCode {
             clang.as_deref(),
             timeout,
             keep_artifacts,
+            gc.as_deref().unwrap_or("malloc"),
         ),
         Cmd::RegenRuntime { check } => cmd_regen_runtime(check),
     };

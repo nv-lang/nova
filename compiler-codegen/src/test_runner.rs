@@ -570,6 +570,34 @@ pub struct LibuvConfig {
     pub eventloop_src: PathBuf,  /* nova_rt/eventloop.c */
 }
 
+/// GC backend selection. Wired through BuildOpts → build_command.
+/// Malloc = plain malloc, no GC (internal/benchmark only — any loop that
+/// allocates will OOM eventually; not for production use).
+/// Boehm = Boehm-Demers-Weiser conservative tracing GC (default after Plan 27 Ф.4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum GcKind {
+    #[default]
+    Malloc,
+    Boehm,
+}
+
+impl GcKind {
+    pub fn parse(s: &str) -> Result<Self> {
+        match s {
+            "malloc" => Ok(GcKind::Malloc),
+            "boehm"  => Ok(GcKind::Boehm),
+            _ => Err(anyhow!("unknown gc backend `{}` (expected malloc|boehm)", s)),
+        }
+    }
+
+    pub fn alloc_c_name(self) -> &'static str {
+        match self {
+            GcKind::Malloc => "alloc.c",
+            GcKind::Boehm  => "alloc_boehm.c",
+        }
+    }
+}
+
 /// Параметры сборки одного теста.
 pub struct BuildOpts<'a> {
     pub c_file: &'a Path,
@@ -579,6 +607,8 @@ pub struct BuildOpts<'a> {
     pub rt_dir: &'a Path,
     pub mode: Mode,
     pub libuv: Option<&'a LibuvConfig>,
+    /// Plan 27 Ф.1: GC backend. Default = Malloc (current behavior).
+    pub gc_kind: GcKind,
 }
 
 /// Windows system libs needed by libuv (linker dependencies).
@@ -600,10 +630,23 @@ const LIBUV_UNIX_SYSLIBS: &[&str] = &["-lpthread", "-ldl", "-lm"];
 /// инкапсулирует cmd /c "vcvars && actual-cmd" — иначе headers/libs
 /// MSVC SDK недоступны.
 fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
-    let rt_alloc = opts.rt_dir.join("alloc.c");
+    // Plan 27 Ф.1: alloc source chosen by GC backend.
+    let rt_alloc = opts.rt_dir.join(opts.gc_kind.alloc_c_name());
     let rt_effects = opts.rt_dir.join("effects.c");
     let rt_fibers = opts.rt_dir.join("fibers.c");
     let march = march_flag();
+
+    // Plan 27 Ф.1: Boehm vcpkg paths (x64-windows-static). Only used on Windows;
+    // on Linux/macOS the system libgc is used (no vcpkg).
+    // cg_include is compiler-codegen/ root, so vcpkg_installed lives alongside nova_rt/.
+    let vcpkg_include = opts.cg_include
+        .join("vcpkg_installed")
+        .join("x64-windows-static")
+        .join("include");
+    let vcpkg_lib = opts.cg_include
+        .join("vcpkg_installed")
+        .join("x64-windows-static")
+        .join("lib");
 
     // Plan 22: libuv linkage. Если libuv config present — добавляем
     // eventloop.c в sources, -DNOVA_USE_LIBUV=1, libuv include, libuv.lib
@@ -638,6 +681,10 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
             if !target.is_empty() {
                 flags.insert(0, target.to_string());
             }
+            // Plan 27 Ф.1: Boehm requires GC_THREADS define.
+            if opts.gc_kind == GcKind::Boehm {
+                flags.push("-DGC_THREADS".to_string());
+            }
             let inc = opts.cg_include.display().to_string();
             let out = opts.exe_file.display().to_string();
             let cfile = opts.c_file.display().to_string();
@@ -667,16 +714,27 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                         libuv_args.push_str(&format!(" -l{}", &syslib.replace(".lib", "")));
                     }
                 }
+                // Plan 27 Ф.1: Boehm link flags for Clang on Windows.
+                // gc.lib must precede atomic_ops.lib (link order matters).
+                let mut boehm_args = String::new();
+                if opts.gc_kind == GcKind::Boehm {
+                    boehm_args.push_str(&format!(
+                        " -I \"{}\" -L \"{}\" -lgc -latomic_ops",
+                        vcpkg_include.display(),
+                        vcpkg_lib.display(),
+                    ));
+                }
                 // Plan 26 Ф.7: chcp 65001 ставит UTF-8 codepage в текущем
                 // cmd.exe — cl/clang будут писать stderr в UTF-8, не в CP1251.
                 // `> nul` подавляет «Active code page: 65001» line.
                 let inner = format!(
-                    "\"chcp 65001 > nul && call \"{}\" > nul && \"{}\" {} -I \"{}\"{} -o \"{}\" \"{}\" \"{}\" \"{}\" \"{}\"\"",
+                    "\"chcp 65001 > nul && call \"{}\" > nul && \"{}\" {} -I \"{}\"{}{}  -o \"{}\" \"{}\" \"{}\" \"{}\" \"{}\"\"",
                     vcv.display(),
                     clang_str,
                     flags.join(" "),
                     inc,
                     libuv_args,
+                    boehm_args,
                     out,
                     cfile,
                     rt1,
@@ -720,6 +778,13 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                 c.arg(&rt_alloc);
                 c.arg(&rt_effects);
                 c.arg(&rt_fibers);
+                // Plan 27 Ф.1: Boehm link flags for Clang on Linux/macOS.
+                // System libgc; on Linux also needs -lpthread (GC_THREADS).
+                if opts.gc_kind == GcKind::Boehm {
+                    c.arg("-lgc");
+                    #[cfg(target_os = "linux")]
+                    c.arg("-lpthread");
+                }
                 c
             }
         }
@@ -752,12 +817,30 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                     libuv_args.push_str(&format!(" {}", syslib));
                 }
             }
+            // Plan 27 Ф.1: Boehm link flags for MSVC.
+            // /DGC_THREADS in compile section; gc.lib + atomic_ops.lib in /link section.
+            // MSVC requires all /link args after source files — built into inner string.
+            let boehm_compile_flags = if opts.gc_kind == GcKind::Boehm {
+                format!(" /DGC_THREADS /I \"{}\"", vcpkg_include.display())
+            } else {
+                String::new()
+            };
+            let boehm_link_flags = if opts.gc_kind == GcKind::Boehm {
+                format!(
+                    " /link \"{}\\gc.lib\" \"{}\\atomic_ops.lib\"",
+                    vcpkg_lib.display(),
+                    vcpkg_lib.display(),
+                )
+            } else {
+                String::new()
+            };
             // Plan 26 Ф.7: chcp 65001 → UTF-8 в текущем cmd. cl.exe выдаст
             // stderr в UTF-8, no need для CP1251 decoder. `> nul` подавляет
             // «Active code page: 65001» и vcvars banner.
             let inner = format!(
-                "\"chcp 65001 > nul && call \"{}\" > nul && cl.exe /nologo /W0 {}{} /I \"{}\" /Fo\"{}\\\\\" /Fe\"{}\" \"{}\" \"{}\" \"{}\" \"{}\"\"",
-                vcvars.display(), flags, libuv_args, inc, obj, out, cfile, rt1, rt2, rt3,
+                "\"chcp 65001 > nul && call \"{}\" > nul && cl.exe /nologo /W0 {}{}{} /I \"{}\" /Fo\"{}\\\\\" /Fe\"{}\" \"{}\" \"{}\" \"{}\" \"{}\"{}\"",
+                vcvars.display(), flags, libuv_args, boehm_compile_flags,
+                inc, obj, out, cfile, rt1, rt2, rt3, boehm_link_flags,
             );
             let mut c = Command::new("cmd");
             #[cfg(target_os = "windows")]
@@ -784,6 +867,10 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                     c.arg("-w");
                 }
             }
+            // Plan 27 Ф.1: Boehm GC_THREADS define (compile-time).
+            if opts.gc_kind == GcKind::Boehm {
+                c.arg("-DGC_THREADS");
+            }
             c.arg("-I").arg(opts.cg_include);
             // Plan 22 libuv (Linux).
             if let (Some(inc_path), Some(lib_path), Some(evloop)) =
@@ -803,6 +890,12 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
             c.arg(&rt_alloc);
             c.arg(&rt_effects);
             c.arg(&rt_fibers);
+            // Plan 27 Ф.1: Boehm link flags for GCC (system libgc).
+            if opts.gc_kind == GcKind::Boehm {
+                c.arg("-lgc");
+                #[cfg(target_os = "linux")]
+                c.arg("-lpthread");
+            }
             c
         }
     }
@@ -1020,6 +1113,8 @@ pub struct TestBuildOpts<'a> {
     /// (cc + run). Default 60 s — long-running тесты должны override через
     /// `--timeout` или (TODO Plan 27) per-test маркер.
     pub timeout: Duration,
+    /// Plan 27 Ф.1: GC backend. Propagates to BuildOpts → build_command.
+    pub gc_kind: GcKind,
 }
 
 /// Plan 26 Ф.2: unique tmp subdir per test. Хеш от display даёт
@@ -1188,6 +1283,7 @@ pub fn run_one(opts: &TestBuildOpts) -> Outcome {
         rt_dir: opts.rt_dir,
         mode: opts.mode,
         libuv: opts.libuv,
+        gc_kind: opts.gc_kind,
     };
     let cmd = build_command(opts.toolchain, &build_opts);
     // Plan 26 Ф.1: timeout для cc. cl.exe / clang обычно <30s, 60s достаточно.
@@ -1499,6 +1595,8 @@ pub struct TestAllOpts<'a> {
     /// (AV-race `cannot open output file`, etc.). 0 = no retry.
     /// Default 0 в CLI, типичное значение для CI = 2.
     pub retries: u32,
+    /// Plan 27 Ф.1: GC backend. Propagated to every TestBuildOpts → BuildOpts.
+    pub gc_kind: GcKind,
 }
 
 // ---------- Plan 26 Ф.13: graceful Ctrl+C ----------
@@ -2242,6 +2340,7 @@ pub fn run_all(opts: TestAllOpts) -> Result<Summary> {
             let timeout = opts.timeout;
             let keep_artifacts = opts.keep_artifacts;
             let retries = opts.retries;
+            let gc_kind = opts.gc_kind;
 
             s.spawn(move || loop {
                 // Plan 26 Ф.13: cooperative cancellation. При Ctrl+C
@@ -2268,6 +2367,7 @@ pub fn run_all(opts: TestAllOpts) -> Result<Summary> {
                     keep_artifacts,
                     libuv: libuv_ref,
                     timeout,
+                    gc_kind,
                 };
                 // Plan 26 Ф.12: retry loop для transient AV/linker race
                 // fails. Реальные test-fail'ы (expectation mismatch, codegen
