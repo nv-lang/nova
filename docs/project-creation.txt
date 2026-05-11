@@ -5114,3 +5114,51 @@ NativeCommandError wrapping stderr в ErrorRecord — фундаментальн
 обёртки, реализовать логику в Rust напрямую.
 
 Commits: plan-28 nova CLI
+
+================================================================================
+POST PLAN-19 C16 — Closure mut-capture heap-promotion (2026-05-11)
+================================================================================
+
+**Проблема (два бага):**
+
+1. **Mut-capture by-reference** (C16 из Plan 19): `let mut x = 0; let f = || { x += 1 }`.
+   Env closure'а хранил копию значения, не shared reference. Writes из
+   closure body не видел caller. D32-spec требует: mut capture = shared ref.
+
+2. **D49 parser bug**: `let mut count = 0\n|| { count += 1; count }` в конце
+   fn body парсировался как `let count = (42 || closure)` — D49-newline-tolerance
+   для `||` binary OR поглощал следующую строку. closure становилась VALUE
+   переменной, переменная не добавлялась в scope → NameResCtx выдавал
+   "undefined identifier `count`".
+
+**Решение:**
+
+emit_c.rs — heap-box promotion:
+  - Первый захват mut-переменной: `_box_name = nova_alloc(sizeof(T)); *_box_name = name`
+  - Caller читает/пишет через `var_boxed` map: ExprKind::Ident проверяет map,
+    эмитит `(*_box_name)` вместо `name`
+  - env closure'а хранит pointer: `_env->name = _box_name`
+  - Lambda body: `var_boxed` очищается перед emit (scope isolation),
+    mut-captures регистрируются как `_env->name` → Ident эмитит `(*_env->name)`
+  - Несколько closure'ов над одной mut var → shared box (reuse)
+
+parser/mod.rs — D49 fix:
+  - parse_or(): newline-tolerance убрана для PipePipe. Newline перед `||`
+    → break (новая closure-expression). Newline перед `or` → continue (OR).
+  - `||` через newline всегда начало closure, не binary OR продолжение.
+
+**Дебаг-путь:** NameResCtx "undefined count" с пустым scope — 3 фрейма, все пустые.
+Добавил eprintln в walk_stmt(Let) и walk_expr(Ident) — увидел что Stmt::Let
+обрабатывается ПОСЛЕ ошибки. Значит closure парсировалась как часть let-value.
+Бисекция в parser показала D49 в parse_or как причину.
+
+**Тесты:**
+  - syntax/closure_mut_capture_escape.nv — 3 кейса:
+    1. make_counter() → escape counter (classic dangling-ptr)
+    2. make_pair() → two closures share one mut-box
+    3. HOF callback regression (не-escape через fn param)
+  - syntax/closure_unit_return_inference.nv — unit-return inference
+
+**Результат:** 160/160 PASS.
+
+Commit: 60e226da6 codegen+parser: closure mut-capture heap-promotion + D49 fix

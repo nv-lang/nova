@@ -2884,7 +2884,7 @@ Detailed retro в docs/plans/19-closure-and-error-ops.md.
 
 ### Отложено
 
-- C16: mut-capture codegen.
+- ~~C16: mut-capture codegen.~~ → **ЗАКРЫТО** (2026-05-11, см. ниже)
 - C6: bidirectional inference HOF arg → closure.
 - Codegen handler-лямбда (D31-rev codegen-side).
 
@@ -3870,3 +3870,38 @@ Commit: efb0248d7 plan-22 F2: libuv mandatory
 **Regression:** `nova test` даёт те же PASS/FAIL что run_tests.ps1.
 
 Commits: plan-28 nova CLI
+
+---
+
+## 2026-05-11 — Post-Plan-19 C16: Closure mut-capture heap-promotion
+
+### Что закрыто
+
+**C16 (mut-capture codegen)** + смежный парсер-баг D49.
+
+**Упрощение закрыто:** `let mut x = 0; let f = || { x += 1 }` — раньше
+closure env копировал значение, не shared reference. Writes из body
+не обновляли caller. Теперь — heap-box promotion:
+
+- emit_c.rs: `_box_name = nova_alloc(sizeof(T)); *_box_name = name`
+- Caller: ExprKind::Ident проверяет `var_boxed` → `(*_box_name)`
+- Lambda body: `var_boxed` сбрасывается перед emit (scope isolation),
+  mut-captures регистрируются как `_env->name` → `(*_env->name)`
+- Несколько closures над одной mut var → shared box (reuse)
+
+**Парсер-баг D49 закрыт:** `||` после newline поглощался D49-tolerance
+как binary OR продолжение. `let x = 0\n|| body` → `let x = (0 || body)`.
+Фикс: newline-tolerance убрана для `||`, оставлена только для `or`.
+
+### Новые тесты
+
+- `syntax/closure_mut_capture_escape.nv` — escape counter, shared box,
+  HOF regression
+- `syntax/closure_unit_return_inference.nv` — unit-return inference
+  для side-effect-only callbacks
+
+### Regression
+
+160/160 PASS.
+
+Commit: 60e226da6
