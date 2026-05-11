@@ -6367,8 +6367,9 @@ impl CEmitter {
                             "try_send" => {
                                 if let Some(arg) = args.first() {
                                     let v = self.emit_expr(arg.expr())?;
+                                    // NovaChanTryResult → bool: OK=true, EMPTY/CLOSED=false
                                     return Ok(format!(
-                                        "nova_chan_writer_try_send({}, (nova_int)({}))",
+                                        "(nova_chan_writer_try_send({}, (nova_int)({})).tag == NOVA_CHAN_TRY_OK)",
                                         obj_c, v));
                                 }
                             }
@@ -6388,7 +6389,14 @@ impl CEmitter {
                         let obj_c = self.emit_expr(obj)?;
                         match method.as_str() {
                             "recv"      => return Ok(format!("nova_chan_reader_recv({})", obj_c)),
-                            "try_recv"  => return Ok(format!("nova_chan_reader_try_recv({})", obj_c)),
+                            "try_recv"  => {
+                                // NovaChanTryResult → NovaOpt_nova_int: OK→Some, EMPTY/CLOSED→None
+                                let tmp = self.fresh_tmp();
+                                self.line(&format!("NovaChanTryResult {} = nova_chan_reader_try_recv({});", tmp, obj_c));
+                                return Ok(format!(
+                                    "({}.tag == NOVA_CHAN_TRY_OK ? (NovaOpt_nova_int){{.tag=NOVA_TAG_Option_Some,.value={}.value}} : (NovaOpt_nova_int){{.tag=NOVA_TAG_Option_None,.value=0}})",
+                                    tmp, tmp));
+                            }
                             "len"       => return Ok(format!("nova_chan_reader_len({})", obj_c)),
                             "capacity"  => return Ok(format!("nova_chan_reader_capacity({})", obj_c)),
                             "is_closed" => return Ok(format!("nova_chan_reader_is_closed({})", obj_c)),

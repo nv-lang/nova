@@ -30,8 +30,6 @@
 #include "alloc.h"
 #include <stdint.h>
 #include <stdbool.h>
-#include <stdio.h>
-#include <stdlib.h>
 
 /* ── Forward declarations ──────────────────────────────────────── */
 
@@ -62,9 +60,20 @@ struct Nova_ChannelState {
     ChannelWaiter* send_waiters;  /* fibers parked waiting for space */
 };
 
+/* ── try_recv / try_send result (three-way, matches Rust TryRecvError) ── */
+
+/* NOVA_CHAN_TRY_OK     — value transferred
+ * NOVA_CHAN_TRY_EMPTY  — buffer empty/full, channel still open (transient)
+ * NOVA_CHAN_TRY_CLOSED — channel closed, no more data will arrive
+ * Nova code uses rx.is_closed() to distinguish EMPTY from CLOSED after None. */
+typedef enum { NOVA_CHAN_TRY_OK = 0, NOVA_CHAN_TRY_EMPTY = 1, NOVA_CHAN_TRY_CLOSED = 2 } NovaChanTryTag;
+typedef struct { NovaChanTryTag tag; nova_int value; } NovaChanTryResult;
+
 /* ── Capability wrappers ───────────────────────────────────────── */
 
-typedef struct { Nova_ChannelState* state; } Nova_ChanWriter;
+/* writer_closed: per-writer flag so double-close() is idempotent per handle,
+ * preventing writer_count underflow when one clone is closed twice. */
+typedef struct { Nova_ChannelState* state; bool writer_closed; } Nova_ChanWriter;
 typedef struct { Nova_ChannelState* state; } Nova_ChanReader;
 
 /* Factory return type (A4). */
@@ -111,9 +120,13 @@ static inline Nova_ChannelPair nova_channel_new(int64_t capacity) {
     st->writer_count = 1;
     st->recv_waiters = NULL;
     st->send_waiters = NULL;
+    if (capacity <= 0) {
+        nova_throw(nova_str_from_cstr("Channel.new: capacity must be >= 1"));
+    }
     Nova_ChanWriter*   tx = (Nova_ChanWriter*)nova_alloc(sizeof(Nova_ChanWriter));
     Nova_ChanReader* rx = (Nova_ChanReader*)nova_alloc(sizeof(Nova_ChanReader));
-    tx->state = st;
+    tx->state        = st;
+    tx->writer_closed = false;
     rx->state = st;
     return (Nova_ChannelPair){ .tx = tx, .rx = rx };
 }
@@ -152,9 +165,7 @@ static inline NovaOpt_nova_int nova_chan_reader_recv(Nova_ChanReader* rx) {
         NovaFiberQueue* sc = _nova_active_scope;
         int             sl = _nova_active_slot;
         if (!sc || sl < 0) {
-            fprintf(stderr,
-                "nova: FATAL: nova_chan_reader_recv called outside fiber context\n");
-            abort();
+            nova_throw(nova_str_from_cstr("recv called outside fiber context"));
         }
         while (st->count == 0 && !st->closed) {
             ChannelWaiter* w = (ChannelWaiter*)nova_alloc(sizeof(ChannelWaiter));
@@ -190,16 +201,17 @@ _closed:
     return (NovaOpt_nova_int){ .tag = NOVA_TAG_Option_None, .value = 0 };
 }
 
-static inline NovaOpt_nova_int nova_chan_reader_try_recv(Nova_ChanReader* rx) {
+static inline NovaChanTryResult nova_chan_reader_try_recv(Nova_ChanReader* rx) {
     Nova_ChannelState* st = rx->state;
     if (st->count == 0) {
-        return (NovaOpt_nova_int){ .tag = NOVA_TAG_Option_None, .value = 0 };
+        NovaChanTryTag tag = st->closed ? NOVA_CHAN_TRY_CLOSED : NOVA_CHAN_TRY_EMPTY;
+        return (NovaChanTryResult){ .tag = tag, .value = 0 };
     }
     nova_int v = st->buf[st->head];
     st->head = (st->head + 1) % st->cap;
     st->count--;
     _nova_channel_wake_send(st);
-    return (NovaOpt_nova_int){ .tag = NOVA_TAG_Option_Some, .value = v };
+    return (NovaChanTryResult){ .tag = NOVA_CHAN_TRY_OK, .value = v };
 }
 
 static inline nova_int   nova_chan_reader_len(Nova_ChanReader* rx)       { return (nova_int)rx->state->count;  }
@@ -220,9 +232,7 @@ static inline nova_bool nova_chan_writer_send(Nova_ChanWriter* tx, nova_int v) {
         NovaFiberQueue* sc = _nova_active_scope;
         int             sl = _nova_active_slot;
         if (!sc || sl < 0) {
-            fprintf(stderr,
-                "nova: FATAL: nova_chan_writer_send called outside fiber context\n");
-            abort();
+            nova_throw(nova_str_from_cstr("send called outside fiber context"));
         }
         while (st->count >= st->cap && !st->closed) {
             ChannelWaiter* w = (ChannelWaiter*)nova_alloc(sizeof(ChannelWaiter));
@@ -256,19 +266,21 @@ _push: {
     }
 }
 
-static inline nova_bool nova_chan_writer_try_send(Nova_ChanWriter* tx, nova_int v) {
+static inline NovaChanTryResult nova_chan_writer_try_send(Nova_ChanWriter* tx, nova_int v) {
     Nova_ChannelState* st = tx->state;
-    if (st->closed || st->count >= st->cap) return 0;
+    if (st->closed)           return (NovaChanTryResult){ .tag = NOVA_CHAN_TRY_CLOSED, .value = 0 };
+    if (st->count >= st->cap) return (NovaChanTryResult){ .tag = NOVA_CHAN_TRY_EMPTY,  .value = 0 };
     int64_t tail = (st->head + st->count) % st->cap;
     st->buf[tail] = v;
     st->count++;
     _nova_channel_wake_recv(st);
-    return 1;
+    return (NovaChanTryResult){ .tag = NOVA_CHAN_TRY_OK, .value = 0 };
 }
 
 static inline void nova_chan_writer_close(Nova_ChanWriter* tx) {
+    if (tx->writer_closed) return;  /* per-writer idempotent guard */
+    tx->writer_closed = true;
     Nova_ChannelState* st = tx->state;
-    if (st->closed) return;
     st->writer_count--;
     if (st->writer_count > 0) return;  /* other writers still alive */
     st->closed = true;
@@ -290,7 +302,8 @@ static inline void nova_chan_writer_close(Nova_ChanWriter* tx) {
 static inline Nova_ChanWriter* nova_chan_writer_clone(Nova_ChanWriter* tx) {
     tx->state->writer_count++;
     Nova_ChanWriter* clone = (Nova_ChanWriter*)nova_alloc(sizeof(Nova_ChanWriter));
-    clone->state = tx->state;
+    clone->state        = tx->state;
+    clone->writer_closed = false;
     return clone;
 }
 

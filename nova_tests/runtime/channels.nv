@@ -343,3 +343,58 @@ test "channel: fan-in — два writer'а, один reader" {
     }
     assert(sum == 66)
 }
+
+// ── Секция 9: исправления Plan 30 review ──────────────────────────
+
+test "channel: double-close одного writer idempotent (Б1 fix)" {
+    let (tx, rx) = Channel.new(2)
+    tx.send(42)
+    tx.close()
+    tx.close()  // повторный close НЕ должен corrupting writer_count
+    // канал закрыт после первого close
+    assert(rx.is_closed())
+    assert(rx.recv().unwrap_or(-1) == 42)
+}
+
+test "channel: double-close clone не ломает другой writer (Б1 fix)" {
+    let (tx, rx) = Channel.new(4)
+    let tx2 = tx.clone()  // writer_count = 2
+    tx.close()            // writer_count = 1, closed = false
+    tx.close()            // idempotent — writer_count остаётся 1
+    assert(!rx.is_closed())  // tx2 ещё жив
+    tx2.send(99)
+    tx2.close()           // writer_count = 0, closed = true
+    assert(rx.is_closed())
+    assert(rx.recv().unwrap_or(-1) == 99)
+}
+
+test "channel: try_recv различает empty-open от empty-closed через is_closed (Н1)" {
+    let (tx, rx) = Channel.new(4)
+    // пустой открытый
+    assert(rx.try_recv().is_none())
+    assert(!rx.is_closed())
+    // пустой закрытый
+    tx.close()
+    assert(rx.try_recv().is_none())
+    assert(rx.is_closed())
+}
+
+test "channel: try_recv drains buffer после close (Н1)" {
+    let (tx, rx) = Channel.new(4)
+    tx.send(1)
+    tx.send(2)
+    tx.close()
+    // данные ещё в буфере — try_recv их читает
+    assert(rx.try_recv().unwrap_or(-1) == 1)
+    assert(rx.try_recv().unwrap_or(-1) == 2)
+    // буфер исчерпан И канал закрыт
+    assert(rx.try_recv().is_none())
+    assert(rx.is_closed())
+}
+
+test "channel: try_send closed channel → false и is_closed (Н1)" {
+    let (tx, _rx) = Channel.new(2)
+    tx.close()
+    assert(!tx.try_send(42))
+    assert(tx.is_closed())
+}
