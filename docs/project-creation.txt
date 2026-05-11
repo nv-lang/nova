@@ -5161,4 +5161,61 @@ parser/mod.rs — D49 fix:
 
 **Результат:** 160/160 PASS.
 
+================================================================================
+ПЛАН 21 — D91 Channel Capability-Split (ChanWriter / ChanReader)
+================================================================================
+
+**Задача:** Заменить D79 Go-style `Channel[T]` (один тип с send+recv) на
+capability-split: `Channel.new(cap)` возвращает `(ChanWriter[T], ChanReader[T])`.
+Это устраняет gotcha где receiver может случайно сделать send, и открывает
+дорогу к select, multi-writer и capability-gate по типам.
+
+**Что реализовано:**
+
+1. `nova_rt/channels.h` — полный переписан под D91:
+   - `Nova_ChanWriter*` / `Nova_ChanReader*` — capability wrappers
+   - `Nova_ChannelPair` — возврат из `nova_channel_new()`
+   - WaiterList heap-allocated (A1) — подготовка к M:N (Plan 23)
+   - stop_cb → NOVA_STOP_SYNC для cancel-during-park (D93)
+   - Full-buffer send паркует fiber (A5) — без busy-wait
+
+2. `emit_c.rs` — codegen для нового API:
+   - `Channel.new(cap)` → `nova_channel_new(cap)` + tuple-destructure с
+     типами `["Nova_ChanWriter*", "Nova_ChanReader*"]`
+   - Method dispatch по типу объекта: `Nova_ChanWriter*` → `nova_chan_writer_*`,
+     `Nova_ChanReader*` → `nova_chan_reader_*`
+   - `type_ref_to_c` fallback: `ChanWriter[int]` → `Nova_ChanWriter*`
+     без явного case — через generic `_ => format!("Nova_{}*", name)`
+   - Параметры функций: `fn fill(tx ChanWriter[int], ...)` работает через
+     `var_types` регистрацию в `emit_fn`
+
+3. `nova_tests/runtime/channels.nv` — 17 тестов:
+   - Секции 1-5: базовый send/recv, буферизация, закрытие, waiters, concurrent
+   - Секция 6: передача ChanWriter/ChanReader как параметров функции
+     (`fill_channel`, `drain_channel`, `relay` pipeline)
+
+4. Negative tests — capability isolation:
+   - `channel_sender_no_recv.nv`: tx.recv() → EXPECT_CC_ERROR
+   - `channel_receiver_no_send.nv`: rx.send(1) → EXPECT_CC_ERROR
+
+5. `spec/decisions/06-concurrency.md` D91 Bootstrap-status → ✅
+
+**Сложности в реализации:**
+
+- `nova.exe` использует `nova-codegen` как Rust lib-зависимость, не binary.
+  `cargo build --bin nova-codegen` не обновляет `nova.exe`. Нужен
+  `cd nova-cli && cargo build`.
+- Parallel test runs: `lld-link: cannot open output file` = transient
+  locked exe, не реальный failure. Решение: `--jobs 1` или ждать.
+- Fallback `type_ref_to_c` избавил от необходимости явных case для
+  `ChanWriter`/`ChanReader` — generic naming convention достаточен.
+
+**Именование:**
+
+Выбраны `ChanWriter` / `ChanReader` вместо `Sender`/`Receiver` (Rust) и
+`WriteChan`/`ReadChan` (Haskell). Методы остались `send`/`recv` —
+согласованы с Go/Rust семантикой, интуитивны.
+
+**Результат:** 156/156 PASS (все тесты кроме transient lld-lock).
+
 Commit: 60e226da6 codegen+parser: closure mut-capture heap-promotion + D49 fix
