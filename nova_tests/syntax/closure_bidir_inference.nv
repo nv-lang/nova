@@ -1,0 +1,65 @@
+// closure_bidir_inference.nv — bidirectional type inference для ClosureLight.
+//
+// Когда `|x| body` передаётся в HOF с аннотированным fn-параметром,
+// тип `x` выводится из сигнатуры HOF (не дефолтится в nova_int).
+// До fix'а: `|x| x` в HOF(fn(str)->str) компилировалось как nova_int → type mismatch.
+// После fix'а: `x` получает тип str из контекста.
+
+module nova_tests.syntax.closure_bidir_inference
+
+// HOF с bool-параметром в closure.
+fn apply_bool_fn(x bool, f fn(bool) -> bool) -> bool {
+    f(x)
+}
+
+// HOF с str-параметром.
+fn transform_str(s str, f fn(str) -> str) -> str {
+    f(s)
+}
+
+// Двухпараметровый HOF: (bool, int) -> int.
+fn conditional_add(flag bool, n int, f fn(bool, int) -> int) -> int {
+    f(flag, n)
+}
+
+// HOF возвращающий bool (predicate).
+fn run_pred(value int, pred fn(int) -> bool) -> bool {
+    pred(value)
+}
+
+test "bidir: bool параметр — identity" {
+    let r = apply_bool_fn(true, |b| b)
+    assert(r == true)
+    let r2 = apply_bool_fn(false, |b| b)
+    assert(r2 == false)
+}
+
+test "bidir: bool параметр — negation" {
+    let r = apply_bool_fn(true, |b| !b)
+    assert(r == false)
+}
+
+test "bidir: str параметр — identity" {
+    let r = transform_str("hello", |s| s)
+    assert(r == "hello")
+}
+
+test "bidir: (bool, int) -> int" {
+    let r = conditional_add(true, 10, |flag, n| if flag { n * 2 } else { n })
+    assert(r == 20)
+    let r2 = conditional_add(false, 10, |flag, n| if flag { n * 2 } else { n })
+    assert(r2 == 10)
+}
+
+test "bidir: predicate инференс" {
+    let r = run_pred(5, |x| x > 3)
+    assert(r == true)
+    let r2 = run_pred(2, |x| x > 3)
+    assert(r2 == false)
+}
+
+test "bidir: closure с захватом + инферированный bool" {
+    let threshold = true
+    let r = apply_bool_fn(false, |b| b || threshold)
+    assert(r == true)
+}
