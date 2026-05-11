@@ -5465,3 +5465,32 @@ xorshift64 PRNG (~15 строк, без extra deps) + Fisher-Yates shuffle.
 **Результат:** 171/171 PASS (3 fail — Plan 31 in-progress, pre-existing).
 Новые возможности проверены: --list, slowest report в Summary.
 
+================================================================================
+ПЛАН 31 Ф.6: SELECT ALL-CLOSED PANIC (2026-05-12)
+================================================================================
+
+Реализован механизм обнаружения deadlock в `select` (D94 Ф.6).
+
+**Проблема:** `nova_select_park()` на all-closed каналах без default arm
+паркировал fiber без единого waiter'а — вечный deadlock без диагностики.
+
+**Решение — два изменения в channels.h:**
+
+1. `SelectSlot.wildcard: bool` — новое поле различает паттерны:
+   - `Some(v) = rx` → `wildcard=0` — не срабатывает на closed без данных
+   - `_ = rx` → `wildcard=1` — срабатывает на любой recv (данные или closed)
+   `nova_select_try_immediate`: `st->closed` срабатывает только если `arm->wildcard`.
+   `nova_select_set_recv`: принимает `wildcard` как 5-й параметр.
+
+2. pre-check в `nova_select_park`: перед проверкой scope/slot считает
+   `can_unblock` arms. Если 0 — `nova_throw("select: all channels closed")`.
+   Работает даже в main thread (где scope==NULL), не требует fiber context.
+
+**Codegen:** `emit_select()` в emit_c.rs → `nova_select_set_recv(..., wildcard)`
+где `wildcard = if binding.is_none() { 1 } else { 0 }`.
+
+**Тест:** `nova_tests/expected_runtime/select_all_closed.nv` переписан на
+реальный multi-arm select с двумя `Some(v) = rxN` на closed+empty каналах.
+
+**Результат:** 173/174 PASS (pre-existing fail: memory_footprint_test).
+

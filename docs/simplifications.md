@@ -4113,3 +4113,29 @@ debug перемешанного прогона).
 
 **Regression:** 171/171 PASS.
 
+---
+
+## Plan 31 Ф.6: select all-closed detection (2026-05-12)
+
+**SelectSlot.wildcard вместо паттерна в dispatch:**
+
+`SelectSlot` добавлено поле `wildcard: bool`. Альтернатива — передавать паттерн
+(`Some` vs wildcard) в каждый вызов. Выбор: хранить в struct, т.к. `try_immediate`
+и `park` оба нуждаются в этом поле, и struct уже передаётся везде.
+
+**pre-check до scope/slot в nova_select_park:**
+
+all-closed detection сделан отдельным первым проходом до проверки `scope==NULL`.
+Альтернатива — post-loop check после регистрации. Pre-check лучше потому что
+main() не является fiber (scope==NULL), поэтому post-loop был бы недостижим —
+`abort()` срабатывал раньше. Pre-check позволяет бросить панику из любого контекста.
+
+**Почему wildcard срабатывает на closed, а Some(v) — нет:**
+
+`_ = rx` — "получить любой результат": данные или EOF (closed). Аналог Rust
+`recv()` с explicit `Err(RecvError)` обработкой. `Some(v) = rx` — "получить
+только данные, игнорировать closed". Это semantically корректное разделение:
+closed канал без данных не является "готовым" для Some-arm.
+
+**Regression:** 173/174 PASS (pre-existing: memory_footprint_test).
+

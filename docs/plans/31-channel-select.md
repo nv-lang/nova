@@ -192,10 +192,16 @@ Timer callback отправляет значение и закрывает write
 - [x] `nova_tests/concurrency/select_closed_test.nv` — 5 тестов (closed channel + cancel_scope)
 - [x] `nova_tests/expected_runtime/select_all_closed.nv` — негативный (EXPECT_RUNTIME_PANIC)
 
-### Ф.6: all-closed panic (tech debt)
-- [ ] `nova_select_park`: после регистрации всех waiters проверить что хотя бы
-  один канал не закрыт; если все closed+empty и нет default → `nova_throw("select: all channels closed")`
-- [ ] Обновить `select_all_closed.nv` на реальный сценарий
+### Ф.6: all-closed panic ✅
+- [x] `channels.h`: добавлено поле `wildcard: bool` в `SelectSlot` — различает
+  `Some(v) = rx` (не срабатывает на closed без данных) от `_ = rx` (срабатывает)
+- [x] `nova_select_try_immediate`: `st->closed` срабатывает только если `arm->wildcard`
+- [x] `nova_select_set_recv`: принимает дополнительный `wildcard` параметр
+- [x] `emit_c.rs`: `nova_select_set_recv(..., wildcard)` — 1 для `_ = rx`, 0 для `Some(v) = rx`
+- [x] `nova_select_park`: pre-check считает `can_unblock` arms до проверки scope/slot,
+  бросает `nova_throw("select: all channels closed")` если 0 — работает и в main thread
+- [x] `nova_tests/expected_runtime/select_all_closed.nv` — обновлён на реальный multi-arm
+  select с `Some(v) = rx1 / rx2` (оба канала closed+empty) → PASS
 
 ---
 
@@ -214,8 +220,9 @@ Timer callback отправляет значение и закрывает write
    `recv_waiters`/`send_waiters`. Но cancel_scope не tested с select parked state.
    Тест "data wins cancel_scope race" проходит через happy path (data arrives before cancel).
 
-4. **all-closed panic не реализован.** `nova_select_park` на all-closed каналах без
-   default может зависнуть. Планируется в Ф.6.
+4. **all-closed panic реализован в Ф.6.** `nova_select_park` на all-closed каналах без
+   default бросает `nova_throw("select: all channels closed")` вместо deadlock.
+   `SelectSlot.wildcard` различает `_ = rx` (срабатывает на closed) от `Some(v) = rx` (нет).
 
 ---
 
@@ -231,14 +238,15 @@ Timer callback отправляет значение и закрывает write
 - [x] Fairness: Fisher-Yates shuffle
 - [x] Spawn capture: переменные из select-армов корректно захватываются
 - [x] Все существующие тесты зелёные (173/174, pre-existing fail)
+- [x] all-closed panic (Ф.6) — бросает вместо deadlock
 - [ ] D94 в spec обновлён (TODO)
-- [ ] all-closed panic (Ф.6)
 
 ---
 
 ## Commits
 
 - `a5003d6b0` — Ф.3: lexer KwSelect + AST + parser + emit_select codegen
+- (Ф.6) — SelectSlot.wildcard + all-closed pre-check + select_all_closed.nv реальный тест
 - `78743a290` — Ф.1/2: channels.h SelectCtx runtime + Time.after + тесты WIP
 - `aef65ae9c` — Ф.5: spawn capture fix (collect_idents/free/bound для Select)
 - `9710a9795` — Ф.6: closed-channel tests + wildcard fast-path fix + negative test

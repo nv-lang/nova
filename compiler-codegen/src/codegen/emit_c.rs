@@ -8081,11 +8081,12 @@ impl CEmitter {
                 "1".to_string()
             };
             match &arm.op {
-                SelectOp::Recv { .. } => {
+                SelectOp::Recv { binding, .. } => {
                     let ch = &ch_map.iter().find(|(idx, _)| *idx == i).unwrap().1;
+                    let wildcard = if binding.is_none() { 1 } else { 0 };
                     self.line(&format!(
-                        "nova_select_set_recv(&{ctx}, {n}, {ch}, {guard});",
-                        ctx = ctx_tmp, n = ch_idx, ch = ch, guard = guard_val
+                        "nova_select_set_recv(&{ctx}, {n}, {ch}, {guard}, {wildcard});",
+                        ctx = ctx_tmp, n = ch_idx, ch = ch, guard = guard_val, wildcard = wildcard
                     ));
                     ch_idx += 1;
                 }

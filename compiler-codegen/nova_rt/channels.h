@@ -321,6 +321,7 @@ typedef struct {
     bool               is_recv;
     nova_int           send_val;
     bool               guard;   /* false → arm disabled */
+    bool               wildcard; /* true = `_ = rx` fires on closed too; false = `Some(v) = rx` needs data */
 } SelectSlot;
 
 /* SelectWaiter: registered on channel's waiter-list while select is parked.
@@ -354,10 +355,11 @@ static inline SelectCtx nova_select_init(int n_arms) {
     SelectCtx ctx;
     int i;
     for (i = 0; i < NOVA_SELECT_MAX_ARMS; i++) {
-        ctx.arms[i].chan     = NULL;
-        ctx.arms[i].is_recv  = false;
-        ctx.arms[i].send_val = 0;
-        ctx.arms[i].guard    = false;
+        ctx.arms[i].chan      = NULL;
+        ctx.arms[i].is_recv   = false;
+        ctx.arms[i].send_val  = 0;
+        ctx.arms[i].guard     = false;
+        ctx.arms[i].wildcard  = false;
     }
     ctx.n_arms   = n_arms;
     ctx.which    = -1;
@@ -368,21 +370,24 @@ static inline SelectCtx nova_select_init(int n_arms) {
 }
 
 static inline void nova_select_set_recv(SelectCtx* ctx, int n,
-                                         Nova_ChanReader* rx, int guard) {
+                                         Nova_ChanReader* rx, int guard,
+                                         int wildcard) {
     if (n < 0 || n >= NOVA_SELECT_MAX_ARMS) return;
-    ctx->arms[n].chan    = rx ? rx->state : NULL;
-    ctx->arms[n].is_recv = true;
-    ctx->arms[n].guard   = (bool)guard;
+    ctx->arms[n].chan     = rx ? rx->state : NULL;
+    ctx->arms[n].is_recv  = true;
+    ctx->arms[n].guard    = (bool)guard;
+    ctx->arms[n].wildcard = (bool)wildcard;
 }
 
 static inline void nova_select_set_send(SelectCtx* ctx, int n,
                                          Nova_ChanWriter* tx, nova_int val,
                                          int guard) {
     if (n < 0 || n >= NOVA_SELECT_MAX_ARMS) return;
-    ctx->arms[n].chan     = tx ? tx->state : NULL;
-    ctx->arms[n].is_recv  = false;
-    ctx->arms[n].send_val = val;
-    ctx->arms[n].guard    = (bool)guard;
+    ctx->arms[n].chan      = tx ? tx->state : NULL;
+    ctx->arms[n].is_recv   = false;
+    ctx->arms[n].send_val  = val;
+    ctx->arms[n].guard     = (bool)guard;
+    ctx->arms[n].wildcard  = false;
 }
 
 /* Xorshift32 — fairness shuffle RNG seeded by ctx address. */
@@ -419,7 +424,8 @@ static inline int nova_select_try_immediate(SelectCtx* ctx) {
                 ctx->which = idx; ctx->recv_val = v;
                 return 1;
             }
-            if (st->closed) {
+            /* `_ = rx` (wildcard) fires on closed channel; `Some(v) = rx` does not */
+            if (st->closed && arm->wildcard) {
                 ctx->which = idx; ctx->recv_val = 0;
                 return 1;
             }
@@ -478,13 +484,30 @@ static inline void _nova_sel_waiter_unlink(SelectWaiter* w) {
 /* Park until one select arm becomes ready. ctx->scope and ctx->slot must
  * be set before calling. On return ctx->which / ctx->recv_val are filled. */
 static inline void nova_select_park(SelectCtx* ctx) {
+    int n = ctx->n_arms, i;
+
+    /* D94 Ф.6 (pre-check): count arms that could ever unblock us.
+     * Do this before checking scope/slot so the all-closed error fires
+     * even outside a fiber (e.g. in main() or test code). */
+    int can_unblock = 0;
+    for (i = 0; i < n; i++) {
+        SelectSlot* arm = &ctx->arms[i];
+        if (!arm->chan || !arm->guard) continue;
+        Nova_ChannelState* st = arm->chan;
+        if (arm->is_recv && st->closed && st->count == 0) continue;
+        if (!arm->is_recv && st->closed) continue;
+        can_unblock++;
+    }
+    if (can_unblock == 0) {
+        nova_throw(nova_str_from_cstr("select: all channels closed"));
+    }
+
     NovaFiberQueue* scope = ctx->scope;
     int             slot  = ctx->slot;
     if (!scope || slot < 0) {
         fprintf(stderr, "nova: nova_select_park: scope/slot not set\n");
         abort();
     }
-    int n = ctx->n_arms, i;
 
     /* Register a SelectWaiter (layout-compatible with ChannelWaiter) on
      * every enabled arm's channel waiter-list.  When any channel operation
@@ -497,6 +520,10 @@ static inline void nova_select_park(SelectCtx* ctx) {
         w->channel = NULL;
         if (!arm->chan || !arm->guard) continue;
         Nova_ChannelState* st = arm->chan;
+        /* Skip channels that are already closed — they can never unblock us.
+         * (pre-check above already ensured at least one live arm exists.) */
+        if (arm->is_recv && st->closed && st->count == 0) continue;
+        if (!arm->is_recv && st->closed) continue;
         w->scope    = scope;
         w->slot     = slot;
         w->channel  = st;
