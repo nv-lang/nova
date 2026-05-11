@@ -32,9 +32,11 @@
 | 18 | [18-stdlib-roadmap.md](18-stdlib-roadmap.md) | Stdlib gap-анализ Rust/Go → Nova: P0/P1/P2 приоритизация под backend/CLI нишу + зафиксированные дизайн-решения (libuv, rustls, M:N-aware sync) | proposal, не начат |
 | 20 | [20-defer-implementation.md](20-defer-implementation.md) | D90 implementation: `defer` и `errdefer` scope-level cleanup statements | 🟡 DRAFT, не начат |
 | 21 | [21-channel-revision-implementation.md](21-channel-revision-implementation.md) | D91 implementation: Channel revision на capability-split (Rust mpsc-style); зависит от Plan 20 | 🟡 DRAFT, не начат |
+| 22 | [22-sleep-libuv-integration.md](22-sleep-libuv-integration.md) | `Time.sleep` через libuv `uv_timer_t` + унифицированный event-loop в scheduler'е; spec sync (D71); открывает D92 (implicit main-scope); открывает дорогу для Plan 18 P0 stdlib | активный, не начат |
 
 > Plan 19 — see `19-closure-and-error-ops.md` (closure-rev + D85 error-ops).
 > Plan 20 и 21 — последовательные (Plan 21 зависит от Plan 20).
+> Plan 22 — самостоятельный, не блокирует Plan 20/21.
 
 ## Связанные директории
 

@@ -7,6 +7,16 @@
 - [Plan 20](20-defer-implementation.md) — `defer` для idiomatic `defer tx.close()`.
 - [D79](../../spec/decisions/06-concurrency.md#d79-channels--coordination-между-fiberами) — текущая Go-style модель, которую пересматриваем.
 
+**Связь с Plan 22:** формально независим, но архитектурно опирается
+на **park/wake primitive** (`nova_rt/sched.h`), который вводит Plan 22.
+Если Plan 22 завершён — `send`/`recv` сразу реализуются через API
+(`nova_sched_park`/`nova_sched_wake`/`nova_sched_register_pending`),
+cancel-during-recv работает автоматически через stop_cb mechanism.
+Если Plan 22 ещё не сделан — Plan 21 реализует `send`/`recv` через
+busy-yield D79-семантики; рефакторинг на API-driven park/wake —
+follow-up после Plan 22. **Рекомендуемый порядок: Plan 22 → Plan 21.**
+См. [«Интеграция с Plan 22»](#интеграция-с-plan-22) ниже.
+
 ---
 
 ## Цель
@@ -49,12 +59,25 @@ State разделена от capabilities. Sender и Receiver — wrapper struc
 паттерну, но через managed heap (без RC, GC соберёт когда оба
 wrapper'а unreachable).
 
+**Park/wake реализация — два варианта:**
+
+- **Если Plan 22 завершён** (рекомендуемо): `send`/`recv` блокировка
+  через `nova_sched_park`/`nova_sched_wake` API из `nova_rt/sched.h`,
+  waitlist'ы recv/send-waiter'ов в `Nova_ChannelState`, cancel-integration
+  через `nova_sched_register_pending` + stop_cb. См.
+  [«Интеграция с Plan 22»](#интеграция-с-plan-22) для полного псевдокода.
+
+- **Если Plan 22 не сделан**: bootstrap-fallback на busy-yield D79-
+  семантику (`while (empty) nova_fiber_yield()`). Менее эффективно,
+  cancel виден на следующем yield-pass'е, но семантически корректно.
+  Рефакторинг на API — follow-up после Plan 22.
+
 **Файлы:**
 - `compiler-codegen/nova_rt/channels.h` — переписать.
 - Возможно `nova_rt/channels.c` если part-functions требуют out-of-header.
 
-**Объём:** ~250 строк (переделка существующих 130 строк channels.h
-+ split на capability-types).
+**Объём:** ~250 строк (под Plan 22 API) либо ~200 строк (без, проще
+реализация без waitlist'ов).
 
 ### Ф.2. Codegen — Channel literals и method dispatch
 
@@ -166,6 +189,119 @@ mechanical.
   есть Channel-примеры по старому API.
 
 **Объём:** ~30 строк.
+
+---
+
+## Интеграция с Plan 22
+
+Plan 22 (`Time.sleep` через libuv) вводит **нормативный park/wake API**
+в `nova_rt/sched.h` (см. [Plan 22 «Park/wake API»](22-sleep-libuv-integration.md#parkwake-api---нормативный-primitive)):
+
+```c
+void      nova_sched_park(NovaFiberQueue* scope, int slot);
+void      nova_sched_wake(NovaFiberQueue* scope, int slot);
+nova_bool nova_sched_is_parked(NovaFiberQueue* scope, int slot);
+void      nova_sched_register_pending(NovaFiberQueue* scope, int slot,
+                                       void* handle, NovaCancelStopCb stop_cb);
+void      nova_sched_unregister_pending(NovaFiberQueue* scope, int slot);
+```
+
+`Channel.send`/`recv` — блокирующая операция, fiber ждёт внешнего
+события (приход данных / освобождение буфера / close). Опирается
+на API напрямую:
+
+```c
+/* Channel state расширяется waitlist'ами. */
+typedef struct ChannelWaiter {
+    NovaFiberQueue* scope;
+    int             slot;
+    struct ChannelWaiter* next;
+} ChannelWaiter;
+
+typedef struct {
+    /* ...buffer fields... */
+    ChannelWaiter* recv_waiters;     /* fiber'ы parked в recv */
+    ChannelWaiter* send_waiters;     /* fiber'ы parked в send (full buffer) */
+    nova_bool      closed;
+} Nova_ChannelState;
+
+/* stop_cb для cancel-wake: убрать waiter из chain. */
+static void _nova_channel_recv_stop_cb(void* handle) {
+    ChannelWaiter* w = (ChannelWaiter*)handle;
+    /* unlink w from its channel's recv_waiters chain (idempotent) */
+    /* ...impl... */
+}
+
+NovaOpt_nova_int nova_receiver_recv(Nova_Receiver* rx) {
+    Nova_ChannelState* st = rx->state;
+    NovaFiberQueue*    sc = _nova_active_scope;
+    int                sl = _nova_active_slot;
+
+    while (st->count == 0 && !st->closed) {
+        ChannelWaiter w = { .scope = sc, .slot = sl, .next = st->recv_waiters };
+        st->recv_waiters = &w;
+
+        nova_sched_register_pending(sc, sl, &w, _nova_channel_recv_stop_cb);
+        nova_sched_park(sc, sl);
+        nova_sched_unregister_pending(sc, sl);
+
+        if (sc && sc->cancel_requested) {
+            nova_throw(nova_str_from_cstr("scope cancelled"));
+        }
+    }
+    if (st->count == 0 && st->closed) return NOVA_OPT_NONE;
+    return NOVA_OPT_SOME(buffer_pop(st));
+}
+
+/* Sender side — будит первого recv-waiter'а после push'а. */
+void nova_sender_send(Nova_Sender* tx, nova_int v) {
+    Nova_ChannelState* st = tx->state;
+    /* ...handle full-buffer parking аналогично... */
+    buffer_push(st, v);
+    if (st->recv_waiters) {
+        ChannelWaiter* w = st->recv_waiters;
+        st->recv_waiters = w->next;
+        nova_sched_wake(w->scope, w->slot);
+    }
+}
+
+/* close — будит всех recv-waiter'ов (они увидят closed + empty → None). */
+void nova_sender_close(Nova_Sender* tx) {
+    Nova_ChannelState* st = tx->state;
+    if (st->closed) return;
+    st->closed = true;
+    while (st->recv_waiters) {
+        ChannelWaiter* w = st->recv_waiters;
+        st->recv_waiters = w->next;
+        nova_sched_wake(w->scope, w->slot);
+    }
+}
+```
+
+**Cancel-during-recv** работает автоматически — `cancel()` Plan 22 R4
+итерируется по `pending_stop_cb` всех slot'ов scope'а и вызывает
+зарегистрированный stop_cb (наш `_nova_channel_recv_stop_cb`), потом
+wake. Никакой Channel-специфичной интеграции с CancelToken не нужно.
+
+**Решение по порядку:**
+
+1. **Plan 22 завершён до Plan 21** (рекомендуемо): Plan 21 Ф.1
+   реализует `send`/`recv` сразу через API из `sched.h`. Production-
+   grade с самого начала, cancel-during-recv работает immediate.
+
+2. **Plan 21 идёт первым** или параллельно: Plan 21 Ф.1 реализует
+   `send`/`recv` через busy-yield (текущая D79-семантика); cancel
+   виден на следующем yield-pass. Рефакторинг на API-driven park/wake
+   — follow-up после Plan 22. Это **два прохода** через channels.h,
+   но user-семантика совпадает.
+
+3. **Cancel-during-recv** — без Plan 22 "best-effort" (cancel на
+   следующем yield); с Plan 22 — immediate. Spec D91 явно cancel-
+   семантику не описывает, оба варианта формально валидны.
+
+**Рекомендуемый порядок:** Plan 22 → Plan 21. Plan 22 ставит
+архитектурный фундамент (park/wake API + libuv-driven scheduler),
+Plan 21 опирается на стабильный contract без переделок.
 
 ---
 
