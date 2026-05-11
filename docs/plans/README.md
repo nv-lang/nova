@@ -33,6 +33,7 @@
 | 20 | [20-defer-implementation.md](20-defer-implementation.md) | D90 implementation: `defer` и `errdefer` scope-level cleanup statements | 🟡 DRAFT, не начат |
 | 21 | [21-channel-revision-implementation.md](21-channel-revision-implementation.md) | D91 implementation: Channel revision на capability-split (Rust mpsc-style); зависит от Plan 20 | 🟡 DRAFT, не начат |
 | 22 | [22-sleep-libuv-integration.md](22-sleep-libuv-integration.md) | `Time.sleep` через libuv `uv_timer_t` + унифицированный event-loop в scheduler'е; spec sync (D71); открывает D92 (implicit main-scope); открывает дорогу для Plan 18 P0 stdlib | активный, не начат |
+| 23 | [23-mn-runtime-roadmap.md](23-mn-runtime-roadmap.md) | M:N runtime — архитектурный roadmap (thread pool + work-stealing + concurrent GC + TLS migration). Зависит от Plan 22/21/18-P0. Открывает Q-mn-* в open-questions. | roadmap, v1.0+ milestone |
 
 > Plan 19 — see `19-closure-and-error-ops.md` (closure-rev + D85 error-ops).
 > Plan 20 и 21 — последовательные (Plan 21 зависит от Plan 20).
