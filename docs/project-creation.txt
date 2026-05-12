@@ -5964,3 +5964,174 @@ Plan 36 = production hardening для CLI subcommand'ов. После 4-way audi
 - `--color never` strips ANSI
 - `CI=true` env → no ANSI
 - Lint warnings visible в check (раньше missed)
+
+
+═══════════════════════════════════════════════════════════════════════════
+Plan 34 — stdlib type-check регресс fix + std.testing handlers (2026-05-12)
+═══════════════════════════════════════════════════════════════════════════
+
+**Контекст.** Baseline в Plan 14 была 50/50 stdlib type-check. После
+добавления новых stdlib-модулей (bcrypt, jwt, ulid, uuid, snowflake,
+rate_limiter, retry, duration, property) обнаружен регресс 33/44 — все
+ругаются на `seeded(N)` и `fixed_ms(N)` как "undefined identifier".
+Плюс 3 parser-бага в json/regex/property — не покрыты Plan 14.
+
+**Реорганизация планов перед началом работы:**
+- Plan 14 переведён из PAUSED в ✅ ЗАКРЫТ (6/7 фаз закрыты;
+  Ф.5 cross-file resolve вынесена).
+- Создан Plan 35 — родительский файл для Ф.5 Plan 14, плюс новая Ф.1
+  (type-check name resolution).
+- Создан Plan 34 как актуальная работа.
+- Plan 18 обновлён: добавлен std.testing в P0-таблицу, частичный ответ
+  на Q3 (test-handlers — в stdlib, production-handlers — открыто).
+
+**Ф.1 — std/testing/handlers.nv.** Создан файл с двумя handler-фабриками:
+
+  fn seeded(seed int) -> Handler[Random] {
+      let mut state = seed as u64
+      handler Random {
+          u64() {
+              state = state * 6364136223846793005 + 1442695040888963407
+              return state
+          }
+          bytes(n) { ... }
+      }
+  }
+
+  fn fixed_ms(ms int) -> Handler[Time] {
+      handler Time {
+          now_ms() => ms as u64
+          now_ns() => (ms as u64) * 1_000_000
+          now() => Timestamp.from_unix_millis(ms as i64)
+          sleep(d) => ()
+      }
+  }
+
+PRNG — Knuth MMIX LCG (не-CSPRNG, но deterministic across architectures).
+7 self-tests в файле проходят чисто.
+
+**Обнаружено:** `nova check` cross-file resolution поддерживает типы
+и static methods без import, но **не bare-name функции**. Использован
+паттерн `import std.testing.handlers as th` + `th.seeded(...)` /
+`th.fixed_ms(...)`. Wildcard `import X.Y.*` парсер не принимает.
+Расширение name resolution для bare-name visibility вынесено в Plan 35 Ф.1.
+
+**Ф.1.5 — sweep по 9 stdlib-файлам:**
+- std/crypto/bcrypt.nv, jwt.nv
+- std/identifiers/snowflake.nv, ulid.nv, uuid.nv
+- std/concurrency/rate_limiter.nv, retry.nv
+- std/testing/property.nv
+- std/time/duration.nv
+
+В каждый добавлен `import std.testing.handlers as th`, все вызовы
+заменены на `th.seeded(...)` / `th.fixed_ms(...)`.
+
+**Ф.2 — parser-фиксы (3 файла, 4 бага):**
+
+1. json.nv:164 — `Some(_) => @col += 1` парсер не принимает bare `+=` в
+   match-arm RHS. Обернул: `Some(_) => { @col += 1 }`.
+2. json.nv:499 — `fn ... (mut fields HashMap[...])` парсер не
+   поддерживает `mut`-modifier для параметра функции. Убрал `mut`
+   (HashMap — reference-type через GC, mutability семантически не
+   теряется). Этот баг прятался за первым.
+3. regex.nv:222 — multi-line `||` continuation. Парсер не продолжает
+   expression на следующей строке если она начинается с `||`. Перенёс
+   `||` в конец предыдущей строки. Семантика идентична.
+4. property.nv (6 мест: 342, 355, 367, 379, 391, 408) — `property(gen) { xs => ... }`
+   использует Kotlin-style trailing-block closure синтаксис, которого
+   в Nova нет. По D22 closure-литерал — `|xs| { ... }`. Заменено на
+   `property(gen, |xs| { ... })` с переходом на explicit-argument
+   форму. Закрывающая `})` добавлена для каждого случая.
+
+**Ф.3 — sweep + retrospective:**
+- nova check std/ → 45/45 PASS (включая новый handlers.nv)
+- nova test → 191/191 PASS (нет регрессий)
+- Plan 34 переведён в ✅ ЗАКРЫТ
+- docs/plans/README.md, plans/18, plans/14 — cross-refs обновлены
+
+**Решённые open-questions:**
+- Q-handler-type: `fn ... -> Handler[E]` с closure-capture mut state.
+- Q-prng-source: Knuth MMIX LCG (reproducible, не-CSPRNG).
+- Q-time-handler-extras: sleep(d) — no-op, advance virtual clock — TODO.
+
+**Что осталось открытым:**
+- Plan 35 Ф.1: bare-name visibility через `import X.Y.*` или re-export.
+  После закрытия можно убрать `th.` префикс в 9 stdlib-файлах
+  (cosmetic, не блокер).
+- Plan 18: production-handlers (real_fs/net/time) — отдельная задача.
+- secure() -> Handler[Random] через CSPRNG runtime hook — отдельно.
+- Advance-virtual-clock для fixed_ms (cron/retry/rate_limiter тесты).
+
+**Acceptance Plan 34:** ✅ все критерии выполнены.
+
+
+================================================================================
+2026-05-12 Plan 33.1 Ф.4 extended: block-bodies + ensures + early return
+================================================================================
+
+Production-grade закрытие block-body case'а (был отложен в первой итерации Ф.4).
+
+### Стратегия: goto post-label
+
+Для функций с ensures-контрактами и FnBody::Block:
+1. Объявляется `_nova_result` variable в начале функции.
+2. Устанавливается флаг `contracts_post_label: Some("_nova_contract_post_<fn>")`.
+3. `Stmt::Return X` подменяется на `{ _nova_result = X; goto <label>; }`.
+4. Trailing block-expression также: `_nova_result = X; goto <label>`.
+5. После body эмитится `<label>:;` + ensures-checks + final return.
+
+Эффект: ensures-проверки срабатывают на ВСЕХ путях выхода из функции,
+включая explicit early return'ы.
+
+### Реализация
+
+CEmitter:
+- Новое поле `contracts_post_label: Option<String>`.
+
+emit_stmt(Stmt::Return):
+- Если post_label установлен — assign в _nova_result + goto.
+- Иначе — обычный return (как раньше).
+- defer cleanup сохранён (вызывается до goto).
+
+emit_block_stmts (trailing expression):
+- Если post_label установлен — assign в _nova_result + goto.
+- Иначе — обычный return как раньше.
+
+emit_fn (FnBody::Block + has_ensures):
+- Эмитит `R _nova_result;` (или ничего для unit-return).
+- Устанавливает contracts_post_label.
+- Эмитит body через emit_block_stmts.
+- Эмитит label (на 0-индентации) + ensures-checks + return _nova_result.
+- Восстанавливает state.
+
+### Тесты
+
+Positive:
+- `nova_tests/contracts/runtime_block_body.nv` — block-body + ensures
+  + early return (abs_block, max3, classify). 3 функции, 8 assert'ов.
+- `nova_tests/contracts/r4_examples.nv` — 10 R4-inspired примеров
+  (без mut params / Fail — те для 33.2/33.3): double, next, divide,
+  classify, parity, clamp, abs_helper, safe_subtract, sign, check.
+  Покрытие: requires, ensures, old, ==>, <==>, early return, trailing.
+  17 assert'ов в test-блоке.
+
+Negative:
+- `nova_tests/expected_runtime/contracts_block_ensures_fail.nv` —
+  bad_max(1, 5) фейлит `ensures result >= b` через early return → runtime-panic.
+
+### Regression
+
+194/194 PASS (191 baseline + 3 новых: runtime_block_body, r4_examples,
+contracts_block_ensures_fail). 0 регрессий.
+
+### Что закрывает в 33.1
+
+- Block-bodies + ensures работают (раньше пропускались с комментарием
+  «roadmap-разбиение»).
+- Acceptance 33.1 «10 R4-примеров end-to-end» закрыт через r4_examples.nv.
+
+### Что остаётся для 33.1 Ф.3
+
+- SMT Z3 backend (требует libz3 setup, отдельный милестоун).
+- После SMT: `#must_verify` поведение, counterexample, zero-cost CI gate.
+

@@ -1,0 +1,52 @@
+// Plan 33.1 Ф.4 production-grade: block-bodies + ensures + early return.
+//
+// Проверяет что:
+// 1. Block-body с trailing expression проходит ensures-check.
+// 2. Block-body с early `return X` проходит ensures-check.
+// 3. Early return при разных условиях — ensures проверяется для всех путей.
+
+module nova_tests.contracts.runtime_block_body
+
+// Trailing expression в block.
+fn abs_block(x int) -> int
+    requires x >= 0
+    ensures result == x
+{
+    let y = x
+    y
+}
+
+// Early return.
+fn max3(a int, b int, c int) -> int
+    requires a >= 0
+    requires b >= 0
+    requires c >= 0
+    ensures result >= a
+    ensures result >= b
+    ensures result >= c
+{
+    if a >= b && a >= c { return a }
+    if b >= c { return b }
+    c
+}
+
+// Сложный early-return с trailing.
+fn classify(x int) -> int
+    requires x >= 0
+    ensures result == 0 || result == 1 || result == 2
+{
+    if x == 0 { return 0 }
+    if x < 10 { return 1 }
+    2
+}
+
+test "block bodies with ensures + early return" {
+    assert(abs_block(5) == 5)
+    assert(abs_block(0) == 0)
+    assert(max3(1, 5, 3) == 5)
+    assert(max3(7, 2, 4) == 7)
+    assert(max3(3, 3, 9) == 9)
+    assert(classify(0) == 0)
+    assert(classify(5) == 1)
+    assert(classify(100) == 2)
+}

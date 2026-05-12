@@ -1,0 +1,103 @@
+// Plan 33.1 acceptance: 10 R4-inspired примеров.
+//
+// Это упрощённые версии R4-функций без mut params/Fail effects
+// (те ждут 33.2/33.3). Покрытие 33.1 scope: requires/ensures/old/result.
+
+module nova_tests.contracts.r4_examples
+
+// 1. Simple precondition.
+fn double(x int) -> int
+    requires x >= 0
+    ensures result == x + x
+=> x + x
+
+// 2. Old value reference.
+fn next(x int) -> int
+    ensures result == old(x) + 1
+=> x + 1
+
+// 3. Multiple requires.
+fn divide(a int, b int) -> int
+    requires b != 0
+    requires a >= 0
+    requires b > 0
+    ensures result * b <= a
+    ensures result >= 0
+=> a / b
+
+// 4. Implication.
+fn classify(x int) -> int
+    requires x >= 0
+    ensures x == 0 ==> result == 0
+    ensures x > 0 ==> result > 0
+=> x
+
+// 5. Equivalence.
+fn parity(x int) -> int
+    requires x >= 0
+    ensures (result == 0) <==> (x % 2 == 0)
+=> x % 2
+
+// 6. Range check.
+fn clamp(x int, lo int, hi int) -> int
+    requires lo <= hi
+    ensures result >= lo
+    ensures result <= hi
+{
+    if x < lo { return lo }
+    if x > hi { return hi }
+    x
+}
+
+// 7. Block body + ensures.
+fn abs_helper(x int) -> int
+    requires x != 0
+    ensures result > 0
+{
+    if x > 0 { return x }
+    0 - x
+}
+
+// 8. Compound condition.
+fn safe_subtract(a int, b int) -> int
+    requires a >= b
+    requires b >= 0
+    ensures result >= 0
+    ensures result == a - b
+=> a - b
+
+// 9. Multiple branches with ensures.
+fn sign(x int) -> int
+    ensures result == -1 || result == 0 || result == 1
+{
+    if x > 0 { return 1 }
+    if x < 0 { return -1 }
+    0
+}
+
+// 10. Chained implications.
+fn check(x int, y int) -> int
+    requires x >= 0
+    requires y >= 0
+    ensures (x > 0 && y > 0) ==> result > 0
+=> x * y
+
+test "R4-inspired contracts end-to-end" {
+    assert(double(5) == 10)
+    assert(next(7) == 8)
+    assert(divide(10, 3) == 3)
+    assert(classify(5) == 5)
+    assert(parity(4) == 0)
+    assert(parity(7) == 1)
+    assert(clamp(5, 1, 10) == 5)
+    assert(clamp(0, 1, 10) == 1)
+    assert(clamp(20, 1, 10) == 10)
+    assert(abs_helper(5) == 5)
+    assert(abs_helper(-3) == 3)
+    assert(safe_subtract(10, 3) == 7)
+    assert(sign(5) == 1)
+    assert(sign(-2) == -1)
+    assert(sign(0) == 0)
+    assert(check(3, 4) == 12)
+    assert(check(0, 5) == 0)
+}

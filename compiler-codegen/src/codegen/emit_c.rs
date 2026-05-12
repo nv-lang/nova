@@ -118,6 +118,11 @@ pub struct CEmitter {
     record_variant_field_order: HashMap<String, Vec<String>>,
     /// Return type of the currently-emitting function, used for match result type inference.
     current_fn_return_ty: Option<String>,
+    /// Plan 33.1 Ф.4 (D24): если установлено — функция имеет ensures-контракты,
+    /// и все `Stmt::Return X` подменяются на `{ _nova_result = X; goto <label>; }`.
+    /// Trailing block-expression также. После label эмитятся ensures-checks
+    /// и финальный return.
+    contracts_post_label: Option<String>,
     /// Maps array variable name → actual element C type (e.g. "Nova_Box*").
     /// The array always uses nova_int storage but elements may be pointers to records.
     array_element_types: HashMap<String, String>,
@@ -330,6 +335,7 @@ impl CEmitter {
             record_variant_field_types: HashMap::new(),
             record_variant_field_order: HashMap::new(),
             current_fn_return_ty: None,
+            contracts_post_label: None,
             array_element_types: HashMap::new(),
             option_inner_types: HashMap::new(),
             pending_option_inner_type: None,
@@ -3892,15 +3898,34 @@ impl CEmitter {
             }
             FnBody::Block(block) => {
                 if has_ensures {
-                    // Block-тело + ensures: пока не поддерживается, потому что
-                    // require'тся перехват return'ов внутри block'а. Это
-                    // отложено в более позднюю под-фазу 33.1 (или 33.2).
-                    // Сейчас — runtime-проверки ensures не emit'ятся для
-                    // block-bodies; компилятор продолжает, контракты остаются
-                    // в AST для будущей SMT-проверки в Ф.3.
-                    // Это НЕ упрощение semantics — это roadmap-разбиение
-                    // (block-bodies покроем в 33.1 follow-up).
+                    // Plan 33.1 Ф.4 (D24 production-grade): block-body +
+                    // ensures. Перехватываем все return'ы через goto post-label,
+                    // collect'им результат в `_nova_result`, потом ensures-checks
+                    // + final return.
+                    let post_label = format!("_nova_contract_post_{}", f.name);
+                    // Объявляем _nova_result заранее. Для unit-return игнорируем
+                    // value, но всё равно нужен label-target.
+                    if ret != "nova_unit" {
+                        self.line(&format!("{} _nova_result;", ret));
+                    }
+                    let saved_label = self.contracts_post_label.take();
+                    self.contracts_post_label = Some(post_label.clone());
+                    self.var_types.insert("result".into(), ret.clone());
                     self.emit_block_stmts(block, &ret)?;
+                    // Post-label: ensures-checks + return.
+                    // Эмитим label на 0-индентации (C label синтаксис).
+                    let saved_indent = self.indent;
+                    self.indent = 0;
+                    self.line(&format!("{}:;", post_label));
+                    self.indent = saved_indent;
+                    self.emit_ensures_checks(f)?;
+                    self.var_types.remove("result");
+                    self.contracts_post_label = saved_label;
+                    if ret == "nova_unit" {
+                        self.line("return NOVA_UNIT;");
+                    } else {
+                        self.line("return _nova_result;");
+                    }
                 } else {
                     self.emit_block_stmts(block, &ret)?;
                 }
@@ -4341,10 +4366,23 @@ impl CEmitter {
         for stmt in &block.stmts {
             self.emit_stmt(stmt)?;
         }
+        // Plan 33.1 Ф.4: при активных ensures (contracts_post_label установлен)
+        // trailing expression идёт в `_nova_result` + goto, чтобы ensures-checks
+        // отработали ПОСЛЕ body (как и для explicit `return X`).
+        let post_label = self.contracts_post_label.clone();
         if let Some(trailing) = &block.trailing {
             self.emit_source_annotation_for_expr(trailing);
             let val = self.emit_expr(trailing)?;
-            if ret_ty == "nova_unit" {
+            if let Some(label) = post_label {
+                // Contracts mode: trailing → _nova_result; goto post.
+                if ret_ty == "nova_unit" {
+                    self.line(&format!("{};", val));
+                } else {
+                    self.line(&format!("_nova_result = {};", val));
+                }
+                self.leave_defer_scope(block_id);
+                self.line(&format!("goto {};", label));
+            } else if ret_ty == "nova_unit" {
                 self.line(&format!("{};", val));
                 self.leave_defer_scope(block_id);
                 self.line("return NOVA_UNIT;");
@@ -4357,7 +4395,11 @@ impl CEmitter {
             }
         } else if ret_ty == "nova_unit" {
             self.leave_defer_scope(block_id);
-            self.line("return NOVA_UNIT;");
+            if let Some(label) = post_label {
+                self.line(&format!("goto {};", label));
+            } else {
+                self.line("return NOVA_UNIT;");
+            }
         } else {
             self.leave_defer_scope(block_id);
         }
@@ -4602,27 +4644,48 @@ impl CEmitter {
                 self.line(&format!("{} {} {};", tgt, op_str, val));
             }
             Stmt::Return { value, .. } => {
+                // Plan 33.1 Ф.4 (D24): если функция имеет ensures-контракты,
+                // `return X` подменяется на `{ _nova_result = X; goto <label>; }`
+                // чтобы ensures-checks работали для **всех** return-точек,
+                // включая early-return в block-bodies.
+                let post_label = self.contracts_post_label.clone();
                 // Plan 20 Ф.4: emit defer cleanup for ALL outer scopes before
                 // returning (return is functional-level exit — walks ALL).
                 // If no defers active, this is a no-op.
                 if let Some(v) = value {
                     let val = self.emit_expr(v)?;
-                    if self.defer_scopes.is_empty() {
+                    let ret_ty = self.current_fn_return_ty.clone().unwrap_or_else(|| "nova_int".to_string());
+                    if let Some(label) = post_label {
+                        // Contracts mode: stash в _nova_result, defer cleanup,
+                        // потом goto. Если defers пустой — просто assign + goto.
+                        self.line(&format!("_nova_result = {};", val));
+                        if !self.defer_scopes.is_empty() {
+                            self.emit_early_exit_cleanup(/*stop_at_loop=*/false);
+                        }
+                        self.line(&format!("goto {};", label));
+                    } else if self.defer_scopes.is_empty() {
                         self.line(&format!("return {};", val));
                     } else {
                         // Stash result in a tmp so defer bodies can't see
                         // it / mutate it.
-                        let ty = self.current_fn_return_ty.clone().unwrap_or_else(|| "nova_int".to_string());
                         let tmp = self.fresh_tmp();
-                        self.line(&format!("{} {} = {};", ty, tmp, val));
+                        self.line(&format!("{} {} = {};", ret_ty, tmp, val));
                         self.emit_early_exit_cleanup(/*stop_at_loop=*/false);
                         self.line(&format!("return {};", tmp));
                     }
                 } else {
-                    if !self.defer_scopes.is_empty() {
-                        self.emit_early_exit_cleanup(/*stop_at_loop=*/false);
+                    if let Some(label) = post_label {
+                        // Contracts mode unit-return.
+                        if !self.defer_scopes.is_empty() {
+                            self.emit_early_exit_cleanup(/*stop_at_loop=*/false);
+                        }
+                        self.line(&format!("goto {};", label));
+                    } else {
+                        if !self.defer_scopes.is_empty() {
+                            self.emit_early_exit_cleanup(/*stop_at_loop=*/false);
+                        }
+                        self.line("return NOVA_UNIT;");
                     }
-                    self.line("return NOVA_UNIT;");
                 }
             }
             Stmt::Break(_) => {

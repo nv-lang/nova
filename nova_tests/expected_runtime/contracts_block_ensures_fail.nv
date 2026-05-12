@@ -1,0 +1,23 @@
+// EXPECT_RUNTIME_PANIC contract ensures failed in `bad_max`
+//
+// Plan 33.1 Ф.4 production-grade: ensures-check срабатывает на early return
+// в block-body когда контракт нарушен.
+
+module nova_tests.expected_runtime.contracts_block_ensures_fail
+
+fn bad_max(a int, b int) -> int
+    requires a >= 0
+    requires b >= 0
+    ensures result >= a
+    ensures result >= b
+{
+    // Bug: всегда возвращает `a` независимо от b → ensures result >= b
+    // нарушается для bad_max(1, 5).
+    if a == 0 { return 0 }
+    a
+}
+
+fn main() Io -> () {
+    let _ = bad_max(1, 5)
+    println("UNREACHABLE")
+}
