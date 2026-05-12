@@ -34,6 +34,7 @@ Nova = backend/CLI/system-альтернатива Go и Rust + AI-first. Эфф
 | **`std.flag`** | без эффекта | CLI args parser: short/long flags, subcommands, env-fallback, help-генерация |
 | **`std.log`** | handler-фабрики для built-in `Log` | `console_handler()`, `json_handler(out Writer)`, `filtered(level, inner)`, `with_fields(fields, inner)` |
 | **`std.sort`** | generic fns | `sort[T Ord]`, `sort_by`, `binary_search`, `min/max`. `Ord` — структурный protocol с `lt(other Self) -> bool` |
+| **`std.testing`** | без эффекта (фабрики handler'ов) | `seeded(seed)`, `fixed_ms(ms)` — deterministic test-handler'ы для `Random`/`Time`. Property-test инфраструктура (`property(gen)`, generators). Закрывается в [Plan 34](34-stdlib-typecheck-and-compile-fix.md). |
 
 **Удалено из P0:**
 - `std.strconv` — заменено `str.from(v)` / `T.try_from(s)?` (D73 + D77)
@@ -86,14 +87,14 @@ HTTP/2/3, WebSocket, gRPC, image/audio, full IANA tz, ssh/ftp/smtp, advanced tem
 
 **Pass-rate сегодня (2026-05-09):** 91/91 nova_tests PASS.
 
-**Plan 14 paused, почти полностью закрыт:**
+**Plan 14 CLOSED (2026-05-12), 6 фаз закрыты:**
 - ✅ Ф.1 (Iter[T] element-type / Option[T] full refactor)
 - ✅ Ф.2 (const non-trivial)
 - ✅ Ф.3 (free-fn-as-value)
 - ✅ Ф.4 (fn-в-record)
 - ✅ Ф.6 (D69 variadic + spread)
 - ✅ Ф.7 (`int as char` literal-only)
-- ❌ Ф.5 (cross-file resolve, низкий ROI / высокая стоимость)
+- ⛔ Ф.5 вынесена в [Plan 35](35-cross-file-resolve.md) (cross-file resolve, низкий ROI)
 
 **Накопленные блокеры std/** (вскрылись после прод-grade Ф.1+Ф.6, не входят в Plan 14):
 - Generic specialization при monomorphization (`set.nv`)
@@ -103,7 +104,8 @@ HTTP/2/3, WebSocket, gRPC, image/audio, full IANA tz, ssh/ftp/smtp, advanced tem
 - Tuple type system (mixed types в `(K, V)`)
 - Ф.7-bis (binary-pattern `(CharLit + IntExpr) as char`)
 
-Возможно объединение в **Plan 19** "stdlib-blockers-round-2". Работа codegen-агента.
+Каждый блокер — отдельный план по приоритету (Plan 19 уже занят под
+closure-rev + D85 error-ops). Работа codegen-агента.
 
 ---
 
@@ -114,10 +116,14 @@ HTTP/2/3, WebSocket, gRPC, image/audio, full IANA tz, ssh/ftp/smtp, advanced tem
 **Q2.** `std.os` — отдельный эффект `Os` (более узкая capability) или операции встраиваются в `Io`? Spec не специфицирует.
 
 **Q3.** Effect handlers для production — где-то должны быть default handler'ы (real_fs, real_net, real_time). Кто их предоставляет — runtime (`nova_rt/`) или std? Граница ответственности?
+> ▸ **Частичный ответ (2026-05-12):** для **test-handler'ов** (`seeded`,
+> `fixed_ms`) ответственность — на stdlib (`std.testing`). См.
+> [Plan 34](34-stdlib-typecheck-and-compile-fix.md). Production-handler'ы (real_fs/net/time)
+> остаются открытыми.
 
 **Q4.** Errors — единый `IoError`/`FsError`/`NetError` per-domain или иерархия общих enum'ов? Spec любит `Fail[E]` с конкретным E.
 
-**Q5.** Что делать с накопленными блокерами std/? Открыть Plan 19 или расширять Plan 14? Это влияет на расписание перед стартом P0 stdlib работы.
+**Q5.** Что делать с накопленными блокерами std/? Расширять Plan 14 уже нельзя (CLOSED 2026-05-12) — каждый блокер формулируется отдельным планом по приоритету. Текущий регресс закрыт [Plan 34](34-stdlib-typecheck-and-compile-fix.md).
 
 **Q6.** `std.fmt.fmt(template str, ...args)` — нужен ли printf-style вообще, если есть string interpolation? Interpolation хватает для статических templates; printf нужен только для динамических (i18n, log formatters). Можно отложить в P1 или вообще не делать.
 
@@ -140,8 +146,9 @@ HTTP/2/3, WebSocket, gRPC, image/audio, full IANA tz, ssh/ftp/smtp, advanced tem
 ## Связь с другими планами
 
 - [03-package-ecosystem-roadmap.md](03-package-ecosystem-roadmap.md) — package manager (v0.6+), от которого зависит P2 категория и AI-стек
-- [14-stdlib-codegen-gaps.md](14-stdlib-codegen-gaps.md) — codegen-блокеры (paused, остался Ф.5 + накопленные блокеры)
+- [14-stdlib-codegen-gaps.md](14-stdlib-codegen-gaps.md) — codegen-блокеры (CLOSED 2026-05-12, 6 из 7 фаз)
 - [15-generic-bounds-enforcement.md](15-generic-bounds-enforcement.md) — D72 enforcement, нужен для протоколов на дженериках
 - [16-capability-enforcement.md](16-capability-enforcement.md) — D63 forbid + D64 realtime, влияет на capability ограничения P0
 - [17-q-resolutions.md](17-q-resolutions.md) — string interpolation (Plan 17 ✅) — основа для `str.from(v)` в форматировании
-- (потенциально) Plan 19 — stdlib-blockers-round-2 (накопленные блокеры std/)
+- [34-stdlib-typecheck-and-compile-fix.md](34-stdlib-typecheck-and-compile-fix.md) — текущий регресс stdlib type-check + `std.testing` handlers (активный)
+- [35-cross-file-resolve.md](35-cross-file-resolve.md) — Ф.5 из Plan 14, вынесена самостоятельно

@@ -294,7 +294,7 @@ M:N (см. open Q ниже).
 | **Plan 21** | Channel capability-split (owner-actor — главный паттерн под M:N) | DRAFT |
 | **Plan 18** | std.sync API (`Atomic[T]`, `Mutex[T]`, `Channel`) — фиксируется как «M:N-correct сразу» | DRAFT |
 | **Plan 09** | Clang migration — нужен для C11 atomics на Linux/macOS | активный, не начат |
-| **Plan 14 Ф.5** | cross-file resolve — std/* должен быть собран до std.sync impl | paused |
+| **Plan 35** | cross-file resolve — std/* должен быть собран до std.sync impl (выделено из Plan 14 Ф.5) | план, не начат |
 
 Plan 23 не блокирует ни один из них — он опирается на их **результаты**.
 

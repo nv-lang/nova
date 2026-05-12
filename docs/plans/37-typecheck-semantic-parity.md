@@ -162,7 +162,7 @@ Audit — **первая задача Ф.1**, не догадки.
 
 ## Связанные планы
 
-- [Plan 34](34-stdlib-typecheck-fix.md) — закрыт; этот gap обнаружен при
+- [Plan 34](34-stdlib-typecheck-and-compile-fix.md) — закрыт; этот gap обнаружен при
   починке `std/encoding/hex.nv` уже после закрытия Plan 34.
 - [Plan 36 / D95](36-cli-production-hardening.md) — `nova check`
   contract: «полная type+lint валидация без codegen». Текущий gap
