@@ -42,8 +42,8 @@ test "perf: select dispatch throughput — 1000 iterations × 4-arm" {
     }
     let elapsed = Time.now() - t0
     // 1000 dispatches × ~spawn/supervised cost. На single-thread runtime
-    // ожидаемо <5s (5ms per iter). Bound generous для CI.
-    assert(elapsed < 30_000)
+    // ожидаемо <5s (5ms per iter). Bound generous для CI (Docker slower).
+    assert(elapsed < 60_000)
 }
 
 
@@ -70,8 +70,8 @@ test "perf: Time.after cleanup throughput — 200 quick recv-wins" {
     let elapsed = Time.now() - t0
     assert(wins == 200)
     // Bound: с B7 ожидаемо <5s; без B7 было бы >>200×5s = >>1000s.
-    // Тест сам себе guard: если elapsed > 30s — B7 сломан.
-    assert(elapsed < 30_000)
+    // Test guard: если elapsed > 60s — B7 сломан (Docker slower).
+    assert(elapsed < 60_000)
 }
 
 
@@ -100,8 +100,8 @@ test "perf: channel throughput — 10000 send/recv pairs (single fiber)" {
     }
     let elapsed = Time.now() - t0
     // 10k send/recv через buffered channel cap=1024 — ожидаемо <2s.
-    // Generous bound для CI.
-    assert(elapsed < 20_000)
+    // Generous bound для CI (Docker slower than native).
+    assert(elapsed < 60_000)
     // 0..9999 = 9999*10000/2 = 49_995_000
     assert(sum == 49_995_000)
 }

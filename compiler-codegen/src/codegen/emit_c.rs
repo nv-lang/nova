@@ -3358,10 +3358,18 @@ impl CEmitter {
         // &_nova_handler_X в том же файле, но semantically неверно.
         // D80 (per-fiber handler scoping) требует чтобы registry был
         // полным — внешняя видимость storage-слотов.
+        /* TLS storage — cross-platform (__declspec on MSVC, __thread elsewhere). */
+        self.line("#ifdef _MSC_VER");
         self.line(&format!(
             "__declspec(thread) NovaVtable_{name}* _nova_handler_{name} = NULL;",
             name = name
         ));
+        self.line("#else");
+        self.line(&format!(
+            "__thread NovaVtable_{name}* _nova_handler_{name} = NULL;",
+            name = name
+        ));
+        self.line("#endif");
         self.line("");
 
         // 3. Dispatch helpers: Nova_Counter_next() calls through vtable

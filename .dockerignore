@@ -5,11 +5,16 @@ nova-cli/target/
 nova-cli/target_alt/
 compiler-codegen/target/
 
-# Generated C / executables.
+# Generated C / executables. Exclude generated C from test runs,
+# но НЕ из подкаталога plan40_sanitizers/ (там hand-written stress
+# tests). Docker .dockerignore parses top-to-bottom; negation must
+# come AFTER the exclusion to override.
 nova_tests/**/*.c
 nova_tests/**/*.exe
 nova_tests/**/*.obj
 nova_tests/**/*.pdb
+!nova_tests/plan40_sanitizers/
+!nova_tests/plan40_sanitizers/**
 
 # vcpkg на Linux не используем (system libgc + libuv).
 compiler-codegen/vcpkg_installed/

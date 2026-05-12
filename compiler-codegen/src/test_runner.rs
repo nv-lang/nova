@@ -837,11 +837,19 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                 }
                 #[cfg(not(target_os = "windows"))]
                 {
-                    c.arg(lib_path);
+                    /* Linux ld обрабатывает .a archives только для symbols
+                     * undefined в момент когда archive seen. Используем
+                     * --start-group / --end-group чтобы symbols искались
+                     * commutative с object files в command line. */
                     c.arg(evloop);
+                    #[cfg(target_os = "linux")]
+                    c.arg("-Wl,--start-group");
+                    c.arg(lib_path);
                     for syslib in LIBUV_UNIX_SYSLIBS {
                         c.arg(syslib);
                     }
+                    #[cfg(target_os = "linux")]
+                    c.arg("-Wl,--end-group");
                 }
             }
             // Plan 27 Ф.1+Ф.D: Boehm link flags for Clang.
@@ -2350,7 +2358,44 @@ fn build_libuv_lib(libuv_dir: &Path, cache_dir: &Path,
     }
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
-        collect_c_files(&src_root.join("unix"), &mut srcs, /*recursive*/ false)?;
+        /* libuv puts platform-specific impls в src/unix/ как отдельные .c
+         * (linux.c, freebsd.c, openbsd.c, darwin.c, sunos.c, aix.c,
+         * ibmi.c, os390.c, ...). Whitelist approach: компилируем common
+         * unix files + platform-specific subset. См. libuv CMakeLists.txt
+         * для reference list.
+         */
+        const COMMON_UNIX: &[&str] = &[
+            "async.c", "core.c", "dl.c", "fs.c",
+            "getaddrinfo.c", "getnameinfo.c",
+            "loop-watcher.c", "loop.c", "pipe.c", "poll.c",
+            "process.c",
+            "random-devurandom.c",
+            "signal.c", "stream.c", "tcp.c", "thread.c", "tty.c", "udp.c",
+        ];
+        #[cfg(target_os = "linux")]
+        const PLATFORM_FILES: &[&str] = &[
+            "linux.c", "procfs-exepath.c",
+            "proctitle.c",
+            "random-getrandom.c", "random-sysctl-linux.c",
+            "no-fsevents.c",
+            /* hrtime: linux.c provides uv__hrtime; не подключаем posix-hrtime.c */
+        ];
+        #[cfg(target_os = "macos")]
+        const PLATFORM_FILES: &[&str] = &[
+            "darwin.c", "darwin-proctitle.c",
+            "kqueue.c", "fsevents.c",
+            "bsd-ifaddrs.c", "bsd-proctitle.c",
+            "random-getentropy.c",
+            "posix-hrtime.c",  /* macOS uses generic POSIX hrtime */
+        ];
+
+        let unix_dir = src_root.join("unix");
+        for name in COMMON_UNIX.iter().chain(PLATFORM_FILES.iter()) {
+            let p = unix_dir.join(name);
+            if p.is_file() {
+                srcs.push(p);
+            }
+        }
     }
     if srcs.is_empty() {
         return Err(anyhow!("no libuv source files found in {}",

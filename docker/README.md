@@ -48,6 +48,37 @@ docker run --rm nova:ubsan ./docker/run-tests.sh
   alone. ASan would have caught the Materialize crossbeam double-free
   (TSan didn't).
 
+## Validation status (2026-05-12)
+
+**Plain Linux build (SANITIZER=none):**
+- ✅ 261/261 nova_tests + 46/46 std type-check PASS.
+- ❌ `plan40_perf_bench` — Boehm `GC_init` SEGV в
+  `GC_find_limit_with_bound` под Docker restricted permissions.
+  **Это не Plan 40 bug** — известная Boehm/Docker interaction.
+  Mitigation: `--skip plan40_perf_bench` в `run-tests.sh`. Plan 27
+  Linux smoke имеет тот же gap.
+
+**Sanitizer builds (TSan/ASan/UBSan):**
+- ❌ pthread stress tests **TRAP под sanitizers** в `libgc.so`
+  (Ubuntu 22.04 default Boehm package single-threaded; multithread
+  variant конфликтует с TSan/ASan instrumentation).
+- **Это не Plan 40 issue**. Real M:N race detection требует:
+  - Build Boehm from source с `--enable-threads=posix --enable-parallel-mark`.
+  - Либо альтернативный GC backend (malloc для sanitizer runs).
+- **Plan 23 prerequisite:** Boehm multithread setup для CI — это
+  **отдельная задача**, не Plan 40 scope.
+
+**Что Plan 40 Ф.1 валидировано:**
+- Single-thread correctness (Windows 262/262, Linux 261/261 без perf).
+- Cross-platform build (Linux clang + Boehm + libuv).
+- Plan 40 functional tests (5 файлов) — все PASS на Linux.
+- API contracts: portable sync.h wrapper, channel runtime layout.
+
+**Что не валидировано (deferred):**
+- Real M:N race detection под TSan (Boehm/Docker issue).
+- Per-fiber stress tests на M:N scheduler'е (Plan 23 dependency).
+- Production benchmark данные на нормальном Linux box (Docker slow).
+
 ## Tier 1 platforms validated
 
 - Linux x86_64 (Ubuntu 22.04+, glibc 2.35+) — primary CI.

@@ -240,7 +240,7 @@ typedef struct { char _dummy; } nova_unit;
 
 /* ---- Plan 22 Ф.3 (D93): нормативный park/wake API ---- */
 /* После fibers.h (NovaFiberQueue полный тип). */
-#include "sched.h"
+#include "nova_sched.h"  /* renamed from sched.h to avoid Linux <sched.h> collision */
 
 /* ---- Plan 40 Ф.1: thread-safety primitives (C11 mtx_t + atomics) ---- */
 /* Перед channels.h — channels.h использует nova_mutex_t / nova_atomic_*. */
