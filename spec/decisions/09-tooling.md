@@ -565,11 +565,10 @@ path, file-or-dir, recurse-by-default.
 |---|---|---|
 | 0 | success | все checks/tests passed |
 | 1 | diagnostic failure | type-check error, test fail |
-| 2 (target) | usage error | bad flag, path not found, wrong extension |
-| 101 (target) | panic | tool bug |
+| 2 | usage error | bad flag, path not found, wrong extension |
+| 101 | panic | tool bug (cross-platform через `std::panic::set_hook`) |
 
-MVP: exit 0 vs 1. Расширение до 0/1/2/101 — sub-plan 36.A (см.
-[Plan 36 R7](../../docs/plans/36-cli-production-hardening.md)).
+Реализовано **полностью** (commit 62c04378fa, Plan 36 R7).
 
 ### Что отвергнуто
 

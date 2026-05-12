@@ -1,6 +1,7 @@
 # Plan 36: CLI production hardening — `nova check` / `nova test`
 
-> **Статус:** план, не начат.
+> **Статус:** **MVP ✅ закрыт** (Ф.0 + Ф.1 + R7 + R10 basic, commits
+> 0b9ec6ec7f + 62c04378fa). Sub-plans 36.A-E — отдельно, не начаты.
 > **Создан:** 2026-05-12.
 > **Обновлён:** 2026-05-12 (v4: после 4-way audit, разрешены contradictions,
 > объявлен MVP, расписаны architectural decisions + prerequisites).
@@ -687,3 +688,38 @@ baseline-compare` helper script. Gating closes A25 — **explicit
     sub-plan separate.
 
 Gaps closed: **160/160** (85 v3 + 75 v4), with clear MVP boundary.
+
+### Implementation log
+
+- **2026-05-12, commit `0b9ec6ec7f`** — Ф.1 part 1: `Cmd::Check.paths:
+  Vec<PathBuf>` + `Cmd::Test.path: Option<PathBuf>`; `walk_nv` made pub
+  in test_runner; canonicalize+dedup+sort; thread::scope parallel;
+  hard-coded skip (target/node_modules/vendor/std/runtime/_*/.*);
+  `--tests-dir` clean break. **Acceptance:** 191/191 PASS regression,
+  multi-path works, non-existent → error.
+
+- **2026-05-12, commit `62c04378fa`** — Ф.0 + R7 + R10:
+  - **Ф.0** correctness fix: `cmd_check` теперь дёргает
+    `types::infer_effects` (D28 effect inference на private fn) +
+    `lints::lint_module` (anonymous-embed override, export-fail-untyped,
+    protocol-in-effect-position, и т.д.). Раньше silent gap — warnings
+    visible только в `cmd_build`.
+  - **R7** exit code quintuplet: `UsageError` newtype + anyhow downcast
+    в main → 0/1/2/101. Panic hook через `std::panic::set_hook` для
+    cross-platform exit=101 (Windows default → 0xC0000409, теперь → 101).
+  - **R10** `--color auto|always|never` global flag через clap. Auto =
+    `OnceLock<ColorMode>` + env detection: NO_COLOR / CLICOLOR=0 /
+    CI=true / TERM=dumb → never; CLICOLOR_FORCE=1 → always; иначе on.
+  - **Acceptance:** lint warnings visible в check, exit codes
+    разделены (verified `non_existent.nv` → 2, type error → 1),
+    `--color never` strip ANSI, CI=true auto-disables.
+
+### Что осталось из MVP (sub-plans 36.A-E)
+
+| Sub-plan | Что | Пререкв |
+|---|---|---|
+| 36.A outputs | --format json/sarif/junit/short, severity, codes, spec_links | Diagnostic extension (AD2 breaking change ~50 sites) |
+| 36.B caching | blake3 content+transitive hash, --no-cache/--frozen/--locked | bootstrap dep approval |
+| 36.C CI | .pre-commit-hooks.yaml, GHA annotations, workflows examples | distribution story для `nova` binary |
+| 36.D ergonomics | -q/-v/-vv, --explain, --dry-run, --list, shell completions | none |
+| 36.E workspace | manifest schema validation, nested nova.toml, workspace concept | ManifestResolver (AD6) |
