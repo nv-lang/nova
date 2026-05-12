@@ -7305,3 +7305,109 @@ Full regression: **233/233 PASS** (231 baseline + 2 new).
 - Type-checker selective filter enforcement (R26 part 2).
 - Migration hardcoded prelude → file-based (R27 followup).
 - Plan 35 sub-plans 35.C-E (advanced features).
+
+
+
+================================================================================
+2026-05-12 Plan 40 Ф.2 + Ф.3 — channel hardening (P2/P3 части)
+================================================================================
+
+Реализация P2/P3 фаз Plan 40 (channel hardening). Ф.1 (P1 M:N
+prerequisites: atomics + selectdone CAS + doubly-linked + per-call
+storage) **отложена** вместе с Plan 23 M:N runtime — без M:N
+scheduler'а race-condition'ы непроверяемы, повтор ошибки Plan 30 Ф.4
+не допускается.
+
+### Архитектурные решения (приняты для будущей Ф.1)
+
+**Mutex backend:** C11 `mtx_t` + `<stdatomic.h>` без platform-wrapper.
+MSVC поддерживает с VS2019 16.8+, clang/gcc давно. Без отдельного
+`nova_rt/sync.h` — typedef'ы `nova_mutex_t` / `nova_atomic_*`.
+Альтернативы (pthread+SRWLOCK wrapper, libuv uv_mutex_t) отвергнуты.
+
+**Select storage:** caller-provided через compound literal в emitted
+коде:
+
+  // codegen эмитит:
+  SelectSlot   _arms[3];     // literal size known at compile time
+  SelectWaiter _waiters[3];
+  SelectCtx ctx = { .arms = _arms, .waiters = _waiters, .n_arms = 3, ... };
+
+`SelectCtx.arms` становится `SelectSlot*` (не inline array). VLA
+отвергнут (MSVC не поддерживает). Heap-alloc отвергнут (GC pressure).
+Plus временный safety cap = 32 в Ф.3 (см. ниже) — снимется в Ф.1.
+
+### Ф.3 cleanup (P3)
+
+**B9 — Channel.new capacity check перед alloc** (channels.h:112-132):
+Раньше alloc state→buf→check→throw. Buffer leaked через GC pressure
+до next collect. Теперь check first, alloc second — no leak on throw.
+
+**B5 — NOVA_SELECT_MAX_ARMS hard cap → compile-error**
+(channels.h:317, emit_c.rs:8667-8678):
+- `#define NOVA_SELECT_MAX_ARMS 32` (было 16).
+- `emit_select` в codegen: `if n_ch > 32` → compile-error
+  «select: too many channel arms (N); maximum is 32. Split into
+  nested selects or refactor into separate operations.»
+- Раньше `set_recv` на `n >= MAX` делал silent return → select
+  висел вечно ожидая non-registered arm.
+- Ф.1 заменит fixed cap на per-call adaptive storage.
+
+**B10 — spec D94 sync** (spec/decisions/06-concurrency.md):
+Bootstrap-ограничения явно перечислены, Plan 40 Ф.2/Ф.3 в
+Bootstrap-status, M:N safety 🟡 отложено с Plan 23.
+
+### Ф.2 timer hardening (P2)
+
+**B7 — Time.after timer cleanup на не-winning arm**
+(channels.h: новые поля on_select_lost/cleanup_data в Nova_ChannelState,
+NovaAfterState.cancelled, _nova_after_on_select_lost):
+
+Раньше: timer всегда срабатывал — `try_send` (idempotent CLOSED) +
+`close` (idempotent через writer_closed). Корректно, но event-loop
+handle висел до GC collect. Под malloc-only GC (Plan 25 G3a) = leak.
+
+Теперь:
+- `Nova_ChannelState` получает opcional callback hook
+  `void (*on_select_lost)(Nova_ChannelState*)` + `void* cleanup_data`.
+  NULL = no-op для обычных каналов (zero overhead).
+- `nova_select_park` после `try_immediate` retry (определение winner'а)
+  итерируется по enabled arms, для не-winner вызывает callback.
+- `Nova_Time_after` сетит callback = `_nova_after_on_select_lost`,
+  который делает `uv_timer_stop` + `nova_chan_writer_close(tx)` +
+  `uv_close`. Idempotent через `NovaAfterState.cancelled` (новое поле).
+- `_nova_after_timer_cb` early-returns при `cancelled` (window между
+  `uv_timer_stop` и event-loop dispatch).
+
+### Тесты
+
+- `nova_tests/concurrency/select_max_arms_boundary.nv` — 32 arms positive.
+- `nova_tests/expected_runtime/select_overflow_compile_error.nv` — 33 arms negative.
+- `nova_tests/concurrency/select_timer_cleanup.nv` — 50 быстрых wins
+  + pure timeout case (2 sub-tests).
+- `nova_tests/expected_runtime/channel_zero_capacity_panic.nv` —
+  Channel.new(0) panic.
+
+### Regression
+
+**237/237 PASS** (231 baseline + 4 новых nova_tests + 2 pre-existing
+от параллельных агентов в сессии). **46/46 std type-check.** Zero
+regressions.
+
+### Что осталось open для Ф.1 (с Plan 23 M:N)
+
+- B1 (T1): atomics на shared state.
+- B2: selectdone CAS race-free wake.
+- B5-storage: per-call compound-literal storage (cap removed).
+- T2: doubly-linked O(1) waiter unlink.
+
+Detailed design всех 4 пунктов сохранён в Plan 40, готов к immediate
+implementation в Plan 23 session.
+
+### Урок
+
+Plan 30 Ф.4 post-close review закрыл план с непроверяемыми
+M:N-claim'ами. Plan 40 не повторяет: P1 пункты явно отложены до
+момента когда есть M:N scheduler для проверки. Defense-in-depth
+applied to project management, не только к коду.
+

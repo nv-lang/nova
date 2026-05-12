@@ -5226,3 +5226,80 @@ emit для prelude items).
 R27 механизм работает (auto-import std.prelude если файл существует);
 user'ы могут расширять prelude добавляя items в std/prelude.nv.
 Migration hardcoded → file-based — future work.
+
+
+---
+
+## Каналы: Plan 40 Ф.1 (M:N safety) отложено с Plan 23 (2026-05-12)
+
+**Где:** `compiler-codegen/nova_rt/channels.h`.
+
+**Что упрощено:** Ф.1 пункты Plan 40 (atomics + selectdone CAS +
+doubly-linked waiters + per-call storage) **не реализованы** в
+сессии Plan 40 Ф.2/Ф.3 implementation. Текущая реализация остаётся
+single-thread корректной.
+
+**Почему не сейчас:** без M:N scheduler'а race-condition'ы
+непроверяемы. Plan 30 Ф.4 закрылся с непроверяемыми M:N-claim'ами —
+повтор anti-pattern'а запрещён.
+
+**Что сделано вместо:** Ф.2 (B7 Time.after cleanup) + Ф.3
+(B5 cap diagnostic, B9 capacity-check ordering, B10 spec D94 sync) —
+валидируется на single-thread runtime'е.
+
+**Detailed design Ф.1 сохранён в Plan 40** для immediate implementation
+в Plan 23 session. Решения: C11 `mtx_t` + `<stdatomic.h>`,
+compound-literal storage в emit'е, Go-style selectdone CAS,
+doubly-linked waiter list.
+
+**Приоритет:** P1 prerequisite для Plan 23.
+
+
+---
+
+## Time.after per-call allocs ~6 — Plan 40 B4 (2026-05-12)
+
+**Где:** `Nova_Time_after` в channels.h.
+
+**Что упрощено:** каждый `Time.after(ms)` = Nova_ChannelPair
+(state+buf+tx+rx, 4 allocs) + NovaAfterState (1) + libuv timer
+heap (1) = ~6 nova_alloc'ов. Tokio = 0-alloc через inline timer
+без backing channel'а.
+
+**Почему:** bootstrap channel-based интегрируется с select как
+просто recv arm. 0-alloc требует выделенного timeout-syntax (special
+casing), что D94 намеренно избежал.
+
+**Влияние:** GC pressure под нагрузкой (HTTP client pool с timeout'ами).
+Под Boehm — minor; под malloc-only — leak.
+
+**Как починить:** timer pool в eventloop.h (Plan 22 follow-up).
+
+**Приоритет:** P2.
+
+
+---
+
+## NOVA_SELECT_MAX_ARMS = 32 hard cap — Plan 40 Ф.3 (2026-05-12)
+
+**Где:** `compiler-codegen/nova_rt/channels.h::NOVA_SELECT_MAX_ARMS` +
+`emit_c.rs::emit_select`.
+
+**Что упрощено:** select ограничен 32 channel arms. Overflow →
+compile-error «select: too many channel arms (N); maximum is 32».
+
+Раньше cap=16 без diagnostic'а; overflow = silent zero-fill →
+select висел вечно. Это bug, не «упрощение». Plan 40 Ф.3 это починил.
+
+**Почему 32:** stack-allocated `SelectCtx.arms[MAX]` требует
+compile-time-known cap. Per-call adaptive storage (Plan 40 Ф.1) уберёт
+cap полностью. VLA отвергнут (MSVC не поддерживает). Heap-alloc
+отвергнут (GC pressure).
+
+**Влияние:** идиоматический Go-код = 3-8 arms; 32 = 4× запас.
+Workaround на overflow: nested selects.
+
+**Как починить:** Plan 40 Ф.1 per-call storage.
+
+**Приоритет:** P3 — limit не достигается в нормальном коде; bug
+(silent hang) уже исправлен.
