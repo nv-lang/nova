@@ -7004,3 +7004,53 @@ composition с seeded). Итого 10 self-tests.
 
 Plan 34 EXTENDED полностью closed.
 
+
+
+================================================================================
+2026-05-12 Plan 33.3 Ф.9: bootstrap improvements (ghost + record inv +
+                          loop inv + decreases recursion)
+================================================================================
+
+После аудита Plan 33 vs Verus / Dafny / Rust contracts RFC 2025 выявлены
+4 doable-сейчас improvement'а (без libz3). Все 4 закрыты:
+
+### Ф.9.1 Ghost erasure (a018fb5bfb) — закрывает V5
+- emit_c.rs Stmt::Let + interp Stmt::Let: if decl.is_ghost → skip.
+- Verus/Dafny semantics: ghost — spec-only, no runtime overhead.
+- Tests: ghost_assume updated; ghost_read_from_nonghost_fail (NEW).
+
+### Ф.9.2 Record invariant auto-enforce (12b1c... ) — soundness gap fix
+- emit_c.rs: pre-pass собирает record_invariants per struct_name.
+- ExprKind::RecordLit: after literal-construction → emit shadow-locals +
+  runtime check для каждого invariant.
+- До этого invariant парсился но никогда не проверялся (silent unsoundness).
+- Tests: record_invariant_positive + contracts_record_invariant_fail.
+
+### Ф.9.3 Loop invariants enforce (e51eb...) — закрывает V2 частично
+- parser/mod.rs: skip_loop_clauses → parse_loop_clauses (возвращает
+  invariants). inject_loop_invariants prepend'ит как assert_static.
+- Runtime check после каждой итерации (через assert_static).
+- Tests: loop_invariant_positive + contracts_loop_invariant_fail.
+
+### Ф.9.4 decreases recursion guard
+- emit_c.rs emit_fn: для fn с decreases — static C-counter
+  `_nova_decreases_depth_<fn>` (sticky monotonic counter).
+- Каждый entry: counter++; if > 10000 → contract violation.
+- Catches infinite recursion в debug. True well-founded (m_new < m_old)
+  — требует SMT.
+- Tests: decreases_recursion_positive + contracts_decreases_recursion_fail.
+
+### Регрессия
+contracts/ 31/31 PASS на release-сборке.
+
+### Что НЕ закрыто (для Plan 33.3 full / отдельный milestone)
+- V1: Z3 backend (libz3 setup).
+- V3: SCC purity inference.
+- V4: old(...) snapshot для mut params в SMT.
+- V6: pure_view + axiom + #verify_handler.
+- V7: bounded quantifiers.
+- V8: FP IEEE 754, strings, sets/maps.
+- V9: incremental cache + parallel + cross-check.
+- V10: #must_verify_module + #trusted external.
+- V11: Dafny-tutorial port (20 примеров).
+

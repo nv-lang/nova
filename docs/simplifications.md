@@ -5031,3 +5031,22 @@ NovaOpt_<T> вместо handcrafted в array.h для int/str.
   enforced (требуют lub). Single-effect case работает.
 - **Returned handler** (`let h = make(); with E = h { ... }`) — нужен
   тип `Handler[E, IRT]` в type-checker'е (currently inline only).
+
+---
+
+## Plan 33.3 Ф.9: bootstrap improvements (2026-05-12)
+
+### [ЗАКР] V2 Loop invariants
+- **Закрыто:** parse_loop_clauses возвращает invariants caller'у;
+  inject_loop_invariants prepend'ит каждый invariant как
+  Stmt::AssertStatic в начало body. Runtime check работает в debug.
+- **Не закрыто полностью:** pre-entry check (invariant true перед
+  first iteration) — invariant injected после первой итерации.
+  Полный havoc-based SMT verify ждёт Z3 backend.
+
+### [ЗАКР] V5 Ghost erasure
+- **Закрыто:** Stmt::Let с is_ghost=true НЕ emit'ится ни в codegen
+  emit_c.rs, ни в interp. Verus/Dafny semantics.
+- **Non-ghost код не может читать ghost-vars** — catch'ится на C-level
+  (undefined identifier). Proper compile-time check в type-checker —
+  отдельная задача (TODO для Plan 33.3 full).
