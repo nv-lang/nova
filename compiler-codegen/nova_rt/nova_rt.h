@@ -209,6 +209,9 @@ typedef struct { char _dummy; } nova_unit;
 /* ---- Effects (Phase 4) — also defines NovaTestFrame + nova_assert ---- */
 #include "effects.h"
 
+/* ---- Plan 41 Etap 1: per-thread fiber stack arena (Linux/macOS only) ---- */
+#include "fiber_arena.h"
+
 /* ---- Fibers / spawn (Phase 5) ---- */
 #include "fibers.h"
 
