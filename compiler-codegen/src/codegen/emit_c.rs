@@ -32,6 +32,11 @@ pub struct CEmitter {
     deferred_impls: String,
     /// File-scope lambda forward declarations (static fn sig only). Flushed before fn definitions.
     lambda_forward_decls: String,
+    /// Plan 36 followup: user-type forward decls (`typedef struct Nova_T Nova_T;`).
+    /// Splice'ятся в `/*__USER_TYPE_FWD_DECLS__*/` ДО NovaOpt typedef'ов,
+    /// чтобы `NovaOpt_Nova_T_p { Nova_T* value; }` не падал с
+    /// `unknown type name 'Nova_T'`. Fills'ится pre-pass'ом в emit_module.
+    user_type_fwd_decls: String,
     /// File-scope lambda implementations (structs + function bodies). Flushed before fn definitions.
     lambda_impls: String,
     indent: usize,
@@ -306,6 +311,7 @@ impl CEmitter {
             out: String::new(),
             deferred_impls: String::new(),
             lambda_forward_decls: String::new(),
+            user_type_fwd_decls: String::new(),
             lambda_impls: String::new(),
             indent: 0,
             tmp_counter: 0,
@@ -581,6 +587,24 @@ impl CEmitter {
         }
 
         self.emit_preamble();
+
+        // Plan 36 followup: pre-pass — forward-decl всех user types
+        // через `typedef struct Nova_T Nova_T;`. Splice'ится в маркер
+        // `/*__USER_TYPE_FWD_DECLS__*/` (ставится в preamble ДО
+        // `/*__NOVAOPT_TYPEDEFS__*/`). Без этого NovaOpt_<T> typedef'ы
+        // ссылаются на не-объявленный `Nova_T` (NovaOpt splice'ится
+        // ПЕРЕД emit_type_decl).
+        for item in &module.items {
+            if let Item::Type(t) = item {
+                match &t.kind {
+                    TypeDeclKind::Record(_) | TypeDeclKind::Sum(_) => {
+                        self.user_type_fwd_decls.push_str(&format!(
+                            "typedef struct Nova_{0} Nova_{0};\n", t.name));
+                    }
+                    _ => {}
+                }
+            }
+        }
 
         // 1. Type declarations first (structs/unions needed by fn signatures)
         for item in &module.items {
@@ -937,6 +961,18 @@ impl CEmitter {
 
         self.emit_main_wrapper(module);
 
+        // Plan 36 followup: splice user-type forward decls в маркер
+        // `/*__USER_TYPE_FWD_DECLS__*/`. Должно быть ДО NovaOpt replace,
+        // потому что NovaOpt typedef'ы могут ссылаться на эти forward decls.
+        let user_fwd_replacement = if self.user_type_fwd_decls.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "/* Plan 36: forward decls для user types — нужны для NovaOpt_<T> */\n{}",
+                self.user_type_fwd_decls)
+        };
+        self.out = self.out.replace("/*__USER_TYPE_FWD_DECLS__*/", &user_fwd_replacement);
+
         // Plan 14 Ф.1: splice NovaOpt_<T> typedefs в позицию маркера.
         // К этому моменту все type_ref_to_c-вызовы (включая в bodies)
         // отработали и заполнили novaopt_typedefs_buf в правильном
@@ -1000,6 +1036,13 @@ impl CEmitter {
             self.line(&format!("typedef struct {{ {} }} _NovaTuple{};", fields, n));
         }
         self.line("");
+        // Plan 36 followup: forward decls user types ДО NovaOpt typedef'ов.
+        // Иначе `NovaOpt_Nova_Range_p { Nova_Range* value; }` падает с
+        // `unknown type name 'Nova_Range'` — типы декларируются после
+        // марker'а в emit_type_decl, а NovaOpt splice'ится в marker.
+        // Решение: pre-pass forward-decl всех user types через отдельный
+        // marker, splice'ится в emit_module finalize.
+        self.line("/*__USER_TYPE_FWD_DECLS__*/");
         // Plan 14 Ф.1: маркер для splice'а typedef'ов NovaOpt_<T> (для T
         // без NOVA_ARRAY_DECL в runtime). Заполняется в `register_novaopt_decl`
         // в registration order (innermost first); splice'ится в финальный
@@ -5302,12 +5345,35 @@ impl CEmitter {
             }
 
             ExprKind::Range { start, end, inclusive } => {
-                // Range emitted as a struct literal — stdlib not linked in Phase 1
-                // Just produce a placeholder that compiles
+                // Plan 36 followup: emit literal `0..N` как Nova_Range
+                // alloc + init если `Range` type зарегистрирован
+                // (например через std/collections/range.nv в same module
+                // или импорт after Plan 35). Иначе placeholder для
+                // emit_for Case 1 (primitive int loop matches это до
+                // emit_expr через ExprKind::Range pattern).
+                //
+                // Inclusive `..=N` — эмитим как `start..end+1` (полу-
+                // открытый эквивалент). Range type не имеет inclusive
+                // поля (std/collections/range.nv:30 — `{start, end}`).
                 let s = self.emit_expr(start)?;
                 let e = self.emit_expr(end)?;
-                let _ = inclusive;
-                Ok(format!("/*range({}, {})*/NOVA_UNIT", s, e))
+                if self.record_schemas.contains_key("Range") {
+                    let tmp = self.fresh_tmp();
+                    let end_expr = if *inclusive {
+                        format!("({} + ((nova_int)1LL))", e)
+                    } else {
+                        e.clone()
+                    };
+                    self.line(&format!(
+                        "Nova_Range* {} = (Nova_Range*)nova_alloc(sizeof(Nova_Range));",
+                        tmp));
+                    self.line(&format!("{}->start = {};", tmp, s));
+                    self.line(&format!("{}->end = {};", tmp, end_expr));
+                    Ok(tmp)
+                } else {
+                    let _ = inclusive;
+                    Ok(format!("/*range({}, {})*/NOVA_UNIT", s, e))
+                }
             }
 
             ExprKind::RecordLit { type_name, fields } => {
@@ -11014,6 +11080,22 @@ impl CEmitter {
                 // Без этого `let b = a as byte` infer'ил бы тип b как nova_int
                 // (тип a) вместо nova_byte. План 05.
                 self.type_ref_to_c(ty).unwrap_or_else(|_| "nova_int".into())
+            }
+            // Plan 36 followup: `0..10` literal — Nova_Range* (если type
+            // зарегистрирован). Без этого fallback nova_int ломал
+            // `(0..N).step_by(K)` method-call inference: искал
+            // method_overloads[("nova_int", "step_by")] = miss → nova_int
+            // → for-in unsupported iterator.
+            //
+            // Если Range не зарегистрирован, остаётся nova_int — emit_for
+            // Case 1 (primitive int loop) обрабатывает это через
+            // `ExprKind::Range` pattern до infer call'а.
+            ExprKind::Range { .. } => {
+                if self.record_schemas.contains_key("Range") {
+                    "Nova_Range*".into()
+                } else {
+                    "nova_int".into()
+                }
             }
             ExprKind::For { .. } => "nova_unit".into(),
             ExprKind::ParallelFor { body, .. } => {

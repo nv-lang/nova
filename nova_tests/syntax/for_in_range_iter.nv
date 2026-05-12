@@ -1,0 +1,81 @@
+// for_in_range_iter.nv — Plan 36 followup: Range literal + custom iterators
+// в for-in цикле.
+//
+// До fix'а `(0..N).method()` падало с:
+//   - `for-in: unsupported iterator type 'nova_int'` — infer возвращал
+//     nova_int для ExprKind::Range, метод не находился в method_overloads.
+//   - `unknown type name 'Nova_Range'` — NovaOpt typedef эмитился до
+//     user-type forward decl.
+//
+// Fix:
+//   1. emit_module pre-pass — forward decls user types через
+//      `typedef struct Nova_T Nova_T;` ДО NovaOpt typedef'ов.
+//   2. emit_expr для ExprKind::Range — эмитит Nova_Range alloc+init
+//      когда Range type зарегистрирован (раньше — placeholder NOVA_UNIT).
+//   3. infer_expr_c_type для ExprKind::Range — `Nova_Range*` (раньше
+//      fallback nova_int).
+
+module nova_tests.syntax.for_in_range_iter
+
+type Range {
+    readonly start int
+    readonly end int
+}
+
+type StepRangeIter {
+    readonly end  int
+    readonly step int
+    mut cur       int
+}
+
+fn Range @step_by(step int) -> StepRangeIter {
+    StepRangeIter { end: @end, step, cur: @start }
+}
+
+fn StepRangeIter mut @next() -> Option[int] {
+    if @cur >= @end { return None }
+    let v = @cur
+    @cur += @step
+    Some(v)
+}
+
+test "step_by(2) on Range literal — even numbers" {
+    let mut sum = 0
+    for i in (0..10).step_by(2) {
+        sum = sum + i
+    }
+    // 0 + 2 + 4 + 6 + 8 = 20
+    assert(sum == 20)
+}
+
+test "step_by(3) on Range literal — every third" {
+    let mut count = 0
+    let mut last = -1
+    for i in (0..10).step_by(3) {
+        count = count + 1
+        last = i
+    }
+    // values: 0, 3, 6, 9 → 4 элемента
+    assert(count == 4)
+    assert(last == 9)
+}
+
+test "step_by(100) — единственный элемент start" {
+    let mut count = 0
+    let mut first = -1
+    for i in (0..5).step_by(100) {
+        if count == 0 { first = i }
+        count = count + 1
+    }
+    assert(count == 1)
+    assert(first == 0)
+}
+
+test "regression: plain Range loop still works (Case 1 primitive)" {
+    let mut sum = 0
+    for i in 0..5 {
+        sum = sum + i
+    }
+    // 0+1+2+3+4 = 10
+    assert(sum == 10)
+}
