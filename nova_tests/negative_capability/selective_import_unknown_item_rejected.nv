@@ -1,0 +1,18 @@
+// EXPECT_CC_ERROR Nova_NonExistentType
+//
+// Plan 35 sub-plan 35.A R26: bootstrap MVP — selective filter syntax-only,
+// items не enforce'ятся. Если user пишет `import X.{NonExistent}`, parser
+// принимает, но usage as type → codegen генерирует ссылку на
+// неизвестный C-тип → clang отвергает.
+//
+// Это **bootstrap-level behavior**: post-bootstrap должен type-checker
+// compile error «unknown item in selective import».
+
+module nova_tests.negative_capability.selective_import_unknown_item_rejected
+
+import std.collections.range.{NonExistentType}
+
+test "usage of unknown selective item rejected (negative)" {
+    let _x NonExistentType = 0
+    assert(true)
+}

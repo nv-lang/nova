@@ -7509,3 +7509,52 @@ Inline reproducers покрывают **algorithm correctness** независи
 - docs/project-creation.txt (эта запись)
 
 Plan 34 EXTENDED + Ф.7 + follow-up #1 + follow-up #2 — closed.
+
+
+================================================================================
+2026-05-12 Negative tests для Plan 39 + 35.A bootstrap features
+================================================================================
+
+После реализации фичей добавлены negative tests (правило памяти).
+
+### Добавлено
+
+**nova_tests/negative_capability/selective_import_empty_rejected.nv:**
+`import std.X.{}` — пустой selective list. Parser отвергает с
+«selective-import list must contain at least one item». PASS.
+
+**nova_tests/negative_capability/selective_import_alias_combo_rejected.nv:**
+`import std.X.{A, B} as Alias` — selective + top-level alias mutual
+exclusion. Parser отвергает с «cannot combine `import X.{A, B}` with
+`as` alias». PASS.
+
+**nova_tests/negative_capability/selective_import_unknown_item_rejected.nv:**
+`import std.X.{NonExistent}` — bootstrap MVP не enforce'ит filter,
+parser принимает. Usage as type → C-код ссылается на неизвестный тип
+→ clang отвергает с `Nova_NonExistentType`. PASS (CC-error path).
+
+### Не реализовано (deferred)
+
+**handler_flow_type_mismatch.nv (удалён):** body=int, interrupt=str —
+type-checker pull-based не enforce'ит typeof(v) ⊑ T_body (D61 §10).
+Codegen эмитит обе ветки через разные slot'ы; если runtime не доходит
+до interrupt-path → нет ошибки. UB только при throw. **Bootstrap gap**,
+заявлен в Plan 39 как «Out of scope: bidirectional inference».
+
+**import_cycle_rejected.nv (удалён):** D29 требует cycle = compile
+error. Bootstrap resolver использует BFS + visited HashSet, который
+dedupает повторные visits silently → cycle не достигает import_stack
+check. **Pre-existing gap** в Plan 35 Ф.1 MVP, отдельная работа.
+
+### Verification
+
+- 6/6 modules tests PASS (selective_import, prelude_auto_import,
+  export_import_reexport + 3 existing).
+- 35/35 negative_capability tests PASS (включая 3 новые).
+- Plan 39 (handler_flow_inference): 6/6 PASS.
+- std/collections/range (Plan 39 Issue A real-world target): PASS.
+
+Full regression: 247/256 PASS. 9 fails — параллельный Plan 40 channel
+hardening работа другого агента (select API изменён, не везде sync'нут),
+**не моя regression** — modules/negative_capability/handler_flow/range
+все PASS.
