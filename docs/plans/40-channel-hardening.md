@@ -55,6 +55,7 @@
 
 ### Тесты
 
+**Базовые** (commit 655033cce6):
 - `nova_tests/concurrency/select_max_arms_boundary.nv` — positive, 32 arms.
 - `nova_tests/expected_runtime/select_overflow_compile_error.nv` — negative,
   33 arms → compile-error pattern.
@@ -64,6 +65,30 @@
     подтверждения что cleanup не сломал normal path.
 - `nova_tests/expected_runtime/channel_zero_capacity_panic.nv` — `Channel.new(0)`
   → runtime panic.
+
+**Focused functional + perf** (commit 4393e94105):
+- `nova_tests/concurrency/plan40_channel_hardening.nv` (7 sub-tests):
+  - B9 positive: `Channel.new(1)` / `Channel.new(1024)` с send/recv stream.
+  - B5 positive: 1-arm fast path, 16-arm middle (старая cap, теперь mainstream).
+  - B7 positive:
+    - alternating recv-wins / timeout-wins (20 iterations) — validates
+      что cleanup корректен для recv-wins И normal path работает для
+      timeout-wins, без накопления state'а между ними.
+    - 1ms timer — самый короткий timer wins.
+    - 10s timer с recv-wins-fast — **критический тест cleanup'а**:
+      без B7 supervised держал бы event-loop 10 секунд; с B7 закрывается
+      за <200ms (assert).
+- `nova_tests/concurrency/plan40_perf_bench.nv` (3 sub-tests):
+  - **select dispatch throughput** — 1000 iterations × 4-arm select.
+    Baseline для Ф.1 mutex overhead measurement в будущем.
+  - **Time.after cleanup throughput** — 200 quick recv-wins с 5-секундным
+    timer'ом каждый. Без B7 event-loop держал бы 200×5s=1000s+ timer'ов;
+    с B7 — все 200 итераций + compile < 30s (assert).
+  - **channel send/recv throughput** — 10000 ops через cap=1024 buffer.
+    Baseline для Ф.1 mutex measurements.
+
+**Validation:** все 6 файлов / 15 sub-tests прогнаны через release nova
+(`nova-cli/target_alt/release/nova.exe`) — **15/15 PASS, 0 FAIL**.
 
 ### Regression
 
