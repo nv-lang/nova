@@ -7198,3 +7198,54 @@ bootstrap. crossbeam lock-free — post-1.0; нужна формальная
 - Plan 30/31 — closed, этот план расширяет их T1/T2/T3.
 
 
+
+
+================================================================================
+2026-05-12 Plan 33.3 Ф.9.5/9.7: pre-entry loop + ghost type-check
+================================================================================
+
+### Ф.9.5 Pre-entry loop invariant check (720e230ef9)
+До: invariants prepend в body → check ПОСЛЕ первой итерации.
+После: wrap_loop_with_preentry_check wrap'ит loop в outer Block с
+pre-entry assert_static stmts. Catches violations ДО loop entry.
+
+parser/mod.rs: parse_for/while/loop теперь делает inject (per-iter) +
+wrap (pre-entry).
+
+Test: expected_runtime/contracts_loop_preentry_fail.nv — n=0, loop
+не выполняется, но pre-entry catches `i < 0` где i=100.
+
+V2 теперь полностью закрыт (pre-entry + per-iteration).
+
+### Ф.9.6 — Frame runtime check ОТЛОЖЕН
+Без SMT (Z3 backend) — недостаточно полезен: compile-time frame check
+уже работает на direct assignments level (check_modifies_frame).
+Runtime check для indirect modifications через callee fn requires
+их modifies info — не доступно без proper analysis. Откладывается
+до Z3 milestone.
+
+### Ф.9.7 Ghost type-check (4c3335d780)
+До: ghost-var read в non-ghost эрейзилось в codegen → C compiler error
+«undeclared identifier» (honest fallback, плохой UX).
+После: check_ghost_usage в types/mod.rs walk'ает каждый fn-body,
+accumulating ghost-set. Non-ghost read ghost-var → proper compile-error
+на type-check этапе.
+
+Test: contracts/ghost_read_from_nonghost_fail.nv updated с
+EXPECT_COMPILE_ERROR (был EXPECT_CC_ERROR).
+
+V5 теперь полностью закрыт (codegen erasure + proper type-check).
+
+### Regression
+230/230 PASS на release. 0 регрессий.
+
+### Plan 33 финальный статус bootstrap
+Закрыты simplifications:
+- V2 Loop invariants (Ф.9.3 + Ф.9.5).
+- V5 Ghost erasure (Ф.9.1 + Ф.9.7).
+- Record invariant auto-enforce (Ф.9.2 — был silent unsoundness gap).
+- decreases recursion guard (Ф.9.4 — catches infinite recursion).
+
+Остающиеся simplifications (V1, V3, V4, V6-V11) требуют libz3 setup
++ Z3 backend implementation. Это отдельный milestone.
+

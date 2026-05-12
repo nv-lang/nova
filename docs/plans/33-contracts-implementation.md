@@ -168,3 +168,28 @@ invariant **перед** входом + **после** каждой итерац
 
 После Ф.9: 209/209 baseline + новые negative-тесты на ghost-erasure,
 invariant-violation, loop-invariant-violation, decreases-violation.
+
+### 9.5 Pre-entry loop invariant check (closes V2 fully)
+
+**Закрыто (720e230ef9):** parse_for/while/loop теперь wrap'ает
+loop-expression в outer Block с pre-entry `assert_static` для каждого
+invariant. Catches violation **до** первой итерации (когда invariant
+ложен с самого старта или loop не выполняется).
+
+Combined с Ф.9.3 (per-iteration check) — invariants полностью enforced
+в debug. SMT havoc-based verify ждёт Z3.
+
+### 9.7 Ghost-var usage type-check (closes V5 properly)
+
+**Закрыто (4c3335d780):** `check_ghost_usage` в types/mod.rs walk'ает
+каждый fn-body, accumulating ghost-set из `ghost let` stmt'ов.
+Non-ghost stmt/expr читающий ghost-var → proper compile-error на
+type-check этапе. До этого: catched на C-level («undeclared
+identifier» после codegen-erasure) — honest fallback, плохой UX.
+
+### 9.6 Frame runtime check — ОТЛОЖЕН
+
+Полезен только в комбинации с SMT (без SMT compile-time frame check
+уже работает на assignments level; runtime check для индирекций через
+callee fn'ы требует знания их modifies — не доступно без full analysis).
+Откладывается до Z3 milestone.
