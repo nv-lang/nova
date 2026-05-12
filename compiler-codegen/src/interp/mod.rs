@@ -1960,6 +1960,20 @@ impl Interpreter {
             Stmt::Defer { .. } | Stmt::ErrDefer { .. } => {
                 Ok(Flow::Value(Value::Unit))
             }
+            // Plan 33.2 Ф.8 (D24): `assert_static <bool>` — в interp
+            // выполняется как обычный assert (runtime-check); SMT-verify
+            // через types/verify в compile-time.
+            Stmt::AssertStatic { expr, span } => {
+                let v = match self.eval_expr(expr, env)? {
+                    Flow::Value(v) => v,
+                    other => return Ok(other),
+                };
+                if let Value::Bool(false) = v {
+                    return Err(Diagnostic::new(
+                        "assert_static failed", *span));
+                }
+                Ok(Flow::Value(Value::Unit))
+            }
         }
     }
 

@@ -440,6 +440,14 @@ pub enum Stmt {
         body: Expr,
         span: Span,
     },
+    /// Plan 33.2 Ф.8 (D24): `assert_static <bool>` — intermediate proof
+    /// obligation. SMT обязан доказать в release; debug — runtime check.
+    /// Доказанные → стираются. Недоказанные → compile error (как
+    /// `#must_verify`).
+    AssertStatic {
+        expr: Expr,
+        span: Span,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

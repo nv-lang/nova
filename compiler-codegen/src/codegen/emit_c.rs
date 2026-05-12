@@ -412,7 +412,8 @@ impl CEmitter {
             | Stmt::Return { span, .. }
             | Stmt::Throw { span, .. }
             | Stmt::Defer { span, .. }
-            | Stmt::ErrDefer { span, .. } => *span,
+            | Stmt::ErrDefer { span, .. }
+            | Stmt::AssertStatic { span, .. } => *span,
             Stmt::Break(s) | Stmt::Continue(s) => *s,
         }
     }
@@ -4770,6 +4771,20 @@ impl CEmitter {
                 let var = scope.entries[idx].active_var.clone();
                 scope.next_idx += 1;
                 self.line(&format!("{} = 1;", var));
+            }
+            // Plan 33.2 Ф.8 (D24): `assert_static <expr>` — intermediate
+            // proof obligation. Сейчас (без full SMT body-encoding)
+            // эмитим как runtime check в debug. В release без
+            // NOVA_CONTRACTS_RUNTIME — стирается препроцессором.
+            Stmt::AssertStatic { expr, span } => {
+                let v = self.emit_expr(expr)?;
+                let src = Self::expr_to_display(expr);
+                self.line("#ifdef NOVA_CONTRACTS_RUNTIME");
+                self.line(&format!(
+                    "if (!({})) nova_contract_violation(NOVA_CONTRACT_PRE, \"<assert_static>\", \"{}\", \"<contract>\", {});",
+                    v, Self::escape_c_str(&src), span.start
+                ));
+                self.line("#endif");
             }
         }
         Ok(())

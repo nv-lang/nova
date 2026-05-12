@@ -1,0 +1,16 @@
+// EXPECT_RUNTIME_PANIC contract requires failed in `<assert_static>`
+//
+// Plan 33.2 Ф.8: assert_static неправильное в runtime → contract violation.
+// (В будущем SMT поймает в compile-time; сейчас runtime fallback.)
+
+module nova_tests.expected_runtime.assert_static_fail
+
+fn buggy(x int) -> int {
+    assert_static x == x + 1   // всегда false
+    x
+}
+
+fn main() Io -> () {
+    let _ = buggy(5)
+    println("UNREACHABLE")
+}

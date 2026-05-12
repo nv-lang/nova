@@ -3531,6 +3531,14 @@ impl Parser {
                 let span = start.merge(body.span);
                 Ok(StmtOrExpr::Stmt(Stmt::ErrDefer { body, span }))
             }
+            // Plan 33.2 Ф.8 (D24): `assert_static <bool>` — intermediate
+            // proof obligation. Контекстный keyword (Ident в лексере).
+            TokenKind::Ident(ref n) if n == "assert_static" => {
+                self.bump();
+                let expr = self.parse_expr()?;
+                let span = start.merge(expr.span);
+                Ok(StmtOrExpr::Stmt(Stmt::AssertStatic { expr, span }))
+            }
             _ => {
                 let expr = self.parse_expr()?;
                 // Assignment?
