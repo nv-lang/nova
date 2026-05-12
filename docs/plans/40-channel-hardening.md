@@ -793,3 +793,144 @@ path correctness), валидировать на Linux через Docker + TSan
   по простоте.
 - **Boehm GC + atomics alignment:** `_Alignas(8)` на atomic_int полях
   для x86 atomicity guarantees. Проверить в bench.
+
+---
+
+## Полный аудит channels.h перед Ф.1 (2026-05-12)
+
+После re-read'а channels.h (681 строка) выявлены **все race window'ы**
+которые нужно закрыть в B1+T2+B2. Это **расширяет scope** по сравнению
+с первым видением «just wrap ops in mutex».
+
+### Race window'ы под M:N (все требуют B1 mutex)
+
+1. **`nova_chan_writer_clone`** (channels.h:317) — `tx->state->writer_count++`
+   non-atomic increment. Решение: `nova_aint_inc(&st->writer_count)`.
+
+2. **`nova_chan_writer_close`** (channels.h:295-314) — sequence:
+   `writer_count--` → `if (writer_count > 0) return` → `closed = true`
+   → wake all waiters. Под M:N два thread'а могут одновременно
+   decrement; race на `closed=true` + wake loop. Решение: atomic
+   `fetch_sub` с проверкой результата `== 0`; затем взять lock и
+   wake под lock'ом (waiter list trav).
+
+3. **`is_closed()` calls** на fast-path (`nova_chan_reader_recv` line 177,
+   `nova_chan_writer_send` line 242, и др.) — read без lock'а OK для
+   atomic_bool, но **последующая операция** (fetch from buffer) должна
+   быть под lock'ом, иначе race на `count`/`head`.
+
+4. **`stop_cb`** (`_nova_channel_waiter_stop_cb`, `_nova_select_waiter_stop_cb`)
+   — iterate waiter list **без lock'а**. Под M:N producer может одновременно
+   wake первый waiter, unlink его, а stop_cb видит inconsistent state.
+   Решение: `nova_mutex_lock(&w->channel->mu)` в начале stop_cb.
+   **Caveat:** stop_cb может быть вызван из scheduler-internal context,
+   где lock уже взят — нужен **trylock**-вариант или re-entrant mutex.
+   Требует анализа sched.h API на момент Этапа 2.
+
+5. **`nova_select_park`** (channels.h:519-605) — регистрирует waiter в
+   каждом channel'е без lock'а. Между регистрацией waiter 1 и 2 producer
+   может wake (потому что одна arm уже ready) → fiber wakes раньше, чем
+   waiter 2 registered → waiter 2 «orphan» в channel'е после select exit.
+   Решение: lock каждого канала на момент регистрации в нём.
+
+6. **`_nova_channel_wake_recv/send`** (channels.h:151-169) — pop+mutate
+   buffer без lock'а. Решение: внутри mutex (вызывать из под lock'а
+   caller'а).
+
+### Atomic fields в Nova_ChannelState (B1)
+
+```c
+struct Nova_ChannelState {
+    nova_mutex_t      mu;            /* B1: protects everything below */
+    nova_int*         buf;
+    int64_t           cap;
+    int64_t           head;          /* under mu */
+    int64_t           count;         /* under mu */
+    nova_atomic_bool  closed;        /* B1: atomic — fast-path read без lock */
+    nova_atomic_int   writer_count;  /* B1: atomic CAS-decrement в close */
+    ChannelWaiter*    recv_waiters;  /* under mu; T2: doubly-linked */
+    ChannelWaiter*    send_waiters;  /* under mu; T2: doubly-linked */
+    void           (*on_select_lost)(Nova_ChannelState*);
+    void*             cleanup_data;
+};
+```
+
+### Waiter layout (T2 + B2)
+
+```c
+struct ChannelWaiter {
+    /* первые 6 полей MUST match SelectWaiter — channel wake helpers
+     * cast'ят ChannelWaiter* и читают scope/slot/channel. */
+    NovaFiberQueue*    scope;
+    int                slot;
+    Nova_ChannelState* channel;
+    bool               is_recv;
+    nova_int           send_val;
+    ChannelWaiter*     next;
+    ChannelWaiter*     prev;       /* T2: NEW — doubly-linked O(1) unlink */
+    nova_atomic_int    fired;      /* B2: NEW — для unified wake protocol */
+};
+
+struct SelectWaiter {
+    /* layout-compatible: первые 8 полей идентичны */
+    NovaFiberQueue*      scope;
+    int                  slot;
+    Nova_ChannelState*   channel;
+    bool                 is_recv;
+    nova_int             send_val;
+    struct SelectWaiter* next;
+    struct SelectWaiter* prev;
+    nova_atomic_int      fired;
+    /* select-only: */
+    int                  arm_idx;
+};
+```
+
+**fired в ChannelWaiter:** добавляем для unified wake protocol. На
+single-thread CAS быстрый (lock cmpxchg ≈ 5 ns). Worth simplifying
+two-path code. Initial value `0`; wake helper CAS'ит `0→1`.
+
+### Wake protocol после B2
+
+`_nova_channel_wake_recv(st)`:
+1. Walk `st->recv_waiters` (head→tail).
+2. Для каждого waiter: CAS `fired: 0→1`.
+3. Если CAS succeeded: unlink (O(1) через T2 doubly-linked) + extract
+   value if SelectWaiter (через arm_idx → channel value already in buf)
+   OR commit buffer change if ChannelWaiter (как раньше) + nova_sched_wake.
+   Break loop.
+4. Если CAS failed (waiter уже fired by select-race): continue к next.
+5. Если все waiters fired: data остаётся в буфере, ждёт следующего recv.
+
+`select_park` после wake: iterate own waiters, найти fired=1, прочитать
+value из канала под mutex'ом, set `which`/`recv_val`.
+
+### Stack frame impact
+
+`ChannelWaiter` после T2+B2: +16 байт (prev pointer + atomic_int с alignment).
+`SelectWaiter` после T2+B2: +16 байт.
+
+`SelectCtx storage` на стеке (Plan 40 Ф.3 final): `n × sizeof(SelectSlot)`
++ `n × sizeof(SelectWaiter)` = `n × (40 + 56)` = `~96n` байт. На 56 KB
+fiber stack — n=580+ безопасно. Раньше было 84n; рост незначительный.
+
+### Scope estimates (после re-audit)
+
+| Этап | Было | После re-audit |
+|---|---|---|
+| 2 B1 | ~150 строк | **~250 строк** (включая close+clone atomics, stop_cb lock, select_park lock на регистрацию) |
+| 3 T2 | ~120 строк | ~120 (без изменений) |
+| 4 B2 | ~250 строк | **~300 строк** (unified wake protocol для обоих waiter types) |
+| **Итого Ф.1 code** | ~520 | **~670 строк** |
+
+### Решено в re-audit
+
+- **`fired` в обоих waiter types** (унификация wake protocol).
+- **stop_cb под lock**: использовать `mtx_lock` напрямую; если sched.h
+  держит lock на caller side — это покажется в Этапе 2 при build/test.
+- **select_park регистрация под lock**: lock каждого канала отдельно
+  на время регистрации waiter в нём. Не deadlock (один lock в момент
+  времени).
+- **Alignment:** atomic_int — 4 байта, на x86 lock-free на 4-byte
+  aligned addresses. Без `_Alignas(8)` обходимся (atomic_bool ─ 1 байт,
+  atomic_int ─ 4 байта; их natural alignment достаточно).
