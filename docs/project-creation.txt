@@ -6798,3 +6798,49 @@ NOT closed:
 
 Commits: 64d1a41c1a (Plan 38), b516bba9ae (Plan 39 Issue D), 08414ab35f
 (plans status update).
+
+
+================================================================================
+2026-05-12 Plan 35 R31: unified compile pipeline
+================================================================================
+
+Пользователь: "нам надо единный pipeline, так?" Да — это R31 в Plan 35
+v2 (был записан как high-priority sub-plan 35.B prereq).
+
+Проблема: Nova имеет 3 separate compile codepaths:
+- cmd_check (nova-cli)
+- cmd_build (nova-cli) — единственный с resolve_imports_inline (Plan 35 Ф.1 MVP)
+- test_runner::codegen_to_c (compiler-codegen) — без import resolve
+
+Cross-file работал в nova build, падал в nova test «cannot resolve
+iterator type 'nova_int'».
+
+Решение (commit 3a759bfad5):
+1. Extract resolve_imports_inline + resolve_import_path в новый module
+   compiler-codegen/src/imports.rs (lib-level, ~180 LOC).
+2. lib.rs: pub mod imports.
+3. nova-cli/src/main.rs cmd_build: вызов
+   nova_codegen::imports::resolve_imports_inline вместо local helper.
+4. nova-cli/src/main.rs check_one_file: добавлен вызов resolve_imports_inline
+   (Plan 35 R19 — nova check parity).
+5. test_runner::codegen_to_c: добавлен вызов + helper find_repo_root_from
+   с workspace-aware lookup (D78 AD6 — 4 nested nova.toml gap).
+
+Workspace-aware root: ищем nova.toml с `[workspace]` маркером.
+Без него — fall back к самому верхнему nova.toml. Это закрывает
+AD6 gap для test_runner case (4 nested nova.toml в repo: root +
+nova_tests/ + examples/ + std/).
+
+Verification (nova_tests/syntax/step_by_cross_file.nv):
+- `nova test step_by_cross_file.nv` с `import std.collections.range` PASS.
+- `(0..10).step_by(2)` через cross-file import работает в test_runner.
+
+221/221 PASS regression. Все 3 pipelines теперь unified.
+
+Go/Rust comparison:
+- Go: один pipeline (go tool compile + linker), все команды через него.
+- Rust: cargo идёт через rustc + build graph, единая система.
+- Nova до R31: 3 раздельных codepath'а (historical accident).
+- Nova после R31: unified entry resolve_imports_inline.
+
+Commit: 3a759bfad5.
