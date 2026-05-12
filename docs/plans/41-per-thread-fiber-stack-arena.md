@@ -634,14 +634,28 @@ Acceptance criterion «<5% overhead» **fails under churn**.
 ~60 LOC. **P1** — ship bootstrap as planned, отметить как known
 regression.
 
-#### P41-6: Stack overflow detection — pretty error
+#### P41-6: Stack overflow detection — **promoted P1 → P0** (audit round 5)
+
+**Promotion rationale.** Без handler'а user видит `Segmentation fault
+(core dumped)` без диагностики — **worst possible UX**. Users из Go
+получают panic'и с full stack trace, Java — StackOverflowError exception.
+Nova production-grade audience не примет silent segfault.
 
 После P41-5 fix (guard pages) — SIGSEGV fires но **Nova не имеет
 SIGSEGV handler** → process dies без помощного message.
 
 **Решение:** SIGSEGV handler проверяет fault addr ∈ arena guard pages
-→ prints «nova: fiber stack overflow (slot N)» → abort. ~80 LOC.
-Signal-safe (no malloc, no locks).
+→ prints «nova: fiber stack overflow (slot N, fiber ID F)» → abort.
+~80 LOC. Signal-safe (no malloc, no locks).
+
+**Production reference:**
+- Go: `runtime.morestack` → panic «runtime: goroutine stack exceeds N-byte limit»
+  с full stack trace.
+- Java: HotSpot вешает SIGSEGV handler, переводит в `StackOverflowError`.
+- Rust: `std::backtrace` не для stack overflow specifically, но panic
+  hooks работают с graceful unwinding до SIGSEGV.
+
+**Severity: P0** — UX блокер для production users.
 
 #### P41-8: NUMA awareness TODO marker
 
@@ -757,3 +771,120 @@ P40R4-1 в Plan 40 round 4 audit (см. ниже).
 - Memory: ~32KB per active fiber + 256MB virtual per worker (NOT
   physical после P41-11 fix). Tokio ~2KB (no stack). Go ~8KB initial.
   Мы 4× Go, fine для bootstrap.
+
+---
+
+## Audit round 5 additions (2026-05-12)
+
+Fresh-eyes audit (post Plan 41 design + Plan 40 closing) обнаружил
+дополнительные findings:
+
+### P41-13 (P0): Stack-clash protection (CVE-2017-1000366)
+
+**Single 4KB guard page (P41-5) НЕ защищает** от stack-clash. Deeply-
+recursive function с large local array (например `char buf[16384]`)
+**skip'нёт past** single guard page в одном subtraction SP.
+
+**Production fix:** clang/GCC `-fstack-clash-protection` (since GCC 8,
+Clang 11) inserts page-by-page probing на stack frames > page_size.
+Plus `-fstack-protector-strong` для canary против return address
+corruption.
+
+**Reference:** https://www.qualys.com/2017/06/19/stack-clash/stack-clash.txt
+
+**Решение (implemented в audit round 5):** Compile flags в
+`compiler-codegen/src/test_runner.rs` для Linux/macOS:
+```rust
+flags.push("-fstack-clash-protection");
+flags.push("-fstack-protector-strong");
+```
+
+Windows clang-cl/MSVC использует `/GS` by default — отдельный mechanism.
+
+**Effect:** **уже работает** без Plan 41 arena implementation —
+defense-in-depth до того как arena landed.
+
+**Cost:** 10 LOC test_runner.rs. **DONE.**
+
+### P41-14 (P2): MADV_NOHUGEPAGE для arena slots
+
+**Transparent Huge Pages (THP) interaction.** Linux может upgrade
+2MB-aligned VMAs в 2MB huge pages при `madvise(MADV_HUGEPAGE)` или
+по default policy. **Конфликтует с P41-4 madvise batching:**
+- THP granularity = 2MB → `MADV_DONTNEED` освобождает entire slot.
+- Lazy commit precision теряется (был 4KB pages).
+
+**Решение в P41 implementation:** `madvise(MADV_NOHUGEPAGE)` сразу
+после `mmap` для arena. Keep 4KB granularity для lazy commit.
+
+**Production reference:**
+https://www.kernel.org/doc/Documentation/vm/transhuge.txt
+
+**Cost:** 3 LOC в `nova_fiber_arena_init`. **P2 — добавить в Этап 1.**
+
+### P41-15 (P2 future-proofing): Cross-thread dealloc bitmap не атомарен
+
+Bitmap modifications в `nova_fiber_dealloc` plain RMW
+(`free_bits[word] |= ...`). Под Plan 23 work-stealing cross-thread
+dealloc → bitmap corruption → double-allocate.
+
+**Решение для Plan 23:** Atomic bitmap (`__atomic_fetch_or` /
+`__atomic_fetch_and`) ИЛИ MPSC return queue к owner thread.
+
+**Cost:** ~50 LOC atomic ops или ~150 LOC MPSC. **Defer to Plan 23
+implementation phase**. Документировано в §Risks.
+
+### Strengths over Go/Rust (audit round 5 — document explicitly)
+
+Plan 41 **строго лучше** Go в одном аспекте:
+
+**No mid-execution stack copy.** Go's `runtime.copystack` копирует stack
+на bigger area при overflow → требует precise GC type info для pointer
+fixup. Наш design = **fixed 2MB ceiling, no copy**. Trade-off: deep
+recursion programs должны refactor. Под typical workloads (web servers,
+batch processors) 2MB headroom более чем достаточно.
+
+**Лучше чем Tokio:** Plan 41 даёт настоящий stack каждому fiber'у.
+Tokio async tasks = state machines, без stack — пользователь ограничен
+`async fn` semantics. Plan 41 fiber'ы — natural sequential code, как Go
+goroutines. **API ergonomics win.**
+
+### Updated scope (round 5)
+
+| Item | Cost | Phase |
+|---|---|---|
+| (previous round 1) P41-2/3/5/11/4/6/12 | ~445 LOC | как раньше |
+| Base arena allocator | ~200 LOC | Этап 1 |
+| **P41-13 stack-clash flags** | ✅ 10 LOC | done (audit round 5) |
+| P41-14 MADV_NOHUGEPAGE | +3 LOC | Этап 1 |
+| P41-15 atomic bitmap (Plan 23) | +50 LOC | deferred |
+| **Plan 41 implementation total** | **~660 LOC** | (Linux/macOS only) |
+
+### Acceptance criteria adjustment
+
+- **Stack overflow → user-visible message** (после P41-6 P0 promotion).
+- Stack-clash CVE-2017-1000366 mitigation **already active** (test_runner
+  flags applied). Verify через regression — все 261/261 Linux PASS.
+
+### Cross-plan dependency summary (final)
+
+После round 5:
+
+```
+Plan 41 (Linux/macOS) ←─── prerequisite ─── Plan 23 (M:N Linux/macOS)
+   ↑
+   │ P40R4-1 cross-plan hazard
+   │ (_NOVA_GC_DISABLE removal)
+   │
+Plan 40 (channels) — Ф.1 closed, но requires Plan 41 close для real M:N
+
+Plan 42+ (Windows arena, SEH guard pages) — отдельный milestone когда
+            Windows production станет realistic target.
+```
+
+**Правильный implementation order:**
+1. **Plan 41 first** на Linux/macOS (P0: P41-2, P41-3, P41-5, P41-11,
+   P41-6, P41-13 (done), P41-14).
+2. **Re-validate Plan 40** под TSan с _NOVA_GC_DISABLE removed.
+3. **Plan 23** M:N runtime на Linux/macOS.
+4. **Plan 42+** Windows arena (если realistic target).

@@ -798,6 +798,17 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
             if !target.is_empty() {
                 flags.insert(0, target.to_string());
             }
+            // Plan 41 P41-5 + audit round 5: stack-clash protection (CVE-2017-1000366).
+            // -fstack-clash-protection inserts page-by-page probing on stack frames
+            // >4KB, preventing skip past single guard page in one SP subtraction.
+            // -fstack-protector-strong adds canaries on functions with arrays.
+            // Linux/macOS clang/gcc support. Windows clang-cl/MSVC: skip (different
+            // mechanisms via /GS by default).
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            {
+                flags.push("-fstack-clash-protection".to_string());
+                flags.push("-fstack-protector-strong".to_string());
+            }
             // Plan 27 R4: NOVA_GC_BOEHM activates GC root registration in fibers.h.
             // We do NOT pass -DGC_THREADS: Nova is single-threaded (libuv + cooperative
             // minicoro), so Boehm's thread-stop API is not needed or safe to use.

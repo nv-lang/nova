@@ -320,6 +320,28 @@ static inline int _nova_channel_wake_send(Nova_ChannelState* st) {
 static inline NovaOpt_nova_int nova_chan_reader_recv(Nova_ChanReader* rx) {
     Nova_ChannelState* st = rx->state;
 
+    /* Plan 40 audit round 5 (2026-05-12): fast-path closed check
+     * symmetric с send fast-path (line ~466 nova_chan_writer_send).
+     * Под bootstrap single-thread cheap; под M:N saves mutex roundtrip
+     * на recv'е from closed-empty channel. Re-check под lock'ом для
+     * TOCTOU correctness (A2). Go runtime/chan.go::chanrecv делает
+     * аналогичный fast-path. */
+    if (nova_abool_load(&st->closed)) {
+        /* Closed flag set. Need lock to check count > 0 (data может быть
+         * в буфере — closed не drains). Если count == 0 → return None. */
+        nova_mutex_lock(&st->mu);
+        if (st->count > 0) {
+            nova_int v = st->buf[st->head];
+            st->head = (st->head + 1) % st->cap;
+            st->count--;
+            (void)_nova_channel_wake_send(st);
+            nova_mutex_unlock(&st->mu);
+            return (NovaOpt_nova_int){ .tag = NOVA_TAG_Option_Some, .value = v };
+        }
+        nova_mutex_unlock(&st->mu);
+        return (NovaOpt_nova_int){ .tag = NOVA_TAG_Option_None, .value = 0 };
+    }
+
     nova_mutex_lock(&st->mu);
 
     /* Try take immediately under lock. */
