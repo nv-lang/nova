@@ -37,7 +37,16 @@
 >
 > Storage refactor (B5 final) **уже сделан** — Ф.1 остаётся:
 > atomics+mutex (B1) + doubly-linked (T2) + selectdone CAS (B2) +
-> Linux/Docker prep + TSan validation + docs.
+> **lockorder для select (A3)** + Linux/Docker prep + TSan validation
+> + deadlock-stress test + docs.
+>
+> **🔴 P0 deadlock prevention:** select с многоканальной registration
+> обязан использовать **lockorder sorted by `(uintptr_t)hchan`**
+> (Go-style — `runtime/select.go::selectgo`). Без этого два fiber'а
+> с inverted-order selects deadlock'аются (`select { ch1, ch2 }` vs
+> `select { ch2, ch1 }`). TSan **не ловит** deadlock — только специально
+> designed cross-fiber select-stress test может его поймать.
+> **Подтверждено пользователем: deadlock нам точно не нужен.**
 >
 > **Detailed roadmap — §«Ф.1 Implementation Plan» ниже.**
 > Обнаружен 2026-05-12 при audit'е Plan 30/31 после закрытия Plan 39.
@@ -1245,3 +1254,344 @@ n > threshold.
   - что мы делаем **лучше** (stack storage, on_select_lost, no padding).
   - что отложено (lock-free SPSC, unbounded, rendezvous, recv_many,
     Permit-based reserve).
+
+---
+
+## Deep audit — round 2 (2026-05-12)
+
+Второй проход (research-agent против Go `runtime/select.go`, Tokio,
+crossbeam, Materialize postmortem, Loom/CDSChecker, matklad, Regehr,
+ARM memory model papers) — **переворачивает часть первого audit'а** и
+добавляет 7 новых P0 items.
+
+### 🔴 Самые опасные пропуски первого audit'а (в порядке риска)
+
+| # | Что | Status в audit 1 | После round 2 | Почему опаснее |
+|---|---|---|---|---|
+| C1 | strict-aliasing UB через cast pun (BaseWaiter) | AP1 P2 | **P0** | Clang -O3 + LTO активно elide'ит reads «не того» типа. Future LTO bite. |
+| C2 | stop_cb lock contract unspecified | A4 «doc only» | **P0** | Deadlock при Plan 23 landing если не nail down сейчас. **Решение: contract (B)** — stop_cb lock-free через atomic `cancelled` flag, **никогда** не берёт channel mutex. |
+| C3 | all-arms-disabled — silent forever-park | not covered | **P0** | Hang который не поймают tests; user'ы hit. Решение: explicit panic «select: no enabled arm». |
+| C4 | TSan alone — пропустит crossbeam-class double-free | covered | **P0 expand** | ASan caught Materialize bug; TSan не caught. Add ASan + UBSan, не только TSan. |
+| C5 | False sharing — Plan 40 хвастался «no padding is strength» | strength claim | **inverted: P1** | crossbeam padding gives **300× perf** under contention (alic.dev measurement). При M:N с 8+ thread'ами Plan 40 будет в 100-1000× slower без padding. |
+| C6 | lost-wakeup contract для `nova_sched_park` | not covered | **P0** | Работает в bootstrap случайно; Plan 23 expose если undocumented. Решение: define `nova_sched_park_with_unlock` API contract сейчас, no-op bootstrap. |
+| C7 | ARM acq_rel cost на `fired` CAS | not covered | **P1** | На ARM каждый failed CAS = full barrier; на x86 free. 2× CAS cost in wake loops на ARM. Использовать `nova_aint_cas_weak` с relaxed-on-failure. |
+
+### 🟢 Demotions / переоценки
+
+- **A3 lockorder: P0 → P2 (под contract B).** Round 2 показал: lockorder
+  нужен только если когда-либо держим ≥2 locks simultaneously. Plan 40
+  не держит (использует optimistic re-scan через post-park retry). Это
+  **correctness mechanism**, не optimization — нужен комментарий
+  `/* CRITICAL: retry is correctness, not perf */` в коде. Saves ~40 LOC.
+  **Подтверждение пользователя «deadlock нам не нужен» сохраняется** —
+  contract (B) обеспечивает deadlock-freedom через optimistic re-scan
+  + atomic fired flag, без необходимости sort'ить.
+
+- **«No padding is strength» — антипаттерн.** First audit перечислял как
+  «what we do better than crossbeam»; round 2 показал что это inverts на
+  M:N. Корректно: pad **by access group** (mu+closed; head+count+
+  waiters+buf; writer_count) — не per-field как crossbeam, но и не
+  «всё в одной cache line».
+
+### Новые P0 items (round 2)
+
+#### C1 — BaseWaiter refactor (was AP1)
+
+Strict-aliasing UB. Solution в audit 1 уже specified:
+
+```c
+typedef struct BaseWaiter {
+    NovaFiberQueue*    scope;
+    int                slot;
+    Nova_ChannelState* channel;
+    bool               is_recv;
+    nova_int           send_val;
+    struct BaseWaiter* next;
+    struct BaseWaiter* prev;        /* T2 */
+    nova_atomic_int    fired;       /* B2 */
+    nova_atomic_bool   cancelled;   /* C2: stop_cb lock-free path */
+} BaseWaiter;
+
+struct ChannelWaiter { BaseWaiter base; };
+struct SelectWaiter  { BaseWaiter base; int arm_idx; nova_int recv_val; };
+```
+
+`recv_waiters` / `send_waiters` хранят `BaseWaiter*` (не cast). Wake
+helpers работают с `BaseWaiter*`. `arm_idx` для select-only через
+container_of-style downcast после `fired` CAS.
+
+**Cost:** ~20 LOC refactor. **P0 (Этап 3).**
+
+#### C2 — stop_cb lock-free contract
+
+Текущий Plan 40 audit 1 говорит «stop_cb берёт mutex; edge cases в
+Этапе 2». Round 2: это закладывает потенциальный deadlock при Plan 23
+landing. **Решение: contract (B).**
+
+```c
+/* C2: stop_cb НИКОГДА не берёт channel mutex.
+ * Использует atomic_bool cancelled на BaseWaiter.
+ * Wake helper при iteration видит cancelled=1 → skip.
+ * Waiter unlink происходит lazy при следующем wake. */
+static NovaStopMode _nova_channel_waiter_stop_cb(void* handle) {
+    BaseWaiter* w = (BaseWaiter*)handle;
+    nova_abool_store(&w->cancelled, true);
+    /* Wake fiber так чтобы scope.cancel_requested check сработал. */
+    if (w->channel) {
+        nova_sched_wake(w->scope, w->slot);
+    }
+    return NOVA_STOP_SYNC;
+}
+```
+
+Wake helpers (`_nova_channel_wake_recv/send`) при iteration:
+```c
+for (BaseWaiter* w = st->recv_waiters; w; w = w->next) {
+    if (nova_abool_load(&w->cancelled)) continue;  /* skip dead waiter */
+    if (!nova_aint_cas(&w->fired, &expected_0, 1)) continue;
+    /* won the CAS — unlink, copy value, wake */
+    ...
+}
+```
+
+Lazy cleanup of cancelled waiters acceptable (eventually wake helper
+walks past, или select_park exit cleanup unlink'ает всех своих).
+
+**Cost:** ~30 LOC. **P0 (Этап 2).** Eliminates entire class of ordering
+bugs с scheduler.
+
+#### C3 — Panic at all-arms-disabled
+
+```c
+/* В nova_select_park, после can_unblock pre-check: */
+int n_enabled = 0;
+for (int i = 0; i < n; i++) {
+    if (ctx->arms[i].chan && ctx->arms[i].guard) n_enabled++;
+}
+if (n_enabled == 0) {
+    nova_throw(nova_str_from_cstr("select: no enabled arm"));
+}
+```
+
+Existing «all closed» check сохраняется. Это дополнительный — для случая
+все arms guarded `if false`.
+
+**Cost:** ~10 LOC + regression test. **P0 (Этап 4).**
+
+#### C4 — ASan + UBSan в Docker, не только TSan
+
+Materialize postmortem: crossbeam unbounded channel double-free, lived
+1 year, **ASan caught**, TSan не caught. 40 days debugging.
+
+**Решение:** в Этапе 5 переименовать `Dockerfile.tsan` → `Dockerfile.sanitizers`
+с 3 variants (TSan / ASan / UBSan). MSan — defer to Ф.4 (требует
+instrumented deps).
+
+```dockerfile
+# Dockerfile.sanitizers — base
+FROM ubuntu:22.04
+ARG SANITIZER=tsan  # tsan|asan|ubsan
+
+RUN apt-get update && apt-get install -y clang-15 cmake git curl
+COPY . /nova
+WORKDIR /nova
+
+ENV CFLAGS="-fsanitize=${SANITIZER} -fno-omit-frame-pointer -g -O1"
+ENV CXXFLAGS="${CFLAGS}"
+ENV CC=clang-15
+
+# build + run tests
+RUN cd compiler-codegen && cargo build --release
+CMD ["./nova_tests/plan40_sanitizers/run_all.sh"]
+```
+
+**Cost:** ~80 LOC Dockerfile + script. **P0 (Этап 5+6).**
+
+#### C5 — Cache-line padding (inverted from strength)
+
+**Решение:** group fields by access pattern, `_Alignas(NOVA_CACHELINE_SIZE)`
+между группами. `NOVA_CACHELINE_SIZE = 64` (x86) / 128 (ARM big) через
+runtime detection или compile-time `#ifdef __aarch64__`.
+
+```c
+struct Nova_ChannelState {
+    /* Group A: mostly-read под mutex */
+    nova_mutex_t      mu;
+    nova_atomic_bool  closed;
+    void           (*on_select_lost)(Nova_ChannelState*);
+    void*             cleanup_data;
+
+    _Alignas(NOVA_CACHELINE_SIZE) char _pad_a[1];
+
+    /* Group B: under-lock state (changes on every op) */
+    nova_int*         buf;
+    int64_t           cap;
+    int64_t           head;
+    int64_t           count;
+    BaseWaiter*       recv_waiters;
+    BaseWaiter*       send_waiters;
+
+    _Alignas(NOVA_CACHELINE_SIZE) char _pad_b[1];
+
+    /* Group C: refcount (contended on close) */
+    nova_atomic_int   writer_count;
+    nova_atomic_bool  reader_closed;  /* B2 */
+};
+```
+
+Cost: +128-192 bytes per channel. На 1000 каналов = 192 KB. Negligible
+vs **300× perf delta** под M:N contention.
+
+**Cost:** ~50 LOC + benchmark verification. **P1 (Этап 2).** Не вытесняем
+из P0 потому что correctness не зависит — только perf. Но **обязательно**
+до declaring Ф.1 done.
+
+#### C6 — nova_sched_park_with_unlock API contract
+
+Even bootstrap no-op, define API now:
+
+```c
+/* sched.h: */
+/* Park fiber, atomically calling unlock_fn(arg) **after** transition
+ * to parked state. Wake from another thread observes parked state and
+ * uses scheduler-correct ready path. Bootstrap implementation can be:
+ *
+ *     void nova_sched_park_with_unlock(scope, slot, unlock_fn, arg) {
+ *         unlock_fn(arg);            // single-thread: безопасно перед park
+ *         nova_sched_park(scope, slot);
+ *     }
+ *
+ * M:N implementation (Plan 23) MUST make the transition atomic. */
+void nova_sched_park_with_unlock(NovaFiberQueue* scope, int slot,
+                                  void (*unlock_fn)(void*), void* arg);
+```
+
+Channel send/recv/select_park use this API. Pattern:
+```c
+nova_mutex_lock(&st->mu);
+/* register waiter under lock */
+...
+nova_sched_park_with_unlock(scope, slot, _unlock_mu, &st->mu);
+/* по wake: lock уже released */
+nova_mutex_lock(&st->mu);
+/* re-check state, unregister waiter */
+```
+
+**Cost:** ~15 LOC bootstrap impl + caller migration in channels.h.
+**P0 (Этап 2 dependency).** Без этого Plan 23 migration требует callsite
+changes.
+
+#### C7 — Weak CAS на ARM (relaxed-on-failure)
+
+В `sync.h`:
+
+```c
+/* Weak CAS: weaker ordering on failure path (no barrier). Use в loop
+ * patterns где failure не carries data. */
+#define nova_aint_cas_weak_release(p, expected, desired) \
+    atomic_compare_exchange_weak_explicit((p), (expected), (desired), \
+                                           memory_order_release, \
+                                           memory_order_relaxed)
+```
+
+Used в wake helpers:
+```c
+int expected = 0;
+if (nova_aint_cas_weak_release(&w->fired, &expected, 1)) { /* won */ }
+```
+
+ARM: failed CAS не emit'ит DMB. x86: same code (already free).
+
+**Cost:** ~10 LOC sync.h + comment block. **P1 (Этап 1 → этап 4).**
+
+### Новые P1 / P2 items (round 2)
+
+| # | Item | Etap | Cost |
+|---|---|---|---|
+| §3 | Spurious-park counter (debug NOVA_DEBUG_CHANNEL=1) | 6 | ~20 LOC |
+| §4 | Same-channel-send-recv acceptance test | 4 | ~30 LOC |
+| §11 | Iter[T] impl на ChanReader (`for v in ch.rx`) | 4 (separate plan?) | ~20 LOC |
+| §13 | Recv-after-close-with-data regression test | 4 | ~20 LOC |
+| §20 | Waiter unlink invariant debug-assert | 4 | ~15 LOC |
+| §29 | NOVA_SELECT_SEED env var (reproducible select) | 6 | ~10 LOC |
+| §26 | Heap fallback при n_arms > 256 (stack guard) | 4 | ~15 LOC |
+
+### Что explicitly **НЕ делаем** (industry doesn't agree)
+
+1. **Auto-close on dropped receiver** (Tokio yes, Go no, Plan 40 = Go).
+   Boehm finalizers risky внутри lock-holding paths. Spec doc + `nova check`
+   lint warning «channel reader dropped without close» — этого достаточно.
+2. **Loom/CDSChecker для Ф.1** (industry recommends; defer to Ф.4
+   pre-1.0 gate). TSan + ASan + UBSan + targeted stress = 90% bugs.
+   CDSChecker = last 10%.
+3. **Debug names per channel** (ни Go ни Tokio не имеют). Wait until
+   observability plan demands.
+4. **Recursive mutex** (2× overhead). Choose contract (B) for stop_cb.
+5. **Cache padding per-field** (crossbeam over-pads). Pad **by access
+   group** = sweet spot.
+6. **Cryptographic RNG для select** (Go fastrand sufficient; ASLR makes
+   pointer-derived seed unpredictable).
+7. **Hold-all-locks during select scan** (Go-style). Use optimistic
+   post-park retry — correctness equivalent, fewer lock traffic.
+
+### Updated final scope для Ф.1
+
+| Этап | После round 1 | После round 2 | Delta |
+|---|---|---|---|
+| 1 sync.h | ~100 | **~130** (+ weak CAS + ordering doc) | +30 |
+| 2 B1 | ~350 | **~480** (+ C2 stop_cb lock-free, C5 padding, C6 park_with_unlock, B2 reader_close, A2 TOCTOU) | +130 |
+| 3 T2 | ~140 | **~160** (+ C1 BaseWaiter refactor) | +20 |
+| 4 B2 | ~360 | **~430** (+ C3 panic, §4/§13/§20 tests, B1 direct-copy, A6 cancel-safety, §26 heap fallback) | +70 |
+| 5 Docker | ~100 | **~180** (+ C4 ASan + UBSan variants) | +80 |
+| 6 TSan/sanitizers | ~315 | **~360** (+ §3 spurious counter, §29 SELECT_SEED, lockorder deadlock test) | +45 |
+| 7 Docs | doc | doc + bench p50/p99 contended (ARM bench → Ф.4) | — |
+| **Total Ф.1** | ~1180 | **~1740 LOC** | **+560** |
+
+### Acceptance criteria (production-grade, final)
+
+- **Correctness:**
+  - 261/261 single-thread regression PASS (Windows).
+  - Все 7 новых P0 items implemented.
+  - Все 7 новых P1 items implemented (минимум C5 padding + C7 weak CAS).
+  - **Все stress tests PASS под TSan + ASan + UBSan** на Linux Docker.
+  - Lockorder-deadlock test (cross-fiber inverted-order select на shared
+    channels) — не должен deadlock'нуть.
+  - Recv-after-close-with-data: явный test.
+  - Send-arm cancel-safety: явный test.
+  - All-arms-disabled: explicit panic, не silent hang.
+
+- **Performance:**
+  - send/recv round-trip uncontended: **<50 ns** (x86).
+  - 8-thread contended send/recv: report p50, p99 (no hard threshold,
+    just observability).
+  - 32-arm select dispatch: linear scaling до n=64.
+
+- **Documentation:**
+  - sync.h: ordering rationale per atomic field.
+  - channels.h: invariant comments (waiter unlink, retry-is-correctness,
+    GC-managed not manually-freed).
+  - spec D94: bootstrap-ограничения + Plan 40 hardening + что отложено.
+  - Plan 40: implementation log per этап.
+  - project-creation.txt + simplifications.md + discussion-log.
+
+- **Plan 23 readiness:**
+  - `nova_sched_park_with_unlock` API defined (no-op bootstrap, M:N impl
+    pending).
+  - stop_cb lock-free contract documented.
+  - GC_register_my_thread integration tested.
+
+### Risks identified (round 2)
+
+1. **C2 contract (B) requires** atomic_bool cancelled на BaseWaiter +
+   wake-helper skip logic. Если wake helper bug — cancelled waiter
+   получит wake = wrong fiber wakes. Mitigation: stress test specifically
+   for cancellation race.
+2. **C5 padding adds 128-192 bytes per channel.** На 100k channels =
+   ~16 MB. Production deployments может potentially hit memory budget;
+   document as known constraint.
+3. **C7 weak CAS на x86 has no benefit** — compiler emits same code.
+   Но **API consistency** важна; documentation должен явно говорить
+   «weak вариант для loops, strong для one-shot».
+4. **Heap fallback при n_arms > 256** — overlaps с Plan 40 Ф.3 «no cap»
+   claim. Resolution: stack для ≤256, heap для >256, документировать как
+   «soft threshold для stack overflow protection» (не «cap»).
