@@ -1,0 +1,24 @@
+// EXPECT_RUNTIME_PANIC contract requires failed in `<assert_static>`
+//
+// Plan 33.3 Ф.9.5: invariant ложен ДО первой итерации (loop никогда не
+// выполняется потому что n=0, но invariant сразу false) → pre-entry
+// runtime panic в debug.
+
+module nova_tests.expected_runtime.contracts_loop_preentry_fail
+
+fn empty_loop_bad(n int) -> int {
+    let mut i = 100   // i стартует с 100
+    while i < n
+        invariant i < 0   // явно ложно от 0-й итерации
+    {
+        i = i + 1
+    }
+    i
+}
+
+fn main() Io -> () {
+    // n=0: loop body не выполняется, но pre-entry check срабатывает
+    // (i=100, invariant `i < 0` false).
+    let _ = empty_loop_bad(0)
+    println("UNREACHABLE")
+}

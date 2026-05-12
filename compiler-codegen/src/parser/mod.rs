@@ -2896,19 +2896,20 @@ impl Parser {
         let pattern = self.parse_pattern()?;
         self.expect(&TokenKind::KwIn)?;
         let iter = self.with_no_struct_or_trailing(|p| p.parse_expr())?;
-        // Plan 33.2 Ф.6 + 33.3 Ф.9.3: loop invariants / decreases.
+        // Plan 33.2 Ф.6 + 33.3 Ф.9.3/9.5: loop invariants / decreases.
         let invs = self.parse_loop_clauses()?;
         let mut body = self.parse_block()?;
-        Self::inject_loop_invariants(invs, &mut body);
+        Self::inject_loop_invariants(invs.clone(), &mut body);
         let end = body.span;
-        Ok(Expr::new(
+        let loop_expr = Expr::new(
             ExprKind::For {
                 pattern,
                 iter: Box::new(iter),
                 body,
             },
             start.merge(end),
-        ))
+        );
+        Ok(Self::wrap_loop_with_preentry_check(loop_expr, &invs))
     }
 
     /// `parallel for x in iter { body }` — D14 fan-out (D50 supervised + spawn).
@@ -2949,30 +2950,30 @@ impl Parser {
             ));
         }
         let cond = self.with_no_struct_or_trailing(|p| p.parse_expr())?;
-        // Plan 33.2 Ф.6 + 33.3 Ф.9.3: loop invariants → assert_static
-        // injected в начало body. Runtime-check в debug; SMT verify (full
-        // havoc-based) — после Z3 backend.
+        // Plan 33.2 Ф.6 + 33.3 Ф.9.3/9.5: loop invariants.
         let invs = self.parse_loop_clauses()?;
         let mut body = self.parse_block()?;
-        Self::inject_loop_invariants(invs, &mut body);
+        Self::inject_loop_invariants(invs.clone(), &mut body);
         let end = body.span;
-        Ok(Expr::new(
+        let loop_expr = Expr::new(
             ExprKind::While {
                 cond: Box::new(cond),
                 body,
             },
             start.merge(end),
-        ))
+        );
+        Ok(Self::wrap_loop_with_preentry_check(loop_expr, &invs))
     }
 
     fn parse_loop(&mut self) -> Result<Expr, Diagnostic> {
         let start = self.expect(&TokenKind::KwLoop)?.span;
-        // Plan 33.2 Ф.6 + 33.3 Ф.9.3: loop invariants → assert_static.
+        // Plan 33.2 Ф.6 + 33.3 Ф.9.3/9.5: loop invariants.
         let invs = self.parse_loop_clauses()?;
         let mut body = self.parse_block()?;
-        Self::inject_loop_invariants(invs, &mut body);
+        Self::inject_loop_invariants(invs.clone(), &mut body);
         let end = body.span;
-        Ok(Expr::new(ExprKind::Loop { body }, start.merge(end)))
+        let loop_expr = Expr::new(ExprKind::Loop { body }, start.merge(end));
+        Ok(Self::wrap_loop_with_preentry_check(loop_expr, &invs))
     }
 
     /// Plan 33.2 Ф.6 + 33.3 Ф.9.3 (D24): парсит loop-attached clauses.
@@ -3010,16 +3011,37 @@ impl Parser {
     }
 
     /// Inject invariant'ы в body цикла как assert_static-stmt'ы.
-    /// - Pre-loop check: эмитится ПЕРЕД loop через wrap'инг enclosing
-    ///   block — невозможно в текущей структуре (loop сам — expression).
-    /// - Per-iteration check: prepend invariants как stmts в body.
-    /// Простой подход: добавить invariants в начало body (это catches
-    /// nарушения после first iteration).
+    /// Per-iteration: prepend invariants в начало body — check срабатывает
+    /// перед каждой итерацией (после первой).
+    ///
+    /// Pre-entry check делается отдельно через `wrap_loop_with_preentry_check`
+    /// (Plan 33.3 Ф.9.5) — wrap'ит loop-expr в Block с pre-entry asserts
+    /// перед loop'ом.
     fn inject_loop_invariants(invariants: Vec<Expr>, body: &mut Block) {
         for inv in invariants.into_iter().rev() {
             let span = inv.span;
             body.stmts.insert(0, Stmt::AssertStatic { expr: inv, span });
         }
+    }
+
+    /// Plan 33.3 Ф.9.5: wrap loop-expression в Block с pre-entry assert_static
+    /// для каждого invariant. Это catches violation **до** первой итерации
+    /// (когда invariant ложен от старта или loop никогда не выполняется).
+    fn wrap_loop_with_preentry_check(loop_expr: Expr, invariants: &[Expr]) -> Expr {
+        if invariants.is_empty() {
+            return loop_expr;
+        }
+        let span = loop_expr.span;
+        let stmts: Vec<Stmt> = invariants.iter()
+            .map(|inv| Stmt::AssertStatic { expr: inv.clone(), span: inv.span })
+            .collect();
+        // Trailing: loop сам — final expr block'а (loop возвращает unit).
+        let block = Block {
+            stmts,
+            trailing: Some(Box::new(loop_expr)),
+            span,
+        };
+        Expr::new(ExprKind::Block(block), span)
     }
 
     fn parse_with(&mut self) -> Result<Expr, Diagnostic> {
