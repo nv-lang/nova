@@ -52,9 +52,18 @@
   #define NOVA_FIBER_ARENA_ENABLED 0
 #endif
 
-/* Default config — может быть override'нут через NOVA_FIBER_ARENA_* env. */
+/* Default config — может быть override'нут через NOVA_FIBER_ARENA_* env.
+ *
+ * Plan 41 audit P41-2: slot_count bumped 256 → 4096 для production.
+ * 4096 × 2MB = 8GB virtual per thread. На x86_64 (256TB virtual)
+ * тривиально; physical commit lazy через MAP_NORESERVE. Real workloads
+ * (web server 10k connections × 4-8 fibers per request) нуждаются в
+ * 4k-16k concurrent fibers per process.
+ *
+ * Slots reused через bitmap free-list — реальный peak ограничен только
+ * concurrent (не cumulative) fibers per worker thread. */
 #define NOVA_FIBER_STACK_SIZE     (2 * 1024 * 1024)  /* 2MB per slot */
-#define NOVA_FIBER_SLOT_COUNT     256                /* 256 × 2MB = 512MB virtual per thread */
+#define NOVA_FIBER_SLOT_COUNT     4096               /* 4096 × 2MB = 8GB virtual per thread */
 #define NOVA_FIBER_GUARD_SIZE     4096               /* 4KB PROT_NONE at slot base */
 
 #if NOVA_FIBER_ARENA_ENABLED

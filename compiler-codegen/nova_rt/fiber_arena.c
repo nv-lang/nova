@@ -24,6 +24,10 @@
 
 /* ── Per-thread arena state ────────────────────────────────────── */
 
+/* Bitmap word count = ceil(NOVA_FIBER_SLOT_COUNT / 64).
+ * 4096 slots = 64 uint64_t words = 512 bytes bitmap. Acceptable cost. */
+#define NOVA_FIBER_BITMAP_WORDS ((NOVA_FIBER_SLOT_COUNT + 63) / 64)
+
 struct NovaFiberArena {
     char*    base;             /* mmap'd base address */
     size_t   virtual_size;     /* total bytes reserved */
@@ -31,10 +35,10 @@ struct NovaFiberArena {
     size_t   slot_count;
     size_t   slots_active;
     size_t   high_water;       /* highest slot index ever used */
-    /* Free-list bitmap: 1 bit per slot. 256 slots = 4 uint64_t words.
+    /* Free-list bitmap: 1 bit per slot.
      * Bit 1 = used, bit 0 = free.
      * Plan 23 prep: будет atomic под M:N (P41-15). Сейчас plain. */
-    uint64_t free_bits[4];     /* 256 bits = 4 words; need bump if > 256 slots */
+    uint64_t free_bits[NOVA_FIBER_BITMAP_WORDS];
 };
 
 static __thread NovaFiberArena _t_arena = { 0 };
@@ -75,9 +79,10 @@ void nova_fiber_arena_init(void) {
     size_t slot_size = NOVA_FIBER_STACK_SIZE;
     size_t slot_count = NOVA_FIBER_SLOT_COUNT;
 
-    /* sizeof bitmap supports 256 slots; bump if config grows. */
-    if (slot_count > 256) {
-        fprintf(stderr, "nova: fiber_arena slot_count > 256 needs bigger bitmap\n");
+    /* Bitmap sized via NOVA_FIBER_BITMAP_WORDS — supports up to
+     * NOVA_FIBER_SLOT_COUNT. Sanity check: slot_count must fit bitmap. */
+    if (slot_count > NOVA_FIBER_BITMAP_WORDS * 64) {
+        fprintf(stderr, "nova: fiber_arena slot_count exceeds bitmap capacity\n");
         abort();
     }
 

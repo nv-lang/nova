@@ -30,13 +30,37 @@
 static size_t _alloc_count = 0;
 
 void nova_gc_init(void) {
+    /* Plan 41 Etap 1 wire-up fix (2026-05-12): Boehm/Docker hardening
+     * before GC_INIT().
+     *
+     * GC_set_no_dls(1) — skip dynamic-libraries data-segment scan.
+     * Without this Boehm's GC_init_linux_data_start() walks /proc/self/maps
+     * to detect data segment; under Docker restricted permissions /proc walk
+     * returns inconsistent results → SEGV в GC_find_limit_with_bound during
+     * GC_init.
+     *
+     * Nova statically links its runtime — dynamic library roots не нужны.
+     * Только main binary data segment + Plan 41 fiber arena ranges + heap. */
+    GC_set_no_dls(1);
+
     GC_INIT();
     /* Allow GC to run finalisers / collect aggressively */
     GC_set_all_interior_pointers(1);
 }
 
 void nova_gc_shutdown(void) {
-    GC_gcollect();
+    /* Plan 41 Etap 1 (2026-05-12): skip final GC_gcollect.
+     *
+     * Under Ubuntu 22.04 system libgc (built с PARALLEL_MARK), GC_gcollect
+     * triggers parallel marker threads. Под Docker thread stack walks
+     * могут fail → SEGV в GC_do_local_mark / GC_do_parallel_mark.
+     *
+     * Final collect не нужен функционально: процесс завершается, kernel
+     * освобождает всю память. Finalizers (если у нас будут) могут не
+     * запуститься, но bootstrap Nova не использует Boehm finalizers.
+     *
+     * Side benefit: faster shutdown (no full mark+sweep). */
+    /* GC_gcollect(); — disabled */
 }
 
 void* nova_alloc(size_t size) {
