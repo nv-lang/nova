@@ -6413,3 +6413,64 @@ production-grade scope.
 Спешка приведёт к полу-реализации.
 
 **Commit:** 88bb1351b3.
+
+
+================================================================================
+2026-05-12 Plan 35 Ф.0 + Ф.1 MVP cross-file resolve (для nova build)
+================================================================================
+
+После Plan 35 v2 audit (65 gaps) приступил к minimal MVP implementation
+для разблокировки multi-file stdlib через `nova build`.
+
+**Ф.0 (commit 24d8266ddc) — FileId в Span + SourceMap registry:**
+- `Span { start, end, file_id: u32 }` — добавлен `file_id` (Default=0).
+- `Span::new(start, end)` остаётся backward-compat — auto file_id=MAIN_FILE_ID=0.
+- `Span::with_file(start, end, file_id)` — explicit cross-file constructor.
+- `SourceMap { files: Vec<SourceFile> }` — registry всех файлов
+  compilation unit. `register_main` + `register` API.
+- `Diagnostic::render_with_map(&map)` — cross-file rendering.
+- 36 existing `Span::new` call sites не сломаны.
+- Regression: 206/206 PASS.
+
+**Ф.1 (commit f481e3950e) — Inline AST expansion для cmd_build:**
+- `resolve_imports_inline(entry, &mut module, repo, stdlib_dir)` —
+  walks `module.imports` BFS, parses imported `.nv`, merge'ит
+  Item::Type / Item::Fn / Item::Const в текущий `module.items`.
+- Path resolution: `<entry_dir>/<path>.nv` → `<repo>/<path>.nv` →
+  `<stdlib_dir>/<path>.nv`.
+- Cycle detection через visited HashSet + import_stack.
+- Recursive transitive imports.
+- Missing import — clear error с searched paths.
+
+**Что unblock'нуто:**
+- `nova build foo.nv` с `import std.collections.range` — теперь
+  Range/StepRangeIter/RangeIter loaded, `(0..N).step_by(K)`
+  resolves правильно.
+
+**Verification:**
+- `nova_tests/syntax/for_in_range_iter.nv` (same-file inline) — PASS.
+- Direct test файл с `import std.collections.range` + step_by — PASS
+  (compile + exe runs).
+- Regression: 208/208 nova_tests PASS.
+
+**Known limitations (sub-plans 35.A-E):**
+- **`nova test` pipeline** не использует resolve_imports_inline.
+  test_runner::codegen_to_c — отдельный codepath в compiler-codegen.
+  Нужно duplicate fix (~50 LOC) или extract helper в shared lib.
+- **Pre-existing `int_MAX` mangling bug** в `range.nv:Range.inclusive` —
+  блокирует full `std/collections/range.nv` test prog. Не Plan 35
+  territory, отдельная задача (codegen prelude constant resolution).
+- **No visibility enforcement** (is_export) — informational only.
+- **No symbol mangling** — collisions если user re-defines stdlib type.
+- **No DCE** — все imported items emit'ятся.
+- **No signature/body 2-pass split** (AD3, R5) — mutual recursion
+  через modules может dadnar; но flat AST merge работает для прямых imports.
+- **Wildcard `import X.*`** не поддерживается (35.A).
+- **No FileId propagation в parser** — все Spans с file_id=0 пока
+  (next phase: при resolve_imports_inline set file_id для imported items).
+
+**Realistic blockers ещё:**
+- `int_MAX` codegen prelude resolution (separate task).
+- `nova test` parity — добавить resolve_imports_inline в test_runner.
+
+**Commits:** 24d8266ddc (Ф.0), f481e3950e (Ф.1 MVP).
