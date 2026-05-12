@@ -1,0 +1,58 @@
+// Plan 33.2 Ф.6: parse loop invariants + decreases.
+//
+// Сейчас в trivial backend invariants/decreases — no-op (SMT verify
+// loops ждёт Z3 backend). Тест проверяет что синтаксис принят парсером.
+
+module nova_tests.contracts.parse_loop_invariants
+
+#unverified
+fn sum_to(n int) -> int
+    requires n >= 0
+{
+    let mut s = 0
+    let mut i = 0
+    while i < n
+        invariant 0 <= i
+        invariant i <= n
+        decreases n - i
+    {
+        s = s + i
+        i = i + 1
+    }
+    s
+}
+
+#unverified
+fn count_array(xs []int) -> int
+{
+    let mut count = 0
+    for x in xs
+        invariant count >= 0
+    {
+        count = count + 1
+    }
+    count
+}
+
+#unverified
+fn loop_with_decreases(n int) -> int
+    requires n > 0
+{
+    let mut i = n
+    let mut total = 0
+    loop
+        invariant total >= 0
+        decreases i
+    {
+        if i == 0 { break }
+        total = total + i
+        i = i - 1
+    }
+    total
+}
+
+test "loop invariants + decreases parse" {
+    assert(sum_to(5) == 0 + 1 + 2 + 3 + 4)
+    assert(count_array([10, 20, 30]) == 3)
+    assert(loop_with_decreases(3) == 3 + 2 + 1)
+}

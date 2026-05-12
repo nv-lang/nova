@@ -2845,6 +2845,8 @@ impl Parser {
         let pattern = self.parse_pattern()?;
         self.expect(&TokenKind::KwIn)?;
         let iter = self.with_no_struct_or_trailing(|p| p.parse_expr())?;
+        // Plan 33.2 Ф.6: loop invariants / decreases.
+        self.skip_loop_clauses()?;
         let body = self.parse_block()?;
         let end = body.span;
         Ok(Expr::new(
@@ -2895,6 +2897,10 @@ impl Parser {
             ));
         }
         let cond = self.with_no_struct_or_trailing(|p| p.parse_expr())?;
+        // Plan 33.2 Ф.6: loop invariants / decreases clauses.
+        // Парсим но игнорируем в AST (no-op в 33.2 первой итерации;
+        // SMT verify loops — после Ф.8 + Z3 backend).
+        self.skip_loop_clauses()?;
         let body = self.parse_block()?;
         let end = body.span;
         Ok(Expr::new(
@@ -2908,9 +2914,34 @@ impl Parser {
 
     fn parse_loop(&mut self) -> Result<Expr, Diagnostic> {
         let start = self.expect(&TokenKind::KwLoop)?.span;
+        // Plan 33.2 Ф.6: loop invariants / decreases — same as while.
+        self.skip_loop_clauses()?;
         let body = self.parse_block()?;
         let end = body.span;
         Ok(Expr::new(ExprKind::Loop { body }, start.merge(end)))
+    }
+
+    /// Plan 33.2 Ф.6: парсит и игнорирует loop-attached clauses:
+    /// - `invariant <expr>` (multiple lines).
+    /// - `decreases <expr>` (single).
+    /// Эти clauses предшествуют `{` body. SMT-verify их использует
+    /// когда добавится Z3 backend; в trivial-режиме — no-op.
+    fn skip_loop_clauses(&mut self) -> Result<(), Diagnostic> {
+        loop {
+            self.skip_newlines();
+            match &self.peek().kind {
+                TokenKind::Ident(n) if n == "invariant" => {
+                    self.bump();
+                    let _ = self.with_no_struct_or_trailing(|p| p.parse_expr())?;
+                }
+                TokenKind::Ident(n) if n == "decreases" => {
+                    self.bump();
+                    let _ = self.with_no_struct_or_trailing(|p| p.parse_expr())?;
+                }
+                _ => break,
+            }
+        }
+        Ok(())
     }
 
     fn parse_with(&mut self) -> Result<Expr, Diagnostic> {
