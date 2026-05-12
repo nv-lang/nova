@@ -6330,3 +6330,86 @@ Fix: ветка `ExprKind::Range { .. } => Nova_Range*` если type
 **Регрессия:** 199/200 PASS (1 transient parallel race). На rerun PASS.
 
 **Commit:** e019a47128.
+
+
+================================================================================
+2026-05-12 Plan 35 v2 cross-file resolve — 3-way audit (65 gaps closed)
+================================================================================
+
+После Plan 36 MVP + codegen forward-decl + Range emit fix (commit
+e019a47128) обнаружено: `(0..N).step_by(K)` работает only same-file
+case. `std/encoding/hex.nv` через `import std.collections.range`
+продолжает падать на cross-file resolution.
+
+Это **bootstrap limitation**, не bug fix. План 35 v2 переписан с
+production-grade scope.
+
+**3-way audit:**
+- vs Rust module system (R1-R20): 20 gaps — `pub use` / re-export
+  (R1), визибилити granularity (R2), `Self`/`super`/`crate`-paths (R7),
+  stable mangling (R8), `extern "C"` (R9-R10), cfg (R11), edition
+  system (R12), incremental compilation `rmeta` (R4, R13), 2-pass
+  typecheck для mutual recursion (R5) — **критичный** gap, orphan rules
+  (R15), prelude (R18).
+- vs Go package model (G01-G14): 14 gaps — cycle detection
+  **обязателен** (G01), directory=package vs file=module (G02), memory
+  cache (G03), `init()` semantics (G04), build determinism (G08),
+  `internal/` (G09), path canonicalization Windows case-fold (G10),
+  conditional compilation (G11), cross-module methods (G13), external
+  fn dedupe (G14).
+- vs Nova-specific (N01-N25): 25 gaps — D82 external + runtime
+  symbol propagation (N01), unification с ExternalRegistry (N03), Plan
+  13 auto-gen invalidation (N04), Plan 16 capability propagation
+  cross-file (N05) — **soundness hole**, Plan 27 ALLOC_REQUIRES
+  transitive (N06), `FileId` в Span для cross-file diagnostics (N11),
+  `Self` binding preservation (N17), sum/effect schemas merge (N09/N10),
+  visibility enforcement gap в текущем nova check (N22).
+
+**Total 65 gaps** (некоторые cross-listed между audits).
+
+**Главные architectural decisions** (AD1-AD12):
+- AD1: module=file preserved (D78), wildcard как UX compensation.
+- AD2: `trait ModuleLoader` unified с ExternalRegistry. Embedded +
+  Filesystem + Composite.
+- AD3: **signature-pass + body-pass split** — критично для mutual
+  recursion across modules (R5).
+- AD4: cache layers — in-memory (MVP), on-disk (35.B).
+- AD5: symbol mangling — MVP shortcut `<module>__<fn>` с error на
+  consecutive `_`, full v0-style → 35.D.
+- AD6: `FileId` в Span — shared phase с Plan 36 sub-plan 36.A.
+- AD7: effect/capability propagation для soundness.
+- AD8: path canonicalization (Windows case-fold + symlinks).
+- AD9: visibility enforcement — closes spec violation (R6/N22).
+- AD10: build determinism.
+- AD11: re-export `export use X` deferred → 35.A.
+- AD12: prelude module deferred → 35.A.
+
+**MVP boundary declared** (Ф.0 + Ф.1 only, ~1500 LOC):
+- Ф.0: `FileId` в Span + Diagnostic chain (R17) — shared с Plan 36.A.
+- Ф.1: Core resolution (R1-R21) — filesystem loader, in-memory cache,
+  topo walk + cycle detection, 2-pass typecheck, schema merge,
+  effect/capability propagation, ALLOC_REQUIRES transitive, mangling,
+  deterministic output, DCE, visibility enforcement, `nova check`
+  parity.
+
+**Sub-plans 35.A-E** declared (post-MVP):
+- 35.A: wildcard `import X.Y.*` + `export use` + prelude + visibility
+  granularity. Spec-heavy, нужны новые D-decisions.
+- 35.B: on-disk module cache (.rmeta-like) + incremental rebuild +
+  regen-runtime invalidation.
+- 35.C: cross-file generic bounds resolution.
+- 35.D: stable symbol mangling v0-style.
+- 35.E: cfg + internal/ + editions + hot-reload.
+
+**Real blockers** (что сейчас не компилируется без Plan 35):
+- `std/encoding/hex.nv` — Range из std/collections/range.
+- `std/crypto/{hmac,jwt,sha256,bcrypt}.nv` — WriteBuffer (работает
+  через ExternalRegistry hack).
+- `std/collections/{lru,priority_queue,deque}.nv` — HashMap.
+- `std/encoding/{csv,toml}.nv` — HashMap.
+
+**Implementation deferred** для следующих сессий — full Plan 35 Ф.1
+многосессионная работа (~1500 LOC + signature/body split refactor).
+Спешка приведёт к полу-реализации.
+
+**Commit:** 88bb1351b3.
