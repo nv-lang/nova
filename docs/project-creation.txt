@@ -6721,3 +6721,48 @@ codegen bug — `int.MAX` mangling в undefined `int_MAX` C identifier.
 - Plan 39 — ждёт Plan 38 + Plan 35 Ф.1 test_runner follow-up.
 
 **Commits:** 2e0d65847f.
+
+
+================================================================================
+2026-05-12 Plan 39 Issue D: Iter[T] resolution + D58 algorithm
+================================================================================
+
+Пользователь указал: «похоже неверно определяется итератор Iter[T]».
+Добавил в Plan 39 (range.nv fixes) детальное описание Issue D с
+**алгоритмом из спецификации D58**.
+
+**D58 (spec/decisions/03-syntax.md):** `for x in c` должен резолвиться
+через 3-step lookup:
+1. Если `c` имеет `mut next() -> Option[T]` — used directly.
+2. Иначе если `c` имеет `iter() -> Iter[T]` — компилятор вставляет
+   `c.iter()`, применяет (1) рекурсивно.
+3. Иначе — compile error.
+
+**Что наблюдается (текущая реализация):**
+`emit_c.rs::emit_for` имеет 4 cases:
+- Case 1: `ExprKind::Range` — primitive int loop (optimization).
+- Case 2: `NovaArray_T` — array index loop (optimization, technically
+  D58 violation в букве, но semantically OK).
+- Case 3: Iter[T] protocol через `next()` method lookup.
+- Fallback: `for-in: unsupported iterator type 'X'`.
+
+**Gaps относительно D58:**
+- **Нет Case 2 алгоритма** (auto-`iter()` insertion). Если type имеет
+  только `iter()`, не `next()` — fall through на fallback, хотя D58
+  требует вставлять `.iter()` автоматически.
+- **`mut`-receiver check** отсутствует для `next()`.
+- **Cross-file method resolution** — recv_type lookup может промахнуться
+  под cross-file imports (Plan 35 territory).
+- **Diagnostic clarity:** generic «unsupported iterator type 'nova_int'»
+  не информативен. Должно быть «type 'X' has neither `next` nor `iter`».
+
+**Fix scope** (Plan 39 Ф.2 Issue D):
+- Audit emit_for Case 3, переписать под D58 algorithm exactly.
+- Implement auto-`iter()` chain.
+- `mut`-receiver assert.
+- Diagnostic improvements.
+- Test file `nova_tests/syntax/for_in_iter_resolution.nv` — 5 тестов.
+
+**Estimate:** ~100-150 LOC emit_c + ~80 LOC tests. Полдня.
+
+**Commit:** 6827d03b4b.
