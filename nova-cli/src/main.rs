@@ -30,9 +30,18 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Type-check a Nova source file.
+    /// Type-check Nova source files or directories.
+    ///
+    /// Polymorphic positional path: file → single check, directory → recursive walk.
+    /// Multiple paths supported. Empty → check current workspace (walks parents
+    /// до nova.toml).
     Check {
-        file: PathBuf,
+        /// Paths to check (files or directories). If empty, uses workspace root.
+        #[arg(num_args = 0..)]
+        paths: Vec<PathBuf>,
+        /// Number of parallel workers (0 = num_cpus, default 0).
+        #[arg(long, default_value_t = 0)]
+        jobs: usize,
     },
     /// Run a Nova source file via the interpreter.
     Run {
@@ -63,8 +72,14 @@ enum Cmd {
         #[arg(long = "keep-artifacts")]
         keep_artifacts: bool,
     },
-    /// Run all Nova tests in nova_tests/.
+    /// Run Nova tests from a directory or single file.
+    ///
+    /// Positional path: file → run that file (must have test blocks),
+    /// directory → walk recursively. Default: `<repo>/nova_tests/`.
     Test {
+        /// Path to tests directory or file. Default: `<repo>/nova_tests/`.
+        #[arg(num_args = 0..=1)]
+        path: Option<PathBuf>,
         /// Filter by display-name substring.
         #[arg(long)]
         filter: Option<String>,
@@ -111,9 +126,6 @@ enum Cmd {
         /// Keep .c / .exe / .obj build artifacts after the run.
         #[arg(long = "keep-artifacts")]
         keep_artifacts: bool,
-        /// Path to nova_tests/ directory (default: auto from nova.toml root).
-        #[arg(long = "tests-dir")]
-        tests_dir: Option<PathBuf>,
         /// GC backend: 'boehm' (default after Plan 27) or 'malloc' (no GC, internal only).
         /// Reserved for Plan 27 — currently accepted but has no effect.
         #[arg(long, value_parser = ["boehm", "malloc"])]
@@ -279,24 +291,189 @@ fn check_module_path(path: &Path, module: &nova_codegen::ast::Module) -> Result<
         .map_err(|msg| anyhow!("{}", msg))
 }
 
-fn cmd_check(path: &Path) -> Result<()> {
-    if !path.is_file() {
-        bail!("file not found: {}", path.display());
+/// Plan 36 Ф.1: polymorphic path argument для `nova check`.
+/// Принимает список путей (file-or-dir, рекурсивный walk для dir).
+/// Empty → walks parents до nova.toml, использует workspace root.
+///
+/// Hard-coded skip:
+///   - `target/`, `node_modules/`, `vendor/`, `.git/`, `.hg/`, `.svn/`
+///   - directories starting with `_` or `.`
+///   - `std/runtime/` (auto-gen, Plan 13)
+fn cmd_check(paths: &[PathBuf], jobs: usize) -> Result<()> {
+    // Если пути не указаны — используем workspace root.
+    let owned_root;
+    let resolved_paths: Vec<PathBuf> = if paths.is_empty() {
+        owned_root = find_repo_root()?;
+        vec![owned_root.clone()]
+    } else {
+        paths.iter().cloned().collect()
+    };
+
+    // Собираем список .nv файлов: для file — сам файл, для dir — рекурсивный walk.
+    let mut files: Vec<PathBuf> = Vec::new();
+    for p in &resolved_paths {
+        if !p.exists() {
+            bail!("path not found: {}", p.display());
+        }
+        if p.is_file() {
+            // Проверка расширения.
+            if p.extension().and_then(|s| s.to_str()) != Some("nv") {
+                bail!("not a Nova source: {}", p.display());
+            }
+            files.push(p.clone());
+        } else if p.is_dir() {
+            let mut found = Vec::new();
+            nova_codegen::test_runner::walk_nv(p, &mut found)
+                .map_err(|e| anyhow!("walk {}: {}", p.display(), e))?;
+            for f in found {
+                if !should_skip_path(&f) {
+                    files.push(f);
+                }
+            }
+        } else {
+            bail!("path is neither file nor directory: {}", p.display());
+        }
     }
-    let src = read_file(path)?;
+
+    if files.is_empty() {
+        println!("no .nv files to check");
+        return Ok(());
+    }
+
+    // Дедуп через canonicalize.
+    let mut seen = std::collections::HashSet::new();
+    files.retain(|p| {
+        match p.canonicalize() {
+            Ok(c) => seen.insert(c),
+            Err(_) => true,
+        }
+    });
+
+    // Sort для детерминизма.
+    files.sort();
+
+    let n_workers = if jobs == 0 { num_cpus() } else { jobs };
+    let total = files.len();
+
+    // Parallel via thread::scope + mpsc.
+    let (tx, rx) = std::sync::mpsc::channel::<CheckResult>();
+    let files_arc = std::sync::Arc::new(files);
+
+    std::thread::scope(|s| {
+        let n_threads = n_workers.min(total).max(1);
+        let chunk = (total + n_threads - 1) / n_threads;
+        for i in 0..n_threads {
+            let start = i * chunk;
+            let end = ((i + 1) * chunk).min(total);
+            if start >= end {
+                continue;
+            }
+            let files = files_arc.clone();
+            let tx = tx.clone();
+            s.spawn(move || {
+                for f in &files[start..end] {
+                    let res = check_one_file(f);
+                    let _ = tx.send(res);
+                }
+            });
+        }
+        drop(tx);
+    });
+
+    // Aggregate в стабильном file-name order.
+    let mut results: Vec<CheckResult> = rx.iter().collect();
+    results.sort_by(|a, b| a.file.cmp(&b.file));
+
+    let mut pass = 0;
+    let mut fail = 0;
+    for r in &results {
+        match &r.error {
+            None => {
+                pass += 1;
+                println!("{} {}", green("ok:"), r.file.display());
+            }
+            Some(msg) => {
+                fail += 1;
+                eprintln!("{} {}", red("FAIL:"), r.file.display());
+                for line in msg.lines() {
+                    eprintln!("  {}", line);
+                }
+            }
+        }
+    }
+
+    println!();
+    println!("===== SUMMARY =====");
+    if fail == 0 {
+        println!("{}: {}  FAIL: 0", green("PASS"), pass);
+        Ok(())
+    } else {
+        println!("PASS: {}  {}: {}", pass, red("FAIL"), fail);
+        Err(anyhow!("{} file(s) failed type-check", fail))
+    }
+}
+
+#[derive(Debug)]
+struct CheckResult {
+    file: PathBuf,
+    error: Option<String>,
+}
+
+/// Single-file check — parse + path-check + type-check.
+/// Plan 36 Ф.0 (correctness fix): TODO — добавить infer_effects + lint_module
+/// в отдельной фазе (out of MVP scope of this commit).
+fn check_one_file(path: &Path) -> CheckResult {
+    let src = match read_file(path) {
+        Ok(s) => s,
+        Err(e) => return CheckResult { file: path.to_path_buf(), error: Some(format!("read: {}", e)) },
+    };
     let path_str = path.to_string_lossy();
-    let module = nova_codegen::parser::parse(&src)
-        .map_err(|d| anyhow!("{}", d.render(&src, &path_str)))?;
-    check_module_path(path, &module)?;
-    nova_codegen::types::check_module(&module).map_err(|errs| {
-        let msgs: Vec<String> = errs
-            .iter()
-            .map(|d| d.render(&src, &path_str))
-            .collect();
-        anyhow!("{}", msgs.join("\n"))
-    })?;
-    println!("{} {}", green("ok:"), path.display());
-    Ok(())
+
+    let module = match nova_codegen::parser::parse(&src) {
+        Ok(m) => m,
+        Err(d) => return CheckResult {
+            file: path.to_path_buf(),
+            error: Some(d.render(&src, &path_str)),
+        },
+    };
+
+    if let Err(e) = check_module_path(path, &module) {
+        return CheckResult { file: path.to_path_buf(), error: Some(format!("{}", e)) };
+    }
+
+    if let Err(errs) = nova_codegen::types::check_module(&module) {
+        let msgs: Vec<String> = errs.iter().map(|d| d.render(&src, &path_str)).collect();
+        return CheckResult { file: path.to_path_buf(), error: Some(msgs.join("\n")) };
+    }
+
+    CheckResult { file: path.to_path_buf(), error: None }
+}
+
+/// Hard-coded skip patterns (Plan 36 R3 minimal version).
+fn should_skip_path(p: &Path) -> bool {
+    // Skip auto-gen std/runtime/.
+    let s = p.to_string_lossy().replace('\\', "/");
+    if s.contains("/std/runtime/") || s.contains("std/runtime/") {
+        return true;
+    }
+    // Skip if any component starts with `_` or `.`, or is target/node_modules/vendor.
+    for comp in p.components() {
+        if let Some(name) = comp.as_os_str().to_str() {
+            if name.starts_with('_') || name.starts_with('.') {
+                return true;
+            }
+            if matches!(name, "target" | "node_modules" | "vendor") {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn num_cpus() -> usize {
+    std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
 }
 
 fn cmd_run(path: &Path) -> Result<()> {
@@ -444,6 +621,7 @@ fn cmd_build(
 }
 
 fn cmd_test(
+    path_arg: Option<&Path>,
     filter: Option<&str>,
     jobs: usize,
     format: &str,
@@ -459,7 +637,6 @@ fn cmd_test(
     retries: u32,
     include_stdlib: bool,
     keep_artifacts: bool,
-    tests_dir_override: Option<&Path>,
     gc: &str,
     list_only: bool,
     filter_from: Option<&Path>,
@@ -504,27 +681,60 @@ fn cmd_test(
         tc.vcvars_path(),
     );
 
+    // Plan 36 Ф.1: positional path argument.
+    // None → default <repo>/nova_tests/.
+    // Some(file) → use parent dir as tests_dir, filter to single file via display name.
+    // Some(dir) → use as tests_dir.
+    let (tests_dir, single_file_filter): (PathBuf, Option<String>) = match path_arg {
+        None => (paths.tests_dir.clone(), None),
+        Some(p) => {
+            if !p.exists() {
+                bail!("path not found: {}", p.display());
+            }
+            if p.is_file() {
+                if p.extension().and_then(|s| s.to_str()) != Some("nv") {
+                    bail!("not a Nova source: {}", p.display());
+                }
+                // Use parent dir as tests_dir, derive display name relative to it.
+                let parent = p.parent()
+                    .ok_or_else(|| anyhow!("cannot get parent of {}", p.display()))?
+                    .to_path_buf();
+                let stem = p.file_stem()
+                    .and_then(|s| s.to_str())
+                    .ok_or_else(|| anyhow!("invalid file name: {}", p.display()))?;
+                (parent, Some(stem.to_string()))
+            } else if p.is_dir() {
+                (p.to_path_buf(), None)
+            } else {
+                bail!("path is neither file nor directory: {}", p.display());
+            }
+        }
+    };
+
     if format == test_runner::OutputFormat::Text {
         eprintln!(
             "Toolchain: {}, mode={:?}, jobs={}, tests-dir={}",
             tc.name(),
             mode,
             jobs,
-            tests_dir_override
-                .unwrap_or(&paths.tests_dir)
-                .display()
+            tests_dir.display()
         );
         if libuv.is_none() {
             eprintln!("warning: libuv not found — concurrency tests will fail");
         }
     }
 
-    let tests_dir = tests_dir_override
-        .map(Path::to_path_buf)
-        .unwrap_or(paths.tests_dir);
     if !tests_dir.is_dir() {
         bail!("tests directory not found: {}", tests_dir.display());
     }
+
+    // If single-file requested, filter through display-name to that one file
+    // (path-filter ⊥ test-name-filter — single-file is path-filter).
+    // If user passes both single-file path + --filter — single-file wins (path is
+    // path-filter, --filter is test-name-filter; current test_runner uses single
+    // string filter for display-name, so we cannot orthogonally combine).
+    let effective_filter: Option<String> = single_file_filter.or_else(|| filter.map(str::to_string));
+    let effective_filter_ref: Option<&str> = effective_filter.as_deref();
     let stdlib_dir_opt = if include_stdlib {
         Some(paths.stdlib_dir.as_path())
     } else {
@@ -562,7 +772,7 @@ fn cmd_test(
         tests_dir: &tests_dir,
         stdlib_dir: stdlib_dir_opt,
         include_stdlib,
-        filter,
+        filter: effective_filter_ref,
         mode,
         toolchain: tc,
         cg_include: &paths.cg_include,
@@ -715,7 +925,7 @@ fn cmd_regen_runtime(check: bool) -> Result<()> {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let result = match cli.cmd {
-        Cmd::Check { file } => cmd_check(&file),
+        Cmd::Check { paths, jobs } => cmd_check(&paths, jobs),
         Cmd::Run { file } => cmd_run(&file),
         Cmd::Build { file, output, mode, toolchain, vcvars, clang, timeout, keep_artifacts } => cmd_build(
             &file,
@@ -728,11 +938,12 @@ fn main() -> ExitCode {
             keep_artifacts,
         ),
         Cmd::Test {
-            filter, jobs, format, mode, toolchain, vcvars, clang, timeout,
+            path, filter, jobs, format, mode, toolchain, vcvars, clang, timeout,
             verbose, quiet, results_file, rerun_failed, retries,
-            include_stdlib, keep_artifacts, tests_dir, gc,
+            include_stdlib, keep_artifacts, gc,
             list, filter_from, shuffle,
         } => cmd_test(
+            path.as_deref(),
             filter.as_deref(),
             jobs,
             &format,
@@ -748,7 +959,6 @@ fn main() -> ExitCode {
             retries,
             include_stdlib,
             keep_artifacts,
-            tests_dir.as_deref(),
             gc.as_deref().unwrap_or("boehm"),
             list,
             filter_from.as_deref(),
