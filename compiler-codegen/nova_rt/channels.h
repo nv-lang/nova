@@ -956,17 +956,43 @@ static inline void nova_select_park(SelectCtx* ctx) {
 /* ── Time.after — D94 timeout channel (Plan 31 Ф.5) ───────────── */
 
 /* Heap-allocated timer state: lives until close_cb fires.
- * Plan 40 Ф.2 B7: `cancelled` flag для idempotent cancel из select wake. */
-typedef struct {
-    uv_timer_t       timer;
-    Nova_ChanWriter* tx;
-    bool             cancelled;  /* set once timer is stopped/closed early */
+ * Plan 40 Ф.2 B7: `cancelled` flag для idempotent cancel из select wake.
+ *
+ * Plan 40 audit round 6 (2026-05-12): pinning через static linked list.
+ * Without pinning Boehm GC может collect NovaAfterState между cancel и
+ * deferred close_cb → use-after-free в close_cb (`h->data` derefs
+ * collected memory). Static head — strong root in data segment, scanned
+ * by every GC cycle. State unlinked в close_cb когда libuv guarantees
+ * no more callbacks fire. */
+typedef struct NovaAfterState {
+    uv_timer_t              timer;
+    Nova_ChanWriter*        tx;
+    bool                    cancelled;  /* set once timer is stopped/closed early */
+    struct NovaAfterState*  pin_next;   /* pending-list link, GC pin */
 } NovaAfterState;
+
+/* Pinning list — static = strong GC root в data segment. */
+static NovaAfterState* _nova_after_pending_head = NULL;
+
+static void _nova_after_pin(NovaAfterState* st) {
+    st->pin_next = _nova_after_pending_head;
+    _nova_after_pending_head = st;
+}
+
+static void _nova_after_unpin(NovaAfterState* st) {
+    NovaAfterState** p = &_nova_after_pending_head;
+    while (*p) {
+        if (*p == st) { *p = st->pin_next; st->pin_next = NULL; return; }
+        p = &(*p)->pin_next;
+    }
+}
 
 static void _nova_after_close_cb(uv_handle_t* h) {
     NovaAfterState* st = (NovaAfterState*)h->data;
-    (void)st;
-    /* state is heap-allocated; GC will collect it. tx already closed. */
+    /* libuv guarantees no more callbacks for this handle. Safe to unpin —
+     * Boehm will collect when no other references remain (cleanup_data
+     * pointer на channel state не используется после close). */
+    _nova_after_unpin(st);
 }
 
 static void _nova_after_timer_cb(uv_timer_t* h) {
@@ -1005,6 +1031,11 @@ static inline Nova_ChanReader* Nova_Time_after(nova_int ms) {
     NovaAfterState* st = (NovaAfterState*)nova_alloc(sizeof(NovaAfterState));
     st->tx = pair.tx;
     st->cancelled = false;
+    st->pin_next = NULL;
+    /* Pin st в static list — Boehm scan'ит data segment каждый цикл,
+     * поэтому object не будет собран между uv_close и _nova_after_close_cb.
+     * Unpin происходит в close_cb (libuv guarantee: no callbacks after). */
+    _nova_after_pin(st);
     int rc = uv_timer_init(nova_evloop(), &st->timer);
     if (rc != 0) {
         fprintf(stderr, "nova: Nova_Time_after: uv_timer_init failed: %s\n",

@@ -49,18 +49,21 @@ void nova_gc_init(void) {
 }
 
 void nova_gc_shutdown(void) {
-    /* Plan 41 Etap 1 (2026-05-12): skip final GC_gcollect.
+    /* Plan 41 Etap 1 (2026-05-12): skip final GC_gcollect on Linux only.
      *
      * Under Ubuntu 22.04 system libgc (built с PARALLEL_MARK), GC_gcollect
-     * triggers parallel marker threads. Под Docker thread stack walks
-     * могут fail → SEGV в GC_do_local_mark / GC_do_parallel_mark.
+     * на shutdown триггерит parallel marker threads. Под Docker thread
+     * stack walks могут fail → SEGV в GC_do_local_mark / GC_do_parallel_mark.
      *
-     * Final collect не нужен функционально: процесс завершается, kernel
-     * освобождает всю память. Finalizers (если у нас будут) могут не
-     * запуститься, но bootstrap Nova не использует Boehm finalizers.
-     *
-     * Side benefit: faster shutdown (no full mark+sweep). */
-    /* GC_gcollect(); — disabled */
+     * На Windows/macOS наш vcpkg-собранный libgc не использует PARALLEL_MARK
+     * и финальный collect нужен для корректного teardown background handles
+     * (libuv timers, channels). Без него ASAN/Valgrind видят утечки и
+     * некоторые tests падают на shutdown с access violation. */
+#if defined(__linux__)
+    /* GC_gcollect(); — disabled под Linux Docker */
+#else
+    GC_gcollect();
+#endif
 }
 
 void* nova_alloc(size_t size) {

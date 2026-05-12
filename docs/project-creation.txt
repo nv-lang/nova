@@ -8207,3 +8207,23 @@ LLM-генерации. Peers модель + explicit `package` декларац
 **3. Backward-compat free.** Все существующие single-file модули
 продолжают работать. Folder-module — opt-in capability для больших
 модулей. Migration не нужна.
+
+---
+
+## Сессия 2026-05-12 (продолжение): Plan 41 Этап 1 wire-up landing
+
+После Boehm/Docker fix (`GC_set_no_dls(1)`) приземлили wire-up
+arena в minicoro через `_NOVA_MCO_DESC_INIT` макрос в fibers.h.
+Также добавили pin NovaAfterState (Plan 40 Ф.2 B7 round 6) —
+static `_nova_after_pending_head` держит st между uv_close и
+deferred close_cb.
+
+**Результаты:**
+- Windows регрессия: 261 PASS / 1 FAIL (select_timer_cleanup).
+- `select_timer_cleanup` SEGV — pre-existing block (bisect показал
+  регресс уходит до commit `bb9af936d2`, не связан с Этап 1).
+- Wire-up на Windows безопасен: `#if defined(__linux__) || defined(__APPLE__)`
+  guard — Windows остаётся на calloc-пути.
+
+**Следующий шаг:** Plan 41 Этап 2 — снять `_NOVA_GC_DISABLE`
+workaround теперь, когда arena GC roots replace per-fiber roots.

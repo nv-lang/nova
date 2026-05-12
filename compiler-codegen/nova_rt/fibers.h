@@ -74,13 +74,43 @@
 static inline void _nova_gc_add_fiber_roots(mco_coro* co)    { (void)co; }
 static inline void _nova_gc_remove_fiber_roots(mco_coro* co) { (void)co; }
 
+/* Plan 41 Etap 1 — fiber stack arena (Linux/macOS).
+ *
+ * Wire minicoro's alloc_cb/dealloc_cb to nova_fiber_alloc/dealloc, которые
+ * берут стек из per-thread mmap'нутой арены вместо calloc. На Windows
+ * остаёмся на дефолтном calloc-пути (Plan 42+).
+ *
+ * Stack size: slot_usable (= slot_size − guard) минус минимальный
+ * mco_desc header overhead. Реальный header < 1KB на amd64; 8KB
+ * закладывается с запасом. */
+#define _NOVA_MCO_HEADER_OVERHEAD 8192
+#if (defined(__linux__) || defined(__APPLE__))
+  #include "fiber_arena.h"
+  #if NOVA_FIBER_ARENA_ENABLED
+    static inline mco_desc _nova_mco_desc_init_arena(void (*entry)(mco_coro*)) {
+        size_t slot_usable = NOVA_FIBER_STACK_SIZE - NOVA_FIBER_GUARD_SIZE;
+        size_t stack_size  = slot_usable - _NOVA_MCO_HEADER_OVERHEAD;
+        mco_desc d = mco_desc_init(entry, stack_size);
+        d.alloc_cb       = nova_fiber_alloc;
+        d.dealloc_cb     = nova_fiber_dealloc;
+        d.allocator_data = NULL;
+        return d;
+    }
+    #define _NOVA_MCO_DESC_INIT(entry) (_nova_mco_desc_init_arena(entry))
+  #else
+    #define _NOVA_MCO_DESC_INIT(entry) (mco_desc_init((entry), 0))
+  #endif
+#else
+  #define _NOVA_MCO_DESC_INIT(entry) (mco_desc_init((entry), 0))
+#endif
+
 /* Run a fiber to completion and return its result.
  * entry      : the generated spawn wrapper function
  * user       : pointer to a NovaSpawnCtx_N stack struct (captures)
  * out_result : pointer to a nova_int that receives the result
  */
 static inline void nova_fiber_run(void (*entry)(mco_coro*), void* user) {
-    mco_desc desc = mco_desc_init(entry, 0);
+    mco_desc desc = _NOVA_MCO_DESC_INIT(entry);
     desc.user_data = user;
     mco_coro* co = NULL;
     mco_result r = mco_create(&co, &desc);
@@ -383,7 +413,7 @@ static inline void nova_fiber_spawn_into(NovaFiberQueue* q,
             nova_sched_grow_state(q, q->capacity);
         }
     }
-    mco_desc desc = mco_desc_init(entry, 0);
+    mco_desc desc = _NOVA_MCO_DESC_INIT(entry);
     desc.user_data = user;
     mco_coro* co = NULL;
     mco_result r = mco_create(&co, &desc);

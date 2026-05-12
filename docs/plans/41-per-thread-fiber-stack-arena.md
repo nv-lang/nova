@@ -976,9 +976,21 @@ runner для smoke test (Plan 27 G5 уже флагнул это как pending
 ### Updated Этап 1 status
 
 - ✅ Infrastructure created (commit `0b75bdcb06`).
-- ⚠️ Wire-up через `mco_desc.alloc_cb` — **blocked** by Boehm/Docker
-  GC_init regression.
-- ⏸ Этап 2 (`_NOVA_GC_DISABLE` removal) — pending wire-up validation.
+- ✅ Boehm/Docker fix (`GC_set_no_dls(1)`, commit `5c4ec9557e`).
+- ✅ **Wire-up landed** (2026-05-12, post-summary): `_NOVA_MCO_DESC_INIT`
+  макрос в [fibers.h](../../compiler-codegen/nova_rt/fibers.h), Linux/macOS
+  пути через `nova_fiber_alloc/dealloc`. Windows fallback на
+  `mco_desc_init(entry, 0)` — без изменений.
+- ✅ Pinning NovaAfterState (Plan 40 Ф.2 B7 round 6): static list
+  `_nova_after_pending_head` в [channels.h](../../compiler-codegen/nova_rt/channels.h)
+  держит st до close_cb → защищает от UAF между uv_close и deferred callback.
+- ⚠️ `select_timer_cleanup` — известный SEGV regression (assertion fail
+  на Windows и Linux Docker), но bisect показывает регресс уходит до
+  Plan 41 infrastructure (≤ commit `bb9af936d2`). Не вызвано wire-up
+  и не вызвано pin fix'ом. **Tracking как отдельный блокер; не блокирует
+  Этап 2.**
+- ⏸ Этап 2 (`_NOVA_GC_DISABLE` removal) — wire-up landed; готово к
+  следующей итерации.
 
 ### Updated Plan 41 status
 
