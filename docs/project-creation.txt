@@ -8128,3 +8128,82 @@ Windows fallback strategy, madvise frequency, VMEM_ALLOCATOR
 incompatibility documentation).
 
 
+
+
+================================================================================
+2026-05-12 D29 rev-2 + Plan 42: folder-modules (Go-style peers)
+================================================================================
+
+После обсуждения с пользователем «folder module + file module —
+нормально?» решено: **да, добавить folder-module variant** (peers,
+Go-style) как extension к D29.
+
+### Контекст принятия
+
+Текущая single-file модель (D29 rev-1) упирается в 2 проблемы при росте:
+
+1. **Internal helpers paint a corner.** Helper-fn либо public, либо в
+   том же файле с public — никакого «module-private» в multi-file
+   смысле.
+2. **Big modules не scale.** Ожидаемый рост std/* (Plan 18 P0:
+   networking, crypto, codecs) даст файлы 1500-3000 LOC. Single-file —
+   плохо для AI context + facade-pattern boilerplate.
+
+### Discussion-points
+
+Прошлись по 4 опциям entry-маркера:
+- `module.nv` entry — отвергнуто, boilerplate.
+- `mod.nv` — отвергнуто (Rust сам уходит).
+- Name-mirror (`admin/admin.nv`) — отвергнуто, дублирование.
+- **Peers без entry (Go-style)** — выбрано. Все файлы папки объявляют
+  одинаковый `module X`, share namespace, no entry-marker.
+
+Прошлись по 4 опциям `module` declaration:
+- Implicit (Rust/Python) — отвергнуто, AI-unfriendly.
+- Optional — отвергнуто, two ways to do.
+- Name-mirror — отвергнуто, дублирование.
+- **Explicit в каждом файле (Go-style)** — выбрано. `module <full-path>`
+  в каждом файле, compiler enforces match с folder.
+
+### Реализация
+
+**D29 rev-2 в spec/decisions/07-modules.md:**
+- Новый подраздел «Модуль — файл или папка».
+- Multi-file folder-module = Go-style peers (все объявляют один
+  `module X`, share namespace).
+- Sub-modules — через nested folders, не через единственный peer.
+- Conflict `X.nv` + `X/` → compile error.
+- Visibility: `export` public, без `export` — module-private (видно
+  из всех peers того же folder-module).
+- Section «Почему» + «Что отвергнуто» + «Эволюция» дополнены.
+
+**Plan 42 (docs/plans/42-folder-modules.md):**
+- 6 phases: spec finalize, resolver, manifest, tests, docs, std migration.
+- Critical files: imports.rs, manifest.rs, новые tests в
+  nova_tests/modules/ и negative_capability/.
+- Estimate: 150-250 LOC, single session.
+
+**Plan 41 был занят** параллельным агентом (Per-thread fiber stack
+arena). Поэтому наш план — **42**, не 41.
+
+### Дальнейшие шаги
+
+Реализация Plan 42 — отдельная задача. Spec done; implementation
+позже когда наступит реальный need (первый std/* модуль > 800 LOC).
+
+### Insights
+
+**1. Pre-bootstrap решения через discussion важнее implementation.**
+Прежде чем кодить, прошлись по 4 + 4 опциям с pros/cons. Финальный
+выбор: Go-style proven в production, AI-friendly, минимальный
+boilerplate. Уверенно записан в spec — implementation будет
+straightforward.
+
+**2. Go precedent повторно убедителен для AI-first языка.**
+Go — самый успешный «AI-friendly» backend язык по статистике
+LLM-генерации. Peers модель + explicit `package` декларация
+не мешают AI. LLM работает с файлами/символами, не whole-module.
+
+**3. Backward-compat free.** Все существующие single-file модули
+продолжают работать. Folder-module — opt-in capability для больших
+модулей. Migration не нужна.

@@ -5606,3 +5606,24 @@ calloc'd blocks**. 100k fibers = 5GB physical memory.
 workloads невозможны без растущих стеков (5GB physical).
 
 Detail: [docs/plans/41-per-thread-fiber-stack-arena.md](plans/41-per-thread-fiber-stack-arena.md).
+
+
+---
+
+## D29 rev-2: folder-modules (Go-style peers) (2026-05-12)
+
+### Изменение
+
+D29 rev-1 (single-file) расширен до **D29 rev-2 (file ИЛИ folder)**.
+Module = `X.nv` (single-file) ИЛИ `X/` папка с ≥1 peer-файлов (все
+объявляют одинаковый `module X`, share namespace).
+
+### Открытое (Plan 42)
+
+Реализация — Plan 42 (`42-folder-modules.md`). Бутстрап MVP не
+блокер; первый use-case появится когда std/* модуль превысит ~800 LOC.
+
+### Backward-compat
+
+Existing single-file модели работают без изменений. Folder-module —
+opt-in capability.
