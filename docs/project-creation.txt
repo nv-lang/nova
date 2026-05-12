@@ -6530,3 +6530,67 @@ production-grade scope.
 Bootstrap-уровень Plan 33 полностью закрыт. Production-ready Z3-уровень —
 отдельный milestone когда libz3 будет setup'нут.
 
+
+
+================================================================================
+2026-05-12 Plan 37: type-checker semantic parity с codegen (gap zafiks)
+================================================================================
+
+При попытке `nova check std/encoding/hex.nv` обнаружено: type-check
+проходит (PASS), а `nova test` падает на codegen-стадии:
+
+  `as`-cast `int as char` запрещён: use `char.try_from(n)?`
+  (range-checked, returns Result[char, _]).
+
+Причина: проверка `check_as_cast_allowed` в
+compiler-codegen/src/codegen/emit_c.rs (10063) вызывается только из
+emit-пути (строка 5474). Type-checker для `ExprKind::As` лишь
+рекурсирует во внутрь (types/mod.rs:434, 1047, 1614, 2499) — никаких
+D54-проверок не делает.
+
+Та же история с `check_bool_condition_at` (emit_c.rs:10165) — strict
+bool в `if cond` / `while cond` живёт только в codegen.
+
+### Влияние
+
+Нарушает контракт `nova check` (D95, Plan 36) — «полная type+lint
+валидация модуля без codegen». LLM-агенты и IDE-integrations, которые
+гоняют `nova check` для feedback'а, получают «green check + red
+build» на тех же файлах.
+
+### Решение
+
+Создан **Plan 37** (docs/plans/37-typecheck-semantic-parity.md) —
+перенести/продублировать D54-проверки в type-checker:
+
+- S1 — 24 banned `as`-пары (int as char, char as byte, int as bool,
+  str ↔ T и др.) с сохранением special-cases (CharLit, IntLit
+  в Unicode range).
+- S2 — strict bool в `if`/`while`.
+- S3 — audit emit_c.rs на другие codegen-only семантические проверки.
+
+Вариант реализации — **B** (shared module, defense-in-depth):
+codegen всё равно держит свой check, чтобы не зависеть от инвариантa
+«type-checker всегда был запущен».
+
+### Приоритет
+
+P2 — UX win для `nova check` contract, но обходится: `nova test`
+ловит ошибку с тем же сообщением, просто позже. Workaround не нужен.
+
+### Acceptance
+
+Ф.0 audit → Ф.1 as-cast → Ф.2 strict-bool → Ф.3 sweep (без регрессий
+в 191/191 nova_tests + 45/45 std type-check).
+
+### Контекст
+
+Gap обнаружен в сессии после закрытия Plan 34 (stdlib type-check
+fix). Type-check std/encoding/hex.nv тогда прошёл, файл попал
+в группу «healthy», но codegen-фаза показала, что there is hidden
+D54 violation. Закрытие Plan 37 предотвратит подобные «отложенные»
+сюрпризы в будущем.
+
+Commit: 22831bf0bc.
+
+
