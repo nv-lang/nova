@@ -1,12 +1,8 @@
-// EXPECT_CC_ERROR use of undeclared identifier 'spec_only'
+// EXPECT_COMPILE_ERROR ghost variable `spec_only` cannot be read in non-ghost code
 //
-// Plan 33.3 Ф.9.1: ghost var не доступен в non-ghost коде.
-// Codegen эрейзит ghost let (Verus/Dafny semantics), поэтому
-// C compiler видит `spec_only` как undeclared.
-//
-// NOTE: «proper» check был бы compile-time в type-checker (запрет
-// чтения ghost-var из non-ghost кода). Сейчас catch'ится C-level
-// — это honest bootstrap, не silent unsoundness.
+// Plan 33.3 Ф.9.1 + Ф.9.7: ghost var не доступен в non-ghost коде.
+// Теперь catch'ится на type-check этапе (proper compile-error),
+// не на C-level (где была undeclared identifier как honest fallback).
 
 module nova_tests.contracts.ghost_read_from_nonghost_fail
 

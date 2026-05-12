@@ -233,6 +233,12 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
     let contract_ctx = ContractCtx::build(module);
     contract_ctx.check_module(module, &mut errors);
 
+    // Plan 33.3 Ф.9.7 (D24): ghost-var usage check.
+    // Non-ghost код не может читать ghost-var (Verus/Dafny semantics).
+    // До этого: catch'илось на C-level через «undeclared identifier»;
+    // теперь — proper compile-error с понятным сообщением.
+    check_ghost_usage(module, &mut errors);
+
     // Plan 33.1 Ф.3 (D24): SMT verification.
     // TrivialBackend по умолчанию (Z3 — отдельная feature в будущем).
     // Доказанные контракты записываются в env для zero-cost release.
@@ -3490,5 +3496,140 @@ impl ContractCtx {
             // Литералы, paths, и прочее — не интересно для базовых правил.
             _ => {}
         }
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Plan 33.3 Ф.9.7 (D24): ghost-var usage check.
+//
+// Verus/Dafny semantics: ghost binding (`ghost let x = ...`) — spec-only,
+// не emit'ится в runtime. Non-ghost код не может читать ghost-var.
+// До этого: catch'илось C-compiler'ом как «undeclared identifier» (ghost
+// эрейзится в codegen). Теперь — proper compile-error на type-check этапе
+// с понятным сообщением.
+//
+// Эвристика: walk каждый fn body, в каждом block:
+// 1. Собираем `ghost let` имена в scope.
+// 2. Walk остальные stmt'ы (non-ghost) и trailing — если ident ссылается
+//    на ghost-name → error.
+//
+// Ограничения bootstrap:
+// - Не учитываем `requires`/`ensures` (ghost OK там — но walk их не
+//   делаем, и не должны catches as «non-ghost»).
+// - Nested blocks: ghost из outer scope виден inner non-ghost — это
+//   ошибка (по Verus); ловим через accumulating ghost-set.
+// - Pattern bindings: только Ident-pattern (простой случай).
+// ──────────────────────────────────────────────────────────────────────────
+
+fn check_ghost_usage(module: &Module, errors: &mut Vec<Diagnostic>) {
+    for item in &module.items {
+        if let Item::Fn(fd) = item {
+            if let FnBody::Block(b) = &fd.body {
+                let ghosts: HashSet<String> = HashSet::new();
+                check_ghost_in_block(b, &ghosts, errors);
+            } else if let FnBody::Expr(e) = &fd.body {
+                let ghosts: HashSet<String> = HashSet::new();
+                check_ghost_in_expr(e, &ghosts, errors);
+            }
+        } else if let Item::Test(t) = item {
+            let ghosts: HashSet<String> = HashSet::new();
+            check_ghost_in_block(&t.body, &ghosts, errors);
+        }
+    }
+}
+
+fn check_ghost_in_block(b: &Block, parent_ghosts: &HashSet<String>, errors: &mut Vec<Diagnostic>) {
+    // Local ghost-set начинаем с parent + добавляем ghost-let'ы из этого
+    // block'а в порядке появления.
+    let mut ghosts = parent_ghosts.clone();
+    for stmt in &b.stmts {
+        if let Stmt::Let(decl) = stmt {
+            if decl.is_ghost {
+                // Ghost let value-expr может читать другие ghost-vars
+                // — это OK. Не проверяем walk_expr на value.
+                if let Pattern::Ident { name, .. } = &decl.pattern {
+                    ghosts.insert(name.clone());
+                }
+                continue;
+            }
+        }
+        // Non-ghost stmt: walk expr и проверяем что не читает ghost.
+        check_ghost_in_stmt(stmt, &ghosts, errors);
+    }
+    if let Some(t) = &b.trailing {
+        check_ghost_in_expr(t, &ghosts, errors);
+    }
+}
+
+fn check_ghost_in_stmt(s: &Stmt, ghosts: &HashSet<String>, errors: &mut Vec<Diagnostic>) {
+    match s {
+        Stmt::Let(decl) => {
+            // Non-ghost let: value не должен использовать ghost-vars.
+            check_ghost_in_expr(&decl.value, ghosts, errors);
+        }
+        Stmt::Expr(e) => check_ghost_in_expr(e, ghosts, errors),
+        Stmt::Assign { target, value, .. } => {
+            check_ghost_in_expr(target, ghosts, errors);
+            check_ghost_in_expr(value, ghosts, errors);
+        }
+        Stmt::Return { value: Some(v), .. } => check_ghost_in_expr(v, ghosts, errors),
+        Stmt::Throw { value, .. } => check_ghost_in_expr(value, ghosts, errors),
+        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. } => check_ghost_in_expr(body, ghosts, errors),
+        // assert_static/assume — это spec-уровень, ghost-vars там OK.
+        // Skip walk через них чтобы не выдавать false-positives.
+        Stmt::AssertStatic { .. } | Stmt::Assume { .. } => {}
+        _ => {}
+    }
+}
+
+fn check_ghost_in_expr(e: &Expr, ghosts: &HashSet<String>, errors: &mut Vec<Diagnostic>) {
+    match &e.kind {
+        ExprKind::Ident(n) => {
+            if ghosts.contains(n) {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "ghost variable `{}` cannot be read in non-ghost code \
+                         (Plan 33.3 Ф.9.1: ghost vars are spec-only, Verus/Dafny semantics). \
+                         Move usage into a contract clause (`requires`/`ensures`/`invariant`) \
+                         or another `ghost let` binding.",
+                        n
+                    ),
+                    e.span,
+                ));
+            }
+        }
+        ExprKind::Binary { left, right, .. } => {
+            check_ghost_in_expr(left, ghosts, errors);
+            check_ghost_in_expr(right, ghosts, errors);
+        }
+        ExprKind::Unary { operand, .. } => check_ghost_in_expr(operand, ghosts, errors),
+        ExprKind::Member { obj, .. } => check_ghost_in_expr(obj, ghosts, errors),
+        ExprKind::Index { obj, index } => {
+            check_ghost_in_expr(obj, ghosts, errors);
+            check_ghost_in_expr(index, ghosts, errors);
+        }
+        ExprKind::Call { func, args, .. } => {
+            check_ghost_in_expr(func, ghosts, errors);
+            for a in args { check_ghost_in_expr(a.expr(), ghosts, errors); }
+        }
+        ExprKind::If { cond, then, else_ } => {
+            check_ghost_in_expr(cond, ghosts, errors);
+            check_ghost_in_block(then, ghosts, errors);
+            if let Some(eb) = else_ {
+                match eb {
+                    ElseBranch::Block(b) => check_ghost_in_block(b, ghosts, errors),
+                    ElseBranch::If(e) => check_ghost_in_expr(e, ghosts, errors),
+                }
+            }
+        }
+        ExprKind::Block(b) => check_ghost_in_block(b, ghosts, errors),
+        ExprKind::As(inner, _) | ExprKind::Is(inner, _) | ExprKind::Try(inner) | ExprKind::Bang(inner) => {
+            check_ghost_in_expr(inner, ghosts, errors);
+        }
+        ExprKind::Coalesce(l, r) => {
+            check_ghost_in_expr(l, ghosts, errors);
+            check_ghost_in_expr(r, ghosts, errors);
+        }
+        _ => {}
     }
 }
