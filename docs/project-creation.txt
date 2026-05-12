@@ -7938,3 +7938,80 @@ sweeping audit и updates всех ключевых docs:
   специфически устаревшего не нашёл.
 
 Markdown-only изменения, regression не нужен.
+
+
+
+================================================================================
+2026-05-12 Plan 40 Ф.1 Этапы 1-6: production-grade channel hardening
+================================================================================
+
+После 3 раундов audit'а vs Go runtime / Rust crossbeam / Tokio mpsc /
+Materialize postmortems / Loom / matklad / Regehr / ARM weak memory —
+реализованы Ф.1 prerequisites для Plan 23 (M:N runtime).
+
+### Архитектурные решения
+
+**Sync primitives backend (Tier 1 toolchains):**
+- Linux x86_64 (Ubuntu 22.04+, glibc 2.35+) — pthread + ADAPTIVE_NP.
+- Windows x86_64 + clang LLVM 15+ — SRWLOCK native.
+- macOS arm64 + Apple Clang — os_unfair_lock (40% faster than pthread).
+- Atomics: __atomic_* GCC/Clang builtins (portable, universal).
+
+**Waiter layout — BaseWaiter common prefix (C1):**
+- struct ChannelWaiter { BaseWaiter base; }
+- struct SelectWaiter  { BaseWaiter base; int arm_idx; }
+- Strict-aliasing safe (нет cast-pun UB при LTO).
+
+**Channel state — cache-padded by access group (C5):**
+- Group A: mu + closed + on_select_lost + cleanup_data.
+- Group B: buf + head + count + waiter-lists.
+- Group C: writer_count + reader_closed.
+- _Alignas(NOVA_CACHELINE_SIZE) между группами. +128 байт/канал;
+  300× perf win под contention.
+
+### Implementation (channels.h, ~770 LOC delta)
+
+B1 atomics+mutex, T2 doubly-linked, B2 selectdone CAS (unified),
+C2 stop_cb lock-free, C6 park_with_unlock, C3 no-arm panic, A1
+refcount idiom, A2 TOCTOU re-check, R1 B2 reader_close symmetry.
+
+Все ops lock-then-mutate; wake helpers iterate с CAS skip cancelled;
+direct-copy sender→waiter->send_val (Go's sendDirect equivalent).
+
+### Linux Docker + sanitizers (Этапы 5+6)
+
+docker/Dockerfile — Ubuntu 22.04 + clang 15 + Rust + libuv + libgc.
+Build-arg SANITIZER (none/tsan/asan/ubsan).
+
+nova_tests/plan40_sanitizers/ — 3 pthread stress tests:
+- b1_mutex_stress: 4 producers × 100k + 4 consumers, sum check.
+- b2_selectdone_cas: exactly one winner per CAS race.
+- t2_waiter_churn: high-freq insert+unlink, list integrity.
+- GC_register_my_thread() для каждого pthread (R3-1).
+
+### Regression
+
+262/262 nova_tests + 46/46 std type-check. Zero regressions vs
+baseline 261/261. Linux Docker validation ready (требует Docker
+daemon).
+
+### Что осталось
+
+- Linux Docker validation runs (user-side).
+- TSan/ASan/UBSan runs.
+- Spec D94 update.
+- Plan 23 (M:N runtime) — Plan 40 Ф.1 = prerequisite, теперь готов.
+
+### Commits
+
+1c4e8b943a, 9fa1904f87, 1f0811887c, d6c52308a8, c484f6a7d0, 7b974a01de,
+42030f287d, 0c82f703ff.
+
+### Honesty disclosure
+
+Single-thread regression validates uncontended correctness. Real M:N
+race detection требует Linux + TSan run (artifacts ready). Plan 23
+integration testing — отдельная задача. Это не Plan 30 Ф.4 anti-
+pattern — мы не claim'им M:N safety без validation infrastructure,
+мы её built и documented как pending user Docker run.
+

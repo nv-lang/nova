@@ -5501,3 +5501,48 @@ subject lines в чужих commit'ах inaccurate но diff виден). Пол
 Open: open-questions.md не trogал — большой документ, потенциально
 содержит ответы которые уже стали решениями. Отдельный audit pass —
 post-bootstrap work.
+
+
+---
+
+## Channel runtime — Plan 40 Ф.1 production-grade implementation (2026-05-12)
+
+**Где:** `compiler-codegen/nova_rt/channels.h` + `sync.h` + `sched.h`.
+
+**Что было сделано:** Production-grade M:N safety prerequisites после 3
+раундов audit'а vs Go runtime / Rust crossbeam / Tokio / Materialize
+postmortems:
+- Portable sync.h wrapper (Tier 1: Linux pthread+ADAPTIVE_NP, Windows
+  SRWLOCK, macOS os_unfair_lock; atomics через __atomic_* GCC builtins).
+- BaseWaiter common prefix (strict-aliasing safe).
+- B1 atomics+mutex, T2 doubly-linked, B2 selectdone CAS (unified),
+  C2 stop_cb lock-free, C6 park_with_unlock API, C3 no-arm panic,
+  A1 refcount idiom Release-dec+Acquire-fence, A2 TOCTOU re-check,
+  R1 B2 reader_close symmetry, C5 cache padding by access group.
+
+**Что отложено как «не упрощение, а deferred to Ф.4/post-1.0»:**
+- `oneshot` / `watch` / `broadcast` channel types (Tokio parity).
+- `recv_many` batch API (P1 для perf — 10-100× under wake amplification).
+- Tokio Permit-based `reserve()`.
+- Adaptive mutex (Linux opt-in only if bench fails <50 ns).
+- Per-channel metrics (NOVA_CHANNEL_METRICS=1 gated).
+- Lock-free SPSC flavor (Plan 50+, Loom-verified).
+- Loom/CDSChecker formal verification (Plan 50+).
+- NUMA-aware allocation (multi-socket Plan 50+).
+- Iter[T] на ChanReader.
+- Auto-close-on-dropped-reader (Boehm finalizers risky).
+- Priority inheritance mutex (RT scheduling).
+- Direct-copy без cap=0 + zero-capacity rendezvous.
+
+**Honesty:** не «simplification», а **explicit P2/P3/post-1.0 deferrals**
+с документированными reasons. Plan 40 Ф.1 = production parity на
+architectural level (atomics, mutex, CAS, padding), не micro-bench
+contention level (требует lock-free flavors).
+
+**Tier 1 supported:** Linux x86_64 glibc 2.35+, Windows + clang 15+,
+macOS arm64 Apple Clang.
+
+**Tier 3 NOT supported:** mingw-w64, MSVC VS2019, CentOS 7, PA-RISC/
+Itanium/SPARC.
+
+Detail: [docs/plans/40-channel-hardening.md](plans/40-channel-hardening.md).

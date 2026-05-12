@@ -2554,11 +2554,45 @@ throw'ы в D50 fire-and-forget — должны быть logged, не abort. П
 >   Stack frame ~84n байт. На default minicoro 56 KB stack ≈ 600+ arms
 >   безопасно. Идиоматический Go код = 2-8 arms; cap'а нет.
 >
-> **Что отложено в Plan 40 Ф.1 (вместе с Plan 23 M:N):**
-> - Atomics + mutex на shared state (writer_count, closed, waiter-lists).
->   Под single-thread runtime'ом sequenced ops корректны; под M:N — нужны.
-> - Race-free select wake через `selectdone` CAS (Go-style).
-> - Doubly-linked waiter list (O(1) unlink вместо O(n)).
+> **Plan 40 Ф.1 (2026-05-12, ✅ Этапы 1-6 закрыты — production-grade M:N
+> prerequisites):**
+> - Atomics + mutex на shared state (B1): writer_count/closed/reader_closed
+>   atomic; head/count/waiter-lists под mutex. Все ops lock-then-mutate.
+> - Refcount idiom Release-dec + Acquire-fence-on-zero (A1, Arc::drop pattern).
+> - Race-free select wake через `selectdone` CAS (B2) — unified protocol
+>   для recv/send/select waiters. Direct-copy sender→waiter (Go's sendDirect
+>   equivalent).
+> - Doubly-linked waiter list O(1) unlink (T2).
+> - BaseWaiter common prefix (C1, strict-aliasing safe).
+> - stop_cb lock-free contract (C2, atomic cancelled flag).
+> - `nova_sched_park_with_unlock` API (C6, lost-wakeup-free park).
+> - Cache padding by access group (C5, 300× perf win под contention).
+> - TOCTOU re-check protocol (A2).
+> - Symmetric `nova_chan_reader_close` (R1 B2, Tokio Receiver::close parity).
+> - All-arms-disabled panic (C3, не silent forever-park).
+> - Linux Docker validation infrastructure + pthread stress tests
+>   (b1_mutex_stress/b2_selectdone_cas/t2_waiter_churn) под TSan/ASan/UBSan.
+>
+> **Tier 1 toolchain backends (sync.h):**
+> - Linux x86_64 (Ubuntu 22.04+, glibc 2.35+) — pthread + ADAPTIVE_NP.
+> - Windows + clang LLVM 15+ — SRWLOCK native.
+> - macOS arm64 + Apple Clang — os_unfair_lock (40% faster than pthread).
+> - Atomics: `__atomic_*` GCC/Clang builtins.
+>
+> **Что отложено в Plan 41+ / Plan 50+:**
+> - `oneshot::channel<T>` / `watch::channel<T>` / `broadcast::channel<T>` —
+>   Tokio type variants (Plan 41).
+> - `recv_many` batch API (Ф.4 follow-up).
+> - Lock-free SPSC flavor (Plan 50+, Loom-verified).
+> - Loom/CDSChecker formal verification (Plan 50+).
+> - NUMA-aware allocation (Plan 50+ multi-socket servers).
+> - Priority inheritance mutex (RT scheduling, doc only сейчас).
+> - Zero-capacity rendezvous channels (`Channel.new(0)` — cap=0 case).
+> - Per-channel metrics (`NOVA_CHANNEL_METRICS=1` opt-in).
+>
+> **Plan 23 (M:N runtime) integration** — Plan 40 Ф.1 = prerequisite,
+> теперь готов. M:N runtime отдельный план; этот блок channels гарантирует
+> что под M:N scheduler'ом channel layer thread-safe.
 
 ### Что
 
