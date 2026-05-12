@@ -188,46 +188,93 @@ fn map_audio(samples []f32, gain f32) -> []f32 =>
 
 - **compiler-codegen** — Rust-реализация с парсером, type-checker'ом,
   treewalk-интерпретатором и C-backend codegen'ом. Компилирует Nova в C
-  через нативный runtime (эффекты, файберы, GC); используется как для
-  интерактивных запусков (`run`, `test`), так и для нативной компиляции
-  (`compile`).
+  через нативный runtime (эффекты, файберы, GC, каналы); используется как
+  для интерактивных запусков (`run`, `test`), так и для нативной
+  компиляции (`build`).
+- **nova-cli** — единая точка входа для пользователя (`nova check`,
+  `nova build`, `nova run`, `nova test`, `nova regen-runtime`).
+  `nova-codegen` остаётся как внутренний инструмент для IDE / CI /
+  отладки codegen'а.
+
+Что работает сегодня (bootstrap):
+
+- Cross-file imports (`import X.Y.Z`, селективный `import X.{A, B}`,
+  `export import X`, prelude auto-import) с DFS cycle detection.
+- Эффекты + handlers (D61/D87): keyword'ы `effect`/`handler`,
+  `with X = h { body }`, `interrupt v`, `Handler[E, IRT]` first-class
+  тип. `forbid`, `realtime` capability-блоки.
+- Structured concurrency (D71): `spawn`, `supervised`, `parallel for`,
+  `cancel_scope`, channels, `select`.
+- Контракты (D24): `requires`/`ensures`/`old`/`result`/`invariant`/
+  `reads`/`modifies`/`decreases`/`ghost let`/`assume`/`assert_static`.
+  Bootstrap SMT через TrivialBackend (reflexive ensures); Z3 — milestone.
+- `defer` / `errdefer` cleanup (D90).
+- Boehm GC default с introspection API (`heap_size`, `live_count`,
+  `collect`).
 
 ## Сборка из исходников
 
-Pipeline двухступенчатый: `nova-codegen` создаёт `.c`, нативный
-C-компилятор линкует его с runtime'ом (`nova_rt/`). Wrapper-скрипты
-делают это одной командой:
-
-```powershell
-# Windows (требуется MSVC Build Tools)
-cd compiler-codegen
-cargo build
-.\build_c.ps1 path\to\hello.nv -Run
-```
+Соберите `nova` CLI, затем используйте его для компиляции Nova-программ:
 
 ```sh
-# Linux / Mac (требуется gcc или clang)
-cd compiler-codegen
-cargo build
-./build_c.sh path/to/hello.nv --run
+# собрать nova CLI (требуется Rust + Cargo)
+cd nova-cli && cargo build && cd ..
+
+# скомпилировать .nv в нативный бинарь
+nova-cli/target/debug/nova build path/to/hello.nv
+
+# запустить через интерпретатор (без нативной компиляции)
+nova-cli/target/debug/nova run path/to/hello.nv
+
+# только type-check
+nova-cli/target/debug/nova check path/to/hello.nv
 ```
 
-Без wrapper'а:
+Pipeline двухступенчатый: `nova-codegen` (внутренний) производит `.c`,
+нативный C-компилятор линкует его с runtime'ом (`nova_rt/`). `nova build`
+оркестрирует это автоматически.
+
+Ручной pipeline (без `nova` CLI):
 
 ```sh
 cd compiler-codegen
-cargo run -- compile path/to/hello.nv          # Nova → C
+cargo run --release -- compile path/to/hello.nv          # Nova → C
 gcc path/to/hello.c nova_rt/alloc.c nova_rt/effects.c nova_rt/fibers.c \
-    -I. -o hello                                # C → бинарь
+    -I. -o hello                                          # C → бинарь
 ./hello
 ```
 
-Есть также режимы без codegen'а: `cargo run -- run file.nv` (treewalk-
-интерпретатор), `cargo run -- check file.nv` (только type-check),
-`cargo run -- test file.nv` (запуск `test "..."` блоков через интерпретатор).
-
 Полный guide, опции, известные ограничения:
 [compiler-codegen/README.md](compiler-codegen/README.md).
+
+## Запуск тестов
+
+Соберите `nova` CLI, затем запустите полный набор тестов:
+
+```sh
+# собрать nova CLI (одноразово, или после изменений)
+cd nova-cli && cargo build && cd ..
+
+# все тесты
+nova-cli/target/debug/nova test
+```
+
+Частые флаги:
+
+```sh
+nova test --filter syntax/closure        # подмножество тестов
+nova test --mode release                 # компиляция с -O3 -flto
+nova test --toolchain clang              # принудительный toolchain
+nova test --timeout 60                   # таймаут на тест
+nova test --format json                  # JSON-события построчно
+nova test --format junit > results.xml   # JUnit XML для CI
+nova test --retries 2                    # повтор flaky AV/race fails
+nova test --rerun-failed                 # только провалившиеся в last run
+nova test --include-stdlib               # включить std/* помимо nova_tests/*
+```
+
+Подробный гайд флагов test-runner, EXPECT-маркеры, troubleshooting:
+[docs/test-conventions.md](docs/test-conventions.md).
 
 ## Поддержка редакторов
 

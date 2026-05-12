@@ -195,9 +195,29 @@ Active development. The specification is stable across core features
 
 - **compiler-codegen** — Rust implementation with parser,
   type-checker, treewalk interpreter, and C-backend codegen.
-  Compiles Nova to C via a native runtime (effects, fibers, GC);
+  Compiles Nova to C via a native runtime (effects, fibers, GC, channels);
   used for both interactive runs (`run`, `test`) and native
-  compilation (`compile`).
+  compilation (`build`).
+- **nova-cli** — single user-facing entry point (`nova check`,
+  `nova build`, `nova run`, `nova test`, `nova regen-runtime`).
+  `nova-codegen` остаётся как внутренний инструмент для IDE / CI /
+  отладки.
+
+What works today (bootstrap):
+
+- Cross-file imports (`import X.Y.Z`, selective `import X.{A, B}`,
+  `export import X`, prelude auto-import) with DFS cycle detection.
+- Effects + handlers (D61/D87): `effect`/`handler` keywords,
+  `with X = h { body }`, `interrupt v`, `Handler[E, IRT]` first-class
+  type. `forbid`, `realtime` capability blocks.
+- Structured concurrency (D71): `spawn`, `supervised`, `parallel for`,
+  `cancel_scope`, `channels`, `select`.
+- Contracts (D24): `requires`/`ensures`/`old`/`result`/`invariant`/
+  `reads`/`modifies`/`decreases`/`ghost let`/`assume`/`assert_static`.
+  Bootstrap SMT через TrivialBackend (reflexive ensures); Z3 — milestone.
+- `defer` / `errdefer` cleanup (D90).
+- Boehm GC default with introspection API (`heap_size`, `live_count`,
+  `collect`).
 
 ## Building from source
 
