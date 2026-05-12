@@ -5410,3 +5410,33 @@ import обратно на entry не detect'ится).
 
 3 negative tests PASS: modules/cycle_a, modules/cycle_b,
 negative_capability/import_cycle_rejected. Full regression 261/261.
+
+
+---
+
+## str lex compare bootstrap byte-wise (2026-05-12)
+
+### Что simplified
+
+`nova_str_cmp` / `lt`/`le`/`gt`/`ge` в bootstrap делают **byte-wise**
+сравнение через memcmp. ASCII-correct, UTF-8 partial (byte order
+совпадает с codepoint order для valid UTF-8 кроме edge cases).
+
+### Production milestone
+
+Полное Unicode collation (locale-aware, normalization NFC/NFD, case
+folding) — requires ICU или подобная библиотека. Сейчас не блокер
+для bootstrap.
+
+### Method-форма str.lt() / str.gt() — partial
+
+Operator-форма (`s1 < s2`) работает через codegen routing. Method-форма
+(`s1.lt(s2)`) пока **не работает** — primitive types не имеют method
+resolution для bootstrap external fn'ов. Нужна method_overloads
+registration для str — отдельная работа.
+
+## std/data/semver_range.nv tuple destructure type-loss (open)
+
+`let (left, build_str) = ...` теряет element types — обе переменные
+объявляются `nova_int` в C, что ломает downstream usage как str.
+Pre-existing codegen bug, отдельный fix.

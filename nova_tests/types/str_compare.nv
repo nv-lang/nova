@@ -1,0 +1,37 @@
+// str lexicographic compare — 2026-05-12.
+//
+// Bootstrap MVP: byte-wise (ASCII-correct, UTF-8 partial). Полное
+// Unicode collation — production milestone.
+//
+// Operators `<`, `<=`, `>`, `>=` routed через nova_str_lt/le/gt/ge
+// (см. nova_rt.h). Метод-формы `s1.lt(s2)`, `s1.le(s2)`, etc.
+
+module nova_tests.types.str_compare
+
+test "ASCII lex compare basic" {
+    assert("apple" < "banana")
+    assert(!("banana" < "apple"))
+    assert("apple" <= "apple")
+    assert("apple" >= "apple")
+    assert("banana" > "apple")
+    assert(!("apple" > "banana"))
+}
+
+test "empty string is smallest" {
+    assert("" < "a")
+    assert("" <= "")
+    assert("a" > "")
+    assert(!("" > "a"))
+}
+
+test "prefix < extended" {
+    assert("foo" < "foobar")
+    assert("foobar" > "foo")
+    assert("foo" <= "foobar")
+}
+
+test "case sensitivity — uppercase < lowercase (ASCII)" {
+    // ASCII: 'A' = 0x41, 'a' = 0x61. 'A' < 'a'.
+    assert("Apple" < "apple")
+    assert("ZZZ" < "aaa")
+}

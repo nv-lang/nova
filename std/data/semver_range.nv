@@ -17,6 +17,9 @@
 
 module std.data.semver_range
 
+// Plan 35 Ф.1: cross-file resolve. Version тип определён в std.data.semver.
+import std.data.semver
+
 
 // AST для constraint'ов
 export type Comparator

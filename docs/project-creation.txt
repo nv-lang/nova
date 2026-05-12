@@ -7755,3 +7755,59 @@ Negative (cycle через цепь):
 Это closure Plan 35 Ф.1 D29 gap. Negative test для cycle detection
 ранее был deferred как «BFS visited dedup vs proper cycle» — теперь
 закрыт.
+
+
+================================================================================
+2026-05-12 str lexicographic compare (<, <=, >, >=) + semver_range.nv import fix
+================================================================================
+
+При попытке закрыть std/data/semver_range.nv CC-FAIL обнаружено два
+gap'а:
+
+1. **Missing import:** semver_range.nv использовал тип `Version` без
+   `import std.data.semver`. Fix: добавлен import.
+
+2. **str compare unsupported:** semver.nv `compare_ident(a, b)` для
+   alphanumeric pre-release components использовал `a < b` на nova_str.
+   Codegen эмитил `unsupported operator Lt on nova_str`.
+
+### Решение (str compare)
+
+**Runtime (nova_rt.h):**
+- `nova_str_cmp(a, b) -> nova_int` — байтовое lex сравнение (memcmp +
+  length comparison).
+- `nova_str_lt/le/gt/ge` — inline обёртки.
+
+Bootstrap MVP: ASCII-correct, UTF-8 partial (byte order совпадает с
+codepoint order для valid UTF-8 кроме edge cases). Полное Unicode
+collation (locale, normalization) — production milestone.
+
+**Codegen (emit_c.rs):**
+Расширил `if lty == "nova_str"` branch в Binary для BinOp::Lt/Le/Gt/Ge.
+
+**Stub registry (runtime_registry.rs):**
+Добавлены 4 `RuntimeFn` для `str.lt`, `str.le`, `str.gt`, `str.ge`.
+`nova regen-runtime` перегенерировал `std/runtime/string.nv` с
+`export external fn str @lt/@le/@gt/@ge`.
+
+### Tests
+
+nova_tests/types/str_compare.nv (4 sub-tests):
+- ASCII lex compare basic (apple < banana).
+- empty string is smallest.
+- prefix < extended (foo < foobar).
+- case sensitivity — uppercase < lowercase (ASCII order).
+
+Method-форма `s.lt(...)` пока не работает (primitive types не имеют
+method resolution для bootstrap external fn'ов; добавление потребовало
+бы method_overloads registration — отдельная работа).
+
+### Semver_range status
+
+После двух fix'ов (import + str compare) semver_range.nv продвинулся
+но ещё CC-FAIL'ит на **tuple destructure type-loss bug** — `_NovaTuple2`
+теряет element types (всё становится `nova_int`). Это **отдельный
+codegen bug**, выходит за scope str compare fix. Документирую как
+follow-up.
+
+Full regression: **262/262 PASS**.
