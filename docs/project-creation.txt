@@ -7708,3 +7708,50 @@ Plan 33 bootstrap-уровень maximally complete без libz3. Z3 milestone
 открывает: V1 full (Z3 backend SMT power), V3 (SCC purity), V4 (mut
 snapshot), V6 (pure_view+axiom), V7 (quantifiers), V8 (FP/strings/sets),
 V9 (incremental+parallel), V10 (must_verify_module+trusted), V11 (Dafny-port).
+
+
+================================================================================
+2026-05-12 Plan 35 Ф.1 cycle detection (D29 compliance)
+================================================================================
+
+После negative-test review обнаружен gap: import cycle не detect'ился
+в bootstrap MVP. Resolver был BFS + visited HashSet — diamond-dep dedup
+silently глушил cycles вместо error.
+
+Spec D29 (07-modules.md): «Циклические импорты — запрещены», compile
+error с указанием полного цикла.
+
+### Решение
+
+Refactor BFS → DFS:
+- imports.rs: queue/import_stack заменены на recursive `resolve_one(...)`.
+- Два множества:
+  - `visited` — closed-set (модули полностью обработаны; diamond-dep
+    dedup через silent skip).
+  - `in_progress` — open-set (модули currently being resolved в DFS-stack;
+    cycle detected если повторный visit).
+  - `import_chain` — parallel Vec<Vec<String>> для error message
+    «import cycle detected: A → B → C → A».
+
+Critical fix: entry module добавляется в in_progress ДО resolve. Иначе
+transitive import обратно на entry → cycle не detect'ится (entry не
+был в открытом множестве).
+
+### Tests
+
+Positive (cycle helpers themselves — expected compile error):
+- nova_tests/modules/cycle_a.nv: imports cycle_b. EXPECT_COMPILE_ERROR.
+- nova_tests/modules/cycle_b.nv: imports cycle_a. EXPECT_COMPILE_ERROR.
+
+Negative (cycle через цепь):
+- nova_tests/negative_capability/import_cycle_rejected.nv:
+  imports cycle_a → cycle_b → cycle_a. EXPECT_COMPILE_ERROR.
+
+Все 3 PASS. Full regression: **261/261 PASS** (zero fails, было 247/256
+с 9 concurrency/select fails от параллельного агента — самоисправились).
+
+### Связь
+
+Это closure Plan 35 Ф.1 D29 gap. Negative test для cycle detection
+ранее был deferred как «BFS visited dedup vs proper cycle» — теперь
+закрыт.

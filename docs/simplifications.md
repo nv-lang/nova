@@ -5386,3 +5386,27 @@ guard) — те же ideas applied к loop iterations.
 - AI-friendly diagnostic — D24 §107 acceptance criterion now satisfied
   в TrivialBackend mode. Z3 backend будет давать concrete counterexample
   values; trivial-mode даёт honest hint.
+
+
+---
+
+## Import cycle detection ✅ FIXED (Plan 35 Ф.1 D29, 2026-05-12)
+
+### Был simplification
+
+Resolver BFS + visited HashSet: cycle A → B → A не detect'ился,
+diamond-dep dedup silently глушил повторные visits. Spec D29 требует
+compile error.
+
+### Now FIXED
+
+Refactor BFS → DFS recursive `resolve_one`. Два множества:
+- `visited` (closed-set) — diamond-dep dedup.
+- `in_progress` (open-set) — cycle detect через повторный visit.
+- `import_chain` — Vec для error message «A → B → C → A».
+
+Entry module добавляется в in_progress ДО resolve (иначе transitive
+import обратно на entry не detect'ится).
+
+3 negative tests PASS: modules/cycle_a, modules/cycle_b,
+negative_capability/import_cycle_rejected. Full regression 261/261.

@@ -242,6 +242,9 @@ Arc<Module>>` shared. Diamond-dep deduplication.
 
 **R3. [MVP] Topological dependency walk + cycle detection** (AD3, G01).
 Cycle = error with deterministic edge-path message. No infinite loop.
+**✅ ЗАКРЫТ 2026-05-12**: BFS → DFS recursive resolve_one с двумя
+множествами (visited / in_progress). Entry в in_progress ДО resolve.
+3 tests PASS (cycle_a, cycle_b, import_cycle_rejected).
 
 **R4. [MVP] Module-name uniqueness** (N16). Two files declaring same
 `module X.Y.Z` (e.g. `std/X/Y/Z.nv` + `vendor/X/Y/Z.nv`) → error

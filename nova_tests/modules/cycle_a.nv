@@ -1,0 +1,13 @@
+// EXPECT_COMPILE_ERROR import cycle detected
+//
+// Plan 35 Ф.1 cycle detection helper — module A.
+// Имеет cycle dependency A → B → A. Сам file компилируется как тест
+// (test_runner walk_nv подхватывает все .nv) → ожидается compile error
+// «import cycle detected». Также используется как helper для
+// negative_capability/import_cycle_rejected.nv (импортирует A).
+
+module nova_tests.modules.cycle_a
+
+import nova_tests.modules.cycle_b.{B_VAL}
+
+export const A_VAL int = 1

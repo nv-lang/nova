@@ -1,0 +1,14 @@
+// EXPECT_COMPILE_ERROR import cycle detected
+//
+// Plan 35 Ф.1 cycle detection (spec D29): импортные циклы запрещены.
+// Этот файл импортирует cycle_a → cycle_a импортирует cycle_b →
+// cycle_b импортирует cycle_a → цикл. Resolver DFS должен detect'ить
+// и эмитить error «import cycle detected: ... → ... → ...».
+
+module nova_tests.negative_capability.import_cycle_rejected
+
+import nova_tests.modules.cycle_a.{A_VAL}
+
+test "cycle A → B → A detected (negative)" {
+    assert(A_VAL == 1)
+}
