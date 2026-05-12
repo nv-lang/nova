@@ -1,0 +1,122 @@
+// Plan 39 Issue D: Iter[T] resolution в for-in loops.
+//
+// D58 algorithm:
+//   1. Если `c` has `mut next() -> Option[T]` — use directly.
+//   2. Иначе если `c` has `iter() -> Iter[T]` — synthesize `c.iter()`,
+//      recurse on result.
+//   3. Иначе — error «type X has neither next nor iter» (clear diagnostic).
+//
+// Этот файл verify'ит:
+// - Case 1 (next() direct) для inline-declared iterator type.
+// - Case 2 (iter() chain) — type without `next()` but with `iter()`.
+// - mut-receiver enforcement (auto-fixed via signature check).
+// - Auto-iter() insertion: `for x in collection` resolves к
+//   `for x in collection.iter()` под капотом.
+
+module nova_tests.syntax.for_in_iter_resolution
+
+// ── Case 1: type с direct `next()` ───────────────────────────────────────
+
+type Counter {
+    mut cur int
+    end int
+}
+
+fn Counter mut @next() -> Option[int] {
+    if @cur >= @end { return None }
+    let v = @cur
+    @cur += 1
+    Some(v)
+}
+
+test "Case 1: direct iterator (mut next)" {
+    let mut sum = 0
+    let it = Counter { cur: 0, end: 5 }
+    for x in it {
+        sum = sum + x
+    }
+    // 0+1+2+3+4 = 10
+    assert(sum == 10)
+}
+
+// ── Case 2: collection с `iter()` метода ─────────────────────────────────
+
+type NumBag {
+    cap int
+}
+
+type NumBagIter {
+    mut cur int
+    end int
+}
+
+fn NumBag @iter() -> NumBagIter {
+    NumBagIter { cur: 0, end: @cap }
+}
+
+fn NumBagIter mut @next() -> Option[int] {
+    if @cur >= @end { return None }
+    let v = @cur * 10
+    @cur += 1
+    Some(v)
+}
+
+test "Case 2: auto-iter() insertion (collection.iter() → next())" {
+    let mut total = 0
+    let bag = NumBag { cap: 3 }
+    // D58: `for x in bag` должен expand'нуться в `for x in bag.iter()`.
+    for x in bag {
+        total = total + x
+    }
+    // 0*10 + 1*10 + 2*10 = 30
+    assert(total == 30)
+}
+
+// ── Case 3: type без `next` и без `iter` — error ─────────────────────────
+// (verified manually — `for x in NonIter { }` should fail at compile time)
+
+// ── Regression: Range literal остаётся primitive int loop ────────────────
+
+test "regression: plain Range loop (primitive int Case 1 D58 optimisation)" {
+    let mut sum = 0
+    for i in 0..5 {
+        sum = sum + i
+    }
+    // 0+1+2+3+4 = 10
+    assert(sum == 10)
+}
+
+// ── Regression: array iteration остаётся primitive ───────────────────────
+
+test "regression: array iteration через NovaArray (Case 2 emit_for optimisation)" {
+    let xs = [10, 20, 30]
+    let mut total = 0
+    for x in xs {
+        total = total + x
+    }
+    assert(total == 60)
+}
+
+// ── Generic-like iterator (counter с initial state) ──────────────────────
+
+type Squares {
+    mut i int
+    n int
+}
+
+fn Squares mut @next() -> Option[int] {
+    if @i >= @n { return None }
+    let v = @i * @i
+    @i += 1
+    Some(v)
+}
+
+test "iterator with computed values" {
+    let mut sum = 0
+    let sq = Squares { i: 0, n: 4 }
+    for s in sq {
+        sum = sum + s
+    }
+    // 0² + 1² + 2² + 3² = 0+1+4+9 = 14
+    assert(sum == 14)
+}

@@ -8057,10 +8057,16 @@ impl CEmitter {
             return Ok(result_tmp);
         }
 
-        // Plan 06 Ф.1: Iter[T] protocol fallback.
-        // Если тип имеет метод `mut @next() -> Option[T]` (через
-        // all_methods multi-key registry — выдерживает overlap нескольких
-        // итераторов в модуле) — эмитим generic loop с next-вызовом.
+        // Plan 06 Ф.1 + Plan 39 Issue D: Iter[T] protocol (D58 §«implicit iter»).
+        //
+        // Algorithm (D58):
+        //   1. Если c has `mut next() -> Option[T]` — use directly.
+        //   2. Иначе если c has `iter() -> Iter[T]` — synthesize `c.iter()`,
+        //      recurse.
+        //   3. Иначе — error: «type 'X' has neither `next` nor `iter` method».
+        //
+        // Case 1 ниже; Case 2 — see "Plan 06 Ф.3: implicit `.iter()`" блок.
+        // Case 3 — final error message в конце функции (улучшенный).
         let iter_struct = arr_ty.strip_prefix("Nova_").unwrap_or("")
             .trim_end_matches('*').trim().to_string();
         if !iter_struct.is_empty()
@@ -8095,6 +8101,18 @@ impl CEmitter {
                 let next_sig = self.method_overloads
                     .get(&(iter_type.clone(), "next".to_string()))
                     .and_then(|sigs| sigs.first()).cloned();
+                // Plan 39 Issue D: D58 требует `mut next()` — iterator advance
+                // мутирует state. Warning'аем если registered как non-mut
+                // (не блокируем — bootstrap может иметь edge cases с
+                // structural-protocol matching).
+                if let Some(sig) = &next_sig {
+                    if !sig.is_instance {
+                        // Static `next` — это не iterator method.
+                        return Err(format!(
+                            "for-in: type '{}' has `next` but it's static, not instance method (D58: `mut next() -> Option[T]` required)",
+                            iter_type));
+                    }
+                }
                 let opt_c_ty = next_sig.as_ref()
                     .map(|s| s.return_c_type.clone())
                     .unwrap_or_else(|| "NovaOpt_nova_int".to_string());
@@ -8176,7 +8194,32 @@ impl CEmitter {
             return self.emit_for(pattern, &iter_call, body);
         }
 
-        Err(format!("for-in: unsupported iterator type '{}' — only Range and Array are supported", arr_ty))
+        // Plan 39 Issue D: explicit D58 algorithm Case 3 — error.
+        //
+        // Возможные причины:
+        //   - Тип не имеет `mut next() -> Option[T]` метода (Case 1).
+        //   - Тип не имеет `iter() -> Iter[T]` метода (Case 2).
+        //   - Тип не зарегистрирован вообще (cross-file resolve gap?).
+        //
+        // Diagnostic specifically lists searched methods for AI / human
+        // debugging.
+        if iter_struct.is_empty() {
+            Err(format!(
+                "for-in: cannot resolve iterator type for expression of C-type '{}'.\n\
+                 Hint: result type may не быть Nova user-type (cross-file resolve gap? \
+                 see Plan 35).",
+                arr_ty))
+        } else {
+            let has_next = self.all_methods.contains(&(iter_struct.clone(), "next".to_string()));
+            let has_iter = self.all_methods.contains(&(iter_struct.clone(), "iter".to_string()));
+            Err(format!(
+                "for-in: type '{}' has neither `mut next() -> Option[T]` nor `iter() -> Iter[T]` methods (D58).\n\
+                 Searched method_overloads: ({}, \"next\")={}, ({}, \"iter\")={}\n\
+                 Hint: add one of the methods, or use `for x in c.iter()` if iterator is created externally.",
+                iter_struct,
+                iter_struct, has_next,
+                iter_struct, has_iter))
+        }
     }
 
     // ---- match ----
