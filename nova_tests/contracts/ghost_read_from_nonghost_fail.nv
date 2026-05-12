@@ -1,0 +1,16 @@
+// EXPECT_CC_ERROR use of undeclared identifier 'spec_only'
+//
+// Plan 33.3 Ф.9.1: ghost var не доступен в non-ghost коде.
+// Codegen эрейзит ghost let (Verus/Dafny semantics), поэтому
+// C compiler видит `spec_only` как undeclared.
+//
+// NOTE: «proper» check был бы compile-time в type-checker (запрет
+// чтения ghost-var из non-ghost кода). Сейчас catch'ится C-level
+// — это honest bootstrap, не silent unsoundness.
+
+module nova_tests.contracts.ghost_read_from_nonghost_fail
+
+fn bad_ghost(x int) -> int {
+    ghost let spec_only = x * 2
+    spec_only + 1
+}

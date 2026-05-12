@@ -1,14 +1,18 @@
-// Plan 33.3: ghost let + assume.
+// Plan 33.3 + Ф.9.1: ghost let + assume.
+//
+// Ghost erasure: `ghost let x = ...` не emit'ится в codegen (Verus/Dafny
+// semantics). Non-ghost код не может читать ghost-vars (TODO: enforce
+// в type-check полностью; пока только naturally через codegen-erasure).
 
 module nova_tests.contracts.ghost_assume
 
 fn use_ghost(x int) -> int {
     // ghost let — spec-only, не emit'ится в codegen.
-    // В runtime сейчас выполняется (типа let), но не используется
-    // (Plan 33.3 first iteration; полное «не emit» когда добавится
-    // codegen-level filtering).
-    ghost let original = x
-    let _ = original   // используем чтобы не было warning о unused
+    // В runtime значение не существует; читать его из non-ghost кода
+    // нельзя (codegen эрейзит).
+    ghost let initial_snapshot = x
+    // initial_snapshot можно использовать в спеке (requires/ensures),
+    // но не в обычном коде.
     x
 }
 

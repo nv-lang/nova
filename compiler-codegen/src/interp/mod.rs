@@ -1916,6 +1916,12 @@ impl Interpreter {
     fn exec_stmt(&self, stmt: &Stmt, env: &Env) -> Result<Flow, Diagnostic> {
         match stmt {
             Stmt::Let(decl) => {
+                // Plan 33.3 Ф.9.1 (D24): ghost erasure в interp.
+                // `ghost let` — spec-only, не выполняется в runtime.
+                // (Parser ensures ghost-vars не читаются из non-ghost кода.)
+                if decl.is_ghost {
+                    return Ok(Flow::Value(Value::Unit));
+                }
                 let v = match self.eval_expr(&decl.value, env)? {
                     Flow::Value(v) => v,
                     other => return Ok(other),

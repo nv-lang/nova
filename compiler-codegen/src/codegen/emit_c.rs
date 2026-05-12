@@ -26,6 +26,110 @@ pub struct MethodSig {
     pub variadic_last: bool,
 }
 
+/// Plan 39 Issue A: classification of `with`-block trail type for
+/// choosing which NovaInterruptFrame slot to use.
+///
+/// - `IntLike`: `nova_int`, `nova_bool`, `nova_byte`, `nova_char`, plain
+///   integers that fit in `nova_int` slot.
+/// - `Pointer`: any C type containing `*` — `Nova_X*`, `NovaArray_X*`,
+///   `void*`. Stored in `value_ptr` directly.
+/// - `ValueStruct`: heap-stored value structs (`NovaOpt_X`, `NovaResult_X_E`,
+///   tuples). Stored via heap-alloc'd slot pointed to by `value_ptr`.
+/// - `UnitVoid`: unit / void — no value, slot unused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WithResultCategory {
+    IntLike,
+    Pointer,
+    ValueStruct,
+    UnitVoid,
+}
+
+/// Plan 39 Issue A: walk handler expression (typically a ClosureLight /
+/// ClosureFull / HandlerLit) и найти первый `interrupt VAL` — вернуть
+/// C-тип VAL. Используется в `infer_expr_c_type` для `With`, когда body
+/// не имеет trailing (тогда тип blocка определяется handler'ом).
+pub fn infer_handler_interrupt_ty(emitter: &CEmitter, handler: &Expr) -> Option<String> {
+    use crate::ast::{ClosureBody, FnBody};
+    fn walk_expr(emitter: &CEmitter, e: &Expr, out: &mut Option<String>) {
+        if out.is_some() { return; }
+        match &e.kind {
+            ExprKind::Interrupt(Some(v)) => {
+                *out = Some(emitter.infer_expr_c_type(v));
+            }
+            ExprKind::Interrupt(None) => {
+                *out = Some("nova_int".into());
+            }
+            ExprKind::Block(b) => {
+                for s in &b.stmts { walk_stmt(emitter, s, out); }
+                if let Some(t) = &b.trailing { walk_expr(emitter, t, out); }
+            }
+            ExprKind::If { then_branch, else_branch, .. } => {
+                walk_block(emitter, then_branch, out);
+                if let Some(eb) = else_branch { walk_block(emitter, eb, out); }
+            }
+            ExprKind::Match { arms, .. } => {
+                for a in arms { walk_expr(emitter, &a.body, out); }
+            }
+            _ => {}
+        }
+    }
+    fn walk_stmt(emitter: &CEmitter, s: &Stmt, out: &mut Option<String>) {
+        match s {
+            Stmt::Expr(e) | Stmt::Return(Some(e)) => walk_expr(emitter, e, out),
+            _ => {}
+        }
+    }
+    fn walk_block(emitter: &CEmitter, b: &Block, out: &mut Option<String>) {
+        for s in &b.stmts { walk_stmt(emitter, s, out); }
+        if let Some(t) = &b.trailing { walk_expr(emitter, t, out); }
+    }
+    let mut out: Option<String> = None;
+    match &handler.kind {
+        ExprKind::ClosureLight { body, .. } => match body {
+            ClosureBody::Expr(e) => walk_expr(emitter, e, &mut out),
+            ClosureBody::Block(b) => walk_block(emitter, b, &mut out),
+        },
+        ExprKind::ClosureFull(sb) => match &sb.body {
+            FnBody::Expr(e) => walk_expr(emitter, e, &mut out),
+            FnBody::Block(b) => walk_block(emitter, b, &mut out),
+        },
+        ExprKind::Lambda { body, .. } => walk_expr(emitter, body, &mut out),
+        ExprKind::HandlerLit { methods, .. } => {
+            for m in methods {
+                match &m.body {
+                    FnBody::Expr(e) => walk_expr(emitter, e, &mut out),
+                    FnBody::Block(b) => walk_block(emitter, b, &mut out),
+                }
+                if out.is_some() { break; }
+            }
+        }
+        _ => {}
+    }
+    out
+}
+
+/// Plan 39 Issue A: pick category from C type string.
+pub fn with_result_category(c_type: &str) -> WithResultCategory {
+    let t = c_type.trim();
+    if t == "nova_unit" || t == "void" || t.is_empty() {
+        return WithResultCategory::UnitVoid;
+    }
+    if t == "nova_int" || t == "nova_bool" || t == "nova_byte"
+        || t == "nova_char" || t == "nova_i8" || t == "nova_i16"
+        || t == "nova_i32" || t == "nova_i64"
+        || t == "nova_u8" || t == "nova_u16" || t == "nova_u32"
+        || t == "nova_u64" || t == "nova_f32" || t == "nova_f64"
+    {
+        return WithResultCategory::IntLike;
+    }
+    if t.contains('*') {
+        return WithResultCategory::Pointer;
+    }
+    // String types are wrappers (nova_str is a struct by value).
+    // Value structs: NovaOpt_X, NovaResult_X_Y, tuples, user-defined records by value.
+    WithResultCategory::ValueStruct
+}
+
 pub struct CEmitter {
     out: String,
     /// File-scope handler impl function bodies (ctx structs + forward decls + bodies)
@@ -1468,11 +1572,29 @@ impl CEmitter {
             self.line(&format!("nova_fail_push(&{});", ff));
         }
 
+        // Plan 39 Issue A: infer T_body to pick correct result slot.
+        // Category of trail type decides storage:
+        //   - int/bool/unit → use NovaInterruptFrame.value (nova_int slot)
+        //   - pointer type (contains '*') → use NovaInterruptFrame.value_ptr (void* slot)
+        //   - value struct (NovaOpt_X, NovaResult_X_E, etc.) → heap-allocate,
+        //     pointer goes through value_ptr; reader dereferences.
+        let trail_ty = body.trailing.as_ref()
+            .map(|e| self.infer_expr_c_type(e))
+            .unwrap_or_else(|| "nova_unit".into());
+        let category = with_result_category(&trail_ty);
+
         // Emit interrupt frame so `interrupt v` can early-exit this with-block
         let iframe = self.fresh_tmp();
         let result_tmp = self.fresh_tmp();
         self.line(&format!("NovaInterruptFrame {};", iframe));
-        self.line(&format!("nova_int {};", result_tmp));
+        // Declare result_tmp with the actual trail type (not always nova_int).
+        let result_decl_ty = match category {
+            WithResultCategory::IntLike => "nova_int".to_string(),
+            WithResultCategory::Pointer => trail_ty.clone(),
+            WithResultCategory::ValueStruct => trail_ty.clone(),
+            WithResultCategory::UnitVoid => "nova_int".to_string(),
+        };
+        self.line(&format!("{} {};", result_decl_ty, result_tmp));
         self.line(&format!("nova_interrupt_push(&{});", iframe));
 
         // If we have fail-frame, wrap interrupt-setjmp inside fail-setjmp.
@@ -1494,16 +1616,31 @@ impl CEmitter {
         }
         if let Some(trailing) = &body.trailing {
             self.emit_source_annotation_for_expr(trailing);
-            let trail_ty = self.infer_expr_c_type(trailing);
             let tv = self.emit_expr(trailing)?;
-            if trail_ty == "nova_int" || trail_ty == "nova_bool" {
-                self.line(&format!("{} = (nova_int)({});", result_tmp, tv));
-            } else {
-                self.line(&format!("(void)({});", tv));
-                self.line(&format!("{} = ((nova_int)0LL);", result_tmp));
+            match category {
+                WithResultCategory::IntLike => {
+                    self.line(&format!("{} = (nova_int)({});", result_tmp, tv));
+                }
+                WithResultCategory::Pointer | WithResultCategory::ValueStruct => {
+                    self.line(&format!("{} = ({});", result_tmp, tv));
+                }
+                WithResultCategory::UnitVoid => {
+                    self.line(&format!("(void)({});", tv));
+                    self.line(&format!("{} = ((nova_int)0LL);", result_tmp));
+                }
             }
         } else {
-            self.line(&format!("{} = ((nova_int)0LL);", result_tmp));
+            match category {
+                WithResultCategory::IntLike | WithResultCategory::UnitVoid => {
+                    self.line(&format!("{} = ((nova_int)0LL);", result_tmp));
+                }
+                WithResultCategory::Pointer => {
+                    self.line(&format!("{} = NULL;", result_tmp));
+                }
+                WithResultCategory::ValueStruct => {
+                    self.line(&format!("{} = ({}){{0}};", result_tmp, result_decl_ty));
+                }
+            }
         }
         self.leave_defer_scope(with_block_id);
         self.indent -= 1;
@@ -1512,8 +1649,21 @@ impl CEmitter {
         self.indent -= 1;
         self.line("} else {");
         self.indent += 1;
-        // Interrupt path: read interrupt value
-        self.line(&format!("{} = {iframe}.value;", result_tmp, iframe = iframe));
+        // Interrupt path: read from the slot matching the category.
+        match category {
+            WithResultCategory::IntLike | WithResultCategory::UnitVoid => {
+                self.line(&format!("{} = {iframe}.value;", result_tmp, iframe = iframe));
+            }
+            WithResultCategory::Pointer => {
+                self.line(&format!("{} = ({}){iframe}.value_ptr;", result_tmp, result_decl_ty, iframe = iframe));
+            }
+            WithResultCategory::ValueStruct => {
+                // value_ptr holds heap-allocated slot of the value struct.
+                self.line(&format!(
+                    "{} = *(({}*){iframe}.value_ptr);",
+                    result_tmp, result_decl_ty, iframe = iframe));
+            }
+        }
         self.indent -= 1;
         self.line("}");
 
@@ -1522,8 +1672,18 @@ impl CEmitter {
             self.indent -= 1;
             self.line("} else {");
             self.indent += 1;
-            // Fail path: handler already ran; result is unit (0).
-            self.line(&format!("{} = ((nova_int)0LL);", result_tmp));
+            // Fail path: handler already ran; result is unit/zero.
+            match category {
+                WithResultCategory::IntLike | WithResultCategory::UnitVoid => {
+                    self.line(&format!("{} = ((nova_int)0LL);", result_tmp));
+                }
+                WithResultCategory::Pointer => {
+                    self.line(&format!("{} = NULL;", result_tmp));
+                }
+                WithResultCategory::ValueStruct => {
+                    self.line(&format!("{} = ({}){{0}};", result_tmp, result_decl_ty));
+                }
+            }
             self.indent -= 1;
             self.line("}");
             self.line("nova_fail_pop();");
@@ -4259,7 +4419,13 @@ impl CEmitter {
         self.line(&format!("{} = 1;", intframe_popped_var));
         // Re-interrupt с тем же value через nova_interrupt — find outer
         // interrupt frame and longjmp туда с captured value.
-        self.line(&format!("nova_interrupt({}.value);", intframe_var));
+        // Plan 39 Issue A: defer-scope не знает category outer with-блока,
+        // поэтому re-issue ОБА slot'а: outer frame прочитает нужный по
+        // своей category. Сохраняем оба значения, выбираем по тому что
+        // непустое: если value_ptr != NULL — pointer-route, иначе int.
+        self.line(&format!(
+            "if ({}.value_ptr) {{ nova_interrupt_ptr({}.value_ptr); }} else {{ nova_interrupt({}.value); }}",
+            intframe_var, intframe_var, intframe_var));
         self.indent -= 1;
         self.line("}");
         self.defer_scopes.push(DeferScope {
@@ -4457,6 +4623,14 @@ impl CEmitter {
         self.emit_source_annotation_for_stmt(stmt);
         match stmt {
             Stmt::Let(decl) => {
+                // Plan 33.3 Ф.9.1 (D24): ghost erasure.
+                // `ghost let x = ...` НЕ emit'ится в C-output (паритет с
+                // Verus/Dafny). Ghost — spec-only, no runtime effect.
+                // Type-check ensures ghost vars не reads из non-ghost code
+                // (TODO: enforce когда добавится ghost-flow checker).
+                if decl.is_ghost {
+                    return Ok(());
+                }
                 // Special case: tuple destructure  `let (a, b, c) = expr`
                 if let Pattern::Tuple(pats, _) = &decl.pattern {
                     return self.emit_tuple_destructure(pats, &decl.value);
@@ -5084,12 +5258,34 @@ impl CEmitter {
                 }
                 // NovaOpt_T is a struct — can't use == directly
                 if lty.starts_with("NovaOpt_") || rty.starts_with("NovaOpt_") {
-                    let elem_ty = lty.strip_prefix("NovaOpt_")
-                        .or_else(|| rty.strip_prefix("NovaOpt_"))
-                        .unwrap_or("nova_int");
+                    // Plan 39 Issue A: bare `None` on one side эмитируется как
+                    // `NovaOpt_nova_int` (fallback `current_fn_return_ty`).
+                    // Если другая сторона — конкретный `NovaOpt_<X>` где X !=
+                    // nova_int — переписать None-литерал с правильным opt_ty.
+                    let (canonical_opt_ty, _) = if lty.starts_with("NovaOpt_") && lty != "NovaOpt_nova_int" {
+                        (lty.clone(), true)
+                    } else if rty.starts_with("NovaOpt_") && rty != "NovaOpt_nova_int" {
+                        (rty.clone(), true)
+                    } else if lty.starts_with("NovaOpt_") {
+                        (lty.clone(), false)
+                    } else {
+                        (rty.clone(), false)
+                    };
+                    let elem_ty = canonical_opt_ty.strip_prefix("NovaOpt_").unwrap_or("nova_int").to_string();
+                    // Re-cast bare None-literal to canonical opt_ty if it slipped through.
+                    // Pattern: "((NovaOpt_nova_int){.tag = NOVA_TAG_Option_None})"
+                    let none_pat = "((NovaOpt_nova_int){.tag = NOVA_TAG_Option_None})";
+                    let none_replacement = format!(
+                        "(({}){{.tag = NOVA_TAG_Option_None}})", canonical_opt_ty);
+                    let l_fixed = if lty == "NovaOpt_nova_int" && l.contains(none_pat) && canonical_opt_ty != "NovaOpt_nova_int" {
+                        l.replace(none_pat, &none_replacement)
+                    } else { l.clone() };
+                    let r_fixed = if rty == "NovaOpt_nova_int" && r.contains(none_pat) && canonical_opt_ty != "NovaOpt_nova_int" {
+                        r.replace(none_pat, &none_replacement)
+                    } else { r.clone() };
                     return match op {
-                        BinOp::Eq  => Ok(format!("(nova_opt_eq_{}({}, {}))", elem_ty, l, r)),
-                        BinOp::Neq => Ok(format!("(!nova_opt_eq_{}({}, {}))", elem_ty, l, r)),
+                        BinOp::Eq  => Ok(format!("(nova_opt_eq_{}({}, {}))", elem_ty, l_fixed, r_fixed)),
+                        BinOp::Neq => Ok(format!("(!nova_opt_eq_{}({}, {}))", elem_ty, l_fixed, r_fixed)),
                         _ => Err(format!("unsupported operator {:?} on option", op)),
                     };
                 }
@@ -5709,26 +5905,41 @@ impl CEmitter {
                 self.emit_handler_lit(effect_name, methods)
             }
             ExprKind::Interrupt(val) => {
-                // interrupt v — longjmp to the nearest with-block via nova_interrupt()
-                // nova_interrupt принимает nova_int, поэтому unit-значение (() или
-                // отсутствие val) кодируется как 0. Cast struct'а NOVA_UNIT
-                // невалиден, поэтому detect'им UnitLit отдельно.
-                let int_val = match val.as_deref().map(|e| &e.kind) {
-                    None | Some(ExprKind::UnitLit) => "((nova_int)0LL)".to_string(),
-                    Some(_) => {
-                        let v = val.as_deref().unwrap();
-                        let vstr = self.emit_expr(v)?;
-                        // Если значение — nova_unit (например блок без trailing-value),
-                        // cast'им через 0; иначе обычный numeric cast.
+                // Plan 39 Issue A: choose slot by value category.
+                //   - IntLike/UnitVoid → nova_interrupt(int_val)
+                //   - Pointer → nova_interrupt_ptr(ptr_val)
+                //   - ValueStruct → heap-alloc copy, nova_interrupt_ptr(slot)
+                match val.as_deref().map(|e| (&e.kind, e)) {
+                    None | Some((ExprKind::UnitLit, _)) => {
+                        self.line("nova_interrupt(((nova_int)0LL));");
+                    }
+                    Some((_, v)) => {
                         let v_ty = self.infer_expr_c_type(v);
-                        if v_ty == "nova_unit" {
-                            format!("((void)({}), (nova_int)0LL)", vstr)
-                        } else {
-                            format!("(nova_int)({})", vstr)
+                        let category = with_result_category(&v_ty);
+                        let vstr = self.emit_expr(v)?;
+                        match category {
+                            WithResultCategory::IntLike => {
+                                self.line(&format!("nova_interrupt((nova_int)({}));", vstr));
+                            }
+                            WithResultCategory::UnitVoid => {
+                                self.line(&format!("(void)({});", vstr));
+                                self.line("nova_interrupt(((nova_int)0LL));");
+                            }
+                            WithResultCategory::Pointer => {
+                                self.line(&format!("nova_interrupt_ptr((void*)({}));", vstr));
+                            }
+                            WithResultCategory::ValueStruct => {
+                                // Heap-allocate slot, copy value, pass pointer.
+                                let slot = self.fresh_tmp();
+                                self.line(&format!(
+                                    "{}* {} = ({}*)nova_alloc(sizeof({}));",
+                                    v_ty, slot, v_ty, v_ty));
+                                self.line(&format!("*{} = ({});", slot, vstr));
+                                self.line(&format!("nova_interrupt_ptr((void*){});", slot));
+                            }
                         }
                     }
-                };
-                self.line(&format!("nova_interrupt({});", int_val));
+                }
                 // After interrupt the code is unreachable, but emit a dummy value
                 Ok("NOVA_UNIT".into())
             }
@@ -10193,6 +10404,31 @@ impl CEmitter {
             "typedef struct NovaOpt_{} {{ int tag; {} value; }} NovaOpt_{};\n",
             sanitized, c_ty, sanitized);
         self.novaopt_typedefs_buf.borrow_mut().push_str(&line);
+
+        // Plan 39 Issue A: auto-generate `nova_opt_eq_<sanitized>` helper.
+        // Без него `r == None` где `r: NovaOpt_<T>` падает с undefined symbol.
+        // Сравнение: по tag. Если tag одинаковый — None: всегда equal; Some:
+        // сравниваем value. Для pointer-types — pointer equality (как Rust для
+        // `&T`). Для value-структур — memcmp (как для tuples). Для scalar —
+        // плоское `==`.
+        let is_pointer = c_ty.ends_with('*');
+        let is_scalar = matches!(c_ty, "nova_int" | "nova_bool" | "nova_byte"
+            | "nova_char" | "nova_i8" | "nova_i16" | "nova_i32" | "nova_i64"
+            | "nova_u8" | "nova_u16" | "nova_u32" | "nova_u64"
+            | "nova_f32" | "nova_f64");
+        let cmp_body = if is_scalar || is_pointer {
+            "a.value == b.value".to_string()
+        } else {
+            format!("memcmp(&a.value, &b.value, sizeof({})) == 0", c_ty)
+        };
+        let eq_fn = format!(
+            "static inline nova_bool nova_opt_eq_{sani}(NovaOpt_{sani} a, NovaOpt_{sani} b) {{\n\
+             \x20   if (a.tag != b.tag) return 0;\n\
+             \x20   if (a.tag == NOVA_TAG_Option_None) return 1;\n\
+             \x20   return {body};\n\
+             }}\n",
+            sani = sanitized, body = cmp_body);
+        self.novaopt_typedefs_buf.borrow_mut().push_str(&eq_fn);
     }
 
 
@@ -11262,6 +11498,25 @@ impl CEmitter {
             ExprKind::Detach(_) => "nova_unit".into(),
             ExprKind::CancelScope { .. } => "nova_unit".into(),
             ExprKind::TaggedTemplate { .. } => "nova_str".into(),
+            // Plan 39 Issue A: With-блок тип = T_body. Если trailing == None
+            // (body заканчивается throw/return/interrupt statement'ом), смотрим
+            // на handler interrupt-VAL тип через bindings — это semantically
+            // тип результата (W = type of every `interrupt v` ⊑ T_body).
+            // Inline handler-лямбда (D31) — body содержит `interrupt VAL` —
+            // ищем рекурсивно.
+            ExprKind::With { bindings, body } => {
+                if let Some(trailing) = &body.trailing {
+                    return self.infer_expr_c_type(trailing);
+                }
+                // Trailing == None — body falls off (throw / return).
+                // Probe handler-лямбды на interrupt VAL.
+                for b in bindings {
+                    if let Some(ty) = infer_handler_interrupt_ty(self, &b.handler) {
+                        return ty;
+                    }
+                }
+                "nova_unit".into()
+            }
             _ => "nova_int".into(),
         }
     }
