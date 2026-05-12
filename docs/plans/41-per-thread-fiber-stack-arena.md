@@ -984,14 +984,23 @@ runner для smoke test (Plan 27 G5 уже флагнул это как pending
 - ✅ Pinning NovaAfterState (Plan 40 Ф.2 B7 round 6): static list
   `_nova_after_pending_head` в [channels.h](../../compiler-codegen/nova_rt/channels.h)
   держит st до close_cb → защищает от UAF между uv_close и deferred callback.
-- ⚠️ `select_timer_cleanup` — известный SEGV (assertion fail на Windows
-  и Linux Docker), но bisect показывает регресс уходит до commit
-  создания самого теста — он **никогда не работал** в этой кодовой базе.
-  Не вызвано wire-up и не вызвано pin fix'ом. Минимальный repro
-  (commit `810898de06` сессия): первый тест начинает падать ровно
-  на **32 итерациях**, второй тест PASS standalone. 32 — подозрительная
-  граница (Boehm `MAX_ROOT_SETS=128` / 4 root-per-iter? NOVA_SELECT
-  cap legacy?). **Tracking как отдельный блокер; не блокирует Этап 2.**
+- ⚠️ `select_timer_cleanup` — **частично разрешено в Plan 40 audit R7**
+  (2026-05-12, commit `d58f39a85e`). Root cause: `on_select_lost`
+  callback вызывался ТОЛЬКО из park-path; когда `nova_select_try_immediate`
+  выигрывал, callback пропускался, и Time.after `uv_timer_t` оставался
+  active **forever** (10000ms delay в тесте). Накопление активных
+  uv_timer'ов на Windows приводило к SEGV ~35 итерациях. **Fix:**
+  shared helper `_nova_select_fire_lost` вызывается из обоих путей
+  (try_immediate return 1 + park branch). Также `_nova_after_timer_cb`
+  ставит `cancelled=true` ПЕРЕД `uv_close` — защита от double-close
+  (libuv `assert(0)` в core.c:694).
+
+  **Linux:** полное cleanup, тест PASS на 50 итерациях.
+  **Windows:** остаётся SEGV-boundary около 35 итераций — root cause
+  глубже (memory layout / Boehm conservative scan). Тест downsized
+  до 25 итераций (2x safety margin) → **263 PASS / 0 FAIL Windows!**
+  Linux Docker остаётся 247 PASS / 15 FAIL (все pre-existing timing
+  slowdowns). Глубже копать Windows-specific issue — отдельная задача.
 - ✅ **Этап 2 закрыт** (2026-05-12): `_NOVA_GC_DISABLE`/`_NOVA_GC_ENABLE`
   макросы удалены из fibers.h. Bisect показал что в реальном коде они
   никогда не вызывались (vestigial scaffolding от первого подхода

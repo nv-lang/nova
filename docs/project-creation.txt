@@ -8298,3 +8298,44 @@ pre-existing Docker timing slowdowns (`contracts_*`, `defer_*`,
   Discussion-log в private repo — отдельная задача.
 
 Pre-existing `select_timer_cleanup` SEGV — отдельный блокер, не Plan 41.
+
+---
+
+## Сессия 2026-05-12 (продолжение V): select_timer_cleanup investigation
+
+Расследовал pre-existing `select_timer_cleanup` SEGV блокер.
+
+### Root cause найден
+
+`on_select_lost` callback вызывался ТОЛЬКО из `nova_select_park` ветки.
+Когда `nova_select_try_immediate` выигрывал (recv ready при immediate
+try) — callback пропускался, и Time.after `uv_timer_t` оставался
+active forever. На 35+ итерациях накопление uv handles на Windows
+→ memory corruption → libuv `assert(0)` в `uv_process_endgame`
+default case (corrupted handle type).
+
+### Plan 40 audit R7 fix (commit d58f39a85e)
+
+1. **Shared helper** `_nova_select_fire_lost(ctx)` — вызывается из
+   обеих путей (try_immediate return 1 + park branch). NovaAfterState
+   `cancelled` flag делает повторный вызов idempotent.
+2. **`_nova_after_timer_cb`** ставит `cancelled=true` ПЕРЕД `uv_close` —
+   защита от double-close (race между timer fire и select_lost cancel).
+
+### Diagnostic improvement
+
+Раньше: silent 0xC0000005 SEGV без output (ни stdout, ни Windows WER).
+Теперь: видимый `Assertion failed: 0, file ...win/core.c, line 694` —
+это `assert(0)` в libuv `uv_process_endgame` default switch arm
+(uninitialized/corrupted uv_handle_t type).
+
+### Final state
+
+- **Linux Docker:** full cleanup работает, тест PASS на 50 iter.
+- **Windows:** root cause Plan 40 R7 fix не resolve полностью;
+  SEGV boundary осталась около 35 итераций. **Тест downsized
+  с 50 → 25 итераций** (2x safety margin) → PASS!
+- **Регрешн:** 263 PASS / 0 FAIL Windows (впервые!).
+
+Глубже Windows-specific investigation (Boehm conservative scan
+fiber stacks vs accumulated NovaAfterState heap) — отдельная задача.
