@@ -2988,10 +2988,11 @@ impl Parser {
         let pattern = self.parse_pattern()?;
         self.expect(&TokenKind::KwIn)?;
         let iter = self.with_no_struct_or_trailing(|p| p.parse_expr())?;
-        // Plan 33.2 Ф.6 + 33.3 Ф.9.3/9.5: loop invariants / decreases.
-        let invs = self.parse_loop_clauses()?;
+        // Plan 33.2 Ф.6 + 33.3 Ф.9.3/9.5/9.8: loop invariants/decreases.
+        let (invs, decr) = self.parse_loop_clauses()?;
         let mut body = self.parse_block()?;
         Self::inject_loop_invariants(invs.clone(), &mut body);
+        Self::inject_loop_decreases(decr, &mut body);
         let end = body.span;
         let loop_expr = Expr::new(
             ExprKind::For {
@@ -3042,10 +3043,11 @@ impl Parser {
             ));
         }
         let cond = self.with_no_struct_or_trailing(|p| p.parse_expr())?;
-        // Plan 33.2 Ф.6 + 33.3 Ф.9.3/9.5: loop invariants.
-        let invs = self.parse_loop_clauses()?;
+        // Plan 33.2 Ф.6 + 33.3 Ф.9.3/9.5/9.8: loop invariants/decreases.
+        let (invs, decr) = self.parse_loop_clauses()?;
         let mut body = self.parse_block()?;
         Self::inject_loop_invariants(invs.clone(), &mut body);
+        Self::inject_loop_decreases(decr, &mut body);
         let end = body.span;
         let loop_expr = Expr::new(
             ExprKind::While {
@@ -3059,10 +3061,11 @@ impl Parser {
 
     fn parse_loop(&mut self) -> Result<Expr, Diagnostic> {
         let start = self.expect(&TokenKind::KwLoop)?.span;
-        // Plan 33.2 Ф.6 + 33.3 Ф.9.3/9.5: loop invariants.
-        let invs = self.parse_loop_clauses()?;
+        // Plan 33.2 Ф.6 + 33.3 Ф.9.3/9.5/9.8: loop invariants/decreases.
+        let (invs, decr) = self.parse_loop_clauses()?;
         let mut body = self.parse_block()?;
         Self::inject_loop_invariants(invs.clone(), &mut body);
+        Self::inject_loop_decreases(decr, &mut body);
         let end = body.span;
         let loop_expr = Expr::new(ExprKind::Loop { body }, start.merge(end));
         Ok(Self::wrap_loop_with_preentry_check(loop_expr, &invs))
@@ -3080,8 +3083,9 @@ impl Parser {
     /// как `assert_static`-statements: pre-loop, post-iteration. Это даёт
     /// runtime-check в debug-сборке. SMT verify (полноценный havoc-based)
     /// ждёт Z3 backend.
-    fn parse_loop_clauses(&mut self) -> Result<Vec<Expr>, Diagnostic> {
+    fn parse_loop_clauses(&mut self) -> Result<(Vec<Expr>, Option<Expr>), Diagnostic> {
         let mut invariants = Vec::new();
+        let mut decreases: Option<Expr> = None;
         loop {
             self.skip_newlines();
             match &self.peek().kind {
@@ -3091,15 +3095,52 @@ impl Parser {
                     invariants.push(e);
                 }
                 TokenKind::Ident(n) if n == "decreases" => {
+                    if decreases.is_some() {
+                        let sp = self.peek().span;
+                        return Err(Diagnostic::new(
+                            "duplicate `decreases` clause on loop", sp));
+                    }
                     self.bump();
-                    // decreases пока игнорируем (Ф.9.4 — runtime check
-                    // для recursion fn decreases, не loop).
-                    let _ = self.with_no_struct_or_trailing(|p| p.parse_expr())?;
+                    let e = self.with_no_struct_or_trailing(|p| p.parse_expr())?;
+                    decreases = Some(e);
                 }
                 _ => break,
             }
         }
-        Ok(invariants)
+        // Skip trailing newlines чтобы caller'у parse_block видеть `{`.
+        self.skip_newlines();
+        Ok((invariants, decreases))
+    }
+
+    /// Plan 33.3 Ф.9.8: inject loop `decreases` runtime check.
+    /// До body эмитим `let _nova_decr_old = <decreases_expr>` (snapshot).
+    /// После body эмитим `assert_static <decreases_expr> < _nova_decr_old`
+    /// (проверка decrement).
+    fn inject_loop_decreases(decreases: Option<Expr>, body: &mut Block) {
+        let Some(d) = decreases else { return };
+        let span = d.span;
+        // Synthesize: let _nova_decr_old = <d>
+        let snapshot_let = Stmt::Let(LetDecl {
+            mutable: false,
+            pattern: Pattern::Ident { name: "_nova_decr_old".into(), span },
+            ty: None,
+            value: d.clone(),
+            span,
+            is_ghost: false,
+        });
+        // Synthesize: assert_static (<d>) < _nova_decr_old
+        let check_expr = Expr::new(
+            ExprKind::Binary {
+                op: BinOp::Lt,
+                left: Box::new(d.clone()),
+                right: Box::new(Expr::new(ExprKind::Ident("_nova_decr_old".into()), span)),
+            },
+            span,
+        );
+        let check_stmt = Stmt::AssertStatic { expr: check_expr, span };
+        // Snapshot — в начало body, check — в конец.
+        body.stmts.insert(0, snapshot_let);
+        body.stmts.push(check_stmt);
     }
 
     /// Inject invariant'ы в body цикла как assert_static-stmt'ы.

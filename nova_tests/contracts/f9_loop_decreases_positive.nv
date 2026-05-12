@@ -1,0 +1,24 @@
+// Plan 33.3 Ф.9.8 positive: loop с правильным decreases (decrement) — OK.
+
+module nova_tests.contracts.f9_loop_decreases_positive
+
+fn countdown(n int) -> int
+    requires n >= 0
+{
+    let mut i = n
+    let mut sum = 0
+    while i > 0
+        invariant i >= 0
+        decreases i
+    {
+        sum = sum + i
+        i = i - 1
+    }
+    sum
+}
+
+test "loop decreases positive" {
+    assert(countdown(5) == 1 + 2 + 3 + 4 + 5)
+    assert(countdown(0) == 0)
+    assert(countdown(10) == 55)
+}
