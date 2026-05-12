@@ -1000,6 +1000,29 @@ runner для smoke test (Plan 27 G5 уже флагнул это как pending
   на Linux/macOS. Комментарий-блок обновлён, чтобы отражать current
   architecture корректно. 261 PASS / 1 FAIL Windows регрешн (тот же
   pre-existing `select_timer_cleanup`).
+- ✅ **Этап 3 закрыт** (2026-05-12): introspection API через
+  `std.runtime.fibers` (по образцу `std.runtime.gc`).
+  Functions: `fibers.virtual_reserved()`, `fibers.slot_count()`,
+  `fibers.slots_active()`, `fibers.high_water()`. На Windows все
+  возвращают 0 (honest sentinel, как `gc.heap_size()` под malloc).
+  Реализация:
+  - [std/runtime/fibers.nv](../../std/runtime/fibers.nv) — type-checker
+    source of truth (4 × `external fn fibers.*`).
+  - [compiler-codegen/nova_rt/fiber_stats.c](../../compiler-codegen/nova_rt/fiber_stats.c)
+    — cross-platform wrappers (forward to arena stats / return 0).
+  - [emit_c.rs](../../compiler-codegen/src/codegen/emit_c.rs)
+    `name == "fibers"` dispatch (mirror gc namespace).
+  - [types/mod.rs](../../compiler-codegen/src/types/mod.rs) builtins:
+    `"fibers"` зарегистрирован.
+  - [test_runner.rs](../../compiler-codegen/src/test_runner.rs) подключает
+    `fiber_stats.c` в build.
+  Smoke-тест [nova_tests/concurrency/fiber_arena_stats.nv](../../nova_tests/concurrency/fiber_arena_stats.nv)
+  — 2 sub-теста, оба PASS на Windows. **262 PASS / 1 FAIL** (тот же
+  pre-existing `select_timer_cleanup`).
+- ⏸ **Этап 4** — Linux Docker validation (требует запущенного Docker
+  daemon, проверка lazy commit через `/proc/self/status` RSS).
+- ⏸ **Этап 5** — D-decision update + discussion-log (часть выполнена
+  в этой сессии: project-creation.txt + plan дополнены).
 
 ### Updated Plan 41 status
 

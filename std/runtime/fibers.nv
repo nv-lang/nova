@@ -1,0 +1,64 @@
+// std/runtime/fibers.nv — Fiber arena introspection API (Plan 41 Этап 3).
+//
+// **NOT auto-gen.** Этот модуль документирует hard-coded namespace `fibers.*`
+// который dispatched через [compiler-codegen/src/codegen/emit_c.rs]
+// special-cases (как `gc.*` в Plan 32).
+//
+// `fibers` — lowercase namespace, аналогично `gc.*`:
+//   - Go:     `runtime.Stack(buf, all)`, `runtime.NumGoroutine()`
+//   - Java:   `Thread.activeCount()`
+//
+// Использование:
+//
+//   import std.runtime.fibers
+//
+//   let v = fibers.virtual_reserved()  // bytes reserved via mmap
+//   let s = fibers.slot_count()         // total slots
+//   let a = fibers.slots_active()       // currently allocated slots
+//   let h = fibers.high_water()         // peak concurrent slots
+//
+// **Semantics per platform:**
+//
+// | API                | Linux/macOS                    | Windows           |
+// |--------------------|--------------------------------|-------------------|
+// | virtual_reserved() | mmap reserved bytes per thread | 0 (arena off)     |
+// | slot_count()       | total slot count (4096 × 2MB)  | 0 (arena off)     |
+// | slots_active()     | currently allocated slots      | 0 (arena off)     |
+// | high_water()       | peak concurrent slots          | 0 (arena off)     |
+//
+// На Windows fiber stacks идут через calloc-путь (см. Plan 42+); arena
+// не активна, поэтому всё возвращает 0 как «honest sentinel» — тесты
+// могут использовать `if fibers.slot_count() == 0 { ... skip ... }`.
+//
+// ──────────────────────────────────────────────────────────────────────────
+// Источник истины для type-checker'а
+// ──────────────────────────────────────────────────────────────────────────
+//
+// Эти `external fn` объявления — **source of truth** для type-checker'а.
+// Codegen имеет parallel hardcoded match на `name == "fibers"` в
+// [emit_c.rs](../../compiler-codegen/src/codegen/emit_c.rs) — они должны
+// быть синхронизированы вручную. При изменении API — обновить оба места.
+
+module std.runtime.fibers
+
+
+// ─── fibers namespace ───────────────────────────────────────────────────
+
+// Bytes reserved через `mmap` для per-thread fiber arena (Linux/macOS).
+// Под Windows всегда 0 — arena не активна (calloc-путь).
+export external fn fibers.virtual_reserved() -> int
+
+// Общее количество slot'ов в arena (slot = 1 fiber stack).
+// 4096 × 2MB = 8GB virtual reserved per thread на Linux/macOS.
+// Под Windows возвращает 0.
+export external fn fibers.slot_count() -> int
+
+// Количество currently-allocated slot'ов (active fibers). Slot'ы
+// освобождаются после fiber termination и могут быть переиспользованы.
+// Под Windows возвращает 0.
+export external fn fibers.slots_active() -> int
+
+// Peak concurrent slot count с момента старта. Полезно для capacity-
+// planning: если high_water близок к slot_count → workload приближается
+// к лимиту арены. Под Windows возвращает 0.
+export external fn fibers.high_water() -> int

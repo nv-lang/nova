@@ -736,6 +736,8 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
     // Plan 41 Etap 1: fiber stack arena (Linux/macOS only — Windows
     // compiles но содержит no-op marker; включаем для всех toolchain'ов).
     let rt_fiber_arena = opts.rt_dir.join("fiber_arena.c");
+    // Plan 41 Etap 3: cross-platform stats wrappers for std.runtime.fibers.
+    let rt_fiber_stats = opts.rt_dir.join("fiber_stats.c");
     let march = march_flag();
 
     // Plan 27 Ф.1+Ф.D: Boehm paths resolved via detect_boehm (env overrides
@@ -903,6 +905,7 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
             c.arg(&rt_effects);
             c.arg(&rt_fibers);
             c.arg(&rt_fiber_arena);  /* Plan 41 Etap 1 */
+            c.arg(&rt_fiber_stats);  /* Plan 41 Etap 3 */
             c
         }
         Toolchain::Msvc { env, .. } => {
@@ -943,6 +946,7 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
             c.arg(&rt_effects);
             c.arg(&rt_fibers);
             c.arg(&rt_fiber_arena);  /* Plan 41 Etap 1 */
+            c.arg(&rt_fiber_stats);  /* Plan 41 Etap 3 */
             // Plan 27 Ф.1: Boehm link flags for MSVC (after sources, before /link).
             if opts.gc_kind == GcKind::Boehm {
                 c.arg("/link");
@@ -991,6 +995,7 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
             c.arg(&rt_effects);
             c.arg(&rt_fibers);
             c.arg(&rt_fiber_arena);  /* Plan 41 Etap 1 */
+            c.arg(&rt_fiber_stats);  /* Plan 41 Etap 3 */
             // Plan 27 Ф.1+Ф.D: Boehm link flags for GCC.
             if opts.gc_kind == GcKind::Boehm {
                 if let Some(cfg) = &boehm_cfg {

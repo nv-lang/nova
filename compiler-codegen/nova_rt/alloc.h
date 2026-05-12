@@ -35,4 +35,14 @@ void   nova_gc_reset_stats(void);
 size_t nova_gc_heap_size(void);
 void   nova_gc_collect(void);
 
+/* Plan 41 Этап 3: fiber arena introspection — std.runtime.fibers.
+ *
+ * На Windows (NOVA_FIBER_ARENA_ENABLED=0) все вернут 0 — honest sentinel
+ * «arena не активна, fiber stacks идут через calloc-путь».
+ * На Linux/macOS отражают per-thread arena stats. */
+size_t nova_fibers_virtual_reserved(void);  /* bytes reserved via mmap */
+size_t nova_fibers_slot_count(void);        /* total slots */
+size_t nova_fibers_slots_active(void);      /* currently allocated */
+size_t nova_fibers_high_water(void);        /* peak concurrent slots */
+
 #endif /* NOVA_RT_ALLOC_H */

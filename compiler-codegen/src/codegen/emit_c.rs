@@ -7285,6 +7285,24 @@ impl CEmitter {
                             _ => {}
                         }
                     }
+                    // Plan 41 Этап 3: fiber arena introspection — std.runtime.fibers.
+                    if name == "fibers" {
+                        match method.as_str() {
+                            "virtual_reserved" if args.is_empty() => {
+                                return Ok("((nova_int)nova_fibers_virtual_reserved())".to_string());
+                            }
+                            "slot_count" if args.is_empty() => {
+                                return Ok("((nova_int)nova_fibers_slot_count())".to_string());
+                            }
+                            "slots_active" if args.is_empty() => {
+                                return Ok("((nova_int)nova_fibers_slots_active())".to_string());
+                            }
+                            "high_water" if args.is_empty() => {
+                                return Ok("((nova_int)nova_fibers_high_water())".to_string());
+                            }
+                            _ => {}
+                        }
+                    }
                 }
                 // 0. Built-in primitive static methods (D35 + D73).
                 //    `str.from(x)` — string conversion (replaces old D70 to_str).
@@ -11309,6 +11327,14 @@ impl CEmitter {
                             return match method.as_str() {
                                 "heap_size" | "live_count" | "alloc_count" => "nova_int".into(),
                                 "collect" | "reset_stats" => "nova_int".into(), // unit comma-expr
+                                _ => "nova_int".into(),
+                            };
+                        }
+                        // Plan 41 Этап 3: fibers.* introspection — type inference.
+                        if n == "fibers" {
+                            return match method.as_str() {
+                                "virtual_reserved" | "slot_count" |
+                                "slots_active" | "high_water" => "nova_int".into(),
                                 _ => "nova_int".into(),
                             };
                         }
