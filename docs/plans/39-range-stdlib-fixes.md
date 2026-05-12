@@ -1,7 +1,13 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 # Plan 39: `std/collections/range.nv` stdlib fixes
 
-> **Статус:** план, не начат. Низкий приоритет (follow-up Plan 38).
+> **Статус (2026-05-12):** **Issue D ✅ закрыт** (commit b516bba9ae) —
+> diagnostic улучшен, mut-receiver assert добавлен, 5 тестов в
+> `for_in_iter_resolution.nv` PASS. **Issue A — open** (handler-flow
+> infer для `with Fail[E] = |e| interrupt None { Some(...) }`).
+> Ф.1 verify: `range.nv` строит после Plan 38 (`int.MAX` resolved),
+> но **продолжает падать на Issue A** в одном теста
+> `"inclusive overflow throws"`.
 > **Создан:** 2026-05-12.
 > **Обнаружен:** 2026-05-12 при работе над Plan 35 Ф.1 (cross-file
 > resolve).
