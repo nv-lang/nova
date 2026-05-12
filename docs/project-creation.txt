@@ -6766,3 +6766,35 @@ codegen bug — `int.MAX` mangling в undefined `int_MAX` C identifier.
 **Estimate:** ~100-150 LOC emit_c + ~80 LOC tests. Полдня.
 
 **Commit:** 6827d03b4b.
+
+
+================================================================================
+2026-05-12 Plan 38 closed + Plan 39 Issue D closed
+================================================================================
+
+После записи Plans 38+39 пользователь сказал "выполни план 39". Сначала
+сделал Plan 38 (numeric constants — блокер для range.nv), потом Plan 39
+Issue D (Iter[T] D58 system fix).
+
+Plan 38 (commit 64d1a41c1a):
+- numeric_type_constant_mapping helper в emit_c.rs (~30 mappings).
+- include float.h в nova_rt.h (DBL_MAX et al).
+- nova_tests/types/numeric_constants.nv: 18 sub-тестов PASS.
+- 210/210 regression.
+
+Plan 39 Issue D (commit b516bba9ae):
+- D58 algorithm comment в emit_for.
+- mut-receiver assert для next().
+- Improved Case 3 fallback diagnostic.
+- nova_tests/syntax/for_in_iter_resolution.nv: 5 тестов PASS.
+- 211/211 regression.
+
+NOT closed:
+- Plan 39 Issue A: handler-flow infer for let r = with Fail[E] = |e|
+  interrupt None { Some(...) }. r infers nova_int вместо NovaOpt_Range.
+  Deep handler return-type inference issue. Range.nv test "inclusive
+  overflow throws" остаётся blocked.
+- Plan 39 Issue B/C: pending verify after Issue A.
+
+Commits: 64d1a41c1a (Plan 38), b516bba9ae (Plan 39 Issue D), 08414ab35f
+(plans status update).

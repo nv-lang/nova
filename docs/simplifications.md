@@ -4914,3 +4914,42 @@ automatic), не на correctness (compile error явный).
   (Range literal) и Case 3 (RangeIter.next direct).
 - `for x in some_hashmap` без `.iter()` — error «unsupported iterator
   type». Workaround: `for x in some_hashmap.iter()`.
+
+
+---
+
+## Numeric type constants FIXED (Plan 38, 2026-05-12)
+
+Plan 38 closed system gap — все int.MAX/f64.NAN/u8.MAX/etc. эмитятся
+корректно через numeric_type_constant_mapping helper в emit_c.rs.
+~30 mappings: signed/unsigned int 8/16/32/64, char, f32/f64.
+
+Was simplification: all numeric constants undefined.
+Now: 30 mappings работают, 18 sub-тестов PASS.
+
+Open:
+- int.BITS / i64.BITS (Rust convention) — не в spec D26, отложено.
+- Custom type constants на user types (D41 territory) — отдельная фича.
+
+
+---
+
+## Iter[T] D58 partial FIXED (Plan 39 Issue D, 2026-05-12)
+
+Plan 39 Issue D closed D58 algorithm gaps в emit_for:
+- Diagnostic clarity (explicit listing searched methods + hint).
+- mut-receiver enforcement (assert next() — instance method).
+- Auto-iter() insertion (Case 2) verified working.
+
+Was simplification: generic error, no mut-check, partial D58.
+Now: explicit D58, clear errors, 5 тестов PASS.
+
+Open:
+- Plan 39 Issue A: handler-flow infer для with Fail[E] = ... interrupt
+  None { Some(...) } — r infers nova_int. Requires handler return-type
+  inference work.
+- Plan 39 Issue B/C — pending after A.
+- Cross-file Iter resolution через Plan 35 inline expansion работает
+  для nova build, не для nova test (test_runner отдельный pipeline).
+
+Priority P2 для Issue A.
