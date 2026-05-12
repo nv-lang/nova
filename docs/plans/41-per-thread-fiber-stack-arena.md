@@ -984,11 +984,14 @@ runner для smoke test (Plan 27 G5 уже флагнул это как pending
 - ✅ Pinning NovaAfterState (Plan 40 Ф.2 B7 round 6): static list
   `_nova_after_pending_head` в [channels.h](../../compiler-codegen/nova_rt/channels.h)
   держит st до close_cb → защищает от UAF между uv_close и deferred callback.
-- ⚠️ `select_timer_cleanup` — известный SEGV regression (assertion fail
-  на Windows и Linux Docker), но bisect показывает регресс уходит до
-  Plan 41 infrastructure (≤ commit `bb9af936d2`). Не вызвано wire-up
-  и не вызвано pin fix'ом. **Tracking как отдельный блокер; не блокирует
-  Этап 2.**
+- ⚠️ `select_timer_cleanup` — известный SEGV (assertion fail на Windows
+  и Linux Docker), но bisect показывает регресс уходит до commit
+  создания самого теста — он **никогда не работал** в этой кодовой базе.
+  Не вызвано wire-up и не вызвано pin fix'ом. Минимальный repro
+  (commit `810898de06` сессия): первый тест начинает падать ровно
+  на **32 итерациях**, второй тест PASS standalone. 32 — подозрительная
+  граница (Boehm `MAX_ROOT_SETS=128` / 4 root-per-iter? NOVA_SELECT
+  cap legacy?). **Tracking как отдельный блокер; не блокирует Этап 2.**
 - ✅ **Этап 2 закрыт** (2026-05-12): `_NOVA_GC_DISABLE`/`_NOVA_GC_ENABLE`
   макросы удалены из fibers.h. Bisect показал что в реальном коде они
   никогда не вызывались (vestigial scaffolding от первого подхода
