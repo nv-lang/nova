@@ -4852,3 +4852,65 @@ pipeline отдельный).
 test_runner parity + Plan 38 (~1 день combined) — `range.nv` либо
 автоматически проходит, либо требует small fix'и (Plan 39, оцениваем
 0-200 LOC).
+
+
+---
+
+## Iter[T] resolution в codegen — partial D58 implementation (Plan 39 Issue D, 2026-05-12)
+
+### Где
+`compiler-codegen/src/codegen/emit_c.rs::emit_for` (Case 3 + fallback).
+
+### Что упрощено
+Spec D58 требует 3-step lookup для `for x in c`:
+1. Method `next()` direct → primitive iterator loop.
+2. Method `iter()` → recursive lookup `next()` на iter type.
+3. Иначе → error «type X has neither next nor iter».
+
+**Текущая реализация:** только Case 1 lookup. Если type имеет `iter()`,
+но не `next()` — fall through на generic «unsupported iterator type».
+**Auto-`iter()` insertion (Case 2) — отсутствует.**
+
+Дополнительно:
+- `mut`-receiver enforcement для `next()` — отсутствует. Возможно
+  iterator advance без mutable state (immutable next = бесконечный
+  loop возвращающий тот же element).
+- Generic «unsupported iterator type 'nova_int'» вместо специфичного
+  «type 'X' has no `next` or `iter` method».
+
+### Почему
+Bootstrap codegen эмитил Case 1 как minimum viable, Case 2 не
+добавили потому что core stdlib (Range, []T, RangeIter) — все
+exposed через **direct `next()`** или **primitive optimization paths**
+(Range = Case 1 primitive int loop, []T = Case 2 array loop).
+
+D58 Case 2 (`iter()` chain) нужен для:
+- User-defined collections с `iter()` методом но без direct `next()`.
+- Stdlib `HashMap.iter()`, `Vec.iter()` returning отдельный iter type.
+
+### Как починить
+Plan 39 Ф.2 Issue D:
+1. Переписать emit_for Case 3 по D58 algorithm exactly:
+   - method_overloads[(c_ty, "next")] check
+   - fallback: method_overloads[(c_ty, "iter")] → recurse next() on
+     iter return type
+   - clear error if neither
+2. Assert `is_mut=true` для `next()`.
+3. Improve diagnostic с конкретным type name + method names searched.
+4. Test file `nova_tests/syntax/for_in_iter_resolution.nv`.
+
+### Workaround сегодня
+**Manual `.iter()` call:** `for x in c.iter()` вместо `for x in c`.
+Это эквивалентно D58 Case 2, но не automatic. Стандартный паттерн
+сейчас в std/* — почти все file'ы explicit `.iter()`.
+
+### Приоритет
+**P2** — нарушение D58 spec, но обходимо через explicit `.iter()`.
+Влияет на UX (программист должен помнить `.iter()` где должно быть
+automatic), не на correctness (compile error явный).
+
+### Real-world impact
+- Cross-file Range/RangeIter сценарии — partial OK через Case 1
+  (Range literal) и Case 3 (RangeIter.next direct).
+- `for x in some_hashmap` без `.iter()` — error «unsupported iterator
+  type». Workaround: `for x in some_hashmap.iter()`.
