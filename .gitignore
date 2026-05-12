@@ -21,6 +21,7 @@ out/
 
 # Rust (на случай реализации компилятора на Rust)
 target/
+target_alt/
 Cargo.lock.user
 **/*.rs.bk
 
