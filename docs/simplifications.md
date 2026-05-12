@@ -4400,3 +4400,83 @@ module) проверки в type-checker. Detail в
 **Обнаружено:** при правке `std/encoding/hex.nv` под D54 (
 `('0' as int + n as int) as char` → нужен `char.try_from(n)?` с `Fail`
 в сигнатуре `digit`). type-check файла прошёл, codegen упал.
+
+
+---
+
+## Cross-file resolve Plan 35 Ф.1 MVP — inline AST expansion (2026-05-12)
+
+### Что упрощено в MVP (commit f481e3950e) vs full Plan 35
+
+**Где:** `nova-cli/src/main.rs::resolve_imports_inline()` (~165 LOC).
+
+**Полный план**: Plan 35 v2 имеет 30 requirements (R1-R30) + 12 AD
+после 3-way audit (65 gaps). **Реализовано в MVP**: только R1 (FS
+loader, single-root), R2 (in-memory dedup via visited), R3 (topo walk
++ cycle detection через import_stack), R7 (missing import error).
+
+**MVP подход:** **inline AST expansion** — imported `module.items`
+просто copy'ятся в текущий `module.items` до typecheck/codegen. Это
+дешевле чем правильный `register_imported_module` (требует deep
+refactor `CEmitter::emit_module` 600+ LOC) и unblock'ит multi-file
+stdlib через `nova build` сегодня.
+
+**Не реализовано (отложено в sub-plans 35.A-E):**
+
+| Sub-plan | Что упрощено в MVP | Workaround / Impact |
+|---|---|---|
+| 35.A wildcard | `import X.Y.*` не поддерживается | используй `import X.Y` + bare names через AST merge |
+| 35.A visibility | `is_export` informational only, не enforced | private items из imported модуля доступны (spec violation) |
+| 35.A `export use` | Re-export не поддерживается | каждый файл re-decl'ит для exposure |
+| 35.A prelude | Нет автоматического prelude module | bare `Option`/`Result` уже работают через hardcoded baseline |
+| 35.B disk cache | Каждый `nova build` re-parsит imports | acceptable для CI; локально медленно при changes |
+| 35.B incremental | Нет dependency-based rebuild | full re-parse каждый раз |
+| 35.B memory cache invalidation | Простой `HashSet<canonical_path>` per build | каждый процесс начинает с нуля |
+| 35.C cross-file generics | Generic bounds не resolve cross-file | inline дублирование bound trait в каждом файле |
+| 35.D stable mangling | Нет mangling, items в global namespace | collision если user re-defines stdlib type (unlikely) |
+| 35.D DCE | Все imported items emit'ятся (bloat) | bin size больше необходимого |
+| 35.E `#[cfg(...)]` | Нет conditional compilation | platform-specific код через if-runtime |
+| AD3 sig/body 2-pass | Single-pass typecheck merged AST | mutual recursion через modules может ломаться; flat deps OK |
+| FileId propagation | Все Spans в imported items имеют file_id=0 | cross-file diagnostics показывают main file даже для imported errors |
+| `nova test` parity | `resolve_imports_inline` только в `cmd_build` | `nova test` с `import` не работает (отдельный pipeline в test_runner) |
+
+### Почему inline expansion вместо register_imported_module
+
+Full register approach (Plan 35 v2 §AD2):
+- New `trait ModuleLoader` + 3 impls (~200 LOC).
+- New `CEmitter::register_imported_module()` (~150 LOC).
+- Visibility filter, collision detection (~50 LOC).
+- 2-pass typecheck signature/body split (~300 LOC refactor existing
+  check_module).
+- Total: ~700+ LOC + invasive refactor.
+
+Inline approach (MVP):
+- One helper function `resolve_imports_inline()` (~165 LOC).
+- Zero changes в `CEmitter` или `types::check_module`.
+- Backward compat: `module.imports.is_empty()` → старое поведение.
+- Trade-off: bloat (no DCE), no visibility (informational only).
+
+**Production-grade — sub-plan 35.A**. MVP первое приближение для
+разблокировки real blockers (hex.nv) уже сейчас.
+
+### Как починить
+
+Sub-plans 35.A-E:
+- **35.A** — visibility enforcement + wildcard `import X.Y.*` + `export use` +
+  prelude module + DCE + mangling rules.
+- **35.B** — disk cache + incremental rebuild + memory cache invalidation.
+- **35.C** — cross-file generic bounds resolution.
+- **35.D** — stable v0-style symbol mangling.
+- **35.E** — conditional compilation + `internal/` convention + editions.
+
+Также **vertical fix**: extract `resolve_imports_inline` из `nova-cli`
+в shared lib (`nova-codegen` или новый crate) и вызывать из
+**test_runner pipeline** — закрыть `nova test` parity.
+
+### Приоритет
+
+**P1** для test_runner parity (50 LOC) — без него `nova test` не
+работает для multi-file stdlib, разработка stdlib ограничена `nova build`.
+**P2** для 35.A visibility/wildcard — production-grade, но обходимо
+сегодня.
+**P3** для 35.B caching — performance, не correctness.
