@@ -493,3 +493,108 @@ Mismatch, нужно `u64` для consistency с `Random.u64()` return type.
 - CSPRNG `secure()` — нужен runtime hook.
 - Real `system_clock()` — нужен libuv.
 - codegen `NovaVtable_<Effect>` для stdlib handler'ов — отдельный план.
+
+
+---
+
+## Ф.8 — Spec sync + focused tests (followup #2, 2026-05-12)
+
+> **Реоткрытие** plan'а после reminder пользователя «ты в спеку все
+> сохранил?» — выявило что Ф.7 изменения (`mut_clock`, `seed u64`,
+> xoshiro256++) **не были sync'нуты в spec/decisions/**. Plus просьба
+> «тесты напиши по тому что делал, позитивные и негативные».
+
+### Ф.8.1 — Spec sync
+
+Источник правды для language features — `spec/decisions/*.md`. Plan 34
+Ф.1 + Ф.7 API изменения должны быть отражены там.
+
+**`spec/decisions/04-effects.md`:**
+- Test-handler table (line 2644): `Time` запись расширена —
+  `fixed_ms(ms)` ✓ (фиксированный момент) + `mut_clock(start_ms)` ✓
+  (sleep продвигает виртуальное время).
+- Test-handler table: `Random` запись уточнена — `seeded(seed)` ✓
+  xoshiro256++ deterministic PRNG.
+- Decision matrix (line 2690): test-handler use-cases расписаны
+  (uuid v7 / jwt / rate_limiter / retry / cron — какой handler где).
+- Footnote после первой таблицы: «Источник test-handler'ов» — pointer
+  на `std/testing/handlers.nv`, xoshiro256++ tier note (parity с Go
+  math/rand v2 PCG и Rust `rand` ChaCha8), pending production-handlers
+  (`secure()`, `system_clock()`).
+
+**`spec/decisions/08-runtime.md` D26 prelude:**
+- Signatures уточнены: `fixed_ms(ms u64) / mut_clock(start_ms u64) /
+  seeded(seed u64)`.
+
+### Ф.8.2 — Focused tests в nova_tests/plan34/
+
+**Дизайн-решение про inline reproducers.** Прямые тесты
+`th.seeded(seed)` / `th.mut_clock(start_ms)` из `std/testing/handlers.nv`
+**не могут быть запущены через `nova test`** — codegen падает на
+`unknown type NovaVtable_Random` (category-D codegen bug для stdlib
+effect-types, не Plan 34 scope).
+
+Альтернатива: **inline reproducers** покрывают **algorithm correctness**
+независимо от effect-codegen. Когда NovaVtable bug закроется — можно
+будет добавить wrapper-тесты на handlers.nv.
+
+**Positive (4 файла):**
+
+| Файл | Покрытие |
+|---|---|
+| `gc_namespace_basic.nv` | Smoke для всех 5 `gc.*` functions: heap_size, live_count, alloc_count, collect, reset_stats. Non-negative + callable без panic. |
+| `gc_alloc_monotonic.nv` | Behavior: `gc.alloc_count` растёт после 100 аллокаций; `gc.collect` после `reset_stats` не валит heap_size. |
+| `inline_xoshiro_determinism.nv` | Inline reproducer splitmix64+xoshiro256++ из handlers.nv. 5 sub-tests: splitmix64-init для seed=0 non-zero, determinism (тот же seed → та же sequence), разные seed → разные sequences, последовательные значения различаются, non-correlation (a→b и b→c diffs не равны). |
+| `inline_mut_clock_advance.nv` | Inline `Clock { ms u64 }` record + `clock_sleep_ms`. 4 sub-tests: sleep продвигает state, разные instances независимы, large delta (1 hour = 3.6M ms), zero delta — state не меняется. |
+
+**Negative (4 файла) — `EXPECT_COMPILE_ERROR` regression markers для Ф.2 parser fixes:**
+
+| Файл | Маркер | Защищает fix |
+|---|---|---|
+| `negative_match_arm_compound_assign.nv` | `expected pattern, got '+='` | json.nv:164 fix #1 (bare `+=` в RHS match-arm) |
+| `negative_mut_param.nv` | `expected identifier, got 'mut'` | json.nv:499 fix #2 (mut-modifier для параметра функции) |
+| `negative_multiline_or_continuation.nv` | `got '\|\|'` | regex.nv:222 fix #3 (multi-line `\|\|` continuation) |
+| `negative_trailing_block_closure.nv` | `unexpected '=>' in expression` | property.nv fix #4 (Kotlin/Swift-style trailing-block closure) |
+
+Каждый negative тест — будущий regression marker: если расширят грамматику
+(когда D-блоки про эти фичи будут приняты) — тест провалится, нужно
+обновить spec и удалить/обновить тест.
+
+### Acceptance Ф.8
+
+- ✅ Spec sync — `04-effects.md` table/matrix/footnote + `08-runtime.md` D26 signatures.
+- ✅ `nova_tests/plan34/` — **8/8 PASS** через release `nova-cli/target/release/nova.exe`.
+- ✅ `nova check std/` — 45/45 (не сломан).
+- ⚠️ Full `nova test` — 249/256 PASS. 7 CC-FAIL — это **не моя регрессия**:
+  `Plan 40 Ф.2+Ф.3 commit 655033c` от агента изменил channel runtime
+  ABI (`nova_channel_send` signature) и не обновил все emit-sites.
+  Affected tests: `concurrency/select_*`, `concurrency/plan40_*`,
+  `expected_runtime/select_all_closed`. Это для агента в Plan 40 followup.
+
+### Process lesson (added to memory)
+
+После reminder пользователя — обновлён `feedback_project_docs.md`:
+**spec sync — четвёртая обязательная компонента** наряду с
+project-creation/simplifications/discussion-log. При **любом**
+изменении user-facing API (signatures, новые ops/handlers, изменение
+spec'd behavior) — sync в `spec/decisions/*.md` обязателен синхронно
+с commit'ом задачи, не postpone'ить.
+
+### Commits Ф.8
+
+- `5d71e0843d` — Plan 34 followup #2: spec sync + 8 focused tests.
+- (в `e7d19dac92` агентский) — docs/project-creation.txt +
+  docs/simplifications.md (захвачены параллельным агентом в его commit;
+  subject inaccurate но содержание сохранено).
+- Private discussion-log Этап 92 — commit `21f7926`.
+
+### Файлы Ф.8
+
+- `spec/decisions/04-effects.md` (table + matrix + footnote)
+- `spec/decisions/08-runtime.md` (D26 signatures)
+- `nova_tests/plan34/*.nv` (8 файлов: 4 positive + 4 negative)
+- `docs/project-creation.txt`, `docs/simplifications.md` (записи)
+- `docs/plans/34-stdlib-typecheck-and-compile-fix.md` (эта Ф.8 секция)
+- `.claude/.../memory/feedback_project_docs.md` (auto-memory updated)
+
+**Plan 34 EXTENDED + Ф.7 + follow-up #1 (gc.nv) + Ф.8 (followup #2) — закрыт полностью.**
