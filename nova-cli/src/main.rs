@@ -15,6 +15,29 @@ use std::time::Duration;
 
 use nova_codegen::test_runner;
 
+// ---------- Plan 36 R7: structured CLI error types ----------
+
+/// Plan 36 R7: usage error — bad flag, path not found, wrong extension,
+/// no nova.toml. Mapped to exit code **2** (distinct from diagnostic
+/// failures which are exit=1).
+///
+/// Cargo-style: 0 = success, 1 = diagnostic, 2 = usage, 101 = panic.
+#[derive(Debug)]
+struct UsageError(String);
+
+impl std::fmt::Display for UsageError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::error::Error for UsageError {}
+
+/// Helper: создаёт UsageError-wrapped anyhow::Error.
+fn usage_err(msg: impl Into<String>) -> anyhow::Error {
+    anyhow::Error::new(UsageError(msg.into()))
+}
+
 // ---------- CLI definition ----------
 
 #[derive(Parser)]
@@ -24,6 +47,13 @@ use nova_codegen::test_runner;
     about = "Nova language CLI — build, run, test Nova programs"
 )]
 struct Cli {
+    /// Plan 36 R10: color control. `auto` (default) detects via env,
+    /// `always` forces ANSI even in pipes, `never` disables completely.
+    /// Respects NO_COLOR, CLICOLOR, CLICOLOR_FORCE, CI, TERM=dumb env vars.
+    #[arg(long, global = true, default_value = "auto",
+          value_parser = ["auto", "always", "never"])]
+    color: String,
+
     #[command(subcommand)]
     cmd: Cmd,
 }
@@ -217,16 +247,73 @@ fn resolve_paths(repo: &Path) -> RepoPaths {
 }
 
 // ---------- ANSI colors ----------
-// Minimal ANSI — no extra deps. Disabled when stdout/stderr is not a tty
-// or when NO_COLOR env var is set (https://no-color.org).
+// Plan 36 R10: `--color auto|always|never` + env detection.
+//
+// Auto-detection precedence (highest first):
+//   1. `--color always|never` CLI flag
+//   2. `CLICOLOR_FORCE=1` env → always
+//   3. `NO_COLOR=*` env → never (https://no-color.org)
+//   4. `CLICOLOR=0` env → never
+//   5. `CI=true` env → never (CI logs usually no-ANSI)
+//   6. `TERM=dumb` env → never
+//   7. default → auto = on (если nothing above triggers)
+//
+// На Windows ANSI поддерживается в Windows Terminal / modern conhost.
+// is-terminal crate отложен (post-MVP); пока default = always on.
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ColorMode {
+    Auto,
+    Always,
+    Never,
+}
+
+impl ColorMode {
+    fn parse(s: &str) -> Result<Self> {
+        match s {
+            "auto" => Ok(ColorMode::Auto),
+            "always" => Ok(ColorMode::Always),
+            "never" => Ok(ColorMode::Never),
+            _ => Err(usage_err(format!(
+                "invalid --color value `{}` (expected: auto, always, never)", s))),
+        }
+    }
+}
+
+static COLOR_MODE: std::sync::OnceLock<ColorMode> = std::sync::OnceLock::new();
+
+fn set_color_mode(mode: ColorMode) {
+    let _ = COLOR_MODE.set(mode);
+}
 
 fn colors_enabled() -> bool {
-    if std::env::var_os("NO_COLOR").is_some() {
-        return false;
+    let mode = COLOR_MODE.get().copied().unwrap_or(ColorMode::Auto);
+    match mode {
+        ColorMode::Always => true,
+        ColorMode::Never => false,
+        ColorMode::Auto => {
+            // CLICOLOR_FORCE wins over all "off" signals.
+            if std::env::var_os("CLICOLOR_FORCE")
+                .map(|v| v != "0")
+                .unwrap_or(false)
+            {
+                return true;
+            }
+            if std::env::var_os("NO_COLOR").is_some() {
+                return false;
+            }
+            if std::env::var("CLICOLOR").as_deref() == Ok("0") {
+                return false;
+            }
+            if std::env::var("CI").as_deref() == Ok("true") {
+                return false;
+            }
+            if std::env::var("TERM").as_deref() == Ok("dumb") {
+                return false;
+            }
+            true
+        }
     }
-    // On Windows, ANSI is supported in Windows Terminal / modern conhost.
-    // Check TERM or just always enable — worst case: harmless escape codes.
-    true
 }
 
 fn red(s: &str) -> String {
@@ -313,12 +400,12 @@ fn cmd_check(paths: &[PathBuf], jobs: usize) -> Result<()> {
     let mut files: Vec<PathBuf> = Vec::new();
     for p in &resolved_paths {
         if !p.exists() {
-            bail!("path not found: {}", p.display());
+            return Err(usage_err(format!("path not found: {}", p.display())));
         }
         if p.is_file() {
             // Проверка расширения.
             if p.extension().and_then(|s| s.to_str()) != Some("nv") {
-                bail!("not a Nova source: {}", p.display());
+                return Err(usage_err(format!("not a Nova source: {}", p.display())));
             }
             files.push(p.clone());
         } else if p.is_dir() {
@@ -331,7 +418,7 @@ fn cmd_check(paths: &[PathBuf], jobs: usize) -> Result<()> {
                 }
             }
         } else {
-            bail!("path is neither file nor directory: {}", p.display());
+            return Err(usage_err(format!("path is neither file nor directory: {}", p.display())));
         }
     }
 
@@ -386,17 +473,31 @@ fn cmd_check(paths: &[PathBuf], jobs: usize) -> Result<()> {
 
     let mut pass = 0;
     let mut fail = 0;
+    let mut warn_count = 0;
     for r in &results {
         match &r.error {
             None => {
                 pass += 1;
-                println!("{} {}", green("ok:"), r.file.display());
+                if r.warnings.is_empty() {
+                    println!("{} {}", green("ok:"), r.file.display());
+                } else {
+                    println!("{} {} ({} warning(s))",
+                        green("ok:"), r.file.display(), r.warnings.len());
+                    for w in &r.warnings {
+                        eprintln!("  {} {}", bold(&yellow("warning:")), w);
+                        warn_count += 1;
+                    }
+                }
             }
             Some(msg) => {
                 fail += 1;
                 eprintln!("{} {}", red("FAIL:"), r.file.display());
                 for line in msg.lines() {
                     eprintln!("  {}", line);
+                }
+                for w in &r.warnings {
+                    eprintln!("  {} {}", bold(&yellow("warning:")), w);
+                    warn_count += 1;
                 }
             }
         }
@@ -405,10 +506,16 @@ fn cmd_check(paths: &[PathBuf], jobs: usize) -> Result<()> {
     println!();
     println!("===== SUMMARY =====");
     if fail == 0 {
-        println!("{}: {}  FAIL: 0", green("PASS"), pass);
+        if warn_count == 0 {
+            println!("{}: {}  FAIL: 0", green("PASS"), pass);
+        } else {
+            println!("{}: {}  FAIL: 0  WARN: {}",
+                green("PASS"), pass, warn_count);
+        }
         Ok(())
     } else {
-        println!("PASS: {}  {}: {}", pass, red("FAIL"), fail);
+        println!("PASS: {}  {}: {}  WARN: {}",
+            pass, red("FAIL"), fail, warn_count);
         Err(anyhow!("{} file(s) failed type-check", fail))
     }
 }
@@ -417,36 +524,79 @@ fn cmd_check(paths: &[PathBuf], jobs: usize) -> Result<()> {
 struct CheckResult {
     file: PathBuf,
     error: Option<String>,
+    /// Lint warnings (Plan 36 Ф.0) — non-fatal, отображаются под file
+    /// если present. PASS если только warnings (no error).
+    warnings: Vec<String>,
 }
 
-/// Single-file check — parse + path-check + type-check.
-/// Plan 36 Ф.0 (correctness fix): TODO — добавить infer_effects + lint_module
-/// в отдельной фазе (out of MVP scope of this commit).
+/// Single-file check — full pipeline (Plan 36 Ф.0 correctness fix).
+/// Phases:
+///   1. parse
+///   2. check_module_path (D78)
+///   3. types::check_module (типы + effects/capability inference embedded)
+///   4. types::infer_effects (D28 — effects на private fn)
+///   5. lints::lint_module (anonymous-embed override и т.д.)
+///
+/// До Plan 36 Ф.0 `cmd_check` дёргал только 1-3 — molча пропускал
+/// effect-inference и lints, которые `cmd_build` ловит. Это был
+/// silent correctness gap.
 fn check_one_file(path: &Path) -> CheckResult {
     let src = match read_file(path) {
         Ok(s) => s,
-        Err(e) => return CheckResult { file: path.to_path_buf(), error: Some(format!("read: {}", e)) },
+        Err(e) => return CheckResult {
+            file: path.to_path_buf(),
+            error: Some(format!("read: {}", e)),
+            warnings: Vec::new(),
+        },
     };
     let path_str = path.to_string_lossy();
 
-    let module = match nova_codegen::parser::parse(&src) {
+    // 1. parse
+    let mut module = match nova_codegen::parser::parse(&src) {
         Ok(m) => m,
         Err(d) => return CheckResult {
             file: path.to_path_buf(),
             error: Some(d.render(&src, &path_str)),
+            warnings: Vec::new(),
         },
     };
 
+    // 2. check_module_path
     if let Err(e) = check_module_path(path, &module) {
-        return CheckResult { file: path.to_path_buf(), error: Some(format!("{}", e)) };
+        return CheckResult {
+            file: path.to_path_buf(),
+            error: Some(format!("{}", e)),
+            warnings: Vec::new(),
+        };
     }
 
+    // 3. types::check_module
     if let Err(errs) = nova_codegen::types::check_module(&module) {
         let msgs: Vec<String> = errs.iter().map(|d| d.render(&src, &path_str)).collect();
-        return CheckResult { file: path.to_path_buf(), error: Some(msgs.join("\n")) };
+        return CheckResult {
+            file: path.to_path_buf(),
+            error: Some(msgs.join("\n")),
+            warnings: Vec::new(),
+        };
     }
 
-    CheckResult { file: path.to_path_buf(), error: None }
+    // 4. infer_effects (D28) — fills in inferred effects on private fn.
+    nova_codegen::types::infer_effects(&mut module);
+
+    // 5. lints::lint_module — anonymous-embed override, etc.
+    let lint_warnings: Vec<String> = nova_codegen::lints::lint_module(&module)
+        .into_iter()
+        .map(|w| {
+            let (line, col) = nova_codegen::diag::byte_to_line_col(&src, w.diag.span.start);
+            format!("{}:{}:{}: {} [{}]", path.display(), line, col, w.diag.message, w.rule)
+        })
+        .collect();
+
+    CheckResult {
+        file: path.to_path_buf(),
+        error: None,
+        warnings: lint_warnings,
+    }
 }
 
 /// Hard-coded skip patterns (Plan 36 R3 minimal version).
@@ -643,15 +793,15 @@ fn cmd_test(
     shuffle: Option<Option<u64>>,
 ) -> Result<()> {
     if timeout_secs == 0 {
-        bail!("--timeout must be >= 1 second");
+        return Err(usage_err("--timeout must be >= 1 second"));
     }
     if let Some(f) = filter {
         if f.is_empty() {
-            bail!("--filter cannot be empty");
+            return Err(usage_err("--filter cannot be empty"));
         }
     }
     if verbose && quiet {
-        bail!("cannot use --verbose and --quiet simultaneously");
+        return Err(usage_err("cannot use --verbose and --quiet simultaneously"));
     }
     let repo = find_repo_root()?;
     let paths = resolve_paths(&repo);
@@ -689,24 +839,24 @@ fn cmd_test(
         None => (paths.tests_dir.clone(), None),
         Some(p) => {
             if !p.exists() {
-                bail!("path not found: {}", p.display());
+                return Err(usage_err(format!("path not found: {}", p.display())));
             }
             if p.is_file() {
                 if p.extension().and_then(|s| s.to_str()) != Some("nv") {
-                    bail!("not a Nova source: {}", p.display());
+                    return Err(usage_err(format!("not a Nova source: {}", p.display())));
                 }
                 // Use parent dir as tests_dir, derive display name relative to it.
                 let parent = p.parent()
-                    .ok_or_else(|| anyhow!("cannot get parent of {}", p.display()))?
+                    .ok_or_else(|| usage_err(format!("cannot get parent of {}", p.display())))?
                     .to_path_buf();
                 let stem = p.file_stem()
                     .and_then(|s| s.to_str())
-                    .ok_or_else(|| anyhow!("invalid file name: {}", p.display()))?;
+                    .ok_or_else(|| usage_err(format!("invalid file name: {}", p.display())))?;
                 (parent, Some(stem.to_string()))
             } else if p.is_dir() {
                 (p.to_path_buf(), None)
             } else {
-                bail!("path is neither file nor directory: {}", p.display());
+                return Err(usage_err(format!("path is neither file nor directory: {}", p.display())));
             }
         }
     };
@@ -725,7 +875,7 @@ fn cmd_test(
     }
 
     if !tests_dir.is_dir() {
-        bail!("tests directory not found: {}", tests_dir.display());
+        return Err(usage_err(format!("tests directory not found: {}", tests_dir.display())));
     }
 
     // If single-file requested, filter through display-name to that one file
@@ -923,7 +1073,31 @@ fn cmd_regen_runtime(check: bool) -> Result<()> {
 // ---------- entry point ----------
 
 fn main() -> ExitCode {
+    // Plan 36 R7: guarantee exit=101 on panic (cargo convention, cross-platform).
+    // Без этого default Rust panic handler даёт 101 на Unix но 0xC0000409 на Windows.
+    std::panic::set_hook(Box::new(|info| {
+        let msg = info.payload().downcast_ref::<&str>().copied()
+            .or_else(|| info.payload().downcast_ref::<String>().map(|s| s.as_str()))
+            .unwrap_or("<no message>");
+        let loc = info.location()
+            .map(|l| format!("{}:{}", l.file(), l.line()))
+            .unwrap_or_else(|| "<unknown>".to_string());
+        eprintln!("nova: internal error at {}: {}", loc, msg);
+        eprintln!("This is a bug in nova. Please report it.");
+        std::process::exit(101);
+    }));
+
     let cli = Cli::parse();
+
+    // Plan 36 R10: apply --color setting before any output.
+    match ColorMode::parse(&cli.color) {
+        Ok(mode) => set_color_mode(mode),
+        Err(e) => {
+            eprintln!("error: {}", e);
+            return ExitCode::from(2);
+        }
+    }
+
     let result = match cli.cmd {
         Cmd::Check { paths, jobs } => cmd_check(&paths, jobs),
         Cmd::Run { file } => cmd_run(&file),
@@ -980,7 +1154,13 @@ fn main() -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("{} {}", bold(&red("error:")), e);
-            ExitCode::FAILURE
+            // Plan 36 R7: usage errors → exit=2, diagnostics → exit=1.
+            // Discriminate через downcast UsageError type.
+            if e.downcast_ref::<UsageError>().is_some() {
+                ExitCode::from(2)
+            } else {
+                ExitCode::FAILURE  // = 1
+            }
         }
     }
 }
