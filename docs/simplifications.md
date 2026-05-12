@@ -5482,3 +5482,22 @@ docs/, либо вообще ничего не staged.
 **Приоритет:** P2 — текущий compromise работает (content сохраняется,
 subject lines в чужих commit'ах inaccurate но diff виден). Полное
 решение требует Git workflow договорённости с пользователем.
+
+
+---
+
+## README + spec docs sync (2026-05-12)
+
+После audit обнаружено что несколько README устарели:
+- `compiler-codegen/README.md` упоминал `build_c.ps1/sh/bat`-скрипты
+  (удалены в Plan 28) и говорил что cross-file imports «не работают
+  в codegen» (Plan 35 R31 это закрыл).
+- `README.ru.md` отставал от `README.md` (Section "Сборка" с устаревшим
+  build_c.*; отсутствовала section "Запуск тестов").
+- `spec/decisions/README.md` таблица обрывалась на D89 (актуально до D96).
+
+Все fixed. Markdown-only changes, не требуют код-regression.
+
+Open: open-questions.md не trogал — большой документ, потенциально
+содержит ответы которые уже стали решениями. Отдельный audit pass —
+post-bootstrap work.
