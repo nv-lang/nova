@@ -257,6 +257,11 @@ pub struct CEmitter {
     /// Type-check уже catches non-ghost reads ghost (Ф.9.7); это просто
     /// allow spec-position reads silently не падать на C-level.
     ghost_vars: std::collections::HashSet<String>,
+    /// Plan 33.3 Ф.9.9 (D24): proven контракты (fn_name, span.start).
+    /// Заполняется через set_proven_contracts из VerificationPipeline result.
+    /// Codegen skip emit для runtime check'ов помеченных как proven —
+    /// true zero-cost даже в debug.
+    proven_contracts: std::collections::HashSet<(String, usize)>,
     /// Maps array variable name → actual element C type (e.g. "Nova_Box*").
     /// The array always uses nova_int storage but elements may be pointers to records.
     array_element_types: HashMap<String, String>,
@@ -472,6 +477,7 @@ impl CEmitter {
             current_fn_return_ty: None,
             contracts_post_label: None,
             ghost_vars: std::collections::HashSet::new(),
+            proven_contracts: std::collections::HashSet::new(),
             record_invariants: HashMap::new(),
             array_element_types: HashMap::new(),
             option_inner_types: HashMap::new(),
@@ -532,6 +538,17 @@ impl CEmitter {
     /// не передан.
     pub fn disable_source_annotations(&mut self) {
         self.annotation_enabled = false;
+    }
+
+    /// Plan 33.3 Ф.9.9 (D24): передать список доказанных контрактов от
+    /// VerificationPipeline. Codegen для proven контрактов **не эмитит**
+    /// runtime check даже в debug — true zero-cost для доказанного.
+    /// Key: (fn_name, contract span start byte offset).
+    pub fn set_proven_contracts(&mut self, proven: &[(String, crate::diag::Span)]) {
+        self.proven_contracts.clear();
+        for (name, span) in proven {
+            self.proven_contracts.insert((name.clone(), span.start));
+        }
     }
 
     /// Get the Span of a statement (where in source it came from).
@@ -3984,6 +4001,10 @@ impl CEmitter {
         // нам нужно "_nova_result". Используем post-process подмену.
         for c in &f.contracts {
             if matches!(c.kind, ContractKind::Ensures) {
+                // Plan 33.3 Ф.9.9: skip emit для proven контрактов.
+                if self.proven_contracts.contains(&(f.name.clone(), c.span.start)) {
+                    continue;
+                }
                 let expr_c = self.emit_expr(&c.expr)?;
                 // Простая подмена идентификатора `result` на `_nova_result`.
                 // Работает для случаев без collision (что справедливо в 33.1).
@@ -4188,6 +4209,12 @@ impl CEmitter {
             self.line("#ifdef NOVA_CONTRACTS_RUNTIME");
             for c in &f.contracts {
                 if matches!(c.kind, ContractKind::Requires) {
+                    // Plan 33.3 Ф.9.9: skip emit для proven контрактов
+                    // (true zero-cost даже в debug). proven_contracts —
+                    // set от VerificationPipeline. Key: (fn_name, span.start).
+                    if self.proven_contracts.contains(&(f.name.clone(), c.span.start)) {
+                        continue;
+                    }
                     let expr_c = self.emit_expr(&c.expr)?;
                     let expr_src = Self::expr_to_display(&c.expr);
                     self.line(&format!(

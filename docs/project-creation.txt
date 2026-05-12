@@ -7582,3 +7582,83 @@ SMT well-founded check полный (Dafny-grade) — отдельный milesto
 
 Test:
 - f9_loop_decreases_positive.nv — countdown(n) с corectным decreases i.
+
+
+
+================================================================================
+2026-05-12 Plan 40 Ф.3 B5 final — убран cap, per-call storage на стеке
+================================================================================
+
+Завершение B5 (storage refactor) — пользователь поправил: «у нас же
+не должно быть cap'а». Изначально ввёл safety guard
+NOVA_SELECT_MAX_ARMS=64, затем убрал полностью.
+
+### Эволюция B5 (3 итерации в одной сессии)
+
+**v1:** cap 16→32 + compile-error в emit_select на overflow. Storage
+остался fixed-size в SelectCtx.
+
+**v2:** cap 32→64 + per-call storage:
+- SelectCtx.arms / .waiters → SelectSlot* / SelectWaiter* (pointer'ы).
+- nova_select_init(n, arms_ptr, waiters_ptr) caller-provided storage.
+- emit_select эмитит `SelectSlot _arms[n_ch]; SelectWaiter _waiters[n_ch];`
+  через compound literal (literal size, MSVC-compatible — не VLA).
+- Cap=64 как safety guard.
+
+**v3 final (по поправке пользователя):**
+- Cap **полностью убран**: ни в channels.h, ни в emit_c.rs нет
+  NOVA_SELECT_MAX_ARMS.
+- nova_select_try_immediate использует alloca(n*sizeof(int)) для
+  internal Fisher-Yates shuffle order array — cross-platform
+  (MSVC <malloc.h>, POSIX <alloca.h>).
+
+### Архитектурное обоснование «без cap'а»
+
+Stack frame на одну select-операцию: ~84n байт:
+- SelectSlot[n] = 40n
+- SelectWaiter[n] = 40n
+- order[n] = 4n (alloca)
+
+На default minicoro 56 KB stack — n=600+ безопасно. Идиоматический
+код = 2-8 arms; даже n=100 = 8.4 KB.
+
+Альтернативы отвергнуты:
+- VLA — MSVC не поддерживает.
+- Heap-alloc (Go-parity) — +3 nova_alloc per select → GC pressure.
+- Fixed cap — искусственное ограничение.
+
+### Fisher-Yates shuffle
+
+```c
+int* order = (int*)alloca((size_t)n * sizeof(int));    // no cap
+for (i = 0; i < n; i++) order[i] = i;
+uint32_t rng = (uint32_t)(uintptr_t)ctx ^ 0xdeadbeef;
+if (!rng) rng = 1;
+for (i = n - 1; i > 0; i--) {
+    j = (int)(_nova_sel_rng(&rng) % (uint32_t)(i + 1));
+    int tmp = order[i]; order[i] = order[j]; order[j] = tmp;
+}
+```
+
+Xorshift32 + uniform Fisher-Yates → Go-parity fairness.
+
+### Тесты
+
+- nova_tests/concurrency/select_many_arms.nv — 100 arms positive.
+- nova_tests/expected_runtime/select_overflow_compile_error.nv —
+  удалён (overflow-error больше не существует).
+
+### Spec D94 sync
+
+В spec/decisions/06-concurrency.md убран пункт «Maximum 32 channel
+arms», добавлен «adaptive per-call storage без cap'а на arm count»
+в реализованную форму.
+
+### Regression
+
+**257/257 PASS** + **46/46 std type-check.** Zero regressions.
+
+### Commit
+
+c9611a59a4 — Plan 40 Ф.3 B5 final.
+

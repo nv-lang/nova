@@ -5280,29 +5280,37 @@ casing), что D94 намеренно избежал.
 
 ---
 
-## NOVA_SELECT_MAX_ARMS = 32 hard cap — Plan 40 Ф.3 (2026-05-12)
+## ~~NOVA_SELECT_MAX_ARMS hard cap~~ — закрыто полностью (Plan 40 Ф.3 v3, 2026-05-12)
 
-**Где:** `compiler-codegen/nova_rt/channels.h::NOVA_SELECT_MAX_ARMS` +
-`emit_c.rs::emit_select`.
+**Где:** `compiler-codegen/nova_rt/channels.h` + `emit_c.rs::emit_select`.
 
-**Что упрощено:** select ограничен 32 channel arms. Overflow →
-compile-error «select: too many channel arms (N); maximum is 32».
+**Что было:** select arm count limit (16 → 32 → 64) с compile-error
+на overflow. Изначально записывалось как «упрощение для bootstrap;
+Plan 40 Ф.1 уберёт cap».
 
-Раньше cap=16 без diagnostic'а; overflow = silent zero-fill →
-select висел вечно. Это bug, не «упрощение». Plan 40 Ф.3 это починил.
+**Что стало:** в той же сессии (по поправке пользователя «у нас же
+не должно быть cap'а») **cap убран полностью**. Адаптивное per-call
+storage:
+- `SelectCtx.arms` / `.waiters` → `SelectSlot*` / `SelectWaiter*`
+  (caller-provided pointer storage).
+- `emit_select` эмитит compound literal `SelectSlot _arms[n_ch];
+  SelectWaiter _waiters[n_ch];` на стеке fiber'а (literal size,
+  известен на codegen-time, MSVC-compatible — не VLA).
+- `nova_select_try_immediate` использует `alloca(n*sizeof(int))` для
+  internal Fisher-Yates shuffle order (cross-platform: MSVC
+  `<malloc.h>`, POSIX `<alloca.h>`).
+- `NOVA_SELECT_MAX_ARMS` полностью удалён из кода.
 
-**Почему 32:** stack-allocated `SelectCtx.arms[MAX]` требует
-compile-time-known cap. Per-call adaptive storage (Plan 40 Ф.1) уберёт
-cap полностью. VLA отвергнут (MSVC не поддерживает). Heap-alloc
-отвергнут (GC pressure).
+Stack frame ~84n байт. На default minicoro 56 KB stack — n=600+ безопасно.
 
-**Влияние:** идиоматический Go-код = 3-8 arms; 32 = 4× запас.
-Workaround на overflow: nested selects.
+**Это больше не упрощение.** Запись оставлена как исторический след
+эволюции дизайна в одной сессии (v1 cap=32 → v2 cap=64 + storage
+refactor → v3 no cap).
 
-**Как починить:** Plan 40 Ф.1 per-call storage.
+**Тест:** `nova_tests/concurrency/select_many_arms.nv` — 100 arms
+positive, доказательство no-cap.
 
-**Приоритет:** P3 — limit не достигается в нормальном коде; bug
-(silent hang) уже исправлен.
+**Commit:** c9611a59a4.
 
 
 ---

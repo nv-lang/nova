@@ -1,0 +1,23 @@
+// EXPECT_RUNTIME_PANIC contract requires failed in `<assert_static>`
+//
+// Plan 33.3 Ф.9.8: loop body не decrement'ит decreases-измеритель →
+// runtime assert_static panic в debug.
+
+module nova_tests.expected_runtime.f9_loop_decreases_fail
+
+fn bad_loop(n int) -> int {
+    let mut i = n
+    let mut iter = 0
+    while iter < 1
+        decreases i
+    {
+        // i не меняется → decreases не уменьшается → violation.
+        iter = iter + 1
+    }
+    i
+}
+
+fn main() Io -> () {
+    let _ = bad_loop(5)
+    println("UNREACHABLE")
+}

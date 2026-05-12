@@ -268,7 +268,7 @@ fn cmd_compile(path: &PathBuf, output: Option<&std::path::Path>, annotate_source
         anyhow!("{}", d.render(&src, &path.to_string_lossy()))
     })?;
     check_module_path(path, &module)?;
-    nova_codegen::types::check_module(&module).map_err(|errs| {
+    let module_env = nova_codegen::types::check_module(&module).map_err(|errs| {
         let messages: Vec<String> = errs
             .iter()
             .map(|d| d.render(&src, &path.to_string_lossy()))
@@ -289,6 +289,9 @@ fn cmd_compile(path: &PathBuf, output: Option<&std::path::Path>, annotate_source
     if !annotate_source {
         emitter.disable_source_annotations();
     }
+    // Plan 33.3 Ф.9.9: передаём proven контракты в codegen для
+    // selective stripping (true zero-cost даже в debug).
+    emitter.set_proven_contracts(&module_env.proven_contracts);
     let (c_code, warnings) = emitter
         .emit_module(&module)
         .map_err(|e| anyhow!("codegen error: {}", e))?;
