@@ -7054,3 +7054,68 @@ contracts/ 31/31 PASS на release-сборке.
 - V10: #must_verify_module + #trusted external.
 - V11: Dafny-tutorial port (20 примеров).
 
+
+================================================================================
+2026-05-12 Plan 34 follow-up — std/runtime/gc.nv заполнен external fn decl'ями
+================================================================================
+
+После Plan 34 Ф.7 пользователь заметил «std\runtime\gc.nv — пустой».
+Фактически файл содержал только doc-comment + `module` declaration —
+без `export external fn` объявлений. Все `gc.*` вызовы резолвились
+через двойной hardcode: builtin name "gc" в types/mod.rs:1470 +
+namespace-style dispatch в emit_c.rs:7155.
+
+Это расходилось с обещанием Plan 32 acceptance («std/runtime/gc.nv
+создан с external declarations через Plan 13 pattern») и было
+архитектурно непоследовательно — std/runtime/{char,math,string,...}.nv
+все содержат `export external fn` declarations.
+
+### Что сделано
+
+std/runtime/gc.nv заполнен 5 declarations:
+- export external fn gc.heap_size() -> int
+- export external fn gc.live_count() -> int
+- export external fn gc.alloc_count() -> int
+- export external fn gc.collect() -> ()
+- export external fn gc.reset_stats() -> ()
+
+Парсер принимает lowercase receiver `gc.X` в std.runtime.* модулях
+(`external fn` allowance мягче D30 PascalCase-for-types). gc.nv —
+source of truth для signatures.
+
+### Почему "gc" builtin всё ещё остался
+
+Попытка убрать `"gc"` из builtin list в types/mod.rs провалилась —
+cross-file bare-name resolution не работает (`undefined identifier
+'gc'` в callers которые делают `gc.heap_size()` без явного
+`import std.runtime.gc as gc`). Это Plan 35 Ф.1 территория (wildcard
+import + bare-name visibility).
+
+Решение: оставил `"gc"` в builtin list с обновлённым комментарием.
+Три места теперь явно синхронизированы:
+1. std/runtime/gc.nv — user-facing API documentation + parser recognition.
+2. emit_c.rs:7155 — codegen lowering на nova_gc_* runtime calls.
+3. types/mod.rs builtin "gc" — name-resolution shortcut (until
+   Plan 35 Ф.1 закроет proper cross-file resolve).
+
+### Acceptance
+
+- nova check std/runtime/gc.nv → PASS.
+- nova check std/ → 45/45 (handlers.nv, gc.nv, остальные).
+- Smoke `gc.heap_size()` / `gc.collect()` — резолвится через builtin.
+- nova test → 228/229 PASS (1 flaky sleep_precision_bench
+  non-regression, retry PASS).
+
+### Note про cargo lock
+
+Во время работы был file-lock на nova-cli/target/release/nova.exe
+(Windows AV/Explorer часто залочивает exe после run). Workaround:
+собирать через `CARGO_TARGET_DIR=nova-cli/target_alt`. Не баг —
+Windows file-locking quirk; alt-dir после commit'а cleanupable.
+
+### Файлы
+
+- std/runtime/gc.nv (заполнен external fn declarations + comment'ы)
+- compiler-codegen/src/types/mod.rs (комментарий рядом с builtin "gc")
+- docs/project-creation.txt, docs/simplifications.md
+

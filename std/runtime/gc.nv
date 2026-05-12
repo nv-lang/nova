@@ -1,10 +1,19 @@
 // std/runtime/gc.nv — GC introspection API (Plan 32).
 //
-// **Не auto-gen** — этот модуль документирует hard-coded namespace `gc.*`
-// который dispatched через compiler-codegen/src/codegen/emit_c.rs
-// (special-case как `panic()`/`exit()`). См. ниже список доступных функций.
+// **NOT auto-gen.** Этот модуль документирует hard-coded namespace `gc.*`
+// который dispatched через [compiler-codegen/src/codegen/emit_c.rs]
+// special-cases (как `panic()`/`exit()`/`assert()`).
+//
+// `gc` — uniqueness: **lowercase namespace** (не type) для consistency с
+// прецедентами в других языках:
+//   - Go:     `runtime.GC()`, `runtime.ReadMemStats(&ms); ms.HeapAlloc`
+//   - Java:   `System.gc()`, `Runtime.getRuntime().totalMemory()`
+//   - Python: `gc.collect()`, `gc.get_stats()`
+//   - .NET:   `GC.Collect()`, `GC.GetTotalMemory(false)`
 //
 // Использование:
+//
+//   import std.runtime.gc       // активирует name resolution для `gc.*`
 //
 //   let h = gc.heap_size()       // bytes; 0 если backend без introspection
 //   let n = gc.live_count()      // приблизительное число live-объектов
@@ -31,12 +40,46 @@
 // Не использовать в hot path. Назначение — manual API для diagnostic
 // и явной разгрузки перед blocking I/O.
 //
-// **Прецеденты в других языках:**
-//   - Go:     `runtime.GC()`, `runtime.ReadMemStats(&ms); ms.HeapAlloc`
-//   - Java:   `System.gc()`, `Runtime.getRuntime().totalMemory()`
-//   - Python: `gc.collect()`, `gc.get_stats()`
-//   - .NET:   `GC.Collect()`, `GC.GetTotalMemory(false)`
+// ──────────────────────────────────────────────────────────────────────────
+// Источник истины для type-checker'а
+// ──────────────────────────────────────────────────────────────────────────
 //
-// Реализация: см. Plan 32 docs/plans/32-gc-introspection.md.
+// Эти `external fn` объявления — **source of truth** для type-checker'а.
+// Codegen имеет свой parallel hardcoded match на `name == "gc"`
+// в [emit_c.rs:7155](../../compiler-codegen/src/codegen/emit_c.rs#L7155)
+// — они должны быть синхронизированы вручную.
+//
+// Используется `gc` как identifier-name (D-spec exception: lowercase для
+// namespace-like API, аналог Python `gc.collect()` или Go
+// `runtime.GC()`). При изменении API — обновить **оба** места.
 
 module std.runtime.gc
+
+
+// ─── gc namespace ───────────────────────────────────────────────────────
+
+// Размер heap в байтах. Под malloc backend всегда возвращает 0
+// (honest sentinel «backend не поддерживает introspection»). Под boehm
+// возвращает результат `GC_get_heap_size()`.
+export external fn gc.heap_size() -> int
+
+// Приблизительное число живых объектов. Под malloc это `alloc_count -
+// free_count` (free_count всегда 0 → растёт монотонно). Под boehm —
+// upper bound через `alloc_count` (real live count Boehm не экспонирует).
+export external fn gc.live_count() -> int
+
+// Монотонный счётчик аллокаций с момента старта программы или
+// последнего `gc.reset_stats()`. Полезен для smoke-тестов «heap не
+// растёт за N итераций».
+export external fn gc.alloc_count() -> int
+
+// Принудительный сбор. Под malloc — no-op. Под boehm — синхронный
+// full mark-sweep через `GC_gcollect()`. ВНИМАНИЕ: тяжёлая операция,
+// не использовать в hot path. Назначение — manual diagnostic API
+// или явная разгрузка перед blocking I/O.
+export external fn gc.collect() -> ()
+
+// Сбрасывает счётчики (`alloc_count` → 0). Используется для
+// per-test isolation. GC stats самого Boehm не сбрасываются (Boehm
+// не поддерживает reset на runtime-уровне).
+export external fn gc.reset_stats() -> ()

@@ -1467,6 +1467,10 @@ impl NameResCtx {
             "panic", "exit",
             // Plan 32: GC introspection namespace (std.runtime.gc).
             // Используется как `gc.heap_size()`, `gc.collect()` и т.д.
+            // Source of truth для signatures: std/runtime/gc.nv (external fn).
+            // Codegen dispatch: emit_c.rs:7155 special-case на name == "gc".
+            // Builtin запись нужна потому что cross-file bare-name resolve
+            // не работает (Plan 35 Ф.1).
             "gc",
             // Default Fail-effect type (D65 placeholder).
             "Fail",

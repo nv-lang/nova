@@ -5050,3 +5050,51 @@ NovaOpt_<T> вместо handcrafted в array.h для int/str.
 - **Non-ghost код не может читать ghost-vars** — catch'ится на C-level
   (undefined identifier). Proper compile-time check в type-checker —
   отдельная задача (TODO для Plan 33.3 full).
+
+
+---
+
+## "gc" namespace в builtin list — Plan 34 follow-up (2026-05-12)
+
+**Где:** compiler-codegen/src/types/mod.rs:1470 — builtin name list
+содержит `"gc"`.
+
+**Что упрощено:** `gc.heap_size()` / `gc.collect()` и т.д. в любом
+.nv файле резолвятся через **builtin shortcut**, а не через cross-file
+import из `std.runtime.gc`. Это **двойной source of truth**:
+1. std/runtime/gc.nv — `export external fn gc.heap_size() -> int` (etc.)
+2. types/mod.rs — builtin name "gc" в name resolver.
+
+**Почему:** Cross-file bare-name resolution не работает (Plan 35 Ф.1
+territory). При попытке убрать `"gc"` из builtin list — все callers
+(`let h = gc.heap_size()` в user code) падают с `undefined identifier
+'gc'`, потому что нужен `import std.runtime.gc as gc` который никто
+не пишет (и wildcard `import std.runtime.gc.*` парсер не принимает).
+
+Альтернативы рассматривал:
+1. **Заставить пользователя писать `import std.runtime.gc as gc`** —
+   удваивает boilerplate для каждого callsite (Go-стиль `runtime.GC()`,
+   Java `System.gc()` — там это implicit). Хуже UX.
+2. **Plan 35 Ф.1 wildcard `import X.Y.*` + bare-name visibility** —
+   правильное решение, но spec-level work (~150 строк parser + name
+   resolver + D-блок про import semantics).
+3. **Type-form `Gc.heap_size()` (PascalCase)** — отход от Plan 32 spec
+   (lowercase `gc` намеренно для consistency с Go/Python/Java
+   namespace style).
+
+**Текущий compromise:** double source of truth с явными synchronization
+comments в обоих местах. Codegen dispatch (emit_c.rs:7155) — третье
+место, тоже синхронизировано вручную.
+
+**Как починить:** Plan 35 Ф.1 — добавить wildcard `import` + open
+bare-names при resolve. После этого:
+1. Удалить `"gc"` из builtin list в types/mod.rs.
+2. Callers пишут `import std.runtime.gc.*` (или implicit prelude
+   для `std.runtime.*`).
+3. gc.nv `external fn`-declarations становятся **единственным**
+   source of truth для type-checker'а.
+4. Codegen dispatch остаётся (special-case как panic/exit) — это
+   semantic dispatch, не name resolution.
+
+**Приоритет:** P2 — текущий compromise работает корректно, double
+source of truth manually synced. Cleanup-приоритет, не функциональный.
