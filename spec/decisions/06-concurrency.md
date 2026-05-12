@@ -2701,3 +2701,93 @@ Go не поддерживает guards в select.
   compile-error overflow + Channel.new check ordering)
 - 🟡 M:N safety: Plan 40 Ф.1 (atomics + selectdone CAS + doubly-linked +
   per-call storage) — отложено вместе с Plan 23 M:N runtime
+
+
+## D97. Fiber stack allocation — per-thread mmap arena (Linux/macOS)
+
+> **Status:** active (Plan 41 Этапы 1-3 закрыты, 2026-05-12).
+> Уточняет [D14](#d14-fiber-runtime--невидимая-инфраструктура) для
+> bootstrap-runtime: где живут fiber stacks и как они видны GC.
+
+### Что
+
+Suspended fiber stacks **не на OS-стеке** — они лежат в пользовательской
+памяти, выделяемой allocator'ом minicoro. Поскольку Boehm GC сканирует
+только OS-стек активного потока + явно зарегистрированные roots, fiber
+stacks нужно сделать видимыми GC явно. D97 фиксирует **гибридную
+стратегию** allocation'а по платформам:
+
+**Linux/macOS — per-thread mmap arena с lazy commit:**
+
+- На первое использование thread'a резервируется **8 GB virtual** через
+  `mmap(MAP_NORESERVE)` — `4096 слотов × 2 MB`.
+- Lazy commit: physical pages приходят только при touch'е (lazy COW).
+- 4 KB **guard page** в начале каждого слота — stack overflow ловится
+  через `SIGSEGV` (не silent corruption).
+- Bitmap free-list для reuse слотов после fiber termination.
+- **Один GC root на тред** — `[base, base + high_water * slot_size]` —
+  снимает MAX_ROOT_SETS=128 ограничение Boehm.
+- `madvise(MADV_DONTNEED)` после dealloc — physical memory возвращается
+  ОС.
+- `madvise(MADV_NOHUGEPAGE)` для guard-page granularity.
+- pthread_key cleanup освобождает arena при thread exit.
+
+**Windows — calloc (как до D97):**
+
+- Дефолтный minicoro allocator (`calloc(56 KB)`) per-fiber.
+- GC safety обеспечивается **single-thread cooperative invariant**:
+  Boehm не запускается между yield/resume, поэтому calloc'нутые stacks
+  «логически live» в течение одного collect window.
+- Windows growable stacks через SEH guard pages — **отложено к
+  Plan 42+**, когда production Windows станет realistic use case.
+
+### Зачем гибрид, а не unified path
+
+- **Linux/macOS — primary production target** для Plan 23 M:N runtime
+  (Docker, Kubernetes, server workloads). 8 GB virtual per thread — free
+  на x86_64 (256 TB address space).
+- **Windows VirtualAlloc** `MEM_RESERVE | MEM_COMMIT` (minicoro
+  `MCO_USE_VMEM_ALLOCATOR`) commits all upfront. 256 MB × 16 threads =
+  4 GB committed без real benefit для Windows.
+- SEH-based growable stacks — отдельная инженерная задача с per-thread
+  exception handler chains. Bootstrap path работает; production-Windows
+  ждёт реального use case.
+
+### Introspection — `std.runtime.fibers`
+
+Плакируется ([std/runtime/fibers.nv](../../std/runtime/fibers.nv)):
+
+```nova
+import std.runtime.fibers
+
+let virt    = fibers.virtual_reserved()  // bytes mmap'нуто, 0 на Windows
+let total   = fibers.slot_count()         // 4096 на Linux/macOS, 0 Win
+let active  = fibers.slots_active()       // running fibers сейчас
+let peak    = fibers.high_water()         // peak concurrent
+```
+
+`slot_count() == 0` — honest sentinel «arena not active»; тесты могут
+бранчиться по нему для cross-platform проверок.
+
+### Что отвергнуто
+
+- **`MCO_USE_VMEM_ALLOCATOR` (built-in minicoro VMEM)** — commits all
+  upfront; не работает с lazy commit semantics; ломает Windows budget.
+- **`GC_add_roots` per-fiber** — упирается в `MAX_ROOT_SETS = 128`
+  Boehm compile-time константу; нельзя bump'нуть без rebuild library
+  (см. правило «не патчить сторонние библиотеки»).
+- **`GC_disable` workaround вокруг scheduler tick** — был vestigial
+  scaffolding в Plan 27 R4; удалён в Plan 41 Этап 2. Реальная защита
+  приходила от single-thread cooperative invariant + arena root, не от
+  disable.
+
+### Bootstrap-status
+
+- ✅ Arena infrastructure (Plan 41 Этап 1, commit `0b75bdcb06`)
+- ✅ Wire-up в minicoro через `_NOVA_MCO_DESC_INIT` (Plan 41 Этап 1
+  wire-up landing, commit `5ed208e84f`)
+- ✅ Удаление `_NOVA_GC_DISABLE` (Plan 41 Этап 2, commit `810898de06`)
+- ✅ `std.runtime.fibers` introspection (Plan 41 Этап 3, commit
+  `f8d345e536`)
+- ⏸ Linux Docker validation (Plan 41 Этап 4) — требует Docker daemon
+- ⏸ SIGSEGV pretty handler (P41-6) — P2, отложено

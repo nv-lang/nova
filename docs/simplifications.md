@@ -5627,3 +5627,47 @@ Module = `X.nv` (single-file) ИЛИ `X/` папка с ≥1 peer-файлов (
 
 Existing single-file модели работают без изменений. Folder-module —
 opt-in capability.
+
+---
+
+## D97: гибридная fiber stack allocation — Windows на calloc остаётся (2026-05-12)
+
+### Что упрощено
+
+Plan 41 ввёл per-thread mmap arena с lazy commit + active-range GC root
+**только для Linux/macOS**. На Windows fiber stacks по-прежнему идут
+через дефолтный minicoro `calloc(56 KB)` per-fiber + single-thread
+cooperative invariant (`_NOVA_GC_DISABLE` workaround удалён в Plan 41
+Этап 2 как vestigial — фактическая защита приходила от cooperative
+invariant, не от disable).
+
+### Что отсутствует
+
+- **Растущие стеки на Windows** — нужна SEH-based guard pages
+  с per-thread exception handler chains. Реализация ≈ 600 LOC +
+  Windows-specific debugging infrastructure.
+- **Single GC root на тред под Windows** — calloc'нутые stacks не
+  объединены в один range; теоретически могут упереться в Boehm
+  `MAX_ROOT_SETS = 128` на 128+ concurrent fibers. На bootstrap
+  не наблюдается (workloads далеко от лимита).
+- **`std.runtime.fibers` introspection на Windows** возвращает 0 для
+  всех функций — honest sentinel, как `gc.heap_size() == 0` под malloc
+  backend.
+
+### Когда вернуться к этому
+
+- Когда появится production Windows use case Nova (server workloads).
+- Когда Plan 23 M:N runtime потребует Windows multi-thread (сейчас
+  scope — Linux/Docker primary target).
+- Когда workload упрётся в MAX_ROOT_SETS лимит (наблюдаемое — не
+  предполагаемое).
+
+Решение об этом — отдельный план (Plan 42+ или Plan 50).
+
+### Что НЕ упрощено
+
+- Linux/macOS получают **full production**: 8 GB virtual per thread,
+  guard pages, lazy commit, single GC root, slot reuse, MADV_DONTNEED
+  на dealloc. Spec D97 описывает это нормативно.
+- `_NOVA_GC_DISABLE` удалён **на обеих платформах** — Plan 41 Этап 2.
+  Это был мёртвый scaffolding (никогда не вызывался в реальном коде).

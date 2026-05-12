@@ -8227,3 +8227,46 @@ deferred close_cb.
 
 **Следующий шаг:** Plan 41 Этап 2 — снять `_NOVA_GC_DISABLE`
 workaround теперь, когда arena GC roots replace per-fiber roots.
+
+---
+
+## Сессия 2026-05-12 (продолжение III): Plan 41 Этап 3 + spec D97
+
+**Этап 3 — introspection API:**
+Добавлен `std.runtime.fibers` namespace по образцу `std.runtime.gc`
+(Plan 32). 4 функции: `virtual_reserved()`, `slot_count()`,
+`slots_active()`, `high_water()`. Реализация cross-platform через
+`fiber_stats.c` wrappers — на Windows arena off, все возвращают 0
+(honest sentinel).
+
+Файлы:
+- std/runtime/fibers.nv (type-checker source of truth)
+- compiler-codegen/nova_rt/fiber_stats.c (cross-platform impl)
+- compiler-codegen/src/codegen/emit_c.rs (dispatch + type inference)
+- compiler-codegen/src/types/mod.rs (`"fibers"` в builtins)
+- compiler-codegen/src/test_runner.rs (build wire-up)
+- nova_tests/concurrency/fiber_arena_stats.nv (smoke-тест)
+
+Commit: f8d345e536.
+
+**Spec D97** — D-decision "Fiber stack allocation — per-thread mmap
+arena (Linux/macOS)" в spec/decisions/06-concurrency.md. Фиксирует:
+
+- Linux/macOS — per-thread mmap arena с lazy commit + active-range
+  GC root + guard pages + slot reuse + MADV_DONTNEED.
+- Windows — calloc-путь (single-thread cooperative invariant).
+- `std.runtime.fibers` introspection — описан в spec.
+
+D97 + index update в spec/decisions/README.md.
+
+**Также удалён obsolete тест** select_overflow_compile_error —
+Plan 40 убрал NOVA_SELECT_MAX_ARMS cap (compound literal storage
+per call), поэтому compile-error на 33 arms больше не emit'тится.
+
+**Регрессия:** 262 PASS / 1 FAIL (pre-existing select_timer_cleanup).
+
+### Что осталось по Plan 41
+
+- Этап 4: Linux Docker validation (требует Docker daemon).
+- Этап 5 docs partially done (D97 + simplifications + project-creation
+  — этот файл). Discussion-log в private repo — отдельная задача.
