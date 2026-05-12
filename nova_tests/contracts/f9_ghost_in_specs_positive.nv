@@ -1,0 +1,29 @@
+// Plan 33.3 Ф.9.7 positive: ghost-var доступен в spec-positions
+// (assert_static, assume, requires/ensures когда compose в #pure).
+
+module nova_tests.contracts.f9_ghost_in_specs_positive
+
+fn ghost_in_assert_static(x int) -> int {
+    ghost let snapshot = x
+    assert_static snapshot == x  // ghost OK в assert_static
+    x
+}
+
+fn ghost_in_assume(x int) -> int {
+    ghost let snap = x
+    assume snap >= 0  // ghost OK в assume
+    x
+}
+
+fn ghost_chain(x int) -> int {
+    ghost let g1 = x
+    ghost let g2 = g1 + 1  // ghost reads ghost — OK
+    assert_static g2 > 0 || x <= -1
+    x + 1
+}
+
+test "ghost OK в spec-positions" {
+    assert(ghost_in_assert_static(5) == 5)
+    assert(ghost_in_assume(3) == 3)
+    assert(ghost_chain(1) == 2)
+}

@@ -1,0 +1,11 @@
+// EXPECT_COMPILE_ERROR ghost variable `g` cannot be read in non-ghost code
+//
+// Plan 33.3 Ф.9.7: ghost-var в арифметическом expression non-ghost кода
+// → compile error.
+
+module nova_tests.contracts.f9_ghost_in_arith_fail
+
+fn bad(x int) -> int {
+    ghost let g = x * 2
+    x + g  // <-- g в обычной арифметике, error
+}

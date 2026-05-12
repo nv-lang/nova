@@ -1,0 +1,54 @@
+// Plan 33.3 Ф.9 combined: все 5 closure-improvements (9.1/9.2/9.3/9.4/9.5/9.7)
+// в одной программе.
+//
+// Покрытие:
+// - 9.1 ghost erasure (codegen + interp skip).
+// - 9.2 record invariant auto-enforce.
+// - 9.3 loop invariants per-iteration.
+// - 9.4 decreases recursion guard.
+// - 9.5 pre-entry loop invariant check.
+// - 9.7 ghost type-check (ghost OK в spec-positions).
+
+module nova_tests.contracts.f9_combined_features
+
+// 9.2: record with invariant.
+type Counter {
+    value int
+}
+    invariant value >= 0
+
+// 9.4: recursive fn с decreases (guard catches infinite recursion).
+fn fact(n int) -> int
+    requires n >= 0
+    decreases n
+=> if n == 0 { 1 } else { n * fact(n - 1) }
+
+fn use_all(c Counter) -> int
+    requires c.value >= 0
+{
+    // 9.1 + 9.7: ghost let, виден только в spec.
+    ghost let initial = c.value
+    assert_static initial == c.value  // 9.7: ghost OK в spec
+
+    // 9.3 + 9.5: loop с invariants. Pre-entry + per-iter.
+    let mut sum = 0
+    let mut i = 0
+    while i < c.value
+        invariant 0 <= i
+        invariant i <= c.value
+        invariant sum >= 0
+    {
+        sum = sum + i
+        i = i + 1
+    }
+
+    sum
+}
+
+test "combined features positive" {
+    let c = Counter { value: 5 }   // 9.2 invariant passes
+    assert(c.value == 5)
+    assert(use_all(c) == 0 + 1 + 2 + 3 + 4)
+    assert(fact(5) == 120)         // 9.4 normal recursion
+    assert(fact(0) == 1)
+}

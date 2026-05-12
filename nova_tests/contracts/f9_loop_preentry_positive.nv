@@ -1,0 +1,43 @@
+// Plan 33.3 Ф.9.5 positive: pre-entry invariant check passes на empty loop.
+//
+// Случай "n=0, loop не выполняется, invariant true" — должен pass'нуть
+// pre-entry check без false positives.
+
+module nova_tests.contracts.f9_loop_preentry_positive
+
+fn empty_loop_ok(n int) -> int
+    requires n >= 0
+{
+    let mut i = 0
+    while i < n
+        invariant i >= 0   // true when i == 0
+        invariant i <= n
+    {
+        i = i + 1
+    }
+    i
+}
+
+fn deep_loop(n int) -> int
+    requires n >= 0
+{
+    let mut sum = 0
+    let mut i = 0
+    while i < n
+        invariant 0 <= i
+        invariant i <= n
+    {
+        sum = sum + i
+        i = i + 1
+    }
+    sum
+}
+
+test "pre-entry positive" {
+    // n=0 — loop не выполняется, pre-entry OK (invariants true).
+    assert(empty_loop_ok(0) == 0)
+    // n>0 — loop выполняется, invariants pre-entry + per-iter OK.
+    assert(empty_loop_ok(5) == 5)
+    assert(deep_loop(0) == 0)
+    assert(deep_loop(5) == 0 + 1 + 2 + 3 + 4)
+}

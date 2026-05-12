@@ -1,0 +1,19 @@
+// EXPECT_RUNTIME_PANIC contract invariant failed in `Counter`
+//
+// Plan 33.3 Ф.9.2: record invariant check на конструкции через
+// record-литерал. Constructor с invariant-violation → runtime panic.
+
+module nova_tests.expected_runtime.f9_record_mut_invariant_fail
+
+type Counter {
+    value int
+}
+    invariant value >= 0
+    invariant value <= 100
+
+fn main() Io -> () {
+    // value == 200 нарушает `value <= 100`.
+    let c = Counter { value: 200 }
+    println("UNREACHABLE")
+    let _ = c
+}

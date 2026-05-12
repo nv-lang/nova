@@ -1,0 +1,11 @@
+// EXPECT_COMPILE_ERROR ghost variable `secret` cannot be read in non-ghost code
+//
+// Plan 33.3 Ф.9.7: ghost-var как trailing expression block'а (return value)
+// → compile error.
+
+module nova_tests.contracts.f9_ghost_as_return_fail
+
+fn leak_ghost(x int) -> int {
+    ghost let secret = x * 100
+    secret  // trailing expr — return value, не spec-position → error
+}
