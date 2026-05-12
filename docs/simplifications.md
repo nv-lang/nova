@@ -5365,3 +5365,8 @@ features.
 
 **Приоритет:** **P1 process fix** — это foundation для всех
 будущих API изменений.
+
+### Ф.9.8 (2026-05-12): loop decreases runtime check
+Снижает scope V2: loop decreases теперь enforced в runtime через
+inject snapshot + assert_static. Comlements Ф.9.4 (recursion decreases
+guard) — те же ideas applied к loop iterations.

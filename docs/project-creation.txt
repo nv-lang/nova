@@ -7558,3 +7558,27 @@ Full regression: 247/256 PASS. 9 fails — параллельный Plan 40 chan
 hardening работа другого агента (select API изменён, не везде sync'нут),
 **не моя regression** — modules/negative_capability/handler_flow/range
 все PASS.
+
+
+================================================================================
+2026-05-12 Plan 33.3 Ф.9.8: loop decreases runtime check (f4d4592d61)
+================================================================================
+
+Дополнение к Ф.9.4 (decreases для recursive fn). Аналогичный механизм
+для loop body:
+
+parser/mod.rs:
+- parse_loop_clauses возвращает (invariants, Option<decreases>).
+- inject_loop_decreases:
+  * snapshot let в начало body.
+  * assert_static `<decr> < _nova_decr_old` в конец body.
+- skip_newlines после clauses — fix для `decreases <expr>\n{`.
+
+Эффект: loops с не-уменьшающимся decreases catches'я через assert_static
+runtime panic в debug. Release-сборка стирает.
+
+Combined с Ф.9.4 — decreases enforce в обоих случаях (recursion + loop).
+SMT well-founded check полный (Dafny-grade) — отдельный milestone с Z3.
+
+Test:
+- f9_loop_decreases_positive.nv — countdown(n) с corectным decreases i.

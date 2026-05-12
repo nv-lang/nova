@@ -193,3 +193,14 @@ identifier» после codegen-erasure) — honest fallback, плохой UX.
 уже работает на assignments level; runtime check для индирекций через
 callee fn'ы требует знания их modifies — не доступно без full analysis).
 Откладывается до Z3 milestone.
+
+### 9.8 Loop decreases runtime check
+
+**Закрыто (f4d4592d61):** для loops с `decreases <expr>` парсер
+inject'ит:
+- `let _nova_decr_old = <expr>` в начало body (snapshot).
+- `assert_static (<expr>) < _nova_decr_old` в конец body (decrement check).
+
+Эффект: loop не decrementing → runtime assert_static panic в debug.
+Catches infinite loops через assert_static механизм. SMT well-founded
+check (полный Dafny-grade) — ждёт Z3.
