@@ -5440,3 +5440,45 @@ registration для str — отдельная работа.
 `let (left, build_str) = ...` теряет element types — обе переменные
 объявляются `nova_int` в C, что ломает downstream usage как str.
 Pre-existing codegen bug, отдельный fix.
+
+
+---
+
+## Plan 34 closing — doc-комплект (process simplification, 2026-05-12)
+
+**Где:** docs/plans/34-stdlib-typecheck-and-compile-fix.md +
+docs/plans/README.md + project-creation.txt + simplifications.md +
+discussion-log.md.
+
+**Что упрощено:** при закрытии Plan 34 (Ф.7 + follow-up #1 + Ф.8)
+docs-обновления выполнялись **не атомарно**: spec sync в одном
+commit'е (5d71e0843d), agent захватил docs/project-creation +
+simplifications в свой commit (e7d19dac92), discussion-log Этап 92
+отдельным commit'ом, plan-34 .md и README — позже в 759cee2a40.
+
+Это **процессное упрощение** — не сделать всё в одном focused
+commit'е (как идеально). Реально оказалось split на ~5 commit'ов
+(включая агентские захваты).
+
+**Почему:** параллельный агент (Plan 33/40 работа) непрерывно
+коммитил в master, захватывая мои staged-файлы в свои коммиты.
+Это **race condition** на staging area — после `git add` пока я
+писал длинный commit-message, агент успевал свой `git add ... &&
+git commit`, и моя следующая попытка commit'а либо проходила без
+docs/, либо вообще ничего не staged.
+
+**Как починить:**
+1. **Coordination** — если работаем параллельно, использовать
+   worktree-изоляцию (`git worktree add`) или мьютекс на staging.
+2. **Tooling** — `git commit -a -m "..."` (commit everything tracked)
+   вместо `add + commit` две стадии. Минус: catch'ит чужие модификации
+   тоже.
+3. **Process** — после **любой** plan-file правки сразу делать
+   тройку docs обновлений + commit, **до** того как агент возьмёт
+   следующую задачу. Это в feedback_project_docs.md как правило, но
+   на практике сессия становится непредсказуемой при параллельных
+   агентах.
+
+**Приоритет:** P2 — текущий compromise работает (content сохраняется,
+subject lines в чужих commit'ах inaccurate но diff виден). Полное
+решение требует Git workflow договорённости с пользователем.

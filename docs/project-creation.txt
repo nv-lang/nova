@@ -7811,3 +7811,59 @@ codegen bug**, выходит за scope str compare fix. Документиру
 follow-up.
 
 Full regression: **262/262 PASS**.
+
+
+================================================================================
+2026-05-12 Plan 34 Ф.8 closing entry — plan-34 .md + README synced
+================================================================================
+
+После предыдущей записи (Plan 34 followup #2 — spec sync + focused
+tests) пользователь напомнил «сохрани, что сделал в плане и в спеке».
+Spec был уже sync'нут в C1 commit, но **сам plan-34 .md** не содержал
+Ф.8 секцию — она была только в discussion-log + project-creation
+запись агента.
+
+### Что сделано
+
+1. **docs/plans/34-stdlib-typecheck-and-compile-fix.md** — дописана
+   Ф.8 секция с полным описанием:
+   - Ф.8.1 Spec sync — список изменений в 04-effects.md (table +
+     matrix + footnote) и 08-runtime.md (D26 signatures).
+   - Ф.8.2 Focused tests — таблица 8 файлов в nova_tests/plan34/
+     (4 positive + 4 negative) с описанием каждого.
+   - Дизайн-решение про inline reproducers vs direct handlers.nv calls.
+   - Acceptance + Process lesson + Commits + Файлы Ф.8.
+
+2. **docs/plans/README.md** — строка Plan 34 обновлена: добавлены
+   Ф.7 (xoshiro256++ + mut_clock + seed u64) + follow-up #1 (gc.nv
+   external declarations) + Ф.8 (spec sync + 8 tests). Итоговая
+   метрика в одной строке: 45/45 std type-check, 8/8 plan34 tests,
+   249/256 nova_tests (с note про 7 fail'ов агента).
+
+### Spec verified
+
+`grep mut_clock|seeded(seed u64)|fixed_ms(ms u64)|xoshiro` →
+8 hits в spec/decisions/04-effects.md + 2 hits в 08-runtime.md.
+Всё консистентно с handlers.nv implementation.
+
+### Acceptance
+
+- ✅ plan-34 .md содержит полную Ф.8 секцию (commit 759cee2a40).
+- ✅ plans/README.md Plan 34 строка обновлена.
+- ✅ spec/decisions/ sync verified.
+- ✅ Этот project-creation entry — формализация closing шага.
+
+### Memory reminder
+
+Пользователь повторно напомнил про правило «не забывай обновлять
+project-creation.txt, simplifications.md, discussion-log.md и
+комитится после каждой большой задачи». Правило уже было в
+feedback_project_docs.md (Ф.7 reminder), но я **выполнил частично**
+для текущей задачи — обновил plan-34 .md + README, но не сразу
+project-creation/simplifications/discussion-log. Эта запись закрывает
+gap. Lesson: после **каждой** plan-file правки — сразу проверить
+тройку docs + private.
+
+Plan 34 EXTENDED + Ф.7 + follow-up #1 + Ф.8 — закрыт, doc-комплект
+полный, spec sync verified.
+
