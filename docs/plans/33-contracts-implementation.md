@@ -30,7 +30,7 @@ Rust-mainstream (где контрактов нет) и Rust+kani/prusti (где
 | `ghost` в debug runtime | Никогда не emit (как Dafny) — ghost чисто spec-уровень | 33.3 |
 | Engine-agnostic SMT | `trait SmtBackend`; Z3 — primary, CVC5 — secondary impl | 33.1+ |
 | Contract-DSL | подмножество Nova-expr + magic-имена (`result`, `old`) | 33.1 закладывает |
-| Default unknown в release | compile error (R20) — программист обязан явно `@unverified` | 33.1 |
+| Default unknown в release | compile error (R20) — программист обязан явно `#unverified` | 33.1 |
 | `simplifications.md` | не используется этим планом — что не входит, явно в «Не входит» | все подпланы |
 
 ## Подпланы
@@ -50,7 +50,7 @@ Z3 SMT → debug runtime check → zero-cost release. Только straight-line
 
 **Цель:** превратить 33.1 в инструмент, способный верифицировать
 реальный imperative-код. Добавляет `reads`/`modifies`, loop invariants,
-`decreases`, composition `@pure` функций, record `invariant`.
+`decreases`, composition `#pure` функций, record `invariant`.
 
 **Зависит от:** 33.1 (`SmtBackend`, ContractCtx, runtime helpers).
 
@@ -63,7 +63,7 @@ Z3 SMT → debug runtime check → zero-cost release. Только straight-line
 **Цель:** «не хуже Dafny». Эффект handler-state (`pure_view` + axiom),
 ghost-переменные, `assume`/`assert_static`, bounded quantifiers,
 IEEE 754 FP, string-теория, sets/maps, incremental cache, parallel
-verification, module strict mode, `@trusted` external, AI-friendly diag
+verification, module strict mode, `#trusted` external, AI-friendly diag
 + JSON, Dafny-tutorial port (20 примеров).
 
 **Зависит от:** 33.2 (loop invariants, frame, composition).

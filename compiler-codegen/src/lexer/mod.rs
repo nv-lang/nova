@@ -70,6 +70,9 @@ impl<'a> Lexer<'a> {
             b';' => self.single(TokenKind::Semicolon),
             b':' => self.single(TokenKind::Colon),
             b'@' => self.single(TokenKind::At),
+            // Plan 33.1: `#` — attribute prefix (`#realtime`, `#pure`, etc.).
+            // Не комментарий (комментарии только `//`). См. D-NN attribute syntax.
+            b'#' => self.single(TokenKind::Hash),
             b'?' => match self.peek_at(1) {
                 Some(b'?') => {
                     self.pos += 2;

@@ -193,12 +193,12 @@ fn main() Io -> () {
   отдельная функция от panic-аналога, везде не вызывает destructor'ы /
   defer'ы.
 
-#### Опция: строгий режим `@strict_total`
+#### Опция: строгий режим `#strict_total`
 
 Для критичного кода (медицина, финансы, авионика):
 
 ```nova
-@strict_total
+#strict_total
 fn critical(...) -> Result =>
     // деление на ноль здесь — compile error
     // обязаны checked-операции: safe_div(a, b)?, arr.get(i)?

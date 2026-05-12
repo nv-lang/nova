@@ -9,19 +9,26 @@
 | [D24](#d24-стратегия-smt-проверки-контрактов) | Стратегия SMT-проверки контрактов |
 | [D89](#d89-test-tooling-конвенции--expect-маркеры-для-negative-тестов) | Test-tooling конвенции: `EXPECT_*` маркеры для negative-тестов |
 | [D95](#d95-cli-path-конвенции--nova-check--nova-test) | CLI path конвенции — `nova check <path>` / `nova test <path>` |
+| [D96](#d96-синтаксис-атрибутов-name-без-квадратных-скобок) | Синтаксис атрибутов — `#name` без квадратных скобок |
 
 ---
 
 ## D24. Стратегия SMT-проверки контрактов
+
+> **Note (Plan 33.1, D96):** Атрибуты `must_verify` / `unverified` /
+> `verify_timeout(N)` / `pure` используют префикс **`#`** (не `@`), см.
+> [D96](#d96-синтаксис-атрибутов-name-без-квадратных-скобок).
+> Примеры ниже сохранены с историческим `@` для контекста, но в коде
+> Nova используется `#name`.
 
 ### Что
 Контракты в сигнатуре (`requires`/`ensures`/`invariant`) проверяются
 **SMT-движком на этапе компиляции** с явным таймаутом и fallback на
 runtime-проверку. Контракт, который SMT не смог доказать, **не
 блокирует** компиляцию по умолчанию — он становится runtime-assert'ом
-в debug и тихо игнорируется в release с предупреждением `@unverified`.
+в debug и тихо игнорируется в release с предупреждением `#unverified`.
 Программист может явно требовать статическое доказательство через
-`@must_verify` — тогда компиляция падает, если SMT не справился.
+`#must_verify` — тогда компиляция падает, если SMT не справился.
 
 ### Правило
 
@@ -614,3 +621,160 @@ MVP: exit 0 vs 1. Расширение до 0/1/2/101 — sub-plan 36.A (см.
   implicit-excludes; sub-plan 36.D.
 
 
+
+
+---
+
+## D96. Синтаксис атрибутов — `#name` без квадратных скобок
+
+### Что
+
+Function/type/module-level атрибуты в Nova используют префикс **`#`** (а не `@`),
+**без обязательных квадратных скобок** (как в Rust `#[name]`).
+
+```nova
+#realtime
+#pure
+#must_verify
+fn must_pure(x int) -> int
+    requires x > 0
+    ensures result > 0
+=> x + 1
+```
+
+Атрибуты с аргументами — через **круглые** скобки (как Java/Kotlin/Python/Scala):
+
+```nova
+#verify_timeout(5000)
+#allow_transit(Db, Log)
+#derive(Json, FromRow)
+fn process_order(o Order) -> Receipt => ...
+```
+
+### Правило
+
+#### Грамматика
+
+```
+Attribute := '#' Ident ( '(' ArgList ')' )?
+ArgList   := Expr (',' Expr)*
+```
+
+- Простой маркер: `#pure`.
+- С аргументами: `#verify_timeout(5000)`.
+- Несколько атрибутов — на отдельных строках перед declaration.
+
+#### Position
+
+Атрибуты разрешены **только перед declarations** (`fn` / `type` / `module`).
+
+**НЕ** разрешены:
+- Перед `let` / `const` внутри тела функции.
+- Перед expressions внутри тела.
+- Inner-attributes (`#![...]` в Rust) — **не вводим**; для module-level
+  директив есть keyword'ы (`module`, `import`).
+
+#### Префикс `#` (не `@`)
+
+Префикс `@` уже занят в Nova для другого: **receiver/self-доступ**
+в методах ([D35](03-syntax.md#d35)):
+
+| Контекст | Синтаксис | Семантика |
+|---|---|---|
+| Method-declaration | `fn Account @balance()` | `@` = «instance-метод» |
+| Self-field access | `@_balance`, `@owner` | `@` = self.field |
+| Self-bare reference | `=> @` (в методе) | `@` = сам receiver |
+| **Attribute** | `#realtime`, `#pure` | `#` = модификатор declaration |
+
+Использование одного `@` для receiver-access И для attributes даёт
+dual-use символа, что создаёт когнитивную нагрузку и потенциал для
+ошибок LLM при генерации кода. Префикс `#` — свободен, не использовался
+в Nova (комментарии только `//`).
+
+### Почему
+
+#### AI-first связь
+
+Один символ = одна семантика. LLM, читая `@something`, не должен
+гадать «attribute или self-access». `#` для attributes, `@` для self —
+прозрачное разделение.
+
+#### Прецеденты
+
+| Язык | Прост. атрибут | С args |
+|---|---|---|
+| Java | `@Override` | `@SuppressWarnings("...")` |
+| Kotlin | `@Composable` | `@JvmName("foo")` |
+| Python | `@property` | `@dataclass(frozen=True)` |
+| Scala | `@inline` | `@deprecated("msg", "1.0")` |
+| C# | `[Obsolete]` | `[Obsolete("msg")]` |
+| Rust | `#[derive]` | `#[derive(Debug)]` |
+| **Nova** | **`#pure`** | **`#verify_timeout(5000)`** |
+
+**Большинство mainstream языков** используют префикс **без обязательных
+скобок** — скобки появляются только когда есть аргументы. Rust с
+`#[...]` — исключение, обусловленное необходимостью inner attributes
+`#![...]`, proc-macros (token tree forwarding) и атрибутов на
+expressions. У Nova ни одной из этих причин нет.
+
+#### Почему не `#[name]` (Rust-стиль)
+
+Скобки `#[...]` в Rust обоснованы тремя историческими факторами,
+которые **не применимы** к Nova:
+
+1. **Proc-macros с произвольным token tree.** `#[serde(rename = "x")]`
+   передаётся в proc-macro как сырой token stream. Nova **не имеет
+   proc-macros** (см. [revolutionary.md](../revolutionary.md): «no macro
+   AST-rewriting»); комптайм-метапрограммирование делается через
+   typed `comptime`, не через rewriting.
+
+2. **Inner attributes `#![...]`** для модуля / crate-level директив.
+   У Nova module declared через keyword `module a.b.c`, никаких inner
+   attributes не нужно.
+
+3. **Атрибуты на expressions** (`vec![#[cfg(unix)] 1, 2, 3]`). У Nova
+   атрибуты только на declarations — это явное design-ограничение.
+
+С круглыми скобками для arguments (`#name(args)`) парсер однозначно
+разрешает в declaration-position. Это работает в Java/Kotlin/Python/Scala
+уже десятилетиями.
+
+### Что отвергнуто
+
+- **`@name` для attributes** — конфликт с receiver-prefix `@field`.
+  Dual-use символа = плохо для AI-first языка.
+- **`#[name]` (Rust-стиль)** — скобки избыточны без proc-macros, inner
+  attributes или атрибутов на expressions. Карго-культ к Rust без
+  понимания причин.
+- **Keyword-форма (`pure fn`)** — ломает существующий синтаксис
+  ([D64 @realtime](#d64-realtime-блок); breaking change для каждого
+  атрибута); композиция `must_verify pure fn` читается странно
+  (два keyword'а подряд).
+- **`name fn` (modifier-keyword без префикса)** — конфликт с обычными
+  идентификаторами; нужны reserved words для каждого атрибута.
+
+### Цена
+
+1. **Миграция `@realtime` → `#realtime`** (Plan 16 уже использовал
+   `@realtime`). На момент D96 — 5 .nv-файлов в repo. Breaking change,
+   но Nova не в production (см. `feedback_revolutionary_changes`).
+2. **Документация:** все примеры в spec/, docs/, README обновляются.
+3. **Будущее расширение:** если когда-либо понадобятся proc-macros
+   или inner attributes — добавляется через **отдельный D-decision**
+   (например `##name` для inner) без breaking change для `#name` outer.
+
+### Связь
+
+- [D24](#d24-стратегия-smt-проверки-контрактов) — `#must_verify`,
+  `#unverified`, `#verify_timeout(N)`, `#pure` атрибуты для контрактов.
+- [D64](04-effects.md) — `#realtime` / `#realtime nogc` атрибут.
+- [D62](04-effects.md) — `#allow_transit(Effects...)` атрибут для
+  transit-effect warning suppression.
+- [revolutionary.md](../revolutionary.md) — «no macro AST-rewriting»
+  как philosophy reason против Rust-style `#[...]` token tree.
+
+### Используется в
+
+- Plan 16 Ф.5 — `#realtime` / `#realtime nogc`.
+- Plan 33.1 — `#must_verify`, `#unverified`, `#verify_timeout(N)`, `#pure`.
+- Plan 33.3 — `#verify_handler`, `#trusted`, `#must_verify_module`.

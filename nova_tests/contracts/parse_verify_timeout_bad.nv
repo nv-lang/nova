@@ -1,10 +1,10 @@
-// EXPECT_COMPILE_ERROR `@verify_timeout(N)` expects positive integer milliseconds
+// EXPECT_COMPILE_ERROR `#verify_timeout(N)` expects positive integer milliseconds
 //
-// Plan 33.1 Ф.1 (D24 §35): @verify_timeout требует положительный int.
+// Plan 33.1 Ф.1 (D24 §35): #verify_timeout требует положительный int.
 
 module nova_tests.contracts.parse_verify_timeout_bad
 
-@verify_timeout(0)
+#verify_timeout(0)
 fn bad_timeout(x int) -> int
     requires x > 0
 => x

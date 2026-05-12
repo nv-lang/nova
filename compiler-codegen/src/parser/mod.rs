@@ -277,31 +277,33 @@ impl Parser {
                 ));
             }
         }
-        // Plan 16 (D64 §3697): `@realtime` / `@realtime nogc` префикс
-        // перед `fn`. Эквивалент оборачивания body в `realtime { ... }`.
+        // Plan 16 (D64 §3697) + Plan 33.1 (D-attr-syntax):
+        // `#realtime` / `#realtime nogc` префикс перед `fn`. Эквивалент
+        // оборачивания body в `realtime { ... }`. Атрибуты — через `#`
+        // (а не `@`, чтобы не конфликтовать с receiver-prefix `@field`).
         // Парсим в RealtimeAttr enum, передаём в parse_fn.
         let realtime_attr = self.parse_realtime_attr()?;
         if !matches!(realtime_attr, RealtimeAttr::None)
             && !matches!(self.peek().kind, TokenKind::KwFn)
-            && !matches!(self.peek().kind, TokenKind::At)
+            && !matches!(self.peek().kind, TokenKind::Hash)
         {
             let span = self.peek().span;
             return Err(Diagnostic::new(
-                "`@realtime` is only valid before `fn`",
+                "`#realtime` is only valid before `fn`",
                 span,
             ));
         }
-        // Plan 33.1 (D24): `@must_verify` / `@unverified` / `@verify_timeout(ms)` /
-        // `@pure` — contract-related атрибуты перед `fn`. Парсятся
-        // отдельно от `@realtime`, могут идти в любом порядке.
-        // Не keyword'ы в лексере (контекстный разбор).
+        // Plan 33.1 (D24): `#must_verify` / `#unverified` / `#verify_timeout(ms)` /
+        // `#pure` — contract-related атрибуты перед `fn`. Парсятся
+        // отдельно от `#realtime`, могут идти в любом порядке.
+        // Не keyword'ы в лексере (контекстный разбор после `#`).
         let contract_attrs = self.parse_contract_attrs()?;
         if !contract_attrs.is_empty()
             && !matches!(self.peek().kind, TokenKind::KwFn)
         {
             let span = self.peek().span;
             return Err(Diagnostic::new(
-                "contract attributes (`@must_verify` / `@unverified` / `@verify_timeout` / `@pure`) are only valid before `fn`",
+                "contract attributes (`#must_verify` / `#unverified` / `#verify_timeout` / `#pure`) are only valid before `fn`",
                 span,
             ));
         }
@@ -324,21 +326,22 @@ impl Parser {
         }
     }
 
-    /// Plan 16 (D64 §3697): parse `@realtime` или `@realtime nogc`
-    /// атрибут перед fn-declaration. Возвращает RealtimeAttr::None
-    /// если префикса нет.
+    /// Plan 16 (D64 §3697) + Plan 33.1 (D-attr-syntax):
+    /// parse `#realtime` или `#realtime nogc` атрибут перед fn-declaration.
+    /// Возвращает RealtimeAttr::None если префикса нет.
     ///
     /// `realtime` — keyword (TokenKind::KwRealtime), `nogc` — обычный
-    /// identifier (не keyword в lexer'е).
+    /// identifier (не keyword в lexer'е). Префикс `#`, не `@`
+    /// (разделение от receiver-prefix).
     fn parse_realtime_attr(&mut self) -> Result<RealtimeAttr, Diagnostic> {
-        if !matches!(self.peek().kind, TokenKind::At) {
+        if !matches!(self.peek().kind, TokenKind::Hash) {
             return Ok(RealtimeAttr::None);
         }
-        // Look ahead: должно быть `@` затем `realtime` keyword.
+        // Look ahead: должно быть `#` затем `realtime` keyword.
         if !matches!(self.peek_at(1).kind, TokenKind::KwRealtime) {
             return Ok(RealtimeAttr::None);
         }
-        self.bump(); // @
+        self.bump(); // #
         self.bump(); // realtime
         // Optional `nogc` modifier (Ident, не keyword).
         let nogc = if let TokenKind::Ident(ref n) = self.peek().kind {
@@ -355,25 +358,26 @@ impl Parser {
     /// Plan 33.1 (D24): contract-related атрибуты перед fn-declaration.
     ///
     /// Поддерживаемые:
-    /// - `@must_verify` — SMT обязан доказать (D24 §50).
-    /// - `@unverified` — отказ от SMT, всегда runtime fallback в debug,
+    /// - `#must_verify` — SMT обязан доказать (D24 §50).
+    /// - `#unverified` — отказ от SMT, всегда runtime fallback в debug,
     ///   стирается в release (D24 §53).
-    /// - `@verify_timeout(N)` — локальный override SMT-timeout в ms.
-    /// - `@pure` — assertion что функция чистая (использование в контрактах
+    /// - `#verify_timeout(N)` — локальный override SMT-timeout в ms.
+    /// - `#pure` — assertion что функция чистая (использование в контрактах
     ///   composition через 33.2).
     ///
     /// Контекстный разбор: keyword'ов в лексере нет, парсер ищет
-    /// `@` + Ident в position перед `fn`.
+    /// `#` + Ident в position перед `fn`. Префикс `#` (не `@`) —
+    /// разделение от receiver-prefix.
     fn parse_contract_attrs(&mut self) -> Result<ContractAttrs, Diagnostic> {
         let mut attrs = ContractAttrs::default();
         loop {
-            if !matches!(self.peek().kind, TokenKind::At) {
+            if !matches!(self.peek().kind, TokenKind::Hash) {
                 break;
             }
-            // Look ahead: `@` затем Ident с одним из contract-keyword'ов.
+            // Look ahead: `#` затем Ident с одним из contract-keyword'ов.
             let next_name = match &self.peek_at(1).kind {
                 TokenKind::Ident(n) => n.clone(),
-                _ => break, // не идентификатор после `@` — выходим
+                _ => break, // не идентификатор после `#` — выходим
             };
             match next_name.as_str() {
                 "must_verify" => {
@@ -384,7 +388,7 @@ impl Parser {
                             span,
                         ));
                     }
-                    self.bump(); // @
+                    self.bump(); // #
                     self.bump(); // must_verify
                     attrs.verify_mode = VerifyMode::MustVerify;
                 }
@@ -396,7 +400,7 @@ impl Parser {
                             span,
                         ));
                     }
-                    self.bump(); // @
+                    self.bump(); // #
                     self.bump(); // unverified
                     attrs.verify_mode = VerifyMode::Unverified;
                 }
@@ -404,11 +408,11 @@ impl Parser {
                     if attrs.verify_timeout_ms.is_some() {
                         let span = self.peek().span;
                         return Err(Diagnostic::new(
-                            "duplicate `@verify_timeout` attribute",
+                            "duplicate `#verify_timeout` attribute",
                             span,
                         ));
                     }
-                    self.bump(); // @
+                    self.bump(); // #
                     self.bump(); // verify_timeout
                     self.expect(&TokenKind::LParen)?;
                     let ms = match self.peek().kind {
@@ -420,7 +424,7 @@ impl Parser {
                         _ => {
                             let span = self.peek().span;
                             return Err(Diagnostic::new(
-                                "`@verify_timeout(N)` expects positive integer milliseconds",
+                                "`#verify_timeout(N)` expects positive integer milliseconds",
                                 span,
                             ));
                         }
@@ -432,15 +436,15 @@ impl Parser {
                     if matches!(attrs.purity, Purity::Pure) {
                         let span = self.peek().span;
                         return Err(Diagnostic::new(
-                            "duplicate `@pure` attribute",
+                            "duplicate `#pure` attribute",
                             span,
                         ));
                     }
-                    self.bump(); // @
+                    self.bump(); // #
                     self.bump(); // pure
                     attrs.purity = Purity::Pure;
                 }
-                _ => break, // unknown @-name — не contract-attr, выходим
+                _ => break, // unknown #-name — не contract-attr, выходим
             }
             self.skip_newlines();
         }

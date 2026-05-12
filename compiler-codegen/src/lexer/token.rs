@@ -94,6 +94,11 @@ pub enum TokenKind {
     Semicolon,
     Colon,
     At,
+    /// `#` — префикс для function/type/module attributes
+    /// (`#realtime`, `#pure`, `#must_verify` и т.д.).
+    /// Plan 33.1: мигрировано с `@` на `#` чтобы разделить attribute-
+    /// prefix от receiver-prefix `@` (см. D-NN attribute syntax).
+    Hash,
     Dot,
     DotDot,
     DotDotEq,
@@ -210,6 +215,7 @@ impl TokenKind {
             TokenKind::Semicolon => "`;`",
             TokenKind::Colon => "`:`",
             TokenKind::At => "`@`",
+            TokenKind::Hash => "`#`",
             TokenKind::Dot => "`.`",
             TokenKind::DotDot => "`..`",
             TokenKind::DotDotEq => "`..=`",

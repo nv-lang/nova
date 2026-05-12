@@ -1,6 +1,6 @@
 // EXPECT_COMPILE_ERROR suspend-effect `Time`
 //
-// Plan 16 Ф.5 (D64 §3697): @realtime атрибут на fn оборачивает body
+// Plan 16 Ф.5 (D64 §3697): #realtime атрибут на fn оборачивает body
 // в realtime-context. Внутри запрещены suspend-effects.
 
 module nova_tests.negative_capability.realtime_attr_suspend
@@ -11,12 +11,12 @@ type Time effect {
 
 fn nap(ms int) Time -> () => Time.sleep(ms)
 
-@realtime
+#realtime
 fn rt_with_sleep() -> () {
     nap(100)
 }
 
-test "@realtime fn — sleep блокируется" {
+test "#realtime fn — sleep блокируется" {
     rt_with_sleep()
     assert(true)
 }

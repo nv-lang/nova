@@ -5835,3 +5835,70 @@ Negative runtime (через EXPECT_RUNTIME_PANIC):
 После Ф.3 SMT доказанные контракты в release будут стираться (как и сейчас),
 но `@must_verify` без proof будет давать compile error (R20).
 
+
+
+================================================================================
+2026-05-12 D96: Атрибуты через #name — миграция @-attrs на #-attrs
+================================================================================
+
+Plan 33.1 при добавлении @must_verify / @unverified / @verify_timeout / @pure
+выявил overload префикса @: он уже использовался для receiver-доступа
+(fn Account @balance(), @field в теле, @ как self-ref). Dual-use одного
+символа создавал когнитивную нагрузку и потенциал для ошибок LLM-генерации.
+
+### Новый D96 (spec/decisions/09-tooling.md)
+
+Синтаксис атрибутов:
+- Префикс `#` (вместо `@`).
+- Без квадратных скобок (vs Rust `#[name]`).
+- Аргументы через круглые: `#verify_timeout(5000)`, `#allow_transit(Db, Log)`.
+- Position: только перед declarations (fn / type / module), не на выражениях.
+- Inner attributes не вводятся (для module-level есть keyword `module`).
+
+### Обоснование
+
+Скобки `#[...]` в Rust обусловлены тремя историческими факторами:
+1. Proc-macros с произвольным token-tree forwarding.
+2. Inner attributes `#![...]` для crate/module-level.
+3. Атрибуты на expressions (`vec![#[cfg(unix)] 1, ...]`).
+
+У Nova ни одна из этих причин не применима:
+1. No macro AST-rewriting (philosophy, revolutionary.md).
+2. Module-level через keyword `module a.b.c`.
+3. Атрибуты только на declarations (design constraint).
+
+Mainstream-прецеденты — Java/Kotlin/Python/Scala — все используют префикс
+**без обязательных скобок**. Nova следует этому пути.
+
+### Миграция
+
+Codegen:
+- TokenKind::Hash добавлен в lexer (один-байтовый токен `#`).
+- parse_realtime_attr и parse_contract_attrs переписаны на Hash вместо At.
+- Diagnostic-сообщения обновлены: "`#realtime`", "`#verify_timeout`" и т.д.
+
+.nv тесты (5 файлов):
+- nova_tests/effects/forbid_realtime.nv
+- nova_tests/negative_capability/realtime_attr_suspend.nv
+- nova_tests/contracts/parse_basic.nv
+- nova_tests/contracts/parse_duplicate_verify_mode.nv
+- nova_tests/contracts/parse_verify_timeout_bad.nv
+
+Все @-attribute usages → #-attribute (через replace_all=true + manual edits
+для случаев с одним вхождением в нужном контексте).
+
+Spec:
+- spec/decisions/04-effects.md: `@realtime` → `#realtime`, `@allow_transit`
+  → `#allow_transit`.
+- spec/decisions/08-runtime.md: `@strict_total` → `#strict_total`.
+- spec/decisions/09-tooling.md: D24 — note про D96; D96 — full definition.
+
+Plan-docs (4 файла, sed batch replace):
+- docs/plans/33-contracts-implementation.md
+- docs/plans/33.1-contracts-core.md
+- docs/plans/33.2-contracts-imperative.md
+- docs/plans/33.3-contracts-advanced.md
++ docs/plans/README.md строки 33.2/33.3 manual update.
+
+Regression: 191/191 PASS. 0 регрессий.
+

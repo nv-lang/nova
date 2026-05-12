@@ -2,8 +2,11 @@
 //
 // Проверяем что:
 // 1. requires/ensures парсятся после сигнатуры.
-// 2. @must_verify / @unverified / @verify_timeout / @pure парсятся как атрибуты.
+// 2. #must_verify / #unverified / #verify_timeout / #pure парсятся как атрибуты.
 // 3. Функции без контрактов продолжают работать (backward-compat).
+//
+// Plan 33.1 (D-attr-syntax): атрибуты через `#`, не `@` (разделение от
+// receiver-prefix `@field`).
 
 module nova_tests.contracts.parse_basic
 
@@ -40,33 +43,33 @@ fn safe_divide(a int, b int) -> int
     ensures b > 0 ==> result >= 0
 => a / b
 
-// Атрибут @must_verify.
-@must_verify
+// Атрибут #must_verify.
+#must_verify
 fn must_double(x int) -> int
     requires x > 0
     ensures result == x * 2
 => x * 2
 
-// Атрибут @unverified.
-@unverified
+// Атрибут #unverified.
+#unverified
 fn unverified_fn(x int) -> int
     requires x > 0
 => x
 
-// Атрибут @pure.
-@pure
+// Атрибут #pure.
+#pure
 fn pure_add(a int, b int) -> int => a + b
 
-// Атрибут @verify_timeout.
-@verify_timeout(5000)
+// Атрибут #verify_timeout.
+#verify_timeout(5000)
 fn slow_proof(x int) -> int
     requires x > 0
     ensures result > 0
 => x + 1
 
 // Комбинация атрибутов.
-@pure
-@must_verify
+#pure
+#must_verify
 fn must_pure(x int) -> int
     requires x > 0
     ensures result > 0

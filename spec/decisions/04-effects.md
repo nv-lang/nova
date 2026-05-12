@@ -1175,7 +1175,7 @@ implementation хотя оба доступны вызывающему).
 > «полный транзитивный вывод эффектов = compile error при missing
 > в public». После D62 вывод **прямых** эффектов остался обязательным
 > (compile error если не объявлены), но транзитивные эффекты теперь
-> дают **warning** (suppressable через `@allow_transit(...)` или
+> дают **warning** (suppressable через `#allow_transit(...)` или
 > `Nova.toml`). «Чистая функция = проверенный факт» теперь работает
 > как «**прямой** эффект отсутствует» — функция может транзитивно
 > делать `Db.exec`, но если она сама не вызывает `Db.X`, она
@@ -1252,7 +1252,7 @@ export fn bad(x int) -> int =>
 3. Каждый вызов функции с эффектами **в чужой сигнатуре** →
    - `Fail` транзитивно добавляется (strict).
    - Другие эффекты — warning «не объявленный транзитивный X»,
-     suppressable через `@allow_transit(X)`.
+     suppressable через `#allow_transit(X)`.
 4. Мутация `@field` в `mut @method` ([03-syntax.md → D35](03-syntax.md#d35))
    — это `mut`-метод, не эффект (D62 убрал `Mut`).
 
@@ -2481,7 +2481,7 @@ Type checker:
 Программист может явно подавить warning:
 
 ```nova
-@allow_transit(Db, Log)
+#allow_transit(Db, Log)
 fn helper(u User) -> () {
     save(u)         // save имеет Db Log, но helper не объявляет — без warning
 }
@@ -2931,7 +2931,7 @@ callback ничего не делает) или через явный whitelist 
   (большинство уже так — реальные функции используют свои эффекты
   напрямую).
 2. **Bootstrap-компилятор**: warning для транзитивных эффектов,
-  strict для Fail. Атрибут `@allow_transit` в парсере (опционально).
+  strict для Fail. Атрибут `#allow_transit` в парсере (опционально).
 3. **R-главы переписать** — революционная заявка ослабляется. Это
   важно для маркетинга/документации, README.
 
@@ -3757,12 +3757,13 @@ fn update_counter(counter mut Counter) {
 }
 ```
 
-### Атрибут `@realtime` на функции
+### Атрибут `#realtime` на функции
 
-Sugar для функции целиком:
+Sugar для функции целиком (атрибут-префикс `#` — см.
+[D96](09-tooling.md#d96-синтаксис-атрибутов-name-без-квадратных-скобок)):
 
 ```nova
-@realtime
+#realtime
 fn checksum(data []byte) -> int {
     let mut sum = 0
     for b in data { sum += b as int }
