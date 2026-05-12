@@ -1777,7 +1777,12 @@ pub fn run_one(opts: &TestBuildOpts) -> Outcome {
 /// AD6 (Plan 35 v2): unified ManifestResolver — package roots ≠
 /// workspace root. Этот helper находит **workspace** для resolve
 /// std/* imports.
-fn find_repo_root_from(start: &Path) -> Option<PathBuf> {
+///
+/// Plan 35 sub-plan 35.B (sync): сделан `pub` для использования из
+/// nova-cli — раньше nova-cli имел отдельный, legacy lookup (первый
+/// nova.toml), который мог найти nova_tests/nova.toml вместо
+/// repo/nova.toml в repos с nested manifest'ами.
+pub fn find_repo_root_from(start: &Path) -> Option<PathBuf> {
     let abs = start.canonicalize().ok()?;
     let mut dir = abs.parent()?.to_path_buf();
     let mut last_toml_dir: Option<PathBuf> = None;

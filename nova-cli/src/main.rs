@@ -240,22 +240,45 @@ enum Cmd {
 // ---------- repo root discovery ----------
 
 /// Walk up from CWD until a directory containing `nova.toml` is found.
+/// Plan 35 sub-plan 35.B (sync): workspace-aware lookup из CWD. Использует
+/// `nova_codegen::test_runner::find_repo_root_from` — тот же helper что
+/// test_runner pipeline (D78 AD6: prefer `[workspace]`-marked nova.toml,
+/// иначе topmost nova.toml). Без sync nova-cli мог найти первый встреченный
+/// nova.toml (nova_tests/nova.toml в nested-repos), что ломало std-import
+/// resolve.
 fn find_repo_root() -> Result<PathBuf> {
-    let mut dir = std::env::current_dir()
+    let cwd = std::env::current_dir()
         .map_err(|e| anyhow!("cannot determine current directory: {}", e))?;
-    loop {
-        if dir.join("nova.toml").exists() {
-            return Ok(dir);
-        }
-        match dir.parent() {
-            Some(p) => dir = p.to_path_buf(),
-            None => bail!(
-                "nova.toml not found — are you inside a Nova project?\n\
-                 (Searched from {} up to filesystem root.)",
-                std::env::current_dir().unwrap_or_default().display()
-            ),
-        }
-    }
+    // find_repo_root_from принимает path к файлу — даём ему синтетический
+    // path в cwd (parent будет cwd), что симулирует «ищем root от cwd».
+    let probe = cwd.join("__novacli_probe__.nv");
+    nova_codegen::test_runner::find_repo_root_from(&probe)
+        .or_else(|| {
+            // Fallback: если canonicalize не сработал (probe не существует),
+            // walk вверх от cwd напрямую.
+            let mut dir = cwd.clone();
+            let mut last_toml_dir: Option<PathBuf> = None;
+            loop {
+                let toml = dir.join("nova.toml");
+                if toml.exists() {
+                    if let Ok(content) = std::fs::read_to_string(&toml) {
+                        if content.contains("[workspace]") {
+                            return Some(dir);
+                        }
+                    }
+                    last_toml_dir = Some(dir.clone());
+                }
+                match dir.parent() {
+                    Some(p) if p != dir => dir = p.to_path_buf(),
+                    _ => return last_toml_dir,
+                }
+            }
+        })
+        .ok_or_else(|| anyhow!(
+            "nova.toml not found — are you inside a Nova project?\n\
+             (Searched from {} up to filesystem root.)",
+            std::env::current_dir().unwrap_or_default().display()
+        ))
 }
 
 struct RepoPaths {
