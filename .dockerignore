@@ -1,0 +1,27 @@
+# Plan 40 Ф.1 Этап 5 — Linux Docker build context exclusions.
+
+# Build artifacts (Windows-specific).
+nova-cli/target/
+nova-cli/target_alt/
+compiler-codegen/target/
+
+# Generated C / executables.
+nova_tests/**/*.c
+nova_tests/**/*.exe
+nova_tests/**/*.obj
+nova_tests/**/*.pdb
+
+# vcpkg на Linux не используем (system libgc + libuv).
+compiler-codegen/vcpkg_installed/
+
+# Git history (не нужна для build).
+.git/
+
+# Editor / IDE.
+.vscode/
+.idea/
+*.swp
+*.tmp
+
+# Private repo (вне build context'а Nova).
+../nova-lang-private/
