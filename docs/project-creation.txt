@@ -6844,3 +6844,63 @@ Go/Rust comparison:
 - Nova после R31: unified entry resolve_imports_inline.
 
 Commit: 3a759bfad5.
+
+
+================================================================================
+2026-05-12 Plan 39 Issue A: handler-flow inference (NovaOpt typedef mismatch)
+================================================================================
+
+Симптом: `let r = with Fail[E] = |e| interrupt None { Some(...) }` —
+codegen эмиттит `nova_int r` вместо `NovaOpt_Nova_Range_p`, breaking
+последующий `r == None`-сравнение.
+
+Корень (audit, 2-х уровневый):
+1. Spec D61 §10 + D87: тип with-блока = T_body; каждый interrupt v
+   должен иметь typeof(v) ⊑ T_body. Чисто и понятно.
+2. Codegen reality: NovaInterruptFrame использует `nova_int value` slot
+   (i64). emit_with объявлял result_tmp всегда как `nova_int`. Non-int
+   trail discarded.
+
+Решение (5 phases, 1 session):
+
+### Ф.1 — Runtime extension
+- NovaInterruptFrame добавить `void* value_ptr` slot (mutually-exclusive
+  с `value`).
+- `nova_interrupt_ptr(void*)` companion fn в effects.c.
+- NovaFiberQueue: `interrupt_value_ptr` + `interrupt_via_ptr` flag для
+  cross-boundary case.
+
+### Ф.2 — emit_with категоризация
+Новый enum WithResultCategory { IntLike, Pointer, ValueStruct, UnitVoid }
++ helper `with_result_category(c_type)`. emit_with infer'ит trail type,
+объявляет result_tmp с правильным типом, читает из value/value_ptr.
+
+### Ф.3 — Interrupt category-routing
+ExprKind::Interrupt(Some(v)): по категории v_ty:
+- IntLike → nova_interrupt((nova_int)v)
+- Pointer → nova_interrupt_ptr((void*)v)
+- ValueStruct → heap-alloc slot, copy v, передать pointer.
+
+### Ф.4 — Walker для body=throw case
+infer_handler_interrupt_ty(handler) рекурсивно ищет первый
+`interrupt VAL` в handler-литерале и возвращает его C-тип. emit_with
+fall'ит на walker когда body.trailing == None.
+
+### Ф.5 — Auto-gen Option helpers
+register_novaopt_decl теперь эмитит:
+- nova_opt_eq_<T> (compare scalars / pointers / memcmp value-structs)
+- Nova_Option_method_is_some_<T> / is_none_<T> / unwrap_or_<T>
+для всех T кроме nova_int/nova_str (legacy в array.h).
+
+### Также фикс в Binary BinOp::Eq/Neq
+Bare `None` literal в одной стороне инферится как NovaOpt_nova_int
+(fallback). Если другая сторона = конкретный NovaOpt_<X> — переписываем
+literal с правильным opt_ty (textual replace в emitted expr).
+
+Verification:
+- range.nv test "inclusive overflow throws" PASS (был CC-FAIL).
+- nova_tests/types/handler_flow_inference.nv (6 sub-tests) PASS:
+  int/pointer/option-of-pointer × happy/fail-path.
+- Full regression 225/225 PASS (было 221 + 4 новых).
+
+Commits будут: runtime + codegen + tests + docs.

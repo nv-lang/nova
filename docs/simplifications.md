@@ -4181,23 +4181,32 @@ captured_stderr в verbose mode, не нужен новый branch. Предуп
 
 ---
 
-## std/testing/handlers.nv — Plan 34 Ф.1 (2026-05-12)
+## std/testing/handlers.nv — Plan 34 Ф.1+Ф.7 (2026-05-12)
 
-**Где:** новый файл std/testing/handlers.nv (Plan 34 Ф.1, активный).
+**Где:** std/testing/handlers.nv.
 
-**Что упрощено:** `seeded(seed)` использует Knuth MMIX LCG, **не CSPRNG**.
-Для production-Random нужен `secure() -> Handler[Random]` через
-runtime-hook (CSPRNG из nova_rt или OS-syscall) — не реализован.
+**Что упрощено:** `seeded(seed)` использует xoshiro256++ PRNG —
+**не CSPRNG**. Production-Random требует `secure() -> Handler[Random]`
+через runtime-hook (CSPRNG из nova_rt или OS-syscall) — не реализован.
 
-**Почему:** test-handler'ы должны быть deterministic и cross-architecture
-reproducible. LCG достаточно для воспроизводимости тестов; CSPRNG для
-test-handlers контр-продуктивен (тест должен давать одинаковый результат
-между запусками). Production-handler для real cryptography — другая
-ответственность, не Plan 34.
+**История:**
+- Ф.1 (изначально) — Knuth MMIX LCG, 2 строки. Бакоп — плохое
+  distribution, короткий period.
+- Ф.7 (production-grade, 2026-05-12) — заменён на **xoshiro256++**
+  (Sebastiano Vigna, public domain CC0): 4×u64 state, period 2^256-1,
+  passes BigCrush/PractRand. State init через splitmix64 для
+  non-zero state при seed=0. `bytes(n)` использует 8 байт за advance
+  (раньше 1 байт). Чистый go/rust-equivalent quality (Go math/rand v2
+  использует PCG, Rust rand crate — ChaCha8; xoshiro — established
+  alternative).
 
-**Как починить:** добавить `fn secure() -> Handler[Random]` в
-std/testing/handlers.nv или в отдельный std.security модуль, с
-external-binding к runtime-CSPRNG (Windows BCryptGenRandom, Linux
+**Почему не CSPRNG:** test-handler'ы должны быть deterministic
+(тот же seed → та же sequence между запусками). CSPRNG для тестов
+контр-продуктивен. Production-handler для real crypto — отдельная
+ответственность.
+
+**Как починить (CSPRNG part):** добавить `fn secure() -> Handler[Random]`
+с external-binding к runtime-CSPRNG (Windows BCryptGenRandom, Linux
 getrandom, macOS SecRandomCopyBytes). Это — часть Plan 18 (P0 stdlib
 roadmap), не блокер.
 
@@ -4980,3 +4989,38 @@ Verified: nova test с `import std.collections.range` + `(0..10).step_by(2)` PAS
   test_runner version. nova-cli ищет первый nova.toml (legacy). Это
   работает но возможны edge cases. Sub-plan 35.B unified
   ManifestResolver — full AD6 (4 nested nova.toml) cleanup.
+
+
+---
+
+## NovaInterruptFrame nova_int slot ✅ FIXED (Plan 39 Issue A, 2026-05-12)
+
+### Был simplification (bootstrap MVP)
+
+NovaInterruptFrame использовал единственный `nova_int value` slot.
+emit_with объявлял `nova_int result_tmp` всегда. Non-int trail values
+(pointers, NovaOpt structs) дискардились через `(void)(trail); result_tmp
+= 0LL;`. Из-за этого `let r = with Fail = |e| interrupt None { Some(x) }`
+получал `r: nova_int` вместо `Option[X]`.
+
+### Now FIXED
+
+NovaInterruptFrame расширен `value_ptr` slot. codegen emit_with
+категоризует trail type (IntLike/Pointer/ValueStruct/UnitVoid),
+объявляет result_tmp с правильным C-типом, читает из соответствующего
+slot. ExprKind::Interrupt эмитит `nova_interrupt` или
+`nova_interrupt_ptr` по категории. handler-walker определяет тип W
+когда body=throw (нет trailing).
+
+Auto-gen Option helpers (eq, is_some, is_none, unwrap_or) для всех
+NovaOpt_<T> вместо handcrafted в array.h для int/str.
+
+### Open
+
+- **Type-checker bidirectional inference** остаётся pull-based.
+  Codegen-side fix достаточен но архитектурно type-checker должен
+  иметь expected-type flow. Multi-session work.
+- **Multiple effects в одном `with`** с разными IRT — пока не
+  enforced (требуют lub). Single-effect case работает.
+- **Returned handler** (`let h = make(); with E = h { ... }`) — нужен
+  тип `Handler[E, IRT]` в type-checker'е (currently inline only).

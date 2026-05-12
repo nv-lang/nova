@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 # Plan 39: `std/collections/range.nv` stdlib fixes
 
-> **Статус (2026-05-12):** **Issue D ✅ закрыт** (commit b516bba9ae) —
-> diagnostic улучшен, mut-receiver assert добавлен, 5 тестов в
-> `for_in_iter_resolution.nv` PASS. **Issue B/C ✅ already implemented**
-> в range.nv (ReverseRangeIter type + step_by(0)/negative throw),
-> blocked только Issue A.
-> **Issue A — детализирован 2026-05-12 после spec audit:**
-> handler-flow inference, нарушение D61 §10 + D87 (handler-литерал в
-> `with`-блоке: bidirectional inference от T_body → IRT). Реальный
-> симптом — `r` получает тип `nova_int` вместо `Option[Range]` в тесте
-> `"inclusive overflow throws"`. Scope MVP: inline handler-литерал,
-> single effect, без returned-handler/multi-effects.
+> **Статус (2026-05-12):** **Все 4 Issue A/B/C/D ✅ ЗАКРЫТЫ.**
+> Issue D (commit b516bba9ae): diagnostic улучшен, mut-receiver assert
+> добавлен. Issue B/C already implemented в range.nv. **Issue A
+> ✅ closed (2026-05-12)**: runtime NovaInterruptFrame расширен
+> `value_ptr` slot + `nova_interrupt_ptr`, codegen emit_with категоризует
+> trail type (IntLike/Pointer/ValueStruct/UnitVoid), Interrupt эмитит
+> правильный slot, handler-walker определяет тип W когда body=throw.
+> Auto-gen Option-helper'ов для non-int (`is_some_<T>` / `is_none_<T>` /
+> `unwrap_or_<T>` / `nova_opt_eq_<T>`). range.nv test "inclusive
+> overflow throws" PASS. handler_flow_inference.nv 6/6 PASS.
+> **Full regression 225/225 PASS** (было 221 + 4 новых).
 > **Создан:** 2026-05-12.
 > **Обнаружен:** 2026-05-12 при работе над Plan 35 Ф.1 (cross-file
 > resolve).
