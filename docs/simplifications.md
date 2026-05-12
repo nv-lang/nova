@@ -4480,3 +4480,148 @@ Sub-plans 35.A-E:
 **P2** для 35.A visibility/wildcard — production-grade, но обходимо
 сегодня.
 **P3** для 35.B caching — performance, не correctness.
+
+---
+
+## Plan 33 contracts (bootstrap)
+
+### [V1] TrivialBackend SMT вместо Z3
+- **Где:** `compiler-codegen/src/verify/backend/trivial.rs`.
+- **Что упрощено:** SMT verification реализована через built-in
+  symbolic simplification + pattern matching (constant folding,
+  reflexivity, импликация-shortcuts, boolean idempotents). Доказывает
+  только тривиальные тавтологии типа `result == x*2` для body `=> x*2`
+  (reflexive после substitute) и явные counterexample типа
+  `result == 42` для body `=> 100`.
+- **Почему:** libz3 не установлен в системе/vcpkg на момент реализации.
+  Architecture-grade trait `SmtBackend` готов — Z3-backend подключается
+  как отдельная реализация trait'а. Это **engine-agnostic дизайн**
+  как требует D24 §148.
+- **Как чинить:** Установить libz3 в vcpkg (`vcpkg.json` + Windows
+  bindings) или системно (apt/dnf на Linux). Добавить feature-flag
+  `z3-backend` в `Cargo.toml`. Реализовать `Z3Backend: SmtBackend`
+  через `z3` crate. Activate через `nova test --smt-backend z3`.
+- **Приоритет:** H — без linear-arith reasoning (что Z3 даёт) trivial
+  backend не доказывает `ensures result > 0` для `=> x + 1` при
+  `requires x > 0`. Программисту приходится либо `#unverified`, либо
+  переписывать на reflexive form.
+
+### [V2] Loop invariants парсятся, но не сохраняются в AST
+- **Где:** `parser::skip_loop_clauses` в `parse_while`/`parse_for`/`parse_loop`.
+- **Что упрощено:** `invariant <expr>` и `decreases <expr>` между
+  loop-header и body парсятся и игнорируются — программист может писать
+  spec, но SMT их не использует.
+- **Почему:** trivial backend всё равно не верифицирует loops
+  (нужен Z3 для havoc + invariant preservation + decreases check).
+- **Как чинить:** Расширить `ExprKind::For`/`While`/`Loop` полями
+  `invariants: Vec<Contract>` и `decreases: Option<Expr>` — это
+  breaking change для interp/codegen/types match'ей, но **необходимо**
+  для Z3 verify pipeline.
+- **Приоритет:** M — depends on [V1] (без Z3 не имеет смысла).
+
+### [V3] Composition требует #pure, но purity не выводится автоматически
+- **Где:** `types::ContractCtx::pure_fn_names`.
+- **Что упрощено:** Composition (вызов user fn в контрактах) разрешён
+  только если у fn есть явный `#pure` атрибут. SCC-inference по
+  call-graph (как `const fn` в Rust) — НЕ реализован.
+- **Почему:** SCC inference потребует mutual-call analysis +
+  effect propagation. Это полноценный pass — отложен до Plan 33.3
+  full (требуется для composition в SMT тоже).
+- **Как чинить:** Добавить `PurityCtx::infer` с fixpoint по
+  call-graph через SCC. Атрибут `#pure` остаётся как assertion
+  (если выведенный mismatch — compile error).
+- **Приоритет:** M — текущее поведение honest (программист обязан
+  пометить), но требует boilerplate `#pure` на каждой helper-fn.
+
+### [V4] `old(...)` для mut params — snapshot trivial (значение = current)
+- **Где:** `verify/pipeline.rs::substitute_old`.
+- **Что упрощено:** `old(x)` подменяется на текущее значение `x`
+  (`old(x) → x` в SMT). Это корректно ТОЛЬКО для 33.1/33.2 scope
+  где нет `mut` параметров — в этих условиях snapshot тривиален.
+- **Почему:** Mut params + frame conditions не закрыты SMT-side
+  в bootstrap (parser + type-check есть, SMT verify ждёт Z3).
+- **Как чинить:** В Z3 backend каждый mut param получает две версии:
+  `x_entry` (snapshot) и `x` (текущее). `old(x)` → `x_entry`.
+  Frame-axiom для `modifies M`: всё что не в M — equated с entry.
+- **Приоритет:** M — без mut params в 33.1/33.2 это noop;
+  обязательно для 33.2 SMT verify + 33.3.
+
+### [V5] Ghost state эмитится в codegen в debug (не «никогда»)
+- **Где:** `parser::parse_let_decl` (is_ghost field) + codegen.
+- **Что упрощено:** `ghost let x = ...` сейчас компилируется как
+  обычный `let` (значение вычисляется и хранится в runtime).
+  Dafny semantics — ghost никогда не emit'ится, даже в debug.
+- **Почему:** Реализация ghost-aware codegen требует filter'а
+  на каждом Stmt + проверки что non-ghost code не reads ghost
+  vars. Big change в emit_c.rs.
+- **Как чинить:** Plan 36 production hardening: ghost-elimination
+  pass в codegen + type-check rule «non-ghost code cannot read
+  ghost vars».
+- **Приоритет:** L — runtime overhead на пустом месте, но не
+  unsoundness. Plan 33.3 описывает это как требование Dafny-parity.
+
+### [V6] pure_view + axiom + #verify_handler — НЕ реализованы
+- **Где:** Plan 33.3 spec.
+- **Что упрощено:** Контракты на handler-state (`ensures Db.balance(to)
+  == old(Db.balance(to)) + amount` из R4) не работают. Effect ops
+  объявить как `pure_view` нельзя.
+- **Почему:** Требует Z3 + axiom-based encoding + handler verification
+  pass. Это значительная работа в Z3 backend.
+- **Как чинить:** Plan 33.3 full — после libz3 setup. Полная семантика
+  pure_view (см. Plan 33.3 Ф.9): UF + axioms + axiom consistency check +
+  обязательный `#verify_handler` для handler'ов с pure_view contracts.
+- **Приоритет:** M — основная revolutionary feature D24/R4; без неё
+  контракты на handler-state остаются «aspirational», не enforced.
+
+### [V7] Bounded quantifiers (`forall`/`exists`) — НЕ реализованы
+- **Где:** Plan 33.3 spec.
+- **Что упрощено:** `forall x in xs : P(x)` / `exists x in xs : P(x)` /
+  `forall i in lo..hi : P(i)` — парсер не принимает, в encode.rs
+  возвращается EncodingError::Unsupported.
+- **Почему:** Требует Z3 quantifier support + bounded encoding
+  (conjunction для known size; SMT forall с pattern для symbolic).
+- **Как чинить:** Plan 33.3 full Ф.10. Парсер расширяется на
+  `KwForall`/`KwExists` + range-syntax; encode.rs добавляет конъюнкцию/
+  Z3 forall с pattern annotation.
+- **Приоритет:** M — нужно для array-based алгоритмов (binary search,
+  sorting properties).
+
+### [V8] FP IEEE 754, strings beyond eq, sets/maps — НЕ реализованы
+- **Где:** Plan 33.3 Ф.11.
+- **Что упрощено:** Контракты с FP-операциями (`f64.is_nan()`),
+  string operations (substring, contains), set/map cardinality —
+  не verified.
+- **Почему:** Каждая теория требует отдельной Z3-кодировки
+  (FloatingPoint theory, Seq theory, Arrays + UF).
+- **Как чинить:** Plan 33.3 full Ф.11. Включается через
+  атрибуты `#verify_fp`/`#verify_strings` (default off, чтобы
+  не замедлять обычное reasoning).
+- **Приоритет:** L — большинство контрактов работает на int/bool.
+
+### [V9] Incremental SMT cache + parallel verification + Z3↔CVC5 cross-check — НЕ реализованы
+- **Где:** Plan 33.3 Ф.12.
+- **Что упрощено:** Каждый верификационный запуск — full re-verify.
+  Один backend (TrivialBackend). Нет cross-check.
+- **Почему:** Все три feature требуют либо libz3 (cache, cross-check
+  имеют смысл только с реальным SMT), либо rayon integration (parallel).
+- **Как чинить:** Plan 33.3 full Ф.12 — после libz3 setup +
+  CVC5 binding crate. Incremental cache: `target/contracts-cache/<hash>.json`.
+- **Приоритет:** L — performance, не correctness.
+
+### [V10] #must_verify_module + #trusted external fn — НЕ реализованы
+- **Где:** Plan 33.3 Ф.13.
+- **Что упрощено:** Module-level strict mode и `#trusted` external
+  с контрактами (registered as axioms без proof) — не поддержаны.
+- **Почему:** Module-level attribute + extension парсера. External
+  fn с контрактами уже rejected как «not supported in Plan 33.1».
+- **Как чинить:** Plan 33.3 full Ф.13.
+- **Приоритет:** L — workable обходные пути (per-fn `#must_verify`).
+
+### [V11] Dafny-tutorial port (20 примеров) — НЕ выполнено
+- **Где:** Plan 33.3 Ф.14.
+- **Что упрощено:** Acceptance test «not worse than Dafny» через
+  port 20 классических примеров не проведён.
+- **Почему:** Требует все вышеперечисленные V6/V7/V8 чтобы пройти.
+- **Как чинить:** После Z3 milestone + V6-V10 fixes.
+- **Приоритет:** M — критичный gate для production-claim
+  «Dafny-parity».
