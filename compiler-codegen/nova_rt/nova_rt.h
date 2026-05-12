@@ -144,6 +144,29 @@ static inline nova_bool nova_str_eq(nova_str a, nova_str b) {
     return a.len == b.len && memcmp(a.ptr, b.ptr, a.len) == 0;
 }
 
+/* Lexicographic byte-wise comparison.
+ *
+ * Returns negative if a < b, 0 if equal, positive if a > b.
+ * Bootstrap MVP: byte-wise (works correctly для ASCII; UTF-8 is partial
+ * — byte order совпадает с codepoint order для valid UTF-8 кроме edge
+ * cases). Полное Unicode-aware сравнение (locale collation) — production
+ * milestone.
+ *
+ * Используется std.runtime.string `@lt`/`@gt`/`@le`/`@ge` и Binary
+ * BinOp::Lt/Gt/Le/Ge operator overload codegen для nova_str. */
+static inline nova_int nova_str_cmp(nova_str a, nova_str b) {
+    size_t min_len = a.len < b.len ? a.len : b.len;
+    int r = memcmp(a.ptr, b.ptr, min_len);
+    if (r != 0) return (nova_int)r;
+    if (a.len < b.len) return -1;
+    if (a.len > b.len) return 1;
+    return 0;
+}
+static inline nova_bool nova_str_lt(nova_str a, nova_str b) { return nova_str_cmp(a, b) <  0; }
+static inline nova_bool nova_str_le(nova_str a, nova_str b) { return nova_str_cmp(a, b) <= 0; }
+static inline nova_bool nova_str_gt(nova_str a, nova_str b) { return nova_str_cmp(a, b) >  0; }
+static inline nova_bool nova_str_ge(nova_str a, nova_str b) { return nova_str_cmp(a, b) >= 0; }
+
 /* nova_str_char_len: count UTF-8 code points (not bytes).
  * Leading bytes of multi-byte sequences start with 11xxxxxx; continuation
  * bytes start with 10xxxxxx and are skipped. ASCII bytes (0xxxxxxx) count 1. */

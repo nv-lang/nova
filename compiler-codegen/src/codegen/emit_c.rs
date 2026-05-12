@@ -5393,6 +5393,14 @@ impl CEmitter {
                         BinOp::Neq => Ok(format!("(!nova_str_eq({}, {}))", l, r)),
                         // Ф.9.2: routing через @plus body `=> @concat(other)`.
                         BinOp::Add => Ok(format!("(nova_str_concat({}, {}))", l, r)),
+                        // 2026-05-12: lex byte-wise compare для nova_str.
+                        // Bootstrap MVP — ASCII-correct; UTF-8 partial.
+                        // Полное Unicode collation — production milestone.
+                        // См. nova_rt.h nova_str_cmp/lt/le/gt/ge.
+                        BinOp::Lt  => Ok(format!("(nova_str_lt({}, {}))", l, r)),
+                        BinOp::Le  => Ok(format!("(nova_str_le({}, {}))", l, r)),
+                        BinOp::Gt  => Ok(format!("(nova_str_gt({}, {}))", l, r)),
+                        BinOp::Ge  => Ok(format!("(nova_str_ge({}, {}))", l, r)),
                         _ => Err(format!("unsupported operator {:?} on nova_str", op)),
                     };
                 }

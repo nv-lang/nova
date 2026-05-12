@@ -54,6 +54,18 @@ export fn str @plus(other str) -> str => @concat(other)
 // Равенство по контенту (memcmp). O(min). Также вызывается оператором ==.
 export external fn str @eq(other str) -> bool
 
+// Lexicographic less-than (byte-wise). Также вызывается оператором `<`.
+export external fn str @lt(other str) -> bool
+
+// Lexicographic less-or-equal. Также вызывается оператором `<=`.
+export external fn str @le(other str) -> bool
+
+// Lexicographic greater-than. Также вызывается оператором `>`.
+export external fn str @gt(other str) -> bool
+
+// Lexicographic greater-or-equal. Также вызывается оператором `>=`.
+export external fn str @ge(other str) -> bool
+
 // UTF-8 bytes как []byte (copy).
 export external fn str @bytes() -> []byte
 
