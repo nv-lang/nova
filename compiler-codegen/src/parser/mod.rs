@@ -1106,6 +1106,14 @@ impl Parser {
 
     fn parse_let_decl(&mut self) -> Result<LetDecl, Diagnostic> {
         let start = self.peek().span;
+        // Plan 33.3 (D24): `ghost let` / `ghost var` — spec-only binding.
+        // Прификс `ghost` перед `let`/`var`. Контекстный keyword.
+        let is_ghost = if let TokenKind::Ident(n) = &self.peek().kind {
+            if n == "ghost" && matches!(self.peek_at(1).kind, TokenKind::KwLet) {
+                self.bump();
+                true
+            } else { false }
+        } else { false };
         self.expect(&TokenKind::KwLet)?;
         let mutable = self.eat(&TokenKind::KwMut).is_some();
         let pattern = self.parse_pattern()?;
@@ -1126,6 +1134,7 @@ impl Parser {
             ty,
             value,
             span,
+            is_ghost,
         })
     }
 
@@ -3485,6 +3494,11 @@ impl Parser {
                 let l = self.parse_let_decl()?;
                 Ok(StmtOrExpr::Stmt(Stmt::Let(l)))
             }
+            // Plan 33.3 (D24): `ghost let` — контекстный keyword `ghost`.
+            TokenKind::Ident(ref n) if n == "ghost" && matches!(self.peek_at(1).kind, TokenKind::KwLet) => {
+                let l = self.parse_let_decl()?;
+                Ok(StmtOrExpr::Stmt(Stmt::Let(l)))
+            }
             TokenKind::KwReturn => {
                 self.bump();
                 let value = if self.at_newline() || matches!(self.peek().kind, TokenKind::RBrace)
@@ -3538,6 +3552,13 @@ impl Parser {
                 let expr = self.parse_expr()?;
                 let span = start.merge(expr.span);
                 Ok(StmtOrExpr::Stmt(Stmt::AssertStatic { expr, span }))
+            }
+            // Plan 33.3 (D24): `assume <bool>` — escape hatch.
+            TokenKind::Ident(ref n) if n == "assume" => {
+                self.bump();
+                let expr = self.parse_expr()?;
+                let span = start.merge(expr.span);
+                Ok(StmtOrExpr::Stmt(Stmt::Assume { expr, span }))
             }
             _ => {
                 let expr = self.parse_expr()?;

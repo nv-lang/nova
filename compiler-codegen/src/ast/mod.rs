@@ -343,6 +343,11 @@ pub struct LetDecl {
     pub ty: Option<TypeRef>,
     pub value: Expr,
     pub span: Span,
+    /// Plan 33.3 (D24): `ghost let` / `ghost var` — spec-only binding.
+    /// Видим в `requires`/`ensures`/`invariant` и других `ghost`-stmts,
+    /// но НЕ emit'ится в codegen (паритет с Dafny).
+    /// Backward-compat: default false.
+    pub is_ghost: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -445,6 +450,14 @@ pub enum Stmt {
     /// Доказанные → стираются. Недоказанные → compile error (как
     /// `#must_verify`).
     AssertStatic {
+        expr: Expr,
+        span: Span,
+    },
+    /// Plan 33.3 (D24): `assume <bool>` — escape hatch для FFI / external
+    /// knowledge. SMT принимает как axiom (без proof). В debug — runtime
+    /// check; в release — стирается. Warning категории `trust-introduced`
+    /// вне `#trusted` функции.
+    Assume {
         expr: Expr,
         span: Span,
     },

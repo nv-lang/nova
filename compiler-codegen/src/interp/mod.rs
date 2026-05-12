@@ -1963,14 +1963,16 @@ impl Interpreter {
             // Plan 33.2 Ф.8 (D24): `assert_static <bool>` — в interp
             // выполняется как обычный assert (runtime-check); SMT-verify
             // через types/verify в compile-time.
-            Stmt::AssertStatic { expr, span } => {
+            // Plan 33.3 (D24): `assume <bool>` — то же runtime behavior:
+            // если expr=false, программист обещал что не будет → bug.
+            Stmt::AssertStatic { expr, span } | Stmt::Assume { expr, span } => {
                 let v = match self.eval_expr(expr, env)? {
                     Flow::Value(v) => v,
                     other => return Ok(other),
                 };
                 if let Value::Bool(false) = v {
                     return Err(Diagnostic::new(
-                        "assert_static failed", *span));
+                        "assert_static/assume failed", *span));
                 }
                 Ok(Flow::Value(Value::Unit))
             }

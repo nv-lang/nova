@@ -413,7 +413,8 @@ impl CEmitter {
             | Stmt::Throw { span, .. }
             | Stmt::Defer { span, .. }
             | Stmt::ErrDefer { span, .. }
-            | Stmt::AssertStatic { span, .. } => *span,
+            | Stmt::AssertStatic { span, .. }
+            | Stmt::Assume { span, .. } => *span,
             Stmt::Break(s) | Stmt::Continue(s) => *s,
         }
     }
@@ -4782,6 +4783,19 @@ impl CEmitter {
                 self.line("#ifdef NOVA_CONTRACTS_RUNTIME");
                 self.line(&format!(
                     "if (!({})) nova_contract_violation(NOVA_CONTRACT_PRE, \"<assert_static>\", \"{}\", \"<contract>\", {});",
+                    v, Self::escape_c_str(&src), span.start
+                ));
+                self.line("#endif");
+            }
+            // Plan 33.3 (D24): `assume <expr>` — runtime check в debug
+            // (программист подтверждает что expr истинен; если нет —
+            // это bug в коде, не bug в верификации).
+            Stmt::Assume { expr, span } => {
+                let v = self.emit_expr(expr)?;
+                let src = Self::expr_to_display(expr);
+                self.line("#ifdef NOVA_CONTRACTS_RUNTIME");
+                self.line(&format!(
+                    "if (!({})) nova_contract_violation(NOVA_CONTRACT_PRE, \"<assume>\", \"{}\", \"<contract>\", {});",
                     v, Self::escape_c_str(&src), span.start
                 ));
                 self.line("#endif");

@@ -1,0 +1,23 @@
+// Plan 33.3: ghost let + assume.
+
+module nova_tests.contracts.ghost_assume
+
+fn use_ghost(x int) -> int {
+    // ghost let — spec-only, не emit'ится в codegen.
+    // В runtime сейчас выполняется (типа let), но не используется
+    // (Plan 33.3 first iteration; полное «не emit» когда добавится
+    // codegen-level filtering).
+    ghost let original = x
+    let _ = original   // используем чтобы не было warning о unused
+    x
+}
+
+fn use_assume(x int) -> int {
+    assume x >= 0      // программист утверждает x >= 0
+    x + 1
+}
+
+test "ghost + assume" {
+    assert(use_ghost(5) == 5)
+    assert(use_assume(3) == 4)
+}

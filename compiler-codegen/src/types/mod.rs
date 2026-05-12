@@ -413,7 +413,7 @@ impl<'a> BoundCtx<'a> {
                 self.walk_expr(body, scope, errors);
             }
             // Plan 33.2 Ф.8: assert_static — walk expr.
-            Stmt::AssertStatic { expr, .. } => self.walk_expr(expr, scope, errors),
+            Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => self.walk_expr(expr, scope, errors),
         }
     }
 
@@ -978,7 +978,7 @@ impl<'a> CapabilityCtx<'a> {
                 self.walk_expr(body, state, errors);
             }
             // Plan 33.2 Ф.8: assert_static — walk expr.
-            Stmt::AssertStatic { expr, .. } => self.walk_expr(expr, state, errors),
+            Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => self.walk_expr(expr, state, errors),
         }
     }
 
@@ -1578,7 +1578,7 @@ impl NameResCtx {
                 self.walk_expr(body, scope, errors);
             }
             // Plan 33.2 Ф.8: assert_static — walk expr.
-            Stmt::AssertStatic { expr, .. } => self.walk_expr(expr, scope, errors),
+            Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => self.walk_expr(expr, scope, errors),
             Stmt::Break(_) | Stmt::Continue(_) => {}
         }
     }
@@ -2111,7 +2111,7 @@ fn has_throw_in_stmt(s: &Stmt) -> bool {
         // отдельную compile error раньше этой проверки.
         Stmt::Defer { .. } | Stmt::ErrDefer { .. } => false,
         // Plan 33.2 Ф.8: assert_static — bool expr, no throw inside.
-        Stmt::AssertStatic { expr, .. } => has_throw_in_expr(expr),
+        Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => has_throw_in_expr(expr),
     }
 }
 
@@ -2396,7 +2396,7 @@ fn walk_block_for_handler_lits(b: &Block, never_ops: &HashSet<(String, String)>,
             Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. } => {
                 walk_expr_for_handler_lits(body, never_ops, errors);
             }
-            Stmt::AssertStatic { expr, .. } => walk_expr_for_handler_lits(expr, never_ops, errors),
+            Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => walk_expr_for_handler_lits(expr, never_ops, errors),
             Stmt::Break(_) | Stmt::Continue(_) => {}
         }
     }
@@ -2723,7 +2723,7 @@ fn walk_block_for_defers(b: &Block, fn_effects: &HashMap<String, Vec<TypeRef>>, 
                 if let Some(v) = value { walk_expr_for_defers(v, fn_effects, errors); }
             }
             Stmt::Throw { value, .. } => walk_expr_for_defers(value, fn_effects, errors),
-            Stmt::AssertStatic { expr, .. } => walk_expr_for_defers(expr, fn_effects, errors),
+            Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => walk_expr_for_defers(expr, fn_effects, errors),
             Stmt::Break(_) | Stmt::Continue(_) => {}
         }
     }
@@ -3157,7 +3157,7 @@ fn check_defer_body_block(b: &Block, kw: &str, fn_effects: &HashMap<String, Vec<
             Stmt::Defer { body, .. } => check_defer_body(body, false, fn_effects, errors),
             Stmt::ErrDefer { body, .. } => check_defer_body(body, true, fn_effects, errors),
             // Plan 33.2 Ф.8: assert_static в defer body — walk expr.
-            Stmt::AssertStatic { expr, .. } => check_defer_body_inner(expr, kw, fn_effects, ctx, errors),
+            Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => check_defer_body_inner(expr, kw, fn_effects, ctx, errors),
         }
     }
     if let Some(t) = &b.trailing {

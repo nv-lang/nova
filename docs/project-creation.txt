@@ -6474,3 +6474,59 @@ production-grade scope.
 - `nova test` parity — добавить resolve_imports_inline в test_runner.
 
 **Commits:** 24d8266ddc (Ф.0), f481e3950e (Ф.1 MVP).
+
+
+================================================================================
+2026-05-12 Plan 33.2 + 33.3 bootstrap-форма закрыты (209/209 PASS)
+================================================================================
+
+### Plan 33.2 Imperative (closed):
+- Ф.5: reads/modifies parser + AST + type-check (modifies frame violation
+  detection для не-local assignments).
+- Ф.6: loop invariants + decreases parser (while/for/loop; в AST не
+  сохраняются — SMT verify loops ждёт Ф.8+Z3).
+- Ф.7: decreases для fn + composition #pure (вызовы non-pure в контрактах
+  → compile error) + record invariant (TypeDecl.invariants).
+- Ф.8: assert_static statement + arrays в SMT IR.
+
+### Plan 33.3 Advanced (bootstrap part closed):
+- Ghost state: `ghost let` — spec-only binding (LetDecl.is_ghost).
+  Контекстный keyword перед `let`. В bootstrap codegen эмитит как
+  обычный let (paritет с Dafny будет в Plan 36 production hardening
+  через ghost-aware codegen).
+- `assume <bool>` statement — escape hatch. Runtime check в debug,
+  стирается в release.
+
+### Tests
+- contracts/runtime_block_body.nv (Ф.4 ext block-bodies).
+- contracts/r4_examples.nv (10 R4-inspired примеров).
+- contracts/parse_frame.nv (Ф.5 reads/modifies).
+- contracts/frame_violation.nv + frame_positive.nv (Ф.5 type-check).
+- contracts/parse_loop_invariants.nv (Ф.6).
+- contracts/parse_decreases_record_inv.nv (Ф.7).
+- contracts/composition_pure.nv + composition_nonpure_fail.nv (Ф.7).
+- contracts/assert_static.nv (Ф.8).
+- contracts/ghost_assume.nv (33.3 ghost + assume).
+- expected_runtime/assert_static_fail.nv + contracts_*_fail.nv.
+
+### Regression
+209/209 PASS на release-сборке.
+
+### Что остаётся для Plan 33.3 в финальной форме
+- Z3 backend через feature-flag (требует libz3 setup):
+  * pure_view + axiom + #verify_handler.
+  * Bounded quantifiers (forall/exists).
+  * IEEE 754 FP semantics.
+  * Strings beyond equality.
+  * Sets/Maps via arrays + cardinality.
+  * Incremental SMT cache.
+  * Parallel verification.
+  * Z3↔CVC5 cross-check.
+  * #must_verify_module strict mode.
+  * #trusted external fn с контрактами.
+  * Dafny-tutorial port (20 примеров).
+
+Эти фичи требуют **полного Z3 backend** — не реализуемы без libz3.
+Bootstrap-уровень Plan 33 полностью закрыт. Production-ready Z3-уровень —
+отдельный milestone когда libz3 будет setup'нут.
+
