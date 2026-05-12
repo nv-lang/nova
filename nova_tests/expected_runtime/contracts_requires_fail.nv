@@ -1,0 +1,15 @@
+// EXPECT_RUNTIME_PANIC contract requires failed in `must_be_positive`
+//
+// Plan 33.1 Ф.4 (D24): nova_contract_violation срабатывает при
+// нарушении requires в runtime (debug сборка).
+
+module nova_tests.expected_runtime.contracts_requires_fail
+
+fn must_be_positive(x int) -> int
+    requires x > 0
+=> x * 2
+
+fn main() Io -> () {
+    let _ = must_be_positive(-5)
+    println("UNREACHABLE")
+}

@@ -222,6 +222,11 @@ typedef struct { char _dummy; } nova_unit;
 /* После sched.h — channels.h использует nova_sched_park/wake/register. */
 #include "channels.h"
 
+/* ---- Plan 33.1 Ф.4 (D24): contracts runtime helper ----
+ * После effects.h + fibers.h — nova_contract_violation использует
+ * NovaFailFrame routing + NovaTestFrame. */
+#include "contracts.h"
+
 /* Plan 22 Ф.4: Windows headers подтянутые libuv (rpcndr.h, etc.)
  * захламляют namespace макросами типа `small`, `interface` и т.д.
  * Это collides с Nova-generated кодом (e.g. `int32_t small = ...`).

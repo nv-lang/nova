@@ -779,10 +779,14 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                 "" // linux: default
             };
             let mut flags: Vec<String> = match opts.mode {
-                Mode::Dev => vec!["-O0", "-g", "-Wno-everything"]
-                    .into_iter()
-                    .map(String::from)
-                    .collect(),
+                Mode::Dev => vec![
+                    "-O0".to_string(),
+                    "-g".to_string(),
+                    "-Wno-everything".to_string(),
+                    // Plan 33.1 Ф.4 (D24): runtime contract checks в debug сборке.
+                    // В release контракты стираются (zero-cost).
+                    "-DNOVA_CONTRACTS_RUNTIME=1".to_string(),
+                ],
                 Mode::Release => vec![
                     "-O3".to_string(),
                     "-flto".to_string(),
@@ -883,7 +887,11 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
             let mut c = Command::new("cl.exe");
             c.env_clear().envs(env.iter().cloned());
             match opts.mode {
-                Mode::Dev => { c.args(["/nologo", "/W0", "/Od", "/Zi"]); }
+                Mode::Dev => {
+                    c.args(["/nologo", "/W0", "/Od", "/Zi"]);
+                    // Plan 33.1 Ф.4: runtime contract checks в debug сборке.
+                    c.arg("/DNOVA_CONTRACTS_RUNTIME=1");
+                }
                 Mode::Release => { c.args(["/nologo", "/W0", "/O2", "/DNDEBUG"]); }
             }
             // Plan 27 R4: NOVA_GC_BOEHM (not GC_THREADS) for single-threaded Boehm.
@@ -924,6 +932,8 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
             match opts.mode {
                 Mode::Dev => {
                     c.args(["-O0", "-g", "-w"]);
+                    // Plan 33.1 Ф.4: runtime contract checks в debug сборке.
+                    c.arg("-DNOVA_CONTRACTS_RUNTIME=1");
                 }
                 Mode::Release => {
                     c.arg("-O3");
@@ -2486,7 +2496,8 @@ fn random_seed() -> u64 {
 }
 
 /// Рекурсивный обход директории, возвращает все .nv файлы.
-fn walk_nv(root: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
+/// Plan 36: pub — используется в `nova check <dir>` flow.
+pub fn walk_nv(root: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
     if !root.is_dir() {
         return Ok(());
     }

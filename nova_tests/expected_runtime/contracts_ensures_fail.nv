@@ -1,0 +1,18 @@
+// EXPECT_RUNTIME_PANIC contract ensures failed in `buggy`
+//
+// Plan 33.1 Ф.4 (D24): nova_contract_violation срабатывает при
+// нарушении ensures в runtime (debug сборка).
+//
+// `buggy` фейлит ensures result == x * 2, потому что body возвращает x + 1.
+
+module nova_tests.expected_runtime.contracts_ensures_fail
+
+fn buggy(x int) -> int
+    requires x > 0
+    ensures result == x * 2
+=> x + 1
+
+fn main() Io -> () {
+    let _ = buggy(5)
+    println("UNREACHABLE")
+}

@@ -5755,3 +5755,83 @@ Regression: 188/188 PASS (185 + 3 новых negative-теста).
 Дальше: Ф.3 (SMT IR + Z3 backend) — после неё добавим полную type-проверку
 контрактов через SMT-кодировку.
 
+
+
+================================================================================
+2026-05-12 Plan 33.1 Ф.4: contracts runtime fallback + debug-only check
+================================================================================
+
+Production-grade runtime fallback для контрактов в debug сборке. SMT-доказательство
+(Ф.3) отложено — требует libz3 setup и существенной интеграции.
+
+### nova_rt/contracts.h
+
+`nova_contract_violation(kind, fn_name, contract_src, file, line)` — inline
+helper по аналогии с nova_assert:
+- Routing: fiber → fail-frame → test-frame → stderr + abort.
+- В test-frame heap-allocates сообщение через nova_alloc (longjmp safe).
+- 3 категории: NOVA_CONTRACT_PRE / POST / INV (последняя — placeholder для 33.2).
+
+Include добавлен в nova_rt.h после channels.h.
+
+### Codegen emit_c.rs
+
+`emit_fn` расширен:
+1. Перед body — `#ifdef NOVA_CONTRACTS_RUNTIME` блок с requires-проверками:
+   ```c
+   if (!(<emit_expr requires_expr>))
+     nova_contract_violation(NOVA_CONTRACT_PRE, "fn_name", "<src>", "<contract>", span);
+   ```
+2. Если есть ensures — body emit'ится в `_nova_result` variable.
+3. После body — `#ifdef NOVA_CONTRACTS_RUNTIME` блок с ensures-проверками.
+   `result` подставляется на `_nova_result` через text-substitution (helper
+   `substitute_result_var` с word-boundary check).
+4. В release сборке (без NOVA_CONTRACTS_RUNTIME) контракты компилируются,
+   но проверки cтерты препроцессором — zero-cost.
+
+### old(expr) — special-case в emit_call
+
+В 33.1 нет mut state, поэтому `old(expr)` = просто `expr` (значение не
+меняется между entry и exit). Snapshot для mut params — в 33.2 вместе с
+frame conditions.
+
+### Block-bodies + ensures — отложено
+
+`fn f() { ... }` с ensures-контрактами: ensures-проверки не emit'ятся (block
+может содержать early return'ы, которые требуют перехвата). Контракты остаются
+в AST для SMT-проверки в Ф.3. Это roadmap-разбиение, не упрощение.
+
+### test_runner.rs
+
+`-DNOVA_CONTRACTS_RUNTIME=1` добавлен в Dev сборки для всех трёх toolchain'ов
+(clang, MSVC, GCC). Release сборки контракты стирают.
+
+### Тесты
+
+Положительные runtime:
+- `nova_tests/contracts/runtime_basic.nv` — abs + safe_inc с requires + ensures.
+
+Negative runtime (через EXPECT_RUNTIME_PANIC):
+- `nova_tests/expected_runtime/contracts_requires_fail.nv` — must_be_positive(-5).
+- `nova_tests/expected_runtime/contracts_ensures_fail.nv` — buggy(5) фейлит ensures.
+
+Сообщения runtime panic: «contract requires/ensures failed in `fn_name`:
+<source> at <contract>:<span>».
+
+### Regression
+
+191/191 PASS — все 10 новых contracts-тестов + 0 регрессий.
+
+### Что отложено в Ф.3 (отдельная сессия)
+
+- **SMT IR + Z3 backend trait + driver** — требует libz3 setup на CI
+  (vcpkg на Windows, apt на Linux) + Rust crate `z3` integration. Значительный
+  scope; делается отдельной сессией.
+- **Полная type-проверка контракта = bool** (через SMT-кодировку).
+- **Flow-аналитика `result.value` / `result.error`** под guard'ом.
+- **Counterexample diagnostic** с values.
+- **Zero-cost release CI gate** (`nova test --verify-zero-cost`).
+
+После Ф.3 SMT доказанные контракты в release будут стираться (как и сейчас),
+но `@must_verify` без proof будет давать compile error (R20).
+

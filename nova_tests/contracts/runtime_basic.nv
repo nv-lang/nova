@@ -1,0 +1,24 @@
+// Plan 33.1 Ф.4 (D24): runtime fallback для контрактов в debug.
+//
+// requires/ensures должны проверяться в runtime (компилятор эмитит
+// nova_contract_violation за #ifdef NOVA_CONTRACTS_RUNTIME).
+
+module nova_tests.contracts.runtime_basic
+
+fn abs(x int) -> int
+    requires x >= 0
+    ensures result == x
+=> x
+
+fn safe_inc(x int) -> int
+    requires x >= 0
+    ensures result == x + 1
+    ensures result > 0
+=> x + 1
+
+test "contracts pass on valid inputs" {
+    assert(abs(5) == 5)
+    assert(abs(0) == 0)
+    assert(safe_inc(0) == 1)
+    assert(safe_inc(10) == 11)
+}

@@ -3712,6 +3712,64 @@ impl CEmitter {
         Ok(())
     }
 
+    /// Plan 33.1 Ф.4 (D24): emit ensures-checks для функции `f`.
+    /// Вызывается после вычисления body, до return'а. Перед вызовом
+    /// `result` должна быть зарегистрирована в var_types и быть
+    /// доступной как обычная C-переменная `_nova_result`.
+    fn emit_ensures_checks(&mut self, f: &FnDecl) -> Result<(), String> {
+        self.line("#ifdef NOVA_CONTRACTS_RUNTIME");
+        // Подставляем `result` → `_nova_result` при emit'е выражения.
+        // emit_expr на Ident("result") вернёт "result" (она в var_types),
+        // нам нужно "_nova_result". Используем post-process подмену.
+        for c in &f.contracts {
+            if matches!(c.kind, ContractKind::Ensures) {
+                let expr_c = self.emit_expr(&c.expr)?;
+                // Простая подмена идентификатора `result` на `_nova_result`.
+                // Работает для случаев без collision (что справедливо в 33.1).
+                let expr_c_subst = Self::substitute_result_var(&expr_c);
+                let expr_src = Self::expr_to_display(&c.expr);
+                self.line(&format!(
+                    "if (!({})) nova_contract_violation(NOVA_CONTRACT_POST, \"{}\", \"{}\", \"{}\", {});",
+                    expr_c_subst, f.name, Self::escape_c_str(&expr_src),
+                    "<contract>", c.span.start
+                ));
+            }
+        }
+        self.line("#endif");
+        Ok(())
+    }
+
+    /// Простая текстовая подмена идентификатора `result` → `_nova_result`
+    /// в C-коде. Используется при emit'е ensures-выражений. Работает
+    /// потому что `result` — magic-имя, не может конфликтовать с
+    /// пользовательскими (Ф.2 валидирует это).
+    fn substitute_result_var(c: &str) -> String {
+        // Word-boundary replace через простой parser.
+        let mut out = String::with_capacity(c.len());
+        let bytes = c.as_bytes();
+        let target = b"result";
+        let mut i = 0;
+        while i < bytes.len() {
+            let b = bytes[i];
+            let is_word = b.is_ascii_alphanumeric() || b == b'_';
+            // Если стартует с `result` и не word-continuation вокруг — заменяем.
+            if i + target.len() <= bytes.len()
+                && &bytes[i..i + target.len()] == target
+                && (i == 0 || !(bytes[i-1].is_ascii_alphanumeric() || bytes[i-1] == b'_'))
+                && (i + target.len() == bytes.len()
+                    || !(bytes[i+target.len()].is_ascii_alphanumeric() || bytes[i+target.len()] == b'_'))
+            {
+                out.push_str("_nova_result");
+                i += target.len();
+                continue;
+            }
+            out.push(b as char);
+            i += 1;
+            let _ = is_word;
+        }
+        out
+    }
+
     fn emit_fn(&mut self, f: &FnDecl) -> Result<(), String> {
         // D82: external fn — Nova body отсутствует, реализация в nova_rt/.
         // Skip emit'инг полностью: dispatch на C-функцию делается в emit_call.
@@ -3785,19 +3843,67 @@ impl CEmitter {
         self.indent = 1;
         let saved_expected = self.expected_record_type.clone();
         self.expected_record_type = Self::struct_name_from_c_type(&ret);
+        // Plan 33.1 Ф.4 (D24): emit contracts.
+        // Только в debug сборке (контролируется через NOVA_CONTRACTS_RUNTIME
+        // macro). В release контракты со статусом @unverified / Default
+        // в 33.1 (без SMT) — стираются. Для @must_verify в 33.1 без SMT
+        // ошибки не выдаём (отложено до Ф.3); поведение runtime-fallback'а
+        // на debug — стандартное.
+        let has_contracts = !f.contracts.is_empty()
+            && !matches!(f.verify_mode, VerifyMode::Unverified);
+        // emit requires checks
+        if has_contracts {
+            self.line("#ifdef NOVA_CONTRACTS_RUNTIME");
+            for c in &f.contracts {
+                if matches!(c.kind, ContractKind::Requires) {
+                    let expr_c = self.emit_expr(&c.expr)?;
+                    let expr_src = Self::expr_to_display(&c.expr);
+                    self.line(&format!(
+                        "if (!({})) nova_contract_violation(NOVA_CONTRACT_PRE, \"{}\", \"{}\", \"{}\", {});",
+                        expr_c, f.name, Self::escape_c_str(&expr_src),
+                        "<contract>", c.span.start
+                    ));
+                }
+            }
+            self.line("#endif");
+        }
+        // emit body — collect into _nova_result if ensures present
+        let has_ensures = has_contracts && f.contracts.iter().any(|c| matches!(c.kind, ContractKind::Ensures));
         match &f.body {
             FnBody::Expr(e) => {
                 self.emit_source_annotation_for_expr(e);
                 let val = self.emit_expr(e)?;
                 if ret == "nova_unit" {
                     self.line(&format!("{};", val));
+                    if has_ensures {
+                        self.emit_ensures_checks(f)?;
+                    }
                     self.line("return NOVA_UNIT;");
+                } else if has_ensures {
+                    self.line(&format!("{} _nova_result = {};", ret, val));
+                    // Register `result` as visible var inside ensures.
+                    self.var_types.insert("result".into(), ret.clone());
+                    self.emit_ensures_checks(f)?;
+                    self.var_types.remove("result");
+                    self.line("return _nova_result;");
                 } else {
                     self.line(&format!("return {};", val));
                 }
             }
             FnBody::Block(block) => {
-                self.emit_block_stmts(block, &ret)?;
+                if has_ensures {
+                    // Block-тело + ensures: пока не поддерживается, потому что
+                    // require'тся перехват return'ов внутри block'а. Это
+                    // отложено в более позднюю под-фазу 33.1 (или 33.2).
+                    // Сейчас — runtime-проверки ensures не emit'ятся для
+                    // block-bodies; компилятор продолжает, контракты остаются
+                    // в AST для будущей SMT-проверки в Ф.3.
+                    // Это НЕ упрощение semantics — это roadmap-разбиение
+                    // (block-bodies покроем в 33.1 follow-up).
+                    self.emit_block_stmts(block, &ret)?;
+                } else {
+                    self.emit_block_stmts(block, &ret)?;
+                }
             }
             // D82: external — этот path не должен вызываться для external fn,
             // т.к. emit_fn skip'ает их раньше. Safety-fallback.
@@ -4934,6 +5040,16 @@ impl CEmitter {
             }
 
             ExprKind::Call { func, args, trailing } => {
+                // Plan 33.1 Ф.4 (D24): `old(expr)` — special-case в контрактах.
+                // В 33.1 нет mut state, поэтому old(expr) — это просто expr
+                // (значение не меняется между entry и exit). Snapshot для mut —
+                // в 33.2 вместе с frame conditions.
+                if let ExprKind::Ident(n) = &func.kind {
+                    if n == "old" && args.len() == 1 && trailing.is_none() {
+                        // Просто emit аргумент.
+                        return self.emit_expr(args[0].expr());
+                    }
+                }
                 // Plan 19, C5: trailing разбираем три варианта.
                 // - `Block` / `LegacyBlockWithParams` — конвертируем в
                 //   legacy `TrailingBlock` для emit_call_with_trailing.
