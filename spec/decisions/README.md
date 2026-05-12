@@ -21,7 +21,7 @@
 | 06 | [06-concurrency.md](06-concurrency.md) | Fiber runtime, structured concurrency, spawn, detach, cancel_scope, channels, handler scoping, park/wake API, implicit main-scope | D14, D50, D71, D75, D79, D80, D91, D92, D93 |
 | 07 | [07-modules.md](07-modules.md) | Модули, импорты, видимость, package tooling | D5, D29, D47, D78 |
 | 08 | [08-runtime.md](08-runtime.md) | Panic, capability, deployment, prelude, From/Into, TryFrom, math, Mem, assert | D7, D13, D26, D41, D70 (replaced → D73), D73, D74, D76, D77, D81 |
-| 09 | [09-tooling.md](09-tooling.md) | Тесты, контракты, форматирование | D24 |
+| 09 | [09-tooling.md](09-tooling.md) | Тесты, контракты, форматирование, CLI | D24, D89, D95 |
 | 10 | [10-overloading.md](10-overloading.md) | Перегрузка функций и методов: четыре оси, резолв | D84 |
 
 ## История

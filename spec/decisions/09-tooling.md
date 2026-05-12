@@ -8,6 +8,7 @@
 |---|---|
 | [D24](#d24-стратегия-smt-проверки-контрактов) | Стратегия SMT-проверки контрактов |
 | [D89](#d89-test-tooling-конвенции--expect-маркеры-для-negative-тестов) | Test-tooling конвенции: `EXPECT_*` маркеры для negative-тестов |
+| [D95](#d95-cli-path-конвенции--nova-check--nova-test) | CLI path конвенции — `nova check <path>` / `nova test <path>` |
 
 ---
 
@@ -452,3 +453,164 @@ CI-плагины) должны переиспользовать эту конв
 3. **Расширения требуют D-блока.** Custom-маркеры в одном проекте —
    допустимы, но если хочется чтобы маркер стал стандартным
    (доступным в любом runner'е) — нужен D-блок-расширение.
+
+---
+
+## D95. CLI path конвенции — `nova check <path>` / `nova test <path>`
+
+### Что
+
+CLI subcommand'ы `nova check` и `nova test` принимают **позиционный
+polymorphic path argument** (file-or-directory). Без `--recursive`
+флага — directory всегда рекурсивно. Без `--tests-dir`,
+`--check-recursive` и подобных — путь **позиционный**.
+
+Прецеденты: `cargo check <path>` (deprecated в cargo, но pattern
+в Rust ecosystem standard), `go vet ./...`, `clippy <path>`, `eslint <path>`,
+`prettier <path>`, `ruff check <path>`, `black <path>`.
+
+### Правило
+
+#### Signature
+
+```
+nova check [<path>...]              # 0+ positional paths
+nova test  [<path>]                 # 0..1 positional path
+```
+
+**`nova check`:**
+- 0 paths → walk parents до `nova.toml` (workspace root), recurse.
+- 1+ paths → каждый is_file → single check; is_dir → recurse.
+- Multi-path: `nova check std/ examples/` — оба обрабатываются.
+
+**`nova test`:**
+- 0 paths → default `<repo>/nova_tests/`.
+- 1 path: is_file → single test (filter through display name);
+  is_dir → use as tests directory.
+- Multi-path не поддерживается в MVP (test_runner ограничение).
+
+#### Семантика
+
+1. **file vs dir дискриминация** через `path.is_file()` / `path.is_dir()`,
+   не через флаги.
+2. **Recurse default для directory** — без `--recursive` флага
+   (clippy/eslint convention).
+3. **`.nv` extension required** для file argument. Wrong extension →
+   error.
+4. **Non-existent path** → error.
+5. **`std/runtime/` hard-skip** (auto-gen из registry, D89).
+6. **Implicit skip directories**: `target/`, `node_modules/`, `vendor/`,
+   `.git/`, `.hg/`, `.svn/`, любые `_*` и `.*` directories.
+
+#### Что НЕ поддерживается в MVP
+
+(Расширения через sub-plans, см. [Plan 36](../../docs/plans/36-cli-production-hardening.md):
+sub-plans 36.A-E.)
+
+- **Glob patterns** (`*.nv`, `**`) — shell expansion достаточен.
+- **`./...` go-style suffix** — slash-style (`std/`) проще и proven.
+- **Multi-path для `nova test`** — однопутевая семантика в MVP.
+- **`--recursive` / `--tests-dir` / подобные флаги** — **запрещены**
+  (clean break, не deprecation).
+- **`compile_commands.json`-style output** — отдельный план.
+- **Glob/regex для filter** — `--filter` остаётся substring match.
+
+### Запрещённые флаги
+
+Следующие флаги **не должны существовать** в `nova check` / `nova test`
+(R1-R3 plan-36, clean-break policy):
+
+| Запрещённый флаг | Почему | Что вместо |
+|---|---|---|
+| `--recursive` / `-r` | Дублирует is_dir дискриминацию | Просто `nova check <dir>` |
+| `--tests-dir <dir>` | Дублирует path positional | `nova test <dir>` |
+| `--check-recursive` | Дублирует path semantic | `nova check <dir>` |
+| `--all` / `--workspace` | Cargo-style; у нас walks-parents default | `nova check` без path |
+
+### Почему
+
+#### AI-first связь
+
+LLM генерирует CLI invocations в скриптах / документации. Polymorphic
+path arg = **меньше surface для ошибок**. Когда есть `--tests-dir`,
+LLM может сгенерировать `nova test --tests-dir foo` где `nova test foo`
+работает. Одна форма — одна семантика.
+
+#### Прецеденты
+
+| Tool | Path argument | Recursive default |
+|---|---|---|
+| `cargo check` (workspace-style) | path не принимает (только `-p`) | да (workspace) |
+| `go vet ./...` | `./...` pattern | да |
+| `clippy <path>` | да | да (dir) |
+| `eslint <path>` | да | да (dir) |
+| `prettier <path>` | да | да (dir) |
+| `ruff check <path>` | да | да (dir) |
+| `black <path>` | да | да (dir) |
+| **`nova check <path>`** | **да** | **да (dir)** |
+
+Nova следует **`clippy` / `eslint` / `ruff` / `black` school**: positional
+path, file-or-dir, recurse-by-default.
+
+#### Exit codes
+
+| Code | Значение | Условие |
+|---|---|---|
+| 0 | success | все checks/tests passed |
+| 1 | diagnostic failure | type-check error, test fail |
+| 2 (target) | usage error | bad flag, path not found, wrong extension |
+| 101 (target) | panic | tool bug |
+
+MVP: exit 0 vs 1. Расширение до 0/1/2/101 — sub-plan 36.A (см.
+[Plan 36 R7](../../docs/plans/36-cli-production-hardening.md)).
+
+### Что отвергнуто
+
+- **`nova check --recursive <dir>`** — дублирует `is_dir()`
+  дискриминацию. Каждый currentmainstream linter работает без этого
+  флага.
+- **`--tests-dir <dir>` deprecation cycle** — bootstrap не в проде,
+  clean break лучше (см. `feedback_revolutionary_changes` память).
+  Удаление флага → `error: unexpected argument '--tests-dir' found`.
+- **Glob patterns в CLI** (`nova check **/*.nv`) — shell expansion
+  делает это лучше. Не нужно реализовывать parser glob'ов.
+- **Cargo-style `-p <package>` selection** — у Nova workspace concept
+  не сформирован (4 nested nova.toml в repo, см. AD6 Plan 36).
+  Path-based proще.
+- **`./...` go-style suffix** — лишний синтаксис. `nova check std/`
+  более интуитивно чем `nova check std/...`.
+
+### Связь
+
+- [01-philosophy.md → D10](01-philosophy.md#d10) — AI-first как driver
+  для simplicity.
+- [D89](#d89-test-tooling-конвенции--expect-маркеры-для-negative-тестов) —
+  test-tooling конвенции (EXPECT_* markers).
+- [Plan 36](../../docs/plans/36-cli-production-hardening.md) —
+  полная спецификация R1-R30 + AD1-AD12, MVP = Ф.0+Ф.1, sub-plans
+  36.A-E для остального.
+- [08-runtime.md → D13](08-runtime.md#d13) — panic semantics
+  (relates to exit code 101).
+
+### Цена
+
+1. **Несовместимость со старым `--tests-dir`.** Кто-то у себя имел
+   `nova test --tests-dir foo` в скрипте → нужно `nova test foo`.
+   Bootstrap не в проде → приемлемо.
+2. **Path не path-pattern.** Если нужно «все файлы кроме одного» —
+   нужны `--no-exclude` flags (sub-plan 36.A). MVP shell-expansion
+   достаточен.
+3. **MVP — exit 0/1 only.** Quintuplet (0/1/2/3/101) отложен. Скрипты
+   которые отличают usage-error от diagnostic пока полагаются на stderr
+   message parsing — fragile.
+
+### Открытые вопросы
+
+- **Multi-path для `nova test`** — нужен только если test_runner
+  поддержит multi-tests-dir. Сейчас нет use-case.
+- **`-` (stdin) input для editor integration** — отдельный план
+  (LSP / formatter).
+- **`--list` mode** (show files без checking) — useful для отладки
+  implicit-excludes; sub-plan 36.D.
+
+
