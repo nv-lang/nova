@@ -77,8 +77,13 @@ enum Cmd {
     Run {
         file: PathBuf,
     },
-    /// Compile a Nova source file to a native binary.
+    /// Compile a single Nova source file to a native binary.
+    ///
+    /// **Single file only** — `nova build` produces one binary per invocation
+    /// (`-o output` is one path). For multi-file projects, use imports within
+    /// the entry-point file. To typecheck multiple files use `nova check <dir>`.
     Build {
+        /// Single .nv file (entry-point with `fn main`).
         file: PathBuf,
         /// Output binary path (default: <name>[.exe] next to source).
         #[arg(short = 'o')]
@@ -663,14 +668,31 @@ fn cmd_build(
     keep_artifacts: bool,
 ) -> Result<()> {
     if timeout_secs == 0 {
-        bail!("--timeout must be >= 1 second");
+        return Err(usage_err("--timeout must be >= 1 second"));
     }
+    // Plan 36 R6: validate path semantics before canonicalize (better errors).
+    // `nova build` принимает **только single file** (по дизайну — `-o output`
+    // один binary, multi-source builds через imports внутри одного entry-point).
+    if !path.exists() {
+        return Err(usage_err(format!("path not found: {}", path.display())));
+    }
+    if path.is_dir() {
+        return Err(usage_err(format!(
+            "`nova build` requires a single .nv file, got directory: {}\n\
+             For multi-file projects, use imports within one entry-point file.\n\
+             To check multiple files: `nova check <dir>` (typecheck only).",
+            path.display())));
+    }
+    if path.extension().and_then(|s| s.to_str()) != Some("nv") {
+        return Err(usage_err(format!("not a Nova source: {}", path.display())));
+    }
+
     let build_start = std::time::Instant::now();
     let repo = find_repo_root()?;
     let paths = resolve_paths(&repo);
 
     let path = path.canonicalize()
-        .map_err(|e| anyhow!("cannot resolve path {}: {}", path.display(), e))?;
+        .map_err(|e| usage_err(format!("cannot resolve path {}: {}", path.display(), e)))?;
     let src = read_file(&path)?;
     let path_str = path.to_string_lossy();
 
