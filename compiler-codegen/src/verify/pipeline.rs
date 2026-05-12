@@ -129,13 +129,9 @@ impl VerificationPipeline {
                     results.push((c.span, VerifyResult::Disproved(model, cex)));
                 }
                 SatResult::Unknown(reason) => {
-                    let msg = match reason {
-                        UnknownReason::Timeout => "SMT timeout".into(),
-                        UnknownReason::NonLinearArithmetic => "nonlinear arithmetic".into(),
-                        UnknownReason::UnsupportedTheory(s) => format!("unsupported theory: {}", s),
-                        UnknownReason::BackendError(s) => format!("backend error: {}", s),
-                        UnknownReason::NotAttempted(s) => s,
-                    };
+                    // Plan 33.3 Ф.9.10: AI-friendly diagnostic — категоризируем
+                    // reason + suggestions.
+                    let msg = unknown_to_diag_message(reason);
                     results.push((c.span, VerifyResult::Unknown(msg)));
                 }
             }
@@ -178,7 +174,11 @@ fn type_to_sort(ty: &TypeRef) -> SortRef {
 
 fn format_counterexample(model: &Model) -> String {
     if model.bindings.is_empty() {
-        return "(no specific values — trivial sat)".into();
+        // Plan 33.3 Ф.9.10: AI-friendly hint когда модель пуста
+        // (TrivialBackend часто эту дорогу — конкретные значения не
+        // вычисляет, только symbolic disprove).
+        return "values not extracted (TrivialBackend); enable Z3 \
+                backend для full counterexample".into();
     }
     let mut parts = Vec::new();
     for (name, val) in &model.bindings {
@@ -191,6 +191,39 @@ fn format_counterexample(model: &Model) -> String {
         parts.push(format!("{} = {}", name, v));
     }
     parts.join(", ")
+}
+
+/// Plan 33.3 Ф.9.10: AI-friendly hint при unknown verify-result.
+/// Категоризирует причину (timeout, nonlinear, unsupported theory) +
+/// предлагает actions.
+fn unknown_to_diag_message(reason: UnknownReason) -> String {
+    match reason {
+        UnknownReason::Timeout => {
+            "SMT solver hit timeout. \
+             Suggestions: (1) simplify the contract into smaller steps via \
+             intermediate `assert_static`; (2) increase `#verify_timeout(N)`; \
+             (3) mark `#unverified` if проверка intentionally сложна.".into()
+        }
+        UnknownReason::NonLinearArithmetic => {
+            "non-linear arithmetic in contract (e.g. `x * y`, `x / y`). \
+             Trivial backend supports only LIA; Z3 backend can handle non-linear \
+             через NIA. Suggestions: (1) rewrite в linear form через intermediate \
+             variables; (2) wait для Z3 backend; (3) `#unverified`.".into()
+        }
+        UnknownReason::UnsupportedTheory(s) => {
+            format!("unsupported SMT theory: {}. Suggestion: rewrite в supported \
+                     theory (LIA/EUF/arrays) или mark `#unverified`.", s)
+        }
+        UnknownReason::BackendError(s) => {
+            format!("SMT backend internal error: {}. Это bug — please report.", s)
+        }
+        UnknownReason::NotAttempted(s) => {
+            format!("{}\n  AI-friendly hint: контракт за пределами TrivialBackend \
+                     capabilities (только reflexive ensures, constant folding, \
+                     impl-shortcuts). Add intermediate `assert_static`, или \
+                     mark `#unverified`, или wait для Z3 backend.", s)
+        }
+    }
 }
 
 /// Entry-point: проверить все функции модуля. Заполняет diagnostics
@@ -215,8 +248,15 @@ pub fn verify_module(module: &Module) -> ModuleVerifyReport {
                         report.proven.push((fd.name.clone(), span));
                     }
                     VerifyResult::Disproved(_, cex) => {
+                        // Plan 33.3 Ф.9.10: AI-friendly format.
+                        // Включает: fn name, counterexample values (или hint),
+                        // suggestions для исправления.
                         let msg = format!(
-                            "contract not satisfied in `{}`: counterexample {}",
+                            "contract violation in `{}`:\n  counterexample: {}\n  \
+                             suggestions:\n    1. Add `requires` precondition restricting input;\n    \
+                             2. Fix function body to match `ensures`;\n    \
+                             3. Weaken `ensures` to actual behavior;\n    \
+                             4. Mark `#unverified` if intentional disprove",
                             fd.name, cex);
                         match fd.verify_mode {
                             VerifyMode::MustVerify => report.errors.push(
@@ -231,8 +271,11 @@ pub fn verify_module(module: &Module) -> ModuleVerifyReport {
                         // `#must_verify`).
                         match fd.verify_mode {
                             VerifyMode::MustVerify => {
+                                // Plan 33.3 Ф.9.10: AI-friendly format с
+                                // категоризированным reason + suggestions
+                                // (reason уже содержит hint из unknown_to_diag_message).
                                 let msg = format!(
-                                    "`#must_verify` failed for `{}`: SMT returned unknown ({})",
+                                    "`#must_verify` failed for `{}`:\n  {}",
                                     fd.name, reason);
                                 report.errors.push(Diagnostic::new(msg, span));
                             }
@@ -247,7 +290,9 @@ pub fn verify_module(module: &Module) -> ModuleVerifyReport {
                         // Аналогично Unknown.
                         if matches!(fd.verify_mode, VerifyMode::MustVerify) {
                             let msg = format!(
-                                "`#must_verify` failed for `{}`: encoder cannot represent contract ({})",
+                                "`#must_verify` failed for `{}`:\n  encoder cannot represent contract: {}\n  \
+                                 hint: Plan 33.1 encoder поддерживает только int/bool/str/record/binary-ops/if/old. \
+                                 Sum types / arrays / quantifiers — ждут Z3 backend.",
                                 fd.name, reason);
                             report.errors.push(Diagnostic::new(msg, span));
                         }
