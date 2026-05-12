@@ -204,3 +204,31 @@ inject'ит:
 Эффект: loop не decrementing → runtime assert_static panic в debug.
 Catches infinite loops через assert_static механизм. SMT well-founded
 check (полный Dafny-grade) — ждёт Z3.
+
+### 9.9 Selective stripping для proven контрактов
+
+**Закрыто (d1dd9ece8a):** true zero-cost даже в debug. ModuleEnv.proven_contracts
+(Vec<(fn_name, span)>) от VerificationPipeline передаётся в CEmitter
+через `set_proven_contracts`. Codegen skip emit для proven контрактов
+в emit_fn requires-loop + emit_ensures_checks.
+
+Effect: доказанные контракты (reflexive ensures, constant folding patterns)
+не генерируют runtime check вообще. Verified: verify_must_verify_proven.c
+содержит 1 nova_contract_violation (unproven requires), не 2.
+
+### 9.10 AI-friendly diagnostic
+
+**Закрыто (2969afbba4):** error messages теперь включают:
+- fn name (где).
+- counterexample values (или honest hint про TrivialBackend limits).
+- categorised UnknownReason (Timeout/NonLinear/Unsupported/NotAttempted).
+- 3-4 numbered suggestions per category.
+
+Format D24 §107 (AI-first compiler как обучающий сигнал для LLM).
+
+### 9.11 Loop decreases negative test
+
+**Закрыто (d1dd9ece8a):** expected_runtime/f9_loop_decreases_fail.nv —
+loop не decrement'ит decreases → assert_static violation. Parse OK
+через nova-codegen check. Full runtime test заблокирован WIP
+channels.h (plan 40); generated `.c` содержит correct check.

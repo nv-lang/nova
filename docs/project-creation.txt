@@ -7662,3 +7662,49 @@ arms», добавлен «adaptive per-call storage без cap'а на arm coun
 
 c9611a59a4 — Plan 40 Ф.3 B5 final.
 
+
+
+================================================================================
+2026-05-12 Plan 33.3 Ф.9.9/9.10/9.11: zero-cost + AI-diag + loop-decr neg test
+================================================================================
+
+### Ф.9.9 Selective stripping (d1dd9ece8a)
+ModuleEnv.proven_contracts собирается VerificationPipeline'ом, но
+codegen игнорировал. Теперь:
+- CEmitter.proven_contracts: HashSet<(fn_name, span.start)>.
+- set_proven_contracts setter; вызывается из main.rs после check_module.
+- emit_fn requires + emit_ensures_checks: skip emit для proven.
+
+Verified: must_double с `ensures result == x*2` (proven) + `requires x>0`
+(unproven) → generated .c содержит 1 nova_contract_violation (requires),
+не 2. True zero-cost для proven даже в debug.
+
+### Ф.9.10 AI-friendly diagnostic (2969afbba4)
+Error format D24 §107:
+- fn name, counterexample (или honest hint), categorised UnknownReason,
+  3-4 numbered suggestions.
+- unknown_to_diag_message helper per UnknownReason variant.
+- Disproved → 4 suggestions; Unknown #must_verify → fn + reason; Encoding
+  Failed → hint про supported encoder scope.
+
+Patterns в verify_disproved.nv обновлены «not satisfied» → «violation»
+(substring match сохранён).
+
+### Ф.9.11 Loop decreases negative test (within d1dd9ece8a)
+expected_runtime/f9_loop_decreases_fail.nv — bad_loop не decrement'ит
+decreases. Parse + codegen OK. Full release-test заблокирован WIP'ом
+channels.h (Plan 40).
+
+### Combined state Plan 33.3 Ф.9
+8 closure-improvements (9.1-9.11; 9.6 SKIP):
+- 9.1 ghost erasure + 9.7 type-check → V5 closed.
+- 9.2 record invariant runtime → soundness gap closed.
+- 9.3 loop invariant per-iter + 9.5 pre-entry → V2 closed.
+- 9.4 fn decreases guard + 9.8 loop decreases → catches infinite recursion/loop.
+- 9.9 selective stripping → true zero-cost (часть V1 mitigation).
+- 9.10 AI-friendly diagnostic → D24 §107 satisfied (trivial-mode).
+
+Plan 33 bootstrap-уровень maximally complete без libz3. Z3 milestone
+открывает: V1 full (Z3 backend SMT power), V3 (SCC purity), V4 (mut
+snapshot), V6 (pure_view+axiom), V7 (quantifiers), V8 (FP/strings/sets),
+V9 (incremental+parallel), V10 (must_verify_module+trusted), V11 (Dafny-port).

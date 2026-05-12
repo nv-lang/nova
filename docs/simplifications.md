@@ -5378,3 +5378,11 @@ features.
 Снижает scope V2: loop decreases теперь enforced в runtime через
 inject snapshot + assert_static. Comlements Ф.9.4 (recursion decreases
 guard) — те же ideas applied к loop iterations.
+
+### Ф.9.9/9.10/9.11 (2026-05-12)
+- Selective stripping closes gap «zero-cost release» — proven контракты
+  не generate runtime check вообще (даже в debug). Это часть V1 closure
+  в TrivialBackend mode (без libz3).
+- AI-friendly diagnostic — D24 §107 acceptance criterion now satisfied
+  в TrivialBackend mode. Z3 backend будет давать concrete counterexample
+  values; trivial-mode даёт honest hint.
