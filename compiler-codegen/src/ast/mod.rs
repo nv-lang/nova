@@ -16,10 +16,26 @@ pub struct Module {
     pub span: Span,
 }
 
+/// Plan 35 sub-plan 35.A (R26): селективный import — `import X.Y.{A, B as C}`.
+#[derive(Debug, Clone)]
+pub struct ImportItem {
+    pub name: String,
+    pub alias: Option<String>,
+    pub span: Span,
+}
+
 #[derive(Debug, Clone)]
 pub struct Import {
     pub path: Vec<String>,
+    /// Plan 35 sub-plan 35.A (R26): селективный список `{A, B as C}`.
+    /// `None` = весь модуль (legacy). `Some([])` — невалидно, парсер не
+    /// эмитит. `Some([item, ...])` — селективный набор: видимы только
+    /// перечисленные имена.
+    pub items: Option<Vec<ImportItem>>,
     pub alias: Option<String>,
+    /// Plan 35 sub-plan 35.A (R26): `export import X.{A}` — re-export.
+    /// При false — обычный import.
+    pub is_export: bool,
     pub span: Span,
 }
 

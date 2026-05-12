@@ -53,6 +53,27 @@ pub fn resolve_imports_inline(
     let mut merged_items: Vec<Item> = Vec::new();
     let mut import_stack: Vec<Vec<String>> = Vec::new(); // for cycle err message
 
+    // Plan 35 sub-plan 35.A R27: auto-import `std.prelude` if exists.
+    // D26 (08-runtime.md): prelude — auto-available имена (Option/Result/...).
+    // Currently большая часть prelude hardcoded в type-checker'е/codegen'е;
+    // R27 даёт миграционный путь — пользователь может расширять prelude
+    // через `std/prelude.nv` файл (или future полная миграция hardcoded
+    // в file-based). MVP: если файл существует — добавляем как import.
+    // Skip prelude auto-import для самого prelude (избежать self-cycle).
+    let is_prelude_self = module.name.iter().map(|s| s.as_str()).collect::<Vec<_>>() == ["std", "prelude"];
+    if !is_prelude_self {
+        let prelude_path = stdlib_dir.join("prelude.nv");
+        if prelude_path.exists() && prelude_path.is_file() {
+            queue.push(Import {
+                path: vec!["std".into(), "prelude".into()],
+                items: None,
+                alias: None,
+                is_export: false,
+                span: crate::diag::Span::dummy(),
+            });
+        }
+    }
+
     while let Some(imp) = queue.pop() {
         // Resolve path to file.
         let resolved = resolve_import_path(&imp.path, &entry_dir, repo, stdlib_dir);
@@ -101,6 +122,17 @@ pub fn resolve_imports_inline(
         for sub in &imp_module.imports {
             queue.push(sub.clone());
         }
+
+        // Plan 35 sub-plan 35.A (R26): selective syntax `import X.{A, B}` —
+        // **bootstrap MVP**: парсер принимает синтаксис, но resolver
+        // **не enforce'ит** filter — все items добавляются. Причина:
+        // **transitive dependency closure** (Range.method_step_by возвращает
+        // StepRangeIter — фильтр без полного dep-walking ломал бы codegen).
+        // Полный enforcement через type-checker visibility — post-bootstrap.
+        // Filter сейчас служит только документацией намерения программиста.
+        // Plan 35 sub-plan 35.A R26 follow-up: enforce via type-checker
+        // name resolution (visible names в module scope).
+        let _ = imp.items.is_some(); // syntax-only
 
         // Merge items: Type, Fn, Const. Skip Test и top-level Let.
         for item in imp_module.items {

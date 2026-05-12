@@ -5181,3 +5181,48 @@ Detail: [docs/plans/40-channel-hardening.md](plans/40-channel-hardening.md).
   semantics). Ф.9.7 добавил proper type-check `check_ghost_usage` —
   non-ghost reading ghost-var выдаёт compile-error с понятным сообщением
   (раньше — undeclared identifier на C-level).
+
+
+---
+
+## Selective import filter — syntax only в bootstrap (35.A R26, 2026-05-12)
+
+### Был simplification
+
+`import X.Y.{A, B}` синтаксис принят парсером, но **resolver не enforce'ит**
+filter — все items имповрта merge'ятся в текущий module.
+
+### Причина
+
+**Transitive dependency closure issue.** Если user пишет
+`import std.collections.range.{Range}`, но Range.@step_by возвращает
+StepRangeIter — codegen reference'ит StepRangeIter type even though
+filter говорит «только Range». Без полного dep-walking (transitive
+closure всех referenced types через methods/fields) filter ломал бы
+codegen.
+
+### Now compromise
+
+Filter сохраняется в AST.Import.items (syntax-only documentation
+намерения программиста). Полный enforcement через type-checker
+visibility (видимые имена в module scope) — post-bootstrap.
+
+### Prelude.nv почти пустой (R27, 2026-05-12)
+
+### Был simplification
+
+`std/prelude.nv` существует но содержит только `PRELUDE_VERSION = 1`.
+
+### Причина
+
+Auto-imported items (Option/Result/Some/None/Ok/Err/Error/Never/print/
+println/panic) — все hardcoded в type-checker'е и codegen'е через
+special cases. Migration этих items в file-based prelude — отдельная
+большая работа (refactor type-checker symbol resolution + codegen
+emit для prelude items).
+
+### Now compromise
+
+R27 механизм работает (auto-import std.prelude если файл существует);
+user'ы могут расширять prelude добавляя items в std/prelude.nv.
+Migration hardcoded → file-based — future work.

@@ -721,7 +721,9 @@ fn check_one_file(path: &Path, verbose: bool) -> CheckResult {
     // 2.5 Plan 35 R31: cross-file resolve через inline expansion.
     // Безопасно для check: type-check merged AST — same correctness как
     // cmd_build. Закрывает Plan 35 R19 (nova check parity).
-    if !module.imports.is_empty() {
+    // Plan 35 sub-plan 35.A R27: вызываем безусловно (resolver auto-добавит
+    // prelude если std/prelude.nv существует, даже без explicit imports).
+    {
         if let Ok(repo) = find_repo_root() {
             let paths = resolve_paths(&repo);
             if let Err(e) = nova_codegen::imports::resolve_imports_inline(

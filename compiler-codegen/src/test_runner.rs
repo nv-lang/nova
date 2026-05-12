@@ -1814,12 +1814,13 @@ fn codegen_to_c(path: &Path, src: &str) -> Result<Vec<String>, String> {
     // expansion. Тот же codepath что в `nova-cli::cmd_build`. Без этого
     // `nova test foo.nv` с `import std.X.Y` падает «cannot resolve
     // iterator type 'nova_int'».
-    if !module.imports.is_empty() {
-        if let Some(repo) = find_repo_root_from(path) {
-            let stdlib_dir = repo.join("std");
-            crate::imports::resolve_imports_inline(path, &mut module, &repo, &stdlib_dir)
-                .map_err(|e| format!("import resolution: {}", e))?;
-        }
+    // Plan 35 sub-plan 35.A R27: prelude auto-import работает даже когда
+    // user не делает explicit import — поэтому вызываем resolve_imports_inline
+    // безусловно (resolver сам auto-добавит prelude если файл существует).
+    if let Some(repo) = find_repo_root_from(path) {
+        let stdlib_dir = repo.join("std");
+        crate::imports::resolve_imports_inline(path, &mut module, &repo, &stdlib_dir)
+            .map_err(|e| format!("import resolution: {}", e))?;
     }
 
     types::check_module(&module).map_err(|errs| {

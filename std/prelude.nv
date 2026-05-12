@@ -1,0 +1,19 @@
+// Plan 35 sub-plan 35.A R27 (D26): prelude module.
+//
+// Auto-imported в каждый module через resolve_imports_inline когда
+// `std/prelude.nv` существует (bootstrap stage discovery).
+//
+// **Currently empty** — большая часть prelude (Option/Result/Some/None/
+// Ok/Err/Error/Never/print/println/panic) встроена в type-checker и
+// codegen напрямую (legacy hardcode). Этот файл — placeholder
+// показывающий что R27 механизм работает; user'ы могут расширять
+// prelude добавляя items сюда.
+//
+// **Future migration**: hardcoded prelude items постепенно переедут
+// в этот файл, удаляя type-checker special cases.
+
+module std.prelude
+
+// Plan 35 sub-plan 35.A R27 marker: добавляю `PRELUDE_VERSION` константу
+// для verify в тестах что auto-import работает.
+export const PRELUDE_VERSION int = 1

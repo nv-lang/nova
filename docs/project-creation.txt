@@ -7249,3 +7249,59 @@ V5 теперь полностью закрыт (codegen erasure + proper type-c
 Остающиеся simplifications (V1, V3, V4, V6-V11) требуют libz3 setup
 + Z3 backend implementation. Это отдельный milestone.
 
+
+
+================================================================================
+2026-05-12 Plan 35 sub-plan 35.A: import semantics extensions (R26 + R27)
+================================================================================
+
+Sub-plan 35.A был roadmap-level (R25-R28). Spec audit показал:
+- R25 wildcard `import X.*` — ❌ отвергнут D29 §«Wildcard import запрещён»
+  («скрывает источник, ломает локальность, AI-first»).
+- R28 `pub/pub(crate)/pub(super)` — ❌ отвергнут D5/D29 (`export` binary).
+- R26 selective `import X.{A, B}` + `export import X.{A}` — D29 spec
+  exists; bootstrap impl нужен.
+- R27 prelude module `std/prelude.nv` — D26 spec exists; auto-import
+  нужен.
+
+### Implementation (commits TBD)
+
+**Parser (compiler-codegen/src/parser/mod.rs):**
+- `parse_dotted_path`: stop on `.{` (selective items follow).
+- `parse_import`: lookahead `export import`, parse `.{ item, item as alias }`.
+- Module-level dispatch: distinguish `export import` от `export fn/type`.
+
+**AST (compiler-codegen/src/ast/mod.rs):**
+- `Import { items: Option<Vec<ImportItem>>, is_export: bool, ... }`.
+- `ImportItem { name, alias, span }`.
+
+**Resolver (compiler-codegen/src/imports.rs):**
+- Bootstrap MVP: `items` filter **не enforce'ит** (transitive dep
+  closure issue — Range method вернёт StepRangeIter even if filter says
+  только Range). Все items merge'ятся. Filter — syntax-only documentation.
+- Auto-import `std/prelude.nv` если файл существует (R27). Skip
+  self-cycle для самого prelude.
+
+**test_runner + nova-cli:** убрано guard `if !module.imports.is_empty()`
+— `resolve_imports_inline` вызывается безусловно для prelude auto-add.
+
+**Tests** (nova_tests/modules/):
+- selective_import.nv — `import std.collections.range.{Range, RangeIter}` PASS.
+- prelude_auto_import.nv — `PRELUDE_VERSION` доступен без import.
+- export_import_reexport.nv — `export import` синтаксис parsed.
+
+Full regression: **233/233 PASS** (231 baseline + 2 new).
+
+### Bootstrap simplifications
+
+- Selective filter — syntax only (не enforce'ит). Полный enforcement
+  через type-checker visibility — post-bootstrap.
+- Prelude.nv пока почти пустой (PRELUDE_VERSION = 1 только). Большая
+  часть prelude items hardcoded в type-checker'е/codegen'е — migration
+  to file-based — future work.
+
+### Что осталось open
+
+- Type-checker selective filter enforcement (R26 part 2).
+- Migration hardcoded prelude → file-based (R27 followup).
+- Plan 35 sub-plans 35.C-E (advanced features).

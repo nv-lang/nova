@@ -124,6 +124,20 @@ impl Parser {
                 imports.push(self.parse_import()?);
                 continue;
             }
+            // Plan 35 sub-plan 35.A (R26): `export import X` re-export
+            // (D29). Lookahead-1 чтобы не съесть `export` для других items
+            // (export fn, export type, etc.). Только `export import|use` —
+            // дополнительный путь для парсинга import'а.
+            if matches!(self.peek().kind, TokenKind::KwExport)
+                && self.pos + 1 < self.tokens.len()
+                && matches!(
+                    self.tokens[self.pos + 1].kind,
+                    TokenKind::KwImport | TokenKind::KwUse
+                )
+            {
+                imports.push(self.parse_import()?);
+                continue;
+            }
             items.push(self.parse_item()?);
         }
         let span = start.merge(self.peek().span);
@@ -230,7 +244,12 @@ impl Parser {
         let mut parts = Vec::new();
         let (first, _) = self.parse_ident()?;
         parts.push(first);
-        while self.eat(&TokenKind::Dot).is_some() {
+        // Plan 35 sub-plan 35.A (R26): stop on `.{` — selective items follow.
+        while matches!(self.peek().kind, TokenKind::Dot)
+            && self.pos + 1 < self.tokens.len()
+            && !matches!(self.tokens[self.pos + 1].kind, TokenKind::LBrace)
+        {
+            self.bump(); // .
             let (next, _) = self.parse_ident()?;
             parts.push(next);
         }
@@ -240,12 +259,77 @@ impl Parser {
     // ─── imports ─────────────────────────────────────────────────────────
 
     fn parse_import(&mut self) -> Result<Import, Diagnostic> {
+        // Plan 35 sub-plan 35.A: support `import X.Y.{A, B as C}` selective
+        // и `export import X.{A}` re-export.
+        // Detect leading `export` keyword. Парсер уже потребил `KwExport`
+        // в parse_item только перед fn/type/const/let — не перед import.
+        // Здесь мы стартуем с `import` или `export import` (или `use`).
         let start = self.peek().span;
+        let is_export = if matches!(self.peek().kind, TokenKind::KwExport) {
+            self.bump();
+            true
+        } else {
+            false
+        };
         // Принимаем как `import`, так и `use` — оба парсятся идентично:
         // `use` будет использоваться для embedding (D39), но в bootstrap
         // мы не различаем.
         self.bump();
         let path = self.parse_dotted_path()?;
+        // Optional `.{Item1, Item2 as Alias, ...}` — selective items.
+        // Префикс — `.` (= Dot), затем `{`. parse_dotted_path остановился на
+        // `.` перед `{`, надо его съесть.
+        let items = if matches!(self.peek().kind, TokenKind::Dot)
+            && self.pos + 1 < self.tokens.len()
+            && matches!(self.tokens[self.pos + 1].kind, TokenKind::LBrace)
+        {
+            self.bump(); // .
+            self.bump(); // {
+            let mut items = Vec::new();
+            loop {
+                if matches!(self.peek().kind, TokenKind::RBrace) {
+                    break;
+                }
+                let item_start = self.peek().span;
+                let (name, _) = self.parse_ident()?;
+                let alias = if matches!(self.peek().kind, TokenKind::KwAs) {
+                    self.bump();
+                    let (a, _) = self.parse_ident()?;
+                    Some(a)
+                } else {
+                    None
+                };
+                let item_end = self.tokens[self.pos.saturating_sub(1)].span;
+                items.push(ImportItem {
+                    name,
+                    alias,
+                    span: item_start.merge(item_end),
+                });
+                if matches!(self.peek().kind, TokenKind::Comma) {
+                    self.bump();
+                } else {
+                    break;
+                }
+            }
+            if !matches!(self.peek().kind, TokenKind::RBrace) {
+                let span = self.peek().span;
+                return Err(Diagnostic::new(
+                    "expected `}` to close selective-import list",
+                    span,
+                ));
+            }
+            self.bump(); // }
+            if items.is_empty() {
+                let span = start;
+                return Err(Diagnostic::new(
+                    "selective-import list must contain at least one item",
+                    span,
+                ));
+            }
+            Some(items)
+        } else {
+            None
+        };
         let alias = if matches!(self.peek().kind, TokenKind::KwAs) {
             self.bump();
             let (name, _) = self.parse_ident()?;
@@ -253,9 +337,17 @@ impl Parser {
         } else {
             None
         };
+        // Mutual exclusivity: нельзя одновременно selective items и alias.
+        if items.is_some() && alias.is_some() {
+            return Err(Diagnostic::new(
+                "cannot combine `import X.{A, B}` with `as` alias — use \
+                 alias per-item: `import X.{A as Aliased, B}`",
+                start,
+            ));
+        }
         self.expect_newline_or_eof()?;
         let span = start.merge(self.tokens[self.pos.saturating_sub(1)].span);
-        Ok(Import { path, alias, span })
+        Ok(Import { path, items, alias, is_export, span })
     }
 
     // ─── top-level items ─────────────────────────────────────────────────

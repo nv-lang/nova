@@ -1,0 +1,11 @@
+// Plan 35 sub-plan 35.A R27 (D26): prelude auto-import.
+//
+// `std/prelude.nv` существует → resolve_imports_inline auto-добавляет
+// `import std.prelude` в queue. `PRELUDE_VERSION` const доступна без
+// explicit import.
+
+module nova_tests.modules.prelude_auto_import
+
+test "PRELUDE_VERSION доступен без import" {
+    assert(PRELUDE_VERSION == 1)
+}

@@ -413,7 +413,7 @@ constraints (`//go:build linux`), error recovery (продолжить typecheck
 
 | Sub-plan | Содержание | Зависимости |
 |---|---|---|
-| **35.A** | Wildcard imports (R25), `export use` re-export (R26), prelude (R27), visibility granularity (R28). Spec-heavy: новые D-decisions для import semantics. | После Q-import-semantics в spec |
+| **35.A** | ✅ **bootstrap MVP закрыт 2026-05-12.** Spec audit: R25 wildcard ❌ **отвергнут** D29; R28 pub granularity ❌ **отвергнут** D5. Implemented: R26 (parser `import X.{A, B}` + `export import X`; bootstrap merge всех items, type-checker enforcement deferred) + R27 (prelude.nv auto-import). 3 теста PASS, full regression 233/233. **Open:** type-checker enforcement selective filter (post-bootstrap). | bootstrap done; full enforcement post-bootstrap |
 | **35.B** | On-disk module cache (R22), incremental rebuild (R23), regen-runtime invalidation (R24). Performance, не correctness. | После MVP |
 | **35.C** | Cross-file generic bounds resolution (R29). Аналог Rust trait coherence (для future protocols). | Plan 14 + Plan 15 |
 | **35.D** | Stable mangling spec (R8 full v0-style). Aналог Rust v0. | Когда FFI use-cases появятся |

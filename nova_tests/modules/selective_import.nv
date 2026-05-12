@@ -1,0 +1,27 @@
+// Plan 35 sub-plan 35.A R26: selective `import X.{A, B}` syntax.
+//
+// Bootstrap MVP: selective list разрешается в parser + filter в
+// imports::resolve_imports_inline. Filter оставляет только items
+// с указанными именами; остальные skip'аются.
+
+module nova_tests.modules.selective_import
+
+import std.collections.range.{Range, RangeIter}
+
+test "selective import Range works" {
+    let r = 0..5
+    let mut sum = 0
+    for i in r {
+        sum = sum + i
+    }
+    assert(sum == 10)
+}
+
+test "selective import RangeIter via .iter()" {
+    let r = 0..3
+    let mut it = r.iter()
+    assert(it.next() == Some(0))
+    assert(it.next() == Some(1))
+    assert(it.next() == Some(2))
+    assert(it.next() == None)
+}

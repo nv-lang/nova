@@ -1,0 +1,22 @@
+// Plan 35 sub-plan 35.A R26 (D29): `export import X` re-export.
+//
+// Bootstrap MVP: parser принимает `export import std.X.{A}`. Resolver
+// merge'ит items как для обычного import. Re-export автоматически
+// работает потому что items унаследованного модуля попадают в текущий,
+// а тот в свою очередь — в impoter's items merged set.
+//
+// `is_export` flag сохраняется в Import AST для post-bootstrap visibility
+// enforcement.
+//
+// Этот тест — sanity check: parser принимает синтаксис, resolver merge'ит.
+
+module nova_tests.modules.export_import_reexport
+
+// Hypothetical facade pattern (without facade-module — этот тест проверяет
+// что `export import` синтаксис парсится корректно как обычный import).
+export import std.collections.range.{Range}
+
+test "export import синтаксис parsed and items merged" {
+    let r = 0..5
+    assert(r.len() == 5)
+}
