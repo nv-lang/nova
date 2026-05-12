@@ -690,8 +690,8 @@ naming convention, по аналогии с примитивами. Исполь
 | `Net` | сеть (HTTP/socket) | recorded responses |
 | `Db` | соединение к БД | in-memory db |
 | `Fs` | файловая система | virtual-fs |
-| `Time` | clock | `fixed_ms(ms)` |
-| `Random` | RNG | `seeded(seed)` |
+| `Time` | clock | `fixed_ms(ms u64)` / `mut_clock(start_ms u64)` |
+| `Random` | RNG | `seeded(seed u64)` |
 | `Log` | logger | capture-log |
 | `Ask[T]` | контекстный read (Reader) | fixed value |
 | `Alloc[R]` | region аллокация | (для real-time, [D6](05-memory.md#d6)) |

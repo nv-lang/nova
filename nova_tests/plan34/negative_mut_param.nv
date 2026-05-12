@@ -1,0 +1,16 @@
+// EXPECT_COMPILE_ERROR expected identifier, got `mut`
+//
+// Plan 34 Ф.2 fix #2 (json.nv:499): `mut`-modifier для параметра функции
+// не поддержан парсером. Workaround — убрать `mut` (HashMap reference
+// через GC, mutability fact'ically сохраняется).
+//
+// Regression marker: если парсер расширят поддержкой mut-param,
+// тест провалится — нужно обновить spec и обновить/удалить.
+
+module nova_tests.plan34.negative_mut_param
+
+type Counter { mut value int }
+
+fn bump(mut c Counter) -> () {        // <-- `mut c` parser падает
+    c.value = c.value + 1
+}

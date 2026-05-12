@@ -1,0 +1,20 @@
+// EXPECT_COMPILE_ERROR unexpected `=>` in expression
+//
+// Plan 34 Ф.2 fix #4 (property.nv: 6 мест): Kotlin/Swift-style
+// trailing-block-as-closure `f(arg) { x => ... }` — синтаксис которого
+// в Nova нет. По D22 closure-литерал — `|x| { ... }`.
+// Workaround — переход на `f(arg, |x| { ... })`.
+//
+// Regression marker: если введут D-блок про trailing-block closure,
+// тест провалится — обновить spec + удалить тест.
+
+module nova_tests.plan34.negative_trailing_block_closure
+
+fn apply(n int, f fn(int) -> int) -> int => f(n)
+
+test "trailing-block closure synthax не поддержан" {
+    let r = apply(5) { x =>          // <-- Kotlin/Swift style, парсер падает
+        x * 2
+    }
+    assert(r == 10)
+}

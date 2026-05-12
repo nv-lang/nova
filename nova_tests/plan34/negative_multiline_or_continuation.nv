@@ -1,0 +1,14 @@
+// EXPECT_COMPILE_ERROR expected fn / type / let / const / test, got `||`
+//
+// Plan 34 Ф.2 fix #3 (regex.nv:222): multi-line `||` continuation —
+// парсер не цепляет expression со следующей строки если она начинается
+// с `||`. Workaround — `||` в конец предыдущей строки.
+//
+// Regression marker: если парсер расширят поддержкой leading-operator
+// continuation, тест провалится — обновить.
+
+module nova_tests.plan34.negative_multiline_or_continuation
+
+fn is_punct(c char) -> bool =>
+    c == '.' || c == ',' || c == ';' || c == ':'
+    || c == '!' || c == '?'      // <-- `||` в начале строки — парсер падает

@@ -1,0 +1,102 @@
+// Plan 34 Ф.7 regression: xoshiro256++ algorithm correctness test.
+//
+// Воспроизводит логику std/testing/handlers.nv::seeded inline, чтобы
+// верифицировать xoshiro256++ + splitmix64 init **независимо** от
+// handlers.nv codegen (который сейчас падает на NovaVtable_Random — не
+// Plan 34 scope).
+//
+// Тестируется:
+//   1. splitmix64 init для seed=0 даёт non-zero state (LCG-degenerate
+//      case был бы fail).
+//   2. determinism: тот же seed → та же последовательность.
+//   3. разные seed → разные sequences.
+//   4. xoshiro256++ step не возвращает 0 после splitmix64-init (ожидание
+//      от Vigna spec).
+
+module nova_tests.plan34.inline_xoshiro_determinism
+
+
+// splitmix64 (Vigna, public domain).
+fn splitmix64_step(seed u64) -> u64 {
+    let mut z = seed + 0x9E3779B97F4A7C15
+    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9
+    z = (z ^ (z >> 27)) * 0x94D049BB133111EB
+    z ^ (z >> 31)
+}
+
+fn rotl64(x u64, k int) -> u64 =>
+    (x << k) | (x >> (64 - k))
+
+
+// Inline reproducer xoshiro256++.next() из std/testing/handlers.nv.
+// Возвращает tuple (state0, state1, state2, state3, result).
+type XState { s0 u64, s1 u64, s2 u64, s3 u64 }
+
+fn xoshiro_init(seed u64) -> XState {
+    let mut z = seed
+    z = splitmix64_step(z); let s0 = z
+    z = splitmix64_step(z); let s1 = z
+    z = splitmix64_step(z); let s2 = z
+    z = splitmix64_step(z); let s3 = z
+    XState { s0, s1, s2, s3 }
+}
+
+fn xoshiro_next(st XState) -> (XState, u64) {
+    let result = rotl64(st.s0 + st.s3, 23) + st.s0
+    let t = st.s1 << 17
+    let s2_a = st.s2 ^ st.s0
+    let s3_a = st.s3 ^ st.s1
+    let s1_a = st.s1 ^ s2_a
+    let s0_a = st.s0 ^ s3_a
+    let s2_b = s2_a ^ t
+    let s3_b = rotl64(s3_a, 45)
+    let new_st = XState { s0: s0_a, s1: s1_a, s2: s2_b, s3: s3_b }
+    (new_st, result)
+}
+
+
+test "splitmix64: seed=0 даёт non-zero state (no degenerate)" {
+    let st = xoshiro_init(0 as u64)
+    // Все 4 state-элемента должны быть non-zero после splitmix64-init
+    // (это ключевое свойство xoshiro family vs LCG).
+    assert(st.s0 != 0 as u64)
+    assert(st.s1 != 0 as u64)
+    assert(st.s2 != 0 as u64)
+    assert(st.s3 != 0 as u64)
+}
+
+test "xoshiro: determinism — тот же seed даёт ту же sequence" {
+    let st1 = xoshiro_init(42 as u64)
+    let (_, r1_a) = xoshiro_next(st1)
+    let st2 = xoshiro_init(42 as u64)
+    let (_, r2_a) = xoshiro_next(st2)
+    assert(r1_a == r2_a)
+}
+
+test "xoshiro: разные seed дают разные sequences" {
+    let st_a = xoshiro_init(1 as u64)
+    let (_, ra) = xoshiro_next(st_a)
+    let st_b = xoshiro_init(2 as u64)
+    let (_, rb) = xoshiro_next(st_b)
+    assert(ra != rb)
+}
+
+test "xoshiro: последовательные значения различаются (no repeats)" {
+    let st = xoshiro_init(99 as u64)
+    let (st1, r1) = xoshiro_next(st)
+    let (st2, r2) = xoshiro_next(st1)
+    let (_, r3) = xoshiro_next(st2)
+    assert(r1 != r2)
+    assert(r2 != r3)
+    assert(r1 != r3)
+}
+
+test "xoshiro: non-correlation (a→b и b→c diffs не равны)" {
+    let st = xoshiro_init(31337 as u64)
+    let (st1, r1) = xoshiro_next(st)
+    let (st2, r2) = xoshiro_next(st1)
+    let (_, r3) = xoshiro_next(st2)
+    let d1 = if r1 > r2 { r1 - r2 } else { r2 - r1 }
+    let d2 = if r2 > r3 { r2 - r3 } else { r3 - r2 }
+    assert(d1 != d2)        // linear-recurrence broken PRNG fails this
+}

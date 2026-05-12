@@ -1,0 +1,19 @@
+// EXPECT_COMPILE_ERROR expected pattern, got `+=`
+//
+// Plan 34 Ф.2 fix #1 (json.nv:164): bare `+=` в RHS match-arm не
+// поддержан парсером. Workaround — обёртка `{ ... }`.
+//
+// Этот тест — regression marker: если парсер расширят поддержкой
+// bare compound-assign в match-arm, тест провалится (EXPECT_COMPILE_ERROR
+// больше не сработает) — нужно обновить или удалить тест.
+
+module nova_tests.plan34.negative_match_arm_compound_assign
+
+type Cell { mut count int }
+
+fn Cell mut @bump(c char) -> () {
+    match c {
+        'a' => @count += 1     // <-- bare `+=` в RHS, парсер падает
+        _   => ()
+    }
+}

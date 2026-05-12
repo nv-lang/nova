@@ -1,0 +1,56 @@
+// Plan 34 Ф.7 regression: mut_clock advance behavior — inline reproducer.
+//
+// Проверяет логику std/testing/handlers.nv::mut_clock независимо от
+// codegen для handler-литералов с custom effects (тот баг закрывается
+// отдельно).
+//
+// Семантика:
+//   - mut_clock(start_ms): handler с mut current_ms = start_ms.
+//   - Time.sleep(d): current_ms += d.nanos / 1_000_000.
+//   - Time.now_ms(): возвращает current_ms.
+//
+// Inline: не используем `Time` effect, моделируем как обычные функции
+// над state-record (т.к. handler-codegen для stdlib Time всё равно
+// требует runtime-уровня support).
+
+module nova_tests.plan34.inline_mut_clock_advance
+
+
+type Clock { ms u64 }
+
+fn clock_new(start_ms u64) -> Clock => Clock { ms: start_ms }
+
+fn clock_sleep_ms(c Clock, delta_ms u64) -> Clock =>
+    Clock { ms: c.ms + delta_ms }
+
+
+test "mut_clock логика: sleep продвигает state на d.ms" {
+    let c0 = clock_new(0 as u64)
+    assert(c0.ms == 0 as u64)
+    let c1 = clock_sleep_ms(c0, 500 as u64)
+    assert(c1.ms == 500 as u64)
+    let c2 = clock_sleep_ms(c1, 2000 as u64)
+    assert(c2.ms == 2500 as u64)
+}
+
+test "mut_clock: разные start_ms независимы" {
+    let a = clock_new(1000 as u64)
+    let b = clock_new(5000 as u64)
+    let a1 = clock_sleep_ms(a, 1000 as u64)
+    let b1 = clock_sleep_ms(b, 1000 as u64)
+    assert(a1.ms == 2000 as u64)
+    assert(b1.ms == 6000 as u64)
+}
+
+test "mut_clock: large delta (1 hour) корректно" {
+    let c = clock_new(0 as u64)
+    // 1 hour = 3_600_000 ms.
+    let c1 = clock_sleep_ms(c, 3_600_000 as u64)
+    assert(c1.ms == 3_600_000 as u64)
+}
+
+test "mut_clock: zero delta — state не меняется" {
+    let c = clock_new(12345 as u64)
+    let c1 = clock_sleep_ms(c, 0 as u64)
+    assert(c1.ms == 12345 as u64)
+}

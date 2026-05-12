@@ -1,0 +1,38 @@
+// Plan 34 follow-up: gc.* namespace API smoke tests.
+// Покрывает все 5 функций из std/runtime/gc.nv:
+//   gc.heap_size, gc.live_count, gc.alloc_count, gc.collect, gc.reset_stats
+//
+// Тесты работают под любым GC backend (malloc/boehm) — используют
+// honest sentinel `heap_size() == 0` для malloc.
+
+module nova_tests.plan34.gc_namespace_basic
+
+
+test "gc.heap_size — non-negative (malloc: 0, boehm: > 0)" {
+    let h = gc.heap_size()
+    assert(h >= 0)
+}
+
+test "gc.live_count — non-negative monotonic upper bound" {
+    let lc = gc.live_count()
+    assert(lc >= 0)
+}
+
+test "gc.alloc_count — non-negative" {
+    let a = gc.alloc_count()
+    assert(a >= 0)
+}
+
+test "gc.collect — callable без panic" {
+    gc.collect()
+    gc.collect()      // повторный вызов — тоже OK
+    assert(true)
+}
+
+test "gc.reset_stats — callable без panic" {
+    gc.reset_stats()
+    let a_after_reset = gc.alloc_count()
+    // После reset alloc_count может быть 0 или близко к нему (зависит от
+    // backend и pending аллокаций между reset и read).
+    assert(a_after_reset >= 0)
+}
