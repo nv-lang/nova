@@ -5098,3 +5098,74 @@ bare-names при resolve. После этого:
 
 **Приоритет:** P2 — текущий compromise работает корректно, double
 source of truth manually synced. Cleanup-приоритет, не функциональный.
+
+
+---
+
+## Каналы: thread-safety и select-wake race — Plan 40 (2026-05-12)
+
+**Где:** `compiler-codegen/nova_rt/channels.h` (610 строк) —
+весь channel-стек после Plan 30/31.
+
+**Что упрощено:**
+
+1. **Нет atomics на shared state.** `Nova_ChannelState` fields
+   (`writer_count`, `closed`, `count`, `head`, waiter-lists) — обычные
+   `int32_t` / `bool` / pointer. Все операции (send/recv/close/clone)
+   non-atomic. Под single-thread runtime'ом работает корректно;
+   под M:N (Plan 23) → data race на любой operation.
+
+2. **Select wake — non-race-free retry.** `nova_select_park`
+   (channels.h:558) после `nova_sched_park` делает `try_immediate` retry
+   для определения winning arm. Channel wake helper (`_nova_channel_wake_recv`)
+   уже **извлёк** значение в момент wake. Между wake и retry на M:N
+   другой fiber-thread может его выхватить → `ctx->which = -1`,
+   silent select dispatch failure. Go использует `selectdone` CAS на
+   waiter'е (mark, не commit) — мы упростили до single-thread assumption.
+
+3. **NOVA_SELECT_MAX_ARMS=16 silent skip.** `nova_select_set_recv/send`
+   на `n >= 16` делает `return` без diagnostic (channels.h:375, 385).
+   Parser и codegen `emit_select` не валидируют. Результат: `select`
+   с 17+ arms → silent зависание (17-я arm не зарегистрирована, select
+   ждёт ready на не-зарегистрированной arm).
+
+4. **O(n) waiter unlink.** Singly-linked waiter lists
+   (`_nova_channel_waiter_unlink`, `_nova_sel_waiter_unlink`). Каждый
+   select-park регистрирует N waiter'ов; после wake unlink'ает N — это
+   **O(N²)** на каждый dispatch. Go/Rust используют doubly-linked для O(1).
+
+5. **Time.after timer cleanup.** Если select выиграл не по
+   `Time.after`-arm'у, timer всё равно сработает и `try_send` в discarded
+   канал. NovaAfterState heap-allocated, GC под Boehm видит указатель
+   через `timer.data`, под malloc-only fallback — leak до конца программы.
+
+6. **Time.after per-call allocations.** Каждый `Time.after(ms)` =
+   ~6 nova_alloc'ов (ChannelPair + state + buf + tx + rx + NovaAfterState).
+   Tokio достигает 0-alloc через poll-state без channel — для нас post-1.0.
+
+7. **Channel.new capacity check после allocate.** `nova_channel_new`
+   alloc'ает state+buf, **потом** throws на `capacity <= 0`. GC eventually
+   соберёт. Косметика.
+
+8. **Нет recv_many batch API.** Tokio 1.32+ recv_many. Не блокер.
+
+**Почему:** Plan 30/31 закрывались под single-thread runtime —
+формальная корректность для M:N не закладывалась. Post-close review
+(Plan 30 Ф.4) закрыл 4 дефекта (Б1/Б2/Н1/Н2), оставил T1/T2/T3 как
+«tech debt», но недооценил критичность T1 (atomics) — это **blocker**,
+а не tech debt: Plan 23 не запустится без него.
+
+**Как починить:** Plan 40 разбивает на три фазы:
+- Ф.1 (P1, prerequisite для Plan 23): atomics+mutex, race-free wake
+  (selectdone CAS), doubly-linked waiters, arm-count diagnostic.
+- Ф.2 (P2): Time.after cleanup + pool.
+- Ф.3 (P3): capacity check ordering, spec D94 sync, recv_many.
+
+**Mutex vs lock-free:** план рекомендует mutex (Rust mpsc parity).
+crossbeam-уровень lock-free — post-1.0 (5+ лет работы над формальной
+верификацией, не успеем).
+
+**Приоритет:** **P1 для Ф.1** (без неё Plan 23 не работает), **P2/P3**
+для остального.
+
+Detail: [docs/plans/40-channel-hardening.md](plans/40-channel-hardening.md).

@@ -7119,3 +7119,82 @@ Windows file-locking quirk; alt-dir после commit'а cleanupable.
 - compiler-codegen/src/types/mod.rs (комментарий рядом с builtin "gc")
 - docs/project-creation.txt, docs/simplifications.md
 
+
+
+================================================================================
+2026-05-12 Plan 40: channel hardening — production parity с Go/Rust mpsc
+================================================================================
+
+Post-close audit Plan 30 (send→bool + tx.clone()) и Plan 31 (select)
+относительно `runtime/chan.go`, `std::sync::mpsc`, `crossbeam::channel`,
+`tokio::sync::mpsc`. Найдены gap'ы, не закрытые в Plan 30/31 review.
+
+### Контекст / триггер
+
+Plan 30 Ф.4 (post-close review, 2026-05-11) закрыл 4 дефекта
+(Б1/Б2/Н1/Н2: double-close writer_count, recv/send outside fiber,
+try_recv 3-way result, Channel.new(0) explicit error) и оставил
+T1/T2/T3 как «tech debt». Re-audit 2026-05-12 переоценил приоритеты
+и нашёл дополнительные gap'ы.
+
+### Найденные gap'ы
+
+**P1 (blockers для Plan 23 M:N):**
+- B1 (был T1): нет atomics на shared state (writer_count, closed,
+  count, head, waiter-lists). Под single-thread работает; под M:N —
+  data race на любой operation.
+- B2 (новый): select wake — non-race-free retry. nova_select_park
+  после park делает try_immediate retry; channel wake уже извлёк
+  значение, на M:N другой fiber может его выхватить → silent
+  select dispatch failure. Go использует selectdone CAS на waiter'е.
+- B5 (новый): NOVA_SELECT_MAX_ARMS=16, set_recv/send на n>=16
+  silent return. select с 17+ arms → silent зависание.
+- T2 (был): singly-linked waiter unlink → O(N²) на каждый select
+  dispatch. Go/Rust используют doubly-linked.
+
+**P2 (hardening post-M:N):**
+- B7 (новый): Time.after timer — если select выиграл не по timer-
+  arm, timer всё равно сработает; risk leak под malloc-only GC.
+- B4 (новый): Time.after = ~6 nova_alloc'ов per call. Tokio 0-alloc
+  через poll-state. Post-1.0.
+
+**P3 (cleanup):**
+- B9 (новый): Channel.new alloc'ает state+buf, потом check capacity.
+- B10 (новый): spec D94 TODO в Plan 31 DoD не закрыт.
+- B8 (новый): нет recv_many batch API (Tokio 1.32+).
+
+### Решение
+
+Создан Plan 40 (docs/plans/40-channel-hardening.md), три фазы:
+- Ф.1 — P1 blockers (atomics + mutex Rust-mpsc-style, selectdone
+  CAS, doubly-linked waiters, arm-count compile error).
+- Ф.2 — Time.after timer cleanup + pool.
+- Ф.3 — capacity check ordering, spec sync, recv_many.
+
+**Mutex vs lock-free:** план рекомендует mutex (опция A) для
+bootstrap. crossbeam lock-free — post-1.0; нужна формальная
+верификация (TLA+/Loom), 5+ лет работы.
+
+**Select cap:** план рекомендует поднять до 32 с compile-error
+на overflow (опция A). Heap-allocate SelectCtx (опция B) — отложено.
+
+### Приоритет
+
+**P1 для Ф.1** — без неё Plan 23 (M:N runtime) не запускается.
+**P2/P3** для Ф.2/Ф.3.
+
+### Acceptance
+
+- pthread + concurrent send/recv stress test PASS под M:N.
+- `select { 17 arms }` → compile-error с line:col.
+- O(1) waiter unlink (benchmark linear, не quadratic).
+- selectdone CAS race test PASS.
+- 191/191 + 45/45 regression без изменений.
+
+### Связано
+
+- Plan 23 (M:N) — Ф.1 prerequisite.
+- Plan 22 (libuv) — basis для timer-pool в Ф.2.
+- Plan 30/31 — closed, этот план расширяет их T1/T2/T3.
+
+
