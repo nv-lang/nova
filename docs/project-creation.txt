@@ -7411,3 +7411,101 @@ M:N-claim'ами. Plan 40 не повторяет: P1 пункты явно от
 момента когда есть M:N scheduler для проверки. Defense-in-depth
 applied to project management, не только к коду.
 
+
+================================================================================
+2026-05-12 Plan 34 followup #2 — spec sync + focused tests (8/8 PASS)
+================================================================================
+
+Запрос пользователя: «тесты напиши по тому, что делал позитивные и
+негативные и проверь только их через релизные nova & компилятор».
+Перед этим вопросом: «ты в спеку все сохранил?» — выявило что Ф.7
+изменения не были sync'нуты в spec/decisions/.
+
+### Spec updates
+
+1. **04-effects.md test-handler table** — добавлен `mut_clock(start_ms)`
+   рядом с `fixed_ms(ms)`. Decision matrix (line 2690) расширен
+   ссылкой на use-cases (uuid v7 / jwt / rate_limiter / retry / cron).
+2. **04-effects.md** — footnote «Источник test-handler'ов»
+   с упоминанием std/testing/handlers.nv, xoshiro256++ tier (parity
+   с Go math/rand v2 PCG и Rust rand ChaCha8), и production-handlers
+   (secure() / system_clock()) как pending external work.
+3. **08-runtime.md D26** — уточнены сигнатуры:
+   `fixed_ms(ms u64) / mut_clock(start_ms u64) / seeded(seed u64)`.
+
+### Tests — nova_tests/plan34/ (8 тестов, все PASS)
+
+**Positive (4):**
+
+1. `gc_namespace_basic.nv` — smoke для всех 5 gc.* functions:
+   heap_size, live_count, alloc_count, collect, reset_stats.
+   Проверяет non-negative значения + callable без panic.
+
+2. `gc_alloc_monotonic.nv` — behavior test: после 100 аллокаций
+   gc.alloc_count растёт; gc.collect после reset_stats не валит
+   heap_size.
+
+3. `inline_xoshiro_determinism.nv` — regression marker для
+   xoshiro256++ algorithm. Inline reproducer splitmix64+xoshiro256++
+   логики из handlers.nv (т.к. сам handlers.nv не компилится — баг
+   NovaVtable_Random в codegen, не Plan 34 scope). Тесты:
+   - splitmix64 init для seed=0 даёт non-zero state (key
+     differentiator vs LCG-degenerate case)
+   - determinism (тот же seed → та же sequence)
+   - разные seed → разные sequences
+   - последовательные значения различаются
+   - non-correlation (a→b и b→c diffs не равны)
+
+4. `inline_mut_clock_advance.nv` — regression marker для mut_clock
+   логики. Inline Clock {ms u64} record + clock_sleep_ms(c, delta).
+   Тесты:
+   - sleep продвигает state
+   - разные instances независимы
+   - large delta (1 hour = 3.6M ms)
+   - zero delta — state не меняется
+
+**Negative (4) — EXPECT_COMPILE_ERROR regression markers:**
+
+5. `negative_match_arm_compound_assign.nv` — bare `+=` в RHS
+   match-arm без braces (был fix #1 в json.nv:164).
+6. `negative_mut_param.nv` — `mut` modifier для параметра функции
+   (был fix #2 в json.nv:499).
+7. `negative_multiline_or_continuation.nv` — multi-line `||`
+   continuation (был fix #3 в regex.nv:222).
+8. `negative_trailing_block_closure.nv` — Kotlin/Swift trailing-block
+   closure `f(arg) { x => ... }` (был fix #4 в property.nv).
+
+Каждый negative тест содержит EXPECT_COMPILE_ERROR маркер с conkretным
+сообщением парсера. Если расширят грамматику (когда D-блоки про эти
+фичи будут приняты) — тесты провалятся, нужно будет обновить spec +
+удалить.
+
+### Дизайн-решение про inline xoshiro/mut_clock
+
+Прямые тесты для `seeded(seed)` / `mut_clock(start_ms)` из handlers.nv
+не могут быть запущены через `nova test` — codegen падает на
+`unknown type NovaVtable_Random` (category-D bug для stdlib
+effect-types). Это **не Plan 34 scope**.
+
+Inline reproducers покрывают **algorithm correctness** независимо
+от handler-codegen. Когда NovaVtable bug закроется — можно будет
+добавить wrapper-тесты, дёргающие реально handlers.nv.
+
+### Acceptance
+
+- ✅ nova_tests/plan34/ — 8/8 PASS (4 positive + 4 negative).
+- ✅ nova check std/ — 45/45 (не сломан).
+- ⚠️ Full nova test → 249/256 PASS (7 CC-FAIL — это **не моя
+  регрессия**, это от Plan 40 Ф.2+Ф.3 commit 655033c agent'а который
+  изменил channel runtime ABI и не обновил все emit-sites:
+  concurrency/select_*, plan40_*. Эти тесты падали уже в master
+  до моих изменений в этой сессии).
+
+### Файлы
+
+- spec/decisions/04-effects.md (test-handler table + decision matrix + footnote)
+- spec/decisions/08-runtime.md (D26 signatures)
+- nova_tests/plan34/*.nv (8 новых тестов)
+- docs/project-creation.txt (эта запись)
+
+Plan 34 EXTENDED + Ф.7 + follow-up #1 + follow-up #2 — closed.

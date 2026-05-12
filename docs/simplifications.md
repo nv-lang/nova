@@ -5303,3 +5303,65 @@ Workaround на overflow: nested selects.
 
 **Приоритет:** P3 — limit не достигается в нормальном коде; bug
 (silent hang) уже исправлен.
+
+
+---
+
+## Тесты для std/testing/handlers.nv — inline reproducers вместо direct (Plan 34 followup #2, 2026-05-12)
+
+**Где:** nova_tests/plan34/inline_xoshiro_determinism.nv,
+nova_tests/plan34/inline_mut_clock_advance.nv.
+
+**Что упрощено:** прямые тесты `seeded(seed u64)` / `mut_clock(start_ms)`
+из std/testing/handlers.nv через `with Random = th.seeded(...) { ... }`
+не могут быть запущены — codegen падает на `unknown type
+NovaVtable_Random` (CC-FAIL). Это **category-D codegen bug** для
+stdlib effect-types, не Plan 34 scope.
+
+Вместо direct tests написал **inline reproducers**:
+- `inline_xoshiro_determinism.nv` — splitmix64 + xoshiro256++ как
+  обычные функции `xoshiro_init(seed) -> XState`, `xoshiro_next(st)
+  -> (XState, u64)`. Те же константы (`0x9E3779B97F4A7C15`,
+  `0xBF58476D1CE4E5B9`, ...) и логика что в handlers.nv.
+- `inline_mut_clock_advance.nv` — `Clock { ms u64 }` record +
+  `clock_sleep_ms(c, delta)` функция. Моделирует state advance
+  без `Time` effect.
+
+**Почему:** algorithm correctness — главное (xoshiro determinism,
+splitmix64 non-zero seed=0). Effect-codegen — отдельная архитектурная
+работа. Когда NovaVtable_<Effect> codegen закроется, inline тесты
+можно заменить на real handler-call wrapper-тесты.
+
+**Как починить:** новый план «codegen для stdlib effect-types
+(NovaVtable_<Effect>)» — расширить emit_c.rs для эффект-литералов
+объявленных не в нативных runtime headers, а в .nv stdlib файлах.
+~150-300 строк.
+
+**Приоритет:** P2 — inline тесты покрывают algorithm regression,
+direct тестирование handlers.nv логики через `with` ждёт codegen
+work.
+
+
+---
+
+## Spec sync после Plan 34 Ф.7 — manual cross-check (2026-05-12)
+
+**Где:** spec/decisions/04-effects.md, spec/decisions/08-runtime.md.
+
+**Что упрощено:** после Plan 34 Ф.7 (xoshiro256++ + mut_clock + seed
+u64) изменения **не были sync'нуты в spec** до того как пользователь
+явно спросил «ты в спеку все сохранил?». Это **процессный bug** — я
+обновлял Plan 34 file, docs/, simplifications.md, discussion-log,
+но **не spec/decisions/**, который явно source of truth для language
+features.
+
+**Как починить:**
+- В коротком: после **любого** изменения user-facing API
+  (sigatures, новые ops/handlers, изменение spec'd behavior) —
+  явный sync-step «обновить spec/decisions/» до commit'а.
+- Стратегически: добавить в `feedback_project_docs.md` (auto-memory)
+  правило «spec sync обязателен для API изменений», аналогично
+  тройке docs/project-creation+simplifications+discussion-log.
+
+**Приоритет:** **P1 process fix** — это foundation для всех
+будущих API изменений.

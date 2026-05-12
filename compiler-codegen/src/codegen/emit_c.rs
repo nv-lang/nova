@@ -250,6 +250,13 @@ pub struct CEmitter {
     /// Trailing block-expression также. После label эмитятся ensures-checks
     /// и финальный return.
     contracts_post_label: Option<String>,
+    /// Plan 33.3 Ф.9.1+Ф.9.7: имена ghost-vars в scope текущей fn.
+    /// Используется в Stmt::AssertStatic / Stmt::Assume / inject'нутых
+    /// loop invariants — если expression читает ghost-var, runtime check
+    /// skip'ается (ghost эрейзится в codegen, не доступен в C-output).
+    /// Type-check уже catches non-ghost reads ghost (Ф.9.7); это просто
+    /// allow spec-position reads silently не падать на C-level.
+    ghost_vars: std::collections::HashSet<String>,
     /// Maps array variable name → actual element C type (e.g. "Nova_Box*").
     /// The array always uses nova_int storage but elements may be pointers to records.
     array_element_types: HashMap<String, String>,
@@ -464,6 +471,7 @@ impl CEmitter {
             record_variant_field_order: HashMap::new(),
             current_fn_return_ty: None,
             contracts_post_label: None,
+            ghost_vars: std::collections::HashSet::new(),
             record_invariants: HashMap::new(),
             array_element_types: HashMap::new(),
             option_inner_types: HashMap::new(),
@@ -4023,6 +4031,48 @@ impl CEmitter {
         out
     }
 
+    /// Plan 33.3 Ф.9.1: walks block для сбора `ghost let` имён.
+    /// Используется в codegen чтобы runtime-check'и (assert_static/assume)
+    /// читающие ghost-vars не emit'ились в C (ghost эрейзится).
+    fn collect_ghost_vars_in_block(b: &Block, out: &mut std::collections::HashSet<String>) {
+        for stmt in &b.stmts {
+            if let Stmt::Let(decl) = stmt {
+                if decl.is_ghost {
+                    if let Pattern::Ident { name, .. } = &decl.pattern {
+                        out.insert(name.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    /// Plan 33.3 Ф.9.1: проверка, использует ли expr ghost-var.
+    /// Используется для skip runtime check в codegen для spec-positions
+    /// (assert_static/assume/loop invariants).
+    fn expr_uses_ghost(e: &Expr, ghost_vars: &std::collections::HashSet<String>) -> bool {
+        match &e.kind {
+            ExprKind::Ident(n) => ghost_vars.contains(n),
+            ExprKind::Binary { left, right, .. } => {
+                Self::expr_uses_ghost(left, ghost_vars) || Self::expr_uses_ghost(right, ghost_vars)
+            }
+            ExprKind::Unary { operand, .. } => Self::expr_uses_ghost(operand, ghost_vars),
+            ExprKind::Member { obj, .. } => Self::expr_uses_ghost(obj, ghost_vars),
+            ExprKind::Index { obj, index } => {
+                Self::expr_uses_ghost(obj, ghost_vars) || Self::expr_uses_ghost(index, ghost_vars)
+            }
+            ExprKind::Call { func, args, .. } => {
+                if Self::expr_uses_ghost(func, ghost_vars) { return true; }
+                args.iter().any(|a| Self::expr_uses_ghost(a.expr(), ghost_vars))
+            }
+            ExprKind::As(inner, _) | ExprKind::Is(inner, _)
+            | ExprKind::Try(inner) | ExprKind::Bang(inner) => Self::expr_uses_ghost(inner, ghost_vars),
+            ExprKind::Coalesce(l, r) => {
+                Self::expr_uses_ghost(l, ghost_vars) || Self::expr_uses_ghost(r, ghost_vars)
+            }
+            _ => false,
+        }
+    }
+
     fn emit_fn(&mut self, f: &FnDecl) -> Result<(), String> {
         // D82: external fn — Nova body отсутствует, реализация в nova_rt/.
         // Skip emit'инг полностью: dispatch на C-функцию делается в emit_call.
@@ -4031,6 +4081,12 @@ impl CEmitter {
         }
         if f.name == "main" {
             return self.emit_nova_main(f);
+        }
+        // Plan 33.3 Ф.9.1: collect ghost-var names в body для runtime-check
+        // skip в assert_static/assume/loop-invariant.
+        self.ghost_vars.clear();
+        if let FnBody::Block(b) = &f.body {
+            Self::collect_ghost_vars_in_block(b, &mut self.ghost_vars);
         }
         // Generic free functions: emit void*-erased stub (type erasure)
         if !f.generics.is_empty() && f.receiver.is_none() {
@@ -5017,27 +5073,39 @@ impl CEmitter {
             // эмитим как runtime check в debug. В release без
             // NOVA_CONTRACTS_RUNTIME — стирается препроцессором.
             Stmt::AssertStatic { expr, span } => {
-                let v = self.emit_expr(expr)?;
-                let src = Self::expr_to_display(expr);
-                self.line("#ifdef NOVA_CONTRACTS_RUNTIME");
-                self.line(&format!(
-                    "if (!({})) nova_contract_violation(NOVA_CONTRACT_PRE, \"<assert_static>\", \"{}\", \"<contract>\", {});",
-                    v, Self::escape_c_str(&src), span.start
-                ));
-                self.line("#endif");
+                // Plan 33.3 Ф.9.1: skip runtime check если expr читает
+                // ghost-var (ghost эрейзится в codegen; SMT-verify в Z3
+                // будет работать). assert_static с ghost — pure spec-level.
+                if Self::expr_uses_ghost(expr, &self.ghost_vars) {
+                    // No-op в codegen — assert_static с ghost — spec-only.
+                } else {
+                    let v = self.emit_expr(expr)?;
+                    let src = Self::expr_to_display(expr);
+                    self.line("#ifdef NOVA_CONTRACTS_RUNTIME");
+                    self.line(&format!(
+                        "if (!({})) nova_contract_violation(NOVA_CONTRACT_PRE, \"<assert_static>\", \"{}\", \"<contract>\", {});",
+                        v, Self::escape_c_str(&src), span.start
+                    ));
+                    self.line("#endif");
+                }
             }
             // Plan 33.3 (D24): `assume <expr>` — runtime check в debug
             // (программист подтверждает что expr истинен; если нет —
             // это bug в коде, не bug в верификации).
             Stmt::Assume { expr, span } => {
-                let v = self.emit_expr(expr)?;
-                let src = Self::expr_to_display(expr);
-                self.line("#ifdef NOVA_CONTRACTS_RUNTIME");
-                self.line(&format!(
-                    "if (!({})) nova_contract_violation(NOVA_CONTRACT_PRE, \"<assume>\", \"{}\", \"<contract>\", {});",
-                    v, Self::escape_c_str(&src), span.start
-                ));
-                self.line("#endif");
+                // Plan 33.3 Ф.9.1: skip если expr читает ghost-var.
+                if Self::expr_uses_ghost(expr, &self.ghost_vars) {
+                    // No-op в codegen — assume с ghost — spec-only.
+                } else {
+                    let v = self.emit_expr(expr)?;
+                    let src = Self::expr_to_display(expr);
+                    self.line("#ifdef NOVA_CONTRACTS_RUNTIME");
+                    self.line(&format!(
+                        "if (!({})) nova_contract_violation(NOVA_CONTRACT_PRE, \"<assume>\", \"{}\", \"<contract>\", {});",
+                        v, Self::escape_c_str(&src), span.start
+                    ));
+                    self.line("#endif");
+                }
             }
         }
         Ok(())
@@ -8666,11 +8734,13 @@ impl CEmitter {
         let n_ch: usize = arms.iter().filter(|a| !matches!(a.op, SelectOp::Default)).count();
         let has_default = arms.iter().any(|a| matches!(a.op, SelectOp::Default));
 
-        // Plan 40 B5: hard cap (NOVA_SELECT_MAX_ARMS=32 in channels.h).
-        // Prior to this check overflow caused silent zero-fill of slots
-        // and select would hang waiting on a non-registered arm.
-        // Plan 40 Ф.1 will replace fixed cap with per-call VLA-style storage.
-        const NOVA_SELECT_MAX_ARMS: usize = 32;
+        // Plan 40 Ф.3-extended: safety guard против runaway stack usage.
+        // Storage adaptive (per-call SelectSlot[n_ch] + SelectWaiter[n_ch]
+        // на стеке fiber'а через compound literal), но >64 arms = >5 KB
+        // stack frame на одну select-операцию, что приближается к опасным
+        // значениям для default minicoro stack (56 KB).
+        // Должен совпадать с NOVA_SELECT_MAX_ARMS в channels.h.
+        const NOVA_SELECT_MAX_ARMS: usize = 64;
         if n_ch > NOVA_SELECT_MAX_ARMS {
             return Err(format!(
                 "select: too many channel arms ({}); maximum is {}. \
@@ -8744,8 +8814,19 @@ impl CEmitter {
         }
 
         // --- Full SelectCtx path ---
+        // Plan 40 Ф.3-extended: per-call adaptive storage.
+        // Эмитим локальные массивы ровно n_ch размера (compound literal
+        // на стеке, размер literal на codegen-time, MSVC-compatible).
+        // nova_select_init принимает указатели на эти массивы.
         let ctx_tmp = self.fresh_tmp_named("sel_ctx");
-        self.line(&format!("SelectCtx {} = nova_select_init({});", ctx_tmp, n_ch));
+        let arms_tmp = self.fresh_tmp_named("sel_arms");
+        let waiters_tmp = self.fresh_tmp_named("sel_waiters");
+        self.line(&format!("SelectSlot {}[{}];", arms_tmp, n_ch));
+        self.line(&format!("SelectWaiter {}[{}];", waiters_tmp, n_ch));
+        self.line(&format!(
+            "SelectCtx {} = nova_select_init({}, {}, {});",
+            ctx_tmp, n_ch, arms_tmp, waiters_tmp
+        ));
 
         // Emit channel exprs upfront
         let mut ch_map: Vec<(usize, String)> = Vec::new();
