@@ -151,9 +151,16 @@ typedef struct {
      * interrupt value here and abort the fiber via fail-frame. After
      * supervised_run drains all fibers, on main-flow it re-issues
      * `nova_interrupt(pending_interrupt_value)` so the with-frame catches
-     * it correctly. interrupt_pending=true → value is set. */
+     * it correctly. interrupt_pending=true → value is set.
+     *
+     * Plan 39 Issue A: добавлено `interrupt_value_ptr` для pointer/struct
+     * interrupt values (parallel slot к interrupt_value). Использует ту
+     * же логику pending → re-issue на main-flow. Codegen выбирает слот
+     * по типу. interrupt_via_ptr=true → re-issue через nova_interrupt_ptr. */
     nova_bool       interrupt_pending;
+    nova_bool       interrupt_via_ptr;     /* true: use value_ptr, иначе value */
     nova_int        interrupt_value;
+    void*           interrupt_value_ptr;
     /* Plan 22 Ф.3 (D93) production: lazy-allocated park/wake state.
      *
      * Pointer-в-struct вместо global side-table (предыдущая итерация
@@ -291,7 +298,9 @@ static inline void nova_scope_init(NovaFiberQueue* q) {
     q->first_error = NULL;
     q->cancel_requested = false;
     q->interrupt_pending = false;
+    q->interrupt_via_ptr = false;
     q->interrupt_value = 0;
+    q->interrupt_value_ptr = NULL;
     /* Plan 22 Ф.3 production: lazy sched_state alloc — NULL пока никто
      * не park'ился. Большинство supervised блоков не используют sleep/
      * recv => sched_state остаётся NULL, нулевой overhead. */
@@ -565,13 +574,20 @@ static inline void nova_supervised_run(NovaFiberQueue* q) {
     nova_sched_drop_state(q);
     const char* err = q->first_error;
     nova_bool pending = q->interrupt_pending;
+    nova_bool via_ptr = q->interrupt_via_ptr;
     nova_int  ivalue  = q->interrupt_value;
+    void*     iptr    = q->interrupt_value_ptr;
     q->count = 0;
     /* Pending interrupt from a fiber's handler-method takes priority over
      * fiber-throw error: handler ran successfully, decided to interrupt
-     * the with-block. Re-issue on main-flow where the with-frame is reachable. */
+     * the with-block. Re-issue on main-flow where the with-frame is reachable.
+     * Plan 39 Issue A: dispatch на ptr-variant если interrupt был pointer. */
     if (pending) {
-        nova_interrupt(ivalue);
+        if (via_ptr) {
+            nova_interrupt_ptr(iptr);
+        } else {
+            nova_interrupt(ivalue);
+        }
         /* unreachable */
     }
     if (err) {

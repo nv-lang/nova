@@ -122,9 +122,25 @@ static inline void nova_throw_str(nova_str msg) {
  *   nova_interrupt_pop();
  */
 
+/* Plan 39 Issue A: NovaInterruptFrame теперь хранит ДВА слота value —
+ * `value` (nova_int / nova_bool / value-types, помещающихся в i64) и
+ * `value_ptr` (void*, для pointer-types и heap-allocated value structs).
+ *
+ * Codegen выбирает слот по типу trail/interrupt expression:
+ *   - int/bool/inline scalars → nova_interrupt(int_value) → slot value
+ *   - pointer types (Nova_X*, NovaArray_X*) → nova_interrupt_ptr(p) → value_ptr
+ *   - value structs (NovaOpt_X, NovaResult_X_E, etc.) → heap-allocate,
+ *     передать pointer через nova_interrupt_ptr; reader разыменует.
+ *
+ * При normal-flow completion body эмиттер пишет ОДИН из слотов по типу;
+ * при interrupt-path — читает тот же слот.
+ *
+ * Mutually-exclusive: только один путь активен в любой `with`-блок.
+ * `value` и `value_ptr` независимые поля — codegen знает какое читать. */
 typedef struct NovaInterruptFrame {
     jmp_buf jmp;
     nova_int value;
+    void*    value_ptr;        /* Plan 39 Issue A: non-int / non-bool результат */
     struct NovaInterruptFrame* prev;
 } NovaInterruptFrame;
 
@@ -147,6 +163,10 @@ static inline void nova_interrupt_pop(void) {
  * fibers.h after NovaFiberQueue is complete (needs _nova_active_scope and
  * fiber error machinery for the cross-mco-boundary case). */
 void nova_interrupt(nova_int value);
+
+/* Plan 39 Issue A: pointer-variant interrupt. Hands pointer/value-struct-ptr
+ * to the `with`-block result slot. See NovaInterruptFrame.value_ptr. */
+void nova_interrupt_ptr(void* value);
 
 /* ---- Test support ---- *
  *

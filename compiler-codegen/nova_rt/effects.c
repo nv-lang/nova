@@ -64,6 +64,32 @@ void nova_interrupt(nova_int value) {
     /* No with-block, no fiber: interrupt is a no-op (body already exited). */
 }
 
+/* Plan 39 Issue A: pointer-variant of nova_interrupt. Stores via
+ * NovaInterruptFrame.value_ptr / NovaFiberQueue.interrupt_value_ptr.
+ * Mutually-exclusive с nova_interrupt() per `with`-block instance:
+ * codegen emits точно один вариант в зависимости от типа выражения. */
+void nova_interrupt_ptr(void* value) {
+    if (_nova_interrupt_top) {
+        _nova_interrupt_top->value_ptr = value;
+        longjmp(_nova_interrupt_top->jmp, 1);
+        /* unreachable */
+    }
+    if (mco_running() && _nova_active_scope) {
+        _nova_active_scope->interrupt_pending   = true;
+        _nova_active_scope->interrupt_via_ptr   = true;
+        _nova_active_scope->interrupt_value_ptr = value;
+        _nova_active_scope->cancel_requested    = true;
+        if (_nova_fail_top) {
+            _nova_fail_top->error_msg = (nova_str){
+                .ptr = "__nova_interrupt__", .len = 18
+            };
+            longjmp(_nova_fail_top->jmp, 1);
+            /* unreachable */
+        }
+    }
+    /* No with-block, no fiber: no-op. */
+}
+
 #ifdef _MSC_VER
 __declspec(thread) NovaFailFrame*      _nova_fail_top      = NULL;
 __declspec(thread) NovaInterruptFrame* _nova_interrupt_top = NULL;
