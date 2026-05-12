@@ -1,0 +1,53 @@
+// Plan 40 Ф.2 B7: Time.after cleanup в select.
+//
+// Когда select выигрывает arm НЕ-таймер, on_select_lost callback
+// должен отменить uv_timer.  До B7 timer срабатывал даже не нужен,
+// засоряя event-loop heap.  После B7 — stop + uv_close с idempotent
+// `cancelled` guard.
+//
+// Тест: 50 итераций select { recv-arm wins, timer-arm timeout 10s }.
+// Если timer не cleanup'ится, 50 активных timer'ов держат event-loop
+// открытым 10s после теста — наблюдаемо как timeout на test runner.
+// Без leak'а тест завершается за <1s.
+
+module nova_tests.concurrency.select_timer_cleanup
+
+test "Time.after cleanup: 50 quick wins не оставляют висящих таймеров" {
+    let mut wins = 0
+    let mut i = 0
+    while i < 50 {
+        let ch = Channel.new(1)
+        supervised {
+            spawn {
+                ch.tx.send(i)
+            }
+            spawn {
+                select {
+                    Some(_) = ch.rx => { wins = wins + 1 }
+                    Some(_) = Time.after(10_000) => {
+                        // 10s timeout — никогда не должен сработать,
+                        // если recv wins; но если sub-test runs <10s
+                        // и B7 работает — timer cancelled.
+                    }
+                }
+            }
+        }
+        i = i + 1
+    }
+    assert(wins == 50)
+}
+
+test "Time.after wins: подтверждает что таймер всё ещё работает когда нужен" {
+    let ch = Channel.new(1)
+    let mut timeout_fired = false
+    supervised {
+        // НЕ посылаем в ch — timer должен выиграть
+        spawn {
+            select {
+                Some(_) = ch.rx => { }
+                Some(_) = Time.after(50) => { timeout_fired = true }
+            }
+        }
+    }
+    assert(timeout_fired)
+}

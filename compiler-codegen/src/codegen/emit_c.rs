@@ -8665,6 +8665,19 @@ impl CEmitter {
 
         let n_ch: usize = arms.iter().filter(|a| !matches!(a.op, SelectOp::Default)).count();
         let has_default = arms.iter().any(|a| matches!(a.op, SelectOp::Default));
+
+        // Plan 40 B5: hard cap (NOVA_SELECT_MAX_ARMS=32 in channels.h).
+        // Prior to this check overflow caused silent zero-fill of slots
+        // and select would hang waiting on a non-registered arm.
+        // Plan 40 Ф.1 will replace fixed cap with per-call VLA-style storage.
+        const NOVA_SELECT_MAX_ARMS: usize = 32;
+        if n_ch > NOVA_SELECT_MAX_ARMS {
+            return Err(format!(
+                "select: too many channel arms ({}); maximum is {}. \
+                 Split into nested selects or refactor into separate operations.",
+                n_ch, NOVA_SELECT_MAX_ARMS
+            ));
+        }
         let result_tmp = self.fresh_tmp_named("sel");
         self.line(&format!("nova_unit {};", result_tmp));
         self.var_types.insert(result_tmp.clone(), "nova_unit".to_string());

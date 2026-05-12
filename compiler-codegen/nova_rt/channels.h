@@ -58,6 +58,12 @@ struct Nova_ChannelState {
     int32_t        writer_count;  /* ref-count: channel closes when all writers call close() */
     ChannelWaiter* recv_waiters;  /* fibers parked waiting for data */
     ChannelWaiter* send_waiters;  /* fibers parked waiting for space */
+    /* Plan 40 Ф.2 B7: optional cleanup hook fired when this channel
+     * loses a select race (другая arm выиграла, эта не нужна).
+     * Используется Time.after для отмены неиспользованного uv_timer'а.
+     * NULL для обычных каналов — без overhead. */
+    void           (*on_select_lost)(Nova_ChannelState*);
+    void*          cleanup_data;
 };
 
 /* ── try_recv / try_send result (three-way, matches Rust TryRecvError) ── */
@@ -110,19 +116,21 @@ static NovaStopMode _nova_channel_waiter_stop_cb(void* handle) {
 /* ── Factory ───────────────────────────────────────────────────── */
 
 static inline Nova_ChannelPair nova_channel_new(int64_t capacity) {
+    /* Plan 40 B9: validate before any allocation — no leak on throw. */
+    if (capacity <= 0) {
+        nova_throw(nova_str_from_cstr("Channel.new: capacity must be >= 1"));
+    }
     Nova_ChannelState* st = (Nova_ChannelState*)nova_alloc(sizeof(Nova_ChannelState));
-    int64_t actual = capacity > 0 ? capacity : 1;
-    st->buf          = (nova_int*)nova_alloc((size_t)actual * sizeof(nova_int));
-    st->cap          = actual;
+    st->buf          = (nova_int*)nova_alloc((size_t)capacity * sizeof(nova_int));
+    st->cap          = capacity;
     st->head         = 0;
     st->count        = 0;
     st->closed       = false;
     st->writer_count = 1;
     st->recv_waiters = NULL;
     st->send_waiters = NULL;
-    if (capacity <= 0) {
-        nova_throw(nova_str_from_cstr("Channel.new: capacity must be >= 1"));
-    }
+    st->on_select_lost = NULL;  /* Plan 40 Ф.2 B7 */
+    st->cleanup_data   = NULL;
     Nova_ChanWriter*   tx = (Nova_ChanWriter*)nova_alloc(sizeof(Nova_ChanWriter));
     Nova_ChanReader* rx = (Nova_ChanReader*)nova_alloc(sizeof(Nova_ChanReader));
     tx->state        = st;
@@ -313,8 +321,11 @@ static inline nova_bool  nova_chan_writer_is_closed(Nova_ChanWriter* tx) { retur
 
 /* ── Select — D94 (Plan 31) ────────────────────────────────────── */
 
-/* Maximum channel arms per select (stack-allocated). */
-#define NOVA_SELECT_MAX_ARMS 16
+/* Maximum channel arms per select (stack-allocated).
+ * Plan 40 B5: raised 16→32; codegen rejects overflow at compile-time
+ * (см. emit_select in emit_c.rs). Plan 40 Ф.1 (vместе с Plan 23 M:N)
+ * заменит fixed-size на per-call VLA-style storage emitted в caller'е. */
+#define NOVA_SELECT_MAX_ARMS 32
 
 typedef struct {
     Nova_ChannelState* chan;     /* NULL = slot unused or default arm */
@@ -556,24 +567,40 @@ static inline void nova_select_park(SelectCtx* ctx) {
     /* Identify the winning arm. The channel that woke us already updated its
      * buffer; try_immediate reads the value atomically. */
     nova_select_try_immediate(ctx);
+
+    /* Plan 40 Ф.2 B7: fire on_select_lost callbacks for arms that did not win.
+     * Used by Time.after to cancel its uv_timer when timeout was not the
+     * winning branch. Skipped for the winner. Idempotent (callback должен
+     * сам guard'ить повторный вызов через своё состояние). */
+    for (i = 0; i < n; i++) {
+        if (i == ctx->which) continue;
+        SelectSlot* arm = &ctx->arms[i];
+        if (!arm->chan || !arm->guard) continue;
+        if (arm->chan->on_select_lost) {
+            arm->chan->on_select_lost(arm->chan);
+        }
+    }
 }
 
 /* ── Time.after — D94 timeout channel (Plan 31 Ф.5) ───────────── */
 
-/* Heap-allocated timer state: lives until close_cb fires. */
+/* Heap-allocated timer state: lives until close_cb fires.
+ * Plan 40 Ф.2 B7: `cancelled` flag для idempotent cancel из select wake. */
 typedef struct {
     uv_timer_t       timer;
     Nova_ChanWriter* tx;
+    bool             cancelled;  /* set once timer is stopped/closed early */
 } NovaAfterState;
 
 static void _nova_after_close_cb(uv_handle_t* h) {
     NovaAfterState* st = (NovaAfterState*)h->data;
     (void)st;
-    /* state is heap-allocated; GC will collect it.  tx already closed. */
+    /* state is heap-allocated; GC will collect it. tx already closed. */
 }
 
 static void _nova_after_timer_cb(uv_timer_t* h) {
     NovaAfterState* st = (NovaAfterState*)h->data;
+    if (st->cancelled) return;  /* select wake cancelled us; do nothing */
     /* Non-blocking send: channel cap=1, always has room at this point. */
     nova_chan_writer_try_send(st->tx, 1);
     /* Close writer so reader sees channel as closed after consuming the value. */
@@ -581,14 +608,32 @@ static void _nova_after_timer_cb(uv_timer_t* h) {
     uv_close((uv_handle_t*)h, _nova_after_close_cb);
 }
 
+/* Plan 40 Ф.2 B7: on_select_lost callback — invoked from nova_select_park
+ * when Time.after-arm did NOT win. Stops timer + closes uv handle so
+ * background event-loop no longer dispatches us. Idempotent via `cancelled`. */
+static void _nova_after_on_select_lost(Nova_ChannelState* st) {
+    NovaAfterState* after = (NovaAfterState*)st->cleanup_data;
+    if (!after || after->cancelled) return;
+    after->cancelled = true;
+    uv_timer_stop(&after->timer);
+    /* Close writer so reader gets closed-state if it's reused outside select.
+     * Idempotent through writer_closed guard. */
+    nova_chan_writer_close(after->tx);
+    uv_close((uv_handle_t*)&after->timer, _nova_after_close_cb);
+}
+
 /* Create a channel that receives one value after `ms` milliseconds.
  * Returns the reader end.  The timer fires in the event-loop background;
  * no fiber is parked.  Use in a select arm:
- *   Some(_) = Time.after(100) => { ... }  // timeout branch */
+ *   Some(_) = Time.after(100) => { ... }  // timeout branch
+ *
+ * Plan 40 Ф.2 B7: if reader is used in select and another arm wins, the
+ * select_lost callback stops the timer; otherwise timer fires normally. */
 static inline Nova_ChanReader* Nova_Time_after(nova_int ms) {
     Nova_ChannelPair pair = nova_channel_new(1);
     NovaAfterState* st = (NovaAfterState*)nova_alloc(sizeof(NovaAfterState));
     st->tx = pair.tx;
+    st->cancelled = false;
     int rc = uv_timer_init(nova_evloop(), &st->timer);
     if (rc != 0) {
         fprintf(stderr, "nova: Nova_Time_after: uv_timer_init failed: %s\n",
@@ -596,6 +641,9 @@ static inline Nova_ChanReader* Nova_Time_after(nova_int ms) {
         abort();
     }
     st->timer.data = st;
+    /* Plan 40 Ф.2 B7: register cleanup hook on the channel state. */
+    pair.rx->state->on_select_lost = _nova_after_on_select_lost;
+    pair.rx->state->cleanup_data   = st;
     uint64_t delay = ms > 0 ? (uint64_t)ms : 1;
     rc = uv_timer_start(&st->timer, _nova_after_timer_cb, delay, 0);
     if (rc != 0) {

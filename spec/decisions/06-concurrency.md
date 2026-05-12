@@ -15,7 +15,7 @@ structured-concurrency примитивы есть в языке, и как па
 | [D80](#d80-handler-scoping-per-fiber) | Handler scoping per-fiber — `with X = handler` локален для fiber'а, наследуется через spawn |
 | [D80](#d80-handler-scoping-per-fiber) | Handler scoping per-fiber — `with X = h` биндинги изолированы между fibers |
 | [D91](#d91-channel-revision--capability-split-на-chanwriter--chanreader) | `Channel` revision: capability-split на `ChanWriter[T]` / `ChanReader[T]`; `send`→`bool`; `tx.clone()` multi-writer ✅ |
-| [D94](#d94-select--multiplexed-channel-operations) | `select { ... }` — финальный синтаксис: `Some(v) = rx =>`, `Time.after(ms)` для timeout ✅ реализован |
+| [D94](#d94-select--multiplexed-channel-operations) | `select { ... }` — финальный синтаксис: `Some(v) = rx =>`, `Time.after(ms)` для timeout ✅ реализован (Plan 31 ✅; Plan 40 Ф.3 hardening) |
 
 ---
 
@@ -2518,7 +2518,8 @@ throw'ы в D50 fire-and-forget — должны быть logged, не abort. П
 
 ## D94. `select { ... }` — multiplexed channel operations
 
-> **Введён:** Plan 31 (2026-05-11). **Статус:** ✅ реализован (2026-05-11).
+> **Введён:** Plan 31 (2026-05-11). **Статус:** ✅ реализован (2026-05-11),
+> ✅ hardening Plan 40 Ф.3 (2026-05-12).
 > **Уточняет** [D79](#d79-channels--coordination-между-fiber-ами) —
 > финализирует синтаксис и семантику `select`.
 >
@@ -2529,9 +2530,33 @@ throw'ы в D50 fire-and-forget — должны быть logged, не abort. П
 > - `Some(v) = rx if guard => { }` — recv с guard
 > - `_ => { }` — default (non-blocking)
 >
-> **Не реализовано в bootstrap:**
-> - `None = rx => { }` — отдельный arm для закрытого канала (только wildcard `_ = rx`)
-> - Panic "select: all channels closed" при all-closed без default (Ф.6 todo)
+> **Bootstrap-ограничения:**
+> - `None = rx => { }` — отдельный arm для закрытого канала **не** введён;
+>   используйте `_ = rx => { }` (wildcard срабатывает на Some и на None/closed)
+>   + `match` внутри тела arm'а для дифференциации, либо `rx.is_closed()`
+>   после recv'а.
+> - `Some(v) = rx` arm на already-closed канале **не** срабатывает —
+>   только wildcard `_ = rx` ловит closed-state. См. Plan 31 §«Отличия от spec».
+> - **Maximum 32 channel arms** на один `select`-блок (Plan 40 Ф.3 B5).
+>   Overflow → compile-error «select: too many channel arms (N); maximum is 32».
+>   Workaround: разбить на nested selects или отдельные операции.
+>   Plan 40 Ф.1 (с Plan 23 M:N) заменит fixed cap на per-call VLA-style.
+>
+> **Реализовано в полной форме (Plan 31 Ф.6, Plan 40 Ф.2/Ф.3):**
+> - Panic «select: all channels closed» при all-closed без default — ✅
+>   (Plan 31 Ф.6; работает и в main-thread context'е через pre-check).
+> - `Time.after(ms)` timer cleanup при non-winning arm — ✅
+>   (Plan 40 Ф.2 B7: `on_select_lost` callback + idempotent `cancelled`
+>   flag на `NovaAfterState`).
+> - `Channel.new(0)` — explicit panic «capacity must be >= 1» **перед**
+>   allocate'ом (Plan 40 Ф.3 B9, без leak'а на throw).
+>
+> **Что отложено в Plan 40 Ф.1 (вместе с Plan 23 M:N):**
+> - Atomics + mutex на shared state (writer_count, closed, waiter-lists).
+>   Под single-thread runtime'ом sequenced ops корректны; под M:N — нужны.
+> - Race-free select wake через `selectdone` CAS (Go-style).
+> - Doubly-linked waiter list (O(1) unlink вместо O(n)).
+> - Per-call adaptive storage (compound-literal в emit'е вместо fixed-32 cap).
 
 ### Что
 
@@ -2630,8 +2655,13 @@ Go не поддерживает guards в select.
 
 ### Bootstrap-status
 
-- 🟡 Runtime: Plan 31 Ф.1 — `SelectCtx`, `SelectWaiter`, `nova_select_*` API
-- 🟡 Send arm: Plan 31 Ф.2
-- 🟡 Parser + codegen: Plan 31 Ф.3
-- 🟡 Arm guards: Plan 31 Ф.4
-- 🟡 `Time.after(d)` + тесты: Plan 31 Ф.5
+- ✅ Runtime: Plan 31 Ф.1 — `SelectCtx`, `SelectWaiter`, `nova_select_*` API
+- ✅ Send arm: Plan 31 Ф.2
+- ✅ Parser + codegen: Plan 31 Ф.3
+- ✅ Arm guards: Plan 31 Ф.4
+- ✅ `Time.after(d)` + тесты: Plan 31 Ф.5
+- ✅ All-closed panic: Plan 31 Ф.6 (с pre-check для main-thread)
+- ✅ Hardening: Plan 40 Ф.2 (Time.after cleanup) + Ф.3 (select cap=32 +
+  compile-error overflow + Channel.new check ordering)
+- 🟡 M:N safety: Plan 40 Ф.1 (atomics + selectdone CAS + doubly-linked +
+  per-call storage) — отложено вместе с Plan 23 M:N runtime

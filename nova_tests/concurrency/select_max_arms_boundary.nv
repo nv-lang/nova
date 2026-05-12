@@ -1,0 +1,65 @@
+// Plan 40 Ф.3 B5: boundary test — select с ровно 32 arms (cap) должен
+// компилироваться без compile-error. 33 arms — соседний negative test
+// в expected_runtime/select_overflow_compile_error.nv.
+
+module nova_tests.concurrency.select_max_arms_boundary
+
+test "select: 32 arms (max) compile and dispatch" {
+    let c0  = Channel.new(1)
+    let c1  = Channel.new(1); let c2  = Channel.new(1); let c3  = Channel.new(1)
+    let c4  = Channel.new(1); let c5  = Channel.new(1); let c6  = Channel.new(1)
+    let c7  = Channel.new(1); let c8  = Channel.new(1); let c9  = Channel.new(1)
+    let c10 = Channel.new(1); let c11 = Channel.new(1); let c12 = Channel.new(1)
+    let c13 = Channel.new(1); let c14 = Channel.new(1); let c15 = Channel.new(1)
+    let c16 = Channel.new(1); let c17 = Channel.new(1); let c18 = Channel.new(1)
+    let c19 = Channel.new(1); let c20 = Channel.new(1); let c21 = Channel.new(1)
+    let c22 = Channel.new(1); let c23 = Channel.new(1); let c24 = Channel.new(1)
+    let c25 = Channel.new(1); let c26 = Channel.new(1); let c27 = Channel.new(1)
+    let c28 = Channel.new(1); let c29 = Channel.new(1); let c30 = Channel.new(1)
+    let c31 = Channel.new(1)
+
+    supervised {
+        spawn {
+            // отправляем в первый канал, чтобы select точно dispatch'нулся
+            c0.tx.send(42)
+        }
+        spawn {
+            let mut got = 0
+            select {
+                Some(v) = c0.rx  => { got = v }
+                Some(_) = c1.rx  => { }
+                Some(_) = c2.rx  => { }
+                Some(_) = c3.rx  => { }
+                Some(_) = c4.rx  => { }
+                Some(_) = c5.rx  => { }
+                Some(_) = c6.rx  => { }
+                Some(_) = c7.rx  => { }
+                Some(_) = c8.rx  => { }
+                Some(_) = c9.rx  => { }
+                Some(_) = c10.rx => { }
+                Some(_) = c11.rx => { }
+                Some(_) = c12.rx => { }
+                Some(_) = c13.rx => { }
+                Some(_) = c14.rx => { }
+                Some(_) = c15.rx => { }
+                Some(_) = c16.rx => { }
+                Some(_) = c17.rx => { }
+                Some(_) = c18.rx => { }
+                Some(_) = c19.rx => { }
+                Some(_) = c20.rx => { }
+                Some(_) = c21.rx => { }
+                Some(_) = c22.rx => { }
+                Some(_) = c23.rx => { }
+                Some(_) = c24.rx => { }
+                Some(_) = c25.rx => { }
+                Some(_) = c26.rx => { }
+                Some(_) = c27.rx => { }
+                Some(_) = c28.rx => { }
+                Some(_) = c29.rx => { }
+                Some(_) = c30.rx => { }
+                Some(_) = c31.rx => { }
+            }
+            assert(got == 42)
+        }
+    }
+}

@@ -1,0 +1,80 @@
+// EXPECT_COMPILE_ERROR select: too many channel arms (33); maximum is 32.
+//
+// Plan 40 Ф.3 B5: select с >32 arms раньше silently возвращал из set_recv
+// и select висел вечно ожидая non-registered arm.  Теперь codegen
+// эмитит compile-error с line:col на overflow.
+//
+// 33 arms (max+1) — минимальный triggering case.
+
+module nova_tests.expected_runtime.select_overflow_compile_error
+
+fn main() {
+    let c0  = Channel.new(1); let r0  = c0.rx
+    let c1  = Channel.new(1); let r1  = c1.rx
+    let c2  = Channel.new(1); let r2  = c2.rx
+    let c3  = Channel.new(1); let r3  = c3.rx
+    let c4  = Channel.new(1); let r4  = c4.rx
+    let c5  = Channel.new(1); let r5  = c5.rx
+    let c6  = Channel.new(1); let r6  = c6.rx
+    let c7  = Channel.new(1); let r7  = c7.rx
+    let c8  = Channel.new(1); let r8  = c8.rx
+    let c9  = Channel.new(1); let r9  = c9.rx
+    let c10 = Channel.new(1); let r10 = c10.rx
+    let c11 = Channel.new(1); let r11 = c11.rx
+    let c12 = Channel.new(1); let r12 = c12.rx
+    let c13 = Channel.new(1); let r13 = c13.rx
+    let c14 = Channel.new(1); let r14 = c14.rx
+    let c15 = Channel.new(1); let r15 = c15.rx
+    let c16 = Channel.new(1); let r16 = c16.rx
+    let c17 = Channel.new(1); let r17 = c17.rx
+    let c18 = Channel.new(1); let r18 = c18.rx
+    let c19 = Channel.new(1); let r19 = c19.rx
+    let c20 = Channel.new(1); let r20 = c20.rx
+    let c21 = Channel.new(1); let r21 = c21.rx
+    let c22 = Channel.new(1); let r22 = c22.rx
+    let c23 = Channel.new(1); let r23 = c23.rx
+    let c24 = Channel.new(1); let r24 = c24.rx
+    let c25 = Channel.new(1); let r25 = c25.rx
+    let c26 = Channel.new(1); let r26 = c26.rx
+    let c27 = Channel.new(1); let r27 = c27.rx
+    let c28 = Channel.new(1); let r28 = c28.rx
+    let c29 = Channel.new(1); let r29 = c29.rx
+    let c30 = Channel.new(1); let r30 = c30.rx
+    let c31 = Channel.new(1); let r31 = c31.rx
+    let c32 = Channel.new(1); let r32 = c32.rx
+    select {
+        _ = r0  => { }
+        _ = r1  => { }
+        _ = r2  => { }
+        _ = r3  => { }
+        _ = r4  => { }
+        _ = r5  => { }
+        _ = r6  => { }
+        _ = r7  => { }
+        _ = r8  => { }
+        _ = r9  => { }
+        _ = r10 => { }
+        _ = r11 => { }
+        _ = r12 => { }
+        _ = r13 => { }
+        _ = r14 => { }
+        _ = r15 => { }
+        _ = r16 => { }
+        _ = r17 => { }
+        _ = r18 => { }
+        _ = r19 => { }
+        _ = r20 => { }
+        _ = r21 => { }
+        _ = r22 => { }
+        _ = r23 => { }
+        _ = r24 => { }
+        _ = r25 => { }
+        _ = r26 => { }
+        _ = r27 => { }
+        _ = r28 => { }
+        _ = r29 => { }
+        _ = r30 => { }
+        _ = r31 => { }
+        _ = r32 => { }
+    }
+}
