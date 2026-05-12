@@ -5902,3 +5902,65 @@ Plan-docs (4 файла, sed batch replace):
 
 Regression: 191/191 PASS. 0 регрессий.
 
+
+
+================================================================================
+2026-05-12 Plan 36 MVP: nova check <path> / nova test <path> production CLI
+================================================================================
+
+Plan 36 = production hardening для CLI subcommand'ов. После 4-way audit
+(cargo + go/CI + nova-specific + implementability/ergonomics/architecture)
+закрыто 160 gaps. MVP = Ф.0 + Ф.1 (~500-700 строк в одном файле).
+
+**Commit 0b9ec6ec7f (Ф.1 part 1):**
+- `Cmd::Check.paths: Vec<PathBuf>` — polymorphic positional path
+  (file → single check, dir → recursive walk, multi-path supported).
+- `Cmd::Test.path: Option<PathBuf>` — single positional, file/dir polymorphic.
+- `--tests-dir` flag УДАЛЁН (clean break, без deprecation). Использование →
+  `error: unexpected argument '--tests-dir' found`.
+- `walk_nv` made pub в test_runner.rs.
+- Canonicalize + dedup + sort для детерминизма.
+- thread::scope parallel check (jobs = num_cpus via available_parallelism).
+- Hard-coded skip: target/, node_modules/, vendor/, std/runtime/,
+  любые _*/.* directories.
+- 191/191 PASS regression test.
+
+**Commit 62c04378fa (Ф.0 + R7 + R10):**
+- **Ф.0 correctness fix:** `cmd_check` теперь дёргает `infer_effects` +
+  `lint_module`. Раньше — silent gap (`cmd_build` это делал, `cmd_check`
+  пропускал). Lint warnings (anonymous-embed, export-fail-untyped) теперь
+  visible в check. CheckResult расширен полем warnings, SUMMARY показывает
+  WARN count.
+- **R7 exit code quintuplet:** UsageError newtype + anyhow downcast в main:
+  0 = success, 1 = diagnostic, 2 = usage error (path not found, wrong
+  ext, bad flag), 101 = panic. Panic hook через std::panic::set_hook —
+  cross-platform exit=101 (раньше Windows default = 0xC0000409, теперь = 101).
+- **R10 --color control:** `--color auto|always|never` global flag.
+  Auto-detect через OnceLock<ColorMode> + env: NO_COLOR / CLICOLOR=0 /
+  CI=true / TERM=dumb → never; CLICOLOR_FORCE=1 → always; иначе on.
+
+**Commit 7aa19c0062 (docs):**
+- D95 (spec/decisions/09-tooling.md) — exit codes table обновлена,
+  убран "MVP target" marker (теперь реально реализовано).
+- docs/plans/README.md — Plan 36 статус: MVP ✅ ЗАКРЫТ.
+- docs/plans/36-cli-production-hardening.md — implementation log в
+  audit history.
+
+**Что осталось** (sub-plans 36.A-E, post-MVP):
+- 36.A outputs: JSON/SARIF/JUnit forms, severity discrimination,
+  stable diagnostic codes registry (E0001-E9999), spec_link field.
+- 36.B caching: blake3 content+transitive hash, --no-cache/--frozen.
+- 36.C CI: .pre-commit-hooks.yaml, GitHub Actions annotations.
+- 36.D ergonomics: -q/-v/-vv, --explain, --dry-run, --list, completions.
+- 36.E workspace: nested nova.toml resolution, manifest schema validation.
+
+**Acceptance:**
+- 191/191 PASS regression
+- `nova check std/` works (recurse + parallel)
+- `nova check non_existent.nv` → exit=2 (usage error)
+- type-check fail → exit=1 (diagnostic)
+- `nova test foo.nv` works (single-file)
+- `nova test --tests-dir foo` → exit=2 (clean break)
+- `--color never` strips ANSI
+- `CI=true` env → no ANSI
+- Lint warnings visible в check (раньше missed)
