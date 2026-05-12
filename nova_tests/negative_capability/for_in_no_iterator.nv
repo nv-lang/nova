@@ -1,0 +1,22 @@
+// EXPECT_COMPILE_ERROR has neither `mut next() -> Option[T]` nor `iter() -> Iter[T]`
+//
+// Plan 39 Issue D negative test: type без `next()` и без `iter()`
+// должен компилироваться с **explicit D58 diagnostic**, не generic
+// «unsupported iterator type 'X'».
+//
+// Spec D58: for-in требует один из методов на receiver type.
+
+module nova_tests.negative_capability.for_in_no_iterator
+
+type NotIterable {
+    value int
+}
+
+fn main() -> int {
+    let bad = NotIterable { value: 42 }
+    for x in bad {
+        // unreachable: codegen error на for-in
+        let _ = x
+    }
+    0
+}

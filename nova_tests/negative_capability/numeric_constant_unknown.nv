@@ -1,0 +1,16 @@
+// EXPECT_CC_ERROR int_NONEXISTENT
+//
+// Plan 38 negative test: неизвестный numeric type constant.
+// `int.MAX` известен (Plan 38 mapping), `int.NONEXISTENT` — нет в
+// `numeric_type_constant_mapping`.
+// Codegen fall through к `parts.join("_")` → `int_NONEXISTENT`
+// undeclared C identifier при C-compile.
+//
+// Это **expected behaviour**: Plan 38 не покрывает arbitrary path,
+// только known type constants. Unknown — runtime/codegen error.
+
+module nova_tests.negative_capability.numeric_constant_unknown
+
+fn main() -> int {
+    int.NONEXISTENT
+}

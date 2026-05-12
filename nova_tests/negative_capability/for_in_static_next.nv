@@ -1,0 +1,25 @@
+// EXPECT_COMPILE_ERROR static, not instance method
+//
+// Plan 39 Issue D: D58 требует `mut next() -> Option[T]` — instance
+// method. Static `Type.next()` — это не iterator method (нет
+// receiver mutate'ить, no state advance).
+//
+// Codegen должен reject'ить с clear error если зарегистрирован
+// `next` как static (`Type.next`, dot вместо @).
+
+module nova_tests.negative_capability.for_in_static_next
+
+type Foo { mut state int }
+
+// Static `Foo.next` — НЕ instance, не iterator.
+fn Foo.next() -> Option[int] {
+    None
+}
+
+fn main() -> int {
+    let f = Foo { state: 0 }
+    for x in f {
+        let _ = x
+    }
+    0
+}

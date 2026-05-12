@@ -1,0 +1,23 @@
+// EXPECT_COMPILE_ERROR Searched method_overloads
+//
+// Plan 39 Issue D: verify улучшенная диагностика fall-through Case 3.
+// Должна показывать **explicit listing methods searched** + hint.
+//
+// Спецификация diagnostic'а (D58 + Plan 39 Issue D):
+//   "for-in: type 'X' has neither `mut next() -> Option[T]` nor
+//    `iter() -> Iter[T]` methods (D58).
+//    Searched method_overloads: (X, "next")=false, (X, "iter")=false
+//    Hint: add one of the methods, or use `for x in c.iter()` if
+//    iterator is created externally."
+
+module nova_tests.negative_capability.for_in_iter_diagnostic
+
+type Empty { value int }
+
+fn main() -> int {
+    let e = Empty { value: 1 }
+    for x in e {
+        let _ = x
+    }
+    0
+}
