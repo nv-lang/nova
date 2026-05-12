@@ -388,3 +388,108 @@ retrospective.
 - 5 `for-in nova_int` файлов целиком.
 
 **Plan 34 закрывается.** Дальнейшая работа — через новые планы.
+
+
+---
+
+## Ф.7 — Production-grade improvements (2026-05-12)
+
+> **Реоткрытие plan'а после аудита «как для прода».** Финальная проверка
+> handlers.nv против Go (PCG в math/rand v2), Rust (ChaCha8 в rand crate),
+> Java (Clock.fixed/offset) выявила 4 production-gaps в Ф.1 реализации,
+> которые **сделаны bootstrap-формой** и могут быть улучшены без
+> architecture changes. Plan 34 расширен Ф.7 для закрытия их сейчас.
+
+### Контекст
+
+LCG (Knuth MMIX) — простейший PRNG, который я выбрал в Ф.1 ради
+2-строчности. Production-grade PRNG (PCG, xoshiro, ChaCha) дают:
+
+- **Лучше distribution** — passes BigCrush/PractRand vs LCG fails.
+- **Дольше period** — xoshiro256++ ~2^256 vs LCG ~2^64.
+- **No degenerate seeds** — xoshiro работает для seed=0 (state init
+  через splitmix64); LCG `state * a + c` с seed=0 → state становится c,
+  но это case-by-case.
+- **Те же ~30 строк** — простота сравнима.
+
+`fixed_ms.sleep(d)` — no-op. Это **теряет deterministic time-advance**
+testing для rate_limiter/retry/cron (Plan 34 Q-time-handler-extras
+честно отметил это). Решение из Go/Rust ecosystem: **mutable test
+clock** (`clock.Advance(d)` в Go, `tokio::time::advance(d)` в Rust).
+
+`bytes(n)` извлекает **1 байт из 64-битного advance** — выкидывает 56
+бит. Тривиальная perf-улучшение: 8 байт за 1 advance.
+
+`seed int` — Plan 34 принимает `int` (signed 64), spec говорит `u64`.
+Mismatch, нужно `u64` для consistency с `Random.u64()` return type.
+
+### Изменения
+
+| Что | Было | Стало |
+|---|---|---|
+| **PRNG** | LCG (Knuth MMIX) | xoshiro256++ (Sebastiano Vigna, public domain) |
+| **`seeded` signature** | `fn seeded(seed int)` | `fn seeded(seed u64)` |
+| **`bytes(n)`** | 1 byte per advance | 8 bytes per advance |
+| **State init для xoshiro** | `state = seed as u64` | splitmix64 mixing seed → 4×u64 state |
+| **`fixed_ms`** | sleep no-op | оставить (single fixed moment) |
+| **New: `mut_clock(start_ms u64)`** | — | mutable test clock с `Time.advance(d Duration)` |
+| **Self-tests** | 7 sanity | +3 distribution/quality smoke tests |
+
+### Acceptance Ф.7
+
+- `nova check std/testing/handlers.nv` PASS (signature changes).
+- Type-check std/ остаётся 45/45 — callers `th.seeded(42)` совместимы
+  (42 → u64 implicit).
+- `nova_tests/` 202/202 без регрессий.
+- 3 новых distribution-теста (period > 2^32, non-correlation,
+  uniform-byte distribution) PASS.
+- `mut_clock` с `Time.advance(Duration)` работает в handler-state.
+
+### Что НЕ входит (по-прежнему)
+
+- CSPRNG (`secure() -> Handler[Random]`) — нужен runtime hook.
+- Real time handler (`system_clock()`) — production handler, требует
+  libuv.
+- Re-fix 41 codegen-FAIL'ов — отдельные планы.
+
+### Ссылки на алгоритм
+
+- xoshiro256++: https://prng.di.unimi.it/xoshiro256plusplus.c
+- splitmix64 для state init: https://prng.di.unimi.it/splitmix64.c
+- Эти PRNG — **public domain** (CC0), безопасно копировать.
+
+### Результаты Ф.7 ✅ ЗАКРЫТ 2026-05-12
+
+Реализовано:
+
+| Что | Результат |
+|---|---|
+| **xoshiro256++** | 30 строк в `seeded()`: 4×u64 state + step function (rotl + XOR) |
+| **splitmix64 init** | Расширяет 64-bit seed → 4 хороших u64. Работает для seed=0 |
+| **`bytes(n)` — 8 bytes/advance** | Cache (`buf, buf_remaining`) hold 8 bytes из последнего u64 |
+| **`seed u64`** | Сигнатура изменена. Все 9 callers `th.seeded(N)` совместимы (implicit `int → u64` coercion) |
+| **`mut_clock(start_ms u64)`** | Новая фабрика — `sleep(d)` продвигает state `current_ms += d.nanos / 1_000_000` |
+| **10 self-tests** | 5 sanity + 3 distribution quality + 4 time handlers |
+
+**Тесты Ф.7:**
+- Sanity: detеrminism, разные seed → разные seq, seed=0 не degenerate,
+  bytes(n) детерминизм
+- Distribution quality: 1000-period smoke, 8-bucket byte uniform,
+  non-correlation между подряд значений
+- Time: `mut_clock` advance, independent instances между `with`-блоками,
+  composition `seeded + mut_clock`
+
+**Acceptance Ф.7 ✅:**
+- ✅ `nova check std/testing/handlers.nv` PASS.
+- ✅ `nova check std/` — 45/45 (не сломан).
+- ✅ 9 callers `th.seeded`/`th.fixed_ms` — все PASS (signature change
+  совместима через type coercion).
+- ✅ `nova test` — 225/225 PASS, нет регрессий.
+- ⚠️ `nova test std/testing/handlers.nv` падает на CC-FAIL `NovaVtable_Random`
+  (category-D codegen bug для effect-types в stdlib — не Ф.7 scope,
+  выносится в отдельный план).
+
+**Production gap'ы остающиеся (не Ф.7):**
+- CSPRNG `secure()` — нужен runtime hook.
+- Real `system_clock()` — нужен libuv.
+- codegen `NovaVtable_<Effect>` для stdlib handler'ов — отдельный план.

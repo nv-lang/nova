@@ -4104,6 +4104,29 @@ impl CEmitter {
         // на debug — стандартное.
         let has_contracts = !f.contracts.is_empty()
             && !matches!(f.verify_mode, VerifyMode::Unverified);
+        // Plan 33.3 Ф.9.4 (D24): `decreases <expr>` для fn → recursion-depth
+        // guard. Каждый entry в fn инкрементит thread-local counter; если
+        // превышает порог (10000) — runtime panic. Это catches infinite
+        // recursion в debug. Полный well-founded check (m_new < m_old) —
+        // ждёт SMT (Z3 backend).
+        let depth_var = if f.decreases.is_some() {
+            // Sanitize fn name для C-identifier.
+            let san: String = f.name.chars()
+                .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+                .collect();
+            let var = format!("_nova_decreases_depth_{}", san);
+            // Declare thread-local counter BEFORE fn (на file-scope).
+            // Делаем через separate preamble line — emit'им сюда не можем,
+            // используем static local внутри fn (init=0, sticky между calls).
+            self.line(&format!("static int {} = 0;", var));
+            self.line("#ifdef NOVA_CONTRACTS_RUNTIME");
+            self.line(&format!("if ({}++ > 10000) nova_contract_violation(NOVA_CONTRACT_PRE, \"{}\", \"decreases recursion depth exceeded 10000\", \"<decreases>\", {});",
+                var, f.name, f.span.start));
+            self.line("#endif");
+            Some(var)
+        } else {
+            None
+        };
         // emit requires checks
         if has_contracts {
             self.line("#ifdef NOVA_CONTRACTS_RUNTIME");

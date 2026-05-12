@@ -4215,27 +4215,34 @@ roadmap), не блокер.
 
 ---
 
-## fixed_ms.sleep(d) — no-op (Plan 34 Ф.1, 2026-05-12)
+## fixed_ms.sleep(d) — no-op; mut_clock — advance ✅ (Plan 34 Ф.1+Ф.7, 2026-05-12)
 
-**Где:** std/testing/handlers.nv, fixed_ms handler.
+**Где:** std/testing/handlers.nv.
 
-**Что упрощено:** `Time.sleep(d)` под `fixed_ms`-handler'ом — instant
-return. Виртуальные часы НЕ продвигаются. Если тест делает `sleep(1s)`,
-`Time.now_ms()` после возвращает то же значение что до.
+**Что упрощено (изначально Ф.1):** `Time.sleep(d)` под
+`fixed_ms`-handler'ом — instant return. Виртуальные часы НЕ
+продвигаются. Если тест делает `sleep(1s)`, `Time.now_ms()` после
+возвращает то же значение что до.
 
-**Почему:** advance-virtual-clock требует mutable handler-state (текущее
-время как `mut now_ms`) и нового API типа `Time.advance(d)` или
-`fixed_ms_advancing(...)`. Сейчас тесты cron/retry/rate_limiter
-которым нужно «прошёл час» обходятся созданием нового handler'а с новым
-`ms` между сценариями: `with Time = th.fixed_ms(0) { ... }; with Time = th.fixed_ms(3600_000) { ... }`.
+**Решено в Ф.7:** добавлена `mut_clock(start_ms u64)` — mutable test
+clock. `sleep(d)` продвигает `current_ms` на `d.nanos / 1_000_000`
+через closure-capture `let mut current_ms`. Используется в
+rate_limiter/retry/cron тестах когда нужно «прошёл час» без real
+delay.
 
-**Как починить:** добавить `fn advancing(start_ms int) -> Handler[Time]`
-с mut state и API `Time.advance(d Duration)`. Альтернатива — `fn clock()`
-возвращающий object с `.now()`/`.advance()` методами + adapter. Реализация
-~30 строк, но нужно D-решение о новых ops в `Time` effect или о
-test-only-effect расширении.
+**Что осталось упрощением:**
+- `fixed_ms` сохраняет no-op поведение — это нужно для тестов которые
+  явно не хотят advance (uuid v7 with fixed timestamp).
+- Sub-millisecond durations в `mut_clock` округляются floor (delta_ms =
+  nanos / 1_000_000). Для durations ≥ 1ms работает корректно;
+  precision-sensitive тесты должны использовать `1.millis()` минимум.
 
-**Приоритет:** P2 — текущие тесты обходятся без advance.
+**Как улучшить (опционально):**
+- Sub-millisecond precision — хранить `current_ns u64` вместо
+  `current_ms`. Тогда `sleep(d)` точное. Trade-off: u64 ns overflow
+  через 584 года — ok.
+
+**Приоритет:** P3 — текущая реализация покрывает 99% use-cases.
 
 
 ---

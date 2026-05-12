@@ -1,0 +1,18 @@
+// EXPECT_RUNTIME_PANIC decreases recursion depth exceeded 10000
+//
+// Plan 33.3 Ф.9.4: бесконечная рекурсия в fn с `decreases` →
+// runtime panic через depth counter (catches infinite recursion в debug).
+//
+// Это honest bootstrap — настоящий well-founded check (m_new < m_old)
+// требует SMT (Z3 backend).
+
+module nova_tests.expected_runtime.contracts_decreases_recursion_fail
+
+fn bad_recursion(n int) -> int
+    decreases n
+=> bad_recursion(n)   // не уменьшает n — infinite recursion
+
+fn main() Io -> () {
+    let _ = bad_recursion(5)
+    println("UNREACHABLE")
+}

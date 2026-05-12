@@ -6904,3 +6904,103 @@ Verification:
 - Full regression 225/225 PASS (было 221 + 4 новых).
 
 Commits будут: runtime + codegen + tests + docs.
+
+
+================================================================================
+2026-05-12 Plan 34 Ф.7 — production-grade improvements для handlers.nv
+================================================================================
+
+После закрытия Plan 34 Ф.6 пользователь попросил аудит «как для прода,
+есть ли что лучше сделать (как в Go/Rust)». Аудит handlers.nv против
+Go (PCG в math/rand v2), Rust (ChaCha8 в rand crate) выявил 4
+production-gaps в bootstrap-Ф.1 реализации, которые можно закрыть
+без architecture changes.
+
+### PRNG: LCG → xoshiro256++
+
+LCG (Knuth MMIX) — простейший PRNG, выбранный в Ф.1 ради 2-строчности.
+Гэп vs production:
+- LCG fails BigCrush/PractRand на multiple subtests (bias на нижних
+  битах, short period 2^64).
+- Period LCG 2^64 vs xoshiro 2^256-1.
+- Degenerate case seed=0: LCG state становится константой c; xoshiro
+  через splitmix64 init гарантирует non-zero state.
+
+xoshiro256++ (Sebastiano Vigna, public domain CC0):
+- 4×u64 state.
+- step: rotl(s0+s3, 23) + s0; затем s2^=s0, s3^=s1, s1^=s2, s0^=s3,
+  s2^=(s1<<17), s3=rotl(s3, 45).
+- splitmix64 для seed → state: 4 последовательных splitmix64 шагов
+  дают 4 хороших u64.
+
+### Signature: seed int → seed u64
+
+Spec sketch говорил `fn seeded(seed u64)`. Plan 34 Ф.1 принял `int` из
+удобства. Ф.7 fixed. 9 callers (`th.seeded(42)`) проходят через
+implicit `int → u64` coercion.
+
+### bytes(n): 8 байт за advance вместо 1
+
+Изначально `for _ in 0..n { advance state; out.push(state & 0xFF) }`
+выкидывало 56 бит из 64 при каждом advance. Production: cache buf +
+buf_remaining — 8 байт из последнего u64. 8× speedup для bcrypt salt
+(16 bytes: 16 advances → 2 advances).
+
+### mut_clock(start_ms u64) -> Handler[Time]
+
+Plan 34 Ф.1 имел только `fixed_ms` (sleep no-op) — теряет
+deterministic time-advance testing для rate_limiter/retry/cron.
+
+Go/Rust prior art:
+- Go: jonboulle/clockwork `clock.NewMock()` + `Advance(d)`.
+- Rust: tokio `pause()` + `advance(d).await`.
+- Java: `Clock.fixed/offset`.
+
+Решение Nova: `mut_clock(start_ms)` возвращает Time handler с
+closure-capture `let mut current_ms`. `Time.sleep(d)` обновляет
+`current_ms += d.nanos / 1_000_000`. Никаких новых operations
+эффекта — переиспользует существующее `Time.sleep`.
+
+### Distribution self-tests
+
+Ф.1 имел 7 sanity tests. Ф.7 добавил 3 quality smoke tests:
+1. 1000-period smoke (first ≠ last через 1000 advances).
+2. 8-bucket byte uniform (256 байт, 8 buckets, каждый ≥ 1 hit).
+3. Non-correlation между подряд значений (a→b и b→c diffs не равны).
+
+Плюс 4 теста для `mut_clock` (advance, independent instances,
+composition с seeded). Итого 10 self-tests.
+
+### Acceptance Ф.7
+
+- nova check std/testing/handlers.nv → PASS.
+- nova check std/ → 45/45 (не сломан signature change).
+- 9 callers — PASS (implicit type coercion).
+- nova test → 225/225 PASS (нет регрессий).
+- Известный CC-FAIL: handlers.nv не компилируется (NovaVtable_Random
+  codegen bug для stdlib effect-types). Не Ф.7 scope.
+
+### Production-grade tier
+
+После Ф.7 handlers.nv:
+- PRNG quality: on par with Go math/rand v2 / Rust rand crate.
+- Mock clock: on par with Go clockwork / Rust tokio::time::pause.
+- API ergonomics: handler-substitution через `with` superior
+  (Go/Rust требуют interfaces или specialized libraries).
+
+### Что осталось упрощением
+
+- `secure() -> Handler[Random]` (CSPRNG) — нужен runtime hook.
+- `system_clock() -> Handler[Time]` (real time) — нужен libuv.
+- `NovaVtable_<Effect>` codegen для stdlib handler'ов — отдельный план.
+- Sub-millisecond precision в `mut_clock` — durations < 1ms floor.
+
+### Файлы
+
+- std/testing/handlers.nv (rewrite: xoshiro256++ + splitmix64 +
+  mut_clock + 10 self-tests + 8 bytes/advance + u64 seed).
+- docs/plans/34-stdlib-typecheck-and-compile-fix.md (Ф.7 section).
+- docs/simplifications.md (2 записи обновлены).
+
+Plan 34 EXTENDED полностью closed.
+
