@@ -452,30 +452,87 @@ impl Parser {
     }
 
     /// Plan 33.1 (D24): парсит блок `requires <expr>` / `ensures <expr>`
+    /// + Plan 33.2 (D24): `reads <expr>{, <expr>}*` / `modifies <expr>{, <expr>}*`
     /// после сигнатуры функции, перед телом (`=>` / `{`).
     ///
-    /// Контекстный разбор: `requires` / `ensures` — обычные Ident'ы в
-    /// лексере, парсер распознаёт их в позиции после return-type до `=>`/`{`.
-    /// Один контракт на строке; разделение по newline.
-    fn parse_contracts(&mut self) -> Result<Vec<Contract>, Diagnostic> {
+    /// Контекстный разбор: `requires` / `ensures` / `reads` / `modifies` —
+    /// обычные Ident'ы в лексере, парсер распознаёт их в позиции после
+    /// return-type до `=>`/`{`. Один clause на строке; разделение по newline.
+    fn parse_contracts(&mut self) -> Result<(Vec<Contract>, Vec<FrameTarget>, Vec<FrameTarget>), Diagnostic> {
         let mut contracts = Vec::new();
+        let mut reads = Vec::new();
+        let mut modifies = Vec::new();
         loop {
             // Пропустить newlines между контрактами.
             self.skip_newlines();
-            let kind = match &self.peek().kind {
-                TokenKind::Ident(n) if n == "requires" => ContractKind::Requires,
-                TokenKind::Ident(n) if n == "ensures" => ContractKind::Ensures,
+            match &self.peek().kind {
+                TokenKind::Ident(n) if n == "requires" => {
+                    let start = self.peek().span;
+                    self.bump();
+                    let expr = self.parse_expr()?;
+                    let span = start.merge(expr.span);
+                    contracts.push(Contract { kind: ContractKind::Requires, expr, span });
+                }
+                TokenKind::Ident(n) if n == "ensures" => {
+                    let start = self.peek().span;
+                    self.bump();
+                    let expr = self.parse_expr()?;
+                    let span = start.merge(expr.span);
+                    contracts.push(Contract { kind: ContractKind::Ensures, expr, span });
+                }
+                TokenKind::Ident(n) if n == "reads" => {
+                    self.bump();
+                    self.parse_frame_target_list(&mut reads)?;
+                }
+                TokenKind::Ident(n) if n == "modifies" => {
+                    self.bump();
+                    self.parse_frame_target_list(&mut modifies)?;
+                }
                 _ => break,
-            };
-            let start = self.peek().span;
-            self.bump(); // requires / ensures
-            // Запрещено в external fn — диагностика на уровне parse_fn
-            // (мы тут не знаем is_external). Сейчас просто парсим expr.
-            let expr = self.parse_expr()?;
-            let span = start.merge(expr.span);
-            contracts.push(Contract { kind, expr, span });
+            }
         }
-        Ok(contracts)
+        Ok((contracts, reads, modifies))
+    }
+
+    /// Plan 33.2: парсит `reads <expr>{, <expr>}*` или `modifies <expr>{, <expr>}*`.
+    /// Each target — l-value: `name` | `name.field` | `arr[i]` | `arr[*]`.
+    fn parse_frame_target_list(&mut self, out: &mut Vec<FrameTarget>) -> Result<(), Diagnostic> {
+        loop {
+            let target = self.parse_frame_target()?;
+            out.push(target);
+            if !matches!(self.peek().kind, TokenKind::Comma) {
+                break;
+            }
+            self.bump(); // ,
+            self.skip_newlines();
+        }
+        Ok(())
+    }
+
+    fn parse_frame_target(&mut self) -> Result<FrameTarget, Diagnostic> {
+        let start = self.peek().span;
+        // Parse base — Ident.
+        let expr = self.parse_postfix()?;
+        // Check shape: Ident → Whole; Member → Field; Index → ArrayElem.
+        match &expr.kind {
+            ExprKind::Member { obj, name } => Ok(FrameTarget::Field {
+                receiver: (**obj).clone(),
+                field: name.clone(),
+                span: start.merge(expr.span),
+            }),
+            ExprKind::Index { obj, index } => {
+                // `arr[*]` — special case: index = Ident("*") syntactic
+                // pattern. Парсер видит `*` как BinOp, не Ident. На данный
+                // момент detect через unary multiplication of nothing —
+                // парсер сейчас не примет. Оставим как future TODO.
+                Ok(FrameTarget::ArrayElem {
+                    array: (**obj).clone(),
+                    index: (**index).clone(),
+                    span: start.merge(expr.span),
+                })
+            }
+            _ => Ok(FrameTarget::Whole(expr)),
+        }
     }
 
     // ─── fn ──────────────────────────────────────────────────────────────
@@ -625,16 +682,20 @@ impl Parser {
             None
         };
 
-        // Plan 33.1 (D24): contracts после сигнатуры, до тела.
-        // `requires <expr>` / `ensures <expr>` на отдельных строках.
-        let contracts = self.parse_contracts()?;
+        // Plan 33.1+33.2 (D24): contracts + reads/modifies после сигнатуры,
+        // до тела. `requires <expr>` / `ensures <expr>` / `reads ...` /
+        // `modifies ...` на отдельных строках.
+        let (contracts, reads, modifies) = self.parse_contracts()?;
         // external fn не может иметь контрактов в 33.1.
-        // (В 33.3 будет `@trusted` external — отдельный путь.)
-        if is_external && !contracts.is_empty() {
-            let span = contracts[0].span;
+        // (В 33.3 будет `#trusted` external — отдельный путь.)
+        if is_external && (!contracts.is_empty() || !reads.is_empty() || !modifies.is_empty()) {
+            let span = contracts.first().map(|c| c.span)
+                .or_else(|| reads.first().map(|f| f.span()))
+                .or_else(|| modifies.first().map(|f| f.span()))
+                .unwrap_or(start);
             return Err(Diagnostic::new(
                 format!(
-                    "external function `{}` cannot have contracts in Plan 33.1 (use `@trusted` in Plan 33.3 when available)",
+                    "external function `{}` cannot have contracts in Plan 33.1 (use `#trusted` in Plan 33.3 when available)",
                     name
                 ),
                 span,
@@ -685,6 +746,10 @@ impl Parser {
             // Backward-compat: пустой Vec для функций без контрактов;
             // Default verify_mode / Unknown purity для функций без атрибутов.
             contracts,
+            // Plan 33.2 (D24): reads/modifies frame conditions —
+            // парсятся в parse_contracts() выше; пока пустые.
+            reads,
+            modifies,
             verify_mode: contract_attrs.verify_mode,
             verify_timeout_ms: contract_attrs.verify_timeout_ms,
             purity: contract_attrs.purity,

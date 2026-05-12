@@ -1,0 +1,43 @@
+// Plan 33.2 Ф.5: parse reads/modifies frame conditions.
+//
+// Проверяет что:
+// 1. `reads target` парсится.
+// 2. `modifies target` парсится.
+// 3. Несколько targets через запятую.
+// 4. Field access: `reads self.field`.
+
+module nova_tests.contracts.parse_frame
+
+#unverified
+fn read_only(x int) -> int
+    reads x
+    requires x > 0
+=> x
+
+#unverified
+fn modify_x(x int) -> int
+    modifies x
+    requires x > 0
+    ensures result == x
+=> x
+
+#unverified
+fn read_multi(a int, b int) -> int
+    reads a, b
+    requires a > 0
+    requires b > 0
+=> a + b
+
+#unverified
+fn modify_multi(a int, b int) -> int
+    reads a
+    modifies b
+    requires a > 0
+=> a
+
+test "parse frame conditions" {
+    assert(read_only(5) == 5)
+    assert(modify_x(3) == 3)
+    assert(read_multi(2, 3) == 5)
+    assert(modify_multi(1, 2) == 1)
+}

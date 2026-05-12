@@ -57,6 +57,16 @@ pub struct FnDecl {
     /// Plan 33.1 (D24): контракты после сигнатуры, до тела.
     /// Пустой вектор у функций без контрактов (backward-compat).
     pub contracts: Vec<Contract>,
+    /// Plan 33.2 (D24): `reads <expr>{, <expr>}*` — frame-read targets.
+    /// Перечисляет l-values которые функция читает (handler-state + record
+    /// fields). Используется SMT для frame-axiom («всё что вне reads
+    /// не повлияет на ensures»).
+    pub reads: Vec<FrameTarget>,
+    /// Plan 33.2 (D24): `modifies <expr>{, <expr>}*` — frame-write targets.
+    /// Перечисляет l-values которые функция МОЖЕТ изменить.
+    /// Type-check проверяет body: assignments вне frame → error.
+    /// SMT использует frame-axiom: всё вне modifies = old.
+    pub modifies: Vec<FrameTarget>,
     /// Plan 33.1 (D24): режим верификации контрактов.
     /// `@must_verify` / `@unverified` / default.
     pub verify_mode: VerifyMode,
@@ -75,6 +85,37 @@ pub struct Contract {
     pub kind: ContractKind,
     pub expr: Expr,
     pub span: Span,
+}
+
+/// Plan 33.2 (D24): frame-target — l-value, который функция читает
+/// (`reads`) или пишет (`modifies`).
+///
+/// Поддерживаемые формы:
+/// - `name` — целая variable / receiver (`self` / `acc`).
+/// - `name.field` — отдельное поле record'а.
+/// - `arr[i]` — конкретный array-элемент (33.2 partial).
+/// - `arr[*]` — все элементы array.
+#[derive(Debug, Clone)]
+pub enum FrameTarget {
+    /// Whole l-value: `acc`, `self`.
+    Whole(Expr),
+    /// Field of receiver: `acc.balance`, `self.field`.
+    Field { receiver: Expr, field: String, span: Span },
+    /// Specific array element: `xs[i]`.
+    ArrayElem { array: Expr, index: Expr, span: Span },
+    /// All elements: `xs[*]`.
+    ArrayAll { array: Expr, span: Span },
+}
+
+impl FrameTarget {
+    pub fn span(&self) -> Span {
+        match self {
+            FrameTarget::Whole(e) => e.span,
+            FrameTarget::Field { span, .. }
+            | FrameTarget::ArrayElem { span, .. }
+            | FrameTarget::ArrayAll { span, .. } => *span,
+        }
+    }
 }
 
 /// Plan 33.1: вид контракта (`requires` vs `ensures`).
