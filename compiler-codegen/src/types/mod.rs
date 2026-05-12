@@ -3208,6 +3208,12 @@ impl ContractCtx {
     }
 
     fn check_fn(&self, fd: &FnDecl, errors: &mut Vec<Diagnostic>) {
+        // Plan 33.2 Ф.5: проверка modifies-frame.
+        // Если объявлен `modifies`, все assignment'ы внутри body должны
+        // быть покрыты frame-target'ами.
+        if !fd.modifies.is_empty() {
+            self.check_modifies_frame(fd, errors);
+        }
         // Plan 33.1 Ф.4: контракты на Fail-функциях требуют ContractResult
         // + flow-аналитики для result.is_ok / result.value / result.error.
         // Это полная реализация — отложена до Ф.3 SMT integration вместе
@@ -3235,6 +3241,135 @@ impl ContractCtx {
                     self.check_ensures_expr(&contract.expr, errors);
                 }
             }
+        }
+    }
+
+    /// Plan 33.2 Ф.5: проверка `modifies`-frame.
+    /// Walks body, для каждого Stmt::Assign к **non-local** target'у
+    /// (параметр / self / поле) проверяет что target покрыт frame-target'ом.
+    ///
+    /// Локальные `let mut` НЕ требуют frame-cover'а — `modifies` относится
+    /// к **API-visible** mutations (параметры, self.fields). Это паритет с
+    /// Dafny: «modifies clause is about heap effect, not stack locals».
+    fn check_modifies_frame(&self, fd: &FnDecl, errors: &mut Vec<Diagnostic>) {
+        let block = match &fd.body {
+            FnBody::Block(b) => b,
+            FnBody::Expr(_) | FnBody::External => return, // no assigns possible
+        };
+        // Collect local-binding names (let / let mut в block).
+        let mut locals: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for stmt in &block.stmts {
+            if let Stmt::Let(LetDecl { pattern, .. }) = stmt {
+                Self::collect_binding_names(pattern, &mut locals);
+            }
+        }
+        for stmt in &block.stmts {
+            if let Stmt::Assign { target, span, .. } = stmt {
+                // Skip locals.
+                if let Some(root_name) = Self::root_lvalue_name(target) {
+                    if locals.contains(&root_name) { continue; }
+                }
+                if !Self::is_assign_covered(target, &fd.modifies) {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "assignment to `{}` is not covered by `modifies` clause of `{}`",
+                            Self::expr_display(target), fd.name
+                        ),
+                        *span,
+                    ));
+                }
+            }
+        }
+    }
+
+    fn collect_binding_names(p: &Pattern, out: &mut std::collections::HashSet<String>) {
+        match p {
+            Pattern::Ident { name, .. } => { out.insert(name.clone()); }
+            Pattern::Binding { name, inner, .. } => {
+                out.insert(name.clone());
+                Self::collect_binding_names(inner, out);
+            }
+            Pattern::Tuple(ps, _) => for sub in ps { Self::collect_binding_names(sub, out); }
+            Pattern::Record { fields, .. } => for f in fields {
+                if let Some(sub) = &f.pattern { Self::collect_binding_names(sub, out); }
+                else { out.insert(f.name.clone()); }
+            },
+            Pattern::Array { elems, .. } => for e in elems {
+                match e {
+                    ArrayPatternElem::Item(pp) => Self::collect_binding_names(pp, out),
+                    ArrayPatternElem::RestBind(n) => { out.insert(n.clone()); }
+                    ArrayPatternElem::Rest => {}
+                }
+            },
+            _ => {}
+        }
+    }
+
+    fn root_lvalue_name(e: &Expr) -> Option<String> {
+        match &e.kind {
+            ExprKind::Ident(n) => Some(n.clone()),
+            ExprKind::Member { obj, .. } => Self::root_lvalue_name(obj),
+            ExprKind::Index { obj, .. } => Self::root_lvalue_name(obj),
+            _ => None,
+        }
+    }
+
+    /// Проверка: один target покрыт `modifies`-list'ом.
+    fn is_assign_covered(target: &Expr, frame: &[FrameTarget]) -> bool {
+        for ft in frame {
+            if Self::frame_covers(ft, target) {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn frame_covers(ft: &FrameTarget, target: &Expr) -> bool {
+        match ft {
+            FrameTarget::Whole(e) => Self::same_lvalue(e, target),
+            FrameTarget::Field { receiver, field, .. } => {
+                if let ExprKind::Member { obj, name } = &target.kind {
+                    name == field && Self::same_lvalue(receiver, obj)
+                } else {
+                    false
+                }
+            }
+            FrameTarget::ArrayElem { array, index, .. } => {
+                if let ExprKind::Index { obj, index: tidx } = &target.kind {
+                    Self::same_lvalue(array, obj) && Self::same_lvalue(index, tidx)
+                } else {
+                    false
+                }
+            }
+            FrameTarget::ArrayAll { array, .. } => {
+                if let ExprKind::Index { obj, .. } = &target.kind {
+                    Self::same_lvalue(array, obj)
+                } else {
+                    false
+                }
+            }
+        }
+    }
+
+    /// Простой сравнитель l-value (без полного structural equality).
+    fn same_lvalue(a: &Expr, b: &Expr) -> bool {
+        match (&a.kind, &b.kind) {
+            (ExprKind::Ident(n1), ExprKind::Ident(n2)) => n1 == n2,
+            (ExprKind::SelfAccess, ExprKind::SelfAccess) => true,
+            (ExprKind::Member { obj: o1, name: n1 }, ExprKind::Member { obj: o2, name: n2 }) => {
+                n1 == n2 && Self::same_lvalue(o1, o2)
+            }
+            _ => false,
+        }
+    }
+
+    fn expr_display(e: &Expr) -> String {
+        match &e.kind {
+            ExprKind::Ident(n) => n.clone(),
+            ExprKind::SelfAccess => "self".into(),
+            ExprKind::Member { obj, name } => format!("{}.{}", Self::expr_display(obj), name),
+            ExprKind::Index { obj, .. } => format!("{}[..]", Self::expr_display(obj)),
+            _ => "<expr>".into(),
         }
     }
 

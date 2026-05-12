@@ -1,0 +1,16 @@
+// EXPECT_COMPILE_ERROR is not covered by `modifies` clause
+//
+// Plan 33.2 Ф.5: assignment к параметру вне `modifies` → compile error.
+// Локальные `let mut` НЕ требуют frame-cover'а (паритет с Dafny).
+
+module nova_tests.contracts.frame_violation
+
+#unverified
+fn bad_modify(a int, b int) -> int
+    modifies a
+{
+    let mut c = a + b
+    c = a * 2     // OK — `c` локальная
+    b = 10        // ERROR — `b` параметр, не в modifies
+    c
+}

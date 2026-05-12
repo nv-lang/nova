@@ -1,0 +1,36 @@
+// Plan 33.2 Ф.5: modifies-frame корректно работает для покрытых assignments.
+
+module nova_tests.contracts.frame_positive
+
+#unverified
+fn modify_a(a int, b int) -> int
+    modifies a
+{
+    let mut a_local = a
+    a_local = b * 2   // OK — локальная
+    a_local
+}
+
+#unverified
+fn modify_both(a int, b int) -> int
+    modifies a, b
+{
+    // a и b — оба в modifies (но мы используем локальную).
+    let mut sum = a + b
+    sum = sum * 2
+    sum
+}
+
+#unverified
+fn no_modifies_no_check(a int) -> int
+{
+    let mut a_local = a
+    a_local = a_local + 1   // OK — modifies не объявлен, frame-check выключен
+    a_local
+}
+
+test "frame positive cases" {
+    assert(modify_a(5, 7) == 14)
+    assert(modify_both(3, 4) == 14)
+    assert(no_modifies_no_check(10) == 11)
+}
