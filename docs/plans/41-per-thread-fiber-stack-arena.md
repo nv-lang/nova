@@ -485,3 +485,216 @@ void nova_fiber_arena_init(void) {
 - **Plan 27 (Boehm GC default)** — Plan 41 удаляет R4 workaround
   (`_NOVA_GC_DISABLE`), упрощает Plan 27 maintenance.
 - **Plan 40 (channel hardening)** — independent, не пересекается.
+
+---
+
+## Production-grade audit round 1 (2026-05-12)
+
+Сравнение с Go runtime stack alloc (`runtime/stack.go`), BEAM
+(`erts/emulator/beam/erl_alloc.c`), Boost.Context (`protected_fixedsize_stack`),
+NPTL pthread stacks, libfiber, jemalloc/tcmalloc decay strategies.
+
+### 🔴 4 P0 — критичны ДО implementation
+
+#### P41-2: Slot count 128 × 16 threads = 2048 fibers — недостаточно
+
+**Проблема:** web server на 10k connections нужно 10k+ fibers (4-16
+активных per HTTP request × 1000 RPS × p99 100ms ≈ 4-16k concurrent).
+Текущий design имеет `calloc` fallback при exhaustion (line 209) —
+fallback'нутые fibers **регрессируют к _NOVA_GC_DISABLE проблеме**
+которую план должен был закрыть.
+
+**Это противоречит заявленной цели** «remove hidden UAF».
+
+**Решение:**
+- Bump default `slot_count` 128 → 4096 (8GB virtual per thread —
+  всё ещё OK на x86_64, не растёт physical до touch).
+- **Удалить calloc fallback** — abort при arena exhaustion.
+- **Implement arena chaining:** linked list of arenas, каждый свой
+  GC root. 16 threads × 2 arenas = 32 GC roots (< 128 limit). ~80 LOC.
+
+**Cost:** ~120 LOC + extensive testing. **P0 — без этого план не
+закрывает свой stated goal.**
+
+#### P41-3: `MAP_NORESERVE` не работает на vm.overcommit_memory=2
+
+**Проблема:** RHEL/CentOS FIPS-mode + PCI-DSS deployments устанавливают
+`vm.overcommit_memory=2` (strict). Kernel **игнорирует MAP_NORESERVE**
+и резервирует full 256MB против commit limit. 16 threads × 256MB = 4GB
+**committed** до запуска любого fiber'а. На machine'е без 4GB+ free
+commit — mmap fails при startup.
+
+Plan 41 **silently не запустится** на enterprise Linux.
+
+**Решение:**
+1. Startup check: read `/proc/sys/vm/overcommit_memory`.
+2. Если `=2` — downgrade на маленький arena (32MB × 16 slots × 2MB =
+   совместимо со strict overcommit).
+3. Explicit error message если даже маленький не fits.
+
+**Cost:** ~30 LOC. **P0 — иначе крах на enterprise.**
+
+#### P41-5: NO guard pages между slots → silent stack overflow
+
+**Security-grade defect.** Текущий design: slots contiguous 2MB
+regions без guard page. Fiber stack overflow → пишет в **next slot's
+stack** → corrupts другой fiber's locals → resume causes arbitrary
+control-flow corruption.
+
+**Хуже текущего calloc'd 56KB** — там corruption hits malloc metadata
+(Boehm detect on next scan). Здесь — silent corruption between fibers.
+Undebuggable.
+
+**Production reference:**
+- pthread: `pthread_attr_setguardsize` default 1 page → SIGSEGV on overflow.
+- Go: `g.stackguard0` + morestack prologue check.
+- Boost.Context: `protected_fixedsize_stack` с `PROT_NONE` guard.
+- musl: **outlier** — no guard, broadly criticized.
+
+**Решение:** `mprotect PROT_NONE` на bottom page каждого slot. Usable
+stack = 2MB − 4KB. Windows: `VirtualProtect` per slot.
+
+**Cost:** ~40 LOC в arena_init. **P0 security.**
+
+#### P41-11: Boehm `GC_add_roots(arena)` commits all pages на first scan
+
+**Defeats lazy commit promise.** `mmap MAP_NORESERVE` лениво commit'ит
+страницы только при touch. **Но GC scan ЧИТАЕТ страницы** → COW maps
+их к zero-page → они становятся committed (RAM-resident, count
+against RSS). 256MB ÷ 4KB = 65k pages первый scan → 25ms once + RSS
+показывает full 256MB.
+
+**Plan 41 just defeated its own design** registering arena как root.
+
+**Решение:** регистрировать только **active range**:
+- arena_init НЕ регистрирует roots.
+- Первый fiber alloc регистрирует `[base, base+(high_water+1)*slot_size]`.
+- При bump high_water — `GC_remove_roots` + `GC_add_roots` с новым bound.
+- Slot reuse не shrinks high_water (acceptable — slots просто
+  становятся unused внутри scanned range).
+- RSS proportional к **peak** concurrent fibers, не arena reservation.
+
+**Cost:** ~40 LOC. **P0 — без этого RSS лишний 256MB/thread.**
+
+### 🟡 4 P1 — strongly recommended
+
+#### P41-4: `madvise(MADV_DONTNEED)` per dealloc — syscall storm
+
+Go batches через `mheap_.scavenger`. jemalloc `opt.dirty_decay_ms=10s`.
+tcmalloc same.
+
+Per-dealloc madvise = ~1µs/syscall. 10k RPS × 4-8 fibers per req →
+40-80k madvise/sec = **40-400ms wall time per sec в syscalls**.
+Acceptance criterion «<5% overhead» **fails under churn**.
+
+**Решение:** TLS-local decay queue, flush periodic (N deallocs or T ms).
+~60 LOC. **P1** — ship bootstrap as planned, отметить как known
+regression.
+
+#### P41-6: Stack overflow detection — pretty error
+
+После P41-5 fix (guard pages) — SIGSEGV fires но **Nova не имеет
+SIGSEGV handler** → process dies без помощного message.
+
+**Решение:** SIGSEGV handler проверяет fault addr ∈ arena guard pages
+→ prints «nova: fiber stack overflow (slot N)» → abort. ~80 LOC.
+Signal-safe (no malloc, no locks).
+
+#### P41-8: NUMA awareness TODO marker
+
+Plan 23 territory, но Plan 41 design **должен оставить TODO** для
+будущего `mbind(MPOL_BIND)` на arena. ~5 LOC doc + 20 LOC defer
+implementation.
+
+#### P41-12: TLS arena lifetime — `__attribute__((destructor))` неправильно
+
+Risk #5 упоминает `pthread_key_create destructor OR __attribute__((destructor))`.
+**`__attribute__((destructor))` runs at process exit, не thread exit
+— wrong tool**. `__thread` storage reclaimed at thread exit но **mmap'd
+arena leaks**.
+
+**Решение:** `pthread_key_create(key, &arena_cleanup_cb)`. Windows:
+`FlsAlloc/FlsCallback`. ~40 LOC cross-platform. **P1 — leak до process
+exit fatal для long-running daemons.**
+
+### 🟢 P2/P3 — acknowledged
+
+- **P41-1** Bitmap O(slabs) scan — at 128 slots acceptable; replace с
+  free-list при Q2 resize. P2.
+- **P41-7** Cache alignment — slots 2MB-aligned автоматически, OK.
+- **P41-9** SP-trick для TLS-less lookup — Plan 23 optimization, defer.
+- **P41-10** `nova_runtime.fibers` API completeness — defer to followup.
+
+### Updated FiberHeader proposal (P41-9 placeholder)
+
+Reserve first 64 bytes of slot для `FiberHeader`:
+```c
+typedef struct {
+    Nova_FiberArena* arena;
+    uint32_t         slot_idx;
+    uint32_t         _pad;
+    /* room for: fiber id, scheduler back-ref, debug flags */
+} FiberHeader;
+```
+
+Stack starts at `slot_base + 64`. Lookup `FiberHeader*` from SP:
+`((FiberHeader*)(sp & ~(slot_size-1)))`. Saves TLS load on ARM.
+
+**Решение:** заложить layout сейчас, fill in fields позже. Plan 23
+optimization can use SP-trick.
+
+### Updated scope (round 1 audit)
+
+| Item | Cost | Phase |
+|---|---|---|
+| P41-2 slot_count + chaining + abort | +120 LOC | Этап 1 |
+| P41-3 overcommit_memory check | +30 LOC | Этап 1 |
+| P41-5 guard pages (mprotect) | +40 LOC | Этап 1 |
+| P41-11 active-range GC roots | +40 LOC | Этап 1 |
+| P41-4 madvise batching | +60 LOC | Этап 3 |
+| P41-6 SIGSEGV handler | +80 LOC | Этап 3 |
+| P41-8 NUMA TODO marker | +5 LOC doc | Этап 5 |
+| P41-12 pthread_key cleanup | +40 LOC | Этап 1 |
+| FiberHeader placeholder | +30 LOC | Этап 1 |
+| **Total addition** | **~445 LOC** | |
+| **Original estimate** | ~400-500 | |
+| **Round 1 final** | **~850-950 LOC** | |
+
+### Cross-plan dependency — критично
+
+**Plan 40 → Plan 41 cross-plan hazard:**
+
+Plan 40 Ф.1 implemented atomics + mutex assuming concurrent GC будет
+работать. **Но `_NOVA_GC_DISABLE` всё ещё активен в `fibers.h:67-68`**.
+Это значит: под M:N (Plan 23 пока не landed) Plan 40 atomics
+**технически correct**, но при Plan 23 implementation worker thread
+parked **с GC disabled globally** → другие workers не могут allocate.
+
+Это **invariant'но известный hazard** Plan 40 audit его не fixed
+потому что fix принадлежит Plan 41. Сейчас зафиксирован как
+P40R4-1 в Plan 40 round 4 audit (см. ниже).
+
+**Правильный order implementations:**
+1. **Plan 41 first** (close P0 items: P41-2, P41-3, P41-5, P41-11).
+2. **Re-validate Plan 40** под TSan with `_NOVA_GC_DISABLE` removed.
+3. **Затем Plan 23** safely.
+
+### Honest production positioning после Plan 41 closed (P0 fixed)
+
+**Stack management:**
+- **Ниже Go** — Go has segmented→continuous copy, per-P caches, free-list
+  O(1), guard pages, NUMA-naive (matches Plan 41).
+- **Ниже BEAM** — per-process heap, copying GC, generational, unbounded.
+- **На par с libfiber/libco** после P41-5 (guard pages) fix.
+- **Ниже NPTL** для pthread substitution — NPTL grows через SIGSEGV
+  механизм (нам нужен P41-6).
+- **Выше musl** — musl без guard pages by design.
+
+**Acceptable production positioning:**
+- I/O-bound web services ~10k concurrent fibers, p99 sub-ms.
+- Comparable с Node.js + libuv, ниже Tokio.
+- **НЕ ready для HFT / sub-µs latency** — mutex-everywhere channels
+  + per-thread arena GC scan = forbidden.
+- Memory: ~32KB per active fiber + 256MB virtual per worker (NOT
+  physical после P41-11 fix). Tokio ~2KB (no stack). Go ~8KB initial.
+  Мы 4× Go, fine для bootstrap.
