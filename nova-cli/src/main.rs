@@ -72,6 +72,26 @@ enum Cmd {
         /// Number of parallel workers (0 = num_cpus, default 0).
         #[arg(long, default_value_t = 0)]
         jobs: usize,
+        /// Show only failures and summary (no per-file `ok:` lines).
+        #[arg(long, short = 'q', conflicts_with = "verbose")]
+        quiet: bool,
+        /// Show extra info per file (timing, expanded warnings).
+        #[arg(long, short = 'v', conflicts_with = "quiet")]
+        verbose: bool,
+        /// List files that would be checked, without checking. Useful для
+        /// отладки --skip / implicit-excludes.
+        #[arg(long)]
+        list: bool,
+        /// Output format. `human` (default) — colored per-file; `short` —
+        /// `file:line:col: msg` для grep. JSON/SARIF/JUnit — sub-plan 36.A.
+        #[arg(long, default_value = "human", value_parser = ["human", "short"])]
+        format: String,
+        /// Include std/runtime/ (auto-gen, normally skipped).
+        #[arg(long = "include-runtime")]
+        include_runtime: bool,
+        /// Skip files whose path matches this substring (repeatable).
+        #[arg(long = "skip", value_name = "PATTERN")]
+        skip: Vec<String>,
     },
     /// Run a Nova source file via the interpreter.
     Run {
@@ -383,15 +403,34 @@ fn check_module_path(path: &Path, module: &nova_codegen::ast::Module) -> Result<
         .map_err(|msg| anyhow!("{}", msg))
 }
 
-/// Plan 36 Ф.1: polymorphic path argument для `nova check`.
+/// Plan 36 Ф.1 + 36.D: polymorphic path argument + verbosity + filters.
 /// Принимает список путей (file-or-dir, рекурсивный walk для dir).
 /// Empty → walks parents до nova.toml, использует workspace root.
 ///
-/// Hard-coded skip:
+/// Hard-coded skip (override через --include-runtime / --skip):
 ///   - `target/`, `node_modules/`, `vendor/`, `.git/`, `.hg/`, `.svn/`
 ///   - directories starting with `_` or `.`
 ///   - `std/runtime/` (auto-gen, Plan 13)
-fn cmd_check(paths: &[PathBuf], jobs: usize) -> Result<()> {
+///
+/// Flags:
+///   - `--jobs N` parallel workers (0=num_cpus).
+///   - `-q`/`--quiet` only failures + summary.
+///   - `-v`/`--verbose` extra info per file (timing).
+///   - `--list` list files без check.
+///   - `--format human|short` (JSON/SARIF/JUnit — sub-plan 36.A).
+///   - `--include-runtime` skip std/runtime/ override.
+///   - `--skip PATTERN` repeatable substring skip filter.
+#[allow(clippy::too_many_arguments)]
+fn cmd_check(
+    paths: &[PathBuf],
+    jobs: usize,
+    quiet: bool,
+    verbose: bool,
+    list_only: bool,
+    format: &str,
+    include_runtime: bool,
+    skip: &[String],
+) -> Result<()> {
     // Если пути не указаны — используем workspace root.
     let owned_root;
     let resolved_paths: Vec<PathBuf> = if paths.is_empty() {
@@ -418,18 +457,13 @@ fn cmd_check(paths: &[PathBuf], jobs: usize) -> Result<()> {
             nova_codegen::test_runner::walk_nv(p, &mut found)
                 .map_err(|e| anyhow!("walk {}: {}", p.display(), e))?;
             for f in found {
-                if !should_skip_path(&f) {
+                if !should_skip_path_full(&f, include_runtime, skip) {
                     files.push(f);
                 }
             }
         } else {
             return Err(usage_err(format!("path is neither file nor directory: {}", p.display())));
         }
-    }
-
-    if files.is_empty() {
-        println!("no .nv files to check");
-        return Ok(());
     }
 
     // Дедуп через canonicalize.
@@ -444,8 +478,27 @@ fn cmd_check(paths: &[PathBuf], jobs: usize) -> Result<()> {
     // Sort для детерминизма.
     files.sort();
 
+    // --list: show files, no check.
+    if list_only {
+        for f in &files {
+            println!("{}", f.display());
+        }
+        if !quiet {
+            eprintln!("\n{} file(s) would be checked", files.len());
+        }
+        return Ok(());
+    }
+
+    if files.is_empty() {
+        if !quiet {
+            println!("no .nv files to check");
+        }
+        return Ok(());
+    }
+
     let n_workers = if jobs == 0 { num_cpus() } else { jobs };
     let total = files.len();
+    let start = std::time::Instant::now();
 
     // Parallel via thread::scope + mpsc.
     let (tx, rx) = std::sync::mpsc::channel::<CheckResult>();
@@ -464,7 +517,7 @@ fn cmd_check(paths: &[PathBuf], jobs: usize) -> Result<()> {
             let tx = tx.clone();
             s.spawn(move || {
                 for f in &files[start..end] {
-                    let res = check_one_file(f);
+                    let res = check_one_file(f, verbose);
                     let _ = tx.send(res);
                 }
             });
@@ -483,44 +536,91 @@ fn cmd_check(paths: &[PathBuf], jobs: usize) -> Result<()> {
         match &r.error {
             None => {
                 pass += 1;
-                if r.warnings.is_empty() {
-                    println!("{} {}", green("ok:"), r.file.display());
+                let timing = if verbose && r.elapsed_ms > 0 {
+                    format!(" ({}ms)", r.elapsed_ms)
                 } else {
-                    println!("{} {} ({} warning(s))",
-                        green("ok:"), r.file.display(), r.warnings.len());
-                    for w in &r.warnings {
-                        eprintln!("  {} {}", bold(&yellow("warning:")), w);
-                        warn_count += 1;
+                    String::new()
+                };
+                let warn_suffix = if r.warnings.is_empty() {
+                    String::new()
+                } else {
+                    format!(" ({} warning(s))", r.warnings.len())
+                };
+                // -q: skip per-file ok: lines.
+                if !quiet {
+                    match format {
+                        "short" => {
+                            // short формат — без декорации, по строке на файл.
+                            println!("{}: ok{}{}", r.file.display(), timing, warn_suffix);
+                        }
+                        _ => {
+                            println!("{} {}{}{}",
+                                green("ok:"), r.file.display(), timing, warn_suffix);
+                        }
                     }
+                }
+                for w in &r.warnings {
+                    if format == "short" {
+                        eprintln!("{}", w);
+                    } else {
+                        eprintln!("  {} {}", bold(&yellow("warning:")), w);
+                    }
+                    warn_count += 1;
                 }
             }
             Some(msg) => {
                 fail += 1;
-                eprintln!("{} {}", red("FAIL:"), r.file.display());
-                for line in msg.lines() {
-                    eprintln!("  {}", line);
+                let timing = if verbose && r.elapsed_ms > 0 {
+                    format!(" ({}ms)", r.elapsed_ms)
+                } else {
+                    String::new()
+                };
+                if format == "short" {
+                    // short: каждая строка ошибки на отдельной строке.
+                    for line in msg.lines() {
+                        eprintln!("{}: {}", r.file.display(), line);
+                    }
+                } else {
+                    eprintln!("{} {}{}", red("FAIL:"), r.file.display(), timing);
+                    for line in msg.lines() {
+                        eprintln!("  {}", line);
+                    }
                 }
                 for w in &r.warnings {
-                    eprintln!("  {} {}", bold(&yellow("warning:")), w);
+                    if format == "short" {
+                        eprintln!("{}", w);
+                    } else {
+                        eprintln!("  {} {}", bold(&yellow("warning:")), w);
+                    }
                     warn_count += 1;
                 }
             }
         }
     }
 
-    println!();
-    println!("===== SUMMARY =====");
+    let elapsed = start.elapsed();
+
+    // Summary — всегда (даже в --quiet).
+    if format != "short" {
+        println!();
+        println!("===== SUMMARY =====");
+    }
+    let timing_suffix = if verbose {
+        format!(" ({:.2}s)", elapsed.as_secs_f64())
+    } else {
+        String::new()
+    };
     if fail == 0 {
         if warn_count == 0 {
-            println!("{}: {}  FAIL: 0", green("PASS"), pass);
+            println!("{}: {}  FAIL: 0{}", green("PASS"), pass, timing_suffix);
         } else {
-            println!("{}: {}  FAIL: 0  WARN: {}",
-                green("PASS"), pass, warn_count);
+            println!("{}: {}  FAIL: 0  WARN: {}{}",
+                green("PASS"), pass, warn_count, timing_suffix);
         }
         Ok(())
     } else {
-        println!("PASS: {}  {}: {}  WARN: {}",
-            pass, red("FAIL"), fail, warn_count);
+        println!("PASS: {}  {}: {}  WARN: {}{}",
+            pass, red("FAIL"), fail, warn_count, timing_suffix);
         Err(anyhow!("{} file(s) failed type-check", fail))
     }
 }
@@ -532,6 +632,9 @@ struct CheckResult {
     /// Lint warnings (Plan 36 Ф.0) — non-fatal, отображаются под file
     /// если present. PASS если только warnings (no error).
     warnings: Vec<String>,
+    /// Per-file elapsed (milliseconds) — only filled когда verbose=true.
+    /// 0 = not measured (Plan 36.D).
+    elapsed_ms: u64,
 }
 
 /// Single-file check — full pipeline (Plan 36 Ф.0 correctness fix).
@@ -545,13 +648,19 @@ struct CheckResult {
 /// До Plan 36 Ф.0 `cmd_check` дёргал только 1-3 — molча пропускал
 /// effect-inference и lints, которые `cmd_build` ловит. Это был
 /// silent correctness gap.
-fn check_one_file(path: &Path) -> CheckResult {
+fn check_one_file(path: &Path, verbose: bool) -> CheckResult {
+    let t0 = if verbose { Some(std::time::Instant::now()) } else { None };
+    let measure = |t0: Option<std::time::Instant>| -> u64 {
+        t0.map(|t| t.elapsed().as_millis() as u64).unwrap_or(0)
+    };
+
     let src = match read_file(path) {
         Ok(s) => s,
         Err(e) => return CheckResult {
             file: path.to_path_buf(),
             error: Some(format!("read: {}", e)),
             warnings: Vec::new(),
+            elapsed_ms: measure(t0),
         },
     };
     let path_str = path.to_string_lossy();
@@ -563,6 +672,7 @@ fn check_one_file(path: &Path) -> CheckResult {
             file: path.to_path_buf(),
             error: Some(d.render(&src, &path_str)),
             warnings: Vec::new(),
+            elapsed_ms: measure(t0),
         },
     };
 
@@ -572,6 +682,7 @@ fn check_one_file(path: &Path) -> CheckResult {
             file: path.to_path_buf(),
             error: Some(format!("{}", e)),
             warnings: Vec::new(),
+            elapsed_ms: measure(t0),
         };
     }
 
@@ -582,6 +693,7 @@ fn check_one_file(path: &Path) -> CheckResult {
             file: path.to_path_buf(),
             error: Some(msgs.join("\n")),
             warnings: Vec::new(),
+            elapsed_ms: measure(t0),
         };
     }
 
@@ -601,14 +713,23 @@ fn check_one_file(path: &Path) -> CheckResult {
         file: path.to_path_buf(),
         error: None,
         warnings: lint_warnings,
+        elapsed_ms: measure(t0),
     }
 }
 
 /// Hard-coded skip patterns (Plan 36 R3 minimal version).
-fn should_skip_path(p: &Path) -> bool {
-    // Skip auto-gen std/runtime/.
+/// `include_runtime=true` отключает skip `std/runtime/`.
+/// `skip` — user-provided substrings (--skip flag).
+fn should_skip_path_full(p: &Path, include_runtime: bool, skip: &[String]) -> bool {
     let s = p.to_string_lossy().replace('\\', "/");
-    if s.contains("/std/runtime/") || s.contains("std/runtime/") {
+    // User-provided skip patterns first.
+    for pat in skip {
+        if !pat.is_empty() && s.contains(pat) {
+            return true;
+        }
+    }
+    // Skip auto-gen std/runtime/ (unless --include-runtime).
+    if !include_runtime && (s.contains("/std/runtime/") || s.starts_with("std/runtime/")) {
         return true;
     }
     // Skip if any component starts with `_` or `.`, or is target/node_modules/vendor.
@@ -623,6 +744,12 @@ fn should_skip_path(p: &Path) -> bool {
         }
     }
     false
+}
+
+/// Backward-compat shim (default flags — no override).
+#[allow(dead_code)]
+fn should_skip_path(p: &Path) -> bool {
+    should_skip_path_full(p, false, &[])
 }
 
 fn num_cpus() -> usize {
@@ -1121,7 +1248,16 @@ fn main() -> ExitCode {
     }
 
     let result = match cli.cmd {
-        Cmd::Check { paths, jobs } => cmd_check(&paths, jobs),
+        Cmd::Check { paths, jobs, quiet, verbose, list, format, include_runtime, skip } => cmd_check(
+            &paths,
+            jobs,
+            quiet,
+            verbose,
+            list,
+            &format,
+            include_runtime,
+            &skip,
+        ),
         Cmd::Run { file } => cmd_run(&file),
         Cmd::Build { file, output, mode, toolchain, vcvars, clang, timeout, keep_artifacts } => cmd_build(
             &file,
