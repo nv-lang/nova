@@ -254,6 +254,16 @@ fn critical(...) -> Result =>
 **prelude** — автоматически в скоупе любого модуля, без `import`.
 Список prelude **явно зафиксирован** в одном месте, не «магия».
 
+> **Bootstrap-расширение (Plan 35 sub-plan 35.A R27, 2026-05-12):**
+> большая часть prelude (`Option`/`Result`/`Some`/`None`/`Ok`/`Err`/
+> `Error`/`Never`/`print`/`println`/`panic`) реализована **hardcoded**
+> в type-checker'е и codegen'е. Параллельно `compiler-codegen::imports`
+> auto-импортирует `std/prelude.nv` если файл существует — это
+> opt-in mechanism для расширения prelude из пользовательского кода
+> (или для миграции hardcoded items в file-based form). Bootstrap MVP:
+> `std/prelude.nv` содержит placeholder `PRELUDE_VERSION = 1`. Полная
+> миграция hardcoded → file-based — future work.
+
 ### Правило
 
 #### Что в prelude (v1.0)

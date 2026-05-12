@@ -96,15 +96,25 @@
 
 ## Tooling из коробки
 
+**Сегодня (bootstrap)** — реализовано в `nova` CLI ([nova-cli/](../nova-cli/)):
+
 - `nova run file.nv` — интерпретатор для скриптов
-- `nova build` — статический бинарь
-- `nova fmt`, `nova lint`, `nova test`, `nova bench`, `nova doc`
+- `nova build file.nv` — статический бинарь через C-backend
+- `nova check file.nv` — типечек + lint без запуска
+- `nova test [filter]` — discovery + parallel прогон `.nv` тестов
+- `nova regen-runtime [--check]` — регенерация `std/runtime/*.nv`
+  stubs из `runtime_registry.rs` (Plan 13)
+- Структурированные ошибки с EXPECT-маркерами для negative-тестов (D89)
+
+**Roadmap** (не в bootstrap):
+
+- `nova fmt`, `nova lint`, `nova bench`, `nova doc`
 - `nova check --fragment '...'` — типечекинг одной функции без проекта
 - `nova run --record trace.nrec` / `nova replay trace.nrec` — time-travel
 - LSP — часть компилятора
 - Пакетный менеджер — content-addressed (как Deno + Nix)
 - Hot reload в dev-режиме
-- Структурированные ошибки с готовыми патчами для LLM
+- AI-friendly патчи в diagnostic'ах (для LLM)
 
 ## Что выкинуто из обычных языков
 
@@ -139,7 +149,7 @@
 | `Error` | record-тип в prelude | для `throw err` | [D26](decisions/08-runtime.md#d26) |
 | `RuntimeError` | sum-тип в prelude | bottom-уровневые runtime-ошибки | [D26](decisions/08-runtime.md#d26) |
 | `RuntimeNoneError` | unit-тип в prelude | бросается через `expr!!` на `Option` | [D85](decisions/04-effects.md#d85) |
-| `Handler[E]` | first-class тип handler'а эффекта `E` | везде | [D61](decisions/04-effects.md#d61) |
+| `Handler[E, IRT]` | first-class тип handler'а эффекта `E` с типом interrupt-VAL `IRT` (default `Never` через D88); sugar `Handler[E]` ≡ `Handler[E, Never]` | везде | [D61](decisions/04-effects.md#d61), [D87](decisions/04-effects.md#d87), [D88](decisions/03-syntax.md#d88) |
 | `Fail[E]`, `Fail` | стандартный эффект | в effect-row сигнатуры | [D25](decisions/04-effects.md#d25), [D65](decisions/04-effects.md#d65) |
 | `Io`, `Net`, `Db`, `Fs`, `Time`, `Random`, `Log`, `Trace`, `Ask[T]`, `Alloc[R]`, `Detach`, `Blocking` | стандартные эффекты | в effect-row сигнатуры | [D2 (REVISED)](decisions/04-effects.md#d2), [D50](decisions/06-concurrency.md#d50) |
 | `int`, `i8`-`i64`, `u8`-`u64`, `f32`, `f64`, `str`, `bool`, `byte` | примитивные типы | везде | [D44](decisions/03-syntax.md#d44), [D27](decisions/03-syntax.md#d27) |
