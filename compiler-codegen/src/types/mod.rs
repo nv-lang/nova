@@ -3187,6 +3187,24 @@ impl ContractCtx {
     }
 
     fn check_fn(&self, fd: &FnDecl, errors: &mut Vec<Diagnostic>) {
+        // Plan 33.1 Ф.4: контракты на Fail-функциях требуют ContractResult
+        // + flow-аналитики для result.is_ok / result.value / result.error.
+        // Это полная реализация — отложена до Ф.3 SMT integration вместе
+        // с Z3-кодировкой ContractResult-datatype.
+        // В 33.1 — explicit compile error чтобы избежать silent unsoundness.
+        if !fd.contracts.is_empty() && Self::fn_has_fail(fd) {
+            errors.push(Diagnostic::new(
+                format!(
+                    "contracts on `Fail`-returning functions not yet supported in Plan 33.1 \
+                     (`{}` has `Fail` effect; ContractResult + flow-analysis for \
+                     result.is_ok / result.value / result.error — Plan 33.1 Ф.3 / Ф.4 follow-up)",
+                    fd.name
+                ),
+                fd.span,
+            ));
+            // Контракты не проверяем дальше — error уже выдан.
+            return;
+        }
         for contract in &fd.contracts {
             match contract.kind {
                 ContractKind::Requires => {
@@ -3197,6 +3215,14 @@ impl ContractCtx {
                 }
             }
         }
+    }
+
+    /// Проверка: функция объявляет `Fail` (любой вариант) в effects.
+    fn fn_has_fail(fd: &FnDecl) -> bool {
+        fd.effects.iter().any(|e| {
+            matches!(e, TypeRef::Named { path, .. }
+                if !path.is_empty() && path.last().map(|s| s.as_str()) == Some("Fail"))
+        })
     }
 
     /// `requires`: запрещены `result` и `old(...)`.

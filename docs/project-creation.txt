@@ -6135,3 +6135,33 @@ contracts_block_ensures_fail). 0 регрессий.
 - SMT Z3 backend (требует libz3 setup, отдельный милестоун).
 - После SMT: `#must_verify` поведение, counterexample, zero-cost CI gate.
 
+
+
+================================================================================
+2026-05-12 Plan 33.1 Ф.2 ext: Fail-fn contracts → explicit compile error
+================================================================================
+
+Контракты на функциях с `Fail` эффектом требуют ContractResult sum-type +
+flow-аналитики для `result.is_ok` / `result.value` / `result.error`.
+Полная реализация — Ф.3 SMT integration с Z3-кодировкой ContractResult-datatype.
+
+В 33.1 без SMT — невозможно дать sound семантику. Делаем explicit
+compile error чтобы избежать silent unsoundness:
+
+```
+error: contracts on `Fail`-returning functions not yet supported in Plan 33.1
+       (`withdraw_with_fail` has `Fail` effect; ContractResult + flow-analysis
+        for result.is_ok / result.value / result.error — Plan 33.1 Ф.3 / Ф.4 follow-up)
+```
+
+ContractCtx::check_fn расширен:
+- Проверка fn_has_fail(fd) до контракт-обхода.
+- Если есть Fail в effects + есть контракты → compile error.
+- Иначе — обычный walk_expr.
+
+Helper Self::fn_has_fail матчит `Fail` или `module.Fail` в effects-list.
+
+Tests:
+- nova_tests/contracts/typecheck_fail_fn_not_supported.nv — negative
+  с EXPECT_COMPILE_ERROR.
+
