@@ -8734,20 +8734,12 @@ impl CEmitter {
         let n_ch: usize = arms.iter().filter(|a| !matches!(a.op, SelectOp::Default)).count();
         let has_default = arms.iter().any(|a| matches!(a.op, SelectOp::Default));
 
-        // Plan 40 Ф.3-extended: safety guard против runaway stack usage.
-        // Storage adaptive (per-call SelectSlot[n_ch] + SelectWaiter[n_ch]
-        // на стеке fiber'а через compound literal), но >64 arms = >5 KB
-        // stack frame на одну select-операцию, что приближается к опасным
-        // значениям для default minicoro stack (56 KB).
-        // Должен совпадать с NOVA_SELECT_MAX_ARMS в channels.h.
-        const NOVA_SELECT_MAX_ARMS: usize = 64;
-        if n_ch > NOVA_SELECT_MAX_ARMS {
-            return Err(format!(
-                "select: too many channel arms ({}); maximum is {}. \
-                 Split into nested selects or refactor into separate operations.",
-                n_ch, NOVA_SELECT_MAX_ARMS
-            ));
-        }
+        // Plan 40 Ф.3-extended: per-call adaptive storage без cap'а.
+        // Storage = SelectSlot[n_ch] + SelectWaiter[n_ch] на стеке через
+        // compound literal (literal size known at codegen time, MSVC-
+        // compatible). Размер stack frame пропорционален n_ch:
+        // ~80n байт. На default minicoro 56 KB stack n_ch=700+ безопасно.
+        // Реальные select'ы — 2-8 arms; даже n_ch=100 = 8 KB безопасно.
         let result_tmp = self.fresh_tmp_named("sel");
         self.line(&format!("nova_unit {};", result_tmp));
         self.var_types.insert(result_tmp.clone(), "nova_unit".to_string());

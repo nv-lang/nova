@@ -30,6 +30,13 @@
 #include "alloc.h"
 #include <stdint.h>
 #include <stdbool.h>
+/* Plan 40 Ф.3-extended: alloca для shuffle order array без VLA
+ * (MSVC не поддерживает VLA, но alloca есть на всех toolchain'ах). */
+#ifdef _MSC_VER
+  #include <malloc.h>
+#else
+  #include <alloca.h>
+#endif
 
 /* ── Forward declarations ──────────────────────────────────────── */
 
@@ -321,11 +328,16 @@ static inline nova_bool  nova_chan_writer_is_closed(Nova_ChanWriter* tx) { retur
 
 /* ── Select — D94 (Plan 31) ────────────────────────────────────── */
 
-/* Maximum channel arms per select (stack-allocated).
- * Plan 40 B5: raised 16→32; codegen rejects overflow at compile-time
- * (см. emit_select in emit_c.rs). Plan 40 Ф.1 (vместе с Plan 23 M:N)
- * заменит fixed-size на per-call VLA-style storage emitted в caller'е. */
-#define NOVA_SELECT_MAX_ARMS 32
+/* Plan 40 Ф.3-extended (2026-05-12): per-call adaptive storage без cap'а.
+ *
+ * Caller (codegen emit_select) выделяет SelectSlot _arms[n_ch] +
+ * SelectWaiter _waiters[n_ch] на стеке (compound literal, размер
+ * literal на codegen-time, MSVC-compatible — не VLA), передаёт указатели
+ * в nova_select_init. Storage = ровно n_ch слотов, zero-fill только
+ * используемые. Stack frame ~80n байт на одну select-операцию.
+ *
+ * Plan 40 Ф.1 (с Plan 23 M:N) добавит atomics/selectdone CAS/
+ * doubly-linked в SelectWaiter, не меняя storage layout. */
 
 typedef struct {
     Nova_ChannelState* chan;     /* NULL = slot unused or default arm */
@@ -352,38 +364,45 @@ typedef struct SelectWaiter {
     int                  arm_idx;
 } SelectWaiter;
 
+/* arms и waiters — caller-provided storage (compound literal в emit'е
+ * со размером n_arms, literal на codegen-time). */
 typedef struct {
-    SelectSlot      arms[NOVA_SELECT_MAX_ARMS];
+    SelectSlot*     arms;      /* caller-provided, size = n_arms */
+    SelectWaiter*   waiters;   /* caller-provided, size = n_arms */
     int             n_arms;    /* number of channel arms (excl. default) */
     int             which;     /* arm that fired: 0..n_arms-1, or -2 = default */
     nova_int        recv_val;  /* received value for winning recv arm */
     NovaFiberQueue* scope;     /* filled by generated code before park */
     int             slot;      /* filled by generated code before park */
-    SelectWaiter    waiters[NOVA_SELECT_MAX_ARMS];
 } SelectCtx;
 
-static inline SelectCtx nova_select_init(int n_arms) {
+static inline SelectCtx nova_select_init(int n_arms,
+                                           SelectSlot* arms_storage,
+                                           SelectWaiter* waiters_storage) {
     SelectCtx ctx;
     int i;
-    for (i = 0; i < NOVA_SELECT_MAX_ARMS; i++) {
+    ctx.arms     = arms_storage;
+    ctx.waiters  = waiters_storage;
+    ctx.n_arms   = n_arms;
+    ctx.which    = -1;
+    ctx.recv_val = 0;
+    ctx.scope    = NULL;
+    ctx.slot     = -1;
+    /* Zero-fill ровно n_arms слотов. */
+    for (i = 0; i < n_arms; i++) {
         ctx.arms[i].chan      = NULL;
         ctx.arms[i].is_recv   = false;
         ctx.arms[i].send_val  = 0;
         ctx.arms[i].guard     = false;
         ctx.arms[i].wildcard  = false;
     }
-    ctx.n_arms   = n_arms;
-    ctx.which    = -1;
-    ctx.recv_val = 0;
-    ctx.scope    = NULL;
-    ctx.slot     = -1;
     return ctx;
 }
 
 static inline void nova_select_set_recv(SelectCtx* ctx, int n,
                                          Nova_ChanReader* rx, int guard,
                                          int wildcard) {
-    if (n < 0 || n >= NOVA_SELECT_MAX_ARMS) return;
+    if (n < 0 || n >= ctx->n_arms) return;
     ctx->arms[n].chan     = rx ? rx->state : NULL;
     ctx->arms[n].is_recv  = true;
     ctx->arms[n].guard    = (bool)guard;
@@ -393,7 +412,7 @@ static inline void nova_select_set_recv(SelectCtx* ctx, int n,
 static inline void nova_select_set_send(SelectCtx* ctx, int n,
                                          Nova_ChanWriter* tx, nova_int val,
                                          int guard) {
-    if (n < 0 || n >= NOVA_SELECT_MAX_ARMS) return;
+    if (n < 0 || n >= ctx->n_arms) return;
     ctx->arms[n].chan      = tx ? tx->state : NULL;
     ctx->arms[n].is_recv   = false;
     ctx->arms[n].send_val  = val;
@@ -410,8 +429,11 @@ static inline uint32_t _nova_sel_rng(uint32_t* s) {
 /* Try all enabled arms once in random order. Returns 1 if an arm fired.
  * Sets ctx->which and ctx->recv_val on success. */
 static inline int nova_select_try_immediate(SelectCtx* ctx) {
-    int order[NOVA_SELECT_MAX_ARMS];
     int n = ctx->n_arms, i, j;
+    /* Plan 40 Ф.3-extended: alloca вместо fixed-size — size = ровно n.
+     * alloca cross-platform (MSVC через <malloc.h>, POSIX <alloca.h>),
+     * освобождается автоматически при return из inline-функции. */
+    int* order = (int*)alloca((size_t)n * sizeof(int));
     for (i = 0; i < n; i++) order[i] = i;
 
     uint32_t rng = (uint32_t)(uintptr_t)ctx ^ 0xdeadbeef;

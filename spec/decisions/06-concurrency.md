@@ -2537,10 +2537,6 @@ throw'ы в D50 fire-and-forget — должны быть logged, не abort. П
 >   после recv'а.
 > - `Some(v) = rx` arm на already-closed канале **не** срабатывает —
 >   только wildcard `_ = rx` ловит closed-state. См. Plan 31 §«Отличия от spec».
-> - **Maximum 32 channel arms** на один `select`-блок (Plan 40 Ф.3 B5).
->   Overflow → compile-error «select: too many channel arms (N); maximum is 32».
->   Workaround: разбить на nested selects или отдельные операции.
->   Plan 40 Ф.1 (с Plan 23 M:N) заменит fixed cap на per-call VLA-style.
 >
 > **Реализовано в полной форме (Plan 31 Ф.6, Plan 40 Ф.2/Ф.3):**
 > - Panic «select: all channels closed» при all-closed без default — ✅
@@ -2548,15 +2544,21 @@ throw'ы в D50 fire-and-forget — должны быть logged, не abort. П
 > - `Time.after(ms)` timer cleanup при non-winning arm — ✅
 >   (Plan 40 Ф.2 B7: `on_select_lost` callback + idempotent `cancelled`
 >   flag на `NovaAfterState`).
-> - `Channel.new(0)` — explicit panic «capacity must be >= 1» **перед**
+> - `Channel.new(0)` — explicit panic «capacity must be >= 1` **перед**
 >   allocate'ом (Plan 40 Ф.3 B9, без leak'а на throw).
+> - **Adaptive per-call storage без cap'а на arm count** (Plan 40
+>   Ф.3 B5): codegen эмитит `SelectSlot _arms[n_ch]; SelectWaiter
+>   _waiters[n_ch];` на стеке fiber'а через compound literal (literal
+>   size, MSVC-compatible — не VLA). `nova_select_try_immediate`
+>   использует `alloca(n*sizeof(int))` для внутреннего shuffle order.
+>   Stack frame ~84n байт. На default minicoro 56 KB stack ≈ 600+ arms
+>   безопасно. Идиоматический Go код = 2-8 arms; cap'а нет.
 >
 > **Что отложено в Plan 40 Ф.1 (вместе с Plan 23 M:N):**
 > - Atomics + mutex на shared state (writer_count, closed, waiter-lists).
 >   Под single-thread runtime'ом sequenced ops корректны; под M:N — нужны.
 > - Race-free select wake через `selectdone` CAS (Go-style).
 > - Doubly-linked waiter list (O(1) unlink вместо O(n)).
-> - Per-call adaptive storage (compound-literal в emit'е вместо fixed-32 cap).
 
 ### Что
 

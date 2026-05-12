@@ -1,25 +1,42 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 # План 40: Channel hardening — production parity с Go/Rust
 
-> **Статус (2026-05-12):** Ф.2 ✅, Ф.3 ✅, Ф.1 отложено.
-> **Ф.3 (cleanup, P3):**
-> - ✅ B5: cap 16→32 + compile-error «select: too many channel arms».
-> - ✅ B9: Channel.new capacity-check **перед** alloc'ом (no leak on throw).
-> - ✅ B10: spec D94 sync (bootstrap-ограничения + Plan 40 hardening).
+> **Статус (2026-05-12):** Ф.2 ✅, Ф.3 ✅ (включая B5-storage **без cap'а**), Ф.1 отложено.
+> **Ф.3 (cleanup + storage refactor):**
+> - ✅ B5 evolution (3 итерации):
+>   - **v1:** cap 16→32 + compile-error на overflow.
+>   - **v2:** cap 32→64 + adaptive storage `SelectSlot*`/`SelectWaiter*`.
+>   - **v3 final:** **cap полностью убран.**
+>     - `SelectCtx.arms` / `.waiters` → `SelectSlot*` / `SelectWaiter*`
+>       (caller-provided storage).
+>     - `emit_select` эмитит compound literal `SelectSlot _arms[n_ch];
+>       SelectWaiter _waiters[n_ch];` на стеке fiber'а — размер literal
+>       на codegen-time, MSVC-compatible (не VLA).
+>     - `nova_select_try_immediate` использует `alloca(n*sizeof(int))`
+>       для внутреннего `order[]` массива (Fisher-Yates shuffle) —
+>       cross-platform (MSVC `<malloc.h>` / POSIX `<alloca.h>`).
+>     - `NOVA_SELECT_MAX_ARMS` **полностью удалён** из кода. Никаких
+>       compile-time или runtime ограничений на arm count.
+>     - Stack frame ~80n байт + 4n байт (order) = ~84n байт на одну
+>       select-операцию. На default minicoro 56 KB stack n=600+
+>       безопасно. Реальные select'ы — 2-8 arms.
+> - ✅ B9: Channel.new capacity-check **перед** alloc'ом.
+> - ✅ B10: spec D94 sync.
 >
 > **Ф.2 (timer hardening, P2):**
 > - ✅ B7: `Nova_ChannelState.on_select_lost` callback + `cancelled`
->   flag в `NovaAfterState`. `nova_select_park` после wake вызывает
->   callback для каждой проигравшей arm; `Time.after` использует это
->   для `uv_timer_stop` + `uv_close`.
+>   flag в `NovaAfterState`.
 >
 > **Ф.1 (M:N prerequisites, P1): отложено** — делать вместе с
 > Plan 23 (M:N runtime). Без M:N scheduler'а race-condition'ы
 > непроверяемы; Plan 30 Ф.4 закрылся именно с этой ошибкой (claim
-> без validation). Решение принято в сессии 2026-05-12 на основе того
-> же урока который Plan 40 формализует. **Detailed design Ф.1 (выбран
-> compound-literal storage + C11 mtx_t + selectdone CAS) сохранён ниже
-> для следующей сессии — план готов для immediate implementation.**
+> без validation). **Detailed design Ф.1 (C11 mtx_t + selectdone CAS +
+> doubly-linked waiters) сохранён ниже для immediate implementation
+> в сессии Plan 23.**
+>
+> Storage refactor (B5 final) **уже сделан** в этой сессии — Ф.1
+> остаётся только atomics + selectdone CAS + doubly-linked + cancel-
+> protocol, без storage refactor'а.
 >
 > Обнаружен 2026-05-12 при audit'е Plan 30/31 после закрытия Plan 39.
 
@@ -89,6 +106,15 @@
 
 **Validation:** все 6 файлов / 15 sub-tests прогнаны через release nova
 (`nova-cli/target_alt/release/nova.exe`) — **15/15 PASS, 0 FAIL**.
+
+**После B5 v3 final (no-cap):**
+- `nova_tests/concurrency/select_many_arms.nv` (1 sub-test) —
+  **100 arms на стеке**. Storage ~8 KB на одну select-операцию.
+  Доказательство что cap полностью убран и compound-literal +
+  alloca работают для значений >>32.
+- `select_overflow_compile_error.nv` **удалён** — overflow-error
+  больше не существует.
+- Full regression: **257/257 PASS** + 46/46 std type-check.
 
 ### Regression
 
