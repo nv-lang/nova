@@ -11,8 +11,8 @@
  *   2. Растущие стеки автоматически (mmap MAP_NORESERVE — lazy commit
  *      pages только под touched memory; Linux/macOS).
  *   3. Concurrent GC ready (Plan 23 prerequisite) — arena registered
- *      as GC root, suspended stacks visible to scanner всегда; никакого
- *      _NOVA_GC_DISABLE workaround не нужен.
+ *      as GC root, suspended stacks visible to scanner всегда. Plan 41
+ *      Этап 2 удалил _NOVA_GC_DISABLE workaround полностью.
  *
  * Architecture (Linux/macOS):
  *   - One arena per thread (TLS, через __thread).
@@ -24,7 +24,8 @@
  *   - pthread_key cleanup on thread exit.
  *   - madvise(MADV_NOHUGEPAGE) после mmap — keep 4KB granularity.
  *
- * Windows: NOT used. Текущий calloc + _NOVA_GC_DISABLE path остаётся.
+ * Windows: NOT used. Текущий calloc-path остаётся (single-thread
+ * cooperative — GC не вытесняет fiber mid-stack).
  * Windows growable stacks через SEH guard pages — Plan 42+.
  *
  * Plan 41 P0 items addressed here:

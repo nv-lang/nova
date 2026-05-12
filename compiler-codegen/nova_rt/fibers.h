@@ -49,26 +49,30 @@
 #include <uv.h>
 #include "eventloop.h"
 
-/* Plan 27 R4: Boehm GC + minicoro fiber stacks.
+/* Plan 27 R4 → Plan 41 Этап 1/2: Boehm GC + minicoro fiber stacks.
  *
  * Suspended fiber stacks are off the OS stack — Boehm's conservative scanner
  * would miss pointers stored in them. GC_add_roots per-fiber hits Boehm's
  * internal root-set limit (128 entries) with many fibers.
  *
- * Solution: disable GC around the supervised scheduler loop. Nova is
- * single-threaded (cooperative minicoro + libuv), so GC only runs inside
- * nova_alloc. By disabling GC for the duration of a scheduler tick, all
- * fiber stacks remain live and scannable when GC eventually runs (after
- * re-enable). GC_enable() triggers a collection if one was pending.
+ * Solution (Plan 41 Этап 1):
+ *  - Linux/macOS: fiber stacks allocated из per-thread mmap arena
+ *    (nova_fiber_alloc). Arena registered ONE GC root для всего active
+ *    range → нет MAX_ROOT_SETS issue.
+ *  - Windows: пока остаётся на calloc-пути. Single-thread cooperative
+ *    means GC физически не запускается между yield/resume — calloc'нутые
+ *    stacks остаются «логически live» для одной collect window. Не
+ *    идеально, но безопасно для bootstrap (см. Plan 42+).
  *
- * GC_disable/GC_enable are reference-counted and always safe to call. */
+ * Plan 41 Этап 2: GC_disable/GC_enable workaround удалён — arena делает
+ * его ненужным на Linux/macOS, а Windows polled только в blocking sync
+ * points где fiber stacks не активны.
+ *
+ * Extension points (для Plan 23 concurrent GC): per-fiber root hooks
+ * остаются noop'ами; concurrent collector будет полагаться на
+ * arena-range root + write barriers, не на per-fiber registration. */
 #ifdef NOVA_GC_BOEHM
 #  include <gc.h>
-#  define _NOVA_GC_DISABLE()  GC_disable()
-#  define _NOVA_GC_ENABLE()   GC_enable()
-#else
-#  define _NOVA_GC_DISABLE()  ((void)0)
-#  define _NOVA_GC_ENABLE()   ((void)0)
 #endif
 
 static inline void _nova_gc_add_fiber_roots(mco_coro* co)    { (void)co; }

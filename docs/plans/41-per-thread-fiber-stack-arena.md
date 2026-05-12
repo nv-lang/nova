@@ -989,8 +989,14 @@ runner для smoke test (Plan 27 G5 уже флагнул это как pending
   Plan 41 infrastructure (≤ commit `bb9af936d2`). Не вызвано wire-up
   и не вызвано pin fix'ом. **Tracking как отдельный блокер; не блокирует
   Этап 2.**
-- ⏸ Этап 2 (`_NOVA_GC_DISABLE` removal) — wire-up landed; готово к
-  следующей итерации.
+- ✅ **Этап 2 закрыт** (2026-05-12): `_NOVA_GC_DISABLE`/`_NOVA_GC_ENABLE`
+  макросы удалены из fibers.h. Bisect показал что в реальном коде они
+  никогда не вызывались (vestigial scaffolding от первого подхода
+  Plan 27 R4) — фактическая защита fiber stacks приходила от
+  single-thread cooperative invariant, а теперь — от arena GC root
+  на Linux/macOS. Комментарий-блок обновлён, чтобы отражать current
+  architecture корректно. 261 PASS / 1 FAIL Windows регрешн (тот же
+  pre-existing `select_timer_cleanup`).
 
 ### Updated Plan 41 status
 
