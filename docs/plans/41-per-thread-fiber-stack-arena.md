@@ -3,6 +3,22 @@
 
 > **Статус:** план, не начат. **P1 prerequisite для Plan 23 (M:N runtime).**
 > Создан 2026-05-12.
+>
+> **Scope (revised 2026-05-12):** **Linux/macOS only** — гибридная
+> стратегия. Windows остаётся на текущем path (calloc + `_NOVA_GC_DISABLE`)
+> для bootstrap. Обоснование:
+>
+> - Plan 23 M:N runtime будет primarily deployed на Linux (Docker,
+>   Kubernetes, server workloads). Windows для Nova production —
+>   редкий use case (developer experience, не fleet).
+> - Windows VirtualAlloc `MEM_RESERVE | MEM_COMMIT` (см. minicoro
+>   `MCO_USE_VMEM_ALLOCATOR`) commits all upfront — 256MB × 16 threads
+>   = 4GB committed без real benefit для Windows users.
+> - SEH guard pages для true Windows growable stacks — отдельный план
+>   (Plan 42+) когда Windows production станет realistic.
+> - Windows на bootstrap path работает 261/261 на Linux Docker через
+>   симметричный (single-thread cooperative + _NOVA_GC_DISABLE) — OK
+>   для developer use case.
 
 **Цель.** Заменить текущий fiber stack allocation (calloc per-fiber +
 `_NOVA_GC_DISABLE` workaround) на per-thread arena с lazy commit. Это
@@ -236,48 +252,75 @@ static void nova_fiber_dealloc(void* ptr, size_t size, void* user) {
 В `nova_fiber_arena_init`:
 
 ```c
+/* Plan 41: Linux/macOS only. Windows uses current path. */
+#if defined(__linux__) || defined(__APPLE__)
+
 void nova_fiber_arena_init(void) {
     if (_nova_arena.base) return;
 
-    size_t arena_size = NOVA_FIBER_ARENA_SIZE;  /* 256MB */
-    #ifdef _WIN32
-        /* Windows: reserve only (no commit). VirtualAlloc with MEM_RESERVE
-         * leaves pages uncommitted; access faults until commit. We don't
-         * commit lazily on Windows — fixed slot allocation, all pages
-         * pre-committed по mere allocation. Acceptable trade-off для
-         * bootstrap. Windows growable stacks — отдельная задача (SEH
-         * guard pages). */
-        _nova_arena.base = VirtualAlloc(NULL, arena_size,
-                                          MEM_RESERVE | MEM_COMMIT,
-                                          PAGE_READWRITE);
-    #else
-        /* Linux/macOS: MAP_NORESERVE — pages не commit'ятся пока не touched.
-         * Этот flag отключает overcommit accounting — критично для
-         * arena сценария где мы reserve много, использовать мало. */
-        _nova_arena.base = mmap(NULL, arena_size,
-                                  PROT_READ | PROT_WRITE,
-                                  MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE,
-                                  -1, 0);
-        if (_nova_arena.base == MAP_FAILED) _nova_arena.base = NULL;
+    size_t arena_size = NOVA_FIBER_ARENA_SIZE;  /* 256MB default */
+
+    /* Plan 41 P41-3: detect strict overcommit на enterprise Linux. */
+    #ifdef __linux__
+    if (_nova_check_overcommit_strict()) {
+        /* vm.overcommit_memory=2 → MAP_NORESERVE ignored. Downgrade
+         * к маленькому arena (32MB) compatible со strict overcommit. */
+        arena_size = 32 * 1024 * 1024;
+    }
     #endif
 
-    if (!_nova_arena.base) {
-        fprintf(stderr, "nova: fiber arena reservation failed\n");
+    /* MAP_NORESERVE — pages не commit'ятся пока не touched.
+     * Linux/macOS: lazy commit работает (overcommit_memory ∈ {0,1}). */
+    _nova_arena.base = mmap(NULL, arena_size,
+                              PROT_READ | PROT_WRITE,
+                              MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE,
+                              -1, 0);
+    if (_nova_arena.base == MAP_FAILED) {
+        fprintf(stderr, "nova: fiber arena mmap failed\n");
         abort();
     }
 
-    /* Register as single GC root. Boehm scans this entire range
-     * on every collection cycle — covers all suspended fiber stacks. */
-    #ifdef NOVA_GC_BOEHM
-    GC_add_roots(_nova_arena.base, _nova_arena.base + arena_size);
-    #endif
-
     _nova_arena.slot_size = NOVA_FIBER_STACK_SIZE;  /* 2MB */
     _nova_arena.slot_count = arena_size / _nova_arena.slot_size;
-    _nova_arena.free_bits[0] = 0;
-    _nova_arena.free_bits[1] = 0;
+    _nova_arena.high_water = 0;
+
+    /* Plan 41 P41-5: guard page (PROT_NONE) на bottom каждого slot. */
+    for (size_t i = 0; i < _nova_arena.slot_count; i++) {
+        mprotect(_nova_arena.base + i * _nova_arena.slot_size,
+                 4096, PROT_NONE);
+    }
+
+    /* Plan 41 P41-11: НЕ register full arena как GC root —
+     * defeats lazy commit. Register только high_water range при первом
+     * alloc'е, growing on demand. См. nova_fiber_alloc. */
+
+    /* Plan 41 P41-12: pthread cleanup callback для thread exit. */
+    pthread_key_create(&_nova_arena_cleanup_key, _nova_arena_cleanup);
+    pthread_setspecific(_nova_arena_cleanup_key, &_nova_arena);
 }
+
+#else  /* Windows — fallback to current path */
+
+/* Plan 41: Windows не использует arena. Текущий calloc + _NOVA_GC_DISABLE
+ * остаётся. SEH guard pages для true Windows growable — отдельный Plan
+ * 42+ когда Windows production станет realistic target. */
+void nova_fiber_arena_init(void) { /* no-op on Windows */ }
+
+#endif
 ```
+
+### Windows fallback path (unchanged from current)
+
+На Windows `nova_fiber_alloc`/`dealloc` НЕ wire'аются в minicoro —
+default `calloc`/`free` остаётся. `fibers.h::_NOVA_GC_DISABLE`/
+`_NOVA_GC_ENABLE` тоже остаётся active under Boehm. Это означает:
+
+- Windows: single-thread cooperative model только.
+- Plan 23 M:N **не deploy'ится на Windows** (потребует Plan 42 first).
+- Windows users получают bootstrap functionality без regression.
+
+**Это осознанное архитектурное решение** — Nova production target =
+Linux/macOS server workloads. Windows = developer experience.
 
 ### Удаление `_NOVA_GC_DISABLE`
 
@@ -643,22 +686,38 @@ Stack starts at `slot_base + 64`. Lookup `FiberHeader*` from SP:
 **Решение:** заложить layout сейчас, fill in fields позже. Plan 23
 optimization can use SP-trick.
 
-### Updated scope (round 1 audit)
+### Updated scope (round 1 audit + hybrid OS strategy)
 
-| Item | Cost | Phase |
-|---|---|---|
-| P41-2 slot_count + chaining + abort | +120 LOC | Этап 1 |
-| P41-3 overcommit_memory check | +30 LOC | Этап 1 |
-| P41-5 guard pages (mprotect) | +40 LOC | Этап 1 |
-| P41-11 active-range GC roots | +40 LOC | Этап 1 |
-| P41-4 madvise batching | +60 LOC | Этап 3 |
-| P41-6 SIGSEGV handler | +80 LOC | Этап 3 |
-| P41-8 NUMA TODO marker | +5 LOC doc | Этап 5 |
-| P41-12 pthread_key cleanup | +40 LOC | Этап 1 |
-| FiberHeader placeholder | +30 LOC | Этап 1 |
-| **Total addition** | **~445 LOC** | |
-| **Original estimate** | ~400-500 | |
-| **Round 1 final** | **~850-950 LOC** | |
+**Scope reduced** благодаря Windows fallback на current path (no arena
+code на Windows).
+
+| Item | Cost | Phase | OS |
+|---|---|---|---|
+| P41-2 slot_count + chaining + abort | +120 LOC | Этап 1 | Linux/macOS |
+| P41-3 overcommit_memory check | +30 LOC | Этап 1 | Linux only |
+| P41-5 guard pages (mprotect) | +40 LOC | Этап 1 | Linux/macOS |
+| P41-11 active-range GC roots | +40 LOC | Этап 1 | Linux/macOS |
+| P41-4 madvise batching | +60 LOC | Этап 3 | Linux/macOS |
+| P41-6 SIGSEGV handler | +80 LOC | Этап 3 | Linux/macOS |
+| P41-8 NUMA TODO marker | +5 LOC doc | Этап 5 | Linux |
+| P41-12 pthread_key cleanup | +40 LOC | Этап 1 | Linux/macOS |
+| FiberHeader placeholder | +30 LOC | Этап 1 | Linux/macOS |
+| **Linux/macOS implementation** | **~445 LOC** | | |
+| Base arena allocator (без Windows path) | ~200 LOC | Этап 1 | Linux/macOS |
+| **Total Plan 41 LOC** | **~645 LOC** | | |
+| Windows fallback (NO new code) | 0 LOC | — | Windows |
+| **Final scope** | **~645 LOC** | (vs unified ~950) | |
+
+**Trade-off explicit:**
+- Linux/macOS: full production-grade arena с lazy commit, growable
+  stacks, concurrent GC ready.
+- Windows: текущий path (calloc + `_NOVA_GC_DISABLE`) — single-thread
+  cooperative only. Plan 23 M:N **не deploy на Windows**.
+- Это **осознанное решение** — Nova production = Linux/macOS server.
+  Windows = developer experience.
+
+**Plan 42+ (future):** Windows SEH guard pages + per-thread arena
+если/когда Windows production станет realistic target.
 
 ### Cross-plan dependency — критично
 
