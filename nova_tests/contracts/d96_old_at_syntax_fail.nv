@@ -1,0 +1,12 @@
+// EXPECT_COMPILE_ERROR expected fn / type / let / const / test, got `@`
+//
+// Plan 33.1 D96: атрибуты используют `#`-префикс, не `@`. Старый
+// `@must_verify` после миграции — error (парсер не распознаёт `@`
+// как атрибутный префикс).
+
+module nova_tests.contracts.d96_old_at_syntax_fail
+
+@must_verify
+fn bad_old_attr(x int) -> int
+    requires x > 0
+=> x

@@ -1,0 +1,16 @@
+// EXPECT_COMPILE_ERROR unexpected newline in expression
+//
+// Plan 33.2 Ф.6: loop `invariant` без выражения → parse error.
+
+module nova_tests.contracts.parse_loop_invariant_negative
+
+#unverified
+fn bad_invariant(n int) -> int {
+    let mut i = 0
+    while i < n
+        invariant
+    {
+        i = i + 1
+    }
+    i
+}

@@ -1,0 +1,12 @@
+// EXPECT_COMPILE_ERROR undefined identifier `ghost`
+//
+// Plan 33.3: `ghost` без `let` — parse error.
+// `ghost` — это контекстный keyword, требует `let` следом.
+// В других позициях `ghost` это обычный ident → undefined identifier.
+
+module nova_tests.contracts.ghost_without_let
+
+fn bad_ghost(x int) -> int {
+    ghost 42
+    x
+}

@@ -1,0 +1,76 @@
+// Plan 33 integration: все bootstrap-фичи в одной программе.
+//
+// Покрытие:
+// - 33.1 requires + ensures + result + old.
+// - 33.1 #pure для composition.
+// - 33.1 ==> / <==> операторы.
+// - 33.2 reads + modifies (на параметре, не локали).
+// - 33.2 decreases (parser-only, no SMT verify).
+// - 33.2 record invariant (parsed).
+// - 33.2 assert_static (runtime check в debug).
+// - 33.3 ghost let.
+// - 33.3 assume (true expression — pass).
+// - D96 #-attributes (#pure, #unverified).
+
+module nova_tests.contracts.integration_all_features
+
+// Record + invariant (parsed, runtime-check эмитится в Plan 33.3 full).
+type Counter {
+    value int
+}
+    invariant value >= 0
+
+// #pure helper, используется в composition.
+#pure
+fn is_safe(x int) -> bool => x >= 0 && x <= 1000
+
+// Главная функция: requires + ensures + composition + assert_static +
+// ghost + assume + ==> + old.
+#unverified
+fn process(input int) -> int
+    requires is_safe(input)
+    requires input >= 0
+    ensures result >= 0
+    ensures input > 0 ==> result > 0
+    ensures input == 0 <==> result == 0
+    decreases input
+{
+    // ghost — snapshot для spec-only reasoning.
+    ghost let initial = input
+
+    // assume — escape hatch.
+    assume initial >= 0
+
+    // assert_static — intermediate proof obligation.
+    assert_static is_safe(input)
+
+    // Регулярная обработка.
+    let doubled = input * 2
+    doubled / 2
+}
+
+// modifies-frame: только параметр `a`, не локали.
+#unverified
+fn modify_a(a int, b int) -> int
+    reads a, b
+    modifies a
+{
+    let mut local = a + b
+    local = local * 2
+    local
+}
+
+test "integration: все фичи bootstrap Plan 33" {
+    // process(0) → 0 (input==0 ==> result==0 by <==>).
+    assert(process(0) == 0)
+    // process(5) → 5 (input > 0 ==> result > 0).
+    assert(process(5) == 5)
+    assert(process(100) == 100)
+
+    // modify_a — frame check проходит (модифицируется только local, не a/b).
+    assert(modify_a(3, 4) == 14)
+
+    // Record с invariant — конструктор не падает.
+    let c = Counter { value: 42 }
+    assert(c.value == 42)
+}
