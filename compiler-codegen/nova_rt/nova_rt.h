@@ -8,6 +8,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <math.h>     /* D74: f64.sqrt()/sin()/cos()/etc. → libm */
+#include <float.h>    /* Plan 38: f64.MAX (DBL_MAX) / f64.EPSILON / etc. */
 #include "cast.h"     /* План 07: float→int saturation helpers */
 /* conv.h подключается в array.h (после nova_alloc и определения nova_str). */
 

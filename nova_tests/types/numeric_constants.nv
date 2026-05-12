@@ -1,0 +1,100 @@
+// Plan 38: numeric type constants — `int.MAX` / `f64.NAN` / `u8.MAX` /
+// etc. Codegen mapping таблица в `emit_c.rs::numeric_type_constant_mapping`.
+//
+// Spec: spec/decisions/08-runtime.md D26.
+
+module nova_tests.types.numeric_constants
+
+// ── signed integers ──────────────────────────────────────────────────────
+
+test "int.MAX is positive and large" {
+    assert(int.MAX > 0)
+    assert(int.MAX > 1000000000)
+}
+
+test "int.MIN is negative and large" {
+    assert(int.MIN < 0)
+    assert(int.MIN < -1000000000)
+}
+
+test "i32.MAX = 2^31 - 1" {
+    assert(i32.MAX as int == 2147483647)
+}
+
+test "i16.MAX = 32767" {
+    assert(i16.MAX as int == 32767)
+}
+
+test "i8.MAX = 127, i8.MIN = -128" {
+    assert(i8.MAX as int == 127)
+    assert(i8.MIN as int == -128)
+}
+
+// ── unsigned integers ────────────────────────────────────────────────────
+
+test "u8.MAX = 255" {
+    assert(u8.MAX as int == 255)
+}
+
+test "u16.MAX = 65535" {
+    assert(u16.MAX as int == 65535)
+}
+
+test "u32.MAX = 2^32 - 1" {
+    assert(u32.MAX as int == 4294967295)
+}
+
+test "byte.MAX = 255" {
+    assert(byte.MAX as int == 255)
+}
+
+// ── char (codepoint) ─────────────────────────────────────────────────────
+
+test "char.MAX = 0x10FFFF" {
+    assert(char.MAX == 1114111)
+}
+
+test "char.MIN = 0" {
+    assert(char.MIN == 0)
+}
+
+// ── floats ───────────────────────────────────────────────────────────────
+
+test "f64.NAN != self (IEEE 754)" {
+    let n = f64.NAN
+    assert(n != n)
+}
+
+test "f64.INFINITY > MAX" {
+    assert(f64.INFINITY > f64.MAX)
+}
+
+test "f64.MAX is large positive" {
+    assert(f64.MAX > 1.0e100)
+}
+
+test "f64.MIN_POSITIVE is small positive" {
+    assert(f64.MIN_POSITIVE > 0.0)
+    assert(f64.MIN_POSITIVE < 1.0)
+}
+
+test "f64.EPSILON tiny" {
+    assert(f64.EPSILON > 0.0)
+    assert(f64.EPSILON < 0.001)
+}
+
+test "f64.PI close to pi" {
+    let p = f64.PI
+    assert(p > 3.14)
+    assert(p < 3.15)
+}
+
+test "f64.E close to e" {
+    let e = f64.E
+    assert(e > 2.71)
+    assert(e < 2.72)
+}
+
+test "f64.NEG_INFINITY < MIN_POSITIVE" {
+    assert(f64.NEG_INFINITY < f64.MIN_POSITIVE)
+}

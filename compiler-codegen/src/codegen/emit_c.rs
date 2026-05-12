@@ -4975,6 +4975,11 @@ impl CEmitter {
                 Ok(name.clone())
             }
             ExprKind::Path(parts) => {
+                // Plan 38: numeric type constants — `int.MAX`, `f64.NAN`, etc.
+                // Mapping table в `numeric_type_constant_mapping`.
+                if let Some((c_expr, _)) = Self::numeric_type_constant_mapping(parts) {
+                    return Ok(c_expr.to_string());
+                }
                 // Plan 14 Ф.2: `FACTOR.x` парсится как Path(["FACTOR", "x"])
                 // если первая часть — Ident с UpperCase (parser routing).
                 // Для lazy const'ов нужно `nova_const_FACTOR()->x` вместо
@@ -10304,6 +10309,66 @@ impl CEmitter {
         )
     }
 
+    /// Plan 38: numeric type constants — `int.MAX` / `f64.NAN` / etc.
+    /// Returns `Some((c_expression, c_type))` если path = primitive
+    /// type constant, иначе `None`. C-expression готов к emit'у напрямую.
+    ///
+    /// Mapping table из spec D26 (08-runtime.md).
+    fn numeric_type_constant_mapping(parts: &[String]) -> Option<(&'static str, &'static str)> {
+        if parts.len() != 2 {
+            return None;
+        }
+        let ty = parts[0].as_str();
+        let name = parts[1].as_str();
+        let mapping: &[(&str, &str, &str, &str)] = &[
+            // (nova_type, const_name, c_expr, c_type)
+            //
+            // Signed integers
+            ("int",  "MAX", "((nova_int)INT64_MAX)", "nova_int"),
+            ("int",  "MIN", "((nova_int)INT64_MIN)", "nova_int"),
+            ("i64",  "MAX", "((nova_int)INT64_MAX)", "nova_int"),
+            ("i64",  "MIN", "((nova_int)INT64_MIN)", "nova_int"),
+            ("i32",  "MAX", "INT32_MAX",             "int32_t"),
+            ("i32",  "MIN", "INT32_MIN",             "int32_t"),
+            ("i16",  "MAX", "INT16_MAX",             "int16_t"),
+            ("i16",  "MIN", "INT16_MIN",             "int16_t"),
+            ("i8",   "MAX", "INT8_MAX",              "int8_t"),
+            ("i8",   "MIN", "INT8_MIN",              "int8_t"),
+            // Unsigned integers
+            ("u64",  "MAX", "UINT64_MAX",            "uint64_t"),
+            ("u32",  "MAX", "UINT32_MAX",            "uint32_t"),
+            ("u16",  "MAX", "UINT16_MAX",            "uint16_t"),
+            ("u8",   "MAX", "UINT8_MAX",             "uint8_t"),
+            ("byte", "MAX", "((nova_byte)UINT8_MAX)", "nova_byte"),
+            // Char (codepoint)
+            ("char", "MAX", "((nova_int)0x10FFFFLL)", "nova_int"),
+            ("char", "MIN", "((nova_int)0LL)",        "nova_int"),
+            // Float
+            ("f64",  "MAX",          "DBL_MAX",                          "nova_f64"),
+            ("f64",  "MIN_POSITIVE", "DBL_MIN",                          "nova_f64"),
+            ("f64",  "EPSILON",      "DBL_EPSILON",                      "nova_f64"),
+            ("f64",  "NAN",          "((double)NAN)",                    "nova_f64"),
+            ("f64",  "INFINITY",     "((double)INFINITY)",               "nova_f64"),
+            ("f64",  "NEG_INFINITY", "((double)(-INFINITY))",            "nova_f64"),
+            ("f64",  "PI",           "3.14159265358979323846",           "nova_f64"),
+            ("f64",  "E",            "2.71828182845904523536",           "nova_f64"),
+            ("f32",  "MAX",          "FLT_MAX",                          "nova_f32"),
+            ("f32",  "MIN_POSITIVE", "FLT_MIN",                          "nova_f32"),
+            ("f32",  "EPSILON",      "FLT_EPSILON",                      "nova_f32"),
+            ("f32",  "NAN",          "((float)NAN)",                     "nova_f32"),
+            ("f32",  "INFINITY",     "((float)INFINITY)",                "nova_f32"),
+            ("f32",  "NEG_INFINITY", "((float)(-INFINITY))",             "nova_f32"),
+            ("f32",  "PI",           "3.14159265358979323846f",          "nova_f32"),
+            ("f32",  "E",            "2.71828182845904523536f",          "nova_f32"),
+        ];
+        for (t, n, expr, c_ty) in mapping {
+            if *t == ty && *n == name {
+                return Some((expr, c_ty));
+            }
+        }
+        None
+    }
+
     /// Returns true for C types that are passed by value (use `.` accessor, not `->`).
     fn is_value_type(ty: &str) -> bool {
         if ty.starts_with("_NovaTuple") && !ty.ends_with('*') {
@@ -10354,6 +10419,12 @@ impl CEmitter {
         // D38 turbofish: type_args не меняют c-тип; делегируем в base.
         if let ExprKind::TurboFish { base, .. } = &expr.kind {
             return self.infer_expr_c_type(base);
+        }
+        // Plan 38: numeric type constants — `int.MAX` etc.
+        if let ExprKind::Path(parts) = &expr.kind {
+            if let Some((_, c_ty)) = Self::numeric_type_constant_mapping(parts) {
+                return c_ty.to_string();
+            }
         }
         match &expr.kind {
             ExprKind::IntLit(_) => "nova_int".into(),
