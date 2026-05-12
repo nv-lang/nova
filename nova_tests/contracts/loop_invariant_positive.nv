@@ -1,0 +1,38 @@
+// Plan 33.3 Ф.9.3: loop invariants enforce runtime check.
+//
+// Invariant'ы инжектятся как assert_static в начало body цикла.
+// Каждая итерация проверяет invariant — если нарушен, runtime panic.
+
+module nova_tests.contracts.loop_invariant_positive
+
+fn sum_to(n int) -> int
+    requires n >= 0
+{
+    let mut s = 0
+    let mut i = 0
+    while i < n
+        invariant 0 <= i
+        invariant i <= n
+    {
+        s = s + i
+        i = i + 1
+    }
+    s
+}
+
+fn count_with_inv(xs []int) -> int {
+    let mut count = 0
+    for x in xs
+        invariant count >= 0
+    {
+        count = count + 1
+        let _ = x
+    }
+    count
+}
+
+test "loop invariants positive" {
+    assert(sum_to(5) == 0 + 1 + 2 + 3 + 4)
+    assert(sum_to(0) == 0)
+    assert(count_with_inv([1, 2, 3, 4]) == 4)
+}
