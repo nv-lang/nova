@@ -3,11 +3,15 @@
 
 > **Статус (2026-05-12):** **Issue D ✅ закрыт** (commit b516bba9ae) —
 > diagnostic улучшен, mut-receiver assert добавлен, 5 тестов в
-> `for_in_iter_resolution.nv` PASS. **Issue A — open** (handler-flow
-> infer для `with Fail[E] = |e| interrupt None { Some(...) }`).
-> Ф.1 verify: `range.nv` строит после Plan 38 (`int.MAX` resolved),
-> но **продолжает падать на Issue A** в одном теста
-> `"inclusive overflow throws"`.
+> `for_in_iter_resolution.nv` PASS. **Issue B/C ✅ already implemented**
+> в range.nv (ReverseRangeIter type + step_by(0)/negative throw),
+> blocked только Issue A.
+> **Issue A — детализирован 2026-05-12 после spec audit:**
+> handler-flow inference, нарушение D61 §10 + D87 (handler-литерал в
+> `with`-блоке: bidirectional inference от T_body → IRT). Реальный
+> симптом — `r` получает тип `nova_int` вместо `Option[Range]` в тесте
+> `"inclusive overflow throws"`. Scope MVP: inline handler-литерал,
+> single effect, без returned-handler/multi-effects.
 > **Создан:** 2026-05-12.
 > **Обнаружен:** 2026-05-12 при работе над Plan 35 Ф.1 (cross-file
 > resolve).
@@ -55,21 +59,151 @@
 
 Зависит от output Ф.1. Возможные categories:
 
-**Issue A: `NovaOpt_nova_int` typedef mismatch.**
-Тесты вроде:
+**Issue A: handler-flow inference для `with`-блока (D61 §10 + D87).**
+
+#### Симптом (наблюдается в range.nv test "inclusive overflow throws")
+
 ```nova
-let r = (0..10).step_by(2)
-let m = r.next()
-// ... позже:
-assert(r.next() == None)
+let r = with Fail[OverflowError] = |e| interrupt None {
+    Some(Range.inclusive(0, int.MAX))
+}
+assert(r == None)
 ```
 
-Codegen emit'ит assert как `nova_opt_eq_nova_int(r.next(), None)` где
-`None` имеет тип `NovaOpt_nova_int` (legacy) но `r.next()` возвращает
-`NovaOpt_Nova_int` (newer). Type mismatch.
+Codegen генерирует:
+```c
+nova_int r = _nv_tmp_48;
+nova_assert((nova_opt_eq_nova_int(r, ((NovaOpt_nova_int){.tag = NOVA_TAG_Option_None}))), "r == None");
+```
 
-Mitigation: Plan 14 Ф.1 (`NovaOpt_<T>` правильно типизированный) уже
-закрыл core path. Остаточное — corner case в pattern match comparison.
+`r` объявлен как `nova_int` вместо `NovaOpt_Nova_Range_ptr`. Type
+mismatch при сравнении с `None: NovaOpt_<T>`.
+
+#### Корень — нарушение D61 §10 + D87
+
+**D61 §10:** Тип `with`-блока = `T_body`. Каждый `interrupt v` в
+handler'е должен иметь `typeof(v) ⊑ T_body`. Если несовместимо —
+compile error.
+
+**D87:** `Handler[E, IRT]` параметризован эффектом и interrupt-return-type
+(IRT). `Handler[E]` ≡ `Handler[E, Never]` (no interrupt). Inline handler
+в `with` — IRT inferred из контекста (bidirectional).
+
+В нашем случае:
+- `T_body` = `Option[Range]` (от `Some(Range.inclusive(0, int.MAX))`).
+- `interrupt None` — `None` polymorphic literal, должен инферироваться
+  как `Option[Range]` через **expected type** сверху от body.
+- `r : Option[Range]`.
+
+#### Что неверно сейчас
+
+1. **`None` polymorphic literal** без bidirectional inference: фолбэкает
+   на `Option[nova_int]` (или Never), а codegen затем берёт этот тип
+   как тип `r`.
+2. **Order of analysis:** type-checker не передаёт `T_body` как
+   expected type вниз в `interrupt v` ветки handler-method'а.
+3. **Codegen `let`-statement** для `r` инферит тип из неправильного
+   места (возможно из handler interrupt-VAL вместо body T).
+
+#### Подводные камни (учесть при impl)
+
+1. **`None` polymorphic literal** — без context не infer'ится. Решение:
+   bidirectional inference, передавать expected type от parent.
+2. **Order of analysis** в `with`: сначала body → T_body, потом
+   handler-method'ы с expected = T_body.
+3. **`Handler[E, IRT]` first-class через переменную** — IRT уже
+   зафиксирован в типе. Тогда `T_body ⊒ IRT`, bidirectional в обратную
+   сторону. Этот case в Plan 39 Issue A **не покрываем** — только
+   inline.
+4. **`Never` поглощение** (`lub(Never, T) = T`) — должно работать для
+   body, который всегда throws.
+5. **Multiple effects в одном `with`** (D61 §10) — каждый handler
+   проверяется отдельно: `IRT_i ⊑ T_body`. Out of scope для Issue A
+   MVP — fix только single-handler.
+6. **`Handler[E, Never]`** запрещает `interrupt` — compile error. Уже
+   реализовано в parser/types? Verify, не в scope.
+
+#### Scope Issue A — full fix (multi-phase, ~500+ LOC)
+
+После codegen audit обнаружена **архитектурная проблема**: NovaInterruptFrame
+runtime использует `nova_int value` slot — все `interrupt v` значения
+кастуются в `nova_int`, теряя структурный тип. `emit_with` жёстко объявляет
+`nova_int result_tmp;`. Non-int trail значения дискардятся:
+
+```rust
+// emit_c.rs:1500-1503
+if trail_ty == "nova_int" || trail_ty == "nova_bool" {
+    self.line(&format!("{} = (nova_int)({});", result_tmp, tv));
+} else {
+    self.line(&format!("(void)({});", tv));
+    self.line(&format!("{} = ((nova_int)0LL);", result_tmp));  // DISCARDED
+}
+```
+
+Bidirectional inference в type-checker'е — отдельный вопрос (нет
+expected-type API; pull-based only). Codegen-side audit показал
+существование `current_fn_return_ty` для `None`-context — частично
+покрывает но не для with-блоков.
+
+#### Полный фикс — фазы
+
+**Фаза 1 — Runtime extension.**
+`NovaInterruptFrame` добавить `void* value_ptr` slot:
+```c
+typedef struct NovaInterruptFrame {
+    jmp_buf jmp;
+    nova_int value;           // legacy int slot
+    void*    value_ptr;       // NEW — для non-int (Option, structs, pointers)
+    struct NovaInterruptFrame* prev;
+} NovaInterruptFrame;
+```
+`nova_interrupt_ptr(void*)` companion fn. Mutually exclusive с `nova_interrupt`.
+
+**Фаза 2 — Codegen `emit_with`.**
+- Infer T_body **до** объявления result_tmp.
+- Если T_body == `nova_int` / `nova_bool` — текущий путь.
+- Если T_body == `<X>*` (pointer) — `result_tmp` объявить как pointer,
+  cast value через `(void*)`.
+- Если T_body == value-struct (NovaOpt_X, etc.) — heap-allocate slot:
+  `NovaOpt_X* result_tmp = nova_alloc(sizeof(NovaOpt_X));`
+  Trail и interrupt: `*result_tmp = trail_value` / `*result_tmp = iframe.value_ptr_as<NovaOpt_X>`.
+
+**Фаза 3 — Codegen `ExprKind::Interrupt`.**
+Аналогично: определить C-тип value, выбрать nova_int / value_ptr слот.
+- `int_val` → `nova_interrupt(int_val)`.
+- `ptr_val` → `nova_interrupt_ptr(ptr_val)`.
+- `struct_val` → heap-allocate, передать pointer.
+
+**Фаза 4 — Codegen `infer_expr_c_type` для `With`.**
+Добавить case: возвращает T_body. Также `Path(["None"])` — учитывать
+expected via let.type_ann или through outer block.
+
+**Фаза 5 — Tests + verify.**
+- `nova_tests/types/handler_flow_inference.nv`: 5+ тестов покрывающих
+  pointer/value/int результаты, multi-effects, Never-body.
+- `std/collections/range.nv` test "inclusive overflow throws" PASS.
+- Full regression 221/221 PASS.
+
+#### Out of scope для Issue A
+
+- **Type-checker bidirectional inference** — pull-based архитектура.
+  Codegen-side fix достаточен пока type-checker не отвергает явно.
+- **Multiple effects в одном `with`** с несовместимыми IRT — отдельный
+  fix.
+- **Returned handler** (`let h = make(); with E = h { ... }`) — другой
+  путь, требует тип `Handler[E, IRT]` в type-checker. Откладывается.
+
+#### Подводные камни
+
+1. **`None` polymorphic literal** без context — partial fix через
+   let.type_ann + current_fn_return_ty + block expected_type
+   (lower-effort пока).
+2. **GC roots** для value_ptr: heap-allocated slot должен быть GC-видим
+   до interrupt_pop.
+3. **Multiple interrupt-types** в одном handler — пока требовать единый
+   тип (lub при разных — отдельно).
+4. **Body == Never** (throw всегда): result_tmp инициализируется только
+   через interrupt-path → ok.
 
 **Issue B: ReverseRangeIter / `step_by(negative)`.**
 `Range.@step_by(step int)` strict positive. Reverse iteration через
