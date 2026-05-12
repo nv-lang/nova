@@ -33,6 +33,8 @@
 
 module std.identifiers.uuid
 
+import std.testing.handlers as th
+
 
 // ──────────────────────────────────────────────────────────────────────────
 // Тип
@@ -89,7 +91,7 @@ export fn Uuid.new(hi u64, lo u64) -> Self =>
 // version=4 и variant=10 (RFC 4122 layout).
 //
 // Эффект `Random` ambient — handler берётся из текущего скоупа.
-// В production — secure RNG; в тестах — `with Random = seeded(...)`
+// В production — secure RNG; в тестах — `with Random = th.seeded(...)`
 // даёт детерминированный поток.
 export fn Uuid.v4() Random -> Self {
     let raw_hi = Random.u64()
@@ -234,12 +236,19 @@ fn write_hex_u16(buf mut Buffer, v u16) {
     }
 }
 
-fn hex_digit(n u8) -> char =>
-    if n < 10 {
-        ('0' as int + n as int) as char
+// Plan 34 Ф.5.2: `int as char` запрещён D54, используем char.try_from.
+// n всегда в [0, 15], code всегда ASCII — Err не возможен.
+fn hex_digit(n u8) -> char {
+    let code = if n < 10 {
+        '0' as int + n as int
     } else {
-        ('a' as int + n as int - 10) as char
+        'a' as int + n as int - 10
     }
+    match char.try_from(code) {
+        Ok(c)  => c
+        Err(_) => '?'
+    }
+}
 
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -325,7 +334,7 @@ test "NIL и MAX константы" {
 }
 
 test "v4: version и variant корректны" {
-    with Random = seeded(42) {
+    with Random = th.seeded(42) {
         let u = Uuid.v4()
         match u.version() {
             V4 => ()
@@ -336,19 +345,19 @@ test "v4: version и variant корректны" {
 }
 
 test "v4: разные seed → разные UUID" {
-    let a = with Random = seeded(1) { Uuid.v4() }
-    let b = with Random = seeded(2) { Uuid.v4() }
+    let a = with Random = th.seeded(1) { Uuid.v4() }
+    let b = with Random = th.seeded(2) { Uuid.v4() }
     assert(!a.eq(b))
 }
 
 test "v4: одинаковый seed → одинаковый UUID (детерминизм)" {
-    let a = with Random = seeded(42) { Uuid.v4() }
-    let b = with Random = seeded(42) { Uuid.v4() }
+    let a = with Random = th.seeded(42) { Uuid.v4() }
+    let b = with Random = th.seeded(42) { Uuid.v4() }
     assert(a.eq(b))
 }
 
 test "v7: version и timestamp" {
-    with Time = fixed_ms(1700000000000), Random = seeded(0) {
+    with Time = th.fixed_ms(1700000000000), Random = th.seeded(0) {
         let u = Uuid.v7()
         match u.version() {
             V7 => ()
@@ -360,8 +369,8 @@ test "v7: version и timestamp" {
 }
 
 test "v7: lexicographic ordering по timestamp" {
-    let earlier = with Time = fixed_ms(1000), Random = seeded(0) { Uuid.v7() }
-    let later = with Time = fixed_ms(2000), Random = seeded(0) { Uuid.v7() }
+    let earlier = with Time = th.fixed_ms(1000), Random = th.seeded(0) { Uuid.v7() }
+    let later = with Time = th.fixed_ms(2000), Random = th.seeded(0) { Uuid.v7() }
     assert(earlier.lt(later))
     assert(!later.lt(earlier))
 }
@@ -442,7 +451,7 @@ test "ordering: total order на UUID" {
 test "AI-first: тест UUID-генерации детерминистичен через handler" {
     // Без mock-библиотек: подменяем Random handler на seeded.
     // Тот же handler-substitution что в orm_decorators.nv для Db.
-    with Random = seeded(0xDEADBEEF) {
+    with Random = th.seeded(0xDEADBEEF) {
         let u1 = Uuid.v4()
         let u2 = Uuid.v4()
         // Воспроизводимо: тот же seed → те же UUID при любом запуске.

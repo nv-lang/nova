@@ -39,14 +39,23 @@ fn encode_with(data []byte, upper bool) -> str {
     buf.into()
 }
 
-fn digit(n u8, upper bool) -> char =>
-    if n < 10 {
-        ('0' as int + n as int) as char
+// Plan 34 Ф.5.2: `int as char` запрещён D54, используем `char.try_from(n)?`.
+// n всегда в [0, 15] (вызывается с (b as int) / 16 или % 16), поэтому
+// code всегда в valid ASCII диапазоне — `char.try_from` не может вернуть
+// Err. Fallback `' '` нужен только для exhaustive-match'а.
+fn digit(n u8, upper bool) -> char {
+    let code = if n < 10 {
+        '0' as int + n as int
     } else if upper {
-        ('A' as int + n as int - 10) as char
+        'A' as int + n as int - 10
     } else {
-        ('a' as int + n as int - 10) as char
+        'a' as int + n as int - 10
     }
+    match char.try_from(code) {
+        Ok(c)  => c
+        Err(_) => ' '
+    }
+}
 
 
 // ──────────────────────────────────────────────────────────────────────────

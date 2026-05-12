@@ -44,33 +44,46 @@ export type Base64Error
 // Alphabet и lookup
 // ──────────────────────────────────────────────────────────────────────────
 
-// RFC 4648 § 4 standard alphabet
-fn encode_char_std(value u8) -> char =>
-    if value < 26 {
-        ('A' as int + value as int) as char       // 0..25 → A..Z
+// RFC 4648 § 4 standard alphabet.
+// Plan 34 Ф.5.2: `int as char` запрещён D54, используем char.try_from(n).
+// `value` всегда в [0, 63] (по семантике base64), значит codepoint
+// всегда в ASCII диапазоне — Err не возможен. Fallback нужен для exhaustiveness.
+fn encode_char_std(value u8) -> char {
+    let code = if value < 26 {
+        'A' as int + value as int                  // 0..25 → A..Z
     } else if value < 52 {
-        ('a' as int + value as int - 26) as char   // 26..51 → a..z
+        'a' as int + value as int - 26             // 26..51 → a..z
     } else if value < 62 {
-        ('0' as int + value as int - 52) as char   // 52..61 → 0..9
+        '0' as int + value as int - 52             // 52..61 → 0..9
     } else if value == 62 {
-        '+'
+        '+' as int
     } else {
-        '/'
+        '/' as int
     }
+    match char.try_from(code) {
+        Ok(c)  => c
+        Err(_) => '?'
+    }
+}
 
 // RFC 4648 § 5 URL-safe alphabet (отличие: `-` вместо `+`, `_` вместо `/`)
-fn encode_char_url(value u8) -> char =>
-    if value < 26 {
-        ('A' as int + value as int) as char
+fn encode_char_url(value u8) -> char {
+    let code = if value < 26 {
+        'A' as int + value as int
     } else if value < 52 {
-        ('a' as int + value as int - 26) as char
+        'a' as int + value as int - 26
     } else if value < 62 {
-        ('0' as int + value as int - 52) as char
+        '0' as int + value as int - 52
     } else if value == 62 {
-        '-'
+        '-' as int
     } else {
-        '_'
+        '_' as int
     }
+    match char.try_from(code) {
+        Ok(c)  => c
+        Err(_) => '?'
+    }
+}
 
 // Decode lookup. Возвращает Option[u8]: Some(0..63), None для невалидных.
 // Принимает оба алфавита (standard и URL-safe) — `+`/`-` дают 62,

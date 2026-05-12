@@ -34,6 +34,8 @@
 
 module std.identifiers.ulid
 
+import std.testing.handlers as th
+
 
 // ──────────────────────────────────────────────────────────────────────────
 // Тип
@@ -65,30 +67,34 @@ export type ParseUlidError
 // Case-insensitive при декодировании.
 
 fn encode_char(value u8) -> char {
-    // value в [0, 31]
-    if value < 10 {
-        ('0' as int + value as int) as char
+    // value в [0, 31]. Plan 34 Ф.5.2: `int as char` запрещён D54.
+    let code = if value < 10 {
+        '0' as int + value as int
     } else if value < 18 {
         // 10..17 → A..H
-        ('A' as int + value as int - 10) as char
+        'A' as int + value as int - 10
     } else if value == 18 {
-        'J'
+        'J' as int
     } else if value == 19 {
-        'K'
+        'K' as int
     } else if value == 20 {
-        'M'
+        'M' as int
     } else if value == 21 {
-        'N'
+        'N' as int
     } else if value < 26 {
         // 22..25 → P..S
-        ('P' as int + value as int - 22) as char
+        'P' as int + value as int - 22
     } else if value == 26 {
-        'T'
+        'T' as int
     } else if value < 31 {
         // 27..30 → V..Y
-        ('V' as int + value as int - 27) as char
+        'V' as int + value as int - 27
     } else {
-        'Z'                                          // 31
+        'Z' as int                                   // 31
+    }
+    match char.try_from(code) {
+        Ok(c)  => c
+        Err(_) => '?'
     }
 }
 
@@ -133,7 +139,7 @@ fn decode_char(c char) -> Option[u8] {
 // Создаёт новый ULID с текущим timestamp и случайной частью.
 //
 // Эффекты Time, Random — ambient. В тестах подменяются handler'ами:
-//   with Time = fixed_ms(...), Random = seeded(...) { Ulid.new() }
+//   with Time = th.fixed_ms(...), Random = th.seeded(...) { Ulid.new() }
 //
 // Throws TimestampOverflow если ms >= 2^48 (~10889 AD).
 export fn Ulid.new() Time Random Fail[ParseUlidError] -> Self {
@@ -327,21 +333,21 @@ fn decode_char_or_throw(s str, pos int) Fail[ParseUlidError] -> u8 {
 // ──────────────────────────────────────────────────────────────────────────
 
 test "генерация: ulid имеет правильный timestamp" {
-    with Time = fixed_ms(1700000000000), Random = seeded(0) {
+    with Time = th.fixed_ms(1700000000000), Random = th.seeded(0) {
         let u = Ulid.new()
         assert(u.timestamp_ms() == 1700000000000)
     }
 }
 
 test "genеrация: одинаковый seed → одинаковый ULID" {
-    let a = with Time = fixed_ms(1000), Random = seeded(42) { Ulid.new() }
-    let b = with Time = fixed_ms(1000), Random = seeded(42) { Ulid.new() }
+    let a = with Time = th.fixed_ms(1000), Random = th.seeded(42) { Ulid.new() }
+    let b = with Time = th.fixed_ms(1000), Random = th.seeded(42) { Ulid.new() }
     assert(a.eq(b))
 }
 
 test "генерация: разные timestamps → разные ULID" {
-    let a = with Time = fixed_ms(1000), Random = seeded(0) { Ulid.new() }
-    let b = with Time = fixed_ms(2000), Random = seeded(0) { Ulid.new() }
+    let a = with Time = th.fixed_ms(1000), Random = th.seeded(0) { Ulid.new() }
+    let b = with Time = th.fixed_ms(2000), Random = th.seeded(0) { Ulid.new() }
     assert(!a.eq(b))
     assert(a.lt(b))                                   // earlier < later
 }
@@ -349,9 +355,9 @@ test "генерация: разные timestamps → разные ULID" {
 test "lexicographic ordering — главная фича ULID" {
     // Несколько ULID, сгенерированных в порядке времени.
     // Их строковые представления должны сортироваться так же.
-    let u1 = with Time = fixed_ms(1000), Random = seeded(1) { Ulid.new() }
-    let u2 = with Time = fixed_ms(2000), Random = seeded(1) { Ulid.new() }
-    let u3 = with Time = fixed_ms(3000), Random = seeded(1) { Ulid.new() }
+    let u1 = with Time = th.fixed_ms(1000), Random = th.seeded(1) { Ulid.new() }
+    let u2 = with Time = th.fixed_ms(2000), Random = th.seeded(1) { Ulid.new() }
+    let u3 = with Time = th.fixed_ms(3000), Random = th.seeded(1) { Ulid.new() }
 
     let s1 = u1.into()
     let s2 = u2.into()
@@ -363,7 +369,7 @@ test "lexicographic ordering — главная фича ULID" {
 }
 
 test "формат: 26 символов" {
-    with Time = fixed_ms(1700000000000), Random = seeded(0) {
+    with Time = th.fixed_ms(1700000000000), Random = th.seeded(0) {
         let u = Ulid.new()
         let s = u.into()
         assert(s.len == 26)
@@ -371,7 +377,7 @@ test "формат: 26 символов" {
 }
 
 test "формат: только Crockford-Base32 символы" {
-    with Time = fixed_ms(1700000000000), Random = seeded(0xFEEDC0DE) {
+    with Time = th.fixed_ms(1700000000000), Random = th.seeded(0xFEEDC0DE) {
         let s = Ulid.new().into()
         // Без I, L, O, U
         assert(!s.contains("I") && !s.contains("i"))
@@ -382,7 +388,7 @@ test "формат: только Crockford-Base32 символы" {
 }
 
 test "round-trip: from(u.into()) == u" {
-    with Time = fixed_ms(1700000000000), Random = seeded(0xCAFE) {
+    with Time = th.fixed_ms(1700000000000), Random = th.seeded(0xCAFE) {
         let u = Ulid.new()
         let s = u.into()
         let parsed = Ulid.from(s)
@@ -391,7 +397,7 @@ test "round-trip: from(u.into()) == u" {
 }
 
 test "from: case-insensitive" {
-    with Time = fixed_ms(1700000000000), Random = seeded(0) {
+    with Time = th.fixed_ms(1700000000000), Random = th.seeded(0) {
         let u = Ulid.new()
         let s_upper = u.into()
         // ULID by spec — upper-case, но decode принимает обе.
@@ -403,7 +409,7 @@ test "from: case-insensitive" {
 test "from: I/L → 1, O → 0 (Crockford ambiguity)" {
     // Берём валидный ULID, заменяем '1' на 'I', '0' на 'O' — должны
     // декодироваться идентично.
-    with Time = fixed_ms(1000), Random = seeded(0) {
+    with Time = th.fixed_ms(1000), Random = th.seeded(0) {
         let u = Ulid.new()
         let s = u.into()
         // Если в s нет '0' или '1' — пропускаем тест (но обычно есть).
@@ -440,7 +446,7 @@ test "from: ошибка — невалидный символ (U)" {
 
 test "AI-first: ULID-генерация детерминистична через handler-substitution" {
     // То же handler-substitution что в orm_decorators.nv для Db, в uuid.nv для Random.
-    with Time = fixed_ms(1700000000000), Random = seeded(0xDEADBEEF) {
+    with Time = th.fixed_ms(1700000000000), Random = th.seeded(0xDEADBEEF) {
         let u1 = Ulid.new()
         let u2 = Ulid.new()
         // Time fixed → одинаковый timestamp

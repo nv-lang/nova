@@ -22,10 +22,12 @@
 //   3. Если body упал через assert_prop — runner ловит Fail и
 //      делает shrinking (бисекция к меньшим вариантам), репортит
 //      минимальный failing input.
-//   4. Деteminизм через `with Random = seeded(seed) { ... }` — тот же
+//   4. Деteminизм через `with Random = th.seeded(seed) { ... }` — тот же
 //      seed даёт тот же набор входов, удобно для CI.
 
 module std.testing.property
+
+import std.testing.handlers as th
 
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -170,8 +172,13 @@ export fn StrGen @generate() Random -> str {
     let len = (Random.u64() as int).abs() % (@max_len + 1)
     let mut buf = StringBuilder.new()
     for i in 0..len {
-        // Печатные ASCII: 32..126 — каждый valid 1-byte UTF-8 char
-        let c = (32 + ((Random.u64() as int).abs() % 95)) as char
+        // Печатные ASCII: 32..126 — каждый valid 1-byte UTF-8 char.
+        // Plan 34 Ф.5.2: `int as char` запрещён D54.
+        let code = 32 + ((Random.u64() as int).abs() % 95)
+        let c = match char.try_from(code) {
+            Ok(ch) => ch
+            Err(_) => '?'
+        }
         buf.append(c)
     }
     buf.into()
@@ -302,7 +309,7 @@ fn shrink_loop[T](gen Generator[T],
 // PropertyFailed с минимальным failing input в context.
 //
 // Использует Random эффект из контекста — для детерминизма в CI
-// оборачивай в `with Random = seeded(seed) { property(...) }`.
+// оборачивай в `with Random = th.seeded(seed) { property(...) }`.
 export fn property[T](gen Generator[T],
                       body fn(T) Fail[PropertyFailed] -> ()) Random Fail[PropertyFailed] -> () {
     property_with(gen, body, PropertyConfig.default())
@@ -337,58 +344,58 @@ export fn property_with[T](gen Generator[T],
 
 // Простейший property — обращение списка дважды даёт исходный.
 test "reverse-reverse == identity для []int" {
-    with Random = seeded(42) {
+    with Random = th.seeded(42) {
         let gen = ArrayGen.default(IntGen.default())
-        property(gen) { xs =>
+        property(gen, |xs| {
             let twice = xs.reverse().reverse()
             assert_prop(twice == xs)
-        }
+        })
     }
 }
 
 // Idempotence sort'а.
 test "sort idempotent для []int" {
-    with Random = seeded(42) {
+    with Random = th.seeded(42) {
         let gen = ArrayGen.default(IntGen.default())
-        property(gen) { xs =>
+        property(gen, |xs| {
             let once = xs.sort()
             let twice = once.sort()
             assert_prop(once == twice)
-        }
+        })
     }
 }
 
 // Длина после concat = сумма длин.
 test "len(a + b) == len(a) + len(b) для []int" {
-    with Random = seeded(123) {
+    with Random = th.seeded(123) {
         let gen = ArrayGen.default(IntGen.default())
-        property(gen) { xs =>
+        property(gen, |xs| {
             let ys = xs.reverse()       // любой второй массив
             let combined = xs + ys
             assert_prop(combined.len == xs.len + ys.len)
-        }
+        })
     }
 }
 
 // String concat ассоциативен.
 test "string concat associative" {
-    with Random = seeded(7) {
+    with Random = th.seeded(7) {
         let gen = StrGen.default()
-        property(gen) { s =>
+        property(gen, |s| {
             let combined1 = (s + s) + s
             let combined2 = s + (s + s)
             assert_prop(combined1 == combined2)
-        }
+        })
     }
 }
 
 // Bool: !!x == x.
 test "double negation для bool" {
-    with Random = seeded(1) {
+    with Random = th.seeded(1) {
         let gen = BoolGen.new()
-        property(gen) { b =>
+        property(gen, |b| {
             assert_prop(!!b == b)
-        }
+        })
     }
 }
 
@@ -401,16 +408,16 @@ test "shrinking демо: ищем минимальный counterexample" {
     let mut caught = false
     let mut min_size = 9999
 
-    with Random = seeded(99) {
+    with Random = th.seeded(99) {
         with Fail[PropertyFailed] = |e| interrupt () {
-            property(gen) { xs =>
+            property(gen, |xs| {
                 // Намеренно ложное свойство: «все элементы > 0»
                 let mut all_pos = true
                 for x in xs {
                     if x <= 0 { all_pos = false }
                 }
                 assert_prop(all_pos)
-            }
+            })
             // Если property не упал — это bug в нашем демо
             caught = false
         }
