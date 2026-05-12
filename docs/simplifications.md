@@ -4625,3 +4625,230 @@ Sub-plans 35.A-E:
 - **Как чинить:** После Z3 milestone + V6-V10 fixes.
 - **Приоритет:** M — критичный gate для production-claim
   «Dafny-parity».
+
+
+---
+
+## char.try_from с unreachable Err fallback — Plan 34 Ф.5.2 (2026-05-12)
+
+**Где:** 5 stdlib-файлов:
+- std/encoding/base64.nv: `encode_char_std`, `encode_char_url`
+- std/encoding/hex.nv: `digit`
+- std/identifiers/ulid.nv: `encode_char`
+- std/identifiers/uuid.nv: `hex_digit`
+- std/testing/property.nv: `StrGen @generate` (ASCII char)
+
+**Что упрощено:** D54 запрещает `int as char`, требует
+`char.try_from(n)?`. Но в этих случаях `n` всегда в valid диапазоне
+(`'0' + value` для `value ∈ [0, 15]` всегда даёт ASCII digit), значит
+`Err` невозможен. Refactor:
+
+  let code = '0' as int + value as int
+  match char.try_from(code) {
+      Ok(c)  => c
+      Err(_) => '?'      // unreachable
+  }
+
+Fallback `'?'` нужен для exhaustive-match, но недостижим —
+**семантически dead branch**.
+
+**Почему:** Альтернативы хуже:
+1. `?`-propagation — меняет return type `-> char` → `Fail[CharRangeError] -> char`,
+   ломает все callers (3-tier изменение).
+2. `panic("unreachable")` — runtime crash вместо degraded output.
+3. `unsafe_int_as_char` — нет в spec, добавлять ради 5 callsites не оправдано.
+
+**Как починить:** Plan 37 «type-check semantic parity» (создан агентом)
+поднимет D54 проверку в type-checker. После этого type-checker может
+validate static-range проверки compile-time (literal + bounded variable
+analysis), `char.try_from(IntLit | bounded var)` опускается до direct
+cast, fallback ветка элиминируется как dead code.
+
+**Приоритет:** P3 — fallback недостижим, downstream perf не страдает.
+
+
+---
+
+## stdlib `--skip std/runtime/` обязателен для nova test — Plan 34 Ф.5.1 (2026-05-12)
+
+**Где:** Workflow для CI / dev sweep по stdlib.
+
+**Что упрощено:** `nova test std/` без `--skip std/runtime` даёт **7
+false-FAIL'ов** для auto-gen библиотечных модулей std/runtime/* (char/
+gc/math/read_buffer/string/string_builder/write_buffer) с linker
+error `undefined symbol 'nova_fn_main_impl'`. Эти файлы — *lib-only*,
+у них нет main и tests, но `nova test` пытается их собрать как exe.
+
+D95 hard-skip `std/runtime/` есть в `nova check` (через
+`should_skip_path`), но **не в `nova test`**. Текущее workaround —
+обязать пользователя писать `--skip std/runtime` вручную.
+
+**Почему не auto-skip в walk_nv:** Параллельный агент выбрал
+**explicit --skip flag** (commit before f481e3950e), а не зашитую
+константу в `walk_nv` (я пробовал, откатил по запросу пользователя).
+Преимущество: пользователь видит что skip'ается; не зашиты опциональные
+правила в core walker. Минус: friction для типичного use-case.
+
+**Как починить (полное решение):** Один из вариантов:
+1. **D95 расширить на nova test** — добавить `runtime` в
+   `is_implicit_skip` ИЛИ вызвать `should_skip_path` в test_runner's
+   walk-этапе (как уже сделано в check). ~10 строк.
+2. **Per-file pragma** `// LIB_ONLY` — runner пропускает файлы без
+   main и без test-блоков. Более общее, но больше работы.
+3. **Manifest-уровень**: `std/runtime/nova.toml` с
+   `kind = "library"` исключает из test sweep'а. Архитектурно
+   правильнее, но требует package-system (Plan 03).
+
+**Приоритет:** P2 — `--skip std/runtime` работает, но это lasting
+papercut для каждого нового пользователя.
+
+
+---
+
+## Plan 34 Ф.5.3 — strict-bool fix НЕ применён (D72 блокер) — 2026-05-12
+
+**Где:** 4 файла std/ остались с `if condition must be bool` codegen-fail:
+- std/collections/priority_queue.nv:69 `@items[i].lt(@items[parent])`
+- std/concurrency/retry.nv:121 `d.gt(max_delay)`
+- std/encoding/json.nv:526 `fields.contains(key)`
+- std/encoding/url.nv:78 `after_scheme.starts_with("//")`
+
+**Что упрощено:** Изначально Plan 34 Ф.5.3 планировал локальный fix
+`if x` → `if x != 0`. После анализа стало ясно — это **не** локальная
+правка. Все 4 вызова — generic-method dispatch через protocol-bound
+(`Ord.lt`, `Ord.gt`, `Hash.contains`, `Str.starts_with`), который
+codegen в generic-context возвращает с return-type `nova_int` вместо
+`bool` (D72 erasure).
+
+Plan 14 retrospective прямо называет это «блокер для Plan 15
+enforcement». Локальный `!= 0` workaround **не помогает** — codegen
+всё равно видит `nova_int` value.
+
+**Почему не fix:** Spec-level work — нужно расширить codegen
+`method_overloads` для protocol-bound generics так чтобы они возвращали
+правильный bool-type. Это **Plan 15 enforcement** territory +
+monomorphization. Не Plan 34 scope.
+
+**Как починить:** Новый план «D72 method-resolution через
+protocol-bounds в codegen» — ~200-300 строк в emit_c.rs +
+method_overloads expansion. Открывает 4+ stdlib-файла для compile.
+
+**Приоритет:** P1 — блокирует 4 файла, но D72-уровень требует careful
+spec-level work.
+
+
+---
+
+## Plan 34 Ф.5.4 — for-in nova_int НЕ закрыт целиком — 2026-05-12
+
+**Где:** 5 файлов std/ с `for-in: unsupported iterator type 'nova_int'`:
+- std/crypto/bcrypt.nv, std/collections/range.nv,
+  std/encoding/ini.nv, std/text/diff.nv, std/text/regex.nv
+
+**Что упрощено:** Plan 14 Ф.1 refactor Option[T] раскрыл Iter[T]
+erasure для нестандартных iterator expressions. `for i in seq.iter()`
+где seq имеет custom Iter — codegen падает.
+
+Параллельный агент сделал commit `e019a47128` "forward-decl user types
++ Nova_Range emit + Range infer для step_by" — это закрывает
+**same-file** Range/StepRange. Cross-file и custom Iter ещё открыты.
+
+**Почему не fix в Plan 34:** Iter[T] generic specialization at
+monomorphization — Plan 14 «накопленные блокеры» категория.
+Architectural work уровня spec.
+
+**Как починить:**
+1. Cross-file Range — Plan 35 Ф.2 (cross-file codegen). MVP через
+   `f481e3950e` (inline AST expansion) частично решает.
+2. Custom Iter (`hashmap.keys() -> Iter[K]`) — Plan 14 «hashmap
+   protocol-dispatch» блокер. Требует monomorphization для generic
+   methods.
+
+**Приоритет:** P1 — 5 stdlib-файлов и больше, но архитектурный блокер.
+
+
+---
+
+## Numeric type constants — known limitation (Plan 38, 2026-05-12)
+
+### Где
+Codegen (`compiler-codegen/src/codegen/emit_c.rs`) и type-check
+(`compiler-codegen/src/types/mod.rs`).
+
+### Что упрощено
+D26 prelude декларирует numeric type constants (`int.MAX`, `int.MIN`,
+`f64.NAN`, `f64.INFINITY`, `u8.MAX`, etc.) — **ни один** не работает в
+codegen. Codegen mangles paths в `<type>_<CONST>` (`int_MAX`,
+`f64_NAN`, etc.), которые undefined C identifiers → compile error.
+
+### Почему
+Bootstrap codegen не имеет mapping table для type-level constants.
+Special-case'итс `int.try_from` / `f64.from_bits` etc. (Plan 08),
+но constants — отдельная category (нет params, тип = type-of(prim)).
+
+### Как починить
+Plan 38 — full mapping table:
+- `int.MAX` → `((nova_int)INT64_MAX)`
+- `f64.NAN` → `NAN` (from `<math.h>`)
+- `u8.MAX` → `((uint8_t)UINT8_MAX)`
+- etc. (см. plan 38 для полной таблицы)
+
+Plus type-check side в `is_known` для primitive type-constants.
+
+### Workaround сегодня
+**Inline literal** вместо `int.MAX`:
+```nova
+// Вместо: if end == int.MAX { ... }
+// Используй: if end >= 9223372036854775807 { ... }  // hard-coded INT64_MAX
+```
+
+Это **breaks portability** между i32 / i64 builds, но работает для
+single-target compile.
+
+### Приоритет
+**P2** — system gap, но влияет на ограниченное число файлов сегодня
+(основной — `std/collections/range.nv:Range.inclusive`). Plan 38 ~ полдня.
+
+### Real-world impact
+- `std/collections/range.nv` — Range.inclusive constructor блокирован
+- Любой future numeric stdlib (clamp, bounded, saturating ops)
+
+
+---
+
+## range.nv blocked — known limitation (Plan 39, 2026-05-12)
+
+### Где
+`std/collections/range.nv` — full file compile блокирован.
+
+### Что упрощено
+`std/collections/range.nv` объявляет 4 core types (Range, RangeIter,
+StepRangeIter, ReverseRangeIter) + ~30 methods + 11 inline tests.
+**Не компилируется** через `nova test` / `nova build` из-за:
+1. `int.MAX` mangling → Plan 38.
+2. `nova test` cross-file resolution отсутствует → Plan 35 Ф.1
+   test_runner parity (отложено).
+3. Возможные `NovaOpt_<T>` typedef mismatches в pattern match
+   ассертах (`r.next() == None`).
+
+### Почему
+Cascade блокеров — каждый требует отдельного fix'а в codegen.
+Pre-existing, не Plan 35 territory.
+
+### Как починить
+Plan 39 = follow-up cleanup после Plan 38 + Plan 35 Ф.1 test_runner.
+
+### Workaround сегодня
+**Inline Range/RangeIter/StepRangeIter в user file** — Plan 35 Ф.1
+MVP уже доказал что same-file path работает. `for_in_range_iter.nv`
+тест: 4 assert PASS на inline declarations.
+
+Cross-file через `import std.collections.range` — works для **`nova
+build`** (после Plan 35 Ф.1 MVP), не для **`nova test`** (test_runner
+pipeline отдельный).
+
+### Приоритет
+**P3** — это **cascade follow-up**, не root cause. После Plan 35 Ф.1
+test_runner parity + Plan 38 (~1 день combined) — `range.nv` либо
+автоматически проходит, либо требует small fix'и (Plan 39, оцениваем
+0-200 LOC).
