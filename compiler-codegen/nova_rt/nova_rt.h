@@ -219,6 +219,10 @@ typedef struct { char _dummy; } nova_unit;
 /* После fibers.h (NovaFiberQueue полный тип). */
 #include "sched.h"
 
+/* ---- Plan 40 Ф.1: thread-safety primitives (C11 mtx_t + atomics) ---- */
+/* Перед channels.h — channels.h использует nova_mutex_t / nova_atomic_*. */
+#include "sync.h"
+
 /* ---- Plan 21 (D91): capability-split Channels ---- */
 /* После sched.h — channels.h использует nova_sched_park/wake/register. */
 #include "channels.h"

@@ -27,17 +27,19 @@
 > - ✅ B7: `Nova_ChannelState.on_select_lost` callback + `cancelled`
 >   flag в `NovaAfterState`.
 >
-> **Ф.1 (M:N prerequisites, P1): отложено** — делать вместе с
-> Plan 23 (M:N runtime). Без M:N scheduler'а race-condition'ы
-> непроверяемы; Plan 30 Ф.4 закрылся именно с этой ошибкой (claim
-> без validation). **Detailed design Ф.1 (C11 mtx_t + selectdone CAS +
-> doubly-linked waiters) сохранён ниже для immediate implementation
-> в сессии Plan 23.**
+> **Ф.1 (M:N prerequisites, P1): в работе (2026-05-12).**
 >
-> Storage refactor (B5 final) **уже сделан** в этой сессии — Ф.1
-> остаётся только atomics + selectdone CAS + doubly-linked + cancel-
-> protocol, без storage refactor'а.
+> Решение: реализовать B1+T2+B2 на Windows (single-thread regression
+> = code correctness on uncontended path), затем валидировать на
+> Linux через Docker + TSan (concurrent stress tests на pthread layer,
+> обходя fiber scheduler). Это даёт real M:N race-detection без
+> зависимости от Plan 23 M:N runtime.
 >
+> Storage refactor (B5 final) **уже сделан** — Ф.1 остаётся:
+> atomics+mutex (B1) + doubly-linked (T2) + selectdone CAS (B2) +
+> Linux/Docker prep + TSan validation + docs.
+>
+> **Detailed roadmap — §«Ф.1 Implementation Plan» ниже.**
 > Обнаружен 2026-05-12 при audit'е Plan 30/31 после закрытия Plan 39.
 
 ---
@@ -624,3 +626,170 @@ hard error на overflow убирается, потому что storage now ada
 - `_Alignas(8)` на atomic'ах для Boehm GC scan alignment.
 - Inline-эмиссия storage увеличит stack frame fiber'а на ~80n байт;
   для n=32 это 2.5 KB при default minicoro stack 56 KB — приемлемо.
+
+---
+
+## Ф.1 Implementation Plan (2026-05-12, согласован)
+
+Подход: реализовать на Windows (single-thread regression = uncontended
+path correctness), валидировать на Linux через Docker + TSan
+(concurrent stress tests на pthread layer, обходя fiber scheduler).
+Это даёт real M:N race-detection без зависимости от Plan 23 runtime.
+
+### Этап 1 — sync.h (✅ done in session)
+
+- `compiler-codegen/nova_rt/sync.h` создан: C11 `mtx_t` + atomics
+  wrappers (`nova_mutex_*`, `nova_aint_*`, `nova_abool_*`).
+- Подключён в `nova_rt.h` перед `channels.h`.
+- C11 `<threads.h>` + `<stdatomic.h>` работают на нашем clang
+  (verified test).
+
+**Acceptance:** ✅ build clean.
+
+### Этап 2 — B1: atomics + mutex на Nova_ChannelState
+
+**Изменения `channels.h`:**
+- `Nova_ChannelState` поля:
+  - `nova_mutex_t mu` — protects buf/head/count/waiter-lists.
+  - `nova_atomic_bool closed` — fast-path read без lock'а.
+  - `nova_atomic_int writer_count` — CAS-based decrement в close().
+  - `count`/`head`/`buf` остаются обычными int64_t — под mutex.
+  - waiter-lists остаются обычными pointer — под mutex.
+- `nova_channel_new`: `nova_mutex_init` + atomic init.
+- Все operations (`recv`/`send`/`try_*`/`close`/`clone`):
+  - `closed` check — fast-path через `nova_abool_load`.
+  - Modify operations — внутри `nova_mutex_lock`/`unlock` block.
+- Layout `ChannelWaiter`/`SelectWaiter` неизменён (Этап 3 трогает).
+
+**Acceptance:**
+- Build clean.
+- 257/257 single-thread regression PASS.
+- Plan 40 functional + perf tests PASS.
+- ~150 строк, 1 commit.
+
+### Этап 3 — T2: doubly-linked waiter list
+
+**Изменения `channels.h`:**
+- `ChannelWaiter.prev` (новое поле) + `SelectWaiter.prev` в
+  layout-compatible позиции (первые N полей всё ещё match'аются
+  через cast).
+- `_nova_channel_waiter_unlink` → O(1) через prev/next pointer swap.
+  То же для `_nova_sel_waiter_unlink`.
+- Все enqueue paths (recv/send park, select park):
+  - `new->prev = NULL` (head-insert).
+  - Если `*head != NULL`: `(*head)->prev = new`.
+  - `new->next = *head; *head = new;`
+- Wake helpers (`_nova_channel_wake_recv/send`) корректно обновляют
+  `head` и его `prev = NULL` (новый head).
+
+**Acceptance:**
+- Build clean.
+- 257/257 regression.
+- New sub-test в `plan40_perf_bench.nv`: 64-arm select × 1000 iter —
+  linear (не quadratic) scaling.
+- ~120 строк, 1 commit.
+
+### Этап 4 — B2: selectdone CAS
+
+**Изменения `channels.h`:**
+- `SelectWaiter.fired` (новое поле, `nova_atomic_int`). `ChannelWaiter`
+  не получает `fired` (одиночный waiter, race невозможен).
+- Channel wake helpers (`_nova_channel_wake_recv/send`) — protocol
+  change:
+  - Old: «pop first waiter, extract value, wake fiber».
+  - New: iterate через waiters, для каждого CAS `fired: 0→1`. Если
+    waiter — `SelectWaiter` (распознать через extended header?) —
+    CAS-mark и продолжить (не extract). Если обычный `ChannelWaiter` —
+    pop+extract+wake как раньше.
+  - **Унификация:** если каждый waiter имеет fired (включая
+    ChannelWaiter с always-0-no-CAS), путь единый. Это упрощает.
+- `nova_select_park` после wake:
+  - Iterate `ctx->waiters[i]`. Тот с `fired=1` — winner.
+  - Читает value из канала **под mutex'ом** (B1 lock acquired).
+  - Updates `ctx->which` + `ctx->recv_val`.
+- Unlink остальных waiters (T2 doubly-linked даёт O(1) на каждый).
+
+**Acceptance:**
+- Build clean.
+- 257/257 regression.
+- ~250 строк, 1 commit.
+
+### Этап 5 — Linux/Docker preparation
+
+**Решение (согласовано):** vcpkg на Linux (тот же `vcpkg.json`,
+добавить `x64-linux` triplet).
+
+**Файлы:**
+- `docker/Dockerfile`: Ubuntu 22.04 + clang-15 + cmake + vcpkg setup
+  + bdwgc install + libuv build.
+- `docker/Dockerfile.tsan`: тот же base + `CFLAGS=-fsanitize=thread`
+  для тестовых run'ов.
+- `docker/build-and-test.sh`: build nova-cli + run 257/257.
+- `docker/README.md`: usage instructions.
+
+**Acceptance:**
+- `docker build -f docker/Dockerfile -t nova-test .` собирает.
+- `docker run nova-test` прогоняет 257/257 на Ubuntu/clang.
+- ~100 строк, 1 commit.
+
+### Этап 6 — TSan validation
+
+**pthread-based stress tests (direct C, обходят fiber layer):**
+- `nova_tests/plan40_tsan/b1_mutex_stress.c` — 8 threads × 100k
+  concurrent send/recv на shared channel. Validates B1 mutex.
+- `nova_tests/plan40_tsan/b2_selectdone_race.c` — 2 threads park'ятся
+  через select на один channel, 1 sender → assert ровно 1 fired.
+  Validates B2 CAS.
+- `nova_tests/plan40_tsan/t2_waiter_churn.c` — high-frequency
+  enqueue/unlink на doubly-linked list. Validates T2.
+
+**Запуск:**
+- `docker build -f docker/Dockerfile.tsan -t nova-tsan .`
+- `docker run nova-tsan ./test_b1_mutex_stress` etc.
+- Expected: exit 0, нет TSan warning'ов.
+
+**Acceptance:**
+- 3 stress tests PASS под TSan.
+- ~300 строк, 1 commit.
+
+### Этап 7 — Documentation
+
+- Plan 40: status Ф.1 → ✅ (все 4 prerequisites закрыты:
+  storage ✅ + B1 ✅ + T2 ✅ + B2 ✅).
+- Spec D94: M:N safety 🟡 → ✅ (с TSan validation).
+- project-creation.txt + simplifications.md + discussion-log:
+  implementation log.
+- 1 commit.
+
+### Сводка объёма
+
+| Этап | Файл/строк | Commit |
+|---|---|---|
+| 1 sync.h | new ~70 | (в этой сессии) |
+| 2 B1 | channels.h ~150 | 1 |
+| 3 T2 | channels.h ~120 | 1 |
+| 4 B2 | channels.h ~250 | 1 |
+| 5 Docker | docker/ ~100 | 1 |
+| 6 TSan | nova_tests/plan40_tsan/ ~300 | 1 |
+| 7 Docs | 5 docs files | 1 |
+| **Итого** | **~990 строк, ~10 файлов** | **6 commits** |
+
+### Honest disclosure
+
+- Этапы 2-4 (B1/T2/B2) — single-thread regression validates **uncontended
+  correctness path**. Real race detection — Этап 6 (TSan на Linux).
+- Этап 7 закрывает Ф.1 как «channel layer M:N-safe, integration с fiber
+  scheduler — pending Plan 23».
+- Plan 23 (M:N runtime) — отдельный план, intermixing scheduler + Plan 40
+  channel layer. Plan 40 Ф.1 — prerequisite, не Plan 23 в целом.
+
+### Open questions
+
+- **`SelectWaiter` layout-compatible с `ChannelWaiter`:** после
+  добавления `fired` к SelectWaiter и `prev` к обоим — первые N полей
+  должны быть identical. Возможно потребуется reordering.
+- **fired в ChannelWaiter:** добавить и игнорировать (always-load-0) для
+  unified wake protocol, или оставить два path'а? Решение — в Этапе 4
+  по простоте.
+- **Boehm GC + atomics alignment:** `_Alignas(8)` на atomic_int полях
+  для x86 atomicity guarantees. Проверить в bench.
