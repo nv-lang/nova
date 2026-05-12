@@ -195,6 +195,11 @@ enum Cmd {
         /// Example: --shuffle 42  or  --shuffle (random seed).
         #[arg(long, num_args = 0..=1, value_name = "SEED")]
         shuffle: Option<Option<u64>>,
+        /// Skip tests whose display name OR file path contains this substring.
+        /// Repeatable: `--skip A --skip B` excludes both.
+        /// Example: `nova test std/ --skip std/runtime/`.
+        #[arg(long = "skip", value_name = "PATTERN")]
+        skip: Vec<String>,
     },
     /// Build and run a single Nova test file (used by IDE / CI for one-shot debug).
     #[command(name = "test-build")]
@@ -940,6 +945,7 @@ fn cmd_test(
     list_only: bool,
     filter_from: Option<&Path>,
     shuffle: Option<Option<u64>>,
+    skip: &[String],
 ) -> Result<()> {
     if timeout_secs == 0 {
         return Err(usage_err("--timeout must be >= 1 second"));
@@ -1091,6 +1097,7 @@ fn cmd_test(
         list_only,
         filter_from,
         shuffle_seed,
+        skip,
     };
 
     let summary = test_runner::run_all(opts)?;
@@ -1273,7 +1280,7 @@ fn main() -> ExitCode {
             path, filter, jobs, format, mode, toolchain, vcvars, clang, timeout,
             verbose, quiet, results_file, rerun_failed, retries,
             include_stdlib, keep_artifacts, gc,
-            list, filter_from, shuffle,
+            list, filter_from, shuffle, skip,
         } => cmd_test(
             path.as_deref(),
             filter.as_deref(),
@@ -1295,6 +1302,7 @@ fn main() -> ExitCode {
             list,
             filter_from.as_deref(),
             shuffle,
+            &skip,
         ),
         Cmd::TestBuild { file, mode, toolchain, vcvars, clang, timeout, keep_artifacts, gc } => cmd_test_build(
             &file,

@@ -1843,6 +1843,10 @@ pub struct TestAllOpts<'a> {
     /// Plan 27 Б.7: seed для Fisher-Yates shuffle (--shuffle [SEED]).
     /// None = не перемешивать. 0 = случайный seed из system time.
     pub shuffle_seed: Option<u64>,
+    /// Plan 36.D: skip patterns — substring match по display name.
+    /// Example: `--skip std/runtime/` исключает все runtime тесты.
+    /// Repeatable: `--skip A --skip B` исключает оба.
+    pub skip: &'a [String],
 }
 
 // ---------- Plan 26 Ф.13: graceful Ctrl+C ----------
@@ -2788,6 +2792,15 @@ pub fn run_all(opts: TestAllOpts) -> Result<Summary> {
         let display = display_name(nv_path, base, *is_stdlib);
         if let Some(filter) = opts.filter {
             if !display.contains(filter) { continue; }
+        }
+        // Plan 36.D: --skip применяется к display name И к raw path string
+        // (для skip типа `std/runtime/` который может не попадать в display).
+        if !opts.skip.is_empty() {
+            let path_str = nv_path.to_string_lossy().replace('\\', "/");
+            let skip_match = opts.skip.iter().any(|pat| {
+                !pat.is_empty() && (display.contains(pat.as_str()) || path_str.contains(pat.as_str()))
+            });
+            if skip_match { continue; }
         }
         if let Some(set) = &filter_from_set {
             if !set.contains(&display) { continue; }
