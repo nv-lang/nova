@@ -6272,3 +6272,61 @@ Negative:
 - Plan 33.3: pure_view + axioms, ghost state, quantifiers, FP/strings,
   incremental cache, parallel, Dafny-parity.
 
+
+
+================================================================================
+2026-05-12 codegen: forward-decl user types + Range emit для step_by
+================================================================================
+
+Запрос: научить codegen эмитить for-in `(0..N).step_by(K)` нативно.
+Обнаружено три связанных bugа:
+
+**1. Emit ordering** (existing latent bug, surfaced step_by):
+NovaOpt_<T> typedef'ы эмитятся в preamble ДО user-type struct declarations.
+Если `Option[T]` использует user-type `T` (например `Option[Range]`), то
+typedef `NovaOpt_Nova_Range_p { Nova_Range* value; }` падает с `unknown
+type name 'Nova_Range'`.
+
+Fix: добавлен **второй marker** `/*__USER_TYPE_FWD_DECLS__*/` в preamble
+ДО `/*__NOVAOPT_TYPEDEFS__*/`. Pre-pass в `emit_module` собирает forward
+decls `typedef struct Nova_T Nova_T;` для всех Record/Sum user types,
+splice'ит в marker через `out.replace()` ДО NovaOpt replace.
+
+**2. ExprKind::Range emit** (existing placeholder bug):
+`(0..10)` literal эмитился как `/*range(...)*/NOVA_UNIT` (literal stub).
+Это означало что `(0..10).step_by(2)` передавал NOVA_UNIT первым
+аргументом метода, ожидавшего `Nova_Range*`.
+
+Fix: когда `record_schemas` содержит `Range` (т.е. в файле определён
+тип Range), эмитить настоящий alloc:
+  Nova_Range* tmp = nova_alloc(sizeof(Nova_Range));
+  tmp->start = s;
+  tmp->end = e;  // или e+1 для ..=
+Иначе остаётся placeholder (для emit_for Case 1 primitive int loop,
+который matches ExprKind::Range pattern до emit_expr).
+
+**3. ExprKind::Range infer** (existing fallback bug):
+`infer_expr_c_type` для ExprKind::Range попадал в `_ => "nova_int"`
+default arm. Method-call inference для `(0..10).step_by(2)` искал
+`method_overloads[("nova_int", "step_by")]` = miss → fallback `nova_int`
+→ `emit_for`: `for-in: unsupported iterator type 'nova_int'`.
+
+Fix: ветка `ExprKind::Range { .. } => Nova_Range*` если type
+зарегистрирован, иначе `nova_int` (для Case 1 primitive loop).
+
+**Тесты** (`nova_tests/syntax/for_in_range_iter.nv`, 4 шт.):
+- `step_by(2)` on Range literal — even numbers (sum == 20)
+- `step_by(3)` — every third (count == 4, last == 9)
+- `step_by(100)` — единственный элемент start
+- regression: plain Range loop (`for i in 0..5`) still работает Case 1
+
+**Не закрыто:**
+- `std/collections/range.nv` всё ещё CC-FAIL из-за **pre-existing**
+  `int_MAX` undeclared (codegen mangling `int.MAX` constant). Отдельный gap.
+- `..=N` inclusive — эмитится как `start..end+1` (Range type только
+  half-open). Семантически правильно, но edge cases (overflow на
+  `INT_MAX..=INT_MAX`) не покрыты.
+
+**Регрессия:** 199/200 PASS (1 transient parallel race). На rerun PASS.
+
+**Commit:** e019a47128.
