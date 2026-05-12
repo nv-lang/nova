@@ -1,0 +1,142 @@
+// std/testing/handlers.nv — детерминированные handler-фабрики для
+// `Random` и `Time` эффектов. Главный инструмент для тестов, которые
+// зависят от случайности или времени.
+//
+// AI-first идея: вместо mock-библиотек и monkey-patching — handler
+// substitution через `with` (D11/D61). Та же функция `Bcrypt.hash` в
+// production видит CSPRNG, в тестах — детерминированный PRNG, без
+// какого-либо изменения сигнатуры.
+//
+// Использование:
+//
+//   import std.testing.handlers
+//
+//   test "uuid v4 детерминирован под seeded" {
+//       let u1 = with Random = seeded(42) { Uuid.v4() }
+//       let u2 = with Random = seeded(42) { Uuid.v4() }
+//       assert(u1 == u2)            // тот же seed → тот же uuid
+//   }
+//
+//   test "ulid сортируется по времени" {
+//       with Time = fixed_ms(1000), Random = seeded(1) {
+//           let a = Ulid.new()
+//           // ... advance time не нужен — детерминированный run
+//       }
+//   }
+//
+// Composability:
+//   with Random = seeded(42), Time = fixed_ms(0) { ... }
+//
+// Не для production: `seeded` — НЕ криптографически стойкий PRNG.
+// Для production используется встроенный `Random` handler (CSPRNG via
+// runtime), который и активен по-умолчанию. См. spec/open-questions.md
+// → `secure()` будущая фабрика для CSPRNG.
+
+module std.testing.handlers
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Random — handler-фабрика с фиксированным seed
+// ──────────────────────────────────────────────────────────────────────────
+//
+// PRNG: LCG (Linear Congruential Generator), параметры Knuth MMIX.
+// Не криптографически стойкий, но достаточный для воспроизводимости
+// тестов: разные seed → разные последовательности; один seed → одинаковая
+// последовательность между запусками.
+
+const LCG_A u64 = 6364136223846793005
+const LCG_C u64 = 1442695040888963407
+
+
+// Возвращает Random handler с детерминированной последовательностью.
+// Тот же `seed` всегда даёт ту же последовательность операций.
+export fn seeded(seed int) -> Handler[Random] {
+    let mut state = seed as u64
+    handler Random {
+        u64() {
+            state = state * LCG_A + LCG_C
+            return state
+        }
+        bytes(n) {
+            let mut out []byte = []
+            for _ in 0..n {
+                state = state * LCG_A + LCG_C
+                out.push((state & 0xFF) as byte)
+            }
+            out
+        }
+    }
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Time — handler-фабрика с фиксированным временем
+// ──────────────────────────────────────────────────────────────────────────
+//
+// Все Time-операции возвращают одно и то же время. `sleep(d)` — no-op
+// (мгновенный возврат), не реальная задержка. Это позволяет тестировать
+// timeout/retry/rate_limit логику за миллисекунды без реальных задержек.
+//
+// Для тестов где нужно «advance virtual clock» — пока нет, см.
+// open Q-time-handler-extras в Plan 34. Workaround: создавать новый
+// handler с новым `ms` между сценариями.
+
+
+// Возвращает Time handler с фиксированным временем `ms` миллисекунд от
+// Unix epoch. `now_ns()` возвращает `ms * 1_000_000`. `sleep(d)` — no-op.
+export fn fixed_ms(ms int) -> Handler[Time] {
+    handler Time {
+        now_ms() => ms as u64
+        now_ns() => (ms as u64) * 1_000_000
+        now() => Timestamp.from_unix_millis(ms as i64)
+        sleep(d) => ()
+    }
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Self-tests
+// ──────────────────────────────────────────────────────────────────────────
+
+test "seeded даёт детерминированную последовательность" {
+    let (a, b) = with Random = seeded(42) {
+        (Random.u64(), Random.u64())
+    }
+    let (a2, b2) = with Random = seeded(42) {
+        (Random.u64(), Random.u64())
+    }
+    assert(a == a2)
+    assert(b == b2)
+    assert(a != b)
+}
+
+test "seeded — разные seed дают разные последовательности" {
+    let v1 = with Random = seeded(1) { Random.u64() }
+    let v2 = with Random = seeded(2) { Random.u64() }
+    assert(v1 != v2)
+}
+
+test "seeded.bytes даёт ту же длину что запрошено" {
+    let bs = with Random = seeded(0) { Random.bytes(16) }
+    assert(bs.len == 16)
+}
+
+test "fixed_ms.now_ms возвращает заданное значение" {
+    let ms = with Time = fixed_ms(12345) { Time.now_ms() }
+    assert(ms == 12345 as u64)
+}
+
+test "fixed_ms.sleep — no-op" {
+    with Time = fixed_ms(1000) {
+        Time.sleep(100.millis())
+        Time.sleep(1.second())
+        assert(Time.now_ms() == 1000 as u64)   // время не двинулось
+    }
+}
+
+test "seeded + fixed_ms композируются" {
+    let r = with Random = seeded(42), Time = fixed_ms(5000) {
+        Random.u64() + Time.now_ms()
+    }
+    assert(r != 0 as u64)
+}

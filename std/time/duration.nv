@@ -12,9 +12,11 @@
 // (D35: метод привязан к типу через `fn Type @method`).
 //
 // AI-first: Time effect позволяет в тестах подменить часы:
-//   with Time = fixed_ms(1700000000000) { ... детерминированный код ... }
+//   with Time = th.fixed_ms(1700000000000) { ... детерминированный код ... }
 
 module std.time.duration
+
+import std.testing.handlers as th
 
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -463,20 +465,20 @@ test "Timestamp comparison" {
 }
 
 test "AI-first: Time fixed → детерминированный код" {
-    with Time = fixed_ms(1700000000000) {
+    with Time = th.fixed_ms(1700000000000) {
         let now = Time.now()
         assert(now.as_unix_millis() == 1700000000000)
     }
 }
 
 test "deadline_in + is_past через Time-handler" {
-    with Time = fixed_ms(1000) {
+    with Time = th.fixed_ms(1000) {
         let dl = deadline_in(5.seconds())
         // Сейчас 1000ms = 1s; deadline = 1s + 5s = 6s
         assert(dl.as_unix_secs() == 6)
         assert(!dl.is_past())
     }
-    with Time = fixed_ms(10_000) {
+    with Time = th.fixed_ms(10_000) {
         // 10 секунд после epoch — deadline 6s уже прошёл
         let dl = Timestamp.from_unix_secs(6)
         assert(dl.is_past())
@@ -484,7 +486,7 @@ test "deadline_in + is_past через Time-handler" {
 }
 
 test "measure: длительность action'а" {
-    with Time = fixed_ms(1000) {
+    with Time = th.fixed_ms(1000) {
         let (result, elapsed) = measure(|| 42)
         assert(result == 42)
         // С fixed_ms всегда возвращает то же — elapsed = 0
@@ -493,7 +495,7 @@ test "measure: длительность action'а" {
 }
 
 test "elapsed / time_until" {
-    with Time = fixed_ms(5000) {
+    with Time = th.fixed_ms(5000) {
         let earlier = Timestamp.from_unix_secs(2)
         assert(earlier.elapsed() == 3.seconds())   // 5s - 2s
 

@@ -1,7 +1,7 @@
 // stdlib/rate_limiter.nv — Token bucket rate limiter.
 //
 // AI-first флагман: использует Time effect → детерминированные тесты
-// через `with Time = fixed_ms(...)`.
+// через `with Time = th.fixed_ms(...)`.
 //
 // Token bucket algorithm:
 //   - Bucket capacity = max burst size
@@ -14,6 +14,8 @@
 //   bucket.try_acquire_n(n int) Time -> bool
 
 module std.concurrency.rate_limiter
+
+import std.testing.handlers as th
 
 
 export type TokenBucket {
@@ -74,7 +76,7 @@ export fn TokenBucket mut @available() Time -> f64 {
 // ──────────────────────────────────────────────────────────────────────────
 
 test "burst в пределах capacity" {
-    with Time = fixed_ms(0) {
+    with Time = th.fixed_ms(0) {
         let mut bucket = TokenBucket.new(5, 1.0)        // 1 token/sec, burst=5
         // 5 запросов подряд — все проходят
         for i in 0..5 {
@@ -86,37 +88,37 @@ test "burst в пределах capacity" {
 }
 
 test "refill через прошедшее время" {
-    let mut bucket = with Time = fixed_ms(0) {
+    let mut bucket = with Time = th.fixed_ms(0) {
         TokenBucket.new(2, 1.0)
     }
 
     // На t=0 — 2 tokens
-    with Time = fixed_ms(0) {
+    with Time = th.fixed_ms(0) {
         assert(bucket.try_acquire())
         assert(bucket.try_acquire())
         assert(!bucket.try_acquire())                   // empty
     }
 
     // На t=1500ms — refill 1.5 tokens, можем взять 1
-    with Time = fixed_ms(1500) {
+    with Time = th.fixed_ms(1500) {
         assert(bucket.try_acquire())
         // ещё 0.5 — не хватит на 1
         assert(!bucket.try_acquire())
     }
 
     // На t=2500ms — добралось до 1.5 tokens, ещё 1
-    with Time = fixed_ms(2500) {
+    with Time = th.fixed_ms(2500) {
         assert(bucket.try_acquire())
     }
 }
 
 test "capacity ограничивает refill" {
-    let mut bucket = with Time = fixed_ms(0) {
+    let mut bucket = with Time = th.fixed_ms(0) {
         TokenBucket.new(3, 10.0)           // 10/sec, capacity 3
     }
 
     // Через 100 секунд — должен оставаться 3 (capped)
-    with Time = fixed_ms(100_000) {
+    with Time = th.fixed_ms(100_000) {
         assert(bucket.available() == 3.0)
         assert(bucket.try_acquire())
         assert(bucket.try_acquire())
@@ -126,11 +128,11 @@ test "capacity ограничивает refill" {
 }
 
 test "try_acquire_n: атомарность" {
-    let mut bucket = with Time = fixed_ms(0) {
+    let mut bucket = with Time = th.fixed_ms(0) {
         TokenBucket.new(5, 1.0)
     }
 
-    with Time = fixed_ms(0) {
+    with Time = th.fixed_ms(0) {
         assert(bucket.try_acquire_n(3))              // ok
         assert(!bucket.try_acquire_n(3))             // нет 3, отказ
         assert(bucket.try_acquire_n(2))              // ровно 2 — ok

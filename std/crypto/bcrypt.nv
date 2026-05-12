@@ -25,6 +25,8 @@
 
 module std.crypto.bcrypt
 
+import std.testing.handlers as th
+
 
 export type BcryptError
     | InvalidCost { value int }                  // cost вне [4, 31]
@@ -246,7 +248,7 @@ fn bcrypt_decode_char(c Option[char]) -> Option[u32] {
 // ──────────────────────────────────────────────────────────────────────────
 
 test "hash + verify round-trip" {
-    let h = with Random = seeded(42) {
+    let h = with Random = th.seeded(42) {
         Bcrypt.hash("my-password", 4)        // cost=4 для скорости тестов
     }
     assert(Bcrypt.verify("my-password", h))
@@ -254,15 +256,15 @@ test "hash + verify round-trip" {
 }
 
 test "детерминизм через seeded Random (тестовый сценарий)" {
-    let h1 = with Random = seeded(42) { Bcrypt.hash("password", 4) }
-    let h2 = with Random = seeded(42) { Bcrypt.hash("password", 4) }
+    let h1 = with Random = th.seeded(42) { Bcrypt.hash("password", 4) }
+    let h2 = with Random = th.seeded(42) { Bcrypt.hash("password", 4) }
     // Тот же seed → тот же salt → тот же hash
     assert(h1 == h2)
 }
 
 test "разные salts → разные hashes" {
-    let h1 = with Random = seeded(1) { Bcrypt.hash("password", 4) }
-    let h2 = with Random = seeded(2) { Bcrypt.hash("password", 4) }
+    let h1 = with Random = th.seeded(1) { Bcrypt.hash("password", 4) }
+    let h2 = with Random = th.seeded(2) { Bcrypt.hash("password", 4) }
     assert(h1 != h2)
     // Но оба verify правильным паролем
     assert(Bcrypt.verify("password", h1))
@@ -270,12 +272,12 @@ test "разные salts → разные hashes" {
 }
 
 test "формат hash правильный" {
-    let h = with Random = seeded(0) { Bcrypt.hash("test", 4) }
+    let h = with Random = th.seeded(0) { Bcrypt.hash("test", 4) }
     assert(h.starts_with("$2b$04$"))
 }
 
 test "ошибка: cost вне диапазона" {
-    let r = with Random = seeded(0), Fail[BcryptError] = |e| interrupt Some(e) {
+    let r = with Random = th.seeded(0), Fail[BcryptError] = |e| interrupt Some(e) {
         let _ = Bcrypt.hash("x", 1)
         None
     }
@@ -288,7 +290,7 @@ test "ошибка: cost вне диапазона" {
 test "ошибка: пароль > 72 байта" {
     let mut long = ""
     for i in 0..100 { long = long + "a" }
-    let r = with Random = seeded(0), Fail[BcryptError] = |e| interrupt Some(e) {
+    let r = with Random = th.seeded(0), Fail[BcryptError] = |e| interrupt Some(e) {
         let _ = Bcrypt.hash(long, 4)
         None
     }

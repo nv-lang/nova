@@ -11,6 +11,8 @@
 
 module std.identifiers.snowflake
 
+import std.testing.handlers as th
+
 
 // Custom epoch: 2020-01-01 UTC = 1577836800000 ms since Unix epoch.
 // Можно настроить под проект, но для совместимости используем стандартный.
@@ -95,7 +97,7 @@ export fn Snowflake.parse(id i64) -> SnowflakeParts {
 
 test "next: monotonic в одной ms" {
     let mut gen = SnowflakeGen.new(1)
-    with Time = fixed_ms(1700000000000) {
+    with Time = th.fixed_ms(1700000000000) {
         let a = gen.next()
         let b = gen.next()
         let c = gen.next()
@@ -107,14 +109,14 @@ test "next: monotonic в одной ms" {
 
 test "next: разные ms → разные ID" {
     let mut gen = SnowflakeGen.new(5)
-    let id1 = with Time = fixed_ms(1000) { gen.next() }
-    let id2 = with Time = fixed_ms(2000) { gen.next() }
+    let id1 = with Time = th.fixed_ms(1000) { gen.next() }
+    let id2 = with Time = th.fixed_ms(2000) { gen.next() }
     assert(id1 < id2)
 }
 
 test "parse: round-trip компонентов" {
     let mut gen = SnowflakeGen.new(42)
-    let id = with Time = fixed_ms(1700000000000) { gen.next() }
+    let id = with Time = th.fixed_ms(1700000000000) { gen.next() }
     let parts = Snowflake.parse(id)
     assert(parts.timestamp_ms == 1700000000000)
     assert(parts.machine_id == 42)
@@ -134,8 +136,8 @@ test "ошибка — невалидный machine_id" {
 
 test "ошибка — clock backwards" {
     let mut gen = SnowflakeGen.new(0)
-    let _ = with Time = fixed_ms(2000) { gen.next() }
-    let r = with Time = fixed_ms(1000), Fail[SnowflakeError] = |e| interrupt Some(e) {
+    let _ = with Time = th.fixed_ms(2000) { gen.next() }
+    let r = with Time = th.fixed_ms(1000), Fail[SnowflakeError] = |e| interrupt Some(e) {
         let _ = gen.next()
         None
     }

@@ -218,8 +218,8 @@ fn Parser mut @parse_atom() Fail[CompileError] -> RegexNode {
 }
 
 fn is_special(c char) -> bool =>
-    c == '*' || c == '+' || c == '?' || c == '|'
-    || c == ')' || c == '}' || c == ']'
+    c == '*' || c == '+' || c == '?' || c == '|' ||
+    c == ')' || c == '}' || c == ']'
 
 fn Parser mut @parse_char_class() Fail[CompileError] -> RegexNode {
     let start = @pos

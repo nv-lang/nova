@@ -9,10 +9,12 @@
 //   - encode / decode / verify
 //   - exp/nbf/iat валидация по Time effect
 //
-// AI-first: validation использует Time effect — `with Time = fixed_ms(...)`
+// AI-first: validation использует Time effect — `with Time = th.fixed_ms(...)`
 // делает тесты детерминированными.
 
 module std.crypto.jwt
+
+import std.testing.handlers as th
 
 
 export type JwtError
@@ -203,7 +205,7 @@ test "validate: expired token" {
     m.insert("exp", Num(1000.0))         // expired at 1000s = 1_000_000ms
     let token = Jwt.encode_hs256(secret, Object(m))
 
-    let r = with Time = fixed_ms(2_000_000), Fail[JwtError] = |e| interrupt Some(e) {
+    let r = with Time = th.fixed_ms(2_000_000), Fail[JwtError] = |e| interrupt Some(e) {
         let _ = Jwt.validate_hs256(secret, token)
         None
     }
@@ -219,7 +221,7 @@ test "validate: not yet valid (nbf в будущем)" {
     m.insert("nbf", Num(5000.0))          // valid с 5000s
     let token = Jwt.encode_hs256(secret, Object(m))
 
-    let r = with Time = fixed_ms(1_000_000), Fail[JwtError] = |e| interrupt Some(e) {
+    let r = with Time = th.fixed_ms(1_000_000), Fail[JwtError] = |e| interrupt Some(e) {
         let _ = Jwt.validate_hs256(secret, token)
         None
     }
@@ -237,7 +239,7 @@ test "validate: ok если exp в будущем и nbf в прошлом" {
     m.insert("sub", Str("user"))
     let token = Jwt.encode_hs256(secret, Object(m))
 
-    with Time = fixed_ms(5_000_000) {
+    with Time = th.fixed_ms(5_000_000) {
         let claims = Jwt.validate_hs256(secret, token)
         match claims.as_object() {
             Some(c) => assert(c.get("sub") == Some(Str("user")))

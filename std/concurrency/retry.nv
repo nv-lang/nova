@@ -6,7 +6,7 @@
 //   - Custom error filter (retry только определённые ошибки)
 //
 // Использует Time + Random эффекты — детерминируется в тестах
-// через `with Time = fixed_ms(0), Random = seeded(42)`.
+// через `with Time = th.fixed_ms(0), Random = th.seeded(42)`.
 //
 // API:
 //   RetryPolicy.exponential(...) -> RetryPolicy
@@ -14,6 +14,8 @@
 //   policy.execute[T, E](body fn() Fail[E] -> T) Time Random Fail[E] -> T
 
 module std.concurrency.retry
+
+import std.testing.handlers as th
 
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -156,7 +158,7 @@ fn apply_jitter(j Jitter, d Duration) Random -> Duration => match j {
 
 test "execute: первая попытка успешна" {
     let policy = RetryPolicy.exponential(3)
-    with Time = fixed_ms(0), Random = seeded(0) {
+    with Time = th.fixed_ms(0), Random = th.seeded(0) {
         let result = policy.execute(|| 42)
         assert(result == 42)
     }
@@ -165,7 +167,7 @@ test "execute: первая попытка успешна" {
 test "execute: retry до успеха" {
     let policy = RetryPolicy.fixed(5, 10.millis())
     let mut attempts = 0
-    with Time = fixed_ms(0), Random = seeded(0) {
+    with Time = th.fixed_ms(0), Random = th.seeded(0) {
         let result = policy.execute(|| {
             attempts += 1
             if attempts < 3 { throw "transient" }
@@ -178,7 +180,7 @@ test "execute: retry до успеха" {
 
 test "execute: исчерпание попыток" {
     let policy = RetryPolicy.fixed(3, 10.millis())
-    let r = with Time = fixed_ms(0), Random = seeded(0),
+    let r = with Time = th.fixed_ms(0), Random = th.seeded(0),
                 Fail[str] = |e| interrupt Some(e) {
         let _ = policy.execute(|| {
             throw "always fails"
@@ -200,7 +202,7 @@ test "exponential backoff: правильные delay'и" {
         NoJitter,
     )
     // attempt 1: 100ms, 2: 200ms, 3: 400ms, 4: 800ms
-    with Random = seeded(0) {
+    with Random = th.seeded(0) {
         assert(policy.compute_delay(1) == 100.millis())
         assert(policy.compute_delay(2) == 200.millis())
         assert(policy.compute_delay(3) == 400.millis())
@@ -218,7 +220,7 @@ test "max_delay ограничивает exponential" {
         },
         NoJitter,
     )
-    with Random = seeded(0) {
+    with Random = th.seeded(0) {
         // attempt 5: 1*10^4 = 10000s ≫ 30s, должен capped
         assert(policy.compute_delay(5) == 30.seconds())
     }
@@ -226,8 +228,8 @@ test "max_delay ограничивает exponential" {
 
 test "jitter детерминистичен через seeded Random" {
     let policy = RetryPolicy.custom(3, Fixed { delay: 1.second() }, FullJitter)
-    let d1 = with Random = seeded(42) { policy.compute_delay(1) }
-    let d2 = with Random = seeded(42) { policy.compute_delay(1) }
+    let d1 = with Random = th.seeded(42) { policy.compute_delay(1) }
+    let d2 = with Random = th.seeded(42) { policy.compute_delay(1) }
     assert(d1 == d2)                               // тот же seed → тот же jitter
 }
 
@@ -235,7 +237,7 @@ test "AI-first: тесты retry полностью детерминирован
     // Без mock-библиотек: just handler-substitution.
     let policy = RetryPolicy.exponential(3)
     let mut count = 0
-    with Time = fixed_ms(0), Random = seeded(123) {
+    with Time = th.fixed_ms(0), Random = th.seeded(123) {
         let r = with Fail[str] = |e| interrupt None {
             count += 1
             Some(policy.execute(|| {
