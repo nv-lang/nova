@@ -1,0 +1,13 @@
+// EXPECT_COMPILE_ERROR contract not satisfied in `wrong_const`
+//
+// Plan 33.1 Ф.3: counterexample-detection. `ensures result == 42`
+// для body `=> 100` — после substitute result→100: `100 == 42` → false.
+// Trivial backend упрощает до `false` → UNSAT-проверки negation:
+// `(not (100 == 42)) = (not false) = true` → SAT trivial → disproved.
+
+module nova_tests.contracts.verify_disproved
+
+#must_verify
+fn wrong_const() -> int
+    ensures result == 42
+=> 100

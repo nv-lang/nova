@@ -6165,3 +6165,110 @@ Tests:
 - nova_tests/contracts/typecheck_fail_fn_not_supported.nv — negative
   с EXPECT_COMPILE_ERROR.
 
+
+
+================================================================================
+2026-05-12 Plan 33.1 Ф.3: SMT verification (TrivialBackend, без libz3)
+================================================================================
+
+Production-grade engine-agnostic SMT pipeline. Z3 не установлен в системе/
+vcpkg, поэтому первый backend — TrivialBackend (built-in, без внешних
+зависимостей). Z3-backend — отдельная реализация trait'а через future
+feature-flag `z3-backend`.
+
+### Архитектура
+
+`compiler-codegen/src/verify/` — новый модуль:
+
+- `ir.rs` — SMT-нейтральный IR: SmtTerm, SortRef, Formula, Assertion,
+  SatResult { Sat(Model) | Unsat(UnsatCore) | Unknown(UnknownReason) },
+  Model, ModelValue, UnknownReason {Timeout, NonLinearArithmetic,
+  UnsupportedTheory, BackendError, NotAttempted}.
+
+- `encode.rs` — Nova AST → SMT-IR encoder:
+  - IntLit, BoolLit, StrLit, Ident → directly.
+  - Binary +/-/*///%, ==/!=/<,<=,>,>=, &&/||, ==>/<==> → SMT App.
+  - Unary !, - → not, неотрицательная унарная подстановка.
+  - if/else → ite через or+and.
+  - `old(expr)` → fresh var `_old_<sanitized-expr>`.
+  - member access → UF `_field_<name>(obj)`.
+  - other (block stmts, match, lambda, call non-old) → EncodingError.
+
+- `backend/mod.rs` — `trait SmtBackend`:
+  declare_var, assert, push/pop, check_sat, name. Engine-agnostic.
+
+- `backend/trivial.rs` — `TrivialBackend`:
+  Symbolic simplification + pattern matching. Доказывает:
+  * Constant folding: 1+2→3.
+  * Reflexivity: x==x→true, x-x→0.
+  * Boolean idempotents: x&&x→x, x||true→true.
+  * Impl shortcuts: false==>A→true, A==>true→true, A==>A→true.
+  * Identity: x+0→x, x*1→x.
+  Остальное → Unknown(NotAttempted) → runtime fallback (D24 semantics).
+
+- `pipeline.rs` — `VerificationPipeline::verify_fn`:
+  1. Declare params как vars в backend.
+  2. Encode requires → assertions.
+  3. Encode body value (expression-body или block без stmts).
+  4. Для каждого ensures: substitute result→body_val, substitute
+     `_old_<x>`→`x` (33.1 без mut, snapshot trivial), try_prove.
+  5. Сборка ModuleVerifyReport { proven, errors, warnings }.
+
+### Интеграция в types/mod.rs
+
+`check_module`:
+- Запускает ContractCtx (базовые правила) → errors.
+- Если errors пусто — запускает `verify::verify_module` → report.
+- env.proven_contracts получает список (fn_name, span) доказанных.
+- `#must_verify` failures + counterexamples → errors.
+- Default-mode unknown → silent (runtime fallback).
+
+### Поведение #must_verify
+
+- Trivial backend доказывает: `ensures result == x*2` для body `=> x*2`
+  (reflexive после substitute).
+- Trivial backend НЕ доказывает: `ensures result > 0` для body `=> x+1`
+  при `requires x > 0` (нужен linear-arith reasoning — ждёт Z3).
+- Counterexample detection: `ensures result == 42` для body `=> 100`
+  → simplified `100 == 42 → false` → disproved.
+
+### Тесты
+
+Positive:
+- verify_must_verify_proven.nv — must_double, identity, const_42
+  (все reflexive ensures, trivial backend доказывает).
+
+Negative:
+- verify_must_verify_fail.nv — `#must_verify` + body требующий
+  linear-arith → compile error «SMT returned unknown».
+- verify_disproved.nv — `#must_verify` + неправильный body →
+  compile error «counterexample».
+
+### Zero-cost release
+
+Текущее поведение:
+- Debug: NOVA_CONTRACTS_RUNTIME defined → все checks emit'ятся.
+- Release: NOVA_CONTRACTS_RUNTIME undefined → препроцессор стирает все
+  checks → zero overhead.
+
+Это уже даёт zero-cost. Selective stripping proven контрактов в debug
+(чтобы экономить cycles на гарантированно-валидных) — оптимизация,
+отложена в Plan 36 production hardening.
+
+### Regression
+
+198/198 PASS (194 baseline + 4 новых contract-тестов).
+
+### Что осталось в Plan 33.1
+
+- Z3 backend через feature-flag (требует libz3 setup в vcpkg/system).
+- После Z3: linear-arith доказательства, sophisticated counterexamples.
+
+### Дальше
+
+- Plan 33.2: frame conditions (reads/modifies), loop invariants,
+  termination (decreases), composition #pure, record invariant,
+  arrays в SMT.
+- Plan 33.3: pure_view + axioms, ghost state, quantifiers, FP/strings,
+  incremental cache, parallel, Dafny-parity.
+

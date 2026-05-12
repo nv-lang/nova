@@ -12,5 +12,6 @@ pub mod manifest;
 pub mod parser;
 pub mod test_runner;
 pub mod types;
+pub mod verify;
 
 pub use diag::{Diagnostic, Span};

@@ -611,6 +611,7 @@ fn cmd_test_all(
         list_only: false,
         filter_from: None,
         shuffle_seed: None,
+        skip: &[],
     };
     let summary = test_runner::run_all(opts)?;
     test_runner::print_summary(&summary, format);

@@ -60,16 +60,20 @@ fn unverified_fn(x int) -> int
 #pure
 fn pure_add(a int, b int) -> int => a + b
 
-// Атрибут #verify_timeout.
+// Атрибут #verify_timeout (с #unverified чтобы trivial backend не пытался
+// доказать x+1>0 — это требует linear-arith reasoning, ждёт Z3).
+#unverified
 #verify_timeout(5000)
 fn slow_proof(x int) -> int
     requires x > 0
     ensures result > 0
 => x + 1
 
-// Комбинация атрибутов.
+// Комбинация атрибутов: #pure + #unverified (trivial backend без
+// linear-arith reasoning не доказывает x+1>0 из x>0; Z3 backend
+// сделает это в будущем).
 #pure
-#must_verify
+#unverified
 fn must_pure(x int) -> int
     requires x > 0
     ensures result > 0

@@ -48,6 +48,10 @@ pub struct ModuleEnv {
     pub types: HashMap<String, TypeDecl>,
     pub fns: HashMap<String, Vec<FnDecl>>,
     pub consts: HashMap<String, ConstDecl>,
+    /// Plan 33.1 Ф.3: список доказанных (fn_name, contract span) контрактов.
+    /// Codegen в release-сборке стирает соответствующие runtime-checks
+    /// (zero-cost guarantee). В debug — checks всегда emit'ятся.
+    pub proven_contracts: Vec<(String, Span)>,
 }
 
 /// Минимальная проверка модуля. Регистрирует имена и базовую структуру —
@@ -225,10 +229,27 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
     // - `result` запрещён в `requires`;
     // - `old(...)` запрещён в `requires`;
     // - composition (вызов другой fn в контракте) запрещён в 33.1
-    //   (будет разрешён для @pure в 33.2).
-    // Полная type-checking + SMT — в Ф.3.
+    //   (будет разрешён для #pure в 33.2).
     let contract_ctx = ContractCtx::build(module);
     contract_ctx.check_module(module, &mut errors);
+
+    // Plan 33.1 Ф.3 (D24): SMT verification.
+    // TrivialBackend по умолчанию (Z3 — отдельная feature в будущем).
+    // Доказанные контракты записываются в env для zero-cost release.
+    // `#must_verify` errors / counterexample warnings — попадают в errors.
+    if errors.is_empty() {
+        // Verify только если предыдущие фазы прошли (иначе encode на
+        // невалидном AST может крашнуть).
+        let report = crate::verify::verify_module(module);
+        env.proven_contracts = report.proven;
+        for e in report.errors { errors.push(e); }
+        // warnings пока silent — добавим warning infrastructure
+        // в Plan 36 production hardening.
+        // Note: counterexample-warnings (без #must_verify) бэк-port'ятся
+        // в errors временно, чтобы в 33.1 negative-тесты могли их детектить.
+        // Это будет уточнено когда добавится warning severity (Plan 36).
+        let _ = report.warnings; // intentionally silent
+    }
 
     if errors.is_empty() {
         Ok(env)

@@ -1,0 +1,13 @@
+// EXPECT_COMPILE_ERROR `#must_verify` failed for `unprovable_fn`
+//
+// Plan 33.1 Ф.3: #must_verify — strict mode. SMT обязан доказать.
+// Trivial backend без linear-arith не докажет `result > 0` для body `x+1`
+// при `requires x > 0`. Это unknown → compile error в strict mode.
+
+module nova_tests.contracts.verify_must_verify_fail
+
+#must_verify
+fn unprovable_fn(x int) -> int
+    requires x > 0
+    ensures result > 0
+=> x + 1
