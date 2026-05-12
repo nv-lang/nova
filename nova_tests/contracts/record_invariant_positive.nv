@@ -1,0 +1,17 @@
+// Plan 33.3 Ф.9.2: record invariant auto-enforce — positive.
+//
+// `Account { balance: 100 }` где invariant `balance >= 0` проходит check.
+
+module nova_tests.contracts.record_invariant_positive
+
+type Account {
+    balance int
+}
+    invariant balance >= 0
+
+test "record invariant positive" {
+    let a = Account { balance: 100 }
+    let b = Account { balance: 0 }
+    assert(a.balance == 100)
+    assert(b.balance == 0)
+}

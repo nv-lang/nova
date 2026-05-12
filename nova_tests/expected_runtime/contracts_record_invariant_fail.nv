@@ -1,0 +1,17 @@
+// EXPECT_RUNTIME_PANIC contract invariant failed in `Account`
+//
+// Plan 33.3 Ф.9.2: record invariant violation на конструкции →
+// runtime contract violation в debug.
+
+module nova_tests.expected_runtime.contracts_record_invariant_fail
+
+type Account {
+    balance int
+}
+    invariant balance >= 0
+
+fn main() Io -> () {
+    let bad = Account { balance: -100 }
+    println("UNREACHABLE")
+    let _ = bad
+}

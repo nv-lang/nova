@@ -49,7 +49,7 @@ pub enum WithResultCategory {
 /// C-тип VAL. Используется в `infer_expr_c_type` для `With`, когда body
 /// не имеет trailing (тогда тип blocка определяется handler'ом).
 pub fn infer_handler_interrupt_ty(emitter: &CEmitter, handler: &Expr) -> Option<String> {
-    use crate::ast::{ClosureBody, FnBody};
+    use crate::ast::{ClosureBody, FnBody, ElseBranch};
     fn walk_expr(emitter: &CEmitter, e: &Expr, out: &mut Option<String>) {
         if out.is_some() { return; }
         match &e.kind {
@@ -60,22 +60,33 @@ pub fn infer_handler_interrupt_ty(emitter: &CEmitter, handler: &Expr) -> Option<
                 *out = Some("nova_int".into());
             }
             ExprKind::Block(b) => {
-                for s in &b.stmts { walk_stmt(emitter, s, out); }
-                if let Some(t) = &b.trailing { walk_expr(emitter, t, out); }
+                walk_block(emitter, b, out);
             }
-            ExprKind::If { then_branch, else_branch, .. } => {
-                walk_block(emitter, then_branch, out);
-                if let Some(eb) = else_branch { walk_block(emitter, eb, out); }
+            ExprKind::If { then, else_, .. } => {
+                walk_block(emitter, then, out);
+                if let Some(eb) = else_ {
+                    match eb {
+                        ElseBranch::Block(b) => walk_block(emitter, b, out),
+                        ElseBranch::If(if_expr) => walk_expr(emitter, if_expr, out),
+                    }
+                }
             }
             ExprKind::Match { arms, .. } => {
-                for a in arms { walk_expr(emitter, &a.body, out); }
+                use crate::ast::MatchArmBody;
+                for a in arms {
+                    match &a.body {
+                        MatchArmBody::Expr(e) => walk_expr(emitter, e, out),
+                        MatchArmBody::Block(b) => walk_block(emitter, b, out),
+                    }
+                }
             }
             _ => {}
         }
     }
     fn walk_stmt(emitter: &CEmitter, s: &Stmt, out: &mut Option<String>) {
         match s {
-            Stmt::Expr(e) | Stmt::Return(Some(e)) => walk_expr(emitter, e, out),
+            Stmt::Expr(e) => walk_expr(emitter, e, out),
+            Stmt::Return { value: Some(e), .. } => walk_expr(emitter, e, out),
             _ => {}
         }
     }
@@ -92,13 +103,15 @@ pub fn infer_handler_interrupt_ty(emitter: &CEmitter, handler: &Expr) -> Option<
         ExprKind::ClosureFull(sb) => match &sb.body {
             FnBody::Expr(e) => walk_expr(emitter, e, &mut out),
             FnBody::Block(b) => walk_block(emitter, b, &mut out),
+            FnBody::External => {}
         },
         ExprKind::Lambda { body, .. } => walk_expr(emitter, body, &mut out),
         ExprKind::HandlerLit { methods, .. } => {
+            use crate::ast::HandlerMethodBody;
             for m in methods {
                 match &m.body {
-                    FnBody::Expr(e) => walk_expr(emitter, e, &mut out),
-                    FnBody::Block(b) => walk_block(emitter, b, &mut out),
+                    HandlerMethodBody::Expr(e) => walk_expr(emitter, e, &mut out),
+                    HandlerMethodBody::Block(b) => walk_block(emitter, b, &mut out),
                 }
                 if out.is_some() { break; }
             }
@@ -227,6 +240,11 @@ pub struct CEmitter {
     record_variant_field_order: HashMap<String, Vec<String>>,
     /// Return type of the currently-emitting function, used for match result type inference.
     current_fn_return_ty: Option<String>,
+    /// Plan 33.3 Ф.9.2 (D24): record-invariants per-type. Map struct_name →
+    /// list of (invariant-expr, span). Используется emit_record_lit'ом для
+    /// wrap'а конструкции в runtime-check (`if (!Inv(tmp)) violation; tmp`).
+    /// Заполняется в emit_module pre-pass.
+    record_invariants: HashMap<String, Vec<(Expr, Span)>>,
     /// Plan 33.1 Ф.4 (D24): если установлено — функция имеет ensures-контракты,
     /// и все `Stmt::Return X` подменяются на `{ _nova_result = X; goto <label>; }`.
     /// Trailing block-expression также. После label эмитятся ensures-checks
@@ -446,6 +464,7 @@ impl CEmitter {
             record_variant_field_order: HashMap::new(),
             current_fn_return_ty: None,
             contracts_post_label: None,
+            record_invariants: HashMap::new(),
             array_element_types: HashMap::new(),
             option_inner_types: HashMap::new(),
             pending_option_inner_type: None,
@@ -565,6 +584,17 @@ impl CEmitter {
     }
 
     pub fn emit_module(mut self, module: &Module) -> Result<(String, Vec<String>), String> {
+        // Plan 33.3 Ф.9.2 (D24): pre-pass — собрать invariants для record-типов.
+        // Used в emit_record_lit для wrap'а конструкции в runtime-check.
+        for item in &module.items {
+            if let Item::Type(td) = item {
+                if !td.invariants.is_empty() {
+                    let invs: Vec<(Expr, Span)> = td.invariants.iter()
+                        .map(|c| (c.expr.clone(), c.span)).collect();
+                    self.record_invariants.insert(td.name.clone(), invs);
+                }
+            }
+        }
         // Pre-populate sum_schemas with built-in Option and Result types.
         {
             let mut opt_variants = HashMap::new();
@@ -1578,9 +1608,21 @@ impl CEmitter {
         //   - pointer type (contains '*') → use NovaInterruptFrame.value_ptr (void* slot)
         //   - value struct (NovaOpt_X, NovaResult_X_E, etc.) → heap-allocate,
         //     pointer goes through value_ptr; reader dereferences.
-        let trail_ty = body.trailing.as_ref()
-            .map(|e| self.infer_expr_c_type(e))
-            .unwrap_or_else(|| "nova_unit".into());
+        // Если body не имеет trailing (заканчивается throw/return), смотрим на
+        // handler interrupt-VAL type — это semantically тип W (D61 §10).
+        let trail_ty = if let Some(t) = &body.trailing {
+            self.infer_expr_c_type(t)
+        } else {
+            // Probe handler-лямбды на interrupt VAL.
+            let mut found: Option<String> = None;
+            for b in bindings {
+                if let Some(ty) = infer_handler_interrupt_ty(self, &b.handler) {
+                    found = Some(ty);
+                    break;
+                }
+            }
+            found.unwrap_or_else(|| "nova_unit".into())
+        };
         let category = with_result_category(&trail_ty);
 
         // Emit interrupt frame so `interrupt v` can early-exit this with-block
@@ -5607,7 +5649,50 @@ impl CEmitter {
             }
 
             ExprKind::RecordLit { type_name, fields } => {
-                self.emit_record_lit(type_name.as_deref(), fields)
+                let lit = self.emit_record_lit(type_name.as_deref(), fields)?;
+                // Plan 33.3 Ф.9.2 (D24): record invariant auto-enforce.
+                // Если у type есть invariants — wrap'нуть конструкцию
+                // в runtime-check (in debug). Используем statement-expression
+                // GNU extension `({ ... })` чтобы expr-position сохранилась.
+                if let Some(name) = type_name {
+                    let struct_name = name.join("_");
+                    if let Some(invs) = self.record_invariants.get(&struct_name).cloned() {
+                        // Эмитим check inline. lit — это уже tmp-var имя
+                        // (emit_record_lit возвращает имя), либо expression.
+                        // Для простоты: декларируем temp, проверяем invariants,
+                        // возвращаем temp. Это меняет inline structure — нужен
+                        // отдельный line-emit, а не expr-substitution.
+                        // Поскольку lit обычно tmp (см. emit_record_lit), просто
+                        // эмитим check после.
+                        for (inv_expr, span) in &invs {
+                            // Bind поля record'а как `tmp->field` для invariant-eval.
+                            // В bootstrap — простой text substitution через
+                            // emit_expr с self.expected_record_type set.
+                            // Сам invariant ссылается на field-names directly
+                            // (записан как `balance >= 0` без `self.`).
+                            // Чтобы он сработал — должны field'ы быть в scope.
+                            // В bootstrap делаем макрос через define + undef.
+                            let inv_src = Self::expr_to_display(inv_expr);
+                            // Получаем поля типа.
+                            if let Some(fields_schema) = self.record_schemas.get(&struct_name).cloned() {
+                                self.line("#ifdef NOVA_CONTRACTS_RUNTIME");
+                                self.line("{");
+                                // Decl shadow-locals для каждого поля → tmp->field.
+                                for (fname, ftyc) in &fields_schema {
+                                    self.line(&format!("    {} {} = {}->{};", ftyc, fname, lit, fname));
+                                }
+                                let inv_c = self.emit_expr(inv_expr)?;
+                                self.line(&format!(
+                                    "    if (!({})) nova_contract_violation(NOVA_CONTRACT_INV, \"{}\", \"{}\", \"<invariant>\", {});",
+                                    inv_c, struct_name, Self::escape_c_str(&inv_src), span.start
+                                ));
+                                self.line("}");
+                                self.line("#endif");
+                            }
+                        }
+                    }
+                }
+                Ok(lit)
             }
 
             ExprKind::ArrayLit(elems) => {
@@ -10429,6 +10514,19 @@ impl CEmitter {
              }}\n",
             sani = sanitized, body = cmp_body);
         self.novaopt_typedefs_buf.borrow_mut().push_str(&eq_fn);
+
+        // Plan 39 Issue A: auto-gen Option methods is_some / is_none /
+        // unwrap_or — для скаляров эти helper'ы есть в array.h (nova_int,
+        // nova_str). Для остальных генерируем здесь чтобы codegen мог
+        // вызывать `.is_some()` / `.is_none()` / `.unwrap_or(default)`.
+        if sanitized != "nova_int" && sanitized != "nova_str" {
+            let methods = format!(
+                "static inline nova_bool Nova_Option_method_is_some_{sani}(NovaOpt_{sani} o) {{ return o.tag == NOVA_TAG_Option_Some; }}\n\
+                 static inline nova_bool Nova_Option_method_is_none_{sani}(NovaOpt_{sani} o) {{ return o.tag == NOVA_TAG_Option_None; }}\n\
+                 static inline {cty} Nova_Option_method_unwrap_or_{sani}(NovaOpt_{sani} o, {cty} default_v) {{ return o.tag == NOVA_TAG_Option_Some ? o.value : default_v; }}\n",
+                sani = sanitized, cty = c_ty);
+            self.novaopt_typedefs_buf.borrow_mut().push_str(&methods);
+        }
     }
 
 

@@ -35,11 +35,13 @@ fn process(input int) -> int
     ensures input == 0 <==> result == 0
     decreases input
 {
-    // ghost — snapshot для spec-only reasoning.
+    // ghost — snapshot для spec-only reasoning (не используется в
+    // non-ghost expressions; ghost vars читаются только в специальных
+    // контекстах: requires/ensures/invariant/другие ghost-stmt).
     ghost let initial = input
 
-    // assume — escape hatch.
-    assume initial >= 0
+    // assume — escape hatch. Использует non-ghost var `input`, не ghost.
+    assume input >= 0
 
     // assert_static — intermediate proof obligation.
     assert_static is_safe(input)
