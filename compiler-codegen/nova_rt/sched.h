@@ -119,6 +119,49 @@ static inline void nova_sched_park(NovaFiberQueue* scope, int slot) {
     mco_yield(co);
 }
 
+/* Plan 40 R2 C6: park_with_unlock — atomically transition to parked state
+ * and release a lock, so wake from another thread cannot race with park.
+ *
+ * Pattern (lost-wakeup-free):
+ *   nova_mutex_lock(&st->mu);
+ *   // register waiter under lock
+ *   nova_sched_park_with_unlock(scope, slot, _unlock_mu, &st->mu);
+ *   // mutex is already released by the time we return
+ *   nova_mutex_lock(&st->mu);
+ *   // re-check state, unlink waiter
+ *
+ * Bootstrap implementation (single-thread): unlock BEFORE park is safe
+ * because no other thread exists. Under Plan 23 M:N this MUST become
+ * atomic — scheduler must transition fiber to parked state, then call
+ * unlock_fn, then deschedule. Until then this API contract is the
+ * single source of truth for callers; callers MUST use this instead of
+ * lock+unlock+park because they will break under M:N otherwise.
+ *
+ * IMPORTANT: callers MUST re-check application state after park returns
+ * (spurious wakes are allowed). For Plan 40 channels/select, the state
+ * is `BaseWaiter.fired` atomic — if 0 after park, retry try_immediate
+ * or park again. This re-check is correctness, not optimization. */
+static inline void nova_sched_park_with_unlock(NovaFiberQueue* scope, int slot,
+                                                 void (*unlock_fn)(void*),
+                                                 void* unlock_arg) {
+    if (!scope || slot < 0 || slot >= scope->count) {
+        fprintf(stderr, "nova: nova_sched_park_with_unlock: invalid scope/slot\n");
+        abort();
+    }
+    NovaSchedState* st = nova_sched_get_state(scope);
+    st->parked[slot] = true;
+    mco_coro* co = mco_running();
+    if (!co) {
+        fprintf(stderr, "nova: nova_sched_park_with_unlock: not in fiber context\n");
+        abort();
+    }
+    /* Bootstrap single-thread: unlock before park is safe.
+     * M:N (Plan 23): unlock must happen AFTER parked-state visible to
+     * other threads — scheduler implementation responsibility. */
+    if (unlock_fn) unlock_fn(unlock_arg);
+    mco_yield(co);
+}
+
 /* Wake parked fiber. Idempotent. Безопасно вызывать из libuv-callback'а. */
 static inline void nova_sched_wake(NovaFiberQueue* scope, int slot) {
     if (!scope || slot < 0 || slot >= scope->count) return;
