@@ -458,10 +458,11 @@ impl Parser {
     /// Контекстный разбор: `requires` / `ensures` / `reads` / `modifies` —
     /// обычные Ident'ы в лексере, парсер распознаёт их в позиции после
     /// return-type до `=>`/`{`. Один clause на строке; разделение по newline.
-    fn parse_contracts(&mut self) -> Result<(Vec<Contract>, Vec<FrameTarget>, Vec<FrameTarget>), Diagnostic> {
+    fn parse_contracts(&mut self) -> Result<(Vec<Contract>, Vec<FrameTarget>, Vec<FrameTarget>, Option<Expr>), Diagnostic> {
         let mut contracts = Vec::new();
         let mut reads = Vec::new();
         let mut modifies = Vec::new();
+        let mut decreases: Option<Expr> = None;
         loop {
             // Пропустить newlines между контрактами.
             self.skip_newlines();
@@ -488,10 +489,20 @@ impl Parser {
                     self.bump();
                     self.parse_frame_target_list(&mut modifies)?;
                 }
+                TokenKind::Ident(n) if n == "decreases" => {
+                    if decreases.is_some() {
+                        let sp = self.peek().span;
+                        return Err(Diagnostic::new(
+                            "duplicate `decreases` clause", sp));
+                    }
+                    self.bump();
+                    let expr = self.parse_expr()?;
+                    decreases = Some(expr);
+                }
                 _ => break,
             }
         }
-        Ok((contracts, reads, modifies))
+        Ok((contracts, reads, modifies, decreases))
     }
 
     /// Plan 33.2: парсит `reads <expr>{, <expr>}*` или `modifies <expr>{, <expr>}*`.
@@ -685,10 +696,10 @@ impl Parser {
         // Plan 33.1+33.2 (D24): contracts + reads/modifies после сигнатуры,
         // до тела. `requires <expr>` / `ensures <expr>` / `reads ...` /
         // `modifies ...` на отдельных строках.
-        let (contracts, reads, modifies) = self.parse_contracts()?;
+        let (contracts, reads, modifies, decreases) = self.parse_contracts()?;
         // external fn не может иметь контрактов в 33.1.
         // (В 33.3 будет `#trusted` external — отдельный путь.)
-        if is_external && (!contracts.is_empty() || !reads.is_empty() || !modifies.is_empty()) {
+        if is_external && (!contracts.is_empty() || !reads.is_empty() || !modifies.is_empty() || decreases.is_some()) {
             let span = contracts.first().map(|c| c.span)
                 .or_else(|| reads.first().map(|f| f.span()))
                 .or_else(|| modifies.first().map(|f| f.span()))
@@ -746,10 +757,11 @@ impl Parser {
             // Backward-compat: пустой Vec для функций без контрактов;
             // Default verify_mode / Unknown purity для функций без атрибутов.
             contracts,
-            // Plan 33.2 (D24): reads/modifies frame conditions —
-            // парсятся в parse_contracts() выше; пока пустые.
+            // Plan 33.2 (D24): reads/modifies frame conditions +
+            // decreases termination measure.
             reads,
             modifies,
+            decreases,
             verify_mode: contract_attrs.verify_mode,
             verify_timeout_ms: contract_attrs.verify_timeout_ms,
             purity: contract_attrs.purity,
@@ -896,6 +908,35 @@ impl Parser {
         if !matches!(kind, TypeDeclKind::Sum(_)) {
             self.expect_newline_or_eof().ok();
         }
+        // Plan 33.2 Ф.7 (D24): `invariant <expr>` clauses на record-типах.
+        // Парсятся после type-body, могут быть несколько. Для не-record
+        // типов — error (sum/protocol/alias/newtype invariants — будущее).
+        let mut invariants: Vec<Contract> = Vec::new();
+        loop {
+            self.skip_newlines();
+            match &self.peek().kind {
+                TokenKind::Ident(n) if n == "invariant" => {
+                    if !matches!(kind, TypeDeclKind::Record(_)) {
+                        let sp = self.peek().span;
+                        return Err(Diagnostic::new(
+                            "`invariant` clauses are only supported on record types in Plan 33.2 \
+                             (sum/protocol/alias invariants — future)",
+                            sp,
+                        ));
+                    }
+                    let cstart = self.peek().span;
+                    self.bump();
+                    let expr = self.parse_expr()?;
+                    let cspan = cstart.merge(expr.span);
+                    invariants.push(Contract {
+                        kind: ContractKind::Ensures, // invariants are 'ensures'-like
+                        expr,
+                        span: cspan,
+                    });
+                }
+                _ => break,
+            }
+        }
         let span = start.merge(self.tokens[self.pos.saturating_sub(1)].span);
         Ok(TypeDecl {
             is_export,
@@ -903,6 +944,7 @@ impl Parser {
             generics,
             kind,
             span,
+            invariants,
         })
     }
 

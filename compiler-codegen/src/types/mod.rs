@@ -3182,21 +3182,31 @@ fn call_target_name(e: &Expr) -> Option<String> {
 //    разрешит для @pure функций).
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Контекст контракт-проверок. Накапливает имена top-level fn (для
-/// детекции composition в 33.1 как error).
+/// Контекст контракт-проверок.
+///
+/// Plan 33.2 Ф.7: разрешает composition — вызов `#pure` функций
+/// в контрактах. Non-`#pure` функции в контрактах — compile error.
 struct ContractCtx {
+    /// Имена всех top-level fn.
     fn_names: HashSet<String>,
+    /// Имена fn объявленных `#pure` (через атрибут).
+    /// Используются для разрешения composition в контрактах (33.2).
+    pure_fn_names: HashSet<String>,
 }
 
 impl ContractCtx {
     fn build(module: &Module) -> Self {
         let mut fn_names = HashSet::new();
+        let mut pure_fn_names = HashSet::new();
         for item in &module.items {
             if let Item::Fn(fd) = item {
                 fn_names.insert(fd.name.clone());
+                if matches!(fd.purity, Purity::Pure) {
+                    pure_fn_names.insert(fd.name.clone());
+                }
             }
         }
-        Self { fn_names }
+        Self { fn_names, pure_fn_names }
     }
 
     fn check_module(&self, module: &Module, errors: &mut Vec<Diagnostic>) {
@@ -3418,12 +3428,13 @@ impl ContractCtx {
                         }
                         return;
                     }
-                    // Composition: вызов другой top-level fn в контракте.
-                    if self.fn_names.contains(name) {
+                    // Plan 33.2 Ф.7 composition: вызов другой fn в контракте
+                    // разрешён ТОЛЬКО если она `#pure`.
+                    if self.fn_names.contains(name) && !self.pure_fn_names.contains(name) {
                         errors.push(Diagnostic::new(
                             format!(
-                                "calling user function `{}` in contracts is not supported in Plan 33.1 \
-                                 (composition with `@pure` functions — Plan 33.2)",
+                                "calling user function `{}` in contracts requires `#pure` attribute \
+                                 (Plan 33.2 composition: only #pure functions allowed)",
                                 name
                             ),
                             e.span,

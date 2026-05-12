@@ -67,6 +67,13 @@ pub struct FnDecl {
     /// Type-check проверяет body: assignments вне frame → error.
     /// SMT использует frame-axiom: всё вне modifies = old.
     pub modifies: Vec<FrameTarget>,
+    /// Plan 33.2 Ф.7 (D24): `decreases <expr>` — termination measure
+    /// для recursive функций. Well-founded measure; SMT-verify check'ает
+    /// что для каждого рекурсивного вызова `f(args')` в теле `f(args)`:
+    /// `decreases(args') < decreases(args)`.
+    /// Без decreases для recursive fn — warning (ensures could be vacuously
+    /// satisfied if fn diverges). В trivial-backend 33.2 — parsed, not enforced.
+    pub decreases: Option<Expr>,
     /// Plan 33.1 (D24): режим верификации контрактов.
     /// `@must_verify` / `@unverified` / default.
     pub verify_mode: VerifyMode,
@@ -253,6 +260,11 @@ pub struct TypeDecl {
     pub generics: Vec<GenericParam>,
     pub kind: TypeDeclKind,
     pub span: Span,
+    /// Plan 33.2 Ф.7 (D24): `invariant <expr>` clauses на record-типах.
+    /// Проверяются runtime (debug): после record-литерала, после mut field
+    /// assignments, на выходе mut-методов. SMT-verify в 33.3.
+    /// Пустой вектор у типов без invariants (backward-compat).
+    pub invariants: Vec<Contract>,
 }
 
 #[derive(Debug, Clone)]

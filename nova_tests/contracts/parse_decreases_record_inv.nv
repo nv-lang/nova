@@ -1,0 +1,31 @@
+// Plan 33.2 Ф.7: parse decreases для fn + record invariants.
+
+module nova_tests.contracts.parse_decreases_record_inv
+
+// Record invariant.
+type Account {
+    balance int
+}
+    invariant balance >= 0
+
+// Recursive function с decreases (parser принимает, SMT-verify в 33.3).
+#unverified
+fn factorial(n int) -> int
+    requires n >= 0
+    decreases n
+=> if n == 0 { 1 } else { n * factorial(n - 1) }
+
+// Decreases на не-recursive fn — тоже валидно (assertion).
+#unverified
+fn add(a int, b int) -> int
+    requires a >= 0
+    requires b >= 0
+    decreases 0
+=> a + b
+
+test "decreases + record invariant parse" {
+    let acc = Account { balance: 100 }
+    assert(acc.balance == 100)
+    assert(factorial(5) == 120)
+    assert(add(3, 4) == 7)
+}

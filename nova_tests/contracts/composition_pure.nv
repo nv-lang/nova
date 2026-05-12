@@ -1,0 +1,19 @@
+// Plan 33.2 Ф.7: composition — вызов #pure функций в контрактах разрешён.
+
+module nova_tests.contracts.composition_pure
+
+// Pure helper.
+#pure
+fn is_positive(x int) -> bool => x > 0
+
+// Composition: используем is_positive в requires контракта.
+#unverified
+fn safe_double(x int) -> int
+    requires is_positive(x)
+    ensures result == x * 2
+=> x * 2
+
+test "composition with #pure" {
+    assert(safe_double(5) == 10)
+    assert(safe_double(1) == 2)
+}

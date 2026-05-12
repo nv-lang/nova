@@ -1,0 +1,13 @@
+// EXPECT_COMPILE_ERROR calling user function `not_pure_helper` in contracts requires `#pure` attribute
+//
+// Plan 33.2 Ф.7: composition — non-pure fn в контракте → compile error.
+
+module nova_tests.contracts.composition_nonpure_fail
+
+// Без #pure — нельзя использовать в контрактах.
+fn not_pure_helper(x int) -> bool => x > 0
+
+#unverified
+fn bad_compose(x int) -> int
+    requires not_pure_helper(x)
+=> x
