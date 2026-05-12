@@ -4953,3 +4953,30 @@ Open:
   для nova build, не для nova test (test_runner отдельный pipeline).
 
 Priority P2 для Issue A.
+
+
+---
+
+## Unified compile pipeline ✅ FIXED (Plan 35 R31, 2026-05-12)
+
+### Был simplification (Plan 35 Ф.1 MVP earlier)
+
+`resolve_imports_inline` только в `cmd_build`. `nova test` cross-file
+не работал (отдельный test_runner pipeline). Workaround:
+explicit inline-decl типов вместо import.
+
+### Now FIXED
+
+Plan 35 R31 (commit 3a759bfad5): extract resolve_imports_inline в
+nova_codegen::imports — shared между cmd_check, cmd_build, test_runner.
+Workspace-aware find_repo_root_from (ищет nova.toml с [workspace]
+маркером — D78 AD6 fix для 4 nested nova.toml в repo).
+
+Verified: nova test с `import std.collections.range` + `(0..10).step_by(2)` PASS.
+
+### Open
+
+- Workspace-aware finder в **nova-cli::find_repo_root** не sync'нут с
+  test_runner version. nova-cli ищет первый nova.toml (legacy). Это
+  работает но возможны edge cases. Sub-plan 35.B unified
+  ManifestResolver — full AD6 (4 nested nova.toml) cleanup.
