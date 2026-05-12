@@ -95,3 +95,76 @@ verification, module strict mode, `#trusted` external, AI-friendly diag
 - Distributed contracts через spawn/suspend — после M:N runtime (Plan 23).
 - LLM-генерация контрактов из тестов (R5.7) — отдельный план tooling.
 - Unbounded quantifiers — запрещены по дизайну (compile error, паритет с Dafny v1).
+
+
+---
+
+## Plan 33.3 Ф.9: bootstrap improvements (без libz3)
+
+После аудита Plan 33 vs Verus / Dafny / Rust contracts RFC 2025 выявлены
+4 doable-сейчас improvement'а которые закрывают **soundness gap** и
+**production-parity** с Verus в части ghost erasure.
+
+### 9.1 Ghost erasure в codegen (закрывает V5)
+
+**Сейчас:** `ghost let x = ...` компилируется как обычный `let` —
+значение вычисляется в runtime, занимает memory, дёргает effects если
+есть. Это violates Dafny/Verus semantics.
+
+**Будет:** `LetDecl.is_ghost == true` → codegen **не emit'ит** statement
+в C-output. Ни в debug, ни в release. В debug если ghost-данные нужны
+для invariant — это TODO для Plan 33.3 full.
+
+**Acceptance:** ghost-fn вызовы не происходят в release (можно проверить
+`nm` на готовом `.o`).
+
+### 9.2 Record invariant auto-enforce (soundness gap)
+
+**Сейчас:** `type Account { balance int } invariant balance >= 0` —
+invariant парсится, но **никогда не проверяется**. Можно создать
+`Account { balance: -100 }` без error. Silent unsoundness.
+
+**Будет:** debug-сборка эмитит runtime-check `nova_contract_violation`
+**после** каждой record-конструкции. После field-assignment в debug
+тоже check (если record имеет invariant).
+
+**Acceptance:** негативный тест — `Account { balance: -1 }` → runtime
+panic в debug.
+
+### 9.3 Loop invariants/decreases в AST (закрывает V2)
+
+**Сейчас:** `parser::skip_loop_clauses` парсит `invariant`/`decreases`
+но **выбрасывает**. AST не хранит. Программист пишет spec в пустоту.
+
+**Будет:** Расширить `ExprKind::For`/`While`/`Loop` полями
+`invariants: Vec<Expr>` + `decreases: Option<Expr>`. Все match'и на
+ExprKind в codegen/interp/types обновляются. В debug runtime-check
+invariant **перед** входом + **после** каждой итерации.
+
+**Acceptance:** loop с явно ложным invariant → runtime panic в debug.
+
+### 9.4 Decreases runtime check для recursion
+
+**Сейчас:** `fn fib(n int) decreases n` — `decreases` парсится в
+`FnDecl.decreases`, но не проверяется. Recursive fn без decreases-decrement
+не ловится → infinite recursion в debug.
+
+**Будет:** Codegen для рекурсивных fn (имя callee = имя callera)
+эмитит runtime-check: snapshot `m_old` до call, после возврата проверить
+`m_new < m_old`. Failure → contract violation «decreases not decreased».
+
+**Acceptance:** `fn bad(n int) decreases n => bad(n)` → runtime panic
+после первого recursive call.
+
+### Что НЕ входит в Ф.9 (для Plan 33.3 full / отдельный milestone)
+
+- SMT verify для всех этих фич (требует libz3) — V1-V11 остаются.
+- Frame condition runtime check (`modifies` после fn-exit) — отдельный
+  improvement, можно сделать позже.
+- pure_view + axiom + #verify_handler — требует Z3.
+- Quantifiers — требует Z3.
+
+### Регрессия
+
+После Ф.9: 209/209 baseline + новые negative-тесты на ghost-erasure,
+invariant-violation, loop-invariant-violation, decreases-violation.
