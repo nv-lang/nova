@@ -1,0 +1,107 @@
+// Plan 40 Ф.2 + Ф.3 — performance benchmarks для изменённых путей.
+//
+// Покрытие:
+//   1) select_dispatch_throughput — 1000 select dispatches на 4-arm channel.
+//      Pre-Plan 40: zero-fill 16 SelectSlot'ов в init = 80 stores per call.
+//      Post-Plan 40: zero-fill 32 (cap raised). Plan 40 Ф.1 заменит на
+//      adaptive storage. Этот bench — baseline для Ф.1 сравнения.
+//
+//   2) time_after_cleanup_throughput — 200 select'ов с быстрым recv-wins.
+//      Pre-B7: 200 живых uv_timer'ов в event-loop, supervised не закроется
+//      пока все они не fire'нут (waits per timer). Post-B7: cleanup
+//      uv_timer_stop сразу, supervised закрывается мгновенно.
+//
+//   3) channel_throughput — 10000 send/recv pairs, baseline для Ф.1 mutex
+//      overhead measurement в будущем.
+
+module nova_tests.concurrency.plan40_perf_bench
+
+
+test "perf: select dispatch throughput — 1000 iterations × 4-arm" {
+    let t0 = Time.now()
+    let mut i = 0
+    while i < 1000 {
+        let ch0 = Channel.new(1)
+        let ch1 = Channel.new(1)
+        let ch2 = Channel.new(1)
+        let ch3 = Channel.new(1)
+        supervised {
+            spawn { ch0.tx.send(i) }
+            spawn {
+                let mut got = 0
+                select {
+                    Some(v) = ch0.rx => { got = v }
+                    Some(_) = ch1.rx => { }
+                    Some(_) = ch2.rx => { }
+                    Some(_) = ch3.rx => { }
+                }
+                assert(got == i)
+            }
+        }
+        i = i + 1
+    }
+    let elapsed = Time.now() - t0
+    // 1000 dispatches × ~spawn/supervised cost. На single-thread runtime
+    // ожидаемо <5s (5ms per iter). Bound generous для CI.
+    assert(elapsed < 30_000)
+}
+
+
+test "perf: Time.after cleanup throughput — 200 quick recv-wins" {
+    // Этот тест ДОЛЖЕН быть быстрым (<1s) с B7 cleanup.
+    // Без B7: event-loop держит 200 uv_timer'ов, каждый ждёт fire,
+    // supervised блокируется ~timeout × N => >>10s.
+    let t0 = Time.now()
+    let mut wins = 0
+    let mut i = 0
+    while i < 200 {
+        let ch = Channel.new(1)
+        supervised {
+            spawn { ch.tx.send(i) }
+            spawn {
+                select {
+                    Some(_) = ch.rx => { wins = wins + 1 }
+                    Some(_) = Time.after(5_000) => { }  // 5s — никогда не fire'нет
+                }
+            }
+        }
+        i = i + 1
+    }
+    let elapsed = Time.now() - t0
+    assert(wins == 200)
+    // Bound: с B7 ожидаемо <5s; без B7 было бы >>200×5s = >>1000s.
+    // Тест сам себе guard: если elapsed > 30s — B7 сломан.
+    assert(elapsed < 30_000)
+}
+
+
+test "perf: channel throughput — 10000 send/recv pairs (single fiber)" {
+    // Baseline для Plan 40 Ф.1 mutex overhead. После Ф.1 ожидаемо +2-3%.
+    let ch = Channel.new(1024)
+    let mut sum = 0
+    let t0 = Time.now()
+    supervised {
+        spawn {
+            let mut i = 0
+            while i < 10_000 {
+                ch.tx.send(i)
+                i = i + 1
+            }
+        }
+        spawn {
+            let mut got = 0
+            while got < 10_000 {
+                match ch.rx.recv() {
+                    Some(v) => { sum = sum + v; got = got + 1 }
+                    None    => { got = 10_000 }
+                }
+            }
+        }
+    }
+    let elapsed = Time.now() - t0
+    // 10k send/recv через buffered channel cap=1024 — ожидаемо <2s.
+    // Generous bound для CI.
+    assert(elapsed < 20_000)
+    // 0..9999 = 9999*10000/2 = 49_995_000
+    assert(sum == 49_995_000)
+}
