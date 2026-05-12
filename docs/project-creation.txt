@@ -8015,3 +8015,116 @@ integration testing — отдельная задача. Это не Plan 30 Ф.
 pattern — мы не claim'им M:N safety без validation infrastructure,
 мы её built и documented как pending user Docker run.
 
+
+
+================================================================================
+2026-05-12 Plan 41: per-thread fiber stack arena — research + design
+================================================================================
+
+После закрытия Plan 40 Ф.1 — research session по Plan 23 prerequisites.
+Главные находки:
+
+### Находка 1 — minicoro VMEM_ALLOCATOR частично работает
+
+minicoro имеет MCO_USE_VMEM_ALLOCATOR (compile-time option) — растущие
+стеки через виртуальную память:
+- Linux/macOS: mmap(PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS)
+  — резервирует 2MB виртуально, physical commit lazy через page faults
+  (4KB chunks). Реально работает.
+- Windows: VirtualAlloc(MEM_RESERVE | MEM_COMMIT) — commits all 2MB
+  upfront. НЕ growable. minicoro не использует SEH guard pages.
+
+Default stack: 56KB → 2040KB при включении.
+
+В audit Plan 40 round 3 я ошибочно писал «minicoro fixed-size 56KB».
+Это неверно — есть VMEM, но мы не включали. Линукс/macOS вин огромный
+(100k fibers: 5GB physical → ~783MB physical), Windows нет.
+
+### Находка 2 — GC_add_roots per-fiber упирался в Boehm limit
+
+Commit 31207daabe (Plan 27 Ф.3-Ф.4 R4, май 2026) подтвердил:
+«GC_add_roots per-fiber hits Boehm root-set limit (128 entries) at
+10k fibers. Solution: _NOVA_GC_DISABLE/_NOVA_GC_ENABLE macros for
+cooperative model.»
+
+Boehm имеет compile-time MAX_ROOT_SETS=128. На 10k fiber stacks
+упёрлись в этот лимит → краш. Текущий workaround — disable GC во
+время scheduler tick. Работает только потому что single-thread
+cooperative.
+
+### Архитектурное противоречие
+
+Хотим одновременно:
+1. Растущие стеки (через lazy commit).
+2. GC scaling до тысяч fibers (через единый arena root).
+3. Concurrent GC (Plan 23 prerequisite).
+
+VMEM_ALLOCATOR даёт (1) но ломает (2) и (3) — каждый стек отдельный
+mmap, разбросаны → много roots → лимит.
+
+_NOVA_GC_DISABLE даёт (2) bootstrap'ом, но ломает (3) — нельзя
+disable GC в concurrent multi-thread runtime'е.
+
+### Решение — Plan 41 per-thread arena
+
+Создан docs/plans/41-per-thread-fiber-stack-arena.md:
+- Один mmap(MAP_NORESERVE) per thread — 256MB virtual reserved.
+- Lazy physical commit через page faults (Linux/macOS only;
+  Windows требует SEH guard pages — отдельная задача).
+- Slot allocator within arena (128 × 2MB slots default).
+- GC_add_roots(arena, arena+256MB) — ОДИН root per thread.
+- Bitmap для slot reuse, madvise MADV_DONTNEED при dealloc.
+
+### Что это даёт
+
+| Свойство | Текущий | Plan 41 |
+|---|---|---|
+| GC root entries | 0 (disable) | 1 per thread |
+| Suspended stacks visible to GC | Нет (через disable) | Да (через arena root) |
+| Growable stacks Linux/macOS | Нет | Да |
+| Growable stacks Windows | Нет | Нет (SEH отдельно) |
+| Concurrent GC compatible | Нет | Да |
+| _NOVA_GC_DISABLE workaround | Required | Removed |
+
+### Concurrent GC unlock — почему
+
+Сейчас _NOVA_GC_DISABLE работает потому что в single-thread cooperative
+модели GC physically не запускается между yield/resume (никаких
+nova_alloc вызовов в этом окне).
+
+В M:N (Plan 23) этот invariant исчезает — N worker threads делают
+nova_alloc независимо, GC может запуститься в любой момент. Общего
+scheduler tick'а в который можно вставить disable нет.
+
+С arena registered как GC root — invariant держится structurally:
+Boehm scanner всегда видит указатели на heap из любого suspended
+fiber stack через scan arena. Disable больше не нужен.
+
+### Estimated
+
+~400-500 LOC, 4-5 commits, 2-3 сессии. P1 prerequisite для Plan 23.
+
+### Открывает
+
+- Plan 23 M:N runtime — GC blocker resolved.
+- Plan 25 G6 growable stacks — частично closed (Linux/macOS).
+
+### Закрытые open questions Plan 40 audit
+
+- «minicoro fixed-size 56KB» (Plan 40 round 3) — неверное утверждение.
+  VMEM есть, но мы не активировали; Plan 41 заменит на arena подход.
+- «Plan 23 prerequisite Boehm multithread rebuild» — частично; реальный
+  prereq это Plan 41 arena, не Boehm rebuild.
+
+### Commits
+
+- 4cdae78094 — docs(Plan 41): создан план.
+
+### Honesty
+
+Implementation отложена. Plan 41 в roadmap status, не started. Чтобы
+начать нужны решения по 5 open questions (slot size, slot count,
+Windows fallback strategy, madvise frequency, VMEM_ALLOCATOR
+incompatibility documentation).
+
+

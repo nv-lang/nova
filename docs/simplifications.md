@@ -5546,3 +5546,63 @@ macOS arm64 Apple Clang.
 Itanium/SPARC.
 
 Detail: [docs/plans/40-channel-hardening.md](plans/40-channel-hardening.md).
+
+
+---
+
+## `_NOVA_GC_DISABLE` workaround — Plan 27 R4 → Plan 41 (2026-05-12)
+
+**Где:** `compiler-codegen/nova_rt/fibers.h::_NOVA_GC_DISABLE/_NOVA_GC_ENABLE`.
+
+**Что упрощено:** suspended fiber stacks выделены через `calloc` (или
+minicoro default), не зарегистрированы как GC roots. Conservative
+Boehm scanner их не видит → указатели на heap из стека suspended
+fiber'а пропускаются → GC может collect ещё-живые объекты → use-after-
+free при resume.
+
+**Workaround:** `GC_disable()` в начале scheduler tick'а, `GC_enable()`
+в конце. Работает потому что **single-thread cooperative** — GC physically
+не запускается между yield/resume. Hidden UAF risk class: любой
+`nova_alloc` вне обёрнутого тика — потенциальный crash.
+
+**Почему не сделали properly:** пробовали `GC_add_roots` per-fiber
+(Plan 27 R4 audit, commit 31207daabe), упёрлись в `MAX_ROOT_SETS=128`
+на 10k fibers.
+
+**Как починить:** Plan 41 — per-thread arena с **одной** регистрацией
+`GC_add_roots(arena, arena+256MB)`. Все stacks в этом диапазоне → GC
+сканит invariant'но → disable не нужен.
+
+**Приоритет:** **P1 — prerequisite для Plan 23 M:N runtime**. Без
+arena подхода concurrent GC невозможен (нет общего scheduler tick'а
+для disable).
+
+Detail: [docs/plans/41-per-thread-fiber-stack-arena.md](plans/41-per-thread-fiber-stack-arena.md).
+
+
+---
+
+## minicoro fixed-size 56KB stacks — `MCO_USE_VMEM_ALLOCATOR` не включён (2026-05-12)
+
+**Где:** `compiler-codegen/nova_rt/minicoro.h::MCO_USE_VMEM_ALLOCATOR`
+(compile-time option) — мы НЕ определяем флаг.
+
+**Что упрощено:** все fiber stacks выделяются как **fixed-size 56KB
+calloc'd blocks**. 100k fibers = 5GB physical memory.
+
+**Почему не включили `MCO_USE_VMEM_ALLOCATOR`:**
+- Linux/macOS: работает (lazy mmap commit), но **каждый стек отдельный
+  mmap** → невозможно зарегистрировать через единый `GC_add_roots`.
+- Windows: minicoro implementation `VirtualAlloc(MEM_RESERVE | MEM_COMMIT)`
+  — commits all 2MB upfront. Не lazy. Не даёт win.
+- В обоих случаях multiple roots → лимит `MAX_ROOT_SETS=128`.
+
+**Как починить:** Plan 41 заменяет VMEM_ALLOCATOR на per-thread arena
+с `MAP_NORESERVE` (Linux/macOS lazy commit) + единый GC root. Получаем
+растущие стеки **и** GC scaling одновременно. Windows growable —
+отдельно через SEH guard pages.
+
+**Приоритет:** **P1** (часть Plan 41). 100k fibers production
+workloads невозможны без растущих стеков (5GB physical).
+
+Detail: [docs/plans/41-per-thread-fiber-stack-arena.md](plans/41-per-thread-fiber-stack-arena.md).
