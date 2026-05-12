@@ -1595,3 +1595,367 @@ ARM: failed CAS не emit'ит DMB. x86: same code (already free).
 4. **Heap fallback при n_arms > 256** — overlaps с Plan 40 Ф.3 «no cap»
    claim. Resolution: stack для ≤256, heap для >256, документировать как
    «soft threshold для stack overflow protection» (не «cap»).
+
+---
+
+## Deep audit — round 3 (2026-05-12)
+
+Третий проход после round 1+2. Focus на production deployment issues,
+toolchain portability, platform-specific perf, real postmortems.
+
+### 🔴 Новые P0 build/correctness blockers
+
+#### R3-2 — C11 toolchain portability (build-breaker)
+
+**Реальность вместо плана:**
+- MSVC: `<threads.h>` с VS2019 16.8+, **но `<stdatomic.h>` только с VS2022 17.5+**.
+  Plan 40 audit r1 ошибся утверждая что MSVC VS2019 16.8 покрывает обоих.
+- mingw-w64 (winpthreads): **не имеет** C11 `<threads.h>` до сих пор.
+  См. [winlibs_mingw#219](https://github.com/brechtsanders/winlibs_mingw/issues/219).
+- Apple Clang: **не имеет** `<threads.h>` в libc (третьесторонний shim
+  `tinycthread` нужен).
+- musl libc: поддерживает с 1.1.5.
+
+**Plan 40 не собирётся** на: mingw-w64, MSVC VS2019, Apple Clang без
+shim, CentOS 7 (glibc 2.17 — но это reject).
+
+**Решение — Option B (portable wrapper):**
+
+```c
+/* sync.h — backend selector */
+#if defined(_MSC_VER) && _MSC_VER >= 1935  /* VS2022 17.5+ */
+  #include <stdatomic.h>
+  #include <threads.h>
+  #define NOVA_SYNC_BACKEND "c11"
+#elif defined(__APPLE__)
+  /* macOS: os_unfair_lock + GCC atomics (R3-5) */
+  #include <os/lock.h>
+  #include <pthread.h>
+  #define NOVA_SYNC_BACKEND "darwin"
+#elif defined(__GNUC__) || defined(__clang__)
+  /* gcc/clang builtins — works on mingw-w64, all Linux */
+  #include <pthread.h>
+  #define NOVA_SYNC_BACKEND "gcc_builtins"
+#else
+  #error "Unsupported toolchain — need C11 or GCC builtins"
+#endif
+
+/* Unified wrappers (см. далее) — все три backend'а expose'ят
+ * nova_mutex_t / nova_atomic_int / nova_aint_cas etc. */
+```
+
+3 backend'а:
+1. **C11** (VS2022 17.5+, modern glibc): прямой `mtx_t` + `<stdatomic.h>`.
+2. **Darwin** (Apple Clang): `os_unfair_lock` + `__atomic_*` GCC builtins.
+3. **GCC builtins** (mingw, older clang, fallback): `pthread_mutex_t` +
+   `__atomic_load_n`/`__atomic_compare_exchange_n` etc.
+
+`__atomic_*` builtins identical API на clang/gcc, работают на всех
+toolchain'ах где компилятор есть (включая mingw). Это **standard
+fallback** для проектов которые нужно собрать без C11 atomics.
+
+**Cost:** ~120 LOC. **P0 — без этого Plan 40 не собирается на 3 из 4
+target toolchain'ах.** Этап 1 (sync.h rewrite).
+
+#### R3-5 — macOS lock perf (40% slower)
+
+**Реальность:** macOS `pthread_mutex_t` heavily fair → **20 µs
+uncontended latency** vs ~50 ns на `os_unfair_lock` (см.
+[mikeash](https://www.mikeash.com/pyblog/friday-qa-2017-10-27-locks-thread-safety-and-swift-2017-edition.html)).
+Plan 40 acceptance criterion «<50 ns round-trip uncontended» **fails on
+macOS** с обычным pthread mutex.
+
+**Решение (часть R3-2 wrapper):**
+
+```c
+/* Darwin backend — sync.h */
+typedef os_unfair_lock nova_mutex_t;
+
+static inline void nova_mutex_init(nova_mutex_t* m) {
+    *m = OS_UNFAIR_LOCK_INIT;
+}
+static inline void nova_mutex_lock(nova_mutex_t* m)   { os_unfair_lock_lock(m); }
+static inline void nova_mutex_unlock(nova_mutex_t* m) { os_unfair_lock_unlock(m); }
+```
+
+Cost integrated в R3-2 (~30 LOC из 120 общего wrapper'а). **P0** для
+macOS support. Если macOS не target — явно doc'нуть в Plan 40.
+
+**Решение для bootstrap:** добавить macOS в Plan 40 supported platforms.
+Cost ~30 LOC.
+
+#### R3-7 — Spurious-wakeup re-check pattern для `nova_sched_park`
+
+**Реальность:** POSIX `pthread_cond_wait` может вернуться spuriously.
+Когда Plan 23 landed и `nova_sched_park` использует condvar, spurious
+wake без `fired` re-check **silently loses value**.
+
+**Решение (~5 LOC + 1 test):** документировать post-park pattern:
+
+```c
+/* sched.h: */
+/* После nova_sched_park caller MUST re-check application state в loop:
+ *
+ *   while (!data_ready()) {
+ *       nova_sched_park_with_unlock(scope, slot, unlock_fn, arg);
+ *       // park может вернуться spuriously — re-check.
+ *   }
+ *
+ * Channel/select use pattern: post-park проверяют fired CAS flag в
+ * waiter (single source of truth), которая Release-store'нута только
+ * настоящим wake helper'ом. Spurious wake → fired остаётся 0 →
+ * try_immediate retry или next park.
+ *
+ * Этот pattern — correctness mechanism (не perf optimization).
+ * НЕ удаляйте post-park retry в `nova_select_park`. */
+```
+
+В Этапе 6 — stress test `spurious_wake_no_value_loss`: 8 threads × N
+iterations, симулируем spurious wake через signal-after-park (kill thread
+without data ready), assert no message lost.
+
+**Cost:** ~5 LOC doc + ~30 LOC test. **P0 (Этап 4 doc + Этап 6 test).**
+
+#### R3-1 — Boehm GC-scan invariant для parked BaseWaiter chain
+
+**Реальность:** BaseWaiter сейчас stack-allocated в fiber locals (через
+compound literal). Если Boehm scan'ит parked fiber stack → waiter chain
+live → safe. Если future refactor переместит storage в не-scanned
+регион → silent UAF on wake.
+
+**Решение (~15 LOC):** debug-build assertion + invariant doc:
+
+```c
+/* channels.h: */
+/* INVARIANT (Plan 40 R3-1): BaseWaiter chain MUST be GC-reachable от
+ * parked fiber stack OR explicit GC root. Wake helper assumes waiter
+ * pointers valid после resume.
+ *
+ * Сейчас: compound-literal storage в `emit_select` живёт на fiber
+ * stack, Boehm scan'ит fiber stacks через minicoro registration. Safe.
+ *
+ * Если будете переносить storage в heap или другую область — обязательно
+ * добавьте GC_add_roots() или используйте nova_alloc(). */
+
+#ifdef NOVA_DEBUG_CHANNEL
+static inline void _assert_waiter_gc_visible(BaseWaiter* w) {
+    /* GC_is_visible — Boehm API проверки что pointer в managed heap
+     * или registered root. */
+    extern void* GC_is_visible(void*);
+    assert(GC_is_visible(w) != NULL && "waiter not GC-reachable");
+}
+#endif
+```
+
+В Этапе 2 каждый waiter register code path делает debug assert.
+
+**Cost:** ~15 LOC. **P0 (Этап 2/3 doc + debug).**
+
+### 🟡 Новые P1 items
+
+#### R3-4 — Adaptive mutex на Linux
+
+**Реальность:** PTHREAD_MUTEX_ADAPTIVE_NP → 55% throughput gain для
+short critical sections (glibc benchmark). Plan 40 critical sections
+короткие (buffer push/pop, waiter unlink).
+
+**Решение (~15 LOC, integrated в R3-2 wrapper):**
+
+```c
+#if defined(__linux__) && defined(__GLIBC__)
+static inline void nova_mutex_init(nova_mutex_t* m) {
+    pthread_mutexattr_t attr;
+    pthread_mutexattr_init(&attr);
+    pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_ADAPTIVE_NP);
+    pthread_mutex_init(m, &attr);
+    pthread_mutexattr_destroy(&attr);
+}
+#else
+static inline void nova_mutex_init(nova_mutex_t* m) {
+    pthread_mutex_init(m, NULL);  /* PTHREAD_MUTEX_NORMAL */
+}
+#endif
+```
+
+**Cost:** ~15 LOC. **P1 (без него <50ns acceptance fails)**.
+
+#### R3-3 — Priority inversion doc
+
+**Реальность:** Default `pthread_mutex_t` не PI-aware. Mixed-priority
+workloads под `SCHED_FIFO` → unbounded inversion (Mars Pathfinder).
+
+**Решение:** doc в Plan 40 / spec D94:
+- Bootstrap channels assume `SCHED_OTHER`.
+- Users mixing RT priorities must externally serialize.
+- Future: add `pthread_mutexattr_setprotocol(PTHREAD_PRIO_INHERIT)`
+  option if RT story needed.
+
+**Cost:** doc only. **P1** (P0 если Nova claim'ит RT support — сейчас не
+claim'ит).
+
+#### R3-9 — recv_many re-rank до P1
+
+**Реальность:** не nice-to-have throughput, а **wake amplification fix**.
+Под нагрузкой каждый `recv()` = 1 wake + 1 cache-line miss per message.
+`recv_many` collapses N wakes в 1 — **10-100× throughput** для
+logging/metrics pipelines.
+
+**Решение:** перенести из B8 P3 в Ф.4 P1. Cost ~80 LOC.
+
+#### R3-12 — Kernel preemption tax stress test
+
+**Реальность:** SCHED_OTHER preempts after ~10ms. Producer fiber-thread
+с lock preempted → все consumers block. Go использует sysmon tgkill
+preemption.
+
+**Решение:** в Этапе 6 — stress test «p99 wakeup latency under simulated
+host scheduling jitter»: `taskset` 1 CPU, run 8 fiber'ов, measure p99
+latency.
+
+**Cost:** ~50 LOC test. **P1** (Plan 23 dependency, но measurable now).
+
+#### R3-14 — Per-channel observability counters
+
+**Реальность:** Tokio-metrics-collector exposes queue depth, sent count,
+peak waiters для Prometheus. Plan 40 не имеет.
+
+**Решение (~30 LOC):** atomic counter fields gated за compile flag:
+
+```c
+#ifdef NOVA_CHANNEL_METRICS
+    nova_atomic_int total_sent;
+    nova_atomic_int total_received;
+    nova_atomic_int peak_waiters;
+#endif
+```
+
+Zero overhead by default. Production builds могут включить через
+`-DNOVA_CHANNEL_METRICS=1`.
+
+**Cost:** ~30 LOC + API (`tx.metrics() -> ChannelMetrics`). **P2 для
+1.0**, but **P1 для «production parity» claim**.
+
+#### R3-11 — UBSan + nova_int overflow
+
+**Реальность:** UBSan signed-integer-overflow trap'ит legitimate
+wraparound. Plan 40 Этап 5 Dockerfile UBSan variant нужен filter.
+
+**Решение:**
+```dockerfile
+ENV UBSAN_OPTIONS="suppressions=/nova/.sanitize/ubsan.supp"
+```
++ exclude `signed-integer-overflow` через `__attribute__((no_sanitize("signed-integer-overflow")))`
+на specific helpers OR `-fno-sanitize=signed-integer-overflow` для
+runtime helpers.
+
+**Cost:** ~3 LOC. **P1**.
+
+#### R3-6 — Boehm flags под TSan Docker
+
+**Реальность:** TSan + Boehm parallel marking → false-positive races
+на GC internals.
+
+**Решение:** в `Dockerfile.sanitizers` (TSan variant):
+```dockerfile
+ENV CFLAGS="${CFLAGS} -DTHREAD_LOCAL_ALLOC=0 -DPARALLEL_MARK=0"
+```
+
+**Cost:** ~5 LOC + 1 README note. **P1**.
+
+#### R3-8 — `oneshot` + `watch` channels (Ф.4)
+
+**Реальность:** Tokio имеет `oneshot::channel<T>` (single-value handoff,
+lighter than mpsc) и `watch::channel<T>` (broadcast-of-latest для config
+reload). Plan 40 = только bounded mpsc.
+
+**Решение в Ф.4:**
+- `oneshot` ~80 LOC (просто mpsc cap=1 без `tx.clone()`).
+- `watch` ~150 LOC (different semantics — overwrite + version counter).
+- `broadcast` ~400 LOC MPMC — отложить в Plan 41.
+
+**Cost:** ~230 LOC в Ф.4. **P1 для 1.0** — Tokio users will look for these.
+
+### Documentation gaps (round 3)
+
+#### R3-15 — API stability across Plan 30→40
+
+Plan 40 silently changes internals; user-facing API unchanged. **Doc
+explicitly** в Plan 40 Acceptance + spec D94: «No source-level breakage».
+
+#### R3-16 — CI bench reproducibility methodology
+
+`<50ns` acceptance без specification hardware/methodology = unfalsifiable.
+
+**Решение в Plan 40 Этап 7:**
+- Hardware: x86_64 baseline (latest commodity CI box).
+- Methodology: `taskset -c 0`, no turbo, average of 1M iterations,
+  exclude warm-up.
+- Bench script committed в `nova_tests/plan40_bench/`.
+
+#### R3-17 — `is_closed()` time-of-check doc warning
+
+User-facing docs: «don't use `is_closed()` for control flow — use `recv`
+return value». Без этого users will write TOCTOU bugs.
+
+### Updated final scope (round 3)
+
+| Round-3 item | LOC | Phase |
+|---|---|---|
+| R3-1 GC-scan invariant + debug assert | +15 | Этап 2/3 |
+| R3-2 Portable atomic/mutex wrapper (3 backends) | +120 | Этап 1 |
+| R3-3 PI mutex doc | +10 doc | Этап 7 |
+| R3-4 Adaptive mutex Linux | +15 | Этап 1 |
+| R3-5 macOS os_unfair_lock (integrated в R3-2) | +30 | Этап 1 |
+| R3-6 Dockerfile Boehm flags | +5 | Этап 5 |
+| R3-7 Spurious-wake re-check + stress test | +35 | Этап 4 + 6 |
+| R3-8 oneshot + watch (Ф.4) | +230 | Ф.4 |
+| R3-9 recv_many re-rank P3→P1 (Ф.4) | (re-rank) | Ф.4 |
+| R3-11 UBSan exclude overflow | +3 | Этап 5 |
+| R3-12 p99 jitter stress test | +50 | Этап 6 |
+| R3-13 static inline doc | +5 doc | Этап 7 |
+| R3-14 Metrics counters (gated) | +30 | Этап 2 |
+| R3-15/16/17 docs | +15 doc | Этап 7 |
+| **Round-3 addition (Ф.1)** | **~328** | |
+| **Round-2 Ф.1 baseline** | 1740 | |
+| **Round-3 final Ф.1 scope** | **~2070 LOC** | |
+
+### Round 3 — Top 5 most dangerous gaps
+
+1. **R3-2 C11 toolchain portability** — Plan 40 не собирётся на mingw,
+   MSVC VS2019, Apple Clang без wrapper. **P0**, ~120 LOC.
+2. **R3-7 Spurious-wake re-check** — silent value loss когда Plan 23
+   condvar landed. **P0**, ~35 LOC.
+3. **R3-1 Boehm GC-scan invariant** — UAF при future refactor. **P0**,
+   ~15 LOC.
+4. **R3-5 macOS pthread_mutex 40% slower** — <50ns target fails на macOS
+   без `os_unfair_lock`. **P0**, integrated в R3-2.
+5. **R3-3 Priority inversion** — niche but production-deadly когда hit.
+   **P1**, doc only.
+
+### Round 3 — Top 5 NICE-to-have NOT chase pre-1.0
+
+1. broadcast::channel — 400 LOC + Loom verification → Plan 41+.
+2. Adaptive mutex backend — opt-in только если bench fails.
+3. Prometheus/tracing integration — отдельный plan.
+4. Watch channel — `Channel(1)` covers 90% use cases для 1.0.
+5. PA-RISC/Itanium/SPARC weak ordering — tier-3 archs Nova won't ship on.
+
+### Архитектурное решение по toolchain support (Plan 40 1.0)
+
+**Tier 1 supported (build + test + sanitizer):**
+- Linux x86_64 (Ubuntu 22.04+, glibc 2.35+) — primary CI.
+- Windows x86_64 + clang (LLVM 15+) — dev workstation.
+- macOS arm64 + Apple Clang — secondary.
+
+**Tier 2 supported (build only, best effort):**
+- Linux aarch64 + clang.
+- Windows MSVC VS2022 17.5+.
+- Alpine Linux + musl.
+
+**Tier 3 NOT supported для 1.0:**
+- mingw-w64 (gap нерешённый).
+- MSVC VS2019 (нет `<stdatomic.h>`).
+- CentOS 7 / RHEL 7 (glibc 2.17 — EOL).
+- PA-RISC / Itanium / SPARC.
+
+Решение задокументировано в spec/overview.md.
