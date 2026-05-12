@@ -4178,3 +4178,183 @@ captured_stderr в verbose mode, не нужен новый branch. Предуп
 
 **Regression:** 91/91 PASS.
 
+
+---
+
+## std/testing/handlers.nv — Plan 34 Ф.1 (2026-05-12)
+
+**Где:** новый файл std/testing/handlers.nv (Plan 34 Ф.1, активный).
+
+**Что упрощено:** `seeded(seed)` использует Knuth MMIX LCG, **не CSPRNG**.
+Для production-Random нужен `secure() -> Handler[Random]` через
+runtime-hook (CSPRNG из nova_rt или OS-syscall) — не реализован.
+
+**Почему:** test-handler'ы должны быть deterministic и cross-architecture
+reproducible. LCG достаточно для воспроизводимости тестов; CSPRNG для
+test-handlers контр-продуктивен (тест должен давать одинаковый результат
+между запусками). Production-handler для real cryptography — другая
+ответственность, не Plan 34.
+
+**Как починить:** добавить `fn secure() -> Handler[Random]` в
+std/testing/handlers.nv или в отдельный std.security модуль, с
+external-binding к runtime-CSPRNG (Windows BCryptGenRandom, Linux
+getrandom, macOS SecRandomCopyBytes). Это — часть Plan 18 (P0 stdlib
+roadmap), не блокер.
+
+**Приоритет:** P2 — production-cryptography не нужна до v0.5.
+
+
+---
+
+## fixed_ms.sleep(d) — no-op (Plan 34 Ф.1, 2026-05-12)
+
+**Где:** std/testing/handlers.nv, fixed_ms handler.
+
+**Что упрощено:** `Time.sleep(d)` под `fixed_ms`-handler'ом — instant
+return. Виртуальные часы НЕ продвигаются. Если тест делает `sleep(1s)`,
+`Time.now_ms()` после возвращает то же значение что до.
+
+**Почему:** advance-virtual-clock требует mutable handler-state (текущее
+время как `mut now_ms`) и нового API типа `Time.advance(d)` или
+`fixed_ms_advancing(...)`. Сейчас тесты cron/retry/rate_limiter
+которым нужно «прошёл час» обходятся созданием нового handler'а с новым
+`ms` между сценариями: `with Time = th.fixed_ms(0) { ... }; with Time = th.fixed_ms(3600_000) { ... }`.
+
+**Как починить:** добавить `fn advancing(start_ms int) -> Handler[Time]`
+с mut state и API `Time.advance(d Duration)`. Альтернатива — `fn clock()`
+возвращающий object с `.now()`/`.advance()` методами + adapter. Реализация
+~30 строк, но нужно D-решение о новых ops в `Time` effect или о
+test-only-effect расширении.
+
+**Приоритет:** P2 — текущие тесты обходятся без advance.
+
+
+---
+
+## import Wildcard `*` и bare-name visibility — Plan 35 Ф.1 (2026-05-12)
+
+**Где:** stdlib (9 файлов) — bcrypt/jwt/ulid/uuid/snowflake/rate_limiter/
+retry/property/duration используют `import std.testing.handlers as th`
++ `th.seeded(...)` / `th.fixed_ms(...)`.
+
+**Что упрощено:** хотелось бы написать `seeded(42)` без префикса (как в
+docstring property.nv `with Random = seeded(seed)`), но `nova check`
+cross-file resolution для bare-name функций не работает. Парсер
+принимает `import X.Y.*`, но падает на токене `*`.
+
+**Почему:** wildcard import / bare-name visibility требует:
+1. Parser: разрешить `*` после dotted-path в parse_import.
+2. Name-resolver: открыть все `export`-сущности модуля по bare имени.
+3. Spec-decision: D-блок про import semantics (conflicts, shadowing,
+   re-export, alias precedence).
+
+Решение через `import as alias` + `alias.fn()` чище для коротких
+вызовов, но многословнее для длинных. После закрытия Plan 35 Ф.1 можно
+будет вернуть bare-name в 9 stdlib-файлах (cosmetic).
+
+**Как починить:** Plan 35 Ф.1 (низкий приоритет, ~150 строк).
+
+**Приоритет:** P3 — workaround через alias работает и читается.
+
+
+---
+
+## json.nv: `mut` параметр не поддерживается (Plan 34 Ф.2.1, 2026-05-12)
+
+**Где:** std/encoding/json.nv:499 — `fn Parser mut @parse_member(fields HashMap[...])`.
+Раньше был `(mut fields HashMap[...])`.
+
+**Что упрощено:** парсер Nova не принимает `mut`-modifier для параметра
+функции (есть только для self-receiver: `fn X mut @method(...)`). Убрал
+`mut`. HashMap — reference-type через GC, мутации фактически работают
+(метод `fields.insert(...)` модифицирует тот же объект что caller
+держит), но в сигнатуре `mut`-маркер потерян.
+
+**Почему:** добавление `mut`-param в Nova grammar — отдельное spec-решение
+(call-site marker? automatic? для всех ref-типов?). Не блокер для type-check.
+
+**Как починить:** D-блок про `mut`-параметры (Rust-style explicit
+`&mut T` или Java/Kotlin-style implicit для reference-types). Парсер +
+type-checker — ~100 строк.
+
+**Приоритет:** P3 — semantics корректна, только signature lossy.
+
+
+---
+
+## property.nv: trailing-block closure синтаксис (Plan 34 Ф.2.3, 2026-05-12)
+
+**Где:** std/testing/property.nv — 6 мест с `property(gen, |xs| { ... })`.
+Раньше использовался Kotlin/Swift-style `property(gen) { xs => ... }`.
+
+**Что упрощено:** Nova не поддерживает trailing-block-as-closure (Kotlin
+`list.forEach { it -> ... }`, Swift `array.map { x in ... }`). По D22
+closure-литерал — `|xs| { ... }`. Переписал на explicit-argument форму.
+Чуть многословнее, но грамматически однозначно (нет ambiguity со
+struct-literal'ом или if/while-body).
+
+**Почему:** trailing-block syntax удобен для DSL'ей и AI-prompts
+(`channel.send { msg => ... }` читается естественно), но грамматически
+конфликтует с block-as-expression (если `f() { ... }` — то closure
+или value-statement?). Нужно D-решение.
+
+**Как починить:** D-блок про trailing-closure синтаксис (когда `{ ... }`
+после call'а — closure, когда — separate statement). Требует анализа
+ambiguity, ~50 строк парсера + грамматики.
+
+**Приоритет:** P2 — DSL ergonomics, но обходится `|x| { ... }`.
+
+
+
+---
+
+## CLI `nova check` / `nova test` — MVP simplifications (Plan 36, 2026-05-12)
+
+### Что упрощено в MVP (Ф.0 + Ф.1 + R7 + R10) vs full Plan 36
+
+**Где:** `nova-cli/src/main.rs` (~455 строк добавлены/изменены).
+
+**Полный план**: 30 requirements (R1-R30) + 12 architecture decisions
+(AD1-AD12). **Реализовано в MVP**: R1-R8 base + R10 base + R13 (Ф.0
+correctness fix) + R19 (parallel) + R20 (GC backend) + R21 (module-path
+hard fail).
+
+**Не реализовано (отложено в sub-plans 36.A-E):**
+
+| Sub-plan | Что упрощено | Sufficient workaround |
+|---|---|---|
+| 36.A outputs | 1 output format (human). Нет JSON/SARIF/JUnit. | Wrap через `grep`/`awk` или wait for 36.A |
+| 36.A diag codes | Нет stable E0001-E9999 registry. Diagnostics только human. | `nova explain` impossible v1, plan 36.D |
+| 36.A spec_link | Нет `spec_link` field в diagnostic. | spec ссылка в diagnostic message прямо как plain text |
+| 36.B caching | Каждый check полный re-check. <500ms cache miss отсутствует. | Acceptable для CI; локально для разработчика — manual incremental |
+| 36.B repro builds | Нет `SOURCE_DATE_EPOCH` / no-timestamps. | Не критично без CI |
+| 36.C pre-commit | Нет `.pre-commit-hooks.yaml`. | Manual git hook script если нужно |
+| 36.C GHA annotations | `::error file=,line=::` не emit'ится. | CI просто видит exit code + stderr |
+| 36.D verbosity | Нет `-q`/`-v`/`-vv`. | --color never для CI достаточен |
+| 36.D --explain | Нет `nova explain Exxxx`. | Diagnostic codes пока не emit'ятся, не блокер |
+| 36.D --dry-run | Нет `--dry-run` / `--list`. | Скрипт `find ... -name '*.nv'` достаточен |
+| 36.E workspace | `find_repo_root` берёт первый parent с nova.toml. 4 nested nova.toml в repo (root + nova_tests + examples + std) — не unified. | В MVP `nova check` от repo root walks-all; для package-scoped check — `nova check std/` явно |
+
+### Почему
+
+Полный Plan 36 — много-сессионная работа (160 gaps в plan v4 после
+4-way audit). MVP = focused subset который **shippable in one session**
+с реальной production-value (Ф.0 closes silent bug, R7 closes exit code
+ambiguity, R10 closes CI no-color requirement).
+
+### Как починить
+
+Sub-plans 36.A-E — отдельные плановые файлы, отдельные сессии. Каждый
+закрывает свою группу:
+- 36.A — outputs (приоритет: высокий для CI integration)
+- 36.B — caching (приоритет: средний, влияет на dev workflow)
+- 36.C — CI integration (приоритет: высокий после 36.A)
+- 36.D — advanced ergonomics (приоритет: средний)
+- 36.E — workspace (приоритет: низкий, current implicit walks-parents
+  работает)
+
+### Приоритет
+
+**P1** для 36.A + 36.C (CI integration сценарий критичен).
+**P2** для 36.B + 36.D (UX win, не блокер).
+**P3** для 36.E (workspace concept — после Plan 03 package ecosystem).
