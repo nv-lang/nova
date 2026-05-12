@@ -1769,9 +1769,54 @@ pub fn run_one(opts: &TestBuildOpts) -> Outcome {
 /// Codegen .nv → .c. Возвращает Ok(warnings) на успех, Err(rendered-error-string) на ошибку.
 /// Warnings (напр. anonymous-embed lint) возвращаются caller'у для routing в captured_stderr,
 /// вместо прямого eprintln! который утекал бы в терминал при параллельном запуске тестов.
+/// Plan 35 R31: find **workspace** root от given path. Walks parents
+/// looking for nova.toml с `[workspace]` секцией. Если не найден —
+/// возвращает самый верхний nova.toml directory (на случай если
+/// workspace declaration отсутствует).
+///
+/// AD6 (Plan 35 v2): unified ManifestResolver — package roots ≠
+/// workspace root. Этот helper находит **workspace** для resolve
+/// std/* imports.
+fn find_repo_root_from(start: &Path) -> Option<PathBuf> {
+    let abs = start.canonicalize().ok()?;
+    let mut dir = abs.parent()?.to_path_buf();
+    let mut last_toml_dir: Option<PathBuf> = None;
+    loop {
+        let toml = dir.join("nova.toml");
+        if toml.exists() {
+            // Check для `[workspace]` маркер.
+            if let Ok(content) = std::fs::read_to_string(&toml) {
+                if content.contains("[workspace]") {
+                    return Some(dir);
+                }
+            }
+            last_toml_dir = Some(dir.clone());
+        }
+        let parent = dir.parent()?.to_path_buf();
+        if parent == dir {
+            // Reached filesystem root.
+            return last_toml_dir;
+        }
+        dir = parent;
+    }
+}
+
 fn codegen_to_c(path: &Path, src: &str) -> Result<Vec<String>, String> {
     let mut module = parser::parse(src).map_err(|d| d.render(src, &path.to_string_lossy()))?;
     manifest::check_module_path(path, &module.name).map_err(|s| s.to_string())?;
+
+    // Plan 35 R31 (unified pipeline): cross-file resolve через inline
+    // expansion. Тот же codepath что в `nova-cli::cmd_build`. Без этого
+    // `nova test foo.nv` с `import std.X.Y` падает «cannot resolve
+    // iterator type 'nova_int'».
+    if !module.imports.is_empty() {
+        if let Some(repo) = find_repo_root_from(path) {
+            let stdlib_dir = repo.join("std");
+            crate::imports::resolve_imports_inline(path, &mut module, &repo, &stdlib_dir)
+                .map_err(|e| format!("import resolution: {}", e))?;
+        }
+    }
+
     types::check_module(&module).map_err(|errs| {
         errs.iter()
             .map(|d| d.render(src, &path.to_string_lossy()))

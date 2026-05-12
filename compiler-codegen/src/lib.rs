@@ -5,6 +5,7 @@
 pub mod ast;
 pub mod codegen;
 pub mod diag;
+pub mod imports;
 pub mod interp;
 pub mod lexer;
 pub mod lints;

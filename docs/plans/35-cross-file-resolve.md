@@ -328,6 +328,34 @@ rebuild только его + transitive dependents.
 **R24. [35.B] Memory cache invalidation для regen-runtime** (N04). Когда
 `std/runtime/*.nv` regenerates, drop relevant cache entries.
 
+**R31. [35.B-prereq] Unified compilation pipeline** (HIGH PRIORITY).
+Сейчас Nova имеет **3 независимых compile codepath'а**:
+- `cmd_check` (nova-cli/src/main.rs) — parse + types + lints.
+- `cmd_build` (nova-cli/src/main.rs) — parse + types + codegen + cc → exe.
+  **+ resolve_imports_inline** (Plan 35 Ф.1 MVP).
+- `test_runner::codegen_to_c` (compiler-codegen/src/test_runner.rs) —
+  parse + types + codegen + cc → exe + run tests. **БЕЗ
+  resolve_imports_inline.**
+
+**Это архитектурный debt:** каждый codepath эволюционировал отдельно
+(Plan 24/28). Cross-file resolve добавлен **только в один**. Аналог в
+Go/Rust: единый pipeline (`go tool compile`, `rustc`) — все команды
+(`go test`/`go build`/`cargo test`/`cargo check`) идут через него.
+
+**Решение:** extract в shared lib `compiler-codegen`:
+- `pub fn resolve_imports_inline(entry_path, &mut module, repo, stdlib_dir) -> Result<()>`
+  — перенести из `nova-cli/src/main.rs`.
+- Вызывать из всех трёх codepath'ов (`cmd_check`, `cmd_build`,
+  `test_runner::codegen_to_c`).
+- Future R22 on-disk cache естественно подключается через единый entry.
+
+**Real-world impact:** `nova test foo.nv` с `import std.X.Y` сейчас
+падает («cannot resolve iterator type 'nova_int'»). После R31 —
+работает identical с `nova build foo.nv`.
+
+**Estimate:** ~80-120 LOC (extract + 3 call site updates).
+**Приоритет:** P1 — блокер для stdlib testing.
+
 ### Spec / DX [35.A]
 
 **R25. [35.A] Wildcard `import X.Y.*`** (parser + resolver). Bare-name

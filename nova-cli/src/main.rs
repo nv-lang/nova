@@ -408,154 +408,9 @@ fn check_module_path(path: &Path, module: &nova_codegen::ast::Module) -> Result<
         .map_err(|msg| anyhow!("{}", msg))
 }
 
-/// Plan 35 Ф.1 MVP: cross-file resolve через inline AST expansion.
-///
-/// Walks `module.imports` recursively (depth-first), loads each imported
-/// `.nv` file, parses, recursively resolves transitive imports.
-/// `Item::Type` и `Item::Fn` (export'нутые) из всех imported modules
-/// merge'ятся в текущий `module.items`.
-///
-/// Это **самый узкий MVP cut** Plan 35 Ф.1 — unblock'ит multi-file
-/// stdlib через codegen без полного refactor (signature/body split,
-/// SourceMap propagation, mangling, DCE — sub-plans 35.A-E).
-///
-/// **Cycle detection:** visited set по canonical path. Cycle → error.
-///
-/// **Load paths** (в порядке поиска):
-///   1. `<entry_dir>/<path/parts>.nv` — same-package import
-///   2. `<repo>/<path/parts>.nv`     — repo-root import (для `std.X.Y` это `<repo>/std/X/Y.nv`)
-///   3. `<stdlib_dir>/<X/Y>.nv`      — explicit stdlib (если path начинается с `std.`)
-fn resolve_imports_inline(
-    entry_path: &Path,
-    module: &mut nova_codegen::ast::Module,
-    repo: &Path,
-    stdlib_dir: &Path,
-) -> Result<()> {
-    use std::collections::HashSet;
-
-    let entry_dir = entry_path.parent().unwrap_or(repo).to_path_buf();
-    let mut visited: HashSet<PathBuf> = HashSet::new();
-    // Mark entry as visited (canonical) to prevent re-loading it.
-    if let Ok(c) = entry_path.canonicalize() {
-        visited.insert(c);
-    }
-
-    // Collect imports to process (BFS).
-    let mut queue: Vec<nova_codegen::ast::Import> = module.imports.clone();
-    let mut merged_items: Vec<nova_codegen::ast::Item> = Vec::new();
-    let mut import_stack: Vec<Vec<String>> = Vec::new(); // for cycle err message
-
-    while let Some(imp) = queue.pop() {
-        // Resolve path to file.
-        let resolved = resolve_import_path(&imp.path, &entry_dir, repo, stdlib_dir);
-        let resolved = match resolved {
-            Some(p) => p,
-            None => {
-                return Err(usage_err(format!(
-                    "cannot find module '{}' — searched:\n  {}/{}.nv\n  {}/{}.nv\n  {}/{}.nv",
-                    imp.path.join("."),
-                    entry_dir.display(), imp.path.join("/"),
-                    repo.display(), imp.path.join("/"),
-                    stdlib_dir.display(), imp.path.iter().skip(1).cloned().collect::<Vec<_>>().join("/"))));
-            }
-        };
-
-        let canon = resolved.canonicalize()
-            .map_err(|e| anyhow!("canonicalize {}: {}", resolved.display(), e))?;
-        if !visited.insert(canon.clone()) {
-            // Already loaded — skip silently (diamond-dep dedup).
-            continue;
-        }
-
-        // Detect cycle: if canon path appears in import_stack, cycle.
-        if import_stack.contains(&imp.path) {
-            return Err(anyhow!(
-                "import cycle detected:\n  {}",
-                import_stack.iter()
-                    .map(|p| p.join("."))
-                    .collect::<Vec<_>>()
-                    .join(" → ")));
-        }
-        import_stack.push(imp.path.clone());
-
-        let imp_src = read_file(&resolved)?;
-        let imp_path_str = resolved.to_string_lossy();
-        let imp_module = nova_codegen::parser::parse(&imp_src)
-            .map_err(|d| anyhow!(
-                "in imported module '{}' ({}): {}",
-                imp.path.join("."), imp_path_str, d.render(&imp_src, &imp_path_str)))?;
-
-        // Recursive: enqueue transitive imports.
-        for sub in &imp_module.imports {
-            queue.push(sub.clone());
-        }
-
-        // Merge items: Type, Fn, Const. Skip Test (test blocks из imported
-        // модулей не нужны — они должны запускаться через `nova test
-        // <imported>`, не как часть main module).
-        for item in imp_module.items {
-            match &item {
-                nova_codegen::ast::Item::Type(_)
-                | nova_codegen::ast::Item::Fn(_)
-                | nova_codegen::ast::Item::Const(_) => {
-                    merged_items.push(item);
-                }
-                nova_codegen::ast::Item::Test(_) | nova_codegen::ast::Item::Let(_) => {
-                    // Test blocks и top-level let — игнорируем для imported.
-                }
-            }
-        }
-
-        import_stack.pop();
-    }
-
-    // Prepend merged items so user code (and its `type Range` overrides)
-    // имеет shadow priority. Actually — append, чтобы user definitions
-    // были последними; но в bootstrap single-pass codegen важно чтобы
-    // typedef'ы появились ДО use-site. Делаем prepend: imported сначала.
-    let mut new_items = merged_items;
-    new_items.append(&mut module.items);
-    module.items = new_items;
-
-    Ok(())
-}
-
-/// Resolve `import a.b.c` к filesystem path.
-/// Returns first existing path.
-fn resolve_import_path(
-    parts: &[String],
-    entry_dir: &Path,
-    repo: &Path,
-    stdlib_dir: &Path,
-) -> Option<PathBuf> {
-    if parts.is_empty() {
-        return None;
-    }
-    // Candidates (порядок: locale → repo → stdlib explicit).
-    let rel_path: PathBuf = parts.iter().collect();
-    let with_ext = rel_path.with_extension("nv");
-
-    let cand_local = entry_dir.join(&with_ext);
-    if cand_local.exists() && cand_local.is_file() {
-        return Some(cand_local);
-    }
-
-    let cand_repo = repo.join(&with_ext);
-    if cand_repo.exists() && cand_repo.is_file() {
-        return Some(cand_repo);
-    }
-
-    // explicit stdlib_dir search (path starts with `std`)
-    if parts[0] == "std" && parts.len() >= 2 {
-        let rel_inside_std: PathBuf = parts[1..].iter().collect();
-        let cand_std = stdlib_dir.join(rel_inside_std.with_extension("nv"));
-        if cand_std.exists() && cand_std.is_file() {
-            return Some(cand_std);
-        }
-    }
-
-    None
-}
+// Plan 35 R31: resolve_imports_inline extracted в nova_codegen::imports
+// для использования из всех 3 pipelines (cmd_check, cmd_build, test_runner).
+// Local thin wrapper для backward-compat usage в cmd_build (UsageError tagging).
 
 /// Plan 36 Ф.1 + 36.D: polymorphic path argument + verbosity + filters.
 /// Принимает список путей (file-or-dir, рекурсивный walk для dir).
@@ -840,6 +695,27 @@ fn check_one_file(path: &Path, verbose: bool) -> CheckResult {
         };
     }
 
+    // 2.5 Plan 35 R31: cross-file resolve через inline expansion.
+    // Безопасно для check: type-check merged AST — same correctness как
+    // cmd_build. Закрывает Plan 35 R19 (nova check parity).
+    if !module.imports.is_empty() {
+        if let Ok(repo) = find_repo_root() {
+            let paths = resolve_paths(&repo);
+            if let Err(e) = nova_codegen::imports::resolve_imports_inline(
+                path, &mut module, &repo, &paths.stdlib_dir,
+            ) {
+                return CheckResult {
+                    file: path.to_path_buf(),
+                    error: Some(format!("import resolution: {}", e)),
+                    warnings: Vec::new(),
+                    elapsed_ms: measure(t0),
+                };
+            }
+        }
+        // Если find_repo_root() не нашёл nova.toml — silently skip imports
+        // (single-file mode без cross-file context).
+    }
+
     // 3. types::check_module
     if let Err(errs) = nova_codegen::types::check_module(&module) {
         let msgs: Vec<String> = errs.iter().map(|d| d.render(&src, &path_str)).collect();
@@ -994,7 +870,7 @@ fn cmd_build(
     //   - Wildcard `import X.*` не поддерживается (R25, sub-plan 35.A).
     //
     // Cycle detection: visited set по canonical path.
-    resolve_imports_inline(&path, &mut module, &repo, &paths.stdlib_dir)?;
+    nova_codegen::imports::resolve_imports_inline(&path, &mut module, &repo, &paths.stdlib_dir)?;
 
     nova_codegen::types::check_module(&module).map_err(|errs| {
         let msgs: Vec<String> = errs.iter()

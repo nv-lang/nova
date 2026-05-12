@@ -1,0 +1,30 @@
+// Plan 35 R31 unified pipeline: cross-file step_by через `nova test`.
+//
+// До R31: `nova test` использовал test_runner pipeline, который НЕ
+// делал inline expansion. `nova build` работал, `nova test` падал
+// «cannot resolve iterator type 'nova_int'».
+//
+// После R31: extract resolve_imports_inline в nova_codegen::imports;
+// test_runner::codegen_to_c также вызывает его. Все 3 pipelines unified.
+
+module nova_tests.syntax.step_by_cross_file
+
+import std.collections.range
+
+test "step_by(2) every other via import std" {
+    let mut sum = 0
+    for i in (0..10).step_by(2) {
+        sum = sum + i
+    }
+    // 0 + 2 + 4 + 6 + 8 = 20
+    assert(sum == 20)
+}
+
+test "Range literal in for-in (Case 1 primitive int loop)" {
+    let mut sum = 0
+    for i in 0..5 {
+        sum = sum + i
+    }
+    // 0+1+2+3+4 = 10
+    assert(sum == 10)
+}
