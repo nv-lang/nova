@@ -8270,3 +8270,31 @@ per call), поэтому compile-error на 33 arms больше не emit'ти
 - Этап 4: Linux Docker validation (требует Docker daemon).
 - Этап 5 docs partially done (D97 + simplifications + project-creation
   — этот файл). Discussion-log в private repo — отдельная задача.
+
+---
+
+## Сессия 2026-05-12 (продолжение IV): Plan 41 Этап 4 — Linux Docker validation
+
+Пересобран docker image `nova:linux` с Plan 41 Этапы 1+2+3+5 кодом.
+Probe-тест на Linux Docker подтвердил production-ready arena:
+
+- slot_count = 4096 (per D97 production sizing)
+- virtual_reserved = 8 589 934 592 байт (8 GB virtual per thread)
+- lazy commit работает (RSS не растёт до 8 GB)
+- slot reuse работает (slots_active обнуляется после fiber termination)
+- high_water корректно отражает peak
+
+Full Linux Docker regression: 247 PASS / 15 FAIL. Все failures —
+pre-existing Docker timing slowdowns (`contracts_*`, `defer_*`,
+`gc_no_leak`, `sleep_*`); arena wire-up НЕ добавил регрессов на Linux.
+
+### Plan 41 status: closed except discussion-log
+
+- ✅ Этап 1: Infrastructure + Boehm/Docker fix + wire-up + pin.
+- ✅ Этап 2: `_NOVA_GC_DISABLE` removal.
+- ✅ Этап 3: `std.runtime.fibers` introspection API.
+- ✅ Этап 4: Linux Docker validation.
+- ✅ Этап 5 (partial): D97 spec + simplifications + project-creation.
+  Discussion-log в private repo — отдельная задача.
+
+Pre-existing `select_timer_cleanup` SEGV — отдельный блокер, не Plan 41.

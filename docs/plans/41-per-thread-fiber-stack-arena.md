@@ -1019,10 +1019,30 @@ runner для smoke test (Plan 27 G5 уже флагнул это как pending
   Smoke-тест [nova_tests/concurrency/fiber_arena_stats.nv](../../nova_tests/concurrency/fiber_arena_stats.nv)
   — 2 sub-теста, оба PASS на Windows. **262 PASS / 1 FAIL** (тот же
   pre-existing `select_timer_cleanup`).
-- ⏸ **Этап 4** — Linux Docker validation (требует запущенного Docker
-  daemon, проверка lazy commit через `/proc/self/status` RSS).
-- ⏸ **Этап 5** — D-decision update + discussion-log (часть выполнена
-  в этой сессии: project-creation.txt + plan дополнены).
+- ✅ **Этап 4 закрыт** (2026-05-12): Linux Docker validation выполнена.
+  Образ `nova:linux` (Ubuntu 22.04, clang-15, system libuv1-dev +
+  libgc-dev) пересобран с Plan 41 Этапы 1+2+3 + D97. Probe-тест
+  (удалён после валидации) на Docker container показал реальные
+  значения arena:
+  - `slot_count = 4096` (production sizing per D97).
+  - `virtual_reserved = 8 589 934 592 байт = 8 GB` per thread (lazy
+    commit, RSS not affected).
+  - `slots_active` корректно растёт с spawn'ами и обнуляется после
+    fiber termination → **slot reuse работает**.
+  - `high_water = 2` peak concurrent, остаётся в фактическом учёте.
+  Smoke-тест [fiber_arena_stats.nv](../../nova_tests/concurrency/fiber_arena_stats.nv)
+  branch'ится на `slot_count > 0` (Linux path) и PASS.
+
+  **Full regression Linux Docker:** 247 PASS / 15 FAIL. Все failures —
+  pre-existing Docker timing slowdowns (`contracts_*`, `defer_*`,
+  `gc_no_leak`, `sleep_*`); arena wire-up НЕ добавил регрессов.
+  `select_timer_cleanup` — тот же pre-existing блокер что на Windows.
+- ✅ **Этап 5 (частично)** закрыт: spec D97 в
+  [06-concurrency.md](../../spec/decisions/06-concurrency.md) +
+  index update в spec/decisions/README.md + entry в simplifications.md
+  + session log в project-creation.txt (commit `6e2f238c30`).
+  Discussion-log в private repo — отдельная задача (memory hook
+  `feedback_discussion_log.md`).
 
 ### Updated Plan 41 status
 
