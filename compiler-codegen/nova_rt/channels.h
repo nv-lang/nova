@@ -739,12 +739,36 @@ static inline uint32_t _nova_sel_rng(uint32_t* s) {
     return *s;
 }
 
+/* Plan 40 audit round 7 (2026-05-12): fire on_select_lost for arms
+ * that did NOT win the select. Must be called on BOTH paths:
+ *   - try_immediate win (NEW — раньше callback пропускался, и Time.after
+ *     timer оставался active forever → накопление uv handles → SEGV
+ *     на ~35 итерациях при использовании Time.after в hot loop).
+ *   - park path (already calls this в нижнем участке after park).
+ *
+ * Caller передаёт ctx->which == winning arm index (0..n_arms-1) или -1
+ * если победил не один arm (e.g., все closed). */
+static inline void _nova_select_fire_lost(SelectCtx* ctx) {
+    int n = ctx->n_arms, i;
+    for (i = 0; i < n; i++) {
+        if (i == ctx->which) continue;
+        SelectSlot* arm = &ctx->arms[i];
+        if (!arm->chan || !arm->guard) continue;
+        if (arm->chan->on_select_lost) {
+            arm->chan->on_select_lost(arm->chan);
+        }
+    }
+}
+
 /* Try all enabled arms once in random order. Returns 1 if an arm fired.
  * Sets ctx->which and ctx->recv_val on success.
  *
  * Plan 40 R2: each channel locked individually around its mutation.
  * Plan 40 R2 §6: no need to hold multiple locks (optimistic re-scan
- * via post-park retry replaces "hold-all" Go pattern). */
+ * via post-park retry replaces "hold-all" Go pattern).
+ *
+ * Plan 40 audit round 7: fire on_select_lost для losing arms перед return.
+ * Без этого Time.after timer arm оставался active даже когда recv arm выигрывал. */
 static inline int nova_select_try_immediate(SelectCtx* ctx) {
     int n = ctx->n_arms, i, j;
     /* Fisher-Yates shuffle (Plan 40 Ф.3 final): alloca = ровно n. */
@@ -773,12 +797,14 @@ static inline int nova_select_try_immediate(SelectCtx* ctx) {
                 (void)_nova_channel_wake_send(st);
                 nova_mutex_unlock(&st->mu);
                 ctx->which = idx; ctx->recv_val = v;
+                _nova_select_fire_lost(ctx);
                 return 1;
             }
             /* wildcard `_ = rx` fires on closed channel; bound `Some(v) = rx` не fires. */
             if (nova_abool_load(&st->closed) && arm->wildcard) {
                 nova_mutex_unlock(&st->mu);
                 ctx->which = idx; ctx->recv_val = 0;
+                _nova_select_fire_lost(ctx);
                 return 1;
             }
         } else {
@@ -790,6 +816,7 @@ static inline int nova_select_try_immediate(SelectCtx* ctx) {
                     _nova_channel_wake_recv_with_value(st, arm->send_val)) {
                     nova_mutex_unlock(&st->mu);
                     ctx->which = idx;
+                    _nova_select_fire_lost(ctx);
                     return 1;
                 }
                 /* Push into buffer. */
@@ -798,6 +825,7 @@ static inline int nova_select_try_immediate(SelectCtx* ctx) {
                 st->count++;
                 nova_mutex_unlock(&st->mu);
                 ctx->which = idx;
+                _nova_select_fire_lost(ctx);
                 return 1;
             }
         }
@@ -942,15 +970,11 @@ static inline void nova_select_park(SelectCtx* ctx) {
         nova_select_try_immediate(ctx);
     }
 
-    /* Plan 40 Ф.2 B7: fire on_select_lost callbacks for arms that did not win. */
-    for (i = 0; i < n; i++) {
-        if (i == ctx->which) continue;
-        SelectSlot* arm = &ctx->arms[i];
-        if (!arm->chan || !arm->guard) continue;
-        if (arm->chan->on_select_lost) {
-            arm->chan->on_select_lost(arm->chan);
-        }
-    }
+    /* Plan 40 Ф.2 B7 + audit round 7: fire on_select_lost callbacks for
+     * arms that did not win. Через shared helper (см. try_immediate path).
+     * Если try_immediate уже отстрелял callback'и для нашей ветки —
+     * повторный вызов безопасен (NovaAfterState `cancelled` flag идемпотентен). */
+    _nova_select_fire_lost(ctx);
 }
 
 /* ── Time.after — D94 timeout channel (Plan 31 Ф.5) ───────────── */
@@ -998,6 +1022,11 @@ static void _nova_after_close_cb(uv_handle_t* h) {
 static void _nova_after_timer_cb(uv_timer_t* h) {
     NovaAfterState* st = (NovaAfterState*)h->data;
     if (st->cancelled) return;  /* select wake cancelled us; do nothing */
+    /* Plan 40 audit round 7 (2026-05-12): set cancelled BEFORE uv_close —
+     * без этого _nova_after_on_select_lost мог сделать второй uv_close
+     * (libuv assert(0) в core.c:694 на повторном endgame).
+     * Order: cancelled-flag → try_send (idempotent) → writer_close → uv_close. */
+    st->cancelled = true;
     /* Non-blocking send: channel cap=1, always has room at this point. */
     nova_chan_writer_try_send(st->tx, 1);
     /* Close writer so reader sees channel as closed after consuming the value. */
