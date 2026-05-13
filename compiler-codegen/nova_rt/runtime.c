@@ -25,7 +25,15 @@
 
 #include <uv.h>
 
-/* No <gc.h> — workers don't touch Boehm в Этапе 0 (см. _worker_main note). */
+/* Plan 44.5 Layer 4: Boehm GC_THREADS register per worker.
+ * Linux/macOS: libgc built with GC_THREADS (Ubuntu apt default).
+ * Windows: vcpkg bdwgc[multithreaded] feature flag — может отсутствовать.
+ * Conditional через NOVA_GC_THREADS_REGISTER (set by build на supported
+ * platforms). Default — off, safe fallback. */
+#if defined(NOVA_GC_BOEHM) && (defined(__linux__) || defined(__APPLE__))
+#  define NOVA_GC_THREADS_REGISTER 1
+#  include <gc.h>
+#endif
 
 /* ── Worker struct ─────────────────────────────────────────────── */
 
@@ -73,11 +81,18 @@ static void _worker_main(void* arg) {
     NovaWorker* w = (NovaWorker*)arg;
     _current_worker_id = w->id;
 
-    /* Plan 44.1 (Plan 44 Этап 0): НЕ регистрируем thread с Boehm GC — это требует
-     * GC_THREADS build (Linux Docker default, Windows vcpkg может без).
-     * Worker'ы в Этапе 0 не делают nova_alloc — только infrastructure
-     * idle. GC register — задача Plan 45+ когда workers будут actually
-     * выполнять fiber workloads. */
+    /* Plan 44.5 Layer 4: register thread с Boehm GC.
+     * Required для workers что вызывают nova_alloc (channels, NovaSpawnCtx).
+     * Linux/macOS: libgc built с GC_THREADS — register/unregister работают.
+     * Windows: conditional skip (build flag NOVA_GC_THREADS_REGISTER).
+     * Без register workers могут crash при nova_alloc (Boehm tries to
+     * walk не-зарегистрированный thread stack). */
+#ifdef NOVA_GC_THREADS_REGISTER
+    struct GC_stack_base sb;
+    if (GC_get_stack_base(&sb) == GC_SUCCESS) {
+        GC_register_my_thread(&sb);
+    }
+#endif
 
     /* Per-worker TLS: _nova_active_scope указывает на own scope.
      * Объявлены в fibers.h cross-platform; здесь только set. */
@@ -129,6 +144,10 @@ static void _worker_main(void* arg) {
         }
     }
     _nova_active_slot = -1;
+
+#ifdef NOVA_GC_THREADS_REGISTER
+    GC_unregister_my_thread();
+#endif
 }
 
 /* ── Init / shutdown ──────────────────────────────────────────── */
@@ -149,6 +168,14 @@ void nova_runtime_init(int n_workers) {
         n_workers = (int)uv_available_parallelism();
         if (n_workers <= 0) n_workers = 1;
     }
+
+#ifdef NOVA_GC_THREADS_REGISTER
+    /* Boehm требует разрешения explicit thread registration ПЕРЕД
+     * первым GC_register_my_thread. Idempotent — safe вызывать
+     * многократно. Without this — register fails с "Threads explicit
+     * registering is not previously enabled" error. */
+    GC_allow_register_threads();
+#endif
 
     _workers = (NovaWorker*)calloc((size_t)n_workers, sizeof(NovaWorker));
     if (!_workers) {
