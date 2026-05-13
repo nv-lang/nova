@@ -733,10 +733,10 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
     let rt_alloc = opts.rt_dir.join(opts.gc_kind.alloc_c_name());
     let rt_effects = opts.rt_dir.join("effects.c");
     let rt_fibers = opts.rt_dir.join("fibers.c");
-    // Plan 41 Etap 1: fiber stack arena (Linux/macOS only — Windows
+    // Plan 44.2 Etap 1: fiber stack arena (Linux/macOS only — Windows
     // compiles но содержит no-op marker; включаем для всех toolchain'ов).
     let rt_fiber_arena = opts.rt_dir.join("fiber_arena.c");
-    // Plan 41 Etap 3: cross-platform stats wrappers for std.runtime.fibers.
+    // Plan 44.2 Etap 3: cross-platform stats wrappers for std.runtime.fibers.
     let rt_fiber_stats = opts.rt_dir.join("fiber_stats.c");
     // Plan 44 Этап 0: M:N runtime (opt-in через nova_runtime_init).
     let rt_runtime = opts.rt_dir.join("runtime.c");
@@ -805,7 +805,7 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
             if !target.is_empty() {
                 flags.insert(0, target.to_string());
             }
-            // Plan 41 P41-5 + audit round 5: stack-clash protection (CVE-2017-1000366).
+            // Plan 44.2 P41-5 + audit round 5: stack-clash protection (CVE-2017-1000366).
             // -fstack-clash-protection inserts page-by-page probing on stack frames
             // >4KB, preventing skip past single guard page in one SP subtraction.
             // -fstack-protector-strong adds canaries on functions with arrays.
@@ -906,8 +906,8 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
             c.arg(&rt_alloc);
             c.arg(&rt_effects);
             c.arg(&rt_fibers);
-            c.arg(&rt_fiber_arena);  /* Plan 41 Etap 1 */
-            c.arg(&rt_fiber_stats);  /* Plan 41 Etap 3 */
+            c.arg(&rt_fiber_arena);  /* Plan 44.2 Etap 1 */
+            c.arg(&rt_fiber_stats);  /* Plan 44.2 Etap 3 */
             c.arg(&rt_runtime);      /* Plan 44 Этап 0 */
             c
         }
@@ -948,8 +948,8 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
             c.arg(&rt_alloc);
             c.arg(&rt_effects);
             c.arg(&rt_fibers);
-            c.arg(&rt_fiber_arena);  /* Plan 41 Etap 1 */
-            c.arg(&rt_fiber_stats);  /* Plan 41 Etap 3 */
+            c.arg(&rt_fiber_arena);  /* Plan 44.2 Etap 1 */
+            c.arg(&rt_fiber_stats);  /* Plan 44.2 Etap 3 */
             c.arg(&rt_runtime);      /* Plan 44 Этап 0 */
             // Plan 27 Ф.1: Boehm link flags for MSVC (after sources, before /link).
             if opts.gc_kind == GcKind::Boehm {
@@ -998,8 +998,8 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
             c.arg(&rt_alloc);
             c.arg(&rt_effects);
             c.arg(&rt_fibers);
-            c.arg(&rt_fiber_arena);  /* Plan 41 Etap 1 */
-            c.arg(&rt_fiber_stats);  /* Plan 41 Etap 3 */
+            c.arg(&rt_fiber_arena);  /* Plan 44.2 Etap 1 */
+            c.arg(&rt_fiber_stats);  /* Plan 44.2 Etap 3 */
             c.arg(&rt_runtime);      /* Plan 44 Этап 0 */
             // Plan 27 Ф.1+Ф.D: Boehm link flags for GCC.
             if opts.gc_kind == GcKind::Boehm {
@@ -1919,7 +1919,8 @@ fn codegen_to_c(path: &Path, src: &str) -> Result<Vec<String>, String> {
     // безусловно (resolver сам auto-добавит prelude если файл существует).
     if let Some(repo) = find_repo_root_from(path) {
         let stdlib_dir = repo.join("std");
-        crate::imports::resolve_imports_inline(path, &mut module, &repo, &stdlib_dir)
+        // Plan 42 правило F: test mode = include `*_test.nv` peers.
+        crate::imports::resolve_imports_inline_ex(path, &mut module, &repo, &stdlib_dir, true)
             .map_err(|e| format!("import resolution: {}", e))?;
     }
 

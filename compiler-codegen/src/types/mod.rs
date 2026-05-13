@@ -922,10 +922,25 @@ impl<'a> CapabilityCtx<'a> {
     }
 
     fn check_module(&self, module: &Module, errors: &mut Vec<Diagnostic>) {
+        // Plan 42 Sub-plan 42.A: file-level #forbid declarations.
+        // Initial forbidden set из module.attrs (per-file scope).
+        // Все functions в этом file получают эти effects forbidden.
+        let mut file_forbidden: HashSet<String> = HashSet::new();
+        for attr in &module.attrs {
+            if matches!(attr.kind, crate::ast::ModuleAttrKind::Forbid) {
+                for e in &attr.effects {
+                    file_forbidden.insert(e.clone());
+                }
+            }
+        }
         for item in &module.items {
             match item {
                 Item::Fn(f) => {
                     let mut state = CapState::default();
+                    // Plan 42 Sub-plan 42.A: file-level #forbid initial frame.
+                    if !file_forbidden.is_empty() {
+                        state.forbidden_stack.push(file_forbidden.clone());
+                    }
                     // Plan 16 Ф.5: @realtime атрибут оборачивает body
                     // в realtime[+nogc] контекст.
                     match f.realtime_attr {
@@ -940,6 +955,9 @@ impl<'a> CapabilityCtx<'a> {
                 }
                 Item::Test(t) => {
                     let mut state = CapState::default();
+                    if !file_forbidden.is_empty() {
+                        state.forbidden_stack.push(file_forbidden.clone());
+                    }
                     self.walk_block(&t.body, &mut state, errors);
                 }
                 _ => {}
