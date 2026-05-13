@@ -8661,3 +8661,85 @@ Plan 23.1 закрывает Слой 1 (thread pool) минимально.
 Следующие этапы (Plan 23.2+) — work-stealing, TLS migration, blocking
 pool, std.sync impl — открываются когда Plan 23.1 acceptance met
 (infrastructure liveness validated).
+
+---
+
+## Сессия 2026-05-13 (продолжение): Plan 44.5 M:N work-stealing (partial)
+
+Запрос: "продолжай работать по плану 44, наша цель сделать не хуже чем в go".
+
+Создан Plan 44.5 (work-stealing scheduler + per-worker libuv loop) —
+executable sub-plan для Plan 44 roadmap. **Layers 1+2+4 закрыты:**
+
+**Layer 1 (Chase-Lev deque)** — `compiler-codegen/nova_rt/deque.h` (~250 LOC).
+Канонический lock-free work-stealing deque (Chase & Lev SPAA 2005):
+- Owner: push/pop LIFO wait-free.
+- Stealers: FIFO lock-free CAS.
+- Memory ordering per PPoPP 2013 paper.
+- Dynamic resize при bottom-top > capacity.
+
+**Layer 2 (worker integration)** — runtime.c refactor:
+- NovaWorker.scope (mutex+push queue) → NovaDeque.
+- Worker main loop: own deque pop → steal у neighbors → idle uv_run.
+- nova_runtime_spawn_global: mco_create + nova_deque_push в target worker.
+
+**Layer 4 (Boehm GC_THREADS)** — register threads:
+- Linux/macOS (NOVA_GC_BOEHM + __linux__/__APPLE__): GC_allow_register_threads
+  + GC_register_my_thread per worker.
+- Windows: conditional skip (vcpkg bdwgc[multithreaded] unreliable).
+- Workers могут безопасно вызывать nova_alloc (channels, NovaSpawnCtx).
+
+**Layer 5 partial** — smoke tests (mn_runtime_cpu_workload.nv):
+- init/shutdown lifecycle.
+- Idempotent cycles.
+- (Actual fiber workload requires Layer 3.)
+
+### Открытое (Plan 44.6 будущая session)
+
+**Layer 3 (per-worker libuv loop)** — actual workload distribution:
+- TLS `_nova_current_loop` для timer/channel handle registration.
+- `nova_supervised_run(scope, loop)` параметризация.
+- Codegen: emit current loop в supervised_run.
+- Без этого Time.sleep/Channel.recv в worker fiber'ах конфликтуют
+  с global event loop.
+
+Plan 44.6 = Layer 3 + full Layer 5 + Layer 6 (D98 spec).
+
+### Сравнение с Go runtime
+
+| Feature | Go | Nova (after 44.5 partial) | Gap |
+|---|---|---|---|
+| Work-stealing deque | Chase-Lev | Chase-Lev | ✅ паритет |
+| Per-worker scheduler | g/M/P | NovaWorker | ✅ паритет |
+| Per-worker event loop | runqueue + netpoll | uv_loop_t per worker | ⏸ Plan 44.6 |
+| Cross-worker wake | futex/event | uv_async_send | ✅ паритет |
+| GC multi-thread | precise + concurrent | Boehm conservative + STW | ⚠️ separate |
+| Fiber migration | g hops P | pinned to worker | ⏸ Plan 44.6+ |
+| Preemption | 10ms safepoint | cooperative-only | ⏸ Plan 44.7 |
+| Blocking pool | netpoll + spawn M | inline | ⏸ Plan 44.8 |
+
+### Регрессия
+
+**274 PASS / 0 FAIL Windows** (Layer 4 conditional skip — Boehm Windows
+без GC_THREADS). **Linux Docker** mn_runtime_smoke + mn_runtime_cpu_workload
++ select_timer_cleanup PASS.
+
+### Commits сессии
+
+- 2c63d015016 — Layer 1 (Chase-Lev deque) + plan 44.5 docs.
+- 9c29a6126f5 — Layer 2 (worker integration с deque).
+- 5c71689a931 — Layer 5 partial smoke test.
+- b27f7c819a2 — Layer 4 (Boehm GC_THREADS register).
+- d0685eb88d4 — Plan 44.5 closure docs (partial → Plan 44.6).
+
+### Текущее состояние Plan 44 дерева
+
+```
+Plan 44 (M:N runtime roadmap)              roadmap, v1.0+ milestone
+├── 44.1 channels hardening                ✅ closed (8 audit rounds)
+├── 44.2 fiber arena POSIX                 ✅ closed (Этапы 1-5)
+├── 44.3 fiber arena Windows               🔒 fundamentally blocked
+├── 44.4 Stage-0 infrastructure            ✅ closed
+└── 44.5 work-stealing scheduler           🟡 Layers 1+2+4 closed; L3 → 44.6
+    └── 44.6 (planned) per-worker loop + full workload + D98
+```
