@@ -59,6 +59,16 @@ typedef struct SelectWaiter      SelectWaiter;
  *                    For SelectWaiter recv arm, on wake the channel writes
  *                    the value here directly (Plan 40 R1 B1 direct-copy)
  *                    avoiding a buffer round-trip.
+ *
+ *                    ⚠️ **TIME-BOMB (P40R8-6, 2026-05-13):** `nova_int`
+ *                    hard-coded — works пока channels mono-typed. Когда
+ *                    Plan 21+ обобщит T (records, structs), нужно:
+ *                      - Сменить `send_val: nova_int` на `void* recv_slot`.
+ *                      - Wake helpers do `memcpy(slot, &val, sizeof T)`.
+ *                      - Sender передаёт указатель на T-typed stack slot.
+ *                    Сейчас type-pun через `w->send_val = value` works
+ *                    только потому что sizeof(nova_int) полный T.
+ *                    Go's `chansend` делает memcpy по типу.
  *   next/prev      — doubly-linked list (Plan 40 T2; O(1) unlink).
  *   fired          — Plan 40 R1 A6 + R2 B2: selectdone CAS. 0 = waiter
  *                    still owns the slot; 1 = winner CAS'd this waiter.
