@@ -149,4 +149,25 @@ extern "C" {
     // Z3_to_app конвертирует Z3_ast (когда это application — например
     // const) в Z3_app. Нужно для bound-constants в forall_const.
     pub fn Z3_to_app(c: Z3_context, a: Z3_ast) -> Z3_app;
+
+    // Plan 33.3 Ф.9: real uninterpreted function declarations для
+    // pure_view ops. Без них Z3_mk_const с pointer-keyed именами даёт
+    // soundness-баг (alpha-rename binder'а ломает axiom propagation).
+    //
+    // Z3_mk_func_decl: декларирует UF `name : domain[0] × ... × domain[n-1] → range`.
+    pub fn Z3_mk_func_decl(
+        c: Z3_context,
+        s: Z3_symbol,
+        domain_size: c_uint,
+        domain: *const Z3_sort,
+        range: Z3_sort,
+    ) -> Z3_func_decl;
+
+    // Z3_mk_app: применить func_decl к аргументам, получая term.
+    pub fn Z3_mk_app(
+        c: Z3_context,
+        d: Z3_func_decl,
+        num_args: c_uint,
+        args: *const Z3_ast,
+    ) -> Z3_ast;
 }

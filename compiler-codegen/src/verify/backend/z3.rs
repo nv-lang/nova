@@ -46,6 +46,9 @@ pub struct Z3Backend {
     str_sort: ffi::Z3_sort,
     /// Declared variables: name → (Z3_ast, sort).
     vars: HashMap<String, (ffi::Z3_ast, SortRef)>,
+    /// Plan 33.3 Ф.9: declared uninterpreted functions (pure_view'ы).
+    /// name → (Z3_func_decl, return_sort).
+    func_decls: HashMap<String, (ffi::Z3_func_decl, SortRef)>,
     /// Все AST refs которые мы должны dec_ref при Drop.
     refs: Vec<ffi::Z3_ast>,
     /// Сохраняются для extract_model — solver assertion order.
@@ -111,6 +114,7 @@ impl Z3Backend {
                 bool_sort,
                 str_sort,
                 vars: HashMap::new(),
+                func_decls: HashMap::new(),
                 refs: Vec::new(),
                 assertions: Vec::new(),
                 scopes: Vec::new(),
@@ -281,16 +285,17 @@ impl Z3Backend {
             ("=>", &[x, y]) => ffi::Z3_mk_implies(ctx, x, y),
             ("<=>", &[x, y]) => ffi::Z3_mk_iff(ctx, x, y),
 
-            // Uninterpreted function (e.g. `_field_balance(account)`,
-            // которое encode.rs производит для member-access). Z3-side
-            // мы трактуем как uninterpreted: семантика unchanged, equality
-            // даёт нужное reasoning.
-            (op_name, args_arr) if op_name.starts_with("_field_") || op_name.starts_with("_view_") => {
-                // Для V1 closure mvp — кодируем UF-style через специальный
-                // path: Z3_mk_app требует func_decl. Мы строим func_decl
-                // on the fly с domain = типы args, range = Int (default).
-                // Это упрощение: enums/records трактуются как opaque ints.
-                return self.uninterpreted_app(op_name, args_arr);
+            // Plan 33.3 Ф.9: pure_view-UF через real Z3_func_decl
+            // (pre-declared в declare_function, sorts из effect-сигнатуры).
+            // Дайт soundness для axiom-propagation даже под alpha-rename.
+            (op_name, args_arr) if op_name.starts_with("_view_") => {
+                return self.uf_app(op_name, args_arr);
+            }
+            // Legacy: record member access (`_field_X(obj)`) кодируется
+            // через fake fresh-const trick (mixed sorts через одну UF
+            // не поддерживаются realf func_decl'ом).
+            (op_name, args_arr) if op_name.starts_with("_field_") => {
+                return self.legacy_uninterpreted_app(op_name, args_arr);
             }
             _ => {
                 return Err(format!(
@@ -303,20 +308,11 @@ impl Z3Backend {
         Ok(self.track(ast))
     }
 
-    /// Uninterpreted function application: создаёт func_decl на лету.
-    /// Для Plan 33 MVP — все uninterpreted'ы имеют Int range (упрощение
-    /// V1; полноценные record-types ждут типизированного encode'а).
-    unsafe fn uninterpreted_app(&mut self, name: &str, args: &[ffi::Z3_ast]) -> Result<ffi::Z3_ast, String> {
-        // Z3_mk_func_decl + Z3_mk_app не объявлены в нашем мини-FFI чтобы
-        // не раздувать его. Вместо этого: создаём fresh constant
-        // вычисляемый по `(name, args)` signature. То есть один и тот же
-        // `_field_balance(x)` всегда → тот же constant. Это эквивалентно
-        // uninterpreted function семантике для нашего use-case.
-        //
-        // Кешируем через имя: `{name}__{ptr1}_{ptr2}_...`. Это hack но
-        // достаточно для V1 closure (encode.rs производит UF только
-        // через member-access — где arg = encoded obj-expr; equal
-        // sub-exprs → equal Z3_ast pointers через Z3 hash-consing).
+    /// Plan 33.3 Ф.9: legacy fake-UF для `_field_X(obj)` (record member).
+    /// Создаёт fresh constant с именем «uf__{name}__{ptr_of_arg}». Mixed
+    /// sorts через один name (Counter.value, AnotherEffect.value) работают
+    /// корректно потому что fresh-const'ы независимы.
+    unsafe fn legacy_uninterpreted_app(&mut self, name: &str, args: &[ffi::Z3_ast]) -> Result<ffi::Z3_ast, String> {
         let mut key = format!("uf__{}", name);
         for a in args {
             key.push_str(&format!("__{:p}", *a));
@@ -331,6 +327,34 @@ impl Z3Backend {
         self.refs.push(ast);
         self.vars.insert(key.clone(), (ast, SortRef::Int));
         Ok(ast)
+    }
+
+    /// Plan 33.3 Ф.9: применение pure_view UF (`_view_X_Y`).
+    /// Использует pre-declared Z3_func_decl (из `declare_function`).
+    /// Без pre-decl — auto-declare с Int sorts (fallback для unit-тестов).
+    unsafe fn uf_app(&mut self, name: &str, args: &[ffi::Z3_ast]) -> Result<ffi::Z3_ast, String> {
+        let decl = if let Some((d, _)) = self.func_decls.get(name) {
+            *d
+        } else {
+            // Auto-declare с Int sort'ами (legacy fallback для `_field_*`).
+            let int_sort = self.int_sort;
+            let domain: Vec<ffi::Z3_sort> = args.iter().map(|_| int_sort).collect();
+            let cname = CString::new(name).unwrap_or_else(|_| CString::new("_uf").unwrap());
+            let sym = ffi::Z3_mk_string_symbol(self.ctx, cname.as_ptr());
+            let d = ffi::Z3_mk_func_decl(
+                self.ctx,
+                sym,
+                domain.len() as c_uint,
+                domain.as_ptr(),
+                int_sort,
+            );
+            ffi::Z3_inc_ref(self.ctx, d);
+            self.refs.push(d);
+            self.func_decls.insert(name.to_string(), (d, SortRef::Int));
+            d
+        };
+        let ast = ffi::Z3_mk_app(self.ctx, decl, args.len() as c_uint, args.as_ptr());
+        Ok(self.track(ast))
     }
 
     fn extract_model(&self) -> Model {
@@ -400,6 +424,36 @@ impl Drop for Z3Backend {
 
 impl SmtBackend for Z3Backend {
     fn name(&self) -> &'static str { "z3" }
+
+    fn declare_function(
+        &mut self,
+        name: &str,
+        param_sorts: &[SortRef],
+        return_sort: SortRef,
+    ) {
+        if self.func_decls.contains_key(name) { return; }
+        unsafe {
+            let domain: Vec<ffi::Z3_sort> = param_sorts.iter()
+                .map(|s| self.sort_for(s))
+                .collect();
+            let range = self.sort_for(&return_sort);
+            let cname = CString::new(name)
+                .unwrap_or_else(|_| CString::new("_uf").unwrap());
+            let sym = ffi::Z3_mk_string_symbol(self.ctx, cname.as_ptr());
+            let d = ffi::Z3_mk_func_decl(
+                self.ctx,
+                sym,
+                domain.len() as c_uint,
+                domain.as_ptr(),
+                range,
+            );
+            // Refcounted-context: inc_ref на func_decl чтобы Z3 не GC'нул
+            // его до Drop. (Z3_func_decl — это alias Z3_ast, ref-mgmt тот же.)
+            ffi::Z3_inc_ref(self.ctx, d);
+            self.refs.push(d);
+            self.func_decls.insert(name.to_string(), (d, return_sort));
+        }
+    }
 
     fn declare_var(&mut self, name: &str, sort: SortRef) {
         // Idempotent — повторный declare с тем же именем игнорируется.

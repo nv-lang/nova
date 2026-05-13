@@ -130,6 +130,15 @@ impl VerificationPipeline {
         let pure_views = collect_pure_views(module);
         let ctx = super::encode::EncodeCtx { pure_views: &pure_views };
 
+        // Plan 33.3 Ф.9: pre-declare все pure_view UFs в backend'е.
+        // Без этого Z3 auto-declare'ит UF с Int sorts по умолчанию;
+        // pre-decl даёт правильные sorts из effect-сигнатуры (важно для
+        // soundness когда args не int'овые).
+        for (op_name, sig) in &pure_views {
+            let uf = super::encode::pure_view_uf_name(&sig.effect_name, op_name);
+            backend.declare_function(&uf, &sig.param_sorts, sig.return_sort.clone());
+        }
+
         // 1. Declare params as Vars.
         for p in &fd.params {
             let sort = type_to_sort(&p.ty);

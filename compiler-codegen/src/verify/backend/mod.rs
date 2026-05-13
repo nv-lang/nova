@@ -36,6 +36,21 @@ pub trait SmtBackend: Send {
     /// Declare a variable of given sort.
     fn declare_var(&mut self, name: &str, sort: SortRef);
 
+    /// Plan 33.3 Ф.9: декларация uninterpreted function (pure_view-UF).
+    /// `name` — UF-имя (например `_view_Db_balance`). После declare'а
+    /// `assert`/translate, встретив `SmtTerm::App(name, args)` где name
+    /// matches, использует func_decl, а не fake-const trick.
+    ///
+    /// Default impl: noop (TrivialBackend трактует UF как opaque App).
+    /// Z3Backend override'ит для создания Z3_func_decl.
+    fn declare_function(
+        &mut self,
+        _name: &str,
+        _param_sorts: &[SortRef],
+        _return_sort: SortRef,
+    ) {
+    }
+
     /// Add assertion (assumption). Label опционально (для unsat-core).
     fn assert(&mut self, assertion: Assertion);
 

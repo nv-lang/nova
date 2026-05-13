@@ -1,0 +1,24 @@
+// REQUIRES_SMT_BACKEND z3
+//
+// Plan 33.3 Ф.9 regression: axiom binder с именем ОТЛИЧНЫМ от
+// функционального параметра. Раньше Z3 fake-UF через pointer-keyed
+// const'ы давал false-positive только когда binder и param совпадали
+// (`id`/`id`). С real Z3_mk_func_decl + Z3_mk_app axiom propagation
+// работает независимо от выбора имён.
+
+module contracts.z3_axiom_alpha_rename
+
+type Db effect {
+    pure_view balance(id int) -> int
+    // Binder `account_id` отличается от парамета функции ниже.
+    axiom non_negative(account_id) => balance(account_id) >= 0
+}
+
+#must_verify
+fn check_balance(id int) Db -> int
+    ensures balance(id) >= 0
+=> 0
+
+test "axiom propagates под alpha-rename" {
+    assert(1 + 1 == 2)
+}
