@@ -1,0 +1,20 @@
+// EXPECT_COMPILE_ERROR Net
+//
+// Plan 42 Sub-plan 42.1: file-level `#forbid Net` запрещает Net effect
+// во всех functions этого файла. Попытка вызвать Net.get() должна
+// reject'нуться compile-time.
+
+module negative_capability.file_forbid_violation
+#forbid Net
+
+type Net effect {
+    get(url str) -> str
+}
+
+export fn fetch_url(url str) Net -> str =>
+    Net.get(url)
+
+test "Net call in #forbid Net module rejected" {
+    let _ = fetch_url("http://example.com")
+    assert(true)
+}

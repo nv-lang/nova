@@ -1,0 +1,7 @@
+// Plan 42 правило F: test-only peer (suffix `_test`).
+// Включается в test mode, исключается из release build.
+
+module modules.folder_module_with_test
+
+// Test helper — видна из user_test.nv peer'а (тоже test-only).
+fn make_triple(x int) -> int => x * 3

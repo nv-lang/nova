@@ -1,0 +1,14 @@
+// EXPECT_COMPILE_ERROR cannot find module
+//
+// Plan 42 D29 rev-3 + правило L: попытка импорта несуществующего
+// folder-module. Error message должен указывать importing module +
+// searched paths + suggestion (если похожее имя есть).
+
+module negative_capability.folder_module_unknown_target
+
+import nova_tests.modules.folder_module_basicc.{User}
+
+test "unknown folder-module rejected" {
+    let _u = User { id: 1, name: "x" }
+    assert(true)
+}

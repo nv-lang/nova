@@ -1,0 +1,10 @@
+// Plan 42 правило H: peer of folder-module
+// `nova_tests.modules.folder_internal.internal` (parent=folder_internal,
+// target=internal).
+//
+// parent.X = folder_internal.internal.
+
+module folder_internal.internal
+
+export fn encode_value(v int) -> int =>
+    v * 2 + 1

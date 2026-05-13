@@ -1,0 +1,11 @@
+// Plan 42 правило H: folder-module с internal sub-module.
+// public.nv — peer of `modules.folder_internal`. Импортирует
+// internal sub-module — разрешено (importing module starts with
+// `folder_internal`, который parent of internal).
+
+module modules.folder_internal
+
+import nova_tests.modules.folder_internal.internal.{make_token}
+
+export fn make_user_token(user_id int) -> int =>
+    make_token(user_id)

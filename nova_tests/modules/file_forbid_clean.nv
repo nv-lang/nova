@@ -1,0 +1,20 @@
+// Plan 42 Sub-plan 42.1: file-level #forbid attribute.
+// Этот файл объявляет `#forbid Net, Fs` — все functions
+// гарантированно не используют Net/Fs effects.
+// Содержит только pure операции — должен compile.
+
+module modules.file_forbid_clean
+#forbid Net, Fs
+
+export fn pure_double(x int) -> int => x * 2
+
+export fn sum_list(xs []int) -> int {
+    let mut s = 0
+    for x in xs { s = s + x }
+    s
+}
+
+test "pure operations work with #forbid Net, Fs" {
+    assert(pure_double(21) == 42)
+    assert(sum_list([1, 2, 3, 4, 5]) == 15)
+}

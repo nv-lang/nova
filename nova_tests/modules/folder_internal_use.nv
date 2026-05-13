@@ -1,0 +1,15 @@
+// Plan 42 правило H: usage test для folder-module с internal/.
+// public.nv может импортировать internal.token (descendants allowed).
+// folder_internal_use.nv (этот файл) — НЕ descendant of folder_internal,
+// поэтому НЕ может прямо импортировать internal.token. Но может
+// импортировать public.
+
+module modules.folder_internal_use
+
+import nova_tests.modules.folder_internal.{make_user_token}
+
+test "internal module accessed via public peer works" {
+    let token = make_user_token(10)
+    // expected: 10 * 31 + 17 = 327
+    assert(token == 327)
+}

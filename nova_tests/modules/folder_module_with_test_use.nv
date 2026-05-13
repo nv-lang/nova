@@ -1,0 +1,13 @@
+// Plan 42 правило F: usage test для folder-module с _test peer.
+// В test mode (`nova test`) — `make_triple` доступна через
+// shared namespace (helpers_test.nv включается).
+// В build mode (`nova build`) — `make_triple` НЕ доступна.
+
+module modules.folder_module_with_test_use
+
+import nova_tests.modules.folder_module_with_test.{double}
+
+test "production peer accessible in both modes" {
+    let r = double(5)
+    assert(r == 10)
+}

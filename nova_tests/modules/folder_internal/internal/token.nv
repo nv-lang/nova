@@ -1,0 +1,11 @@
+// Plan 42 правило H: peer of folder-module
+// `nova_tests.modules.folder_internal.internal`.
+// Доступен только из `folder_internal.*` descendants
+// (rule H — internal directory).
+//
+// parent.X = folder_internal.internal.
+
+module folder_internal.internal
+
+export fn make_token(user_id int) -> int =>
+    user_id * 31 + 17

@@ -1,0 +1,15 @@
+// EXPECT_COMPILE_ERROR cannot import internal module
+//
+// Plan 42 правило H: `<X>/internal/` доступен только из `<X>.*`
+// descendants. Этот файл — module `negative_capability.folder_internal_external_import`,
+// он НЕ descendant of `nova_tests.modules.folder_internal` —
+// попытка прямого импорта `.internal.{...}` должна reject'нуться.
+
+module negative_capability.folder_internal_external_import
+
+import nova_tests.modules.folder_internal.internal.{make_token}
+
+test "internal import from outside rejected" {
+    let _x = make_token(5)
+    assert(true)
+}
