@@ -178,7 +178,7 @@ CLI-флаги для `compile`:
 проверяет соответствие `module path.X` ↔ filesystem path. Standalone
 `.nv` без `nova.toml` проверку проходит.
 
-### Cross-file resolve (Plan 35 R31 + Ф.1)
+### Cross-file resolve (Plan 35 R31 + Ф.1 + Plan 42)
 
 `nova check` / `nova build` / `nova test` все используют общий
 resolver (`src/imports.rs::resolve_imports_inline`):
@@ -188,6 +188,29 @@ resolver (`src/imports.rs::resolve_imports_inline`):
 - `export import X.{A}` re-export.
 - Prelude auto-import: `std/prelude.nv` (если файл существует)
   автоматически подгружается без explicit `import`.
+
+### Folder-modules (Plan 42 / D29 rev-3)
+
+Module = single-file `X.nv` ИЛИ folder `X/` с peers (Go-style).
+
+- `resolve_module_paths(parts, ...)` returns Vec<PathBuf> —
+  alphabetical sort peers (deterministic build).
+- Filter `*_test.nv` peers если !include_test_peers (Sub-plan 42.1 F).
+- Conflict `X.nv` + `X/` с direct .nv → ambiguous error.
+- `internal/<...>` path-protection (Sub-plan 42.1 H): import only from
+  parent's descendants.
+- File-level `#forbid Eff1, Eff2` (Sub-plan 42.1): attribute после
+  `module X` объявляет per-file capability constraint, enforce'ится
+  через `CapabilityCtx.forbidden_stack` initial frame.
+
+`walk_nv` (test_runner.rs) folder-aware: peers одного folder-module
+**не** компилируются как standalone test entries (только entry-files
+получают `main` codegen).
+
+`module declaration format = parent.X` (D29 rev-3): file basename для
+single-file, folder name для folder-module peer. Compat mode принимает
+**оба** формата (rev-1 full path + rev-3 parent.X) для постепенной
+миграции std/* — sub-plan 42.6.
 
 ## Структура
 

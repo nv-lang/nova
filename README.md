@@ -207,6 +207,12 @@ What works today (bootstrap):
 
 - Cross-file imports (`import X.Y.Z`, selective `import X.{A, B}`,
   `export import X`, prelude auto-import) with DFS cycle detection.
+- **Folder-modules** (D29 rev-3 / Plan 42): module = single-file `X.nv`
+  ИЛИ folder `X/` with peer files (Go-style). All peers declare same
+  `module parent.X` and share namespace. Internal helpers without
+  `export`. Test isolation via `_test.nv` suffix. `internal/` directory
+  for library boundaries. File-level `#forbid Net, Fs` capability
+  attribute (Nova-unique).
 - Effects + handlers (D61/D87): `effect`/`handler` keywords,
   `with X = h { body }`, `interrupt v`, `Handler[E, IRT]` first-class
   type. `forbid`, `realtime` capability blocks.

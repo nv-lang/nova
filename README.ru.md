@@ -200,6 +200,12 @@ fn map_audio(samples []f32, gain f32) -> []f32 =>
 
 - Cross-file imports (`import X.Y.Z`, селективный `import X.{A, B}`,
   `export import X`, prelude auto-import) с DFS cycle detection.
+- **Folder-modules** (D29 rev-3 / Plan 42): module = single-file `X.nv`
+  ИЛИ folder `X/` с peer-файлами (Go-style). Все peers объявляют тот
+  же `module parent.X` и share namespace. Internal helpers без `export`.
+  Test isolation через `_test.nv` suffix. `internal/` directory для
+  library boundaries. File-level `#forbid Net, Fs` capability
+  attribute (Nova-unique).
 - Эффекты + handlers (D61/D87): keyword'ы `effect`/`handler`,
   `with X = h { body }`, `interrupt v`, `Handler[E, IRT]` first-class
   тип. `forbid`, `realtime` capability-блоки.
