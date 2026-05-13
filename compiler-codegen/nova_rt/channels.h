@@ -55,20 +55,19 @@ typedef struct SelectWaiter      SelectWaiter;
  *   scope/slot     — scheduler park identity.
  *   channel        — back-pointer for unlink; NULL = unlinked.
  *   is_recv        — true = recv-waiter, false = send-waiter.
- *   send_val       — value to commit (send-waiter only).
- *                    For SelectWaiter recv arm, on wake the channel writes
- *                    the value here directly (Plan 40 R1 B1 direct-copy)
- *                    avoiding a buffer round-trip.
+ *   send_val       — value to commit (send-waiter only). Sender при park
+ *                    устанавливает; wake send helper читает и кладёт в
+ *                    buffer (или прямо доставляет recv-waiter'у).
+ *   recv_val       — value carrier (recv-waiter only). Wake recv helper
+ *                    direct-writes value сюда (Plan 40 R1 B1 direct-copy);
+ *                    reader после park читает field и возвращает caller'у.
  *
- *                    ⚠️ **TIME-BOMB (P40R8-6, 2026-05-13):** `nova_int`
- *                    hard-coded — works пока channels mono-typed. Когда
- *                    Plan 21+ обобщит T (records, structs), нужно:
- *                      - Сменить `send_val: nova_int` на `void* recv_slot`.
- *                      - Wake helpers do `memcpy(slot, &val, sizeof T)`.
- *                      - Sender передаёт указатель на T-typed stack slot.
- *                    Сейчас type-pun через `w->send_val = value` works
- *                    только потому что sizeof(nova_int) полный T.
- *                    Go's `chansend` делает memcpy по типу.
+ *                    Plan 40 R8-6 fix (2026-05-13): раньше recv использовал
+ *                    `send_val` field как carrier — type-pun работал только
+ *                    пока T=nova_int mono-typed. Теперь поля разделены —
+ *                    semantically чисто, и T-generic refactor (Plan 21+)
+ *                    меняет тип обоих полей одинаково (или сменит на
+ *                    `void* slot + size` для variable-size T).
  *   next/prev      — doubly-linked list (Plan 40 T2; O(1) unlink).
  *   fired          — Plan 40 R1 A6 + R2 B2: selectdone CAS. 0 = waiter
  *                    still owns the slot; 1 = winner CAS'd this waiter.
@@ -84,7 +83,8 @@ struct BaseWaiter {
     int                slot;
     Nova_ChannelState* channel;
     bool               is_recv;
-    nova_int           send_val;
+    nova_int           send_val;  /* send-waiter: value to commit */
+    nova_int           recv_val;  /* recv-waiter: wake helper writes here */
     BaseWaiter*        next;
     BaseWaiter*        prev;
     nova_atomic_int    fired;
@@ -98,9 +98,12 @@ struct ChannelWaiter {
 
 /* SelectWaiter — for select-arm registration. BaseWaiter prefix + arm-only.
  *
- * On wake, channel writes the recv'd value into `base.send_val` (re-using
- * the field as a unified carrier for direct-copy, Plan 40 R1 B1).
- * select_park reads `waiters[which].base.send_val` after fired check.
+ * On wake, channel writes the recv'd value into `base.recv_val` (Plan 40
+ * R1 B1 direct-copy). select_park reads `waiters[which].base.recv_val`
+ * after fired check.
+ *
+ * Plan 40 R8-6 (2026-05-13): use separate recv_val field вместо type-pun
+ * через send_val — semantically чище для T-generic refactor (Plan 21+).
  */
 struct SelectWaiter {
     BaseWaiter base;
@@ -278,11 +281,10 @@ static inline int _nova_channel_wake_recv_with_value(Nova_ChannelState* st,
         }
         int32_t expected = 0;
         if (nova_aint_cas_weak_release(&w->fired, &expected, 1)) {
-            /* Won the CAS. Direct-copy value into waiter's recv slot if
-             * it's a SelectWaiter (has recv_val field). For plain
-             * ChannelWaiter we use send_val as the carrier (reusing the
-             * field — see recv path below). */
-            w->send_val = value;
+            /* Won the CAS. Plan 40 R8-6: direct-copy value в recv_val
+             * field (раньше через send_val type-pun — semantically dirty
+             * для T-generic refactor). */
+            w->recv_val = value;
             _nova_waiter_unlink_locked(w);
             nova_sched_wake(w->scope, w->slot);
             return 1;
@@ -404,6 +406,7 @@ static inline NovaOpt_nova_int nova_chan_reader_recv(Nova_ChanReader* rx) {
     w->channel  = st;
     w->is_recv  = true;
     w->send_val = 0;
+    w->recv_val = 0;
     w->next     = NULL;
     w->prev     = NULL;
     nova_aint_init(&w->fired, 0);
@@ -426,11 +429,10 @@ static inline NovaOpt_nova_int nova_chan_reader_recv(Nova_ChanReader* rx) {
         nova_throw(nova_str_from_cstr("scope cancelled"));
     }
 
-    /* Wake helper (sender side) CAS'd our fired = 1 and copied value
-     * into w->send_val (direct-copy, Plan 40 B1). */
+    /* Plan 40 R8-6: wake helper writes в recv_val (раньше через send_val). */
     int32_t fired = nova_aint_load(&w->fired);
     if (fired) {
-        nova_int v = w->send_val;
+        nova_int v = w->recv_val;
         /* waiter already unlinked by wake helper */
         nova_mutex_unlock(&st->mu);
         return (NovaOpt_nova_int){ .tag = NOVA_TAG_Option_Some, .value = v };
@@ -570,6 +572,7 @@ static inline nova_bool nova_chan_writer_send(Nova_ChanWriter* tx, nova_int v) {
     w->channel  = st;
     w->is_recv  = false;
     w->send_val = v;
+    w->recv_val = 0;
     w->next     = NULL;
     w->prev     = NULL;
     nova_aint_init(&w->fired, 0);
@@ -745,6 +748,7 @@ static inline SelectCtx nova_select_init(int n_arms,
         ctx.waiters[i].base.channel  = NULL;
         ctx.waiters[i].base.is_recv  = false;
         ctx.waiters[i].base.send_val = 0;
+        ctx.waiters[i].base.recv_val = 0;
         ctx.waiters[i].base.next     = NULL;
         ctx.waiters[i].base.prev     = NULL;
         nova_aint_init(&ctx.waiters[i].base.fired, 0);
@@ -984,6 +988,7 @@ static inline void nova_select_park(SelectCtx* ctx) {
         w->base.channel  = st;
         w->base.is_recv  = arm->is_recv;
         w->base.send_val = arm->send_val;
+        w->base.recv_val = 0;
         w->base.next     = NULL;
         w->base.prev     = NULL;
         nova_aint_init(&w->base.fired, 0);
@@ -1017,13 +1022,13 @@ static inline void nova_select_park(SelectCtx* ctx) {
 
     /* Identify the winning arm. First check fired flags (a producer's wake
      * helper already CAS'd one of our waiters and copied value into its
-     * send_val via direct-copy). */
+     * recv_val via direct-copy, Plan 40 R8-6). */
     ctx->which = -1;
     for (i = 0; i < n; i++) {
         SelectWaiter* w = &ctx->waiters[i];
         if (nova_aint_load(&w->base.fired)) {
             ctx->which = w->arm_idx;
-            ctx->recv_val = w->base.send_val;  /* direct-copy carrier */
+            ctx->recv_val = w->base.recv_val;  /* direct-copy carrier */
             break;
         }
     }
