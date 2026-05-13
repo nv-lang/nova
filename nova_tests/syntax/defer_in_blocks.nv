@@ -6,7 +6,7 @@
 // while/loop/while-let/for-in-array/for-in-iter bodies, else-branch,
 // match-arm blocks. Каждый — отдельный test'кейс.
 
-module nova_tests.syntax.defer_in_blocks
+module syntax.defer_in_blocks
 
 
 // ───── defer внутри while body — каждая итерация ─────

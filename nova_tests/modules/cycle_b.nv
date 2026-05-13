@@ -3,7 +3,7 @@
 // Plan 35 Ф.1 cycle detection helper — module B.
 // Замыкает цикл: A → B → A. Сам file как тест → expected compile error.
 
-module nova_tests.modules.cycle_b
+module modules.cycle_b
 
 import nova_tests.modules.cycle_a.{A_VAL}
 

@@ -7,7 +7,7 @@
 // Regression marker: если парсер расширят поддержкой leading-operator
 // continuation, тест провалится — обновить.
 
-module nova_tests.plan34.negative_multiline_or_continuation
+module plan34.negative_multiline_or_continuation
 
 fn is_punct(c char) -> bool =>
     c == '.' || c == ',' || c == ';' || c == ':'

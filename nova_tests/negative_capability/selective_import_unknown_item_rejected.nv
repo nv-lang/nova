@@ -8,7 +8,7 @@
 // Это **bootstrap-level behavior**: post-bootstrap должен type-checker
 // compile error «unknown item in selective import».
 
-module nova_tests.negative_capability.selective_import_unknown_item_rejected
+module negative_capability.selective_import_unknown_item_rejected
 
 import std.collections.range.{NonExistentType}
 

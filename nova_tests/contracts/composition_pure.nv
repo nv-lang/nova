@@ -1,6 +1,6 @@
 // Plan 33.2 Ф.7: composition — вызов #pure функций в контрактах разрешён.
 
-module nova_tests.contracts.composition_pure
+module contracts.composition_pure
 
 // Pure helper.
 #pure

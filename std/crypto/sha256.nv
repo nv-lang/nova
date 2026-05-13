@@ -24,7 +24,7 @@
 //   state.update(chunk2)
 //   let digest = state.finalize()
 
-module std.crypto.sha256
+module crypto.sha256
 
 
 // ──────────────────────────────────────────────────────────────────────────

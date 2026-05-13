@@ -19,7 +19,7 @@
 // Структура: outer map от section name → inner map от key → value.
 // Top-level keys (вне sections) — в section с именем "".
 
-module std.encoding.ini
+module encoding.ini
 
 
 export type ParseIniError

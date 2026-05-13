@@ -15,7 +15,7 @@
 //   VersionReq.parse(s str) Fail[ParseRangeError] -> VersionReq
 //   req.matches(version Version) -> bool
 
-module std.data.semver_range
+module data.semver_range
 
 // Plan 35 Ф.1: cross-file resolve. Version тип определён в std.data.semver.
 import std.data.semver

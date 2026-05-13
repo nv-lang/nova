@@ -3,7 +3,7 @@
 // annotation defaulted к `nova_int`, что ломало compilation для
 // side-effect-only callbacks.
 
-module nova_tests.syntax.closure_unit_return_inference
+module syntax.closure_unit_return_inference
 
 
 // HOF callback с unit-return.

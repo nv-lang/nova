@@ -3,7 +3,7 @@
 // Plan 33.3 Ф.9.2: record invariant violation на конструкции →
 // runtime contract violation в debug.
 
-module nova_tests.expected_runtime.contracts_record_invariant_fail
+module expected_runtime.contracts_record_invariant_fail
 
 type Account {
     balance int

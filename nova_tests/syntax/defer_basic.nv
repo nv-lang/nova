@@ -4,7 +4,7 @@
 // exit-путях (trailing, early return). Defer body захватывает
 // mut local'и by-mutable-reference (через closure-like capture).
 
-module nova_tests.syntax.defer_basic
+module syntax.defer_basic
 
 
 // ───── Single defer: cleanup на trailing exit (block-expr) ─────

@@ -11,7 +11,7 @@
 //
 // Round-trip с WriteBuffer: write → into → from → read.
 
-module nova_tests.runtime.read_buffer
+module runtime.read_buffer
 
 
 // ================================================================

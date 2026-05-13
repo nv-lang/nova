@@ -6,7 +6,7 @@
 // «import cycle detected». Также используется как helper для
 // negative_capability/import_cycle_rejected.nv (импортирует A).
 
-module nova_tests.modules.cycle_a
+module modules.cycle_a
 
 import nova_tests.modules.cycle_b.{B_VAL}
 

@@ -3,7 +3,7 @@
 // В 07_sum_types.nv покрыты unit и tuple варианты. Здесь — варианты
 // с именованными полями: `Success { code int, body str }`.
 
-module nova_tests.types.record_variants
+module types.record_variants
 
 type Response
     | Success { code int, body str }

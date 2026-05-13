@@ -1,6 +1,6 @@
 // Plan 33.2 Ф.5: modifies-frame корректно работает для покрытых assignments.
 
-module nova_tests.contracts.frame_positive
+module contracts.frame_positive
 
 #unverified
 fn modify_a(a int, b int) -> int

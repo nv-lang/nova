@@ -8,7 +8,7 @@
 //   pq.len -> int
 //   pq.is_empty() -> bool
 
-module std.collections.priority_queue
+module collections.priority_queue
 
 
 // T Ord — должен иметь @lt method (D72 bound).

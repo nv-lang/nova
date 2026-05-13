@@ -3,7 +3,7 @@
 // Plan 16 Ф.2 (D63): вызов fn'а с эффектом, который входит в
 // окружающий forbid-set, должен давать compile error.
 
-module nova_tests.negative_capability.forbid_effect_call
+module negative_capability.forbid_effect_call
 
 type Counter effect {
     next() -> int

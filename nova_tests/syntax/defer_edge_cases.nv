@@ -8,7 +8,7 @@
 //   4. defer в handler-method body (cleanup внутри handler).
 //   5. defer fires в panic-path (panic через nova_throw → fail-frame).
 
-module nova_tests.syntax.defer_edge_cases
+module syntax.defer_edge_cases
 
 
 // ───── (1) early break из inner loop — outer defer fires ─────

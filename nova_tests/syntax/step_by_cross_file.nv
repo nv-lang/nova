@@ -7,7 +7,7 @@
 // После R31: extract resolve_imports_inline в nova_codegen::imports;
 // test_runner::codegen_to_c также вызывает его. Все 3 pipelines unified.
 
-module nova_tests.syntax.step_by_cross_file
+module syntax.step_by_cross_file
 
 import std.collections.range
 

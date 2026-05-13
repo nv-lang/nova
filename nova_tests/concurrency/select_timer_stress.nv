@@ -14,7 +14,7 @@
 // Также пробует pattern «timer wins сам по себе»: 100 iterations
 // Time.after(1ms) timeout fires — verify timer cleanup после fire тоже OK.
 
-module nova_tests.concurrency.select_timer_stress
+module concurrency.select_timer_stress
 
 test "500 iter select cleanup stress" {
     let mut wins = 0

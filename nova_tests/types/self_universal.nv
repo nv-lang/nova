@@ -4,7 +4,7 @@
 // После D66: `Self` валиден в любом type-контексте — static-методах,
 // instance-методах, sum-вариантах, effect-объявлениях.
 
-module nova_tests.types.self_universal
+module types.self_universal
 
 // === 1. Self в static-методе record'а ===
 

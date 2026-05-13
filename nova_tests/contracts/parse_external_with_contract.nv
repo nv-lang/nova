@@ -3,7 +3,7 @@
 // Plan 33.1 Ф.1 (D24): external fn не может иметь requires/ensures
 // в 33.1 (полная поддержка с `@trusted` атрибутом — в Plan 33.3).
 
-module nova_tests.contracts.parse_external_with_contract
+module contracts.parse_external_with_contract
 
 external fn bad(x int) -> int
     requires x > 0

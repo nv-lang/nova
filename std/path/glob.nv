@@ -11,7 +11,7 @@
 // API:
 //   Glob.matches(pattern str, path str) -> bool
 
-module std.path.glob
+module path.glob
 
 
 // Matches a path against a glob pattern.

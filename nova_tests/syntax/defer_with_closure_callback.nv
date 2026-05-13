@@ -2,7 +2,7 @@
 // defer body вызывает closure'у которая mutates outer mut local через
 // capture. Это типичный паттерн "callback в defer".
 
-module nova_tests.syntax.defer_with_closure_callback
+module syntax.defer_with_closure_callback
 
 
 fn run_with_cleanup(cleanup fn(int) -> int) -> int {

@@ -1,6 +1,6 @@
 // 09_methods.nv — @-методы (D35), static-методы
 
-module nova_tests.syntax.methods
+module syntax.methods
 
 type Point { x int, y int }
 

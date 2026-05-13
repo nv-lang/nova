@@ -14,7 +14,7 @@
 // для второго closure'а, потому что `a` в его env не попадает (он
 // только параметр первого closure'а).
 
-module nova_tests.syntax.closure_free_var_resolution
+module syntax.closure_free_var_resolution
 
 // Положительный тест: каждый closure видит **своё** окружение, не
 // чужие параметры.

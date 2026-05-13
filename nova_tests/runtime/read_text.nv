@@ -9,7 +9,7 @@
 // Errors: UnexpectedEnd (буфер пуст / неполная UTF-8 sequence на хвосте)
 //   либо InvalidUtf8 { position int } (мусорный байт в середине sequence).
 
-module nova_tests.runtime.read_text
+module runtime.read_text
 
 
 // ================================================================

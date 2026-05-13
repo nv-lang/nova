@@ -1,6 +1,6 @@
 // 06_records.nv — records, field access, field punning (D52), spread (D60)
 
-module nova_tests.types.records
+module types.records
 
 type Point {
     x int

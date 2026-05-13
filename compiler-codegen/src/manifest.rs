@@ -236,3 +236,32 @@ pub fn check_module_path_with_kind(
         exp_legacy_str,
     ))
 }
+
+/// Plan 42 Sub-plan 42.6 (D29 rev-3): identify stdlib runtime module
+/// (`std/runtime/*.nv`) под обоих declaration форматов.
+///
+/// Используется в type-checker'е для разрешения `external fn` keyword'а
+/// (whitelisted только в stdlib runtime — D82).
+///
+/// - rev-1 legacy:  `module std.runtime.X` → `["std", "runtime", X]`
+/// - rev-3 default: `module runtime.X`     → `["runtime", X]` (parent=runtime, target=X)
+///
+/// Compat mode остаётся после Sub-plan 42.6 migration для случая user
+/// package с `name = "std"` (overlap с stdlib namespace).
+pub fn is_stdlib_runtime_module(name: &[String]) -> bool {
+    (name.len() >= 2 && name[0] == "std" && name[1] == "runtime")
+        || (name.len() == 2 && name[0] == "runtime")
+}
+
+/// Plan 42 Sub-plan 42.6: identify `std/prelude.nv` под обоих форматов.
+/// Используется в resolver для skip self-import prelude.
+///
+/// - rev-1 legacy:  `module std.prelude` → `["std", "prelude"]`
+/// - rev-3:         `module <package>.prelude` (для stdlib `<package>=std`,
+///   так что result совпадает; для user package — `["myproject", "prelude"]`).
+///
+/// Более permissive — match по `last() == "prelude"` чтобы прикрыть оба.
+pub fn is_prelude_self_module(name: &[String]) -> bool {
+    (name.len() == 2 && name[0] == "std" && name[1] == "prelude")
+        || name.last().map(|s| s == "prelude").unwrap_or(false)
+}

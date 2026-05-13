@@ -3,7 +3,7 @@
 // `expr is Variant` — runtime tag-check. Возвращает bool.
 // Без binding-формы (binding это работа `if let` из D34).
 
-module nova_tests.syntax.is_sum
+module syntax.is_sum
 
 type Shape
     | Circle { radius f64 }

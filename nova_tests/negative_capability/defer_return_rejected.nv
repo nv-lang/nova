@@ -4,7 +4,7 @@
 // он hijack'нул бы scope-exit окружающей функции. `return` внутри
 // nested fn-литерала в defer body — разрешён (local control).
 
-module nova_tests.negative_capability.defer_return_rejected
+module negative_capability.defer_return_rejected
 
 
 fn f() -> int {

@@ -26,7 +26,7 @@
 //   - 6-/7-полевые форматы (Quartz с seconds и year)
 //   - @yearly / @daily aliases
 
-module std.time.cron
+module time.cron
 
 
 export type ParseCronError

@@ -8,7 +8,7 @@
 // Этот тест проверяет, что handler без exit-control отвергается
 // type-checker'ом.
 
-module nova_tests.negative_capability.fail_handler_no_exit_rejected
+module negative_capability.fail_handler_no_exit_rejected
 
 
 test "handler без exit-control должен fail compile" {

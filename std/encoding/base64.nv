@@ -27,7 +27,7 @@
 //   Base64.decode(s str) Fail[Base64Error] -> []byte
 //   Base64.decode_url(s str) Fail[Base64Error] -> []byte
 
-module std.encoding.base64
+module encoding.base64
 
 
 // ──────────────────────────────────────────────────────────────────────────

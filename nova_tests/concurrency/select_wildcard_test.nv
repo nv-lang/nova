@@ -6,7 +6,7 @@
 //   - Multi-arm: open channel beats closed when Some arm
 //   - Wildcard prevents all-closed deadlock (immediate path, park не нужен)
 
-module nova_tests.concurrency.select_wildcard_test
+module concurrency.select_wildcard_test
 
 // ================================================================
 // SECTION 1: Some(v) = rx — не срабатывает на closed+empty

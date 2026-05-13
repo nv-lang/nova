@@ -1,0 +1,28 @@
+// REQUIRES_SMT_BACKEND z3
+//
+// Plan 33 Z3 milestone: implication-chain reasoning что TrivialBackend
+// тоже не может (требует linear-arith).
+//
+// Если `x > 5` то `x - 3 > 2`. Для z3 — UNSAT (proven).
+// Trivial backend не has arith propagation → Unknown (silent runtime fallback).
+
+module contracts.z3_implication_chain
+
+#must_verify
+fn shift_left(x int) -> int
+    requires x > 5
+    ensures result > 2
+=> x - 3
+
+#must_verify
+fn abs_safe(x int) -> int
+    requires x >= 0
+    ensures result >= 0
+    ensures result == x
+=> x
+
+test "z3 implication chain" {
+    assert(shift_left(10) == 7)
+    assert(abs_safe(0) == 0)
+    assert(abs_safe(42) == 42)
+}

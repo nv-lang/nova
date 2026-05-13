@@ -5821,6 +5821,7 @@ explicit.
 **документация** (LLM reads signature без context lookup).
 
 
+
 ## Plan 44.6: Layer 3 (per-worker libuv loop) без Nova-side workload distribution
 
 **Что упрощено.** Plan 44.6 покрывает только TLS infrastructure для
@@ -5883,3 +5884,115 @@ Cooperative scheduling работает в пределах one worker. Это i
 Требует ~600 строк refactor'а + careful invariant work. Откладывается
 до тех пор пока workload не покажет migration необходимым (single-
 worker stuck'и под uneven load).
+
+
+---
+
+## Plan 42 Sub-plan 42.6 (2026-05-13): migration std/* + nova_tests/* → parent.X
+
+D29 rev-3 ввёл `parent.X` формат module declarations (target = filename
+для single-file или folder name для folder-module peer; parent = directory
+сразу над target). Sub-plan 42.6 — переписать **324 файла** в `std/` и
+`nova_tests/` с legacy `module package.full.path` на `module parent.X`.
+
+**Walker** — `scripts/migrate_modules_rev3.ps1`, one-shot PowerShell.
+
+**Упрощение для пользователя:**
+
+| До (rev-1) | После (rev-3) |
+|---|---|
+| `module std.encoding.hex` | `module encoding.hex` |
+| `module std.collections.hashmap` | `module collections.hashmap` |
+| `module std.runtime.string` | `module runtime.string` |
+| `module nova_tests.basics.literals` | `module basics.literals` |
+
+Declaration **всегда 2 segments** независимо от глубины nesting.
+Имена короче, refactor-safe (move file → declaration не меняется, если
+parent folder тот же).
+
+**Что НЕ меняется:**
+
+- Import paths остаются full path: `import std.encoding.hex.{decode}`
+  (compiler maintains canonical full path ↔ (parent, target) mapping).
+- Single-file at source root (`std/prelude.nv`): rev-3 == rev-1 ==
+  `module std.prelude` (parent = package name). Migration silent skip.
+- Folder-module peers (`modules/folder_X/Y.nv`): уже rev-3 — declare
+  folder name `modules.folder_X`. Skip.
+
+**Compat mode сохранён** в `manifest.rs::check_module_path` —
+оба формата accepted. User packages в любом из форматов работают
+без принудительной migration.
+
+---
+
+## Plan 42 Sub-plan 42.7 ❌ ОТВЕРГНУТО (2026-05-14): cross-peer #forbid lint
+
+Изначально предлагался warning при разных `#forbid` declarations
+между peers одного folder-module — для поддержания «whole-module
+security» convention soft-enforcement'ом.
+
+**Отказ.** File-level `#forbid` (Sub-plan 42.1) — **by-design**
+per-peer, peers равноправны, разные capability constraints — это
+**корректная** decomposition, не code smell:
+
+- `users.nv` использует webhook (нужен `Net`) — НЕ должен `#forbid Net`.
+- `helpers.nv` не делает network — должен `#forbid Net`.
+- `audit.nv` пишет в log-файл (нужен `Fs`) — НЕ должен `#forbid Fs`.
+- Остальные peers — `#forbid Fs`.
+
+Это **legitimate** capability separation внутри одного module.
+Lint срабатывал бы на корректные designs → false positives.
+Программист либо игнорирует warning (noise), либо «выравнивает»
+constraints чтобы lint молчал (потеря выразительности). Real-world
+parallel: ESLint правила типа «consistent-X» часто отключаются.
+
+«Catch typos» аргумент тоже не работает: парсер `#forbid` принимает
+имена capabilities из enum'а, invalid имя — compile error на парсинге.
+
+Lint solved a phantom problem. Plan 42 sub-plan вычеркнут.
+
+---
+
+## Plan 42 Sub-plan 42.3 ❌ ОТВЕРГНУТО (2026-05-14): fn-level #forbid attribute
+
+Изначально предлагался attribute `#forbid X, Y` перед `fn` declaration
+как shortcut для `forbid X { body }` scope-block (D63).
+
+```nova
+// Вариант 1 (D63, существующий):
+fn process_user(u User) {
+    forbid Net, Fs {
+        validate(u)
+        ...
+    }
+}
+
+// Вариант 2 (42.3, отвергнут):
+#forbid Net, Fs
+fn process_user(u User) {
+    validate(u)
+    ...
+}
+```
+
+**Отказ.** Это TIMTOWTDI (There's More Than One Way To Do It) —
+дублирующий syntax с идентичной семантикой. Nova philosophy:
+**«один способ для одной вещи»** (AI-first consistency — LLM не
+должен выбирать между equivalent syntaxes для одного концепта).
+
+Convenience win минимальный: убрать один `{ ... }` wrap. Стоимость —
+два keyword'а (`forbid` keyword + `#forbid` attribute) с identical
+семантикой, два места в parser, две формы в spec. AI-first language
+не должен иметь несколько способов выразить одно — это шум для
+LLM-обучения и code-review noise.
+
+Эта же логика что в 42.7: добавление feature, дублирующего
+существующий механизм, не оправдано. Если когда-нибудь fn-level
+scope станет dominant pattern (typical больше блок-wrap'ов чем
+free statements), пересмотреть. Сейчас bootstrap std/* не имеет
+ни одного `forbid` use case — нет данных что block wrap mешает.
+
+**Note:** `#forbid` на file-level (42.1 ✅) — **другой scope**
+(per-file capability), не дублирующий fn-body block. Это
+legitimate новое feature без syntax overlap.
+

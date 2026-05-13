@@ -16,7 +16,7 @@
 // вместо nova_alloc — снимает Boehm conservative scan dependency,
 // решает Windows boundary ~35 SEGV. Восстановлен оригинальный 50-iter.
 
-module nova_tests.concurrency.select_timer_cleanup
+module concurrency.select_timer_cleanup
 
 test "Time.after cleanup: 50 quick wins не оставляют висящих таймеров" {
     let mut wins = 0

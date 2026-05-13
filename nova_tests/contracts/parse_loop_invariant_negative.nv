@@ -2,7 +2,7 @@
 //
 // Plan 33.2 Ф.6: loop `invariant` без выражения → parse error.
 
-module nova_tests.contracts.parse_loop_invariant_negative
+module contracts.parse_loop_invariant_negative
 
 #unverified
 fn bad_invariant(n int) -> int {

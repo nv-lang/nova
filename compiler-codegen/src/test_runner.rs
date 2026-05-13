@@ -1091,6 +1091,9 @@ impl AllocConstraint {
 #[derive(Debug, Clone)]
 pub enum SkipReason {
     AllocBackend { constraint: AllocConstraint, actual: GcKindTag },
+    /// Plan 33 V1: тест требует конкретный SMT backend
+    /// (через `// REQUIRES_SMT_BACKEND z3`), но активный backend другой.
+    SmtBackend { required: String, actual: String },
 }
 
 impl SkipReason {
@@ -1104,9 +1107,38 @@ impl SkipReason {
                     "excluded for gc={} (running with gc={})", t.as_str(), actual.as_str()
                 ),
                 AllocConstraint::None => "skipped (no constraint — bug)".to_string(),
+            },
+            SkipReason::SmtBackend { required, actual } => format!(
+                "requires NOVA_SMT_BACKEND={} but running with {}",
+                required, actual,
+            ),
+        }
+    }
+}
+
+/// Plan 33 V1: `// REQUIRES_SMT_BACKEND <name>`. Тест выполняется
+/// только когда активный backend (`NOVA_SMT_BACKEND` env var, default
+/// `trivial`) совпадает с указанным именем.
+pub fn parse_smt_backend_requirement(src: &str) -> Option<String> {
+    for line in src.lines().take(30) {
+        let t = line.trim();
+        if let Some(rest) = t.strip_prefix("// REQUIRES_SMT_BACKEND") {
+            let name = rest.trim();
+            if !name.is_empty() {
+                return Some(name.to_ascii_lowercase());
             }
         }
     }
+    None
+}
+
+/// Активный backend, как его читает `VerificationPipeline::from_env`.
+fn active_smt_backend() -> String {
+    std::env::var("NOVA_SMT_BACKEND")
+        .ok()
+        .map(|s| s.trim().to_ascii_lowercase())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "trivial".to_string())
 }
 
 /// Читает первые 30 строк файла и ищет `// ALLOC_REQUIRES <tag>` или
@@ -1431,6 +1463,18 @@ pub fn run_one(opts: &TestBuildOpts) -> Outcome {
             },
             elapsed: start.elapsed(),
         };
+    }
+
+    // Plan 33 V1: REQUIRES_SMT_BACKEND — skip если активный backend
+    // не совпадает с тем, который тест ожидает (Z3-only / trivial-only).
+    if let Some(required) = parse_smt_backend_requirement(&src) {
+        let actual = active_smt_backend();
+        if actual != required {
+            return Outcome::Skipped {
+                reason: SkipReason::SmtBackend { required, actual },
+                elapsed: start.elapsed(),
+            };
+        }
     }
 
     // Plan 27 Б.2: per-test timeout override via EXPECT_TIMEOUT_MS.
@@ -3244,9 +3288,11 @@ pub fn print_summary(summary: &Summary, format: OutputFormat) {
             }
             if had_fail { let _ = writeln!(out); }
 
-            // Plan 27 Ф.6: skip count.
+            // Plan 27 Ф.6: skip count. Plan 33 V1: причин теперь несколько
+            // (alloc-backend + smt-backend) — общее «skipped», конкретика
+            // в каждой SKIP-строке выше.
             if summary.skip > 0 {
-                let _ = writeln!(out, "PASS: {}  FAIL: {}  SKIP: {} (alloc-backend)",
+                let _ = writeln!(out, "PASS: {}  FAIL: {}  SKIP: {} (skipped)",
                     summary.pass, summary.fail, summary.skip);
             } else {
                 let _ = writeln!(out, "PASS: {}  FAIL: {}", summary.pass, summary.fail);
@@ -3563,7 +3609,7 @@ mod tests {
     #[test]
     fn parse_expect_duplicate_first_wins() {
         let src = "// EXPECT_EXIT_CODE 1\n// EXPECT_STDOUT hello\ntest {}\n";
-        match parse_expect(src) {
+        match first_marker(src) {
             Some(ExpectMarker::ExitCode(1)) => {}
             other => panic!("expected ExitCode(1) (first), got {:?}", other),
         }
@@ -3594,5 +3640,32 @@ mod tests {
         std::env::set_var("NOVA_MARCH_NATIVE", "1");
         assert_eq!(march_flag(), "native");
         std::env::remove_var("NOVA_MARCH_NATIVE");
+    }
+
+    #[test]
+    fn parse_smt_backend_marker_present() {
+        let src = "// REQUIRES_SMT_BACKEND z3\n// EXPECT_COMPILE_ERROR x\nmodule m\n";
+        assert_eq!(parse_smt_backend_requirement(src), Some("z3".into()));
+    }
+
+    #[test]
+    fn parse_smt_backend_marker_case_insensitive() {
+        let src = "// REQUIRES_SMT_BACKEND Trivial\nmodule m\n";
+        assert_eq!(parse_smt_backend_requirement(src), Some("trivial".into()));
+    }
+
+    #[test]
+    fn parse_smt_backend_marker_missing() {
+        let src = "module m\nfn f() => 1\n";
+        assert_eq!(parse_smt_backend_requirement(src), None);
+    }
+
+    #[test]
+    fn parse_smt_backend_marker_only_first_30_lines() {
+        let mut s = String::new();
+        for _ in 0..40 { s.push_str("// padding\n"); }
+        s.push_str("// REQUIRES_SMT_BACKEND z3\n");
+        // 31-я строка и далее не учитываются.
+        assert_eq!(parse_smt_backend_requirement(&s), None);
     }
 }

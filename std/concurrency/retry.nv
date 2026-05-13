@@ -13,7 +13,7 @@
 //   RetryPolicy.fixed(...) -> RetryPolicy
 //   policy.execute[T, E](body fn() Fail[E] -> T) Time Random Fail[E] -> T
 
-module std.concurrency.retry
+module concurrency.retry
 
 import std.testing.handlers as th
 

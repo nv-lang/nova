@@ -13,7 +13,7 @@
 //     init + uv_loop_close в эпилоге.
 // В обоих случаях output идентичен.
 
-module nova_tests.runtime.libuv_link
+module runtime.libuv_link
 
 // EXPECT_STDOUT libuv link smoke ok
 

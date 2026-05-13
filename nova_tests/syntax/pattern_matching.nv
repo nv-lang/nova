@@ -1,6 +1,6 @@
 // 08_pattern_matching.nv — match с разными pattern'ами (D17, D52, D59)
 
-module nova_tests.syntax.pattern_matching
+module syntax.pattern_matching
 
 type Tree
     | Leaf

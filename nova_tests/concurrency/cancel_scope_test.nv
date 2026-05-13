@@ -12,7 +12,7 @@
 //   - tok.bind(other)     — связать с родительским kill-switch
 //                            (cancel(other) → cancel(self))
 
-module nova_tests.concurrency.cancel_scope_test
+module concurrency.cancel_scope_test
 
 // ================================================================
 // SECTION 1: cancel_scope без вызова cancel ≡ supervised

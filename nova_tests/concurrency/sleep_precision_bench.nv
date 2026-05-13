@@ -12,7 +12,7 @@
 // измерения). Если slack нужен больше — claim overclaim'ed, должен
 // быть обновлён.
 
-module nova_tests.concurrency.sleep_precision_bench
+module concurrency.sleep_precision_bench
 
 const TARGET_MS int = 50
 

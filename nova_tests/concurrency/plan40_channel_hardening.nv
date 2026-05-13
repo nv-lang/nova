@@ -7,7 +7,7 @@
 //                        nested selects (timer внутри timer-arm select'а).
 //   B9 (capacity check): positive cases (cap=1, cap=1024).
 
-module nova_tests.concurrency.plan40_channel_hardening
+module concurrency.plan40_channel_hardening
 
 
 // ────────────────────────────────────────────────────────────────────

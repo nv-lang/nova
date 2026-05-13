@@ -3,7 +3,7 @@
 // Option[T]: is_some / is_none / unwrap / unwrap_or
 // Result[T,E]: is_ok / is_err / ok / unwrap / unwrap_or
 
-module nova_tests.runtime.unwrap_or
+module runtime.unwrap_or
 
 // ================================================================
 // SECTION 1: Option<int>

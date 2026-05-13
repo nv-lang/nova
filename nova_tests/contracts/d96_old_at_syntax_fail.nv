@@ -4,7 +4,7 @@
 // `@must_verify` после миграции — error (парсер не распознаёт `@`
 // как атрибутный префикс).
 
-module nova_tests.contracts.d96_old_at_syntax_fail
+module contracts.d96_old_at_syntax_fail
 
 @must_verify
 fn bad_old_attr(x int) -> int

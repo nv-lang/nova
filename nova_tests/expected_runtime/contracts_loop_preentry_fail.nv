@@ -4,7 +4,7 @@
 // выполняется потому что n=0, но invariant сразу false) → pre-entry
 // runtime panic в debug.
 
-module nova_tests.expected_runtime.contracts_loop_preentry_fail
+module expected_runtime.contracts_loop_preentry_fail
 
 fn empty_loop_bad(n int) -> int {
     let mut i = 100   // i стартует с 100

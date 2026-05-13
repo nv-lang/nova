@@ -12,7 +12,7 @@
 //   - empty (variadic position пустая) → []T length 0;
 //   - method с variadic-параметром.
 
-module nova_tests.syntax.variadic
+module syntax.variadic
 
 
 // Declaration: ...items []int (variadic last).

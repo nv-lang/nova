@@ -53,7 +53,7 @@
 // namespace-like API, аналог Python `gc.collect()` или Go
 // `runtime.GC()`). При изменении API — обновить **оба** места.
 
-module std.runtime.gc
+module runtime.gc
 
 
 // ─── gc namespace ───────────────────────────────────────────────────────

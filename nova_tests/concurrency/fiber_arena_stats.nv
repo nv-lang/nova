@@ -7,7 +7,7 @@
 //
 // Тест должен PASS на обеих платформах — branching через slot_count == 0.
 
-module nova_tests.concurrency.fiber_arena_stats
+module concurrency.fiber_arena_stats
 
 
 test "fibers introspection API доступен" {

@@ -8,7 +8,7 @@
 // `x => x + 1` внутри block intepretируется как expression и
 // упирается в `=>`, что в expression-position запрещено.
 
-module nova_tests.negative_capability.trailing_block_legacy_params_rejected
+module negative_capability.trailing_block_legacy_params_rejected
 
 fn dummy(p fn(int) -> int) -> int => p(0)
 

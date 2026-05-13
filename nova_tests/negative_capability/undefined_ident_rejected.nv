@@ -6,7 +6,7 @@
 // C-компилятора и фейлил с малочитаемой ошибкой
 // "undeclared identifier".
 
-module nova_tests.negative_capability.undefined_ident_rejected
+module negative_capability.undefined_ident_rejected
 
 test "undefined ident должен ловиться typechecker'ом" {
     let r = 1 | undefined_var

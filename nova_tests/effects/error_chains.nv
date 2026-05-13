@@ -4,7 +4,7 @@
 // `?` в одной функции, ранний return из match-arm, propagation
 // через несколько уровней вызова.
 
-module nova_tests.effects.error_chains
+module effects.error_chains
 
 fn safe_div(a int, b int) -> Result {
     if b == 0 {

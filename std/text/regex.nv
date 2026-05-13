@@ -26,7 +26,7 @@
 // Use cases: validation, search-filtering, user-supplied patterns
 // (без риска DoS).
 
-module std.text.regex
+module text.regex
 
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -8,8 +8,8 @@
 //! Все три вызывают `resolve_imports_inline(...)` ДО передачи `Module` в
 //! `types::check_module` или `CEmitter::emit_module`.
 
-use crate::ast::{Import, Item, Module};
-use crate::diag::byte_to_line_col;
+use crate::ast::{Import, Item, Module, PeerFile};
+use crate::diag::{byte_to_line_col, FileId, MAIN_FILE_ID};
 use crate::parser;
 use anyhow::{anyhow, Result};
 use std::collections::HashSet;
@@ -59,6 +59,26 @@ pub fn resolve_imports_inline_ex(
     let mut visited: HashSet<PathBuf> = HashSet::new();
 
     let mut merged_items: Vec<Item> = Vec::new();
+
+    // Plan 42 Sub-plan 42.4 шаг 2 (2026-05-14): per-peer attribution.
+    // Entry's PeerFile регистрируется первым (file_id = MAIN_FILE_ID = 0).
+    // imports + items_here — копия entry's pre-merge state.
+    //
+    // Note: entry parsed parent caller'ом через `parser::parse(src)` который
+    // использует MAIN_FILE_ID, так что entry's spans уже file_id=0. Сейчас
+    // лишь регистрируем PeerFile для type-checker'а.
+    let entry_canon_for_peer = entry_path.canonicalize().unwrap_or_else(|_| entry_path.to_path_buf());
+    let entry_peer_file = PeerFile {
+        path: entry_canon_for_peer,
+        file_id: MAIN_FILE_ID,
+        imports: module.imports.clone(),
+        items_here: module.items.clone(),
+    };
+    // Local counter для file_id (entry = 0, peers начинают с 1).
+    // Используем Vec<PeerFile> чтобы collect peers через resolve_one,
+    // потом append в module.peer_files после всех resolves.
+    let mut peer_files: Vec<PeerFile> = vec![entry_peer_file];
+    let mut next_file_id: FileId = 1;
     // Plan 35 Ф.1 cycle detection (D29): in-progress DFS-stack — canonical
     // paths модулей currently being resolved. Если import упирается в
     // канон уже в стеке → cycle. visited — closed-set (diamond-dep dedup);
@@ -82,7 +102,9 @@ pub fn resolve_imports_inline_ex(
     // через `std/prelude.nv` файл (или future полная миграция hardcoded
     // в file-based). MVP: если файл существует — добавляем как import.
     // Skip prelude auto-import для самого prelude (избежать self-cycle).
-    let is_prelude_self = module.name.iter().map(|s| s.as_str()).collect::<Vec<_>>() == ["std", "prelude"];
+    // Plan 42 Sub-plan 42.6: detect prelude self по обоих declaration
+    // форматов (rev-1 legacy + rev-3 parent.X). Logic — в manifest helper.
+    let is_prelude_self = crate::manifest::is_prelude_self_module(&module.name);
     let mut initial_imports = module.imports.clone();
     if !is_prelude_self {
         let prelude_path = stdlib_dir.join("prelude.nv");
@@ -107,6 +129,8 @@ pub fn resolve_imports_inline_ex(
             &mut in_progress,
             &mut import_chain,
             &mut merged_items,
+            &mut peer_files,
+            &mut next_file_id,
             include_test_peers,
         )?;
     }
@@ -124,6 +148,10 @@ pub fn resolve_imports_inline_ex(
     let mut new_items = merged_items;
     new_items.append(&mut module.items);
     module.items = new_items;
+
+    // Plan 42 Sub-plan 42.4 шаг 2: переносим собранные PeerFile в module.
+    // Type-checker (шаг 3) использует это для per-peer name resolution.
+    module.peer_files = peer_files;
 
     Ok(())
 }
@@ -144,6 +172,8 @@ fn resolve_one(
     in_progress: &mut HashSet<PathBuf>,
     import_chain: &mut Vec<Vec<String>>,
     merged_items: &mut Vec<Item>,
+    peer_files: &mut Vec<PeerFile>,
+    next_file_id: &mut FileId,
     include_test_peers: bool,
 ) -> Result<()> {
     // Plan 42 правило H: `internal/` directory access check.
@@ -260,13 +290,28 @@ fn resolve_one(
         let peer_src = std::fs::read_to_string(peer_path)
             .map_err(|e| anyhow!("failed to read imported module {}: {}", peer_path.display(), e))?;
         let peer_path_str = peer_path.to_string_lossy().to_string();
-        let peer_module = parser::parse(&peer_src)
+
+        // Plan 42 Sub-plan 42.4 шаг 2: allocate unique FileId для этого peer
+        // и parse с этим file_id. Все tokens/spans peer'а получат этот id,
+        // type-checker (шаг 3) использует для per-peer name resolution.
+        let peer_file_id = *next_file_id;
+        *next_file_id += 1;
+
+        let peer_module = parser::parse_with_file_id(&peer_src, peer_file_id)
             .map_err(|d| {
                 let (line, col) = byte_to_line_col(&peer_src, d.span.start);
                 anyhow!(
                     "in imported module '{}' ({}): {}:{}: {}",
                     imp.path.join("."), peer_path_str, line, col, d.message)
             })?;
+
+        // Регистрируем PeerFile (snapshot до recursive resolve + merge).
+        peer_files.push(PeerFile {
+            path: peer_canons.last().expect("peer_canons populated above").clone(),
+            file_id: peer_file_id,
+            imports: peer_module.imports.clone(),
+            items_here: peer_module.items.clone(),
+        });
 
         // Recursive: resolve transitive imports for THIS peer.
         for sub in &peer_module.imports {
@@ -279,6 +324,8 @@ fn resolve_one(
                 in_progress,
                 import_chain,
                 merged_items,
+                peer_files,
+                next_file_id,
                 include_test_peers,
             )?;
         }

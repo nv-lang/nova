@@ -6,7 +6,7 @@
 // Operators `<`, `<=`, `>`, `>=` routed через nova_str_lt/le/gt/ge
 // (см. nova_rt.h). Метод-формы `s1.lt(s2)`, `s1.le(s2)`, etc.
 
-module nova_tests.types.str_compare
+module types.str_compare
 
 test "ASCII lex compare basic" {
     assert("apple" < "banana")

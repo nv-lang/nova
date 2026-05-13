@@ -7,7 +7,7 @@
 // NaN / Infinity создаются через арифметику (0.0/0.0, 1.0/0.0) —
 // f64.NAN / f64.INFINITY константы в bootstrap не реализованы.
 
-module nova_tests.syntax.as_cast_float
+module syntax.as_cast_float
 
 
 // ───── Helper'ы для NaN / Inf — bootstrap не имеет констант ─────

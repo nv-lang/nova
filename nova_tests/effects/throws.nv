@@ -5,7 +5,7 @@
 // до match { Err(_) => ... }. Полноценные Throws-handler'ы — для будущих
 // версий компилятора.
 
-module nova_tests.effects.throws
+module effects.throws
 
 fn parse_pos(s str) -> Result {
     if s == "good" { return Ok(42) }

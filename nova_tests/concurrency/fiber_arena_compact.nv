@@ -6,7 +6,7 @@
 //
 // На Windows arena off — compact() no-op.
 
-module nova_tests.concurrency.fiber_arena_compact
+module concurrency.fiber_arena_compact
 
 test "fibers.compact() callable" {
     // Burst → quiescence → compact().

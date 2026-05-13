@@ -4,7 +4,7 @@
 // imports::resolve_imports_inline. Filter оставляет только items
 // с указанными именами; остальные skip'аются.
 
-module nova_tests.modules.selective_import
+module modules.selective_import
 
 import std.collections.range.{Range, RangeIter}
 

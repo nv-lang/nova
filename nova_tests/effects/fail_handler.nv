@@ -12,7 +12,7 @@
 // Spec явно отвергает try/catch синтаксис ([rejected.md]) — единственный
 // способ перехватить throw это handler через with.
 
-module nova_tests.effects.fail_handler
+module effects.fail_handler
 
 // Functions that throw via Fail.
 fn parse_num(s str) -> int {

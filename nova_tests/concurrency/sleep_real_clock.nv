@@ -4,7 +4,7 @@
 // ждёт ms миллисекунд, не более чем slack. Тесты используют
 // Time.now() для измерения elapsed.
 
-module nova_tests.concurrency.sleep_real_clock
+module concurrency.sleep_real_clock
 
 // Slack 200ms даёт CI-стабильность.
 const SLACK_MS int = 200

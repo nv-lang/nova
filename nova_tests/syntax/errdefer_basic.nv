@@ -10,7 +10,7 @@
 // fail-frame'а. Этот edge case с handler+errdefer — отдельная
 // семантическая проблема, отложена. См. open-questions.
 
-module nova_tests.syntax.errdefer_basic
+module syntax.errdefer_basic
 
 
 // ───── errdefer НЕ срабатывает на normal exit ─────

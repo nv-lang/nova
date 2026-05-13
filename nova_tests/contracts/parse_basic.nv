@@ -8,7 +8,7 @@
 // Plan 33.1 (D-attr-syntax): атрибуты через `#`, не `@` (разделение от
 // receiver-prefix `@field`).
 
-module nova_tests.contracts.parse_basic
+module contracts.parse_basic
 
 // Без контрактов — backward-compat (как до Plan 33.1).
 fn double(x int) -> int => x * 2

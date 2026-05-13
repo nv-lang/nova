@@ -12,7 +12,7 @@
 // 2. Handler с interrupt-семантикой (значение IRT) работает в runtime.
 // 3. Тип Handler[E, IRT] парсится и type-checker не ломается.
 
-module nova_tests.effects.handler_irt_d87
+module effects.handler_irt_d87
 
 type Logger effect {
     log(msg str) -> ()

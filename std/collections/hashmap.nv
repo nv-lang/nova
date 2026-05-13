@@ -18,7 +18,7 @@
 //   - Поля по правилам [D36](../spec/decisions/02-types.md#d36): `readonly` для
 //     invariants, без префикса для мутируемых.
 
-module std.collections.hashmap
+module collections.hashmap
 
 
 // ──────────────────────────────────────────────────────────────────────────

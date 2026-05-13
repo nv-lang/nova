@@ -5,7 +5,7 @@
 // нужны generic'и — использовать named fn, либо обходить через
 // erasure.
 
-module nova_tests.negative_capability.closure_full_generics_rejected
+module negative_capability.closure_full_generics_rejected
 
 test "closure-full с `[T]` отвергается" {
     let f = fn[T](x T) -> T => x

@@ -1,6 +1,6 @@
 // 07_sum_types.nv — sum-types через `|` (D52), Option/Result из прелюдии
 
-module nova_tests.types.sum_types
+module types.sum_types
 
 // Unit-only variants
 type Color | Red | Green | Blue

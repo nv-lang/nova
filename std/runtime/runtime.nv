@@ -25,7 +25,7 @@
 // **Не предназначен для production использования** в Этапе 0 — bootstrap
 // scheduler не параметризован per-worker libuv loop (Plan 45+).
 
-module std.runtime.runtime
+module runtime.runtime
 
 
 // ─── runtime namespace ──────────────────────────────────────────

@@ -3,7 +3,7 @@
 // Tests `for elem in array { ... }` which generates:
 //   for (int64_t _i = 0; _i < arr->len; _i++) { T elem = arr->data[_i]; ... }
 
-module nova_tests.syntax.for_in_array
+module syntax.for_in_array
 
 // ---- basic iteration ----
 

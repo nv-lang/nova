@@ -6,7 +6,7 @@
 // Если блок завершился нормально, errdefer не срабатывает при
 // последующем panic.
 
-module nova_tests.expected_runtime.panic_no_errdefer_in_scope
+module expected_runtime.panic_no_errdefer_in_scope
 
 
 fn main() Io -> () {

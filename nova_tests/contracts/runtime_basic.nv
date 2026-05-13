@@ -3,7 +3,7 @@
 // requires/ensures должны проверяться в runtime (компилятор эмитит
 // nova_contract_violation за #ifdef NOVA_CONTRACTS_RUNTIME).
 
-module nova_tests.contracts.runtime_basic
+module contracts.runtime_basic
 
 fn abs(x int) -> int
     requires x >= 0

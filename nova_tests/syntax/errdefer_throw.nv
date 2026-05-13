@@ -10,7 +10,7 @@
 // normal exit). См. также `errdefer_unhandled.nv` для unhandled-throw
 // сценария (отдельный файл, использует EXPECT_RUNTIME_PANIC).
 
-module nova_tests.syntax.errdefer_throw
+module syntax.errdefer_throw
 
 
 // ───── errdefer НЕ срабатывает когда handler делает interrupt ─────

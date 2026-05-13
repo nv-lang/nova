@@ -6,7 +6,7 @@
 //
 // Slack'и широкие для CI-стабильности.
 
-module nova_tests.concurrency.sleep_bench
+module concurrency.sleep_bench
 
 // 10k concurrent sleep'ов через park/wake. Theoretical: ~100ms
 // wall-clock (все спят параллельно через libuv event loop). Если

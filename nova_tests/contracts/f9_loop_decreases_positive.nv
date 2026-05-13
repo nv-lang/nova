@@ -1,6 +1,6 @@
 // Plan 33.3 Ф.9.8 positive: loop с правильным decreases (decrement) — OK.
 
-module nova_tests.contracts.f9_loop_decreases_positive
+module contracts.f9_loop_decreases_positive
 
 fn countdown(n int) -> int
     requires n >= 0

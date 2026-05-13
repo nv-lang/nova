@@ -7,7 +7,7 @@
 //
 // Production-компилятор будет делать compile-time + runtime проверки.
 
-module nova_tests.effects.forbid_realtime
+module effects.forbid_realtime
 
 type Counter effect {
     next() -> int

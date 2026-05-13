@@ -15,7 +15,7 @@
 // С Boehm GC: live count должен быть bounded (most objects unreachable).
 // С alloc_rc.c (RC): аналогично — released immediate когда refcount=0.
 
-module nova_tests.concurrency.memory_growth_check
+module concurrency.memory_growth_check
 
 type Point { x int, y int, z int }
 

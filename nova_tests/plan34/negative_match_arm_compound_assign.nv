@@ -7,7 +7,7 @@
 // bare compound-assign в match-arm, тест провалится (EXPECT_COMPILE_ERROR
 // больше не сработает) — нужно обновить или удалить тест.
 
-module nova_tests.plan34.negative_match_arm_compound_assign
+module plan34.negative_match_arm_compound_assign
 
 type Cell { mut count int }
 

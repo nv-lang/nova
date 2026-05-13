@@ -1,6 +1,6 @@
 // Plan 33.2 Ф.7: parse decreases для fn + record invariants.
 
-module nova_tests.contracts.parse_decreases_record_inv
+module contracts.parse_decreases_record_inv
 
 // Record invariant.
 type Account {

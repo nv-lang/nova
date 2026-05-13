@@ -3,7 +3,7 @@
 // Plan 16 Ф.5 (D64 §3697): #realtime атрибут на fn оборачивает body
 // в realtime-context. Внутри запрещены suspend-effects.
 
-module nova_tests.negative_capability.realtime_attr_suspend
+module negative_capability.realtime_attr_suspend
 
 type Time effect {
     sleep(ms int) -> ()

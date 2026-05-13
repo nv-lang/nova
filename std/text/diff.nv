@@ -5,7 +5,7 @@
 //   Diff.compute(a []str, b []str) -> []DiffOp
 //   DiffOp = Equal(str) | Insert(str) | Delete(str)
 
-module std.text.diff
+module text.diff
 
 
 export type DiffOp

@@ -23,7 +23,7 @@
 // быстрые, GPU-attackable. Bcrypt намеренно медленный (cost 10 ≈ 100ms
 // на современном CPU) — экспоненциально замедляет brute-force.
 
-module std.crypto.bcrypt
+module crypto.bcrypt
 
 import std.testing.handlers as th
 

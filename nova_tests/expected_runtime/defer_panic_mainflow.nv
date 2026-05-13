@@ -4,7 +4,7 @@
 // nv_panic fix: defer (не errdefer) тоже срабатывает на panic() на
 // main flow. defer срабатывает на любом exit — panic, throw, normal.
 
-module nova_tests.expected_runtime.defer_panic_mainflow
+module expected_runtime.defer_panic_mainflow
 
 
 fn main() Io -> () {

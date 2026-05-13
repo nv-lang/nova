@@ -10,7 +10,7 @@
 // (k str, v int) или (k int, v Custom) это пока не работает в
 // generic-форме (TBD когда element-type полностью infer'ится).
 
-module nova_tests.syntax.for_iter_tuple
+module syntax.for_iter_tuple
 
 
 // Custom итератор, возвращает пары (index, value).

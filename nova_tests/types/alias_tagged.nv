@@ -1,7 +1,7 @@
 // 30_alias_tagged.nv — type aliases (`type X alias T`) и
 // tagged template literals.
 
-module nova_tests.types.alias_tagged
+module types.alias_tagged
 
 // --- Alias types ---
 

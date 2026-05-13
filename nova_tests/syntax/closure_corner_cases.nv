@@ -10,7 +10,7 @@
 // Mut-capture в closure (один-разделяемый счётчик) не работает в
 // bootstrap codegen (env копирует value); test для этого — в C16.
 
-module nova_tests.syntax.closure_corner_cases
+module syntax.closure_corner_cases
 
 // ─── #1: shared enclosing scope (immutable) — двойное чтение n ────
 

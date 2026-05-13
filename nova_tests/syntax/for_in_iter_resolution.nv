@@ -13,7 +13,7 @@
 // - Auto-iter() insertion: `for x in collection` resolves к
 //   `for x in collection.iter()` под капотом.
 
-module nova_tests.syntax.for_in_iter_resolution
+module syntax.for_in_iter_resolution
 
 // ── Case 1: type с direct `next()` ───────────────────────────────────────
 

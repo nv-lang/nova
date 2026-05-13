@@ -3,7 +3,7 @@
 // Plan 33.2 Ф.7 (D24): composition разрешён только для #pure функций.
 // Без #pure атрибута — compile error.
 
-module nova_tests.contracts.typecheck_composition
+module contracts.typecheck_composition
 
 // БЕЗ #pure — нельзя использовать в контракте.
 fn helper(x int) -> int => x + 1

@@ -8,7 +8,7 @@
 //
 // Покрывает: Iter[byte], Iter[bool], Iter[i32], Iter[str], Iter[(int,str)].
 
-module nova_tests.syntax.for_iter_typed
+module syntax.for_iter_typed
 
 
 // Iter[byte] — счётчик байтов 0..n.

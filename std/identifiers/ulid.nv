@@ -32,7 +32,7 @@
 //   u.into() -> str
 //   u.timestamp_ms() -> u64
 
-module std.identifiers.ulid
+module identifiers.ulid
 
 import std.testing.handlers as th
 

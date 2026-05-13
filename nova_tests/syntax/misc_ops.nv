@@ -7,7 +7,7 @@
 // - block expression `{ ... }` всегда даёт значение последнего
 //   выражения.
 
-module nova_tests.syntax.misc_ops
+module syntax.misc_ops
 
 test "as cast int → int (no-op)" {
     let x = 42 as int

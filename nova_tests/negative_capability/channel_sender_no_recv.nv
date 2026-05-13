@@ -4,7 +4,7 @@
 // tx имеет тип Nova_ChanWriter*, у которого нет recv в emit_c dispatch.
 // Fallback emit'ит tx->recv() → C error: no member 'recv'.
 
-module nova_tests.negative_capability.channel_sender_no_recv
+module negative_capability.channel_sender_no_recv
 
 test "sender cannot recv" {
     let (tx, _rx) = Channel.new(1)

@@ -4,7 +4,7 @@
 // (В release с full SMT это была бы compile error, но в bootstrap-форме —
 // runtime fallback.)
 
-module nova_tests.expected_runtime.contracts_assume_fail
+module expected_runtime.contracts_assume_fail
 
 fn bad_assume(x int) -> int {
     assume x < 0      // программист утверждает x < 0

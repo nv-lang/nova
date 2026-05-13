@@ -3,7 +3,7 @@
 // Plan 35 sub-plan 35.A R26: `import X.{A, B} as Alias` mutual exclusion —
 // per-item alias надо использовать: `import X.{A as Aliased, B}`.
 
-module nova_tests.negative_capability.selective_import_alias_combo_rejected
+module negative_capability.selective_import_alias_combo_rejected
 
 import std.collections.range.{Range, RangeIter} as RangeMod
 

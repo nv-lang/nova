@@ -9,7 +9,7 @@
 // через него. Это покрывает path «structural Iter[T] для
 // user-defined типов».
 
-module nova_tests.syntax.for_iter
+module syntax.for_iter
 
 
 // Custom итератор: считает 0..end.

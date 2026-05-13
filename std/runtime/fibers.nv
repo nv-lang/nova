@@ -39,7 +39,7 @@
 // [emit_c.rs](../../compiler-codegen/src/codegen/emit_c.rs) — они должны
 // быть синхронизированы вручную. При изменении API — обновить оба места.
 
-module std.runtime.fibers
+module runtime.fibers
 
 
 // ─── fibers namespace ───────────────────────────────────────────────────

@@ -8,7 +8,7 @@
 //   - Guard arms
 //   - Timeout via Time.after
 
-module nova_tests.concurrency.select_test
+module concurrency.select_test
 
 // ================================================================
 // SECTION 1: single recv arm

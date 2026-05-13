@@ -8,7 +8,7 @@
 // Используем Some(v) = rx (не wildcard _ = rx), потому что wildcard
 // срабатывает немедленно на закрытый канал — это штатное поведение.
 
-module nova_tests.expected_runtime.select_all_closed
+module expected_runtime.select_all_closed
 
 fn main() Io -> () {
     let ch1 = Channel.new(1)

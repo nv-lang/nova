@@ -18,7 +18,7 @@
 // API:
 //   Toml.parse(s str) Fail[ParseTomlError] -> TomlValue
 
-module std.encoding.toml
+module encoding.toml
 
 
 export type TomlValue

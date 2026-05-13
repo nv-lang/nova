@@ -6,7 +6,7 @@
 // - state-style эффект через get/set
 // - reader/writer паттерн
 
-module nova_tests.effects.effects_composition
+module effects.effects_composition
 
 type Logger effect {
     log(msg str) -> ()

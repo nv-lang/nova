@@ -7,7 +7,7 @@
 //   cache.len -> int
 //   cache.contains(k K) -> bool
 
-module std.collections.lru
+module collections.lru
 
 
 // Используем массив для упорядочивания (head = most recent, tail = LRU)

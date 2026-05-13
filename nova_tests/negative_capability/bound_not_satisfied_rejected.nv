@@ -7,7 +7,7 @@
 //
 // Spec: spec/decisions/02-types.md → D72 «Generic bounds».
 
-module nova_tests.negative_capability.bound_not_satisfied_rejected
+module negative_capability.bound_not_satisfied_rejected
 
 
 type BnsHashable protocol {

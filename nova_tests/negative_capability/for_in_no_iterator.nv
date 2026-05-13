@@ -6,7 +6,7 @@
 //
 // Spec D58: for-in требует один из методов на receiver type.
 
-module nova_tests.negative_capability.for_in_no_iterator
+module negative_capability.for_in_no_iterator
 
 type NotIterable {
     value int

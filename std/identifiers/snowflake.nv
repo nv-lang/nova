@@ -9,7 +9,7 @@
 // Sortable lexicographically as integers (timestamp в старших битах).
 // Использует Time effect — детерминируется handler-substitution.
 
-module std.identifiers.snowflake
+module identifiers.snowflake
 
 import std.testing.handlers as th
 

@@ -6,7 +6,7 @@
 //
 // Spec: spec/decisions/10-overloading.md → D84 «Резолв на call-site».
 
-module nova_tests.negative_capability.overload_no_match
+module negative_capability.overload_no_match
 
 
 fn handle(n int) -> str { "int: ${n}" }

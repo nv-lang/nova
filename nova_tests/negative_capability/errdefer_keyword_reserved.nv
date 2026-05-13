@@ -3,7 +3,7 @@
 // D90/D83: `errdefer` — зарезервированный keyword. Использование как
 // identifier — compile error.
 
-module nova_tests.negative_capability.errdefer_keyword_reserved
+module negative_capability.errdefer_keyword_reserved
 
 
 fn use_errdefer_as_var() -> int {

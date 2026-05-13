@@ -8,7 +8,7 @@
 // Эти тесты — regression-фиксаторы, чтобы случайный switch на
 // auto-derived deep clone не прошёл незамеченным.
 
-module nova_tests.runtime.clone_semantics
+module runtime.clone_semantics
 
 
 // === 1. Shallow @clone для record: примитивные поля копируются ===

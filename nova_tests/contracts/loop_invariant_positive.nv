@@ -3,7 +3,7 @@
 // Invariant'ы инжектятся как assert_static в начало body цикла.
 // Каждая итерация проверяет invariant — если нарушен, runtime panic.
 
-module nova_tests.contracts.loop_invariant_positive
+module contracts.loop_invariant_positive
 
 fn sum_to(n int) -> int
     requires n >= 0

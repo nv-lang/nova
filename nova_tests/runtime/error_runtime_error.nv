@@ -9,7 +9,7 @@
 //   - Error.new(msg) — конструктор
 //   - RuntimeError.<Variant>(...) — sum-конструкторы
 
-module nova_tests.runtime.error_runtime_error
+module runtime.error_runtime_error
 
 
 // ───── Error.new ─────

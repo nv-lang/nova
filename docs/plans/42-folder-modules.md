@@ -495,30 +495,61 @@ decl типов уже работает (Plan 36 followup). Verify на test'е.
   в `forbidden_stack`). `#requires` отвергнут (нарушает AI-first
   explicit principle — implicit effects in function signatures).
   Tests: `modules/file_forbid_clean.nv` + `negative_capability/file_forbid_violation.nv` PASS.
-- **42.2 — `nova doc <module>`** tooling. Roadmap.
-  Auto-collect public API из всех peers, source-of-truth = реализация.
-  Заменяет отвергнутый `overview.nv` (правило G).
-- **42.3 — function-level `#forbid`** (новое 2026-05-13). Attribute
-  `#forbid X, Y` перед `fn`, applies к whole function body. Сейчас
-  можно эмулировать через `forbid X { body }` scope-block (D63).
-  Convenience shortcut, не блокер. Roadmap.
-- **42.4 — per-file imports scope** (правило C из production audit).
-  Bootstrap MVP shared imports через flat merge. Real fix: AST
-  refactor `Module.peer_files: Vec<PeerFile>`, name resolution
-  учитывает per-peer import scope (Go-style).
+- **42.2 — `nova doc <module>`** tooling — **вынесен в отдельный
+  [Plan 45](45-nova-doc.md)** (2026-05-14). Auto-collect public API
+  из всех peers, source-of-truth = реализация; заменяет отвергнутый
+  `overview.nv` (правило G). Большой scope (~700-1000 LOC: lexer +
+  parser + CLI subcommand + formatters), отдельная сессия.
+- **42.3 — function-level `#forbid`** ❌ ОТВЕРГНУТО 2026-05-14.
+  Изначально предлагался attribute `#forbid X, Y` перед `fn` как
+  shortcut для `forbid X { body }`. **Отказ:** это TIMTOWTDI
+  (two ways to do one thing) — дублирующий syntax поверх
+  существующего `forbid X { body }` scope-block (D63). Nova
+  philosophy «один способ для одной вещи» (AI-first consistency:
+  LLM не должен выбирать между equivalent syntaxes). Convenience
+  win минимален (один блок-wrap), стоимость — два keyword'а с
+  идентичной семантикой. Тот же anti-pattern что 42.7 (см.
+  simplifications.md). Если когда-нибудь fn-level scope станет
+  настолько частым случаем что block wrap стал code-smell —
+  пересмотреть; до тех пор `forbid X { body }` достаточен.
+- **42.4 — per-file imports scope** — детальный план в
+  [42.4-per-file-imports-scope.md](42.4-per-file-imports-scope.md)
+  (2026-05-14, scope ~600-800 LOC, 2-3 commit'а). Закрытие правила C
+  production audit: AST refactor `Module.files: Vec<SourceFile>` +
+  FileRegistry activation + span walker + type-checker per-peer name
+  resolution. В bootstrap нет видимого spec violation (нет folder-
+  modules с cross-peer imports в std/* и тестах), но preemptive fix
+  перед production-scale stdlib.
 - **42.5 — 2-pass codegen** (правило D). Pass 1 emit forward decls
   для всех Fn/Type/Const, Pass 2 emit bodies. Текущий single-pass
   works для всех use cases bootstrap; sub-plan когда mutually
   recursive types между peers появятся.
-- **42.6 — Migration std/* под parent.X** (D29 rev-3). Automated
-  tool walks все `.nv` файлы в repo, computes expected `module
-  parent.X` declaration, заменяет existing `module a.b.c.d`. После
-  миграции compat mode (rev-1 acceptance) можно убрать.
-- **42.7 — Cross-peer consistency lint** (новое 2026-05-13). Warn
-  если peers folder-module объявляют **разные** `#forbid` attributes
-  — inconsistent capability boundary. Не error (peers независимы),
-  только lint hint. Helps maintain «whole-module security» convention
-  без enforcement.
+- **42.6 — Migration std/* + nova_tests/* под parent.X** (D29 rev-3) ✅
+  ЗАКРЫТ 2026-05-13. `scripts/migrate_modules_rev3.ps1` — automated
+  walker: для каждого `.nv` файла computes expected `module parent.X`
+  по filesystem path и переписывает legacy `module package.full.path`
+  declaration. Применён к `std/` (package=`std`) и `nova_tests/`
+  (package=`nova_tests`): **324 файла мигрированы**, 16 пропущено
+  (folder-module peers — уже rev-3; single-file at source root — rev-3
+  совпадает с rev-1). Hardcoded compat-checks (`is_stdlib_runtime_module`,
+  `is_prelude_self_module`) — вынесены в `manifest.rs` как helpers,
+  используются в `types/mod.rs::check_module` и `imports.rs::resolve_imports_inline_ex`.
+  Compat mode остаётся (rev-1 declarations accepted) для backward-compat —
+  не блокер удалять. Регрессия: **274 PASS / 0 FAIL / 3 SKIP** (3 z3 SKIP
+  = свежие тесты Plan 33 V1, out of scope). examples/* не мигрированы —
+  файлы там в произвольных форматах (часть `module hello`, часть rev-1),
+  не enforced manifest check'ом (отдельная задача-cleanup).
+- **42.7 — Cross-peer consistency lint** ❌ ОТВЕРГНУТО 2026-05-14.
+  Изначально предлагался warning при разных `#forbid` между peers
+  одного folder-module. **Отказ:** file-level `#forbid` *by design*
+  per-peer (Sub-plan 42.1), peers равноправны, разные constraints —
+  это **корректная** capability decomposition, не smell. Use-cases:
+  один peer нуждается в `Net` (webhook), другой — `#forbid Net`; один
+  пишет в log (нужен `Fs`), другие — `#forbid Fs`. Lint срабатывал бы
+  на legitimate designs → false positives → noise или потеря
+  выразительности. «Catch typos» аргумент тоже не валиден: парсер
+  `#forbid` принимает имена capabilities из enum'а, invalid имя —
+  compile error. Lint solved a phantom problem.
 
 ---
 

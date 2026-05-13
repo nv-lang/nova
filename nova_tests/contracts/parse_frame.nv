@@ -6,7 +6,7 @@
 // 3. Несколько targets через запятую.
 // 4. Field access: `reads self.field`.
 
-module nova_tests.contracts.parse_frame
+module contracts.parse_frame
 
 #unverified
 fn read_only(x int) -> int

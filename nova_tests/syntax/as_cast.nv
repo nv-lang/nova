@@ -7,7 +7,7 @@
 //   - truncate (f64 → int)
 //   - newtype ↔ underlying — no-op в C, корректный тип в Nova
 
-module nova_tests.syntax.as_cast
+module syntax.as_cast
 
 
 // Newtype для последнего теста.

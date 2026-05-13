@@ -7,7 +7,7 @@
 // одновременно с EXPECT_RUNTIME_PANIC. До fix'а только первый маркер
 // проверялся. После fix'а все паттерны из Vec<ExpectMarker> проверяются.
 
-module nova_tests.expected_runtime.multi_expect_stdout
+module expected_runtime.multi_expect_stdout
 
 
 fn main() Io -> () {

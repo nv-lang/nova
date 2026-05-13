@@ -4,7 +4,7 @@
 //
 // См. docs/plans/13-runtime-stdlib-and-autogen.md.
 
-module std.runtime.read_buffer
+module runtime.read_buffer
 
 
 // ─── ReadBuffer ───

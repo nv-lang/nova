@@ -7,7 +7,7 @@
 // Проверяем минимальный сценарий: panic("explicit panic") в main →
 // runtime print "panic: explicit panic\n" + abort.
 
-module nova_tests.expected_runtime.panic_main
+module expected_runtime.panic_main
 
 
 fn main() Io -> () {

@@ -7,7 +7,7 @@
 // That file tests alloc_count/free_count directly; this file tests
 // observable value correctness from the Nova side.
 
-module nova_tests.concurrency.deep_gc
+module concurrency.deep_gc
 
 type Point {
     x int

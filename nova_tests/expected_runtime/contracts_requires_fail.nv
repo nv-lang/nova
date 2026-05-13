@@ -3,7 +3,7 @@
 // Plan 33.1 Ф.4 (D24): nova_contract_violation срабатывает при
 // нарушении requires в runtime (debug сборка).
 
-module nova_tests.expected_runtime.contracts_requires_fail
+module expected_runtime.contracts_requires_fail
 
 fn must_be_positive(x int) -> int
     requires x > 0

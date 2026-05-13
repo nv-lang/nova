@@ -5,7 +5,7 @@
 //
 // Проверяем D13 exit() — гасит весь процесс с указанным кодом.
 
-module nova_tests.expected_runtime.exit_code_42
+module expected_runtime.exit_code_42
 
 
 fn main() Io -> () {

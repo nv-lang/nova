@@ -2,7 +2,7 @@
 // компилироваться без compile-error. 33 arms — соседний negative test
 // в expected_runtime/select_overflow_compile_error.nv.
 
-module nova_tests.concurrency.select_max_arms_boundary
+module concurrency.select_max_arms_boundary
 
 test "select: 32 arms (max) compile and dispatch" {
     let c0  = Channel.new(1)

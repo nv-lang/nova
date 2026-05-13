@@ -6,7 +6,7 @@
 //
 // Spec: spec/decisions/10-overloading.md → D84.
 
-module nova_tests.negative_capability.overload_duplicate_signature
+module negative_capability.overload_duplicate_signature
 
 
 fn process(n int) -> str { "first: ${n}" }

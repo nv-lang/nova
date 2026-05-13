@@ -1,7 +1,7 @@
 // 33_stack_queue.nv — реализация Stack и Queue через record + методы
 // (как в реальном data-structure коде).
 
-module nova_tests.modules.stack_queue
+module modules.stack_queue
 
 // --- Generic Stack[T] (LIFO) ---
 

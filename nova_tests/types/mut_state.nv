@@ -1,7 +1,7 @@
 // 23_mut_state.nv — мутабельное состояние: let mut, mut поля,
 // присваивание через chained access, мутация элементов массива.
 
-module nova_tests.types.mut_state
+module types.mut_state
 
 type Box { mut inner int }
 type Wrap { mut b Box }

@@ -15,7 +15,7 @@
 //   - map_err(f) — основная цель
 //   - unwrap() (Fail handler)
 
-module nova_tests.runtime.result_methods
+module runtime.result_methods
 
 
 // ───── is_ok / is_err ─────

@@ -7,7 +7,7 @@
 // Реализационно panic ≡ throw без user handler — ловится _defer_BID_ff
 // аналогично unhandled throw.
 
-module nova_tests.expected_runtime.errdefer_on_panic
+module expected_runtime.errdefer_on_panic
 
 
 fn main() Io -> () {

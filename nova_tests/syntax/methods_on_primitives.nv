@@ -4,7 +4,7 @@
 // примитивы (int, str, bool, f64...). Методы определяются как обычно
 // через `fn <prim> @method(...)` или `fn <prim>.static(...)`.
 
-module nova_tests.syntax.methods_on_primitives
+module syntax.methods_on_primitives
 
 // ================================================================
 // SECTION 1: instance methods on int

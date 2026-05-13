@@ -3,7 +3,7 @@
 // Plan 33.3 Ф.9.2: record invariant check на конструкции через
 // record-литерал. Constructor с invariant-violation → runtime panic.
 
-module nova_tests.expected_runtime.f9_record_mut_invariant_fail
+module expected_runtime.f9_record_mut_invariant_fail
 
 type Counter {
     value int

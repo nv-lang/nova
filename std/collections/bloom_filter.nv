@@ -15,7 +15,7 @@
 //   - Дедупликация в streaming
 //   - Предварительная фильтрация в join'ах
 
-module std.collections.bloom_filter
+module collections.bloom_filter
 
 
 export type BloomFilter {

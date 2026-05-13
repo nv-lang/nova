@@ -3,7 +3,7 @@
 // Plan 19 D22-rev: closure-light `|x| body` всегда untyped.
 // Если нужны типы — переключайся на closure-full `fn(x T) -> R body`.
 
-module nova_tests.negative_capability.closure_typed_param_rejected
+module negative_capability.closure_typed_param_rejected
 
 test "closure-light с типом параметра отвергается" {
     let inc = |x int| x + 1

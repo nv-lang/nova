@@ -5,7 +5,7 @@
 // Тесты работают под любым GC backend (malloc/boehm) — используют
 // honest sentinel `heap_size() == 0` для malloc.
 
-module nova_tests.plan34.gc_namespace_basic
+module plan34.gc_namespace_basic
 
 
 test "gc.heap_size — non-negative (malloc: 0, boehm: > 0)" {

@@ -2,7 +2,7 @@
 // сочетание bidir-инферированных и уже-правильно-работавших closures.
 // HOF с несколькими аргументами (не только closure), mixed-type HOFs.
 
-module nova_tests.syntax.closure_bidir_typed_explicit
+module syntax.closure_bidir_typed_explicit
 
 
 fn apply_bool(x bool, f fn(bool) -> bool) -> bool {

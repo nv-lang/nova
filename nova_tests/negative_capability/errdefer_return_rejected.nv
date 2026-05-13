@@ -4,7 +4,7 @@
 // он hijack'нул бы scope-exit окружающей функции. Same constraints
 // что и `defer`.
 
-module nova_tests.negative_capability.errdefer_return_rejected
+module negative_capability.errdefer_return_rejected
 
 
 fn f() -> int {

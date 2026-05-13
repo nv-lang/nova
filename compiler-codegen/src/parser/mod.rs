@@ -185,12 +185,17 @@ impl Parser {
             items.push(self.parse_item()?);
         }
         let span = start.merge(self.peek().span);
+        // Plan 42 Sub-plan 42.4: Module.peer_files оставляем пустым на
+        // parser уровне — parser не знает path к исходнику. Caller'ы
+        // (imports.rs::resolve_imports_inline / test_runner / cmd_check)
+        // заполняют `peer_files` после parse.
         Ok(Module {
             name: module_name,
             imports,
             items,
             attrs: module_attrs,
             span,
+            peer_files: Vec::new(),
         })
     }
 
@@ -4203,8 +4208,15 @@ enum StmtOrExpr {
 }
 
 /// Удобная обёртка — лексирует и парсит исходник.
+/// `file_id = MAIN_FILE_ID` (backward compat).
 pub fn parse(src: &str) -> Result<Module, Diagnostic> {
-    let tokens = crate::lexer::lex(src)?;
+    parse_with_file_id(src, crate::diag::MAIN_FILE_ID)
+}
+
+/// Plan 42 Sub-plan 42.4 шаг 2: parse с explicit FileId.
+/// Все Span'ы AST получат указанный file_id (через token spans от lexer).
+pub fn parse_with_file_id(src: &str, file_id: crate::diag::FileId) -> Result<Module, Diagnostic> {
+    let tokens = crate::lexer::lex_with_file_id(src, file_id)?;
     let mut p = Parser::with_src(tokens, src.to_string());
     p.parse_module()
 }

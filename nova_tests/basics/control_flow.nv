@@ -1,6 +1,6 @@
 // 04_control_flow.nv — if/else/while/loop/break/continue/return
 
-module nova_tests.basics.control_flow
+module basics.control_flow
 
 fn classify(n int) -> str {
     if n < 0 { return "negative" }

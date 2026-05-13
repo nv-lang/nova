@@ -11,7 +11,7 @@
 //
 // ALLOC_REQUIRES boehm
 
-module nova_tests.concurrency.gc_correctness
+module concurrency.gc_correctness
 
 type Node {
     val   int

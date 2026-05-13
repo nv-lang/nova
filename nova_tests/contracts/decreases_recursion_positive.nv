@@ -1,7 +1,7 @@
 // Plan 33.3 Ф.9.4: fn с `decreases` и правильной recursion → проходит
 // без panic (depth не превышает limit).
 
-module nova_tests.contracts.decreases_recursion_positive
+module contracts.decreases_recursion_positive
 
 fn factorial(n int) -> int
     requires n >= 0

@@ -21,7 +21,7 @@
 // API:
 //   Markdown.to_html(md str) -> str
 
-module std.text.markdown_minimal
+module text.markdown_minimal
 
 
 export fn Markdown.to_html(md str) -> str {

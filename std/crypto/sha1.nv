@@ -9,7 +9,7 @@
 //   - Git object IDs (исторически)
 //   - Non-cryptographic identifiers
 
-module std.crypto.sha1
+module crypto.sha1
 
 
 export type Sha1 {

@@ -3,7 +3,7 @@
 // Это упрощённые версии R4-функций без mut params/Fail effects
 // (те ждут 33.2/33.3). Покрытие 33.1 scope: requires/ensures/old/result.
 
-module nova_tests.contracts.r4_examples
+module contracts.r4_examples
 
 // 1. Simple precondition.
 fn double(x int) -> int

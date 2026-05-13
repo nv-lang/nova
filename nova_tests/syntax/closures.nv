@@ -3,7 +3,7 @@
 // В 05_functions.nv покрыты только базовые лямбды. Здесь — захват
 // окружения, возврат функции, передача функции как параметра.
 
-module nova_tests.syntax.closures
+module syntax.closures
 
 fn make_adder(n int) -> fn(int) -> int {
     |x| x + n

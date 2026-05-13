@@ -1,6 +1,6 @@
 // 17_tuples.nv — кортежи
 
-module nova_tests.basics.tuples
+module basics.tuples
 
 test "tuple literal" {
     let t = (1, 2, 3)

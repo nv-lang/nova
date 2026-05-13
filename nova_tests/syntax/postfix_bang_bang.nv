@@ -4,7 +4,7 @@
 // через Fail[E]. Внешняя fn должна иметь Fail[E] в effects (или
 // активный with-handler).
 
-module nova_tests.syntax.postfix_bang_bang
+module syntax.postfix_bang_bang
 
 // ─── !! на Result ──────────────────────────────────────────────────
 

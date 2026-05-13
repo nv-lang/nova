@@ -10,7 +10,7 @@
 //     OS sleep). ms учитывается через monotonic wall-clock.
 //   now() — monotonic ms через GetTickCount64/clock_gettime(MONOTONIC).
 
-module nova_tests.concurrency.time_handler
+module concurrency.time_handler
 
 // ================================================================
 // SECTION 1: with Time handler overrides default

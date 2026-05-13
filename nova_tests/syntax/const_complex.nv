@@ -9,7 +9,7 @@
 // return value }`. На use-site `Ident(name)` для lazy const'ов эмитится
 // `nova_const_<name>()`.
 
-module nova_tests.syntax.const_complex
+module syntax.const_complex
 
 
 // === 1. Const с record-литералом ===

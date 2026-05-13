@@ -8,7 +8,7 @@
 //
 // Spec: spec/decisions/02-types.md → D72.
 
-module nova_tests.negative_capability.bound_missing_method_rejected
+module negative_capability.bound_missing_method_rejected
 
 
 type BmmCountable protocol {

@@ -3,7 +3,7 @@
 // Plan 33.2 Ф.5: assignment к параметру вне `modifies` → compile error.
 // Локальные `let mut` НЕ требуют frame-cover'а (паритет с Dafny).
 
-module nova_tests.contracts.frame_violation
+module contracts.frame_violation
 
 #unverified
 fn bad_modify(a int, b int) -> int

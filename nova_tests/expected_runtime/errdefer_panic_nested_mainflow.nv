@@ -5,7 +5,7 @@
 // nv_panic fix: вложенные errdefer на main flow — оба срабатывают.
 // Внутренний scope errdefer первым (LIFO по блокам).
 
-module nova_tests.expected_runtime.errdefer_panic_nested_mainflow
+module expected_runtime.errdefer_panic_nested_mainflow
 
 
 fn main() Io -> () {

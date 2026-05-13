@@ -6,7 +6,7 @@
 // `|x| => body` (как в JS-стиле), парсер выдаёт явную ошибку
 // с подсказкой убрать `=>`.
 
-module nova_tests.negative_capability.closure_arrow_in_body_rejected
+module negative_capability.closure_arrow_in_body_rejected
 
 test "`|x| => body` отвергается (нет `=>` в closure-light)" {
     let bad = |x| => x + 1
