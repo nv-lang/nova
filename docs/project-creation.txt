@@ -8453,3 +8453,46 @@ Plan 43 docs описывают next-attempt path (CreateFiber API, smaller slot
 ### Регрессия
 
 263 PASS / 0 FAIL Windows. Linux Docker всё ключевое PASS.
+
+---
+
+## Сессия 2026-05-13 (продолжение): Plan 41 R8 + Plan 43 closed
+
+### Plan 41 R8 P41-3 closed (commit f8dffddf60)
+
+MADV_DONTNEED decay queue: idle-only flush через `slots_active == 0`
+threshold (single batch syscall vs per-dealloc). Explicit
+`nova_fibers_compact()` API через `std.runtime.fibers.compact()`.
+Trade-off: pages кешируются между peak и idle = win для Nova
+supervised burst → quiescence pattern.
+
+### Plan 43 (Windows fiber arena) — 4 неудачные попытки, fundamentally blocked
+
+Попытки 1-4 документированы в docs/plans/43-windows-fiber-arena.md:
+1. VEH page-level lazy commit — Boehm scan RSS thrash.
+2. Slot-level lazy commit + decommit — commit charge limit.
+3. Slot 256 KB + idle decommit — TIB metadata mismatch.
+4. No decommit (committed_bits tracking) — даже simple main_yield TIMEOUT.
+
+**Root cause найден на 4-й попытке:** Windows TIB tracks current thread
+stack range. minicoro MCO_USE_ASM context switch обновляет только RSP,
+НЕ TIB → exception handling / SEH / control flow guard hangs на
+VirtualAlloc'нутом stack. Default calloc работает «by luck» (HeapAlloc
+memory не enforces strict TIB validation).
+
+**Spec D97 updated** — explicit disclosure что Windows arena
+fundamentally blocked, не "deferred to Plan 42+".
+
+### Финальный регрешн
+
+**263 PASS / 0 FAIL Windows.** Linux Docker validation тех же ключевых
+тестов PASS. Plan 41 closed fully (Этапы 1-5 + Audit R8 + P41-3 + P41-6).
+Plan 40 closed fully (5 audit rounds + R8 production audit). Plan 43
+fundamentally blocked, документирован.
+
+### Что осталось open (за рамки этой sessions)
+
+- **P40R8-6** sendDirect type-pun через nova_int — TIME-BOMB для T-generic
+  channels (Plan 21+). Compile assertion возможна, не сделана.
+- **Plan 43 redesign** — если когда-нибудь нужно: CreateFiber-based
+  Windows path (proper TIB через kernel call). Major refactor.
