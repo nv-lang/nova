@@ -81,6 +81,14 @@ static void _worker_main(void* arg) {
     NovaWorker* w = (NovaWorker*)arg;
     _current_worker_id = w->id;
 
+    /* Plan 44.6 Layer 3: per-worker libuv loop visible через TLS.
+     * Все timer/handle registrations в этом thread'е (Time.sleep,
+     * channels Time.after) пойдут на &w->loop, не на main thread's
+     * nova_evloop(). Без этого fiber park'ается на main loop'е, но
+     * worker крутит свой uv_run — callback никогда не fire'нет на
+     * worker'е, fiber hangs permanently. */
+    _nova_current_loop = &w->loop;
+
     /* Plan 44.5 Layer 4: register thread с Boehm GC.
      * Required для workers что вызывают nova_alloc (channels, NovaSpawnCtx).
      * Linux/macOS: libgc built с GC_THREADS — register/unregister работают.
