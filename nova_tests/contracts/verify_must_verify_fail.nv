@@ -8,7 +8,7 @@
 // Plan 33 V1: с Z3 backend этот goal доказуем, поэтому файл «отвечает
 // за trivial-only сценарий» и skip'ается при NOVA_SMT_BACKEND=z3.
 
-module nova_tests.contracts.verify_must_verify_fail
+module contracts.verify_must_verify_fail
 
 #must_verify
 fn unprovable_fn(x int) -> int

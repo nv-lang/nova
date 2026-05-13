@@ -6,7 +6,7 @@
 // Если `x > 5` то `x - 3 > 2`. Для z3 — UNSAT (proven).
 // Trivial backend не has arith propagation → Unknown (silent runtime fallback).
 
-module nova_tests.contracts.z3_implication_chain
+module contracts.z3_implication_chain
 
 #must_verify
 fn shift_left(x int) -> int

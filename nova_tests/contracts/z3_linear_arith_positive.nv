@@ -10,7 +10,7 @@
 // Без env-var (default trivial) test_runner skip'ает файл — маркер
 // `// REQUIRES_SMT_BACKEND z3` выше включается только при `NOVA_SMT_BACKEND=z3`.
 
-module nova_tests.contracts.z3_linear_arith_positive
+module contracts.z3_linear_arith_positive
 
 #must_verify
 fn inc_positive(x int) -> int

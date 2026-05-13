@@ -10,7 +10,7 @@
 //
 // Запуск с NOVA_SMT_BACKEND=z3.
 
-module nova_tests.contracts.z3_unprovable_with_counterexample
+module contracts.z3_unprovable_with_counterexample
 
 #must_verify
 fn bad_double(x int) -> int
