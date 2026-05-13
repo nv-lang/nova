@@ -1,12 +1,20 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 # План 23: M:N runtime — архитектурный roadmap
 
-> **Статус:** roadmap, не план-исполнения. Целит на milestone v1.0+.
+> **Статус:** roadmap, **не** план-исполнения. Целит на milestone v1.0+.
 > **Создан:** 2026-05-11.
 > **Зависит от:** Plan 22 (libuv + park/wake API), Plan 21 (Channel
 > capability-split — owner-actor паттерн), Plan 18 (P0 stdlib для real
 > backend use-case).
 > **Не блокирует:** ничего из текущей работы.
+>
+> **Executable companions (started 2026-05-13):**
+> - [Plan 44](44-mn-runtime-stage0.md) — Этап 0 закрыт: infrastructure
+>   liveness (NovaWorker struct, runtime.init/shutdown, smoke test,
+>   std.runtime.runtime API). 266 PASS / 0 FAIL Windows.
+> - Plan 45+ — следующие этапы (work-stealing, TLS migration, blocking
+>   pool, std.sync impl, spec semantics для shared mut). Открываются
+>   когда Plan 44 acceptance met.
 
 ---
 

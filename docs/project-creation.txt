@@ -8643,3 +8643,21 @@ prevents wasted work.
 core infrastructure (resolver + manifest + test_runner). Migration
 std/* — separate work (большая, risky). Production polish (A-L) —
 separate sub-plans. 267/267 regression — safe checkpoint.
+
+---
+
+## Уточнение нумерации планов (2026-05-13)
+
+Plan 44 (M:N Этап 0) создан как **executable companion** для Plan 23
+roadmap, не как самостоятельный план. Plan 23 — architectural map
+(7 слоёв, 7 open Q), который сам по себе говорит «это карта, не план».
+Plan 44 закрывает Слой 1 (thread pool) минимально.
+
+Связь явно зафиксирована:
+- Plan 23 в шапке ссылается на Plan 44.
+- Plan 44 в шапке указывает Plan 23 как parent + объясняет почему
+  отдельный файл (Plan 23 = roadmap отдельно от executable steps).
+
+Следующие этапы (Plan 45+) — work-stealing, TLS migration, blocking
+pool, std.sync impl — открываются когда Plan 44 acceptance met
+(infrastructure liveness validated).

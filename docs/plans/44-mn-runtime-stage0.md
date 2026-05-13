@@ -1,13 +1,27 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-# План 44: M:N Runtime — Этап 0 proof of concept
+# План 44: M:N Runtime — Этап 0 (executable companion для Plan 23)
 
-> **Статус:** executable план. Создан 2026-05-13.
-> **Цель:** минимальный M:N proof of concept — multiple OS worker threads,
-> каждый со своим scheduler + libuv loop + fiber arena. Channels и
-> arena уже M:N-ready (Plan 40 R8 + Plan 41 R8).
+> **Статус:** executable plan, Этап 0 реализован 2026-05-13.
+>
+> **Parent:** [Plan 23 (M:N runtime roadmap)](23-mn-runtime-roadmap.md).
+> Plan 23 — architectural map (что/зачем/Q-вопросы). Plan 44 — concrete
+> implementation первого этапа: infrastructure liveness.
+>
+> **Почему отдельный файл, а не section в Plan 23:** Plan 23 описывает
+> 7 архитектурных слоёв + 7 open Q + roadmap до v1.0+. Plan 44 закрывает
+> Слой 1 (thread pool) минимально (без work-stealing, без TLS migration,
+> без std.sync). Слои 2-7 — отдельные executable planы 45, 46, ...
+> Roadmap отделён от executable steps намеренно (как Plan 23 README говорит:
+> «Этот файл — карта, не план. Принятие = добавление в docs/plans/README.md
+> со статусом roadmap»).
+>
+> **Цель Этапа 0:** минимальный M:N proof of concept — multiple OS worker
+> threads, каждый со своим libuv loop + fiber scope. Channels и arena
+> уже M:N-ready (Plan 40 R8 + Plan 41 R8).
 >
 > **Не входит в Этап 0:** work-stealing, TLS migration, blocking pool,
-> spec semantics для shared mut. Они — отдельные планы (45, 46+).
+> spec semantics для shared mut. Они — отдельные планы (45, 46+) либо
+> остаются open Q в Plan 23.
 
 ---
 
