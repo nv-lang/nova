@@ -130,16 +130,23 @@ fn resolve_one(
     import_chain: &mut Vec<Vec<String>>,
     merged_items: &mut Vec<Item>,
 ) -> Result<()> {
-    let resolved = resolve_import_path(&imp.path, entry_dir, repo, stdlib_dir)
+    // Plan 42 Ф.2: resolve module to list of peer files (or single file
+    // for legacy single-file modules).
+    let resolved_paths = resolve_module_paths(&imp.path, entry_dir, repo, stdlib_dir)
         .ok_or_else(|| anyhow!(
-            "cannot find module '{}' — searched:\n  {}/{}.nv\n  {}/{}.nv\n  {}/{}.nv",
+            "cannot find module '{}' — searched:\n  {}/{}.nv (or .nv files in {}/{}/)\n  {}/{}.nv\n  {}/{}.nv",
             imp.path.join("."),
+            entry_dir.display(), imp.path.join("/"),
             entry_dir.display(), imp.path.join("/"),
             repo.display(), imp.path.join("/"),
             stdlib_dir.display(), imp.path.iter().skip(1).cloned().collect::<Vec<_>>().join("/")))?;
 
-    let canon = resolved.canonicalize()
-        .map_err(|e| anyhow!("canonicalize {}: {}", resolved.display(), e))?;
+    // Use FIRST peer file's canonical path as module identity key. All peers
+    // of one folder-module share single key (we promote ALL peers to visited
+    // when done — diamond-dep dedup works correctly).
+    let first_path = &resolved_paths[0];
+    let canon = first_path.canonicalize()
+        .map_err(|e| anyhow!("canonicalize {}: {}", first_path.display(), e))?;
 
     // D29: cycle = canon уже в in_progress.
     if in_progress.contains(&canon) {
@@ -160,55 +167,70 @@ fn resolve_one(
     in_progress.insert(canon.clone());
     import_chain.push(imp.path.clone());
 
-    let imp_src = std::fs::read_to_string(&resolved)
-        .map_err(|e| anyhow!("failed to read imported module {}: {}", resolved.display(), e))?;
-    let imp_path_str = resolved.to_string_lossy().to_string();
-    let imp_module = parser::parse(&imp_src)
-        .map_err(|d| {
-            let (line, col) = byte_to_line_col(&imp_src, d.span.start);
-            anyhow!(
-                "in imported module '{}' ({}): {}:{}: {}",
-                imp.path.join("."), imp_path_str, line, col, d.message)
-        })?;
+    // Plan 42 Ф.2: parse все peer files в alphabetical order (правило B).
+    // Для each peer:
+    //   1. Parse to Module.
+    //   2. Recursively resolve its imports.
+    //   3. Append its items в merged_items.
+    // Peers share namespace через merge'нутый Module.items.
+    let mut peer_canons: Vec<PathBuf> = Vec::new();
+    for peer_path in &resolved_paths {
+        let peer_canon = peer_path.canonicalize()
+            .map_err(|e| anyhow!("canonicalize {}: {}", peer_path.display(), e))?;
+        peer_canons.push(peer_canon);
 
-    // Recursive: resolve transitive imports.
-    for sub in &imp_module.imports {
-        resolve_one(
-            sub,
-            entry_dir,
-            repo,
-            stdlib_dir,
-            visited,
-            in_progress,
-            import_chain,
-            merged_items,
-        )?;
+        let peer_src = std::fs::read_to_string(peer_path)
+            .map_err(|e| anyhow!("failed to read imported module {}: {}", peer_path.display(), e))?;
+        let peer_path_str = peer_path.to_string_lossy().to_string();
+        let peer_module = parser::parse(&peer_src)
+            .map_err(|d| {
+                let (line, col) = byte_to_line_col(&peer_src, d.span.start);
+                anyhow!(
+                    "in imported module '{}' ({}): {}:{}: {}",
+                    imp.path.join("."), peer_path_str, line, col, d.message)
+            })?;
+
+        // Recursive: resolve transitive imports for THIS peer.
+        for sub in &peer_module.imports {
+            resolve_one(
+                sub,
+                entry_dir,
+                repo,
+                stdlib_dir,
+                visited,
+                in_progress,
+                import_chain,
+                merged_items,
+            )?;
+        }
+
+        // Merge items from this peer.
+        for item in peer_module.items {
+            match &item {
+                Item::Type(_) | Item::Fn(_) | Item::Const(_) => {
+                    merged_items.push(item);
+                }
+                Item::Test(_) | Item::Let(_) => {
+                    // Test blocks / top-level let — игнорируем для imported.
+                }
+            }
+        }
     }
 
     // Plan 35 sub-plan 35.A (R26): selective filter — syntax-only.
     let _ = imp.items.is_some();
 
-    // Merge items: Type, Fn, Const. Skip Test и top-level Let.
-    for item in imp_module.items {
-        match &item {
-            Item::Type(_) | Item::Fn(_) | Item::Const(_) => {
-                merged_items.push(item);
-            }
-            Item::Test(_) | Item::Let(_) => {
-                // Test blocks и top-level let — игнорируем для imported.
-            }
-        }
-    }
-
-    // Pop in_progress + chain; promote canon в closed-set.
+    // Pop in_progress + chain; promote ALL peer canons в closed-set.
     in_progress.remove(&canon);
-    visited.insert(canon);
+    for c in peer_canons {
+        visited.insert(c);
+    }
     import_chain.pop();
     Ok(())
 }
 
 /// Resolve `import a.b.c` к filesystem path.
-/// Returns first existing path.
+/// Returns first existing path. Used для single-file modules.
 fn resolve_import_path(
     parts: &[String],
     entry_dir: &Path,
@@ -237,6 +259,99 @@ fn resolve_import_path(
         let cand_std = stdlib_dir.join(rel_inside_std.with_extension("nv"));
         if cand_std.exists() && cand_std.is_file() {
             return Some(cand_std);
+        }
+    }
+
+    None
+}
+
+/// Plan 42 Ф.2: resolve module to **list** of peer files (folder-module)
+/// или single file. Returns `Vec<PathBuf>` alphabetically sorted (правило B).
+///
+/// Resolution order:
+/// 1. Try single-file `<...>/parts.nv` (legacy behaviour).
+/// 2. If not found, try folder `<...>/parts/` — collect все `*.nv` файлы
+///    в этой папке (non-recursive, alphabetical sort).
+/// 3. Conflict (file exists AND folder with .nv files exists) → return
+///    None and caller emits «ambiguous module».
+///
+/// Каждый search root (entry_dir / repo / stdlib_dir) проверяется в
+/// порядке.
+fn resolve_module_paths(
+    parts: &[String],
+    entry_dir: &Path,
+    repo: &Path,
+    stdlib_dir: &Path,
+) -> Option<Vec<PathBuf>> {
+    if parts.is_empty() {
+        return None;
+    }
+    let rel_path: PathBuf = parts.iter().collect();
+
+    // Candidate search roots — same order as resolve_import_path.
+    let mut roots: Vec<PathBuf> = vec![
+        entry_dir.to_path_buf(),
+        repo.to_path_buf(),
+    ];
+    if parts[0] == "std" && parts.len() >= 2 {
+        roots.push(stdlib_dir.to_path_buf());
+    }
+
+    for root in &roots {
+        // Translate path: для stdlib_dir мы пропускаем первый `std` segment.
+        let local_rel: PathBuf = if root == stdlib_dir && parts[0] == "std" {
+            parts[1..].iter().collect()
+        } else {
+            rel_path.clone()
+        };
+
+        let single_file = root.join(local_rel.with_extension("nv"));
+        let folder = root.join(&local_rel);
+
+        let file_exists = single_file.is_file();
+        let folder_exists = folder.is_dir();
+
+        if file_exists && folder_exists {
+            // Check folder has direct .nv files — only then it's ambiguous.
+            // If folder только contains sub-folders without direct .nv,
+            // we treat it as namespace-container (rule E).
+            let has_direct_nv = std::fs::read_dir(&folder)
+                .ok()
+                .map(|entries| {
+                    entries.filter_map(|e| e.ok()).any(|e| {
+                        e.path().extension().and_then(|s| s.to_str()) == Some("nv")
+                    })
+                })
+                .unwrap_or(false);
+            if has_direct_nv {
+                // Ambiguous — return None and let caller emit error.
+                // Note: silent None is bad UX; caller currently emits
+                // generic «cannot find» error. Improvement: thread Result.
+                return None;
+            }
+        }
+
+        if file_exists {
+            return Some(vec![single_file]);
+        }
+
+        if folder_exists {
+            // Collect все *.nv files (non-recursive), alphabetical sort.
+            let mut peers: Vec<PathBuf> = std::fs::read_dir(&folder)
+                .ok()?
+                .filter_map(|e| e.ok())
+                .map(|e| e.path())
+                .filter(|p| {
+                    p.is_file()
+                        && p.extension().and_then(|s| s.to_str()) == Some("nv")
+                })
+                .collect();
+            if !peers.is_empty() {
+                peers.sort();
+                return Some(peers);
+            }
+            // Folder без .nv files — namespace-container, не module.
+            // Продолжаем поиск в других roots.
         }
     }
 

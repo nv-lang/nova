@@ -1841,9 +1841,74 @@ pub fn find_repo_root_from(start: &Path) -> Option<PathBuf> {
     }
 }
 
+/// Plan 42 D29 rev-3: heuristic — is this file a peer of folder-module?
+///
+/// Folder-module = все .nv files в parent dir объявляют **тот же**
+/// `module X`. Single-file = unique declaration per file (current
+/// existing model в nova_tests/basics/ где каждый .nv объявляет
+/// свой own module).
+///
+/// Detect: parse `module X` declaration first-line из каждого .nv в
+/// parent. Если все одинаковы — folder-module peer. Иначе single-file.
+///
+/// Лёгкая heuristic (без полного parser): grep первую non-comment
+/// строку для `module ...` pattern.
+fn is_folder_module_peer(path: &Path) -> bool {
+    let parent = match path.parent() {
+        Some(p) => p,
+        None => return false,
+    };
+    let entries: Vec<PathBuf> = match std::fs::read_dir(parent) {
+        Ok(it) => it
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| {
+                p.is_file()
+                    && p.extension().and_then(|s| s.to_str()) == Some("nv")
+            })
+            .collect(),
+        Err(_) => return false,
+    };
+    if entries.len() < 2 {
+        return false;
+    }
+    // Read `module X` decl первой non-comment строки каждого файла.
+    let mut decls: Vec<String> = Vec::with_capacity(entries.len());
+    for entry in &entries {
+        let src = match std::fs::read_to_string(entry) {
+            Ok(s) => s,
+            Err(_) => return false,
+        };
+        let mut decl: Option<String> = None;
+        for raw in src.lines() {
+            let line = raw.trim();
+            if line.is_empty() || line.starts_with("//") {
+                continue;
+            }
+            if let Some(rest) = line.strip_prefix("module ") {
+                decl = Some(rest.trim().to_string());
+            }
+            break;
+        }
+        match decl {
+            Some(d) => decls.push(d),
+            None => return false,
+        }
+    }
+    // All decls identical?
+    let first = &decls[0];
+    decls.iter().all(|d| d == first)
+}
+
 fn codegen_to_c(path: &Path, src: &str) -> Result<Vec<String>, String> {
     let mut module = parser::parse(src).map_err(|d| d.render(src, &path.to_string_lossy()))?;
-    manifest::check_module_path(path, &module.name).map_err(|s| s.to_string())?;
+    // Plan 42 D29 rev-3: detect — is this file a peer of folder-module?
+    // Folder-module = parent dir содержит >1 .nv files, и все они
+    // объявляют тот же `module X`. Если да — manifest check использует
+    // is_folder_module=true (parent.X rule).
+    let is_folder_module = is_folder_module_peer(path);
+    manifest::check_module_path_with_kind(path, &module.name, is_folder_module)
+        .map_err(|s| s.to_string())?;
 
     // Plan 35 R31 (unified pipeline): cross-file resolve через inline
     // expansion. Тот же codepath что в `nova-cli::cmd_build`. Без этого
@@ -2630,16 +2695,66 @@ pub fn walk_nv(root: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
     }
     let entries = std::fs::read_dir(root)
         .map_err(|e| anyhow!("read_dir {}: {}", root.display(), e))?;
+    // Plan 42 D29 rev-3: collect direct .nv files в этой папке.
+    // Если они — peers of folder-module (все объявляют одинаковый
+    // `module X`), они НЕ компилируются как standalone test entries
+    // (нет main, peers depend друг от друга). Folder-module
+    // компилируется только через import из внешнего entry.
+    let mut direct_nv: Vec<PathBuf> = Vec::new();
+    let mut sub_dirs: Vec<PathBuf> = Vec::new();
     for entry in entries {
         let entry = entry.map_err(|e| anyhow!("read_dir entry: {}", e))?;
         let path = entry.path();
         if path.is_dir() {
-            walk_nv(&path, out)?;
+            sub_dirs.push(path);
         } else if path.extension().and_then(|s| s.to_str()) == Some("nv") {
-            out.push(path);
+            direct_nv.push(path);
         }
     }
+    let is_folder_module = direct_nv.len() >= 2 && is_folder_module_dir(&direct_nv);
+    if !is_folder_module {
+        // Каждый файл — standalone test entry.
+        for p in direct_nv {
+            out.push(p);
+        }
+    }
+    // Sub-dirs recursive (могут быть other modules / sub-modules).
+    for sub in sub_dirs {
+        walk_nv(&sub, out)?;
+    }
     Ok(())
+}
+
+/// Plan 42 D29 rev-3: detect — все эти .nv files объявляют тот же
+/// `module X` (folder-module peers)?
+fn is_folder_module_dir(files: &[PathBuf]) -> bool {
+    if files.len() < 2 {
+        return false;
+    }
+    let mut decls: Vec<String> = Vec::with_capacity(files.len());
+    for f in files {
+        let src = match std::fs::read_to_string(f) {
+            Ok(s) => s,
+            Err(_) => return false,
+        };
+        let mut decl: Option<String> = None;
+        for raw in src.lines() {
+            let line = raw.trim();
+            if line.is_empty() || line.starts_with("//") {
+                continue;
+            }
+            if let Some(rest) = line.strip_prefix("module ") {
+                decl = Some(rest.trim().to_string());
+            }
+            break;
+        }
+        match decl {
+            Some(d) => decls.push(d),
+            None => return false,
+        }
+    }
+    let first = &decls[0];
+    decls.iter().all(|d| d == first)
 }
 
 /// Сборка display-name для теста на основе path + base.
