@@ -185,12 +185,17 @@ impl Parser {
             items.push(self.parse_item()?);
         }
         let span = start.merge(self.peek().span);
+        // Plan 42 Sub-plan 42.4: Module.files оставляем пустым на parser
+        // уровне — parser не знает path к исходнику. Caller'ы
+        // (imports.rs::resolve_imports_inline / test_runner / cmd_check)
+        // заполняют `files` после parse через `attach_source_file`.
         Ok(Module {
             name: module_name,
             imports,
             items,
             attrs: module_attrs,
             span,
+            files: Vec::new(),
         })
     }
 
