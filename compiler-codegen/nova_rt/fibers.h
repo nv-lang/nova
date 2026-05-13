@@ -82,7 +82,7 @@ static inline void _nova_gc_remove_fiber_roots(mco_coro* co) { (void)co; }
  *
  * Wire minicoro's alloc_cb/dealloc_cb to nova_fiber_alloc/dealloc, которые
  * берут стек из per-thread mmap'нутой арены вместо calloc. На Windows
- * остаёмся на дефолтном calloc-пути (Plan 42+).
+ * остаёмся на дефолтном calloc-пути (Plan 43 — открытый).
  *
  * Stack size: slot_usable (= slot_size − guard) минус минимальный
  * mco_desc header overhead. Реальный header < 1KB на amd64; 8KB

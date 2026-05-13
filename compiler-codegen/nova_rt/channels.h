@@ -360,50 +360,18 @@ static inline NovaOpt_nova_int nova_chan_reader_recv(Nova_ChanReader* rx) {
         return (NovaOpt_nova_int){ .tag = NOVA_TAG_Option_None, .value = 0 };
     }
 
-    /* Plan 40 audit R8-4 (2026-05-13): BaseWaiter — per-platform allocation.
+    /* Plan 40 audit R8-4 (2026-05-13): BaseWaiter ALLOCATED ON FIBER STACK
+     * на Linux/macOS (D97 arena). Это Nova unique advantage над Go:
+     * minicoro fixed fiber stacks → stack-pinned waiter лежит в slot,
+     * виден GC через arena root, не аллоцируется через nova_alloc.
+     * Go не может сделать это потому что goroutine stacks могут расти
+     * (copy + remap), pointers могут стать invalid. Nova fibers не двигаются.
      *
-     * Park logic: fiber кладёт waiter в channel->recv_waiters/send_waiters
-     * (doubly-linked), yields через scheduler, после wake читает w->send_val.
-     * Waiter живёт ровно от park до unlink (после fired/cancel) — это
-     * SCOPED lifetime, совпадает с лексическим scope'ом recv()/send().
+     * Heap pressure win: 100k req/s ≈ 6.4 MB/s GC garbage saved.
      *
-     * Между park и wake fiber suspended → его OS stack отлеплён от
-     * текущего CPU thread. Conservative GC (Boehm) сканирует ТОЛЬКО
-     * текущий thread stack + зарегистрированные roots. Чтобы waiter
-     * остался reachable (a) waker не следовал на стейл pointer и (b)
-     * объект не был collected — нужно одно из:
-     *   1. Waiter в GC-managed heap (`nova_alloc`) → reachable через
-     *      heap walk если channel state reachable (channel state →
-     *      waiter list → waiter).
-     *   2. Suspended fiber stack — зарегистрированный GC root → waiter
-     *      на этом стеке reachable через root walk.
-     *
-     * Linux/macOS (D97 fiber arena ENABLED):
-     *   - Fiber stacks живут в `mmap`'нутой arena.
-     *   - Arena `[base, base+high_water*slot_size]` зарегистрирован как
-     *     один Boehm root (`fiber_arena.c::_arena_register_active_range`).
-     *   - Suspended fiber stack scanned ⇒ waiter на этом стеке visible
-     *     ⇒ stack allocation БЕЗОПАСНА.
-     *   - Бонус: zero allocation per park → нет heap pressure под
-     *     100k req/s (6.4 MB/s GC garbage сэкономлено).
-     *   - Это **Nova unique advantage над Go**: goroutine stacks могут
-     *     грow → copied → pointer на старый stack invalidates. Go не
-     *     может разместить sudog на goroutine stack. Nova fibers
-     *     (minicoro) на фиксированных стеках — pointers stable.
-     *
-     * Windows (D97 fiber arena DISABLED, fiber stacks через calloc):
-     *   - Calloc'нутые stacks НЕ зарегистрированы как Boehm root.
-     *   - Boehm conservative scan видит указатели только если они
-     *     случайно лежат на active thread stack или в data segment.
-     *   - Suspended fiber stack invisible ⇒ waiter на этом стеке
-     *     может стать unreachable во время collect cycle ⇒ UAF
-     *     (это был root cause "boundary ~35" SEGV для Time.after,
-     *      исправленный в P40R8-1 для NovaAfterState).
-     *   - Поэтому на Windows fallback на nova_alloc — heap-managed
-     *     waiter reachable через channel state.
-     *
-     * Когда Windows получит arena (Plan 42+ через SEH guard pages),
-     * этот #ifdef can be удалён — путь станет single. */
+     * Windows: arena off (Plan 43 открытый), suspended fiber stacks НЕ
+     * зарегистрированы как Boehm root → waiter на стеке невидим для
+     * conservative scan. Под Windows остаёмся на nova_alloc (GC-managed). */
     NovaFiberQueue* sc = _nova_active_scope;
     int             sl = _nova_active_slot;
     if (!sc || sl < 0) {
@@ -417,7 +385,7 @@ static inline NovaOpt_nova_int nova_chan_reader_recv(Nova_ChanReader* rx) {
     BaseWaiter* w = &w_storage;
 #else
     /* Windows: heap-allocated через GC — suspended fiber stack невидим
-     * для Boehm conservative scan (calloc-путь, см. D97). */
+     * для Boehm conservative scan (calloc-путь, Plan 43 открытый). */
     BaseWaiter* w = (BaseWaiter*)nova_alloc(sizeof(BaseWaiter));
 #endif
     w->scope    = sc;
