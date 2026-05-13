@@ -21,6 +21,9 @@ size_t nova_fibers_slots_active(void) {
 size_t nova_fibers_high_water(void) {
     return nova_fiber_arena_stats().high_water;
 }
+void   nova_fibers_compact(void) {
+    nova_fiber_arena_compact();
+}
 
 #else /* Windows / unsupported */
 
@@ -28,5 +31,6 @@ size_t nova_fibers_virtual_reserved(void) { return 0; }
 size_t nova_fibers_slot_count(void)       { return 0; }
 size_t nova_fibers_slots_active(void)     { return 0; }
 size_t nova_fibers_high_water(void)       { return 0; }
+void   nova_fibers_compact(void)          { /* no-op — arena off */ }
 
 #endif

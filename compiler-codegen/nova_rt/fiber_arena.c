@@ -354,16 +354,72 @@ void nova_fiber_dealloc(void* ptr, size_t size, void* allocator_data) {
     _arena_mark_slot_free(&_t_arena, slot);
     _t_arena.slots_active--;
 
-    /* Plan 41 P41-4 P1: should batch madvise через decay queue.
-     * Bootstrap: per-dealloc syscall. Известный regression под churn —
-     * fix to Plan 41 Этап 3. */
-    char* slot_top = _t_arena.base + (slot + 1) * _t_arena.slot_size;
-    char* usable_base = _t_arena.base + slot * _t_arena.slot_size + NOVA_FIBER_GUARD_SIZE;
-    size_t usable_size = (size_t)(slot_top - usable_base);
+    /* Plan 41 P41-3 (R8, 2026-05-13): MADV_DONTNEED только на idle.
+     *
+     * Раньше: per-dealloc madvise → каждый syscall takes mmap_sem write
+     * lock → serialize все VM ops в процессе. Под 100k fiber/sec churn —
+     * deadlock-grade.
+     *
+     * Теперь: при `slots_active == 0` (idle = весь scope завершился)
+     * выполняем ОДИН madvise на весь used range [base+guard, high_water*slot].
+     * Pages этого range возвращаются ОС батчем, mmap_sem locked один раз.
+     *
+     * Trade-off: между peak и idle physical pages держатся (slot pages
+     * cached в OS). Это **win**: следующий burst переиспользует pages
+     * без zero-page COW. Workload pattern Nova — supervised scope
+     * spawns burst → quiescence → next scope — идеально fits.
+     *
+     * Если pattern long-running без idle (например server с постоянно
+     * активными fibers) — manual flush через nova_fibers_compact()
+     * (см. std.runtime.fibers). */
+    if (_t_arena.slots_active == 0 && _t_arena.high_water > 0) {
 #ifdef MADV_DONTNEED
-    madvise(usable_base, usable_size, MADV_DONTNEED);
-#else
-    (void)usable_size;
+        char* range_base = _t_arena.base + NOVA_FIBER_GUARD_SIZE;
+        size_t range_size = _t_arena.high_water * _t_arena.slot_size
+                          - NOVA_FIBER_GUARD_SIZE;
+        madvise(range_base, range_size, MADV_DONTNEED);
+#endif
+    }
+}
+
+/* Plan 41 P41-3 (2026-05-13): explicit compact API для long-running
+ * workloads без natural idle. Released все free slots' physical pages
+ * одним syscall. Exposed через std.runtime.fibers.compact(). */
+void nova_fiber_arena_compact(void) {
+    if (!_t_arena.base || _t_arena.high_water == 0) return;
+#ifdef MADV_DONTNEED
+    /* Iterate bitmap, find contiguous free runs, batch MADV. */
+    size_t total_words = (_t_arena.slot_count + 63) / 64;
+    size_t run_start = SIZE_MAX;  /* sentinel — no run in progress */
+    for (size_t w = 0; w < total_words; w++) {
+        uint64_t bits = _t_arena.free_bits[w];
+        for (size_t b = 0; b < 64; b++) {
+            size_t slot = w * 64 + b;
+            if (slot >= _t_arena.high_water) goto end_scan;
+            bool used = (bits >> b) & 1;
+            if (!used) {
+                if (run_start == SIZE_MAX) run_start = slot;
+            } else {
+                if (run_start != SIZE_MAX) {
+                    /* Flush run [run_start, slot). */
+                    char* rbase = _t_arena.base + run_start * _t_arena.slot_size
+                                + NOVA_FIBER_GUARD_SIZE;
+                    size_t rsize = (slot - run_start) * _t_arena.slot_size
+                                 - NOVA_FIBER_GUARD_SIZE;
+                    madvise(rbase, rsize, MADV_DONTNEED);
+                    run_start = SIZE_MAX;
+                }
+            }
+        }
+    }
+end_scan:
+    if (run_start != SIZE_MAX) {
+        char* rbase = _t_arena.base + run_start * _t_arena.slot_size
+                    + NOVA_FIBER_GUARD_SIZE;
+        size_t rsize = (_t_arena.high_water - run_start) * _t_arena.slot_size
+                     - NOVA_FIBER_GUARD_SIZE;
+        madvise(rbase, rsize, MADV_DONTNEED);
+    }
 #endif
 }
 

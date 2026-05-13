@@ -7300,6 +7300,10 @@ impl CEmitter {
                             "high_water" if args.is_empty() => {
                                 return Ok("((nova_int)nova_fibers_high_water())".to_string());
                             }
+                            // Plan 41 R8 P41-3: explicit decay flush.
+                            "compact" if args.is_empty() => {
+                                return Ok("(nova_fibers_compact(), (nova_int)0LL)".to_string());
+                            }
                             _ => {}
                         }
                     }
@@ -11335,6 +11339,7 @@ impl CEmitter {
                             return match method.as_str() {
                                 "virtual_reserved" | "slot_count" |
                                 "slots_active" | "high_water" => "nova_int".into(),
+                                "compact" => "nova_int".into(), // unit comma-expr
                                 _ => "nova_int".into(),
                             };
                         }

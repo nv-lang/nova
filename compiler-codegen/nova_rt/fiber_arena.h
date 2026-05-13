@@ -100,6 +100,12 @@ typedef struct {
 
 NovaFiberArenaStats nova_fiber_arena_stats(void);
 
+/* Plan 41 P41-3: explicit decay — flush physical pages of free slots
+ * batched single MADV_DONTNEED per contiguous run. For long-running
+ * workloads без natural idle (server с постоянно активными fibers).
+ * No-op если arena не activated. */
+void nova_fiber_arena_compact(void);
+
 /* minicoro alloc callbacks. Wire через mco_desc.alloc_cb / dealloc_cb.
  *
  * NOTE: minicoro signature (allocator_data, size) → ptr; we ignore

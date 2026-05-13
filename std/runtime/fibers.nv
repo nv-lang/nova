@@ -62,3 +62,16 @@ export external fn fibers.slots_active() -> int
 // planning: если high_water близок к slot_count → workload приближается
 // к лимиту арены. Под Windows возвращает 0.
 export external fn fibers.high_water() -> int
+
+// Plan 41 P41-3 (R8): explicit decay flush. Возвращает physical pages
+// всех currently-free arena slots обратно ОС одним батчем (MADV_DONTNEED
+// на каждый contiguous run free slots). Для long-running workloads без
+// natural idle — например server где постоянно есть N active fibers и
+// peak время от времени поднимается выше.
+//
+// Auto-decay: реализация делает то же самое самостоятельно когда
+// `slots_active == 0` (idle threshold). Manual `fibers.compact()` нужен
+// если такого idle window нет.
+//
+// Под Windows: no-op (arena off).
+export external fn fibers.compact() -> ()
