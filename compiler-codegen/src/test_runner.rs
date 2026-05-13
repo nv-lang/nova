@@ -3288,9 +3288,11 @@ pub fn print_summary(summary: &Summary, format: OutputFormat) {
             }
             if had_fail { let _ = writeln!(out); }
 
-            // Plan 27 Ф.6: skip count.
+            // Plan 27 Ф.6: skip count. Plan 33 V1: причин теперь несколько
+            // (alloc-backend + smt-backend) — общее «skipped», конкретика
+            // в каждой SKIP-строке выше.
             if summary.skip > 0 {
-                let _ = writeln!(out, "PASS: {}  FAIL: {}  SKIP: {} (alloc-backend)",
+                let _ = writeln!(out, "PASS: {}  FAIL: {}  SKIP: {} (skipped)",
                     summary.pass, summary.fail, summary.skip);
             } else {
                 let _ = writeln!(out, "PASS: {}  FAIL: {}", summary.pass, summary.fail);
