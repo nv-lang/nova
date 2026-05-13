@@ -1,0 +1,43 @@
+// Plan 41 R8 P41-3: fibers.compact() API smoke test.
+//
+// На Linux/macOS arena активна — compact() выполняет MADV_DONTNEED
+// на free slots. После compact() slot_count и slots_active НЕ меняются;
+// меняется только physical RSS (не наблюдаемо через API).
+//
+// На Windows arena off — compact() no-op.
+
+module nova_tests.concurrency.fiber_arena_compact
+
+test "fibers.compact() callable" {
+    // Burst → quiescence → compact().
+    let mut wins = 0
+    let mut i = 0
+    while i < 20 {
+        let ch = Channel.new(1)
+        supervised {
+            spawn { ch.tx.send(i) }
+            spawn {
+                select {
+                    Some(_) = ch.rx => { wins = wins + 1 }
+                    Some(_) = Time.after(5_000) => { }
+                }
+            }
+        }
+        i = i + 1
+    }
+    assert(wins == 20)
+
+    // Compact arena — все slots free после supervised exit'a.
+    fibers.compact()
+
+    // slot_count и virtual_reserved неизменны.
+    let slots = fibers.slot_count()
+    if slots > 0 {
+        assert(slots >= 4096)
+        // slots_active может быть либо 0 (Linux clean state) либо некоторое
+        // residual если supervisor scope ещё не GC'ed.
+    }
+    // Idempotent — повторный вызов OK.
+    fibers.compact()
+    fibers.compact()
+}
