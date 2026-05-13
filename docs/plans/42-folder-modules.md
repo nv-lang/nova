@@ -495,9 +495,11 @@ decl типов уже работает (Plan 36 followup). Verify на test'е.
   в `forbidden_stack`). `#requires` отвергнут (нарушает AI-first
   explicit principle — implicit effects in function signatures).
   Tests: `modules/file_forbid_clean.nv` + `negative_capability/file_forbid_violation.nv` PASS.
-- **42.2 — `nova doc <module>`** tooling. Roadmap.
-  Auto-collect public API из всех peers, source-of-truth = реализация.
-  Заменяет отвергнутый `overview.nv` (правило G).
+- **42.2 — `nova doc <module>`** tooling — **вынесен в отдельный
+  [Plan 45](45-nova-doc.md)** (2026-05-14). Auto-collect public API
+  из всех peers, source-of-truth = реализация; заменяет отвергнутый
+  `overview.nv` (правило G). Большой scope (~700-1000 LOC: lexer +
+  parser + CLI subcommand + formatters), отдельная сессия.
 - **42.3 — function-level `#forbid`** ❌ ОТВЕРГНУТО 2026-05-14.
   Изначально предлагался attribute `#forbid X, Y` перед `fn` как
   shortcut для `forbid X { body }`. **Отказ:** это TIMTOWTDI
@@ -510,10 +512,14 @@ decl типов уже работает (Plan 36 followup). Verify на test'е.
   simplifications.md). Если когда-нибудь fn-level scope станет
   настолько частым случаем что block wrap стал code-smell —
   пересмотреть; до тех пор `forbid X { body }` достаточен.
-- **42.4 — per-file imports scope** (правило C из production audit).
-  Bootstrap MVP shared imports через flat merge. Real fix: AST
-  refactor `Module.peer_files: Vec<PeerFile>`, name resolution
-  учитывает per-peer import scope (Go-style).
+- **42.4 — per-file imports scope** — детальный план в
+  [42.4-per-file-imports-scope.md](42.4-per-file-imports-scope.md)
+  (2026-05-14, scope ~600-800 LOC, 2-3 commit'а). Закрытие правила C
+  production audit: AST refactor `Module.files: Vec<SourceFile>` +
+  FileRegistry activation + span walker + type-checker per-peer name
+  resolution. В bootstrap нет видимого spec violation (нет folder-
+  modules с cross-peer imports в std/* и тестах), но preemptive fix
+  перед production-scale stdlib.
 - **42.5 — 2-pass codegen** (правило D). Pass 1 emit forward decls
   для всех Fn/Type/Const, Pass 2 emit bodies. Текущий single-pass
   works для всех use cases bootstrap; sub-plan когда mutually
