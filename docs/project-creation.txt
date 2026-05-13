@@ -8339,3 +8339,57 @@ default case (corrupted handle type).
 
 Глубже Windows-specific investigation (Boehm conservative scan
 fiber stacks vs accumulated NovaAfterState heap) — отдельная задача.
+
+
+================================================================================
+2026-05-13 Plan 42 production audit: правило G (overview.nv) отвергнуто
+================================================================================
+
+После production audit Plan 42 был ревизован с 5 правил до 12 (A-L) с
+gaps замечанными после deep сравнения с Go/Rust practices. После
+обсуждения с пользователем — **правило G (overview.nv compiler-
+verified) отвергнуто** по причине «программист будет забывать
+обновлять — overview будет отставать от реальности» (typical Go
+`doc.go` failure mode).
+
+### Что решено
+
+- `overview.nv` convention с compiler verification — **отвергнуто**.
+- Source-of-truth публичного API — **реализация** (где написан `export`).
+- LLM/программист получает API через **`nova doc <module>`** tooling
+  (sub-plan 42.B), который auto-collects из всех peers. Никакого
+  ручного дублирования.
+
+### Изменения в Plan 42
+
+- Правило G помечено «ОТВЕРГНУТО» с rationale.
+- Удалены: `folder_overview/` positive test, `folder_overview_signature_mismatch/`
+  negative test.
+- Sub-plan 42.C (overview verification) удалён.
+- "Что улучшает vs Go/Rust" — переnumbered (без overview entry).
+- Estimate: MVP 400-600 LOC (правила A B C D E F), production polish
+  +130 LOC (H L), sub-plans 42.A/B остаются.
+
+### Финальные правила Plan 42
+
+- **A** cycle по module-name
+- **B** alphabetical ordering
+- **C** per-file imports
+- **D** 2-pass codegen для cross-peer cycles
+- **E** `X.nv` + `X/sub/` валидно
+- **F** `_test.nv` test isolation
+- ~~**G** overview.nv — отвергнуто~~
+- **H** `internal/` directory
+- **I** module-level `#forbid`/`#requires` (sub-plan 42.A)
+- **J** `nova doc <module>` (sub-plan 42.B)
+- **K** per-module incremental rebuild
+- **L** diagnostic quality
+
+### Что Nova делает лучше Go/Rust (final)
+
+1. Module-level capability/effect (I) — Nova-unique.
+2. Cycle detection по module-name (A).
+3. 2-pass codegen для cross-peer cycles (D).
+4. Per-module incremental rebuild (K).
+5. `internal/` unified с folder-module (H).
+6. `_test.nv` + capability inheritance из module (F+I combo).

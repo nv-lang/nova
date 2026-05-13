@@ -5671,3 +5671,27 @@ invariant, не от disable).
   на dealloc. Spec D97 описывает это нормативно.
 - `_NOVA_GC_DISABLE` удалён **на обеих платформах** — Plan 41 Этап 2.
   Это был мёртвый scaffolding (никогда не вызывался в реальном коде).
+
+
+---
+
+## Plan 42 правило G (overview.nv) отвергнуто (2026-05-13)
+
+После audit вернулся к идее `overview.nv` peer-файла с compiler
+verification. Изначально казалось полезным («convention with teeth»
+vs Go `doc.go`). В обсуждении выяснилось:
+
+- Программист **будет забывать** обновлять overview при изменении
+  реализации.
+- Result: overview отстаёт от реальности → typical Go `doc.go`
+  failure mode.
+- Нет способа сделать work без **дублирования** signatures (которое
+  Nova явно избегает — нет header/source split).
+
+**Решение:** source-of-truth = реализация. AI/программист получает
+API через `nova doc <module>` tooling (sub-plan 42.B), который
+auto-collects из всех peers. **Никакого ручного дублирования.**
+
+Это даже лучше Go (тут `nova doc` всегда актуален; в Go `godoc`
+тоже актуален, но `doc.go` опционально дополняет — мы избегаем
+второй layer).
