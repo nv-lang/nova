@@ -8542,3 +8542,104 @@ Linux Docker mn_runtime_smoke PASS. Plan 44 Этап 0 acceptance met.
 
 - Boehm GC_THREADS build на Windows vcpkg — required для Plan 45.
 - nova_supervised_run параметризация — отдельный refactor task.
+
+
+================================================================================
+2026-05-13 Plan 42 — folder-modules implementation (autonomous session)
+================================================================================
+
+Пользователь дал autonomous mandate выполнить Plan 42. После
+production audit + обсуждения правила `parent.X` (D29 rev-3),
+реализована core infrastructure.
+
+### Spec D29 rev-3
+
+Module declaration = `parent.X` для **обоих** случаев:
+- Single-file: parent = directory над файлом, X = basename.
+- Folder-module peer: parent = directory над папкой, X = folder name.
+- Examples: `src/main.nv` → `module src.main`; `std/encoding/hex.nv`
+  → `module encoding.hex`; `std/encoding/json/parse.nv` (peer of
+  `json/`) → `module encoding.json`.
+
+Compatibility mode: compiler принимает **оба** формата (rev-1 legacy
+full path и rev-3 parent.X), что позволяет постепенную миграцию
+std/* (339+ файлов) без big-bang breaking change.
+
+### Implementation (3 коммита)
+
+**Commit f49a0fe430 — spec + plan:**
+- spec/decisions/07-modules.md D29 rev-3 + полная таблица examples.
+- Plan 42 updated под parent.X с Ф.1.5 migration phase.
+
+**Commit 42eacead630 — compiler infra:**
+- manifest.rs: `expected_module_path_rev3` + `check_module_path_with_kind`.
+  Compat mode (rev-1 OR rev-3 declaration accepted).
+- imports.rs: `resolve_module_paths` returns Vec<PathBuf>
+  (single-file → 1, folder-module → all peers alphabetically).
+  `resolve_one` расширен для peer loop, cycle detection через
+  first peer's canonical path, все peers promoted to visited at end.
+- test_runner.rs: `walk_nv` folder-aware — skip peers как standalone
+  test entries (folder-module компилируется только через import).
+  `is_folder_module_dir` / `is_folder_module_peer` heuristic via
+  module declaration parse.
+
+**Commit 6416c51e977 — positive test:**
+- nova_tests/modules/folder_module_basic/ (2 peers: users.nv +
+  helpers.nv, оба объявляют `module modules.folder_module_basic`).
+- folder_module_basic_use.nv (entry test) импортирует и использует.
+- Verify: shared namespace, internal helper visibility, cross-peer
+  reference.
+
+### Verification
+
+Full regression: **267/267 PASS** (zero fails). Backward compat
+preserved — все existing single-file modules работают как раньше.
+
+### Что осталось (deferred sub-plans)
+
+**Migration std/* под parent.X** — postponed. Compatibility mode
+позволяет существующим файлам использовать rev-1 (legacy full path)
+declarations пока. Migration — отдельная сессия с automated tool.
+
+**Правила A-L production polish:**
+- A (cycle by module-name) — implemented через file canonical path
+  (simpler approach; works для single-file и folder-module).
+- B (alphabetical ordering) — implemented в resolve_module_paths.
+- C (per-file imports) — **deferred**: bootstrap MVP использует
+  shared imports через flat merge. Real per-file scope требует
+  AST refactor (`Module.peer_files: Vec<PeerFile>`). Sub-plan.
+- D (2-pass codegen) — **not yet needed**: bootstrap codegen single-pass
+  works для folder-module если peer items ordered (users.nv → fn
+  referring helpers.nv — works потому что merged items включают
+  helpers' fn forward).
+- E (X.nv + X/sub/) — implementation в resolve_module_paths
+  (namespace-container case).
+- F (_test.nv) — **deferred** (separate convention).
+- H (internal/) — **deferred** (separate path enforcement).
+- I (module-level #forbid) — sub-plan 42.A.
+- J (nova doc) — sub-plan 42.B.
+- K (per-module incremental) — design hook (cache invalidation
+  granularity = module = file or folder).
+- L (diagnostic quality) — minor improvements в error messages.
+
+### Insights
+
+**1. Compatibility mode критичен для language-in-development.** Без
+него rev-3 = big-bang breaking change на 339 файлах. С compat mode
+— bootstrap продолжает работать на rev-1, новые folder-modules
+используют rev-3. Postепенный transition.
+
+**2. heuristic-based folder-module detection достаточен для
+bootstrap.** «All peers declare same module X» — простая heuristic
+без stateful detect через `nova.toml [folder_module]` config.
+Reliable enough для standard use cases.
+
+**3. walk_nv folder-aware fundamental для test_runner.** Без skip
+folder-module peers — каждый peer пытается компилироваться как
+standalone entry → undefined references (cross-peer). Detection
+prevents wasted work.
+
+**4. Естественный stop-point для autonomous session.** Реализовал
+core infrastructure (resolver + manifest + test_runner). Migration
+std/* — separate work (большая, risky). Production polish (A-L) —
+separate sub-plans. 267/267 regression — safe checkpoint.

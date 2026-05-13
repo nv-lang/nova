@@ -5737,3 +5737,52 @@ Windows, _registered_high_water не __thread, select pre-check missing
 retry). Lesson: **freshly-eyes audit с reference implementation
 comparison** (Go runtime, Tokio, crossbeam) catches more чем
 self-incremental audit rounds.
+
+
+---
+
+## Plan 42 implementation — bootstrap simplifications (2026-05-13)
+
+### Compatibility mode (rev-1 + rev-3)
+
+Module declaration check принимает **оба** формата:
+- rev-1: full path от source root (`module std.encoding.hex`).
+- rev-3: parent.X (`module encoding.hex`).
+
+Это позволяет постепенную миграцию std/* (339 файлов). Без compat
+mode — big-bang breaking change неприемлем.
+
+Cleanup rev-1: после полной миграции std/* (отдельная сессия с
+automated tool).
+
+### Правило C (per-file imports) — deferred
+
+В Plan 42 design imports внутри folder-module должны быть **per-peer
+scope** (Go-style). Bootstrap MVP реализует **shared imports** через
+flat merge. Это означает что если peer A импортирует `std.io.File`,
+этот import видим из peer B без явного declaration.
+
+**Real fix:** AST refactor `Module.peer_files: Vec<PeerFile>`,
+name resolution учитывает per-peer scope. Sub-plan — отдельная работа.
+
+**Bootstrap impact:** programs работают correctly но имеют «leakier»
+namespace. Не critical для bootstrap std (использует мало imports
+per peer file).
+
+### Правило D (2-pass codegen) — not yet needed
+
+Plan 42 говорил что cross-peer cycles требуют 2-pass codegen.
+**На practice:** flat merge всех peer items (alphabetical sort)
+обычно работает single-pass — функция в `users.nv` видит forward
+declaration функции в `helpers.nv` если items merged correctly.
+
+Если хитрые cross-peer cycles появятся (mutually recursive types
+между peers) — нужен 2-pass. Sub-plan когда понадобится.
+
+### Heuristic-based folder-module detection
+
+«All .nv peers в папке объявляют тот же `module X`» = folder-module.
+Alternative — explicit declaration в nova.toml или special file.
+Heuristic простой, никаких new config files, reliable enough для
+standard use cases. Если ambiguous — compiler выдаёт manifest mismatch
+error с suggestions.
