@@ -117,10 +117,18 @@ impl VerificationPipeline {
 
     /// Verify одну функцию: возвращает list of (Contract span, VerifyResult).
     /// Backend выбирается через `BackendChoice` (env-var / CLI flag).
-    pub fn verify_fn(&self, fd: &FnDecl) -> Vec<(Span, VerifyResult)> {
+    ///
+    /// Plan 33.3 Ф.9: принимает `module` для разрешения pure_view-вызовов
+    /// и регистрации axioms эффектов в SMT-scope этой fn.
+    pub fn verify_fn(&self, module: &Module, fd: &FnDecl) -> Vec<(Span, VerifyResult)> {
         if fd.contracts.is_empty() { return Vec::new(); }
 
         let mut backend = self.create_backend();
+
+        // Plan 33.3 Ф.9: реестр pure_view-ops модуля. Используется
+        // encoder'ом для перевода `balance(id)` → UF `_view_Db_balance(id)`.
+        let pure_views = collect_pure_views(module);
+        let ctx = super::encode::EncodeCtx { pure_views: &pure_views };
 
         // 1. Declare params as Vars.
         for p in &fd.params {
@@ -128,11 +136,31 @@ impl VerificationPipeline {
             backend.declare_var(&p.name, sort);
         }
 
+        // Plan 33.3 Ф.9: для каждого эффекта в сигнатуре fn регистрируем
+        // axioms как глобальные assertions (Forall'ы). Z3 instantiate'ит
+        // их через trigger-based heuristics; TrivialBackend хранит as-is.
+        let fn_effects: std::collections::HashSet<String> = fd.effects.iter()
+            .filter_map(|tr| match tr {
+                TypeRef::Named { path, .. } => path.last().cloned(),
+                _ => None,
+            })
+            .collect();
+        for ax_info in collect_axioms(module) {
+            if !fn_effects.contains(&ax_info.effect_name) { continue; }
+            if let Some(formula) = encode_axiom(&ax_info, &pure_views) {
+                backend.assert(Assertion {
+                    formula,
+                    label: Some(format!("axiom@{}.{}",
+                        ax_info.effect_name, ax_info.axiom_name)),
+                });
+            }
+        }
+
         // 2. Encode requires → assertions.
         let mut requires_failed = false;
         for c in &fd.contracts {
             if matches!(c.kind, ContractKind::Requires) {
-                match encode::encode_expr(&c.expr) {
+                match encode::encode_expr_with_ctx(&c.expr, &ctx) {
                     Ok(t) => backend.assert(Assertion {
                         formula: t,
                         label: Some(format!("requires@{}", c.span.start)),
@@ -150,9 +178,9 @@ impl VerificationPipeline {
         // 3. Encode body value. Только для `=> expr` форм
         // (block-bodies с trailing-only тоже OK).
         let body_val = match &fd.body {
-            FnBody::Expr(e) => encode::encode_expr(e).ok(),
+            FnBody::Expr(e) => encode::encode_expr_with_ctx(e, &ctx).ok(),
             FnBody::Block(b) if b.stmts.is_empty() => {
-                b.trailing.as_ref().and_then(|e| encode::encode_expr(e).ok())
+                b.trailing.as_ref().and_then(|e| encode::encode_expr_with_ctx(e, &ctx).ok())
             }
             _ => None,
         };
@@ -166,7 +194,7 @@ impl VerificationPipeline {
                     "requires-context failed to encode".into())));
                 continue;
             }
-            let encoded = match encode::encode_expr(&c.expr) {
+            let encoded = match encode::encode_expr_with_ctx(&c.expr, &ctx) {
                 Ok(t) => t,
                 Err(super::encode::EncodingError::Unsupported(msg)) => {
                     results.push((c.span, VerifyResult::EncodingFailed(msg)));
@@ -203,6 +231,142 @@ impl VerificationPipeline {
         }
         let _ = self.timeout_ms; // используется когда добавим Z3-backend
         results
+    }
+}
+
+/// Plan 33.3 Ф.9: собрать все pure_view'ы модуля в реестр.
+fn collect_pure_views(module: &Module) -> std::collections::HashMap<String, super::encode::PureViewSig> {
+    use super::encode::PureViewSig;
+    let mut out = std::collections::HashMap::new();
+    for item in &module.items {
+        let Item::Type(td) = item else { continue };
+        let TypeDeclKind::Effect(methods) = &td.kind else { continue };
+        for m in methods {
+            if !matches!(m.kind, EffectOpKind::PureView) { continue; }
+            let return_sort = m.return_type.as_ref()
+                .map(type_to_sort)
+                .unwrap_or(SortRef::Int);
+            let param_sorts: Vec<SortRef> = m.params.iter()
+                .map(|p| type_to_sort(&p.ty)).collect();
+            out.insert(m.name.clone(), PureViewSig {
+                effect_name: td.name.clone(),
+                arity: m.params.len(),
+                return_sort,
+                param_sorts,
+            });
+        }
+    }
+    out
+}
+
+/// Plan 33.3 Ф.9: метаданные одного axiom'а с реестрами для encoding.
+struct AxiomInfo<'a> {
+    effect_name: String,
+    axiom_name: String,
+    binders: &'a [String],
+    /// Маппинг binder-name → sort. Выводится из usage в pure_view-вызовах
+    /// внутри formula (V1 эвристика).
+    formula: &'a crate::ast::Expr,
+}
+
+/// Plan 33.3 Ф.9: собрать все axiom'ы модуля.
+fn collect_axioms(module: &Module) -> Vec<AxiomInfo<'_>> {
+    let mut out = Vec::new();
+    for item in &module.items {
+        let Item::Type(td) = item else { continue };
+        if !matches!(td.kind, TypeDeclKind::Effect(_)) { continue }
+        for ax in &td.axioms {
+            out.push(AxiomInfo {
+                effect_name: td.name.clone(),
+                axiom_name: ax.name.clone(),
+                binders: ax.binders.as_slice(),
+                formula: &ax.formula,
+            });
+        }
+    }
+    out
+}
+
+/// Plan 33.3 Ф.9: encode axiom в SMT-Forall.
+///
+/// Биндеры приобретают sort из ПЕРВОГО pure_view-вызова в формуле,
+/// где они используются как аргумент. Это эвристика V1; явные type
+/// ascriptions в binders — future work.
+fn encode_axiom(
+    ax: &AxiomInfo,
+    pure_views: &std::collections::HashMap<String, super::encode::PureViewSig>,
+) -> Option<SmtTerm> {
+    // Инфер sorts для binders.
+    let mut binder_sorts: std::collections::HashMap<String, SortRef> = std::collections::HashMap::new();
+    infer_binder_sorts(ax.formula, ax.binders, pure_views, &mut binder_sorts);
+    // Encode body.
+    let ctx = super::encode::EncodeCtx { pure_views };
+    let body = super::encode::encode_expr_with_ctx(ax.formula, &ctx).ok()?;
+    // Build binders Vec — для каждого ax.binder возьмём inferred sort,
+    // default Int если не выведен.
+    let binders: Vec<(String, SortRef)> = ax.binders.iter()
+        .map(|n| (n.clone(), binder_sorts.remove(n).unwrap_or(SortRef::Int)))
+        .collect();
+    if binders.is_empty() {
+        Some(body)
+    } else {
+        Some(SmtTerm::Forall(binders, Box::new(body)))
+    }
+}
+
+/// Walks `formula` и для каждой ссылки на binder в pure_view-arg
+/// записывает sort параметра в `out`.
+fn infer_binder_sorts(
+    e: &crate::ast::Expr,
+    binders: &[String],
+    pure_views: &std::collections::HashMap<String, super::encode::PureViewSig>,
+    out: &mut std::collections::HashMap<String, SortRef>,
+) {
+    use crate::ast::ExprKind::*;
+    let binders_set: std::collections::HashSet<&String> = binders.iter().collect();
+    match &e.kind {
+        Call { func, args, .. } => {
+            if let Ident(name) = &func.kind {
+                if let Some(sig) = pure_views.get(name) {
+                    for (i, a) in args.iter().enumerate() {
+                        if i < sig.param_sorts.len() {
+                            if let Ident(arg_name) = &a.expr().kind {
+                                if binders_set.contains(&arg_name.to_string()) {
+                                    out.entry(arg_name.clone())
+                                        .or_insert_with(|| sig.param_sorts[i].clone());
+                                }
+                            }
+                        }
+                        infer_binder_sorts(a.expr(), binders, pure_views, out);
+                    }
+                    return;
+                }
+            }
+            for a in args {
+                infer_binder_sorts(a.expr(), binders, pure_views, out);
+            }
+        }
+        Binary { left, right, .. } => {
+            infer_binder_sorts(left, binders, pure_views, out);
+            infer_binder_sorts(right, binders, pure_views, out);
+        }
+        Unary { operand, .. } => {
+            infer_binder_sorts(operand, binders, pure_views, out);
+        }
+        If { cond, then, else_ } => {
+            infer_binder_sorts(cond, binders, pure_views, out);
+            if let Some(t) = &then.trailing {
+                infer_binder_sorts(t, binders, pure_views, out);
+            }
+            if let Some(crate::ast::ElseBranch::Block(b)) = else_ {
+                if let Some(t) = &b.trailing {
+                    infer_binder_sorts(t, binders, pure_views, out);
+                }
+            } else if let Some(crate::ast::ElseBranch::If(ie)) = else_ {
+                infer_binder_sorts(ie, binders, pure_views, out);
+            }
+        }
+        _ => {}
     }
 }
 
@@ -306,7 +470,7 @@ pub fn verify_module(module: &Module) -> ModuleVerifyReport {
             // Skip Fail-functions — ContractCtx уже выдал error.
             // Mut-параметры → пропустить (33.2). Сейчас детектим через
             // отсутствие в типах.
-            let results = pipeline.verify_fn(fd);
+            let results = pipeline.verify_fn(module, fd);
             for (span, vr) in results {
                 match vr {
                     VerifyResult::Proven => {

@@ -1,0 +1,27 @@
+// REQUIRES_SMT_BACKEND z3
+//
+// Plan 33.3 Ф.9 acceptance: Z3 доказывает `balance(id) >= 0` в
+// `ensures` ТОЛЬКО потому что `axiom non_negative` объявляет
+// `forall id, balance(id) >= 0`. Без axiom Z3 не знает range balance'а
+// и находит counterexample.
+//
+// Body здесь — заглушка (значение `result` не релевантно).
+
+module contracts.z3_pure_view_axiom_positive
+
+type Db effect {
+    pure_view balance(id int) -> int
+    axiom non_negative(id) => balance(id) >= 0
+}
+
+#must_verify
+fn check_balance(id int) Db -> int
+    ensures balance(id) >= 0
+=> 0
+
+test "z3 axiom proves ensures balance >= 0" {
+    // Sanity: check_balance прошёл #must_verify на этапе компиляции.
+    // Runtime семантика не релевантна — handler не запускается, контракт
+    // стирается в release.
+    assert(1 + 1 == 2)
+}

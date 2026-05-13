@@ -37,6 +37,13 @@ pub enum SmtTerm {
     Var(String),
     /// Application: `op(args...)`.
     App(String, Vec<SmtTerm>),
+    /// Plan 33.3 Ф.9: `forall (binders) <body>` — universal
+    /// quantifier. Используется для encoding'а axioms эффектов:
+    /// `axiom non_negative(id) => balance(id) >= 0` →
+    /// `Forall([("id", Int)], _view_Db_balance(id) >= 0)`.
+    /// TrivialBackend не reasoning'ует над quantifiers (Unknown);
+    /// Z3 backend через Z3_mk_forall_const.
+    Forall(Vec<(String, SortRef)>, Box<SmtTerm>),
 }
 
 /// Formula = SmtTerm типа Bool. Alias для семантической ясности.
@@ -139,6 +146,18 @@ impl SmtTerm {
                 op.clone(),
                 args.iter().map(|a| a.substitute(name, replacement)).collect(),
             ),
+            // Plan 33.3 Ф.9: capture-avoiding — если `name` shadowed
+            // одним из binders, не подменяем внутри. Иначе recurse.
+            SmtTerm::Forall(binders, body) => {
+                if binders.iter().any(|(b, _)| b == name) {
+                    self.clone()
+                } else {
+                    SmtTerm::Forall(
+                        binders.clone(),
+                        Box::new(body.substitute(name, replacement)),
+                    )
+                }
+            }
             _ => self.clone(),
         }
     }
@@ -166,6 +185,12 @@ impl SmtTerm {
                     "=>" => format!("({} ==> {})", args_str[0], args_str[1]),
                     _ => format!("{}({})", op, args_str.join(", ")),
                 }
+            }
+            SmtTerm::Forall(binders, body) => {
+                let bs: Vec<String> = binders.iter()
+                    .map(|(n, s)| format!("{}: {:?}", n, s))
+                    .collect();
+                format!("(forall ({}) {})", bs.join(", "), body.pretty())
             }
         }
     }

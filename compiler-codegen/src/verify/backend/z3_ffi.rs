@@ -128,4 +128,25 @@ extern "C" {
 
     // AST inspection (для extract counterexample).
     pub fn Z3_ast_to_string(c: Z3_context, a: Z3_ast) -> Z3_string;
+
+    // Plan 33.3 Ф.9: quantifiers (universal forall) для axiom encoding.
+    //
+    // Z3_mk_forall_const принимает массив bound-constants (созданных через
+    // Z3_mk_const) и body. Pattern'ы — для trigger-based instantiation
+    // (опциональны; передаём пустой массив для default heuristics).
+    //
+    // weight=0 — default priority.
+    pub fn Z3_mk_forall_const(
+        c: Z3_context,
+        weight: c_uint,
+        num_bound: c_uint,
+        bound: *const Z3_app,
+        num_patterns: c_uint,
+        patterns: *const *mut c_void, // Z3_pattern*; pустой массив
+        body: Z3_ast,
+    ) -> Z3_ast;
+
+    // Z3_to_app конвертирует Z3_ast (когда это application — например
+    // const) в Z3_app. Нужно для bound-constants в forall_const.
+    pub fn Z3_to_app(c: Z3_context, a: Z3_ast) -> Z3_app;
 }

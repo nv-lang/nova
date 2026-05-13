@@ -196,6 +196,55 @@ impl Z3Backend {
                 Ok(ast)
             }
             SmtTerm::App(op, args) => self.translate_app(op, args),
+            // Plan 33.3 Ф.9: universal quantifier через Z3_mk_forall_const.
+            //
+            // Создаём fresh constants для каждого binder, translate body
+            // (где binder-имена резолвятся через `vars` HashMap'у), затем
+            // Z3_mk_forall_const упаковывает в forall AST.
+            SmtTerm::Forall(binders, body) => {
+                if binders.is_empty() {
+                    // Empty forall == body unchanged.
+                    return self.translate_inner(body);
+                }
+                // Создаём fresh consts для binders, регистрируем в vars.
+                // Сохраняем previous bindings чтобы откатить после quantifier
+                // (capture-avoiding semantics: binder shadows outer var
+                // только внутри body).
+                let mut bound_apps: Vec<ffi::Z3_app> = Vec::with_capacity(binders.len());
+                let mut saved: Vec<(String, Option<(ffi::Z3_ast, SortRef)>)> = Vec::with_capacity(binders.len());
+                for (bname, bsort) in binders {
+                    let prev = self.vars.get(bname).cloned();
+                    saved.push((bname.clone(), prev));
+                    let z3_sort = self.sort_for(bsort);
+                    let cname = CString::new(bname.as_str())
+                        .unwrap_or_else(|_| CString::new("_b").unwrap());
+                    let sym = ffi::Z3_mk_string_symbol(self.ctx, cname.as_ptr());
+                    let ast = ffi::Z3_mk_const(self.ctx, sym, z3_sort);
+                    ffi::Z3_inc_ref(self.ctx, ast);
+                    self.refs.push(ast);
+                    self.vars.insert(bname.clone(), (ast, bsort.clone()));
+                    let app = ffi::Z3_to_app(self.ctx, ast);
+                    bound_apps.push(app);
+                }
+                let body_ast = self.translate_inner(body)?;
+                // Restore previous var-bindings.
+                for (bname, prev) in saved {
+                    match prev {
+                        Some(p) => { self.vars.insert(bname, p); }
+                        None => { self.vars.remove(&bname); }
+                    }
+                }
+                let forall_ast = ffi::Z3_mk_forall_const(
+                    self.ctx,
+                    0, // weight
+                    bound_apps.len() as c_uint,
+                    bound_apps.as_ptr(),
+                    0, // num_patterns
+                    std::ptr::null(),
+                    body_ast,
+                );
+                Ok(self.track(forall_ast))
+            }
         }
     }
 

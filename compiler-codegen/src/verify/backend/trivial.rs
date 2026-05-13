@@ -127,6 +127,11 @@ pub fn simplify(term: &SmtTerm) -> SmtTerm {
             let simplified_args: Vec<SmtTerm> = args.iter().map(simplify).collect();
             simplify_app(op, &simplified_args)
         }
+        // Plan 33.3 Ф.9: TrivialBackend не reasoning'ует над quantifiers.
+        // Возвращаем term as-is; на check_sat это посчитается «непрозрачным»
+        // — backend выдаст Unknown(NotAttempted) для goal'ов опирающихся
+        // на forall'ы.
+        SmtTerm::Forall(_, _) => term.clone(),
     }
 }
 
