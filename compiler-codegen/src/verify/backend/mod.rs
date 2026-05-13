@@ -11,6 +11,14 @@
 
 pub mod trivial;
 
+#[cfg(feature = "z3-backend")]
+pub mod z3_ffi;
+#[cfg(feature = "z3-backend")]
+pub mod z3;
+
+#[cfg(feature = "z3-backend")]
+pub use z3::Z3Backend;
+
 use super::ir::{Assertion, Formula, SatResult, SortRef};
 
 /// Backend для check-sat запросов. Engine-agnostic.
