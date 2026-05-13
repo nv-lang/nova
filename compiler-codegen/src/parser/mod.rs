@@ -113,6 +113,50 @@ impl Parser {
             Vec::new()
         };
 
+        // Plan 42 Sub-plan 42.A: module-level #forbid X, Y attribute
+        // между module declaration и imports.
+        //
+        // **Decision 2026-05-13:** `#requires` отвергнуто — implicit
+        // effects в function signatures противоречат Nova AI-first
+        // explicit principle (D62 «эффекты в сигнатуре»). `#forbid`
+        // оставлен как security boundary: making «no Net» explicit
+        // через module-level не скрывает behaviour, а документирует
+        // constraint.
+        let mut module_attrs = Vec::new();
+        loop {
+            self.skip_newlines();
+            if !matches!(self.peek().kind, TokenKind::Hash) {
+                break;
+            }
+            let next_kind = self.tokens.get(self.pos + 1).map(|t| t.kind.clone());
+            // `forbid` is keyword (KwForbid) in Nova; treat это как attribute name.
+            let is_forbid = matches!(next_kind, Some(TokenKind::KwForbid));
+            if !is_forbid {
+                break; // not a module-level attribute
+            }
+            let attr_start = self.peek().span;
+            self.bump(); // #
+            self.bump(); // forbid
+            // Parse список эффектов через запятую.
+            let mut effects: Vec<String> = Vec::new();
+            loop {
+                let (name, _) = self.parse_ident()?;
+                effects.push(name);
+                if matches!(self.peek().kind, TokenKind::Comma) {
+                    self.bump();
+                } else {
+                    break;
+                }
+            }
+            self.expect_newline_or_eof()?;
+            let attr_end = self.tokens[self.pos.saturating_sub(1)].span;
+            module_attrs.push(ModuleAttr {
+                kind: ModuleAttrKind::Forbid,
+                effects,
+                span: attr_start.merge(attr_end),
+            });
+        }
+
         let mut imports = Vec::new();
         let mut items = Vec::new();
         loop {
@@ -145,6 +189,7 @@ impl Parser {
             name: module_name,
             imports,
             items,
+            attrs: module_attrs,
             span,
         })
     }

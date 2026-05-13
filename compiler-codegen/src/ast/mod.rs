@@ -13,7 +13,25 @@ pub struct Module {
     pub name: Vec<String>, // module a.b.c → ["a", "b", "c"]
     pub imports: Vec<Import>,
     pub items: Vec<Item>,
+    /// Plan 42 Sub-plan 42.A: module-level attributes (`#forbid X, Y`).
+    /// `#requires` отвергнут — нарушает AI-first explicit principle.
+    pub attrs: Vec<ModuleAttr>,
     pub span: Span,
+}
+
+/// Plan 42 Sub-plan 42.A: module-level attribute.
+#[derive(Debug, Clone)]
+pub struct ModuleAttr {
+    pub kind: ModuleAttrKind,
+    pub effects: Vec<String>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ModuleAttrKind {
+    /// `#forbid X, Y` — все functions module не могут использовать
+    /// эти effects (compile error через capability check).
+    Forbid,
 }
 
 /// Plan 35 sub-plan 35.A (R26): селективный import — `import X.Y.{A, B as C}`.
