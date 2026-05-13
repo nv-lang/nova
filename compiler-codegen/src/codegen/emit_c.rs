@@ -2224,8 +2224,22 @@ impl CEmitter {
         // results from concurrent execution come through mut-captures or
         // `parallel for` (homogeneous results), never from spawn itself.
         let queue = self.current_scope_queue.clone().expect("scope queue must be active");
+        // Plan 44.5 Layer 5: implicit M:N — runtime initialized → push в worker
+        // deque; иначе single-thread path unchanged.
+        self.line("if (nova_runtime_is_initialized()) {");
+        self.indent += 1;
+        self.line(&format!("{ctx}->_nova_parent_scope = &{q};",
+            ctx = ctx_var, q = queue));
+        self.line(&format!("nova_runtime_spawn_into(&{q}, {id}, {ctx});",
+            q = queue, id = spawn_id, ctx = ctx_var));
+        self.indent -= 1;
+        self.line("} else {");
+        self.indent += 1;
+        self.line(&format!("{ctx}->_nova_parent_scope = NULL;", ctx = ctx_var));
         self.line(&format!("nova_fiber_spawn_into(&{q}, {id}, {ctx});",
             q = queue, id = spawn_id, ctx = ctx_var));
+        self.indent -= 1;
+        self.line("}");
 
         // Emit the ctx-struct typedef into lambda_forward_decls — flushed before the
         // current function in `out`, so the typedef is visible at the spawn-instance
@@ -2244,11 +2258,12 @@ impl CEmitter {
             let _ = writeln!(self.lambda_forward_decls,
                 "    NovaArray_{}* _nova_par_result;", elem_ty);
         }
+        // Plan 44.5 Layer 5: parent scope для remote-spawn tracking.
+        // NULL = single-thread (без runtime.init). Always present —
+        // заменяет dummy padding для empty spawns.
+        let _ = writeln!(self.lambda_forward_decls,
+            "    NovaFiberQueue* _nova_parent_scope;");
         // Note: no `_nova_result` field — spawn returns unit (D50/D71).
-        // We need at least one field for empty-capture spawns to satisfy MSVC.
-        if captures.is_empty() && parfor_slot.is_none() {
-            let _ = writeln!(self.lambda_forward_decls, "    char _nova_dummy;");
-        }
         let _ = writeln!(self.lambda_forward_decls, "}} {};", ctx_ty);
 
         // Swap out to deferred_impls for body emission
@@ -2258,13 +2273,11 @@ impl CEmitter {
 
         self.line(&format!("static void {}(mco_coro* _co) {{", spawn_id));
         self.indent += 1;
-        if !captures.is_empty() || parfor_slot.is_some() {
-            self.line(&format!("{ctx}* _c = ({ctx}*)mco_get_user_data(_co);", ctx = ctx_ty));
-        } else {
-            // Even with no captures, mco_get_user_data is needed if we activate captures —
-            // but we don't here, so just consume the parameter.
-            self.line("(void)_co;");
-        }
+        // Plan 44.5 Layer 5: _c всегда нужен — entry function reads
+        // _c->_nova_parent_scope для remote-fiber cleanup (decrement
+        // pending_remote + signal_main). Раньше для empty-capture spawn
+        // было `(void)_co;` — теперь _c always.
+        self.line(&format!("{ctx}* _c = ({ctx}*)mco_get_user_data(_co);", ctx = ctx_ty));
         // Activate capture rewriting: ExprKind::Ident → `(*_c->name)` or `_c->name`.
         let mut cap_set: HashSet<String> = HashSet::new();
         let mut cap_by_value: HashSet<String> = HashSet::new();
@@ -2335,10 +2348,34 @@ impl CEmitter {
         self.indent -= 1;
         self.line("} else {");
         self.indent += 1;
-        // Report error to the scope. error_msg.ptr lives on heap or static — safe.
+        // Plan 44.5 Layer 5: error reporting — remote vs local.
+        // Remote (parent_scope != NULL, worker'е): atomic CAS на parent.first_error_atomic.
+        // Local (parent_scope == NULL): old path через scope arrays.
+        self.line("if (_c->_nova_parent_scope) {");
+        self.indent += 1;
+        self.line("const void* _exp = NULL;");
+        self.line("(void)nova_aptr_cas(&_c->_nova_parent_scope->first_error_atomic, &_exp, (const void*)_ff.error_msg.ptr);");
+        self.line("_c->_nova_parent_scope->cancel_requested = true;");
+        self.indent -= 1;
+        self.line("} else {");
+        self.indent += 1;
         self.line("nova_fiber_report_error(_ff.error_msg.ptr);");
         self.indent -= 1;
         self.line("}");
+        self.indent -= 1;
+        self.line("}");
+        self.indent -= 1;
+        self.line("}");
+
+        // Plan 44.5 Layer 5: remote fiber post-completion cleanup.
+        // Decrement parent's pending_remote (release ordering) — main
+        // thread в supervised_run wait-loop увидит decrement через
+        // nova_aint_load(acquire). signal_main wake'ом wake'ает main
+        // thread'а из uv_run(UV_RUN_ONCE).
+        self.line("if (_c->_nova_parent_scope) {");
+        self.indent += 1;
+        self.line("(void)nova_aint_fetch_sub_release(&_c->_nova_parent_scope->pending_remote);");
+        self.line("nova_runtime_signal_main();");
         self.indent -= 1;
         self.line("}");
 
