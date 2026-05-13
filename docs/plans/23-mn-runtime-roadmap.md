@@ -9,12 +9,12 @@
 > **Не блокирует:** ничего из текущей работы.
 >
 > **Executable companions (started 2026-05-13):**
-> - [Plan 44](44-mn-runtime-stage0.md) — Этап 0 закрыт: infrastructure
+> - [Plan 23.1](23.1-mn-runtime-stage0.md) — Этап 0 закрыт: infrastructure
 >   liveness (NovaWorker struct, runtime.init/shutdown, smoke test,
 >   std.runtime.runtime API). 266 PASS / 0 FAIL Windows.
-> - Plan 45+ — следующие этапы (work-stealing, TLS migration, blocking
+> - Plan 23.2+ — следующие этапы (work-stealing, TLS migration, blocking
 >   pool, std.sync impl, spec semantics для shared mut). Открываются
->   когда Plan 44 acceptance met.
+>   когда Plan 23.1 acceptance met.
 
 ---
 

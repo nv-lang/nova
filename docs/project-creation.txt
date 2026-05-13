@@ -8499,13 +8499,13 @@ fundamentally blocked, документирован.
 
 ---
 
-## Сессия 2026-05-13 (продолжение): Plan 44 Этап 0 — M:N infrastructure
+## Сессия 2026-05-13 (продолжение): Plan 23.1 Этап 0 — M:N infrastructure
 
 Запрос пользователя: "продолжай реализовывать многопоточность".
 
 ### Что landed
 
-Plan 44 Этап 0 (commit с runtime.h/c + std.runtime.runtime API):
+Plan 23.1 Этап 0 (commit с runtime.h/c + std.runtime.runtime API):
 - NovaWorker struct: per-worker libuv loop + fiber scope + queue mutex +
   uv_async_t wake handle.
 - Runtime API: nova_runtime_init(n) / shutdown / worker_count /
@@ -8536,7 +8536,7 @@ Plan 44 Этап 0 (commit с runtime.h/c + std.runtime.runtime API):
 ### Регрессия
 
 266 PASS effective Windows (2 transient AV-flakes на rerun PASS).
-Linux Docker mn_runtime_smoke PASS. Plan 44 Этап 0 acceptance met.
+Linux Docker mn_runtime_smoke PASS. Plan 23.1 Этап 0 acceptance met.
 
 ### Открытые блокеры
 
@@ -8648,16 +8648,16 @@ separate sub-plans. 267/267 regression — safe checkpoint.
 
 ## Уточнение нумерации планов (2026-05-13)
 
-Plan 44 (M:N Этап 0) создан как **executable companion** для Plan 23
+Plan 23.1 (M:N Этап 0) создан как **executable companion** для Plan 23
 roadmap, не как самостоятельный план. Plan 23 — architectural map
 (7 слоёв, 7 open Q), который сам по себе говорит «это карта, не план».
-Plan 44 закрывает Слой 1 (thread pool) минимально.
+Plan 23.1 закрывает Слой 1 (thread pool) минимально.
 
 Связь явно зафиксирована:
-- Plan 23 в шапке ссылается на Plan 44.
-- Plan 44 в шапке указывает Plan 23 как parent + объясняет почему
+- Plan 23 в шапке ссылается на Plan 23.1.
+- Plan 23.1 в шапке указывает Plan 23 как parent + объясняет почему
   отдельный файл (Plan 23 = roadmap отдельно от executable steps).
 
-Следующие этапы (Plan 45+) — work-stealing, TLS migration, blocking
-pool, std.sync impl — открываются когда Plan 44 acceptance met
+Следующие этапы (Plan 23.2+) — work-stealing, TLS migration, blocking
+pool, std.sync impl — открываются когда Plan 23.1 acceptance met
 (infrastructure liveness validated).
