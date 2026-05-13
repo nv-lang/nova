@@ -1,0 +1,40 @@
+// Plan 44.5 Layer 2 validation: CPU-bound workload через worker deques.
+//
+// Verify что после runtime.init(N):
+//   1. nova_runtime_spawn_global push'ит fibers в worker deques.
+//   2. Workers вытаскивают через deque pop (own) и steal (cross).
+//   3. Все fibers выполняются, no lost work.
+//
+// **Sole limitation**: fiber callable не делает nova_alloc (Boehm не
+// зарегистрирован в worker thread'ах — Plan 44.5 Layer 4). Только
+// integer math + статические integer assignments.
+//
+// Cannot use Nova-level spawn/supervised сейчас — codegen генерирует
+// nova_fiber_spawn_into(&scope, ...) который требует scope context.
+// Plan 44.5 Layer 3 параметризует это для runtime.spawn_global path.
+//
+// **На текущем этапе тест проверяет только что runtime init/shutdown
+// не падает после Layer 2 deque integration.**
+
+module nova_tests.concurrency.mn_runtime_cpu_workload
+
+test "deque integration: init + shutdown без crash" {
+    runtime.init(4)
+    assert(runtime.worker_count() == 4)
+
+    // Workers idle (нет spawn_global) — должны блокироваться на uv_run.
+    // Layer 5 actual workload — после Layer 3 (per-worker libuv loop).
+    runtime.shutdown()
+    assert(!runtime.is_initialized())
+}
+
+test "deque integration: 2 workers idempotent cycle" {
+    let mut i = 0
+    while i < 3 {
+        runtime.init(2)
+        assert(runtime.worker_count() == 2)
+        runtime.shutdown()
+        assert(runtime.worker_count() == 0)
+        i = i + 1
+    }
+}
