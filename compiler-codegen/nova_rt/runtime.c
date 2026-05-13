@@ -81,31 +81,62 @@ static void _worker_main(void* arg) {
     _nova_active_slot  = -1;
 
     while (!nova_abool_load(&w->stop)) {
-        /* (1) Drain pending fibers пушнутые cross-worker'ом. */
+        /* (1) Drain ready fibers без global event-loop dependency.
+         * Plan 44 Этап 0: simple drain — supports CPU-bound fibers только.
+         * Yielding fibers (Time.sleep, Channel.recv) требуют param'ed
+         * nova_supervised_run — Plan 45. */
+        bool did_work = false;
         nova_mutex_lock(&w->queue_mu);
-        int has_work = (w->scope.count > 0);
+        int n = w->scope.count;
         nova_mutex_unlock(&w->queue_mu);
-
-        if (has_work) {
-            /* Run scheduler tick на own scope. */
-            /* nova_supervised_run drain'ит до empty + waits для park. */
-            nova_supervised_run(&w->scope);
-            nova_aint_store(&w->pending_count, 0);
-            continue;
+        if (n > 0) {
+            for (int i = 0; i < n; i++) {
+                mco_coro* co;
+                nova_mutex_lock(&w->queue_mu);
+                co = (i < w->scope.count) ? w->scope.fibers[i] : NULL;
+                nova_mutex_unlock(&w->queue_mu);
+                if (!co) continue;
+                if (mco_status(co) == MCO_SUSPENDED) {
+                    _nova_active_slot = i;
+                    mco_resume(co);
+                    did_work = true;
+                }
+                if (mco_status(co) == MCO_DEAD) {
+                    mco_destroy(co);
+                    nova_mutex_lock(&w->queue_mu);
+                    /* Mark slot empty by setting fiber=NULL. Compaction
+                     * — TODO; для PoC просто NULL'им. */
+                    if (i < w->scope.count) {
+                        w->scope.fibers[i] = NULL;
+                    }
+                    nova_mutex_unlock(&w->queue_mu);
+                }
+            }
+            _nova_active_slot = -1;
+            /* Compact scope: remove NULL entries. */
+            nova_mutex_lock(&w->queue_mu);
+            int wi = 0;
+            for (int i = 0; i < w->scope.count; i++) {
+                if (w->scope.fibers[i]) {
+                    if (wi != i) {
+                        w->scope.fibers[wi] = w->scope.fibers[i];
+                        w->scope.fiber_ctx[wi] = w->scope.fiber_ctx[i];
+                    }
+                    wi++;
+                }
+            }
+            w->scope.count = wi;
+            nova_mutex_unlock(&w->queue_mu);
         }
 
-        /* (2) Idle — block в libuv до wake_handle или timer. */
-        uv_run(&w->loop, UV_RUN_ONCE);
+        /* (2) Idle — block в libuv до wake_handle (cross-worker push). */
+        if (!did_work) {
+            uv_run(&w->loop, UV_RUN_ONCE);
+        }
     }
 
-    /* Cleanup. Final drain. */
-    nova_mutex_lock(&w->queue_mu);
-    if (w->scope.count > 0) {
-        nova_mutex_unlock(&w->queue_mu);
-        nova_supervised_run(&w->scope);
-    } else {
-        nova_mutex_unlock(&w->queue_mu);
-    }
+    /* Cleanup — drain remaining. */
+    _nova_active_slot = -1;
 
     /* No GC unregister — мы не регистрировали (см. note выше). */
 }
