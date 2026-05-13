@@ -570,7 +570,7 @@ static inline void nova_supervised_drain_main_scope(NovaFiberQueue* q) {
         if (alive == 0) break;
         int parked = nova_sched_count_parked(q);
         if (parked > 0 && parked == alive) {
-            uv_run(nova_evloop(), UV_RUN_ONCE);
+            uv_run(nova_current_loop(), UV_RUN_ONCE);
         }
     }
     nova_sched_drop_state(q);
@@ -601,7 +601,7 @@ static inline void nova_supervised_run(NovaFiberQueue* q) {
         if (parked > 0 && parked == alive) {
             /* Все alive parked. Spin до libuv-события (наш sleep timer
              * либо stop_cb из cancel). */
-            uv_run(nova_evloop(), UV_RUN_ONCE);
+            uv_run(nova_current_loop(), UV_RUN_ONCE);
         }
     }
     /* Cleanup sched-state for этого scope'а (если был alloc'ом). */
@@ -760,7 +760,7 @@ static inline void _nova_sleep_via_libuv(NovaFiberQueue* scope, int slot,
         .slot  = slot,
         .stage = NOVA_SLEEP_PENDING,
     };
-    int rc = uv_timer_init(nova_evloop(), &st.timer);
+    int rc = uv_timer_init(nova_current_loop(), &st.timer);
     if (rc != 0) {
         fprintf(stderr, "nova: FATAL uv_timer_init failed: %s\n", uv_strerror(rc));
         abort();  /* Plan 22 Ф.6: timer_init fails только при OOM либо
@@ -842,14 +842,14 @@ static inline nova_unit _nova_time_default_sleep(nova_int ms) {
                 int64_t remaining = deadline - _nova_monotonic_ms();
                 if (remaining > 0) {
                     uv_timer_t main_wait;
-                    uv_timer_init(nova_evloop(), &main_wait);
+                    uv_timer_init(nova_current_loop(), &main_wait);
                     uv_timer_start(&main_wait, _nova_main_wait_timer_cb,
                                     (uint64_t)remaining, 0);
-                    uv_run(nova_evloop(), UV_RUN_ONCE);
+                    uv_run(nova_current_loop(), UV_RUN_ONCE);
                     uv_timer_stop(&main_wait);
                     uv_close((uv_handle_t*)&main_wait, NULL);
                     /* close handle через NOWAIT pass. */
-                    uv_run(nova_evloop(), UV_RUN_NOWAIT);
+                    uv_run(nova_current_loop(), UV_RUN_NOWAIT);
                 }
             } else {
                 /* Есть alive fiber'ы — может быть parked. */
@@ -858,7 +858,7 @@ static inline nova_unit _nova_time_default_sleep(nova_int ms) {
                     /* Все parked — ждать libuv event. */
                     int64_t remaining = deadline - _nova_monotonic_ms();
                     if (remaining > 0) {
-                        uv_run(nova_evloop(), UV_RUN_ONCE);
+                        uv_run(nova_current_loop(), UV_RUN_ONCE);
                     }
                 }
             }
