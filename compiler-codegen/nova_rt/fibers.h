@@ -209,6 +209,33 @@ typedef struct {
      * Lazy-alloc через nova_alloc при первом nova_sched_park либо
      * nova_sched_register_pending. */
     struct NovaSchedState* sched_state;
+    /* Plan 44.5 Layer 5: counter fiber'ов running на workers (M:N).
+     *
+     * Под `runtime.is_initialized()` codegen эмитит
+     * `nova_runtime_spawn_into(&scope, ...)` вместо `nova_fiber_spawn_into`.
+     * spawn_into push'ит fiber в worker's deque, increments
+     * `pending_remote`. После завершения worker fiber decrement'ит
+     * counter + `uv_async_send` main thread wake'ом.
+     *
+     * `nova_supervised_run` / `drain_main_scope` ждут пока
+     * `pending_remote == 0 && local fibers == 0`.
+     *
+     * Atomic operations:
+     *   - increment: nova_aint_inc (release ordering)
+     *   - decrement: nova_aint_dec (acq_rel)
+     *   - load: nova_aint_load (acquire)
+     *
+     * Initial value 0 — для single-thread (без runtime.init) остаётся 0
+     * navсегда, behaviour identical. */
+    nova_atomic_int pending_remote;
+    /* Plan 44.5 Layer 5: atomic first_error для cross-worker error
+     * propagation. Worker fiber на throw делает CAS (NULL → err_msg);
+     * первый wins. После CAS — sets cancel_requested = true для
+     * cooperative cancel других fiber'ов в scope.
+     *
+     * NULL = no error. Read через nova_aptr_load(acquire) в main thread
+     * после `pending_remote == 0` — корректный happens-before. */
+    nova_atomic_ptr first_error_atomic;
 } NovaFiberQueue;
 
 /* Plan 22 Ф.3 (D93) + Ф.7 + Ф.8: NovaSchedState typedef.
@@ -339,6 +366,11 @@ static inline void nova_scope_init(NovaFiberQueue* q) {
      * не park'ился. Большинство supervised блоков не используют sleep/
      * recv => sched_state остаётся NULL, нулевой overhead. */
     q->sched_state = NULL;
+    /* Plan 44.5 Layer 5: atomic counters для M:N integration.
+     * Single-thread baseline (без runtime.init) — оба остаются нулевыми
+     * forever, behaviour identical. */
+    nova_aint_init(&q->pending_remote, 0);
+    nova_aptr_init(&q->first_error_atomic, NULL);
     /* Plan 22 Ф.7: arrays — lazy alloc'нутся в nova_fiber_spawn_into.
      * Idle scope (count=0) = ~100 bytes на стеке. */
 }
@@ -456,7 +488,14 @@ extern __thread int             _nova_active_slot;
 
 /* Called from spawn-entry's catch block when the body threw.
  * Records the error message into the scope queue's slot.
- * Also signals cancellation to remaining live fibers (cooperative). */
+ * Also signals cancellation to remaining live fibers (cooperative).
+ *
+ * Plan 44.5 Layer 5 note: для remote fiber'ов (running на worker под M:N
+ * distribution) error propagation идёт через explicit inline code в
+ * generated entry function (см. codegen emit_spawn) — не через эту
+ * функцию. Worker'е _nova_active_scope = &w->scope (worker's own scope,
+ * не parent) — вызов report_error пошёл бы в wrong scope. Codegen
+ * routes на _c->_nova_parent_scope.first_error_atomic CAS вместо. */
 static inline void nova_fiber_report_error(const char* msg) {
     if (_nova_active_scope && _nova_active_slot >= 0) {
         _nova_active_scope->fiber_error[_nova_active_slot] = msg;
@@ -567,16 +606,25 @@ static inline int nova_supervised_step(NovaFiberQueue* q) {
 static inline void nova_supervised_drain_main_scope(NovaFiberQueue* q) {
     for (;;) {
         int alive = nova_supervised_step(q);
-        if (alive == 0) break;
+        if (alive == 0) {
+            /* Plan 44.5 Layer 5: local done — но могут быть remote
+             * fiber'ы running на workers. Wait для них. */
+            int remote = (int)nova_aint_load(&q->pending_remote);
+            if (remote == 0) break;
+            uv_run(nova_current_loop(), UV_RUN_ONCE);
+            continue;
+        }
         int parked = nova_sched_count_parked(q);
         if (parked > 0 && parked == alive) {
             uv_run(nova_current_loop(), UV_RUN_ONCE);
         }
     }
     nova_sched_drop_state(q);
-    if (q->first_error) {
-        fprintf(stderr, "nova: detach-fiber error after main: %s\n",
-                q->first_error);
+    /* Plan 44.5 Layer 5: cross-worker first_error_atomic check. */
+    const char* atomic_err = (const char*)nova_aptr_load(&q->first_error_atomic);
+    const char* err = q->first_error ? q->first_error : atomic_err;
+    if (err) {
+        fprintf(stderr, "nova: detach-fiber error after main: %s\n", err);
     }
     q->count = 0;
 }
@@ -592,21 +640,29 @@ static inline void nova_supervised_drain_main_scope(NovaFiberQueue* q) {
 static inline void nova_supervised_run(NovaFiberQueue* q) {
     for (;;) {
         int alive = nova_supervised_step(q);
-        if (alive == 0) break;
-        /* alive > 0: либо есть ready fiber'ы (step resume'ил кого-то и
-         * counter увеличен), либо ВСЕ alive = parked (никого не
-         * resume'или, только counted++). Различим: если ready=0 и
-         * parked>0 → idle в uv_run UV_RUN_ONCE. */
+        if (alive == 0) {
+            /* Plan 44.5 Layer 5: local done — но могут быть remote
+             * fiber'ы running на workers. Wait для них. */
+            int remote = (int)nova_aint_load(&q->pending_remote);
+            if (remote == 0) break;
+            uv_run(nova_current_loop(), UV_RUN_ONCE);
+            continue;
+        }
+        /* alive > 0: либо есть ready fiber'ы, либо ВСЕ alive = parked.
+         * Если ready=0 и parked>0 → idle в uv_run UV_RUN_ONCE. */
         int parked = nova_sched_count_parked(q);
         if (parked > 0 && parked == alive) {
-            /* Все alive parked. Spin до libuv-события (наш sleep timer
-             * либо stop_cb из cancel). */
             uv_run(nova_current_loop(), UV_RUN_ONCE);
         }
     }
     /* Cleanup sched-state for этого scope'а (если был alloc'ом). */
     nova_sched_drop_state(q);
-    const char* err = q->first_error;
+    /* Plan 44.5 Layer 5: prefer cross-worker first_error_atomic (set
+     * через CAS из worker fiber'а) над single-thread first_error.
+     * После pending_remote == 0 cause-effect через atomic release/acquire
+     * — main видит final значение atomic. */
+    const char* atomic_err = (const char*)nova_aptr_load(&q->first_error_atomic);
+    const char* err = q->first_error ? q->first_error : atomic_err;
     nova_bool pending = q->interrupt_pending;
     nova_bool via_ptr = q->interrupt_via_ptr;
     nova_int  ivalue  = q->interrupt_value;

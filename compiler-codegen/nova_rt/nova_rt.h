@@ -212,6 +212,10 @@ typedef struct { char _dummy; } nova_unit;
 /* ---- Plan 44.2 Etap 1: per-thread fiber stack arena (Linux/macOS only) ---- */
 #include "fiber_arena.h"
 
+/* ---- Plan 44.1 Ф.1: thread-safety primitives — moved up для Plan 44.5 L5
+ * NovaFiberQueue.pending_remote / first_error_atomic в fibers.h. ---- */
+#include "sync.h"
+
 /* ---- Fibers / spawn (Phase 5) ---- */
 #include "fibers.h"
 
@@ -245,9 +249,15 @@ typedef struct { char _dummy; } nova_unit;
 /* После fibers.h (NovaFiberQueue полный тип). */
 #include "nova_sched.h"  /* renamed from sched.h to avoid Linux <sched.h> collision */
 
-/* ---- Plan 44.1 Ф.1: thread-safety primitives (C11 mtx_t + atomics) ---- */
-/* Перед channels.h — channels.h использует nova_mutex_t / nova_atomic_*. */
-#include "sync.h"
+/* sync.h уже включён выше (перед fibers.h, для NovaFiberQueue
+ * atomic-полей Plan 44.5 L5). Header guard защитит от re-entry. */
+
+/* Plan 44.5 Layer 5: declarations для nova_runtime_is_initialized,
+ * nova_runtime_spawn_into, nova_runtime_signal_main — codegen эмитит
+ * эти вызовы в каждой spawn-call-site и entry-function. Без явного
+ * include'а компилятор использует implicit-int declaration → ABI
+ * mismatch (bool vs int return) → reads garbage. */
+#include "runtime.h"
 
 /* ---- Plan 21 (D91): capability-split Channels ---- */
 /* После sched.h — channels.h использует nova_sched_park/wake/register. */

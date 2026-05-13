@@ -61,6 +61,18 @@ static bool            _initialized = false;
 static nova_mutex_t    _init_mu;
 static bool            _init_mu_inited = false;
 
+/* Plan 44.5 Layer 5: main wake handle для cross-thread signal'а из
+ * worker'а в main thread'а supervised_run wait-loop. Init'ится в
+ * nova_runtime_init на nova_evloop (main thread's default loop). */
+static uv_async_t      _main_wake;
+static bool            _main_wake_inited = false;
+
+static void _main_wake_cb(uv_async_t* h) {
+    (void)h;
+    /* No-op — signal itself wakes uv_run(UV_RUN_ONCE) в main thread'е.
+     * Main thread сам проверяет scope.pending_remote после wake'а. */
+}
+
 /* TLS: current worker id (для diagnostic). -1 = main thread. */
 #ifdef _MSC_VER
 static __declspec(thread) int _current_worker_id = -1;
@@ -185,6 +197,23 @@ void nova_runtime_init(int n_workers) {
     GC_allow_register_threads();
 #endif
 
+    /* Plan 44.5 Layer 5: init main wake handle на nova_evloop()
+     * (main thread's default loop — мы сейчас на main thread). Workers
+     * сделают uv_async_send(&_main_wake) после fiber complete; main
+     * thread в uv_run(UV_RUN_ONCE) проснётся и проверит pending_remote. */
+    if (!_main_wake_inited) {
+        int rc = uv_async_init(nova_evloop(), &_main_wake, _main_wake_cb);
+        if (rc != 0) {
+            fprintf(stderr, "nova: uv_async_init main_wake failed: %s\n",
+                    uv_strerror(rc));
+            abort();
+        }
+        /* Unref — handle не должен сам keep'ить loop alive. Loop active
+         * пока есть active timer/handles из user code (sleep, channels). */
+        uv_unref((uv_handle_t*)&_main_wake);
+        _main_wake_inited = true;
+    }
+
     _workers = (NovaWorker*)calloc((size_t)n_workers, sizeof(NovaWorker));
     if (!_workers) {
         fprintf(stderr, "nova: runtime_init OOM (%d workers)\n", n_workers);
@@ -302,6 +331,45 @@ void nova_runtime_spawn_global(void (*entry)(mco_coro*), void* user) {
 
     nova_aint_inc(&target->pending_count);
     uv_async_send(&target->wake_handle);
+}
+
+/* Plan 44.5 Layer 5: structured M:N spawn — distribute fiber на worker
+ * + tracking в parent scope. Caller (codegen) обязан set
+ * ctx->_nova_parent_scope = scope **перед** этим вызовом — entry-функция
+ * читает поле для post-completion decrement + signal_main.
+ *
+ * Release ordering на increment — main thread в supervised_run wait-loop
+ * увидит инкремент до того как worker fiber sees decremented count
+ * (через cause-effect через memory). */
+void nova_runtime_spawn_into(struct NovaFiberQueue* scope,
+                              void (*entry)(mco_coro*),
+                              void* user) {
+    if (!scope) {
+        fprintf(stderr, "nova: runtime_spawn_into: NULL scope\n");
+        abort();
+    }
+    if (!_initialized || _n_workers == 0) {
+        /* Fallback — fall through к normal spawn в active scope.
+         * Это safety net; codegen эмитит conditional check, но если
+         * runtime caller вызовет напрямую без init — degraded behavior. */
+        nova_fiber_spawn_into((NovaFiberQueue*)scope, entry, user);
+        return;
+    }
+    /* Increment ДО push'а — main thread в drain-loop должен видеть
+     * pending_remote > 0 даже если worker сразу подхватит fiber и завершит
+     * его до того как main опросит counter. */
+    nova_aint_inc(&((NovaFiberQueue*)scope)->pending_remote);
+    /* Реальный push идёт через spawn_global. */
+    nova_runtime_spawn_global(entry, user);
+}
+
+/* Plan 44.5 Layer 5: signal main thread из worker context'а.
+ * No-op до runtime.init либо после shutdown — main thread в этих режимах
+ * либо вообще нет (test'у без init), либо exit'ит (shutdown). */
+void nova_runtime_signal_main(void) {
+    if (_main_wake_inited) {
+        uv_async_send(&_main_wake);
+    }
 }
 
 /* ── Diagnostic ───────────────────────────────────────────────── */
