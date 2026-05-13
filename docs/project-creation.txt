@@ -8496,3 +8496,49 @@ fundamentally blocked, документирован.
   channels (Plan 21+). Compile assertion возможна, не сделана.
 - **Plan 43 redesign** — если когда-нибудь нужно: CreateFiber-based
   Windows path (proper TIB через kernel call). Major refactor.
+
+---
+
+## Сессия 2026-05-13 (продолжение): Plan 44 Этап 0 — M:N infrastructure
+
+Запрос пользователя: "продолжай реализовывать многопоточность".
+
+### Что landed
+
+Plan 44 Этап 0 (commit с runtime.h/c + std.runtime.runtime API):
+- NovaWorker struct: per-worker libuv loop + fiber scope + queue mutex +
+  uv_async_t wake handle.
+- Runtime API: nova_runtime_init(n) / shutdown / worker_count /
+  current_worker_id / is_initialized.
+- std.runtime.runtime namespace (runtime.init/shutdown/...).
+- 4 sub-теста smoke: lifecycle, idempotent init, auto-detect, default.
+- Bootstrap default остаётся single-thread — M:N opt-in через init().
+
+### Что НЕ работает в Этапе 0 (intentional)
+
+- runtime.spawn_global() — есть API но не функционален: bootstrap
+  nova_supervised_run использует global uv_evloop, workers имеют свои
+  loops → конфликт. Spawn_global push'нет fiber в worker scope, но он
+  не выполнится корректно.
+- Actual cross-worker fiber execution.
+- Time.sleep / Channel.recv в worker'ах — registration timers на global
+  loop, parking из чужого thread.
+- Boehm GC_THREADS — workers не делают nova_alloc, в Этапе 0 это OK.
+
+### Что нужно для Plan 45 (actual workload distribution)
+
+1. Параметризовать nova_supervised_run per-worker'овым libuv loop.
+2. Boehm rebuild с GC_THREADS + GC_register_my_thread per worker.
+3. Codegen: spawn dispatch — local supervised vs global runtime.
+4. TLS migration для effect handlers (Plan 23 Слой 3).
+5. Cross-worker channel — уже M:N-safe (Plan 40 R8 audit).
+
+### Регрессия
+
+266 PASS effective Windows (2 transient AV-flakes на rerun PASS).
+Linux Docker mn_runtime_smoke PASS. Plan 44 Этап 0 acceptance met.
+
+### Открытые блокеры
+
+- Boehm GC_THREADS build на Windows vcpkg — required для Plan 45.
+- nova_supervised_run параметризация — отдельный refactor task.
