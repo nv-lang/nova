@@ -3302,6 +3302,9 @@ impl Parser {
         let start = self.expect(&TokenKind::KwWith)?.span;
         let mut bindings = Vec::new();
         loop {
+            // Plan 33.3 Ф.9.6: optional `#verify_handler` или `#trusted_handler`
+            // перед effect-name. Применяется к ЭТОЙ конкретной binding'е.
+            let verification = self.parse_handler_verification_attr()?;
             let effect = self.parse_type()?;
             self.expect(&TokenKind::Eq)?;
             // handler — выражение. handler-литерал (`EffName { op() => ... }`)
@@ -3315,6 +3318,7 @@ impl Parser {
                 effect,
                 handler,
                 span,
+                verification,
             });
             if self.eat(&TokenKind::Comma).is_none() {
                 break;
@@ -3327,6 +3331,41 @@ impl Parser {
             ExprKind::With { bindings, body },
             start.merge(end),
         ))
+    }
+
+    /// Plan 33.3 Ф.9.6: парсит `#verify_handler` или `#trusted_handler`
+    /// (без аргументов) перед with-binding'ом. Без атрибута — Unverified.
+    /// Дублирующиеся / противоречащие атрибуты → error.
+    fn parse_handler_verification_attr(&mut self) -> Result<HandlerVerification, Diagnostic> {
+        if !matches!(self.peek().kind, TokenKind::Hash) {
+            return Ok(HandlerVerification::Unverified);
+        }
+        let name = match &self.peek_at(1).kind {
+            TokenKind::Ident(n) => n.clone(),
+            _ => return Ok(HandlerVerification::Unverified),
+        };
+        let result = match name.as_str() {
+            "verify_handler" => HandlerVerification::Verify,
+            "trusted_handler" => HandlerVerification::Trusted,
+            _ => return Ok(HandlerVerification::Unverified),
+        };
+        self.bump(); // #
+        self.bump(); // ident
+        self.skip_newlines();
+        // Disallow stacking `#verify_handler #trusted_handler` (контрадикция).
+        if matches!(self.peek().kind, TokenKind::Hash) {
+            if let TokenKind::Ident(next) = &self.peek_at(1).kind {
+                if next == "verify_handler" || next == "trusted_handler" {
+                    let span = self.peek().span;
+                    return Err(Diagnostic::new(
+                        "duplicate or conflicting handler verification attribute \
+                         (`#verify_handler` and `#trusted_handler` are mutually exclusive)",
+                        span,
+                    ));
+                }
+            }
+        }
+        Ok(result)
     }
 
     /// Парсит выражение, специально проверяя на handler-литерал `EffName { op... }`.

@@ -932,6 +932,27 @@ pub struct WithBinding {
     pub effect: TypeRef,
     pub handler: Expr,
     pub span: Span,
+    /// Plan 33.3 Ф.9.6: верификационный статус handler'а для этого
+    /// эффекта. Required когда body использует функции с контрактами,
+    /// ссылающимися на pure_view данного эффекта (gate в types/mod.rs).
+    /// По умолчанию — `Unverified`.
+    pub verification: HandlerVerification,
+}
+
+/// Plan 33.3 Ф.9.6 (D24): верификация handler'а для конкретного эффекта.
+///
+/// - `Unverified` — default. Handler не проверен и не trusted; использовать
+///   нельзя если body вызывает fn с pure_view-contract'ами этого эффекта.
+/// - `Verify` — `#verify_handler`. Symbolic verification handler.action
+///   body против axiom'ов эффекта (Ф.9.7). До Ф.9.7 — treated как
+///   placeholder (Ф.9.6 принимает синтаксис, но не верифицирует).
+/// - `Trusted` — `#trusted_handler`. Программист берёт ответственность,
+///   что handler корректно реализует axioms эффекта. Без verification.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HandlerVerification {
+    Unverified,
+    Verify,
+    Trusted,
 }
 
 #[derive(Debug, Clone)]

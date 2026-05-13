@@ -222,6 +222,12 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
     // фундамент SMT encoding (UF mapping в Ф.9.4).
     check_effect_axioms(module, &mut errors);
 
+    // Plan 33.3 Ф.9.6: handler verification gate.
+    // Если эффект имеет pure_view-ops, любая `with E = handler` для
+    // этого эффекта обязана быть помечена `#verify_handler` или
+    // `#trusted_handler`. Без атрибута — compile error.
+    check_handler_verification_gate(module, &mut errors);
+
     // Name-resolution фаза: статический поиск undefined идентификаторов
     // в expr-position. Запускается ПОСЛЕ BoundCtx/CapabilityCtx, чтобы
     // более фундаментальные ошибки (signatures/effects) приходили первыми.
@@ -2411,6 +2417,123 @@ fn check_handler_never_ops(module: &Module, errors: &mut Vec<Diagnostic>) {
             Item::Test(t) => walk_block_for_handler_lits(&t.body, &never_ops, errors),
             _ => {}
         }
+    }
+}
+
+/// Plan 33.3 Ф.9.6 (D24): handler verification gate.
+///
+/// Если эффект имеет хотя бы одну `pure_view` op'у, любое использование
+/// handler'а через `with E = h` обязано декларировать verification
+/// статус через `#verify_handler` или `#trusted_handler`. Без атрибута —
+/// compile error.
+///
+/// Семантика:
+/// - `#verify_handler` — symbolic verification handler.action body
+///   против axiom'ов эффекта (Ф.9.7). Bootstrap V1: атрибут принимается
+///   но реальной верификации нет — placeholder для Ф.9.7.
+/// - `#trusted_handler` — программист берёт ответственность.
+/// - Default (Unverified) для эффектов с pure_views — **error**.
+///
+/// Эффекты БЕЗ pure_views — никаких ограничений (default = Unverified
+/// допустим).
+///
+/// Эта проверка консервативна: даже если body не вызывает pure_view-
+/// using функции, gate всё равно требует attribute для эффекта с
+/// pure_views. Это упрощает V1 (нет cross-fn analysis); Ф.9.7
+/// уточнит до actually-uses analysis.
+fn check_handler_verification_gate(module: &Module, errors: &mut Vec<Diagnostic>) {
+    // Шаг 1: какие эффекты имеют pure_view-ops?
+    let mut effects_with_pv: HashSet<String> = HashSet::new();
+    for item in &module.items {
+        let Item::Type(td) = item else { continue };
+        let TypeDeclKind::Effect(methods) = &td.kind else { continue };
+        if methods.iter().any(|m| matches!(m.kind, EffectOpKind::PureView)) {
+            effects_with_pv.insert(td.name.clone());
+        }
+    }
+    if effects_with_pv.is_empty() { return; }
+
+    // Шаг 2: walk all expressions, найти WithBinding'и с такими эффектами.
+    for item in &module.items {
+        match item {
+            Item::Fn(f) => match &f.body {
+                FnBody::Block(b) => walk_block_for_with_gate(b, &effects_with_pv, errors),
+                FnBody::Expr(e) => walk_expr_for_with_gate(e, &effects_with_pv, errors),
+                FnBody::External => {}
+            }
+            Item::Test(t) => walk_block_for_with_gate(&t.body, &effects_with_pv, errors),
+            _ => {}
+        }
+    }
+}
+
+fn walk_block_for_with_gate(b: &Block, eff_pv: &HashSet<String>, errors: &mut Vec<Diagnostic>) {
+    for s in &b.stmts {
+        match s {
+            Stmt::Expr(e) => walk_expr_for_with_gate(e, eff_pv, errors),
+            Stmt::Let(LetDecl { value, .. }) => walk_expr_for_with_gate(value, eff_pv, errors),
+            Stmt::Assign { target, value, .. } => {
+                walk_expr_for_with_gate(target, eff_pv, errors);
+                walk_expr_for_with_gate(value, eff_pv, errors);
+            }
+            _ => {}
+        }
+    }
+    if let Some(t) = &b.trailing { walk_expr_for_with_gate(t, eff_pv, errors); }
+}
+
+fn walk_expr_for_with_gate(e: &Expr, eff_pv: &HashSet<String>, errors: &mut Vec<Diagnostic>) {
+    use crate::ast::ExprKind::*;
+    match &e.kind {
+        With { bindings, body } => {
+            for b in bindings {
+                let eff_name = match &b.effect {
+                    TypeRef::Named { path, .. } => path.last().cloned().unwrap_or_default(),
+                    _ => String::new(),
+                };
+                if !eff_pv.contains(&eff_name) { continue; }
+                if matches!(b.verification, HandlerVerification::Unverified) {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "handler for effect `{}` must be marked `#verify_handler` \
+                             or `#trusted_handler` (effect has `pure_view` ops, so any \
+                             handler must declare verification status). Examples:\n  \
+                             with #trusted_handler {0} = my_handler {{ ... }}\n  \
+                             with #verify_handler {0} = my_handler {{ ... }}",
+                            eff_name,
+                        ),
+                        b.span,
+                    ));
+                }
+                walk_expr_for_with_gate(&b.handler, eff_pv, errors);
+            }
+            walk_block_for_with_gate(body, eff_pv, errors);
+        }
+        Block(b) => walk_block_for_with_gate(b, eff_pv, errors),
+        Call { func, args, .. } => {
+            walk_expr_for_with_gate(func, eff_pv, errors);
+            for a in args { walk_expr_for_with_gate(a.expr(), eff_pv, errors); }
+        }
+        Binary { left, right, .. } => {
+            walk_expr_for_with_gate(left, eff_pv, errors);
+            walk_expr_for_with_gate(right, eff_pv, errors);
+        }
+        Unary { operand, .. } => walk_expr_for_with_gate(operand, eff_pv, errors),
+        Member { obj, .. } => walk_expr_for_with_gate(obj, eff_pv, errors),
+        Index { obj, index } => {
+            walk_expr_for_with_gate(obj, eff_pv, errors);
+            walk_expr_for_with_gate(index, eff_pv, errors);
+        }
+        If { cond, then, else_ } => {
+            walk_expr_for_with_gate(cond, eff_pv, errors);
+            walk_block_for_with_gate(then, eff_pv, errors);
+            match else_ {
+                Some(crate::ast::ElseBranch::Block(b)) => walk_block_for_with_gate(b, eff_pv, errors),
+                Some(crate::ast::ElseBranch::If(ie)) => walk_expr_for_with_gate(ie, eff_pv, errors),
+                None => {}
+            }
+        }
+        _ => {}
     }
 }
 
