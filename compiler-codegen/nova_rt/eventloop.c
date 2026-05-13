@@ -25,6 +25,15 @@
 static uv_loop_t* _evloop = NULL;
 static int        _evloop_state = 0;  /* 0 = uninit, 1 = active, 2 = closed */
 
+/* Plan 44.6 Layer 3: TLS storage. Initialised lazily — main thread в
+ * nova_evloop_init(), worker thread в _worker_main (runtime.c).
+ * Fallback path в nova_current_loop() — если NULL, set к global default. */
+#ifdef _MSC_VER
+__declspec(thread) uv_loop_t* _nova_current_loop = NULL;
+#else
+__thread uv_loop_t* _nova_current_loop = NULL;
+#endif
+
 void nova_evloop_init(void) {
     if (_evloop_state != 0) return;  /* idempotent */
     _evloop = uv_default_loop();
@@ -33,6 +42,9 @@ void nova_evloop_init(void) {
         abort();
     }
     _evloop_state = 1;
+    /* Plan 44.6 Layer 3: main thread current loop = global default.
+     * Worker threads set'ят own loop в _worker_main. */
+    _nova_current_loop = _evloop;
 }
 
 uv_loop_t* nova_evloop(void) {
@@ -47,6 +59,14 @@ uv_loop_t* nova_evloop(void) {
         return NULL;
     }
     return _evloop;
+}
+
+uv_loop_t* nova_current_loop(void) {
+    if (_nova_current_loop) return _nova_current_loop;
+    /* Fallback: TLS не set'нут (main thread где evloop_init ещё не
+     * fired либо thread без runtime.init). Lazily берём global default. */
+    _nova_current_loop = nova_evloop();
+    return _nova_current_loop;
 }
 
 bool nova_evloop_is_initialized(void) {
