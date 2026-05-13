@@ -69,7 +69,7 @@ static void _worker_main(void* arg) {
     NovaWorker* w = (NovaWorker*)arg;
     _current_worker_id = w->id;
 
-    /* Plan 44 Этап 0: НЕ регистрируем thread с Boehm GC — это требует
+    /* Plan 44.1 (Plan 44 Этап 0): НЕ регистрируем thread с Boehm GC — это требует
      * GC_THREADS build (Linux Docker default, Windows vcpkg может без).
      * Worker'ы в Этапе 0 не делают nova_alloc — только infrastructure
      * idle. GC register — задача Plan 45+ когда workers будут actually
@@ -82,7 +82,7 @@ static void _worker_main(void* arg) {
 
     while (!nova_abool_load(&w->stop)) {
         /* (1) Drain ready fibers без global event-loop dependency.
-         * Plan 44 Этап 0: simple drain — supports CPU-bound fibers только.
+         * Plan 44.1 (Plan 44 Этап 0): simple drain — supports CPU-bound fibers только.
          * Yielding fibers (Time.sleep, Channel.recv) требуют param'ed
          * nova_supervised_run — Plan 45. */
         bool did_work = false;

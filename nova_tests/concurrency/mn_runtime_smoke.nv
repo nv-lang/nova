@@ -1,4 +1,4 @@
-// Plan 44 Этап 0: smoke test для M:N runtime infrastructure.
+// Plan 44.1 (Plan 44 Этап 0): smoke test для M:N runtime infrastructure.
 //
 // Минимальный verification что multi-thread runtime может:
 //   1. Initialize N workers.

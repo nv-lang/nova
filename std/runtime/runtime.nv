@@ -18,7 +18,7 @@
 // После — M:N через worker pool. `runtime.shutdown()` восстанавливает
 // single-thread state (workers joined, resources freed).
 //
-// Use cases (Plan 44 Этап 0):
+// Use cases (Plan 44.1 (Plan 44 Этап 0)):
 // - Smoke test что infrastructure работает.
 // - Diagnostic поверх runtime'а (worker counts, current id).
 //
