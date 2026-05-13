@@ -5786,3 +5786,36 @@ Alternative — explicit declaration в nova.toml или special file.
 Heuristic простой, никаких new config files, reliable enough для
 standard use cases. Если ambiguous — compiler выдаёт manifest mismatch
 error с suggestions.
+
+
+---
+
+## Plan 42 #forbid per-file vs module-level (2026-05-13)
+
+Изначально предлагал `#forbid` на **module-level** (через peer-union)
+— но user указал что peers равноправны, и выбор «какой peer canonical»
+для declaration создаёт ambiguity.
+
+**Решение:** per-file scope. Каждый peer объявляет свои constraints
+независимо. Если хочешь module-wide constraint — пиши `#forbid Net`
+в каждом peer (convention).
+
+**Потеря:** строгий «module-level capability boundary» (что был Nova-
+unique advantage).
+
+**Замена:** sub-plan 42.7 — lint rule warn при inconsistent #forbid
+between peers (helps maintain whole-module convention без enforcement).
+
+Trade-off: consistency с peer equality > strong module boundary.
+User-friendly + intuitive > theoretical purity.
+
+### `#requires` отвергнут
+
+Module-level (или file-level) `#requires Db` means «все fn в файле
+implicitly получают Db в effect row». Это **скрывает behavior**
+от function signature — нарушает D62 «эффекты в сигнатуре» / AI-first
+explicit.
+
+Программист должен писать effects в каждой signature explicitly.
+Если все functions модуля имеют Db — это **не** boilerplate, это
+**документация** (LLM reads signature без context lookup).

@@ -8743,3 +8743,104 @@ Plan 44 (M:N runtime roadmap)              roadmap, v1.0+ milestone
 └── 44.5 work-stealing scheduler           🟡 Layers 1+2+4 closed; L3 → 44.6
     └── 44.6 (planned) per-worker loop + full workload + D98
 ```
+
+
+================================================================================
+2026-05-13 Plan 42 — folder-modules полная реализация (autonomous, продолжение)
+================================================================================
+
+Продолжение autonomous session: после core infra (Этап 97) дозакрыта
+полная реализация Plan 42 включая F/H/L правила + Sub-plan 42.1
+(file-level #forbid).
+
+### Реализовано
+
+**Правило F (`_test.nv` test isolation):**
+- `resolve_module_paths` принимает `include_test_peers` параметр.
+- Filter peers с suffix `_test.nv` если build mode.
+- test_runner всегда передаёт true (test mode).
+- positive test `folder_module_with_test/` (PASS).
+
+**Правило H (`internal/` directory):**
+- Pre-check в `resolve_one`: import internal/X разрешён только из
+  descendant of internal's parent.
+- positive test `folder_internal/` (PASS).
+- negative test `folder_internal_external_import.nv` (PASS).
+
+**Правило L (diagnostic quality):**
+- Improved error для «cannot find module» — importing module +
+  searched paths + suggestion via `suggest_module_name` (case-
+  insensitive name match в parent dir).
+
+**Sub-plan 42.1 (file-level #forbid):**
+- Parser принимает `#forbid Eff1, Eff2` после module declaration.
+  `forbid` это keyword (KwForbid).
+- AST: `Module.attrs: Vec<ModuleAttr>` + `ModuleAttrKind::Forbid`.
+- Type-checker: file-level forbid initial frame в `CapabilityCtx`'s
+  `forbidden_stack` для each fn/test.
+- `#requires` отвергнут (нарушает AI-first explicit, D62).
+- Per-file scope (не cross-peer — peers равноправны).
+- positive `file_forbid_clean.nv` + negative `file_forbid_violation.nv`.
+
+### Sub-plans renumbered 42.A/B → 42.1/2/3/4/5/6/7
+
+- **42.1** ✅ file-level #forbid (closed).
+- **42.2** nova doc <module> (roadmap).
+- **42.3** function-level #forbid (roadmap; emulatable через D63).
+- **42.4** per-file imports scope (deferred, AST refactor).
+- **42.5** 2-pass codegen (deferred, no use case yet).
+- **42.6** migration std/* parent.X (automated tool — sub-plan).
+- **42.7** cross-peer consistency lint.
+
+### Verification
+
+**274/274 PASS** (zero fails). Backward compat preserved.
+
+7 коммитов в этой группе:
+- f49a0fe430 spec D29 rev-3 + Plan 42 update (parent.X).
+- 42eacead630 compiler infra (manifest + imports + walk_nv).
+- 6416c51e977 positive test folder_module_basic.
+- c4d2e3a363b project-creation + simplifications entries.
+- 8b82a2b930d spec/D29 + plan(42) расширены правилами F/H/42.1.
+- 2fe10f8dfdc AST + parser для #forbid.
+- cc187050d16 type-checker + resolver + test_runner правила F/H/42.1/L.
+- 220503b5522 4 positive + 3 negative tests.
+- ba957b4d31e README updates.
+
+### Что НЕ сделано (deferred — sub-plans 42.2/3/4/5/6/7)
+
+- Migration std/* (sub-plan 42.6) — automated tool. Compat mode
+  позволяет легко выполнить позже без блокировки.
+- nova doc <module> (42.2) — roadmap tooling.
+- Function-level #forbid (42.3) — convenience shortcut, esperably
+  postponed.
+- Per-file imports scope (42.4) — AST refactor, требует
+  `Module.peer_files`.
+- 2-pass codegen (42.5) — когда mutually recursive types появятся.
+- Cross-peer consistency lint (42.7) — production polish.
+
+### Insights
+
+**1. Production audit pre-implementation pays off.** Plan 42 был
+сильно пере-аудит'нут в Этап 96 → 12 правил A-L. Реализация Этап 97
++ этот этап покрыла A B E F H L (core MVP) + Sub-plan 42.1 (Nova-
+unique фича). D C — deferred. Production audit правильно
+выявил priorities.
+
+**2. Per-file vs module-level — user pushback правильный.** Я
+рекомендовал `#forbid` на module-level (через peer-union); user
+указал что peers равноправны и cross-peer inheritance создаёт
+неясность. Per-file решение consistent + intuitive. Lost — Nova-
+unique «module-level capability» argument (теперь это file-level
++ convention + sub-plan 42.7 lint), но gained correctness.
+
+**3. Sub-plan numbering 42.A/B → 42.1/2** — пользователь указал.
+Числовая нумерация лучше — нет ambiguity «A это alphabetical или
+порядок?».
+
+**4. AV-блок reoccurs.** Около 5-7 минут rebuild attempts были
+заблокированы Windows AV. mv exe → rebuild → ok. Reliable workaround.
+
+**5. 5 коммитов за этап = appropriate granularity.** spec/plan,
+AST+parser, infra (types+resolver+walk_nv), tests, READMEs —
+логические группы.
