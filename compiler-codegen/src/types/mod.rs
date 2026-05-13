@@ -3439,21 +3439,42 @@ struct ContractCtx {
     /// Имена fn объявленных `#pure` (через атрибут).
     /// Используются для разрешения composition в контрактах (33.2).
     pure_fn_names: HashSet<String>,
+    /// Plan 33.3 Ф.9: pure_view-имя → (effect_name, arity).
+    /// При вызове `balance(id)` в контракте определяем (а) что это
+    /// pure_view, (б) к какому эффекту относится, (в) что эффект в
+    /// сигнатуре enclosing fn.
+    pure_views: HashMap<String, (String, usize)>,
 }
 
 impl ContractCtx {
     fn build(module: &Module) -> Self {
         let mut fn_names = HashSet::new();
         let mut pure_fn_names = HashSet::new();
+        let mut pure_views: HashMap<String, (String, usize)> = HashMap::new();
         for item in &module.items {
-            if let Item::Fn(fd) = item {
-                fn_names.insert(fd.name.clone());
-                if matches!(fd.purity, Purity::Pure) {
-                    pure_fn_names.insert(fd.name.clone());
+            match item {
+                Item::Fn(fd) => {
+                    fn_names.insert(fd.name.clone());
+                    if matches!(fd.purity, Purity::Pure) {
+                        pure_fn_names.insert(fd.name.clone());
+                    }
                 }
+                Item::Type(td) => {
+                    if let TypeDeclKind::Effect(methods) = &td.kind {
+                        for m in methods {
+                            if matches!(m.kind, EffectOpKind::PureView) {
+                                pure_views.insert(
+                                    m.name.clone(),
+                                    (td.name.clone(), m.params.len()),
+                                );
+                            }
+                        }
+                    }
+                }
+                _ => {}
             }
         }
-        Self { fn_names, pure_fn_names }
+        Self { fn_names, pure_fn_names, pure_views }
     }
 
     fn check_module(&self, module: &Module, errors: &mut Vec<Diagnostic>) {
@@ -3489,13 +3510,21 @@ impl ContractCtx {
             // Контракты не проверяем дальше — error уже выдан.
             return;
         }
+        // Plan 33.3 Ф.9: множество имён эффектов из сигнатуры функции
+        // (для разрешения pure_view-вызовов в контрактах).
+        let fn_effects: HashSet<String> = fd.effects.iter()
+            .filter_map(|tr| match tr {
+                TypeRef::Named { path, .. } => path.last().cloned(),
+                _ => None,
+            })
+            .collect();
         for contract in &fd.contracts {
             match contract.kind {
                 ContractKind::Requires => {
-                    self.check_requires_expr(&contract.expr, errors);
+                    self.check_requires_expr(&contract.expr, &fn_effects, &fd.name, errors);
                 }
                 ContractKind::Ensures => {
-                    self.check_ensures_expr(&contract.expr, errors);
+                    self.check_ensures_expr(&contract.expr, &fn_effects, &fd.name, errors);
                 }
             }
         }
@@ -3639,16 +3668,35 @@ impl ContractCtx {
     }
 
     /// `requires`: запрещены `result` и `old(...)`.
-    fn check_requires_expr(&self, e: &Expr, errors: &mut Vec<Diagnostic>) {
-        self.walk_expr(e, errors, /*in_ensures*/ false);
+    fn check_requires_expr(
+        &self,
+        e: &Expr,
+        fn_effects: &HashSet<String>,
+        fn_name: &str,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        self.walk_expr(e, fn_effects, fn_name, errors, /*in_ensures*/ false);
     }
 
     /// `ensures`: `result`/`old(...)` разрешены; composition запрещён в 33.1.
-    fn check_ensures_expr(&self, e: &Expr, errors: &mut Vec<Diagnostic>) {
-        self.walk_expr(e, errors, /*in_ensures*/ true);
+    fn check_ensures_expr(
+        &self,
+        e: &Expr,
+        fn_effects: &HashSet<String>,
+        fn_name: &str,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        self.walk_expr(e, fn_effects, fn_name, errors, /*in_ensures*/ true);
     }
 
-    fn walk_expr(&self, e: &Expr, errors: &mut Vec<Diagnostic>, in_ensures: bool) {
+    fn walk_expr(
+        &self,
+        e: &Expr,
+        fn_effects: &HashSet<String>,
+        fn_name: &str,
+        errors: &mut Vec<Diagnostic>,
+        in_ensures: bool,
+    ) {
         match &e.kind {
             ExprKind::Ident(n) => {
                 if n == "result" && !in_ensures {
@@ -3671,7 +3719,39 @@ impl ContractCtx {
                         // Walk old() arg ONCE; it's a snapshot of pre-state,
                         // not a composition.
                         for a in args {
-                            self.walk_expr(a.expr(), errors, in_ensures);
+                            self.walk_expr(a.expr(), fn_effects, fn_name, errors, in_ensures);
+                        }
+                        return;
+                    }
+                    // Plan 33.3 Ф.9.3 part 2: pure_view-вызов в контракте
+                    // разрешён только если соответствующий эффект объявлен в
+                    // сигнатуре enclosing fn (`(...) Eff -> ...`). pure_view
+                    // — read-only observation, нужен effect-handler в scope.
+                    if let Some((effect_name, expected_arity)) = self.pure_views.get(name) {
+                        if !fn_effects.contains(effect_name) {
+                            errors.push(Diagnostic::new(
+                                format!(
+                                    "pure_view `{}.{}` referenced in contract of `{}`, \
+                                     but effect `{}` is not in this function's signature \
+                                     (add `{}` to effects)",
+                                    effect_name, name, fn_name, effect_name, effect_name,
+                                ),
+                                e.span,
+                            ));
+                        }
+                        if args.len() != *expected_arity {
+                            errors.push(Diagnostic::new(
+                                format!(
+                                    "pure_view `{}.{}` expects {} arg(s), got {}",
+                                    effect_name, name, expected_arity, args.len(),
+                                ),
+                                e.span,
+                            ));
+                        }
+                        // pure_view-вызов разрешён; walk args, не walk
+                        // callee (это identifier-name pure_view, не fn).
+                        for a in args {
+                            self.walk_expr(a.expr(), fn_effects, fn_name, errors, in_ensures);
                         }
                         return;
                     }
@@ -3689,34 +3769,34 @@ impl ContractCtx {
                     }
                 }
                 // Walk callee + args.
-                self.walk_expr(func, errors, in_ensures);
+                self.walk_expr(func, fn_effects, fn_name, errors, in_ensures);
                 for a in args {
-                    self.walk_expr(a.expr(), errors, in_ensures);
+                    self.walk_expr(a.expr(), fn_effects, fn_name, errors, in_ensures);
                 }
             }
             ExprKind::Binary { left, right, .. } => {
-                self.walk_expr(left, errors, in_ensures);
-                self.walk_expr(right, errors, in_ensures);
+                self.walk_expr(left, fn_effects, fn_name, errors, in_ensures);
+                self.walk_expr(right, fn_effects, fn_name, errors, in_ensures);
             }
             ExprKind::Unary { operand, .. } => {
-                self.walk_expr(operand, errors, in_ensures);
+                self.walk_expr(operand, fn_effects, fn_name, errors, in_ensures);
             }
             ExprKind::Member { obj, .. } => {
-                self.walk_expr(obj, errors, in_ensures);
+                self.walk_expr(obj, fn_effects, fn_name, errors, in_ensures);
             }
             ExprKind::Index { obj, index } => {
-                self.walk_expr(obj, errors, in_ensures);
-                self.walk_expr(index, errors, in_ensures);
+                self.walk_expr(obj, fn_effects, fn_name, errors, in_ensures);
+                self.walk_expr(index, fn_effects, fn_name, errors, in_ensures);
             }
             ExprKind::As(inner, _) | ExprKind::Is(inner, _) => {
-                self.walk_expr(inner, errors, in_ensures);
+                self.walk_expr(inner, fn_effects, fn_name, errors, in_ensures);
             }
             ExprKind::Try(inner) | ExprKind::Bang(inner) => {
-                self.walk_expr(inner, errors, in_ensures);
+                self.walk_expr(inner, fn_effects, fn_name, errors, in_ensures);
             }
             ExprKind::Coalesce(l, r) => {
-                self.walk_expr(l, errors, in_ensures);
-                self.walk_expr(r, errors, in_ensures);
+                self.walk_expr(l, fn_effects, fn_name, errors, in_ensures);
+                self.walk_expr(r, fn_effects, fn_name, errors, in_ensures);
             }
             // Литералы, paths, и прочее — не интересно для базовых правил.
             _ => {}
