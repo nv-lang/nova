@@ -10,6 +10,12 @@ publish = false
 name = "nova"
 path = "src/main.rs"
 
+[features]
+# Plan 33 V1: forward z3-backend во вложенный nova_codegen.
+# Build: `cargo build --release --features z3-backend` из nova-cli/.
+default = []
+z3-backend = ["nova_codegen/z3-backend"]
+
 [dependencies]
 clap         = { version = "4", features = ["derive"] }
 anyhow       = "1"

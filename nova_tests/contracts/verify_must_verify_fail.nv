@@ -1,8 +1,12 @@
 // EXPECT_COMPILE_ERROR `#must_verify` failed for `unprovable_fn`
+// REQUIRES_SMT_BACKEND trivial
 //
 // Plan 33.1 Ф.3: #must_verify — strict mode. SMT обязан доказать.
 // Trivial backend без linear-arith не докажет `result > 0` для body `x+1`
 // при `requires x > 0`. Это unknown → compile error в strict mode.
+//
+// Plan 33 V1: с Z3 backend этот goal доказуем, поэтому файл «отвечает
+// за trivial-only сценарий» и skip'ается при NOVA_SMT_BACKEND=z3.
 
 module nova_tests.contracts.verify_must_verify_fail
 
