@@ -1,0 +1,44 @@
+// Plan 44 Этап 0: smoke test для M:N runtime infrastructure.
+//
+// Минимальный verification что multi-thread runtime может:
+//   1. Initialize N workers.
+//   2. Report worker_count() correctly.
+//   3. Graceful shutdown без deadlock/crash.
+//
+// Real workload distribution — Plan 45+. Сейчас просто infrastructure
+// liveness check.
+
+module nova_tests.concurrency.mn_runtime_smoke
+
+test "runtime not initialized by default" {
+    assert(!runtime.is_initialized())
+    assert(runtime.worker_count() == 0)
+    assert(runtime.current_worker_id() == -1)
+}
+
+test "init + shutdown lifecycle (2 workers)" {
+    runtime.init(2)
+    assert(runtime.is_initialized())
+    assert(runtime.worker_count() == 2)
+    // main thread не worker.
+    assert(runtime.current_worker_id() == -1)
+
+    runtime.shutdown()
+    assert(!runtime.is_initialized())
+    assert(runtime.worker_count() == 0)
+}
+
+test "init idempotent" {
+    runtime.init(1)
+    runtime.init(99)  // ignored — already initialized
+    assert(runtime.worker_count() == 1)
+    runtime.shutdown()
+}
+
+test "init auto-detect (n=0)" {
+    runtime.init(0)
+    assert(runtime.is_initialized())
+    // worker_count > 0 (uv_available_parallelism)
+    assert(runtime.worker_count() > 0)
+    runtime.shutdown()
+}

@@ -1483,6 +1483,9 @@ impl NameResCtx {
             // Source of truth: std/runtime/fibers.nv. Codegen dispatch:
             // emit_c.rs `name == "fibers"`.
             "fibers",
+            // Plan 44 Этап 0: M:N runtime control namespace
+            // (std.runtime.runtime). `runtime.init(n)`, `runtime.shutdown()`.
+            "runtime",
             // Default Fail-effect type (D65 placeholder).
             "Fail",
             // Detach effect-type для detach {} expression (D50).

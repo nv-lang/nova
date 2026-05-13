@@ -7307,6 +7307,28 @@ impl CEmitter {
                             _ => {}
                         }
                     }
+                    // Plan 44 Этап 0: M:N runtime — std.runtime.runtime.
+                    if name == "runtime" {
+                        match method.as_str() {
+                            "init" if args.len() == 1 => {
+                                let n = self.emit_expr(args[0].expr())?;
+                                return Ok(format!("(nova_runtime_init((int){}), (nova_int)0LL)", n));
+                            }
+                            "shutdown" if args.is_empty() => {
+                                return Ok("(nova_runtime_shutdown(), (nova_int)0LL)".to_string());
+                            }
+                            "worker_count" if args.is_empty() => {
+                                return Ok("((nova_int)nova_runtime_worker_count())".to_string());
+                            }
+                            "is_initialized" if args.is_empty() => {
+                                return Ok("((nova_bool)nova_runtime_is_initialized())".to_string());
+                            }
+                            "current_worker_id" if args.is_empty() => {
+                                return Ok("((nova_int)nova_runtime_current_worker_id())".to_string());
+                            }
+                            _ => {}
+                        }
+                    }
                 }
                 // 0. Built-in primitive static methods (D35 + D73).
                 //    `str.from(x)` — string conversion (replaces old D70 to_str).
@@ -11340,6 +11362,15 @@ impl CEmitter {
                                 "virtual_reserved" | "slot_count" |
                                 "slots_active" | "high_water" => "nova_int".into(),
                                 "compact" => "nova_int".into(), // unit comma-expr
+                                _ => "nova_int".into(),
+                            };
+                        }
+                        // Plan 44 Этап 0: runtime.* — type inference.
+                        if n == "runtime" {
+                            return match method.as_str() {
+                                "init" | "shutdown" => "nova_int".into(),
+                                "worker_count" | "current_worker_id" => "nova_int".into(),
+                                "is_initialized" => "nova_bool".into(),
                                 _ => "nova_int".into(),
                             };
                         }

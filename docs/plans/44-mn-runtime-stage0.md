@@ -1,0 +1,273 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+# План 44: M:N Runtime — Этап 0 proof of concept
+
+> **Статус:** executable план. Создан 2026-05-13.
+> **Цель:** минимальный M:N proof of concept — multiple OS worker threads,
+> каждый со своим scheduler + libuv loop + fiber arena. Channels и
+> arena уже M:N-ready (Plan 40 R8 + Plan 41 R8).
+>
+> **Не входит в Этап 0:** work-stealing, TLS migration, blocking pool,
+> spec semantics для shared mut. Они — отдельные планы (45, 46+).
+
+---
+
+## Что уже готово к Этапу 0
+
+| Компонент | Источник | Готовность |
+|---|---|---|
+| Channels M:N-safe | Plan 40 (atomics, mutex, doubly-linked, R8 audit) | ✅ |
+| Fiber arena M:N-safe (Linux/macOS) | Plan 41 R8 (`_registered_high_water` __thread) | ✅ |
+| Stack-allocated BaseWaiter | Plan 40 R8-4 | ✅ |
+| Boehm GC multi-thread | требует rebuild с GC_THREADS | ⚠️ |
+| libuv per-thread loop | поддерживается nativly libuv | ✅ |
+| Cross-thread wake | `uv_async_t` — есть в libuv | ✅ |
+| pthread/uv_thread API | libuv vendored | ✅ |
+| Windows arena | Plan 43 заблокирован (TIB) — calloc-путь | ⚠️ |
+
+**Что нужно сделать в Этапе 0:**
+
+1. Скомпилировать Boehm с `GC_THREADS=1` + `GC_PTHREADS` (Linux/macOS)
+   или `GC_WIN32_THREADS` (Windows). Boehm нативно поддерживает.
+2. `nova_rt/runtime.h` + `runtime.c` — worker thread API.
+3. TLS state: `_nova_active_scope`, `_nova_active_slot` уже `__thread` —
+   корректно per-thread.
+4. Cross-worker spawn: round-robin (примитив — простой mutex-protected
+   shared queue для Этапа 0; Chase-Lev deque — Этап 1).
+5. Тест: spawn N fibers через `Runtime.spawn(...)`, проверить что они
+   распределяются между workers, channels работают cross-thread.
+
+---
+
+## Архитектура Этапа 0
+
+### NovaWorker — struct
+
+```c
+typedef struct NovaWorker {
+    int               id;            /* 0..N-1 */
+    uv_thread_t       thread;        /* OS thread handle */
+    uv_loop_t         loop;          /* per-worker libuv loop */
+    uv_async_t        wake_handle;   /* cross-worker wake notification */
+    NovaFiberQueue    scope;         /* worker-local fiber queue */
+    nova_mutex_t      queue_mu;      /* protects scope.fibers under push */
+    nova_atomic_bool  stop;          /* graceful shutdown flag */
+} NovaWorker;
+```
+
+### Runtime — global state
+
+```c
+typedef struct NovaRuntime {
+    NovaWorker*     workers;       /* heap-allocated [n_workers] */
+    int             n_workers;
+    nova_atomic_int round_robin;   /* simple work distribution */
+    bool            initialized;
+} NovaRuntime;
+
+extern NovaRuntime _nova_runtime;
+```
+
+### API
+
+```c
+/* Initialize multi-thread runtime. Idempotent.
+ * n=0 → auto-detect через uv_available_parallelism. */
+void nova_runtime_init(int n_workers);
+
+/* Push fiber onto worker queue (round-robin для Этапа 0).
+ * Wakes target worker через uv_async_send. */
+void nova_runtime_spawn_global(void (*entry)(mco_coro*), void* user);
+
+/* Graceful shutdown — signal all workers to stop,
+ * join, free resources. */
+void nova_runtime_shutdown(void);
+
+/* Diagnostic. */
+int  nova_runtime_worker_count(void);
+int  nova_runtime_current_worker_id(void);  /* -1 если main thread */
+```
+
+### Worker main loop
+
+```c
+void _nova_worker_main(void* arg) {
+    NovaWorker* w = (NovaWorker*)arg;
+    /* Per-worker TLS initialization. */
+    /* fiber arena lazy на первом alloc'е. */
+
+    /* Set scope для этого worker'а. */
+    _nova_active_scope = &w->scope;
+    _nova_active_slot  = -1;
+
+    while (!nova_abool_load(&w->stop)) {
+        /* (1) Drain local queue: run all ready fibers round-robin. */
+        nova_supervised_drain_one_tick(&w->scope);
+
+        /* (2) Idle — wait для cross-worker push или timer. */
+        uv_run(&w->loop, UV_RUN_ONCE);
+    }
+
+    /* Cleanup before thread exit. */
+    nova_supervised_drain_main_scope(&w->scope);
+    uv_loop_close(&w->loop);
+}
+```
+
+### Cross-worker spawn flow
+
+```
+main thread:                worker N's loop:
+  nova_runtime_spawn(...)
+    │
+    ├── select target = (round_robin++) % n_workers
+    ├── mu_lock(target.queue_mu)
+    │     push fiber into target.scope
+    ├── mu_unlock(...)
+    └── uv_async_send(&target.wake_handle)
+                                │
+                                ▼
+                          uv_run returns
+                          drain_one_tick:
+                            resume new fiber
+```
+
+---
+
+## Этапы (Этап 0 internal)
+
+### Этап 0.1 — Boehm GC_THREADS rebuild
+
+Текущий Boehm в vcpkg — single-thread default. Нужно:
+- Custom vcpkg overlay либо CMake флаг `enable_threads=ON`.
+- На Linux Docker — system `libgc-dev` уже built с threads (Ubuntu default).
+- На Windows — vcpkg `bdwgc[multithreaded]` feature.
+
+Verify через `GC_no_dls` + thread test.
+
+### Этап 0.2 — Runtime infrastructure
+
+- `compiler-codegen/nova_rt/runtime.h` + `.c` (~200 LOC).
+- `nova_runtime_init(n)`, `_spawn_global`, `_shutdown`.
+- Worker thread main loop через `uv_thread_create`.
+- Простой mutex-protected push, без deque (Chase-Lev — Этап 1).
+
+### Этап 0.3 — TLS audit
+
+Проверить что все `__thread` / `__declspec(thread)` корректны:
+- `_nova_active_scope`, `_nova_active_slot` — да.
+- `_t_arena` (fiber_arena.c) — да.
+- `_registered_high_water` — да (Plan 41 R8).
+- Effect storage TLS (`_nova_handler_*`) — **NO**, пока scope-snapshot
+  паттерн как сейчас (через `nova_register_effect_storage`). Это
+  работает для bootstrap N:1 single thread, но при M:N migration
+  нужен per-fiber state — отложено к Plan 45.
+
+### Этап 0.4 — Smoke test
+
+```nova
+import std.runtime.runtime
+
+fn main() {
+    runtime.init(2)  // 2 workers
+    supervised {
+        spawn { print("fiber A") }
+        spawn { print("fiber B") }
+    }
+    runtime.shutdown()
+}
+```
+
+Verify: оба fiber'a печатают, no crash, no deadlock.
+
+### Этап 0.5 — Cross-worker channel
+
+```nova
+import std.runtime.runtime
+
+fn main() {
+    runtime.init(2)
+    let ch = Channel.new(8)
+    supervised {
+        spawn {
+            for i in 0..10 { ch.tx.send(i) }
+            ch.tx.close()
+        }
+        spawn {
+            while let Some(v) = ch.rx.recv() {
+                print(v)
+            }
+        }
+    }
+}
+```
+
+Verify: send/recv корректно работают между workers, no lost messages.
+
+### Этап 0.6 — Docs + commit
+
+- D-decision для M:N initial impl (D98).
+- project-creation.txt + simplifications.md.
+- regression: full `nova test` + Linux Docker.
+
+---
+
+## Acceptance Этапа 0
+
+1. `nova test` PASS на single-thread (workers=1) — текущая регрессия 265 PASS.
+2. `nova test` PASS на workers=2 — отдельный test mode либо env override.
+3. Smoke test (0.4) PASS.
+4. Cross-worker channel test (0.5) PASS.
+5. No Boehm GC errors под TSan (Linux Docker).
+6. D98 spec обновлён.
+
+---
+
+## Не входит в Этап 0
+
+- **Work-stealing Chase-Lev deque** — Plan 45.
+- **TLS migration для effect handlers** — Plan 45.
+- **Blocking pool** — Plan 46.
+- **`std.sync` API** (`Atomic[T]`, `Mutex[T]`) — Plan 18 + 46.
+- **`realtime nogc` pinning** — Plan 47.
+- **Memory model spec** для shared mut — Plan 48.
+- **Concurrent GC tuning** — BDW-GC default, свой GC — отдельный milestone.
+
+---
+
+## Риски Этапа 0
+
+- **R1: Boehm GC_THREADS rebuild сложности.** vcpkg + custom feature flag.
+  Workaround: на Linux Docker уже мульти-тред, тестировать там сначала.
+- **R2: Race conditions в shared scope queue.** Простой mutex — slow
+  под contention, но корректен. Чейзлев — Этап 1.
+- **R3: TLS leakage между workers.** TLS variables thread-local OK,
+  но global static может leak. Аудит обязателен.
+- **R4: minicoro context switch + Windows TIB** — на Windows arena
+  off (Plan 43 block); fiber'ы на calloc stacks, должны работать на
+  любом OS thread.
+- **R5: libuv `uv_async_send` performance** — wake latency. Acceptable
+  для Этапа 0.
+
+---
+
+## Связь с другими планами
+
+- **Plan 23** — roadmap, parent.
+- **Plan 40 R8** — channels M:N-ready, prereq closed.
+- **Plan 41 R8** — fiber arena M:N-ready, prereq closed.
+- **Plan 43** — Windows arena blocked, accepted limitation.
+- **Plan 45+** — work-stealing, TLS migration, blocking pool, std.sync impl.
+
+---
+
+## Что Nova получит от Этапа 0
+
+**Sanity-check that M:N feasible** через bootstrap stack. До этого Plan 23
+был roadmap; Этап 0 даёт **runnable proof of concept**. Это снимает
+самые большие unknowns:
+- Boehm GC + multiple threads actually работает?
+- libuv per-worker loop'ы могут wake'ить друг друга?
+- Channels действительно M:N-safe через atomics?
+- Какие TLS variables нужно migration'ить (Этап 1 prep)?
+
+После Этапа 0 — concrete blockers и concrete LOC estimates для Этапов 1+.

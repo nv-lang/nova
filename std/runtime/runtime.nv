@@ -1,0 +1,55 @@
+// std/runtime/runtime.nv — M:N runtime control API (Plan 44).
+//
+// **Status: opt-in proof of concept.** Bootstrap default остаётся
+// single-threaded cooperative. M:N активируется через `runtime.init(n)`.
+//
+// **NOT auto-gen.** Hardcoded namespace `runtime.*` через emit_c.rs.
+//
+// API:
+//   import std.runtime.runtime
+//
+//   runtime.init(n)        // start n worker threads (0 = auto-detect)
+//   runtime.shutdown()     // graceful join all workers
+//   runtime.worker_count() // currently running workers
+//   runtime.is_initialized() // bool — multi-thread active?
+//
+// **Каноническая граница использования:**
+// До `runtime.init()` — single-thread cooperative (default Nova).
+// После — M:N через worker pool. `runtime.shutdown()` восстанавливает
+// single-thread state (workers joined, resources freed).
+//
+// Use cases (Plan 44 Этап 0):
+// - Smoke test что infrastructure работает.
+// - Diagnostic поверх runtime'а (worker counts, current id).
+//
+// **Не предназначен для production использования** в Этапе 0 — bootstrap
+// scheduler не параметризован per-worker libuv loop (Plan 45+).
+
+module std.runtime.runtime
+
+
+// ─── runtime namespace ──────────────────────────────────────────
+
+// Initialize M:N runtime с N worker threads. n=0 → auto-detect через
+// `uv_available_parallelism()`. Idempotent — повторный вызов no-op.
+//
+// Effects: spawns N OS threads. Each worker имеет:
+//   - own libuv event loop;
+//   - own fiber scope (worker-local push queue);
+//   - own fiber arena (Plan 41 Linux/macOS — lazily init per thread).
+export external fn runtime.init(n: int) -> ()
+
+// Graceful shutdown — signal stop, join workers, free resources.
+// После shutdown повторный init() стартует новые workers.
+export external fn runtime.shutdown() -> ()
+
+// Number of currently running workers. 0 если runtime не initialized.
+export external fn runtime.worker_count() -> int
+
+// Whether M:N runtime is active. Used для conditional code paths
+// (например, в тестах что branched на single-thread vs M:N behavior).
+export external fn runtime.is_initialized() -> bool
+
+// Current worker ID (0..n_workers-1) или -1 если вызвано из main thread.
+// Useful для diagnostic — на каком worker'е выполняется fiber.
+export external fn runtime.current_worker_id() -> int
