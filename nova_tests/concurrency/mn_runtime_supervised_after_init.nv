@@ -1,0 +1,59 @@
+// Plan 44.6 Layer 3 regression: supervised + spawn на main thread после
+// runtime.init.
+//
+// Под Layer 3 main-thread fiber'ы продолжают исполняться на main scope
+// (workers idle — Nova-side distribution через workers — это Plan 44.7).
+// Этот тест verify что supervised + Time.sleep в fiber'ах продолжают
+// работать корректно когда workers крутятся в background.
+//
+// Поведение должно быть **identical** behavior без runtime.init —
+// workers только idle на uv_run, никаких interference с main scope.
+
+module nova_tests.concurrency.mn_runtime_supervised_after_init
+
+test "supervised with sleeping spawn after init(2)" {
+    runtime.init(2)
+
+    let mut counter = 0
+    supervised {
+        spawn {
+            Time.sleep(5)
+            counter = counter + 1
+        }
+        spawn {
+            Time.sleep(5)
+            counter = counter + 10
+        }
+        spawn {
+            Time.sleep(5)
+            counter = counter + 100
+        }
+    }
+    assert(counter == 111)
+
+    runtime.shutdown()
+}
+
+test "nested supervised + spawn после init(4)" {
+    runtime.init(4)
+
+    let mut sum = 0
+    supervised {
+        spawn {
+            supervised {
+                spawn {
+                    Time.sleep(3)
+                    sum = sum + 1
+                }
+                spawn {
+                    Time.sleep(3)
+                    sum = sum + 2
+                }
+            }
+            sum = sum + 4
+        }
+    }
+    assert(sum == 7)
+
+    runtime.shutdown()
+}
