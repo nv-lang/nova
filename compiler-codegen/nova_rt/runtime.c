@@ -34,10 +34,14 @@ struct NovaWorker {
     uv_thread_t       thread;
     uv_loop_t         loop;
     uv_async_t        wake_handle;
+    /* Plan 44.5 Layer 2: Chase-Lev deque вместо mutex+scope push.
+     * Lock-free owner ops, lock-free CAS steals. */
+    NovaDeque         deque;
+    /* scope остаётся для cancellation propagation и fiber bookkeeping —
+     * но fiber dispatch идёт через deque. */
     NovaFiberQueue    scope;
-    nova_mutex_t      queue_mu;
     nova_atomic_bool  stop;
-    nova_atomic_int   pending_count;  /* fibers waiting в queue */
+    nova_atomic_int   pending_count;
 };
 
 /* ── Runtime state ─────────────────────────────────────────────── */
@@ -81,64 +85,50 @@ static void _worker_main(void* arg) {
     _nova_active_slot  = -1;
 
     while (!nova_abool_load(&w->stop)) {
-        /* (1) Drain ready fibers без global event-loop dependency.
-         * Plan 44.1 (Plan 44 Этап 0): simple drain — supports CPU-bound fibers только.
-         * Yielding fibers (Time.sleep, Channel.recv) требуют param'ed
-         * nova_supervised_run — Plan 45. */
-        bool did_work = false;
-        nova_mutex_lock(&w->queue_mu);
-        int n = w->scope.count;
-        nova_mutex_unlock(&w->queue_mu);
-        if (n > 0) {
-            for (int i = 0; i < n; i++) {
-                mco_coro* co;
-                nova_mutex_lock(&w->queue_mu);
-                co = (i < w->scope.count) ? w->scope.fibers[i] : NULL;
-                nova_mutex_unlock(&w->queue_mu);
-                if (!co) continue;
-                if (mco_status(co) == MCO_SUSPENDED) {
-                    _nova_active_slot = i;
-                    mco_resume(co);
-                    did_work = true;
-                }
-                if (mco_status(co) == MCO_DEAD) {
-                    mco_destroy(co);
-                    nova_mutex_lock(&w->queue_mu);
-                    /* Mark slot empty by setting fiber=NULL. Compaction
-                     * — TODO; для PoC просто NULL'им. */
-                    if (i < w->scope.count) {
-                        w->scope.fibers[i] = NULL;
-                    }
-                    nova_mutex_unlock(&w->queue_mu);
-                }
+        mco_coro* co = NULL;
+
+        /* (1) Local deque — owner LIFO pop. Wait-free hot path. */
+        co = (mco_coro*)nova_deque_pop(&w->deque);
+
+        /* (2) Idle — try steal у соседей (FIFO from their deque top). */
+        if (!co) {
+            for (int i = 0; i < _n_workers; i++) {
+                if (i == w->id) continue;
+                co = (mco_coro*)nova_deque_steal(&_workers[i].deque);
+                if (co) break;
             }
-            _nova_active_slot = -1;
-            /* Compact scope: remove NULL entries. */
-            nova_mutex_lock(&w->queue_mu);
-            int wi = 0;
-            for (int i = 0; i < w->scope.count; i++) {
-                if (w->scope.fibers[i]) {
-                    if (wi != i) {
-                        w->scope.fibers[wi] = w->scope.fibers[i];
-                        w->scope.fiber_ctx[wi] = w->scope.fiber_ctx[i];
-                    }
-                    wi++;
-                }
-            }
-            w->scope.count = wi;
-            nova_mutex_unlock(&w->queue_mu);
         }
 
-        /* (2) Idle — block в libuv до wake_handle (cross-worker push). */
-        if (!did_work) {
+        /* (3) Still nothing — block в libuv (own loop) до cross-worker wake. */
+        if (!co) {
             uv_run(&w->loop, UV_RUN_ONCE);
+            continue;
+        }
+
+        /* (4) Run fiber. */
+        if (mco_status(co) == MCO_SUSPENDED) {
+            mco_resume(co);
+        }
+        if (mco_status(co) == MCO_DEAD) {
+            mco_destroy(co);
+        } else if (mco_status(co) == MCO_SUSPENDED) {
+            /* Yielded — re-push в own deque. */
+            nova_deque_push(&w->deque, co);
         }
     }
 
-    /* Cleanup — drain remaining. */
+    /* Cleanup — drain remaining items в deque. */
+    while (true) {
+        mco_coro* co = (mco_coro*)nova_deque_pop(&w->deque);
+        if (!co) break;
+        if (mco_status(co) == MCO_SUSPENDED) {
+            mco_resume(co);
+        }
+        if (mco_status(co) == MCO_DEAD) {
+            mco_destroy(co);
+        }
+    }
     _nova_active_slot = -1;
-
-    /* No GC unregister — мы не регистрировали (см. note выше). */
 }
 
 /* ── Init / shutdown ──────────────────────────────────────────── */
@@ -171,10 +161,14 @@ void nova_runtime_init(int n_workers) {
     for (int i = 0; i < n_workers; i++) {
         NovaWorker* w = &_workers[i];
         w->id = i;
-        nova_mutex_init(&w->queue_mu);
         nova_abool_init(&w->stop, false);
         nova_aint_init(&w->pending_count, 0);
         nova_scope_init(&w->scope);
+        /* Plan 44.5 Layer 2: per-worker Chase-Lev deque. */
+        if (!nova_deque_init(&w->deque, 64)) {
+            fprintf(stderr, "nova: deque_init failed\n");
+            abort();
+        }
 
         int rc = uv_loop_init(&w->loop);
         if (rc != 0) {
@@ -226,7 +220,7 @@ void nova_runtime_shutdown(void) {
         /* Run one more tick to process close. */
         uv_run(&w->loop, UV_RUN_NOWAIT);
         uv_loop_close(&w->loop);
-        nova_mutex_destroy(&w->queue_mu);
+        nova_deque_destroy(&w->deque);
     }
 
     free(_workers);
@@ -254,9 +248,22 @@ void nova_runtime_spawn_global(void (*entry)(mco_coro*), void* user) {
     int idx = (int)((uint32_t)nova_aint_inc(&_round_robin) % (uint32_t)_n_workers);
     NovaWorker* target = &_workers[idx];
 
-    nova_mutex_lock(&target->queue_mu);
-    nova_fiber_spawn_into(&target->scope, entry, user);
-    nova_mutex_unlock(&target->queue_mu);
+    /* Plan 44.5 Layer 2: create mco_coro + push в target's deque.
+     * nova_fiber_spawn_into push'ит в scope arrays, но мы хотим в deque.
+     * Использую low-level mco_create + manual deque push. */
+    mco_desc desc = _NOVA_MCO_DESC_INIT(entry);
+    desc.user_data = user;
+    mco_coro* co = NULL;
+    mco_result r = mco_create(&co, &desc);
+    if (r != MCO_SUCCESS || co == NULL) {
+        fprintf(stderr, "nova: runtime_spawn_global: mco_create failed (%d)\n", (int)r);
+        abort();
+    }
+    if (!nova_deque_push(&target->deque, co)) {
+        fprintf(stderr, "nova: runtime_spawn_global: deque_push failed\n");
+        mco_destroy(co);
+        abort();
+    }
 
     nova_aint_inc(&target->pending_count);
     uv_async_send(&target->wake_handle);
