@@ -8393,3 +8393,63 @@ verified) отвергнуто** по причине «программист б
 4. Per-module incremental rebuild (K).
 5. `internal/` unified с folder-module (H).
 6. `_test.nv` + capability inheritance из module (F+I combo).
+
+---
+
+## Сессия 2026-05-13: Production audit R8 + improvements
+
+Запрошен фундаментальный production-grade аудит Plans 40 + 41 с
+сравнением vs Go runtime, Tokio mpsc, crossbeam. Через 3 параллельных
+subagent reviews найдены 4 P0 + 5 P1 bugs.
+
+### Применённые fixes (commits 6cb4b6496a, 588e9612ea, ed19489c05)
+
+**Plan 40 audit R8:**
+- P40R8-1 (P0): NovaAfterState → malloc/free вместо nova_alloc. **Решает
+  Windows boundary ~35 SEGV** (Boehm conservative scan на Windows calloc
+  fiber stacks был root cause). Восстановлен 50-iter select_timer_cleanup
+  (был downsized до 25). Убирает M:N race на pin list.
+- P40R8-3 (P0): nova_select_park retry try_immediate перед can_unblock
+  check. Lost wake под M:N concurrent send.
+- P40R8-5 (P1): Fisher-Yates seed + atomic counter. Same compound literal
+  ctx address в loop иначе = same shuffle order = starvation.
+- P40R8-4 (P1): stack-allocated BaseWaiter для plain recv/send на
+  Linux/macOS (Windows fallback на nova_alloc). **Nova unique advantage**
+  над Go: minicoro fixed fiber stacks → stack-pinned waiter ОК; Go не
+  может из-за moving goroutine stacks. Zero alloc per park = 6.4 MB/s
+  GC garbage saved под 100k req/s.
+
+**Plan 41 audit:**
+- P41R-1 (P0): _registered_high_water → static __thread. Без TLS под M:N
+  thread B пропускал свою Boehm root regstration → UAF.
+- P41R-4 (P1): 32-bit address space downscale (64 slots vs 4096).
+- P41R-5 (P1): Guard size 4 KB → 16 KB. CVE-2017-1000366 stack-clash.
+- P41-6 (P1, deferred → закрыт): SIGSEGV pretty handler для guard hits.
+  'Fiber stack overflow in slot N' вместо generic segfault.
+
+### Plan 43 — открытый
+
+Попытка реализовать Windows fiber arena (symmetric с Linux). 2 неудачные
+попытки:
+1. VEH page-level lazy commit — Boehm conservative scan touches uncommitted
+   pages → VEH committs все → RSS thrash.
+2. Slot-level lazy commit — 2 MB per fiber × N parallel tests упирается
+   в Windows commit charge limit.
+
+Cleanup полный, Windows остаётся на calloc + Plan 40 R8-1 workaround.
+Plan 43 docs описывают next-attempt path (CreateFiber API, smaller slots
++ chaining).
+
+### False alarms (документировано):
+- P41R-2 (atomic bitmap): _t_arena __thread, no race.
+- P40R8-2 (ARM64 fired ordering): __ATOMIC_ACQUIRE pairing correct.
+- P40R8-7 (redundant fence): pairs с release-dec other threads.
+
+### Open improvements (Plan 40 round 9 / Plan 41 backlog)
+
+- P40R8-6: sendDirect type-pun через nova_int — **TIME-BOMB** для T-generic.
+- P41R-3: MADV_DONTNEED decay queue (mmap_sem contention).
+
+### Регрессия
+
+263 PASS / 0 FAIL Windows. Linux Docker всё ключевое PASS.
