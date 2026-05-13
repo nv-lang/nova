@@ -5996,3 +5996,50 @@ free statements), пересмотреть. Сейчас bootstrap std/* не и
 (per-file capability), не дублирующий fn-body block. Это
 legitimate новое feature без syntax overlap.
 
+
+
+## Plan 44.5 Layer 5: park/wake migration к worker scope — отложено
+
+**Что упрощено.** Plan 44.5 Layer 5 закрыл implicit M:N для **compute-only**
+spawn body (без Time.sleep / Channel.recv). Workers actually выполняют
+fiber bodies через codegen routing на `nova_runtime_spawn_into`. Mut-captured
+scalars writeable cross-thread (race-free если each fiber writes own slot).
+
+Park/wake API сейчас (scope, slot)-keyed: `nova_sched_park(scope, slot)`
+читает `scope->sched_state->parked[slot]`. Worker fiber имеет
+`_nova_active_slot = -1` (worker_main не allocates slot). При Time.sleep
+вызывается `_nova_sleep_via_libuv(scope, -1, ms)` → register_pending fails
+guard `_nova_active_slot < 0` → FATAL D92 invariant violated.
+
+**Почему НЕ исправлять сейчас.** Proper park/wake migration требует:
+1. Per-fiber NovaSchedState struct (а не scope-array indexed by slot).
+2. TLS-swap в codegen entry function — set `_nova_active_scope` к parent
+   и аллоцировать slot в scope.
+3. Worker_main loop integration: status check after mco_resume, hold
+   parked fibers, wake from libuv callback.
+4. Fiber pinning to home worker (Go's `LockOSThread` analog) — anti-
+   migration для consistency park/wake handles thread-bound.
+
+Это ~600-1000 LOC значимой работы. Сделать всё в одной сессии =
+high risk regression. Honest partial closure: compute-only Layer 5
+дает user benefit (workers actually работают), park/wake migration =
+следующий milestone.
+
+**Long-term path.** Реализация Go's g/m state separation:
+- Per-fiber state struct (NovaFiberState analog к Go's `g`).
+- TLS только current_fiber pointer (Go's `getg()`).
+- На dispatch: TLS становится cache от current_fiber->fields.
+- На park: copy back в fiber state перед yield.
+
+Memory updated: `feedback_mn_runtime_go_reference.md` — для всей M:N
+работы первым делом research Go runtime, не изобретать.
+
+**Что НЕ упрощено.** Compute-only Layer 5 sufficient для:
+- Pure CPU workloads (parallel computation, map-reduce).
+- Workers actually distributing work (proven через
+  `mn_runtime_actual_workload.nv` / `runtime.current_worker_id()`).
+- Cross-worker `first_error_atomic` propagation.
+- Scope.pending_remote tracking + main thread wait через uv_async_send.
+
+Это honest scope split — fundamental compute parallelism отделён от
+park/wake migration ergonomics.

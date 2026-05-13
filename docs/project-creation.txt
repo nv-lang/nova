@@ -9028,3 +9028,98 @@ feedback_release_builds.md). Migration lightly увеличивает разме
 генерируемого C-кода (длиннее prelude/runtime references) → wider race
 window. Workaround `--jobs 8` достаточен.
 
+
+
+## Сессия 2026-05-14: Plan 44.5 Layer 5 partial — implicit M:N через codegen routing
+
+**Контекст.** После merge 44.6 → 44.5 (предыдущая сессия), осталось закрыть
+Layer 5 — actual workload distribution. Original Plan 44.5 acceptance
+требовал 3 mn_runtime workload tests + parallelism speedup.
+
+**Approach A (implicit M:N, Go-style)** — выбран после feedback'а
+пользователя «в go это решается автоматически». Изначально я предложил
+explicit `runtime.spawn { body }` syntax (Approach B), но это degraded UX
+относительно Go's `go func()`. Реально правильное решение — implicit:
+один и тот же `spawn { body }` работает в single-thread и distributed.
+
+### Реализация
+
+**Runtime (commit 7a97df1fbd5):**
+- `NovaFiberQueue.pending_remote` (atomic int) + `first_error_atomic`
+  (atomic ptr). Patterns directly from Go's `sync.WaitGroup` (counter)
+  и `errgroup.errOnce.Do` (first-writer-wins error).
+- `_main_wake` uv_async_t handle на nova_evloop() — workers сигналят
+  main thread'а после fiber complete (cross-thread wake).
+- `nova_runtime_spawn_into(scope, entry, user)` — public M:N API:
+  increment scope.pending_remote перед push к worker deque (release
+  ordering чтобы main видел counter > 0 до того как worker начнёт fiber).
+- `nova_aptr_init/load/cas` в sync.h — minimal atomic pointer API.
+
+**Codegen (commit 58201dc150a):**
+- `SpawnCtx._nova_parent_scope` field added (replaces dummy padding).
+- `emit_spawn` эмитит conditional `if (nova_runtime_is_initialized()) ...`
+  routing к spawn_into (M:N) или fiber_spawn_into (single-thread).
+- Entry function: catch branch для remote делает atomic CAS на parent's
+  first_error_atomic (single-thread — old report_error path); post-catch
+  cleanup decrements pending_remote + signal_main wake.
+- One-line decrement (Go's `defer Done` pattern) — единая точка exit.
+
+### Critical bug found via Agent #1 + #2 (Go research)
+
+**38 timeouts в first attempt** были вызваны single root cause:
+`nova_runtime_is_initialized` declared только в `runtime.h`, который
+не был включён в `nova_rt.h`. Generated test code включал nova_rt.h
+но не runtime.h → implicit-int declaration → ABI mismatch (function
+returns bool, caller treats as int) → garbage return value → branch
+к M:N path вместо single-thread → underflow pending_remote → infinite
+loop в supervised_run wait.
+
+**Fix:** добавить `#include "runtime.h"` в `nova_rt.h`. Single-thread
+baseline восстановлен мгновенно (276/277 → 277/277 → 278/278 with new
+test).
+
+**Lesson learned:** ALL public API declarations используемые codegen'ом
+МУСТ быть accessible через `nova_rt.h`. Implicit declarations — silent
+bug source, особенно в C где return type важен для register handling.
+Memory updated: `feedback_mn_runtime_go_reference.md` — Go research
+для всей M:N работы.
+
+### Honest scope limit
+
+Park/wake migration к worker scope (Time.sleep / Channel.recv в worker
+fiber'е) НЕ закрыт. Worker fiber имеет `_nova_active_slot = -1` (worker
+не set'ит slot перед mco_resume). При Time.sleep — abort с D92 invariant
+violated. Решение требует TLS-swap entry function + slot allocation в
+worker scope (Go's g/m state separation pattern из Agent #2 research) —
+significant refactor, отдельный milestone.
+
+Layer 5 partial: compute-only spawn'ы (без park) actually parallelize.
+Тесты:
+- `mn_runtime_supervised_after_init.nv` — 4-worker spawn dispatch с
+  mut-captured int writes (race-free).
+- `mn_runtime_actual_workload.nv` — 16 fibers, distribution verified
+  через `runtime.current_worker_id()` histogram (>= 2 distinct
+  workers used).
+
+### Insights
+
+**1. Implicit-int C declaration — silent ABI killer.** C99 allows
+implicit declarations с warning, не error. Returns int regardless of
+actual signature. Для bool-returning function — мостly ОК но conditional
+branch logic depends on full int value. fall through к non-zero path
+если upper bytes garbage. Always include declarations explicitly.
+
+**2. Agent research как accelerator.** Pre-implementation research через
+Agent (Go's WaitGroup/errgroup, scheduler g/m state) дал блокирующие
+insights в 10 минут что я бы потратил часа на trial-and-error. Память
+updated: `feedback_mn_runtime_go_reference.md`.
+
+**3. Implicit > explicit для concurrency primitives.** Один `spawn`
+работает в обоих режимах — Go pattern. Explicit `runtime.spawn` для
+M:N это API rot (программист must помнить which to use). Spec обещает
+прозрачность M:N (D71); implementation должен это отражать.
+
+**4. Honest partial closure > scope creep.** Park/wake migration —
+большой refactor (~600-1000 LOC + careful slot/TLS work). Закрытие
+compute-only Layer 5 как partial milestone — honest, оставляет clean
+checkpoint, открывает possibility разработки в next session.

@@ -2891,16 +2891,41 @@ Practical implication: long-running fiber на worker A блокирует worke
 
 ### Bootstrap-status
 
-- ✅ TLS infrastructure (Plan 44.6 Этап 6.1)
-- ✅ `_worker_main` set TLS (Plan 44.6 Этап 6.2)
+**Layer 3 (TLS loop) — Plan 44.5 L3 (originally Plan 44.6, re-merged):**
+- ✅ TLS infrastructure (eventloop.h+c)
+- ✅ `_worker_main` set TLS (runtime.c)
 - ✅ Replace `nova_evloop()` → `nova_current_loop()` в fibers/channels
-  (Plan 44.6 Этап 6.3)
 - ✅ Regression: 274/274 single-thread baseline сохранён
-- ✅ Plan 44.6 regression: 3 mn_runtime regression-теста (PASS)
-- ⏸ Nova-side workload distribution (codegen `emit_supervised`
-  routing к `runtime.spawn_global` под `runtime.is_initialized()`) —
-  Plan 44.7
-- ⏸ Cross-worker fiber error propagation (parent scope's `first_error`
-  через atomic / mutex) — Plan 44.7
+- ✅ 3 mn_runtime regression-теста PASS
+
+**Layer 5 (implicit M:N — codegen routing) — Plan 44.5 L5 partial (2026-05-14):**
+- ✅ Runtime atomics: `pending_remote` (Go's WaitGroup pattern) +
+  `first_error_atomic` (Go's errgroup.errOnce pattern) + `_main_wake`
+  uv_async + `nova_runtime_spawn_into` + `nova_runtime_signal_main`.
+- ✅ Codegen routing: `emit_spawn` эмитит conditional
+  `if (runtime_is_initialized) nova_runtime_spawn_into else nova_fiber_spawn_into`.
+  Один и тот же `spawn { body }` работает single-thread и distributed
+  (Go's `go func()` model).
+- ✅ Cross-worker error propagation через atomic CAS на parent's
+  `first_error_atomic` (first-writer-wins).
+- ✅ `mn_runtime_actual_workload.nv` PASS — 16 fibers распределены на
+  4 workers через `runtime.current_worker_id()` distribution
+  (round-robin, не all одного worker'а).
+- ✅ 278/278 PASS Windows.
+
+**Critical fix:** `runtime.h` включён в `nova_rt.h` явно. Без этого
+codegen использовал implicit-int declaration для
+`nova_runtime_is_initialized` → ABI mismatch (bool vs int) → garbage
+return → wrong code path → underflow `pending_remote` → infinite loop
+(38 timeout'ов в первой попытке Plan 44.5 L5).
+
+**Open:**
+- ⏸ Park/wake migration к worker scope (Time.sleep / Channel.recv в
+  worker fiber'е). Worker не имеет slot для park/wake — abort. Требует
+  TLS-swap entry function + slot allocation в worker scope (Go's g/m
+  state separation: per-fiber state struct, current fiber pointer в TLS,
+  TLS becomes cache от current_fiber->fields). Significant refactor —
+  следующий milestone.
+- ⏸ Linux Docker validation Plan 44.5 L5 — требует Docker daemon.
 - ⏸ Linux Docker validation Plan 44.6 — требует Docker daemon
 
