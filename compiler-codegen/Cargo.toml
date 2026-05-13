@@ -14,6 +14,18 @@ path = "src/main.rs"
 name = "nova_codegen"
 path = "src/lib.rs"
 
+[features]
+# Default — без внешних SMT-зависимостей (TrivialBackend).
+# `z3-backend` подключает libz3 через vcpkg (см. compiler-codegen/build.rs +
+# vcpkg.json). Plan 33 Z3 milestone: закрывает V1 simplification.
+#
+# FFI bindings — собственные (в src/verify/backend/z3_ffi.rs), без
+# external `z3`/`z3-sys` crate. Это удерживает Cargo dep-tree
+# минимальным (см. feedback_third_party_libs: обёртки только в наших
+# файлах) и позволяет точно контролировать linkage через build.rs.
+default = []
+z3-backend = []
+
 [dependencies]
 # Минимум зависимостей. Bootstrap должен собираться с пустым lockfile
 # на любой stable Rust 1.85+.
