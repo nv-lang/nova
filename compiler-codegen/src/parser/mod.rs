@@ -1004,18 +1004,22 @@ impl Parser {
         //     bound (D72) и тип-значение.
         // Codegen эмитит vtable только для Effect-kind. BoundCtx
         // (D72 enforcement) регистрирует только Protocol-kind.
+        // Plan 33.3 Ф.9: axioms собираются внутри effect-блока (после
+        // методов и pure_view-объявлений). Для protocol — всегда пусто.
+        let mut effect_axioms: Vec<EffectAxiom> = Vec::new();
         let kind = match self.peek().kind {
             TokenKind::KwEffect => {
                 self.bump();
                 self.expect(&TokenKind::LBrace)?;
-                let methods = self.parse_effect_methods()?;
+                let methods = self.parse_effect_methods(/* allow_pure_view */ true)?;
+                effect_axioms = self.parse_effect_axioms()?;
                 self.expect(&TokenKind::RBrace)?;
                 TypeDeclKind::Effect(methods)
             }
             TokenKind::KwProtocol => {
                 self.bump();
                 self.expect(&TokenKind::LBrace)?;
-                let methods = self.parse_effect_methods()?;
+                let methods = self.parse_effect_methods(/* allow_pure_view */ false)?;
                 self.expect(&TokenKind::RBrace)?;
                 TypeDeclKind::Protocol(methods)
             }
@@ -1082,6 +1086,7 @@ impl Parser {
             kind,
             span,
             invariants,
+            axioms: effect_axioms,
         })
     }
 
@@ -1198,10 +1203,27 @@ impl Parser {
         Ok(variants)
     }
 
-    fn parse_effect_methods(&mut self) -> Result<Vec<EffectMethod>, Diagnostic> {
+    fn parse_effect_methods(&mut self, allow_pure_view: bool) -> Result<Vec<EffectMethod>, Diagnostic> {
         let mut methods = Vec::new();
         self.skip_newlines();
         while !matches!(self.peek().kind, TokenKind::RBrace) {
+            // Plan 33.3 Ф.9: `axiom <name>(...) => <formula>` обрабатывается
+            // отдельной функцией. Останавливаемся как только видим `axiom`.
+            // Также pure_view-prefix считывается ниже.
+            if let TokenKind::Ident(n) = &self.peek().kind {
+                if n == "axiom" { break; }
+            }
+            // pure_view-prefix: контекстный keyword (effect-only).
+            let op_kind = if let TokenKind::Ident(n) = &self.peek().kind {
+                if allow_pure_view && n == "pure_view" {
+                    self.bump();
+                    EffectOpKind::PureView
+                } else {
+                    EffectOpKind::Operation
+                }
+            } else {
+                EffectOpKind::Operation
+            };
             let (name, name_span) = self.parse_ident()?;
             // Plan 15 (D72): generics — declaration form с optional bounds.
             let generics: Vec<GenericParam> = if matches!(self.peek().kind, TokenKind::LBracket) {
@@ -1226,6 +1248,15 @@ impl Parser {
                 None
             };
             let end = self.tokens[self.pos.saturating_sub(1)].span;
+            // Plan 33.3 Ф.9: pure_view обязан иметь return type
+            // (что-то наблюдать). Без `-> R` объявление бессмысленно.
+            if op_kind == EffectOpKind::PureView && return_type.is_none() {
+                return Err(Diagnostic::new(
+                    "`pure_view` operation must declare a return type \
+                     (`-> <Type>`); without it it observes nothing",
+                    name_span.merge(end),
+                ));
+            }
             methods.push(EffectMethod {
                 name,
                 generics,
@@ -1233,10 +1264,55 @@ impl Parser {
                 effects,
                 return_type,
                 span: name_span.merge(end),
+                kind: op_kind,
             });
             self.skip_newlines();
         }
         Ok(methods)
+    }
+
+    /// Plan 33.3 Ф.9: `axiom <name>(binders) => <formula>` внутри effect-блока.
+    ///
+    /// `binders` — список идентификаторов без типов (V1; типы выводятся
+    /// из usage). `formula` — обычное Nova-выражение типа `bool`.
+    /// Семантика: глобальное assert'ение, видимое во всех контрактах
+    /// где импортирован эффект.
+    fn parse_effect_axioms(&mut self) -> Result<Vec<EffectAxiom>, Diagnostic> {
+        let mut axioms = Vec::new();
+        self.skip_newlines();
+        loop {
+            let is_axiom = matches!(
+                &self.peek().kind,
+                TokenKind::Ident(n) if n == "axiom"
+            );
+            if !is_axiom { break; }
+            let start = self.peek().span;
+            self.bump(); // consume `axiom`
+            let (ax_name, _) = self.parse_ident()?;
+            self.expect(&TokenKind::LParen)?;
+            let mut binders: Vec<String> = Vec::new();
+            while !matches!(self.peek().kind, TokenKind::RParen) {
+                let (b, _) = self.parse_ident()?;
+                binders.push(b);
+                if self.eat(&TokenKind::Comma).is_none() {
+                    break;
+                }
+                self.skip_newlines();
+            }
+            self.expect(&TokenKind::RParen)?;
+            // `=>` обязателен. Однострочное `axiom name() => expr`.
+            self.expect(&TokenKind::FatArrow)?;
+            let formula = self.parse_expr()?;
+            let span = start.merge(formula.span);
+            axioms.push(EffectAxiom {
+                name: ax_name,
+                binders,
+                formula,
+                span,
+            });
+            self.skip_newlines();
+        }
+        Ok(axioms)
     }
 
     // ─── let / const / test ──────────────────────────────────────────────
