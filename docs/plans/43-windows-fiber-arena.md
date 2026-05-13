@@ -423,3 +423,72 @@ Plan 43 — **3 неудачные попытки**. Bootstrap running OK на W
 calloc + Plan 40 R8-1 workaround. **Приоритет ниже Plan 23** —
 вернёмся когда Windows production станет realistic, либо когда есть
 time для minicoro backend investigation.
+
+---
+
+## Investigation findings (2026-05-13, post attempt 3)
+
+Проверил `minicoro.h` Windows backend selection:
+
+```c
+#if defined(_WIN32)
+    #if (defined(__GNUC__) && defined(__x86_64__)) || (defined(_MSC_VER) && defined(_M_X64))
+      #define MCO_USE_ASM       // ← Windows x64 + clang/MSVC
+    #else
+      #define MCO_USE_FIBERS    // ← Windows ARM или 32-bit
+    #endif
+```
+
+**Windows x64 + clang → `MCO_USE_ASM`**, не fibers. Значит `alloc_cb` и
+`dealloc_cb` работают symmetric с Linux. **Это НЕ root cause attempt 3 fail.**
+
+minicoro alloc lifecycle:
+```c
+mco_coro* co = desc->alloc_cb(desc->coro_size, ...);
+// ... use co ...
+co->dealloc_cb(co, co->coro_size, ...);
+```
+
+`desc->coro_size` = `sizeof(mco_coro) + align(stack_size, 16) + storage_size`.
+Тот же ptr возвращается из alloc, передаётся в dealloc. **Linux работает
+с теми же арифметикой** — slots correctly tracked.
+
+### Реальная hypothesis attempt 3
+
+Возможный root cause не в alloc API contract, а в **VirtualFree(MEM_DECOMMIT)
+semantics во время context switch**. minicoro destroy lifecycle:
+
+1. fiber done → caller resume yield → minicoro переключает CPU stack
+   обратно на caller stack.
+2. caller вызывает `mco_destroy(co)` → `co->dealloc_cb(co, size, ...)`.
+3. Наш dealloc → `_arena_mark_slot_free` → `slots_active--`.
+4. Если `slots_active == 0` → `VirtualFree(MEM_DECOMMIT)`.
+
+На шаге 4 Windows может всё ещё tracking finished fiber stack через
+internal kernel structures (TIB metadata, exception unwind tables).
+DECOMMIT в этот момент **может corrupt** kernel-side state, hence
+TIMEOUTs (deadlock в kernel) или memory issues.
+
+Linux munmap/madvise не имеет аналогичной kernel-tracked stack metadata,
+поэтому MADV_DONTNEED после dealloc безопасно.
+
+### Path для attempt 4 (если возьмёмся)
+
+1. **Убрать decommit совсем.** Slots reuse через bitmap; physical memory
+   committed permanently. Trade-off: peak commit charge = slots_count
+   × slot_size = 1 GB (256 KB × 4096). На Windows 16 GB RAM machine
+   acceptable; на CI runner возможно tight.
+
+2. **Verify dealloc lifecycle через fprintf** logging. Add `fprintf(stderr,
+   "dealloc slot=%zu, slots_active=%zu\n", ...)` чтобы убедиться, что
+   slot index computed correctly и counter behaves expected.
+
+3. **Test через single test первого** (`nova_tests/concurrency/main_yield.nv` —
+   simple spawn) перед full regression. Easier to debug single failure.
+
+### Open conclusion
+
+Plan 43 — **3 неудачные попытки, открыт** для focused investigation
+session. Bootstrap working OK через Windows calloc path. Plan 23 M:N
+prerequisites закрыты на Linux/macOS — Windows может оставаться на
+bootstrap-grade path пока не возникнет реальной production needs.
