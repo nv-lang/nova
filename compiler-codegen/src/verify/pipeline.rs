@@ -383,6 +383,98 @@ impl Default for VerificationPipeline {
     fn default() -> Self { Self::new() }
 }
 
+/// Plan 33.3 Ф.9.5: проверка consistency axiom'ов модуля.
+///
+/// Для каждого эффекта с axioms создаётся изолированный backend, в нём
+/// объявляются все pure_view UFs эффекта, asserted все axioms, затем
+/// `check_sat`. Если UNSAT — axioms together implication False →
+/// **compile error** «axioms inconsistent».
+///
+/// SAT или Unknown — OK. TrivialBackend всегда даёт Unknown для
+/// quantified-axioms (нет reasoning'а над Forall), что трактуется как
+/// «не доказано inconsistent» — silent fallback.
+///
+/// Возвращает diagnostic'и (пустой Vec если всё consistent).
+pub fn check_axiom_consistency(module: &Module) -> Vec<Diagnostic> {
+    let mut diagnostics = Vec::new();
+    let pure_views = collect_pure_views(module);
+
+    // Группируем axioms по effect-name.
+    let mut axioms_by_effect: std::collections::HashMap<String, Vec<(&crate::ast::TypeDecl, Vec<&crate::ast::EffectAxiom>)>>
+        = std::collections::HashMap::new();
+    for item in &module.items {
+        let Item::Type(td) = item else { continue };
+        if !matches!(td.kind, TypeDeclKind::Effect(_)) { continue }
+        if td.axioms.is_empty() { continue }
+        let entry = axioms_by_effect.entry(td.name.clone()).or_default();
+        let axiom_refs: Vec<&crate::ast::EffectAxiom> = td.axioms.iter().collect();
+        entry.push((td, axiom_refs));
+    }
+
+    let pipeline = VerificationPipeline::new();
+
+    for (_effect_name, effect_group) in &axioms_by_effect {
+        for (td, axiom_refs) in effect_group {
+            let mut backend = pipeline.create_backend();
+
+            // Pre-declare ВСЕ pure_view UFs модуля (могут ссылаться cross-effect
+            // в формулах — V1 ограничивает one-effect-axioms, но безопаснее
+            // pre-decl'ить всё).
+            for (op_name, sig) in &pure_views {
+                let uf = super::encode::pure_view_uf_name(&sig.effect_name, op_name);
+                backend.declare_function(&uf, &sig.param_sorts, sig.return_sort.clone());
+            }
+
+            // Assert все axioms эффекта.
+            let mut some_encoded = false;
+            for ax in axiom_refs {
+                let info = AxiomInfo {
+                    effect_name: td.name.clone(),
+                    axiom_name: ax.name.clone(),
+                    binders: &ax.binders,
+                    formula: &ax.formula,
+                };
+                if let Some(formula) = encode_axiom(&info, &pure_views) {
+                    backend.assert(Assertion {
+                        formula,
+                        label: Some(format!("axiom@{}.{}", td.name, ax.name)),
+                    });
+                    some_encoded = true;
+                }
+            }
+
+            // Если ни один axiom не encoded — нечего проверять.
+            if !some_encoded { continue; }
+
+            // check_sat. Unsat → inconsistent.
+            match backend.check_sat() {
+                SatResult::Unsat(_) => {
+                    diagnostics.push(Diagnostic::new(
+                        format!(
+                            "axioms of effect `{}` are inconsistent: their conjunction \
+                             entails `false`. Z3 cannot find any model satisfying all \
+                             axioms simultaneously. Suggestions:\n  \
+                             1. Review axiom bodies for unintended contradiction \
+                                (e.g. `balance(id) >= 0` AND `balance(id) < 0`);\n  \
+                             2. If axioms intentionally over-constrain (impossible \
+                                effect), mark effect `#trusted` and split into \
+                                consistent subset.",
+                            td.name,
+                        ),
+                        td.span,
+                    ));
+                }
+                _ => {
+                    // SAT или Unknown — axioms consistent (или TrivialBackend
+                    // не reasoning'ует — silent OK).
+                }
+            }
+        }
+    }
+
+    diagnostics
+}
+
 /// Substitute `_old_<x>` → `<x>` (33.1: no mut, snapshot trivial).
 fn substitute_old(t: &SmtTerm) -> SmtTerm {
     match t {
@@ -473,6 +565,20 @@ fn unknown_to_diag_message(reason: UnknownReason) -> String {
 pub fn verify_module(module: &Module) -> ModuleVerifyReport {
     let pipeline = VerificationPipeline::new();
     let mut report = ModuleVerifyReport::default();
+
+    // Plan 33.3 Ф.9.5: проверка consistency axiom'ов до per-fn verify.
+    // Если axioms эффекта inconsistent (Z3 → UNSAT) → compile-error,
+    // skip всех остальных verify'ев (любая formula тривиально доказуема
+    // под inconsistent assumptions).
+    let inconsistency_errors = check_axiom_consistency(module);
+    let has_inconsistent_axioms = !inconsistency_errors.is_empty();
+    for e in inconsistency_errors {
+        report.errors.push(e);
+    }
+    if has_inconsistent_axioms {
+        return report;
+    }
+
     for item in &module.items {
         if let Item::Fn(fd) = item {
             if fd.contracts.is_empty() { continue; }
