@@ -5,7 +5,7 @@
 // но не различает Some(v) от None (closed) в dispatch — это
 // намеренное упрощение bootstrap (None-arm планируется отдельно).
 
-module nova_tests.concurrency.select_closed_test
+module concurrency.select_closed_test
 
 // ================================================================
 // SECTION 1: Wildcard arm при наличии данных и при закрытом канале

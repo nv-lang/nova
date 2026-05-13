@@ -13,7 +13,7 @@
 // Plan 22 R4 target: elapsed_after_cancel < 1ms.
 // Реалистично: Windows scheduler + uv_close async cb ≈ 1-10ms p99.
 
-module nova_tests.concurrency.cancel_latency_bench
+module concurrency.cancel_latency_bench
 
 test "single fiber cancel-during-sleep — wake latency measurement" {
     let t0 = Time.now()

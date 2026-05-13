@@ -7,7 +7,7 @@
 // в MVP нет ([Q-bounds](../spec/open-questions.md)), компилятор
 // проверит при использовании.
 
-module std.collections.set
+module collections.set
 
 
 // ──────────────────────────────────────────────────────────────────────────

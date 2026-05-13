@@ -8,7 +8,7 @@
 // В codegen: ExprKind::Throw эмитируется как `Nova_Fail_fail(msg);` +
 // dummy `((nova_int)0LL)` (никогда не используется — control не вернётся).
 
-module nova_tests.syntax.throw_in_expression
+module syntax.throw_in_expression
 
 // ================================================================
 // SECTION 1: throw в match-arm body

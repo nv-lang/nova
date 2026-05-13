@@ -10,7 +10,7 @@
 // Off-range литералы → compile error (negative tests — ручная
 // проверка через `nova-codegen check`, не в test-runner).
 
-module nova_tests.syntax.as_cast_char_literal
+module syntax.as_cast_char_literal
 
 
 test "decimal literal as char — basic ASCII" {

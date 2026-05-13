@@ -19,7 +19,7 @@
 //   Fnv.hash64(data []byte) -> u64
 //   Fnv.hash_str(s str) -> u64
 
-module std.checksums.fnv
+module checksums.fnv
 
 
 // FNV-1a 32-bit

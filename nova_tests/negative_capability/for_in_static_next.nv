@@ -7,7 +7,7 @@
 // Codegen должен reject'ить с clear error если зарегистрирован
 // `next` как static (`Type.next`, dot вместо @).
 
-module nova_tests.negative_capability.for_in_static_next
+module negative_capability.for_in_static_next
 
 type Foo { mut state int }
 

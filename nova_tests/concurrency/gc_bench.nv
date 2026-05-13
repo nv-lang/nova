@@ -12,7 +12,7 @@
 //   malloc:  быстрее (нет GC-overhead), но объекты не освобождаются.
 //   boehm:   чуть медленнее, heap bounded.
 
-module nova_tests.concurrency.gc_bench
+module concurrency.gc_bench
 
 type Obj { a int, b int, c int }
 

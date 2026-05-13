@@ -8,7 +8,7 @@
 // `defer` распознаётся как KwDefer-токен, не как Ident. Парсер
 // видит KwDefer там где ожидался Ident → ошибка.
 
-module nova_tests.negative_capability.defer_keyword_reserved
+module negative_capability.defer_keyword_reserved
 
 
 fn use_defer_as_var() -> int {

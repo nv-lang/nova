@@ -12,7 +12,7 @@
 // AI-first: validation использует Time effect — `with Time = th.fixed_ms(...)`
 // делает тесты детерминированными.
 
-module std.crypto.jwt
+module crypto.jwt
 
 import std.testing.handlers as th
 

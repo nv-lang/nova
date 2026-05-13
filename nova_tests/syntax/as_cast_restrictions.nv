@@ -13,7 +13,7 @@
 //
 // Этот файл — positive smoke: разрешённые cast'ы продолжают работать.
 
-module nova_tests.syntax.as_cast_restrictions
+module syntax.as_cast_restrictions
 
 
 test "char-literal as byte/int/u8 — разрешено (program ставит codepoint буквально)" {

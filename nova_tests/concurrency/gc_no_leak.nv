@@ -14,7 +14,7 @@
 //
 // ALLOC_REQUIRES boehm
 
-module nova_tests.concurrency.gc_no_leak
+module concurrency.gc_no_leak
 
 type Junk { a int, b int, c int, d int }
 

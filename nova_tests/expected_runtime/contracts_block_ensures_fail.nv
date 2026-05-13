@@ -3,7 +3,7 @@
 // Plan 33.1 Ф.4 production-grade: ensures-check срабатывает на early return
 // в block-body когда контракт нарушен.
 
-module nova_tests.expected_runtime.contracts_block_ensures_fail
+module expected_runtime.contracts_block_ensures_fail
 
 fn bad_max(a int, b int) -> int
     requires a >= 0

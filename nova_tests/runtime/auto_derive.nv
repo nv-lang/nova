@@ -9,7 +9,7 @@
 // dispatch'а (try_from/from registries). Compile-time ошибки если
 // синтез не находит target — ещё не реализованы (Ф.6).
 
-module nova_tests.runtime.auto_derive
+module runtime.auto_derive
 
 
 // Custom тип Celsius с try_from(int).

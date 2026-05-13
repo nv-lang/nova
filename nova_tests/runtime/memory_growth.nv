@@ -11,7 +11,7 @@
 // — если изменения в codegen начнут аллоцировать в N раз больше,
 // тест упадёт.
 
-module nova_tests.runtime.memory_growth
+module runtime.memory_growth
 
 // ================================================================
 // SECTION 1: Mem effect — basic operations

@@ -1,6 +1,6 @@
 // 16_if_let.nv — `if let` и `while let` (D34)
 
-module nova_tests.syntax.if_let
+module syntax.if_let
 
 fn lookup(n int) -> Option {
     if n > 0 { return Some(n * 100) }

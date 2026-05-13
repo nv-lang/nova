@@ -8,7 +8,7 @@
 // That file tests stack addresses, yield/resume ordering, fib(30), etc.
 // This file tests the observable Nova semantics built on top of that runtime.
 
-module nova_tests.concurrency.deep_spawn
+module concurrency.deep_spawn
 
 type Counter {
     val int

@@ -9,7 +9,7 @@
 //
 // Сравнение `c == 'A'` работает (оба int). Match-pattern `match c { 'a' => ... }` тоже.
 
-module nova_tests.types.char_literals
+module types.char_literals
 
 // ================================================================
 // SECTION 1: ASCII literals

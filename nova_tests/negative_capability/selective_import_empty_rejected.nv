@@ -3,7 +3,7 @@
 // Plan 35 sub-plan 35.A R26: `import X.{}` с пустым списком отвергается
 // parser'ом (валидно только `.{Item1, ...}` или без `.{}` секции).
 
-module nova_tests.negative_capability.selective_import_empty_rejected
+module negative_capability.selective_import_empty_rejected
 
 import std.collections.range.{}
 

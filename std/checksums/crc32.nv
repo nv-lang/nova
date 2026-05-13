@@ -22,7 +22,7 @@
 // API:
 //   fn crc32(data []byte) -> u32
 
-module std.checksums.crc32
+module checksums.crc32
 
 
 // ──────────────────────────────────────────────────────────────────────────

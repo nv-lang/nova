@@ -13,7 +13,7 @@
 // над state-record (т.к. handler-codegen для stdlib Time всё равно
 // требует runtime-уровня support).
 
-module nova_tests.plan34.inline_mut_clock_advance
+module plan34.inline_mut_clock_advance
 
 
 type Clock { ms u64 }

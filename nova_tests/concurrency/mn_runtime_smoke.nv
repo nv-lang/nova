@@ -8,7 +8,7 @@
 // Real workload distribution — Plan 45+. Сейчас просто infrastructure
 // liveness check.
 
-module nova_tests.concurrency.mn_runtime_smoke
+module concurrency.mn_runtime_smoke
 
 test "runtime not initialized by default" {
     assert(!runtime.is_initialized())

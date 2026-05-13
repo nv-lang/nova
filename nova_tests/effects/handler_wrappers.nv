@@ -16,7 +16,7 @@
 //    получает resource id, а не сам Resource. Реальный API будет
 //    после type-erasure доработки codegen'а.
 
-module nova_tests.effects.handler_wrappers
+module effects.handler_wrappers
 
 // ================================================================
 // SECTION 1: tracker для отслеживания open/close

@@ -8,7 +8,7 @@
 // (nova_alloc box), caller читает/пишет через #define, closure хранит
 // указатель на box — safe при escape.
 
-module nova_tests.syntax.closure_mut_capture_escape
+module syntax.closure_mut_capture_escape
 
 
 // ─── Case 1: closure escapes fn scope (classic dangling-ptr case) ────

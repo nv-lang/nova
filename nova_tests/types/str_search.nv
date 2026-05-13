@@ -4,7 +4,7 @@
 // Spec D26: все индексы — byte-offset (consistent с Rust/Go),
 // возвращаемое значение — Option[int] для find/rfind.
 
-module nova_tests.types.str_search
+module types.str_search
 
 // ================================================================
 // SECTION 1: find — первое вхождение

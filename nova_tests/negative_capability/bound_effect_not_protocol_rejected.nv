@@ -7,7 +7,7 @@
 //
 // Spec: spec/decisions/02-types.md → D53/D72.
 
-module nova_tests.negative_capability.bound_effect_not_protocol_rejected
+module negative_capability.bound_effect_not_protocol_rejected
 
 
 // Effect-kind тип (D53): декларирован через `effect`, не `protocol`.

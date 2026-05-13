@@ -8,7 +8,7 @@
 // потоке caller'а. Этого достаточно чтобы проверить наблюдаемые side-effects
 // и совместимость с capture-семантикой.
 
-module nova_tests.concurrency.detach_test
+module concurrency.detach_test
 
 type Counter {
     mut val int

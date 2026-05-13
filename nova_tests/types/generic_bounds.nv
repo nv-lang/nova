@@ -12,7 +12,7 @@
 // Negative tests (compile-error при non-satisfied bound) — отдельный
 // файл `tmp_*.nv`, проверяется вручную через `nova-codegen check`.
 
-module nova_tests.types.generic_bounds
+module types.generic_bounds
 
 
 // Plan 15 D53 strict: protocol/effect разделены в AST. Codegen эмитит

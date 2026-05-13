@@ -9,7 +9,7 @@
 // Если codegen pipeline не справляется, runtime через interp
 // (`cargo run -- test ...`) подтверждает interp-side D31-rev.
 
-module nova_tests.effects.handler_lambda_d31_rev
+module effects.handler_lambda_d31_rev
 
 type Logger effect {
     log(msg str) -> ()

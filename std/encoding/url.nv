@@ -28,7 +28,7 @@
 //   Url.encode_query(s str) -> str  (percent-encoding)
 //   Url.decode_query(s str) Fail[ParseUrlError] -> str
 
-module std.encoding.url
+module encoding.url
 
 
 // ──────────────────────────────────────────────────────────────────────────

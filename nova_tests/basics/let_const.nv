@@ -1,6 +1,6 @@
 // 03_let_const.nv — let, mut, const
 
-module nova_tests.basics.let_const
+module basics.let_const
 
 const PI int = 3
 const GREETING str = "hello"

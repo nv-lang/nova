@@ -3,7 +3,7 @@
 // D90 Ф.3: defer body должно быть infallible (no Fail-effect). `throw`
 // в body — compile error.
 
-module nova_tests.negative_capability.defer_throw_rejected
+module negative_capability.defer_throw_rejected
 
 
 fn f() Fail -> int {

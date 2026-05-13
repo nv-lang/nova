@@ -5,7 +5,7 @@
 // type-check'аться, codegen'иться и исполняться идентично старому
 // `|x|` синтаксису (dual-mode C2-C12 в Plan 19).
 
-module nova_tests.syntax.closure_rev
+module syntax.closure_rev
 
 // ─── closure-light как значение ──────────────────────────────────────
 

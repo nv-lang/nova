@@ -6,7 +6,7 @@
 //
 // Когда тело без trailing — старая семантика: parallel for как statement (unit).
 
-module nova_tests.concurrency.parallel_for_array
+module concurrency.parallel_for_array
 
 // ================================================================
 // SECTION 1: range → []int

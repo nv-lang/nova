@@ -1,7 +1,7 @@
 // Compound-assign операторы: +=, -=, *=, /= на let-mut и @field.
 // Также проверка ??= (null-coalescing assign) для Option.
 
-module nova_tests.syntax.compound_assign
+module syntax.compound_assign
 
 
 // ──────────────────────────────────────────────────────────────────────────

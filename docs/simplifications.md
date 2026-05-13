@@ -5819,3 +5819,40 @@ explicit.
 Программист должен писать effects в каждой signature explicitly.
 Если все functions модуля имеют Db — это **не** boilerplate, это
 **документация** (LLM reads signature без context lookup).
+
+---
+
+## Plan 42 Sub-plan 42.6 (2026-05-13): migration std/* + nova_tests/* → parent.X
+
+D29 rev-3 ввёл `parent.X` формат module declarations (target = filename
+для single-file или folder name для folder-module peer; parent = directory
+сразу над target). Sub-plan 42.6 — переписать **324 файла** в `std/` и
+`nova_tests/` с legacy `module package.full.path` на `module parent.X`.
+
+**Walker** — `scripts/migrate_modules_rev3.ps1`, one-shot PowerShell.
+
+**Упрощение для пользователя:**
+
+| До (rev-1) | После (rev-3) |
+|---|---|
+| `module std.encoding.hex` | `module encoding.hex` |
+| `module std.collections.hashmap` | `module collections.hashmap` |
+| `module std.runtime.string` | `module runtime.string` |
+| `module nova_tests.basics.literals` | `module basics.literals` |
+
+Declaration **всегда 2 segments** независимо от глубины nesting.
+Имена короче, refactor-safe (move file → declaration не меняется, если
+parent folder тот же).
+
+**Что НЕ меняется:**
+
+- Import paths остаются full path: `import std.encoding.hex.{decode}`
+  (compiler maintains canonical full path ↔ (parent, target) mapping).
+- Single-file at source root (`std/prelude.nv`): rev-3 == rev-1 ==
+  `module std.prelude` (parent = package name). Migration silent skip.
+- Folder-module peers (`modules/folder_X/Y.nv`): уже rev-3 — declare
+  folder name `modules.folder_X`. Skip.
+
+**Compat mode сохранён** в `manifest.rs::check_module_path` —
+оба формата accepted. User packages в любом из форматов работают
+без принудительной migration.

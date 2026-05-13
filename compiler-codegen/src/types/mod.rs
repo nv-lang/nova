@@ -62,13 +62,14 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
     let mut errors = Vec::new();
     let mut names: HashSet<String> = HashSet::new();
 
-    // D82: `external fn` whitelisted только в `std.runtime.*`. User-код
+    // D82: `external fn` whitelisted только в `std/runtime/*.nv`. User-код
     // не должен использовать external — это keyword для документирования
     // stdlib runtime-функций, реализованных в nova_rt/*.h. Будущий
     // `extern("C")` для FFI к сторонним libs — отдельный keyword.
-    let is_runtime_module = module.name.len() >= 2
-        && module.name[0] == "std"
-        && module.name[1] == "runtime";
+    //
+    // Plan 42 Sub-plan 42.6: detect runtime module по обоих declaration
+    // форматов (rev-1 legacy + rev-3 parent.X). Logic — в manifest helper.
+    let is_runtime_module = crate::manifest::is_stdlib_runtime_module(&module.name);
     if !is_runtime_module {
         for item in &module.items {
             if let Item::Fn(fd) = item {

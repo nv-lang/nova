@@ -4,7 +4,7 @@
 // вручную через for. Эти тесты проверяют что HOF-параметры работают
 // (`fn(int) -> int` как тип параметра, передача lambda, вызов внутри).
 
-module nova_tests.syntax.higher_order
+module syntax.higher_order
 
 fn map_int(xs []int, f fn(int) -> int) -> []int {
     let r = []

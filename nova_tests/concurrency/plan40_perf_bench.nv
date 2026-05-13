@@ -14,7 +14,7 @@
 //   3) channel_throughput — 10000 send/recv pairs, baseline для Ф.1 mutex
 //      overhead measurement в будущем.
 
-module nova_tests.concurrency.plan40_perf_bench
+module concurrency.plan40_perf_bench
 
 
 test "perf: select dispatch throughput — 1000 iterations × 4-arm" {

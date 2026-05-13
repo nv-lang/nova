@@ -5,7 +5,7 @@
 // so the buffer leaked through GC pressure until the next collect.
 // Functional behaviour is identical; this test pins the contract.
 
-module nova_tests.expected_runtime.channel_zero_capacity_panic
+module expected_runtime.channel_zero_capacity_panic
 
 fn main() {
     let _ = Channel.new(0)

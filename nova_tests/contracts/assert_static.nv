@@ -1,6 +1,6 @@
 // Plan 33.2 Ф.8: `assert_static <bool>` — intermediate proof obligation.
 
-module nova_tests.contracts.assert_static
+module contracts.assert_static
 
 fn use_assert_static(x int) -> int {
     assert_static x == x

@@ -10,7 +10,7 @@
 // Эти тесты — без ALLOC_REQUIRES — работают с любым backend'ом.
 // Логика: differential через `if heap_size() == 0` (malloc-marker).
 
-module nova_tests.concurrency.gc_introspection
+module concurrency.gc_introspection
 
 type Obj { a int, b int, c int }
 

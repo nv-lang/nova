@@ -4,7 +4,7 @@
 // он hijack'нул бы окружающий loop. `break` внутри nested loop в
 // defer body — разрешён (local control).
 
-module nova_tests.negative_capability.defer_break_rejected
+module negative_capability.defer_break_rejected
 
 
 fn f() -> int {

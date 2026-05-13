@@ -9,7 +9,7 @@
 // Это **expected behaviour**: Plan 38 не покрывает arbitrary path,
 // только known type constants. Unknown — runtime/codegen error.
 
-module nova_tests.negative_capability.numeric_constant_unknown
+module negative_capability.numeric_constant_unknown
 
 fn main() -> int {
     int.NONEXISTENT

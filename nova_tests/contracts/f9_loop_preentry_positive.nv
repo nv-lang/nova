@@ -3,7 +3,7 @@
 // Случай "n=0, loop не выполняется, invariant true" — должен pass'нуть
 // pre-entry check без false positives.
 
-module nova_tests.contracts.f9_loop_preentry_positive
+module contracts.f9_loop_preentry_positive
 
 fn empty_loop_ok(n int) -> int
     requires n >= 0

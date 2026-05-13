@@ -5,7 +5,7 @@
 // cycle_b импортирует cycle_a → цикл. Resolver DFS должен detect'ить
 // и эмитить error «import cycle detected: ... → ... → ...».
 
-module nova_tests.negative_capability.import_cycle_rejected
+module negative_capability.import_cycle_rejected
 
 import nova_tests.modules.cycle_a.{A_VAL}
 

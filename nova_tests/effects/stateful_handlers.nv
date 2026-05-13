@@ -13,7 +13,7 @@
 // (см. docs/known-issues-bootstrap.md «with X = factory()»).
 // Для тестов используем альтернативный синтаксис.
 
-module nova_tests.effects.stateful_handlers
+module effects.stateful_handlers
 
 type Counter effect {
     next() -> int

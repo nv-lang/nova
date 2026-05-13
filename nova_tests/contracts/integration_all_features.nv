@@ -12,7 +12,7 @@
 // - 33.3 assume (true expression — pass).
 // - D96 #-attributes (#pure, #unverified).
 
-module nova_tests.contracts.integration_all_features
+module contracts.integration_all_features
 
 // Record + invariant (parsed, runtime-check эмитится в Plan 33.3 full).
 type Counter {

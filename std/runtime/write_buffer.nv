@@ -4,7 +4,7 @@
 //
 // См. docs/plans/13-runtime-stdlib-and-autogen.md.
 
-module std.runtime.write_buffer
+module runtime.write_buffer
 
 
 // ─── WriteBuffer ───

@@ -13,7 +13,7 @@
 //   bucket.try_acquire() Time -> bool
 //   bucket.try_acquire_n(n int) Time -> bool
 
-module std.concurrency.rate_limiter
+module concurrency.rate_limiter
 
 import std.testing.handlers as th
 

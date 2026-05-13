@@ -12,7 +12,7 @@
 //
 // Use cases: BFS, sliding window, scheduling, undo/redo
 
-module std.collections.deque
+module collections.deque
 
 
 // Простая реализация: храним в []T, управляем индексами head/tail.

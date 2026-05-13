@@ -15,7 +15,7 @@
 //
 // Spec: spec/decisions/10-overloading.md → D84 + Bootstrap-status ⚠️.
 
-module nova_tests.negative_capability.overload_ambiguous
+module negative_capability.overload_ambiguous
 
 
 fn convert(n int) -> str { "as str: ${n}" }

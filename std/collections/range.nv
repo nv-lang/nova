@@ -16,7 +16,7 @@
 // `Iter[T]` — структурный effect в prelude. RangeIter автоматически
 // удовлетворяет `Iter[int]` через `mut next() -> Option[int]`.
 
-module std.collections.range
+module collections.range
 
 
 // ──────────────────────────────────────────────────────────────────────────

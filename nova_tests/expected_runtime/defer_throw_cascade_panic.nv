@@ -13,7 +13,7 @@
 //   - Throw корректно re-thrown на каждом уровне, доходит до
 //     unhandled → test-runner panic.
 
-module nova_tests.expected_runtime.defer_throw_cascade_panic
+module expected_runtime.defer_throw_cascade_panic
 
 
 fn main() Io -> () {

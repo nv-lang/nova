@@ -5,7 +5,7 @@
 // - mutual recursion: json_size → json_arr_size → json_size
 // - tuple element access (p.1)
 
-module nova_tests.modules.json_ast
+module modules.json_ast
 
 type Json
     | JNull

@@ -4,7 +4,7 @@
 // `ghost` — это контекстный keyword, требует `let` следом.
 // В других позициях `ghost` это обычный ident → undefined identifier.
 
-module nova_tests.contracts.ghost_without_let
+module contracts.ghost_without_let
 
 fn bad_ghost(x int) -> int {
     ghost 42

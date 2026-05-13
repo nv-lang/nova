@@ -4,7 +4,7 @@
 // `must_double` имеет `ensures result == x * 2`, body `=> x * 2`.
 // После substitute result → x*2: `x*2 == x*2` → reflexive → proven.
 
-module nova_tests.contracts.verify_must_verify_proven
+module contracts.verify_must_verify_proven
 
 #must_verify
 fn must_double(x int) -> int

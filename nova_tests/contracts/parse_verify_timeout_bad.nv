@@ -2,7 +2,7 @@
 //
 // Plan 33.1 Ф.1 (D24 §35): #verify_timeout требует положительный int.
 
-module nova_tests.contracts.parse_verify_timeout_bad
+module contracts.parse_verify_timeout_bad
 
 #verify_timeout(0)
 fn bad_timeout(x int) -> int

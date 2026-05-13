@@ -22,7 +22,7 @@
 //
 // После consume любой append → runtime panic "string builder consumed".
 
-module nova_tests.runtime.string_builder
+module runtime.string_builder
 
 
 // ================================================================

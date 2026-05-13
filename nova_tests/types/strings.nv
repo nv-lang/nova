@@ -1,6 +1,6 @@
 // 11_strings.nv — строковые операции
 
-module nova_tests.types.strings
+module types.strings
 
 test "concat via +" {
     assert("foo" + "bar" == "foobar")

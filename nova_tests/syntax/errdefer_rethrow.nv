@@ -14,7 +14,7 @@
 //   2. errdefer между inner-rethrow и outer-catch срабатывает (throw
 //      проходит через local fail-frame).
 
-module nova_tests.syntax.errdefer_rethrow
+module syntax.errdefer_rethrow
 
 
 // ───── re-throw из handler работает (D65 правило 3) ─────

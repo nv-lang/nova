@@ -10,7 +10,7 @@
 // check. NovaSleepState живёт на stack fiber'а, uv_timer_t закрыт
 // через close_cb в каждом call'е, sched_state per-scope.
 
-module nova_tests.concurrency.sleep_leak_check
+module concurrency.sleep_leak_check
 
 test "100k sequential sleep(0) — no resource accumulation" {
     // 100k fast yield'ов через Time.sleep(0). Каждый создаёт+закрывает

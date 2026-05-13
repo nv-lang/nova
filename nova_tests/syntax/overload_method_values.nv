@@ -3,7 +3,7 @@
 // Когда у метода несколько overload'ов, без annotation нельзя выбрать —
 // используем `as fn(P...) -> R` для disambiguation.
 
-module nova_tests.syntax.overload_method_values
+module syntax.overload_method_values
 
 type Buf { items []int }
 

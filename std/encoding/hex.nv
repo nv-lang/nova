@@ -10,7 +10,7 @@
 // Use cases: hash digests (SHA, CRC), binary dumps, debugging,
 // crypto tokens, file integrity.
 
-module std.encoding.hex
+module encoding.hex
 
 
 export type ParseHexError

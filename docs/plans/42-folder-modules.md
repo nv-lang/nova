@@ -510,10 +510,21 @@ decl типов уже работает (Plan 36 followup). Verify на test'е.
   для всех Fn/Type/Const, Pass 2 emit bodies. Текущий single-pass
   works для всех use cases bootstrap; sub-plan когда mutually
   recursive types между peers появятся.
-- **42.6 — Migration std/* под parent.X** (D29 rev-3). Automated
-  tool walks все `.nv` файлы в repo, computes expected `module
-  parent.X` declaration, заменяет existing `module a.b.c.d`. После
-  миграции compat mode (rev-1 acceptance) можно убрать.
+- **42.6 — Migration std/* + nova_tests/* под parent.X** (D29 rev-3) ✅
+  ЗАКРЫТ 2026-05-13. `scripts/migrate_modules_rev3.ps1` — automated
+  walker: для каждого `.nv` файла computes expected `module parent.X`
+  по filesystem path и переписывает legacy `module package.full.path`
+  declaration. Применён к `std/` (package=`std`) и `nova_tests/`
+  (package=`nova_tests`): **324 файла мигрированы**, 16 пропущено
+  (folder-module peers — уже rev-3; single-file at source root — rev-3
+  совпадает с rev-1). Hardcoded compat-checks (`is_stdlib_runtime_module`,
+  `is_prelude_self_module`) — вынесены в `manifest.rs` как helpers,
+  используются в `types/mod.rs::check_module` и `imports.rs::resolve_imports_inline_ex`.
+  Compat mode остаётся (rev-1 declarations accepted) для backward-compat —
+  не блокер удалять. Регрессия: **274 PASS / 0 FAIL / 3 SKIP** (3 z3 SKIP
+  = свежие тесты Plan 33 V1, out of scope). examples/* не мигрированы —
+  файлы там в произвольных форматах (часть `module hello`, часть rev-1),
+  не enforced manifest check'ом (отдельная задача-cleanup).
 - **42.7 — Cross-peer consistency lint** (новое 2026-05-13). Warn
   если peers folder-module объявляют **разные** `#forbid` attributes
   — inconsistent capability boundary. Не error (peers независимы),

@@ -2,7 +2,7 @@
 //
 // `Account { balance: 100 }` где invariant `balance >= 0` проходит check.
 
-module nova_tests.contracts.record_invariant_positive
+module contracts.record_invariant_positive
 
 type Account {
     balance int

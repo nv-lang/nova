@@ -5,7 +5,7 @@
 //
 // Полезно для golden-file тестов и проверки format/print-логики.
 
-module nova_tests.expected_runtime.stdout_hello
+module expected_runtime.stdout_hello
 
 
 fn main() Io -> () {

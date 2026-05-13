@@ -10,7 +10,7 @@
 //    Hint: add one of the methods, or use `for x in c.iter()` if
 //    iterator is created externally."
 
-module nova_tests.negative_capability.for_in_iter_diagnostic
+module negative_capability.for_in_iter_diagnostic
 
 type Empty { value int }
 

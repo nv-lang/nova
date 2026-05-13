@@ -8,7 +8,7 @@
 // компилируются и работают. Negative cases (`if int_value` → compile
 // error) проверяются вручную через `nova-codegen check`.
 
-module nova_tests.syntax.strict_if_bool
+module syntax.strict_if_bool
 
 
 test "if с bool literal" {

@@ -7,7 +7,7 @@
 // Отличие от EXPECT_RUNTIME_PANIC: не требует ненулевой exit code —
 // проверяется только содержимое stderr.
 
-module nova_tests.expected_runtime.stderr_panic
+module expected_runtime.stderr_panic
 
 
 fn main() Io -> () {

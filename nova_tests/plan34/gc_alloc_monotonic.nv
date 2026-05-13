@@ -2,7 +2,7 @@
 // должен расти. Это differential test: показывает что counter реально
 // инкрементируется на real allocation.
 
-module nova_tests.plan34.gc_alloc_monotonic
+module plan34.gc_alloc_monotonic
 
 
 type Obj { a int, b int }

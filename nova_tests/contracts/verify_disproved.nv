@@ -5,7 +5,7 @@
 // Trivial backend упрощает до `false` → UNSAT-проверки negation:
 // `(not (100 == 42)) = (not false) = true` → SAT trivial → disproved.
 
-module nova_tests.contracts.verify_disproved
+module contracts.verify_disproved
 
 #must_verify
 fn wrong_const() -> int

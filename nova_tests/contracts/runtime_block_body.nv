@@ -5,7 +5,7 @@
 // 2. Block-body с early `return X` проходит ensures-check.
 // 3. Early return при разных условиях — ensures проверяется для всех путей.
 
-module nova_tests.contracts.runtime_block_body
+module contracts.runtime_block_body
 
 // Trailing expression в block.
 fn abs_block(x int) -> int

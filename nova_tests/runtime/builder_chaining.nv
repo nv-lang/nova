@@ -7,7 +7,7 @@
 //
 // Также static creation методы возвращают Self (унификация).
 
-module nova_tests.runtime.builder_chaining
+module runtime.builder_chaining
 
 
 // ================================================================

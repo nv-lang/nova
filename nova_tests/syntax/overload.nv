@@ -6,7 +6,7 @@
 // Strict matching, no implicit conversions.
 // Free-functions overload не разрешён (только для methods).
 
-module nova_tests.syntax.overload
+module syntax.overload
 
 
 // ─── 1. Static overload по типу аргумента ───

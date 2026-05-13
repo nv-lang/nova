@@ -12,7 +12,7 @@
 // Тест НЕ имеет ALLOC_REQUIRES — работает с любым backend'ом, потому что
 // поведение разделяется через runtime check `heap_size() == 0`.
 
-module nova_tests.concurrency.gc_differential
+module concurrency.gc_differential
 
 type Junk { a int, b int, c int, d int }
 

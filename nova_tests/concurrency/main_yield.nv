@@ -9,7 +9,7 @@
 // This test set verifies REAL coroutine interleaving where the supervised
 // body itself participates in the cooperative dance.
 
-module nova_tests.concurrency.main_yield
+module concurrency.main_yield
 
 // ================================================================
 // SECTION 1: main yields between spawn registrations

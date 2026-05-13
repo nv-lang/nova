@@ -4,7 +4,7 @@
 //
 // См. docs/plans/13-runtime-stdlib-and-autogen.md.
 
-module std.runtime.string_builder
+module runtime.string_builder
 
 
 // ─── StringBuilder ───

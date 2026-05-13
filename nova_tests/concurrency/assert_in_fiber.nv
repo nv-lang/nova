@@ -12,7 +12,7 @@
 // этого не можем проверить позитивно — только косвенно (через отсутствие
 // краша suite во всех parallel-for тестах с assert'ами в bodies).
 
-module nova_tests.concurrency.assert_in_fiber
+module concurrency.assert_in_fiber
 
 // ================================================================
 // SECTION 1: assert(true) внутри simple spawn body

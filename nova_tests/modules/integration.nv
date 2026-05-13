@@ -3,7 +3,7 @@
 // arrays + side-effects). Это smoke-тесты bootstrap'а на realistic
 // мини-программах.
 
-module nova_tests.modules.integration
+module modules.integration
 
 // ===== Toy expression evaluator =====
 

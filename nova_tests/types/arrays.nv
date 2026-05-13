@@ -1,6 +1,6 @@
 // 10_arrays.nv — массивы (D27), spread (D60), методы
 
-module nova_tests.types.arrays
+module types.arrays
 
 test "array literal and len" {
     let a = [1, 2, 3]

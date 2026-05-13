@@ -6,7 +6,7 @@
 // nv_panic fix: несколько errdefer на main flow — LIFO порядок.
 // Регистрация: A, B, C. Ожидаемый порядок срабатывания: C, B, A.
 
-module nova_tests.expected_runtime.errdefer_panic_lifo
+module expected_runtime.errdefer_panic_lifo
 
 
 fn main() Io -> () {

@@ -4,7 +4,7 @@
 // Теперь catch'ится на type-check этапе (proper compile-error),
 // не на C-level (где была undeclared identifier как honest fallback).
 
-module nova_tests.contracts.ghost_read_from_nonghost_fail
+module contracts.ghost_read_from_nonghost_fail
 
 fn bad_ghost(x int) -> int {
     ghost let spec_only = x * 2

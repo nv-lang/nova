@@ -3,7 +3,7 @@
 // Plan 16 Ф.3 (D64): вызов fn'а с suspend-effect (Net/Fs/Db/Time/Blocking)
 // внутри realtime-блока — compile error.
 
-module nova_tests.negative_capability.realtime_suspend
+module negative_capability.realtime_suspend
 
 type Net effect {
     fetch(url str) -> str

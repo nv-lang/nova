@@ -11,7 +11,7 @@
 // methods с receiver'ом). Здесь Self — именно эти methods, поэтому
 // уникальные имена нужны.
 
-module nova_tests.syntax.self_in_expr
+module syntax.self_in_expr
 
 
 // ─── 1. Default → parameterized constructor ───

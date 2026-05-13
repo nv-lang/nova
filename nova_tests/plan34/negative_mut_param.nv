@@ -7,7 +7,7 @@
 // Regression marker: если парсер расширят поддержкой mut-param,
 // тест провалится — нужно обновить spec и обновить/удалить.
 
-module nova_tests.plan34.negative_mut_param
+module plan34.negative_mut_param
 
 type Counter { mut value int }
 

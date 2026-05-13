@@ -4,7 +4,7 @@
 // flow-аналитики для result.is_ok / result.value / result.error. Полная
 // реализация — Ф.3 SMT integration. В 33.1 — explicit compile error.
 
-module nova_tests.contracts.typecheck_fail_fn_not_supported
+module contracts.typecheck_fail_fn_not_supported
 
 type Overdraft | Overdraft
 

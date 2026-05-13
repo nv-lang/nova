@@ -1,6 +1,6 @@
 // 05_functions.nv — fn, expression-body, block-body, recursion, closures
 
-module nova_tests.basics.functions
+module basics.functions
 
 // Expression-body (D40)
 fn double(x int) -> int => x * 2

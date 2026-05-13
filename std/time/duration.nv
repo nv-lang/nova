@@ -14,7 +14,7 @@
 // AI-first: Time effect позволяет в тестах подменить часы:
 //   with Time = th.fixed_ms(1700000000000) { ... детерминированный код ... }
 
-module std.time.duration
+module time.duration
 
 import std.testing.handlers as th
 

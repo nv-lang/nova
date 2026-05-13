@@ -8,7 +8,7 @@
 // все три stdout-паттерна должны присутствовать в выводе.
 // defer + errdefer порядок: errdefer LIFO (B затем A), затем defer C.
 
-module nova_tests.expected_runtime.multi_expect_panic_errdefer
+module expected_runtime.multi_expect_panic_errdefer
 
 
 fn main() Io -> () {

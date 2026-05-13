@@ -4,7 +4,7 @@
 // semantics). Non-ghost код не может читать ghost-vars (TODO: enforce
 // в type-check полностью; пока только naturally через codegen-erasure).
 
-module nova_tests.contracts.ghost_assume
+module contracts.ghost_assume
 
 fn use_ghost(x int) -> int {
     // ghost let — spec-only, не emit'ится в codegen.

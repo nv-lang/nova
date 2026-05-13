@@ -6,7 +6,7 @@
 // обычная функция: финальное выражение или `return v` становится
 // результатом операции в caller'е.
 
-module nova_tests.effects.basic
+module effects.basic
 
 type Counter effect {
     next() -> int

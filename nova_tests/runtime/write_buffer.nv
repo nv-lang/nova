@@ -12,7 +12,7 @@
 //   wb.len(), wb.capacity(), wb.clone()
 //   wb.into() -> []byte (infallible)
 
-module nova_tests.runtime.write_buffer
+module runtime.write_buffer
 
 
 // ================================================================

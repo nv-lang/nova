@@ -1,6 +1,6 @@
 // 02_operators.nv — все бинарные и унарные операторы
 
-module nova_tests.basics.operators
+module basics.operators
 
 test "int arithmetic" {
     assert(2 + 3 == 5)

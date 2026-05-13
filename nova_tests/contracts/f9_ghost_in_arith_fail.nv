@@ -3,7 +3,7 @@
 // Plan 33.3 Ф.9.7: ghost-var в арифметическом expression non-ghost кода
 // → compile error.
 
-module nova_tests.contracts.f9_ghost_in_arith_fail
+module contracts.f9_ghost_in_arith_fail
 
 fn bad(x int) -> int {
     ghost let g = x * 2

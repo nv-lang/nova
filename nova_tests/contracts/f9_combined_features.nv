@@ -9,7 +9,7 @@
 // - 9.5 pre-entry loop invariant check.
 // - 9.7 ghost type-check (ghost OK в spec-positions).
 
-module nova_tests.contracts.f9_combined_features
+module contracts.f9_combined_features
 
 // 9.2: record with invariant.
 type Counter {

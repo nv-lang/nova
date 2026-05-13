@@ -13,7 +13,7 @@
 // - Фильтр 3: result-type из контекста (если есть).
 // - Фильтр 4: самый специфичный матч (concrete > generic, etc.).
 
-module nova_tests.syntax.overload_free_fn
+module syntax.overload_free_fn
 
 
 // ───── Overload по типу аргумента ─────

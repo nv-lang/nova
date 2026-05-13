@@ -15,7 +15,7 @@
 //   3. infer_expr_c_type для ExprKind::Range — `Nova_Range*` (раньше
 //      fallback nova_int).
 
-module nova_tests.syntax.for_in_range_iter
+module syntax.for_in_range_iter
 
 type Range {
     readonly start int

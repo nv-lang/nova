@@ -10,7 +10,7 @@
 // pop'ает interrupt-frame, и re-interrupt'ит с тем же value
 // чтобы outer interrupt-frame получил значение.
 
-module nova_tests.syntax.defer_on_interrupt
+module syntax.defer_on_interrupt
 
 
 // ───── defer срабатывает когда handler делает interrupt ─────

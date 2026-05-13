@@ -82,7 +82,9 @@ pub fn resolve_imports_inline_ex(
     // через `std/prelude.nv` файл (или future полная миграция hardcoded
     // в file-based). MVP: если файл существует — добавляем как import.
     // Skip prelude auto-import для самого prelude (избежать self-cycle).
-    let is_prelude_self = module.name.iter().map(|s| s.as_str()).collect::<Vec<_>>() == ["std", "prelude"];
+    // Plan 42 Sub-plan 42.6: detect prelude self по обоих declaration
+    // форматов (rev-1 legacy + rev-3 parent.X). Logic — в manifest helper.
+    let is_prelude_self = crate::manifest::is_prelude_self_module(&module.name);
     let mut initial_imports = module.imports.clone();
     if !is_prelude_self {
         let prelude_path = stdlib_dir.join("prelude.nv");

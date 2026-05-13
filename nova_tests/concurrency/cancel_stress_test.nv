@@ -5,7 +5,7 @@
 // cancel в middle. Все fiber'ы должны wake immediate, throw "scope
 // cancelled", scope завершается быстро.
 
-module nova_tests.concurrency.cancel_stress_test
+module concurrency.cancel_stress_test
 
 // Slack 200ms для CI-стабильности.
 const SLACK_MS int = 200

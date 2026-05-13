@@ -14,7 +14,7 @@
 // все handler-storages при старте. supervised_step save/restore
 // snapshot вокруг mco_resume.
 
-module nova_tests.concurrency.per_fiber_handlers
+module concurrency.per_fiber_handlers
 
 // ================================================================
 // SECTION 1: Разные Time handlers в разных fiber'ах

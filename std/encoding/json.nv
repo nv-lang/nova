@@ -42,7 +42,7 @@
 //   - JsonValue.from(s str)                        D73 From[str] (alias parse)
 //   - v.@into() -> str                             D73 Into[str] (сериализация)
 
-module std.encoding.json
+module encoding.json
 
 
 // ──────────────────────────────────────────────────────────────────────────

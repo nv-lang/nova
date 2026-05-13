@@ -25,7 +25,7 @@
 //   4. Деteminизм через `with Random = th.seeded(seed) { ... }` — тот же
 //      seed даёт тот же набор входов, удобно для CI.
 
-module std.testing.property
+module testing.property
 
 import std.testing.handlers as th
 

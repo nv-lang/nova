@@ -6,7 +6,7 @@
 // через fail-frame — errdefer не срабатывал. После fix'а fail-frame
 // проверяется первым независимо от fiber-контекста.
 
-module nova_tests.expected_runtime.errdefer_panic_mainflow
+module expected_runtime.errdefer_panic_mainflow
 
 
 fn main() Io -> () {

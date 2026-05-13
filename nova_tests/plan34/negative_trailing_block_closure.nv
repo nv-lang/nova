@@ -8,7 +8,7 @@
 // Regression marker: если введут D-блок про trailing-block closure,
 // тест провалится — обновить spec + удалить тест.
 
-module nova_tests.plan34.negative_trailing_block_closure
+module plan34.negative_trailing_block_closure
 
 fn apply(n int, f fn(int) -> int) -> int => f(n)
 

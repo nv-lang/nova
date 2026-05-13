@@ -3,7 +3,7 @@
 // Plan 33.1 Ф.2 (D24): `old(...)` доступен только в `ensures` и
 // post-state позициях `invariant` (в 33.2).
 
-module nova_tests.contracts.typecheck_old_in_requires
+module contracts.typecheck_old_in_requires
 
 fn bad(x int) -> int
     requires old(x) > 0

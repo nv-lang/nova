@@ -8,7 +8,7 @@
 // - lambda возвращаемая из match-ветвей
 // - lambda как параметр и возвращаемое значение HOF
 
-module nova_tests.syntax.fn_first_class
+module syntax.fn_first_class
 
 
 // ──────────────────────────────────────────────────────────────────────────

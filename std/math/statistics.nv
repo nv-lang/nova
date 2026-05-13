@@ -20,7 +20,7 @@
 //
 // Pure functions, без эффектов.
 
-module std.math.statistics
+module math.statistics
 
 
 export type StatsError

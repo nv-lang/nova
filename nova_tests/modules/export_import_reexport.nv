@@ -10,7 +10,7 @@
 //
 // Этот тест — sanity check: parser принимает синтаксис, resolver merge'ит.
 
-module nova_tests.modules.export_import_reexport
+module modules.export_import_reexport
 
 // Hypothetical facade pattern (without facade-module — этот тест проверяет
 // что `export import` синтаксис парсится корректно как обычный import).

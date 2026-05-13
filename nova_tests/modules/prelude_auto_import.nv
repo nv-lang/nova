@@ -4,7 +4,7 @@
 // `import std.prelude` в queue. `PRELUDE_VERSION` const доступна без
 // explicit import.
 
-module nova_tests.modules.prelude_auto_import
+module modules.prelude_auto_import
 
 test "PRELUDE_VERSION доступен без import" {
     assert(PRELUDE_VERSION == 1)

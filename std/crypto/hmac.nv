@@ -21,7 +21,7 @@
 //   HmacSha256.verify(key []byte, message []byte, mac [32]byte) -> bool
 //                                                       // constant-time
 
-module std.crypto.hmac
+module crypto.hmac
 
 
 // ──────────────────────────────────────────────────────────────────────────

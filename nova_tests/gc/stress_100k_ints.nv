@@ -4,7 +4,7 @@
 // без аллокаций. Под любым alloc backend int-арифметика должна давать
 // правильный результат и не аллоцировать ничего лишнего.
 
-module nova_tests.gc.stress_100k_ints
+module gc.stress_100k_ints
 
 test "100k int loop — zero allocations" {
     Mem.reset()

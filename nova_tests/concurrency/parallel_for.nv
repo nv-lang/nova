@@ -13,7 +13,7 @@
 // Println'ы внутри fiber bodies — для визуальной диагностики при ручном
 // запуске бинаря (test runner их не показывает).
 
-module nova_tests.concurrency.parallel_for
+module concurrency.parallel_for
 
 // ================================================================
 // SECTION 1: базовое суммирование (НЕ доказывает параллельность —

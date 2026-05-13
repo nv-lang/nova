@@ -4,7 +4,7 @@
 // обязательных. `[T = int, U]` — обязательный U после default'а T —
 // нарушение порядка, compile error.
 
-module nova_tests.negative_capability.generic_default_ordering_rejected
+module negative_capability.generic_default_ordering_rejected
 
 fn bad_order[T = int, U](x T, y U) -> T => x
 

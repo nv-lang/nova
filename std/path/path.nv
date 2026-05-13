@@ -10,7 +10,7 @@
 //
 // Использует "/" как separator. Windows paths требуют отдельной либы.
 
-module std.path.path
+module path.path
 
 
 // D69 variadic (Plan 14 Ф.6): `...parts []str` принимает любое

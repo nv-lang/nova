@@ -8,7 +8,7 @@
 // NovaInterruptFrame получил `value_ptr` slot. emit_with declare'ит
 // result_tmp с правильным C-типом, не nova_int.
 
-module nova_tests.types.handler_flow_inference
+module types.handler_flow_inference
 
 type WrapperError { msg str }
 

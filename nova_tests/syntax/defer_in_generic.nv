@@ -5,7 +5,7 @@
 // fn panic'ил codegen ("defer/errdefer outside defer scope"). Fix:
 // добавил enter/leave_defer_scope в emit_generic_fn_erased.
 
-module nova_tests.syntax.defer_in_generic
+module syntax.defer_in_generic
 
 
 fn do_with_defer[T](x T) -> T {

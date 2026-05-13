@@ -3,7 +3,7 @@
 // `Type.@method` — unbound method value (fn pointer берёт self явно).
 // `Type.method`  — static method value (fn pointer без self).
 
-module nova_tests.syntax.method_values
+module syntax.method_values
 
 type Counter { value int }
 

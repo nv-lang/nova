@@ -13,7 +13,7 @@
 //   4. xoshiro256++ step не возвращает 0 после splitmix64-init (ожидание
 //      от Vigna spec).
 
-module nova_tests.plan34.inline_xoshiro_determinism
+module plan34.inline_xoshiro_determinism
 
 
 // splitmix64 (Vigna, public domain).

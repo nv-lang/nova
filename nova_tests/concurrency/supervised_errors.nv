@@ -13,7 +13,7 @@
 //   3. Как обнаружить ошибку завершения spawn — через явный
 //      mut-флаг "did_succeed" / "had_error" (Go-style).
 
-module nova_tests.concurrency.supervised_errors
+module concurrency.supervised_errors
 
 // Простая ad-hoc структура для агрегации статуса fiber'а — не Result
 // (prelude занят), просто record с success-флагом.

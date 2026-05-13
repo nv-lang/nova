@@ -16,7 +16,7 @@
 // **На текущем этапе тест проверяет только что runtime init/shutdown
 // не падает после Layer 2 deque integration.**
 
-module nova_tests.concurrency.mn_runtime_cpu_workload
+module concurrency.mn_runtime_cpu_workload
 
 test "deque integration: init + shutdown без crash" {
     runtime.init(4)

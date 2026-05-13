@@ -6,7 +6,7 @@
 // Это honest bootstrap — настоящий well-founded check (m_new < m_old)
 // требует SMT (Z3 backend).
 
-module nova_tests.expected_runtime.contracts_decreases_recursion_fail
+module expected_runtime.contracts_decreases_recursion_fail
 
 fn bad_recursion(n int) -> int
     decreases n

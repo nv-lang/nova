@@ -1,7 +1,7 @@
 // EXPECT_RUNTIME_PANIC nova: unhandled Fail: bang
 // EXPECT_STDOUT DEFER_FIRED
 
-module nova_tests.expected_runtime.defer_throw_single
+module expected_runtime.defer_throw_single
 
 
 fn main() Io -> () {

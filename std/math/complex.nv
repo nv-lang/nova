@@ -38,7 +38,7 @@
 // Использует instance-методы на f64 (std.math): `@sqrt`, `@hypot`,
 // `@atan2`, `@cos`, `@sin`, `@is_finite`, `@is_nan`, `@abs`.
 
-module std.math.complex
+module math.complex
 
 
 // ──────────────────────────────────────────────────────────────────────────

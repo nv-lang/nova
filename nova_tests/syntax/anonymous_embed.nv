@@ -7,7 +7,7 @@
 // Multi-anonymous one type → compile error (см. отдельный negative
 // test, нужна compile_fail инфраструктура).
 
-module nova_tests.syntax.anonymous_embed
+module syntax.anonymous_embed
 
 
 // ─── 1. Базовый named embed: auto-proxy ───

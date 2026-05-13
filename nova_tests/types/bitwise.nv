@@ -1,7 +1,7 @@
 // bitwise.nv — D-operators (spec/03-syntax.md): bit-and, bit-or,
 // bit-xor, shift-left, shift-right.
 
-module nova_tests.types.bitwise
+module types.bitwise
 
 // ================================================================
 // SECTION 1: AND `&`

@@ -51,7 +51,7 @@
 // runtime), который и активен по-умолчанию. См. spec/open-questions.md
 // → `secure()` будущая фабрика для CSPRNG.
 
-module std.testing.handlers
+module testing.handlers
 
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -31,7 +31,7 @@
 //   - `Buffer @add_byte`, `@add_str`, `@into_str_unchecked`
 //   - char-литералы (Q-char-literals закрыто 2026-05-07)
 
-module std.identifiers.uuid
+module identifiers.uuid
 
 import std.testing.handlers as th
 
