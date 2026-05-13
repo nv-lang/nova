@@ -213,6 +213,77 @@ target=main). Folder `admin/` (с 4 файлами) = module `src.admin` где
 Это даёт **internal helpers**: `_helpers.nv` без `export fn helper()`
 видна из `users.nv`, `audit.nv`, etc. — но **не** извне `admin`.
 
+#### Test isolation — `_test.nv` suffix (Plan 42 правило F)
+
+Peer-файл с suffix `_test.nv` (basename ends with `_test`) — **test-
+only**. Включается в test mode (`nova test`), исключается из release
+build (`nova build` / `nova run`). Имеет full доступ к module-private
+items как обычный peer (для close-box testing).
+
+```
+admin/
+├── users.nv          (production peer, всегда compiled)
+├── users_test.nv     (test-only peer, только в test mode)
+└── helpers.nv        (production peer)
+```
+
+Аналог Go `*_test.go`. Inline `test "..."` блоки в production-peer-
+файлах работают как раньше (test-runner их собирает, codegen
+исключает из release).
+
+#### Internal modules — `internal/` directory (Plan 42 правило H)
+
+Folder `<X>/internal/<...>` доступен **только** из `<X>/...`
+descendants (Go-style library boundary).
+
+```
+admin/
+├── users.nv                              (peer of admin)
+└── internal/
+    ├── token.nv                          module admin.internal
+    └── crypto.nv                         module admin.internal (peer)
+```
+
+- `admin/users.nv` может `import admin.internal.{Token}` — OK
+  (descendant of `admin`).
+- `http/handler.nv` НЕ может `import admin.internal.{Token}` —
+  compile error «cannot import internal module from outside parent».
+
+Critical для production library development: refactor internal без
+breaking external API.
+
+#### File-level `#forbid` attribute (Plan 42 Sub-plan 42.1)
+
+Attribute `#forbid Eff1, Eff2` после `module X` declaration applies
+к **этому файлу** (per-file scope). Все functions/tests в этом
+файле получают forbidden effects.
+
+```nova
+module admin
+#forbid Net, Fs
+
+// все fn в этом файле гарантированно не используют Net/Fs.
+export fn create_user(name str) Db -> User { ... }
+```
+
+**Semantics:**
+
+- **Per-file scope.** Применяется только к этому файлу. Peers
+  folder-module имеют независимые `#forbid` declarations
+  (intentional — peers равноправны).
+- **Layered с function-scope** D63. Function-internal `forbid X { body }`
+  union'ится с file-level forbid.
+- **`#requires` отвергнут.** Module-level implicit effects (auto-injected
+  в function signatures) противоречат AI-first explicit principle
+  (D62 «эффекты в сигнатуре»). Используй explicit `Eff` в каждой
+  signature как обычно.
+
+**Cross-peer consistency:** convention — programmer пишет одинаковый
+`#forbid` в каждом peer module если хочет module-wide constraint.
+Compiler **не** auto-propagates between peers (peers равноправны).
+Lint rule (sub-plan 42.7) — warn при inconsistent `#forbid` declarations
+between peers same module.
+
 #### Импорт
 
 ```nova

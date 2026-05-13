@@ -484,14 +484,41 @@ decl типов уже работает (Plan 36 followup). Verify на test'е.
 Если первый std/* модуль вырастет >800 LOC — convertable example.
 Не блокер для Plan 42 closure.
 
-### Sub-plans (после Plan 42 MVP)
+### Sub-plans (пронумерованы 42.1, 42.2, ...)
 
-- **42.A — module-level effect/capability declarations** (правило I).
-  Дизайн `#forbid`/`#requires` на module-level + `_module.nv`
-  convention. Production hardening для library boundaries.
-- **42.B — `nova doc <module>`** tooling (правило J). Roadmap.
-  Auto-collect public API из всех peers, source-of-truth =
-  реализация. Заменяет отвергнутый `overview.nv` (G).
+- **42.1 — file-level `#forbid`** ✅ ЗАКРЫТ 2026-05-13.
+  Attribute `#forbid X, Y` на module-top (после `module X`
+  declaration) applies к **этому файлу** (per-file scope, не
+  cross-peer — peers равноправны, наследование между peers было бы
+  inconsistent). Каждый peer объявляет свои constraints. Enforce'ится
+  через type-checker `CapabilityCtx` (file-level initial frame
+  в `forbidden_stack`). `#requires` отвергнут (нарушает AI-first
+  explicit principle — implicit effects in function signatures).
+  Tests: `modules/file_forbid_clean.nv` + `negative_capability/file_forbid_violation.nv` PASS.
+- **42.2 — `nova doc <module>`** tooling. Roadmap.
+  Auto-collect public API из всех peers, source-of-truth = реализация.
+  Заменяет отвергнутый `overview.nv` (правило G).
+- **42.3 — function-level `#forbid`** (новое 2026-05-13). Attribute
+  `#forbid X, Y` перед `fn`, applies к whole function body. Сейчас
+  можно эмулировать через `forbid X { body }` scope-block (D63).
+  Convenience shortcut, не блокер. Roadmap.
+- **42.4 — per-file imports scope** (правило C из production audit).
+  Bootstrap MVP shared imports через flat merge. Real fix: AST
+  refactor `Module.peer_files: Vec<PeerFile>`, name resolution
+  учитывает per-peer import scope (Go-style).
+- **42.5 — 2-pass codegen** (правило D). Pass 1 emit forward decls
+  для всех Fn/Type/Const, Pass 2 emit bodies. Текущий single-pass
+  works для всех use cases bootstrap; sub-plan когда mutually
+  recursive types между peers появятся.
+- **42.6 — Migration std/* под parent.X** (D29 rev-3). Automated
+  tool walks все `.nv` файлы в repo, computes expected `module
+  parent.X` declaration, заменяет existing `module a.b.c.d`. После
+  миграции compat mode (rev-1 acceptance) можно убрать.
+- **42.7 — Cross-peer consistency lint** (новое 2026-05-13). Warn
+  если peers folder-module объявляют **разные** `#forbid` attributes
+  — inconsistent capability boundary. Не error (peers независимы),
+  только lint hint. Helps maintain «whole-module security» convention
+  без enforcement.
 
 ---
 
