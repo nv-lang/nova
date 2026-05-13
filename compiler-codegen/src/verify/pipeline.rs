@@ -37,25 +37,90 @@ pub enum VerifyResult {
     EncodingFailed(String),
 }
 
+/// Выбор SMT backend'а.
+///
+/// Plan 33 Z3 milestone (V1 closure): добавлен `Z3`. По умолчанию
+/// `Trivial` (backward-compat + no external deps). Switch:
+/// - CLI flag (nova check/test/compile): `--smt-backend=z3`.
+/// - Env var: `NOVA_SMT_BACKEND=z3`.
+///
+/// Если feature `z3-backend` не compiled-in, `Z3` теряет смысл —
+/// `create_backend` падает обратно на trivial с stderr-warning.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BackendChoice {
+    Trivial,
+    Z3,
+}
+
+impl BackendChoice {
+    /// Парсит строку, used и для CLI и для env-var.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "trivial" | "default" | "" => Some(BackendChoice::Trivial),
+            "z3" => Some(BackendChoice::Z3),
+            _ => None,
+        }
+    }
+
+    /// Backend по умолчанию: смотрим `NOVA_SMT_BACKEND`, иначе Trivial.
+    pub fn from_env() -> Self {
+        std::env::var("NOVA_SMT_BACKEND")
+            .ok()
+            .and_then(|s| Self::parse(&s))
+            .unwrap_or(BackendChoice::Trivial)
+    }
+}
+
 pub struct VerificationPipeline {
     timeout_ms: u32,
+    backend: BackendChoice,
 }
 
 impl VerificationPipeline {
     pub fn new() -> Self {
-        Self { timeout_ms: 2000 }
+        Self { timeout_ms: 2000, backend: BackendChoice::from_env() }
     }
 
     pub fn with_timeout(timeout_ms: u32) -> Self {
-        Self { timeout_ms }
+        Self { timeout_ms, backend: BackendChoice::from_env() }
+    }
+
+    /// Plan 33 Z3 milestone: явный выбор backend'а (override env-var).
+    pub fn with_backend(mut self, backend: BackendChoice) -> Self {
+        self.backend = backend;
+        self
+    }
+
+    /// Создать backend instance согласно выбору. Falls back to trivial
+    /// с warning'ом если z3 не compiled-in.
+    fn create_backend(&self) -> Box<dyn SmtBackend> {
+        match self.backend {
+            BackendChoice::Trivial => Box::new(TrivialBackend::new()),
+            BackendChoice::Z3 => {
+                #[cfg(feature = "z3-backend")]
+                {
+                    Box::new(super::backend::z3::Z3Backend::new(self.timeout_ms))
+                }
+                #[cfg(not(feature = "z3-backend"))]
+                {
+                    // User-friendly fallback (но не silent — пишем в stderr).
+                    eprintln!(
+                        "warning: --smt-backend=z3 requested, but binary built without \
+                         `--features z3-backend`; falling back to trivial backend. \
+                         Rebuild с `cargo build --features z3-backend`."
+                    );
+                    Box::new(TrivialBackend::new())
+                }
+            }
+        }
     }
 
     /// Verify одну функцию: возвращает list of (Contract span, VerifyResult).
-    /// Trivial backend используется по умолчанию (без libz3).
+    /// Backend выбирается через `BackendChoice` (env-var / CLI flag).
     pub fn verify_fn(&self, fd: &FnDecl) -> Vec<(Span, VerifyResult)> {
         if fd.contracts.is_empty() { return Vec::new(); }
 
-        let mut backend = TrivialBackend::new();
+        let mut backend = self.create_backend();
 
         // 1. Declare params as Vars.
         for p in &fd.params {
@@ -121,8 +186,8 @@ impl VerificationPipeline {
             // В 33.1 нет mut params → старые значения = текущие значения.
             let goal = substitute_old(&goal);
 
-            // try_prove(goal).
-            match try_prove(&mut backend, goal) {
+            // try_prove(goal). `&mut *backend` чтобы coerce Box<dyn> → &mut dyn.
+            match try_prove(&mut *backend, goal) {
                 SatResult::Unsat(_) => results.push((c.span, VerifyResult::Proven)),
                 SatResult::Sat(model) => {
                     let cex = format_counterexample(&model);
