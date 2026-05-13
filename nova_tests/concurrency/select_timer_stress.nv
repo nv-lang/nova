@@ -1,0 +1,54 @@
+// Plan 40 audit R8 stress test (2026-05-13).
+//
+// 500 iterations select { recv wins, Time.after(10s) cancelled }.
+// Это 10x существующего select_timer_cleanup. Цель — catch regressions
+// в lifecycle management uv_timer'ов:
+//   - Boehm conservative scan через NovaAfterState (R8-1 fix).
+//   - on_select_lost callback из try_immediate (R7 fix).
+//   - cancelled flag перед uv_close (R7 fix).
+//   - malloc/free вместо nova_alloc для NovaAfterState (R8-1 fix).
+//
+// Если любой из этих fix'ов regress'ится, тест либо TIMEOUT'ит (накопление
+// uv handles) либо SEGV'ит (UAF на collected NovaAfterState).
+//
+// Также пробует pattern «timer wins сам по себе»: 100 iterations
+// Time.after(1ms) timeout fires — verify timer cleanup после fire тоже OK.
+
+module nova_tests.concurrency.select_timer_stress
+
+test "500 iter select cleanup stress" {
+    let mut wins = 0
+    let mut i = 0
+    while i < 500 {
+        let ch = Channel.new(1)
+        supervised {
+            spawn { ch.tx.send(i) }
+            spawn {
+                select {
+                    Some(_) = ch.rx => { wins = wins + 1 }
+                    Some(_) = Time.after(10_000) => { }
+                }
+            }
+        }
+        i = i + 1
+    }
+    assert(wins == 500)
+}
+
+test "100 iter Time.after fires" {
+    let mut fired = 0
+    let mut i = 0
+    while i < 100 {
+        let ch = Channel.new(1)
+        supervised {
+            spawn {
+                select {
+                    Some(_) = ch.rx => { }
+                    Some(_) = Time.after(1) => { fired = fired + 1 }
+                }
+            }
+        }
+        i = i + 1
+    }
+    assert(fired == 100)
+}
