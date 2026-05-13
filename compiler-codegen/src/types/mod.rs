@@ -215,6 +215,13 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
     // ной, и если да — body должен diverge (static analysis).
     check_handler_never_ops(module, &mut errors);
 
+    // Plan 33.3 Ф.9 (D24): validate axiom-bodies в effect-блоках.
+    // Каждый axiom должен ссылаться только на binders + pure_view-ops
+    // **того же эффекта** + литералы + boolean/arith operators. Любой
+    // другой identifier (включая non-pure_view ops) → error. Это
+    // фундамент SMT encoding (UF mapping в Ф.9.4).
+    check_effect_axioms(module, &mut errors);
+
     // Name-resolution фаза: статический поиск undefined идентификаторов
     // в expr-position. Запускается ПОСЛЕ BoundCtx/CapabilityCtx, чтобы
     // более фундаментальные ошибки (signatures/effects) приходили первыми.
@@ -2414,6 +2421,197 @@ fn type_ref_is_never(t: &TypeRef) -> bool {
         }
     }
     false
+}
+
+/// Plan 33.3 Ф.9 (D24): валидация axiom-формул внутри effect-блоков.
+///
+/// Контракт: внутри `axiom name(binders) => formula` разрешены только:
+///   - литералы (int/bool/str/unit);
+///   - идентификаторы из `binders`;
+///   - вызовы pure_view-ops **того же эффекта**: `balance(id) >= 0`;
+///   - стандартные бинарные/унарные/comparison/boolean операторы;
+///   - `if/else` без stmts.
+///
+/// Запрещены:
+///   - non-pure_view operations (`SetBalance(...)`);
+///   - вызовы любых других fn (включая built-ins за пределами разрешённых
+///     операторов);
+///   - record/sum constructors, member access, method calls.
+///
+/// Эти ограничения нужны для чистой SMT-кодировки (`pure_view` → UF,
+/// axiom → assert) в Ф.9.4. Если разрешить произвольный код — SMT
+/// encoding теряет soundness.
+fn check_effect_axioms(module: &Module, errors: &mut Vec<Diagnostic>) {
+    for item in &module.items {
+        let Item::Type(td) = item else { continue };
+        let TypeDeclKind::Effect(methods) = &td.kind else { continue };
+        if td.axioms.is_empty() { continue; }
+
+        // Собираем pure_view-имена эффекта: имя → ожидаемая арность.
+        let mut pure_views: HashMap<String, usize> = HashMap::new();
+        for m in methods {
+            if matches!(m.kind, EffectOpKind::PureView) {
+                pure_views.insert(m.name.clone(), m.params.len());
+            }
+        }
+
+        for ax in &td.axioms {
+            // Duplicate-binder check.
+            let mut seen: HashSet<&String> = HashSet::new();
+            for b in &ax.binders {
+                if !seen.insert(b) {
+                    errors.push(Diagnostic::new(
+                        format!("axiom `{}.{}`: duplicate binder `{}`",
+                            td.name, ax.name, b),
+                        ax.span,
+                    ));
+                }
+            }
+            let binders: HashSet<&String> = ax.binders.iter().collect();
+            check_axiom_expr(&ax.formula, &td.name, &ax.name,
+                             &binders, &pure_views, errors);
+        }
+    }
+}
+
+/// Walk `expr` в axiom-formula и пушит ошибки на запрещённые конструкции.
+fn check_axiom_expr(
+    e: &Expr,
+    effect_name: &str,
+    axiom_name: &str,
+    binders: &HashSet<&String>,
+    pure_views: &HashMap<String, usize>,
+    errors: &mut Vec<Diagnostic>,
+) {
+    use crate::ast::ExprKind::*;
+    match &e.kind {
+        IntLit(_) | BoolLit(_) | StrLit(_) | CharLit(_) | UnitLit => {}
+        Ident(n) => {
+            if binders.contains(&n.to_string()) { return; }
+            if pure_views.contains_key(n) {
+                // Reference to pure_view без вызова — V1 запрещаем
+                // (требуем `name(args)`-форму для arity-clarity).
+                errors.push(Diagnostic::new(
+                    format!(
+                        "axiom `{}.{}`: pure_view `{}` must be called \
+                         with arguments (e.g. `{}(...)`), not used as value",
+                        effect_name, axiom_name, n, n,
+                    ),
+                    e.span,
+                ));
+                return;
+            }
+            errors.push(Diagnostic::new(
+                format!(
+                    "axiom `{}.{}`: unknown identifier `{}` (axiom-body \
+                     may only reference binders {:?} or pure_view ops \
+                     of effect `{}`)",
+                    effect_name, axiom_name, n,
+                    binders.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
+                    effect_name,
+                ),
+                e.span,
+            ));
+        }
+        Binary { left, right, .. } => {
+            check_axiom_expr(left, effect_name, axiom_name, binders, pure_views, errors);
+            check_axiom_expr(right, effect_name, axiom_name, binders, pure_views, errors);
+        }
+        Unary { operand, .. } => {
+            check_axiom_expr(operand, effect_name, axiom_name, binders, pure_views, errors);
+        }
+        If { cond, then, else_ } => {
+            check_axiom_expr(cond, effect_name, axiom_name, binders, pure_views, errors);
+            if !then.stmts.is_empty() {
+                errors.push(Diagnostic::new(
+                    format!("axiom `{}.{}`: if-branch must not contain statements",
+                        effect_name, axiom_name),
+                    e.span,
+                ));
+            }
+            if let Some(trailing) = &then.trailing {
+                check_axiom_expr(trailing, effect_name, axiom_name, binders, pure_views, errors);
+            }
+            match else_ {
+                Some(crate::ast::ElseBranch::Block(b)) => {
+                    if !b.stmts.is_empty() {
+                        errors.push(Diagnostic::new(
+                            format!("axiom `{}.{}`: else-branch must not contain statements",
+                                effect_name, axiom_name),
+                            e.span,
+                        ));
+                    }
+                    if let Some(t) = &b.trailing {
+                        check_axiom_expr(t, effect_name, axiom_name, binders, pure_views, errors);
+                    }
+                }
+                Some(crate::ast::ElseBranch::If(ie)) => {
+                    check_axiom_expr(ie, effect_name, axiom_name, binders, pure_views, errors);
+                }
+                None => {}
+            }
+        }
+        Call { func, args, trailing } => {
+            if trailing.is_some() {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "axiom `{}.{}`: trailing blocks not allowed in axiom-formulas",
+                        effect_name, axiom_name,
+                    ),
+                    e.span,
+                ));
+                return;
+            }
+            // V1: разрешена форма `<pure_view_name>(args)`.
+            let pv_name = match &func.kind {
+                Ident(n) => n.clone(),
+                _ => {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "axiom `{}.{}`: callee must be a pure_view of effect `{}`",
+                            effect_name, axiom_name, effect_name,
+                        ),
+                        e.span,
+                    ));
+                    return;
+                }
+            };
+            let Some(&expected) = pure_views.get(&pv_name) else {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "axiom `{}.{}`: `{}` is not a pure_view of effect `{}` \
+                         (axioms may only reference pure_view ops)",
+                        effect_name, axiom_name, pv_name, effect_name,
+                    ),
+                    e.span,
+                ));
+                return;
+            };
+            if args.len() != expected {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "axiom `{}.{}`: pure_view `{}` expects {} arg(s), got {}",
+                        effect_name, axiom_name, pv_name, expected, args.len(),
+                    ),
+                    e.span,
+                ));
+            }
+            for a in args {
+                check_axiom_expr(a.expr(), effect_name, axiom_name, binders, pure_views, errors);
+            }
+        }
+        _ => {
+            errors.push(Diagnostic::new(
+                format!(
+                    "axiom `{}.{}`: this expression form is not allowed inside \
+                     axiom-formula (only literals, binders, pure_view calls, \
+                     arith/bool ops, and if/else)",
+                    effect_name, axiom_name,
+                ),
+                e.span,
+            ));
+        }
+    }
 }
 
 /// Walk block recursively: ищет HandlerLit, проверяет never-ops.
