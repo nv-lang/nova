@@ -492,3 +492,93 @@ Plan 43 — **3 неудачные попытки, открыт** для focused
 session. Bootstrap working OK через Windows calloc path. Plan 23 M:N
 prerequisites закрыты на Linux/macOS — Windows может оставаться на
 bootstrap-grade path пока не возникнет реальной production needs.
+
+---
+
+## Попытка 4 (2026-05-13): no-decommit slot reuse
+
+**Дизайн:** slot 256 KB, per-slot MEM_COMMIT only on first allocation
+(`committed_bits` tracking), bitmap reuse, **НЕТ VirtualFree** anywhere.
+Physical commit charge = high_water × slot_size permanently.
+
+**Результат:** **fail.** Даже `main_yield` (простейший spawn+yield)
+TIMEOUT 60+ сек. На 4-й failed attempt я нашёл **fundamental root cause**.
+
+---
+
+## ROOT CAUSE найден: Windows TIB stack tracking
+
+**Windows kernel tracks current thread's stack range** в TIB (Thread
+Information Block, NT_TIB):
+- `NT_TIB.StackBase` (high address)
+- `NT_TIB.StackLimit` (low address)
+
+Эти поля установлены kernel при `CreateThread` и used для:
+- Exception handling (`__try`/`__except`, SEH unwind).
+- Stack overflow detection (PAGE_GUARD на stack bottom).
+- Return address validation (control flow guard, /GS канари).
+- Debug stack walking.
+
+`MCO_USE_ASM` backend в minicoro **переключает только RSP** через asm
+context switch. **TIB metadata НЕ обновляется** — указывает на оригинальный
+OS thread stack. Когда fiber запускается на нашем VirtualAlloc'нутом
+stack, любой код требующий TIB validation:
+- Хватает StackBase/StackLimit из TIB → не совпадает с current RSP.
+- Walks stack range expecting kernel-tracked metadata → infinite loop
+  или hang.
+- Throws exception → SEH unwind walks invalid stack range → hang.
+
+**Почему calloc'нутый stack работает по default**: process heap memory
+allocated via HeapAlloc принадлежит **process heap segment** который
+kernel tracks differently. minicoro context switches happily используют
+HeapAlloc'нутую memory potentially **because kernel doesn't strictly
+enforce TIB validation для всех paths**. Но это **luck-based** — не
+documented invariant.
+
+`MCO_USE_FIBERS` (Windows fiber API через `ConvertThreadToFiber` +
+`CreateFiber` + `SwitchToFiber`) **обновляет TIB** через kernel call —
+proper context switch с full metadata sync.
+
+### Implications
+
+**Plan 43 fundamentally невозможен** через arena allocator подход без:
+1. **CreateFiber API** — kernel-managed stacks. Major minicoro replacement
+   на Windows (separate code path, не unified ASM context switch).
+2. **Manual TIB update** в minicoro context switch (`patch minicoro` —
+   нарушает правило `feedback_third_party_libs`).
+3. **NtSetInformationThread** — undocumented API для TIB manipulation.
+
+### Closed status
+
+Plan 43 — **fundamentally blocked** on Windows. **4 failed attempts**:
+1. VEH page-level lazy commit — Boehm scan RSS thrash.
+2. Slot-level lazy commit + decommit — Windows commit charge limit / TIB issues.
+3. Slot 256 KB + idle decommit — TIB metadata mismatch causing timeouts.
+4. No decommit (committed_bits tracking) — same TIB issue, even simple
+   main_yield TIMEOUT.
+
+**Не приоритизировать без production Windows use case.** Bootstrap
+running OK на Windows calloc + Plan 40 R8-1 NovaAfterState workaround
++ Plan 40 R8-4 stack BaseWaiter Linux-only.
+
+### Re-design notes (если когда-нибудь)
+
+Реалистичный path для Windows arena = **CreateFiber-based runtime**:
+- Использовать `MCO_USE_FIBERS` backend (уже в minicoro).
+- НО: каждый fiber через `CreateFiber(stack_size, ...)` allocates
+  отдельный stack — нельзя поместить в один arena range.
+- Boehm GC sees individual stacks via thread tracking — same N-roots
+  problem.
+
+**Возможно проще** — продолжать default minicoro calloc на Windows
+и **зарегистрировать Boehm root manually для каждого fiber stack**:
+- При spawn: `GC_add_roots(fiber_stack_base, fiber_stack_top)`.
+- При complete: `GC_remove_roots(...)`.
+- Это упирается в MAX_ROOT_SETS=128 (Plan 27 R4 history) → solvable
+  если recompile Boehm с `LARGE_CONFIG`. Это нарушает "не патчить
+  библиотеки" но это recompile-config-flag, не patch source.
+
+Опция оптимизации stack-BaseWaiter для Windows: создать **per-thread
+side-table** для fiber stack metadata, не полагаться на conservative
+GC scan через fiber stack pages. Это переписать GC strategy. Out-of-scope.
+

@@ -385,7 +385,8 @@ static inline NovaOpt_nova_int nova_chan_reader_recv(Nova_ChanReader* rx) {
     BaseWaiter* w = &w_storage;
 #else
     /* Windows: heap-allocated через GC — suspended fiber stack невидим
-     * для Boehm conservative scan (calloc-путь, Plan 43 открытый). */
+     * для Boehm conservative scan (calloc-путь, Plan 43 fundamentally
+     * blocked by Windows TIB stack tracking). */
     BaseWaiter* w = (BaseWaiter*)nova_alloc(sizeof(BaseWaiter));
 #endif
     w->scope    = sc;
