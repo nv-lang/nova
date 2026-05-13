@@ -498,10 +498,18 @@ decl типов уже работает (Plan 36 followup). Verify на test'е.
 - **42.2 — `nova doc <module>`** tooling. Roadmap.
   Auto-collect public API из всех peers, source-of-truth = реализация.
   Заменяет отвергнутый `overview.nv` (правило G).
-- **42.3 — function-level `#forbid`** (новое 2026-05-13). Attribute
-  `#forbid X, Y` перед `fn`, applies к whole function body. Сейчас
-  можно эмулировать через `forbid X { body }` scope-block (D63).
-  Convenience shortcut, не блокер. Roadmap.
+- **42.3 — function-level `#forbid`** ❌ ОТВЕРГНУТО 2026-05-14.
+  Изначально предлагался attribute `#forbid X, Y` перед `fn` как
+  shortcut для `forbid X { body }`. **Отказ:** это TIMTOWTDI
+  (two ways to do one thing) — дублирующий syntax поверх
+  существующего `forbid X { body }` scope-block (D63). Nova
+  philosophy «один способ для одной вещи» (AI-first consistency:
+  LLM не должен выбирать между equivalent syntaxes). Convenience
+  win минимален (один блок-wrap), стоимость — два keyword'а с
+  идентичной семантикой. Тот же anti-pattern что 42.7 (см.
+  simplifications.md). Если когда-нибудь fn-level scope станет
+  настолько частым случаем что block wrap стал code-smell —
+  пересмотреть; до тех пор `forbid X { body }` достаточен.
 - **42.4 — per-file imports scope** (правило C из production audit).
   Bootstrap MVP shared imports через flat merge. Real fix: AST
   refactor `Module.peer_files: Vec<PeerFile>`, name resolution
