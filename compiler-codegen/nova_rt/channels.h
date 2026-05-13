@@ -360,7 +360,50 @@ static inline NovaOpt_nova_int nova_chan_reader_recv(Nova_ChanReader* rx) {
         return (NovaOpt_nova_int){ .tag = NOVA_TAG_Option_None, .value = 0 };
     }
 
-    /* Need to park. Allocate waiter on the heap (Nova_alloc — GC-managed). */
+    /* Plan 40 audit R8-4 (2026-05-13): BaseWaiter — per-platform allocation.
+     *
+     * Park logic: fiber кладёт waiter в channel->recv_waiters/send_waiters
+     * (doubly-linked), yields через scheduler, после wake читает w->send_val.
+     * Waiter живёт ровно от park до unlink (после fired/cancel) — это
+     * SCOPED lifetime, совпадает с лексическим scope'ом recv()/send().
+     *
+     * Между park и wake fiber suspended → его OS stack отлеплён от
+     * текущего CPU thread. Conservative GC (Boehm) сканирует ТОЛЬКО
+     * текущий thread stack + зарегистрированные roots. Чтобы waiter
+     * остался reachable (a) waker не следовал на стейл pointer и (b)
+     * объект не был collected — нужно одно из:
+     *   1. Waiter в GC-managed heap (`nova_alloc`) → reachable через
+     *      heap walk если channel state reachable (channel state →
+     *      waiter list → waiter).
+     *   2. Suspended fiber stack — зарегистрированный GC root → waiter
+     *      на этом стеке reachable через root walk.
+     *
+     * Linux/macOS (D97 fiber arena ENABLED):
+     *   - Fiber stacks живут в `mmap`'нутой arena.
+     *   - Arena `[base, base+high_water*slot_size]` зарегистрирован как
+     *     один Boehm root (`fiber_arena.c::_arena_register_active_range`).
+     *   - Suspended fiber stack scanned ⇒ waiter на этом стеке visible
+     *     ⇒ stack allocation БЕЗОПАСНА.
+     *   - Бонус: zero allocation per park → нет heap pressure под
+     *     100k req/s (6.4 MB/s GC garbage сэкономлено).
+     *   - Это **Nova unique advantage над Go**: goroutine stacks могут
+     *     грow → copied → pointer на старый stack invalidates. Go не
+     *     может разместить sudog на goroutine stack. Nova fibers
+     *     (minicoro) на фиксированных стеках — pointers stable.
+     *
+     * Windows (D97 fiber arena DISABLED, fiber stacks через calloc):
+     *   - Calloc'нутые stacks НЕ зарегистрированы как Boehm root.
+     *   - Boehm conservative scan видит указатели только если они
+     *     случайно лежат на active thread stack или в data segment.
+     *   - Suspended fiber stack invisible ⇒ waiter на этом стеке
+     *     может стать unreachable во время collect cycle ⇒ UAF
+     *     (это был root cause "boundary ~35" SEGV для Time.after,
+     *      исправленный в P40R8-1 для NovaAfterState).
+     *   - Поэтому на Windows fallback на nova_alloc — heap-managed
+     *     waiter reachable через channel state.
+     *
+     * Когда Windows получит arena (Plan 42+ через SEH guard pages),
+     * этот #ifdef can be удалён — путь станет single. */
     NovaFiberQueue* sc = _nova_active_scope;
     int             sl = _nova_active_slot;
     if (!sc || sl < 0) {
@@ -368,12 +411,22 @@ static inline NovaOpt_nova_int nova_chan_reader_recv(Nova_ChanReader* rx) {
         nova_throw(nova_str_from_cstr("recv called outside fiber context"));
     }
 
+#if (defined(__linux__) || defined(__APPLE__))
+    /* Stack-allocated — arena GC root покрывает suspended fiber stacks. */
+    BaseWaiter w_storage;
+    BaseWaiter* w = &w_storage;
+#else
+    /* Windows: heap-allocated через GC — suspended fiber stack невидим
+     * для Boehm conservative scan (calloc-путь, см. D97). */
     BaseWaiter* w = (BaseWaiter*)nova_alloc(sizeof(BaseWaiter));
+#endif
     w->scope    = sc;
     w->slot     = sl;
     w->channel  = st;
     w->is_recv  = true;
     w->send_val = 0;
+    w->next     = NULL;
+    w->prev     = NULL;
     nova_aint_init(&w->fired, 0);
     nova_abool_init(&w->cancelled, false);
     _nova_waiter_insert_locked(w);
@@ -516,7 +569,10 @@ static inline nova_bool nova_chan_writer_send(Nova_ChanWriter* tx, nova_int v) {
         return 1;
     }
 
-    /* Need to park. */
+    /* Need to park. Plan 40 audit R8-4: stack-allocated waiter — обоснование
+     * полностью разобрано в nova_chan_reader_recv выше. Сжатый summary:
+     *   Linux/macOS: arena GC root покрывает suspended fiber stacks ⇒ safe.
+     *   Windows: calloc'нутые stacks НЕ GC roots ⇒ heap fallback. */
     NovaFiberQueue* sc = _nova_active_scope;
     int             sl = _nova_active_slot;
     if (!sc || sl < 0) {
@@ -524,12 +580,19 @@ static inline nova_bool nova_chan_writer_send(Nova_ChanWriter* tx, nova_int v) {
         nova_throw(nova_str_from_cstr("send called outside fiber context"));
     }
 
+#if (defined(__linux__) || defined(__APPLE__))
+    BaseWaiter w_storage;
+    BaseWaiter* w = &w_storage;
+#else
     BaseWaiter* w = (BaseWaiter*)nova_alloc(sizeof(BaseWaiter));
+#endif
     w->scope    = sc;
     w->slot     = sl;
     w->channel  = st;
     w->is_recv  = false;
     w->send_val = v;
+    w->next     = NULL;
+    w->prev     = NULL;
     nova_aint_init(&w->fired, 0);
     nova_abool_init(&w->cancelled, false);
     _nova_waiter_insert_locked(w);
