@@ -33,6 +33,29 @@ extern "C" {
  * Не возвращает NULL — на ошибке программа abort'ает. */
 uv_loop_t* nova_evloop(void);
 
+/* Plan 44.6 Layer 3: per-thread current event loop.
+ *
+ * libuv `uv_loop_t` — thread-bound resource. Под M:N runtime каждый
+ * worker thread имеет own loop (NovaWorker.loop); main thread использует
+ * глобальный nova_evloop(). Все timer/handle registrations в runtime
+ * (Time.sleep, channels, Time.after) обязаны идти на own loop текущего
+ * thread'а, иначе callback'и fire'ятся в чужом loop'е и park'нутый
+ * fiber никогда не resume'ится.
+ *
+ * Set'ится:
+ *   - main thread: в nova_evloop_init() = _evloop (global).
+ *   - worker thread: в _worker_main (runtime.c) = &worker->loop.
+ *
+ * Fallback: NULL → nova_current_loop() ленится на nova_evloop()
+ * (для C-static init paths и threads без runtime.init). */
+#ifdef _MSC_VER
+extern __declspec(thread) uv_loop_t* _nova_current_loop;
+#else
+extern __thread uv_loop_t* _nova_current_loop;
+#endif
+
+uv_loop_t* nova_current_loop(void);
+
 /* Init the event loop. Идемпотентна — повторные вызовы no-op.
  * Должна быть вызвана из main-prelude. */
 void nova_evloop_init(void);

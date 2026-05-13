@@ -1130,7 +1130,7 @@ static inline Nova_ChanReader* Nova_Time_after(nova_int ms) {
     }
     st->tx = pair.tx;
     st->cancelled = false;
-    int rc = uv_timer_init(nova_evloop(), &st->timer);
+    int rc = uv_timer_init(nova_current_loop(), &st->timer);
     if (rc != 0) {
         fprintf(stderr, "nova: Nova_Time_after: uv_timer_init failed: %s\n",
                 uv_strerror(rc));

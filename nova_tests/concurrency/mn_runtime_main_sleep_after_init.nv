@@ -1,0 +1,41 @@
+// Plan 44.6 Layer 3 regression: main thread Time.sleep после runtime.init.
+//
+// Verify TLS _nova_current_loop fallback на nova_evloop() на main thread'е
+// — после runtime.init(N) запускаются worker threads (каждый со своим
+// loop'ом), но main thread продолжает использовать nova_evloop() через
+// TLS-fallback. Если TLS infrastructure сломала main thread sleep —
+// этот тест поймает.
+//
+// Acceptance:
+//   - Time.sleep(20) на main после init занимает >= 18ms (не зависает
+//     и не возвращается мгновенно).
+//   - Time.sleep корректно работает несколько раз подряд.
+
+module nova_tests.concurrency.mn_runtime_main_sleep_after_init
+
+test "Time.sleep on main thread after runtime.init(2)" {
+    runtime.init(2)
+
+    let t0 = Time.now()
+    Time.sleep(20)
+    let dt = Time.now() - t0
+
+    // Bounded check: должен спать ~20ms, но bounded'но (не более 200ms
+    // даже под heavy CI). Lower bound 15ms — Windows timer gran ~16ms,
+    // даём небольшой запас.
+    assert(dt >= 15)
+    assert(dt < 200)
+
+    runtime.shutdown()
+}
+
+test "multiple sleeps on main thread cycle through after init/shutdown" {
+    runtime.init(0)  // auto-detect
+    Time.sleep(5)
+    Time.sleep(5)
+    runtime.shutdown()
+
+    // Sleep после shutdown тоже работает — TLS остался указывать
+    // на nova_evloop, который всё ещё active.
+    Time.sleep(5)
+}

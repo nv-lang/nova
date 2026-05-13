@@ -1,0 +1,92 @@
+// Plan 44.5 Layer 5 acceptance: actual M:N parallelism доказан через
+// `runtime.current_worker_id()` distribution — fibers actually run на
+// разных workers (не idle).
+//
+// **Compute-only:** spawn body не использует Time.sleep/Channel.recv
+// (park/wake migration к worker scope — отдельный milestone, требует
+// TLS-swap entry function + slot allocation в worker scope).
+//
+// Acceptance:
+//   - 16 fibers spawn'аются под supervised в M:N mode (runtime.init(4)).
+//   - Каждый записывает worker_id в собственный slot (race-free, mut int
+//     captured by reference).
+//   - Все slots должны быть >= 0 (fibers actually ran на workers, не на
+//     main thread где worker_id == -1).
+//   - >= 2 distinct worker_id'ов (round-robin distribution фактически
+//     работает — не all одного worker'а).
+
+module nova_tests.concurrency.mn_runtime_actual_workload
+
+test "M:N: 16 fibers distributed на 4 workers" {
+    runtime.init(4)
+
+    // 16 mut slots — each spawn writes own slot's worker_id.
+    let mut w00 = -1; let mut w01 = -1; let mut w02 = -1; let mut w03 = -1
+    let mut w04 = -1; let mut w05 = -1; let mut w06 = -1; let mut w07 = -1
+    let mut w08 = -1; let mut w09 = -1; let mut w10 = -1; let mut w11 = -1
+    let mut w12 = -1; let mut w13 = -1; let mut w14 = -1; let mut w15 = -1
+
+    supervised {
+        spawn { w00 = runtime.current_worker_id() }
+        spawn { w01 = runtime.current_worker_id() }
+        spawn { w02 = runtime.current_worker_id() }
+        spawn { w03 = runtime.current_worker_id() }
+        spawn { w04 = runtime.current_worker_id() }
+        spawn { w05 = runtime.current_worker_id() }
+        spawn { w06 = runtime.current_worker_id() }
+        spawn { w07 = runtime.current_worker_id() }
+        spawn { w08 = runtime.current_worker_id() }
+        spawn { w09 = runtime.current_worker_id() }
+        spawn { w10 = runtime.current_worker_id() }
+        spawn { w11 = runtime.current_worker_id() }
+        spawn { w12 = runtime.current_worker_id() }
+        spawn { w13 = runtime.current_worker_id() }
+        spawn { w14 = runtime.current_worker_id() }
+        spawn { w15 = runtime.current_worker_id() }
+    }
+
+    // (1) Все 16 fibers actually отработали.
+    let total_ran =
+        (if w00 >= 0 { 1 } else { 0 }) +
+        (if w01 >= 0 { 1 } else { 0 }) +
+        (if w02 >= 0 { 1 } else { 0 }) +
+        (if w03 >= 0 { 1 } else { 0 }) +
+        (if w04 >= 0 { 1 } else { 0 }) +
+        (if w05 >= 0 { 1 } else { 0 }) +
+        (if w06 >= 0 { 1 } else { 0 }) +
+        (if w07 >= 0 { 1 } else { 0 }) +
+        (if w08 >= 0 { 1 } else { 0 }) +
+        (if w09 >= 0 { 1 } else { 0 }) +
+        (if w10 >= 0 { 1 } else { 0 }) +
+        (if w11 >= 0 { 1 } else { 0 }) +
+        (if w12 >= 0 { 1 } else { 0 }) +
+        (if w13 >= 0 { 1 } else { 0 }) +
+        (if w14 >= 0 { 1 } else { 0 }) +
+        (if w15 >= 0 { 1 } else { 0 })
+    assert(total_ran == 16)
+
+    // (2) Не все на одном worker'е (round-robin distribution фактически
+    // работает). Считаем сколько распределены на worker 0 — если все 16,
+    // distribution failed. С 4 workers round-robin даёт ~4 на worker.
+    let on_w0 =
+        (if w00 == 0 { 1 } else { 0 }) +
+        (if w01 == 0 { 1 } else { 0 }) +
+        (if w02 == 0 { 1 } else { 0 }) +
+        (if w03 == 0 { 1 } else { 0 }) +
+        (if w04 == 0 { 1 } else { 0 }) +
+        (if w05 == 0 { 1 } else { 0 }) +
+        (if w06 == 0 { 1 } else { 0 }) +
+        (if w07 == 0 { 1 } else { 0 }) +
+        (if w08 == 0 { 1 } else { 0 }) +
+        (if w09 == 0 { 1 } else { 0 }) +
+        (if w10 == 0 { 1 } else { 0 }) +
+        (if w11 == 0 { 1 } else { 0 }) +
+        (if w12 == 0 { 1 } else { 0 }) +
+        (if w13 == 0 { 1 } else { 0 }) +
+        (if w14 == 0 { 1 } else { 0 }) +
+        (if w15 == 0 { 1 } else { 0 })
+    // Round-robin + work-stealing: not all 16 on worker 0.
+    assert(on_w0 < 16)
+
+    runtime.shutdown()
+}

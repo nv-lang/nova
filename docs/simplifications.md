@@ -5820,6 +5820,72 @@ explicit.
 Если все functions модуля имеют Db — это **не** boilerplate, это
 **документация** (LLM reads signature без context lookup).
 
+
+
+## Plan 44.6: Layer 3 (per-worker libuv loop) без Nova-side workload distribution
+
+**Что упрощено.** Plan 44.6 покрывает только TLS infrastructure для
+per-worker libuv loop (`_nova_current_loop`). Worker_main set'ит TLS,
+runtime callsites читают его. Это даёт корректность для (будущих)
+fiber'ов запущенных через `runtime.spawn_global` — их Time.sleep
+park'ается на own loop, callback fires там же, wake срабатывает.
+
+Plan 44.6 **не реализует** Nova-side workload distribution: top-level
+`supervised { spawn { ... } }` всё ещё генерирует `nova_fiber_spawn_into`
+к main scope (workers idle). Чтобы spawn'ы реально пошли на workers
+нужен codegen change в `emit_supervised`: выбор между
+`nova_fiber_spawn_into(scope)` (single-thread) и
+`nova_runtime_spawn_global(...)` (M:N) в зависимости от
+`runtime.is_initialized()`.
+
+**Почему это OK сейчас.** Layer 3 — фундамент для M:N. Без него любая
+workload distribution была бы broken (Time.sleep на worker'е hangs).
+Layer 3 закрывает infrastructure, Plan 44.7 закрывает API surface.
+Логичная sequence: первый PR делает корректным то что уже было (M:N
+infrastructure не ломает single-thread baseline), второй PR открывает
+parallelism.
+
+**Long-term path.** Plan 44.7: codegen `emit_supervised` routing
++ cross-worker fiber error propagation (atomic / mutex для parent
+scope `first_error`) + actual workload tests
+(`mn_runtime_actual_workload.nv`, `mn_runtime_steal.nv`,
+`mn_runtime_cross_channel.nv`).
+
+**Что НЕ упрощено.** Layer 3 sufficient для:
+- C-level testing M:N (тесты на C можно push'ить fibers через
+  `nova_runtime_spawn_global` API — runtime ABI стабилен).
+- Future Nova-level API: `runtime.spawn(fn ...)` direct call в Plan 44.7.
+- Cross-worker channel send/recv (Plan 44.1 channels уже M:N-correct).
+
+Это honest scope split — fundamental infrastructure отделён от ergonomic
+API.
+
+## Plan 44.6: Migration между workers — отложено
+
+**Что упрощено.** Fiber pin'ится к worker'у на котором park'нулся.
+Wake происходит из close_cb на том же worker'е. Migration между
+workers — НЕ реализована.
+
+**Почему.** uv handles thread-bound. Если fiber park'нулся на worker A
+(timer registered на A's loop), потом мигрировал на worker B (свободный)
+— B не имеет handle'а, A's loop scheduled callback'у некого wake'нуть.
+Migration требует:
+- TLS state migration (handler-stack, fail-frame, interrupt-frame).
+- Handle re-registration на target's loop (`uv_close` на A + `uv_init`
+  на B — non-trivial, race-prone).
+- Atomic pointer update в waiter struct.
+
+**Practical impact.** Long-running fiber на worker A блокирует
+worker A до завершения. Other workers продолжают независимо.
+Cooperative scheduling работает в пределах one worker. Это identical
+к Tokio default behaviour без `tokio::task::yield_now`.
+
+**Path forward.** Plan 44.8: TLS migration + handle re-registration.
+Требует ~600 строк refactor'а + careful invariant work. Откладывается
+до тех пор пока workload не покажет migration необходимым (single-
+worker stuck'и под uneven load).
+
+
 ---
 
 ## Plan 42 Sub-plan 42.6 (2026-05-13): migration std/* + nova_tests/* → parent.X
@@ -5929,3 +5995,51 @@ free statements), пересмотреть. Сейчас bootstrap std/* не и
 **Note:** `#forbid` на file-level (42.1 ✅) — **другой scope**
 (per-file capability), не дублирующий fn-body block. Это
 legitimate новое feature без syntax overlap.
+
+
+
+## Plan 44.5 Layer 5: park/wake migration к worker scope — отложено
+
+**Что упрощено.** Plan 44.5 Layer 5 закрыл implicit M:N для **compute-only**
+spawn body (без Time.sleep / Channel.recv). Workers actually выполняют
+fiber bodies через codegen routing на `nova_runtime_spawn_into`. Mut-captured
+scalars writeable cross-thread (race-free если each fiber writes own slot).
+
+Park/wake API сейчас (scope, slot)-keyed: `nova_sched_park(scope, slot)`
+читает `scope->sched_state->parked[slot]`. Worker fiber имеет
+`_nova_active_slot = -1` (worker_main не allocates slot). При Time.sleep
+вызывается `_nova_sleep_via_libuv(scope, -1, ms)` → register_pending fails
+guard `_nova_active_slot < 0` → FATAL D92 invariant violated.
+
+**Почему НЕ исправлять сейчас.** Proper park/wake migration требует:
+1. Per-fiber NovaSchedState struct (а не scope-array indexed by slot).
+2. TLS-swap в codegen entry function — set `_nova_active_scope` к parent
+   и аллоцировать slot в scope.
+3. Worker_main loop integration: status check after mco_resume, hold
+   parked fibers, wake from libuv callback.
+4. Fiber pinning to home worker (Go's `LockOSThread` analog) — anti-
+   migration для consistency park/wake handles thread-bound.
+
+Это ~600-1000 LOC значимой работы. Сделать всё в одной сессии =
+high risk regression. Honest partial closure: compute-only Layer 5
+дает user benefit (workers actually работают), park/wake migration =
+следующий milestone.
+
+**Long-term path.** Реализация Go's g/m state separation:
+- Per-fiber state struct (NovaFiberState analog к Go's `g`).
+- TLS только current_fiber pointer (Go's `getg()`).
+- На dispatch: TLS становится cache от current_fiber->fields.
+- На park: copy back в fiber state перед yield.
+
+Memory updated: `feedback_mn_runtime_go_reference.md` — для всей M:N
+работы первым делом research Go runtime, не изобретать.
+
+**Что НЕ упрощено.** Compute-only Layer 5 sufficient для:
+- Pure CPU workloads (parallel computation, map-reduce).
+- Workers actually distributing work (proven через
+  `mn_runtime_actual_workload.nv` / `runtime.current_worker_id()`).
+- Cross-worker `first_error_atomic` propagation.
+- Scope.pending_remote tracking + main thread wait через uv_async_send.
+
+Это honest scope split — fundamental compute parallelism отделён от
+park/wake migration ergonomics.

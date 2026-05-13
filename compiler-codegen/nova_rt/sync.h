@@ -182,6 +182,31 @@ static inline void nova_abool_store(volatile nova_atomic_bool* p, bool v) {
     __atomic_store_n(p, v, __ATOMIC_RELEASE);
 }
 
+/* pointer operations (Plan 44.5 Layer 5) — для cross-worker first_error
+ * propagation через атомарный first-writer-wins CAS. */
+
+typedef const void* nova_atomic_ptr;
+
+static inline void nova_aptr_init(volatile nova_atomic_ptr* p, const void* v) {
+    __atomic_store_n((const void**)p, v, __ATOMIC_RELAXED);
+}
+
+static inline const void* nova_aptr_load(const volatile nova_atomic_ptr* p) {
+    return __atomic_load_n((const void**)p, __ATOMIC_ACQUIRE);
+}
+
+/* Strong CAS на pointer: returns true on success, false on failure
+ * (expected обновляется текущим значением). Acq_rel на успехе, acquire
+ * на failure — стандартный pattern для one-shot first-writer-wins. */
+static inline bool nova_aptr_cas(volatile nova_atomic_ptr* p,
+                                  const void** expected,
+                                  const void* desired) {
+    return __atomic_compare_exchange_n((const void**)p, expected, desired,
+                                         false,  /* strong */
+                                         __ATOMIC_ACQ_REL,
+                                         __ATOMIC_ACQUIRE);
+}
+
 /* ── Cache-line size (Plan 44.1 R2 C5) ───────────────────────────── */
 
 /* x86_64: 64 bytes. ARM big cores: 128 bytes. Default to 64 для bootstrap;

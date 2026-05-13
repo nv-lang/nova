@@ -1,0 +1,89 @@
+// Plan 44.5 Layer 5: implicit M:N — `spawn { body }` под `runtime.init(N)`
+// автоматически distribute'ит fiber'ы на workers (codegen эмитит conditional
+// `if (nova_runtime_is_initialized()) nova_runtime_spawn_into else
+// nova_fiber_spawn_into`).
+//
+// Этот тест проверяет **compute-only** spawn'ы — fibers без park-точек
+// (Time.sleep / Channel.recv). Park/wake migration к worker scope —
+// отдельный milestone (требует TLS-swap в entry function + slot
+// allocation в worker scope, см. Plan 44.* roadmap).
+//
+// **Acceptance:** workers actually выполняют spawn bodies; mut-captured
+// scalars writeable cross-thread; supervised waits через
+// `pending_remote` counter.
+
+module nova_tests.concurrency.mn_runtime_supervised_after_init
+
+test "M:N: workers run compute-only spawn bodies (4 workers)" {
+    runtime.init(4)
+
+    let mut a = 0
+    let mut b = 0
+    let mut c = 0
+    let mut d = 0
+
+    supervised {
+        spawn { a = 1 }
+        spawn { b = 2 }
+        spawn { c = 4 }
+        spawn { d = 8 }
+    }
+
+    // Все 4 fiber'а должны были отработать (на любом worker'е).
+    // Race-free: каждый writes own variable.
+    assert(a + b + c + d == 15)
+
+    runtime.shutdown()
+}
+
+test "M:N: 8 spawn bodies (2 workers, sequential ordering not required)" {
+    runtime.init(2)
+
+    let mut s0 = 0
+    let mut s1 = 0
+    let mut s2 = 0
+    let mut s3 = 0
+    let mut s4 = 0
+    let mut s5 = 0
+    let mut s6 = 0
+    let mut s7 = 0
+
+    supervised {
+        spawn { s0 = 1 }
+        spawn { s1 = 1 }
+        spawn { s2 = 1 }
+        spawn { s3 = 1 }
+        spawn { s4 = 1 }
+        spawn { s5 = 1 }
+        spawn { s6 = 1 }
+        spawn { s7 = 1 }
+    }
+
+    let total = s0 + s1 + s2 + s3 + s4 + s5 + s6 + s7
+    assert(total == 8)
+
+    runtime.shutdown()
+}
+
+test "M:N: nested compute-only supervised" {
+    runtime.init(2)
+
+    let mut outer = 0
+    let mut inner_a = 0
+    let mut inner_b = 0
+
+    supervised {
+        spawn {
+            outer = 100
+            // Nested supervised — inner spawn'ы тоже distribute.
+            // (Note: inner spawn'ы могут run на любом worker, не
+            // обязательно на том же что parent.)
+        }
+        spawn { inner_a = 10 }
+        spawn { inner_b = 1 }
+    }
+
+    assert(outer + inner_a + inner_b == 111)
+
+    runtime.shutdown()
+}

@@ -2801,3 +2801,131 @@ let peak    = fibers.high_water()         // peak concurrent
   `f8d345e536`)
 - ⏸ Linux Docker validation (Plan 44.2 Этап 4) — требует Docker daemon
 - ⏸ SIGSEGV pretty handler (P41-6) — P2, отложено
+
+## D98. Per-worker libuv loop — TLS `_nova_current_loop`
+
+> **Правило.** Каждый OS-thread исполняющий fiber'ы имеет own
+> `uv_loop_t`. Все timer / handle / I/O registrations в runtime
+> (Time.sleep, Time.after, channel-select-timer, future Net/Fs)
+> регистрируют libuv handles **на own loop текущего thread'а**, а не
+> на global `nova_evloop()`. Discovery — через TLS `_nova_current_loop`.
+
+### Проблема
+
+libuv `uv_loop_t` — **thread-bound resource**. uv handles
+(`uv_timer_t`, `uv_signal_t`, `uv_tcp_t`, `uv_async_t`) registered'ы
+на конкретный loop; их callback'и fire'ются ТОЛЬКО когда тот loop
+крутится через `uv_run`. Cross-thread callback firing — undefined.
+
+В bootstrap N:1 ([D71](#d71)) был один thread + один loop — проблема не
+существовала. Под M:N ([Plan 44](../../docs/plans/44-mn-runtime-roadmap.md))
+worker thread имеет own loop ([NovaWorker.loop](../../compiler-codegen/nova_rt/runtime.c)).
+Fiber на worker N park'нувшийся через `Time.sleep` создавал timer на
+**main thread's loop** (через `nova_evloop()`); main thread не крутил
+этот loop в синхронной точке (он либо в supervised_run, либо exit'нут);
+worker N крутил own loop где timer не было. **Result:** fiber hangs
+permanently.
+
+### Решение
+
+TLS `_nova_current_loop` (`uv_loop_t*`) — declared в
+[eventloop.h](../../compiler-codegen/nova_rt/eventloop.h):
+
+```c
+#ifdef _MSC_VER
+extern __declspec(thread) uv_loop_t* _nova_current_loop;
+#else
+extern __thread uv_loop_t* _nova_current_loop;
+#endif
+
+uv_loop_t* nova_current_loop(void);  /* TLS либо fallback на nova_evloop */
+```
+
+Set'ится:
+- **Main thread**: в `nova_evloop_init()` = `_evloop` (глобальный
+  default).
+- **Worker thread**: в `_worker_main` (runtime.c) = `&worker->loop`
+  сразу после `_current_worker_id = w->id`.
+
+Все timer/handle creation в runtime call'ает `nova_current_loop()`:
+- `_nova_sleep_via_libuv` (`fibers.h`) — fiber-context sleep.
+- `_nova_time_default_sleep` (`fibers.h`) — main-flow sleep.
+- `nova_supervised_run` / `nova_supervised_drain_main_scope` — idle uv_run.
+- `Nova_Time_after` (`channels.h`) — select-timer.
+
+`nova_evloop()` остаётся **только** для глобально main-thread операций:
+- `nova_evloop_install_sigint` — single SIGINT handler per process.
+- `nova_evloop_close` — finalize main loop в exit path.
+
+### Fallback semantics
+
+`nova_current_loop()` сначала проверяет TLS; если NULL — lazily set'ит
+к `nova_evloop()` (default). Это покрывает:
+- C-static initializer'ы что вызывают timer creation **до**
+  `nova_evloop_init()`.
+- Threads без `runtime.init()` (тесты что не активируют M:N).
+
+### Ограничение D98
+
+Fiber **pin'ится к worker'у** на котором park'нулся. Wake происходит
+из close_cb на том же worker'е. Migration между workers требует
+отдельной machinery (TLS state migration, handle re-registration на
+target loop) — **отложено** в Plan 44.7+.
+
+Practical implication: long-running fiber на worker A блокирует worker A
+до завершения. Other workers продолжают независимо. Cooperative scheduling
+работает в пределах one worker.
+
+### Что отвергнуто
+
+- **`nova_supervised_run(scope, loop)` параметризация через codegen** —
+  early Plan 44.5 idea. Требовало menyat `emit_supervised`
+  (codegen-side change) emit'ить `_nova_current_loop` в каждый call site.
+  TLS-based подход transparent'но решил это без codegen изменений —
+  любой call site читает TLS without API change.
+- **`uv_default_loop()` per-worker** — нельзя, libuv даёт один default
+  loop на process. Workers используют `uv_loop_init(&w->loop)` с **новой**
+  `uv_loop_t` структурой.
+- **Shared loop через mutex** — обходит изоляцию libuv, kills
+  parallelism (один thread crank'ает — others ждут).
+
+### Bootstrap-status
+
+**Layer 3 (TLS loop) — Plan 44.5 L3 (originally Plan 44.6, re-merged):**
+- ✅ TLS infrastructure (eventloop.h+c)
+- ✅ `_worker_main` set TLS (runtime.c)
+- ✅ Replace `nova_evloop()` → `nova_current_loop()` в fibers/channels
+- ✅ Regression: 274/274 single-thread baseline сохранён
+- ✅ 3 mn_runtime regression-теста PASS
+
+**Layer 5 (implicit M:N — codegen routing) — Plan 44.5 L5 partial (2026-05-14):**
+- ✅ Runtime atomics: `pending_remote` (Go's WaitGroup pattern) +
+  `first_error_atomic` (Go's errgroup.errOnce pattern) + `_main_wake`
+  uv_async + `nova_runtime_spawn_into` + `nova_runtime_signal_main`.
+- ✅ Codegen routing: `emit_spawn` эмитит conditional
+  `if (runtime_is_initialized) nova_runtime_spawn_into else nova_fiber_spawn_into`.
+  Один и тот же `spawn { body }` работает single-thread и distributed
+  (Go's `go func()` model).
+- ✅ Cross-worker error propagation через atomic CAS на parent's
+  `first_error_atomic` (first-writer-wins).
+- ✅ `mn_runtime_actual_workload.nv` PASS — 16 fibers распределены на
+  4 workers через `runtime.current_worker_id()` distribution
+  (round-robin, не all одного worker'а).
+- ✅ 278/278 PASS Windows.
+
+**Critical fix:** `runtime.h` включён в `nova_rt.h` явно. Без этого
+codegen использовал implicit-int declaration для
+`nova_runtime_is_initialized` → ABI mismatch (bool vs int) → garbage
+return → wrong code path → underflow `pending_remote` → infinite loop
+(38 timeout'ов в первой попытке Plan 44.5 L5).
+
+**Open:**
+- ⏸ Park/wake migration к worker scope (Time.sleep / Channel.recv в
+  worker fiber'е). Worker не имеет slot для park/wake — abort. Требует
+  TLS-swap entry function + slot allocation в worker scope (Go's g/m
+  state separation: per-fiber state struct, current fiber pointer в TLS,
+  TLS becomes cache от current_fiber->fields). Significant refactor —
+  следующий milestone.
+- ⏸ Linux Docker validation Plan 44.5 L5 — требует Docker daemon.
+- ⏸ Linux Docker validation Plan 44.6 — требует Docker daemon
+

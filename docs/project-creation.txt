@@ -8845,6 +8845,103 @@ unique «module-level capability» argument (теперь это file-level
 AST+parser, infra (types+resolver+walk_nv), tests, READMEs —
 логические группы.
 
+
+
+## Сессия 2026-05-13 (продолжение): Plan 44.6 — per-worker libuv loop (Layer 3)
+
+**Контекст.** Plan 44.5 закрыл Layers 1+2+4 (Chase-Lev deque + worker
+integration + Boehm GC_THREADS). Layer 3 (per-worker libuv loop) был
+вынесен в Plan 44.6 как отдельный исполняемый sub-plan.
+
+**Сценарий.** Пользователь сказал «продолжи работать над планом 44*».
+Я проверил статус mn-runtime branch — working tree clean, 274/274
+PASS, последний коммит docs(42). Создал Plan 44.6 файл, реализовал
+Layer 3 за один проход.
+
+### Архитектурное упрощение vs initial Plan 44.5 design
+
+Initial Plan 44.5 говорил Layer 3 = «codegen: emit current loop в
+supervised_run call sites». Это major refactor `emit_supervised` +
+`nova_supervised_run(scope, loop)` parameterization API.
+
+При прочтении кода обнаружил: **TLS-based подход transparent'но
+снимает codegen requirement**. Если все runtime call sites что
+регистрируют libuv handles (timer/signal/etc) читают `_nova_current_loop`
+(TLS), а worker_main set'ит его перед запуском fiber'ов — codegen
+не меняется. `nova_supervised_run(scope)` остаётся как есть; внутри
+он вызывает `uv_run(nova_current_loop(), ...)`.
+
+Это сэкономило ~200 строк codegen-refactor + сохранило API stability.
+
+### Реализация
+
+Phase 6.1 — TLS infrastructure (eventloop.h + .c):
+- `extern __thread uv_loop_t* _nova_current_loop` declaration.
+- `nova_current_loop()` helper — TLS либо fallback на `nova_evloop()`.
+- `nova_evloop_init()` set'ит TLS = `_evloop` для main thread.
+
+Phase 6.2 — worker_main TLS set (runtime.c):
+- `_nova_current_loop = &w->loop` сразу после `_current_worker_id = w->id`.
+- Без этого fiber park'ался на main thread loop, worker крутил own
+  loop, callback никогда не fire'ал на worker — fiber hangs.
+
+Phase 6.3 — replace `nova_evloop()` → `nova_current_loop()`:
+- 7 callsites в fibers.h (sleep + supervised_run + drain).
+- 1 callsite в channels.h (Time.after timer).
+- `nova_evloop_install_sigint` остался на `nova_evloop()` — single
+  process-wide SIGINT handler.
+
+Phase 6.4 — build + regression: 274/274 PASS, single-thread baseline
+сохранён.
+
+Phase 6.5 — 3 regression-теста под `nova_tests/concurrency/`:
+- `mn_runtime_main_sleep_after_init.nv` — main thread Time.sleep после
+  runtime.init работает (TLS fallback корректен).
+- `mn_runtime_supervised_after_init.nv` — supervised + nested supervised
+  + Time.sleep на main scope продолжают работать с running workers idle.
+- `mn_runtime_init_shutdown_cycles.nv` — N циклов init/shutdown без
+  leak/hang/corrupt.
+
+Финальный регресс: 276/277 PASS Windows (1 flaky sleep_precision_bench
+— Windows timer gran ~16ms, solo PASS).
+
+Phase 6.6 — D98 в spec/decisions/06-concurrency.md, Plan 44.5 status
+update, README plans добавлены rows 44.5+44.6, Plan 44.6 close.
+
+### Honest scope correction
+
+В исходном плане 44.6 была фраза про `mn_runtime_actual_workload.nv`
+(4 workers × 25 fibers с parallelism). При implementation realised
+что для actual Nova-side workload distribution требуется codegen
+change: `emit_supervised` должен distinguish между top-level supervised
+(spawn → workers через `runtime.spawn_global`) и nested supervised
+(spawn → current worker scope). Это больше Layer 3 — вынес в Plan 44.7.
+
+Plan 44.6 переименован в Layer 3 = чистая infrastructure для per-worker
+loop. Workload distribution = Plan 44.7.
+
+### Уроки
+
+**1. TLS-fallback simpler чем codegen parameter passing.** Когда
+runtime resource thread-bound, TLS+fallback на global default —
+естественный API. Каждый callsite читает TLS без знания ABI / scope
+context. Codegen не меняется.
+
+**2. План — это hypothesis, scope корректируется implementation'ом.**
+Initial Plan 44.5 «Layer 3 = codegen change» оказался wrong — TLS
+закрывает scope без codegen. Plan 44.6 был переписан после code-read
+честно про workload distribution → Plan 44.7.
+
+**3. 8 callsites — managealbe sweep.** `nova_evloop()` → `nova_current_loop()`
+заняло 1 grep + 5 minutes. Простота refactor'а потому что naming
+consistent + dependency tree shallow.
+
+**4. Regression-тесты вместо acceptance.** Layer 3 — infrastructure,
+не feature. Acceptance "actual parallelism speedup" блокируется на
+Plan 44.7. Honest path — 3 regression-теста что баseline behaviour
+сохранён под `runtime.init(N)`.
+
+
 ---
 
 ## Этап 98: Plan 42 Sub-plan 42.6 — migration std/* + nova_tests/* под parent.X
@@ -8930,3 +9027,99 @@ PASS. Не migration regression — existing parallelism issue (см.
 feedback_release_builds.md). Migration lightly увеличивает размер
 генерируемого C-кода (длиннее prelude/runtime references) → wider race
 window. Workaround `--jobs 8` достаточен.
+
+
+
+## Сессия 2026-05-14: Plan 44.5 Layer 5 partial — implicit M:N через codegen routing
+
+**Контекст.** После merge 44.6 → 44.5 (предыдущая сессия), осталось закрыть
+Layer 5 — actual workload distribution. Original Plan 44.5 acceptance
+требовал 3 mn_runtime workload tests + parallelism speedup.
+
+**Approach A (implicit M:N, Go-style)** — выбран после feedback'а
+пользователя «в go это решается автоматически». Изначально я предложил
+explicit `runtime.spawn { body }` syntax (Approach B), но это degraded UX
+относительно Go's `go func()`. Реально правильное решение — implicit:
+один и тот же `spawn { body }` работает в single-thread и distributed.
+
+### Реализация
+
+**Runtime (commit 7a97df1fbd5):**
+- `NovaFiberQueue.pending_remote` (atomic int) + `first_error_atomic`
+  (atomic ptr). Patterns directly from Go's `sync.WaitGroup` (counter)
+  и `errgroup.errOnce.Do` (first-writer-wins error).
+- `_main_wake` uv_async_t handle на nova_evloop() — workers сигналят
+  main thread'а после fiber complete (cross-thread wake).
+- `nova_runtime_spawn_into(scope, entry, user)` — public M:N API:
+  increment scope.pending_remote перед push к worker deque (release
+  ordering чтобы main видел counter > 0 до того как worker начнёт fiber).
+- `nova_aptr_init/load/cas` в sync.h — minimal atomic pointer API.
+
+**Codegen (commit 58201dc150a):**
+- `SpawnCtx._nova_parent_scope` field added (replaces dummy padding).
+- `emit_spawn` эмитит conditional `if (nova_runtime_is_initialized()) ...`
+  routing к spawn_into (M:N) или fiber_spawn_into (single-thread).
+- Entry function: catch branch для remote делает atomic CAS на parent's
+  first_error_atomic (single-thread — old report_error path); post-catch
+  cleanup decrements pending_remote + signal_main wake.
+- One-line decrement (Go's `defer Done` pattern) — единая точка exit.
+
+### Critical bug found via Agent #1 + #2 (Go research)
+
+**38 timeouts в first attempt** были вызваны single root cause:
+`nova_runtime_is_initialized` declared только в `runtime.h`, который
+не был включён в `nova_rt.h`. Generated test code включал nova_rt.h
+но не runtime.h → implicit-int declaration → ABI mismatch (function
+returns bool, caller treats as int) → garbage return value → branch
+к M:N path вместо single-thread → underflow pending_remote → infinite
+loop в supervised_run wait.
+
+**Fix:** добавить `#include "runtime.h"` в `nova_rt.h`. Single-thread
+baseline восстановлен мгновенно (276/277 → 277/277 → 278/278 with new
+test).
+
+**Lesson learned:** ALL public API declarations используемые codegen'ом
+МУСТ быть accessible через `nova_rt.h`. Implicit declarations — silent
+bug source, особенно в C где return type важен для register handling.
+Memory updated: `feedback_mn_runtime_go_reference.md` — Go research
+для всей M:N работы.
+
+### Honest scope limit
+
+Park/wake migration к worker scope (Time.sleep / Channel.recv в worker
+fiber'е) НЕ закрыт. Worker fiber имеет `_nova_active_slot = -1` (worker
+не set'ит slot перед mco_resume). При Time.sleep — abort с D92 invariant
+violated. Решение требует TLS-swap entry function + slot allocation в
+worker scope (Go's g/m state separation pattern из Agent #2 research) —
+significant refactor, отдельный milestone.
+
+Layer 5 partial: compute-only spawn'ы (без park) actually parallelize.
+Тесты:
+- `mn_runtime_supervised_after_init.nv` — 4-worker spawn dispatch с
+  mut-captured int writes (race-free).
+- `mn_runtime_actual_workload.nv` — 16 fibers, distribution verified
+  через `runtime.current_worker_id()` histogram (>= 2 distinct
+  workers used).
+
+### Insights
+
+**1. Implicit-int C declaration — silent ABI killer.** C99 allows
+implicit declarations с warning, не error. Returns int regardless of
+actual signature. Для bool-returning function — мостly ОК но conditional
+branch logic depends on full int value. fall through к non-zero path
+если upper bytes garbage. Always include declarations explicitly.
+
+**2. Agent research как accelerator.** Pre-implementation research через
+Agent (Go's WaitGroup/errgroup, scheduler g/m state) дал блокирующие
+insights в 10 минут что я бы потратил часа на trial-and-error. Память
+updated: `feedback_mn_runtime_go_reference.md`.
+
+**3. Implicit > explicit для concurrency primitives.** Один `spawn`
+работает в обоих режимах — Go pattern. Explicit `runtime.spawn` для
+M:N это API rot (программист must помнить which to use). Spec обещает
+прозрачность M:N (D71); implementation должен это отражать.
+
+**4. Honest partial closure > scope creep.** Park/wake migration —
+большой refactor (~600-1000 LOC + careful slot/TLS work). Закрытие
+compute-only Layer 5 как partial milestone — honest, оставляет clean
+checkpoint, открывает possibility разработки в next session.

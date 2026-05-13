@@ -1,0 +1,37 @@
+// Plan 44.6 Layer 3 regression: init/shutdown cycles + sleep между ними.
+//
+// Stress-test для TLS lifecycle:
+//   - Worker thread set'ит _nova_current_loop = &w->loop.
+//   - Main thread set'ит _nova_current_loop = nova_evloop().
+//   - После runtime.shutdown TLS остаётся валидным на main (nova_evloop
+//     не закрывается между циклами).
+//
+// Verify что N циклов не leak'ат, не hang'ят, не corrupt'ят main loop.
+
+module nova_tests.concurrency.mn_runtime_init_shutdown_cycles
+
+test "5 init/shutdown cycles + main sleep between" {
+    let mut i = 0
+    while i < 5 {
+        runtime.init(2)
+        assert(runtime.worker_count() == 2)
+        // Workers idle — main thread может выполняться независимо.
+        Time.sleep(2)
+        runtime.shutdown()
+        assert(runtime.worker_count() == 0)
+        // Между циклами тоже sleep — verify nova_evloop alive.
+        Time.sleep(2)
+        i = i + 1
+    }
+}
+
+test "varying worker counts cycle" {
+    let counts = [1, 2, 4, 0, 3]  // 0 = auto-detect
+    let mut idx = 0
+    while idx < 5 {
+        runtime.init(counts[idx])
+        Time.sleep(1)
+        runtime.shutdown()
+        idx = idx + 1
+    }
+}

@@ -48,6 +48,31 @@ void nova_runtime_init(int n_workers);
  * `user` — pointer на NovaSpawnCtx_N (heap-managed, GC-tracked). */
 void nova_runtime_spawn_global(void (*entry)(mco_coro*), void* user);
 
+/* Plan 44.5 Layer 5: structured M:N spawn — push fiber в worker deque
+ * + increment scope.pending_remote. Под `runtime.is_initialized()`
+ * codegen routes spawn'ы через эту API вместо nova_fiber_spawn_into.
+ *
+ * Caller (codegen-emit'ом) обязан перед вызовом set ctx->_nova_parent_scope
+ * = scope (через SpawnCtx field) — entry-функция читает его для:
+ *   - error reporting в parent (TLS swap _nova_active_scope = parent),
+ *   - decrement pending_remote + signal main thread после complete.
+ *
+ * Increment счётчика — release, чтобы main thread видел инкремент
+ * before push'нутый fiber начнёт выполняться. */
+struct NovaFiberQueue;  /* forward */
+void nova_runtime_spawn_into(struct NovaFiberQueue* scope,
+                              void (*entry)(mco_coro*),
+                              void* user);
+
+/* Plan 44.5 Layer 5: signal main thread из worker (cross-thread wake).
+ * Worker fiber после complete / on error вызывает это, чтобы main
+ * thread проснулся из uv_run(UV_RUN_ONCE) в supervised_run wait-loop.
+ *
+ * Internally — uv_async_send на singleton handle инициализированный
+ * в nova_runtime_init на nova_evloop() (main thread's loop). No-op
+ * если runtime не initialized (main wake handle отсутствует). */
+void nova_runtime_signal_main(void);
+
 /* Graceful shutdown — signal all workers, join, free resources.
  * Called by codegen в exit path (либо явно через runtime.shutdown()). */
 void nova_runtime_shutdown(void);
