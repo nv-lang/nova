@@ -15,21 +15,40 @@ mod token;
 
 pub use token::{Token, TokenKind};
 
-use crate::diag::{Diagnostic, Span};
+use crate::diag::{Diagnostic, FileId, Span, MAIN_FILE_ID};
 
 pub struct Lexer<'a> {
     src: &'a str,
     bytes: &'a [u8],
     pos: usize,
+    /// Plan 42 Sub-plan 42.4 шаг 2 (2026-05-14): FileId присваивается
+    /// каждому Span создаваемому лексером. Default = MAIN_FILE_ID для
+    /// entry/single-file (backward compat). imports.rs передаёт unique
+    /// FileId для каждого imported peer-файла через
+    /// `new_with_file_id`/`lex_with_file_id`.
+    file_id: FileId,
 }
 
 impl<'a> Lexer<'a> {
     pub fn new(src: &'a str) -> Self {
+        Self::new_with_file_id(src, MAIN_FILE_ID)
+    }
+
+    /// Plan 42 Sub-plan 42.4 шаг 2: lexer с explicit FileId.
+    /// Все Span'ы (tokens + EOF) получат этот file_id.
+    pub fn new_with_file_id(src: &'a str, file_id: FileId) -> Self {
         Self {
             src,
             bytes: src.as_bytes(),
             pos: 0,
+            file_id,
         }
+    }
+
+    /// Helper — construct Span с lexer's file_id.
+    #[inline]
+    fn span(&self, start: usize, end: usize) -> Span {
+        Span::with_file(start, end, self.file_id)
     }
 
     /// Лексирует весь вход, возвращает Vec<Token>. EOF добавляется в конец.
@@ -38,7 +57,7 @@ impl<'a> Lexer<'a> {
         loop {
             self.skip_trivia();
             if self.pos >= self.bytes.len() {
-                let span = Span::new(self.pos, self.pos);
+                let span = self.span(self.pos, self.pos);
                 out.push(Token::new(TokenKind::Eof, span));
                 return Ok(out);
             }
@@ -239,11 +258,11 @@ impl<'a> Lexer<'a> {
             other => {
                 return Err(Diagnostic::new(
                     format!("unexpected byte: {:?}", other as char),
-                    Span::new(start, start + 1),
+                    self.span(start, start + 1),
                 ));
             }
         };
-        let span = Span::new(start, self.pos);
+        let span = self.span(start, self.pos);
         Ok(Token::new(kind, span))
     }
 
@@ -331,7 +350,7 @@ impl<'a> Lexer<'a> {
         }
 
         let text = &self.src[start..self.pos];
-        let span = Span::new(start, self.pos);
+        let span = self.span(start, self.pos);
         if is_float {
             let cleaned: String = text.chars().filter(|c| *c != '_').collect();
             let v: f64 = cleaned
@@ -357,7 +376,7 @@ impl<'a> Lexer<'a> {
                 break;
             }
         }
-        let span = Span::new(start, self.pos);
+        let span = self.span(start, self.pos);
         if self.pos == digits_start {
             return Err(Diagnostic::new(
                 format!("expected digits after radix prefix (base {radix})"),
@@ -389,7 +408,7 @@ impl<'a> Lexer<'a> {
             }
         }
         let text = &self.src[start..self.pos];
-        let span = Span::new(start, self.pos);
+        let span = self.span(start, self.pos);
         let kind = match text {
             "module" => TokenKind::KwModule,
             "import" => TokenKind::KwImport,
@@ -448,13 +467,13 @@ impl<'a> Lexer<'a> {
             let Some(&b) = self.bytes.get(self.pos) else {
                 return Err(Diagnostic::new(
                     "unterminated string literal",
-                    Span::new(start, self.pos),
+                    self.span(start, self.pos),
                 ));
             };
             match b {
                 b'"' => {
                     self.pos += 1;
-                    let span = Span::new(start, self.pos);
+                    let span = self.span(start, self.pos);
                     return Ok(Token::new(TokenKind::Str(s), span));
                 }
                 b'\\' => {
@@ -462,7 +481,7 @@ impl<'a> Lexer<'a> {
                     let Some(&esc) = self.bytes.get(self.pos) else {
                         return Err(Diagnostic::new(
                             "unterminated escape",
-                            Span::new(start, self.pos),
+                            self.span(start, self.pos),
                         ));
                     };
                     match esc {
@@ -491,7 +510,7 @@ impl<'a> Lexer<'a> {
                                     Some(&c) if c.is_ascii_hexdigit() => self.pos += 1,
                                     _ => return Err(Diagnostic::new(
                                         "expected 2 hex digits after \\x",
-                                        Span::new(hex_start.saturating_sub(2), self.pos + 1),
+                                        self.span(hex_start.saturating_sub(2), self.pos + 1),
                                     )),
                                 }
                             }
@@ -499,7 +518,7 @@ impl<'a> Lexer<'a> {
                             let byte_val = u8::from_str_radix(hex_str, 16).map_err(|_| {
                                 Diagnostic::new(
                                     format!("invalid hex in \\x: {}", hex_str),
-                                    Span::new(hex_start, self.pos),
+                                    self.span(hex_start, self.pos),
                                 )
                             })?;
                             // Для байтов 0..127 — push as ASCII char (ровно 1 byte UTF-8).
@@ -513,7 +532,7 @@ impl<'a> Lexer<'a> {
                             if self.bytes.get(self.pos) != Some(&b'{') {
                                 return Err(Diagnostic::new(
                                     "expected '{' after \\u in string literal",
-                                    Span::new(self.pos, self.pos + 1),
+                                    self.span(self.pos, self.pos + 1),
                                 ));
                             }
                             self.pos += 1;
@@ -525,26 +544,26 @@ impl<'a> Lexer<'a> {
                             if hex_end == hex_start {
                                 return Err(Diagnostic::new(
                                     "expected hex digits in \\u{...}",
-                                    Span::new(hex_start, hex_end),
+                                    self.span(hex_start, hex_end),
                                 ));
                             }
                             let hex_str = &self.src[hex_start..hex_end];
                             let cp = u32::from_str_radix(hex_str, 16).map_err(|_| {
                                 Diagnostic::new(
                                     format!("invalid hex in \\u{{...}}: {}", hex_str),
-                                    Span::new(hex_start, hex_end),
+                                    self.span(hex_start, hex_end),
                                 )
                             })?;
                             if cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF) {
                                 return Err(Diagnostic::new(
                                     format!("invalid Unicode codepoint: U+{:X}", cp),
-                                    Span::new(hex_start, hex_end),
+                                    self.span(hex_start, hex_end),
                                 ));
                             }
                             if self.bytes.get(self.pos) != Some(&b'}') {
                                 return Err(Diagnostic::new(
                                     "expected '}' to close \\u{...}",
-                                    Span::new(self.pos, self.pos + 1),
+                                    self.span(self.pos, self.pos + 1),
                                 ));
                             }
                             self.pos += 1;
@@ -553,14 +572,14 @@ impl<'a> Lexer<'a> {
                             } else {
                                 return Err(Diagnostic::new(
                                     format!("invalid char codepoint: U+{:X}", cp),
-                                    Span::new(hex_start, hex_end),
+                                    self.span(hex_start, hex_end),
                                 ));
                             }
                         }
                         other => {
                             return Err(Diagnostic::new(
                                 format!("unknown escape: \\{}", other as char),
-                                Span::new(self.pos - 1, self.pos + 1),
+                                self.span(self.pos - 1, self.pos + 1),
                             ));
                         }
                     }
@@ -584,7 +603,7 @@ impl<'a> Lexer<'a> {
         let Some(&b) = self.bytes.get(self.pos) else {
             return Err(Diagnostic::new(
                 "unterminated char literal",
-                Span::new(start, self.pos),
+                self.span(start, self.pos),
             ));
         };
         let cp: u32 = if b == b'\\' {
@@ -592,7 +611,7 @@ impl<'a> Lexer<'a> {
             let Some(&esc) = self.bytes.get(self.pos) else {
                 return Err(Diagnostic::new(
                     "unterminated char escape",
-                    Span::new(start, self.pos),
+                    self.span(start, self.pos),
                 ));
             };
             match esc {
@@ -609,7 +628,7 @@ impl<'a> Lexer<'a> {
                     if self.bytes.get(self.pos) != Some(&b'{') {
                         return Err(Diagnostic::new(
                             "expected '{' after \\u in char literal",
-                            Span::new(self.pos, self.pos + 1),
+                            self.span(self.pos, self.pos + 1),
                         ));
                     }
                     self.pos += 1;
@@ -621,26 +640,26 @@ impl<'a> Lexer<'a> {
                     if hex_end == hex_start {
                         return Err(Diagnostic::new(
                             "expected hex digits in \\u{...}",
-                            Span::new(hex_start, hex_end),
+                            self.span(hex_start, hex_end),
                         ));
                     }
                     let hex_str = &self.src[hex_start..hex_end];
                     let cp = u32::from_str_radix(hex_str, 16).map_err(|_| {
                         Diagnostic::new(
                             format!("invalid hex in \\u{{...}}: {}", hex_str),
-                            Span::new(hex_start, hex_end),
+                            self.span(hex_start, hex_end),
                         )
                     })?;
                     if cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF) {
                         return Err(Diagnostic::new(
                             format!("invalid Unicode codepoint: U+{:X}", cp),
-                            Span::new(hex_start, hex_end),
+                            self.span(hex_start, hex_end),
                         ));
                     }
                     if self.bytes.get(self.pos) != Some(&b'}') {
                         return Err(Diagnostic::new(
                             "expected '}' to close \\u{...}",
-                            Span::new(self.pos, self.pos + 1),
+                            self.span(self.pos, self.pos + 1),
                         ));
                     }
                     self.pos += 1;
@@ -649,7 +668,7 @@ impl<'a> Lexer<'a> {
                 other => {
                     return Err(Diagnostic::new(
                         format!("unknown char escape: \\{}", other as char),
-                        Span::new(self.pos - 1, self.pos + 1),
+                        self.span(self.pos - 1, self.pos + 1),
                     ));
                 }
             }
@@ -660,12 +679,12 @@ impl<'a> Lexer<'a> {
             if end > self.bytes.len() {
                 return Err(Diagnostic::new(
                     "incomplete UTF-8 in char literal",
-                    Span::new(start, self.pos),
+                    self.span(start, self.pos),
                 ));
             }
             let s = &self.src[self.pos..end];
             let cp = s.chars().next().ok_or_else(|| {
-                Diagnostic::new("empty char literal", Span::new(start, end))
+                Diagnostic::new("empty char literal", self.span(start, end))
             })? as u32;
             self.pos = end;
             cp
@@ -674,11 +693,11 @@ impl<'a> Lexer<'a> {
         if self.bytes.get(self.pos) != Some(&b'\'') {
             return Err(Diagnostic::new(
                 "expected closing ' in char literal",
-                Span::new(self.pos, self.pos + 1),
+                self.span(self.pos, self.pos + 1),
             ));
         }
         self.pos += 1;
-        let span = Span::new(start, self.pos);
+        let span = self.span(start, self.pos);
         Ok(Token::new(TokenKind::Char(cp), span))
     }
 
@@ -693,14 +712,14 @@ impl<'a> Lexer<'a> {
             let Some(&b) = self.bytes.get(self.pos) else {
                 return Err(Diagnostic::new(
                     "unterminated backtick string",
-                    Span::new(start, self.pos),
+                    self.span(start, self.pos),
                 ));
             };
             if b == b'`' {
                 self.pos += 1;
                 return Ok(Token::new(
                     TokenKind::Backtick(s),
-                    Span::new(start, self.pos),
+                    self.span(start, self.pos),
                 ));
             }
             let ch_start = self.pos;
@@ -731,6 +750,13 @@ fn utf8_char_len(first_byte: u8) -> usize {
 }
 
 /// Удобная обёртка: лексирует строку, возвращая Vec<Token>.
+/// `file_id = MAIN_FILE_ID` (backward compat).
 pub fn lex(src: &str) -> Result<Vec<Token>, Diagnostic> {
     Lexer::new(src).lex()
+}
+
+/// Plan 42 Sub-plan 42.4 шаг 2: lex с explicit FileId.
+/// Все Span'ы tokens получат указанный file_id.
+pub fn lex_with_file_id(src: &str, file_id: FileId) -> Result<Vec<Token>, Diagnostic> {
+    Lexer::new_with_file_id(src, file_id).lex()
 }

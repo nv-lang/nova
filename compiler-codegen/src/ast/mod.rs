@@ -19,8 +19,8 @@ pub struct Module {
     pub span: Span,
     /// Plan 42 Sub-plan 42.4 (шаг 1, 2026-05-14): per-peer attribution.
     ///
-    /// Для **single-file** module — `files = [SourceFile { ... }]` (1 elem)
-    /// со всеми imports/items entry-файла.
+    /// Для **single-file** module — `peer_files = [PeerFile { ... }]`
+    /// (1 elem) со всеми imports/items entry-файла.
     ///
     /// Для **folder-module** — N elem'ов, по одному на peer-файл
     /// (alphabetical order, как `module.items`). Каждый peer хранит свои
@@ -29,21 +29,27 @@ pub struct Module {
     ///
     /// `Module.imports` и `Module.items` остаются flat для backward compat
     /// (codegen/interp/verify их читают как раньше). 42.4 шаги 2-3 учат
-    /// type-checker использовать `files` для per-peer name resolution.
-    pub files: Vec<SourceFile>,
+    /// type-checker использовать `peer_files` для per-peer name resolution.
+    ///
+    /// Имя `peer_files` (а не `files`) — чтобы не конфликтовать со
+    /// смежным `diag::SourceFile` и явно отражать терминологию Plan 42 spec.
+    pub peer_files: Vec<PeerFile>,
 }
 
 /// Plan 42 Sub-plan 42.4 (шаг 1, 2026-05-14): per-peer source attribution.
 ///
-/// Сохраняет имportance каждого peer-файла отдельно, не merge'нутое в
+/// Сохраняет imports каждого peer-файла отдельно, не merge'нутые в
 /// flat `Module.imports`/`Module.items`. Используется type-checker'ом
 /// для enforce'а правила C (peers share declarations namespace, но
 /// **не imports**).
 ///
+/// Для single-file module — один PeerFile со всеми entry-данными.
+/// Для folder-module — N PeerFile, по одному на peer-файл.
+///
 /// `file_id` — будет заполнен в шаге 2 (FileRegistry activation +
 /// span walker). Сейчас (шаг 1) остаётся `MAIN_FILE_ID` placeholder.
 #[derive(Debug, Clone)]
-pub struct SourceFile {
+pub struct PeerFile {
     /// Канонический путь к файлу (для diagnostics + identity).
     pub path: std::path::PathBuf,
     /// FileId — назначается в шаге 2. В шаге 1 = `MAIN_FILE_ID`.
