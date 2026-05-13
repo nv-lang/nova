@@ -525,11 +525,17 @@ decl типов уже работает (Plan 36 followup). Verify на test'е.
   = свежие тесты Plan 33 V1, out of scope). examples/* не мигрированы —
   файлы там в произвольных форматах (часть `module hello`, часть rev-1),
   не enforced manifest check'ом (отдельная задача-cleanup).
-- **42.7 — Cross-peer consistency lint** (новое 2026-05-13). Warn
-  если peers folder-module объявляют **разные** `#forbid` attributes
-  — inconsistent capability boundary. Не error (peers независимы),
-  только lint hint. Helps maintain «whole-module security» convention
-  без enforcement.
+- **42.7 — Cross-peer consistency lint** ❌ ОТВЕРГНУТО 2026-05-14.
+  Изначально предлагался warning при разных `#forbid` между peers
+  одного folder-module. **Отказ:** file-level `#forbid` *by design*
+  per-peer (Sub-plan 42.1), peers равноправны, разные constraints —
+  это **корректная** capability decomposition, не smell. Use-cases:
+  один peer нуждается в `Net` (webhook), другой — `#forbid Net`; один
+  пишет в log (нужен `Fs`), другие — `#forbid Fs`. Lint срабатывал бы
+  на legitimate designs → false positives → noise или потеря
+  выразительности. «Catch typos» аргумент тоже не валиден: парсер
+  `#forbid` принимает имена capabilities из enum'а, invalid имя —
+  compile error. Lint solved a phantom problem.
 
 ---
 

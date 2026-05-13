@@ -5856,3 +5856,31 @@ parent folder тот же).
 **Compat mode сохранён** в `manifest.rs::check_module_path` —
 оба формата accepted. User packages в любом из форматов работают
 без принудительной migration.
+
+---
+
+## Plan 42 Sub-plan 42.7 ❌ ОТВЕРГНУТО (2026-05-14): cross-peer #forbid lint
+
+Изначально предлагался warning при разных `#forbid` declarations
+между peers одного folder-module — для поддержания «whole-module
+security» convention soft-enforcement'ом.
+
+**Отказ.** File-level `#forbid` (Sub-plan 42.1) — **by-design**
+per-peer, peers равноправны, разные capability constraints — это
+**корректная** decomposition, не code smell:
+
+- `users.nv` использует webhook (нужен `Net`) — НЕ должен `#forbid Net`.
+- `helpers.nv` не делает network — должен `#forbid Net`.
+- `audit.nv` пишет в log-файл (нужен `Fs`) — НЕ должен `#forbid Fs`.
+- Остальные peers — `#forbid Fs`.
+
+Это **legitimate** capability separation внутри одного module.
+Lint срабатывал бы на корректные designs → false positives.
+Программист либо игнорирует warning (noise), либо «выравнивает»
+constraints чтобы lint молчал (потеря выразительности). Real-world
+parallel: ESLint правила типа «consistent-X» часто отключаются.
+
+«Catch typos» аргумент тоже не работает: парсер `#forbid` принимает
+имена capabilities из enum'а, invalid имя — compile error на парсинге.
+
+Lint solved a phantom problem. Plan 42 sub-plan вычеркнут.
