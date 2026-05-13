@@ -1,0 +1,38 @@
+// REQUIRES_SMT_BACKEND z3
+//
+// Plan 33 Z3 milestone: positive test для V1 closure.
+//
+// TrivialBackend не доказывает `result > 0` для body `=> x + 1` при
+// `requires x > 0` — нет linear-arith reasoning. Z3 backend это доказывает
+// через quantifier-free LIA.
+//
+// Запуск: `NOVA_SMT_BACKEND=z3 nova test contracts/z3_linear_arith_positive.nv`.
+// Без env-var (default trivial) test_runner skip'ает файл — маркер
+// `// REQUIRES_SMT_BACKEND z3` выше включается только при `NOVA_SMT_BACKEND=z3`.
+
+module nova_tests.contracts.z3_linear_arith_positive
+
+#must_verify
+fn inc_positive(x int) -> int
+    requires x > 0
+    ensures result > 0
+=> x + 1
+
+#must_verify
+fn double_positive(x int) -> int
+    requires x > 0
+    ensures result > 0
+=> x * 2
+
+#must_verify
+fn add_positives(a int, b int) -> int
+    requires a > 0
+    requires b > 0
+    ensures result > 0
+=> a + b
+
+test "z3 linear arith — positive cases" {
+    assert(inc_positive(5) == 6)
+    assert(double_positive(3) == 6)
+    assert(add_positives(2, 3) == 5)
+}

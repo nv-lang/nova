@@ -99,6 +99,61 @@ verification, module strict mode, `#trusted` external, AI-friendly diag
 
 ---
 
+## Plan 33 Z3 V1 milestone (2026-05-13) — ЗАКРЫТ
+
+После bootstrap'а (Ф.1-Ф.4 на TrivialBackend) добавлен полноценный Z3
+backend. End-to-end Plan 33.1 теперь работает в продакшен-режиме:
+`requires`/`ensures` доказываются linear-arith reasoning'ом, а не только
+константной симплификацией.
+
+### Поставлено
+
+- `compiler-codegen/Cargo.toml`: feature flag `z3-backend` (default off).
+- `compiler-codegen/build.rs`: при feature=on линкует
+  `vcpkg_installed/x64-windows-static/lib/libz3.lib` + psapi/advapi32/
+  user32 (Win) или stdc++/pthread (*nix). Чёткое сообщение если libz3
+  не установлен.
+- `compiler-codegen/src/verify/backend/z3_ffi.rs`: собственные FFI
+  bindings (~30 функций C API) — **никакого** внешнего `z3-sys` / `z3`
+  crate'а, по правилу feedback_third_party_libs.
+- `compiler-codegen/src/verify/backend/z3.rs`: `Z3Backend` impl
+  `SmtBackend`. Refcounted AST (Z3_mk_context_rc + inc_ref/dec_ref).
+  Pattern: int/bool/str literal'ы → Z3-AST; record member access
+  через uninterpreted functions. `unsafe impl Send`. `Drop` для
+  cleanup всех Z3 refs.
+- `compiler-codegen/src/verify/pipeline.rs`: `BackendChoice::{Trivial,
+  Z3}` + env-var `NOVA_SMT_BACKEND={trivial|z3}` (default trivial).
+- `nova-cli/Cargo.toml`: feature `z3-backend` форвардит в `nova_codegen`.
+  Build: `cargo build --release --features z3-backend` из nova-cli/.
+- `nova_tests/contracts/z3_*.nv` × 3: positive linear-arith + implication
+  chain + counterexample (EXPECT_COMPILE_ERROR). Все с маркером
+  `// REQUIRES_SMT_BACKEND z3`.
+- `compiler-codegen/src/test_runner.rs`: gate `// REQUIRES_SMT_BACKEND
+  <name>` — тест skip'ается если активный backend не совпадает.
+  Используется и для тестов, требующих **trivial** (где Z3 доказал бы
+  лишнее) — например `verify_must_verify_fail.nv`.
+
+### НЕ входит (отдельные milestone'ы)
+
+- **V7**: strings beyond equality (substring/contains/index_of через
+  `(Seq Int)`). Сейчас Z3 поддерживает только eq на строках.
+- **V8**: IEEE 754 FP — теория FloatingPoint Z3/CVC5.
+- **V11**: bounded quantifiers (`forall x in xs: P(x)`).
+- **V**: incremental cache + parallel verification + Z3↔CVC5 cross-check
+  (см. Plan 33.3 Ф.12).
+- Linux/macOS smoke (vcpkg builds passable на *nix, но без CI).
+
+### Acceptance
+
+- `cargo test --features z3-backend` зелёный (включая 3 unit-теста в
+  `backend/z3.rs`).
+- `NOVA_SMT_BACKEND=z3 nova test nova_tests/contracts/z3_*.nv` — все 3
+  PASS.
+- Без env-var (default trivial) `nova test` skip'ает Z3-only tests
+  через `// REQUIRES_SMT_BACKEND` gate; regression baseline сохранён.
+
+---
+
 ## Plan 33.3 Ф.9: bootstrap improvements (без libz3)
 
 После аудита Plan 33 vs Verus / Dafny / Rust contracts RFC 2025 выявлены

@@ -55,6 +55,13 @@ pub struct Z3Backend {
     scopes: Vec<(usize, usize)>,
 }
 
+// SAFETY: Z3 context is не thread-safe для одновременного использования
+// из разных потоков, но **ownership transfer** между потоками безопасен.
+// `Z3Backend` инкапсулирует context/solver полностью; ни один pointer
+// не уезжает за пределы методов. SmtBackend trait требует `Send` чтобы
+// pipeline мог положить backend в Box<dyn SmtBackend>.
+unsafe impl Send for Z3Backend {}
+
 impl Z3Backend {
     /// Создать backend. `timeout_ms` устанавливается глобально через
     /// `Z3_global_param_set("timeout", ...)` (Z3 уважает per-check timeout).
