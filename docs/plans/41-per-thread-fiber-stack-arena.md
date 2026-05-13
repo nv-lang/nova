@@ -1074,3 +1074,103 @@ unit-level reasoning.
 Это **lesson learned** для будущих integration plans: не accept
 «infrastructure landed» как proof of work; **wire-up validation на
 production target** должна быть acceptance criterion.
+
+---
+
+## Audit findings (2026-05-13) — Critical P0 в fiber_arena.c
+
+**Контекст:** Production-grade аудит Plan 41 vs Go runtime/stack.go +
+Tokio/Boost.Context. Найдены 2 P0 + 4 P1.
+
+### P0 — Production blockers
+
+**P41R-1: `_registered_high_water` file-static, не `__thread`**
+(fiber_arena.c:146). Каждый thread имеет свою `_t_arena` (`__thread`
+TLS), но registered-range tracker — shared file-static. Под Plan 23
+M:N: Thread A bump'ит до 100, Thread B's `_arena_register_active_range`
+видит `_registered_high_water=100` и **skip'ит свою регистрацию** →
+Thread B fiber stacks НЕ зарегистрированы как Boehm root → conservative
+scan может пропустить указатели → GC reclaim live data → UAF.
+
+**Fix:** `static __thread size_t _registered_high_water = 0;`. One-line.
+
+**P41R-2: Bitmap operations не atomic** (fiber_arena.c:41, 186-192).
+Под M:N: два thread'a одновременно `_arena_find_free_slot` могут
+получить одно и то же значение и оба `_arena_mark_slot_used` →
+**double-allocation одного slot'a** → corruption.
+
+**Fix:** CAS loop на `free_bits[w]`. Сейчас bitmap простой OR/AND-NOT.
+
+### P1 — Perf / correctness gaps
+
+**P41R-3: MADV_DONTNEED per dealloc — mmap_sem contention**
+(fiber_arena.c:266). На Linux MADV_DONTNEED takes mmap_sem write lock →
+serializes ALL VM ops in process. Под 100k fiber/sec churn = 10s/sec
+wall (deadlock-grade).
+
+**Fix:** decay queue. Thread-local ring buffer: dealloc'нутые slots
+помечаются bitmap-free immediately, но MADV откладывается. Flush at
+supervised_run idle либо через GC cycle hook. Эквивалент `runtime.stackcache`
+в Go.
+
+**P41R-4: 32-bit platforms abort** (fiber_arena.c:74, 100-105). 8 GB
+mmap reservation = OOM на 32-bit. Сейчас `abort()`. **Fix:** runtime check
+`sizeof(void*) == 4` → downsize `slot_count` до e.g. 64, либо disable
+arena полностью (fall through to calloc).
+
+**P41R-5: Guard page single 4KB — CVE-2017-1000366 stack-clash**
+(fiber_arena.c:114-123). Single 4KB guard может быть skipped одним
+SP-subtract если функция аллоцирует >4KB local array. `-fstack-clash-protection`
+emit probes, но только для **Nova-generated C** — runtime helpers
+(nova_rt.h, fibers.h) могут не быть скомпилированы с этим flag.
+
+**Fix:** увеличить guard до 16-64KB. Cost: 60KB × 4096 = 240MB extra
+virtual reservation, **zero physical** (PROT_NONE never commits). На
+64-bit address space — тривиально.
+
+**P41R-6: SIGSEGV без pretty handler** (deferred P41-6). Stack overflow
+→ generic "Segmentation fault". Production хочет: `sigaction(SIGSEGV)` →
+check `siginfo_t.si_addr` vs `nova_fiber_arena_contains` + slot base →
+`"Fiber stack overflow in slot M"`. +50 LOC, большой UX win.
+
+### Cross-plan blockers (для Plan 23 M:N)
+
+| Find | Blocker для M:N? |
+|---|---|
+| P41R-1 (`_registered_high_water` __thread) | ✅ Yes |
+| P41R-2 (atomic bitmap) | ✅ Yes |
+| P41R-3 (MADV decay queue) | ⚠️ Perf only |
+| P41R-4 (32-bit) | ⚠️ Edge case |
+| P41R-5 (bigger guard) | ⚠️ Security |
+| P41R-6 (SIGSEGV handler) | ⚠️ UX only |
+
+### Implementation priority (this session)
+
+- **P41R-1** — one-line fix `static __thread`. Делается сейчас.
+- **P41R-2** — atomic bitmap. Делается сейчас (CAS loop ~15 LOC).
+- **P41R-4** — 32-bit guard. Делается сейчас (~10 LOC).
+- **P41R-5** — guard 4KB → 16KB. Делается сейчас (one constant).
+- **P41R-3, P41R-6** — отложены к Plan 41 Этап 4.5 (отдельная задача).
+
+### Nova unique advantages confirmed
+
+- **Single GC root vs Go N-stack scan**: Boehm conservative scan читает
+  all touched fiber stack pages, но **только high_water * slot_size range**.
+  Go в comparison stackmap'ом scan'ит каждую функцию. Nova proще, Go точнее.
+- **2MB usable per fiber vs Go default 2KB**: Nova не нуждается в
+  morestack copying (cost 10-30% по Go runtime numbers). Лучше для
+  deep-recursion workloads.
+- **Lazy commit via MAP_NORESERVE**: только touched pages commit.
+  Go reserves только current goroutine stack — наш модель "headroom
+  up front, pay nothing until used" wins on cold-fiber-heavy workloads.
+
+### Gaps acknowledged
+
+- **No growable stacks** (D97 disclosure). User с recursive DFS >2MB
+  hard SIGSEGV. Workaround — per-spawn configurable slot size (макрос
+  → runtime parameter).
+- **Conservative scan vs Go precise**: Nova scan'ит full usable per
+  active fiber (2 MB worst case). Go scan'ит только `sp..stk.hi` (~8 KB).
+  Под heavy churn pause grows linearly. **Mitigation:** MADV_DONTNEED
+  на dealloc zeros pages → scanner reads zeros = cheap. Но live fibers
+  ещё have used stack — для them no mitigation.

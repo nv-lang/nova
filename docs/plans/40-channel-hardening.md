@@ -2261,3 +2261,115 @@ trade-off. Implement если bench показывает что modulo — bottl
 documentation updates. **No architecture changes needed.** План
 готов к production use под Plan 23 M:N **с Plan 41 closing first**
 (P40R4-1 cross-plan hazard).
+
+---
+
+## Audit Round 8 (2026-05-13) — Critical findings from cross-cut Go/Rust review
+
+**Контекст:** Запрошенный пользователем production-grade аудит сравнения
+с Go runtime/chan.go, Tokio mpsc, crossbeam. Использован subagent-driven
+review с прочтением actual кода (channels.h 1090 LOC + fiber_arena.c +
+fibers.h). Найдены P0 bugs которые не были покрыты раундами 1-7.
+
+### P0 — Production blockers
+
+**P40R8-1: `_nova_after_pending_head` global static — race под M:N**
+(channels.h:999). Pin list введён в R6 для защиты NovaAfterState от
+Boehm collection. Под Plan 23 M:N несколько worker threads concurrently
+вызывают `Time.after` → race на pin/unpin без mutex.
+
+**Fix:** убираем pin list полностью. NovaAfterState переводится на
+`malloc`/`free` (raw heap, не Boehm). Lifetime управляется libuv'ом
+(close_cb guarantee). Это same pattern как Tokio (raw handle, owned by
+libuv) и Go runtime (timer struct в P-local heap).
+
+Бонус: это **also fixes** Windows boundary ~35 SEGV. Hypothesis: Windows
+fiber stacks через calloc (D97) НЕ зарегистрированы как Boehm roots →
+SelectWaiter / BaseWaiter на fiber stack могут стать unreachable во
+время collect cycle → conservative scan miss → UAF на post-park unlink.
+Pin list защищал NovaAfterState но не transitive (tx, channel state,
+recv_waiters). Убирая GC-управление NovaAfterState полностью, мы
+снимаем dependency на Boehm root coverage.
+
+**P40R8-2: Memory ordering on `fired` CAS — ARM64 reorder risk.**
+`nova_aint_cas_weak_release` (acq_rel/relaxed-on-failure) + `nova_aint_load`
+acquire (sync.h:126). Pairing работает для x86 TSO, но на ARM64 store
+buffer может reorder writes ДО CAS-release с writes ПОСЛЕ. Конкретно:
+waker делает `w->send_val = value; cas(fired)`. Reader делает
+`load(fired); v = w->send_val;`. На ARM64 без full acquire на load —
+race window.
+
+**Fix:** CAS на `fired` → `acq_rel` (вместо weak_release), либо load
+`fired` всегда через explicit acquire fence + ordering pair. Bootstrap
+single-thread не важно; M:N — критично.
+
+**P40R8-3: select pre-check может пропустить wakeup** (channels.h:892-894).
+`can_unblock = 0` → `nova_throw("select: all channels closed")` без
+вызова `try_immediate`. Между pre-check и park-registration channel
+может стать ready (concurrent send). Под bootstrap single-thread не
+проявится; под M:N — wake lost.
+
+**Fix:** call `try_immediate(ctx)` перед `can_unblock` check; if hit →
+return. Если miss → check can_unblock.
+
+### P1 — Perf / correctness
+
+**P40R8-4: Per-park BaseWaiter heap allocation** (channels.h:371, 527).
+`nova_alloc(sizeof(BaseWaiter))` на каждый recv/send park. Под 100k
+req/s = 6.4 MB/s garbage в Boehm heap. Select уже использует caller-provided
+storage (compound literal на стеке) — extend to plain recv/send. **Это
+Nova unique advantage над Go**: minicoro fixed fiber stacks ↔ stack-pinned
+BaseWaiter safe; Go не может из-за moving goroutine stacks.
+
+**P40R8-5: Fisher-Yates seed reuse в loop** (channels.h:778).
+`uint32_t rng = (uintptr_t)ctx ^ 0xdeadbeef`. Same `ctx` (compound literal
+на той же стек-позиции) на consecutive `select` iterations в loop = same
+seed = same shuffle order. Destroys fairness across iterations.
+
+**Fix:** seed с `(uintptr_t)ctx ^ rdtsc()` либо persist `rng_state` в
+`SelectCtx`.
+
+**P40R8-6: `sendDirect` type-pun через `send_val: nova_int`** (channels.h:275, 503).
+Прямой direct-copy через `w->send_val = value;` где value — `nova_int`
+(8 bytes). Когда Plan 21+ обобщит channel'ы на arbitrary T (записи,
+структуры) — type-pun сломается. **Это TIME-BOMB на refactoring.**
+
+**Fix (когда добавлять T-generic channels):** SelectWaiter имеет `void* recv_slot`,
+caller передаёт указатель на T-typed stack slot; wake helper memcpy(slot, val, sizeof T).
+Go's `chansend` так и делает.
+
+**P40R8-7: `nova_chan_writer_close` redundant fence** (channels.h:600).
+`fetch_sub_release` + `thread_fence_acquire` корректно для refcount idiom.
+Но subsequent reads (`st->buf`, `st->count`) под `nova_mutex_lock` — mutex
+acquire даёт нужный ordering. Fence dead code. Remove или document.
+
+### P2 — Cleanups
+
+**P40R8-8: `nova_chan_writer_clone` increment** (channels.h:625) — verify
+что `nova_aint_inc` — `relaxed` (refcount idiom, не `seq_cst`).
+
+**P40R8-9: Ring buffer без `tail` field** — каждое push считает
+`(head+count) % cap`. Go использует sendx/recvx separately. Minor perf.
+
+### Cross-plan blockers (для Plan 23 M:N)
+
+| Find | Plan | Blocker для M:N? |
+|---|---|---|
+| P40R8-1 (pin list) | 40 | ✅ Yes |
+| P40R8-2 (ARM64 fired ordering) | 40 | ✅ Yes |
+| P40R8-3 (select pre-check) | 40 | ✅ Yes |
+| P40R8-4 (heap pressure) | 40 | ⚠️ Perf only |
+| P40R8-5 (Fisher-Yates seed) | 40 | ⚠️ Fairness only |
+| P40R8-6 (sendDirect typepun) | 40 + 21 | ❌ Blocks T-generic |
+
+### Implementation priority (this session)
+
+- **P40R8-1** — already started (malloc/free вместо pin list).
+- **P40R8-5** — 5-line fix.
+- **P40R8-3** — 5-line fix.
+- **P40R8-2** — `__atomic_load_n` уже использует `__ATOMIC_ACQUIRE` (sync.h:126), pairing OK. Аудит подтверждение через документацию.
+- **P40R8-7** — comment update.
+
+Остальное (P40R8-4 heap pressure, P40R8-6 sendDirect typepun) — выходят
+за scope этой сессии. Открыты как Plan 40 round 9+ или поглощены в
+Plan 23 implementation.

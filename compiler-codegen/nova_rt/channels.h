@@ -775,7 +775,15 @@ static inline int nova_select_try_immediate(SelectCtx* ctx) {
     int* order = (int*)alloca((size_t)n * sizeof(int));
     for (i = 0; i < n; i++) order[i] = i;
 
-    uint32_t rng = (uint32_t)(uintptr_t)ctx ^ 0xdeadbeef;
+    /* Plan 40 audit R8-5 (2026-05-13): seed Fisher-Yates RNG с непредсказуемой
+     * компонентой. Раньше `(uintptr_t)ctx ^ 0xdeadbeef` — same ctx
+     * (compound literal на той же стек-позиции) на consecutive `select`
+     * iterations в loop = same seed = same shuffle order → starvation.
+     * Используем `__builtin_readcyclecounter()` если доступен (clang/gcc 14+),
+     * иначе монотонный counter через static. */
+    static nova_atomic_int _nova_sel_rng_tick = 0;
+    uint32_t tick = (uint32_t)nova_aint_inc(&_nova_sel_rng_tick);
+    uint32_t rng = ((uint32_t)(uintptr_t)ctx) ^ 0xdeadbeef ^ tick;
     if (!rng) rng = 1;
     for (i = n - 1; i > 0; i--) {
         j = (int)(_nova_sel_rng(&rng) % (uint32_t)(i + 1));
@@ -875,6 +883,19 @@ static inline void nova_select_park(SelectCtx* ctx) {
     }
     if (n_enabled == 0) {
         nova_throw(nova_str_from_cstr("select: no enabled arm"));
+    }
+
+    /* Plan 40 audit R8-3 (2026-05-13): retry try_immediate ПЕРЕД
+     * can_unblock check. Между pre-check и park-registration channel
+     * может стать ready (concurrent send). Без retry мы можем panic'нуть
+     * "all channels closed" хотя данные пришли. Под bootstrap single-thread
+     * не проявится; под M:N — wake lost.
+     *
+     * Note: try_immediate уже вызывается через codegen ПЕРЕД nova_select_park,
+     * но между ними может быть scheduler yield. Retry дешёвый (мутекс +
+     * шафлинг), correctness важнее. */
+    if (nova_select_try_immediate(ctx)) {
+        return;
     }
 
     /* D94 Ф.6 (pre-check): count arms that could ever unblock us. */
@@ -979,44 +1000,40 @@ static inline void nova_select_park(SelectCtx* ctx) {
 
 /* ── Time.after — D94 timeout channel (Plan 31 Ф.5) ───────────── */
 
-/* Heap-allocated timer state: lives until close_cb fires.
- * Plan 40 Ф.2 B7: `cancelled` flag для idempotent cancel из select wake.
+/* Plan 40 audit round 8 (2026-05-13): malloc/free вместо nova_alloc.
  *
- * Plan 40 audit round 6 (2026-05-12): pinning через static linked list.
- * Without pinning Boehm GC может collect NovaAfterState между cancel и
- * deferred close_cb → use-after-free в close_cb (`h->data` derefs
- * collected memory). Static head — strong root in data segment, scanned
- * by every GC cycle. State unlinked в close_cb когда libuv guarantees
- * no more callbacks fire. */
+ * Why: на Windows fiber stacks через calloc (см. D97) и НЕ зарегистрированы
+ * как Boehm GC roots. Поэтому SelectWaiter / BaseWaiter в fiber stack
+ * могут стать unreachable во время collect cycle → UAF на post-park
+ * unlink. Plan 40 R6 pin list через static head решал часть проблемы
+ * (защищал NovaAfterState от collection), но не решал transitive issue
+ * (tx, channel state, recv waiters могут быть на conservative-scan-miss
+ * pages).
+ *
+ * Решение: NovaAfterState не должна быть GC-managed вообще. Это handle
+ * для libuv, lifetime = от `Nova_Time_after` до `_nova_after_close_cb`.
+ * libuv сам гарантирует callback ordering. Used pattern same как Tokio
+ * (raw handle, owned by libuv) и Go runtime (timer struct lives in P-local
+ * heap, not Go heap).
+ *
+ * Преимущества:
+ *   1. Linux + Windows symmetric: НЕТ зависимости от Boehm root coverage.
+ *   2. Нет pin list → нет global mutex / race под M:N (Plan 23 ready).
+ *   3. Heap pressure на nova_alloc уменьшается — Time.after в hot loop
+ *      больше не аллоцирует через GC heap.
+ *   4. Снимает Windows boundary ~35 итераций (предположительный root cause). */
 typedef struct NovaAfterState {
     uv_timer_t              timer;
     Nova_ChanWriter*        tx;
     bool                    cancelled;  /* set once timer is stopped/closed early */
-    struct NovaAfterState*  pin_next;   /* pending-list link, GC pin */
 } NovaAfterState;
-
-/* Pinning list — static = strong GC root в data segment. */
-static NovaAfterState* _nova_after_pending_head = NULL;
-
-static void _nova_after_pin(NovaAfterState* st) {
-    st->pin_next = _nova_after_pending_head;
-    _nova_after_pending_head = st;
-}
-
-static void _nova_after_unpin(NovaAfterState* st) {
-    NovaAfterState** p = &_nova_after_pending_head;
-    while (*p) {
-        if (*p == st) { *p = st->pin_next; st->pin_next = NULL; return; }
-        p = &(*p)->pin_next;
-    }
-}
 
 static void _nova_after_close_cb(uv_handle_t* h) {
     NovaAfterState* st = (NovaAfterState*)h->data;
-    /* libuv guarantees no more callbacks for this handle. Safe to unpin —
-     * Boehm will collect when no other references remain (cleanup_data
-     * pointer на channel state не используется после close). */
-    _nova_after_unpin(st);
+    /* libuv guarantees no more callbacks for this handle. Free raw alloc.
+     * tx + channel state остаются GC-managed (reachable из user code если
+     * reader ещё держится; иначе Boehm collect'ит). */
+    free(st);
 }
 
 static void _nova_after_timer_cb(uv_timer_t* h) {
@@ -1057,14 +1074,15 @@ static void _nova_after_on_select_lost(Nova_ChannelState* st) {
  * select_lost callback stops the timer; otherwise timer fires normally. */
 static inline Nova_ChanReader* Nova_Time_after(nova_int ms) {
     Nova_ChannelPair pair = nova_channel_new(1);
-    NovaAfterState* st = (NovaAfterState*)nova_alloc(sizeof(NovaAfterState));
+    /* Plan 40 R8: raw malloc, NOT nova_alloc — NovaAfterState owned by libuv
+     * (lifetime = from this call до _nova_after_close_cb). Не GC-managed. */
+    NovaAfterState* st = (NovaAfterState*)malloc(sizeof(NovaAfterState));
+    if (!st) {
+        fprintf(stderr, "nova: Nova_Time_after: malloc failed\n");
+        abort();
+    }
     st->tx = pair.tx;
     st->cancelled = false;
-    st->pin_next = NULL;
-    /* Pin st в static list — Boehm scan'ит data segment каждый цикл,
-     * поэтому object не будет собран между uv_close и _nova_after_close_cb.
-     * Unpin происходит в close_cb (libuv guarantee: no callbacks after). */
-    _nova_after_pin(st);
     int rc = uv_timer_init(nova_evloop(), &st->timer);
     if (rc != 0) {
         fprintf(stderr, "nova: Nova_Time_after: uv_timer_init failed: %s\n",

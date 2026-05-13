@@ -64,8 +64,21 @@
  * Slots reused через bitmap free-list — реальный peak ограничен только
  * concurrent (не cumulative) fibers per worker thread. */
 #define NOVA_FIBER_STACK_SIZE     (2 * 1024 * 1024)  /* 2MB per slot */
-#define NOVA_FIBER_SLOT_COUNT     4096               /* 4096 × 2MB = 8GB virtual per thread */
-#define NOVA_FIBER_GUARD_SIZE     4096               /* 4KB PROT_NONE at slot base */
+/* Plan 41 audit R8 (2026-05-13): 32-bit address space недостаточен для
+ * 8 GB virtual. Downsize до 64 slots × 2MB = 128 MB на 32-bit. На 64-bit
+ * остаёмся 4096. */
+#if defined(__SIZEOF_POINTER__) && __SIZEOF_POINTER__ < 8
+  #define NOVA_FIBER_SLOT_COUNT   64                 /* 64 × 2MB = 128 MB virtual (32-bit) */
+#else
+  #define NOVA_FIBER_SLOT_COUNT   4096               /* 4096 × 2MB = 8GB virtual per thread (64-bit) */
+#endif
+/* Plan 41 audit R8 (2026-05-13): 16 KB guard (было 4 KB) для CVE-2017-1000366
+ * stack-clash protection. Single 4 KB guard может быть skipped одним
+ * SP-subtract если функция аллоцирует >4 KB local array. 16 KB существенно
+ * затрудняет clash (нужен >16 KB allocation в одном instruction). Cost:
+ * 12 KB × 4096 = 48 MB extra virtual reservation, zero physical
+ * (PROT_NONE never commits). */
+#define NOVA_FIBER_GUARD_SIZE     (16 * 1024)        /* 16 KB PROT_NONE at slot base */
 
 #if NOVA_FIBER_ARENA_ENABLED
 

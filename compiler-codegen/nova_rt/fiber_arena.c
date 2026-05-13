@@ -143,7 +143,12 @@ void nova_fiber_arena_init(void) {
 /* ── Active-range GC root management (P41-11) ──────────────────── */
 
 #ifdef NOVA_GC_BOEHM
-static size_t _registered_high_water = 0;
+/* Plan 41 audit R8 P0 (2026-05-13): __thread — per-thread tracker.
+ * Без __thread thread B's `_arena_register_active_range` видит
+ * `_registered_high_water = 100` от Thread A → skip'ит свою регистрацию
+ * → Thread B fiber stacks НЕ зарегистрированы как Boehm root →
+ * conservative scan miss → UAF под M:N (Plan 23). */
+static __thread size_t _registered_high_water = 0;
 
 static void _arena_register_active_range(NovaFiberArena* a, size_t new_high) {
     if (new_high <= _registered_high_water) return;  /* already covered */
