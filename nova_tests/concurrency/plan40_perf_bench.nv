@@ -1,9 +1,9 @@
-// Plan 40 Ф.2 + Ф.3 — performance benchmarks для изменённых путей.
+// Plan 44.1 Ф.2 + Ф.3 — performance benchmarks для изменённых путей.
 //
 // Покрытие:
 //   1) select_dispatch_throughput — 1000 select dispatches на 4-arm channel.
-//      Pre-Plan 40: zero-fill 16 SelectSlot'ов в init = 80 stores per call.
-//      Post-Plan 40: zero-fill 32 (cap raised). Plan 40 Ф.1 заменит на
+//      Pre-Plan 44.1: zero-fill 16 SelectSlot'ов в init = 80 stores per call.
+//      Post-Plan 44.1: zero-fill 32 (cap raised). Plan 44.1 Ф.1 заменит на
 //      adaptive storage. Этот bench — baseline для Ф.1 сравнения.
 //
 //   2) time_after_cleanup_throughput — 200 select'ов с быстрым recv-wins.
@@ -76,7 +76,7 @@ test "perf: Time.after cleanup throughput — 200 quick recv-wins" {
 
 
 test "perf: channel throughput — 10000 send/recv pairs (single fiber)" {
-    // Baseline для Plan 40 Ф.1 mutex overhead. После Ф.1 ожидаемо +2-3%.
+    // Baseline для Plan 44.1 Ф.1 mutex overhead. После Ф.1 ожидаемо +2-3%.
     let ch = Channel.new(1024)
     let mut sum = 0
     let t0 = Time.now()

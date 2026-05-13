@@ -30,7 +30,7 @@
 static size_t _alloc_count = 0;
 
 void nova_gc_init(void) {
-    /* Plan 41 Etap 1 wire-up fix (2026-05-12): Boehm/Docker hardening
+    /* Plan 44.2 Etap 1 wire-up fix (2026-05-12): Boehm/Docker hardening
      * before GC_INIT().
      *
      * GC_set_no_dls(1) — skip dynamic-libraries data-segment scan.
@@ -40,7 +40,7 @@ void nova_gc_init(void) {
      * GC_init.
      *
      * Nova statically links its runtime — dynamic library roots не нужны.
-     * Только main binary data segment + Plan 41 fiber arena ranges + heap. */
+     * Только main binary data segment + Plan 44.2 fiber arena ranges + heap. */
     GC_set_no_dls(1);
 
     GC_INIT();
@@ -49,7 +49,7 @@ void nova_gc_init(void) {
 }
 
 void nova_gc_shutdown(void) {
-    /* Plan 41 Etap 1 (2026-05-12): skip final GC_gcollect on Linux only.
+    /* Plan 44.2 Etap 1 (2026-05-12): skip final GC_gcollect on Linux only.
      *
      * Under Ubuntu 22.04 system libgc (built с PARALLEL_MARK), GC_gcollect
      * на shutdown триггерит parallel marker threads. Под Docker thread

@@ -30,7 +30,7 @@
 #include "alloc.h"
 #include <stdint.h>
 #include <stdbool.h>
-/* Plan 40 Ф.3-extended: alloca для shuffle order array без VLA
+/* Plan 44.1 Ф.3-extended: alloca для shuffle order array без VLA
  * (MSVC не поддерживает VLA, но alloca есть на всех toolchain'ах). */
 #ifdef _MSC_VER
   #include <malloc.h>
@@ -45,7 +45,7 @@ typedef struct BaseWaiter        BaseWaiter;
 typedef struct ChannelWaiter     ChannelWaiter;
 typedef struct SelectWaiter      SelectWaiter;
 
-/* ── BaseWaiter — common prefix (Plan 40 R2 C1) ─────────────────
+/* ── BaseWaiter — common prefix (Plan 44.1 R2 C1) ─────────────────
  *
  * Shared between ChannelWaiter (single park/wake) and SelectWaiter
  * (select arm registration). Replaces the cast-pun pattern of Plan 31
@@ -59,21 +59,21 @@ typedef struct SelectWaiter      SelectWaiter;
  *                    устанавливает; wake send helper читает и кладёт в
  *                    buffer (или прямо доставляет recv-waiter'у).
  *   recv_val       — value carrier (recv-waiter only). Wake recv helper
- *                    direct-writes value сюда (Plan 40 R1 B1 direct-copy);
+ *                    direct-writes value сюда (Plan 44.1 R1 B1 direct-copy);
  *                    reader после park читает field и возвращает caller'у.
  *
- *                    Plan 40 R8-6 fix (2026-05-13): раньше recv использовал
+ *                    Plan 44.1 R8-6 fix (2026-05-13): раньше recv использовал
  *                    `send_val` field как carrier — type-pun работал только
  *                    пока T=nova_int mono-typed. Теперь поля разделены —
  *                    semantically чисто, и T-generic refactor (Plan 21+)
  *                    меняет тип обоих полей одинаково (или сменит на
  *                    `void* slot + size` для variable-size T).
- *   next/prev      — doubly-linked list (Plan 40 T2; O(1) unlink).
- *   fired          — Plan 40 R1 A6 + R2 B2: selectdone CAS. 0 = waiter
+ *   next/prev      — doubly-linked list (Plan 44.1 T2; O(1) unlink).
+ *   fired          — Plan 44.1 R1 A6 + R2 B2: selectdone CAS. 0 = waiter
  *                    still owns the slot; 1 = winner CAS'd this waiter.
  *                    For ChannelWaiter (single waiter) fired is also CAS'd
  *                    so wake-loop has a single unified protocol.
- *   cancelled      — Plan 40 R2 C2: stop_cb lock-free path. stop_cb sets
+ *   cancelled      — Plan 44.1 R2 C2: stop_cb lock-free path. stop_cb sets
  *                    this WITHOUT acquiring channel mutex; wake helpers
  *                    skip cancelled waiters during iteration. Lazy unlink
  *                    at next-wake or select-park exit.
@@ -98,11 +98,11 @@ struct ChannelWaiter {
 
 /* SelectWaiter — for select-arm registration. BaseWaiter prefix + arm-only.
  *
- * On wake, channel writes the recv'd value into `base.recv_val` (Plan 40
+ * On wake, channel writes the recv'd value into `base.recv_val` (Plan 44.1
  * R1 B1 direct-copy). select_park reads `waiters[which].base.recv_val`
  * after fired check.
  *
- * Plan 40 R8-6 (2026-05-13): use separate recv_val field вместо type-pun
+ * Plan 44.1 R8-6 (2026-05-13): use separate recv_val field вместо type-pun
  * через send_val — semantically чище для T-generic refactor (Plan 21+).
  */
 struct SelectWaiter {
@@ -112,7 +112,7 @@ struct SelectWaiter {
 
 /* ── Channel state (hidden from Nova code) ─────────────────────── */
 
-/* Plan 40 R2 C5 (false sharing prevention): fields grouped by access
+/* Plan 44.1 R2 C5 (false sharing prevention): fields grouped by access
  * pattern, padded between groups. Single-threaded cost: +128 bytes per
  * channel. Under M:N saves 100-1000× contention vs unpadded layout
  * (crossbeam benchmarks, Zen4 16-core).
@@ -127,8 +127,8 @@ struct SelectWaiter {
 struct Nova_ChannelState {
     /* ── Group A: mostly read + cold writes ── */
     nova_mutex_t      mu;
-    nova_atomic_bool  closed;        /* Plan 40 R1 A2: fast-path read без lock; under-lock re-check */
-    /* Plan 40 Ф.2 B7: optional cleanup hook fired when this channel
+    nova_atomic_bool  closed;        /* Plan 44.1 R1 A2: fast-path read без lock; under-lock re-check */
+    /* Plan 44.1 Ф.2 B7: optional cleanup hook fired when this channel
      * loses a select race (другая arm выиграла, эта не нужна).
      * Используется Time.after для отмены неиспользованного uv_timer'а.
      * NULL для обычных каналов — без overhead. */
@@ -148,8 +148,8 @@ struct Nova_ChannelState {
     _Alignas(NOVA_CACHELINE_SIZE) char _pad_bc[1];
 
     /* ── Group C: refcounts (contended on close) ── */
-    nova_atomic_int   writer_count;  /* Plan 40 R1 A1: Release-dec + Acquire-fence-on-zero */
-    nova_atomic_bool  reader_closed; /* Plan 40 R1 B2: symmetric reader-side close */
+    nova_atomic_int   writer_count;  /* Plan 44.1 R1 A1: Release-dec + Acquire-fence-on-zero */
+    nova_atomic_bool  reader_closed; /* Plan 44.1 R1 B2: symmetric reader-side close */
 };
 
 /* ── try_recv / try_send result (three-way, matches Rust TryRecvError) ── */
@@ -173,7 +173,7 @@ typedef struct { Nova_ChanWriter* tx; Nova_ChanReader* rx; } Nova_ChannelPair;
 
 /* ── WaiterList helpers ────────────────────────────────────────── */
 
-/* Plan 40 T2: O(1) doubly-linked unlink. Caller MUST hold channel mu. */
+/* Plan 44.1 T2: O(1) doubly-linked unlink. Caller MUST hold channel mu. */
 static inline void _nova_waiter_unlink_locked(BaseWaiter* w) {
     if (!w->channel) return;  /* already unlinked */
     Nova_ChannelState* st = w->channel;
@@ -191,7 +191,7 @@ static inline void _nova_waiter_unlink_locked(BaseWaiter* w) {
     w->channel = NULL;
 }
 
-/* Plan 40 T2: O(1) doubly-linked head insert. Caller MUST hold channel mu. */
+/* Plan 44.1 T2: O(1) doubly-linked head insert. Caller MUST hold channel mu. */
 static inline void _nova_waiter_insert_locked(BaseWaiter* w) {
     Nova_ChannelState* st = w->channel;
     BaseWaiter** head = w->is_recv ? &st->recv_waiters : &st->send_waiters;
@@ -201,7 +201,7 @@ static inline void _nova_waiter_insert_locked(BaseWaiter* w) {
     *head = w;
 }
 
-/* Plan 40 R2 C2: stop_cb lock-free contract.
+/* Plan 44.1 R2 C2: stop_cb lock-free contract.
  *
  * stop_cb runs from scheduler context при cancel_scope cancellation.
  * It MUST NOT acquire channel mutex (potential deadlock if scheduler
@@ -227,7 +227,7 @@ static inline void _nova_unlock_mutex_cb(void* arg) {
 /* ── Factory ───────────────────────────────────────────────────── */
 
 static inline Nova_ChannelPair nova_channel_new(int64_t capacity) {
-    /* Plan 40 B9: validate before any allocation — no leak on throw. */
+    /* Plan 44.1 B9: validate before any allocation — no leak on throw. */
     if (capacity <= 0) {
         nova_throw(nova_str_from_cstr("Channel.new: capacity must be >= 1"));
     }
@@ -239,7 +239,7 @@ static inline Nova_ChannelPair nova_channel_new(int64_t capacity) {
     st->count        = 0;
     nova_abool_init(&st->closed, false);
     nova_aint_init(&st->writer_count, 1);
-    nova_abool_init(&st->reader_closed, false);  /* Plan 40 R1 B2 */
+    nova_abool_init(&st->reader_closed, false);  /* Plan 44.1 R1 B2 */
     st->recv_waiters = NULL;
     st->send_waiters = NULL;
     st->on_select_lost = NULL;
@@ -254,12 +254,12 @@ static inline Nova_ChannelPair nova_channel_new(int64_t capacity) {
 
 /* ── Internal wake helpers ─────────────────────────────────────── */
 
-/* Plan 40 R2 B2: unified selectdone wake protocol.
+/* Plan 44.1 R2 B2: unified selectdone wake protocol.
  *
  * Walk recv_waiters head→tail. For each waiter:
  *   - skip if cancelled (lazy unlink at next opportunity).
  *   - CAS fired: 0→1. First successful CAS wins.
- *     • Direct-copy value into winner's stack (Plan 40 R1 B1).
+ *     • Direct-copy value into winner's stack (Plan 44.1 R1 B1).
  *     • Unlink, wake fiber, return.
  *   - On CAS failure (waiter already fired by another wake / scope cancel):
  *     unlink it lazily and continue.
@@ -281,7 +281,7 @@ static inline int _nova_channel_wake_recv_with_value(Nova_ChannelState* st,
         }
         int32_t expected = 0;
         if (nova_aint_cas_weak_release(&w->fired, &expected, 1)) {
-            /* Won the CAS. Plan 40 R8-6: direct-copy value в recv_val
+            /* Won the CAS. Plan 44.1 R8-6: direct-copy value в recv_val
              * field (раньше через send_val type-pun — semantically dirty
              * для T-generic refactor). */
             w->recv_val = value;
@@ -327,12 +327,12 @@ static inline int _nova_channel_wake_send(Nova_ChannelState* st) {
 
 /* ── Receiver ──────────────────────────────────────────────────── */
 
-/* Plan 40 R1 A2: fast-path is_closed read without lock; full state check
+/* Plan 44.1 R1 A2: fast-path is_closed read without lock; full state check
  * MUST be performed under lock (TOCTOU re-check protocol). */
 static inline NovaOpt_nova_int nova_chan_reader_recv(Nova_ChanReader* rx) {
     Nova_ChannelState* st = rx->state;
 
-    /* Plan 40 audit round 5 (2026-05-12): fast-path closed check
+    /* Plan 44.1 audit round 5 (2026-05-12): fast-path closed check
      * symmetric с send fast-path (line ~466 nova_chan_writer_send).
      * Под bootstrap single-thread cheap; под M:N saves mutex roundtrip
      * на recv'е from closed-empty channel. Re-check под lock'ом для
@@ -366,13 +366,13 @@ static inline NovaOpt_nova_int nova_chan_reader_recv(Nova_ChanReader* rx) {
         nova_mutex_unlock(&st->mu);
         return (NovaOpt_nova_int){ .tag = NOVA_TAG_Option_Some, .value = v };
     }
-    /* Re-check closed under lock (Plan 40 A2 TOCTOU). */
+    /* Re-check closed under lock (Plan 44.1 A2 TOCTOU). */
     if (nova_abool_load(&st->closed)) {
         nova_mutex_unlock(&st->mu);
         return (NovaOpt_nova_int){ .tag = NOVA_TAG_Option_None, .value = 0 };
     }
 
-    /* Plan 40 audit R8-4 (2026-05-13): BaseWaiter ALLOCATED ON FIBER STACK
+    /* Plan 44.1 audit R8-4 (2026-05-13): BaseWaiter ALLOCATED ON FIBER STACK
      * на Linux/macOS (D97 arena). Это Nova unique advantage над Go:
      * minicoro fixed fiber stacks → stack-pinned waiter лежит в slot,
      * виден GC через arena root, не аллоцируется через nova_alloc.
@@ -381,7 +381,7 @@ static inline NovaOpt_nova_int nova_chan_reader_recv(Nova_ChanReader* rx) {
      *
      * Heap pressure win: 100k req/s ≈ 6.4 MB/s GC garbage saved.
      *
-     * Windows: arena off (Plan 43 открытый), suspended fiber stacks НЕ
+     * Windows: arena off (Plan 44.3 открытый), suspended fiber stacks НЕ
      * зарегистрированы как Boehm root → waiter на стеке невидим для
      * conservative scan. Под Windows остаёмся на nova_alloc (GC-managed). */
     NovaFiberQueue* sc = _nova_active_scope;
@@ -397,7 +397,7 @@ static inline NovaOpt_nova_int nova_chan_reader_recv(Nova_ChanReader* rx) {
     BaseWaiter* w = &w_storage;
 #else
     /* Windows: heap-allocated через GC — suspended fiber stack невидим
-     * для Boehm conservative scan (calloc-путь, Plan 43 fundamentally
+     * для Boehm conservative scan (calloc-путь, Plan 44.3 fundamentally
      * blocked by Windows TIB stack tracking). */
     BaseWaiter* w = (BaseWaiter*)nova_alloc(sizeof(BaseWaiter));
 #endif
@@ -414,11 +414,11 @@ static inline NovaOpt_nova_int nova_chan_reader_recv(Nova_ChanReader* rx) {
     _nova_waiter_insert_locked(w);
 
     nova_sched_register_pending(sc, sl, w, _nova_channel_waiter_stop_cb);
-    /* Plan 40 R2 C6: atomically transition to parked state + release lock. */
+    /* Plan 44.1 R2 C6: atomically transition to parked state + release lock. */
     nova_sched_park_with_unlock(sc, sl, _nova_unlock_mutex_cb, &st->mu);
     nova_sched_unregister_pending(sc, sl);
 
-    /* Plan 40 R3-7 + C2: re-acquire lock, check fired/cancelled, drain. */
+    /* Plan 44.1 R3-7 + C2: re-acquire lock, check fired/cancelled, drain. */
     nova_mutex_lock(&st->mu);
 
     /* If cancel_scope cancelled us, throw. cancelled flag was set by
@@ -429,7 +429,7 @@ static inline NovaOpt_nova_int nova_chan_reader_recv(Nova_ChanReader* rx) {
         nova_throw(nova_str_from_cstr("scope cancelled"));
     }
 
-    /* Plan 40 R8-6: wake helper writes в recv_val (раньше через send_val). */
+    /* Plan 44.1 R8-6: wake helper writes в recv_val (раньше через send_val). */
     int32_t fired = nova_aint_load(&w->fired);
     if (fired) {
         nova_int v = w->recv_val;
@@ -484,7 +484,7 @@ static inline nova_bool nova_chan_reader_is_closed(Nova_ChanReader* rx) {
     return (nova_bool)nova_abool_load(&rx->state->closed);
 }
 
-/* Plan 40 R1 B2: symmetric reader-side close. Wakes all parked senders
+/* Plan 44.1 R1 B2: symmetric reader-side close. Wakes all parked senders
  * who then return `false` from `send()`. Subsequent sends return false
  * immediately (reader_closed atomic load fast-path). */
 static inline void nova_chan_reader_close(Nova_ChanReader* rx) {
@@ -518,7 +518,7 @@ static inline void nova_chan_reader_close(Nova_ChanReader* rx) {
 static inline nova_bool nova_chan_writer_send(Nova_ChanWriter* tx, nova_int v) {
     Nova_ChannelState* st = tx->state;
 
-    /* Fast-path closed check (Plan 40 R1 A2: re-check under lock). */
+    /* Fast-path closed check (Plan 44.1 R1 A2: re-check under lock). */
     if (nova_abool_load(&st->closed) || nova_abool_load(&st->reader_closed)) {
         return 0;
     }
@@ -531,7 +531,7 @@ static inline nova_bool nova_chan_writer_send(Nova_ChanWriter* tx, nova_int v) {
         return 0;
     }
 
-    /* Direct hand-off to a parked receiver (Plan 40 B1 direct-copy):
+    /* Direct hand-off to a parked receiver (Plan 44.1 B1 direct-copy):
      * skip the buffer entirely если есть recv-waiter. */
     if (st->recv_waiters) {
         if (_nova_channel_wake_recv_with_value(st, v)) {
@@ -550,7 +550,7 @@ static inline nova_bool nova_chan_writer_send(Nova_ChanWriter* tx, nova_int v) {
         return 1;
     }
 
-    /* Need to park. Plan 40 audit R8-4: stack-allocated waiter — обоснование
+    /* Need to park. Plan 44.1 audit R8-4: stack-allocated waiter — обоснование
      * полностью разобрано в nova_chan_reader_recv выше. Сжатый summary:
      *   Linux/macOS: arena GC root покрывает suspended fiber stacks ⇒ safe.
      *   Windows: calloc'нутые stacks НЕ GC roots ⇒ heap fallback. */
@@ -630,7 +630,7 @@ static inline NovaChanTryResult nova_chan_writer_try_send(Nova_ChanWriter* tx, n
     return (NovaChanTryResult){ .tag = NOVA_CHAN_TRY_OK, .value = 0 };
 }
 
-/* Plan 40 R1 A1: writer_count decrement через Release-fetch_sub; thread
+/* Plan 44.1 R1 A1: writer_count decrement через Release-fetch_sub; thread
  * that drove count to zero issues Acquire fence before reading owned
  * state — classic refcount idiom (Boost.Atomic, Rust Arc::drop). */
 static inline void nova_chan_writer_close(Nova_ChanWriter* tx) {
@@ -665,7 +665,7 @@ static inline void nova_chan_writer_close(Nova_ChanWriter* tx) {
 }
 
 /* Plan 30 Ф.2: clone creates a second writer sharing the same channel
- * state. Plan 40 R1 A1: atomic increment. */
+ * state. Plan 44.1 R1 A1: atomic increment. */
 static inline Nova_ChanWriter* nova_chan_writer_clone(Nova_ChanWriter* tx) {
     nova_aint_inc(&tx->state->writer_count);
     Nova_ChanWriter* clone = (Nova_ChanWriter*)nova_alloc(sizeof(Nova_ChanWriter));
@@ -690,7 +690,7 @@ static inline nova_bool nova_chan_writer_is_closed(Nova_ChanWriter* tx) {
 
 /* ── Select — D94 (Plan 31) ────────────────────────────────────── */
 
-/* Plan 40 Ф.3-extended (2026-05-12): per-call adaptive storage без cap'а.
+/* Plan 44.1 Ф.3-extended (2026-05-12): per-call adaptive storage без cap'а.
  *
  * Caller (codegen emit_select) выделяет SelectSlot _arms[n_ch] +
  * SelectWaiter _waiters[n_ch] на стеке (compound literal, размер
@@ -698,7 +698,7 @@ static inline nova_bool nova_chan_writer_is_closed(Nova_ChanWriter* tx) {
  * в nova_select_init. Storage = ровно n_ch слотов, zero-fill только
  * используемые. Stack frame ~80n байт на одну select-операцию.
  *
- * Plan 40 Ф.1 (с Plan 23 M:N) добавит atomics/selectdone CAS/
+ * Plan 44.1 Ф.1 (с Plan 23 M:N) добавит atomics/selectdone CAS/
  * doubly-linked в SelectWaiter, не меняя storage layout. */
 
 typedef struct {
@@ -709,7 +709,7 @@ typedef struct {
     bool               wildcard; /* true = `_ = rx` fires on closed too; false = `Some(v) = rx` needs data */
 } SelectSlot;
 
-/* SelectWaiter struct defined earlier via BaseWaiter composition (Plan 40 C1). */
+/* SelectWaiter struct defined earlier via BaseWaiter composition (Plan 44.1 C1). */
 
 /* arms и waiters — caller-provided storage (compound literal в emit'е
  * со размером n_arms, literal на codegen-time). */
@@ -785,7 +785,7 @@ static inline uint32_t _nova_sel_rng(uint32_t* s) {
     return *s;
 }
 
-/* Plan 40 audit round 7 (2026-05-12): fire on_select_lost for arms
+/* Plan 44.1 audit round 7 (2026-05-12): fire on_select_lost for arms
  * that did NOT win the select. Must be called on BOTH paths:
  *   - try_immediate win (NEW — раньше callback пропускался, и Time.after
  *     timer оставался active forever → накопление uv handles → SEGV
@@ -809,19 +809,19 @@ static inline void _nova_select_fire_lost(SelectCtx* ctx) {
 /* Try all enabled arms once in random order. Returns 1 if an arm fired.
  * Sets ctx->which and ctx->recv_val on success.
  *
- * Plan 40 R2: each channel locked individually around its mutation.
- * Plan 40 R2 §6: no need to hold multiple locks (optimistic re-scan
+ * Plan 44.1 R2: each channel locked individually around its mutation.
+ * Plan 44.1 R2 §6: no need to hold multiple locks (optimistic re-scan
  * via post-park retry replaces "hold-all" Go pattern).
  *
- * Plan 40 audit round 7: fire on_select_lost для losing arms перед return.
+ * Plan 44.1 audit round 7: fire on_select_lost для losing arms перед return.
  * Без этого Time.after timer arm оставался active даже когда recv arm выигрывал. */
 static inline int nova_select_try_immediate(SelectCtx* ctx) {
     int n = ctx->n_arms, i, j;
-    /* Fisher-Yates shuffle (Plan 40 Ф.3 final): alloca = ровно n. */
+    /* Fisher-Yates shuffle (Plan 44.1 Ф.3 final): alloca = ровно n. */
     int* order = (int*)alloca((size_t)n * sizeof(int));
     for (i = 0; i < n; i++) order[i] = i;
 
-    /* Plan 40 audit R8-5 (2026-05-13): seed Fisher-Yates RNG с непредсказуемой
+    /* Plan 44.1 audit R8-5 (2026-05-13): seed Fisher-Yates RNG с непредсказуемой
      * компонентой. Раньше `(uintptr_t)ctx ^ 0xdeadbeef` — same ctx
      * (compound literal на той же стек-позиции) на consecutive `select`
      * iterations в loop = same seed = same shuffle order → starvation.
@@ -888,7 +888,7 @@ static inline int nova_select_try_immediate(SelectCtx* ctx) {
     return 0;
 }
 
-/* stop_cb for select-arm cancel-during-park. Plan 40 R2 C2: lock-free —
+/* stop_cb for select-arm cancel-during-park. Plan 44.1 R2 C2: lock-free —
  * just set the atomic cancelled flag; wake helpers skip lazily. Wake
  * fiber so cancel_scope check fires after park. */
 static NovaStopMode _nova_select_waiter_stop_cb(void* handle) {
@@ -908,21 +908,21 @@ static inline void _nova_sel_waiter_unlink_locked(SelectWaiter* w) {
 /* Park until one select arm becomes ready. ctx->scope and ctx->slot must
  * be set before calling. On return ctx->which / ctx->recv_val are filled.
  *
- * Plan 40 R1/R2: production-grade protocol.
- *   - Plan 40 R2 §6: each channel locked individually around its
+ * Plan 44.1 R1/R2: production-grade protocol.
+ *   - Plan 44.1 R2 §6: each channel locked individually around its
  *     waiter registration (no hold-all-locks). Post-park retry via
  *     try_immediate replaces Go's hold-all pattern — equivalent
  *     correctness, less lock traffic.
- *   - Plan 40 R3-1: BaseWaiter chain lives on fiber stack via compound
+ *   - Plan 44.1 R3-1: BaseWaiter chain lives on fiber stack via compound
  *     literal; Boehm scans parked fiber stacks → safe.
- *   - Plan 40 R2 C3: panic if no enabled arms (silent forever-park is bug).
- *   - Plan 40 R3-7: post-park MUST re-check fired/try_immediate (spurious
+ *   - Plan 44.1 R2 C3: panic if no enabled arms (silent forever-park is bug).
+ *   - Plan 44.1 R3-7: post-park MUST re-check fired/try_immediate (spurious
  *     wakes allowed; correctness mechanism not optimization).
  */
 static inline void nova_select_park(SelectCtx* ctx) {
     int n = ctx->n_arms, i;
 
-    /* Plan 40 R2 C3: panic on no-enabled-arm. */
+    /* Plan 44.1 R2 C3: panic on no-enabled-arm. */
     int n_enabled = 0;
     for (i = 0; i < n; i++) {
         if (ctx->arms[i].chan && ctx->arms[i].guard) n_enabled++;
@@ -931,7 +931,7 @@ static inline void nova_select_park(SelectCtx* ctx) {
         nova_throw(nova_str_from_cstr("select: no enabled arm"));
     }
 
-    /* Plan 40 audit R8-3 (2026-05-13): retry try_immediate ПЕРЕД
+    /* Plan 44.1 audit R8-3 (2026-05-13): retry try_immediate ПЕРЕД
      * can_unblock check. Между pre-check и park-registration channel
      * может стать ready (concurrent send). Без retry мы можем panic'нуть
      * "all channels closed" хотя данные пришли. Под bootstrap single-thread
@@ -1000,7 +1000,7 @@ static inline void nova_select_park(SelectCtx* ctx) {
         nova_sched_register_pending(scope, slot, w, _nova_select_waiter_stop_cb);
     }
 
-    /* Park. Plan 40 R3-7: spurious wakes allowed — post-park always re-checks. */
+    /* Park. Plan 44.1 R3-7: spurious wakes allowed — post-park always re-checks. */
     nova_sched_park(scope, slot);
     nova_sched_unregister_pending(scope, slot);
 
@@ -1022,7 +1022,7 @@ static inline void nova_select_park(SelectCtx* ctx) {
 
     /* Identify the winning arm. First check fired flags (a producer's wake
      * helper already CAS'd one of our waiters and copied value into its
-     * recv_val via direct-copy, Plan 40 R8-6). */
+     * recv_val via direct-copy, Plan 44.1 R8-6). */
     ctx->which = -1;
     for (i = 0; i < n; i++) {
         SelectWaiter* w = &ctx->waiters[i];
@@ -1038,7 +1038,7 @@ static inline void nova_select_park(SelectCtx* ctx) {
         nova_select_try_immediate(ctx);
     }
 
-    /* Plan 40 Ф.2 B7 + audit round 7: fire on_select_lost callbacks for
+    /* Plan 44.1 Ф.2 B7 + audit round 7: fire on_select_lost callbacks for
      * arms that did not win. Через shared helper (см. try_immediate path).
      * Если try_immediate уже отстрелял callback'и для нашей ветки —
      * повторный вызов безопасен (NovaAfterState `cancelled` flag идемпотентен). */
@@ -1047,12 +1047,12 @@ static inline void nova_select_park(SelectCtx* ctx) {
 
 /* ── Time.after — D94 timeout channel (Plan 31 Ф.5) ───────────── */
 
-/* Plan 40 audit round 8 (2026-05-13): malloc/free вместо nova_alloc.
+/* Plan 44.1 audit round 8 (2026-05-13): malloc/free вместо nova_alloc.
  *
  * Why: на Windows fiber stacks через calloc (см. D97) и НЕ зарегистрированы
  * как Boehm GC roots. Поэтому SelectWaiter / BaseWaiter в fiber stack
  * могут стать unreachable во время collect cycle → UAF на post-park
- * unlink. Plan 40 R6 pin list через static head решал часть проблемы
+ * unlink. Plan 44.1 R6 pin list через static head решал часть проблемы
  * (защищал NovaAfterState от collection), но не решал transitive issue
  * (tx, channel state, recv waiters могут быть на conservative-scan-miss
  * pages).
@@ -1086,7 +1086,7 @@ static void _nova_after_close_cb(uv_handle_t* h) {
 static void _nova_after_timer_cb(uv_timer_t* h) {
     NovaAfterState* st = (NovaAfterState*)h->data;
     if (st->cancelled) return;  /* select wake cancelled us; do nothing */
-    /* Plan 40 audit round 7 (2026-05-12): set cancelled BEFORE uv_close —
+    /* Plan 44.1 audit round 7 (2026-05-12): set cancelled BEFORE uv_close —
      * без этого _nova_after_on_select_lost мог сделать второй uv_close
      * (libuv assert(0) в core.c:694 на повторном endgame).
      * Order: cancelled-flag → try_send (idempotent) → writer_close → uv_close. */
@@ -1098,7 +1098,7 @@ static void _nova_after_timer_cb(uv_timer_t* h) {
     uv_close((uv_handle_t*)h, _nova_after_close_cb);
 }
 
-/* Plan 40 Ф.2 B7: on_select_lost callback — invoked from nova_select_park
+/* Plan 44.1 Ф.2 B7: on_select_lost callback — invoked from nova_select_park
  * when Time.after-arm did NOT win. Stops timer + closes uv handle so
  * background event-loop no longer dispatches us. Idempotent via `cancelled`. */
 static void _nova_after_on_select_lost(Nova_ChannelState* st) {
@@ -1117,11 +1117,11 @@ static void _nova_after_on_select_lost(Nova_ChannelState* st) {
  * no fiber is parked.  Use in a select arm:
  *   Some(_) = Time.after(100) => { ... }  // timeout branch
  *
- * Plan 40 Ф.2 B7: if reader is used in select and another arm wins, the
+ * Plan 44.1 Ф.2 B7: if reader is used in select and another arm wins, the
  * select_lost callback stops the timer; otherwise timer fires normally. */
 static inline Nova_ChanReader* Nova_Time_after(nova_int ms) {
     Nova_ChannelPair pair = nova_channel_new(1);
-    /* Plan 40 R8: raw malloc, NOT nova_alloc — NovaAfterState owned by libuv
+    /* Plan 44.1 R8: raw malloc, NOT nova_alloc — NovaAfterState owned by libuv
      * (lifetime = from this call до _nova_after_close_cb). Не GC-managed. */
     NovaAfterState* st = (NovaAfterState*)malloc(sizeof(NovaAfterState));
     if (!st) {
@@ -1137,7 +1137,7 @@ static inline Nova_ChanReader* Nova_Time_after(nova_int ms) {
         abort();
     }
     st->timer.data = st;
-    /* Plan 40 Ф.2 B7: register cleanup hook on the channel state. */
+    /* Plan 44.1 Ф.2 B7: register cleanup hook on the channel state. */
     pair.rx->state->on_select_lost = _nova_after_on_select_lost;
     pair.rx->state->cleanup_data   = st;
     uint64_t delay = ms > 0 ? (uint64_t)ms : 1;

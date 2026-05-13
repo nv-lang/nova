@@ -13,7 +13,7 @@
  *   - Spawn round-robin между workers (Chase-Lev deque — Этап 1).
  *   - Cross-worker wake через uv_async_send.
  *   - TLS: _nova_active_scope/_active_slot уже __thread (correct).
- *   - Fiber arena per-thread (Plan 41 Linux/macOS) — лениво init per worker.
+ *   - Fiber arena per-thread (Plan 44.2 Linux/macOS) — лениво init per worker.
  *   - Boehm GC: REQUIRES GC_THREADS build (Linux Docker автоматом).
  *
  * NOT included в Этап 0:

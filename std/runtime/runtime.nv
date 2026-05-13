@@ -36,7 +36,7 @@ module std.runtime.runtime
 // Effects: spawns N OS threads. Each worker имеет:
 //   - own libuv event loop;
 //   - own fiber scope (worker-local push queue);
-//   - own fiber arena (Plan 41 Linux/macOS — lazily init per thread).
+//   - own fiber arena (Plan 44.2 Linux/macOS — lazily init per thread).
 export external fn runtime.init(n: int) -> ()
 
 // Graceful shutdown — signal stop, join workers, free resources.

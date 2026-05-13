@@ -1,4 +1,4 @@
-/* Plan 41 Этап 3 — fiber arena stats wrappers (cross-platform).
+/* Plan 44.2 Этап 3 — fiber arena stats wrappers (cross-platform).
  *
  * Linux/macOS: forward to nova_fiber_arena_stats().
  * Windows: return 0 across the board (arena not active — honest sentinel,

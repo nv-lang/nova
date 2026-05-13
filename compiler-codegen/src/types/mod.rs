@@ -1478,7 +1478,7 @@ impl NameResCtx {
             // Builtin запись нужна потому что cross-file bare-name resolve
             // не работает (Plan 35 Ф.1).
             "gc",
-            // Plan 41 Этап 3: fiber arena introspection namespace
+            // Plan 44.2 Этап 3: fiber arena introspection namespace
             // (std.runtime.fibers). `fibers.slot_count()`, etc.
             // Source of truth: std/runtime/fibers.nv. Codegen dispatch:
             // emit_c.rs `name == "fibers"`.

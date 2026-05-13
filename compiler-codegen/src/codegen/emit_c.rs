@@ -7285,7 +7285,7 @@ impl CEmitter {
                             _ => {}
                         }
                     }
-                    // Plan 41 Этап 3: fiber arena introspection — std.runtime.fibers.
+                    // Plan 44.2 Этап 3: fiber arena introspection — std.runtime.fibers.
                     if name == "fibers" {
                         match method.as_str() {
                             "virtual_reserved" if args.is_empty() => {
@@ -7300,7 +7300,7 @@ impl CEmitter {
                             "high_water" if args.is_empty() => {
                                 return Ok("((nova_int)nova_fibers_high_water())".to_string());
                             }
-                            // Plan 41 R8 P41-3: explicit decay flush.
+                            // Plan 44.2 R8 P41-3: explicit decay flush.
                             "compact" if args.is_empty() => {
                                 return Ok("(nova_fibers_compact(), (nova_int)0LL)".to_string());
                             }
@@ -8821,7 +8821,7 @@ impl CEmitter {
         let n_ch: usize = arms.iter().filter(|a| !matches!(a.op, SelectOp::Default)).count();
         let has_default = arms.iter().any(|a| matches!(a.op, SelectOp::Default));
 
-        // Plan 40 Ф.3-extended: per-call adaptive storage без cap'а.
+        // Plan 44.1 Ф.3-extended: per-call adaptive storage без cap'а.
         // Storage = SelectSlot[n_ch] + SelectWaiter[n_ch] на стеке через
         // compound literal (literal size known at codegen time, MSVC-
         // compatible). Размер stack frame пропорционален n_ch:
@@ -8893,7 +8893,7 @@ impl CEmitter {
         }
 
         // --- Full SelectCtx path ---
-        // Plan 40 Ф.3-extended: per-call adaptive storage.
+        // Plan 44.1 Ф.3-extended: per-call adaptive storage.
         // Эмитим локальные массивы ровно n_ch размера (compound literal
         // на стеке, размер literal на codegen-time, MSVC-compatible).
         // nova_select_init принимает указатели на эти массивы.
@@ -11356,7 +11356,7 @@ impl CEmitter {
                                 _ => "nova_int".into(),
                             };
                         }
-                        // Plan 41 Этап 3: fibers.* introspection — type inference.
+                        // Plan 44.2 Этап 3: fibers.* introspection — type inference.
                         if n == "fibers" {
                             return match method.as_str() {
                                 "virtual_reserved" | "slot_count" |

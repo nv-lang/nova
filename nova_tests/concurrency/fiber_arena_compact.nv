@@ -1,4 +1,4 @@
-// Plan 41 R8 P41-3: fibers.compact() API smoke test.
+// Plan 44.2 R8 P41-3: fibers.compact() API smoke test.
 //
 // На Linux/macOS arena активна — compact() выполняет MADV_DONTNEED
 // на free slots. После compact() slot_count и slots_active НЕ меняются;

@@ -1,4 +1,4 @@
-// Plan 40 Ф.3-extended: select без cap'а — 100 arms на стеке.
+// Plan 44.1 Ф.3-extended: select без cap'а — 100 arms на стеке.
 //
 // Storage = SelectSlot[100] + SelectWaiter[100] = ~8 KB на одну
 // select-операцию. На default minicoro 56 KB stack — безопасно.

@@ -209,7 +209,7 @@ typedef struct { char _dummy; } nova_unit;
 /* ---- Effects (Phase 4) — also defines NovaTestFrame + nova_assert ---- */
 #include "effects.h"
 
-/* ---- Plan 41 Etap 1: per-thread fiber stack arena (Linux/macOS only) ---- */
+/* ---- Plan 44.2 Etap 1: per-thread fiber stack arena (Linux/macOS only) ---- */
 #include "fiber_arena.h"
 
 /* ---- Fibers / spawn (Phase 5) ---- */
@@ -245,7 +245,7 @@ typedef struct { char _dummy; } nova_unit;
 /* После fibers.h (NovaFiberQueue полный тип). */
 #include "nova_sched.h"  /* renamed from sched.h to avoid Linux <sched.h> collision */
 
-/* ---- Plan 40 Ф.1: thread-safety primitives (C11 mtx_t + atomics) ---- */
+/* ---- Plan 44.1 Ф.1: thread-safety primitives (C11 mtx_t + atomics) ---- */
 /* Перед channels.h — channels.h использует nova_mutex_t / nova_atomic_*. */
 #include "sync.h"
 

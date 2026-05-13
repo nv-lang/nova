@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-/* Plan 41 Etap 1 — per-thread fiber stack arena (Linux/macOS).
+/* Plan 44.2 Etap 1 — per-thread fiber stack arena (Linux/macOS).
  * See fiber_arena.h for design notes.
  *
  * Compiled into binary as separate TU (linked alongside alloc_boehm.c /
@@ -181,7 +181,7 @@ void nova_fiber_arena_init(void) {
 
     size_t virtual_size = slot_size * slot_count;
 
-    /* Plan 41 P41-3 TODO: detect vm.overcommit_memory=2 and downgrade.
+    /* Plan 44.2 P41-3 TODO: detect vm.overcommit_memory=2 and downgrade.
      * For now (bootstrap) assume default Linux overcommit_memory ∈ {0,1}. */
 
     int prot = PROT_READ | PROT_WRITE;
@@ -197,14 +197,14 @@ void nova_fiber_arena_init(void) {
         abort();
     }
 
-    /* Plan 41 P41-14: disable Transparent Huge Pages для arena.
+    /* Plan 44.2 P41-14: disable Transparent Huge Pages для arena.
      * THP upgrades 2MB-aligned VMAs to 2MB huge pages — конфликтует с
      * lazy commit precision (entire slot would commit at once). */
 #if defined(MADV_NOHUGEPAGE)
     madvise(p, virtual_size, MADV_NOHUGEPAGE);
 #endif
 
-    /* Plan 41 P41-5: guard page (PROT_NONE, 4KB) at bottom of every slot.
+    /* Plan 44.2 P41-5: guard page (PROT_NONE, 4KB) at bottom of every slot.
      * Stack grows DOWN on x86/ARM, so "bottom" = lowest address = first
      * page of each slot. Overflow → page fault → SIGSEGV. */
     for (size_t i = 0; i < slot_count; i++) {
@@ -223,7 +223,7 @@ void nova_fiber_arena_init(void) {
     _t_arena.high_water = 0;
     memset(_t_arena.free_bits, 0, sizeof(_t_arena.free_bits));
 
-    /* Plan 41 P41-11: НЕ register full arena как GC root now —
+    /* Plan 44.2 P41-11: НЕ register full arena как GC root now —
      * defeats lazy commit (Boehm scan reads every page → COW to zero,
      * RSS grows to full 512MB).
      * Active-range registration: lazy, on first slot alloc bumping
@@ -236,7 +236,7 @@ void nova_fiber_arena_init(void) {
 /* ── Active-range GC root management (P41-11) ──────────────────── */
 
 #ifdef NOVA_GC_BOEHM
-/* Plan 41 audit R8 P0 (2026-05-13): __thread — per-thread tracker.
+/* Plan 44.2 audit R8 P0 (2026-05-13): __thread — per-thread tracker.
  * Без __thread thread B's `_arena_register_active_range` видит
  * `_registered_high_water = 100` от Thread A → skip'ит свою регистрацию
  * → Thread B fiber stacks НЕ зарегистрированы как Boehm root →
@@ -309,7 +309,7 @@ void* nova_fiber_alloc(size_t size, void* allocator_data) {
 
     size_t slot = _arena_find_free_slot(&_t_arena);
     if (slot == SIZE_MAX) {
-        /* Plan 41 P41-2: abort instead of calloc fallback (which would
+        /* Plan 44.2 P41-2: abort instead of calloc fallback (which would
          * regress to _NOVA_GC_DISABLE UAF risk). Arena exhaustion is
          * production error — log + abort. Production sizing: 256 slots.
          * Plan 23 prep: implement arena chaining instead of abort. */
@@ -354,7 +354,7 @@ void nova_fiber_dealloc(void* ptr, size_t size, void* allocator_data) {
     _arena_mark_slot_free(&_t_arena, slot);
     _t_arena.slots_active--;
 
-    /* Plan 41 P41-3 (R8, 2026-05-13): MADV_DONTNEED только на idle.
+    /* Plan 44.2 P41-3 (R8, 2026-05-13): MADV_DONTNEED только на idle.
      *
      * Раньше: per-dealloc madvise → каждый syscall takes mmap_sem write
      * lock → serialize все VM ops в процессе. Под 100k fiber/sec churn —
@@ -382,7 +382,7 @@ void nova_fiber_dealloc(void* ptr, size_t size, void* allocator_data) {
     }
 }
 
-/* Plan 41 P41-3 (2026-05-13): explicit compact API для long-running
+/* Plan 44.2 P41-3 (2026-05-13): explicit compact API для long-running
  * workloads без natural idle. Released все free slots' physical pages
  * одним syscall. Exposed через std.runtime.fibers.compact(). */
 void nova_fiber_arena_compact(void) {

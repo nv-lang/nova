@@ -1,4 +1,4 @@
-// std/runtime/fibers.nv — Fiber arena introspection API (Plan 41 Этап 3).
+// std/runtime/fibers.nv — Fiber arena introspection API (Plan 44.2 Этап 3).
 //
 // **NOT auto-gen.** Этот модуль документирует hard-coded namespace `fibers.*`
 // который dispatched через [compiler-codegen/src/codegen/emit_c.rs]
@@ -63,7 +63,7 @@ export external fn fibers.slots_active() -> int
 // к лимиту арены. Под Windows возвращает 0.
 export external fn fibers.high_water() -> int
 
-// Plan 41 P41-3 (R8): explicit decay flush. Возвращает physical pages
+// Plan 44.2 P41-3 (R8): explicit decay flush. Возвращает physical pages
 // всех currently-free arena slots обратно ОС одним батчем (MADV_DONTNEED
 // на каждый contiguous run free slots). Для long-running workloads без
 // natural idle — например server где постоянно есть N active fibers и

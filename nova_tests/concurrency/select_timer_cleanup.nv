@@ -1,4 +1,4 @@
-// Plan 40 Ф.2 B7: Time.after cleanup в select.
+// Plan 44.1 Ф.2 B7: Time.after cleanup в select.
 //
 // Когда select выигрывает arm НЕ-таймер, on_select_lost callback
 // должен отменить uv_timer.  До B7 timer срабатывал даже не нужен,
@@ -10,9 +10,9 @@
 // открытым 10s после теста — наблюдаемо как timeout на test runner.
 // Без leak'а тест завершается за <1s.
 //
-// Plan 40 audit R7 (2026-05-12): on_select_lost теперь срабатывает и
+// Plan 44.1 audit R7 (2026-05-12): on_select_lost теперь срабатывает и
 // из try_immediate ветки (раньше только park-path).
-// Plan 40 audit R8 (2026-05-13): NovaAfterState переведена на malloc/free
+// Plan 44.1 audit R8 (2026-05-13): NovaAfterState переведена на malloc/free
 // вместо nova_alloc — снимает Boehm conservative scan dependency,
 // решает Windows boundary ~35 SEGV. Восстановлен оригинальный 50-iter.
 

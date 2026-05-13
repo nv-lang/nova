@@ -1,4 +1,4 @@
-// Plan 41 Этап 3: smoke test для std.runtime.fibers introspection.
+// Plan 44.2 Этап 3: smoke test для std.runtime.fibers introspection.
 //
 // Verify что `fibers.*` API доступен и возвращает sane values:
 //   - На Linux/macOS arena активна → slot_count > 0, slots_active растёт

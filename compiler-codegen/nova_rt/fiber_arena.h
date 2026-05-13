@@ -2,7 +2,7 @@
 #ifndef NOVA_RT_FIBER_ARENA_H
 #define NOVA_RT_FIBER_ARENA_H
 
-/* Plan 41 Etap 1 — per-thread fiber stack arena (Linux/macOS only).
+/* Plan 44.2 Etap 1 — per-thread fiber stack arena (Linux/macOS only).
  *
  * Goal: replace minicoro default calloc(56KB) stack allocator с
  * arena-based allocation для:
@@ -11,7 +11,7 @@
  *   2. Растущие стеки автоматически (mmap MAP_NORESERVE — lazy commit
  *      pages только под touched memory; Linux/macOS).
  *   3. Concurrent GC ready (Plan 23 prerequisite) — arena registered
- *      as GC root, suspended stacks visible to scanner всегда. Plan 41
+ *      as GC root, suspended stacks visible to scanner всегда. Plan 44.2
  *      Этап 2 удалил _NOVA_GC_DISABLE workaround полностью.
  *
  * Architecture (Linux/macOS):
@@ -28,19 +28,19 @@
  * cooperative — GC не вытесняет fiber mid-stack).
  * Windows growable stacks через SEH guard pages — Plan 42+.
  *
- * Plan 41 P0 items addressed here:
+ * Plan 44.2 P0 items addressed here:
  *   - P41-5: guard pages (PROT_NONE).
  *   - P41-11: active-range roots (lazy commit preserved).
  *   - P41-12: pthread_key cleanup.
  *   - P41-13: requires -fstack-clash-protection (set в test_runner.rs).
  *   - P41-14: madvise MADV_NOHUGEPAGE.
  *
- * Plan 41 P0 items deferred to integration phase:
+ * Plan 44.2 P0 items deferred to integration phase:
  *   - P41-2: slot count 256 (boots) → 4096 (production) после validation.
  *   - P41-3: vm.overcommit_memory=2 detection — TODO.
  *   - P41-6: SIGSEGV handler с pretty error — TODO.
  *
- * Plan 41 deferred to Plan 23:
+ * Plan 44.2 deferred to Plan 23:
  *   - P41-15: cross-thread dealloc atomic bitmap (single-thread bootstrap OK).
  */
 
@@ -55,7 +55,7 @@
 
 /* Default config — может быть override'нут через NOVA_FIBER_ARENA_* env.
  *
- * Plan 41 audit P41-2: slot_count bumped 256 → 4096 для production.
+ * Plan 44.2 audit P41-2: slot_count bumped 256 → 4096 для production.
  * 4096 × 2MB = 8GB virtual per thread. На x86_64 (256TB virtual)
  * тривиально; physical commit lazy через MAP_NORESERVE. Real workloads
  * (web server 10k connections × 4-8 fibers per request) нуждаются в
@@ -64,7 +64,7 @@
  * Slots reused через bitmap free-list — реальный peak ограничен только
  * concurrent (не cumulative) fibers per worker thread. */
 #define NOVA_FIBER_STACK_SIZE     (2 * 1024 * 1024)  /* 2MB per slot */
-/* Plan 41 audit R8 (2026-05-13): 32-bit address space недостаточен для
+/* Plan 44.2 audit R8 (2026-05-13): 32-bit address space недостаточен для
  * 8 GB virtual. Downsize до 64 slots × 2MB = 128 MB на 32-bit. На 64-bit
  * остаёмся 4096. */
 #if defined(__SIZEOF_POINTER__) && __SIZEOF_POINTER__ < 8
@@ -72,7 +72,7 @@
 #else
   #define NOVA_FIBER_SLOT_COUNT   4096               /* 4096 × 2MB = 8GB virtual per thread (64-bit) */
 #endif
-/* Plan 41 audit R8 (2026-05-13): 16 KB guard (было 4 KB) для CVE-2017-1000366
+/* Plan 44.2 audit R8 (2026-05-13): 16 KB guard (было 4 KB) для CVE-2017-1000366
  * stack-clash protection. Single 4 KB guard может быть skipped одним
  * SP-subtract если функция аллоцирует >4 KB local array. 16 KB существенно
  * затрудняет clash (нужен >16 KB allocation в одном instruction). Cost:
@@ -100,7 +100,7 @@ typedef struct {
 
 NovaFiberArenaStats nova_fiber_arena_stats(void);
 
-/* Plan 41 P41-3: explicit decay — flush physical pages of free slots
+/* Plan 44.2 P41-3: explicit decay — flush physical pages of free slots
  * batched single MADV_DONTNEED per contiguous run. For long-running
  * workloads без natural idle (server с постоянно активными fibers).
  * No-op если arena не activated. */

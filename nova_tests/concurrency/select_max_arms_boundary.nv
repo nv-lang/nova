@@ -1,4 +1,4 @@
-// Plan 40 Ф.3 B5: boundary test — select с ровно 32 arms (cap) должен
+// Plan 44.1 Ф.3 B5: boundary test — select с ровно 32 arms (cap) должен
 // компилироваться без compile-error. 33 arms — соседний negative test
 // в expected_runtime/select_overflow_compile_error.nv.
 

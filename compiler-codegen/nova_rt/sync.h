@@ -2,9 +2,9 @@
 #ifndef NOVA_RT_SYNC_H
 #define NOVA_RT_SYNC_H
 
-/* Plan 40 Ф.1 (2026-05-12): thread-safety primitives для channel runtime.
+/* Plan 44.1 Ф.1 (2026-05-12): thread-safety primitives для channel runtime.
  *
- * Tier 1 supported toolchains (Plan 40 R3-2):
+ * Tier 1 supported toolchains (Plan 44.1 R3-2):
  *   - Linux x86_64/aarch64 + clang LLVM 15+ (glibc 2.35+)
  *   - Windows x86_64 + clang LLVM 15+
  *   - macOS arm64 + Apple Clang
@@ -22,13 +22,13 @@
  *
  * Под M:N (Plan 23) — реальная contention + CAS-loop'ы.
  *
- * Memory ordering правила (Plan 40 R1 A1):
+ * Memory ordering правила (Plan 44.1 R1 A1):
  *   - `closed`: Release-store / Acquire-load (paired flag+payload).
  *   - `writer_count`: Release-dec + Acquire-fence-on-zero (refcount idiom
  *     как Arc::drop / shared_ptr).
  *   - `fired` CAS: acq_rel/acquire — mutex acquire даёт оставшийся ordering.
  *   - Weak CAS (loop, failure ничего не carry): nova_aint_cas_weak с
- *     release/relaxed-on-failure (Plan 40 R2 C7) — на ARM saves a barrier
+ *     release/relaxed-on-failure (Plan 44.1 R2 C7) — на ARM saves a barrier
  *     per failed CAS, на x86 same code.
  */
 
@@ -49,7 +49,7 @@
   #define NOVA_SYNC_BACKEND_PTHREAD 1
   #include <pthread.h>
 #else
-  #error "Plan 40 Tier 1 unsupported platform"
+  #error "Plan 44.1 Tier 1 unsupported platform"
 #endif
 
 /* ── Mutex ─────────────────────────────────────────────────────── */
@@ -68,7 +68,7 @@
 #elif defined(NOVA_SYNC_BACKEND_DARWIN)
 
   /* macOS: os_unfair_lock — ~50 ns vs ~20 µs для pthread_mutex_t (R3-5).
-   * Plan 40 acceptance <50 ns round-trip достижимо только с unfair_lock. */
+   * Plan 44.1 acceptance <50 ns round-trip достижимо только с unfair_lock. */
   typedef os_unfair_lock nova_mutex_t;
 
   static inline void nova_mutex_init(nova_mutex_t* m) {
@@ -83,7 +83,7 @@
   typedef pthread_mutex_t nova_mutex_t;
 
   static inline void nova_mutex_init(nova_mutex_t* m) {
-      /* Plan 40 R3-4: PTHREAD_MUTEX_ADAPTIVE_NP для short critical sections
+      /* Plan 44.1 R3-4: PTHREAD_MUTEX_ADAPTIVE_NP для short critical sections
        * (glibc benchmark: ~55% throughput gain vs NORMAL). */
       #if defined(__GLIBC__) && defined(PTHREAD_MUTEX_ADAPTIVE_NP)
           pthread_mutexattr_t attr;
@@ -157,7 +157,7 @@ static inline bool nova_aint_cas(volatile nova_atomic_int* p,
                                          __ATOMIC_ACQUIRE);
 }
 
-/* Weak CAS с release/relaxed-on-failure (Plan 40 R2 C7).
+/* Weak CAS с release/relaxed-on-failure (Plan 44.1 R2 C7).
  * Используется в loop где failure не carry data — на ARM saves DMB per
  * failed iteration. На x86 emit identical code. */
 static inline bool nova_aint_cas_weak_release(volatile nova_atomic_int* p,
@@ -182,7 +182,7 @@ static inline void nova_abool_store(volatile nova_atomic_bool* p, bool v) {
     __atomic_store_n(p, v, __ATOMIC_RELEASE);
 }
 
-/* ── Cache-line size (Plan 40 R2 C5) ───────────────────────────── */
+/* ── Cache-line size (Plan 44.1 R2 C5) ───────────────────────────── */
 
 /* x86_64: 64 bytes. ARM big cores: 128 bytes. Default to 64 для bootstrap;
  * Plan 23 может tune через runtime detection. */

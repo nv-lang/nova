@@ -49,13 +49,13 @@
 #include <uv.h>
 #include "eventloop.h"
 
-/* Plan 27 R4 → Plan 41 Этап 1/2: Boehm GC + minicoro fiber stacks.
+/* Plan 27 R4 → Plan 44.2 Этап 1/2: Boehm GC + minicoro fiber stacks.
  *
  * Suspended fiber stacks are off the OS stack — Boehm's conservative scanner
  * would miss pointers stored in them. GC_add_roots per-fiber hits Boehm's
  * internal root-set limit (128 entries) with many fibers.
  *
- * Solution (Plan 41 Этап 1):
+ * Solution (Plan 44.2 Этап 1):
  *  - Linux/macOS: fiber stacks allocated из per-thread mmap arena
  *    (nova_fiber_alloc). Arena registered ONE GC root для всего active
  *    range → нет MAX_ROOT_SETS issue.
@@ -64,7 +64,7 @@
  *    stacks остаются «логически live» для одной collect window. Не
  *    идеально, но безопасно для bootstrap (см. Plan 42+).
  *
- * Plan 41 Этап 2: GC_disable/GC_enable workaround удалён — arena делает
+ * Plan 44.2 Этап 2: GC_disable/GC_enable workaround удалён — arena делает
  * его ненужным на Linux/macOS, а Windows polled только в blocking sync
  * points где fiber stacks не активны.
  *
@@ -78,11 +78,11 @@
 static inline void _nova_gc_add_fiber_roots(mco_coro* co)    { (void)co; }
 static inline void _nova_gc_remove_fiber_roots(mco_coro* co) { (void)co; }
 
-/* Plan 41 Etap 1 — fiber stack arena (Linux/macOS).
+/* Plan 44.2 Etap 1 — fiber stack arena (Linux/macOS).
  *
  * Wire minicoro's alloc_cb/dealloc_cb to nova_fiber_alloc/dealloc, которые
  * берут стек из per-thread mmap'нутой арены вместо calloc. На Windows
- * остаёмся на дефолтном calloc-пути (Plan 43 — открытый).
+ * остаёмся на дефолтном calloc-пути (Plan 44.3 — открытый).
  *
  * Stack size: slot_usable (= slot_size − guard) минус минимальный
  * mco_desc header overhead. Реальный header < 1KB на amd64; 8KB

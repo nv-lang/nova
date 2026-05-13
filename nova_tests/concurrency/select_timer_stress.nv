@@ -1,4 +1,4 @@
-// Plan 40 audit R8 stress test (2026-05-13).
+// Plan 44.1 audit R8 stress test (2026-05-13).
 //
 // 500 iterations select { recv wins, Time.after(10s) cancelled }.
 // Это 10x существующего select_timer_cleanup. Цель — catch regressions

@@ -119,7 +119,7 @@ static inline void nova_sched_park(NovaFiberQueue* scope, int slot) {
     mco_yield(co);
 }
 
-/* Plan 40 R2 C6: park_with_unlock — atomically transition to parked state
+/* Plan 44.1 R2 C6: park_with_unlock — atomically transition to parked state
  * and release a lock, so wake from another thread cannot race with park.
  *
  * Pattern (lost-wakeup-free):
@@ -138,7 +138,7 @@ static inline void nova_sched_park(NovaFiberQueue* scope, int slot) {
  * lock+unlock+park because they will break under M:N otherwise.
  *
  * IMPORTANT: callers MUST re-check application state after park returns
- * (spurious wakes are allowed). For Plan 40 channels/select, the state
+ * (spurious wakes are allowed). For Plan 44.1 channels/select, the state
  * is `BaseWaiter.fired` atomic — if 0 after park, retry try_immediate
  * or park again. This re-check is correctness, not optimization. */
 static inline void nova_sched_park_with_unlock(NovaFiberQueue* scope, int slot,
