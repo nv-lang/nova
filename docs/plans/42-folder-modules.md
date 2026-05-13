@@ -36,27 +36,50 @@ Folder-module (Go-style peers) закрывает оба.
 
 ## Архитектурное решение (финальное)
 
-**Peers (Go-style).** Все файлы папки объявляют **одинаковый**
-`module <full-path>` и share **declarations namespace** (но не imports
-— см. правило C ниже). Никакого entry-marker.
+**Peers (Go-style)** + **module declaration format = `parent.X`**
+(D29 rev-3). Все файлы папки объявляют **одинаковый** `module
+<parent>.<X>` и share **declarations namespace** (но не imports —
+см. правило C ниже). Никакого entry-marker.
 
 ```
-admin/
-├── users.nv          module admin           (peer)
-├── audit.nv          module admin           (peer)
-├── permissions.nv    module admin           (peer)
-└── helpers.nv        module admin           (peer; internal по convention)
+src/admin/
+├── users.nv          module src.admin       (peer; parent=src, target=admin)
+├── audit.nv          module src.admin       (peer)
+├── permissions.nv    module src.admin       (peer)
+└── helpers.nv        module src.admin       (peer; internal, без export)
 ```
 
-Compiler выводит folder-module из filesystem: папка `X/` с ≥1 `.nv`-
-файлом, где **все** файлы объявляют `module <X-full-path>` и **share
-namespace declarations** = folder-module.
+Compiler выводит folder-module из filesystem: папка `X/` с ≥1 `.nv`
+файлом, где **все** файлы объявляют `module <parent>.<X>` (parent —
+родитель папки `X/`, X — имя самой папки) и **share namespace
+declarations** = folder-module.
 
 **Sub-modules — только через nested folders**, не через peers с
-точечным именем. `admin/billing/invoice.nv` объявляет `module admin.billing`
-(peer of folder-module `admin.billing`) — независимый module от `admin`.
-Чтобы использовать `Invoice` из `admin/users.nv` — explicit `import
-admin.billing.{Invoice}`.
+точечным именем. `src/admin/billing/invoice.nv` объявляет `module
+admin.billing` (parent=admin, target=billing) — независимый module
+от `src.admin`. Чтобы использовать `Invoice` из `src/admin/users.nv` —
+explicit `import admin.billing.{Invoice}` (через full path).
+
+**Module declaration format — `parent.X`** (rev-3, 2026-05-13):
+
+| Файл | parent | target | declaration |
+|---|---|---|---|
+| `src/main.nv` (single-file) | src | main | `module src.main` |
+| `src/admin.nv` (single-file) | src | admin | `module src.admin` |
+| `src/std/admin.nv` (single-file) | std | admin | `module std.admin` |
+| `src/std/user/admin.nv` (single-file) | user | admin | `module user.admin` |
+| `src/admin/users.nv` (peer of `admin/`) | src | admin | `module src.admin` |
+| `src/std/encoding/hex.nv` (single-file) | encoding | hex | `module encoding.hex` |
+| `src/std/encoding/json/parse.nv` (peer of `json/`) | encoding | json | `module encoding.json` |
+
+- **target** = file basename (для single-file) или folder name (для
+  folder-module peer).
+- **parent_of_target** = имя directory **сразу над** target.
+- Declaration **всегда 2 segments**, не зависит от глубины nesting.
+- **Import** всегда использует full path: `import std.encoding.hex.{decode}`.
+- Compiler maintains internal `decl ↔ canonical filesystem path`
+  mapping; declaration — identity check (refactor safety), не
+  routing key.
 
 **Conflict resolution:** одновременное наличие `X.nv` (single-file) и
 папки `X/` (folder-module) на одном уровне — compile error «ambiguous
@@ -317,12 +340,24 @@ similar names. **Better than Go** (Go показывает только filename
 
 ### Ф.1 — Spec finalize ✅
 
-- [x] D29 rev-2 в spec/decisions/07-modules.md.
+- [x] D29 rev-2 в spec/decisions/07-modules.md (folder-module Go-style).
+- [x] D29 rev-3 — module declaration format = `parent.X` (2026-05-13).
 - [x] D29 «Почему» / «Что отвергнуто» / «Эволюция» дополнены.
-- [ ] Update D78 (path enforcement) для folder-modules. Manifest
-  check для inconsistent `module` decls (Ф.3).
-- [ ] Update D5/D47 (visibility) explicit mention что без `export`
-  shared между peers of folder-module.
+- [ ] Update D78 (path enforcement) для folder-modules + parent.X
+  rule. Manifest check для inconsistent `module` decls (Ф.3).
+
+### Ф.1.5 — Migration std/* + nova_tests/* + examples под `parent.X`
+
+Все существующие `module a.b.c.d` (full path) → `module c.d` (parent.X).
+Tool/script: walk все `.nv` файлы в репо, для каждого вычислить
+правильный `module parent.target` из filesystem path, заменить
+declaration.
+
+Также обновить **все imports** в этих файлах — imports остаются
+full path (не меняются), но компилятор теперь связывает full import
+path с modules через `(parent, target)` identity check.
+
+Acceptance: после migration full regression PASS (261+/261).
 
 ### Ф.2 — Resolver: collect peers + per-file imports
 
@@ -355,16 +390,24 @@ similar names. **Better than Go** (Go показывает только filename
 
 ### Ф.3 — Manifest check (path enforcement D78 rev)
 
-`compiler-codegen/src/manifest.rs::check_module_path`:
+`compiler-codegen/src/manifest.rs::check_module_path` под **rev-3
+правило `parent.X`**:
 
-- Single-file `admin/users.nv` → `module admin.users` (как сейчас).
-- Folder-module peer `admin/users/foo.nv` → `module admin.users`
-  (matches folder, **не** file basename).
-- All peers in folder must declare **identical** `module` → если
-  разные, return Err с listing всех мисматчей + suggested fix.
+- Single-file `admin/users.nv` → expected `module admin.users`
+  (parent=admin, target=users).
+- Folder-module peer `admin/users/foo.nv` → expected `module
+  admin.users` (parent=admin, target=users — фолдер).
+- All peers в folder-module declare **identical** `module
+  <parent>.<target>` (parent + folder name) → если разные, return
+  Err с listing всех мисматчей + suggested fix.
 - Conflict `X.nv` + `X/` (с direct `.nv` files) → return Err.
 - Эдж: `admin.nv` + `admin/billing/foo.nv` (admin/ has no direct
-  .nv) → OK (правило E).
+  .nv) → OK (правило E). `admin.nv` имеет declaration по своей
+  parent (например `src.admin`), `admin/billing/foo.nv` —
+  `admin.billing`.
+- File at workspace root (`main.nv` без parent folder в repo) —
+  parent = «имя самого root folder» (берётся `nova.toml` parent
+  directory имя, обычно `src` или `nova_tests`).
 
 ### Ф.4 — Codegen: 2-pass для folder-modules (правило D)
 

@@ -67,13 +67,17 @@ static, метод), `const`, `let`, `protocol` ([D42](02-types.md#d42)).
 > (folder = module, Go-style peers). Все файлы в папке объявляют
 > один и тот же `module X` и share namespace. Single-file модули
 > продолжают работать. См. подраздел «Модуль — файл или папка».
+>
+> **2026-05-13 (rev-3):** module declaration format = **`parent.X`**
+> (parent folder + target name) для **обоих** случаев (single-file
+> и folder-module). См. подраздел «Объявление модуля».
 
 ### Что
 **Модуль — это файл `X.nv` ИЛИ папка `X/` с одним или несколькими
-`.nv` файлами.** Все файлы папки-модуля объявляют `module <full-path>`
+`.nv` файлами.** Все файлы папки-модуля объявляют `module <parent>.<X>`
 (одинаковый для всех peers) и **share namespace** (как в Go).
-Имя модуля объявляется первой строкой `module path.to.name`. Импорт
-через `import path.module.{Names}`. Wildcard и циклические импорты
+Имя модуля объявляется первой строкой `module parent.name`. Импорт
+через `import path.to.module.{Names}`. Wildcard и циклические импорты
 запрещены. Re-export — `export import`.
 
 ### Правило
@@ -84,85 +88,121 @@ static, метод), `const`, `let`, `protocol` ([D42](02-types.md#d42)).
 
 ```nova
 // admin/audit.nv
-module admin.audit
+module admin.audit                              // parent=admin, name=audit
 ```
 
 **Multi-file (folder = module, peers)** — для больших модулей. Все
-файлы в папке объявляют **одинаковый** `module X` (X = full dotted
-path для этой папки) и share namespace — функции/типы из одного файла
-видны в другом без import:
+файлы в папке объявляют **одинаковый** `module <parent>.<X>` (где
+parent — родитель папки `X/`, X — имя самой папки) и share namespace —
+функции/типы из одного файла видны в другом без import:
 
 ```
-admin/
-├── users.nv          module admin (peer)
-├── audit.nv          module admin (peer)
-├── permissions.nv    module admin (peer)
-└── _helpers.nv       module admin (peer; internal по convention)
+src/admin/
+├── users.nv          module src.admin     (peer; parent=src, name=admin)
+├── audit.nv          module src.admin     (peer)
+├── permissions.nv    module src.admin     (peer)
+└── helpers.nv        module src.admin     (peer; internal, без export)
 ```
 
-Все 4 файла начинаются с `module admin`. Если какой-то файл объявляет
-другое имя (например `module admin.users`) — compile error, имя должно
-совпадать с folder.
+Все 4 файла начинаются с `module src.admin`. Если какой-то файл
+объявляет другое имя (например `module admin` или `module src.admin.users`)
+— compile error.
 
 **Sub-modules — через nested folders, не через single peer file:**
 
 ```
-admin/
-├── users.nv               module admin (peer)
+src/admin/
+├── users.nv               module src.admin            (peer)
 └── billing/               
-    ├── invoice.nv         module admin.billing (peer of billing)
-    └── subscription.nv    module admin.billing (peer of billing)
+    ├── invoice.nv         module admin.billing        (peer; parent=admin, name=billing)
+    └── subscription.nv    module admin.billing        (peer)
 ```
 
-`admin/billing/` — это **независимый** модуль `admin.billing`. Файлы
-в нём peers друг другу, но **не** peers с `admin/users.nv`. Чтобы
-использовать invoice из users.nv, нужен явный `import admin.billing.{Invoice}`.
+`src/admin/billing/` — это **независимый** модуль `admin.billing`.
+Файлы в нём peers друг другу, но **не** peers с `src/admin/users.nv`.
+Чтобы использовать invoice из users.nv, нужен явный
+`import admin.billing.{Invoice}`.
 
 **Конфликт** `X.nv` + папка `X/` на одном уровне (например `admin.nv`
 рядом с `admin/`) — compile error «ambiguous module 'admin'».
 
-#### Объявление модуля
+#### Объявление модуля — правило `parent.X`
 
 ```nova
-module admin.audit                              // первая строка файла
+module parent.name                          // первая строка файла
 ```
 
-Имя модуля — иерархическое через точки. **Соответствует пути в
-файловой системе** относительно корня проекта:
-- Single-file `admin/audit.nv` → `module admin.audit`.
-- Multi-file `admin/users.nv` (peer of folder-module admin) →
-  `module admin` (same as folder name).
-- Multi-file `admin/billing/invoice.nv` (peer of folder-module
-  admin.billing) → `module admin.billing`.
+**Универсальное правило (rev-3):** `module = <parent_of_target>.<target_name>`
 
-Один файл = одна `module X` декларация. Никаких `module X { ... }`-
-блоков внутри файла.
+где:
+- **target** = file basename (для single-file) или folder name
+  (для folder-module peer).
+- **parent_of_target** = имя directory **сразу над** target.
+
+Примеры:
+
+| Файл | parent | target | declaration |
+|---|---|---|---|
+| `src/main.nv` (single-file) | `src` | `main` | `module src.main` |
+| `src/admin.nv` (single-file) | `src` | `admin` | `module src.admin` |
+| `src/std/admin.nv` (single-file) | `std` | `admin` | `module std.admin` |
+| `src/std/user/admin.nv` (single-file) | `user` | `admin` | `module user.admin` |
+| `src/admin/users.nv` (peer of folder `admin/`) | `src` | `admin` | `module src.admin` |
+| `src/std/encoding/hex.nv` (single-file) | `encoding` | `hex` | `module encoding.hex` |
+| `src/std/encoding/json/parse.nv` (peer of `json/`) | `encoding` | `json` | `module encoding.json` |
+| `src/std/encoding/json/stringify.nv` (peer of `json/`) | `encoding` | `json` | `module encoding.json` |
+
+**Свойства правила:**
+
+1. **Declaration всегда 2 segments** (parent.target), не зависит от
+   глубины nesting.
+2. **Refactor safety:** при move файла или папки compiler сравнивает
+   declaration с (parent, target) пары и эмитит error при mismatch.
+3. **Folder-module и single-file consistent:** оба используют parent.X,
+   нет split-личностей в codebase.
+4. **Cycle detection и import resolution** работают через
+   полный **filesystem path** (compiler ведёт internal mapping
+   `decl ↔ canonical path`); declaration — это **identity check**,
+   не routing key.
+
+**Import всегда использует full path:**
+
+```nova
+import std.encoding.hex.{decode}            // полный путь от source root
+```
+
+Compiler находит модуль по filesystem path, проверяет что declaration
+matches `(parent, target)` пары, и связывает с full path.
+
+Один файл = одна `module parent.name` декларация. Никаких
+`module X { ... }`-блоков внутри файла.
 
 #### Структура проекта
 
 ```
 project/
 ├── src/
-│   ├── main.nv                  module main          (single-file)
-│   ├── admin/                                         (folder-module)
-│   │   ├── users.nv             module admin
-│   │   ├── audit.nv             module admin
-│   │   ├── permissions.nv       module admin
-│   │   └── _helpers.nv          module admin
-│   └── http/                                          (folder-module)
-│       ├── server.nv            module http
-│       ├── client.nv            module http
-│       └── handler/                                   (nested folder-module)
+│   ├── main.nv                  module src.main           (single-file)
+│   ├── admin/                                              (folder-module)
+│   │   ├── users.nv             module src.admin
+│   │   ├── audit.nv             module src.admin
+│   │   ├── permissions.nv       module src.admin
+│   │   └── helpers.nv           module src.admin
+│   └── http/                                               (folder-module)
+│       ├── server.nv            module src.http
+│       ├── client.nv            module src.http
+│       └── handler/                                        (nested folder-module)
 │           ├── auth.nv          module http.handler
 │           └── log.nv           module http.handler
 └── nova.toml                    манифест проекта
 ```
 
-Корень — `src/`. Single-file `main.nv` = module `main`. Folder
-`admin/` (с 4 файлами) = module `admin` где все 4 файла peers.
-Nested folder `http/handler/` = независимый module `http.handler`.
-Структура проекта (где `src/`, как устроен `nova.toml`) — это
-**tooling**, см. открытые вопросы.
+Корень — `src/`. Single-file `main.nv` = module `src.main` (parent=src,
+target=main). Folder `admin/` (с 4 файлами) = module `src.admin` где
+все 4 файла peers. Nested folder `http/handler/` = независимый module
+`http.handler` (parent=http, target=handler). Структура проекта (где
+`src/`, как устроен `nova.toml`) — это **tooling**, см. открытые
+вопросы.
 
 #### Visibility внутри folder-module
 
@@ -323,9 +363,15 @@ LLM знает фиксированный список — «известная 
   Иерархия через точки. AI-friendly: open file = full module.
 - **rev-2** (2026-05-12, Plan 42): добавлена folder-module variant
   (Go-style peers). Single-file модели продолжают работать без
-  изменений. Backward-compatible. Триггер изменения: ожидаемый рост
-  std/* модулей >800 LOC; internal helpers становятся critical для
-  production-grade stdlib.
+  изменений. Backward-compatible.
+- **rev-3** (2026-05-13, Plan 42): module declaration format =
+  **`parent.X`** (parent folder + target name) для **обоих** случаев
+  (single-file и folder-module). До rev-3 было «full path от source
+  root» (`module std.encoding.hex`); стало «parent + target»
+  (`module encoding.hex`). Свойства: всегда 2 segments, refactor
+  safety (move → mismatch detected), consistent между single-file и
+  folder-module. **Требует миграцию существующих std/* файлов** —
+  одноразовая операция (язык не в проде, breaking change приемлем).
 
 ---
 
