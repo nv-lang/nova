@@ -17,6 +17,8 @@
 #include <unistd.h>
 #include <sys/mman.h>
 #include <pthread.h>
+#include <signal.h>     /* P41-6 SIGSEGV handler */
+#include <ucontext.h>   /* для siginfo_t.si_addr */
 
 #ifdef NOVA_GC_BOEHM
 #include <gc.h>
@@ -69,12 +71,103 @@ static void _arena_register_pthread_key(void) {
     pthread_key_create(&_arena_cleanup_key, _arena_thread_exit_cleanup);
 }
 
+/* ── SIGSEGV pretty handler (P41-6, 2026-05-13) ───────────────────
+ *
+ * Перехватывает SIGSEGV для guard-page hits в нашей arena и печатает
+ * понятную диагностику ("Fiber stack overflow in slot N") вместо
+ * generic "Segmentation fault".
+ *
+ * Trade-off: SIGSEGV — process-wide signal, наш handler applies ко
+ * всем threads. Для не-arena SIGSEGV (например null deref в user code)
+ * мы делегируем обратно default action через sigaction restore.
+ *
+ * Chaining: сохраняем previous SIGSEGV handler в `_prev_sigsegv` и
+ * вызываем его если fault не в нашей arena (или в usable region).
+ *
+ * Безопасность: handler работает в signal context (async-signal-safe
+ * functions only). fprintf к stderr — НЕ async-safe строго, но в
+ * single-threaded crash context это commonly acceptable practice
+ * (Boehm, libuv, Go runtime все делают похожее). */
+
+static struct sigaction _prev_sigsegv;
+static bool _sigsegv_installed = false;
+
+static void _arena_sigsegv_handler(int sig, siginfo_t* info, void* uctx) {
+    void* fault_addr = info ? info->si_addr : NULL;
+
+    /* Не наш диапазон? Восстановим default или previous handler и re-raise. */
+    if (!_t_arena.base || !fault_addr ||
+        (char*)fault_addr <  _t_arena.base ||
+        (char*)fault_addr >= _t_arena.base + _t_arena.virtual_size) {
+        /* Delegate. Если previous был SIG_DFL — restore default и re-raise.
+         * Если был user handler — invoke его. */
+        if (_prev_sigsegv.sa_flags & SA_SIGINFO) {
+            if (_prev_sigsegv.sa_sigaction &&
+                _prev_sigsegv.sa_sigaction != (void*)SIG_DFL &&
+                _prev_sigsegv.sa_sigaction != (void*)SIG_IGN) {
+                _prev_sigsegv.sa_sigaction(sig, info, uctx);
+                return;
+            }
+        } else if (_prev_sigsegv.sa_handler &&
+                   _prev_sigsegv.sa_handler != SIG_DFL &&
+                   _prev_sigsegv.sa_handler != SIG_IGN) {
+            _prev_sigsegv.sa_handler(sig);
+            return;
+        }
+        /* No handler — restore default and re-raise. Default = process abort. */
+        signal(sig, SIG_DFL);
+        raise(sig);
+        return;
+    }
+
+    /* В arena. Какой slot? guard или usable? */
+    size_t offset      = (size_t)((char*)fault_addr - _t_arena.base);
+    size_t slot_idx    = offset / _t_arena.slot_size;
+    size_t slot_offset = offset % _t_arena.slot_size;
+
+    /* fprintf не строго async-safe — но в crash context приемлемо. */
+    if (slot_offset < NOVA_FIBER_GUARD_SIZE) {
+        fprintf(stderr,
+                "\nnova: fiber stack overflow in slot %zu "
+                "(fault @ %p, guard @ [%p, %p))\n"
+                "Hint: increase NOVA_FIBER_STACK_SIZE or reduce recursion depth.\n",
+                slot_idx, fault_addr,
+                _t_arena.base + slot_idx * _t_arena.slot_size,
+                _t_arena.base + slot_idx * _t_arena.slot_size + NOVA_FIBER_GUARD_SIZE);
+    } else {
+        fprintf(stderr,
+                "\nnova: SIGSEGV in fiber arena slot %zu, offset %zu "
+                "(fault @ %p)\n"
+                "Hint: heap corruption or use-after-free affecting fiber memory.\n",
+                slot_idx, slot_offset, fault_addr);
+    }
+    fflush(stderr);
+
+    /* Restore default and re-raise so core dump / debugger attach работает. */
+    signal(sig, SIG_DFL);
+    raise(sig);
+}
+
+static void _arena_install_sigsegv_handler(void) {
+    if (_sigsegv_installed) return;
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_sigaction = _arena_sigsegv_handler;
+    sa.sa_flags     = SA_SIGINFO | SA_NODEFER;  /* allow re-entry для re-raise */
+    sigemptyset(&sa.sa_mask);
+    sigaction(SIGSEGV, &sa, &_prev_sigsegv);
+    _sigsegv_installed = true;
+}
+
 /* ── Init ──────────────────────────────────────────────────────── */
 
 void nova_fiber_arena_init(void) {
     if (_t_arena.base) return;  /* already initialized */
 
     pthread_once(&_arena_key_once, _arena_register_pthread_key);
+    /* P41-6: pretty stack overflow diagnostic. Idempotent — выполнится
+     * один раз для процесса (не per-thread). */
+    _arena_install_sigsegv_handler();
 
     size_t slot_size = NOVA_FIBER_STACK_SIZE;
     size_t slot_count = NOVA_FIBER_SLOT_COUNT;
