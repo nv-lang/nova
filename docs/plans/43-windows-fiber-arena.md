@@ -362,3 +362,64 @@ production path для Windows.
 - `fibers.h` — `_NOVA_MCO_DESC_INIT` снова Linux/macOS-conditional.
 - `channels.h` — stack BaseWaiter снова `#if defined(__linux__) || defined(__APPLE__)`.
 - `test_runner.rs` — `fiber_arena_win.c` НЕ подключён.
+
+---
+
+## Попытка 3 (2026-05-13): slot 256 KB + idle-only decommit
+
+**Дизайн:**
+- slot_size = 256 KB вместо 2 MB (8x compact, ещё 4x больше default minicoro 56 KB).
+- VirtualAlloc(MEM_RESERVE) 1 GB per thread (4096 × 256 KB).
+- На alloc: per-slot MEM_COMMIT 240 KB usable, guard region остаётся
+  reserved (PAGE_NOACCESS default).
+- На dealloc: НЕ decommit в hot path. Idle-only flush (mirror Linux
+  P41R-3 fix) — при `slots_active == 0` → batch VirtualFree(MEM_DECOMMIT)
+  whole high_water range.
+- Boehm GC root через `_arena_register_active_range`.
+- НЕТ VEH handler — guard hits → standard SEH crash.
+
+**Результат:** **fail.** Все concurrency тесты TIMEOUT (60+ sec) +
+`fiber_arena exhausted (4096 slots used)` на одном тесте.
+
+**Hypothesis root cause:** **arena slots не reuse'ются**. dealloc_cb
+вероятно вызывается с ptr который не совпадает с slot boundary (minicoro
+internal arithmetic), наш `_arena_mark_slot_free` либо не decrement'ит
+`slots_active` (если `if (slot >= slot_count) return` falls through),
+либо decrement'ит wrong slot. Slots leak → exhaustion. Все concurrency
+тесты которые делают много spawn-cycles → exhaustion → fiber alloc fail
+or unsafe state → hang.
+
+На Linux/macOS этот же код работает (Plan 41 validated). Разница —
+**minicoro context switch backend**. На POSIX = `MCO_USE_UCONTEXT` или
+`MCO_USE_ASM`. На Windows может быть `MCO_USE_FIBERS` (Windows Fiber
+API через CreateFiber) — что **может internally allocate** независимо
+от нашего alloc_cb.
+
+**Cleanup:** revert. fiber_arena_win.c удалён. 263 PASS / 0 FAIL восстановлено.
+
+---
+
+## Что нужно для попытки 4
+
+1. **Проверить minicoro Windows backend.** Если `MCO_USE_FIBERS` (CreateFiber)
+   — наш alloc_cb игнорируется, и весь подход не работает. Нужен либо
+   `MCO_USE_ASM` (asm context switch — minicoro built-in), либо custom
+   Windows fiber wrapper.
+
+2. **Verify minicoro alloc_cb / dealloc_cb pointer contract.** Что
+   именно minicoro передаёт в dealloc_cb на Windows? Если ptr ≠ ptr
+   from alloc_cb — наш bitmap free логика broken.
+
+3. **Альтернатива — CreateFiber API directly** (не через minicoro).
+   Это major rewrite, не Plan 43 scope.
+
+4. **Альтернатива — slot reuse без `slots_active == 0` idle decommit**.
+   Может decommit + recommit confuses Windows VM manager. Сначала
+   попробовать БЕЗ decommit (просто bitmap free + reuse).
+
+### Open status
+
+Plan 43 — **3 неудачные попытки**. Bootstrap running OK на Windows
+calloc + Plan 40 R8-1 workaround. **Приоритет ниже Plan 23** —
+вернёмся когда Windows production станет realistic, либо когда есть
+time для minicoro backend investigation.
