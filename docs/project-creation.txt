@@ -8844,3 +8844,98 @@ unique «module-level capability» argument (теперь это file-level
 **5. 5 коммитов за этап = appropriate granularity.** spec/plan,
 AST+parser, infra (types+resolver+walk_nv), tests, READMEs —
 логические группы.
+
+
+## Сессия 2026-05-13 (продолжение): Plan 44.6 — per-worker libuv loop (Layer 3)
+
+**Контекст.** Plan 44.5 закрыл Layers 1+2+4 (Chase-Lev deque + worker
+integration + Boehm GC_THREADS). Layer 3 (per-worker libuv loop) был
+вынесен в Plan 44.6 как отдельный исполняемый sub-plan.
+
+**Сценарий.** Пользователь сказал «продолжи работать над планом 44*».
+Я проверил статус mn-runtime branch — working tree clean, 274/274
+PASS, последний коммит docs(42). Создал Plan 44.6 файл, реализовал
+Layer 3 за один проход.
+
+### Архитектурное упрощение vs initial Plan 44.5 design
+
+Initial Plan 44.5 говорил Layer 3 = «codegen: emit current loop в
+supervised_run call sites». Это major refactor `emit_supervised` +
+`nova_supervised_run(scope, loop)` parameterization API.
+
+При прочтении кода обнаружил: **TLS-based подход transparent'но
+снимает codegen requirement**. Если все runtime call sites что
+регистрируют libuv handles (timer/signal/etc) читают `_nova_current_loop`
+(TLS), а worker_main set'ит его перед запуском fiber'ов — codegen
+не меняется. `nova_supervised_run(scope)` остаётся как есть; внутри
+он вызывает `uv_run(nova_current_loop(), ...)`.
+
+Это сэкономило ~200 строк codegen-refactor + сохранило API stability.
+
+### Реализация
+
+Phase 6.1 — TLS infrastructure (eventloop.h + .c):
+- `extern __thread uv_loop_t* _nova_current_loop` declaration.
+- `nova_current_loop()` helper — TLS либо fallback на `nova_evloop()`.
+- `nova_evloop_init()` set'ит TLS = `_evloop` для main thread.
+
+Phase 6.2 — worker_main TLS set (runtime.c):
+- `_nova_current_loop = &w->loop` сразу после `_current_worker_id = w->id`.
+- Без этого fiber park'ался на main thread loop, worker крутил own
+  loop, callback никогда не fire'ал на worker — fiber hangs.
+
+Phase 6.3 — replace `nova_evloop()` → `nova_current_loop()`:
+- 7 callsites в fibers.h (sleep + supervised_run + drain).
+- 1 callsite в channels.h (Time.after timer).
+- `nova_evloop_install_sigint` остался на `nova_evloop()` — single
+  process-wide SIGINT handler.
+
+Phase 6.4 — build + regression: 274/274 PASS, single-thread baseline
+сохранён.
+
+Phase 6.5 — 3 regression-теста под `nova_tests/concurrency/`:
+- `mn_runtime_main_sleep_after_init.nv` — main thread Time.sleep после
+  runtime.init работает (TLS fallback корректен).
+- `mn_runtime_supervised_after_init.nv` — supervised + nested supervised
+  + Time.sleep на main scope продолжают работать с running workers idle.
+- `mn_runtime_init_shutdown_cycles.nv` — N циклов init/shutdown без
+  leak/hang/corrupt.
+
+Финальный регресс: 276/277 PASS Windows (1 flaky sleep_precision_bench
+— Windows timer gran ~16ms, solo PASS).
+
+Phase 6.6 — D98 в spec/decisions/06-concurrency.md, Plan 44.5 status
+update, README plans добавлены rows 44.5+44.6, Plan 44.6 close.
+
+### Honest scope correction
+
+В исходном плане 44.6 была фраза про `mn_runtime_actual_workload.nv`
+(4 workers × 25 fibers с parallelism). При implementation realised
+что для actual Nova-side workload distribution требуется codegen
+change: `emit_supervised` должен distinguish между top-level supervised
+(spawn → workers через `runtime.spawn_global`) и nested supervised
+(spawn → current worker scope). Это больше Layer 3 — вынес в Plan 44.7.
+
+Plan 44.6 переименован в Layer 3 = чистая infrastructure для per-worker
+loop. Workload distribution = Plan 44.7.
+
+### Уроки
+
+**1. TLS-fallback simpler чем codegen parameter passing.** Когда
+runtime resource thread-bound, TLS+fallback на global default —
+естественный API. Каждый callsite читает TLS без знания ABI / scope
+context. Codegen не меняется.
+
+**2. План — это hypothesis, scope корректируется implementation'ом.**
+Initial Plan 44.5 «Layer 3 = codegen change» оказался wrong — TLS
+закрывает scope без codegen. Plan 44.6 был переписан после code-read
+честно про workload distribution → Plan 44.7.
+
+**3. 8 callsites — managealbe sweep.** `nova_evloop()` → `nova_current_loop()`
+заняло 1 grep + 5 minutes. Простота refactor'а потому что naming
+consistent + dependency tree shallow.
+
+**4. Regression-тесты вместо acceptance.** Layer 3 — infrastructure,
+не feature. Acceptance "actual parallelism speedup" блокируется на
+Plan 44.7. Honest path — 3 regression-теста что баseline behaviour
+сохранён под `runtime.init(N)`.
