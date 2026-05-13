@@ -1,0 +1,24 @@
+// Plan 42 D29 rev-3: folder-module peer.
+// parent.X rule: parent=modules, target=folder_module_basic
+// → module modules.folder_module_basic
+//
+// peer #1 — публичные user-операции. Использует internal helper
+// `compute_audit_id` из helpers.nv через shared namespace без import
+// (Go-style peer scope).
+
+module modules.folder_module_basic
+
+export type User {
+    id   int
+    name str
+}
+
+export fn create_user(id int, name str) -> User =>
+    User { id: id, name: name }
+
+// Использует helpers::compute_audit_id из соседнего peer'а — shared
+// namespace, no import нужен.
+export fn create_audited_user(id int, name str) -> User {
+    let audit_id = compute_audit_id(id)
+    User { id: audit_id, name: name }
+}

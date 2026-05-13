@@ -1,0 +1,13 @@
+// Plan 42 D29 rev-3: folder-module peer (internal — без export).
+// parent.X: parent=modules, target=folder_module_basic
+// → module modules.folder_module_basic (peer, same as users.nv)
+//
+// `compute_audit_id` БЕЗ `export` — видна только из peers того же
+// module. Извне `import modules.folder_module_basic` показывает
+// только exported items (User, create_user, create_audited_user).
+
+module modules.folder_module_basic
+
+// Internal helper — module-private.
+fn compute_audit_id(base_id int) -> int =>
+    base_id * 100 + 7

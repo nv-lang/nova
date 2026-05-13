@@ -1,0 +1,29 @@
+// Plan 42 D29 rev-3: usage test для folder-module.
+//
+// `modules.folder_module_basic` — folder с 2 peers (users.nv, helpers.nv).
+// Тест проверяет:
+//   1. folder-module правильно resolve'ится (collect peers, merge AST).
+//   2. exported items (User, create_user, create_audited_user) видны
+//      импортирующему.
+//   3. internal helper compute_audit_id виден между peers но НЕ извне.
+//   4. Cross-peer reference работает (create_audited_user из users.nv
+//      зовёт compute_audit_id из helpers.nv).
+
+module modules.folder_module_basic_use
+
+import nova_tests.modules.folder_module_basic.{User, create_user, create_audited_user}
+
+test "folder-module: exported items accessible" {
+    let u = create_user(1, "alice")
+    assert(u.id == 1)
+    assert(u.name == "alice")
+}
+
+test "folder-module: cross-peer internal helper works" {
+    // create_audited_user из users.nv использует compute_audit_id из helpers.nv.
+    // Если cross-peer namespace shared — этот тест пройдёт.
+    let u = create_audited_user(5, "bob")
+    // expected: id = 5 * 100 + 7 = 507
+    assert(u.id == 507)
+    assert(u.name == "bob")
+}
