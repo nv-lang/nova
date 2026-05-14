@@ -2977,13 +2977,122 @@ codegen использовал implicit-int declaration для
 return → wrong code path → underflow `pending_remote` → infinite loop
 (38 timeout'ов в первой попытке Plan 44.5 L5).
 
+### Boehm `GC_THREADS` — обязательный client-side define (НЕ feature flag!)
+
+> **Запомнить, чтобы не передиагностировать каждый раз.** Boehm bdwgc
+> **уже собран thread-safe** — и vcpkg Windows (`build.ninja` содержит
+> `-DGC_THREADS` в `DEFINES`), и `libgc-dev` Ubuntu. Никакой кастомный
+> vcpkg `bdwgc[multithreaded]` feature **НЕ нужен** — это была неверная
+> гипотеза.
+
+Корень проблемы был в **клиентском** коде: `<gc.h>` прячет
+`GC_register_my_thread` / `GC_unregister_my_thread` / `GC_get_stack_base`
+за `#ifdef GC_THREADS`. Если клиент инклудит `<gc.h>` **без** `-DGC_THREADS`,
+прототипы невидимы → worker'ы не регистрируются в GC → Boehm STW walker
+пропускает их стеки → GC-объекты, на которые ссылается только worker stack,
+преждевременно собираются → use-after-free / `SIGSEGV`.
+
+**Правило (все платформы):** при сборке с Boehm GC клиент **обязан**
+передать `-DGC_THREADS` (`/DGC_THREADS` для MSVC) тем же compiler invocation,
+что инклудит `<gc.h>`. Это не Linux/macOS-специфично — Windows регистрирует
+worker'ы точно так же.
+
+Где зафиксировано в коде:
+- [test_runner.rs](../../compiler-codegen/src/test_runner.rs) — `-DGC_THREADS` /
+  `/DGC_THREADS` во всех 3 compiler-path (gcc/clang, MSVC, доп. path), рядом
+  с `-DNOVA_GC_BOEHM`.
+- [runtime.c](../../compiler-codegen/nova_rt/runtime.c) —
+  `NOVA_GC_THREADS_REGISTER` активируется **безусловно** при `NOVA_GC_BOEHM`
+  (никакого `&& defined(__linux__)` guard'а); `GC_register_my_thread` в
+  `_worker_main`, `GC_unregister_my_thread` в cleanup.
+
+Исправлено в commit `8fcbc67fddb` (Plan 44.5 Layer 5). Результат: Windows
+multi-fiber `Time.sleep` перестал флакать (был ~14% segfault).
+
 **Open:**
-- ⏸ Park/wake migration к worker scope (Time.sleep / Channel.recv в
-  worker fiber'е). Worker не имеет slot для park/wake — abort. Требует
-  TLS-swap entry function + slot allocation в worker scope (Go's g/m
-  state separation: per-fiber state struct, current fiber pointer в TLS,
-  TLS becomes cache от current_fiber->fields). Significant refactor —
-  следующий milestone.
+- ✅ Park/wake migration к worker scope (Time.sleep / Channel.recv в
+  worker fiber'е) — закрыто Plan 44.5 Layer 5, commit `8fcbc67fddb`:
+  TLS-swap + `nova_scope_alloc_slot` в entry preamble, `dispatch_ready`
+  hook (same-thread → deque push, cross-thread → `wake_pending` +
+  `uv_async_send`).
 - ⏸ Linux Docker validation Plan 44.5 L5 — требует Docker daemon.
-- ⏸ Linux Docker validation Plan 44.6 — требует Docker daemon
+
+
+## D103. Preemption — sysmon-thread + codegen safepoints
+
+> **Status:** active (Plan 44.7, Вариант B, закрыт 2026-05-14).
+> **Note:** номер D103, а не D102 — D102 на ветке main занят «именованными
+> аргументами» (Plan 46); preemption перенумерован при подготовке к sync.
+> Дополняет [D71](#) (M:N прозрачность) и [D93](#d93-parkwake--нормативный-runtime-primitive-для-блокирующих-операций):
+> fair CPU-sharing — часть гарантии прозрачности M:N.
+
+### Что
+
+CPU-bound fiber без явного `runtime.yield()` НЕ монополизирует worker
+thread. Runtime автоматически вытесняет fiber'у, крутящуюся дольше
+timeslice'а (~10ms), на ближайшем safepoint'е — peer fiber'ы получают CPU.
+
+```nova
+runtime.init(1)
+supervised {
+    spawn {
+        let mut i = 0
+        while i < 1_000_000_000 { i = i + 1 }   // НЕ блокирует worker
+    }
+    spawn { Time.sleep(10); /* ... */ }          // запустится, не дождавшись
+}                                                 // конца loop'а соседа
+```
+
+### Механизм
+
+**sysmon thread** — отдельный OS-thread (аналог Go's `sysmon`), не привязан
+к worker'ам. Каждые ~10ms проходит workers; если worker крутит одну fiber'у
+дольше `NOVA_PREEMPT_SLICE_NS` — выставляет `NovaWorker.preempt_flag`.
+
+**Codegen safepoints** — `nova_preempt_check()` эмитится в прологе каждой
+Nova-функции и первым стейтментом тела каждого цикла. Читает живой флаг
+через TLS `_nova_preempt_ptr` → при выставленном флаге кооперативно
+`nova_fiber_yield()`. Стоимость на горячем пути: TLS-load + predicted-not-
+taken branch (~1-2 такта). В single-thread режиме `_nova_preempt_ptr ==
+NULL` → чистый no-op.
+
+**yielded-FIFO** — вытесненный fiber кладётся в per-worker FIFO, не обратно
+в LIFO-deque (иначе worker сразу re-pop'ит его, голодя peer'ов). Worker loop:
+deque (свежие/разбуженные) → yielded-FIFO → steal → block.
+
+**uv_run каждую итерацию** — worker сервисит libuv loop (`UV_RUN_NOWAIT`) на
+каждой итерации, не только когда deque пуст. Без этого вытесненный CPU-fiber
+держал бы deque непустым → таймеры (`Time.sleep`) никогда не fire'или бы.
+
+### Отличие от Go — и почему так
+
+Go использует `SIGURG` async signal + ASM `asyncPreempt`. Nova — кооперативные
+codegen safepoint'ы. Причина: minicoro `mco_yield` НЕ async-signal-safe,
+yield из signal handler = UB. Вариант B (safepoints) даёт **observable**
+паритет — CPU-bound fiber не морит голодом соседей — за ~20% сложности
+Варианта C. Непокрыто: tight loop целиком в inline-ASM/FFI без
+codegen-backedge'а (нишевой кейс).
+
+### Что отвергнуто
+
+- **SIGURG/SuspendThread async preemption** (Вариант C) — 2-3 недели
+  engineering, ASM-level, высокий риск; observable benefit над Вариантом B
+  только для нишевого inline-ASM-loop кейса. См. docs/plans/44.7-preemption.md.
+- **Snapshot флага в TLS перед resume** — worker застревает в `mco_resume`
+  на весь CPU-loop, не может перечитать снапшот; sysmon выставляет флаг уже
+  после старта fiber'ы. Поэтому `_nova_preempt_ptr` — указатель на живой
+  `NovaWorker.preempt_flag`, а не копия.
+- **Re-push вытесненного fiber'а в deque** — LIFO → мгновенный re-pop →
+  starvation peer'ов. Отсюда отдельная yielded-FIFO.
+
+### Файлы
+
+- `compiler-codegen/nova_rt/runtime.c` — sysmon thread, `preempt_flag`,
+  `current_fiber_start`, yielded-FIFO, `uv_run(NOWAIT)` каждую итерацию.
+- `compiler-codegen/nova_rt/fibers.h` — `_nova_preempt_ptr` extern,
+  `nova_preempt_check()`, `NOVA_UNLIKELY`.
+- `compiler-codegen/nova_rt/effects.c` — `_nova_preempt_ptr` TLS def.
+- `compiler-codegen/src/codegen/emit_c.rs` — safepoint emit в `emit_fn` +
+  `emit_loop_body_inline`.
+- `nova_tests/concurrency/mn_runtime_preemption.nv` — 2 positive + 2 negative.
 

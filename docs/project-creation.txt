@@ -9938,6 +9938,88 @@ D99 — operator grammar (cfg_or/cfg_and/cfg_not/cfg_atom) + позиция
 
 
 ================================================================================
+PLAN 44.7: PREEMPTION — sysmon-thread + codegen safepoints (2026-05-14)
+================================================================================
+
+Закрывает последнюю крупную дыру M:N-паритета с Go: автоматическое
+вытеснение CPU-bound fiber'ов. До этого был только кооперативный
+runtime.yield() (Plan 44.5) — CPU-loop без явного yield монополизировал
+worker.
+
+### Что
+
+CPU-bound fiber без runtime.yield() больше не блокирует worker. sysmon
+OS-thread помечает worker'ы, крутящие одну fiber'у дольше ~10ms; codegen
+safepoint'ы (пролог функции + backedge цикла) видят флаг и кооперативно
+yield'ятся. Observable Go-style паритет: peer fiber'ы получают CPU даже
+без явного yield.
+
+### Реализация (Вариант B плана — sysmon + safepoints, не SIGURG)
+
+Runtime (runtime.c):
+- NovaWorker.preempt_flag (volatile int) + current_fiber_start (uint64_t).
+- _sysmon_main: OS-thread, каждые 10ms проходит workers, при overrun'е
+  ставит preempt_flag. Старт в runtime_init, стоп ПЕРВЫМ в shutdown.
+- yielded-FIFO per worker: кооперативно вытесненный fiber кладётся СЮДА,
+  не в LIFO-deque (иначе worker сразу re-pop'ит его → peer'ы голодают).
+  Worker loop: deque → yielded-FIFO → steal → block.
+- uv_run(UV_RUN_NOWAIT) каждую итерацию worker loop (раньше только когда
+  deque пуст) — иначе вытесненный CPU-fiber держит deque непустым →
+  таймеры Time.sleep никогда не fire'ят → deadlock.
+
+TLS (fibers.h / effects.c):
+- _nova_preempt_ptr — volatile int*, в _worker_main → &w->preempt_flag.
+  Указатель, не снапшот: worker застревает в mco_resume на весь loop,
+  снапшот не перечитать. NULL на main thread → safepoint no-op.
+- nova_preempt_check() inline: if (ptr && *ptr) { *ptr=0; fiber_yield(); }.
+
+Codegen (emit_c.rs):
+- emit_fn: nova_preempt_check() первым стейтментом каждой Nova-функции.
+- emit_loop_body_inline: nova_preempt_check() первым стейтментом тела
+  каждого цикла (ловит и continue-edge, и tight loops без вызовов).
+
+### Баги по ходу (3 итерации)
+
+1. Снапшот флага перед resume не работал — worker stuck в mco_resume,
+   sysmon ставит флаг уже после копирования. Fix: TLS-указатель на живой
+   флаг.
+2. Вытесненный CPU-fiber re-push'ился в LIFO-deque → мгновенный re-pop →
+   peer на дне deque вообще не стартовал. Fix: yielded-FIFO.
+3. uv_run вызывался только при пустом deque → вытесненный fiber держит
+   deque непустым → Time.sleep-таймеры не fire'ят. Fix: uv_run(NOWAIT)
+   каждую итерацию.
+
+### Отличие от Go
+
+Механизм — кооперативные codegen safepoint'ы, не SIGURG async signal
+(minicoro mco_yield не async-signal-safe). Observable поведение
+совпадает. Непокрыто: inline-ASM/FFI loop без codegen-backedge'а —
+нишевой кейс, Вариант C не делаем.
+
+### Файлы
+
+- compiler-codegen/nova_rt/runtime.c (sysmon + yielded-FIFO + uv_run)
+- compiler-codegen/nova_rt/fibers.h (_nova_preempt_ptr + nova_preempt_check)
+- compiler-codegen/nova_rt/effects.c (_nova_preempt_ptr TLS def)
+- compiler-codegen/src/codegen/emit_c.rs (safepoint emit ×2)
+- spec/decisions/06-concurrency.md (D103 — D102 занят named-args на main)
+- docs/plans/44.7-preemption.md (статус → CLOSED)
+- nova_tests/concurrency/mn_runtime_preemption.nv (2 positive + 2 negative)
+
+ТЕСТЫ (mn_runtime_preemption.nv):
+- positive: observable interleave — CPU-fiber видит флаг peer'а посреди
+  своего цикла (доказывает вытеснение + прогресс peer'а).
+- positive: state correctness — 2×400k fetch_add под вытеснением = 800k.
+- negative: no-op без runtime.init (single-thread default не задет).
+- negative: цикл на main thread после runtime.init безопасен.
+
+339 PASS / 1 FAIL (flaky M:N mn_runtime_actual_workload — 5/5 PASS
+изолированно, timing-dependent distribution) / 7 SKIP. mn_runtime_preemption.nv
+4/4. Регрессий нет. Plan 44.7 закрыт — последняя крупная дыра M:N-паритета
+с Go (автоматическое вытеснение) закрыта.
+
+
+================================================================================
 PLAN 46: ИМЕНОВАННЫЕ АРГУМЕНТЫ + ЗНАЧЕНИЯ ПО УМОЛЧАНИЮ (D102, 2026-05-14)
 ================================================================================
 

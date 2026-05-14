@@ -1,0 +1,127 @@
+// Plan 44.7: signal-free preemption (Вариант B — sysmon + codegen safepoints).
+//
+// Без preemption CPU-bound fiber без runtime.yield() монополизирует свой
+// worker — на 1 worker'е peer fiber вообще не получает CPU пока loop не
+// завершится. Plan 44.7 добавляет:
+//   - sysmon OS-thread: каждые ~10ms помечает worker'ы, крутящие одну
+//     fiber'у дольше timeslice'а;
+//   - codegen safepoints: nova_preempt_check() в прологе каждой функции и
+//     на backedge каждого цикла — при выставленном флаге fiber кооперативно
+//     yield'ится.
+//
+// Это даёт наблюдаемый Go-style паритет: CPU-bound fiber не морит голодом
+// соседей даже без явного yield. Mechanism — кооперативные safepoint'ы, а
+// не SIGURG (minicoro mco_yield не async-signal-safe), но observable
+// поведение совпадает с Go.
+
+module nova_tests.concurrency.mn_runtime_preemption
+
+// ─── Positive: observable interleave ───────────────────────────────
+//
+// Ключевой тест. 1 worker → CPU-fiber и peer-fiber ОБЯЗАНЫ делить
+// единственный поток. CPU-fiber крутит длинный loop без yield. Peer
+// делает Time.sleep(15) и ставит флаг.
+//
+// Без preemption: на 1 worker'е peer не стартует пока CPU-loop не
+// доедет до конца (1e9 итераций) — к этому моменту peer_done всё ещё
+// false, цикл выходит сам, saw_peer_done_mid_loop остаётся false.
+//
+// С preemption: sysmon помечает worker ~через 10ms, CPU-fiber yield'ится
+// на backedge цикла, peer запускается, Time.sleep(15) паркуется, CPU-fiber
+// резюмится и крутит дальше, ~через 15ms timer peer'а fire'ит, peer ставит
+// peer_done, CPU-fiber на следующей итерации это ВИДИТ — посреди своего
+// цикла, не доехав до конца. saw_peer_done_mid_loop == true.
+test "preemption: peer fiber progresses while CPU-bound fiber loops (1 worker)" {
+    runtime.init(1)
+    let peer_done = AtomicBool.new(false)
+    let saw_mid_loop = AtomicBool.new(false)
+    supervised {
+        spawn {
+            // CPU-bound: длинный loop без явного yield. Backedge safepoint
+            // ловит sysmon-флаг и yield'ит нас, давая peer'у CPU.
+            let mut i = 0
+            while i < 1_000_000_000 {
+                i = i + 1
+                if peer_done.load() {
+                    // Peer успел отработать ПОКА мы крутились — значит нас
+                    // вытеснили. Фиксируем и выходим из цикла.
+                    saw_mid_loop.store(true)
+                    i = 1_000_000_000
+                }
+            }
+        }
+        spawn {
+            Time.sleep(15)
+            peer_done.store(true)
+        }
+    }
+    // true только если CPU-fiber был вытеснен, peer отработал, и CPU-fiber
+    // резюмился и увидел результат — всё ДО естественного конца цикла.
+    assert(saw_mid_loop.load() == true)
+    runtime.shutdown()
+}
+
+// ─── Positive: state correctness across many preemptions ───────────
+//
+// Два fiber'а на 2 worker'ах, каждый делает много fetch_add в общий
+// AtomicInt. Прогон длится десятки ms → sysmon вытесняет каждого fiber'а
+// несколько раз. Safepoint'ы вставлены в каждую итерацию цикла — проверяем
+// что ни один increment не потерян из-за yield'ов посреди работы.
+test "preemption: shared state stays exact across many preemptions" {
+    runtime.init(2)
+    let total = AtomicInt.new(0)
+    supervised {
+        spawn {
+            let mut i = 0
+            while i < 400_000 {
+                total.fetch_add(1)
+                i = i + 1
+            }
+        }
+        spawn {
+            let mut i = 0
+            while i < 400_000 {
+                total.fetch_add(1)
+                i = i + 1
+            }
+        }
+    }
+    // Оба fiber'а доехали до конца, вытесненные многократно по пути —
+    // ровно 800k increment'ов, ничего не потеряно и не задвоено.
+    assert(total.load() == 800_000)
+    runtime.shutdown()
+}
+
+// ─── Negative: single-thread mode untouched ────────────────────────
+//
+// Без runtime.init() sysmon не запущен, _nova_should_yield никем не
+// выставляется. nova_preempt_check() эмитится в каждую функцию и цикл,
+// но это чистый no-op (TLS-load + predicted-not-taken branch). Default
+// single-thread поведение не меняется.
+test "preemption: no-op without runtime.init (single-thread default)" {
+    let mut sum = 0
+    let mut i = 0
+    while i < 2_000_000 {
+        sum = sum + 1
+        i = i + 1
+    }
+    assert(sum == 2_000_000)
+}
+
+// ─── Negative: safepoint safe in non-fiber context ─────────────────
+//
+// Цикл крутится на MAIN thread (не в spawn) при активном runtime.
+// _nova_should_yield — TLS worker'ов; копия main thread'а всегда 0.
+// Даже если бы флаг сработал — nova_fiber_yield() no-op вне fiber'а
+// (mco_running() == NULL). Ни hang, ни crash.
+test "preemption: main-thread loop after runtime.init is safe" {
+    runtime.init(2)
+    let mut sum = 0
+    let mut i = 0
+    while i < 1_000_000 {
+        sum = sum + 1
+        i = i + 1
+    }
+    assert(sum == 1_000_000)
+    runtime.shutdown()
+}
