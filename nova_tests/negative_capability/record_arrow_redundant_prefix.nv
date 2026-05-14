@@ -1,0 +1,15 @@
+// EXPECT_COMPILE_ERROR redundant type prefix on record literal
+//
+// Plan 51: когда `=>`-тело — record-литерал, тип уже объявлен в
+// return-аннотации. `-> T => T { }` пишет тип дважды → запрещено.
+// Каноничная форма: `-> T => { }`.
+
+module negative_capability.record_arrow_redundant_prefix
+
+type Pt { x int, y int }
+
+fn mk() -> Pt => Pt { x: 1, y: 2 }
+
+test "unreachable — parse error on redundant prefix" {
+    assert(mk().x == 1)
+}
