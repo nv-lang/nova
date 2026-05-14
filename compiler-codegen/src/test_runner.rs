@@ -816,11 +816,13 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                 flags.push("-fstack-clash-protection".to_string());
                 flags.push("-fstack-protector-strong".to_string());
             }
-            // Plan 27 R4: NOVA_GC_BOEHM activates GC root registration in fibers.h.
-            // We do NOT pass -DGC_THREADS: Nova is single-threaded (libuv + cooperative
-            // minicoro), so Boehm's thread-stop API is not needed or safe to use.
+            // Plan 44.5: NOVA_GC_BOEHM activates GC root registration in fibers.h.
+            // GC_THREADS — Boehm compiled with -DGC_THREADS (vcpkg build.ninja confirms);
+            // client side must define it too to expose GC_register_my_thread / GC_allow_register_threads.
+            // Required for M:N workers (Plan 44.5 Layer 4+5).
             if opts.gc_kind == GcKind::Boehm {
                 flags.push("-DNOVA_GC_BOEHM".to_string());
+                flags.push("-DGC_THREADS".to_string());
             }
 
             // Direct clang invocation with pre-captured vcvars env.
@@ -923,9 +925,11 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                 }
                 Mode::Release => { c.args(["/nologo", "/W0", "/O2", "/DNDEBUG"]); }
             }
-            // Plan 27 R4: NOVA_GC_BOEHM (not GC_THREADS) for single-threaded Boehm.
+            // Plan 44.5: NOVA_GC_BOEHM + GC_THREADS — Boehm compiled with -DGC_THREADS;
+            // client must define it too for GC_register_my_thread API (M:N workers).
             if opts.gc_kind == GcKind::Boehm {
                 c.arg("/DNOVA_GC_BOEHM");
+                c.arg("/DGC_THREADS");
                 c.arg(format!("/I\"{}\"", vcpkg_include.display()));
             }
             c.arg(format!("/I\"{}\"", opts.cg_include.display()));
@@ -975,9 +979,10 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                     c.arg("-w");
                 }
             }
-            // Plan 27 R4: NOVA_GC_BOEHM (not GC_THREADS) for single-threaded Boehm.
+            // Plan 44.5: NOVA_GC_BOEHM + GC_THREADS for M:N worker thread registration.
             if opts.gc_kind == GcKind::Boehm {
                 c.arg("-DNOVA_GC_BOEHM");
+                c.arg("-DGC_THREADS");
             }
             c.arg("-I").arg(opts.cg_include);
             // Plan 22 libuv (Linux).

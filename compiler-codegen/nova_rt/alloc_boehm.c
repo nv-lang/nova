@@ -19,7 +19,8 @@
 
 #include "alloc.h"
 
-/* Nova is single-threaded (libuv + cooperative minicoro). No GC_THREADS needed. */
+/* GC_THREADS defined by -DGC_THREADS compile flag (Plan 44.5): exposes
+ * GC_register_my_thread / GC_allow_register_threads for M:N workers. */
 #include <gc.h>
 
 #include <stdio.h>

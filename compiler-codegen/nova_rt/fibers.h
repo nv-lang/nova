@@ -236,6 +236,11 @@ typedef struct {
      * NULL = no error. Read через nova_aptr_load(acquire) в main thread
      * после `pending_remote == 0` — корректный happens-before. */
     nova_atomic_ptr first_error_atomic;
+    /* Plan 44.5 Layer 5 park/wake: hook вызывается из nova_sched_wake
+     * чтобы re-queue fiber обратно в owner-worker deque после park.
+     * NULL в single-thread mode — wake не делает ничего лишнего. */
+    void (*dispatch_ready)(void* ctx, mco_coro* co);
+    void*  dispatch_ctx;
 } NovaFiberQueue;
 
 /* Plan 22 Ф.3 (D93) + Ф.7 + Ф.8: NovaSchedState typedef.
@@ -371,6 +376,8 @@ static inline void nova_scope_init(NovaFiberQueue* q) {
      * forever, behaviour identical. */
     nova_aint_init(&q->pending_remote, 0);
     nova_aptr_init(&q->first_error_atomic, NULL);
+    q->dispatch_ready = NULL;
+    q->dispatch_ctx   = NULL;
     /* Plan 22 Ф.7: arrays — lazy alloc'нутся в nova_fiber_spawn_into.
      * Idle scope (count=0) = ~100 bytes на стеке. */
 }
@@ -430,6 +437,50 @@ static inline void nova_cancel_token_bind(NovaCancelToken* self,
     if (parent->scope && parent->scope->cancel_requested) {
         nova_cancel_token_cancel(self);
     }
+}
+
+/* Plan 44.5 Layer 5 park/wake: alloc a tracking slot in worker scope for
+ * a fiber that will block (Time.sleep, Channel.recv). Caller is within the
+ * fiber itself (worker thread). Sets _nova_active_slot so park/wake API works.
+ *
+ * Returns slot index >= 0. Caller must call nova_scope_free_slot on exit.
+ * Thread-safety: called only from own-worker thread (no contention). */
+static inline int nova_scope_alloc_slot(NovaFiberQueue* scope, mco_coro* co) {
+    void* user = mco_get_user_data(co);
+    /* Fast path: reuse a NULL slot from a previously freed fiber. */
+    for (int i = 0; i < scope->count; i++) {
+        if (scope->fibers[i] == NULL) {
+            scope->fibers[i]               = co;
+            scope->fiber_ctx[i]            = user;
+            scope->fiber_fail_top[i]       = NULL;
+            scope->fiber_interrupt_top[i]  = NULL;
+            scope->fiber_effect_snapshot[i]= NULL;
+            scope->fiber_error[i]          = NULL;
+            scope->fiber_did_throw[i]      = NULL;
+            return i;
+        }
+    }
+    /* Slow path: extend scope. Pre-alloc in runtime_init prevents realloc
+     * on worker thread for the common case (< 64 concurrent fibers). */
+    if (scope->count >= scope->capacity) {
+        nova_scope_grow(scope, scope->count + 1);
+    }
+    int slot = scope->count++;
+    scope->fibers[slot]               = co;
+    scope->fiber_ctx[slot]            = user;
+    scope->fiber_fail_top[slot]       = NULL;
+    scope->fiber_interrupt_top[slot]  = NULL;
+    scope->fiber_effect_snapshot[slot]= NULL;
+    scope->fiber_error[slot]          = NULL;
+    scope->fiber_did_throw[slot]      = NULL;
+    return slot;
+}
+
+/* Release a slot previously allocated by nova_scope_alloc_slot. */
+static inline void nova_scope_free_slot(NovaFiberQueue* scope, int slot) {
+    if (!scope || slot < 0 || slot >= scope->count) return;
+    scope->fibers[slot]    = NULL;
+    scope->fiber_ctx[slot] = NULL;
 }
 
 /* Forward-decl для использования из spawn_into. */

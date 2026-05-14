@@ -2263,6 +2263,11 @@ impl CEmitter {
         // заменяет dummy padding для empty spawns.
         let _ = writeln!(self.lambda_forward_decls,
             "    NovaFiberQueue* _nova_parent_scope;");
+        // Plan 44.5 Layer 5 park/wake: slot index в worker scope.
+        // Alloc'нутся в entry preamble — позволяет Time.sleep/recv в worker.
+        // -1 = single-thread (nova_scope_alloc_slot не вызывался).
+        let _ = writeln!(self.lambda_forward_decls,
+            "    int _nova_worker_slot;");
         // Note: no `_nova_result` field — spawn returns unit (D50/D71).
         let _ = writeln!(self.lambda_forward_decls, "}} {};", ctx_ty);
 
@@ -2278,6 +2283,20 @@ impl CEmitter {
         // pending_remote + signal_main). Раньше для empty-capture spawn
         // было `(void)_co;` — теперь _c always.
         self.line(&format!("{ctx}* _c = ({ctx}*)mco_get_user_data(_co);", ctx = ctx_ty));
+        // Plan 44.5 Layer 5 park/wake: alloc slot in worker scope on first resume.
+        // Required so _nova_active_slot >= 0 (D92 invariant) when fiber calls
+        // Time.sleep / Channel.recv in worker context.
+        // Single-thread path: _nova_parent_scope == NULL → skip.
+        self.line("if (_c->_nova_parent_scope) {");
+        self.indent += 1;
+        self.line("_nova_active_slot = nova_scope_alloc_slot(_nova_active_scope, _co);");
+        self.line("_c->_nova_worker_slot = _nova_active_slot;");
+        self.indent -= 1;
+        self.line("} else {");
+        self.indent += 1;
+        self.line("_c->_nova_worker_slot = -1;");
+        self.indent -= 1;
+        self.line("}");
         // Activate capture rewriting: ExprKind::Ident → `(*_c->name)` or `_c->name`.
         let mut cap_set: HashSet<String> = HashSet::new();
         let mut cap_by_value: HashSet<String> = HashSet::new();
@@ -2368,12 +2387,20 @@ impl CEmitter {
         self.line("}");
 
         // Plan 44.5 Layer 5: remote fiber post-completion cleanup.
-        // Decrement parent's pending_remote (release ordering) — main
-        // thread в supervised_run wait-loop увидит decrement через
-        // nova_aint_load(acquire). signal_main wake'ом wake'ает main
-        // thread'а из uv_run(UV_RUN_ONCE).
+        // (1) Free worker scope slot (alloc'd in preamble) — before decrement
+        //     so the slot is available for the next fiber immediately.
+        // (2) Decrement parent's pending_remote (release ordering) — main
+        //     thread в supervised_run wait-loop увидит decrement через
+        //     nova_aint_load(acquire). signal_main wake'ом wake'ает main
+        //     thread'а из uv_run(UV_RUN_ONCE).
         self.line("if (_c->_nova_parent_scope) {");
         self.indent += 1;
+        self.line("if (_c->_nova_worker_slot >= 0) {");
+        self.indent += 1;
+        self.line("nova_scope_free_slot(_nova_active_scope, _c->_nova_worker_slot);");
+        self.line("_nova_active_slot = -1;");
+        self.indent -= 1;
+        self.line("}");
         self.line("(void)nova_aint_fetch_sub_release(&_c->_nova_parent_scope->pending_remote);");
         self.line("nova_runtime_signal_main();");
         self.indent -= 1;

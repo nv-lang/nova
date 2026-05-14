@@ -1,0 +1,32 @@
+// Plan 44.5 Layer 5 park/wake — Time.sleep в worker fiber.
+//
+// D92 invariant (_nova_active_slot >= 0) фиксируется через
+// nova_scope_alloc_slot в entry preamble: worker fiber получает
+// реальный slot, dispatch_ready hook re-queue'ит fiber в deque
+// после таймера. Без этого Time.sleep в worker → assert/deadlock.
+
+module nova_tests.concurrency.mn_runtime_sleep_in_worker
+
+test "M:N: 1 fiber Time.sleep в worker — park/wake" {
+    runtime.init(2)
+    let mut done = 0
+    supervised {
+        spawn { Time.sleep(10); done = 1 }
+    }
+    assert(done == 1)
+    runtime.shutdown()
+}
+
+test "M:N: 1 fiber Time.sleep loop (5 iterations)" {
+    runtime.init(2)
+    let mut i = 0
+    while i < 5 {
+        let mut done = 0
+        supervised {
+            spawn { Time.sleep(5); done = 1 }
+        }
+        assert(done == 1)
+        i = i + 1
+    }
+    runtime.shutdown()
+}

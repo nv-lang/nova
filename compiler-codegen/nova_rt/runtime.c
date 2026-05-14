@@ -25,12 +25,12 @@
 
 #include <uv.h>
 
-/* Plan 44.5 Layer 4: Boehm GC_THREADS register per worker.
- * Linux/macOS: libgc built with GC_THREADS (Ubuntu apt default).
- * Windows: vcpkg bdwgc[multithreaded] feature flag — может отсутствовать.
- * Conditional через NOVA_GC_THREADS_REGISTER (set by build на supported
- * platforms). Default — off, safe fallback. */
-#if defined(NOVA_GC_BOEHM) && (defined(__linux__) || defined(__APPLE__))
+/* Plan 44.5 Layer 4+5: Boehm GC_THREADS register per worker.
+ * vcpkg bdwgc build.ninja shows -DGC_THREADS in DEFINES — library IS thread-safe.
+ * Client must define GC_THREADS too (via test_runner -DGC_THREADS) to expose
+ * GC_register_my_thread / GC_allow_register_threads prototypes.
+ * Works on all platforms when GC_THREADS defined at compile time. */
+#if defined(NOVA_GC_BOEHM)
 #  define NOVA_GC_THREADS_REGISTER 1
 #  include <gc.h>
 #endif
@@ -50,6 +50,14 @@ struct NovaWorker {
     NovaFiberQueue    scope;
     nova_atomic_bool  stop;
     nova_atomic_int   pending_count;
+    /* Plan 44.5 Layer 5 park/wake: cross-thread wake queue.
+     * Fibers parked on this worker (via dispatch_ready from another worker or
+     * timer callbacks) accumulate here under wake_mu; drained at each worker
+     * loop iteration before deque pop. */
+    nova_mutex_t      wake_mu;
+    mco_coro**        wake_pending;
+    int               wake_pending_count;
+    int               wake_pending_cap;
 };
 
 /* ── Runtime state ─────────────────────────────────────────────── */
@@ -89,6 +97,31 @@ static void _worker_async_cb(uv_async_t* h) {
     /* No-op — wake-up itself is the signal. */
 }
 
+/* Plan 44.5 Layer 5 park/wake: dispatch hook called by nova_sched_wake.
+ * Same-thread (owner wake via timer on own loop): direct deque push.
+ * Cross-thread (wake from different worker or main thread): mutex-protected
+ * wake_pending list + uv_async_send to wake the target worker's uv_run. */
+static void _worker_dispatch_ready(void* ctx, mco_coro* co) {
+    NovaWorker* w = (NovaWorker*)ctx;
+    if (_current_worker_id == w->id) {
+        /* Owner push: lock-free, same thread as deque owner. */
+        nova_deque_push(&w->deque, co);
+    } else {
+        /* Cross-thread: queue under mutex, wake worker's uv loop. */
+        nova_mutex_lock(&w->wake_mu);
+        if (w->wake_pending_count >= w->wake_pending_cap) {
+            int new_cap = w->wake_pending_cap > 0 ? w->wake_pending_cap * 2 : 8;
+            w->wake_pending = (mco_coro**)realloc(w->wake_pending,
+                                                   (size_t)new_cap * sizeof(mco_coro*));
+            if (!w->wake_pending) abort();
+            w->wake_pending_cap = new_cap;
+        }
+        w->wake_pending[w->wake_pending_count++] = co;
+        nova_mutex_unlock(&w->wake_mu);
+        uv_async_send(&w->wake_handle);
+    }
+}
+
 static void _worker_main(void* arg) {
     NovaWorker* w = (NovaWorker*)arg;
     _current_worker_id = w->id;
@@ -101,12 +134,10 @@ static void _worker_main(void* arg) {
      * worker'е, fiber hangs permanently. */
     _nova_current_loop = &w->loop;
 
-    /* Plan 44.5 Layer 4: register thread с Boehm GC.
-     * Required для workers что вызывают nova_alloc (channels, NovaSpawnCtx).
-     * Linux/macOS: libgc built с GC_THREADS — register/unregister работают.
-     * Windows: conditional skip (build flag NOVA_GC_THREADS_REGISTER).
-     * Без register workers могут crash при nova_alloc (Boehm tries to
-     * walk не-зарегистрированный thread stack). */
+    /* Plan 44.5 Layer 4+5: register thread с Boehm GC.
+     * Required для workers — без register Boehm STW walker skips thread stack,
+     * GC objects referenced only from worker stack → premature collect → SIGSEGV.
+     * All platforms: vcpkg bdwgc built with -DGC_THREADS; client passes same flag. */
 #ifdef NOVA_GC_THREADS_REGISTER
     struct GC_stack_base sb;
     if (GC_get_stack_base(&sb) == GC_SUCCESS) {
@@ -120,6 +151,14 @@ static void _worker_main(void* arg) {
     _nova_active_slot  = -1;
 
     while (!nova_abool_load(&w->stop)) {
+        /* (0) Drain cross-thread wake queue (fibers re-queued after park). */
+        nova_mutex_lock(&w->wake_mu);
+        for (int i = 0; i < w->wake_pending_count; i++) {
+            nova_deque_push(&w->deque, w->wake_pending[i]);
+        }
+        w->wake_pending_count = 0;
+        nova_mutex_unlock(&w->wake_mu);
+
         mco_coro* co = NULL;
 
         /* (1) Local deque — owner LIFO pop. Wait-free hot path. */
@@ -134,7 +173,9 @@ static void _worker_main(void* arg) {
             }
         }
 
-        /* (3) Still nothing — block в libuv (own loop) до cross-worker wake. */
+        /* (3) Still nothing — block в libuv (own loop) до cross-worker wake.
+         * UV_RUN_ONCE: wait for at least one event (timer fire, async send),
+         * then return — loop checks wake_pending at next iteration start. */
         if (!co) {
             uv_run(&w->loop, UV_RUN_ONCE);
             continue;
@@ -147,8 +188,15 @@ static void _worker_main(void* arg) {
         if (mco_status(co) == MCO_DEAD) {
             mco_destroy(co);
         } else if (mco_status(co) == MCO_SUSPENDED) {
-            /* Yielded — re-push в own deque. */
-            nova_deque_push(&w->deque, co);
+            /* Yielded: check if fiber parked (timer/channel wait).
+             * If parked — dispatch_ready will re-queue when wake fires.
+             * If not parked (cooperative yield) — re-push immediately. */
+            int act_slot = _nova_active_slot;
+            if (act_slot >= 0 && nova_sched_is_parked(&w->scope, act_slot)) {
+                /* Parked: let dispatch_ready handle requeueing. */
+            } else {
+                nova_deque_push(&w->deque, co);
+            }
         }
     }
 
@@ -233,6 +281,19 @@ void nova_runtime_init(int n_workers) {
             fprintf(stderr, "nova: deque_init failed\n");
             abort();
         }
+        /* Plan 44.5 Layer 5 park/wake: pre-alloc scope arrays on main thread
+         * (GC-safe) so worker fibers don't call nova_alloc during slot alloc.
+         * Also pre-alloc sched_state so park arrays exist before first park. */
+        nova_scope_grow(&w->scope, 64);
+        (void)nova_sched_get_state(&w->scope);
+        /* dispatch_ready hook wires nova_sched_wake → worker deque push. */
+        w->scope.dispatch_ready = _worker_dispatch_ready;
+        w->scope.dispatch_ctx   = w;
+        /* wake_pending: cross-thread fiber re-queue under mutex. */
+        nova_mutex_init(&w->wake_mu);
+        w->wake_pending       = NULL;
+        w->wake_pending_count = 0;
+        w->wake_pending_cap   = 0;
 
         int rc = uv_loop_init(&w->loop);
         if (rc != 0) {
@@ -285,6 +346,8 @@ void nova_runtime_shutdown(void) {
         uv_run(&w->loop, UV_RUN_NOWAIT);
         uv_loop_close(&w->loop);
         nova_deque_destroy(&w->deque);
+        free(w->wake_pending);
+        w->wake_pending = NULL;
     }
 
     free(_workers);

@@ -162,11 +162,22 @@ static inline void nova_sched_park_with_unlock(NovaFiberQueue* scope, int slot,
     mco_yield(co);
 }
 
-/* Wake parked fiber. Idempotent. Безопасно вызывать из libuv-callback'а. */
+/* Wake parked fiber. Idempotent. Безопасно вызывать из libuv-callback'а.
+ *
+ * Plan 44.5 Layer 5 park/wake: если scope->dispatch_ready != NULL (M:N
+ * worker scope), вызывает его чтобы re-queue fiber в worker deque.
+ * Single-thread: dispatch_ready == NULL — main loop resume'ит fiber сам. */
 static inline void nova_sched_wake(NovaFiberQueue* scope, int slot) {
     if (!scope || slot < 0 || slot >= scope->count) return;
     NovaSchedState* st = nova_sched_find_state(scope);
     if (st && slot < st->capacity) st->parked[slot] = false;
+    /* M:N dispatch: push woken fiber back to worker deque. */
+    if (scope->dispatch_ready && slot < scope->count) {
+        mco_coro* co = scope->fibers[slot];
+        if (co && mco_status(co) != MCO_DEAD) {
+            scope->dispatch_ready(scope->dispatch_ctx, co);
+        }
+    }
 }
 
 /* True если fiber в slot сейчас parked. */
