@@ -1,0 +1,13 @@
+// EXPECT_COMPILE_ERROR без значения по умолчанию не может идти после
+//
+// Plan 46 (D102): параметры с дефолтом идут строго ПОСЛЕ параметров
+// без дефолта. `fn f(x int = 0, y int)` — parse error.
+
+module negative_capability.np_default_before_required
+
+fn bad(x int = 0, y int) -> int =>
+    x + y
+
+test "default before required rejected" {
+    assert(bad(1, 2) == 3)
+}

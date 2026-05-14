@@ -1,0 +1,41 @@
+// Plan 46 (D102) Ф.3: именованные аргументы + дефолты для методов
+// (instance @-методы и static .-методы).
+
+module named_params.methods
+
+type Box {
+    base int
+}
+
+// Instance-метод с дефолтами. Receiver — @base.
+fn Box @scaled(factor int = 2, offset int = 0) -> int =>
+    @base * factor + offset
+
+// Static-метод с дефолтами.
+fn Box .make(start int = 100) -> Box =>
+    Box { base: start }
+
+test "instance method: все дефолты" {
+    let b = Box { base: 10 }
+    assert(b.scaled() == 20)  // factor=2, offset=0
+}
+
+test "instance method: именованный аргумент" {
+    let b = Box { base: 10 }
+    assert(b.scaled(offset: 5) == 25)  // factor=2 default, offset=5
+}
+
+test "instance method: именованные переставлены" {
+    let b = Box { base: 10 }
+    assert(b.scaled(offset: 3, factor: 4) == 43)  // 10*4+3
+}
+
+test "static method: дефолт" {
+    let b = Box.make()
+    assert(b.base == 100)
+}
+
+test "static method: именованный" {
+    let b = Box.make(start: 7)
+    assert(b.base == 7)
+}

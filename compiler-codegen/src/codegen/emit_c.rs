@@ -6698,9 +6698,12 @@ impl CEmitter {
                     regular_arity, args.len()));
             }
             // Variadic-position args собираем в ArrayLit.
+            // Plan 46 (D102): Named в variadic-position не попадает —
+            // argbind ловит NamedForVariadic. Arm для exhaustiveness.
             let var_elems: Vec<ArrayElem> = args[regular_arity..].iter().map(|a| match a {
                 CallArg::Item(e) => ArrayElem::Item(e.clone()),
                 CallArg::Spread(e) => ArrayElem::Spread(e.clone()),
+                CallArg::Named { value, .. } => ArrayElem::Item(value.clone()),
             }).collect();
             let synth_array = Expr {
                 kind: ExprKind::ArrayLit(var_elems),

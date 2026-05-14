@@ -1,0 +1,18 @@
+// EXPECT_COMPILE_ERROR недопустим для variadic-параметра
+//
+// Plan 46 (D102): именованные аргументы — только для параметров ДО
+// variadic. Именованный аргумент с именем variadic-параметра — error.
+
+module negative_capability.np_named_for_variadic
+
+fn collect(label str, ...nums []int) -> int {
+    let mut t = label.len
+    for n in nums { t = t + n }
+    t
+}
+
+test "named arg for variadic param rejected" {
+    // `nums` — variadic, нельзя передать его именованным аргументом.
+    let _ = collect("x", nums: 5)
+    assert(true)
+}

@@ -1,0 +1,15 @@
+// EXPECT_COMPILE_ERROR связан дважды
+//
+// Plan 46 (D102): каждый параметр связывается ровно один раз.
+// Передать параметр и позиционно, и по имени — error.
+
+module negative_capability.np_double_bind
+
+fn fn2(a int, b int) -> int =>
+    a + b
+
+test "param bound twice rejected" {
+    // `a` передан позиционно (1) и по имени (a: 2).
+    let _ = fn2(1, a: 2)
+    assert(true)
+}

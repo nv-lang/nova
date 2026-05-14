@@ -1,0 +1,14 @@
+// EXPECT_COMPILE_ERROR позиционный аргумент не может идти после именованного
+//
+// Plan 46 (D102): именованный аргумент не может предшествовать
+// позиционному. `f(opt: 5, 1)` — error.
+
+module negative_capability.np_positional_after_named
+
+fn fn3(a int, b int, c int) -> int =>
+    a + b + c
+
+test "positional after named rejected" {
+    let _ = fn3(b: 2, 1, 3)
+    assert(true)
+}

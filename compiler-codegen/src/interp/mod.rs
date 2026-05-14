@@ -408,6 +408,15 @@ impl Interpreter {
                     for a in args {
                         match a {
                             CallArg::Item(e) => arg_values.push(self.eval_expr_value(e, env)?),
+                            // Plan 46 (D102): named-аргумент в treewalk-interp.
+                            // Bootstrap: eval value, push позиционно. Полная
+                            // раскладка named→param-order делается в codegen
+                            // (основной путь). interp — вторичный, named args
+                            // здесь работают для естественного порядка; reorder
+                            // не делается (см. simplifications [M-interp-named]).
+                            CallArg::Named { value, .. } => {
+                                arg_values.push(self.eval_expr_value(value, env)?);
+                            }
                             CallArg::Spread(e) => {
                                 let v = self.eval_expr_value(e, env)?;
                                 match v {

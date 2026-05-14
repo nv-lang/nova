@@ -819,7 +819,7 @@ fn cmd_run(path: &Path) -> Result<()> {
     }
     let src = read_file(path)?;
     let path_str = path.to_string_lossy();
-    let module = nova_codegen::parser::parse(&src)
+    let mut module = nova_codegen::parser::parse(&src)
         .map_err(|d| anyhow!("{}", d.render(&src, &path_str)))?;
     check_module_path(path, &module)?;
     nova_codegen::types::check_module(&module).map_err(|errs| {
@@ -829,6 +829,10 @@ fn cmd_run(path: &Path) -> Result<()> {
             .collect();
         anyhow!("{}", msgs.join("\n"))
     })?;
+    // Plan 46 (D102) Ф.2: нормализация call-site для treewalk-interp.
+    // Single-file mode — sigs только из этого файла; импортированные
+    // callee с defaults interp обрабатывает упрощённо (см. interp arm).
+    nova_codegen::callnorm::normalize_module(&mut module);
     let mut interp = nova_codegen::interp::Interpreter::new();
     interp
         .load_module(&module)
@@ -908,6 +912,10 @@ fn cmd_build(
         let (line, col) = nova_codegen::diag::byte_to_line_col(&src, w.diag.span.start);
         eprintln!("{} {}:{}:{}: {} [{}]", bold(&yellow("warning:")), path.display(), line, col, w.diag.message, w.rule);
     }
+
+    // Plan 46 (D102) Ф.2: нормализация call-site — named args → positional
+    // + вставка defaults. После type-check, до codegen.
+    nova_codegen::callnorm::normalize_module(&mut module);
 
     let mut emitter = nova_codegen::codegen::CEmitter::new();
     emitter.set_source_for_annotations(src.clone());

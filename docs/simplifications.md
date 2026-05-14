@@ -4766,6 +4766,29 @@ spec-level work.
 
 ---
 
+### [M-interp-named] treewalk-interp: named args без reorder
+
+- **Где:** `compiler-codegen/src/interp/mod.rs` (`CallArg::Named` arm)
+- **Что упрощено:** Plan 46 (D102) named args в treewalk-интерпретаторе
+  (`nova run`) — `CallArg::Named` value eval'ится позиционно, без
+  раскладки named→param-order. Работает для named args в естественном
+  порядке; переставленные named в interp дадут неверный результат.
+- **Почему:** Основной путь Nova — codegen (`nova test`/`nova build`),
+  где `callnorm` делает полную раскладку через двухфазный Block.
+  `nova run` (treewalk) — вторичный путь; `cmd_run` вызывает
+  `callnorm::normalize_module` для single-file (если callee в том же
+  файле — нормализация срабатывает и interp получает чистый
+  позиционный). Не нормализуются: импортированные callee в interp-mode
+  (cmd_run не делает resolve_imports_inline).
+- **Как починить:** либо `cmd_run` делает resolve_imports + полная
+  нормализация, либо interp call-handling использует `argbind::bind_call_args`
+  напрямую. ~80-120 LOC.
+- **Приоритет:** L — codegen path (главный) полностью корректен;
+  interp edge затрагивает только `nova run` с импортированными
+  callee + переставленные named.
+
+---
+
 ### [M11] Rule A cycle detection — canonical PathBuf keying — ✅ RESOLVED 2026-05-14
 
 - **Resolved:** Plan 42.14 Ф.3 — `in_progress`/`visited` переведены на
