@@ -512,14 +512,10 @@ decl типов уже работает (Plan 36 followup). Verify на test'е.
   simplifications.md). Если когда-нибудь fn-level scope станет
   настолько частым случаем что block wrap стал code-smell —
   пересмотреть; до тех пор `forbid X { body }` достаточен.
-- **42.4 — per-file imports scope** — детальный план в
-  [42.4-per-file-imports-scope.md](42.4-per-file-imports-scope.md)
-  (2026-05-14, scope ~600-800 LOC, 2-3 commit'а). Закрытие правила C
-  production audit: AST refactor `Module.files: Vec<SourceFile>` +
-  FileRegistry activation + span walker + type-checker per-peer name
-  resolution. В bootstrap нет видимого spec violation (нет folder-
-  modules с cross-peer imports в std/* и тестах), но preemptive fix
-  перед production-scale stdlib.
+- **42.04 — per-file imports scope** ✅ ЗАКРЫТ 2026-05-14 — детальный
+  план в [42.04-per-file-imports-scope.md](42.04-per-file-imports-scope.md).
+  Шаги 1-3 + позитивный тест. Rule C частично enforced (Path-form не
+  проверяется — см. [M10] в simplifications.md).
 - **42.5 — 2-pass codegen** (правило D). Pass 1 emit forward decls
   для всех Fn/Type/Const, Pass 2 emit bodies. Текущий single-pass
   works для всех use cases bootstrap; sub-plan когда mutually
