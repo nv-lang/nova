@@ -9457,3 +9457,66 @@ Merge Plan 42.09 (reexport + rename) + 42.10 (module-level #forbid) +
   поля AND main's новые GC pinning fields (`ctx_pins/ctx_pins_count/ctx_pins_cap`).
 
 **Итог:** 307/307 PASS (26 новых тестов из Plan 42.09/42.10/42.12).
+
+
+================================================================================
+2026-05-14 Plan 18: std.sync — AtomicInt + Mutex + WaitGroup
+================================================================================
+
+Fiber-aware synchronization primitives для Nova concurrency runtime.
+
+РЕАЛИЗОВАНО:
+
+  Runtime (nova_rt/sync_primitives.h):
+  - Nova_AtomicInt: lock-free integer через __atomic C11 builtins.
+    Операции: new/load/store/fetch_add/fetch_sub/compare_exchange.
+    Ordering: load=acquire, store=release, fetch_*/CAS=acq_rel.
+  - Nova_Mutex: fair waiter-queue mutex. Внутри fiber:
+    nova_sched_park_with_unlock атомарно паркует и отпускает spinlock.
+    Разбудка через nova_sched_wake (FIFO порядок). Вне fiber (OS thread):
+    spin fallback. Поле locked=true при wake не сбрасывается — lock передаётся
+    следующему waiter'у без сброса.
+  - Nova_WaitGroup: счётчик-rendezvous. add(n) перед spawn'ами,
+    done() от каждого worker'а, wait() парков вызывающую fiber пока
+    count > 0. done(): при count→0 отстёгивает весь waiter-list под lock'ом,
+    wake'ит всех вне lock'а (WakeAll семантика).
+
+  Nova declarations (std/runtime/sync.nv):
+  - ExternalRegistry source embedded в binary через include_str!.
+  - Статические конструкторы: AtomicInt.new, Mutex.new, WaitGroup.new.
+  - Instance-методы на `mut` и non-mut receiver'ах.
+
+  Codegen расширения:
+  - external_registry.rs: SYNC_SRC + ("sync.nv", SYNC_SRC) в load_builtins().
+  - emit_c.rs infer_expr_c_type: два новых generic ExternalRegistry lookup'а:
+    1. Static method (AtomicInt.new → Nova_AtomicInt*) в Ident-блоке.
+    2. Instance method (a.load → nova_int) для recv_ty.starts_with("Nova_").
+    Устраняет необходимость в per-type hardcoding (как StringBuilder/WriteBuffer).
+  - nova_rt.h: #include "sync_primitives.h" после channels.h.
+
+ТЕСТЫ (310 PASS, 0 FAIL):
+
+  sync_atomic.nv (8 тестов):
+  - Single-fiber: new/load, store/load, fetch_add (prev check), fetch_sub,
+    compare_exchange success + failure.
+  - Concurrent: 2 fibers × 200 fetch_add → counter == 400 (data-race-free).
+  - CAS loop: 2 fibers × 10 CAS-increment via compare_exchange retry → val == 20.
+
+  sync_mutex.nv (6 тестов):
+  - try_lock на fresh mutex → true; try_lock while locked → false.
+  - lock/unlock в single fiber × 2 iterations.
+  - Mutual exclusion stress: `inside` инкрементируется под lock, декрементируется
+    перед unlock, с runtime.yield() между — violations == 0 при 50×50 operations.
+  - Protected counter: 2 fibers × 100 lock+increment+unlock → counter == 200.
+  - M:N mode (2 workers): те же guarantee работают cross-worker.
+
+  sync_waitgroup.nv (5 тестов):
+  - wait() на zero-count не блокирует.
+  - add(1) + spawn{done()} + spawn{wait()} — done_count visible after wait.
+  - 3 workers с fetch_add + done, 4th fiber wait → counter == 3.
+  - Multiple waiters: оба просыпаются при done.
+  - M:N rendezvous: 4 workers × разные суммы → sum.load() == 10.
+
+УРОК: ExternalRegistry infer_expr_c_type generic lookup устраняет необходимость
+добавлять per-type hardcoding для каждого нового external типа. Достаточно добавить
+.nv декларации — тип inferируется автоматически.

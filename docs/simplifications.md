@@ -6077,3 +6077,29 @@ Slot allocation в preamble (первый resume) обеспечивает D92 i
 отложен: требует safe points в codegen, `NOVA_PREEMPT` signal handler,
 TLS флаг "fiber должна yield" — оценка 2-3 недели engineering. Приоритет
 низкий пока CPU-bound workloads не станут реальным use case.
+
+
+## Plan 18 std.sync: AtomicInt / Mutex / WaitGroup — ✅ CLOSED (2026-05-14)
+
+**Закрыто одним коммитом** `cf6e3e6bf21`.
+
+Fiber-aware synchronization primitives. AtomicInt через C11 __atomic builtins.
+Mutex через nova_sched_park_with_unlock / nova_sched_wake (fair FIFO waiter queue).
+WaitGroup через counter + waiter list (WakeAll при count→0).
+
+ExternalRegistry infer_expr_c_type расширен generic lookup'ами — более не требует
+per-type hardcoding для новых external типов (StringBuilder pattern).
+
+**310 PASS, 0 FAIL** — sync_atomic.nv (8 тестов), sync_mutex.nv (6 тестов),
+sync_waitgroup.nv (5 тестов) + все предыдущие тесты.
+
+**Что осталось упрощено:**
+
+- [S-SYNC1] `WaitGroup.add(n)` не защищён от отрицательного counter — panic
+  поведение при done() без предшествующего add() неопределено. Нужна runtime
+  assertion (counter >= 0) в done(). Приоритет: L.
+- [S-SYNC2] `Mutex` не реентрантен — deadlock при повторном lock() из той
+  же fiber. Go/pthreads также не реентрантны по default, но явная диагностика
+  была бы лучше. Приоритет: L.
+- [S-SYNC3] `AtomicInt` нет `swap()` / `fetch_or()` / `fetch_and()` — добавить
+  при реальной необходимости. Приоритет: L.
