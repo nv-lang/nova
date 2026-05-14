@@ -1,0 +1,36 @@
+// Plan 44.5 Layer 5 park/wake — single-fiber Time.sleep в worker.
+//
+// Закрывает D92 invariant violation (`_nova_active_slot < 0`) для
+// worker-spawned fibers. Codegen entry function preamble allocates slot
+// в worker scope (nova_scope_alloc_slot); park/wake работает through
+// dispatch_ready hook (sleep close_cb pushes fiber back to worker deque).
+//
+// Multi-fiber Time.sleep — known-flake на Windows (~14% segfault),
+// возможно из-за Boehm bdwgc[multithreaded] feature flag отсутствующего
+// в vcpkg build (workers не зарегистрированы с GC). Отдельная задача.
+
+module nova_tests.concurrency.mn_runtime_sleep_in_worker
+
+test "M:N: 1 fiber Time.sleep в worker — park/wake" {
+    runtime.init(2)
+    let mut done = 0
+    supervised {
+        spawn { Time.sleep(10); done = 1 }
+    }
+    assert(done == 1)
+    runtime.shutdown()
+}
+
+test "M:N: 1 fiber Time.sleep loop (repeat)" {
+    runtime.init(2)
+    let mut i = 0
+    while i < 5 {
+        let mut done = 0
+        supervised {
+            spawn { Time.sleep(5); done = 1 }
+        }
+        assert(done == 1)
+        i = i + 1
+    }
+    runtime.shutdown()
+}

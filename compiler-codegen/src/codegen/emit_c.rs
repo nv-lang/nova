@@ -2224,6 +2224,8 @@ impl CEmitter {
         // results from concurrent execution come through mut-captures or
         // `parallel for` (homogeneous results), never from spawn itself.
         let queue = self.current_scope_queue.clone().expect("scope queue must be active");
+        // Plan 44.5 Layer 5 park/wake: init worker_slot to sentinel before spawn.
+        self.line(&format!("{ctx}->_nova_worker_slot = -1;", ctx = ctx_var));
         // Plan 44.5 Layer 5: implicit M:N — runtime initialized → push в worker
         // deque; иначе single-thread path unchanged.
         self.line("if (nova_runtime_is_initialized()) {");
@@ -2263,6 +2265,10 @@ impl CEmitter {
         // заменяет dummy padding для empty spawns.
         let _ = writeln!(self.lambda_forward_decls,
             "    NovaFiberQueue* _nova_parent_scope;");
+        // Plan 44.5 Layer 5 park/wake: slot in worker scope, -1 until allocated.
+        // Entry function preamble allocates via nova_scope_alloc_slot; epilogue frees.
+        let _ = writeln!(self.lambda_forward_decls,
+            "    int _nova_worker_slot;");
         // Note: no `_nova_result` field — spawn returns unit (D50/D71).
         let _ = writeln!(self.lambda_forward_decls, "}} {};", ctx_ty);
 
@@ -2278,6 +2284,16 @@ impl CEmitter {
         // pending_remote + signal_main). Раньше для empty-capture spawn
         // было `(void)_co;` — теперь _c always.
         self.line(&format!("{ctx}* _c = ({ctx}*)mco_get_user_data(_co);", ctx = ctx_ty));
+        // Plan 44.5 Layer 5 park/wake: для remote fiber'а allocate slot
+        // в worker scope (_nova_active_scope = &w->scope set'нут в
+        // _worker_main). Без slot'а Time.sleep / Channel.recv abort'или
+        // бы (D92 invariant: _nova_active_slot >= 0 в fiber context).
+        self.line("if (_c->_nova_parent_scope) {");
+        self.indent += 1;
+        self.line("_nova_active_slot = nova_scope_alloc_slot(_nova_active_scope, _co);");
+        self.line("_c->_nova_worker_slot = _nova_active_slot;");
+        self.indent -= 1;
+        self.line("}");
         // Activate capture rewriting: ExprKind::Ident → `(*_c->name)` or `_c->name`.
         let mut cap_set: HashSet<String> = HashSet::new();
         let mut cap_by_value: HashSet<String> = HashSet::new();
@@ -2367,6 +2383,17 @@ impl CEmitter {
         self.indent -= 1;
         self.line("}");
 
+        // Plan 44.5 Layer 5 park/wake: free worker scope slot ПЕРЕД
+        // pending_remote decrement. После slot free — fibers[slot] == NULL,
+        // park/wake helpers будут skip'ать. _nova_active_slot обнуляем
+        // (worker сам set'ит -1 в init, но другой spawn на этом worker'е
+        // не должен унаследовать slot этого fiber'а).
+        self.line("if (_c->_nova_parent_scope && _c->_nova_worker_slot >= 0) {");
+        self.indent += 1;
+        self.line("nova_scope_free_slot(_nova_active_scope, _c->_nova_worker_slot);");
+        self.line("_nova_active_slot = -1;");
+        self.indent -= 1;
+        self.line("}");
         // Plan 44.5 Layer 5: remote fiber post-completion cleanup.
         // Decrement parent's pending_remote (release ordering) — main
         // thread в supervised_run wait-loop увидит decrement через
