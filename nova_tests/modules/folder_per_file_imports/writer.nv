@@ -1,0 +1,9 @@
+// Plan 42.4 Rule C: peer с другим импортом.
+// Этот peer НЕ импортирует Range.
+// Использует только встроенные операции — not Range.
+// Peer-сосед (reader.nv) импортирует Range — сюда не просачивается.
+
+module modules.folder_per_file_imports
+
+export fn double(n int) -> int =>
+    n * 2

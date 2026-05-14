@@ -1,0 +1,33 @@
+// Plan 42.4 Rule C: позитивный тест per-peer import isolation.
+//
+// folder_per_file_imports/ содержит 2 peers:
+//   reader.nv — импортирует std.collections.range.{Range}
+//   writer.nv — НЕ импортирует Range, использует только builtins
+//
+// Тест проверяет:
+//   1. Оба peers корректно type-check'ируются (нет false positive).
+//   2. Peer A (reader) видит Range из своего import.
+//   3. Peer B (writer) работает без Range-import — нет ложных ошибок.
+//   4. Exported функции обоих peers доступны импортирующему.
+
+module modules.folder_per_file_imports_use
+
+import nova_tests.modules.folder_per_file_imports.{sum_range, double}
+
+test "peer A (reader): sum_range uses range internally" {
+    // reader.nv импортирует Range и итерирует 0..5.
+    // 0+1+2+3+4 = 10
+    assert(sum_range(0, 5) == 10)
+}
+
+test "peer B (writer): double works without Range import" {
+    // writer.nv не импортирует Range — но double работает через builtins.
+    assert(double(7) == 14)
+}
+
+test "both peers: combined use" {
+    // Совместное использование обоих peers — shared declaration namespace.
+    let s = sum_range(1, 4)  // 1+2+3 = 6
+    let d = double(s)         // 12
+    assert(d == 12)
+}

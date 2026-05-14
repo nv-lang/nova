@@ -1,0 +1,16 @@
+// Plan 42.4 Rule C: peer с собственным import.
+// Этот peer импортирует std.collections.range.{Range, RangeIter}
+// и использует range в своей функции.
+// Peer-сосед (writer.nv) имеет другой набор imports.
+
+module modules.folder_per_file_imports
+
+import std.collections.range.{Range}
+
+export fn sum_range(lo int, hi int) -> int {
+    let mut total = 0
+    for i in lo..hi {
+        total = total + i
+    }
+    total
+}
