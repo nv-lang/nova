@@ -10,7 +10,8 @@
 //   - tok.cancel()        — пометить bound scope как cancelled (idempotent;
 //                            на отвязанном / завершённом scope'е — no-op)
 //   - tok.is_cancelled()  — intent-флаг «был ли вызван cancel()», без yield
-//   - tok.bind(other)     — каскад: cancel(other) отменяет и tok
+//   - child.cancelled_by(parent) — направленный каскад: parent.cancel()
+//                            отменяет и child (вниз, не вверх)
 
 module concurrency.supervised_cancel_test
 
@@ -107,15 +108,16 @@ test "is_cancelled() reflects cancel state within same fiber" {
 }
 
 // ================================================================
-// SECTION 5: bind — каскадная отмена (kill-switch composition)
+// SECTION 5: cancelled_by — каскадная отмена (kill-switch composition)
 // ================================================================
 
-test "bind: cancel parent — child каскадно отменён" {
-    // Оба токена caller-owned, создаются заранее. child.bind(parent):
-    // когда parent.cancel() сработает — child тоже отменится.
+test "cancelled_by: cancel parent — child каскадно отменён" {
+    // Оба токена caller-owned, создаются заранее. child.cancelled_by(parent):
+    // когда parent.cancel() сработает — child тоже отменится (вниз по
+    // направлению; child.cancel() parent НЕ затронет).
     let parent = CancelToken.new()
     let child = CancelToken.new()
-    child.bind(parent)
+    child.cancelled_by(parent)
     let mut child_was_cancelled = false
     supervised(cancel: parent) {
         spawn {

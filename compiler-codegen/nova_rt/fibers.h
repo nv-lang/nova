@@ -557,10 +557,13 @@ static inline nova_bool nova_cancel_token_is_cancelled(NovaCancelToken* t) {
     return t->cancel_requested;
 }
 
-/* Каскад: `tok.bind(other)` — когда `other.cancel()` сработает, `tok` тоже
- * будет отменён. Реализация: `tok` добавляется в `other->linked[]`.
- * Динамический рост массива (GC-managed copy). Если `other` уже отменён —
- * `tok` отменяется немедленно. */
+/* Направленный каскад: Nova-уровень `child.cancelled_by(parent)` — когда
+ * `parent.cancel()` сработает, `child` тоже будет отменён (но НЕ наоборот:
+ * отмена течёт только вниз, parent → child). Реализация: `child`
+ * добавляется в `parent->linked[]`. Динамический рост массива (GC-managed
+ * copy). Если `parent` уже отменён — `child` отменяется немедленно.
+ * Параметры названы tok/other по historical reasons — семантически
+ * tok = child, other = parent. */
 static inline void nova_cancel_token_bind_cascade(NovaCancelToken* tok,
                                                   NovaCancelToken* other) {
     if (!tok || !other) return;

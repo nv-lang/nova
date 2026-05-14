@@ -1041,9 +1041,11 @@ scope-binding. Создаётся `CancelToken.new()`, живёт сколько
   Если токен **не привязан** или scope **уже завершён** — **no-op**
   (безвредно). Idempotent.
 - `tok.is_cancelled() -> bool` — чтение флага без yield. Не throws.
-- `tok.bind(other CancelToken)` — каскад: `other.cancel()` вызовет
-  и `tok.cancel()`. Композиция в более широкий родительский
-  kill-switch.
+- `child.cancelled_by(parent CancelToken)` — **направленный** каскад:
+  `parent.cancel()` отменяет и `child`; обратно НЕ течёт
+  (`child.cancel()` не трогает `parent`). Композиция в более широкий
+  родительский kill-switch — как дерево `context` в Go. Имя несёт
+  направление: «child отменяется по parent».
 
 ### Правило bind-check — один токен, один живой scope
 
@@ -1094,7 +1096,7 @@ Escape токена за пределы scope'а **не опасен**: `tok.can
 | Wait для всех fiber'ов | да | да |
 | Cancel изнутри (через throw) | да | да |
 | **Cancel снаружи** (`tok.cancel()`) | **нет** | **да** |
-| Token-binding (родительский kill-switch) | нет | да (через `tok.bind`) |
+| Token-binding (родительский kill-switch) | нет | да (через `child.cancelled_by(parent)`) |
 
 `supervised` остаётся **keyword'ом** — это неустранимая магия, точка,
 куда `spawn` регистрирует fiber'ы (D14/D50; `spawn` — тоже

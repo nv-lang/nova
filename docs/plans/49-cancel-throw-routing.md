@@ -242,7 +242,8 @@ fallback для fiber'ов, запаркованных в блокирующих
 - **`PANIC`-kind** для unrecoverable (channel cap=0, GC OOM) — сейчас
   `abort()` напрямую. Отдельный kind при необходимости — under-план.
 - **Cancellation propagation через каналы** (Go `ctx` в struct, передача
-  по каналу) — в Nova явный `tok.bind()` каскад (Plan 47, уже есть).
+  по каналу) — в Nova явный `child.cancelled_by(parent)` каскад (Plan 47,
+  уже есть).
 - **Deadline как keyword** — `within` остаётся stdlib-функцией (как Go
   `context.WithTimeout` — тоже «stdlib»). Не keyword.
 - **Closures-in-generics** — Plan 48. `within`/`race` как код требуют

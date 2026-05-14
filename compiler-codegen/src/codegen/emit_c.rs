@@ -7013,15 +7013,19 @@ impl CEmitter {
                             "is_cancelled" => {
                                 return Ok(format!("nova_cancel_token_is_cancelled({})", obj_c));
                             }
-                            "bind" => {
-                                // `tok.bind(other)` — каскад: other.cancel()
-                                // отменит и tok. nova_cancel_token_bind_cascade
-                                // (бывший _bind; _bind теперь — scope-binding).
-                                if let Some(other_arg) = args.first() {
-                                    let other_c = self.emit_expr(other_arg.expr())?;
+                            "cancelled_by" => {
+                                // `child.cancelled_by(parent)` — направленный
+                                // каскад: parent.cancel() отменяет и child.
+                                // Имя несёт направление (отмена течёт вниз —
+                                // parent → child, не обратно).
+                                // C-функция — nova_cancel_token_bind_cascade
+                                // (cascade-bind; scope-binding это отдельный
+                                // nova_cancel_token_bind).
+                                if let Some(parent_arg) = args.first() {
+                                    let parent_c = self.emit_expr(parent_arg.expr())?;
                                     return Ok(format!(
                                         "(nova_cancel_token_bind_cascade({}, {}), NOVA_UNIT)",
-                                        obj_c, other_c
+                                        obj_c, parent_c
                                     ));
                                 }
                             }
@@ -11493,7 +11497,7 @@ impl CEmitter {
                     if self.infer_expr_c_type(obj) == "NovaCancelToken*" {
                         match method.as_str() {
                             "is_cancelled" => return "nova_bool".into(),
-                            "cancel" | "bind" => return "nova_unit".into(),
+                            "cancel" | "cancelled_by" => return "nova_unit".into(),
                             _ => {}
                         }
                     }
