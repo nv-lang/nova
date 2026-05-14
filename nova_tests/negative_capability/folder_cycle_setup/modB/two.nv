@@ -1,0 +1,6 @@
+// modB peer 2 — нужен для folder-module detection.
+
+module folder_cycle_setup.modB
+
+export fn b_extra() -> int =>
+    200

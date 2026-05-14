@@ -4779,6 +4779,30 @@ spec-level work.
   базе (peers не используют чужие aliases). Enforcement актуально при
   росте stdlib.
 
+---
+
+### [M11] Rule A cycle detection — canonical PathBuf keying
+
+- **Где:** `compiler-codegen/src/imports.rs::resolve_one` (`in_progress: HashSet<PathBuf>`)
+- **Что упрощено:** Plan 42 spec rule A: cycle = по module-name
+  (`HashSet<Vec<String>>`). Реальность — `HashSet<PathBuf>` keyed by
+  canonical path первого peer'а folder-module. Работает для diamond-
+  dep dedup и cycle detection в текущих сценариях.
+- **Почему:** PathBuf keying проще — не нужен дополнительный mapping
+  path→module-name. Также filesystem canonicalize handles `./` / `..` /
+  case-sensitivity normalize'ом.
+- **Edge case (potential):** symlinks или case-insensitive FS (NTFS на
+  Windows) могут дать different canonical paths для same logical module
+  → false-negative cycle detect. **Не известно реальных bug reports**;
+  все текущие тесты PASS.
+- **Как починить:** Refactor `in_progress`/`visited` на `HashSet<Vec<String>>`
+  keyed by declared module name (parent.X). Парсить declared module из
+  каждого peer'а перед canonicalize. ~100-150 LOC.
+- **Negative test:** `folder_cycle_between_modules.nv` (Plan 42.08 Ф.1)
+  покрывает основной case через canonicalize keying — PASS.
+- **Приоритет:** L — не блокирует production. Revisit если symlink/case-
+  sensitivity bug stop'нет реального user'а.
+
 
 ---
 

@@ -177,23 +177,29 @@ fn resolve_one(
     include_test_peers: bool,
 ) -> Result<()> {
     // Plan 42 правило H: `internal/` directory access check.
-    // Module `<X>.internal.<Y>` доступен только из `<X>.*` (descendants).
-    // Importing module = тот кто DIRECTLY делает import (последний в
-    // chain), не entry. Например `folder_internal/public.nv` имеет
-    // import internal/... — он descendant of folder_internal, разрешено.
+    // Plan 42 правило H: `<X>/internal/<Y>` доступен только из `<X>.*`
+    // (descendants — по filesystem hierarchy, не по declared module name).
+    //
+    // **Важно про terminology** (Plan 42.08 Ф.3 уточнение):
+    // Сравнение идёт по **import path**, не declared module name (которое
+    // в rev-3 ВСЕГДА 2 segments, не отражает full path). Import path в
+    // resolver-mode хранится в `import_chain` (push'ится на каждом resolve).
+    // Это работает корректно потому что import path → filesystem path
+    // mapping bijective (resolver использует import path как rel_path).
+    //
+    // Edge case (NOT current bug, но caveat): re-export через Plan 35.A R26
+    // `export import X` может создать situation где модуль reachable через
+    // два разных import path. Тогда Rule H check по import path может
+    // permit/deny не consistently. Defer до Plan 42.09 (re-export).
     if let Some(internal_idx) = imp.path.iter().position(|s| s == "internal") {
-        // Parent of `internal` = everything before it.
+        // Parent of `internal` segment = import path prefix until `internal`.
         let internal_parent = &imp.path[..internal_idx];
-        // Importing module = the module currently being resolved (last in
-        // chain). It's the file that wrote `import ...` line.
-        let importing_module = import_chain.last().cloned().unwrap_or_default();
-        // internal_parent должен быть prefix of importing_module.
-        // Также важно: imported module's parent is the prefix until
-        // `internal`. importing path должен **содержать** internal_parent
-        // как prefix (descendant rule).
+        // Importing path = последнее import в chain (тот кто пишет import line).
+        let importing_path = import_chain.last().cloned().unwrap_or_default();
+        // internal_parent должен быть prefix of importing_path (descendant rule).
         let allowed = internal_parent.is_empty()
-            || (internal_parent.len() <= importing_module.len()
-                && importing_module
+            || (internal_parent.len() <= importing_path.len()
+                && importing_path
                     .iter()
                     .zip(internal_parent.iter())
                     .all(|(a, b)| a == b));
@@ -205,7 +211,7 @@ fn resolve_one(
                  hint: internal modules accessible only from descendants of `{}`",
                 imp.path.join("."),
                 internal_parent.join("."),
-                importing_module.join("."),
+                importing_path.join("."),
                 internal_parent.join("."),
             ));
         }
@@ -214,39 +220,54 @@ fn resolve_one(
     // Plan 42 Ф.2: resolve module to list of peer files (or single file
     // for legacy single-file modules).
     let resolved_paths = resolve_module_paths(&imp.path, entry_dir, repo, stdlib_dir, include_test_peers)
-        .ok_or_else(|| {
-            // Plan 42 правило L: diagnostic quality. Show importing module
-            // (last in chain) + searched paths + suggestion.
+        .map_err(|err| {
+            // Plan 42 правило L: diagnostic quality. Plan 42.08 Ф.2: ambiguous
+            // case теперь явно диагностируется.
             let importing = import_chain
                 .last()
                 .map(|m| m.join("."))
                 .unwrap_or_else(|| "<unknown>".to_string());
-            let suggestion = suggest_module_name(
-                &imp.path,
-                entry_dir,
-                repo,
-                stdlib_dir,
-            );
-            anyhow!(
-                "cannot find module '{}'\n  \
-                 imported from: module `{}`\n  \
-                 searched:\n  \
-                 \x20  {} (single-file or folder)\n  \
-                 \x20  {} (single-file or folder)\n  \
-                 \x20  {} (stdlib){}",
-                imp.path.join("."),
-                importing,
-                entry_dir.join(imp.path.iter().collect::<PathBuf>()).display(),
-                repo.join(imp.path.iter().collect::<PathBuf>()).display(),
-                if imp.path[0] == "std" && imp.path.len() >= 2 {
-                    stdlib_dir.join(imp.path[1..].iter().collect::<PathBuf>())
-                        .display()
-                        .to_string()
-                } else {
-                    "<n/a>".to_string()
-                },
-                suggestion,
-            )
+            match err {
+                ResolveErr::Ambiguous { file, folder } => anyhow!(
+                    "ambiguous module '{}': both single-file and folder-module exist\n  \
+                     imported from: module `{}`\n  \
+                     file:   {}\n  \
+                     folder: {}\n  \
+                     hint: remove one or rename to resolve conflict (D29 rev-3)",
+                    imp.path.join("."),
+                    importing,
+                    file.display(),
+                    folder.display(),
+                ),
+                ResolveErr::NotFound => {
+                    let suggestion = suggest_module_name(
+                        &imp.path,
+                        entry_dir,
+                        repo,
+                        stdlib_dir,
+                    );
+                    anyhow!(
+                        "cannot find module '{}'\n  \
+                         imported from: module `{}`\n  \
+                         searched:\n  \
+                         \x20  {} (single-file or folder)\n  \
+                         \x20  {} (single-file or folder)\n  \
+                         \x20  {} (stdlib){}",
+                        imp.path.join("."),
+                        importing,
+                        entry_dir.join(imp.path.iter().collect::<PathBuf>()).display(),
+                        repo.join(imp.path.iter().collect::<PathBuf>()).display(),
+                        if imp.path[0] == "std" && imp.path.len() >= 2 {
+                            stdlib_dir.join(imp.path[1..].iter().collect::<PathBuf>())
+                                .display()
+                                .to_string()
+                        } else {
+                            "<n/a>".to_string()
+                        },
+                        suggestion,
+                    )
+                }
+            }
         })?;
 
     // Use FIRST peer file's canonical path as module identity key. All peers
@@ -454,24 +475,34 @@ fn resolve_import_path(
 /// Plan 42 Ф.2: resolve module to **list** of peer files (folder-module)
 /// или single file. Returns `Vec<PathBuf>` alphabetically sorted (правило B).
 ///
+/// Plan 42.08 Ф.2: возвращает `ResolveErr::Ambiguous` если `X.nv` И `X/`
+/// (с direct .nv) сосуществуют — раньше silent None → generic "cannot find".
+///
 /// Resolution order:
 /// 1. Try single-file `<...>/parts.nv` (legacy behaviour).
 /// 2. If not found, try folder `<...>/parts/` — collect все `*.nv` файлы
 ///    в этой папке (non-recursive, alphabetical sort).
-/// 3. Conflict (file exists AND folder with .nv files exists) → return
-///    None and caller emits «ambiguous module».
+/// 3. Conflict (file exists AND folder with .nv files exists) → `Err(Ambiguous)`.
 ///
 /// Каждый search root (entry_dir / repo / stdlib_dir) проверяется в
 /// порядке.
+#[derive(Debug)]
+pub(crate) enum ResolveErr {
+    /// Не найдено — caller emit'ит «cannot find module» с suggestions.
+    NotFound,
+    /// `X.nv` и `X/` (с direct .nv) сосуществуют — ambiguous.
+    Ambiguous { file: PathBuf, folder: PathBuf },
+}
+
 fn resolve_module_paths(
     parts: &[String],
     entry_dir: &Path,
     repo: &Path,
     stdlib_dir: &Path,
     include_test_peers: bool,
-) -> Option<Vec<PathBuf>> {
+) -> Result<Vec<PathBuf>, ResolveErr> {
     if parts.is_empty() {
-        return None;
+        return Err(ResolveErr::NotFound);
     }
     let rel_path: PathBuf = parts.iter().collect();
 
@@ -511,23 +542,29 @@ fn resolve_module_paths(
                 })
                 .unwrap_or(false);
             if has_direct_nv {
-                // Ambiguous — return None and let caller emit error.
-                // Note: silent None is bad UX; caller currently emits
-                // generic «cannot find» error. Improvement: thread Result.
-                return None;
+                // Plan 42.08 Ф.2: ambiguous → return explicit ResolveErr
+                // вместо silent None. Caller emit'ит clear «ambiguous module
+                // X: <file> vs <folder>» вместо generic «cannot find».
+                return Err(ResolveErr::Ambiguous {
+                    file: single_file.clone(),
+                    folder: folder.clone(),
+                });
             }
         }
 
         if file_exists {
-            return Some(vec![single_file]);
+            return Ok(vec![single_file]);
         }
 
         if folder_exists {
             // Collect все *.nv files (non-recursive), alphabetical sort.
             // Plan 42 правило F: filter `*_test.nv` peers если
             // !include_test_peers (build mode).
-            let mut peers: Vec<PathBuf> = std::fs::read_dir(&folder)
-                .ok()?
+            let entries = match std::fs::read_dir(&folder) {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+            let mut peers: Vec<PathBuf> = entries
                 .filter_map(|e| e.ok())
                 .map(|e| e.path())
                 .filter(|p| {
@@ -549,12 +586,12 @@ fn resolve_module_paths(
                 .collect();
             if !peers.is_empty() {
                 peers.sort();
-                return Some(peers);
+                return Ok(peers);
             }
             // Folder без .nv files (после filter) — namespace-container,
             // не module. Продолжаем поиск в других roots.
         }
     }
 
-    None
+    Err(ResolveErr::NotFound)
 }

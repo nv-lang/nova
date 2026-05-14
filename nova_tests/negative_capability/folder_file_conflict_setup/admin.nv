@@ -1,0 +1,15 @@
+// Plan 42.08 Ф.1 + Ф.2: setup для negative test.
+// Этот файл — single-file module `admin`. Параллельно есть папка
+// `admin/` (folder-module). Создаёт ambiguous error при import.
+//
+// trivial test чтобы файл не падал как standalone (linker fails без main):
+// сам по себе compile'ится OK (нет ambiguity при codegen этого file).
+
+module folder_file_conflict_setup.admin
+
+export fn version() -> int =>
+    1
+
+test "setup placeholder — fixture для folder_file_vs_folder_conflict.nv" {
+    assert(version() == 1)
+}
