@@ -134,6 +134,7 @@ pub fn resolve_imports_inline_ex(
     for imp in &initial_imports {
         resolve_one(
             imp,
+            entry_path,
             &entry_dir,
             repo,
             stdlib_dir,
@@ -191,6 +192,9 @@ pub fn resolve_imports_inline_ex(
 ///   - `import_chain`: parallel vec для error-message (full cycle path).
 fn resolve_one(
     imp: &Import,
+    // Plan 42.17 Ф.4: путь importing-файла (entry или peer, который
+    // написал этот `import`). Нужен для Rule H filesystem-containment.
+    importer_path: &Path,
     entry_dir: &Path,
     repo: &Path,
     stdlib_dir: &Path,
@@ -210,46 +214,10 @@ fn resolve_one(
     // получают свой временный acc (не протекают в caller).
     visible_acc: &mut HashSet<String>,
 ) -> Result<()> {
-    // Plan 42 правило H: `internal/` directory access check.
-    // `<X>/internal/<Y>` доступен только из `<X>.*` (descendants).
-    //
-    // **Plan 42.14 Ф.5 (Rule H actual fix):** после Plan 42.13 (D29
-    // rev-3.1) declared module name для `internal/` файлов = полный
-    // `owner.internal.target` (3 segments). Import path тоже содержит
-    // `...owner.internal.target`. Они **согласованы** — раньше declared
-    // был 2-segment `internal.target` и расходился с import path.
-    //
-    // Теперь Rule H check по import path **корректен**: import path
-    // `admin.internal.token` ↔ declared `admin.internal.token`. Caveat
-    // про re-export (Plan 42.08 Ф.3) частично снят — re-export через
-    // `export import` сохраняет import path semantic; declared name
-    // imported модуля не меняется. Owner всегда explicit в обоих.
-    if let Some(internal_idx) = imp.path.iter().position(|s| s == "internal") {
-        // Parent of `internal` segment = import path prefix until `internal`.
-        // После rev-3.1 это совпадает с declared module owner.
-        let internal_parent = &imp.path[..internal_idx];
-        // Importing path = последнее import в chain (тот кто пишет import line).
-        let importing_path = import_chain.last().cloned().unwrap_or_default();
-        // internal_parent должен быть prefix of importing_path (descendant rule).
-        let allowed = internal_parent.is_empty()
-            || (internal_parent.len() <= importing_path.len()
-                && importing_path
-                    .iter()
-                    .zip(internal_parent.iter())
-                    .all(|(a, b)| a == b));
-        if !allowed {
-            return Err(anyhow!(
-                "cannot import internal module '{}' from outside parent\n  \
-                 internal module's parent: {}\n  \
-                 importing module:         {}\n  \
-                 hint: internal modules accessible only from descendants of `{}`",
-                imp.path.join("."),
-                internal_parent.join("."),
-                importing_path.join("."),
-                internal_parent.join("."),
-            ));
-        }
-    }
+    // Plan 42 правило H (`internal/` boundary) — проверяется НИЖЕ, после
+    // resolve в filesystem paths. Plan 42.17 Ф.4 перевёл его с хрупкого
+    // import-path-string prefix на filesystem-containment: re-export /
+    // alias больше не обходят boundary.
 
     // Plan 42 Ф.2: resolve module to list of peer files (or single file
     // for legacy single-file modules).
@@ -303,6 +271,40 @@ fn resolve_one(
                 }
             }
         })?;
+
+    // Plan 42 правило H + Plan 42.17 Ф.4: `internal/` boundary —
+    // **filesystem-containment** check. `<owner>/internal/...` импортируем
+    // ТОЛЬКО из файлов физически под `<owner>/`. Проверяем по реальному
+    // пути importing-файла (`importer_path`) против реального пути
+    // resolved `internal/`-модуля — не по строке import-path. Re-export
+    // (`export import`) и alias обойти boundary не могут: проверяется
+    // фактическое расположение файлов, а не путь, по которому дошли.
+    if let Some(owner_dir) = find_internal_owner_dir(&resolved_paths[0]) {
+        let importer_canon = importer_path.canonicalize()
+            .unwrap_or_else(|_| importer_path.to_path_buf());
+        let owner_canon = owner_dir.canonicalize()
+            .unwrap_or_else(|_| owner_dir.clone());
+        if !importer_canon.starts_with(&owner_canon) {
+            let importing = import_chain.last()
+                .map(|m| m.join("."))
+                .unwrap_or_else(|| "<entry>".to_string());
+            return Err(anyhow!(
+                "cannot import internal module '{}' from outside its owner\n  \
+                 internal module:  {}\n  \
+                 owner directory:  {}\n  \
+                 importing file:   {}\n  \
+                 importing module: {}\n  \
+                 hint: `internal/` modules are accessible only from files \
+                 under `{}` (Plan 42 rule H)",
+                imp.path.join("."),
+                resolved_paths[0].display(),
+                owner_canon.display(),
+                importer_canon.display(),
+                importing,
+                owner_canon.display(),
+            ));
+        }
+    }
 
     // Plan 42.14 Ф.3 ([M11]): cycle detection по DECLARED MODULE NAME,
     // не canonical PathBuf. Symlink / case-insensitive FS могли дать
@@ -415,6 +417,7 @@ fn resolve_one(
             let mut sub_visible: HashSet<String> = HashSet::new();
             resolve_one(
                 sub,
+                peer_path,
                 entry_dir,
                 repo,
                 stdlib_dir,
@@ -514,6 +517,26 @@ fn resolve_one(
     visited.insert(module_key);
     import_chain.pop();
     Ok(())
+}
+
+/// Plan 42.17 Ф.4: если `path` лежит внутри `.../<owner>/internal/...`,
+/// возвращает `.../<owner>/` — owner-директорию для Rule H containment
+/// check. None если `internal` сегмента в пути нет.
+///
+/// Spec D29 rev-3.1: «берётся **первый** internal сегмент» — поэтому при
+/// nested `internal/` берём самый ВЕРХНИЙ. `internal` на самом верху
+/// (нет родителя) → None.
+fn find_internal_owner_dir(path: &Path) -> Option<PathBuf> {
+    let mut cur = path;
+    let mut internal_dir: Option<&Path> = None;
+    while let Some(parent) = cur.parent() {
+        if parent.file_name().map(|n| n == "internal").unwrap_or(false) {
+            // Перезаписываем — итоговое значение = самый верхний `internal`.
+            internal_dir = Some(parent);
+        }
+        cur = parent;
+    }
+    internal_dir.and_then(|d| d.parent()).map(|p| p.to_path_buf())
 }
 
 /// Plan 42.17 Ф.3: единый сканер `module a.b` декларации из исходника —
