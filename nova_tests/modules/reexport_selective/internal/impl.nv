@@ -1,0 +1,15 @@
+// Plan 42.17 Ф.6: internal impl с ДВУМЯ exported items — для проверки
+// что селективный фильтр consumer'а применяется к re-exported items.
+
+module reexport_selective.internal.impl
+
+export fn alpha(x int) -> int =>
+    x + 100
+
+export fn beta(x int) -> int =>
+    x + 200
+
+test "internal impl fixture" {
+    assert(alpha(1) == 101)
+    assert(beta(1) == 201)
+}

@@ -22,9 +22,9 @@ type Tree {
     depth int
 }
 
-fn make_point(x int, y int) -> Point => Point { x, y }
+fn make_point(x int, y int) -> Point => { x, y }
 
-fn make_tree(val int, depth int) -> Tree => Tree { val, depth }
+fn make_tree(val int, depth int) -> Tree => { val, depth }
 
 fn sum_to(n int) -> int {
     let mut acc = 0

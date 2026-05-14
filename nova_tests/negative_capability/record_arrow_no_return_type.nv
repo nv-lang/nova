@@ -1,0 +1,15 @@
+// EXPECT_COMPILE_ERROR must declare its return type
+//
+// Plan 51: `=>`-тело — record-литерал, но return-тип не объявлен —
+// тип «спрятан» в литерале. Запрещено: тип должен быть в сигнатуре.
+// Каноничная форма: `fn f() -> T => { }`.
+
+module negative_capability.record_arrow_no_return_type
+
+type Pt { x int, y int }
+
+fn mk() => Pt { x: 1, y: 2 }
+
+test "unreachable — parse error on missing return type" {
+    assert(mk().x == 1)
+}

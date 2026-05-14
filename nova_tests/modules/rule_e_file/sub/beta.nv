@@ -1,0 +1,6 @@
+// Plan 42.17 Ф.7: второй peer `rule_e_file.sub` (folder-module ≥2 .nv).
+
+module rule_e_file.sub
+
+export fn from_sub_b() -> int =>
+    30

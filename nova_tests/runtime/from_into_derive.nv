@@ -33,7 +33,7 @@ type Celsius { degrees int }
 type Fahrenheit { degrees int }
 
 fn Fahrenheit.from(c Celsius) -> Self =>
-    Fahrenheit { degrees: c.degrees * 9 / 5 + 32 }
+    { degrees: c.degrees * 9 / 5 + 32 }
 
 test "from-form вызова — explicit static" {
     let c = Celsius { degrees: 100 }

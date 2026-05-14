@@ -10198,3 +10198,248 @@ supervised_unknown_named_arg (compile error).
 - nova_tests/concurrency/supervised_cancel_test.nv + *_stress_test.nv
 - nova_tests/expected_runtime/supervised_cancel_double_bind.nv
 - nova_tests/negative_capability/supervised_unknown_named_arg.nv
+
+
+## Сессия 2026-05-14 (продолжение): Plan 42.17 — production-readiness audit closure
+
+Аудит Plan 42* «с чистого листа» (3 параллельных general-purpose агента
++ прямая верификация load-bearing claims). Вывод: claim «production-grade,
+no simplifications» был нарушен — архитектурный gap, doc которая
+противоречит коду, shipped dead code, doc drift, слабые тесты. Plan 42.17
+закрывает это по фазам (commit после каждой).
+
+### Ф.1 — doc drift fix (docs only)
+
+- 42.04: реальность — `PeerFile` (не `SourceFile`),
+  `imported_item_names: HashSet<String>` (не `imported_items: Vec<Item>`);
+  `span_walker.rs` не создан — FileId присваивается через
+  `parser::parse_with_file_id` (работает для импортированных peers).
+- 42.09: item rename работает end-to-end (doc утверждал обратное).
+- 42.14 Ф.5: Rule H была помечена «✅ done», но код не менялся — честная
+  коррекция, реальный fix → Ф.4 здесь.
+- 42-folder-modules: status block; «42.A/42.B» → цифры; sub-plan 42.5
+  (2-pass codegen) отмечен SATISFIED — Rule D достигается глобальным
+  forward-decl pass'ом (`emit_c.rs` Pass 1), `folder_mutual_recursion`
+  компилирует двунаправленную рекурсию.
+- simplifications: [M10]/[M12] квалифицированы «resolved для
+  импортированных folder-modules»; новый [M-entry-folder-module]; [M11] —
+  block-comment edge оказался ложным флагом (Nova не имеет `/* */`).
+
+### Ф.2 — dead code cleanup (imports.rs)
+
+`resolve_import_path` (полностью неиспользуем, superseded
+`resolve_module_paths`), `peer_canons` Vec-аккумулятор (vestigial — только
+`.last()` читался), два no-op `let _`, `Box::leak` в `current_target_os`
+(→ валидация `NOVA_TARGET_OS` против известных значений, `&'static str`).
+
+### Ф.3 — единый сканер module-строки
+
+`read_module_decl` + `is_folder_module_peer` + `is_folder_module_dir`
+руками повторяли «skip blank/comment/#-attr, найти `module a.b`» —
+drift-prone (Plan 42.16 пришлось патчить все три). Теперь один
+`imports::scan_module_decl(src) -> Option<Vec<String>>`; test_runner
+сравнивает разобранные сегменты.
+
+### Ф.4 — Rule H actual fix: filesystem-containment
+
+import-path-string prefix → проверка по реальному расположению файлов.
+`resolve_one` получает `importer_path`; `find_internal_owner_dir`
+локализует `<owner>/` (родитель самого верхнего `internal/` сегмента,
+spec rev-3.1); importer должен быть физически под ним (canonical
+`starts_with`). Re-export / alias больше не обходят boundary — проверяется
+ГДЕ файл, а не КАК до него дошли. Check перенесён после resolve в paths.
+
+### Ф.5 — module-attrs после `module` → чёткая ошибка
+
+`parse_module` ловит `#forbid`/`#doc` в item-loop → «`#forbid` is a
+module-level attribute — it must precede the `module` declaration».
+Раньше падало в `parse_item` с misleading «expected fn/type/...». `#cfg`
+не трогается — у него есть легитимный item-level use.
+
+### Ф.6 — re-export через селективный фильтр consumer'а
+
+`if sub.is_export` вставлял ВСЕ re-exported имена в caller's visible
+scope, игнорируя его `import F.{...}` — `import F.{a}` протекал все
+прочие re-exports F. Новый `import_selects(imp, name)` — единый источник
+«admits this name», используется и в re-export branch, и в direct-import
+`is_visible` (DRY; убран misleading «or alias matched» комментарий).
+Rename к re-exported items НЕ применяется (item уже в merged_items под
+именем re-export'а — переименовать только в visible-scope = рассинхрон с
+codegen) — задокументировано inline.
+
+### Ф.7 — усиление слабых тестов + missing coverage
+
+- `folder_module_with_test`: `make_triple` → `export`, `_use.nv`
+  импортирует+ассертит — PASS под `nova test` доказывает, что `_test`-peer
+  реально компилируется в test mode (раньше дёргался только production-peer).
+- `cfg_feature_gated_invisible` + `cfg_target_os_gated_invisible`
+  (negative) — gated-peer invisibility раньше «проверялась» только
+  комментарием; теперь обращение к gated-символу → undefined identifier.
+- `rule_e_file` + `rule_e_file/sub/` + `_use.nv` — правило E (single-file
+  `X.nv` + nested `X/sub/`) не было покрыто.
+- `folder_inconsistent_decl/{alpha,beta}` (negative) — peers с разными
+  `module` decl → папка не folder-module → manifest mismatch на обоих.
+
+### Ф.8 — entry-folder-module isolation — honest-defer
+
+Investigate-итог: per-peer изоляция (`[M10]`/`[M12]`) реальна для
+**импортированных** folder-modules; когда folder-module — сам
+компилируемый entry, peers коллапсируют в один `MAIN_FILE_ID`. Полный fix
+= resolver-side (`resolve_imports_inline_ex` собирает entry siblings,
+zero-regression-risk сам по себе) + test-runner-side (`walk_nv`
+компилирует folder-module как unit — меняет entry-selection, риск для
+363-test регрессии). Honest-defer: не баг сейчас (нулевая
+regression-exposure — ни один code path не делает folder-module точкой
+компиляции), машинерия изоляции корректна для reachable-случая. Полный
+дизайн → `[M-entry-folder-module]`. Прецедент: 42.14 Ф.4/Ф.6 → 42.15.
+
+### Регрессия
+
+363 PASS / 0 FAIL / 7 SKIP (release). +13 тестов от Ф.5/Ф.6/Ф.7, 0 новых
+FAIL. Каждая фаза — отдельный commit.
+
+### Файлы
+
+- compiler-codegen/src/imports.rs (Ф.2 dead code, Ф.3 scan_module_decl,
+  Ф.4 Rule H + find_internal_owner_dir, Ф.6 import_selects)
+- compiler-codegen/src/parser/mod.rs (Ф.5)
+- compiler-codegen/src/test_runner.rs (Ф.3)
+- docs/plans/42.17-audit-closure.md (новый)
+- docs/plans/42.04, 42.09, 42.14, 42-folder-modules.md (Ф.1)
+- docs/simplifications.md (Ф.1 [M10]/[M11]/[M12] + Ф.8 [M-entry-folder-module])
+- nova_tests/modules/* + nova_tests/negative_capability/* (Ф.5/Ф.6/Ф.7)
+
+## Сессия 2026-05-14..15: дизайн concurrency-синтаксиса — D75 ревизия, D102, Plans 46/47/50
+
+Спец-дизайн сессия (без кода). Глубокий research концепции отмены и
+синтаксиса вызова — от вопроса «что такое cancel_scope, почему не
+эффект» до набора D-решений.
+
+### D75 ревизия — keyword `cancel_scope` удалён
+
+`cancel_scope { tok => body }` схлопнут в именованный аргумент
+`supervised(cancel: tok) { body }`. Причины: minus один keyword;
+`tok =>` scope-binding не существует больше нигде в языке; модель
+токена переведена на caller-owned (создаётся вне scope'а, переживает
+его, `cancel()` на завершённом scope'е — no-op) — это устраняет старое
+bootstrap-ограничение «token dangling после scope-exit». Защита от
+двойной привязки — runtime bind-check «один токен → один живой scope»,
+compile-time affine-типы отвергнуты как несоразмерные (Nova — GC, не
+borrow checker). `race`/`with_timeout` зафиксированы как stdlib-функции
+поверх `supervised(cancel:)`, не keyword'ы. Закрыт
+Q-cancel_scope-lambda-syntax: keyword-scope'ы НЕ превращаются в
+trailing-fn функции (`supervised` остаётся keyword'ом — точка
+регистрации `spawn`-fiber'ов). Подчищены ссылки на `cancel_scope` по
+всей спеке.
+
+### D102 — именованные аргументы + дефолты + ревизия «keyword-only»
+
+D102 (base): именованные аргументы `f(name: val)` + значения параметров
+по умолчанию `fn f(x int = 0)` как общая фича языка. Базовая реализация
+— Plan 46 (закрыт параллельным агентом, отдельная запись выше).
+
+D102 ревизия (2026-05-15): **параметр с дефолтом — keyword-only на
+месте вызова**. Рассмотрены и отвергнуты: обязательные имена для ВСЕХ
+параметров (Swift-style — делает имя каждого параметра жёстким API,
+церемония для унарных/math-функций) и исключение «один дефолт →
+позиционно разрешён» (рефакторинг-ловушка: добавление 2-го дефолта
+тихо ломает вызовы; количество дефолтов не показатель риска). Итог —
+одно правило: обязательный позиционно, опциональный по имени;
+позиционный bool-флаг становится compile error (AI-first: класс багов
+LLM-генерации → ошибка компиляции). Trailing-форма D43 — исключение
+(синтаксически отлична от позиционного аргумента в скобках).
+
+Также отвергнут spread аргументов в вызов (`f(...record)` / `f(..array)`)
+— непрозрачный call-site, два несогласованных оператора, `...` занят
+variadic; бандл параметров → option-struct.
+
+### Планы
+
+- Plan 47 — реализация D75 ревизии (удаление keyword, caller-owned
+  токен, runtime bind-check, stdlib race/with_timeout).
+- Plan 50 — реализация D102 ревизии (ограничение поверх Plan 46
+  binding-логики + production-grade диагностика + миграция кодовой базы).
+
+### Файлы
+
+- spec/decisions/03-syntax.md (D102 + ревизия), 06-concurrency.md (D75
+  ревизия), open-questions.md (Q-cancel_scope закрыт), 07-modules.md,
+  syntax.md, revolutionary.md, decisions/README.md, history/rejected.md
+  (sweep ссылок на cancel_scope)
+- docs/plans/46-named-parameters.md, 47-supervised-cancel.md,
+  50-default-keyword-only.md (новые), docs/plans/README.md
+- simplifications.md — без новых записей (спец-дизайн, не реализация;
+  bootstrap-ограничения фиксируются на этапе Plan 47/50)
+
+
+## Сессия 2026-05-15: Plan 51 — record-литерал, тип пишется ровно один раз
+
+Пользователь начал с конкретной боли: `fn ok_status(v int) -> FiberStatus
+=> FiberStatus { ... }` — `FiberStatus` дважды. Investigation показал, что
+`=> { ... }` (typeless) уже работает в return-позиции; широкая «полная
+унификация D55» НЕ оправдана (пробники + census: D55 реально работает
+только в `=>`-return; «~900 избыточных мест» — переоценка, основная
+масса — перенос имени, а не устранение; конструкторы вариантов трогать
+нельзя). Scope сведён к реальной задаче — устранение дублирования имени
+типа в record-литерале.
+
+### Ф.1 — codegen: `let x T = { }`
+
+`Stmt::Let` emit протягивает `expected_record_type` из аннотации вокруг
+emit значения — mirror существующего `const`-хендлинга. Гейт узкий:
+значение — **напрямую** typeless record-литерал, иначе тип `x` не
+«протекает» во вложенные литералы внутри других выражений.
+
+### Ф.2 — parser: запрет дублирования
+
+`check_record_lit_type_once` — общий хелпер для `parse_fn` и
+`parse_closure_full`. `=>`-тело = `RecordLit{type_name:Some}`: тип
+литерала == return-тип → ошибка «redundant type prefix»; нет return-типа
+→ ошибка «must declare its return type». `-> Self` резолвится к типу
+receiver'а. `parse_let_decl`: `let x T = T{}` → ошибка. sum-coercion
+(`path ≠ return`, напр. `-> Shape => Circle{}`) не трогается.
+
+### Ф.3 — миграция (28 файлов)
+
+Census грепом дал ~24 — недооценка: парсер (источник истины) поймал
+**multi-line** `=>`-тела и **closure**-тела, которые grep пропустил
+(overload.nv ×24, self_in_expr ×11, gc_*-бенчи). stack_queue.nv ×7 —
+`let s Stack[int] = Stack{}` (generic-аннотация ломала census-grep).
+Урок: `perl -0777 -i` переписал line-endings во всех 358 `.nv`
+(CRLF→LF) — закоммичены только 28 файлов с реальными content-изменениями
+(`git diff --numstat` фильтр), 330 line-ending-only вычищены
+`git checkout`.
+
+### Ф.4 — тесты
+
+positive `record_literal_type_once.nv` (каноничные формы + `-> Self` +
+sum-coercion anti-regression) + 3 negative.
+
+### Ф.5 — spec + docs
+
+D55 (02-types.md): positions-таблица получила колонку «Реализовано
+(bootstrap)?» + honesty-пометку (coercion реально работает в ~3 из 7
+позиций — урок Plan 42.17, спека не врёт); новая подсекция «Запрет
+дублирования имени типа (Plan 51)».
+
+### Найденный попутно баг
+
+`[M-match-void-arm]`: `match`-как-голый-statement, где каждый arm —
+void-typed выражение (`assert(...)`), даёт невалидный C
+(`nova_unit _x = void_func()`). Узкий codegen-баг, вне scope Plan 51 —
+позитивный тест переписан на идиоматичный `let x = match ...`.
+
+### Регрессия
+
+367 PASS / 0 FAIL / 7 SKIP (release). Каждая фаза — отдельный commit.
+
+### Файлы
+
+- compiler-codegen/src/codegen/emit_c.rs (Ф.1)
+- compiler-codegen/src/parser/mod.rs (Ф.2)
+- 28 `.nv` миграции (Ф.3)
+- nova_tests/syntax/record_literal_type_once.nv +
+  nova_tests/negative_capability/record_arrow_*.nv + record_let_*.nv (Ф.4)
+- spec/decisions/02-types.md, docs/simplifications.md,
+  docs/project-creation.txt (Ф.5)
+- docs/plans/51-d55-record-literal-unification.md

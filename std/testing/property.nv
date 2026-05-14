@@ -41,7 +41,7 @@ export type PropertyConfig {
 }
 
 export fn PropertyConfig.default() -> PropertyConfig =>
-    PropertyConfig {
+    {
         num_tests: 100,
         max_shrink_steps: 1000,
         seed: 0,
@@ -62,7 +62,7 @@ export type PropertyFailed {
 }
 
 export fn PropertyFailed.new(msg str) -> PropertyFailed =>
-    PropertyFailed { message: msg, context: "" }
+    { message: msg, context: "" }
 
 
 // Замена обычному assert(...) в property-тесте. Бросает Fail вместо
@@ -112,7 +112,7 @@ export type IntGen {
 }
 
 export fn IntGen.new(min int, max int) -> IntGen =>
-    IntGen { min, max }
+    { min, max }
 
 // Default int generator — диапазон [-1000, 1000], типичный для тестов.
 export fn IntGen.default() -> IntGen =>
@@ -144,7 +144,7 @@ export fn IntGen @shrink(value int) -> Iter[int] {
 // Shrinking: к false (минимально интересный вариант).
 export type BoolGen { }
 
-export fn BoolGen.new() -> BoolGen => BoolGen { }
+export fn BoolGen.new() -> BoolGen => { }
 
 export fn BoolGen @generate() Random -> bool =>
     Random.u64() & 1 == 1
@@ -163,7 +163,7 @@ export type StrGen {
 }
 
 export fn StrGen.new(max_len int) -> StrGen =>
-    StrGen { max_len }
+    { max_len }
 
 export fn StrGen.default() -> StrGen =>
     StrGen.new(64)

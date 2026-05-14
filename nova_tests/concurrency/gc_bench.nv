@@ -17,7 +17,7 @@ module concurrency.gc_bench
 type Obj { a int, b int, c int }
 
 fn make_obj(a int, b int, c int) -> Obj =>
-    Obj { a, b, c }
+    { a, b, c }
 
 // ── Bench 1: 100k простых аллокаций ────────────────────────────────────────
 

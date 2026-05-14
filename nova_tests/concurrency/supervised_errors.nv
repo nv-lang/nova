@@ -23,8 +23,8 @@ type FiberStatus {
     error_msg str
 }
 
-fn ok_status(v int) -> FiberStatus => FiberStatus { ok: true, value: v, error_msg: "" }
-fn err_status(msg str) -> FiberStatus => FiberStatus { ok: false, value: 0, error_msg: msg }
+fn ok_status(v int) -> FiberStatus => { ok: true, value: v, error_msg: "" }
+fn err_status(msg str) -> FiberStatus => { ok: false, value: 0, error_msg: msg }
 
 // ================================================================
 // SECTION 1: error-flag pattern — рекомендованный bootstrap-способ

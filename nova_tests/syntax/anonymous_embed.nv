@@ -17,7 +17,7 @@ type Account {
 }
 
 export fn Account.acc_new(b int) -> Self =>
-    Self { bal: b }
+    { bal: b }
 
 export fn Account @balance() -> int =>
     @bal
@@ -43,7 +43,7 @@ type Counter {
 }
 
 export fn Counter.cnt_new(v int) -> Self =>
-    Self { cnt_value: v }
+    { cnt_value: v }
 
 export fn Counter @value() -> int =>
     @cnt_value
@@ -69,7 +69,7 @@ type Inner {
 }
 
 export fn Inner.inner_new(v int) -> Self =>
-    Self { inner_val: v }
+    { inner_val: v }
 
 export fn Inner @get() -> int =>
     @inner_val
@@ -99,7 +99,7 @@ type Storage {
 }
 
 export fn Storage.stor_new(c int) -> Self =>
-    Self { cap: c }
+    { cap: c }
 
 export fn Storage @capacity() -> int =>
     @cap
@@ -136,7 +136,7 @@ type MultiBase {
 }
 
 export fn MultiBase.mb_new(a int, b int) -> Self =>
-    Self { x: a, y: b }
+    { x: a, y: b }
 
 export fn MultiBase @get_x() -> int => @x
 export fn MultiBase @get_y() -> int => @y
@@ -165,7 +165,7 @@ type Calc {
 }
 
 export fn Calc.calc_new(b int) -> Self =>
-    Self { base: b }
+    { base: b }
 
 export fn Calc @add_to(n int) -> int =>
     @base + n
@@ -195,7 +195,7 @@ type SourceA {
 }
 
 export fn SourceA.src_a_new(v int) -> Self =>
-    Self { a_val: v }
+    { a_val: v }
 
 export fn SourceA @get_a() -> int => @a_val
 
@@ -205,7 +205,7 @@ type SourceB {
 }
 
 export fn SourceB.src_b_new(v int) -> Self =>
-    Self { b_val: v }
+    { b_val: v }
 
 export fn SourceB @get_b() -> int => @b_val
 
@@ -233,7 +233,7 @@ type Engine {
 }
 
 export fn Engine.eng_new(r int) -> Self =>
-    Self { rpm: r }
+    { rpm: r }
 
 export fn Engine @rev() -> int =>
     @rpm
@@ -263,7 +263,7 @@ type Animal {
 }
 
 export fn Animal.an_new(l int) -> Self =>
-    Self { legs: l }
+    { legs: l }
 
 export fn Animal @description() -> int =>
     @legs

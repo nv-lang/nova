@@ -19,7 +19,7 @@ type Node {
 }
 
 fn make_node(v int, d int) -> Node =>
-    Node { val: v, depth: d }
+    { val: v, depth: d }
 
 // ── 1. Сентинельный объект выживает 50k аллокаций ──────────────────────────
 

@@ -1,0 +1,18 @@
+// EXPECT_COMPILE_ERROR undefined identifier `experimental_value`
+//
+// Plan 42.17 Ф.7: усиление feature_gate_use — раньше invisibility
+// gated-peer'а проверялась только комментарием. Здесь — настоящая
+// проверка: `experimental.nv` имеет `#cfg(feature = "experimental")`;
+// без `NOVA_FEATURES=experimental` peer skip'ается, его
+// `experimental_value()` НЕ видим импортирующему.
+
+module negative_capability.cfg_feature_gated_invisible
+
+import nova_tests.cfg.feature_gate.{stable_value}
+
+test "feature-gated symbol invisible without the feature" {
+    let _ = stable_value()
+    // experimental_value gated #cfg(feature = "experimental") — off.
+    let _ = experimental_value()
+    assert(true)
+}

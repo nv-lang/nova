@@ -1935,27 +1935,14 @@ fn is_folder_module_peer(path: &Path) -> bool {
     if entries.len() < 2 {
         return false;
     }
-    // Read `module X` decl первой non-comment строки каждого файла.
-    let mut decls: Vec<String> = Vec::with_capacity(entries.len());
+    // Plan 42.17 Ф.3: единый сканер `crate::imports::scan_module_decl`.
+    let mut decls: Vec<Vec<String>> = Vec::with_capacity(entries.len());
     for entry in &entries {
         let src = match std::fs::read_to_string(entry) {
             Ok(s) => s,
             Err(_) => return false,
         };
-        let mut decl: Option<String> = None;
-        for raw in src.lines() {
-            let line = raw.trim();
-            // Plan 42.16: module-level атрибуты (`#forbid`/`#cfg`/`#doc`)
-            // идут ПЕРЕД `module` — пропускаем их при поиске декларации.
-            if line.is_empty() || line.starts_with("//") || line.starts_with('#') {
-                continue;
-            }
-            if let Some(rest) = line.strip_prefix("module ") {
-                decl = Some(rest.trim().to_string());
-            }
-            break;
-        }
-        match decl {
+        match crate::imports::scan_module_decl(&src) {
             Some(d) => decls.push(d),
             None => return false,
         }
@@ -2817,26 +2804,14 @@ fn is_folder_module_dir(files: &[PathBuf]) -> bool {
     if files.len() < 2 {
         return false;
     }
-    let mut decls: Vec<String> = Vec::with_capacity(files.len());
+    // Plan 42.17 Ф.3: единый сканер `crate::imports::scan_module_decl`.
+    let mut decls: Vec<Vec<String>> = Vec::with_capacity(files.len());
     for f in files {
         let src = match std::fs::read_to_string(f) {
             Ok(s) => s,
             Err(_) => return false,
         };
-        let mut decl: Option<String> = None;
-        for raw in src.lines() {
-            let line = raw.trim();
-            // Plan 42.16: module-level атрибуты (`#forbid`/`#cfg`/`#doc`)
-            // идут ПЕРЕД `module` — пропускаем их при поиске декларации.
-            if line.is_empty() || line.starts_with("//") || line.starts_with('#') {
-                continue;
-            }
-            if let Some(rest) = line.strip_prefix("module ") {
-                decl = Some(rest.trim().to_string());
-            }
-            break;
-        }
-        match decl {
+        match crate::imports::scan_module_decl(&src) {
             Some(d) => decls.push(d),
             None => return false,
         }

@@ -1,0 +1,17 @@
+// EXPECT_COMPILE_ERROR undefined identifier `beta`
+//
+// Plan 42.17 Ф.6: facade `modules.reexport_selective` re-export'ит
+// `alpha` И `beta`. Этот consumer выбрал `import ....{alpha}` — только
+// `alpha`. `beta` (другой re-exported item) НЕ должен протечь в scope.
+// До Ф.6 re-exported items игнорировали селективный фильтр consumer'а.
+
+module negative_capability.reexport_selective_leak
+
+import nova_tests.modules.reexport_selective.{alpha}
+
+test "non-selected re-export does not leak" {
+    let _ = alpha(1)
+    // beta НЕ был выбран — обращение к нему должно быть ошибкой.
+    let _ = beta(1)
+    assert(true)
+}

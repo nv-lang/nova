@@ -1,7 +1,14 @@
 # Plan 45: `nova doc` — production-grade documentation tooling
 
 > **Создан 2026-05-14**, переписан с чистого листа 2026-05-14
-> (production-rewrite после первой draft-версии).
+> (production-rewrite после первой draft-версии). **Ревизия 2026-05-15:**
+> spec-deltas перенумерованы D100-D103 → **D104-D107** (D100-D103 заняты:
+> D100 `_module.nv` peer, D101 `#doc` module-attr, D102 named params,
+> D103 preemption); реконсиляция с уже отгруженными D100/D101; incremental
+> cache промоутнут из «optional» в обязательную фазу; stdlib doc-pass
+> выделен из Plan 45 как отдельный трек; закрыты разрывы между §19
+> (заявления) и фазами (signature-aware search, page-size budget);
+> контрактный IR уточнён (`MarkdownExpr` → `ContractExpr` из Plan 33).
 >
 > **Контекст:** в Plan 42 правило G отвергло `overview.nv` convention
 > (manual signature copy → drift). Replacement = auto-tooling,
@@ -149,10 +156,29 @@
 
 ## 2. Что меняет в языке (spec deltas)
 
-Plan 45 вводит **четыре** spec-decisions (новые D-номера выбираем при
-ревью; placeholder D100-D103):
+Plan 45 вводит **четыре** spec-decisions: **D104, D105, D106, D107**
+(следующий свободный блок после D103 — preemption).
 
-### D100. Doc-comment syntax: `///` outer, `//!` inner
+### Реконсиляция с уже существующими D100/D101
+
+D100-D103 **заняты** и Plan 45 их **не трогает**:
+
+- **D100** (`_module.nv` peer convention) — не связан с doc.
+- **D101** (`#doc "..."` module-level attribute, отгружен Plan 42.11) —
+  **остаётся**. Plan 45 строится поверх него:
+  - `//!` (D104) — rich multi-line module-doc-comment — **сосуществует**
+    с `#doc "..."` (D101). `nova doc` мерджит оба источника module-doc
+    в детерминированном порядке: сначала все `#doc "..."` строки (в
+    порядке появления, multi-peer — alphabetical filename), затем `//!`
+    блок. `//!` — основная форма (markdown, multi-line, intra-links);
+    `#doc "..."` — терсная атрибутная альтернатива для одной строки.
+  - **Namespace `#doc`** используется обеими decisions, парсер
+    различает по форме аргумента (D96): `#doc "строка"` — module-text
+    (D101); `#doc(key = val)` / `#doc(flag)` — doc-tool директивы
+    (D105). Это зафиксировано в D105 явно, чтобы не было tag-soup.
+- **D102** (named params), **D103** (preemption) — не связаны.
+
+### D104. Doc-comment syntax: `///` outer, `//!` inner
 
 - `///` (тройной слэш) **до** declaration — attaches к следующему
   `fn` / `type` / `const` / nested `module` / `effect` / `handler` / `protocol`.
@@ -168,10 +194,19 @@ Plan 45 вводит **четыре** spec-decisions (новые D-номера 
   парсится только в `nova doc`, не в компиляторе.
 - **Несовместимо с regular `//`** — `//` остаётся regular
   comment, drop'ается лексером.
+- **Сосуществование с D101 `#doc "..."`** — `//!` и `#doc "..."` оба
+  валидны для module-doc; `nova doc` мерджит (см. «Реконсиляция»).
+  `//!` рекомендуется для нового кода (richer), `#doc` не deprecated.
 
-### D101. Doc attributes: `#deprecated`, `#since`, `#stable`, `#unstable`, `#experimental`, `#hide_doc`, `#doc_alias`, `#doc(inline|no_inline)`
+### D105. Doc attributes: `#deprecated`, `#since`, `#stable`, `#unstable`, `#experimental`, `#hide_doc`, `#doc_alias`, `#doc(inline|no_inline)`
 
-Все используют D96 синтаксис (`#name` / `#name(args)`).
+Все используют D96 синтаксис (`#name` / `#name(args)`). **Namespace
+`#doc`:** key-form (`#doc(inline)`, `#doc(test_handlers = "...")`,
+`#doc(summary = "...")`) — это D105 doc-tool директивы; string-form
+(`#doc "..."`) — module-text (D101). Парсер различает по аргументу
+(parenthesized args vs string literal). Item-level top-level атрибуты
+(`#deprecated`, `#since`, `#stable`, ...) — отдельные имена, не под
+`#doc`.
 
 - `#deprecated(since = "0.4.0", note = "use foo instead")` —
   triggers compile-time warning при использовании, рендерится
@@ -193,7 +228,7 @@ Plan 45 вводит **четыре** spec-decisions (новые D-номера 
   ссылка. Default = `no_inline` для cross-module, `inline` для
   same-package.
 
-### D102. Doc-test semantics
+### D106. Doc-test semantics
 
 - Code-blocks в doc-comments с лангом `nova` (или без лангом =
   default `nova`) — **doc-tests**.
@@ -214,7 +249,7 @@ Plan 45 вводит **четыре** spec-decisions (новые D-номера 
   `#doc(test_handlers = "std.testing.handlers")` на module-level
   auto-importit testing handlers в каждый doc-test.
 
-### D103. JSON output schema v1
+### D107. JSON output schema v1
 
 - Schema file: `nova-doc-schema-v1.json` (JSON Schema draft 2020-12).
 - Versioning: `schema_version: 1`. Внутри v1 — только additive
@@ -234,7 +269,7 @@ Plan 45 вводит **четыре** spec-decisions (новые D-номера 
 .nv files
    ↓ (Plan 35 resolve_imports_inline)
 Module + peer_files (FileId-attributed)
-   ↓ (lexer: D100 // /// //!)
+   ↓ (lexer: D104 // /// //!)
 TokenStream с DocComment(span, content, kind=outer|inner)
    ↓ (parser: attach docs + attrs к items)
 AST с Item { ..., doc: Option<DocBlock>, attrs: Vec<Attr> }
@@ -354,17 +389,24 @@ pub struct DocFn {
         pub effects: Vec<EffectRef>,        // resolved links to effects
         pub raises: Vec<TypeRef>,           // Fail[E] flattened
         pub contracts: Contracts {
-            pub requires: Vec<MarkdownExpr>,
-            pub ensures:  Vec<MarkdownExpr>,
-            pub reads:    Vec<Expr>,
-            pub modifies: Vec<Expr>,
-            pub decreases: Option<Expr>,
-            pub invariants: Vec<MarkdownExpr>,
+            pub requires:   Vec<ContractExpr>,
+            pub ensures:    Vec<ContractExpr>,
+            pub reads:      Vec<ContractExpr>,
+            pub modifies:   Vec<ContractExpr>,
+            pub decreases:  Option<ContractExpr>,
+            pub invariants: Vec<ContractExpr>,
             pub verify_status: VerifyStatus, // Proven | Timeout(ms) |
                                              // Unverified | Trusted |
                                              // RuntimeFallback
         },
     },
+    // ContractExpr — НЕ markdown. Реальное контрактное выражение из
+    // Plan 33 AST + детерминированный pretty-print для рендеринга.
+    // pub struct ContractExpr {
+    //     pub ast: ContractExprId,   // ссылка в Plan 33 contract-AST
+    //     pub pretty: String,        // canonical pretty-print (deterministic)
+    //     pub note: Option<MarkdownBlock>, // опц. прозаический комментарий автора
+    // }
     pub doc: Option<DocBlock>,
     pub sections: StandardSections,     // см. ниже
     pub attrs: ItemAttrs,
@@ -380,7 +422,7 @@ pub struct DocType {
         Newtype { inner: TypeRef },
     },
     pub generics: Vec<GenericParam>,
-    pub invariant: Option<MarkdownExpr>, // record-level invariant (33.2)
+    pub invariant: Option<ContractExpr>, // record-level invariant (33.2)
     pub protocol_impls: Vec<ProtocolRef>, // структурно резолвится
     pub methods: Vec<DocFn>,            // методы на типе
     pub doc: Option<DocBlock>,
@@ -699,7 +741,7 @@ exit codes (Plan 36 / D95):
 
 ---
 
-## 9. Doc-tests pipeline (D102)
+## 9. Doc-tests pipeline (D106)
 
 1. **Extract:** в `doc/doctest.rs` обходим DocModel, собираем
    `(item_id, block_idx, lang, modifiers, code)`.
@@ -780,17 +822,25 @@ Output: markdown table (default), JSON (`--format json`), exit 1
 
 ## 12. Phases
 
-### Ф.0 — Spec (D100-D103)
+### Ф.0 — Spec (D104-D107)
 
-- Написать 4 D-decisions в `spec/decisions/03-syntax.md` (D100, D102)
-  и `09-tooling.md` (D101, D103).
+- Написать 4 D-decisions: **D104** (doc-comment syntax) в
+  `spec/decisions/03-syntax.md`; **D105** (doc attributes), **D106**
+  (doc-test semantics), **D107** (JSON schema v1) в `09-tooling.md`.
+- **D105 обязан cross-ref'ить существующий D101** (`#doc "..."`
+  module-attr, 07-modules.md) и зафиксировать namespace-разделение
+  `#doc "строка"` vs `#doc(key=val)`. **D104 обязан зафиксировать
+  сосуществование `//!` с D101**.
+- Перед стартом — верифицировать, что D104-D107 свободны (на момент
+  ревизии плана 2026-05-15 max = D103). При коллизии — взять следующий
+  свободный блок и обновить плана-внутренние ссылки.
 - В overview.md / revolutionary.md — упомянуть `nova doc` как
   shipping, не roadmap.
-- Acceptance: spec reviewed, D-numbers assigned, history/evolution.md
-  обновлён.
+- Acceptance: spec reviewed, D104-D107 не коллидируют, history/evolution.md
+  обновлён, D101/D100 не изменены (только cross-ref'ятся).
 - Размер: ~600-900 LOC spec.
 
-### Ф.1 — Lexer (D100)
+### Ф.1 — Lexer (D104)
 
 - `TokenKind::DocComment { kind: Outer | Inner, content: String,
   span: Span }`.
@@ -812,7 +862,7 @@ Output: markdown table (default), JSON (`--format json`), exit 1
   item — warning).
 - Размер: ~250-400 LOC + AST changes (~50 LOC).
 
-### Ф.3 — Doc attributes (D101)
+### Ф.3 — Doc attributes (D105)
 
 - Расширить attribute recognizer: `#deprecated`, `#since`, `#stable`,
   `#unstable`, `#experimental`, `#hide_doc`, `#doc_alias`,
@@ -872,7 +922,7 @@ Output: markdown table (default), JSON (`--format json`), exit 1
 - Tests: golden file comparison на тех же 5-7 модулях.
 - Размер: ~300-500 LOC.
 
-### Ф.9 — JSON renderer + schema (D103)
+### Ф.9 — JSON renderer + schema (D107)
 
 - `doc/render_json.rs` — serde-derived, stable field order
   (alphabetical внутри struct, deterministic).
@@ -883,14 +933,28 @@ Output: markdown table (default), JSON (`--format json`), exit 1
   (DocModel → JSON → parse → equal).
 - Размер: ~400-600 LOC + schema файл ~500-1000 lines.
 
-### Ф.10 — HTML renderer + search index
+### Ф.10 — HTML renderer + signature-aware search index
 
 - `doc/render_html.rs` + embedded CSS/JS в `assets/doc-html/`.
 - Theme via CSS variables + `prefers-color-scheme`.
-- Search index emit alongside.
-- Reproducible (SOURCE_DATE_EPOCH).
+- **Signature-aware search index** (не name-only — это и есть «лучше
+  rustdoc», §19.2). Индексируемые поля на каждый item: `name`,
+  `aliases` (`#doc_alias`), `summary`, **`effects[]`**, **`raises[]`**,
+  **`contract_status`** (proven/unverified/...), `kind`, `stability`.
+  Запросы вида «functions raising NotFound», «realtime functions»,
+  «unverified contracts» — резолвятся клиентским индексом. Формат
+  индекса — часть schema-контракта (детерминированный, versioned).
+- **Page-size budget.** Embedded assets shared (один CSS, один JS на
+  весь сайт, не per-page), no framework, no per-page inline JS.
+  Acceptance — budget-тест в Ф.19: средний размер item-страницы
+  ≤ заданного порога (фиксируется в Ф.10, напр. 50 KB без assets).
+- Source links `[src]` → file:line; `--source-html` рендерит .nv
+  highlighted alongside.
+- Reproducible (SOURCE_DATE_EPOCH, deterministic ordering, embedded
+  assets — byte-identical между прогонами).
 - Tests: smoke (HTML парсится валидным parser'ом), search index JSON
-  валиден, no broken anchors.
+  валиден против своей схемы, no broken anchors, page-size budget,
+  signature-search возвращает ожидаемые items на golden corpus.
 - Размер: ~800-1200 LOC + ~500 LOC assets.
 
 ### Ф.11 — Man-page renderer
@@ -931,14 +995,26 @@ Output: markdown table (default), JSON (`--format json`), exit 1
 - Tests: smoke (touch file → re-render fires once).
 - Размер: ~150-250 LOC.
 
-### Ф.16 — Incremental cache (post-MVP, optional)
+### Ф.16 — Incremental cache (обязательная фаза)
 
-- On-disk cache (blake3-hashed DocModel per module).
-- Invalidate: file mtime + content hash.
-- `nova doc --no-cache` для CI bisect.
-- **Note:** не блокер для прода. Прод-CI чаще запускает clean.
-  Phase отдельно после fields'ового feedback.
-- Размер: ~300-500 LOC.
+Не «optional» — это load-bearing для «быстрее rustdoc» (§19.2 первая
+жалоба: rustdoc doc-tests медленные, CI bottleneck). Production-grade
+doc-tooling обязан не пересчитывать неизменённое.
+
+- On-disk cache: blake3-hashed **DocModel per module** + **doc-test
+  results per test** (id + input-hash → pass/fail/duration).
+- Invalidate: content hash входных `.nv` (не mtime — mtime ненадёжен
+  в CI/git checkout) + hash зависимостей (изменился импортируемый
+  модуль → инвалидируется зависимый DocModel) + nova_version +
+  schema_version.
+- Cache key включает флаги, влияющие на вывод (`--include-private`,
+  `--theme`, ...), чтобы не отдать stale-вывод под другими флагами.
+- `nova doc --no-cache` — форсировать clean (CI bisect, отладка).
+- Cache-директория — `<workspace>/.nova/doc-cache/`, в `.gitignore`.
+- Tests: touch неизменяющий файл → cache hit; изменить тело функции →
+  только её DocModel + зависимые инвалидируются; изменить импорт →
+  каскад; doc-test с неизменным input → результат из кэша.
+- Размер: ~350-550 LOC.
 
 ### Ф.17 — CI integration
 
@@ -947,14 +1023,26 @@ Output: markdown table (default), JSON (`--format json`), exit 1
 - pre-commit hook example.
 - Размер: ~50 LOC config + docs.
 
-### Ф.18 — Stdlib pass
+### Ф.18 — Stdlib doc-pass — отдельный трек, не блокер закрытия Plan 45
 
-- Написать doc-comments для всех export items в `std/*`.
-- Doc-tests для критических функций.
-- `nova doc --workspace --check --doc-tests` обязан зелёным.
-- Multi-session (стdlib ~50 модулей, по 5-10 за session).
-- Acceptance gate для closing Plan 45.
-- Размер: ~3000-5000 LOC doc-comments + tests.
+Документирование всего `std/` (~50 модулей, ~3000-5000 LOC
+doc-comments) — это **не часть Plan 45**. Plan 45 — это **инструмент**;
+наполнение stdlib документацией — отдельный долгоиграющий трек,
+координируемый с Plan 18 (stdlib roadmap). Бандлить 3-5k LOC
+doc-writing в Plan 45 = делать его неуказуемо-закрываемым.
+
+В рамках Plan 45 (как доказательство, что инструмент работает на
+реальном коде):
+
+- Полностью задокументировать **репрезентативный набор** — 3-5 std
+  модулей разных видов: folder-module, single-file, модуль с
+  эффектами, модуль с контрактами, модуль с protocol/handler.
+- На этом наборе `nova doc --workspace --check --doc-tests` обязан
+  быть зелёным — это acceptance-gate Plan 45.
+- Полный проход по `std/` — трекать отдельным планом (или как часть
+  Plan 18), Plan 45 от него не зависит.
+- Размер (в рамках Plan 45): ~400-700 LOC doc-comments + doc-tests на
+  репрезентативном наборе.
 
 ### Ф.19 — Tests + golden files
 
@@ -994,18 +1082,24 @@ Output: markdown table (default), JSON (`--format json`), exit 1
 
 ## 13. Acceptance criteria (closing plan)
 
-- [ ] D100-D103 written, reviewed, merged в spec.
+- [ ] D104-D107 written, reviewed, merged в spec; D100/D101 не
+      изменены, только cross-ref'нуты; namespace `#doc` разделён.
 - [ ] `nova doc <module>` produces markdown для single-file + folder
       module.
 - [ ] `nova doc --format json` validates against embedded schema v1.
 - [ ] `nova doc --format html -o site/` produces standalone site
-      (search работает, theme switches).
+      (signature-aware search работает — запрос «raises NotFound»
+      возвращает ожидаемое; theme switches).
+- [ ] HTML page-size budget соблюдён (Ф.10 порог).
 - [ ] `nova doc --check` exit 1 на missing doc / broken link /
       failing doc-test.
 - [ ] `nova doc --diff baseline.json` detects all categories из §11.
-- [ ] `nova doc --workspace --check --doc-tests` зелёный на полном
-      `std/`.
-- [ ] All export items в `std/` имеют doc-comments.
+- [ ] `nova doc --workspace --check --doc-tests` зелёный на
+      **репрезентативном наборе** std-модулей (Ф.18) — proof, что
+      инструмент работает на реальном коде. Полный проход по `std/` —
+      отдельный трек, не блокер.
+- [ ] Incremental cache: повторный `nova doc` без изменений — cache
+      hit; точечное изменение инвалидирует только затронутое + зависимое.
 - [ ] `nova_tests/doc/*` — 20+ тестов, все PASS.
 - [ ] HTML output reproducible byte-identical с SOURCE_DATE_EPOCH.
 - [ ] JSON output deterministic (sorted keys, stable item order).
@@ -1035,12 +1129,15 @@ Output: markdown table (default), JSON (`--format json`), exit 1
 | Ф.13 diff | 300-500 | 100-150 |
 | Ф.14 check | 200-300 | 100-150 |
 | Ф.15 watch | 150-250 | 50 |
-| Ф.16 cache (opt) | 300-500 | 100 |
+| Ф.16 cache (обязательная) | 350-550 | 150-200 |
 | Ф.17 CI | 50 | 100 |
-| Ф.18 stdlib pass | — | 3000-5000 |
+| Ф.18 stdlib doc-pass (репрезентативный набор) | — | 400-700 |
 | Ф.19 tests | — | 800-1200 |
 | Ф.20 docs | — | 600-1000 |
-| **Total** | **~6000-9000** | **~7000-11000** |
+| **Total** | **~6000-9000** | **~4500-6800** |
+
+> Полный stdlib doc-pass (~3000-5000 LOC doc-comments на ~50 модулей) —
+> **вне** этих оценок: отдельный трек, координируется с Plan 18.
 
 Сравнительно: rustdoc ≈ 30k LOC Rust (без markdown crate). Naш план
 скромнее за счёт reuse compiler infrastructure (parser, resolver,
@@ -1092,6 +1189,8 @@ MVP-cut (Ф.0-Ф.9 + Ф.12 + Ф.14 + Ф.19) — 5-7 сессий до точки
 - ✅ Plan 24 (test_runner subcommands) — reuse для doc-tests.
 - ✅ Plan 33.1 V1 (contracts) — нужен для contract rendering + must_verify.
 - ✅ D96 (attributes) — нужен для doc-attrs.
+- ✅ Plan 42.11 / D101 (`#doc "..."` module-attr) — отгружен; D104 `//!`
+  и D105 doc-attrs строятся поверх, не конфликтуют (см. §2).
 
 **Non-blocking but improves:**
 - Plan 42.4 (per-file imports scope) — без него folder-module
@@ -1119,7 +1218,12 @@ MVP-cut (Ф.0-Ф.9 + Ф.12 + Ф.14 + Ф.19) — 5-7 сессий до точки
 - D89 (EXPECT-маркеры) — reuse в doc-test runner.
 - D95 (CLI conventions) — `nova doc` follows.
 - D96 (attribute syntax) — reuse для doc-attrs.
-- D100-D103 (new) — Plan 45 spec deltas.
+- D100 (`_module.nv` peer) — **существующий**, не изменяется; peers
+  могут содержать `#doc`.
+- D101 (`#doc "..."` module-attr, Plan 42.11) — **существующий**, не
+  изменяется; D104 `//!` сосуществует с ним, D105 делит namespace `#doc`.
+- D104-D107 (new) — Plan 45 spec deltas (doc-comment syntax, doc
+  attributes, doc-test semantics, JSON schema v1).
 
 ---
 
@@ -1140,7 +1244,7 @@ MVP-cut (Ф.0-Ф.9 + Ф.12 + Ф.14 + Ф.19) — 5-7 сессий до точки
 5. **Privacy boundary для doc-tests.** Doc-test для `export fn` —
    может ли test обращаться к private items того же модуля? **Решение:**
    да, doc-test имеет module-private access (как Rust). Документируем
-   в D102.
+   в D106.
 
 ---
 
@@ -1157,9 +1261,9 @@ issues, Reddit r/rust, Hacker News.
 |---|---|---|
 | Нет intra-doc links — `Foo` в комментарии не кликабельно | golang/go #34866, #41497 | Ф.6: `[Foo]` / `[mod.Foo]` / `[Self.method]` с резолвом через name-resolver, fail-loud в `--check` |
 | Нет структурных секций (Errors/Panics/Examples) — только конвенции | dev.to discussions | Ф.5: распознаваемые `# Effects` / `# Errors` / `# Panics` / `# Safety` / `# Contracts` / `# Since` / `# See also` / `# Deprecated`, auto-derive из signature |
-| Doc-tests слабые — `ExampleFoo` в отдельном test-файле, оторвано от документируемой функции | golang/go #16851 | D102 + Ф.7: code-blocks **внутри** doc-comment'а, рядом с кодом; модификаторы `no_run`/`ignore`/`compile_fail`/`should_panic`/`must_verify` |
-| Нет машино-читаемого deprecation — только `Deprecated:` в прозе | golang/go #54546 | D101: `#deprecated(since=..., note=...)` + parse-time warning + render-time banner; в JSON — структурно |
-| Нет JSON output — godoc/pkg.go.dev только HTML | golang/go #21342 | D103 + Ф.9: stable JSON schema v1 как первоклассный output, embedded JSON Schema для валидации |
+| Doc-tests слабые — `ExampleFoo` в отдельном test-файле, оторвано от документируемой функции | golang/go #16851 | D106 + Ф.7: code-blocks **внутри** doc-comment'а, рядом с кодом; модификаторы `no_run`/`ignore`/`compile_fail`/`should_panic`/`must_verify` |
+| Нет машино-читаемого deprecation — только `Deprecated:` в прозе | golang/go #54546 | D105: `#deprecated(since=..., note=...)` + parse-time warning + render-time banner; в JSON — структурно |
+| Нет JSON output — godoc/pkg.go.dev только HTML | golang/go #21342 | D107 + Ф.9: stable JSON schema v1 как первоклассный output, embedded JSON Schema для валидации |
 | Generics в documentation поверхностные, late arrival | golang/go #54393 | Ф.4: `GenericParam` с bounds (Plan 15) — структурно в DocModel |
 | Subpackages discovery awkward — clicking through tree | пользовательские отзывы pkg.go.dev | Ф.10: sidebar + поиск + folder-module aggregation (Plan 42 peers видны сразу) |
 | Нет semantic diff / changelog generation | golang/go #51599 | Ф.13: `--diff baseline.json` с 9 категориями (Removed/SigChange/EffectAdd/ContractTighten/...) |
@@ -1171,24 +1275,24 @@ issues, Reddit r/rust, Hacker News.
 | Жалоба | Источник | Как Nova решает |
 |---|---|---|
 | Doc-tests **медленные** — каждый = отдельная компиляция, CI bottleneck | rust-lang/rust #45599, #67295 | Ф.7: reuse Plan 24 parallel test_runner + `--jobs N`; Ф.16: incremental cache (blake3 hash inputs) skip unchanged tests |
-| Doc-tests не имеют IDE support — текст внутри строк | rust-lang/rust #50912 | D102: doc-tests synthesizes реальные `.nv` файлы во временный каталог, LSP видит как обычные test modules |
+| Doc-tests не имеют IDE support — текст внутри строк | rust-lang/rust #50912 | D106: doc-tests synthesizes реальные `.nv` файлы во временный каталог, LSP видит как обычные test modules |
 | `[Foo]` не резолвится — confusing errors | rust-lang/rust #74481, #83864 | Ф.6: error message указывает file:line, conflicting candidates, candidate suggestion (LLM-friendly) |
 | HTML output **гигантский** — много CSS/JS на каждой странице | rust-lang/rust #76526 | Ф.10: embedded assets shared, no template engine, no per-page JS framework; smoke test проверяет page-size budget |
 | Search ограничен — name-only, signature search скрыт | rust-lang/rust #51030 | Ф.10 + `#doc_alias`: search index включает name + aliases + effect-row + raises + contract status; LLM может искать «functions raising NotFound» |
 | `#[doc(hidden)]` — **opt-out**, exports leak by default | rust-lang/rust #54574 | D5: `export` — opt-in. По умолчанию **private**. Никаких leak'ов. |
-| JSON output (`rustdoc --output-format json`) — **только nightly**, schema нестабильна | rust-lang/rust #76578 | D103: stable schema v1 на **stable** компиляторе, embedded JSON Schema, additive-only changes в v1 |
+| JSON output (`rustdoc --output-format json`) — **только nightly**, schema нестабильна | rust-lang/rust #76578 | D107: stable schema v1 на **stable** компиляторе, embedded JSON Schema, additive-only changes в v1 |
 | Нет нативного API diff — `cargo public-api` третий-сторонний | rust-lang/rust #58197 | Ф.13: built-in `--diff` с severity categories + `--deny-breaking` exit code для release-gate |
 | Inter-crate links ненадёжны (`--extern-html-root-url`) | rust-lang/rust #56935 | Ф.6: workspace-scoped index в `O(items)` map'у, cross-module = `O(1)` resolve, no external URL configuration |
-| Doc-tests не могут share setup — `# use foo::*` hack | rust-lang/rust #67918 | D102: `#doc(test_handlers = "...")` module-level + folder-module peer `_doctest_setup.nv` (Plan 42 даёт нам peers, никаких hidden hacks) |
+| Doc-tests не могут share setup — `# use foo::*` hack | rust-lang/rust #67918 | D106: `#doc(test_handlers = "...")` module-level + folder-module peer `_doctest_setup.nv` (Plan 42 даёт нам peers, никаких hidden hacks) |
 | HTML reproducibility issues — версии rustdoc emit разный HTML | rust-lang/rust #88791 | Ф.10 + Ф.19 acceptance: byte-identical с `SOURCE_DATE_EPOCH`, reproducibility test в corpus |
 | Нет native man-page output | rust-lang/rust #21178 | Ф.11: groff output из того же DocModel |
-| Module-level summary обрезается на первом предложении — fragile | rust-lang/rust #74481 | Ф.5: explicit `summary` extraction правило документировано в D100; `#doc(summary = "...")` override |
-| `pub use` re-export confusion — `#[doc(inline)]` per-item, забывают | rust-lang/rust #50847 | D101: `#doc(inline)` default для same-package, `no_inline` для cross-package — sensible defaults, override только когда нужно |
+| Module-level summary обрезается на первом предложении — fragile | rust-lang/rust #74481 | Ф.5: explicit `summary` extraction правило документировано в D104; `#doc(summary = "...")` override |
+| `pub use` re-export confusion — `#[doc(inline)]` per-item, забывают | rust-lang/rust #50847 | D105: `#doc(inline)` default для same-package, `no_inline` для cross-package — sensible defaults, override только когда нужно |
 | Нет watch mode — community уходит в `cargo watch` | rust-lang/rust #44095 | Ф.15: `--watch` built-in, debounce 200ms, re-resolve only changed module + dependents |
-| Нет "stability index" — нельзя увидеть весь `unstable`/`experimental` API сразу | rust-lang/rust #43466 | D101: `#stable`/`#unstable`/`#experimental` атрибут; `--since` filter; в JSON структурно |
-| Нет deprecation timeline — `since=` есть, `until=` нет | rust-lang/rust #58622 | D101: `#deprecated(since = "0.4", until = "1.0", note = "...")` — `until` ставит deadline для удаления, CI gate `--deny-overdue-deprecations` |
+| Нет "stability index" — нельзя увидеть весь `unstable`/`experimental` API сразу | rust-lang/rust #43466 | D105: `#stable`/`#unstable`/`#experimental` атрибут; `--since` filter; в JSON структурно |
+| Нет deprecation timeline — `since=` есть, `until=` нет | rust-lang/rust #58622 | D105: `#deprecated(since = "0.4", until = "1.0", note = "...")` — `until` ставит deadline для удаления, CI gate `--deny-overdue-deprecations` |
 | Не могут включить произвольные markdown файлы | rust-lang/rust #44732 | `#doc(include = "CHANGELOG.md")` атрибут (рассматривается в Ф.3 advanced; LP open question) |
-| Нет hide-test-from-output-but-run — `# ` prefix ugly | rust-lang/rust #67918 | D102: doc-test code не показывается в HTML если префиксован `# ` (Rust convention принят, но docs explicit) или `#doc(test_only = "...")` блок |
+| Нет hide-test-from-output-but-run — `# ` prefix ugly | rust-lang/rust #67918 | D106: doc-test code не показывается в HTML если префиксован `# ` (Rust convention принят, но docs explicit) или `#doc(test_only = "...")` блок |
 
 ### 19.3. TypeDoc / TSDoc
 
@@ -1196,19 +1300,19 @@ issues, Reddit r/rust, Hacker News.
 |---|---|---|
 | Медленный на больших проектах — TS compiler API bottleneck | TypeStrong/typedoc #2155, #1944 | Reuse compiler-codegen — single-pass parse + type-check; Ф.16 incremental cache |
 | HTML output dated — выглядит как jsdoc 2010 | TypeStrong/typedoc #1844, #2231 | Ф.10: modern layout, sticky TOC, client-side search, theme variables; comparison points = rustdoc layout |
-| Multiple competing tag conventions (JSDoc vs TSDoc) — fragmented | microsoft/tsdoc #4 | D100 + D101: **один** конвент (`///` + `# Section` + `#attr`), spec'нут, не дополняется ad-hoc |
-| `@example` parsing inconsistent — иногда требует lang hint | TypeStrong/typedoc #1672 | D102: lang tag формализован (default = `nova` если опущен), модификаторы документированы |
-| Нет doc-test runner — `@example` не выполняется | microsoft/tsdoc #211 | D102 + Ф.7: doc-tests реально компилируются и запускаются через test_runner |
-| Plugin ecosystem fragmented — темы ломаются между версиями | TypeStrong/typedoc #2089 | Никаких user-plugins. Theme = CSS variables + `--css` override. Schema lock-in через D103. |
+| Multiple competing tag conventions (JSDoc vs TSDoc) — fragmented | microsoft/tsdoc #4 | D104 + D105: **один** конвент (`///` + `# Section` + `#attr`), spec'нут, не дополняется ad-hoc |
+| `@example` parsing inconsistent — иногда требует lang hint | TypeStrong/typedoc #1672 | D106: lang tag формализован (default = `nova` если опущен), модификаторы документированы |
+| Нет doc-test runner — `@example` не выполняется | microsoft/tsdoc #211 | D106 + Ф.7: doc-tests реально компилируются и запускаются через test_runner |
+| Plugin ecosystem fragmented — темы ломаются между версиями | TypeStrong/typedoc #2089 | Никаких user-plugins. Theme = CSS variables + `--css` override. Schema lock-in через D107. |
 | Нет breaking-change detection | TypeStrong/typedoc #1789 | Ф.13: built-in diff |
-| `@deprecated` не connect к migration paths | TypeStrong/typedoc #1916 | D101: `#deprecated(note = "use foo instead — [foo.bar]")` — поддержка intra-doc link в note |
+| `@deprecated` не connect к migration paths | TypeStrong/typedoc #1916 | D105: `#deprecated(note = "use foo instead — [foo.bar]")` — поддержка intra-doc link в note |
 | `{@link Foo}` fragile, sometimes doesn't resolve | TypeStrong/typedoc #2138 | Ф.6: `[Foo]` резолвится через type-checker name-resolver, не через regex match |
 | Module/namespace/file boundaries confusing | TypeStrong/typedoc #1830 | D29 rev-3: `parent.X` — один формат; folder-module = explicit; namespace concept не вводим |
-| Нет JSON schema для `--json` output — schema меняется | TypeStrong/typedoc #1942 | D103: embedded JSON Schema v1, stability commitment |
+| Нет JSON schema для `--json` output — schema меняется | TypeStrong/typedoc #1942 | D107: embedded JSON Schema v1, stability commitment |
 | Inheritance docs incomplete | TypeStrong/typedoc #1827 | Ф.4: protocols structural, implementors auto-listed; effects + handlers — explicit relationship rendered |
-| Нет проверки что `@example` компилируется | TypeStrong/typedoc #2090 | D102: compile_fail модификатор делает «не должен компилироваться» first-class; default = «должен» |
-| Нет "internal but exported" mark — `@internal` recognized inconsistently | TypeStrong/typedoc #1843 | D101: `#hide_doc` — item exported (real export), но скрыт из docs. Bright line, не tag-soup. |
-| AI consumption — must scrape HTML or wrangle unstable `--json` | community feedback | D103 + AI-first design: stable JSON schema v1, all signatures structural, ready для LLM tool use |
+| Нет проверки что `@example` компилируется | TypeStrong/typedoc #2090 | D106: compile_fail модификатор делает «не должен компилироваться» first-class; default = «должен» |
+| Нет "internal but exported" mark — `@internal` recognized inconsistently | TypeStrong/typedoc #1843 | D105: `#hide_doc` — item exported (real export), но скрыт из docs. Bright line, не tag-soup. |
+| AI consumption — must scrape HTML or wrangle unstable `--json` | community feedback | D107 + AI-first design: stable JSON schema v1, all signatures structural, ready для LLM tool use |
 
 ### 19.4. Общие проблемы всех трёх — где Nova **уникально** лучше
 
@@ -1253,7 +1357,7 @@ issues, Reddit r/rust, Hacker News.
 6. **AI-first JSON schema с первого дня.**
    - Все три: JSON output либо отсутствует (godoc), либо nightly +
      unstable (rustdoc), либо schema-less (TypeDoc).
-   - Nova: D103 — stable schema v1 на release builds, embedded JSON
+   - Nova: D107 — stable schema v1 на release builds, embedded JSON
      Schema, validated в Ф.19 corpus tests. LLM tool-call может
      consume output напрямую.
 
@@ -1277,12 +1381,12 @@ issues, Reddit r/rust, Hacker News.
 10. **Stability tiers + deprecation timeline.**
     - Rust: `#[deprecated(since, note)]` — нет `until`.
     - Go/TS: free-text convention.
-    - Nova: D101 + Ф.14 — `#deprecated(since, until, note)` +
+    - Nova: D105 + Ф.14 — `#deprecated(since, until, note)` +
       `--deny-overdue-deprecations` CI gate.
 
 11. **`--since <version>` filter** для changelog generation.
     - Никто из трёх не имеет.
-    - Nova: Ф.12 — built-in, использует `#since` attr из D101.
+    - Nova: Ф.12 — built-in, использует `#since` attr из D105.
 
 12. **`--check` как обязательный CI gate с полным spectrum lint'ов.**
     - Rust: `cargo doc` warnings — best-effort.

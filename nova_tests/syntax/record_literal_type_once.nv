@@ -1,0 +1,48 @@
+// Plan 51: record-литерал — тип пишется ровно один раз.
+// Каноничные формы компилируются; sum-coercion (тип литерала ≠
+// return-тип) НЕ сломан.
+
+module syntax.record_literal_type_once
+
+type Pt { x int, y int }
+type Shape | Circle { r int } | Square { s int }
+
+// `=>`-тело: тип в return-аннотации, литерал без префикса.
+fn mk(a int, b int) -> Pt => { x: a, y: b }
+// `-> Self => { }`: Self резолвится к receiver-типу.
+fn Pt.origin() -> Self => { x: 0, y: 0 }
+// sum-coercion: тип литерала (`Circle`) ≠ return-тип (`Shape`) →
+// префикс нужен, правило «type once» не срабатывает.
+fn mk_circle(r int) -> Shape => Circle { r: r }
+
+test "=>-body typeless record literal" {
+    let p = mk(3, 4)
+    assert(p.x == 3)
+    assert(p.y == 4)
+}
+
+test "-> Self => { } resolves Self" {
+    assert(Pt.origin().x == 0)
+}
+
+test "let with annotation, typeless literal" {
+    let p Pt = { x: 7, y: 8 }
+    assert(p.x == 7)
+    assert(p.y == 8)
+}
+
+test "let without annotation, typed literal" {
+    let q = Pt { x: 1, y: 2 }
+    assert(q.x == 1)
+}
+
+test "sum-coercion not broken (literal type != return type)" {
+    let s = mk_circle(5)
+    // match в let-позиции (arms возвращают int) — `mk_circle` строит
+    // `Circle { r: 5 }` через sum-coercion из `-> Shape => Circle { ... }`.
+    let res = match s {
+        Circle { r } => r
+        Square { s } => -1
+    }
+    assert(res == 5)
+}

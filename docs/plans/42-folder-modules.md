@@ -3,6 +3,12 @@
 > **Создан 2026-05-12, ревизия 2026-05-13** (Этап 95 + audit с чистого
 > листа против Go/Rust production-практик).
 >
+> **СТАТУС 2026-05-14:** MVP + sub-plans **42.01-42.17 закрыты**.
+> Sub-plans пронумерованы цифрами с leading zeros (`42.01`, …, `42.17`);
+> старая буквенная нумерация «42.A/42.B» в тексте ниже — **legacy**,
+> мигрирована (42.A → 42.10, 42.B → [Plan 45](45-nova-doc.md)). Финальный
+> audit (Plan 42.17) закрыл doc drift, dead code, Rule H, слабые тесты.
+>
 > Реализует [D29 rev-2](../../spec/decisions/07-modules.md#d29-модули-и-импорты):
 > модуль может быть либо single-file (`X.nv`), либо folder (`X/` с одним
 > или несколькими `.nv` файлами как peers, share namespace).
@@ -256,8 +262,8 @@ Tooling (roadmap, не блокер): команда собирает все `ex
 LLM получает API за один запрос.
 
 В Plan 42 — **резервируем design**: данные для tool'а доступны
-через `Module.items` после merge'а. Сама команда — отдельный
-sub-plan 42.B (production tooling).
+через `Module.items` после merge'а. Сама команда — [Plan 45](45-nova-doc.md)
+(вынесена в отдельный план, production tooling).
 
 ### K. Incremental rebuild — единица = whole folder-module
 
@@ -520,10 +526,14 @@ decl типов уже работает (Plan 36 followup). Verify на test'е.
   план в [42.04-per-file-imports-scope.md](42.04-per-file-imports-scope.md).
   Шаги 1-3 + позитивный тест. Rule C частично enforced (Path-form не
   проверяется — см. [M10] в simplifications.md).
-- **42.5 — 2-pass codegen** (правило D). Pass 1 emit forward decls
-  для всех Fn/Type/Const, Pass 2 emit bodies. Текущий single-pass
-  works для всех use cases bootstrap; sub-plan когда mutually
-  recursive types между peers появятся.
+- **42.5 — 2-pass codegen** (правило D) ✅ **SATISFIED** (verified Plan
+  42.17 audit). Правило D достигнуто **глобальным forward-decl pass**:
+  `emit_c.rs` Pass 1 эмитит `emit_fn_forward_decl` для **всех**
+  `module.items` (порядко-независимо), Pass 2 — bodies. Folder-module
+  peers flat-merge'атся в `module.items`, поэтому cross-peer взаимная
+  рекурсия резолвится автоматически. Тест `folder_mutual_recursion`
+  (`even.nv`↔`odd.nv`) компилирует двунаправленную рекурсию. Отдельный
+  folder-module-specific 2-pass **не нужен**.
 - **42.6 — Migration std/* + nova_tests/* под parent.X** (D29 rev-3) ✅
   ЗАКРЫТ 2026-05-13. `scripts/migrate_modules_rev3.ps1` — automated
   walker: для каждого `.nv` файла computes expected `module parent.X`
@@ -596,10 +606,10 @@ decl типов уже работает (Plan 36 followup). Verify на test'е.
 - Diagnostic quality для cross-peer errors (L) — указывает module +
   peer-file + line + similar suggestions.
 
-**Sub-plans (deferred):**
+**Sub-plans (закрыты):**
 
-- Module-level `#forbid`/`#requires` (I) — sub-plan 42.A.
-- `nova doc <module>` (J) — sub-plan 42.B.
+- Module-level `#forbid` (I) — [Plan 42.10](42.10-module-level-forbid.md) ✅.
+- `nova doc <module>` (J) — [Plan 45](45-nova-doc.md) (вынесен отдельно).
 
 ---
 
@@ -639,8 +649,9 @@ decl типов уже работает (Plan 36 followup). Verify на test'е.
 - **Conditional compilation** (`cfg`) per peer — отдельный sub-plan 35.E.
 - **`pub(crate)`/`pub(super)`** granularity — отвергнуто D5;
   `internal/` convention closes this need.
-- **Module-level `#forbid`/`#requires`** (I) — sub-plan 42.A после MVP.
-- **`nova doc`** tooling (J) — sub-plan 42.B.
+- **Module-level `#forbid`** (I) — [Plan 42.10](42.10-module-level-forbid.md)
+  ✅ (`#requires` отвергнут — нарушает D62 explicit-effects).
+- **`nova doc`** tooling (J) — [Plan 45](45-nova-doc.md).
 
 ---
 

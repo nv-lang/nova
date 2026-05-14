@@ -7,7 +7,7 @@ module syntax.method_values
 
 type Counter { value int }
 
-fn Counter.new() -> Self => Self { value: 0 }
+fn Counter.new() -> Self => { value: 0 }
 fn Counter @get() -> int => @value
 fn Counter @add(n int) -> int => @value + n
 fn Counter @add_two(a int, b int) -> int => @value + a + b

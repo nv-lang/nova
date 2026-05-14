@@ -134,6 +134,7 @@ pub fn resolve_imports_inline_ex(
     for imp in &initial_imports {
         resolve_one(
             imp,
+            entry_path,
             &entry_dir,
             repo,
             stdlib_dir,
@@ -191,6 +192,9 @@ pub fn resolve_imports_inline_ex(
 ///   - `import_chain`: parallel vec для error-message (full cycle path).
 fn resolve_one(
     imp: &Import,
+    // Plan 42.17 Ф.4: путь importing-файла (entry или peer, который
+    // написал этот `import`). Нужен для Rule H filesystem-containment.
+    importer_path: &Path,
     entry_dir: &Path,
     repo: &Path,
     stdlib_dir: &Path,
@@ -210,46 +214,10 @@ fn resolve_one(
     // получают свой временный acc (не протекают в caller).
     visible_acc: &mut HashSet<String>,
 ) -> Result<()> {
-    // Plan 42 правило H: `internal/` directory access check.
-    // `<X>/internal/<Y>` доступен только из `<X>.*` (descendants).
-    //
-    // **Plan 42.14 Ф.5 (Rule H actual fix):** после Plan 42.13 (D29
-    // rev-3.1) declared module name для `internal/` файлов = полный
-    // `owner.internal.target` (3 segments). Import path тоже содержит
-    // `...owner.internal.target`. Они **согласованы** — раньше declared
-    // был 2-segment `internal.target` и расходился с import path.
-    //
-    // Теперь Rule H check по import path **корректен**: import path
-    // `admin.internal.token` ↔ declared `admin.internal.token`. Caveat
-    // про re-export (Plan 42.08 Ф.3) частично снят — re-export через
-    // `export import` сохраняет import path semantic; declared name
-    // imported модуля не меняется. Owner всегда explicit в обоих.
-    if let Some(internal_idx) = imp.path.iter().position(|s| s == "internal") {
-        // Parent of `internal` segment = import path prefix until `internal`.
-        // После rev-3.1 это совпадает с declared module owner.
-        let internal_parent = &imp.path[..internal_idx];
-        // Importing path = последнее import в chain (тот кто пишет import line).
-        let importing_path = import_chain.last().cloned().unwrap_or_default();
-        // internal_parent должен быть prefix of importing_path (descendant rule).
-        let allowed = internal_parent.is_empty()
-            || (internal_parent.len() <= importing_path.len()
-                && importing_path
-                    .iter()
-                    .zip(internal_parent.iter())
-                    .all(|(a, b)| a == b));
-        if !allowed {
-            return Err(anyhow!(
-                "cannot import internal module '{}' from outside parent\n  \
-                 internal module's parent: {}\n  \
-                 importing module:         {}\n  \
-                 hint: internal modules accessible only from descendants of `{}`",
-                imp.path.join("."),
-                internal_parent.join("."),
-                importing_path.join("."),
-                internal_parent.join("."),
-            ));
-        }
-    }
+    // Plan 42 правило H (`internal/` boundary) — проверяется НИЖЕ, после
+    // resolve в filesystem paths. Plan 42.17 Ф.4 перевёл его с хрупкого
+    // import-path-string prefix на filesystem-containment: re-export /
+    // alias больше не обходят boundary.
 
     // Plan 42 Ф.2: resolve module to list of peer files (or single file
     // for legacy single-file modules).
@@ -304,6 +272,40 @@ fn resolve_one(
             }
         })?;
 
+    // Plan 42 правило H + Plan 42.17 Ф.4: `internal/` boundary —
+    // **filesystem-containment** check. `<owner>/internal/...` импортируем
+    // ТОЛЬКО из файлов физически под `<owner>/`. Проверяем по реальному
+    // пути importing-файла (`importer_path`) против реального пути
+    // resolved `internal/`-модуля — не по строке import-path. Re-export
+    // (`export import`) и alias обойти boundary не могут: проверяется
+    // фактическое расположение файлов, а не путь, по которому дошли.
+    if let Some(owner_dir) = find_internal_owner_dir(&resolved_paths[0]) {
+        let importer_canon = importer_path.canonicalize()
+            .unwrap_or_else(|_| importer_path.to_path_buf());
+        let owner_canon = owner_dir.canonicalize()
+            .unwrap_or_else(|_| owner_dir.clone());
+        if !importer_canon.starts_with(&owner_canon) {
+            let importing = import_chain.last()
+                .map(|m| m.join("."))
+                .unwrap_or_else(|| "<entry>".to_string());
+            return Err(anyhow!(
+                "cannot import internal module '{}' from outside its owner\n  \
+                 internal module:  {}\n  \
+                 owner directory:  {}\n  \
+                 importing file:   {}\n  \
+                 importing module: {}\n  \
+                 hint: `internal/` modules are accessible only from files \
+                 under `{}` (Plan 42 rule H)",
+                imp.path.join("."),
+                resolved_paths[0].display(),
+                owner_canon.display(),
+                importer_canon.display(),
+                importing,
+                owner_canon.display(),
+            ));
+        }
+    }
+
     // Plan 42.14 Ф.3 ([M11]): cycle detection по DECLARED MODULE NAME,
     // не canonical PathBuf. Symlink / case-insensitive FS могли дать
     // разные пути для same module → false-negative cycle. Module name
@@ -346,7 +348,6 @@ fn resolve_one(
     //   2. Recursively resolve its imports.
     //   3. Append its items в merged_items.
     // Peers share namespace через merge'нутый Module.items.
-    let mut peer_canons: Vec<PathBuf> = Vec::new();
     for peer_path in &resolved_paths {
         let peer_canon = peer_path.canonicalize()
             .map_err(|e| anyhow!("canonicalize {}: {}", peer_path.display(), e))?;
@@ -376,9 +377,6 @@ fn resolve_one(
             continue;
         }
 
-        // Push canon только для active peers (dedup logic).
-        peer_canons.push(peer_canon);
-
         // Plan 42.10: `_module.nv` peer — special module-config файл.
         // Его module-level attrs (Forbid / Cfg / Doc) пропагируются на
         // entry's module.attrs — applied ко всему compiled module.
@@ -396,7 +394,7 @@ fn resolve_one(
         // is_entry_module = false — это peer ИМПОРТИРОВАННОГО модуля,
         // его items_here НЕ должны протекать в entry's shared_decls.
         peer_files.push(PeerFile {
-            path: peer_canons.last().expect("peer_canons populated above").clone(),
+            path: peer_canon,
             file_id: peer_file_id,
             imports: peer_module.imports.clone(),
             items_here: peer_module.items.clone(),
@@ -419,6 +417,7 @@ fn resolve_one(
             let mut sub_visible: HashSet<String> = HashSet::new();
             resolve_one(
                 sub,
+                peer_path,
                 entry_dir,
                 repo,
                 stdlib_dir,
@@ -436,10 +435,19 @@ fn resolve_one(
             for n in &sub_visible {
                 peer_visible.insert(n.clone());
             }
-            // `export import` — re-export: items также видны caller'у.
+            // `export import` — re-export: items видны caller'у, НО через
+            // селективный фильтр самого caller'а (Plan 42.17 Ф.6): если
+            // caller написал `import F.{a}` — он получает только `a` из
+            // re-export'ов F, не другие re-exported items.
+            // Note: rename caller'а к re-exported items НЕ применяется —
+            // re-exported item уже в merged_items под именем re-export'а,
+            // переименовать его здесь без рассинхрона с codegen-scope
+            // нельзя. Rename работает для прямых (не re-exported) imports.
             if sub.is_export {
                 for n in &sub_visible {
-                    visible_acc.insert(n.clone());
+                    if import_selects(imp, n) {
+                        visible_acc.insert(n.clone());
+                    }
                 }
             }
         }
@@ -488,19 +496,12 @@ fn resolve_one(
                         item_name.clone()
                     };
                     // Plan 42.15: visible_acc — что caller's peer ВИДИТ.
-                    // Selective filter: если import `X.{A}` — только `A`
-                    // (+ rename target) попадает в visible_acc; `B` (тоже
-                    // из X, но не в списке) merge'ится для codegen, но
-                    // НЕ виден caller'у по имени.
-                    let is_visible = match &imp.items {
-                        None => true, // import X — весь модуль visible
-                        Some(sel) => sel.iter().any(|it| {
-                            // visible под final_name: либо original name в
-                            // списке (без rename), либо alias совпал.
-                            it.name == item_name
-                        }),
-                    };
-                    if is_visible {
+                    // Selective filter: `import X.{A}` — только `A` виден
+                    // caller'у; `B` (тоже из X, не в списке) merge'ится в
+                    // merged_items для codegen completeness, но НЕ виден
+                    // caller'у по имени. Матч по оригинальному `item_name`;
+                    // в scope кладётся `final_name` (renamed при alias).
+                    if import_selects(imp, &item_name) {
                         visible_acc.insert(final_name);
                     }
                 }
@@ -511,44 +512,83 @@ fn resolve_one(
         }
     }
 
-    // Plan 35 sub-plan 35.A (R26): selective list applied above через
-    // rename_map + selective_names (Plan 42.09). Раньше был syntax-only.
-    let _ = imp.items.is_some();
-
     // Plan 42.14 Ф.3: pop in_progress + chain; promote module_key в
     // closed-set. Все peers folder-module share один module_key (declared
     // name) — diamond-dep dedup работает естественно.
-    let _ = &peer_canons; // peer_canons больше не нужен для visited keying
     in_progress.remove(&module_key);
     visited.insert(module_key);
     import_chain.pop();
     Ok(())
 }
 
-/// Plan 42.14 Ф.3 ([M11]): lightweight чтение `module X.Y` declaration
-/// из файла — только первая non-comment строка, без полного parse.
-/// Используется для cycle-detection key (module name, не path).
-/// Возвращает None если файл не читается или нет `module` декларации.
-fn read_module_decl(path: &Path) -> Option<Vec<String>> {
-    let src = std::fs::read_to_string(path).ok()?;
+/// Plan 42.17 Ф.6: видит ли селективный список `imp` имя `name`?
+/// `import X` (без `.{...}`) — видит всё. `import X.{a, b}` — только
+/// `a`/`b`. Матч по ОРИГИНАЛЬНОМУ имени item'а; `alias` — это что
+/// кладётся в scope (`final_name`), не критерий отбора.
+fn import_selects(imp: &Import, name: &str) -> bool {
+    match &imp.items {
+        None => true,
+        Some(sel) => sel.iter().any(|it| it.name == name),
+    }
+}
+
+/// Plan 42.17 Ф.4: если `path` лежит внутри `.../<owner>/internal/...`,
+/// возвращает `.../<owner>/` — owner-директорию для Rule H containment
+/// check. None если `internal` сегмента в пути нет.
+///
+/// Spec D29 rev-3.1: «берётся **первый** internal сегмент» — поэтому при
+/// nested `internal/` берём самый ВЕРХНИЙ. `internal` на самом верху
+/// (нет родителя) → None.
+fn find_internal_owner_dir(path: &Path) -> Option<PathBuf> {
+    let mut cur = path;
+    let mut internal_dir: Option<&Path> = None;
+    while let Some(parent) = cur.parent() {
+        if parent.file_name().map(|n| n == "internal").unwrap_or(false) {
+            // Перезаписываем — итоговое значение = самый верхний `internal`.
+            internal_dir = Some(parent);
+        }
+        cur = parent;
+    }
+    internal_dir.and_then(|d| d.parent()).map(|p| p.to_path_buf())
+}
+
+/// Plan 42.17 Ф.3: единый сканер `module a.b` декларации из исходника —
+/// заменяет три копипаст-сканера (`read_module_decl` + два folder-module
+/// detector'а в `test_runner.rs`).
+///
+/// Lightweight: первая значимая строка, без полного parse. Пропускает
+/// blank / `//` / `#`-attr строки (Plan 42.16 — module-level атрибуты
+/// идут ПЕРЕД `module`). Nova не имеет block-комментариев (`/* */`) —
+/// лексер обрабатывает только `//`, поэтому отдельная их обработка не
+/// нужна. Первая non-skip строка не `module ...` → `None`.
+///
+/// Возвращает имя модуля как сегменты: `module encoding.hex` →
+/// `["encoding", "hex"]`. Trailing-комментарий после декларации
+/// отбрасывается (`module a.b // note` → `["a", "b"]`).
+pub fn scan_module_decl(src: &str) -> Option<Vec<String>> {
     for raw in src.lines() {
         let line = raw.trim();
-        // Plan 42.16: module-level атрибуты (`#forbid`/`#cfg`/`#doc`)
-        // идут ПЕРЕД `module` — пропускаем их при поиске декларации.
         if line.is_empty() || line.starts_with("//") || line.starts_with('#') {
             continue;
         }
         if let Some(rest) = line.strip_prefix("module ") {
-            let decl = rest.trim();
-            // Берём только до first whitespace/comment (decl может иметь
-            // trailing comment или быть просто `module X.Y`).
-            let decl = decl.split_whitespace().next().unwrap_or(decl);
+            let decl = rest.trim().split_whitespace().next().unwrap_or("");
+            if decl.is_empty() {
+                return None;
+            }
             return Some(decl.split('.').map(|s| s.to_string()).collect());
         }
-        // Первая non-comment / non-attr строка не `module` — нет декларации.
-        break;
+        // Первая значимая строка не `module` — декларации нет.
+        return None;
     }
     None
+}
+
+/// Plan 42.14 Ф.3 ([M11]): cycle-detection key — declared module name
+/// (не canonical path). Тонкая обёртка над `scan_module_decl`.
+fn read_module_decl(path: &Path) -> Option<Vec<String>> {
+    let src = std::fs::read_to_string(path).ok()?;
+    scan_module_decl(&src)
 }
 
 /// Plan 42.09: rename item (Type/Fn/Const) при selective re-import.
@@ -631,42 +671,6 @@ fn suggest_module_name(
     format!("\n  hint: did you mean `{}`?", suggestion)
 }
 
-/// Resolve `import a.b.c` к filesystem path.
-/// Returns first existing path. Used для single-file modules.
-fn resolve_import_path(
-    parts: &[String],
-    entry_dir: &Path,
-    repo: &Path,
-    stdlib_dir: &Path,
-) -> Option<PathBuf> {
-    if parts.is_empty() {
-        return None;
-    }
-    let rel_path: PathBuf = parts.iter().collect();
-    let with_ext = rel_path.with_extension("nv");
-
-    let cand_local = entry_dir.join(&with_ext);
-    if cand_local.exists() && cand_local.is_file() {
-        return Some(cand_local);
-    }
-
-    let cand_repo = repo.join(&with_ext);
-    if cand_repo.exists() && cand_repo.is_file() {
-        return Some(cand_repo);
-    }
-
-    // explicit stdlib_dir search (path starts with `std`)
-    if parts[0] == "std" && parts.len() >= 2 {
-        let rel_inside_std: PathBuf = parts[1..].iter().collect();
-        let cand_std = stdlib_dir.join(rel_inside_std.with_extension("nv"));
-        if cand_std.exists() && cand_std.is_file() {
-            return Some(cand_std);
-        }
-    }
-
-    None
-}
-
 /// Plan 42.12 Ф.2: enabled features set (через `NOVA_FEATURES=foo,bar` env
 /// или `--features` CLI flag). Empty if нет features.
 pub fn enabled_features() -> HashSet<String> {
@@ -720,8 +724,17 @@ fn cfg_active(module: &Module) -> bool {
 /// Default — host OS (cfg!(target_os) at compile time of nova-codegen).
 /// Override через `NOVA_TARGET_OS` env var (Ф.1 minimal — без CLI flag).
 pub fn current_target_os() -> &'static str {
+    // Override через env var — валидируем против известных значений и
+    // возвращаем `&'static str` literal (без Box::leak: невалидное имя
+    // никогда не матчится, "unknown" честнее утёкшей мусорной строки).
     if let Ok(t) = std::env::var("NOVA_TARGET_OS") {
-        return Box::leak(t.into_boxed_str());
+        return match t.as_str() {
+            "windows" => "windows",
+            "linux" => "linux",
+            "macos" => "macos",
+            "unix" | "posix" => "unix",
+            _ => "unknown",
+        };
     }
     if cfg!(target_os = "windows") { "windows" }
     else if cfg!(target_os = "linux") { "linux" }

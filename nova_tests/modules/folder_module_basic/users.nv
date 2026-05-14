@@ -14,7 +14,7 @@ export type User {
 }
 
 export fn create_user(id int, name str) -> User =>
-    User { id: id, name: name }
+    { id: id, name: name }
 
 // Использует helpers::compute_audit_id из соседнего peer'а — shared
 // namespace, no import нужен.

@@ -43,7 +43,7 @@ type Counter {
     mut value int
 }
 
-fn Counter.new() -> Self => Self { value: 0 }
+fn Counter.new() -> Self => { value: 0 }
 
 fn Counter mut @inc() -> () {
     @value += 1
@@ -82,7 +82,7 @@ type State {
     mut count int
 }
 
-fn State.new() -> Self => Self { x: 0, y: 0, count: 0 }
+fn State.new() -> Self => { x: 0, y: 0, count: 0 }
 
 fn State mut @move(dx int, dy int) -> () {
     @x += dx

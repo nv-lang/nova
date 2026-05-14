@@ -17,7 +17,7 @@ module concurrency.gc_differential
 type Junk { a int, b int, c int, d int }
 
 fn make_junk(i int) -> Junk =>
-    Junk { a: i, b: i + 1, c: i + 2, d: i + 3 }
+    { a: i, b: i + 1, c: i + 2, d: i + 3 }
 
 test "gc differential: heap bounded после 100k короткоживущих + collect()" {
     // Прогрев + baseline

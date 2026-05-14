@@ -1,0 +1,14 @@
+// Plan 42.17 Ф.7: правило E usage test. `rule_e_file.nv` (single-file)
+// и `rule_e_file.sub` (nested folder-module) — независимые модули,
+// оба импортируются и работают.
+
+module modules.rule_e_file_use
+
+import nova_tests.modules.rule_e_file.{from_file}
+import nova_tests.modules.rule_e_file.sub.{from_sub_a, from_sub_b}
+
+test "single-file X.nv and nested X/sub/ folder-module coexist" {
+    assert(from_file() == 10)
+    assert(from_sub_a() == 20)
+    assert(from_sub_b() == 30)
+}

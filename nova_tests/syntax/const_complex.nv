@@ -40,7 +40,7 @@ test "const с D55 record-coercion" {
 
 // === 3. Const с вызовом функции ===
 
-fn make_point(a f64, b f64) -> Point => Point { x: a, y: b }
+fn make_point(a f64, b f64) -> Point => { x: a, y: b }
 
 const COMPUTED Point = make_point(7.0, 14.0)
 
@@ -54,7 +54,7 @@ test "const с function call" {
 
 const FACTOR Point = Point { x: 2.0, y: 3.0 }
 
-fn scale(p Point) -> Point => Point { x: p.x * FACTOR.x, y: p.y * FACTOR.y }
+fn scale(p Point) -> Point => { x: p.x * FACTOR.x, y: p.y * FACTOR.y }
 
 test "lazy const использован в fn body" {
     let p = scale(Point { x: 5.0, y: 10.0 })

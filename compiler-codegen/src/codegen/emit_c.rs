@@ -4963,7 +4963,22 @@ impl CEmitter {
                 };
                 // target-type-aware emit: для typed-integer ty_c литералы внутри
                 // Binary получают native-typed cast вместо ((nova_int)NLL).
+                //
+                // Plan 51 Ф.1: typed `let x T = { ... }` — anonymous record
+                // literal без префикса берёт тип из аннотации (D55, mirror
+                // `const`-handling). Гейт узкий: значение — **напрямую**
+                // typeless record-литерал. Иначе expected_record_type не
+                // трогаем, чтобы тип `x` не «протёк» во вложенные литералы
+                // внутри других выражений (`let x T = foo({ ... })`).
+                let direct_typeless_record = matches!(
+                    &decl.value.kind,
+                    ExprKind::RecordLit { type_name: None, .. });
+                let saved_expected = self.expected_record_type.clone();
+                if decl.ty.is_some() && direct_typeless_record {
+                    self.expected_record_type = Self::struct_name_from_c_type(&ty_c);
+                }
                 let val = self.emit_expr_with_target_type(&decl.value, &ty_c)?;
+                self.expected_record_type = saved_expected;
                 // For pointer types: the emitted tmp expression already carries the type.
                 // Just declare the binding with the right type.
                 self.var_types.insert(binding.clone(), ty_c.clone());

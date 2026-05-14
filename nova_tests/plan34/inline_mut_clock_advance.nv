@@ -18,10 +18,10 @@ module plan34.inline_mut_clock_advance
 
 type Clock { ms u64 }
 
-fn clock_new(start_ms u64) -> Clock => Clock { ms: start_ms }
+fn clock_new(start_ms u64) -> Clock => { ms: start_ms }
 
 fn clock_sleep_ms(c Clock, delta_ms u64) -> Clock =>
-    Clock { ms: c.ms + delta_ms }
+    { ms: c.ms + delta_ms }
 
 
 test "mut_clock логика: sleep продвигает state на d.ms" {

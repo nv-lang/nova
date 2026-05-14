@@ -16,13 +16,13 @@ type Money {
 }
 
 export fn Money.from_int(c int) -> Money =>
-    Money { cents: c }
+    { cents: c }
 
 export fn Money.from(n int) -> Money =>
-    Money { cents: n }
+    { cents: n }
 
 export fn Money.from(s str) -> Money =>
-    Money { cents: 999 }    // marker — distinguish from int-version
+    { cents: 999 }    // marker — distinguish from int-version
 
 
 test "static overload Money.from(int) vs from(str)" {
@@ -40,13 +40,13 @@ type Acc {
 }
 
 export fn Acc.new() -> Acc =>
-    Acc { sum: 0 }
+    { sum: 0 }
 
 export fn Acc @add(n int) -> Acc =>
-    Acc { sum: @sum + n }
+    { sum: @sum + n }
 
 export fn Acc @add(s str) -> Acc =>
-    Acc { sum: @sum + 1 }    // marker: str increments by 1
+    { sum: @sum + 1 }    // marker: str increments by 1
 
 
 test "instance overload Acc.@add(int) vs @add(str)" {
@@ -72,10 +72,10 @@ type Box2 {
 }
 
 export fn Box1.make() -> Box1 =>
-    Box1 { value: 100 }
+    { value: 100 }
 
 export fn Box2.make() -> Box2 =>
-    Box2 { label: 200 }
+    { label: 200 }
 
 
 test "одноимённые static на разных типах не конфликтуют" {
@@ -93,15 +93,15 @@ type Logger {
 }
 
 export fn Logger.new() -> Logger =>
-    Logger { level: 0 }
+    { level: 0 }
 
 // 1 параметр:
 export fn Logger @log(msg str) -> Logger =>
-    Logger { level: @level + 1 }
+    { level: @level + 1 }
 
 // 2 параметра:
 export fn Logger @log(lvl int, msg str) -> Logger =>
-    Logger { level: @level + lvl }
+    { level: @level + lvl }
 
 
 test "arity overload: @log(msg) vs @log(level, msg)" {
@@ -122,16 +122,16 @@ type Combiner {
 }
 
 export fn Combiner.new() -> Combiner =>
-    Combiner { state: 0 }
+    { state: 0 }
 
 export fn Combiner @put(n int) -> Combiner =>
-    Combiner { state: @state + n }       // int: add
+    { state: @state + n }       // int: add
 
 export fn Combiner @put(s str) -> Combiner =>
-    Combiner { state: @state * 2 }       // str: double
+    { state: @state * 2 }       // str: double
 
 export fn Combiner @put(b bool) -> Combiner =>
-    Combiner { state: @state - 1 }       // bool: decrement
+    { state: @state - 1 }       // bool: decrement
 
 
 test "3 overloads различаются по типу первого аргумента" {
@@ -153,10 +153,10 @@ type Mixed {
 }
 
 export fn Mixed.from(n int) -> Mixed =>
-    Mixed { value: n }
+    { value: n }
 
 export fn Mixed @from(other Mixed) -> Mixed =>
-    Mixed { value: @value + other.value }
+    { value: @value + other.value }
 
 
 test "mixed static+instance overload одного имени" {
@@ -176,7 +176,7 @@ type Convert {
 }
 
 export fn Convert.new(v int) -> Convert =>
-    Convert { raw: v }
+    { raw: v }
 
 export fn Convert @get(fallback int) -> int =>
     if @raw == 0 { fallback } else { @raw }
@@ -204,13 +204,13 @@ type Pair {
 }
 
 export fn Pair.new() -> Pair =>
-    Pair { a: 0, b: 0 }
+    { a: 0, b: 0 }
 
 export fn Pair @set(x int, y int) -> Pair =>
-    Pair { a: x, b: y }
+    { a: x, b: y }
 
 export fn Pair @set(x str, y int) -> Pair =>
-    Pair { a: 0, b: y }                  // ignores str x
+    { a: 0, b: y }                  // ignores str x
 
 
 test "overload по first arg type" {
@@ -232,13 +232,13 @@ type Counter2 {
 }
 
 export fn Counter2.zero() -> Counter2 =>
-    Counter2 { n: 0 }
+    { n: 0 }
 
 export fn Counter2 @bump() -> Counter2 =>
-    Counter2 { n: @n + 1 }
+    { n: @n + 1 }
 
 export fn Counter2 @bump(by int) -> Counter2 =>
-    Counter2 { n: @n + by }
+    { n: @n + by }
 
 
 test "no-arg vs N-arg arity overload" {

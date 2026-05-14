@@ -4754,7 +4754,7 @@ spec-level work.
 
 ---
 
-### [M10] Rule C (per-peer imports) не enforced — ✅ RESOLVED 2026-05-14
+### [M10] Rule C (per-peer imports) не enforced — ✅ RESOLVED (для импортированных folder-modules) 2026-05-14
 
 - **Resolved:** Plan 42.15 — NameResCtx переведён на per-group visible
   scope. `group_decls` (declarations module-group каждого peer'а) +
@@ -4763,6 +4763,11 @@ spec-level work.
 - **Tests:** `peer_path_leak.nv` (negative — cross-peer alias use →
   undefined identifier) + `peer_isolation_ok_use.nv` (positive — peers
   share declarations namespace).
+- **Квалификация (Plan 42.17 audit):** per-peer изоляция реальна для
+  **импортированных** folder-modules (peers получают distinct `file_id`
+  через `parse_with_file_id`). Когда folder-module — **сам компилируемый
+  entry**, все его peers коллапсируют в один `MAIN_FILE_ID` PeerFile →
+  изоляция между ними становится no-op. См. `[M-entry-folder-module]`.
 
 ---
 
@@ -4789,6 +4794,30 @@ spec-level work.
 
 ---
 
+### [M-match-void-arm] match-как-выражение с void-typed arm'ами → невалидный C
+
+- **Где:** `compiler-codegen/src/codegen/emit_c.rs` — emit `match` в
+  expression-позиции.
+- **Что:** когда `match` стоит как голый statement (его значение не
+  используется), а каждый arm — выражение типа `unit`/`void` (например
+  `assert(...)`, который в рантайме `static inline void nova_assert(...)`),
+  codegen всё равно объявляет temp `nova_unit _nv_match_N;` и пишет
+  `_nv_match_N = nova_assert(...)` → C-ошибка «assigning to 'nova_unit'
+  from incompatible» (нельзя присвоить результат void-функции).
+- **Обнаружено:** Plan 51 Ф.4 — позитивный тест писал
+  `match s { Circle {r} => assert(...) Square {s} => assert(...) }`
+  как statement. Переписан на `let x = match ...` с arm'ами,
+  возвращающими `int` — обычный паттерн, codegen его поддерживает.
+- **Как починить:** codegen должен либо (а) не эмитить присваивание
+  temp'у, когда тип match-выражения — `unit` и оно в statement-позиции,
+  либо (б) эмитить arm'ы как statements (без `_nv_match_N =`). ~20-40 LOC
+  в emit `match`.
+- **Приоритет:** L — узкий паттерн (`match`-statement, где каждый arm
+  сам void-typed). Idiomatic-форма (`match` в let / с не-void arm'ами)
+  работает. Не относится к Plan 51 (синтаксис record-литералов).
+
+---
+
 ### [M11] Rule A cycle detection — canonical PathBuf keying — ✅ RESOLVED 2026-05-14
 
 - **Resolved:** Plan 42.14 Ф.3 — `in_progress`/`visited` переведены на
@@ -4797,6 +4826,11 @@ spec-level work.
   edge case устранён — module name стабильный логический identity.
 - **Tests:** `folder_cycle_between_modules.nv` + `import_cycle_rejected.nv`
   PASS с новым keying.
+- **Доделано (Plan 42.17 Ф.3):** три копипаст-сканера `module`-строки
+  (`read_module_decl` + `is_folder_module_peer` + `is_folder_module_dir`)
+  объединены в один `imports::scan_module_decl`. Drift-риск устранён.
+  Block-комментариев у Nova нет (лексер обрабатывает только `//`), так
+  что отдельная их обработка не требуется — audit-флаг был ложным.
 
 ### [M12] Selective import — visible-scope enforcement — ✅ RESOLVED 2026-05-14
 
@@ -4807,6 +4841,53 @@ spec-level work.
   только items из selective list (после rename) видны импортирующему.
 - **Tests:** `rename_old_name_rejected.nv` (negative — старое имя после
   `A as B` rename → undefined) + `rename_import_use.nv` (positive).
+- **Квалификация (Plan 42.17 audit):** как и `[M10]` — visible-scope
+  enforcement реален для импортированных folder-modules; entry-folder-
+  module см. `[M-entry-folder-module]`.
+
+---
+
+### [M-entry-folder-module] Entry folder-module — per-peer изоляция не активна
+
+- **Где:** `compiler-codegen/src/imports.rs` (`resolve_imports_inline_ex`).
+- **Что:** entry-модуль парсится caller'ом как **один файл**
+  (`parser::parse(src)` → `MAIN_FILE_ID`) и регистрируется как один
+  `PeerFile`. Если этот entry-файл — peer folder-module, его sibling
+  peers **не собираются** (нет кода, который делал бы это для entry —
+  только для импортированных folder-modules в `resolve_one`). Поэтому
+  Rule C / `[M10]` / `[M12]` per-peer изоляция между peers самого
+  entry-модуля — no-op.
+- **Почему не критично сейчас:** не reachable в bootstrap. `nova test`
+  компилирует test-файлы (folder-module всегда импортируется через
+  `_use.nv`); `nova build`/`nova run` берут single-file entry. Entry-as-
+  folder-module появится когда `main` проекта станет папкой.
+- **Как починить (полный дизайн, Plan 42.17 Ф.8 investigate-итог):**
+  Две связанные части:
+  1. **Resolver-side** (`resolve_imports_inline_ex`): после parse entry —
+     детектить, что `entry_path.parent()` — folder-module (≥2 `.nv`,
+     все объявляют тот же `module`, совпадающий с `module.name` entry).
+     Если да — собрать sibling peers (alphabetical, `_test`/`#cfg`
+     filter как в `resolve_module_paths`), parse каждый с distinct
+     `file_id`, register как `PeerFile { is_entry_module: true }`,
+     merge items в `module.items` **включая `Item::Test`** (в отличие
+     от imported peers — у entry-folder-module свои тесты должны
+     гоняться), recursively resolve их imports. Зеркалит peer-loop из
+     `resolve_one` (~100 LOC). Сам по себе zero-regression-risk: gated
+     на условии, ложном для всех текущих entry (single-file / `_use.nv`).
+  2. **Test-runner-side** (`walk_nv`): сейчас peers folder-module
+     **пропускаются** как test-entry (тестируются через внешний
+     `_use.nv`). Для постоянного regression-guard `nova test` должен
+     компилировать folder-module как unit и гонять её `test`-блоки.
+     Меняет entry-selection → начнёт компилировать каждую fixture
+     standalone — **риск для 350-test регрессии**, отдельная focused-
+     работа.
+- **Статус:** honest-defer (Plan 42.17 Ф.8). Не баг — нулевая
+  regression-exposure; машинерия изоляции корректна для импортированных
+  folder-modules. Реализовать в отдельной сессии (resolver-side +
+  test-runner-side вместе, с полной регрессией).
+- **Приоритет:** L — by-design не reachable до folder-module entry-point
+  (когда `main` проекта или explicit `nova test <folder-module-peer>`
+  станет use-case'ом).
 
 
 ---

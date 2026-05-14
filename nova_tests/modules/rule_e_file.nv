@@ -1,0 +1,13 @@
+// Plan 42.17 Ф.7: правило E — single-file `X.nv` сосуществует с папкой
+// `X/`, если `X/` сама НЕ содержит direct `.nv` (только sub-folder).
+// Здесь: `rule_e_file.nv` (этот файл) + `rule_e_file/sub/` (nested
+// folder-module). `rule_e_file/` direct `.nv` не имеет → конфликта нет.
+
+module modules.rule_e_file
+
+export fn from_file() -> int =>
+    10
+
+test "single-file half of rule E compiles standalone" {
+    assert(from_file() == 10)
+}

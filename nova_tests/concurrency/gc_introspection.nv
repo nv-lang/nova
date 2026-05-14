@@ -15,7 +15,7 @@ module concurrency.gc_introspection
 type Obj { a int, b int, c int }
 
 fn make_obj(a int, b int, c int) -> Obj =>
-    Obj { a, b, c }
+    { a, b, c }
 
 // ── 1. alloc_count монотонно растёт ───────────────────────────────────────
 

@@ -13,7 +13,7 @@ fn Box @scaled(factor int = 2, offset int = 0) -> int =>
 
 // Static-метод с дефолтами.
 fn Box .make(start int = 100) -> Box =>
-    Box { base: start }
+    { base: start }
 
 test "instance method: все дефолты" {
     let b = Box { base: 10 }

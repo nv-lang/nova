@@ -1,0 +1,6 @@
+// Plan 42.17 Ф.6: второй peer — folder-module требует ≥2 .nv файлов.
+
+module modules.reexport_selective
+
+export fn marker() -> int =>
+    42

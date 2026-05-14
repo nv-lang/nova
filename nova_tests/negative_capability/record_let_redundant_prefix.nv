@@ -1,0 +1,14 @@
+// EXPECT_COMPILE_ERROR redundant type prefix on record literal
+//
+// Plan 51: `let x T = T { }` пишет тип дважды — в аннотации и в
+// литерале. Запрещено. Каноничные формы: `let x T = { }` либо
+// `let x = T { }` (тип ровно один раз).
+
+module negative_capability.record_let_redundant_prefix
+
+type Pt { x int, y int }
+
+test "unreachable — parse error on redundant let prefix" {
+    let p Pt = Pt { x: 1, y: 2 }
+    assert(p.x == 1)
+}
