@@ -10233,3 +10233,65 @@ FAIL. Каждая фаза — отдельный commit.
 - docs/plans/42.04, 42.09, 42.14, 42-folder-modules.md (Ф.1)
 - docs/simplifications.md (Ф.1 [M10]/[M11]/[M12] + Ф.8 [M-entry-folder-module])
 - nova_tests/modules/* + nova_tests/negative_capability/* (Ф.5/Ф.6/Ф.7)
+
+## Сессия 2026-05-14..15: дизайн concurrency-синтаксиса — D75 ревизия, D102, Plans 46/47/50
+
+Спец-дизайн сессия (без кода). Глубокий research концепции отмены и
+синтаксиса вызова — от вопроса «что такое cancel_scope, почему не
+эффект» до набора D-решений.
+
+### D75 ревизия — keyword `cancel_scope` удалён
+
+`cancel_scope { tok => body }` схлопнут в именованный аргумент
+`supervised(cancel: tok) { body }`. Причины: minus один keyword;
+`tok =>` scope-binding не существует больше нигде в языке; модель
+токена переведена на caller-owned (создаётся вне scope'а, переживает
+его, `cancel()` на завершённом scope'е — no-op) — это устраняет старое
+bootstrap-ограничение «token dangling после scope-exit». Защита от
+двойной привязки — runtime bind-check «один токен → один живой scope»,
+compile-time affine-типы отвергнуты как несоразмерные (Nova — GC, не
+borrow checker). `race`/`with_timeout` зафиксированы как stdlib-функции
+поверх `supervised(cancel:)`, не keyword'ы. Закрыт
+Q-cancel_scope-lambda-syntax: keyword-scope'ы НЕ превращаются в
+trailing-fn функции (`supervised` остаётся keyword'ом — точка
+регистрации `spawn`-fiber'ов). Подчищены ссылки на `cancel_scope` по
+всей спеке.
+
+### D102 — именованные аргументы + дефолты + ревизия «keyword-only»
+
+D102 (base): именованные аргументы `f(name: val)` + значения параметров
+по умолчанию `fn f(x int = 0)` как общая фича языка. Базовая реализация
+— Plan 46 (закрыт параллельным агентом, отдельная запись выше).
+
+D102 ревизия (2026-05-15): **параметр с дефолтом — keyword-only на
+месте вызова**. Рассмотрены и отвергнуты: обязательные имена для ВСЕХ
+параметров (Swift-style — делает имя каждого параметра жёстким API,
+церемония для унарных/math-функций) и исключение «один дефолт →
+позиционно разрешён» (рефакторинг-ловушка: добавление 2-го дефолта
+тихо ломает вызовы; количество дефолтов не показатель риска). Итог —
+одно правило: обязательный позиционно, опциональный по имени;
+позиционный bool-флаг становится compile error (AI-first: класс багов
+LLM-генерации → ошибка компиляции). Trailing-форма D43 — исключение
+(синтаксически отлична от позиционного аргумента в скобках).
+
+Также отвергнут spread аргументов в вызов (`f(...record)` / `f(..array)`)
+— непрозрачный call-site, два несогласованных оператора, `...` занят
+variadic; бандл параметров → option-struct.
+
+### Планы
+
+- Plan 47 — реализация D75 ревизии (удаление keyword, caller-owned
+  токен, runtime bind-check, stdlib race/with_timeout).
+- Plan 50 — реализация D102 ревизии (ограничение поверх Plan 46
+  binding-логики + production-grade диагностика + миграция кодовой базы).
+
+### Файлы
+
+- spec/decisions/03-syntax.md (D102 + ревизия), 06-concurrency.md (D75
+  ревизия), open-questions.md (Q-cancel_scope закрыт), 07-modules.md,
+  syntax.md, revolutionary.md, decisions/README.md, history/rejected.md
+  (sweep ссылок на cancel_scope)
+- docs/plans/46-named-parameters.md, 47-supervised-cancel.md,
+  50-default-keyword-only.md (новые), docs/plans/README.md
+- simplifications.md — без новых записей (спец-дизайн, не реализация;
+  bootstrap-ограничения фиксируются на этапе Plan 47/50)

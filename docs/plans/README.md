@@ -71,6 +71,7 @@
 | 45 | [45-nova-doc.md](45-nova-doc.md) | `nova doc` — **production-grade** documentation tooling. Rustdoc-paritet+: doc-comments (`///`/`//!`), intra-doc links, doc-tests (с `compile_fail`/`should_panic`/`must_verify`), markdown/JSON/HTML/man output, stable JSON schema v1, `--check` CI gate, `--diff` semantic API diff, `--watch`, search index. Nova-уникальное: effect rows + contracts + capabilities + folder-modules + AI-first JSON в первом классе. 4 spec D-decisions (D100-D103). Replacement отвергнутого `overview.nv` (Plan 42 правило G). Переписан 2026-05-14. | план, не начат, **P1** (foundation для AI-first stdlib consumption) |
 | 46 | [46-named-parameters.md](46-named-parameters.md) | Именованные аргументы `f(name: val)` + значения параметров по умолчанию `fn f(x int = 0)` (D102). Парсер + type-checker binding-pass + codegen call-site reorder. Блокирует Plan 47. | план, не начат, **P1** |
 | 47 | [47-supervised-cancel.md](47-supervised-cancel.md) | `supervised(cancel: tok)` — удаление keyword `cancel_scope` (ревизия D75 2026-05-14). Caller-owned `CancelToken` + runtime bind-check + stdlib `race`/`with_timeout`. Зависит от Plan 46. | план, не начат, **P1** |
+| 50 | [50-default-keyword-only.md](50-default-keyword-only.md) | Параметр с дефолтом — keyword-only на месте вызова (ревизия D102 2026-05-15). Ограничение поверх Plan 46 + production-grade диагностика + миграция кодовой базы. | план, не начат, **P1** |
 
 > Plan 19 — see `19-closure-and-error-ops.md` (closure-rev + D85 error-ops).
 > Plan 20 и 21 — последовательные (Plan 21 зависит от Plan 20).
