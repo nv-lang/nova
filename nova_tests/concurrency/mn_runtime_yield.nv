@@ -1,0 +1,56 @@
+// Plan 44.5 Layer 5 acceptance: runtime.yield() cooperative yield в M:N context.
+//
+// Проверяет что runtime.yield() позволяет другим fiber'ам запустить
+// в worker контексте — cooperative multitasking в рамках M:N runtime.
+
+module nova_tests.concurrency.mn_runtime_yield
+
+// --- Базовый: yield позволяет другому fiber'у прогресс ---
+// Два fiber'а по очереди increment'ят счётчик через yield.
+// Без yield: первый fiber мог бы занять worker до завершения.
+test "M:N: runtime.yield() — cooperative progress between fibers" {
+    runtime.init(1)
+    let mut a_steps = 0
+    let mut b_steps = 0
+    supervised {
+        spawn {
+            let mut i = 0
+            while i < 3 {
+                a_steps = a_steps + 1
+                runtime.yield()
+                i = i + 1
+            }
+        }
+        spawn {
+            let mut i = 0
+            while i < 3 {
+                b_steps = b_steps + 1
+                runtime.yield()
+                i = i + 1
+            }
+        }
+    }
+    assert(a_steps == 3)
+    assert(b_steps == 3)
+    runtime.shutdown()
+}
+
+// --- yield вне fiber context: no-op ---
+test "M:N: runtime.yield() outside fiber — no-op" {
+    // Вызвано из main thread (не fiber) — должно быть no-op (return сразу).
+    runtime.yield()
+    assert(true)
+}
+
+// --- yield в single-thread (без runtime.init) ---
+test "runtime.yield() без init — cooperative yield в single-thread" {
+    let mut count = 0
+    supervised {
+        spawn {
+            count = count + 1
+            runtime.yield()
+            count = count + 1
+        }
+    }
+    assert(count == 2)
+}

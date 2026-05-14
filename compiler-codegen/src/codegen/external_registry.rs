@@ -61,12 +61,14 @@ impl ExternalRegistry {
         include_str!("../../../std/runtime/read_buffer.nv");
     pub const CHAR_SRC: &'static str =
         include_str!("../../../std/runtime/char.nv");
+    pub const SYNC_SRC: &'static str =
+        include_str!("../../../std/runtime/sync.nv");
 
     /// Парсит per-type .nv файлы (string_builder/write_buffer/read_buffer/
-    /// char) и строит unified registry. Вызывается один раз при
+    /// char/sync) и строит unified registry. Вызывается один раз при
     /// инициализации CEmitter.
     ///
-    /// Plan 13 Ф.8: builtins.nv декомпозирован — теперь 4 источника.
+    /// Plan 13 Ф.8: builtins.nv декомпозирован — теперь 5 источников.
     /// Все embedded в binary через include_str!.
     pub fn load_builtins() -> Result<Self, String> {
         let mut reg = Self::default();
@@ -75,6 +77,7 @@ impl ExternalRegistry {
             ("write_buffer.nv",   Self::WRITE_BUFFER_SRC),
             ("read_buffer.nv",    Self::READ_BUFFER_SRC),
             ("char.nv",           Self::CHAR_SRC),
+            ("sync.nv",           Self::SYNC_SRC),
         ] {
             let module = crate::parser::parse(src)
                 .map_err(|d| format!("failed to parse {}: {}", name, d.message))?;

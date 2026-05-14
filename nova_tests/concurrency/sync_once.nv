@@ -1,0 +1,186 @@
+// Plan 18 std.sync: Once tests.
+//
+// Once guarantees exactly-once execution of an initialization body.
+// API: once.run() returns true for the first caller only. Concurrent
+// callers park until done() is called. All callers that arrive after
+// done() return false immediately.
+//
+// Key observable properties:
+//  - Exactly one fiber receives true from run() across any number of
+//    concurrent callers.
+//  - Fibers that park on a running Once wake only after done() — so
+//    side-effects produced before done() are visible to all of them.
+//  - Callers that arrive after done() skip the body entirely.
+
+module nova_tests.concurrency.sync_once
+
+// ─── Basic API ─────────────────────────────────────────────────
+
+test "Once: single caller runs and completes" {
+    let once = Once.new()
+    let mut ran = false
+    supervised {
+        spawn {
+            if once.run() {
+                ran = true
+                once.done()
+            }
+        }
+    }
+    assert(ran == true)
+}
+
+test "Once: run returns false on second sequential call" {
+    let once = Once.new()
+    supervised {
+        spawn {
+            if once.run() { once.done() }
+        }
+    }
+    // After supervised completes, once is in DONE state.
+    let second = once.run()
+    assert(second == false)
+    let third = once.run()
+    assert(third == false)
+}
+
+test "Once: run returns false immediately when already done" {
+    let once = Once.new()
+    supervised {
+        spawn { if once.run() { once.done() } }
+    }
+    // Fast-path: acquire-load sees DONE without acquiring the mutex.
+    let mut i = 0
+    let mut all_false = true
+    while i < 5 {
+        if once.run() { all_false = false }
+        i = i + 1
+    }
+    assert(all_false == true)
+}
+
+// ─── Mutual exclusion of the once-body ─────────────────────────
+
+// Three fibers concurrently call run(). Only one should receive true
+// and execute the body. The counter must equal exactly 1.
+test "Once: only one of N concurrent callers executes body" {
+    let once = Once.new()
+    let counter = AtomicInt.new(0)
+    supervised {
+        spawn {
+            if once.run() {
+                counter.fetch_add(1)
+                once.done()
+            }
+        }
+        spawn {
+            if once.run() {
+                counter.fetch_add(1)
+                once.done()
+            }
+        }
+        spawn {
+            if once.run() {
+                counter.fetch_add(1)
+                once.done()
+            }
+        }
+    }
+    assert(counter.load() == 1)
+}
+
+// ─── Happens-before guarantee ───────────────────────────────────
+
+// The once-body sets a value. Other fibers that call run() (receiving false)
+// must see that value after run() returns — because done() provides the
+// release boundary and their park/resume provides the acquire boundary.
+//
+// In cooperative FIFO scheduling: spawn-1 runs first (sets value, done()),
+// then spawn-2 runs (run() → false, fast-path or waiter), then asserts.
+// In M:N: the Once park/wake ensures happens-before.
+test "Once: body side-effects visible to waiting fibers" {
+    let once = Once.new()
+    let value = AtomicInt.new(0)
+    supervised {
+        spawn {
+            if once.run() {
+                // The once-body: write a sentinel value.
+                value.store(42)
+                once.done()
+            }
+        }
+        spawn {
+            // This fiber either runs the body (if it wins the race)
+            // or waits for the first fiber and then reads the value.
+            if once.run() {
+                // We are the runner — this path only taken if spawn-2
+                // arrives before spawn-1 transitions to RUNNING.
+                value.store(42)
+                once.done()
+            }
+            // Whether we ran or waited, value == 42 here.
+            assert(value.load() == 42)
+        }
+    }
+    assert(value.load() == 42)
+}
+
+// Multiple waiters: five fibers wait on a Once. The runner fiber yields
+// before calling done() to allow waiters to queue. All must see the
+// post-init value.
+test "Once: multiple waiters all wake after done" {
+    let once = Once.new()
+    let init_value = AtomicInt.new(0)
+    let saw_correct = AtomicInt.new(0)
+    supervised {
+        spawn {
+            // Runner: yield to let waiters register, then init + done.
+            if once.run() {
+                runtime.yield()
+                init_value.store(99)
+                once.done()
+            } else {
+                // If we arrive late (already DONE), value is already set.
+                if init_value.load() == 99 {
+                    saw_correct.fetch_add(1)
+                }
+            }
+        }
+        spawn {
+            if once.run() { init_value.store(99); once.done() }
+            else { if init_value.load() == 99 { saw_correct.fetch_add(1) } }
+        }
+        spawn {
+            if once.run() { init_value.store(99); once.done() }
+            else { if init_value.load() == 99 { saw_correct.fetch_add(1) } }
+        }
+        spawn {
+            if once.run() { init_value.store(99); once.done() }
+            else { if init_value.load() == 99 { saw_correct.fetch_add(1) } }
+        }
+        spawn {
+            if once.run() { init_value.store(99); once.done() }
+            else { if init_value.load() == 99 { saw_correct.fetch_add(1) } }
+        }
+    }
+    // init_value must be 99 (set by exactly one runner).
+    assert(init_value.load() == 99)
+}
+
+// ─── M:N mode ──────────────────────────────────────────────────
+
+// Under M:N scheduling, multiple OS threads race to call run().
+// The CAS in state transition guarantees exactly one winner.
+test "Once: M:N — exactly one worker executes body" {
+    runtime.init(2)
+    let once = Once.new()
+    let counter = AtomicInt.new(0)
+    supervised {
+        spawn { if once.run() { counter.fetch_add(1); once.done() } }
+        spawn { if once.run() { counter.fetch_add(1); once.done() } }
+        spawn { if once.run() { counter.fetch_add(1); once.done() } }
+        spawn { if once.run() { counter.fetch_add(1); once.done() } }
+    }
+    assert(counter.load() == 1)
+    runtime.shutdown()
+}

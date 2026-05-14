@@ -528,6 +528,33 @@ static inline void nova_cancel_token_bind(NovaCancelToken* self,
     }
 }
 
+/* Plan 44.5 Layer 5 fix: common base prefix for all generated SpawnCtx structs.
+ * Worker loop (runtime.c _worker_main) accesses these via NovaSpawnCtxBase* cast
+ * from mco_get_user_data(co). Codegen guarantees these are the FIRST five fields
+ * in every SpawnCtx (before user captures). nova_alloc zero-inits all fields:
+ *   _nova_parent_scope = NULL    → preamble sets per path (M:N vs single-thread)
+ *   _nova_worker_slot  = 0       → preamble overwrites with real slot on first run
+ *   _nova_saved_fail_top = NULL  → fiber starts with clean fail-stack (correct)
+ *   _nova_saved_interrupt_top = NULL → same
+ *   _nova_fiber_scope = NULL     → preamble sets to home worker scope (set once)
+ * Worker saves/restores these around each mco_resume, isolating each fiber's
+ * fail-frame chain so cross-fiber longjmp (crash) cannot happen.
+ *
+ * Work-stealing correctness (Plan 44.5 Layer 5 deadlock fix):
+ * A fiber's slot lives in its HOME worker scope (_nova_fiber_scope), set once
+ * in preamble. If the fiber is stolen by another worker, the stealing worker
+ * restores _nova_active_scope = _nova_fiber_scope so channel ops capture the
+ * correct (home) scope/slot. Without this, the channel waiter records the
+ * wrong scope, nova_sched_wake finds scope->fibers[slot]=NULL, dispatch_ready
+ * is never called, and the fiber hangs permanently (deadlock). */
+typedef struct {
+    NovaFiberQueue*      _nova_parent_scope;
+    int                  _nova_worker_slot;
+    NovaFailFrame*       _nova_saved_fail_top;
+    NovaInterruptFrame*  _nova_saved_interrupt_top;
+    NovaFiberQueue*      _nova_fiber_scope;
+} NovaSpawnCtxBase;
+
 /* Forward-decl для использования из spawn_into. */
 static inline void nova_sched_grow_state(NovaFiberQueue* scope, int new_cap);
 
@@ -577,9 +604,15 @@ static inline void nova_fiber_spawn_into(NovaFiberQueue* q,
 #ifdef _MSC_VER
 __declspec(thread) extern NovaFiberQueue* _nova_active_scope;
 __declspec(thread) extern int             _nova_active_slot;
+/* Plan 44.5 Layer 5 deferred-unlock: set by park_with_unlock before mco_yield;
+ * called by scheduler (worker loop / supervised_step) after mco_resume returns. */
+__declspec(thread) extern void (*_nova_park_unlock_fn)(void*);
+__declspec(thread) extern void*           _nova_park_unlock_arg;
 #else
 extern __thread NovaFiberQueue* _nova_active_scope;
 extern __thread int             _nova_active_slot;
+extern __thread void (*_nova_park_unlock_fn)(void*);
+extern __thread void*           _nova_park_unlock_arg;
 #endif
 
 /* Called from spawn-entry's catch block when the body threw.
@@ -675,6 +708,15 @@ static inline int nova_supervised_step(NovaFiberQueue* q) {
         /* Restore outer handlers (clean state для следующего fiber'а
          * или main-flow после step). */
         nova_effect_snapshot_restore(&outer_effects);
+        /* Plan 44.5 Layer 5 deferred-unlock: call if fiber used park_with_unlock.
+         * Single-thread: no race (no concurrent wakers), just maintain protocol. */
+        if (_nova_park_unlock_fn) {
+            void (*_pufn)(void*) = _nova_park_unlock_fn;
+            void* _puarg = _nova_park_unlock_arg;
+            _nova_park_unlock_fn  = NULL;
+            _nova_park_unlock_arg = NULL;
+            _pufn(_puarg);
+        }
         if (r != MCO_SUCCESS) {
             fprintf(stderr, "nova: fiber resume failed (%d)\n", (int)r);
             abort();

@@ -133,6 +133,95 @@ closure-rev + D85 error-ops). Работа codegen-агента.
 
 ---
 
+## Execution Plan (актуализирован 2026-05-14)
+
+> Plan 18 статус: DRAFT → продвигается к **active**. Ниже — конкретные
+> шаги в порядке приоритета. Каждый шаг = отдельный коммит/sub-plan.
+
+### Шаг 1 — std.sync (M:N-correct примитивы) — HIGH
+
+**Почему сейчас:** M:N runtime работает (Plan 44.5). Shared mut между
+workers без синхронизации = UB. std.sync нужен для честного M:N кода.
+
+Реализация:
+
+**`Atomic[T]`** — через C11 `_Atomic` / MSVC `_InterlockedExchange*`.
+```nova
+export external fn Atomic[int].new(val int) -> Atomic[int]
+export external fn Atomic[int].@load() -> int
+export external fn Atomic[int].@store(val int) -> ()
+export external fn Atomic[int].@fetch_add(delta int) -> int
+export external fn Atomic[int].@compare_exchange(expected int, desired int) -> bool
+```
+Runtime: `nova_rt/atomic.h` — wrapping `<stdatomic.h>` (C11) /
+`<intrin.h>` (MSVC). T=int, bool, ptr (3 specializations).
+
+**`Mutex[T]`** — через `uv_mutex_t` (libuv, кроссплатформенный).
+```nova
+export external fn Mutex[T].new(val T) -> Mutex[T]
+export external fn Mutex[T].@lock() -> T  // park если занят
+export external fn Mutex[T].@unlock() -> ()
+export external fn Mutex[T].@try_lock() -> Option[T]
+```
+Park-while-locked: `nova_sched_park_with_unlock` + `uv_mutex_lock` —
+паттерн уже есть в Channel implementation.
+
+**`WaitGroup`** — счётчик с barrier.
+```nova
+export external fn WaitGroup.new() -> WaitGroup
+export external fn WaitGroup.@add(delta int) -> ()
+export external fn WaitGroup.@done() -> ()   // add(-1)
+export external fn WaitGroup.@wait() -> ()   // park until count == 0
+```
+
+Тесты: atomic increment от N workers (final sum = N × iterations),
+mutex producer-consumer, waitgroup join N fibers.
+
+### Шаг 2 — std.fs базовый (File read/write) — MEDIUM
+
+**`File.open`, `File.read`, `File.write`, `File.close`** через
+libuv `uv_fs_open/read/write/close` с park/wake integration
+(async libuv callback → `nova_sched_wake`). Effect: `Fs`.
+
+Минимум для v0.2: read whole file, write whole file, stat, list dir.
+Blocking-pool для sync path (отдельный thread pool в libuv).
+
+Тест: write temp file → read back → assert content. Cross-platform.
+
+### Шаг 3 — std.os.args / env — SMALL
+
+```nova
+export external fn os.args() -> []str
+export external fn os.env(key str) -> Option[str]
+export external fn os.exit(code int) -> ()
+```
+
+Runtime: `argc/argv` через main thread init; `getenv` / `GetEnvironmentVariable`.
+Нет libuv: синхронные системные вызовы.
+
+### Шаг 4 — std.net (TCP echo server) — MEDIUM-HIGH
+
+`TcpListener.bind(addr)` + `TcpStream.dial(addr)` через libuv `uv_tcp_*`.
+accept loop → spawn fiber per connection → park/wake на read/write.
+
+**Это первый end-to-end network test Nova.** Если работает —
+языковой server на Nova возможен.
+
+### Шаг 5 — std.sync остаток (Once, RwLock, Semaphore) — LOWER
+
+После Шаг 1 + 2 проверки покажут что ещё нужно. Эти нужны
+для продвинутых паттернов (lazy singleton, read-heavy data).
+
+### Блокеры которые нужно закрыть ДО шагов выше
+
+- **Generic specialization** (`Atomic[int]`, `Mutex[T]`) — Plan 15
+  или targeted fix в codegen. Сейчас generics через void* erasure —
+  может быть достаточно для `Atomic[int]` (фиксированный T=int).
+- **external fn в user-defined modules** — std.sync/fs/net не в
+  `std.runtime.*` → D82 whitelist надо расширить на `std.*`.
+
+---
+
 ## Verification (когда дойдёт до реализации)
 
 Каждый модуль из P0 должен иметь:

@@ -6031,6 +6031,68 @@ legitimate новое feature без syntax overlap.
 
 
 
+## Plan 44.5 Layer 5: park/wake migration к worker scope — ✅ CLOSED (2026-05-14)
+
+**Закрыто через два коммита:**
+- `8fcbc67fddb` — park/wake + Time.sleep в worker fiber (D92 fixed, dispatch_ready,
+  slot allocation в preamble). 279/279 PASS.
+- `b7514c02c2d` — work-stealing deadlock fix (`_nova_fiber_scope` home scope).
+
+**Проблема была.** (scope, slot)-keyed park/wake + work-stealing:
+fiber аллоцирует slot в home worker A, мигрирует на worker B через steal.
+Channel waiter записывал неправильный scope (`_nova_active_scope` = B's scope
+во время park) → `nova_sched_wake` не находил fiber → permanent hang.
+
+**Итоговое решение.** `_nova_fiber_scope` в `NovaSpawnCtxBase` (5-й field).
+Worker loop restore'ит `_nova_active_scope = base->_nova_fiber_scope` перед
+каждым `mco_resume` — home scope сохраняется независимо от steel migrations.
+Slot allocation в preamble (первый resume) обеспечивает D92 invariant.
+
+**Что осталось упрощено (Windows стеки).** 8MB fiber стеки через
+`mmap(MAP_NORESERVE)` реализованы на Linux/macOS. Windows использует
+`calloc` fallback — SEH guard pages и `VirtualAlloc(MEM_RESERVE|MEM_COMMIT)`
+отложены на Plan 42+ (низкий приоритет: миллион fibers на Windows нереальный
+сценарий для типичных программ).
+
+**Что осталось упрощено (preemption).** Cooperative `runtime.yield()` —
+явный hint, не автоматический. Signal-based preemption (аналог Go's SIGURG)
+отложен: требует safe points в codegen, `NOVA_PREEMPT` signal handler,
+TLS флаг "fiber должна yield" — оценка 2-3 недели engineering. Приоритет
+низкий пока CPU-bound workloads не станут реальным use case.
+
+
+## Plan 18 std.sync: AtomicInt / AtomicBool / Mutex / WaitGroup / Once — ✅ CLOSED (2026-05-14)
+
+**Закрыто двумя коммитами** (основной + codegen fix).
+
+Fiber-aware synchronization primitives. AtomicInt / AtomicBool через C11 __atomic
+builtins. Mutex через nova_sched_park_with_unlock / nova_sched_wake (fair FIFO).
+WaitGroup через counter + waiter list (WakeAll при count→0). Once через state
+machine NEW→RUNNING→DONE: run() → true только для первого caller'а, остальные
+паркуются до done(). Fast-path: acquire-load на DONE state без mutex.
+
+ExternalRegistry infer_expr_c_type расширен generic lookup'ами — более не требует
+per-type hardcoding для новых external типов (StringBuilder pattern).
+
+**Codegen bug**: Type.new() парсится как ExprKind::Path(["Type", "new"]), не как
+Member. Path-ветка infer_expr_c_type не имела ExternalRegistry lookup → var_types
+получал "nova_int" вместо "Nova_Type*" → instance method type inference ломалась.
+Фикс: добавить lookup в Path-ветку. Симптом проявляется при `if once.run()` —
+прямое использование bool-returning external method в if без промежуточной let.
+
+**334 PASS, 0 FAIL** — sync_atomic.nv (15 тестов), sync_mutex.nv (6), 
+sync_waitgroup.nv (5), sync_once.nv (7) + все предыдущие тесты.
+
+**Что осталось упрощено:**
+
+- [S-SYNC1] `WaitGroup.add(n)` нет runtime assertion для вызова done() без add().
+  Поведение задефайнировано через NOVA_SYNC_ASSERT в debug builds. Приоритет: L.
+- [S-SYNC2] `Mutex` не реентрантен — deadlock при повторном lock() из той
+  же fiber. Явная диагностика была бы лучше. Приоритет: L.
+- [S-SYNC3] `AtomicInt` нет `fetch_or()` / `fetch_and()` — добавить при
+  реальной необходимости. Приоритет: L.
+
+
 ## Plan 44.5 Layer 5: park/wake migration к worker scope — отложено
 
 **Что упрощено.** Plan 44.5 Layer 5 закрыл implicit M:N для **compute-only**
@@ -6053,26 +6115,8 @@ guard `_nova_active_slot < 0` → FATAL D92 invariant violated.
 4. Fiber pinning to home worker (Go's `LockOSThread` analog) — anti-
    migration для consistency park/wake handles thread-bound.
 
-Это ~600-1000 LOC значимой работы. Сделать всё в одной сессии =
-high risk regression. Honest partial closure: compute-only Layer 5
-дает user benefit (workers actually работают), park/wake migration =
-следующий milestone.
-
-**Long-term path.** Реализация Go's g/m state separation:
-- Per-fiber state struct (NovaFiberState analog к Go's `g`).
-- TLS только current_fiber pointer (Go's `getg()`).
-- На dispatch: TLS становится cache от current_fiber->fields.
-- На park: copy back в fiber state перед yield.
-
-Memory updated: `feedback_mn_runtime_go_reference.md` — для всей M:N
-работы первым делом research Go runtime, не изобретать.
-
-**Что НЕ упрощено.** Compute-only Layer 5 sufficient для:
-- Pure CPU workloads (parallel computation, map-reduce).
-- Workers actually distributing work (proven через
-  `mn_runtime_actual_workload.nv` / `runtime.current_worker_id()`).
-- Cross-worker `first_error_atomic` propagation.
-- Scope.pending_remote tracking + main thread wait через uv_async_send.
+Это ~600-1000 LOC значимой работы. Honest partial closure: compute-only Layer 5
+дает user benefit (workers actually работают), park/wake migration = следующий milestone.
 
 Это honest scope split — fundamental compute parallelism отделён от
 park/wake migration ergonomics.

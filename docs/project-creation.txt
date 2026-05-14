@@ -9381,6 +9381,175 @@ Tests:
 
 
 ================================================================================
+PLAN 44.5 LAYER 5 ФИНАЛ: cross-channel + runtime.yield + 8MB стеки + sync (2026-05-14)
+================================================================================
+
+После выпуска Plan 44.5 Layer 5 (park/wake — Time.sleep в worker fiber, 279/279 PASS)
+три post-layer-5 задачи и синхронизация с main закрыты в одной сессии.
+
+### A. Work-stealing deadlock fix — mn_runtime_cross_channel (commit b7514c02c2d)
+
+**Проблема.** Тест mn_runtime_cross_channel висел 65s, затем timeout.
+Root cause: work-stealing race в Channel park/wake.
+
+Когда fiber_A создаётся на worker A (slot выделен в `&w_A->scope`), потом
+worker B крадёт её через Chase-Lev deque, TLS `_nova_active_scope` на
+worker B = `&w_B->scope`. Channel.recv вызывает park: записывает waiter
+с `(scope=&w_B->scope, slot=N)`. Sender вызывает wake: `&w_B->scope.fibers[N]`
+= NULL (slot аллоцирован в w_A, не в w_B) → `dispatch_ready` не вызывается
+→ fiber навсегда подвешена.
+
+**Fix.** Добавлено поле `NovaFiberQueue* _nova_fiber_scope` в `NovaSpawnCtxBase`
+(home worker scope, записывается один раз в preamble). Worker loop перед
+каждым `mco_resume` restore'ит `_nova_active_scope = base->_nova_fiber_scope`
+— channel ops всегда используют правильный home scope, независимо от того
+на каком worker запускается fiber.
+
+Изменения:
+- `nova_rt/fibers.h`: `_nova_fiber_scope` в `NovaSpawnCtxBase`.
+- `nova_rt/runtime.c`: restore home scope в worker loop перед `mco_resume`;
+  `is_parked` check использует `base->_nova_fiber_scope`.
+- `emit_c.rs`: emit `_c->_nova_fiber_scope = _nova_active_scope` в preamble.
+
+Тест: 3 сценария в `mn_runtime_cross_channel.nv` — basic send/recv,
+4-producer pipeline, Channel + Time.sleep. Все PASS.
+
+### B. runtime.yield() built-in (commit 0a8f6635640)
+
+`runtime.yield()` — cooperative yield hint: fiber re-queue'ится в worker
+deque (не парковается), другие fibers получают CPU. Если очередь пуста —
+no-op. Семантика: "я готов уступить CPU прямо сейчас".
+
+Реализация:
+- `emit_c.rs`: встроенный dispatch `"yield" if args.is_empty()` →
+  `(nova_fiber_yield(), (nova_int)0LL)`.
+- `std/runtime/runtime.nv`: `export external fn runtime.yield() -> ()`.
+
+Тест: `mn_runtime_yield.nv` — cooperative progress между 2 fibers с yield,
+yield вне fiber context (no-op), yield без runtime.init (single-thread).
+
+Урок: явный `runtime.yield()` по запросу пользователя лучше
+автоматического insert в каждый loop — overhead на IO-bound loops, codegen
+не знает длину итерации.
+
+### C. 8MB demand-paged fiber стеки (commit 0a8f6635640)
+
+`fiber_arena.h` — `NOVA_FIBER_STACK_SIZE = 8MB` вместо 2MB.
+Linux/macOS: `mmap(MAP_ANONYMOUS | MAP_PRIVATE | MAP_NORESERVE, 8MB)` —
+demand-paged, физические страницы выделяются при обращении.
+4096 slots × 8MB virtual = 32GB virtual, физически — только реально
+использованный стек. Guard page внизу стека: SIGSEGV → понятная ошибка
+вместо тихого memory corruption.
+Windows: `calloc` fallback (SEH guard pages отложены на Plan 42+).
+
+Преимущество над Go stack copying: не нужны write barriers на каждый
+pointer в стек, не нужен stack scanner. Ограничение: стек не может
+превысить virtual reserve (8MB); overflow = SIGSEGV, не grow.
+
+### D. Sync mn-runtime ← main (commit cf860aecc86)
+
+Merge Plan 42.09 (reexport + rename) + 42.10 (module-level #forbid) +
+42.12 (#cfg conditional compilation) + D100+D101 spec.
+
+5 файлов имели merge conflicts:
+- Большинство (comment-only) → `git checkout --ours`.
+- `fibers.h` — ручной merge: сохранены `_nova_fiber_scope` + `NovaSpawnCtxBase`
+  поля AND main's новые GC pinning fields (`ctx_pins/ctx_pins_count/ctx_pins_cap`).
+
+**Итог:** 307/307 PASS (26 новых тестов из Plan 42.09/42.10/42.12).
+
+
+================================================================================
+2026-05-14 Plan 18: std.sync — AtomicInt + AtomicBool + Mutex + WaitGroup + Once
+================================================================================
+
+Fiber-aware synchronization primitives для Nova concurrency runtime.
+
+РЕАЛИЗОВАНО:
+
+  Runtime (nova_rt/sync_primitives.h):
+  - Nova_AtomicInt: lock-free integer через __atomic C11 builtins.
+    Операции: new/load/store/fetch_add/fetch_sub/compare_exchange.
+    Ordering: load=acquire, store=release, fetch_*/CAS=acq_rel.
+  - Nova_AtomicBool: lock-free boolean. Операции: new/load/store/
+    compare_exchange/swap. swap() полезен для one-shot ownership race.
+  - Nova_Mutex: fair waiter-queue mutex. Внутри fiber:
+    nova_sched_park_with_unlock атомарно паркует и отпускает spinlock.
+    Разбудка через nova_sched_wake (FIFO порядок). Вне fiber (OS thread):
+    spin fallback. Поле locked=true при wake не сбрасывается — lock передаётся
+    следующему waiter'у без сброса.
+  - Nova_WaitGroup: счётчик-rendezvous. add(n) перед spawn'ами,
+    done() от каждого worker'а, wait() парков вызывающую fiber пока
+    count > 0. done(): при count→0 отстёгивает весь waiter-list под lock'ом,
+    wake'ит всех вне lock'а (WakeAll семантика).
+  - Nova_Once: exactly-once state machine NEW→RUNNING→DONE.
+    run() → true только для первого caller'а (должен вызвать done()).
+    Конкурентные callers паркуются до done(). После done() — fast-path
+    acquire-load возвращает false без mutex (NOVA_ONCE_DONE state).
+
+  Nova declarations (std/runtime/sync.nv):
+  - ExternalRegistry source embedded в binary через include_str!.
+  - Статические конструкторы: AtomicInt.new, AtomicBool.new, Mutex.new,
+    WaitGroup.new, Once.new.
+  - Instance-методы на `mut` и non-mut receiver'ах.
+
+  Codegen расширения:
+  - external_registry.rs: SYNC_SRC + ("sync.nv", SYNC_SRC) в load_builtins().
+  - emit_c.rs infer_expr_c_type: два новых generic ExternalRegistry lookup'а:
+    1. Static method (AtomicInt.new → Nova_AtomicInt*) в Ident-блоке.
+    2. Instance method (a.load → nova_int) для recv_ty.starts_with("Nova_").
+    Устраняет необходимость в per-type hardcoding (как StringBuilder/WriteBuffer).
+  - emit_c.rs Path-branch fix: добавлен ExternalRegistry static-method lookup
+    в Path-form ветку infer_expr_c_type. Root cause: Type.new() парсится как
+    ExprKind::Path(["Type", "new"]), не как Member — без этого фикса
+    var_types["x"] = "nova_int" вместо "Nova_Type*", что ломало instance
+    method type inference (once.run() → nova_int вместо nova_bool в if).
+  - nova_rt.h: #include "sync_primitives.h" после channels.h.
+
+ТЕСТЫ (334 PASS, 0 FAIL):
+
+  sync_atomic.nv (15 тестов):
+  - AtomicInt single-fiber: new/load, store/load, fetch_add (prev check),
+    fetch_sub, compare_exchange success + failure.
+  - AtomicInt concurrent: 2 fibers × 200 fetch_add → counter == 400.
+  - AtomicInt CAS loop: 2 fibers × 10 CAS-increment → val == 20.
+  - AtomicBool single-fiber: new false/true, store/load, compare_exchange
+    success + failure, swap false→true, swap true→false.
+  - AtomicBool concurrent: swap one-shot ownership — exactly 1 winner из 3.
+
+  sync_mutex.nv (6 тестов):
+  - try_lock на fresh mutex → true; try_lock while locked → false.
+  - lock/unlock в single fiber × 2 iterations.
+  - Mutual exclusion stress: violations == 0 при 50×50 operations.
+  - Protected counter: 2 fibers × 100 lock+increment+unlock → counter == 200.
+  - M:N mode (2 workers): те же guarantee работают cross-worker.
+
+  sync_waitgroup.nv (5 тестов):
+  - wait() на zero-count не блокирует.
+  - add(1) + spawn{done()} + spawn{wait()} — done_count visible after wait.
+  - 3 workers с fetch_add + done, 4th fiber wait → counter == 3.
+  - Multiple waiters: оба просыпаются при done.
+  - M:N rendezvous: 4 workers × разные суммы → sum.load() == 10.
+
+  sync_once.nv (7 тестов):
+  - Single caller runs and completes (ran == true).
+  - run() returns false on second sequential call.
+  - run() returns false immediately when already done (fast-path × 5).
+  - Only one of N concurrent callers executes body (counter == 1).
+  - Body side-effects visible to waiting fibers (value == 42).
+  - Multiple waiters all wake after done (init_value == 99).
+  - M:N mode (2 workers): exactly one worker executes body.
+
+УРОК (Path-form type inference bug):
+  Type.new() в Nova парсится как ExprKind::Path(["Type", "new"]), НЕ как
+  ExprKind::Member. Path-ветка infer_expr_c_type не имела ExternalRegistry lookup,
+  что приводило к var_types["x"] = "nova_int" для всех internal external типов.
+  Фикс: добавить lookup в Path-ветку симметрично Member-ветке.
+  Проявляется только когда результат метода напрямую используется в `if` условии
+  (if once.run()) — без явной let-переменной тип не кэшируется.
+
+
+================================================================================
 PLAN 42.13: internal/ EXTENDED NAMING (D29 rev-3.1, 2026-05-14)
 ================================================================================
 

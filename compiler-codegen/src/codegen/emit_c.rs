@@ -2235,7 +2235,9 @@ impl CEmitter {
         // results from concurrent execution come through mut-captures or
         // `parallel for` (homogeneous results), never from spawn itself.
         let queue = self.current_scope_queue.clone().expect("scope queue must be active");
-        // Plan 44.5 Layer 5 park/wake: init worker_slot to sentinel before spawn.
+        // Plan 44.5 Layer 5 fix: initialize _nova_worker_slot = -1 explicitly.
+        // nova_alloc zero-initializes (slot=0), but 0 is a valid slot index —
+        // -1 is required as "not yet set" sentinel for the worker loop restore logic.
         self.line(&format!("{ctx}->_nova_worker_slot = -1;", ctx = ctx_var));
         // Plan 44.5 Layer 5: implicit M:N — runtime initialized → push в worker
         // deque; иначе single-thread path unchanged.
@@ -2257,7 +2259,32 @@ impl CEmitter {
         // Emit the ctx-struct typedef into lambda_forward_decls — flushed before the
         // current function in `out`, so the typedef is visible at the spawn-instance
         // declaration site (and also for the entry fn body which lives in deferred_impls).
+        //
+        // Plan 44.5 Layer 5 fix: base fields MUST be FIRST so NovaSpawnCtxBase* cast
+        // in runtime.c worker loop is safe (fixed offsets). User captures follow.
         let _ = writeln!(self.lambda_forward_decls, "typedef struct {{");
+        // Base fields first (NovaSpawnCtxBase layout — must match fibers.h).
+        // Plan 44.5 Layer 5: parent scope для remote-spawn tracking.
+        // NULL = single-thread (без runtime.init). Always present.
+        let _ = writeln!(self.lambda_forward_decls,
+            "    NovaFiberQueue* _nova_parent_scope;");
+        // Plan 44.5 Layer 5 park/wake: slot index в worker scope.
+        // Initialized to -1; set by preamble on first run. -1 = not yet set.
+        let _ = writeln!(self.lambda_forward_decls,
+            "    int _nova_worker_slot;");
+        // Plan 44.5 Layer 5 fix: per-fiber fail/interrupt-top chain snapshot.
+        // Worker saves/restores these around mco_resume to isolate fiber fail-stacks.
+        let _ = writeln!(self.lambda_forward_decls,
+            "    NovaFailFrame* _nova_saved_fail_top;");
+        let _ = writeln!(self.lambda_forward_decls,
+            "    NovaInterruptFrame* _nova_saved_interrupt_top;");
+        // Plan 44.5 Layer 5 deadlock fix: home worker scope for work-stealing.
+        // Set once in preamble; worker restores _nova_active_scope from this
+        // before each mco_resume so channel ops always capture the correct scope.
+        // NULL before preamble runs (_nova_worker_slot == -1 guards that path).
+        let _ = writeln!(self.lambda_forward_decls,
+            "    NovaFiberQueue* _nova_fiber_scope;");
+        // User capture fields follow base fields.
         for (cap, ty, by_value) in &captures {
             if *by_value {
                 let _ = writeln!(self.lambda_forward_decls, "    {} {};", ty, cap);
@@ -2271,15 +2298,6 @@ impl CEmitter {
             let _ = writeln!(self.lambda_forward_decls,
                 "    NovaArray_{}* _nova_par_result;", elem_ty);
         }
-        // Plan 44.5 Layer 5: parent scope для remote-spawn tracking.
-        // NULL = single-thread (без runtime.init). Always present —
-        // заменяет dummy padding для empty spawns.
-        let _ = writeln!(self.lambda_forward_decls,
-            "    NovaFiberQueue* _nova_parent_scope;");
-        // Plan 44.5 Layer 5 park/wake: slot in worker scope, -1 until allocated.
-        // Entry function preamble allocates via nova_scope_alloc_slot; epilogue frees.
-        let _ = writeln!(self.lambda_forward_decls,
-            "    int _nova_worker_slot;");
         // Note: no `_nova_result` field — spawn returns unit (D50/D71).
         let _ = writeln!(self.lambda_forward_decls, "}} {};", ctx_ty);
 
@@ -2295,14 +2313,19 @@ impl CEmitter {
         // pending_remote + signal_main). Раньше для empty-capture spawn
         // было `(void)_co;` — теперь _c always.
         self.line(&format!("{ctx}* _c = ({ctx}*)mco_get_user_data(_co);", ctx = ctx_ty));
-        // Plan 44.5 Layer 5 park/wake: для remote fiber'а allocate slot
-        // в worker scope (_nova_active_scope = &w->scope set'нут в
-        // _worker_main). Без slot'а Time.sleep / Channel.recv abort'или
-        // бы (D92 invariant: _nova_active_slot >= 0 в fiber context).
+        // Plan 44.5 Layer 5 park/wake: alloc slot in worker scope on first resume.
+        // Required so _nova_active_slot >= 0 (D92 invariant) when fiber calls
+        // Time.sleep / Channel.recv in worker context.
+        // Single-thread path: _nova_parent_scope == NULL → skip.
         self.line("if (_c->_nova_parent_scope) {");
         self.indent += 1;
         self.line("_nova_active_slot = nova_scope_alloc_slot(_nova_active_scope, _co);");
         self.line("_c->_nova_worker_slot = _nova_active_slot;");
+        self.line("_c->_nova_fiber_scope = _nova_active_scope;");
+        self.indent -= 1;
+        self.line("} else {");
+        self.indent += 1;
+        self.line("_c->_nova_worker_slot = -1;");
         self.indent -= 1;
         self.line("}");
         // Activate capture rewriting: ExprKind::Ident → `(*_c->name)` or `_c->name`.
@@ -2394,24 +2417,21 @@ impl CEmitter {
         self.indent -= 1;
         self.line("}");
 
-        // Plan 44.5 Layer 5 park/wake: free worker scope slot ПЕРЕД
-        // pending_remote decrement. После slot free — fibers[slot] == NULL,
-        // park/wake helpers будут skip'ать. _nova_active_slot обнуляем
-        // (worker сам set'ит -1 в init, но другой spawn на этом worker'е
-        // не должен унаследовать slot этого fiber'а).
-        self.line("if (_c->_nova_parent_scope && _c->_nova_worker_slot >= 0) {");
+        // Plan 44.5 Layer 5: remote fiber post-completion cleanup.
+        // (1) Free worker scope slot (alloc'd in preamble) — before decrement
+        //     so the slot is available for the next fiber immediately.
+        // (2) Decrement parent's pending_remote (release ordering) — main
+        //     thread в supervised_run wait-loop увидит decrement через
+        //     nova_aint_load(acquire). signal_main wake'ом wake'ает main
+        //     thread'а из uv_run(UV_RUN_ONCE).
+        self.line("if (_c->_nova_parent_scope) {");
+        self.indent += 1;
+        self.line("if (_c->_nova_worker_slot >= 0) {");
         self.indent += 1;
         self.line("nova_scope_free_slot(_nova_active_scope, _c->_nova_worker_slot);");
         self.line("_nova_active_slot = -1;");
         self.indent -= 1;
         self.line("}");
-        // Plan 44.5 Layer 5: remote fiber post-completion cleanup.
-        // Decrement parent's pending_remote (release ordering) — main
-        // thread в supervised_run wait-loop увидит decrement через
-        // nova_aint_load(acquire). signal_main wake'ом wake'ает main
-        // thread'а из uv_run(UV_RUN_ONCE).
-        self.line("if (_c->_nova_parent_scope) {");
-        self.indent += 1;
         self.line("(void)nova_aint_fetch_sub_release(&_c->_nova_parent_scope->pending_remote);");
         self.line("nova_runtime_signal_main();");
         self.indent -= 1;
@@ -7441,6 +7461,9 @@ impl CEmitter {
                             "current_worker_id" if args.is_empty() => {
                                 return Ok("((nova_int)nova_runtime_current_worker_id())".to_string());
                             }
+                            "yield" if args.is_empty() => {
+                                return Ok("(nova_fiber_yield(), (nova_int)0LL)".to_string());
+                            }
                             _ => {}
                         }
                     }
@@ -11497,6 +11520,13 @@ impl CEmitter {
                         if n == "int" && method == "to_bits" {
                             return "nova_int".into();
                         }
+                        // Plan 12 + Plan 18: ExternalRegistry static-method return type.
+                        // Handles AtomicInt.new(), Mutex.new(), WaitGroup.new(), etc.
+                        if let Some(decls) = self.external_registry.lookup(n, method) {
+                            if let Some(decl) = decls.iter().find(|d| !d.is_instance) {
+                                return decl.return_c_type.clone();
+                            }
+                        }
                     }
                     // Plan 04 + Plan 13 Ф.9.1: instance-method type inference.
                     // Self-return для chaining (mut @append, all @write_*, @clone).
@@ -11546,6 +11576,17 @@ impl CEmitter {
                             m if m.starts_with("try_read_") => "Nova_Result*".into(),
                             _ => "nova_int".into(),
                         };
+                    }
+                    // Plan 12 + Plan 18: ExternalRegistry instance-method return type.
+                    // Handles AtomicInt.@load(), Mutex.@lock(), WaitGroup.@wait(), etc.
+                    if obj_ty.starts_with("Nova_") && obj_ty.ends_with('*') {
+                        let recv_ty = obj_ty.trim_start_matches("Nova_")
+                            .trim_end_matches('*').trim();
+                        if let Some(decls) = self.external_registry.lookup(recv_ty, method) {
+                            if let Some(decl) = decls.iter().find(|d| d.is_instance) {
+                                return decl.return_c_type.clone();
+                            }
+                        }
                     }
                     // D26 prelude: NovaOpt_T method type inference.
                     if obj_ty.starts_with("NovaOpt_") {
@@ -11769,6 +11810,15 @@ impl CEmitter {
                         if let Some(schema) = self.effect_schemas.get(eff.as_str()) {
                             if let Some((_, ret_ty)) = Self::schema_lookup(schema, method_name.as_str()) {
                                 return ret_ty.clone();
+                            }
+                        }
+                        // Plan 12 + Plan 18: ExternalRegistry static-method lookup
+                        // для Path-form вызовов (Once.new(), AtomicBool.new(), etc.).
+                        // Path-form используется вместо Member-form для статических
+                        // методов внешних типов — Member-branch выше не покрывает это.
+                        if let Some(decls) = self.external_registry.lookup(eff, method_name) {
+                            if let Some(decl) = decls.iter().find(|d| !d.is_instance) {
+                                return decl.return_c_type.clone();
                             }
                         }
                         let key = format!("fn_ret_{}", method_name);

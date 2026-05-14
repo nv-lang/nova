@@ -72,8 +72,9 @@ test "sleep(0) zero-overhead yield <5ms" {
 }
 
 test "sleep(1) minimum useful sleep — within Windows gran" {
-    // sleep(1) target — на Windows реальная fire может быть 0-15ms
-    // из-за timer-gran. Не fail если выше 1ms, fail если выше 30ms.
+    // sleep(1) target — на Windows реальная fire может быть 0-31ms
+    // из-за timer-gran (2 тика по ~15.6ms). Не fail если выше 1ms,
+    // fail если выше 50ms (3 тика — явный баг).
     let mut max_observed int = 0
     for _ in 0..10 {
         let t0 = Time.now()
@@ -81,6 +82,6 @@ test "sleep(1) minimum useful sleep — within Windows gran" {
         let elapsed = Time.now() - t0
         if elapsed > max_observed { max_observed = elapsed }
     }
-    // Документируем: sleep(1) на Windows фактически ~1-16ms.
-    assert(max_observed < 30)
+    // Документируем: sleep(1) на Windows фактически ~1-31ms (2 тика).
+    assert(max_observed < 50)
 }

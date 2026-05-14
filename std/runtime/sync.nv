@@ -1,0 +1,96 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 18 std.sync: fiber-aware synchronization primitives.
+//
+// AtomicInt  — lock-free atomic integer (int32 precision, nova_int width).
+// AtomicBool — lock-free atomic boolean; swap() useful for one-shot ownership.
+// Mutex      — fair FIFO fiber-aware mutex; park/wake via nova_sched.
+// WaitGroup  — counter-based rendezvous; wait() parks until count == 0.
+// Once       — exactly-once execution barrier; run()/done() pair.
+//
+// See compiler-codegen/nova_rt/sync_primitives.h for C implementations.
+
+module runtime.sync
+
+// ─── AtomicInt ───────────────────────────────────────────────────
+
+// Create a new AtomicInt with initial value v.
+export external fn AtomicInt.new(v int) -> Self
+
+// Load current value (acquire ordering).
+export external fn AtomicInt @load() -> int
+
+// Store new value (release ordering).
+export external fn AtomicInt mut @store(v int)
+
+// Atomically add delta, return previous value (acq_rel).
+export external fn AtomicInt mut @fetch_add(delta int) -> int
+
+// Atomically subtract delta, return previous value (acq_rel).
+export external fn AtomicInt mut @fetch_sub(delta int) -> int
+
+// CAS: if value == expected, store desired. Returns true on success.
+export external fn AtomicInt mut @compare_exchange(expected int, desired int) -> bool
+
+// ─── AtomicBool ──────────────────────────────────────────────────
+
+// Create a new AtomicBool with initial value v.
+export external fn AtomicBool.new(v bool) -> Self
+
+// Load current value (acquire ordering).
+export external fn AtomicBool @load() -> bool
+
+// Store new value (release ordering).
+export external fn AtomicBool mut @store(v bool)
+
+// CAS: if value == expected, store desired. Returns true on success.
+export external fn AtomicBool mut @compare_exchange(expected bool, desired bool) -> bool
+
+// Atomically set to v, return previous value (acq_rel).
+// Useful for one-shot ownership: if !flag.swap(true) { /* first */ }.
+export external fn AtomicBool mut @swap(v bool) -> bool
+
+// ─── Mutex ───────────────────────────────────────────────────────
+
+// Create a new unlocked Mutex.
+export external fn Mutex.new() -> Self
+
+// Acquire the mutex. Parks the calling fiber until the lock is available.
+// NOT reentrant: calling lock() twice from the same fiber deadlocks.
+export external fn Mutex mut @lock()
+
+// Release the mutex. Wakes the next waiting fiber if any.
+// Must be called only when the mutex is locked.
+export external fn Mutex mut @unlock()
+
+// Try to acquire without blocking. Returns true if acquired.
+export external fn Mutex mut @try_lock() -> bool
+
+// ─── WaitGroup ───────────────────────────────────────────────────
+
+// Create a new WaitGroup with counter 0.
+export external fn WaitGroup.new() -> Self
+
+// Increment the counter by delta. Call before spawning workers.
+export external fn WaitGroup mut @add(delta int)
+
+// Decrement the counter by 1. Wakes all wait() callers when counter reaches 0.
+// Must not be called more times than add() in total.
+export external fn WaitGroup mut @done()
+
+// Park the calling fiber until the counter reaches 0.
+export external fn WaitGroup @wait()
+
+// ─── Once ────────────────────────────────────────────────────────
+
+// Create a new Once (initial state: not yet executed).
+export external fn Once.new() -> Self
+
+// Transition to running state. Returns true if THIS fiber should execute
+// the once-body. Returns false immediately if already done, or parks until
+// done() is called if another fiber is currently running.
+// Contract: if run() returns true, done() MUST be called exactly once.
+export external fn Once mut @run() -> bool
+
+// Mark the once-body as complete. Wakes all parked callers of run().
+// Must be called exactly once, by the fiber whose run() returned true.
+export external fn Once mut @done()

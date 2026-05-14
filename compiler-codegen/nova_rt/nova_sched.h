@@ -155,24 +155,37 @@ static inline void nova_sched_park_with_unlock(NovaFiberQueue* scope, int slot,
         fprintf(stderr, "nova: nova_sched_park_with_unlock: not in fiber context\n");
         abort();
     }
-    /* Bootstrap single-thread: unlock before park is safe.
-     * M:N (Plan 23): unlock must happen AFTER parked-state visible to
-     * other threads — scheduler implementation responsibility. */
-    if (unlock_fn) unlock_fn(unlock_arg);
+    /* Plan 44.5 Layer 5 deferred-unlock (M:N correctness):
+     *
+     * Store unlock fn/arg in thread-local instead of calling immediately.
+     * The scheduler (worker loop in runtime.c or nova_supervised_step) will:
+     *   1. Call mco_resume(co) — fiber sets parked[slot]=true, stores fn, yields.
+     *   2. Check nova_sched_is_parked WHILE fn is not yet called (mutex still held).
+     *   3. Call fn(arg) — releases mutex — only now can a cross-thread sender wake us.
+     *   4. Since parked check happened at step 2, the worker correctly sees parked=true
+     *      and does NOT re-push. Only dispatch_ready (from nova_sched_wake) re-queues.
+     *
+     * Without this, a race exists: sender could call nova_sched_wake (clearing
+     * parked[slot]) BEFORE mco_yield completes, causing the worker to re-push the
+     * fiber to its deque AND wake_pending → double-push → double-resume → crash. */
+    _nova_park_unlock_fn  = unlock_fn;
+    _nova_park_unlock_arg = unlock_arg;
     mco_yield(co);
+    /* Fiber resumed: clear deferred state (scheduler already called fn). */
+    _nova_park_unlock_fn  = NULL;
+    _nova_park_unlock_arg = NULL;
 }
 
 /* Wake parked fiber. Idempotent. Безопасно вызывать из libuv-callback'а.
  *
- * Plan 44.5 Layer 5: если scope->dispatch_ready != NULL (M:N worker
- * scope), re-schedule fiber через dispatch hook (same-thread deque push
- * или cross-thread pending list + uv_async_send). Single-thread scopes
- * (dispatch_ready == NULL) — поведение прежнее: supervisor loop resume'ит. */
+ * Plan 44.5 Layer 5 park/wake: если scope->dispatch_ready != NULL (M:N
+ * worker scope), вызывает его чтобы re-queue fiber в worker deque.
+ * Single-thread: dispatch_ready == NULL — main loop resume'ит fiber сам. */
 static inline void nova_sched_wake(NovaFiberQueue* scope, int slot) {
     if (!scope || slot < 0 || slot >= scope->count) return;
     NovaSchedState* st = nova_sched_find_state(scope);
     if (st && slot < st->capacity) st->parked[slot] = false;
-    /* M:N: push woken fiber back to worker deque. */
+    /* M:N dispatch: push woken fiber back to worker deque. */
     if (scope->dispatch_ready && slot < scope->count) {
         mco_coro* co = scope->fibers[slot];
         if (co && mco_status(co) != MCO_DEAD) {

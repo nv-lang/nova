@@ -1,0 +1,105 @@
+// Plan 18 std.sync: WaitGroup tests.
+//
+// Verifies counter-based rendezvous: add/done/wait.
+// The key observable property: when wait() returns, all done() calls have
+// completed, so any side effects produced before done() are visible.
+// Tests verify this by reading a shared counter after wait() returns.
+
+module nova_tests.concurrency.sync_waitgroup
+
+// ─── Basic API ─────────────────────────────────────────────────
+
+test "WaitGroup: wait on zero-count returns immediately" {
+    let wg = WaitGroup.new()
+    // count is already 0 — wait must not block
+    wg.wait()
+    assert(true)
+}
+
+test "WaitGroup: add then done reaches zero" {
+    let wg = WaitGroup.new()
+    let mut done_count = 0
+    wg.add(1)
+    supervised {
+        spawn {
+            done_count = done_count + 1
+            wg.done()
+        }
+        spawn {
+            wg.wait()
+            assert(done_count == 1)
+        }
+    }
+    assert(done_count == 1)
+}
+
+// ─── Multi-task rendezvous ──────────────────────────────────────
+
+// Three tasks each increment a shared counter (atomic to avoid race in
+// M:N mode) and call done(). A fourth fiber waits, then asserts the full
+// count is visible. This verifies wait() does not return prematurely.
+test "WaitGroup: wait blocks until 3 tasks complete" {
+    let wg = WaitGroup.new()
+    let counter = AtomicInt.new(0)
+    wg.add(3)
+    supervised {
+        spawn { counter.fetch_add(1); wg.done() }
+        spawn { counter.fetch_add(1); wg.done() }
+        spawn { counter.fetch_add(1); wg.done() }
+        spawn {
+            wg.wait()
+            // All three done() calls must have completed.
+            assert(counter.load() == 3)
+        }
+    }
+    assert(counter.load() == 3)
+}
+
+// Multiple waiters: two fibers wait on the same WaitGroup.
+// Both must be woken when count reaches 0.
+test "WaitGroup: multiple waiters — both wake" {
+    let wg = WaitGroup.new()
+    let counter = AtomicInt.new(0)
+    let mut w1_saw = 0
+    let mut w2_saw = 0
+    wg.add(1)
+    supervised {
+        spawn {
+            // worker: increment counter then signal done
+            counter.fetch_add(10)
+            wg.done()
+        }
+        spawn {
+            wg.wait()
+            w1_saw = counter.load()
+        }
+        spawn {
+            wg.wait()
+            w2_saw = counter.load()
+        }
+    }
+    assert(w1_saw == 10)
+    assert(w2_saw == 10)
+}
+
+// ─── M:N mode ──────────────────────────────────────────────────
+
+// Four workers run concurrently. WaitGroup rendezvous collects results.
+test "WaitGroup: M:N rendezvous — 4 workers" {
+    runtime.init(2)
+    let wg = WaitGroup.new()
+    let sum = AtomicInt.new(0)
+    wg.add(4)
+    supervised {
+        spawn { sum.fetch_add(1); wg.done() }
+        spawn { sum.fetch_add(2); wg.done() }
+        spawn { sum.fetch_add(3); wg.done() }
+        spawn { sum.fetch_add(4); wg.done() }
+        spawn {
+            wg.wait()
+            assert(sum.load() == 10)
+        }
+    }
+    assert(sum.load() == 10)
+    runtime.shutdown()
+}
