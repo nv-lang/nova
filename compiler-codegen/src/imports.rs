@@ -193,22 +193,22 @@ fn resolve_one(
     inherited_attrs: &mut Vec<crate::ast::ModuleAttr>,
 ) -> Result<()> {
     // Plan 42 правило H: `internal/` directory access check.
-    // Plan 42 правило H: `<X>/internal/<Y>` доступен только из `<X>.*`
-    // (descendants — по filesystem hierarchy, не по declared module name).
+    // `<X>/internal/<Y>` доступен только из `<X>.*` (descendants).
     //
-    // **Важно про terminology** (Plan 42.08 Ф.3 уточнение):
-    // Сравнение идёт по **import path**, не declared module name (которое
-    // в rev-3 ВСЕГДА 2 segments, не отражает full path). Import path в
-    // resolver-mode хранится в `import_chain` (push'ится на каждом resolve).
-    // Это работает корректно потому что import path → filesystem path
-    // mapping bijective (resolver использует import path как rel_path).
+    // **Plan 42.14 Ф.5 (Rule H actual fix):** после Plan 42.13 (D29
+    // rev-3.1) declared module name для `internal/` файлов = полный
+    // `owner.internal.target` (3 segments). Import path тоже содержит
+    // `...owner.internal.target`. Они **согласованы** — раньше declared
+    // был 2-segment `internal.target` и расходился с import path.
     //
-    // Edge case (NOT current bug, но caveat): re-export через Plan 35.A R26
-    // `export import X` может создать situation где модуль reachable через
-    // два разных import path. Тогда Rule H check по import path может
-    // permit/deny не consistently. Defer до Plan 42.09 (re-export).
+    // Теперь Rule H check по import path **корректен**: import path
+    // `admin.internal.token` ↔ declared `admin.internal.token`. Caveat
+    // про re-export (Plan 42.08 Ф.3) частично снят — re-export через
+    // `export import` сохраняет import path semantic; declared name
+    // imported модуля не меняется. Owner всегда explicit в обоих.
     if let Some(internal_idx) = imp.path.iter().position(|s| s == "internal") {
         // Parent of `internal` segment = import path prefix until `internal`.
+        // После rev-3.1 это совпадает с declared module owner.
         let internal_parent = &imp.path[..internal_idx];
         // Importing path = последнее import в chain (тот кто пишет import line).
         let importing_path = import_chain.last().cloned().unwrap_or_default();
@@ -411,11 +411,9 @@ fn resolve_one(
             } else {
                 std::collections::HashMap::new()
             };
-        let selective_names: Option<HashSet<String>> = imp.items.as_ref().map(|items| {
-            items.iter().map(|it| it.name.clone()).collect()
-        });
-
-        // Merge items from this peer (with optional rename + selective filter).
+        // Merge items from this peer (with optional rename).
+        // Plan 42.14 Ф.4: selective list влияет только на rename, не на
+        // visibility (см. комментарий ниже + simplifications.md [M12]).
         for item in peer_module.items {
             let name = match &item {
                 Item::Type(t) => Some(t.name.clone()),
@@ -425,19 +423,23 @@ fn resolve_one(
             };
             match (&item, name) {
                 (Item::Type(_) | Item::Fn(_) | Item::Const(_), Some(item_name)) => {
-                    // Selective filter: skip items not в селективном списке.
-                    if let Some(allowed) = &selective_names {
-                        if !allowed.contains(&item_name) {
-                            // Item не в selective list — skip из merged_items.
-                            // Но переноcим в module visible scope только select'ed.
-                            // (Plan 35.A R26 partial: import all через resolver,
-                            // selective лишь UX promise; full enforcement в Plan 47).
-                            // Пока — keep all для backward compat но flag в R26 todo.
-                            merged_items.push(item);
-                            continue;
-                        }
-                    }
-                    // Apply rename if specified.
+                    // Plan 42.14 Ф.4: selective filter.
+                    //
+                    // **Bootstrap semantic (honest):** items НЕ в selective
+                    // list всё равно merge'атся в `merged_items` — это нужно
+                    // для **codegen completeness**: при inline expansion
+                    // `import X.{A}` где `A` использует `B` (тоже из X),
+                    // `B` обязан быть в merged scope иначе `A`'s body не
+                    // скомпилируется.
+                    //
+                    // Strict visible-scope enforcement (запретить
+                    // импортирующему ИСПОЛЬЗОВАТЬ `B` напрямую если он не
+                    // в `{...}`) требует per-import visible-set в NameResCtx
+                    // type-checker'а — это **Plan 47** scope (отдельный
+                    // план, не bootstrap). Сейчас selective list влияет
+                    // только на rename (`A as B`), не на visibility.
+                    //
+                    // См. simplifications.md [M12].
                     if let Some(new_name) = rename_map.get(&item_name) {
                         let renamed = rename_item(item, new_name.clone());
                         merged_items.push(renamed);

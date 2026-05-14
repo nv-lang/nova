@@ -4781,27 +4781,33 @@ spec-level work.
 
 ---
 
-### [M11] Rule A cycle detection — canonical PathBuf keying
+### [M11] Rule A cycle detection — canonical PathBuf keying — ✅ RESOLVED 2026-05-14
 
-- **Где:** `compiler-codegen/src/imports.rs::resolve_one` (`in_progress: HashSet<PathBuf>`)
-- **Что упрощено:** Plan 42 spec rule A: cycle = по module-name
-  (`HashSet<Vec<String>>`). Реальность — `HashSet<PathBuf>` keyed by
-  canonical path первого peer'а folder-module. Работает для diamond-
-  dep dedup и cycle detection в текущих сценариях.
-- **Почему:** PathBuf keying проще — не нужен дополнительный mapping
-  path→module-name. Также filesystem canonicalize handles `./` / `..` /
-  case-sensitivity normalize'ом.
-- **Edge case (potential):** symlinks или case-insensitive FS (NTFS на
-  Windows) могут дать different canonical paths для same logical module
-  → false-negative cycle detect. **Не известно реальных bug reports**;
-  все текущие тесты PASS.
-- **Как починить:** Refactor `in_progress`/`visited` на `HashSet<Vec<String>>`
-  keyed by declared module name (parent.X). Парсить declared module из
-  каждого peer'а перед canonicalize. ~100-150 LOC.
-- **Negative test:** `folder_cycle_between_modules.nv` (Plan 42.08 Ф.1)
-  покрывает основной case через canonicalize keying — PASS.
-- **Приоритет:** L — не блокирует production. Revisit если symlink/case-
-  sensitivity bug stop'нет реального user'а.
+- **Resolved:** Plan 42.14 Ф.3 — `in_progress`/`visited` переведены на
+  `HashSet<Vec<String>>` keyed by declared module name (через
+  `read_module_decl` lightweight parser). Symlink / case-insensitive FS
+  edge case устранён — module name стабильный логический identity.
+- **Tests:** `folder_cycle_between_modules.nv` + `import_cycle_rejected.nv`
+  PASS с новым keying.
+
+### [M12] Selective import — visible-scope enforcement не строгий
+
+- **Где:** `compiler-codegen/src/imports.rs::resolve_one` (selective merge)
+- **Что упрощено:** `import X.{A}` парсит selective list, применяет
+  rename (`A as B`), но items НЕ в `{...}` всё равно merge'атся в
+  visible scope импортирующего модуля. То есть `import X.{A}` НЕ прячет
+  `B` (другой item из X) — `B` остаётся доступен по имени.
+- **Почему:** при inline expansion `A`'s body может ссылаться на `B`
+  (они в одном модуле X). Если `B` не merge'ить — codegen `A` падает.
+  Полный strict enforcement требует per-import visible-set в NameResCtx
+  (codegen видит всё, type-checker — только selective). Это значительный
+  refactor type-checker'а.
+- **Как починить:** Plan 47 — NameResCtx per-import visible scope.
+  Merge всё для codegen, но visible names импортирующего = только
+  selective list. ~300-400 LOC в types/mod.rs.
+- **Приоритет:** L — selective list работает как UX-промис + rename.
+  Реальных нарушений нет (никто не полагается на «скрытость»). Strict
+  enforcement важен при production library API hygiene.
 
 
 ---
