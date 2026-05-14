@@ -554,8 +554,11 @@ impl<'a> BoundCtx<'a> {
                 FnBody::External => {}
             },
             ExprKind::Spawn(body) => self.walk_expr(body, scope, errors),
-            ExprKind::Supervised(body) | ExprKind::Detach(body) => self.walk_block(body, scope, errors),
-            ExprKind::CancelScope { body, .. } => self.walk_block(body, scope, errors),
+            ExprKind::Detach(body) => self.walk_block(body, scope, errors),
+            ExprKind::Supervised { body, cancel } => {
+                if let Some(c) = cancel { self.walk_expr(c, scope, errors); }
+                self.walk_block(body, scope, errors);
+            }
             ExprKind::Forbid { body, .. } => self.walk_block(body, scope, errors),
             ExprKind::Realtime { body, .. } => self.walk_block(body, scope, errors),
             ExprKind::ParallelFor { iter, body, .. } => {
@@ -1286,8 +1289,11 @@ impl<'a> CapabilityCtx<'a> {
                 FnBody::External => {}
             },
             ExprKind::Spawn(body) => self.walk_expr(body, state, errors),
-            ExprKind::Supervised(body) | ExprKind::Detach(body) => self.walk_block(body, state, errors),
-            ExprKind::CancelScope { body, .. } => self.walk_block(body, state, errors),
+            ExprKind::Detach(body) => self.walk_block(body, state, errors),
+            ExprKind::Supervised { body, cancel } => {
+                if let Some(c) = cancel { self.walk_expr(c, state, errors); }
+                self.walk_block(body, state, errors);
+            }
             ExprKind::ParallelFor { iter, body, .. } => {
                 self.walk_expr(iter, state, errors);
                 self.walk_block(body, state, errors);
@@ -1648,9 +1654,11 @@ impl NameResCtx {
             "Fail",
             // Detach effect-type для detach {} expression (D50).
             "Detach",
-            // CancelToken — bind name в cancel_scope { tok => ... } (D75)
-            // регистрируется отдельно во время walk; в общий builtin
-            // не добавляем.
+            // CancelToken — caller-owned cancellation handle (D75 revised,
+            // Plan 47). Builtin type: `CancelToken.new()` конструктор +
+            // тип параметра `cancel CancelToken`. Методы (cancel/is_cancelled/
+            // bind) — built-in dispatch в codegen на receiver NovaCancelToken*.
+            "CancelToken",
         ]
         .iter()
         .map(|s| s.to_string())
@@ -2130,15 +2138,17 @@ impl NameResCtx {
                 self.walk_expr(end, file_id, scope, errors);
             }
             ExprKind::Spawn(body) => self.walk_expr(body, file_id, scope, errors),
-            ExprKind::Supervised(body) | ExprKind::Detach(body) => {
+            ExprKind::Detach(body) => {
                 self.walk_block(body, file_id, scope, errors);
             }
-            ExprKind::CancelScope { token_name, body } => {
-                let mut frame: HashSet<String> = HashSet::new();
-                frame.insert(token_name.clone());
-                scope.push(frame);
+            ExprKind::Supervised { body, cancel } => {
+                // Plan 47: `cancel:` expr — обычное выражение scope'а
+                // (типично `Ident` токена); резолвится в текущем scope'е,
+                // никаких новых биндингов не вводит.
+                if let Some(c) = cancel {
+                    self.walk_expr(c, file_id, scope, errors);
+                }
                 self.walk_block(body, file_id, scope, errors);
-                scope.pop();
             }
             ExprKind::Throw(inner) => self.walk_expr(inner, file_id, scope, errors),
         }
@@ -2474,7 +2484,10 @@ fn has_throw_in_expr(e: &Expr) -> bool {
             has_throw_in_block(body)
         }
         ExprKind::Spawn(e) => has_throw_in_expr(e),
-        ExprKind::Supervised(b) => has_throw_in_block(b),
+        ExprKind::Supervised { body, cancel } => {
+            has_throw_in_block(body)
+                || cancel.as_ref().map_or(false, |c| has_throw_in_expr(c))
+        }
         ExprKind::ParallelFor { iter, body, .. } =>
             has_throw_in_expr(iter) || has_throw_in_block(body),
         ExprKind::TurboFish { base, .. } => has_throw_in_expr(base),
@@ -2606,9 +2619,8 @@ fn is_suspend_expr_kind(kind: &ExprKind) -> bool {
     matches!(kind,
         ExprKind::ParallelFor { .. }
         | ExprKind::Spawn(_)
-        | ExprKind::Supervised(_)
+        | ExprKind::Supervised { .. }
         | ExprKind::Detach(_)
-        | ExprKind::CancelScope { .. }
     )
 }
 
@@ -3177,9 +3189,12 @@ fn walk_expr_for_handler_lits(e: &Expr, never_ops: &HashSet<(String, String)>, e
         ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. } => {
             walk_block_for_handler_lits(body, never_ops, errors);
         }
-        ExprKind::Supervised(b) | ExprKind::Detach(b) => walk_block_for_handler_lits(b, never_ops, errors),
+        ExprKind::Detach(b) => walk_block_for_handler_lits(b, never_ops, errors),
+        ExprKind::Supervised { body, cancel } => {
+            if let Some(c) = cancel { walk_expr_for_handler_lits(c, never_ops, errors); }
+            walk_block_for_handler_lits(body, never_ops, errors);
+        }
         ExprKind::Spawn(ex) => walk_expr_for_handler_lits(ex, never_ops, errors),
-        ExprKind::CancelScope { body, .. } => walk_block_for_handler_lits(body, never_ops, errors),
         ExprKind::ParallelFor { iter, body, .. } => {
             walk_expr_for_handler_lits(iter, never_ops, errors);
             walk_block_for_handler_lits(body, never_ops, errors);
@@ -3469,8 +3484,12 @@ fn walk_expr_for_defers(e: &Expr, fn_effects: &HashMap<String, Vec<TypeRef>>, er
             }
         }
         ExprKind::With { body, .. } | ExprKind::Forbid { body, .. }
-        | ExprKind::Realtime { body, .. } | ExprKind::Supervised(body)
-        | ExprKind::Detach(body) | ExprKind::CancelScope { body, .. } => {
+        | ExprKind::Realtime { body, .. }
+        | ExprKind::Detach(body) => {
+            walk_block_for_defers(body, fn_effects, errors);
+        }
+        ExprKind::Supervised { body, cancel } => {
+            if let Some(c) = cancel { walk_expr_for_defers(c, fn_effects, errors); }
             walk_block_for_defers(body, fn_effects, errors);
         }
         ExprKind::Call { func, args, trailing } => {
@@ -3601,10 +3620,10 @@ fn check_defer_body_inner(e: &Expr, kw: &str, fn_effects: &HashMap<String, Vec<T
             ));
         }
         // Suspend constructs by AST-form.
-        ExprKind::Spawn(_) | ExprKind::Supervised(_) | ExprKind::Detach(_)
-        | ExprKind::CancelScope { .. } | ExprKind::ParallelFor { .. } => {
+        ExprKind::Spawn(_) | ExprKind::Supervised { .. } | ExprKind::Detach(_)
+        | ExprKind::ParallelFor { .. } => {
             errors.push(Diagnostic::new(
-                format!("suspend operation (`spawn`/`supervised`/`detach`/`cancel_scope`/`parallel for`) \
+                format!("suspend operation (`spawn`/`supervised`/`detach`/`parallel for`) \
                          is not allowed inside `{}` body (D90): defer must be fast cleanup.", kw),
                 e.span,
             ));

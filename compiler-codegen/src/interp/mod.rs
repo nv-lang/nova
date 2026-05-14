@@ -876,19 +876,17 @@ impl Interpreter {
                 // В bootstrap'е spawn = inline call (синхронно).
                 self.eval_expr(body, env)
             }
-            ExprKind::Supervised(body) => {
-                // В bootstrap'е supervised — обычный block. Реальный scheduler
-                // только в codegen-варианте через nova_supervised_run.
+            ExprKind::Supervised { body, .. } => {
+                // В bootstrap-интерпретаторе supervised — обычный block, а
+                // `cancel:` токен игнорируется (нет реального scheduler'а).
+                // Codegen реализует D75 полноценно через NovaCancelToken +
+                // nova_supervised_run_cancel. Это bootstrap-ограничение
+                // [M-interp-cancel] — см. docs/simplifications.md.
                 self.exec_block_flow(body, env)
             }
             ExprKind::Detach(body) => {
                 // В bootstrap'е default-handler Detach = SyncDetach: исполняется inline.
                 // Production-runtime запустит на глобальном supervisor'е.
-                self.exec_block_flow(body, env)
-            }
-            ExprKind::CancelScope { body, .. } => {
-                // В bootstrap-интерпретаторе cancel_scope ≡ supervised без token-API.
-                // Codegen реализует D75 полноценно через NovaCancelToken.
                 self.exec_block_flow(body, env)
             }
             ExprKind::Throw(value) => {

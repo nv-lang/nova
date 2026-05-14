@@ -2810,7 +2810,6 @@ impl Parser {
             TokenKind::KwSupervised => self.parse_supervised(),
             TokenKind::KwParallel => self.parse_parallel_for(),
             TokenKind::KwDetach => self.parse_detach(),
-            TokenKind::KwCancelScope => self.parse_cancel_scope(),
             TokenKind::KwThrow => {
                 // D25/D65: `throw expr` as expression (type Never).
                 // Stmt-level throw уже обрабатывается parse_stmt_or_expr;
@@ -3905,12 +3904,48 @@ impl Parser {
         Ok(Expr::new(ExprKind::Spawn(Box::new(body)), span))
     }
 
-    /// `supervised { body }` — structured-concurrency scope (D50).
+    /// `supervised { body }` / `supervised(cancel: tok) { body }` —
+    /// structured-concurrency scope (D50 / D75 revised, Plan 47).
+    ///
+    /// После `supervised` опционально идёт `( cancel : expr )` — единственный
+    /// допустимый именованный аргумент keyword-конструкции (V1). Прочие имена
+    /// или позиционная форма → diagnostic.
     fn parse_supervised(&mut self) -> Result<Expr, Diagnostic> {
         let start = self.expect(&TokenKind::KwSupervised)?.span;
+        let cancel = if matches!(self.peek().kind, TokenKind::LParen) {
+            self.bump(); // (
+            self.skip_newlines();
+            // Имя аргумента — обязано быть `cancel`.
+            match &self.peek().kind {
+                TokenKind::Ident(name) if name == "cancel" => {
+                    self.bump(); // cancel
+                }
+                other => {
+                    return Err(Diagnostic::new(
+                        format!(
+                            "`supervised` accepts only the named argument `cancel:` \
+                             (got {}); use `supervised(cancel: tok) {{ ... }}`",
+                            other.name()
+                        ),
+                        self.peek().span,
+                    ));
+                }
+            }
+            self.expect(&TokenKind::Colon)?;
+            self.skip_newlines();
+            let expr = self.parse_expr()?;
+            self.skip_newlines();
+            self.expect(&TokenKind::RParen)?;
+            Some(Box::new(expr))
+        } else {
+            None
+        };
         let block = self.parse_block()?;
         let end = block.span;
-        Ok(Expr::new(ExprKind::Supervised(block), start.merge(end)))
+        Ok(Expr::new(
+            ExprKind::Supervised { body: block, cancel },
+            start.merge(end),
+        ))
     }
 
     /// `detach { body }` — fire-and-forget, global supervisor (D50).
@@ -3919,58 +3954,6 @@ impl Parser {
         let block = self.parse_block()?;
         let end = block.span;
         Ok(Expr::new(ExprKind::Detach(block), start.merge(end)))
-    }
-
-    /// `cancel_scope { tok => body }` — D75 manual structured cancellation.
-    /// Token binding is mandatory (otherwise just use `supervised`).
-    fn parse_cancel_scope(&mut self) -> Result<Expr, Diagnostic> {
-        let start = self.expect(&TokenKind::KwCancelScope)?.span;
-        let lbrace_span = self.expect(&TokenKind::LBrace)?.span;
-        self.skip_newlines();
-        // Parse token binding: `ident =>`.
-        let peek_kind = self.peek().kind.clone();
-        let token_name = match peek_kind {
-            TokenKind::Ident(ref n) => {
-                let name = n.clone();
-                self.bump();
-                name
-            }
-            _ => {
-                return Err(Diagnostic::new(
-                    "cancel_scope expects a token binding: `cancel_scope { tok => body }`".to_string(),
-                    self.peek().span,
-                ));
-            }
-        };
-        self.expect(&TokenKind::FatArrow)?;
-        self.skip_newlines();
-        // Parse body statements until matching `}` — bootstrap cancel_scope
-        // yields unit (like supervised), so trailing-expr is treated as a stmt.
-        let mut stmts: Vec<Stmt> = Vec::new();
-        let mut trailing: Option<Box<Expr>> = None;
-        while !matches!(self.peek().kind, TokenKind::RBrace) {
-            let stmt_or_expr = self.parse_stmt_or_expr()?;
-            match stmt_or_expr {
-                StmtOrExpr::Stmt(s) => {
-                    stmts.push(s);
-                    self.skip_newlines();
-                }
-                StmtOrExpr::Expr(e) => {
-                    self.skip_newlines();
-                    if matches!(self.peek().kind, TokenKind::RBrace) {
-                        trailing = Some(Box::new(e));
-                    } else {
-                        stmts.push(Stmt::Expr(e));
-                    }
-                }
-            }
-        }
-        let end = self.expect(&TokenKind::RBrace)?.span;
-        let body = Block { stmts, trailing, span: lbrace_span.merge(end) };
-        Ok(Expr::new(
-            ExprKind::CancelScope { token_name, body },
-            start.merge(end),
-        ))
     }
 
     /// `forbid X1, X2, ... { body }` — capability sandbox (D63).

@@ -65,7 +65,6 @@ pub enum TokenKind {
     KwSupervised,
     KwParallel,
     KwDetach,
-    KwCancelScope,
     /// Q-char-literals: 'a' / '\n' / '\u{1F600}' — Unicode codepoint
     Char(u32),
     KwInterrupt,
@@ -194,7 +193,6 @@ impl TokenKind {
             TokenKind::KwSupervised => "`supervised`",
             TokenKind::KwParallel => "`parallel`",
             TokenKind::KwDetach => "`detach`",
-            TokenKind::KwCancelScope => "`cancel_scope`",
             TokenKind::Char(_) => "char literal",
             TokenKind::KwInterrupt => "`interrupt`",
             TokenKind::KwForbid => "`forbid`",
