@@ -1410,10 +1410,24 @@ impl<'a> CapabilityCtx<'a> {
 
 /// Plan 19+: статическая проверка undefined идентификаторов.
 struct NameResCtx {
-    /// Все top-level имена модуля (fns без receiver, types, consts,
-    /// variant-имена). Receiver-методы НЕ включаются — они вызываются
-    /// как `obj.method(...)` или `Type.method(...)`, что обходит Ident.
-    top_level: HashSet<String>,
+    /// Plan 42.15: per-group shared declarations (Rule C). Key = file_id
+    /// peer'а. Value = declarations всех peers ЕГО module-group (folder-
+    /// module с общим parent dir). Peers одной группы делят namespace;
+    /// между группами — НЕ делят (imported folder-module's decls не
+    /// протекают).
+    group_decls: HashMap<FileId, HashSet<String>>,
+    /// Plan 42.15: fallback для legacy/single-file (peer_files пуст) —
+    /// flat все module.items. Используется когда file_id не в group_decls.
+    shared_decls: HashSet<String>,
+    /// Plan 42.15: union ВСЕХ declarations (все группы + imported). НЕ
+    /// для name-resolution enforcement (это нарушило бы Rule C) —
+    /// используется ТОЛЬКО как эвристика в `collect_pattern_bindings`
+    /// (отличить pattern-binding `let x` от variant-pattern `Some`).
+    all_decls: HashSet<String>,
+    /// Plan 42.15: per-peer imported item names — items ставшие
+    /// видимыми в peer'е через его прямые `import` (после rename +
+    /// selective filter). Rule C: imports НЕ shared между peers.
+    peer_imported_names: HashMap<FileId, HashSet<String>>,
     /// Built-in имена, доступные в любом scope без объявления:
     /// primitive types, prelude variants (None/Some/Ok/Err), bool
     /// литералы (true/false), builtin functions (assert/print/...),
@@ -1422,40 +1436,75 @@ struct NameResCtx {
     /// Per-peer import namespace (Plan 42.4 Rule C).
     /// Key = file_id of peer file (MAIN_FILE_ID for entry).
     /// Value = set of module/alias names visible in that peer.
-    /// Fallback: if file_id not found, falls back to entry's set.
     peer_module_names: HashMap<FileId, HashSet<String>>,
 }
 
 impl NameResCtx {
     fn build(module: &Module) -> Self {
-        let mut top_level: HashSet<String> = HashSet::new();
+        // Plan 42.15: per-group shared declarations (Rule C).
+        //
+        // **Module-group** = набор peer-файлов одного folder-module
+        // (имеют общий parent dir). Внутри группы peers делят
+        // declarations namespace (Rule C: «peers share declarations»).
+        // МЕЖДУ группами — НЕ делят (imported folder-module's decls не
+        // протекают в entry's namespace).
+        //
+        // `group_decls`: HashMap<FileId, HashSet<String>> — для каждого
+        // peer'а (по file_id) → declarations всех peers его группы.
+        let mut group_decls: HashMap<FileId, HashSet<String>> = HashMap::new();
+        // Fallback для legacy/single-file (peer_files пуст).
+        let mut shared_decls: HashSet<String> = HashSet::new();
 
-        for item in &module.items {
-            match item {
-                Item::Fn(fd) => {
-                    // Только free-functions (без receiver) валидны как
-                    // bare-ident expression `foo()`. Методы вызываются
-                    // через `obj.method` или `Type.method`.
-                    if fd.receiver.is_none() {
-                        top_level.insert(fd.name.clone());
-                    }
-                }
-                Item::Type(td) => {
-                    top_level.insert(td.name.clone());
-                    // Variant-имена sum-типов: `Some(x)`, `Red`, etc. —
-                    // могут использоваться как ident в expr-position
-                    // (unit-variant как `let c = Red`) или как call'и
-                    // (`Square(5)` — Call с base=Ident("Square")).
-                    if let TypeDeclKind::Sum(variants) = &td.kind {
-                        for v in variants {
-                            top_level.insert(v.name.clone());
+        fn collect_decl_names(items: &[Item], out: &mut HashSet<String>) {
+            for item in items {
+                match item {
+                    Item::Fn(fd) => {
+                        // free-functions (без receiver) валидны как
+                        // bare-ident `foo()`. Методы — через obj.method.
+                        if fd.receiver.is_none() {
+                            out.insert(fd.name.clone());
                         }
                     }
+                    Item::Type(td) => {
+                        out.insert(td.name.clone());
+                        // Variant-имена sum-типов: `Some(x)`, `Red`, etc.
+                        if let TypeDeclKind::Sum(variants) = &td.kind {
+                            for v in variants {
+                                out.insert(v.name.clone());
+                            }
+                        }
+                    }
+                    Item::Const(cd) => {
+                        out.insert(cd.name.clone());
+                    }
+                    Item::Let(_) | Item::Test(_) => {}
                 }
-                Item::Const(cd) => {
-                    top_level.insert(cd.name.clone());
+            }
+        }
+
+        if module.peer_files.is_empty() {
+            // Legacy/single-file: flat — все module.items.
+            collect_decl_names(&module.items, &mut shared_decls);
+        } else {
+            // Группируем peers по parent dir пути. Все peers одной
+            // папки = одна module-group, делят declarations.
+            let mut groups: HashMap<std::path::PathBuf, HashSet<String>> = HashMap::new();
+            let mut peer_group_key: HashMap<FileId, std::path::PathBuf> = HashMap::new();
+            for pf in &module.peer_files {
+                let group_key = pf.path.parent()
+                    .map(|p| p.to_path_buf())
+                    .unwrap_or_else(|| pf.path.clone());
+                peer_group_key.insert(pf.file_id, group_key.clone());
+                let entry = groups.entry(group_key).or_default();
+                collect_decl_names(&pf.items_here, entry);
+            }
+            // Разворачиваем: для каждого peer'а — decls его группы.
+            for pf in &module.peer_files {
+                if let Some(gk) = peer_group_key.get(&pf.file_id) {
+                    if let Some(decls) = groups.get(gk) {
+                        group_decls.insert(pf.file_id, decls.clone());
+                    }
                 }
-                Item::Let(_) | Item::Test(_) => {}
             }
         }
 
@@ -1545,7 +1594,27 @@ impl NameResCtx {
             }
         }
 
-        NameResCtx { top_level, builtins, peer_module_names }
+        // Plan 42.15: per-peer imported item names. Resolver наполнил
+        // `PeerFile.imported_item_names` (items притащенные прямыми
+        // imports этого peer'а). Rule C: imports не shared между peers.
+        let mut peer_imported_names: HashMap<FileId, HashSet<String>> = HashMap::new();
+        for pf in &module.peer_files {
+            peer_imported_names.insert(pf.file_id, pf.imported_item_names.clone());
+        }
+
+        // Plan 42.15: all_decls — union ВСЕХ declarations (эвристика для
+        // pattern-binding detection, НЕ для enforcement).
+        let mut all_decls: HashSet<String> = shared_decls.clone();
+        for gd in group_decls.values() {
+            all_decls.extend(gd.iter().cloned());
+        }
+        // Также merged module.items (imported items для эвристики).
+        collect_decl_names(&module.items, &mut all_decls);
+
+        NameResCtx {
+            group_decls, shared_decls, all_decls, builtins,
+            peer_module_names, peer_imported_names,
+        }
     }
 
     fn check_module(&self, module: &Module, errors: &mut Vec<Diagnostic>) {
@@ -1989,7 +2058,7 @@ impl NameResCtx {
                 // pattern-matching). Также Capitalized-имена в bootstrap
                 // — это всегда type/variant (cross-file), не binding.
                 let is_variant_like = self.builtins.contains(name)
-                    || self.top_level.contains(name)
+                    || self.all_decls.contains(name)
                     || name.chars().next().map(|c| c.is_ascii_uppercase()).unwrap_or(false);
                 if !is_variant_like {
                     out.insert(name.clone());
@@ -2045,9 +2114,21 @@ impl NameResCtx {
 
     fn is_known(&self, name: &str, file_id: FileId, scope: &[HashSet<String>]) -> bool {
         if self.builtins.contains(name) { return true; }
-        if self.top_level.contains(name) { return true; }
-        // Plan 42.4 Rule C: per-peer import namespace.
-        // Look up this peer's import set; fall back to entry (MAIN_FILE_ID) if absent.
+        // Plan 42.15 Rule C: declarations module-group этого peer'а
+        // (peers одного folder-module делят declarations namespace).
+        // Fallback на flat shared_decls для legacy/single-file.
+        if let Some(gd) = self.group_decls.get(&file_id) {
+            if gd.contains(name) { return true; }
+        } else if self.shared_decls.contains(name) {
+            return true;
+        }
+        // Plan 42.15: per-peer imported item names — items притащенные
+        // прямыми imports ИМЕННО этого peer'а. Rule C: imports НЕ shared.
+        // Fallback на MAIN_FILE_ID если file_id не найден (legacy).
+        let imported = self.peer_imported_names.get(&file_id)
+            .or_else(|| self.peer_imported_names.get(&MAIN_FILE_ID));
+        if imported.map_or(false, |s| s.contains(name)) { return true; }
+        // Plan 42.4 Rule C: per-peer import namespace (module/alias names).
         let module_names = self.peer_module_names.get(&file_id)
             .or_else(|| self.peer_module_names.get(&MAIN_FILE_ID));
         if module_names.map_or(false, |s| s.contains(name)) { return true; }

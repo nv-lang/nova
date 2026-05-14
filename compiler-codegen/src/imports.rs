@@ -75,6 +75,10 @@ pub fn resolve_imports_inline_ex(
         file_id: MAIN_FILE_ID,
         imports: module.imports.clone(),
         items_here: module.items.clone(),
+        // Plan 42.15: заполнится после resolve entry's imports.
+        imported_item_names: HashSet::new(),
+        // Plan 42.15: entry — часть компилируемого module.
+        is_entry_module: true,
     };
     // Local counter для file_id (entry = 0, peers начинают с 1).
     // Используем Vec<PeerFile> чтобы collect peers через resolve_one,
@@ -124,6 +128,9 @@ pub fn resolve_imports_inline_ex(
     // of imported folder-modules. Applied to entry's module.attrs at end.
     let mut inherited_attrs: Vec<crate::ast::ModuleAttr> = Vec::new();
 
+    // Plan 42.15: accumulator visible-имён для entry's PeerFile.
+    let mut entry_visible: HashSet<String> = HashSet::new();
+
     for imp in &initial_imports {
         resolve_one(
             imp,
@@ -138,7 +145,13 @@ pub fn resolve_imports_inline_ex(
             &mut next_file_id,
             include_test_peers,
             &mut inherited_attrs,
+            &mut entry_visible,
         )?;
+    }
+
+    // Plan 42.15: записываем visible-имена в entry's PeerFile (file_id=0).
+    if let Some(entry_pf) = peer_files.iter_mut().find(|p| p.file_id == MAIN_FILE_ID) {
+        entry_pf.imported_item_names = entry_visible;
     }
 
     // Entry done — promote из in_progress → visited.
@@ -191,6 +204,11 @@ fn resolve_one(
     // Plan 42.10: collect module-level attrs from `_module.nv` peers
     // for propagation into entry's module.attrs.
     inherited_attrs: &mut Vec<crate::ast::ModuleAttr>,
+    // Plan 42.15: accumulator имён items, ставших видимыми через ЭТОТ
+    // import (после rename). Caller — владелец import'а (peer/entry) —
+    // передаёт свой `imported_item_names`. Транзитивные sub-imports
+    // получают свой временный acc (не протекают в caller).
+    visible_acc: &mut HashSet<String>,
 ) -> Result<()> {
     // Plan 42 правило H: `internal/` directory access check.
     // `<X>/internal/<Y>` доступен только из `<X>.*` (descendants).
@@ -374,15 +392,31 @@ fn resolve_one(
         }
 
         // Регистрируем PeerFile (snapshot до recursive resolve + merge).
+        // Plan 42.15: imported_item_names заполняется ниже после resolve.
+        // is_entry_module = false — это peer ИМПОРТИРОВАННОГО модуля,
+        // его items_here НЕ должны протекать в entry's shared_decls.
         peer_files.push(PeerFile {
             path: peer_canons.last().expect("peer_canons populated above").clone(),
             file_id: peer_file_id,
             imports: peer_module.imports.clone(),
             items_here: peer_module.items.clone(),
+            imported_item_names: HashSet::new(),
+            is_entry_module: false,
         });
+
+        // Plan 42.15: accumulator имён items видимых ЭТОМУ peer'у через
+        // его прямые imports. Передаётся в resolve_one для каждого sub —
+        // resolve_one пишет туда имена items которые sub притащил.
+        let mut peer_visible: HashSet<String> = HashSet::new();
 
         // Recursive: resolve transitive imports for THIS peer.
         for sub in &peer_module.imports {
+            // Plan 42.15: re-export. Если peer делает `export import X`
+            // (sub.is_export) — items притащенные `sub` re-export'ятся:
+            // они видны не только этому peer'у, но и caller'у (тому кто
+            // импортировал ЭТОТ folder-module). Собираем в отдельный acc
+            // и потом мержим в caller's visible_acc если is_export.
+            let mut sub_visible: HashSet<String> = HashSet::new();
             resolve_one(
                 sub,
                 entry_dir,
@@ -396,13 +430,30 @@ fn resolve_one(
                 next_file_id,
                 include_test_peers,
                 inherited_attrs,
+                &mut sub_visible,
             )?;
+            // Items всегда видны самому peer'у.
+            for n in &sub_visible {
+                peer_visible.insert(n.clone());
+            }
+            // `export import` — re-export: items также видны caller'у.
+            if sub.is_export {
+                for n in &sub_visible {
+                    visible_acc.insert(n.clone());
+                }
+            }
+        }
+
+        // Plan 42.15: записываем собранные visible-имена в PeerFile.
+        // Находим PeerFile по file_id (он был push'нут выше; recursive
+        // resolve_one мог push'нуть ещё peer_files, ищем по id).
+        if let Some(pf) = peer_files.iter_mut().find(|p| p.file_id == peer_file_id) {
+            pf.imported_item_names = peer_visible;
         }
 
         // Plan 42.09: selective rename map. Если import имеет
         // `.{A as B}` — после merge item с name `A` переименовывается
-        // в `B` в merged scope. Также фильтрация: если selective list
-        // задан и item не в нём → skip (R26 visibility).
+        // в `B` в merged scope.
         let rename_map: std::collections::HashMap<String, String> =
             if let Some(items) = &imp.items {
                 items.iter()
@@ -412,8 +463,9 @@ fn resolve_one(
                 std::collections::HashMap::new()
             };
         // Merge items from this peer (with optional rename).
-        // Plan 42.14 Ф.4: selective list влияет только на rename, не на
-        // visibility (см. комментарий ниже + simplifications.md [M12]).
+        // Plan 42.15: имена merged items пишутся в `visible_acc` —
+        // caller (peer/entry который написал `imp`) получает их в свой
+        // visible scope. Это и есть «import притащил эти имена».
         for item in peer_module.items {
             let name = match &item {
                 Item::Type(t) => Some(t.name.clone()),
@@ -423,28 +475,33 @@ fn resolve_one(
             };
             match (&item, name) {
                 (Item::Type(_) | Item::Fn(_) | Item::Const(_), Some(item_name)) => {
-                    // Plan 42.14 Ф.4: selective filter.
-                    //
-                    // **Bootstrap semantic (honest):** items НЕ в selective
-                    // list всё равно merge'атся в `merged_items` — это нужно
-                    // для **codegen completeness**: при inline expansion
-                    // `import X.{A}` где `A` использует `B` (тоже из X),
-                    // `B` обязан быть в merged scope иначе `A`'s body не
-                    // скомпилируется.
-                    //
-                    // Strict visible-scope enforcement (запретить
-                    // импортирующему ИСПОЛЬЗОВАТЬ `B` напрямую если он не
-                    // в `{...}`) требует per-import visible-set в NameResCtx
-                    // type-checker'а — это **Plan 47** scope (отдельный
-                    // план, не bootstrap). Сейчас selective list влияет
-                    // только на rename (`A as B`), не на visibility.
-                    //
-                    // См. simplifications.md [M12].
-                    if let Some(new_name) = rename_map.get(&item_name) {
+                    // Codegen completeness: ВСЕ items merge'атся в
+                    // merged_items (inline expansion — `A`'s body может
+                    // ссылаться на `B` из того же модуля). Selective list
+                    // влияет на visibility, не на codegen-scope.
+                    let final_name = if let Some(new_name) = rename_map.get(&item_name) {
                         let renamed = rename_item(item, new_name.clone());
                         merged_items.push(renamed);
+                        new_name.clone()
                     } else {
                         merged_items.push(item);
+                        item_name.clone()
+                    };
+                    // Plan 42.15: visible_acc — что caller's peer ВИДИТ.
+                    // Selective filter: если import `X.{A}` — только `A`
+                    // (+ rename target) попадает в visible_acc; `B` (тоже
+                    // из X, но не в списке) merge'ится для codegen, но
+                    // НЕ виден caller'у по имени.
+                    let is_visible = match &imp.items {
+                        None => true, // import X — весь модуль visible
+                        Some(sel) => sel.iter().any(|it| {
+                            // visible под final_name: либо original name в
+                            // списке (без rename), либо alias совпал.
+                            it.name == item_name
+                        }),
+                    };
+                    if is_visible {
+                        visible_acc.insert(final_name);
                     }
                 }
                 _ => {
