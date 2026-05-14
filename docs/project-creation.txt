@@ -9561,3 +9561,77 @@ NameResCtx — выделено в Plan 42.15 единым refactor'ом. Honest
 - nova_tests/negative_capability/cfg_item_inactive_rejected (negative)
 
 328 PASS / 0 FAIL / 7 SKIP.
+
+
+================================================================================
+PLAN 42.15: PER-PEER IMPORT ISOLATION (2026-05-14)
+================================================================================
+
+Закрывает [M10] Rule C Path-form + [M12] selective import visible-scope —
+оба имели общий корень: flat module.items + NameResCtx без per-import
+visible tracking.
+
+### Проблема (Rule C)
+
+Plan 42 правило C: peers folder-module делят DECLARATIONS, но НЕ imports.
+До 42.15:
+- bare Ident проверялся per-peer (42.04), но Path-form (alias.func) — нет
+- imported items одного peer "протекали" во все peers через flat top_level
+- selective import X.{A} не прятал B (тоже из X)
+
+### Решение: per-group visible scope
+
+PeerFile расширен:
+- imported_item_names: HashSet<String> — items притащенные ПРЯМЫМИ
+  imports этого peer'а (после rename + selective filter)
+- is_entry_module: bool — различает peers компилируемого module vs
+  imported folder-modules
+
+NameResCtx переписан:
+- group_decls: HashMap<FileId, HashSet<String>> — declarations
+  module-group каждого peer'а. Группа = peers с общим parent dir.
+  Peers группы делят namespace; между группами — нет.
+- peer_imported_names: per-peer imports (Rule C: НЕ shared)
+- all_decls: union всех — ТОЛЬКО эвристика для pattern-binding
+  detection, не enforcement
+- is_known(name, file_id, scope): group_decls[file_id] →
+  peer_imported_names[file_id] → peer_module_names[file_id] → scope
+
+resolver (imports.rs):
+- visible_acc параметр в resolve_one — накапливает имена items
+  притащенных конкретным import'ом
+- export import (re-export): items пробрасываются в caller's visible_acc
+- selective filter: только items из {...} списка попадают в visible_acc
+
+### Path-form check
+
+ExprKind::Path head-segment: lowercase head проверяется против
+builtins ∪ peer_module_names ∪ scope. Unknown → error. На практике
+unknown lowercase alias чаще ловится через Ident-ветку (парсер эмитит
+Member{obj:Ident} для неизвестных heads). False positives = 0.
+
+### Тесты
+
+- negative_capability/peer_path_leak.nv — peer B использует alias
+  peer A → undefined identifier (Rule C violation)
+- modules/peer_isolation_ok_use.nv — peers делят declarations (OK)
+
+### Эволюция (что чинилось по ходу)
+
+1. Первая версия: shared_decls flat для is_entry_module peers —
+   сломала cross-peer refs ВНУТРИ импортированных folder-modules
+   (even.nv ↔ odd.nv). Fix: per-group decls (group_decls по parent dir).
+2. reexport_facade упал — export import не пробрасывал items.
+   Fix: re-export propagation в resolve_one (sub.is_export → caller acc).
+
+### Файлы
+
+- compiler-codegen/src/ast/mod.rs (PeerFile +2 поля)
+- compiler-codegen/src/imports.rs (visible_acc, re-export, is_entry_module)
+- compiler-codegen/src/types/mod.rs (NameResCtx per-group refactor)
+- docs/plans/42.15-per-peer-import-isolation.md
+- docs/simplifications.md ([M10] + [M12] → RESOLVED)
+- nova_tests/negative_capability/peer_path_leak* (negative)
+- nova_tests/modules/peer_isolation_ok* (positive)
+
+331 PASS / 0 FAIL / 7 SKIP. Все sub-plans Plan 42 (01-15) закрыты.
