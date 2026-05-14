@@ -6049,48 +6049,31 @@ legitimate новое feature без syntax overlap.
 
 
 
-## Plan 44.5 Layer 5: park/wake migration к worker scope — отложено
+## Plan 44.5 Layer 5: park/wake migration к worker scope — ✅ CLOSED (2026-05-14)
 
-**Что упрощено.** Plan 44.5 Layer 5 закрыл implicit M:N для **compute-only**
-spawn body (без Time.sleep / Channel.recv). Workers actually выполняют
-fiber bodies через codegen routing на `nova_runtime_spawn_into`. Mut-captured
-scalars writeable cross-thread (race-free если each fiber writes own slot).
+**Закрыто через два коммита:**
+- `8fcbc67fddb` — park/wake + Time.sleep в worker fiber (D92 fixed, dispatch_ready,
+  slot allocation в preamble). 279/279 PASS.
+- `b7514c02c2d` — work-stealing deadlock fix (`_nova_fiber_scope` home scope).
 
-Park/wake API сейчас (scope, slot)-keyed: `nova_sched_park(scope, slot)`
-читает `scope->sched_state->parked[slot]`. Worker fiber имеет
-`_nova_active_slot = -1` (worker_main не allocates slot). При Time.sleep
-вызывается `_nova_sleep_via_libuv(scope, -1, ms)` → register_pending fails
-guard `_nova_active_slot < 0` → FATAL D92 invariant violated.
+**Проблема была.** (scope, slot)-keyed park/wake + work-stealing:
+fiber аллоцирует slot в home worker A, мигрирует на worker B через steal.
+Channel waiter записывал неправильный scope (`_nova_active_scope` = B's scope
+во время park) → `nova_sched_wake` не находил fiber → permanent hang.
 
-**Почему НЕ исправлять сейчас.** Proper park/wake migration требует:
-1. Per-fiber NovaSchedState struct (а не scope-array indexed by slot).
-2. TLS-swap в codegen entry function — set `_nova_active_scope` к parent
-   и аллоцировать slot в scope.
-3. Worker_main loop integration: status check after mco_resume, hold
-   parked fibers, wake from libuv callback.
-4. Fiber pinning to home worker (Go's `LockOSThread` analog) — anti-
-   migration для consistency park/wake handles thread-bound.
+**Итоговое решение.** `_nova_fiber_scope` в `NovaSpawnCtxBase` (5-й field).
+Worker loop restore'ит `_nova_active_scope = base->_nova_fiber_scope` перед
+каждым `mco_resume` — home scope сохраняется независимо от steel migrations.
+Slot allocation в preamble (первый resume) обеспечивает D92 invariant.
 
-Это ~600-1000 LOC значимой работы. Сделать всё в одной сессии =
-high risk regression. Honest partial closure: compute-only Layer 5
-дает user benefit (workers actually работают), park/wake migration =
-следующий milestone.
+**Что осталось упрощено (Windows стеки).** 8MB fiber стеки через
+`mmap(MAP_NORESERVE)` реализованы на Linux/macOS. Windows использует
+`calloc` fallback — SEH guard pages и `VirtualAlloc(MEM_RESERVE|MEM_COMMIT)`
+отложены на Plan 42+ (низкий приоритет: миллион fibers на Windows нереальный
+сценарий для типичных программ).
 
-**Long-term path.** Реализация Go's g/m state separation:
-- Per-fiber state struct (NovaFiberState analog к Go's `g`).
-- TLS только current_fiber pointer (Go's `getg()`).
-- На dispatch: TLS становится cache от current_fiber->fields.
-- На park: copy back в fiber state перед yield.
-
-Memory updated: `feedback_mn_runtime_go_reference.md` — для всей M:N
-работы первым делом research Go runtime, не изобретать.
-
-**Что НЕ упрощено.** Compute-only Layer 5 sufficient для:
-- Pure CPU workloads (parallel computation, map-reduce).
-- Workers actually distributing work (proven через
-  `mn_runtime_actual_workload.nv` / `runtime.current_worker_id()`).
-- Cross-worker `first_error_atomic` propagation.
-- Scope.pending_remote tracking + main thread wait через uv_async_send.
-
-Это honest scope split — fundamental compute parallelism отделён от
-park/wake migration ergonomics.
+**Что осталось упрощено (preemption).** Cooperative `runtime.yield()` —
+явный hint, не автоматический. Signal-based preemption (аналог Go's SIGURG)
+отложен: требует safe points в codegen, `NOVA_PREEMPT` signal handler,
+TLS флаг "fiber должна yield" — оценка 2-3 недели engineering. Приоритет
+низкий пока CPU-bound workloads не станут реальным use case.

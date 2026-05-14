@@ -9378,3 +9378,82 @@ Tests:
 
 ВСЕ active sub-plans (42.01, 04, 05, 06, 08, 09, 10, 11, 12) ЗАКРЫТЫ.
 42.02 → Plan 45 (отдельно). 42.03, 42.07 ❌ rejected (TIMTOWTDI / phantom).
+
+
+================================================================================
+PLAN 44.5 LAYER 5 ФИНАЛ: cross-channel + runtime.yield + 8MB стеки + sync (2026-05-14)
+================================================================================
+
+После выпуска Plan 44.5 Layer 5 (park/wake — Time.sleep в worker fiber, 279/279 PASS)
+три post-layer-5 задачи и синхронизация с main закрыты в одной сессии.
+
+### A. Work-stealing deadlock fix — mn_runtime_cross_channel (commit b7514c02c2d)
+
+**Проблема.** Тест mn_runtime_cross_channel висел 65s, затем timeout.
+Root cause: work-stealing race в Channel park/wake.
+
+Когда fiber_A создаётся на worker A (slot выделен в `&w_A->scope`), потом
+worker B крадёт её через Chase-Lev deque, TLS `_nova_active_scope` на
+worker B = `&w_B->scope`. Channel.recv вызывает park: записывает waiter
+с `(scope=&w_B->scope, slot=N)`. Sender вызывает wake: `&w_B->scope.fibers[N]`
+= NULL (slot аллоцирован в w_A, не в w_B) → `dispatch_ready` не вызывается
+→ fiber навсегда подвешена.
+
+**Fix.** Добавлено поле `NovaFiberQueue* _nova_fiber_scope` в `NovaSpawnCtxBase`
+(home worker scope, записывается один раз в preamble). Worker loop перед
+каждым `mco_resume` restore'ит `_nova_active_scope = base->_nova_fiber_scope`
+— channel ops всегда используют правильный home scope, независимо от того
+на каком worker запускается fiber.
+
+Изменения:
+- `nova_rt/fibers.h`: `_nova_fiber_scope` в `NovaSpawnCtxBase`.
+- `nova_rt/runtime.c`: restore home scope в worker loop перед `mco_resume`;
+  `is_parked` check использует `base->_nova_fiber_scope`.
+- `emit_c.rs`: emit `_c->_nova_fiber_scope = _nova_active_scope` в preamble.
+
+Тест: 3 сценария в `mn_runtime_cross_channel.nv` — basic send/recv,
+4-producer pipeline, Channel + Time.sleep. Все PASS.
+
+### B. runtime.yield() built-in (commit 0a8f6635640)
+
+`runtime.yield()` — cooperative yield hint: fiber re-queue'ится в worker
+deque (не парковается), другие fibers получают CPU. Если очередь пуста —
+no-op. Семантика: "я готов уступить CPU прямо сейчас".
+
+Реализация:
+- `emit_c.rs`: встроенный dispatch `"yield" if args.is_empty()` →
+  `(nova_fiber_yield(), (nova_int)0LL)`.
+- `std/runtime/runtime.nv`: `export external fn runtime.yield() -> ()`.
+
+Тест: `mn_runtime_yield.nv` — cooperative progress между 2 fibers с yield,
+yield вне fiber context (no-op), yield без runtime.init (single-thread).
+
+Урок: явный `runtime.yield()` по запросу пользователя лучше
+автоматического insert в каждый loop — overhead на IO-bound loops, codegen
+не знает длину итерации.
+
+### C. 8MB demand-paged fiber стеки (commit 0a8f6635640)
+
+`fiber_arena.h` — `NOVA_FIBER_STACK_SIZE = 8MB` вместо 2MB.
+Linux/macOS: `mmap(MAP_ANONYMOUS | MAP_PRIVATE | MAP_NORESERVE, 8MB)` —
+demand-paged, физические страницы выделяются при обращении.
+4096 slots × 8MB virtual = 32GB virtual, физически — только реально
+использованный стек. Guard page внизу стека: SIGSEGV → понятная ошибка
+вместо тихого memory corruption.
+Windows: `calloc` fallback (SEH guard pages отложены на Plan 42+).
+
+Преимущество над Go stack copying: не нужны write barriers на каждый
+pointer в стек, не нужен stack scanner. Ограничение: стек не может
+превысить virtual reserve (8MB); overflow = SIGSEGV, не grow.
+
+### D. Sync mn-runtime ← main (commit cf860aecc86)
+
+Merge Plan 42.09 (reexport + rename) + 42.10 (module-level #forbid) +
+42.12 (#cfg conditional compilation) + D100+D101 spec.
+
+5 файлов имели merge conflicts:
+- Большинство (comment-only) → `git checkout --ours`.
+- `fibers.h` — ручной merge: сохранены `_nova_fiber_scope` + `NovaSpawnCtxBase`
+  поля AND main's новые GC pinning fields (`ctx_pins/ctx_pins_count/ctx_pins_cap`).
+
+**Итог:** 307/307 PASS (26 новых тестов из Plan 42.09/42.10/42.12).
