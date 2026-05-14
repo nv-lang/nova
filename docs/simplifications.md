@@ -4794,6 +4794,30 @@ spec-level work.
 
 ---
 
+### [M-match-void-arm] match-как-выражение с void-typed arm'ами → невалидный C
+
+- **Где:** `compiler-codegen/src/codegen/emit_c.rs` — emit `match` в
+  expression-позиции.
+- **Что:** когда `match` стоит как голый statement (его значение не
+  используется), а каждый arm — выражение типа `unit`/`void` (например
+  `assert(...)`, который в рантайме `static inline void nova_assert(...)`),
+  codegen всё равно объявляет temp `nova_unit _nv_match_N;` и пишет
+  `_nv_match_N = nova_assert(...)` → C-ошибка «assigning to 'nova_unit'
+  from incompatible» (нельзя присвоить результат void-функции).
+- **Обнаружено:** Plan 51 Ф.4 — позитивный тест писал
+  `match s { Circle {r} => assert(...) Square {s} => assert(...) }`
+  как statement. Переписан на `let x = match ...` с arm'ами,
+  возвращающими `int` — обычный паттерн, codegen его поддерживает.
+- **Как починить:** codegen должен либо (а) не эмитить присваивание
+  temp'у, когда тип match-выражения — `unit` и оно в statement-позиции,
+  либо (б) эмитить arm'ы как statements (без `_nv_match_N =`). ~20-40 LOC
+  в emit `match`.
+- **Приоритет:** L — узкий паттерн (`match`-statement, где каждый arm
+  сам void-typed). Idiomatic-форма (`match` в let / с не-void arm'ами)
+  работает. Не относится к Plan 51 (синтаксис record-литералов).
+
+---
+
 ### [M11] Rule A cycle detection — canonical PathBuf keying — ✅ RESOLVED 2026-05-14
 
 - **Resolved:** Plan 42.14 Ф.3 — `in_progress`/`visited` переведены на

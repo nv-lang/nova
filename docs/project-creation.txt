@@ -10295,3 +10295,76 @@ variadic; бандл параметров → option-struct.
   50-default-keyword-only.md (новые), docs/plans/README.md
 - simplifications.md — без новых записей (спец-дизайн, не реализация;
   bootstrap-ограничения фиксируются на этапе Plan 47/50)
+
+
+## Сессия 2026-05-15: Plan 51 — record-литерал, тип пишется ровно один раз
+
+Пользователь начал с конкретной боли: `fn ok_status(v int) -> FiberStatus
+=> FiberStatus { ... }` — `FiberStatus` дважды. Investigation показал, что
+`=> { ... }` (typeless) уже работает в return-позиции; широкая «полная
+унификация D55» НЕ оправдана (пробники + census: D55 реально работает
+только в `=>`-return; «~900 избыточных мест» — переоценка, основная
+масса — перенос имени, а не устранение; конструкторы вариантов трогать
+нельзя). Scope сведён к реальной задаче — устранение дублирования имени
+типа в record-литерале.
+
+### Ф.1 — codegen: `let x T = { }`
+
+`Stmt::Let` emit протягивает `expected_record_type` из аннотации вокруг
+emit значения — mirror существующего `const`-хендлинга. Гейт узкий:
+значение — **напрямую** typeless record-литерал, иначе тип `x` не
+«протекает» во вложенные литералы внутри других выражений.
+
+### Ф.2 — parser: запрет дублирования
+
+`check_record_lit_type_once` — общий хелпер для `parse_fn` и
+`parse_closure_full`. `=>`-тело = `RecordLit{type_name:Some}`: тип
+литерала == return-тип → ошибка «redundant type prefix»; нет return-типа
+→ ошибка «must declare its return type». `-> Self` резолвится к типу
+receiver'а. `parse_let_decl`: `let x T = T{}` → ошибка. sum-coercion
+(`path ≠ return`, напр. `-> Shape => Circle{}`) не трогается.
+
+### Ф.3 — миграция (28 файлов)
+
+Census грепом дал ~24 — недооценка: парсер (источник истины) поймал
+**multi-line** `=>`-тела и **closure**-тела, которые grep пропустил
+(overload.nv ×24, self_in_expr ×11, gc_*-бенчи). stack_queue.nv ×7 —
+`let s Stack[int] = Stack{}` (generic-аннотация ломала census-grep).
+Урок: `perl -0777 -i` переписал line-endings во всех 358 `.nv`
+(CRLF→LF) — закоммичены только 28 файлов с реальными content-изменениями
+(`git diff --numstat` фильтр), 330 line-ending-only вычищены
+`git checkout`.
+
+### Ф.4 — тесты
+
+positive `record_literal_type_once.nv` (каноничные формы + `-> Self` +
+sum-coercion anti-regression) + 3 negative.
+
+### Ф.5 — spec + docs
+
+D55 (02-types.md): positions-таблица получила колонку «Реализовано
+(bootstrap)?» + honesty-пометку (coercion реально работает в ~3 из 7
+позиций — урок Plan 42.17, спека не врёт); новая подсекция «Запрет
+дублирования имени типа (Plan 51)».
+
+### Найденный попутно баг
+
+`[M-match-void-arm]`: `match`-как-голый-statement, где каждый arm —
+void-typed выражение (`assert(...)`), даёт невалидный C
+(`nova_unit _x = void_func()`). Узкий codegen-баг, вне scope Plan 51 —
+позитивный тест переписан на идиоматичный `let x = match ...`.
+
+### Регрессия
+
+367 PASS / 0 FAIL / 7 SKIP (release). Каждая фаза — отдельный commit.
+
+### Файлы
+
+- compiler-codegen/src/codegen/emit_c.rs (Ф.1)
+- compiler-codegen/src/parser/mod.rs (Ф.2)
+- 28 `.nv` миграции (Ф.3)
+- nova_tests/syntax/record_literal_type_once.nv +
+  nova_tests/negative_capability/record_arrow_*.nv + record_let_*.nv (Ф.4)
+- spec/decisions/02-types.md, docs/simplifications.md,
+  docs/project-creation.txt (Ф.5)
+- docs/plans/51-d55-record-literal-unification.md
