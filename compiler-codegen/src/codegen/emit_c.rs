@@ -11469,6 +11469,13 @@ impl CEmitter {
                         if n == "int" && method == "to_bits" {
                             return "nova_int".into();
                         }
+                        // Plan 12 + Plan 18: ExternalRegistry static-method return type.
+                        // Handles AtomicInt.new(), Mutex.new(), WaitGroup.new(), etc.
+                        if let Some(decls) = self.external_registry.lookup(n, method) {
+                            if let Some(decl) = decls.iter().find(|d| !d.is_instance) {
+                                return decl.return_c_type.clone();
+                            }
+                        }
                     }
                     // Plan 04 + Plan 13 Ф.9.1: instance-method type inference.
                     // Self-return для chaining (mut @append, all @write_*, @clone).
@@ -11518,6 +11525,17 @@ impl CEmitter {
                             m if m.starts_with("try_read_") => "Nova_Result*".into(),
                             _ => "nova_int".into(),
                         };
+                    }
+                    // Plan 12 + Plan 18: ExternalRegistry instance-method return type.
+                    // Handles AtomicInt.@load(), Mutex.@lock(), WaitGroup.@wait(), etc.
+                    if obj_ty.starts_with("Nova_") && obj_ty.ends_with('*') {
+                        let recv_ty = obj_ty.trim_start_matches("Nova_")
+                            .trim_end_matches('*').trim();
+                        if let Some(decls) = self.external_registry.lookup(recv_ty, method) {
+                            if let Some(decl) = decls.iter().find(|d| d.is_instance) {
+                                return decl.return_c_type.clone();
+                            }
+                        }
                     }
                     // D26 prelude: NovaOpt_T method type inference.
                     if obj_ty.starts_with("NovaOpt_") {

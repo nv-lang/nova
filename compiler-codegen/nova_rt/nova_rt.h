@@ -263,6 +263,10 @@ typedef struct { char _dummy; } nova_unit;
 /* После sched.h — channels.h использует nova_sched_park/wake/register. */
 #include "channels.h"
 
+/* ---- Plan 18 std.sync: fiber-aware AtomicInt / Mutex / WaitGroup ----
+ * После nova_sched.h (park/wake API) + fibers.h (TLS scope/slot). */
+#include "sync_primitives.h"
+
 /* ---- Plan 33.1 Ф.4 (D24): contracts runtime helper ----
  * После effects.h + fibers.h — nova_contract_violation использует
  * NovaFailFrame routing + NovaTestFrame. */
