@@ -9804,3 +9804,50 @@ Member{obj:Ident} для неизвестных heads). False positives = 0.
 - nova_tests/modules/peer_isolation_ok* (positive)
 
 331 PASS / 0 FAIL / 7 SKIP. Все sub-plans Plan 42 (01-15) закрыты.
+
+
+================================================================================
+BIDIRECTIONAL SYNC: main ↔ mn-runtime (2026-05-14)
+================================================================================
+
+Двухсторонний merge двух веток после независимого параллельного развития.
+
+### mn-runtime → main
+
+Принято: Plan 44.5 Layer 5 (implicit M:N routing через
+nova_runtime_is_initialized) + Plan 18 финал (AtomicBool + Once +
+Path-form codegen fix). 14 коммитов.
+
+Что добавилось в main:
+- nova_rt/sync_primitives.h: AtomicBool (C11 __atomic) + Once
+  (state machine NEW→RUNNING→DONE, fiber park/wake).
+- std/runtime/sync.nv: external declarations AtomicBool/Once.
+- nova_tests/concurrency/sync_atomic.nv: 7 AtomicBool tests.
+- nova_tests/concurrency/sync_once.nv: 7 Once tests (concurrent
+  exclusion, happens-before, M:N mode).
+- emit_c.rs: ExternalRegistry lookup в Path-form ветке
+  infer_expr_c_type — fix для Once.new()/AtomicBool.new() type
+  inference. Root cause: Type.new() = ExprKind::Path, не Member.
+- compiler-codegen/nova_rt: M:N spawn routing, pending_remote atomic,
+  nova_runtime_spawn_into, _main_wake uv_async_t.
+
+### main → mn-runtime
+
+Принято: Plan 42.14 F.4+F.5 (selective import honest re-defer + Rule
+H fix) + Plan 42.15 (per-peer import isolation, group_decls, per-group
+visible scope). 5 коммитов.
+
+Что добавилось в mn-runtime:
+- imports.rs: visible_acc накапливает per-import items; re-export
+  propagation; selective filter честный (только {A,B} проходит).
+- types/mod.rs: NameResCtx group_decls (по parent dir), peer_imported_names.
+- nova_tests/negative_capability/peer_path_leak.nv — Rule C violation.
+- nova_tests/modules/peer_isolation_ok_use.nv — cross-peer decls OK.
+
+### Результат
+
+- main: 339 PASS / 0 FAIL / 7 SKIP
+- mn-runtime: 337 PASS / 0 FAIL / 7 SKIP
+
+(Разница 2: Z3 backend tests на main — Plan 33 V1 SMT backend selector,
+ в mn-runtime эти тесты не были добавлены до merge.)
