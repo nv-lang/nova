@@ -4837,13 +4837,33 @@ spec-level work.
   компилирует test-файлы (folder-module всегда импортируется через
   `_use.nv`); `nova build`/`nova run` берут single-file entry. Entry-as-
   folder-module появится когда `main` проекта станет папкой.
-- **Как починить:** `resolve_imports_inline_ex` детектит, что
-  `entry_path` — peer folder-module (siblings объявляют тот же
-  `module`), собирает их с distinct `file_id` + `is_entry_module:
-  true`, merge'ит items. ~120-200 LOC + test-runner поддержка запуска
-  folder-module как entry. Plan 42.17 Ф.8 — investigate + implement или
-  оставить здесь.
-- **Приоритет:** L — by-design не reachable до folder-module entry-point.
+- **Как починить (полный дизайн, Plan 42.17 Ф.8 investigate-итог):**
+  Две связанные части:
+  1. **Resolver-side** (`resolve_imports_inline_ex`): после parse entry —
+     детектить, что `entry_path.parent()` — folder-module (≥2 `.nv`,
+     все объявляют тот же `module`, совпадающий с `module.name` entry).
+     Если да — собрать sibling peers (alphabetical, `_test`/`#cfg`
+     filter как в `resolve_module_paths`), parse каждый с distinct
+     `file_id`, register как `PeerFile { is_entry_module: true }`,
+     merge items в `module.items` **включая `Item::Test`** (в отличие
+     от imported peers — у entry-folder-module свои тесты должны
+     гоняться), recursively resolve их imports. Зеркалит peer-loop из
+     `resolve_one` (~100 LOC). Сам по себе zero-regression-risk: gated
+     на условии, ложном для всех текущих entry (single-file / `_use.nv`).
+  2. **Test-runner-side** (`walk_nv`): сейчас peers folder-module
+     **пропускаются** как test-entry (тестируются через внешний
+     `_use.nv`). Для постоянного regression-guard `nova test` должен
+     компилировать folder-module как unit и гонять её `test`-блоки.
+     Меняет entry-selection → начнёт компилировать каждую fixture
+     standalone — **риск для 350-test регрессии**, отдельная focused-
+     работа.
+- **Статус:** honest-defer (Plan 42.17 Ф.8). Не баг — нулевая
+  regression-exposure; машинерия изоляции корректна для импортированных
+  folder-modules. Реализовать в отдельной сессии (resolver-side +
+  test-runner-side вместе, с полной регрессией).
+- **Приоритет:** L — by-design не reachable до folder-module entry-point
+  (когда `main` проекта или explicit `nova test <folder-module-peer>`
+  станет use-case'ом).
 
 
 ---
