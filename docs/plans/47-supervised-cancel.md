@@ -2,7 +2,8 @@
 
 > **Создан 2026-05-14.**
 >
-> **СТАТУС:** план, не начат.
+> **СТАТУС:** ✅ ЗАКРЫТ (2026-05-14) — Ф.0–Ф.4 + Ф.6 выполнены полностью;
+> Ф.5 (stdlib `within`/`race`) отложена с явной причиной (см. ниже).
 >
 > **Реализует:** ревизию [D75](../../spec/decisions/06-concurrency.md#d75-supervisedcancel-tok--структурная-отмена-с-внешним-токеном)
 > (2026-05-14) + закрытие [Q-cancel_scope-lambda-syntax](../../spec/open-questions.md).
@@ -13,6 +14,43 @@
 >
 > **Приоритет:** P1 — убирает лишний keyword, чинит dangling-token
 > ограничение bootstrap'а.
+
+---
+
+## Итог реализации (2026-05-14)
+
+**Ф.0–Ф.4 + Ф.6 — выполнены полностью.** `cancel_scope` keyword удалён;
+`supervised(cancel: tok)` парсится, тайп-чекается, кодогенерируется.
+`CancelToken` — caller-owned: `new`/`bind`/`unbind`/`cancel`/`is_cancelled`/
+`bind_cascade`, динамический `linked[]`, переживает scope, `cancel()` на
+завершённом scope'е — no-op. `unbind` делается внутри
+`nova_supervised_run_cancel` на всех путях выхода (включая re-throw) —
+`bound_scope` не повисает на dead stack frame.
+
+Тесты: `supervised_cancel_test.nv` (8/8), мигрированы `*_stress_test`,
+`cancel_latency_bench`, `select_closed_test`, `sleep_real_clock`.
+Negative: `supervised_cancel_double_bind` (runtime panic),
+`supervised_unknown_named_arg` (compile error).
+
+**Ф.5 (stdlib `within`/`race`) — ОТЛОЖЕНА.** Причина: упирается в
+ортогональное ограничение codegen — **замыкания в generic-erased
+функциях**. `within[T](ms, body fn() -> T)` / `race[T](competitors
+[]fn() -> T)` после type-erasure теряют сигнатуру: вызов `body()`
+эмитится как `nova_fn_body()` (как именованная функция, не closure-call);
+`[]fn() -> T` эрейзится в `void*` (`.len()`/`[i]`/`for-in` не резолвятся).
+Это codegen-фича уровня «closures-in-generics», вне scope Plan 47
+(миграция синтаксиса отмены). `within` (= `with_timeout`) тривиально
+строится поверх `supervised(cancel:)` как только этот codegen-пробел
+закрыт. Зафиксировано как `[M-race-closure-array]` +
+`[M-within-error-conflation]` в docs/simplifications.md.
+
+**Побочный codegen-фикс (в рамках Ф.5-разведки):** `emit_generic_fn_erased`
+/ `emit_generic_method_erased` не буферизовали тело и не флашили
+`lambda_forward_decls` → `spawn` внутри generic-функции давал
+«undeclared NovaSpawnCtx_*». Исправлено (буферизация как в emit_fn).
+Также `scan_expr_fwd` не рекурсил в тело `spawn` → вложенные spawn'ы не
+получали forward-decl, scan/emit counter рассинхронизировались.
+Исправлено (рекурсия, depth-first как emit).
 
 ---
 

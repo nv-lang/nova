@@ -1174,34 +1174,47 @@ export fn race[T](competitors []fn() -> T) -> T {
 - [Plan 47](../../docs/plans/47-supervised-cancel.md) — реализация:
   миграция bootstrap'а с keyword `cancel_scope` на `supervised(cancel:)`.
 
-### История bootstrap-реализации (keyword `cancel_scope`, 2026-05-06)
+### История: keyword `cancel_scope` (2026-05-06) → удалён в Plan 47 (2026-05-14)
 
-> Удаляется в [Plan 47](../../docs/plans/47-supervised-cancel.md).
-> Сохранено для контекста миграции.
+> ✅ Keyword `cancel_scope` **удалён** в [Plan 47](../../docs/plans/47-supervised-cancel.md).
+> Раздел сохранён как контекст миграции.
 
-Реализовано как отдельный keyword:
+Старая реализация — отдельный keyword `cancel_scope { tok => body }`:
+лексер `KwCancelScope`, AST `CancelScope { token_name, body }`, парсер
+`parse_cancel_scope`, codegen `emit_cancel_scope`, `NovaCancelToken` со
+scope-owned моделью (токен хранил указатель на queue-frame).
 
-- `compiler-codegen/nova_rt/fibers.h`: `NovaCancelToken` struct +
-  `nova_cancel_token_init/cancel/is_cancelled/bind`.
-- `compiler-codegen/src/lexer/`: keyword `cancel_scope` (`KwCancelScope`).
-- `compiler-codegen/src/ast/`: variant `CancelScope { token_name, body }`.
-- `compiler-codegen/src/parser/`: `parse_cancel_scope`.
-- `compiler-codegen/src/codegen/emit_c.rs`: `emit_cancel_scope` +
-  built-in dispatch для `tok.cancel()` / `is_cancelled()` / `bind()`.
-- `nova_tests/concurrency/cancel_scope_test.nv`: 5 тестов.
+**Plan 47 (2026-05-14) заменил это на `supervised(cancel: tok)`:**
 
-Известные ограничения той реализации (наследуются миграцией):
+- AST: `Supervised { body, cancel: Option<Expr> }`; вариант `CancelScope`
+  удалён. Лексер/парсер/`emit_cancel_scope` — удалены.
+- `NovaCancelToken` переписан на **caller-owned** модель: поля
+  `cancel_requested` + `bound_scope` (nullable) + динамический `linked[]`.
+  API: `nova_cancel_token_new` / `_bind` (scope-binding, panic при
+  double-bind) / `_unbind` / `_cancel` / `_is_cancelled` / `_bind_cascade`
+  (бывший `_bind` — каскад токенов).
+- `emit_supervised` для cancel-формы: `nova_cancel_token_bind` перед
+  `nova_supervised_run_cancel` (после тела — прямой throw в body-стейтменте
+  не оставит dangling `bound_scope`); `unbind` — внутри
+  `nova_supervised_run_cancel` на всех путях выхода (нормальный возврат +
+  re-throw).
 
-1. **Cancel-throw на main flow приходит как plain `nova_throw`**, не
-   через `Nova_Fail_fail`/handler-vtable — user `with Fail` handler не
-   вызывается. Корректный фикс требует различать source: fiber-throw-
-   from-handler vs cooperative-cancel-throw — отдельная задача.
-2. **NOVA_CANCEL_LINKED_CAP=8** — токен привязывается максимум к 8
-   родительским токенам. Production — динамический список.
-3. **Token не survives scope-exit.** В старой модели токен хранил
-   указатель на queue-frame и после выхода становился dangling. Новая
-   модель (caller-owned token + bind/unbind + no-op на завершённом
-   scope'е) это устраняет.
+**Что caller-owned модель исправила:**
+
+- **Dangling token.** Старый токен хранил указатель на queue-frame и после
+  scope-exit'а становился dangling. Новый — caller-owned, `unbind` чистит
+  `bound_scope`, `cancel()` на отвязанном токене — безвредный no-op, токен
+  переживает scope.
+- **`NOVA_CANCEL_LINKED_CAP=8`** — фиксированный массив каскадов заменён на
+  динамический `linked[]` (GC-managed, геометрический рост).
+
+**Унаследованное ограничение (вне scope Plan 47, см. §«Что НЕ входит»
+плана):** cancel-throw на main flow приходит как plain `nova_throw`, не
+через `Nova_Fail_fail`/handler-vtable. Корректный фикс требует различать
+fiber-throw-from-handler vs cooperative-cancel-throw — отдельная задача.
+Из-за этого stdlib `within`/`race` (Ф.5) пришлось бы оборачивать в
+`with Fail[any]` handler с конфляцией реальных ошибок и timeout'а
+(`[M-within-error-conflation]`) — Ф.5 отложена, см. план.
 
 ---
 
