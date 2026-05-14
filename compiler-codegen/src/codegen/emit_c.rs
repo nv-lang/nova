@@ -11812,6 +11812,15 @@ impl CEmitter {
                                 return ret_ty.clone();
                             }
                         }
+                        // Plan 12 + Plan 18: ExternalRegistry static-method lookup
+                        // для Path-form вызовов (Once.new(), AtomicBool.new(), etc.).
+                        // Path-form используется вместо Member-form для статических
+                        // методов внешних типов — Member-branch выше не покрывает это.
+                        if let Some(decls) = self.external_registry.lookup(eff, method_name) {
+                            if let Some(decl) = decls.iter().find(|d| !d.is_instance) {
+                                return decl.return_c_type.clone();
+                            }
+                        }
                         let key = format!("fn_ret_{}", method_name);
                         self.var_types.get(&key).cloned().unwrap_or_else(|| "nova_int".into())
                     } else {
