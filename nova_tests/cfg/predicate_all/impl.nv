@@ -1,0 +1,10 @@
+// Plan 42.14 Ф.1: peer с #cfg(all(...)) — вложенный not внутри all.
+// all(any(windows,linux,macos), not(target_os="freebsd")) =
+//   "одна из 3 поддерживаемых OS" AND "не freebsd" = true на всех 3.
+// Проверяет recursive eval: all + any + not вложенно.
+
+module cfg.predicate_all
+#cfg(all(any(target_os = "windows", target_os = "linux", target_os = "macos"), not(target_os = "freebsd")))
+
+export fn gated_value() -> int =>
+    99
