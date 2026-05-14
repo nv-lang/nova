@@ -14,7 +14,7 @@ type Counter {
     mut val int
 }
 
-fn make_counter(v int) -> Counter => Counter { val: v }
+fn make_counter(v int) -> Counter => { val: v }
 
 // ================================================================
 // SECTION 1: базовое исполнение

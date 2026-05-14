@@ -30,7 +30,7 @@ module concurrency.gc_pause_bench
 type Obj { a int, b int, c int }
 
 fn make_obj(i int) -> Obj =>
-    Obj { a: i, b: i + 1, c: i + 2 }
+    { a: i, b: i + 1, c: i + 2 }
 
 // Возвращает max-pause из N раундов (миллисекунды).
 fn run_rounds(rounds int, per_round int) -> int {

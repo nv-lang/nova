@@ -1125,6 +1125,8 @@ impl Parser {
             };
             (b, s)
         };
+        // Plan 51 Ф.2: `=>`-тело — record-литерал ⇒ тип ровно один раз.
+        Self::check_record_lit_type_once(&return_type, receiver.as_ref(), &body)?;
         Ok(FnDecl {
             is_export,
             is_external,
@@ -1236,6 +1238,50 @@ impl Parser {
                     span,
                 ))
             }
+        }
+    }
+
+    /// Plan 51 Ф.2: когда `=>`-тело функции/замыкания — record-литерал,
+    /// тип берётся из return-аннотации; писать его И в литерале нельзя
+    /// (тип объявляется ровно один раз). `-> Self` резолвится к типу
+    /// receiver'а (`-> Self => Counter{}` в методе `Counter` — тоже
+    /// избыточно). `path ≠ return` (sum-coercion, `-> Shape => Circle{}`)
+    /// — не трогаем. Используется и `parse_fn`, и `parse_closure_full`.
+    fn check_record_lit_type_once(
+        return_type: &Option<TypeRef>,
+        receiver: Option<&crate::ast::Receiver>,
+        body: &FnBody,
+    ) -> Result<(), Diagnostic> {
+        let FnBody::Expr(e) = body else { return Ok(()); };
+        let ExprKind::RecordLit { type_name: Some(lit_path), .. } = &e.kind else {
+            return Ok(());
+        };
+        let resolve = |p: &Vec<String>| -> Vec<String> {
+            if p.len() == 1 && p[0] == "Self" {
+                if let Some(r) = receiver {
+                    return vec![r.type_name.clone()];
+                }
+            }
+            p.clone()
+        };
+        match return_type {
+            None => Err(Diagnostic::new(
+                "a function whose `=>` body is a record literal must declare \
+                 its return type — write `fn ... -> T => { ... }`",
+                e.span)),
+            Some(TypeRef::Named { path: ret_path, .. }) => {
+                if resolve(lit_path) == resolve(ret_path) {
+                    Err(Diagnostic::new(
+                        format!(
+                            "redundant type prefix on record literal — the return \
+                             type `-> {}` already declares it; write `=> {{ ... }}`",
+                            ret_path.join(".")),
+                        e.span))
+                } else {
+                    Ok(())
+                }
+            }
+            Some(_) => Ok(()),
         }
     }
 
@@ -1638,6 +1684,21 @@ impl Parser {
         let value = self.parse_expr()?;
         let span = start.merge(value.span);
         self.expect_newline_or_eof().ok();
+        // Plan 51 Ф.2: `let x T = T { ... }` — тип объявлен дважды (в
+        // аннотации и в литерале). Тип пишется ровно один раз: каноничные
+        // формы — `let x T = { ... }` либо `let x = T { ... }`.
+        if let Some(TypeRef::Named { path: ann_path, .. }) = &ty {
+            if let ExprKind::RecordLit { type_name: Some(lit_path), .. } = &value.kind {
+                if ann_path == lit_path {
+                    return Err(Diagnostic::new(
+                        format!(
+                            "redundant type prefix on record literal — the `let` \
+                             annotation already declares `{}`; write `= {{ ... }}`",
+                            ann_path.join(".")),
+                        value.span));
+                }
+            }
+        }
         Ok(LetDecl {
             mutable,
             pattern,
@@ -3090,6 +3151,10 @@ impl Parser {
             ),
         };
         let span = start.merge(body_span);
+
+        // Plan 51 Ф.2: `=>`-тело замыкания — record-литерал ⇒ тип ровно
+        // один раз (как для named fn; receiver у замыкания нет).
+        Self::check_record_lit_type_once(&return_type, None, &body)?;
 
         Ok(Expr::new(
             ExprKind::ClosureFull(Box::new(crate::ast::FnSigBody {

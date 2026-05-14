@@ -21,7 +21,7 @@ type Account {
 }
 
 export fn Account.acc_with_initial(amount int) -> Self =>
-    Self { balance: amount }
+    { balance: amount }
 
 export fn Account.acc_new() -> Self =>
     Self.acc_with_initial(0)
@@ -43,10 +43,10 @@ type Box {
 }
 
 export fn Box.box_empty() -> Self =>
-    Self { value: 0, tag: 0 }
+    { value: 0, tag: 0 }
 
 export fn Box.box_tagged(v int, t int) -> Self =>
-    Self { value: v, tag: t }
+    { value: v, tag: t }
 
 
 test "Self { ... } literal" {
@@ -67,7 +67,7 @@ export fn Builder.bld_empty() -> Self =>
     Self.bld_with_count(0)
 
 export fn Builder.bld_with_count(n int) -> Self =>
-    Self { count: n }
+    { count: n }
 
 export fn Builder.bld_from_default() -> Self =>
     Self.bld_empty()
@@ -88,7 +88,7 @@ type Counter {
 }
 
 export fn Counter.ctr_with_initial(v int) -> Self =>
-    Self { value: v }
+    { value: v }
 
 export fn Counter.ctr_from_pair(a int, b int) -> Self =>
     Self.ctr_with_initial(a + b)
@@ -108,7 +108,7 @@ type SelfInstance {
 }
 
 export fn SelfInstance.si_make(v int) -> Self =>
-    Self { n: v }
+    { n: v }
 
 // Instance метод, который через Self вызывает свой static.
 export fn SelfInstance @si_double() -> Self =>
@@ -129,10 +129,10 @@ type Chain {
 }
 
 export fn Chain.chain_zero() -> Self =>
-    Self { step: 0 }
+    { step: 0 }
 
 export fn Chain @chain_next() -> Self =>
-    Self { step: @step + 1 }
+    { step: @step + 1 }
 
 
 test "Self в return + Self literal в body" {
@@ -150,13 +150,13 @@ type Nest {
 }
 
 export fn Nest.nst_zero() -> Self =>
-    Self { depth: 0 }
+    { depth: 0 }
 
 export fn Nest.nst_one() -> Self =>
-    Self { depth: 1 }
+    { depth: 1 }
 
 export fn Nest.nst_two() -> Self =>
-    Self { depth: Self.nst_one().depth + 1 }
+    { depth: Self.nst_one().depth + 1 }
 
 
 test "nested Self.method calls" {

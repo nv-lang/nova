@@ -19,8 +19,8 @@ type Stage {
     output int
 }
 
-fn make_counter(val int) -> Counter => Counter { val }
-fn make_stage(input int, output int) -> Stage => Stage { input, output }
+fn make_counter(val int) -> Counter => { val }
+fn make_stage(input int, output int) -> Stage => { input, output }
 
 fn fib(n int) -> int {
     let mut a = 0

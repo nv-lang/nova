@@ -25,9 +25,9 @@ type Triple {
     c int
 }
 
-fn make_point(x int, y int) -> Point => Point { x, y }
-fn make_box(val int, depth int) -> Box => Box { val, depth }
-fn make_triple(a int, b int, c int) -> Triple => Triple { a, b, c }
+fn make_point(x int, y int) -> Point => { x, y }
+fn make_box(val int, depth int) -> Box => { val, depth }
+fn make_triple(a int, b int, c int) -> Triple => { a, b, c }
 
 // ---- helpers ----
 

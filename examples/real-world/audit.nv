@@ -382,7 +382,7 @@ fn query_audit(p ListParams) Db Fail -> []AuditEntry {
 }
 
 fn row_to_audit_entry(row DbRow) Fail -> AuditEntry =>
-    AuditEntry {
+    {
         id:          row.get_int("id"),
         admin_id:    row.get_int("admin_id"),
         admin_name:  row.get_str("admin_name"),

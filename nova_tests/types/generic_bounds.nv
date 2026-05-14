@@ -135,7 +135,7 @@ export fn GbKey @hash() -> u64 => @raw
 export fn GbKey @eq(other GbKey) -> bool => @raw == other.raw
 
 
-export fn GbValue @from_key(k GbKey) -> GbValue => GbValue { derived: k.raw }
+export fn GbValue @from_key(k GbKey) -> GbValue => { derived: k.raw }
 
 
 fn pair_forward[K GbHashable, V GbFromKey[K]](k K, v V) -> V => v

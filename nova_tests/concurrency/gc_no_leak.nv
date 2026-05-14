@@ -19,12 +19,12 @@ module concurrency.gc_no_leak
 type Junk { a int, b int, c int, d int }
 
 fn make_junk(i int) -> Junk =>
-    Junk { a: i, b: i + 1, c: i + 2, d: i + 3 }
+    { a: i, b: i + 1, c: i + 2, d: i + 3 }
 
 type Wrap { item Junk, count int }
 
 fn make_wrap(i int) -> Wrap =>
-    Wrap { item: make_junk(i), count: i }
+    { item: make_junk(i), count: i }
 
 // ── 1. Stable heap после warmup ────────────────────────────────────────
 
