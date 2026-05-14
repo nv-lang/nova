@@ -1,7 +1,10 @@
 // Plan 42.09: internal реализация — недоступна напрямую (Rule H).
 // Только через re-export facade.
+//
+// Plan 42.13 (D29 rev-3.1): single-file внутри `internal/` →
+// declaration = owner.internal.target = reexport_facade.internal.impl.
 
-module internal.impl
+module reexport_facade.internal.impl
 
 export fn parse_internal(s str) -> int =>
     s.len
