@@ -1,123 +1,149 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-# Plan 49: Cancel-throw routing — kinded throws
+# Plan 49: Cancellation semantics — kinded throws + cancel reason
 
-> **Создан 2026-05-14.**
+> **Создан 2026-05-14. Расширен 2026-05-15** (kinded throws → полная
+> модель отмены: reason/cause, USER-precedence, defer-on-cancel — паритет
+> с Go `context` / Rust cancellation / TS `AbortSignal`, местами лучше).
 >
 > **СТАТУС:** план, не начат.
 >
 > **Приоритет:** P1 — закрывает `[M-cancel-throw-routing]` и
-> `[M-within-error-conflation]`; делает `supervised(cancel:)` /
-> `within` / `race` семантически честными (отмена ≠ ошибка).
+> `[M-within-error-conflation]`; делает отмену first-class: «отмена ≠
+> ошибка», с причиной, без потери реальных ошибок.
 >
-> **Предшественники:** [Plan 47](47-supervised-cancel.md) ✅ —
-> `supervised(cancel:)` + `CancelToken`. **Независим от Plan 48** —
-> Plan 49 чинит runtime-семантику; Plan 48 чинит codegen для closures.
-> Чистый stdlib `within`/`race` требует ОБА.
+> **Предшественники:** [Plan 47](47-supervised-cancel.md) ✅. **Независим
+> от Plan 48** — Plan 49 чинит runtime-семантику; чистый stdlib
+> `within`/`race` требует обоих (48 — компиляция, 49 — семантика).
 
 ---
 
-## Проблема
+## Зачем и сравнение с индустрией
 
-Брошенная ошибка в Nova — это просто `nova_str` без «вида»
-(`NovaFailFrame.error_msg`, effects.h:26-30). На месте перехвата
-невозможно отличить:
+Сейчас брошенная ошибка в Nova — просто `nova_str` без «вида»
+(`NovaFailFrame.error_msg`). Отмена scope'а (`"scope cancelled"`)
+неотличима от реальной ошибки кроме как строковым сравнением. Следствия:
+отмена «убегает» из `supervised(cancel:)` наружу как ошибка; `within`
+вынужден ловить её `with Fail`-обёрткой, которая неотличимо глотает и
+реальные ошибки (`[M-within-error-conflation]`).
 
-- реальную ошибку пользователя (`throw "db connection failed"`),
-- кооперативную отмену (`"scope cancelled"` из `nova_fiber_yield`).
+Как сделано в индустрии (с чем просили сравнивать):
 
-Текущий обход — строковое сравнение с `"scope cancelled"`. Хрупко.
+| | Механизм отмены | Отмена — это ошибка? | Причина отмены | Реальная ошибка vs отмена |
+|---|---|---|---|---|
+| **Go** | `context.Context` + `ctx.Done()` канал | **Нет** — значение (`ctx.Err()`) | `context.Cause()` (1.20+) — произвольная | errgroup: first-error-wins |
+| **Rust** | future-drop / `CancellationToken` | **Нет** — структурно отдельно от `Result` | токен может нести reason | независимы по конструкции |
+| **TypeScript** | `AbortController`/`AbortSignal` | **Полу** — `AbortError` в reject-канале | `signal.reason` (произвольная) | различимы по типу `AbortError` |
+| **Nova сейчас** | cancel-throw (`nova_str`) | **Да** — неотличимо от Fail | нет | **не различимы** (строковый хак) |
 
-### Последствие 1 — отмена «убегает» из `supervised(cancel:)`
-
-`nova_supervised_run_impl` (fibers.h) делает `if (err) nova_throw(err)` —
-re-throw'ит ВСЁ, включая `"scope cancelled"`. То есть когда снаружи
-вызвали `tok.cancel()` — ожидаемое, штатное событие — `supervised`
-выкидывает это наружу как ошибку. Вызывающий обязан оборачивать scope в
-`with Fail` handler просто чтобы поймать собственную отмену.
-
-### Последствие 2 — `within` не может быть честным
-
-`within`/`race` (Plan 47 Ф.5) вынуждены оборачивать `supervised(cancel:)`
-в `with Fail[any]` handler, который ловит cancel-throw. Но тот же handler
-неотличимо ловит и **реальную** ошибку из `body()` — обе сводятся к
-`None`/проигрышу. Это `[M-within-error-conflation]`: timeout и настоящий
-баг в коде неразличимы.
-
-### Корень — throw не несёт «kind»
-
-`nova_throw(msg)` кладёт только `nova_str`. Нет поля, по которому
-catch-site понял бы природу throw'а.
+Nova сейчас хуже всех: отмена = ошибка, без причины, неотличима.
+Plan 49 выводит на паритет и местами лучше:
+- **vs Go:** отмена не ошибка (паритет); причина (`Context.Cause`
+  паритет); **лучше** — USER-ошибка имеет приоритет над отменой (Go
+  errgroup теряет реальную ошибку при first-wins, мы — нет).
+- **vs Rust:** отмена структурно отдельна от ошибок (паритет); reason
+  на токене (паритет).
+- **vs TS:** отмена **не** всплывает в caller'а как ошибка (**лучше** TS,
+  где `AbortError` всё же в reject-канале — у нас отмена не доходит до
+  caller'а `supervised` вообще); причина (паритет `signal.reason`).
 
 ---
 
-## Архитектурное решение: kinded throws
+## Корень проблемы
 
-**Добавить «вид» брошенному значению.** Минимальный enum:
+`nova_throw(msg)` кладёт только `nova_str` — нет поля, по которому
+catch-site понял бы природу throw'а. `nova_supervised_run_impl` делает
+`if (err) nova_throw(err)` — re-throw'ит ВСЁ, включая отмену.
+`with Fail` `setjmp`-frame ловит ЛЮБОЙ throw, не отличая отмену от Fail.
+
+---
+
+## Архитектурное решение
+
+### 1. Kinded throws — у throw'а есть «вид»
 
 ```c
 typedef enum {
     NOVA_THROW_USER   = 0,   /* user `throw`, `?`, `!!`, assert — обычная ошибка */
-    NOVA_THROW_CANCEL = 1,   /* кооперативная отмена scope'а ("scope cancelled") */
+    NOVA_THROW_CANCEL = 1,   /* кооперативная отмена scope'а */
 } NovaThrowKind;
 ```
 
-`NovaFailFrame` получает поле `error_kind`. `nova_throw(msg)` — kind по
-умолчанию `USER` (вся существующая семантика не меняется). Новый
-`nova_throw_cancel(msg)` — kind `CANCEL`. Kind переживает `longjmp`
-(хранится в frame, ставится до longjmp, читается после).
+`NovaFailFrame` получает `error_kind`. `nova_throw(msg)` — `USER`
+по умолчанию (вся существующая семантика не меняется). Новый
+`nova_throw_cancel(msg)` — `CANCEL`. Kind переживает `longjmp`.
 
-**`NovaFiberQueue`** получает `first_error_kind` рядом с `first_error` —
-spawn-entry при перехвате throw'а fiber'а записывает И сообщение, И kind.
+### 2. Cancel reason — причина отмены (Go `Context.Cause` паритет)
 
-**`nova_supervised_run_impl` становится kind-aware:**
+`CancelToken` получает поле `reason` (`nova_str`, nullable). API:
+- `tok.cancel()` — отмена без причины (reason = дефолт `"cancelled"`).
+- `tok.cancel(reason str)` — отмена с причиной (`"deadline exceeded"`,
+  `"user aborted"`, ...). Перегрузка / опциональный аргумент.
+- `tok.is_cancelled() -> bool` — был ли вызван `cancel()` (как
+  `ctx.Err() != nil`).
+- `tok.reason() -> str?` — причина, если отменён (как `ctx.Cause()` /
+  `signal.reason`). `None` если не отменён.
 
-- `first_error_kind == CANCEL` → scope был отменён (штатно, через
-  `tok.cancel()`). **Возврат БЕЗ re-throw** — отмена сделала свою работу,
-  fiber'ы остановлены, наружу ничего не летит.
-- `first_error_kind == USER` → реальная ошибка fiber'а. Re-throw —
-  причём через `Nova_Fail_fail` (а не plain `nova_throw`), чтобы
-  внешний `with Fail` handler пользователя был вызван (закрывает вторую
-  половину `[M-cancel-throw-routing]`: «user with Fail handler не
-  вызывается»).
+`cancel-throw` несёт reason как `error_msg` (не фиксированную строку).
+`within` отменяет watchdog'ом с reason `"deadline exceeded"` — это
+естественно даёт Go-различие `Canceled` vs `DeadlineExceeded` без
+отдельного enum'а.
 
-**`with` блок становится kind-aware:** его `setjmp`-frame ловит ЛЮБОЙ
-throw, включая cancel. Codegen `emit_with`: если frame поймал
-`CANCEL`-kind — это не Fail, handler НЕ запускается; throw
-**пробрасывается дальше** (`nova_throw_cancel` снова) к ближайшему
-`supervised`. `with Fail` никогда не «обрабатывает» отмену — отмена
-структурна, не ошибка.
+### 3. `supervised(cancel:)` — отмена не убегает наружу
 
-### Что это даёт — `within` без хака
+`nova_supervised_run_impl` становится kind-aware. После цикла, при
+`first_error != NULL`:
+- `first_error_kind == CANCEL` → scope отменён штатно. **Возврат БЕЗ
+  re-throw.** Отмена сделала работу, наружу ничего не летит. (Как в Go:
+  `ctx` отменён → функция просто возвращается.)
+- `first_error_kind == USER` → реальная ошибка fiber'а. Re-throw через
+  `Nova_Fail_fail(err)` (не plain `nova_throw`) — внешний `with Fail`
+  handler пользователя вызывается.
 
-После Plan 49 (+ Plan 48 для closures) `within` становится тривиальным
-и **корректным**, без `with Fail`-обёртки:
+### 4. USER-precedence — реальная ошибка не теряется (лучше Go)
 
-```nova
-export fn within[T](ms int, body fn() -> T) -> Option[T] {
-    let tok = CancelToken.new()
-    let mut result Option[T] = None
-    supervised(cancel: tok) {
-        spawn { Time.sleep(ms); tok.cancel() }
-        spawn { result = Some(body()); tok.cancel() }
-    }
-    result    // timeout → None; body завершился → Some(...);
-              // реальная ошибка body() → re-throw наружу, НЕ None
-}
-```
+`nova_fiber_report_error` при записи в `first_error` соблюдает приоритет:
 
-- Watchdog сработал → work отменён (`CANCEL`) → `supervised` вышел чисто
-  → `result == None`. Timeout честно = `None`.
-- `body()` бросил реальную ошибку (`USER`) → `first_error_kind == USER`
-  → `supervised` re-throw'ит → ошибка летит наружу, НЕ маскируется под
-  `None`. Конфляция устранена.
+| current ↓ \ incoming → | (пусто) | CANCEL | USER |
+|---|---|---|---|
+| **(пусто)** | — | запись CANCEL | запись USER |
+| **CANCEL** | — | keep | **overwrite USER** |
+| **USER** | — | keep | keep (first USER wins) |
 
-### Почему enum, а не богатый ErrorBox
+То есть: реальная ошибка **всегда** перетирает отмену, даже если отмена
+записана раньше. Go errgroup делает чистый first-wins и **теряет**
+реальную ошибку, случившуюся после отмены — у нас она surface'ится.
+(Edge: ошибка в cancellation-teardown тоже surface'ится — это честнее,
+см. Риск R6.)
 
-Богатый `NovaError { kind; msg; payload; type_info }` — это D65 typed
-errors, отдельная большая ось. Plan 49 — минимальный incremental шаг:
-одно enum-поле в уже существующих структурах. Существующий код
-(`nova_throw`, `Nova_Fail_fail`, `with Fail`) продолжает работать —
-`USER` это дефолт.
+### 5. `with Fail` не «обрабатывает» отмену
+
+Codegen `emit_with`: `setjmp`-frame поймал throw → проверить
+`frame.error_kind`. `CANCEL` → handler НЕ запускается, throw
+пробрасывается дальше (`nova_throw_cancel`) к ближайшему `supervised`.
+`with Fail` ловит только `USER`. Отмена структурна, не ошибка.
+
+### 6. defer/errdefer выполняются при отмене (Rust Drop / Go defer паритет)
+
+Когда fiber отменён (cancel-throw разворачивает его стек), его `defer`-
+блоки **обязаны** выполниться — это cleanup-семантика, паритет с Rust
+(Drop при отмене future) и Go (`defer` при выходе goroutine).
+`errdefer` — тоже срабатывает (отмена это «выход с ошибкой» с точки
+зрения fiber'а). Проверяется явно в Ф.4.
+
+### Почему throw, а не Go-style чисто-значение
+
+Go-горутина проверяет `ctx.Done()` в `select` и **возвращается сама**.
+Nova-fiber может быть запаркован глубоко внутри `Time.sleep` /
+`Channel.recv` — его нельзя «вернуть», его надо **развернуть** со стека.
+Throw (longjmp) — и есть механизм разворота. Ключевое: throw **kinded**
+(различим) и **не убегает** из `supervised` (наружу — как в Go,
+невидим). Внутри — kinded unwind; снаружи — отмена не ошибка.
+
+Кооперативная проверка `tok.is_cancelled()` остаётся **предпочтительным**
+путём для CPU-bound fiber'ов (как Go `select { case <-ctx.Done() }`) —
+`if tok.is_cancelled() { return }` выходит чисто, без throw'а. Throw —
+fallback для fiber'ов, запаркованных в блокирующих операциях, которые
+не могут опрашивать флаг.
 
 ---
 
@@ -125,145 +151,147 @@ errors, отдельная большая ось. Plan 49 — минимальн
 
 ### Ф.0 — `NovaThrowKind` + `NovaFailFrame.error_kind` + `nova_throw_cancel`
 
-- `nova_rt/effects.h`: enum `NovaThrowKind { USER, CANCEL }`. Поле
-  `NovaThrowKind error_kind` в `NovaFailFrame`. `nova_throw(msg)` ставит
-  `error_kind = USER` перед longjmp. Новый `nova_throw_cancel(msg)`
-  ставит `CANCEL`.
-- Все существующие места `setjmp(frame.jmp)` читают `frame.error_kind`
-  при ненулевом возврате — но на Ф.0 ещё никто не ставит `CANCEL`, так
-  что поведение не меняется (чистый рефактор + новое API).
-- `NOVA_TRY`/`NOVA_CATCH` макросы — `error_kind` доступен через frame.
+- `nova_rt/effects.h`: enum `NovaThrowKind`; поле `error_kind` в
+  `NovaFailFrame`; `nova_throw` ставит `USER`; `nova_throw_cancel` —
+  `CANCEL`. `NOVA_TRY`/`NOVA_CATCH` экспонируют `error_kind`.
+- Чистый рефактор + новое API — поведение не меняется (никто ещё не
+  бросает `CANCEL`).
 
-### Ф.1 — Кооперативная отмена бросает `CANCEL`
+### Ф.1 — Cancel reason на `CancelToken`
 
-- `nova_rt/fibers.h`: `nova_fiber_yield` — `cancel_requested` ветка
-  меняет `nova_throw(...)` → `nova_throw_cancel(nova_str_from_cstr("scope cancelled"))`.
-- Аналогично — все остальные точки cooperative-cancel-throw'а
-  (`channels.h` cancel-during-recv, `nova_sleep` cancel-during-park —
-  проверить все места где fiber бросает из-за `cancel_requested`).
-- `NovaFiberQueue`: поле `NovaThrowKind first_error_kind`. `nova_scope_init`
-  инициализирует `USER`.
-- `nova_fiber_report_error(msg)` → `nova_fiber_report_error_kinded(msg, kind)`;
-  spawn-entry catch-блок (codegen) передаёт `_ff.error_kind`.
+- `nova_rt/fibers.h`: поле `nova_str reason` в `NovaCancelToken`
+  (caller-owned, переживает scope).
+- `nova_cancel_token_cancel(tok)` → `nova_cancel_token_cancel_reason(tok, reason)`;
+  старый — wrapper с дефолтом `"cancelled"`.
+- `nova_cancel_token_reason(tok) -> nova_str` (пустая если не отменён).
+- Codegen: `tok.cancel()` / `tok.cancel(reason)` (опц. аргумент),
+  `tok.reason()` → `Option[str]`. Dispatch на `NovaCancelToken*`.
+- Spec D75 §«Модель токена» — добавить `reason()` в capabilities.
 
-### Ф.2 — `nova_supervised_run_impl` kind-aware
+### Ф.2 — Кооперативная отмена бросает `CANCEL` + reason
 
-- После цикла, при `err != NULL`:
-  - `first_error_kind == CANCEL` → НЕ re-throw; нормальный возврат.
-    (Token отвязан, scope чист — отмена отработала.)
-  - `first_error_kind == USER` → re-throw через `Nova_Fail_fail(err)`
-    (не plain `nova_throw`) — внешний `with Fail` handler вызывается.
-    Если handler'а нет — `Nova_Fail_fail` сам падает в `nova_throw` →
-    abort с сообщением. Поведение для USER-ошибок без handler'а
-    сохраняется.
-- `interrupt`-ветка (`pending`) не трогается — interrupt ортогонален.
-- Граница: если первым записан `CANCEL`, но позже fiber бросил `USER` —
-  «first wins», реальная ошибка в отменяемом scope'е теряется. Для V1
-  приемлемо (scope всё равно валится); зафиксировать как
-  `[M-cancel-masks-late-error]` в simplifications.md.
+- `nova_fiber_yield` (`cancel_requested` ветка): `nova_throw_cancel`
+  с reason из токена scope'а (а не фикс. `"scope cancelled"`).
+  → нужен путь scope → bound token → reason. Либо scope несёт
+  `cancel_reason` (копируется из токена в `nova_cancel_token_bind` /
+  при `cancel()`).
+- **Аудит всех точек cancel-throw'а:** `fibers.h` (yield),
+  `channels.h` (cancel-during-recv/send), `nova_sleep` (cancel-during-park),
+  `select`. Каждая — на `nova_throw_cancel`. Пропуск = регрессия (Риск R1).
+- `NovaFiberQueue`: `first_error_kind` + `first_error_reason`.
+  `nova_scope_init` инициализирует.
+- `nova_fiber_report_error` → kinded + USER-precedence таблица (раздел 4).
 
-### Ф.3 — `emit_with` kind-aware
+### Ф.3 — `nova_supervised_run_impl` + `emit_with` kind-aware
 
-- Codegen `emit_with` (emit_c.rs:1578): в else-ветке `setjmp` (frame
-  поймал throw) — проверять `frame.error_kind`:
-  - `CANCEL` → НЕ запускать handler-логику with-блока; re-throw
-    `nova_throw_cancel(frame.error_msg)` — отмена пробрасывается к
-    ближайшему `supervised`. `with Fail` не «обрабатывает» отмену.
-  - `USER` → существующее поведение (handler уже отработал внутри
-    `Nova_Fail_fail`; frame-catch — точка приземления unwind'а).
-- Проверить взаимодействие с `interrupt`-frame'ом (отдельный
-  `NovaInterruptFrame`) — cancel не должен путаться с `interrupt`.
+- `nova_supervised_run_impl`: `CANCEL` → возврат без re-throw; `USER` →
+  re-throw через `Nova_Fail_fail`.
+- `emit_with` (emit_c.rs): frame поймал `CANCEL` → re-throw
+  `nova_throw_cancel` (с reason), handler не запускать; `USER` →
+  существующее поведение. Аккуратный pop/re-throw порядок (Риск R3).
 
-### Ф.4 — Тесты runtime-семантики (без Plan 48)
+### Ф.4 — Тесты семантики (без Plan 48)
 
-`nova_tests/concurrency/` — прямые `supervised(cancel: tok)` тесты,
-НЕ требующие closures-in-generics (Plan 48):
+Прямые `supervised(cancel: tok)` тесты, НЕ требующие closures-in-generics:
+- **отмена не убегает**: `supervised(cancel: tok)` без `with Fail` —
+  после scope'а код продолжается, throw наружу нет.
+- **реальная ошибка убегает**: fiber `throw "boom"` → `supervised`
+  re-throw'ит, внешний `with Fail` ловит именно `"boom"`.
+- **USER-precedence**: один fiber `tok.cancel()`, другой позже
+  `throw "boom"` → наружу летит `"boom"`, не отмена.
+- **reason**: `tok.cancel("deadline")` → после scope'а
+  `tok.reason() == Some("deadline")`; `tok.is_cancelled() == true`.
+- **`with Fail` не глотает отмену**: handler не вызывается на cancel-throw.
+- **defer при отмене**: fiber с `defer { cleanup() }` отменён →
+  `cleanup()` выполнился. `errdefer` — тоже.
+- **кооперативный `is_cancelled()`**: CPU-bound fiber проверяет флаг,
+  выходит `return` без throw'а — scope чист.
+- Чистка: убрать `with Fail`-обёртки из Plan-47-тестов, которые были
+  нужны ТОЛЬКО чтобы ловить убегавшую отмену.
 
-- **cancel не убегает**: `supervised(cancel: tok) { spawn{...}; spawn{ tok.cancel() } }`
-  без обёртки `with Fail` — после scope'а код продолжается нормально,
-  никакого throw наружу.
-- **реальная ошибка убегает**: fiber бросает реальный `throw "boom"` —
-  `supervised` re-throw'ит, внешний `with Fail` handler ловит именно
-  `"boom"` (не `"scope cancelled"`).
-- **cancel + real error**: один fiber `tok.cancel()`, другой
-  `throw "boom"` — `first wins`; проверяем детерминированный исход в
-  cooperative FIFO.
-- **`with Fail` не глотает отмену**: `with Fail = handler {...} {
-  supervised(cancel: tok) { ... tok.cancel() ... } }` — handler НЕ
-  вызывается на cancel-throw; cancel доходит до `supervised` и
-  гасится там.
-- Negative: убрать из мигрированных Plan-47-тестов `with Fail`-обёртки,
-  которые были нужны ТОЛЬКО чтобы ловить убегавшую отмену
-  (`supervised_cancel_test.nv` тест «tok.cancel() изнутри» — упрощается).
+### Ф.5 — M:N: kind + reason в cross-worker propagation
 
-### Ф.5 — M:N: kind в cross-worker error propagation
-
-- Plan 44.5 Layer 5: cross-worker ошибка идёт через
-  `NovaFiberQueue.first_error_atomic` (CAS). Добавить
-  `first_error_kind_atomic` (или упаковать kind в старший бит/рядом).
-- `nova_supervised_run_impl` под M:N читает атомарный kind так же.
+- Plan 44.5 Layer 5: cross-worker ошибка через `first_error_atomic` (CAS).
+  Добавить `first_error_kind` + `first_error_reason` рядом; reader читает
+  их только увидев non-NULL msg (release/acquire ordering, как
+  существующий atomic-путь).
+- USER-precedence под M:N: CAS-петля должна уметь overwrite CANCEL→USER
+  (не строгий compare-NULL-and-swap, а compare-kind).
 - Тест: `runtime.init(N)` + `supervised(cancel:)` + cross-worker cancel
-  — отмена не убегает и под M:N.
+  + cross-worker real error — поведение совпадает с single-thread.
 
 ### Ф.6 — Regression + docs + spec
 
 - Полный `nova test` (release) — без новых FAIL.
-- spec `06-concurrency.md`: новая D-decision (следующий свободный номер,
-  ~D104) — «kinded throws: cancellation ≠ error». Обновить D75 §«Семантика
-  отмены» п.3 (throw + cancel) и §«История» (ограничение снято).
-- `docs/project-creation.txt` + `docs/simplifications.md`: закрытие
-  плана; снять `[M-cancel-throw-routing]` и `[M-within-error-conflation]`;
-  добавить `[M-cancel-masks-late-error]` (Ф.2 граница).
-- discussion-log private-репы.
+- spec `06-concurrency.md`: D-decision (~D104) — «cancellation semantics:
+  kinded throws, отмена ≠ ошибка, reason, USER-precedence». Обновить D75
+  §«Семантика отмены», §«Модель токена» (reason), §«История» (ограничение
+  снято).
+- `project-creation.txt` + `simplifications.md`: закрытие; снять
+  `[M-cancel-throw-routing]` + `[M-within-error-conflation]`.
+- discussion-log.
 
 ---
 
 ## Что НЕ входит
 
-- **D65 typed errors / `NovaError` с payload + type-info** — богатая
-  модель ошибок отдельная ось. Plan 49 — минимальный enum-kind, не
-  типизированные ошибки.
+- **D65 typed errors / `NovaError` с payload + RTTI** — богатая модель
+  ошибок отдельная ось. Plan 49 — минимальный kind-enum + reason-строка,
+  не типизированные ошибки. (Reason — строка, не произвольное значение
+  как Go `Cause() error`; типизированный cause — future work с D65.)
 - **`PANIC`-kind** для unrecoverable (channel cap=0, GC OOM) — сейчас
-  такие делают `abort()` напрямую, не `nova_throw`. Если понадобится
-  отдельный kind — under-план. V1: `USER` / `CANCEL`.
-- **Closures-in-generics** — Plan 48. `within`/`race` как stdlib-код
-  требуют Plan 48; Plan 49 даёт им семантику, Plan 48 — компиляцию.
-- **`[M-cancel-masks-late-error]`** — «first error wins» когда cancel
-  записан раньше реальной ошибки. Осознанная граница V1 (см. Ф.2).
+  `abort()` напрямую. Отдельный kind при необходимости — under-план.
+- **Cancellation propagation через каналы** (Go `ctx` в struct, передача
+  по каналу) — в Nova явный `tok.bind()` каскад (Plan 47, уже есть).
+- **Deadline как keyword** — `within` остаётся stdlib-функцией (как Go
+  `context.WithTimeout` — тоже «stdlib»). Не keyword.
+- **Closures-in-generics** — Plan 48. `within`/`race` как код требуют
+  Plan 48; Plan 49 даёт им семантику.
 
 ---
 
 ## Риски
 
-**R1 — пропущенная точка cancel-throw'а.** Если какой-то путь бросает
-`"scope cancelled"` через старый `nova_throw` (не `nova_throw_cancel`) —
-он останется `USER`-kind и будет re-throw'иться. Митигация: Ф.1 явно
-аудитит ВСЕ места throw'а по `cancel_requested` (fibers.h, channels.h,
-sleep). Тест Ф.4 «cancel не убегает» поймает регрессию.
+**R1 — пропущенная точка cancel-throw'а.** Путь, бросающий отмену через
+старый `nova_throw` (не `_cancel`) → останется `USER` → re-throw'ится.
+Митигация: Ф.2 явно аудитит ВСЕ места throw'а по `cancel_requested`
+(fibers/channels/sleep/select). Тест Ф.4 «отмена не убегает» ловит регресс.
 
-**R2 — взаимодействие с `interrupt`-frame.** `with`-блок имеет и
-`NovaFailFrame`, и `NovaInterruptFrame`. Cancel-throw'ит через
-fail-frame; `interrupt` — через interrupt-frame. Нельзя перепутать.
-Митигация: kind живёт только в `NovaFailFrame`; `interrupt` не трогаем.
-Integration-тест Ф.4 с `with` + `supervised(cancel:)` вместе.
+**R2 — `interrupt`-frame vs cancel.** `with`-блок имеет `NovaFailFrame`
+И `NovaInterruptFrame`. Cancel — через fail-frame; `interrupt` — через
+interrupt-frame. Митигация: kind живёт только в `NovaFailFrame`,
+`interrupt` не трогаем; integration-тест Ф.4 `with` + `supervised(cancel:)`.
 
-**R3 — двойной unwind.** `emit_with` при `CANCEL` делает re-throw —
-второй longjmp из else-ветки setjmp'а. Нужно убедиться, что frame уже
-снят (`nova_fail_pop` до re-throw'а) — иначе longjmp в себя.
-Митигация: аккуратный порядок pop/re-throw, как в существующем
-re-throw из handler-body (D65 правило 3 уже делает похожее).
+**R3 — двойной unwind в `emit_with`.** `CANCEL` → re-throw = второй
+longjmp из else-ветки setjmp'а. Frame должен быть снят (`nova_fail_pop`)
+до re-throw'а. Митигация: порядок pop/re-throw как в существующем
+re-throw из handler-body (D65 правило 3 — аналог уже работает).
 
-**R4 — M:N atomic kind.** `first_error_atomic` — CAS на указатель.
-Добавление kind атомарно — либо второй атомик (рассогласование msg/kind
-в окне), либо упаковка. Митигация: упаковать kind в выделенный
-`first_error_kind` обычным atomic-store ПОСЛЕ успешного CAS на msg —
-reader читает kind только увидев non-NULL msg (release/acquire).
+**R4 — M:N atomic kind+reason.** Три поля (msg/kind/reason) вместо
+одного atomic'а. Митигация: kind+reason пишутся обычным store ПОСЛЕ
+успешного CAS на msg-указатель; reader читает их увидев non-NULL msg
+(release/acquire). USER-precedence требует compare-kind в CAS-петле —
+аккуратно, integration-тест Ф.5.
 
-**R5 — поведение существующих тестов.** Многие тесты сейчас полагаются
-на то, что отмена прилетает как Fail (оборачивают в `with Fail`). После
-Ф.2 отмена не убегает — эти обёртки становятся no-op (handler не
-вызывается). Митигация: Ф.4 явно проходит по мигрированным Plan-47
-тестам и убирает лишние обёртки; regression Ф.6 ловит остальное.
+**R5 — defer при cancel-throw.** Если cancel-throw НЕ прогоняет defer'ы
+fiber'а — leak/missed-cleanup. Митигация: cancel-throw идёт через тот же
+`longjmp`-механизм что и обычный throw, а defer-cleanup уже привязан к
+fail-frame unwinding'у; Ф.4 явно тестирует defer+errdefer при отмене.
+Если окажется что defer не срабатывает на cancel-path — это баг к
+исправлению в рамках Ф.3, не «отложить».
+
+**R6 — USER-precedence surface'ит teardown-ошибки.** После `tok.cancel()`
+ошибка в cleanup-коде fiber'а теперь всплывёт (раньше маскировалась
+отменой). Это **честнее** (cleanup-failure — реальный баг), но может
+быть «шумнее». Митигация: это by-design, документируется; если на
+практике мешает — отдельная under-фича «suppress errors during teardown»,
+не сейчас.
+
+**R7 — регрессия тестов, полагавшихся на «отмена = Fail».** Тесты,
+оборачивающие `supervised(cancel:)` в `with Fail` чтобы поймать
+убегавшую отмену — после Ф.3 обёртка становится no-op. Митигация: Ф.4
+проходит по Plan-47-тестам, убирает лишние обёртки; Ф.6 regression
+ловит остальное.
 
 ---
 
@@ -272,44 +300,49 @@ reader читает kind только увидев non-NULL msg (release/acquire
 | Компонент | LOC |
 |---|---|
 | Ф.0 — NovaThrowKind + frame field + nova_throw_cancel | ~60 |
-| Ф.1 — cooperative-cancel throws CANCEL + queue kind field | ~120 |
-| Ф.2 — nova_supervised_run_impl kind-aware | ~50 |
-| Ф.3 — emit_with kind-aware | ~80 |
-| Ф.4 — runtime-семантика тесты + чистка Plan-47 обёрток | ~180 |
-| Ф.5 — M:N atomic kind | ~70 |
-| Ф.6 — regression + docs + spec | ~80 |
-| **Итого** | **~640** |
+| Ф.1 — cancel reason на токене + API | ~130 |
+| Ф.2 — cooperative-cancel → CANCEL+reason + аудит точек + USER-precedence | ~180 |
+| Ф.3 — supervised_run_impl + emit_with kind-aware | ~120 |
+| Ф.4 — тесты семантики + чистка Plan-47 обёрток | ~220 |
+| Ф.5 — M:N atomic kind+reason | ~90 |
+| Ф.6 — regression + docs + spec | ~90 |
+| **Итого** | **~890** |
 
 ---
 
 ## Acceptance criteria
 
-- [ ] `nova_throw_cancel` ставит `CANCEL`-kind; `nova_throw` — `USER`;
-      kind переживает longjmp.
-- [ ] Кооперативная отмена (`nova_fiber_yield` по `cancel_requested`,
-      channels, sleep) бросает `CANCEL`.
-- [ ] `supervised(cancel: tok)` + `tok.cancel()` — БЕЗ `with Fail`
-      обёртки: scope выходит чисто, наружу throw не летит.
-- [ ] Реальная ошибка fiber'а (`USER`) — `supervised` re-throw'ит,
-      внешний `with Fail` handler вызывается именно с этим сообщением.
-- [ ] `with Fail` НЕ перехватывает cancel-throw как Fail (handler не
-      вызывается; cancel пробрасывается к `supervised`).
-- [ ] M:N: cross-worker cancel не убегает из scope'а.
+- [ ] `nova_throw_cancel` → `CANCEL`-kind; `nova_throw` → `USER`; kind
+      переживает longjmp.
+- [ ] Кооперативная отмена (yield/channels/sleep/select) бросает `CANCEL`
+      с reason из токена.
+- [ ] `CancelToken`: `cancel()` / `cancel(reason)` / `is_cancelled()` /
+      `reason() -> str?` — caller-owned, reason переживает scope.
+- [ ] `supervised(cancel: tok)` + `tok.cancel()` БЕЗ `with Fail`-обёртки:
+      scope выходит чисто, throw наружу не летит.
+- [ ] Реальная ошибка fiber'а (`USER`) → `supervised` re-throw'ит,
+      внешний `with Fail` handler вызывается с этим сообщением.
+- [ ] USER-precedence: отмена + поздняя реальная ошибка → наружу летит
+      ошибка, не отмена.
+- [ ] `with Fail` НЕ перехватывает cancel-throw как Fail.
+- [ ] `defer` / `errdefer` отменённого fiber'а выполняются.
+- [ ] Кооперативный `is_cancelled()` → fiber выходит `return` без throw'а.
+- [ ] M:N: cross-worker cancel не убегает; cross-worker USER-ошибка
+      re-throw'ится; USER-precedence соблюдается.
 - [ ] Полный `nova test` (release) — без новых FAIL.
-- [ ] `[M-cancel-throw-routing]` + `[M-within-error-conflation]` сняты
-      из simplifications.md.
+- [ ] `[M-cancel-throw-routing]` + `[M-within-error-conflation]` сняты.
 
 ---
 
 ## Связь
 
 - [Plan 47](47-supervised-cancel.md) — `supervised(cancel:)` +
-  `CancelToken`; Plan 49 чинит семантику отмены, которую Plan 47
-  явно вынес «вне scope».
+  `CancelToken`; Plan 49 чинит семантику отмены, вынесенную Plan 47
+  «вне scope».
 - [Plan 48](48-closures-in-generics.md) — ортогонален; оба нужны для
-  чистого stdlib `within`/`race` (Plan 48 — компиляция, Plan 49 —
-  семантика без error-conflation).
-- spec D75 §«Семантика отмены» / §«История» — обновляются в Ф.6.
+  чистого stdlib `within`/`race` (48 — компиляция, 49 — семантика).
+- spec D75 §«Семантика отмены» / §«Модель токена» / §«История» —
+  обновляются в Ф.6 (добавляется `reason()`, снимается ограничение).
 - D65 (Fail-strict, typed errors) — Plan 49 минимально совместим:
-  `USER`-kind = текущая D65-семантика; `CANCEL` — новый ортогональный
-  вид, не typed-error.
+  `USER`-kind = текущая D65-семантика; `CANCEL` — ортогональный вид.
+  Типизированный cause (Go `Cause() error`) — future work с D65.
