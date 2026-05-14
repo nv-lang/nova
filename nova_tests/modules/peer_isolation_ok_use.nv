@@ -1,0 +1,18 @@
+// Plan 42.15: positive test — Rule C shared declarations работают.
+//
+// peer_isolation_ok/ — folder-module с 2 peers:
+//   alpha.nv — объявляет alpha_fn, использует beta_fn (cross-peer decl)
+//   beta.nv  — объявляет beta_fn
+//
+// Rule C: peers ОДНОГО folder-module делят declarations namespace.
+// alpha_fn видит beta_fn без import. После Plan 42.15 per-group
+// isolation это по-прежнему работает (group_decls).
+
+module modules.peer_isolation_ok_use
+
+import nova_tests.modules.peer_isolation_ok.{alpha_fn, beta_fn}
+
+test "peers share declarations namespace (Rule C)" {
+    assert(beta_fn() == 41)
+    assert(alpha_fn() == 42)  // alpha_fn = beta_fn() + 1
+}

@@ -1,0 +1,22 @@
+// EXPECT_COMPILE_ERROR undefined identifier `tgt`
+//
+// Plan 42.15 Ф.3: Rule C import isolation.
+//
+// peer_path_leak_setup/ — folder-module с 2 peers:
+//   importer.nv — `import target.core as tgt`, использует `tgt.X` (legit)
+//   leaker.nv   — НЕ импортирует target, пытается `tgt.X` (Rule C violation)
+//
+// Rule C: imports per-peer, НЕ shared. alias `tgt` виден только в
+// importer.nv. leaker.nv использует `tgt` → undefined identifier
+// (NameResCtx per-peer: alias `tgt` в peer_module_names только для
+// importer.nv, leaker.nv его не видит).
+
+module negative_capability.peer_path_leak
+
+import nova_tests.negative_capability.peer_path_leak_setup.{use_target, leak_attempt}
+
+test "cross-peer Path-form import leak rejected" {
+    let _ = use_target()
+    let _l = leak_attempt()
+    assert(true)
+}

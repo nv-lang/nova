@@ -1,0 +1,11 @@
+// Plan 42.15 Ф.3: target folder-module для negative Path-form test.
+// Peer A импортирует это `as tgt`, использует `tgt.X`. Peer B — нет.
+
+module peer_path_leak_target.core
+
+export fn helper_value() -> int =>
+    42
+
+test "setup placeholder — fixture для peer_path_leak.nv" {
+    assert(helper_value() == 42)
+}

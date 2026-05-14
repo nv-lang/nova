@@ -60,6 +60,20 @@ pub struct PeerFile {
     /// resolve). Type-checker использует для построения per-peer
     /// declarations namespace (shared между peers одного module).
     pub items_here: Vec<Item>,
+    /// Plan 42.15: имена items, ставших видимыми в этом peer'е через
+    /// его **прямые** `import` statements (после rename + selective
+    /// filter). Транзитивные imports (import чужого import'а) сюда НЕ
+    /// попадают — это и есть Rule C strict isolation.
+    ///
+    /// NameResCtx использует это + items_here peers ЭТОГО module
+    /// (shared decls) для построения per-peer visible scope.
+    pub imported_item_names: std::collections::HashSet<String>,
+    /// Plan 42.15: true — peer принадлежит **компилируемому** module
+    /// (entry + его folder-module peers). false — peer импортированного
+    /// модуля. NameResCtx собирает `shared_decls` ТОЛЬКО из
+    /// `is_entry_module = true` peers — иначе items импортированных
+    /// folder-modules «протекли» бы в shared namespace (нарушение Rule C).
+    pub is_entry_module: bool,
 }
 
 /// Plan 42 Sub-plan 42.A: module-level attribute.

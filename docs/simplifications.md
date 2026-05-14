@@ -4754,54 +4754,36 @@ spec-level work.
 
 ---
 
-### [M10] Rule C (per-peer imports) не enforced для Path-form использования
+### [M10] Rule C (per-peer imports) не enforced — ✅ RESOLVED 2026-05-14
 
-- **Где:** `compiler-codegen/src/types/mod.rs` (`NameResCtx`)
-- **Что упрощено:** Plan 42.4 добавил per-peer import tracking
-  (`peer_module_names: HashMap<FileId, HashSet<String>>`), но Rule C не
-  полностью enforced: использование import-алиаса через Path-форму
-  (`rng.Range`, `vec.map(...)`) не проверяется NameResCtx — только
-  голые Ident проверяются. Кроме того, после `resolve_imports_inline_ex`
-  импортированные items попадают в flat `module.items` (top_level) и
-  становятся видимы всем peers независимо от того, кем импортированы.
-- **Почему:** Bootstrap архитектура (inline expansion + flat items).
-  Path-form moduel access — дизайн-решение (проверяется codegen).
-  Полный enforcement потребовал бы отдельного tracking импортированных
-  items per-peer и запрета cross-peer usage — значительная переработка
-  imports.rs и types/mod.rs.
-- **Как починить:** Два направления:
-  1. В imports.rs: при populate `module.peer_files`, не включать
-     импортированные items в flat `module.items` — только in peer's
-     `imported_items`. Codegen читает peer_files напрямую.
-  2. В NameResCtx: check not just bare Ident но и head-segment Path
-     against per-peer module_names.
-- **Приоритет:** L — реальных нарушений Rule C нет в текущей кодовой
-  базе (peers не используют чужие aliases). Enforcement актуально при
-  росте stdlib.
+- **Resolved:** Plan 42.15 — NameResCtx переведён на per-group visible
+  scope. `group_decls` (declarations module-group каждого peer'а) +
+  `peer_imported_names` (per-peer imports, НЕ shared) + Path-form check
+  в walk_expr. Imported items больше не «протекают» между peers.
+- **Tests:** `peer_path_leak.nv` (negative — cross-peer alias use →
+  undefined identifier) + `peer_isolation_ok_use.nv` (positive — peers
+  share declarations namespace).
 
 ---
 
-### [M11] Rule A cycle detection — canonical PathBuf keying
+### [M11] Rule A cycle detection — canonical PathBuf keying — ✅ RESOLVED 2026-05-14
 
-- **Где:** `compiler-codegen/src/imports.rs::resolve_one` (`in_progress: HashSet<PathBuf>`)
-- **Что упрощено:** Plan 42 spec rule A: cycle = по module-name
-  (`HashSet<Vec<String>>`). Реальность — `HashSet<PathBuf>` keyed by
-  canonical path первого peer'а folder-module. Работает для diamond-
-  dep dedup и cycle detection в текущих сценариях.
-- **Почему:** PathBuf keying проще — не нужен дополнительный mapping
-  path→module-name. Также filesystem canonicalize handles `./` / `..` /
-  case-sensitivity normalize'ом.
-- **Edge case (potential):** symlinks или case-insensitive FS (NTFS на
-  Windows) могут дать different canonical paths для same logical module
-  → false-negative cycle detect. **Не известно реальных bug reports**;
-  все текущие тесты PASS.
-- **Как починить:** Refactor `in_progress`/`visited` на `HashSet<Vec<String>>`
-  keyed by declared module name (parent.X). Парсить declared module из
-  каждого peer'а перед canonicalize. ~100-150 LOC.
-- **Negative test:** `folder_cycle_between_modules.nv` (Plan 42.08 Ф.1)
-  покрывает основной case через canonicalize keying — PASS.
-- **Приоритет:** L — не блокирует production. Revisit если symlink/case-
-  sensitivity bug stop'нет реального user'а.
+- **Resolved:** Plan 42.14 Ф.3 — `in_progress`/`visited` переведены на
+  `HashSet<Vec<String>>` keyed by declared module name (через
+  `read_module_decl` lightweight parser). Symlink / case-insensitive FS
+  edge case устранён — module name стабильный логический identity.
+- **Tests:** `folder_cycle_between_modules.nv` + `import_cycle_rejected.nv`
+  PASS с новым keying.
+
+### [M12] Selective import — visible-scope enforcement — ✅ RESOLVED 2026-05-14
+
+- **Resolved:** Plan 42.15 — `import X.{A}` теперь strict: items НЕ в
+  selective `{...}` списке merge'атся в `merged_items` для codegen
+  completeness, НО НЕ попадают в `peer_imported_names` (visible scope).
+  resolver проверяет `imp.items` при заполнении `visible_acc` —
+  только items из selective list (после rename) видны импортирующему.
+- **Tests:** `rename_old_name_rejected.nv` (negative — старое имя после
+  `A as B` rename → undefined) + `rename_import_use.nv` (positive).
 
 
 ---
