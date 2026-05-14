@@ -4754,30 +4754,15 @@ spec-level work.
 
 ---
 
-### [M10] Rule C (per-peer imports) не enforced для Path-form использования
+### [M10] Rule C (per-peer imports) не enforced — ✅ RESOLVED 2026-05-14
 
-- **Где:** `compiler-codegen/src/types/mod.rs` (`NameResCtx`)
-- **Что упрощено:** Plan 42.4 добавил per-peer import tracking
-  (`peer_module_names: HashMap<FileId, HashSet<String>>`), но Rule C не
-  полностью enforced: использование import-алиаса через Path-форму
-  (`rng.Range`, `vec.map(...)`) не проверяется NameResCtx — только
-  голые Ident проверяются. Кроме того, после `resolve_imports_inline_ex`
-  импортированные items попадают в flat `module.items` (top_level) и
-  становятся видимы всем peers независимо от того, кем импортированы.
-- **Почему:** Bootstrap архитектура (inline expansion + flat items).
-  Path-form moduel access — дизайн-решение (проверяется codegen).
-  Полный enforcement потребовал бы отдельного tracking импортированных
-  items per-peer и запрета cross-peer usage — значительная переработка
-  imports.rs и types/mod.rs.
-- **Как починить:** Два направления:
-  1. В imports.rs: при populate `module.peer_files`, не включать
-     импортированные items в flat `module.items` — только in peer's
-     `imported_items`. Codegen читает peer_files напрямую.
-  2. В NameResCtx: check not just bare Ident но и head-segment Path
-     against per-peer module_names.
-- **Приоритет:** L — реальных нарушений Rule C нет в текущей кодовой
-  базе (peers не используют чужие aliases). Enforcement актуально при
-  росте stdlib.
+- **Resolved:** Plan 42.15 — NameResCtx переведён на per-group visible
+  scope. `group_decls` (declarations module-group каждого peer'а) +
+  `peer_imported_names` (per-peer imports, НЕ shared) + Path-form check
+  в walk_expr. Imported items больше не «протекают» между peers.
+- **Tests:** `peer_path_leak.nv` (negative — cross-peer alias use →
+  undefined identifier) + `peer_isolation_ok_use.nv` (positive — peers
+  share declarations namespace).
 
 ---
 
@@ -4790,24 +4775,15 @@ spec-level work.
 - **Tests:** `folder_cycle_between_modules.nv` + `import_cycle_rejected.nv`
   PASS с новым keying.
 
-### [M12] Selective import — visible-scope enforcement не строгий
+### [M12] Selective import — visible-scope enforcement — ✅ RESOLVED 2026-05-14
 
-- **Где:** `compiler-codegen/src/imports.rs::resolve_one` (selective merge)
-- **Что упрощено:** `import X.{A}` парсит selective list, применяет
-  rename (`A as B`), но items НЕ в `{...}` всё равно merge'атся в
-  visible scope импортирующего модуля. То есть `import X.{A}` НЕ прячет
-  `B` (другой item из X) — `B` остаётся доступен по имени.
-- **Почему:** при inline expansion `A`'s body может ссылаться на `B`
-  (они в одном модуле X). Если `B` не merge'ить — codegen `A` падает.
-  Полный strict enforcement требует per-import visible-set в NameResCtx
-  (codegen видит всё, type-checker — только selective). Это значительный
-  refactor type-checker'а.
-- **Как починить:** Plan 47 — NameResCtx per-import visible scope.
-  Merge всё для codegen, но visible names импортирующего = только
-  selective list. ~300-400 LOC в types/mod.rs.
-- **Приоритет:** L — selective list работает как UX-промис + rename.
-  Реальных нарушений нет (никто не полагается на «скрытость»). Strict
-  enforcement важен при production library API hygiene.
+- **Resolved:** Plan 42.15 — `import X.{A}` теперь strict: items НЕ в
+  selective `{...}` списке merge'атся в `merged_items` для codegen
+  completeness, НО НЕ попадают в `peer_imported_names` (visible scope).
+  resolver проверяет `imp.items` при заполнении `visible_acc` —
+  только items из selective list (после rename) видны импортирующему.
+- **Tests:** `rename_old_name_rejected.nv` (negative — старое имя после
+  `A as B` rename → undefined) + `rename_import_use.nv` (positive).
 
 
 ---

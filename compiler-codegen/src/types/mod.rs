@@ -1742,10 +1742,41 @@ impl NameResCtx {
                 }
             }
             // Path-form `Module.func` / `Type.method`: head — модуль или
-            // type (не expr-binding). Не проверяем — это работа codegen
-            // (resolve через method_table / effect_decls). Consistent с
-            // подходом BoundCtx/CapabilityCtx.
-            ExprKind::Path(_) => {}
+            // type. Plan 42.15 Ф.3: head-segment check для lowercase
+            // module-alias'ов (Rule C: peer видит только свои imports).
+            //
+            // Проверяем ТОЛЬКО lowercase head: Capitalized = тип/effect/
+            // variant (cross-file, bootstrap-консервативно пропускаем).
+            // lowercase head должен быть: builtin namespace (gc/fibers/
+            // runtime) ИЛИ module-alias в peer's import scope. Если нет —
+            // вероятно use чужого import'а (Rule C violation) или typo.
+            ExprKind::Path(parts) => {
+                if let Some(head) = parts.first() {
+                    let is_lowercase = head.chars().next()
+                        .map(|c| c.is_ascii_lowercase())
+                        .unwrap_or(false);
+                    if is_lowercase {
+                        let in_builtins = self.builtins.contains(head);
+                        let in_peer_modules = self.peer_module_names.get(&file_id)
+                            .or_else(|| self.peer_module_names.get(&MAIN_FILE_ID))
+                            .map_or(false, |s| s.contains(head));
+                        // Также head может быть local binding (struct в
+                        // scope) — тогда это фактически Member-access;
+                        // парсер иногда эмитит Path. Проверяем scope.
+                        let in_scope = scope.iter().rev()
+                            .any(|frame| frame.contains(head));
+                        if !in_builtins && !in_peer_modules && !in_scope {
+                            errors.push(Diagnostic::new(
+                                format!(
+                                    "undefined module / name `{}` in path expression \
+                                     (Rule C: peer sees only its own imports)",
+                                    head),
+                                e.span,
+                            ));
+                        }
+                    }
+                }
+            }
             // SelfAccess — `@field` или `@method`. Не Ident.
             ExprKind::SelfAccess => {}
 

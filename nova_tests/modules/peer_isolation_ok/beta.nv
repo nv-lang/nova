@@ -1,0 +1,7 @@
+// Plan 42.15: positive test peer B. Объявляет `beta_fn` — shared
+// declaration, видна peer A (alpha.nv). Rule C: peers share decls.
+
+module modules.peer_isolation_ok
+
+export fn beta_fn() -> int =>
+    41

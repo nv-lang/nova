@@ -1,0 +1,9 @@
+// Plan 42.15 Ф.3: peer A — импортирует target as `tgt`, использует
+// `tgt.helper_value()` через Path-form. Это его собственный import.
+
+module negative_capability.peer_path_leak_setup
+
+import nova_tests.negative_capability.peer_path_leak_target.core as tgt
+
+export fn use_target() -> int =>
+    tgt.helper_value()
