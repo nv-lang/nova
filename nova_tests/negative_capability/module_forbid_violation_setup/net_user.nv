@@ -1,0 +1,11 @@
+// Plan 42.10: peer пытается использовать Net effect.
+// _module.nv declares #forbid Net → должно быть compile error.
+
+module negative_capability.module_forbid_violation_setup
+
+type Net effect {
+    get(url str) -> str
+}
+
+export fn fetch_url(url str) Net -> str =>
+    Net.get(url)

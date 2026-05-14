@@ -1,0 +1,5 @@
+// Plan 42.10: module-level #forbid Net.
+// Propagирует Net forbid ко всем peers folder-module.
+
+module negative_capability.module_forbid_violation_setup
+#forbid Net
