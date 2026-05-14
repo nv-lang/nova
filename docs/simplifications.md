@@ -4754,7 +4754,7 @@ spec-level work.
 
 ---
 
-### [M10] Rule C (per-peer imports) не enforced — ✅ RESOLVED 2026-05-14
+### [M10] Rule C (per-peer imports) не enforced — ✅ RESOLVED (для импортированных folder-modules) 2026-05-14
 
 - **Resolved:** Plan 42.15 — NameResCtx переведён на per-group visible
   scope. `group_decls` (declarations module-group каждого peer'а) +
@@ -4763,6 +4763,11 @@ spec-level work.
 - **Tests:** `peer_path_leak.nv` (negative — cross-peer alias use →
   undefined identifier) + `peer_isolation_ok_use.nv` (positive — peers
   share declarations namespace).
+- **Квалификация (Plan 42.17 audit):** per-peer изоляция реальна для
+  **импортированных** folder-modules (peers получают distinct `file_id`
+  через `parse_with_file_id`). Когда folder-module — **сам компилируемый
+  entry**, все его peers коллапсируют в один `MAIN_FILE_ID` PeerFile →
+  изоляция между ними становится no-op. См. `[M-entry-folder-module]`.
 
 ---
 
@@ -4797,6 +4802,10 @@ spec-level work.
   edge case устранён — module name стабильный логический identity.
 - **Tests:** `folder_cycle_between_modules.nv` + `import_cycle_rejected.nv`
   PASS с новым keying.
+- **Доделано (Plan 42.17 Ф.3):** `read_module_decl` объединён с
+  `is_folder_module_peer`/`is_folder_module_dir` в один сканер
+  `scan_module_decl`, который пропускает blank / `//` / `/* */` / `#`-attr
+  строки перед `module` (block-comment edge закрыт).
 
 ### [M12] Selective import — visible-scope enforcement — ✅ RESOLVED 2026-05-14
 
@@ -4807,6 +4816,33 @@ spec-level work.
   только items из selective list (после rename) видны импортирующему.
 - **Tests:** `rename_old_name_rejected.nv` (negative — старое имя после
   `A as B` rename → undefined) + `rename_import_use.nv` (positive).
+- **Квалификация (Plan 42.17 audit):** как и `[M10]` — visible-scope
+  enforcement реален для импортированных folder-modules; entry-folder-
+  module см. `[M-entry-folder-module]`.
+
+---
+
+### [M-entry-folder-module] Entry folder-module — per-peer изоляция не активна
+
+- **Где:** `compiler-codegen/src/imports.rs` (`resolve_imports_inline_ex`).
+- **Что:** entry-модуль парсится caller'ом как **один файл**
+  (`parser::parse(src)` → `MAIN_FILE_ID`) и регистрируется как один
+  `PeerFile`. Если этот entry-файл — peer folder-module, его sibling
+  peers **не собираются** (нет кода, который делал бы это для entry —
+  только для импортированных folder-modules в `resolve_one`). Поэтому
+  Rule C / `[M10]` / `[M12]` per-peer изоляция между peers самого
+  entry-модуля — no-op.
+- **Почему не критично сейчас:** не reachable в bootstrap. `nova test`
+  компилирует test-файлы (folder-module всегда импортируется через
+  `_use.nv`); `nova build`/`nova run` берут single-file entry. Entry-as-
+  folder-module появится когда `main` проекта станет папкой.
+- **Как починить:** `resolve_imports_inline_ex` детектит, что
+  `entry_path` — peer folder-module (siblings объявляют тот же
+  `module`), собирает их с distinct `file_id` + `is_entry_module:
+  true`, merge'ит items. ~120-200 LOC + test-runner поддержка запуска
+  folder-module как entry. Plan 42.17 Ф.8 — investigate + implement или
+  оставить здесь.
+- **Приоритет:** L — by-design не reachable до folder-module entry-point.
 
 
 ---
