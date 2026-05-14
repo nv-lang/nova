@@ -81,6 +81,12 @@ pub enum ModuleAttrKind {
     /// Поскольку filename suffix (Ф.1) покрывает 90% target_os кейсов,
     /// `#cfg(target_os)` рекомендуется только для item-level (Ф.3).
     Cfg(CfgPredicate),
+    /// Plan 42.11: `#doc "..."` — module-level documentation line.
+    /// Multi-peer merging: все `#doc` строки из всех peers concat'аются
+    /// в alphabetical filename order. AI-first signal: LLM видит
+    /// module purpose прямо в peer-файле без CLI invoke.
+    /// Consumer: Plan 45 (nova doc).
+    Doc(String),
 }
 
 /// Plan 42.12 Ф.2: cfg predicate (strict minimal, no `any/all/not`).

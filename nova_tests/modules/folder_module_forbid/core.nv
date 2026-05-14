@@ -1,0 +1,7 @@
+// Plan 42.10: peer без своих #forbid. Наследует Net forbid от _module.nv.
+// Можно использовать чистые операции (без Net effect).
+
+module modules.folder_module_forbid
+
+export fn compute(x int) -> int =>
+    x * 2 + 1

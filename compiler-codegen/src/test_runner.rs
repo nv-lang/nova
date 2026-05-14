@@ -2773,6 +2773,11 @@ pub fn walk_nv(root: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
             // Plan 42.12 Ф.1: standalone test с OS-specific suffix
             // skip'ается на других платформах.
             if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                // Plan 42.10: `_module.nv` — module-config peer, никогда
+                // не запускается как standalone test (нет items, только attrs).
+                if stem == "_module" {
+                    continue;
+                }
                 let core_stem = stem.strip_suffix("_test").unwrap_or(stem);
                 if !crate::imports::peer_active_for_target_pub(core_stem, target) {
                     continue;

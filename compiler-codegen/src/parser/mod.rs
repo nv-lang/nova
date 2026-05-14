@@ -129,14 +129,37 @@ impl Parser {
                 break;
             }
             let next_kind = self.tokens.get(self.pos + 1).map(|t| t.kind.clone());
-            // `forbid` is keyword (KwForbid) in Nova; `cfg` — обычный ident.
+            // `forbid` is keyword (KwForbid) in Nova; `cfg` и `doc` — обычные idents.
             let is_forbid = matches!(next_kind, Some(TokenKind::KwForbid));
             let is_cfg = matches!(&next_kind, Some(TokenKind::Ident(name)) if name == "cfg");
-            if !is_forbid && !is_cfg {
+            let is_doc = matches!(&next_kind, Some(TokenKind::Ident(name)) if name == "doc");
+            if !is_forbid && !is_cfg && !is_doc {
                 break; // not a module-level attribute
             }
             let attr_start = self.peek().span;
             self.bump(); // #
+
+            if is_doc {
+                // Plan 42.11: `#doc "..."` — module-level documentation line.
+                self.bump(); // doc (ident)
+                let doc_span = self.peek().span;
+                let text = if let TokenKind::Str(s) = &self.peek().kind {
+                    let v = s.clone();
+                    self.bump();
+                    v
+                } else {
+                    return Err(Diagnostic::new(
+                        "expected string literal after `#doc`", doc_span));
+                };
+                self.expect_newline_or_eof()?;
+                let attr_end = self.tokens[self.pos.saturating_sub(1)].span;
+                module_attrs.push(ModuleAttr {
+                    kind: ModuleAttrKind::Doc(text),
+                    effects: Vec::new(),
+                    span: attr_start.merge(attr_end),
+                });
+                continue;
+            }
 
             if is_forbid {
                 self.bump(); // forbid

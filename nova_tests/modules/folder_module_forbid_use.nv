@@ -1,0 +1,18 @@
+// Plan 42.10: positive test — module-level #forbid Net inheritance.
+//
+// folder_module_forbid/ имеет _module.nv с `#forbid Net`. Этот forbid
+// применяется ко всему module (core.nv + helper.nv items). Все функции
+// в этом folder-module compile-time не могут использовать Net effect.
+//
+// Тест проверяет, что положительные usage (нет Net) — PASS:
+//   compute(5) → 11
+//   double(7)  → 14
+
+module modules.folder_module_forbid_use
+
+import nova_tests.modules.folder_module_forbid.{compute, double}
+
+test "module-level forbid inheritance: positive path" {
+    assert(compute(5) == 11)
+    assert(double(7) == 14)
+}

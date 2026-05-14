@@ -119,6 +119,10 @@ pub fn resolve_imports_inline_ex(
         }
     }
 
+    // Plan 42.10: accumulate module-level attrs from `_module.nv` peers
+    // of imported folder-modules. Applied to entry's module.attrs at end.
+    let mut inherited_attrs: Vec<crate::ast::ModuleAttr> = Vec::new();
+
     for imp in &initial_imports {
         resolve_one(
             imp,
@@ -132,6 +136,7 @@ pub fn resolve_imports_inline_ex(
             &mut peer_files,
             &mut next_file_id,
             include_test_peers,
+            &mut inherited_attrs,
         )?;
     }
 
@@ -152,6 +157,15 @@ pub fn resolve_imports_inline_ex(
     // Plan 42 Sub-plan 42.4 шаг 2: переносим собранные PeerFile в module.
     // Type-checker (шаг 3) использует это для per-peer name resolution.
     module.peer_files = peer_files;
+
+    // Plan 42.10: merge inherited attrs из `_module.nv` peers импортированных
+    // folder-modules. CapabilityCtx (types/mod.rs) применит #forbid attrs
+    // ко всем functions module — независимо от того, defined ли они в
+    // entry или imported. Doc и Cfg attrs тоже пропагируются (consumer —
+    // Plan 45 nova doc и cfg_active filter уже handled).
+    for attr in inherited_attrs {
+        module.attrs.push(attr);
+    }
 
     Ok(())
 }
@@ -175,6 +189,9 @@ fn resolve_one(
     peer_files: &mut Vec<PeerFile>,
     next_file_id: &mut FileId,
     include_test_peers: bool,
+    // Plan 42.10: collect module-level attrs from `_module.nv` peers
+    // for propagation into entry's module.attrs.
+    inherited_attrs: &mut Vec<crate::ast::ModuleAttr>,
 ) -> Result<()> {
     // Plan 42 правило H: `internal/` directory access check.
     // Plan 42 правило H: `<X>/internal/<Y>` доступен только из `<X>.*`
@@ -335,6 +352,18 @@ fn resolve_one(
         // Push canon только для active peers (dedup logic).
         peer_canons.push(peer_canon);
 
+        // Plan 42.10: `_module.nv` peer — special module-config файл.
+        // Его module-level attrs (Forbid / Cfg / Doc) пропагируются на
+        // entry's module.attrs — applied ко всему compiled module.
+        let is_module_config = peer_path.file_stem()
+            .and_then(|s| s.to_str())
+            .map_or(false, |stem| stem == "_module");
+        if is_module_config {
+            for attr in &peer_module.attrs {
+                inherited_attrs.push(attr.clone());
+            }
+        }
+
         // Регистрируем PeerFile (snapshot до recursive resolve + merge).
         peer_files.push(PeerFile {
             path: peer_canons.last().expect("peer_canons populated above").clone(),
@@ -357,6 +386,7 @@ fn resolve_one(
                 peer_files,
                 next_file_id,
                 include_test_peers,
+                inherited_attrs,
             )?;
         }
 

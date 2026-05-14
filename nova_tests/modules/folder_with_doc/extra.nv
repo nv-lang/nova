@@ -1,0 +1,6 @@
+// Plan 42.11: второй peer без doc — peers без #doc просто не contribute.
+
+module modules.folder_with_doc
+
+export fn ping() -> int =>
+    42

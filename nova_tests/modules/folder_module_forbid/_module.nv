@@ -1,0 +1,6 @@
+// Plan 42.10: `_module.nv` — special module-config peer.
+// `#forbid` attrs здесь наследуются всеми peers folder-module
+// (Net forbid применяется к core.nv и helper.nv).
+
+module modules.folder_module_forbid
+#forbid Net
