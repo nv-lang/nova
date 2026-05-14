@@ -7410,6 +7410,9 @@ impl CEmitter {
                             "current_worker_id" if args.is_empty() => {
                                 return Ok("((nova_int)nova_runtime_current_worker_id())".to_string());
                             }
+                            "yield" if args.is_empty() => {
+                                return Ok("(nova_fiber_yield(), (nova_int)0LL)".to_string());
+                            }
                             _ => {}
                         }
                     }

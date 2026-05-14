@@ -53,3 +53,10 @@ export external fn runtime.is_initialized() -> bool
 // Current worker ID (0..n_workers-1) или -1 если вызвано из main thread.
 // Useful для diagnostic — на каком worker'е выполняется fiber.
 export external fn runtime.current_worker_id() -> int
+
+// Cooperative yield — suspend current fiber, allow other fibers to run.
+// Outside fiber context: no-op. Checks cancel_requested before yielding.
+// In M:N mode: fiber is re-queued to the worker deque; any worker may pick
+// it up next (work-stealing). Useful for CPU-bound loops to avoid starving
+// other fibers on the same worker.
+export external fn runtime.yield() -> ()
