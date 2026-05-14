@@ -9,7 +9,7 @@ module contracts.f9_pure_view_parse
 type Db effect {
     SetBalance(id int, amount int)
     Withdraw(id int, amount int)
-    pure_view balance(id int) -> int
+    #pure balance(id int) -> int
     axiom non_negative(id) => balance(id) >= 0
 }
 

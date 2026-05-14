@@ -1,4 +1,4 @@
-// Plan 33.1 Ф.3: #must_verify positive — trivial backend доказывает
+// Plan 33.1 Ф.3: #verify positive — trivial backend доказывает
 // reflexive ensures `result == body_expr`.
 //
 // `must_double` имеет `ensures result == x * 2`, body `=> x * 2`.
@@ -6,18 +6,18 @@
 
 module contracts.verify_must_verify_proven
 
-#must_verify
+#verify
 fn must_double(x int) -> int
     requires x > 0
     ensures result == x * 2
 => x * 2
 
-#must_verify
+#verify
 fn identity(x int) -> int
     ensures result == x
 => x
 
-#must_verify
+#verify
 fn const_42() -> int
     ensures result == 42
 => 42

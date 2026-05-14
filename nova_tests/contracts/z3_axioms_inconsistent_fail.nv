@@ -9,7 +9,7 @@
 module contracts.z3_axioms_inconsistent_fail
 
 type Db effect {
-    pure_view balance(id int) -> int
+    #pure balance(id int) -> int
     axiom non_negative(id) => balance(id) >= 0
     axiom always_negative(id) => balance(id) < 0
 }

@@ -1,16 +1,17 @@
-// Plan 33.3 Ф.9.6: positive — handler с pure_view-эффектом помечен
-// `#trusted_handler`, gate пропускает.
+// Plan 33.3 Ф.9.6: positive — handler для эффекта с axiom помечен
+// `#trusted`, gate пропускает.
 
 module contracts.f9_handler_verify_positive
 
 type Db effect {
     SetBalance(id int, amount int)
-    pure_view balance(id int) -> int
+    #pure balance(id int) -> int
+    axiom non_negative(id) => balance(id) >= 0
 }
 
-test "trusted handler for pure_view effect type-checks" {
+test "trusted handler for axiom-bearing effect type-checks" {
     let mut store = 0
-    with #trusted_handler Db = handler Db {
+    with #trusted Db = handler Db {
         SetBalance(id, amount) { store = amount }
         balance(id) => store
     } {

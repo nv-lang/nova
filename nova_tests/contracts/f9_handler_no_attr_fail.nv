@@ -1,14 +1,15 @@
 // EXPECT_COMPILE_ERROR handler for effect `Db` must be marked
 //
-// Plan 33.3 Ф.9.6: handler-gate. Эффект `Db` имеет pure_view → любой
-// `with Db = handler` обязан быть `#verify_handler` или
-// `#trusted_handler`. Без атрибута — compile error.
+// Plan 33.3 Ф.9.6: handler-gate. Эффект `Db` объявляет axiom → любой
+// `with Db = handler` обязан быть `#verify` или `#trusted`. Без атрибута
+// — compile error.
 
 module contracts.f9_handler_no_attr_fail
 
 type Db effect {
     SetBalance(id int, amount int)
-    pure_view balance(id int) -> int
+    #pure balance(id int) -> int
+    axiom non_negative(id) => balance(id) >= 0
 }
 
 test "handler без attribute → error" {

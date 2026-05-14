@@ -612,14 +612,14 @@ pub fn verify_module(module: &Module) -> ModuleVerifyReport {
                     VerifyResult::Unknown(reason) => {
                         // По D24 / Plan 33.1: default — runtime fallback в debug,
                         // в release контракт стирается с warning (или error если
-                        // `#must_verify`).
+                        // `#verify`).
                         match fd.verify_mode {
                             VerifyMode::MustVerify => {
                                 // Plan 33.3 Ф.9.10: AI-friendly format с
                                 // категоризированным reason + suggestions
                                 // (reason уже содержит hint из unknown_to_diag_message).
                                 let msg = format!(
-                                    "`#must_verify` failed for `{}`:\n  {}",
+                                    "`#verify` failed for `{}`:\n  {}",
                                     fd.name, reason);
                                 report.errors.push(Diagnostic::new(msg, span));
                             }
@@ -634,7 +634,7 @@ pub fn verify_module(module: &Module) -> ModuleVerifyReport {
                         // Аналогично Unknown.
                         if matches!(fd.verify_mode, VerifyMode::MustVerify) {
                             let msg = format!(
-                                "`#must_verify` failed for `{}`:\n  encoder cannot represent contract: {}\n  \
+                                "`#verify` failed for `{}`:\n  encoder cannot represent contract: {}\n  \
                                  hint: Plan 33.1 encoder поддерживает только int/bool/str/record/binary-ops/if/old. \
                                  Sum types / arrays / quantifiers — ждут Z3 backend.",
                                 fd.name, reason);
@@ -654,8 +654,8 @@ pub struct ModuleVerifyReport {
     /// Доказанные контракты — `(fn_name, span)`. Используются codegen'ом
     /// в release-сборке для стирания runtime-check'а.
     pub proven: Vec<(String, Span)>,
-    /// Errors — выдаются после verify (например `#must_verify` failed).
+    /// Errors — выдаются после verify (например `#verify` failed).
     pub errors: Vec<Diagnostic>,
-    /// Warnings — counterexamples для контрактов без `#must_verify`.
+    /// Warnings — counterexamples для контрактов без `#verify`.
     pub warnings: Vec<Diagnostic>,
 }

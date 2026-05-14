@@ -10,17 +10,17 @@
 module contracts.z3_pure_view_axiom_positive
 
 type Db effect {
-    pure_view balance(id int) -> int
+    #pure balance(id int) -> int
     axiom non_negative(id) => balance(id) >= 0
 }
 
-#must_verify
+#verify
 fn check_balance(id int) Db -> int
     ensures balance(id) >= 0
 => 0
 
 test "z3 axiom proves ensures balance >= 0" {
-    // Sanity: check_balance прошёл #must_verify на этапе компиляции.
+    // Sanity: check_balance прошёл #verify на этапе компиляции.
     // Runtime семантика не релевантна — handler не запускается, контракт
     // стирается в release.
     assert(1 + 1 == 2)

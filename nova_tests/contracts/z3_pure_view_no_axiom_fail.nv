@@ -8,10 +8,10 @@
 module contracts.z3_pure_view_no_axiom_fail
 
 type Db effect {
-    pure_view balance(id int) -> int
+    #pure balance(id int) -> int
 }
 
-#must_verify
+#verify
 fn check_balance(id int) Db -> int
     ensures balance(id) >= 0
 => 0

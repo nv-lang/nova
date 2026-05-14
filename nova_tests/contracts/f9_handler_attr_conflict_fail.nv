@@ -5,11 +5,11 @@
 module contracts.f9_handler_attr_conflict_fail
 
 type Db effect {
-    pure_view balance(id int) -> int
+    #pure balance(id int) -> int
 }
 
 test "conflicting attributes" {
-    with #verify_handler #trusted_handler Db = handler Db {
+    with #verify #trusted Db = handler Db {
         balance(id) => 0
     } {
         let _ = Db.balance(1)

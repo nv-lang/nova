@@ -1,10 +1,10 @@
-// EXPECT_COMPILE_ERROR `pure_view` operation must declare a return type
+// EXPECT_COMPILE_ERROR `#pure` operation must declare a return type
 //
-// Plan 33.3 Ф.9: pure_view обязан иметь `-> R`. Без return type
+// Plan 33.3 Ф.9: `#pure` op обязан иметь `-> R`. Без return type
 // объявление бессмысленно (что наблюдать?). Парсер ловит на месте.
 
 module contracts.f9_pure_view_no_return_fail
 
 type Bad effect {
-    pure_view nothing(id int)
+    #pure nothing(id int)
 }

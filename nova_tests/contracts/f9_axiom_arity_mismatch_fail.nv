@@ -5,6 +5,6 @@
 module contracts.f9_axiom_arity_mismatch_fail
 
 type Db effect {
-    pure_view balance(id int) -> int
+    #pure balance(id int) -> int
     axiom bad(id, extra) => balance(id, extra) >= 0
 }

@@ -2442,26 +2442,29 @@ fn check_handler_never_ops(module: &Module, errors: &mut Vec<Diagnostic>) {
 /// pure_views. Это упрощает V1 (нет cross-fn analysis); Ф.9.7
 /// уточнит до actually-uses analysis.
 fn check_handler_verification_gate(module: &Module, errors: &mut Vec<Diagnostic>) {
-    // Шаг 1: какие эффекты имеют pure_view-ops?
-    let mut effects_with_pv: HashSet<String> = HashSet::new();
+    // Шаг 1: какие эффекты имеют axioms?
+    // Refactor: gate срабатывает только при axiom-присутствии — pure_view сам по
+    // себе ничего не утверждает, утверждение делает axiom. Без axiom handler
+    // верифицировать не на что.
+    let mut effects_with_axioms: HashSet<String> = HashSet::new();
     for item in &module.items {
         let Item::Type(td) = item else { continue };
-        let TypeDeclKind::Effect(methods) = &td.kind else { continue };
-        if methods.iter().any(|m| matches!(m.kind, EffectOpKind::PureView)) {
-            effects_with_pv.insert(td.name.clone());
+        if !matches!(&td.kind, TypeDeclKind::Effect(_)) { continue; }
+        if !td.axioms.is_empty() {
+            effects_with_axioms.insert(td.name.clone());
         }
     }
-    if effects_with_pv.is_empty() { return; }
+    if effects_with_axioms.is_empty() { return; }
 
     // Шаг 2: walk all expressions, найти WithBinding'и с такими эффектами.
     for item in &module.items {
         match item {
             Item::Fn(f) => match &f.body {
-                FnBody::Block(b) => walk_block_for_with_gate(b, &effects_with_pv, errors),
-                FnBody::Expr(e) => walk_expr_for_with_gate(e, &effects_with_pv, errors),
+                FnBody::Block(b) => walk_block_for_with_gate(b, &effects_with_axioms, errors),
+                FnBody::Expr(e) => walk_expr_for_with_gate(e, &effects_with_axioms, errors),
                 FnBody::External => {}
             }
-            Item::Test(t) => walk_block_for_with_gate(&t.body, &effects_with_pv, errors),
+            Item::Test(t) => walk_block_for_with_gate(&t.body, &effects_with_axioms, errors),
             _ => {}
         }
     }
@@ -2495,11 +2498,11 @@ fn walk_expr_for_with_gate(e: &Expr, eff_pv: &HashSet<String>, errors: &mut Vec<
                 if matches!(b.verification, HandlerVerification::Unverified) {
                     errors.push(Diagnostic::new(
                         format!(
-                            "handler for effect `{}` must be marked `#verify_handler` \
-                             or `#trusted_handler` (effect has `pure_view` ops, so any \
+                            "handler for effect `{}` must be marked `#verify` \
+                             or `#trusted` (effect has `axiom` declarations, so any \
                              handler must declare verification status). Examples:\n  \
-                             with #trusted_handler {0} = my_handler {{ ... }}\n  \
-                             with #verify_handler {0} = my_handler {{ ... }}",
+                             with #trusted {0} = my_handler {{ ... }}\n  \
+                             with #verify {0} = my_handler {{ ... }}",
                             eff_name,
                         ),
                         b.span,
@@ -2567,7 +2570,51 @@ fn type_ref_is_never(t: &TypeRef) -> bool {
 fn check_effect_axioms(module: &Module, errors: &mut Vec<Diagnostic>) {
     for item in &module.items {
         let Item::Type(td) = item else { continue };
-        let TypeDeclKind::Effect(methods) = &td.kind else { continue };
+        // Plan 33.3 Ф.9 (refactor): unique-name + axiom-formula checks
+        // применяются и к effect, и к protocol (в обоих можно объявлять
+        // #pure ops и axioms).
+        let methods = match &td.kind {
+            TypeDeclKind::Effect(m) | TypeDeclKind::Protocol(m) => m,
+            _ => continue,
+        };
+
+        // Plan 33.3 Ф.9 (refactor): unique-name checks внутри effect-блока.
+        // Конфликты:
+        //   1. два operation/#pure с одинаковым именем;
+        //   2. два axiom с одинаковым именем;
+        //   3. axiom имя совпадает с именем operation/#pure.
+        // Делаем check'и независимо от наличия axioms — дубликаты method'ов
+        // ловим всегда.
+        let mut method_names: HashSet<&String> = HashSet::new();
+        for m in methods {
+            if !method_names.insert(&m.name) {
+                errors.push(Diagnostic::new(
+                    format!("effect `{}`: duplicate operation `{}`",
+                        td.name, m.name),
+                    m.span,
+                ));
+            }
+        }
+        let mut axiom_names: HashSet<&String> = HashSet::new();
+        for ax in &td.axioms {
+            if !axiom_names.insert(&ax.name) {
+                errors.push(Diagnostic::new(
+                    format!("effect `{}`: duplicate axiom `{}`",
+                        td.name, ax.name),
+                    ax.span,
+                ));
+            }
+            if method_names.contains(&ax.name) {
+                errors.push(Diagnostic::new(
+                    format!("effect `{}`: axiom `{}` conflicts with operation \
+                             of the same name (axiom names must be distinct \
+                             from operations / `#pure` views)",
+                        td.name, ax.name),
+                    ax.span,
+                ));
+            }
+        }
+
         if td.axioms.is_empty() { continue; }
 
         // Собираем pure_view-имена эффекта: имя → ожидаемая арность.

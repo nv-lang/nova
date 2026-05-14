@@ -9,12 +9,12 @@
 module contracts.z3_axiom_alpha_rename
 
 type Db effect {
-    pure_view balance(id int) -> int
+    #pure balance(id int) -> int
     // Binder `account_id` отличается от парамета функции ниже.
     axiom non_negative(account_id) => balance(account_id) >= 0
 }
 
-#must_verify
+#verify
 fn check_balance(id int) Db -> int
     ensures balance(id) >= 0
 => 0

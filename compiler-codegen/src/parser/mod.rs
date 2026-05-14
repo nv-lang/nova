@@ -430,7 +430,7 @@ impl Parser {
                 span,
             ));
         }
-        // Plan 33.1 (D24): `#must_verify` / `#unverified` / `#verify_timeout(ms)` /
+        // Plan 33.1 (D24): `#verify` / `#unverified` / `#verify_timeout(ms)` /
         // `#pure` — contract-related атрибуты перед `fn`. Парсятся
         // отдельно от `#realtime`, могут идти в любом порядке.
         // Не keyword'ы в лексере (контекстный разбор после `#`).
@@ -440,7 +440,7 @@ impl Parser {
         {
             let span = self.peek().span;
             return Err(Diagnostic::new(
-                "contract attributes (`#must_verify` / `#unverified` / `#verify_timeout` / `#pure`) are only valid before `fn`",
+                "contract attributes (`#verify` / `#unverified` / `#verify_timeout` / `#pure`) are only valid before `fn`",
                 span,
             ));
         }
@@ -495,7 +495,7 @@ impl Parser {
     /// Plan 33.1 (D24): contract-related атрибуты перед fn-declaration.
     ///
     /// Поддерживаемые:
-    /// - `#must_verify` — SMT обязан доказать (D24 §50).
+    /// - `#verify` — SMT обязан доказать (D24 §50).
     /// - `#unverified` — отказ от SMT, всегда runtime fallback в debug,
     ///   стирается в release (D24 §53).
     /// - `#verify_timeout(N)` — локальный override SMT-timeout в ms.
@@ -517,7 +517,7 @@ impl Parser {
                 _ => break, // не идентификатор после `#` — выходим
             };
             match next_name.as_str() {
-                "must_verify" => {
+                "verify" => {
                     if !matches!(attrs.verify_mode, VerifyMode::Default) {
                         let span = self.peek().span;
                         return Err(Diagnostic::new(
@@ -526,7 +526,7 @@ impl Parser {
                         ));
                     }
                     self.bump(); // #
-                    self.bump(); // must_verify
+                    self.bump(); // verify
                     attrs.verify_mode = VerifyMode::MustVerify;
                 }
                 "unverified" => {
@@ -1011,7 +1011,7 @@ impl Parser {
             TokenKind::KwEffect => {
                 self.bump();
                 self.expect(&TokenKind::LBrace)?;
-                let methods = self.parse_effect_methods(/* allow_pure_view */ true)?;
+                let methods = self.parse_effect_methods()?;
                 effect_axioms = self.parse_effect_axioms()?;
                 self.expect(&TokenKind::RBrace)?;
                 TypeDeclKind::Effect(methods)
@@ -1019,7 +1019,13 @@ impl Parser {
             TokenKind::KwProtocol => {
                 self.bump();
                 self.expect(&TokenKind::LBrace)?;
-                let methods = self.parse_effect_methods(/* allow_pure_view */ false)?;
+                let methods = self.parse_effect_methods()?;
+                // Plan 33.3 Ф.9 (refactor): protocol также может содержать
+                // axioms. Verification impl-handler'а отложена на V2
+                // (#verify_impl / #trusted_impl) — в V1 axioms в protocol
+                // трактуются как trusted-by-default (любая impl верна, что
+                // декларирует axiom). Symmetry с #trusted handler'ами.
+                effect_axioms = self.parse_effect_axioms()?;
                 self.expect(&TokenKind::RBrace)?;
                 TypeDeclKind::Protocol(methods)
             }
@@ -1203,21 +1209,30 @@ impl Parser {
         Ok(variants)
     }
 
-    fn parse_effect_methods(&mut self, allow_pure_view: bool) -> Result<Vec<EffectMethod>, Diagnostic> {
+    fn parse_effect_methods(&mut self) -> Result<Vec<EffectMethod>, Diagnostic> {
         let mut methods = Vec::new();
         self.skip_newlines();
         while !matches!(self.peek().kind, TokenKind::RBrace) {
             // Plan 33.3 Ф.9: `axiom <name>(...) => <formula>` обрабатывается
             // отдельной функцией. Останавливаемся как только видим `axiom`.
-            // Также pure_view-prefix считывается ниже.
             if let TokenKind::Ident(n) = &self.peek().kind {
                 if n == "axiom" { break; }
             }
-            // pure_view-prefix: контекстный keyword (effect-only).
-            let op_kind = if let TokenKind::Ident(n) = &self.peek().kind {
-                if allow_pure_view && n == "pure_view" {
-                    self.bump();
-                    EffectOpKind::PureView
+            // Plan 33.3 Ф.9 (refactor): `#pure` атрибут перед operation.
+            // Раньше использовался keyword `pure_view` — заменили на `#pure`
+            // для consistency с другими `#`-атрибутами Nova.
+            // Разрешён в обоих effect и protocol (axiom + pure_view как
+            // declarative spec; в protocol verification impl'а — V2 через
+            // #verify_impl/#trusted_impl).
+            let op_kind = if matches!(self.peek().kind, TokenKind::Hash) {
+                if let TokenKind::Ident(n) = &self.peek_at(1).kind {
+                    if n == "pure" {
+                        self.bump(); // #
+                        self.bump(); // pure
+                        EffectOpKind::PureView
+                    } else {
+                        EffectOpKind::Operation
+                    }
                 } else {
                     EffectOpKind::Operation
                 }
@@ -1248,11 +1263,11 @@ impl Parser {
                 None
             };
             let end = self.tokens[self.pos.saturating_sub(1)].span;
-            // Plan 33.3 Ф.9: pure_view обязан иметь return type
+            // Plan 33.3 Ф.9: `#pure` op обязан иметь return type
             // (что-то наблюдать). Без `-> R` объявление бессмысленно.
             if op_kind == EffectOpKind::PureView && return_type.is_none() {
                 return Err(Diagnostic::new(
-                    "`pure_view` operation must declare a return type \
+                    "`#pure` operation must declare a return type \
                      (`-> <Type>`); without it it observes nothing",
                     name_span.merge(end),
                 ));
@@ -3333,9 +3348,13 @@ impl Parser {
         ))
     }
 
-    /// Plan 33.3 Ф.9.6: парсит `#verify_handler` или `#trusted_handler`
-    /// (без аргументов) перед with-binding'ом. Без атрибута — Unverified.
+    /// Plan 33.3 Ф.9.6: парсит `#verify` или `#trusted` (без аргументов)
+    /// перед with-binding'ом. Без атрибута — Unverified.
     /// Дублирующиеся / противоречащие атрибуты → error.
+    ///
+    /// Refactor: раньше `#verify_handler` / `#trusted_handler` —
+    /// упростили до `#verify` / `#trusted` (контекст определяет
+    /// смысл — внутри with-binding это про handler).
     fn parse_handler_verification_attr(&mut self) -> Result<HandlerVerification, Diagnostic> {
         if !matches!(self.peek().kind, TokenKind::Hash) {
             return Ok(HandlerVerification::Unverified);
@@ -3345,21 +3364,21 @@ impl Parser {
             _ => return Ok(HandlerVerification::Unverified),
         };
         let result = match name.as_str() {
-            "verify_handler" => HandlerVerification::Verify,
-            "trusted_handler" => HandlerVerification::Trusted,
+            "verify" => HandlerVerification::Verify,
+            "trusted" => HandlerVerification::Trusted,
             _ => return Ok(HandlerVerification::Unverified),
         };
         self.bump(); // #
         self.bump(); // ident
         self.skip_newlines();
-        // Disallow stacking `#verify_handler #trusted_handler` (контрадикция).
+        // Disallow stacking `#verify #trusted` (контрадикция).
         if matches!(self.peek().kind, TokenKind::Hash) {
             if let TokenKind::Ident(next) = &self.peek_at(1).kind {
-                if next == "verify_handler" || next == "trusted_handler" {
+                if next == "verify" || next == "trusted" {
                     let span = self.peek().span;
                     return Err(Diagnostic::new(
                         "duplicate or conflicting handler verification attribute \
-                         (`#verify_handler` and `#trusted_handler` are mutually exclusive)",
+                         (`#verify` and `#trusted` are mutually exclusive)",
                         span,
                     ));
                 }

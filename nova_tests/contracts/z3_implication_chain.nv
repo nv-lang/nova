@@ -8,13 +8,13 @@
 
 module contracts.z3_implication_chain
 
-#must_verify
+#verify
 fn shift_left(x int) -> int
     requires x > 5
     ensures result > 2
 => x - 3
 
-#must_verify
+#verify
 fn abs_safe(x int) -> int
     requires x >= 0
     ensures result >= 0
