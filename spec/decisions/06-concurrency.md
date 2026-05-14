@@ -2919,6 +2919,38 @@ codegen использовал implicit-int declaration для
 return → wrong code path → underflow `pending_remote` → infinite loop
 (38 timeout'ов в первой попытке Plan 44.5 L5).
 
+### Boehm `GC_THREADS` — обязательный client-side define (НЕ feature flag!)
+
+> **Запомнить, чтобы не передиагностировать каждый раз.** Boehm bdwgc
+> **уже собран thread-safe** — и vcpkg Windows (`build.ninja` содержит
+> `-DGC_THREADS` в `DEFINES`), и `libgc-dev` Ubuntu. Никакой кастомный
+> vcpkg `bdwgc[multithreaded]` feature **НЕ нужен** — это была неверная
+> гипотеза.
+
+Корень проблемы был в **клиентском** коде: `<gc.h>` прячет
+`GC_register_my_thread` / `GC_unregister_my_thread` / `GC_get_stack_base`
+за `#ifdef GC_THREADS`. Если клиент инклудит `<gc.h>` **без** `-DGC_THREADS`,
+прототипы невидимы → worker'ы не регистрируются в GC → Boehm STW walker
+пропускает их стеки → GC-объекты, на которые ссылается только worker stack,
+преждевременно собираются → use-after-free / `SIGSEGV`.
+
+**Правило (все платформы):** при сборке с Boehm GC клиент **обязан**
+передать `-DGC_THREADS` (`/DGC_THREADS` для MSVC) тем же compiler invocation,
+что инклудит `<gc.h>`. Это не Linux/macOS-специфично — Windows регистрирует
+worker'ы точно так же.
+
+Где зафиксировано в коде:
+- [test_runner.rs](../../compiler-codegen/src/test_runner.rs) — `-DGC_THREADS` /
+  `/DGC_THREADS` во всех 3 compiler-path (gcc/clang, MSVC, доп. path), рядом
+  с `-DNOVA_GC_BOEHM`.
+- [runtime.c](../../compiler-codegen/nova_rt/runtime.c) —
+  `NOVA_GC_THREADS_REGISTER` активируется **безусловно** при `NOVA_GC_BOEHM`
+  (никакого `&& defined(__linux__)` guard'а); `GC_register_my_thread` в
+  `_worker_main`, `GC_unregister_my_thread` в cleanup.
+
+Исправлено в commit `8fcbc67fddb` (Plan 44.5 Layer 5). Результат: Windows
+multi-fiber `Time.sleep` перестал флакать (был ~14% segfault).
+
 **Open:**
 - ⏸ Park/wake migration к worker scope (Time.sleep / Channel.recv в
   worker fiber'е). Worker не имеет slot для park/wake — abort. Требует
