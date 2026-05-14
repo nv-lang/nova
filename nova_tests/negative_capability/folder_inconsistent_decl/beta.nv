@@ -1,0 +1,16 @@
+// EXPECT_COMPILE_ERROR module declaration does not match file path
+//
+// Plan 42.17 Ф.7: опечатка в `module` декларации этого peer'а
+// («inconsistnet» вместо «inconsistent») рассинхронизирует folder-module.
+// `alpha.nv` объявил корректный `negative_capability.folder_inconsistent_decl`,
+// этот файл — нет → папка не folder-module → manifest check проваливается
+// на обоих peers.
+
+module negative_capability.folder_inconsistnet_decl
+
+export fn beta_fn() -> int =>
+    2
+
+test "unreachable — manifest mismatch" {
+    assert(beta_fn() == 2)
+}

@@ -1,0 +1,16 @@
+// EXPECT_COMPILE_ERROR module declaration does not match file path
+//
+// Plan 42.17 Ф.7: peers folder-module ДОЛЖНЫ объявлять одинаковый
+// `module`. Здесь `beta.nv` сделал опечатку в декларации → папка
+// перестаёт распознаваться как folder-module (`is_folder_module_dir`
+// требует идентичных decl) → каждый peer проверяется как single-file
+// и проваливает manifest check (rev-3 ожидает `folder_inconsistent_decl.alpha`).
+
+module negative_capability.folder_inconsistent_decl
+
+export fn alpha_fn() -> int =>
+    1
+
+test "unreachable — manifest mismatch" {
+    assert(alpha_fn() == 1)
+}

@@ -1,7 +1,13 @@
 // Plan 42 правило F: test-only peer (suffix `_test`).
 // Включается в test mode, исключается из release build.
+//
+// Plan 42.17 Ф.7: `make_triple` теперь `export` — `_use.nv` импортирует
+// её и ассертит. Тест ПРОХОДИТ под `nova test` ⇒ доказывает, что
+// `_test`-peer реально компилируется в test mode (раньше `_use.nv`
+// дёргал только production-peer `double`, inclusion не проверялся).
 
 module modules.folder_module_with_test
 
-// Test helper — видна из user_test.nv peer'а (тоже test-only).
-fn make_triple(x int) -> int => x * 3
+// Test helper. Использует production-peer `double` — заодно доказывает
+// cross-peer доступ test-peer'а к production-peer'у в test mode.
+export fn make_triple(x int) -> int => double(x) + x

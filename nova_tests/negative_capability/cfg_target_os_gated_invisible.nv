@@ -1,0 +1,18 @@
+// EXPECT_COMPILE_ERROR undefined identifier `bsd_only_value`
+//
+// Plan 42.17 Ф.7: усиление target_os_module_use — раньше invisibility
+// gated-peer'а проверялась только комментарием. Здесь — настоящая
+// проверка: `bsd_only.nv` имеет `#cfg(target_os = "freebsd")`, никогда
+// не active на windows/linux/macos; `bsd_only_value()` НЕ видим
+// импортирующему.
+
+module negative_capability.cfg_target_os_gated_invisible
+
+import nova_tests.cfg.target_os_module.{shared_value}
+
+test "target_os-gated symbol invisible on non-matching OS" {
+    let _ = shared_value()
+    // bsd_only_value gated #cfg(target_os = "freebsd") — off here.
+    let _ = bsd_only_value()
+    assert(true)
+}
