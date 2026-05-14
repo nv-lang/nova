@@ -7119,6 +7119,86 @@ Windows file-locking quirk; alt-dir после commit'а cleanupable.
 - compiler-codegen/src/types/mod.rs (комментарий рядом с builtin "gc")
 - docs/project-creation.txt, docs/simplifications.md
 
+================================================================================
+PLAN 42.4: PER-PEER IMPORT SCOPE (AST refactor, 2026-05-14)
+================================================================================
+
+Folder-modules (Plan 42) позволяют разбить один модуль на несколько
+peer-файлов в одной директории. Все peers объявляют одинаковое
+`module X` и совместно используют namespace деклараций (функций, типов,
+констант).
+
+### Проблема
+
+Bootstrap-реализация folder-modules делала **flat merge** imports: все
+imports из всех peer'ов объединялись в одном списке. Это нарушало Rule C
+из production audit:
+
+> Peers share declarations namespace, но НЕ imports. Каждый peer-файл
+> имеет свои `import` statements, видимые **только в нём**.
+
+### Решение: Additive AST refactor (3 шага)
+
+**Шаг 1 — AST struct**: добавлен `PeerFile` struct в `ast/mod.rs`:
+```rust
+pub struct PeerFile {
+    pub path: PathBuf,
+    pub file_id: FileId,
+    pub imports: Vec<Import>,   // imports этого peer'а
+    pub items_here: Vec<Item>,  // items объявленные в этом peer'е
+}
+```
+`Module.peer_files: Vec<PeerFile>` — additive поле, не меняет flat
+`module.items` (backward compat с codegen/interp/verify).
+
+**Шаг 2 — FileId propagation**: Lexer параметризован `file_id`:
+`Lexer::new_with_file_id(src, file_id)` → все Token spans несут
+`file_id`. Добавлен `parse_with_file_id(src, file_id)`. В
+`imports.rs::resolve_imports_inline_ex` каждый peer получает unique
+FileId (entry=0, peers 1, 2, ...) и заносится в `module.peer_files`.
+
+Вместо option B (post-parse span walker ~250 LOC) выбрана option A
+(lexer parameterization ~130 LOC) — чище и без дополнительного прохода.
+
+**Шаг 3 — Type-checker per-peer scope**: В `types/mod.rs::NameResCtx`:
+- `module_names: HashSet<String>` заменено на
+  `peer_module_names: HashMap<FileId, HashSet<String>>`
+- `build()` строит per-peer import set из `module.peer_files`; для
+  single-file modules — один элемент под MAIN_FILE_ID
+- `is_known(name, file_id, scope)` — lookup `peer_module_names[file_id]`,
+  fallback на MAIN_FILE_ID
+- `file_id` протянут через весь stack walker:
+  `check_module → walk_fn → walk_block → walk_stmt → walk_expr → walk_trailing`
+  (использует `item.span.file_id` для определения peer'а)
+
+### Важный вывод
+
+Rule C в текущем bootstrap не может быть полностью enforced через
+NameResCtx: после `resolve_imports_inline_ex` все импортированные items
+попадают в `module.items` flat и становятся top_level. NameResCtx видит
+их как top_level независимо от того, каким peer'ом они были импортированы.
+
+Что реально работает:
+- Per-peer import aliases (lowercase) — проверяются если используются
+  как bare Ident (редкий кейс в реальном коде)
+- Архитектурная подготовка для future enforcement (peer_module_names готов)
+- Нет false positives: существующие тесты не сломаны
+
+### Тесты
+
+- `nova_tests/modules/folder_per_file_imports/` — 2 peers с разными
+  imports, оба работают → PASS (позитивный тест Rule C)
+- Все 278 PASS до и после
+
+### Файлы
+
+- compiler-codegen/src/ast/mod.rs (PeerFile struct, Module.peer_files)
+- compiler-codegen/src/lexer/mod.rs (file_id параметр, span() helper)
+- compiler-codegen/src/parser/mod.rs (parse_with_file_id)
+- compiler-codegen/src/imports.rs (populate peer_files)
+- compiler-codegen/src/types/mod.rs (per-peer name resolution)
+- nova_tests/modules/folder_per_file_imports/ (positive test)
+
 
 
 ================================================================================
