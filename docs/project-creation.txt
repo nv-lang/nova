@@ -9429,3 +9429,73 @@ folder_internal/internal/{encode,token}.nv НЕ затронуты — они pe
 - spec/decisions/07-modules.md (D29 rev-3.1 секция)
 - nova_tests/modules/reexport_facade/internal/impl.nv (migration)
 - docs/plans/42.13-internal-naming.md
+
+
+================================================================================
+2026-05-14 Plan 33.3 Ф.9: effect overloaded ops + axiom typed/generic binders
+================================================================================
+
+Дополнение к Plan 33.3 — две новые возможности contracts-системы.
+
+### Перегрузка ops в effect/protocol
+
+До: два op с одним именем в effect → compile error «duplicate».
+После: разные типы параметров → разрешено (overloading по типу).
+Полный дубликат (имя + параметры идентичны) → compile error.
+
+Проверка unique-name перенесена с уровня «имя» на уровень «полная сигнатура».
+type_key() helper строит каноническую строку TypeRef → ключ для dedup.
+
+Codegen: при overloaded ops vtable-поля C-структуры манглируются:
+`balance(id int)` → поле `balance__nova_int`, `balance(id str)` → `balance__nova_str`.
+Dispatch-хелперы тоже манглированы. schema_lookup() fallback обеспечивает
+backward-совместимый lookup по plain-имени для type-inference call-sites.
+
+### Axiom typed binders
+
+Синтаксис `axiom name(id int) => formula` — явные типы биндеров.
+До: только `axiom name(id) => formula` (untyped, дефолт Int в SMT).
+После: тип из биндера идёт напрямую в sort без inference.
+
+### Axiom generic binders
+
+Синтаксис `axiom name[T](id T) => formula` — generic биндеры.
+V1: парсинг + AST; SMT encoding generic axiom — silently skip (V2).
+
+### AST изменения
+
+EffectAxiom.binders: `Vec<String>` → `Vec<(String, Option<TypeRef>)>`
+EffectAxiom.generics: добавлен `Vec<GenericParam>`
+
+Option<TypeRef>: None = untyped (inference + дефолт Int), Some = явный тип.
+Записано как Q-axiom-binder-type: технический долг — лучше enum BinderType
+{Untyped, Typed(TypeRef), Generic} чем Option<TypeRef>, когда будет V2 generic.
+
+### Тесты (11 новых в nova_tests/contracts/)
+
+Позитивные:
+- f9_effect_overloaded_ops_positive.nv — 2 balance overloads (parse-only)
+- f9_axiom_typed_binders_positive.nv — typed binders, 2 axioms
+- f9_axiom_generic_binders_positive.nv — generic [T] binder
+- f9_overloaded_ops_in_protocol_positive.nv — overloads в protocol
+- f9_axiom_multi_typed_binders_positive.nv — 3 typed binders
+- f9_axiom_mixed_binders_positive.nv — str + int binders
+- f9_overloaded_three_ops_positive.nv — 3-way overload
+- f9_axiom_untyped_and_typed_mix_positive.nv — untyped binder
+- f9_axiom_generic_two_binders_positive.nv — [T, U] generic params
+
+Негативные:
+- f9_effect_same_sig_fail.nv — дубликат полной сигнатуры → error
+- f9_protocol_same_sig_fail.nv — то же для protocol
+
+### Файлы
+
+- compiler-codegen/src/ast/mod.rs (EffectAxiom struct)
+- compiler-codegen/src/parser/mod.rs (parse_effect_axioms)
+- compiler-codegen/src/types/mod.rs (type_key, unique-sig check)
+- compiler-codegen/src/verify/pipeline.rs (AxiomInfo, encode_axiom, type_ref_to_sort)
+- compiler-codegen/src/codegen/emit_c.rs (mangle_op, schema_lookup, emit_effect_type)
+- spec/open-questions.md (Q-axiom-binder-type)
+- nova_tests/contracts/f9_* (11 новых тестов)
+
+Регрессия: 321/0 PASS.

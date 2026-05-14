@@ -6094,3 +6094,40 @@ Memory updated: `feedback_mn_runtime_go_reference.md` — для всей M:N
 
 Это honest scope split — fundamental compute parallelism отделён от
 park/wake migration ergonomics.
+
+
+## Plan 33.3 Ф.9: effect overloaded ops + axiom typed/generic binders (2026-05-14)
+
+**Что упрощено — overloading.**
+
+До: unique-name check в effect/protocol по полю `name` — любые два op
+с одинаковым именем → error. Это было проще имплементировать, но
+семантически неверно: нет причины запрещать `balance(id int)` и
+`balance(id str)` в одном effect — это валидный overloading.
+
+После: check по полной сигнатуре `(name, param_types)`. type_key()
+helper → canonical строка для dedup. Дубликат полной сигнатуры → error.
+Разные param types → разрешено.
+
+C-codegen: при overloaded ops поля vtable-структуры манглированы
+(`balance__nova_int` / `balance__nova_str`). schema_lookup() fallback
+позволяет type-inference call-sites искать по plain-имени.
+
+**Что упрощено — typed binders.**
+
+До: axiom binders только untyped: `axiom name(id) => ...` — тип биндера
+выводился из usage в формуле или defaulted в Int.
+
+После: `axiom name(id int) => ...` — явный тип идёт напрямую в SMT sort
+без inference. Оба синтаксиса сосуществуют; `Option<TypeRef>` в AST.
+
+**Что добавлено — generic binders.**
+
+`axiom name[T](id T) => ...` — generic param в axiom. V1: парсинг + AST,
+SMT encoding generic axiom silently skip (is_generic = true → None).
+V2 — полный encode через uninterpreted sorts или multi-sort instantiation.
+
+**Техдолг.** `Option<TypeRef>` для binder-типа читается как «нет значения»,
+хотя семантика «untyped» — другое. Зафиксировано как Q-axiom-binder-type:
+при добавлении Generic как третьего варианта — рефакторить на enum
+`BinderType { Untyped, Typed(TypeRef), Generic }`.
