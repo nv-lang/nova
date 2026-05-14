@@ -271,20 +271,32 @@ fallback для fiber'ов, запаркованных в блокирующих
 - `CancelToken[T].new()`, `tok.cancel(reason: T)`, `tok.reason() -> Option[T]`.
   Runtime `reason` уже `void*` (Ф.1) — box'ит `T` (мономорфизация даёт
   типобезопасный un-box на Nova-уровне, без RTTI).
-- **Cross-type cascade — link-time reason.** `child.cancelled_by(parent)`
-  где `child: CancelToken[A]`, `parent: CancelToken[B]` — типы причин
-  разные. Решение: каскад **передаёт сигнал, не значение причины**;
-  `child` получает СВОЮ причину, заданную при линковке:
-  `child.cancelled_by(parent, on_cancel: A)` — «когда parent отменён
-  (любой `B`-причиной), отмени child с этой `A`-причиной». Для
-  `CancelToken[str]` — `on_cancel` опционален (дефолт
-  `"cancelled by parent"`); для `[T]`, `T ≠ str` — обязателен. Это
-  type-clean (никакого `A|B`), semantically clear, и **строго лучше**
-  Go (там child-context просто получает `context.Canceled`, без
-  возможности задать свою причину).
+- **Cross-type cascade — конвертация причины через `From` (D73/D77).**
+  `child.cancelled_by(parent)` где `child: CancelToken[A]`,
+  `parent: CancelToken[B]` — типы причин разные. Родитель может быть
+  отменён по РАЗНЫМ `B`-причинам, и мы хотим, чтобы причина ребёнка их
+  **отражала**, а не была фиксированной константой. Решение — каскад
+  конвертирует причину через уже существующий протокол `From`:
+  - **Same-type** (`A == B`): причина пробрасывается как есть, конвертация
+    не нужна. `child.cancelled_by(parent)`.
+  - **Cross-type** (`A != B`): требуется `A: From[B]` — конвертация
+    `B → A`. При отмене `parent` с `b_reason` ребёнок отменяется с
+    `A.from(b_reason)`. Compile-time проверка: нет `From[B] for A` →
+    понятная ошибка «no conversion from B to A — define `A.from(B)` or
+    use a shared reason type».
+  - **«Не важна причина родителя»** — частный случай: пишешь `A.from(B)`,
+    игнорирующий вход и возвращающий константу. Это покрывает старый
+    `on_cancel`-вариант, но не навязывает его.
+  Почему `From`, а не bespoke `on_cancel`-аргумент: (1) `From`/`TryFrom`
+  — **идиоматичный** механизм конверсий в Nova, не надо изобретать;
+  (2) **сохраняет «почему»** — причина ребёнка проекция реальной причины
+  родителя, а не фиксированная заглушка; (3) compile-time типобезопасно.
+  Это **строго лучше Go**: Go `context.Cause` пробрасывает причину
+  предка как `error`-интерфейс (надо type-assert'ить и причина одного
+  типа на всё дерево); у нас — типизированная проекция per-уровень.
 - Тесты: `CancelToken[CustomEnum]` — `match` по структурированной
-  причине; cross-type каскад; `within`/`race` (Plan 48) с типизированной
-  причиной таймаута.
+  причине; cross-type каскад с `From`-конвертацией; `within`/`race`
+  (Plan 48) с типизированной причиной таймаута.
 - Снять любые str-only оговорки; обновить spec D75 на `[T]`.
 
 ### Ф.7 — Regression + docs + spec
@@ -362,10 +374,12 @@ fail-frame unwinding'у; Ф.4 явно тестирует defer+errdefer при 
 ловит остальное.
 
 **R8 — cross-type cascade (`CancelToken[A].cancelled_by(CancelToken[B])`).**
-Типы причин разные — нечего «передать вниз». Митигация (раздел Ф.6):
-каскад передаёт **сигнал, не значение**; `child` получает свою причину,
-заданную при линковке (`cancelled_by(parent, on_cancel: A)`). Type-clean,
-никакого `A|B`. Решение зафиксировано в дизайне, не «разберёмся потом».
+Типы причин разные. Митигация (раздел Ф.6): каскад конвертирует причину
+через протокол `From` — same-type пробрасывает как есть, cross-type
+требует `A: From[B]` (compile-time проверка). Сохраняет «почему»
+(причина ребёнка — проекция реальной причины родителя), использует
+идиоматичный Nova-механизм конверсий, никакого `A|B`-union. Решение
+зафиксировано в дизайне.
 
 **R9 — Ф.6 зависит от Plan 48.** `CancelToken[T]` — generic-тип, требует
 мономорфизации. Митигация: Ф.0–Ф.5 спроектированы на `CancelToken[str]`
@@ -421,9 +435,12 @@ fail-frame unwinding'у; Ф.4 явно тестирует defer+errdefer при 
       работает.
 - [ ] `CancelToken` без параметра == `CancelToken[str]` (existing-код
       компилируется без изменений).
-- [ ] Cross-type каскад: `child.cancelled_by(parent, on_cancel: A)` —
-      `child: CancelToken[A]`, `parent: CancelToken[B]` — линкуется,
-      `child` получает свою `A`-причину при отмене `parent`.
+- [ ] Cross-type каскад: `child.cancelled_by(parent)` где
+      `child: CancelToken[A]`, `parent: CancelToken[B]` — требует
+      `A: From[B]`; при отмене `parent` с `b_reason` ребёнок отменяется
+      с `A.from(b_reason)`. Нет `From[B] for A` → понятная compile-error.
+- [ ] Same-type каскад (`A == B`) — причина родителя пробрасывается
+      ребёнку как есть, без конвертации.
 
 ---
 
@@ -443,3 +460,7 @@ fail-frame unwinding'у; Ф.4 явно тестирует defer+errdefer при 
   `USER`-kind = текущая D65-семантика; `CANCEL` — ортогональный вид.
   Plan 49 типизирует *причину отмены* (`CancelToken[T]`); типизация
   *Fail-канала* — future work с D65.
+- D73/D77 (`From` / `TryFrom` протоколы) — cross-type каскад
+  (`CancelToken[A].cancelled_by(CancelToken[B])`, Ф.6) использует
+  `A: From[B]` для конвертации причины. Переиспользование существующего
+  механизма конверсий, не bespoke API.
