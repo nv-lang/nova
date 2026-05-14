@@ -1,12 +1,11 @@
-// Plan 18 std.sync: AtomicInt tests.
+// Plan 18 std.sync: AtomicInt + AtomicBool tests.
 //
-// Verifies lock-free integer operations: new/load/store/fetch_add/fetch_sub/
-// compare_exchange. Concurrent test shows two fibers incrementing atomically
-// without data race — final value must equal sum of both fibers' contributions.
+// Verifies lock-free integer and boolean operations.
+// Concurrent tests confirm no data race — final values must be exact.
 
 module nova_tests.concurrency.sync_atomic
 
-// ─── Single-fiber baseline ──────────────────────────────────────
+// ─── AtomicInt: single-fiber baseline ──────────────────────────
 
 test "AtomicInt: new and load" {
     let a = AtomicInt.new(42)
@@ -47,7 +46,7 @@ test "AtomicInt: compare_exchange failure (wrong expected)" {
     assert(a.load() == 5)
 }
 
-// ─── Concurrent increment ───────────────────────────────────────
+// ─── AtomicInt: concurrent ──────────────────────────────────────
 
 // Two fibers each do 200 atomic fetch_adds of 1. Without atomic ops,
 // a plain `mut n = n + 1` would race and produce < 400. With AtomicInt,
@@ -110,4 +109,84 @@ test "AtomicInt: CAS loop — cooperative increment" {
         }
     }
     assert(val.load() == 20)
+}
+
+// ─── AtomicBool: single-fiber baseline ─────────────────────────
+
+test "AtomicBool: new false and load" {
+    let a = AtomicBool.new(false)
+    assert(a.load() == false)
+}
+
+test "AtomicBool: new true and load" {
+    let b = AtomicBool.new(true)
+    assert(b.load() == true)
+}
+
+test "AtomicBool: store and load" {
+    let a = AtomicBool.new(false)
+    a.store(true)
+    assert(a.load() == true)
+    a.store(false)
+    assert(a.load() == false)
+}
+
+test "AtomicBool: compare_exchange success" {
+    let a = AtomicBool.new(false)
+    let ok = a.compare_exchange(false, true)
+    assert(ok == true)
+    assert(a.load() == true)
+}
+
+test "AtomicBool: compare_exchange failure (wrong expected)" {
+    let a = AtomicBool.new(false)
+    let ok = a.compare_exchange(true, false)
+    assert(ok == false)
+    assert(a.load() == false)
+}
+
+// swap() sets new value, returns previous.
+test "AtomicBool: swap false→true returns previous" {
+    let a = AtomicBool.new(false)
+    let prev = a.swap(true)
+    assert(prev == false)
+    assert(a.load() == true)
+}
+
+test "AtomicBool: swap true→false returns previous" {
+    let a = AtomicBool.new(true)
+    let prev = a.swap(false)
+    assert(prev == true)
+    assert(a.load() == false)
+}
+
+// ─── AtomicBool: concurrent ─────────────────────────────────────
+
+// Two fibers race to set a flag via swap(). Only one can see false as
+// the previous value — the "winner" of the one-shot ownership race.
+// This is the canonical once-flag pattern without Once.
+test "AtomicBool: swap one-shot ownership — exactly one winner" {
+    let flag = AtomicBool.new(false)
+    let winners = AtomicInt.new(0)
+    supervised {
+        spawn {
+            let was_false = flag.swap(true)
+            if was_false == false {
+                winners.fetch_add(1)
+            }
+        }
+        spawn {
+            let was_false = flag.swap(true)
+            if was_false == false {
+                winners.fetch_add(1)
+            }
+        }
+        spawn {
+            let was_false = flag.swap(true)
+            if was_false == false {
+                winners.fetch_add(1)
+            }
+        }
+    }
+    assert(winners.load() == 1)
 }
