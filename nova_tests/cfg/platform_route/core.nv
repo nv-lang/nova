@@ -1,0 +1,11 @@
+// Plan 42.12 Ф.1: platform-agnostic peer.
+// Использует platform_name() из platform-specific peer:
+//   - impl_windows.nv (active на Windows)
+//   - impl_linux.nv (active на Linux)
+//   - impl_macos.nv (active на macOS)
+// На каждой OS active ровно один — name collision исключён.
+
+module cfg.platform_route
+
+export fn greet() -> str =>
+    "hello from " + platform_name()

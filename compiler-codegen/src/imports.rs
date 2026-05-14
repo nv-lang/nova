@@ -472,11 +472,66 @@ fn resolve_import_path(
     None
 }
 
+/// Plan 42.12 Ф.1: target OS для filename suffix filtering.
+/// Default — host OS (cfg!(target_os) at compile time of nova-codegen).
+/// Override через `NOVA_TARGET_OS` env var (Ф.1 minimal — без CLI flag).
+pub fn current_target_os() -> &'static str {
+    if let Ok(t) = std::env::var("NOVA_TARGET_OS") {
+        return Box::leak(t.into_boxed_str());
+    }
+    if cfg!(target_os = "windows") { "windows" }
+    else if cfg!(target_os = "linux") { "linux" }
+    else if cfg!(target_os = "macos") { "macos" }
+    else if cfg!(target_family = "unix") { "unix" }
+    else { "unknown" }
+}
+
+/// Plan 42.12 Ф.1: filename suffix filter для peer files.
+/// Returns Some(target) если filename имеет recognized suffix (`_windows.nv`,
+/// `_linux.nv`, `_macos.nv`, `_unix.nv`, `_posix.nv`); None если нет suffix.
+fn file_target_suffix(stem: &str) -> Option<&'static str> {
+    // Order matters: check more specific suffixes first.
+    // `_test` тоже может быть в stem'е — мы фильтруем после _test stripping
+    // в caller, так что здесь работаем с already-stripped stem.
+    if stem.ends_with("_windows") { Some("windows") }
+    else if stem.ends_with("_linux") { Some("linux") }
+    else if stem.ends_with("_macos") { Some("macos") }
+    else if stem.ends_with("_unix") { Some("unix") }
+    else if stem.ends_with("_posix") { Some("posix") }
+    else { None }
+}
+
+/// Public wrapper для test_runner walker.
+pub fn peer_active_for_target_pub(stem: &str, target: &str) -> bool {
+    peer_active_for_target(stem, target)
+}
+
+/// Plan 42.12 Ф.1: peer file active для current target?
+/// - Без suffix → активен всегда.
+/// - С suffix → активен если target matches:
+///   - `_windows` ↔ windows
+///   - `_linux` ↔ linux
+///   - `_macos` ↔ macos
+///   - `_unix` ↔ linux OR macos (POSIX-like, без bsd для simplicity)
+///   - `_posix` ↔ linux OR macos (синоним _unix)
+fn peer_active_for_target(stem: &str, target: &str) -> bool {
+    match file_target_suffix(stem) {
+        None => true,
+        Some("windows") => target == "windows",
+        Some("linux") => target == "linux",
+        Some("macos") => target == "macos",
+        Some("unix") | Some("posix") => target == "linux" || target == "macos" || target == "unix",
+        Some(_) => true,
+    }
+}
+
 /// Plan 42 Ф.2: resolve module to **list** of peer files (folder-module)
 /// или single file. Returns `Vec<PathBuf>` alphabetically sorted (правило B).
 ///
 /// Plan 42.08 Ф.2: возвращает `ResolveErr::Ambiguous` если `X.nv` И `X/`
 /// (с direct .nv) сосуществуют — раньше silent None → generic "cannot find".
+///
+/// Plan 42.12 Ф.1: filter peer files по filename suffix vs current target.
 ///
 /// Resolution order:
 /// 1. Try single-file `<...>/parts.nv` (legacy behaviour).
@@ -560,6 +615,8 @@ fn resolve_module_paths(
             // Collect все *.nv files (non-recursive), alphabetical sort.
             // Plan 42 правило F: filter `*_test.nv` peers если
             // !include_test_peers (build mode).
+            // Plan 42.12 Ф.1: filter peers по filename suffix vs current target.
+            let target = current_target_os();
             let entries = match std::fs::read_dir(&folder) {
                 Ok(e) => e,
                 Err(_) => continue,
@@ -574,11 +631,18 @@ fn resolve_module_paths(
                     if p.extension().and_then(|s| s.to_str()) != Some("nv") {
                         return false;
                     }
-                    if !include_test_peers {
-                        if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
-                            if stem.ends_with("_test") {
-                                return false;
-                            }
+                    if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
+                        // Strip `_test` suffix first для test-peer filter.
+                        let core_stem = stem.strip_suffix("_test").unwrap_or(stem);
+                        if !include_test_peers && core_stem != stem {
+                            // `_test` peer, build mode → skip.
+                            return false;
+                        }
+                        // Target filter: применяем к stem БЕЗ `_test` suffix'а
+                        // (чтобы `tls_windows_test.nv` правильно ассоциировался
+                        // с windows target).
+                        if !peer_active_for_target(core_stem, target) {
+                            return false;
                         }
                     }
                     true

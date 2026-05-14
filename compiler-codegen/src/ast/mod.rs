@@ -66,6 +66,7 @@ pub struct PeerFile {
 #[derive(Debug, Clone)]
 pub struct ModuleAttr {
     pub kind: ModuleAttrKind,
+    /// Для `#forbid` — список эффектов. Для `#cfg` — пусто (predicate в kind).
     pub effects: Vec<String>,
     pub span: Span,
 }
@@ -75,6 +76,21 @@ pub enum ModuleAttrKind {
     /// `#forbid X, Y` — все functions module не могут использовать
     /// эти effects (compile error через capability check).
     Forbid,
+    /// Plan 42.12 Ф.2: `#cfg(feature = "X")` или `#cfg(target_os = "Y")` —
+    /// module/peer активен только при matching condition.
+    /// Поскольку filename suffix (Ф.1) покрывает 90% target_os кейсов,
+    /// `#cfg(target_os)` рекомендуется только для item-level (Ф.3).
+    Cfg(CfgPredicate),
+}
+
+/// Plan 42.12 Ф.2: cfg predicate (strict minimal, no `any/all/not`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CfgPredicate {
+    /// `#cfg(feature = "X")` — active если feature `X` в `nova.toml [features]`
+    /// AND enabled через `--features` CLI flag.
+    Feature(String),
+    /// `#cfg(target_os = "Y")` — active если current target matches.
+    TargetOs(String),
 }
 
 /// Plan 35 sub-plan 35.A (R26): селективный import — `import X.Y.{A, B as C}`.

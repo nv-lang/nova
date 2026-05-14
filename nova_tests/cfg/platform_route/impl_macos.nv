@@ -1,0 +1,6 @@
+// Plan 42.12 Ф.1: active только на macOS.
+
+module cfg.platform_route
+
+export fn platform_name() -> str =>
+    "macos"
