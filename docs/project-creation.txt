@@ -9460,7 +9460,7 @@ Merge Plan 42.09 (reexport + rename) + 42.10 (module-level #forbid) +
 
 
 ================================================================================
-2026-05-14 Plan 18: std.sync — AtomicInt + Mutex + WaitGroup
+2026-05-14 Plan 18: std.sync — AtomicInt + AtomicBool + Mutex + WaitGroup + Once
 ================================================================================
 
 Fiber-aware synchronization primitives для Nova concurrency runtime.
@@ -9471,6 +9471,8 @@ Fiber-aware synchronization primitives для Nova concurrency runtime.
   - Nova_AtomicInt: lock-free integer через __atomic C11 builtins.
     Операции: new/load/store/fetch_add/fetch_sub/compare_exchange.
     Ordering: load=acquire, store=release, fetch_*/CAS=acq_rel.
+  - Nova_AtomicBool: lock-free boolean. Операции: new/load/store/
+    compare_exchange/swap. swap() полезен для one-shot ownership race.
   - Nova_Mutex: fair waiter-queue mutex. Внутри fiber:
     nova_sched_park_with_unlock атомарно паркует и отпускает spinlock.
     Разбудка через nova_sched_wake (FIFO порядок). Вне fiber (OS thread):
@@ -9480,10 +9482,15 @@ Fiber-aware synchronization primitives для Nova concurrency runtime.
     done() от каждого worker'а, wait() парков вызывающую fiber пока
     count > 0. done(): при count→0 отстёгивает весь waiter-list под lock'ом,
     wake'ит всех вне lock'а (WakeAll семантика).
+  - Nova_Once: exactly-once state machine NEW→RUNNING→DONE.
+    run() → true только для первого caller'а (должен вызвать done()).
+    Конкурентные callers паркуются до done(). После done() — fast-path
+    acquire-load возвращает false без mutex (NOVA_ONCE_DONE state).
 
   Nova declarations (std/runtime/sync.nv):
   - ExternalRegistry source embedded в binary через include_str!.
-  - Статические конструкторы: AtomicInt.new, Mutex.new, WaitGroup.new.
+  - Статические конструкторы: AtomicInt.new, AtomicBool.new, Mutex.new,
+    WaitGroup.new, Once.new.
   - Instance-методы на `mut` и non-mut receiver'ах.
 
   Codegen расширения:
@@ -9492,21 +9499,28 @@ Fiber-aware synchronization primitives для Nova concurrency runtime.
     1. Static method (AtomicInt.new → Nova_AtomicInt*) в Ident-блоке.
     2. Instance method (a.load → nova_int) для recv_ty.starts_with("Nova_").
     Устраняет необходимость в per-type hardcoding (как StringBuilder/WriteBuffer).
+  - emit_c.rs Path-branch fix: добавлен ExternalRegistry static-method lookup
+    в Path-form ветку infer_expr_c_type. Root cause: Type.new() парсится как
+    ExprKind::Path(["Type", "new"]), не как Member — без этого фикса
+    var_types["x"] = "nova_int" вместо "Nova_Type*", что ломало instance
+    method type inference (once.run() → nova_int вместо nova_bool в if).
   - nova_rt.h: #include "sync_primitives.h" после channels.h.
 
-ТЕСТЫ (310 PASS, 0 FAIL):
+ТЕСТЫ (334 PASS, 0 FAIL):
 
-  sync_atomic.nv (8 тестов):
-  - Single-fiber: new/load, store/load, fetch_add (prev check), fetch_sub,
-    compare_exchange success + failure.
-  - Concurrent: 2 fibers × 200 fetch_add → counter == 400 (data-race-free).
-  - CAS loop: 2 fibers × 10 CAS-increment via compare_exchange retry → val == 20.
+  sync_atomic.nv (15 тестов):
+  - AtomicInt single-fiber: new/load, store/load, fetch_add (prev check),
+    fetch_sub, compare_exchange success + failure.
+  - AtomicInt concurrent: 2 fibers × 200 fetch_add → counter == 400.
+  - AtomicInt CAS loop: 2 fibers × 10 CAS-increment → val == 20.
+  - AtomicBool single-fiber: new false/true, store/load, compare_exchange
+    success + failure, swap false→true, swap true→false.
+  - AtomicBool concurrent: swap one-shot ownership — exactly 1 winner из 3.
 
   sync_mutex.nv (6 тестов):
   - try_lock на fresh mutex → true; try_lock while locked → false.
   - lock/unlock в single fiber × 2 iterations.
-  - Mutual exclusion stress: `inside` инкрементируется под lock, декрементируется
-    перед unlock, с runtime.yield() между — violations == 0 при 50×50 operations.
+  - Mutual exclusion stress: violations == 0 при 50×50 operations.
   - Protected counter: 2 fibers × 100 lock+increment+unlock → counter == 200.
   - M:N mode (2 workers): те же guarantee работают cross-worker.
 
@@ -9517,9 +9531,22 @@ Fiber-aware synchronization primitives для Nova concurrency runtime.
   - Multiple waiters: оба просыпаются при done.
   - M:N rendezvous: 4 workers × разные суммы → sum.load() == 10.
 
-УРОК: ExternalRegistry infer_expr_c_type generic lookup устраняет необходимость
-добавлять per-type hardcoding для каждого нового external типа. Достаточно добавить
-.nv декларации — тип inferируется автоматически.
+  sync_once.nv (7 тестов):
+  - Single caller runs and completes (ran == true).
+  - run() returns false on second sequential call.
+  - run() returns false immediately when already done (fast-path × 5).
+  - Only one of N concurrent callers executes body (counter == 1).
+  - Body side-effects visible to waiting fibers (value == 42).
+  - Multiple waiters all wake after done (init_value == 99).
+  - M:N mode (2 workers): exactly one worker executes body.
+
+УРОК (Path-form type inference bug):
+  Type.new() в Nova парсится как ExprKind::Path(["Type", "new"]), НЕ как
+  ExprKind::Member. Path-ветка infer_expr_c_type не имела ExternalRegistry lookup,
+  что приводило к var_types["x"] = "nova_int" для всех internal external типов.
+  Фикс: добавить lookup в Path-ветку симметрично Member-ветке.
+  Проявляется только когда результат метода напрямую используется в `if` условии
+  (if once.run()) — без явной let-переменной тип не кэшируется.
 
 
 ================================================================================

@@ -6079,30 +6079,36 @@ TLS флаг "fiber должна yield" — оценка 2-3 недели engine
 низкий пока CPU-bound workloads не станут реальным use case.
 
 
-## Plan 18 std.sync: AtomicInt / Mutex / WaitGroup — ✅ CLOSED (2026-05-14)
+## Plan 18 std.sync: AtomicInt / AtomicBool / Mutex / WaitGroup / Once — ✅ CLOSED (2026-05-14)
 
-**Закрыто одним коммитом** `cf6e3e6bf21`.
+**Закрыто двумя коммитами** (основной + codegen fix).
 
-Fiber-aware synchronization primitives. AtomicInt через C11 __atomic builtins.
-Mutex через nova_sched_park_with_unlock / nova_sched_wake (fair FIFO waiter queue).
-WaitGroup через counter + waiter list (WakeAll при count→0).
+Fiber-aware synchronization primitives. AtomicInt / AtomicBool через C11 __atomic
+builtins. Mutex через nova_sched_park_with_unlock / nova_sched_wake (fair FIFO).
+WaitGroup через counter + waiter list (WakeAll при count→0). Once через state
+machine NEW→RUNNING→DONE: run() → true только для первого caller'а, остальные
+паркуются до done(). Fast-path: acquire-load на DONE state без mutex.
 
 ExternalRegistry infer_expr_c_type расширен generic lookup'ами — более не требует
 per-type hardcoding для новых external типов (StringBuilder pattern).
 
-**310 PASS, 0 FAIL** — sync_atomic.nv (8 тестов), sync_mutex.nv (6 тестов),
-sync_waitgroup.nv (5 тестов) + все предыдущие тесты.
+**Codegen bug**: Type.new() парсится как ExprKind::Path(["Type", "new"]), не как
+Member. Path-ветка infer_expr_c_type не имела ExternalRegistry lookup → var_types
+получал "nova_int" вместо "Nova_Type*" → instance method type inference ломалась.
+Фикс: добавить lookup в Path-ветку. Симптом проявляется при `if once.run()` —
+прямое использование bool-returning external method в if без промежуточной let.
+
+**334 PASS, 0 FAIL** — sync_atomic.nv (15 тестов), sync_mutex.nv (6), 
+sync_waitgroup.nv (5), sync_once.nv (7) + все предыдущие тесты.
 
 **Что осталось упрощено:**
 
-- [S-SYNC1] `WaitGroup.add(n)` не защищён от отрицательного counter — panic
-  поведение при done() без предшествующего add() неопределено. Нужна runtime
-  assertion (counter >= 0) в done(). Приоритет: L.
+- [S-SYNC1] `WaitGroup.add(n)` нет runtime assertion для вызова done() без add().
+  Поведение задефайнировано через NOVA_SYNC_ASSERT в debug builds. Приоритет: L.
 - [S-SYNC2] `Mutex` не реентрантен — deadlock при повторном lock() из той
-  же fiber. Go/pthreads также не реентрантны по default, но явная диагностика
-  была бы лучше. Приоритет: L.
-- [S-SYNC3] `AtomicInt` нет `swap()` / `fetch_or()` / `fetch_and()` — добавить
-  при реальной необходимости. Приоритет: L.
+  же fiber. Явная диагностика была бы лучше. Приоритет: L.
+- [S-SYNC3] `AtomicInt` нет `fetch_or()` / `fetch_and()` — добавить при
+  реальной необходимости. Приоритет: L.
 
 
 ## Plan 44.5 Layer 5: park/wake migration к worker scope — отложено
