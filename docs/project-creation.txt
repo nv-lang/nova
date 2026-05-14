@@ -10002,7 +10002,7 @@ Codegen (emit_c.rs):
 - compiler-codegen/nova_rt/fibers.h (_nova_preempt_ptr + nova_preempt_check)
 - compiler-codegen/nova_rt/effects.c (_nova_preempt_ptr TLS def)
 - compiler-codegen/src/codegen/emit_c.rs (safepoint emit ×2)
-- spec/decisions/06-concurrency.md (D102)
+- spec/decisions/06-concurrency.md (D103 — D102 занят named-args на main)
 - docs/plans/44.7-preemption.md (статус → CLOSED)
 - nova_tests/concurrency/mn_runtime_preemption.nv (2 positive + 2 negative)
 

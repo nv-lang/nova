@@ -2960,9 +2960,11 @@ multi-fiber `Time.sleep` перестал флакать (был ~14% segfault).
 - ⏸ Linux Docker validation Plan 44.5 L5 — требует Docker daemon.
 
 
-## D102. Preemption — sysmon-thread + codegen safepoints
+## D103. Preemption — sysmon-thread + codegen safepoints
 
 > **Status:** active (Plan 44.7, Вариант B, закрыт 2026-05-14).
+> **Note:** номер D103, а не D102 — D102 на ветке main занят «именованными
+> аргументами» (Plan 46); preemption перенумерован при подготовке к sync.
 > Дополняет [D71](#) (M:N прозрачность) и [D93](#d93-parkwake--нормативный-runtime-primitive-для-блокирующих-операций):
 > fair CPU-sharing — часть гарантии прозрачности M:N.
 
