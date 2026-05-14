@@ -1,0 +1,13 @@
+// Plan 42.14 Ф.1: #cfg(any/all/not) predicate test.
+//
+// predicate_any/impl.nv использует `#cfg(any(windows, linux, macos))` —
+// active на всех 3 поддерживаемых платформах. Если any() работает —
+// helper_value() видна, base() резолвится.
+
+module cfg.predicate_any_use
+
+import nova_tests.cfg.predicate_any.{base}
+
+test "cfg any() predicate: active on all supported OS" {
+    assert(base() == 42)
+}

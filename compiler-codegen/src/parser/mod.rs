@@ -181,38 +181,19 @@ impl Parser {
                     span: attr_start.merge(attr_end),
                 });
             } else {
-                // Plan 42.12 Ф.2: `#cfg(feature = "X")` или `#cfg(target_os = "Y")`.
+                // Plan 42.12 Ф.2 + 42.14 Ф.1: `#cfg(<predicate>)` —
+                // feature/target_os + any/all/not композиции.
                 self.bump(); // cfg (ident)
                 if !matches!(self.peek().kind, TokenKind::LParen) {
                     return Err(Diagnostic::new("expected `(` after `#cfg`", self.peek().span));
                 }
                 self.bump(); // (
-                let (key, _) = self.parse_ident()?;
-                if !matches!(self.peek().kind, TokenKind::Eq) {
-                    return Err(Diagnostic::new("expected `=` in #cfg predicate", self.peek().span));
-                }
-                self.bump(); // =
-                let value_span = self.peek().span;
-                let value = if let TokenKind::Str(s) = &self.peek().kind {
-                    let v = s.clone();
-                    self.bump();
-                    v
-                } else {
-                    return Err(Diagnostic::new(
-                        "expected string literal in #cfg predicate", value_span));
-                };
+                let pred = self.parse_cfg_predicate()?;
                 if !matches!(self.peek().kind, TokenKind::RParen) {
                     return Err(Diagnostic::new(
                         "expected `)` closing #cfg predicate", self.peek().span));
                 }
                 self.bump(); // )
-                let pred = match key.as_str() {
-                    "feature" => CfgPredicate::Feature(value),
-                    "target_os" => CfgPredicate::TargetOs(value),
-                    other => return Err(Diagnostic::new(
-                        format!("unknown #cfg key `{}` — expected `feature` or `target_os`", other),
-                        attr_start)),
-                };
                 self.expect_newline_or_eof()?;
                 let attr_end = self.tokens[self.pos.saturating_sub(1)].span;
                 module_attrs.push(ModuleAttr {
@@ -248,7 +229,12 @@ impl Parser {
                 imports.push(self.parse_import()?);
                 continue;
             }
-            items.push(self.parse_item()?);
+            // Plan 42.14 Ф.2: parse_item возвращает Option — None если
+            // item gated `#cfg(...)` predicate'ом который inactive для
+            // current target/features → item дропается на parse-этапе.
+            if let Some(item) = self.parse_item()? {
+                items.push(item);
+            }
         }
         let span = start.merge(self.peek().span);
         // Plan 42 Sub-plan 42.4: Module.peer_files оставляем пустым на
@@ -372,6 +358,98 @@ impl Parser {
         Ok(parts)
     }
 
+    // ─── #cfg predicate ──────────────────────────────────────────────────
+
+    /// Plan 42.14 Ф.1: recursive `#cfg` predicate parsing.
+    /// Grammar:
+    ///   predicate := key '=' string          // feature = "x" / target_os = "y"
+    ///              | 'any' '(' pred-list ')'
+    ///              | 'all' '(' pred-list ')'
+    ///              | 'not' '(' predicate ')'
+    ///   pred-list := predicate (',' predicate)*
+    /// Caller уже consumed opening `(` после `#cfg`; этот метод парсит
+    /// одну predicate (не consumes closing `)` верхнего уровня).
+    fn parse_cfg_predicate(&mut self) -> Result<CfgPredicate, Diagnostic> {
+        let start = self.peek().span;
+        let (key, _) = self.parse_ident()?;
+        match key.as_str() {
+            "any" | "all" => {
+                if !matches!(self.peek().kind, TokenKind::LParen) {
+                    return Err(Diagnostic::new(
+                        format!("expected `(` after `{}`", key), self.peek().span));
+                }
+                self.bump(); // (
+                let mut preds = Vec::new();
+                loop {
+                    preds.push(self.parse_cfg_predicate()?);
+                    if matches!(self.peek().kind, TokenKind::Comma) {
+                        self.bump();
+                        // Trailing comma allowed before `)`.
+                        if matches!(self.peek().kind, TokenKind::RParen) {
+                            break;
+                        }
+                    } else {
+                        break;
+                    }
+                }
+                if !matches!(self.peek().kind, TokenKind::RParen) {
+                    return Err(Diagnostic::new(
+                        format!("expected `)` closing `{}(...)`", key), self.peek().span));
+                }
+                self.bump(); // )
+                if preds.is_empty() {
+                    return Err(Diagnostic::new(
+                        format!("`{}(...)` must contain at least one predicate", key), start));
+                }
+                Ok(if key == "any" {
+                    CfgPredicate::Any(preds)
+                } else {
+                    CfgPredicate::All(preds)
+                })
+            }
+            "not" => {
+                if !matches!(self.peek().kind, TokenKind::LParen) {
+                    return Err(Diagnostic::new(
+                        "expected `(` after `not`", self.peek().span));
+                }
+                self.bump(); // (
+                let inner = self.parse_cfg_predicate()?;
+                if !matches!(self.peek().kind, TokenKind::RParen) {
+                    return Err(Diagnostic::new(
+                        "expected `)` closing `not(...)`", self.peek().span));
+                }
+                self.bump(); // )
+                Ok(CfgPredicate::Not(Box::new(inner)))
+            }
+            "feature" | "target_os" => {
+                if !matches!(self.peek().kind, TokenKind::Eq) {
+                    return Err(Diagnostic::new(
+                        format!("expected `=` after `{}` in #cfg predicate", key),
+                        self.peek().span));
+                }
+                self.bump(); // =
+                let value_span = self.peek().span;
+                let value = if let TokenKind::Str(s) = &self.peek().kind {
+                    let v = s.clone();
+                    self.bump();
+                    v
+                } else {
+                    return Err(Diagnostic::new(
+                        "expected string literal in #cfg predicate", value_span));
+                };
+                Ok(if key == "feature" {
+                    CfgPredicate::Feature(value)
+                } else {
+                    CfgPredicate::TargetOs(value)
+                })
+            }
+            other => Err(Diagnostic::new(
+                format!("unknown #cfg key `{}` — expected `feature`, `target_os`, \
+                         `any`, `all` or `not`", other),
+                start)),
+        }
+    }
+
     // ─── imports ─────────────────────────────────────────────────────────
 
     fn parse_import(&mut self) -> Result<Import, Diagnostic> {
@@ -468,7 +546,35 @@ impl Parser {
 
     // ─── top-level items ─────────────────────────────────────────────────
 
-    fn parse_item(&mut self) -> Result<Item, Diagnostic> {
+    fn parse_item(&mut self) -> Result<Option<Item>, Diagnostic> {
+        // Plan 42.14 Ф.2: item-level `#cfg(...)`. Парсится ПЕРЕД
+        // export/external/realtime/contract attrs. Если predicate inactive
+        // для current target/features — item пропускается (return None),
+        // но всё равно полностью парсится (для корректного advance токенов).
+        let item_cfg: Option<CfgPredicate> = if matches!(self.peek().kind, TokenKind::Hash)
+            && matches!(
+                self.tokens.get(self.pos + 1).map(|t| &t.kind),
+                Some(TokenKind::Ident(name)) if name == "cfg"
+            )
+        {
+            self.bump(); // #
+            self.bump(); // cfg
+            if !matches!(self.peek().kind, TokenKind::LParen) {
+                return Err(Diagnostic::new("expected `(` after `#cfg`", self.peek().span));
+            }
+            self.bump(); // (
+            let pred = self.parse_cfg_predicate()?;
+            if !matches!(self.peek().kind, TokenKind::RParen) {
+                return Err(Diagnostic::new(
+                    "expected `)` closing #cfg predicate", self.peek().span));
+            }
+            self.bump(); // )
+            self.skip_newlines();
+            Some(pred)
+        } else {
+            None
+        };
+
         let is_export = self.eat(&TokenKind::KwExport).is_some();
         // D82: `external` modifier — между `export` и `fn`. Только для fn.
         let is_external = self.eat(&TokenKind::KwExternal).is_some();
@@ -515,23 +621,36 @@ impl Parser {
                 span,
             ));
         }
-        match self.peek().kind {
-            TokenKind::KwFn => Ok(Item::Fn(self.parse_fn(is_export, is_external, realtime_attr, contract_attrs)?)),
-            TokenKind::KwType => Ok(Item::Type(self.parse_type_decl(is_export)?)),
-            TokenKind::KwLet => Ok(Item::Let(self.parse_let_decl()?)),
-            TokenKind::KwConst => Ok(Item::Const(self.parse_const_decl(is_export)?)),
-            TokenKind::KwTest if !is_export => Ok(Item::Test(self.parse_test_decl()?)),
+        let parsed = match self.peek().kind {
+            TokenKind::KwFn => Item::Fn(self.parse_fn(is_export, is_external, realtime_attr, contract_attrs)?),
+            TokenKind::KwType => Item::Type(self.parse_type_decl(is_export)?),
+            TokenKind::KwLet => Item::Let(self.parse_let_decl()?),
+            TokenKind::KwConst => Item::Const(self.parse_const_decl(is_export)?),
+            TokenKind::KwTest if !is_export => Item::Test(self.parse_test_decl()?),
             _ => {
                 let span = self.peek().span;
-                Err(Diagnostic::new(
+                return Err(Diagnostic::new(
                     format!(
                         "expected fn / type / let / const / test, got {}",
                         self.peek().kind.name()
                     ),
                     span,
-                ))
+                ));
+            }
+        };
+
+        // Plan 42.14 Ф.2: item-level `#cfg` — eval predicate. Если inactive
+        // для current target/features, item полностью parsed но дропается
+        // (return None). Eval использует те же env-источники что imports.rs
+        // (NOVA_TARGET_OS / NOVA_FEATURES) — consistency между фазами.
+        if let Some(pred) = item_cfg {
+            let target = crate::imports::current_target_os();
+            let features = crate::imports::enabled_features();
+            if !crate::imports::eval_cfg_predicate(&pred, target, &features) {
+                return Ok(None);
             }
         }
+        Ok(Some(parsed))
     }
 
     /// Plan 16 (D64 §3697) + Plan 33.1 (D-attr-syntax):

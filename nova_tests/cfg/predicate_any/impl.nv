@@ -1,0 +1,9 @@
+// Plan 42.14 Ф.1: peer с `#cfg(any(...))` predicate.
+// Active на linux ИЛИ macos ИЛИ windows — то есть на всех 3 платформах,
+// которые поддерживает Nova. Всегда active в реальных тестах.
+
+module cfg.predicate_any
+#cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))
+
+export fn helper_value() -> int =>
+    41

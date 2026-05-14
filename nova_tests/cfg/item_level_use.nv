@@ -1,0 +1,29 @@
+// Plan 42.14 Ф.2: item-level #cfg test.
+//
+// Внутри одного файла разные функции gated разными `#cfg(...)`:
+//   - always_fn — без cfg, всегда есть
+//   - supported_fn — #cfg(any(windows, linux, macos)) — есть на всех
+//   - never_fn — #cfg(target_os = "freebsd") — никогда (skip parse)
+//
+// never_fn полностью парсится но дропается (return None в parse_item).
+// Если бы он остался — name collision или unused. Тест проверяет что
+// always_fn + supported_fn работают.
+
+module cfg.item_level_use
+
+fn always_fn() -> int =>
+    1
+
+#cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))
+fn supported_fn() -> int =>
+    2
+
+#cfg(target_os = "freebsd")
+fn never_fn() -> int =>
+    999
+
+test "item-level cfg: active items work, inactive dropped" {
+    assert(always_fn() == 1)
+    assert(supported_fn() == 2)
+    // never_fn() НЕ существует — gated #cfg(freebsd), дропнут на parse.
+}

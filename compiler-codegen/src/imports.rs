@@ -582,32 +582,39 @@ pub fn enabled_features() -> HashSet<String> {
     }
 }
 
-/// Plan 42.12 Ф.2: peer module active при current target/features?
+/// Plan 42.14 Ф.1: рекурсивная оценка одного `#cfg` predicate.
+/// `any` — OR, `all` — AND, `not` — negation.
+pub fn eval_cfg_predicate(
+    pred: &crate::ast::CfgPredicate,
+    target: &str,
+    features: &HashSet<String>,
+) -> bool {
+    use crate::ast::CfgPredicate as P;
+    match pred {
+        P::Feature(name) => features.contains(name),
+        P::TargetOs(os) => match os.as_str() {
+            "windows" => target == "windows",
+            "linux" => target == "linux",
+            "macos" => target == "macos",
+            "unix" | "posix" => target == "linux" || target == "macos" || target == "unix",
+            _ => false, // unknown target = never matches
+        },
+        P::Any(preds) => preds.iter().any(|p| eval_cfg_predicate(p, target, features)),
+        P::All(preds) => preds.iter().all(|p| eval_cfg_predicate(p, target, features)),
+        P::Not(inner) => !eval_cfg_predicate(inner, target, features),
+    }
+}
+
+/// Plan 42.12 Ф.2 + 42.14 Ф.1: peer module active при current target/features?
 /// Проверяет все `#cfg` атрибуты — если хоть один inactive → peer inactive.
-/// (AND semantic — все cfg должны matchнуть.)
+/// (AND semantic между разными `#cfg` атрибутами; внутри одного — `any/all/not`.)
 fn cfg_active(module: &Module) -> bool {
     let target = current_target_os();
     let features = enabled_features();
     for attr in &module.attrs {
         if let crate::ast::ModuleAttrKind::Cfg(pred) = &attr.kind {
-            match pred {
-                crate::ast::CfgPredicate::Feature(name) => {
-                    if !features.contains(name) {
-                        return false;
-                    }
-                }
-                crate::ast::CfgPredicate::TargetOs(os) => {
-                    let matches = match os.as_str() {
-                        "windows" => target == "windows",
-                        "linux" => target == "linux",
-                        "macos" => target == "macos",
-                        "unix" | "posix" => target == "linux" || target == "macos" || target == "unix",
-                        _ => false, // unknown target = never matches
-                    };
-                    if !matches {
-                        return false;
-                    }
-                }
+            if !eval_cfg_predicate(pred, target, &features) {
+                return false;
             }
         }
     }

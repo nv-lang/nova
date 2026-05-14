@@ -89,7 +89,8 @@ pub enum ModuleAttrKind {
     Doc(String),
 }
 
-/// Plan 42.12 Ф.2: cfg predicate (strict minimal, no `any/all/not`).
+/// Plan 42.12 Ф.2 + Plan 42.14 Ф.1: cfg predicate.
+/// Plan 42.14: добавлены `any/all/not` композиции (Rust-style).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CfgPredicate {
     /// `#cfg(feature = "X")` — active если feature `X` в `nova.toml [features]`
@@ -97,6 +98,12 @@ pub enum CfgPredicate {
     Feature(String),
     /// `#cfg(target_os = "Y")` — active если current target matches.
     TargetOs(String),
+    /// Plan 42.14 Ф.1: `#cfg(any(P1, P2, ...))` — active если хоть один.
+    Any(Vec<CfgPredicate>),
+    /// Plan 42.14 Ф.1: `#cfg(all(P1, P2, ...))` — active если все.
+    All(Vec<CfgPredicate>),
+    /// Plan 42.14 Ф.1: `#cfg(not(P))` — active если P inactive.
+    Not(Box<CfgPredicate>),
 }
 
 /// Plan 35 sub-plan 35.A (R26): селективный import — `import X.Y.{A, B as C}`.
