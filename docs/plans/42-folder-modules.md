@@ -242,8 +242,12 @@ module admin
 declaration. Это **Nova-specific advantage**. Production-grade security
 boundary.
 
-**Sub-plan 42.A**: design + impl — отдельная phase после MVP. Не
-блокер для Plan 42 closure, но reserve syntax уже сейчас.
+**Sub-plan 42.10** ✅ ЗАКРЫТ 2026-05-14: `_module.nv` convention
+реализован. Module-level `#forbid` пропагируется всеми peers через
+`inherited_attrs` в `resolve_imports_inline_ex`. CapabilityCtx
+применяет к compiled module. `#requires` НЕ реализован — отвергнут
+(implicit effects in signatures противоречат D62). См.
+[42.10-module-level-forbid.md](42.10-module-level-forbid.md).
 
 ### J. `nova doc <module>` — collect public API from all peers
 
