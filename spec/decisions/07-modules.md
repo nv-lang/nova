@@ -1183,7 +1183,7 @@ nova_tests/
    `_posix`. Применяется к **peer-files** в folder-modules и к
    standalone tests. Без suffix → active всегда.
 
-2. **`#cfg` attribute** (Rust-style minimal) — для **feature flags**
+2. **`#cfg` attribute** (Rust-style) — для **feature flags**
    и item-level OS routing:
    ```nova
    module net.tls
@@ -1191,26 +1191,40 @@ nova_tests/
 
    export fn connect(host str) -> Connection { ... }
    ```
-   Recognized predicates: `#cfg(feature = "X")`,
-   `#cfg(target_os = "Y")`. Strict minimal — **никаких** `any/all/not`
-   composition. Если нужна композиция — два attribute блока (AND
-   semantic) или filename suffix.
+   Recognized predicates:
+   - `#cfg(feature = "X")` — feature flag из `NOVA_FEATURES`.
+   - `#cfg(target_os = "Y")` — OS check.
+   - `#cfg(any(P1, P2, ...))` — OR композиция (active если хоть один).
+   - `#cfg(all(P1, P2, ...))` — AND композиция (active если все).
+   - `#cfg(not(P))` — negation.
+   - Композиции **рекурсивны**: `any(all(...), not(...))` валиден.
+   - **Plan 42.14 Ф.1 (2026-05-14):** `any/all/not` добавлены
+     (изначально были strict-rejected). Выбрана Rust-форма
+     `any(...)` (не Go `&&`/`||`) — однозначность приоритетов,
+     единообразие с attribute syntax, расширяемость вложением.
 
 ### Семантика
 
 | Mechanism | Scope | Detection |
 |---|---|---|
 | Filename suffix | peer-file / standalone test | filename stem suffix |
-| `#cfg(feature)` | peer-file / module (Ф.3: item) | `NOVA_FEATURES` env / `--features` CLI |
-| `#cfg(target_os)` | peer-file / module (Ф.3: item) | `NOVA_TARGET_OS` env / host OS default |
+| `#cfg(feature)` | peer-file / module / **item** (Plan 42.14 Ф.2) | `NOVA_FEATURES` env / `--features` CLI |
+| `#cfg(target_os)` | peer-file / module / **item** (Plan 42.14 Ф.2) | `NOVA_TARGET_OS` env / host OS default |
+| `#cfg(any/all/not)` | то же — рекурсивный predicate | рекурсивный eval (Plan 42.14 Ф.1) |
 
-**AND semantic** для multiple `#cfg`: peer active iff **all** cfg
-predicates match. Один inactive → peer skip целиком (не parsed
-items, не register peer_file, не recurse imports).
+**Item-level `#cfg`** (Plan 42.14 Ф.2): `#cfg(...)` перед top-level
+item (Fn/Type/Const). Inactive predicate → item полностью парсится но
+дропается (`parse_item → None`). Caveat: `#cfg` сразу после `module`
+перехватывается module-level attr loop — item-level `#cfg` не может
+быть на первом item (поставить функцию-непустышку перед ним).
+
+**AND semantic** для multiple `#cfg` атрибутов: peer/item active iff
+**все** cfg атрибуты match. Внутри одного атрибута — `any/all/not`.
+Один inactive → peer skip целиком (не parsed items, не register
+peer_file, не recurse imports).
 
 ### Что НЕ входит
 
-- `any(...)`, `all(...)`, `not(...)` — strict minimal.
 - `#cfg` в expression position (`if #cfg(target_os = ...) { ... }`).
 - `#cfg(target_arch = ...)` — на ARM/x86 differences. Future, если
   понадобится.
@@ -1223,13 +1237,14 @@ items, не register peer_file, не recurse imports).
 
 - **Go-only filename suffix** — мощно для OS routing, слабо для
   feature flags. Plan 18 P0 (TLS) требует и того, и другого.
-- **Rust full `#[cfg(...)]` system** — рабочее, но `any/all/not` +
-  cfg-expr + cfg-attr — 3× complexity. Bootstrap не выдержит.
+- **Rust full `#[cfg(...)]` system** — рабочее, но cfg-expr +
+  cfg-attr — лишняя complexity. Nova взяла `any/all/not` (Plan 42.14)
+  но БЕЗ cfg-в-expression-position и cfg-attr.
 - **Только runtime branching** — dead code в binary + security risk
   (включён код для другой OS).
 
-Filename + minimal `#cfg` покрывает 90% production кейсов при 10%
-complexity Rust'а.
+Filename + `#cfg` (с `any/all/not`, но без cfg-expr) покрывает
+production кейсы при меньшей complexity чем полный Rust.
 
 ### Связь
 

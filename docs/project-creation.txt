@@ -9726,10 +9726,16 @@ NameResCtx — выделено в Plan 42.15 единым refactor'ом. Honest
   HashSet<Vec<String>> keying, Rule H comment)
 - docs/plans/42.14-backlog-closure.md, 42.15-per-peer-import-isolation.md
 - docs/simplifications.md ([M11] RESOLVED, [M12] new)
-- nova_tests/cfg/predicate_any*, predicate_not*, item_level_use (positive)
+- nova_tests/cfg/predicate_any*, predicate_not*, predicate_all*,
+  predicate_all_off*, item_level_use (positive — any/all/not + item-level)
 - nova_tests/negative_capability/cfg_item_inactive_rejected (negative)
 
 328 PASS / 0 FAIL / 7 SKIP.
+
+Followup (2026-05-14): добавлены predicate_all* + predicate_all_off*
+тесты — покрытие #cfg(all(...)) с вложенными any/not (recursive eval)
++ FALSE-конъюнкт → peer skip. D99 в spec обновлён: any/all/not больше
+не в "что НЕ входит", описана рекурсивная композиция + item-level #cfg.
 
 
 ================================================================================
