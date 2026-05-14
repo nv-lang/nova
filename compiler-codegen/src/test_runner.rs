@@ -1997,6 +1997,10 @@ fn codegen_to_c(path: &Path, src: &str) -> Result<Vec<String>, String> {
     })?;
     types::infer_effects(&mut module);
 
+    // Plan 46 (D102) Ф.2: нормализация call-site — named args → positional
+    // + вставка defaults. После type-check (binding validated), до codegen.
+    crate::callnorm::normalize_module(&mut module);
+
     let mut emitter = CEmitter::new();
     emitter.set_source_for_annotations(src.to_string());
     let (c_code, warnings) = emitter

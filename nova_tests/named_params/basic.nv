@@ -1,0 +1,47 @@
+// Plan 46 (D102): именованные аргументы + значения по умолчанию.
+// Базовый positive smoke — все формы вызова.
+
+module named_params.basic
+
+fn connect(host str, port int = 8080, tls bool = false) -> int {
+    let p = port
+    let t = if tls { 1 } else { 0 }
+    host.len + p + t
+}
+
+// Default ссылается на предшествующий параметр (D102 правило 2).
+fn slice_len(xs []int, from int = 0, to int = xs.len) -> int =>
+    to - from
+
+test "все позиционно" {
+    assert(connect("ab", 80, true) == 2 + 80 + 1)
+}
+
+test "все дефолты" {
+    assert(connect("ab") == 2 + 8080 + 0)
+}
+
+test "именованный аргумент" {
+    assert(connect("ab", port: 9000) == 2 + 9000 + 0)
+}
+
+test "именованные переставлены" {
+    assert(connect("ab", tls: true, port: 80) == 2 + 80 + 1)
+}
+
+test "часть позиционно, часть именованно" {
+    assert(connect("ab", 80, tls: true) == 2 + 80 + 1)
+}
+
+test "опущенный средний параметр через дефолт" {
+    // port опущен → 8080, tls именованный
+    assert(connect("ab", tls: true) == 2 + 8080 + 1)
+}
+
+test "default ссылается на предшествующий параметр" {
+    let arr = [10, 20, 30, 40, 50]
+    // from=0 (default), to=xs.len=5 (default ссылается на xs)
+    assert(slice_len(arr) == 5)
+    // from=2 именованный, to=5 default
+    assert(slice_len(arr, from: 2) == 3)
+}

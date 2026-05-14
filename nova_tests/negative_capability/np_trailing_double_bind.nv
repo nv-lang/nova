@@ -1,0 +1,18 @@
+// EXPECT_COMPILE_ERROR связан и trailing-формой, и именованным
+//
+// Plan 46 (D102) Ф.3: trailing-форма (D43) связывает последний
+// функциональный параметр. Передать его И trailing-формой, И
+// именованным аргументом — error (правило 3, «связан дважды»).
+
+module negative_capability.np_trailing_double_bind
+
+fn apply_to(base int, f fn(int) -> int) -> int =>
+    f(base)
+
+fn double(x int) -> int => x * 2
+
+test "trailing + named for same param rejected" {
+    // `f` передан и именованным аргументом (f: double), и trailing-fn.
+    let _ = apply_to(10, f: double) fn(x int) -> int { x + 1 }
+    assert(true)
+}

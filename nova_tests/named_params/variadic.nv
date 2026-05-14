@@ -1,0 +1,43 @@
+// Plan 46 (D102) Ф.3: именованные аргументы + variadic.
+// D102: named args только для параметров ДО variadic; параметры до
+// variadic могут иметь дефолты; variadic — последний, без дефолта.
+//
+// Важное ограничение D102: named regular-параметр нельзя смешать с
+// позиционным variadic-хвостом (named идёт после positional, а хвост
+// позиционный). Валидные комбинации: (а) всё позиционно, (б) regular
+// через named/default + ПУСТОЙ variadic.
+
+module named_params.variadic
+
+fn sum_from(start int = 0, ...nums []int) -> int {
+    let mut total = start
+    for n in nums {
+        total = total + n
+    }
+    total
+}
+
+test "variadic: позиционный start + variadic-хвост" {
+    // 1 -> start, [2,3] -> nums
+    assert(sum_from(1, 2, 3) == 1 + 2 + 3)
+}
+
+test "variadic: start через дефолт, пустой пакет" {
+    assert(sum_from() == 0)
+}
+
+test "variadic: start именованный, пустой пакет" {
+    // start=100 named, nums=[] — валидно: regular named + пустой variadic.
+    assert(sum_from(start: 100) == 100)
+}
+
+fn label_count(prefix str = "x", ...items []int) -> int {
+    let mut c = prefix.len
+    for it in items { c = c + it }
+    c
+}
+
+test "variadic: позиционный prefix + variadic-хвост" {
+    // "ab" -> prefix, [5,5] -> items
+    assert(label_count("ab", 5, 5) == 2 + 5 + 5)
+}

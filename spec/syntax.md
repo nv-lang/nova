@@ -1322,9 +1322,10 @@ D73 — explicit method call для произвольных типов.
 ### `spawn expr`
 
 `spawn` — keyword-конструкция (не функция). По спеке D50 — разрешён только внутри
-structured-scope (`supervised`, `parallel for`, `race`, `cancel_scope`,
-`with_timeout`); вне scope — compile error. В bootstrap-реализации `spawn` вне
-scope временно разрешён в eager-blocking семантике (D71 legacy).
+structured-scope (`supervised`, в т.ч. `supervised(cancel:)`, `parallel for`,
+`select`; и stdlib `race`/`with_timeout` внутри своих тел); вне scope —
+compile error. В bootstrap-реализации `spawn` вне scope временно разрешён в
+eager-blocking семантике (D71 legacy).
 
 Внутри scope `spawn` кладёт fiber в очередь и возвращает unit; результат
 работы — через захваченные `mut`-переменные или каналы. `spawn() { body }`
@@ -1443,18 +1444,20 @@ fn handle_request(req Request) Net Db Detach -> Response {
 }
 ```
 
-### `cancel_scope { tok => body }`
+### `supervised(cancel: tok) { body }`
 
-Manual structured cancellation. Аналог `supervised`, но вводит
-биндинг `tok` (тип `CancelToken` в prelude) — first-class токен,
-который можно передать снаружи и вызвать `tok.cancel()` для fail-fast
-всех fiber'ов в scope'е. Все spawn'ы scope'а на следующем yield-point
-бросят `"scope cancelled"`.
+Structured cancellation с внешним токеном. Обычный `supervised`-scope
+с именованным аргументом `cancel:` ([D102](decisions/03-syntax.md#d102-именованные-аргументы-и-значения-параметров-по-умолчанию)).
+`tok` — **caller-owned** значение типа `CancelToken`: создаётся
+вызывающим кодом, переживает scope, может быть захвачен/передан.
+`tok.cancel()` извне валит все fiber'ы scope'а — на следующем
+yield-point они бросят `"scope cancelled"`.
 
 ```nova
-cancel_scope { tok =>
-    spawn { do_thing(tok) }
-    spawn { do_other(tok) }
+let tok = CancelToken.new()
+supervised(cancel: tok) {
+    spawn { do_thing() }
+    spawn { do_other() }
 }
 
 // внешний kill-switch:
@@ -1464,7 +1467,9 @@ fetch_with_kill(urls, tok)
 ```
 
 Token capabilities: `tok.cancel()`, `tok.is_cancelled()`,
-`tok.bind(other)` для каскадной отмены. Подробно — [D75](decisions/06-concurrency.md#d75).
+`tok.bind(other)` для каскадной отмены. Один токен — один живой scope
+(bind-check). Подробно — [D75](decisions/06-concurrency.md#d75-supervisedcancel-tok--структурная-отмена-с-внешним-токеном).
+Keyword `cancel_scope` удалён (ревизия D75, 2026-05-14).
 
 ### `Channel[T]` и `select`
 
@@ -1521,7 +1526,7 @@ fiber'ов либо идёт в `uv_run UV_RUN_ONCE` (kernel-wait, CPU idle).
 | Вне fiber, внутри `supervised` body | drain queue пока deadline не пройдёт (Plan 22 Ф.5 → libuv-driven main) |
 | Полностью вне scope | native OS sleep (Plan 22 Ф.5 → implicit main-scope, libuv) |
 
-Cancel ([D75](decisions/06-concurrency.md#d75)) прерывает sleep
+Cancel ([D75](decisions/06-concurrency.md#d75-supervisedcancel-tok--структурная-отмена-с-внешним-токеном)) прерывает sleep
 **немедленно** через generic `stop_cb` mechanism (D93): cancel-token
 закрывает таймер и wake'ает parked fiber, который throw'ает `"scope
 cancelled"`. Не нужно ждать срабатывания timer'а.

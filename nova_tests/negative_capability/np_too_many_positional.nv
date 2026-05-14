@@ -1,0 +1,15 @@
+// EXPECT_COMPILE_ERROR слишком много позиционных аргументов
+//
+// Plan 46 (D102): позиционных аргументов больше, чем параметров
+// (callee не variadic) — error. argbind::BindError::TooManyPositional.
+
+module negative_capability.np_too_many_positional
+
+fn takes_two(a int, b int = 0) -> int =>
+    a + b
+
+test "too many positional args rejected" {
+    // takes_two принимает максимум 2 (a + b с дефолтом). Передано 3.
+    let _ = takes_two(1, 2, 3)
+    assert(true)
+}

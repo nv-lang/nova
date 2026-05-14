@@ -333,6 +333,12 @@ pub struct Param {
     /// Caller'ы могут передать N args (которые collected'ятся в []T)
     /// или `...arr` (spread в variadic position).
     pub is_variadic: bool,
+    /// Plan 46 (D102): значение по умолчанию `fn f(x int = expr)`.
+    /// Default-выражение вычисляется **на месте вызова** (не def-time),
+    /// может ссылаться на предшествующие параметры и module-level const.
+    /// Параметры с дефолтом идут строго после параметров без дефолта;
+    /// variadic-параметр НЕ может иметь дефолт. `None` — обязательный.
+    pub default: Option<Expr>,
 }
 
 /// Plan 15 (D72): generic-параметр с optional bound.
@@ -941,12 +947,17 @@ pub enum ArrayElem {
 /// Plan 14 Ф.6 (D69): аргумент вызова. Зеркально к `ArrayElem`.
 /// `Spread` разрешён только в variadic-position на call-site
 /// (codegen в emit_call валидирует).
+/// Plan 46 (D102): `Named` — именованный аргумент `name: expr`.
 #[derive(Debug, Clone)]
 pub enum CallArg {
-    /// Обычный аргумент.
+    /// Обычный позиционный аргумент.
     Item(Expr),
     /// `...expr` — spread в variadic-position.
     Spread(Expr),
+    /// Plan 46 (D102): `name: expr` — именованный аргумент.
+    /// `name` — имя параметра callee (не выражение). Именованные
+    /// аргументы переставимы; позиционный после именованного — error.
+    Named { name: String, value: Expr },
 }
 
 impl CallArg {
@@ -954,11 +965,20 @@ impl CallArg {
     pub fn expr(&self) -> &Expr {
         match self {
             CallArg::Item(e) | CallArg::Spread(e) => e,
+            CallArg::Named { value, .. } => value,
         }
     }
 
     pub fn is_spread(&self) -> bool {
         matches!(self, CallArg::Spread(_))
+    }
+
+    /// Plan 46: имя именованного аргумента, если это `Named`.
+    pub fn arg_name(&self) -> Option<&str> {
+        match self {
+            CallArg::Named { name, .. } => Some(name.as_str()),
+            _ => None,
+        }
     }
 }
 

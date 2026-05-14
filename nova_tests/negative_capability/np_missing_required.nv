@@ -1,0 +1,15 @@
+// EXPECT_COMPILE_ERROR обязательный параметр
+//
+// Plan 46 (D102): параметр без дефолта обязателен (позиционно или
+// по имени). Не передан — error.
+
+module negative_capability.np_missing_required
+
+fn need_two(a int, b int) -> int =>
+    a + b
+
+test "missing required param rejected" {
+    // `b` не передан, у него нет дефолта.
+    let _ = need_two(a: 1)
+    assert(true)
+}

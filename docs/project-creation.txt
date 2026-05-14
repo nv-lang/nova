@@ -10017,3 +10017,109 @@ Codegen (emit_c.rs):
 изолированно, timing-dependent distribution) / 7 SKIP. mn_runtime_preemption.nv
 4/4. Регрессий нет. Plan 44.7 закрыт — последняя крупная дыра M:N-паритета
 с Go (автоматическое вытеснение) закрыта.
+
+
+================================================================================
+PLAN 46: ИМЕНОВАННЫЕ АРГУМЕНТЫ + ЗНАЧЕНИЯ ПО УМОЛЧАНИЮ (D102, 2026-05-14)
+================================================================================
+
+D102: параметр функции может иметь значение по умолчанию; аргумент на
+call-site может передаваться по имени.
+
+  fn connect(host str, port int = 8080, tls bool = false) -> Conn
+  connect("localhost")                       // дефолты
+  connect("localhost", port: 9000)           // именованно
+  connect("localhost", tls: true, port: 80)  // переставимы
+
+### Архитектура — единая логика binding, два потребителя
+
+argbind.rs — bind_call_args(params, args) -> Vec<ArgBinding>:
+сопоставляет позиционные + именованные аргументы с параметрами.
+Возвращает ArgBinding (Positional/Named/Default/Variadic) per параметр
+или BindError. Это НЕ упрощение под bootstrap — правильная архитектура:
+одна функция правил D102, два потребителя (type-checker + codegen).
+
+### Ф.0 — AST + parser
+
+- Param.default: Option<Expr> — значение по умолчанию.
+- CallArg::Named { name, value } — именованный аргумент.
+- parse_param: опциональное `= expr` после типа. variadic не может
+  иметь дефолт. parse_fn: проверка «default после required».
+- call-args: lookahead `ident :` → CallArg::Named (внутри `(...)`
+  вызова `ident:` всегда named-arg, коллизии с record-lit нет).
+
+### Ф.1 — type-checker diagnostics
+
+BoundCtx::check_call_argbind — резолвит callee (free fn по Ident,
+static-method по Path[2], instance-method по уникальному имени метода),
+вызывает bind_call_args, эмитит diagnostics: positional-after-named,
+unknown-param, double-bind, missing-required, named-for-variadic,
+trailing-double-bind. Регрессия после Ф.1: 338 PASS / 0 FAIL — нет
+false positives на существующем коде.
+
+### Ф.2 — callnorm.rs (codegen normalization)
+
+Early-pass normalize_module — переписывает call-site с named/defaults
+в чистый позиционный вызов, чтобы codegen не знал про Named/default.
+
+Двухфазный Block:
+  slice(to: g(), xs: h())  →
+  {
+    let __nova_arg_src0 = g()    // фаза 1: explicit args, source-order
+    let __nova_arg_src1 = h()
+    let xs = __nova_arg_src1     // фаза 2: param-binding, param-order.
+    let from = 0                 //   имя биндинга = имя параметра →
+    let to = xs.len()            //   default видит `xs` естественно
+    slice(xs, from, to)          // call в param-order
+  }
+
+Side-effect order: explicit args в source-order (фаза 1), defaults
+left-to-right. Имена temp-биндингов фазы 2 = имена параметров — это
+устраняет substitution walk: default `xs.len()` резолвится на `let xs`
+выше. Instance-method receiver выносится в temp первым (source-order).
+
+Запускается после type-check, до codegen (test_runner::codegen_to_c,
+nova-cli cmd_build, cmd_run).
+
+### Ф.3 — instance-методы + variadic + trailing
+
+- Instance-методы: callnorm + type-checker резолвят `obj.method` по
+  уникальному имени метода (без type-inference — если метод на одном
+  типе без overload).
+- Variadic: bind_call_args даёт ArgBinding::Variadic(indices) —
+  позиционный хвост. named для variadic-параметра → error.
+- Trailing-форма (D43): связывает последний функциональный параметр;
+  bind против params без него. named + trailing для одного параметра
+  → DuplicateParam error.
+
+### Ф.4 — тесты (11)
+
+positive (nova_tests/named_params/):
+  basic.nv        — 7 форм вызова (поз/имен/смешанно/переставлено/
+                    дефолты/default-ссылается-на-параметр)
+  methods.nv      — instance + static method named args + defaults
+  variadic.nv     — named + variadic комбинации
+  side_effects.nv — observable source-order через массив-аргумент
+
+negative (nova_tests/negative_capability/np_*):
+  default_before_required, positional_after_named, double_bind,
+  missing_required, unknown_named, named_for_variadic,
+  trailing_double_bind — все EXPECT_COMPILE_ERROR.
+
+### Ф.5 — bootstrap-ограничение
+
+[M-interp-named]: treewalk-interp (`nova run`) named args без reorder.
+Codegen path (главный) полностью корректен. interp — вторичный путь;
+cmd_run вызывает callnorm для single-file, но импортированные callee
+в interp-mode не нормализуются.
+
+### Файлы
+
+- compiler-codegen/src/argbind.rs (новый — bind_call_args)
+- compiler-codegen/src/callnorm.rs (новый — normalize_module)
+- compiler-codegen/src/ast/mod.rs (Param.default, CallArg::Named)
+- compiler-codegen/src/parser/mod.rs (parse_param =expr, named call-args)
+- compiler-codegen/src/types/mod.rs (check_call_argbind)
+- compiler-codegen/src/interp/mod.rs (CallArg::Named arm)
+- compiler-codegen/src/test_runner.rs + nova-cli/src/main.rs (pipeline)
+- nova_tests/named_params/* + negative_capability/np_*

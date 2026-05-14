@@ -440,6 +440,8 @@ impl<'a> BoundCtx<'a> {
     fn walk_expr(&self, e: &Expr, scope: &mut HashMap<String, TypeRef>, errors: &mut Vec<Diagnostic>) {
         // Проверяем сам call перед рекурсией в args (порядок не важен).
         self.check_call_bounds(e, scope, errors);
+        // Plan 46 (D102): argument binding diagnostics.
+        self.check_call_argbind(e, errors);
         match &e.kind {
             ExprKind::Call { func, args, trailing } => {
                 self.walk_expr(func, scope, errors);
@@ -676,6 +678,105 @@ impl<'a> BoundCtx<'a> {
             self.check_satisfaction(
                 concrete, bound, &gp.name, &fn_name, e.span, errors,
             );
+        }
+    }
+
+    /// Plan 46 (D102): проверить argument binding на call-site.
+    /// Резолвит callee (free fn / static-method по Path), сопоставляет
+    /// позиционные + именованные аргументы с параметрами через
+    /// `argbind::bind_call_args`, эмитит diagnostics.
+    ///
+    /// Резолв best-effort: если callee неоднозначен (overload по arity)
+    /// или не резолвится (instance-method через Member — нужен тип obj) —
+    /// проверка пропускается (codegen поймает на своём уровне).
+    fn check_call_argbind(
+        &self,
+        e: &Expr,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        let ExprKind::Call { func, args, trailing } = &e.kind else { return; };
+        // Распакуем turbofish до базового func-expr.
+        let base: &Expr = match &func.kind {
+            ExprKind::TurboFish { base, .. } => base,
+            _ => func.as_ref(),
+        };
+        // Резолвим callee → список параметров.
+        let callee_params: &[Param] = match &base.kind {
+            ExprKind::Ident(name) => {
+                let Some(overloads) = self.fn_decls.get(name) else { return; };
+                match overloads.as_slice() {
+                    [single] => &single.params,
+                    _ => return, // overload — пропускаем (D102: нет overload,
+                                 // но bootstrap fn_decls может иметь несколько).
+                }
+            }
+            ExprKind::Path(parts) if parts.len() == 2 => {
+                // `Type.method` — static-method резолв.
+                let Some(methods) = self.method_table.get(&parts[0]) else { return; };
+                let Some(overloads) = methods.get(&parts[1]) else { return; };
+                match overloads.as_slice() {
+                    [single] => &single.params,
+                    _ => return,
+                }
+            }
+            // Plan 46 Ф.3: instance-method `obj.method(...)`. Без
+            // type-inference резолвим по уникальному имени метода: если
+            // метод с этим именем есть ровно на одном типе без overload
+            // — берём его сигнатуру. Иначе (несколько типов / overload)
+            // — пропускаем (codegen резолвит через type-info).
+            ExprKind::Member { name: method_name, .. } => {
+                let mut found: Option<&FnDecl> = None;
+                let mut ambiguous = false;
+                for methods in self.method_table.values() {
+                    if let Some(overloads) = methods.get(method_name) {
+                        for f in overloads {
+                            if found.is_some() {
+                                ambiguous = true;
+                            }
+                            found = Some(f);
+                        }
+                    }
+                }
+                if ambiguous { return; }
+                match found {
+                    Some(f) => &f.params,
+                    None => return,
+                }
+            }
+            _ => return,
+        };
+        // Plan 46 Ф.3: trailing-форма (D43) связывает ПОСЛЕДНИЙ
+        // функциональный параметр. Bind'аем против params без него.
+        // Также: если named-arg назван как trailing-bound param — это
+        // double-bind (ловится ниже отдельно).
+        let trailing_present = trailing.is_some();
+        let effective_params: &[Param] = if trailing_present && !callee_params.is_empty() {
+            // Проверка: named-arg для trailing-bound параметра — error.
+            let last = &callee_params[callee_params.len() - 1];
+            for a in args.iter() {
+                if a.arg_name() == Some(last.name.as_str()) {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "параметр `{}` связан и trailing-формой, и именованным \
+                             аргументом (D102)",
+                            last.name
+                        ),
+                        a.expr().span,
+                    ));
+                    return;
+                }
+            }
+            &callee_params[..callee_params.len() - 1]
+        } else {
+            callee_params
+        };
+        // Запускаем binding. Ошибка → diagnostic.
+        if let Err(err) = crate::argbind::bind_call_args(effective_params, args) {
+            let span = {
+                let s = err.span();
+                if s == crate::diag::Span::dummy() { e.span } else { s }
+            };
+            errors.push(Diagnostic::new(err.message(), span));
         }
     }
 

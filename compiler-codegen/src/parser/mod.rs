@@ -1032,6 +1032,23 @@ impl Parser {
                 ));
             }
         }
+        // Plan 46 (D102): параметры с дефолтом идут строго ПОСЛЕ
+        // параметров без дефолта. `fn f(x int = 0, y int)` — error.
+        let mut seen_default = false;
+        for p in &params {
+            if p.default.is_some() {
+                seen_default = true;
+            } else if seen_default && !p.is_variadic {
+                return Err(Diagnostic::new(
+                    format!(
+                        "параметр `{}` без значения по умолчанию не может идти после \
+                         параметра с дефолтом (D102)",
+                        p.name
+                    ),
+                    p.span,
+                ));
+            }
+        }
 
         // Effects: до `->` или до тела
         let effects = self.parse_effects_until_arrow_or_body()?;
@@ -1137,11 +1154,31 @@ impl Parser {
                 ty.span(),
             ));
         }
+        // Plan 46 (D102): опциональное `= expr` — значение по умолчанию.
+        // Variadic-параметр не может иметь дефолт (его дефолт — пустой
+        // пакет). Правило «default после required» проверяется в parse_fn
+        // после сбора всех params (нужен весь список).
+        let default = if matches!(self.peek().kind, TokenKind::Eq) {
+            if is_variadic {
+                return Err(Diagnostic::new(
+                    format!("variadic-параметр `{}` не может иметь значение по умолчанию (D102)", name),
+                    self.peek().span,
+                ));
+            }
+            self.bump(); // =
+            // Default-выражение без struct-literal ambiguity (как в других
+            // expr-position внутри сигнатуры).
+            Some(self.with_no_struct_or_trailing(|p| p.parse_expr())?)
+        } else {
+            None
+        };
+        let span_end = default.as_ref().map(|e| e.span).unwrap_or_else(|| ty.span());
         Ok(Param {
             name,
             ty: ty.clone(),
-            span: name_span.merge(ty.span()),
+            span: name_span.merge(span_end),
             is_variadic,
+            default,
         })
     }
 
@@ -2425,6 +2462,21 @@ impl Parser {
                         if self.eat(&TokenKind::DotDotDot).is_some() {
                             let inner = self.parse_expr()?;
                             args.push(CallArg::Spread(inner));
+                        } else if matches!(self.peek().kind, TokenKind::Ident(_))
+                            && matches!(
+                                self.tokens.get(self.pos + 1).map(|t| &t.kind),
+                                Some(TokenKind::Colon)
+                            )
+                        {
+                            // Plan 46 (D102): `name: expr` — именованный
+                            // аргумент. Внутри `(...)` вызова `ident ':'`
+                            // всегда named-arg (коллизии с record-литералом
+                            // нет — record это `Имя { ... }`).
+                            let (arg_name, _) = self.parse_ident()?;
+                            self.bump(); // :
+                            self.skip_newlines();
+                            let value = self.parse_expr()?;
+                            args.push(CallArg::Named { name: arg_name, value });
                         } else {
                             args.push(CallArg::Item(self.parse_expr()?));
                         }

@@ -1,0 +1,15 @@
+// EXPECT_COMPILE_ERROR нет такого параметра
+//
+// Plan 46 (D102): имя в `name: expr` — имя параметра callee. Имя,
+// которого нет среди параметров — error.
+
+module negative_capability.np_unknown_named
+
+fn greet(name str) -> int =>
+    name.len
+
+test "unknown named arg rejected" {
+    // У `greet` нет параметра `nonexistent`.
+    let _ = greet(nonexistent: "x")
+    assert(true)
+}
