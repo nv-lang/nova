@@ -1,6 +1,10 @@
 # План 20: D90 implementation — `defer` / `errdefer`
 
-**Статус:** 🟡 **DRAFT — implementation pending**.
+**Статус:** ✅ **ЗАКРЫТ** — реализовано: лексер `KwDefer`/`KwErrdefer`,
+AST `Stmt::Defer`/`ErrDefer`, codegen LIFO defer-scope
+(`enter_defer_scope`/`leave_defer_scope`/`emit_defer_body_void`), ~27
+тестов (`nova_tests/syntax/` + `expected_runtime/` panic-interaction +
+`negative_capability/`) — все в полном прогоне.
 **Дата создания:** 2026-05-10.
 **Зависимости:** [D90](../../spec/decisions/03-syntax.md#d90-defer-и-errdefer--scope-level-cleanup-statement).
 **Блокирует:** [Plan 21](#) (D91 Channel revision — использует `defer tx.close()`).
