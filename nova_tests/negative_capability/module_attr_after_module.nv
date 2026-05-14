@@ -1,0 +1,16 @@
+// EXPECT_COMPILE_ERROR must precede the `module` declaration
+//
+// Plan 42.17 Ф.5: `#forbid` / `#doc` — module-level атрибуты, валидны
+// ТОЛЬКО перед `module` declaration. Размещённые ПОСЛЕ `module` —
+// чёткая ошибка (раньше падало в parse_item с misleading «expected
+// fn/type/...»).
+
+module negative_capability.module_attr_after_module
+
+#forbid Net
+
+fn f() -> int => 1
+
+test "unreachable — parse error on misplaced #forbid" {
+    assert(f() == 1)
+}

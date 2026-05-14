@@ -127,6 +127,25 @@ impl Parser {
             if matches!(self.peek().kind, TokenKind::Eof) {
                 break;
             }
+            // Plan 42.17 Ф.5: `#forbid` / `#doc` — module-level атрибуты,
+            // валидны ТОЛЬКО перед `module` declaration. После — чёткая
+            // ошибка (раньше падало в parse_item с misleading «expected
+            // fn/type/...»). `#cfg` — исключение: легитимен как item-level
+            // атрибут перед fn/type/const, его здесь не трогаем.
+            if matches!(self.peek().kind, TokenKind::Hash) {
+                let next_kind = self.tokens.get(self.pos + 1).map(|t| &t.kind);
+                let is_forbid = matches!(next_kind, Some(TokenKind::KwForbid));
+                let is_doc =
+                    matches!(next_kind, Some(TokenKind::Ident(n)) if n == "doc");
+                if is_forbid || is_doc {
+                    let attr = if is_forbid { "#forbid" } else { "#doc" };
+                    return Err(Diagnostic::new(
+                        format!(
+                            "`{attr}` is a module-level attribute — it must \
+                             precede the `module` declaration, not follow it"),
+                        self.peek().span));
+                }
+            }
             if matches!(self.peek().kind, TokenKind::KwImport | TokenKind::KwUse) {
                 imports.push(self.parse_import()?);
                 continue;
