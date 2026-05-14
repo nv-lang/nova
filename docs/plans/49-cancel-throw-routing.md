@@ -304,8 +304,9 @@ fallback для fiber'ов, запаркованных в блокирующих
 - Полный `nova test` (release) — без новых FAIL.
 - spec `06-concurrency.md`: D-decision (~D104) — «cancellation semantics:
   kinded throws, отмена ≠ ошибка, typed reason `CancelToken[T]`,
-  USER-precedence, link-time-reason cascade». Обновить D75 §«Семантика
-  отмены», §«Модель токена» (typed reason), §«История» (ограничение снято).
+  USER-precedence, cross-type cascade через `From`-конвертацию». Обновить
+  D75 §«Семантика отмены», §«Модель токена» (typed reason), §«История»
+  (ограничение снято).
 - `project-creation.txt` + `simplifications.md`: закрытие; снять
   `[M-cancel-throw-routing]` + `[M-within-error-conflation]`.
 - discussion-log.
@@ -454,8 +455,8 @@ fail-frame unwinding'у; Ф.4 явно тестирует defer+errdefer при 
   Оба нужны для чистого stdlib `within`/`race` (48 — компиляция,
   49 — семантика).
 - spec D75 §«Семантика отмены» / §«Модель токена» / §«История» —
-  обновляются в Ф.7 (typed `reason()`, link-time-reason cascade,
-  снимается ограничение).
+  обновляются в Ф.7 (typed `reason()`, cross-type cascade через
+  `From`-конвертацию, снимается ограничение).
 - D65 (Fail-strict, typed errors) — Plan 49 минимально совместим:
   `USER`-kind = текущая D65-семантика; `CANCEL` — ортогональный вид.
   Plan 49 типизирует *причину отмены* (`CancelToken[T]`); типизация
