@@ -84,6 +84,51 @@ spawn { Time.sleep(5_000); tok.cancel() }
 
 ---
 
+## Сравнение с индустрией (re-check 2026-05-15)
+
+| | Структурная конкурентность | Внешняя отмена | Каскад родитель→ребёнок | «Отмена ≠ ошибка» |
+|---|---|---|---|---|
+| **Go** | `errgroup` / явный `WaitGroup` | `context.Context` (`WithCancel`) | дерево `context` | да (`ctx.Err()` — значение) |
+| **Rust** | `JoinSet` / `task::scope` | `CancellationToken` (tokio) | `child_token()` | да (drop / structural) |
+| **TypeScript** | `Promise.all`/`allSettled` | `AbortController`/`AbortSignal` | `AbortSignal.any([...])` | полу (`AbortError` в reject) |
+| **Nova (Plan 47)** | `supervised` (keyword, D50) | `supervised(cancel: tok)` | `child.cancelled_by(parent)` | **частично** — см. ниже |
+
+**Где Plan 47 на паритете:**
+- Структурная конкурентность встроена в язык (`supervised` — keyword,
+  гарантирует join всех `spawn`). Это **сильнее** Go (там `errgroup` —
+  библиотека, забыть `Wait()` можно) и на уровне Rust `scope`.
+- Caller-owned токен, переживающий scope, `cancel()` на завершённом —
+  no-op: паритет с Go `context` (можно держать ссылку после).
+- `AbortSignal.any([a, b])` выражается несколькими `cancelled_by`:
+  `t.cancelled_by(a); t.cancelled_by(b)` → `t` отменяется когда отменён
+  любой из них. Паритет с TS, без отдельного API.
+
+**Где Plan 47 СОЗНАТЕЛЬНО строже индустрии (честно):**
+- **Bind-check «один токен — один живой scope»** — Go/Rust позволяют
+  свободно шарить `context`/`CancellationToken` между чем угодно. Nova
+  запрещает (runtime panic при double-bind). Обоснование — D75 §«Почему
+  runtime-check»: шарить токен «вниз» по вложенности не нужно (вложенный
+  scope рвётся автоматически как часть structured-отмены), а защищать
+  надо только aliasing. Это **строже**, но не «хуже» — это убранный
+  класс ошибок (нельзя случайно отменить чужой scope).
+
+**Чего Plan 47 НЕ закрывает (→ Plans 48/49):**
+- **«Отмена ≠ ошибка» не полная.** Cancel-throw сейчас убегает из
+  `supervised(cancel:)` как Fail — нужна обёртка `with Fail`. Это
+  `[M-cancel-throw-routing]`. Закрывается **Plan 49** (kinded throws):
+  после него отмена не убегает, паритет с Go/Rust.
+- **Причина отмены** (Go `Context.Cause`, TS `signal.reason`) — нет.
+  Закрывается **Plan 49** (cancel reason).
+- **Stdlib `within`/`race`/`with_timeout`** (Go `WithTimeout`, TS
+  `AbortSignal.timeout`) — отложены: требуют closures-in-generics
+  (**Plan 48**) + чистой семантики отмены (**Plan 49**).
+
+Итог: **Plan 47 даёт каркас структурной отмены на паритете с Go/Rust,
+местами строже. Полный паритет «отмена = first-class, не ошибка, с
+причиной» + stdlib-обёртки — это Plans 48 + 49.**
+
+---
+
 ## Архитектурное решение
 
 ### Модель токена — caller-owned handle
