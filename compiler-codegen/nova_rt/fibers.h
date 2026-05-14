@@ -471,60 +471,116 @@ static inline void nova_scope_pin_ctx(NovaFiberQueue* scope, void* ctx) {
     scope->ctx_pins[scope->ctx_pins_count++] = ctx;
 }
 
-/* ---- D75: CancelToken — first-class cancellation handle ----
+/* ---- D75 (revised, Plan 47): CancelToken — caller-owned cancellation handle ----
  *
- * Token wraps a NovaFiberQueue* (its "own" scope). cancel() sets the
- * scope's cancel_requested flag — same mechanism D71 uses for cooperative
- * cancellation. linked[] holds tokens that should also be cancelled when
- * this one is (parent kill-switch composition via bind()). */
-#define NOVA_CANCEL_LINKED_CAP 8
-
+ * Модель: токен — caller-owned значение, создаётся `CancelToken.new()`,
+ * живёт сколько нужно вызывающему коду. `supervised(cancel: tok)` при входе
+ * ПРИВЯЗЫВАЕТ токен к scope'у (`bind`), при выходе — ОТВЯЗЫВАЕТ (`unbind`).
+ * Токен переживает scope: `cancel()` на отвязанном / завершённом scope'е —
+ * безвредный no-op (только записывает intent в сам токен).
+ *
+ * Поля:
+ *  - cancel_requested — intent-флаг: был ли вызван cancel() на этом токене.
+ *    Сохраняется навсегда (kill-switch остаётся flipped). `is_cancelled()`
+ *    читает именно его — токен это first-class handle, ответ не зависит от
+ *    того, привязан ли он сейчас.
+ *  - bound_scope — живой scope, к которому токен сейчас привязан, или NULL.
+ *    Bind-check: повторный bind при non-NULL → runtime panic.
+ *  - linked[] — динамический список токенов-каскадов: при cancel() этого
+ *    токена каскадно отменяются они. Растёт геометрически; GC-managed
+ *    (nova_alloc), чтобы хранимые указатели не давали GC собрать цели. */
 typedef struct NovaCancelToken {
-    NovaFiberQueue*           scope;          /* own scope (owner) */
-    struct NovaCancelToken*   linked[NOVA_CANCEL_LINKED_CAP];
+    nova_bool                 cancel_requested;  /* intent: был ли cancel() */
+    NovaFiberQueue*           bound_scope;       /* live scope, либо NULL */
+    struct NovaCancelToken**  linked;            /* cascade children (GC array) */
     int                       linked_count;
+    int                       linked_cap;
 } NovaCancelToken;
 
-static inline void nova_cancel_token_init(NovaCancelToken* t, NovaFiberQueue* q) {
-    t->scope = q;
-    t->linked_count = 0;
-    for (int i = 0; i < NOVA_CANCEL_LINKED_CAP; i++) t->linked[i] = NULL;
+/* Аллокация GC-managed токена. nova_alloc zero-инициализирует — все поля
+ * 0/NULL/false, токен сразу валиден (unbound, не-cancelled, без каскадов). */
+static inline NovaCancelToken* nova_cancel_token_new(void) {
+    return (NovaCancelToken*)nova_alloc(sizeof(NovaCancelToken));
 }
 
+/* Привязать токен к scope'у (вызывается emit_supervised при входе).
+ * Bind-check: токен уже привязан к живому scope'у → runtime panic.
+ * Если cancel() уже был вызван до bind'а — отмена немедленно
+ * пробрасывается в свежепривязанный scope. */
+static inline void nova_cancel_token_bind(NovaCancelToken* t, NovaFiberQueue* q) {
+    if (!t || !q) return;
+    if (t->bound_scope != NULL) {
+        fprintf(stderr, "nova: panic: token already bound to a live scope\n");
+        abort();
+    }
+    t->bound_scope = q;
+    /* cancel-before-bind: pending intent пробрасывается в новый scope. */
+    if (t->cancel_requested) {
+        q->cancel_requested = true;
+        nova_sched_cancel_all_pending(q);
+    }
+}
+
+/* Отвязать токен от scope'а (вызывается emit_supervised на выходе, включая
+ * throw-путь). Intent-флаг (cancel_requested) НЕ сбрасывается — токен
+ * помнит, что был отменён. */
+static inline void nova_cancel_token_unbind(NovaCancelToken* t) {
+    if (!t) return;
+    t->bound_scope = NULL;
+}
+
+/* Запросить отмену. Idempotent. Всегда записывает intent в сам токен;
+ * если привязан к живому scope'у — ставит его cancel_requested + будит
+ * parked-fiber'ов; каскадно отменяет linked[]. На отвязанном / завершённом
+ * scope'е — безвредно (только intent-флаг). */
 static inline void nova_cancel_token_cancel(NovaCancelToken* t) {
-    if (!t || !t->scope) return;
-    if (t->scope->cancel_requested) return;   /* idempotent */
-    t->scope->cancel_requested = true;
-    /* Plan 22 Ф.4 (D93): wake all parked fiber'ов через registered
-     * stop_cb's. Это immediate (не дожидаемся следующего yield-point
-     * — fiber вообще park'ом без yield'ов). */
-    nova_sched_cancel_all_pending(t->scope);
-    /* Walk linked tokens and cancel them too — kill-switch composition. */
+    if (!t) return;
+    if (t->cancel_requested) return;          /* idempotent */
+    t->cancel_requested = true;
+    if (t->bound_scope) {
+        t->bound_scope->cancel_requested = true;
+        /* Plan 22 Ф.4 (D93): wake all parked fiber'ов через registered
+         * stop_cb's — immediate, не дожидаясь следующего yield-point'а. */
+        nova_sched_cancel_all_pending(t->bound_scope);
+    }
+    /* Каскад: отменяем все linked-токены (kill-switch composition). */
     for (int i = 0; i < t->linked_count; i++) {
         NovaCancelToken* other = t->linked[i];
         if (other) nova_cancel_token_cancel(other);
     }
 }
 
+/* Чтение intent-флага без yield. Не throws. Отражает «был ли вызван
+ * cancel() на этом токене» — независимо от bind-состояния. */
 static inline nova_bool nova_cancel_token_is_cancelled(NovaCancelToken* t) {
-    if (!t || !t->scope) return false;
-    return t->scope->cancel_requested;
+    if (!t) return false;
+    return t->cancel_requested;
 }
 
-/* bind(self, parent): when parent.cancel() fires, self gets cancelled too.
- * Implementation: append self into parent.linked[]. */
-static inline void nova_cancel_token_bind(NovaCancelToken* self,
-                                          NovaCancelToken* parent) {
-    if (!self || !parent) return;
-    if (parent->linked_count >= NOVA_CANCEL_LINKED_CAP) {
-        fprintf(stderr, "nova: cancel-token linked cap (%d) exceeded\n",
-            NOVA_CANCEL_LINKED_CAP);
-        abort();
+/* Направленный каскад: Nova-уровень `child.cancelled_by(parent)` — когда
+ * `parent.cancel()` сработает, `child` тоже будет отменён (но НЕ наоборот:
+ * отмена течёт только вниз, parent → child). Реализация: `child`
+ * добавляется в `parent->linked[]`. Динамический рост массива (GC-managed
+ * copy). Если `parent` уже отменён — `child` отменяется немедленно.
+ * Параметры названы tok/other по historical reasons — семантически
+ * tok = child, other = parent. */
+static inline void nova_cancel_token_bind_cascade(NovaCancelToken* tok,
+                                                  NovaCancelToken* other) {
+    if (!tok || !other) return;
+    if (other->linked_count >= other->linked_cap) {
+        int new_cap = other->linked_cap > 0 ? other->linked_cap * 2 : 4;
+        NovaCancelToken** grown = (NovaCancelToken**)nova_alloc(
+            (size_t)new_cap * sizeof(NovaCancelToken*));
+        for (int i = 0; i < other->linked_count; i++) {
+            grown[i] = other->linked[i];
+        }
+        other->linked = grown;
+        other->linked_cap = new_cap;
     }
-    parent->linked[parent->linked_count++] = self;
-    /* If parent is already cancelled, propagate immediately. */
-    if (parent->scope && parent->scope->cancel_requested) {
-        nova_cancel_token_cancel(self);
+    other->linked[other->linked_count++] = tok;
+    /* Если other уже отменён — пробрасываем немедленно. */
+    if (other->cancel_requested) {
+        nova_cancel_token_cancel(tok);
     }
 }
 
@@ -791,8 +847,14 @@ static inline void nova_supervised_drain_main_scope(NovaFiberQueue* q) {
  * uv_run UV_RUN_ONCE. Это блокирует main-thread в kernel-wait'е до
  * ближайшего libuv-события (наш timer's callback пробудит fiber). Так
  * scheduler не жжёт CPU busy-loop'ом.
+ *
+ * Plan 47: `tok` (nullable) — cancel-токен `supervised(cancel: tok)`.
+ * Отвязывается ПЕРЕД любым re-throw/interrupt — scope (`q`) живёт на
+ * стеке сгенерированного C-frame'а и становится невалидным после
+ * longjmp'а, поэтому `bound_scope` нельзя оставлять висеть.
  */
-static inline void nova_supervised_run(NovaFiberQueue* q) {
+static inline void nova_supervised_run_impl(NovaFiberQueue* q,
+                                            NovaCancelToken* tok) {
     for (;;) {
         int alive = nova_supervised_step(q);
         if (alive == 0) {
@@ -823,6 +885,11 @@ static inline void nova_supervised_run(NovaFiberQueue* q) {
     nova_int  ivalue  = q->interrupt_value;
     void*     iptr    = q->interrupt_value_ptr;
     q->count = 0;
+    /* Plan 47: unbind токен ПЕРЕД любым longjmp'ом (re-throw / interrupt).
+     * После unbind'а `tok->bound_scope == NULL` → последующий `tok.cancel()`
+     * / повторный bind безопасны; `tok` (caller-owned, GC) переживает
+     * unwind. На normal-пути (нет err/pending) unbind тоже здесь. */
+    if (tok) nova_cancel_token_unbind(tok);
     /* Pending interrupt from a fiber's handler-method takes priority over
      * fiber-throw error: handler ran successfully, decided to interrupt
      * the with-block. Re-issue on main-flow where the with-frame is reachable.
@@ -839,6 +906,19 @@ static inline void nova_supervised_run(NovaFiberQueue* q) {
         /* Re-throw on main-flow (back in caller's stack — safe to longjmp). */
         nova_throw(nova_str_from_cstr(err));
     }
+}
+
+/* `supervised { body }` — без cancel-токена. */
+static inline void nova_supervised_run(NovaFiberQueue* q) {
+    nova_supervised_run_impl(q, NULL);
+}
+
+/* `supervised(cancel: tok) { body }` — с cancel-токеном (Plan 47).
+ * Токен отвязывается внутри _impl перед нормальным возвратом И перед
+ * любым re-throw. */
+static inline void nova_supervised_run_cancel(NovaFiberQueue* q,
+                                              NovaCancelToken* tok) {
+    nova_supervised_run_impl(q, tok);
 }
 
 /* nova_fiber_yield — suspend the current fiber, yielding to the scheduler.

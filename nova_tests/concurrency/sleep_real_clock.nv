@@ -45,7 +45,8 @@ test "many fibers sleep concurrently, not sequentially" {
 
 test "cancel during long sleep wakes immediately" {
     let t0 = Time.now()
-    cancel_scope { tok =>
+    let tok = CancelToken.new()
+    supervised(cancel: tok) {
         spawn {
             Time.sleep(10000)  // 10 sec — должен быть отменён
         }

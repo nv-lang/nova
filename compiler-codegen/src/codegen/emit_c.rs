@@ -1503,6 +1503,10 @@ impl CEmitter {
                         }
                         Ok("void*".into())
                     }
+                    // D75 (revised, Plan 47): CancelToken — caller-owned
+                    // cancellation handle. C-тип — NovaCancelToken* (без
+                    // подчёркивания Nova_ — это runtime-struct, не Nova-record).
+                    "CancelToken" => Ok("NovaCancelToken*".into()),
                     _ => {
                         // Check if it's a type alias — return the aliased type directly (no *)
                         if let Some(aliased_c) = self.type_aliases.get(&name).cloned() {
@@ -2457,7 +2461,18 @@ impl CEmitter {
     /// Emit `supervised { body }` — D50 structured-concurrency scope.
     /// All `spawn` inside the body push fibers into a local NovaFiberQueue;
     /// at scope-exit, nova_supervised_run drives them round-robin to completion.
-    fn emit_supervised(&mut self, body: &Block) -> Result<String, String> {
+    /// Emit `supervised { body }` / `supervised(cancel: tok) { body }`
+    /// (D50 / D75 revised, Plan 47).
+    ///
+    /// Если `cancel` присутствует — токен (`NovaCancelToken*`) вычисляется
+    /// при входе в scope, ПРИВЯЗЫВАЕТСЯ к scope-queue прямо перед
+    /// `nova_supervised_run_cancel` (после эмиссии тела — так прямой `throw`
+    /// в стейтменте тела не оставит висящий `bound_scope`), и ОТВЯЗЫВАЕТСЯ
+    /// внутри `nova_supervised_run_cancel` на всех путях выхода (нормальный
+    /// возврат + re-throw).
+    fn emit_supervised(&mut self, body: &Block, cancel: Option<&Expr>)
+        -> Result<String, String>
+    {
         let id = self.supervised_counter;
         self.supervised_counter += 1;
         let queue_var = format!("_nova_scope_q_{}", id);
@@ -2468,6 +2483,18 @@ impl CEmitter {
         self.indent += 1;
         self.line(&format!("NovaFiberQueue {} = {{0}};", queue_var));
         self.line(&format!("nova_scope_init(&{});", queue_var));
+
+        // Plan 47: evaluate the cancel-token expr at scope entry — source
+        // order, `(cancel: tok)` стоит до `{ body }`. Кладём в temp;
+        // bind происходит ниже, после тела, перед run'ом.
+        let cancel_tok_var = if let Some(cexpr) = cancel {
+            let cval = self.emit_expr(cexpr)?;
+            let tv = format!("_nova_cancel_tok_{}", id);
+            self.line(&format!("NovaCancelToken* {} = {};", tv, cval));
+            Some(tv)
+        } else {
+            None
+        };
 
         // Set _nova_active_scope to this queue so that on main-flow,
         // Time.sleep (default handler) finds the right scope to drive.
@@ -2493,7 +2520,17 @@ impl CEmitter {
         self.current_scope_queue = prev;
 
         // Run the scheduler: round-robin until all fibers in queue are dead.
-        self.line(&format!("nova_supervised_run(&{});", queue_var));
+        // Plan 47: для cancel-формы — bind токена к scope-queue здесь (после
+        // тела: прямой throw в body-стейтменте не оставит dangling
+        // bound_scope), затем run-with-cancel; unbind делается внутри
+        // nova_supervised_run_cancel перед нормальным возвратом И перед
+        // любым re-throw.
+        if let Some(tv) = &cancel_tok_var {
+            self.line(&format!("nova_cancel_token_bind({}, &{});", tv, queue_var));
+            self.line(&format!("nova_supervised_run_cancel(&{}, {});", queue_var, tv));
+        } else {
+            self.line(&format!("nova_supervised_run(&{});", queue_var));
+        }
         // Restore previous active scope (may be NULL or outer scope).
         self.line(&format!("_nova_active_scope = {};", prev_scope_var));
 
@@ -2501,68 +2538,6 @@ impl CEmitter {
         self.line("}");
 
         // supervised expression evaluates to unit.
-        Ok("NOVA_UNIT".to_string())
-    }
-
-    /// Emit `cancel_scope { tok => body }` — D75 manual structured cancellation.
-    /// Like `emit_supervised` but binds a `NovaCancelToken*` variable named
-    /// `token_name` for the body to capture into spawns. External code that
-    /// holds the token can call `nova_cancel_token_cancel()` to fail-fast.
-    fn emit_cancel_scope(&mut self, token_name: &str, body: &Block) -> Result<String, String> {
-        let id = self.supervised_counter;
-        self.supervised_counter += 1;
-        let queue_var = format!("_nova_scope_q_{}", id);
-        let prev_scope_var = format!("_nova_prev_scope_{}", id);
-        let tok_var = token_name.to_string();
-
-        // The token must be heap-allocated: its address is captured by spawns
-        // (by-pointer capture for non-scalars), but the queue lives on the
-        // stack inside the supervised C-block. Spawns may run after we've
-        // finished emitting body — they just resume in-place. The token
-        // pointing into the same C-frame's stack is fine; we keep the
-        // C-block open until nova_supervised_run returns.
-        self.line("{");
-        self.indent += 1;
-        self.line(&format!("NovaFiberQueue {} = {{0}};", queue_var));
-        self.line(&format!("nova_scope_init(&{});", queue_var));
-        self.line(&format!(
-            "NovaCancelToken* {} = (NovaCancelToken*)nova_alloc(sizeof(NovaCancelToken));",
-            tok_var
-        ));
-        self.line(&format!("nova_cancel_token_init({}, &{});", tok_var, queue_var));
-
-        self.line(&format!("NovaFiberQueue* {} = _nova_active_scope;", prev_scope_var));
-        self.line(&format!("_nova_active_scope = &{};", queue_var));
-
-        // Register the token in var_types so spawns capturing it work.
-        // Type "NovaCancelToken*" is a pointer; spawn-capture treats it
-        // by-pointer. We also mark non-mut so it's pass-by-pointer once
-        // (token is immutable handle; the *scope it points to* is what mutates).
-        self.var_types.insert(tok_var.clone(), "NovaCancelToken*".to_string());
-        self.var_mutable.remove(&tok_var);
-
-        let prev = std::mem::replace(&mut self.current_scope_queue, Some(queue_var.clone()));
-
-        let block_id = self.enter_defer_scope(body, false);
-        for stmt in &body.stmts {
-            self.emit_stmt(stmt)?;
-        }
-        if let Some(trailing) = &body.trailing {
-            let v = self.emit_expr(trailing)?;
-            self.line(&format!("(void)({});", v));
-        }
-        self.leave_defer_scope(block_id);
-
-        self.current_scope_queue = prev;
-        self.line(&format!("nova_supervised_run(&{});", queue_var));
-        self.line(&format!("_nova_active_scope = {};", prev_scope_var));
-
-        // Drop the binding from var_types (scope-local).
-        self.var_types.remove(&tok_var);
-
-        self.indent -= 1;
-        self.line("}");
-
         Ok("NOVA_UNIT".to_string())
     }
 
@@ -2603,7 +2578,7 @@ impl CEmitter {
                 span,
             );
             let supervised_block = Block { stmts: vec![Stmt::Expr(for_expr)], trailing: None, span };
-            return self.emit_supervised(&supervised_block);
+            return self.emit_supervised(&supervised_block, None);
         }
 
         // Array-mode: infer element type from the trailing expression.
@@ -2629,7 +2604,7 @@ impl CEmitter {
                     span,
                 );
                 let supervised_block = Block { stmts: vec![Stmt::Expr(for_expr)], trailing: None, span };
-                return self.emit_supervised(&supervised_block);
+                return self.emit_supervised(&supervised_block, None);
             }
         };
 
@@ -2661,7 +2636,7 @@ impl CEmitter {
                         span,
                     );
                     let supervised_block = Block { stmts: vec![Stmt::Expr(for_expr)], trailing: None, span };
-                    return self.emit_supervised(&supervised_block);
+                    return self.emit_supervised(&supervised_block, None);
                 }
                 // Materialise the array once, then walk indices.
                 let arr_var = format!("_nova_par_src_{}", self.tmp_counter);
@@ -2708,7 +2683,7 @@ impl CEmitter {
                     span,
                 );
                 let supervised_block = Block { stmts: vec![Stmt::Expr(for_expr)], trailing: None, span };
-                return self.emit_supervised(&supervised_block);
+                return self.emit_supervised(&supervised_block, None);
             }
         };
 
@@ -2847,10 +2822,17 @@ impl CEmitter {
                     ));
                 }
             }
-            ExprKind::Spawn(_body) => {
+            ExprKind::Spawn(body) => {
                 let spawn_id = format!("_nova_spawn_{}", *s);
                 *s += 1;
                 self.line(&format!("static void {}(mco_coro* _co);", spawn_id));
+                // Plan 47: рекурсия в тело spawn'а — вложенные spawn'ы
+                // (`spawn { supervised { spawn {...} } }`) тоже нуждаются в
+                // forward-decl, и `*s` counter обязан совпадать с emit'овским
+                // (emit_spawn инкрементит spawn_counter, затем эмитит тело →
+                // depth-first). Без рекурсии scan/emit рассинхронизировались
+                // и вложенные entry-функции оставались undeclared.
+                self.scan_expr_fwd(body, h, s)?;
             }
             ExprKind::Block(b) => self.scan_block_fwd(b, h, s)?,
             ExprKind::If { cond, then, else_ } => {
@@ -2916,9 +2898,8 @@ impl CEmitter {
                 }
             }
             ExprKind::Unary { operand, .. } => self.scan_expr_fwd(operand, h, s)?,
-            ExprKind::Supervised(b) => self.scan_block_fwd(b, h, s)?,
+            ExprKind::Supervised { body, .. } => self.scan_block_fwd(body, h, s)?,
             ExprKind::Detach(b) => self.scan_block_fwd(b, h, s)?,
-            ExprKind::CancelScope { body, .. } => self.scan_block_fwd(body, h, s)?,
             _ => {}
         }
         Ok(())
@@ -3010,12 +2991,8 @@ impl CEmitter {
             }
             ExprKind::Loop { body } => Self::collect_bound_names_block(body, out),
             ExprKind::With { body, .. } => Self::collect_bound_names_block(body, out),
-            ExprKind::Supervised(body) => Self::collect_bound_names_block(body, out),
+            ExprKind::Supervised { body, .. } => Self::collect_bound_names_block(body, out),
             ExprKind::Detach(body) => Self::collect_bound_names_block(body, out),
-            ExprKind::CancelScope { token_name, body } => {
-                out.insert(token_name.clone());
-                Self::collect_bound_names_block(body, out);
-            }
             ExprKind::Select { arms } => {
                 for arm in arms {
                     if let SelectOp::Recv { binding: Some(b), .. } = &arm.op {
@@ -3186,9 +3163,11 @@ impl CEmitter {
             }
             ExprKind::Interrupt(Some(v)) => Self::collect_idents_expr(v, out),
             ExprKind::Block(b) => Self::collect_idents_block(b, out),
-            ExprKind::Supervised(b) => Self::collect_idents_block(b, out),
+            ExprKind::Supervised { body, cancel } => {
+                Self::collect_idents_block(body, out);
+                if let Some(c) = cancel { Self::collect_idents_expr(c, out); }
+            }
             ExprKind::Detach(b) => Self::collect_idents_block(b, out),
-            ExprKind::CancelScope { body, .. } => Self::collect_idents_block(body, out),
             ExprKind::Select { arms } => {
                 for arm in arms {
                     match &arm.op {
@@ -3994,6 +3973,11 @@ impl CEmitter {
             parts.push(format!("{} {}", p_c, p.name));
         }
         let params_s = if parts.is_empty() { "void".into() } else { parts.join(", ") };
+        // Plan 47: буферизуем тело — см. emit_generic_fn_erased (тот же баг:
+        // spawn в generic-методе → ctx-typedef после использования).
+        let saved_out = std::mem::take(&mut self.out);
+        let saved_indent = self.indent;
+        self.indent = 0;
         self.line(&format!("static {} {}({}) {{", ret_c, mangled, params_s));
         self.indent += 1;
         // Register nova_self and params
@@ -4038,6 +4022,16 @@ impl CEmitter {
         self.indent -= 1;
         self.line("}");
         self.line("");
+        // Plan 47: restore + flush spawn-ctx typedefs / lambda impls before body.
+        let fn_body = std::mem::replace(&mut self.out, saved_out);
+        self.indent = saved_indent;
+        if !self.lambda_forward_decls.is_empty() {
+            self.out.push_str(&std::mem::take(&mut self.lambda_forward_decls));
+        }
+        if !self.lambda_impls.is_empty() {
+            self.out.push_str(&std::mem::take(&mut self.lambda_impls));
+        }
+        self.out.push_str(&fn_body);
         Ok(())
     }
 
@@ -4067,6 +4061,14 @@ impl CEmitter {
         } else {
             f.params.iter().zip(&param_c_tys).map(|(p, ty)| format!("{} {}", ty, p.name)).collect::<Vec<_>>().join(", ")
         };
+        // Plan 47: буферизуем тело — spawn-ctx typedefs (lambda_forward_decls)
+        // должны флашиться ПЕРЕД телом. Иначе `spawn` внутри generic-функции
+        // (например stdlib `within`/`race`) → ctx-typedef оказывается ПОСЛЕ
+        // использования → "undeclared NovaSpawnCtx_*". emit_fn/emit_test уже
+        // делают так; emit_generic_fn_erased — нет (был баг).
+        let saved_out = std::mem::take(&mut self.out);
+        let saved_indent = self.indent;
+        self.indent = 0;
         self.line(&format!("static void* {}({}) {{", mangled, params_str));
         self.indent += 1;
         // Register params with their concrete (or erased) types
@@ -4130,6 +4132,16 @@ impl CEmitter {
         self.indent -= 1;
         self.line("}");
         self.line("");
+        // Plan 47: restore + flush spawn-ctx typedefs / lambda impls before body.
+        let fn_body = std::mem::replace(&mut self.out, saved_out);
+        self.indent = saved_indent;
+        if !self.lambda_forward_decls.is_empty() {
+            self.out.push_str(&std::mem::take(&mut self.lambda_forward_decls));
+        }
+        if !self.lambda_impls.is_empty() {
+            self.out.push_str(&std::mem::take(&mut self.lambda_impls));
+        }
+        self.out.push_str(&fn_body);
         Ok(())
     }
 
@@ -6359,14 +6371,11 @@ impl CEmitter {
             ExprKind::Spawn(body) => {
                 self.emit_spawn(body)
             }
-            ExprKind::Supervised(body) => {
-                self.emit_supervised(body)
+            ExprKind::Supervised { body, cancel } => {
+                self.emit_supervised(body, cancel.as_deref())
             }
             ExprKind::Detach(body) => {
                 self.emit_detach(body)
-            }
-            ExprKind::CancelScope { token_name, body } => {
-                self.emit_cancel_scope(token_name, body)
             }
             ExprKind::ParallelFor { pattern, iter, body } => {
                 self.emit_parallel_for(pattern, iter, body)
@@ -7006,23 +7015,31 @@ impl CEmitter {
                         }
                     }
                 }
-                // D75: built-in methods on NovaCancelToken*.
+                // D75 (revised, Plan 47): built-in methods on NovaCancelToken*.
                 {
                     let obj_ty = self.infer_expr_c_type(obj);
                     if obj_ty == "NovaCancelToken*" {
                         let obj_c = self.emit_expr(obj)?;
                         match method.as_str() {
                             "cancel" => {
-                                return Ok(format!("nova_cancel_token_cancel({})", obj_c));
+                                return Ok(format!(
+                                    "(nova_cancel_token_cancel({}), NOVA_UNIT)", obj_c));
                             }
                             "is_cancelled" => {
                                 return Ok(format!("nova_cancel_token_is_cancelled({})", obj_c));
                             }
-                            "bind" => {
+                            "cancelled_by" => {
+                                // `child.cancelled_by(parent)` — направленный
+                                // каскад: parent.cancel() отменяет и child.
+                                // Имя несёт направление (отмена течёт вниз —
+                                // parent → child, не обратно).
+                                // C-функция — nova_cancel_token_bind_cascade
+                                // (cascade-bind; scope-binding это отдельный
+                                // nova_cancel_token_bind).
                                 if let Some(parent_arg) = args.first() {
                                     let parent_c = self.emit_expr(parent_arg.expr())?;
                                     return Ok(format!(
-                                        "(nova_cancel_token_bind({}, {}), NOVA_UNIT)",
+                                        "(nova_cancel_token_bind_cascade({}, {}), NOVA_UNIT)",
                                         obj_c, parent_c
                                     ));
                                 }
@@ -7375,6 +7392,10 @@ impl CEmitter {
                             let v = self.emit_expr(arg.expr())?;
                             return Ok(format!("nova_channel_new({})", v));
                         }
+                    }
+                    // D75 (revised, Plan 47): CancelToken.new() — Member-form.
+                    if name == "CancelToken" && method == "new" {
+                        return Ok("nova_cancel_token_new()".to_string());
                     }
                 }
                 // Plan 12: registry-driven dispatch для Member-form static
@@ -7869,6 +7890,11 @@ impl CEmitter {
                         let v = self.emit_expr(arg.expr())?;
                         return Ok(format!("nova_channel_new({})", v));
                     }
+                }
+                // D75 (revised, Plan 47): CancelToken.new() — Path-form.
+                // Type.new() парсится как ExprKind::Path (см. Plan 18 урок).
+                if parts.len() == 2 && parts[0] == "CancelToken" && parts[1] == "new" {
+                    return Ok("nova_cancel_token_new()".to_string());
                 }
                 // Plan 08 Ф.2: D77 try_from / D73 from для numeric/char/bool ↔ str.
                 // T.try_from(v) → Result[T, ParseError]; здесь эмитим
@@ -10113,13 +10139,15 @@ impl CEmitter {
             }
             ExprKind::Lambda { body, .. } => Self::collect_free_idents(body, out),
             ExprKind::TupleLit(elems) => { for e in elems { Self::collect_free_idents(e, out); } }
-            ExprKind::Supervised(b) | ExprKind::Detach(b) => {
+            ExprKind::Detach(b) => {
                 for s in &b.stmts { Self::collect_free_idents_stmt(s, out); }
                 if let Some(t) = &b.trailing { Self::collect_free_idents(t, out); }
             }
-            ExprKind::CancelScope { body, .. } => {
+            ExprKind::Supervised { body, cancel } => {
                 for s in &body.stmts { Self::collect_free_idents_stmt(s, out); }
                 if let Some(t) = &body.trailing { Self::collect_free_idents(t, out); }
+                // Plan 47: cancel-token expr — свободный идентификатор scope'а.
+                if let Some(c) = cancel { Self::collect_free_idents(c, out); }
             }
             ExprKind::Select { arms } => {
                 for arm in arms {
@@ -11475,6 +11503,18 @@ impl CEmitter {
                         if n == "Time" && method == "after" {
                             return "Nova_ChanReader*".into();
                         }
+                        // D75 (revised, Plan 47): CancelToken.new() — Member-form.
+                        if n == "CancelToken" && method == "new" {
+                            return "NovaCancelToken*".into();
+                        }
+                    }
+                    // D75: instance methods on NovaCancelToken*.
+                    if self.infer_expr_c_type(obj) == "NovaCancelToken*" {
+                        match method.as_str() {
+                            "is_cancelled" => return "nova_bool".into(),
+                            "cancel" | "cancelled_by" => return "nova_unit".into(),
+                            _ => {}
+                        }
                     }
                     // D91: Sender capability method return types.
                     if obj_ty == "Nova_ChanWriter*" {
@@ -11786,6 +11826,10 @@ impl CEmitter {
                         if eff == "Channel" && method_name == "new" {
                             return "Nova_ChannelPair".into();
                         }
+                        // D75 (revised, Plan 47): CancelToken.new() — Path-form.
+                        if eff == "CancelToken" && method_name == "new" {
+                            return "NovaCancelToken*".into();
+                        }
                         // Plan 04 Этап 6: Buffer removed. StringBuilder/
                         // WriteBuffer/ReadBuffer effect-schema ниже.
                         // Plan 04: built-in opaque static methods.
@@ -12005,9 +12049,8 @@ impl CEmitter {
             ExprKind::While { .. } => "nova_unit".into(),
             ExprKind::WhileLet { .. } => "nova_unit".into(),
             ExprKind::Loop { .. } => "nova_unit".into(),
-            ExprKind::Supervised(_) => "nova_unit".into(),
+            ExprKind::Supervised { .. } => "nova_unit".into(),
             ExprKind::Detach(_) => "nova_unit".into(),
-            ExprKind::CancelScope { .. } => "nova_unit".into(),
             ExprKind::TaggedTemplate { .. } => "nova_str".into(),
             // Plan 39 Issue A: With-блок тип = T_body. Если trailing == None
             // (body заканчивается throw/return/interrupt statement'ом), смотрим

@@ -1,11 +1,12 @@
-// cancel_stress_test.nv — Plan 22 Ф.6 production stress test.
+// supervised_cancel_stress_test.nv — Plan 22 Ф.6 / Plan 47 production
+// stress test для `supervised(cancel: tok)`.
 //
-// Validates: cancel-during-park (R4 в Plan 22) корректно работает
-// при concurrent stress — N fiber'ов в Time.sleep, один из них triggers
+// Validates: cancel-during-park (R4 в Plan 22) корректно работает при
+// concurrent stress — N fiber'ов в Time.sleep, один из них triggers
 // cancel в middle. Все fiber'ы должны wake immediate, throw "scope
 // cancelled", scope завершается быстро.
 
-module concurrency.cancel_stress_test
+module concurrency.supervised_cancel_stress_test
 
 // Slack 200ms для CI-стабильности.
 const SLACK_MS int = 200
@@ -13,8 +14,9 @@ const SLACK_MS int = 200
 test "cancel during 100 parked sleeps wakes all immediately" {
     // 100 fiber'ов в Time.sleep(10_000) — без cancel это были бы 10 sec.
     // Один из них triggers cancel через 50ms — все должны wake immediate.
+    let tok = CancelToken.new()
     let t0 = Time.now()
-    cancel_scope { tok =>
+    supervised(cancel: tok) {
         for _ in 0..99 {
             spawn {
                 Time.sleep(10_000)
@@ -37,8 +39,9 @@ test "cancel during 100 parked sleeps wakes all immediately" {
 test "cancel mid-flight with mixed sleep durations" {
     // 50 fiber'ов с разными sleep'ами (100ms - 5000ms). Cancel через 30ms.
     // Все должны wake immediate.
+    let tok = CancelToken.new()
     let t0 = Time.now()
-    cancel_scope { tok =>
+    supervised(cancel: tok) {
         for i in 0..50 {
             spawn {
                 // Durations from 100ms to 5000ms.
@@ -56,11 +59,13 @@ test "cancel mid-flight with mixed sleep durations" {
 
 test "no leak on cancel — scope completes cleanly" {
     // Verify scope-exit после cancel — no hung fibers, no resource leak.
-    // Запускаем 3 cancel-scope подряд, каждый с 100 parked fiber'ов.
-    // Если предыдущий leak'ал — этот hung'нет.
+    // Запускаем 3 supervised(cancel:) подряд, каждый со 100 parked fiber'ов.
+    // Если предыдущий leak'ал — этот hung'нет. Каждый scope — свой токен
+    // (один токен — один живой scope, bind-check).
     let t0 = Time.now()
     for _ in 0..3 {
-        cancel_scope { tok =>
+        let tok = CancelToken.new()
+        supervised(cancel: tok) {
             for _ in 0..100 {
                 spawn { Time.sleep(5_000) }
             }

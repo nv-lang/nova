@@ -907,18 +907,18 @@ pub enum ExprKind {
     Block(Block),
     /// `spawn body` — D50
     Spawn(Box<Expr>),
-    /// `supervised { body }` — structured-concurrency scope (D50)
-    Supervised(Block),
+    /// `supervised { body }` / `supervised(cancel: tok) { body }` —
+    /// structured-concurrency scope (D50). `cancel` — опциональный
+    /// именованный аргумент `cancel:` с выражением типа `CancelToken`
+    /// (D75 revised, Plan 47): внешний код может вызвать `tok.cancel()`
+    /// чтобы fail-fast все fiber'ы scope'а.
+    Supervised {
+        body: Block,
+        cancel: Option<Box<Expr>>,
+    },
     /// `detach { body }` — fire-and-forget, global supervisor (D50).
     /// Requires `Detach` effect in the enclosing function's signature.
     Detach(Block),
-    /// `cancel_scope { tok => body }` — D75 manual structured cancellation.
-    /// Same as `supervised` but exposes a `CancelToken` binding so external
-    /// code can call `tok.cancel()` to fail-fast all fibers in the scope.
-    CancelScope {
-        token_name: String,
-        body: Block,
-    },
     /// `throw expr` в позиции expression (D25/D65). Обрабатывается как
     /// эффект `Fail.fail(msg)`, тип `Never`. В codegen эмитируется как
     /// `(Nova_Fail_fail(msg), zero<T>)` — comma-expression, dummy после

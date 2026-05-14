@@ -6303,3 +6303,56 @@ predicted-not-taken branch + (если ptr≠NULL) ещё один load — ~1-2
 == NULL` → ветка всегда не берётся. Безусловная эмиссия (codegen не знает,
 будет ли `runtime.init()`) — принята осознанно: корректность > микро-
 оптимизация для языка не в проде.
+
+
+## Plan 47: supervised(cancel:) — удаление keyword cancel_scope (2026-05-14)
+
+**Что упрощено в языке — минус keyword.**
+
+Keyword `cancel_scope { tok => body }` удалён. Внешняя отмена scope'а
+выражается именованным аргументом `cancel:` у `supervised`. Это убирает
+один keyword И уникальный синтаксис `tok =>` (scope-introduced binding,
+которого больше нигде в языке нет). Один pattern (`supervised` + named
+arg) вместо edge-case'а.
+
+**Что упрощено в реализации — caller-owned токен.**
+
+Старая scope-owned модель: `NovaCancelToken` хранил указатель на
+queue-frame и после scope-exit'а становился dangling (известный
+bootstrap-баг). Новая caller-owned: токен создаётся `CancelToken.new()`,
+переживает scope, `bind`/`unbind` на входе/выходе, `cancel()` на
+отвязанном/завершённом scope'е — безвредный no-op. Это не упрощение —
+это исправление; старая модель была bootstrap-затычкой.
+
+**Что осталось упрощено / отложено (by-design или codegen-prereq):**
+
+- [M-interp-cancel] Treewalk-интерпретатор (`nova run`) игнорирует
+  `cancel:` токен — `supervised(cancel:)` ≡ обычный `supervised` без
+  token-API. Codegen-путь (главный) реализует D75 полностью. Приоритет: L.
+- [M-race-closure-array] Stdlib `race[T](competitors []fn() -> T)` (Plan 47
+  Ф.5) НЕ реализован: массив замыканий в generic-erased функции эрейзится
+  в `void*`, теряя array-ность (`.len()` / `[i]` / `for-in` не резолвятся).
+  Нужна codegen-поддержка closures-in-generics — отдельная задача, вне
+  scope Plan 47. Приоритет: M.
+- [M-within-error-conflation] Stdlib `within[T]` (= `with_timeout`) тоже
+  отложен: его реализация требует ловить cancel-throw через `with Fail`
+  handler, который неотличимо ловит и реальные ошибки из `body()`, и
+  timeout-cancel (обе → `None`). Корректное различение требует
+  cancel-throw routing fix — явно вне scope Plan 47 (см. план §«Что НЕ
+  входит»). Приоритет: M. Сам примитив тривиален поверх
+  `supervised(cancel:)` как только routing закрыт.
+- [M-cancel-throw-routing] (унаследовано из D75) Cancel-throw на main flow
+  приходит как plain `nova_throw`, не через `Nova_Fail_fail`/handler-vtable
+  — user `with Fail` handler ловит cancellation как обычный Fail. Корректный
+  фикс требует различать fiber-throw-from-handler vs cooperative-cancel-
+  throw. Приоритет: M. Блокирует чистый Ф.5.
+
+**Codegen-фиксы по ходу (не упрощения — баги, исправлены):**
+
+- `scan_expr_fwd` не рекурсил в тело `spawn` → вложенные spawn'ы
+  (`spawn { supervised { spawn {} } }`) не получали forward-decl,
+  scan/emit spawn-counter рассинхронизировались. Fix: рекурсия depth-first.
+- `emit_generic_fn_erased` / `emit_generic_method_erased` не буферизовали
+  тело и не флашили `lambda_forward_decls` → `spawn` внутри generic-функции
+  → ctx-typedef после использования → «undeclared NovaSpawnCtx_*». Fix:
+  буферизация + flush (как emit_fn/emit_test).

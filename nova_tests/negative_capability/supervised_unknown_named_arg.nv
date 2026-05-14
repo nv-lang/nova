@@ -1,0 +1,15 @@
+// EXPECT_COMPILE_ERROR accepts only the named argument
+
+// D75 (revised, Plan 47): `supervised` принимает ровно один именованный
+// аргумент — `cancel:`. Любое другое имя (`supervised(foo: x)`) —
+// compile error на этапе парсинга (parse_supervised). Позиционная форма
+// `supervised(x)` тоже отвергается тем же путём.
+
+module negative_capability.supervised_unknown_named_arg
+
+fn main() {
+    let x = 5
+    supervised(foo: x) {
+        spawn { }
+    }
+}

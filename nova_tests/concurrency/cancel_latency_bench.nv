@@ -17,7 +17,8 @@ module concurrency.cancel_latency_bench
 
 test "single fiber cancel-during-sleep — wake latency measurement" {
     let t0 = Time.now()
-    cancel_scope { tok =>
+    let tok = CancelToken.new()
+    supervised(cancel: tok) {
         spawn {
             Time.sleep(10_000)  // never fires
         }
@@ -44,7 +45,8 @@ test "100 parked fibers cancel — wake latency under load" {
     // cancel_all_pending iterates все 100, инициирует close для каждого.
     // Все close_cb'и должны fire'нуть в одном-двух uv_run pass'ах.
     let t0 = Time.now()
-    cancel_scope { tok =>
+    let tok = CancelToken.new()
+    supervised(cancel: tok) {
         for _ in 0..99 {
             spawn { Time.sleep(10_000) }
         }
@@ -68,7 +70,8 @@ test "10 nested cancels — cumulative latency" {
     let mut total_after_cancel int = 0
     for _ in 0..10 {
         let t0 = Time.now()
-        cancel_scope { tok =>
+        let tok = CancelToken.new()
+        supervised(cancel: tok) {
             for _ in 0..9 {
                 spawn { Time.sleep(10_000) }
             }
