@@ -1,0 +1,12 @@
+// Plan 42.17 Ф.6: positive — consumer выбирает только `alpha` из
+// facade, которая re-export'ит и `alpha`, и `beta`. `alpha` доступен.
+// (Негативная половина — beta НЕ виден — в
+// negative_capability/reexport_selective_leak.nv.)
+
+module modules.reexport_selective_use
+
+import nova_tests.modules.reexport_selective.{alpha}
+
+test "selectively imported re-export is visible" {
+    assert(alpha(5) == 105)
+}

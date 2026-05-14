@@ -435,10 +435,19 @@ fn resolve_one(
             for n in &sub_visible {
                 peer_visible.insert(n.clone());
             }
-            // `export import` — re-export: items также видны caller'у.
+            // `export import` — re-export: items видны caller'у, НО через
+            // селективный фильтр самого caller'а (Plan 42.17 Ф.6): если
+            // caller написал `import F.{a}` — он получает только `a` из
+            // re-export'ов F, не другие re-exported items.
+            // Note: rename caller'а к re-exported items НЕ применяется —
+            // re-exported item уже в merged_items под именем re-export'а,
+            // переименовать его здесь без рассинхрона с codegen-scope
+            // нельзя. Rename работает для прямых (не re-exported) imports.
             if sub.is_export {
                 for n in &sub_visible {
-                    visible_acc.insert(n.clone());
+                    if import_selects(imp, n) {
+                        visible_acc.insert(n.clone());
+                    }
                 }
             }
         }
@@ -487,19 +496,12 @@ fn resolve_one(
                         item_name.clone()
                     };
                     // Plan 42.15: visible_acc — что caller's peer ВИДИТ.
-                    // Selective filter: если import `X.{A}` — только `A`
-                    // (+ rename target) попадает в visible_acc; `B` (тоже
-                    // из X, но не в списке) merge'ится для codegen, но
-                    // НЕ виден caller'у по имени.
-                    let is_visible = match &imp.items {
-                        None => true, // import X — весь модуль visible
-                        Some(sel) => sel.iter().any(|it| {
-                            // visible под final_name: либо original name в
-                            // списке (без rename), либо alias совпал.
-                            it.name == item_name
-                        }),
-                    };
-                    if is_visible {
+                    // Selective filter: `import X.{A}` — только `A` виден
+                    // caller'у; `B` (тоже из X, не в списке) merge'ится в
+                    // merged_items для codegen completeness, но НЕ виден
+                    // caller'у по имени. Матч по оригинальному `item_name`;
+                    // в scope кладётся `final_name` (renamed при alias).
+                    if import_selects(imp, &item_name) {
                         visible_acc.insert(final_name);
                     }
                 }
@@ -517,6 +519,17 @@ fn resolve_one(
     visited.insert(module_key);
     import_chain.pop();
     Ok(())
+}
+
+/// Plan 42.17 Ф.6: видит ли селективный список `imp` имя `name`?
+/// `import X` (без `.{...}`) — видит всё. `import X.{a, b}` — только
+/// `a`/`b`. Матч по ОРИГИНАЛЬНОМУ имени item'а; `alias` — это что
+/// кладётся в scope (`final_name`), не критерий отбора.
+fn import_selects(imp: &Import, name: &str) -> bool {
+    match &imp.items {
+        None => true,
+        Some(sel) => sel.iter().any(|it| it.name == name),
+    }
 }
 
 /// Plan 42.17 Ф.4: если `path` лежит внутри `.../<owner>/internal/...`,
