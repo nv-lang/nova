@@ -1,0 +1,26 @@
+// Plan 46 (D102): default-выражение может ссылаться на module-level
+// `const` (D102 правило 2 — "может ссылаться на предшествующие
+// параметры и module-level const").
+
+module named_params.default_const
+
+const DEFAULT_PORT int = 8080
+const DEFAULT_RETRIES int = 3
+
+fn open(host str, port int = DEFAULT_PORT, retries int = DEFAULT_RETRIES) -> int =>
+    host.len + port + retries
+
+test "default ссылается на module const" {
+    // port = DEFAULT_PORT (8080), retries = DEFAULT_RETRIES (3)
+    assert(open("ab") == 2 + 8080 + 3)
+}
+
+test "именованный override + const default" {
+    // port = 80 named, retries = DEFAULT_RETRIES (3)
+    assert(open("ab", port: 80) == 2 + 80 + 3)
+}
+
+test "const default комбинируется с предшествующим параметром" {
+    // retries именованный, port = DEFAULT_PORT
+    assert(open("xyz", retries: 10) == 3 + 8080 + 10)
+}
