@@ -104,6 +104,7 @@ __declspec(thread) int                 _nova_active_slot   = -1;
  * flag before mco_yield, causing double-push to worker deque. */
 __declspec(thread) void (*_nova_park_unlock_fn)(void*) = NULL;
 __declspec(thread) void*               _nova_park_unlock_arg = NULL;
+__declspec(thread) volatile int*       _nova_preempt_ptr   = NULL;  /* Plan 44.7 */
 #else
 __thread NovaFailFrame*      _nova_fail_top      = NULL;
 __thread NovaInterruptFrame* _nova_interrupt_top = NULL;
@@ -114,6 +115,7 @@ __thread NovaFiberQueue*     _nova_active_scope  = NULL;
 __thread int                 _nova_active_slot   = -1;
 __thread void (*_nova_park_unlock_fn)(void*)  = NULL;
 __thread void*               _nova_park_unlock_arg = NULL;
+__thread volatile int*       _nova_preempt_ptr   = NULL;  /* Plan 44.7 */
 #endif
 
 /* Per-fiber handler scoping: registry of effect-storage addresses.

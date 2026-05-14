@@ -58,7 +58,71 @@ struct NovaWorker {
     mco_coro**        wake_pending;
     int               wake_pending_count;
     int               wake_pending_cap;
+    /* Plan 44.7: preemption. `current_fiber_start` — uv_hrtime() snapshot,
+     * записанный worker loop'ом перед mco_resume, обнуляемый после. sysmon
+     * thread читает его, и если worker крутит одну fiber'у дольше
+     * NOVA_PREEMPT_SLICE_NS — выставляет `preempt_flag = 1`.
+     *
+     * `preempt_flag` — plain `volatile int`, НЕ снапшот: codegen safepoint
+     * (nova_preempt_check) читает его ВЖИВУЮ через TLS-указатель
+     * `_nova_preempt_ptr`, выставленный в _worker_main на &w->preempt_flag.
+     * Снапшот не годится — worker thread застревает внутри mco_resume на
+     * весь CPU-loop и не может перечитать флаг; sysmon выставляет его уже
+     * после старта fiber'ы. Single producer (sysmon) + single consumer
+     * (бегущая на этом worker'е fiber) для 0/1 флага — volatile достаточно
+     * (Go так же делает non-atomic write в stackguard0). `current_fiber_start`
+     * — torn-read safe через __atomic_* (sysmon читает, worker пишет). */
+    uint64_t          current_fiber_start;  /* __atomic_* accessed */
+    volatile int      preempt_flag;
+    /* Plan 44.7: FIFO-очередь кооперативно-yield'нутых fiber'ов. Вытесненный
+     * (или вызвавший runtime.yield()) fiber кладётся СЮДА, не обратно в deque.
+     * Причина: deque — LIFO для owner'а, re-push вытесненного CPU-fiber'а →
+     * он сразу же re-popнут → peer'ы (включая ещё не стартовавшие, на дне
+     * deque) голодают. Worker loop берёт из deque (свежие spawn'ы + разбуженные
+     * fiber'ы — приоритет), и лишь когда deque пуст — из этой FIFO. Доступ
+     * только из worker thread'а (fiber yield'ится НА нём, loop обрабатывает
+     * ТАМ ЖЕ) → без mutex'а. Front-advancing массив с компактизацией. */
+    mco_coro**        yielded;
+    int               yielded_count;
+    int               yielded_cap;
+    int               yielded_head;
 };
+
+/* Plan 44.7: timeslice до preemption. Go использует 10ms. */
+#define NOVA_PREEMPT_SLICE_NS 10000000ULL
+
+/* Plan 44.7: yielded-FIFO helpers. Single-threaded (worker owns it) — no
+ * locking. push_back добавляет в хвост (с компактизацией/ростом), pop_front
+ * снимает с головы. */
+static void _worker_yielded_push(NovaWorker* w, mco_coro* co) {
+    if (w->yielded_head + w->yielded_count >= w->yielded_cap) {
+        if (w->yielded_head > 0) {
+            /* Компактизация: сдвигаем живой хвост к началу. */
+            for (int i = 0; i < w->yielded_count; i++) {
+                w->yielded[i] = w->yielded[w->yielded_head + i];
+            }
+            w->yielded_head = 0;
+        }
+        if (w->yielded_count >= w->yielded_cap) {
+            int new_cap = w->yielded_cap > 0 ? w->yielded_cap * 2 : 8;
+            w->yielded = (mco_coro**)realloc(w->yielded,
+                                             (size_t)new_cap * sizeof(mco_coro*));
+            if (!w->yielded) abort();
+            w->yielded_cap = new_cap;
+        }
+    }
+    w->yielded[w->yielded_head + w->yielded_count] = co;
+    w->yielded_count++;
+}
+
+static mco_coro* _worker_yielded_pop(NovaWorker* w) {
+    if (w->yielded_count == 0) return NULL;
+    mco_coro* co = w->yielded[w->yielded_head];
+    w->yielded_head++;
+    w->yielded_count--;
+    if (w->yielded_count == 0) w->yielded_head = 0;
+    return co;
+}
 
 /* ── Runtime state ─────────────────────────────────────────────── */
 
@@ -79,6 +143,41 @@ static void _main_wake_cb(uv_async_t* h) {
     (void)h;
     /* No-op — signal itself wakes uv_run(UV_RUN_ONCE) в main thread'е.
      * Main thread сам проверяет scope.pending_remote после wake'а. */
+}
+
+/* ── Plan 44.7: sysmon (system monitor) thread ─────────────────────
+ *
+ * Аналог Go's sysmon goroutine. Отдельный OS-thread, не привязан к
+ * worker'ам. Каждые ~10ms проходит по всем workers и если worker
+ * крутит одну fiber'у дольше timeslice'а — выставляет preempt_flag.
+ * Worker loop копирует флаг в TLS `_nova_should_yield`, который
+ * проверяется codegen'ом в function prologue + loop backedge → fiber
+ * кооперативно yield'ится. Это даёт честный CPU-sharing даже для
+ * CPU-bound fibers без явного runtime.yield().
+ *
+ * Почему не signal-based (Go's SIGURG): minicoro mco_yield НЕ
+ * async-signal-safe. TLS-флаг + codegen safepoints — 80% benefit за
+ * 20% сложности (см. docs/plans/44.7-preemption.md, Вариант B). */
+static uv_thread_t       _sysmon_thread;
+static nova_atomic_bool  _sysmon_running;
+static bool              _sysmon_started = false;
+
+static void _sysmon_main(void* arg) {
+    (void)arg;
+    while (nova_abool_load(&_sysmon_running)) {
+        uv_sleep(10);  /* ~10ms (Windows timer gran → ~15ms — приемлемо). */
+        if (!nova_abool_load(&_sysmon_running)) break;
+        uint64_t now = uv_hrtime();
+        for (int i = 0; i < _n_workers; i++) {
+            NovaWorker* w = &_workers[i];
+            uint64_t started = __atomic_load_n(&w->current_fiber_start,
+                                               __ATOMIC_RELAXED);
+            /* started == 0 → worker idle / между fiber'ами — не trip. */
+            if (started != 0 && (now - started) > NOVA_PREEMPT_SLICE_NS) {
+                w->preempt_flag = 1;  /* живой флаг — fiber перечитает */
+            }
+        }
+    }
 }
 
 /* TLS: current worker id (для diagnostic). -1 = main thread. */
@@ -150,8 +249,29 @@ static void _worker_main(void* arg) {
     _nova_active_scope = &w->scope;
     _nova_active_slot  = -1;
 
+    /* Plan 44.7: point this worker thread's preemption TLS at its own
+     * preempt_flag. Codegen safepoints (nova_preempt_check) dereference
+     * `_nova_preempt_ptr` to read the LIVE flag set by sysmon. A fiber
+     * always runs on exactly one worker thread, so the ptr always refers
+     * to "the worker I'm currently on" — survives work-stealing migration. */
+    _nova_preempt_ptr = &w->preempt_flag;
+
     while (!nova_abool_load(&w->stop)) {
-        /* (0) Drain cross-thread wake queue (fibers re-queued after park). */
+        /* (0) Service the worker's libuv loop non-blockingly EVERY iteration.
+         *
+         * Plan 44.7: this is mandatory once preemption exists. A CPU-bound
+         * fiber that gets preempted is re-pushed to the deque and (LIFO)
+         * immediately re-popped — so the deque is never empty and the old
+         * "uv_run only when idle" path would never run. Timer/async callbacks
+         * (Time.sleep wakeups, channel Time.after, cross-worker async) would
+         * then never fire → parked fibers never resume → deadlock.
+         * UV_RUN_NOWAIT processes whatever is ready and returns at once;
+         * with nothing ready it is a cheap poll(0). */
+        uv_run(&w->loop, UV_RUN_NOWAIT);
+
+        /* (1) Drain cross-thread wake queue (fibers re-queued after park).
+         * Done after uv_run so same-thread timer dispatches (which push
+         * straight to the deque) and cross-thread ones are both visible. */
         nova_mutex_lock(&w->wake_mu);
         for (int i = 0; i < w->wake_pending_count; i++) {
             nova_deque_push(&w->deque, w->wake_pending[i]);
@@ -161,10 +281,19 @@ static void _worker_main(void* arg) {
 
         mco_coro* co = NULL;
 
-        /* (1) Local deque — owner LIFO pop. Wait-free hot path. */
+        /* (2) Local deque — owner LIFO pop. Wait-free hot path. Свежие
+         * spawn'ы + разбуженные fiber'ы (приоритет — они progress'ят). */
         co = (mco_coro*)nova_deque_pop(&w->deque);
 
-        /* (2) Idle — try steal у соседей (FIFO from their deque top). */
+        /* (2.5) Plan 44.7: yielded-FIFO — кооперативно вытесненные fiber'ы.
+         * После deque, до steal: своя preempted-работа продвигается, но
+         * уступает свежим/разбуженным. FIFO → честный round-robin между
+         * несколькими CPU-bound fiber'ами. */
+        if (!co) {
+            co = _worker_yielded_pop(w);
+        }
+
+        /* (3) Idle — try steal у соседей (FIFO from their deque top). */
         if (!co) {
             for (int i = 0; i < _n_workers; i++) {
                 if (i == w->id) continue;
@@ -173,7 +302,7 @@ static void _worker_main(void* arg) {
             }
         }
 
-        /* (3) Still nothing — block в libuv (own loop) до cross-worker wake.
+        /* (4) Still nothing — block в libuv (own loop) до cross-worker wake.
          * UV_RUN_ONCE: wait for at least one event (timer fire, async send),
          * then return — loop checks wake_pending at next iteration start. */
         if (!co) {
@@ -181,7 +310,7 @@ static void _worker_main(void* arg) {
             continue;
         }
 
-        /* (4) Run fiber.
+        /* (5) Run fiber.
          *
          * Plan 44.5 Layer 5 fix: save/restore _nova_fail_top, _nova_interrupt_top,
          * and _nova_active_slot per fiber — mirrors nova_supervised_step behavior.
@@ -222,9 +351,21 @@ static void _worker_main(void* arg) {
             _nova_interrupt_top = base->_nova_saved_interrupt_top;
         }
 
+        /* Plan 44.7: preemption hand-off. Clear the preempt flag so each
+         * fiber starts its slice clean, and stamp `current_fiber_start` so
+         * sysmon can detect an overrun. The running fiber reads the LIVE
+         * flag via `_nova_preempt_ptr` (set once in _worker_main) at every
+         * codegen safepoint — no stale snapshot. */
+        w->preempt_flag = 0;
+        __atomic_store_n(&w->current_fiber_start, uv_hrtime(), __ATOMIC_RELAXED);
+
         if (mco_status(co) == MCO_SUSPENDED) {
             mco_resume(co);
         }
+
+        /* Fiber returned to the loop — clear the overrun timestamp so an
+         * idle worker is never marked for preemption. */
+        __atomic_store_n(&w->current_fiber_start, 0, __ATOMIC_RELAXED);
 
         /* Save fiber's current TLS state back; restore outer worker state. */
         if (base) {
@@ -264,18 +405,22 @@ static void _worker_main(void* arg) {
             mco_destroy(co);
         } else if (mco_status(co) == MCO_SUSPENDED) {
             /* Yielded: if parked (timer/channel wait) → dispatch_ready re-queues.
-             * If not parked (cooperative yield) → re-push immediately. */
+             * If not parked (cooperative yield via preemption or runtime.yield)
+             * → yielded-FIFO, NOT the deque. Re-pushing to the LIFO deque would
+             * make the worker immediately re-pop the same fiber, starving every
+             * peer below it (Plan 44.7). */
             if (fiber_is_parked) {
                 /* Parked: let dispatch_ready handle requeueing when wake fires. */
             } else {
-                nova_deque_push(&w->deque, co);
+                _worker_yielded_push(w, co);
             }
         }
     }
 
-    /* Cleanup — drain remaining items в deque. */
+    /* Cleanup — drain remaining items в deque + yielded-FIFO (Plan 44.7). */
     while (true) {
         mco_coro* co = (mco_coro*)nova_deque_pop(&w->deque);
+        if (!co) co = _worker_yielded_pop(w);
         if (!co) break;
         if (mco_status(co) == MCO_SUSPENDED) {
             mco_resume(co);
@@ -285,6 +430,9 @@ static void _worker_main(void* arg) {
         }
     }
     _nova_active_slot = -1;
+    /* Plan 44.7: worker thread exiting — its preempt_flag (in NovaWorker,
+     * freed by shutdown) must not be dereferenced again. */
+    _nova_preempt_ptr = NULL;
 
 #ifdef NOVA_GC_THREADS_REGISTER
     GC_unregister_my_thread();
@@ -348,6 +496,9 @@ void nova_runtime_init(int n_workers) {
         w->id = i;
         nova_abool_init(&w->stop, false);
         nova_aint_init(&w->pending_count, 0);
+        /* Plan 44.7: preemption state — calloc'нуто в 0, инициализируем явно. */
+        w->preempt_flag = 0;
+        w->current_fiber_start = 0;
         nova_scope_init(&w->scope);
         /* Plan 44.5 Layer 2: per-worker Chase-Lev deque. */
         if (!nova_deque_init(&w->deque, 64)) {
@@ -387,6 +538,19 @@ void nova_runtime_init(int n_workers) {
         }
     }
 
+    /* Plan 44.7: launch sysmon thread — preemption ticker. Started ПОСЛЕ
+     * workers (sysmon читает _workers/_n_workers), остановлен ПЕРВЫМ в
+     * shutdown (до free(_workers)). */
+    nova_abool_init(&_sysmon_running, true);
+    if (uv_thread_create(&_sysmon_thread, _sysmon_main, NULL) == 0) {
+        _sysmon_started = true;
+    } else {
+        /* sysmon — best-effort: без него runtime работает, просто без
+         * автоматической preemption (остаётся кооперативный yield). */
+        _sysmon_started = false;
+        nova_abool_store(&_sysmon_running, false);
+    }
+
     _initialized = true;
     nova_mutex_unlock(&_init_mu);
 }
@@ -397,6 +561,14 @@ void nova_runtime_shutdown(void) {
     if (!_initialized) {
         nova_mutex_unlock(&_init_mu);
         return;
+    }
+
+    /* Plan 44.7: stop sysmon ПЕРВЫМ — до free(_workers), чтобы sysmon
+     * не читал освобождённую память. join гарантирует тред вышел. */
+    if (_sysmon_started) {
+        nova_abool_store(&_sysmon_running, false);
+        uv_thread_join(&_sysmon_thread);
+        _sysmon_started = false;
     }
 
     /* Signal stop + wake workers. */
@@ -421,6 +593,8 @@ void nova_runtime_shutdown(void) {
         nova_deque_destroy(&w->deque);
         free(w->wake_pending);
         w->wake_pending = NULL;
+        free(w->yielded);          /* Plan 44.7 yielded-FIFO */
+        w->yielded = NULL;
     }
 
     free(_workers);

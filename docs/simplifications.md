@@ -6157,3 +6157,45 @@ V2 — полный encode через uninterpreted sorts или multi-sort inst
 хотя семантика «untyped» — другое. Зафиксировано как Q-axiom-binder-type:
 при добавлении Generic как третьего варианта — рефакторить на enum
 `BinderType { Untyped, Typed(TypeRef), Generic }`.
+
+
+## Plan 44.7: preemption — sysmon + codegen safepoints (2026-05-14)
+
+**Что упрощено — Вариант B вместо Варианта C.**
+
+Go вытесняет goroutine через `SIGURG` async signal + ASM `asyncPreempt`,
+который умеет прервать ДАЖЕ tight inline-ASM loop. Nova взяла Вариант B:
+кооперативные codegen safepoint'ы (`nova_preempt_check()` в прологе функции
+и на backedge цикла) + sysmon-thread, выставляющий флаг.
+
+Причина не идеологическая, а техническая: minicoro `mco_yield` НЕ
+async-signal-safe — yield из signal handler = UB. Полный Go-механизм
+(Вариант C) — 2-3 недели ASM-level работы с высоким риском. Вариант B даёт
+**observable** паритет (CPU-bound fiber не морит голодом соседей) за ~20%
+сложности.
+
+**Что упрощено осознанно (не баг — by-design):**
+
+- [S-PREEMPT1] Tight loop целиком в inline-ASM или одном FFI-вызове без
+  codegen-backedge'а НЕ вытесняется. Codegen вставляет safepoint только в
+  Nova-циклы и прологи Nova-функций; чужой ASM/C-код вне его контроля.
+  Нишевой кейс — типичный Nova-fiber это IO или Nova-вычисления. Приоритет:
+  L. Эскалация к Варианту C — только при конкретном benchmark'е.
+- [S-PREEMPT2] Generic-функции (`emit_generic_fn_erased` /
+  `emit_generic_method_erased`) НЕ получают prologue safepoint — отдельный
+  codegen-путь. Циклы внутри них всё равно получают backedge safepoint
+  (через `emit_loop_body_inline`), так что наблюдаемая дыра — только
+  generic-функция БЕЗ циклов в рекурсии. Приоритет: L.
+- [S-PREEMPT3] Timeslice фиксирован 10ms (`NOVA_PREEMPT_SLICE_NS`), не
+  настраивается. Go тоже ~10ms. Tunable — при реальной необходимости.
+- [S-PREEMPT4] Вытесненный fiber pin'нится к своему worker'у (yielded-FIFO
+  per-worker, не shared). Совпадает с уже существующей моделью «fiber
+  pinned to worker» из Plan 44.5 — migration между workers это отдельный
+  отложенный вопрос (Plan 44.6 H, «benefit неочевиден»).
+
+**Стоимость safepoint'а.** На горячем (не-preempt) пути: TLS-load +
+predicted-not-taken branch + (если ptr≠NULL) ещё один load — ~1-2 такта на
+вызов функции и на итерацию цикла. В single-thread режиме `_nova_preempt_ptr
+== NULL` → ветка всегда не берётся. Безусловная эмиссия (codegen не знает,
+будет ли `runtime.init()`) — принята осознанно: корректность > микро-
+оптимизация для языка не в проде.

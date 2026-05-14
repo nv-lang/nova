@@ -4314,6 +4314,14 @@ impl CEmitter {
         self.indent = 0;
         self.line(&format!("static {} {}({}) {{", ret, mangled, params));
         self.indent = 1;
+        // Plan 44.7: preemption safepoint. First statement of every Nova
+        // function — a TLS-flag check that cooperatively yields when the
+        // M:N sysmon flagged this worker for an overrun. No-op (≈1 cycle,
+        // predicted-not-taken) in single-thread mode where the flag is
+        // never raised. Together with the loop-backedge check this gives
+        // observable Go-style preemption: a CPU-bound fiber can't starve
+        // its peers even with no explicit runtime.yield().
+        self.line("nova_preempt_check();");
         let saved_expected = self.expected_record_type.clone();
         self.expected_record_type = Self::struct_name_from_c_type(&ret);
         // Plan 33.1 Ф.4 (D24): emit contracts.
@@ -4826,6 +4834,14 @@ impl CEmitter {
     /// в нашей собственной body — local, не пересекают loop boundary.
     fn emit_loop_body_inline(&mut self, body: &Block) -> Result<(), String> {
         let block_id = self.enter_defer_scope(body, true);
+        // Plan 44.7: preemption safepoint at the loop backedge. Emitted as
+        // the first statement of the body so it runs at the start of every
+        // iteration — this also covers the `continue` edge (continue jumps
+        // to the condition, re-enters the body, hits this check). Without
+        // it a tight arithmetic loop with no function calls (`while i < N
+        // { i = i + 1 }`) would never reach a prologue safepoint and could
+        // monopolise its worker. No-op in single-thread mode.
+        self.line("nova_preempt_check();");
         for stmt in &body.stmts {
             self.emit_stmt(stmt)?;
         }

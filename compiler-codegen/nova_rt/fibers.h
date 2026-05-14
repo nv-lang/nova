@@ -608,11 +608,28 @@ __declspec(thread) extern int             _nova_active_slot;
  * called by scheduler (worker loop / supervised_step) after mco_resume returns. */
 __declspec(thread) extern void (*_nova_park_unlock_fn)(void*);
 __declspec(thread) extern void*           _nova_park_unlock_arg;
+/* Plan 44.7: preemption pointer. Each worker thread sets this (in
+ * _worker_main) to point at its own NovaWorker.preempt_flag. The sysmon
+ * thread raises that flag on a timeslice overrun; codegen safepoints
+ * (nova_preempt_check) dereference this ptr to read the LIVE flag and
+ * cooperatively yield. NULL on the main thread / single-thread mode → the
+ * safepoint is a pure no-op. A snapshot wouldn't work — the worker thread
+ * is stuck inside mco_resume for the whole CPU-loop and can't re-copy. */
+__declspec(thread) extern volatile int*   _nova_preempt_ptr;
 #else
 extern __thread NovaFiberQueue* _nova_active_scope;
 extern __thread int             _nova_active_slot;
 extern __thread void (*_nova_park_unlock_fn)(void*);
 extern __thread void*           _nova_park_unlock_arg;
+extern __thread volatile int*   _nova_preempt_ptr;
+#endif
+
+/* Plan 44.7: branch-hint macro — codegen emits NOVA_UNLIKELY(_nova_should_yield)
+ * at every safepoint, so the not-taken path must stay cheap. */
+#if defined(__GNUC__) || defined(__clang__)
+#  define NOVA_UNLIKELY(x) __builtin_expect(!!(x), 0)
+#else
+#  define NOVA_UNLIKELY(x) (x)
 #endif
 
 /* Called from spawn-entry's catch block when the body threw.
@@ -840,6 +857,23 @@ static inline void nova_fiber_yield(void) {
         nova_throw(nova_str_from_cstr("scope cancelled"));
     }
     mco_yield(co);
+}
+
+/* Plan 44.7: preemption safepoint. Codegen emits a call to this at every
+ * function prologue and every loop backedge. Cost on the hot (not-preempt)
+ * path: one TLS load + a predicted-not-taken branch, and — only if the ptr
+ * is non-NULL — one more load (~1-2 cycles total). When the sysmon thread
+ * has flagged this worker as overrunning its timeslice, *_nova_preempt_ptr
+ * is 1 → clear it and cooperatively yield so peer fibers get CPU.
+ *
+ * Safe outside a fiber (main thread, single-thread mode): _nova_preempt_ptr
+ * is NULL there → pure no-op. `nova_fiber_yield()` itself also no-ops if
+ * `mco_running()` is NULL — double safety. */
+static inline void nova_preempt_check(void) {
+    if (NOVA_UNLIKELY(_nova_preempt_ptr != NULL) && *_nova_preempt_ptr) {
+        *_nova_preempt_ptr = 0;
+        nova_fiber_yield();
+    }
 }
 
 /* ---- Built-in `Time` effect operations ----
