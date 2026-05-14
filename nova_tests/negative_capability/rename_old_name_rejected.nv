@@ -1,0 +1,14 @@
+// EXPECT_COMPILE_ERROR undefined identifier `calculate`
+//
+// Plan 42.09: item rename — старое имя больше не доступно после rename.
+// Импортируем `calculate as compute`. Попытка использовать `calculate`
+// (старое имя) → undefined identifier на name-resolution стадии.
+
+module negative_capability.rename_old_name_rejected
+
+import nova_tests.modules.rename_import_source.{calculate as compute}
+
+test "old name rejected after rename" {
+    let _x = calculate(5)
+    assert(true)
+}
