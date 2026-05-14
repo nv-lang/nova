@@ -1,0 +1,15 @@
+// Plan 33.3 (refactor): перегрузка operation в protocol по типу параметра
+// разрешена так же, как в effect.
+//
+// Тест: парсинг + type-check проходят без ошибок.
+
+module contracts.f9_overloaded_ops_in_protocol_positive
+
+type Store protocol {
+    get(key str) -> int
+    get(key int) -> int
+}
+
+test "overloaded ops in protocol type-check" {
+    assert(1 + 1 == 2)
+}

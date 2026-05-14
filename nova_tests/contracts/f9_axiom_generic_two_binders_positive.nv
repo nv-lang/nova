@@ -1,0 +1,13 @@
+// Plan 33.3 (refactor): generic axiom с двумя generic-параметрами [T, U].
+// V1: парсинг + AST; SMT encoding generic axioms — V2 (silently skipped).
+
+module contracts.f9_axiom_generic_two_binders_positive
+
+type Store effect {
+    #pure get(key int) -> int
+    axiom bounded[T, U](k T, limit U) => get(0) >= 0
+}
+
+test "two generic params in axiom" {
+    assert(1 + 1 == 2)
+}

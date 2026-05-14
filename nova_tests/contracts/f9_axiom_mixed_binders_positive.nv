@@ -1,0 +1,13 @@
+// Plan 33.3 (refactor): typed binders с разными типами (str, int).
+// axiom использует биндеры разных типов — парсер и type-check принимают.
+
+module contracts.f9_axiom_mixed_binders_positive
+
+type Registry effect {
+    #pure lookup(key str) -> int
+    axiom exists(key str, threshold int) => lookup(key) >= threshold
+}
+
+test "mixed type binders in axiom" {
+    assert(1 + 1 == 2)
+}
