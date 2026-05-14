@@ -98,6 +98,12 @@ __declspec(thread) NovaVtable_Fail*    _nova_handler_Fail  = NULL;  /* default N
 __declspec(thread) NovaVtable_Time*    _nova_handler_Time  = NULL;  /* default NULL → context-sensitive yield (see fibers.h) */
 __declspec(thread) NovaFiberQueue*     _nova_active_scope  = NULL;  /* active supervised scope for current thread */
 __declspec(thread) int                 _nova_active_slot   = -1;
+/* Plan 44.5 Layer 5 deferred-unlock: set by fiber in park_with_unlock before
+ * mco_yield; called by worker loop AFTER mco_resume returns (= after fiber is
+ * truly MCO_SUSPENDED). Prevents race where cross-thread wake clears parked
+ * flag before mco_yield, causing double-push to worker deque. */
+__declspec(thread) void (*_nova_park_unlock_fn)(void*) = NULL;
+__declspec(thread) void*               _nova_park_unlock_arg = NULL;
 #else
 __thread NovaFailFrame*      _nova_fail_top      = NULL;
 __thread NovaInterruptFrame* _nova_interrupt_top = NULL;
@@ -106,6 +112,8 @@ __thread NovaVtable_Fail*    _nova_handler_Fail  = NULL;
 __thread NovaVtable_Time*    _nova_handler_Time  = NULL;
 __thread NovaFiberQueue*     _nova_active_scope  = NULL;
 __thread int                 _nova_active_slot   = -1;
+__thread void (*_nova_park_unlock_fn)(void*)  = NULL;
+__thread void*               _nova_park_unlock_arg = NULL;
 #endif
 
 /* Per-fiber handler scoping: registry of effect-storage addresses.

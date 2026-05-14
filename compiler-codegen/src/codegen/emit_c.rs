@@ -2224,6 +2224,10 @@ impl CEmitter {
         // results from concurrent execution come through mut-captures or
         // `parallel for` (homogeneous results), never from spawn itself.
         let queue = self.current_scope_queue.clone().expect("scope queue must be active");
+        // Plan 44.5 Layer 5 fix: initialize _nova_worker_slot = -1 explicitly.
+        // nova_alloc zero-initializes (slot=0), but 0 is a valid slot index —
+        // -1 is required as "not yet set" sentinel for the worker loop restore logic.
+        self.line(&format!("{ctx}->_nova_worker_slot = -1;", ctx = ctx_var));
         // Plan 44.5 Layer 5: implicit M:N — runtime initialized → push в worker
         // deque; иначе single-thread path unchanged.
         self.line("if (nova_runtime_is_initialized()) {");
@@ -2244,7 +2248,32 @@ impl CEmitter {
         // Emit the ctx-struct typedef into lambda_forward_decls — flushed before the
         // current function in `out`, so the typedef is visible at the spawn-instance
         // declaration site (and also for the entry fn body which lives in deferred_impls).
+        //
+        // Plan 44.5 Layer 5 fix: base fields MUST be FIRST so NovaSpawnCtxBase* cast
+        // in runtime.c worker loop is safe (fixed offsets). User captures follow.
         let _ = writeln!(self.lambda_forward_decls, "typedef struct {{");
+        // Base fields first (NovaSpawnCtxBase layout — must match fibers.h).
+        // Plan 44.5 Layer 5: parent scope для remote-spawn tracking.
+        // NULL = single-thread (без runtime.init). Always present.
+        let _ = writeln!(self.lambda_forward_decls,
+            "    NovaFiberQueue* _nova_parent_scope;");
+        // Plan 44.5 Layer 5 park/wake: slot index в worker scope.
+        // Initialized to -1; set by preamble on first run. -1 = not yet set.
+        let _ = writeln!(self.lambda_forward_decls,
+            "    int _nova_worker_slot;");
+        // Plan 44.5 Layer 5 fix: per-fiber fail/interrupt-top chain snapshot.
+        // Worker saves/restores these around mco_resume to isolate fiber fail-stacks.
+        let _ = writeln!(self.lambda_forward_decls,
+            "    NovaFailFrame* _nova_saved_fail_top;");
+        let _ = writeln!(self.lambda_forward_decls,
+            "    NovaInterruptFrame* _nova_saved_interrupt_top;");
+        // Plan 44.5 Layer 5 deadlock fix: home worker scope for work-stealing.
+        // Set once in preamble; worker restores _nova_active_scope from this
+        // before each mco_resume so channel ops always capture the correct scope.
+        // NULL before preamble runs (_nova_worker_slot == -1 guards that path).
+        let _ = writeln!(self.lambda_forward_decls,
+            "    NovaFiberQueue* _nova_fiber_scope;");
+        // User capture fields follow base fields.
         for (cap, ty, by_value) in &captures {
             if *by_value {
                 let _ = writeln!(self.lambda_forward_decls, "    {} {};", ty, cap);
@@ -2258,16 +2287,6 @@ impl CEmitter {
             let _ = writeln!(self.lambda_forward_decls,
                 "    NovaArray_{}* _nova_par_result;", elem_ty);
         }
-        // Plan 44.5 Layer 5: parent scope для remote-spawn tracking.
-        // NULL = single-thread (без runtime.init). Always present —
-        // заменяет dummy padding для empty spawns.
-        let _ = writeln!(self.lambda_forward_decls,
-            "    NovaFiberQueue* _nova_parent_scope;");
-        // Plan 44.5 Layer 5 park/wake: slot index в worker scope.
-        // Alloc'нутся в entry preamble — позволяет Time.sleep/recv в worker.
-        // -1 = single-thread (nova_scope_alloc_slot не вызывался).
-        let _ = writeln!(self.lambda_forward_decls,
-            "    int _nova_worker_slot;");
         // Note: no `_nova_result` field — spawn returns unit (D50/D71).
         let _ = writeln!(self.lambda_forward_decls, "}} {};", ctx_ty);
 
@@ -2291,6 +2310,7 @@ impl CEmitter {
         self.indent += 1;
         self.line("_nova_active_slot = nova_scope_alloc_slot(_nova_active_scope, _co);");
         self.line("_c->_nova_worker_slot = _nova_active_slot;");
+        self.line("_c->_nova_fiber_scope = _nova_active_scope;");
         self.indent -= 1;
         self.line("} else {");
         self.indent += 1;

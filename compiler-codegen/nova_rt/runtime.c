@@ -181,19 +181,92 @@ static void _worker_main(void* arg) {
             continue;
         }
 
-        /* (4) Run fiber. */
+        /* (4) Run fiber.
+         *
+         * Plan 44.5 Layer 5 fix: save/restore _nova_fail_top, _nova_interrupt_top,
+         * and _nova_active_slot per fiber — mirrors nova_supervised_step behavior.
+         *
+         * Bug without this: fiber F1 parks (fail-top = &_ff_F1). Fiber F2 runs
+         * and parks (fail-top = &_ff_F2 → &_ff_F1). F1 resumes and throws →
+         * longjmp(&_ff_F2->jmp) → cross-stack jump into F2's suspended coroutine
+         * → SIGSEGV / STATUS_ACCESS_VIOLATION.
+         *
+         * Also fixes stale _nova_active_slot: without restore, _nova_active_slot
+         * = previous fiber's slot (or -1) when fiber resumes, causing wrong slot
+         * in channel ops on second+ park. */
+        NovaSpawnCtxBase* base = (NovaSpawnCtxBase*)mco_get_user_data(co);
+
+        /* Restore fiber's TLS snapshot (fail-top chain + active scope/slot).
+         *
+         * Plan 44.5 deadlock fix (work-stealing): a fiber's home scope
+         * (_nova_fiber_scope) is fixed to the worker that ran its preamble.
+         * If stolen by another worker, we MUST restore _nova_active_scope to
+         * the home scope so channel ops capture the correct scope/slot.
+         * Without this, the channel waiter records the stealer's scope, and
+         * nova_sched_wake finds scope->fibers[slot]=NULL → dispatch_ready not
+         * called → fiber never re-queued → permanent hang (deadlock). */
+        NovaFiberQueue*     outer_scope     = _nova_active_scope;
+        NovaFailFrame*      outer_fail      = _nova_fail_top;
+        NovaInterruptFrame* outer_interrupt = _nova_interrupt_top;
+        if (base && base->_nova_worker_slot >= 0 && base->_nova_fiber_scope) {
+            /* Preamble already ran: restore home scope + saved TLS. */
+            _nova_active_scope  = base->_nova_fiber_scope;
+            _nova_active_slot   = base->_nova_worker_slot;
+            _nova_fail_top      = base->_nova_saved_fail_top;
+            _nova_interrupt_top = base->_nova_saved_interrupt_top;
+        } else if (base) {
+            /* Before preamble (first run): restore saved fail/interrupt but
+             * leave _nova_active_scope as this worker's scope (preamble will
+             * allocate the home slot + set _nova_fiber_scope on first resume). */
+            _nova_fail_top      = base->_nova_saved_fail_top;
+            _nova_interrupt_top = base->_nova_saved_interrupt_top;
+        }
+
         if (mco_status(co) == MCO_SUSPENDED) {
             mco_resume(co);
         }
+
+        /* Save fiber's current TLS state back; restore outer worker state. */
+        if (base) {
+            base->_nova_saved_fail_top      = _nova_fail_top;
+            base->_nova_saved_interrupt_top = _nova_interrupt_top;
+        }
+        _nova_active_scope  = outer_scope;
+        _nova_fail_top      = outer_fail;
+        _nova_interrupt_top = outer_interrupt;
+
+        /* Plan 44.5 Layer 5 deferred-unlock: check parked state BEFORE releasing
+         * the channel/sleep mutex. This captures parked[slot]=true while no
+         * cross-thread waker can clear it (they are blocked on the mutex).
+         * Only after this check do we release the mutex via the deferred fn.
+         *
+         * Use _nova_fiber_scope (home scope) for is_parked check — must match
+         * the scope used by the fiber in nova_sched_park_with_unlock, which
+         * captures _nova_active_scope (restored to _nova_fiber_scope above). */
+        bool fiber_is_parked = false;
+        if (mco_status(co) == MCO_SUSPENDED) {
+            NovaFiberQueue* check_scope = (base && base->_nova_fiber_scope)
+                                          ? base->_nova_fiber_scope : &w->scope;
+            int act_slot = base ? base->_nova_worker_slot : _nova_active_slot;
+            if (act_slot >= 0) {
+                fiber_is_parked = (bool)nova_sched_is_parked(check_scope, act_slot);
+            }
+        }
+        if (_nova_park_unlock_fn) {
+            void (*fn)(void*) = _nova_park_unlock_fn;
+            void* arg = _nova_park_unlock_arg;
+            _nova_park_unlock_fn  = NULL;
+            _nova_park_unlock_arg = NULL;
+            fn(arg);
+        }
+
         if (mco_status(co) == MCO_DEAD) {
             mco_destroy(co);
         } else if (mco_status(co) == MCO_SUSPENDED) {
-            /* Yielded: check if fiber parked (timer/channel wait).
-             * If parked — dispatch_ready will re-queue when wake fires.
-             * If not parked (cooperative yield) — re-push immediately. */
-            int act_slot = _nova_active_slot;
-            if (act_slot >= 0 && nova_sched_is_parked(&w->scope, act_slot)) {
-                /* Parked: let dispatch_ready handle requeueing. */
+            /* Yielded: if parked (timer/channel wait) → dispatch_ready re-queues.
+             * If not parked (cooperative yield) → re-push immediately. */
+            if (fiber_is_parked) {
+                /* Parked: let dispatch_ready handle requeueing when wake fires. */
             } else {
                 nova_deque_push(&w->deque, co);
             }
