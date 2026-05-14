@@ -1494,23 +1494,38 @@ impl Parser {
             let start = self.peek().span;
             self.bump(); // consume `axiom`
             let (ax_name, _) = self.parse_ident()?;
+            // Plan 33.3 (refactor): generic params `axiom name[T](id T) => ...`
+            let generics: Vec<GenericParam> = if matches!(self.peek().kind, TokenKind::LBracket) {
+                self.parse_generic_decl_params()?
+            } else {
+                Vec::new()
+            };
             self.expect(&TokenKind::LParen)?;
-            let mut binders: Vec<String> = Vec::new();
+            // Typed binders: `axiom name(id int, x str) => ...`
+            // Untyped:       `axiom name(id, x) => ...`  (type inferred)
+            let mut binders: Vec<(String, Option<TypeRef>)> = Vec::new();
             while !matches!(self.peek().kind, TokenKind::RParen) {
                 let (b, _) = self.parse_ident()?;
-                binders.push(b);
+                // Если следующий токен — не запятая и не ')' — это тип.
+                let ty = if !matches!(self.peek().kind,
+                    TokenKind::Comma | TokenKind::RParen) {
+                    Some(self.parse_type()?)
+                } else {
+                    None
+                };
+                binders.push((b, ty));
                 if self.eat(&TokenKind::Comma).is_none() {
                     break;
                 }
                 self.skip_newlines();
             }
             self.expect(&TokenKind::RParen)?;
-            // `=>` обязателен. Однострочное `axiom name() => expr`.
             self.expect(&TokenKind::FatArrow)?;
             let formula = self.parse_expr()?;
             let span = start.merge(formula.span);
             axioms.push(EffectAxiom {
                 name: ax_name,
+                generics,
                 binders,
                 formula,
                 span,

@@ -2607,18 +2607,53 @@ fn check_effect_axioms(module: &Module, errors: &mut Vec<Diagnostic>) {
             _ => continue,
         };
 
-        // Plan 33.3 Ф.9 (refactor): unique-name checks внутри effect-блока.
-        // Конфликты:
-        //   1. два operation/#pure с одинаковым именем;
-        //   2. два axiom с одинаковым именем;
-        //   3. axiom имя совпадает с именем operation/#pure.
-        // Делаем check'и независимо от наличия axioms — дубликаты method'ов
-        // ловим всегда.
-        let mut method_names: HashSet<&String> = HashSet::new();
+        // Plan 33.3 (refactor): unique-name checks внутри effect/protocol.
+        //
+        // Перегрузка op разрешена — уникальность по (name + param_types).
+        // Axioms уникальны по имени (overloading axioms не поддерживается).
+        // Axiom name не может совпадать с именем любого op (независимо от
+        // типов параметров) — они в одном logical namespace.
+        fn type_key(ty: &TypeRef) -> String {
+            match ty {
+                TypeRef::Named { path, generics, .. } => {
+                    let base = path.join(".");
+                    if generics.is_empty() {
+                        base
+                    } else {
+                        let a: Vec<_> = generics.iter().map(type_key).collect();
+                        format!("{}[{}]", base, a.join(","))
+                    }
+                }
+                TypeRef::Tuple(ts, _) => {
+                    let a: Vec<_> = ts.iter().map(type_key).collect();
+                    format!("({})", a.join(","))
+                }
+                TypeRef::Func { params, return_type, .. } => {
+                    let ps: Vec<_> = params.iter().map(type_key).collect();
+                    let ret = return_type.as_deref().map(type_key).unwrap_or_default();
+                    format!("fn({})->{}", ps.join(","), ret)
+                }
+                TypeRef::Array(t, _) => format!("[]{}", type_key(t)),
+                TypeRef::FixedArray(n, t, _) => format!("[{}]{}", n, type_key(t)),
+                TypeRef::Unit(_) => "()".to_string(),
+            }
+        }
+        fn op_sig(m: &EffectMethod) -> String {
+            let types: Vec<String> = m.params.iter()
+                .map(|p| type_key(&p.ty))
+                .collect();
+            format!("{}({})", m.name, types.join(","))
+        }
+        let mut op_sigs: HashSet<String> = HashSet::new();
+        // op_names_only: все имена operations (для проверки axiom↔op коллизии).
+        let mut op_names_only: HashSet<&String> = HashSet::new();
         for m in methods {
-            if !method_names.insert(&m.name) {
+            op_names_only.insert(&m.name);
+            let sig = op_sig(m);
+            if !op_sigs.insert(sig) {
                 errors.push(Diagnostic::new(
-                    format!("effect `{}`: duplicate operation `{}`",
+                    format!("effect `{}`: duplicate operation `{}` \
+                             (same name and parameter types)",
                         td.name, m.name),
                     m.span,
                 ));
@@ -2633,7 +2668,7 @@ fn check_effect_axioms(module: &Module, errors: &mut Vec<Diagnostic>) {
                     ax.span,
                 ));
             }
-            if method_names.contains(&ax.name) {
+            if op_names_only.contains(&ax.name) {
                 errors.push(Diagnostic::new(
                     format!("effect `{}`: axiom `{}` conflicts with operation \
                              of the same name (axiom names must be distinct \
@@ -2657,7 +2692,7 @@ fn check_effect_axioms(module: &Module, errors: &mut Vec<Diagnostic>) {
         for ax in &td.axioms {
             // Duplicate-binder check.
             let mut seen: HashSet<&String> = HashSet::new();
-            for b in &ax.binders {
+            for (b, _ty) in &ax.binders {
                 if !seen.insert(b) {
                     errors.push(Diagnostic::new(
                         format!("axiom `{}.{}`: duplicate binder `{}`",
@@ -2666,7 +2701,7 @@ fn check_effect_axioms(module: &Module, errors: &mut Vec<Diagnostic>) {
                     ));
                 }
             }
-            let binders: HashSet<&String> = ax.binders.iter().collect();
+            let binders: HashSet<&String> = ax.binders.iter().map(|(n, _)| n).collect();
             check_axiom_expr(&ax.formula, &td.name, &ax.name,
                              &binders, &pure_views, errors);
         }

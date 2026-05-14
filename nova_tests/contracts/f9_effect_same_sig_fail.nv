@@ -1,0 +1,12 @@
+// EXPECT_COMPILE_ERROR effect `Db`: duplicate operation `balance`
+//
+// Plan 33.3 (refactor): два operation с одинаковой полной сигнатурой
+// (name + param types) → error. Перегрузка по типу разрешена,
+// полный дубликат — нет.
+
+module contracts.f9_effect_same_sig_fail
+
+type Db effect {
+    balance(id int) -> int
+    balance(id int) -> int
+}

@@ -56,7 +56,9 @@ pub fn resolve_imports_inline_ex(
     include_test_peers: bool,
 ) -> Result<()> {
     let entry_dir = entry_path.parent().unwrap_or(repo).to_path_buf();
-    let mut visited: HashSet<PathBuf> = HashSet::new();
+    // Plan 42.14 Ф.3 ([M11]): cycle detection keyed by declared module
+    // name (Vec<String>), не canonical PathBuf — symlink-safe.
+    let mut visited: HashSet<Vec<String>> = HashSet::new();
 
     let mut merged_items: Vec<Item> = Vec::new();
 
@@ -79,20 +81,19 @@ pub fn resolve_imports_inline_ex(
     // потом append в module.peer_files после всех resolves.
     let mut peer_files: Vec<PeerFile> = vec![entry_peer_file];
     let mut next_file_id: FileId = 1;
-    // Plan 35 Ф.1 cycle detection (D29): in-progress DFS-stack — canonical
-    // paths модулей currently being resolved. Если import упирается в
-    // канон уже в стеке → cycle. visited — closed-set (diamond-dep dedup);
+    // Plan 35 Ф.1 cycle detection (D29) + Plan 42.14 Ф.3 ([M11]):
+    // in-progress DFS-stack — declared module names (Vec<String>)
+    // currently being resolved. Если import упирается в module name
+    // уже в стеке → cycle. visited — closed-set (diamond-dep dedup);
     // in_progress — open-set (cycle detect).
-    let mut in_progress: HashSet<PathBuf> = HashSet::new();
+    let mut in_progress: HashSet<Vec<String>> = HashSet::new();
     let mut import_chain: Vec<Vec<String>> = Vec::new(); // для error message
 
     // Plan 35 Ф.1 (D29): добавляем entry в in_progress + chain ДО resolve.
     // Если transitive import ссылается обратно на entry — cycle detected.
-    // (Если entry сам не в visited — diamond-dep потом silent skip.)
-    let entry_canon = entry_path.canonicalize().ok();
-    if let Some(c) = &entry_canon {
-        in_progress.insert(c.clone());
-    }
+    // Entry key = его declared module name (module.name).
+    let entry_key = module.name.clone();
+    in_progress.insert(entry_key.clone());
     import_chain.push(module.name.clone());
 
     // Plan 35 sub-plan 35.A R27: auto-import `std.prelude` if exists.
@@ -141,10 +142,8 @@ pub fn resolve_imports_inline_ex(
     }
 
     // Entry done — promote из in_progress → visited.
-    if let Some(c) = entry_canon {
-        in_progress.remove(&c);
-        visited.insert(c);
-    }
+    in_progress.remove(&entry_key);
+    visited.insert(entry_key);
     import_chain.pop();
 
     // Prepend merged items: imported сначала, потом user code.
@@ -182,8 +181,8 @@ fn resolve_one(
     entry_dir: &Path,
     repo: &Path,
     stdlib_dir: &Path,
-    visited: &mut HashSet<PathBuf>,
-    in_progress: &mut HashSet<PathBuf>,
+    visited: &mut HashSet<Vec<String>>,
+    in_progress: &mut HashSet<Vec<String>>,
     import_chain: &mut Vec<Vec<String>>,
     merged_items: &mut Vec<Item>,
     peer_files: &mut Vec<PeerFile>,
@@ -287,15 +286,25 @@ fn resolve_one(
             }
         })?;
 
-    // Use FIRST peer file's canonical path as module identity key. All peers
-    // of one folder-module share single key (we promote ALL peers to visited
-    // when done — diamond-dep dedup works correctly).
+    // Plan 42.14 Ф.3 ([M11]): cycle detection по DECLARED MODULE NAME,
+    // не canonical PathBuf. Symlink / case-insensitive FS могли дать
+    // разные пути для same module → false-negative cycle. Module name
+    // (parent.X) — стабильный логический identity.
+    //
+    // Читаем `module X.Y` declaration из первого peer (lightweight —
+    // только первая non-comment строка, без полного parse).
     let first_path = &resolved_paths[0];
-    let canon = first_path.canonicalize()
-        .map_err(|e| anyhow!("canonicalize {}: {}", first_path.display(), e))?;
+    let module_key: Vec<String> = read_module_decl(first_path)
+        .unwrap_or_else(|| {
+            // Fallback: если decl не прочитался — canonical path string
+            // как single-element key (всё равно уникален).
+            let canon = first_path.canonicalize()
+                .unwrap_or_else(|_| first_path.clone());
+            vec![canon.to_string_lossy().to_string()]
+        });
 
-    // D29: cycle = canon уже в in_progress.
-    if in_progress.contains(&canon) {
+    // D29: cycle = module_key уже в in_progress.
+    if in_progress.contains(&module_key) {
         let mut chain_display: Vec<String> = import_chain.iter()
             .map(|p| p.join("."))
             .collect();
@@ -306,11 +315,11 @@ fn resolve_one(
     }
 
     // Closed-set: diamond-dep dedup. Silent skip.
-    if visited.contains(&canon) {
+    if visited.contains(&module_key) {
         return Ok(());
     }
 
-    in_progress.insert(canon.clone());
+    in_progress.insert(module_key.clone());
     import_chain.push(imp.path.clone());
 
     // Plan 42 Ф.2: parse все peer files в alphabetical order (правило B).
@@ -447,13 +456,38 @@ fn resolve_one(
     // rename_map + selective_names (Plan 42.09). Раньше был syntax-only.
     let _ = imp.items.is_some();
 
-    // Pop in_progress + chain; promote ALL peer canons в closed-set.
-    in_progress.remove(&canon);
-    for c in peer_canons {
-        visited.insert(c);
-    }
+    // Plan 42.14 Ф.3: pop in_progress + chain; promote module_key в
+    // closed-set. Все peers folder-module share один module_key (declared
+    // name) — diamond-dep dedup работает естественно.
+    let _ = &peer_canons; // peer_canons больше не нужен для visited keying
+    in_progress.remove(&module_key);
+    visited.insert(module_key);
     import_chain.pop();
     Ok(())
+}
+
+/// Plan 42.14 Ф.3 ([M11]): lightweight чтение `module X.Y` declaration
+/// из файла — только первая non-comment строка, без полного parse.
+/// Используется для cycle-detection key (module name, не path).
+/// Возвращает None если файл не читается или нет `module` декларации.
+fn read_module_decl(path: &Path) -> Option<Vec<String>> {
+    let src = std::fs::read_to_string(path).ok()?;
+    for raw in src.lines() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with("//") {
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix("module ") {
+            let decl = rest.trim();
+            // Берём только до first whitespace/comment (decl может иметь
+            // trailing comment или быть просто `module X.Y`).
+            let decl = decl.split_whitespace().next().unwrap_or(decl);
+            return Some(decl.split('.').map(|s| s.to_string()).collect());
+        }
+        // Первая non-comment строка не `module` — нет декларации.
+        break;
+    }
+    None
 }
 
 /// Plan 42.09: rename item (Type/Fn/Const) при selective re-import.

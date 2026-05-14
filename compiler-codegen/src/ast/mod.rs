@@ -487,11 +487,13 @@ pub enum EffectOpKind {
 #[derive(Debug, Clone)]
 pub struct EffectAxiom {
     pub name: String,
-    /// Параметры формулы: `axiom foo(id, x) => ...` имеет binders
-    /// `[(id, ?), (x, ?)]`. Типы выводятся из usage в `formula` или
-    /// объявляются явно как `id: AccountId, x: money` (V1 — без явных
-    /// типов, выводятся из pure_view сигнатур).
-    pub binders: Vec<String>,
+    /// Generic-параметры: `axiom foo[T](id T) => ...` → `generics = [T]`.
+    /// V1: парсинг + AST; SMT encoding generic axioms — V2.
+    pub generics: Vec<GenericParam>,
+    /// Параметры формулы с опциональными типами:
+    /// `axiom foo(id int, x str) => ...` → `[(id, Some(int)), (x, Some(str))]`.
+    /// `axiom foo(id) => ...` → `[(id, None)]` (тип выводится из usage).
+    pub binders: Vec<(String, Option<TypeRef>)>,
     pub formula: Expr,
     pub span: Span,
 }

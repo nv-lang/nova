@@ -272,10 +272,11 @@ fn collect_pure_views(module: &Module) -> std::collections::HashMap<String, supe
 struct AxiomInfo<'a> {
     effect_name: String,
     axiom_name: String,
-    binders: &'a [String],
-    /// Маппинг binder-name → sort. Выводится из usage в pure_view-вызовах
-    /// внутри formula (V1 эвристика).
+    /// Binders с опциональными типами: `(name, Option<TypeRef>)`.
+    binders: &'a [(String, Option<crate::ast::TypeRef>)],
     formula: &'a crate::ast::Expr,
+    /// Generic params (V2 — сейчас только для проверки наличия).
+    is_generic: bool,
 }
 
 /// Plan 33.3 Ф.9: собрать все axiom'ы модуля.
@@ -290,6 +291,7 @@ fn collect_axioms(module: &Module) -> Vec<AxiomInfo<'_>> {
                 axiom_name: ax.name.clone(),
                 binders: ax.binders.as_slice(),
                 formula: &ax.formula,
+                is_generic: !ax.generics.is_empty(),
             });
         }
     }
@@ -301,19 +303,46 @@ fn collect_axioms(module: &Module) -> Vec<AxiomInfo<'_>> {
 /// Биндеры приобретают sort из ПЕРВОГО pure_view-вызова в формуле,
 /// где они используются как аргумент. Это эвристика V1; явные type
 /// ascriptions в binders — future work.
+/// Конвертирует TypeRef в SortRef для SMT (V1: int/bool/str → соответствующий sort,
+/// остальное → Int как fallback).
+fn type_ref_to_sort(ty: &crate::ast::TypeRef) -> SortRef {
+    if let crate::ast::TypeRef::Named { path, .. } = ty {
+        if let Some(name) = path.last() {
+            return match name.as_str() {
+                "int" | "i32" | "i64" | "u32" | "u64" | "usize" => SortRef::Int,
+                "bool" => SortRef::Bool,
+                "str" => SortRef::Str,
+                _ => SortRef::Int,
+            };
+        }
+    }
+    SortRef::Int
+}
+
 fn encode_axiom(
     ax: &AxiomInfo,
     pure_views: &std::collections::HashMap<String, super::encode::PureViewSig>,
 ) -> Option<SmtTerm> {
-    // Инфер sorts для binders.
+    // Generic axioms — V2; пока не поддерживаются в SMT encoding.
+    if ax.is_generic {
+        return None;
+    }
+    // Инфер sorts для binders (только имена нужны для infer).
+    let binder_names: Vec<String> = ax.binders.iter().map(|(n, _)| n.clone()).collect();
     let mut binder_sorts: std::collections::HashMap<String, SortRef> = std::collections::HashMap::new();
-    infer_binder_sorts(ax.formula, ax.binders, pure_views, &mut binder_sorts);
+    // Если у binder есть явный тип — используем его; иначе выводим из usage.
+    for (name, ty_opt) in ax.binders {
+        if let Some(ty) = ty_opt {
+            let sort = type_ref_to_sort(ty);
+            binder_sorts.insert(name.clone(), sort);
+        }
+    }
+    infer_binder_sorts(ax.formula, &binder_names, pure_views, &mut binder_sorts);
     // Encode body.
     let ctx = super::encode::EncodeCtx { pure_views };
     let body = super::encode::encode_expr_with_ctx(ax.formula, &ctx).ok()?;
-    // Build binders Vec — для каждого ax.binder возьмём inferred sort,
-    // default Int если не выведен.
-    let binders: Vec<(String, SortRef)> = ax.binders.iter()
+    // Build binders Vec — явный или inferred sort, default Int.
+    let binders: Vec<(String, SortRef)> = binder_names.iter()
         .map(|n| (n.clone(), binder_sorts.remove(n).unwrap_or(SortRef::Int)))
         .collect();
     if binders.is_empty() {
@@ -433,6 +462,7 @@ pub fn check_axiom_consistency(module: &Module) -> Vec<Diagnostic> {
                     axiom_name: ax.name.clone(),
                     binders: &ax.binders,
                     formula: &ax.formula,
+                    is_generic: !ax.generics.is_empty(),
                 };
                 if let Some(formula) = encode_axiom(&info, &pure_views) {
                     backend.assert(Assertion {
