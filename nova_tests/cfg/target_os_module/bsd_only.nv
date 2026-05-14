@@ -1,0 +1,10 @@
+// Plan 42.12 Ф.2: peer с #cfg(target_os = "freebsd").
+// Никогда не active на текущих платформах (windows/linux/macos),
+// потому что target_os = "freebsd" не matches.
+// Заявленный bsd_only_value() невидим импортирующему.
+
+module cfg.target_os_module
+#cfg(target_os = "freebsd")
+
+export fn bsd_only_value() -> int =>
+    111

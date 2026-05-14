@@ -306,7 +306,6 @@ fn resolve_one(
     for peer_path in &resolved_paths {
         let peer_canon = peer_path.canonicalize()
             .map_err(|e| anyhow!("canonicalize {}: {}", peer_path.display(), e))?;
-        peer_canons.push(peer_canon);
 
         let peer_src = std::fs::read_to_string(peer_path)
             .map_err(|e| anyhow!("failed to read imported module {}: {}", peer_path.display(), e))?;
@@ -325,6 +324,16 @@ fn resolve_one(
                     "in imported module '{}' ({}): {}:{}: {}",
                     imp.path.join("."), peer_path_str, line, col, d.message)
             })?;
+
+        // Plan 42.12 Ф.2: проверка module-level `#cfg(feature/target_os)`.
+        // Если peer объявил inactive cfg — skip целиком (не merge items,
+        // не register peer_file, не recurse imports).
+        if !cfg_active(&peer_module) {
+            continue;
+        }
+
+        // Push canon только для active peers (dedup logic).
+        peer_canons.push(peer_canon);
 
         // Регистрируем PeerFile (snapshot до recursive resolve + merge).
         peer_files.push(PeerFile {
@@ -470,6 +479,48 @@ fn resolve_import_path(
     }
 
     None
+}
+
+/// Plan 42.12 Ф.2: enabled features set (через `NOVA_FEATURES=foo,bar` env
+/// или `--features` CLI flag). Empty if нет features.
+pub fn enabled_features() -> HashSet<String> {
+    if let Ok(s) = std::env::var("NOVA_FEATURES") {
+        s.split(',').map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect()
+    } else {
+        HashSet::new()
+    }
+}
+
+/// Plan 42.12 Ф.2: peer module active при current target/features?
+/// Проверяет все `#cfg` атрибуты — если хоть один inactive → peer inactive.
+/// (AND semantic — все cfg должны matchнуть.)
+fn cfg_active(module: &Module) -> bool {
+    let target = current_target_os();
+    let features = enabled_features();
+    for attr in &module.attrs {
+        if let crate::ast::ModuleAttrKind::Cfg(pred) = &attr.kind {
+            match pred {
+                crate::ast::CfgPredicate::Feature(name) => {
+                    if !features.contains(name) {
+                        return false;
+                    }
+                }
+                crate::ast::CfgPredicate::TargetOs(os) => {
+                    let matches = match os.as_str() {
+                        "windows" => target == "windows",
+                        "linux" => target == "linux",
+                        "macos" => target == "macos",
+                        "unix" | "posix" => target == "linux" || target == "macos" || target == "unix",
+                        _ => false, // unknown target = never matches
+                    };
+                    if !matches {
+                        return false;
+                    }
+                }
+            }
+        }
+    }
+    true
 }
 
 /// Plan 42.12 Ф.1: target OS для filename suffix filtering.

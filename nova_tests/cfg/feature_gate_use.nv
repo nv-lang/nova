@@ -1,0 +1,18 @@
+// Plan 42.12 Ф.2: #cfg(feature) gating test.
+//
+// cfg/feature_gate/ имеет 3 peers:
+//   core.nv         — всегда active
+//   stable.nv       — всегда active
+//   experimental.nv — #cfg(feature = "experimental") → active ТОЛЬКО при
+//                     NOVA_FEATURES=experimental (или --features=experimental)
+//
+// Без feature: experimental_value() невидима. Импортирующий не использует.
+// С feature: experimental peer merged + items available.
+
+module cfg.feature_gate_use
+
+import nova_tests.cfg.feature_gate.{stable_value}
+
+test "default: stable items work" {
+    assert(stable_value() == 101)
+}

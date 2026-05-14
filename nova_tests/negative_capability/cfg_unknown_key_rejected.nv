@@ -1,0 +1,12 @@
+// EXPECT_COMPILE_ERROR unknown #cfg key
+//
+// Plan 42.12 Ф.2: парсер должен reject'ить unknown #cfg keys.
+// Допустимо только `feature` и `target_os`. Здесь `nonsense` —
+// должен дать parse error «unknown #cfg key `nonsense`».
+
+module negative_capability.cfg_unknown_key_rejected
+#cfg(nonsense = "foo")
+
+test "unknown cfg key rejected at parse" {
+    assert(true)
+}

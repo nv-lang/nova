@@ -9,6 +9,7 @@
 | [D29](#d29-модули-и-импорты) | Модули и импорты |
 | [D47](#d47-видимость-деклараций) | Видимость деклараций (расширение D5) |
 | [D78](#d78-package-tooling-novatoml-novalock-registry-chain-workspace) | Package tooling: `nova.toml`, `nova.lock`, registry chain, workspace |
+| [D99](#d99-conditional-compilation-filename-suffix--cfg) | Conditional compilation: filename suffix + `#cfg` |
 
 ---
 
@@ -1117,3 +1118,78 @@ nova_tests/
 - Хрупкость: insert требует shift всех соседей или поиск slot'а.
 
 После миграции (commit `a33b245`) этот anti-pattern удалён.
+
+
+---
+
+## D99. Conditional compilation: filename suffix + `#cfg`
+
+### Что
+
+Два механизма platform/feature-conditional кода:
+
+1. **Filename suffix convention** (Go-style) — для **OS routing**:
+   ```
+   std/net/
+   ├── tls.nv               // shared signatures, always active
+   ├── tls_windows.nv       // Windows-only peer
+   ├── tls_linux.nv         // Linux-only peer
+   └── tls_macos.nv         // macOS-only peer
+   ```
+   Recognized suffixes: `_windows`, `_linux`, `_macos`, `_unix`,
+   `_posix`. Применяется к **peer-files** в folder-modules и к
+   standalone tests. Без suffix → active всегда.
+
+2. **`#cfg` attribute** (Rust-style minimal) — для **feature flags**
+   и item-level OS routing:
+   ```nova
+   module net.tls
+   #cfg(feature = "experimental_io_uring")
+
+   export fn connect(host str) -> Connection { ... }
+   ```
+   Recognized predicates: `#cfg(feature = "X")`,
+   `#cfg(target_os = "Y")`. Strict minimal — **никаких** `any/all/not`
+   composition. Если нужна композиция — два attribute блока (AND
+   semantic) или filename suffix.
+
+### Семантика
+
+| Mechanism | Scope | Detection |
+|---|---|---|
+| Filename suffix | peer-file / standalone test | filename stem suffix |
+| `#cfg(feature)` | peer-file / module (Ф.3: item) | `NOVA_FEATURES` env / `--features` CLI |
+| `#cfg(target_os)` | peer-file / module (Ф.3: item) | `NOVA_TARGET_OS` env / host OS default |
+
+**AND semantic** для multiple `#cfg`: peer active iff **all** cfg
+predicates match. Один inactive → peer skip целиком (не parsed
+items, не register peer_file, не recurse imports).
+
+### Что НЕ входит
+
+- `any(...)`, `all(...)`, `not(...)` — strict minimal.
+- `#cfg` в expression position (`if #cfg(target_os = ...) { ... }`).
+- `#cfg(target_arch = ...)` — на ARM/x86 differences. Future, если
+  понадобится.
+- Cross-compile toolchain integration — `--target=linux` на Windows-
+  host требует cross C-toolchain (separate plan).
+
+### Почему
+
+Конкретные numbers vs альтернатив:
+
+- **Go-only filename suffix** — мощно для OS routing, слабо для
+  feature flags. Plan 18 P0 (TLS) требует и того, и другого.
+- **Rust full `#[cfg(...)]` system** — рабочее, но `any/all/not` +
+  cfg-expr + cfg-attr — 3× complexity. Bootstrap не выдержит.
+- **Только runtime branching** — dead code в binary + security risk
+  (включён код для другой OS).
+
+Filename + minimal `#cfg` покрывает 90% production кейсов при 10%
+complexity Rust'а.
+
+### Связь
+
+- [Plan 42](../../docs/plans/42-folder-modules.md) — folder-modules.
+- [Plan 42.12](../../docs/plans/42.12-cfg-conditional-compilation.md) — реализация.
+- [Plan 18](../../docs/plans/18-stdlib-roadmap.md) P0 — unblock'aется D99.

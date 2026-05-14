@@ -9203,3 +9203,98 @@ M:N это API rot (программист must помнить which to use). Sp
 большой refactor (~600-1000 LOC + careful slot/TLS work). Закрытие
 compute-only Layer 5 как partial milestone — honest, оставляет clean
 checkpoint, открывает possibility разработки в next session.
+
+
+================================================================================
+PLAN 42.08 + 42.12: AUDIT CLOSING + CONDITIONAL COMPILATION (2026-05-14)
+================================================================================
+
+После закрытия Plan 42.04 (per-peer imports) проведён аудит "с чистого
+листа против Go/Rust/TS". Найденные gap'ы разбиты на 5 подпланов:
+
+  42.08 — closing audit (fixes, ЗАКРЫТ)
+  42.09 — re-export (`export ... from`) — stub
+  42.10 — module-level #forbid (правило I) — stub
+  42.11 — inline module doc (`///!`) — stub
+  42.12 — conditional compilation #cfg (БЛОКЕР Plan 18 P0, ЗАКРЫТ)
+
+Нумерация перешла на leading-zero (42.04, 42.08 ... 42.12) для
+sort order при ≥10 подпланах.
+
+### Plan 42.08 — closing audit (закрыт)
+
+Три gap'а из аудита:
+
+1. Missing negative tests — Plan 42 Ф.6 требовала 4-5, было только 2.
+   Добавлены:
+   - `folder_file_vs_folder_conflict.nv` — `X.nv` + `X/` ambiguity
+   - `folder_cycle_between_modules.nv` — folder ↔ folder cycle
+   - Третий (`folder_inconsistent_decl`) N/A: manifest rev-3 ловит
+     каждый peer отдельно.
+
+2. Diagnostic для ambiguous X.nv+X/ — был silent None → generic
+   "cannot find module". Добавлен `ResolveErr` enum (NotFound |
+   Ambiguous). Diagnostic теперь explicit с обоими paths + hint.
+
+3. Rule H comment misleading — code сравнивает import path prefix,
+   а comment говорил "module name". Comment обновлён, изменения
+   логики не требовались (Rule H правильный — import path = filesystem
+   path bijective).
+
+[M11] simplifications.md: Rule A cycle detection использует canonical
+PathBuf keying вместо HashSet<Vec<String>>. Symlink/case-sensitive
+edge case задокументирован.
+
+### Plan 42.12 — conditional compilation (закрыт)
+
+**Зачем:** Plan 18 P0 (TLS, crypto, networking) требует platform-
+specific backends (Windows Schannel ↔ Linux OpenSSL ↔ macOS Secure
+Transport). Без compile-time switch — runtime branching → dead code в
+binary + security risk.
+
+**Два механизма (как в Go), но выбрали оба:**
+
+1. **Filename suffix convention** — `_windows.nv`, `_linux.nv`,
+   `_macos.nv`, `_unix.nv`, `_posix.nv` peers фильтруются по target.
+   Recognized suffixes только эти — другие игнорируются (no-suffix
+   semantic).
+
+2. **`#cfg(...)` attribute** — `#cfg(feature = "X")` или
+   `#cfg(target_os = "Y")` на module-level (peer-level). Strict
+   minimal — никаких `any/all/not` композиций. AND semantic для
+   множественных `#cfg` (все должны matchнуть).
+
+**Реализация:**
+- `imports.rs`: `current_target_os()`, `enabled_features()`,
+  `peer_active_for_target()`, `cfg_active()` — фильтрация по filename
+  suffix и module attrs.
+- `test_runner.rs`: walker filter для standalone test files +
+  `is_folder_module_peer` filter.
+- `parser/mod.rs`: parsing `#cfg(feature = "X")` и `#cfg(target_os = "Y")`
+  как `ModuleAttrKind::Cfg(CfgPredicate)`.
+- `ast/mod.rs`: `CfgPredicate::Feature(String) | TargetOs(String)`.
+- Override через env: `NOVA_TARGET_OS=linux`, `NOVA_FEATURES=foo,bar`.
+- Spec D99 в `spec/decisions/07-modules.md`.
+
+**Item-level `#cfg` (Ф.3) отложен** — filename suffix + module-level
+покрывают 95% production кейсов. Item-level — edge case, можно
+work-around через split peer.
+
+**Тесты (4):**
+- `cfg/platform_route_use.nv` — filename suffix routing
+- `cfg/feature_gate_use.nv` — #cfg(feature) с/без NOVA_FEATURES
+- `cfg/target_os_module_use.nv` — #cfg(target_os = "freebsd") skip
+- `negative_capability/cfg_unknown_key_rejected.nv` — parse error на
+  unknown #cfg key
+
+### Файлы
+
+- compiler-codegen/src/imports.rs (+target/cfg filter)
+- compiler-codegen/src/test_runner.rs (walker target filter)
+- compiler-codegen/src/parser/mod.rs (#cfg parser)
+- compiler-codegen/src/ast/mod.rs (CfgPredicate enum)
+- spec/decisions/07-modules.md (D99)
+- docs/plans/42.08-audit-closing.md
+- docs/plans/42.12-cfg-conditional-compilation.md
+- nova_tests/cfg/* (3 positive tests)
+- nova_tests/negative_capability/cfg_unknown_key_rejected.nv

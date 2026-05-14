@@ -129,32 +129,75 @@ impl Parser {
                 break;
             }
             let next_kind = self.tokens.get(self.pos + 1).map(|t| t.kind.clone());
-            // `forbid` is keyword (KwForbid) in Nova; treat это как attribute name.
+            // `forbid` is keyword (KwForbid) in Nova; `cfg` — обычный ident.
             let is_forbid = matches!(next_kind, Some(TokenKind::KwForbid));
-            if !is_forbid {
+            let is_cfg = matches!(&next_kind, Some(TokenKind::Ident(name)) if name == "cfg");
+            if !is_forbid && !is_cfg {
                 break; // not a module-level attribute
             }
             let attr_start = self.peek().span;
             self.bump(); // #
-            self.bump(); // forbid
-            // Parse список эффектов через запятую.
-            let mut effects: Vec<String> = Vec::new();
-            loop {
-                let (name, _) = self.parse_ident()?;
-                effects.push(name);
-                if matches!(self.peek().kind, TokenKind::Comma) {
-                    self.bump();
-                } else {
-                    break;
+
+            if is_forbid {
+                self.bump(); // forbid
+                let mut effects: Vec<String> = Vec::new();
+                loop {
+                    let (name, _) = self.parse_ident()?;
+                    effects.push(name);
+                    if matches!(self.peek().kind, TokenKind::Comma) {
+                        self.bump();
+                    } else {
+                        break;
+                    }
                 }
+                self.expect_newline_or_eof()?;
+                let attr_end = self.tokens[self.pos.saturating_sub(1)].span;
+                module_attrs.push(ModuleAttr {
+                    kind: ModuleAttrKind::Forbid,
+                    effects,
+                    span: attr_start.merge(attr_end),
+                });
+            } else {
+                // Plan 42.12 Ф.2: `#cfg(feature = "X")` или `#cfg(target_os = "Y")`.
+                self.bump(); // cfg (ident)
+                if !matches!(self.peek().kind, TokenKind::LParen) {
+                    return Err(Diagnostic::new("expected `(` after `#cfg`", self.peek().span));
+                }
+                self.bump(); // (
+                let (key, _) = self.parse_ident()?;
+                if !matches!(self.peek().kind, TokenKind::Eq) {
+                    return Err(Diagnostic::new("expected `=` in #cfg predicate", self.peek().span));
+                }
+                self.bump(); // =
+                let value_span = self.peek().span;
+                let value = if let TokenKind::Str(s) = &self.peek().kind {
+                    let v = s.clone();
+                    self.bump();
+                    v
+                } else {
+                    return Err(Diagnostic::new(
+                        "expected string literal in #cfg predicate", value_span));
+                };
+                if !matches!(self.peek().kind, TokenKind::RParen) {
+                    return Err(Diagnostic::new(
+                        "expected `)` closing #cfg predicate", self.peek().span));
+                }
+                self.bump(); // )
+                let pred = match key.as_str() {
+                    "feature" => CfgPredicate::Feature(value),
+                    "target_os" => CfgPredicate::TargetOs(value),
+                    other => return Err(Diagnostic::new(
+                        format!("unknown #cfg key `{}` — expected `feature` or `target_os`", other),
+                        attr_start)),
+                };
+                self.expect_newline_or_eof()?;
+                let attr_end = self.tokens[self.pos.saturating_sub(1)].span;
+                module_attrs.push(ModuleAttr {
+                    kind: ModuleAttrKind::Cfg(pred),
+                    effects: Vec::new(),
+                    span: attr_start.merge(attr_end),
+                });
             }
-            self.expect_newline_or_eof()?;
-            let attr_end = self.tokens[self.pos.saturating_sub(1)].span;
-            module_attrs.push(ModuleAttr {
-                kind: ModuleAttrKind::Forbid,
-                effects,
-                span: attr_start.merge(attr_end),
-            });
         }
 
         let mut imports = Vec::new();

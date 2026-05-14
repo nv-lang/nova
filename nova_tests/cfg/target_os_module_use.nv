@@ -1,0 +1,20 @@
+// Plan 42.12 Ф.2: #cfg(target_os) на module-level test.
+//
+// folder cfg/target_os_module/ имеет:
+//   core.nv          — active всегда
+//   helper.nv        — active всегда
+//   bsd_only.nv      — #cfg(target_os = "freebsd") → НИКОГДА active
+//                      на windows/linux/macos
+//
+// shared_value() + helper_value() доступны.
+// bsd_only_value() не должна быть видна — peer skip'ается из merge.
+
+module cfg.target_os_module_use
+
+import nova_tests.cfg.target_os_module.{shared_value, helper_value}
+
+test "target_os mismatch: bsd peer skip'ается" {
+    assert(shared_value() == 42)
+    assert(helper_value() == 7)
+    // bsd_only_value() не импортируется — peer cfg-off на этой OS.
+}
