@@ -1,0 +1,25 @@
+// Plan 42.5: cross-peer mutual recursion smoke test.
+//
+// folder_mutual_recursion/ — два peers:
+//   even.nv: is_even(n) — вызывает is_odd из odd.nv
+//   odd.nv:  is_odd(n)  — вызывает is_even из even.nv
+//
+// Forward declarations в codegen (step 2 emit_module) покрывают
+// cross-peer mutual recursion автоматически через inline expansion.
+// Отдельный 2-pass codegen (Plan 42.5) НЕ требуется.
+
+module modules.folder_mutual_recursion_use
+
+import nova_tests.modules.folder_mutual_recursion.{is_even, is_odd}
+
+test "cross-peer mutual recursion: even" {
+    assert(is_even(0) == true)
+    assert(is_even(4) == true)
+    assert(is_even(7) == false)
+}
+
+test "cross-peer mutual recursion: odd" {
+    assert(is_odd(1) == true)
+    assert(is_odd(5) == true)
+    assert(is_odd(6) == false)
+}
