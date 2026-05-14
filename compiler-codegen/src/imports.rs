@@ -346,7 +346,6 @@ fn resolve_one(
     //   2. Recursively resolve its imports.
     //   3. Append its items в merged_items.
     // Peers share namespace через merge'нутый Module.items.
-    let mut peer_canons: Vec<PathBuf> = Vec::new();
     for peer_path in &resolved_paths {
         let peer_canon = peer_path.canonicalize()
             .map_err(|e| anyhow!("canonicalize {}: {}", peer_path.display(), e))?;
@@ -376,9 +375,6 @@ fn resolve_one(
             continue;
         }
 
-        // Push canon только для active peers (dedup logic).
-        peer_canons.push(peer_canon);
-
         // Plan 42.10: `_module.nv` peer — special module-config файл.
         // Его module-level attrs (Forbid / Cfg / Doc) пропагируются на
         // entry's module.attrs — applied ко всему compiled module.
@@ -396,7 +392,7 @@ fn resolve_one(
         // is_entry_module = false — это peer ИМПОРТИРОВАННОГО модуля,
         // его items_here НЕ должны протекать в entry's shared_decls.
         peer_files.push(PeerFile {
-            path: peer_canons.last().expect("peer_canons populated above").clone(),
+            path: peer_canon,
             file_id: peer_file_id,
             imports: peer_module.imports.clone(),
             items_here: peer_module.items.clone(),
@@ -511,14 +507,9 @@ fn resolve_one(
         }
     }
 
-    // Plan 35 sub-plan 35.A (R26): selective list applied above через
-    // rename_map + selective_names (Plan 42.09). Раньше был syntax-only.
-    let _ = imp.items.is_some();
-
     // Plan 42.14 Ф.3: pop in_progress + chain; promote module_key в
     // closed-set. Все peers folder-module share один module_key (declared
     // name) — diamond-dep dedup работает естественно.
-    let _ = &peer_canons; // peer_canons больше не нужен для visited keying
     in_progress.remove(&module_key);
     visited.insert(module_key);
     import_chain.pop();
@@ -631,42 +622,6 @@ fn suggest_module_name(
     format!("\n  hint: did you mean `{}`?", suggestion)
 }
 
-/// Resolve `import a.b.c` к filesystem path.
-/// Returns first existing path. Used для single-file modules.
-fn resolve_import_path(
-    parts: &[String],
-    entry_dir: &Path,
-    repo: &Path,
-    stdlib_dir: &Path,
-) -> Option<PathBuf> {
-    if parts.is_empty() {
-        return None;
-    }
-    let rel_path: PathBuf = parts.iter().collect();
-    let with_ext = rel_path.with_extension("nv");
-
-    let cand_local = entry_dir.join(&with_ext);
-    if cand_local.exists() && cand_local.is_file() {
-        return Some(cand_local);
-    }
-
-    let cand_repo = repo.join(&with_ext);
-    if cand_repo.exists() && cand_repo.is_file() {
-        return Some(cand_repo);
-    }
-
-    // explicit stdlib_dir search (path starts with `std`)
-    if parts[0] == "std" && parts.len() >= 2 {
-        let rel_inside_std: PathBuf = parts[1..].iter().collect();
-        let cand_std = stdlib_dir.join(rel_inside_std.with_extension("nv"));
-        if cand_std.exists() && cand_std.is_file() {
-            return Some(cand_std);
-        }
-    }
-
-    None
-}
-
 /// Plan 42.12 Ф.2: enabled features set (через `NOVA_FEATURES=foo,bar` env
 /// или `--features` CLI flag). Empty if нет features.
 pub fn enabled_features() -> HashSet<String> {
@@ -720,8 +675,17 @@ fn cfg_active(module: &Module) -> bool {
 /// Default — host OS (cfg!(target_os) at compile time of nova-codegen).
 /// Override через `NOVA_TARGET_OS` env var (Ф.1 minimal — без CLI flag).
 pub fn current_target_os() -> &'static str {
+    // Override через env var — валидируем против известных значений и
+    // возвращаем `&'static str` literal (без Box::leak: невалидное имя
+    // никогда не матчится, "unknown" честнее утёкшей мусорной строки).
     if let Ok(t) = std::env::var("NOVA_TARGET_OS") {
-        return Box::leak(t.into_boxed_str());
+        return match t.as_str() {
+            "windows" => "windows",
+            "linux" => "linux",
+            "macos" => "macos",
+            "unix" | "posix" => "unix",
+            _ => "unknown",
+        };
     }
     if cfg!(target_os = "windows") { "windows" }
     else if cfg!(target_os = "linux") { "linux" }
