@@ -1,0 +1,168 @@
+// supervised_cancel_test.nv — D75 (revised, Plan 47): structured
+// cancellation через `supervised(cancel: tok)`.
+//
+// Keyword `cancel_scope` удалён. Внешняя отмена выражается именованным
+// аргументом `cancel:` у `supervised`. `CancelToken` — caller-owned
+// значение: создаётся `CancelToken.new()`, переживает scope, привязывается
+// при входе в `supervised(cancel:)`, отвязывается на выходе.
+//
+// Возможности token (D75):
+//   - tok.cancel()        — пометить bound scope как cancelled (idempotent;
+//                            на отвязанном / завершённом scope'е — no-op)
+//   - tok.is_cancelled()  — intent-флаг «был ли вызван cancel()», без yield
+//   - tok.bind(other)     — каскад: cancel(other) отменяет и tok
+
+module concurrency.supervised_cancel_test
+
+// ================================================================
+// SECTION 1: supervised(cancel:) без cancel() ≡ обычный supervised
+// ================================================================
+
+test "supervised(cancel:) без cancel() — все fiber'ы выполняются" {
+    let tok = CancelToken.new()
+    let mut sum = 0
+    supervised(cancel: tok) {
+        spawn { sum += 1 }
+        spawn { sum += 2 }
+        spawn { sum += 4 }
+    }
+    assert(sum == 7)
+}
+
+test "supervised(cancel:): is_cancelled false по умолчанию" {
+    let tok = CancelToken.new()
+    let mut got_false = false
+    supervised(cancel: tok) {
+        spawn {
+            if !tok.is_cancelled() {
+                got_false = true
+            }
+        }
+    }
+    assert(got_false)
+}
+
+// ================================================================
+// SECTION 2: tok.cancel() изнутри — отмена peer-fiber'ов
+// ================================================================
+
+test "tok.cancel() изнутри — peer на следующем yield не выполняется" {
+    // FIFO: spawn0 первый, делает cancel; spawn1 на yield видит cancel и throw.
+    // throw в spawn1 поймает spawn-entry fail-frame; peer_completed не
+    // успеет выставиться. Re-throw на main приходит как nova_throw (без user
+    // handler — design D71 cooperative cancellation), поэтому оборачиваем
+    // в with Fail чтобы тест не abort'нулся.
+    let tok = CancelToken.new()
+    let mut peer_completed = false
+    with Fail = handler Fail {
+        fail(_msg) {
+            interrupt ()
+        }
+    } {
+        supervised(cancel: tok) {
+            spawn { tok.cancel() }
+            spawn {
+                Time.sleep(0)            // первый yield — cancel detected
+                peer_completed = true    // не должно
+            }
+        }
+    }
+    assert(!peer_completed)
+}
+
+// ================================================================
+// SECTION 3: повторный cancel — idempotent
+// ================================================================
+
+test "double cancel() — idempotent, no panic" {
+    let tok = CancelToken.new()
+    let mut hits = 0
+    supervised(cancel: tok) {
+        spawn {
+            tok.cancel()
+            tok.cancel()       // второй — no-op
+            hits += 1
+        }
+    }
+    assert(hits == 1)
+}
+
+// ================================================================
+// SECTION 4: is_cancelled() меняется после cancel()
+// ================================================================
+
+test "is_cancelled() reflects cancel state within same fiber" {
+    let tok = CancelToken.new()
+    let mut before = false
+    let mut after = false
+    supervised(cancel: tok) {
+        spawn {
+            before = tok.is_cancelled()    // false
+            tok.cancel()
+            after = tok.is_cancelled()     // true
+        }
+    }
+    assert(!before)
+    assert(after)
+}
+
+// ================================================================
+// SECTION 5: bind — каскадная отмена (kill-switch composition)
+// ================================================================
+
+test "bind: cancel parent — child каскадно отменён" {
+    // Оба токена caller-owned, создаются заранее. child.bind(parent):
+    // когда parent.cancel() сработает — child тоже отменится.
+    let parent = CancelToken.new()
+    let child = CancelToken.new()
+    child.bind(parent)
+    let mut child_was_cancelled = false
+    supervised(cancel: parent) {
+        spawn {
+            supervised(cancel: child) {
+                spawn {
+                    parent.cancel()
+                    // Без yield — мы остаёмся на этом fiber'е; каскад уже
+                    // сработал синхронно внутри parent.cancel().
+                    child_was_cancelled = child.is_cancelled()
+                }
+            }
+        }
+    }
+    assert(child_was_cancelled)
+}
+
+// ================================================================
+// SECTION 6: caller-owned — токен переживает scope (новая модель D75)
+// ================================================================
+
+test "cancel() на завершённом scope — безвредный no-op" {
+    // Старая модель: токен dangling после scope-exit. Новая: caller-owned,
+    // unbind на выходе, cancel() на отвязанном токене — чистый no-op.
+    let tok = CancelToken.new()
+    let mut ran = false
+    supervised(cancel: tok) {
+        spawn { ran = true }
+    }
+    // scope завершён, токен отвязан — cancel() не паникует и не throws.
+    tok.cancel()
+    assert(ran)
+    // intent записан в сам токен, даже без живого scope'а.
+    assert(tok.is_cancelled())
+}
+
+test "токен переживает scope — повторный bind на свежий scope" {
+    // unbind на выходе освобождает токен; не-отменённый токен можно
+    // привязать к новому scope'у заново.
+    let tok = CancelToken.new()
+    let mut first = 0
+    supervised(cancel: tok) {
+        spawn { first += 1 }
+    }
+    let mut second = 0
+    supervised(cancel: tok) {
+        spawn { second += 1 }
+    }
+    assert(first == 1)
+    assert(second == 1)
+}

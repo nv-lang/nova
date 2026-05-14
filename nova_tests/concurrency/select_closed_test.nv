@@ -62,10 +62,10 @@ test "select: Some arm fires on buffered value, wildcard on closed" {
 }
 
 // ================================================================
-// SECTION 2: cancel_scope + select
+// SECTION 2: supervised(cancel:) + select
 // ================================================================
 
-test "select: data wins cancel_scope race" {
+test "select: data wins supervised(cancel:) race" {
     // Data arrives immediately; scope cancel comes much later.
     // Expect select to fire with the data, no error.
     let ch = Channel.new(1)
@@ -74,13 +74,14 @@ test "select: data wins cancel_scope race" {
     let mut branch = 0
     let mut error_seen = false
 
+    let tok = CancelToken.new()
     with Fail = handler Fail {
         fail(_msg) {
             error_seen = true
             interrupt ()
         }
     } {
-        cancel_scope { tok =>
+        supervised(cancel: tok) {
             spawn {
                 tx.send(77)
                 Time.sleep(500)

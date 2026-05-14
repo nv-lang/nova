@@ -1,0 +1,31 @@
+// EXPECT_RUNTIME_PANIC token already bound to a live scope
+//
+// D75 (revised, Plan 47): bind-check. Один `CancelToken` нельзя привязать
+// к двум ЖИВЫМ scope'ам одновременно. Здесь внутренний
+// `supervised(cancel: tok)` запускается ВНУТРИ spawn'а внешнего scope'а —
+// то есть пока внешний scope (и его привязка `tok`) ещё жив. Повторный
+// bind того же токена → runtime panic «token already bound to a live
+// scope» (nova_cancel_token_bind, fibers.h).
+//
+// Почему именно через spawn: emit_supervised привязывает токен ПЕРЕД
+// nova_supervised_run_cancel (после тела). Прямое лексическое вложение
+// `supervised(cancel: tok) { supervised(cancel: tok) {} }` не пересекается
+// по времени (внутренний bind+unbind отрабатывает during эмиссии тела
+// внешнего, до внешнего bind). А вложение через spawn — пересекается:
+// spawn выполняется во время nova_supervised_run_cancel внешнего, когда
+// tok уже привязан.
+
+module expected_runtime.supervised_cancel_double_bind
+
+fn main() {
+    let tok = CancelToken.new()
+    let mut hits = 0
+    supervised(cancel: tok) {
+        spawn {
+            // tok уже привязан к внешнему scope'у — этот bind должен паниковать.
+            supervised(cancel: tok) {
+                spawn { hits = hits + 1 }
+            }
+        }
+    }
+}
