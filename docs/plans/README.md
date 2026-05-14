@@ -72,6 +72,7 @@
 | 46 | [46-named-parameters.md](46-named-parameters.md) | Именованные аргументы `f(name: val)` + значения параметров по умолчанию `fn f(x int = 0)` (D102). Парсер + type-checker binding-pass + codegen call-site reorder. Блокирует Plan 47. | план, не начат, **P1** |
 | 47 | [47-supervised-cancel.md](47-supervised-cancel.md) | `supervised(cancel: tok)` — удаление keyword `cancel_scope` (ревизия D75 2026-05-14). Caller-owned `CancelToken` + runtime bind-check. Зависит от Plan 46. | ✅ закрыт 2026-05-14 (Ф.0–Ф.4+Ф.6; Ф.5 stdlib `within`/`race` → Plan 48) |
 | 48 | [48-closures-in-generics.md](48-closures-in-generics.md) | Closures in generic functions — higher-order generics. Call-site erasure adapter + uniform erased closure ABI: closure-параметры и `[]fn()->T` внутри `generic[T]`. Разблокирует Plan 47 Ф.5 (`within`/`race`) + `retry.nv`. | план, не начат, **P1** |
+| 49 | [49-cancel-throw-routing.md](49-cancel-throw-routing.md) | Cancel-throw routing — kinded throws (`USER`/`CANCEL`). Отмена ≠ ошибка: `supervised(cancel:)` не выкидывает отмену наружу, реальная ошибка идёт через `with Fail`. Закрывает `[M-cancel-throw-routing]` + `[M-within-error-conflation]`. Независим от Plan 48; оба нужны для чистого `within`/`race`. | план, не начат, **P1** |
 
 > Plan 19 — see `19-closure-and-error-ops.md` (closure-rev + D85 error-ops).
 > Plan 20 и 21 — последовательные (Plan 21 зависит от Plan 20).
