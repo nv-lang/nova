@@ -569,8 +569,8 @@ Java virtual threads. См. [D14](../06-concurrency.md#d14),
 
 ### Fire-and-forget `spawn` свободно (Go-style)
 **Отвергнуто.** `spawn` разрешён **только** внутри structured-scope
-(`supervised`, `parallel for`, `race`, `select`, `cancel_scope`,
-`with_timeout`). Долгоживущие задачи — через `detach { ... }` с
+(`supervised` [+ опц. `cancel:`], `parallel for`, `select`; и stdlib
+`race`/`with_timeout`). Долгоживущие задачи — через `detach { ... }` с
 эффектом `Detach` в сигнатуре. Утечки fiber'ов как в Go-style
 fire-and-forget устраняются. См. [D50](../06-concurrency.md#d50).
 

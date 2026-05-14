@@ -18,7 +18,7 @@
 | 03 | [03-syntax.md](03-syntax.md) | Объявления, литералы, операторы, методы, парсинг, defer/errdefer, атрибуты `#name`, default generics, select | D16, D19, D20, D22, D23, D27, D30, D33, D34, D35, D37, D38, D40, D43, D44, D45, D46, D48, D49, D54, D58, D59, D60, D69, D82, D83, D88, D90, D94, D96 |
 | 04 | [04-effects.md](04-effects.md) | Fail, Io, Db, handlers, with-блоки, interrupt, forbid, realtime, ?, `Handler[E, IRT]` | D2, D3, D4, D11, D12, D18, D25, D28, D31, D61, D62, D63, D64, D65, D67, D68, D85, D86, D87 |
 | 05 | [05-memory.md](05-memory.md) | Managed GC, escape analysis, regions | D6, D21 (cancelled) |
-| 06 | [06-concurrency.md](06-concurrency.md) | Fiber runtime, structured concurrency, spawn, detach, cancel_scope, channels (Channel revision capability-split), select, handler scoping, park/wake API, implicit main-scope, fiber stack allocation | D14, D50, D71, D75, D79, D80, D91, D92, D93, D97 |
+| 06 | [06-concurrency.md](06-concurrency.md) | Fiber runtime, structured concurrency, spawn, detach, supervised(cancel:), channels (Channel revision capability-split), select, handler scoping, park/wake API, implicit main-scope, fiber stack allocation | D14, D50, D71, D75, D79, D80, D91, D92, D93, D97 |
 | 07 | [07-modules.md](07-modules.md) | Модули, импорты (включая селективный `import X.{A, B}` и `export import` re-export), видимость, package tooling | D5, D29, D47, D78 |
 | 08 | [08-runtime.md](08-runtime.md) | Panic, capability, deployment, prelude, From/Into, TryFrom, math, Mem, assert | D7, D13, D26, D41, D70 (replaced → D73), D73, D74, D76, D77, D81 |
 | 09 | [09-tooling.md](09-tooling.md) | Тесты, контракты, форматирование, CLI, EXPECT-маркеры | D24, D89, D95 |

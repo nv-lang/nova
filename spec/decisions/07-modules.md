@@ -1139,8 +1139,8 @@ nova_tests/
 3. **Module path = filesystem path.** Первая компонента — package name
    (`nova_tests` из `nova.toml`), затем подкаталоги, затем файл.
 4. **Keyword collisions избегаются.** Если файл/группа конфликтует с
-   keyword'ом (`cancel_scope` — keyword), используется `_test` суффикс:
-   `concurrency/cancel_scope_test.nv` → `module nova_tests.concurrency.cancel_scope_test`.
+   keyword'ом (`select` — keyword), используется `_test` суффикс:
+   `concurrency/select_test.nv` → `module nova_tests.concurrency.select_test`.
 
 ### Преимущества (vs плоский нумерованный layout)
 
