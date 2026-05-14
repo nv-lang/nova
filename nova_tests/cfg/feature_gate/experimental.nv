@@ -3,8 +3,8 @@
 // По умолчанию (без feature) этот peer skip'ается, его items
 // невидимы импортирующему.
 
-module cfg.feature_gate
 #cfg(feature = "experimental")
+module cfg.feature_gate
 
 export fn experimental_value() -> int =>
     999

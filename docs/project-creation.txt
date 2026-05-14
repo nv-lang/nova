@@ -9726,10 +9726,16 @@ NameResCtx — выделено в Plan 42.15 единым refactor'ом. Honest
   HashSet<Vec<String>> keying, Rule H comment)
 - docs/plans/42.14-backlog-closure.md, 42.15-per-peer-import-isolation.md
 - docs/simplifications.md ([M11] RESOLVED, [M12] new)
-- nova_tests/cfg/predicate_any*, predicate_not*, item_level_use (positive)
+- nova_tests/cfg/predicate_any*, predicate_not*, predicate_all*,
+  predicate_all_off*, item_level_use (positive — any/all/not + item-level)
 - nova_tests/negative_capability/cfg_item_inactive_rejected (negative)
 
 328 PASS / 0 FAIL / 7 SKIP.
+
+Followup (2026-05-14): добавлены predicate_all* + predicate_all_off*
+тесты — покрытие #cfg(all(...)) с вложенными any/not (recursive eval)
++ FALSE-конъюнкт → peer skip. D99 в spec обновлён: any/all/not больше
+не в "что НЕ входит", описана рекурсивная композиция + item-level #cfg.
 
 
 ================================================================================
@@ -9851,3 +9857,81 @@ visible scope). 5 коммитов.
 
 (Разница 2: Z3 backend tests на main — Plan 33 V1 SMT backend selector,
  в mn-runtime эти тесты не были добавлены до merge.)
+
+
+================================================================================
+PLAN 42.16: MODULE-ATTR SYNTAX — POSITION + #cfg OPERATORS (2026-05-14)
+================================================================================
+
+Два синтаксических изменения module-level атрибутов по итогам
+дизайн-обсуждения.
+
+### Изменение 1: атрибуты ПЕРЕД `module` (был вариант C)
+
+Раньше: #forbid/#cfg/#doc после `module`. Стало: перед.
+  // было          // стало
+  module net.tls   #cfg(target_os = "windows")
+  #cfg(...)        module net.tls
+
+Почему:
+- Консистентность с item-level (#cfg/#realtime/#pure перед fn)
+- #cfg семантически — гейт "существует ли файл", логично читать до module
+- AI-first: условия файла видны первыми при открытии
+- Rust-familiar (#[cfg] перед mod)
+
+parse_module: extracted parse_module_attrs() helper, вызывается ДО
+парсинга `module` декларации. module-декларация = разделитель:
+атрибуты до неё = file-level, после (перед item) = item-level.
+
+### Изменение 2: #cfg операторы || && ! вместо any/all/not
+
+Раньше (42.14 Ф.1): функц-форма any(P1,P2), all(...), not(P).
+Стало (42.16): Go/C-операторы.
+  #cfg(target_os = "linux" || target_os = "macos")
+  #cfg(feature = "tls" && !target_os = "windows")
+  #cfg((feature = "a" || feature = "b") && target_os = "linux")
+
+Precedence: ! > && > || (как C/Rust/Go). Скобки override.
+
+parse_cfg_predicate переписан на recursive-descent с precedence:
+  parse_cfg_or → parse_cfg_and → parse_cfg_not → parse_cfg_atom
+Токены ||/&&/! уже были в лексере (булевы операторы языка).
+
+AST CfgPredicate (Any/All/Not) НЕ изменился — это internal имена.
+Парсер схлопывает `a || b || c` → Any([a,b,c]). eval_cfg_predicate
+не трогался.
+
+### Доп. fix: module-scan helpers
+
+is_folder_module_dir, is_folder_module_peer (test_runner.rs),
+read_module_decl (imports.rs) — искали `module ` в первой non-comment
+строке через break. С атрибутами ПЕРЕД module первая строка стала
+`#cfg`/`#forbid`/`#doc` → detection ломался (16 CODEGEN-FAIL в первой
+регрессии). Fix: scan пропускает `#`-строки.
+
+### Миграция
+
+13 файлов: nova_tests/cfg/* (#cfg позиция + any/all/not → операторы),
+nova_tests/modules/folder_with_doc/* (#doc позиция),
+folder_module_forbid/_module.nv, file_forbid_clean.nv,
+file_forbid_violation.nv, module_forbid_violation_setup/_module.nv,
+cfg_unknown_key_rejected.nv. item-level #cfg (item_level_use,
+cfg_item_inactive_rejected) — позиция НЕ менялась (перед fn), только
+any() → операторы в item_level_use.
+
+### Spec
+
+D99 — operator grammar (cfg_or/cfg_and/cfg_not/cfg_atom) + позиция
+перед module. D100 (_module.nv), D101 (#doc), 42.1 #forbid пример —
+все обновлены на "перед module".
+
+### Файлы
+
+- compiler-codegen/src/parser/mod.rs (parse_module_attrs, parse_cfg_*)
+- compiler-codegen/src/test_runner.rs (scan helpers skip #-attrs)
+- compiler-codegen/src/imports.rs (read_module_decl skip #-attrs)
+- spec/decisions/07-modules.md (D99/D100/D101 + 42.1)
+- 13 nova_tests/*.nv мигрированы
+
+338 PASS / 1 FAIL (flaky M:N mn_runtime_actual_workload) / 7 SKIP.
+Все sub-plans Plan 42 (01-16) закрыты.

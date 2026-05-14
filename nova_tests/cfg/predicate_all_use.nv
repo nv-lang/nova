@@ -1,0 +1,13 @@
+// Plan 42.14 Ф.1: #cfg(all(...)) + вложенные any/not — positive.
+//
+// predicate_all/impl.nv использует
+// #cfg(all(any(windows,linux,macos), not(freebsd))) — recursive eval
+// должен дать true на всех 3 поддерживаемых платформах.
+
+module cfg.predicate_all_use
+
+import nova_tests.cfg.predicate_all.{base}
+
+test "cfg all() with nested any/not — recursive eval" {
+    assert(base() == 100)
+}

@@ -4,8 +4,8 @@
 // во всех functions этого файла. Попытка вызвать Net.get() должна
 // reject'нуться compile-time.
 
-module negative_capability.file_forbid_violation
 #forbid Net
+module negative_capability.file_forbid_violation
 
 type Net effect {
     get(url str) -> str

@@ -1,0 +1,14 @@
+// Plan 42.14 Ф.1: #cfg(all(...)) с FALSE-условием — peer skip.
+//
+// predicate_all_off/disabled.nv: #cfg(all(windows, freebsd)) —
+// невозможная конъюнкция → peer всегда skip. disabled_value()
+// невидима, только always_here() из core.nv доступна.
+
+module cfg.predicate_all_off_use
+
+import nova_tests.cfg.predicate_all_off.{always_here}
+
+test "cfg all() with FALSE conjunct — peer skipped" {
+    assert(always_here() == 5)
+    // disabled_value() НЕ импортируется — all() = false.
+}

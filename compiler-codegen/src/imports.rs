@@ -533,7 +533,9 @@ fn read_module_decl(path: &Path) -> Option<Vec<String>> {
     let src = std::fs::read_to_string(path).ok()?;
     for raw in src.lines() {
         let line = raw.trim();
-        if line.is_empty() || line.starts_with("//") {
+        // Plan 42.16: module-level атрибуты (`#forbid`/`#cfg`/`#doc`)
+        // идут ПЕРЕД `module` — пропускаем их при поиске декларации.
+        if line.is_empty() || line.starts_with("//") || line.starts_with('#') {
             continue;
         }
         if let Some(rest) = line.strip_prefix("module ") {
@@ -543,7 +545,7 @@ fn read_module_decl(path: &Path) -> Option<Vec<String>> {
             let decl = decl.split_whitespace().next().unwrap_or(decl);
             return Some(decl.split('.').map(|s| s.to_string()).collect());
         }
-        // Первая non-comment строка не `module` — нет декларации.
+        // Первая non-comment / non-attr строка не `module` — нет декларации.
         break;
     }
     None

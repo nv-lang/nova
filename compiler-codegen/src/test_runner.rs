@@ -1945,7 +1945,9 @@ fn is_folder_module_peer(path: &Path) -> bool {
         let mut decl: Option<String> = None;
         for raw in src.lines() {
             let line = raw.trim();
-            if line.is_empty() || line.starts_with("//") {
+            // Plan 42.16: module-level атрибуты (`#forbid`/`#cfg`/`#doc`)
+            // идут ПЕРЕД `module` — пропускаем их при поиске декларации.
+            if line.is_empty() || line.starts_with("//") || line.starts_with('#') {
                 continue;
             }
             if let Some(rest) = line.strip_prefix("module ") {
@@ -2820,7 +2822,9 @@ fn is_folder_module_dir(files: &[PathBuf]) -> bool {
         let mut decl: Option<String> = None;
         for raw in src.lines() {
             let line = raw.trim();
-            if line.is_empty() || line.starts_with("//") {
+            // Plan 42.16: module-level атрибуты (`#forbid`/`#cfg`/`#doc`)
+            // идут ПЕРЕД `module` — пропускаем их при поиске декларации.
+            if line.is_empty() || line.starts_with("//") || line.starts_with('#') {
                 continue;
             }
             if let Some(rest) = line.strip_prefix("module ") {

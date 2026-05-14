@@ -298,13 +298,13 @@ breaking external API.
 
 #### File-level `#forbid` attribute (Plan 42 Sub-plan 42.1)
 
-Attribute `#forbid Eff1, Eff2` после `module X` declaration applies
-к **этому файлу** (per-file scope). Все functions/tests в этом
-файле получают forbidden effects.
+Attribute `#forbid Eff1, Eff2` **перед** `module X` declaration
+(Plan 42.16) applies к **этому файлу** (per-file scope). Все
+functions/tests в этом файле получают forbidden effects.
 
 ```nova
-module admin
 #forbid Net, Fs
+module admin
 
 // все fn в этом файле гарантированно не используют Net/Fs.
 export fn create_user(name str) Db -> User { ... }
@@ -1183,34 +1183,57 @@ nova_tests/
    `_posix`. Применяется к **peer-files** в folder-modules и к
    standalone tests. Без suffix → active всегда.
 
-2. **`#cfg` attribute** (Rust-style minimal) — для **feature flags**
-   и item-level OS routing:
+2. **`#cfg` attribute** — для **feature flags** и item-level OS routing.
+
+   **Позиция (Plan 42.16):** module-level атрибуты идут **ПЕРЕД**
+   `module` declaration (консистентно с item-level — `#cfg`/`#realtime`/
+   `#pure` перед `fn`):
    ```nova
-   module net.tls
    #cfg(feature = "experimental_io_uring")
+   module net.tls
 
    export fn connect(host str) -> Connection { ... }
    ```
-   Recognized predicates: `#cfg(feature = "X")`,
-   `#cfg(target_os = "Y")`. Strict minimal — **никаких** `any/all/not`
-   composition. Если нужна композиция — два attribute блока (AND
-   semantic) или filename suffix.
+
+   **Синтаксис predicate (Plan 42.16 — операторы `|| && !`):**
+   ```text
+   cfg_expr := cfg_or
+   cfg_or   := cfg_and ('||' cfg_and)*
+   cfg_and  := cfg_not ('&&' cfg_not)*
+   cfg_not  := '!' cfg_not | cfg_atom
+   cfg_atom := '(' cfg_expr ')' | key '=' string
+   ```
+   - `#cfg(feature = "X")` — feature flag из `NOVA_FEATURES`.
+   - `#cfg(target_os = "Y")` — OS check.
+   - `#cfg(A || B)` — OR. `#cfg(A && B)` — AND. `#cfg(!A)` — negation.
+   - Precedence: `!` > `&&` > `||` (как C/Rust/Go). Скобки override.
+   - Пример: `#cfg((target_os = "linux" || target_os = "macos") && !feature = "legacy")`
+   - **Эволюция:** Plan 42.14 Ф.1 ввёл функц-форму `any/all/not`;
+     Plan 42.16 заменил на операторы `|| && !` — компактнее, привычнее.
+     AST internal (`Any/All/Not`) не изменился — поменялся только
+     синтаксис ввода.
 
 ### Семантика
 
 | Mechanism | Scope | Detection |
 |---|---|---|
 | Filename suffix | peer-file / standalone test | filename stem suffix |
-| `#cfg(feature)` | peer-file / module (Ф.3: item) | `NOVA_FEATURES` env / `--features` CLI |
-| `#cfg(target_os)` | peer-file / module (Ф.3: item) | `NOVA_TARGET_OS` env / host OS default |
+| `#cfg(feature)` | **перед** module / **перед** item | `NOVA_FEATURES` env / `--features` CLI |
+| `#cfg(target_os)` | **перед** module / **перед** item | `NOVA_TARGET_OS` env / host OS default |
+| `#cfg(... || && !)` | то же — operator predicate | рекурсивный eval |
 
-**AND semantic** для multiple `#cfg`: peer active iff **all** cfg
-predicates match. Один inactive → peer skip целиком (не parsed
-items, не register peer_file, не recurse imports).
+**Item-level `#cfg`** (Plan 42.14 Ф.2): `#cfg(...)` перед top-level
+item (Fn/Type/Const). Inactive predicate → item полностью парсится но
+дропается (`parse_item → None`). `module`-декларация — разделитель:
+атрибуты до неё = file-level, после (перед item) = item-level.
+
+**AND semantic** для multiple `#cfg` атрибутов: peer/item active iff
+**все** cfg атрибуты match. Внутри одного атрибута — операторы
+`|| && !`. Один inactive → peer skip целиком (не parsed items, не
+register peer_file, не recurse imports).
 
 ### Что НЕ входит
 
-- `any(...)`, `all(...)`, `not(...)` — strict minimal.
 - `#cfg` в expression position (`if #cfg(target_os = ...) { ... }`).
 - `#cfg(target_arch = ...)` — на ARM/x86 differences. Future, если
   понадобится.
@@ -1223,13 +1246,14 @@ items, не register peer_file, не recurse imports).
 
 - **Go-only filename suffix** — мощно для OS routing, слабо для
   feature flags. Plan 18 P0 (TLS) требует и того, и другого.
-- **Rust full `#[cfg(...)]` system** — рабочее, но `any/all/not` +
-  cfg-expr + cfg-attr — 3× complexity. Bootstrap не выдержит.
+- **Rust full `#[cfg(...)]` system** — рабочее, но cfg-expr +
+  cfg-attr — лишняя complexity. Nova взяла `any/all/not` (Plan 42.14)
+  но БЕЗ cfg-в-expression-position и cfg-attr.
 - **Только runtime branching** — dead code в binary + security risk
   (включён код для другой OS).
 
-Filename + minimal `#cfg` покрывает 90% production кейсов при 10%
-complexity Rust'а.
+Filename + `#cfg` (с `any/all/not`, но без cfg-expr) покрывает
+production кейсы при меньшей complexity чем полный Rust.
 
 ### Связь
 
@@ -1299,18 +1323,19 @@ Module-level documentation через `#doc "..."` attribute. Multi-line
 через несколько `#doc` строк.
 
 ```nova
-module src.admin
 #doc "Модуль admin — управление пользователями и аудит."
 #doc ""
 #doc "- Все операции требуют Auth capability."
 #doc "- create_user логирует в audit."
+module src.admin
 
 export fn create_user(...) { ... }
 ```
 
 ### Правила
 
-1. `#doc "..."` идёт **после** `module` declaration, до items.
+1. `#doc "..."` идёт **перед** `module` declaration (Plan 42.16 —
+   консистентно с `#forbid`/`#cfg`).
 2. Каждый `#doc` — одна строка text (regular `"..."` string literal,
    без интерполяции).
 3. Multiple `#doc` накапливаются в порядке появления (вкладывается в

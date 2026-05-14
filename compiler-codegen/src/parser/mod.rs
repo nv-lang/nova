@@ -104,6 +104,13 @@ impl Parser {
         self.skip_newlines();
         let start = self.peek().span;
 
+        // Plan 42.16 Ф.2: module-level атрибуты (`#forbid` / `#cfg` /
+        // `#doc`) идут **ПЕРЕД** `module` declaration — консистентно с
+        // item-level атрибутами (`#cfg`/`#realtime`/`#pure` перед `fn`).
+        // `#cfg` семантически — гейт «существует ли файл», логично
+        // читать до `module`. AI-first: условия файла видны первыми.
+        let module_attrs = self.parse_module_attrs()?;
+
         // module keyword.path
         let module_name = if self.eat(&TokenKind::KwModule).is_some() {
             let path = self.parse_dotted_path()?;
@@ -112,97 +119,6 @@ impl Parser {
         } else {
             Vec::new()
         };
-
-        // Plan 42 Sub-plan 42.A: module-level #forbid X, Y attribute
-        // между module declaration и imports.
-        //
-        // **Decision 2026-05-13:** `#requires` отвергнуто — implicit
-        // effects в function signatures противоречат Nova AI-first
-        // explicit principle (D62 «эффекты в сигнатуре»). `#forbid`
-        // оставлен как security boundary: making «no Net» explicit
-        // через module-level не скрывает behaviour, а документирует
-        // constraint.
-        let mut module_attrs = Vec::new();
-        loop {
-            self.skip_newlines();
-            if !matches!(self.peek().kind, TokenKind::Hash) {
-                break;
-            }
-            let next_kind = self.tokens.get(self.pos + 1).map(|t| t.kind.clone());
-            // `forbid` is keyword (KwForbid) in Nova; `cfg` и `doc` — обычные idents.
-            let is_forbid = matches!(next_kind, Some(TokenKind::KwForbid));
-            let is_cfg = matches!(&next_kind, Some(TokenKind::Ident(name)) if name == "cfg");
-            let is_doc = matches!(&next_kind, Some(TokenKind::Ident(name)) if name == "doc");
-            if !is_forbid && !is_cfg && !is_doc {
-                break; // not a module-level attribute
-            }
-            let attr_start = self.peek().span;
-            self.bump(); // #
-
-            if is_doc {
-                // Plan 42.11: `#doc "..."` — module-level documentation line.
-                self.bump(); // doc (ident)
-                let doc_span = self.peek().span;
-                let text = if let TokenKind::Str(s) = &self.peek().kind {
-                    let v = s.clone();
-                    self.bump();
-                    v
-                } else {
-                    return Err(Diagnostic::new(
-                        "expected string literal after `#doc`", doc_span));
-                };
-                self.expect_newline_or_eof()?;
-                let attr_end = self.tokens[self.pos.saturating_sub(1)].span;
-                module_attrs.push(ModuleAttr {
-                    kind: ModuleAttrKind::Doc(text),
-                    effects: Vec::new(),
-                    span: attr_start.merge(attr_end),
-                });
-                continue;
-            }
-
-            if is_forbid {
-                self.bump(); // forbid
-                let mut effects: Vec<String> = Vec::new();
-                loop {
-                    let (name, _) = self.parse_ident()?;
-                    effects.push(name);
-                    if matches!(self.peek().kind, TokenKind::Comma) {
-                        self.bump();
-                    } else {
-                        break;
-                    }
-                }
-                self.expect_newline_or_eof()?;
-                let attr_end = self.tokens[self.pos.saturating_sub(1)].span;
-                module_attrs.push(ModuleAttr {
-                    kind: ModuleAttrKind::Forbid,
-                    effects,
-                    span: attr_start.merge(attr_end),
-                });
-            } else {
-                // Plan 42.12 Ф.2 + 42.14 Ф.1: `#cfg(<predicate>)` —
-                // feature/target_os + any/all/not композиции.
-                self.bump(); // cfg (ident)
-                if !matches!(self.peek().kind, TokenKind::LParen) {
-                    return Err(Diagnostic::new("expected `(` after `#cfg`", self.peek().span));
-                }
-                self.bump(); // (
-                let pred = self.parse_cfg_predicate()?;
-                if !matches!(self.peek().kind, TokenKind::RParen) {
-                    return Err(Diagnostic::new(
-                        "expected `)` closing #cfg predicate", self.peek().span));
-                }
-                self.bump(); // )
-                self.expect_newline_or_eof()?;
-                let attr_end = self.tokens[self.pos.saturating_sub(1)].span;
-                module_attrs.push(ModuleAttr {
-                    kind: ModuleAttrKind::Cfg(pred),
-                    effects: Vec::new(),
-                    span: attr_start.merge(attr_end),
-                });
-            }
-        }
 
         let mut imports = Vec::new();
         let mut items = Vec::new();
@@ -358,94 +274,199 @@ impl Parser {
         Ok(parts)
     }
 
-    // ─── #cfg predicate ──────────────────────────────────────────────────
+    // ─── module-level attributes ─────────────────────────────────────────
 
-    /// Plan 42.14 Ф.1: recursive `#cfg` predicate parsing.
-    /// Grammar:
-    ///   predicate := key '=' string          // feature = "x" / target_os = "y"
-    ///              | 'any' '(' pred-list ')'
-    ///              | 'all' '(' pred-list ')'
-    ///              | 'not' '(' predicate ')'
-    ///   pred-list := predicate (',' predicate)*
-    /// Caller уже consumed opening `(` после `#cfg`; этот метод парсит
-    /// одну predicate (не consumes closing `)` верхнего уровня).
-    fn parse_cfg_predicate(&mut self) -> Result<CfgPredicate, Diagnostic> {
-        let start = self.peek().span;
-        let (key, _) = self.parse_ident()?;
-        match key.as_str() {
-            "any" | "all" => {
-                if !matches!(self.peek().kind, TokenKind::LParen) {
-                    return Err(Diagnostic::new(
-                        format!("expected `(` after `{}`", key), self.peek().span));
-                }
-                self.bump(); // (
-                let mut preds = Vec::new();
-                loop {
-                    preds.push(self.parse_cfg_predicate()?);
-                    if matches!(self.peek().kind, TokenKind::Comma) {
-                        self.bump();
-                        // Trailing comma allowed before `)`.
-                        if matches!(self.peek().kind, TokenKind::RParen) {
-                            break;
-                        }
-                    } else {
-                        break;
-                    }
-                }
-                if !matches!(self.peek().kind, TokenKind::RParen) {
-                    return Err(Diagnostic::new(
-                        format!("expected `)` closing `{}(...)`", key), self.peek().span));
-                }
-                self.bump(); // )
-                if preds.is_empty() {
-                    return Err(Diagnostic::new(
-                        format!("`{}(...)` must contain at least one predicate", key), start));
-                }
-                Ok(if key == "any" {
-                    CfgPredicate::Any(preds)
-                } else {
-                    CfgPredicate::All(preds)
-                })
+    /// Plan 42.16 Ф.2: парсит module-level атрибуты ПЕРЕД `module`
+    /// declaration. `#forbid X, Y` / `#cfg(<expr>)` / `#doc "..."`.
+    ///
+    /// **Decision 2026-05-13:** `#requires` отвергнуто — implicit
+    /// effects в function signatures противоречат Nova AI-first
+    /// explicit principle (D62). `#forbid` оставлен как security boundary.
+    fn parse_module_attrs(&mut self) -> Result<Vec<ModuleAttr>, Diagnostic> {
+        let mut module_attrs = Vec::new();
+        loop {
+            self.skip_newlines();
+            if !matches!(self.peek().kind, TokenKind::Hash) {
+                break;
             }
-            "not" => {
-                if !matches!(self.peek().kind, TokenKind::LParen) {
-                    return Err(Diagnostic::new(
-                        "expected `(` after `not`", self.peek().span));
-                }
-                self.bump(); // (
-                let inner = self.parse_cfg_predicate()?;
-                if !matches!(self.peek().kind, TokenKind::RParen) {
-                    return Err(Diagnostic::new(
-                        "expected `)` closing `not(...)`", self.peek().span));
-                }
-                self.bump(); // )
-                Ok(CfgPredicate::Not(Box::new(inner)))
+            let next_kind = self.tokens.get(self.pos + 1).map(|t| t.kind.clone());
+            // `forbid` is keyword (KwForbid) in Nova; `cfg` и `doc` — обычные idents.
+            let is_forbid = matches!(next_kind, Some(TokenKind::KwForbid));
+            let is_cfg = matches!(&next_kind, Some(TokenKind::Ident(name)) if name == "cfg");
+            let is_doc = matches!(&next_kind, Some(TokenKind::Ident(name)) if name == "doc");
+            if !is_forbid && !is_cfg && !is_doc {
+                break; // not a module-level attribute
             }
-            "feature" | "target_os" => {
-                if !matches!(self.peek().kind, TokenKind::Eq) {
-                    return Err(Diagnostic::new(
-                        format!("expected `=` after `{}` in #cfg predicate", key),
-                        self.peek().span));
-                }
-                self.bump(); // =
-                let value_span = self.peek().span;
-                let value = if let TokenKind::Str(s) = &self.peek().kind {
+            let attr_start = self.peek().span;
+            self.bump(); // #
+
+            if is_doc {
+                // Plan 42.11: `#doc "..."` — module-level documentation line.
+                self.bump(); // doc (ident)
+                let doc_span = self.peek().span;
+                let text = if let TokenKind::Str(s) = &self.peek().kind {
                     let v = s.clone();
                     self.bump();
                     v
                 } else {
                     return Err(Diagnostic::new(
-                        "expected string literal in #cfg predicate", value_span));
+                        "expected string literal after `#doc`", doc_span));
                 };
-                Ok(if key == "feature" {
-                    CfgPredicate::Feature(value)
-                } else {
-                    CfgPredicate::TargetOs(value)
-                })
+                self.expect_newline_or_eof()?;
+                let attr_end = self.tokens[self.pos.saturating_sub(1)].span;
+                module_attrs.push(ModuleAttr {
+                    kind: ModuleAttrKind::Doc(text),
+                    effects: Vec::new(),
+                    span: attr_start.merge(attr_end),
+                });
+                continue;
             }
+
+            if is_forbid {
+                self.bump(); // forbid
+                let mut effects: Vec<String> = Vec::new();
+                loop {
+                    let (name, _) = self.parse_ident()?;
+                    effects.push(name);
+                    if matches!(self.peek().kind, TokenKind::Comma) {
+                        self.bump();
+                    } else {
+                        break;
+                    }
+                }
+                self.expect_newline_or_eof()?;
+                let attr_end = self.tokens[self.pos.saturating_sub(1)].span;
+                module_attrs.push(ModuleAttr {
+                    kind: ModuleAttrKind::Forbid,
+                    effects,
+                    span: attr_start.merge(attr_end),
+                });
+            } else {
+                // Plan 42.12 + 42.14 + 42.16: `#cfg(<expr>)` —
+                // feature/target_os + операторы `|| && !`.
+                self.bump(); // cfg (ident)
+                if !matches!(self.peek().kind, TokenKind::LParen) {
+                    return Err(Diagnostic::new("expected `(` after `#cfg`", self.peek().span));
+                }
+                self.bump(); // (
+                let pred = self.parse_cfg_predicate()?;
+                if !matches!(self.peek().kind, TokenKind::RParen) {
+                    return Err(Diagnostic::new(
+                        "expected `)` closing #cfg predicate", self.peek().span));
+                }
+                self.bump(); // )
+                self.expect_newline_or_eof()?;
+                let attr_end = self.tokens[self.pos.saturating_sub(1)].span;
+                module_attrs.push(ModuleAttr {
+                    kind: ModuleAttrKind::Cfg(pred),
+                    effects: Vec::new(),
+                    span: attr_start.merge(attr_end),
+                });
+            }
+        }
+        Ok(module_attrs)
+    }
+
+    // ─── #cfg predicate ──────────────────────────────────────────────────
+
+    /// Plan 42.16 Ф.1: `#cfg` predicate с операторами `|| && !`
+    /// (Go/C-style вместо функц-формы `any/all/not` из Plan 42.14).
+    ///
+    /// Grammar (precedence: `!` > `&&` > `||`, скобки override):
+    /// ```text
+    ///   cfg_expr := cfg_or
+    ///   cfg_or   := cfg_and ('||' cfg_and)*
+    ///   cfg_and  := cfg_not ('&&' cfg_not)*
+    ///   cfg_not  := '!' cfg_not | cfg_atom
+    ///   cfg_atom := '(' cfg_expr ')' | key '=' string
+    /// ```
+    ///
+    /// AST: `a || b || c` → `Any([a,b,c])`, `a && b` → `All`, `!a` → `Not`
+    /// (имена вариантов internal — пользователь видит только операторы).
+    /// Caller уже consumed opening `(` после `#cfg`; этот метод парсит
+    /// один cfg_expr (не consumes closing `)` верхнего уровня).
+    fn parse_cfg_predicate(&mut self) -> Result<CfgPredicate, Diagnostic> {
+        self.parse_cfg_or()
+    }
+
+    /// `cfg_or := cfg_and ('||' cfg_and)*` — самый низкий приоритет.
+    fn parse_cfg_or(&mut self) -> Result<CfgPredicate, Diagnostic> {
+        let first = self.parse_cfg_and()?;
+        let mut alts = vec![first];
+        while matches!(self.peek().kind, TokenKind::PipePipe) {
+            self.bump(); // ||
+            alts.push(self.parse_cfg_and()?);
+        }
+        if alts.len() == 1 {
+            Ok(alts.into_iter().next().unwrap())
+        } else {
+            Ok(CfgPredicate::Any(alts))
+        }
+    }
+
+    /// `cfg_and := cfg_not ('&&' cfg_not)*`
+    fn parse_cfg_and(&mut self) -> Result<CfgPredicate, Diagnostic> {
+        let first = self.parse_cfg_not()?;
+        let mut parts = vec![first];
+        while matches!(self.peek().kind, TokenKind::AmpAmp) {
+            self.bump(); // &&
+            parts.push(self.parse_cfg_not()?);
+        }
+        if parts.len() == 1 {
+            Ok(parts.into_iter().next().unwrap())
+        } else {
+            Ok(CfgPredicate::All(parts))
+        }
+    }
+
+    /// `cfg_not := '!' cfg_not | cfg_atom`
+    fn parse_cfg_not(&mut self) -> Result<CfgPredicate, Diagnostic> {
+        if matches!(self.peek().kind, TokenKind::Bang) {
+            self.bump(); // !
+            let inner = self.parse_cfg_not()?;
+            Ok(CfgPredicate::Not(Box::new(inner)))
+        } else {
+            self.parse_cfg_atom()
+        }
+    }
+
+    /// `cfg_atom := '(' cfg_expr ')' | key '=' string`
+    fn parse_cfg_atom(&mut self) -> Result<CfgPredicate, Diagnostic> {
+        // Скобочная группа.
+        if matches!(self.peek().kind, TokenKind::LParen) {
+            self.bump(); // (
+            let inner = self.parse_cfg_or()?;
+            if !matches!(self.peek().kind, TokenKind::RParen) {
+                return Err(Diagnostic::new(
+                    "expected `)` closing #cfg group", self.peek().span));
+            }
+            self.bump(); // )
+            return Ok(inner);
+        }
+        // Атом: key '=' string.
+        let start = self.peek().span;
+        let (key, _) = self.parse_ident()?;
+        if !matches!(self.peek().kind, TokenKind::Eq) {
+            return Err(Diagnostic::new(
+                format!("expected `=` after `{}` in #cfg predicate", key),
+                self.peek().span));
+        }
+        self.bump(); // =
+        let value_span = self.peek().span;
+        let value = if let TokenKind::Str(s) = &self.peek().kind {
+            let v = s.clone();
+            self.bump();
+            v
+        } else {
+            return Err(Diagnostic::new(
+                "expected string literal in #cfg predicate", value_span));
+        };
+        match key.as_str() {
+            "feature" => Ok(CfgPredicate::Feature(value)),
+            "target_os" => Ok(CfgPredicate::TargetOs(value)),
             other => Err(Diagnostic::new(
-                format!("unknown #cfg key `{}` — expected `feature`, `target_os`, \
-                         `any`, `all` or `not`", other),
+                format!("unknown #cfg key `{}` — expected `feature` or `target_os` \
+                         (composition via `||` `&&` `!`)", other),
                 start)),
         }
     }
