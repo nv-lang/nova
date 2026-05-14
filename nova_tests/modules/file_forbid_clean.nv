@@ -3,8 +3,8 @@
 // гарантированно не используют Net/Fs effects.
 // Содержит только pure операции — должен compile.
 
-module modules.file_forbid_clean
 #forbid Net, Fs
+module modules.file_forbid_clean
 
 export fn pure_double(x int) -> int => x * 2
 

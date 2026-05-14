@@ -1,8 +1,8 @@
-// Plan 42.14 Ф.2: item-level #cfg test.
+// Plan 42.14 Ф.2 + 42.16 Ф.1: item-level #cfg test (operator syntax).
 //
 // Внутри одного файла разные функции gated разными `#cfg(...)`:
 //   - always_fn — без cfg, всегда есть
-//   - supported_fn — #cfg(any(windows, linux, macos)) — есть на всех
+//   - supported_fn — #cfg(win || linux || macos) — есть на всех
 //   - never_fn — #cfg(target_os = "freebsd") — никогда (skip parse)
 //
 // never_fn полностью парсится но дропается (return None в parse_item).
@@ -14,7 +14,7 @@ module cfg.item_level_use
 fn always_fn() -> int =>
     1
 
-#cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))
+#cfg(target_os = "windows" || target_os = "linux" || target_os = "macos")
 fn supported_fn() -> int =>
     2
 

@@ -4,8 +4,8 @@
 // Допустимо только `feature` и `target_os`. Здесь `nonsense` —
 // должен дать parse error «unknown #cfg key `nonsense`».
 
-module negative_capability.cfg_unknown_key_rejected
 #cfg(nonsense = "foo")
+module negative_capability.cfg_unknown_key_rejected
 
 test "unknown cfg key rejected at parse" {
     assert(true)

@@ -3,8 +3,8 @@
 // потому что target_os = "freebsd" не matches.
 // Заявленный bsd_only_value() невидим импортирующему.
 
-module cfg.target_os_module
 #cfg(target_os = "freebsd")
+module cfg.target_os_module
 
 export fn bsd_only_value() -> int =>
     111

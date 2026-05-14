@@ -1,10 +1,10 @@
-// Plan 42.14 Ф.1: peer с `#cfg(not(any(windows, linux, macos)))`.
-// not(any(все 3 OS)) = active только на НЕ-supported OS = НИКОГДА
+// Plan 42.16 Ф.1: peer с `#cfg(!(win || linux || macos))`.
+// !(любая из 3 OS) = active только на НЕ-supported OS = НИКОГДА
 // на реальных платформах. Этот peer всегда skip'ается.
 // disabled_value() невидима импортирующему.
 
+#cfg(!(target_os = "windows" || target_os = "linux" || target_os = "macos"))
 module cfg.predicate_not
-#cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))
 
 export fn disabled_value() -> int =>
     999

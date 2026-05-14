@@ -1,7 +1,8 @@
 // Plan 42.11 + 42.10: _module.nv с #doc attrs для propagation
 // через inherited_attrs (Plan 42.10 mechanism).
+// Plan 42.16: attrs ПЕРЕД module.
 
-module modules.folder_with_doc
 #doc "Folder-with-doc — demo для Plan 42.11."
 #doc ""
 #doc "Module-level documentation, видна Plan 45 nova doc."
+module modules.folder_with_doc

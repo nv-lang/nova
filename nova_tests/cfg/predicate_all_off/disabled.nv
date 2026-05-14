@@ -1,11 +1,11 @@
-// Plan 42.14 Ф.1: peer с #cfg(all(...)) где одно условие FALSE.
-// all(target_os="windows", target_os="freebsd") — freebsd никогда не
-// matches → весь all() = false → peer skip на любой платформе.
+// Plan 42.16 Ф.1: peer с #cfg && где одно условие FALSE.
+// target_os = "windows" && target_os = "freebsd" — freebsd никогда не
+// matches → весь && = false → peer skip на любой платформе.
 // (Даже на Windows: target_os не может быть И windows И freebsd.)
 // disabled_value() невидима импортирующему.
 
+#cfg(target_os = "windows" && target_os = "freebsd")
 module cfg.predicate_all_off
-#cfg(all(target_os = "windows", target_os = "freebsd"))
 
 export fn disabled_value() -> int =>
     777
