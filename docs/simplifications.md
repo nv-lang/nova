@@ -4802,10 +4802,11 @@ spec-level work.
   edge case устранён — module name стабильный логический identity.
 - **Tests:** `folder_cycle_between_modules.nv` + `import_cycle_rejected.nv`
   PASS с новым keying.
-- **Доделано (Plan 42.17 Ф.3):** `read_module_decl` объединён с
-  `is_folder_module_peer`/`is_folder_module_dir` в один сканер
-  `scan_module_decl`, который пропускает blank / `//` / `/* */` / `#`-attr
-  строки перед `module` (block-comment edge закрыт).
+- **Доделано (Plan 42.17 Ф.3):** три копипаст-сканера `module`-строки
+  (`read_module_decl` + `is_folder_module_peer` + `is_folder_module_dir`)
+  объединены в один `imports::scan_module_decl`. Drift-риск устранён.
+  Block-комментариев у Nova нет (лексер обрабатывает только `//`), так
+  что отдельная их обработка не требуется — audit-флаг был ложным.
 
 ### [M12] Selective import — visible-scope enforcement — ✅ RESOLVED 2026-05-14
 

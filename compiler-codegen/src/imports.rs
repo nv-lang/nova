@@ -516,30 +516,43 @@ fn resolve_one(
     Ok(())
 }
 
-/// Plan 42.14 Ф.3 ([M11]): lightweight чтение `module X.Y` declaration
-/// из файла — только первая non-comment строка, без полного parse.
-/// Используется для cycle-detection key (module name, не path).
-/// Возвращает None если файл не читается или нет `module` декларации.
-fn read_module_decl(path: &Path) -> Option<Vec<String>> {
-    let src = std::fs::read_to_string(path).ok()?;
+/// Plan 42.17 Ф.3: единый сканер `module a.b` декларации из исходника —
+/// заменяет три копипаст-сканера (`read_module_decl` + два folder-module
+/// detector'а в `test_runner.rs`).
+///
+/// Lightweight: первая значимая строка, без полного parse. Пропускает
+/// blank / `//` / `#`-attr строки (Plan 42.16 — module-level атрибуты
+/// идут ПЕРЕД `module`). Nova не имеет block-комментариев (`/* */`) —
+/// лексер обрабатывает только `//`, поэтому отдельная их обработка не
+/// нужна. Первая non-skip строка не `module ...` → `None`.
+///
+/// Возвращает имя модуля как сегменты: `module encoding.hex` →
+/// `["encoding", "hex"]`. Trailing-комментарий после декларации
+/// отбрасывается (`module a.b // note` → `["a", "b"]`).
+pub fn scan_module_decl(src: &str) -> Option<Vec<String>> {
     for raw in src.lines() {
         let line = raw.trim();
-        // Plan 42.16: module-level атрибуты (`#forbid`/`#cfg`/`#doc`)
-        // идут ПЕРЕД `module` — пропускаем их при поиске декларации.
         if line.is_empty() || line.starts_with("//") || line.starts_with('#') {
             continue;
         }
         if let Some(rest) = line.strip_prefix("module ") {
-            let decl = rest.trim();
-            // Берём только до first whitespace/comment (decl может иметь
-            // trailing comment или быть просто `module X.Y`).
-            let decl = decl.split_whitespace().next().unwrap_or(decl);
+            let decl = rest.trim().split_whitespace().next().unwrap_or("");
+            if decl.is_empty() {
+                return None;
+            }
             return Some(decl.split('.').map(|s| s.to_string()).collect());
         }
-        // Первая non-comment / non-attr строка не `module` — нет декларации.
-        break;
+        // Первая значимая строка не `module` — декларации нет.
+        return None;
     }
     None
+}
+
+/// Plan 42.14 Ф.3 ([M11]): cycle-detection key — declared module name
+/// (не canonical path). Тонкая обёртка над `scan_module_decl`.
+fn read_module_decl(path: &Path) -> Option<Vec<String>> {
+    let src = std::fs::read_to_string(path).ok()?;
+    scan_module_decl(&src)
 }
 
 /// Plan 42.09: rename item (Type/Fn/Const) при selective re-import.
