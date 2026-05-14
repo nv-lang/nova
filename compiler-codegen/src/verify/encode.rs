@@ -12,6 +12,8 @@
 //! - method calls.
 //! - other expressions (block, match, lambda, ...).
 
+use std::collections::HashMap;
+
 use crate::ast::{Expr, ExprKind, BinOp, UnOp};
 use super::ir::*;
 
@@ -21,8 +23,50 @@ pub enum EncodingError {
     Unsupported(String),
 }
 
-/// Encode Nova-expr в SMT-term.
+/// Plan 33.3 Ф.9: контекст encoder'а — реестр pure_view-ops модуля.
+/// Ключ — pure_view name (e.g. "balance"), значение — (effect_name,
+/// return_sort). Используется для конвертации `balance(id)` →
+/// uninterpreted function `_view_Db_balance(id)` SMT-stide.
+#[derive(Debug, Clone)]
+pub struct EncodeCtx<'a> {
+    pub pure_views: &'a HashMap<String, PureViewSig>,
+}
+
+#[derive(Debug, Clone)]
+pub struct PureViewSig {
+    pub effect_name: String,
+    pub arity: usize,
+    /// Sort возвращаемого значения. Используется backend'ом для
+    /// типизированной декларации UF (Z3 нужно знать range sort).
+    pub return_sort: SortRef,
+    /// Sorts параметров (тоже для UF declaration).
+    pub param_sorts: Vec<SortRef>,
+}
+
+impl<'a> EncodeCtx<'a> {
+    /// Empty context — pure_view-ы не известны (старые тесты + bootstrap).
+    pub fn empty() -> EncodeCtx<'static> {
+        // Хитрый трюк: возвращаем 'static reference на пустую map.
+        // Используется только для backward-compat encode_expr.
+        static EMPTY: std::sync::OnceLock<HashMap<String, PureViewSig>> = std::sync::OnceLock::new();
+        let map = EMPTY.get_or_init(HashMap::new);
+        EncodeCtx { pure_views: map }
+    }
+}
+
+/// Helper для UF имени pure_view: `_view_<EffectName>_<OpName>`.
+pub fn pure_view_uf_name(effect: &str, op: &str) -> String {
+    format!("_view_{}_{}", effect, op)
+}
+
+/// Encode Nova-expr в SMT-term (без context'а — backward-compat).
 pub fn encode_expr(e: &Expr) -> Result<SmtTerm, EncodingError> {
+    let ctx = EncodeCtx::empty();
+    encode_expr_with_ctx(e, &ctx)
+}
+
+/// Encode Nova-expr в SMT-term с контекстом pure_view'ов.
+pub fn encode_expr_with_ctx(e: &Expr, ctx: &EncodeCtx) -> Result<SmtTerm, EncodingError> {
     match &e.kind {
         ExprKind::IntLit(n) => Ok(SmtTerm::IntLit(*n)),
         ExprKind::BoolLit(b) => Ok(SmtTerm::BoolLit(*b)),
@@ -35,10 +79,31 @@ pub fn encode_expr(e: &Expr) -> Result<SmtTerm, EncodingError> {
             if trailing.is_none() && args.len() == 1 {
                 if let ExprKind::Ident(name) = &func.kind {
                     if name == "old" {
-                        let inner = encode_expr(args[0].expr())?;
+                        let inner = encode_expr_with_ctx(args[0].expr(), ctx)?;
                         // Name based on pretty-print для стабильности.
                         let key = format!("_old_{}", sanitize_for_var(&inner.pretty()));
                         return Ok(SmtTerm::Var(key));
+                    }
+                }
+            }
+            // Plan 33.3 Ф.9: pure_view-call → UF `_view_<Effect>_<Op>`.
+            // Type-check уже проверил что эффект в сигнатуре fn (Ф.9.3
+            // part 2), здесь — просто конвертация в SMT-IR.
+            if trailing.is_none() {
+                if let ExprKind::Ident(name) = &func.kind {
+                    if let Some(sig) = ctx.pure_views.get(name) {
+                        if args.len() != sig.arity {
+                            return Err(EncodingError::Unsupported(format!(
+                                "pure_view `{}.{}` arity mismatch: expected {}, got {}",
+                                sig.effect_name, name, sig.arity, args.len(),
+                            )));
+                        }
+                        let mut encoded_args = Vec::with_capacity(args.len());
+                        for a in args {
+                            encoded_args.push(encode_expr_with_ctx(a.expr(), ctx)?);
+                        }
+                        let uf = pure_view_uf_name(&sig.effect_name, name);
+                        return Ok(SmtTerm::App(uf, encoded_args));
                     }
                 }
             }
@@ -49,14 +114,14 @@ pub fn encode_expr(e: &Expr) -> Result<SmtTerm, EncodingError> {
         }
 
         ExprKind::Binary { op, left, right } => {
-            let l = encode_expr(left)?;
-            let r = encode_expr(right)?;
+            let l = encode_expr_with_ctx(left, ctx)?;
+            let r = encode_expr_with_ctx(right, ctx)?;
             let op_str = bin_op_to_smt(*op)?;
             Ok(SmtTerm::App(op_str.into(), vec![l, r]))
         }
 
         ExprKind::Unary { op, operand } => {
-            let v = encode_expr(operand)?;
+            let v = encode_expr_with_ctx(operand, ctx)?;
             match op {
                 UnOp::Not => Ok(SmtTerm::App("not".into(), vec![v])),
                 UnOp::Neg => Ok(SmtTerm::App("-".into(),
@@ -67,12 +132,12 @@ pub fn encode_expr(e: &Expr) -> Result<SmtTerm, EncodingError> {
         // `if cond { then } else { else_ }` → ite(cond, then, else)
         // через `(or (and cond then) (and (not cond) else))`.
         ExprKind::If { cond, then, else_ } => {
-            let cond_term = encode_expr(cond)?;
+            let cond_term = encode_expr_with_ctx(cond, ctx)?;
             // Block must be single expression for trivial encoding.
             if !then.stmts.is_empty() { return Err(EncodingError::Unsupported(
                 "if-branch with statements not supported in trivial encoder".into())); }
             let then_term = match &then.trailing {
-                Some(e) => encode_expr(e)?,
+                Some(e) => encode_expr_with_ctx(e, ctx)?,
                 None => return Err(EncodingError::Unsupported(
                     "if without trailing expression".into())),
             };
@@ -81,12 +146,12 @@ pub fn encode_expr(e: &Expr) -> Result<SmtTerm, EncodingError> {
                     if !b.stmts.is_empty() { return Err(EncodingError::Unsupported(
                         "else-branch with statements not supported".into())); }
                     match &b.trailing {
-                        Some(e) => encode_expr(e)?,
+                        Some(e) => encode_expr_with_ctx(e, ctx)?,
                         None => return Err(EncodingError::Unsupported(
                             "else-block without trailing".into())),
                     }
                 }
-                Some(crate::ast::ElseBranch::If(e)) => encode_expr(e)?,
+                Some(crate::ast::ElseBranch::If(e)) => encode_expr_with_ctx(e, ctx)?,
                 None => return Err(EncodingError::Unsupported(
                     "if without else not supported".into())),
             };
@@ -102,7 +167,7 @@ pub fn encode_expr(e: &Expr) -> Result<SmtTerm, EncodingError> {
         // Member access (record fields) — uninterpreted в 33.1.
         // Кодируем как UF: `field_x(obj)`.
         ExprKind::Member { obj, name } => {
-            let obj_t = encode_expr(obj)?;
+            let obj_t = encode_expr_with_ctx(obj, ctx)?;
             Ok(SmtTerm::App(format!("_field_{}", name), vec![obj_t]))
         }
 

@@ -1,0 +1,25 @@
+// Plan 33.3 Ф.9: pure_view-вызов в контрактах разрешён, если эффект
+// объявлен в сигнатуре enclosing fn.
+
+module contracts.f9_pure_view_in_contract_positive
+
+type Db effect {
+    SetBalance(id int, amount int)
+    #pure balance(id int) -> int
+    axiom non_negative(id) => balance(id) >= 0
+}
+
+// `withdraw` объявляет Db в эффектах → может ссылаться на balance в
+// контрактах. SMT-доказательство тела ждёт Ф.9.4 (UF encoding +
+// axiom assert). Здесь — только type-check.
+fn withdraw(id int, amount int) Db -> int
+    requires balance(id) >= amount
+    ensures result >= 0
+=> 0  // тело-заглушка; SMT здесь не доказывает потому что contract
+       // не reflexive, и Z3 без UF balance не знает что result=0
+       // удовлетворяет ensures. С axiom non_negative и body=0 — Z3
+       // докажет в Ф.9.4.
+
+test "pure_view in contract type-checks when effect in sig" {
+    assert(1 + 1 == 2)
+}

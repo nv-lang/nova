@@ -1,0 +1,12 @@
+// EXPECT_COMPILE_ERROR `Db.bad`: `SetBalance` is not a pure_view
+//
+// Plan 33.3 Ф.9: axiom-body может ссылаться только на `#pure` views.
+// Здесь axiom пытается вызвать обычную operation SetBalance — error.
+
+module contracts.f9_axiom_calls_non_pureview_fail
+
+type Db effect {
+    SetBalance(id int, amount int)
+    #pure balance(id int) -> int
+    axiom bad(id) => SetBalance(id, 100) == 0
+}

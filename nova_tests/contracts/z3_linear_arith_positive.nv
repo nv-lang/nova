@@ -12,19 +12,19 @@
 
 module contracts.z3_linear_arith_positive
 
-#must_verify
+#verify
 fn inc_positive(x int) -> int
     requires x > 0
     ensures result > 0
 => x + 1
 
-#must_verify
+#verify
 fn double_positive(x int) -> int
     requires x > 0
     ensures result > 0
 => x * 2
 
-#must_verify
+#verify
 fn add_positives(a int, b int) -> int
     requires a > 0
     requires b > 0

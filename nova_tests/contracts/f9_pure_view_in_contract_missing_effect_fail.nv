@@ -1,0 +1,16 @@
+// EXPECT_COMPILE_ERROR pure_view `Db.balance` referenced in contract
+//
+// Plan 33.3 Ф.9.3: `#pure` view-вызов в контракте функции, в сигнатуре
+// которой эффект НЕ объявлен. Ошибка — нельзя observable эффект-state
+// без handler'а в scope.
+
+module contracts.f9_pure_view_in_contract_missing_effect_fail
+
+type Db effect {
+    #pure balance(id int) -> int
+}
+
+// `bad` НЕ объявляет Db в эффектах → contract refers to balance → error.
+fn bad(id int) -> int
+    requires balance(id) >= 0
+=> 0

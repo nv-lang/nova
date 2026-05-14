@@ -1,0 +1,11 @@
+// EXPECT_COMPILE_ERROR `Db.bad`: unknown identifier `something_else`
+//
+// Plan 33.3 Ф.9: axiom-body может ссылаться только на binders +
+// pure_view'ы. Любой свободный identifier — error.
+
+module contracts.f9_axiom_unknown_ident_fail
+
+type Db effect {
+    #pure balance(id int) -> int
+    axiom bad(id) => balance(id) >= something_else
+}

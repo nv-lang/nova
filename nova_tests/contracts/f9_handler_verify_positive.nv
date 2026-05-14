@@ -1,0 +1,21 @@
+// Plan 33.3 Ф.9.6: positive — handler для эффекта с axiom помечен
+// `#trusted`, gate пропускает.
+
+module contracts.f9_handler_verify_positive
+
+type Db effect {
+    SetBalance(id int, amount int)
+    #pure balance(id int) -> int
+    axiom non_negative(id) => balance(id) >= 0
+}
+
+test "trusted handler for axiom-bearing effect type-checks" {
+    let mut store = 0
+    with #trusted Db = handler Db {
+        SetBalance(id, amount) { store = amount }
+        balance(id) => store
+    } {
+        Db.SetBalance(1, 100)
+        assert(Db.balance(1) == 100)
+    }
+}

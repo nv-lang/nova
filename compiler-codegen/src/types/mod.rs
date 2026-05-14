@@ -215,6 +215,19 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
     // ной, и если да — body должен diverge (static analysis).
     check_handler_never_ops(module, &mut errors);
 
+    // Plan 33.3 Ф.9 (D24): validate axiom-bodies в effect-блоках.
+    // Каждый axiom должен ссылаться только на binders + pure_view-ops
+    // **того же эффекта** + литералы + boolean/arith operators. Любой
+    // другой identifier (включая non-pure_view ops) → error. Это
+    // фундамент SMT encoding (UF mapping в Ф.9.4).
+    check_effect_axioms(module, &mut errors);
+
+    // Plan 33.3 Ф.9.6: handler verification gate.
+    // Если эффект имеет pure_view-ops, любая `with E = handler` для
+    // этого эффекта обязана быть помечена `#verify_handler` или
+    // `#trusted_handler`. Без атрибута — compile error.
+    check_handler_verification_gate(module, &mut errors);
+
     // Name-resolution фаза: статический поиск undefined идентификаторов
     // в expr-position. Запускается ПОСЛЕ BoundCtx/CapabilityCtx, чтобы
     // более фундаментальные ошибки (signatures/effects) приходили первыми.
@@ -2436,6 +2449,126 @@ fn check_handler_never_ops(module: &Module, errors: &mut Vec<Diagnostic>) {
     }
 }
 
+/// Plan 33.3 Ф.9.6 (D24): handler verification gate.
+///
+/// Если эффект имеет хотя бы одну `pure_view` op'у, любое использование
+/// handler'а через `with E = h` обязано декларировать verification
+/// статус через `#verify_handler` или `#trusted_handler`. Без атрибута —
+/// compile error.
+///
+/// Семантика:
+/// - `#verify_handler` — symbolic verification handler.action body
+///   против axiom'ов эффекта (Ф.9.7). Bootstrap V1: атрибут принимается
+///   но реальной верификации нет — placeholder для Ф.9.7.
+/// - `#trusted_handler` — программист берёт ответственность.
+/// - Default (Unverified) для эффектов с pure_views — **error**.
+///
+/// Эффекты БЕЗ pure_views — никаких ограничений (default = Unverified
+/// допустим).
+///
+/// Эта проверка консервативна: даже если body не вызывает pure_view-
+/// using функции, gate всё равно требует attribute для эффекта с
+/// pure_views. Это упрощает V1 (нет cross-fn analysis); Ф.9.7
+/// уточнит до actually-uses analysis.
+fn check_handler_verification_gate(module: &Module, errors: &mut Vec<Diagnostic>) {
+    // Шаг 1: какие эффекты имеют axioms?
+    // Refactor: gate срабатывает только при axiom-присутствии — pure_view сам по
+    // себе ничего не утверждает, утверждение делает axiom. Без axiom handler
+    // верифицировать не на что.
+    let mut effects_with_axioms: HashSet<String> = HashSet::new();
+    for item in &module.items {
+        let Item::Type(td) = item else { continue };
+        if !matches!(&td.kind, TypeDeclKind::Effect(_)) { continue; }
+        if !td.axioms.is_empty() {
+            effects_with_axioms.insert(td.name.clone());
+        }
+    }
+    if effects_with_axioms.is_empty() { return; }
+
+    // Шаг 2: walk all expressions, найти WithBinding'и с такими эффектами.
+    for item in &module.items {
+        match item {
+            Item::Fn(f) => match &f.body {
+                FnBody::Block(b) => walk_block_for_with_gate(b, &effects_with_axioms, errors),
+                FnBody::Expr(e) => walk_expr_for_with_gate(e, &effects_with_axioms, errors),
+                FnBody::External => {}
+            }
+            Item::Test(t) => walk_block_for_with_gate(&t.body, &effects_with_axioms, errors),
+            _ => {}
+        }
+    }
+}
+
+fn walk_block_for_with_gate(b: &Block, eff_pv: &HashSet<String>, errors: &mut Vec<Diagnostic>) {
+    for s in &b.stmts {
+        match s {
+            Stmt::Expr(e) => walk_expr_for_with_gate(e, eff_pv, errors),
+            Stmt::Let(LetDecl { value, .. }) => walk_expr_for_with_gate(value, eff_pv, errors),
+            Stmt::Assign { target, value, .. } => {
+                walk_expr_for_with_gate(target, eff_pv, errors);
+                walk_expr_for_with_gate(value, eff_pv, errors);
+            }
+            _ => {}
+        }
+    }
+    if let Some(t) = &b.trailing { walk_expr_for_with_gate(t, eff_pv, errors); }
+}
+
+fn walk_expr_for_with_gate(e: &Expr, eff_pv: &HashSet<String>, errors: &mut Vec<Diagnostic>) {
+    use crate::ast::ExprKind::*;
+    match &e.kind {
+        With { bindings, body } => {
+            for b in bindings {
+                let eff_name = match &b.effect {
+                    TypeRef::Named { path, .. } => path.last().cloned().unwrap_or_default(),
+                    _ => String::new(),
+                };
+                if !eff_pv.contains(&eff_name) { continue; }
+                if matches!(b.verification, HandlerVerification::Unverified) {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "handler for effect `{}` must be marked `#verify` \
+                             or `#trusted` (effect has `axiom` declarations, so any \
+                             handler must declare verification status). Examples:\n  \
+                             with #trusted {0} = my_handler {{ ... }}\n  \
+                             with #verify {0} = my_handler {{ ... }}",
+                            eff_name,
+                        ),
+                        b.span,
+                    ));
+                }
+                walk_expr_for_with_gate(&b.handler, eff_pv, errors);
+            }
+            walk_block_for_with_gate(body, eff_pv, errors);
+        }
+        Block(b) => walk_block_for_with_gate(b, eff_pv, errors),
+        Call { func, args, .. } => {
+            walk_expr_for_with_gate(func, eff_pv, errors);
+            for a in args { walk_expr_for_with_gate(a.expr(), eff_pv, errors); }
+        }
+        Binary { left, right, .. } => {
+            walk_expr_for_with_gate(left, eff_pv, errors);
+            walk_expr_for_with_gate(right, eff_pv, errors);
+        }
+        Unary { operand, .. } => walk_expr_for_with_gate(operand, eff_pv, errors),
+        Member { obj, .. } => walk_expr_for_with_gate(obj, eff_pv, errors),
+        Index { obj, index } => {
+            walk_expr_for_with_gate(obj, eff_pv, errors);
+            walk_expr_for_with_gate(index, eff_pv, errors);
+        }
+        If { cond, then, else_ } => {
+            walk_expr_for_with_gate(cond, eff_pv, errors);
+            walk_block_for_with_gate(then, eff_pv, errors);
+            match else_ {
+                Some(crate::ast::ElseBranch::Block(b)) => walk_block_for_with_gate(b, eff_pv, errors),
+                Some(crate::ast::ElseBranch::If(ie)) => walk_expr_for_with_gate(ie, eff_pv, errors),
+                None => {}
+            }
+        }
+        _ => {}
+    }
+}
+
 fn type_ref_is_never(t: &TypeRef) -> bool {
     if let TypeRef::Named { path, .. } = t {
         if let Some(last) = path.last() {
@@ -2443,6 +2576,241 @@ fn type_ref_is_never(t: &TypeRef) -> bool {
         }
     }
     false
+}
+
+/// Plan 33.3 Ф.9 (D24): валидация axiom-формул внутри effect-блоков.
+///
+/// Контракт: внутри `axiom name(binders) => formula` разрешены только:
+///   - литералы (int/bool/str/unit);
+///   - идентификаторы из `binders`;
+///   - вызовы pure_view-ops **того же эффекта**: `balance(id) >= 0`;
+///   - стандартные бинарные/унарные/comparison/boolean операторы;
+///   - `if/else` без stmts.
+///
+/// Запрещены:
+///   - non-pure_view operations (`SetBalance(...)`);
+///   - вызовы любых других fn (включая built-ins за пределами разрешённых
+///     операторов);
+///   - record/sum constructors, member access, method calls.
+///
+/// Эти ограничения нужны для чистой SMT-кодировки (`pure_view` → UF,
+/// axiom → assert) в Ф.9.4. Если разрешить произвольный код — SMT
+/// encoding теряет soundness.
+fn check_effect_axioms(module: &Module, errors: &mut Vec<Diagnostic>) {
+    for item in &module.items {
+        let Item::Type(td) = item else { continue };
+        // Plan 33.3 Ф.9 (refactor): unique-name + axiom-formula checks
+        // применяются и к effect, и к protocol (в обоих можно объявлять
+        // #pure ops и axioms).
+        let methods = match &td.kind {
+            TypeDeclKind::Effect(m) | TypeDeclKind::Protocol(m) => m,
+            _ => continue,
+        };
+
+        // Plan 33.3 Ф.9 (refactor): unique-name checks внутри effect-блока.
+        // Конфликты:
+        //   1. два operation/#pure с одинаковым именем;
+        //   2. два axiom с одинаковым именем;
+        //   3. axiom имя совпадает с именем operation/#pure.
+        // Делаем check'и независимо от наличия axioms — дубликаты method'ов
+        // ловим всегда.
+        let mut method_names: HashSet<&String> = HashSet::new();
+        for m in methods {
+            if !method_names.insert(&m.name) {
+                errors.push(Diagnostic::new(
+                    format!("effect `{}`: duplicate operation `{}`",
+                        td.name, m.name),
+                    m.span,
+                ));
+            }
+        }
+        let mut axiom_names: HashSet<&String> = HashSet::new();
+        for ax in &td.axioms {
+            if !axiom_names.insert(&ax.name) {
+                errors.push(Diagnostic::new(
+                    format!("effect `{}`: duplicate axiom `{}`",
+                        td.name, ax.name),
+                    ax.span,
+                ));
+            }
+            if method_names.contains(&ax.name) {
+                errors.push(Diagnostic::new(
+                    format!("effect `{}`: axiom `{}` conflicts with operation \
+                             of the same name (axiom names must be distinct \
+                             from operations / `#pure` views)",
+                        td.name, ax.name),
+                    ax.span,
+                ));
+            }
+        }
+
+        if td.axioms.is_empty() { continue; }
+
+        // Собираем pure_view-имена эффекта: имя → ожидаемая арность.
+        let mut pure_views: HashMap<String, usize> = HashMap::new();
+        for m in methods {
+            if matches!(m.kind, EffectOpKind::PureView) {
+                pure_views.insert(m.name.clone(), m.params.len());
+            }
+        }
+
+        for ax in &td.axioms {
+            // Duplicate-binder check.
+            let mut seen: HashSet<&String> = HashSet::new();
+            for b in &ax.binders {
+                if !seen.insert(b) {
+                    errors.push(Diagnostic::new(
+                        format!("axiom `{}.{}`: duplicate binder `{}`",
+                            td.name, ax.name, b),
+                        ax.span,
+                    ));
+                }
+            }
+            let binders: HashSet<&String> = ax.binders.iter().collect();
+            check_axiom_expr(&ax.formula, &td.name, &ax.name,
+                             &binders, &pure_views, errors);
+        }
+    }
+}
+
+/// Walk `expr` в axiom-formula и пушит ошибки на запрещённые конструкции.
+fn check_axiom_expr(
+    e: &Expr,
+    effect_name: &str,
+    axiom_name: &str,
+    binders: &HashSet<&String>,
+    pure_views: &HashMap<String, usize>,
+    errors: &mut Vec<Diagnostic>,
+) {
+    use crate::ast::ExprKind::*;
+    match &e.kind {
+        IntLit(_) | BoolLit(_) | StrLit(_) | CharLit(_) | UnitLit => {}
+        Ident(n) => {
+            if binders.contains(&n.to_string()) { return; }
+            if pure_views.contains_key(n) {
+                // Reference to pure_view без вызова — V1 запрещаем
+                // (требуем `name(args)`-форму для arity-clarity).
+                errors.push(Diagnostic::new(
+                    format!(
+                        "axiom `{}.{}`: pure_view `{}` must be called \
+                         with arguments (e.g. `{}(...)`), not used as value",
+                        effect_name, axiom_name, n, n,
+                    ),
+                    e.span,
+                ));
+                return;
+            }
+            errors.push(Diagnostic::new(
+                format!(
+                    "axiom `{}.{}`: unknown identifier `{}` (axiom-body \
+                     may only reference binders {:?} or pure_view ops \
+                     of effect `{}`)",
+                    effect_name, axiom_name, n,
+                    binders.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
+                    effect_name,
+                ),
+                e.span,
+            ));
+        }
+        Binary { left, right, .. } => {
+            check_axiom_expr(left, effect_name, axiom_name, binders, pure_views, errors);
+            check_axiom_expr(right, effect_name, axiom_name, binders, pure_views, errors);
+        }
+        Unary { operand, .. } => {
+            check_axiom_expr(operand, effect_name, axiom_name, binders, pure_views, errors);
+        }
+        If { cond, then, else_ } => {
+            check_axiom_expr(cond, effect_name, axiom_name, binders, pure_views, errors);
+            if !then.stmts.is_empty() {
+                errors.push(Diagnostic::new(
+                    format!("axiom `{}.{}`: if-branch must not contain statements",
+                        effect_name, axiom_name),
+                    e.span,
+                ));
+            }
+            if let Some(trailing) = &then.trailing {
+                check_axiom_expr(trailing, effect_name, axiom_name, binders, pure_views, errors);
+            }
+            match else_ {
+                Some(crate::ast::ElseBranch::Block(b)) => {
+                    if !b.stmts.is_empty() {
+                        errors.push(Diagnostic::new(
+                            format!("axiom `{}.{}`: else-branch must not contain statements",
+                                effect_name, axiom_name),
+                            e.span,
+                        ));
+                    }
+                    if let Some(t) = &b.trailing {
+                        check_axiom_expr(t, effect_name, axiom_name, binders, pure_views, errors);
+                    }
+                }
+                Some(crate::ast::ElseBranch::If(ie)) => {
+                    check_axiom_expr(ie, effect_name, axiom_name, binders, pure_views, errors);
+                }
+                None => {}
+            }
+        }
+        Call { func, args, trailing } => {
+            if trailing.is_some() {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "axiom `{}.{}`: trailing blocks not allowed in axiom-formulas",
+                        effect_name, axiom_name,
+                    ),
+                    e.span,
+                ));
+                return;
+            }
+            // V1: разрешена форма `<pure_view_name>(args)`.
+            let pv_name = match &func.kind {
+                Ident(n) => n.clone(),
+                _ => {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "axiom `{}.{}`: callee must be a pure_view of effect `{}`",
+                            effect_name, axiom_name, effect_name,
+                        ),
+                        e.span,
+                    ));
+                    return;
+                }
+            };
+            let Some(&expected) = pure_views.get(&pv_name) else {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "axiom `{}.{}`: `{}` is not a pure_view of effect `{}` \
+                         (axioms may only reference pure_view ops)",
+                        effect_name, axiom_name, pv_name, effect_name,
+                    ),
+                    e.span,
+                ));
+                return;
+            };
+            if args.len() != expected {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "axiom `{}.{}`: pure_view `{}` expects {} arg(s), got {}",
+                        effect_name, axiom_name, pv_name, expected, args.len(),
+                    ),
+                    e.span,
+                ));
+            }
+            for a in args {
+                check_axiom_expr(a.expr(), effect_name, axiom_name, binders, pure_views, errors);
+            }
+        }
+        _ => {
+            errors.push(Diagnostic::new(
+                format!(
+                    "axiom `{}.{}`: this expression form is not allowed inside \
+                     axiom-formula (only literals, binders, pure_view calls, \
+                     arith/bool ops, and if/else)",
+                    effect_name, axiom_name,
+                ),
+                e.span,
+            ));
+        }
+    }
 }
 
 /// Walk block recursively: ищет HandlerLit, проверяет never-ops.
@@ -3270,21 +3638,42 @@ struct ContractCtx {
     /// Имена fn объявленных `#pure` (через атрибут).
     /// Используются для разрешения composition в контрактах (33.2).
     pure_fn_names: HashSet<String>,
+    /// Plan 33.3 Ф.9: pure_view-имя → (effect_name, arity).
+    /// При вызове `balance(id)` в контракте определяем (а) что это
+    /// pure_view, (б) к какому эффекту относится, (в) что эффект в
+    /// сигнатуре enclosing fn.
+    pure_views: HashMap<String, (String, usize)>,
 }
 
 impl ContractCtx {
     fn build(module: &Module) -> Self {
         let mut fn_names = HashSet::new();
         let mut pure_fn_names = HashSet::new();
+        let mut pure_views: HashMap<String, (String, usize)> = HashMap::new();
         for item in &module.items {
-            if let Item::Fn(fd) = item {
-                fn_names.insert(fd.name.clone());
-                if matches!(fd.purity, Purity::Pure) {
-                    pure_fn_names.insert(fd.name.clone());
+            match item {
+                Item::Fn(fd) => {
+                    fn_names.insert(fd.name.clone());
+                    if matches!(fd.purity, Purity::Pure) {
+                        pure_fn_names.insert(fd.name.clone());
+                    }
                 }
+                Item::Type(td) => {
+                    if let TypeDeclKind::Effect(methods) = &td.kind {
+                        for m in methods {
+                            if matches!(m.kind, EffectOpKind::PureView) {
+                                pure_views.insert(
+                                    m.name.clone(),
+                                    (td.name.clone(), m.params.len()),
+                                );
+                            }
+                        }
+                    }
+                }
+                _ => {}
             }
         }
-        Self { fn_names, pure_fn_names }
+        Self { fn_names, pure_fn_names, pure_views }
     }
 
     fn check_module(&self, module: &Module, errors: &mut Vec<Diagnostic>) {
@@ -3320,13 +3709,21 @@ impl ContractCtx {
             // Контракты не проверяем дальше — error уже выдан.
             return;
         }
+        // Plan 33.3 Ф.9: множество имён эффектов из сигнатуры функции
+        // (для разрешения pure_view-вызовов в контрактах).
+        let fn_effects: HashSet<String> = fd.effects.iter()
+            .filter_map(|tr| match tr {
+                TypeRef::Named { path, .. } => path.last().cloned(),
+                _ => None,
+            })
+            .collect();
         for contract in &fd.contracts {
             match contract.kind {
                 ContractKind::Requires => {
-                    self.check_requires_expr(&contract.expr, errors);
+                    self.check_requires_expr(&contract.expr, &fn_effects, &fd.name, errors);
                 }
                 ContractKind::Ensures => {
-                    self.check_ensures_expr(&contract.expr, errors);
+                    self.check_ensures_expr(&contract.expr, &fn_effects, &fd.name, errors);
                 }
             }
         }
@@ -3470,16 +3867,35 @@ impl ContractCtx {
     }
 
     /// `requires`: запрещены `result` и `old(...)`.
-    fn check_requires_expr(&self, e: &Expr, errors: &mut Vec<Diagnostic>) {
-        self.walk_expr(e, errors, /*in_ensures*/ false);
+    fn check_requires_expr(
+        &self,
+        e: &Expr,
+        fn_effects: &HashSet<String>,
+        fn_name: &str,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        self.walk_expr(e, fn_effects, fn_name, errors, /*in_ensures*/ false);
     }
 
     /// `ensures`: `result`/`old(...)` разрешены; composition запрещён в 33.1.
-    fn check_ensures_expr(&self, e: &Expr, errors: &mut Vec<Diagnostic>) {
-        self.walk_expr(e, errors, /*in_ensures*/ true);
+    fn check_ensures_expr(
+        &self,
+        e: &Expr,
+        fn_effects: &HashSet<String>,
+        fn_name: &str,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        self.walk_expr(e, fn_effects, fn_name, errors, /*in_ensures*/ true);
     }
 
-    fn walk_expr(&self, e: &Expr, errors: &mut Vec<Diagnostic>, in_ensures: bool) {
+    fn walk_expr(
+        &self,
+        e: &Expr,
+        fn_effects: &HashSet<String>,
+        fn_name: &str,
+        errors: &mut Vec<Diagnostic>,
+        in_ensures: bool,
+    ) {
         match &e.kind {
             ExprKind::Ident(n) => {
                 if n == "result" && !in_ensures {
@@ -3502,7 +3918,39 @@ impl ContractCtx {
                         // Walk old() arg ONCE; it's a snapshot of pre-state,
                         // not a composition.
                         for a in args {
-                            self.walk_expr(a.expr(), errors, in_ensures);
+                            self.walk_expr(a.expr(), fn_effects, fn_name, errors, in_ensures);
+                        }
+                        return;
+                    }
+                    // Plan 33.3 Ф.9.3 part 2: pure_view-вызов в контракте
+                    // разрешён только если соответствующий эффект объявлен в
+                    // сигнатуре enclosing fn (`(...) Eff -> ...`). pure_view
+                    // — read-only observation, нужен effect-handler в scope.
+                    if let Some((effect_name, expected_arity)) = self.pure_views.get(name) {
+                        if !fn_effects.contains(effect_name) {
+                            errors.push(Diagnostic::new(
+                                format!(
+                                    "pure_view `{}.{}` referenced in contract of `{}`, \
+                                     but effect `{}` is not in this function's signature \
+                                     (add `{}` to effects)",
+                                    effect_name, name, fn_name, effect_name, effect_name,
+                                ),
+                                e.span,
+                            ));
+                        }
+                        if args.len() != *expected_arity {
+                            errors.push(Diagnostic::new(
+                                format!(
+                                    "pure_view `{}.{}` expects {} arg(s), got {}",
+                                    effect_name, name, expected_arity, args.len(),
+                                ),
+                                e.span,
+                            ));
+                        }
+                        // pure_view-вызов разрешён; walk args, не walk
+                        // callee (это identifier-name pure_view, не fn).
+                        for a in args {
+                            self.walk_expr(a.expr(), fn_effects, fn_name, errors, in_ensures);
                         }
                         return;
                     }
@@ -3520,34 +3968,34 @@ impl ContractCtx {
                     }
                 }
                 // Walk callee + args.
-                self.walk_expr(func, errors, in_ensures);
+                self.walk_expr(func, fn_effects, fn_name, errors, in_ensures);
                 for a in args {
-                    self.walk_expr(a.expr(), errors, in_ensures);
+                    self.walk_expr(a.expr(), fn_effects, fn_name, errors, in_ensures);
                 }
             }
             ExprKind::Binary { left, right, .. } => {
-                self.walk_expr(left, errors, in_ensures);
-                self.walk_expr(right, errors, in_ensures);
+                self.walk_expr(left, fn_effects, fn_name, errors, in_ensures);
+                self.walk_expr(right, fn_effects, fn_name, errors, in_ensures);
             }
             ExprKind::Unary { operand, .. } => {
-                self.walk_expr(operand, errors, in_ensures);
+                self.walk_expr(operand, fn_effects, fn_name, errors, in_ensures);
             }
             ExprKind::Member { obj, .. } => {
-                self.walk_expr(obj, errors, in_ensures);
+                self.walk_expr(obj, fn_effects, fn_name, errors, in_ensures);
             }
             ExprKind::Index { obj, index } => {
-                self.walk_expr(obj, errors, in_ensures);
-                self.walk_expr(index, errors, in_ensures);
+                self.walk_expr(obj, fn_effects, fn_name, errors, in_ensures);
+                self.walk_expr(index, fn_effects, fn_name, errors, in_ensures);
             }
             ExprKind::As(inner, _) | ExprKind::Is(inner, _) => {
-                self.walk_expr(inner, errors, in_ensures);
+                self.walk_expr(inner, fn_effects, fn_name, errors, in_ensures);
             }
             ExprKind::Try(inner) | ExprKind::Bang(inner) => {
-                self.walk_expr(inner, errors, in_ensures);
+                self.walk_expr(inner, fn_effects, fn_name, errors, in_ensures);
             }
             ExprKind::Coalesce(l, r) => {
-                self.walk_expr(l, errors, in_ensures);
-                self.walk_expr(r, errors, in_ensures);
+                self.walk_expr(l, fn_effects, fn_name, errors, in_ensures);
+                self.walk_expr(r, fn_effects, fn_name, errors, in_ensures);
             }
             // Литералы, paths, и прочее — не интересно для базовых правил.
             _ => {}

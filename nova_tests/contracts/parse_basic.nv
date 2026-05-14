@@ -2,7 +2,7 @@
 //
 // Проверяем что:
 // 1. requires/ensures парсятся после сигнатуры.
-// 2. #must_verify / #unverified / #verify_timeout / #pure парсятся как атрибуты.
+// 2. #verify / #unverified / #verify_timeout / #pure парсятся как атрибуты.
 // 3. Функции без контрактов продолжают работать (backward-compat).
 //
 // Plan 33.1 (D-attr-syntax): атрибуты через `#`, не `@` (разделение от
@@ -43,8 +43,8 @@ fn safe_divide(a int, b int) -> int
     ensures b > 0 ==> result >= 0
 => a / b
 
-// Атрибут #must_verify.
-#must_verify
+// Атрибут #verify.
+#verify
 fn must_double(x int) -> int
     requires x > 0
     ensures result == x * 2

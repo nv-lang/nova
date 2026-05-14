@@ -501,7 +501,7 @@ impl Parser {
                 span,
             ));
         }
-        // Plan 33.1 (D24): `#must_verify` / `#unverified` / `#verify_timeout(ms)` /
+        // Plan 33.1 (D24): `#verify` / `#unverified` / `#verify_timeout(ms)` /
         // `#pure` — contract-related атрибуты перед `fn`. Парсятся
         // отдельно от `#realtime`, могут идти в любом порядке.
         // Не keyword'ы в лексере (контекстный разбор после `#`).
@@ -511,7 +511,7 @@ impl Parser {
         {
             let span = self.peek().span;
             return Err(Diagnostic::new(
-                "contract attributes (`#must_verify` / `#unverified` / `#verify_timeout` / `#pure`) are only valid before `fn`",
+                "contract attributes (`#verify` / `#unverified` / `#verify_timeout` / `#pure`) are only valid before `fn`",
                 span,
             ));
         }
@@ -566,7 +566,7 @@ impl Parser {
     /// Plan 33.1 (D24): contract-related атрибуты перед fn-declaration.
     ///
     /// Поддерживаемые:
-    /// - `#must_verify` — SMT обязан доказать (D24 §50).
+    /// - `#verify` — SMT обязан доказать (D24 §50).
     /// - `#unverified` — отказ от SMT, всегда runtime fallback в debug,
     ///   стирается в release (D24 §53).
     /// - `#verify_timeout(N)` — локальный override SMT-timeout в ms.
@@ -588,7 +588,7 @@ impl Parser {
                 _ => break, // не идентификатор после `#` — выходим
             };
             match next_name.as_str() {
-                "must_verify" => {
+                "verify" => {
                     if !matches!(attrs.verify_mode, VerifyMode::Default) {
                         let span = self.peek().span;
                         return Err(Diagnostic::new(
@@ -597,7 +597,7 @@ impl Parser {
                         ));
                     }
                     self.bump(); // #
-                    self.bump(); // must_verify
+                    self.bump(); // verify
                     attrs.verify_mode = VerifyMode::MustVerify;
                 }
                 "unverified" => {
@@ -1075,11 +1075,15 @@ impl Parser {
         //     bound (D72) и тип-значение.
         // Codegen эмитит vtable только для Effect-kind. BoundCtx
         // (D72 enforcement) регистрирует только Protocol-kind.
+        // Plan 33.3 Ф.9: axioms собираются внутри effect-блока (после
+        // методов и pure_view-объявлений). Для protocol — всегда пусто.
+        let mut effect_axioms: Vec<EffectAxiom> = Vec::new();
         let kind = match self.peek().kind {
             TokenKind::KwEffect => {
                 self.bump();
                 self.expect(&TokenKind::LBrace)?;
                 let methods = self.parse_effect_methods()?;
+                effect_axioms = self.parse_effect_axioms()?;
                 self.expect(&TokenKind::RBrace)?;
                 TypeDeclKind::Effect(methods)
             }
@@ -1087,6 +1091,12 @@ impl Parser {
                 self.bump();
                 self.expect(&TokenKind::LBrace)?;
                 let methods = self.parse_effect_methods()?;
+                // Plan 33.3 Ф.9 (refactor): protocol также может содержать
+                // axioms. Verification impl-handler'а отложена на V2
+                // (#verify_impl / #trusted_impl) — в V1 axioms в protocol
+                // трактуются как trusted-by-default (любая impl верна, что
+                // декларирует axiom). Symmetry с #trusted handler'ами.
+                effect_axioms = self.parse_effect_axioms()?;
                 self.expect(&TokenKind::RBrace)?;
                 TypeDeclKind::Protocol(methods)
             }
@@ -1153,6 +1163,7 @@ impl Parser {
             kind,
             span,
             invariants,
+            axioms: effect_axioms,
         })
     }
 
@@ -1273,6 +1284,32 @@ impl Parser {
         let mut methods = Vec::new();
         self.skip_newlines();
         while !matches!(self.peek().kind, TokenKind::RBrace) {
+            // Plan 33.3 Ф.9: `axiom <name>(...) => <formula>` обрабатывается
+            // отдельной функцией. Останавливаемся как только видим `axiom`.
+            if let TokenKind::Ident(n) = &self.peek().kind {
+                if n == "axiom" { break; }
+            }
+            // Plan 33.3 Ф.9 (refactor): `#pure` атрибут перед operation.
+            // Раньше использовался keyword `pure_view` — заменили на `#pure`
+            // для consistency с другими `#`-атрибутами Nova.
+            // Разрешён в обоих effect и protocol (axiom + pure_view как
+            // declarative spec; в protocol verification impl'а — V2 через
+            // #verify_impl/#trusted_impl).
+            let op_kind = if matches!(self.peek().kind, TokenKind::Hash) {
+                if let TokenKind::Ident(n) = &self.peek_at(1).kind {
+                    if n == "pure" {
+                        self.bump(); // #
+                        self.bump(); // pure
+                        EffectOpKind::PureView
+                    } else {
+                        EffectOpKind::Operation
+                    }
+                } else {
+                    EffectOpKind::Operation
+                }
+            } else {
+                EffectOpKind::Operation
+            };
             let (name, name_span) = self.parse_ident()?;
             // Plan 15 (D72): generics — declaration form с optional bounds.
             let generics: Vec<GenericParam> = if matches!(self.peek().kind, TokenKind::LBracket) {
@@ -1297,6 +1334,15 @@ impl Parser {
                 None
             };
             let end = self.tokens[self.pos.saturating_sub(1)].span;
+            // Plan 33.3 Ф.9: `#pure` op обязан иметь return type
+            // (что-то наблюдать). Без `-> R` объявление бессмысленно.
+            if op_kind == EffectOpKind::PureView && return_type.is_none() {
+                return Err(Diagnostic::new(
+                    "`#pure` operation must declare a return type \
+                     (`-> <Type>`); without it it observes nothing",
+                    name_span.merge(end),
+                ));
+            }
             methods.push(EffectMethod {
                 name,
                 generics,
@@ -1304,10 +1350,55 @@ impl Parser {
                 effects,
                 return_type,
                 span: name_span.merge(end),
+                kind: op_kind,
             });
             self.skip_newlines();
         }
         Ok(methods)
+    }
+
+    /// Plan 33.3 Ф.9: `axiom <name>(binders) => <formula>` внутри effect-блока.
+    ///
+    /// `binders` — список идентификаторов без типов (V1; типы выводятся
+    /// из usage). `formula` — обычное Nova-выражение типа `bool`.
+    /// Семантика: глобальное assert'ение, видимое во всех контрактах
+    /// где импортирован эффект.
+    fn parse_effect_axioms(&mut self) -> Result<Vec<EffectAxiom>, Diagnostic> {
+        let mut axioms = Vec::new();
+        self.skip_newlines();
+        loop {
+            let is_axiom = matches!(
+                &self.peek().kind,
+                TokenKind::Ident(n) if n == "axiom"
+            );
+            if !is_axiom { break; }
+            let start = self.peek().span;
+            self.bump(); // consume `axiom`
+            let (ax_name, _) = self.parse_ident()?;
+            self.expect(&TokenKind::LParen)?;
+            let mut binders: Vec<String> = Vec::new();
+            while !matches!(self.peek().kind, TokenKind::RParen) {
+                let (b, _) = self.parse_ident()?;
+                binders.push(b);
+                if self.eat(&TokenKind::Comma).is_none() {
+                    break;
+                }
+                self.skip_newlines();
+            }
+            self.expect(&TokenKind::RParen)?;
+            // `=>` обязателен. Однострочное `axiom name() => expr`.
+            self.expect(&TokenKind::FatArrow)?;
+            let formula = self.parse_expr()?;
+            let span = start.merge(formula.span);
+            axioms.push(EffectAxiom {
+                name: ax_name,
+                binders,
+                formula,
+                span,
+            });
+            self.skip_newlines();
+        }
+        Ok(axioms)
     }
 
     // ─── let / const / test ──────────────────────────────────────────────
@@ -3297,6 +3388,9 @@ impl Parser {
         let start = self.expect(&TokenKind::KwWith)?.span;
         let mut bindings = Vec::new();
         loop {
+            // Plan 33.3 Ф.9.6: optional `#verify_handler` или `#trusted_handler`
+            // перед effect-name. Применяется к ЭТОЙ конкретной binding'е.
+            let verification = self.parse_handler_verification_attr()?;
             let effect = self.parse_type()?;
             self.expect(&TokenKind::Eq)?;
             // handler — выражение. handler-литерал (`EffName { op() => ... }`)
@@ -3310,6 +3404,7 @@ impl Parser {
                 effect,
                 handler,
                 span,
+                verification,
             });
             if self.eat(&TokenKind::Comma).is_none() {
                 break;
@@ -3322,6 +3417,45 @@ impl Parser {
             ExprKind::With { bindings, body },
             start.merge(end),
         ))
+    }
+
+    /// Plan 33.3 Ф.9.6: парсит `#verify` или `#trusted` (без аргументов)
+    /// перед with-binding'ом. Без атрибута — Unverified.
+    /// Дублирующиеся / противоречащие атрибуты → error.
+    ///
+    /// Refactor: раньше `#verify_handler` / `#trusted_handler` —
+    /// упростили до `#verify` / `#trusted` (контекст определяет
+    /// смысл — внутри with-binding это про handler).
+    fn parse_handler_verification_attr(&mut self) -> Result<HandlerVerification, Diagnostic> {
+        if !matches!(self.peek().kind, TokenKind::Hash) {
+            return Ok(HandlerVerification::Unverified);
+        }
+        let name = match &self.peek_at(1).kind {
+            TokenKind::Ident(n) => n.clone(),
+            _ => return Ok(HandlerVerification::Unverified),
+        };
+        let result = match name.as_str() {
+            "verify" => HandlerVerification::Verify,
+            "trusted" => HandlerVerification::Trusted,
+            _ => return Ok(HandlerVerification::Unverified),
+        };
+        self.bump(); // #
+        self.bump(); // ident
+        self.skip_newlines();
+        // Disallow stacking `#verify #trusted` (контрадикция).
+        if matches!(self.peek().kind, TokenKind::Hash) {
+            if let TokenKind::Ident(next) = &self.peek_at(1).kind {
+                if next == "verify" || next == "trusted" {
+                    let span = self.peek().span;
+                    return Err(Diagnostic::new(
+                        "duplicate or conflicting handler verification attribute \
+                         (`#verify` and `#trusted` are mutually exclusive)",
+                        span,
+                    ));
+                }
+            }
+        }
+        Ok(result)
     }
 
     /// Парсит выражение, специально проверяя на handler-литерал `EffName { op... }`.
