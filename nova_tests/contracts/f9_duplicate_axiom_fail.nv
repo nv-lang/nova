@@ -1,0 +1,11 @@
+// EXPECT_COMPILE_ERROR effect `Db`: duplicate axiom `non_negative`
+//
+// Plan 33.3 Ф.9 (refactor): два axiom с одним именем → compile error.
+
+module contracts.f9_duplicate_axiom_fail
+
+type Db effect {
+    #pure balance(id int) -> int
+    axiom non_negative(id) => balance(id) >= 0
+    axiom non_negative(id) => balance(id) >= 0
+}

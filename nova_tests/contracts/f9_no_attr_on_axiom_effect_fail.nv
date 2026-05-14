@@ -1,0 +1,22 @@
+// EXPECT_COMPILE_ERROR handler for effect `Counter` must be marked
+//
+// Plan 33.3 Ф.9 (refactor): effect с axiom → handler без #verify/#trusted
+// → compile error. Gate срабатывает ТОЛЬКО при наличии axiom.
+
+module contracts.f9_no_attr_on_axiom_effect_fail
+
+type Counter effect {
+    Increment()
+    #pure value() -> int
+    axiom non_negative() => value() >= 0
+}
+
+test "handler без attr на axiom-effect → error" {
+    let mut n = 0
+    with Counter = handler Counter {
+        Increment() { n = n + 1 }
+        value() => n
+    } {
+        Counter.Increment()
+    }
+}
