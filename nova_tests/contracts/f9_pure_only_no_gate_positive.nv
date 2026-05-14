@@ -1,0 +1,21 @@
+// Plan 33.3 Ф.9 (refactor): effect с #pure но БЕЗ axiom — gate НЕ
+// срабатывает. Handler без атрибута допустим (нечего верифицировать).
+
+module contracts.f9_pure_only_no_gate_positive
+
+type Db effect {
+    SetBalance(id int, amount int)
+    #pure balance(id int) -> int
+    // axiom отсутствует → gate не активируется
+}
+
+test "no gate without axiom" {
+    let mut store = 0
+    with Db = handler Db {
+        SetBalance(id, amount) { store = amount }
+        balance(id) => store
+    } {
+        Db.SetBalance(1, 42)
+        assert(Db.balance(1) == 42)
+    }
+}

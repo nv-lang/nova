@@ -1,0 +1,14 @@
+// Plan 33.3 (refactor): typed binders в axiom — `axiom name(id int) => ...`
+// Парсер принимает явные типы, SMT использует их напрямую без inference.
+
+module contracts.f9_axiom_typed_binders_positive
+
+type Db effect {
+    #pure balance(id int) -> int
+    axiom non_negative(id int) => balance(id) >= 0
+    axiom bound(id int, limit int) => balance(id) >= limit
+}
+
+test "typed binders parse and type-check" {
+    assert(1 + 1 == 2)
+}

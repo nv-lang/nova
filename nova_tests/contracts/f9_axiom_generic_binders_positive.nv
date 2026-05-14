@@ -1,0 +1,13 @@
+// Plan 33.3 (refactor): generic binders `axiom name[T](id T) => ...`
+// V1: парсинг + AST; SMT encoding generic axioms — V2 (silently skipped).
+
+module contracts.f9_axiom_generic_binders_positive
+
+type Db effect {
+    #pure balance(id int) -> int
+    axiom non_negative[T](id T) => balance(0) >= 0
+}
+
+test "generic axiom parses" {
+    assert(1 + 1 == 2)
+}

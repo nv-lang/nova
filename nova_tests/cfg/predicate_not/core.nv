@@ -1,0 +1,6 @@
+// Plan 42.14 Ф.1: core peer для not() test.
+
+module cfg.predicate_not
+
+export fn always_here() -> int =>
+    7

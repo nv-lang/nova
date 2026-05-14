@@ -1,0 +1,11 @@
+// EXPECT_COMPILE_ERROR effect `Db`: duplicate operation `balance`
+//
+// Plan 33.3 Ф.9 (refactor): unique-name check — два operation с одним
+// именем внутри effect → compile error.
+
+module contracts.f9_duplicate_op_fail
+
+type Db effect {
+    balance(id int) -> int
+    balance(id int) -> int
+}

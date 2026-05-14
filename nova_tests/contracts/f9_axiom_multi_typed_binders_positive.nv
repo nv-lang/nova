@@ -1,0 +1,14 @@
+// Plan 33.3 (refactor): axiom с тремя типизированными биндерами.
+// Проверяет, что парсер и type-check принимают аксиомы с 3 параметрами.
+
+module contracts.f9_axiom_multi_typed_binders_positive
+
+type Ledger effect {
+    #pure balance(from int, to int) -> int
+    axiom non_negative(from int, to int) => balance(from, to) >= 0
+    axiom symmetric(from int, to int, limit int) => balance(from, to) >= limit
+}
+
+test "multi-param typed binders" {
+    assert(1 + 1 == 2)
+}

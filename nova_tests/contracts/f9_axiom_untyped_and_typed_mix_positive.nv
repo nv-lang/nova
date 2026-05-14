@@ -1,0 +1,13 @@
+// Plan 33.3 (refactor): axiom с untyped binder (без типа) — парсер
+// принимает, type-check не отвергает (untyped binders допустимы).
+
+module contracts.f9_axiom_untyped_and_typed_mix_positive
+
+type Db effect {
+    #pure balance(id int) -> int
+    axiom non_negative(id) => balance(0) >= 0
+}
+
+test "untyped binder still parses" {
+    assert(1 + 1 == 2)
+}

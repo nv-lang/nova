@@ -6103,3 +6103,69 @@ sync_waitgroup.nv (5 тестов) + все предыдущие тесты.
   была бы лучше. Приоритет: L.
 - [S-SYNC3] `AtomicInt` нет `swap()` / `fetch_or()` / `fetch_and()` — добавить
   при реальной необходимости. Приоритет: L.
+
+
+## Plan 44.5 Layer 5: park/wake migration к worker scope — отложено
+
+**Что упрощено.** Plan 44.5 Layer 5 закрыл implicit M:N для **compute-only**
+spawn body (без Time.sleep / Channel.recv). Workers actually выполняют
+fiber bodies через codegen routing на `nova_runtime_spawn_into`. Mut-captured
+scalars writeable cross-thread (race-free если each fiber writes own slot).
+
+Park/wake API сейчас (scope, slot)-keyed: `nova_sched_park(scope, slot)`
+читает `scope->sched_state->parked[slot]`. Worker fiber имеет
+`_nova_active_slot = -1` (worker_main не allocates slot). При Time.sleep
+вызывается `_nova_sleep_via_libuv(scope, -1, ms)` → register_pending fails
+guard `_nova_active_slot < 0` → FATAL D92 invariant violated.
+
+**Почему НЕ исправлять сейчас.** Proper park/wake migration требует:
+1. Per-fiber NovaSchedState struct (а не scope-array indexed by slot).
+2. TLS-swap в codegen entry function — set `_nova_active_scope` к parent
+   и аллоцировать slot в scope.
+3. Worker_main loop integration: status check after mco_resume, hold
+   parked fibers, wake from libuv callback.
+4. Fiber pinning to home worker (Go's `LockOSThread` analog) — anti-
+   migration для consistency park/wake handles thread-bound.
+
+Это ~600-1000 LOC значимой работы. Honest partial closure: compute-only Layer 5
+дает user benefit (workers actually работают), park/wake migration = следующий milestone.
+
+Это honest scope split — fundamental compute parallelism отделён от
+park/wake migration ergonomics.
+
+
+## Plan 33.3 Ф.9: effect overloaded ops + axiom typed/generic binders (2026-05-14)
+
+**Что упрощено — overloading.**
+
+До: unique-name check в effect/protocol по полю `name` — любые два op
+с одинаковым именем → error. Это было проще имплементировать, но
+семантически неверно: нет причины запрещать `balance(id int)` и
+`balance(id str)` в одном effect — это валидный overloading.
+
+После: check по полной сигнатуре `(name, param_types)`. type_key()
+helper → canonical строка для dedup. Дубликат полной сигнатуры → error.
+Разные param types → разрешено.
+
+C-codegen: при overloaded ops поля vtable-структуры манглированы
+(`balance__nova_int` / `balance__nova_str`). schema_lookup() fallback
+позволяет type-inference call-sites искать по plain-имени.
+
+**Что упрощено — typed binders.**
+
+До: axiom binders только untyped: `axiom name(id) => ...` — тип биндера
+выводился из usage в формуле или defaulted в Int.
+
+После: `axiom name(id int) => ...` — явный тип идёт напрямую в SMT sort
+без inference. Оба синтаксиса сосуществуют; `Option<TypeRef>` в AST.
+
+**Что добавлено — generic binders.**
+
+`axiom name[T](id T) => ...` — generic param в axiom. V1: парсинг + AST,
+SMT encoding generic axiom silently skip (is_generic = true → None).
+V2 — полный encode через uninterpreted sorts или multi-sort instantiation.
+
+**Техдолг.** `Option<TypeRef>` для binder-типа читается как «нет значения»,
+хотя семантика «untyped» — другое. Зафиксировано как Q-axiom-binder-type:
+при добавлении Generic как третьего варианта — рефакторить на enum
+`BinderType { Untyped, Typed(TypeRef), Generic }`.

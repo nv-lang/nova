@@ -1,0 +1,10 @@
+// EXPECT_COMPILE_ERROR effect `Db`: axiom `balance` conflicts with operation
+//
+// Plan 33.3 Ф.9 (refactor): axiom имя совпадает с именем operation → error.
+
+module contracts.f9_axiom_name_conflicts_op_fail
+
+type Db effect {
+    #pure balance(id int) -> int
+    axiom balance(id) => balance(id) >= 0
+}

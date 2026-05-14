@@ -121,10 +121,17 @@ pub fn expected_module_path(file: &Path, m: &Manifest) -> Option<Vec<String>> {
 ///   (для folder-module peer — определяется через folder_module flag).
 /// - **parent** = directory сразу над target.
 ///
+/// **Plan 42.13 (D29 rev-3.1): `internal/` special-case.** Если path
+/// содержит сегмент `internal`, declaration = `<owner>.internal.<target>`
+/// (3 segments), где owner = directory сразу перед `internal`. Это
+/// устраняет naming collision когда у нескольких модулей свои `internal/`.
+///
 /// Examples (с source_root = `<repo>`):
 /// - `src/main.nv` (single) → `["src", "main"]`
 /// - `std/encoding/hex.nv` (single) → `["encoding", "hex"]`
 /// - `std/encoding/json/parse.nv` (peer of `json/`) → `["encoding", "json"]`
+/// - `src/admin/internal/token.nv` (single) → `["admin", "internal", "token"]`
+/// - `src/admin/internal/codec/enc.nv` (peer of `codec/`) → `["admin", "internal", "codec"]`
 pub fn expected_module_path_rev3(
     file: &Path,
     m: &Manifest,
@@ -138,6 +145,42 @@ pub fn expected_module_path_rev3(
         .components()
         .filter_map(|c| c.as_os_str().to_str().map(|s| s.to_string()))
         .collect();
+
+    // Plan 42.13 (D29 rev-3.1): `internal/` special-case.
+    // Если path содержит `internal`, declaration = owner.internal.target.
+    // owner = сегмент сразу перед `internal`. target = file basename
+    // (single-file) или folder name (folder-module peer).
+    //
+    // Edge case: если `internal/` САМА folder-module (peers прямо в
+    // internal/, target == "internal") — declaration = `owner.internal`
+    // (2 segments, без дублирования).
+    if let Some(internal_idx) = parts.iter().position(|s| s == "internal") {
+        // owner = parts[internal_idx - 1]; если internal на root level
+        // (parts[0] == "internal") — owner = package name.
+        let owner = if internal_idx == 0 {
+            m.package_name.clone()
+        } else {
+            parts[internal_idx - 1].clone()
+        };
+        // target = последний сегмент для single-file; для folder-module
+        // peer — folder name (предпоследний сегмент).
+        let target = if is_folder_module {
+            // peer of folder: parts = [..., owner, internal, folder, basename]
+            // target = folder = parts[parts.len()-2].
+            if parts.len() < 2 {
+                return None;
+            }
+            parts[parts.len() - 2].clone()
+        } else {
+            parts.last()?.clone()
+        };
+        // Если target == "internal" → `internal/` сама folder-module,
+        // declaration = owner.internal (2 segments, без дублирования).
+        if target == "internal" {
+            return Some(vec![owner, "internal".to_string()]);
+        }
+        return Some(vec![owner, "internal".to_string(), target]);
+    }
 
     if is_folder_module {
         // peer of folder `X/` — declaration = "<parent_of_X>.<X>".

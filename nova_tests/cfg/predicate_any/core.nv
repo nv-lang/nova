@@ -1,0 +1,6 @@
+// Plan 42.14 Ф.1: core peer.
+
+module cfg.predicate_any
+
+export fn base() -> int =>
+    helper_value() + 1

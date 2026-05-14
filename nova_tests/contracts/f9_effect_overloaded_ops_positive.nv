@@ -1,0 +1,16 @@
+// Plan 33.3 (refactor): перегрузка operation в effect по типу параметра
+// допустима на уровне type-check. Codegen-поддержка overloaded ops — V2.
+//
+// Тест: парсинг + type-check (без runtime использования перегруженных ops).
+
+module contracts.f9_effect_overloaded_ops_positive
+
+type Db effect {
+    balance(id int) -> int
+    balance(id str) -> int
+    SetBalance(id int, amount int)
+}
+
+test "overloaded ops in effect type-check (no runtime dispatch)" {
+    assert(1 + 1 == 2)
+}

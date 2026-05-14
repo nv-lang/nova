@@ -1,0 +1,15 @@
+// Plan 33.3 Ф.9 (refactor): protocol разрешает #pure + axiom.
+// В V1 axioms в protocol trusted-by-default (impl не верифицируется).
+//
+// Тест: парсинг + type-check проходят без ошибок.
+
+module contracts.f9_protocol_pure_axiom_positive
+
+type Storage protocol {
+    #pure size() -> int
+    axiom non_negative() => size() >= 0
+}
+
+test "protocol with #pure and axiom parses and type-checks" {
+    assert(1 + 1 == 2)
+}

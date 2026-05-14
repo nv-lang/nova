@@ -1,0 +1,15 @@
+// Plan 42.14 Ф.1: #cfg(not(...)) predicate test.
+//
+// predicate_not/disabled.nv использует
+// `#cfg(not(any(windows, linux, macos)))` — это active только на
+// НЕ-supported OS, то есть никогда. Peer skip'ается, disabled_value()
+// невидима. always_here() из core.nv — доступна.
+
+module cfg.predicate_not_use
+
+import nova_tests.cfg.predicate_not.{always_here}
+
+test "cfg not() predicate: disabled peer skipped" {
+    assert(always_here() == 7)
+    // disabled_value() НЕ импортируется — peer cfg-off.
+}

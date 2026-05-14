@@ -1,0 +1,11 @@
+// EXPECT_COMPILE_ERROR effect `Store`: duplicate operation `get`
+//
+// Plan 33.3 (refactor): два operation с одинаковой полной сигнатурой
+// в protocol → compile error (аналогично effect).
+
+module contracts.f9_protocol_same_sig_fail
+
+type Store protocol {
+    get(key str) -> int
+    get(key str) -> int
+}

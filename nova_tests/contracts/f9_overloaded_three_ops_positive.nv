@@ -1,0 +1,14 @@
+// Plan 33.3 (refactor): три перегрузки одного operation в effect
+// (по int, str, bool) — все три разные сигнатуры, дубликатов нет.
+
+module contracts.f9_overloaded_three_ops_positive
+
+type Converter effect {
+    convert(x int) -> str
+    convert(x str) -> int
+    convert(x bool) -> str
+}
+
+test "three-way overload type-checks" {
+    assert(1 + 1 == 2)
+}

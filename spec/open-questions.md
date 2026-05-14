@@ -6089,6 +6089,36 @@ Plan 23 socket-read/file-read, D93 spec.
 
 ---
 
+## Q-axiom-binder-type. Тип binder в axiom: `Option<TypeRef>` vs отдельный enum
+
+**Контекст.** `EffectAxiom.binders: Vec<(String, Option<TypeRef>)>` — `None` означает
+"тип не указан явно". В SMT encoding при `None` делается inference из usage в формуле,
+а если inference не находит — дефолт `SortRef::Int`.
+
+**Проблема.** `None` читается как "отсутствует/нет значения", хотя семантически это
+"untyped" — совсем другое намерение. Скрывает смысл на call-сайтах.
+
+**Предлагаемое именование:**
+
+```rust
+pub enum BinderType {
+    Untyped,           // axiom name(id) => ...      — inference + дефолт Int
+    Typed(TypeRef),    // axiom name(id int) => ...  — явный sort
+    Generic,           // axiom name[T](id T) => ... — T из generics (V2)
+}
+```
+
+Тогда `match` на call-сайтах читается как документация, а не загадка `None`.
+
+**Когда менять.** При добавлении третьего варианта (Generic как отдельный BinderType,
+а не флаг `is_generic` на уровне аксиомы) — тогда рефактор окупится. Пока два варианта
+(`Option<TypeRef>`) работает корректно, это техдолг читаемости.
+
+**Связь:** Plan 33.3 Ф.9 (contracts), `compiler-codegen/src/ast/mod.rs` `EffectAxiom`,
+`verify/pipeline.rs` `encode_axiom`.
+
+---
+
 ## Финальное напоминание
 
 Прежде чем продолжать **дизайн**, прочитай:

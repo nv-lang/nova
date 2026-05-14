@@ -9520,3 +9520,124 @@ Fiber-aware synchronization primitives для Nova concurrency runtime.
 УРОК: ExternalRegistry infer_expr_c_type generic lookup устраняет необходимость
 добавлять per-type hardcoding для каждого нового external типа. Достаточно добавить
 .nv декларации — тип inferируется автоматически.
+
+
+================================================================================
+PLAN 42.13: internal/ EXTENDED NAMING (D29 rev-3.1, 2026-05-14)
+================================================================================
+
+После закрытия 42.* подпланов — review naming модулей внутри `internal/`.
+
+### Проблема
+
+Rev-3 правило `parent.X`: declaration всегда 2 segments. Single-file
+внутри `internal/`:
+  admin/internal/token.nv   → module internal.token
+  billing/internal/token.nv → module internal.token  ← COLLISION
+
+Разные модули со своим internal/ → одинаковые declarations. Резолвится
+по filesystem path, но в error messages/debugging не видно владельца.
+
+### Решение: 3-segment declaration для internal/
+
+Если path содержит `internal` → declaration = owner.internal.target:
+  admin/internal/token.nv         → module admin.internal.token
+  admin/internal/codec/enc.nv     → module admin.internal.codec (peer)
+
+owner = directory сразу перед `internal`. target = file basename
+(single) или folder name (folder-module peer).
+
+Edge case: если `internal/` САМА folder-module (peers прямо в
+internal/, не в sub-folder) — target == "internal" → declaration =
+owner.internal (2 segments, без дублирования internal.internal).
+
+### Реализация
+
+manifest.rs::expected_module_path_rev3 — перед обычной rev-3 логикой
+проверка `parts.position(|s| s == "internal")`. ~35 LOC special-case.
+
+### Миграция
+
+1 файл: reexport_facade/internal/impl.nv —
+`module internal.impl` → `module reexport_facade.internal.impl`.
+
+folder_internal/internal/{encode,token}.nv НЕ затронуты — они peers
+самой internal/ folder-module → edge case даёт `folder_internal.internal`
+(совпадает с прежней декларацией).
+
+### Файлы
+
+- compiler-codegen/src/manifest.rs (expected_module_path_rev3)
+- spec/decisions/07-modules.md (D29 rev-3.1 секция)
+- nova_tests/modules/reexport_facade/internal/impl.nv (migration)
+- docs/plans/42.13-internal-naming.md
+
+
+================================================================================
+2026-05-14 Plan 33.3 Ф.9: effect overloaded ops + axiom typed/generic binders
+================================================================================
+
+Дополнение к Plan 33.3 — две новые возможности contracts-системы.
+
+### Перегрузка ops в effect/protocol
+
+До: два op с одним именем в effect → compile error «duplicate».
+После: разные типы параметров → разрешено (overloading по типу).
+Полный дубликат (имя + параметры идентичны) → compile error.
+
+Проверка unique-name перенесена с уровня «имя» на уровень «полная сигнатура».
+type_key() helper строит каноническую строку TypeRef → ключ для dedup.
+
+Codegen: при overloaded ops vtable-поля C-структуры манглируются:
+`balance(id int)` → поле `balance__nova_int`, `balance(id str)` → `balance__nova_str`.
+Dispatch-хелперы тоже манглированы. schema_lookup() fallback обеспечивает
+backward-совместимый lookup по plain-имени для type-inference call-sites.
+
+### Axiom typed binders
+
+Синтаксис `axiom name(id int) => formula` — явные типы биндеров.
+До: только `axiom name(id) => formula` (untyped, дефолт Int в SMT).
+После: тип из биндера идёт напрямую в sort без inference.
+
+### Axiom generic binders
+
+Синтаксис `axiom name[T](id T) => formula` — generic биндеры.
+V1: парсинг + AST; SMT encoding generic axiom — silently skip (V2).
+
+### AST изменения
+
+EffectAxiom.binders: `Vec<String>` → `Vec<(String, Option<TypeRef>)>`
+EffectAxiom.generics: добавлен `Vec<GenericParam>`
+
+Option<TypeRef>: None = untyped (inference + дефолт Int), Some = явный тип.
+Записано как Q-axiom-binder-type: технический долг — лучше enum BinderType
+{Untyped, Typed(TypeRef), Generic} чем Option<TypeRef>, когда будет V2 generic.
+
+### Тесты (11 новых в nova_tests/contracts/)
+
+Позитивные:
+- f9_effect_overloaded_ops_positive.nv — 2 balance overloads (parse-only)
+- f9_axiom_typed_binders_positive.nv — typed binders, 2 axioms
+- f9_axiom_generic_binders_positive.nv — generic [T] binder
+- f9_overloaded_ops_in_protocol_positive.nv — overloads в protocol
+- f9_axiom_multi_typed_binders_positive.nv — 3 typed binders
+- f9_axiom_mixed_binders_positive.nv — str + int binders
+- f9_overloaded_three_ops_positive.nv — 3-way overload
+- f9_axiom_untyped_and_typed_mix_positive.nv — untyped binder
+- f9_axiom_generic_two_binders_positive.nv — [T, U] generic params
+
+Негативные:
+- f9_effect_same_sig_fail.nv — дубликат полной сигнатуры → error
+- f9_protocol_same_sig_fail.nv — то же для protocol
+
+### Файлы
+
+- compiler-codegen/src/ast/mod.rs (EffectAxiom struct)
+- compiler-codegen/src/parser/mod.rs (parse_effect_axioms)
+- compiler-codegen/src/types/mod.rs (type_key, unique-sig check)
+- compiler-codegen/src/verify/pipeline.rs (AxiomInfo, encode_axiom, type_ref_to_sort)
+- compiler-codegen/src/codegen/emit_c.rs (mangle_op, schema_lookup, emit_effect_type)
+- spec/open-questions.md (Q-axiom-binder-type)
+- nova_tests/contracts/f9_* (11 новых тестов)
+
+Регрессия: 321/0 PASS.

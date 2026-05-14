@@ -1,0 +1,21 @@
+// EXPECT_COMPILE_ERROR undefined identifier `freebsd_only`
+//
+// Plan 42.14 Ф.2: item-level #cfg — функция gated inactive predicate'ом
+// дропается на parse. Попытка её вызвать → undefined identifier.
+
+module negative_capability.cfg_item_inactive_rejected
+
+// always_fn первой — чтобы parser не съел #cfg как module-level attr
+// (module-level attrs парсятся только между `module` decl и первым item).
+fn always_fn() -> int =>
+    1
+
+#cfg(target_os = "freebsd")
+fn freebsd_only() -> int =>
+    42
+
+test "inactive cfg-gated item not callable" {
+    let _ = always_fn()
+    let _x = freebsd_only()
+    assert(true)
+}

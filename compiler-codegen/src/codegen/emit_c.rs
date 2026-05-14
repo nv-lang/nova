@@ -1954,13 +1954,24 @@ impl CEmitter {
                 self.line(&format!("{ctx}->{cap} = &{cap};", ctx = ctx_var, cap = cap_name));
             }
         }
-        // Patch vtable at runtime
+        // Patch vtable at runtime — use mangled field name for overloaded ops
         self.line(&format!("{vt}->ctx = {ctx};",
             vt = vtable_var, ctx = ctx_var));
         for m in methods {
             let fn_name = format!("{}_impl_{}_{}", handler_id, eff, m.name);
-            self.line(&format!("{vt}->{method} = {fn};",
-                vt = vtable_var, method = m.name, fn = fn_name));
+            // Resolve mangled vtable field: look up by plain name in schema,
+            // find the matching key (mangled or plain).
+            let field = {
+                let schema_snap = self.effect_schemas.get(&eff).cloned().unwrap_or_default();
+                // Find the schema key whose prefix matches m.name
+                let mangled_key = schema_snap.keys()
+                    .find(|k| *k == &m.name || k.starts_with(&format!("{}__", m.name)))
+                    .cloned()
+                    .unwrap_or_else(|| m.name.clone());
+                mangled_key
+            };
+            self.line(&format!("{vt}->{field} = {fn};",
+                vt = vtable_var, field = field, fn = fn_name));
         }
         // Plan 20 Ф.8 (4): vtable->prev initialized to NULL here.
         // Будет перезаписан в `with X = h { ... }` codegen перед install'ом
@@ -1975,7 +1986,7 @@ impl CEmitter {
 
         // ---- Emit forward declarations into deferred_impls (file scope) ----
         for m in methods {
-            let (param_types, ret_ty) = schema.get(&m.name)
+            let (param_types, ret_ty) = Self::schema_lookup(&schema, &m.name)
                 .cloned()
                 .unwrap_or_else(|| (vec![], "nova_unit".into()));
             let mut fn_params = vec!["void* _ctx".to_string()];
@@ -2821,7 +2832,7 @@ impl CEmitter {
                 *h += 1;
                 let schema = self.effect_schemas.get(&eff).cloned().unwrap_or_default();
                 for m in methods {
-                    let (param_types, ret_ty) = schema.get(&m.name)
+                    let (param_types, ret_ty) = Self::schema_lookup(&schema, &m.name)
                         .cloned()
                         .unwrap_or_else(|| (vec![], "nova_unit".into()));
                     let mut fn_params = vec!["void* _ctx".to_string()];
@@ -3412,37 +3423,42 @@ impl CEmitter {
     }
 
     fn emit_effect_type(&mut self, name: &str, methods: &[EffectMethod]) -> Result<(), String> {
+        // Pre-compute C param types for all methods (needed for mangle_op).
+        let mut method_param_c: Vec<(String, Vec<String>)> = Vec::new();
+        for m in methods {
+            let mut ptypes: Vec<String> = Vec::new();
+            for p in &m.params {
+                ptypes.push(self.type_ref_to_c(&p.ty)?);
+            }
+            method_param_c.push((m.name.clone(), ptypes));
+        }
+        // Build the name+param pairs needed by mangle_op.
+        let all_method_pairs: Vec<(&str, &[String])> = method_param_c.iter()
+            .map(|(n, p)| (n.as_str(), p.as_slice()))
+            .collect();
+
         // 1. Vtable struct: one fn ptr per method, plus void* ctx
         self.line(&format!("typedef struct {{"));
         self.indent += 1;
         self.line("void* ctx;");
         let mut schema: HashMap<String, (Vec<String>, String)> = HashMap::new();
-        for m in methods {
+        for (m, (_, param_c_types)) in methods.iter().zip(method_param_c.iter()) {
             let ret = match &m.return_type {
                 None => "nova_unit".to_string(),
                 Some(t) => self.type_ref_to_c(t)?,
             };
-            let mut param_types = vec!["void*".to_string()]; // ctx first
-            for p in &m.params {
-                param_types.push(self.type_ref_to_c(&p.ty)?);
-            }
-            let params_sig = param_types.join(", ");
-            self.line(&format!("{} (*{})({}); ", ret, m.name, params_sig));
-            schema.insert(m.name.clone(), (param_types[1..].to_vec(), ret));
+            let mangled = Self::mangle_op(&m.name, param_c_types, &all_method_pairs);
+            let mut param_types_with_ctx = vec!["void*".to_string()]; // ctx first
+            param_types_with_ctx.extend(param_c_types.iter().cloned());
+            let params_sig = param_types_with_ctx.join(", ");
+            self.line(&format!("{} (*{})({}); ", ret, mangled, params_sig));
+            schema.insert(mangled.clone(), (param_c_types.clone(), ret));
         }
         self.indent -= 1;
         self.line(&format!("}} NovaVtable_{};", name));
         self.line("");
 
-        // 2. Thread-local handler slot. БЕЗ static — handler-storage
-        // должен быть видим из других TU (для multi-module compilation
-        // в production) и регистрируется в registry
-        // (nova_register_effect_storage), которая может быть в другом TU.
-        // В bootstrap'е (single-TU) static тоже работает через
-        // &_nova_handler_X в том же файле, но semantically неверно.
-        // D80 (per-fiber handler scoping) требует чтобы registry был
-        // полным — внешняя видимость storage-слотов.
-        /* TLS storage — cross-platform (__declspec on MSVC, __thread elsewhere). */
+        // 2. Thread-local handler slot.
         self.line("#ifdef _MSC_VER");
         self.line(&format!(
             "__declspec(thread) NovaVtable_{name}* _nova_handler_{name} = NULL;",
@@ -3456,15 +3472,18 @@ impl CEmitter {
         self.line("#endif");
         self.line("");
 
-        // 3. Dispatch helpers: Nova_Counter_next() calls through vtable
-        for m in methods {
-            let (param_types, ret) = schema.get(&m.name).unwrap();
+        // 3. Dispatch helpers: Nova_Effect_method() calls through vtable
+        for (m, (_, param_c_types)) in methods.iter().zip(method_param_c.iter()) {
+            let mangled = Self::mangle_op(&m.name, param_c_types, &all_method_pairs);
+            let (_, ret) = schema.get(&mangled).unwrap();
+            let ret = ret.clone();
             let mut fn_params: Vec<String> = Vec::new();
-            let mut call_args: Vec<String> = vec!["_nova_handler_{name}->ctx".to_string()];
-            for (i, (p, ty)) in m.params.iter().zip(param_types.iter()).enumerate() {
+            let mut call_args: Vec<String> = vec![
+                format!("_nova_handler_{name}->ctx", name = name)
+            ];
+            for (p, ty) in m.params.iter().zip(param_c_types.iter()) {
                 fn_params.push(format!("{} {}", ty, p.name));
                 call_args.push(p.name.clone());
-                let _ = i;
             }
             let fn_params_str = if fn_params.is_empty() {
                 "void".to_string()
@@ -3472,19 +3491,14 @@ impl CEmitter {
                 fn_params.join(", ")
             };
             let call_args_str = call_args.join(", ");
-            // Replace {name} placeholder in call_args[0]
-            let call_args_str = call_args_str.replace(
-                "_nova_handler_{name}->ctx",
-                &format!("_nova_handler_{name}->ctx", name = name)
-            );
             self.line(&format!(
                 "static inline {ret} Nova_{name}_{method}({params}) {{",
-                ret = ret, name = name, method = m.name, params = fn_params_str
+                ret = ret, name = name, method = mangled, params = fn_params_str
             ));
             self.indent += 1;
             self.line(&format!(
-                "return _nova_handler_{name}->{method}({args});",
-                name = name, method = m.name, args = call_args_str
+                "return _nova_handler_{name}->{field}({args});",
+                name = name, field = mangled, args = call_args_str
             ));
             self.indent -= 1;
             self.line("}");
@@ -3850,6 +3864,43 @@ impl CEmitter {
             // логику или эмитит ошибку.
             _ => None,
         }
+    }
+
+    /// Mangle an effect op name with its param C-types for vtable field naming.
+    /// Single overload (no collision): returns plain name.
+    /// Overloaded: returns `name__type1_type2` (e.g. `balance__nova_int`).
+    /// `all_methods` is the full list of methods in this effect.
+    fn mangle_op(name: &str, param_c_types: &[String], all_methods: &[(&str, &[String])]) -> String {
+        let same_name_count = all_methods.iter().filter(|(n, _)| *n == name).count();
+        if same_name_count <= 1 {
+            return name.to_string();
+        }
+        // Mangle: replace pointer stars and spaces with underscores for valid C identifier
+        let suffix: String = param_c_types.iter()
+            .map(|t| t.replace("* ", "_ptr_").replace('*', "_ptr").replace(' ', "_"))
+            .collect::<Vec<_>>()
+            .join("_");
+        if suffix.is_empty() {
+            format!("{}_void", name)
+        } else {
+            format!("{}__{}", name, suffix)
+        }
+    }
+
+    /// Lookup in effect schema by op name, supporting both mangled and plain keys.
+    /// Used at call-sites where only the plain method name is known.
+    fn schema_lookup<'s>(
+        schema: &'s HashMap<String, (Vec<String>, String)>,
+        method_name: &str,
+    ) -> Option<&'s (Vec<String>, String)> {
+        if let Some(v) = schema.get(method_name) {
+            return Some(v);
+        }
+        // Mangled key search: find first key that is `method_name` or starts with `method_name__`
+        let prefix = format!("{}__", method_name);
+        schema.iter()
+            .find(|(k, _)| k.as_str() == method_name || k.starts_with(&prefix))
+            .map(|(_, v)| v)
     }
 
     /// C type for receiver-typed parameter (D35 v2: receiver may be a primitive).
@@ -11585,7 +11636,7 @@ impl CEmitter {
                     };
                     if let Some(ref eff) = eff_name {
                         if let Some(schema) = self.effect_schemas.get(eff.as_str()) {
-                            if let Some((_, ret_ty)) = schema.get(method.as_str()) {
+                            if let Some((_, ret_ty)) = Self::schema_lookup(schema, method.as_str()) {
                                 return ret_ty.clone();
                             }
                         }
@@ -11667,7 +11718,7 @@ impl CEmitter {
                             .strip_prefix("NovaVtable_").unwrap_or("")
                             .trim_end_matches('*').trim();
                         if let Some(schema) = self.effect_schemas.get(eff) {
-                            if let Some((_, ret_ty)) = schema.get(method.as_str()) {
+                            if let Some((_, ret_ty)) = Self::schema_lookup(schema, method.as_str()) {
                                 return ret_ty.clone();
                             }
                         }
@@ -11757,7 +11808,7 @@ impl CEmitter {
                             }
                         }
                         if let Some(schema) = self.effect_schemas.get(eff.as_str()) {
-                            if let Some((_, ret_ty)) = schema.get(method_name.as_str()) {
+                            if let Some((_, ret_ty)) = Self::schema_lookup(schema, method_name.as_str()) {
                                 return ret_ty.clone();
                             }
                         }

@@ -89,7 +89,8 @@ pub enum ModuleAttrKind {
     Doc(String),
 }
 
-/// Plan 42.12 Ф.2: cfg predicate (strict minimal, no `any/all/not`).
+/// Plan 42.12 Ф.2 + Plan 42.14 Ф.1: cfg predicate.
+/// Plan 42.14: добавлены `any/all/not` композиции (Rust-style).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CfgPredicate {
     /// `#cfg(feature = "X")` — active если feature `X` в `nova.toml [features]`
@@ -97,6 +98,12 @@ pub enum CfgPredicate {
     Feature(String),
     /// `#cfg(target_os = "Y")` — active если current target matches.
     TargetOs(String),
+    /// Plan 42.14 Ф.1: `#cfg(any(P1, P2, ...))` — active если хоть один.
+    Any(Vec<CfgPredicate>),
+    /// Plan 42.14 Ф.1: `#cfg(all(P1, P2, ...))` — active если все.
+    All(Vec<CfgPredicate>),
+    /// Plan 42.14 Ф.1: `#cfg(not(P))` — active если P inactive.
+    Not(Box<CfgPredicate>),
 }
 
 /// Plan 35 sub-plan 35.A (R26): селективный import — `import X.Y.{A, B as C}`.
@@ -480,11 +487,13 @@ pub enum EffectOpKind {
 #[derive(Debug, Clone)]
 pub struct EffectAxiom {
     pub name: String,
-    /// Параметры формулы: `axiom foo(id, x) => ...` имеет binders
-    /// `[(id, ?), (x, ?)]`. Типы выводятся из usage в `formula` или
-    /// объявляются явно как `id: AccountId, x: money` (V1 — без явных
-    /// типов, выводятся из pure_view сигнатур).
-    pub binders: Vec<String>,
+    /// Generic-параметры: `axiom foo[T](id T) => ...` → `generics = [T]`.
+    /// V1: парсинг + AST; SMT encoding generic axioms — V2.
+    pub generics: Vec<GenericParam>,
+    /// Параметры формулы с опциональными типами:
+    /// `axiom foo(id int, x str) => ...` → `[(id, Some(int)), (x, Some(str))]`.
+    /// `axiom foo(id) => ...` → `[(id, None)]` (тип выводится из usage).
+    pub binders: Vec<(String, Option<TypeRef>)>,
     pub formula: Expr,
     pub span: Span,
 }
