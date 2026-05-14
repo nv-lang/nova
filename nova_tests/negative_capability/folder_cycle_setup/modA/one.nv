@@ -1,0 +1,9 @@
+// Plan 42.08 Ф.1: folder-module cycle setup. modA peer 1.
+// Импортирует folder-module modB → создаёт cycle (modB импортирует modA).
+
+module folder_cycle_setup.modA
+
+import nova_tests.negative_capability.folder_cycle_setup.modB.{b_val}
+
+export fn a_val() -> int =>
+    b_val() + 1

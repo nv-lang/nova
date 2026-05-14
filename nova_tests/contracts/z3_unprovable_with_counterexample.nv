@@ -12,7 +12,7 @@
 
 module contracts.z3_unprovable_with_counterexample
 
-#must_verify
+#verify
 fn bad_double(x int) -> int
     ensures result == x * 2
 => x + x + 1

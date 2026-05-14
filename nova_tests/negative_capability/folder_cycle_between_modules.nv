@@ -1,0 +1,19 @@
+// EXPECT_COMPILE_ERROR import cycle
+//
+// Plan 42.08 Ф.1: folder-module cycle detection (Rule A).
+//
+// folder_cycle_setup/modA/ импортирует folder_cycle_setup/modB/.
+// folder_cycle_setup/modB/ импортирует folder_cycle_setup/modA/.
+// Rule A: cycle detection by module-name должна ловить это.
+//
+// Существующий import_cycle_rejected.nv тестирует single-file modules.
+// Этот тест покрывает folder ↔ folder cycle.
+
+module negative_capability.folder_cycle_between_modules
+
+import nova_tests.negative_capability.folder_cycle_setup.modA.{a_val}
+
+test "folder-module cycle rejected" {
+    let _v = a_val()
+    assert(true)
+}

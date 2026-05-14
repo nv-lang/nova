@@ -6,7 +6,7 @@
 //! интерпретации (treewalk не требует всего).
 
 use crate::ast::*;
-use crate::diag::{Diagnostic, Span};
+use crate::diag::{Diagnostic, FileId, MAIN_FILE_ID, Span};
 use std::collections::{HashMap, HashSet};
 
 /// Очень упрощённая система типов для bootstrap'а.
@@ -214,6 +214,19 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
     // method'а, является ли соответствующая operation Never-возврат-
     // ной, и если да — body должен diverge (static analysis).
     check_handler_never_ops(module, &mut errors);
+
+    // Plan 33.3 Ф.9 (D24): validate axiom-bodies в effect-блоках.
+    // Каждый axiom должен ссылаться только на binders + pure_view-ops
+    // **того же эффекта** + литералы + boolean/arith operators. Любой
+    // другой identifier (включая non-pure_view ops) → error. Это
+    // фундамент SMT encoding (UF mapping в Ф.9.4).
+    check_effect_axioms(module, &mut errors);
+
+    // Plan 33.3 Ф.9.6: handler verification gate.
+    // Если эффект имеет pure_view-ops, любая `with E = handler` для
+    // этого эффекта обязана быть помечена `#verify_handler` или
+    // `#trusted_handler`. Без атрибута — compile error.
+    check_handler_verification_gate(module, &mut errors);
 
     // Name-resolution фаза: статический поиск undefined идентификаторов
     // в expr-position. Запускается ПОСЛЕ BoundCtx/CapabilityCtx, чтобы
@@ -1406,40 +1419,16 @@ struct NameResCtx {
     /// литералы (true/false), builtin functions (assert/print/...),
     /// special idents (Self).
     builtins: HashSet<String>,
-    /// Имена модулей-импортов и их aliases. Используется чтобы не
-    /// падать на `Module.func(...)` — head identifier — модуль.
-    /// Включает также собственное имя модуля (last segment) на случай
-    /// self-reference.
-    module_names: HashSet<String>,
+    /// Per-peer import namespace (Plan 42.4 Rule C).
+    /// Key = file_id of peer file (MAIN_FILE_ID for entry).
+    /// Value = set of module/alias names visible in that peer.
+    /// Fallback: if file_id not found, falls back to entry's set.
+    peer_module_names: HashMap<FileId, HashSet<String>>,
 }
 
 impl NameResCtx {
     fn build(module: &Module) -> Self {
         let mut top_level: HashSet<String> = HashSet::new();
-        let mut module_names: HashSet<String> = HashSet::new();
-
-        // Имена импортированных модулей: для `import a.b.c` — добавляем
-        // последний segment "c" (head'ом expr-path'а). Если есть alias —
-        // alias. Также все intermediate-segments на всякий случай.
-        for imp in &module.imports {
-            if let Some(alias) = &imp.alias {
-                module_names.insert(alias.clone());
-            }
-            if let Some(last) = imp.path.last() {
-                module_names.insert(last.clone());
-            }
-            // Intermediate segments (head of compound path).
-            if let Some(head) = imp.path.first() {
-                module_names.insert(head.clone());
-            }
-        }
-        // Собственное имя модуля (head) — на случай self-reference.
-        if let Some(head) = module.name.first() {
-            module_names.insert(head.clone());
-        }
-        if let Some(last) = module.name.last() {
-            module_names.insert(last.clone());
-        }
 
         for item in &module.items {
             match item {
@@ -1517,28 +1506,73 @@ impl NameResCtx {
         .map(|s| s.to_string())
         .collect();
 
-        NameResCtx { top_level, builtins, module_names }
+        // Plan 42.4 Rule C: per-peer import namespace isolation.
+        // Build a map from file_id → visible module names for that peer.
+        // If peer_files is empty (legacy/single-file), fall back to entry.
+        let mut peer_module_names: HashMap<FileId, HashSet<String>> = HashMap::new();
+
+        let build_import_names = |imports: &[Import], module_name: &[String]| -> HashSet<String> {
+            let mut names: HashSet<String> = HashSet::new();
+            for imp in imports {
+                if let Some(alias) = &imp.alias {
+                    names.insert(alias.clone());
+                }
+                if let Some(last) = imp.path.last() {
+                    names.insert(last.clone());
+                }
+                if let Some(head) = imp.path.first() {
+                    names.insert(head.clone());
+                }
+            }
+            // Own module name (last + first segment) for self-reference.
+            if let Some(head) = module_name.first() { names.insert(head.clone()); }
+            if let Some(last) = module_name.last() { names.insert(last.clone()); }
+            names
+        };
+
+        if module.peer_files.is_empty() {
+            // Legacy/single-file: entry imports under MAIN_FILE_ID.
+            peer_module_names.insert(
+                MAIN_FILE_ID,
+                build_import_names(&module.imports, &module.name),
+            );
+        } else {
+            for pf in &module.peer_files {
+                peer_module_names.insert(
+                    pf.file_id,
+                    build_import_names(&pf.imports, &module.name),
+                );
+            }
+        }
+
+        NameResCtx { top_level, builtins, peer_module_names }
     }
 
     fn check_module(&self, module: &Module, errors: &mut Vec<Diagnostic>) {
         for item in &module.items {
+            let file_id = match item {
+                Item::Fn(f) => f.span.file_id,
+                Item::Test(t) => t.span.file_id,
+                Item::Const(c) => c.span.file_id,
+                Item::Type(t) => t.span.file_id,
+                Item::Let(l) => l.span.file_id,
+            };
             match item {
-                Item::Fn(f) => self.walk_fn(f, errors),
+                Item::Fn(f) => self.walk_fn(f, file_id, errors),
                 Item::Test(t) => {
                     let mut scope: Vec<HashSet<String>> = vec![HashSet::new()];
-                    self.walk_block(&t.body, &mut scope, errors);
+                    self.walk_block(&t.body, file_id, &mut scope, errors);
                 }
                 Item::Const(c) => {
-                    // Const value — выражение, выполняется без scope'а.
                     let mut scope: Vec<HashSet<String>> = vec![HashSet::new()];
-                    self.walk_expr(&c.value, &mut scope, errors);
+                    self.walk_expr(&c.value, file_id, &mut scope, errors);
                 }
                 _ => {}
             }
         }
     }
 
-    fn walk_fn(&self, f: &FnDecl, errors: &mut Vec<Diagnostic>) {
+    fn walk_fn(&self, f: &FnDecl, file_id: FileId, errors: &mut Vec<Diagnostic>) {
         // External — нет тела.
         if matches!(f.body, FnBody::External) { return; }
         let mut scope: Vec<HashSet<String>> = vec![HashSet::new()];
@@ -1558,8 +1592,8 @@ impl NameResCtx {
         }
         scope.push(frame);
         match &f.body {
-            FnBody::Expr(e) => self.walk_expr(e, &mut scope, errors),
-            FnBody::Block(b) => self.walk_block(b, &mut scope, errors),
+            FnBody::Expr(e) => self.walk_expr(e, file_id, &mut scope, errors),
+            FnBody::Block(b) => self.walk_block(b, file_id, &mut scope, errors),
             FnBody::External => {}
         }
         scope.pop();
@@ -1568,15 +1602,16 @@ impl NameResCtx {
     fn walk_block(
         &self,
         b: &Block,
+        file_id: FileId,
         scope: &mut Vec<HashSet<String>>,
         errors: &mut Vec<Diagnostic>,
     ) {
         scope.push(HashSet::new());
         for s in &b.stmts {
-            self.walk_stmt(s, scope, errors);
+            self.walk_stmt(s, file_id, scope, errors);
         }
         if let Some(t) = &b.trailing {
-            self.walk_expr(t, scope, errors);
+            self.walk_expr(t, file_id, scope, errors);
         }
         scope.pop();
     }
@@ -1584,16 +1619,17 @@ impl NameResCtx {
     fn walk_stmt(
         &self,
         s: &Stmt,
+        file_id: FileId,
         scope: &mut Vec<HashSet<String>>,
         errors: &mut Vec<Diagnostic>,
     ) {
         match s {
-            Stmt::Expr(e) => self.walk_expr(e, scope, errors),
+            Stmt::Expr(e) => self.walk_expr(e, file_id, scope, errors),
             Stmt::Let(d) => {
                 // Right-side вычисляется в текущем scope (let не
                 // рекурсивный). Затем pattern-bindings добавляются в
                 // текущий frame.
-                self.walk_expr(&d.value, scope, errors);
+                self.walk_expr(&d.value, file_id, scope, errors);
                 let mut bindings: HashSet<String> = HashSet::new();
                 self.collect_pattern_bindings(&d.pattern, &mut bindings);
                 if let Some(top) = scope.last_mut() {
@@ -1601,21 +1637,21 @@ impl NameResCtx {
                 }
             }
             Stmt::Assign { target, value, .. } => {
-                self.walk_expr(target, scope, errors);
-                self.walk_expr(value, scope, errors);
+                self.walk_expr(target, file_id, scope, errors);
+                self.walk_expr(value, file_id, scope, errors);
             }
             Stmt::Return { value, .. } => {
-                if let Some(v) = value { self.walk_expr(v, scope, errors); }
+                if let Some(v) = value { self.walk_expr(v, file_id, scope, errors); }
             }
-            Stmt::Throw { value, .. } => self.walk_expr(value, scope, errors),
+            Stmt::Throw { value, .. } => self.walk_expr(value, file_id, scope, errors),
             // D90 (Plan 20): defer/errdefer body — обычный expr в текущем
             // scope. Bindings внутри body локальны их собственным under-scope'ам;
             // на верхнем уровне defer не вводит новых имён.
             Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. } => {
-                self.walk_expr(body, scope, errors);
+                self.walk_expr(body, file_id, scope, errors);
             }
             // Plan 33.2 Ф.8: assert_static — walk expr.
-            Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => self.walk_expr(expr, scope, errors),
+            Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => self.walk_expr(expr, file_id, scope, errors),
             Stmt::Break(_) | Stmt::Continue(_) => {}
         }
     }
@@ -1623,12 +1659,13 @@ impl NameResCtx {
     fn walk_expr(
         &self,
         e: &Expr,
+        file_id: FileId,
         scope: &mut Vec<HashSet<String>>,
         errors: &mut Vec<Diagnostic>,
     ) {
         match &e.kind {
             ExprKind::Ident(name) => {
-                if !self.is_known(name, scope) {
+                if !self.is_known(name, file_id, scope) {
                     errors.push(Diagnostic::new(
                         format!("undefined identifier `{}`", name),
                         e.span,
@@ -1650,7 +1687,7 @@ impl NameResCtx {
             ExprKind::InterpolatedStr { parts } => {
                 for p in parts {
                     if let InterpStrPart::Expr(e) = p {
-                        self.walk_expr(e, scope, errors);
+                        self.walk_expr(e, file_id, scope, errors);
                     }
                 }
             }
@@ -1659,155 +1696,155 @@ impl NameResCtx {
                 // Special-case: если func — bare Ident, может быть
                 // variant-constructor (`Square(5)`) — top_level.contains.
                 // is_known покрывает оба варианта (fn + variant).
-                self.walk_expr(func, scope, errors);
+                self.walk_expr(func, file_id, scope, errors);
                 for a in args {
-                    self.walk_expr(a.expr(), scope, errors);
+                    self.walk_expr(a.expr(), file_id, scope, errors);
                 }
                 if let Some(t) = trailing {
-                    self.walk_trailing(t, scope, errors);
+                    self.walk_trailing(t, file_id, scope, errors);
                 }
             }
-            ExprKind::TurboFish { base, .. } => self.walk_expr(base, scope, errors),
+            ExprKind::TurboFish { base, .. } => self.walk_expr(base, file_id, scope, errors),
             ExprKind::Try(inner) | ExprKind::Bang(inner) => {
-                self.walk_expr(inner, scope, errors)
+                self.walk_expr(inner, file_id, scope, errors)
             }
             ExprKind::Coalesce(a, b) => {
-                self.walk_expr(a, scope, errors);
-                self.walk_expr(b, scope, errors);
+                self.walk_expr(a, file_id, scope, errors);
+                self.walk_expr(b, file_id, scope, errors);
             }
-            ExprKind::As(e, _) | ExprKind::Is(e, _) => self.walk_expr(e, scope, errors),
+            ExprKind::As(e, _) | ExprKind::Is(e, _) => self.walk_expr(e, file_id, scope, errors),
             ExprKind::Binary { left, right, .. } => {
-                self.walk_expr(left, scope, errors);
-                self.walk_expr(right, scope, errors);
+                self.walk_expr(left, file_id, scope, errors);
+                self.walk_expr(right, file_id, scope, errors);
             }
-            ExprKind::Unary { operand, .. } => self.walk_expr(operand, scope, errors),
+            ExprKind::Unary { operand, .. } => self.walk_expr(operand, file_id, scope, errors),
 
             // Member-access: проверяем obj (это expr), но НЕ name (field/method).
-            ExprKind::Member { obj, .. } => self.walk_expr(obj, scope, errors),
+            ExprKind::Member { obj, .. } => self.walk_expr(obj, file_id, scope, errors),
             ExprKind::Index { obj, index } => {
-                self.walk_expr(obj, scope, errors);
-                self.walk_expr(index, scope, errors);
+                self.walk_expr(obj, file_id, scope, errors);
+                self.walk_expr(index, file_id, scope, errors);
             }
 
             ExprKind::If { cond, then, else_ } => {
-                self.walk_expr(cond, scope, errors);
-                self.walk_block(then, scope, errors);
+                self.walk_expr(cond, file_id, scope, errors);
+                self.walk_block(then, file_id, scope, errors);
                 if let Some(eb) = else_ {
                     match eb {
-                        ElseBranch::Block(b) => self.walk_block(b, scope, errors),
-                        ElseBranch::If(e) => self.walk_expr(e, scope, errors),
+                        ElseBranch::Block(b) => self.walk_block(b, file_id, scope, errors),
+                        ElseBranch::If(e) => self.walk_expr(e, file_id, scope, errors),
                     }
                 }
             }
             ExprKind::IfLet { pattern, scrutinee, then, else_ } => {
-                self.walk_expr(scrutinee, scope, errors);
+                self.walk_expr(scrutinee, file_id, scope, errors);
                 // Pattern-bindings — в scope только для then-branch.
                 let mut bindings: HashSet<String> = HashSet::new();
                 self.collect_pattern_bindings(pattern, &mut bindings);
                 scope.push(bindings);
-                self.walk_block(then, scope, errors);
+                self.walk_block(then, file_id, scope, errors);
                 scope.pop();
                 if let Some(eb) = else_ {
                     match eb {
-                        ElseBranch::Block(b) => self.walk_block(b, scope, errors),
-                        ElseBranch::If(e) => self.walk_expr(e, scope, errors),
+                        ElseBranch::Block(b) => self.walk_block(b, file_id, scope, errors),
+                        ElseBranch::If(e) => self.walk_expr(e, file_id, scope, errors),
                     }
                 }
             }
             ExprKind::Match { scrutinee, arms } => {
-                self.walk_expr(scrutinee, scope, errors);
+                self.walk_expr(scrutinee, file_id, scope, errors);
                 for arm in arms {
                     let mut bindings: HashSet<String> = HashSet::new();
                     self.collect_pattern_bindings(&arm.pattern, &mut bindings);
                     scope.push(bindings);
                     if let Some(g) = &arm.guard {
-                        self.walk_expr(g, scope, errors);
+                        self.walk_expr(g, file_id, scope, errors);
                     }
                     match &arm.body {
-                        MatchArmBody::Expr(e) => self.walk_expr(e, scope, errors),
-                        MatchArmBody::Block(b) => self.walk_block(b, scope, errors),
+                        MatchArmBody::Expr(e) => self.walk_expr(e, file_id, scope, errors),
+                        MatchArmBody::Block(b) => self.walk_block(b, file_id, scope, errors),
                     }
                     scope.pop();
                 }
             }
             ExprKind::For { pattern, iter, body } => {
-                self.walk_expr(iter, scope, errors);
+                self.walk_expr(iter, file_id, scope, errors);
                 let mut bindings: HashSet<String> = HashSet::new();
                 self.collect_pattern_bindings(pattern, &mut bindings);
                 scope.push(bindings);
-                self.walk_block(body, scope, errors);
+                self.walk_block(body, file_id, scope, errors);
                 scope.pop();
             }
             ExprKind::ParallelFor { pattern, iter, body } => {
-                self.walk_expr(iter, scope, errors);
+                self.walk_expr(iter, file_id, scope, errors);
                 let mut bindings: HashSet<String> = HashSet::new();
                 self.collect_pattern_bindings(pattern, &mut bindings);
                 scope.push(bindings);
-                self.walk_block(body, scope, errors);
+                self.walk_block(body, file_id, scope, errors);
                 scope.pop();
             }
             ExprKind::While { cond, body } => {
-                self.walk_expr(cond, scope, errors);
-                self.walk_block(body, scope, errors);
+                self.walk_expr(cond, file_id, scope, errors);
+                self.walk_block(body, file_id, scope, errors);
             }
             ExprKind::WhileLet { pattern, scrutinee, body } => {
-                self.walk_expr(scrutinee, scope, errors);
+                self.walk_expr(scrutinee, file_id, scope, errors);
                 let mut bindings: HashSet<String> = HashSet::new();
                 self.collect_pattern_bindings(pattern, &mut bindings);
                 scope.push(bindings);
-                self.walk_block(body, scope, errors);
+                self.walk_block(body, file_id, scope, errors);
                 scope.pop();
             }
-            ExprKind::Loop { body } => self.walk_block(body, scope, errors),
+            ExprKind::Loop { body } => self.walk_block(body, file_id, scope, errors),
             ExprKind::Select { arms } => {
                 for arm in arms {
                     match &arm.op {
                         SelectOp::Recv { binding, chan } => {
-                            self.walk_expr(chan, scope, errors);
+                            self.walk_expr(chan, file_id, scope, errors);
                             let mut bindings: HashSet<String> = HashSet::new();
                             if let Some(b) = binding { bindings.insert(b.clone()); }
                             scope.push(bindings);
-                            if let Some(g) = &arm.guard { self.walk_expr(g, scope, errors); }
-                            self.walk_block(&arm.body, scope, errors);
+                            if let Some(g) = &arm.guard { self.walk_expr(g, file_id, scope, errors); }
+                            self.walk_block(&arm.body, file_id, scope, errors);
                             scope.pop();
                         }
                         SelectOp::Send { chan, value } => {
-                            self.walk_expr(chan, scope, errors);
-                            self.walk_expr(value, scope, errors);
-                            if let Some(g) = &arm.guard { self.walk_expr(g, scope, errors); }
-                            self.walk_block(&arm.body, scope, errors);
+                            self.walk_expr(chan, file_id, scope, errors);
+                            self.walk_expr(value, file_id, scope, errors);
+                            if let Some(g) = &arm.guard { self.walk_expr(g, file_id, scope, errors); }
+                            self.walk_block(&arm.body, file_id, scope, errors);
                         }
                         SelectOp::Default => {
-                            if let Some(g) = &arm.guard { self.walk_expr(g, scope, errors); }
-                            self.walk_block(&arm.body, scope, errors);
+                            if let Some(g) = &arm.guard { self.walk_expr(g, file_id, scope, errors); }
+                            self.walk_block(&arm.body, file_id, scope, errors);
                         }
                     }
                 }
             }
 
-            ExprKind::Block(b) => self.walk_block(b, scope, errors),
+            ExprKind::Block(b) => self.walk_block(b, file_id, scope, errors),
 
             ExprKind::ArrayLit(elems) => {
                 for el in elems {
                     match el {
                         ArrayElem::Item(e) | ArrayElem::Spread(e) => {
-                            self.walk_expr(e, scope, errors);
+                            self.walk_expr(e, file_id, scope, errors);
                         }
                     }
                 }
             }
             ExprKind::TupleLit(elems) => {
-                for e in elems { self.walk_expr(e, scope, errors); }
+                for e in elems { self.walk_expr(e, file_id, scope, errors); }
             }
             ExprKind::RecordLit { fields, .. } => {
                 for f in fields {
                     match &f.value {
-                        Some(v) => self.walk_expr(v, scope, errors),
+                        Some(v) => self.walk_expr(v, file_id, scope, errors),
                         None => {
                             // Shorthand `{ name }` (D52 field punning):
                             // `name` — это ident, который должен быть
                             // в scope.
-                            if !f.is_spread && !self.is_known(&f.name, scope) {
+                            if !f.is_spread && !self.is_known(&f.name, file_id, scope) {
                                 errors.push(Diagnostic::new(
                                     format!("undefined identifier `{}`", f.name),
                                     f.span,
@@ -1825,7 +1862,7 @@ impl NameResCtx {
             // Ident — это special-form syntax, не обычный expr-call.
             // Args (`${expr}` интерполяции) — обычные expressions.
             ExprKind::TaggedTemplate { args, .. } => {
-                for a in args { self.walk_expr(a, scope, errors); }
+                for a in args { self.walk_expr(a, file_id, scope, errors); }
             }
 
             // Lambda (legacy) / closure-light / closure-full — params
@@ -1834,7 +1871,7 @@ impl NameResCtx {
                 let mut frame: HashSet<String> = HashSet::new();
                 for p in params { frame.insert(p.name.clone()); }
                 scope.push(frame);
-                self.walk_expr(body, scope, errors);
+                self.walk_expr(body, file_id, scope, errors);
                 scope.pop();
             }
             ExprKind::ClosureLight { params, body } => {
@@ -1844,8 +1881,8 @@ impl NameResCtx {
                 }
                 scope.push(frame);
                 match body {
-                    crate::ast::ClosureBody::Expr(e) => self.walk_expr(e, scope, errors),
-                    crate::ast::ClosureBody::Block(b) => self.walk_block(b, scope, errors),
+                    crate::ast::ClosureBody::Expr(e) => self.walk_expr(e, file_id, scope, errors),
+                    crate::ast::ClosureBody::Block(b) => self.walk_block(b, file_id, scope, errors),
                 }
                 scope.pop();
             }
@@ -1854,8 +1891,8 @@ impl NameResCtx {
                 for p in &sb.params { frame.insert(p.name.clone()); }
                 scope.push(frame);
                 match &sb.body {
-                    FnBody::Expr(e) => self.walk_expr(e, scope, errors),
-                    FnBody::Block(b) => self.walk_block(b, scope, errors),
+                    FnBody::Expr(e) => self.walk_expr(e, file_id, scope, errors),
+                    FnBody::Block(b) => self.walk_block(b, file_id, scope, errors),
                     FnBody::External => {}
                 }
                 scope.pop();
@@ -1864,9 +1901,9 @@ impl NameResCtx {
             ExprKind::With { bindings, body } => {
                 // Effect-handler vals — обычные expressions.
                 for b in bindings {
-                    self.walk_expr(&b.handler, scope, errors);
+                    self.walk_expr(&b.handler, file_id, scope, errors);
                 }
-                self.walk_block(body, scope, errors);
+                self.walk_block(body, file_id, scope, errors);
             }
             ExprKind::HandlerLit { methods, .. } => {
                 // Каждый method — handler-op с собственным scope params.
@@ -1875,50 +1912,51 @@ impl NameResCtx {
                     for p in &m.params { frame.insert(p.name.clone()); }
                     scope.push(frame);
                     match &m.body {
-                        HandlerMethodBody::Expr(e) => self.walk_expr(e, scope, errors),
-                        HandlerMethodBody::Block(b) => self.walk_block(b, scope, errors),
+                        HandlerMethodBody::Expr(e) => self.walk_expr(e, file_id, scope, errors),
+                        HandlerMethodBody::Block(b) => self.walk_block(b, file_id, scope, errors),
                     }
                     scope.pop();
                 }
             }
             ExprKind::Interrupt(opt) => {
-                if let Some(e) = opt { self.walk_expr(e, scope, errors); }
+                if let Some(e) = opt { self.walk_expr(e, file_id, scope, errors); }
             }
             ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. } => {
-                self.walk_block(body, scope, errors);
+                self.walk_block(body, file_id, scope, errors);
             }
             ExprKind::Range { start, end, .. } => {
-                self.walk_expr(start, scope, errors);
-                self.walk_expr(end, scope, errors);
+                self.walk_expr(start, file_id, scope, errors);
+                self.walk_expr(end, file_id, scope, errors);
             }
-            ExprKind::Spawn(body) => self.walk_expr(body, scope, errors),
+            ExprKind::Spawn(body) => self.walk_expr(body, file_id, scope, errors),
             ExprKind::Supervised(body) | ExprKind::Detach(body) => {
-                self.walk_block(body, scope, errors);
+                self.walk_block(body, file_id, scope, errors);
             }
             ExprKind::CancelScope { token_name, body } => {
                 let mut frame: HashSet<String> = HashSet::new();
                 frame.insert(token_name.clone());
                 scope.push(frame);
-                self.walk_block(body, scope, errors);
+                self.walk_block(body, file_id, scope, errors);
                 scope.pop();
             }
-            ExprKind::Throw(inner) => self.walk_expr(inner, scope, errors),
+            ExprKind::Throw(inner) => self.walk_expr(inner, file_id, scope, errors),
         }
     }
 
     fn walk_trailing(
         &self,
         t: &crate::ast::Trailing,
+        file_id: FileId,
         scope: &mut Vec<HashSet<String>>,
         errors: &mut Vec<Diagnostic>,
     ) {
         match t {
-            crate::ast::Trailing::Block(b) => self.walk_block(b, scope, errors),
+            crate::ast::Trailing::Block(b) => self.walk_block(b, file_id, scope, errors),
             crate::ast::Trailing::LegacyBlockWithParams(tb) => {
                 let mut frame: HashSet<String> = HashSet::new();
                 for p in &tb.params { frame.insert(p.name.clone()); }
                 scope.push(frame);
-                self.walk_block(&tb.body, scope, errors);
+                self.walk_block(&tb.body, file_id, scope, errors);
                 scope.pop();
             }
             crate::ast::Trailing::Fn(sb) => {
@@ -1926,8 +1964,8 @@ impl NameResCtx {
                 for p in &sb.params { frame.insert(p.name.clone()); }
                 scope.push(frame);
                 match &sb.body {
-                    FnBody::Expr(e) => self.walk_expr(e, scope, errors),
-                    FnBody::Block(b) => self.walk_block(b, scope, errors),
+                    FnBody::Expr(e) => self.walk_expr(e, file_id, scope, errors),
+                    FnBody::Block(b) => self.walk_block(b, file_id, scope, errors),
                     FnBody::External => {}
                 }
                 scope.pop();
@@ -2005,10 +2043,14 @@ impl NameResCtx {
         }
     }
 
-    fn is_known(&self, name: &str, scope: &[HashSet<String>]) -> bool {
+    fn is_known(&self, name: &str, file_id: FileId, scope: &[HashSet<String>]) -> bool {
         if self.builtins.contains(name) { return true; }
         if self.top_level.contains(name) { return true; }
-        if self.module_names.contains(name) { return true; }
+        // Plan 42.4 Rule C: per-peer import namespace.
+        // Look up this peer's import set; fall back to entry (MAIN_FILE_ID) if absent.
+        let module_names = self.peer_module_names.get(&file_id)
+            .or_else(|| self.peer_module_names.get(&MAIN_FILE_ID));
+        if module_names.map_or(false, |s| s.contains(name)) { return true; }
         for frame in scope.iter().rev() {
             if frame.contains(name) { return true; }
         }
@@ -2407,6 +2449,126 @@ fn check_handler_never_ops(module: &Module, errors: &mut Vec<Diagnostic>) {
     }
 }
 
+/// Plan 33.3 Ф.9.6 (D24): handler verification gate.
+///
+/// Если эффект имеет хотя бы одну `pure_view` op'у, любое использование
+/// handler'а через `with E = h` обязано декларировать verification
+/// статус через `#verify_handler` или `#trusted_handler`. Без атрибута —
+/// compile error.
+///
+/// Семантика:
+/// - `#verify_handler` — symbolic verification handler.action body
+///   против axiom'ов эффекта (Ф.9.7). Bootstrap V1: атрибут принимается
+///   но реальной верификации нет — placeholder для Ф.9.7.
+/// - `#trusted_handler` — программист берёт ответственность.
+/// - Default (Unverified) для эффектов с pure_views — **error**.
+///
+/// Эффекты БЕЗ pure_views — никаких ограничений (default = Unverified
+/// допустим).
+///
+/// Эта проверка консервативна: даже если body не вызывает pure_view-
+/// using функции, gate всё равно требует attribute для эффекта с
+/// pure_views. Это упрощает V1 (нет cross-fn analysis); Ф.9.7
+/// уточнит до actually-uses analysis.
+fn check_handler_verification_gate(module: &Module, errors: &mut Vec<Diagnostic>) {
+    // Шаг 1: какие эффекты имеют axioms?
+    // Refactor: gate срабатывает только при axiom-присутствии — pure_view сам по
+    // себе ничего не утверждает, утверждение делает axiom. Без axiom handler
+    // верифицировать не на что.
+    let mut effects_with_axioms: HashSet<String> = HashSet::new();
+    for item in &module.items {
+        let Item::Type(td) = item else { continue };
+        if !matches!(&td.kind, TypeDeclKind::Effect(_)) { continue; }
+        if !td.axioms.is_empty() {
+            effects_with_axioms.insert(td.name.clone());
+        }
+    }
+    if effects_with_axioms.is_empty() { return; }
+
+    // Шаг 2: walk all expressions, найти WithBinding'и с такими эффектами.
+    for item in &module.items {
+        match item {
+            Item::Fn(f) => match &f.body {
+                FnBody::Block(b) => walk_block_for_with_gate(b, &effects_with_axioms, errors),
+                FnBody::Expr(e) => walk_expr_for_with_gate(e, &effects_with_axioms, errors),
+                FnBody::External => {}
+            }
+            Item::Test(t) => walk_block_for_with_gate(&t.body, &effects_with_axioms, errors),
+            _ => {}
+        }
+    }
+}
+
+fn walk_block_for_with_gate(b: &Block, eff_pv: &HashSet<String>, errors: &mut Vec<Diagnostic>) {
+    for s in &b.stmts {
+        match s {
+            Stmt::Expr(e) => walk_expr_for_with_gate(e, eff_pv, errors),
+            Stmt::Let(LetDecl { value, .. }) => walk_expr_for_with_gate(value, eff_pv, errors),
+            Stmt::Assign { target, value, .. } => {
+                walk_expr_for_with_gate(target, eff_pv, errors);
+                walk_expr_for_with_gate(value, eff_pv, errors);
+            }
+            _ => {}
+        }
+    }
+    if let Some(t) = &b.trailing { walk_expr_for_with_gate(t, eff_pv, errors); }
+}
+
+fn walk_expr_for_with_gate(e: &Expr, eff_pv: &HashSet<String>, errors: &mut Vec<Diagnostic>) {
+    use crate::ast::ExprKind::*;
+    match &e.kind {
+        With { bindings, body } => {
+            for b in bindings {
+                let eff_name = match &b.effect {
+                    TypeRef::Named { path, .. } => path.last().cloned().unwrap_or_default(),
+                    _ => String::new(),
+                };
+                if !eff_pv.contains(&eff_name) { continue; }
+                if matches!(b.verification, HandlerVerification::Unverified) {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "handler for effect `{}` must be marked `#verify` \
+                             or `#trusted` (effect has `axiom` declarations, so any \
+                             handler must declare verification status). Examples:\n  \
+                             with #trusted {0} = my_handler {{ ... }}\n  \
+                             with #verify {0} = my_handler {{ ... }}",
+                            eff_name,
+                        ),
+                        b.span,
+                    ));
+                }
+                walk_expr_for_with_gate(&b.handler, eff_pv, errors);
+            }
+            walk_block_for_with_gate(body, eff_pv, errors);
+        }
+        Block(b) => walk_block_for_with_gate(b, eff_pv, errors),
+        Call { func, args, .. } => {
+            walk_expr_for_with_gate(func, eff_pv, errors);
+            for a in args { walk_expr_for_with_gate(a.expr(), eff_pv, errors); }
+        }
+        Binary { left, right, .. } => {
+            walk_expr_for_with_gate(left, eff_pv, errors);
+            walk_expr_for_with_gate(right, eff_pv, errors);
+        }
+        Unary { operand, .. } => walk_expr_for_with_gate(operand, eff_pv, errors),
+        Member { obj, .. } => walk_expr_for_with_gate(obj, eff_pv, errors),
+        Index { obj, index } => {
+            walk_expr_for_with_gate(obj, eff_pv, errors);
+            walk_expr_for_with_gate(index, eff_pv, errors);
+        }
+        If { cond, then, else_ } => {
+            walk_expr_for_with_gate(cond, eff_pv, errors);
+            walk_block_for_with_gate(then, eff_pv, errors);
+            match else_ {
+                Some(crate::ast::ElseBranch::Block(b)) => walk_block_for_with_gate(b, eff_pv, errors),
+                Some(crate::ast::ElseBranch::If(ie)) => walk_expr_for_with_gate(ie, eff_pv, errors),
+                None => {}
+            }
+        }
+        _ => {}
+    }
+}
+
 fn type_ref_is_never(t: &TypeRef) -> bool {
     if let TypeRef::Named { path, .. } = t {
         if let Some(last) = path.last() {
@@ -2414,6 +2576,241 @@ fn type_ref_is_never(t: &TypeRef) -> bool {
         }
     }
     false
+}
+
+/// Plan 33.3 Ф.9 (D24): валидация axiom-формул внутри effect-блоков.
+///
+/// Контракт: внутри `axiom name(binders) => formula` разрешены только:
+///   - литералы (int/bool/str/unit);
+///   - идентификаторы из `binders`;
+///   - вызовы pure_view-ops **того же эффекта**: `balance(id) >= 0`;
+///   - стандартные бинарные/унарные/comparison/boolean операторы;
+///   - `if/else` без stmts.
+///
+/// Запрещены:
+///   - non-pure_view operations (`SetBalance(...)`);
+///   - вызовы любых других fn (включая built-ins за пределами разрешённых
+///     операторов);
+///   - record/sum constructors, member access, method calls.
+///
+/// Эти ограничения нужны для чистой SMT-кодировки (`pure_view` → UF,
+/// axiom → assert) в Ф.9.4. Если разрешить произвольный код — SMT
+/// encoding теряет soundness.
+fn check_effect_axioms(module: &Module, errors: &mut Vec<Diagnostic>) {
+    for item in &module.items {
+        let Item::Type(td) = item else { continue };
+        // Plan 33.3 Ф.9 (refactor): unique-name + axiom-formula checks
+        // применяются и к effect, и к protocol (в обоих можно объявлять
+        // #pure ops и axioms).
+        let methods = match &td.kind {
+            TypeDeclKind::Effect(m) | TypeDeclKind::Protocol(m) => m,
+            _ => continue,
+        };
+
+        // Plan 33.3 Ф.9 (refactor): unique-name checks внутри effect-блока.
+        // Конфликты:
+        //   1. два operation/#pure с одинаковым именем;
+        //   2. два axiom с одинаковым именем;
+        //   3. axiom имя совпадает с именем operation/#pure.
+        // Делаем check'и независимо от наличия axioms — дубликаты method'ов
+        // ловим всегда.
+        let mut method_names: HashSet<&String> = HashSet::new();
+        for m in methods {
+            if !method_names.insert(&m.name) {
+                errors.push(Diagnostic::new(
+                    format!("effect `{}`: duplicate operation `{}`",
+                        td.name, m.name),
+                    m.span,
+                ));
+            }
+        }
+        let mut axiom_names: HashSet<&String> = HashSet::new();
+        for ax in &td.axioms {
+            if !axiom_names.insert(&ax.name) {
+                errors.push(Diagnostic::new(
+                    format!("effect `{}`: duplicate axiom `{}`",
+                        td.name, ax.name),
+                    ax.span,
+                ));
+            }
+            if method_names.contains(&ax.name) {
+                errors.push(Diagnostic::new(
+                    format!("effect `{}`: axiom `{}` conflicts with operation \
+                             of the same name (axiom names must be distinct \
+                             from operations / `#pure` views)",
+                        td.name, ax.name),
+                    ax.span,
+                ));
+            }
+        }
+
+        if td.axioms.is_empty() { continue; }
+
+        // Собираем pure_view-имена эффекта: имя → ожидаемая арность.
+        let mut pure_views: HashMap<String, usize> = HashMap::new();
+        for m in methods {
+            if matches!(m.kind, EffectOpKind::PureView) {
+                pure_views.insert(m.name.clone(), m.params.len());
+            }
+        }
+
+        for ax in &td.axioms {
+            // Duplicate-binder check.
+            let mut seen: HashSet<&String> = HashSet::new();
+            for b in &ax.binders {
+                if !seen.insert(b) {
+                    errors.push(Diagnostic::new(
+                        format!("axiom `{}.{}`: duplicate binder `{}`",
+                            td.name, ax.name, b),
+                        ax.span,
+                    ));
+                }
+            }
+            let binders: HashSet<&String> = ax.binders.iter().collect();
+            check_axiom_expr(&ax.formula, &td.name, &ax.name,
+                             &binders, &pure_views, errors);
+        }
+    }
+}
+
+/// Walk `expr` в axiom-formula и пушит ошибки на запрещённые конструкции.
+fn check_axiom_expr(
+    e: &Expr,
+    effect_name: &str,
+    axiom_name: &str,
+    binders: &HashSet<&String>,
+    pure_views: &HashMap<String, usize>,
+    errors: &mut Vec<Diagnostic>,
+) {
+    use crate::ast::ExprKind::*;
+    match &e.kind {
+        IntLit(_) | BoolLit(_) | StrLit(_) | CharLit(_) | UnitLit => {}
+        Ident(n) => {
+            if binders.contains(&n.to_string()) { return; }
+            if pure_views.contains_key(n) {
+                // Reference to pure_view без вызова — V1 запрещаем
+                // (требуем `name(args)`-форму для arity-clarity).
+                errors.push(Diagnostic::new(
+                    format!(
+                        "axiom `{}.{}`: pure_view `{}` must be called \
+                         with arguments (e.g. `{}(...)`), not used as value",
+                        effect_name, axiom_name, n, n,
+                    ),
+                    e.span,
+                ));
+                return;
+            }
+            errors.push(Diagnostic::new(
+                format!(
+                    "axiom `{}.{}`: unknown identifier `{}` (axiom-body \
+                     may only reference binders {:?} or pure_view ops \
+                     of effect `{}`)",
+                    effect_name, axiom_name, n,
+                    binders.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
+                    effect_name,
+                ),
+                e.span,
+            ));
+        }
+        Binary { left, right, .. } => {
+            check_axiom_expr(left, effect_name, axiom_name, binders, pure_views, errors);
+            check_axiom_expr(right, effect_name, axiom_name, binders, pure_views, errors);
+        }
+        Unary { operand, .. } => {
+            check_axiom_expr(operand, effect_name, axiom_name, binders, pure_views, errors);
+        }
+        If { cond, then, else_ } => {
+            check_axiom_expr(cond, effect_name, axiom_name, binders, pure_views, errors);
+            if !then.stmts.is_empty() {
+                errors.push(Diagnostic::new(
+                    format!("axiom `{}.{}`: if-branch must not contain statements",
+                        effect_name, axiom_name),
+                    e.span,
+                ));
+            }
+            if let Some(trailing) = &then.trailing {
+                check_axiom_expr(trailing, effect_name, axiom_name, binders, pure_views, errors);
+            }
+            match else_ {
+                Some(crate::ast::ElseBranch::Block(b)) => {
+                    if !b.stmts.is_empty() {
+                        errors.push(Diagnostic::new(
+                            format!("axiom `{}.{}`: else-branch must not contain statements",
+                                effect_name, axiom_name),
+                            e.span,
+                        ));
+                    }
+                    if let Some(t) = &b.trailing {
+                        check_axiom_expr(t, effect_name, axiom_name, binders, pure_views, errors);
+                    }
+                }
+                Some(crate::ast::ElseBranch::If(ie)) => {
+                    check_axiom_expr(ie, effect_name, axiom_name, binders, pure_views, errors);
+                }
+                None => {}
+            }
+        }
+        Call { func, args, trailing } => {
+            if trailing.is_some() {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "axiom `{}.{}`: trailing blocks not allowed in axiom-formulas",
+                        effect_name, axiom_name,
+                    ),
+                    e.span,
+                ));
+                return;
+            }
+            // V1: разрешена форма `<pure_view_name>(args)`.
+            let pv_name = match &func.kind {
+                Ident(n) => n.clone(),
+                _ => {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "axiom `{}.{}`: callee must be a pure_view of effect `{}`",
+                            effect_name, axiom_name, effect_name,
+                        ),
+                        e.span,
+                    ));
+                    return;
+                }
+            };
+            let Some(&expected) = pure_views.get(&pv_name) else {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "axiom `{}.{}`: `{}` is not a pure_view of effect `{}` \
+                         (axioms may only reference pure_view ops)",
+                        effect_name, axiom_name, pv_name, effect_name,
+                    ),
+                    e.span,
+                ));
+                return;
+            };
+            if args.len() != expected {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "axiom `{}.{}`: pure_view `{}` expects {} arg(s), got {}",
+                        effect_name, axiom_name, pv_name, expected, args.len(),
+                    ),
+                    e.span,
+                ));
+            }
+            for a in args {
+                check_axiom_expr(a.expr(), effect_name, axiom_name, binders, pure_views, errors);
+            }
+        }
+        _ => {
+            errors.push(Diagnostic::new(
+                format!(
+                    "axiom `{}.{}`: this expression form is not allowed inside \
+                     axiom-formula (only literals, binders, pure_view calls, \
+                     arith/bool ops, and if/else)",
+                    effect_name, axiom_name,
+                ),
+                e.span,
+            ));
+        }
+    }
 }
 
 /// Walk block recursively: ищет HandlerLit, проверяет never-ops.
@@ -3241,21 +3638,42 @@ struct ContractCtx {
     /// Имена fn объявленных `#pure` (через атрибут).
     /// Используются для разрешения composition в контрактах (33.2).
     pure_fn_names: HashSet<String>,
+    /// Plan 33.3 Ф.9: pure_view-имя → (effect_name, arity).
+    /// При вызове `balance(id)` в контракте определяем (а) что это
+    /// pure_view, (б) к какому эффекту относится, (в) что эффект в
+    /// сигнатуре enclosing fn.
+    pure_views: HashMap<String, (String, usize)>,
 }
 
 impl ContractCtx {
     fn build(module: &Module) -> Self {
         let mut fn_names = HashSet::new();
         let mut pure_fn_names = HashSet::new();
+        let mut pure_views: HashMap<String, (String, usize)> = HashMap::new();
         for item in &module.items {
-            if let Item::Fn(fd) = item {
-                fn_names.insert(fd.name.clone());
-                if matches!(fd.purity, Purity::Pure) {
-                    pure_fn_names.insert(fd.name.clone());
+            match item {
+                Item::Fn(fd) => {
+                    fn_names.insert(fd.name.clone());
+                    if matches!(fd.purity, Purity::Pure) {
+                        pure_fn_names.insert(fd.name.clone());
+                    }
                 }
+                Item::Type(td) => {
+                    if let TypeDeclKind::Effect(methods) = &td.kind {
+                        for m in methods {
+                            if matches!(m.kind, EffectOpKind::PureView) {
+                                pure_views.insert(
+                                    m.name.clone(),
+                                    (td.name.clone(), m.params.len()),
+                                );
+                            }
+                        }
+                    }
+                }
+                _ => {}
             }
         }
-        Self { fn_names, pure_fn_names }
+        Self { fn_names, pure_fn_names, pure_views }
     }
 
     fn check_module(&self, module: &Module, errors: &mut Vec<Diagnostic>) {
@@ -3291,13 +3709,21 @@ impl ContractCtx {
             // Контракты не проверяем дальше — error уже выдан.
             return;
         }
+        // Plan 33.3 Ф.9: множество имён эффектов из сигнатуры функции
+        // (для разрешения pure_view-вызовов в контрактах).
+        let fn_effects: HashSet<String> = fd.effects.iter()
+            .filter_map(|tr| match tr {
+                TypeRef::Named { path, .. } => path.last().cloned(),
+                _ => None,
+            })
+            .collect();
         for contract in &fd.contracts {
             match contract.kind {
                 ContractKind::Requires => {
-                    self.check_requires_expr(&contract.expr, errors);
+                    self.check_requires_expr(&contract.expr, &fn_effects, &fd.name, errors);
                 }
                 ContractKind::Ensures => {
-                    self.check_ensures_expr(&contract.expr, errors);
+                    self.check_ensures_expr(&contract.expr, &fn_effects, &fd.name, errors);
                 }
             }
         }
@@ -3441,16 +3867,35 @@ impl ContractCtx {
     }
 
     /// `requires`: запрещены `result` и `old(...)`.
-    fn check_requires_expr(&self, e: &Expr, errors: &mut Vec<Diagnostic>) {
-        self.walk_expr(e, errors, /*in_ensures*/ false);
+    fn check_requires_expr(
+        &self,
+        e: &Expr,
+        fn_effects: &HashSet<String>,
+        fn_name: &str,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        self.walk_expr(e, fn_effects, fn_name, errors, /*in_ensures*/ false);
     }
 
     /// `ensures`: `result`/`old(...)` разрешены; composition запрещён в 33.1.
-    fn check_ensures_expr(&self, e: &Expr, errors: &mut Vec<Diagnostic>) {
-        self.walk_expr(e, errors, /*in_ensures*/ true);
+    fn check_ensures_expr(
+        &self,
+        e: &Expr,
+        fn_effects: &HashSet<String>,
+        fn_name: &str,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        self.walk_expr(e, fn_effects, fn_name, errors, /*in_ensures*/ true);
     }
 
-    fn walk_expr(&self, e: &Expr, errors: &mut Vec<Diagnostic>, in_ensures: bool) {
+    fn walk_expr(
+        &self,
+        e: &Expr,
+        fn_effects: &HashSet<String>,
+        fn_name: &str,
+        errors: &mut Vec<Diagnostic>,
+        in_ensures: bool,
+    ) {
         match &e.kind {
             ExprKind::Ident(n) => {
                 if n == "result" && !in_ensures {
@@ -3473,7 +3918,39 @@ impl ContractCtx {
                         // Walk old() arg ONCE; it's a snapshot of pre-state,
                         // not a composition.
                         for a in args {
-                            self.walk_expr(a.expr(), errors, in_ensures);
+                            self.walk_expr(a.expr(), fn_effects, fn_name, errors, in_ensures);
+                        }
+                        return;
+                    }
+                    // Plan 33.3 Ф.9.3 part 2: pure_view-вызов в контракте
+                    // разрешён только если соответствующий эффект объявлен в
+                    // сигнатуре enclosing fn (`(...) Eff -> ...`). pure_view
+                    // — read-only observation, нужен effect-handler в scope.
+                    if let Some((effect_name, expected_arity)) = self.pure_views.get(name) {
+                        if !fn_effects.contains(effect_name) {
+                            errors.push(Diagnostic::new(
+                                format!(
+                                    "pure_view `{}.{}` referenced in contract of `{}`, \
+                                     but effect `{}` is not in this function's signature \
+                                     (add `{}` to effects)",
+                                    effect_name, name, fn_name, effect_name, effect_name,
+                                ),
+                                e.span,
+                            ));
+                        }
+                        if args.len() != *expected_arity {
+                            errors.push(Diagnostic::new(
+                                format!(
+                                    "pure_view `{}.{}` expects {} arg(s), got {}",
+                                    effect_name, name, expected_arity, args.len(),
+                                ),
+                                e.span,
+                            ));
+                        }
+                        // pure_view-вызов разрешён; walk args, не walk
+                        // callee (это identifier-name pure_view, не fn).
+                        for a in args {
+                            self.walk_expr(a.expr(), fn_effects, fn_name, errors, in_ensures);
                         }
                         return;
                     }
@@ -3491,34 +3968,34 @@ impl ContractCtx {
                     }
                 }
                 // Walk callee + args.
-                self.walk_expr(func, errors, in_ensures);
+                self.walk_expr(func, fn_effects, fn_name, errors, in_ensures);
                 for a in args {
-                    self.walk_expr(a.expr(), errors, in_ensures);
+                    self.walk_expr(a.expr(), fn_effects, fn_name, errors, in_ensures);
                 }
             }
             ExprKind::Binary { left, right, .. } => {
-                self.walk_expr(left, errors, in_ensures);
-                self.walk_expr(right, errors, in_ensures);
+                self.walk_expr(left, fn_effects, fn_name, errors, in_ensures);
+                self.walk_expr(right, fn_effects, fn_name, errors, in_ensures);
             }
             ExprKind::Unary { operand, .. } => {
-                self.walk_expr(operand, errors, in_ensures);
+                self.walk_expr(operand, fn_effects, fn_name, errors, in_ensures);
             }
             ExprKind::Member { obj, .. } => {
-                self.walk_expr(obj, errors, in_ensures);
+                self.walk_expr(obj, fn_effects, fn_name, errors, in_ensures);
             }
             ExprKind::Index { obj, index } => {
-                self.walk_expr(obj, errors, in_ensures);
-                self.walk_expr(index, errors, in_ensures);
+                self.walk_expr(obj, fn_effects, fn_name, errors, in_ensures);
+                self.walk_expr(index, fn_effects, fn_name, errors, in_ensures);
             }
             ExprKind::As(inner, _) | ExprKind::Is(inner, _) => {
-                self.walk_expr(inner, errors, in_ensures);
+                self.walk_expr(inner, fn_effects, fn_name, errors, in_ensures);
             }
             ExprKind::Try(inner) | ExprKind::Bang(inner) => {
-                self.walk_expr(inner, errors, in_ensures);
+                self.walk_expr(inner, fn_effects, fn_name, errors, in_ensures);
             }
             ExprKind::Coalesce(l, r) => {
-                self.walk_expr(l, errors, in_ensures);
-                self.walk_expr(r, errors, in_ensures);
+                self.walk_expr(l, fn_effects, fn_name, errors, in_ensures);
+                self.walk_expr(r, fn_effects, fn_name, errors, in_ensures);
             }
             // Литералы, paths, и прочее — не интересно для базовых правил.
             _ => {}

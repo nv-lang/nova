@@ -17,6 +17,75 @@
 
 ---
 
+## TL;DR — что мы делаем лучше Go/Rust/TS (простыми словами)
+
+> Эта секция нужна для быстрого ответа на вопрос «зачем своё, чем
+> rustdoc плох». Детальная таблица с issue-номерами — в §19.
+
+**Главное в одном предложении:** Go/Rust/TS показывают **имена и
+типы**; Nova показывает **что функция делает с миром, что от неё
+требует и что гарантирует — и всё это проверено компилятором**, а не
+написано в комментариях.
+
+1. **Doc сразу показывает побочки.** Из `fn save(x)` в Go/Rust/TS не
+   видно — ходит ли функция в сеть, пишет ли на диск, читает ли время.
+   У нас в сигнатуре стоит `Net Db Fail[NotFound]` — LLM/человек
+   понимает побочки за секунду без чтения тела.
+
+2. **Doc показывает требования и гарантии — проверенные.** В Rust
+   `// must be > 0` — комментарий, никем не проверяется. У нас
+   `requires x > 0` рядом с сигнатурой, помечен **PROVEN** /
+   **UNVERIFIED** / **TRUSTED**, SMT-проверен (Plan 33.1).
+
+3. **Примеры реально запускаются.** Go: `Example_xxx` в отдельном
+   файле, оторвано от функции. TS `@example`: просто текст. Rust:
+   запускает, но медленно и без шаринга setup. У нас — примеры рядом
+   с функцией, проверяются (включая контракты через `must_verify`),
+   setup шарится через folder-peer `_doctest_setup.nv`.
+
+4. **AI получает API одним JSON-запросом, schema стабильна.** godoc:
+   JSON нет. TypeDoc: есть, но schema меняется. Rustdoc: только
+   `+nightly`, unstable. У нас — `nova doc --format json`, schema v1
+   зафиксирована, embedded JSON Schema, валидируется. Один tool-call
+   → полный API.
+
+5. **Ссылки `[Foo]` всегда работают.** rustdoc регулярно ломает
+   cross-crate links. У нас резолвер тот же, что в type-checker'е —
+   битый линк = ошибка в `nova check`, а не молчаливо пустая ссылка
+   в HTML.
+
+6. **`--diff` показывает реальные breaking changes.** Нигде нет из
+   коробки. У нас встроено и видит не только смену сигнатуры, но и
+   **добавление эффекта** (breaking), **усиление `requires`**
+   (breaking!), **ослабление `ensures`** (breaking!) — категории,
+   которые `cargo public-api` не видит, потому что у Rust этого
+   в типах нет.
+
+7. **Приватно по умолчанию.** Rust `pub` всё палит → нужны
+   `#[doc(hidden)]` затычки. У нас `export` opt-in — что не
+   экспортнул, того в doc нет. Случайных утечек API не бывает.
+
+8. **Deprecation с дедлайном.** `#deprecated(since="0.4", until="1.0",
+   note="...")` — CI ругается, если до 1.0 не удалил. Rust `since`
+   есть, `until` нет; Go/TS — просто текст.
+
+9. **HTML byte-identical между прогонами.** rustdoc/TypeDoc дают
+   разный HTML каждый раз (timestamps, порядок). У нас — `SOURCE_DATE_
+   EPOCH` + deterministic ordering, reproducibility test в acceptance.
+   Diff в git показывает реальные изменения, а не шум.
+
+10. **`--watch`, `--theme`, поиск — флаги, не экосистема.** В Rust
+    для watch'а ставят `cargo install cargo-watch` (внешний tool). В
+    TypeDoc темы — отдельные npm-пакеты, ломаются между версиями. У
+    нас `nova doc --watch` и `--theme dark` — флаги той же команды.
+    Одна программа, одна версия, одна точка обновления. Discoverable
+    через `nova doc --help`, не через гугл.
+
+**Формула:** «экосистема» = искать, ставить, версионировать, надеяться.
+«Флаг» = просто написал `--watch`.
+
+---
+
 ## 1. Цели и не-цели
 
 ### Цели
@@ -1075,7 +1144,156 @@ MVP-cut (Ф.0-Ф.9 + Ф.12 + Ф.14 + Ф.19) — 5-7 сессий до точки
 
 ---
 
-## 19. Связанные планы
+## 19. Что жалуются в Go / Rust / TS и как Nova делает лучше
+
+Сводка реальных жалоб community на godoc/pkg.go.dev, rustdoc, TypeDoc —
+и как Plan 45 их закрывает. Не теоретические гипотезы: каждый пункт из
+обсуждений на rust-lang/rust, golang/go issues, TypeStrong/typedoc
+issues, Reddit r/rust, Hacker News.
+
+### 19.1. godoc / pkg.go.dev
+
+| Жалоба | Источник | Как Nova решает |
+|---|---|---|
+| Нет intra-doc links — `Foo` в комментарии не кликабельно | golang/go #34866, #41497 | Ф.6: `[Foo]` / `[mod.Foo]` / `[Self.method]` с резолвом через name-resolver, fail-loud в `--check` |
+| Нет структурных секций (Errors/Panics/Examples) — только конвенции | dev.to discussions | Ф.5: распознаваемые `# Effects` / `# Errors` / `# Panics` / `# Safety` / `# Contracts` / `# Since` / `# See also` / `# Deprecated`, auto-derive из signature |
+| Doc-tests слабые — `ExampleFoo` в отдельном test-файле, оторвано от документируемой функции | golang/go #16851 | D102 + Ф.7: code-blocks **внутри** doc-comment'а, рядом с кодом; модификаторы `no_run`/`ignore`/`compile_fail`/`should_panic`/`must_verify` |
+| Нет машино-читаемого deprecation — только `Deprecated:` в прозе | golang/go #54546 | D101: `#deprecated(since=..., note=...)` + parse-time warning + render-time banner; в JSON — структурно |
+| Нет JSON output — godoc/pkg.go.dev только HTML | golang/go #21342 | D103 + Ф.9: stable JSON schema v1 как первоклассный output, embedded JSON Schema для валидации |
+| Generics в documentation поверхностные, late arrival | golang/go #54393 | Ф.4: `GenericParam` с bounds (Plan 15) — структурно в DocModel |
+| Subpackages discovery awkward — clicking through tree | пользовательские отзывы pkg.go.dev | Ф.10: sidebar + поиск + folder-module aggregation (Plan 42 peers видны сразу) |
+| Нет semantic diff / changelog generation | golang/go #51599 | Ф.13: `--diff baseline.json` с 9 категориями (Removed/SigChange/EffectAdd/ContractTighten/...) |
+| Темы / dark mode — pkg.go.dev добавил недавно, godoc local не имеет | golang/go #29991 | Ф.10: light/dark/auto через CSS variables + `prefers-color-scheme`, `--css` override |
+| Нет offline reproducibility — pkg.go.dev hosted | многочисленные | Ф.10 + Ф.17: HTML reproducible через `SOURCE_DATE_EPOCH`, deterministic ordering, embedded assets, `--offline` flag |
+
+### 19.2. rustdoc
+
+| Жалоба | Источник | Как Nova решает |
+|---|---|---|
+| Doc-tests **медленные** — каждый = отдельная компиляция, CI bottleneck | rust-lang/rust #45599, #67295 | Ф.7: reuse Plan 24 parallel test_runner + `--jobs N`; Ф.16: incremental cache (blake3 hash inputs) skip unchanged tests |
+| Doc-tests не имеют IDE support — текст внутри строк | rust-lang/rust #50912 | D102: doc-tests synthesizes реальные `.nv` файлы во временный каталог, LSP видит как обычные test modules |
+| `[Foo]` не резолвится — confusing errors | rust-lang/rust #74481, #83864 | Ф.6: error message указывает file:line, conflicting candidates, candidate suggestion (LLM-friendly) |
+| HTML output **гигантский** — много CSS/JS на каждой странице | rust-lang/rust #76526 | Ф.10: embedded assets shared, no template engine, no per-page JS framework; smoke test проверяет page-size budget |
+| Search ограничен — name-only, signature search скрыт | rust-lang/rust #51030 | Ф.10 + `#doc_alias`: search index включает name + aliases + effect-row + raises + contract status; LLM может искать «functions raising NotFound» |
+| `#[doc(hidden)]` — **opt-out**, exports leak by default | rust-lang/rust #54574 | D5: `export` — opt-in. По умолчанию **private**. Никаких leak'ов. |
+| JSON output (`rustdoc --output-format json`) — **только nightly**, schema нестабильна | rust-lang/rust #76578 | D103: stable schema v1 на **stable** компиляторе, embedded JSON Schema, additive-only changes в v1 |
+| Нет нативного API diff — `cargo public-api` третий-сторонний | rust-lang/rust #58197 | Ф.13: built-in `--diff` с severity categories + `--deny-breaking` exit code для release-gate |
+| Inter-crate links ненадёжны (`--extern-html-root-url`) | rust-lang/rust #56935 | Ф.6: workspace-scoped index в `O(items)` map'у, cross-module = `O(1)` resolve, no external URL configuration |
+| Doc-tests не могут share setup — `# use foo::*` hack | rust-lang/rust #67918 | D102: `#doc(test_handlers = "...")` module-level + folder-module peer `_doctest_setup.nv` (Plan 42 даёт нам peers, никаких hidden hacks) |
+| HTML reproducibility issues — версии rustdoc emit разный HTML | rust-lang/rust #88791 | Ф.10 + Ф.19 acceptance: byte-identical с `SOURCE_DATE_EPOCH`, reproducibility test в corpus |
+| Нет native man-page output | rust-lang/rust #21178 | Ф.11: groff output из того же DocModel |
+| Module-level summary обрезается на первом предложении — fragile | rust-lang/rust #74481 | Ф.5: explicit `summary` extraction правило документировано в D100; `#doc(summary = "...")` override |
+| `pub use` re-export confusion — `#[doc(inline)]` per-item, забывают | rust-lang/rust #50847 | D101: `#doc(inline)` default для same-package, `no_inline` для cross-package — sensible defaults, override только когда нужно |
+| Нет watch mode — community уходит в `cargo watch` | rust-lang/rust #44095 | Ф.15: `--watch` built-in, debounce 200ms, re-resolve only changed module + dependents |
+| Нет "stability index" — нельзя увидеть весь `unstable`/`experimental` API сразу | rust-lang/rust #43466 | D101: `#stable`/`#unstable`/`#experimental` атрибут; `--since` filter; в JSON структурно |
+| Нет deprecation timeline — `since=` есть, `until=` нет | rust-lang/rust #58622 | D101: `#deprecated(since = "0.4", until = "1.0", note = "...")` — `until` ставит deadline для удаления, CI gate `--deny-overdue-deprecations` |
+| Не могут включить произвольные markdown файлы | rust-lang/rust #44732 | `#doc(include = "CHANGELOG.md")` атрибут (рассматривается в Ф.3 advanced; LP open question) |
+| Нет hide-test-from-output-but-run — `# ` prefix ugly | rust-lang/rust #67918 | D102: doc-test code не показывается в HTML если префиксован `# ` (Rust convention принят, но docs explicit) или `#doc(test_only = "...")` блок |
+
+### 19.3. TypeDoc / TSDoc
+
+| Жалоба | Источник | Как Nova решает |
+|---|---|---|
+| Медленный на больших проектах — TS compiler API bottleneck | TypeStrong/typedoc #2155, #1944 | Reuse compiler-codegen — single-pass parse + type-check; Ф.16 incremental cache |
+| HTML output dated — выглядит как jsdoc 2010 | TypeStrong/typedoc #1844, #2231 | Ф.10: modern layout, sticky TOC, client-side search, theme variables; comparison points = rustdoc layout |
+| Multiple competing tag conventions (JSDoc vs TSDoc) — fragmented | microsoft/tsdoc #4 | D100 + D101: **один** конвент (`///` + `# Section` + `#attr`), spec'нут, не дополняется ad-hoc |
+| `@example` parsing inconsistent — иногда требует lang hint | TypeStrong/typedoc #1672 | D102: lang tag формализован (default = `nova` если опущен), модификаторы документированы |
+| Нет doc-test runner — `@example` не выполняется | microsoft/tsdoc #211 | D102 + Ф.7: doc-tests реально компилируются и запускаются через test_runner |
+| Plugin ecosystem fragmented — темы ломаются между версиями | TypeStrong/typedoc #2089 | Никаких user-plugins. Theme = CSS variables + `--css` override. Schema lock-in через D103. |
+| Нет breaking-change detection | TypeStrong/typedoc #1789 | Ф.13: built-in diff |
+| `@deprecated` не connect к migration paths | TypeStrong/typedoc #1916 | D101: `#deprecated(note = "use foo instead — [foo.bar]")` — поддержка intra-doc link в note |
+| `{@link Foo}` fragile, sometimes doesn't resolve | TypeStrong/typedoc #2138 | Ф.6: `[Foo]` резолвится через type-checker name-resolver, не через regex match |
+| Module/namespace/file boundaries confusing | TypeStrong/typedoc #1830 | D29 rev-3: `parent.X` — один формат; folder-module = explicit; namespace concept не вводим |
+| Нет JSON schema для `--json` output — schema меняется | TypeStrong/typedoc #1942 | D103: embedded JSON Schema v1, stability commitment |
+| Inheritance docs incomplete | TypeStrong/typedoc #1827 | Ф.4: protocols structural, implementors auto-listed; effects + handlers — explicit relationship rendered |
+| Нет проверки что `@example` компилируется | TypeStrong/typedoc #2090 | D102: compile_fail модификатор делает «не должен компилироваться» first-class; default = «должен» |
+| Нет "internal but exported" mark — `@internal` recognized inconsistently | TypeStrong/typedoc #1843 | D101: `#hide_doc` — item exported (real export), но скрыт из docs. Bright line, не tag-soup. |
+| AI consumption — must scrape HTML or wrangle unstable `--json` | community feedback | D103 + AI-first design: stable JSON schema v1, all signatures structural, ready для LLM tool use |
+
+### 19.4. Общие проблемы всех трёх — где Nova **уникально** лучше
+
+Эти жалобы общие для godoc + rustdoc + TypeDoc; Nova решает их за счёт
+конструктов, которых **нет** в Go/Rust/TS в типах:
+
+1. **Effect rows в signature.**
+   - Go/Rust/TS: эффекты невидимы (`func f() {}` ничего не говорит про
+     I/O, time, randomness).
+   - Nova: `fn f() Net Db Fail[E] -> T` — DocFn.signature.effects[]
+     рендерится как набор линкованных badge'ев. LLM понимает побочные
+     эффекты функции из doc без чтения тела.
+
+2. **Контракты как часть API.**
+   - Go/Rust/TS: «pre/postconditions» — комментарии в прозе, никем
+     не проверяемые.
+   - Nova: `requires` / `ensures` / `invariant` — статически
+     верифицируются (Plan 33.1), рендерятся отдельной секцией с
+     verify_status (PROVEN / TIMEOUT / UNVERIFIED / TRUSTED).
+     `must_verify` doc-test модификатор — Nova-уникальный.
+
+3. **Capabilities в типах.**
+   - Go/Rust/TS: `#[forbid_unsafe]` etc. — lint-config, не часть API.
+   - Nova: `#forbid(Io)` / `#realtime nogc` / `#allow_transit(...)` —
+     атрибуты item-level, видны в doc как capability badges. Real-time
+     audit становится `nova doc --filter realtime`.
+
+4. **Protocol implementors / Effect handlers — auto-listed.**
+   - Rust: `impl Trait for Type` — частично работает, cross-crate
+     ненадёжен.
+   - Nova: structural protocols + workspace-scoped index → 100%
+     reliable auto-listing implementors + handlers.
+
+5. **Folder-modules с peer attribution.**
+   - Go: один файл = один package; `internal/` для приватных — но
+     прятать deeper.
+   - Rust: `mod.rs` + tree — конфузит начинающих, peers неестественны.
+   - TS: namespace/module/file — три способа сделать одно.
+   - Nova: D29 rev-3 + Plan 42 — folder = module, peers explicit, doc
+     показывает «defined in users.nv:42» с per-peer attribution.
+
+6. **AI-first JSON schema с первого дня.**
+   - Все три: JSON output либо отсутствует (godoc), либо nightly +
+     unstable (rustdoc), либо schema-less (TypeDoc).
+   - Nova: D103 — stable schema v1 на release builds, embedded JSON
+     Schema, validated в Ф.19 corpus tests. LLM tool-call может
+     consume output напрямую.
+
+7. **Semantic API diff включая контракты и эффекты.**
+   - `cargo public-api` (Rust third-party) — sig changes only.
+   - Nova: Ф.13 — sig + effects + raises + contracts (tighten/loosen
+     pre/post) + stability + deprecation. **Contract tightening =
+     breaking change** detected automatically.
+
+8. **Doc-tests с handler injection.**
+   - Rust: `# use foo::*;` hidden lines.
+   - Nova: `#doc(test_handlers = "std.testing.handlers")` module-level,
+     + folder-module peer `_doctest_setup.nv` — clean abstraction,
+     leveraging Plan 42.
+
+9. **Reproducibility byte-identical как acceptance criterion.**
+   - Все три: best-effort, регулярные регрессии.
+   - Nova: Ф.19 включает reproducibility test (две прогона →
+     diff = empty). CI gate в Ф.17.
+
+10. **Stability tiers + deprecation timeline.**
+    - Rust: `#[deprecated(since, note)]` — нет `until`.
+    - Go/TS: free-text convention.
+    - Nova: D101 + Ф.14 — `#deprecated(since, until, note)` +
+      `--deny-overdue-deprecations` CI gate.
+
+11. **`--since <version>` filter** для changelog generation.
+    - Никто из трёх не имеет.
+    - Nova: Ф.12 — built-in, использует `#since` attr из D101.
+
+12. **`--check` как обязательный CI gate с полным spectrum lint'ов.**
+    - Rust: `cargo doc` warnings — best-effort.
+    - Go: pkg.go.dev hosted, нет local `--check`.
+    - TS: TypeDoc errors mode частичный.
+    - Nova: §8 таблица — 10 lint категорий, exit 1 на errors, full
+      stdlib должен проходить.
+
+---
+
+## 20. Связанные планы
 
 - [Plan 42 — folder-modules](42-folder-modules.md): был sub-plan 42.2,
   выделен 2026-05-14.

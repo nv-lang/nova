@@ -1,0 +1,11 @@
+// Plan 42.09: item rename test.
+// Импортируем `calculate` под именем `compute` через rename.
+// `compute` должен работать; `calculate` НЕ должен (renamed).
+
+module modules.rename_import_use
+
+import nova_tests.modules.rename_import_source.{calculate as compute}
+
+test "imported item available under alias" {
+    assert(compute(5) == 11)
+}

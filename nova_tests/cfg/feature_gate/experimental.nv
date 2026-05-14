@@ -1,0 +1,10 @@
+// Plan 42.12 Ф.2: experimental peer, active только при
+// `--features=experimental` (или `NOVA_FEATURES=experimental`).
+// По умолчанию (без feature) этот peer skip'ается, его items
+// невидимы импортирующему.
+
+module cfg.feature_gate
+#cfg(feature = "experimental")
+
+export fn experimental_value() -> int =>
+    999

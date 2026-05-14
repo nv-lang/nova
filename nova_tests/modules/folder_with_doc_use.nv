@@ -1,0 +1,13 @@
+// Plan 42.11: smoke test inline module doc.
+// folder_with_doc/core.nv содержит `#doc "..."` строки.
+// Парсер должен принимать без error. Code generation игнорирует —
+// doc хранится в AST для будущего consumer (Plan 45 nova doc).
+
+module modules.folder_with_doc_use
+
+import nova_tests.modules.folder_with_doc.{greet, ping}
+
+test "module с #doc parses + works" {
+    assert(greet() == "hello from doc'd module")
+    assert(ping() == 42)
+}

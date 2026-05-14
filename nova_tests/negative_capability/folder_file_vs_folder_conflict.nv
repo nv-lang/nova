@@ -1,0 +1,17 @@
+// EXPECT_COMPILE_ERROR ambiguous module
+//
+// Plan 42.08 Ф.1 + Ф.2: file vs folder conflict.
+//
+// `folder_file_conflict_setup/admin.nv` (single-file) + `folder_file_conflict_setup/admin/`
+// (folder с peer users.nv) — ambiguous. До Plan 42.08 Ф.2 это был silent
+// None → generic "cannot find module" error. Теперь — explicit
+// «ambiguous module» с указанием обоих путей.
+
+module negative_capability.folder_file_vs_folder_conflict
+
+import nova_tests.negative_capability.folder_file_conflict_setup.admin.{version}
+
+test "ambiguous module rejected with clear error" {
+    let _v = version()
+    assert(true)
+}

@@ -1,0 +1,8 @@
+// modB peer 1 — импортирует modA → замыкает cycle.
+
+module folder_cycle_setup.modB
+
+import nova_tests.negative_capability.folder_cycle_setup.modA.{a_extra}
+
+export fn b_val() -> int =>
+    a_extra() + 1

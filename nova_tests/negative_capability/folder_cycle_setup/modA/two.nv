@@ -1,0 +1,6 @@
+// modA peer 2 — нужен чтобы папка считалась folder-module (≥2 peers).
+
+module folder_cycle_setup.modA
+
+export fn a_extra() -> int =>
+    100

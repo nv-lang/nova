@@ -1,0 +1,23 @@
+// Plan 42.12 Ф.1 smoke test: filename suffix routing.
+//
+// folder cfg/platform_route/ имеет:
+//   core.nv (active всегда — нет suffix)
+//   impl_windows.nv (active только на Windows)
+//   impl_linux.nv (active только на Linux)
+//   impl_macos.nv (active только на macOS)
+//
+// На каждой OS active ровно один impl_*.nv peer →
+// platform_name() единственно определена → name collision не возникает.
+
+module cfg.platform_route_use
+
+import nova_tests.cfg.platform_route.{greet}
+
+test "filename suffix dispatch: greet returns OS-specific name" {
+    let g = greet()
+    // Тест должен PASS на любом из 3-х platforms — на каждом active
+    // ровно один impl_*.nv peer. Проверяем что результат — один из
+    // ожидаемых OS names. Если filename suffix не работает — будет
+    // или dup-definition compile error, или undefined symbol linker error.
+    assert(g == "hello from windows" || g == "hello from linux" || g == "hello from macos")
+}

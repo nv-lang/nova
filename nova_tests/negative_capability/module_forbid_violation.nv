@@ -1,0 +1,16 @@
+// EXPECT_COMPILE_ERROR Net
+//
+// Plan 42.10: module-level #forbid Net через _module.nv. Folder-module
+// `module_forbid_violation_setup/` имеет _module.nv с `#forbid Net`.
+// Peer `net_user.nv` пытается использовать Net effect.
+// CapabilityCtx должен flag-нуть это как violation (after inherited_attrs
+// propagation из imports.rs).
+
+module negative_capability.module_forbid_violation
+
+import nova_tests.negative_capability.module_forbid_violation_setup.{fetch_url}
+
+test "module-level forbid Net violation rejected" {
+    let _ = fetch_url("http://example.com")
+    assert(true)
+}

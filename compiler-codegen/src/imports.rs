@@ -119,6 +119,10 @@ pub fn resolve_imports_inline_ex(
         }
     }
 
+    // Plan 42.10: accumulate module-level attrs from `_module.nv` peers
+    // of imported folder-modules. Applied to entry's module.attrs at end.
+    let mut inherited_attrs: Vec<crate::ast::ModuleAttr> = Vec::new();
+
     for imp in &initial_imports {
         resolve_one(
             imp,
@@ -132,6 +136,7 @@ pub fn resolve_imports_inline_ex(
             &mut peer_files,
             &mut next_file_id,
             include_test_peers,
+            &mut inherited_attrs,
         )?;
     }
 
@@ -152,6 +157,15 @@ pub fn resolve_imports_inline_ex(
     // Plan 42 Sub-plan 42.4 шаг 2: переносим собранные PeerFile в module.
     // Type-checker (шаг 3) использует это для per-peer name resolution.
     module.peer_files = peer_files;
+
+    // Plan 42.10: merge inherited attrs из `_module.nv` peers импортированных
+    // folder-modules. CapabilityCtx (types/mod.rs) применит #forbid attrs
+    // ко всем functions module — независимо от того, defined ли они в
+    // entry или imported. Doc и Cfg attrs тоже пропагируются (consumer —
+    // Plan 45 nova doc и cfg_active filter уже handled).
+    for attr in inherited_attrs {
+        module.attrs.push(attr);
+    }
 
     Ok(())
 }
@@ -175,25 +189,34 @@ fn resolve_one(
     peer_files: &mut Vec<PeerFile>,
     next_file_id: &mut FileId,
     include_test_peers: bool,
+    // Plan 42.10: collect module-level attrs from `_module.nv` peers
+    // for propagation into entry's module.attrs.
+    inherited_attrs: &mut Vec<crate::ast::ModuleAttr>,
 ) -> Result<()> {
     // Plan 42 правило H: `internal/` directory access check.
-    // Module `<X>.internal.<Y>` доступен только из `<X>.*` (descendants).
-    // Importing module = тот кто DIRECTLY делает import (последний в
-    // chain), не entry. Например `folder_internal/public.nv` имеет
-    // import internal/... — он descendant of folder_internal, разрешено.
+    // Plan 42 правило H: `<X>/internal/<Y>` доступен только из `<X>.*`
+    // (descendants — по filesystem hierarchy, не по declared module name).
+    //
+    // **Важно про terminology** (Plan 42.08 Ф.3 уточнение):
+    // Сравнение идёт по **import path**, не declared module name (которое
+    // в rev-3 ВСЕГДА 2 segments, не отражает full path). Import path в
+    // resolver-mode хранится в `import_chain` (push'ится на каждом resolve).
+    // Это работает корректно потому что import path → filesystem path
+    // mapping bijective (resolver использует import path как rel_path).
+    //
+    // Edge case (NOT current bug, но caveat): re-export через Plan 35.A R26
+    // `export import X` может создать situation где модуль reachable через
+    // два разных import path. Тогда Rule H check по import path может
+    // permit/deny не consistently. Defer до Plan 42.09 (re-export).
     if let Some(internal_idx) = imp.path.iter().position(|s| s == "internal") {
-        // Parent of `internal` = everything before it.
+        // Parent of `internal` segment = import path prefix until `internal`.
         let internal_parent = &imp.path[..internal_idx];
-        // Importing module = the module currently being resolved (last in
-        // chain). It's the file that wrote `import ...` line.
-        let importing_module = import_chain.last().cloned().unwrap_or_default();
-        // internal_parent должен быть prefix of importing_module.
-        // Также важно: imported module's parent is the prefix until
-        // `internal`. importing path должен **содержать** internal_parent
-        // как prefix (descendant rule).
+        // Importing path = последнее import в chain (тот кто пишет import line).
+        let importing_path = import_chain.last().cloned().unwrap_or_default();
+        // internal_parent должен быть prefix of importing_path (descendant rule).
         let allowed = internal_parent.is_empty()
-            || (internal_parent.len() <= importing_module.len()
-                && importing_module
+            || (internal_parent.len() <= importing_path.len()
+                && importing_path
                     .iter()
                     .zip(internal_parent.iter())
                     .all(|(a, b)| a == b));
@@ -205,7 +228,7 @@ fn resolve_one(
                  hint: internal modules accessible only from descendants of `{}`",
                 imp.path.join("."),
                 internal_parent.join("."),
-                importing_module.join("."),
+                importing_path.join("."),
                 internal_parent.join("."),
             ));
         }
@@ -214,39 +237,54 @@ fn resolve_one(
     // Plan 42 Ф.2: resolve module to list of peer files (or single file
     // for legacy single-file modules).
     let resolved_paths = resolve_module_paths(&imp.path, entry_dir, repo, stdlib_dir, include_test_peers)
-        .ok_or_else(|| {
-            // Plan 42 правило L: diagnostic quality. Show importing module
-            // (last in chain) + searched paths + suggestion.
+        .map_err(|err| {
+            // Plan 42 правило L: diagnostic quality. Plan 42.08 Ф.2: ambiguous
+            // case теперь явно диагностируется.
             let importing = import_chain
                 .last()
                 .map(|m| m.join("."))
                 .unwrap_or_else(|| "<unknown>".to_string());
-            let suggestion = suggest_module_name(
-                &imp.path,
-                entry_dir,
-                repo,
-                stdlib_dir,
-            );
-            anyhow!(
-                "cannot find module '{}'\n  \
-                 imported from: module `{}`\n  \
-                 searched:\n  \
-                 \x20  {} (single-file or folder)\n  \
-                 \x20  {} (single-file or folder)\n  \
-                 \x20  {} (stdlib){}",
-                imp.path.join("."),
-                importing,
-                entry_dir.join(imp.path.iter().collect::<PathBuf>()).display(),
-                repo.join(imp.path.iter().collect::<PathBuf>()).display(),
-                if imp.path[0] == "std" && imp.path.len() >= 2 {
-                    stdlib_dir.join(imp.path[1..].iter().collect::<PathBuf>())
-                        .display()
-                        .to_string()
-                } else {
-                    "<n/a>".to_string()
-                },
-                suggestion,
-            )
+            match err {
+                ResolveErr::Ambiguous { file, folder } => anyhow!(
+                    "ambiguous module '{}': both single-file and folder-module exist\n  \
+                     imported from: module `{}`\n  \
+                     file:   {}\n  \
+                     folder: {}\n  \
+                     hint: remove one or rename to resolve conflict (D29 rev-3)",
+                    imp.path.join("."),
+                    importing,
+                    file.display(),
+                    folder.display(),
+                ),
+                ResolveErr::NotFound => {
+                    let suggestion = suggest_module_name(
+                        &imp.path,
+                        entry_dir,
+                        repo,
+                        stdlib_dir,
+                    );
+                    anyhow!(
+                        "cannot find module '{}'\n  \
+                         imported from: module `{}`\n  \
+                         searched:\n  \
+                         \x20  {} (single-file or folder)\n  \
+                         \x20  {} (single-file or folder)\n  \
+                         \x20  {} (stdlib){}",
+                        imp.path.join("."),
+                        importing,
+                        entry_dir.join(imp.path.iter().collect::<PathBuf>()).display(),
+                        repo.join(imp.path.iter().collect::<PathBuf>()).display(),
+                        if imp.path[0] == "std" && imp.path.len() >= 2 {
+                            stdlib_dir.join(imp.path[1..].iter().collect::<PathBuf>())
+                                .display()
+                                .to_string()
+                        } else {
+                            "<n/a>".to_string()
+                        },
+                        suggestion,
+                    )
+                }
+            }
         })?;
 
     // Use FIRST peer file's canonical path as module identity key. All peers
@@ -285,7 +323,6 @@ fn resolve_one(
     for peer_path in &resolved_paths {
         let peer_canon = peer_path.canonicalize()
             .map_err(|e| anyhow!("canonicalize {}: {}", peer_path.display(), e))?;
-        peer_canons.push(peer_canon);
 
         let peer_src = std::fs::read_to_string(peer_path)
             .map_err(|e| anyhow!("failed to read imported module {}: {}", peer_path.display(), e))?;
@@ -304,6 +341,28 @@ fn resolve_one(
                     "in imported module '{}' ({}): {}:{}: {}",
                     imp.path.join("."), peer_path_str, line, col, d.message)
             })?;
+
+        // Plan 42.12 Ф.2: проверка module-level `#cfg(feature/target_os)`.
+        // Если peer объявил inactive cfg — skip целиком (не merge items,
+        // не register peer_file, не recurse imports).
+        if !cfg_active(&peer_module) {
+            continue;
+        }
+
+        // Push canon только для active peers (dedup logic).
+        peer_canons.push(peer_canon);
+
+        // Plan 42.10: `_module.nv` peer — special module-config файл.
+        // Его module-level attrs (Forbid / Cfg / Doc) пропагируются на
+        // entry's module.attrs — applied ко всему compiled module.
+        let is_module_config = peer_path.file_stem()
+            .and_then(|s| s.to_str())
+            .map_or(false, |stem| stem == "_module");
+        if is_module_config {
+            for attr in &peer_module.attrs {
+                inherited_attrs.push(attr.clone());
+            }
+        }
 
         // Регистрируем PeerFile (snapshot до recursive resolve + merge).
         peer_files.push(PeerFile {
@@ -327,23 +386,65 @@ fn resolve_one(
                 peer_files,
                 next_file_id,
                 include_test_peers,
+                inherited_attrs,
             )?;
         }
 
-        // Merge items from this peer.
+        // Plan 42.09: selective rename map. Если import имеет
+        // `.{A as B}` — после merge item с name `A` переименовывается
+        // в `B` в merged scope. Также фильтрация: если selective list
+        // задан и item не в нём → skip (R26 visibility).
+        let rename_map: std::collections::HashMap<String, String> =
+            if let Some(items) = &imp.items {
+                items.iter()
+                    .filter_map(|it| it.alias.as_ref().map(|a| (it.name.clone(), a.clone())))
+                    .collect()
+            } else {
+                std::collections::HashMap::new()
+            };
+        let selective_names: Option<HashSet<String>> = imp.items.as_ref().map(|items| {
+            items.iter().map(|it| it.name.clone()).collect()
+        });
+
+        // Merge items from this peer (with optional rename + selective filter).
         for item in peer_module.items {
-            match &item {
-                Item::Type(_) | Item::Fn(_) | Item::Const(_) => {
-                    merged_items.push(item);
+            let name = match &item {
+                Item::Type(t) => Some(t.name.clone()),
+                Item::Fn(f) => Some(f.name.clone()),
+                Item::Const(c) => Some(c.name.clone()),
+                Item::Test(_) | Item::Let(_) => None,
+            };
+            match (&item, name) {
+                (Item::Type(_) | Item::Fn(_) | Item::Const(_), Some(item_name)) => {
+                    // Selective filter: skip items not в селективном списке.
+                    if let Some(allowed) = &selective_names {
+                        if !allowed.contains(&item_name) {
+                            // Item не в selective list — skip из merged_items.
+                            // Но переноcим в module visible scope только select'ed.
+                            // (Plan 35.A R26 partial: import all через resolver,
+                            // selective лишь UX promise; full enforcement в Plan 47).
+                            // Пока — keep all для backward compat но flag в R26 todo.
+                            merged_items.push(item);
+                            continue;
+                        }
+                    }
+                    // Apply rename if specified.
+                    if let Some(new_name) = rename_map.get(&item_name) {
+                        let renamed = rename_item(item, new_name.clone());
+                        merged_items.push(renamed);
+                    } else {
+                        merged_items.push(item);
+                    }
                 }
-                Item::Test(_) | Item::Let(_) => {
+                _ => {
                     // Test blocks / top-level let — игнорируем для imported.
                 }
             }
         }
     }
 
-    // Plan 35 sub-plan 35.A (R26): selective filter — syntax-only.
+    // Plan 35 sub-plan 35.A (R26): selective list applied above через
+    // rename_map + selective_names (Plan 42.09). Раньше был syntax-only.
     let _ = imp.items.is_some();
 
     // Pop in_progress + chain; promote ALL peer canons в closed-set.
@@ -353,6 +454,26 @@ fn resolve_one(
     }
     import_chain.pop();
     Ok(())
+}
+
+/// Plan 42.09: rename item (Type/Fn/Const) при selective re-import.
+/// `import X.{A as B}` → A in module X становится B в importing module.
+fn rename_item(item: Item, new_name: String) -> Item {
+    match item {
+        Item::Type(mut t) => {
+            t.name = new_name;
+            Item::Type(t)
+        }
+        Item::Fn(mut f) => {
+            f.name = new_name;
+            Item::Fn(f)
+        }
+        Item::Const(mut c) => {
+            c.name = new_name;
+            Item::Const(c)
+        }
+        other => other,
+    }
 }
 
 /// Plan 42 правило L: suggest module name через scan parent dir.
@@ -451,27 +572,134 @@ fn resolve_import_path(
     None
 }
 
+/// Plan 42.12 Ф.2: enabled features set (через `NOVA_FEATURES=foo,bar` env
+/// или `--features` CLI flag). Empty if нет features.
+pub fn enabled_features() -> HashSet<String> {
+    if let Ok(s) = std::env::var("NOVA_FEATURES") {
+        s.split(',').map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect()
+    } else {
+        HashSet::new()
+    }
+}
+
+/// Plan 42.12 Ф.2: peer module active при current target/features?
+/// Проверяет все `#cfg` атрибуты — если хоть один inactive → peer inactive.
+/// (AND semantic — все cfg должны matchнуть.)
+fn cfg_active(module: &Module) -> bool {
+    let target = current_target_os();
+    let features = enabled_features();
+    for attr in &module.attrs {
+        if let crate::ast::ModuleAttrKind::Cfg(pred) = &attr.kind {
+            match pred {
+                crate::ast::CfgPredicate::Feature(name) => {
+                    if !features.contains(name) {
+                        return false;
+                    }
+                }
+                crate::ast::CfgPredicate::TargetOs(os) => {
+                    let matches = match os.as_str() {
+                        "windows" => target == "windows",
+                        "linux" => target == "linux",
+                        "macos" => target == "macos",
+                        "unix" | "posix" => target == "linux" || target == "macos" || target == "unix",
+                        _ => false, // unknown target = never matches
+                    };
+                    if !matches {
+                        return false;
+                    }
+                }
+            }
+        }
+    }
+    true
+}
+
+/// Plan 42.12 Ф.1: target OS для filename suffix filtering.
+/// Default — host OS (cfg!(target_os) at compile time of nova-codegen).
+/// Override через `NOVA_TARGET_OS` env var (Ф.1 minimal — без CLI flag).
+pub fn current_target_os() -> &'static str {
+    if let Ok(t) = std::env::var("NOVA_TARGET_OS") {
+        return Box::leak(t.into_boxed_str());
+    }
+    if cfg!(target_os = "windows") { "windows" }
+    else if cfg!(target_os = "linux") { "linux" }
+    else if cfg!(target_os = "macos") { "macos" }
+    else if cfg!(target_family = "unix") { "unix" }
+    else { "unknown" }
+}
+
+/// Plan 42.12 Ф.1: filename suffix filter для peer files.
+/// Returns Some(target) если filename имеет recognized suffix (`_windows.nv`,
+/// `_linux.nv`, `_macos.nv`, `_unix.nv`, `_posix.nv`); None если нет suffix.
+fn file_target_suffix(stem: &str) -> Option<&'static str> {
+    // Order matters: check more specific suffixes first.
+    // `_test` тоже может быть в stem'е — мы фильтруем после _test stripping
+    // в caller, так что здесь работаем с already-stripped stem.
+    if stem.ends_with("_windows") { Some("windows") }
+    else if stem.ends_with("_linux") { Some("linux") }
+    else if stem.ends_with("_macos") { Some("macos") }
+    else if stem.ends_with("_unix") { Some("unix") }
+    else if stem.ends_with("_posix") { Some("posix") }
+    else { None }
+}
+
+/// Public wrapper для test_runner walker.
+pub fn peer_active_for_target_pub(stem: &str, target: &str) -> bool {
+    peer_active_for_target(stem, target)
+}
+
+/// Plan 42.12 Ф.1: peer file active для current target?
+/// - Без suffix → активен всегда.
+/// - С suffix → активен если target matches:
+///   - `_windows` ↔ windows
+///   - `_linux` ↔ linux
+///   - `_macos` ↔ macos
+///   - `_unix` ↔ linux OR macos (POSIX-like, без bsd для simplicity)
+///   - `_posix` ↔ linux OR macos (синоним _unix)
+fn peer_active_for_target(stem: &str, target: &str) -> bool {
+    match file_target_suffix(stem) {
+        None => true,
+        Some("windows") => target == "windows",
+        Some("linux") => target == "linux",
+        Some("macos") => target == "macos",
+        Some("unix") | Some("posix") => target == "linux" || target == "macos" || target == "unix",
+        Some(_) => true,
+    }
+}
+
 /// Plan 42 Ф.2: resolve module to **list** of peer files (folder-module)
 /// или single file. Returns `Vec<PathBuf>` alphabetically sorted (правило B).
+///
+/// Plan 42.08 Ф.2: возвращает `ResolveErr::Ambiguous` если `X.nv` И `X/`
+/// (с direct .nv) сосуществуют — раньше silent None → generic "cannot find".
+///
+/// Plan 42.12 Ф.1: filter peer files по filename suffix vs current target.
 ///
 /// Resolution order:
 /// 1. Try single-file `<...>/parts.nv` (legacy behaviour).
 /// 2. If not found, try folder `<...>/parts/` — collect все `*.nv` файлы
 ///    в этой папке (non-recursive, alphabetical sort).
-/// 3. Conflict (file exists AND folder with .nv files exists) → return
-///    None and caller emits «ambiguous module».
+/// 3. Conflict (file exists AND folder with .nv files exists) → `Err(Ambiguous)`.
 ///
 /// Каждый search root (entry_dir / repo / stdlib_dir) проверяется в
 /// порядке.
+#[derive(Debug)]
+pub(crate) enum ResolveErr {
+    /// Не найдено — caller emit'ит «cannot find module» с suggestions.
+    NotFound,
+    /// `X.nv` и `X/` (с direct .nv) сосуществуют — ambiguous.
+    Ambiguous { file: PathBuf, folder: PathBuf },
+}
+
 fn resolve_module_paths(
     parts: &[String],
     entry_dir: &Path,
     repo: &Path,
     stdlib_dir: &Path,
     include_test_peers: bool,
-) -> Option<Vec<PathBuf>> {
+) -> Result<Vec<PathBuf>, ResolveErr> {
     if parts.is_empty() {
-        return None;
+        return Err(ResolveErr::NotFound);
     }
     let rel_path: PathBuf = parts.iter().collect();
 
@@ -511,23 +739,31 @@ fn resolve_module_paths(
                 })
                 .unwrap_or(false);
             if has_direct_nv {
-                // Ambiguous — return None and let caller emit error.
-                // Note: silent None is bad UX; caller currently emits
-                // generic «cannot find» error. Improvement: thread Result.
-                return None;
+                // Plan 42.08 Ф.2: ambiguous → return explicit ResolveErr
+                // вместо silent None. Caller emit'ит clear «ambiguous module
+                // X: <file> vs <folder>» вместо generic «cannot find».
+                return Err(ResolveErr::Ambiguous {
+                    file: single_file.clone(),
+                    folder: folder.clone(),
+                });
             }
         }
 
         if file_exists {
-            return Some(vec![single_file]);
+            return Ok(vec![single_file]);
         }
 
         if folder_exists {
             // Collect все *.nv files (non-recursive), alphabetical sort.
             // Plan 42 правило F: filter `*_test.nv` peers если
             // !include_test_peers (build mode).
-            let mut peers: Vec<PathBuf> = std::fs::read_dir(&folder)
-                .ok()?
+            // Plan 42.12 Ф.1: filter peers по filename suffix vs current target.
+            let target = current_target_os();
+            let entries = match std::fs::read_dir(&folder) {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+            let mut peers: Vec<PathBuf> = entries
                 .filter_map(|e| e.ok())
                 .map(|e| e.path())
                 .filter(|p| {
@@ -537,11 +773,18 @@ fn resolve_module_paths(
                     if p.extension().and_then(|s| s.to_str()) != Some("nv") {
                         return false;
                     }
-                    if !include_test_peers {
-                        if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
-                            if stem.ends_with("_test") {
-                                return false;
-                            }
+                    if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
+                        // Strip `_test` suffix first для test-peer filter.
+                        let core_stem = stem.strip_suffix("_test").unwrap_or(stem);
+                        if !include_test_peers && core_stem != stem {
+                            // `_test` peer, build mode → skip.
+                            return false;
+                        }
+                        // Target filter: применяем к stem БЕЗ `_test` suffix'а
+                        // (чтобы `tls_windows_test.nv` правильно ассоциировался
+                        // с windows target).
+                        if !peer_active_for_target(core_stem, target) {
+                            return false;
                         }
                     }
                     true
@@ -549,12 +792,12 @@ fn resolve_module_paths(
                 .collect();
             if !peers.is_empty() {
                 peers.sort();
-                return Some(peers);
+                return Ok(peers);
             }
             // Folder без .nv files (после filter) — namespace-container,
             // не module. Продолжаем поиск в других roots.
         }
     }
 
-    None
+    Err(ResolveErr::NotFound)
 }

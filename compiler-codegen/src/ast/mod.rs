@@ -66,6 +66,7 @@ pub struct PeerFile {
 #[derive(Debug, Clone)]
 pub struct ModuleAttr {
     pub kind: ModuleAttrKind,
+    /// Для `#forbid` — список эффектов. Для `#cfg` — пусто (predicate в kind).
     pub effects: Vec<String>,
     pub span: Span,
 }
@@ -75,6 +76,27 @@ pub enum ModuleAttrKind {
     /// `#forbid X, Y` — все functions module не могут использовать
     /// эти effects (compile error через capability check).
     Forbid,
+    /// Plan 42.12 Ф.2: `#cfg(feature = "X")` или `#cfg(target_os = "Y")` —
+    /// module/peer активен только при matching condition.
+    /// Поскольку filename suffix (Ф.1) покрывает 90% target_os кейсов,
+    /// `#cfg(target_os)` рекомендуется только для item-level (Ф.3).
+    Cfg(CfgPredicate),
+    /// Plan 42.11: `#doc "..."` — module-level documentation line.
+    /// Multi-peer merging: все `#doc` строки из всех peers concat'аются
+    /// в alphabetical filename order. AI-first signal: LLM видит
+    /// module purpose прямо в peer-файле без CLI invoke.
+    /// Consumer: Plan 45 (nova doc).
+    Doc(String),
+}
+
+/// Plan 42.12 Ф.2: cfg predicate (strict minimal, no `any/all/not`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CfgPredicate {
+    /// `#cfg(feature = "X")` — active если feature `X` в `nova.toml [features]`
+    /// AND enabled через `--features` CLI flag.
+    Feature(String),
+    /// `#cfg(target_os = "Y")` — active если current target matches.
+    TargetOs(String),
 }
 
 /// Plan 35 sub-plan 35.A (R26): селективный import — `import X.Y.{A, B as C}`.
@@ -342,6 +364,12 @@ pub struct TypeDecl {
     /// assignments, на выходе mut-методов. SMT-verify в 33.3.
     /// Пустой вектор у типов без invariants (backward-compat).
     pub invariants: Vec<Contract>,
+    /// Plan 33.3 Ф.9 (D24): `axiom <name>(binders) => <formula>` —
+    /// global formulas про `pure_view` ops эффекта. Применимо только к
+    /// `TypeDeclKind::Effect`; на других типах пустой Vec.
+    /// При SMT verify добавляются как глобальные `assert` в любом
+    /// scope где эффект импортирован.
+    pub axioms: Vec<EffectAxiom>,
 }
 
 #[derive(Debug, Clone)]
@@ -410,6 +438,54 @@ pub struct EffectMethod {
     pub params: Vec<Param>,
     pub effects: Vec<TypeRef>,
     pub return_type: Option<TypeRef>,
+    pub span: Span,
+    /// Plan 33.3 Ф.9 (D24): kind операции — Operation (default,
+    /// действие через handler) vs PureView (наблюдение состояния).
+    /// PureView-методы:
+    ///   - ВНУТРИ effect-блока объявляются как `pure_view name(args) -> R`.
+    ///   - Не имеют side-effects, не вызываются как handler-actions.
+    ///   - Используются в контрактах функций (если эффект в сигнатуре).
+    ///   - SMT кодируются как uninterpreted functions (UF).
+    ///   - Backward-compat: для protocol-методов всегда Operation.
+    pub kind: EffectOpKind,
+}
+
+/// Plan 33.3 Ф.9 (D24): Operation vs PureView для effect-метода.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EffectOpKind {
+    /// Обычная operation — side-effecting, dispatch через handler.
+    Operation,
+    /// `pure_view` — read-only observation эффект-state'а. Не вызывается
+    /// напрямую; используется в контрактах. SMT-side — uninterpreted
+    /// function; semantics задаётся через `axiom <expr>`.
+    PureView,
+}
+
+/// Plan 33.3 Ф.9 (D24): глобальная формула про pure_view-ops эффекта.
+///
+/// Пример:
+/// ```nova
+/// type Db effect {
+///     SetBalance(id AccountId, x money)
+///     pure_view balance(id AccountId) -> money
+///     axiom non_negative(id) => balance(id) >= 0
+///     axiom after_set(id, x) =>
+///         post(SetBalance(id, x))(balance(id)) == x
+/// }
+/// ```
+///
+/// `binders` — параметры формулы (свободные переменные).
+/// `formula` обязана быть `bool`-выражением; видны binders + все
+/// pure_view ops эффекта.
+#[derive(Debug, Clone)]
+pub struct EffectAxiom {
+    pub name: String,
+    /// Параметры формулы: `axiom foo(id, x) => ...` имеет binders
+    /// `[(id, ?), (x, ?)]`. Типы выводятся из usage в `formula` или
+    /// объявляются явно как `id: AccountId, x: money` (V1 — без явных
+    /// типов, выводятся из pure_view сигнатур).
+    pub binders: Vec<String>,
+    pub formula: Expr,
     pub span: Span,
 }
 
@@ -921,6 +997,27 @@ pub struct WithBinding {
     pub effect: TypeRef,
     pub handler: Expr,
     pub span: Span,
+    /// Plan 33.3 Ф.9.6: верификационный статус handler'а для этого
+    /// эффекта. Required когда body использует функции с контрактами,
+    /// ссылающимися на pure_view данного эффекта (gate в types/mod.rs).
+    /// По умолчанию — `Unverified`.
+    pub verification: HandlerVerification,
+}
+
+/// Plan 33.3 Ф.9.6 (D24): верификация handler'а для конкретного эффекта.
+///
+/// - `Unverified` — default. Handler не проверен и не trusted; использовать
+///   нельзя если body вызывает fn с pure_view-contract'ами этого эффекта.
+/// - `Verify` — `#verify_handler`. Symbolic verification handler.action
+///   body против axiom'ов эффекта (Ф.9.7). До Ф.9.7 — treated как
+///   placeholder (Ф.9.6 принимает синтаксис, но не верифицирует).
+/// - `Trusted` — `#trusted_handler`. Программист берёт ответственность,
+///   что handler корректно реализует axioms эффекта. Без verification.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HandlerVerification {
+    Unverified,
+    Verify,
+    Trusted,
 }
 
 #[derive(Debug, Clone)]

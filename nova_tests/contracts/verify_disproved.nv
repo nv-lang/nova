@@ -7,7 +7,7 @@
 
 module contracts.verify_disproved
 
-#must_verify
+#verify
 fn wrong_const() -> int
     ensures result == 42
 => 100

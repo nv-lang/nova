@@ -1,0 +1,17 @@
+// EXPECT_COMPILE_ERROR contract violation in `check_balance`
+// REQUIRES_SMT_BACKEND z3
+//
+// Plan 33.3 Ф.9 negative: ТОТ ЖЕ контракт что в
+// z3_pure_view_axiom_positive.nv, НО без axiom non_negative.
+// Z3 не знает range balance'а → counterexample (balance(id) < 0).
+
+module contracts.z3_pure_view_no_axiom_fail
+
+type Db effect {
+    #pure balance(id int) -> int
+}
+
+#verify
+fn check_balance(id int) Db -> int
+    ensures balance(id) >= 0
+=> 0

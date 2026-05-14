@@ -1,0 +1,10 @@
+// EXPECT_COMPILE_ERROR pure_view `balance` expects 1 arg(s), got 2
+//
+// Plan 33.3 Ф.9: axiom вызывает pure_view с неверной арностью.
+
+module contracts.f9_axiom_arity_mismatch_fail
+
+type Db effect {
+    #pure balance(id int) -> int
+    axiom bad(id, extra) => balance(id, extra) >= 0
+}

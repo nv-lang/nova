@@ -242,8 +242,12 @@ module admin
 declaration. Это **Nova-specific advantage**. Production-grade security
 boundary.
 
-**Sub-plan 42.A**: design + impl — отдельная phase после MVP. Не
-блокер для Plan 42 closure, но reserve syntax уже сейчас.
+**Sub-plan 42.10** ✅ ЗАКРЫТ 2026-05-14: `_module.nv` convention
+реализован. Module-level `#forbid` пропагируется всеми peers через
+`inherited_attrs` в `resolve_imports_inline_ex`. CapabilityCtx
+применяет к compiled module. `#requires` НЕ реализован — отвергнут
+(implicit effects in signatures противоречат D62). См.
+[42.10-module-level-forbid.md](42.10-module-level-forbid.md).
 
 ### J. `nova doc <module>` — collect public API from all peers
 
@@ -512,14 +516,10 @@ decl типов уже работает (Plan 36 followup). Verify на test'е.
   simplifications.md). Если когда-нибудь fn-level scope станет
   настолько частым случаем что block wrap стал code-smell —
   пересмотреть; до тех пор `forbid X { body }` достаточен.
-- **42.4 — per-file imports scope** — детальный план в
-  [42.4-per-file-imports-scope.md](42.4-per-file-imports-scope.md)
-  (2026-05-14, scope ~600-800 LOC, 2-3 commit'а). Закрытие правила C
-  production audit: AST refactor `Module.files: Vec<SourceFile>` +
-  FileRegistry activation + span walker + type-checker per-peer name
-  resolution. В bootstrap нет видимого spec violation (нет folder-
-  modules с cross-peer imports в std/* и тестах), но preemptive fix
-  перед production-scale stdlib.
+- **42.04 — per-file imports scope** ✅ ЗАКРЫТ 2026-05-14 — детальный
+  план в [42.04-per-file-imports-scope.md](42.04-per-file-imports-scope.md).
+  Шаги 1-3 + позитивный тест. Rule C частично enforced (Path-form не
+  проверяется — см. [M10] в simplifications.md).
 - **42.5 — 2-pass codegen** (правило D). Pass 1 emit forward decls
   для всех Fn/Type/Const, Pass 2 emit bodies. Текущий single-pass
   works для всех use cases bootstrap; sub-plan когда mutually

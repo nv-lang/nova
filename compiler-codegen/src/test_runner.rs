@@ -1907,13 +1907,27 @@ fn is_folder_module_peer(path: &Path) -> bool {
         Some(p) => p,
         None => return false,
     };
+    // Plan 42.12 Ф.1: filter peers по target — `_windows.nv` peer на Linux
+    // skip'ается, не учитывается в folder-module detection.
+    let target = crate::imports::current_target_os();
     let entries: Vec<PathBuf> = match std::fs::read_dir(parent) {
         Ok(it) => it
             .filter_map(|e| e.ok())
             .map(|e| e.path())
             .filter(|p| {
-                p.is_file()
-                    && p.extension().and_then(|s| s.to_str()) == Some("nv")
+                if !p.is_file() {
+                    return false;
+                }
+                if p.extension().and_then(|s| s.to_str()) != Some("nv") {
+                    return false;
+                }
+                if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
+                    let core_stem = stem.strip_suffix("_test").unwrap_or(stem);
+                    if !crate::imports::peer_active_for_target_pub(core_stem, target) {
+                        return false;
+                    }
+                }
+                true
             })
             .collect(),
         Err(_) => return false,
@@ -2750,6 +2764,9 @@ pub fn walk_nv(root: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
     // `module X`), они НЕ компилируются как standalone test entries
     // (нет main, peers depend друг от друга). Folder-module
     // компилируется только через import из внешнего entry.
+    // Plan 42.12 Ф.1: target OS filter — `_windows.nv` / `_linux.nv` /
+    // `_macos.nv` standalone tests skip'аются на других платформах.
+    let target = crate::imports::current_target_os();
     let mut direct_nv: Vec<PathBuf> = Vec::new();
     let mut sub_dirs: Vec<PathBuf> = Vec::new();
     for entry in entries {
@@ -2758,6 +2775,19 @@ pub fn walk_nv(root: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
         if path.is_dir() {
             sub_dirs.push(path);
         } else if path.extension().and_then(|s| s.to_str()) == Some("nv") {
+            // Plan 42.12 Ф.1: standalone test с OS-specific suffix
+            // skip'ается на других платформах.
+            if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                // Plan 42.10: `_module.nv` — module-config peer, никогда
+                // не запускается как standalone test (нет items, только attrs).
+                if stem == "_module" {
+                    continue;
+                }
+                let core_stem = stem.strip_suffix("_test").unwrap_or(stem);
+                if !crate::imports::peer_active_for_target_pub(core_stem, target) {
+                    continue;
+                }
+            }
             direct_nv.push(path);
         }
     }

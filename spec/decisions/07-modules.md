@@ -9,6 +9,9 @@
 | [D29](#d29-модули-и-импорты) | Модули и импорты |
 | [D47](#d47-видимость-деклараций) | Видимость деклараций (расширение D5) |
 | [D78](#d78-package-tooling-novatoml-novalock-registry-chain-workspace) | Package tooling: `nova.toml`, `nova.lock`, registry chain, workspace |
+| [D99](#d99-conditional-compilation-filename-suffix--cfg) | Conditional compilation: filename suffix + `#cfg` |
+| [D100](#d100-_modulenv-peer--module-config-convention) | `_module.nv` peer — module-config convention |
+| [D101](#d101-doc-attribute--module-level-inline-documentation) | `#doc` attribute — module-level inline documentation |
 
 ---
 
@@ -1117,3 +1120,176 @@ nova_tests/
 - Хрупкость: insert требует shift всех соседей или поиск slot'а.
 
 После миграции (commit `a33b245`) этот anti-pattern удалён.
+
+
+---
+
+## D99. Conditional compilation: filename suffix + `#cfg`
+
+### Что
+
+Два механизма platform/feature-conditional кода:
+
+1. **Filename suffix convention** (Go-style) — для **OS routing**:
+   ```
+   std/net/
+   ├── tls.nv               // shared signatures, always active
+   ├── tls_windows.nv       // Windows-only peer
+   ├── tls_linux.nv         // Linux-only peer
+   └── tls_macos.nv         // macOS-only peer
+   ```
+   Recognized suffixes: `_windows`, `_linux`, `_macos`, `_unix`,
+   `_posix`. Применяется к **peer-files** в folder-modules и к
+   standalone tests. Без suffix → active всегда.
+
+2. **`#cfg` attribute** (Rust-style minimal) — для **feature flags**
+   и item-level OS routing:
+   ```nova
+   module net.tls
+   #cfg(feature = "experimental_io_uring")
+
+   export fn connect(host str) -> Connection { ... }
+   ```
+   Recognized predicates: `#cfg(feature = "X")`,
+   `#cfg(target_os = "Y")`. Strict minimal — **никаких** `any/all/not`
+   composition. Если нужна композиция — два attribute блока (AND
+   semantic) или filename suffix.
+
+### Семантика
+
+| Mechanism | Scope | Detection |
+|---|---|---|
+| Filename suffix | peer-file / standalone test | filename stem suffix |
+| `#cfg(feature)` | peer-file / module (Ф.3: item) | `NOVA_FEATURES` env / `--features` CLI |
+| `#cfg(target_os)` | peer-file / module (Ф.3: item) | `NOVA_TARGET_OS` env / host OS default |
+
+**AND semantic** для multiple `#cfg`: peer active iff **all** cfg
+predicates match. Один inactive → peer skip целиком (не parsed
+items, не register peer_file, не recurse imports).
+
+### Что НЕ входит
+
+- `any(...)`, `all(...)`, `not(...)` — strict minimal.
+- `#cfg` в expression position (`if #cfg(target_os = ...) { ... }`).
+- `#cfg(target_arch = ...)` — на ARM/x86 differences. Future, если
+  понадобится.
+- Cross-compile toolchain integration — `--target=linux` на Windows-
+  host требует cross C-toolchain (separate plan).
+
+### Почему
+
+Конкретные numbers vs альтернатив:
+
+- **Go-only filename suffix** — мощно для OS routing, слабо для
+  feature flags. Plan 18 P0 (TLS) требует и того, и другого.
+- **Rust full `#[cfg(...)]` system** — рабочее, но `any/all/not` +
+  cfg-expr + cfg-attr — 3× complexity. Bootstrap не выдержит.
+- **Только runtime branching** — dead code в binary + security risk
+  (включён код для другой OS).
+
+Filename + minimal `#cfg` покрывает 90% production кейсов при 10%
+complexity Rust'а.
+
+### Связь
+
+- [Plan 42](../../docs/plans/42-folder-modules.md) — folder-modules.
+- [Plan 42.12](../../docs/plans/42.12-cfg-conditional-compilation.md) — реализация.
+- [Plan 18](../../docs/plans/18-stdlib-roadmap.md) P0 — unblock'aется D99.
+
+
+---
+
+## D100. `_module.nv` peer — module-config convention
+
+### Что
+
+Опциональный special peer-файл с именем `_module.nv` в folder-module
+с module-level attributes (`#forbid`, `#doc`, `#cfg`). Эти attributes
+**наследуются всеми peers** этого folder-module.
+
+```
+admin/
+├── _module.nv      // #forbid Net  (module-level)
+├── users.nv        // inherits #forbid Net
+├── audit.nv        // inherits #forbid Net
+└── helpers.nv      // inherits #forbid Net
+```
+
+### Правила
+
+1. `_module.nv` обязан декларировать тот же `module parent.X` что и
+   остальные peers (rev-3 manifest check).
+2. Может содержать **ТОЛЬКО** module-level attributes — никаких
+   `items` (Fn/Type/Const/Test/Let). Парсер не enforced'ит, но
+   convention strict.
+3. `#forbid X, Y` — applied capability-check'ом ко всем functions
+   compiled module (включая peer'ы и transitive imports).
+4. `#doc "..."` — accumulated for [D101](#d101) → Plan 45 consumer.
+5. `#cfg(...)` — определяет active state ВСЕГО folder-module (если
+   `_module.nv` cfg-off, весь folder skip'ается).
+6. `_module.nv` НЕ запускается как standalone test (test_runner walker
+   exclude'ит).
+
+### Семантика propagation
+
+Реализация: `resolve_imports_inline_ex` обнаруживает `_module.nv` peers
+импортированных folder-modules, его attrs push'ятся в `inherited_attrs`,
+которые merg'аются в **entry's** `module.attrs` в конце resolve loop.
+CapabilityCtx видит merged attrs естественно.
+
+Bootstrap limitation: attrs `_module.nv` **entry's own** folder-module
+не пропагируются назад в entry (entry парсится first). Workaround:
+объявить `#forbid` в самом entry-peer. Production-grade refactor —
+parse entry's folder-module unified первым.
+
+### Связь
+
+- [Plan 42](../../docs/plans/42-folder-modules.md) правило I.
+- [Plan 42.10](../../docs/plans/42.10-module-level-forbid.md) — реализация.
+- [Plan 42.01](../../docs/plans/42-folder-modules.md#42-1) — file-level `#forbid`.
+
+---
+
+## D101. `#doc` attribute — module-level inline documentation
+
+### Что
+
+Module-level documentation через `#doc "..."` attribute. Multi-line
+через несколько `#doc` строк.
+
+```nova
+module src.admin
+#doc "Модуль admin — управление пользователями и аудит."
+#doc ""
+#doc "- Все операции требуют Auth capability."
+#doc "- create_user логирует в audit."
+
+export fn create_user(...) { ... }
+```
+
+### Правила
+
+1. `#doc "..."` идёт **после** `module` declaration, до items.
+2. Каждый `#doc` — одна строка text (regular `"..."` string literal,
+   без интерполяции).
+3. Multiple `#doc` накапливаются в порядке появления (вкладывается в
+   `Module.attrs` как `ModuleAttrKind::Doc(String)`).
+4. Codegen и type-checker **игнорируют** `#doc` — это инструмент для
+   tooling (Plan 45 `nova doc`).
+5. Multi-peer: каждый peer добавляет свои `#doc`. Plan 45 consumer
+   определяет порядок merge (рекомендация: alphabetical filename).
+
+### AI-first rationale
+
+Rust `//!`-style inner doc-comments — IDE hover показывает purpose.
+Nova `nova doc <module>` (Plan 45) — CLI. Inline `#doc` — **в коде**,
+LLM получает context при чтении файла без CLI invoke.
+
+Convention для multi-line: каждая строка отдельным `#doc`. Heredoc-
+syntax не вводится (bootstrap simplicity).
+
+### Связь
+
+- [Plan 42.11](../../docs/plans/42.11-inline-module-doc.md) — реализация.
+- [Plan 45](../../docs/plans/45-nova-doc.md) — `nova doc` consumer.
+- [D100](#d100) — `_module.nv` может содержать `#doc` strings.

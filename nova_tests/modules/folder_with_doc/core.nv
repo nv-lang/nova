@@ -1,0 +1,12 @@
+// Plan 42.11: peer с module-level doc attribute.
+// `#doc "..."` строки — AI-first signal для LLM (видно прямо в файле,
+// без CLI invoke). Consumer — Plan 45 (nova doc tooling).
+
+module modules.folder_with_doc
+#doc "Модуль folder_with_doc — demo для Plan 42.11."
+#doc ""
+#doc "- Содержит две peer-файла: core.nv + extra.nv."
+#doc "- Multi-peer doc lines конкатенируются alphabetical filename order."
+
+export fn greet() -> str =>
+    "hello from doc'd module"

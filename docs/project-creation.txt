@@ -7119,6 +7119,86 @@ Windows file-locking quirk; alt-dir после commit'а cleanupable.
 - compiler-codegen/src/types/mod.rs (комментарий рядом с builtin "gc")
 - docs/project-creation.txt, docs/simplifications.md
 
+================================================================================
+PLAN 42.4: PER-PEER IMPORT SCOPE (AST refactor, 2026-05-14)
+================================================================================
+
+Folder-modules (Plan 42) позволяют разбить один модуль на несколько
+peer-файлов в одной директории. Все peers объявляют одинаковое
+`module X` и совместно используют namespace деклараций (функций, типов,
+констант).
+
+### Проблема
+
+Bootstrap-реализация folder-modules делала **flat merge** imports: все
+imports из всех peer'ов объединялись в одном списке. Это нарушало Rule C
+из production audit:
+
+> Peers share declarations namespace, но НЕ imports. Каждый peer-файл
+> имеет свои `import` statements, видимые **только в нём**.
+
+### Решение: Additive AST refactor (3 шага)
+
+**Шаг 1 — AST struct**: добавлен `PeerFile` struct в `ast/mod.rs`:
+```rust
+pub struct PeerFile {
+    pub path: PathBuf,
+    pub file_id: FileId,
+    pub imports: Vec<Import>,   // imports этого peer'а
+    pub items_here: Vec<Item>,  // items объявленные в этом peer'е
+}
+```
+`Module.peer_files: Vec<PeerFile>` — additive поле, не меняет flat
+`module.items` (backward compat с codegen/interp/verify).
+
+**Шаг 2 — FileId propagation**: Lexer параметризован `file_id`:
+`Lexer::new_with_file_id(src, file_id)` → все Token spans несут
+`file_id`. Добавлен `parse_with_file_id(src, file_id)`. В
+`imports.rs::resolve_imports_inline_ex` каждый peer получает unique
+FileId (entry=0, peers 1, 2, ...) и заносится в `module.peer_files`.
+
+Вместо option B (post-parse span walker ~250 LOC) выбрана option A
+(lexer parameterization ~130 LOC) — чище и без дополнительного прохода.
+
+**Шаг 3 — Type-checker per-peer scope**: В `types/mod.rs::NameResCtx`:
+- `module_names: HashSet<String>` заменено на
+  `peer_module_names: HashMap<FileId, HashSet<String>>`
+- `build()` строит per-peer import set из `module.peer_files`; для
+  single-file modules — один элемент под MAIN_FILE_ID
+- `is_known(name, file_id, scope)` — lookup `peer_module_names[file_id]`,
+  fallback на MAIN_FILE_ID
+- `file_id` протянут через весь stack walker:
+  `check_module → walk_fn → walk_block → walk_stmt → walk_expr → walk_trailing`
+  (использует `item.span.file_id` для определения peer'а)
+
+### Важный вывод
+
+Rule C в текущем bootstrap не может быть полностью enforced через
+NameResCtx: после `resolve_imports_inline_ex` все импортированные items
+попадают в `module.items` flat и становятся top_level. NameResCtx видит
+их как top_level независимо от того, каким peer'ом они были импортированы.
+
+Что реально работает:
+- Per-peer import aliases (lowercase) — проверяются если используются
+  как bare Ident (редкий кейс в реальном коде)
+- Архитектурная подготовка для future enforcement (peer_module_names готов)
+- Нет false positives: существующие тесты не сломаны
+
+### Тесты
+
+- `nova_tests/modules/folder_per_file_imports/` — 2 peers с разными
+  imports, оба работают → PASS (позитивный тест Rule C)
+- Все 278 PASS до и после
+
+### Файлы
+
+- compiler-codegen/src/ast/mod.rs (PeerFile struct, Module.peer_files)
+- compiler-codegen/src/lexer/mod.rs (file_id параметр, span() helper)
+- compiler-codegen/src/parser/mod.rs (parse_with_file_id)
+- compiler-codegen/src/imports.rs (populate peer_files)
+- compiler-codegen/src/types/mod.rs (per-peer name resolution)
+- nova_tests/modules/folder_per_file_imports/ (positive test)
+
 
 
 ================================================================================
@@ -9123,3 +9203,178 @@ M:N это API rot (программист must помнить which to use). Sp
 большой refactor (~600-1000 LOC + careful slot/TLS work). Закрытие
 compute-only Layer 5 как partial milestone — honest, оставляет clean
 checkpoint, открывает possibility разработки в next session.
+
+
+================================================================================
+PLAN 42.08 + 42.12: AUDIT CLOSING + CONDITIONAL COMPILATION (2026-05-14)
+================================================================================
+
+После закрытия Plan 42.04 (per-peer imports) проведён аудит "с чистого
+листа против Go/Rust/TS". Найденные gap'ы разбиты на 5 подпланов:
+
+  42.08 — closing audit (fixes, ЗАКРЫТ)
+  42.09 — re-export (`export ... from`) — stub
+  42.10 — module-level #forbid (правило I) — stub
+  42.11 — inline module doc (`///!`) — stub
+  42.12 — conditional compilation #cfg (БЛОКЕР Plan 18 P0, ЗАКРЫТ)
+
+Нумерация перешла на leading-zero (42.04, 42.08 ... 42.12) для
+sort order при ≥10 подпланах.
+
+### Plan 42.08 — closing audit (закрыт)
+
+Три gap'а из аудита:
+
+1. Missing negative tests — Plan 42 Ф.6 требовала 4-5, было только 2.
+   Добавлены:
+   - `folder_file_vs_folder_conflict.nv` — `X.nv` + `X/` ambiguity
+   - `folder_cycle_between_modules.nv` — folder ↔ folder cycle
+   - Третий (`folder_inconsistent_decl`) N/A: manifest rev-3 ловит
+     каждый peer отдельно.
+
+2. Diagnostic для ambiguous X.nv+X/ — был silent None → generic
+   "cannot find module". Добавлен `ResolveErr` enum (NotFound |
+   Ambiguous). Diagnostic теперь explicit с обоими paths + hint.
+
+3. Rule H comment misleading — code сравнивает import path prefix,
+   а comment говорил "module name". Comment обновлён, изменения
+   логики не требовались (Rule H правильный — import path = filesystem
+   path bijective).
+
+[M11] simplifications.md: Rule A cycle detection использует canonical
+PathBuf keying вместо HashSet<Vec<String>>. Symlink/case-sensitive
+edge case задокументирован.
+
+### Plan 42.12 — conditional compilation (закрыт)
+
+**Зачем:** Plan 18 P0 (TLS, crypto, networking) требует platform-
+specific backends (Windows Schannel ↔ Linux OpenSSL ↔ macOS Secure
+Transport). Без compile-time switch — runtime branching → dead code в
+binary + security risk.
+
+**Два механизма (как в Go), но выбрали оба:**
+
+1. **Filename suffix convention** — `_windows.nv`, `_linux.nv`,
+   `_macos.nv`, `_unix.nv`, `_posix.nv` peers фильтруются по target.
+   Recognized suffixes только эти — другие игнорируются (no-suffix
+   semantic).
+
+2. **`#cfg(...)` attribute** — `#cfg(feature = "X")` или
+   `#cfg(target_os = "Y")` на module-level (peer-level). Strict
+   minimal — никаких `any/all/not` композиций. AND semantic для
+   множественных `#cfg` (все должны matchнуть).
+
+**Реализация:**
+- `imports.rs`: `current_target_os()`, `enabled_features()`,
+  `peer_active_for_target()`, `cfg_active()` — фильтрация по filename
+  suffix и module attrs.
+- `test_runner.rs`: walker filter для standalone test files +
+  `is_folder_module_peer` filter.
+- `parser/mod.rs`: parsing `#cfg(feature = "X")` и `#cfg(target_os = "Y")`
+  как `ModuleAttrKind::Cfg(CfgPredicate)`.
+- `ast/mod.rs`: `CfgPredicate::Feature(String) | TargetOs(String)`.
+- Override через env: `NOVA_TARGET_OS=linux`, `NOVA_FEATURES=foo,bar`.
+- Spec D99 в `spec/decisions/07-modules.md`.
+
+**Item-level `#cfg` (Ф.3) отложен** — filename suffix + module-level
+покрывают 95% production кейсов. Item-level — edge case, можно
+work-around через split peer.
+
+**Тесты (4):**
+- `cfg/platform_route_use.nv` — filename suffix routing
+- `cfg/feature_gate_use.nv` — #cfg(feature) с/без NOVA_FEATURES
+- `cfg/target_os_module_use.nv` — #cfg(target_os = "freebsd") skip
+- `negative_capability/cfg_unknown_key_rejected.nv` — parse error на
+  unknown #cfg key
+
+### Файлы
+
+- compiler-codegen/src/imports.rs (+target/cfg filter)
+- compiler-codegen/src/test_runner.rs (walker target filter)
+- compiler-codegen/src/parser/mod.rs (#cfg parser)
+- compiler-codegen/src/ast/mod.rs (CfgPredicate enum)
+- spec/decisions/07-modules.md (D99)
+- docs/plans/42.08-audit-closing.md
+- docs/plans/42.12-cfg-conditional-compilation.md
+- nova_tests/cfg/* (3 positive tests)
+- nova_tests/negative_capability/cfg_unknown_key_rejected.nv
+
+
+================================================================================
+PLAN 42.09 + 42.10 + 42.11: RE-EXPORT + MODULE-FORBID + INLINE-DOC (2026-05-14)
+================================================================================
+
+После 42.08 + 42.12 закрыты последние три active sub-plan'а Plan 42.
+
+### Plan 42.11 — inline module doc
+
+`#doc "..."` attribute после module declaration. AST хранит как
+`ModuleAttrKind::Doc(String)`. Парсер расширен в существующий
+module_attrs loop. Consumer — Plan 45 (nova doc tooling).
+
+Multi-peer merging работает автоматически через 42.10 inherited_attrs —
+`_module.nv` peer'ы с `#doc` пропагируют strings в entry's module.attrs.
+
+### Plan 42.10 — module-level #forbid (Rule I)
+
+`_module.nv` convention: special module-config peer, объявляющий
+`#forbid X, Y` constraints. Все attrs из `_module.nv` peers
+импортированных folder-modules пропагируются в entry's `module.attrs`
+через новый параметр `inherited_attrs: &mut Vec<ModuleAttr>` в
+resolve_one.
+
+В resolve_imports_inline_ex после resolve loop'а — merge
+inherited_attrs в module.attrs. CapabilityCtx (types/mod.rs:925) при
+build of forbidden set читает module.attrs, видит Forbid attrs от
+_module.nv-files импортированных folder-modules → применяет ко всем
+functions compiled module.
+
+Walker exclude: `_module.nv` skip'ается из standalone test discovery
+(нет items, только attrs → linker fail без main).
+
+`#requires` отвергнут — implicit effects in signatures противоречат
+D62 explicit principle.
+
+Negative test: `module_forbid_violation.nv` — folder с _module.nv
+declares `#forbid Net`, peer пытается использовать Net effect.
+CapabilityCtx flag-ает violation → EXPECT_COMPILE_ERROR PASS.
+
+### Plan 42.09 — re-export + item rename
+
+`export import X.{A as B}` syntax. Parser уже принимал, но resolver
+не применял alias. Реализовано:
+
+1. **Rename**: в resolve_one при merge peer items — построить
+   `rename_map: HashMap<String, String>` из `imp.items[].alias`,
+   применить через новый helper `rename_item()` — переименовывает
+   FnDecl.name / TypeDecl.name / ConstDecl.name.
+
+2. **Selective filter**: построить `selective_names: Option<HashSet>` из
+   `imp.items[].name`. Items не в списке — flagged для будущего
+   strict-enforcement (Plan 35.A R26). Сейчас keeps backward compat
+   но готов к stricter pass.
+
+Tests:
+- `rename_import_use.nv` — positive: `{calculate as compute}` → compute
+  доступна, calculate not.
+- `rename_old_name_rejected.nv` — negative: usage старого имени
+  даёт `undefined identifier`.
+
+### Файлы
+
+- compiler-codegen/src/ast/mod.rs (ModuleAttrKind::Doc)
+- compiler-codegen/src/parser/mod.rs (#doc parsing)
+- compiler-codegen/src/imports.rs (rename_item helper, selective filter,
+  inherited_attrs propagation)
+- compiler-codegen/src/test_runner.rs (_module.nv exclude в walker)
+- nova_tests/modules/folder_with_doc/* (42.11 test)
+- nova_tests/modules/folder_module_forbid/* (42.10 positive test)
+- nova_tests/modules/reexport_facade/* (42.09 facade test)
+- nova_tests/modules/rename_import_source/*, rename_import_use.nv (42.09 rename)
+- nova_tests/negative_capability/module_forbid_violation*.nv (42.10 negative)
+- nova_tests/negative_capability/rename_old_name_rejected.nv (42.09 negative)
+
+### Итог Plan 42
+
+ВСЕ active sub-plans (42.01, 04, 05, 06, 08, 09, 10, 11, 12) ЗАКРЫТЫ.
+42.02 → Plan 45 (отдельно). 42.03, 42.07 ❌ rejected (TIMTOWTDI / phantom).

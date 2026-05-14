@@ -1,0 +1,14 @@
+// Plan 42.09: smoke test — re-export через facade.
+//
+// reexport_facade/public.nv делает `export import` items из
+// reexport_facade.internal.impl. External user видит parse_internal
+// через facade без прямого import internal/.
+
+module modules.reexport_facade_use
+
+import nova_tests.modules.reexport_facade.{parse_internal, ping}
+
+test "facade re-export: parse_internal accessible через public" {
+    assert(parse_internal("hello") == 5)
+    assert(ping() == 7)
+}

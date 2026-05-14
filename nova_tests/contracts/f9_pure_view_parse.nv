@@ -1,0 +1,21 @@
+// Plan 33.3 Ф.9: pure_view + axiom — parse-level smoke test.
+//
+// Гарантия: парсер принимает `pure_view <op>(...) -> R` внутри effect
+// и `axiom name(binders) => <formula>` после ops. Полный SMT-цикл (UF
+// encoding + axiom assert + inconsistency check) — отдельные фазы.
+
+module contracts.f9_pure_view_parse
+
+type Db effect {
+    SetBalance(id int, amount int)
+    Withdraw(id int, amount int)
+    #pure balance(id int) -> int
+    axiom non_negative(id) => balance(id) >= 0
+}
+
+test "effect with pure_view and axioms parses" {
+    // Сам тест — что парсинг + тип-чек не упали. Контракт ниже
+    // ссылается на pure_view только если эффект импортирован
+    // (Ф.9.3 type-check). До этой фазы просто проверяем грамматику.
+    assert(1 + 1 == 2)
+}
