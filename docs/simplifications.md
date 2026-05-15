@@ -4589,18 +4589,15 @@ Sub-plans 35.A-E:
   * Ф.9.7 symbolic handler verification — `#verify` gate принимает атрибут
     но реальной Z3 верификации handler body ещё нет (placeholder). См. [V12].
 
-### [V7] Bounded quantifiers (`forall`/`exists`) — НЕ реализованы
-- **Где:** Plan 33.3 spec.
-- **Что упрощено:** `forall x in xs : P(x)` / `exists x in xs : P(x)` /
-  `forall i in lo..hi : P(i)` — парсер не принимает, в encode.rs
-  возвращается EncodingError::Unsupported.
-- **Почему:** Требует Z3 quantifier support + bounded encoding
-  (conjunction для known size; SMT forall с pattern для symbolic).
-- **Как чинить:** Plan 33.3 full Ф.10. Парсер расширяется на
-  `KwForall`/`KwExists` + range-syntax; encode.rs добавляет конъюнкцию/
-  Z3 forall с pattern annotation.
-- **Приоритет:** M — нужно для array-based алгоритмов (binary search,
-  sorting properties).
+### [ЗАКР 2026-05-15] Bounded quantifiers (`forall`/`exists`) — [V7]
+- **Закрыто (Plan 33.4 D.1.3):**
+  * `forall x in lo..hi : P(x)` / `exists x in lo..hi : P(x)` — контекстуальные
+    ключевые слова (не новые токены), парсятся в `ExprKind::Forall`/`Exists`.
+  * SMT encoding: Forall → `SmtTerm::Forall([x:Int], in_range => P(x))`;
+    Exists → `not(Forall([x:Int], in_range => not(P(x))))`.
+  * D.1.4: trigger-finding stub + eprintln warning при отсутствии trigger.
+  * Test: `nova_tests/contracts/quantifier_positive.nv` (70/70 PASS).
+- **Остаток:** Trigger pattern аннотации в SmtTerm IR — V2 (Plan 33.5).
 
 ### [V8] FP IEEE 754, strings beyond eq, sets/maps — НЕ реализованы
 - **Где:** Plan 33.3 Ф.11.
@@ -4682,15 +4679,13 @@ Sub-plans 35.A-E:
   * Loop havoc + preservation (полный SMT) — V2 (entry-check partial).
   * `decreases` в цикле SMT — Plan 33.4 D.1.x.
 
-### [V15] Frame SMT axiom — нет `var_post == var_pre` для non-modifies
-- **Где:** `verify/pipeline.rs` (нет frame axiom assertion).
-- **Что упрощено:** `modifies x, y` type-check'ится, но SMT не добавляет
-  frame axiom. Переменные вне `modifies` не equated с entry-state —
-  ensures с `old(z)` где `z ∉ modifies` не верифицируется.
-- **Почему:** Требует split-variable encoding (x → x_pre + x_post).
-  Текущий encoder не различает pre/post state.
-- **Как чинить:** Plan 33.4 D.1.2 — split-variable + frame axiom assertion.
-- **Приоритет:** M.
+### [ЗАКР 2026-05-15] Frame SMT axiom — [V15]
+- **Закрыто (Plan 33.4 D.1.2):**
+  * Для каждого параметра НЕ в `modifies`-списке: `(assert (= _old_x x))`.
+  * Z3 получает факт неизменности non-modified params; `ensures old(z)` верифицируется.
+  * `FrameTarget::Whole(Ident)` извлекает имена; ArrayElem/Field skipped.
+  * Test: `nova_tests/contracts/frame_smt_positive.nv` (70/70 PASS).
+- **Остаток:** split-variable encoding (x_pre/x_post) для mutable params — V2.
 
 ### [V16] BinderType enum для EffectAxiom.binders
 - **Закрыто (Plan 33.4 P1-5, 2026-05-15):**
