@@ -1,0 +1,20 @@
+// EXPECT_COMPILE_ERROR передаётся только по имени
+//
+// Plan 50 (D102 ревизия): правило keyword-only применяется к
+// static-методам (форма «конструктор»). `Box.make(7)` — `7` лёг
+// позиционно на `start`, у которого дефолт → ошибка; корректно —
+// `Box.make(start: 7)`.
+
+module negative_capability.p50_positional_default_static_method
+
+type Box {
+    base int
+}
+
+fn Box .make(start int = 100) -> Box =>
+    { base: start }
+
+test "positional arg on defaulted param of static method rejected" {
+    let _ = Box.make(7)
+    assert(true)
+}

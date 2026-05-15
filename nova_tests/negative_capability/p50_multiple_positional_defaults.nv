@@ -1,0 +1,19 @@
+// EXPECT_COMPILE_ERROR передаётся только по имени
+//
+// Plan 50 (D102 ревизия): несколько позиционных аргументов на дефолтных
+// параметрах. Реализация эмитит ОТДЕЛЬНУЮ диагностику на каждый
+// нарушающий аргумент (не «первый и стоп»), каждая с собственным
+// structured suggestion. Здесь `9000` → `port` и `true` → `flag` — оба
+// нарушают; оба позиционные, до именованных, поэтому keyword-only.
+
+module negative_capability.p50_multiple_positional_defaults
+
+fn connect(host str, port int = 8080, flag bool = false) -> int {
+    let f = if flag { 1 } else { 0 }
+    host.len + port + f
+}
+
+test "multiple positional args on defaulted params rejected" {
+    let _ = connect("localhost", 9000, true)
+    assert(true)
+}

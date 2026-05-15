@@ -1,0 +1,28 @@
+// Plan 50 Ф.2 ([M-interp-named] закрытие): именованные аргументы для
+// ИМПОРТИРОВАННОГО callee — переставленные named + опущенный дефолт.
+//
+// Codegen-путь: test_runner делает resolve_imports_inline + callnorm —
+// корректность раскладки проверяется этим тестом в полном прогоне.
+// Interp-путь (`nova run`): `cmd_run` теперь тоже делает
+// resolve_imports_inline перед callnorm — раньше импортированный callee
+// не нормализовался и переставленные named давали неверный результат.
+
+module named_params.imported_named_use
+
+import nova_tests.named_params.imported_mod.{configure}
+
+test "импортированный callee: дефолты опущены" {
+    // retries=3, verbose=false → 2 + 30 + 0
+    assert(configure("ab") == 2 + 30 + 0)
+}
+
+test "импортированный callee: переставленные named" {
+    // verbose до retries в source — раскладка в param-order обязательна.
+    // retries=5, verbose=true → 2 + 50 + 1000
+    assert(configure("ab", verbose: true, retries: 5) == 2 + 50 + 1000)
+}
+
+test "импортированный callee: обязательный позиционно + дефолтный по имени" {
+    // name="abc" позиционно, retries=2 named, verbose опущен (default false)
+    assert(configure("abc", retries: 2) == 3 + 20 + 0)
+}
