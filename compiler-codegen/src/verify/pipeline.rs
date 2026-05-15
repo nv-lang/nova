@@ -2079,12 +2079,39 @@ pub fn verify_handlers(module: &Module) -> Vec<Diagnostic> {
                 is_generic: !ax.generics.is_empty(),
             };
 
-            // V1: РµСЃР»Рё axiom СЃРѕРґРµСЂР¶РёС‚ `post(` вЂ” СЌС‚Рѕ post-condition axiom, skip.
-            // РћРїСЂРµРґРµР»СЏРµРј РїРѕ РЅР°Р»РёС‡РёСЋ РІС‹Р·РѕРІР° `post` РІ С„РѕСЂРјСѓР»Рµ.
+            // Ф.6: если axiom содержит `post(` — используем symbolic exec V2.
             if axiom_formula_has_post(&ax.formula) {
-                // Honest diagnostic: post-axiom verification requires V2.
-                // РќРµ error вЂ” РїСЂРѕСЃС‚Рѕ warning, С‡С‚Рѕ РїСЂРѕРІРµСЂРєР° РїСЂРѕРїСѓС‰РµРЅР°.
-                // РќРµ РїСѓС€РёРј РІ diagnostics (РЅРµ РѕС€РёР±РєР° СЃР°РјР° РїРѕ СЃРµР±Рµ) вЂ” РјРѕР»С‡Р° skip.
+                let result = verify_post_axiom_with_handler(
+                    &pipeline, &ax_info, &pure_views, methods, &effect_name, module, &inferred_pure,
+                );
+                match result {
+                    VerifyResult::Proven => {
+                        // post-axiom verified via symbolic execution.
+                    }
+                    VerifyResult::Disproved(_, cex) => {
+                        diagnostics.push(Diagnostic::new(
+                            format!(
+                                concat!(
+                                    "#verify handler for effect {}: ",
+                                    "post-axiom {} is NOT satisfied.
+  ",
+                                    "counterexample: {}
+  ",
+                                    "suggestion: fix handler action or view."
+                                ),
+                                effect_name, ax.name, cex,
+                            ),
+                            binding_span,
+                        ));
+                    }
+                    VerifyResult::Unknown(_reason) => {
+                        // Cannot verify this post-axiom - silent skip (not an error).
+                        let _ = _reason;
+                    }
+                    VerifyResult::EncodingFailed(_) => {
+                        // Encoding failed — silent skip.
+                    }
+                }
                 continue;
             }
 
@@ -2353,6 +2380,288 @@ fn verify_static_axiom_with_handler(
         SatResult::Unknown(reason) => {
             VerifyResult::Unknown(unknown_to_diag_message(reason))
         }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Ф.6: post(Action(args))(view(args)) symbolic exec V2
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Substitute all occurrences of `name` (as `ExprKind::Ident`) with
+/// `replacement` in the given expression tree (AST-level substitution).
+fn subst_ident_in_expr(
+    expr: &crate::ast::Expr,
+    name: &str,
+    replacement: &crate::ast::Expr,
+) -> crate::ast::Expr {
+    use crate::ast::ExprKind::*;
+    let new_kind = match &expr.kind {
+        Ident(n) if n == name => return replacement.clone(),
+        Binary { op, left, right } => Binary {
+            op: op.clone(),
+            left: Box::new(subst_ident_in_expr(left, name, replacement)),
+            right: Box::new(subst_ident_in_expr(right, name, replacement)),
+        },
+        Unary { op, operand } => Unary {
+            op: op.clone(),
+            operand: Box::new(subst_ident_in_expr(operand, name, replacement)),
+        },
+        Call { func, args, trailing } => Call {
+            func: Box::new(subst_ident_in_expr(func, name, replacement)),
+            args: args.iter().map(|a| subst_call_arg(a, name, replacement)).collect(),
+            trailing: trailing.clone(),
+        },
+        Member { obj, name: field } => Member {
+            obj: Box::new(subst_ident_in_expr(obj, name, replacement)),
+            name: field.clone(),
+        },
+        Index { obj, index } => Index {
+            obj: Box::new(subst_ident_in_expr(obj, name, replacement)),
+            index: Box::new(subst_ident_in_expr(index, name, replacement)),
+        },
+        // Everything else (literals, other idents, etc.) — clone as-is.
+        _ => return expr.clone(),
+    };
+    crate::ast::Expr { kind: new_kind, span: expr.span }
+}
+
+fn subst_call_arg(
+    arg: &crate::ast::CallArg,
+    name: &str,
+    replacement: &crate::ast::Expr,
+) -> crate::ast::CallArg {
+    match arg {
+        crate::ast::CallArg::Item(e) =>
+            crate::ast::CallArg::Item(subst_ident_in_expr(e, name, replacement)),
+        crate::ast::CallArg::Spread(e) =>
+            crate::ast::CallArg::Spread(subst_ident_in_expr(e, name, replacement)),
+        crate::ast::CallArg::Named { name: n, value } =>
+            crate::ast::CallArg::Named {
+                name: n.clone(),
+                value: subst_ident_in_expr(value, name, replacement),
+            },
+    }
+}
+
+/// Extract `(var_name, value_expr)` pairs from simple `Assign` stmts in block.
+/// Only `target = value` where target is a bare Ident. Other stmts are ignored.
+fn extract_block_assignments(block: &crate::ast::Block) -> Vec<(String, crate::ast::Expr)> {
+    let mut result = Vec::new();
+    for stmt in &block.stmts {
+        if let crate::ast::Stmt::Assign { target, value, .. } = stmt {
+            if let crate::ast::ExprKind::Ident(var) = &target.kind {
+                result.push((var.clone(), value.clone()));
+            }
+        }
+    }
+    result
+}
+
+/// Parse `post(ActionCall)(viewCall)` from a `Call` expression.
+/// Returns `(action_func_name, action_args, view_func_name, view_args)` or None.
+fn parse_post_call(
+    expr: &crate::ast::Expr,
+) -> Option<(String, Vec<crate::ast::Expr>, String, Vec<crate::ast::Expr>)> {
+    use crate::ast::ExprKind::*;
+    // Outer: post_with_action(view_args)
+    let Call { func: outer_func, args: view_args, .. } = &expr.kind else { return None };
+    // Inner func: post(action_call) — this is the "curried" result
+    let Call { func: post_ident, args: action_wrap_args, .. } = &outer_func.kind else { return None };
+    // post_ident must be Ident("post")
+    let Ident(post_name) = &post_ident.kind else { return None };
+    if post_name != "post" { return None; }
+    // action_wrap_args must be exactly 1
+    if action_wrap_args.len() != 1 { return None; }
+    let action_call_expr = action_wrap_args[0].expr();
+    // action_call_expr: ActionName(a1..an)
+    let Call { func: action_func, args: action_args, .. } = &action_call_expr.kind else { return None };
+    let Ident(action_name) = &action_func.kind else { return None };
+    // view_args: ViewName(v1..vn)
+    if view_args.len() != 1 { return None; }
+    let view_call_expr = view_args[0].expr();
+    let Call { func: view_func, args: view_args2, .. } = &view_call_expr.kind else { return None };
+    let Ident(view_name) = &view_func.kind else { return None };
+
+    Some((
+        action_name.clone(),
+        action_args.iter().map(|a| a.expr().clone()).collect(),
+        view_name.clone(),
+        view_args2.iter().map(|a| a.expr().clone()).collect(),
+    ))
+}
+
+/// Rewrite all `post(ActionCall)(viewCall)` subterms in `formula` by symbolic
+/// execution using handler `methods`. Returns `Some(rewritten)` if at least one
+/// post-term was rewritten and all encountered post-terms were handled.
+/// Returns `None` if a post-term was found but could not be decoded/handled.
+fn rewrite_post_in_expr(
+    formula: &crate::ast::Expr,
+    methods: &[crate::ast::HandlerMethod],
+) -> Result<(crate::ast::Expr, bool), String> {
+    use crate::ast::ExprKind::*;
+
+    // Try to rewrite this node as a post(...)(...) call.
+    if let Some((action_name, action_args, view_name, view_args)) = parse_post_call(formula) {
+        // Find action handler method (must have Block body).
+        let action_method = methods.iter().find(|m| m.name == action_name)
+            .ok_or_else(|| format!("handler method `{}` not found", action_name))?;
+        let action_block = match &action_method.body {
+            crate::ast::HandlerMethodBody::Block(b) => b,
+            crate::ast::HandlerMethodBody::Expr(_) =>
+                return Err(format!("action `{}` has Expr body, expected Block", action_name)),
+        };
+
+        // Find view handler method (must have Expr body).
+        let view_method = methods.iter().find(|m| m.name == view_name)
+            .ok_or_else(|| format!("handler method `{}` not found", view_name))?;
+        let view_expr = match &view_method.body {
+            crate::ast::HandlerMethodBody::Expr(e) => e.clone(),
+            crate::ast::HandlerMethodBody::Block(_) =>
+                return Err(format!("view `{}` has Block body, expected Expr", view_name)),
+        };
+
+        // Extract assignments from action block.
+        let assignments = extract_block_assignments(action_block);
+
+        // Apply assignments to view body (symbolic execution).
+        let mut result_expr = view_expr;
+        for (var, new_val) in &assignments {
+            result_expr = subst_ident_in_expr(&result_expr, var, new_val);
+        }
+
+        // Substitute action params → axiom action args.
+        let action_params: Vec<String> = action_method.params.iter()
+            .map(|p| p.name.clone()).collect();
+        for (param, arg_expr) in action_params.iter().zip(action_args.iter()) {
+            result_expr = subst_ident_in_expr(&result_expr, param, arg_expr);
+        }
+
+        // Substitute view params → axiom view args.
+        let view_params: Vec<String> = view_method.params.iter()
+            .map(|p| p.name.clone()).collect();
+        for (param, arg_expr) in view_params.iter().zip(view_args.iter()) {
+            result_expr = subst_ident_in_expr(&result_expr, param, arg_expr);
+        }
+
+        return Ok((result_expr, true));
+    }
+
+    // Recurse into sub-expressions.
+    let mut changed = false;
+    let new_kind = match &formula.kind {
+        Binary { op, left, right } => {
+            let (l, cl) = rewrite_post_in_expr(left, methods)?;
+            let (r, cr) = rewrite_post_in_expr(right, methods)?;
+            changed = cl || cr;
+            Binary { op: op.clone(), left: Box::new(l), right: Box::new(r) }
+        }
+        Unary { op, operand } => {
+            let (o, c) = rewrite_post_in_expr(operand, methods)?;
+            changed = c;
+            Unary { op: op.clone(), operand: Box::new(o) }
+        }
+        Call { func, args, trailing } => {
+            let (f, cf) = rewrite_post_in_expr(func, methods)?;
+            let mut new_args = Vec::with_capacity(args.len());
+            let mut ca = false;
+            for arg in args {
+                let (e, c) = rewrite_post_in_expr(arg.expr(), methods)?;
+                ca = ca || c;
+                new_args.push(match arg {
+                    crate::ast::CallArg::Item(_) => crate::ast::CallArg::Item(e),
+                    crate::ast::CallArg::Spread(_) => crate::ast::CallArg::Spread(e),
+                    crate::ast::CallArg::Named { name, .. } =>
+                        crate::ast::CallArg::Named { name: name.clone(), value: e },
+                });
+            }
+            changed = cf || ca;
+            Call { func: Box::new(f), args: new_args, trailing: trailing.clone() }
+        }
+        _ => return Ok((formula.clone(), false)),
+    };
+
+    Ok((crate::ast::Expr { kind: new_kind, span: formula.span }, changed))
+}
+
+/// Ф.6: verify a post-axiom using symbolic execution of the handler body.
+fn verify_post_axiom_with_handler(
+    pipeline: &VerificationPipeline,
+    ax: &AxiomInfo,
+    pure_views: &std::collections::HashMap<String, super::encode::PureViewSig>,
+    methods: &[crate::ast::HandlerMethod],
+    effect_name: &str,
+    module: &Module,
+    inferred_pure: &std::collections::HashSet<String>,
+) -> VerifyResult {
+    // Step 1: symbolically rewrite post(...) subterms.
+    let rewritten_formula = match rewrite_post_in_expr(ax.formula, methods) {
+        Ok((expr, true)) => expr,
+        Ok((_, false)) => {
+            // No post term found (shouldn't happen since caller checked).
+            return VerifyResult::Unknown(
+                "post-axiom: no post(...) term found during rewrite".into(),
+            );
+        }
+        Err(reason) => {
+            return VerifyResult::Unknown(format!(
+                "post-axiom `{}`: symbolic rewrite not applicable — {}", ax.axiom_name, reason
+            ));
+        }
+    };
+
+    // Step 2: encode and prove the rewritten formula.
+    let ax_rewritten = AxiomInfo {
+        effect_name: ax.effect_name.clone(),
+        axiom_name: ax.axiom_name.clone(),
+        binders: ax.binders,
+        formula: &rewritten_formula,
+        is_generic: ax.is_generic,
+    };
+
+    let pure_fns = collect_pure_fns(module, inferred_pure);
+    let ctx = super::encode::EncodeCtx { pure_views, pure_fns: &pure_fns };
+    let mut backend = pipeline.create_backend();
+
+    // Pre-declare pure_view UFs.
+    for (op_name, sig) in pure_views {
+        let uf = super::encode::pure_view_uf_name(&sig.effect_name, op_name);
+        backend.declare_function(&uf, &sig.param_sorts, sig.return_sort.clone());
+    }
+
+    let Some(ax_formula) = encode_axiom(&ax_rewritten, pure_views) else {
+        // Fallback: try direct encoding without UF machinery.
+        let binder_names: Vec<String> = ax.binders.iter().map(|bd| bd.name.clone()).collect();
+        let body = match super::encode::encode_expr_with_ctx(&rewritten_formula, &ctx) {
+            Ok(t) => t,
+            Err(e) => return VerifyResult::EncodingFailed(format!("{:?}", e)),
+        };
+        let mut binder_sorts: std::collections::HashMap<String, SortRef> = Default::default();
+        infer_binder_sorts(&rewritten_formula, &binder_names, pure_views, &mut binder_sorts);
+        let binders: Vec<(String, SortRef)> = binder_names.iter()
+            .map(|n| (n.clone(), binder_sorts.remove(n).unwrap_or(SortRef::Int)))
+            .collect();
+        let formula_term = if binders.is_empty() {
+            body
+        } else {
+            SmtTerm::Forall(binders, vec![], Box::new(body))
+        };
+        return match try_prove(&mut *backend, formula_term) {
+            SatResult::Unsat(_) => VerifyResult::Proven,
+            SatResult::Sat(model) => {
+                let cex = format_counterexample(&model);
+                VerifyResult::Disproved(model, cex)
+            }
+            SatResult::Unknown(reason) => VerifyResult::Unknown(unknown_to_diag_message(reason)),
+        };
+    };
+
+    match try_prove(&mut *backend, ax_formula) {
+        SatResult::Unsat(_) => VerifyResult::Proven,
+        SatResult::Sat(model) => {
+            let cex = format_counterexample(&model);
+            VerifyResult::Disproved(model, cex)
+        }
+        SatResult::Unknown(reason) => VerifyResult::Unknown(unknown_to_diag_message(reason)),
     }
 }
 

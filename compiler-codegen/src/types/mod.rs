@@ -3324,7 +3324,37 @@ fn check_axiom_expr(
                 ));
                 return;
             }
-            // V1: СЂР°Р·СЂРµС€РµРЅР° С„РѕСЂРјР° `<pure_view_name>(args)`.
+            // Plan 33.5 F.6: allow `post(ActionCall)(viewCall)` in axiom-formulas.
+            // Shape: outer Call{ func: Call{ func: Ident("post"), args:[action_call] }, args:[view_call] }
+            // Validate: action args and view args must only reference binders.
+            // (Action and view names are validated at pipeline verify time, not here.)
+            if let Call { func: inner_func, args: inner_args, .. } = &func.kind {
+                if let Ident(n) = &inner_func.kind {
+                    if n == "post" {
+                        // post(ActionCall)(ViewCall): only validate binder references
+                        // inside action args and view args; action/view names are
+                        // validated by pipeline at verify time.
+                        // inner_args[0] = ActionName(binder1, binder2, ...)
+                        if let Some(action_call) = inner_args.first() {
+                            if let Call { args: action_binder_args, .. } = &action_call.expr().kind {
+                                for a in action_binder_args {
+                                    check_axiom_expr(a.expr(), effect_name, axiom_name, binders, pure_views, errors);
+                                }
+                            }
+                        }
+                        // args[0] = ViewName(binder1, ...)
+                        if let Some(view_call) = args.first() {
+                            if let Call { args: view_binder_args, .. } = &view_call.expr().kind {
+                                for a in view_binder_args {
+                                    check_axiom_expr(a.expr(), effect_name, axiom_name, binders, pure_views, errors);
+                                }
+                            }
+                        }
+                        return;
+                    }
+                }
+            }
+            // V1: allowed form `<pure_view_name>(args)`.
             let pv_name = match &func.kind {
                 Ident(n) => n.clone(),
                 _ => {

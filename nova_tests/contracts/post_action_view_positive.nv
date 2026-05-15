@@ -1,0 +1,22 @@
+// Plan 33.5 Ф.6: post(Action)(view) symbolic exec V2.
+// Верификация аксиомы post(SetBalance(id, x))(balance(id)) == x.
+// Handler: SetBalance assigns store = amount; balance reads store.
+
+module nova_tests.contracts.post_action_view_positive
+
+type Db effect {
+    SetBalance(id int, amount int)
+    #pure balance(id int) -> int
+    axiom after_set(id, x) => post(SetBalance(id, x))(balance(id)) == x
+}
+
+test "post action view symbolic exec" {
+    let mut store = 0
+    with #verify Db = handler Db {
+        SetBalance(id, amount) { store = amount }
+        balance(id) => store
+    } {
+        Db.SetBalance(1, 42)
+        assert(Db.balance(1) == 42)
+    }
+}
