@@ -2744,6 +2744,10 @@ impl Parser {
                     Ok(Expr::new(ExprKind::SelfAccess, start))
                 }
             }
+            TokenKind::Ident(ref kw) if kw == "forall" || kw == "exists" => {
+                let is_forall = kw == "forall";
+                self.parse_quantifier(is_forall)
+            }
             TokenKind::Ident(_) => {
                 // Простой идентификатор. Dot-цепочки `.field`/`.method`
                 // обрабатываются в parse_postfix как Member access — это
@@ -3180,6 +3184,36 @@ impl Parser {
             })),
             span,
         ))
+    }
+
+    /// D.1.3: парсит `forall x in lo..hi : P(x)` или `exists x in lo..hi : P(x)`.
+    ///
+    /// Вызывается из parse_primary когда текущий токен — Ident("forall")
+    /// или Ident("exists"). Оба являются контекстными ключевыми словами
+    /// (не TokenKind), поэтому диспатч через проверку содержимого Ident.
+    fn parse_quantifier(&mut self, is_forall: bool) -> Result<Expr, Diagnostic> {
+        let start = self.bump().span; // consume "forall" / "exists"
+        let (var_name, _var_span) = self.parse_ident()?; // bound variable
+        self.expect(&TokenKind::KwIn)?;
+        // Диапазон — lo..hi. Отключаем trailing/struct чтобы `:` не
+        // поглощалось как named-argument или record-поле.
+        let range = self.with_no_struct_or_trailing(|p| p.parse_expr())?;
+        self.expect(&TokenKind::Colon)?;
+        let body = self.parse_expr()?;
+        let span = start.merge(body.span);
+        if is_forall {
+            Ok(Expr::new(ExprKind::Forall {
+                var: var_name,
+                range: Box::new(range),
+                body: Box::new(body),
+            }, span))
+        } else {
+            Ok(Expr::new(ExprKind::Exists {
+                var: var_name,
+                range: Box::new(range),
+                body: Box::new(body),
+            }, span))
+        }
     }
 
     /// Эвристика: `{` перед нами — это начало record-литерала?

@@ -227,9 +227,53 @@ pub fn encode_expr_with_ctx(e: &Expr, ctx: &EncodeCtx) -> Result<SmtTerm, Encodi
             Ok(SmtTerm::App(format!("_field_{}", name), vec![obj_t]))
         }
 
+        // D.1.3: forall x in lo..hi : P(x)
+        ExprKind::Forall { var, range, body } => {
+            let (lo, hi) = extract_range(range)?;
+            let lo_t = encode_expr_with_ctx(lo, ctx)?;
+            let hi_t = encode_expr_with_ctx(hi, ctx)?;
+            let body_t = encode_expr_with_ctx(body, ctx)?;
+            let var_s = SmtTerm::Var(var.clone());
+            // range constraint: lo <= x && x < hi
+            let in_range = SmtTerm::and(vec![
+                SmtTerm::App("<=".into(), vec![lo_t, var_s.clone()]),
+                SmtTerm::App("<".into(), vec![var_s, hi_t]),
+            ]);
+            // forall x: Int. in_range => body
+            let implies = SmtTerm::App("=>".into(), vec![in_range, body_t]);
+            Ok(SmtTerm::Forall(vec![(var.clone(), SortRef::Int)], Box::new(implies)))
+        }
+
+        // D.1.3: exists x in lo..hi : P(x)
+        // Кодируем как not(forall x in range: not P(x))
+        ExprKind::Exists { var, range, body } => {
+            let (lo, hi) = extract_range(range)?;
+            let lo_t = encode_expr_with_ctx(lo, ctx)?;
+            let hi_t = encode_expr_with_ctx(hi, ctx)?;
+            let body_t = encode_expr_with_ctx(body, ctx)?;
+            let var_s = SmtTerm::Var(var.clone());
+            let in_range = SmtTerm::and(vec![
+                SmtTerm::App("<=".into(), vec![lo_t, var_s.clone()]),
+                SmtTerm::App("<".into(), vec![var_s, hi_t]),
+            ]);
+            let not_body = SmtTerm::not(body_t);
+            let implies = SmtTerm::App("=>".into(), vec![in_range, not_body]);
+            let inner = SmtTerm::Forall(vec![(var.clone(), SortRef::Int)], Box::new(implies));
+            Ok(SmtTerm::not(inner))
+        }
+
         _ => Err(EncodingError::Unsupported(format!(
             "expression kind not supported in contract encoder (33.1)"
         ))),
+    }
+}
+
+/// D.1.3: извлечь lo и hi из Range-выражения.
+fn extract_range(e: &Expr) -> Result<(&Expr, &Expr), EncodingError> {
+    match &e.kind {
+        ExprKind::Range { start, end, .. } => Ok((start, end)),
+        _ => Err(EncodingError::Unsupported(
+            "quantifier range must be lo..hi expression".into())),
     }
 }
 

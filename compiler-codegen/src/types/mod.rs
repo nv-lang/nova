@@ -619,6 +619,11 @@ impl<'a> BoundCtx<'a> {
                 if let Some(e) = opt { self.walk_expr(e, scope, errors); }
             }
             ExprKind::With { body, .. } => self.walk_block(body, scope, errors),
+            // D.1.3: квантор — только в контрактах; обходим range и body.
+            ExprKind::Forall { range, body, .. } | ExprKind::Exists { range, body, .. } => {
+                self.walk_expr(range, scope, errors);
+                self.walk_expr(body, scope, errors);
+            }
             // Литералы / ident'ы / handler-литералы — без рекурсии в bound-проверке.
             ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::BoolLit(_)
             | ExprKind::StrLit(_) | ExprKind::CharLit(_) | ExprKind::UnitLit
@@ -1591,6 +1596,11 @@ impl<'a> CapabilityCtx<'a> {
             ExprKind::Interrupt(opt) => {
                 if let Some(e) = opt { self.walk_expr(e, state, errors); }
             }
+            // D.1.3: квантор — только в контрактах; обходим range и body.
+            ExprKind::Forall { range, body, .. } | ExprKind::Exists { range, body, .. } => {
+                self.walk_expr(range, state, errors);
+                self.walk_expr(body, state, errors);
+            }
             // Литералы / ident'ы / handler-литералы — без рекурсии.
             ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::BoolLit(_)
             | ExprKind::StrLit(_) | ExprKind::CharLit(_) | ExprKind::UnitLit
@@ -2409,6 +2419,15 @@ impl NameResCtx {
                 self.walk_block(body, file_id, scope, errors);
             }
             ExprKind::Throw(inner) => self.walk_expr(inner, file_id, scope, errors),
+            // D.1.3: квантор — bound variable вводится в scope для body.
+            ExprKind::Forall { var, range, body } | ExprKind::Exists { var, range, body } => {
+                self.walk_expr(range, file_id, scope, errors);
+                let mut frame: HashSet<String> = HashSet::new();
+                frame.insert(var.clone());
+                scope.push(frame);
+                self.walk_expr(body, file_id, scope, errors);
+                scope.pop();
+            }
         }
     }
 
@@ -3525,6 +3544,11 @@ fn walk_expr_for_handler_lits(e: &Expr, never_ops: &HashSet<(String, String)>, e
         // TaggedTemplate имеет args со sub-expressions — но bootstrap-stage
         // редко используется; для completeness'а добавим shallow walk.
         ExprKind::TaggedTemplate { .. } => {}
+        // D.1.3: квантор — только в контрактах; обходим range и body.
+        ExprKind::Forall { range, body, .. } | ExprKind::Exists { range, body, .. } => {
+            walk_expr_for_handler_lits(range, never_ops, errors);
+            walk_expr_for_handler_lits(body, never_ops, errors);
+        }
         // Leaf expressions — nothing to recurse into.
         ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::CharLit(_) | ExprKind::StrLit(_)
         | ExprKind::BoolLit(_) | ExprKind::Ident(_) | ExprKind::Path(_) | ExprKind::UnitLit

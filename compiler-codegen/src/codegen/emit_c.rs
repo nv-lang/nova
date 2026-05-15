@@ -5035,6 +5035,10 @@ impl CEmitter {
                 if self.proven_contracts.contains(&(f.name.clone(), c.span.start)) {
                     continue;
                 }
+                // D.1.3: квантор не может быть проверен в runtime — пропускаем.
+                if matches!(c.expr.kind, ExprKind::Forall { .. } | ExprKind::Exists { .. }) {
+                    continue;
+                }
                 let expr_c = self.emit_expr(&c.expr)?;
                 // Простая подмена идентификатора `result` на `_nova_result`.
                 // Работает для случаев без collision (что справедливо в 33.1).
@@ -5257,6 +5261,10 @@ impl CEmitter {
                     // (true zero-cost даже в debug). proven_contracts —
                     // set от VerificationPipeline. Key: (fn_name, span.start).
                     if self.proven_contracts.contains(&(f.name.clone(), c.span.start)) {
+                        continue;
+                    }
+                    // D.1.3: квантор не может быть проверен в runtime — пропускаем.
+                    if matches!(c.expr.kind, ExprKind::Forall { .. } | ExprKind::Exists { .. }) {
                         continue;
                     }
                     let expr_c = self.emit_expr(&c.expr)?;
@@ -7460,6 +7468,10 @@ impl CEmitter {
                 self.line("}");
                 self.line(&format!("{} = NOVA_UNIT;", loop_tmp));
                 Ok(loop_tmp)
+            }
+            // D.1.3: квантор — только в контрактах, не в runtime-коде.
+            ExprKind::Forall { .. } | ExprKind::Exists { .. } => {
+                Err("forall/exists quantifiers are contract-only and cannot be compiled to C".into())
             }
         }
     }

@@ -933,6 +933,11 @@ impl Interpreter {
                 "`select` requires the compiled runtime (not available in bootstrap interpreter)",
                 expr.span,
             )),
+            // D.1.3: квантор — только в контрактах, не в интерпретаторе.
+            ExprKind::Forall { .. } | ExprKind::Exists { .. } => Err(Diagnostic::new(
+                "forall/exists quantifiers are contract-only and cannot be interpreted",
+                expr.span,
+            )),
         }
     }
 

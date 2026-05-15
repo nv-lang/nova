@@ -956,6 +956,20 @@ pub enum ExprKind {
         end: Box<Expr>,
         inclusive: bool,
     },
+    /// D.1.3: универсальный квантор в контрактах.
+    /// `forall x in lo..hi : P(x)`
+    Forall {
+        var: String,
+        range: Box<Expr>,
+        body: Box<Expr>,
+    },
+    /// D.1.3: экзистенциальный квантор в контрактах.
+    /// `exists x in lo..hi : P(x)`
+    Exists {
+        var: String,
+        range: Box<Expr>,
+        body: Box<Expr>,
+    },
     /// Блок-выражение `{ stmts; expr }`
     Block(Block),
     /// `spawn body` — D50
