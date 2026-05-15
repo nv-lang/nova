@@ -55,6 +55,18 @@ pub fn build(module: &Module) -> DocTree {
     tree
 }
 
+/// Plan 45 Ф.21.7 — workspace-режим: построить unified DocTree из
+/// нескольких модулей. Cross-module intra-doc-links резолвятся
+/// корректно — links pass видит все items.
+pub fn build_workspace(modules: &[Module]) -> DocTree {
+    let mut tree = collector::collect_workspace(modules);
+    strip_hidden_doc(&mut tree);
+    links::resolve_intra_doc_links(&mut tree);
+    doctests::collect_doc_tests(&mut tree);
+    stability::propagate_stability(&mut tree);
+    tree
+}
+
 /// Plan 45 Ф.12: pass `strip_private` — отбрасывает items с
 /// `visibility = Private`. Применять, если `--include-private` НЕ задан.
 pub fn strip_private(tree: &mut DocTree) {

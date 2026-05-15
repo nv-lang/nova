@@ -908,6 +908,11 @@ fn cmd_doc(path: &Path, format: &str, json_schema: bool, include_private: bool, 
         println!("{}", nova_doc_embedded_schema());
         return Ok(());
     }
+    // Plan 45 Ф.21.7: workspace-режим. Если path — каталог, рекурсивно
+    // парсим все *.nv и строим multi-module DocTree.
+    if path.is_dir() {
+        return cmd_doc_workspace(path, format, include_private, run_doc_tests, check, coverage);
+    }
     if !path.is_file() {
         bail!("file not found: {}", path.display());
     }
@@ -941,33 +946,7 @@ fn cmd_doc(path: &Path, format: &str, json_schema: bool, include_private: bool, 
         return cmd_doc_coverage(&tree);
     }
     if check {
-        let mut issues: Vec<String> = Vec::new();
-        for link in &tree.links {
-            if link.target_id.is_none() {
-                let from = link.from_id.as_deref().unwrap_or("<module>");
-                issues.push(format!("broken intra-doc-link [{}] in {}", link.text, from));
-            }
-        }
-        for m in &tree.modules {
-            for it in &m.items {
-                if it.visibility == nova_codegen::doc::Visibility::Export
-                    && it.summary.is_none()
-                {
-                    issues.push(format!("missing doc-summary on exported item `{}`", it.id));
-                }
-            }
-        }
-        if issues.is_empty() {
-            println!("doc-check: ok ({} item(s), {} link(s))",
-                tree.modules.iter().map(|m| m.items.len()).sum::<usize>(),
-                tree.links.len());
-            return Ok(());
-        }
-        for i in &issues {
-            eprintln!("doc-check: {}", i);
-        }
-        eprintln!("\ndoc-check: {} issue(s)", issues.len());
-        std::process::exit(1);
+        return cmd_doc_check(&tree);
     }
     if run_doc_tests {
         let summary = nova_codegen::doc::test_runner::run_doc_tests_with_source(&tree.doc_tests, Some(&src));
@@ -1008,6 +987,124 @@ fn cmd_doc(path: &Path, format: &str, json_schema: bool, include_private: bool, 
         }
     };
     print!("{}", out);
+    Ok(())
+}
+
+/// Plan 45 Ф.21.7 — workspace mode. Рекурсивно собирает все *.nv
+/// в каталоге, парсит каждый, строит unified DocTree (cross-module
+/// intra-doc-links резолвятся). Поддерживает --format / --check /
+/// --test / --coverage / --include-private.
+fn cmd_doc_workspace(
+    dir: &Path,
+    format: &str,
+    include_private: bool,
+    run_doc_tests: bool,
+    check: bool,
+    coverage: bool,
+) -> Result<()> {
+    let mut files: Vec<PathBuf> = Vec::new();
+    walk_nv_files(dir, &mut files)?;
+    files.sort();
+    if files.is_empty() {
+        bail!("no .nv files found under `{}`", dir.display());
+    }
+    let mut modules: Vec<nova_codegen::ast::Module> = Vec::with_capacity(files.len());
+    for f in &files {
+        let src = read_file(f)?;
+        let path_str = f.to_string_lossy();
+        let mut m = nova_codegen::parser::parse(&src)
+            .map_err(|d| anyhow!("{}: {}", path_str, d.render(&src, &path_str)))?;
+        // Игнорируем type-check ошибки в workspace mode (MVP) — те же
+        // соображения что и для single-file: cross-module symbols без
+        // resolve_imports не разрешаются.
+        let _ = nova_codegen::types::check_module(&m);
+        nova_codegen::types::infer_effects(&mut m);
+        modules.push(m);
+    }
+    let mut tree = nova_codegen::doc::build_workspace(&modules);
+    if !include_private {
+        nova_codegen::doc::strip_private(&mut tree);
+    }
+    if coverage {
+        return cmd_doc_coverage(&tree);
+    }
+    if check {
+        return cmd_doc_check(&tree);
+    }
+    if run_doc_tests {
+        // Doc-tests в workspace mode — пока без crate-scope injection
+        // (нет single source). Тесты исполняются изолированно.
+        let summary = nova_codegen::doc::test_runner::run_doc_tests(&tree.doc_tests);
+        return print_doc_test_summary(summary);
+    }
+    let out = match format {
+        "markdown" | "md" => nova_codegen::doc::render_markdown(&tree),
+        "json" => nova_codegen::doc::render_json(&tree),
+        other => bail!("unknown --format `{}`", other),
+    };
+    print!("{}", out);
+    Ok(())
+}
+
+fn walk_nv_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let p = entry.path();
+        if p.is_dir() {
+            walk_nv_files(&p, out)?;
+        } else if p.extension().map(|e| e == "nv").unwrap_or(false) {
+            out.push(p);
+        }
+    }
+    Ok(())
+}
+
+/// Helper для check-mode (используется и single-file и workspace).
+fn cmd_doc_check(tree: &nova_codegen::doc::DocTree) -> Result<()> {
+    let mut issues: Vec<String> = Vec::new();
+    for link in &tree.links {
+        if link.target_id.is_none() {
+            let from = link.from_id.as_deref().unwrap_or("<module>");
+            issues.push(format!("broken intra-doc-link [{}] in {}", link.text, from));
+        }
+    }
+    for m in &tree.modules {
+        for it in &m.items {
+            if it.visibility == nova_codegen::doc::Visibility::Export && it.summary.is_none() {
+                issues.push(format!("missing doc-summary on exported item `{}`", it.id));
+            }
+        }
+    }
+    if issues.is_empty() {
+        println!("doc-check: ok ({} item(s), {} link(s))",
+            tree.modules.iter().map(|m| m.items.len()).sum::<usize>(),
+            tree.links.len());
+        return Ok(());
+    }
+    for i in &issues {
+        eprintln!("doc-check: {}", i);
+    }
+    eprintln!("\ndoc-check: {} issue(s)", issues.len());
+    std::process::exit(1);
+}
+
+/// Helper: print doc-test summary + exit 1 on failures.
+fn print_doc_test_summary(summary: nova_codegen::doc::test_runner::DocTestSummary) -> Result<()> {
+    let total = summary.results.len();
+    let passed = summary.passed();
+    let failed = summary.failed();
+    let skipped = summary.skipped();
+    for r in &summary.results {
+        match &r.outcome {
+            nova_codegen::doc::test_runner::DocTestOutcome::Passed => println!("ok   {}", r.id),
+            nova_codegen::doc::test_runner::DocTestOutcome::Failed(msg) => println!("FAIL {} — {}", r.id, msg),
+            nova_codegen::doc::test_runner::DocTestOutcome::Skipped(reason) => println!("skip {} ({})", r.id, reason),
+        }
+    }
+    println!("\ndoc-tests: {} passed, {} failed, {} skipped (total {})", passed, failed, skipped, total);
+    if !summary.all_passed() {
+        std::process::exit(1);
+    }
     Ok(())
 }
 

@@ -111,11 +111,28 @@ fn is_post_1_0_version(v: &str) -> bool {
 ///   module-attr (D101).
 pub fn collect(module: &Module) -> DocTree {
     let mut tree = DocTree::new();
-    let module_path = module.name.clone();
+    tree.modules.push(collect_one(module));
+    tree
+}
 
+/// Plan 45 Ф.21.7: workspace mode — собрать многомодульный DocTree.
+/// Modules уже type-checked + effects-inferred caller'ом. Порядок modules
+/// в tree.modules — сортируется по `path` для детерминизма.
+pub fn collect_workspace(modules: &[Module]) -> DocTree {
+    let mut tree = DocTree::new();
+    for m in modules {
+        tree.modules.push(collect_one(m));
+    }
+    // Deterministic order: по path.
+    tree.modules.sort_by(|a, b| a.path.cmp(&b.path));
+    tree
+}
+
+/// Helper: один Module → DocModule.
+fn collect_one(module: &Module) -> DocModule {
+    let module_path = module.name.clone();
     // Module-level documentation: концат `//!` (inner doc) + все
-    // `#doc "..."` module-attr строки (alphabetical filename order
-    // уже обеспечивается parser'ом).
+    // `#doc "..."` module-attr строки.
     let mut module_doc_parts: Vec<String> = Vec::new();
     for attr in &module.attrs {
         if let ModuleAttrKind::Doc(s) = &attr.kind {
@@ -136,21 +153,12 @@ pub fn collect(module: &Module) -> DocTree {
     let mut items: Vec<DocItem> = Vec::new();
     for item in &module.items {
         match item {
-            Item::Fn(f) => {
-                items.push(collect_fn(&module_path, f));
-            }
-            Item::Type(t) => {
-                items.push(collect_type(&module_path, t));
-            }
-            Item::Const(c) => {
-                items.push(collect_const(&module_path, c));
-            }
-            // `Item::Let` / `Item::Test` / `Item::Lemma` не документируются.
+            Item::Fn(f) => items.push(collect_fn(&module_path, f)),
+            Item::Type(t) => items.push(collect_type(&module_path, t)),
+            Item::Const(c) => items.push(collect_const(&module_path, c)),
             Item::Let(_) | Item::Test(_) | Item::Lemma(_) => {}
         }
     }
-
-    // Deterministic order: по `id`.
     items.sort_by(|a, b| a.id.cmp(&b.id));
 
     let module_name = module_path.last().cloned().unwrap_or_default();
@@ -165,7 +173,7 @@ pub fn collect(module: &Module) -> DocTree {
         .filter_map(|pf| pf.path.file_name().map(|s| s.to_string_lossy().into_owned()))
         .collect();
 
-    tree.modules.push(DocModule {
+    DocModule {
         path: module_path,
         name: module_name,
         kind,
@@ -174,9 +182,7 @@ pub fn collect(module: &Module) -> DocTree {
         description: module_description,
         items,
         source_span: module.span,
-    });
-
-    tree
+    }
 }
 
 fn collect_fn(module_path: &[String], f: &FnDecl) -> DocItem {
