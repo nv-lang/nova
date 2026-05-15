@@ -54,6 +54,118 @@ pub fn extract_summary(content: &str) -> (Option<String>, Option<String>) {
     (summary, description)
 }
 
+/// Plan 45 Ф.5 / D104 / D107: parse markdown body на стандартные секции.
+///
+/// Распознаваемые секции (по style-guide §11.5 fixed order):
+/// - `# Examples` / `# Example`
+/// - `# Errors`
+/// - `# Panics`
+/// - `# Safety`
+/// - `# Effects`
+/// - `# Contracts`
+/// - `# Since`
+/// - `# See also` / `# See Also`
+/// - `# Deprecated`
+///
+/// Заголовок распознаётся в первой колонне строки (без отступа).
+/// Соответствие имени — case-insensitive, без учёта trailing
+/// whitespace. Любые другие `# Heading` сохраняются как часть текущей
+/// секции (renderer'у решать что делать).
+///
+/// Возвращает `Sections` с ключами в lowercase (для JSON output по D107).
+/// Возвращаемая `body` — текст до первого распознанного `# Heading`
+/// (т.е. общая часть, не относящаяся ни к одной секции).
+pub fn split_sections(body: &str) -> ParsedBody {
+    let mut sections: std::collections::BTreeMap<String, String> =
+        std::collections::BTreeMap::new();
+    let mut current_section: Option<String> = None;
+    let mut current_buf = String::new();
+    let mut intro_buf = String::new();
+
+    fn flush(
+        current: &mut Option<String>,
+        buf: &mut String,
+        sections: &mut std::collections::BTreeMap<String, String>,
+    ) {
+        if let Some(name) = current.take() {
+            let trimmed = buf.trim().to_string();
+            if !trimmed.is_empty() {
+                sections.insert(name, trimmed);
+            }
+            buf.clear();
+        }
+    }
+
+    for raw_line in body.lines() {
+        let line = raw_line;
+        // Section-heading: ровно один `#`, пробел, имя.
+        if let Some(rest) = line.strip_prefix("# ") {
+            let heading = rest.trim();
+            let canonical = canonical_section_name(heading);
+            if let Some(name) = canonical {
+                // Flush previous section/intro.
+                if current_section.is_some() {
+                    flush(&mut current_section, &mut current_buf, &mut sections);
+                }
+                current_section = Some(name);
+                continue;
+            }
+        }
+        if current_section.is_some() {
+            if !current_buf.is_empty() {
+                current_buf.push('\n');
+            }
+            current_buf.push_str(line);
+        } else {
+            if !intro_buf.is_empty() {
+                intro_buf.push('\n');
+            }
+            intro_buf.push_str(line);
+        }
+    }
+    // Flush last section.
+    flush(&mut current_section, &mut current_buf, &mut sections);
+
+    ParsedBody {
+        intro: {
+            let s = intro_buf.trim().to_string();
+            if s.is_empty() {
+                None
+            } else {
+                Some(s)
+            }
+        },
+        sections,
+    }
+}
+
+/// Результат `split_sections`. `intro` — текст до первого распознанного
+/// section heading'а (общая часть description'а). `sections` —
+/// distinct-секции, ключеванные lowercase-именем.
+#[derive(Debug, Clone, Default)]
+pub struct ParsedBody {
+    pub intro: Option<String>,
+    pub sections: std::collections::BTreeMap<String, String>,
+}
+
+/// Канонизировать имя секции в lowercase. Возвращает `None` для
+/// неизвестных секций (renderer оставит их в общем тексте).
+fn canonical_section_name(heading: &str) -> Option<String> {
+    let h = heading.trim().to_ascii_lowercase();
+    match h.as_str() {
+        "examples" | "example" => Some("examples".to_string()),
+        "errors" => Some("errors".to_string()),
+        "panics" => Some("panics".to_string()),
+        "safety" => Some("safety".to_string()),
+        "effects" => Some("effects".to_string()),
+        "contracts" => Some("contracts".to_string()),
+        "since" => Some("since".to_string()),
+        "see also" => Some("see also".to_string()),
+        "deprecated" => Some("deprecated".to_string()),
+        _ => None,
+    }
+}
+
 /// Найти первое sentence-terminating предложение в строке. Игнорирует
 /// `.`/`?`/`!` внутри inline-кода (backtick'ов) и markdown-link'ов.
 fn first_sentence(text: &str) -> String {
@@ -147,5 +259,65 @@ mod tests {
             d.as_deref(),
             Some("Second sentence in same paragraph.")
         );
+    }
+
+    #[test]
+    fn split_sections_basic_examples() {
+        let body = "Some intro text.\n\n# Examples\n\n```nova\nlet x = 1\n```";
+        let parsed = split_sections(body);
+        assert_eq!(parsed.intro.as_deref(), Some("Some intro text."));
+        assert_eq!(
+            parsed.sections.get("examples").map(|s| s.as_str()),
+            Some("```nova\nlet x = 1\n```")
+        );
+    }
+
+    #[test]
+    fn split_sections_multiple() {
+        let body = "Intro.\n\n# Examples\n\nE1.\n\n# Errors\n\nNotFound.";
+        let parsed = split_sections(body);
+        assert_eq!(parsed.intro.as_deref(), Some("Intro."));
+        assert_eq!(parsed.sections.len(), 2);
+        assert_eq!(parsed.sections.get("examples").map(|s| s.as_str()), Some("E1."));
+        assert_eq!(parsed.sections.get("errors").map(|s| s.as_str()), Some("NotFound."));
+    }
+
+    #[test]
+    fn split_sections_case_insensitive() {
+        let body = "# EXAMPLES\n\nx";
+        let parsed = split_sections(body);
+        assert!(parsed.sections.contains_key("examples"));
+    }
+
+    #[test]
+    fn split_sections_unknown_heading_kept_in_intro_or_section() {
+        // Unknown `# Foo` остаётся как часть текущего блока, не создаёт
+        // новой секции.
+        let body = "Intro.\n# Foo\nFoo body.\n\n# Examples\n\nE1.";
+        let parsed = split_sections(body);
+        // intro содержит "# Foo\nFoo body."
+        assert!(parsed.intro.as_deref().unwrap().contains("# Foo"));
+        assert_eq!(parsed.sections.get("examples").map(|s| s.as_str()), Some("E1."));
+    }
+
+    #[test]
+    fn split_sections_empty_body() {
+        let parsed = split_sections("");
+        assert!(parsed.intro.is_none());
+        assert!(parsed.sections.is_empty());
+    }
+
+    #[test]
+    fn split_sections_no_sections_just_intro() {
+        let parsed = split_sections("Plain description with no sections.");
+        assert_eq!(parsed.intro.as_deref(), Some("Plain description with no sections."));
+        assert!(parsed.sections.is_empty());
+    }
+
+    #[test]
+    fn split_sections_with_see_also() {
+        let body = "Intro.\n\n# See also\n\n- [foo]\n- [bar]";
+        let parsed = split_sections(body);
+        assert_eq!(parsed.sections.get("see also").map(|s| s.as_str()), Some("- [foo]\n- [bar]"));
     }
 }

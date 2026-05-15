@@ -22,6 +22,11 @@ pub struct DocTree {
     pub format_version: u32,
     /// Список документированных модулей.
     pub modules: Vec<DocModule>,
+    /// Plan 45 Ф.6: разрешённые intra-doc-links. Заполняется
+    /// `resolve_intra_doc_links` pass'ом. Sorted by (from_id, text).
+    pub links: Vec<DocLink>,
+    /// Plan 45 Ф.7: doc-tests, извлечённые из ` ```nova ` blocks.
+    pub doc_tests: Vec<DocTest>,
 }
 
 impl DocTree {
@@ -29,6 +34,65 @@ impl DocTree {
         Self {
             format_version: 1,
             modules: Vec::new(),
+            links: Vec::new(),
+            doc_tests: Vec::new(),
+        }
+    }
+}
+
+/// Plan 45 Ф.6: разрешённая intra-doc ссылка. По D107 §«Links shape».
+#[derive(Debug, Clone)]
+pub struct DocLink {
+    /// ID item'а, в чьём doc-text найдена ссылка. `None` — link из
+    /// module-level doc'а.
+    pub from_id: Option<String>,
+    /// Текст ссылки как написан: `Range`, `mod.Range`, `Range.map`.
+    pub text: String,
+    /// ID цели, если разрешена. `None` — broken link.
+    pub target_id: Option<String>,
+}
+
+/// Plan 45 Ф.7: один извлечённый doc-test. По D104 §«Doc-test modifiers».
+#[derive(Debug, Clone)]
+pub struct DocTest {
+    /// Stable ID для теста: `<module>::doc_test_<N>`.
+    pub id: String,
+    /// ID item'а, в чьём doc'е найден тест. `None` — module-level.
+    pub from_id: Option<String>,
+    /// Порядковый номер в пределах DocTree (1-based).
+    pub index: u32,
+    /// Modifiers: no_run / ignore / compile_fail / should_panic /
+    /// must_verify. Пустой = обычный test.
+    pub modifiers: Vec<DocTestModifier>,
+    /// Visible source — то что показывается в рендере (без hidden `# `).
+    pub visible_source: String,
+    /// Full source — то что компилируется (включая hidden `# ` boilerplate).
+    pub full_source: String,
+}
+
+/// Plan 45 Ф.7: doc-test modifier. По D104.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DocTestModifier {
+    /// `no_run` — компилируется, не запускается.
+    NoRun,
+    /// `ignore` — не компилируется (только display).
+    Ignore,
+    /// `compile_fail` — ожидается compile-error.
+    CompileFail,
+    /// `should_panic` — ожидается runtime panic.
+    ShouldPanic,
+    /// `must_verify` — ожидается successful SMT verification (Plan 33).
+    MustVerify,
+}
+
+impl DocTestModifier {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            DocTestModifier::NoRun => "no_run",
+            DocTestModifier::Ignore => "ignore",
+            DocTestModifier::CompileFail => "compile_fail",
+            DocTestModifier::ShouldPanic => "should_panic",
+            DocTestModifier::MustVerify => "must_verify",
         }
     }
 }
@@ -88,12 +152,66 @@ pub struct DocItem {
     pub visibility: Visibility,
     /// Summary — первое предложение из doc-content'а.
     pub summary: Option<String>,
-    /// Полное markdown-тело документации.
+    /// Plan 45 Ф.5 / D107: текст description'а ДО первого распознанного
+    /// section heading'а. Полное markdown-тело item'а = `description` +
+    /// все sections, склеенные обратно (consumer'у решать как
+    /// рендерить).
     pub description: Option<String>,
+    /// Plan 45 Ф.5 / D107: распарсенные стандартные секции
+    /// (`# Examples` / `# Errors` / `# Panics` / `# Safety` / `# Effects`
+    /// / `# Contracts` / `# Since` / `# See also` / `# Deprecated`).
+    /// Ключи lowercase для канонического JSON output. `BTreeMap` для
+    /// детерминистического порядка.
+    pub sections: std::collections::BTreeMap<String, String>,
+    /// Plan 45 Ф.3 / D105: structured deprecation marker. Заполняется
+    /// `propagate_stability` pass'ом из `# Deprecated` section или
+    /// `#deprecated` doc-attr.
+    pub deprecation: Option<Deprecation>,
+    /// Plan 45 Ф.3 / D105: structured stability marker. Заполняется
+    /// `propagate_stability` pass'ом из `#stable` / `#unstable` /
+    /// `#experimental` doc-attr или `# Since` section.
+    pub stability: Option<Stability>,
     /// Kind-discriminator + специфичные поля.
     pub kind: ItemKind,
     /// Span декларации в исходнике — для "View Source".
     pub source_span: Span,
+}
+
+/// Plan 45 Ф.3 / D105: deprecation marker.
+#[derive(Debug, Clone)]
+pub struct Deprecation {
+    /// Свободный текст с объяснением + рекомендацией замены.
+    pub note: String,
+    /// Optional `since` version если упомянута в note или явно.
+    pub since: Option<String>,
+}
+
+/// Plan 45 Ф.3 / D105: stability tier.
+#[derive(Debug, Clone)]
+pub struct Stability {
+    pub tier: StabilityTier,
+    /// Версия, с которой действует tier (если известна).
+    pub since: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StabilityTier {
+    /// `#stable` или derived из `# Since` (semver ≥ 1.0).
+    Stable,
+    /// `#unstable` — может измениться без notice.
+    Unstable,
+    /// `#experimental` — preview-quality, не для production.
+    Experimental,
+}
+
+impl StabilityTier {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            StabilityTier::Stable => "stable",
+            StabilityTier::Unstable => "unstable",
+            StabilityTier::Experimental => "experimental",
+        }
+    }
 }
 
 /// Tagged union по D107 §«Item shape».
@@ -231,12 +349,28 @@ impl DocItem {
     }
 }
 
-/// Helper для построения `summary` / `description` из `DocBlock`.
-/// Использует `markdown::extract_summary` для разбиения первого
-/// предложения и остального тела.
-pub fn split_doc(doc: &Option<DocBlock>) -> (Option<String>, Option<String>) {
+/// Plan 45 Ф.5: разбить `DocBlock.content` на (summary, description,
+/// sections). Используется collector'ом для всех item'ов.
+///
+/// - **summary** — первое предложение (см. `markdown::extract_summary`).
+/// - **description** — текст после summary, до первого распознанного
+///   section heading'а.
+/// - **sections** — стандартные секции (по D107 §«Item shape»):
+///   examples / errors / panics / safety / effects / contracts /
+///   since / see also / deprecated.
+pub fn split_doc(
+    doc: &Option<DocBlock>,
+) -> (Option<String>, Option<String>, std::collections::BTreeMap<String, String>) {
     match doc {
-        None => (None, None),
-        Some(b) => crate::doc::markdown::extract_summary(&b.content),
+        None => (None, None, std::collections::BTreeMap::new()),
+        Some(b) => {
+            let (summary, body) = crate::doc::markdown::extract_summary(&b.content);
+            // Из `body` извлекаем секции.
+            let parsed = match &body {
+                Some(text) => crate::doc::markdown::split_sections(text),
+                None => crate::doc::markdown::ParsedBody::default(),
+            };
+            (summary, parsed.intro, parsed.sections)
+        }
     }
 }

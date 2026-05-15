@@ -98,7 +98,7 @@ fn collect_fn(module_path: &[String], f: &FnDecl) -> DocItem {
         Some(r) => format!("{}::{}.{}", module_str, r.type_name, f.name),
         None => format!("{}::{}", module_str, f.name),
     };
-    let (summary, description) = crate::doc::doctree::split_doc(&f.doc);
+    let (summary, description, sections) = crate::doc::doctree::split_doc(&f.doc);
     let visibility = if f.is_export {
         Visibility::Export
     } else {
@@ -112,6 +112,9 @@ fn collect_fn(module_path: &[String], f: &FnDecl) -> DocItem {
         visibility,
         summary,
         description,
+        sections,
+        deprecation: None,
+        stability: None,
         kind: ItemKind::Fn(signature),
         source_span: f.span,
     }
@@ -120,7 +123,7 @@ fn collect_fn(module_path: &[String], f: &FnDecl) -> DocItem {
 fn collect_type(module_path: &[String], t: &TypeDecl) -> DocItem {
     let module_str = module_path.join(".");
     let id = format!("{}::{}", module_str, t.name);
-    let (summary, description) = crate::doc::doctree::split_doc(&t.doc);
+    let (summary, description, sections) = crate::doc::doctree::split_doc(&t.doc);
     let visibility = if t.is_export {
         Visibility::Export
     } else {
@@ -224,6 +227,9 @@ fn collect_type(module_path: &[String], t: &TypeDecl) -> DocItem {
         visibility,
         summary,
         description,
+        sections,
+        deprecation: None,
+        stability: None,
         kind,
         source_span: t.span,
     }
@@ -232,7 +238,7 @@ fn collect_type(module_path: &[String], t: &TypeDecl) -> DocItem {
 fn collect_const(module_path: &[String], c: &ConstDecl) -> DocItem {
     let module_str = module_path.join(".");
     let id = format!("{}::{}", module_str, c.name);
-    let (summary, description) = crate::doc::doctree::split_doc(&c.doc);
+    let (summary, description, sections) = crate::doc::doctree::split_doc(&c.doc);
     let visibility = if c.is_export {
         Visibility::Export
     } else {
@@ -250,6 +256,9 @@ fn collect_const(module_path: &[String], c: &ConstDecl) -> DocItem {
         visibility,
         summary,
         description,
+        sections,
+        deprecation: None,
+        stability: None,
         kind: ItemKind::Const {
             ty,
             value: render_expr(&c.value),
@@ -393,7 +402,7 @@ fn extract_fail_inner(eff: &crate::ast::TypeRef) -> Option<String> {
 /// литералов и Ident — точный; для остального — placeholder.
 /// Полный pretty-printer — Plan 45.A или separate util.
 fn render_expr(e: &crate::ast::Expr) -> String {
-    use crate::ast::ExprKind;
+    use crate::ast::{ArrayElem, BinOp, CallArg, ExprKind, UnOp};
     match &e.kind {
         ExprKind::IntLit(n) => n.to_string(),
         ExprKind::FloatLit(f) => f.to_string(),
@@ -403,6 +412,73 @@ fn render_expr(e: &crate::ast::Expr) -> String {
         ExprKind::UnitLit => "()".to_string(),
         ExprKind::Ident(name) => name.clone(),
         ExprKind::Path(parts) => parts.join("."),
+        ExprKind::ArrayLit(elems) => {
+            let parts: Vec<String> = elems
+                .iter()
+                .map(|el| match el {
+                    ArrayElem::Item(x) => render_expr(x),
+                    ArrayElem::Spread(x) => format!("...{}", render_expr(x)),
+                })
+                .collect();
+            format!("[{}]", parts.join(", "))
+        }
+        ExprKind::TupleLit(xs) => {
+            let parts: Vec<String> = xs.iter().map(render_expr).collect();
+            format!("({})", parts.join(", "))
+        }
+        ExprKind::RecordLit { type_name, fields } => {
+            let head = type_name
+                .as_ref()
+                .map(|p| format!("{} ", p.join(".")))
+                .unwrap_or_default();
+            let parts: Vec<String> = fields
+                .iter()
+                .map(|f| {
+                    if f.is_spread {
+                        format!("...{}", f.value.as_ref().map(render_expr).unwrap_or_default())
+                    } else {
+                        match &f.value {
+                            Some(v) => format!("{}: {}", f.name, render_expr(v)),
+                            None => f.name.clone(),
+                        }
+                    }
+                })
+                .collect();
+            format!("{}{{ {} }}", head, parts.join(", "))
+        }
+        ExprKind::Member { obj, name } => format!("{}.{}", render_expr(obj), name),
+        ExprKind::Unary { op, operand } => {
+            let sym = match op {
+                UnOp::Neg => "-",
+                UnOp::Not => "!",
+            };
+            format!("{}{}", sym, render_expr(operand))
+        }
+        ExprKind::Binary { op, left, right } => {
+            let sym = match op {
+                BinOp::Add => "+", BinOp::Sub => "-", BinOp::Mul => "*",
+                BinOp::Div => "/", BinOp::Mod => "%",
+                BinOp::Eq => "==", BinOp::Neq => "!=",
+                BinOp::Lt => "<", BinOp::Le => "<=",
+                BinOp::Gt => ">", BinOp::Ge => ">=",
+                BinOp::And => "&&", BinOp::Or => "||",
+                BinOp::Implies => "==>", BinOp::Iff => "<==>",
+                BinOp::BitAnd => "&", BinOp::BitOr => "|", BinOp::BitXor => "^",
+                BinOp::Shl => "<<", BinOp::Shr => ">>",
+            };
+            format!("{} {} {}", render_expr(left), sym, render_expr(right))
+        }
+        ExprKind::Call { func, args, .. } => {
+            let parts: Vec<String> = args
+                .iter()
+                .map(|a| match a {
+                    CallArg::Item(x) => render_expr(x),
+                    CallArg::Spread(x) => format!("...{}", render_expr(x)),
+                    CallArg::Named { name, value } => format!("{}: {}", name, render_expr(value)),
+                })
+                .collect();
+            format!("{}({})", render_expr(func), parts.join(", "))
+        }
         _ => "...".to_string(),
     }
 }

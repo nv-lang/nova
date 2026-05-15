@@ -23,26 +23,57 @@ use crate::doc::doctree::*;
 use std::fmt::Write;
 
 pub fn render(tree: &DocTree) -> String {
-    let mut w = JsonWriter::new();
+    render_with_source(tree, None)
+}
+
+/// Render с optional source text для line-information. Если `source`
+/// предоставлен — `source.line` рассчитывается через byte_to_line_col;
+/// иначе — placeholder 1.
+pub fn render_with_source(tree: &DocTree, source: Option<&str>) -> String {
+    let mut w = JsonWriter::new(source);
     w.begin_object();
     w.field_u32("format_version", tree.format_version);
+    // generated_at — opt-in (по умолчанию опускаем для reproducible
+    // builds). Источники timestamp'а в порядке приоритета:
+    //   1. NOVA_DOC_GENERATED_AT — explicit ISO-8601 string;
+    //   2. SOURCE_DATE_EPOCH — Unix epoch seconds (стандарт);
+    //   3. опускаем поле (deterministic default).
+    // Алфавитный порядок: generated_at (g) < nova_version (n).
+    if let Some(ts) = generated_at_value() {
+        w.field_str("generated_at", &ts);
+    }
     w.field_str(
         "nova_version",
         env!("CARGO_PKG_VERSION"),
     );
-    if let Ok(_) = std::env::var("SOURCE_DATE_EPOCH") {
-        // Опускаем generated_at для reproducible builds.
-    } else {
-        // MVP: не эмитим generated_at вообще (deterministic by default).
-        // Production может включить через флаг.
-    }
-    w.field_array("doc_tests", |_w| {
-        // Plan 45 Ф.7 — пока пустой массив (collector не извлекает
-        // doc-test'ы в MVP-collector'е; будет добавлено вместе с Ф.7).
+    w.field_array("doc_tests", |w| {
+        for t in &tree.doc_tests {
+            w.array_object(|w| {
+                w.field_null_or_str("from_id", t.from_id.as_deref());
+                w.field_str("full_source", &t.full_source);
+                w.field_str("id", &t.id);
+                w.field_u32("index", t.index);
+                w.field_array("modifiers", |w| {
+                    let mut mods: Vec<&'static str> =
+                        t.modifiers.iter().map(|m| m.as_str()).collect();
+                    mods.sort();
+                    mods.dedup();
+                    for m in mods {
+                        w.array_str(m);
+                    }
+                });
+                w.field_str("visible_source", &t.visible_source);
+            });
+        }
     });
-    w.field_array("links", |_w| {
-        // Plan 45 Ф.6 — пока пустой массив (intra-doc-link resolver
-        // не реализован в MVP-collector'е).
+    w.field_array("links", |w| {
+        for link in &tree.links {
+            w.array_object(|w| {
+                w.field_null_or_str("from_id", link.from_id.as_deref());
+                w.field_null_or_str("target_id", link.target_id.as_deref());
+                w.field_str("text", &link.text);
+            });
+        }
     });
     w.field_array("modules", |w| {
         for m in &tree.modules {
@@ -52,9 +83,6 @@ pub fn render(tree: &DocTree) -> String {
     w.field_array("items", |w| {
         for m in &tree.modules {
             for it in &m.items {
-                if it.visibility != Visibility::Export {
-                    continue;
-                }
                 w.array_object(|w| write_item(w, it));
             }
         }
@@ -85,7 +113,7 @@ fn write_module(w: &mut JsonWriter, m: &DocModule) {
     w.field_object("source", |w| {
         let span = m.source_span;
         w.field_u32("file_id", span.file_id);
-        w.field_u32("line", line_of(span.start) as u32);
+        w.field_u32("line", w.line_of(span.start));
     });
     w.field_null_or_str("stability", None);
     w.field_null_or_str("summary", m.summary.as_deref());
@@ -93,19 +121,36 @@ fn write_module(w: &mut JsonWriter, m: &DocModule) {
 }
 
 fn write_item(w: &mut JsonWriter, it: &DocItem) {
-    w.field_null_or_str("deprecation", None);
+    match &it.deprecation {
+        None => w.field_null_or_str("deprecation", None),
+        Some(d) => w.field_object("deprecation", |w| {
+            w.field_str("note", &d.note);
+            w.field_null_or_str("since", d.since.as_deref());
+        }),
+    }
     w.field_null_or_str("description", it.description.as_deref());
     w.field_array("doc_attrs", |_| {});
     w.field_str("id", &it.id);
     w.field_str("kind", item_kind_str(&it.kind));
     w.field_str("module_path", &it.module_path.join("."));
     w.field_str("name", &it.name);
+    w.field_object("sections", |w| {
+        for (key, val) in &it.sections {
+            w.field_str(key, val);
+        }
+    });
     w.field_object("source", |w| {
         let span = it.source_span;
         w.field_u32("file_id", span.file_id);
-        w.field_u32("line", line_of(span.start) as u32);
+        w.field_u32("line", w.line_of(span.start));
     });
-    w.field_null_or_str("stability", None);
+    match &it.stability {
+        None => w.field_null_or_str("stability", None),
+        Some(s) => w.field_object("stability", |w| {
+            w.field_null_or_str("since", s.since.as_deref());
+            w.field_str("tier", s.tier.as_str());
+        }),
+    }
     w.field_null_or_str("summary", it.summary.as_deref());
 
     match &it.kind {
@@ -274,33 +319,35 @@ fn item_kind_str(k: &ItemKind) -> &'static str {
     }
 }
 
-/// Plan 45 Ф.9: MVP-helper для line-information. Без полной line-map'ы
-/// (это требует доступа к source-тексту) возвращает 1 — placeholder.
-/// Production: line-map передаётся в render_json() параметром.
-fn line_of(_offset: usize) -> usize {
-    1
-}
-
 // ── Manual JSON writer ──────────────────────────────────────────────
 //
 // Гарантирует sorted alphabetical key-order (caller обязан вызывать
 // field_* в порядке имён). Производит человекочитаемый 2-space indented
 // output, deterministic byte-for-byte.
 
-struct JsonWriter {
+struct JsonWriter<'src> {
     out: String,
     indent: usize,
     /// Stack of "is this position the first field/elem?" — used to
     /// emit comma separators correctly.
     first_at_depth: Vec<bool>,
+    /// Опциональный source text для line-mapping.
+    source: Option<&'src str>,
 }
 
-impl JsonWriter {
-    fn new() -> Self {
+impl<'src> JsonWriter<'src> {
+    fn new(source: Option<&'src str>) -> Self {
         Self {
             out: String::new(),
             indent: 0,
             first_at_depth: Vec::new(),
+            source,
+        }
+    }
+    fn line_of(&self, offset: usize) -> u32 {
+        match self.source {
+            None => 1,
+            Some(src) => crate::diag::byte_to_line_col(src, offset).0 as u32,
         }
     }
     fn finish(self) -> String {
@@ -399,6 +446,58 @@ impl JsonWriter {
         f(self);
         self.end_object();
     }
+}
+
+/// Plan 45 Ф.9: вернуть значение для `generated_at` поля или `None`,
+/// если оно должно быть опущено. Поведение:
+/// - `NOVA_DOC_GENERATED_AT=<string>` → возвращаем как есть (caller'у
+///   решать формат);
+/// - `SOURCE_DATE_EPOCH=<seconds>` → конвертируем в простой ISO-8601-
+///   подобный формат `YYYY-MM-DDTHH:MM:SSZ`;
+/// - иначе → `None` (deterministic by default).
+fn generated_at_value() -> Option<String> {
+    if let Ok(ts) = std::env::var("NOVA_DOC_GENERATED_AT") {
+        if !ts.is_empty() {
+            return Some(ts);
+        }
+    }
+    if let Ok(s) = std::env::var("SOURCE_DATE_EPOCH") {
+        if let Ok(secs) = s.parse::<i64>() {
+            return Some(epoch_to_iso8601(secs));
+        }
+    }
+    None
+}
+
+/// Конвертация Unix epoch в `YYYY-MM-DDTHH:MM:SSZ`. Простая
+/// реализация без внешних зависимостей (UTC, no leap-seconds).
+fn epoch_to_iso8601(secs: i64) -> String {
+    let days = secs.div_euclid(86_400);
+    let rem = secs.rem_euclid(86_400);
+    let hour = rem / 3600;
+    let minute = (rem % 3600) / 60;
+    let second = rem % 60;
+    let (year, month, day) = civil_from_days(days);
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+        year, month, day, hour, minute, second
+    )
+}
+
+/// Howard Hinnant's `civil_from_days` алгоритм: Unix epoch days →
+/// (year, month, day) в григорианском календаре.
+fn civil_from_days(z: i64) -> (i32, u32, u32) {
+    let z = z + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = if m <= 2 { y + 1 } else { y };
+    (year as i32, m as u32, d as u32)
 }
 
 fn json_escape(s: &str) -> String {

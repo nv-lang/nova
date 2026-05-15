@@ -40,23 +40,18 @@ fn render_module(m: &DocModule, out: &mut String) {
     // Группируем items по kind для удобного чтения.
     let fns: Vec<&DocItem> = m.items.iter()
         .filter(|i| matches!(i.kind, ItemKind::Fn(_)))
-        .filter(|i| i.visibility == Visibility::Export)
         .collect();
     let types: Vec<&DocItem> = m.items.iter()
         .filter(|i| matches!(i.kind, ItemKind::Type(_)))
-        .filter(|i| i.visibility == Visibility::Export)
         .collect();
     let consts: Vec<&DocItem> = m.items.iter()
         .filter(|i| matches!(i.kind, ItemKind::Const { .. }))
-        .filter(|i| i.visibility == Visibility::Export)
         .collect();
     let effects: Vec<&DocItem> = m.items.iter()
         .filter(|i| matches!(i.kind, ItemKind::Effect { .. }))
-        .filter(|i| i.visibility == Visibility::Export)
         .collect();
     let protocols: Vec<&DocItem> = m.items.iter()
         .filter(|i| matches!(i.kind, ItemKind::Protocol { .. }))
-        .filter(|i| i.visibility == Visibility::Export)
         .collect();
 
     if !types.is_empty() {
@@ -89,6 +84,16 @@ fn render_module(m: &DocModule, out: &mut String) {
 fn render_item(it: &DocItem, out: &mut String) {
     let _ = writeln!(out, "### `{}`", it.name);
     let _ = writeln!(out);
+    if let Some(d) = &it.deprecation {
+        let since = d.since.as_deref().map(|s| format!(" (since {})", s)).unwrap_or_default();
+        let _ = writeln!(out, "> **DEPRECATED{}**: {}", since, d.note);
+        let _ = writeln!(out);
+    }
+    if let Some(s) = &it.stability {
+        let since = s.since.as_deref().map(|v| format!(" since {}", v)).unwrap_or_default();
+        let _ = writeln!(out, "> *Stability:* **{}**{}", s.tier.as_str(), since);
+        let _ = writeln!(out);
+    }
     // Signature / definition / value.
     match &it.kind {
         ItemKind::Fn(sig) => {
@@ -139,6 +144,26 @@ fn render_item(it: &DocItem, out: &mut String) {
     if let Some(d) = &it.description {
         let _ = writeln!(out, "{}", d);
         let _ = writeln!(out);
+    }
+    // Style-guide §11.5 fixed section order.
+    const SECTION_ORDER: &[(&str, &str)] = &[
+        ("examples", "Examples"),
+        ("errors", "Errors"),
+        ("panics", "Panics"),
+        ("safety", "Safety"),
+        ("effects", "Effects"),
+        ("contracts", "Contracts"),
+        ("since", "Since"),
+        ("see also", "See also"),
+        ("deprecated", "Deprecated"),
+    ];
+    for (key, title) in SECTION_ORDER {
+        if let Some(body) = it.sections.get(*key) {
+            let _ = writeln!(out, "#### {}", title);
+            let _ = writeln!(out);
+            let _ = writeln!(out, "{}", body);
+            let _ = writeln!(out);
+        }
     }
 }
 

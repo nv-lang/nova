@@ -22,6 +22,11 @@
 pub mod doctree;
 pub mod collector;
 pub mod markdown;
+pub mod links;
+pub mod doctests;
+pub mod schema;
+pub mod stability;
+pub mod test_runner;
 pub mod render_md;
 pub mod render_json;
 
@@ -40,7 +45,19 @@ use crate::ast::Module;
 /// `types::check_module(&module)` прошёл; collector ассамит, что
 /// сигнатуры валидны).
 pub fn build(module: &Module) -> DocTree {
-    collector::collect(module)
+    let mut tree = collector::collect(module);
+    links::resolve_intra_doc_links(&mut tree);
+    doctests::collect_doc_tests(&mut tree);
+    stability::propagate_stability(&mut tree);
+    tree
+}
+
+/// Plan 45 Ф.12: pass `strip_private` — отбрасывает items с
+/// `visibility = Private`. Применять, если `--include-private` НЕ задан.
+pub fn strip_private(tree: &mut DocTree) {
+    for m in &mut tree.modules {
+        m.items.retain(|it| it.visibility == doctree::Visibility::Export);
+    }
 }
 
 /// Plan 45 Ф.8 — DocTree → Markdown.
@@ -51,4 +68,9 @@ pub fn render_markdown(tree: &DocTree) -> String {
 /// Plan 45 Ф.9 — DocTree → JSON (D107 schema v1).
 pub fn render_json(tree: &DocTree) -> String {
     render_json::render(tree)
+}
+
+/// Plan 45 Ф.9 — DocTree → JSON с source text для точной line-info.
+pub fn render_json_with_source(tree: &DocTree, source: &str) -> String {
+    render_json::render_with_source(tree, Some(source))
 }
