@@ -4691,6 +4691,14 @@ pub fn parse(src: &str) -> Result<Module, Diagnostic> {
 /// Все Span'ы AST получат указанный file_id (через token spans от lexer).
 pub fn parse_with_file_id(src: &str, file_id: crate::diag::FileId) -> Result<Module, Diagnostic> {
     let tokens = crate::lexer::lex_with_file_id(src, file_id)?;
+    // Plan 45 Ф.1: до Ф.2 (attach doc к items в parser'е) — пропускаем
+    // doc-comment токены, чтобы существующий парсер работал без знания
+    // про них. Это interim shim: Ф.2 удалит его и добавит accumulator
+    // pending-attrs/pending-docs перед каждой декларацией.
+    let tokens: Vec<_> = tokens
+        .into_iter()
+        .filter(|t| !matches!(t.kind, crate::lexer::TokenKind::DocComment { .. }))
+        .collect();
     let mut p = Parser::with_src(tokens, src.to_string());
     p.parse_module()
 }
