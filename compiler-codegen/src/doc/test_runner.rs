@@ -100,7 +100,13 @@ fn run_one(t: &DocTest, original_source: Option<&str>) -> DocTestOutcome {
             if compile_fail {
                 return DocTestOutcome::Passed;
             }
-            return DocTestOutcome::Failed(format!("parse error: {}", d.message));
+            // Plan 45 Ф.21.8: render diagnostic с span/snippet через
+            // существующую Diagnostic.render. Path помечен `<doc-test>`
+            // (синтетический source).
+            return DocTestOutcome::Failed(format!(
+                "parse error:\n{}",
+                d.render(&synthetic, "<doc-test>")
+            ));
         }
     };
 
@@ -109,12 +115,17 @@ fn run_one(t: &DocTest, original_source: Option<&str>) -> DocTestOutcome {
         if compile_fail {
             return DocTestOutcome::Passed;
         }
-        let msg = errs
-            .iter()
-            .map(|d| d.message.clone())
-            .collect::<Vec<_>>()
-            .join("; ");
-        return DocTestOutcome::Failed(format!("type-check error: {}", msg));
+        // Plan 45 Ф.21.8: rendered diagnostics с span/snippet — берём
+        // первый error (тот, что наиболее indicative) + count'ом
+        // дополнительных.
+        let first = errs.first().expect("Err(_) implies non-empty");
+        let rendered = first.render(&synthetic, "<doc-test>");
+        let extra = if errs.len() > 1 {
+            format!("\n  (+{} more error{})", errs.len() - 1, if errs.len() == 2 { "" } else { "s" })
+        } else {
+            String::new()
+        };
+        return DocTestOutcome::Failed(format!("type-check error:\n{}{}", rendered, extra));
     }
 
     if compile_fail {
@@ -129,13 +140,15 @@ fn run_one(t: &DocTest, original_source: Option<&str>) -> DocTestOutcome {
         // hint'ы для контрактов без `#verify` — не наш кейс).
         let report = crate::verify::pipeline::verify_module(&module);
         if !report.errors.is_empty() {
-            let msg = report
-                .errors
-                .iter()
-                .map(|d| d.message.clone())
-                .collect::<Vec<_>>()
-                .join("; ");
-            return DocTestOutcome::Failed(format!("must_verify: SMT failed: {}", msg));
+            // Ф.21.8: rendered diagnostics для SMT-failures.
+            let first = &report.errors[0];
+            let rendered = first.render(&synthetic, "<doc-test>");
+            let extra = if report.errors.len() > 1 {
+                format!("\n  (+{} more)", report.errors.len() - 1)
+            } else {
+                String::new()
+            };
+            return DocTestOutcome::Failed(format!("must_verify failed:\n{}{}", rendered, extra));
         }
         return DocTestOutcome::Passed;
     }
@@ -148,7 +161,10 @@ fn run_one(t: &DocTest, original_source: Option<&str>) -> DocTestOutcome {
     crate::callnorm::normalize_module(&mut module);
     let mut interp = crate::interp::Interpreter::new();
     if let Err(d) = interp.load_module(&module) {
-        return DocTestOutcome::Failed(format!("load error: {}", d.message));
+        return DocTestOutcome::Failed(format!(
+            "load error:\n{}",
+            d.render(&synthetic, "<doc-test>")
+        ));
     }
     let run_result = interp.run_main();
     let should_panic = modifiers.contains(&DocTestModifier::ShouldPanic);
@@ -158,7 +174,10 @@ fn run_one(t: &DocTest, original_source: Option<&str>) -> DocTestOutcome {
             DocTestOutcome::Failed("should_panic: expected panic, got success".to_string())
         }
         (Err(_), true) => DocTestOutcome::Passed,
-        (Err(d), false) => DocTestOutcome::Failed(format!("runtime error: {}", d.message)),
+        (Err(d), false) => DocTestOutcome::Failed(format!(
+            "runtime error:\n{}",
+            d.render(&synthetic, "<doc-test>")
+        )),
     }
 }
 
