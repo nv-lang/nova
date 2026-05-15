@@ -655,11 +655,12 @@ impl Interpreter {
                 pattern,
                 iter,
                 body,
+                ..
             } => {
                 let iter_v = self.eval_expr_value(iter, env)?;
                 self.run_for_loop(pattern, iter_v, body, env, expr.span)
             }
-            ExprKind::While { cond, body } => loop {
+            ExprKind::While { cond, body, .. } => loop {
                 let c = self.eval_expr_value(cond, env)?;
                 if !c.truthy() {
                     break Ok(Flow::Value(Value::Unit));
@@ -674,6 +675,7 @@ impl Interpreter {
                 pattern,
                 scrutinee,
                 body,
+                ..
             } => loop {
                 let v = self.eval_expr_value(scrutinee, env)?;
                 let local = Env::new_child(env);
@@ -686,7 +688,7 @@ impl Interpreter {
                     other => break Ok(other),
                 }
             },
-            ExprKind::Loop { body } => loop {
+            ExprKind::Loop { body, .. } => loop {
                 match self.exec_block_flow(body, env)? {
                     Flow::Break => break Ok(Flow::Value(Value::Unit)),
                     Flow::Continue | Flow::Value(_) => continue,

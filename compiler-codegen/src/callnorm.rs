@@ -221,13 +221,13 @@ fn walk_children(e: &mut Expr, sigs: &Sigs) {
         ExprKind::ParallelFor { iter, body, .. } => {
             normalize_expr(iter, sigs); normalize_block(body, sigs);
         }
-        ExprKind::While { cond, body } => {
+        ExprKind::While { cond, body, .. } => {
             normalize_expr(cond, sigs); normalize_block(body, sigs);
         }
         ExprKind::WhileLet { scrutinee, body, .. } => {
             normalize_expr(scrutinee, sigs); normalize_block(body, sigs);
         }
-        ExprKind::Loop { body } => normalize_block(body, sigs),
+        ExprKind::Loop { body, .. } => normalize_block(body, sigs),
         ExprKind::Block(b) => normalize_block(b, sigs),
         ExprKind::Spawn(x) => normalize_expr(x, sigs),
         ExprKind::Detach(b) => normalize_block(b, sigs),

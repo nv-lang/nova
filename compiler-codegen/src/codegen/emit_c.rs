@@ -2751,7 +2751,7 @@ impl CEmitter {
                 span,
             };
             let for_expr = Expr::new(
-                ExprKind::For { pattern: pattern.clone(), iter: Box::new(iter.clone()), body: for_body },
+                ExprKind::For { pattern: pattern.clone(), iter: Box::new(iter.clone()), body: for_body, invariants: vec![], decreases: None },
                 span,
             );
             let supervised_block = Block { stmts: vec![Stmt::Expr(for_expr)], trailing: None, span };
@@ -2777,7 +2777,7 @@ impl CEmitter {
                     span,
                 };
                 let for_expr = Expr::new(
-                    ExprKind::For { pattern: pattern.clone(), iter: Box::new(iter.clone()), body: for_body },
+                    ExprKind::For { pattern: pattern.clone(), iter: Box::new(iter.clone()), body: for_body, invariants: vec![], decreases: None },
                     span,
                 );
                 let supervised_block = Block { stmts: vec![Stmt::Expr(for_expr)], trailing: None, span };
@@ -2809,7 +2809,7 @@ impl CEmitter {
                     let spawn_expr = Expr::new(ExprKind::Spawn(Box::new(spawn_body_expr)), span);
                     let for_body = Block { stmts: vec![Stmt::Expr(spawn_expr)], trailing: None, span };
                     let for_expr = Expr::new(
-                        ExprKind::For { pattern: pattern.clone(), iter: Box::new(iter.clone()), body: for_body },
+                        ExprKind::For { pattern: pattern.clone(), iter: Box::new(iter.clone()), body: for_body, invariants: vec![], decreases: None },
                         span,
                     );
                     let supervised_block = Block { stmts: vec![Stmt::Expr(for_expr)], trailing: None, span };
@@ -2856,7 +2856,7 @@ impl CEmitter {
                     span,
                 };
                 let for_expr = Expr::new(
-                    ExprKind::For { pattern: pattern.clone(), iter: Box::new(iter.clone()), body: for_body },
+                    ExprKind::For { pattern: pattern.clone(), iter: Box::new(iter.clone()), body: for_body, invariants: vec![], decreases: None },
                     span,
                 );
                 let supervised_block = Block { stmts: vec![Stmt::Expr(for_expr)], trailing: None, span };
@@ -3045,7 +3045,7 @@ impl CEmitter {
                 self.scan_expr_fwd(left, h, s)?;
                 self.scan_expr_fwd(right, h, s)?;
             }
-            ExprKind::While { cond, body } => {
+            ExprKind::While { cond, body, .. } => {
                 self.scan_expr_fwd(cond, h, s)?;
                 self.scan_block_fwd(body, h, s)?;
             }
@@ -3062,7 +3062,7 @@ impl CEmitter {
                 *s += 1;
                 self.line(&format!("static void {}(mco_coro* _co);", spawn_id));
             }
-            ExprKind::Loop { body } => {
+            ExprKind::Loop { body, .. } => {
                 self.scan_block_fwd(body, h, s)?;
             }
             ExprKind::Match { scrutinee, arms } => {
@@ -3155,8 +3155,8 @@ impl CEmitter {
                     }
                 }
             }
-            ExprKind::For { pattern, iter, body }
-            | ExprKind::ParallelFor { pattern, iter, body } => {
+            ExprKind::For { pattern, iter, body, .. }
+            | ExprKind::ParallelFor { pattern, iter, body, .. } => {
                 Self::collect_bound_names_expr(iter, out);
                 Self::collect_bound_names_pattern(pattern, out);
                 Self::collect_bound_names_block(body, out);
@@ -3166,7 +3166,7 @@ impl CEmitter {
                 Self::collect_bound_names_pattern(pattern, out);
                 Self::collect_bound_names_block(body, out);
             }
-            ExprKind::Loop { body } => Self::collect_bound_names_block(body, out),
+            ExprKind::Loop { body, .. } => Self::collect_bound_names_block(body, out),
             ExprKind::With { body, .. } => Self::collect_bound_names_block(body, out),
             ExprKind::Supervised { body, .. } => Self::collect_bound_names_block(body, out),
             ExprKind::Detach(body) => Self::collect_bound_names_block(body, out),
@@ -3282,7 +3282,7 @@ impl CEmitter {
                     Self::collect_idents_expr(e, out);
                 }
             }
-            ExprKind::While { cond, body } => {
+            ExprKind::While { cond, body, .. } => {
                 Self::collect_idents_expr(cond, out);
                 Self::collect_idents_block(body, out);
             }
@@ -3295,7 +3295,7 @@ impl CEmitter {
                 Self::collect_idents_expr(iter, out);
                 Self::collect_idents_block(body, out);
             }
-            ExprKind::Loop { body } => Self::collect_idents_block(body, out),
+            ExprKind::Loop { body, .. } => Self::collect_idents_block(body, out),
             ExprKind::Match { scrutinee, arms } => {
                 Self::collect_idents_expr(scrutinee, out);
                 for arm in arms {
@@ -6787,11 +6787,11 @@ impl CEmitter {
                 Ok(format!("({}{}{})", o, accessor, field_name))
             }
 
-            ExprKind::For { pattern, iter, body } => {
+            ExprKind::For { pattern, iter, body, .. } => {
                 self.emit_for(pattern, iter, body)
             }
 
-            ExprKind::While { cond, body } => {
+            ExprKind::While { cond, body, .. } => {
                 // Plan 08 Ф.4: strict bool-check.
                 let cond_ty = self.infer_expr_c_type(cond);
                 self.check_bool_condition_at(&cond_ty, "while", cond.span)?;
@@ -6809,7 +6809,7 @@ impl CEmitter {
                 Ok(tmp)
             }
 
-            ExprKind::Loop { body } => {
+            ExprKind::Loop { body, .. } => {
                 let tmp = self.fresh_tmp_named("loop");
                 self.line(&format!("nova_unit {};", tmp));
                 self.line("for (;;) {");
@@ -7436,7 +7436,7 @@ impl CEmitter {
                 }
                 Ok(result_tmp)
             }
-            ExprKind::WhileLet { pattern, scrutinee, body } => {
+            ExprKind::WhileLet { pattern, scrutinee, body, .. } => {
                 // while let Pat = expr { body }
                 // → loop: evaluate scrutinee, if pattern matches bind and run body, else break
                 let loop_tmp = self.fresh_tmp_named("while_let");

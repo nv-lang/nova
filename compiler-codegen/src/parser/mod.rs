@@ -3489,13 +3489,15 @@ impl Parser {
         let (invs, decr) = self.parse_loop_clauses()?;
         let mut body = self.parse_block()?;
         Self::inject_loop_invariants(invs.clone(), &mut body);
-        Self::inject_loop_decreases(decr, &mut body);
+        Self::inject_loop_decreases(decr.clone(), &mut body);
         let end = body.span;
         let loop_expr = Expr::new(
             ExprKind::For {
                 pattern,
                 iter: Box::new(iter),
                 body,
+                invariants: invs.clone(),
+                decreases: decr.map(Box::new),
             },
             start.merge(end),
         );
@@ -3535,6 +3537,8 @@ impl Parser {
                     pattern,
                     scrutinee: Box::new(scrutinee),
                     body,
+                    invariants: vec![],
+                    decreases: None,
                 },
                 start.merge(end),
             ));
@@ -3544,12 +3548,14 @@ impl Parser {
         let (invs, decr) = self.parse_loop_clauses()?;
         let mut body = self.parse_block()?;
         Self::inject_loop_invariants(invs.clone(), &mut body);
-        Self::inject_loop_decreases(decr, &mut body);
+        Self::inject_loop_decreases(decr.clone(), &mut body);
         let end = body.span;
         let loop_expr = Expr::new(
             ExprKind::While {
                 cond: Box::new(cond),
                 body,
+                invariants: invs.clone(),
+                decreases: decr.map(Box::new),
             },
             start.merge(end),
         );
@@ -3562,9 +3568,9 @@ impl Parser {
         let (invs, decr) = self.parse_loop_clauses()?;
         let mut body = self.parse_block()?;
         Self::inject_loop_invariants(invs.clone(), &mut body);
-        Self::inject_loop_decreases(decr, &mut body);
+        Self::inject_loop_decreases(decr.clone(), &mut body);
         let end = body.span;
-        let loop_expr = Expr::new(ExprKind::Loop { body }, start.merge(end));
+        let loop_expr = Expr::new(ExprKind::Loop { body, invariants: invs.clone(), decreases: decr.map(Box::new) }, start.merge(end));
         Ok(Self::wrap_loop_with_preentry_check(loop_expr, &invs))
     }
 

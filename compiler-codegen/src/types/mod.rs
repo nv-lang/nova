@@ -587,7 +587,7 @@ impl<'a> BoundCtx<'a> {
                 self.walk_expr(iter, scope, errors);
                 self.walk_block(body, scope, errors);
             }
-            ExprKind::While { cond, body } => {
+            ExprKind::While { cond, body, .. } => {
                 self.walk_expr(cond, scope, errors);
                 self.walk_block(body, scope, errors);
             }
@@ -595,7 +595,7 @@ impl<'a> BoundCtx<'a> {
                 self.walk_expr(scrutinee, scope, errors);
                 self.walk_block(body, scope, errors);
             }
-            ExprKind::Loop { body } => self.walk_block(body, scope, errors),
+            ExprKind::Loop { body, .. } => self.walk_block(body, scope, errors),
             ExprKind::Select { arms } => {
                 for arm in arms {
                     match &arm.op {
@@ -1560,7 +1560,7 @@ impl<'a> CapabilityCtx<'a> {
                 self.walk_expr(iter, state, errors);
                 self.walk_block(body, state, errors);
             }
-            ExprKind::While { cond, body } => {
+            ExprKind::While { cond, body, .. } => {
                 self.walk_expr(cond, state, errors);
                 self.walk_block(body, state, errors);
             }
@@ -1568,7 +1568,7 @@ impl<'a> CapabilityCtx<'a> {
                 self.walk_expr(scrutinee, state, errors);
                 self.walk_block(body, state, errors);
             }
-            ExprKind::Loop { body } => self.walk_block(body, state, errors),
+            ExprKind::Loop { body, .. } => self.walk_block(body, state, errors),
             ExprKind::Select { arms } => {
                 for arm in arms {
                     match &arm.op {
@@ -2234,7 +2234,7 @@ impl NameResCtx {
                     scope.pop();
                 }
             }
-            ExprKind::For { pattern, iter, body } => {
+            ExprKind::For { pattern, iter, body, .. } => {
                 self.walk_expr(iter, file_id, scope, errors);
                 let mut bindings: HashSet<String> = HashSet::new();
                 self.collect_pattern_bindings(pattern, &mut bindings);
@@ -2250,11 +2250,11 @@ impl NameResCtx {
                 self.walk_block(body, file_id, scope, errors);
                 scope.pop();
             }
-            ExprKind::While { cond, body } => {
+            ExprKind::While { cond, body, .. } => {
                 self.walk_expr(cond, file_id, scope, errors);
                 self.walk_block(body, file_id, scope, errors);
             }
-            ExprKind::WhileLet { pattern, scrutinee, body } => {
+            ExprKind::WhileLet { pattern, scrutinee, body, .. } => {
                 self.walk_expr(scrutinee, file_id, scope, errors);
                 let mut bindings: HashSet<String> = HashSet::new();
                 self.collect_pattern_bindings(pattern, &mut bindings);
@@ -2262,7 +2262,7 @@ impl NameResCtx {
                 self.walk_block(body, file_id, scope, errors);
                 scope.pop();
             }
-            ExprKind::Loop { body } => self.walk_block(body, file_id, scope, errors),
+            ExprKind::Loop { body, .. } => self.walk_block(body, file_id, scope, errors),
             ExprKind::Select { arms } => {
                 for arm in arms {
                     match &arm.op {
@@ -2712,11 +2712,11 @@ fn has_throw_in_expr(e: &Expr) -> bool {
                 MatchArmBody::Block(b) => has_throw_in_block(b),
             })
         }
-        ExprKind::While { cond, body } => has_throw_in_expr(cond) || has_throw_in_block(body),
+        ExprKind::While { cond, body, .. } => has_throw_in_expr(cond) || has_throw_in_block(body),
         ExprKind::WhileLet { scrutinee, body, .. } =>
             has_throw_in_expr(scrutinee) || has_throw_in_block(body),
         ExprKind::For { iter, body, .. } => has_throw_in_expr(iter) || has_throw_in_block(body),
-        ExprKind::Loop { body } => has_throw_in_block(body),
+        ExprKind::Loop { body, .. } => has_throw_in_block(body),
         ExprKind::Select { arms } => arms.iter().any(|a| {
             (match &a.op {
                 SelectOp::Recv { chan, .. } => has_throw_in_expr(chan),
@@ -3425,11 +3425,11 @@ fn walk_expr_for_handler_lits(e: &Expr, never_ops: &HashSet<(String, String)>, e
             walk_expr_for_handler_lits(iter, never_ops, errors);
             walk_block_for_handler_lits(body, never_ops, errors);
         }
-        ExprKind::While { cond, body } | ExprKind::WhileLet { scrutinee: cond, body, .. } => {
+        ExprKind::While { cond, body, .. } | ExprKind::WhileLet { scrutinee: cond, body, .. } => {
             walk_expr_for_handler_lits(cond, never_ops, errors);
             walk_block_for_handler_lits(body, never_ops, errors);
         }
-        ExprKind::Loop { body } => walk_block_for_handler_lits(body, never_ops, errors),
+        ExprKind::Loop { body, .. } => walk_block_for_handler_lits(body, never_ops, errors),
         ExprKind::Select { arms } => {
             for arm in arms {
                 match &arm.op {
@@ -3718,7 +3718,7 @@ fn walk_expr_for_defers(e: &Expr, fn_effects: &HashMap<String, Vec<TypeRef>>, er
             walk_expr_for_defers(iter, fn_effects, errors);
             walk_block_for_defers(body, fn_effects, errors);
         }
-        ExprKind::While { cond, body } => {
+        ExprKind::While { cond, body, .. } => {
             walk_expr_for_defers(cond, fn_effects, errors);
             walk_block_for_defers(body, fn_effects, errors);
         }
@@ -3726,7 +3726,7 @@ fn walk_expr_for_defers(e: &Expr, fn_effects: &HashMap<String, Vec<TypeRef>>, er
             walk_expr_for_defers(scrutinee, fn_effects, errors);
             walk_block_for_defers(body, fn_effects, errors);
         }
-        ExprKind::Loop { body } => walk_block_for_defers(body, fn_effects, errors),
+        ExprKind::Loop { body, .. } => walk_block_for_defers(body, fn_effects, errors),
         ExprKind::Select { arms } => {
             for arm in arms {
                 match &arm.op {
@@ -3968,7 +3968,7 @@ fn walk_defer_subexprs(e: &Expr, kw: &str, fn_effects: &HashMap<String, Vec<Type
             let inner = DeferBodyCtx { loop_depth: ctx.loop_depth + 1, fn_depth: ctx.fn_depth };
             check_defer_body_block(body, kw, fn_effects, &inner, errors);
         }
-        ExprKind::While { cond, body } => {
+        ExprKind::While { cond, body, .. } => {
             check_defer_body_inner(cond, kw, fn_effects, ctx, errors);
             let inner = DeferBodyCtx { loop_depth: ctx.loop_depth + 1, fn_depth: ctx.fn_depth };
             check_defer_body_block(body, kw, fn_effects, &inner, errors);
@@ -3978,7 +3978,7 @@ fn walk_defer_subexprs(e: &Expr, kw: &str, fn_effects: &HashMap<String, Vec<Type
             let inner = DeferBodyCtx { loop_depth: ctx.loop_depth + 1, fn_depth: ctx.fn_depth };
             check_defer_body_block(body, kw, fn_effects, &inner, errors);
         }
-        ExprKind::Loop { body } => {
+        ExprKind::Loop { body, .. } => {
             let inner = DeferBodyCtx { loop_depth: ctx.loop_depth + 1, fn_depth: ctx.fn_depth };
             check_defer_body_block(body, kw, fn_effects, &inner, errors);
         }

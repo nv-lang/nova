@@ -801,6 +801,10 @@ pub enum ExprKind {
         pattern: Pattern,
         iter: Box<Expr>,
         body: Block,
+        /// Plan 33.4 D.0.3: loop invariants (SMT + runtime).
+        invariants: Vec<Expr>,
+        /// Plan 33.4 D.0.3: well-founded termination measure.
+        decreases: Option<Box<Expr>>,
     },
     /// `parallel for x in iter { body }` — D14, fan-out body for each element.
     /// Desugars to `supervised { for x in iter { spawn { body } } }`.
@@ -812,15 +816,27 @@ pub enum ExprKind {
     While {
         cond: Box<Expr>,
         body: Block,
+        /// Plan 33.4 D.0.3: loop invariants (SMT + runtime).
+        invariants: Vec<Expr>,
+        /// Plan 33.4 D.0.3: well-founded termination measure.
+        decreases: Option<Box<Expr>>,
     },
     /// `while let pattern = expr { ... }` — D34
     WhileLet {
         pattern: Pattern,
         scrutinee: Box<Expr>,
         body: Block,
+        /// Plan 33.4 D.0.3: loop invariants.
+        invariants: Vec<Expr>,
+        /// Plan 33.4 D.0.3: well-founded termination measure.
+        decreases: Option<Box<Expr>>,
     },
     Loop {
         body: Block,
+        /// Plan 33.4 D.0.3: loop invariants (SMT + runtime).
+        invariants: Vec<Expr>,
+        /// Plan 33.4 D.0.3: well-founded termination measure.
+        decreases: Option<Box<Expr>>,
     },
     /// `select { Some(v) = rx.recv() => body, _ => default }` --- D94
     Select {

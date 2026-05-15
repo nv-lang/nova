@@ -334,6 +334,35 @@ impl VerificationPipeline {
             }
         }
 
+        // Plan 33.4 D.0.3: verify loop invariants at entry.
+        // Для каждого цикла с `invariant <expr>` в теле fn:
+        // пытаемся доказать что invariant выполняется при входе в функцию
+        // (при условии requires). Это partial check — не доказывает
+        // preservation (полный havoc-based encoding — V2).
+        let loop_invs = collect_loop_invariants_in_body(&fd.body);
+        for (inv_span, inv_expr) in loop_invs {
+            match encode::encode_expr_with_ctx(&inv_expr, &ctx) {
+                Ok(inv_term) => {
+                    match try_prove(&mut *backend, inv_term) {
+                        SatResult::Unsat(_) => results.push((inv_span, VerifyResult::Proven)),
+                        SatResult::Sat(model) => {
+                            let cex = format_counterexample(&model);
+                            results.push((inv_span, VerifyResult::Disproved(model,
+                                format!("loop invariant may not hold at entry: {}", cex))));
+                        }
+                        SatResult::Unknown(reason) => {
+                            results.push((inv_span, VerifyResult::Unknown(
+                                format!("loop invariant at entry: {}", unknown_to_diag_message(reason)))));
+                        }
+                    }
+                }
+                Err(_) => {
+                    // Invariant не encodable (e.g. содержит вызовы) — silent skip.
+                    // Runtime check (inject_loop_invariants) покрывает этот случай.
+                }
+            }
+        }
+
         let _ = self.timeout_ms; // используется когда добавим Z3-backend
         results
     }
@@ -468,6 +497,81 @@ fn find_recursive_calls_in_expr(e: &Expr, fn_name: &str, out: &mut Vec<(Span, Ve
                 match &arm.body {
                     MatchArmBody::Expr(ae) => find_recursive_calls_in_expr(ae, fn_name, out),
                     MatchArmBody::Block(ab) => find_recursive_calls_in_block(ab, fn_name, out),
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Plan 33.4 D.0.3: собрать все loop invariant'ы из тела функции.
+/// Возвращает Vec<(Span, Expr)> — span цикла + invariant expression.
+fn collect_loop_invariants_in_body(body: &FnBody) -> Vec<(Span, Expr)> {
+    let mut out = Vec::new();
+    match body {
+        FnBody::Expr(e) => collect_loop_invariants_in_expr(e, &mut out),
+        FnBody::Block(b) => collect_loop_invariants_in_block(b, &mut out),
+        FnBody::External => {}
+    }
+    out
+}
+
+fn collect_loop_invariants_in_block(b: &Block, out: &mut Vec<(Span, Expr)>) {
+    for s in &b.stmts {
+        collect_loop_invariants_in_stmt(s, out);
+    }
+    if let Some(e) = &b.trailing {
+        collect_loop_invariants_in_expr(e, out);
+    }
+}
+
+fn collect_loop_invariants_in_stmt(s: &Stmt, out: &mut Vec<(Span, Expr)>) {
+    match s {
+        Stmt::Expr(e) => collect_loop_invariants_in_expr(e, out),
+        Stmt::Let(ld) => collect_loop_invariants_in_expr(&ld.value, out),
+        Stmt::Return { value: Some(v), .. } => collect_loop_invariants_in_expr(v, out),
+        Stmt::Assign { value, .. } => collect_loop_invariants_in_expr(value, out),
+        _ => {}
+    }
+}
+
+fn collect_loop_invariants_in_expr(e: &Expr, out: &mut Vec<(Span, Expr)>) {
+    match &e.kind {
+        ExprKind::While { body, invariants, .. }
+        | ExprKind::For { body, invariants, .. }
+        | ExprKind::Loop { body, invariants, .. } => {
+            for inv in invariants {
+                out.push((e.span, inv.clone()));
+            }
+            collect_loop_invariants_in_block(body, out);
+        }
+        ExprKind::WhileLet { body, invariants, .. } => {
+            for inv in invariants {
+                out.push((e.span, inv.clone()));
+            }
+            collect_loop_invariants_in_block(body, out);
+        }
+        ExprKind::If { cond, then, else_ } => {
+            collect_loop_invariants_in_expr(cond, out);
+            collect_loop_invariants_in_block(then, out);
+            match else_ {
+                Some(ElseBranch::Block(b)) => collect_loop_invariants_in_block(b, out),
+                Some(ElseBranch::If(ei)) => collect_loop_invariants_in_expr(ei, out),
+                None => {}
+            }
+        }
+        ExprKind::Block(b) => collect_loop_invariants_in_block(b, out),
+        ExprKind::Binary { left, right, .. } => {
+            collect_loop_invariants_in_expr(left, out);
+            collect_loop_invariants_in_expr(right, out);
+        }
+        ExprKind::Unary { operand, .. } => collect_loop_invariants_in_expr(operand, out),
+        ExprKind::Match { scrutinee, arms } => {
+            collect_loop_invariants_in_expr(scrutinee, out);
+            for arm in arms {
+                match &arm.body {
+                    MatchArmBody::Expr(ae) => collect_loop_invariants_in_expr(ae, out),
+                    MatchArmBody::Block(ab) => collect_loop_invariants_in_block(ab, out),
                 }
             }
         }
