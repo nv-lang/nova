@@ -154,6 +154,9 @@ fn write_item(w: &mut JsonWriter, it: &DocItem) {
     match &it.stability {
         None => w.field_null_or_str("stability", None),
         Some(s) => w.field_object("stability", |w| {
+            // alphabetical: feature < note < since < tier
+            w.field_null_or_str("feature", s.feature.as_deref());
+            w.field_null_or_str("note", s.note.as_deref());
             w.field_null_or_str("since", s.since.as_deref());
             w.field_str("tier", s.tier.as_str());
         }),

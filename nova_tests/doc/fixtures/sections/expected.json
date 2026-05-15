@@ -63,6 +63,8 @@
         "line": 27
       },
       "stability": {
+        "feature": null,
+        "note": null,
         "since": "0.1.0",
         "tier": "unstable"
       },

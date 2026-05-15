@@ -52,6 +52,8 @@
         "line": 23
       },
       "stability": {
+        "feature": null,
+        "note": null,
         "since": "1.0.0",
         "tier": "stable"
       },
@@ -117,6 +119,8 @@
         "line": 28
       },
       "stability": {
+        "feature": null,
+        "note": "may change in 0.5",
         "since": "0.3.0",
         "tier": "experimental"
       },
@@ -296,6 +300,8 @@
         "line": 40
       },
       "stability": {
+        "feature": "channel_select",
+        "note": null,
         "since": null,
         "tier": "unstable"
       },

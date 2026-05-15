@@ -39,6 +39,8 @@ fn extract_doc_attrs(attrs: &[DocAttr]) -> ExtractedDocAttrs {
     // Pass 2: tier + остальные атрибуты.
     let mut tier: Option<StabilityTier> = None;
     let mut tier_since: Option<String> = None;
+    let mut tier_feature: Option<String> = None;
+    let mut tier_note: Option<String> = None;
     for a in attrs {
         match a {
             DocAttr::Deprecated { since, note, until: _ } => {
@@ -52,13 +54,15 @@ fn extract_doc_attrs(attrs: &[DocAttr]) -> ExtractedDocAttrs {
                 tier = Some(StabilityTier::Stable);
                 tier_since = since.clone().or_else(|| explicit_since.clone());
             }
-            DocAttr::Unstable { feature: _ } => {
+            DocAttr::Unstable { feature } => {
                 tier = Some(StabilityTier::Unstable);
                 tier_since = explicit_since.clone();
+                tier_feature = feature.clone();
             }
-            DocAttr::Experimental { note: _ } => {
+            DocAttr::Experimental { note } => {
                 tier = Some(StabilityTier::Experimental);
                 tier_since = explicit_since.clone();
+                tier_note = note.clone();
             }
             DocAttr::HideDoc => hide_doc = true,
             DocAttr::DocAlias(xs) => aliases.extend(xs.iter().cloned()),
@@ -69,7 +73,12 @@ fn extract_doc_attrs(attrs: &[DocAttr]) -> ExtractedDocAttrs {
         }
     }
     let stability = match tier {
-        Some(t) => Some(Stability { tier: t, since: tier_since }),
+        Some(t) => Some(Stability {
+            tier: t,
+            since: tier_since,
+            feature: tier_feature,
+            note: tier_note,
+        }),
         None => explicit_since.as_ref().map(|v| Stability {
             tier: if is_post_1_0_version(v) {
                 StabilityTier::Stable
@@ -77,6 +86,8 @@ fn extract_doc_attrs(attrs: &[DocAttr]) -> ExtractedDocAttrs {
                 StabilityTier::Unstable
             },
             since: Some(v.clone()),
+            feature: None,
+            note: None,
         }),
     };
     aliases.sort();

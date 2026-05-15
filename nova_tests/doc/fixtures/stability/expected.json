@@ -51,6 +51,8 @@
         "line": 21
       },
       "stability": {
+        "feature": null,
+        "note": null,
         "since": "1.0.0",
         "tier": "stable"
       },
@@ -116,6 +118,8 @@
         "line": 29
       },
       "stability": {
+        "feature": null,
+        "note": null,
         "since": "0.3.0",
         "tier": "experimental"
       },
@@ -185,6 +189,8 @@
         "line": 14
       },
       "stability": {
+        "feature": null,
+        "note": null,
         "since": "0.1.0",
         "tier": "unstable"
       },

@@ -268,6 +268,8 @@ const SCHEMA_V1: &str = r##"{
       "required": ["tier"],
       "additionalProperties": false,
       "properties": {
+        "feature": { "type": ["string", "null"], "description": "Plan 45 Ф.22.2 / D105: для `#unstable(feature = \"name\")` — имя feature-флага. null для stable/experimental." },
+        "note": { "type": ["string", "null"], "description": "Plan 45 Ф.22.2 / D105: для `#experimental(note = \"...\")` — объяснение, что может измениться. null для stable/unstable." },
         "since": { "type": ["string", "null"] },
         "tier": { "type": "string", "enum": ["stable", "unstable", "experimental"] }
       }

@@ -51,23 +51,32 @@ fn derive_for_item(it: &mut DocItem) {
         });
     }
 
-    // 3. Stability — приоритет: inline-attr > derived from # Since.
-    if let Some(tier) = attrs.tier {
-        it.stability = Some(Stability {
-            tier,
-            since: attrs.since.clone(),
-        });
-    } else if let Some(since_text) = it.sections.get("since") {
-        let since_str = since_text.trim().to_string();
-        let tier = if is_post_1_0(&since_str) {
-            StabilityTier::Stable
-        } else {
-            StabilityTier::Unstable
-        };
-        it.stability = Some(Stability {
-            tier,
-            since: Some(since_str),
-        });
+    // 3. Stability — приоритет: real parser attr (already in collector)
+    // > markdown-inline `#[stable]` > derived from `# Since` section.
+    // Ф.22.2: не overwrite уже установленный stability (real-attr хранит
+    // feature/note, которые markdown-inline теряет).
+    if it.stability.is_none() {
+        if let Some(tier) = attrs.tier {
+            it.stability = Some(Stability {
+                tier,
+                since: attrs.since.clone(),
+                feature: None,
+                note: None,
+            });
+        } else if let Some(since_text) = it.sections.get("since") {
+            let since_str = since_text.trim().to_string();
+            let tier = if is_post_1_0(&since_str) {
+                StabilityTier::Stable
+            } else {
+                StabilityTier::Unstable
+            };
+            it.stability = Some(Stability {
+                tier,
+                since: Some(since_str),
+                feature: None,
+                note: None,
+            });
+        }
     }
 }
 
