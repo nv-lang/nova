@@ -12601,12 +12601,35 @@ impl CEmitter {
                         _ => None,
                     };
                     if let Some((rt, mn, want_inst)) = recv_and_method {
-                        let key = (rt, mn);
+                        let key = (rt.clone(), mn.clone());
                         if let Some(overloads) = self.method_overloads.get(&key) {
                             let candidates: Vec<&MethodSig> = overloads.iter()
                                 .filter(|s| s.is_instance == want_inst)
                                 .collect();
                             if !candidates.is_empty() {
+                                // Plan 48 Ф.7.1: sentinel — generic method с
+                                // собственными type params. return_c_type у sentinel
+                                // = "void*"; нужно резолвить через mono inference.
+                                if candidates.iter().any(|c| c.c_name.starts_with("__mono_method__")) {
+                                    let recv_key = (rt.clone(), mn.clone());
+                                    if let Some(fn_decl) = self.mono_method_decls.get(&recv_key) {
+                                        if let Ok(type_subst) = self.resolve_mono_type_args(fn_decl, &[], args) {
+                                            let subst_opt: Vec<(String, Option<String>)> = type_subst.iter()
+                                                .map(|(n, t)| (n.clone(), Some(t.clone()))).collect();
+                                            if let Some(ret_ty) = &fn_decl.return_type {
+                                                if let Some(c_ty) = Self::apply_type_subst_to_ref(ret_ty, &subst_opt) {
+                                                    if !c_ty.is_empty() && c_ty != "void*" {
+                                                        return c_ty;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    // Sentinel + не смогли резолвить → fallback на void*
+                                    // (call site эмитит mono call, но тип не известен —
+                                    // user должен дать explicit annotation).
+                                    return "void*".into();
+                                }
                                 // Plan 11 Ф.9.3: override-precedence Own > Delegated.
                                 // Single → return its return_c_type (no override
                                 // conflict possible).

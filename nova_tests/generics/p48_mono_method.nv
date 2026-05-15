@@ -1,17 +1,13 @@
-// Plan 48: instance generic-метод с собственными type params (не type
-// params receiver-а).
+// Plan 48: generic-методы (instance + static) с собственными type params.
 //
 // Покрывает sentinel MethodSig + register_mono_method_instance +
-// emit_monomorphized_method для **instance** методов. Метод НЕ изменяет
+// emit_monomorphized_method для обоих kinds. Метод НЕ изменяет
 // receiver, чтобы избежать mono generic records (это Ф.3, V2).
 //
-// FIXME / followups:
-//  - call-site `let r = c.method(...)` тип `r` инфер'ится как `void*`
-//    (infer_expr_c_type method-call branch не делает Plan 48 mono
-//    inference). Workaround: явная type annotation. Followup в Plan 48.
-//  - Static generic methods (`Type.method[T]()` без receiver) — sentinel
-//    `__mono_method__T__m` попадает в C-output как c_name линковщику,
-//    не resolved через mono routing. Followup в Plan 48.
+// После Ф.7.1: `let r = c.method(...)` инфер'ит правильный mono'д
+// return type — workaround `let r int = ...` больше не нужен.
+// После Ф.7.2: static `Type.method[T]()` работает через sentinel
+// routing с правильной C signature (без nova_self).
 
 module nova_tests.generics.p48_mono_method
 
@@ -29,28 +25,28 @@ export fn Counter @apply[T](f fn(int) -> T) -> T => f(@base)
 export fn Counter.combine[T](x T, y T, merge fn(T, T) -> T) -> T => merge(x, y)
 
 
-test "mono method: int return" {
+test "mono method: int return (Ф.7.1 — без annotation)" {
     let c = Counter { base: 10 }
-    let r int = c.apply(fn(n int) -> int { n * 2 })
+    let r = c.apply(fn(n int) -> int { n * 2 })
     assert(r == 20)
 }
 
-test "mono method: bool return" {
+test "mono method: bool return (Ф.7.1)" {
     let c = Counter { base: 3 }
-    let r bool = c.apply(fn(n int) -> bool { n > 0 })
+    let r = c.apply(fn(n int) -> bool { n > 0 })
     assert(r == true)
 }
 
-test "mono method: closure with block body" {
+test "mono method: closure с block body" {
     let c = Counter { base: 5 }
-    let r int = c.apply(fn(n int) -> int {
+    let r = c.apply(fn(n int) -> int {
         let doubled = n * 2
         doubled + 1
     })
     assert(r == 11)
 }
 
-test "static mono method: int merge" {
-    let r int = Counter.combine(2, 3, fn(a int, b int) -> int { a + b })
+test "static mono method: int merge (Ф.7.2)" {
+    let r = Counter.combine(2, 3, fn(a int, b int) -> int { a + b })
     assert(r == 5)
 }
