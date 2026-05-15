@@ -141,8 +141,9 @@ fn withdraw(mut acc Account, amount money) Fail -> ()
 ## Память: managed по умолчанию, real-time opt-in
 
 **Программист пишет, GC работает.** Никаких префиксов памяти в обычном
-коде. Циклы освобождаются автоматически. Современный concurrent GC —
-паузы <1ms.
+коде. Циклы освобождаются автоматически. По умолчанию используется Boehm GC — консервативный,
+паузы на практике до 16ms. Concurrent incremental GC — в roadmap v1.0
+(Plan 25).
 
 Для real-time зон (звук, торговля, embedded) — блок `realtime { ... }`.
 Внутри него компилятор гарантирует отсутствие приостановок и GC-пауз;
@@ -209,8 +210,10 @@ fn map_audio(samples []f32, gain f32) -> []f32 =>
 - Эффекты + handlers (D61/D87): keyword'ы `effect`/`handler`,
   `with X = h { body }`, `interrupt v`, `Handler[E, IRT]` first-class
   тип. `forbid`, `realtime` capability-блоки.
-- Structured concurrency (D71): `spawn`, `supervised`, `parallel for`,
-  `cancel_scope`, channels, `select`.
+- Structured concurrency (D71/D75/D92): `spawn`, `supervised`,
+  `supervised(cancel: tok)`, `parallel for`, channels, `select`.
+- **M:N runtime** (Plans 44.1–44.7): work-stealing scheduler,
+  per-worker libuv event loop, preemption (D103), GC_THREADS.
 - Контракты (D24): `requires`/`ensures`/`old`/`result`/`invariant`/
   `reads`/`modifies`/`decreases`/`ghost let`/`assume`/`assert_static`.
   Bootstrap SMT через TrivialBackend (reflexive ensures); Z3 — milestone.
@@ -224,16 +227,16 @@ fn map_audio(samples []f32, gain f32) -> []f32 =>
 
 ```sh
 # собрать nova CLI (требуется Rust + Cargo)
-cd nova-cli && cargo build && cd ..
+cd nova-cli && cargo build --release && cd ..
 
 # скомпилировать .nv в нативный бинарь
-nova-cli/target/debug/nova build path/to/hello.nv
+nova-cli/target/release/nova build path/to/hello.nv
 
 # запустить через интерпретатор (без нативной компиляции)
-nova-cli/target/debug/nova run path/to/hello.nv
+nova-cli/target/release/nova run path/to/hello.nv
 
 # только type-check
-nova-cli/target/debug/nova check path/to/hello.nv
+nova-cli/target/release/nova check path/to/hello.nv
 ```
 
 Pipeline двухступенчатый: `nova-codegen` (внутренний) производит `.c`,
@@ -259,10 +262,10 @@ gcc path/to/hello.c nova_rt/alloc.c nova_rt/effects.c nova_rt/fibers.c \
 
 ```sh
 # собрать nova CLI (одноразово, или после изменений)
-cd nova-cli && cargo build && cd ..
+cd nova-cli && cargo build --release && cd ..
 
 # все тесты
-nova-cli/target/debug/nova test
+nova-cli/target/release/nova test
 ```
 
 Частые флаги:
