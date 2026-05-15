@@ -21,7 +21,7 @@ Branch `plan-45-doc`, uncommitted после первоначального merg
 | Ф.15 `--watch` mode | ✅ done | `--watch` flag — mtime poll каждые 500ms, ANSI screen-clear перед каждым re-render'ом; no new deps |
 | Ф.17 CI integration | ✅ done | `.github/workflows/nova-doc.yml` — три job'а: `--check` clean fixtures + negative path; `--test` all fixtures; doc-module unit tests |
 | Ф.19 Tests/golden | ✅ done | 42 unit tests + 7 golden-snapshot integration tests (`compiler-codegen/tests/doc_golden.rs`) — committed `expected.json` per fixture, byte-for-byte regression check |
-| Ф.20 User docs | ✅ done | `docs/user/nova-doc.md` — quick start, sections, links, doc-tests, modifiers, stability, CLI flags, CI integration, style guide |
+| Ф.20 User docs | ✅ done | `docs/nova-doc.md` — quick start, sections, links, doc-tests, modifiers, stability, CLI flags, CI integration, style guide |
 
 **Производственные расширения (опциональные для MVP-cutoff):** doc-attrs wiring, `--watch` mode, CI integration, user guide.
 

@@ -310,6 +310,21 @@ Override with `--toolchain clang|msvc|gcc` or via env-vars
 Full reference of test-runner flags, EXPECT-markers, troubleshooting:
 [docs/test-conventions.md](docs/test-conventions.md).
 
+## Documentation (`nova doc`)
+
+Generate documentation from `///` and `//!` doc-comments with
+doc-tests, intra-doc-links, stability/deprecation, JSON Schema 2020-12
+output:
+
+```sh
+nova doc src/api.nv                # Markdown to stdout
+nova doc src/api.nv --format json  # JSON (D107 schema v1)
+nova doc src/api.nv --test         # run doc-tests
+nova doc src/api.nv --check        # validate (broken links, missing summaries)
+```
+
+Full user guide: [docs/nova-doc.md](docs/nova-doc.md).
+
 ## SMT verification + Z3 setup
 
 Nova включает статический верификатор контрактов (`requires`/`ensures`/`invariant`).
