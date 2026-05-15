@@ -19,6 +19,30 @@
 > это explicit phasing: MVP закрывается отдельно (~13-20 dev-days,
 > ~5000-8000 LOC), 45.A и 45.B — следующими итерациями. См. §12.0.
 >
+> **Ревизия 2026-05-15 (третья, research-driven):** production-grade
+> архитектурное расширение после research конвенций rustdoc / godoc /
+> typedoc:
+> - §3 — **passes-based IR transformation** (rustdoc-style 11 ordered
+>   passes для MVP, каждый файл-пасс с единственной ответственностью);
+>   детальный crate/file layout (~25 файлов); output file scheme
+>   (per-module dirs + kind-prefixed anchors).
+> - §6 — **JSON schema versioning policy**: `format_version` field +
+>   SemVer-like эвалюция + `nova-doc-types` consumer-крейт + schema
+>   soak period (v1 mvp-stable до promotion).
+> - §11.5 — **Doc-comment style guide**: 8 правил (first-sentence
+>   summary, imperative mood, fixed section order, markdown subset,
+>   intra-doc links syntax, examples обязательны для public fn,
+>   deprecation note + since/until, stability tiers) + catalog of 10
+>   lints в `lint_docs` pass.
+> - §14.5 — **Performance budget**: wall-clock / output size / memory
+>   targets как acceptance criteria; reproducibility CI gate.
+> - §15 — **Operational risks subsection** + risk register (12 risks
+>   с impact/likelihood/mitigation-phase).
+>
+> Plan now production-grade без упрощений: каждое архитектурное
+> решение опирается либо на конкретный rustdoc/godoc precedent, либо
+> на explicit Nova-уникальное обоснование. См. §3-§15.
+>
 > **Контекст:** в Plan 42 правило G отвергло `overview.nv` convention
 > (manual signature copy → drift). Replacement = auto-tooling,
 > source-of-truth = implementation. `nova doc` — обязательство,
@@ -284,55 +308,213 @@ TokenStream с DocComment(span, content, kind=outer|inner)
 AST с Item { ..., doc: Option<DocBlock>, attrs: Vec<Attr> }
    ↓ (infer_effects + type_check + lint_module — full pipeline)
 TypedAST (signatures полностью разрешены: effects, contracts, generics)
-   ↓ (doc_collector в nova-codegen)
-DocModel — typed IR для рендеринга
-   ↓ (intra_link_resolver — обходит DocModel, резолвит [X])
-DocModel + resolved_links
-   ↓ (doc_test_extractor — выдёргивает code-blocks с lang=nova)
-DocModel + doc_tests[]
+   ↓ (doctree builder — AST walker → raw doctree)
+DocTree (raw, untransformed item-tree)
+   ↓ (ordered passes — §3.2)
+DocTree (после passes: visibility-filtered, links-resolved, deprecation/
+         stability propagated, doc-tests collected, coverage calculated)
    ↓ (опционально: doc_test_runner — компилирует+запускает через test_runner)
-DocModel + test_results[]
-   ↓ (renderer per format)
-markdown | json | html | man
+DocTree + test_results[]
+   ↓ (renderer per format — реализует trait Renderer)
+markdown | json (MVP) | html | man (Plan 45.A)
 ```
 
-### Crate layout
+### Passes (rustdoc-style ordered IR transformation)
+
+**Архитектурное решение (research 2026-05-15):** имитировать rustdoc'овский
+passes-pattern вместо монолитного «collector → renderer». Каждый pass —
+отдельный файл, единственная ответственность, ордеринг явно
+зафиксирован. Это даёт:
+
+1. **Testability per pass.** Каждый pass юнит-тестируется на минимальном
+   DocTree-фикстуре. Регрессия локализована в пасс.
+2. **Order explicit.** Зависимости пассов (`strip_private` ДО
+   `resolve_links` чтобы не резолвить ссылки на отстрипленные items)
+   читаются прямо в `passes/mod.rs`.
+3. **Extensibility.** Новые правила (coverage, scrape examples, lint
+   missing summary) — новый файл в `passes/`, регистрация в pass-list.
+   Никаких правок collector'а / renderer'а.
+4. **Disable-by-flag.** `--passes <name>` (advanced) даёт
+   возможность отключать пассы для debug; default — full pass-list.
+
+**Reference:** rustdoc src/librustdoc/passes/ имеет 13 пассов
+(calculate_doc_coverage, check_doc_test_visibility, collect_intra_doc_links,
+collect_trait_impls, lint, propagate_doc_cfg, propagate_stability,
+strip_aliased_non_local, strip_hidden, strip_priv_imports, strip_private,
+stripper). Мы берём эту модель — не копируем поимённо (Nova-семантика
+другая), но pattern «pass = file = unit of transformation» применяем.
+
+**Pass list для Plan 45 MVP** (порядок жёстко зафиксирован):
+
+| # | Pass | Ответственность | Закрывает |
+|---|---|---|---|
+| 1 | `strip_private` | Удалить non-export items (D5 default-private). | Visibility filter |
+| 2 | `propagate_stability` | `#stable`/`#unstable`/`#experimental` от модуля → items без явного маркера. | D105 |
+| 3 | `propagate_deprecation` | `#deprecated` от parent module — наследуется в items, если те не override'нули. | D105 |
+| 4 | `derive_sections` | Авто-секции `# Effects` / `# Errors` / `# Contracts` из сигнатуры (если в doc их нет). | §5 sections |
+| 5 | `resolve_intra_doc_links` | `[X]` / `[mod.X]` / `[Self.method]` → resolved item paths. | Ф.6 |
+| 6 | `collect_doc_tests` | Извлечь code-blocks `lang=nova` + модификаторы. | D106, Ф.7 |
+| 7 | `attach_source_loc` | К каждому item — `source_url`/`source_file:line` (для «View source» link). | rustdoc-paritet |
+| 8 | `collect_implementors` | Для protocol-типов — auto-list типов, реализующих протокол (workspace-scoped). | Ф.4 |
+| 9 | `collect_handlers` | Для effect-типов — auto-list handler'ов в workspace. | Ф.4 |
+| 10 | `lint_docs` | Missing summary / orphan headings / unknown attrs / broken links — warnings (или errors в `--check`). | §8 |
+| 11 | `calculate_coverage` | `<reported_items> / <total_public_items>` per module; foundation для Plan 45.A `--show-coverage`. | rustdoc-paritet |
+
+**Plan 45.A добавляет:**
+
+| # | Pass | Ответственность |
+|---|---|---|
+| 12 | `propagate_doc_cfg` | `#cfg(...)` attribute propagation (Plan 42.12 derived). |
+| 13 | `collect_examples` | `--scrape-examples` mode (если включён) — найти usage в workspace. |
+
+`passes/mod.rs` экспортирует `DEFAULT_PASSES: &[&dyn Pass]` константу +
+функцию `run_passes(doctree, &passes)` — driver. Каждый pass:
+
+```rust
+pub trait Pass {
+    fn name(&self) -> &'static str;
+    fn run(&self, tree: &mut DocTree, ctx: &PassCtx) -> Result<(), PassError>;
+}
+```
+
+`PassCtx` — read-only: SourceMap, TypeChecker handle, workspace index.
+DocTree mutates in-place — между пассами никакого copy.
+
+### Code organization (production-grade детальный layout)
 
 ```
 compiler-codegen/src/
    lexer/
-      token.rs          — TokenKind::DocComment { kind, content, span }
-      mod.rs            — recognize /// //! //// и /// после // (precedence)
+      token.rs          — TokenKind::DocComment { kind: Outer|Inner, content, span }
+      mod.rs            — recognize /// //! //// precedence (Ф.1)
    ast/
-      mod.rs            — добавляем generic Attr struct +
-                          doc: Option<DocBlock> на Fn/Type/Const/Effect/Handler/Protocol/Module
+      mod.rs            — generic Attr struct + doc: Option<DocBlock> (Ф.2)
    parser/
-      mod.rs            — collect docs + attrs до declarations,
-                          attach к next item
-   doc/                  (NEW)
-      mod.rs            — public API: build_doc_model, render_*
-      model.rs          — DocModel structs
-      collector.rs      — TypedAST → DocModel
-      links.rs          — intra-doc link resolver
-      sections.rs       — recognize # Effects / # Errors / # Panics /
-                          # Safety / # Examples / # Contracts / # Since /
-                          # See also / # Deprecated
-      doctest.rs        — extract + harness
-      markdown.rs       — md parsing (pulldown-cmark) + render
-      render_md.rs      — DocModel → Markdown
-      render_json.rs    — DocModel → JSON (schema v1)
-      render_html.rs    — DocModel → static HTML site
-      render_man.rs     — DocModel → groff man-page
-      search_index.rs   — JSON search index для HTML
-      diff.rs           — semantic API diff между двумя DocModel
-      schema.rs         — embedded JSON Schema v1 (для --json-schema)
+      mod.rs            — pending-attrs/pending-docs accumulator (Ф.2)
+   doc/                  ── NEW crate-module (~25 файлов на MVP)
+      mod.rs            — public API: `pub fn build(...)`, `pub fn render(...)` (lib entry)
+      doctree.rs        — raw doctree types (DocCrate, DocModule, DocItem, ItemKind, Signature, Visibility, Stability, Deprecation)
+      attrs.rs          — typed enum DocAttr (parses generic Attr → typed) (Ф.3)
+      collector.rs      — AST + TypeChecker → raw DocTree; no transformations (Ф.4 part 1)
+      markdown.rs       — pulldown-cmark wrapper; CommonMark + tables/footnotes/strikethrough only
+      sections.rs       — parse `# Effects` / `# Errors` / `# Panics` / `# Safety` / `# Examples` / `# Contracts` / `# Since` / `# See also` / `# Deprecated` (Ф.5)
+      passes/
+         mod.rs                       — Pass trait + DEFAULT_PASSES + run_passes driver
+         strip_private.rs             — D5 visibility filter (~40 LOC)
+         propagate_stability.rs       — `#stable`/`#unstable` propagation (~50 LOC)
+         propagate_deprecation.rs     — `#deprecated` inheritance (~50 LOC)
+         derive_sections.rs           — auto-Effects/Errors/Contracts из sig (~120 LOC)
+         resolve_intra_doc_links.rs   — `[X]` → ItemPath (Ф.6, ~250-400 LOC)
+         collect_doc_tests.rs         — extract `nova` code-blocks (Ф.7 part, ~100 LOC)
+         attach_source_loc.rs         — FileId+line → "view source" URL (~40 LOC)
+         collect_implementors.rs      — protocol → impls auto-listing (~80 LOC)
+         collect_handlers.rs          — effect → handler auto-listing (~80 LOC)
+         lint_docs.rs                 — missing summary / broken sections / orphan headings (~150 LOC)
+         calculate_coverage.rs        — coverage % per module (~40 LOC)
+      doctest/
+         mod.rs                       — public API
+         extractor.rs                 — code-block + modifier parsing (collect_doc_tests pass uses this)
+         runner.rs                    — integration с crate::test_runner (Ф.7 part, ~200-400 LOC)
+         expect_markers.rs            — translate compile_fail/should_panic/must_verify → EXPECT (D89 reuse)
+      render/
+         mod.rs                       — trait Renderer + format-detection
+         md.rs                        — DocTree → Markdown (Ф.8, ~300-500 LOC)
+         json/
+            mod.rs                    — DocTree → JSON (Ф.9, ~400-600 LOC)
+            schema.rs                 — embedded JSON Schema 2020-12 (Ф.9, ~500-1000 LOC)
+            version.rs                — `FORMAT_VERSION` const + compat policy
+         html.rs                      — Plan 45.A (~800-1200 LOC)
+         man.rs                       — Plan 45.A (~200-300 LOC)
+         search_index.rs              — Plan 45.A (~150-250 LOC)
+      links.rs           — ItemPath, link-syntax parser (used by resolve_intra_doc_links pass)
+      cli.rs             — clap-derived Args struct + dispatch
+      check.rs           — `--check` mode (Ф.14, lints → exit code)
+      watch.rs           — `--watch` mode (Ф.15, notify crate, debounce)
+      diff.rs            — Plan 45.A (Ф.13, ~300-500 LOC)
+      cache.rs           — Plan 45.A (Ф.16, blake3-keyed incremental)
    bin/
-      nova-codegen.rs   — subcommand `doc` (internal, для nova CLI)
+      nova-codegen.rs   — `nova-codegen doc <args>` subcommand wires в doc::cli::run
 
 nova-cli/src/
-   cmd_doc.rs           — CLI surface, routing к nova-codegen
-   main.rs              — register `nova doc`
+   cmd_doc.rs           — `nova doc` user surface; delegates в nova-codegen
+   main.rs              — register `nova doc` subcommand
+
+nova_tests/doc/        ── NEW тесты-фикстуры (Ф.19)
+   fixtures/
+      basic/              — простой single-file модуль с doc-comments
+      folder_module/      — folder-module с peers, cross-peer links
+      intra_links/        — все формы [X] / [mod.X] / [Self.method]
+      doctest_modifiers/  — compile_fail / should_panic / no_run / must_verify
+      stability/          — #stable / #unstable / #experimental
+      deprecation/        — #deprecated with since / until / note
+      effects/            — fn с effect-row → rendered effect badges
+      contracts/          — fn с requires/ensures → contract section
+      sum_variants/       — sum-types с record-variants → variant docs
+   golden/
+      <fixture>/expected.md   — expected markdown output (committed)
+      <fixture>/expected.json — expected JSON output (committed)
+   regressions/             — bug-driven tests, append-only
+
+docs/nova-doc/         ── NEW user-facing docs (Ф.20)
+   getting-started.md
+   style-guide.md      — §11.5 материал
+   intra-doc-links.md
+   attributes.md       — D105 reference
+   doc-tests.md        — D106 reference
+   json-schema.md      — D107 reference + schema-v1.json link
+   cli.md              — `nova doc` flags
+   ci-integration.md   — `--check`, pre-commit, GHA examples
+   troubleshooting.md
+
+spec/decisions/
+   03-syntax.md        — D104 (doc-comment syntax)
+   09-tooling.md       — D105, D106, D107
 ```
+
+**Размер MVP по файлам:**
+- lexer/parser/ast правки: ~400-570 LOC
+- `doc/` core (model + attrs + collector + markdown + sections + cli + check + watch): ~2000-3000 LOC
+- `doc/passes/`: ~1000-1500 LOC (11 пассов MVP)
+- `doc/doctest/`: ~400-600 LOC
+- `doc/render/{md,json}`: ~700-1100 LOC + JSON schema 500-1000 LOC
+- `doc/links.rs`: ~150-250 LOC
+
+Итого MVP `doc/` модуль: **~4750-7450 LOC**. Совпадает с §12.0 оценкой
+(~5000-8000 LOC core).
+
+### Output file scheme
+
+Convention: `<output-dir>/<module-path>/index.<ext>` плюс anchors per item.
+
+**Module path resolution:**
+- `module std.collections.range` → output `std/collections/range/index.md`
+- folder-module: один файл на module-group (peers merged), peer attribution
+  через note внутри item docs.
+
+**Default output dir** (D95-consistent): `target/doc/` (по аналогии с
+`cargo doc`). Override через `-o <dir>` / `--output <dir>`.
+
+**Per-item anchors:**
+- `fn foo` → anchor `#fn-foo`
+- `type Foo` → anchor `#type-Foo`
+- `fn Foo @bar` (instance method) → `#fn-Foo-bar`
+- `fn Foo .baz` (static method) → `#fn-Foo-baz-static`
+- effects, protocols, handlers, constants — аналогично с kind-префиксом
+
+Kind-префикс в anchor исключает collision когда `fn Foo` и `type Foo`
+существуют (Nova допускает — different namespaces).
+
+**URL form в intra-doc links:**
+- intra-file: `#fn-bar` (anchor only)
+- cross-file: `../bar/index.md#fn-baz` (relative path)
+- cross-module: `../../other-mod/index.md#type-X`
+
+Relative paths работают как в `file://`, так и в `http://` хостинге.
+
+**Search index (Plan 45.A, `target/doc/search-index.json`):**
+- One file per workspace, не per module
+- Schema: `{ "items": [{ "path": "...", "kind": "...", "summary": "...", "effects": [...], "raises": [...] }, ...] }`
+- Client-side fetch + filter в HTML site
 
 ### Зависимости (crates)
 
@@ -665,14 +847,89 @@ Auto-derived помечается `(auto)` в HTML/MD и `auto: true` в JSON,
 }
 ```
 
-**Stability rules:**
+**Stability rules (production-grade contract):**
 
-- v1 — additive only. Новые optional fields разрешены, но
-  существующие fields не меняют тип / семантику.
-- Удаление field, переименование, смена типа → v2. Оба
-  поддерживаются ≥1 release с deprecation warning.
-- `nova doc --json-schema` emits embedded JSON Schema; CI
-  валидирует output против него.
+JSON output — публичный контракт для AI/LSP/CI инструментов
+(downstream-tools от стороннего человека/LLM). Любая поломка =
+сломанный пайплайн у тех, кто читает наш output. Поэтому versioning
+жёсткий:
+
+#### Format version field
+
+Каждый JSON output **обязан** включать на верхнем уровне:
+
+```json
+{
+  "format_version": 1,
+  "nova_version": "0.1.0",
+  ...
+}
+```
+
+- `format_version: u32` — integer **schema version** (растёт ТОЛЬКО при
+  breaking change).
+- `nova_version: str` — версия компилятора (info, не контракт).
+
+Consumer-код **обязан** проверять `format_version` и failing-loud если
+непонимает мажор. Поведение «ignore unknown fields» — стандарт.
+
+#### SemVer-like эвалюция
+
+- **Patch / minor changes (без bump'а `format_version`):**
+  - добавление новых optional fields (consumer'ы ignore'ят)
+  - добавление новых variant'ов в open-ended enums (документировано
+    как «extension allowed») — consumer обязан default'ить unknown
+    через `_` / catch-all (schema это explicitly допускает)
+  - расширение допустимого диапазона string-значения (e.g. новые
+    section-имена) если поле документировано как «extensible»
+- **Major changes (`format_version` инкрементится):**
+  - удаление field
+  - переименование field
+  - смена типа field
+  - сужение допустимых значений string/enum (т.е. removal вариантов)
+  - изменение семантики (то же название, новый смысл)
+
+#### Совместимость между мажорами
+
+- Версия N и N+1 поддерживаются параллельно **≥1 stable release**
+  компилятора Nova.
+- В переходный релиз: `nova doc --format-version=N` принимает
+  явный pin; default — current.
+- Migration guide для каждого major bump → `docs/nova-doc/migrations/v<N>-to-v<N+1>.md`.
+
+#### `nova-doc-types` — published consumer-крейт
+
+Чтобы LLM/IDE/CI не дублировали JSON-schema руками:
+
+- `nova-doc-types` — отдельный crate в workspace (`crates/nova-doc-types/`)
+  с Rust-структурами, реализующими `Deserialize` для нашего JSON.
+- Версионируется параллельно `format_version`: `nova-doc-types = "1.x"`
+  поддерживает `format_version=1`.
+- Published на crates.io (или собственный registry — Plan 03).
+- В Plan 45 MVP: crate создаётся пустой/минимальный (lib re-exporting
+  типы из `compiler-codegen/src/doc/json/`); полный extract — в
+  Plan 45.A или раньше при необходимости.
+
+**Аналог:** Rust имеет `rustdoc-types` crate для своего JSON output —
+именно эта модель.
+
+#### Embedded JSON Schema 2020-12
+
+- `compiler-codegen/src/doc/render/json/schema.rs` — `const SCHEMA_V1:
+  &str = include_str!("schema-v1.json");`.
+- `nova doc --json-schema` выводит этот текст — для оффлайн-валидации.
+- CI gate `nova doc --check` запускает schema validation на каждый
+  produced JSON (через `jsonschema` crate, dev-dep).
+
+#### Schema soak — v1 не declare'ится stable сразу
+
+**Производство-grade обязательство:** v1 marked `"stability": "mvp-stable"`
+в первой публикации; через ≥1 milestone реального использования
+(stdlib doc-pass из Plan 45.B + ≥3 внешних AI-consumer'а) — promote
+к `"stability": "stable"`. Это даёт окно поймать oversights без
+breaking change'а.
+
+Эта политика фиксируется в [D107](../../spec/decisions/09-tooling.md#d107).
 
 ---
 
@@ -826,6 +1083,159 @@ Categories:
 
 Output: markdown table (default), JSON (`--format json`), exit 1
 если найден breaking change и `--deny-breaking` (для CI release-gate).
+
+---
+
+## 11.5 Doc-comment style guide (production-grade conventions)
+
+Style guide — обязательная часть production-grade tooling. Без него
+каждый разработчик пишет в своём стиле, AI/LLM не понимает структуру,
+review-ы становятся spelling-bee. Конвенции — заимствование лучшего из
+rustdoc / godoc / TSDoc + Nova-специфика (effects, contracts).
+
+**Документация:** полный материал → `docs/nova-doc/style-guide.md`.
+В плане — резюме обязательных правил.
+
+### Правило 1: First-sentence summary
+
+Первое предложение doc-comment'а — **summary**. Должно:
+
+- Быть полным грамматическим предложением (с заглавной, точкой в
+  конце).
+- Помещаться в одну строку (≤ **120 символов** включая `/// `).
+- Описывать, **что делает** item, не **как реализован**.
+- Использовать **imperative mood** для функций (rustdoc-convention):
+  - ✓ «Returns the absolute value.»
+  - ✓ «Closes the channel and wakes all waiters.»
+  - ✗ «This function returns...» (избыточно)
+  - ✗ «Will close the channel» (future-tense — godoc anti-pattern)
+- Для типов / эффектов / протоколов — **declarative**:
+  - ✓ «A bounded MPSC channel.»
+  - ✓ «Capability for filesystem operations.»
+
+Renderer'ы извлекают summary автоматически: всё до первой пустой
+строки. Override — `#doc(summary = "...")` атрибут (D105) для редких
+случаев.
+
+### Правило 2: Структура — фиксированный порядок секций
+
+После summary — опциональные секции в **каноническом порядке**.
+Renderer не пересортировывает; lint warning если порядок нарушен:
+
+1. **(описание)** — multi-paragraph body после summary, без заголовка.
+2. `# Examples` — ≥1 doc-test (примеры — first-class).
+3. `# Effects` — список effect-rows. Auto-derive из sig если опущен.
+4. `# Errors` — описание `Fail[E]` raises. Auto-derive из effect-row
+   `Fail[...]` если опущен.
+5. `# Panics` — условия паники (≠ contract violation).
+6. `# Contracts` — pre/postconditions. Auto-derive из `requires`/
+   `ensures` если опущен.
+7. `# Safety` — invariants caller'а (для capabilities `#realtime`/
+   `#forbid`).
+8. `# Since` — версия первого появления (≠ `#since` attr; attr — это
+   structured form).
+9. `# See also` — links к related items.
+10. `# Deprecated` — note о замене (≠ `#deprecated` attr).
+
+Нестандартные заголовки → `derive_sections` pass warning'ит, но
+рендерит как «Other» section. Кастомные секции через
+`#doc(section = "Name")` (advanced, Plan 45.A).
+
+### Правило 3: Markdown subset
+
+Базовый Markdown — **CommonMark** (через `pulldown-cmark`). Plus
+explicit extensions:
+
+- ✓ **Tables** — GFM-style `| a | b |`.
+- ✓ **Strikethrough** — `~~text~~`.
+- ✓ **Footnotes** — `[^1]` / `[^1]: ...`.
+- ✓ **Task lists** — `- [ ] / - [x]`.
+- ✗ **Raw HTML** — запрещено в MVP. `<b>text</b>` → render как
+  literal. (Reason: безопасность HTML rendering + reproducibility.)
+- ✗ **LaTeX/Math** — MVP не поддерживает. Plan 45.A может добавить
+  `$...$` через KaTeX (вне runtime — bundled JS only).
+- ✓ **Code blocks с lang tag**: ` ```nova` doc-test, ` ```text`
+  literal, ` ```` без tag — treated as Nova (default).
+
+Document subset фиксирован в `docs/nova-doc/style-guide.md`. Lint
+flags неподдерживаемые конструкции (raw HTML) с suggestion.
+
+### Правило 4: Intra-doc links — predictable syntax
+
+См. §5 (полная семантика). Style-уровень:
+
+- Использовать `[X]` для items в текущем модуле / prelude.
+- Использовать `[mod.X]` для cross-module, **полный** path не нужен
+  если виден через imports.
+- `[Self.method]` для methods текущего типа (в `///` на типе/
+  методе).
+- **Никогда** не хардкодить URL — link resolver сломает их при
+  переименовании.
+
+### Правило 5: Examples — обязательны для нетривиальных public fn
+
+`lint_docs` pass предупреждает: public fn без `# Examples` секции +
+без doc-test code-block → warning `missing-example`. Override —
+`#hide_doc` или явный `#[doc(no_example)]` (advanced).
+
+«Нетривиальная» определяется эвристикой:
+- arity ≥ 2 ИЛИ
+- non-trivial return type (не `()`, не `bool`) ИЛИ
+- non-empty effect-row.
+
+Trivial getters / setters / one-line wrappers — exempt.
+
+### Правило 6: `#deprecated` — обязательны `since` и `note`
+
+D105 attribute `#deprecated(since = "X.Y", note = "...")`:
+
+- `since` — версия Nova / package, в которой deprecation введён.
+- `note` — что использовать вместо. **Должно** содержать intra-doc
+  link к replacement: `note = "use [foo.bar] instead"`.
+- `until` (optional) — версия, в которой item будет удалён. Если
+  присутствует, CI gate `--deny-overdue-deprecations` проверит при
+  bump'е.
+
+`lint_docs` warning'ит deprecated без note или с note без link.
+
+### Правило 7: Stability tiers — explicit для public stdlib
+
+Public items в `std/` должны явно маркироваться:
+
+- `#stable(since = "1.0")` — committed API.
+- `#unstable(feature = "X")` — может меняться, feature-gated.
+- `#experimental(note = "...")` — proof-of-concept, expect breakage.
+
+Без атрибута — default = `stable` для exported items в `std/`
+(strict mode); для user-кода — без проверки. Module-level `#stable`
+propagated через `propagate_stability` pass на items без явного.
+
+### Правило 8: Length и формат
+
+- Summary: ≤ 120 chars (включая `/// `).
+- Body paragraph: разумная ширина для review (~80-100 chars), но
+  hard cap не enforced.
+- Code-blocks: `nova test` запускает doc-tests — examples должны
+  компилироваться (если не `compile_fail`).
+
+### Lints в `lint_docs` pass (MVP)
+
+| Lint | Severity | Описание |
+|---|---|---|
+| `missing-summary` | warning | Public item без doc-comment'а |
+| `summary-not-sentence` | warning | Summary без точки / не начинается с заглавной |
+| `summary-too-long` | warning | Summary > 120 chars |
+| `wrong-section-order` | warning | Секции в нестандартном порядке |
+| `unknown-section` | warning | Неизвестное `# Heading` название |
+| `broken-intra-doc-link` | **error в `--check`** | `[X]` не резолвится |
+| `missing-example` | warning | Нетривиальная public fn без `# Examples` |
+| `deprecated-without-note` | warning | `#deprecated` без `note` |
+| `deprecated-overdue` | **error в `--check --deny-overdue`** | `until` версия в прошлом |
+| `raw-html` | warning | `<tag>` в markdown body (MVP: запрещено) |
+
+Все lints — конфигурируемы через `[nova-doc.lints]` секцию в
+`nova.toml`: `level = "warn" | "deny" | "allow"`. Plan 45.A добавит
+`--lints-config <file>`.
 
 ---
 
@@ -1278,6 +1688,77 @@ MVP-cut (Ф.0-Ф.9 + Ф.12 + Ф.14 + Ф.19) — 5-7 сессий до точки
 
 ---
 
+## 14.5 Performance budget (production-grade targets)
+
+Объявленные targets — **MVP-grade aspirational**: измеряемые в Ф.19
+benchmark suite, регрессионные тесты в Ф.17 CI. Числа задают bar,
+ниже которого падать без сознательного решения не должны.
+
+### Wall-clock targets
+
+| Сценарий | MVP target | Plan 45.A target (с cache) |
+|---|---|---|
+| `nova doc <single-file>` (~200 LOC) | ≤ 200 ms | ≤ 50 ms (cache hit) |
+| `nova doc <folder-module>` (3-5 peers) | ≤ 500 ms | ≤ 100 ms |
+| `nova doc --workspace` на полном std/ (~50 модулей) | ≤ 3 s | ≤ 500 ms |
+| `nova doc --check` на std/ (без doctest-run) | ≤ 5 s | ≤ 1 s |
+| `nova doc --check --doc-tests` на std/ | ≤ 30 s (parallel by `--jobs N`) | ≤ 10 s |
+| `--watch` rebuild after single-file change | ≤ 300 ms | ≤ 50 ms |
+
+Измерения: i7-12700H / 32 GB / NVMe (reference dev machine), release
+build. Benches фиксируются в `nova_tests/doc/benches/` (или
+эквивалент через `cargo bench`).
+
+### Output size budgets
+
+| Output | Target | Max (hard cap, lint flags если превышен) |
+|---|---|---|
+| JSON, типичный module | ≤ 50 KB | 500 KB |
+| JSON, std-aggregate (all modules) | ≤ 5 MB | — |
+| Markdown, типичный module | ≤ 20 KB | 200 KB |
+| HTML page (Plan 45.A) | ≤ 100 KB (gzipped: ≤ 30 KB) | 1 MB |
+| HTML assets shared (CSS+JS, всё API) | ≤ 200 KB (gzipped: ≤ 50 KB) | — |
+| Search index (Plan 45.A) | ≤ 500 KB per workspace | 5 MB |
+
+Hard caps для HTML — реакция на rustdoc'овский pain (rust-lang/rust
+#76526: HTML output гигантский). Lint warning в `--check` если
+превышено; suppress через `#doc(allow_large_page)` attribute (advanced).
+
+### Memory budgets
+
+| Phase | Target | Hard cap |
+|---|---|---|
+| `nova doc <single-file>` peak RSS | ≤ 50 MB | 200 MB |
+| `nova doc --workspace std/` peak RSS | ≤ 250 MB | 1 GB |
+| `--watch` resident (idle) | ≤ 100 MB | 300 MB |
+
+Memory особенно важна для `--watch` mode — он живёт долго.
+
+### Concurrency
+
+- Doc-tests scale linearly with `--jobs N` (Plan 24 reuse). Без флага
+  — `num_cpus`.
+- DocTree passes — single-threaded в MVP (correctness > perf). Plan
+  45.A может parallel'ить `lint_docs` + `calculate_coverage` (read-only
+  passes).
+- Renderer (md/json) — single-threaded; HTML (45.A) per-page parallel.
+
+### Reproducibility (rustdoc rust-lang/rust #88791 paritet)
+
+- **MVP acceptance:** два запуска подряд → byte-identical output для
+  md и JSON.
+- **Plan 45.A acceptance:** то же для HTML с `SOURCE_DATE_EPOCH` set.
+- CI gate: regression-тест в Ф.19 corpus запускает twice, diff'ит.
+
+### Бенчи в CI
+
+- `cargo bench --bench nova_doc_*` запускается на nightly CI runner.
+- Регрессия > 10% от baseline (3-run median) → fail.
+- Baseline обновляется при merge в main с >10% pessimization
+  (объяснение в commit message обязательно).
+
+---
+
 ## 15. Risks / Trade-offs
 
 - **AST refactor для generic `Vec<Attr>`.** Существующий
@@ -1306,6 +1787,73 @@ MVP-cut (Ф.0-Ф.9 + Ф.12 + Ф.14 + Ф.19) — 5-7 сессий до точки
 - **Breaking change `@realtime` → `#realtime` legacy.** Already
   closed by D96; planner relevant только если кто-то ещё откладывает
   миграцию.
+
+### Operational risks (production-grade additions)
+
+- **Schema v1 soak period.** Декларировать v1 stable сразу — recipe
+  для regret'а: пропустим oversights, потом приходится bump'ить или
+  жить с workaround'ами. **Mitigation:** в первой публикации
+  `format_version=1` marked `"stability": "mvp-stable"` (см. §6).
+  Promote к `"stable"` только после ≥1 milestone реального
+  использования (Plan 45.B stdlib doc-pass + ≥3 внешних consumer'а).
+  CI gate в этот период разрешает additive minor; major bump запрещён.
+- **Doc-test maintenance burden для stdlib.** ~50 модулей × 2-5
+  doc-tests = 100-250 примеров, которые могут протухнуть (API
+  changes ломают доку). **Mitigation:** `--check --doc-tests` в CI
+  на каждый PR в std/. Plan 45.B owner координирует с Plan 18
+  владельцами модулей; rotating ownership.
+- **HTML reproducibility regressions (Plan 45.A).** Embedded asset
+  versions, font ordering, browser-rendering инвариантность.
+  Регулярные регрессии в rustdoc (rust-lang/rust #88791) показывают:
+  это не «once-and-done». **Mitigation:** reproducibility test в
+  Ф.19 corpus + nightly CI run + visual-diff harness в 45.A.
+- **AI-consumer breaking (LLM tool-call).** LLM полагается на JSON
+  schema; даже не-breaking additive minor может surprise'ить кого-то
+  с brittle parser. **Mitigation:** golden JSON snapshots для
+  representative items committed в repo; любое diff требует CHANGELOG
+  entry; `nova-doc-types` crate как «канонический consumer» — что
+  ломается там, ломается у всех.
+- **Pulldown-cmark upstream behavior change.** Markdown rendering —
+  внешняя dependency, может тонко измениться между версиями
+  (поведение `<` escaping, footnote rendering, etc.). **Mitigation:**
+  pin major version в Cargo.toml; reproducibility test ловит drift;
+  pulldown-cmark API surface небольшая — wrapper в `markdown.rs`
+  даёт точку для compat-shims.
+- **Lint inflation.** Каждый pass хочет добавлять свой lint; в сумме
+  → noisy output, developers ignore. **Mitigation:** lint catalog в
+  `docs/nova-doc/lints.md` — все lints fixed, level (warn/deny/allow)
+  configurable в `nova.toml`; новые lints requirе rationale + opt-in
+  initial state.
+- **Style-guide drift.** Без enforcement style-guide становится
+  «рекомендация». **Mitigation:** style-guide правила реализованы как
+  lints (`missing-summary`, `summary-not-sentence`, `wrong-section-order`,
+  etc.); `--check` enforced в CI для std/. User-код default = warn.
+- **CI runner cost.** Doc-tests + reproducibility + schema-validate +
+  bench — заметное время. **Mitigation:** doc-tests в parallel
+  (`--jobs N`); reproducibility — раз в день не на каждый PR; bench —
+  nightly runner; cache (Plan 45.A Ф.16) сократит до minutes.
+- **`--watch` resource leak.** Long-lived process с file-system
+  notifier — классический leak source (notify-crate edge cases).
+  **Mitigation:** ulimit'ы в test'ах Ф.15; periodic teardown +
+  rebuild при превышении memory budget; добавить graceful exit на
+  SIGINT.
+
+### Risk register summary
+
+| ID | Risk | Impact | Likelihood | Mitigation phase |
+|---|---|---|---|---|
+| R1 | D104-D107 namespace collision | high | low | Ф.0 verification |
+| R2 | Parser regression from attr generalization | high | medium | Ф.2 + regression CI |
+| R3 | pulldown-cmark upstream change | medium | low | Pin + wrapper |
+| R4 | Schema v1 oversights | high | medium | Soak period (mvp-stable) |
+| R5 | Doc-test integration with test_runner | medium | medium | Smoke test Ф.7 early |
+| R6 | HTML reproducibility regressions | medium | high | Ф.19 + CI + 45.A visual-diff |
+| R7 | Doc-test maintenance burden | medium | high | Rotating ownership (45.B) |
+| R8 | AI-consumer breaking on additive change | high | low | Golden snapshots + nova-doc-types |
+| R9 | Lint inflation noise | low | high | Catalog + opt-in initial state |
+| R10 | Style-guide drift | medium | high | Lint enforcement в --check |
+| R11 | CI runner cost | low | medium | Parallel + cache + nightly |
+| R12 | --watch resource leak | medium | medium | Ulimit + graceful teardown |
 
 ---
 
