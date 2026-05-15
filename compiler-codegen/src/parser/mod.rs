@@ -1626,17 +1626,32 @@ impl Parser {
             self.expect(&TokenKind::LParen)?;
             // Typed binders: `axiom name(id int, x str) => ...`
             // Untyped:       `axiom name(id, x) => ...`  (type inferred)
-            let mut binders: Vec<(String, Option<TypeRef>)> = Vec::new();
+            // Generic refs:  `axiom name[T](id T) => ...` → Generic("T")
+            let generic_names: std::collections::HashSet<String> =
+                generics.iter().map(|g| g.name.clone()).collect();
+            let mut binders: Vec<crate::ast::BinderDef> = Vec::new();
             while !matches!(self.peek().kind, TokenKind::RParen) {
-                let (b, _) = self.parse_ident()?;
+                let (b, b_span) = self.parse_ident()?;
                 // Если следующий токен — не запятая и не ')' — это тип.
-                let ty = if !matches!(self.peek().kind,
+                let kind = if !matches!(self.peek().kind,
                     TokenKind::Comma | TokenKind::RParen) {
-                    Some(self.parse_type()?)
+                    let ty = self.parse_type()?;
+                    // Проверяем: тип = единственный Named{path:[T]} где T generic?
+                    if let crate::ast::TypeRef::Named { path, generics: g, .. } = &ty {
+                        if g.is_empty() && path.len() == 1
+                            && generic_names.contains(&path[0])
+                        {
+                            crate::ast::BinderType::Generic(path[0].clone())
+                        } else {
+                            crate::ast::BinderType::Typed(ty)
+                        }
+                    } else {
+                        crate::ast::BinderType::Typed(ty)
+                    }
                 } else {
-                    None
+                    crate::ast::BinderType::Untyped
                 };
-                binders.push((b, ty));
+                binders.push(crate::ast::BinderDef { name: b, kind, span: b_span });
                 if self.eat(&TokenKind::Comma).is_none() {
                     break;
                 }

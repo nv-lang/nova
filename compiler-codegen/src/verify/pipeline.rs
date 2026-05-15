@@ -579,12 +579,12 @@ fn collect_loop_invariants_in_expr(e: &Expr, out: &mut Vec<(Span, Expr)>) {
     }
 }
 
-/// Plan 33.3 Ф.9: метаданные одного axiom'а с реестрами для encoding.
+/// Plan 33.3 Ф.9 / Plan 33.4 P1-5: метаданные одного axiom'а с реестрами для encoding.
 struct AxiomInfo<'a> {
     effect_name: String,
     axiom_name: String,
-    /// Binders с опциональными типами: `(name, Option<TypeRef>)`.
-    binders: &'a [(String, Option<crate::ast::TypeRef>)],
+    /// Plan 33.4 P1-5: binders через BinderDef (различаем Untyped/Typed/Generic).
+    binders: &'a [crate::ast::BinderDef],
     formula: &'a crate::ast::Expr,
     /// Generic params (V2 — сейчас только для проверки наличия).
     is_generic: bool,
@@ -638,15 +638,16 @@ fn encode_axiom(
     if ax.is_generic {
         return None;
     }
-    // Инфер sorts для binders (только имена нужны для infer).
-    let binder_names: Vec<String> = ax.binders.iter().map(|(n, _)| n.clone()).collect();
+    // Plan 33.4 P1-5: binders через BinderDef.
+    let binder_names: Vec<String> = ax.binders.iter().map(|bd| bd.name.clone()).collect();
     let mut binder_sorts: std::collections::HashMap<String, SortRef> = std::collections::HashMap::new();
-    // Если у binder есть явный тип — используем его; иначе выводим из usage.
-    for (name, ty_opt) in ax.binders {
-        if let Some(ty) = ty_opt {
+    // Если у binder явный тип (Typed) — используем его; Generic/Untyped — выводим из usage.
+    for bd in ax.binders {
+        if let crate::ast::BinderType::Typed(ty) = &bd.kind {
             let sort = type_ref_to_sort(ty);
-            binder_sorts.insert(name.clone(), sort);
+            binder_sorts.insert(bd.name.clone(), sort);
         }
+        // Generic и Untyped — оставляем для infer_binder_sorts.
     }
     infer_binder_sorts(ax.formula, &binder_names, pure_views, &mut binder_sorts);
     // Encode body.

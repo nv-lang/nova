@@ -3175,16 +3175,16 @@ fn check_effect_axioms(module: &Module, errors: &mut Vec<Diagnostic>) {
         for ax in &td.axioms {
             // Duplicate-binder check.
             let mut seen: HashSet<&String> = HashSet::new();
-            for (b, _ty) in &ax.binders {
-                if !seen.insert(b) {
+            for bd in &ax.binders {
+                if !seen.insert(&bd.name) {
                     errors.push(Diagnostic::new(
                         format!("axiom `{}.{}`: duplicate binder `{}`",
-                            td.name, ax.name, b),
+                            td.name, ax.name, bd.name),
                         ax.span,
                     ));
                 }
             }
-            let binders: HashSet<&String> = ax.binders.iter().map(|(n, _)| n).collect();
+            let binders: HashSet<&String> = ax.binders.iter().map(|bd| &bd.name).collect();
             check_axiom_expr(&ax.formula, &td.name, &ax.name,
                              &binders, &pure_views, errors);
         }

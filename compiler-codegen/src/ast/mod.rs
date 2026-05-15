@@ -501,6 +501,44 @@ pub enum EffectOpKind {
 /// }
 /// ```
 ///
+/// Plan 33.4 P1-5: вид binder'а в EffectAxiom.
+/// Различает три семантически разных состояния вместо Option<TypeRef>:
+/// - Untyped: `axiom foo(id)` — тип не аннотирован, выводится из usage
+/// - Typed: `axiom foo(id int)` — конкретный тип
+/// - Generic: `axiom foo[T](id T)` — ссылка на generic param по имени
+#[derive(Debug, Clone)]
+pub enum BinderType {
+    /// Тип не аннотирован — inference из usage.
+    Untyped,
+    /// Конкретный аннотированный тип: `int`, `str`, named type и т.п.
+    Typed(TypeRef),
+    /// Ссылка на generic-параметр аксиомы: `axiom foo[T](id T)` → Generic("T").
+    Generic(String),
+}
+
+/// Plan 33.4 P1-5: параметр (binder) аксиомы с типом.
+#[derive(Debug, Clone)]
+pub struct BinderDef {
+    pub name: String,
+    pub kind: BinderType,
+    pub span: Span,
+}
+
+impl BinderDef {
+    /// Если binder типизирован (не generic и не untyped), вернуть TypeRef.
+    pub fn typed_ref(&self) -> Option<&TypeRef> {
+        match &self.kind {
+            BinderType::Typed(t) => Some(t),
+            _ => None,
+        }
+    }
+
+    /// True если binder ссылается на generic-параметр аксиомы.
+    pub fn is_generic(&self) -> bool {
+        matches!(&self.kind, BinderType::Generic(_))
+    }
+}
+
 /// `binders` — параметры формулы (свободные переменные).
 /// `formula` обязана быть `bool`-выражением; видны binders + все
 /// pure_view ops эффекта.
@@ -510,10 +548,9 @@ pub struct EffectAxiom {
     /// Generic-параметры: `axiom foo[T](id T) => ...` → `generics = [T]`.
     /// V1: парсинг + AST; SMT encoding generic axioms — V2.
     pub generics: Vec<GenericParam>,
-    /// Параметры формулы с опциональными типами:
-    /// `axiom foo(id int, x str) => ...` → `[(id, Some(int)), (x, Some(str))]`.
-    /// `axiom foo(id) => ...` → `[(id, None)]` (тип выводится из usage).
-    pub binders: Vec<(String, Option<TypeRef>)>,
+    /// Plan 33.4 P1-5: параметры формулы с типами через BinderDef.
+    /// Заменяет Vec<(String, Option<TypeRef>)>.
+    pub binders: Vec<BinderDef>,
     pub formula: Expr,
     pub span: Span,
 }
