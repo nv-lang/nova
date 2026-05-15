@@ -4639,23 +4639,19 @@ Sub-plans 35.A-E:
 - **Приоритет:** M — критичный gate для production-claim
   «Dafny-parity».
 
-### [V12] `#verify` handler gate — placeholder, нет реальной верификации
-- **Где:** `compiler-codegen/src/types/mod.rs:2922-2925`
-  (комментарий verbatim: «Bootstrap V1: атрибут принимается но реальной
-  верификации нет — placeholder для Ф.9.7»).
-- **Что упрощено:** Программист пишет `with #verify Db = my_handler`
-  и ожидает, что Nova проверяет соответствие handler.action axiom'ам
-  эффекта. На деле gate принимает синтаксис, но **не делает ни одного
-  SMT-вызова** — soundness gap.
-- **Почему:** Ф.9.7 (symbolic handler verification) — research-grade,
-  требует symbolic execution handler body + Z3 доказательство
-  `view_post == X`. Отложено как отдельный milestone.
-- **Как чинить:** Plan 33.4 Ф.1 — symbolic handler verification.
-  Для `post(action)(view) == X` axiom: symbolic exec `action` body,
-  encode `view` через symbolic state, assert == X в Z3.
-  Handler с FFI/IO → обязан `#trusted`.
-- **Приоритет:** H — это soundness gap (gate заявляет верификацию,
-  но не верифицирует).
+### [ЗАКР 2026-05-15] `#verify` handler gate — P0-1 V1 — [V12]
+- **Закрыто (Plan 33.4 P0-1, 2026-05-15):**
+  * `verify_handlers(module)` в pipeline.rs — walks `with #verify E = h` bindings.
+  * Для каждого static axiom (без `post(...)`) : assert handler's pure_view body
+    как Forall axiom, call `try_prove(axiom_formula)`.
+  * `post(...)` axioms → `Unknown("post-axiom V2")` (честно документировано).
+  * Test: `nova_tests/contracts/handler_verify_v1_positive.nv` (72/72 PASS).
+- **Остаток (V2):**
+  * `post(Action(args))(view(vp)) == X` axioms — требует symbolic execution
+    handler action body (присваивания → SMT equalities).
+  * Handler body с branching — только linear path в V2, SCC в V3.
+- **Приоритет остатка:** H — soundness gap закрыт для static axioms;
+  post-axioms всё ещё placeholder.
 
 ### [ЗАКР 2026-05-15] Composition в контрактах — [V13]
 - **Закрыто (Plan 33.4 D.0.2, 2026-05-15):**
