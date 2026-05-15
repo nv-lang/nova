@@ -111,6 +111,23 @@ enum Cmd {
         /// validation, IDE auto-completion, LLM prompt context).
         #[arg(long = "json-schema")]
         json_schema: bool,
+        /// Include private (non-exported) items in output.
+        /// By default only items marked `export` are documented.
+        #[arg(long = "include-private")]
+        include_private: bool,
+        /// Plan 45 Ф.7: run doc-tests (`nova` fenced code blocks) instead
+        /// of rendering. Reports pass/fail/skipped per test.
+        #[arg(long = "test")]
+        run_doc_tests: bool,
+        /// Plan 45 Ф.14: validate doc-content without rendering. Reports
+        /// broken intra-doc-links and missing summaries; exits non-zero
+        /// on any issue. Useful in CI.
+        #[arg(long = "check")]
+        check: bool,
+        /// Plan 45 Ф.15: re-render on file change (mtime poll, 500ms).
+        /// Ctrl-C to exit. Works with --format and --check.
+        #[arg(long = "watch")]
+        watch: bool,
     },
     /// Compile a single Nova source file to a native binary.
     ///
@@ -881,7 +898,7 @@ fn cmd_run(path: &Path) -> Result<()> {
 ///
 /// MVP: один входной файл, вывод в stdout. Никаких подкоманд (workspace/
 /// --output-dir/--watch — Plan 45.A или отдельные субкоманды позже).
-fn cmd_doc(path: &Path, format: &str, json_schema: bool) -> Result<()> {
+fn cmd_doc(path: &Path, format: &str, json_schema: bool, include_private: bool, run_doc_tests: bool, check: bool, watch: bool) -> Result<()> {
     // `--json-schema` — печатает embedded схему и выходит (D107).
     if json_schema {
         println!("{}", nova_doc_embedded_schema());
@@ -889,6 +906,9 @@ fn cmd_doc(path: &Path, format: &str, json_schema: bool) -> Result<()> {
     }
     if !path.is_file() {
         bail!("file not found: {}", path.display());
+    }
+    if watch {
+        return cmd_doc_watch(path, format, include_private, run_doc_tests, check);
     }
     let src = read_file(path)?;
     let path_str = path.to_string_lossy();
@@ -909,10 +929,70 @@ fn cmd_doc(path: &Path, format: &str, json_schema: bool) -> Result<()> {
     // делать полный type-check.
     let _ = nova_codegen::types::check_module(&module);
     nova_codegen::types::infer_effects(&mut module);
-    let tree = nova_codegen::doc::build(&module);
+    let mut tree = nova_codegen::doc::build(&module);
+    if !include_private {
+        nova_codegen::doc::strip_private(&mut tree);
+    }
+    if check {
+        let mut issues: Vec<String> = Vec::new();
+        for link in &tree.links {
+            if link.target_id.is_none() {
+                let from = link.from_id.as_deref().unwrap_or("<module>");
+                issues.push(format!("broken intra-doc-link [{}] in {}", link.text, from));
+            }
+        }
+        for m in &tree.modules {
+            for it in &m.items {
+                if it.visibility == nova_codegen::doc::Visibility::Export
+                    && it.summary.is_none()
+                {
+                    issues.push(format!("missing doc-summary on exported item `{}`", it.id));
+                }
+            }
+        }
+        if issues.is_empty() {
+            println!("doc-check: ok ({} item(s), {} link(s))",
+                tree.modules.iter().map(|m| m.items.len()).sum::<usize>(),
+                tree.links.len());
+            return Ok(());
+        }
+        for i in &issues {
+            eprintln!("doc-check: {}", i);
+        }
+        eprintln!("\ndoc-check: {} issue(s)", issues.len());
+        std::process::exit(1);
+    }
+    if run_doc_tests {
+        let summary = nova_codegen::doc::test_runner::run_doc_tests(&tree.doc_tests);
+        let total = summary.results.len();
+        let passed = summary.passed();
+        let failed = summary.failed();
+        let skipped = summary.skipped();
+        for r in &summary.results {
+            match &r.outcome {
+                nova_codegen::doc::test_runner::DocTestOutcome::Passed => {
+                    println!("ok   {}", r.id);
+                }
+                nova_codegen::doc::test_runner::DocTestOutcome::Failed(msg) => {
+                    println!("FAIL {} — {}", r.id, msg);
+                }
+                nova_codegen::doc::test_runner::DocTestOutcome::Skipped(reason) => {
+                    println!("skip {} ({})", r.id, reason);
+                }
+            }
+        }
+        println!(
+            "\ndoc-tests: {} passed, {} failed, {} skipped (total {})",
+            passed, failed, skipped, total
+        );
+        if !summary.all_passed() {
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
     let out = match format {
         "markdown" | "md" => nova_codegen::doc::render_markdown(&tree),
-        "json" => nova_codegen::doc::render_json(&tree),
+        "json" => nova_codegen::doc::render_json_with_source(&tree, &src),
         other => {
             return Err(usage_err(format!(
                 "unknown --format `{}` (supported: `markdown`, `json`)",
@@ -924,29 +1004,59 @@ fn cmd_doc(path: &Path, format: &str, json_schema: bool) -> Result<()> {
     Ok(())
 }
 
+/// Plan 45 Ф.15: watch mode — re-render при изменении `path` (mtime
+/// poll каждые 500ms). Без `notify` dep'ы для minimal footprint.
+/// Ctrl-C завершает loop.
+fn cmd_doc_watch(
+    path: &Path,
+    format: &str,
+    include_private: bool,
+    run_doc_tests: bool,
+    check: bool,
+) -> Result<()> {
+    let mut last_mtime: Option<std::time::SystemTime> = None;
+    eprintln!("nova doc --watch: monitoring {} (Ctrl-C to exit)", path.display());
+    loop {
+        let mtime = std::fs::metadata(path).and_then(|m| m.modified()).ok();
+        if mtime != last_mtime {
+            last_mtime = mtime;
+            // Очистка экрана + cursor home (ANSI). Сохраняем scrollback.
+            eprint!("\x1b[2J\x1b[H");
+            eprintln!(
+                "─── nova doc --watch ({}) ───",
+                chrono_like_now()
+            );
+            // Re-run одним проходом через cmd_doc (без watch/json_schema).
+            match cmd_doc(path, format, false, include_private, run_doc_tests, check, false) {
+                Ok(_) => {}
+                Err(e) => eprintln!("error: {}", e),
+            }
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
+}
+
+/// MVP timestamp для watch-header'а. Без chrono dep'ы — простая
+/// HH:MM:SS из SystemTime (UTC).
+fn chrono_like_now() -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let rem = now % 86_400;
+    let h = rem / 3600;
+    let m = (rem % 3600) / 60;
+    let s = rem % 60;
+    format!("{:02}:{:02}:{:02} UTC", h, m, s)
+}
+
 /// Embedded JSON Schema (D107) — пока минимальная заглушка с
 /// корректным `format_version` дискриминатором. Полная схема —
 /// Plan 45 Ф.9 (schema.rs); этот placeholder уже валидный JSON Schema
 /// 2020-12, описывающий обязательный `format_version: u32` (1) и
 /// высокоуровневый shape.
 fn nova_doc_embedded_schema() -> &'static str {
-    r#"{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://nova-lang.org/schemas/nova-doc-v1.json",
-  "title": "Nova doc output (D107 schema v1)",
-  "type": "object",
-  "required": ["format_version", "nova_version", "modules", "items", "links", "doc_tests"],
-  "properties": {
-    "format_version": { "type": "integer", "const": 1 },
-    "nova_version":   { "type": "string" },
-    "generated_at":   { "type": "string", "format": "date-time" },
-    "source_root":    { "type": "string" },
-    "modules":        { "type": "array", "items": { "type": "object" } },
-    "items":          { "type": "array", "items": { "type": "object" } },
-    "links":          { "type": "array", "items": { "type": "object" } },
-    "doc_tests":      { "type": "array", "items": { "type": "object" } }
-  }
-}"#
+    nova_codegen::doc::schema::schema_v1()
 }
 
 fn cmd_build(
@@ -1445,7 +1555,7 @@ fn main() -> ExitCode {
             &skip,
         ),
         Cmd::Run { file } => cmd_run(&file),
-        Cmd::Doc { file, format, json_schema } => cmd_doc(&file, &format, json_schema),
+        Cmd::Doc { file, format, json_schema, include_private, run_doc_tests, check, watch } => cmd_doc(&file, &format, json_schema, include_private, run_doc_tests, check, watch),
         Cmd::Build { file, output, mode, toolchain, vcvars, clang, timeout, keep_artifacts } => cmd_build(
             &file,
             output.as_deref(),
