@@ -793,6 +793,15 @@ impl Interpreter {
                 }
                 Ok(Flow::Value(Value::Tuple(vs)))
             }
+            // Plan 52 Ф.1: MapLit-заглушка. Реальная eval-логика
+            // (`with_capacity` + `@insert`, нормативный порядок) — Ф.5.
+            ExprKind::MapLit(_) => {
+                Err(Diagnostic::new(
+                    "internal: map literal `[k: v]` reached interpreter without \
+                     desugaring (Plan 52 Ф.5 not yet wired)",
+                    expr.span,
+                ))
+            }
             ExprKind::RecordLit { type_name, fields } => {
                 let mut out: HashMap<String, Value> = HashMap::new();
                 for f in fields {

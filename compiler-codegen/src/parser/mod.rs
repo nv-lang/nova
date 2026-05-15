@@ -906,9 +906,22 @@ impl Parser {
         } else {
             is_external
         };
+        // Plan 52 Ф.1: `#from_fields` — маркер на декларации типа.
+        // Помечает str-keyed map-тип для D55 map-coercion (`{field: v}`).
+        // Только перед `type`. Контекстный разбор после `#` (не keyword).
+        let type_attrs = self.parse_type_attrs()?;
+        if !type_attrs.is_empty()
+            && !matches!(self.peek().kind, TokenKind::KwType)
+        {
+            let span = self.peek().span;
+            return Err(Diagnostic::new(
+                "`#from_fields` is only valid before `type`",
+                span,
+            ));
+        }
         let parsed = match self.peek().kind {
             TokenKind::KwFn => Item::Fn(self.parse_fn(is_export, is_external, realtime_attr, contract_attrs, pending_doc.clone(), pending_doc_attrs.clone())?),
-            TokenKind::KwType => Item::Type(self.parse_type_decl(is_export, pending_doc.clone(), pending_doc_attrs.clone())?),
+            TokenKind::KwType => Item::Type(self.parse_type_decl(is_export, type_attrs, pending_doc.clone(), pending_doc_attrs.clone())?),
             TokenKind::KwLet => {
                 if let Some(d) = &pending_doc {
                     // Plan 45 Ф.3: orphan `///` warning — doc-comment'ы
@@ -1410,6 +1423,45 @@ impl Parser {
         Ok(attrs)
     }
 
+    /// Plan 52 Ф.1 (D108): атрибуты-маркеры перед `type`-декларацией.
+    ///
+    /// Поддерживаемые:
+    /// - `#from_fields` — помечает str-keyed map-тип, в который анонимный
+    ///   record-литерал `{field: v}` коэрсится через D55 map-coercion.
+    ///
+    /// Контекстный разбор: `from_fields` — обычный Ident в лексере, парсер
+    /// ищет `#` + Ident в позиции перед `type`. Префикс `#` (не `@`) —
+    /// консистентно с `#realtime` / `#verify` / `#cfg`.
+    fn parse_type_attrs(&mut self) -> Result<Vec<crate::ast::TypeAttr>, Diagnostic> {
+        let mut attrs = Vec::new();
+        loop {
+            if !matches!(self.peek().kind, TokenKind::Hash) {
+                break;
+            }
+            let next_name = match &self.peek_at(1).kind {
+                TokenKind::Ident(n) => n.clone(),
+                _ => break, // не идентификатор после `#` — выходим
+            };
+            match next_name.as_str() {
+                "from_fields" => {
+                    if attrs.contains(&crate::ast::TypeAttr::FromFields) {
+                        let span = self.peek().span;
+                        return Err(Diagnostic::new(
+                            "duplicate `#from_fields` attribute",
+                            span,
+                        ));
+                    }
+                    self.bump(); // #
+                    self.bump(); // from_fields
+                    attrs.push(crate::ast::TypeAttr::FromFields);
+                }
+                _ => break, // unknown #-name — не type-attr, выходим
+            }
+            self.skip_newlines();
+        }
+        Ok(attrs)
+    }
+
     /// Plan 33.1 (D24): парсит блок `requires <expr>` / `ensures <expr>`
     /// + Plan 33.2 (D24): `reads <expr>{, <expr>}*` / `modifies <expr>{, <expr>}*`
     /// после сигнатуры функции, перед телом (`=>` / `{`).
@@ -1888,7 +1940,7 @@ impl Parser {
 
     // ─── type declarations ───────────────────────────────────────────────
 
-    fn parse_type_decl(&mut self, is_export: bool, doc: Option<crate::ast::DocBlock>, doc_attrs: Vec<crate::ast::DocAttr>) -> Result<TypeDecl, Diagnostic> {
+    fn parse_type_decl(&mut self, is_export: bool, attrs: Vec<crate::ast::TypeAttr>, doc: Option<crate::ast::DocBlock>, doc_attrs: Vec<crate::ast::DocAttr>) -> Result<TypeDecl, Diagnostic> {
         let start = self.peek().span;
         self.expect(&TokenKind::KwType)?;
         let (name, _) = self.parse_ident()?;
@@ -2007,6 +2059,7 @@ impl Parser {
             generics,
             kind,
             span,
+            attrs,
             invariants,
             axioms: effect_axioms,
         })
@@ -3580,8 +3633,15 @@ impl Parser {
                     }
                 }
                 // Если за path идёт `{`, и **это валидно как record-литерал**:
-                if matches!(self.peek().kind, TokenKind::LBrace) && self.looks_like_record_lit() {
-                    return self.parse_record_lit_after_path(path, first_span);
+                if matches!(self.peek().kind, TokenKind::LBrace) {
+                    // Plan 52 Ф.1: keyword в field-position → actionable error
+                    // с HELP-подсказкой, до того как `{` уйдёт в блок-ветку.
+                    if let Some(diag) = self.record_lit_keyword_field_error() {
+                        return Err(diag);
+                    }
+                    if self.looks_like_record_lit() {
+                        return self.parse_record_lit_after_path(path, first_span);
+                    }
                 }
                 if path.len() == 1 {
                     Ok(Expr::new(
@@ -3599,6 +3659,11 @@ impl Parser {
                 // Запись или блок? В Nova record-литерал без типа — тоже
                 // валиден (D55 coercion). Различаем: { name : ... } -> record,
                 // { name, name: ... } -> record (D52 punning), иначе блок.
+                // Plan 52 Ф.1: keyword в field-position → actionable error
+                // с HELP-подсказкой, до того как `{` уйдёт в блок-ветку.
+                if let Some(diag) = self.record_lit_keyword_field_error() {
+                    return Err(diag);
+                }
                 if self.looks_like_record_lit() {
                     self.parse_record_lit_after_path(Vec::new(), start)
                 } else {
@@ -3984,6 +4049,87 @@ impl Parser {
 
     /// Эвристика: `{` перед нами — это начало record-литерала?
     /// Смотрим первый «значимый» токен внутри: `Ident :` или `...` или `}`.
+    /// Plan 52 Ф.1 (D108): диагностика «keyword как имя поля в `{...}`».
+    ///
+    /// `{type: 1}` — `type` это keyword, не валидное имя поля (D83). Без
+    /// этой проверки `looks_like_record_lit` вернул бы `false` (keyword ≠
+    /// `Ident`), `{` распарсился бы как блок, и ошибка парсера была бы
+    /// непонятной. Возвращает `Some(Diagnostic)` если после `{` (через
+    /// newlines) стоит keyword в field-position (`kw :` / `kw ,` / `kw }`),
+    /// с HELP-подсказкой использовать map-литерал `["kw": value]`.
+    fn record_lit_keyword_field_error(&self) -> Option<Diagnostic> {
+        if self.no_struct_lit {
+            return None;
+        }
+        let mut i = self.pos + 1; // после `{`
+        while i < self.tokens.len()
+            && matches!(self.tokens[i].kind, TokenKind::Newline | TokenKind::Semicolon)
+        {
+            i += 1;
+        }
+        let tok = self.tokens.get(i)?;
+        let kw_text = match &tok.kind {
+            TokenKind::KwModule => "module",
+            TokenKind::KwImport => "import",
+            TokenKind::KwUse => "use",
+            TokenKind::KwExport => "export",
+            TokenKind::KwExternal => "external",
+            TokenKind::KwFn => "fn",
+            TokenKind::KwType => "type",
+            TokenKind::KwProtocol => "protocol",
+            TokenKind::KwEffect => "effect",
+            TokenKind::KwHandler => "handler",
+            TokenKind::KwAlias => "alias",
+            TokenKind::KwLet => "let",
+            TokenKind::KwConst => "const",
+            TokenKind::KwMut => "mut",
+            TokenKind::KwReadonly => "readonly",
+            TokenKind::KwIf => "if",
+            TokenKind::KwElse => "else",
+            TokenKind::KwMatch => "match",
+            TokenKind::KwFor => "for",
+            TokenKind::KwWhile => "while",
+            TokenKind::KwLoop => "loop",
+            TokenKind::KwIn => "in",
+            TokenKind::KwReturn => "return",
+            TokenKind::KwBreak => "break",
+            TokenKind::KwContinue => "continue",
+            TokenKind::KwTest => "test",
+            TokenKind::KwWith => "with",
+            TokenKind::KwThrow => "throw",
+            TokenKind::KwAs => "as",
+            TokenKind::KwIs => "is",
+            TokenKind::KwSpawn => "spawn",
+            TokenKind::KwSupervised => "supervised",
+            TokenKind::KwParallel => "parallel",
+            TokenKind::KwDetach => "detach",
+            TokenKind::KwInterrupt => "interrupt",
+            TokenKind::KwForbid => "forbid",
+            TokenKind::KwRealtime => "realtime",
+            TokenKind::KwDefer => "defer",
+            TokenKind::KwErrDefer => "errdefer",
+            TokenKind::KwSelect => "select",
+            _ => return None, // не keyword — обычный путь
+        };
+        // Keyword в field-position только если за ним `:` / `,` / `}`.
+        let next = self.tokens.get(i + 1);
+        if matches!(
+            next.map(|t| &t.kind),
+            Some(TokenKind::Colon | TokenKind::Comma | TokenKind::RBrace)
+        ) {
+            Some(Diagnostic::new(
+                format!(
+                    "keyword `{kw_text}` cannot be used as a field name in a \
+                     record/map-coercion literal — use map-literal syntax \
+                     instead: [\"{kw_text}\": value]"
+                ),
+                tok.span,
+            ))
+        } else {
+            None
+        }
+    }
+
     fn looks_like_record_lit(&self) -> bool {
         if self.no_struct_lit {
             return false;
@@ -4104,30 +4250,27 @@ impl Parser {
         ))
     }
 
+    /// Парсит `[...]` — array-литерал (D27/D38) ИЛИ map-литерал (D108).
+    ///
+    /// Парсинг **локальный, без type-directed** (D108):
+    /// 1. `[]` пустой → `ArrayLit(vec![])` — array-или-map, разрешается на
+    ///    type-check по ожидаемому типу.
+    /// 2. Иначе парсим первое выражение; если первый элемент — `...spread`,
+    ///    это всегда array. Следующий токен после первого expr:
+    ///    - `:` → map-литерал, дальше пары `expr : expr`;
+    ///    - `,` / `]` → array-литерал.
+    /// 3. Смешение форм (`[a, b: c]`) → actionable error.
     fn parse_array_lit(&mut self) -> Result<Expr, Diagnostic> {
         let start = self.expect(&TokenKind::LBracket)?.span;
-        let mut elems = Vec::new();
         self.skip_newlines();
-        while !matches!(self.peek().kind, TokenKind::RBracket) {
-            if self.eat(&TokenKind::DotDotDot).is_some() {
-                let v = self.parse_expr()?;
-                elems.push(ArrayElem::Spread(v));
-            } else {
-                let v = self.parse_expr()?;
-                elems.push(ArrayElem::Item(v));
-            }
-            if self.eat(&TokenKind::Comma).is_some() {
-                self.skip_newlines();
-            } else {
-                self.skip_newlines();
-            }
-        }
-        let end = self.expect(&TokenKind::RBracket)?.span;
+
+        // Пустой `[]` — array-или-map, разрешается на type-check.
         // D38 array-type-static-method: `[]T.method(...)` — empty литерал
         // immediately followed by Ident `.` означает array-type prefix, не
         // empty literal. Превращаем в Path(["__array", "<T>"]) — codegen
         // эмитит как `nova_array_new_<T>` для `.new()` / `.with_capacity()`.
-        if elems.is_empty() {
+        if matches!(self.peek().kind, TokenKind::RBracket) {
+            let end = self.expect(&TokenKind::RBracket)?.span;
             if let TokenKind::Ident(_) = &self.peek().kind {
                 if matches!(self.peek_at(1).kind, TokenKind::Dot) {
                     let (elem_type_name, ty_span) = self.parse_ident()?;
@@ -4137,8 +4280,131 @@ impl Parser {
                     ));
                 }
             }
+            return Ok(Expr::new(ExprKind::ArrayLit(Vec::new()), start.merge(end)));
         }
+
+        // Первый элемент: `...spread` → всегда array (spread не может
+        // стоять слева от `:`). Иначе парсим первое выражение и смотрим
+        // на следующий токен — `:` означает map-литерал.
+        if self.eat(&TokenKind::DotDotDot).is_some() {
+            let v = self.parse_expr()?;
+            return self.parse_array_lit_rest(start, vec![ArrayElem::Spread(v)]);
+        }
+        let first = self.parse_expr()?;
+        if matches!(self.peek().kind, TokenKind::Colon) {
+            self.bump(); // :
+            self.skip_newlines();
+            let first_val = self.parse_expr()?;
+            return self.parse_map_lit_rest(start, vec![(first, first_val)]);
+        }
+        // Array-литерал: первый элемент уже распарсен.
+        self.parse_array_lit_rest(start, vec![ArrayElem::Item(first)])
+    }
+
+    /// Продолжает парсинг array-литерала после уже распарсенного первого
+    /// элемента. Обрабатывает `,`-разделители, `...spread`, trailing comma.
+    /// Если внутри встречается `expr :` — actionable error (смешение форм).
+    fn parse_array_lit_rest(
+        &mut self,
+        start: Span,
+        mut elems: Vec<ArrayElem>,
+    ) -> Result<Expr, Diagnostic> {
+        // После первого элемента: либо `,` (ещё элементы), либо `]`.
+        loop {
+            self.skip_newlines();
+            if matches!(self.peek().kind, TokenKind::RBracket) {
+                break;
+            }
+            if self.eat(&TokenKind::Comma).is_none() {
+                // Нет `,` и нет `]` — синтаксическая ошибка. Частый случай:
+                // `[a b]` (забыли запятую).
+                let span = self.peek().span;
+                return Err(Diagnostic::new(
+                    format!(
+                        "expected `,` or `]` in array literal, got {}",
+                        self.peek().kind.name()
+                    ),
+                    span,
+                ));
+            }
+            self.skip_newlines();
+            if matches!(self.peek().kind, TokenKind::RBracket) {
+                break; // trailing comma
+            }
+            if self.eat(&TokenKind::DotDotDot).is_some() {
+                let v = self.parse_expr()?;
+                elems.push(ArrayElem::Spread(v));
+            } else {
+                let v = self.parse_expr()?;
+                // Смешение форм: `[a, b: c]` — после array-элемента видим `:`.
+                if matches!(self.peek().kind, TokenKind::Colon) {
+                    return Err(Diagnostic::new(
+                        "cannot mix array and map syntax in `[...]` — either all \
+                         elements are `k: v` pairs (map literal) or none are (array \
+                         literal)",
+                        v.span,
+                    ));
+                }
+                elems.push(ArrayElem::Item(v));
+            }
+        }
+        let end = self.expect(&TokenKind::RBracket)?.span;
         Ok(Expr::new(ExprKind::ArrayLit(elems), start.merge(end)))
+    }
+
+    /// Продолжает парсинг map-литерала после уже распарсенной первой пары
+    /// `k: v`. Обрабатывает `,`-разделители, trailing comma. Если внутри
+    /// встречается элемент без `:` — actionable error (смешение форм).
+    fn parse_map_lit_rest(
+        &mut self,
+        start: Span,
+        mut pairs: Vec<(Expr, Expr)>,
+    ) -> Result<Expr, Diagnostic> {
+        loop {
+            self.skip_newlines();
+            if matches!(self.peek().kind, TokenKind::RBracket) {
+                break;
+            }
+            if self.eat(&TokenKind::Comma).is_none() {
+                let span = self.peek().span;
+                return Err(Diagnostic::new(
+                    format!(
+                        "expected `,` or `]` in map literal, got {}",
+                        self.peek().kind.name()
+                    ),
+                    span,
+                ));
+            }
+            self.skip_newlines();
+            if matches!(self.peek().kind, TokenKind::RBracket) {
+                break; // trailing comma
+            }
+            // `...spread` в map-литерале — пока не поддержан (D60-spread для
+            // мап — отдельная фича, за scope Plan 52).
+            if matches!(self.peek().kind, TokenKind::DotDotDot) {
+                let span = self.peek().span;
+                return Err(Diagnostic::new(
+                    "spread `...` in map literals is not supported in bootstrap \
+                     — merge maps explicitly via `@insert`",
+                    span,
+                ));
+            }
+            let k = self.parse_expr()?;
+            // Смешение форм: `[k: v, x]` — после map-пары элемент без `:`.
+            if !matches!(self.peek().kind, TokenKind::Colon) {
+                return Err(Diagnostic::new(
+                    "cannot mix map and array syntax in `[...]` — every entry of a \
+                     map literal must be `key: value`",
+                    k.span,
+                ));
+            }
+            self.bump(); // :
+            self.skip_newlines();
+            let v = self.parse_expr()?;
+            pairs.push((k, v));
+        }
+        let end = self.expect(&TokenKind::RBracket)?.span;
+        Ok(Expr::new(ExprKind::MapLit(pairs), start.merge(end)))
     }
 
     // Plan 19, C13: try_parse_lambda удалена. Старая `(params) =>`

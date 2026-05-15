@@ -548,6 +548,12 @@ impl<'a> BoundCtx<'a> {
                     }
                 }
             }
+            ExprKind::MapLit(pairs) => {
+                for (k, v) in pairs {
+                    self.walk_expr(k, scope, errors);
+                    self.walk_expr(v, scope, errors);
+                }
+            }
             ExprKind::TupleLit(elems) => {
                 for e in elems { self.walk_expr(e, scope, errors); }
             }
@@ -1532,6 +1538,12 @@ impl<'a> CapabilityCtx<'a> {
                     }
                 }
             }
+            ExprKind::MapLit(pairs) => {
+                for (k, v) in pairs {
+                    self.walk_expr(k, state, errors);
+                    self.walk_expr(v, state, errors);
+                }
+            }
             ExprKind::TupleLit(elems) => {
                 for e in elems { self.walk_expr(e, state, errors); }
             }
@@ -2330,6 +2342,12 @@ impl NameResCtx {
                             self.walk_expr(e, file_id, scope, errors);
                         }
                     }
+                }
+            }
+            ExprKind::MapLit(pairs) => {
+                for (k, v) in pairs {
+                    self.walk_expr(k, file_id, scope, errors);
+                    self.walk_expr(v, file_id, scope, errors);
                 }
             }
             ExprKind::TupleLit(elems) => {
@@ -3575,6 +3593,12 @@ fn walk_expr_for_handler_lits(e: &Expr, never_ops: &HashSet<(String, String)>, e
                 match el {
                     ArrayElem::Item(e2) | ArrayElem::Spread(e2) => walk_expr_for_handler_lits(e2, never_ops, errors),
                 }
+            }
+        }
+        ExprKind::MapLit(pairs) => {
+            for (k, v) in pairs {
+                walk_expr_for_handler_lits(k, never_ops, errors);
+                walk_expr_for_handler_lits(v, never_ops, errors);
             }
         }
         ExprKind::TupleLit(elems) => { for el in elems { walk_expr_for_handler_lits(el, never_ops, errors); } }

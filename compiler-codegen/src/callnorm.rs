@@ -262,6 +262,12 @@ fn walk_children(e: &mut Expr, sigs: &Sigs) {
                 }
             }
         }
+        ExprKind::MapLit(pairs) => {
+            for (k, v) in pairs.iter_mut() {
+                normalize_expr(k, sigs);
+                normalize_expr(v, sigs);
+            }
+        }
         ExprKind::TupleLit(elems) => {
             for x in elems.iter_mut() { normalize_expr(x, sigs); }
         }

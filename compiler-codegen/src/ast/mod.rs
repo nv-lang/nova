@@ -483,6 +483,20 @@ pub enum FnBody {
     External,
 }
 
+/// Plan 52 Ф.1: атрибут-маркер на декларации типа (`#from_fields`).
+///
+/// Маркер `#from_fields` помечает str-keyed map-тип, в который анонимный
+/// record-литерал `{field: v}` коэрсится через D55 map-coercion (имена
+/// полей становятся строковыми ключами). Bootstrap honored только для
+/// `collections.hashmap.HashMap` — type-checker дополнительно сверяет
+/// canonical identity, чтобы shadowing локальным `HashMap` не ломал
+/// правило. Точка расширения (`OrderedMap`, `BTreeMap`) — позже.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TypeAttr {
+    /// `#from_fields` — str-keyed map-тип для D55 map-coercion (D108 / Plan 52).
+    FromFields,
+}
+
 #[derive(Debug, Clone)]
 pub struct TypeDecl {
     /// Plan 45 / D104: doc-comment перед `type`.
@@ -495,6 +509,9 @@ pub struct TypeDecl {
     pub generics: Vec<GenericParam>,
     pub kind: TypeDeclKind,
     pub span: Span,
+    /// Plan 52 Ф.1: атрибуты-маркеры перед `type` (`#from_fields`).
+    /// Пустой вектор у типов без атрибутов (backward-compat).
+    pub attrs: Vec<TypeAttr>,
     /// Plan 33.2 Ф.7 (D24): `invariant <expr>` clauses на record-типах.
     /// Проверяются runtime (debug): после record-литерала, после mut field
     /// assignments, на выходе mut-методов. SMT-verify в 33.3.
@@ -904,6 +921,13 @@ pub enum ExprKind {
     CharLit(u32),
     /// `arr` или `[1, 2, ...rest, 4]` — D60
     ArrayLit(Vec<ArrayElem>),
+    /// `[k1: v1, k2: v2]` — map-литерал (D108, Plan 52). Конструирует
+    /// `HashMap[K, V]`. Ключи и значения — выражения; порядок вычисления
+    /// нормативный: `k1, v1, k2, v2, ...` (слева направо, ключ перед
+    /// значением). Десугарится в codegen/interp в `with_capacity`+`@insert`
+    /// block-expression. Пустой `[]` остаётся `ArrayLit(vec![])` —
+    /// разрешается по ожидаемому типу на type-check.
+    MapLit(Vec<(Expr, Expr)>),
     /// `{ field: value, ...spread, name }` — D17/D52/D60
     RecordLit {
         type_name: Option<Vec<String>>, // Some(["User"]) для `User { ... }`

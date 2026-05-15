@@ -3492,6 +3492,12 @@ impl CEmitter {
                     }
                 }
             }
+            ExprKind::MapLit(pairs) => {
+                for (k, v) in pairs {
+                    Self::collect_idents_expr(k, out);
+                    Self::collect_idents_expr(v, out);
+                }
+            }
             ExprKind::RecordLit { fields, .. } => {
                 for f in fields {
                     if let Some(v) = &f.value { Self::collect_idents_expr(v, out); }
@@ -8065,6 +8071,13 @@ impl CEmitter {
 
             ExprKind::ArrayLit(elems) => {
                 self.emit_array_lit(elems)
+            }
+
+            // Plan 52 Ф.1: MapLit-заглушка. Реальный десугаринг
+            // (`with_capacity` + `@insert` block-expression) — Ф.4.
+            ExprKind::MapLit(_) => {
+                Err("internal: map literal `[k: v]` reached codegen without \
+                     desugaring (Plan 52 Ф.4 not yet wired)".into())
             }
 
             ExprKind::TupleLit(elems) => {
