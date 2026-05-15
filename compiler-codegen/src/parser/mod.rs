@@ -1583,6 +1583,31 @@ impl Parser {
             } else {
                 None
             };
+            // Plan 33.5 Ф.5.1: контракты метода эффекта — requires/ensures.
+            // Используются для Liskov-верификации handler'ов (Ф.5.2).
+            let mut contracts: Vec<Contract> = Vec::new();
+            self.skip_newlines();
+            loop {
+                let cstart = self.peek().span;
+                match self.peek().kind.clone() {
+                    TokenKind::Ident(ref n) if n == "requires" => {
+                        self.bump();
+                        let expr = self.parse_expr()?;
+                        let span = cstart.merge(expr.span);
+                        contracts.push(Contract { kind: ContractKind::Requires, expr, span });
+                        self.skip_newlines();
+                    }
+                    TokenKind::Ident(ref n) if n == "ensures" => {
+                        self.bump();
+                        let expr = self.parse_expr()?;
+                        let span = cstart.merge(expr.span);
+                        contracts.push(Contract { kind: ContractKind::Ensures, expr, span });
+                        self.skip_newlines();
+                    }
+                    _ => break,
+                }
+            }
+
             let end = self.tokens[self.pos.saturating_sub(1)].span;
             // Plan 33.3 Ф.9: `#pure` op обязан иметь return type
             // (что-то наблюдать). Без `-> R` объявление бессмысленно.
@@ -1601,6 +1626,7 @@ impl Parser {
                 return_type,
                 span: name_span.merge(end),
                 kind: op_kind,
+                contracts,
             });
             self.skip_newlines();
         }

@@ -501,6 +501,10 @@ pub struct EffectMethod {
     ///   - SMT кодируются как uninterpreted functions (UF).
     ///   - Backward-compat: для protocol-методов всегда Operation.
     pub kind: EffectOpKind,
+    /// Plan 33.5 Ф.5.1: контракты метода эффекта (requires/ensures).
+    /// Используются в Ф.5.2 для верификации Liskov-подобия handler'ов.
+    /// Пустые = нет spec-контрактов (handler принимается без проверки).
+    pub contracts: Vec<Contract>,
 }
 
 /// Plan 33.3 Ф.9 (D24): Operation vs PureView для effect-метода.
