@@ -1,0 +1,14 @@
+// EXPECT_COMPILE_ERROR refutable pattern в `let`
+//
+// Plan 53: variant-patterns требуют tag-check в runtime — `let` гарантирует
+// binding, не fallible match. Для variant — `if let` / `match`.
+
+module negative_capability.p53_let_variant_pattern
+
+type Maybe | None | Just(int)
+
+test "variant pattern in let — refutable" {
+    let m = Maybe.Just(5)
+    let Just(x) = m
+    assert(x == 5)
+}

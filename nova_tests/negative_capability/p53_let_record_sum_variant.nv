@@ -1,0 +1,15 @@
+// EXPECT_COMPILE_ERROR refutable pattern в `let`
+//
+// Plan 53: record-pattern с type_path к sum-variant — refutable (tag
+// может быть другой variant). Plain record-types работают; sum-variants
+// требуют `if let` / `match`.
+
+module negative_capability.p53_let_record_sum_variant
+
+type Shape | Circle { r int } | Square { s int }
+
+test "record-variant pattern in let — refutable" {
+    let sh = Shape.Circle { r: 7 }
+    let Circle { r } = sh
+    assert(r == 7)
+}
