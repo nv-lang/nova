@@ -4374,11 +4374,32 @@ impl CEmitter {
         for (name, resolved) in subst {
             match resolved {
                 Some(c_ty) => result.push((name, c_ty)),
-                None => return Err(format!(
-                    "cannot infer type argument `{name}` for generic function `{}`; \
-                     use turbofish: `fn_name[T](...)`",
-                    fn_decl.name
-                )),
+                None => {
+                    // Plan 48 Ф.7.5: указать в каком параметре T встречается.
+                    // Помогает LLM/user понять, какой argument добавить или
+                    // как явно дать turbofish.
+                    let positions: Vec<String> = fn_decl.params.iter().enumerate()
+                        .filter_map(|(i, p)| {
+                            let mut found = false;
+                            let mut names = std::collections::HashSet::new();
+                            Self::collect_typeref_names(&p.ty, &mut names, &mut std::collections::HashSet::new());
+                            if names.contains(&name) { found = true; }
+                            if found {
+                                Some(format!("param `{}` (#{i})", p.name))
+                            } else { None }
+                        })
+                        .collect();
+                    let where_used = if positions.is_empty() {
+                        " (returned only — turbofish required)".to_string()
+                    } else {
+                        format!(" — appears in {}", positions.join(", "))
+                    };
+                    return Err(format!(
+                        "cannot infer type argument `{name}` for generic function `{}`{}; \
+                         use turbofish: `{}[{name}](...)`",
+                        fn_decl.name, where_used, fn_decl.name
+                    ));
+                }
             }
         }
         Ok(result)
