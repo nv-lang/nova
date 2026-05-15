@@ -6345,9 +6345,10 @@ bootstrap-баг). Новая caller-owned: токен создаётся `Cance
   - [M-mono-method-call-inference] `let r = c.method(...)` для generic-
     метода типизирует `r` как `void*` — `infer_expr_c_type` method-call
     branch не делает Plan 48 mono inference. Workaround: `let r int = ...`.
-  - [M-mono-static-methods] Static generic-методы (`Type.method[T]()` без
-    instance receiver) — sentinel c_name `__mono_method__T__m` попадает в
-    C-output как линкуемое имя, не resolved через mono routing.
+  - ~~[M-mono-static-methods]~~ — закрыто 2026-05-15 Ф.7.2. Path-form
+    static dispatch получил sentinel-detection branch (emit_c.rs:~9063),
+    `register_mono_method_instance` / `emit_monomorphized_method`
+    учитывают `ReceiverKind::Static` (no nova_self в signature).
   - [M-mono-error-not-fallback] V1 plan говорил "понятная ошибка cannot
     infer T, не тихий void*-fallback" — реализация делает erasure
     fallback на любой Err из `resolve_mono_type_args`. Plan нарушен,

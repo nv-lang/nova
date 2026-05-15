@@ -25,6 +25,10 @@ type Counter {
 export fn Counter @apply[T](f fn(int) -> T) -> T => f(@base)
 
 
+// Static generic method — без instance receiver.
+export fn Counter.combine[T](x T, y T, merge fn(T, T) -> T) -> T => merge(x, y)
+
+
 test "mono method: int return" {
     let c = Counter { base: 10 }
     let r int = c.apply(fn(n int) -> int { n * 2 })
@@ -44,4 +48,9 @@ test "mono method: closure with block body" {
         doubled + 1
     })
     assert(r == 11)
+}
+
+test "static mono method: int merge" {
+    let r int = Counter.combine(2, 3, fn(a int, b int) -> int { a + b })
+    assert(r == 5)
 }
