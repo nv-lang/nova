@@ -848,6 +848,12 @@ impl Parser {
         // parse_type_decl / parse_const_decl через pending_doc_attrs.
         let pending_doc_attrs = self.parse_doc_attrs()?;
 
+        // Plan 52 Ф.1: `#from_fields` — маркер на декларации типа.
+        // Помечает str-keyed map-тип для D55 map-coercion (`{field: v}`).
+        // Парсится ПЕРЕД `export` (консистентно с `#cfg`) и только перед
+        // `type`. Контекстный разбор после `#` (не keyword).
+        let type_attrs = self.parse_type_attrs()?;
+
         let is_export = self.eat(&TokenKind::KwExport).is_some();
         // D82: `external` modifier — между `export` и `fn`. Только для fn.
         let is_external = self.eat(&TokenKind::KwExternal).is_some();
@@ -906,10 +912,7 @@ impl Parser {
         } else {
             is_external
         };
-        // Plan 52 Ф.1: `#from_fields` — маркер на декларации типа.
-        // Помечает str-keyed map-тип для D55 map-coercion (`{field: v}`).
-        // Только перед `type`. Контекстный разбор после `#` (не keyword).
-        let type_attrs = self.parse_type_attrs()?;
+        // Plan 52 Ф.1: `#from_fields` валиден только перед `type`-декларацией.
         if !type_attrs.is_empty()
             && !matches!(self.peek().kind, TokenKind::KwType)
         {

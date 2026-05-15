@@ -6,6 +6,7 @@ pub mod argbind;
 pub mod ast;
 pub mod callnorm;
 pub mod codegen;
+pub mod desugar;
 pub mod diag;
 pub mod doc;
 pub mod imports;

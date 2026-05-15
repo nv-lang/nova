@@ -249,7 +249,7 @@ fn cmd_check(path: &PathBuf) -> Result<()> {
 
 fn cmd_run(path: &PathBuf) -> Result<()> {
     let src = read_file(path)?;
-    let module = nova_codegen::parser::parse(&src).map_err(|d| {
+    let mut module = nova_codegen::parser::parse(&src).map_err(|d| {
         anyhow!(
             "{}",
             d.render(&src, &path.to_string_lossy())
@@ -263,6 +263,9 @@ fn cmd_run(path: &PathBuf) -> Result<()> {
             .collect();
         anyhow!("{}", messages.join("\n"))
     })?;
+    // Plan 52 Ф.5: десугаринг map-литералов `[k: v]` → block-expression
+    // ПОСЛЕ type-check (типы проверены), ДО интерпретации.
+    nova_codegen::desugar::desugar_module(&mut module);
     let mut interp = nova_codegen::interp::Interpreter::new();
     interp.load_module(&module).map_err(|d| {
         anyhow!(
@@ -292,6 +295,10 @@ fn cmd_compile(path: &PathBuf, output: Option<&std::path::Path>, annotate_source
             .collect();
         anyhow!("{}", messages.join("\n"))
     })?;
+    // Plan 52 Ф.4: десугаринг map-литералов `[k: v]` → block-expression
+    // ПОСЛЕ type-check, ДО effect-inference и codegen. После прохода
+    // codegen видит обычные method-call'ы (with_capacity / insert).
+    nova_codegen::desugar::desugar_module(&mut module);
     // D28: effect inference для private fn — добавить `Fail` если throw
     // в теле и нет явного Fail в effect-row.
     nova_codegen::types::infer_effects(&mut module);
@@ -328,13 +335,15 @@ fn cmd_compile(path: &PathBuf, output: Option<&std::path::Path>, annotate_source
 
 fn cmd_test(path: &PathBuf) -> Result<()> {
     let src = read_file(path)?;
-    let module = nova_codegen::parser::parse(&src).map_err(|d| {
+    let mut module = nova_codegen::parser::parse(&src).map_err(|d| {
         anyhow!(
             "{}",
             d.render(&src, &path.to_string_lossy())
         )
     })?;
     check_module_path(path, &module)?;
+    // Plan 52 Ф.5: десугаринг map-литералов перед интерпретацией тестов.
+    nova_codegen::desugar::desugar_module(&mut module);
     let mut interp = nova_codegen::interp::Interpreter::new();
     interp.load_module(&module).map_err(|d| {
         anyhow!(

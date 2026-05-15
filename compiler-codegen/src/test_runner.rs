@@ -1982,6 +1982,10 @@ fn codegen_to_c(path: &Path, src: &str) -> Result<Vec<String>, String> {
             .collect::<Vec<_>>()
             .join("\n")
     })?;
+    // Plan 52 Ф.4: десугаринг map-литералов `[k: v]` → block-expression.
+    // ПОСЛЕ type-check, ДО infer_effects/callnorm/codegen — codegen видит
+    // обычные method-call'ы (with_capacity / insert).
+    crate::desugar::desugar_module(&mut module);
     types::infer_effects(&mut module);
 
     // Plan 46 (D102) Ф.2: нормализация call-site — named args → positional

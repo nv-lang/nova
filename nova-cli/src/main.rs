@@ -974,6 +974,9 @@ fn cmd_run(path: &Path) -> Result<()> {
             .collect();
         anyhow!("{}", msgs.join("\n"))
     })?;
+    // Plan 52 Ф.5: десугаринг map-литералов `[k: v]` → block-expression
+    // ПОСЛЕ type-check, ДО callnorm/interp.
+    nova_codegen::desugar::desugar_module(&mut module);
     // Plan 46 (D102) Ф.2: нормализация call-site для treewalk-interp —
     // named args → positional + вставка defaults. После resolve_imports
     // (нужны все сигнатуры) и type-check, до запуска интерпретатора.
@@ -1798,6 +1801,10 @@ fn cmd_build(
         let (line, col) = nova_codegen::diag::byte_to_line_col(&src, w.diag.span.start);
         eprintln!("{} {}:{}:{}: {} [{}]", bold(&yellow("warning:")), path.display(), line, col, w.diag.message, w.rule);
     }
+
+    // Plan 52 Ф.4: десугаринг map-литералов `[k: v]` → block-expression.
+    // ПОСЛЕ lints (которые анализируют MapLit-узлы), ДО callnorm/codegen.
+    nova_codegen::desugar::desugar_module(&mut module);
 
     // Plan 46 (D102) Ф.2: нормализация call-site — named args → positional
     // + вставка defaults. После type-check, до codegen.
