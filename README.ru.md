@@ -285,6 +285,20 @@ nova test --include-stdlib               # включить std/* помимо n
 Подробный гайд флагов test-runner, EXPECT-маркеры, troubleshooting:
 [docs/test-conventions.md](docs/test-conventions.md).
 
+## Документация (`nova doc`)
+
+Генерация документации из `///` и `//!` doc-comment'ов, с doc-tests,
+intra-doc-links, stability/deprecation, JSON Schema 2020-12 output:
+
+```sh
+nova doc src/api.nv                # Markdown в stdout
+nova doc src/api.nv --format json  # JSON (D107 schema v1)
+nova doc src/api.nv --test         # запустить doc-tests
+nova doc src/api.nv --check        # validate (broken links, missing summaries)
+```
+
+Полный user guide: [docs/nova-doc.md](docs/nova-doc.md).
+
 ## Поддержка редакторов
 
 Plugin'ы подсветки синтаксиса для нескольких редакторов лежат в
