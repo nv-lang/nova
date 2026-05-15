@@ -1,0 +1,34 @@
+//! Plan 45 Ф.7: fixture для doc-tests с модификаторами + hidden lines.
+
+module nova_tests.doc.fixtures.doctests.sample
+
+/// Удваивает `x`.
+///
+/// # Examples
+///
+/// Тривиальный пример:
+///
+/// ```nova
+/// let x = 21
+/// let y = x * 2
+/// ```
+///
+/// Не запускаем (compile-only):
+///
+/// ```nova,no_run
+/// let big = 1_000_000 * 2
+/// ```
+///
+/// Игнорируем (показано, но не запускается):
+///
+/// ```nova,ignore
+/// undefined_symbol()
+/// ```
+///
+/// Compile-fail тест (ожидаемая ошибка типа):
+///
+/// ```nova,compile_fail
+/// let x: int = "not an int"
+/// ```
+export fn double(x int) -> int =>
+    x * 2

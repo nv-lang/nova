@@ -771,9 +771,31 @@ impl Parser {
         let parsed = match self.peek().kind {
             TokenKind::KwFn => Item::Fn(self.parse_fn(is_export, is_external, realtime_attr, contract_attrs, pending_doc.clone())?),
             TokenKind::KwType => Item::Type(self.parse_type_decl(is_export, pending_doc.clone())?),
-            TokenKind::KwLet => Item::Let(self.parse_let_decl()?),
+            TokenKind::KwLet => {
+                if let Some(d) = &pending_doc {
+                    // Plan 45 Ф.3: orphan `///` warning — doc-comment'ы
+                    // не имеют семантики для `let`/`test` items.
+                    eprintln!(
+                        "warning: doc-comment (`///`) before `let` is ignored \
+                         — `let` declarations are not documented (Plan 45 Ф.3). \
+                         span: {:?}",
+                        d.span
+                    );
+                }
+                Item::Let(self.parse_let_decl()?)
+            }
             TokenKind::KwConst => Item::Const(self.parse_const_decl(is_export, pending_doc.clone())?),
-            TokenKind::KwTest if !is_export => Item::Test(self.parse_test_decl()?),
+            TokenKind::KwTest if !is_export => {
+                if let Some(d) = &pending_doc {
+                    eprintln!(
+                        "warning: doc-comment (`///`) before `test` is ignored \
+                         — `test` declarations are not documented (Plan 45 Ф.3). \
+                         span: {:?}",
+                        d.span
+                    );
+                }
+                Item::Test(self.parse_test_decl()?)
+            }
             _ => {
                 let span = self.peek().span;
                 return Err(Diagnostic::new(
