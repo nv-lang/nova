@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 # План 21: D91 implementation — Channel revision (capability-split)
 
-**Статус:** 🟡 **PRODUCTION PLAN — implementation ready**.
+**Статус:** ✅ **ЗАКРЫТ** — D91 capability-split реализован
+(`ChanWriter`/`ChanReader`, negative-тесты sender-no-recv /
+receiver-no-send проходят; подтверждено Plan 30 §«Связь»).
 **Дата создания:** 2026-05-10.
 **Обновлён:** 2026-05-11 (production-grade rewrite после Plan 22 completion).
 **Зависимости:**
