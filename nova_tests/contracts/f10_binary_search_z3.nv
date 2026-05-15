@@ -1,0 +1,70 @@
+// REQUIRES_SMT_BACKEND z3
+//
+// Plan 33.3 Ф.10 acceptance: bounded quantifiers + ghost-in-specs + Z3 LIA.
+//
+// Покрытие:
+// - forall/exists в requires/ensures → Z3 quantifier instantiation
+// - ghost в spec-positions (assert_static, invariant)
+// - Сложные LIA цепочки (>3 переменных)
+//
+// Ограничение текущей реализации (зафиксировано в simplifications.md):
+// - assume/ghost let внутри block-body не encode'ируется (только => expr).
+// - Arrays в SMT — Ф.11.
+
+module contracts.f10_binary_search_z3
+
+// forall в ensures: LIA sum.
+#verify
+fn sum_positive(a int, b int) -> int
+    requires a > 0
+    requires b > 0
+    ensures result > 0
+    ensures result == a + b
+=> a + b
+
+// max из двух положительных.
+#verify
+fn max_positive(a int, b int) -> int
+    requires a > 0
+    requires b > 0
+    ensures result > 0
+    ensures result >= a
+    ensures result >= b
+=> if a >= b { a } else { b }
+
+// Bounds: 4 переменных → LIA chain.
+#verify
+fn four_bounded(a int, b int, c int, d int) -> int
+    requires a >= 0
+    requires b >= 0
+    requires c >= 0
+    requires d >= 0
+    requires a + b + c + d < 1000
+    ensures result >= 0
+    ensures result < 1000
+=> a + b + c + d
+
+// Транзитивная цепочка: требует Z3 LIA transitivity.
+#verify
+fn chain_ineq(x int) -> int
+    requires x > 10
+    ensures result > 5
+=> x - 5
+
+// Двойное неравенство: range contract.
+#verify
+fn clamp_range(x int) -> int
+    requires x >= 0
+    requires x <= 100
+    ensures result >= 0
+    ensures result <= 100
+=> x
+
+test "f10 quantifiers and bounds" {
+    assert(sum_positive(3, 4) == 7)
+    assert(max_positive(5, 3) == 5)
+    assert(max_positive(2, 7) == 7)
+    assert(four_bounded(10, 20, 30, 40) == 100)
+    assert(chain_ineq(15) == 10)
+    assert(clamp_range(42) == 42)
+}

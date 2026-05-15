@@ -358,6 +358,8 @@ impl Z3Backend {
             ("or", a) if !a.is_empty() => ffi::Z3_mk_or(ctx, a.len() as c_uint, a.as_ptr()),
             ("=>", &[x, y]) => ffi::Z3_mk_implies(ctx, x, y),
             ("<=>", &[x, y]) => ffi::Z3_mk_iff(ctx, x, y),
+            // ITE: правильный if-then-else для arithmetic и bool terms.
+            ("ite", &[cond, then, else_]) => ffi::Z3_mk_ite(ctx, cond, then, else_),
 
             // Plan 33.3 Ф.9: pure_view-UF через real Z3_func_decl
             // (pre-declared в declare_function, sorts из effect-сигнатуры).

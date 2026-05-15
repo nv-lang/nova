@@ -173,6 +173,10 @@ extern "C" {
         range: Z3_sort,
     ) -> Z3_func_decl;
 
+    // If-then-else: ite(cond: Bool, then: T, else: T) -> T.
+    // Правильное ITE для arithmetic — не теряет информацию как or+and encoding.
+    pub fn Z3_mk_ite(c: Z3_context, t1: Z3_ast, t2: Z3_ast, t3: Z3_ast) -> Z3_ast;
+
     // Z3_mk_app: применить func_decl к аргументам, получая term.
     pub fn Z3_mk_app(
         c: Z3_context,

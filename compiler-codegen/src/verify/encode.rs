@@ -211,10 +211,10 @@ pub fn encode_expr_with_ctx(e: &Expr, ctx: &EncodeCtx) -> Result<SmtTerm, Encodi
                 None => return Err(EncodingError::Unsupported(
                     "if without else not supported".into())),
             };
-            // ite via or+and: (cond ∧ then) ∨ (¬cond ∧ else)
-            Ok(SmtTerm::or(vec![
-                SmtTerm::and(vec![cond_term.clone(), then_term]),
-                SmtTerm::and(vec![SmtTerm::not(cond_term), else_term]),
+            // Настоящий SMT ITE — корректен для arithmetic и bool terms.
+            // or+and encoding терял информацию при arithmetic (Z3 не видел
+            // что ite(c, a, b) >= a когда a >= b).
+            Ok(SmtTerm::App("ite".into(), vec![cond_term, then_term, else_term
             ]))
         }
 
