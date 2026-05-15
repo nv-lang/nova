@@ -1,0 +1,32 @@
+// EXPECT_COMPILE_ERROR передаётся только по имени
+//
+// Plan 50 follow-up: при коллизии имён методов между типами keyword-only
+// диагностика обязана срабатывать. В Plan 46 `check_call_argbind`
+// резолвил `obj.method` по уникальному имени метода через все типы —
+// при collision (`Box.scaled` + `Cube.scaled`) name-only видел >1 sig и
+// пропускал диагностику. Plan 50 follow-up добавил receiver-type
+// inference через `infer_arg_ty`: тип `b` известен из scope → точный
+// резолв `method_table["Box"]["scaled"]`, диагностика срабатывает на
+// корректную сигнатуру.
+
+module negative_capability.p50_method_name_collision
+
+type Box {
+    base int
+}
+
+type Cube {
+    side int
+}
+
+fn Box @scaled(factor int = 2) -> int =>
+    @base * factor
+
+fn Cube @scaled(factor int = 3) -> int =>
+    @side * factor
+
+test "method-name collision: keyword-only fires on positional default" {
+    let b = Box { base: 10 }
+    let _ = b.scaled(3)
+    assert(true)
+}

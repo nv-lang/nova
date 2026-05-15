@@ -441,7 +441,7 @@ impl<'a> BoundCtx<'a> {
         // Проверяем сам call перед рекурсией в args (порядок не важен).
         self.check_call_bounds(e, scope, errors);
         // Plan 46 (D102): argument binding diagnostics.
-        self.check_call_argbind(e, errors);
+        self.check_call_argbind(e, scope, errors);
         match &e.kind {
             ExprKind::Call { func, args, trailing } => {
                 self.walk_expr(func, scope, errors);
@@ -695,6 +695,7 @@ impl<'a> BoundCtx<'a> {
     fn check_call_argbind(
         &self,
         e: &Expr,
+        scope: &HashMap<String, TypeRef>,
         errors: &mut Vec<Diagnostic>,
     ) {
         let ExprKind::Call { func, args, trailing } = &e.kind else { return; };
@@ -722,26 +723,19 @@ impl<'a> BoundCtx<'a> {
                     _ => return,
                 }
             }
-            // Plan 46 Ф.3: instance-method `obj.method(...)`. Без
-            // type-inference резолвим по уникальному имени метода: если
-            // метод с этим именем есть ровно на одном типе без overload
-            // — берём его сигнатуру. Иначе (несколько типов / overload)
-            // — пропускаем (codegen резолвит через type-info).
-            ExprKind::Member { name: method_name, .. } => {
-                let mut found: Option<&FnDecl> = None;
-                let mut ambiguous = false;
-                for methods in self.method_table.values() {
-                    if let Some(overloads) = methods.get(method_name) {
-                        for f in overloads {
-                            if found.is_some() {
-                                ambiguous = true;
-                            }
-                            found = Some(f);
-                        }
-                    }
-                }
-                if ambiguous { return; }
-                match found {
+            // Plan 46 Ф.3 + Plan 50 follow-up: instance-method `obj.method(...)`.
+            // Первая попытка — receiver-type inference (best-effort через
+            // `infer_arg_ty`): если тип `obj` известен (Ident в scope,
+            // record-литерал, литерал-примитив) — точный резолв
+            // `method_table[type][method]`. Закрывает gap при collision
+            // имён методов: `Box.scaled` vs `Cube.scaled` с дефолтами
+            // больше не пропускает keyword-only диагностику.
+            // Fallback — name-only резолв (как было в Plan 46): уникальное
+            // имя метода через все типы. Для остальных случаев codegen
+            // резолвит через type-info.
+            ExprKind::Member { obj, name: method_name } => {
+                let resolved = self.resolve_instance_method(obj, method_name, scope);
+                match resolved {
                     Some(f) => &f.params,
                     None => return,
                 }
@@ -857,6 +851,58 @@ impl<'a> BoundCtx<'a> {
             .with_suggestion(suggestion);
             errors.push(diag);
         }
+    }
+
+    /// Plan 50 follow-up: резолв `obj.method` для argbind-диагностик.
+    ///
+    /// Сначала best-effort receiver-type inference через `infer_arg_ty`
+    /// — если тип `obj` известен (Ident в scope / record-литерал /
+    /// литерал-примитив), точный резолв через `method_table[type][name]`.
+    /// Это закрывает gap при коллизии имён методов между типами
+    /// (`Box.scaled` vs `Cube.scaled` с дефолтами): без inference оба
+    /// попадали в name-only поиск, тот видел >1 sig → ambiguous → skip,
+    /// keyword-only диагностика терялась.
+    ///
+    /// Fallback — name-only через все типы (поведение Plan 46): подходит
+    /// когда тип receiver'а не выводим (сложное выражение / generic).
+    /// Уникальное имя метода → один тип → один sig → используем его.
+    /// Иначе — пропускаем, codegen резолвит через type-info.
+    fn resolve_instance_method(
+        &self,
+        obj: &Expr,
+        method_name: &str,
+        scope: &HashMap<String, TypeRef>,
+    ) -> Option<&FnDecl> {
+        // Попытка 1: receiver-type inference.
+        if let Some(recv_ty) = Self::infer_arg_ty(obj, scope) {
+            if let TypeRef::Named { path, .. } = &recv_ty {
+                if path.len() == 1 {
+                    if let Some(methods) = self.method_table.get(&path[0]) {
+                        if let Some(overloads) = methods.get(method_name) {
+                            if let [single] = overloads.as_slice() {
+                                return Some(single);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // Попытка 2: name-only fallback. Уникальное имя метода через
+        // все типы → один sig, используем.
+        let mut found: Option<&FnDecl> = None;
+        let mut ambiguous = false;
+        for methods in self.method_table.values() {
+            if let Some(overloads) = methods.get(method_name) {
+                for f in overloads {
+                    if found.is_some() {
+                        ambiguous = true;
+                    }
+                    found = Some(f);
+                }
+            }
+        }
+        if ambiguous { return None; }
+        found
     }
 
     /// Если param's TypeRef — простой `Named{path: [T]}` где T в
