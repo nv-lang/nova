@@ -4816,36 +4816,35 @@ TIMTOWTDI: `{}` и `[]` покрывают **разные** случаи (имя
 
 ---
 
-## D104. Doc-comment syntax — `///` outer, `//!` inner
+## D104. Синтаксис doc-comment'ов — `///` outer, `//!` inner
 
-> **Status:** active (spec). Implementation — [Plan 45](../../docs/plans/45-nova-doc.md) Ф.1.
+> **Status:** active (spec). Реализация — [Plan 45](../../docs/plans/45-nova-doc.md) Ф.1.
 >
-> **Cross-refs:** [D101](07-modules.md#d101-doc-module-attr) (`#doc "..."` module-attr coexists with `//!`); [D105](09-tooling.md#d105-doc-attributes) (`#doc(...)` typed attributes share the `#doc` namespace); [D106](09-tooling.md#d106-doc-test-semantics) (code-blocks inside doc-comments).
+> **Cross-refs:** [D101](07-modules.md#d101-doc-module-attr) (`#doc "..."` module-attr сосуществует с `//!`); [D105](09-tooling.md#d105-doc-attributes) (`#doc(...)` типизированные атрибуты делят namespace `#doc`); [D106](09-tooling.md#d106-doc-test-semantics) (code-блоки внутри doc-comment'ов).
 
-### What
+### Что
 
-Two doc-comment prefixes:
+Два префикса doc-comment'ов:
 
-- `///` — **outer doc-comment**: attaches to the immediately following
-  item declaration (function, type, constant, effect, handler,
-  protocol).
-- `//!` — **inner doc-comment**: attaches to the enclosing
-  module/file. Only allowed at file top (after the `module X` line and
-  any `import` lines), before the first item.
+- `///` — **внешний doc-comment** (outer): привязывается к **следующей**
+  декларации (function, type, constant, effect, handler, protocol).
+- `//!` — **внутренний doc-comment** (inner): привязывается к
+  окружающему модулю/файлу. Допустим **только в начале файла** (после
+  строки `module X` и любых строк `import`), до первой декларации.
 
-Bare `//` remains a regular comment (not parsed as doc).
+Голое `//` остаётся обычным комментарием (doc-token не эмитится).
 
 ```nova
-//! Module-level summary.
+//! Краткое описание модуля.
 //!
-//! Detailed description of what this module provides, including
-//! examples that span items.
+//! Подробное описание того, что предоставляет модуль, включая
+//! примеры, охватывающие несколько items.
 
 module std.example
 
 import std.io
 
-/// Returns the absolute value of `x`.
+/// Возвращает модуль числа `x`.
 ///
 /// # Examples
 ///
@@ -4856,166 +4855,167 @@ fn abs(x int) -> int =>
     if x < 0 { -x } else { x }
 ```
 
-### Rules
+### Правила
 
-1. **Outer (`///`)** — attaches to the **next** declaration in source
-   order. Sequences of consecutive `///` lines are merged into one
-   doc-block. A blank `///` line (or a non-doc line) terminates the
-   block.
+1. **Outer (`///`)** — привязывается к **следующей** декларации в
+   порядке исходника. Подряд идущие `///` строки сливаются в один
+   doc-блок. Пустая `///` строка не разрывает блок (становится пустой
+   строкой в content); не-doc строка завершает блок.
 
-2. **Inner (`//!`)** — only valid at the **top of the module**: after
-   the `module <path>` line and any `import` statements, but
-   **before** the first item declaration. Multiple consecutive `//!`
-   lines merge.
+2. **Inner (`//!`)** — допустим **только в начале модуля**: после
+   строки `module <path>` и любых `import` statement'ов, но **до**
+   первой декларации item'а. Подряд идущие `//!` строки сливаются.
 
-3. **`////` (four or more slashes)** — regular comment, **not** a
-   doc-comment. This mirrors rustdoc and prevents accidental
-   doc-promotion when section dividers are used.
+3. **`////` (четыре или больше слэшей)** — обычный комментарий, **не**
+   doc-comment. Это копирует поведение rustdoc и предотвращает
+   случайное doc-promotion для идиомы section-divider'ов (`////
+   SECTION`).
 
-4. **Multi-line merging** — consecutive `///` (or `//!`) lines without
-   intervening blank lines or other tokens are concatenated with `\n`
-   separators. The leading `///` (or `//!`) plus exactly one optional
-   space is stripped from each line:
+4. **Multi-line merging** — подряд идущие `///` (или `//!`) строки без
+   разделяющих blank-строк или других токенов конкатенируются с
+   `\n`-разделителями. С каждой строки снимается префикс `///` (или
+   `//!`) плюс ровно один опциональный ведущий пробел:
 
    ```nova
-   /// First line.
+   /// Первая строка.
    ///
-   /// Third line (preceded by blank doc line).
+   /// Третья строка (после пустой doc-строки).
    ```
 
-   yields doc content `"First line.\n\nThird line (preceded by blank doc line)."`.
+   даёт content `"Первая строка.\n\nТретья строка (после пустой doc-строки)."`.
 
-5. **Indentation stripping** — when a doc-block spans multiple lines,
-   the **common leading whitespace** (after the `///`/`//!` plus one
-   optional space) is stripped from each non-empty line. This
-   normalises markdown indentation:
+5. **Indentation stripping** — когда doc-блок занимает несколько строк,
+   **общий leading whitespace** (после префикса `///`/`//!` + одного
+   опционального пробела) снимается единообразно с каждой непустой
+   строки. Это нормализует индентацию markdown:
 
    ```nova
        /// Indented doc:
        ///   inner detail
    ```
 
-   yields `"Indented doc:\n  inner detail"` (the four-space outer
-   indent is stripped uniformly; the two-space inner indent is
-   preserved).
+   даёт `"Indented doc:\n  inner detail"` (четырёхпробельный внешний
+   отступ снят равномерно; двухпробельный внутренний — сохранён).
 
-6. **No doc on `module`, `import`, `let` at module scope, or `test`**
-   blocks. Module-level documentation goes through `//!` inner doc or
-   `#doc "..."` module-attr (D101); the `test` block has no doc
-   convention (use a regular comment if needed).
+6. **Doc не допускается на `module`, `import`, `let` на module-scope,
+   `test`-блоке.** Документация уровня модуля — через `//!` (inner doc)
+   или через `#doc "..."` module-attr (D101); у `test`-блока doc-
+   convention нет (если нужен комментарий — обычный `//`).
 
-7. **Empty doc-block (`///` followed by blank line or `///\n`)** —
-   warning, treated as no documentation. Style guide forbids empty
-   doc-blocks except for explicit `#hide_doc` cases (D105).
+7. **Пустой doc-блок (`///` за которым blank line или `///\n`)** —
+   warning, обрабатывается как отсутствие документации. Style guide
+   запрещает пустые doc-блоки кроме явных случаев `#hide_doc` (D105).
 
-### Position rules — examples
+### Position rules — примеры
 
 ```nova
-//! ok: at module top, after module + imports.
+//! ok: в начале модуля, после module + imports.
 
 module foo
 
 import bar
 
-//! WARNING: //! after first item — discarded with warning.
+//! WARNING: //! после первого item — отбрасывается с warning'ом.
 
-/// ok: outer doc on item below.
+/// ok: outer doc на item ниже.
 fn baz() -> int => 1
 
-/// orphan outer doc — warning: no item follows.
+/// orphan outer doc — warning: за ним нет item'а.
 ```
 
 ```nova
 fn outer() -> int {
-    //! ERROR: //! inside a function body is not valid.
+    //! ERROR: //! внутри тела функции недопустим.
 
-    /// ERROR: outer doc on let-statement is not supported.
+    /// ERROR: outer doc на let-statement не поддерживается.
     let x = 1
     x
 }
 ```
 
-### Encoding and escapes
+### Кодировка и escapes
 
-- Doc-comment content is **plain text** (CommonMark markdown layer
-  is applied later, in [D106](09-tooling.md#d106-doc-test-semantics)
-  / Plan 45 Ф.5).
-- No escape sequences are interpreted at the lexer level. Backslashes,
-  backticks, etc. are part of the raw content.
-- UTF-8 only. BOM at file start is stripped before doc-recognition.
-- Trailing whitespace on each line is preserved (markdown line-break
-  semantics depend on it).
+- Content doc-comment'а — **сырой текст** (CommonMark markdown слой
+  применяется позже, в [D106](09-tooling.md#d106-doc-test-semantics) /
+  Plan 45 Ф.5).
+- На уровне лексера escape-последовательности не интерпретируются.
+  Backslash'ы, backtick'и и пр. — часть raw content.
+- Только UTF-8. BOM в начале файла снимается перед doc-recognition.
+- Trailing whitespace на каждой строке сохраняется (от него зависит
+  markdown line-break семантика).
 
-### Lexer-level grammar
+### Грамматика на уровне лексера
 
 ```
 doc-outer-line  = "///" [content-char ...] NEWLINE
 doc-inner-line  = "//!" [content-char ...] NEWLINE
 doc-block-outer = doc-outer-line { doc-outer-line }
 doc-block-inner = doc-inner-line { doc-inner-line }
-content-char    = any character except NEWLINE, where the line MUST NOT
-                  start with `/` after the prefix (i.e. `////` is
-                  regular comment, not doc-prefix + extra slash).
+content-char    = любой символ, кроме NEWLINE; при этом строка НЕ
+                  ДОЛЖНА начинаться с `/` сразу после префикса (т.е.
+                  `////` — обычный комментарий, а не doc-prefix + лишний
+                  слэш).
 ```
 
-### Co-existence with `#doc "..."` (D101)
+### Сосуществование с `#doc "..."` (D101)
 
-[D101](07-modules.md#d101-doc-module-attr) defines a `#doc "..."`
-**module attribute** that may appear before the `module X` line in
-`_module.nv` and propagates to all peers. This is **complementary**
-to `//!`:
+[D101](07-modules.md#d101-doc-module-attr) определяет атрибут
+**module-level** `#doc "..."`, который может стоять перед строкой
+`module X` в `_module.nv` и пропагируется на все peer-файлы. Это
+**комплементарно** к `//!`:
 
-- `#doc "..."` — for short module summaries, especially in folder
-  modules with `_module.nv`.
-- `//!` — for long module documentation living in a single canonical
-  file, including markdown body and `# Examples` sections.
+- `#doc "..."` — для коротких summary модуля, особенно в
+  folder-module'ах с `_module.nv`.
+- `//!` — для длинной документации модуля в одном каноническом файле,
+  включая markdown-тело и `# Examples`-секции.
 
-A module **may have both** simultaneously. When both are present:
-- `#doc` text becomes the module summary (first sentence).
-- `//!` body is appended as the module description.
+Модуль **может иметь оба** одновременно. Если оба присутствуют:
+- Текст `#doc` становится module summary (первое предложение).
+- Тело `//!` добавляется как module description.
 
-The `nova doc` tool concatenates them; no conflict, but the lint
-`redundant-module-doc` warns if both contain identical content.
+`nova doc` склеивает их; конфликта нет, но lint `redundant-module-doc`
+предупреждает, если оба содержат идентичный текст.
 
-### Why
+### Почему
 
-1. **`///` + `//!`** — matches rustdoc convention familiar to a wide
-   developer base. Adopting an established convention reduces friction
-   for newcomers and AI assistants.
-2. **`////` rejected as doc** — saves headings-as-comment idiom
-   (`//// SECTION`) without accidental doc-promotion. rustdoc made
-   this choice; we keep it.
-3. **No `/** ... */`-style block doc-comments** — Nova has no block
-   comments at all (only `//` line comments per existing language
-   convention). Adding block doc-comments solely for documentation
-   would introduce a new comment syntax for one purpose.
-4. **English-by-convention** — the canonical language for doc-comments
-   is **English**. Tooling treats content as opaque text (UTF-8), but
-   the style guide (Plan 45 §11.5) and stdlib all use English. This
-   removes translation churn and improves AI/LLM consumption.
+1. **`///` + `//!`** — копирует rustdoc-конвенцию, знакомую широкому
+   developer-сообществу. Заимствование устоявшейся конвенции снижает
+   friction для новичков и AI-ассистентов.
+2. **`////` отвергнут как doc** — сохраняет идиому
+   headings-as-comment'ы (`//// SECTION`) без случайного
+   doc-promotion. rustdoc сделал этот выбор; мы повторяем.
+3. **Никаких `/** ... */`-style блочных doc-comment'ов** — в Nova
+   вообще нет блочных комментариев (только `//` line по существующей
+   языковой конвенции). Добавлять блочные doc-comment'ы только ради
+   документации — вводить новый синтаксис комментариев для одной цели.
+4. **Английский как рекомендованная convention** — для широкого
+   охвата и AI/LLM-consumption Plan 45 §11.5 рекомендует писать
+   doc-content на английском. Однако технически lexer/codegen не
+   ограничивают язык — content treated как opaque UTF-8 text, и при
+   необходимости разработчик/команда выбирает язык под свою аудиторию.
 
 ### Что отвергнуто
 
-- **`///` for inner docs on the next-line-also-item style** —
-  ambiguous with attaching to the following item. Rejected; `//!` is
-  unambiguously inner.
-- **`//* ... */`-block doc-comments** — adds a comment syntax variant
-  for one purpose; line-form covers all cases with one rule.
-- **Auto-promotion of `//` regular comments to docs when preceding an
-  exported item** — implicit and surprising. Doc-promotion must be
-  explicit (`///`).
-- **Doc on `import`** — imports are not part of the public API surface
-  and are not rendered.
+- **`///` для inner-doc через position next-line** — неоднозначно
+  с привязкой к следующему item'у. Отвергнуто; `//!` однозначно inner.
+- **`//* ... */`-блочные doc-comment'ы** — добавляет вариант
+  синтаксиса комментариев для одной цели; line-форма покрывает все
+  случаи одним правилом.
+- **Авто-promotion `//` обычных комментариев в doc, когда они
+  предшествуют exported item** — неявно и неожиданно. Doc-promotion
+  обязан быть явным (`///`).
+- **Doc на `import`** — import'ы не часть public API surface, в
+  output'е не рендерятся.
 
 ### Связь
 
 - [D101](07-modules.md#d101-doc-module-attr) — module-level `#doc`
-  attribute; co-existence rules above.
-- [D105](09-tooling.md#d105-doc-attributes) — typed doc attributes
-  including `#doc(summary = "...")`.
-- [D106](09-tooling.md#d106-doc-test-semantics) — code-blocks inside
-  doc-comments are doc-tests.
+  attribute; правила сосуществования выше.
+- [D105](09-tooling.md#d105-doc-attributes) — типизированные doc-
+  атрибуты, включая `#doc(summary = "...")`.
+- [D106](09-tooling.md#d106-doc-test-semantics) — code-блоки внутри
+  doc-comment'ов являются doc-test'ами.
 - [D107](09-tooling.md#d107-json-output-schema-v1) — JSON output
-  includes the raw doc content plus parsed structure.
-- [Plan 45](../../docs/plans/45-nova-doc.md) — implementation; §11.5
+  включает сырой doc-content плюс распарсенную структуру.
+- [Plan 45](../../docs/plans/45-nova-doc.md) — реализация; §11.5
   style guide.

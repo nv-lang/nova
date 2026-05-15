@@ -777,41 +777,44 @@ expressions. У Nova ни одной из этих причин нет.
 
 ---
 
-## D105. Doc attributes
 
-> **Status:** active (spec). Implementation — [Plan 45](../../docs/plans/45-nova-doc.md) Ф.3.
+---
+
+## D105. Doc-атрибуты
+
+> **Status:** active (spec). Реализация — [Plan 45](../../docs/plans/45-nova-doc.md) Ф.3.
 >
-> **Builds on:** [D96](#d96-синтаксис-атрибутов--name-без-квадратных-скобок) (`#name` attribute syntax), [D101](07-modules.md#d101-doc-module-attr) (`#doc "..."` module-attr).
+> **Опирается на:** [D96](#d96-синтаксис-атрибутов--name-без-квадратных-скобок) (синтаксис атрибутов `#name`), [D101](07-modules.md#d101-doc-module-attr) (module-attr `#doc "..."`).
 >
-> **Namespace:** `#doc(...)` shares its prefix with D101's `#doc "string"` but the two forms are syntactically distinct (string literal vs. parenthesised key-value list) and never collide. See "Namespace" below.
+> **Namespace:** `#doc(...)` делит префикс с D101 `#doc "string"`, но эти две формы синтаксически различны (string literal vs. parenthesised key-value list) и не коллидируют. См. подсекцию «Namespace» ниже.
 
-### What
+### Что
 
-A fixed set of attributes that decorate items with documentation
-metadata. Tooling (`nova doc`, type-checker lints) reads them;
-runtime ignores them.
+Фиксированный набор атрибутов, декорирующих items документационной
+метаинформацией. Tooling (`nova doc`, type-checker lint'ы) читает их;
+runtime — игнорирует.
 
-The catalog (for Plan 45 MVP):
+Каталог для Plan 45 MVP:
 
-| Attribute | Targets | Purpose |
+| Атрибут | Targets | Назначение |
 |---|---|---|
-| `#deprecated(since = "X", note = "...", until = "Y"?)` | item | Marks the item as deprecated; lint on use-sites. |
-| `#since("X.Y")` | item | Records introduction version (informational). |
-| `#stable(since = "X.Y"?)` | item, module | Marks item as stable API. |
-| `#unstable(feature = "name")` | item, module | Marks item as unstable behind a named feature gate. |
-| `#experimental(note = "..."?)` | item, module | Marks item as proof-of-concept; expect breakage. |
-| `#hide_doc` | item | Item is exported, but hidden from `nova doc` output. |
-| `#doc_alias("alt-name", ...)` | item | Search aliases for the item (HTML/JSON search index). |
-| `#doc(inline)` / `#doc(no_inline)` | re-export item | Render the re-exported target inline at the re-export site (`inline`) or only show a link (`no_inline`). |
-| `#doc(summary = "...")` | item | Override the automatic first-sentence summary extraction. |
-| `#doc(section = "Name")` | item | Place item in a custom section in module rendering (advanced; opt-in MVP). |
-| `#doc(test_handlers = "path.to.handlers")` | module, item | Register handlers automatically wired into doc-tests for this item/module. |
+| `#deprecated(since = "X", note = "...", until = "Y"?)` | item | Помечает item как deprecated; lint на use-сайтах. |
+| `#since("X.Y")` | item | Записывает версию появления (информационно). |
+| `#stable(since = "X.Y"?)` | item, module | Stable API. |
+| `#unstable(feature = "name")` | item, module | Unstable за named feature-флагом. |
+| `#experimental(note = "..."?)` | item, module | Proof-of-concept; ожидайте breaking changes. |
+| `#hide_doc` | item | Item exported, но скрыт из `nova doc` output'а. |
+| `#doc_alias("alt-name", ...)` | item | Search-aliases (HTML/JSON search index). |
+| `#doc(inline)` / `#doc(no_inline)` | re-export item | Рендерить re-exported target inline у re-export site (`inline`) либо только ссылкой (`no_inline`). |
+| `#doc(summary = "...")` | item | Override автоматического first-sentence summary. |
+| `#doc(section = "Name")` | item | Поместить item в custom section module rendering (advanced; opt-in MVP). |
+| `#doc(test_handlers = "path.to.handlers")` | module, item | Зарегистрировать handler'ы, автоматически wrap'ируемые вокруг doc-test'ов. |
 
-### Syntax
+### Синтаксис
 
-All doc attributes use D96 `#name(...)` form. Bare `#stable`,
-`#unstable`, `#experimental`, `#hide_doc` are valid without
-arguments; their key-value form takes the listed parameters.
+Все doc-атрибуты используют форму D96 `#name(...)`. Голые `#stable`,
+`#unstable`, `#experimental`, `#hide_doc` валидны без аргументов; их
+key-value форма принимает перечисленные параметры.
 
 ```nova
 #deprecated(since = "0.4.0", note = "use [open_buffered] instead")
@@ -836,262 +839,261 @@ export import std.collections.range.{Range}
 fn sha256(data []byte) -> [32]byte = ...
 ```
 
-### Semantics
+### Семантика
 
 #### `#deprecated`
 
-- **Required parameters:** `since` (string, version of Nova or
-  package introducing the deprecation) **and** `note` (string with
-  the migration guidance).
-- **Optional:** `until` (string, version of planned removal). When
-  present, enables `--deny-overdue-deprecations` CI gate in `nova
-  doc --check`.
-- **Effect:**
-  - `nova check` / `nova test` / `nova build` emit a `deprecated`
-    warning at every use-site (file:line + the `note`).
-  - `nova doc` renders the deprecation banner and includes `since`,
-    `until`, and `note` in JSON output.
-- The `note` field SHOULD include an intra-doc link to the
-  replacement (`note = "use [foo.bar] instead"`); lint
-  `deprecated-without-link` warns when missing.
+- **Обязательные параметры:** `since` (string, версия Nova/пакета,
+  вводящая deprecation) **и** `note` (string с migration guidance).
+- **Опциональный:** `until` (string, версия планируемого удаления). При
+  присутствии — включает CI-gate `--deny-overdue-deprecations` в
+  `nova doc --check`.
+- **Эффект:**
+  - `nova check` / `nova test` / `nova build` эмитят warning
+    `deprecated` на каждом use-сайте (file:line + `note`).
+  - `nova doc` рендерит deprecation-баннер и включает `since`, `until`,
+    `note` в JSON output.
+- Поле `note` ДОЛЖНО содержать intra-doc link на замену
+  (`note = "use [foo.bar] instead"`); lint `deprecated-without-link`
+  warning'ит при отсутствии.
 
 #### `#since(version)`
 
-- Records the version in which the item was introduced.
-- Used by `--since <version>` filter (Plan 45 Ф.12) for changelog
-  generation.
-- Does not produce diagnostics; purely informational.
+- Записывает версию появления item'а.
+- Используется filter'ом `--since <version>` (Plan 45 Ф.12) для
+  changelog-генерации.
+- Diagnostics не производит; чисто информационный.
 
 #### `#stable` / `#unstable` / `#experimental` (stability tiers)
 
-Three mutually-exclusive tiers. An item may carry at most one.
+Три mutually-exclusive tier'а. Item может нести **не более одного**.
 
-- `#stable(since = "...")` — committed API. `since` recommended,
+- `#stable(since = "...")` — committed API. `since` рекомендован;
   default `unknown`.
-- `#unstable(feature = "name")` — opt-in via feature flag at build
-  time (Plan 42.12 `#cfg(feature = "name")` precedent). Use-site
-  outside `#cfg(feature = "name")` scope is a hard error.
-- `#experimental(note = "...")` — proof-of-concept. Use-sites emit a
-  warning. `note` SHOULD describe what may change.
+- `#unstable(feature = "name")` — opt-in через feature-флаг на этапе
+  билда (Plan 42.12 `#cfg(feature = "name")`-precedent). Use-сайт вне
+  `#cfg(feature = "name")`-скоупа — hard error.
+- `#experimental(note = "...")` — proof-of-concept. Use-сайты эмитят
+  warning. `note` ДОЛЖЕН описывать, что может измениться.
 
-**Propagation:** A module-level stability tier propagates to items
-in the module that have no explicit tier (via the
-`propagate_stability` pass; Plan 45 §3). Items with explicit tiers
-override.
+**Propagation:** module-level stability tier пропагируется на items
+модуля без явного tier'а (через pass `propagate_stability`; Plan 45
+§3). Item'ы с явным tier override.
 
 #### `#hide_doc`
 
-- Item is **really exported** (visible to `import` consumers) but is
-  **not rendered** by `nova doc`.
-- Use case: items kept exported for backward compatibility that
-  shouldn't be promoted in new docs, or internal helpers exposed for
-  testing.
-- Has no runtime effect; only the `nova doc` collector skips the item.
+- Item **реально exported** (виден `import`-consumer'ам), но **не
+  рендерится** через `nova doc`.
+- Use case: items, оставшиеся exported для backward compat, которые
+  не должны промоутиться в новой документации; internal helpers,
+  открытые для testing.
+- Runtime-эффекта нет; только `nova doc` collector пропускает item.
 
 #### `#doc_alias("name", "name", ...)`
 
-- Alternative names for search indices.
-- Example: `#doc_alias("malloc")` on `fn allocate` makes a search
-  for "malloc" find `allocate`.
-- Each alias is a string literal; no transformations.
-- Plan 45 MVP: aliases appear in JSON output; HTML search index
-  consumption is Plan 45.A.
+- Альтернативные имена для search index'ов.
+- Пример: `#doc_alias("malloc")` на `fn allocate` — поиск "malloc"
+  найдёт `allocate`.
+- Каждый alias — string literal; никаких трансформаций.
+- Plan 45 MVP: aliases появляются в JSON output; consumption в HTML
+  search index — Plan 45.A.
 
 #### `#doc(inline)` / `#doc(no_inline)`
 
-- Controls rendering of re-exports.
-- `#doc(inline)` (default for same-package re-exports): the
-  re-exported item is rendered at the re-export site with the
-  same docs as the original.
-- `#doc(no_inline)` (default for cross-package re-exports): a short
-  "re-export of `path.to.original`" stub is rendered with a link.
+- Контролирует рендеринг re-export'ов.
+- `#doc(inline)` (default для same-package re-export'ов): re-exported
+  item рендерится у re-export-сайта с теми же docs, что и оригинал.
+- `#doc(no_inline)` (default для cross-package re-export'ов):
+  короткий стаб «re-export of `path.to.original`» с link'ом.
 
 #### `#doc(summary = "...")`
 
-- Overrides the automatic first-sentence summary extraction.
-- Plain string; no markdown beyond inline code (backtick code) and
+- Override automatic first-sentence summary extraction.
+- Plain string; markdown — только inline-code (через backtick) и
   intra-doc links.
-- Use when the first sentence of the doc body is not a good summary
-  (e.g. begins with a setup clause).
+- Используется, когда первое предложение doc-body — не лучший
+  summary (например, начинается с setup-clause).
 
 #### `#doc(section = "Name")`
 
-- Places the item in a custom section in module rendering.
-- Default sections (`Functions`, `Types`, `Constants`, ...) are
-  recognized; this attribute creates a sub-section under the
-  appropriate kind heading.
-- **Plan 45 MVP:** recognized in parser, ignored in rendering (the
-  item is placed in the default section). Full rendering — Plan 45.A.
+- Помещает item в custom section module rendering.
+- Default-секции (`Functions`, `Types`, `Constants`, ...) узнаются;
+  этот атрибут создаёт sub-section под соответствующим kind-heading.
+- **Plan 45 MVP:** распознаётся parser'ом, игнорируется в рендеринге
+  (item помещается в default-секцию). Полный рендеринг — Plan 45.A.
 
 #### `#doc(test_handlers = "path.to.handlers")`
 
-- Module-level or item-level.
-- When present, doc-tests in scope are automatically wrapped with
-  `with handler from <path> { ... }`. The path resolves like an
-  import.
-- Removes the need for hidden setup lines in every doc-test.
-- Cross-references [D106](#d106-doc-test-semantics) for doc-test
-  semantics.
+- Module-level или item-level.
+- При присутствии все doc-test'ы в scope'е автоматически
+  оборачиваются в `with handler from <path> { ... }`. Path резолвится
+  как import.
+- Снимает необходимость в hidden setup-line'ах в каждом doc-test'е.
+- Cross-ref с [D106](#d106-doc-test-semantics) для doc-test-семантики.
 
 ### Namespace
 
-The `#doc` prefix is shared with [D101](07-modules.md#d101-doc-module-attr)'s
-`#doc "string-literal"` form. The two are distinguished by the
-**first token after `doc`**:
+Префикс `#doc` делится с формой [D101](07-modules.md#d101-doc-module-attr)
+`#doc "string-literal"`. Различаются по **первому токену после
+`doc`**:
 
-- `#doc "..."` (string literal) — D101 module-doc attribute.
-- `#doc(...)` (parenthesised key-value list) — D105 typed attribute.
-- `#doc_alias(...)` (underscore in name) — D105 catalog member.
-- `#doc_*` reserved for future D105 attributes (e.g. `#doc_section`).
+- `#doc "..."` (string literal) — D101 module-doc-атрибут.
+- `#doc(...)` (parenthesised key-value list) — D105 типизированный
+  атрибут.
+- `#doc_alias(...)` (underscore в имени) — D105 catalog-member.
+- `#doc_*` зарезервировано для будущих D105-атрибутов (например,
+  `#doc_section`).
 
-Parser disambiguates by lookahead at the next token after the
-`doc` identifier:
+Parser дисамбигуирует lookahead'ом за токен после идентификатора
+`doc`:
 - `STRING_LIT` → D101.
 - `LPAREN` → D105.
 - `_<ident>` → D105 named member.
-- anything else → syntax error.
+- что-либо иное → syntax error.
 
-### Why
+### Почему
 
-1. **Catalog (not free-form tag soup)** — Go, Rust, and TypeScript
-   doc tools all suffered from convention drift: `@param` vs
-   `@parameter` vs nothing in TSDoc; `Deprecated:` prose vs
-   `#[deprecated]` attribute in Go vs Rust. Fixing a small, named
-   catalog at the language level prevents this. Adding new
-   attributes requires a new D-decision.
-2. **Typed parameters** — `#deprecated(since, note, until)` has
-   structured fields available in JSON output. LLM consumers can
-   read `since` numerically; "Deprecated: use foo instead." in a
-   free-form comment is opaque.
-3. **`#hide_doc` is opt-out, not opt-in** — Rust's `#[doc(hidden)]`
-   is opt-out, mirroring its `pub`-by-default. Nova is private-by-
-   default ([D5](04-effects.md#d5)), so `export` is opt-in. Hiding
-   an export from docs is a separate opt-out — this matches the
-   private-by-default mental model.
-4. **`until` field for `#deprecated`** — neither Rust nor Go has it.
-   Yet "we're removing this in 1.0" is a real lifecycle stage. With
-   `until`, `nova doc --deny-overdue-deprecations` becomes a CI
-   gate against forgetting to delete.
+1. **Каталог (не free-form tag soup)** — Go, Rust и TypeScript
+   doc-tooling'и все страдали от drift'а конвенций (`@param` vs
+   `@parameter` vs ничего в TSDoc; `Deprecated:` proza vs
+   `#[deprecated]`-атрибут в Go vs Rust). Фиксация маленького
+   именованного каталога на уровне языка — предотвращает это.
+   Добавление новых атрибутов требует новой D-decision.
+2. **Типизированные параметры** — `#deprecated(since, note, until)`
+   имеет структурированные fields, доступные в JSON output. LLM-
+   consumer'ы могут читать `since` numerically; «Deprecated: use foo
+   instead.» в free-form комментарии — opaque.
+3. **`#hide_doc` opt-out, не opt-in** — Rust'овский `#[doc(hidden)]`
+   opt-out, mirror'ит `pub`-by-default. Nova private-by-default
+   ([D5](04-effects.md#d5)), поэтому `export` opt-in. Прятать export
+   из doc — отдельный opt-out — это соответствует ментальной модели
+   private-by-default.
+4. **Поле `until` для `#deprecated`** — ни у Rust, ни у Go нет. А
+   «we're removing this in 1.0» — реальная lifecycle-стадия. С
+   `until` `nova doc --deny-overdue-deprecations` становится CI-
+   gate'ом против забывчивости удалить.
 
 ### Что отвергнуто
 
-- **JSDoc-style `@param` / `@returns` tags** — Nova has typed
-  parameters and return types in the signature; documenting them
-  again in prose duplicates info and drifts. Style guide
+- **JSDoc-style теги `@param` / `@returns`** — у Nova типизированные
+  параметры и return-типы в сигнатуре; документировать их повторно
+  prose'й — duplication и drift. Style guide
   ([Plan 45 §11.5](../../docs/plans/45-nova-doc.md#115-doc-comment-style-guide))
-  recommends inline mention in the description.
+  рекомендует inline-упоминание в description.
 - **`#[doc = "raw text"]` alternative form** (Rust precedent) —
-  the `///` form is sufficient; raw text in attributes is for code
-  generators (macros) which Nova does not have. Reconsider if
-  metaprogramming is added.
-- **Multi-tier stability beyond three** (Rust has many flavours of
-  unstable) — three tiers (`stable`/`unstable`/`experimental`) cover
-  the use cases without complexity.
-- **User-defined doc attributes** — opens the catalog to arbitrary
-  tags, fracturing convention. Catalog grows only via D-decisions.
+  форма `///` достаточна; raw text в атрибутах нужен генераторам
+  кода (макросам), которых в Nova нет. Пересмотреть, если появится
+  metaprogramming.
+- **Multi-tier стабильность сверх трёх** (у Rust много flavour'ов
+  unstable) — три tier'а (`stable`/`unstable`/`experimental`)
+  покрывают use-кейсы без сложности.
+- **User-defined doc-атрибуты** — открывает каталог для произвольных
+  тегов, фрагментируя convention. Каталог растёт только через
+  D-decisions.
 
 ### Связь
 
 - [D96](#d96-синтаксис-атрибутов--name-без-квадратных-скобок) —
-  `#name(...)` syntax foundation.
-- [D101](07-modules.md#d101-doc-module-attr) — `#doc "..."` module
-  attr; namespace coexists.
+  основание `#name(...)` синтаксиса.
+- [D101](07-modules.md#d101-doc-module-attr) — module-attr
+  `#doc "..."`; namespace сосуществует.
 - [D104](03-syntax.md#d104-doc-comment-syntax--outer--inner) —
-  `///`/`//!` doc-comment lexer recognition.
-- [D106](#d106-doc-test-semantics) — `#doc(test_handlers)` referenced.
-- [Plan 45](../../docs/plans/45-nova-doc.md) Ф.3 implementation,
-  §11.5 style guide.
+  лексер `///`/`//!` doc-comment recognition.
+- [D106](#d106-doc-test-semantics) — `#doc(test_handlers)`
+  referenced.
+- [Plan 45](../../docs/plans/45-nova-doc.md) Ф.3 реализация, §11.5
+  style guide.
 
 ---
 
-## D106. Doc-test semantics
+## D106. Семантика doc-test'ов
 
-> **Status:** active (spec). Implementation — [Plan 45](../../docs/plans/45-nova-doc.md) Ф.7.
+> **Status:** active (spec). Реализация — [Plan 45](../../docs/plans/45-nova-doc.md) Ф.7.
 >
-> **Reuses:** [D89](#d89-test-tooling-конвенции--expect_-маркеры-для-negative-тестов) (EXPECT-markers); [Plan 24](../../docs/plans/24-cross-platform-test-runner.md) (test_runner). Doc-tests are compiled and run through the same pipeline as `*_test.nv` files.
+> **Reuses:** [D89](#d89-test-tooling-конвенции--expect_-маркеры-для-negative-тестов) (EXPECT-markers); [Plan 24](../../docs/plans/24-cross-platform-test-runner.md) (test_runner). Doc-test'ы компилируются и запускаются через тот же pipeline, что и `*_test.nv`-файлы.
 
-### What
+### Что
 
-A code block inside a doc-comment is a **doc-test** if it:
+Code-блок внутри doc-comment'а является **doc-test'ом**, если:
 
-- Is fenced with triple backticks.
-- Has language tag `nova`, or has no language tag at all (default).
+- Огорожен triple-backtick (` ``` `).
+- Имеет language tag `nova` либо вообще без language tag (default).
 
 ```nova
-/// Returns true if `x` is even.
+/// Возвращает true, если `x` чётно.
 ///
 /// # Examples
 ///
-/// (triple-backtick fenced block here — code goes inside)
+/// (triple-backtick fenced block здесь — code внутри)
 /// assert(is_even(2))
 /// assert(!is_even(3))
 fn is_even(x int) -> bool => x % 2 == 0
 ```
 
-The above contains one doc-test. The test runner extracts it,
-compiles it as a self-contained module, and runs the assertions.
+Выше — один doc-test. Test runner извлекает его, компилирует как
+самодостаточный модуль и запускает assert'ы.
 
-### Code-block modifiers
+### Code-block модификаторы
 
-The language tag may be followed by zero or more comma-separated
-modifiers, written immediately after the language tag in the
-fence-opener line.
+Language tag может сопровождаться нолём или больше comma-separated
+модификаторов, написанных сразу после language tag в строке
+fence-opener'а.
 
-**Catalogue (MVP):**
+**Каталог (MVP):**
 
-| Modifier | Effect |
+| Модификатор | Эффект |
 |---|---|
-| `no_run` | Compile only; do not execute. |
-| `ignore` | Skip entirely (do not compile, do not execute). |
-| `compile_fail` | The code MUST NOT compile. If it compiles, the doc-test fails. |
-| `should_panic` | Code MUST compile AND panic at runtime. Non-panic exit fails. |
-| `must_verify` | Contract verification (`#must_verify` per [D24](#d24-стратегия-smt-проверки-контрактов) / Plan 33) MUST succeed. Failed verification (UNSAT, TIMEOUT) fails the doc-test. |
+| `no_run` | Только компилируется, не выполняется. |
+| `ignore` | Пропускается полностью (не компилируется, не выполняется). |
+| `compile_fail` | Code НЕ ДОЛЖЕН компилироваться. Если компилируется — doc-test fail. |
+| `should_panic` | Code ДОЛЖЕН компилироваться И паниковать в runtime. Non-panic exit — fail. |
+| `must_verify` | Contract verification (`#must_verify` по [D24](#d24-стратегия-smt-проверки-контрактов) / Plan 33) ДОЛЖНА succeed. Failed verification (UNSAT, TIMEOUT) — fail doc-test'а. |
 
-Multiple modifiers compose where sensible (`no_run,must_verify`
-means "verify but do not execute"). Conflicting combinations
-(`compile_fail,should_panic`) are a configuration error.
+Множественные модификаторы комбинируются там, где имеет смысл
+(`no_run,must_verify` означает «verify but do not execute»).
+Конфликтующие комбинации (`compile_fail,should_panic`) — configuration
+error.
 
 ### Hidden lines
 
-A doc-test line beginning with `# ` (hash + space) is **hidden** in
-the rendered output but **compiled and executed** as part of the
-test. Used for setup that would clutter examples (imports, helper
-definitions, etc.).
+Doc-test строка, начинающаяся с `# ` (хеш + пробел) — **скрыта** в
+рендеренном output'е, но **компилируется и выполняется** как часть
+test'а. Используется для setup'а, который засорил бы примеры
+(import'ы, helper-определения и т.п.).
 
 ### Privacy
 
-Doc-tests have **module-private access** to the item they document.
-A doc-test on `export fn foo` (in `std.collections.range`) may call
-non-exported helpers within `std.collections.range`. This matches
-rustdoc behaviour and reflects the principle that examples
-demonstrate using the item from a same-module perspective.
+Doc-test'ы имеют **module-private access** к item'у, который
+документируют. Doc-test на `export fn foo` (в `std.collections.range`)
+может вызывать non-exported helpers внутри `std.collections.range`.
+Это соответствует поведению rustdoc и отражает принцип: примеры
+демонстрируют использование item'а с same-module-перспективы.
 
-Cross-module doc-tests on re-exports retain the **original module's**
-privacy scope (the module that defined the item), not the
-re-exporter's.
+Cross-module doc-test'ы на re-export'ах сохраняют privacy-scope
+**оригинального модуля** (того, где item определён), а не re-exporter'а.
 
-### Setup via `#doc(test_handlers)`
+### Setup через `#doc(test_handlers)`
 
-[D105](#d105-doc-attributes) defines a `#doc(test_handlers = "path")`
-attribute. When applied to a module or item, all doc-tests in scope
-are implicitly wrapped:
+[D105](#d105-doc-attributes) определяет атрибут `#doc(test_handlers =
+"path")`. При применении к модулю или item'у все doc-test'ы в scope'е
+неявно оборачиваются:
 
 ```nova
 with handler from path.to.handlers {
-    ... doc-test body ...
+    ... тело doc-test'а ...
 }
 ```
 
-This removes boilerplate for common setups (test-handler stacks,
-mock filesystems, etc.).
+Снимает boilerplate для типичных setup'ов (test-handler stack'и,
+mock filesystems и пр.).
 
-A folder-module peer file named `_doctest_setup.nv` (Plan 42 folder-
-module convention) is also implicitly imported into doc-test scope
-when present. Both mechanisms are additive.
+Peer-файл folder-модуля с именем `_doctest_setup.nv` (Plan 42
+folder-module convention) также неявно импортируется в doc-test-
+scope, если присутствует. Оба механизма аддитивны.
 
-### Compilation model
+### Модель компиляции
 
-Each doc-test is compiled as a synthetic module:
+Каждый doc-test компилируется как synthetic module:
 
 ```
 module __nova_doc_test_<hash>
@@ -1103,119 +1105,119 @@ test "<item-name> example <index>" {
 }
 ```
 
-- The hash is a deterministic function of (item-path, doc-test-index).
-- The test name is `<item-name> example <N>` (1-indexed).
-- Imports from the enclosing module are wildcard-style (peers visible).
+- Hash — детерминированная функция от (item-path, doc-test-index).
+- Имя теста — `<item-name> example <N>` (1-indexed).
+- Import'ы из enclosing-модуля — wildcard-style (peers видимы).
 
-Compilation reuses the standard pipeline (parser → type-checker →
-codegen / interp). Failures route the same way as regular test
-failures.
+Компиляция переиспользует стандартный pipeline (parser → type-checker
+→ codegen / interp). Сбои маршрутизируются как обычные test-failures.
 
-### Execution
+### Выполнение
 
-Doc-tests run through the same `test_runner` as regular tests
-([Plan 24](../../docs/plans/24-cross-platform-test-runner.md)).
-Parallelism (`--jobs N`), output format, and exit codes are
-identical.
+Doc-test'ы выполняются через тот же `test_runner`, что и обычные
+тесты ([Plan 24](../../docs/plans/24-cross-platform-test-runner.md)).
+Parallelism (`--jobs N`), output format и exit codes идентичны.
 
-`nova doc --check` runs doc-tests by default; `--no-doc-tests`
-disables. `nova test` does **not** run doc-tests by default
-(doc-tests are owned by `nova doc`); `nova test --doc-tests` opts in.
+`nova doc --check` запускает doc-test'ы по дефолту; `--no-doc-tests`
+отключает. `nova test` **не** запускает doc-test'ы по дефолту
+(doc-test'ы принадлежат `nova doc`); `nova test --doc-tests` opt-in.
 
-Exit codes per [D95](#d95-cli-path-конвенции--nova-check-path--nova-test-path):
-- 0 — all doc-tests passed.
-- 1 — at least one failed.
+Exit codes по [D95](#d95-cli-path-конвенции--nova-check-path--nova-test-path):
+- 0 — все doc-test'ы прошли.
+- 1 — хотя бы один failed.
 - 2 — usage error.
 - 101 — internal panic.
 
-### EXPECT marker integration
+### Интеграция с EXPECT-markers
 
-The `compile_fail` and `should_panic` modifiers are syntactic sugar
-that translate to [D89](#d89-test-tooling-конвенции--expect_-маркеры-для-negative-тестов)
-EXPECT-markers inserted into the synthetic test file:
+Модификаторы `compile_fail` и `should_panic` — syntactic sugar,
+транслирующийся в [D89](#d89-test-tooling-конвенции--expect_-маркеры-для-negative-тестов)
+EXPECT-markers, вставленные в синтетический test-файл:
 
-| Modifier | Synthesized EXPECT |
+| Модификатор | Синтезируемый EXPECT |
 |---|---|
 | `compile_fail` | `// EXPECT_COMPILE_ERROR` |
 | `should_panic` | `// EXPECT_RUNTIME_PANIC` |
-| `must_verify` | `// REQUIRES_SMT_BACKEND` + verify-check on `#must_verify` items |
+| `must_verify` | `// REQUIRES_SMT_BACKEND` + verify-check на `#must_verify` items |
 
-This reuses existing test_runner infrastructure; no new failure-mode
-machinery is needed.
+Reuse'ит существующую test_runner инфраструктуру; никакой новой
+failure-mode-механики не нужно.
 
-### Why
+### Почему
 
-1. **Doc-tests adjacent to documented items** — Go's `Example*`
-   functions in `*_test.go` (golang/go #16851) drift from the
-   documented item. Inline doc-tests are co-located with what they
-   document; renaming an item adjacent in the same file moves the
-   tests with it.
-2. **`compile_fail` / `should_panic` first-class** — rustdoc
-   precedent. Documenting "this should fail" is valuable; making the
-   tool verify it removes a class of stale-example bugs.
+1. **Doc-test'ы соседствуют с документируемыми item'ами** — Go'шные
+   `Example*`-функции в `*_test.go` (golang/go #16851) дрейфят от
+   документируемого item'а. Inline doc-test'ы co-located с тем, что
+   документируют; при rename item'а соседние тесты в том же файле
+   движутся вместе.
+2. **`compile_fail` / `should_panic` first-class** — rustdoc precedent.
+   Документирование «это должно failиться» ценно; tooling-проверка —
+   убирает целый класс stale-example багов.
 3. **`must_verify` — Nova-unique** — leverages Plan 33 SMT
-   verification. A doc-comment can demonstrate that a function
-   satisfies its contracts under all inputs, not just one example.
-4. **Hidden setup via `# `** — accepted compromise: too verbose to
-   show every import; `#doc(test_handlers)` and `_doctest_setup.nv`
-   handle the common cases without per-test boilerplate.
+   verification. Doc-comment может демонстрировать, что функция
+   удовлетворяет контрактам **под всеми входами**, не только под
+   одним примером.
+4. **Hidden setup через `# `** — приемлемый компромисс: слишком
+   verbose показывать каждый import; `#doc(test_handlers)` и
+   `_doctest_setup.nv` покрывают типичные кейсы без per-test
+   boilerplate'а.
 
 ### Что отвергнуто
 
-- **Markdown-link-style references to external example files** — a
-  doc-test that lives in `examples/foo.nv` adds indirection,
-  loses co-location. Inline is the canonical form.
-- **`run_only_if_feature("name")` modifier** — duplicates
-  `#cfg(feature = ...)` (Plan 42.12). If the documented item is
-  feature-gated, the test inherits the gate.
-- **`expected_output = "..."` modifier for stdout comparison** —
-  asserts inside the test are more flexible. If the user wants
-  stdout matching, [D89](#d89-test-tooling-конвенции--expect_-маркеры-для-negative-тестов)
-  `EXPECT_STDOUT` is available via hidden line.
-- **Doc-test isolation containers (process-per-test)** — overhead
-  too high; `test_runner` already isolates state per test via
-  fresh module instance.
+- **Markdown-link-style ссылки на внешние example-файлы** — doc-test
+  в `examples/foo.nv` добавляет indirection, теряет co-location.
+  Inline — каноническая форма.
+- **Модификатор `run_only_if_feature("name")`** — дублирует
+  `#cfg(feature = ...)` (Plan 42.12). Если документируемый item
+  feature-gated, тест наследует gate.
+- **Модификатор `expected_output = "..."` для stdout-сравнения** —
+  assert'ы внутри теста более гибкие. Если нужно stdout-matching —
+  [D89](#d89-test-tooling-конвенции--expect_-маркеры-для-negative-тестов)
+  `EXPECT_STDOUT` через hidden line.
+- **Doc-test isolation-контейнеры (process-per-test)** — overhead
+  слишком высокий; `test_runner` уже изолирует state per-test через
+  fresh module-instance.
 
 ### Связь
 
-- [D24](#d24-стратегия-smt-проверки-контрактов) — `must_verify`
-  modifier ties to SMT verification.
+- [D24](#d24-стратегия-smt-проверки-контрактов) — модификатор
+  `must_verify` завязан на SMT verification.
 - [D89](#d89-test-tooling-конвенции--expect_-маркеры-для-negative-тестов)
   — EXPECT-markers reused.
 - [D95](#d95-cli-path-конвенции--nova-check-path--nova-test-path) —
   CLI exit codes.
 - [D104](03-syntax.md#d104-doc-comment-syntax--outer--inner) —
-  fenced code blocks inside doc-comments.
+  fenced code-блоки внутри doc-comment'ов.
 - [D105](#d105-doc-attributes) — `#doc(test_handlers)`.
 - [Plan 24](../../docs/plans/24-cross-platform-test-runner.md) —
   test_runner reuse.
 - [Plan 33](../../docs/plans/33-contracts-implementation.md) —
-  contracts for `must_verify`.
+  контракты для `must_verify`.
 - [Plan 42](../../docs/plans/42-folder-modules.md) —
   `_doctest_setup.nv` folder-module peer.
-- [Plan 45](../../docs/plans/45-nova-doc.md) Ф.7 implementation.
+- [Plan 45](../../docs/plans/45-nova-doc.md) Ф.7 реализация.
 
 ---
 
 ## D107. JSON output schema v1
 
-> **Status:** active (spec). Implementation — [Plan 45](../../docs/plans/45-nova-doc.md) Ф.9.
+> **Status:** active (spec). Реализация — [Plan 45](../../docs/plans/45-nova-doc.md) Ф.9.
 >
-> **Note on stability state:** v1 ships marked **`mvp-stable`** —
-> additive minor changes only, no breaking. After ≥1 milestone of real
-> use (Plan 45.B stdlib doc-pass + ≥3 external AI consumers), the
-> stability is promoted to **`stable`**. The promotion is a separate
-> spec revision of this D-decision.
+> **Заметка о состоянии stability:** v1 поставляется маркированный как
+> **`mvp-stable`** — только additive minor changes, никаких breaking.
+> После ≥ 1 milestone'а реального использования (Plan 45.B stdlib
+> doc-pass + ≥ 3 внешних AI-consumer'ов) stability промоутится к
+> **`stable`**. Promotion — отдельная spec-ревизия этой D-decision.
 
-### What
+### Что
 
-`nova doc --format json` produces a JSON document describing the
-public API surface of a module (or workspace). The document conforms
-to a versioned schema (`format_version: u32`); consumers MUST check
-the version before parsing.
+`nova doc --format json` производит JSON-документ, описывающий
+public API surface модуля (или workspace'а). Документ соответствует
+versioned-схеме (`format_version: u32`); consumer'ы ОБЯЗАНЫ проверять
+версию перед парсингом.
 
-The schema is **embedded** in the compiler binary as JSON Schema
-2020-12 and emitted by `nova doc --json-schema`.
+Схема **embedded** в бинарь компилятора как JSON Schema 2020-12 и
+эмитится через `nova doc --json-schema`.
 
 ### Top-level shape
 
@@ -1232,30 +1234,30 @@ The schema is **embedded** in the compiler binary as JSON Schema
 }
 ```
 
-**Required top-level fields:**
+**Обязательные top-level-поля:**
 
-- `format_version` (`u32`) — schema major version. Consumers MUST
-  fail loudly when encountering an unrecognised version.
-- `nova_version` (`string`, semver) — compiler version that emitted
-  the document. Informational; not a stability contract.
-- `generated_at` (`string`, RFC 3339 UTC) — emission timestamp. May
-  be elided in reproducible-build mode (`SOURCE_DATE_EPOCH`).
-- `modules` (`array<Module>`) — every module documented in this
-  document (entry plus transitive imports if `--workspace`).
-- `items` (`array<Item>`) — flat list of all items; `module_path`
-  field disambiguates ownership.
-- `links` (`array<Link>`) — resolved intra-doc links from items in
-  this document.
-- `doc_tests` (`array<DocTest>`) — extracted (and optionally run)
-  doc-tests with their status.
+- `format_version` (`u32`) — major-версия схемы. Consumer'ы ОБЯЗАНЫ
+  fail-loudly при нераспознанной версии.
+- `nova_version` (`string`, semver) — версия компилятора, эмитившего
+  документ. Информационно; не stability-контракт.
+- `generated_at` (`string`, RFC 3339 UTC) — emission timestamp. Может
+  быть elided в reproducible-build mode (`SOURCE_DATE_EPOCH`).
+- `modules` (`array<Module>`) — каждый документированный модуль
+  (entry + transitive imports при `--workspace`).
+- `items` (`array<Item>`) — flat-список всех items; поле `module_path`
+  дисамбигуирует ownership.
+- `links` (`array<Link>`) — резолвенные intra-doc links от items в
+  этом документе.
+- `doc_tests` (`array<DocTest>`) — извлечённые (и опционально
+  выполненные) doc-test'ы со статусами.
 
-**Optional top-level fields:**
+**Опциональные top-level-поля:**
 
-- `source_root` (`string`, absolute path) — repository root. Omitted
-  when source paths are anonymised (`--anonymize-paths`, a future
-  flag).
+- `source_root` (`string`, абсолютный путь) — корень репозитория.
+  Опускается, когда source-paths анонимизированы (флаг
+  `--anonymize-paths` — будущий).
 
-### `Module` shape
+### Форма `Module`
 
 ```json
 {
@@ -1273,24 +1275,24 @@ The schema is **embedded** in the compiler binary as JSON Schema
 ```
 
 - `path` — dotted module path.
-- `name` — last segment of `path`.
-- `kind` — `folder` for folder-modules, `file` for single-file.
-- `peers` — relative paths to peer files (only for `folder` kind);
-  empty for `file`.
-- `summary` — first sentence extracted from `//!` doc and `#doc`
+- `name` — последний segment `path`.
+- `kind` — `folder` для folder-модулей, `file` для single-file.
+- `peers` — relative paths к peer-файлам (только для `folder`); пустой
+  для `file`.
+- `summary` — первое предложение, извлечённое из `//!` doc и `#doc`
   module-attr.
-- `description` — full markdown body.
+- `description` — полное markdown-тело.
 - `stability` — `{ tier: "stable" | "unstable" | "experimental",
-  since: "..."?, feature: "..."?, note: "..."? }` or `null` for
-  unknown tier.
-- `deprecation` — `{ since, note, until? }` or `null`.
-- `doc_attrs` — other doc-attributes (per [D105](#d105-doc-attributes))
-  that do not have a structured top-level field.
-- `source` — `{ file_id, line }` for "View Source" links.
+  since: "..."?, feature: "..."?, note: "..."? }` или `null` для
+  неизвестного tier'а.
+- `deprecation` — `{ since, note, until? }` или `null`.
+- `doc_attrs` — прочие doc-атрибуты (по [D105](#d105-doc-attributes)),
+  не имеющие structured top-level-поля.
+- `source` — `{ file_id, line }` для «View Source»-links.
 
-### `Item` shape
+### Форма `Item`
 
-Items are tagged unions. All items share a common header:
+Item'ы — tagged unions. Все items делят общий header:
 
 ```json
 {
@@ -1309,28 +1311,28 @@ Items are tagged unions. All items share a common header:
 }
 ```
 
-`id` is a stable identifier: `<module_path>::<name>` for free items;
-`<module_path>::<TypeName>.<method>` for methods. IDs are the
-**canonical link target**.
+`id` — стабильный идентификатор: `<module_path>::<name>` для free
+items; `<module_path>::<TypeName>.<method>` для методов. ID'ы —
+**канонический link target**.
 
-The `sections` object contains parsed standardised sections
-(`# Examples`, `# Errors`, etc.) as markdown strings keyed by
-lowercase section name.
+Объект `sections` содержит распарсенные стандартизованные секции
+(`# Examples`, `# Errors` и пр.) как markdown-строки, ключеванные
+lowercase-именем секции.
 
 **Kind-specific:**
 
 - `kind: "fn"` — `signature` (params, return type, effect-row, raises,
   generics, contracts).
 - `kind: "type"` — `definition` (Record | Sum | Alias | Protocol |
-  Effect) with `fields` / `variants` / etc.
-- `kind: "const"` — `type`, `value` (rendered as Nova source).
-- `kind: "effect"` — `methods` array (effect-op signatures), `axioms`
-  (Plan 33.3 D24 `axiom` clauses).
-- `kind: "handler"` — `effect` (resolved id), `is_default` flag.
-- `kind: "protocol"` — `methods` (required-method signatures),
-  `implementors` (resolved item ids).
+  Effect) с `fields` / `variants` и т.п.
+- `kind: "const"` — `type`, `value` (рендерится как Nova source).
+- `kind: "effect"` — массив `methods` (effect-op signatures), `axioms`
+  (Plan 33.3 D24 `axiom`-clauses).
+- `kind: "handler"` — `effect` (резолвенный id), флаг `is_default`.
+- `kind: "protocol"` — `methods` (signatures обязательных методов),
+  `implementors` (резолвенные item-id'ы).
 
-### `Signature` shape (for `fn` items)
+### Форма `Signature` (для `fn`-items)
 
 ```json
 {
@@ -1353,20 +1355,20 @@ lowercase section name.
 }
 ```
 
-- `type` fields are **rendered as Nova source** (strings), not
-  structural ASTs. This is intentional: consumers needing structure
-  may parse them with the same parser. Rendering as strings keeps
-  the JSON output portable and human-readable.
-- `keyword_only: true` is set when the parameter has a `default` per
+- Поля `type` — **рендерятся как Nova source** (строки), не как
+  структурные AST. Это намеренно: consumer'ы, которым нужна
+  структура, могут парсить тем же parser'ом. Рендеринг строк
+  сохраняет JSON output портабельным и человекочитаемым.
+- `keyword_only: true` ставится, когда параметр имеет `default` по
   [D102](03-syntax.md#d102-именованные-аргументы-и-значения-параметров-по-умолчанию).
-- `effects` list is the effect-row (set-typed, ordered
-  alphabetically for determinism).
-- `raises` is the union of `Fail[X]` variants from the effect-row.
-- `receiver` is non-null for instance/static methods:
+- Список `effects` — effect-row (set-typed, упорядочено алфавитно для
+  детерминизма).
+- `raises` — union вариантов `Fail[X]` из effect-row.
+- `receiver` ненулевой для instance/static-методов:
   `{ "type": "Box", "kind": "instance", "mutable": false }`.
-- `contracts.verify_status` — one of `PROVEN | UNVERIFIED | TIMEOUT | TRUSTED`.
+- `contracts.verify_status` — одно из `PROVEN | UNVERIFIED | TIMEOUT | TRUSTED`.
 
-### `Link` shape
+### Форма `Link`
 
 ```json
 {
@@ -1378,10 +1380,10 @@ lowercase section name.
 }
 ```
 
-Records every intra-doc link discovered in this document. When
-`resolved: false`, the link target was unresolvable (broken link).
+Запись каждого intra-doc link'а, обнаруженного в этом документе. При
+`resolved: false` link-target был unresolvable (broken link).
 
-### `DocTest` shape
+### Форма `DocTest`
 
 ```json
 {
@@ -1398,122 +1400,122 @@ Records every intra-doc link discovered in this document. When
 }
 ```
 
-- `id` — deterministic: `<item_id>::doc_<index>` (0-indexed).
-- `code` — full code including hidden setup lines.
-- `code_visible` — code excluding hidden lines (for HTML/Markdown
-  rendering).
-- `status` — one of `passed | failed | skipped | not_run`.
-- `failure` — `null` on success; otherwise `{ kind, message }` where
-  `kind` is one of `compile_error | runtime_panic | verification_failure`.
-- `status: "not_run"` — `--no-doc-tests` was passed; only extracted,
-  not executed.
+- `id` — детерминированный: `<item_id>::doc_<index>` (0-indexed).
+- `code` — полный код, включая hidden setup-lines.
+- `code_visible` — код без hidden-lines (для HTML/Markdown rendering).
+- `status` — одно из `passed | failed | skipped | not_run`.
+- `failure` — `null` при успехе; иначе `{ kind, message }`, где
+  `kind` ∈ `compile_error | runtime_panic | verification_failure`.
+- `status: "not_run"` — был передан `--no-doc-tests`; только извлечён,
+  не выполнялся.
 
-### Deterministic output
+### Детерминированный output
 
-Producers MUST emit the JSON deterministically:
+Producer'ы ОБЯЗАНЫ эмитить JSON детерминированно:
 
-- Object keys sorted alphabetically.
-- Arrays in stable order: modules and items sorted by `path`/`id`;
-  links sorted by `from` then `to`; doc_tests sorted by `id`.
-- `generated_at` field elided when `SOURCE_DATE_EPOCH` is set in the
-  environment.
+- Object-keys отсортированы алфавитно.
+- Arrays в стабильном порядке: modules и items по `path`/`id`; links
+  по `from` затем `to`; doc_tests по `id`.
+- Поле `generated_at` опускается, когда в env установлен
+  `SOURCE_DATE_EPOCH`.
 
-Tests in Plan 45 Ф.19 verify byte-identical output across two
-consecutive runs.
+Тесты в Plan 45 Ф.19 проверяют byte-identical output между двумя
+последовательными прогонами.
 
-### Stability rules
+### Правила стабильности
 
-See [Plan 45 §6](../../docs/plans/45-nova-doc.md#6-json-schema-v1-контракт)
-for the full versioning policy. Summary:
+Полную versioning-политику см. в
+[Plan 45 §6](../../docs/plans/45-nova-doc.md#6-json-schema-v1-контракт).
+Кратко:
 
-- **Additive minor changes** (do not bump `format_version`):
-  - New optional top-level or nested fields.
-  - New enum variants in fields documented as "extensible".
-  - New `kind`-specific Item fields (consumers must default-skip).
-- **Breaking changes** (bump `format_version`):
-  - Remove or rename a field.
-  - Change a field's type or semantics.
-  - Narrow an enum (remove a variant).
+- **Additive minor changes** (не bump'ят `format_version`):
+  - Новые опциональные top-level или вложенные поля.
+  - Новые enum-варианты в полях, документированных как «extensible».
+  - Новые `kind`-specific Item-fields (consumer'ы default-skip'ают).
+- **Breaking changes** (`format_version` инкрементится):
+  - Удалить или переименовать поле.
+  - Сменить тип или семантику поля.
+  - Сузить enum (удалить вариант).
 
-`format_version=N` and `format_version=N+1` are supported in parallel
-for ≥1 stable release of the compiler. Consumers are encouraged to
-fail loudly on unrecognised major versions.
+`format_version=N` и `format_version=N+1` поддерживаются параллельно
+≥ 1 stable-релиз компилятора. Consumer'ы поощряются fail-loudly на
+непознанной major-версии.
 
-### `nova-doc-types` consumer crate
+### `nova-doc-types` consumer-крейт
 
-A separate Rust crate `nova-doc-types` provides typed bindings to
-the schema:
+Отдельный Rust-крейт `nova-doc-types` предоставляет типизированные
+bindings к схеме:
 
 ```rust
-// nova-doc-types = "1.x" — version-locked with format_version=1.
+// nova-doc-types = "1.x" — версия-locked с format_version=1.
 use nova_doc_types::{Document, Item, ItemKind};
 
 let doc: Document = serde_json::from_str(&json_input)?;
 ```
 
-Mirrors rustdoc's `rustdoc-types` crate. Versioning is parallel to
-`format_version`: major bumps lock-step.
+Mirror'ит rustdoc'овский `rustdoc-types`-крейт. Versioning параллельный
+`format_version`: major-bump'ы lock-step.
 
 ### Embedded JSON Schema
 
-`nova doc --json-schema` emits the schema as a JSON document
-conforming to JSON Schema 2020-12. This enables:
+`nova doc --json-schema` эмитит схему как JSON-документ,
+соответствующий JSON Schema 2020-12. Это включает:
 
-- Offline validation in CI gates.
-- IDE auto-completion in editors that consume JSON Schema.
+- Offline-валидацию в CI-gate'ах.
+- IDE auto-completion в редакторах, потребляющих JSON Schema.
 - LLM tool-use prompt context.
 
-The schema is **embedded in the compiler binary** (`include_str!`).
-Versions of the schema are immutable per `format_version`; the binary
-ships exactly one (the current major).
+Схема **embedded в бинаре компилятора** (`include_str!`). Версии
+схемы immutable per `format_version`; бинарь несёт ровно одну
+(текущий major).
 
-### Why
+### Почему
 
-1. **Stable JSON as a first-class output** — godoc has none, rustdoc
-   has unstable nightly-only, TypeDoc has unstable. Nova ships a
-   stable schema **on stable builds** from MVP day one. AI/LSP
-   consumers can rely on it.
-2. **`format_version` integer, not semver string** — checks are
-   simpler (`>= 1 && <= 1` per consumer), parser is simpler. SemVer
-   semantics are baked into the additive-minor / breaking-major
-   rule above without exposing the version string complexity.
-3. **String-rendered types vs structural ASTs** — exposing the full
-   structural AST in JSON would couple consumers to internal Nova
-   type representations. String rendering is portable (any
-   consumer can read it) and stable (parser changes do not break the
-   JSON shape, only the contents of rendered strings change in step
-   with the language).
-4. **Sorted, deterministic output** — required for `--diff`
-   (Plan 45.A) and reproducible builds. Without it, doc-as-CI-gate
-   produces spurious diffs.
-5. **Embedded schema** — offline validation without network. CI
-   gates can run on air-gapped builders.
+1. **Stable JSON как first-class output** — у godoc'а нет, rustdoc'е
+   только unstable-nightly, TypeDoc — unstable. Nova поставляет
+   stable-схему **на stable-сборке** с MVP-day-one. AI/LSP-consumer'ы
+   могут полагаться.
+2. **`format_version` integer, не semver-string** — проверки проще
+   (`>= 1 && <= 1` per consumer), parser проще. SemVer-семантика
+   запечена в additive-minor / breaking-major правило выше без
+   exposure version-string complexity.
+3. **String-рендеренные типы vs структурные AST** — exposure полного
+   структурного AST в JSON связал бы consumer'ов с internal Nova
+   type representations. Рендеринг строк портабельный (любой
+   consumer прочитает) и стабильный (parser-changes не ломают JSON
+   shape, только содержимое рендеренных strings меняется в step
+   с языком).
+4. **Sorted, deterministic output** — нужен для `--diff` (Plan 45.A)
+   и reproducible builds. Без него doc-as-CI-gate производит
+   ложные diff'ы.
+5. **Embedded schema** — offline-валидация без сети. CI-gate'ы могут
+   крутиться на air-gapped-builder'ах.
 
 ### Что отвергнуто
 
-- **Per-module JSON files (one file per module)** — Plan 45 emits a
-  single document by default. Per-module files create discovery
-  problems (must list directories, no global cross-references).
-  Future enhancement may add `--split-by-module` for very large
-  workspaces.
-- **GraphQL endpoint instead of JSON file** — server overhead for a
-  CLI tool. JSON document is consumer-agnostic.
-- **Protocol Buffers / MessagePack** — JSON is the lowest common
-  denominator for AI/LSP/CI tooling. Binary formats added later if
-  proven needed; JSON is the canonical contract.
-- **Embedded full source** — bloats output and duplicates work. The
-  consumer-side tool can resolve `source.file_id` if it has source
-  access.
+- **Per-module JSON-файлы (один файл на модуль)** — Plan 45 эмитит
+  единый документ по дефолту. Per-module-файлы создают
+  discovery-проблемы (надо листать директории, нет глобальных
+  cross-references). Будущее расширение может добавить
+  `--split-by-module` для очень больших workspace'ов.
+- **GraphQL endpoint вместо JSON-файла** — server-overhead для CLI-
+  инструмента. JSON-документ — consumer-agnostic.
+- **Protocol Buffers / MessagePack** — JSON — lowest common
+  denominator для AI/LSP/CI tooling. Бинарные форматы — позже,
+  если докажут нужду; JSON — канонический контракт.
+- **Embedded полный source** — раздувает output и дублирует работу.
+  Consumer-сайд может резолвить `source.file_id`, если у него есть
+  доступ к source.
 
 ### Связь
 
 - [D89](#d89-test-tooling-конвенции--expect_-маркеры-для-negative-тестов)
-  — EXPECT-markers translated into `DocTest.failure.kind`.
+  — EXPECT-markers транслируются в `DocTest.failure.kind`.
 - [D95](#d95-cli-path-конвенции--nova-check-path--nova-test-path) —
-  CLI conventions for `nova doc --format json`.
-- [D104](03-syntax.md#d104-doc-comment-syntax--outer--inner) — source
-  of doc content.
-- [D105](#d105-doc-attributes) — attribute metadata fields.
-- [D106](#d106-doc-test-semantics) — DocTest shape source.
+  CLI-конвенции для `nova doc --format json`.
+- [D104](03-syntax.md#d104-doc-comment-syntax--outer--inner) —
+  источник doc-content.
+- [D105](#d105-doc-attributes) — поля attribute-metadata.
+- [D106](#d106-doc-test-semantics) — источник формы DocTest.
 - [Plan 45](../../docs/plans/45-nova-doc.md) §6, §6.5 — versioning
-  policy; Ф.9 implementation.
+  policy; Ф.9 реализация.
