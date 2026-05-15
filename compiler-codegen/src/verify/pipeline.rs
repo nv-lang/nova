@@ -128,7 +128,8 @@ impl VerificationPipeline {
         // Plan 33.3 Ф.9: реестр pure_view-ops модуля. Используется
         // encoder'ом для перевода `balance(id)` → UF `_view_Db_balance(id)`.
         let pure_views = collect_pure_views(module);
-        let ctx = super::encode::EncodeCtx { pure_views: &pure_views };
+        let pure_fns = collect_pure_fns(module);
+        let ctx = super::encode::EncodeCtx { pure_views: &pure_views, pure_fns: &pure_fns };
 
         // Plan 33.3 Ф.9: pre-declare все pure_view UFs в backend'е.
         // Без этого Z3 auto-declare'ит UF с Int sorts по умолчанию;
@@ -137,6 +138,42 @@ impl VerificationPipeline {
         for (op_name, sig) in &pure_views {
             let uf = super::encode::pure_view_uf_name(&sig.effect_name, op_name);
             backend.declare_function(&uf, &sig.param_sorts, sig.return_sort.clone());
+        }
+
+        // Plan 33.4 D.0.2: pre-declare UFs для #pure fns + emit body axioms.
+        for (fn_name, info) in &pure_fns {
+            let uf = super::encode::pure_fn_uf_name(fn_name);
+            backend.declare_function(&uf, &info.param_sorts, info.return_sort.clone());
+        }
+        // Body axioms: forall params. uf(params) == body_encoded.
+        for item in &module.items {
+            let Item::Fn(pfd) = item else { continue };
+            if !matches!(pfd.purity, Purity::Pure) { continue; }
+            let Some(info) = pure_fns.get(&pfd.name) else { continue };
+            let body_expr = match &pfd.body {
+                FnBody::Expr(e) => Some(e),
+                FnBody::Block(b) if b.stmts.is_empty() => b.trailing.as_deref(),
+                _ => None,
+            };
+            if let Some(body_e) = body_expr {
+                if let Ok(body_term) = encode::encode_expr_with_ctx(body_e, &ctx) {
+                    let param_vars: Vec<SmtTerm> = info.param_names.iter()
+                        .map(|n| SmtTerm::Var(n.clone())).collect();
+                    let uf_app = SmtTerm::App(encode::pure_fn_uf_name(&pfd.name), param_vars);
+                    let eq_body = SmtTerm::eq(uf_app, body_term);
+                    let binders: Vec<(String, SortRef)> = info.param_names.iter()
+                        .zip(info.param_sorts.iter())
+                        .map(|(n, s)| (n.clone(), s.clone()))
+                        .collect();
+                    let axiom = if binders.is_empty() { eq_body } else {
+                        SmtTerm::Forall(binders, Box::new(eq_body))
+                    };
+                    backend.assert(Assertion {
+                        formula: axiom,
+                        label: Some(format!("pure_fn_body@{}", pfd.name)),
+                    });
+                }
+            }
         }
 
         // 1. Declare params as Vars.
@@ -238,6 +275,65 @@ impl VerificationPipeline {
                 }
             }
         }
+        // Plan 33.4 D.0.4: verify decreases well-foundedness.
+        if let Some(dec_expr) = &fd.decreases {
+            if let Ok(dec_entry) = encode::encode_expr_with_ctx(dec_expr, &ctx) {
+                // Step A: dec_entry >= 0 at entry (requires already in scope).
+                let non_neg = SmtTerm::App(">=".into(), vec![
+                    dec_entry.clone(),
+                    SmtTerm::IntLit(0),
+                ]);
+                let dec_span = fd.span;
+                match try_prove(&mut *backend, non_neg) {
+                    SatResult::Unsat(_) => results.push((dec_span, VerifyResult::Proven)),
+                    SatResult::Sat(model) => {
+                        let cex = format_counterexample(&model);
+                        results.push((dec_span, VerifyResult::Disproved(model,
+                            format!("decreases measure may be negative: {}", cex))));
+                    }
+                    SatResult::Unknown(reason) => {
+                        results.push((dec_span, VerifyResult::Unknown(
+                            format!("decreases non-negative: {}", unknown_to_diag_message(reason)))));
+                    }
+                }
+                // Step B: at each recursive call, dec_at_call < dec_entry.
+                let recursive_calls = find_recursive_calls_in_body(&fd.body, &fd.name);
+                for (call_span, call_args) in recursive_calls {
+                    if call_args.len() != fd.params.len() { continue; }
+                    // Substitute params into dec_entry to get dec_at_call.
+                    let mut dec_at_call = dec_entry.clone();
+                    for (param, arg_expr) in fd.params.iter().zip(call_args.iter()) {
+                        match encode::encode_expr_with_ctx(arg_expr, &ctx) {
+                            Ok(enc_arg) => {
+                                dec_at_call = dec_at_call.substitute(&param.name, &enc_arg);
+                            }
+                            Err(_) => {
+                                results.push((call_span, VerifyResult::EncodingFailed(
+                                    format!("cannot encode recursive call arg for decreases check"))));
+                                continue;
+                            }
+                        }
+                    }
+                    let decreasing = SmtTerm::App("<".into(), vec![
+                        dec_at_call,
+                        dec_entry.clone(),
+                    ]);
+                    match try_prove(&mut *backend, decreasing) {
+                        SatResult::Unsat(_) => results.push((call_span, VerifyResult::Proven)),
+                        SatResult::Sat(model) => {
+                            let cex = format_counterexample(&model);
+                            results.push((call_span, VerifyResult::Disproved(model,
+                                format!("decreases measure may not decrease at recursive call: {}", cex))));
+                        }
+                        SatResult::Unknown(reason) => {
+                            results.push((call_span, VerifyResult::Unknown(
+                                format!("decreases at recursive call: {}", unknown_to_diag_message(reason)))));
+                        }
+                    }
+                }
+            }
+        }
+
         let _ = self.timeout_ms; // используется когда добавим Z3-backend
         results
     }
@@ -266,6 +362,117 @@ fn collect_pure_views(module: &Module) -> std::collections::HashMap<String, supe
         }
     }
     out
+}
+
+/// Plan 33.4 D.0.2: собрать все #pure fn'ы модуля в реестр для encoder'а.
+fn collect_pure_fns(module: &Module) -> std::collections::HashMap<String, encode::PureFnInfo> {
+    let mut out = std::collections::HashMap::new();
+    for item in &module.items {
+        let Item::Fn(fd) = item else { continue };
+        if !matches!(fd.purity, Purity::Pure) { continue; }
+        let param_sorts = fd.params.iter().map(|p| type_to_sort(&p.ty)).collect();
+        let return_sort = fd.return_type.as_ref().map(type_to_sort).unwrap_or(SortRef::Int);
+        // Capture body for inlining: `=> expr` or empty-block-with-trailing.
+        let body_expr = match &fd.body {
+            FnBody::Expr(e) => Some(Box::new(e.clone())),
+            FnBody::Block(b) if b.stmts.is_empty() => {
+                b.trailing.as_ref().map(|e| Box::new(e.as_ref().clone()))
+            }
+            _ => None,
+        };
+        out.insert(fd.name.clone(), encode::PureFnInfo {
+            param_names: fd.params.iter().map(|p| p.name.clone()).collect(),
+            param_sorts,
+            return_sort,
+            body_expr,
+        });
+    }
+    out
+}
+
+/// Plan 33.4 D.0.4: найти все само-рекурсивные вызовы в теле функции.
+/// Возвращает Vec<(call_span, Vec<arg_expr>)>.
+fn find_recursive_calls_in_body(body: &FnBody, fn_name: &str) -> Vec<(Span, Vec<Expr>)> {
+    let mut results = Vec::new();
+    match body {
+        FnBody::Expr(e) => find_recursive_calls_in_expr(e, fn_name, &mut results),
+        FnBody::Block(b) => find_recursive_calls_in_block(b, fn_name, &mut results),
+        FnBody::External => {}
+    }
+    results
+}
+
+fn find_recursive_calls_in_block(b: &Block, fn_name: &str, out: &mut Vec<(Span, Vec<Expr>)>) {
+    for s in &b.stmts {
+        find_recursive_calls_in_stmt(s, fn_name, out);
+    }
+    if let Some(e) = &b.trailing {
+        find_recursive_calls_in_expr(e, fn_name, out);
+    }
+}
+
+fn find_recursive_calls_in_stmt(s: &Stmt, fn_name: &str, out: &mut Vec<(Span, Vec<Expr>)>) {
+    match s {
+        Stmt::Let(ld) => {
+            find_recursive_calls_in_expr(&ld.value, fn_name, out);
+        }
+        Stmt::Expr(e) => find_recursive_calls_in_expr(e, fn_name, out),
+        Stmt::Return { value: Some(v), .. } => find_recursive_calls_in_expr(v, fn_name, out),
+        Stmt::Return { value: None, .. } => {}
+        Stmt::Assign { value, .. } => find_recursive_calls_in_expr(value, fn_name, out),
+        Stmt::Throw { value, .. } => find_recursive_calls_in_expr(value, fn_name, out),
+        _ => {}
+    }
+}
+
+fn find_recursive_calls_in_expr(e: &Expr, fn_name: &str, out: &mut Vec<(Span, Vec<Expr>)>) {
+    match &e.kind {
+        ExprKind::Call { func, args, trailing } => {
+            // Check if this is a self-recursive call.
+            if trailing.is_none() {
+                if let ExprKind::Ident(name) = &func.kind {
+                    if name == fn_name {
+                        let arg_exprs: Vec<Expr> = args.iter()
+                            .map(|a| a.expr().clone())
+                            .collect();
+                        out.push((e.span, arg_exprs));
+                    }
+                }
+            }
+            // Recurse into func and all args regardless.
+            find_recursive_calls_in_expr(func, fn_name, out);
+            for a in args {
+                find_recursive_calls_in_expr(a.expr(), fn_name, out);
+            }
+        }
+        ExprKind::Binary { left, right, .. } => {
+            find_recursive_calls_in_expr(left, fn_name, out);
+            find_recursive_calls_in_expr(right, fn_name, out);
+        }
+        ExprKind::Unary { operand, .. } => {
+            find_recursive_calls_in_expr(operand, fn_name, out);
+        }
+        ExprKind::If { cond, then, else_ } => {
+            find_recursive_calls_in_expr(cond, fn_name, out);
+            find_recursive_calls_in_block(then, fn_name, out);
+            match else_ {
+                Some(ElseBranch::Block(b)) => find_recursive_calls_in_block(b, fn_name, out),
+                Some(ElseBranch::If(ei)) => find_recursive_calls_in_expr(ei, fn_name, out),
+                None => {}
+            }
+        }
+        ExprKind::Block(b) => find_recursive_calls_in_block(b, fn_name, out),
+        ExprKind::Match { scrutinee, arms } => {
+            find_recursive_calls_in_expr(scrutinee, fn_name, out);
+            for arm in arms {
+                match &arm.body {
+                    MatchArmBody::Expr(ae) => find_recursive_calls_in_expr(ae, fn_name, out),
+                    MatchArmBody::Block(ab) => find_recursive_calls_in_block(ab, fn_name, out),
+                }
+            }
+        }
+        _ => {}
+    }
 }
 
 /// Plan 33.3 Ф.9: метаданные одного axiom'а с реестрами для encoding.
@@ -339,7 +546,9 @@ fn encode_axiom(
     }
     infer_binder_sorts(ax.formula, &binder_names, pure_views, &mut binder_sorts);
     // Encode body.
-    let ctx = super::encode::EncodeCtx { pure_views };
+    static EMPTY_FNS: std::sync::OnceLock<std::collections::HashMap<String, super::encode::PureFnInfo>> = std::sync::OnceLock::new();
+    let empty_fns = EMPTY_FNS.get_or_init(std::collections::HashMap::new);
+    let ctx = super::encode::EncodeCtx { pure_views, pure_fns: empty_fns };
     let body = super::encode::encode_expr_with_ctx(ax.formula, &ctx).ok()?;
     // Build binders Vec — явный или inferred sort, default Int.
     let binders: Vec<(String, SortRef)> = binder_names.iter()

@@ -30,6 +30,27 @@ pub enum EncodingError {
 #[derive(Debug, Clone)]
 pub struct EncodeCtx<'a> {
     pub pure_views: &'a HashMap<String, PureViewSig>,
+    /// Plan 33.4 D.0.2: реестр `#pure` fn-ов модуля. Ключ — fn name.
+    /// Используется для кодирования `is_positive(n)` в контракте →
+    /// UF `_pure_fn_is_positive(n)` в SMT.
+    pub pure_fns: &'a HashMap<String, PureFnInfo>,
+}
+
+/// Signature of a `#pure` fn for SMT encoding (Plan 33.4 D.0.2).
+#[derive(Debug, Clone)]
+pub struct PureFnInfo {
+    pub param_names: Vec<String>,
+    pub param_sorts: Vec<SortRef>,
+    pub return_sort: SortRef,
+    /// Body expression for inlining. If present, calls to this fn in contracts
+    /// are inlined (substituting args for params) rather than encoded as UF.
+    /// This gives Z3 immediate ground truth without quantifier instantiation.
+    pub body_expr: Option<Box<Expr>>,
+}
+
+/// SMT UF name for a pure fn: `_pure_fn_<name>`.
+pub fn pure_fn_uf_name(fn_name: &str) -> String {
+    format!("_pure_fn_{}", fn_name)
 }
 
 #[derive(Debug, Clone)]
@@ -48,9 +69,11 @@ impl<'a> EncodeCtx<'a> {
     pub fn empty() -> EncodeCtx<'static> {
         // Хитрый трюк: возвращаем 'static reference на пустую map.
         // Используется только для backward-compat encode_expr.
-        static EMPTY: std::sync::OnceLock<HashMap<String, PureViewSig>> = std::sync::OnceLock::new();
-        let map = EMPTY.get_or_init(HashMap::new);
-        EncodeCtx { pure_views: map }
+        static EMPTY_VIEWS: std::sync::OnceLock<HashMap<String, PureViewSig>> = std::sync::OnceLock::new();
+        static EMPTY_FNS: std::sync::OnceLock<HashMap<String, PureFnInfo>> = std::sync::OnceLock::new();
+        let views = EMPTY_VIEWS.get_or_init(HashMap::new);
+        let fns = EMPTY_FNS.get_or_init(HashMap::new);
+        EncodeCtx { pure_views: views, pure_fns: fns }
     }
 }
 
@@ -104,6 +127,39 @@ pub fn encode_expr_with_ctx(e: &Expr, ctx: &EncodeCtx) -> Result<SmtTerm, Encodi
                         }
                         let uf = pure_view_uf_name(&sig.effect_name, name);
                         return Ok(SmtTerm::App(uf, encoded_args));
+                    }
+                }
+            }
+            // Plan 33.4 D.0.2: #pure fn composition.
+            // If body is available, inline (substitute args for params) to give
+            // Z3 ground truth without quantifier instantiation. Otherwise fall
+            // back to UF application (+ forall axiom in pipeline).
+            if trailing.is_none() {
+                if let ExprKind::Ident(name) = &func.kind {
+                    if let Some(info) = ctx.pure_fns.get(name) {
+                        if args.len() != info.param_sorts.len() {
+                            return Err(EncodingError::Unsupported(format!(
+                                "pure fn `{}` arity mismatch: expected {}, got {}",
+                                name, info.param_sorts.len(), args.len()
+                            )));
+                        }
+                        if let Some(body_e) = &info.body_expr {
+                            // Inline: encode body with params substituted by encoded args.
+                            let mut term = encode_expr_with_ctx(body_e, ctx)?;
+                            for (param_name, call_arg) in info.param_names.iter().zip(args.iter()) {
+                                let enc_arg = encode_expr_with_ctx(call_arg.expr(), ctx)?;
+                                term = term.substitute(param_name, &enc_arg);
+                            }
+                            return Ok(term);
+                        } else {
+                            // No body → UF application.
+                            let mut encoded_args = Vec::with_capacity(args.len());
+                            for a in args {
+                                encoded_args.push(encode_expr_with_ctx(a.expr(), ctx)?);
+                            }
+                            let uf = pure_fn_uf_name(name);
+                            return Ok(SmtTerm::App(uf, encoded_args));
+                        }
                     }
                 }
             }

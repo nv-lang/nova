@@ -231,6 +231,25 @@ impl Z3Backend {
                     bound_apps.push(app);
                 }
                 let body_ast = self.translate_inner(body)?;
+                // Heuristic trigger (binder vars still in scope): если body —
+                // равенство `f(args) = expr`, используем `f(args)` как
+                // trigger pattern, чтобы Z3 instantiate'ил quantifier при
+                // появлении вызова `f(...)` в формуле.
+                let (num_patterns, pattern_ptrs): (c_uint, Vec<*mut std::ffi::c_void>) =
+                    if let SmtTerm::App(eq_op, eq_args) = body.as_ref() {
+                        if eq_op == "=" && eq_args.len() == 2 {
+                            if let SmtTerm::App(_, _) = &eq_args[0] {
+                                if let Ok(lhs_ast) = self.translate_inner(&eq_args[0]) {
+                                    let lhs_arr = [lhs_ast];
+                                    let pat = ffi::Z3_mk_pattern(
+                                        self.ctx, 1, lhs_arr.as_ptr());
+                                    (1, vec![pat])
+                                } else {
+                                    (0, vec![])
+                                }
+                            } else { (0, vec![]) }
+                        } else { (0, vec![]) }
+                    } else { (0, vec![]) };
                 // Restore previous var-bindings.
                 for (bname, prev) in saved {
                     match prev {
@@ -243,8 +262,8 @@ impl Z3Backend {
                     0, // weight
                     bound_apps.len() as c_uint,
                     bound_apps.as_ptr(),
-                    0, // num_patterns
-                    std::ptr::null(),
+                    num_patterns,
+                    if pattern_ptrs.is_empty() { std::ptr::null() } else { pattern_ptrs.as_ptr() as *const *mut std::ffi::c_void },
                     body_ast,
                 );
                 Ok(self.track(forall_ast))
