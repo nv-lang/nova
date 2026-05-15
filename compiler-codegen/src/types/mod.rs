@@ -457,6 +457,10 @@ impl<'a> BoundCtx<'a> {
             Stmt::Apply { args, .. } => {
                 for a in args { self.walk_expr(a, scope, errors); }
             }
+            // Ф.4.2: calc — ghost, шаги walk'аем.
+            Stmt::Calc { steps, .. } => {
+                for step in steps { self.walk_expr(&step.expr, scope, errors); }
+            }
         }
     }
 
@@ -1391,6 +1395,8 @@ impl<'a> CapabilityCtx<'a> {
             Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => self.walk_expr(expr, state, errors),
             // Ф.4.1: apply — ghost, нет capability-эффектов.
             Stmt::Apply { .. } => {}
+            // Ф.4.2: calc — ghost, нет capability-эффектов.
+            Stmt::Calc { .. } => {}
         }
     }
 
@@ -2111,6 +2117,10 @@ impl NameResCtx {
             Stmt::Apply { args, .. } => {
                 for a in args { self.walk_expr(a, file_id, scope, errors); }
             }
+            // Ф.4.2: calc — ghost, шаги walk для name-resolution.
+            Stmt::Calc { steps, .. } => {
+                for step in steps { self.walk_expr(&step.expr, file_id, scope, errors); }
+            }
         }
     }
 
@@ -2705,6 +2715,8 @@ fn has_throw_in_stmt(s: &Stmt) -> bool {
         Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => has_throw_in_expr(expr),
         // Ф.4.1: apply — ghost, args могут содержать throw (теоретически нет, но проверяем).
         Stmt::Apply { args, .. } => args.iter().any(has_throw_in_expr),
+        // Ф.4.2: calc — ghost, шаги могут содержать throw.
+        Stmt::Calc { steps, .. } => steps.iter().any(|s| has_throw_in_expr(&s.expr)),
     }
 }
 
@@ -3386,6 +3398,9 @@ fn walk_block_for_handler_lits(b: &Block, never_ops: &HashSet<(String, String)>,
             Stmt::Apply { args, .. } => {
                 for a in args { walk_expr_for_handler_lits(a, never_ops, errors); }
             }
+            Stmt::Calc { steps, .. } => {
+                for step in steps { walk_expr_for_handler_lits(&step.expr, never_ops, errors); }
+            }
         }
     }
     if let Some(t) = &b.trailing { walk_expr_for_handler_lits(t, never_ops, errors); }
@@ -3723,6 +3738,9 @@ fn walk_block_for_defers(b: &Block, fn_effects: &HashMap<String, Vec<TypeRef>>, 
             Stmt::Break(_) | Stmt::Continue(_) => {}
             Stmt::Apply { args, .. } => {
                 for a in args { walk_expr_for_defers(a, fn_effects, errors); }
+            }
+            Stmt::Calc { steps, .. } => {
+                for step in steps { walk_expr_for_defers(&step.expr, fn_effects, errors); }
             }
         }
     }
@@ -4164,6 +4182,10 @@ fn check_defer_body_block(b: &Block, kw: &str, fn_effects: &HashMap<String, Vec<
             // Ф.4.1: apply — ghost, args walk.
             Stmt::Apply { args, .. } => {
                 for a in args { check_defer_body_inner(a, kw, fn_effects, ctx, errors); }
+            }
+            // Ф.4.2: calc — ghost, шаги walk.
+            Stmt::Calc { steps, .. } => {
+                for step in steps { check_defer_body_inner(&step.expr, kw, fn_effects, ctx, errors); }
             }
         }
     }

@@ -585,7 +585,8 @@ impl CEmitter {
             | Stmt::ErrDefer { span, .. }
             | Stmt::AssertStatic { span, .. }
             | Stmt::Assume { span, .. }
-            | Stmt::Apply { span, .. } => *span,
+            | Stmt::Apply { span, .. }
+            | Stmt::Calc { span, .. } => *span,
             Stmt::Break(s) | Stmt::Continue(s) => *s,
         }
     }
@@ -6224,6 +6225,11 @@ impl CEmitter {
             // в verify/pipeline.rs (assert lemma.ensures[args/params]).
             Stmt::Apply { .. } => {
                 // Ghost erasure — никакого C-кода не эмитируем.
+            }
+            // Plan 33.5 Ф.4.2: `calc { ... }` — ghost statement, полностью
+            // стирается в codegen. SMT-семантика в verify/pipeline.rs.
+            Stmt::Calc { .. } => {
+                // Ghost erasure.
             }
         }
         Ok(())

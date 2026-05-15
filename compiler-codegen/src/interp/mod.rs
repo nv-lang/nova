@@ -2005,6 +2005,8 @@ impl Interpreter {
             // В interp'е просто пропускаем (аргументы не вычисляем — они могут
             // содержать spec-выражения без runtime-значения).
             Stmt::Apply { .. } => Ok(Flow::Value(Value::Unit)),
+            // Ф.4.2: calc — ghost statement, нет runtime-эффекта.
+            Stmt::Calc { .. } => Ok(Flow::Value(Value::Unit)),
         }
     }
 

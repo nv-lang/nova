@@ -1857,6 +1857,64 @@ impl Parser {
         })
     }
 
+    /// Plan 33.5 Ф.4.2: `calc { expr; == expr; == expr; }`.
+    ///
+    /// Синтаксис:
+    ///   calc {
+    ///     expr1 ;
+    ///     == expr2 ;    // или <=, <, >=, >
+    ///     == expr3 ;
+    ///   }
+    ///
+    /// Первый шаг — просто expr (без отношения). Остальные начинаются с rel.
+    fn parse_calc_stmt(&mut self, start: Span) -> Result<Stmt, Diagnostic> {
+        self.expect(&TokenKind::LBrace)?;
+        let mut steps: Vec<CalcStep> = Vec::new();
+
+        loop {
+            self.skip_newlines();
+            if matches!(self.peek().kind, TokenKind::RBrace) { break; }
+
+            // Первый шаг — без отношения; последующие начинаются с rel-оператора.
+            let rel = if steps.is_empty() {
+                None
+            } else {
+                // Ожидаем rel-оператор: ==, <=, <, >=, >
+                let rel = match &self.peek().kind {
+                    TokenKind::EqEq => { self.bump(); CalcRel::Eq }
+                    TokenKind::Le => { self.bump(); CalcRel::Le }
+                    TokenKind::Lt => { self.bump(); CalcRel::Lt }
+                    TokenKind::Ge => { self.bump(); CalcRel::Ge }
+                    TokenKind::Gt => { self.bump(); CalcRel::Gt }
+                    _ => return Err(Diagnostic::new(
+                        "expected relation operator (==, <=, <, >=, >) in `calc` step",
+                        self.peek().span,
+                    )),
+                };
+                Some(rel)
+            };
+
+            let expr = self.parse_expr()?;
+            let step_span = expr.span;
+
+            // Опциональная точка с запятой после выражения.
+            self.skip_newlines();
+            if matches!(self.peek().kind, TokenKind::Semicolon) {
+                self.bump();
+            }
+
+            steps.push(CalcStep { rel, expr, span: step_span });
+        }
+
+        let end = self.expect(&TokenKind::RBrace)?.span;
+
+        if steps.is_empty() {
+            return Err(Diagnostic::new("empty `calc` block", start));
+        }
+
+        Ok(Stmt::Calc { steps, span: start.merge(end) })
+    }
+
     // ─── types ───────────────────────────────────────────────────────────
 
     fn parse_type(&mut self) -> Result<TypeRef, Diagnostic> {
@@ -4428,6 +4486,12 @@ impl Parser {
                 let end = self.expect(&TokenKind::RParen)?.span;
                 let span = start.merge(end);
                 Ok(StmtOrExpr::Stmt(Stmt::Apply { lemma: name, args, span }))
+            }
+            // Plan 33.5 Ф.4.2: `calc { ... }` — структурированное доказательство.
+            // Контекстуальный keyword (не резервируем `calc` глобально).
+            TokenKind::Ident(ref n) if n == "calc" => {
+                self.bump(); // consume `calc`
+                Ok(StmtOrExpr::Stmt(self.parse_calc_stmt(start)?))
             }
             _ => {
                 let expr = self.parse_expr()?;

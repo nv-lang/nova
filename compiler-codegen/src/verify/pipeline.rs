@@ -295,6 +295,12 @@ impl VerificationPipeline {
             }
         }
 
+        // 2.6. Ф.4.2: обработать `calc { ... }` из тела fn.
+        // Для каждого calc-блока: каждый смежный шаг (e_i rel e_{i+1}) доказывается
+        // и ассертируется в SMT-scope (как lemma: доказано → доступно для ensures).
+        // Результат: SMT знает все промежуточные равенства/неравенства.
+        let calc_step_results = verify_calc_stmts_in_body(&fd.body, &ctx, &mut *backend);
+
         // 3. Encode body value. РўРѕР»СЊРєРѕ РґР»СЏ `=> expr` С„РѕСЂРј
         // (block-bodies СЃ trailing-only С‚РѕР¶Рµ OK).
         // Ф.4.1: блок, содержащий только ghost `apply`-стейтменты, тоже считается
@@ -308,7 +314,7 @@ impl VerificationPipeline {
         };
 
         // 4. Verify each ensures.
-        let mut results = Vec::new();
+        let mut results = calc_step_results; // Ф.4.2: calc шаги добавляются первыми
         for c in &fd.contracts {
             if !matches!(c.kind, ContractKind::Ensures) { continue; }
             if requires_failed {
@@ -1106,10 +1112,89 @@ fn find_recursive_calls_in_expr(e: &Expr, fn_name: &str, out: &mut Vec<(Span, Ve
     }
 }
 
+/// Ф.4.2: верифицировать calc-блоки в теле fn.
+/// Для каждого смежного шага (e_i rel e_{i+1}): try_prove(e_i rel e_{i+1}).
+/// Доказанные шаги ассертируются в backend как аксиомы (транзитивно усиливают SMT-scope).
+fn verify_calc_stmts_in_body(
+    body: &FnBody,
+    ctx: &encode::EncodeCtx,
+    backend: &mut dyn SmtBackend,
+) -> Vec<(Span, VerifyResult)> {
+    let mut results = Vec::new();
+    let calcs = collect_calc_stmts_in_body(body);
+    for (steps, _calc_span) in calcs {
+        if steps.len() < 2 { continue; }
+        for i in 0..steps.len() - 1 {
+            let step_a = &steps[i];
+            let step_b = &steps[i + 1];
+            let rel = match step_b.rel {
+                Some(r) => r,
+                None => continue, // первый шаг (нет rel)
+            };
+            let enc_a = match encode::encode_expr_with_ctx(&step_a.expr, ctx) {
+                Ok(t) => t,
+                Err(_) => {
+                    results.push((step_b.span, VerifyResult::EncodingFailed(
+                        format!("calc step {} cannot be encoded", i))));
+                    continue;
+                }
+            };
+            let enc_b = match encode::encode_expr_with_ctx(&step_b.expr, ctx) {
+                Ok(t) => t,
+                Err(_) => {
+                    results.push((step_b.span, VerifyResult::EncodingFailed(
+                        format!("calc step {} cannot be encoded", i + 1))));
+                    continue;
+                }
+            };
+            let smt_op = rel.to_smt_op().to_string();
+            let goal = SmtTerm::App(smt_op.clone(), vec![enc_a.clone(), enc_b.clone()]);
+            match try_prove(backend, goal.clone()) {
+                SatResult::Unsat(_) => {
+                    // Доказано: добавляем как аксиому в scope.
+                    backend.assert(Assertion {
+                        formula: goal,
+                        label: Some(format!("calc_step@{}:{}", i, step_b.span.start)),
+                    });
+                    results.push((step_b.span, VerifyResult::Proven));
+                }
+                SatResult::Sat(model) => {
+                    let cex = format_counterexample(&model);
+                    results.push((step_b.span, VerifyResult::Disproved(model,
+                        format!("calc step {} {} {} failed: {}", i, smt_op, i + 1, cex))));
+                }
+                SatResult::Unknown(reason) => {
+                    results.push((step_b.span, VerifyResult::Unknown(
+                        format!("calc step: {}", unknown_to_diag_message(reason)))));
+                }
+            }
+        }
+    }
+    results
+}
+
+/// Ф.4.2: собрать все `calc { ... }` из тела функции.
+fn collect_calc_stmts_in_body(body: &FnBody) -> Vec<(Vec<CalcStep>, Span)> {
+    let mut out = Vec::new();
+    match body {
+        FnBody::Block(b) => collect_calc_in_block(b, &mut out),
+        FnBody::Expr(_) | FnBody::External => {}
+    }
+    out
+}
+
+fn collect_calc_in_block(b: &Block, out: &mut Vec<(Vec<CalcStep>, Span)>) {
+    for s in &b.stmts {
+        if let Stmt::Calc { steps, span } = s {
+            out.push((steps.clone(), *span));
+        }
+    }
+}
+
 /// Ф.4.1: блок "ghost-only" — все стейтменты ghost (`apply`).
 /// Такой блок при верификации трактуется как trailing-only (apply стираются).
 fn block_has_only_ghost_stmts(b: &Block) -> bool {
-    b.stmts.iter().all(|s| matches!(s, Stmt::Apply { .. }))
+    b.stmts.iter().all(|s| matches!(s, Stmt::Apply { .. } | Stmt::Calc { .. }))
 }
 
 /// Ф.4.1: собрать все `apply lemma(args)` из тела функции.

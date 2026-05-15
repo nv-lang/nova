@@ -714,6 +714,45 @@ pub enum Stmt {
         args: Vec<Expr>,
         span: Span,
     },
+    /// Plan 33.5 Ф.4.2: `calc { expr; == expr; == expr; }` — structured
+    /// equational reasoning. Ghost statement: each step asserts adjacency
+    /// relation in SMT; erased in codegen.
+    Calc {
+        steps: Vec<CalcStep>,
+        span: Span,
+    },
+}
+
+/// Один шаг calc-доказательства: отношение + выражение.
+/// Первый шаг (expr1) не имеет отношения; остальные — `== expr`, `<= expr`, etc.
+#[derive(Debug, Clone)]
+pub struct CalcStep {
+    /// None для первого шага, Some(rel) для последующих.
+    pub rel: Option<CalcRel>,
+    pub expr: Expr,
+    pub span: Span,
+}
+
+/// Отношение между шагами calc.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum CalcRel {
+    Eq,   // ==
+    Le,   // <=
+    Lt,   // <
+    Ge,   // >=
+    Gt,   // >
+}
+
+impl CalcRel {
+    pub fn to_smt_op(self) -> &'static str {
+        match self {
+            CalcRel::Eq => "=",
+            CalcRel::Le => "<=",
+            CalcRel::Lt => "<",
+            CalcRel::Ge => ">=",
+            CalcRel::Gt => ">",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

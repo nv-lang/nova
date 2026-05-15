@@ -1,0 +1,20 @@
+// Plan 33.5 Ф.4.2: calc-блок — структурированное экваториальное рассуждение.
+// Trivial backend доказывает рефлексивные шаги (x == x).
+
+module nova_tests.contracts.calc_basic_positive
+
+#verify
+fn double_is_double(x int) -> int
+    ensures result == x * 2
+{
+    calc {
+        x * 2;
+        == x * 2;
+    }
+    x * 2
+}
+
+test "calc basic positive" {
+    assert(double_is_double(3) == 6)
+    assert(double_is_double(0) == 0)
+}

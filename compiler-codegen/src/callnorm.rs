@@ -148,6 +148,10 @@ fn normalize_stmt(s: &mut Stmt, sigs: &Sigs) {
         Stmt::Apply { args, .. } => {
             for a in args { normalize_expr(a, sigs); }
         }
+        // Ф.4.2: calc — ghost, выражения шагов нормализуем.
+        Stmt::Calc { steps, .. } => {
+            for step in steps { normalize_expr(&mut step.expr, sigs); }
+        }
     }
 }
 
