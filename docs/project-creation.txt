@@ -10878,6 +10878,102 @@ C-struct'ы с полями правильного типа.
 2026-05-15 Plan 48 Ф.3 fixes + Ф.7.3/Ф.7.7 confirmed
 ================================================================================
 
+2026-05-15 D109 — Встроенные hash/eq + HashMap[str,int]/[int,int] codegen
+================================================================================
+
+Сессия: автономная работа, продолжение Plan 48 в nova-lang-mn.
+
+Цель: заставить пройти 4 теста `nova_tests/modules/hashmap_basic.nv` —
+HashMap[str,int] и HashMap[int,int] со всеми операциями включая rehash.
+
+### Контекст
+
+До этой сессии std/collections/hashmap.nv существовал, но кодогенерация
+монофирмизованных generic-методов (emit_monomorphized_method) содержала 4
+отдельных бага, вызывавших CC-FAIL при попытке использовать HashMap.
+
+Дополнительно: примитивные типы (int, str, bool, f64) не имели методов
+hash/eq/ord, необходимых для protocol bound `K Hashable`.
+
+### Что сделано
+
+**1. nova_rt.h — FNV-1a hash-функции для примитивов**
+
+Добавлены inline-функции: `nova_str_hash`, `nova_int_hash`, `nova_bool_hash`,
+`nova_f64_hash`. Все используют FNV-1a алгоритм (64-bit).
+
+**2. emit_c.rs — prim_builtin_method dispatch**
+
+Новый перехватчик вызовов `hash()`/`eq()`/`lt()`/... на примитивных типах
+(nova_int, nova_str, nova_bool, nova_f64). Вызывается до общего resolver'а.
+
+**3. Fix A — emit_expr(Index): правильный cast для @buckets[idx]**
+
+В монофирмизованном контексте `infer_expr_c_type(Member{SelfAccess, "buckets"})`
+возвращает `"nova_int"` (erased), поэтому ветка `obj_ty.starts_with("NovaArray_")`
+не срабатывала. Добавлена проверка `Member{SelfAccess, field}` до этой ветки,
+использующая `array_element_types["(nova_self->buckets)"]` для cast-формы:
+`((Nova_Slot____nova_str__nova_int*)((nova_self->buckets)->data[idx]))`.
+
+**4. Fix B — emit_record_lit: конкретный конструктор sum-variant**
+
+`find_variant("Occupied")` возвращает erased `("Slot", ...)`. В монофирмизованном
+контексте это порождало `nova_make_Slot_Occupied(void*, void*)` вместо
+`nova_make_Nova_Slot____nova_str__nova_int_Occupied(nova_str, nova_int)`.
+Фикс: проверяем `current_type_subst`, вычисляем конкретное mangled-имя.
+
+**5. Fix C — pattern_bind_typed: тип поля из конкретного scr_ty**
+
+При деструктуризации `Occupied { key, value }` `find_variant` возвращал
+erased `"Slot"` → `get_record_variant_field_type("Slot", "Occupied", "key")`
+→ `"void*"` вместо `"nova_str"`. Фикс: если `scr_ty` содержит конкретное
+`"Nova_Slot____nova_str__nova_int*"` и ключ есть в `sum_schemas`, используем его.
+
+**6. Fix D — trailing return type check в монофирмизованных методах**
+
+Метод `find_slot` имеет бесконечный цикл как trailing expression. Тип цикла
+`nova_unit`, но функция возвращает `nova_int`. Прямой `return val;` давал
+CC-FAIL «returning nova_unit from nova_int function». Фикс: если
+`trailing_ty == "nova_unit"` но `ret_c != "nova_unit"` → `return (ret_c)0; /* unreachable */`.
+
+**7. Fix E — анонимный record literal через current_fn_return_ty**
+
+`fn Wrapper[T].of(v T) -> Wrapper[T] => { value: v }` — анонимный literal
+(type_name: None) давал hardcoded error. Фикс: используем `current_fn_return_ty`
+(`"Nova_Wrapper____nova_int*"`) для определения struct-имени.
+
+**8. std/runtime/string.nv — объявление str.hash()**
+
+Добавлено `export external fn str @hash() -> u64` (реализация в nova_rt.h).
+
+**9. std/collections/hashmap.nv — мелкие фиксы**
+
+- `HashMap[K Hashable, V]` — добавлен protocol bound на K.
+- `new_buckets(cap)` → `new_buckets[K, V](cap)` для корректной type-arg передачи.
+- `get_or_insert`: параметр `default` → `fallback` (зарезервированное слово).
+
+### Регрессия
+
+390/391 PASS (--gc malloc, 2026-05-15). 10 SKIP — GC-dependent tests.
+FAIL: 1 — `types/generic_record_mono` (Ф.7.7 protocol-bounded dispatch для int
+в `contains_point[K GrmEq]` — компилирует `(it == target)` вместо `it.eq(target)`).
+
+Добавлено 4 новых теста в hashmap_basic; regression baseline: 390 PASS.
+
+### Файлы
+
+- compiler-codegen/nova_rt/nova_rt.h (+33 lines — hash functions)
+- compiler-codegen/src/codegen/emit_c.rs (+575/-36 — Fixes A-E + prim_builtin_method)
+- std/runtime/string.nv (+3 lines — str.hash() declaration)
+- std/collections/hashmap.nv (+14/-1 — K Hashable, new_buckets type args)
+- nova_tests/modules/hashmap_basic.nv (новый тест, 48 строк)
+- docs/plans/48-closures-in-generics.md (Ф.8 section added)
+- spec/decisions/08-runtime.md (D109 decision record)
+- docs/project-creation.txt (эта секция)
+
+2026-05-15 D109 hashmap_basic 4/4 PASS
+================================================================================
+
 Продолжение предыдущей сессии — два дополнительных фикса + подтверждение
 Ф.7.3/Ф.7.7.
 

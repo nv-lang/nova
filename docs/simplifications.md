@@ -6374,6 +6374,25 @@ bootstrap-баг). Новая caller-owned: токен создаётся `Cance
   фикс требует различать fiber-throw-from-handler vs cooperative-cancel-
   throw. Приоритет: M. Блокирует чистый Ф.5.
 
+**D109 codegen-фиксы (2026-05-15, hashmap monomorphization):**
+
+- Fix A: `emit_expr(Index)` — добавлена ветка `Member{SelfAccess, field}` до
+  `obj_ty.starts_with("NovaArray_")`. В монофирмизованном контексте
+  `infer_expr_c_type` возвращает `"nova_int"` для erased поля, но
+  `array_element_types["(nova_self->field)"]` содержит конкретный тип.
+  Используем cast-форму `((ElemTy*)((obj)->data[idx]))`.
+- Fix B: `emit_record_lit` sum variant — `find_variant("Occupied")` возвращает
+  erased `"Slot"`. Если sum_type_name ∈ `generic_types` и `current_type_subst`
+  заполнен, вычисляем конкретное mangled-имя для constructor и type.
+- Fix C: `pattern_bind_typed` Record variant — предпочитаем `sum_type_name`
+  из `scr_ty` (содержит конкретный параметр вроде `"Slot____nova_str__nova_int"`)
+  если ключ присутствует в `sum_schemas`; иначе `find_variant` fallback.
+- Fix D: trailing return type check в `emit_monomorphized_method/fn` — если
+  trailing_ty == `"nova_unit"` но ret_c != `"nova_unit"` (бесконечный цикл),
+  emit `(void)val; return (ret_c)0; /* unreachable */`.
+- Fix E: анонимный record literal (type_name: None, no spread) — используем
+  `current_fn_return_ty` для определения struct-имени вместо hardcoded error.
+
 **Codegen-фиксы по ходу (не упрощения — баги, исправлены):**
 
 - `scan_expr_fwd` не рекурсил в тело `spawn` → вложенные spawn'ы
