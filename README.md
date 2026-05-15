@@ -148,8 +148,9 @@ correctness-critical code — write as many contracts as you need.
 ## Memory: managed by default, real-time opt-in
 
 **The programmer writes, the GC works.** No memory prefixes in
-regular code. Cycles are reclaimed automatically. A modern
-concurrent GC keeps pauses below 1ms.
+regular code. Cycles are reclaimed automatically. Boehm GC runs by default — conservative, with stop-the-world
+pauses under 16ms measured in practice. Concurrent incremental GC
+is on the v1.0 roadmap (Plan 25).
 
 For real-time zones (audio, trading, embedded) — a `realtime { ... }`
 block. Inside it the compiler guarantees no suspension and no GC
@@ -216,8 +217,10 @@ What works today (bootstrap):
 - Effects + handlers (D61/D87): `effect`/`handler` keywords,
   `with X = h { body }`, `interrupt v`, `Handler[E, IRT]` first-class
   type. `forbid`, `realtime` capability blocks.
-- Structured concurrency (D71): `spawn`, `supervised`, `parallel for`,
-  `cancel_scope`, `channels`, `select`.
+- Structured concurrency (D71/D75/D92): `spawn`, `supervised`,
+  `supervised(cancel: tok)`, `parallel for`, `channels`, `select`.
+- **M:N runtime** (Plans 44.1–44.7): work-stealing scheduler,
+  per-worker libuv event loop, preemption (D103), GC_THREADS.
 - Contracts (D24): `requires`/`ensures`/`old`/`result`/`invariant`/
   `reads`/`modifies`/`decreases`/`ghost let`/`assume`/`assert_static`.
   Bootstrap SMT через TrivialBackend (reflexive ensures); Z3 — milestone.
@@ -231,16 +234,16 @@ Build the `nova` CLI, then use it to compile Nova programs:
 
 ```sh
 # build nova CLI (requires Rust + Cargo)
-cd nova-cli && cargo build && cd ..
+cd nova-cli && cargo build --release && cd ..
 
 # compile a Nova file to a native binary
-nova-cli/target/debug/nova build path/to/hello.nv
+nova-cli/target/release/nova build path/to/hello.nv
 
 # run via interpreter (no native compilation)
-nova-cli/target/debug/nova run path/to/hello.nv
+nova-cli/target/release/nova run path/to/hello.nv
 
 # type-check only
-nova-cli/target/debug/nova check path/to/hello.nv
+nova-cli/target/release/nova check path/to/hello.nv
 ```
 
 The pipeline is two-stage: `nova-codegen` (internal) produces `.c`, a
@@ -266,10 +269,10 @@ Build `nova` CLI, then run the full test suite:
 
 ```sh
 # build nova CLI (one-time, or after changes)
-cd nova-cli && cargo build && cd ..
+cd nova-cli && cargo build --release && cd ..
 
 # run all tests
-nova-cli/target/debug/nova test
+nova-cli/target/release/nova test
 ```
 
 Common flags:
@@ -278,7 +281,7 @@ Common flags:
 nova test --filter syntax/closure        # subset of tests
 nova test --mode release                 # -O3 -flto compilation
 nova test --toolchain clang              # force toolchain
-nova test --jobs 4 --timeout 60          # parallel + timeout
+nova test --timeout 60                   # timeout per test
 nova test --format json                  # JSON events (one per line)
 nova test --format junit > results.xml   # JUnit XML for CI parsers
 nova test --retries 2                    # retry transient AV/race fails

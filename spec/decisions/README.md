@@ -15,13 +15,13 @@
 |---|---|---|---|
 | 01 | [01-philosophy.md](01-philosophy.md) | Цели, парадигма, AI-first | D1, D9, D10 |
 | 02 | [02-types.md](02-types.md) | Record, sum-type, protocol, generic, поля, bounds | D15, D17, D32, D36, D39, D42, D52, D53, D55, D66, D72 |
-| 03 | [03-syntax.md](03-syntax.md) | Объявления, литералы, операторы, методы, парсинг, defer/errdefer, атрибуты `#name`, default generics, select | D16, D19, D20, D22, D23, D27, D30, D33, D34, D35, D37, D38, D40, D43, D44, D45, D46, D48, D49, D54, D58, D59, D60, D69, D82, D83, D88, D90, D94, D96 |
+| 03 | [03-syntax.md](03-syntax.md) | Объявления, литералы, операторы, методы, парсинг, defer/errdefer, атрибуты `#name`, default generics, select, named params, map-literal | D16, D19, D20, D22, D23, D27, D30, D33, D34, D35, D37, D38, D40, D43, D44, D45, D46, D48, D49, D54, D58, D59, D60, D69, D82, D83, D88, D90, D94, D96, D102, D108 |
 | 04 | [04-effects.md](04-effects.md) | Fail, Io, Db, handlers, with-блоки, interrupt, forbid, realtime, ?, `Handler[E, IRT]` | D2, D3, D4, D11, D12, D18, D25, D28, D31, D61, D62, D63, D64, D65, D67, D68, D85, D86, D87 |
 | 05 | [05-memory.md](05-memory.md) | Managed GC, escape analysis, regions | D6, D21 (cancelled) |
-| 06 | [06-concurrency.md](06-concurrency.md) | Fiber runtime, structured concurrency, spawn, detach, supervised(cancel:), channels (Channel revision capability-split), select, handler scoping, park/wake API, implicit main-scope, fiber stack allocation | D14, D50, D71, D75, D79, D80, D91, D92, D93, D97 |
-| 07 | [07-modules.md](07-modules.md) | Модули, импорты (включая селективный `import X.{A, B}` и `export import` re-export), видимость, package tooling | D5, D29, D47, D78 |
+| 06 | [06-concurrency.md](06-concurrency.md) | Fiber runtime, structured concurrency, spawn, detach, supervised(cancel:), channels (Channel revision capability-split), select, handler scoping, park/wake API, implicit main-scope, fiber stack allocation, work-stealing scheduler, preemption | D14, D50, D71, D75, D79, D80, D91, D92, D93, D97, D98, D103 |
+| 07 | [07-modules.md](07-modules.md) | Модули, импорты (включая селективный `import X.{A, B}` и `export import` re-export), видимость, package tooling, `_module.nv` | D5, D29, D47, D78, D100 |
 | 08 | [08-runtime.md](08-runtime.md) | Panic, capability, deployment, prelude, From/Into, TryFrom, math, Mem, assert | D7, D13, D26, D41, D70 (replaced → D73), D73, D74, D76, D77, D81 |
-| 09 | [09-tooling.md](09-tooling.md) | Тесты, контракты, форматирование, CLI, EXPECT-маркеры | D24, D89, D95 |
+| 09 | [09-tooling.md](09-tooling.md) | Тесты, контракты, форматирование, CLI, EXPECT-маркеры, conditional compilation, `#doc` | D24, D89, D95, D99, D101 |
 | 10 | [10-overloading.md](10-overloading.md) | Перегрузка функций и методов: четыре оси, резолв | D84 |
 
 ### Свежие D-решения (по нумерации)
@@ -41,6 +41,13 @@
 | D95 | 09-tooling.md | CLI path конвенции — `nova check <path>` / `nova test <path>` |
 | D96 | 03-syntax.md | Синтаксис атрибутов — `#name` без квадратных скобок (`#realtime`, `#pure`) |
 | D97 | 06-concurrency.md | Fiber stack allocation — per-thread mmap arena (Linux/macOS) / calloc (Windows) |
+| D98 | 06-concurrency.md | Work-stealing scheduler — per-worker runqueue, global queue fallback |
+| D99 | 09-tooling.md | Conditional compilation — `#if platform(...)` / `#if feature(...)` атрибуты |
+| D100 | 07-modules.md | `_module.nv` — entry-point файл для folder-module |
+| D101 | 09-tooling.md | `#doc` атрибут — structured documentation comments |
+| D102 | 03-syntax.md | Named parameters — `f(x: 1, y: 2)` синтаксис вызова |
+| D103 | 06-concurrency.md | Preemption — cooperative yield-points в fiber tight loops |
+| D108 | 03-syntax.md | Map-literal `[k: v]` синтаксис + map-coercion (D55 rev) |
 
 ## История
 

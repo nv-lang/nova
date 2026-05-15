@@ -1,6 +1,6 @@
-# Plan 40 Ф.1 Linux Docker
+# Plan 44.1 Ф.1 Linux Docker
 
-Production validation для Plan 40 channel hardening на Tier 1 Linux
+Production validation для Plan 44.1 M:N runtime на Tier 1 Linux
 (Ubuntu 22.04+ x86_64, clang 15+, glibc 2.35+).
 
 ## Что внутри
@@ -13,7 +13,7 @@ Production validation для Plan 40 channel hardening на Tier 1 Linux
 
 ## Usage
 
-### Plain build (262/262 regression):
+### Plain build (regression):
 
 ```sh
 docker build -f docker/Dockerfile -t nova:linux .
@@ -36,7 +36,7 @@ docker build -f docker/Dockerfile -t nova:ubsan --build-arg SANITIZER=ubsan .
 docker run --rm nova:ubsan ./docker/run-tests.sh
 ```
 
-## Plan 40 audit findings addressed here
+## Plan 44.1 audit findings addressed here
 
 - **R3-6:** TSan + Boehm — `THREAD_LOCAL_ALLOC=0` + `PARALLEL_MARK=0`
   to suppress GC-internals false positives.
@@ -62,21 +62,21 @@ docker run --rm nova:ubsan ./docker/run-tests.sh
 - ❌ pthread stress tests **TRAP под sanitizers** в `libgc.so`
   (Ubuntu 22.04 default Boehm package single-threaded; multithread
   variant конфликтует с TSan/ASan instrumentation).
-- **Это не Plan 40 issue**. Real M:N race detection требует:
+- **Это не Plan 44.1 issue**. Real M:N race detection требует:
   - Build Boehm from source с `--enable-threads=posix --enable-parallel-mark`.
   - Либо альтернативный GC backend (malloc для sanitizer runs).
-- **Plan 23 prerequisite:** Boehm multithread setup для CI — это
-  **отдельная задача**, не Plan 40 scope.
+- **Plan 44.4 prerequisite:** Boehm multithread setup для CI — это
+  **отдельная задача**, не Plan 44.1 scope.
 
-**Что Plan 40 Ф.1 валидировано:**
+**Что Plan 44.1 Ф.1 валидировано:**
 - Single-thread correctness (Windows 262/262, Linux 261/261 без perf).
 - Cross-platform build (Linux clang + Boehm + libuv).
-- Plan 40 functional tests (5 файлов) — все PASS на Linux.
+- Plan 44.1 functional tests (5 файлов) — все PASS на Linux.
 - API contracts: portable sync.h wrapper, channel runtime layout.
 
 **Что не валидировано (deferred):**
 - Real M:N race detection под TSan (Boehm/Docker issue).
-- Per-fiber stress tests на M:N scheduler'е (Plan 23 dependency).
+- Per-fiber stress tests на M:N scheduler'е (Plan 44.4 dependency).
 - Production benchmark данные на нормальном Linux box (Docker slow).
 
 ## Tier 1 platforms validated

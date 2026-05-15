@@ -26,4 +26,3 @@
 | [read-project.md](read-project.md) | **Основной промпт для начала сессии.** Говори «прочитай проект» — агент читает спеку + планы + toolchain за один раз. |
 | [read-toolchain.md](read-toolchain.md) | Только инфраструктура: nova CLI, test runner, структура репо. Входит в read-project. |
 | [regen-runtime.md](regen-runtime.md) | Регенерирует `std/runtime/*.nv` из `runtime_registry.rs` (Plan 13 Ф.3). |
-| [continue-plan-14.md](continue-plan-14.md) | Передача контекста для продолжения Plan 14 — для start новой сессии другим агентом. |

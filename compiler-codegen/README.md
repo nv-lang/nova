@@ -26,8 +26,8 @@
   - `effects.{h,c}` — механизм эффектов (handler-стек, D61, `interrupt` /
     `nova_interrupt_ptr`).
   - `fibers.{h,c}` — файберы через minicoro (stackful coroutines),
-    structured concurrency (`supervised`, `spawn`, `cancel_scope`).
-  - `channels.h` / `sync.h` — `Channel[T]` mpsc (Plan 40), `select`.
+    structured concurrency (`supervised`, `supervised(cancel: tok)`, `spawn`).
+  - `channels.h` / `sync.h` — `Channel[T]` mpsc (Plan 44.1), `select`.
   - `nova_rt.h` — единый include для сгенерированного кода (вкл.
     `nova_str_cmp`/`lt`/`le`/`gt`/`ge` lex byte-wise compare).
 - CLI: `nova-codegen check`, `run`, `test`, `compile`, `test-build`,
@@ -76,9 +76,9 @@ compiler-codegen/target/debug/nova-codegen.exe dump-runtime
   `with X = h { body }`, `interrupt v`, `throw`, `?`, `!!`, `??`
   (D61/D62/D85/D86). `Handler[E, IRT]` first-class type (D87).
   `forbid X { body }` (D63), `realtime { body }` (D64).
-- **Structured concurrency** (D71): `spawn`, `supervised`, `parallel for`,
-  `cancel_scope`, `detach`, channels (`Channel[T]` mpsc через Plan 40),
-  `select { ... }` (D94 / Plan 31).
+- **Structured concurrency** (D71/D75/D92): `spawn`, `supervised`,
+  `supervised(cancel: tok)`, `detach`, `parallel for`,
+  channels (`Channel[T]` mpsc, Plan 44.1), `select { ... }` (D94).
 - **Contracts** (D24): `requires` / `ensures` / `old` / `result` /
   `invariant` / `reads` / `modifies` / `decreases` / ghost let / assume
   / `assert_static`. Bootstrap MVP: TrivialBackend SMT (reflexive
@@ -238,7 +238,7 @@ nova_rt/                  C runtime
   alloc_rc.c              ref-counting backend (legacy)
   effects.{h,c}           handler-стек, interrupt (incl. nova_interrupt_ptr)
   fibers.{h,c}            minicoro shim + supervised/spawn/cancel
-  channels.h              Channel[T] mpsc (Plan 40)
+  channels.h              Channel[T] mpsc (Plan 44.1)
   sync.h                  C11 atomics + mutex для channel hardening
   array.h                 NovaArray_<T>, NovaOpt_<T> auto-gen helpers
   cast.h                  D54 narrow casts
