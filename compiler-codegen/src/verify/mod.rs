@@ -19,6 +19,7 @@ pub mod ir;
 pub mod encode;
 pub mod backend;
 pub mod pipeline;
+pub mod cache;
 
 pub use ir::{Formula, SmtTerm, SortRef, SatResult, Model, UnsatCore, UnknownReason};
 pub use backend::SmtBackend;

@@ -2769,6 +2769,9 @@ fn collect_verify_bindings_expr<'a>(
 /// proven РєРѕРЅС‚СЂР°РєС‚С‹ РЅРµ emit'СЏС‚СЃСЏ РІ release СЃР±РѕСЂРєРµ.
 pub fn verify_module(module: &Module) -> ModuleVerifyReport {
     let pipeline = VerificationPipeline::new();
+    let cache_dir = std::env::var("NOVA_CACHE_DIR").map(std::path::PathBuf::from).unwrap_or_else(|_| std::env::current_dir().unwrap_or_default().join("target"));
+    let cache = super::cache::ContractCache::new(&cache_dir);
+    let module_name = module.name.join(".");
     let mut report = ModuleVerifyReport::default();
 
     // Plan 33.3 Р¤.9.5: РїСЂРѕРІРµСЂРєР° consistency axiom'РѕРІ РґРѕ per-fn verify.
@@ -2802,7 +2805,16 @@ pub fn verify_module(module: &Module) -> ModuleVerifyReport {
             // Skip Fail-functions вЂ” ContractCtx СѓР¶Рµ РІС‹РґР°Р» error.
             // Mut-РїР°СЂР°РјРµС‚СЂС‹ в†’ РїСЂРѕРїСѓСЃС‚РёС‚СЊ (33.2). РЎРµР№С‡Р°СЃ РґРµС‚РµРєС‚РёРј С‡РµСЂРµР·
             // РѕС‚СЃСѓС‚СЃС‚РІРёРµ РІ С‚РёРїР°С….
+            let contracts_repr: String = fd.contracts.iter().map(|c| format!("{c:?}")).collect::<Vec<_>>().join("|");
+            let body_repr = format!("{:?}", fd.body);
+            let ck = super::cache::cache_key(&module_name, &fd.name, &contracts_repr, &body_repr);
+            if let Some(super::cache::CachedResult::Proven) = cache.lookup(ck) {
+                for c in &fd.contracts { if matches!(c.kind, ContractKind::Ensures) { report.proven.push((fd.name.clone(), c.span)); } }
+                continue;
+            }
+            let t0 = std::time::Instant::now();
             let results = pipeline.verify_fn(module, fd, &inferred_pure);
+            let elapsed_ms = t0.elapsed().as_millis() as u64;
             for (span, vr) in results {
                 match vr {
                     VerifyResult::Proven => {
