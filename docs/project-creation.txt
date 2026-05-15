@@ -10544,6 +10544,82 @@ nova-cli (важно: CLI отдельный crate), затем `nova test` →
 - `nova_tests/generics/p48_none_in_mono_body.nv` (4 cases) — None target type
 - Регрессия post-tests: **391 PASS / 0 FAIL / 7 SKIP** (release).
 
+
+================================================================================
+# Plan 48 Ф.7 + Plan 50 Ф.6.1 + Plan 53 Ф.5.1 — Production hardening (2026-05-15)
+
+После reviews «без упрощений как для прода»: 6 closed fixes, 2 V2 blocked.
+
+**Plan 53 Ф.5.1** — examples в diag для refutable patterns. Literal/Or/
+Array refutable-в-let получили `with_note` с конкретным примером
+правильного синтаксиса (`if let 42 = n { ... }`, `match x { A | B => ... }`).
+NOT structured Suggestion (requires reading source — нарушает source-
+независимость producer'а). LLM получает example для auto-fix.
+
+**Plan 50 Ф.6.1** — Levenshtein "did you mean" suggestion для UnknownParam.
+`connect("h", prot: 9000)` → "именованный аргумент `prot` — нет такого
+параметра (did you mean `port:`?)". Threshold: 1 edit для имён ≤2 char,
+2 edits для остальных. `BindError::UnknownParam` расширен полем
+`suggestion: Option<String>`. AI-first: LLM auto-fixes typos.
+
+**Plan 48 Ф.7.5** — param-position в "cannot infer T" diag. Раньше: "cannot
+infer T for fn `f`". Теперь: "cannot infer T for fn `f` — appears in
+param `body` (#1); use turbofish: `f[T](...)`". Для T только в return:
+"(returned only — turbofish required)".
+
+**Plan 48 Ф.7.6** — `NOVA_MONO_DEPTH` env var для polymorphic recursion
+limit. Magic 500 → DEFAULT_MONO_DEPTH_LIMIT с env-var override. Error
+message включает текущий limit + hint про env var. Полноценный CLI
+flag `--mono-depth=N` — V2 (требует BuildOpts pipe через nova-cli).
+
+**Plan 48 Ф.7.2** — Static generic methods через sentinel routing.
+`Type.method[T]()` падало с `lld-link: undefined symbol
+__mono_method__T__m`. Path-form static dispatch (emit_c.rs ~9063) был
+**отдельный** от Member-form (instance dispatch) и пропускал sentinel
+detection. Добавлен sentinel branch + register_mono_method_instance/
+emit_monomorphized_method уважают ReceiverKind::Static (no nova_self в
+C signature).
+
+**Plan 48 Ф.7.1** — Method-call inference в infer_expr_c_type. `let r =
+c.method(...)` для generic-метода типизировал `r` как `void*` (sentinel
+return_c_type). Workaround в тестах был `let r int = ...` — больше не
+нужен. Branch в `infer_expr_c_type` (~12609) делает sentinel detection
+ПЕРЕД legacy short-circuit, использует `resolve_mono_type_args` +
+`apply_type_subst_to_ref` для concrete return type.
+
+**Plan 48 Ф.7.3 + Ф.7.4 — ЗАБЛОКИРОВАНЫ Ф.3 (generic records mono).**
+Ф.7.3 хотело заменить erasure-fallback на real error. Но без Ф.3
+(generic records `Box[T]` → реальный struct per instance) `box_get(b)`
+с `b: Box[T]` не выводит T (потому что `Nova_Box*` arg-type не несёт T
+info). Без erasure fallback `nova_tests/types/generics.nv` сломается.
+Ф.7.3 пара с Ф.3. Ф.7.4 пара с Ф.7.3.
+
+**Plan 48 Ф.7.7 — Protocol-bounded generic dispatch (CRITICAL,
+production-blocker).**
+User обнаружил: `std/collections/hashmap.nv:326` `k.eq(key)` где K имеет
+bound — codegen эмитит `nova_int` вместо `bool`. 8 файлов в
+`std/collections` CC-FAIL по этой причине. Plan §«Protocol-bounded
+generics» обещал static dispatch — не выполнено в V1. Записано в plan
+как production-blocker. Большая работа: bound-method dispatch через
+protocol method table, mono-substitution K→concrete, static call вместо
+default-typed call.
+
+**Тест: p50_typo_suggestion.nv** — negative-EXPECT с проверкой "did you
+mean `port:`" в diag.
+
+**Изменённые файлы:**
+- `compiler-codegen/src/argbind.rs` (+71/-3) — Levenshtein + suggestion field
+- `compiler-codegen/src/codegen/emit_c.rs` (+157/-29) — Ф.7.1/2/5/6
+- `compiler-codegen/src/types/mod.rs` (+35/-15) — Plan 53 diag
+- `docs/plans/48-closures-in-generics.md` (Ф.7 раздел)
+- `docs/plans/50-default-keyword-only.md` (Ф.6.1 раздел)
+- `docs/plans/53-let-destructuring.md` (Ф.5.1 раздел)
+- `docs/simplifications.md` (5 followups закрыты, 1 новый critical)
+
+**Регрессия:** 391/391 PASS release (1 flake mn_runtime_actual_workload
+прошёл на повторе; pre-existing timing-sensitive M:N test).
+
+
 ## Сессия 2026-05-15: Plan 50 — параметр с дефолтом keyword-only
 
 Реализация ревизии D102 (2026-05-15): параметр со значением по умолчанию
