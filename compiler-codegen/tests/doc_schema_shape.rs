@@ -320,3 +320,9 @@ fn fixture_stability_shape() { check_fixture("stability"); }
 
 #[test]
 fn fixture_real_attrs_shape() { check_fixture("real_attrs"); }
+
+#[test]
+fn fixture_module_attrs_shape() { check_fixture("module_attrs"); }
+
+#[test]
+fn fixture_should_panic_shape() { check_fixture("should_panic"); }

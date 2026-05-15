@@ -94,6 +94,12 @@ fn render_item(it: &DocItem, out: &mut String) {
         let _ = writeln!(out, "> *Stability:* **{}**{}", s.tier.as_str(), since);
         let _ = writeln!(out);
     }
+    // Plan 45 Ф.22.6 / D105: aliases из `#doc_alias(...)` — отображаются
+    // как search-hints для IDE. Показываем только если есть.
+    if !it.aliases.is_empty() {
+        let _ = writeln!(out, "*Also known as:* {}", it.aliases.iter().map(|a| format!("`{}`", a)).collect::<Vec<_>>().join(", "));
+        let _ = writeln!(out);
+    }
     // Signature / definition / value.
     match &it.kind {
         ItemKind::Fn(sig) => {
@@ -114,12 +120,15 @@ fn render_item(it: &DocItem, out: &mut String) {
             let _ = writeln!(out, "```");
             let _ = writeln!(out);
         }
-        ItemKind::Effect { methods } => {
+        ItemKind::Effect { methods, axioms } => {
             let _ = writeln!(out, "```nova");
             let _ = writeln!(out, "type {} effect {{", it.name);
             for m in methods {
                 let params = m.params.iter().map(render_param).collect::<Vec<_>>().join(", ");
                 let _ = writeln!(out, "    fn {}({}) -> {}", m.name, params, m.return_type);
+            }
+            for ax in axioms {
+                let _ = writeln!(out, "    axiom {} => {}", ax.name, ax.formula);
             }
             let _ = writeln!(out, "}}");
             let _ = writeln!(out, "```");

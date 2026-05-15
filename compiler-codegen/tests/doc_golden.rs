@@ -108,3 +108,13 @@ fn golden_stability() {
 fn golden_real_attrs() {
     run_one("real_attrs");
 }
+
+#[test]
+fn golden_module_attrs() {
+    run_one("module_attrs");
+}
+
+#[test]
+fn golden_should_panic() {
+    run_one("should_panic");
+}

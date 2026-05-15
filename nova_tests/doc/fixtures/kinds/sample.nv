@@ -5,9 +5,10 @@ module nova_tests.doc.fixtures.kinds.sample
 /// Sum-тип с unit-вариантами.
 export type Color | Red | Green | Blue
 
-/// Counter — простой effect.
+/// Counter — простой effect с axiom.
 export type Counter effect {
     next() -> int
+    axiom non_negative(x int) => x >= 0
 }
 
 /// Eq — protocol.

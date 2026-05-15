@@ -48,7 +48,7 @@
       },
       "source": {
         "file_id": 0,
-        "line": 22
+        "line": 23
       },
       "stability": null,
       "summary": "Newtype над int.",
@@ -120,7 +120,13 @@
         "line": 9
       },
       "stability": null,
-      "summary": "Counter — простой effect.",
+      "summary": "Counter — простой effect с axiom.",
+      "axioms": [
+        {
+          "formula": "x >= 0",
+          "name": "non_negative"
+        }
+      ],
       "methods": [
         {
           "name": "next",
@@ -150,10 +156,13 @@
       },
       "source": {
         "file_id": 0,
-        "line": 14
+        "line": 15
       },
       "stability": null,
       "summary": "Eq — protocol.",
+      "implementors": [
+
+      ],
       "methods": [
         {
           "name": "equals",
@@ -189,7 +198,7 @@
       },
       "source": {
         "file_id": 0,
-        "line": 19
+        "line": 20
       },
       "stability": null,
       "summary": "Alias над int — semantic clarity.",

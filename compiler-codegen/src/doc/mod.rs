@@ -78,6 +78,9 @@ pub fn strip_private(tree: &mut DocTree) {
 /// Plan 45 Ф.3 / D105: pass `strip_hidden_doc` — отбрасывает items с
 /// `#hide_doc` attr. Применяется ВСЕГДА (это explicit сигнал автора).
 pub fn strip_hidden_doc(tree: &mut DocTree) {
+    // Plan 45 Ф.22.1: модули с `#hide_doc` отбрасываются целиком
+    // (всех items включая children).
+    tree.modules.retain(|m| !m.hide_doc);
     for m in &mut tree.modules {
         m.items.retain(|it| !it.hide_doc);
     }

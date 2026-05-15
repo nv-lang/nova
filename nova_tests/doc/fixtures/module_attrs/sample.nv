@@ -1,0 +1,15 @@
+//! Ф.22.1 — модуль с module-level doc-attrs.
+//!
+//! Проверяет: `#stable` / `#deprecated` на уровне модуля,
+//! propagation stability → items без явного override.
+
+#stable(since = "1.0.0")
+
+module nova_tests.doc.fixtures.module_attrs.sample
+
+/// Функция без собственного stability — наследует module-stable.
+export fn foo(x int) -> int => x
+
+/// Экспериментальная функция — overrides module-stable.
+#experimental(note = "may change")
+export fn bar(x int) -> int => x

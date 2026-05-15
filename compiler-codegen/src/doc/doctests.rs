@@ -214,6 +214,9 @@ mod tests {
             peers: vec![],
             summary: None,
             description: None,
+            deprecation: None,
+            stability: None,
+            hide_doc: false,
             items,
             source_span: crate::diag::Span {
                 start: 0,

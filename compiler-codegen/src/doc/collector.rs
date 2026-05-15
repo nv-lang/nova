@@ -184,6 +184,9 @@ fn collect_one(module: &Module) -> DocModule {
         .filter_map(|pf| pf.path.file_name().map(|s| s.to_string_lossy().into_owned()))
         .collect();
 
+    // Plan 45 Ф.22.1 / D105: module-level doc-attrs.
+    let mod_attrs = extract_doc_attrs(&module.doc_attrs);
+
     DocModule {
         path: module_path,
         name: module_name,
@@ -191,6 +194,9 @@ fn collect_one(module: &Module) -> DocModule {
         peers,
         summary: module_summary,
         description: module_description,
+        deprecation: mod_attrs.deprecation,
+        stability: mod_attrs.stability,
+        hide_doc: mod_attrs.hide_doc,
         items,
         source_span: module.span,
     }
@@ -281,6 +287,12 @@ fn collect_type(module_path: &[String], t: &TypeDecl) -> DocItem {
         TypeDeclKind::Alias(ty) => ItemKind::Type(TypeDefinition::Alias(render_type(ty))),
         TypeDeclKind::Newtype(ty) => ItemKind::Type(TypeDefinition::Alias(render_type(ty))),
         TypeDeclKind::Effect(methods) => {
+            // Plan 45 Ф.22.4 / D107: axioms на уровне ItemKind::Effect,
+            // не per-method (axiom ссылается на эффект целиком).
+            let axioms: Vec<EffectAxiomDoc> = t.axioms.iter().map(|ax| EffectAxiomDoc {
+                name: ax.name.clone(),
+                formula: render_expr(&ax.formula),
+            }).collect();
             let sigs = methods
                 .iter()
                 .map(|m| EffectMethodSig {
@@ -303,7 +315,7 @@ fn collect_type(module_path: &[String], t: &TypeDecl) -> DocItem {
                         .unwrap_or_else(|| "()".to_string()),
                 })
                 .collect();
-            ItemKind::Effect { methods: sigs }
+            ItemKind::Effect { methods: sigs, axioms }
         }
         TypeDeclKind::Protocol(methods) => {
             let sigs = methods

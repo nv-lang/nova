@@ -131,8 +131,12 @@ const SCHEMA_V1: &str = r##"{
           "then": { "required": ["type", "value"] }
         },
         {
-          "if": { "properties": { "kind": { "enum": ["effect", "protocol"] } } },
-          "then": { "required": ["methods"] }
+          "if": { "properties": { "kind": { "const": "effect" } } },
+          "then": { "required": ["methods", "axioms"] }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "protocol" } } },
+          "then": { "required": ["methods", "implementors"] }
         }
       ]
     },

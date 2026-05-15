@@ -124,6 +124,14 @@ pub struct DocModule {
     pub summary: Option<String>,
     /// Полное markdown-тело документации (всё после summary).
     pub description: Option<String>,
+    /// Plan 45 Ф.22.1 / D105: module-level deprecation.
+    pub deprecation: Option<Deprecation>,
+    /// Plan 45 Ф.22.1 / D105: module-level stability tier. Propagates
+    /// на items без явного override (см. `propagate_stability` pass).
+    pub stability: Option<Stability>,
+    /// Plan 45 Ф.22.1 / D105: module-level `#hide_doc` — модуль
+    /// exported, но скрыт из nova doc output.
+    pub hide_doc: bool,
     /// Items этого модуля.
     pub items: Vec<DocItem>,
     /// Span первого токена модуля — для "View Source" links (D107).
@@ -251,6 +259,9 @@ pub enum ItemKind {
     /// Effect-декларация (D62).
     Effect {
         methods: Vec<EffectMethodSig>,
+        /// Plan 45 Ф.22.4 / D107: axioms эффекта (по D24). Пустой Vec
+        /// если нет axioms (большинство эффектов).
+        axioms: Vec<EffectAxiomDoc>,
     },
     /// Protocol-декларация (D72).
     Protocol {
@@ -341,6 +352,15 @@ pub enum VariantPayload {
     Unit,
     Tuple(Vec<String>),
     Record(Vec<RecordField>),
+}
+
+/// Plan 45 Ф.22.4 / D107: axiom effect'а — formula-constraint на
+/// `pure_view` операции (D24). `formula` рендерится как Nova source.
+#[derive(Debug, Clone)]
+pub struct EffectAxiomDoc {
+    pub name: String,
+    /// Строка-формула, рендерёная как Nova source (best-effort).
+    pub formula: String,
 }
 
 #[derive(Debug, Clone)]

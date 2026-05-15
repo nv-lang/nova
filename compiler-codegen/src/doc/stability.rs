@@ -17,8 +17,25 @@ use super::doctree::*;
 
 pub fn propagate_stability(tree: &mut DocTree) {
     for m in &mut tree.modules {
+        // Ф.22.1 / D105: snapshot module-level stability/deprecation
+        // ДО mutable-borrow на items, чтобы propagate'ить на items
+        // без явного override.
+        let module_stability = m.stability.clone();
+        let module_deprecation = m.deprecation.clone();
         for it in &mut m.items {
             derive_for_item(it);
+            // Propagate module → item только если item не имеет
+            // явного override (set'нутого collector'ом или derive_for_item'ом).
+            if it.stability.is_none() {
+                if let Some(s) = &module_stability {
+                    it.stability = Some(s.clone());
+                }
+            }
+            if it.deprecation.is_none() {
+                if let Some(d) = &module_deprecation {
+                    it.deprecation = Some(d.clone());
+                }
+            }
         }
     }
 }

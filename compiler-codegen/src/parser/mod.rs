@@ -118,6 +118,11 @@ impl Parser {
         // `#cfg` семантически — гейт «существует ли файл», логично
         // читать до `module`. AI-first: условия файла видны первыми.
         let module_attrs = self.parse_module_attrs()?;
+        // Plan 45 Ф.22.1 / D105: module-level doc-attrs (`#stable`/etc.)
+        // — могут идти между classic module attrs (`#cfg`/`#forbid`) и
+        // `module` declaration. Используем тот же parse_doc_attrs() что
+        // и для items.
+        let module_doc_attrs = self.parse_doc_attrs()?;
 
         // module keyword.path
         let module_name = if self.eat(&TokenKind::KwModule).is_some() {
@@ -217,6 +222,7 @@ impl Parser {
             imports,
             items,
             attrs: module_attrs,
+            doc_attrs: module_doc_attrs,
             span,
             peer_files: Vec::new(),
             doc: module_doc,

@@ -1014,18 +1014,43 @@ fn cmd_doc_workspace(
     if files.is_empty() {
         bail!("no .nv files found under `{}`", dir.display());
     }
+    // Plan 45 Ф.22.5 / D107: workspace graceful-fail — продолжаем при
+    // parse-ошибках в отдельных файлах (как rustdoc), выводим warnings
+    // в stderr. Hard-fail только если 0 файлов распарсилось.
     let mut modules: Vec<nova_codegen::ast::Module> = Vec::with_capacity(files.len());
+    // Для Ф.22.7: храним source каждого файла рядом с модулем.
+    let mut sources: Vec<String> = Vec::with_capacity(files.len());
+    let mut parse_warnings: Vec<String> = Vec::new();
     for f in &files {
-        let src = read_file(f)?;
+        let src = match read_file(f) {
+            Ok(s) => s,
+            Err(e) => {
+                parse_warnings.push(format!("warning: {}: {}", f.display(), e));
+                continue;
+            }
+        };
         let path_str = f.to_string_lossy();
-        let mut m = nova_codegen::parser::parse(&src)
-            .map_err(|d| anyhow!("{}: {}", path_str, d.render(&src, &path_str)))?;
-        // Игнорируем type-check ошибки в workspace mode (MVP) — те же
-        // соображения что и для single-file: cross-module symbols без
-        // resolve_imports не разрешаются.
-        let _ = nova_codegen::types::check_module(&m);
-        nova_codegen::types::infer_effects(&mut m);
-        modules.push(m);
+        match nova_codegen::parser::parse(&src) {
+            Ok(mut m) => {
+                let _ = nova_codegen::types::check_module(&m);
+                nova_codegen::types::infer_effects(&mut m);
+                sources.push(src);
+                modules.push(m);
+            }
+            Err(d) => {
+                parse_warnings.push(format!(
+                    "warning: {}: {}",
+                    path_str,
+                    d.render(&src, &path_str)
+                ));
+            }
+        }
+    }
+    for w in &parse_warnings {
+        eprintln!("{}", w);
+    }
+    if modules.is_empty() && !files.is_empty() {
+        bail!("все файлы в `{}` содержат ошибки парсинга", dir.display());
     }
     let mut tree = nova_codegen::doc::build_workspace(&modules);
     // Plan 45 Ф.22.3 / D107: workspace source_root = переданный dir,
@@ -1041,9 +1066,17 @@ fn cmd_doc_workspace(
         return cmd_doc_check(&tree);
     }
     if run_doc_tests {
-        // Doc-tests в workspace mode — пока без crate-scope injection
-        // (нет single source). Тесты исполняются изолированно.
-        let summary = nova_codegen::doc::test_runner::run_doc_tests(&tree.doc_tests);
+        // Plan 45 Ф.22.7: workspace doc-tests с crate-scope.
+        // Каждый тест получает source своего исходного модуля для
+        // crate-scope injection (аналог single-file Ф.21.1).
+        // Используем concatenated sources как best-effort fallback:
+        // doc-test'ам нужен только scope своего модуля, но merged
+        // sources покрывают cross-module cases тоже.
+        let combined_source = sources.join("\n\n");
+        let summary = nova_codegen::doc::test_runner::run_doc_tests_with_source(
+            &tree.doc_tests,
+            Some(&combined_source),
+        );
         return print_doc_test_summary(summary);
     }
     let out = match format {

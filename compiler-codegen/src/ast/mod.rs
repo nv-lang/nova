@@ -16,6 +16,10 @@ pub struct Module {
     /// Plan 42 Sub-plan 42.A: module-level attributes (`#forbid X, Y`).
     /// `#requires` отвергнут — нарушает AI-first explicit principle.
     pub attrs: Vec<ModuleAttr>,
+    /// Plan 45 Ф.22.1 / D105: module-level doc-attrs
+    /// (`#stable`/`#unstable`/`#experimental`/`#deprecated`/`#hide_doc`/etc.).
+    /// Семантически: tier propagates на items module'а без явного override.
+    pub doc_attrs: Vec<DocAttr>,
     pub span: Span,
     /// Plan 42 Sub-plan 42.4 (шаг 1, 2026-05-14): per-peer attribution.
     ///

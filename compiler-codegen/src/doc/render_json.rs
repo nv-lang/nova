@@ -98,7 +98,13 @@ pub fn render_with_source(tree: &DocTree, source: Option<&str>) -> String {
 }
 
 fn write_module(w: &mut JsonWriter, m: &DocModule) {
-    w.field_null_or_str("deprecation", None);
+    match &m.deprecation {
+        None => w.field_null_or_str("deprecation", None),
+        Some(d) => w.field_object("deprecation", |w| {
+            w.field_str("note", &d.note);
+            w.field_null_or_str("since", d.since.as_deref());
+        }),
+    }
     w.field_array("doc_attrs", |_| {});
     w.field_str(
         "kind",
@@ -121,7 +127,15 @@ fn write_module(w: &mut JsonWriter, m: &DocModule) {
         w.field_u32("file_id", span.file_id);
         w.field_u32("line", w.line_of(span.start));
     });
-    w.field_null_or_str("stability", None);
+    match &m.stability {
+        None => w.field_null_or_str("stability", None),
+        Some(s) => w.field_object("stability", |w| {
+            w.field_null_or_str("feature", s.feature.as_deref());
+            w.field_null_or_str("note", s.note.as_deref());
+            w.field_null_or_str("since", s.since.as_deref());
+            w.field_str("tier", s.tier.as_str());
+        }),
+    }
     w.field_null_or_str("summary", m.summary.as_deref());
     w.field_null_or_str("description", m.description.as_deref());
 }
@@ -180,7 +194,16 @@ fn write_item(w: &mut JsonWriter, it: &DocItem) {
             w.field_str("type", ty);
             w.field_str("value", value);
         }
-        ItemKind::Effect { methods } => {
+        ItemKind::Effect { methods, axioms } => {
+            // Plan 45 Ф.22.4 / D107: axioms эффекта (D24) — alphabetical.
+            w.field_array("axioms", |w| {
+                for ax in axioms {
+                    w.array_object(|w| {
+                        w.field_str("formula", &ax.formula);
+                        w.field_str("name", &ax.name);
+                    });
+                }
+            });
             w.field_array("methods", |w| {
                 for m in methods {
                     w.array_object(|w| {
@@ -196,6 +219,9 @@ fn write_item(w: &mut JsonWriter, it: &DocItem) {
             });
         }
         ItemKind::Protocol { methods } => {
+            // Plan 45 Ф.22.4 / D107: `implementors` — placeholder []
+            // (требует workspace-scope scan; см. сноску Ф.22.4 в плане).
+            w.field_array("implementors", |_| {});
             w.field_array("methods", |w| {
                 for m in methods {
                     w.array_object(|w| {
