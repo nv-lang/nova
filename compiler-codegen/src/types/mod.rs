@@ -4847,6 +4847,17 @@ struct MapLitCtx {
     /// через D55 map-coercion. Bootstrap honored только для
     /// `collections.hashmap.HashMap` (проверка canonical identity ниже).
     from_fields_types: HashSet<String>,
+    /// Plan 52 Ф.3a: free-fn name → `(имя, тип)` параметров (только если у
+    /// имени **один** кандидат — без overload; иначе резолв неоднозначен и
+    /// пропускается). Для D55 argument-position coercion.
+    fn_param_types: HashMap<String, Vec<(String, TypeRef)>>,
+    /// Plan 52 Ф.3a: `Type.method` → `(имя, тип)` параметров (static +
+    /// instance методы; только уникальные по имени, без overload).
+    method_param_types: HashMap<String, Vec<(String, TypeRef)>>,
+    /// Plan 52 Ф.3a: имя метода → `(имя, тип)` параметров, если метод с этим
+    /// именем существует ровно на **одном** типе без overload (для резолва
+    /// instance-call `obj.method(...)` без type-inference receiver'а).
+    unique_method_param_types: HashMap<String, Vec<(String, TypeRef)>>,
     /// Имена generic-параметров, видимых в текущей функции. Заполняется
     /// per-fn в `check_fn`. Generic `K` — permissive (Hashable не enforce'ится
     /// статически: bound-проверка — отдельный механизм Plan 15).
@@ -4858,6 +4869,13 @@ impl MapLitCtx {
         let mut type_methods: HashMap<String, HashSet<String>> = HashMap::new();
         let mut known_types: HashSet<String> = HashSet::new();
         let mut from_fields_types: HashSet<String> = HashSet::new();
+        // Plan 52 Ф.3a: сначала собираем все overload-группы, потом
+        // оставляем только уникальные (single-candidate) для резолва
+        // argument-позиций — overload без type-inference резолвить нельзя.
+        let mut fn_overloads: HashMap<String, Vec<&FnDecl>> = HashMap::new();
+        let mut method_overloads: HashMap<String, Vec<&FnDecl>> = HashMap::new();
+        // имя метода → множество (type_name) на которых он определён.
+        let mut method_owner_count: HashMap<String, Vec<&FnDecl>> = HashMap::new();
         for item in &module.items {
             match item {
                 Item::Type(t) => {
@@ -4879,15 +4897,50 @@ impl MapLitCtx {
                             .entry(recv.type_name.clone())
                             .or_default()
                             .insert(f.name.clone());
+                        let key = format!("{}.{}", recv.type_name, f.name);
+                        method_overloads.entry(key).or_default().push(f);
+                        method_owner_count.entry(f.name.clone()).or_default().push(f);
+                    } else {
+                        fn_overloads.entry(f.name.clone()).or_default().push(f);
                     }
                 }
                 _ => {}
             }
         }
+        // Оставляем только single-candidate (без overload) — иначе резолв
+        // по имени неоднозначен и argument-позиция не получает expected.
+        let extract_params = |fns: &[&FnDecl]| -> Option<Vec<(String, TypeRef)>> {
+            match fns {
+                [single] => Some(
+                    single
+                        .params
+                        .iter()
+                        .map(|p| (p.name.clone(), p.ty.clone()))
+                        .collect(),
+                ),
+                _ => None,
+            }
+        };
+        let fn_param_types: HashMap<String, Vec<(String, TypeRef)>> = fn_overloads
+            .iter()
+            .filter_map(|(k, v)| extract_params(v).map(|p| (k.clone(), p)))
+            .collect();
+        let method_param_types: HashMap<String, Vec<(String, TypeRef)>> = method_overloads
+            .iter()
+            .filter_map(|(k, v)| extract_params(v).map(|p| (k.clone(), p)))
+            .collect();
+        let unique_method_param_types: HashMap<String, Vec<(String, TypeRef)>> =
+            method_owner_count
+                .iter()
+                .filter_map(|(k, v)| extract_params(v).map(|p| (k.clone(), p)))
+                .collect();
         MapLitCtx {
             type_methods,
             known_types,
             from_fields_types,
+            fn_param_types,
+            method_param_types,
+            unique_method_param_types,
             fn_generics: HashSet::new(),
         }
     }
@@ -4901,6 +4954,9 @@ impl MapLitCtx {
                         type_methods: self.type_methods.clone(),
                         known_types: self.known_types.clone(),
                         from_fields_types: self.from_fields_types.clone(),
+                        fn_param_types: self.fn_param_types.clone(),
+                        method_param_types: self.method_param_types.clone(),
+                        unique_method_param_types: self.unique_method_param_types.clone(),
                         fn_generics: f.generics.iter().map(|g| g.name.clone()).collect(),
                     };
                     // Generic-параметры receiver-типа тоже видимы.
@@ -5002,15 +5058,28 @@ impl MapLitCtx {
             }
             ExprKind::Call { func, args, trailing } => {
                 self.walk_expr(func, None, errors);
-                // Argument-позиция: если callee резолвится и параметр имеет
-                // известный тип — протаскиваем его как expected (фундамент
-                // Ф.3a). Bootstrap: только positional args, callee по имени.
-                let param_types = self.resolve_call_param_types(func);
-                for (idx, a) in args.iter().enumerate() {
-                    let arg_expected = param_types
-                        .as_ref()
-                        .and_then(|ps| ps.get(idx))
-                        .and_then(|p| p.as_ref());
+                // Plan 52 Ф.3a: D55 argument-position coercion. Если callee
+                // резолвится в единственного кандидата — протаскиваем тип
+                // соответствующего параметра как expected в каждый аргумент.
+                // Positional args связываются по индексу, named (D102) — по
+                // имени параметра. Это разблокирует `f({...})` / `f([k:v])`
+                // / `f(opts: {...})`.
+                let params = self.resolve_call_params(func);
+                let mut positional_idx = 0usize;
+                for a in args.iter() {
+                    let arg_expected: Option<&TypeRef> = match (&params, a.arg_name()) {
+                        (Some(ps), Some(name)) => {
+                            // Named-arg: ищем параметр по имени.
+                            ps.iter().find(|(pn, _)| pn == name).map(|(_, t)| t)
+                        }
+                        (Some(ps), None) => {
+                            // Positional-arg: по текущему индексу.
+                            let r = ps.get(positional_idx).map(|(_, t)| t);
+                            positional_idx += 1;
+                            r
+                        }
+                        (None, _) => None,
+                    };
                     self.walk_expr(a.expr(), arg_expected, errors);
                 }
                 if let Some(t) = trailing {
@@ -5187,15 +5256,38 @@ impl MapLitCtx {
         }
     }
 
-    /// Резолвит callee `func`-выражение в список типов параметров. Bootstrap:
-    /// только free-fn по имени и `Type.method` static-call с единственным
-    /// (без overload) кандидатом. Возвращает `None` если резолв неоднозначен
-    /// — тогда argument-позиции не получают expected (graceful fallback).
-    fn resolve_call_param_types(&self, _func: &Expr) -> Option<Vec<Option<TypeRef>>> {
-        // Ф.2: argument-позиция пока без резолва — заполняется в Ф.3a, где
-        // добавляется fn_decls/method_table. Здесь — заглушка, чтобы
-        // walk-структура была готова. Возврат None = нет expected у args.
-        None
+    /// Plan 52 Ф.3a: резолвит callee `func`-выражение в список `(имя, тип)`
+    /// параметров для D55 argument-position coercion.
+    ///
+    /// Поддерживает (bootstrap, только single-candidate без overload):
+    ///   - `f(...)` — free-fn по имени;
+    ///   - `Type.method(...)` — static-method / конструктор;
+    ///   - `obj.method(...)` — instance-method, если имя метода уникально
+    ///     (определено ровно на одном типе) — без type-inference receiver'а.
+    ///
+    /// Возвращает `None` если резолв неоднозначен (overload, неизвестное
+    /// имя, сложный callee) — тогда argument-позиции не получают expected
+    /// (graceful fallback: coercion-проверки просто не запускаются).
+    fn resolve_call_params(&self, func: &Expr) -> Option<Vec<(String, TypeRef)>> {
+        // Распаковываем turbofish до базового func-expr.
+        let base: &Expr = match &func.kind {
+            ExprKind::TurboFish { base, .. } => base,
+            _ => func,
+        };
+        match &base.kind {
+            ExprKind::Ident(name) => self.fn_param_types.get(name).cloned(),
+            ExprKind::Path(parts) if parts.len() == 2 => {
+                // `Type.method` — static-call / конструктор.
+                let key = format!("{}.{}", parts[0], parts[1]);
+                self.method_param_types.get(&key).cloned()
+            }
+            ExprKind::Member { name: method_name, .. } => {
+                // `obj.method` — instance-call. Резолвим по уникальному
+                // имени метода (определён ровно на одном типе без overload).
+                self.unique_method_param_types.get(method_name).cloned()
+            }
+            _ => None,
+        }
     }
 
     /// Plan 52 Ф.2: проверка map-литерала `[k: v]`.
