@@ -428,6 +428,23 @@ impl VerificationPipeline {
             }
         }
 
+        // Ф.2 (Plan 33.5): Loop invariant preservation via havoc-based encoding.
+        //
+        // Алгоритм (Dafny/Verus standard):
+        // 1. Собрать все while-loops с invariants в теле fn.
+        // 2. Для каждого цикла:
+        //    a. Havoc: для каждой mutable var в теле цикла — fresh SMT var
+        //       (символическое состояние после N итераций).
+        //    b. Assume invariant на havoc'd state + assume loop cond true.
+        //    c. Symbolic exec body (V1: straight-line assignments only).
+        //    d. Assert invariant после body (на post-state).
+        //    e. UNSAT → invariant preserved; SAT → counterexample.
+        let loop_pres = collect_loop_preservation_targets(&fd.body);
+        for lp in loop_pres {
+            let res = verify_loop_preservation(&lp, &ctx, &mut *backend);
+            results.extend(res);
+        }
+
         // Ф.1.3 (Plan 33.5): verify loop decreases.
         // V1 scope: simple `while <cond> decreases <m> { ... }` где body
         // содержит прямое decrement `var = var - 1` или `var = var + 1`
@@ -810,6 +827,255 @@ fn extract_counter_assignments(body: &Block) -> Vec<(String, i64)> {
         }
     }
     result
+}
+
+/// Ф.2 (Plan 33.5): данные одного цикла с invariants для preservation check.
+struct LoopPreservationTarget {
+    span: Span,
+    invariants: Vec<Expr>,
+    cond: Option<Expr>,           // None для `loop { }` (условие = true)
+    body_assignments: Vec<(String, Expr)>, // (var_name, value_expr) из body stmts
+    havoc_vars: Vec<String>,      // vars мутируемые в теле
+}
+
+/// Ф.2: собрать все while/loop с invariants для havoc+preservation.
+fn collect_loop_preservation_targets(body: &FnBody) -> Vec<LoopPreservationTarget> {
+    let mut out = Vec::new();
+    match body {
+        FnBody::Expr(e) => collect_loop_preservation_in_expr(e, &mut out),
+        FnBody::Block(b) => collect_loop_preservation_in_block(b, &mut out),
+        FnBody::External => {}
+    }
+    out
+}
+
+fn collect_loop_preservation_in_block(b: &Block, out: &mut Vec<LoopPreservationTarget>) {
+    for s in &b.stmts {
+        if let Stmt::Expr(e) = s { collect_loop_preservation_in_expr(e, out); }
+    }
+    if let Some(e) = &b.trailing { collect_loop_preservation_in_expr(e, out); }
+}
+
+fn collect_loop_preservation_in_expr(e: &Expr, out: &mut Vec<LoopPreservationTarget>) {
+    match &e.kind {
+        ExprKind::While { cond, body, invariants, .. } if !invariants.is_empty() => {
+            let assignments = extract_body_assignments(body);
+            let havoc_vars: Vec<String> = assignments.iter().map(|(n, _)| n.clone()).collect();
+            out.push(LoopPreservationTarget {
+                span: e.span,
+                invariants: invariants.clone(),
+                cond: Some(*cond.clone()),
+                body_assignments: assignments,
+                havoc_vars,
+            });
+            collect_loop_preservation_in_block(body, out);
+        }
+        ExprKind::Loop { body, invariants, .. } if !invariants.is_empty() => {
+            let assignments = extract_body_assignments(body);
+            let havoc_vars: Vec<String> = assignments.iter().map(|(n, _)| n.clone()).collect();
+            out.push(LoopPreservationTarget {
+                span: e.span,
+                invariants: invariants.clone(),
+                cond: None,
+                body_assignments: assignments,
+                havoc_vars,
+            });
+            collect_loop_preservation_in_block(body, out);
+        }
+        ExprKind::While { body, .. } | ExprKind::Loop { body, .. } => {
+            collect_loop_preservation_in_block(body, out);
+        }
+        ExprKind::For { body, invariants, .. } if !invariants.is_empty() => {
+            // For-loops: treat body as is, no cond (iter is opaque in V1).
+            let assignments = extract_body_assignments(body);
+            let havoc_vars: Vec<String> = assignments.iter().map(|(n, _)| n.clone()).collect();
+            out.push(LoopPreservationTarget {
+                span: e.span,
+                invariants: invariants.clone(),
+                cond: None,
+                body_assignments: assignments,
+                havoc_vars,
+            });
+            collect_loop_preservation_in_block(body, out);
+        }
+        ExprKind::For { body, .. } => collect_loop_preservation_in_block(body, out),
+        ExprKind::Block(b) => collect_loop_preservation_in_block(b, out),
+        ExprKind::If { then, else_, .. } => {
+            collect_loop_preservation_in_block(then, out);
+            match else_ {
+                Some(ElseBranch::Block(b)) => collect_loop_preservation_in_block(b, out),
+                Some(ElseBranch::If(ei)) => collect_loop_preservation_in_expr(ei, out),
+                None => {}
+            }
+        }
+        _ => {}
+    }
+}
+
+/// V1: извлечь прямые assignments `Assign { target: Ident(x), op: Assign, value: e }`
+/// из тела блока (только первый уровень stmts). Compound `+=/-=` тоже собираем.
+fn extract_body_assignments(body: &Block) -> Vec<(String, Expr)> {
+    let mut result = Vec::new();
+    for s in &body.stmts {
+        let Stmt::Assign { target, op: assign_op, value, .. } = s else { continue };
+        let ExprKind::Ident(var_name) = &target.kind else { continue };
+        let synthetic_value: Expr = match assign_op {
+            AssignOp::Assign => value.clone(),
+            // x += k  →  synthetic: x + k
+            AssignOp::Add => Expr {
+                kind: ExprKind::Binary {
+                    left: Box::new(target.clone()),
+                    op: BinOp::Add,
+                    right: Box::new(value.clone()),
+                },
+                span: value.span,
+            },
+            // x -= k  →  synthetic: x - k
+            AssignOp::Sub => Expr {
+                kind: ExprKind::Binary {
+                    left: Box::new(target.clone()),
+                    op: BinOp::Sub,
+                    right: Box::new(value.clone()),
+                },
+                span: value.span,
+            },
+            _ => continue, // Mul/Div — skip in V1
+        };
+        result.push((var_name.clone(), synthetic_value));
+    }
+    result
+}
+
+/// Ф.2: verify invariant preservation для одного цикла.
+///
+/// Алгоритм:
+/// 1. Для каждой havoc var — declare fresh `_havoc_<var>` в backend.
+/// 2. push() scope.
+/// 3. Assume invariants на havoc state (substitute var → _havoc_var).
+/// 4. Assume cond на havoc state (если есть).
+/// 5. Encode body assignments: для каждого `var = rhs` → compute `rhs` на havoc state.
+/// 6. Assert invariants на post state (substitute var → post_val).
+/// 7. check_sat (goal = negation of invariant → UNSAT = preserved).
+/// 8. pop() scope.
+fn verify_loop_preservation(
+    lp: &LoopPreservationTarget,
+    ctx: &encode::EncodeCtx<'_>,
+    backend: &mut dyn SmtBackend,
+) -> Vec<(Span, VerifyResult)> {
+    let mut results = Vec::new();
+
+    // Step 1: declare fresh havoc vars.
+    let mut havoc_map: std::collections::HashMap<String, SmtTerm> = std::collections::HashMap::new();
+    for var in &lp.havoc_vars {
+        let havoc_name = format!("_havoc_{}", var);
+        backend.declare_var(&havoc_name, SortRef::Int);
+        havoc_map.insert(var.clone(), SmtTerm::Var(havoc_name));
+    }
+
+    // Helper: substitute havoc vars in a SmtTerm.
+    let substitute_havoc = |mut t: SmtTerm| -> SmtTerm {
+        for (var, havoc_var) in &havoc_map {
+            t = t.substitute(var, havoc_var);
+        }
+        t
+    };
+
+    // Step 2: push scope.
+    backend.push();
+
+    // Step 3: assume invariants on havoc state.
+    let mut inv_terms_havoc: Vec<SmtTerm> = Vec::new();
+    for inv in &lp.invariants {
+        match encode::encode_expr_with_ctx(inv, ctx) {
+            Ok(inv_t) => {
+                let inv_havoc = substitute_havoc(inv_t);
+                inv_terms_havoc.push(inv_havoc.clone());
+                // Assume (not(not inv)) = assume inv.
+                backend.assert(Assertion {
+                    formula: inv_havoc,
+                    label: Some("inv_pre_havoc".into()),
+                });
+            }
+            Err(_) => {
+                // Invariant non-encodable → skip preservation for this loop.
+                backend.pop();
+                return results;
+            }
+        }
+    }
+
+    // Step 4: assume cond on havoc state.
+    if let Some(cond_expr) = &lp.cond {
+        if let Ok(cond_t) = encode::encode_expr_with_ctx(cond_expr, ctx) {
+            let cond_havoc = substitute_havoc(cond_t);
+            backend.assert(Assertion { formula: cond_havoc, label: Some("loop_cond_havoc".into()) });
+        }
+    }
+
+    // Step 5: compute post-state for each assigned var.
+    let mut post_map: std::collections::HashMap<String, SmtTerm> = std::collections::HashMap::new();
+    for (var, rhs_expr) in &lp.body_assignments {
+        match encode::encode_expr_with_ctx(rhs_expr, ctx) {
+            Ok(rhs_t) => {
+                // rhs читает из havoc state.
+                let rhs_havoc = substitute_havoc(rhs_t);
+                post_map.insert(var.clone(), rhs_havoc);
+            }
+            Err(_) => {
+                // Cannot encode rhs → fall back, no preservation check.
+                backend.pop();
+                return results;
+            }
+        }
+    }
+
+    // Helper: substitute post vars in a SmtTerm (post-state).
+    let substitute_post = |t: SmtTerm| -> SmtTerm {
+        let mut result = t;
+        // Non-assigned vars: havoc (still in havoc state post-loop).
+        for (var, havoc_var) in &havoc_map {
+            if !post_map.contains_key(var) {
+                result = result.substitute(var, havoc_var);
+            }
+        }
+        // Assigned vars: use post value.
+        for (var, post_val) in &post_map {
+            result = result.substitute(var, post_val);
+        }
+        result
+    };
+
+    // Step 6 + 7: for each invariant, try_prove(inv_post).
+    // try_prove asserts NOT(goal) then checks SAT:
+    //   UNSAT = goal proven (invariant holds after body).
+    //   SAT   = counterexample (invariant NOT preserved).
+    for inv in &lp.invariants {
+        match encode::encode_expr_with_ctx(inv, ctx) {
+            Ok(inv_t) => {
+                let inv_post = substitute_post(inv_t);
+                match try_prove(backend, inv_post) {
+                    SatResult::Unsat(_) => {
+                        results.push((lp.span, VerifyResult::Proven));
+                    }
+                    SatResult::Sat(model) => {
+                        let cex = format_counterexample(&model);
+                        results.push((lp.span, VerifyResult::Disproved(model,
+                            format!("loop invariant not preserved: {}", cex))));
+                    }
+                    SatResult::Unknown(reason) => {
+                        results.push((lp.span, VerifyResult::Unknown(
+                            format!("loop invariant preservation: {}", unknown_to_diag_message(reason)))));
+                    }
+                }
+            }
+            Err(_) => {} // non-encodable invariant → skip
+        }
+    }
+
+    // Step 8: pop scope.
+    backend.pop();
+
+    results
 }
 
 /// Plan 33.3 Ф.9 / Plan 33.4 P1-5: метаданные одного axiom'а с реестрами для encoding.
