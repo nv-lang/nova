@@ -6439,3 +6439,24 @@ bootstrap-баг). Новая caller-owned: токен создаётся `Cance
   тело и не флашили `lambda_forward_decls` → `spawn` внутри generic-функции
   → ctx-typedef после использования → «undeclared NovaSpawnCtx_*». Fix:
   буферизация + flush (как emit_fn/emit_test).
+
+---
+
+## Plan 33.4 P1-6: Spec sync — 8 D-decisions (2026-05-15)
+
+Из Plan 33.4 Ф.8 «Spec sync»: 8 D-decisions, реализованных в
+Plan 33.3 Ф.9 / Plan 33.4 P1-5, записаны в spec/decisions/.
+
+**D109** (`#pure` views + axioms + `#verify`/`#trusted`) → `04-effects.md`.
+**D110** (ghost state — spec-only bindings) → `02-types.md`.
+**D111** (`assume` / `assert_static` / `#trusted` external) → `09-tooling.md`.
+**D112** (bounded quantifiers `forall`/`exists`) → `09-tooling.md`.
+**D113** (`#must_verify_module` strict mode) → `09-tooling.md`, статус Planned V2.
+**D114** (SMT cache + parallel verification) → `09-tooling.md`, статус Planned V2.
+**D115** (Axiom `BinderType` enum) → `04-effects.md`.
+**D116** (Z3 backend через собственные FFI) → `09-tooling.md`.
+
+Статусы:
+- Реализовано (Plan 33.3 Ф.9): D109, D115, D116.
+- Реализовано (Plan 33.3 Ф.10): D110, D111, D112.
+- Запланировано (Plan 33.4 V2): D113 (`#must_verify_module`), D114 (cache + parallel).

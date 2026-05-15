@@ -19,6 +19,7 @@
 | [D36](#d36-поля-типа-дефолт-mutable-у-mut-bindinga-readonly-для-never-mut) | Поля типа: дефолт mutable у mut-binding'а, `readonly` для never-mut | active |
 | [D66](#d66-self-universal--ссылка-на-обобщающий-тип-в-методах-effects-protocols) | `Self` universal: ссылка на обобщающий тип в методах, effects, protocols | active |
 | [D72](#d72-generic-bounds-через-t-protocol--protocol-как-тип) | Generic bounds через `[T Protocol]` — protocol как тип | active |
+| [D110](#d110-ghost-state--spec-only-bindings) | Ghost state — spec-only bindings | active |
 
 ---
 
@@ -3093,5 +3094,55 @@ Q-bounds зафиксировал синтаксис заранее (`[T Bound]`
 D72 принимает это как формальное решение, расширяет до полной семантики
 (structural check, existential-vs-universal через позицию, multiple
 bounds через анонимный protocol).
+
+---
+
+## D110. Ghost state — spec-only bindings
+
+**Статус:** Принято (Plan 33.3 Ф.10, реализовано в AST и type-checker)
+
+### Решение
+
+`ghost let` / `ghost var` объявляют **spec-only переменные** — они видимы
+в `requires`/`ensures`/`invariant` и других `ghost`-statements, но
+**никогда не эмитируются в C-код** (ни в debug, ни в release).
+
+```nova
+fn fill(xs mut []int) -> ()
+    ensures forall i in 0..xs.len() : xs[i] == 0
+{
+    ghost let n = xs.len()      // spec-only: виден в invariant
+    for i in 0..xs.len()
+        invariant forall j in 0..i : xs[j] == 0
+    {
+        xs[i] = 0
+    }
+}
+```
+
+**Правила видимости ghost:**
+- Ghost-binding виден: в других `ghost`-stmts; в `requires`/`ensures`/`invariant`; в теле `#pure` функций.
+- Использование ghost-binding в non-ghost emit-code → **compile error**.
+- Codegen: ghost-stmts и ghost-bindings полностью стираются (паритет с Dafny).
+
+**Следствие:** invariants, использующие ghost-данные, в debug **не проверяются
+runtime** — только через SMT. Это задокументированное design-решение.
+
+### Обоснование
+
+Ghost state позволяет писать контракты в терминах вспомогательных
+концепций (счётчики, логические флаги, промежуточные значения), не
+засоряя runtime-код. Паритет с Dafny `ghost var`, F* `Ghost`.
+
+### Реализация
+
+- `compiler-codegen/src/ast/mod.rs` — поле `is_ghost: bool` в `LetDecl`;
+  enum-вариант `Stmt::Ghost` для ghost-блоков (Ф.10 scope).
+- `compiler-codegen/src/types/mod.rs` — type-check: reject ghost-ref
+  в non-ghost context.
+- `compiler-codegen/src/codegen/emit_c.rs` — ghost-stmts стираются
+  (пустой emit).
+- `compiler-codegen/src/verify/encode.rs` — ghost-vars участвуют
+  в SMT-encoding как обычные fresh-vars.
 
 ---
