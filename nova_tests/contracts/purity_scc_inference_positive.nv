@@ -1,0 +1,20 @@
+// Ф.3 (Plan 33.5): Purity SCC inference.
+// fn is_positive без @pure авто-определяется как pure через SCC,
+// можно использовать в requires другой функции.
+
+module nova_tests.contracts.purity_scc_inference_positive
+
+// Нет @pure — должно быть авто-выведено через SCC.
+fn is_positive(x int) -> bool => x > 0
+
+fn safe_div(a int, b int) -> int
+    requires is_positive(b)
+{
+    a / b
+}
+
+test "purity_scc_inferred" {
+    assert(is_positive(5) == true)
+    assert(is_positive(-1) == false)
+    assert(safe_div(10, 2) == 5)
+}

@@ -30,6 +30,27 @@ pub enum EncodingError {
 #[derive(Debug, Clone)]
 pub struct EncodeCtx<'a> {
     pub pure_views: &'a HashMap<String, PureViewSig>,
+    /// Plan 33.4 D.0.2: реестр `#pure` fn-ов модуля. Ключ — fn name.
+    /// Используется для кодирования `is_positive(n)` в контракте →
+    /// UF `_pure_fn_is_positive(n)` в SMT.
+    pub pure_fns: &'a HashMap<String, PureFnInfo>,
+}
+
+/// Signature of a `#pure` fn for SMT encoding (Plan 33.4 D.0.2).
+#[derive(Debug, Clone)]
+pub struct PureFnInfo {
+    pub param_names: Vec<String>,
+    pub param_sorts: Vec<SortRef>,
+    pub return_sort: SortRef,
+    /// Body expression for inlining. If present, calls to this fn in contracts
+    /// are inlined (substituting args for params) rather than encoded as UF.
+    /// This gives Z3 immediate ground truth without quantifier instantiation.
+    pub body_expr: Option<Box<Expr>>,
+}
+
+/// SMT UF name for a pure fn: `_pure_fn_<name>`.
+pub fn pure_fn_uf_name(fn_name: &str) -> String {
+    format!("_pure_fn_{}", fn_name)
 }
 
 #[derive(Debug, Clone)]
@@ -48,9 +69,11 @@ impl<'a> EncodeCtx<'a> {
     pub fn empty() -> EncodeCtx<'static> {
         // Хитрый трюк: возвращаем 'static reference на пустую map.
         // Используется только для backward-compat encode_expr.
-        static EMPTY: std::sync::OnceLock<HashMap<String, PureViewSig>> = std::sync::OnceLock::new();
-        let map = EMPTY.get_or_init(HashMap::new);
-        EncodeCtx { pure_views: map }
+        static EMPTY_VIEWS: std::sync::OnceLock<HashMap<String, PureViewSig>> = std::sync::OnceLock::new();
+        static EMPTY_FNS: std::sync::OnceLock<HashMap<String, PureFnInfo>> = std::sync::OnceLock::new();
+        let views = EMPTY_VIEWS.get_or_init(HashMap::new);
+        let fns = EMPTY_FNS.get_or_init(HashMap::new);
+        EncodeCtx { pure_views: views, pure_fns: fns }
     }
 }
 
@@ -104,6 +127,39 @@ pub fn encode_expr_with_ctx(e: &Expr, ctx: &EncodeCtx) -> Result<SmtTerm, Encodi
                         }
                         let uf = pure_view_uf_name(&sig.effect_name, name);
                         return Ok(SmtTerm::App(uf, encoded_args));
+                    }
+                }
+            }
+            // Plan 33.4 D.0.2: #pure fn composition.
+            // If body is available, inline (substitute args for params) to give
+            // Z3 ground truth without quantifier instantiation. Otherwise fall
+            // back to UF application (+ forall axiom in pipeline).
+            if trailing.is_none() {
+                if let ExprKind::Ident(name) = &func.kind {
+                    if let Some(info) = ctx.pure_fns.get(name) {
+                        if args.len() != info.param_sorts.len() {
+                            return Err(EncodingError::Unsupported(format!(
+                                "pure fn `{}` arity mismatch: expected {}, got {}",
+                                name, info.param_sorts.len(), args.len()
+                            )));
+                        }
+                        if let Some(body_e) = &info.body_expr {
+                            // Inline: encode body with params substituted by encoded args.
+                            let mut term = encode_expr_with_ctx(body_e, ctx)?;
+                            for (param_name, call_arg) in info.param_names.iter().zip(args.iter()) {
+                                let enc_arg = encode_expr_with_ctx(call_arg.expr(), ctx)?;
+                                term = term.substitute(param_name, &enc_arg);
+                            }
+                            return Ok(term);
+                        } else {
+                            // No body → UF application.
+                            let mut encoded_args = Vec::with_capacity(args.len());
+                            for a in args {
+                                encoded_args.push(encode_expr_with_ctx(a.expr(), ctx)?);
+                            }
+                            let uf = pure_fn_uf_name(name);
+                            return Ok(SmtTerm::App(uf, encoded_args));
+                        }
                     }
                 }
             }
@@ -171,9 +227,116 @@ pub fn encode_expr_with_ctx(e: &Expr, ctx: &EncodeCtx) -> Result<SmtTerm, Encodi
             Ok(SmtTerm::App(format!("_field_{}", name), vec![obj_t]))
         }
 
+        // D.1.3: forall x in lo..hi : P(x)
+        ExprKind::Forall { var, range, body } => {
+            let (lo, hi) = extract_range(range)?;
+            let lo_t = encode_expr_with_ctx(lo, ctx)?;
+            let hi_t = encode_expr_with_ctx(hi, ctx)?;
+            let body_t = encode_expr_with_ctx(body, ctx)?;
+            let var_s = SmtTerm::Var(var.clone());
+            // range constraint: lo <= x && x < hi
+            let in_range = SmtTerm::and(vec![
+                SmtTerm::App("<=".into(), vec![lo_t, var_s.clone()]),
+                SmtTerm::App("<".into(), vec![var_s, hi_t]),
+            ]);
+            // forall x: Int. in_range => body
+            let implies = SmtTerm::App("=>".into(), vec![in_range, body_t]);
+            // Ф.1.2 (Plan 33.5): extract trigger patterns from body.
+            // Ищем App(uf, args) содержащий bound_var → передаём как trigger
+            // в SmtTerm::Forall.patterns, Z3 backend использует Z3_mk_pattern.
+            let patterns = collect_triggers(&implies, var);
+            Ok(SmtTerm::Forall(vec![(var.clone(), SortRef::Int)], patterns, Box::new(implies)))
+        }
+
+        // D.1.3: exists x in lo..hi : P(x)
+        // Кодируем как not(forall x in range: not P(x))
+        ExprKind::Exists { var, range, body } => {
+            let (lo, hi) = extract_range(range)?;
+            let lo_t = encode_expr_with_ctx(lo, ctx)?;
+            let hi_t = encode_expr_with_ctx(hi, ctx)?;
+            let body_t = encode_expr_with_ctx(body, ctx)?;
+            let var_s = SmtTerm::Var(var.clone());
+            let in_range = SmtTerm::and(vec![
+                SmtTerm::App("<=".into(), vec![lo_t, var_s.clone()]),
+                SmtTerm::App("<".into(), vec![var_s, hi_t]),
+            ]);
+            let not_body = SmtTerm::not(body_t);
+            let implies = SmtTerm::App("=>".into(), vec![in_range, not_body]);
+            // Ф.1.2: triggers для двойного-отрицания exists (по body, не not_body).
+            // Ищем в implies (который содержит и not_body).
+            let patterns = collect_triggers(&implies, var);
+            let inner = SmtTerm::Forall(vec![(var.clone(), SortRef::Int)], patterns, Box::new(implies));
+            Ok(SmtTerm::not(inner))
+        }
+
         _ => Err(EncodingError::Unsupported(format!(
             "expression kind not supported in contract encoder (33.1)"
         ))),
+    }
+}
+
+/// Ф.1.2 (Plan 33.5): собирает trigger patterns для квантора над `bound_var`.
+///
+/// Алгоритм:
+/// 1. Обходим body рекурсивно, собираем **все** App(name, args) где:
+///    - name не является логическим оператором (=>, and, or, not, =, !=, <, <=, >, >=).
+///    - хотя бы один arg содержит `bound_var` (прямо или косвенно).
+/// 2. Возвращаем их как `Vec<Vec<SmtTerm>>` — один pattern per найденный App.
+///    Z3 попробует каждый pattern независимо; достаточно матча одного.
+/// 3. Если triggers не найдены — возвращаем пустой вектор (no-hint,
+///    Z3 использует heuristic instantiation).
+///
+/// Паритет с Dafny: Dafny автоматически выводит triggers; Verus требует
+/// явных `#[trigger]`. Nova автовыводит как Dafny, но без SAT fallback.
+pub fn collect_triggers(body: &SmtTerm, bound_var: &str) -> Vec<Vec<SmtTerm>> {
+    let mut found: Vec<SmtTerm> = Vec::new();
+    collect_trigger_apps(body, bound_var, &mut found);
+    if found.is_empty() {
+        vec![]
+    } else {
+        // Каждый найденный App — отдельный single-term pattern.
+        found.into_iter().map(|t| vec![t]).collect()
+    }
+}
+
+/// Рекурсивный walker для collect_triggers.
+fn collect_trigger_apps(t: &SmtTerm, bound_var: &str, out: &mut Vec<SmtTerm>) {
+    match t {
+        SmtTerm::App(name, args) => {
+            let is_logic_op = matches!(name.as_str(),
+                "=>" | "and" | "or" | "not" | "=" | "!=" | "<" | "<=" | ">" | ">=" | "ite");
+            if !is_logic_op && args.iter().any(|a| term_contains_var(a, bound_var)) {
+                // Хороший trigger: UF или arithmetic fn содержащий bound var.
+                out.push(t.clone());
+                // Не рекурсируем в args — inner triggers less precise.
+                return;
+            }
+            // Для логических операторов рекурсируем в аргументы.
+            for a in args {
+                collect_trigger_apps(a, bound_var, out);
+            }
+        }
+        SmtTerm::Forall(_, _, inner) => collect_trigger_apps(inner, bound_var, out),
+        _ => {}
+    }
+}
+
+/// Ф.1.2: проверяет, содержит ли term переменную `var_name`.
+pub fn term_contains_var(t: &SmtTerm, var_name: &str) -> bool {
+    match t {
+        SmtTerm::Var(n) => n == var_name,
+        SmtTerm::App(_, args) => args.iter().any(|a| term_contains_var(a, var_name)),
+        SmtTerm::Forall(_, _, body) => term_contains_var(body, var_name),
+        _ => false,
+    }
+}
+
+/// D.1.3: извлечь lo и hi из Range-выражения.
+fn extract_range(e: &Expr) -> Result<(&Expr, &Expr), EncodingError> {
+    match &e.kind {
+        ExprKind::Range { start, end, .. } => Ok((start, end)),
+        _ => Err(EncodingError::Unsupported(
+            "quantifier range must be lo..hi expression".into())),
     }
 }
 

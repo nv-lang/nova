@@ -1,0 +1,15 @@
+// REQUIRES_SMT_BACKEND z3
+module nova_tests.contracts.decreases_wf_z3_positive
+
+// Verify decreases well-foundedness: measure `n` is non-negative at entry
+// (requires n >= 0), and decreases at the recursive call (n-1 < n).
+// The `ensures` is omitted to keep the body encodable check independent.
+#unverified
+fn fact(n int) -> int
+    requires n >= 0
+    decreases n
+=> if n == 0 { 1 } else { n * fact(n - 1) }
+
+test "decreases verified" {
+    assert(fact(5) == 120)
+}

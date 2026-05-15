@@ -81,6 +81,12 @@ pub enum TokenKind {
     KwErrDefer,
     /// D94: multiplexed channel operation.
     KwSelect,
+    /// Plan 33.5 Ф.4.1: `lemma` — proof term декларация (верифицируется SMT,
+    /// не emit'ится в runtime). Семантика как у ghost fn с обязательным verify.
+    KwLemma,
+    /// Plan 33.5 Ф.4.1: `apply lemma_name(args)` — активировать lemma в текущем
+    /// SMT-scope. Adds lemma.ensures как assertion; не emit'ится в runtime.
+    KwApply,
 
     // Пунктуация
     LParen,
@@ -203,6 +209,8 @@ impl TokenKind {
             TokenKind::KwDefer => "`defer`",
             TokenKind::KwErrDefer => "`errdefer`",
             TokenKind::KwSelect => "`select`",
+            TokenKind::KwLemma => "`lemma`",
+            TokenKind::KwApply => "`apply`",
             TokenKind::LParen => "`(`",
             TokenKind::RParen => "`)`",
             TokenKind::LBracket => "`[`",

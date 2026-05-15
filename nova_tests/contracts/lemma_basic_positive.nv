@@ -1,0 +1,13 @@
+// Plan 33.5 Ф.4.1: базовая лемма — тело рефлексивно доказывает ensures.
+// TrivialBackend proves reflexive: result == body → body == body (tautology).
+
+module nova_tests.contracts.lemma_basic_positive
+
+lemma identity_lemma(x int)
+    ensures result == x
+=> x
+
+test "lemma basic positive" {
+    // Лемма является spec-only, не вызывается в runtime.
+    // Тест проверяет только что компиляция и верификация успешны.
+}

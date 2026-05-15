@@ -10,6 +10,11 @@
 | [D89](#d89-test-tooling-конвенции--expect-маркеры-для-negative-тестов) | Test-tooling конвенции: `EXPECT_*` маркеры для negative-тестов |
 | [D95](#d95-cli-path-конвенции--nova-check--nova-test) | CLI path конвенции — `nova check <path>` / `nova test <path>` |
 | [D96](#d96-синтаксис-атрибутов-name-без-квадратных-скобок) | Синтаксис атрибутов — `#name` без квадратных скобок |
+| [D111](#d111-assume--assert_static--trusted-external) | `assume` / `assert_static` / `#trusted` external |
+| [D112](#d112-bounded-quantifiers-forallexists-по-коллекции) | Bounded quantifiers (`forall`/`exists` по коллекции) |
+| [D113](#d113-must_verify_module--strict-mode-на-модуле) | `#must_verify_module` — strict mode на модуле |
+| [D114](#d114-smt-cache--parallel-verification) | SMT cache + parallel verification |
+| [D116](#d116-z3-backend-через-собственные-ffi-биндинги) | Z3 backend через собственные FFI-биндинги |
 
 ---
 
@@ -774,3 +779,255 @@ expressions. У Nova ни одной из этих причин нет.
 - Plan 16 Ф.5 — `#realtime` / `#realtime nogc`.
 - Plan 33.1 — `#must_verify`, `#unverified`, `#verify_timeout(N)`, `#pure`.
 - Plan 33.3 — `#verify_handler`, `#trusted`, `#must_verify_module`.
+
+---
+
+## D111. `assume` / `assert_static` / `#trusted` external
+
+**Статус:** Принято (Plan 33.2 Ф.8 + Plan 33.3 Ф.9/Ф.13, реализовано)
+
+### Решение
+
+Три escape-hatch механизма для управления верификацией:
+
+#### `assert_static <bool>`
+
+Промежуточный шаг доказательства: разбивает сложный контракт на части.
+SMT видит `assert_static` как дополнительный fact в текущей точке.
+В release стирается (verified по SMT); в debug — runtime assert.
+
+```nova
+fn transfer(from int, to int, amount money) Db -> ()
+    requires amount > 0
+    ensures Db.balance(to) == old(Db.balance(to)) + amount
+{
+    assert_static Db.balance(from) >= amount   // промежуточный факт
+    Db.setBalance(from, Db.balance(from) - amount)
+    Db.setBalance(to,   Db.balance(to)   + amount)
+}
+```
+
+#### `assume <bool>`
+
+Escape-hatch для знаний о FFI / внешних инвариантах. SMT получает
+`(assert <expr>)` без proof. Вне функции, помеченной `#trusted`, —
+**warning** категории `trust-introduced`.
+
+```nova
+#trusted
+fn call_ffi() -> int {
+    let result = extern_fn()
+    assume result >= 0   // знаем по документации FFI
+    result
+}
+```
+
+#### `#trusted` external fn
+
+`external fn` с контрактами требует `#trusted`. Контракты регистрируются
+как axioms — caller получает `ensures` как предположение без proof.
+
+```nova
+#trusted
+external fn libc_strlen(s str) -> int
+    requires s.is_valid_cstring()
+    ensures result >= 0
+```
+
+### Обоснование
+
+Полностью pure SMT-proof недостижим для кода с FFI, внешними
+библиотеками и непроверяемыми OS-инвариантами. Escape-хатчи
+сохраняют expressiveness при сознательном принятии риска. Паттерн
+из Dafny (`assume`, `{:axiom}`), F* (`assume_val`).
+
+### Реализация
+
+- `compiler-codegen/src/ast/mod.rs` — `ExprKind::AssertStatic`, `ExprKind::Assume`.
+- `compiler-codegen/src/parser/mod.rs` — парсинг `assert_static`, `assume`.
+- `compiler-codegen/src/types/mod.rs` — `#trusted` attribute на fn-decl;
+  warning для `assume` вне `#trusted`.
+- `compiler-codegen/src/verify/encode.rs` — `assert_static` → SMT fact; `assume` → `(assert ...)`.
+- `compiler-codegen/src/codegen/emit_c.rs` — `assume` → стирается в release;
+  debug → runtime-if с `NOVA_ASSUME` violation.
+
+---
+
+## D112. Bounded quantifiers (`forall`/`exists` по коллекции)
+
+**Статус:** Принято (Plan 33.3 Ф.10, реализовано в AST и SMT-encoder)
+
+### Решение
+
+Nova поддерживает **bounded quantifiers** — только по конкретным
+коллекциям или диапазонам. Unbounded quantifiers (`forall x : T : P(x)`)
+**запрещены** (compile error).
+
+```nova
+requires forall i in 0..xs.len() : xs[i] >= 0
+ensures  exists i in indices : result == xs[i]
+invariant forall i in 0..k : processed[i] == true
+```
+
+**Синтаксис:**
+```
+forall <ident> in <expr> : <bool>
+exists <ident> in <expr> : <bool>
+```
+
+`expr` после `in` — `Iter[T]` (array, range, set, map); body — `bool`,
+`#pure` (без side effects).
+
+**SMT encoding:**
+- Конкретный размер → конъюнкция/дизъюнкция `P(xs[0]) ∧ P(xs[1]) ∧ ...`.
+- Символьный размер → `Z3_mk_forall_const` с `:pattern ((select xs i))`.
+
+Unbounded форма вызывает ошибку компиляции:
+```
+error: unbounded quantifier not supported
+  use `forall x in collection : P(x)` (bounded form)
+```
+
+### Обоснование
+
+Unbounded quantifiers в SMT практически всегда требуют ручного trigger
+annotation и часто зависают. Bounded форма даёт детерминированный
+trigger через `select`-pattern и покрывает 95% реальных программных
+инвариантов. Паттерн из Dafny, Verus.
+
+### Реализация
+
+- `compiler-codegen/src/ast/mod.rs` — `ExprKind::Forall { var, iter, body }`, `ExprKind::Exists { ... }`.
+- `compiler-codegen/src/parser/mod.rs` — парсинг `forall`/`exists`; reject unbounded form.
+- `compiler-codegen/src/types/mod.rs` — type-check: iter → `Iter[T]`, body → `bool`, `#pure`.
+- `compiler-codegen/src/verify/encode.rs` — конъюнкция (concrete) или `forall` с pattern (symbolic).
+
+---
+
+## D113. `#must_verify_module` — strict mode на модуле
+
+**Статус:** Запланировано (Plan 33.3 Ф.13, Plan 33.4 V2)
+
+### Решение
+
+Атрибут `#must_verify_module` на модуле переводит все функции внутри
+в режим `#must_verify` — любой unprovable контракт становится
+**compile error** (не fallback на runtime).
+
+```nova
+#must_verify_module
+module banking.core {
+    fn transfer(from int, to int, amount money) Db -> ()
+        requires amount > 0
+        ensures  Db.balance(to) == old(Db.balance(to)) + amount
+    => ...
+}
+```
+
+Целевой use-case: критичные компоненты (финансы, медицина, авионика)
+где runtime-fallback неприемлем. Паритет с Dafny `:verify true` на
+модуле.
+
+Функция внутри `#must_verify_module` может явно opt-out через
+`#unverified` (задокументированное исключение).
+
+### Обоснование
+
+`#must_verify` на каждой функции — verbose. Module-level атрибут
+выражает намерение «этот модуль формально верифицирован» одной строкой.
+Позволяет CI-gate отделить critical-core от ordinary code.
+
+### Реализация (V2)
+
+- `compiler-codegen/src/ast/mod.rs` — флаг `must_verify_module` в `ModuleDecl`.
+- `compiler-codegen/src/types/mod.rs` — при type-check fn в таком модуле:
+  применять semantics `#must_verify` ко всем fn без явного `#unverified`.
+
+---
+
+## D114. SMT cache + parallel verification
+
+**Статус:** Запланировано (Plan 33.3 Ф.12, V2)
+
+### Решение
+
+#### Incremental SMT cache
+
+`target/contracts-cache/<hash>.json` хранит результат верификации
+каждой функции:
+
+```json
+{
+  "fn_id":          "module/path::fn_name",
+  "input_hash":     "sha256:<AST + deps + contracts>",
+  "smt_query_hash": "sha256:<encoded SMT>",
+  "result":         "proven",
+  "solver":         "z3-4.13.0",
+  "duration_ms":    142
+}
+```
+
+Pipeline: compute `input_hash` → lookup → cache hit → skip SMT call.
+Инвалидация по изменению любой transitive contract-dependency (Salsa-style).
+
+#### Parallel verification
+
+`verify/worker.rs` через `rayon::ThreadPool` с `N = num_cpus` workers.
+Каждая `verify_fn` — independent job со своей SMT-context (Z3 thread-safe:
+`Z3_global_param_set("parallel.enable", "true")`). Финальный
+diagnostics-merge в главном потоке.
+
+**Acceptance targets:**
+- Incremental rebuild без изменений на 100-fn corpus — < 2 сек.
+- Parallel speedup >= 6× на 8 cores.
+- Release binary identical для proven fn (zero-cost erasure).
+
+### Обоснование
+
+Верификация контрактов линейно растёт с размером кодовой базы.
+Без кэша и параллелизма time-to-compile с включёнными контрактами
+становится непрактичным уже при 500+ функциях. Паттерн из
+Dafny incremental / Verus parallel.
+
+### Реализация (V2 plan)
+
+- `compiler-codegen/src/verify/worker.rs` — rayon ThreadPool.
+- `compiler-codegen/src/verify/pipeline.rs` — cache lookup/save.
+- `target/contracts-cache/` — директория с JSON-артефактами.
+
+---
+
+## D116. Z3 backend через собственные FFI-биндинги
+
+**Статус:** Принято (Plan 33.3 Ф.9, реализовано 2026-05-14)
+
+### Решение
+
+Nova линкует Z3 напрямую через **собственные FFI-биндинги** (`z3_ffi.rs`)
+без зависимости от crate-экосистемы (`z3-sys`, `z3` crate).
+
+Биндинги декларируют только те функции Z3 C API, которые реально
+используются в `Z3Backend` — менее 30 функций. Выбор конкретной
+версии Z3 полностью под контролем Nova.
+
+Backend реализует trait `SolverBackend` и выбирается через
+pipeline-selector: `--smt-backend=z3` (default) или env var `NOVA_SMT_BACKEND=z3`.
+
+### Обоснование
+
+Crate `z3-sys` / `z3` — внешние зависимости с независимым release
+cycle. Историческая практика в Nova: не патчить и не полагаться на
+сторонние аблокации критичных подсистем (ср. политику с minicoro,
+Boehm GC). Собственные биндинги дают:
+- Полный контроль над версией Z3.
+- Минимальный API surface (менее 30 функций vs тысячи в полном `z3-sys`).
+- Возможность свитч Z3 -> CVC5 без смены интерфейса.
+
+### Реализация
+
+- `compiler-codegen/src/verify/backend/z3_ffi.rs` — FFI-объявления (~25 функций Z3 C API).
+- `compiler-codegen/src/verify/backend/z3.rs` — `Z3Backend` struct,
+  реализация `SolverBackend`.
+- `compiler-codegen/src/verify/backend/mod.rs` — `SolverBackend` trait,
+  factory/selector по env/flag.
+- `compiler-codegen/build.rs` — feature `z3-backend`; link Z3 shared lib.

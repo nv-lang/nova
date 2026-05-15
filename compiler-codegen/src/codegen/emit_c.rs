@@ -584,7 +584,9 @@ impl CEmitter {
             | Stmt::Defer { span, .. }
             | Stmt::ErrDefer { span, .. }
             | Stmt::AssertStatic { span, .. }
-            | Stmt::Assume { span, .. } => *span,
+            | Stmt::Assume { span, .. }
+            | Stmt::Apply { span, .. }
+            | Stmt::Calc { span, .. } => *span,
             Stmt::Break(s) | Stmt::Continue(s) => *s,
         }
     }
@@ -2751,7 +2753,7 @@ impl CEmitter {
                 span,
             };
             let for_expr = Expr::new(
-                ExprKind::For { pattern: pattern.clone(), iter: Box::new(iter.clone()), body: for_body },
+                ExprKind::For { pattern: pattern.clone(), iter: Box::new(iter.clone()), body: for_body, invariants: vec![], decreases: None },
                 span,
             );
             let supervised_block = Block { stmts: vec![Stmt::Expr(for_expr)], trailing: None, span };
@@ -2777,7 +2779,7 @@ impl CEmitter {
                     span,
                 };
                 let for_expr = Expr::new(
-                    ExprKind::For { pattern: pattern.clone(), iter: Box::new(iter.clone()), body: for_body },
+                    ExprKind::For { pattern: pattern.clone(), iter: Box::new(iter.clone()), body: for_body, invariants: vec![], decreases: None },
                     span,
                 );
                 let supervised_block = Block { stmts: vec![Stmt::Expr(for_expr)], trailing: None, span };
@@ -2809,7 +2811,7 @@ impl CEmitter {
                     let spawn_expr = Expr::new(ExprKind::Spawn(Box::new(spawn_body_expr)), span);
                     let for_body = Block { stmts: vec![Stmt::Expr(spawn_expr)], trailing: None, span };
                     let for_expr = Expr::new(
-                        ExprKind::For { pattern: pattern.clone(), iter: Box::new(iter.clone()), body: for_body },
+                        ExprKind::For { pattern: pattern.clone(), iter: Box::new(iter.clone()), body: for_body, invariants: vec![], decreases: None },
                         span,
                     );
                     let supervised_block = Block { stmts: vec![Stmt::Expr(for_expr)], trailing: None, span };
@@ -2856,7 +2858,7 @@ impl CEmitter {
                     span,
                 };
                 let for_expr = Expr::new(
-                    ExprKind::For { pattern: pattern.clone(), iter: Box::new(iter.clone()), body: for_body },
+                    ExprKind::For { pattern: pattern.clone(), iter: Box::new(iter.clone()), body: for_body, invariants: vec![], decreases: None },
                     span,
                 );
                 let supervised_block = Block { stmts: vec![Stmt::Expr(for_expr)], trailing: None, span };
@@ -3045,7 +3047,7 @@ impl CEmitter {
                 self.scan_expr_fwd(left, h, s)?;
                 self.scan_expr_fwd(right, h, s)?;
             }
-            ExprKind::While { cond, body } => {
+            ExprKind::While { cond, body, .. } => {
                 self.scan_expr_fwd(cond, h, s)?;
                 self.scan_block_fwd(body, h, s)?;
             }
@@ -3062,7 +3064,7 @@ impl CEmitter {
                 *s += 1;
                 self.line(&format!("static void {}(mco_coro* _co);", spawn_id));
             }
-            ExprKind::Loop { body } => {
+            ExprKind::Loop { body, .. } => {
                 self.scan_block_fwd(body, h, s)?;
             }
             ExprKind::Match { scrutinee, arms } => {
@@ -3155,8 +3157,8 @@ impl CEmitter {
                     }
                 }
             }
-            ExprKind::For { pattern, iter, body }
-            | ExprKind::ParallelFor { pattern, iter, body } => {
+            ExprKind::For { pattern, iter, body, .. }
+            | ExprKind::ParallelFor { pattern, iter, body, .. } => {
                 Self::collect_bound_names_expr(iter, out);
                 Self::collect_bound_names_pattern(pattern, out);
                 Self::collect_bound_names_block(body, out);
@@ -3166,7 +3168,7 @@ impl CEmitter {
                 Self::collect_bound_names_pattern(pattern, out);
                 Self::collect_bound_names_block(body, out);
             }
-            ExprKind::Loop { body } => Self::collect_bound_names_block(body, out),
+            ExprKind::Loop { body, .. } => Self::collect_bound_names_block(body, out),
             ExprKind::With { body, .. } => Self::collect_bound_names_block(body, out),
             ExprKind::Supervised { body, .. } => Self::collect_bound_names_block(body, out),
             ExprKind::Detach(body) => Self::collect_bound_names_block(body, out),
@@ -3282,7 +3284,7 @@ impl CEmitter {
                     Self::collect_idents_expr(e, out);
                 }
             }
-            ExprKind::While { cond, body } => {
+            ExprKind::While { cond, body, .. } => {
                 Self::collect_idents_expr(cond, out);
                 Self::collect_idents_block(body, out);
             }
@@ -3295,7 +3297,7 @@ impl CEmitter {
                 Self::collect_idents_expr(iter, out);
                 Self::collect_idents_block(body, out);
             }
-            ExprKind::Loop { body } => Self::collect_idents_block(body, out),
+            ExprKind::Loop { body, .. } => Self::collect_idents_block(body, out),
             ExprKind::Match { scrutinee, arms } => {
                 Self::collect_idents_expr(scrutinee, out);
                 for arm in arms {
@@ -5035,6 +5037,10 @@ impl CEmitter {
                 if self.proven_contracts.contains(&(f.name.clone(), c.span.start)) {
                     continue;
                 }
+                // D.1.3: квантор не может быть проверен в runtime — пропускаем.
+                if matches!(c.expr.kind, ExprKind::Forall { .. } | ExprKind::Exists { .. }) {
+                    continue;
+                }
                 let expr_c = self.emit_expr(&c.expr)?;
                 // Простая подмена идентификатора `result` на `_nova_result`.
                 // Работает для случаев без collision (что справедливо в 33.1).
@@ -5241,7 +5247,7 @@ impl CEmitter {
             // используем static local внутри fn (init=0, sticky между calls).
             self.line(&format!("static int {} = 0;", var));
             self.line("#ifdef NOVA_CONTRACTS_RUNTIME");
-            self.line(&format!("if ({}++ > 10000) nova_contract_violation(NOVA_CONTRACT_PRE, \"{}\", \"decreases recursion depth exceeded 10000\", \"<decreases>\", {});",
+            self.line(&format!("if ({}++ > 1000000) nova_contract_violation(NOVA_CONTRACT_PRE, \"{}\", \"decreases recursion depth exceeded 1000000\", \"<decreases>\", {});",
                 var, f.name, f.span.start));
             self.line("#endif");
             Some(var)
@@ -5257,6 +5263,10 @@ impl CEmitter {
                     // (true zero-cost даже в debug). proven_contracts —
                     // set от VerificationPipeline. Key: (fn_name, span.start).
                     if self.proven_contracts.contains(&(f.name.clone(), c.span.start)) {
+                        continue;
+                    }
+                    // D.1.3: квантор не может быть проверен в runtime — пропускаем.
+                    if matches!(c.expr.kind, ExprKind::Forall { .. } | ExprKind::Exists { .. }) {
                         continue;
                     }
                     let expr_c = self.emit_expr(&c.expr)?;
@@ -6210,6 +6220,17 @@ impl CEmitter {
                     self.line("#endif");
                 }
             }
+            // Plan 33.5 Ф.4.1: `apply lemma_name(args)` — ghost statement,
+            // полностью стирается в codegen. SMT-семантика обрабатывается
+            // в verify/pipeline.rs (assert lemma.ensures[args/params]).
+            Stmt::Apply { .. } => {
+                // Ghost erasure — никакого C-кода не эмитируем.
+            }
+            // Plan 33.5 Ф.4.2: `calc { ... }` — ghost statement, полностью
+            // стирается в codegen. SMT-семантика в verify/pipeline.rs.
+            Stmt::Calc { .. } => {
+                // Ghost erasure.
+            }
         }
         Ok(())
     }
@@ -6787,11 +6808,11 @@ impl CEmitter {
                 Ok(format!("({}{}{})", o, accessor, field_name))
             }
 
-            ExprKind::For { pattern, iter, body } => {
+            ExprKind::For { pattern, iter, body, .. } => {
                 self.emit_for(pattern, iter, body)
             }
 
-            ExprKind::While { cond, body } => {
+            ExprKind::While { cond, body, .. } => {
                 // Plan 08 Ф.4: strict bool-check.
                 let cond_ty = self.infer_expr_c_type(cond);
                 self.check_bool_condition_at(&cond_ty, "while", cond.span)?;
@@ -6809,7 +6830,7 @@ impl CEmitter {
                 Ok(tmp)
             }
 
-            ExprKind::Loop { body } => {
+            ExprKind::Loop { body, .. } => {
                 let tmp = self.fresh_tmp_named("loop");
                 self.line(&format!("nova_unit {};", tmp));
                 self.line("for (;;) {");
@@ -7436,7 +7457,7 @@ impl CEmitter {
                 }
                 Ok(result_tmp)
             }
-            ExprKind::WhileLet { pattern, scrutinee, body } => {
+            ExprKind::WhileLet { pattern, scrutinee, body, .. } => {
                 // while let Pat = expr { body }
                 // → loop: evaluate scrutinee, if pattern matches bind and run body, else break
                 let loop_tmp = self.fresh_tmp_named("while_let");
@@ -7460,6 +7481,10 @@ impl CEmitter {
                 self.line("}");
                 self.line(&format!("{} = NOVA_UNIT;", loop_tmp));
                 Ok(loop_tmp)
+            }
+            // D.1.3: квантор — только в контрактах, не в runtime-коде.
+            ExprKind::Forall { .. } | ExprKind::Exists { .. } => {
+                Err("forall/exists quantifiers are contract-only and cannot be compiled to C".into())
             }
         }
     }

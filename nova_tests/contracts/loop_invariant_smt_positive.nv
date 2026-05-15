@@ -1,0 +1,23 @@
+// Plan 33.4 D.0.3: SMT check для loop invariants на основе requires.
+// Invariant `n >= 0` provable from `requires n >= 0` при trivial backend.
+
+module nova_tests.contracts.loop_invariant_smt_positive
+
+fn bounded_loop(n int) -> int
+    requires n >= 0
+{
+    let mut s = 0
+    let mut i = 0
+    while i < n
+        invariant n >= 0
+    {
+        s = s + 1
+        i = i + 1
+    }
+    s
+}
+
+test "bounded_loop works" {
+    assert(bounded_loop(3) == 3)
+    assert(bounded_loop(0) == 0)
+}
