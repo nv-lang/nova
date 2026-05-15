@@ -10916,3 +10916,97 @@ simplifications.md [V12]-[V14]:
 - docs/plans/33.4-contracts-parity-gaps.md (новый план)
 - docs/simplifications.md (V1 partial, V6 закрыт, V12-V14 новые)
 - docs/project-creation.txt (эта секция)
+
+================================================================================
+ПЛАН 33.4 — CONTRACTS PARITY GAPS (ЗАКРЫТЫЕ ПУНКТЫ, 2026-05-15)
+================================================================================
+
+Автономная сессия по Plan 33.4: закрыты все tractable пункты. Worktree:
+`plan33-4` (d:\Sources\nova-lang-p33).
+
+### D.0.3 — Loop invariants в AST + SMT entry-check
+
+`ExprKind::For/While/WhileLet/Loop` расширены полями `invariants: Vec<Expr>`
+и `decreases: Option<Box<Expr>>`. Парсер (`parse_loop_clauses`) собирает
+клаузы между заголовком и телом цикла. В `verify_fn` добавлен entry-check:
+для каждого invariant в теле fn пытаемся доказать что он выполняется при
+условии `requires`. Partial check — полный havoc+preservation — V2.
+
+Downstream: callnorm, interp, emit_c, types получили `..` в match-arm'ах.
+Синтез For в emit_c (parallel-for lowering) получил `invariants: vec![]`.
+
+Тест: `nova_tests/contracts/loop_invariant_smt_positive.nv`.
+
+### P1-5 — BinderType enum
+
+`EffectAxiom.binders: Vec<(String, Option<TypeRef>)>` → `Vec<BinderDef>`.
+`BinderType { Untyped, Typed(TypeRef), Generic(String) }` — три состояния
+явно различимы. Механический рефактор 4 файлов.
+
+### D.1.3 — Quantifiers forall/exists в контрактах
+
+Синтаксис: `forall x in lo..hi : P(x)` / `exists x in lo..hi : P(x)`.
+Контекстуальные ключевые слова (не новые токены). `ExprKind::Forall`/`Exists`
+в AST. SMT encoding: Forall → `SmtTerm::Forall([x:Int], in_range => P(x))`;
+Exists → `not(Forall(..., in_range => not(P(x))))`.
+
+В типизаторе bound variable вводится в scope при проверке body.
+TrivialBackend возвращает Unknown на forall (ожидаемо); Z3 инстанциирует.
+
+Тест: `nova_tests/contracts/quantifier_positive.nv`. 69/69 PASS.
+
+### D.1.2 — Frame SMT axiom
+
+Для каждого параметра НЕ в `modifies`-списке в SMT scope добавляется
+assertion `(= _old_x x)`. Это даёт Z3 факт неизменности non-modified
+параметров — `ensures old(z) == z` верифицируется через SMT.
+
+`FrameTarget::Whole(Ident)` → имя переменной; Field/ArrayElem/ArrayAll skip.
+
+Тест: `nova_tests/contracts/frame_smt_positive.nv`. 70/70 PASS.
+
+### D.1.4 — Trigger patterns (stub)
+
+В encode.rs добавлены: `find_trigger_hint(body, var)` — ищет `App(uf, args)`
+содержащий bound var; `warn_if_no_trigger` — eprintln при отсутствии. Вызывается
+при кодировании Forall/Exists. SmtTerm IR не расширялся — полная аннотация
+`:pattern` в V2 (Plan 33.5).
+
+### P1-6 — Spec sync (8 D-decisions)
+
+8 решений из Plan 33.3/33.4 задокументированы:
+- D109 (`#pure` + axiom + `#verify`/`#trusted`) → spec/decisions/04-effects.md
+- D110 (ghost state) → spec/decisions/02-types.md
+- D111 (assume/assert_static/#trusted) → spec/decisions/09-tooling.md
+- D112 (bounded quantifiers) → spec/decisions/09-tooling.md
+- D113 (#must_verify_module, Planned V2) → spec/decisions/09-tooling.md
+- D114 (SMT cache + parallel, Planned V2) → spec/decisions/09-tooling.md
+- D115 (BinderType enum) → spec/decisions/04-effects.md
+- D116 (Z3 own FFI) → spec/decisions/09-tooling.md
+
+### Итоговый статус тестов
+
+70/70 PASS (contract tests), 9 SKIP (Z3-only).
+
+Ещё открыто в Plan 33.4:
+- P0-1: `#verify` handler symbolic verification (~3 дня research-grade)
+- P0-4: Well-founded decreases (D.0.4 = entry-check; loop decreases SMT — V2)
+- P1-3: Fail-fn contracts (ensures_fail clause)
+- P1-4: Liskov substitutability verification
+
+### Файлы (эта сессия)
+
+- compiler-codegen/src/ast/mod.rs (Forall/Exists ExprKind; loop inv/decr fields)
+- compiler-codegen/src/parser/mod.rs (parse_quantifier; parse_loop_clauses)
+- compiler-codegen/src/verify/encode.rs (Forall/Exists encoding; frame axiom helpers)
+- compiler-codegen/src/verify/pipeline.rs (D.1.2 frame axioms; D.0.3 loop inv check)
+- compiler-codegen/src/types/mod.rs (BinderDef downstream; Forall/Exists scope)
+- compiler-codegen/src/callnorm.rs (Forall/Exists walk)
+- compiler-codegen/src/interp/mod.rs (Forall/Exists unsupported)
+- compiler-codegen/src/codegen/emit_c.rs (Forall/Exists contract-only skip)
+- spec/decisions/02-types.md, 04-effects.md, 09-tooling.md (D109-D116)
+- nova_tests/contracts/quantifier_positive.nv
+- nova_tests/contracts/frame_smt_positive.nv
+- nova_tests/contracts/loop_invariant_smt_positive.nv
+- docs/simplifications.md (V7/V15 закрыты; V16 закрыт)
+- docs/project-creation.txt (эта секция)
