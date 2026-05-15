@@ -1,0 +1,14 @@
+module nova_tests.contracts.composition_trivial_positive
+
+#pure
+fn always_true(x int) -> bool => true
+
+#verify
+fn use_pure(n int) -> int
+    requires always_true(n)
+    ensures result == n
+=> n
+
+test "composition trivial" {
+    assert(use_pure(42) == 42)
+}
