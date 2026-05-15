@@ -51,7 +51,7 @@ Critical-review revealed gaps: MVP формально закрыт, но **не 
 
 | # | Что | Status |
 |---|---|---|
-| Ф.21.10 | Performance benchmark suite (§14.5 wall-clock targets) — `cargo bench --bench doc_perf` + CI regression gate. | ⏳ pending |
+| Ф.21.9 | Performance benchmark suite (§14.5 wall-clock targets) — `cargo test --test doc_perf` + CI regression gate. | ✅ done — `tests/doc_perf.rs` 3 tests: single-file (2ms vs 800ms budget), workspace 50 modules (6ms vs 12000ms), 8 fixtures combined (8ms vs 2000ms). 100-2000× faster than budget. CI gate. |
 | Ф.21.11 | `should_panic` smoke fixture | ⏳ pending |
 | Ф.21.12 | External crate-doc links (resolve `[std::vec::Vec]` к published docs) | ⏳ Plan 45.A |
 

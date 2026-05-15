@@ -86,3 +86,5 @@ jobs:
         run: "cargo test --release --manifest-path compiler-codegen/Cargo.toml --test doc_golden"
       - name: "Run cargo test --test doc_schema_shape (Ф.21.5)"
         run: "cargo test --release --manifest-path compiler-codegen/Cargo.toml --test doc_schema_shape"
+      - name: "Run cargo test --test doc_perf (Ф.21.9)"
+        run: "cargo test --release --manifest-path compiler-codegen/Cargo.toml --test doc_perf"
