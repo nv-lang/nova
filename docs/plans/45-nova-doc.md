@@ -52,8 +52,32 @@ Critical-review revealed gaps: MVP формально закрыт, но **не 
 | # | Что | Status |
 |---|---|---|
 | Ф.21.9 | Performance benchmark suite (§14.5 wall-clock targets) — `cargo test --test doc_perf` + CI regression gate. | ✅ done — `tests/doc_perf.rs` 3 tests: single-file (2ms vs 800ms budget), workspace 50 modules (6ms vs 12000ms), 8 fixtures combined (8ms vs 2000ms). 100-2000× faster than budget. CI gate. |
-| Ф.21.11 | `should_panic` smoke fixture | ⏳ pending |
+| Ф.21.11 | `should_panic` smoke fixture | ⏳ moved → Ф.22.8 |
 | Ф.21.12 | External crate-doc links (resolve `[std::vec::Vec]` к published docs) | ⏳ Plan 45.A |
+
+## Ф.22 — Production hardening round 2 (2026-05-15, post-Ф.21 audit)
+
+Второй audit revealed 4 spec-drift gaps + 4 UX gaps.
+
+### 🔴 P0 — Spec drift (D105/D107)
+
+| # | Что | Spec | Статус |
+|---|---|---|---|
+| Ф.22.1 | **Module-level doc-attrs** — `parse_module_attrs` распознавал только `#cfg`/`#forbid`/`#doc "..."`. D105 требует `#stable`/`#unstable`/`#experimental`/`#deprecated`/`#hide_doc` валидными на module. Module stability должен propagate'ить на items без явного tier'а. | D105 | ✅ done |
+| Ф.22.2 | **Information loss `#experimental(note)` / `#unstable(feature)`** — хранили tier+since, выбрасывали `note` / `feature`. | D105 | ✅ done |
+| Ф.22.3 | **`source_root` field в top-level JSON** — D107 explicitly lists вместе с `format_version`/`nova_version`/`generated_at`/`modules`/`items`. | D107 | ✅ done |
+| Ф.22.4 | **Effect `axioms` + Protocol `implementors`** — D107 §«Item shape» обязывает. У нас только `methods`. | D107 | ✅ done (axioms полностью; implementors — empty array в single-file, см. сноску) |
+
+### 🟡 P1 — Production usability
+
+| # | Что | Статус |
+|---|---|---|
+| Ф.22.5 | **Workspace hard-fail на одном bad файле** — `parse error` ломает весь workspace. Rustdoc продолжает с warnings. | ✅ done |
+| Ф.22.6 | **render_md не показывает aliases** — JSON эмитит, markdown — нет. | ✅ done |
+| Ф.22.7 | **Workspace doc-tests без crate-scope** — single-file имеет `run_doc_tests_with_source(&src)`, workspace — нет. | ✅ done |
+| Ф.22.8 | `should_panic` smoke fixture | ✅ done |
+
+> **Сноска (Ф.22.4 implementors):** Protocol-implementors требуют scan'а workspace на `impl Protocol for T` блоки — в Nova это пока не специальный AST node (impl-блоки = methods с `Protocol` receiver). Полная реализация = scan через ALL DocModules с матчингом receiver-types против Protocol-method-name'ов. Сейчас эмитим `[]` (placeholder для forward-compat) + TODO note.
 
 ### Сравнение с production tools
 
