@@ -1347,8 +1347,11 @@ impl CEmitter {
                             let base_opt: Option<String> = if self.mono_method_decls.contains_key(&key) {
                                 None
                             } else {
-                                self.generic_type_instance_info.borrow()
-                                    .get(recv_type).map(|(b, _)| b.clone())
+                                // recv_type from section 5b has no "Nova_" prefix; map keys do.
+                                let info = self.generic_type_instance_info.borrow();
+                                info.get(recv_type)
+                                    .or_else(|| info.get(&format!("Nova_{}", recv_type)))
+                                    .map(|(b, _)| b.clone())
                             };
                             let fn_decl_opt = if let Some(fd) = self.mono_method_decls.get(&key).cloned() {
                                 Some(fd)
@@ -4652,6 +4655,27 @@ impl CEmitter {
                 }
             }
         }
+        // Source 2c: for generic-type params (e.g. `box_get[T](b Box[T])`), extract T from
+        // monomorphized instance info. After Ф.3, Box[int] arg has C type Nova_Box____nova_int*
+        // and generic_type_instance_info maps "Nova_Box____nova_int" → ("Box", ["nova_int"]).
+        for (param, arg) in fn_decl.params.iter().zip(args.iter()) {
+            if let crate::ast::TypeRef::Named { generics, .. } = &param.ty {
+                if generics.is_empty() { continue; }
+                let arg_c = self.infer_expr_c_type(arg.expr());
+                let key = arg_c.trim_end_matches('*').trim().to_string();
+                let instance_args: Option<Vec<String>> = self.generic_type_instance_info
+                    .borrow()
+                    .get(&key)
+                    .map(|(_, args)| args.clone());
+                if let Some(iargs) = instance_args {
+                    if iargs.len() == generics.len() {
+                        for (gen_ty, c_ty) in generics.iter().zip(iargs.iter()) {
+                            Self::infer_type_param_binding(gen_ty, c_ty, &mut subst);
+                        }
+                    }
+                }
+            }
+        }
         // Source 3: infer from current_fn_return_ty vs fn return type
         if let Some(ref ret_ty) = fn_decl.return_type {
             if let Some(ref actual_ret) = self.current_fn_return_ty {
@@ -4763,6 +4787,23 @@ impl CEmitter {
                 // []T → NovaArray_<inner_c>*
                 let inner_c = Self::apply_type_subst_to_ref(inner, subst)?;
                 Some(format!("NovaArray_{}*", inner_c))
+            }
+            // Generic user-defined type e.g. Pair[B, A] → Nova_Pair____T1__T2*
+            crate::ast::TypeRef::Named { path, generics, .. }
+                if !generics.is_empty()
+                    && path.last().map(|s| s.as_str()) != Some("Option") =>
+            {
+                let mut resolved = Vec::new();
+                for g in generics {
+                    if let Some(c) = Self::apply_type_subst_to_ref(g, subst) {
+                        resolved.push(c);
+                    } else {
+                        return None;
+                    }
+                }
+                let base = path.last().cloned().unwrap_or_default();
+                let mangled = Self::compute_generic_type_c_name(&base, &resolved);
+                Some(format!("{}*", mangled))
             }
             crate::ast::TypeRef::Tuple(elems, _) => {
                 // (A, B, ...) → erased as void* (tuple mono is not V1 scope).
@@ -4977,9 +5018,45 @@ impl CEmitter {
                 } else { None }
             }),
         );
+        // Ф.7: Erased Array runtime always returns NovaOpt_nova_int; emit a bridge wrapper
+        // for methods whose concrete return type is NovaOpt_T (T != nova_int).
+        let bridge_emitted = if let Some(inner_t) = ret_c.strip_prefix("NovaOpt_") {
+            if inner_t != "nova_int" && is_instance {
+                let info = self.generic_type_instance_info.borrow();
+                let base_opt = info.get(&format!("Nova_{}", recv_type)).map(|(b, _)| b.clone());
+                drop(info);
+                if let Some(base_name) = base_opt {
+                    let erased_method = format!("Nova_{}_method_{}", base_name, fn_decl.name);
+                    let base_recv_ty = format!("Nova_{}*", base_name);
+                    // Pointer types stored directly; structs/scalars stored as boxed pointers.
+                    let value_convert = if inner_t.ends_with('*') {
+                        format!("({})(intptr_t)(_erased.value)", inner_t)
+                    } else {
+                        format!("*({}*)(intptr_t)(_erased.value)", inner_t)
+                    };
+                    self.line(&format!(
+                        "NovaOpt_nova_int _erased = {}(({})nova_self);",
+                        erased_method, base_recv_ty
+                    ));
+                    self.line("if (_erased.tag == NOVA_TAG_Option_None) {");
+                    self.indent += 1;
+                    self.line(&format!(
+                        "return (({}){{.tag = NOVA_TAG_Option_None}});",
+                        ret_c
+                    ));
+                    self.indent -= 1;
+                    self.line("}");
+                    self.line(&format!(
+                        "return (({}){{.tag = NOVA_TAG_Option_Some, .value = {}}});",
+                        ret_c, value_convert
+                    ));
+                    true
+                } else { false }
+            } else { false }
+        } else { false };
         // Emit body
         let body_clone = fn_decl.body.clone();
-        match &body_clone {
+        if !bridge_emitted { match &body_clone {
             FnBody::Expr(e) => {
                 self.emit_source_annotation_for_expr(e);
                 let val = self.emit_expr(e)?;
@@ -5011,7 +5088,7 @@ impl CEmitter {
                 }
             }
             FnBody::External => {}
-        }
+        } } // end: match body, if !bridge_emitted
         // Restore
         for (name, prev) in saved_var_types {
             match prev {
@@ -5068,6 +5145,11 @@ impl CEmitter {
             for (base_name, type_args_c, mangled) in batch {
                 if self.emitted_generic_type_instances.contains(&mangled) { continue; }
                 self.emitted_generic_type_instances.insert(mangled.clone());
+                // Register instance info for Source 2c in resolve_mono_type_args:
+                // "Nova_Box____nova_int" → ("Box", ["nova_int"])
+                self.generic_type_instance_info.borrow_mut()
+                    .entry(mangled.clone())
+                    .or_insert_with(|| (base_name.clone(), type_args_c.clone()));
                 let template = match self.generic_type_templates.get(&base_name).cloned() {
                     Some(t) => t,
                     None => continue,
@@ -9260,8 +9342,10 @@ impl CEmitter {
                 {
                     let rt_trimmed = obj_ty.trim_start_matches("Nova_")
                         .trim_end_matches('*').trim().to_string();
+                    // generic_type_instance_info keys have "Nova_" prefix; rt_trimmed doesn't.
                     let instance_opt: Option<(String, Vec<String>)> =
-                        self.generic_type_instance_info.borrow().get(&rt_trimmed).cloned();
+                        self.generic_type_instance_info.borrow()
+                            .get(&format!("Nova_{}", rt_trimmed)).cloned();
                     if let Some((base_name, type_args_c)) = instance_opt {
                         let method_decl = self.generic_type_methods.get(&base_name)
                             .and_then(|ms| ms.iter().find(|m| m.name == *method))
@@ -9884,30 +9968,9 @@ impl CEmitter {
                         }
                         return Ok(format!("{}({})", mono_name, arg_strs.join(", ")));
                     }
-                    Err(_e) => {
-                        // Plan 48 V1 fallback: when type args can't be inferred
-                        // (e.g. generic record params like Box[T]), fall back to
-                        // void*-erased emission. The erased body is registered
-                        // on-demand via register_erased_instance.
-                        self.register_erased_instance(&fn_decl);
-                        let erased_name = format!("nova_fn_{}", fn_name);
-                        // Box all args to void* (same as old erasure path)
-                        let mut arg_strs = Vec::new();
-                        for a in args.iter() {
-                            let arg_ty = self.infer_expr_c_type(a.expr());
-                            let v = self.emit_expr(a.expr())?;
-                            if arg_ty == "nova_str" {
-                                let heap_tmp = self.fresh_tmp();
-                                self.line(&format!("nova_str* {} = (nova_str*)nova_alloc(sizeof(nova_str));", heap_tmp));
-                                self.line(&format!("*{} = {};", heap_tmp, v));
-                                arg_strs.push(format!("(void*)({})", heap_tmp));
-                            } else if arg_ty.ends_with('*') || arg_ty == "void*" {
-                                arg_strs.push(format!("(void*)({})", v));
-                            } else {
-                                arg_strs.push(format!("(void*)(intptr_t)({})", v));
-                            }
-                        }
-                        return Ok(format!("{}({})", erased_name, arg_strs.join(", ")));
+                    Err(msg) => {
+                        // Plan 48 Ф.7.3: cannot-infer → compile error, not silent erasure.
+                        return Err(msg);
                     }
                 }
             }
@@ -10933,6 +10996,52 @@ impl CEmitter {
                 self.current_receiver_type.clone().unwrap_or(raw_name)
             } else {
                 raw_name
+            };
+            // If struct_name is a base generic type (e.g. "Box"), resolve to the concrete
+            // monomorphized name (e.g. "Box____nova_int") using field value types.
+            // This enables `Box { value: 42 }` to emit as Nova_Box____nova_int.
+            let struct_name = if self.generic_types.contains(&struct_name) {
+                if let Some(template) = self.generic_type_templates.get(&struct_name).cloned() {
+                    use crate::ast::TypeDeclKind;
+                    let mut type_args_c: Vec<String> = template.generics.iter()
+                        .map(|_| "nova_int".to_string())
+                        .collect();
+                    if let TypeDeclKind::Record(field_decls) = &template.kind {
+                        for (i, g) in template.generics.iter().enumerate() {
+                            for f_decl in field_decls {
+                                if let crate::ast::TypeRef::Named { path, generics: fgens, .. } = &f_decl.ty {
+                                    if fgens.is_empty() && path.join("_") == g.name {
+                                        if let Some(field) = fields.iter().find(|f| f.name == f_decl.name) {
+                                            if let Some(v) = &field.value {
+                                                let c_ty = self.infer_expr_c_type(v);
+                                                if !c_ty.is_empty() && c_ty != "void*" {
+                                                    type_args_c[i] = c_ty;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    let mangled = Self::compute_generic_type_c_name(&struct_name, &type_args_c);
+                    let concrete = mangled.strip_prefix("Nova_").unwrap_or(&mangled).to_string();
+                    // Queue instance if not yet in worklist / emitted
+                    if !self.emitted_generic_type_instances.contains(&mangled) {
+                        let mut wl = self.generic_type_worklist.borrow_mut();
+                        if !wl.iter().any(|(_, _, m)| m == &mangled) {
+                            wl.push((struct_name.clone(), type_args_c, mangled));
+                        }
+                    }
+                    // Drain so record_schemas is populated before we proceed
+                    drop(template);
+                    self.drain_generic_type_worklist()?;
+                    concrete
+                } else {
+                    struct_name
+                }
+            } else {
+                struct_name
             };
             // Check if this is a sum-type record variant (not a plain record)
             if let Some((sum_type_name, _)) = self.find_variant(&struct_name) {
@@ -13049,7 +13158,7 @@ impl CEmitter {
                     "nova_unit".into()
                 }
             }
-            ExprKind::RecordLit { type_name: Some(name), .. } => {
+            ExprKind::RecordLit { type_name: Some(name), fields } => {
                 let raw_name = name.join("_");
                 let struct_name = if raw_name == "Self" {
                     self.current_receiver_type.clone().unwrap_or(raw_name)
@@ -13057,11 +13166,42 @@ impl CEmitter {
                 // Check if this is a sum-type record variant
                 if let Some((sum_type_name, _)) = self.find_variant(&struct_name) {
                     format!("Nova_{}*", sum_type_name)
-                } else if !self.record_schemas.contains_key(&struct_name) {
-                    // Unknown struct (generic or undeclared) — returns void* stub
-                    "void*".into()
-                } else {
+                } else if self.generic_types.contains(&struct_name) {
+                    // Generic type: compute concrete mono name from field values.
+                    // Check BEFORE record_schemas because record_schemas has the erased form
+                    // (with void* fields) for generic types — we want the concrete mono form.
+                    if let Some(template) = self.generic_type_templates.get(&struct_name) {
+                        use crate::ast::TypeDeclKind;
+                        let mut type_args_c: Vec<String> = template.generics.iter()
+                            .map(|_| "nova_int".to_string())
+                            .collect();
+                        if let TypeDeclKind::Record(field_decls) = &template.kind {
+                            for (i, g) in template.generics.iter().enumerate() {
+                                for f_decl in field_decls {
+                                    if let crate::ast::TypeRef::Named { path, generics: fgens, .. } = &f_decl.ty {
+                                        if fgens.is_empty() && path.join("_") == g.name {
+                                            if let Some(field) = fields.iter().find(|f| f.name == f_decl.name) {
+                                                if let Some(v) = &field.value {
+                                                    let c_ty = self.infer_expr_c_type(v);
+                                                    if !c_ty.is_empty() && c_ty != "void*" {
+                                                        type_args_c[i] = c_ty;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        let mangled = Self::compute_generic_type_c_name(&struct_name, &type_args_c);
+                        format!("{}*", mangled)
+                    } else {
+                        "void*".into()
+                    }
+                } else if self.record_schemas.contains_key(&struct_name) {
                     format!("Nova_{}*", struct_name)
+                } else {
+                    "void*".into()
                 }
             }
             ExprKind::RecordLit { type_name: None, fields, .. } => {
@@ -13233,6 +13373,34 @@ impl CEmitter {
                                     return sig.return_c_type.clone();
                                 }
                                 // 0 matches — fallback на старую логику ниже.
+                            }
+                        }
+                        // Ф.3: fallback for generic type instance methods.
+                        // method_overloads is keyed by base type ("Stack"), but rt here is
+                        // the concrete instance ("Stack____nova_str"). Look up return type
+                        // from generic_type_methods + template substitution.
+                        {
+                            let info = self.generic_type_instance_info.borrow();
+                            let instance_opt = info.get(&format!("Nova_{}", rt)).cloned();
+                            drop(info);
+                            if let Some((base_name, type_args_c)) = instance_opt {
+                                if let Some(tmpl) = self.generic_type_templates.get(&base_name) {
+                                    let subst: Vec<(String, Option<String>)> = tmpl.generics.iter()
+                                        .zip(type_args_c.iter())
+                                        .map(|(g, c)| (g.name.clone(), Some(c.clone())))
+                                        .collect();
+                                    if let Some(method_decl) = self.generic_type_methods.get(&base_name)
+                                        .and_then(|ms| ms.iter().find(|m| m.name == mn))
+                                    {
+                                        if let Some(ret_ty) = &method_decl.return_type {
+                                            if let Some(c_ty) = Self::apply_type_subst_to_ref(ret_ty, &subst) {
+                                                if !c_ty.is_empty() && c_ty != "void*" {
+                                                    return c_ty;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
