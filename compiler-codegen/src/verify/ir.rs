@@ -40,10 +40,15 @@ pub enum SmtTerm {
     /// Plan 33.3 Ф.9: `forall (binders) <body>` — universal
     /// quantifier. Используется для encoding'а axioms эффектов:
     /// `axiom non_negative(id) => balance(id) >= 0` →
-    /// `Forall([("id", Int)], _view_Db_balance(id) >= 0)`.
+    /// `Forall([("id", Int)], patterns, _view_Db_balance(id) >= 0)`.
     /// TrivialBackend не reasoning'ует над quantifiers (Unknown);
-    /// Z3 backend через Z3_mk_forall_const.
-    Forall(Vec<(String, SortRef)>, Box<SmtTerm>),
+    /// Z3 backend через Z3_mk_forall_const + Z3_mk_pattern.
+    ///
+    /// `patterns`: N multi-patterns (Ф.1.2, Plan 33.5). Каждый pattern —
+    /// список term'ов (multi-trigger). Z3 instantiate'ит квантор при
+    /// матче всех term'ов одного pattern'а. Пустой вектор = no hint,
+    /// Z3 использует heuristic instantiation.
+    Forall(Vec<(String, SortRef)>, Vec<Vec<SmtTerm>>, Box<SmtTerm>),
 }
 
 /// Formula = SmtTerm типа Bool. Alias для семантической ясности.
@@ -148,12 +153,13 @@ impl SmtTerm {
             ),
             // Plan 33.3 Ф.9: capture-avoiding — если `name` shadowed
             // одним из binders, не подменяем внутри. Иначе recurse.
-            SmtTerm::Forall(binders, body) => {
+            SmtTerm::Forall(binders, patterns, body) => {
                 if binders.iter().any(|(b, _)| b == name) {
                     self.clone()
                 } else {
                     SmtTerm::Forall(
                         binders.clone(),
+                        patterns.iter().map(|p| p.iter().map(|t| t.substitute(name, replacement)).collect()).collect(),
                         Box::new(body.substitute(name, replacement)),
                     )
                 }
@@ -186,11 +192,18 @@ impl SmtTerm {
                     _ => format!("{}({})", op, args_str.join(", ")),
                 }
             }
-            SmtTerm::Forall(binders, body) => {
+            SmtTerm::Forall(binders, patterns, body) => {
                 let bs: Vec<String> = binders.iter()
                     .map(|(n, s)| format!("{}: {:?}", n, s))
                     .collect();
-                format!("(forall ({}) {})", bs.join(", "), body.pretty())
+                if patterns.is_empty() {
+                    format!("(forall ({}) {})", bs.join(", "), body.pretty())
+                } else {
+                    let pats: Vec<String> = patterns.iter()
+                        .map(|p| format!("[{}]", p.iter().map(|t| t.pretty()).collect::<Vec<_>>().join(", ")))
+                        .collect();
+                    format!("(forall ({}) {:?} {})", bs.join(", "), pats.join("; "), body.pretty())
+                }
             }
         }
     }

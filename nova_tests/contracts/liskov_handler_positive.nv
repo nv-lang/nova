@@ -1,0 +1,18 @@
+// Plan 33.5 Ф.5.2: Liskov-верификация handler'а — handler.m удовлетворяет effect.m.contracts.
+// Тривиальный backend: рефлексивный ensures (result == x * 2 → body == x * 2 → trivial).
+
+module nova_tests.contracts.liskov_handler_positive
+
+type Multiplier effect {
+    twice(x int) -> int
+        ensures result == x * 2
+}
+
+test "liskov handler positive" {
+    with #verify Multiplier = handler Multiplier {
+        twice(x) => x * 2
+    } {
+        let r = Multiplier.twice(5)
+        assert(r == 10)
+    }
+}

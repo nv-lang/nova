@@ -655,11 +655,12 @@ impl Interpreter {
                 pattern,
                 iter,
                 body,
+                ..
             } => {
                 let iter_v = self.eval_expr_value(iter, env)?;
                 self.run_for_loop(pattern, iter_v, body, env, expr.span)
             }
-            ExprKind::While { cond, body } => loop {
+            ExprKind::While { cond, body, .. } => loop {
                 let c = self.eval_expr_value(cond, env)?;
                 if !c.truthy() {
                     break Ok(Flow::Value(Value::Unit));
@@ -674,6 +675,7 @@ impl Interpreter {
                 pattern,
                 scrutinee,
                 body,
+                ..
             } => loop {
                 let v = self.eval_expr_value(scrutinee, env)?;
                 let local = Env::new_child(env);
@@ -686,7 +688,7 @@ impl Interpreter {
                     other => break Ok(other),
                 }
             },
-            ExprKind::Loop { body } => loop {
+            ExprKind::Loop { body, .. } => loop {
                 match self.exec_block_flow(body, env)? {
                     Flow::Break => break Ok(Flow::Value(Value::Unit)),
                     Flow::Continue | Flow::Value(_) => continue,
@@ -929,6 +931,11 @@ impl Interpreter {
             }
             ExprKind::Select { .. } => Err(Diagnostic::new(
                 "`select` requires the compiled runtime (not available in bootstrap interpreter)",
+                expr.span,
+            )),
+            // D.1.3: квантор — только в контрактах, не в интерпретаторе.
+            ExprKind::Forall { .. } | ExprKind::Exists { .. } => Err(Diagnostic::new(
+                "forall/exists quantifiers are contract-only and cannot be interpreted",
                 expr.span,
             )),
         }
@@ -1994,6 +2001,12 @@ impl Interpreter {
                 }
                 Ok(Flow::Value(Value::Unit))
             }
+            // Ф.4.1: `apply lemma(args)` — ghost statement, нет runtime-эффекта.
+            // В interp'е просто пропускаем (аргументы не вычисляем — они могут
+            // содержать spec-выражения без runtime-значения).
+            Stmt::Apply { .. } => Ok(Flow::Value(Value::Unit)),
+            // Ф.4.2: calc — ghost statement, нет runtime-эффекта.
+            Stmt::Calc { .. } => Ok(Flow::Value(Value::Unit)),
         }
     }
 

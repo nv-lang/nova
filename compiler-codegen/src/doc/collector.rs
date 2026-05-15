@@ -58,8 +58,8 @@ pub fn collect(module: &Module) -> DocTree {
             Item::Const(c) => {
                 items.push(collect_const(&module_path, c));
             }
-            // `Item::Let` / `Item::Test` не документируются.
-            Item::Let(_) | Item::Test(_) => {}
+            // `Item::Let` / `Item::Test` / `Item::Lemma` не документируются.
+            Item::Let(_) | Item::Test(_) | Item::Lemma(_) => {}
         }
     }
 

@@ -1,13 +1,18 @@
-// EXPECT_COMPILE_ERROR calling user function `helper` in contracts requires `#pure` attribute
+// EXPECT_COMPILE_ERROR calling user function `impure_helper` in contracts requires `#pure` attribute
 //
 // Plan 33.2 Ф.7 (D24): composition разрешён только для #pure функций.
-// Без #pure атрибута — compile error.
+// Ф.3 (Plan 33.5): SCC inference авто-определяет pure fn'ы, поэтому
+// fn без @pure, которая вызывает external fn — остаётся non-pure через SCC.
 
 module contracts.typecheck_composition
 
-// БЕЗ #pure — нельзя использовать в контракте.
-fn helper(x int) -> int => x + 1
+// external body → non-pure по определению.
+external fn side_effect(x int) -> int
 
+// Вызывает external → SCC делает impure_helper non-pure.
+fn impure_helper(x int) -> int => side_effect(x)
+
+// Вызов non-pure fn в контракте — compile error.
 fn caller(x int) -> int
-    requires helper(x) > 0
+    requires impure_helper(x) > 0
 => x

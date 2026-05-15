@@ -634,6 +634,8 @@ impl<'a> Lexer<'a> {
             "defer" => TokenKind::KwDefer,
             "errdefer" => TokenKind::KwErrDefer,
             "select" => TokenKind::KwSelect,
+            "lemma" => TokenKind::KwLemma,
+            "apply" => TokenKind::KwApply,
             _ => TokenKind::Ident(text.to_string()),
         };
         Ok(Token::new(kind, span))

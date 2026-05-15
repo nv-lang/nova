@@ -11152,3 +11152,161 @@ phases: doc-attrs (Ф.3), intra-doc links (Ф.6), doc-test runner (Ф.7),
 Ветка `plan-45-doc` (worktree `d:\Sources\nova-lang-p45-doc`),
 запушена в `origin/plan-45-doc`. НЕ мерджится в main до закрытия
 полного MVP — по Plan 45 §12.0 acceptance.
+
+================================================================================
+ПЛАН 33.4 — CONTRACTS PARITY GAPS (ЗАКРЫТЫЕ ПУНКТЫ, 2026-05-15)
+================================================================================
+
+Автономная сессия по Plan 33.4: закрыты все tractable пункты. Worktree:
+`plan33-4` (d:\Sources\nova-lang-p33).
+
+### D.0.3 — Loop invariants в AST + SMT entry-check
+
+`ExprKind::For/While/WhileLet/Loop` расширены полями `invariants: Vec<Expr>`
+и `decreases: Option<Box<Expr>>`. Парсер (`parse_loop_clauses`) собирает
+клаузы между заголовком и телом цикла. В `verify_fn` добавлен entry-check:
+для каждого invariant в теле fn пытаемся доказать что он выполняется при
+условии `requires`. Partial check — полный havoc+preservation — V2.
+
+Downstream: callnorm, interp, emit_c, types получили `..` в match-arm'ах.
+Синтез For в emit_c (parallel-for lowering) получил `invariants: vec![]`.
+
+Тест: `nova_tests/contracts/loop_invariant_smt_positive.nv`.
+
+### P1-5 — BinderType enum
+
+`EffectAxiom.binders: Vec<(String, Option<TypeRef>)>` → `Vec<BinderDef>`.
+`BinderType { Untyped, Typed(TypeRef), Generic(String) }` — три состояния
+явно различимы. Механический рефактор 4 файлов.
+
+### D.1.3 — Quantifiers forall/exists в контрактах
+
+Синтаксис: `forall x in lo..hi : P(x)` / `exists x in lo..hi : P(x)`.
+Контекстуальные ключевые слова (не новые токены). `ExprKind::Forall`/`Exists`
+в AST. SMT encoding: Forall → `SmtTerm::Forall([x:Int], in_range => P(x))`;
+Exists → `not(Forall(..., in_range => not(P(x))))`.
+
+В типизаторе bound variable вводится в scope при проверке body.
+TrivialBackend возвращает Unknown на forall (ожидаемо); Z3 инстанциирует.
+
+Тест: `nova_tests/contracts/quantifier_positive.nv`. 69/69 PASS.
+
+### D.1.2 — Frame SMT axiom
+
+Для каждого параметра НЕ в `modifies`-списке в SMT scope добавляется
+assertion `(= _old_x x)`. Это даёт Z3 факт неизменности non-modified
+параметров — `ensures old(z) == z` верифицируется через SMT.
+
+`FrameTarget::Whole(Ident)` → имя переменной; Field/ArrayElem/ArrayAll skip.
+
+Тест: `nova_tests/contracts/frame_smt_positive.nv`. 70/70 PASS.
+
+### D.1.4 — Trigger patterns (stub)
+
+В encode.rs добавлены: `find_trigger_hint(body, var)` — ищет `App(uf, args)`
+содержащий bound var; `warn_if_no_trigger` — eprintln при отсутствии. Вызывается
+при кодировании Forall/Exists. SmtTerm IR не расширялся — полная аннотация
+`:pattern` в V2 (Plan 33.5).
+
+### P1-6 — Spec sync (8 D-decisions)
+
+8 решений из Plan 33.3/33.4 задокументированы:
+- D109 (`#pure` + axiom + `#verify`/`#trusted`) → spec/decisions/04-effects.md
+- D110 (ghost state) → spec/decisions/02-types.md
+- D111 (assume/assert_static/#trusted) → spec/decisions/09-tooling.md
+- D112 (bounded quantifiers) → spec/decisions/09-tooling.md
+- D113 (#must_verify_module, Planned V2) → spec/decisions/09-tooling.md
+- D114 (SMT cache + parallel, Planned V2) → spec/decisions/09-tooling.md
+- D115 (BinderType enum) → spec/decisions/04-effects.md
+- D116 (Z3 own FFI) → spec/decisions/09-tooling.md
+
+### Итоговый статус тестов
+
+70/70 PASS (contract tests), 9 SKIP (Z3-only).
+
+Ещё открыто в Plan 33.4:
+- P0-1: `#verify` handler symbolic verification (~3 дня research-grade)
+- P0-4: Well-founded decreases (D.0.4 = entry-check; loop decreases SMT — V2)
+- P1-3: Fail-fn contracts (ensures_fail clause)
+- P1-4: Liskov substitutability verification
+
+### Файлы (эта сессия)
+
+- compiler-codegen/src/ast/mod.rs (Forall/Exists ExprKind; loop inv/decr fields)
+- compiler-codegen/src/parser/mod.rs (parse_quantifier; parse_loop_clauses)
+- compiler-codegen/src/verify/encode.rs (Forall/Exists encoding; frame axiom helpers)
+- compiler-codegen/src/verify/pipeline.rs (D.1.2 frame axioms; D.0.3 loop inv check)
+- compiler-codegen/src/types/mod.rs (BinderDef downstream; Forall/Exists scope)
+- compiler-codegen/src/callnorm.rs (Forall/Exists walk)
+- compiler-codegen/src/interp/mod.rs (Forall/Exists unsupported)
+- compiler-codegen/src/codegen/emit_c.rs (Forall/Exists contract-only skip)
+- spec/decisions/02-types.md, 04-effects.md, 09-tooling.md (D109-D116)
+- nova_tests/contracts/quantifier_positive.nv
+- nova_tests/contracts/frame_smt_positive.nv
+- nova_tests/contracts/loop_invariant_smt_positive.nv
+- docs/simplifications.md (V7/V15 закрыты; V16 закрыт)
+- docs/project-creation.txt (эта секция)
+
+================================================================================
+ПЛАН 33.4 — CONTRACTS PARITY GAPS (ФИНАЛ, 2026-05-15)
+================================================================================
+
+Вторая автономная сессия. Закрыты все tractable пункты до конца плана.
+
+### D.1.5 — ensures_fail clause
+
+`ContractKind::EnsuresFail` — постусловие для Fail-пути функции.
+Синтаксис: `ensures_fail <bool-expr>`. SMT-верифицируется независимо
+под `requires`-контекстом (V1: no `result`, `old(x)` доступен).
+Без runtime check в V1 (specification annotation only).
+
+Тест: `nova_tests/contracts/ensures_fail_positive.nv`. 71/71 PASS.
+
+### P0-1 — Symbolic handler verification V1
+
+`verify_handlers(module)` в pipeline.rs:
+- Находит все `with #verify E = handler` bindings через AST walk.
+- Для static axioms (без `post(...)`): создаёт fresh SMT backend,
+  объявляет pure_view UFs, assertит handler's pure_view body как
+  `forall params. uf(params) == body`, доказывает axiom formula.
+- `post(...)` axioms → `Unknown("post-axiom V2")` (честно).
+- `axiom_formula_has_post()` — AST-детектор post-клауз.
+
+Тест: `nova_tests/contracts/handler_verify_v1_positive.nv`. 72/72 PASS.
+
+### P1-4 — Liskov (blocked/documented)
+
+`EffectMethod` не имеет `contracts: Vec<Contract>`. Liskov per-operation
+проверка требует `requires`/`ensures` на уровне effect-операций, которых
+нет в текущем AST. Задокументировано в simplifications.md как V2.
+
+### Итоговый статус тестов
+
+72/72 PASS (contracts/), 9 SKIP (Z3-only). 0 FAIL.
+
+### Plan 33.4 — полный закрытый список
+
+- [✓] D.0.1: docs (done в prev session)
+- [✓] D.0.4: decreases WF (done в prev session)
+- [✓] D.0.2: composition #pure fn SMT
+- [✓] D.0.3: loop invariants AST + SMT entry-check
+- [✓] P1-5: BinderType enum (EffectAxiom binders)
+- [✓] D.1.3: forall/exists quantifiers in contracts
+- [✓] D.1.2: frame SMT axiom (old(x)==x для non-modifies)
+- [✓] D.1.4: trigger pattern stub (eprintln warning)
+- [✓] P1-6: spec sync (D109-D116 в spec/decisions/)
+- [✓] D.1.5: ensures_fail clause
+- [✓] P0-1 V1: symbolic handler verification (static axioms)
+- [~] P1-4: Liskov (blocked, documented V2)
+- [~] P0-1 V2: post(...) axioms symbolic exec (research V3)
+
+### Файлы (вторая сессия)
+
+- compiler-codegen/src/ast/mod.rs (EnsuresFail ContractKind)
+- compiler-codegen/src/parser/mod.rs (ensures_fail parse arm)
+- compiler-codegen/src/types/mod.rs (EnsuresFail type-check)
+- compiler-codegen/src/verify/pipeline.rs (verify_handlers + EnsuresFail loop)
+- nova_tests/contracts/ensures_fail_positive.nv
+- nova_tests/contracts/handler_verify_v1_positive.nv
+- docs/simplifications.md (V12/V17 закрыты; P1-4 documented)
+- docs/project-creation.txt (эта секция)

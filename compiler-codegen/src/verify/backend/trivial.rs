@@ -131,7 +131,7 @@ pub fn simplify(term: &SmtTerm) -> SmtTerm {
         // Возвращаем term as-is; на check_sat это посчитается «непрозрачным»
         // — backend выдаст Unknown(NotAttempted) для goal'ов опирающихся
         // на forall'ы.
-        SmtTerm::Forall(_, _) => term.clone(),
+        SmtTerm::Forall(_, _, _) => term.clone(),
     }
 }
 

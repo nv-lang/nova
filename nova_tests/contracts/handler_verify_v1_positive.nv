@@ -1,0 +1,22 @@
+// Plan 33.4 P0-1 (Ф.9.7 V1): #verify handler с тривиально-доказуемым
+// статическим axiom'ом. Axiom `value() >= 0` доказуем потому что
+// handler body `=> 0` (константа 0 >= 0 — тавтология для TrivialBackend).
+
+module contracts.handler_verify_v1_positive
+
+type Counter effect {
+    Increment()
+    #pure value() -> int
+    axiom non_negative() => value() >= 0
+}
+
+test "#verify handler с тривиальным static axiom компилируется" {
+    let mut n = 0
+    with #verify Counter = handler Counter {
+        Increment() { n = n + 1 }
+        value() => 0
+    } {
+        Counter.Increment()
+        assert(Counter.value() == 0)
+    }
+}

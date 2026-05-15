@@ -181,7 +181,7 @@ fn check_module_path(file: &PathBuf, module: &nova_codegen::ast::Module) -> Resu
         .map_err(|msg| anyhow!("{}", msg))
 }
 
-fn main() -> ExitCode {
+fn run() -> ExitCode {
     let cli = Cli::parse();
     let result = match cli.cmd {
         Cmd::Check { file } => cmd_check(&file),
@@ -204,6 +204,23 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// Точка входа: запускаем всё в потоке с увеличенным стеком (32 MiB).
+///
+/// AST-обходы (type-checker, SCC-based purity inference, SMT encoder)
+/// взаимно рекурсивны через expr ↔ block ↔ stmt. На Windows стек
+/// главного потока по умолчанию 1 MiB — для глубоко вложенных выражений
+/// и больших модулей этого недостаточно. Spawn с explicit stack_size
+/// вместо linker flags: portably работает на Windows/Linux/macOS.
+fn main() -> ExitCode {
+    std::thread::Builder::new()
+        .name("nova-main".to_string())
+        .stack_size(64 * 1024 * 1024)
+        .spawn(run)
+        .expect("spawn main thread")
+        .join()
+        .unwrap_or(ExitCode::FAILURE)
 }
 
 fn read_file(path: &PathBuf) -> Result<String> {

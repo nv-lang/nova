@@ -774,7 +774,7 @@ impl Parser {
             TokenKind::KwLet => {
                 if let Some(d) = &pending_doc {
                     // Plan 45 Ф.3: orphan `///` warning — doc-comment'ы
-                    // не имеют семантики для `let`/`test` items.
+                    // не имеют семантики для `let`/`test`/`lemma` items.
                     eprintln!(
                         "warning: doc-comment (`///`) before `let` is ignored \
                          — `let` declarations are not documented (Plan 45 Ф.3). \
@@ -795,6 +795,17 @@ impl Parser {
                     );
                 }
                 Item::Test(self.parse_test_decl()?)
+            }
+            TokenKind::KwLemma if !is_export && !is_external => {
+                if let Some(d) = &pending_doc {
+                    eprintln!(
+                        "warning: doc-comment (`///`) before `lemma` is ignored \
+                         — `lemma` declarations are not documented (Plan 45 Ф.3). \
+                         span: {:?}",
+                        d.span
+                    );
+                }
+                Item::Lemma(self.parse_lemma_decl()?)
             }
             _ => {
                 let span = self.peek().span;
@@ -976,6 +987,13 @@ impl Parser {
                     let expr = self.parse_expr()?;
                     let span = start.merge(expr.span);
                     contracts.push(Contract { kind: ContractKind::Ensures, expr, span });
+                }
+                TokenKind::Ident(n) if n == "ensures_fail" => {
+                    let start = self.peek().span;
+                    self.bump();
+                    let expr = self.parse_expr()?;
+                    let span = start.merge(expr.span);
+                    contracts.push(Contract { kind: ContractKind::EnsuresFail, expr, span });
                 }
                 TokenKind::Ident(n) if n == "reads" => {
                     self.bump();
@@ -1706,6 +1724,31 @@ impl Parser {
             } else {
                 None
             };
+            // Plan 33.5 Ф.5.1: контракты метода эффекта — requires/ensures.
+            // Используются для Liskov-верификации handler'ов (Ф.5.2).
+            let mut contracts: Vec<Contract> = Vec::new();
+            self.skip_newlines();
+            loop {
+                let cstart = self.peek().span;
+                match self.peek().kind.clone() {
+                    TokenKind::Ident(ref n) if n == "requires" => {
+                        self.bump();
+                        let expr = self.parse_expr()?;
+                        let span = cstart.merge(expr.span);
+                        contracts.push(Contract { kind: ContractKind::Requires, expr, span });
+                        self.skip_newlines();
+                    }
+                    TokenKind::Ident(ref n) if n == "ensures" => {
+                        self.bump();
+                        let expr = self.parse_expr()?;
+                        let span = cstart.merge(expr.span);
+                        contracts.push(Contract { kind: ContractKind::Ensures, expr, span });
+                        self.skip_newlines();
+                    }
+                    _ => break,
+                }
+            }
+
             let end = self.tokens[self.pos.saturating_sub(1)].span;
             // Plan 33.3 Ф.9: `#pure` op обязан иметь return type
             // (что-то наблюдать). Без `-> R` объявление бессмысленно.
@@ -1724,6 +1767,7 @@ impl Parser {
                 return_type,
                 span: name_span.merge(end),
                 kind: op_kind,
+                contracts,
             });
             self.skip_newlines();
         }
@@ -1757,17 +1801,32 @@ impl Parser {
             self.expect(&TokenKind::LParen)?;
             // Typed binders: `axiom name(id int, x str) => ...`
             // Untyped:       `axiom name(id, x) => ...`  (type inferred)
-            let mut binders: Vec<(String, Option<TypeRef>)> = Vec::new();
+            // Generic refs:  `axiom name[T](id T) => ...` → Generic("T")
+            let generic_names: std::collections::HashSet<String> =
+                generics.iter().map(|g| g.name.clone()).collect();
+            let mut binders: Vec<crate::ast::BinderDef> = Vec::new();
             while !matches!(self.peek().kind, TokenKind::RParen) {
-                let (b, _) = self.parse_ident()?;
+                let (b, b_span) = self.parse_ident()?;
                 // Если следующий токен — не запятая и не ')' — это тип.
-                let ty = if !matches!(self.peek().kind,
+                let kind = if !matches!(self.peek().kind,
                     TokenKind::Comma | TokenKind::RParen) {
-                    Some(self.parse_type()?)
+                    let ty = self.parse_type()?;
+                    // Проверяем: тип = единственный Named{path:[T]} где T generic?
+                    if let crate::ast::TypeRef::Named { path, generics: g, .. } = &ty {
+                        if g.is_empty() && path.len() == 1
+                            && generic_names.contains(&path[0])
+                        {
+                            crate::ast::BinderType::Generic(path[0].clone())
+                        } else {
+                            crate::ast::BinderType::Typed(ty)
+                        }
+                    } else {
+                        crate::ast::BinderType::Typed(ty)
+                    }
                 } else {
-                    None
+                    crate::ast::BinderType::Untyped
                 };
-                binders.push((b, ty));
+                binders.push(crate::ast::BinderDef { name: b, kind, span: b_span });
                 if self.eat(&TokenKind::Comma).is_none() {
                     break;
                 }
@@ -1887,6 +1946,141 @@ impl Parser {
             body,
             span: start.merge(body_span),
         })
+    }
+
+    // ─── lemma ───────────────────────────────────────────────────────────
+
+    /// Plan 33.5 Ф.4.1: `lemma name(params) requires P ensures Q { body }`.
+    ///
+    /// Синтаксис — упрощённый fn без effects/return_type/decreases/modifies.
+    /// Контракты: только `requires` и `ensures` (body доказывает ensures при requires).
+    fn parse_lemma_decl(&mut self) -> Result<LemmaDecl, Diagnostic> {
+        let start = self.expect(&TokenKind::KwLemma)?.span;
+        let name = match self.peek().kind.clone() {
+            TokenKind::Ident(n) => { self.bump(); n }
+            _ => return Err(Diagnostic::new(
+                "expected lemma name",
+                self.peek().span,
+            )),
+        };
+
+        // Generics: `[T]` form (optional).
+        let generics = if matches!(self.peek().kind, TokenKind::LBracket) {
+            self.parse_generic_decl_params()?
+        } else {
+            Vec::new()
+        };
+
+        // Params.
+        self.expect(&TokenKind::LParen)?;
+        let mut params = Vec::new();
+        while !matches!(self.peek().kind, TokenKind::RParen) {
+            params.push(self.parse_param()?);
+            if !matches!(self.peek().kind, TokenKind::RParen) {
+                self.expect(&TokenKind::Comma)?;
+            }
+        }
+        self.expect(&TokenKind::RParen)?;
+
+        // Contracts: requires / ensures (same parsing as in parse_fn).
+        let mut contracts = Vec::new();
+        loop {
+            self.skip_newlines();
+            let cstart = self.peek().span;
+            match self.peek().kind.clone() {
+                TokenKind::Ident(ref n) if n == "requires" => {
+                    self.bump();
+                    let expr = self.parse_expr()?;
+                    let span = cstart.merge(expr.span);
+                    contracts.push(Contract { kind: ContractKind::Requires, expr, span });
+                }
+                TokenKind::Ident(ref n) if n == "ensures" => {
+                    self.bump();
+                    let expr = self.parse_expr()?;
+                    let span = cstart.merge(expr.span);
+                    contracts.push(Contract { kind: ContractKind::Ensures, expr, span });
+                }
+                _ => break,
+            }
+        }
+
+        // Body: `=> expr` или `{ ... }` block (как у fn).
+        let (body, end_span) = if matches!(self.peek().kind, TokenKind::FatArrow) {
+            self.bump(); // consume `=>`
+            let expr = self.parse_expr()?;
+            let sp = expr.span;
+            (FnBody::Expr(expr), sp)
+        } else {
+            let b = self.parse_block()?;
+            let sp = b.span;
+            (FnBody::Block(b), sp)
+        };
+        Ok(LemmaDecl {
+            name,
+            generics,
+            params,
+            contracts,
+            body,
+            span: start.merge(end_span),
+        })
+    }
+
+    /// Plan 33.5 Ф.4.2: `calc { expr; == expr; == expr; }`.
+    ///
+    /// Синтаксис:
+    ///   calc {
+    ///     expr1 ;
+    ///     == expr2 ;    // или <=, <, >=, >
+    ///     == expr3 ;
+    ///   }
+    ///
+    /// Первый шаг — просто expr (без отношения). Остальные начинаются с rel.
+    fn parse_calc_stmt(&mut self, start: Span) -> Result<Stmt, Diagnostic> {
+        self.expect(&TokenKind::LBrace)?;
+        let mut steps: Vec<CalcStep> = Vec::new();
+
+        loop {
+            self.skip_newlines();
+            if matches!(self.peek().kind, TokenKind::RBrace) { break; }
+
+            // Первый шаг — без отношения; последующие начинаются с rel-оператора.
+            let rel = if steps.is_empty() {
+                None
+            } else {
+                // Ожидаем rel-оператор: ==, <=, <, >=, >
+                let rel = match &self.peek().kind {
+                    TokenKind::EqEq => { self.bump(); CalcRel::Eq }
+                    TokenKind::Le => { self.bump(); CalcRel::Le }
+                    TokenKind::Lt => { self.bump(); CalcRel::Lt }
+                    TokenKind::Ge => { self.bump(); CalcRel::Ge }
+                    TokenKind::Gt => { self.bump(); CalcRel::Gt }
+                    _ => return Err(Diagnostic::new(
+                        "expected relation operator (==, <=, <, >=, >) in `calc` step",
+                        self.peek().span,
+                    )),
+                };
+                Some(rel)
+            };
+
+            let expr = self.parse_expr()?;
+            let step_span = expr.span;
+
+            // Опциональная точка с запятой после выражения.
+            self.skip_newlines();
+            if matches!(self.peek().kind, TokenKind::Semicolon) {
+                self.bump();
+            }
+
+            steps.push(CalcStep { rel, expr, span: step_span });
+        }
+
+        let end = self.expect(&TokenKind::RBrace)?.span;
+
+        if steps.is_empty() {
+            return Err(Diagnostic::new("empty `calc` block", start));
+        }
+
+        Ok(Stmt::Calc { steps, span: start.merge(end) })
     }
 
     // ─── types ───────────────────────────────────────────────────────────
@@ -2861,6 +3055,10 @@ impl Parser {
                     Ok(Expr::new(ExprKind::SelfAccess, start))
                 }
             }
+            TokenKind::Ident(ref kw) if kw == "forall" || kw == "exists" => {
+                let is_forall = kw == "forall";
+                self.parse_quantifier(is_forall)
+            }
             TokenKind::Ident(_) => {
                 // Простой идентификатор. Dot-цепочки `.field`/`.method`
                 // обрабатываются в parse_postfix как Member access — это
@@ -3299,6 +3497,36 @@ impl Parser {
         ))
     }
 
+    /// D.1.3: парсит `forall x in lo..hi : P(x)` или `exists x in lo..hi : P(x)`.
+    ///
+    /// Вызывается из parse_primary когда текущий токен — Ident("forall")
+    /// или Ident("exists"). Оба являются контекстными ключевыми словами
+    /// (не TokenKind), поэтому диспатч через проверку содержимого Ident.
+    fn parse_quantifier(&mut self, is_forall: bool) -> Result<Expr, Diagnostic> {
+        let start = self.bump().span; // consume "forall" / "exists"
+        let (var_name, _var_span) = self.parse_ident()?; // bound variable
+        self.expect(&TokenKind::KwIn)?;
+        // Диапазон — lo..hi. Отключаем trailing/struct чтобы `:` не
+        // поглощалось как named-argument или record-поле.
+        let range = self.with_no_struct_or_trailing(|p| p.parse_expr())?;
+        self.expect(&TokenKind::Colon)?;
+        let body = self.parse_expr()?;
+        let span = start.merge(body.span);
+        if is_forall {
+            Ok(Expr::new(ExprKind::Forall {
+                var: var_name,
+                range: Box::new(range),
+                body: Box::new(body),
+            }, span))
+        } else {
+            Ok(Expr::new(ExprKind::Exists {
+                var: var_name,
+                range: Box::new(range),
+                body: Box::new(body),
+            }, span))
+        }
+    }
+
     /// Эвристика: `{` перед нами — это начало record-литерала?
     /// Смотрим первый «значимый» токен внутри: `Ident :` или `...` или `}`.
     fn looks_like_record_lit(&self) -> bool {
@@ -3621,13 +3849,15 @@ impl Parser {
         let (invs, decr) = self.parse_loop_clauses()?;
         let mut body = self.parse_block()?;
         Self::inject_loop_invariants(invs.clone(), &mut body);
-        Self::inject_loop_decreases(decr, &mut body);
+        Self::inject_loop_decreases(decr.clone(), &mut body);
         let end = body.span;
         let loop_expr = Expr::new(
             ExprKind::For {
                 pattern,
                 iter: Box::new(iter),
                 body,
+                invariants: invs.clone(),
+                decreases: decr.map(Box::new),
             },
             start.merge(end),
         );
@@ -3667,6 +3897,8 @@ impl Parser {
                     pattern,
                     scrutinee: Box::new(scrutinee),
                     body,
+                    invariants: vec![],
+                    decreases: None,
                 },
                 start.merge(end),
             ));
@@ -3676,12 +3908,14 @@ impl Parser {
         let (invs, decr) = self.parse_loop_clauses()?;
         let mut body = self.parse_block()?;
         Self::inject_loop_invariants(invs.clone(), &mut body);
-        Self::inject_loop_decreases(decr, &mut body);
+        Self::inject_loop_decreases(decr.clone(), &mut body);
         let end = body.span;
         let loop_expr = Expr::new(
             ExprKind::While {
                 cond: Box::new(cond),
                 body,
+                invariants: invs.clone(),
+                decreases: decr.map(Box::new),
             },
             start.merge(end),
         );
@@ -3694,9 +3928,9 @@ impl Parser {
         let (invs, decr) = self.parse_loop_clauses()?;
         let mut body = self.parse_block()?;
         Self::inject_loop_invariants(invs.clone(), &mut body);
-        Self::inject_loop_decreases(decr, &mut body);
+        Self::inject_loop_decreases(decr.clone(), &mut body);
         let end = body.span;
-        let loop_expr = Expr::new(ExprKind::Loop { body }, start.merge(end));
+        let loop_expr = Expr::new(ExprKind::Loop { body, invariants: invs.clone(), decreases: decr.map(Box::new) }, start.merge(end));
         Ok(Self::wrap_loop_with_preentry_check(loop_expr, &invs))
     }
 
@@ -4397,6 +4631,35 @@ impl Parser {
                 let expr = self.parse_expr()?;
                 let span = start.merge(expr.span);
                 Ok(StmtOrExpr::Stmt(Stmt::Assume { expr, span }))
+            }
+            // Plan 33.5 Ф.4.1: `apply lemma_name(args)` — активация lemma.
+            TokenKind::KwApply => {
+                self.bump();
+                let name = match self.peek().kind.clone() {
+                    TokenKind::Ident(n) => { self.bump(); n }
+                    _ => return Err(Diagnostic::new(
+                        "expected lemma name after `apply`",
+                        self.peek().span,
+                    )),
+                };
+                // args — обязательный список в скобках, может быть пустым.
+                self.expect(&TokenKind::LParen)?;
+                let mut args = Vec::new();
+                while !matches!(self.peek().kind, TokenKind::RParen) {
+                    args.push(self.parse_expr()?);
+                    if !matches!(self.peek().kind, TokenKind::RParen) {
+                        self.expect(&TokenKind::Comma)?;
+                    }
+                }
+                let end = self.expect(&TokenKind::RParen)?.span;
+                let span = start.merge(end);
+                Ok(StmtOrExpr::Stmt(Stmt::Apply { lemma: name, args, span }))
+            }
+            // Plan 33.5 Ф.4.2: `calc { ... }` — структурированное доказательство.
+            // Контекстуальный keyword (не резервируем `calc` глобально).
+            TokenKind::Ident(ref n) if n == "calc" => {
+                self.bump(); // consume `calc`
+                Ok(StmtOrExpr::Stmt(self.parse_calc_stmt(start)?))
             }
             _ => {
                 let expr = self.parse_expr()?;

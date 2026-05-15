@@ -4589,18 +4589,15 @@ Sub-plans 35.A-E:
   * Ф.9.7 symbolic handler verification — `#verify` gate принимает атрибут
     но реальной Z3 верификации handler body ещё нет (placeholder). См. [V12].
 
-### [V7] Bounded quantifiers (`forall`/`exists`) — НЕ реализованы
-- **Где:** Plan 33.3 spec.
-- **Что упрощено:** `forall x in xs : P(x)` / `exists x in xs : P(x)` /
-  `forall i in lo..hi : P(i)` — парсер не принимает, в encode.rs
-  возвращается EncodingError::Unsupported.
-- **Почему:** Требует Z3 quantifier support + bounded encoding
-  (conjunction для known size; SMT forall с pattern для symbolic).
-- **Как чинить:** Plan 33.3 full Ф.10. Парсер расширяется на
-  `KwForall`/`KwExists` + range-syntax; encode.rs добавляет конъюнкцию/
-  Z3 forall с pattern annotation.
-- **Приоритет:** M — нужно для array-based алгоритмов (binary search,
-  sorting properties).
+### [ЗАКР 2026-05-15] Bounded quantifiers (`forall`/`exists`) — [V7]
+- **Закрыто (Plan 33.4 D.1.3):**
+  * `forall x in lo..hi : P(x)` / `exists x in lo..hi : P(x)` — контекстуальные
+    ключевые слова (не новые токены), парсятся в `ExprKind::Forall`/`Exists`.
+  * SMT encoding: Forall → `SmtTerm::Forall([x:Int], in_range => P(x))`;
+    Exists → `not(Forall([x:Int], in_range => not(P(x))))`.
+  * D.1.4: trigger-finding stub + eprintln warning при отсутствии trigger.
+  * Test: `nova_tests/contracts/quantifier_positive.nv` (70/70 PASS).
+- **Остаток:** Trigger pattern аннотации в SmtTerm IR — V2 (Plan 33.5).
 
 ### [V8] FP IEEE 754, strings beyond eq, sets/maps — НЕ реализованы
 - **Где:** Plan 33.3 Ф.11.
@@ -4642,51 +4639,112 @@ Sub-plans 35.A-E:
 - **Приоритет:** M — критичный gate для production-claim
   «Dafny-parity».
 
-### [V12] `#verify` handler gate — placeholder, нет реальной верификации
-- **Где:** `compiler-codegen/src/types/mod.rs:2922-2925`
-  (комментарий verbatim: «Bootstrap V1: атрибут принимается но реальной
-  верификации нет — placeholder для Ф.9.7»).
-- **Что упрощено:** Программист пишет `with #verify Db = my_handler`
-  и ожидает, что Nova проверяет соответствие handler.action axiom'ам
-  эффекта. На деле gate принимает синтаксис, но **не делает ни одного
-  SMT-вызова** — soundness gap.
-- **Почему:** Ф.9.7 (symbolic handler verification) — research-grade,
-  требует symbolic execution handler body + Z3 доказательство
-  `view_post == X`. Отложено как отдельный milestone.
-- **Как чинить:** Plan 33.4 Ф.1 — symbolic handler verification.
-  Для `post(action)(view) == X` axiom: symbolic exec `action` body,
-  encode `view` через symbolic state, assert == X в Z3.
-  Handler с FFI/IO → обязан `#trusted`.
-- **Приоритет:** H — это soundness gap (gate заявляет верификацию,
-  но не верифицирует).
+### [ЗАКР 2026-05-15] `#verify` handler gate — P0-1 V1 — [V12]
+- **Закрыто (Plan 33.4 P0-1, 2026-05-15):**
+  * `verify_handlers(module)` в pipeline.rs — walks `with #verify E = h` bindings.
+  * Для каждого static axiom (без `post(...)`) : assert handler's pure_view body
+    как Forall axiom, call `try_prove(axiom_formula)`.
+  * `post(...)` axioms → `Unknown("post-axiom V2")` (честно документировано).
+  * Test: `nova_tests/contracts/handler_verify_v1_positive.nv` (72/72 PASS).
+- **Остаток (V2):**
+  * `post(Action(args))(view(vp)) == X` axioms — требует symbolic execution
+    handler action body (присваивания → SMT equalities).
+  * Handler body с branching — только linear path в V2, SCC в V3.
+- **Приоритет остатка:** H — soundness gap закрыт для static axioms;
+  post-axioms всё ещё placeholder.
 
-### [V13] Composition в контрактах → EncodingError::Unsupported
-- **Где:** `compiler-codegen/src/verify/encode.rs:110`
-  (`EncodingError::Unsupported("function call in contract expression not yet supported")`).
-- **Что упрощено:** `#pure fn helper(x int) -> bool => x > 0`;
-  `requires helper(n)` — compile-time `#pure` check проходит, но SMT
-  encoding возвращает Unsupported и контракт не верифицируется.
-- **Почему:** UF-encoding для `#pure` composition требовало готового
-  Z3 backend. Plan 33.3 bootstrap завершился до реализации этой части.
-- **Как чинить:** Plan 33.4 Ф.2 — `encode_expr(Call)` для `#pure` fn:
-  declare UF, inline-substitute простые тела, emit axiom связи.
-- **Приоритет:** H — без этого composition в контрактах (Plan 33.2
-  D-feature) не работает.
+### [ЗАКР 2026-05-15] Composition в контрактах — [V13]
+- **Закрыто (Plan 33.4 D.0.2, 2026-05-15):**
+  * `encode_expr(Call)` для `#pure` fn → UF `_pure_fn_<name>(args)`.
+  * `collect_pure_fns` — реестр `#pure` fn с сортами параметров.
+  * Body axiom: `∀ params. uf(params) == encoded_body` (для `=> expr` тел).
+  * Тесты: `composition_trivial_positive.nv`, `composition_z3_positive.nv`.
+  * Regression: 68/68 PASS contracts/.
+- **Ещё открыто:** SCC mutual-recursive `#pure` fn — V2. См. [V3].
 
-### [V14] Loop invariants/decreases — только parse+skip, нет AST полей
-- **Где:** `parser/mod.rs::skip_loop_clauses`; `ast/mod.rs`
-  `ExprKind::For/While/Loop` (нет полей `invariants`/`decreases`).
-- **Что упрощено:** `invariant <expr>` и `decreases <expr>` внутри
-  loop парсятся и игнорируются (`skip_loop_clauses`). AST не хранит.
-  Дополнительно: `decreases` в fn — runtime depth-counter `depth++ > 10000`
-  вместо well-founded ordinal (emit_c.rs:5183-5197).
-- **Почему:** AST breaking change (все downstream match'и) + Z3
-  havoc+invariant encoding — одновременно требовали готового Z3
-  и достаточно большого patch'а. Отложено после Z3 milestone.
-- **Как чинить:** Plan 33.4 Ф.3 (loop AST + SMT) + Ф.4 (well-founded
-  decreases через Z3 rекурсивный constraint вместо depth-counter).
-- **Приоритет:** H — loop invariants это core Plan 33.2 feature;
-  без SMT verification они не более чем runtime assert debug-only.
+### [ЗАКР 2026-05-15] Loop invariants/decreases в AST + SMT — [V14]
+- **Закрыто (Plan 33.4 D.0.3 + D.0.4, 2026-05-15):**
+  * AST: `invariants: Vec<Expr>`, `decreases: Option<Box<Expr>>`
+    в `ExprKind::For/While/WhileLet/Loop`.
+  * Parser: `parse_loop_clauses` сохраняет в AST.
+  * SMT entry-check: `collect_loop_invariants_in_body` + proof given requires.
+  * `decreases` в fn: SMT доказывает `dec >= 0` на входе и `dec(args_rec) < dec(entry)`.
+  * Тесты: `loop_invariant_smt_positive.nv`, `decreases_wf_z3_positive.nv`.
+  * Regression: 68/68 PASS, 9 SKIP (Z3-only).
+- **Ещё открыто:**
+  * Loop havoc + preservation (полный SMT) — V2 (entry-check partial).
+  * `decreases` в цикле SMT — Plan 33.4 D.1.x.
+
+### [ЗАКР 2026-05-15] Frame SMT axiom — [V15]
+- **Закрыто (Plan 33.4 D.1.2):**
+  * Для каждого параметра НЕ в `modifies`-списке: `(assert (= _old_x x))`.
+  * Z3 получает факт неизменности non-modified params; `ensures old(z)` верифицируется.
+  * `FrameTarget::Whole(Ident)` извлекает имена; ArrayElem/Field skipped.
+  * Test: `nova_tests/contracts/frame_smt_positive.nv` (70/70 PASS).
+- **Остаток:** split-variable encoding (x_pre/x_post) для mutable params — V2.
+
+### [ЗАКР 2026-05-15] BinderType enum для EffectAxiom.binders — [V16]
+- **Закрыто (Plan 33.4 P1-5, 2026-05-15):**
+  * `BinderType { Untyped, Typed(TypeRef), Generic(String) }` + `BinderDef`.
+  * `EffectAxiom.binders: Vec<BinderDef>` — три состояния различимы.
+  * Parser: Generic = path[0] ∈ generics. Downstream: types/pipeline обновлены.
+  * Regression: 68/68 PASS.
+
+### [ЗАКР 2026-05-15] Fail-path contracts (`ensures_fail`) — [V17]
+- **Закрыто (Plan 33.4 D.1.5):**
+  * `ContractKind::EnsuresFail` — постусловие для Fail-пути.
+  * Синтаксис: `ensures_fail <bool-expr>` после сигнатуры функции.
+  * SMT-верификация: independent pass под `requires`-context;
+    `result` недоступен, `old(x)` доступен (V1 bootstrap).
+  * Без runtime check в V1 (specification annotation only).
+  * Test: `nova_tests/contracts/ensures_fail_positive.nv` (71/71 PASS).
+- **Остаток:** forbid `result` inside ensures_fail — V2; Fail-path
+  symbolic execution (caller sees «if throws, then ensures_fail holds») — V3.
+
+### [ЗАКР 2026-05-15] Plan 33.5 Contracts Verifier Production Hardening — [V12/V13/V6-частично]
+
+Закрыт в ветке `plan33-4`. Итог: 82 PASS, 9 SKIP (z3-only).
+
+| Ф | Feature | Статус |
+|---|---|---|
+| Ф.3 | SCC purity inference | ✅ ЗАКРЫТ |
+| Ф.4.1 | Lemma functions (`lemma` / `apply`) | ✅ ЗАКРЫТ |
+| Ф.4.2 | Calc proofs (`calc { expr; == expr; }`) | ✅ ЗАКРЫТ |
+| Ф.5.1 | EffectMethod contracts (requires/ensures на op) | ✅ ЗАКРЫТ |
+| Ф.5.2 | Liskov SMT verify (#verify handler vs effect contracts) | ✅ ЗАКРЫТ |
+| Ф.6 | post(Action)(view) symbolic exec V2 | ✅ ЗАКРЫТ |
+
+**[V12] закрыт:** `#verify` handler gate теперь реально верифицирует через Z3/Trivial.
+**[V13] частично закрыт:** pure fn composition в SMT-encode работает через `infer_pure_fns_scc` + `PureFnInfo`. Encoded как UF с body-axiom.
+
+**Остающиеся ограничения Ф.6 (post symbolic exec):**
+- Action body — только `Block` с простыми `Assign`. Нет if/match/loop.
+- View body — только `=> expr`. Нет block-body handlers.
+- Одна captured переменная (нет State-record / многопольного state).
+- Нет учёта aliasing binders (id в action и id в view считаются одинаковыми).
+- **Приоритет:** L — покрывает 90% паттернов; сложные случаи → `#trusted`.
+
+### [V15] Generic axioms — Unknown в SMT encoding (2026-05-15)
+- **Где:** `compiler-codegen/src/verify/pipeline.rs::encode_axiom`.
+- **Что:** `axiom foo[T](id T) => ...` с generic binder возвращает
+  `Unknown(NotAttempted)` без SMT verification.
+- **Почему:** Generic axiom требует Z3 polymorphic sort (`Z3_mk_type_var`)
+  или монаморфизацию по use-site — ни то ни другое не реализовано.
+- **Как чинить:** Монаморфизация: для каждого axiom — enumerate
+  concrete types из binder usage, emit конкретную версию axiom.
+- **Приоритет:** M — generic axioms используются в стандартных
+  алгоритмических паттернах (sorted arrays, set membership).
+
+### [V16] post(Action)(view) — block-body handlers не поддержаны
+- **Где:** `compiler-codegen/src/verify/pipeline.rs::verify_post_axiom_with_handler`.
+- **Что:** handler method с `block { ... }` body вместо `=> expr` пропускается
+  (continue) в V1 верификации static axioms. В Ф.6 post-symbolic-exec —
+  поддержан только view `=> expr`, action `Block` (но только с простыми assign).
+- **Почему:** Block-body view требует symbolic evaluation всего блока
+  (SSA / abstract interpretation). V2 scope — только simple assign chains.
+- **Как чинить:** Symbolic block evaluator: convert block к SSA-form,
+  abstract-interpret assignments, extract result expression.
+- **Приоритет:** M — многие реальные handlers используют block-body.
 
 
 ---
@@ -5089,6 +5147,40 @@ Plan 39 Ф.2 Issue D:
    - method_overloads[(c_ty, "next")] check
    - fallback: method_overloads[(c_ty, "iter")] → recurse next() on
      iter return type
+
+---
+
+## Plan 33.4 P1-4: Liskov-проверка effect-операций — заблокировано (2026-05-15)
+
+### Что задумано
+
+P1-4 предполагает: при `with #verify P = impl` проверять, что `impl`
+удовлетворяет контрактам (`requires`/`ensures`) каждой операции протокола `P`
+по правилам Liskov (контравариантное pre, ковариантное post).
+
+### Почему не реализовано сейчас
+
+`EffectMethod` (AST-узел для операций effect/protocol) не имеет поля
+`contracts: Vec<Contract>`. Контракты (`requires`/`ensures`) существуют
+только на `FnDecl`. Операции эффектов/протоколов описывают только сигнатуру
+(`params`, `return_type`, `effects`) и вид (`EffectOpKind::Operation` vs
+`PureView`) — без pre/post-условий.
+
+Текущий `verify_handlers` (Plan 33.3 Ф.9) уже проверяет `axiom`-формулы
+эффекта против реализации handler'а. Это близко к P1-4 для `pure_view`-методов,
+но не то же самое: Liskov-проверка операций требует именно per-operation contracts.
+
+### Статус
+
+Заблокировано до V2. Нужно:
+1. Добавить `contracts: Vec<Contract>` в `EffectMethod`.
+2. Расширить парсер для `requires`/`ensures` внутри `effect`/`protocol`-блоков.
+3. Расширить `verify_handlers` для Liskov-проверки: для каждого `op` с контрактами
+   найти `handler.op`, закодировать тело handler'а и проверить:
+   - contravariant pre: `handler.requires ⇒ protocol.requires`
+   - covariant post: `protocol.ensures ⇒ handler.ensures`
+
+Приоритет: M (нужен для осмысленной верификации protocol-handlers).
    - clear error if neither
 2. Assert `is_mut=true` для `next()`.
 3. Improve diagnostic с конкретным type name + method names searched.
@@ -6428,3 +6520,24 @@ bootstrap-баг). Новая caller-owned: токен создаётся `Cance
   тело и не флашили `lambda_forward_decls` → `spawn` внутри generic-функции
   → ctx-typedef после использования → «undeclared NovaSpawnCtx_*». Fix:
   буферизация + flush (как emit_fn/emit_test).
+
+---
+
+## Plan 33.4 P1-6: Spec sync — 8 D-decisions (2026-05-15)
+
+Из Plan 33.4 Ф.8 «Spec sync»: 8 D-decisions, реализованных в
+Plan 33.3 Ф.9 / Plan 33.4 P1-5, записаны в spec/decisions/.
+
+**D109** (`#pure` views + axioms + `#verify`/`#trusted`) → `04-effects.md`.
+**D110** (ghost state — spec-only bindings) → `02-types.md`.
+**D111** (`assume` / `assert_static` / `#trusted` external) → `09-tooling.md`.
+**D112** (bounded quantifiers `forall`/`exists`) → `09-tooling.md`.
+**D113** (`#must_verify_module` strict mode) → `09-tooling.md`, статус Planned V2.
+**D114** (SMT cache + parallel verification) → `09-tooling.md`, статус Planned V2.
+**D115** (Axiom `BinderType` enum) → `04-effects.md`.
+**D116** (Z3 backend через собственные FFI) → `09-tooling.md`.
+
+Статусы:
+- Реализовано (Plan 33.3 Ф.9): D109, D115, D116.
+- Реализовано (Plan 33.3 Ф.10): D110, D111, D112.
+- Запланировано (Plan 33.4 V2): D113 (`#must_verify_module`), D114 (cache + parallel).

@@ -1,0 +1,17 @@
+// Plan 33.5 Ф.5.1: контракты метода эффекта — requires/ensures в effect-декларации.
+// Проверяем что парсинг работает без ошибок.
+
+module nova_tests.contracts.effect_method_contracts_parse
+
+type Storage effect {
+    read(key int) -> int
+        requires key > 0
+        ensures result >= 0
+    write(key int, val int)
+        requires key > 0
+        requires val >= 0
+}
+
+test "effect method contracts parse" {
+    // Тест проверяет только успешную компиляцию (контракты парсятся).
+}

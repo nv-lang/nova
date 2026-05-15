@@ -1,0 +1,25 @@
+// Ф.2 (Plan 33.5): Loop invariant preservation via havoc-based encoding.
+// Classic: while i < n invariant 0 <= i <= n { i = i + 1 }
+// Z3 должен доказать что инвариант 0 <= i && i <= n сохраняется после каждой итерации.
+
+module nova_tests.contracts.loop_invariant_preservation_positive
+
+fn count_up(n int) -> int
+    requires n >= 0
+    ensures result == n
+{
+    let mut i = 0
+    while i < n
+        invariant i >= 0
+        invariant i <= n
+        decreases n - i
+    {
+        i += 1
+    }
+    i
+}
+
+test "count_up" {
+    assert(count_up(5) == 5)
+    assert(count_up(0) == 0)
+}
