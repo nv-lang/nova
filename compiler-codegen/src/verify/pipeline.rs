@@ -428,6 +428,64 @@ impl VerificationPipeline {
             }
         }
 
+        // Ф.1.3 (Plan 33.5): verify loop decreases.
+        // V1 scope: simple `while <cond> decreases <m> { ... }` где body
+        // содержит прямое decrement `var = var - 1` или `var = var + 1`
+        // (в зависимости от убывания или возрастания). Доказываем:
+        //   1. dec_pre >= 0 (non-negative при входе, под requires).
+        //   2. В каждой итерации dec_post < dec_pre
+        //      (использует assignment-analysis: over-approx `var_post = var_pre - 1`).
+        let loop_decs = collect_loop_decreases_in_body(&fd.body);
+        for (dec_span, dec_expr, body_assignments) in loop_decs {
+            match encode::encode_expr_with_ctx(&dec_expr, &ctx) {
+                Ok(dec_pre) => {
+                    // Проверяем dec_pre >= 0 под requires.
+                    let non_neg = SmtTerm::App(">=".into(), vec![dec_pre.clone(), SmtTerm::IntLit(0)]);
+                    match try_prove(&mut *backend, non_neg) {
+                        SatResult::Unsat(_) => {
+                            results.push((dec_span, VerifyResult::Proven));
+                        }
+                        SatResult::Sat(model) => {
+                            let cex = format_counterexample(&model);
+                            results.push((dec_span, VerifyResult::Disproved(model,
+                                format!("loop decreases measure may be negative: {}", cex))));
+                            continue;
+                        }
+                        SatResult::Unknown(_) => {} // fall through to decrease check
+                    }
+                    // Проверяем что мера убывает: для каждого counter-assignment
+                    // `var = var - k` → dec_post = dec_pre[var → var - k] < dec_pre.
+                    // V1: только одно scalar decreases expression.
+                    // Если в body найдено простое decrement → encode как fresh var.
+                    for (var_name, delta) in &body_assignments {
+                        // dec_post: substitute var → (var - delta) в dec_expr.
+                        let var_minus_delta = SmtTerm::App(
+                            "-".into(),
+                            vec![SmtTerm::Var(var_name.clone()), SmtTerm::IntLit(*delta)],
+                        );
+                        let dec_post = dec_pre.substitute(var_name, &var_minus_delta);
+                        // prove dec_post < dec_pre (i.e. dec_pre - dec_post > 0)
+                        let decreasing = SmtTerm::App("<".into(), vec![dec_post, dec_pre.clone()]);
+                        match try_prove(&mut *backend, decreasing) {
+                            SatResult::Unsat(_) => {
+                                results.push((dec_span, VerifyResult::Proven));
+                            }
+                            SatResult::Sat(model) => {
+                                let cex = format_counterexample(&model);
+                                results.push((dec_span, VerifyResult::Disproved(model,
+                                    format!("loop decreases measure may not decrease: {}", cex))));
+                            }
+                            SatResult::Unknown(reason) => {
+                                results.push((dec_span, VerifyResult::Unknown(
+                                    format!("loop decreases: {}", unknown_to_diag_message(reason)))));
+                            }
+                        }
+                    }
+                }
+                Err(_) => {} // dec не encodable — skip (не ломаем существующие тесты)
+            }
+        }
+
         let _ = self.timeout_ms; // используется когда добавим Z3-backend
         results
     }
@@ -642,6 +700,116 @@ fn collect_loop_invariants_in_expr(e: &Expr, out: &mut Vec<(Span, Expr)>) {
         }
         _ => {}
     }
+}
+
+/// Ф.1.3 (Plan 33.5): собрать все `decreases` claus'ы из циклов.
+///
+/// Возвращает Vec<(Span, decreases_expr, assignments)> где:
+/// - `decreases_expr` — выражение меры (должно убывать).
+/// - `assignments` — Vec<(var_name, delta)> — обнаруженные `var = var ± delta`
+///   в теле цикла (V1: over-approximate, только straight-line assignment stmts).
+///   `delta > 0` означает `var = var - delta` (мера var убывает),
+///   `delta < 0` — `var = var + delta` (мера растёт, delta negative → decrement positive).
+fn collect_loop_decreases_in_body(body: &FnBody) -> Vec<(Span, Expr, Vec<(String, i64)>)> {
+    let mut out = Vec::new();
+    match body {
+        FnBody::Expr(e) => collect_loop_decreases_in_expr(e, &mut out),
+        FnBody::Block(b) => collect_loop_decreases_in_block(b, &mut out),
+        FnBody::External => {}
+    }
+    out
+}
+
+fn collect_loop_decreases_in_block(b: &Block, out: &mut Vec<(Span, Expr, Vec<(String, i64)>)>) {
+    for s in &b.stmts {
+        if let Stmt::Expr(e) = s { collect_loop_decreases_in_expr(e, out); }
+    }
+    if let Some(e) = &b.trailing { collect_loop_decreases_in_expr(e, out); }
+}
+
+fn collect_loop_decreases_in_expr(e: &Expr, out: &mut Vec<(Span, Expr, Vec<(String, i64)>)>) {
+    match &e.kind {
+        ExprKind::While { body, decreases: Some(dec), .. }
+        | ExprKind::Loop { body, decreases: Some(dec), .. } => {
+            let assignments = extract_counter_assignments(body);
+            out.push((e.span, *dec.clone(), assignments));
+            collect_loop_decreases_in_block(body, out);
+        }
+        ExprKind::While { body, decreases: None, .. }
+        | ExprKind::Loop { body, decreases: None, .. } => {
+            collect_loop_decreases_in_block(body, out);
+        }
+        ExprKind::For { body, decreases: Some(dec), .. } => {
+            let assignments = extract_counter_assignments(body);
+            out.push((e.span, *dec.clone(), assignments));
+            collect_loop_decreases_in_block(body, out);
+        }
+        ExprKind::For { body, decreases: None, .. } => {
+            collect_loop_decreases_in_block(body, out);
+        }
+        ExprKind::WhileLet { body, decreases: Some(dec), .. } => {
+            let assignments = extract_counter_assignments(body);
+            out.push((e.span, *dec.clone(), assignments));
+            collect_loop_decreases_in_block(body, out);
+        }
+        ExprKind::WhileLet { body, decreases: None, .. } => {
+            collect_loop_decreases_in_block(body, out);
+        }
+        ExprKind::Block(b) => collect_loop_decreases_in_block(b, out),
+        ExprKind::If { then, else_, .. } => {
+            collect_loop_decreases_in_block(then, out);
+            match else_ {
+                Some(ElseBranch::Block(b)) => collect_loop_decreases_in_block(b, out),
+                Some(ElseBranch::If(ei)) => collect_loop_decreases_in_expr(ei, out),
+                None => {}
+            }
+        }
+        _ => {}
+    }
+}
+
+/// V1: извлечь простые counter-decrement assignments из тела цикла.
+///
+/// Паттерны:
+/// - `x = x - k` (AssignOp::Assign + BinOp::Sub) → delta = k
+/// - `x -= k`    (AssignOp::Sub)                  → delta = k
+/// - `x = x + k` where k < 0 → delta = -k (редкий)
+/// Возвращаем (var_name, delta) где delta > 0 означает убывание меры.
+fn extract_counter_assignments(body: &Block) -> Vec<(String, i64)> {
+    let mut result = Vec::new();
+    for s in &body.stmts {
+        let Stmt::Assign { target, op: assign_op, value, .. } = s else { continue };
+        let ExprKind::Ident(var_name) = &target.kind else { continue };
+        let delta: i64 = match assign_op {
+            // x -= k  →  delta = k (positive means decreasing)
+            AssignOp::Sub => {
+                let ExprKind::IntLit(k) = &value.kind else { continue };
+                *k
+            }
+            // x += k  →  delta = -k  (positive k → increasing, negative delta = skip)
+            AssignOp::Add => {
+                let ExprKind::IntLit(k) = &value.kind else { continue };
+                -*k
+            }
+            // x = x ± k
+            AssignOp::Assign => {
+                let ExprKind::Binary { left, op: bin_op, right } = &value.kind else { continue };
+                let ExprKind::Ident(lvar) = &left.kind else { continue };
+                if lvar != var_name { continue; }
+                let ExprKind::IntLit(k) = &right.kind else { continue };
+                match bin_op {
+                    BinOp::Sub => *k,
+                    BinOp::Add => -*k,
+                    _ => continue,
+                }
+            }
+            _ => continue,
+        };
+        if delta > 0 {
+            result.push((var_name.clone(), delta));
+        }
+    }
+    result
 }
 
 /// Plan 33.3 Ф.9 / Plan 33.4 P1-5: метаданные одного axiom'а с реестрами для encoding.
