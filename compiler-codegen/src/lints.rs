@@ -9,8 +9,11 @@
 //!  - `export-fail-untyped`: `export fn ... Fail -> ...` без `[E]` —
 //!    warning. Public API должен иметь typed Fail (D65 convention).
 
-use crate::ast::{FnDecl, Item, Module, TypeDeclKind, TypeRef};
-use crate::diag::Diagnostic;
+use crate::ast::{
+    ArrayElem, Block, ClosureBody, ElseBranch, Expr, ExprKind, FnBody, FnDecl,
+    HandlerMethodBody, Item, MatchArmBody, Module, Stmt, TypeDeclKind, TypeRef,
+};
+use crate::diag::{Diagnostic, Span};
 use std::collections::HashSet;
 
 /// Один lint-warning.
@@ -26,12 +29,311 @@ pub fn lint_module(m: &Module) -> Vec<LintWarning> {
     let effect_names = collect_effect_names(m);
     let protocol_names = collect_protocol_names(m);
     for item in &m.items {
-        if let Item::Fn(f) = item {
-            check_fn(f, &mut warnings);
-            check_protocol_in_effect_position(f, &protocol_names, &effect_names, &mut warnings);
+        match item {
+            Item::Fn(f) => {
+                check_fn(f, &mut warnings);
+                check_protocol_in_effect_position(f, &protocol_names, &effect_names, &mut warnings);
+                // Plan 52 Ф.2: map-литерал lints (dup-key, NaN-key) —
+                // требуют обхода выражений внутри тела функции.
+                match &f.body {
+                    FnBody::Expr(e) => walk_expr_lints(e, &mut warnings),
+                    FnBody::Block(b) => walk_block_lints(b, &mut warnings),
+                    FnBody::External => {}
+                }
+            }
+            Item::Test(t) => {
+                walk_block_lints(&t.body, &mut warnings);
+            }
+            Item::Const(c) => walk_expr_lints(&c.value, &mut warnings),
+            Item::Let(l) => walk_expr_lints(&l.value, &mut warnings),
+            Item::Type(_) => {}
         }
     }
     warnings
+}
+
+/// Plan 52 Ф.2: рекурсивный обход блока для lint-проверок выражений.
+fn walk_block_lints(b: &Block, out: &mut Vec<LintWarning>) {
+    for s in &b.stmts {
+        walk_stmt_lints(s, out);
+    }
+    if let Some(t) = &b.trailing {
+        walk_expr_lints(t, out);
+    }
+}
+
+fn walk_stmt_lints(s: &Stmt, out: &mut Vec<LintWarning>) {
+    match s {
+        Stmt::Expr(e) => walk_expr_lints(e, out),
+        Stmt::Let(d) => walk_expr_lints(&d.value, out),
+        Stmt::Assign { target, value, .. } => {
+            walk_expr_lints(target, out);
+            walk_expr_lints(value, out);
+        }
+        Stmt::Return { value, .. } => {
+            if let Some(v) = value { walk_expr_lints(v, out); }
+        }
+        Stmt::Throw { value, .. } => walk_expr_lints(value, out),
+        Stmt::Break(_) | Stmt::Continue(_) => {}
+        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. } => walk_expr_lints(body, out),
+        Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => walk_expr_lints(expr, out),
+    }
+}
+
+/// Plan 52 Ф.2: рекурсивный обход выражения. На каждом `MapLit` запускает
+/// map-литерал lints; рекурсивно спускается во все под-выражения.
+fn walk_expr_lints(e: &Expr, out: &mut Vec<LintWarning>) {
+    if let ExprKind::MapLit(pairs) = &e.kind {
+        check_map_literal_lints(pairs, out);
+    }
+    match &e.kind {
+        ExprKind::MapLit(pairs) => {
+            for (k, v) in pairs {
+                walk_expr_lints(k, out);
+                walk_expr_lints(v, out);
+            }
+        }
+        ExprKind::ArrayLit(elems) => {
+            for el in elems {
+                match el {
+                    ArrayElem::Item(x) | ArrayElem::Spread(x) => walk_expr_lints(x, out),
+                }
+            }
+        }
+        ExprKind::TupleLit(elems) => {
+            for x in elems { walk_expr_lints(x, out); }
+        }
+        ExprKind::RecordLit { fields, .. } => {
+            for f in fields {
+                if let Some(v) = &f.value { walk_expr_lints(v, out); }
+            }
+        }
+        ExprKind::Call { func, args, trailing } => {
+            walk_expr_lints(func, out);
+            for a in args { walk_expr_lints(a.expr(), out); }
+            if let Some(t) = trailing {
+                match t {
+                    crate::ast::Trailing::Block(b) => walk_block_lints(b, out),
+                    crate::ast::Trailing::LegacyBlockWithParams(tb) => walk_block_lints(&tb.body, out),
+                    crate::ast::Trailing::Fn(sb) => match &sb.body {
+                        FnBody::Expr(x) => walk_expr_lints(x, out),
+                        FnBody::Block(b) => walk_block_lints(b, out),
+                        FnBody::External => {}
+                    },
+                }
+            }
+        }
+        ExprKind::TurboFish { base, .. } => walk_expr_lints(base, out),
+        ExprKind::Try(x) | ExprKind::Bang(x) => walk_expr_lints(x, out),
+        ExprKind::Coalesce(a, b) => { walk_expr_lints(a, out); walk_expr_lints(b, out); }
+        ExprKind::As(x, _) | ExprKind::Is(x, _) => walk_expr_lints(x, out),
+        ExprKind::Binary { left, right, .. } => {
+            walk_expr_lints(left, out); walk_expr_lints(right, out);
+        }
+        ExprKind::Unary { operand, .. } => walk_expr_lints(operand, out),
+        ExprKind::Member { obj, .. } => walk_expr_lints(obj, out),
+        ExprKind::Index { obj, index } => {
+            walk_expr_lints(obj, out); walk_expr_lints(index, out);
+        }
+        ExprKind::If { cond, then, else_ } => {
+            walk_expr_lints(cond, out);
+            walk_block_lints(then, out);
+            if let Some(eb) = else_ {
+                match eb {
+                    ElseBranch::Block(b) => walk_block_lints(b, out),
+                    ElseBranch::If(x) => walk_expr_lints(x, out),
+                }
+            }
+        }
+        ExprKind::IfLet { scrutinee, then, else_, .. } => {
+            walk_expr_lints(scrutinee, out);
+            walk_block_lints(then, out);
+            if let Some(eb) = else_ {
+                match eb {
+                    ElseBranch::Block(b) => walk_block_lints(b, out),
+                    ElseBranch::If(x) => walk_expr_lints(x, out),
+                }
+            }
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            walk_expr_lints(scrutinee, out);
+            for arm in arms {
+                if let Some(g) = &arm.guard { walk_expr_lints(g, out); }
+                match &arm.body {
+                    MatchArmBody::Expr(x) => walk_expr_lints(x, out),
+                    MatchArmBody::Block(b) => walk_block_lints(b, out),
+                }
+            }
+        }
+        ExprKind::For { iter, body, .. } | ExprKind::ParallelFor { iter, body, .. } => {
+            walk_expr_lints(iter, out); walk_block_lints(body, out);
+        }
+        ExprKind::While { cond, body } => {
+            walk_expr_lints(cond, out); walk_block_lints(body, out);
+        }
+        ExprKind::WhileLet { scrutinee, body, .. } => {
+            walk_expr_lints(scrutinee, out); walk_block_lints(body, out);
+        }
+        ExprKind::Loop { body } => walk_block_lints(body, out),
+        ExprKind::Block(b) => walk_block_lints(b, out),
+        ExprKind::Spawn(x) => walk_expr_lints(x, out),
+        ExprKind::Detach(b) => walk_block_lints(b, out),
+        ExprKind::Supervised { body, cancel } => {
+            walk_block_lints(body, out);
+            if let Some(c) = cancel { walk_expr_lints(c, out); }
+        }
+        ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. } => {
+            walk_block_lints(body, out);
+        }
+        ExprKind::Throw(x) => walk_expr_lints(x, out),
+        ExprKind::Interrupt(opt) => {
+            if let Some(x) = opt { walk_expr_lints(x, out); }
+        }
+        ExprKind::Range { start, end, .. } => {
+            walk_expr_lints(start, out); walk_expr_lints(end, out);
+        }
+        ExprKind::InterpolatedStr { parts } => {
+            for p in parts {
+                if let crate::ast::InterpStrPart::Expr(x) = p { walk_expr_lints(x, out); }
+            }
+        }
+        ExprKind::TaggedTemplate { args, .. } => {
+            for x in args { walk_expr_lints(x, out); }
+        }
+        ExprKind::Lambda { body, .. } => walk_expr_lints(body, out),
+        ExprKind::ClosureLight { body, .. } => match body {
+            ClosureBody::Expr(x) => walk_expr_lints(x, out),
+            ClosureBody::Block(b) => walk_block_lints(b, out),
+        },
+        ExprKind::ClosureFull(sb) => match &sb.body {
+            FnBody::Expr(x) => walk_expr_lints(x, out),
+            FnBody::Block(b) => walk_block_lints(b, out),
+            FnBody::External => {}
+        },
+        ExprKind::With { bindings, body } => {
+            for b in bindings { walk_expr_lints(&b.handler, out); }
+            walk_block_lints(body, out);
+        }
+        ExprKind::HandlerLit { methods, .. } => {
+            for m in methods {
+                match &m.body {
+                    HandlerMethodBody::Expr(x) => walk_expr_lints(x, out),
+                    HandlerMethodBody::Block(b) => walk_block_lints(b, out),
+                }
+            }
+        }
+        ExprKind::Select { arms } => {
+            for arm in arms {
+                match &arm.op {
+                    crate::ast::SelectOp::Recv { chan, .. } => walk_expr_lints(chan, out),
+                    crate::ast::SelectOp::Send { chan, value } => {
+                        walk_expr_lints(chan, out); walk_expr_lints(value, out);
+                    }
+                    crate::ast::SelectOp::Default => {}
+                }
+                if let Some(g) = &arm.guard { walk_expr_lints(g, out); }
+                walk_block_lints(&arm.body, out);
+            }
+        }
+        // Листовые — нет под-выражений.
+        ExprKind::Ident(_) | ExprKind::Path(_) | ExprKind::SelfAccess
+        | ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::BoolLit(_)
+        | ExprKind::StrLit(_) | ExprKind::CharLit(_) | ExprKind::UnitLit => {}
+    }
+}
+
+/// Plan 52 Ф.2 (D108): lint-проверки map-литерала `[k: v]`.
+///
+/// - **duplicate-map-key**: два ключа — одинаковые compile-time константы
+///   (int/str/bool literal). Last-wins семантика, но второй entry молча
+///   затирает первый — паритет с `go vet` / `tsc`. Произвольные выражения
+///   (`a`, `a+1`, `f()`) не проверяются.
+/// - **nan-map-key**: ключ — константа `f64.NAN` / `f32.NAN`. По IEEE 754
+///   `NaN != NaN`, поэтому вставленный ключ невозможно найти обратно.
+fn check_map_literal_lints(pairs: &[(Expr, Expr)], out: &mut Vec<LintWarning>) {
+    // NaN-key: ключ это Path(["f64", "NAN"]) или Path(["f32", "NAN"]).
+    for (k, _) in pairs {
+        if let ExprKind::Path(parts) = &k.kind {
+            if parts.len() == 2
+                && (parts[0] == "f64" || parts[0] == "f32")
+                && parts[1] == "NAN"
+            {
+                out.push(LintWarning {
+                    rule: "nan-map-key",
+                    diag: Diagnostic::new(
+                        format!(
+                            "warning: `{}.NAN` as map key — inserted key can never be \
+                             found (IEEE 754: NaN != NaN). Consider a sentinel value or \
+                             a non-float key type.",
+                            parts[0]
+                        ),
+                        k.span,
+                    ),
+                });
+            }
+        }
+    }
+    // duplicate-map-key: сравниваем константные ключи попарно. Канонизируем
+    // в строковый дескриптор; non-const ключи дают None и не сравниваются.
+    let consts: Vec<(Option<String>, Span)> = pairs
+        .iter()
+        .map(|(k, _)| (const_key_descriptor(k), k.span))
+        .collect();
+    for i in 0..consts.len() {
+        let (Some(desc_i), _) = (&consts[i].0, consts[i].1) else { continue };
+        for j in (i + 1)..consts.len() {
+            let (Some(desc_j), span_j) = (&consts[j].0, consts[j].1) else { continue };
+            if desc_i == desc_j {
+                out.push(LintWarning {
+                    rule: "duplicate-map-key",
+                    diag: Diagnostic::new(
+                        format!(
+                            "warning: duplicate key `{}` in map literal — the later \
+                             entry overwrites the earlier one (last-wins)",
+                            human_key(&consts[j].0, pairs, j)
+                        ),
+                        span_j,
+                    ),
+                });
+                break; // один warning на дубликат — не плодим N²
+            }
+        }
+    }
+}
+
+/// Канонический дескриптор compile-time-константного ключа для сравнения
+/// дубликатов. `None` — ключ не является распознаваемой константой.
+/// Дескриптор включает префикс типа, чтобы `1` (int) и `"1"` (str) не
+/// считались дубликатами.
+fn const_key_descriptor(k: &Expr) -> Option<String> {
+    match &k.kind {
+        ExprKind::IntLit(n) => Some(format!("int:{n}")),
+        ExprKind::StrLit(s) => Some(format!("str:{s}")),
+        ExprKind::BoolLit(b) => Some(format!("bool:{b}")),
+        ExprKind::CharLit(c) => Some(format!("char:{c}")),
+        // Унарный минус над int-литералом — `-1` как ключ.
+        ExprKind::Unary { op: crate::ast::UnOp::Neg, operand } => {
+            if let ExprKind::IntLit(n) = &operand.kind {
+                Some(format!("int:{}", -n))
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Человекочитаемое представление ключа для текста warning'а.
+fn human_key(desc: &Option<String>, pairs: &[(Expr, Expr)], idx: usize) -> String {
+    match &pairs[idx].0.kind {
+        ExprKind::IntLit(n) => n.to_string(),
+        ExprKind::StrLit(s) => format!("\"{s}\""),
+        ExprKind::BoolLit(b) => b.to_string(),
+        ExprKind::CharLit(c) => {
+            char::from_u32(*c).map(|ch| format!("'{ch}'")).unwrap_or_else(|| format!("'\\u{{{c:x}}}'"))
+        }
+        _ => desc.clone().unwrap_or_else(|| "<key>".to_string()),
+    }
 }
 
 /// Собирает имена user-defined эффектов: `type X effect { ... }`.

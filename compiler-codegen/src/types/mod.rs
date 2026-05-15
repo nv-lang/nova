@@ -254,10 +254,23 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
     // С‚РµРїРµСЂСЊ вЂ” proper compile-error СЃ РїРѕРЅСЏС‚РЅС‹Рј СЃРѕРѕР±С‰РµРЅРёРµРј.
     check_ghost_usage(module, &mut errors);
 
-    // Plan 33.1 Р¤.3 (D24): SMT verification.
-    // TrivialBackend РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ (Z3 вЂ” РѕС‚РґРµР»СЊРЅР°СЏ feature РІ Р±СѓРґСѓС‰РµРј).
-    // Р”РѕРєР°Р·Р°РЅРЅС‹Рµ РєРѕРЅС‚СЂР°РєС‚С‹ Р·Р°РїРёСЃС‹РІР°СЋС‚СЃСЏ РІ env РґР»СЏ zero-cost release.
-    // `#must_verify` errors / counterexample warnings вЂ” РїРѕРїР°РґР°СЋС‚ РІ errors.
+    // Plan 52 Ф.2 (D108): map-литерал `[k: v]` type-checking.
+    //
+    // Focused expected-type проход: обходит fn-bodies/tests/consts,
+    // протаскивая ожидаемый тип в let-аннотацию / return / argument-
+    // позицию. На каждом `MapLit` — вывод `HashMap[K, V]` из ключей/
+    // значений (или из ожидаемого типа), enforce `K: Hashable`,
+    // унификация ключей и значений. Пустой `[]` в позиции, ожидающей
+    // `HashMap` — валиден; неоднозначный `[]` без типа — error.
+    // Не заменяет существующие walk'и — отдельный проход (как
+    // NameResCtx / ContractCtx), минимум регрессий.
+    let map_lit_ctx = MapLitCtx::build(module);
+    map_lit_ctx.check_module(module, &mut errors);
+
+    // Plan 33.1 Ф.3 (D24): SMT verification.
+    // TrivialBackend по умолчанию (Z3 — отдельная feature в будущем).
+    // Доказанные контракты записываются в env для zero-cost release.
+    // `#must_verify` errors / counterexample warnings — попадают в errors.
     if errors.is_empty() {
         // Verify С‚РѕР»СЊРєРѕ РµСЃР»Рё РїСЂРµРґС‹РґСѓС‰РёРµ С„Р°Р·С‹ РїСЂРѕС€Р»Рё (РёРЅР°С‡Рµ encode РЅР°
         // РЅРµРІР°Р»РёРґРЅРѕРј AST РјРѕР¶РµС‚ РєСЂР°С€РЅСѓС‚СЊ).
@@ -4801,3 +4814,612 @@ fn check_ghost_in_expr(e: &Expr, ghosts: &HashSet<String>, errors: &mut Vec<Diag
     }
 }
 
+// ============================================================================
+// Plan 52 Ф.2 (D108): map-литерал `[k: v]` type-checking.
+//
+// Focused expected-type проход. Type-checker bootstrap'а синтаксический
+// (нет полноценного bidirectional inference), поэтому MapLitCtx — это
+// отдельный лёгкий walk, который НЕ заменяет существующие walk'и, а
+// добавляет проверки литералов в позициях с известным ожидаемым типом:
+//   - `let x HashMap[K,V] = [...]` — let-аннотация;
+//   - `fn f() -> HashMap[K,V] => [...]` — return-выражение;
+//   - `f([...])` где параметр имеет тип `HashMap[K,V]` — argument-позиция
+//     (это и есть фундамент Ф.3a).
+//
+// На каждом `MapLit`:
+//   - вывод `HashMap[K, V]` из ключей/значений ИЛИ из ожидаемого типа;
+//   - enforce `K: Hashable` (примитивы — авто-OK; именованный тип —
+//     нужны методы `hash` + `eq`; неизвестный/generic — permissive);
+//   - унификация: все ключи в один `K`, все значения в один `V`.
+// Пустой `[]` в позиции, ожидающей `HashMap` — валиден (пустая мапа).
+// ============================================================================
+
+/// Plan 52 Ф.2: контекст для map-литерал type-checking.
+struct MapLitCtx {
+    /// Для каждого concrete-типа — множество имён его методов. Нужно для
+    /// Hashable-проверки именованных ключевых типов (требуются `hash` + `eq`).
+    type_methods: HashMap<String, HashSet<String>>,
+    /// Имена top-level типов модуля (record/sum/newtype/alias) — для
+    /// различения «известный именованный тип» vs «generic-параметр».
+    known_types: HashSet<String>,
+    /// Имена generic-параметров, видимых в текущей функции. Заполняется
+    /// per-fn в `check_fn`. Generic `K` — permissive (Hashable не enforce'ится
+    /// статически: bound-проверка — отдельный механизм Plan 15).
+    fn_generics: HashSet<String>,
+}
+
+impl MapLitCtx {
+    fn build(module: &Module) -> Self {
+        let mut type_methods: HashMap<String, HashSet<String>> = HashMap::new();
+        let mut known_types: HashSet<String> = HashSet::new();
+        for item in &module.items {
+            match item {
+                Item::Type(t) => {
+                    known_types.insert(t.name.clone());
+                }
+                Item::Fn(f) => {
+                    if let Some(recv) = &f.receiver {
+                        type_methods
+                            .entry(recv.type_name.clone())
+                            .or_default()
+                            .insert(f.name.clone());
+                    }
+                }
+                _ => {}
+            }
+        }
+        MapLitCtx { type_methods, known_types, fn_generics: HashSet::new() }
+    }
+
+    fn check_module(&self, module: &Module, errors: &mut Vec<Diagnostic>) {
+        for item in &module.items {
+            match item {
+                Item::Fn(f) => {
+                    // Generic-параметры функции — permissive scope для Hashable.
+                    let mut ctx = MapLitCtx {
+                        type_methods: self.type_methods.clone(),
+                        known_types: self.known_types.clone(),
+                        fn_generics: f.generics.iter().map(|g| g.name.clone()).collect(),
+                    };
+                    // Generic-параметры receiver-типа тоже видимы.
+                    if let Some(recv) = &f.receiver {
+                        for g in &recv.generics {
+                            if let TypeRef::Named { path, .. } = g {
+                                if path.len() == 1 {
+                                    ctx.fn_generics.insert(path[0].clone());
+                                }
+                            }
+                        }
+                    }
+                    match &f.body {
+                        FnBody::Expr(e) => {
+                            ctx.walk_expr(e, f.return_type.as_ref(), errors);
+                        }
+                        FnBody::Block(b) => ctx.walk_block(b, errors),
+                        FnBody::External => {}
+                    }
+                }
+                Item::Test(t) => {
+                    self.walk_block(&t.body, errors);
+                }
+                Item::Const(c) => {
+                    self.walk_expr(&c.value, c.ty.as_ref(), errors);
+                }
+                Item::Let(l) => {
+                    self.walk_expr(&l.value, l.ty.as_ref(), errors);
+                }
+                Item::Type(_) => {}
+            }
+        }
+    }
+
+    fn walk_block(&self, b: &Block, errors: &mut Vec<Diagnostic>) {
+        for s in &b.stmts {
+            self.walk_stmt(s, errors);
+        }
+        if let Some(t) = &b.trailing {
+            // Trailing-выражение блока не имеет известного ожидаемого
+            // типа без контекста — walk без expected.
+            self.walk_expr(t, None, errors);
+        }
+    }
+
+    fn walk_stmt(&self, s: &Stmt, errors: &mut Vec<Diagnostic>) {
+        match s {
+            Stmt::Expr(e) => self.walk_expr(e, None, errors),
+            Stmt::Let(d) => {
+                // let-аннотация — known-target-type position (D55).
+                self.walk_expr(&d.value, d.ty.as_ref(), errors);
+            }
+            Stmt::Assign { target, value, .. } => {
+                self.walk_expr(target, None, errors);
+                self.walk_expr(value, None, errors);
+            }
+            Stmt::Return { value, .. } => {
+                // Return-выражение — known-target-type, но return_type здесь
+                // недоступен (walk_block не несёт его). Walk без expected;
+                // FnBody::Expr-возврат покрыт в check_module отдельно.
+                if let Some(v) = value {
+                    self.walk_expr(v, None, errors);
+                }
+            }
+            Stmt::Throw { value, .. } => self.walk_expr(value, None, errors),
+            Stmt::Break(_) | Stmt::Continue(_) => {}
+            Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. } => {
+                self.walk_expr(body, None, errors);
+            }
+            Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
+                self.walk_expr(expr, None, errors);
+            }
+        }
+    }
+
+    /// Обход выражения с опциональным ожидаемым типом. На `MapLit` —
+    /// запускает проверку; рекурсивно спускается во все под-выражения,
+    /// протаскивая expected туда, где он известен (let / arg-позиции).
+    fn walk_expr(&self, e: &Expr, expected: Option<&TypeRef>, errors: &mut Vec<Diagnostic>) {
+        match &e.kind {
+            ExprKind::MapLit(pairs) => {
+                self.check_map_lit(e, pairs, expected, errors);
+                // Рекурсия в ключи/значения — без expected (key/value
+                // expected-types выводятся внутри check_map_lit; для
+                // вложенных литералов глубокий проход — будущее расширение).
+                for (k, v) in pairs {
+                    self.walk_expr(k, None, errors);
+                    self.walk_expr(v, None, errors);
+                }
+            }
+            ExprKind::ArrayLit(elems) => {
+                for el in elems {
+                    match el {
+                        ArrayElem::Item(x) | ArrayElem::Spread(x) => {
+                            self.walk_expr(x, None, errors);
+                        }
+                    }
+                }
+            }
+            ExprKind::Call { func, args, trailing } => {
+                self.walk_expr(func, None, errors);
+                // Argument-позиция: если callee резолвится и параметр имеет
+                // известный тип — протаскиваем его как expected (фундамент
+                // Ф.3a). Bootstrap: только positional args, callee по имени.
+                let param_types = self.resolve_call_param_types(func);
+                for (idx, a) in args.iter().enumerate() {
+                    let arg_expected = param_types
+                        .as_ref()
+                        .and_then(|ps| ps.get(idx))
+                        .and_then(|p| p.as_ref());
+                    self.walk_expr(a.expr(), arg_expected, errors);
+                }
+                if let Some(t) = trailing {
+                    match t {
+                        crate::ast::Trailing::Block(b) => self.walk_block(b, errors),
+                        crate::ast::Trailing::LegacyBlockWithParams(tb) => {
+                            self.walk_block(&tb.body, errors)
+                        }
+                        crate::ast::Trailing::Fn(sb) => match &sb.body {
+                            FnBody::Expr(x) => self.walk_expr(x, None, errors),
+                            FnBody::Block(b) => self.walk_block(b, errors),
+                            FnBody::External => {}
+                        },
+                    }
+                }
+            }
+            ExprKind::TurboFish { base, .. } => self.walk_expr(base, expected, errors),
+            ExprKind::Try(x) | ExprKind::Bang(x) => self.walk_expr(x, None, errors),
+            ExprKind::Coalesce(a, b) => {
+                self.walk_expr(a, None, errors);
+                self.walk_expr(b, None, errors);
+            }
+            ExprKind::As(x, _) | ExprKind::Is(x, _) => self.walk_expr(x, None, errors),
+            ExprKind::Binary { left, right, .. } => {
+                self.walk_expr(left, None, errors);
+                self.walk_expr(right, None, errors);
+            }
+            ExprKind::Unary { operand, .. } => self.walk_expr(operand, None, errors),
+            ExprKind::Member { obj, .. } => self.walk_expr(obj, None, errors),
+            ExprKind::Index { obj, index } => {
+                self.walk_expr(obj, None, errors);
+                self.walk_expr(index, None, errors);
+            }
+            ExprKind::TupleLit(elems) => {
+                for x in elems { self.walk_expr(x, None, errors); }
+            }
+            ExprKind::RecordLit { fields, .. } => {
+                for f in fields {
+                    if let Some(v) = &f.value { self.walk_expr(v, None, errors); }
+                }
+            }
+            ExprKind::If { cond, then, else_ } => {
+                self.walk_expr(cond, None, errors);
+                self.walk_block(then, errors);
+                if let Some(eb) = else_ {
+                    match eb {
+                        ElseBranch::Block(b) => self.walk_block(b, errors),
+                        ElseBranch::If(x) => self.walk_expr(x, None, errors),
+                    }
+                }
+            }
+            ExprKind::IfLet { scrutinee, then, else_, .. } => {
+                self.walk_expr(scrutinee, None, errors);
+                self.walk_block(then, errors);
+                if let Some(eb) = else_ {
+                    match eb {
+                        ElseBranch::Block(b) => self.walk_block(b, errors),
+                        ElseBranch::If(x) => self.walk_expr(x, None, errors),
+                    }
+                }
+            }
+            ExprKind::Match { scrutinee, arms } => {
+                self.walk_expr(scrutinee, None, errors);
+                for arm in arms {
+                    if let Some(g) = &arm.guard { self.walk_expr(g, None, errors); }
+                    match &arm.body {
+                        MatchArmBody::Expr(x) => self.walk_expr(x, None, errors),
+                        MatchArmBody::Block(b) => self.walk_block(b, errors),
+                    }
+                }
+            }
+            ExprKind::For { iter, body, .. } | ExprKind::ParallelFor { iter, body, .. } => {
+                self.walk_expr(iter, None, errors);
+                self.walk_block(body, errors);
+            }
+            ExprKind::While { cond, body } => {
+                self.walk_expr(cond, None, errors);
+                self.walk_block(body, errors);
+            }
+            ExprKind::WhileLet { scrutinee, body, .. } => {
+                self.walk_expr(scrutinee, None, errors);
+                self.walk_block(body, errors);
+            }
+            ExprKind::Loop { body } => self.walk_block(body, errors),
+            ExprKind::Block(b) => self.walk_block(b, errors),
+            ExprKind::Spawn(x) => self.walk_expr(x, None, errors),
+            ExprKind::Detach(b) => self.walk_block(b, errors),
+            ExprKind::Supervised { body, cancel } => {
+                self.walk_block(body, errors);
+                if let Some(c) = cancel { self.walk_expr(c, None, errors); }
+            }
+            ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. } => {
+                self.walk_block(body, errors);
+            }
+            ExprKind::Throw(x) => self.walk_expr(x, None, errors),
+            ExprKind::Interrupt(opt) => {
+                if let Some(x) = opt { self.walk_expr(x, None, errors); }
+            }
+            ExprKind::Range { start, end, .. } => {
+                self.walk_expr(start, None, errors);
+                self.walk_expr(end, None, errors);
+            }
+            ExprKind::InterpolatedStr { parts } => {
+                for p in parts {
+                    if let crate::ast::InterpStrPart::Expr(x) = p {
+                        self.walk_expr(x, None, errors);
+                    }
+                }
+            }
+            ExprKind::TaggedTemplate { args, .. } => {
+                for x in args { self.walk_expr(x, None, errors); }
+            }
+            ExprKind::Lambda { body, .. } => self.walk_expr(body, None, errors),
+            ExprKind::ClosureLight { body, .. } => match body {
+                ClosureBody::Expr(x) => self.walk_expr(x, None, errors),
+                ClosureBody::Block(b) => self.walk_block(b, errors),
+            },
+            ExprKind::ClosureFull(sb) => match &sb.body {
+                FnBody::Expr(x) => self.walk_expr(x, None, errors),
+                FnBody::Block(b) => self.walk_block(b, errors),
+                FnBody::External => {}
+            },
+            ExprKind::With { bindings, body } => {
+                for b in bindings { self.walk_expr(&b.handler, None, errors); }
+                self.walk_block(body, errors);
+            }
+            ExprKind::HandlerLit { methods, .. } => {
+                for m in methods {
+                    match &m.body {
+                        HandlerMethodBody::Expr(x) => self.walk_expr(x, None, errors),
+                        HandlerMethodBody::Block(b) => self.walk_block(b, errors),
+                    }
+                }
+            }
+            ExprKind::Select { arms } => {
+                for arm in arms {
+                    match &arm.op {
+                        crate::ast::SelectOp::Recv { chan, .. } => {
+                            self.walk_expr(chan, None, errors)
+                        }
+                        crate::ast::SelectOp::Send { chan, value } => {
+                            self.walk_expr(chan, None, errors);
+                            self.walk_expr(value, None, errors);
+                        }
+                        crate::ast::SelectOp::Default => {}
+                    }
+                    if let Some(g) = &arm.guard { self.walk_expr(g, None, errors); }
+                    self.walk_block(&arm.body, errors);
+                }
+            }
+            // Листовые.
+            ExprKind::Ident(_) | ExprKind::Path(_) | ExprKind::SelfAccess
+            | ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::BoolLit(_)
+            | ExprKind::StrLit(_) | ExprKind::CharLit(_) | ExprKind::UnitLit => {}
+        }
+    }
+
+    /// Резолвит callee `func`-выражение в список типов параметров. Bootstrap:
+    /// только free-fn по имени и `Type.method` static-call с единственным
+    /// (без overload) кандидатом. Возвращает `None` если резолв неоднозначен
+    /// — тогда argument-позиции не получают expected (graceful fallback).
+    fn resolve_call_param_types(&self, _func: &Expr) -> Option<Vec<Option<TypeRef>>> {
+        // Ф.2: argument-позиция пока без резолва — заполняется в Ф.3a, где
+        // добавляется fn_decls/method_table. Здесь — заглушка, чтобы
+        // walk-структура была готова. Возврат None = нет expected у args.
+        None
+    }
+
+    /// Plan 52 Ф.2: проверка map-литерала `[k: v]`.
+    fn check_map_lit(
+        &self,
+        e: &Expr,
+        pairs: &[(Expr, Expr)],
+        expected: Option<&TypeRef>,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        // Извлечь K, V из ожидаемого типа `HashMap[K, V]`, если он задан.
+        let (exp_k, exp_v) = match expected {
+            Some(TypeRef::Named { path, generics, .. })
+                if path.last().map(|s| s.as_str()) == Some("HashMap")
+                    && generics.len() == 2 =>
+            {
+                (Some(&generics[0]), Some(&generics[1]))
+            }
+            // Ожидаемый тип задан, но это не HashMap — литерал `[k:v]`
+            // конструирует HashMap, поэтому несовместимо.
+            Some(other) if !is_unknown_type(other) => {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "map literal `[k: v]` constructs a `HashMap`, but the \
+                         expected type here is `{}`",
+                        typeref_render(other)
+                    ),
+                    e.span,
+                ));
+                return;
+            }
+            _ => (None, None),
+        };
+
+        // Вывод типа ключей: унификация всех ключевых выражений.
+        let key_ty = self.unify_exprs(
+            pairs.iter().map(|(k, _)| k),
+            exp_k,
+            "key",
+            e.span,
+            errors,
+        );
+        // Вывод типа значений: унификация всех value-выражений.
+        let _val_ty = self.unify_exprs(
+            pairs.iter().map(|(_, v)| v),
+            exp_v,
+            "value",
+            e.span,
+            errors,
+        );
+
+        // Enforce `K: Hashable`.
+        if let Some(k) = &key_ty {
+            self.check_hashable(k, e.span, errors);
+        }
+    }
+
+    /// Унифицирует типы набора выражений. Если задан `expected` — все
+    /// выражения сверяются с ним; иначе тип выводится best-effort из
+    /// первого выражения с известным типом и остальные сверяются с ним.
+    /// `role` — "key" / "value" для текста ошибки. Возвращает выведенный
+    /// тип (или `expected`), если он определён.
+    fn unify_exprs<'e>(
+        &self,
+        exprs: impl Iterator<Item = &'e Expr>,
+        expected: Option<&TypeRef>,
+        role: &str,
+        lit_span: Span,
+        errors: &mut Vec<Diagnostic>,
+    ) -> Option<TypeRef> {
+        let mut inferred: Option<TypeRef> = expected.cloned();
+        for ex in exprs {
+            let this_ty = simple_expr_type(ex);
+            let Some(this) = this_ty else { continue };
+            match &inferred {
+                None => inferred = Some(this),
+                Some(prev) => {
+                    if !simple_types_compatible(prev, &this) {
+                        let hint = if role == "value" {
+                            " — возможно нужен общий тип, напр. `HashMap[K, JsonValue]`?"
+                        } else {
+                            ""
+                        };
+                        errors.push(Diagnostic::new(
+                            format!(
+                                "map literal {}s have incompatible types `{}` and `{}`{}",
+                                role,
+                                typeref_render(prev),
+                                typeref_render(&this),
+                                hint
+                            ),
+                            ex.span,
+                        ));
+                        // Один error на role — дальше не плодим.
+                        return inferred;
+                    }
+                }
+            }
+        }
+        let _ = lit_span;
+        inferred
+    }
+
+    /// Enforce `K: Hashable` для ключевого типа map-литерала.
+    ///
+    /// Bootstrap-семантика (best-effort, консистентно с `check_satisfaction`):
+    ///   - примитивы (`str`/`int`/`bool`/`char`/числовые) — авто-Hashable;
+    ///   - generic-параметр текущей функции — permissive (статический
+    ///     bound-check — отдельный механизм Plan 15, здесь не дублируем);
+    ///   - известный именованный тип — требует методы `hash` и `eq`;
+    ///   - неизвестный тип / составной — permissive (не ругаемся).
+    fn check_hashable(&self, k: &TypeRef, span: Span, errors: &mut Vec<Diagnostic>) {
+        let TypeRef::Named { path, .. } = k else {
+            // Array / Tuple / Func как ключ — permissive в bootstrap.
+            return;
+        };
+        if path.len() != 1 {
+            return; // module-qualified — permissive
+        }
+        let name = &path[0];
+        // Примитивы — авто-Hashable.
+        if matches!(
+            name.as_str(),
+            "int" | "i8" | "i16" | "i32" | "i64"
+                | "u8" | "u16" | "u32" | "u64"
+                | "f32" | "f64" | "bool" | "char" | "byte" | "str"
+        ) {
+            return;
+        }
+        // Generic-параметр функции — permissive (bound-check — Plan 15).
+        if self.fn_generics.contains(name) {
+            return;
+        }
+        // Известный именованный тип — требует `hash` + `eq`.
+        if self.known_types.contains(name) {
+            let methods = self.type_methods.get(name);
+            let has_hash = methods.map(|m| m.contains("hash")).unwrap_or(false);
+            let has_eq = methods.map(|m| m.contains("eq")).unwrap_or(false);
+            if !has_hash || !has_eq {
+                let mut missing = Vec::new();
+                if !has_hash { missing.push("`hash() -> u64`"); }
+                if !has_eq { missing.push("`eq(other) -> bool`"); }
+                errors.push(Diagnostic::new(
+                    format!(
+                        "key type `{}` does not implement `Hashable` — a map key \
+                         type must provide {}. Add the missing method(s) to `{}` \
+                         or use a primitive key type.",
+                        name,
+                        missing.join(" and "),
+                        name
+                    ),
+                    span,
+                ));
+            }
+            return;
+        }
+        // Неизвестное имя — permissive (не наша забота: NameResCtx поймает
+        // действительно undefined типы).
+    }
+}
+
+/// Plan 52 Ф.2: `true` если тип — `any` или иной «неизвестный» маркер,
+/// для которого coercion-проверки пропускаются (permissive).
+fn is_unknown_type(t: &TypeRef) -> bool {
+    matches!(t, TypeRef::Named { path, .. } if path.len() == 1 && path[0] == "any")
+}
+
+/// Plan 52 Ф.2: рендер TypeRef в человекочитаемую строку для диагностик.
+fn typeref_render(t: &TypeRef) -> String {
+    match t {
+        TypeRef::Named { path, generics, .. } => {
+            let base = path.join(".");
+            if generics.is_empty() {
+                base
+            } else {
+                let inner: Vec<String> = generics.iter().map(typeref_render).collect();
+                format!("{}[{}]", base, inner.join(", "))
+            }
+        }
+        TypeRef::Array(inner, _) => format!("[]{}", typeref_render(inner)),
+        TypeRef::FixedArray(n, inner, _) => format!("[{}]{}", n, typeref_render(inner)),
+        TypeRef::Tuple(elems, _) => {
+            let inner: Vec<String> = elems.iter().map(typeref_render).collect();
+            format!("({})", inner.join(", "))
+        }
+        TypeRef::Unit(_) => "()".to_string(),
+        TypeRef::Func { .. } => "fn(...)".to_string(),
+    }
+}
+
+/// Plan 52 Ф.2: best-effort тип выражения по синтаксической форме.
+/// Возвращает `None` если тип не выводится локально (Ident без scope,
+/// произвольный вызов и т.п.) — такие выражения не участвуют в
+/// унификации (permissive: «не знаем — не ругаемся»).
+fn simple_expr_type(e: &Expr) -> Option<TypeRef> {
+    let prim = |name: &str| {
+        Some(TypeRef::Named {
+            path: vec![name.to_string()],
+            generics: Vec::new(),
+            span: e.span,
+        })
+    };
+    match &e.kind {
+        ExprKind::IntLit(_) => prim("int"),
+        ExprKind::FloatLit(_) => prim("f64"),
+        ExprKind::BoolLit(_) => prim("bool"),
+        ExprKind::StrLit(_) | ExprKind::InterpolatedStr { .. } => prim("str"),
+        ExprKind::CharLit(_) => prim("char"),
+        ExprKind::RecordLit { type_name: Some(name), .. } => Some(TypeRef::Named {
+            path: name.clone(),
+            generics: Vec::new(),
+            span: e.span,
+        }),
+        // f64.NAN / int.MAX и т.п. — Path(["f64", "NAN"]).
+        ExprKind::Path(parts) if parts.len() == 2 => {
+            match parts[0].as_str() {
+                "f64" => prim("f64"),
+                "f32" => prim("f32"),
+                "int" => prim("int"),
+                "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64" => prim(&parts[0]),
+                _ => None,
+            }
+        }
+        // Унарный минус не меняет числовой тип операнда.
+        ExprKind::Unary { op: crate::ast::UnOp::Neg, operand } => simple_expr_type(operand),
+        _ => None,
+    }
+}
+
+/// Plan 52 Ф.2: совместимость двух простых типов для унификации
+/// ключей/значений map-литерала. Bootstrap: точное равенство имён +
+/// числовая лёгкость (int-литерал совместим с любым целочисленным
+/// ожидаемым типом — coercion на codegen-уровне).
+fn simple_types_compatible(a: &TypeRef, b: &TypeRef) -> bool {
+    if is_unknown_type(a) || is_unknown_type(b) {
+        return true;
+    }
+    match (a, b) {
+        (
+            TypeRef::Named { path: pa, generics: ga, .. },
+            TypeRef::Named { path: pb, generics: gb, .. },
+        ) => {
+            if pa == pb && ga.len() == gb.len() {
+                return ga.iter().zip(gb).all(|(x, y)| simple_types_compatible(x, y));
+            }
+            // Числовая лёгкость: int-литерал унифицируется с любым
+            // целочисленным типом (codegen разрешит).
+            let is_int = |p: &[String]| {
+                p.len() == 1
+                    && matches!(
+                        p[0].as_str(),
+                        "int" | "i8" | "i16" | "i32" | "i64"
+                            | "u8" | "u16" | "u32" | "u64"
+                    )
+            };
+            if is_int(pa) && is_int(pb) {
+                return true;
+            }
+            false
+        }
+        (TypeRef::Array(ia, _), TypeRef::Array(ib, _)) => simple_types_compatible(ia, ib),
+        (TypeRef::Tuple(ea, _), TypeRef::Tuple(eb, _)) => {
+            ea.len() == eb.len()
+                && ea.iter().zip(eb).all(|(x, y)| simple_types_compatible(x, y))
+        }
+        _ => false,
+    }
+}
