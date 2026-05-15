@@ -96,7 +96,7 @@ test "filter keeps matching elements" {
 
 test "fold sums elements" {
     let v []int = [1, 2, 3, 4]
-    let sum = v.fold(0) { |acc, x| acc + x }
+    let sum = v.fold(0, |acc, x| acc + x)
     assert(sum == 10)
 }
 

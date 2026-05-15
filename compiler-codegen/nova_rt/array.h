@@ -165,6 +165,26 @@ static inline nova_bool nova_opt_eq_nova_int(NovaOpt_nova_int a, NovaOpt_nova_in
     if (a.tag == NOVA_TAG_Option_None) return 1;
     return a.value == b.value;
 }
+static inline nova_bool nova_opt_eq_nova_str(NovaOpt_nova_str a, NovaOpt_nova_str b) {
+    if (a.tag != b.tag) return 0;
+    if (a.tag == NOVA_TAG_Option_None) return 1;
+    return nova_str_eq(a.value, b.value);
+}
+static inline nova_bool nova_opt_eq_nova_bool(NovaOpt_nova_bool a, NovaOpt_nova_bool b) {
+    if (a.tag != b.tag) return 0;
+    if (a.tag == NOVA_TAG_Option_None) return 1;
+    return a.value == b.value;
+}
+static inline nova_bool nova_opt_eq_nova_byte(NovaOpt_nova_byte a, NovaOpt_nova_byte b) {
+    if (a.tag != b.tag) return 0;
+    if (a.tag == NOVA_TAG_Option_None) return 1;
+    return a.value == b.value;
+}
+static inline nova_bool nova_opt_eq_nova_f64(NovaOpt_nova_f64 a, NovaOpt_nova_f64 b) {
+    if (a.tag != b.tag) return 0;
+    if (a.tag == NOVA_TAG_Option_None) return 1;
+    return a.value == b.value;
+}
 
 /* ---- D26 Option methods: is_some / is_none / unwrap_or ---- */
 static inline nova_bool Nova_Option_method_is_some_nova_int(NovaOpt_nova_int o) {

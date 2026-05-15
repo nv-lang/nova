@@ -78,10 +78,10 @@ export fn Queue[T] mut @pop() -> Option[T] {
 }
 
 // Просмотреть голову без удаления.
-// `last()` — метод-расширение на []T (stdlib_vec.nv через D35).
 export fn Queue[T] @peek() -> Option[T] {
     if !@outbox.is_empty {
-        @outbox.last()
+        // Голова outbox — последний элемент (pop забирает с конца).
+        @outbox.get(@outbox.len - 1)
     } else if !@inbox.is_empty {
         // Голова находится в `in[0]` (она «дальше всего» от выхода
         // тоже, но ещё не перелита).

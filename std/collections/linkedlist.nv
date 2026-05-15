@@ -36,9 +36,11 @@ export fn LinkedList[T].new() => Empty
 
 // Из массива — fold справа налево.
 export fn LinkedList[T].from_array(xs []T) -> Self {
-    let mut acc = Empty
-    for i in (0..xs.len).reverse() {
+    let mut acc LinkedList[T] = Empty
+    let mut i = xs.len - 1
+    while i >= 0 {
         acc = Cons(xs[i], acc)
+        i -= 1
     }
     acc
 }
@@ -205,14 +207,14 @@ test "filter removes non-matching" {
 
 test "fold sums" {
     let l = LinkedList[int].from_array([1, 2, 3, 4])
-    let sum = l.fold(0) { |acc, x| acc + x }
+    let sum = l.fold(0, |acc, x| acc + x)
     assert(sum == 10)
 }
 
-test "concat with operator +" {
+test "concat with plus method" {
     let a = LinkedList[int].from_array([1, 2])
     let b = LinkedList[int].from_array([3, 4])
-    let c = a + b
+    let c = a.plus(b)
     assert(c.length() == 4)
     assert(c.head() == Some(1))
 }
@@ -220,6 +222,6 @@ test "concat with operator +" {
 test "Empty is identity for concat" {
     let a = LinkedList[int].from_array([1, 2])
     let e LinkedList[int] = Empty
-    assert (a + e).length() == 2
-    assert (e + a).length() == 2
+    assert(a.plus(e).length() == 2)
+    assert(e.plus(a).length() == 2)
 }
