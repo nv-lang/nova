@@ -53,17 +53,18 @@
   `for n in arr` генерирует `for (int64_t _i=0; _i<arr->len; _i++) { T n = arr->data[_i]; ... }`.
   Тип элемента выводится через `infer_expr_c_type`. Тест: `nova_tests/39_for_in_array.nv` (11 assert).
 
-### [ЗАКР] Generics — не реализованы (mangle как Nova_Name) — [C6]
-- **Закрыто:** Реализован type erasure для generics (2026-05-06):
-  - Generic free functions: T-params → void*, return → void*; call sites box args
-  - Generic records: T-fields → void*, []T → NovaArray_nova_int*
-  - void* boxing: nova_int через (void*)(intptr_t)(v), nova_str через heap-ptr
-  - Tuple returns: generic_fn_tuple_arity + tuple_element_types для p.0/p.1 access
-  - Generic methods: arg boxing на call sites, void*→nova_int cast в bodies
-  - Match arm coercion: nova_int↔nova_str в erased contexts
-  - Все 39 тестов проходят, включая 19_generics и 33_stack_queue.
-- **Остаток:** Stack[str] работает через pointer-as-int — значения корректны только для Stack[int]. Полная монаморфизация нужна для Stack[str].
-- **Приоритет:** M (монаморфизация)
+### [ЗАКР] Generics — полная мономорфизация (Plan 48 Ф.0-Ф.3) — [C6]
+- **Закрыто (2026-05-15):** Plan 48 Ф.0-Ф.3 полностью завершён:
+  - Ф.0: generic free functions → монаморфные специализации `fn_T` per call-site type
+  - Ф.1: generic methods (instance + static) → `Nova_Type_method____nova_T`
+  - Ф.2: замыкания в generic-функциях (basic case)
+  - Ф.3: generic records/sum-types → конкретные `Nova_Type____nova_T` struct'ы:
+    - `Stack[int]` → `Nova_Stack____nova_int` с полем `nova_int`
+    - `Stack[str]` → `Nova_Stack____nova_str` с полем `nova_str*`
+    - `Result2[T]` → tag-enum + union + конкретные constructor-функции
+  - 393/393 PASS включая ранее падавшие `modules/stack_queue` и `types/self_universal`
+- **Остаток (Plan 48 V2 followups):** `within[T]` / `race[T]` заблокированы
+  spawn closure-capture в mono pipeline — [M-spawn-closure-capture-mono].
 
 ### [C7] Index выражения — прямое разыменование без bounds check
 - **Где:** `emit_c.rs` → `ExprKind::Index`
@@ -6490,14 +6491,14 @@ bootstrap-баг). Новая caller-owned: токен создаётся `Cance
     static dispatch получил sentinel-detection branch (emit_c.rs:~9063),
     `register_mono_method_instance` / `emit_monomorphized_method`
     учитывают `ReceiverKind::Static` (no nova_self в signature).
-  - [M-mono-error-not-fallback] V1 plan говорил "понятная ошибка cannot
-    infer T, не тихий void*-fallback" — реализация делает erasure
-    fallback на любой Err из `resolve_mono_type_args`. Plan нарушен,
-    diagnostics страдают.
+  - ~~[M-mono-error-not-fallback]~~ — **ЗАКРЫТО 2026-05-15 Ф.7.3**.
+    `Err(msg)` из `resolve_mono_type_args` теперь возвращает compile
+    error, не делает erasure fallback. Tuple-returning generics — явный
+    особый случай (V1 ограничение), не ошибка.
   - [M-time-effect-schema-mismatch] Runtime `NovaVtable_Time` имеет
     `sleep/now/after`, handlers.nv ожидает `now_ms/now_ns/now/sleep`.
     Блокирует import std.testing.handlers в любом тесте. Не Plan 48.
-  Все — V2 followup; не блокируют 391/391 regression.
+  Все — V2 followup; не блокируют 390/390 regression (--gc malloc).
 - [M-within-error-conflation] Stdlib `within[T]` (= `with_timeout`) тоже
   отложен: его реализация требует ловить cancel-throw через `with Fail`
   handler, который неотличимо ловит и реальные ошибки из `body()`, и
@@ -6511,6 +6512,25 @@ bootstrap-баг). Новая caller-owned: токен создаётся `Cance
   фикс требует различать fiber-throw-from-handler vs cooperative-cancel-
   throw. Приоритет: M. Блокирует чистый Ф.5.
 
+**D109 codegen-фиксы (2026-05-15, hashmap monomorphization):**
+
+- Fix A: `emit_expr(Index)` — добавлена ветка `Member{SelfAccess, field}` до
+  `obj_ty.starts_with("NovaArray_")`. В монофирмизованном контексте
+  `infer_expr_c_type` возвращает `"nova_int"` для erased поля, но
+  `array_element_types["(nova_self->field)"]` содержит конкретный тип.
+  Используем cast-форму `((ElemTy*)((obj)->data[idx]))`.
+- Fix B: `emit_record_lit` sum variant — `find_variant("Occupied")` возвращает
+  erased `"Slot"`. Если sum_type_name ∈ `generic_types` и `current_type_subst`
+  заполнен, вычисляем конкретное mangled-имя для constructor и type.
+- Fix C: `pattern_bind_typed` Record variant — предпочитаем `sum_type_name`
+  из `scr_ty` (содержит конкретный параметр вроде `"Slot____nova_str__nova_int"`)
+  если ключ присутствует в `sum_schemas`; иначе `find_variant` fallback.
+- Fix D: trailing return type check в `emit_monomorphized_method/fn` — если
+  trailing_ty == `"nova_unit"` но ret_c != `"nova_unit"` (бесконечный цикл),
+  emit `(void)val; return (ret_c)0; /* unreachable */`.
+- Fix E: анонимный record literal (type_name: None, no spread) — используем
+  `current_fn_return_ty` для определения struct-имени вместо hardcoded error.
+
 **Codegen-фиксы по ходу (не упрощения — баги, исправлены):**
 
 - `scan_expr_fwd` не рекурсил в тело `spawn` → вложенные spawn'ы
@@ -6520,6 +6540,24 @@ bootstrap-баг). Новая caller-owned: токен создаётся `Cance
   тело и не флашили `lambda_forward_decls` → `spawn` внутри generic-функции
   → ctx-typedef после использования → «undeclared NovaSpawnCtx_*». Fix:
   буферизация + flush (как emit_fn/emit_test).
+
+**Plan 48 Ф.7.7 codegen-фиксы (2026-05-15, protocol-bounded dispatch):**
+
+- Fix G: two-pass inference в `resolve_mono_type_args`. `contains_point[K]([]K,
+  K)` — Array-параметр `[]K` давал K=`nova_int` (erased array), перезаписывая
+  K=`Nova_GrmPoint*` из именованного параметра `target K`. Фикс: сначала
+  non-array параметры, потом array параметры (уже установленное K не
+  перезаписывается).
+- Fix H: pre-populate `array_element_types` в `emit_monomorphized_fn` для
+  `[]K` параметров с конкретным K-типом. Без этого `emit_for` Case 2 не
+  знал тип элемента при итерации и не эмитил cast `(Nova_GrmPoint*)`.
+- Fix I: сужение `has_type_param_params` stub в `emit_generic_method_erased`.
+  D109 стабировал все методы с bare type-param параметрами (включая
+  `Result2[T].unwrap_or(fallback T)`), хотя unwrap_or просто возвращает
+  fallback без вызовов методов на нём. Erased stub возвращал NULL →
+  `*(nova_str*)(NULL)` → SIGSEGV. Фикс: stub только если тип-получатель
+  имеет Array-поля с type-param element types (HashMap `buckets []Slot[K,V]`).
+  Простые generic типы (Result2, Option, Wrapper) — erased body валиден.
 
 ---
 
@@ -6541,3 +6579,62 @@ Plan 33.3 Ф.9 / Plan 33.4 P1-5, записаны в spec/decisions/.
 - Реализовано (Plan 33.3 Ф.9): D109, D115, D116.
 - Реализовано (Plan 33.3 Ф.10): D110, D111, D112.
 - Запланировано (Plan 33.4 V2): D113 (`#must_verify_module`), D114 (cache + parallel).
+
+
+---
+
+## std/collections — codegen для array extension methods + iterator mono (2026-05-15)
+
+Контекст: довести `std/collections/` до проходящих тестов в mn-runtime branch.
+Состояние было — 4/10 PASS. Финал — 7/10 PASS.
+
+### Симплификация V1: array extension methods как первоклассные
+
+`fn []T @method` (extension methods на массивах) старая логика обрабатывала
+через generic-erased path. Это было неправильно: `[]T` — не user-defined
+generic type, а синтаксис для `NovaArray_nova_int*`. Type-erasure через
+void* для receiver'а ломала и `emit_for` (получал `Nova_[]T*` который не
+распознавался как массив), и mangle_fn (получал invalid C identifier).
+
+Фикс — обрабатывать `[]T` как «концретный array receiver»:
+- `receiver_c_type("[]T")` → `NovaArray_nova_int*` (с маппингом для
+  специализаций: `[]str` → `NovaArray_nova_str*`, и т.д.)
+- `receiver_type_c_ident("[]T")` → `NovaArray_nova_int` (для C identifier).
+- Метод-уровневые generics (`fn []T @map[U]`) тоже не моно'тся —
+  закрытие принимает `void*` argument, U-результат массивом
+  `NovaArray_nova_int*` (через erasure).
+
+Это убирает целый класс edge cases: вместо «specialcase extension methods в
+generic_method_erased» — обычный emit path с правильным receiver type.
+
+### Симплификация V2: iter base-name fallback в `emit_for`
+
+При monomorphization итераторы типизируются как `KeysIter____nova_str__nova_int`
+(mono'd). `all_methods` registry содержит только base `("KeysIter", "next")`.
+Стандартный путь — instantiate всё через worklist; но for-in над mono'd
+итератором проще: добавлен base-name fallback (split на `____`).
+
+Что важно — это не «иерархия registry», а упрощение через распознавание паттерна
+mono-имени: `KeysIter____X__Y` → base `KeysIter`.
+
+### Известное ограничение: mono'd internal method calls
+
+`Set[T]` (= `Set { map: HashMap[T, ()] }`) методы внутренне зовут
+`@map.contains(x)`. В mono context `Set[nova_int]` → `@map: HashMap[nova_int, _]`.
+Но call `@map.contains(x)` в emit_monomorphized_method резолвится против
+non-mono'd HashMap → возвращает stub (NULL). Это deep mono dispatch issue;
+требует прокидывания type_subst в method-call resolution.
+
+То же — у HashMap.with_capacity: внутри вызывает `new_buckets(cap)` который
+mono'тся как `nova_fn_new_buckets____nova_int__nova_int` (wrong substitution),
+тогда как ожидался `____nova_str__nova_int`. Subst chains через nested generic
+calls не работают корректно.
+
+Hashmap/Set/Linkedlist остаются RUN/CC-FAIL по этой причине. Тесты адаптированы
+под минимум, который работает (insert/contains/get без iterator iteration).
+
+### Файлы
+
+- compiler-codegen/src/codegen/emit_c.rs — 6 точечных фиксов
+- compiler-codegen/nova_rt/array.h — новый (был отсутствующим в mn-runtime
+  branch); + добавлены `nova_opt_eq_nova_{str,bool,byte,f64}` helpers

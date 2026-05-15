@@ -635,7 +635,7 @@ impl<'a> Lexer<'a> {
             "errdefer" => TokenKind::KwErrDefer,
             "select" => TokenKind::KwSelect,
             "lemma" => TokenKind::KwLemma,
-            "apply" => TokenKind::KwApply,
+            // "apply" — контекстуальный keyword (не резервируем глобально, чтобы не ломать идентификаторы)
             _ => TokenKind::Ident(text.to_string()),
         };
         Ok(Token::new(kind, span))

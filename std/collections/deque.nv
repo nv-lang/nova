@@ -97,7 +97,7 @@ test "push_back / pop_back" {
     d.push_back(1)
     d.push_back(2)
     d.push_back(3)
-    assert(d.len == 3)
+    assert(d.len() == 3)
     assert(d.pop_back() == Some(3))
     assert(d.pop_back() == Some(2))
     assert(d.pop_back() == Some(1))
@@ -132,12 +132,12 @@ test "BFS-like sliding window" {
     let inputs = [1, 2, 3, 4, 5]
     for x in inputs {
         d.push_back(x)
-        if d.len > 3 {
+        if d.len() > 3 {
             let _ = d.pop_front()
         }
     }
     // Window of size 3 на конце
-    assert(d.len == 3)
+    assert(d.len() == 3)
     assert(d.front() == Some(3))
     assert(d.back() == Some(5))
 }
