@@ -4,7 +4,25 @@
 > **Создан 2026-05-14. Переписан 2026-05-15** (с «erasure + adapters» на
 > мономорфизацию — это разница между «как в TS без JIT» и «как в Rust»).
 >
-> **СТАТУС:** план, не начат.
+> **СТАТУС:** Ф.0-Ф.2 (свободные функции + методы + замыкания) — DONE;
+> Ф.3 (generic records/sum-types) — частично (Option[T] return inference
+> и None target-type работают); Ф.4 (within/race) — заблокирован spawn
+> closure-capture багом (отдельный V2 followup); Ф.5 collections —
+> pre-existing fails, не регрессировали Plan 48; Ф.6 — docs обновлены.
+>
+> **Регрессия:** 370/370 PASS на release-сборке (2026-05-15).
+>
+> **Followups:**
+> - `[M-spawn-closure-capture-mono]` — в mono'д generic fn body,
+>   `body fn() -> T` captured into spawn ctx, но spawn body использует
+>   `body` без `_c->body` rewrite. Блокирует cancellation.nv (within/race).
+> - `[M-mono-spawn-fwd-decls]` — mono эмитит новые spawn-body функции,
+>   но их forward-decls не добавляются в spawn pre-scan. race[T=nova_str]
+>   падает на `_nova_spawn_3` undeclared.
+> - `[M-random-effect-codegen]` — `type Random effect` теперь объявлен
+>   в handlers.nv, но `type Time effect` не объявлен — runtime Time
+>   pre-registration (sleep/now/after) не совпадает с handlers.nv
+>   методами (now_ms/now_ns). retry.nv заблокирован этим (не Plan 48).
 >
 > **Приоритет:** P1 — generic-codegen сейчас 100% type-erasure (всё
 > `void*`); это перформанс-долг И корректностный долг (замыкания/массивы

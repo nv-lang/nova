@@ -10443,3 +10443,98 @@ void-typed выражение (`assert(...)`), даёт невалидный C
 - spec/decisions/02-types.md, docs/simplifications.md,
   docs/project-creation.txt (Ф.5)
 - docs/plans/51-d55-record-literal-unification.md
+
+
+================================================================================
+# Plan 48 — Monomorphization (Ф.0-Ф.2 + частично Ф.3): closures-in-generics
+
+**Дата:** 2026-05-15. **Регрессия:** 370/370 PASS (release).
+
+**Что сделано:**
+
+**Ф.0-Ф.1 — Type-arg resolution + Worklist + Mangling.**
+TurboFish теперь источник type-args (раньше выбрасывался). Inference из
+аргументов: bare `T` → arg-type, `[]T` → element, `fn(..)->T` → ret.
+Worklist `mono_worklist: Vec<(String, Vec<(String,String)>, String)>`,
+дедуп через `mono_instantiated: HashSet<String>`. Мангление:
+`nova_fn_within____nova_int`.
+
+**Ф.2 — Mono эмиссия функций и методов.**
+- **Свободные generic fn** (`box_get[T]`, `mono_basic`) — работают,
+  замыкания внутри (`body()`) zero-cost direct call.
+- **Generic methods с собственными type params** (`RetryPolicy
+  @execute[T,E](body fn() Fail[E] -> T)`) — sentinel в `method_overloads`
+  (`c_name = "__mono_method__RetryPolicy__execute"`), per-receiver dispatch
+  в emit_call detection, `register_mono_method_instance` +
+  `emit_monomorphized_method` зеркалят free-fn путь. Step 1c skip для
+  generic-методов чтобы не плодить дубликаты.
+- **Source 2b inference** в `resolve_mono_type_args` И в
+  `infer_expr_c_type` (Call-branch): для `fn() -> T` параметра T
+  выводится из closure body return type.
+- **`apply_type_subst_to_ref`** для `Option[T]` → `NovaOpt_<T_c>`
+  (раньше только bare named и Array).
+- **`emit_expr_with_target_type`** для `None` инициализатора: когда
+  target = `NovaOpt_X*`, эмитит `((NovaOpt_X){.tag = NOVA_TAG_Option_None})`
+  вместо legacy `NovaOpt_nova_int`. Закрывает `let mut x Option[T] = None`
+  внутри mono'д generic body.
+
+**Forward-decls для импортированных user types.**
+Новый pre-pass в `emit_module`: сканирует TypeRef в полях типов и
+сигнатурах функций, эмитит `typedef struct Nova_X Nova_X;` для:
+- Внешних struct-типов (e.g. `Nova_Duration` из std.time.duration)
+- Effect vtables через `Handler[X]` → `NovaVtable_X` (e.g.
+  `NovaVtable_Random`).
+Скип-листы: BUILTIN_TYPE_NAMES, BUILTIN_RUNTIME_TYPES (Nova_ChanReader/
+Mutex/StringBuilder/...), BUILTIN_VTABLE_NAMES (Fail/Time из effects.h),
+local_effects (anonymous typedef would conflict с named forward-decl).
+
+**Доп. фиксы по ходу:**
+- `type Random effect` объявлен в `std/testing/handlers.nv` (раньше
+  не существовал в коде, только в spec/open-questions.md).
+- `std/concurrency/retry.nv` — `Duration.gt()`/`.le()` fields, не методы.
+
+**Ф.3 — частично (Option[T] return через apply_type_subst_to_ref).**
+Generic records `Box[T]` → реальный struct per инстанциация — НЕ
+реализовано в этой сессии. V2.
+
+**Ф.4 — НЕ сделано.** `std/concurrency/cancellation.nv` (`within[T]`/
+`race[T]`) написан и удалён — заблокирован двумя суб-багами mono'д
+эмиссии:
+- [M-spawn-closure-capture-mono] body fn()->T captured в spawn ctx, но
+  spawn body использует `body` без `_c->body` rewrite.
+- [M-mono-spawn-fwd-decls] mono эмитит новые spawn bodies, но их
+  forward-decls не добавляются (spawn_counter инкрементит после pre-scan).
+
+**Ф.5 — collections regression check.** Pre-existing CC-FAIL на deque/
+queue/vec/linkedlist/set/lru/hashmap/priority_queue (Nova_Self resolution,
+if-condition bool check, for-in[]T iter, arg counts) — НЕ от Plan 48,
+эти fails существовали и раньше. `nova check std`: 43 PASS / 3 FAIL
+(lru, set, encoding/toml) — pre-existing.
+
+**Ф.6 — docs обновлены.** Этот файл, simplifications.md, plan
+48-closures-in-generics.md (статус).
+
+**Регрессия:** `cargo build --release` в обоих compiler-codegen И
+nova-cli (важно: CLI отдельный crate), затем `nova test` →
+**370 PASS / 0 FAIL / 7 SKIP**.
+
+**Что осталось упрощением (V2 followups):**
+- [M-spawn-closure-capture-mono] — в mono'д spawn body, function-typed
+  capture variables не получают `_c->` rewrite. Блокирует within/race.
+- [M-mono-spawn-fwd-decls] — mono'д generic-fn'ы с spawn внутри. Race
+  с `[T=nova_str]` падает на undeclared `_nova_spawn_3`.
+- [M-random-effect-codegen] — `type Random effect` теперь есть, но
+  retry.nv падает на mismatch'е runtime Time (sleep/now/after) vs
+  handlers.nv Time (now_ms/now_ns/now/sleep). Отдельная задача.
+- Generic records (Box[T] → struct Nova_Box__nova_int) — V2 Ф.3.
+- Erased emitters (emit_generic_fn_erased / _method_erased) пока НЕ
+  удалены — fallback для случаев когда mono inference не сработал
+  (turbofish missing на tuple-returning generics и т.д.).
+
+**Изменённые файлы:**
+- `compiler-codegen/src/codegen/emit_c.rs` (~+400 строк)
+- `std/testing/handlers.nv` (+`type Random effect`)
+- `std/concurrency/retry.nv` (Duration field-access)
+- `docs/plans/48-closures-in-generics.md` (статус)
+- `docs/simplifications.md` (followups)
+

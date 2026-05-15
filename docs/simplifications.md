@@ -6334,6 +6334,19 @@ bootstrap-баг). Новая caller-owned: токен создаётся `Cance
   в `void*`, теряя array-ность (`.len()` / `[i]` / `for-in` не резолвятся).
   Нужна codegen-поддержка closures-in-generics — отдельная задача, вне
   scope Plan 47. Приоритет: M.
+  **2026-05-15 update:** Plan 48 разблокировал свободные generic-функции и
+  generic-методы с собственными type params (Ф.0-Ф.2 done). Но
+  `cancellation.nv` (within[T] / race[T]) пока заблокирован двумя
+  суб-багами mono'д эмиссии:
+  - [M-spawn-closure-capture-mono] В mono'д body generic-fn `body fn()->T`
+    captured в spawn ctx как `void** body`, но spawn-body использует `body`
+    БЕЗ `_c->body` rewrite. Capture-substitution не применяется к
+    function-typed параметрам в mono pipeline.
+  - [M-mono-spawn-fwd-decls] Mono'д generic-fn эмитит новые spawn-bodies
+    (с инкрементом spawn_counter), но pre-scan forward-decls (lines 27-29
+    в C) уже отработали раньше. Дополнительные `_nova_spawn_3+` не
+    forward-declared. Fix: дополнить `mono_fwd_decls` для mono'д spawns.
+  Оба — V2 followup; не блокируют 370/370 regression.
 - [M-within-error-conflation] Stdlib `within[T]` (= `with_timeout`) тоже
   отложен: его реализация требует ловить cancel-throw через `with Fail`
   handler, который неотличимо ловит и реальные ошибки из `body()`, и

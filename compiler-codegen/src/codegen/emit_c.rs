@@ -393,6 +393,9 @@ pub struct CEmitter {
     /// Plan 48: generic FnDecls for monomorphization worklist drain.
     /// Key = Nova fn name (e.g. "within"). Populated during pre-pass.
     mono_fn_decls: HashMap<String, crate::ast::FnDecl>,
+    /// Plan 48: generic instance-method FnDecls for method monomorphization.
+    /// Key = (receiver_type_name, method_name). Methods with own type params (e.g. @execute[T,E]).
+    mono_method_decls: HashMap<(String, String), crate::ast::FnDecl>,
     /// Plan 48: monomorphization worklist — (nova_fn_name, type_subst, mangled_c_name).
     mono_worklist: Vec<(String, Vec<(String, String)>, String)>,
     /// Plan 48: already-instantiated mangled names (for dedup).
@@ -535,6 +538,7 @@ impl CEmitter {
             var_boxed: HashMap::new(),
             warnings: Vec::new(),
             mono_fn_decls: HashMap::new(),
+            mono_method_decls: HashMap::new(),
             mono_worklist: Vec::new(),
             mono_instantiated: HashSet::new(),
             current_type_subst: HashMap::new(),
@@ -773,6 +777,19 @@ impl CEmitter {
         // `/*__NOVAOPT_TYPEDEFS__*/`). Без этого NovaOpt_<T> typedef'ы
         // ссылаются на не-объявленный `Nova_T` (NovaOpt splice'ится
         // ПЕРЕД emit_type_decl).
+
+        // Collect locally-defined type names first.
+        let local_types: HashSet<String> = module.items.iter()
+            .filter_map(|i| if let Item::Type(t) = i { Some(t.name.clone()) } else { None })
+            .collect();
+        // Locally-defined effect types — emit_effect_type generates an anonymous
+        // typedef struct, which would conflict with our named forward decl.
+        let local_effects: HashSet<String> = module.items.iter()
+            .filter_map(|i| if let Item::Type(t) = i {
+                if matches!(t.kind, TypeDeclKind::Effect(_)) { Some(t.name.clone()) } else { None }
+            } else { None })
+            .collect();
+
         for item in &module.items {
             if let Item::Type(t) = item {
                 match &t.kind {
@@ -781,6 +798,77 @@ impl CEmitter {
                             "typedef struct Nova_{0} Nova_{0};\n", t.name));
                     }
                     _ => {}
+                }
+            }
+        }
+
+        // Also forward-decl external user types and effect vtables referenced
+        // in this module's type fields and function signatures. Without this,
+        // imported types (e.g. Duration from std.time.duration) and effect
+        // vtables (e.g. NovaVtable_Random from Handler[Random]) cause
+        // 'unknown type name' errors.
+        {
+            let mut external_names: HashSet<String> = HashSet::new();
+            let mut vtable_names: HashSet<String> = HashSet::new();
+            for item in &module.items {
+                match item {
+                    Item::Type(t) => Self::collect_typeref_names_in_typedecl(
+                        t, &mut external_names, &mut vtable_names),
+                    Item::Fn(f) => {
+                        for p in &f.params {
+                            Self::collect_typeref_names(&p.ty, &mut external_names, &mut vtable_names);
+                        }
+                        if let Some(r) = &f.return_type {
+                            Self::collect_typeref_names(r, &mut external_names, &mut vtable_names);
+                        }
+                        // Direct effect annotations on fn → vtable names
+                        for e in &f.effects {
+                            if let TypeRef::Named { path, .. } = e {
+                                if let Some(n) = path.last() { vtable_names.insert(n.clone()); }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            const BUILTIN_TYPE_NAMES: &[&str] = &[
+                "int", "i64", "i32", "i16", "i8",
+                "u64", "u32", "u16", "u8",
+                "f64", "f32", "bool", "str", "byte", "char",
+                "Option", "Result", "Self", "Handler", "CancelToken",
+                "Never", "Error",
+            ];
+            // Runtime types defined in nova_rt/*.h with anonymous typedef'd structs.
+            // A named forward decl `typedef struct Nova_X Nova_X;` would conflict
+            // with the runtime's `typedef struct { ... } Nova_X;` (different types).
+            const BUILTIN_RUNTIME_TYPES: &[&str] = &[
+                "Result", "Error", "RuntimeError",
+                "ReadBuffer", "StringBuilder", "WriteBuffer",
+                "ChanReader", "ChanWriter", "ChannelPair",
+                "AtomicInt", "AtomicBool", "Mutex", "WaitGroup", "Once",
+                "Timestamp",
+            ];
+            for name in external_names {
+                if local_types.contains(&name) { continue; }
+                if BUILTIN_TYPE_NAMES.contains(&name.as_str()) { continue; }
+                if BUILTIN_RUNTIME_TYPES.contains(&name.as_str()) { continue; }
+                // Only emit forward decl for names starting with uppercase
+                // (user-defined types map to Nova_Name*).
+                if name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
+                    self.user_type_fwd_decls.push_str(&format!(
+                        "typedef struct Nova_{0} Nova_{0};\n", name));
+                }
+            }
+            // Built-in vtables defined in nova_rt/effects.h — skip.
+            const BUILTIN_VTABLE_NAMES: &[&str] = &["Fail", "Time"];
+            for name in vtable_names {
+                if BUILTIN_VTABLE_NAMES.contains(&name.as_str()) { continue; }
+                // Local effects — emit_effect_type generates an anonymous typedef
+                // which would conflict with a named forward decl. Skip.
+                if local_effects.contains(&name) { continue; }
+                if name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
+                    self.user_type_fwd_decls.push_str(&format!(
+                        "typedef struct NovaVtable_{0} NovaVtable_{0};\n", name));
                 }
             }
         }
@@ -889,6 +977,12 @@ impl CEmitter {
                     continue;
                 }
                 if let Some(recv) = &f.receiver {
+                    // Plan 48: generic methods with own type params are handled
+                    // by monomorphization (sentinel MethodSig registered in emit_fn_forward_decl).
+                    // Skip step-1c registration to avoid creating a duplicate non-sentinel entry.
+                    if !f.generics.is_empty() {
+                        continue;
+                    }
                     let is_instance = matches!(recv.kind, ReceiverKind::Instance);
                     self.method_receivers.insert(
                         f.name.clone(),
@@ -1155,6 +1249,17 @@ impl CEmitter {
                     if let Some(real_name) = fn_name.strip_prefix("__erased__") {
                         if let Some(fn_decl) = self.mono_fn_decls.get(real_name).cloned() {
                             self.emit_generic_fn_erased(&fn_decl)?;
+                        }
+                        continue;
+                    }
+                    // Plan 48: __method__TYPE::name prefix marks generic method instances.
+                    if let Some(rest) = fn_name.strip_prefix("__method__") {
+                        if let Some((recv_type, mname)) = rest.split_once("::") {
+                            let key = (recv_type.to_string(), mname.to_string());
+                            if let Some(fn_decl) = self.mono_method_decls.get(&key).cloned() {
+                                let rt = recv_type.to_string();
+                                self.emit_monomorphized_method(&fn_decl, type_subst, &mono_name, &rt)?;
+                            }
                         }
                         continue;
                     }
@@ -3292,8 +3397,27 @@ impl CEmitter {
             }
             return Ok(());
         }
-        // Skip generic methods on generic types — no monomorphization support
+        // Plan 48: Generic methods with own type params → store for monomorphization.
+        // These are methods like @execute[T,E] where T,E are declared on the method itself.
+        // Different from methods on generic types (recv.generics) which use erasure.
         if !f.generics.is_empty() {
+            if let Some(recv) = &f.receiver {
+                self.mono_method_decls.insert((recv.type_name.clone(), f.name.clone()), f.clone());
+                // Register sentinel MethodSig so call sites can find and mono-route this method.
+                let sentinel_name = format!("__mono_method__{}__{}", recv.type_name, f.name);
+                let sig = MethodSig {
+                    param_c_types: vec![],
+                    return_c_type: "void*".to_string(),
+                    is_instance: !matches!(f.receiver.as_ref().map(|r| &r.kind),
+                        Some(crate::ast::ReceiverKind::Static)),
+                    is_external: false,
+                    is_delegated: false,
+                    c_name: sentinel_name,
+                    variadic_last: false,
+                };
+                let key = (recv.type_name.clone(), f.name.clone());
+                self.method_overloads.entry(key).or_default().push(sig);
+            }
             return Ok(());
         }
         if let Some(recv) = &f.receiver {
@@ -3925,6 +4049,82 @@ impl CEmitter {
             .map(|(_, v)| v)
     }
 
+    /// Recursively collect type names from a TypeRef.
+    /// `out` — regular struct names (Nova_X). `vtable_out` — effect vtable names (NovaVtable_X)
+    /// from Handler[X] generics and Func effects.
+    fn collect_typeref_names(
+        ty: &crate::ast::TypeRef,
+        out: &mut HashSet<String>,
+        vtable_out: &mut HashSet<String>,
+    ) {
+        use crate::ast::TypeRef;
+        match ty {
+            TypeRef::Named { path, generics, .. } => {
+                let name = path.last().cloned();
+                if let Some(n) = &name {
+                    // Handler[X] → X is a vtable name, not a struct name
+                    if n == "Handler" {
+                        if let Some(TypeRef::Named { path: gpath, .. }) = generics.first() {
+                            if let Some(eff) = gpath.last() { vtable_out.insert(eff.clone()); }
+                        }
+                        return;
+                    }
+                    out.insert(n.clone());
+                }
+                for g in generics {
+                    Self::collect_typeref_names(g, out, vtable_out);
+                }
+            }
+            TypeRef::Array(inner, _) | TypeRef::FixedArray(_, inner, _) => {
+                Self::collect_typeref_names(inner, out, vtable_out);
+            }
+            TypeRef::Tuple(items, _) => {
+                for item in items {
+                    Self::collect_typeref_names(item, out, vtable_out);
+                }
+            }
+            TypeRef::Func { params, effects, return_type, .. } => {
+                for p in params { Self::collect_typeref_names(p, out, vtable_out); }
+                // Effects in fn type → vtable names
+                for e in effects {
+                    if let TypeRef::Named { path, .. } = e {
+                        if let Some(n) = path.last() { vtable_out.insert(n.clone()); }
+                    }
+                }
+                if let Some(r) = return_type { Self::collect_typeref_names(r, out, vtable_out); }
+            }
+            TypeRef::Unit(_) => {}
+        }
+    }
+
+    /// Collect type names referenced in a type declaration's fields/variants.
+    fn collect_typeref_names_in_typedecl(
+        t: &crate::ast::TypeDecl,
+        out: &mut HashSet<String>,
+        vtable_out: &mut HashSet<String>,
+    ) {
+        use crate::ast::{TypeDeclKind, SumVariantKind};
+        match &t.kind {
+            TypeDeclKind::Record(fields) => {
+                for f in fields { Self::collect_typeref_names(&f.ty, out, vtable_out); }
+            }
+            TypeDeclKind::Sum(variants) => {
+                for v in variants {
+                    match &v.kind {
+                        SumVariantKind::Unit => {}
+                        SumVariantKind::Tuple(tys) => {
+                            for ty in tys { Self::collect_typeref_names(ty, out, vtable_out); }
+                        }
+                        SumVariantKind::Record(fields) => {
+                            for f in fields { Self::collect_typeref_names(&f.ty, out, vtable_out); }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// C type for receiver-typed parameter (D35 v2: receiver may be a primitive).
     /// Returns the C type to use for `nova_self`. Primitives are passed by value;
     /// records/sums by pointer.
@@ -4137,6 +4337,32 @@ impl CEmitter {
             let arg_c = self.infer_expr_c_type(arg.expr());
             Self::infer_type_param_binding(&param.ty, &arg_c, &mut subst);
         }
+        // Source 2b: for fn-typed params, infer return type T from closure arg body.
+        // Handles `body fn() Fail[E] -> T` where arg is `|| 42` → T = nova_int.
+        for (param, arg) in fn_decl.params.iter().zip(args.iter()) {
+            if let crate::ast::TypeRef::Func { return_type: Some(ret_ty_ref), .. } = &param.ty {
+                let closure_ret_c = match &arg.expr().kind {
+                    ExprKind::ClosureLight { body, .. } => match body {
+                        crate::ast::ClosureBody::Expr(e) => {
+                            let t = self.infer_expr_c_type(e);
+                            if t.is_empty() || t == "void*" { String::new() } else { t }
+                        }
+                        crate::ast::ClosureBody::Block(b) => b.trailing.as_ref()
+                            .map(|e| self.infer_expr_c_type(e))
+                            .filter(|t| !t.is_empty() && t != "void*")
+                            .unwrap_or_default(),
+                    },
+                    ExprKind::ClosureFull(sb) => sb.return_type.as_ref()
+                        .and_then(|rt| self.type_ref_to_c(rt).ok())
+                        .filter(|t| !t.is_empty() && t != "void*")
+                        .unwrap_or_default(),
+                    _ => String::new(),
+                };
+                if !closure_ret_c.is_empty() {
+                    Self::infer_type_param_binding(ret_ty_ref.as_ref(), &closure_ret_c, &mut subst);
+                }
+            }
+        }
         // Source 3: infer from current_fn_return_ty vs fn return type
         if let Some(ref ret_ty) = fn_decl.return_type {
             if let Some(ref actual_ret) = self.current_fn_return_ty {
@@ -4214,6 +4440,14 @@ impl CEmitter {
                     _ => return None,
                 };
                 Some(c.to_string())
+            }
+            // Option[T] → NovaOpt_<T_c>
+            crate::ast::TypeRef::Named { path, generics, .. }
+                if path.last().map(|s| s.as_str()) == Some("Option") && generics.len() == 1 =>
+            {
+                let inner_c = Self::apply_type_subst_to_ref(&generics[0], subst)?;
+                let sanitized = Self::sanitize_for_novaopt(&inner_c);
+                Some(format!("NovaOpt_{}", sanitized))
             }
             crate::ast::TypeRef::Array(inner, _) => {
                 // []T → NovaArray_<inner_c>*
@@ -4309,6 +4543,184 @@ impl CEmitter {
         ));
         // Enqueue for body emission
         self.mono_worklist.push((fn_decl.name.clone(), type_subst, mono_name.to_string()));
+    }
+
+    /// Plan 48: register a monomorphized METHOD instance (add forward decl + worklist entry).
+    /// Like register_mono_instance but prepends `nova_self` receiver param.
+    fn register_mono_method_instance(
+        &mut self,
+        fn_decl: &crate::ast::FnDecl,
+        type_subst: Vec<(String, String)>,
+        mono_name: &str,
+        recv_type: &str,
+    ) {
+        if self.mono_instantiated.contains(mono_name) {
+            return;
+        }
+        self.mono_instantiated.insert(mono_name.to_string());
+        // Compute param and return C types with substitution applied
+        let saved_subst = std::mem::replace(
+            &mut self.current_type_subst,
+            type_subst.iter().cloned().collect(),
+        );
+        let recv_c = self.receiver_c_type(recv_type);
+        let param_c_tys: Vec<String> = fn_decl.params.iter()
+            .map(|p| self.type_ref_to_c(&p.ty).unwrap_or_else(|_| "nova_int".into()))
+            .collect();
+        let ret_c = fn_decl.return_type.as_ref()
+            .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_unit".into()))
+            .unwrap_or_else(|| "nova_unit".into());
+        self.current_type_subst = saved_subst;
+        // Build param list: nova_self first, then regular params
+        let mut parts = vec![format!("{} nova_self", recv_c)];
+        for (p, ty) in fn_decl.params.iter().zip(&param_c_tys) {
+            parts.push(format!("{} {}", ty, p.name));
+        }
+        let params_str = parts.join(", ");
+        // Forward decl
+        self.mono_fwd_decls.push_str(&format!(
+            "static {} {}({});\n",
+            ret_c, mono_name, params_str
+        ));
+        // Enqueue for body emission — prefix __method__TYPE::name so worklist drain can route
+        let worklist_key = format!("__method__{}::{}", recv_type, fn_decl.name);
+        self.mono_worklist.push((worklist_key, type_subst, mono_name.to_string()));
+    }
+
+    /// Plan 48: emit a monomorphized METHOD body (instance method variant of emit_monomorphized_fn).
+    fn emit_monomorphized_method(
+        &mut self,
+        fn_decl: &crate::ast::FnDecl,
+        type_subst: Vec<(String, String)>,
+        mono_name: &str,
+        recv_type: &str,
+    ) -> Result<(), String> {
+        use crate::ast::FnBody;
+        // Set type substitution
+        let saved_subst = std::mem::replace(
+            &mut self.current_type_subst,
+            type_subst.iter().cloned().collect(),
+        );
+        let recv_c = self.receiver_c_type(recv_type);
+        let param_c_tys: Vec<String> = fn_decl.params.iter()
+            .map(|p| self.type_ref_to_c(&p.ty).unwrap_or_else(|_| "nova_int".into()))
+            .collect();
+        let ret_c = fn_decl.return_type.as_ref()
+            .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_unit".into()))
+            .unwrap_or_else(|| "nova_unit".into());
+        // Build param list with nova_self first
+        let mut parts = vec![format!("{} nova_self", recv_c)];
+        for (p, ty) in fn_decl.params.iter().zip(&param_c_tys) {
+            parts.push(format!("{} {}", ty, p.name));
+        }
+        let params_str = parts.join(", ");
+        // Buffer body
+        let saved_out = std::mem::take(&mut self.out);
+        let saved_indent = self.indent;
+        self.indent = 0;
+        self.line(&format!("static {} {}({}) {{", ret_c, mono_name, params_str));
+        self.indent += 1;
+        // Register nova_self and params in var_types
+        let prev_self = self.var_types.insert("nova_self".to_string(), recv_c.clone());
+        let saved_var_types: Vec<(String, Option<String>)> = fn_decl.params.iter()
+            .zip(&param_c_tys)
+            .map(|(p, ty)| (p.name.clone(), self.var_types.insert(p.name.clone(), ty.clone())))
+            .collect();
+        // Register function-typed params in fn_param_sigs with concrete types
+        let mut saved_fn_sigs: Vec<(String, Option<(Vec<String>, String)>)> = Vec::new();
+        for (p, _c_ty) in fn_decl.params.iter().zip(&param_c_tys) {
+            if let crate::ast::TypeRef::Func { params: fp, return_type, .. } = &p.ty {
+                let inner_ptys: Vec<String> = fp.iter()
+                    .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".into()))
+                    .collect();
+                let inner_ret = return_type.as_ref()
+                    .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_unit".into()))
+                    .unwrap_or_else(|| "nova_unit".into());
+                let prev = self.fn_param_sigs.insert(p.name.clone(), (inner_ptys, inner_ret));
+                saved_fn_sigs.push((p.name.clone(), prev));
+            }
+        }
+        // Set receiver type so @field and Self resolve correctly
+        let saved_recv = std::mem::replace(&mut self.current_receiver_type, Some(recv_type.to_string()));
+        let saved_ret_ty = std::mem::replace(&mut self.current_fn_return_ty, Some(ret_c.clone()));
+        let saved_expected = std::mem::replace(
+            &mut self.expected_record_type,
+            fn_decl.return_type.as_ref().and_then(|t| {
+                if let crate::ast::TypeRef::Named { path, generics, .. } = t {
+                    if generics.is_empty() { Some(path.join("_")) } else { None }
+                } else { None }
+            }),
+        );
+        // Emit body
+        let body_clone = fn_decl.body.clone();
+        match &body_clone {
+            FnBody::Expr(e) => {
+                self.emit_source_annotation_for_expr(e);
+                let val = self.emit_expr(e)?;
+                if ret_c == "nova_unit" {
+                    self.line(&format!("{};", val));
+                    self.line("return NOVA_UNIT;");
+                } else {
+                    self.line(&format!("return {};", val));
+                }
+            }
+            FnBody::Block(block) => {
+                let block_id = self.enter_defer_scope(block, false);
+                for stmt in &block.stmts {
+                    self.emit_stmt(stmt)?;
+                }
+                if let Some(trailing) = &block.trailing {
+                    self.emit_source_annotation_for_expr(trailing);
+                    let val = self.emit_expr(trailing)?;
+                    self.leave_defer_scope(block_id);
+                    if ret_c == "nova_unit" {
+                        self.line(&format!("{};", val));
+                        self.line("return NOVA_UNIT;");
+                    } else {
+                        self.line(&format!("return {};", val));
+                    }
+                } else {
+                    self.leave_defer_scope(block_id);
+                    self.line("return NOVA_UNIT;");
+                }
+            }
+            FnBody::External => {}
+        }
+        // Restore
+        for (name, prev) in saved_var_types {
+            match prev {
+                Some(old) => { self.var_types.insert(name, old); }
+                None => { self.var_types.remove(&name); }
+            }
+        }
+        match prev_self {
+            Some(old) => { self.var_types.insert("nova_self".to_string(), old); }
+            None => { self.var_types.remove("nova_self"); }
+        }
+        for (name, prev) in saved_fn_sigs {
+            match prev {
+                Some(old) => { self.fn_param_sigs.insert(name, old); }
+                None => { self.fn_param_sigs.remove(&name); }
+            }
+        }
+        self.current_receiver_type = saved_recv;
+        self.current_fn_return_ty = saved_ret_ty;
+        self.expected_record_type = saved_expected;
+        self.flush_boxed_vars();
+        self.indent -= 1;
+        self.line("}");
+        self.line("");
+        let fn_body = std::mem::replace(&mut self.out, saved_out);
+        self.indent = saved_indent;
+        if !self.lambda_forward_decls.is_empty() {
+            self.out.push_str(&std::mem::take(&mut self.lambda_forward_decls));
+        }
+        if !self.lambda_impls.is_empty() {
+            self.out.push_str(&std::mem::take(&mut self.lambda_impls));
+        }
+        self.out.push_str(&fn_body);
+        self.current_type_subst = saved_subst;
+        Ok(())
     }
 
     /// Plan 48 Ф.2: emit a monomorphized function body.
@@ -4682,9 +5094,14 @@ impl CEmitter {
             // FnDecl already stored in mono_fn_decls during forward-decl phase.
             return Ok(());
         }
+        // Plan 48: Generic methods with own type params → monomorphized on demand; skip body.
+        if !f.generics.is_empty() && f.receiver.is_some() {
+            // FnDecl stored in mono_method_decls during forward-decl phase.
+            return Ok(());
+        }
         if let Some(recv) = &f.receiver {
             if !recv.generics.is_empty() {
-                // Generic methods: still use type-erased emit in V1 (method mono is Ф.3+ scope).
+                // Generic methods on generic types: type-erased emit.
                 return self.emit_generic_method_erased(f);
             }
         }
@@ -5752,6 +6169,17 @@ impl CEmitter {
     /// (trailing — известен ty блока), и `emit_if_expr` для `else if`
     /// ветки (известен if_ty).
     fn emit_expr_with_target_type(&mut self, expr: &Expr, target_ty_c: &str) -> Result<String, String> {
+        // Plan 48: `None` initializer should match target NovaOpt_X type when target is known.
+        // Otherwise None falls back to NovaOpt_nova_int (per current_fn_return_ty), which
+        // breaks `let mut result NovaOpt_nova_str = None` in mono'd generic bodies.
+        if target_ty_c.starts_with("NovaOpt_") {
+            if let ExprKind::Ident(name) = &expr.kind {
+                if name == "None" {
+                    return Ok(format!(
+                        "(({}){{.tag = NOVA_TAG_Option_None}})", target_ty_c));
+                }
+            }
+        }
         // Только typed-integer target пропагируем — для nova_int/struct/etc.
         // обычный emit_expr уже корректен.
         if !Self::is_typed_integer(target_ty_c) {
@@ -8180,6 +8608,58 @@ impl CEmitter {
                                 .filter(|s| s.is_instance == want_instance)
                                 .collect();
                             if !candidates.is_empty() {
+                                // Plan 48: sentinel detection for generic methods with own type params.
+                                if candidates.iter().any(|c| c.c_name.starts_with("__mono_method__")) {
+                                    let recv_key = (rt.clone(), method.clone());
+                                    if let Some(fn_decl) = self.mono_method_decls.get(&recv_key).cloned() {
+                                        let type_subst = self.resolve_mono_type_args(&fn_decl, &[], args)
+                                            .unwrap_or_else(|_| fn_decl.generics.iter()
+                                                .map(|g| (g.name.clone(), "nova_str".to_string()))
+                                                .collect());
+                                        let base_c_name = format!("Nova_{}_method_{}", rt, method);
+                                        let mono_name = Self::compute_mono_name(&base_c_name, &type_subst);
+                                        let rt_clone = rt.clone();
+                                        self.register_mono_method_instance(
+                                            &fn_decl.clone(), type_subst.clone(), &mono_name.clone(), &rt_clone);
+                                        let mut arg_strs = Vec::new();
+                                        for (param_decl, a) in fn_decl.params.iter().zip(args.iter()) {
+                                            if let crate::ast::TypeRef::Func { params: fp, return_type, .. } = &param_decl.ty {
+                                                let saved_inner = std::mem::replace(
+                                                    &mut self.current_type_subst,
+                                                    type_subst.iter().cloned().collect(),
+                                                );
+                                                let inner_ptys: Vec<String> = fp.iter()
+                                                    .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".into()))
+                                                    .collect();
+                                                let inner_ret = return_type.as_ref()
+                                                    .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_unit".into()))
+                                                    .unwrap_or_else(|| "nova_unit".into());
+                                                self.current_type_subst = saved_inner;
+                                                let prev_sig = self.fn_param_sigs.insert(
+                                                    param_decl.name.clone(), (inner_ptys, inner_ret));
+                                                let v = self.emit_expr(a.expr())?;
+                                                match prev_sig {
+                                                    Some(old) => { self.fn_param_sigs.insert(param_decl.name.clone(), old); }
+                                                    None => { self.fn_param_sigs.remove(&param_decl.name); }
+                                                }
+                                                arg_strs.push(v);
+                                            } else {
+                                                arg_strs.push(self.emit_expr(a.expr())?);
+                                            }
+                                        }
+                                        for a in args.iter().skip(fn_decl.params.len()) {
+                                            arg_strs.push(self.emit_expr(a.expr())?);
+                                        }
+                                        if want_instance {
+                                            let obj_c = self.emit_expr(obj)?;
+                                            let mut full = vec![obj_c];
+                                            full.extend(arg_strs);
+                                            return Ok(format!("{}({})", mono_name, full.join(", ")));
+                                        } else {
+                                            return Ok(format!("{}({})", mono_name, arg_strs.join(", ")));
+                                        }
+                                    }
+                                }
                                 // Generic receiver (Stack[T], etc.): args боксируются
                                 // в void*. Без этого вызов методов на generic типе
                                 // даёт type-mismatch в C (param void*, arg int/str).
@@ -12001,6 +12481,32 @@ impl CEmitter {
                                 for (param, arg) in fn_decl.params.iter().zip(args.iter()) {
                                     let arg_c = self.infer_expr_c_type(arg.expr());
                                     Self::infer_type_param_binding(&param.ty, &arg_c, &mut subst);
+                                }
+                                // Source 2b: for fn-typed params, infer T from closure body return type.
+                                // `body fn() -> T` + closure `|| 42` → T = nova_int.
+                                for (param, arg) in fn_decl.params.iter().zip(args.iter()) {
+                                    if let crate::ast::TypeRef::Func { return_type: Some(ret_ty_ref), .. } = &param.ty {
+                                        let closure_ret_c = match &arg.expr().kind {
+                                            ExprKind::ClosureLight { body, .. } => match body {
+                                                crate::ast::ClosureBody::Expr(e) => {
+                                                    let t = self.infer_expr_c_type(e);
+                                                    if t.is_empty() || t == "void*" { String::new() } else { t }
+                                                }
+                                                crate::ast::ClosureBody::Block(b) => b.trailing.as_ref()
+                                                    .map(|e| self.infer_expr_c_type(e))
+                                                    .filter(|t| !t.is_empty() && t != "void*")
+                                                    .unwrap_or_default(),
+                                            },
+                                            ExprKind::ClosureFull(sb) => sb.return_type.as_ref()
+                                                .and_then(|rt| self.type_ref_to_c(rt).ok())
+                                                .filter(|t| !t.is_empty() && t != "void*")
+                                                .unwrap_or_default(),
+                                            _ => String::new(),
+                                        };
+                                        if !closure_ret_c.is_empty() {
+                                            Self::infer_type_param_binding(ret_ty_ref.as_ref(), &closure_ret_c, &mut subst);
+                                        }
+                                    }
                                 }
                                 // Resolve return type by substituting bare type params
                                 let resolved = Self::apply_type_subst_to_ref(ret_ty_ref, &subst);

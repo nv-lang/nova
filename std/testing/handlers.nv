@@ -54,6 +54,16 @@
 module testing.handlers
 
 
+// Random — effect-тип для PRNG. Объявлен здесь же, в handlers.nv:
+// codegen генерирует NovaVtable_Random + thread-local handler при первом
+// `type Random effect` декларации, и все импортирующие модули видят
+// определение через инлайн-import (resolve_imports_inline).
+export type Random effect {
+    u64() -> u64                        // 64 случайных бита
+    bytes(n int) -> []byte              // массовая генерация
+}
+
+
 // ──────────────────────────────────────────────────────────────────────────
 // Random — xoshiro256++ handler-фабрика
 // ──────────────────────────────────────────────────────────────────────────

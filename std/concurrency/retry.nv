@@ -118,7 +118,7 @@ fn RetryPolicy @compute_delay(attempt int) Random -> Duration {
             let mut i = 1
             while i < attempt {
                 d = d * multiplier
-                if d.gt(max_delay) { d = max_delay; i = attempt }
+                if d.nanos > max_delay.nanos { d = max_delay; i = attempt }
                 i += 1
             }
             d
@@ -126,7 +126,7 @@ fn RetryPolicy @compute_delay(attempt int) Random -> Duration {
         Linear { initial, increment, max_delay } => {
             let total_inc = increment * ((attempt - 1) as i64)
             let d = initial + total_inc
-            if d.gt(max_delay) { max_delay } else { d }
+            if d.nanos > max_delay.nanos { max_delay } else { d }
         }
     }
 
