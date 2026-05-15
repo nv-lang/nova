@@ -255,6 +255,10 @@ pub enum ContractKind {
     /// Доступны `result`, `result.is_ok`/`.is_err`/`.value`/`.error`,
     /// `old(expr)` для значений до вызова.
     Ensures,
+    /// D.1.5: `ensures_fail <bool-expr>` — постусловие для Fail-пути.
+    /// `result` недоступен (fn не вернула нормально); `old(x)` доступен.
+    /// SMT-верифицируется независимо; runtime-check не эмитируется (V1).
+    EnsuresFail,
 }
 
 /// Plan 33.1 (D24 §49): режим верификации контрактов функции.

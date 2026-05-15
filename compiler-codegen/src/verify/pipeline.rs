@@ -305,6 +305,41 @@ impl VerificationPipeline {
                 }
             }
         }
+
+        // D.1.5: verify ensures_fail clauses (Fail-path postconditions).
+        // Модель (V1, conservative): верифицируем ensures_fail независимо,
+        // используя те же params + requires-assertions (entry state).
+        // `result` недоступен; `old(x)` → x (entry-state, нет мутабельных params).
+        for c in &fd.contracts {
+            if !matches!(c.kind, ContractKind::EnsuresFail) { continue; }
+            if requires_failed {
+                results.push((c.span, VerifyResult::EncodingFailed(
+                    "requires-context failed to encode".into())));
+                continue;
+            }
+            let encoded = match encode::encode_expr_with_ctx(&c.expr, &ctx) {
+                Ok(t) => t,
+                Err(super::encode::EncodingError::Unsupported(msg)) => {
+                    results.push((c.span, VerifyResult::EncodingFailed(msg)));
+                    continue;
+                }
+            };
+            // `old(x)` → x (entry-state, params неизменны в V1).
+            let goal = substitute_old(&encoded);
+            match try_prove(&mut *backend, goal) {
+                SatResult::Unsat(_) => results.push((c.span, VerifyResult::Proven)),
+                SatResult::Sat(model) => {
+                    let cex = format_counterexample(&model);
+                    results.push((c.span, VerifyResult::Disproved(model,
+                        format!("ensures_fail может не выполняться на Fail-пути: {}", cex))));
+                }
+                SatResult::Unknown(reason) => {
+                    results.push((c.span, VerifyResult::Unknown(
+                        format!("ensures_fail: {}", unknown_to_diag_message(reason)))));
+                }
+            }
+        }
+
         // Plan 33.4 D.0.4: verify decreases well-foundedness.
         if let Some(dec_expr) = &fd.decreases {
             if let Ok(dec_entry) = encode::encode_expr_with_ctx(dec_expr, &ctx) {

@@ -848,6 +848,13 @@ impl Parser {
                     let span = start.merge(expr.span);
                     contracts.push(Contract { kind: ContractKind::Ensures, expr, span });
                 }
+                TokenKind::Ident(n) if n == "ensures_fail" => {
+                    let start = self.peek().span;
+                    self.bump();
+                    let expr = self.parse_expr()?;
+                    let span = start.merge(expr.span);
+                    contracts.push(Contract { kind: ContractKind::EnsuresFail, expr, span });
+                }
                 TokenKind::Ident(n) if n == "reads" => {
                     self.bump();
                     self.parse_frame_target_list(&mut reads)?;

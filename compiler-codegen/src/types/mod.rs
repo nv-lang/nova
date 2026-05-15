@@ -4274,6 +4274,11 @@ impl ContractCtx {
                 ContractKind::Ensures => {
                     self.check_ensures_expr(&contract.expr, &fn_effects, &fd.name, errors);
                 }
+                ContractKind::EnsuresFail => {
+                    // D.1.5: ensures_fail — проверяем как ensures (V1 bootstrap).
+                    // V2: добавить проверку что `result` не используется.
+                    self.check_ensures_expr(&contract.expr, &fn_effects, &fd.name, errors);
+                }
             }
         }
     }
