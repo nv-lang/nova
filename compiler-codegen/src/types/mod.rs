@@ -302,6 +302,11 @@ struct BoundCtx<'a> {
     /// есть type-инфер аргументов).
     fn_decls: HashMap<String, Vec<&'a FnDecl>>,
     method_table: HashMap<String, HashMap<String, Vec<&'a FnDecl>>>,
+    /// Plan 53: имена sum-variant'ов (для refutability check let-pattern).
+    /// `type Color | Red | Green` → {"Red", "Green"}. Используется чтобы
+    /// отличить `let Color.Red { x } = obj` (refutable, error) от
+    /// `let Pair { x, y } = p` (irrefutable record).
+    sum_variant_names: std::collections::HashSet<String>,
 }
 
 impl<'a> BoundCtx<'a> {
@@ -309,6 +314,7 @@ impl<'a> BoundCtx<'a> {
         let mut protocol_specs = HashMap::new();
         let mut fn_decls: HashMap<String, Vec<&FnDecl>> = HashMap::new();
         let mut method_table: HashMap<String, HashMap<String, Vec<&FnDecl>>> = HashMap::new();
+        let mut sum_variant_names: std::collections::HashSet<String> = std::collections::HashSet::new();
 
         let mut effect_decls: HashMap<String, &TypeDecl> = HashMap::new();
         for item in &module.items {
@@ -323,6 +329,12 @@ impl<'a> BoundCtx<'a> {
                         }
                         TypeDeclKind::Effect(_) => {
                             effect_decls.insert(t.name.clone(), t);
+                        }
+                        // Plan 53: sum-variants для refutability check.
+                        TypeDeclKind::Sum(variants) => {
+                            for v in variants {
+                                sum_variant_names.insert(v.name.clone());
+                            }
                         }
                         _ => {}
                     }
@@ -344,7 +356,7 @@ impl<'a> BoundCtx<'a> {
             }
         }
 
-        BoundCtx { protocol_specs, effect_decls, fn_decls, method_table }
+        BoundCtx { protocol_specs, effect_decls, fn_decls, method_table, sum_variant_names }
     }
 
     fn check_module(&self, module: &Module, errors: &mut Vec<Diagnostic>) {
@@ -408,6 +420,12 @@ impl<'a> BoundCtx<'a> {
             Stmt::Expr(e) => self.walk_expr(e, scope, errors),
             Stmt::Let(d) => {
                 self.walk_expr(&d.value, scope, errors);
+                // Plan 53: refutable pattern в `let` — compile error.
+                // Допустимы только irrefutable patterns (Ident, Wildcard,
+                // Tuple, plain-Record). Refutable (Literal, Variant, Or,
+                // Array, Record-к-sum-variant) ловим здесь — codegen и
+                // interp ассамят irrefutable.
+                self.check_let_pattern_irrefutable(&d.pattern, errors);
                 // Регистрируем simple-Ident pattern с inferred типом.
                 if let Some(name) = pattern_simple_name(&d.pattern) {
                     let inferred = d.ty.clone()
@@ -850,6 +868,104 @@ impl<'a> BoundCtx<'a> {
             )
             .with_suggestion(suggestion);
             errors.push(diag);
+        }
+    }
+
+    /// Plan 53: refutability check для `let`-pattern. Допустимы только
+    /// irrefutable patterns:
+    /// - `Ident`, `Wildcard`
+    /// - `Tuple(pats)` — рекурсивно irrefutable
+    /// - `Record` без type_path ИЛИ с type_path к record-типу (не
+    ///   sum-variant) — рекурсивно irrefutable для под-pattern'ов
+    /// - `Binding { inner, .. }` — inner irrefutable
+    ///
+    /// Refutable (compile error):
+    /// - `Literal`, `Variant`, `Or`, `Array` (всегда refutable)
+    /// - `Record` с type_path к sum-variant (нужен tag-check в runtime)
+    ///
+    /// Production-grade diagnostic: тип нарушения + подсказка `if let
+    /// <pat> = <expr> { ... }` / `match`.
+    fn check_let_pattern_irrefutable(&self, pat: &Pattern, errors: &mut Vec<Diagnostic>) {
+        match pat {
+            Pattern::Ident { .. } | Pattern::Wildcard(_) => {}
+            Pattern::Tuple(pats, _) => {
+                for p in pats {
+                    self.check_let_pattern_irrefutable(p, errors);
+                }
+            }
+            Pattern::Record { type_path, fields, span, .. } => {
+                // Sum-variant в type_path — refutable.
+                if let Some(path) = type_path {
+                    if let Some(last) = path.last() {
+                        if self.sum_variant_names.contains(last) {
+                            errors.push(
+                                Diagnostic::new(
+                                    format!(
+                                        "refutable pattern в `let`: `{}` — sum-variant, \
+                                         совпадение не гарантировано (D52). Используйте \
+                                         `if let` / `match`",
+                                        path.join("."),
+                                    ),
+                                    *span,
+                                )
+                                .with_note(
+                                    "Plan 53: `let` принимает только irrefutable patterns \
+                                     (Ident, Wildcard, Tuple, plain-Record). Sum-variants \
+                                     требуют tag-check в runtime — `let` не может его сделать.",
+                                ),
+                            );
+                            return;
+                        }
+                    }
+                }
+                // Рекурсивно проверяем под-patterns полей.
+                for f in fields {
+                    if let Some(sub) = &f.pattern {
+                        self.check_let_pattern_irrefutable(sub, errors);
+                    }
+                }
+            }
+            Pattern::Binding { inner, .. } => {
+                self.check_let_pattern_irrefutable(inner, errors);
+            }
+            Pattern::Literal(_, span) => {
+                errors.push(Diagnostic::new(
+                    "refutable pattern в `let`: literal — совпадение не гарантировано. \
+                     Используйте `if let` / `match` либо обычный `let x = ...; if x == ...`",
+                    *span,
+                ));
+            }
+            Pattern::Variant { path, span, .. } => {
+                errors.push(
+                    Diagnostic::new(
+                        format!(
+                            "refutable pattern в `let`: `{}` — variant-pattern, \
+                             совпадение не гарантировано (D52/D59). Используйте \
+                             `if let` / `match`",
+                            path.join("."),
+                        ),
+                        *span,
+                    )
+                    .with_note(
+                        "Plan 53: variant-patterns требуют tag-check в runtime — \
+                         `let` гарантирует binding, не fallible match.",
+                    ),
+                );
+            }
+            Pattern::Or { span, .. } => {
+                errors.push(Diagnostic::new(
+                    "refutable pattern в `let`: alternation `|` — совпадение не \
+                     гарантировано. Используйте `if let` / `match`",
+                    *span,
+                ));
+            }
+            Pattern::Array { span, .. } => {
+                errors.push(Diagnostic::new(
+                    "refutable pattern в `let`: array — длина не гарантирована. \
+                     Используйте `if let` / `match` либо индексацию `xs[0]`, `xs.len`",
+                    *span,
+                ));
+            }
         }
     }
 
