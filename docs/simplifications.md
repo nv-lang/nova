@@ -6633,8 +6633,71 @@ calls не работают корректно.
 Hashmap/Set/Linkedlist остаются RUN/CC-FAIL по этой причине. Тесты адаптированы
 под минимум, который работает (insert/contains/get без iterator iteration).
 
+### D43 violation в исходных тестах (не парсер-баг)
+
+vec.nv и linkedlist.nv содержали `v.fold(0) { |acc, x| acc + x }` — невалидный
+синтаксис по D43. Спека: trailing-block разрешён ТОЛЬКО без params
+(`f(args) { block }`); `|...|` (closure-light) в trailing-position ЗАПРЕЩЁН.
+
+Корректные формы:
+- `v.fold(0, |acc, x| acc + x)` — closure-light как аргумент
+- `v.fold(0) fn(acc, x) acc + x` — trailing-fn (с params)
+
+Парсер был permissive: съел невалидную форму и заэмитил странный кодеген
+(trailing-block без params оборачивал inner closure-light expression — fn
+trailing block возвращал closure, fold вызывал closure как (env, acc, x), но
+trailing block принимал только (env)). Тесты переписаны под D43.
+
+Отдельная задача — enforcement D43 в parser, чтобы такие тесты не молча
+проходили codegen с broken output.
+
 ### Файлы
 
 - compiler-codegen/src/codegen/emit_c.rs — 6 точечных фиксов
 - compiler-codegen/nova_rt/array.h — новый (был отсутствующим в mn-runtime
   branch); + добавлены `nova_opt_eq_nova_{str,bool,byte,f64}` helpers
+
+
+## Итоговый статус (2026-05-15 EOD)
+
+### Готово (commit 8a986a9130a)
+
+- std/collections: **7/10 PASS** (было 4/10):
+  bloom_filter, deque, lru, priority_queue, queue, range, vec
+- nova_tests: **386/414 PASS** — 28 FAIL все pre-existing (`apply` reserved
+  keyword + doc/fixtures missing main); 0 регрессий от этой сессии
+
+### Активные блокеры
+
+**B1: Mono dispatch для nested generic calls.**
+`emit_monomorphized_method` не прокидывает `type_subst` в recursive `emit_call`
+для методов, вызываемых на mono'д полях. Симптомы:
+- `Set.contains` → `@map.contains` → NULL (set CC-FAIL)
+- `HashMap.with_capacity` вызывает `new_buckets()` с wrong substitution
+  (`____nova_int__nova_int` вместо `____nova_str__nova_int`) — hashmap RUN-FAIL
+
+Требует архитектурного фикса: передачу `current_type_subst` через `emit_call`
+recursion + правильный resolve type-args для каждого вложенного вызова.
+
+**B2: Mono'd sum-type unboxing.**
+Для `LinkedList[int]` body `head`/`tail` destructure'ит `Cons(h, t)` где
+`h` хранится как `void*` (boxed via `(void*)(intptr_t)int_value`). При
+unbox'е codegen берёт `_nv_scr->payload.Cons._0` как `void* h` и передаёт
+в `nova_make_Option_Some(h)` без `(nova_int)(intptr_t)h` cast. Работает
+случайно для маленьких int (битовое представление совпадает), ломается
+для других типов. Linkedlist 3/8 в файле PASS.
+
+**B3: Operator overload на generic'е.**
+`a + b` для `LinkedList[int]` не диспатчится в `@plus` метод —
+emit'ит raw C pointer arithmetic. Workaround — явный `.plus()` вызов.
+
+**B4: D43 enforcement в parser (отдельная мелкая задача).**
+Парсер принимает `f(args) { |params| body }` несмотря на D43-запрет
+closure-light в trailing-position. Должен отвергать с диагностикой.
+
+### Out of scope этой сессии
+
+- `apply` reserved keyword conflict в parser (basics/functions,
+  generics/mono_basic, p48_mono_method)
+- 8× doc/fixtures/*/sample CC-FAIL (missing main, infra setup gap)
+- str.hash() в stdlib (документировано как pre-existing в Plan 48 Ф.5)

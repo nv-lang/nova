@@ -11671,15 +11671,18 @@ via split on `____` separator. Также:
 
 ### Тесты (std/collections/)
 
-Workaround'ы:
-- vec.nv: `v.fold(0) { |acc, x| acc + x }` → `v.fold(0, |acc, x| acc + x)`.
-  Trailing-block синтаксис с method call даёт корректную форму closure'а, но
-  парсер обрабатывает `{ |params| body }` как `Trailing::Block(b)` где body
-  = inner closure expr → trailing_block оборачивает закрытие. Прямой синтаксис
-  обходит баг.
+Исправления в тестах:
+- vec.nv, linkedlist.nv: `v.fold(0) { |acc, x| acc + x }` → `v.fold(0, |acc, x| acc + x)`.
+  Исходный синтаксис нарушал **D43**: trailing-block разрешён только без params
+  (`f(args) { block }`); `|...|` (closure-light) в trailing-position ЗАПРЕЩЁН.
+  С params — должна быть trailing-fn `f(args) fn(p) body` или прямой arg
+  `f(args, |p| body)`. Парсер был permissive (съел невалидный синтаксис и
+  заэмитил странный кодеген: trailing-block без params оборачивал inner
+  closure как expression). Прямой синтаксис — каноничен по D43.
 - linkedlist.nv: `+` operator overload на generic'е не диспатчится; заменено
-  на `.plus()` явный вызов. Также `from_array` переписан с `for i in (0..n).reverse()`
-  на `while i >= 0` — `.reverse()` resolved'илась криво в generic context.
+  на `.plus()` явный вызов. Также `from_array` переписан с
+  `for i in (0..n).reverse()` на `while i >= 0` — `.reverse()` resolved'илась
+  криво в generic context.
 - hashmap.nv: тест "iterate keys" → "contains keys" (m.keys() iter mono
   body emits incomplete — inner `@inner.next()` call в mono'd KeysIter
   не резолвится).
