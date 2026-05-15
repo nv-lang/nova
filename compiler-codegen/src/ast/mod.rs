@@ -34,6 +34,11 @@ pub struct Module {
     /// Имя `peer_files` (а не `files`) — чтобы не конфликтовать со
     /// смежным `diag::SourceFile` и явно отражать терминологию Plan 42 spec.
     pub peer_files: Vec<PeerFile>,
+    /// Plan 45 / D104: inner doc-comment модуля (`//!`), если присутствует.
+    /// Допустим только в начале файла (после `module X` и `import`-ов,
+    /// до первого item'а). Объединяется с `#doc "..."` module-attr
+    /// (D101) на этапе collector'а (Plan 45 Ф.4).
+    pub doc: Option<DocBlock>,
 }
 
 /// Plan 42 Sub-plan 42.4 (шаг 1, 2026-05-14): per-peer source attribution.
@@ -74,6 +79,22 @@ pub struct PeerFile {
     /// `is_entry_module = true` peers — иначе items импортированных
     /// folder-modules «протекли» бы в shared namespace (нарушение Rule C).
     pub is_entry_module: bool,
+}
+
+/// Plan 45 / D104: блок doc-comment'ов, привязанный к item'у или
+/// модулю. Это последовательность одного или нескольких подряд
+/// идущих `///` (outer) либо `//!` (inner) комментариев, склеенных
+/// лексером (см. `lexer::TokenKind::DocComment`).
+///
+/// `kind` — указывает, outer это (привязан к следующей декларации) или
+/// inner (привязан к окружающему модулю). `content` — сырой текст,
+/// markdown НЕ парсится на уровне AST; парсинг markdown +
+/// section-extraction — отдельный pass (`doc::passes::derive_sections`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct DocBlock {
+    pub kind: crate::lexer::DocCommentKind,
+    pub content: String,
+    pub span: Span,
 }
 
 /// Plan 42 Sub-plan 42.A: module-level attribute.
@@ -156,6 +177,10 @@ pub enum Item {
 /// Функция: и свободная, и метод (через `receiver`).
 #[derive(Debug, Clone)]
 pub struct FnDecl {
+    /// Plan 45 / D104: doc-comment, прикреплённый парсером (один или
+    /// несколько подряд идущих `///` непосредственно перед `fn`).
+    /// `None` — у функции нет doc-comment'а.
+    pub doc: Option<DocBlock>,
     pub is_export: bool,
     /// D82: external fn — реализована в nova_rt/*.h. Body отсутствует
     /// (FnBody::External). Только в std.runtime.* whitelisted.
@@ -380,6 +405,8 @@ pub enum FnBody {
 
 #[derive(Debug, Clone)]
 pub struct TypeDecl {
+    /// Plan 45 / D104: doc-comment перед `type`.
+    pub doc: Option<DocBlock>,
     pub is_export: bool,
     pub name: String,
     /// Plan 15 (D72): `[K Hashable, V]` — имена + optional bounds.
@@ -534,6 +561,8 @@ pub struct LetDecl {
 
 #[derive(Debug, Clone)]
 pub struct ConstDecl {
+    /// Plan 45 / D104: doc-comment перед `const`.
+    pub doc: Option<DocBlock>,
     pub is_export: bool,
     pub name: String,
     pub ty: Option<TypeRef>,
