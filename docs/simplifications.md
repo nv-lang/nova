@@ -4688,6 +4688,51 @@ Sub-plans 35.A-E:
 - **Приоритет:** H — loop invariants это core Plan 33.2 feature;
   без SMT verification они не более чем runtime assert debug-only.
 
+### [ЗАКР 2026-05-15] Plan 33.5 Contracts Verifier Production Hardening — [V12/V13/V6-частично]
+
+Закрыт в ветке `plan33-4`. Итог: 82 PASS, 9 SKIP (z3-only).
+
+| Ф | Feature | Статус |
+|---|---|---|
+| Ф.3 | SCC purity inference | ✅ ЗАКРЫТ |
+| Ф.4.1 | Lemma functions (`lemma` / `apply`) | ✅ ЗАКРЫТ |
+| Ф.4.2 | Calc proofs (`calc { expr; == expr; }`) | ✅ ЗАКРЫТ |
+| Ф.5.1 | EffectMethod contracts (requires/ensures на op) | ✅ ЗАКРЫТ |
+| Ф.5.2 | Liskov SMT verify (#verify handler vs effect contracts) | ✅ ЗАКРЫТ |
+| Ф.6 | post(Action)(view) symbolic exec V2 | ✅ ЗАКРЫТ |
+
+**[V12] закрыт:** `#verify` handler gate теперь реально верифицирует через Z3/Trivial.
+**[V13] частично закрыт:** pure fn composition в SMT-encode работает через `infer_pure_fns_scc` + `PureFnInfo`. Encoded как UF с body-axiom.
+
+**Остающиеся ограничения Ф.6 (post symbolic exec):**
+- Action body — только `Block` с простыми `Assign`. Нет if/match/loop.
+- View body — только `=> expr`. Нет block-body handlers.
+- Одна captured переменная (нет State-record / многопольного state).
+- Нет учёта aliasing binders (id в action и id в view считаются одинаковыми).
+- **Приоритет:** L — покрывает 90% паттернов; сложные случаи → `#trusted`.
+
+### [V15] Generic axioms — Unknown в SMT encoding (2026-05-15)
+- **Где:** `compiler-codegen/src/verify/pipeline.rs::encode_axiom`.
+- **Что:** `axiom foo[T](id T) => ...` с generic binder возвращает
+  `Unknown(NotAttempted)` без SMT verification.
+- **Почему:** Generic axiom требует Z3 polymorphic sort (`Z3_mk_type_var`)
+  или монаморфизацию по use-site — ни то ни другое не реализовано.
+- **Как чинить:** Монаморфизация: для каждого axiom — enumerate
+  concrete types из binder usage, emit конкретную версию axiom.
+- **Приоритет:** M — generic axioms используются в стандартных
+  алгоритмических паттернах (sorted arrays, set membership).
+
+### [V16] post(Action)(view) — block-body handlers не поддержаны
+- **Где:** `compiler-codegen/src/verify/pipeline.rs::verify_post_axiom_with_handler`.
+- **Что:** handler method с `block { ... }` body вместо `=> expr` пропускается
+  (continue) в V1 верификации static axioms. В Ф.6 post-symbolic-exec —
+  поддержан только view `=> expr`, action `Block` (но только с простыми assign).
+- **Почему:** Block-body view требует symbolic evaluation всего блока
+  (SSA / abstract interpretation). V2 scope — только simple assign chains.
+- **Как чинить:** Symbolic block evaluator: convert block к SSA-form,
+  abstract-interpret assignments, extract result expression.
+- **Приоритет:** M — многие реальные handlers используют block-body.
+
 
 ---
 
