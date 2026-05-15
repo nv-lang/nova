@@ -929,11 +929,16 @@ impl<'a> BoundCtx<'a> {
                 self.check_let_pattern_irrefutable(inner, errors);
             }
             Pattern::Literal(_, span) => {
-                errors.push(Diagnostic::new(
-                    "refutable pattern в `let`: literal — совпадение не гарантировано. \
-                     Используйте `if let` / `match` либо обычный `let x = ...; if x == ...`",
-                    *span,
-                ));
+                errors.push(
+                    Diagnostic::new(
+                        "refutable pattern в `let`: literal — совпадение не гарантировано. \
+                         Используйте `if let` / `match` либо обычный `let x = ...; if x == ...`",
+                        *span,
+                    )
+                    .with_note(
+                        "пример: `if let 42 = n { ... }` или `let x = n; if x == 42 { ... }`",
+                    ),
+                );
             }
             Pattern::Variant { path, span, .. } => {
                 errors.push(
@@ -953,18 +958,33 @@ impl<'a> BoundCtx<'a> {
                 );
             }
             Pattern::Or { span, .. } => {
-                errors.push(Diagnostic::new(
-                    "refutable pattern в `let`: alternation `|` — совпадение не \
-                     гарантировано. Используйте `if let` / `match`",
-                    *span,
-                ));
+                errors.push(
+                    Diagnostic::new(
+                        "refutable pattern в `let`: alternation `|` — совпадение не \
+                         гарантировано. Используйте `if let` / `match`",
+                        *span,
+                    )
+                    .with_note(
+                        "пример: `match x { A | B => ..., _ => ... }`",
+                    ),
+                );
             }
             Pattern::Array { span, .. } => {
-                errors.push(Diagnostic::new(
-                    "refutable pattern в `let`: array — длина не гарантирована. \
-                     Используйте `if let` / `match` либо индексацию `xs[0]`, `xs.len`",
-                    *span,
-                ));
+                errors.push(
+                    Diagnostic::new(
+                        "refutable pattern в `let`: array — длина не гарантирована. \
+                         Используйте `if let` / `match` либо индексацию `xs[0]`, `xs.len`",
+                        *span,
+                    )
+                    .with_note(
+                        "пример: `if let [a, b, c] = xs { ... } else { /* handle */ }` \
+                         или `match xs { [a, b, c] => ..., _ => ... }`",
+                    )
+                    .with_note(
+                        "Plan 53: array-длина проверяется в runtime — `let` принимает \
+                         только статически-гарантированные patterns.",
+                    ),
+                );
             }
         }
     }

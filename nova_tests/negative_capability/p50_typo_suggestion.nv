@@ -1,0 +1,13 @@
+// EXPECT_COMPILE_ERROR did you mean `port:`
+//
+// Plan 50 Ф.6.1: opечатка в keyword arg (`prot:` вместо `port:`) — codegen
+// предлагает ближайший по Levenshtein-distance параметр. AI-first
+// improvement: LLM-сгенерированные опечатки получают авто-fix hint.
+
+module negative_capability.p50_typo_suggestion
+
+fn connect(host str, port int = 8080) Time -> bool => true
+
+test "typo in keyword arg suggests closest param" {
+    let _ = connect("h", prot: 9000)
+}

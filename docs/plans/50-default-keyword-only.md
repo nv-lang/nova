@@ -347,4 +347,20 @@ Plan 50 делает named args **обязательными** для дефол
   — variadic; variadic-параметр без дефолта, правилом не затрагивается.
 - [Plan 46](46-named-parameters.md) — базовая реализация named args +
   дефолтов; Plan 50 — ограничение поверх неё + закрытие [M-interp-named].
+
+---
+
+## Ф.6 — Production hardening (2026-05-15)
+
+**Ф.6.1 — `UnknownParam` + Levenshtein «did you mean?».**
+- Сейчас `argbind.rs:55` при unknown keyword arg (`connect(prot: 9000)`
+  вместо `port:`) выдаёт «unknown parameter `prot`». LLM-friendly —
+  но без suggestion'а на ближайший валидный.
+- **Fix:** Levenshtein distance ≤2 (или ≤max(1, len/3)) на
+  `params.iter().map(|p| &p.name)`. Если есть match — добавить
+  `Suggestion { applicability: MachineApplicable }` с заменой
+  identifier'а.
+- AI-first выгода: LLM может авто-исправить опечатки.
+- Тест: `nova_tests/named_params/p50_typo_suggestion.nv` (positive,
+  EXPECT_COMPILE_ERROR + EXPECT_STDOUT с suggestion-текстом).
 - `docs/simplifications.md` [M-interp-named] — закрывается в Ф.2.

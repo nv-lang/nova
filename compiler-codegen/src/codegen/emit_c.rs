@@ -1232,16 +1232,25 @@ impl CEmitter {
             }
         }
 
-        // Plan 48: drain monomorphization worklist to fixpoint (R3: polymorphic recursion guard)
+        // Plan 48: drain monomorphization worklist to fixpoint (R3: polymorphic recursion guard).
+        // Ф.7.6: limit конфигурируется через NOVA_MONO_DEPTH env var (default 500).
+        // Полноценный CLI flag `--mono-depth=N` — V2 (требует BuildOpts расширения).
         {
+            const DEFAULT_MONO_DEPTH_LIMIT: usize = 500;
+            let limit = std::env::var("NOVA_MONO_DEPTH").ok()
+                .and_then(|s| s.parse::<usize>().ok())
+                .filter(|n| *n > 0)
+                .unwrap_or(DEFAULT_MONO_DEPTH_LIMIT);
             let mut safety = 0usize;
             while !self.mono_worklist.is_empty() {
                 safety += 1;
-                if safety > 500 {
-                    return Err(
-                        "instantiation depth limit exceeded (possible polymorphic recursion); \
-                         add a non-generic base case or use explicit bounds to terminate".into()
-                    );
+                if safety > limit {
+                    return Err(format!(
+                        "instantiation depth limit {} exceeded (possible polymorphic recursion); \
+                         add a non-generic base case, use explicit bounds to terminate, \
+                         or raise via NOVA_MONO_DEPTH env var",
+                        limit
+                    ));
                 }
                 let batch: Vec<_> = std::mem::take(&mut self.mono_worklist);
                 for (fn_name, type_subst, mono_name) in batch {
@@ -4374,11 +4383,32 @@ impl CEmitter {
         for (name, resolved) in subst {
             match resolved {
                 Some(c_ty) => result.push((name, c_ty)),
-                None => return Err(format!(
-                    "cannot infer type argument `{name}` for generic function `{}`; \
-                     use turbofish: `fn_name[T](...)`",
-                    fn_decl.name
-                )),
+                None => {
+                    // Plan 48 Ф.7.5: указать в каком параметре T встречается.
+                    // Помогает LLM/user понять, какой argument добавить или
+                    // как явно дать turbofish.
+                    let positions: Vec<String> = fn_decl.params.iter().enumerate()
+                        .filter_map(|(i, p)| {
+                            let mut found = false;
+                            let mut names = std::collections::HashSet::new();
+                            Self::collect_typeref_names(&p.ty, &mut names, &mut std::collections::HashSet::new());
+                            if names.contains(&name) { found = true; }
+                            if found {
+                                Some(format!("param `{}` (#{i})", p.name))
+                            } else { None }
+                        })
+                        .collect();
+                    let where_used = if positions.is_empty() {
+                        " (returned only — turbofish required)".to_string()
+                    } else {
+                        format!(" — appears in {}", positions.join(", "))
+                    };
+                    return Err(format!(
+                        "cannot infer type argument `{name}` for generic function `{}`{}; \
+                         use turbofish: `{}[{name}](...)`",
+                        fn_decl.name, where_used, fn_decl.name
+                    ));
+                }
             }
         }
         Ok(result)
@@ -4571,12 +4601,18 @@ impl CEmitter {
             .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_unit".into()))
             .unwrap_or_else(|| "nova_unit".into());
         self.current_type_subst = saved_subst;
-        // Build param list: nova_self first, then regular params
-        let mut parts = vec![format!("{} nova_self", recv_c)];
+        // Plan 48 Ф.7.2: static-методы без nova_self.
+        let is_instance = matches!(fn_decl.receiver.as_ref().map(|r| &r.kind),
+            Some(crate::ast::ReceiverKind::Instance));
+        let mut parts: Vec<String> = if is_instance {
+            vec![format!("{} nova_self", recv_c)]
+        } else {
+            Vec::new()
+        };
         for (p, ty) in fn_decl.params.iter().zip(&param_c_tys) {
             parts.push(format!("{} {}", ty, p.name));
         }
-        let params_str = parts.join(", ");
+        let params_str = if parts.is_empty() { "void".to_string() } else { parts.join(", ") };
         // Forward decl
         self.mono_fwd_decls.push_str(&format!(
             "static {} {}({});\n",
@@ -4608,20 +4644,30 @@ impl CEmitter {
         let ret_c = fn_decl.return_type.as_ref()
             .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_unit".into()))
             .unwrap_or_else(|| "nova_unit".into());
-        // Build param list with nova_self first
-        let mut parts = vec![format!("{} nova_self", recv_c)];
+        // Plan 48 Ф.7.2: static-методы без nova_self.
+        let is_instance = matches!(fn_decl.receiver.as_ref().map(|r| &r.kind),
+            Some(crate::ast::ReceiverKind::Instance));
+        let mut parts: Vec<String> = if is_instance {
+            vec![format!("{} nova_self", recv_c)]
+        } else {
+            Vec::new()
+        };
         for (p, ty) in fn_decl.params.iter().zip(&param_c_tys) {
             parts.push(format!("{} {}", ty, p.name));
         }
-        let params_str = parts.join(", ");
+        let params_str = if parts.is_empty() { "void".to_string() } else { parts.join(", ") };
         // Buffer body
         let saved_out = std::mem::take(&mut self.out);
         let saved_indent = self.indent;
         self.indent = 0;
         self.line(&format!("static {} {}({}) {{", ret_c, mono_name, params_str));
         self.indent += 1;
-        // Register nova_self and params in var_types
-        let prev_self = self.var_types.insert("nova_self".to_string(), recv_c.clone());
+        // Register nova_self and params in var_types (только если instance method)
+        let prev_self = if is_instance {
+            self.var_types.insert("nova_self".to_string(), recv_c.clone())
+        } else {
+            None
+        };
         let saved_var_types: Vec<(String, Option<String>)> = fn_decl.params.iter()
             .zip(&param_c_tys)
             .map(|(p, ty)| (p.name.clone(), self.var_types.insert(p.name.clone(), ty.clone())))
@@ -4693,9 +4739,13 @@ impl CEmitter {
                 None => { self.var_types.remove(&name); }
             }
         }
-        match prev_self {
-            Some(old) => { self.var_types.insert("nova_self".to_string(), old); }
-            None => { self.var_types.remove("nova_self"); }
+        if is_instance {
+            match prev_self {
+                Some(old) => { self.var_types.insert("nova_self".to_string(), old); }
+                None => { self.var_types.remove("nova_self"); }
+            }
+        } else {
+            let _ = prev_self;
         }
         for (name, prev) in saved_fn_sigs {
             match prev {
@@ -9036,6 +9086,56 @@ impl CEmitter {
                             .filter(|s| !s.is_instance)
                             .collect();
                         if !static_overloads.is_empty() {
+                            // Plan 48 Ф.7.2: sentinel detection для static generic
+                            // методов с собственными type params. Без этого
+                            // sentinel c_name (__mono_method__T__m) утекает в
+                            // линковщик как undefined symbol.
+                            if static_overloads.iter().any(|c| c.c_name.starts_with("__mono_method__")) {
+                                let recv_key = (parts[0].clone(), method_name.clone());
+                                if let Some(fn_decl) = self.mono_method_decls.get(&recv_key).cloned() {
+                                    let type_subst = self.resolve_mono_type_args(&fn_decl, &[], args)
+                                        .unwrap_or_else(|_| fn_decl.generics.iter()
+                                            .map(|g| (g.name.clone(), "nova_str".to_string()))
+                                            .collect());
+                                    let base_c_name = format!("Nova_{}_static_{}", parts[0], method_name);
+                                    let mono_name = Self::compute_mono_name(&base_c_name, &type_subst);
+                                    let rt_clone = parts[0].clone();
+                                    self.register_mono_method_instance(
+                                        &fn_decl.clone(), type_subst.clone(),
+                                        &mono_name.clone(), &rt_clone);
+                                    // Emit args с fn_param_sigs context для closure params.
+                                    let mut arg_strs = Vec::new();
+                                    for (param_decl, a) in fn_decl.params.iter().zip(args.iter()) {
+                                        if let crate::ast::TypeRef::Func { params: fp, return_type, .. } = &param_decl.ty {
+                                            let saved_inner = std::mem::replace(
+                                                &mut self.current_type_subst,
+                                                type_subst.iter().cloned().collect(),
+                                            );
+                                            let inner_ptys: Vec<String> = fp.iter()
+                                                .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".into()))
+                                                .collect();
+                                            let inner_ret = return_type.as_ref()
+                                                .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_unit".into()))
+                                                .unwrap_or_else(|| "nova_unit".into());
+                                            self.current_type_subst = saved_inner;
+                                            let prev_sig = self.fn_param_sigs.insert(
+                                                param_decl.name.clone(), (inner_ptys, inner_ret));
+                                            let v = self.emit_expr(a.expr())?;
+                                            match prev_sig {
+                                                Some(old) => { self.fn_param_sigs.insert(param_decl.name.clone(), old); }
+                                                None => { self.fn_param_sigs.remove(&param_decl.name); }
+                                            }
+                                            arg_strs.push(v);
+                                        } else {
+                                            arg_strs.push(self.emit_expr(a.expr())?);
+                                        }
+                                    }
+                                    for a in args.iter().skip(fn_decl.params.len()) {
+                                        arg_strs.push(self.emit_expr(a.expr())?);
+                                    }
+                                    return Ok(format!("{}({})", mono_name, arg_strs.join(", ")));
+                                }
+                            }
                             // Эмиттим args сначала, чтобы получить C-типы.
                             let mut arg_strs = Vec::new();
                             let mut arg_types = Vec::new();
@@ -12510,12 +12610,35 @@ impl CEmitter {
                         _ => None,
                     };
                     if let Some((rt, mn, want_inst)) = recv_and_method {
-                        let key = (rt, mn);
+                        let key = (rt.clone(), mn.clone());
                         if let Some(overloads) = self.method_overloads.get(&key) {
                             let candidates: Vec<&MethodSig> = overloads.iter()
                                 .filter(|s| s.is_instance == want_inst)
                                 .collect();
                             if !candidates.is_empty() {
+                                // Plan 48 Ф.7.1: sentinel — generic method с
+                                // собственными type params. return_c_type у sentinel
+                                // = "void*"; нужно резолвить через mono inference.
+                                if candidates.iter().any(|c| c.c_name.starts_with("__mono_method__")) {
+                                    let recv_key = (rt.clone(), mn.clone());
+                                    if let Some(fn_decl) = self.mono_method_decls.get(&recv_key) {
+                                        if let Ok(type_subst) = self.resolve_mono_type_args(fn_decl, &[], args) {
+                                            let subst_opt: Vec<(String, Option<String>)> = type_subst.iter()
+                                                .map(|(n, t)| (n.clone(), Some(t.clone()))).collect();
+                                            if let Some(ret_ty) = &fn_decl.return_type {
+                                                if let Some(c_ty) = Self::apply_type_subst_to_ref(ret_ty, &subst_opt) {
+                                                    if !c_ty.is_empty() && c_ty != "void*" {
+                                                        return c_ty;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    // Sentinel + не смогли резолвить → fallback на void*
+                                    // (call site эмитит mono call, но тип не известен —
+                                    // user должен дать explicit annotation).
+                                    return "void*".into();
+                                }
                                 // Plan 11 Ф.9.3: override-precedence Own > Delegated.
                                 // Single → return its return_c_type (no override
                                 // conflict possible).

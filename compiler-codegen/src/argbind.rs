@@ -33,7 +33,9 @@ pub enum BindError {
     /// Позиционный аргумент после именованного — D102 запрещает.
     PositionalAfterNamed { span: Span },
     /// Именованный аргумент с именем, которого нет среди параметров.
-    UnknownParam { name: String, span: Span },
+    /// `suggestion` — closest match по Levenshtein (≤2 distance или ≤len/3),
+    /// `None` если нет похожего. Plan 50 Ф.6.1 AI-first "did you mean".
+    UnknownParam { name: String, span: Span, suggestion: Option<String> },
     /// Параметр связан дважды (позиционно И по имени).
     DuplicateParam { name: String, span: Span },
     /// Обязательный параметр (без default) не передан.
@@ -51,8 +53,13 @@ impl BindError {
         match self {
             BindError::PositionalAfterNamed { .. } =>
                 "позиционный аргумент не может идти после именованного (D102)".to_string(),
-            BindError::UnknownParam { name, .. } =>
-                format!("именованный аргумент `{}` — нет такого параметра", name),
+            BindError::UnknownParam { name, suggestion, .. } => {
+                let hint = match suggestion {
+                    Some(s) => format!(" (did you mean `{}:`?)", s),
+                    None => String::new(),
+                };
+                format!("именованный аргумент `{}` — нет такого параметра{}", name, hint)
+            }
             BindError::DuplicateParam { name, .. } =>
                 format!("параметр `{}` связан дважды (позиционно и по имени)", name),
             BindError::MissingRequired { name } =>
@@ -129,9 +136,12 @@ pub fn bind_call_args(
     for &ni in &named {
         let arg_name = args[ni].arg_name().unwrap_or("");
         if !params.iter().any(|p| p.name == arg_name) {
+            // Plan 50 Ф.6.1: closest match через Levenshtein для "did you mean".
+            let suggestion = closest_param_name(arg_name, params);
             return Err(BindError::UnknownParam {
                 name: arg_name.to_string(),
                 span: args[ni].expr().span,
+                suggestion,
             });
         }
     }
@@ -214,12 +224,56 @@ pub fn bind_call_args(
     for (ni_pos, &arg_idx) in named.iter().enumerate() {
         if !named_used[ni_pos] {
             let name = args[arg_idx].arg_name().unwrap_or("").to_string();
+            let suggestion = closest_param_name(&name, params);
             return Err(BindError::UnknownParam {
                 name,
                 span: args[arg_idx].expr().span,
+                suggestion,
             });
         }
     }
 
     Ok(bindings)
+}
+
+/// Plan 50 Ф.6.1: найти ближайший по Levenshtein-distance параметр.
+/// Threshold: 1 для имён длины ≤2, 2 для остальных (typical typos: missing,
+/// extra, transposed char). Если несколько кандидатов — самый близкий;
+/// при ничьей — первый встреченный (стабильный по AST-порядку).
+fn closest_param_name(needle: &str, params: &[Param]) -> Option<String> {
+    let max_dist = if needle.len() <= 2 { 1 } else { 2 };
+    let mut best: Option<(usize, &str)> = None;
+    for p in params {
+        let d = levenshtein(needle, &p.name);
+        if d > max_dist { continue; }
+        match best {
+            None => best = Some((d, &p.name)),
+            Some((bd, _)) if d < bd => best = Some((d, &p.name)),
+            _ => {}
+        }
+    }
+    best.map(|(_, name)| name.to_string())
+}
+
+/// Classic Levenshtein edit-distance — O(m*n) time, O(min(m,n)) space.
+/// Используется для "did you mean" suggestions; не perf-critical.
+fn levenshtein(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    if a.is_empty() { return b.len(); }
+    if b.is_empty() { return a.len(); }
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    let mut curr: Vec<usize> = vec![0; b.len() + 1];
+    for i in 1..=a.len() {
+        curr[0] = i;
+        for j in 1..=b.len() {
+            let cost = if a[i - 1] == b[j - 1] { 0 } else { 1 };
+            curr[j] = std::cmp::min(
+                std::cmp::min(curr[j - 1] + 1, prev[j] + 1),
+                prev[j - 1] + cost,
+            );
+        }
+        std::mem::swap(&mut prev, &mut curr);
+    }
+    prev[b.len()]
 }
