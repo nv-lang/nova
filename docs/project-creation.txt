@@ -10800,4 +10800,77 @@ positive .nv + 4 negative p53_*).
 - nova_tests/negative_capability/p53_*.nv ×4 (Ф.3 negative)
 - docs/plans/53-let-destructuring.md
 - docs/plans/README.md
+
+================================================================================
+2026-05-15 Plan 48 Ф.3: мономорфизация generic records / sum-types
+================================================================================
+
+Закрывает [C6] из simplifications.md — полная мономорфизация вместо
+type-erasure. `Stack[int]` / `Stack[str]` теперь получают конкретные
+C-struct'ы с полями правильного типа.
+
+### Что сделано
+
+**emit_generic_type_instance** — генерирует мономорфную специализацию
+`Nova_TypeName____nova_arg1__nova_arg2` при первом использовании типа:
+- struct с полями конкретных типов вместо `void*`
+- для sum-type: tag-enum + union + конструктор-функции
+- параллельный маппинг variant fields
+
+**Ключевые исправления в emit_c.rs:**
+
+1. **record_schemas / sum_schemas keys без `Nova_` префикса** —
+   `emit_generic_type_instance` использовал `mangled` (с `Nova_`) как
+   ключ, а lookup шёл без. Фикс: `strip_prefix("Nova_")`.
+
+2. **1c pre-pass → `erased_type_ref_c` для generic receiver** —
+   `type_ref_to_c(Pair[B, A])` в методах с type-params создавал
+   spurious `Nova_Pair____Nova_B_p__Nova_A_p` instance. Фикс:
+   определять `recv_type_params` и для generic receiver вызывать
+   `erased_type_ref_c` — возвращает `Nova_Pair*` (erased).
+
+3. **Static methods без `nova_self`** — `emit_generic_method_erased` и
+   forward-decl добавляли `nova_self` всегда. Фикс: проверка
+   `ReceiverKind::Instance` перед добавлением.
+
+4. **Static call boxing** — вызов `Type.static_method(v)` для generic
+   типов не боксировал аргументы в `void*`. Фикс: зеркальная логика
+   как в instance-call branch.
+
+5. **Erased form для generic sum-types** — `Nova_Result2` не имела
+   struct-определения (только forward decl). Фикс: эмитим tag-enum +
+   struct + constructors в `emit_type_decl` для generic sum-types.
+
+6. **Variant constructor boxing** — `Ok2("value")` передавал `nova_str`
+   напрямую в `void*` параметр. Фикс: `is_generic_call = true` когда
+   конструктор принадлежит generic sum-type.
+
+**Одновременно закрыты два pre-existing fail'а:**
+- `modules/stack_queue` — CODEGEN-FAIL "Stack____nova_int not in
+  record_schemas" → фикс 1 (prefix stripping).
+- `types/self_universal` — CC-FAIL "passing Nova_B* to incompatible" →
+  фикс 2 (erased_type_ref_c для generic receiver в 1c pre-pass).
+
+### Новый тест
+
+`nova_tests/types/generic_record_mono.nv` (9 тестов):
+- `Wrapper[T]` — record с статическим `.of()` + instance `.get()`:
+  `Wrapper[int]`, `Wrapper[str]`, `Wrapper[bool]`, два независимых
+- `Pair[A, B]` — record с двумя разными type-params: `.make()`,
+  `.fst`/`.snd` доступ
+- `Result2[T]` — generic sum-type: `Ok2(T)` / `Err2`, методы
+  `.is_ok()` / `.unwrap_or()` для `int` и `str`
+
+### Регрессия
+
+393/393 PASS (release). +3 от предыдущей базы (390 → 393):
+- `modules/stack_queue` исправлен
+- `types/self_universal` исправлен
+- `types/generic_record_mono` добавлен (9 новых тестов)
+
+### Файлы
+
+- compiler-codegen/src/codegen/emit_c.rs
+- nova_tests/types/generic_record_mono.nv
+- docs/plans/48-closures-in-generics.md (статус Ф.3 → DONE)
 - docs/project-creation.txt (эта секция)
