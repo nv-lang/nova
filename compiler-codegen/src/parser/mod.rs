@@ -4633,7 +4633,8 @@ impl Parser {
                 Ok(StmtOrExpr::Stmt(Stmt::Assume { expr, span }))
             }
             // Plan 33.5 Ф.4.1: `apply lemma_name(args)` — активация lemma.
-            TokenKind::KwApply => {
+            // Контекстуальный keyword: `apply` не резервируем глобально.
+            TokenKind::Ident(ref n) if n == "apply" => {
                 self.bump();
                 let name = match self.peek().kind.clone() {
                     TokenKind::Ident(n) => { self.bump(); n }

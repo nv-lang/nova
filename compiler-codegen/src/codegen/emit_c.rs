@@ -13477,6 +13477,41 @@ impl CEmitter {
         }
     }
 
+    /// Plan 48: вычислить return-type метода для монотипа.
+    /// Если `obj_ty = "Nova_X____A__B*"`, извлекаем base = "X",
+    /// type_args = ["A", "B"], находим метод в generic_type_methods["X"],
+    /// применяем apply_type_subst_to_ref с подстановкой generics→type_args.
+    fn infer_mono_method_ret(&self, obj_ty: &str, method: &str) -> Option<String> {
+        // Формат: "Nova_X____A__B*" или без суффикса "*"
+        let stripped = obj_ty.strip_prefix("Nova_")?.trim_end_matches('*');
+        // Должно содержать "____" — разделитель base от type args
+        let sep_pos = stripped.find("____")?;
+        let base_name = &stripped[..sep_pos];
+        let args_str = &stripped[sep_pos + 4..]; // после "____"
+        // type args разделены "__" (двойное подчёркивание)
+        let type_args: Vec<String> = args_str.split("__")
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+            .collect();
+        let template = self.generic_type_templates.get(base_name)?;
+        let methods = self.generic_type_methods.get(base_name)?;
+        let fd = methods.iter().find(|m| m.name == method)?;
+        let ret_ref = fd.return_type.as_ref()?;
+        // Строим подстановку: generic_param_name → concrete_c_type
+        let subst: Vec<(String, Option<String>)> = template.generics.iter()
+            .zip(type_args.iter())
+            .map(|(g, c)| (g.name.clone(), Some(c.clone())))
+            .collect();
+        let ret_c = Self::apply_type_subst_to_ref(ret_ref, &subst)?;
+        // Если return type совпадает с самим типом (Self), используем mono тип
+        if ret_c == format!("Nova_{}*", base_name) {
+            // Возвращается Self → нужен конкретный mono тип
+            let mangled = Self::compute_generic_type_c_name(base_name, &type_args);
+            return Some(format!("{}*", mangled));
+        }
+        Some(ret_c)
+    }
+
     /// Plan 14 std-fix: возвращаемый C-тип для встроенных методов str.
     /// Используется в `infer_expr_c_type` для Call с `Member`-func, чтобы
     /// `s.starts_with(...)`/`s.contains(...)` (и т.д.) корректно
@@ -14398,6 +14433,14 @@ impl CEmitter {
                         }
                     }
                     let obj_ty = self.infer_expr_c_type(obj);
+                    // Plan 48: если obj_ty — монотип вида "Nova_X____A__B*",
+                    // вычислить return-type метода через generic_type_methods["X"]
+                    // с подстановкой type-аргументов. Это исправляет случаи вроде
+                    // `let s = p.swap()` где p: Pair[int,str] — без этого
+                    // fn_ret_swap = "void*" (erased) и поля s потом неверно typed.
+                    if let Some(ret) = self.infer_mono_method_ret(&obj_ty, method) {
+                        return ret;
+                    }
                     // Plan 14 std-fix: built-in str методы (starts_with/ends_with/
                     // contains/eq/...) — return-type из hardcoded map'а. Без этого
                     // `s.starts_with(...)` инфер'ится как `nova_int` (default
@@ -14940,16 +14983,38 @@ impl CEmitter {
                     .trim_end_matches('*')
                     .trim()
                     .to_string();
-                // For monomorphized names like "Queue____nova_int", fall back to base "Queue"
-                // so field types are found in the erased schema.
+                // For monomorphized names like "Queue____nova_int": look up concrete schema first.
                 let base_name: &str = struct_name.split("____").next().unwrap_or(&struct_name);
-                let schema_opt = self.record_schemas.get(&struct_name)
-                    .or_else(|| if base_name.len() < struct_name.len() {
-                        self.record_schemas.get(base_name)
-                    } else {
-                        None
-                    });
-                if let Some(schema) = schema_opt {
+                // 1. Concrete mono schema (registered by drain_generic_type_worklist).
+                if let Some(schema) = self.record_schemas.get(&struct_name) {
+                    if let Some(field_ty) = schema.get(name.as_str()) {
+                        return field_ty.clone();
+                    }
+                }
+                // 2. Plan 48: if mono schema not yet registered (test body runs before drain),
+                //    compute field type directly from generic_type_templates + type arg substitution.
+                if base_name.len() < struct_name.len() {
+                    let args_str = &struct_name[base_name.len() + 4..]; // skip "____"
+                    let type_args: Vec<String> = args_str.split("__")
+                        .filter(|s| !s.is_empty())
+                        .map(|s| s.to_string())
+                        .collect();
+                    if let Some(template) = self.generic_type_templates.get(base_name).cloned() {
+                        if let crate::ast::TypeDeclKind::Record(fields) = &template.kind {
+                            if let Some(field_decl) = fields.iter().find(|f| f.name == *name) {
+                                let subst: Vec<(String, Option<String>)> = template.generics.iter()
+                                    .zip(type_args.iter())
+                                    .map(|(g, c)| (g.name.clone(), Some(c.clone())))
+                                    .collect();
+                                if let Some(c_ty) = Self::apply_type_subst_to_ref(&field_decl.ty, &subst) {
+                                    return c_ty;
+                                }
+                            }
+                        }
+                    }
+                }
+                // 3. Erased base schema fallback (void* for type-param fields).
+                if let Some(schema) = self.record_schemas.get(base_name) {
                     if let Some(field_ty) = schema.get(name.as_str()) {
                         return field_ty.clone();
                     }
