@@ -774,12 +774,88 @@ impl<'a> BoundCtx<'a> {
             callee_params
         };
         // Запускаем binding. Ошибка → diagnostic.
-        if let Err(err) = crate::argbind::bind_call_args(effective_params, args) {
-            let span = {
-                let s = err.span();
-                if s == crate::diag::Span::dummy() { e.span } else { s }
+        //
+        // Precedence (Plan 50): структурные ошибки argbind — арность,
+        // неизвестное имя, двойная привязка, позиционный-после-именованного
+        // — fail-fast в `bind_call_args` и эмитятся первыми. Правило
+        // keyword-only (Plan 50, D102 №1) проверяется ТОЛЬКО когда
+        // структура валидна (`Ok(bindings)`) — оно последнее в порядке
+        // диагностик.
+        match crate::argbind::bind_call_args(effective_params, args) {
+            Err(err) => {
+                let span = {
+                    let s = err.span();
+                    if s == crate::diag::Span::dummy() { e.span } else { s }
+                };
+                errors.push(Diagnostic::new(err.message(), span));
+            }
+            Ok(bindings) => {
+                // Plan 50 (D102 ревизия): параметр с дефолтом — keyword-only.
+                // Позиционная привязка к дефолтному параметру — ошибка.
+                // Trailing-форма исключена структурно: trailing-bound
+                // параметр уже снят из `effective_params` выше, поэтому
+                // в `bindings` его нет — заполнение дефолтного последнего
+                // параметра trailing-формой не считается нарушением.
+                //
+                // Отдельная диагностика на КАЖДЫЙ нарушающий аргумент
+                // (не «первый и стоп») — error recovery без каскада:
+                // просто продолжаем цикл.
+                self.check_keyword_only(effective_params, args, &bindings, errors);
+            }
+        }
+    }
+
+    /// Plan 50 (D102 №1): после успешного argbind — найти позиционные
+    /// аргументы, легшие на параметры с дефолтом, и эмитить production-grade
+    /// диагностику на каждый (имя параметра, `note: declared here`,
+    /// machine-applicable structured suggestion `name: <expr>`).
+    fn check_keyword_only(
+        &self,
+        effective_params: &[Param],
+        args: &[CallArg],
+        bindings: &[crate::argbind::ArgBinding],
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        use crate::argbind::ArgBinding;
+        use crate::diag::{Applicability, Span, Suggestion};
+        for (pi, binding) in bindings.iter().enumerate() {
+            let ArgBinding::Positional(ai) = binding else { continue; };
+            let param = &effective_params[pi];
+            if param.default.is_none() {
+                continue;
+            }
+            // Нарушение: позиционный аргумент `args[*ai]` лёг на
+            // дефолтный параметр `param`.
+            let arg_span = args[*ai].expr().span;
+            // Structured suggestion — чистая ВСТАВКА `<name>: ` в начале
+            // выражения-аргумента (span нулевой ширины). Source-независимо:
+            // producer не читает исходник. Machine-applicable — edit
+            // корректен и авто-применим (`nova fix` / LSP code-action).
+            let insert_at = Span::with_file(arg_span.start, arg_span.start, arg_span.file_id);
+            let suggestion = Suggestion {
+                message: format!("pass `{}` by name", param.name),
+                span: insert_at,
+                replacement: format!("{}: ", param.name),
+                applicability: Applicability::MachineApplicable,
             };
-            errors.push(Diagnostic::new(err.message(), span));
+            let diag = Diagnostic::new(
+                format!(
+                    "параметр `{}` имеет значение по умолчанию — \
+                     передаётся только по имени (D102)",
+                    param.name,
+                ),
+                arg_span,
+            )
+            .with_note_at(
+                format!("параметр `{}` объявлен здесь", param.name),
+                param.span,
+            )
+            .with_note(
+                "параметры с дефолтом — keyword-only: обязательный — \
+                 позиционно, опциональный — по имени",
+            )
+            .with_suggestion(suggestion);
+            errors.push(diag);
         }
     }
 
