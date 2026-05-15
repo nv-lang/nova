@@ -10537,6 +10537,13 @@ nova-cli (важно: CLI отдельный crate), затем `nova test` →
 - `docs/plans/48-closures-in-generics.md` (статус)
 - `docs/simplifications.md` (followups)
 
+**Тесты Plan 48 (добавлены отдельным коммитом):**
+- `nova_tests/generics/p48_closure_arg_inference.nv` (5 cases) — Source 2b
+- `nova_tests/generics/p48_mono_method.nv` (3 cases) — instance generic method
+- `nova_tests/generics/p48_option_return_inference.nv` (4 cases) — Option[T] return
+- `nova_tests/generics/p48_none_in_mono_body.nv` (4 cases) — None target type
+- Регрессия post-tests: **391 PASS / 0 FAIL / 7 SKIP** (release).
+
 ## Сессия 2026-05-15: Plan 50 — параметр с дефолтом keyword-only
 
 Реализация ревизии D102 (2026-05-15): параметр со значением по умолчанию

@@ -6342,7 +6342,20 @@ bootstrap-баг). Новая caller-owned: токен создаётся `Cance
     (с инкрементом spawn_counter), но pre-scan forward-decls (lines 27-29
     в C) уже отработали раньше. Дополнительные `_nova_spawn_3+` не
     forward-declared. Fix: дополнить `mono_fwd_decls` для mono'д spawns.
-  Оба — V2 followup; не блокируют 370/370 regression.
+  - [M-mono-method-call-inference] `let r = c.method(...)` для generic-
+    метода типизирует `r` как `void*` — `infer_expr_c_type` method-call
+    branch не делает Plan 48 mono inference. Workaround: `let r int = ...`.
+  - [M-mono-static-methods] Static generic-методы (`Type.method[T]()` без
+    instance receiver) — sentinel c_name `__mono_method__T__m` попадает в
+    C-output как линкуемое имя, не resolved через mono routing.
+  - [M-mono-error-not-fallback] V1 plan говорил "понятная ошибка cannot
+    infer T, не тихий void*-fallback" — реализация делает erasure
+    fallback на любой Err из `resolve_mono_type_args`. Plan нарушен,
+    diagnostics страдают.
+  - [M-time-effect-schema-mismatch] Runtime `NovaVtable_Time` имеет
+    `sleep/now/after`, handlers.nv ожидает `now_ms/now_ns/now/sleep`.
+    Блокирует import std.testing.handlers в любом тесте. Не Plan 48.
+  Все — V2 followup; не блокируют 391/391 regression.
 - [M-within-error-conflation] Stdlib `within[T]` (= `with_timeout`) тоже
   отложен: его реализация требует ловить cancel-throw через `with Fail`
   handler, который неотличимо ловит и реальные ошибки из `body()`, и

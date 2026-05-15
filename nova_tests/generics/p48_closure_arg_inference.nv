@@ -1,0 +1,48 @@
+// Plan 48: Source 2b inference — T для `fn() -> T` параметра
+// выводится из closure body return type (Expr или Block trailing).
+//
+// Tests Source 2b в resolve_mono_type_args И infer_expr_c_type
+// (нужно для `let r = process(...)` — `r` должен быть правильно
+// типизирован, иначе assert ломается).
+
+module nova_tests.generics.p48_closure_arg_inference
+
+
+// Generic-fn: T выводится из closure body return type.
+export fn process[T](body fn() -> T) -> T => body()
+
+
+// Generic-fn с дополнительными параметрами, T только в closure.
+export fn after[T](n int, body fn() -> T) -> T {
+    let _ = n
+    body()
+}
+
+
+test "Source 2b: int closure body" {
+    let r = process(fn() -> int { 42 })
+    assert(r == 42)
+}
+
+test "Source 2b: str closure body" {
+    let r = process(fn() -> str { "hi" })
+    assert(r == "hi")
+}
+
+test "Source 2b: bool closure body" {
+    let r = process(fn() -> bool { true })
+    assert(r == true)
+}
+
+test "Source 2b: block closure trailing — int" {
+    let r = process(fn() -> int {
+        let x = 10
+        x + 5
+    })
+    assert(r == 15)
+}
+
+test "Source 2b: extra positional param + closure" {
+    let r = after(100, fn() -> int { 7 })
+    assert(r == 7)
+}

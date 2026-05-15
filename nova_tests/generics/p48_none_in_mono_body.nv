@@ -1,0 +1,57 @@
+// Plan 48: emit_expr_with_target_type для `None` когда target = NovaOpt_X.
+//
+// Внутри mono'д generic fn body: `let mut r Option[T] = None`. Без fix'а
+// None эмитится как NovaOpt_nova_int (legacy fallback из
+// current_fn_return_ty), что конфликтует с NovaOpt_nova_str для T=str.
+//
+// Используем match (а не `==`) чтобы не требовать nova_opt_eq_<T>
+// runtime helper.
+
+module nova_tests.generics.p48_none_in_mono_body
+
+
+// `result` объявлен с Option[T]; None initializer должен матчиться target типу.
+export fn lookup[T](found bool, value T) -> Option[T] {
+    let mut result Option[T] = None
+    if found {
+        result = Some(value)
+    }
+    result
+}
+
+
+test "None init in mono body: int found" {
+    let r = lookup(true, 42)
+    let got = match r {
+        Some(v) => v
+        None    => -1
+    }
+    assert(got == 42)
+}
+
+test "None init in mono body: int not found" {
+    let r = lookup(false, 0)
+    let is_none = match r {
+        Some(_) => false
+        None    => true
+    }
+    assert(is_none)
+}
+
+test "None init in mono body: str found" {
+    let r = lookup(true, "hello")
+    let got = match r {
+        Some(v) => v
+        None    => "fallback"
+    }
+    assert(got == "hello")
+}
+
+test "None init in mono body: str not found" {
+    let r = lookup(false, "default")
+    let is_none = match r {
+        Some(_) => false
+        None    => true
+    }
+    assert(is_none)
+}

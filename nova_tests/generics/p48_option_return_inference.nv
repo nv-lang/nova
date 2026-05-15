@@ -1,0 +1,58 @@
+// Plan 48: apply_type_subst_to_ref handling для Option[T].
+//
+// Generic-fn возвращает `Option[T]`. На call site `let r = f(...)`
+// тип `r` должен быть `NovaOpt_<T_c>` (после mono), не `void*`.
+// Без этого fix'а `r` дегенерируется и unwrap'ы / match'ы ломаются.
+//
+// Используем `match` вместо `r == Some(...)` чтобы не требовать
+// runtime helper `nova_opt_eq_<T>` (он есть только для nova_int).
+
+module nova_tests.generics.p48_option_return_inference
+
+
+// Generic-fn возвращает Option[T] (через Some(x)).
+export fn maybe[T](x T, present bool) -> Option[T] {
+    if present { Some(x) } else { None }
+}
+
+
+// Generic-fn с closure: T выводится из closure (Source 2b) +
+// return type Option[T] подставляется через apply_type_subst_to_ref.
+export fn try_compute[T](body fn() -> T) -> Option[T] => Some(body())
+
+
+test "Option[T] return: int Some via match" {
+    let r = maybe(42, true)
+    let got = match r {
+        Some(v) => v
+        None    => -1
+    }
+    assert(got == 42)
+}
+
+test "Option[T] return: int None via match" {
+    let r = maybe(0, false)
+    let got = match r {
+        Some(v) => v
+        None    => -1
+    }
+    assert(got == -1)
+}
+
+test "Option[T] return: int Some via closure" {
+    let r = try_compute(fn() -> int { 100 })
+    let got = match r {
+        Some(v) => v
+        None    => 0
+    }
+    assert(got == 100)
+}
+
+test "Option[T] return: str Some via match" {
+    let r = try_compute(fn() -> str { "computed" })
+    let got = match r {
+        Some(v) => v
+        None    => "fallback"
+    }
+    assert(got == "computed")
+}
