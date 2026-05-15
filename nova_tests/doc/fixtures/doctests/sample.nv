@@ -36,5 +36,11 @@ module nova_tests.doc.fixtures.doctests.sample
 /// ```nova,compile_fail
 /// let x: int = "not an int"
 /// ```
+///
+/// SMT-verified (Ф.21.4): без contracts → trivially verifies.
+///
+/// ```nova,must_verify
+/// let _ = 1
+/// ```
 export fn double(x int) -> int =>
     x * 2

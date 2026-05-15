@@ -88,16 +88,11 @@ fn run_one(t: &DocTest, original_source: Option<&str>) -> DocTestOutcome {
     if modifiers.contains(&DocTestModifier::Ignore) {
         return DocTestOutcome::Skipped("ignore modifier".to_string());
     }
-    if modifiers.contains(&DocTestModifier::MustVerify) {
-        // SMT verification — Plan 33; doc-test runner вызывает SMT
-        // pipeline отдельно (Plan 45 Ф.7.B). MVP: skip.
-        return DocTestOutcome::Skipped("must_verify not yet wired".to_string());
-    }
-
     let synthetic = wrap_source(&t.full_source, original_source);
     // 1. Parse.
     let parse_result = crate::parser::parse(&synthetic);
     let compile_fail = modifiers.contains(&DocTestModifier::CompileFail);
+    let must_verify = modifiers.contains(&DocTestModifier::MustVerify);
 
     let mut module = match parse_result {
         Ok(m) => m,
@@ -125,6 +120,24 @@ fn run_one(t: &DocTest, original_source: Option<&str>) -> DocTestOutcome {
     if compile_fail {
         // Ожидали ошибку — не получили.
         return DocTestOutcome::Failed("compile_fail: expected error, got success".to_string());
+    }
+
+    if must_verify {
+        // Plan 45 Ф.21.4: SMT verification через Plan 33 pipeline.
+        // Запускаем `verify_module` на синтетическом модуле; success
+        // ⇔ no errors. Counterexamples (warnings) — игнорируем (это
+        // hint'ы для контрактов без `#verify` — не наш кейс).
+        let report = crate::verify::pipeline::verify_module(&module);
+        if !report.errors.is_empty() {
+            let msg = report
+                .errors
+                .iter()
+                .map(|d| d.message.clone())
+                .collect::<Vec<_>>()
+                .join("; ");
+            return DocTestOutcome::Failed(format!("must_verify: SMT failed: {}", msg));
+        }
+        return DocTestOutcome::Passed;
     }
 
     if modifiers.contains(&DocTestModifier::NoRun) {
@@ -273,10 +286,14 @@ mod tests {
     }
 
     #[test]
-    fn must_verify_skipped() {
+    fn must_verify_passes_trivial() {
+        // Ф.21.4: must_verify wiring к Plan 33 SMT. Trivial-test без
+        // контрактов → verify_module не возвращает errors → Passed.
         let t = make_test("let x = 1\n", vec![DocTestModifier::MustVerify]);
         let s = run_doc_tests(std::slice::from_ref(&t));
-        assert!(matches!(s.results[0].outcome, DocTestOutcome::Skipped(_)));
+        assert_eq!(s.results[0].outcome, DocTestOutcome::Passed,
+            "must_verify on trivial test should pass (no contracts → no SMT failures): {:?}",
+            s.results[0].outcome);
     }
 
     #[test]
