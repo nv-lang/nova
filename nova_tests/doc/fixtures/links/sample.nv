@@ -1,0 +1,18 @@
+//! Plan 45 Ф.6: fixture для intra-doc-links.
+//!
+//! См. [Point] для двумерных координат, [translate] для трансляции,
+//! и [unknown_link] чтобы убедиться, что broken-link обрабатывается.
+
+module nova_tests.doc.fixtures.links.sample
+
+/// Двумерная точка.
+///
+/// Используется в [translate].
+export type Point {
+    x int
+    y int
+}
+
+/// Сдвигает [Point] на dx/dy.
+export fn translate(p Point, dx int, dy int) -> Point =>
+    { x: p.x + dx, y: p.y + dy }

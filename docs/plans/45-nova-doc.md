@@ -1,5 +1,32 @@
 # Plan 45: `nova doc` — production-grade documentation tooling
 
+## Текущий статус MVP (2026-05-15)
+
+Branch `plan-45-doc`, uncommitted после первоначального merge'а Ф.4+Ф.5+Ф.8+Ф.9+Ф.12.
+
+| Фаза | Статус | Где |
+|---|---|---|
+| Ф.0 Spec D104-D107 | ✅ done | `spec/decisions/{03,09}-*.md` |
+| Ф.1 Lexer `///`/`//!` | ✅ done | `lexer/{mod,token}.rs` + 19 tests |
+| Ф.2 Parser attach | ✅ done | `parser/mod.rs` + 7 tests |
+| Ф.3 Doc attributes | ✅ done | orphan `///` warning; `propagate_stability` pass; sections + inline `#[deprecated]` / `#[stable]` / `#[unstable]` / `#[experimental]` / `#[since]` → `deprecation` + `stability` JSON fields; markdown rendering показывает badges |
+| Ф.4 DocModel + collector | ✅ done | `doc/{doctree,collector}.rs` |
+| Ф.5 Markdown + sections | ✅ done | `doc/markdown.rs` — 9 канонических секций + 7 tests |
+| Ф.6 Intra-doc links | ✅ done | `doc/links.rs` + 7 tests, broken-link reporting |
+| Ф.7 Doc-test extractor + runner | ✅ done | `doc/{doctests,test_runner}.rs` — 5 modifiers, `--test` CLI, 14 tests |
+| Ф.8 Markdown renderer | ✅ done | `doc/render_md.rs` — sections в canonical order |
+| Ф.9 JSON renderer + schema v1 | ✅ done | `doc/render_json.rs` — sections, links, doc_tests, deprecation, stability, real source.line, `generated_at` opt-in; `doc/schema.rs` — полная JSON Schema 2020-12 с `$defs` (270 LOC, embedded via `--json-schema`) |
+| Ф.12 CLI subcommand | ✅ done | `nova doc <file> [--format md\|json] [--include-private] [--test] [--check] [--json-schema]` |
+| Ф.14 `--check` mode | ✅ done | broken links + missing summaries → exit 1 |
+| Ф.15 `--watch` mode | ✅ done | `--watch` flag — mtime poll каждые 500ms, ANSI screen-clear перед каждым re-render'ом; no new deps |
+| Ф.17 CI integration | ✅ done | `.github/workflows/nova-doc.yml` — три job'а: `--check` clean fixtures + negative path; `--test` all fixtures; doc-module unit tests |
+| Ф.19 Tests/golden | ✅ done | 42 unit tests + 7 golden-snapshot integration tests (`compiler-codegen/tests/doc_golden.rs`) — committed `expected.json` per fixture, byte-for-byte regression check |
+| Ф.20 User docs | ✅ done | `docs/user/nova-doc.md` — quick start, sections, links, doc-tests, modifiers, stability, CLI flags, CI integration, style guide |
+
+**Производственные расширения (опциональные для MVP-cutoff):** doc-attrs wiring, `--watch` mode, CI integration, user guide.
+
+---
+
 > **Создан 2026-05-14**, переписан с чистого листа 2026-05-14
 > (production-rewrite после первой draft-версии). **Ревизия 2026-05-15:**
 > spec-deltas перенумерованы D100-D103 → **D104-D107** (D100-D103 заняты:

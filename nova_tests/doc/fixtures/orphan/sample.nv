@@ -1,0 +1,9 @@
+//! Plan 45 Ф.3: fixture для orphan-doc warning.
+
+module nova_tests.doc.fixtures.orphan.sample
+
+/// Этот doc — orphan, потому что относится к `let`.
+let x = 42
+
+/// А этот относится к нормальной fn'е — без warning.
+export fn id(n int) -> int => n

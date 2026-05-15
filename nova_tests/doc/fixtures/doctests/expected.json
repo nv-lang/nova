@@ -1,0 +1,123 @@
+{
+  "format_version": 1,
+  "nova_version": "0.1.0",
+  "doc_tests": [
+    {
+      "from_id": "nova_tests.doc.fixtures.doctests.sample::double",
+      "full_source": "let x = 21\nlet y = x * 2",
+      "id": "nova_tests.doc.fixtures.doctests.sample::doc_test_1",
+      "index": 1,
+      "modifiers": [
+
+      ],
+      "visible_source": "let x = 21\nlet y = x * 2"
+    },
+    {
+      "from_id": "nova_tests.doc.fixtures.doctests.sample::double",
+      "full_source": "let big = 1_000_000 * 2",
+      "id": "nova_tests.doc.fixtures.doctests.sample::doc_test_2",
+      "index": 2,
+      "modifiers": [
+        "no_run"
+      ],
+      "visible_source": "let big = 1_000_000 * 2"
+    },
+    {
+      "from_id": "nova_tests.doc.fixtures.doctests.sample::double",
+      "full_source": "undefined_symbol()",
+      "id": "nova_tests.doc.fixtures.doctests.sample::doc_test_3",
+      "index": 3,
+      "modifiers": [
+        "ignore"
+      ],
+      "visible_source": "undefined_symbol()"
+    },
+    {
+      "from_id": "nova_tests.doc.fixtures.doctests.sample::double",
+      "full_source": "let x: int = \"not an int\"",
+      "id": "nova_tests.doc.fixtures.doctests.sample::doc_test_4",
+      "index": 4,
+      "modifiers": [
+        "compile_fail"
+      ],
+      "visible_source": "let x: int = \"not an int\""
+    }
+  ],
+  "links": [
+
+  ],
+  "modules": [
+    {
+      "deprecation": null,
+      "doc_attrs": [
+
+      ],
+      "kind": "file",
+      "name": "sample",
+      "path": "nova_tests.doc.fixtures.doctests.sample",
+      "peers": [
+
+      ],
+      "source": {
+        "file_id": 0,
+        "line": 1
+      },
+      "stability": null,
+      "summary": "Plan 45 Ф.7: fixture для doc-tests с модификаторами + hidden lines.",
+      "description": null
+    }
+  ],
+  "items": [
+    {
+      "deprecation": null,
+      "description": null,
+      "doc_attrs": [
+
+      ],
+      "id": "nova_tests.doc.fixtures.doctests.sample::double",
+      "kind": "fn",
+      "module_path": "nova_tests.doc.fixtures.doctests.sample",
+      "name": "double",
+      "sections": {
+        "examples": "Тривиальный пример:\n\n```nova\nlet x = 21\nlet y = x * 2\n```\n\nНе запускаем (compile-only):\n\n```nova,no_run\nlet big = 1_000_000 * 2\n```\n\nИгнорируем (показано, но не запускается):\n\n```nova,ignore\nundefined_symbol()\n```\n\nCompile-fail тест (ожидаемая ошибка типа):\n\n```nova,compile_fail\nlet x: int = \"not an int\"\n```"
+      },
+      "source": {
+        "file_id": 0,
+        "line": 33
+      },
+      "stability": null,
+      "summary": "Удваивает `x`.",
+      "signature": {
+        "contracts": {
+          "ensures": [
+
+          ],
+          "requires": [
+
+          ],
+          "verify_status": "UNVERIFIED"
+        },
+        "effects": [
+
+        ],
+        "generics": [
+
+        ],
+        "params": [
+          {
+            "default": null,
+            "keyword_only": false,
+            "name": "x",
+            "type": "int",
+            "variadic": false
+          }
+        ],
+        "raises": [
+
+        ],
+        "receiver": null,
+        "return_type": "int"
+      }
+    }
+  ]
+}

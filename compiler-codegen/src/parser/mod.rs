@@ -104,6 +104,14 @@ impl Parser {
         self.skip_newlines();
         let start = self.peek().span;
 
+        // Plan 45 Ф.2 / D104: `//!` Inner doc-comments — собираются как
+        // module-level. Спецификация: они валидны только в начале файла
+        // (после `module X` и imports, до первой декларации), но для
+        // robustness'а парсер собирает Inner-токены отовсюду на module-
+        // уровне (вне function-bodies), сливая в `module_doc`.
+        let mut module_doc: Option<crate::ast::DocBlock> =
+            self.consume_doc_block_of_kind(crate::lexer::DocCommentKind::Inner);
+
         // Plan 42.16 Ф.2: module-level атрибуты (`#forbid` / `#cfg` /
         // `#doc`) идут **ПЕРЕД** `module` declaration — консистентно с
         // item-level атрибутами (`#cfg`/`#realtime`/`#pure` перед `fn`).
@@ -124,6 +132,22 @@ impl Parser {
         let mut items = Vec::new();
         loop {
             self.skip_newlines();
+            // Plan 45 Ф.2 / D104: на каждой итерации loop'а проверяем,
+            // не появился ли Inner doc-comment (`//!`) — допустимо
+            // между imports и first item; merge'им в `module_doc`.
+            if let Some(extra_inner) = self
+                .consume_doc_block_of_kind(crate::lexer::DocCommentKind::Inner)
+            {
+                module_doc = Some(match module_doc.take() {
+                    None => extra_inner,
+                    Some(prev) => crate::ast::DocBlock {
+                        kind: crate::lexer::DocCommentKind::Inner,
+                        content: format!("{}\n\n{}", prev.content, extra_inner.content),
+                        span: prev.span.merge(extra_inner.span),
+                    },
+                });
+                self.skip_newlines();
+            }
             if matches!(self.peek().kind, TokenKind::Eof) {
                 break;
             }
@@ -183,6 +207,7 @@ impl Parser {
             attrs: module_attrs,
             span,
             peer_files: Vec::new(),
+            doc: module_doc,
         })
     }
 
@@ -231,6 +256,81 @@ impl Parser {
 
     fn skip_newlines(&mut self) {
         while matches!(self.peek().kind, TokenKind::Newline | TokenKind::Semicolon) {
+            self.bump();
+        }
+    }
+
+    /// Plan 45 Ф.2 / D104: консумит подряд идущие `DocComment`-токены
+    /// заданного `kind`'а (пропуская newline/semicolon между ними) и
+    /// склеивает их content в один `DocBlock`. Возвращает `None`, если
+    /// ни одного doc-токена заданного kind'а на текущей позиции нет.
+    ///
+    /// Несколько подряд идущих doc-блоков того же kind'а (после
+    /// blank-line) объединяются: лексер уже сливает строки в один токен,
+    /// но parser может встретить два таких токена, разделённых newline'ом.
+    /// Этот метод объединяет их через `\n\n` (markdown paragraph break).
+    fn consume_doc_block_of_kind(
+        &mut self,
+        kind: crate::lexer::DocCommentKind,
+    ) -> Option<crate::ast::DocBlock> {
+        // Сохраним стартовую позицию — чтобы можно было откатиться,
+        // если ничего не нашли.
+        let start_pos = self.pos;
+        // Пропускаем ведущие newline (они между предыдущим item'ом и
+        // следующим doc-блоком).
+        while matches!(
+            self.peek().kind,
+            TokenKind::Newline | TokenKind::Semicolon
+        ) {
+            self.bump();
+        }
+        let mut accumulated: Option<crate::ast::DocBlock> = None;
+        loop {
+            match &self.peek().kind {
+                TokenKind::DocComment {
+                    kind: tok_kind,
+                    content,
+                } if *tok_kind == kind => {
+                    let content = content.clone();
+                    let span = self.peek().span;
+                    self.bump();
+                    accumulated = Some(match accumulated {
+                        None => crate::ast::DocBlock {
+                            kind,
+                            content,
+                            span,
+                        },
+                        Some(prev) => crate::ast::DocBlock {
+                            kind,
+                            content: format!("{}\n\n{}", prev.content, content),
+                            span: prev.span.merge(span),
+                        },
+                    });
+                    // Между doc-блоками допускаем blank-line.
+                    while matches!(
+                        self.peek().kind,
+                        TokenKind::Newline | TokenKind::Semicolon
+                    ) {
+                        self.bump();
+                    }
+                }
+                _ => break,
+            }
+        }
+        if accumulated.is_none() {
+            // Ничего не нашли — откатимся, чтобы caller'ские
+            // `skip_newlines` отработали как раньше.
+            self.pos = start_pos;
+        }
+        accumulated
+    }
+
+    /// Plan 45 Ф.2: helper для случаев, когда doc-token попался в
+    /// неожиданной позиции (например, внутри тела функции). Тихо
+    /// съедает их, чтобы не валить парсинг. Lint в Ф.3 даст warning
+    /// «orphan doc-comment».
+    fn skip_stray_doc_comments(&mut self) {
+        while matches!(self.peek().kind, TokenKind::DocComment { .. }) {
             self.bump();
         }
     }
@@ -587,6 +687,13 @@ impl Parser {
     // ─── top-level items ─────────────────────────────────────────────────
 
     fn parse_item(&mut self) -> Result<Option<Item>, Diagnostic> {
+        // Plan 45 Ф.2 / D104: outer doc-comment (`///`) перед декларацией
+        // — собираем; передаём дальше через `pending_doc`. Если за doc'ом
+        // следует `let` / `test` (которые doc-поля не имеют) — doc
+        // отбрасывается (lint warning в Ф.3).
+        let pending_doc =
+            self.consume_doc_block_of_kind(crate::lexer::DocCommentKind::Outer);
+
         // Plan 42.14 Ф.2: item-level `#cfg(...)`. Парсится ПЕРЕД
         // export/external/realtime/contract attrs. Если predicate inactive
         // для current target/features — item пропускается (return None),
@@ -662,12 +769,44 @@ impl Parser {
             ));
         }
         let parsed = match self.peek().kind {
-            TokenKind::KwFn => Item::Fn(self.parse_fn(is_export, is_external, realtime_attr, contract_attrs)?),
-            TokenKind::KwType => Item::Type(self.parse_type_decl(is_export)?),
-            TokenKind::KwLet => Item::Let(self.parse_let_decl()?),
-            TokenKind::KwConst => Item::Const(self.parse_const_decl(is_export)?),
-            TokenKind::KwTest if !is_export => Item::Test(self.parse_test_decl()?),
-            TokenKind::KwLemma if !is_export && !is_external => Item::Lemma(self.parse_lemma_decl()?),
+            TokenKind::KwFn => Item::Fn(self.parse_fn(is_export, is_external, realtime_attr, contract_attrs, pending_doc.clone())?),
+            TokenKind::KwType => Item::Type(self.parse_type_decl(is_export, pending_doc.clone())?),
+            TokenKind::KwLet => {
+                if let Some(d) = &pending_doc {
+                    // Plan 45 Ф.3: orphan `///` warning — doc-comment'ы
+                    // не имеют семантики для `let`/`test`/`lemma` items.
+                    eprintln!(
+                        "warning: doc-comment (`///`) before `let` is ignored \
+                         — `let` declarations are not documented (Plan 45 Ф.3). \
+                         span: {:?}",
+                        d.span
+                    );
+                }
+                Item::Let(self.parse_let_decl()?)
+            }
+            TokenKind::KwConst => Item::Const(self.parse_const_decl(is_export, pending_doc.clone())?),
+            TokenKind::KwTest if !is_export => {
+                if let Some(d) = &pending_doc {
+                    eprintln!(
+                        "warning: doc-comment (`///`) before `test` is ignored \
+                         — `test` declarations are not documented (Plan 45 Ф.3). \
+                         span: {:?}",
+                        d.span
+                    );
+                }
+                Item::Test(self.parse_test_decl()?)
+            }
+            TokenKind::KwLemma if !is_export && !is_external => {
+                if let Some(d) = &pending_doc {
+                    eprintln!(
+                        "warning: doc-comment (`///`) before `lemma` is ignored \
+                         — `lemma` declarations are not documented (Plan 45 Ф.3). \
+                         span: {:?}",
+                        d.span
+                    );
+                }
+                Item::Lemma(self.parse_lemma_decl()?)
+            }
             _ => {
                 let span = self.peek().span;
                 return Err(Diagnostic::new(
@@ -923,7 +1062,7 @@ impl Parser {
 
     // ─── fn ──────────────────────────────────────────────────────────────
 
-    fn parse_fn(&mut self, is_export: bool, is_external: bool, realtime_attr: RealtimeAttr, contract_attrs: ContractAttrs) -> Result<FnDecl, Diagnostic> {
+    fn parse_fn(&mut self, is_export: bool, is_external: bool, realtime_attr: RealtimeAttr, contract_attrs: ContractAttrs, doc: Option<crate::ast::DocBlock>) -> Result<FnDecl, Diagnostic> {
         let start = self.peek().span;
         self.expect(&TokenKind::KwFn)?;
 
@@ -1136,6 +1275,7 @@ impl Parser {
         // Plan 51 Ф.2: `=>`-тело — record-литерал ⇒ тип ровно один раз.
         Self::check_record_lit_type_once(&return_type, receiver.as_ref(), &body)?;
         Ok(FnDecl {
+            doc,
             is_export,
             is_external,
             name,
@@ -1295,7 +1435,7 @@ impl Parser {
 
     // ─── type declarations ───────────────────────────────────────────────
 
-    fn parse_type_decl(&mut self, is_export: bool) -> Result<TypeDecl, Diagnostic> {
+    fn parse_type_decl(&mut self, is_export: bool, doc: Option<crate::ast::DocBlock>) -> Result<TypeDecl, Diagnostic> {
         let start = self.peek().span;
         self.expect(&TokenKind::KwType)?;
         let (name, _) = self.parse_ident()?;
@@ -1407,6 +1547,7 @@ impl Parser {
         }
         let span = start.merge(self.tokens[self.pos.saturating_sub(1)].span);
         Ok(TypeDecl {
+            doc,
             is_export,
             name,
             generics,
@@ -1758,7 +1899,7 @@ impl Parser {
         })
     }
 
-    fn parse_const_decl(&mut self, is_export: bool) -> Result<ConstDecl, Diagnostic> {
+    fn parse_const_decl(&mut self, is_export: bool, doc: Option<crate::ast::DocBlock>) -> Result<ConstDecl, Diagnostic> {
         let start = self.peek().span;
         self.expect(&TokenKind::KwConst)?;
         let (name, _) = self.parse_ident()?;
@@ -1773,6 +1914,7 @@ impl Parser {
         let value_span = value.span;
         self.expect_newline_or_eof().ok();
         Ok(ConstDecl {
+            doc,
             is_export,
             name,
             ty,
@@ -4944,8 +5086,150 @@ pub fn parse(src: &str) -> Result<Module, Diagnostic> {
 /// Все Span'ы AST получат указанный file_id (через token spans от lexer).
 pub fn parse_with_file_id(src: &str, file_id: crate::diag::FileId) -> Result<Module, Diagnostic> {
     let tokens = crate::lexer::lex_with_file_id(src, file_id)?;
+    // Plan 45 Ф.2: doc-comment токены остаются в стриме; парсер
+    // консумит их через `consume_doc_block_of_kind` (Outer — перед
+    // item'ами; Inner — на уровне модуля). Interim shim из Ф.1
+    // удалён.
     let mut p = Parser::with_src(tokens, src.to_string());
     p.parse_module()
+}
+
+#[cfg(test)]
+mod doc_attach_tests {
+    //! Plan 45 Ф.2: проверяем, что парсер прикрепляет doc-блоки к
+    //! item'ам и к модулю. Тесты идут поверх существующего parser-pipeline
+    //! (lex → parser); doc-token'ы попадают в стрим из lexer'а Ф.1.
+    use super::*;
+    use crate::ast::{Item, TypeDeclKind};
+    use crate::lexer::DocCommentKind;
+
+    fn parse_or_panic(src: &str) -> crate::ast::Module {
+        super::parse(src).unwrap_or_else(|e| panic!("parse failed: {:?}", e))
+    }
+
+    #[test]
+    fn outer_doc_attaches_to_fn() {
+        let src = "\
+module m
+
+/// Returns the absolute value of `x`.
+fn abs(x int) -> int => x
+";
+        let m = parse_or_panic(src);
+        let fn_decl = m.items.iter().find_map(|it| match it {
+            Item::Fn(f) => Some(f),
+            _ => None,
+        }).expect("fn must exist");
+        let doc = fn_decl.doc.as_ref().expect("doc must be attached");
+        assert_eq!(doc.kind, DocCommentKind::Outer);
+        assert_eq!(doc.content, "Returns the absolute value of `x`.");
+    }
+
+    #[test]
+    fn outer_doc_multi_line_attaches() {
+        let src = "\
+module m
+
+/// Summary line.
+///
+/// Long description spanning
+/// multiple lines.
+fn foo() -> int => 1
+";
+        let m = parse_or_panic(src);
+        let fn_decl = m.items.iter().find_map(|it| match it {
+            Item::Fn(f) => Some(f),
+            _ => None,
+        }).expect("fn must exist");
+        let doc = fn_decl.doc.as_ref().expect("doc must be attached");
+        assert!(doc.content.starts_with("Summary line."));
+        assert!(doc.content.contains("Long description"));
+    }
+
+    #[test]
+    fn outer_doc_attaches_to_type() {
+        let src = "\
+module m
+
+/// A point in 2D space.
+type Point { x int; y int }
+";
+        let m = parse_or_panic(src);
+        let ty = m.items.iter().find_map(|it| match it {
+            Item::Type(t) => Some(t),
+            _ => None,
+        }).expect("type must exist");
+        let doc = ty.doc.as_ref().expect("doc must be attached");
+        assert_eq!(doc.content, "A point in 2D space.");
+        assert!(matches!(ty.kind, TypeDeclKind::Record(_)));
+    }
+
+    #[test]
+    fn outer_doc_attaches_to_const() {
+        let src = "\
+module m
+
+/// Maximum buffer size in bytes.
+const MAX_BUF int = 4096
+";
+        let m = parse_or_panic(src);
+        let c = m.items.iter().find_map(|it| match it {
+            Item::Const(c) => Some(c),
+            _ => None,
+        }).expect("const must exist");
+        let doc = c.doc.as_ref().expect("doc must be attached");
+        assert_eq!(doc.content, "Maximum buffer size in bytes.");
+    }
+
+    #[test]
+    fn inner_doc_attaches_to_module() {
+        let src = "\
+//! This module provides examples for testing.
+
+module m
+
+fn foo() -> int => 1
+";
+        let m = parse_or_panic(src);
+        let doc = m.doc.as_ref().expect("module doc must be attached");
+        assert_eq!(doc.kind, DocCommentKind::Inner);
+        assert_eq!(doc.content, "This module provides examples for testing.");
+    }
+
+    #[test]
+    fn outer_doc_with_attrs_in_between() {
+        // `///` then `#realtime` then `fn` — doc must attach to fn, not lost.
+        let src = "\
+module m
+
+/// Realtime-safe abs.
+#realtime
+fn abs(x int) -> int => x
+";
+        let m = parse_or_panic(src);
+        let fn_decl = m.items.iter().find_map(|it| match it {
+            Item::Fn(f) => Some(f),
+            _ => None,
+        }).expect("fn must exist");
+        let doc = fn_decl.doc.as_ref().expect("doc must be attached");
+        assert_eq!(doc.content, "Realtime-safe abs.");
+    }
+
+    #[test]
+    fn no_doc_means_none() {
+        let src = "\
+module m
+
+fn no_doc_fn() -> int => 1
+";
+        let m = parse_or_panic(src);
+        let fn_decl = m.items.iter().find_map(|it| match it {
+            Item::Fn(f) => Some(f),
+            _ => None,
+        }).expect("fn must exist");
+        assert!(fn_decl.doc.is_none());
+        assert!(m.doc.is_none());
+    }
 }
 
 #[cfg(test)]
