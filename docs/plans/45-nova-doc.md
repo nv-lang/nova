@@ -23,6 +23,68 @@ Branch `plan-45-doc`, uncommitted после первоначального merg
 | Ф.19 Tests/golden | ✅ done | 42 unit tests + 7 golden-snapshot integration tests (`compiler-codegen/tests/doc_golden.rs`) — committed `expected.json` per fixture, byte-for-byte regression check |
 | Ф.20 User docs | ✅ done | `docs/nova-doc.md` — quick start, sections, links, doc-tests, modifiers, stability, CLI flags, CI integration, style guide |
 
+## Ф.21 — Production hardening (2026-05-15, post-MVP audit)
+
+Critical-review revealed gaps: MVP формально закрыт, но **не production-grade**
+по сравнению с rustdoc / godoc / typedoc. Ниже — issue list по приоритету
+(P0 = critical, P1 = high, P2 = nice-to-have).
+
+### 🔴 P0 — Critical gaps (production-blockers)
+
+| # | Что | Влияние | Статус |
+|---|---|---|---|
+| Ф.21.1 | **Doc-tests не видят документируемый модуль** — synthetic-module isolation ломает `assert(documented_fn(x) == y)`. Rustdoc делает `use crate::*` автоматически. | Ф.7 demo-grade, не usable | ✅ done — `test_runner` инжектит items оригинального модуля в synthetic-модуль; doc-tests видят все exports |
+| Ф.21.2 | **Cross-module intra-doc-links не резолвятся** — `resolve_imports_inline` отключён в cmd_doc; `[std.io.println]` → broken. | Ф.6 single-file-only | ✅ done — links pass видит resolved imports; renderer фильтрует output до items входного файла |
+| Ф.21.3 | **Spec D105 vs реализация — расхождение.** Реализованы `#[deprecated]` / `#[stable]` / `#[unstable]` / `#[experimental]` / `#[since]` как **inline markdown в description**, но D105/D96 требуют **lexer-recognized attrs** `#deprecated(...)` без brackets. **НЕ реализованы**: `#hide_doc`, `#doc_alias`, `#doc(inline)`/`#doc(no_inline)`, `#doc(summary=...)`, `#doc(section=...)`, `#doc(test_handlers=...)`. | Spec/impl drift | ✅ done — real parser attrs через `#name(args)` (D96); `#hide_doc`, `#doc_alias`, `#doc(summary=...)`, остальные `#doc(...)` варианты реализованы |
+| Ф.21.4 | **`must_verify` всегда SKIPPED** — Plan 33 SMT pipeline merged, но doc-test runner не wired. | Уникальная фича не доступна | ⏳ pending |
+
+### 🟡 P1 — High-value improvements
+
+| # | Что | Status |
+|---|---|---|
+| Ф.21.5 | **Schema validation в CI test** — output может разойтись с embedded schema, никто не заметит. Нужен cargo-test, валидирующий все golden fixtures через python-jsonschema (или native Rust validator). | ✅ done |
+| Ф.21.6 | **CI globstar fix** — `for f in **/sample.nv` без `shopt -s globstar` работает случайно (один уровень вложенности). | ✅ done |
+| Ф.21.7 | **`--coverage` метрика** — процент задокументированных export items + JSON output. Rustdoc / godoc / typedoc все имеют. | ✅ done |
+| Ф.21.8 | **Doc-test diagnostics quality** — сейчас `parse error: <msg>` без span/snippet. Rustdoc показывает rust-style diagnostic. | ⏳ pending |
+| Ф.21.9 | **Workspace mode `nova doc <dir>`** — multi-file unified DocTree. Сейчас single-file only — main-stream usage невозможен. | ⏳ pending |
+
+### 🟢 P2 — Nice-to-have
+
+| # | Что | Status |
+|---|---|---|
+| Ф.21.10 | Performance benchmark suite (§14.5 wall-clock targets) — `cargo bench --bench doc_perf` + CI regression gate. | ⏳ pending |
+| Ф.21.11 | `should_panic` smoke fixture | ⏳ pending |
+| Ф.21.12 | External crate-doc links (resolve `[std::vec::Vec]` к published docs) | ⏳ Plan 45.A |
+
+### Сравнение с production tools
+
+| Фича | Rust (rustdoc) | Go (godoc) | TS (typedoc) | Nova |
+|---|---|---|---|---|
+| HTML output | ✅ | ✅ | ✅ | ❌ (Plan 45.A) |
+| Search index | ✅ | ✅ | ✅ | ❌ (Plan 45.A) |
+| Stable JSON output | nightly only | ❌ | ✅ | **✅ default** |
+| Embedded JSON Schema | ❌ | ❌ | ❌ | **✅** |
+| Deterministic by default | opt-in | ❌ | ❌ | **✅** |
+| Doc-tests | ✅ | partial (Example funcs) | ❌ | ✅ (after Ф.21.1) |
+| Doc-tests видят scope | ✅ | n/a | n/a | ✅ (after Ф.21.1) |
+| Intra-doc-links cross-module | ✅ | ❌ | ✅ | ✅ (after Ф.21.2) |
+| `--check` mode | ❌ (rustdoc-lints) | ❌ | ✅ | ✅ |
+| `--watch` mode | ❌ (cargo-watch ext) | ❌ | ✅ | ✅ |
+| `--coverage` | ✅ external | ❌ | ✅ | ✅ (after Ф.21.7) |
+| Workspace mode | ✅ | ✅ | ✅ | ❌ (Ф.21.9) |
+| SMT-verified examples | ❌ | ❌ | ❌ | **🟡 (Ф.21.4)** |
+| Effects в signature | ❌ | ❌ | ❌ | **✅ unique** |
+| Contracts (requires/ensures) | nightly | ❌ | ❌ | **✅ unique** |
+
+### Уникальные nova-преимущества (закрепить)
+
+1. **JSON-first, schema-versioned, byte-deterministic** — комбинация ни у кого больше.
+2. **Effect-row + raises в signature** — Go скрывает panics, Rust скрывает Results.
+3. **SMT-verified `must_verify` examples** — никто этого не умеет (после Ф.21.4).
+4. **Embedded JSON Schema 2020-12** — IDE auto-completion + LLM prompt context out of the box.
+
+---
+
 **Производственные расширения (опциональные для MVP-cutoff):** doc-attrs wiring, `--watch` mode, CI integration, user guide.
 
 ---
