@@ -5,12 +5,14 @@
 > мономорфизацию — это разница между «как в TS без JIT» и «как в Rust»).
 >
 > **СТАТУС:** Ф.0-Ф.2 (свободные функции + методы + замыкания) — DONE;
-> Ф.3 (generic records/sum-types) — частично (Option[T] return inference
-> и None target-type работают); Ф.4 (within/race) — заблокирован spawn
-> closure-capture багом (отдельный V2 followup); Ф.5 collections —
-> pre-existing fails, не регрессировали Plan 48; Ф.6 — docs обновлены.
+> Ф.3 — улучшен: apply_type_subst_to_ref обрабатывает generic user types
+> (Pair[B,A]), bridge wrapper для NovaOpt_T методов (Stack.pop()),
+> protocol-bounded dispatch на user types работает (Ф.7.7 для user types);
+> Ф.4 (within/race) — заблокирован spawn closure-capture багом (V2);
+> Ф.5 collections — pre-existing fails (str.hash() не реализован, не Plan 48);
+> Ф.6 — docs обновлены; Ф.7.1/7.2/7.3 — DONE.
 >
-> **Регрессия:** 370/370 PASS на release-сборке (2026-05-15).
+> **Регрессия:** 390/390 PASS (--gc malloc, 2026-05-15).
 >
 > **Followups:**
 > - `[M-spawn-closure-capture-mono]` — в mono'д generic fn body,
