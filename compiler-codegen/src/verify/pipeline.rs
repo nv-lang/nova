@@ -166,7 +166,7 @@ impl VerificationPipeline {
                         .map(|(n, s)| (n.clone(), s.clone()))
                         .collect();
                     let axiom = if binders.is_empty() { eq_body } else {
-                        SmtTerm::Forall(binders, Box::new(eq_body))
+                        SmtTerm::Forall(binders, vec![], Box::new(eq_body))
                     };
                     backend.assert(Assertion {
                         formula: axiom,
@@ -727,7 +727,7 @@ fn encode_axiom(
     if binders.is_empty() {
         Some(body)
     } else {
-        Some(SmtTerm::Forall(binders, Box::new(body)))
+        Some(SmtTerm::Forall(binders, vec![], Box::new(body)))
     }
 }
 
@@ -1133,7 +1133,7 @@ fn verify_static_axiom_with_handler(
             let handler_axiom = if binders.is_empty() {
                 eq_body
             } else {
-                SmtTerm::Forall(binders, Box::new(eq_body))
+                SmtTerm::Forall(binders, vec![], Box::new(eq_body))
             };
 
             backend.assert(Assertion {

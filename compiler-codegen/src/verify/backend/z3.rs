@@ -205,7 +205,7 @@ impl Z3Backend {
             // Создаём fresh constants для каждого binder, translate body
             // (где binder-имена резолвятся через `vars` HashMap'у), затем
             // Z3_mk_forall_const упаковывает в forall AST.
-            SmtTerm::Forall(binders, body) => {
+            SmtTerm::Forall(binders, patterns, body) => {
                 if binders.is_empty() {
                     // Empty forall == body unchanged.
                     return self.translate_inner(body);
@@ -231,25 +231,31 @@ impl Z3Backend {
                     bound_apps.push(app);
                 }
                 let body_ast = self.translate_inner(body)?;
-                // Heuristic trigger (binder vars still in scope): если body —
-                // равенство `f(args) = expr`, используем `f(args)` как
-                // trigger pattern, чтобы Z3 instantiate'ил quantifier при
-                // появлении вызова `f(...)` в формуле.
-                let (num_patterns, pattern_ptrs): (c_uint, Vec<*mut std::ffi::c_void>) =
-                    if let SmtTerm::App(eq_op, eq_args) = body.as_ref() {
-                        if eq_op == "=" && eq_args.len() == 2 {
-                            if let SmtTerm::App(_, _) = &eq_args[0] {
-                                if let Ok(lhs_ast) = self.translate_inner(&eq_args[0]) {
-                                    let lhs_arr = [lhs_ast];
-                                    let pat = ffi::Z3_mk_pattern(
-                                        self.ctx, 1, lhs_arr.as_ptr());
-                                    (1, vec![pat])
-                                } else {
-                                    (0, vec![])
-                                }
-                            } else { (0, vec![]) }
-                        } else { (0, vec![]) }
-                    } else { (0, vec![]) };
+                // Ф.1.2 (Plan 33.5): используем patterns из SmtTerm::Forall.patterns
+                // (собранные encode.rs::collect_triggers). Каждый pattern —
+                // Vec<SmtTerm>, переводим в Z3_pattern через Z3_mk_pattern.
+                // Если patterns пустые — Z3 использует heuristic.
+                // Z3_pattern is *mut c_void (no separate alias in our ffi).
+                let mut z3_patterns: Vec<*mut std::ffi::c_void> = Vec::new();
+                for pat_terms in patterns {
+                    if pat_terms.is_empty() { continue; }
+                    let mut term_asts: Vec<ffi::Z3_ast> = Vec::with_capacity(pat_terms.len());
+                    let mut ok = true;
+                    for pt in pat_terms {
+                        match self.translate_inner(pt) {
+                            Ok(a) => term_asts.push(a),
+                            Err(_) => { ok = false; break; }
+                        }
+                    }
+                    if ok && !term_asts.is_empty() {
+                        let z3_pat = ffi::Z3_mk_pattern(
+                            self.ctx,
+                            term_asts.len() as c_uint,
+                            term_asts.as_ptr(),
+                        );
+                        z3_patterns.push(z3_pat);
+                    }
+                }
                 // Restore previous var-bindings.
                 for (bname, prev) in saved {
                     match prev {
@@ -257,13 +263,19 @@ impl Z3Backend {
                         None => { self.vars.remove(&bname); }
                     }
                 }
+                let num_patterns = z3_patterns.len() as c_uint;
+                let pat_ptr = if z3_patterns.is_empty() {
+                    ptr::null()
+                } else {
+                    z3_patterns.as_ptr()
+                };
                 let forall_ast = ffi::Z3_mk_forall_const(
                     self.ctx,
                     0, // weight
                     bound_apps.len() as c_uint,
                     bound_apps.as_ptr(),
                     num_patterns,
-                    if pattern_ptrs.is_empty() { std::ptr::null() } else { pattern_ptrs.as_ptr() as *const *mut std::ffi::c_void },
+                    pat_ptr as *const *mut std::ffi::c_void,
                     body_ast,
                 );
                 Ok(self.track(forall_ast))

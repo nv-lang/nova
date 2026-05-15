@@ -241,9 +241,11 @@ pub fn encode_expr_with_ctx(e: &Expr, ctx: &EncodeCtx) -> Result<SmtTerm, Encodi
             ]);
             // forall x: Int. in_range => body
             let implies = SmtTerm::App("=>".into(), vec![in_range, body_t]);
-            // D.1.4: warn if no trigger found (optimization hint).
-            warn_if_no_trigger(var, &implies);
-            Ok(SmtTerm::Forall(vec![(var.clone(), SortRef::Int)], Box::new(implies)))
+            // Ф.1.2 (Plan 33.5): extract trigger patterns from body.
+            // Ищем App(uf, args) содержащий bound_var → передаём как trigger
+            // в SmtTerm::Forall.patterns, Z3 backend использует Z3_mk_pattern.
+            let patterns = collect_triggers(&implies, var);
+            Ok(SmtTerm::Forall(vec![(var.clone(), SortRef::Int)], patterns, Box::new(implies)))
         }
 
         // D.1.3: exists x in lo..hi : P(x)
@@ -260,9 +262,10 @@ pub fn encode_expr_with_ctx(e: &Expr, ctx: &EncodeCtx) -> Result<SmtTerm, Encodi
             ]);
             let not_body = SmtTerm::not(body_t);
             let implies = SmtTerm::App("=>".into(), vec![in_range, not_body]);
-            // D.1.4: warn if no trigger found (optimization hint).
-            warn_if_no_trigger(var, &implies);
-            let inner = SmtTerm::Forall(vec![(var.clone(), SortRef::Int)], Box::new(implies));
+            // Ф.1.2: triggers для двойного-отрицания exists (по body, не not_body).
+            // Ищем в implies (который содержит и not_body).
+            let patterns = collect_triggers(&implies, var);
+            let inner = SmtTerm::Forall(vec![(var.clone(), SortRef::Int)], patterns, Box::new(implies));
             Ok(SmtTerm::not(inner))
         }
 
@@ -272,61 +275,59 @@ pub fn encode_expr_with_ctx(e: &Expr, ctx: &EncodeCtx) -> Result<SmtTerm, Encodi
     }
 }
 
-/// D.1.4: поиск trigger-pattern для кванторов.
+/// Ф.1.2 (Plan 33.5): собирает trigger patterns для квантора над `bound_var`.
 ///
-/// Ищет в `body` подтерм `App(name, args)` где хотя бы один arg
-/// — `Var(bound_var)`. Если найден — возвращает его как trigger hint.
+/// Алгоритм:
+/// 1. Обходим body рекурсивно, собираем **все** App(name, args) где:
+///    - name не является логическим оператором (=>, and, or, not, =, !=, <, <=, >, >=).
+///    - хотя бы один arg содержит `bound_var` (прямо или косвенно).
+/// 2. Возвращаем их как `Vec<Vec<SmtTerm>>` — один pattern per найденный App.
+///    Z3 попробует каждый pattern независимо; достаточно матча одного.
+/// 3. Если triggers не найдены — возвращаем пустой вектор (no-hint,
+///    Z3 использует heuristic instantiation).
 ///
-/// Примечание: SmtTerm::Forall не имеет поля `pattern` (IR расширение —
-/// Plan 33.5 V2). Сейчас функция используется только для диагностики:
-/// если trigger не найден в Z3-режиме, emit eprintln warning.
-/// Z3 backend через Z3_mk_forall_const с паттернами — future work.
-fn find_trigger_hint(body: &SmtTerm, bound_var: &str) -> Option<SmtTerm> {
-    match body {
-        SmtTerm::App(name, args) => {
-            // Пропускаем булевы операторы — они не годятся как triggers.
-            let is_logic_op = matches!(name.as_str(), "=>" | "and" | "or" | "not" | "=" | "!=" | "<" | "<=" | ">" | ">=");
-            if !is_logic_op {
-                // Проверяем что хотя бы один arg содержит bound_var.
-                let has_var = args.iter().any(|a| term_contains_var(a, bound_var));
-                if has_var {
-                    return Some(body.clone());
-                }
-            }
-            // Recurse в args.
-            for a in args {
-                if let Some(t) = find_trigger_hint(a, bound_var) {
-                    return Some(t);
-                }
-            }
-            None
-        }
-        SmtTerm::Forall(_, inner) => find_trigger_hint(inner, bound_var),
-        _ => None,
+/// Паритет с Dafny: Dafny автоматически выводит triggers; Verus требует
+/// явных `#[trigger]`. Nova автовыводит как Dafny, но без SAT fallback.
+pub fn collect_triggers(body: &SmtTerm, bound_var: &str) -> Vec<Vec<SmtTerm>> {
+    let mut found: Vec<SmtTerm> = Vec::new();
+    collect_trigger_apps(body, bound_var, &mut found);
+    if found.is_empty() {
+        vec![]
+    } else {
+        // Каждый найденный App — отдельный single-term pattern.
+        found.into_iter().map(|t| vec![t]).collect()
     }
 }
 
-/// D.1.4: проверяет, содержит ли term переменную `var_name`.
-fn term_contains_var(t: &SmtTerm, var_name: &str) -> bool {
+/// Рекурсивный walker для collect_triggers.
+fn collect_trigger_apps(t: &SmtTerm, bound_var: &str, out: &mut Vec<SmtTerm>) {
+    match t {
+        SmtTerm::App(name, args) => {
+            let is_logic_op = matches!(name.as_str(),
+                "=>" | "and" | "or" | "not" | "=" | "!=" | "<" | "<=" | ">" | ">=" | "ite");
+            if !is_logic_op && args.iter().any(|a| term_contains_var(a, bound_var)) {
+                // Хороший trigger: UF или arithmetic fn содержащий bound var.
+                out.push(t.clone());
+                // Не рекурсируем в args — inner triggers less precise.
+                return;
+            }
+            // Для логических операторов рекурсируем в аргументы.
+            for a in args {
+                collect_trigger_apps(a, bound_var, out);
+            }
+        }
+        SmtTerm::Forall(_, _, inner) => collect_trigger_apps(inner, bound_var, out),
+        _ => {}
+    }
+}
+
+/// Ф.1.2: проверяет, содержит ли term переменную `var_name`.
+pub fn term_contains_var(t: &SmtTerm, var_name: &str) -> bool {
     match t {
         SmtTerm::Var(n) => n == var_name,
         SmtTerm::App(_, args) => args.iter().any(|a| term_contains_var(a, var_name)),
-        SmtTerm::Forall(_, body) => term_contains_var(body, var_name),
+        SmtTerm::Forall(_, _, body) => term_contains_var(body, var_name),
         _ => false,
-    }
-}
-
-/// D.1.4: emit warning если квантор не имеет очевидного trigger pattern.
-/// Вызывается из encode_expr_with_ctx при кодировании Forall/Exists.
-/// Предупреждение полезно в Z3-режиме; в trivial-backend триггеры не нужны.
-fn warn_if_no_trigger(bound_var: &str, body: &SmtTerm) {
-    if find_trigger_hint(body, bound_var).is_none() {
-        eprintln!(
-            "warning: SMT quantifier over `{}` may be slow without trigger pattern \
-             (no App(_, [Var({})]) found in body). \
-             Consider using a #pure fn call involving `{}` as trigger.",
-            bound_var, bound_var, bound_var
-        );
     }
 }
 
