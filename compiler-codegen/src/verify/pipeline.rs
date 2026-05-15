@@ -142,7 +142,9 @@ impl VerificationPipeline {
         if let Some(entry) = pure_fns.get_mut(&fd.name) {
             entry.body_expr = None;
         }
-        let ctx = super::encode::EncodeCtx { pure_views: &pure_views, pure_fns: &pure_fns };
+        let var_sorts: std::collections::HashMap<String, SortRef> = fd.params.iter()
+            .map(|p| (p.name.clone(), type_to_sort(&p.ty))).collect();
+        let ctx = super::encode::EncodeCtx { pure_views: &pure_views, pure_fns: &pure_fns, var_sorts };
 
         // Plan 33.3 Р¤.9: pre-declare РІСЃРµ pure_view UFs РІ backend'Рµ.
         // Р‘РµР· СЌС‚РѕРіРѕ Z3 auto-declare'РёС‚ UF СЃ Int sorts РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ;
@@ -577,7 +579,9 @@ impl VerificationPipeline {
         let mut backend = self.create_backend();
         let pure_views = collect_pure_views(module);
         let pure_fns = collect_pure_fns(module, inferred_pure);
-        let ctx = super::encode::EncodeCtx { pure_views: &pure_views, pure_fns: &pure_fns };
+        let var_sorts: std::collections::HashMap<String, SortRef> = ld.params.iter()
+            .map(|p| (p.name.clone(), type_to_sort(&p.ty))).collect();
+        let ctx = super::encode::EncodeCtx { pure_views: &pure_views, pure_fns: &pure_fns, var_sorts };
 
         // Pre-declare pure_view UFs.
         for (op_name, sig) in &pure_views {
@@ -1769,7 +1773,7 @@ fn encode_axiom(
     // Encode body.
     static EMPTY_FNS: std::sync::OnceLock<std::collections::HashMap<String, super::encode::PureFnInfo>> = std::sync::OnceLock::new();
     let empty_fns = EMPTY_FNS.get_or_init(std::collections::HashMap::new);
-    let ctx = super::encode::EncodeCtx { pure_views, pure_fns: empty_fns };
+    let ctx = super::encode::EncodeCtx { pure_views, pure_fns: empty_fns, var_sorts: std::collections::HashMap::new() };
     let body = super::encode::encode_expr_with_ctx(ax.formula, &ctx).ok()?;
     // Build binders Vec вЂ” СЏРІРЅС‹Р№ РёР»Рё inferred sort, default Int.
     let binders: Vec<(String, SortRef)> = binder_names.iter()
@@ -1956,6 +1960,8 @@ fn type_to_sort(ty: &TypeRef) -> SortRef {
             "int" | "i32" | "i64" | "money" | "nat" => SortRef::Int,
             "bool" => SortRef::Bool,
             "str" => SortRef::Str,
+            "f32" => SortRef::F32,
+            "f64" => SortRef::F64,
             other => SortRef::Named(other.into()),
         },
         _ => SortRef::Named("opaque".into()),
@@ -2210,7 +2216,9 @@ fn verify_liskov_method(
 ) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
     let pure_fns = collect_pure_fns(module, inferred_pure);
-    let ctx = super::encode::EncodeCtx { pure_views, pure_fns: &pure_fns };
+    let var_sorts: std::collections::HashMap<String, SortRef> = effect_params.iter()
+        .map(|p| (p.name.clone(), type_to_sort(&p.ty))).collect();
+    let ctx = super::encode::EncodeCtx { pure_views, pure_fns: &pure_fns, var_sorts };
     let mut backend = pipeline.create_backend();
 
     // Pre-declare pure_view UFs и pure_fn UFs.
@@ -2312,7 +2320,7 @@ fn verify_static_axiom_with_handler(
     inferred_pure: &std::collections::HashSet<String>,
 ) -> VerifyResult {
     let pure_fns = collect_pure_fns(module, inferred_pure);
-    let ctx = super::encode::EncodeCtx { pure_views, pure_fns: &pure_fns };
+    let ctx = super::encode::EncodeCtx { pure_views, pure_fns: &pure_fns, var_sorts: std::collections::HashMap::new() };
 
     let mut backend = pipeline.create_backend();
 
@@ -2619,7 +2627,7 @@ fn verify_post_axiom_with_handler(
     };
 
     let pure_fns = collect_pure_fns(module, inferred_pure);
-    let ctx = super::encode::EncodeCtx { pure_views, pure_fns: &pure_fns };
+    let ctx = super::encode::EncodeCtx { pure_views, pure_fns: &pure_fns, var_sorts: std::collections::HashMap::new() };
     let mut backend = pipeline.create_backend();
 
     // Pre-declare pure_view UFs.

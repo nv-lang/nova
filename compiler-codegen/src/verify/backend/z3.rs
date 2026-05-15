@@ -66,11 +66,14 @@ fn check_z3_error() -> Result<(), String> {
 pub struct Z3Backend {
     ctx: ffi::Z3_context,
     solver: ffi::Z3_solver,
-    /// Кэш sort'ов — int/bool/str используются массово, нет смысла
-    /// создавать по несколько раз.
+    /// Кэш sort'ов — int/bool/str используются массово.
     int_sort: ffi::Z3_sort,
     bool_sort: ffi::Z3_sort,
     str_sort: ffi::Z3_sort,
+    /// Rounding mode RNE (round nearest, ties to even) — default для FP ops.
+    /// FP sort'ы (f32/f64) запрашиваются свежо через Z3_mk_fpa_sort_32/64 каждый раз
+    /// (Z3 hash-cons'ит их, overhead минимальный, зато нет проблем с pointer validity).
+    rne: ffi::Z3_ast,
     /// Declared variables: name → (Z3_ast, sort).
     vars: HashMap<String, (ffi::Z3_ast, SortRef)>,
     /// Plan 33.3 Ф.9: declared uninterpreted functions (pure_view'ы).
@@ -129,9 +132,11 @@ impl Z3Backend {
             let int_sort = ffi::Z3_mk_int_sort(ctx);
             let bool_sort = ffi::Z3_mk_bool_sort(ctx);
             let str_sort = ffi::Z3_mk_string_sort(ctx);
+            let rne = ffi::Z3_mk_fpa_round_nearest_ties_to_even(ctx);
             ffi::Z3_inc_ref(ctx, int_sort);
             ffi::Z3_inc_ref(ctx, bool_sort);
             ffi::Z3_inc_ref(ctx, str_sort);
+            ffi::Z3_inc_ref(ctx, rne);
 
             let solver = ffi::Z3_mk_solver(ctx);
             ffi::Z3_solver_inc_ref(ctx, solver);
@@ -142,6 +147,7 @@ impl Z3Backend {
                 int_sort,
                 bool_sort,
                 str_sort,
+                rne,
                 vars: HashMap::new(),
                 func_decls: HashMap::new(),
                 refs: Vec::new(),
@@ -162,6 +168,8 @@ impl Z3Backend {
             SortRef::Int => self.int_sort,
             SortRef::Bool => self.bool_sort,
             SortRef::Str => self.str_sort,
+            SortRef::F32 => unsafe { ffi::Z3_mk_fpa_sort_32(self.ctx) },
+            SortRef::F64 => unsafe { ffi::Z3_mk_fpa_sort_64(self.ctx) },
             SortRef::Named(name) => {
                 // Plan 33.1 trivial backend wraps record-types as
                 // uninterpreted; для Z3 делаем то же — uninterpreted
@@ -222,6 +230,18 @@ impl Z3Backend {
                 let c = CString::new(s.as_str())
                     .map_err(|_| "string literal contains NUL".to_string())?;
                 let ast = ffi::Z3_mk_string(self.ctx, c.as_ptr());
+                Ok(self.track(ast))
+            }
+            SmtTerm::F32Lit(bits) => {
+                let v = f32::from_bits(*bits);
+                let f32_sort = ffi::Z3_mk_fpa_sort_32(self.ctx);
+                let ast = ffi::Z3_mk_fpa_numeral_float(self.ctx, v, f32_sort);
+                Ok(self.track(ast))
+            }
+            SmtTerm::F64Lit(bits) => {
+                let v = f64::from_bits(*bits);
+                let f64_sort = ffi::Z3_mk_fpa_sort_64(self.ctx);
+                let ast = ffi::Z3_mk_fpa_numeral_double(self.ctx, v, f64_sort);
                 Ok(self.track(ast))
             }
             SmtTerm::Var(name) => {
@@ -361,6 +381,39 @@ impl Z3Backend {
             // ITE: правильный if-then-else для arithmetic и bool terms.
             ("ite", &[cond, then, else_]) => ffi::Z3_mk_ite(ctx, cond, then, else_),
 
+            // ─── FP IEEE 754 (Plan 33.3 Ф.11) ────────────────────────────
+            // Arithmetic с rounding mode RNE.
+            ("fp.add", &[x, y]) => ffi::Z3_mk_fpa_add(ctx, self.rne, x, y),
+            ("fp.sub", &[x, y]) => ffi::Z3_mk_fpa_sub(ctx, self.rne, x, y),
+            ("fp.mul", &[x, y]) => ffi::Z3_mk_fpa_mul(ctx, self.rne, x, y),
+            ("fp.div", &[x, y]) => ffi::Z3_mk_fpa_div(ctx, self.rne, x, y),
+            ("fp.abs", &[x]) => ffi::Z3_mk_fpa_abs(ctx, x),
+            ("fp.neg", &[x]) => ffi::Z3_mk_fpa_neg(ctx, x),
+            ("fp.sqrt", &[x]) => ffi::Z3_mk_fpa_sqrt(ctx, self.rne, x),
+            // FP comparisons (fp.eq — IEEE eq, не total order).
+            ("fp.eq",  &[x, y]) => ffi::Z3_mk_fpa_eq(ctx, x, y),
+            ("fp.lt",  &[x, y]) => ffi::Z3_mk_fpa_lt(ctx, x, y),
+            ("fp.leq", &[x, y]) => ffi::Z3_mk_fpa_leq(ctx, x, y),
+            ("fp.gt",  &[x, y]) => ffi::Z3_mk_fpa_gt(ctx, x, y),
+            ("fp.geq", &[x, y]) => ffi::Z3_mk_fpa_geq(ctx, x, y),
+            // FP predicates.
+            ("fp.is_nan",      &[x]) => ffi::Z3_mk_fpa_is_nan(ctx, x),
+            ("fp.is_infinite", &[x]) => ffi::Z3_mk_fpa_is_infinite(ctx, x),
+            ("fp.is_positive",  &[x]) => ffi::Z3_mk_fpa_is_positive(ctx, x),
+            ("fp.is_negative",  &[x]) => ffi::Z3_mk_fpa_is_negative(ctx, x),
+            ("fp.is_zero",     &[x]) => ffi::Z3_mk_fpa_is_zero(ctx, x),
+
+            // ─── Strings / Seq (Plan 33.3 Ф.11) ──────────────────────────
+            ("str.len",      &[x]) => ffi::Z3_mk_seq_length(ctx, x),
+            ("str.contains", &[x, y]) => ffi::Z3_mk_seq_contains(ctx, x, y),
+            ("str.prefix",   &[x, y]) => ffi::Z3_mk_seq_prefix(ctx, x, y),
+            ("str.suffix",   &[x, y]) => ffi::Z3_mk_seq_suffix(ctx, x, y),
+            ("str.concat", args_arr) if !args_arr.is_empty() => {
+                ffi::Z3_mk_seq_concat(ctx, args_arr.len() as c_uint, args_arr.as_ptr())
+            }
+            ("str.substr", &[s, off, len]) => ffi::Z3_mk_seq_extract(ctx, s, off, len),
+            ("str.index",  &[s, sub, off]) => ffi::Z3_mk_seq_index(ctx, s, sub, off),
+
             // Plan 33.3 Ф.9: pure_view-UF через real Z3_func_decl
             // (pre-declared в declare_function, sorts из effect-сигнатуры).
             // Дайт soundness для axiom-propagation даже под alpha-rename.
@@ -473,7 +526,7 @@ impl Z3Backend {
                             ModelValue::Str(cs.to_string_lossy().into_owned())
                         }
                     }
-                    SortRef::Named(_) => ModelValue::Unknown,
+                    SortRef::Named(_) | SortRef::F32 | SortRef::F64 => ModelValue::Unknown,
                 };
                 bindings.insert(name.clone(), val);
             }
@@ -492,6 +545,7 @@ impl Drop for Z3Backend {
             ffi::Z3_dec_ref(self.ctx, self.int_sort);
             ffi::Z3_dec_ref(self.ctx, self.bool_sort);
             ffi::Z3_dec_ref(self.ctx, self.str_sort);
+            ffi::Z3_dec_ref(self.ctx, self.rne);
             ffi::Z3_solver_dec_ref(self.ctx, self.solver);
             ffi::Z3_del_context(self.ctx);
         }
