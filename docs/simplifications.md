@@ -6353,14 +6353,14 @@ bootstrap-баг). Новая caller-owned: токен создаётся `Cance
     static dispatch получил sentinel-detection branch (emit_c.rs:~9063),
     `register_mono_method_instance` / `emit_monomorphized_method`
     учитывают `ReceiverKind::Static` (no nova_self в signature).
-  - [M-mono-error-not-fallback] V1 plan говорил "понятная ошибка cannot
-    infer T, не тихий void*-fallback" — реализация делает erasure
-    fallback на любой Err из `resolve_mono_type_args`. Plan нарушен,
-    diagnostics страдают.
+  - ~~[M-mono-error-not-fallback]~~ — **ЗАКРЫТО 2026-05-15 Ф.7.3**.
+    `Err(msg)` из `resolve_mono_type_args` теперь возвращает compile
+    error, не делает erasure fallback. Tuple-returning generics — явный
+    особый случай (V1 ограничение), не ошибка.
   - [M-time-effect-schema-mismatch] Runtime `NovaVtable_Time` имеет
     `sleep/now/after`, handlers.nv ожидает `now_ms/now_ns/now/sleep`.
     Блокирует import std.testing.handlers в любом тесте. Не Plan 48.
-  Все — V2 followup; не блокируют 391/391 regression.
+  Все — V2 followup; не блокируют 390/390 regression (--gc malloc).
 - [M-within-error-conflation] Stdlib `within[T]` (= `with_timeout`) тоже
   отложен: его реализация требует ловить cancel-throw через `with Fail`
   handler, который неотличимо ловит и реальные ошибки из `body()`, и

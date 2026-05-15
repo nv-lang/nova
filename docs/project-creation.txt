@@ -10874,3 +10874,61 @@ C-struct'ы с полями правильного типа.
 - nova_tests/types/generic_record_mono.nv
 - docs/plans/48-closures-in-generics.md (статус Ф.3 → DONE)
 - docs/project-creation.txt (эта секция)
+
+2026-05-15 Plan 48 Ф.3 fixes + Ф.7.3/Ф.7.7 confirmed
+================================================================================
+
+Продолжение предыдущей сессии — два дополнительных фикса + подтверждение
+Ф.7.3/Ф.7.7.
+
+### Что сделано
+
+**1. apply_type_subst_to_ref — generic user-defined return types**
+
+До фикса: `Pair[B, A]` в return type generic метода → fallback `None` в
+`apply_type_subst_to_ref` (arm `_ => None`). Это давало неправильный
+тип для `let s = p.swap()` где swap возвращает `Pair[B, A]`.
+
+После фикса: добавлен arm для `Named { generics non-empty, !Option }` —
+рекурсивно резолвит type-args и формирует `Nova_Pair____T1__T2*`.
+Фиксирует `types/self_universal` test 3.
+
+**2. emit_monomorphized_method — bridge wrapper для NovaOpt_T**
+
+Erased Array runtime всегда возвращает `NovaOpt_nova_int`. Методы с
+конкретным return type `NovaOpt_T` (T != nova_int) имели type mismatch.
+
+Фикс: если `ret_c = "NovaOpt_T"` и T != nova_int — эмитим bridge:
+```c
+NovaOpt_nova_int _erased = Nova_Base_method_pop((Nova_Base*)nova_self);
+if (_erased.tag == NOVA_TAG_Option_None) return ((NovaOpt_T){...None});
+return ((NovaOpt_T){...Some, .value = *(T*)(intptr_t)(_erased.value)});
+```
+Фиксирует `modules/stack_queue` CC-FAIL.
+
+**3. Ф.7.3 — подтверждено DONE**
+
+`resolve_mono_type_args` source 2c (generic_type_instance_info) уже
+обрабатывает `box_get[T](b Box[T])` — `Nova_Box____nova_int*` arg → T=nova_int.
+Fallback-блокер был снят в предыдущей сессии. `Err(msg) => return Err(msg)`
+уже на месте в emit_call.
+
+**4. Ф.7.7 — protocol-bounded dispatch РАБОТАЕТ для user types**
+
+Добавлен smoke-тест: `contains_point[K GrmEq]` вызывает `it.eq(target)`
+где K=GrmPoint. Корректно диспетчится на `GrmPoint.eq()` через
+monomorphization (K заменяется конкретным C-типом, method_overloads lookup
+работает стандартно). std/collections CC-FAIL — отдельная проблема
+(str.hash() не определён в stdlib, не Plan 48 scope).
+
+### Регрессия
+
+390/390 PASS (--gc malloc, 2026-05-15). 10 SKIP — GC-dependent tests.
+
+### Файлы
+
+- compiler-codegen/src/codegen/emit_c.rs (+202/-34)
+- nova_tests/types/generic_record_mono.nv (+29 lines — protocol-bound test)
+- docs/plans/48-closures-in-generics.md (статус обновлён)
+- docs/simplifications.md ([M-mono-error-not-fallback] → ЗАКРЫТО)
+- docs/project-creation.txt (эта секция)
