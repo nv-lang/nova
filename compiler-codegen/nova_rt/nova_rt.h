@@ -167,6 +167,39 @@ static inline nova_bool nova_str_le(nova_str a, nova_str b) { return nova_str_cm
 static inline nova_bool nova_str_gt(nova_str a, nova_str b) { return nova_str_cmp(a, b) >  0; }
 static inline nova_bool nova_str_ge(nova_str a, nova_str b) { return nova_str_cmp(a, b) >= 0; }
 
+/* D109: FNV-1a hash для примитивных типов. Используется в std.collections. */
+static inline nova_int nova_str_hash(nova_str s) {
+    uint64_t h = 14695981039346656037ULL;
+    const unsigned char* p = (const unsigned char*)s.ptr;
+    for (size_t i = 0; i < s.len; i++) {
+        h ^= (uint64_t)p[i];
+        h *= 1099511628211ULL;
+    }
+    return (nova_int)h;
+}
+static inline nova_int nova_int_hash(nova_int v) {
+    uint64_t h = 14695981039346656037ULL;
+    uint64_t bits = (uint64_t)v;
+    for (int i = 0; i < 8; i++) {
+        h ^= (bits >> (i * 8)) & 0xFFU;
+        h *= 1099511628211ULL;
+    }
+    return (nova_int)h;
+}
+static inline nova_int nova_bool_hash(nova_bool v) {
+    return (nova_int)(uint64_t)(v != 0);
+}
+static inline nova_int nova_f64_hash(nova_f64 v) {
+    uint64_t bits = 0;
+    memcpy(&bits, &v, sizeof(bits));
+    uint64_t h = 14695981039346656037ULL;
+    for (int i = 0; i < 8; i++) {
+        h ^= (bits >> (i * 8)) & 0xFFU;
+        h *= 1099511628211ULL;
+    }
+    return (nova_int)h;
+}
+
 /* nova_str_char_len: count UTF-8 code points (not bytes).
  * Leading bytes of multi-byte sequences start with 11xxxxxx; continuation
  * bytes start with 10xxxxxx and are skipped. ASCII bytes (0xxxxxxx) count 1. */

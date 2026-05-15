@@ -20,10 +20,13 @@
 
 module collections.hashmap
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Типы
 // ──────────────────────────────────────────────────────────────────────────
+
+export type Hashable protocol {
+    hash() -> u64
+}
 
 // Slot — состояние ячейки в open-addressing-таблице.
 //
@@ -37,7 +40,7 @@ type Slot[K, V]
     | Tombstone
     | Occupied { key K, value V }
 
-export type HashMap[K, V] {
+export type HashMap[K Hashable, V] {
     // buckets — массив слотов. Длина — степень двойки (для битовой маски
     // вместо modulo — `idx & (len - 1)`).
     buckets []Slot[K, V]
@@ -70,7 +73,7 @@ export fn HashMap[K, V].new() -> HashMap[K, V] =>
 export fn HashMap[K, V].with_capacity(min_capacity int) -> HashMap[K, V] {
     let cap = next_pow2(if min_capacity < 4 { 4 } else { min_capacity })
     HashMap {
-        buckets: new_buckets(cap),
+        buckets: new_buckets[K, V](cap),
         count: 0,
         tombstones: 0,
         load_factor: 0.75,
@@ -200,11 +203,11 @@ export fn HashMap[K, V] mut @clear() {
 // и возвращает его.
 //
 // Полезный паттерн для счётчиков: `m.get_or_insert(key, || 0) + 1`.
-export fn HashMap[K, V] mut @get_or_insert(key K, default fn() -> V) -> V {
+export fn HashMap[K, V] mut @get_or_insert(key K, fallback fn() -> V) -> V {
     if let Some(v) = @get(key) {
         return v
     }
-    let v = default()
+    let v = fallback()
     @insert(key, v)
     v
 }
@@ -328,7 +331,7 @@ fn HashMap[K, V] mut @maybe_grow() {
 // Используется при росте и при cleanup tombstones.
 fn HashMap[K, V] mut @rehash(new_cap int) {
     let old_buckets = @buckets
-    @buckets = new_buckets(new_cap)
+    @buckets = new_buckets[K, V](new_cap)
     @count = 0
     @tombstones = 0
 
