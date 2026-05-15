@@ -4834,7 +4834,7 @@ fn check_ghost_in_expr(e: &Expr, ghosts: &HashSet<String>, errors: &mut Vec<Diag
 // Пустой `[]` в позиции, ожидающей `HashMap` — валиден (пустая мапа).
 // ============================================================================
 
-/// Plan 52 Ф.2: контекст для map-литерал type-checking.
+/// Plan 52 Ф.2/Ф.3: контекст для map-литерал type-checking.
 struct MapLitCtx {
     /// Для каждого concrete-типа — множество имён его методов. Нужно для
     /// Hashable-проверки именованных ключевых типов (требуются `hash` + `eq`).
@@ -4842,6 +4842,11 @@ struct MapLitCtx {
     /// Имена top-level типов модуля (record/sum/newtype/alias) — для
     /// различения «известный именованный тип» vs «generic-параметр».
     known_types: HashSet<String>,
+    /// Plan 52 Ф.3: имена типов, помеченных `#from_fields` — str-keyed
+    /// map-типы, в которые анонимный record-литерал `{field: v}` коэрсится
+    /// через D55 map-coercion. Bootstrap honored только для
+    /// `collections.hashmap.HashMap` (проверка canonical identity ниже).
+    from_fields_types: HashSet<String>,
     /// Имена generic-параметров, видимых в текущей функции. Заполняется
     /// per-fn в `check_fn`. Generic `K` — permissive (Hashable не enforce'ится
     /// статически: bound-проверка — отдельный механизм Plan 15).
@@ -4852,10 +4857,21 @@ impl MapLitCtx {
     fn build(module: &Module) -> Self {
         let mut type_methods: HashMap<String, HashSet<String>> = HashMap::new();
         let mut known_types: HashSet<String> = HashSet::new();
+        let mut from_fields_types: HashSet<String> = HashSet::new();
         for item in &module.items {
             match item {
                 Item::Type(t) => {
                     known_types.insert(t.name.clone());
+                    // Plan 52 Ф.3: `#from_fields` маркер. Bootstrap honored
+                    // только для canonical `collections.hashmap.HashMap` —
+                    // shadowing локальным `HashMap` правило не ломает: маркер
+                    // ставится в hashmap.nv, и type-имя там — именно
+                    // `HashMap`. После inline import-resolve TypeDecl
+                    // попадает в items с тем же именем; снятие гейта
+                    // (user-типы, OrderedMap) — документированное будущее.
+                    if t.attrs.contains(&TypeAttr::FromFields) {
+                        from_fields_types.insert(t.name.clone());
+                    }
                 }
                 Item::Fn(f) => {
                     if let Some(recv) = &f.receiver {
@@ -4868,7 +4884,12 @@ impl MapLitCtx {
                 _ => {}
             }
         }
-        MapLitCtx { type_methods, known_types, fn_generics: HashSet::new() }
+        MapLitCtx {
+            type_methods,
+            known_types,
+            from_fields_types,
+            fn_generics: HashSet::new(),
+        }
     }
 
     fn check_module(&self, module: &Module, errors: &mut Vec<Diagnostic>) {
@@ -4879,6 +4900,7 @@ impl MapLitCtx {
                     let mut ctx = MapLitCtx {
                         type_methods: self.type_methods.clone(),
                         known_types: self.known_types.clone(),
+                        from_fields_types: self.from_fields_types.clone(),
                         fn_generics: f.generics.iter().map(|g| g.name.clone()).collect(),
                     };
                     // Generic-параметры receiver-типа тоже видимы.
@@ -5025,7 +5047,26 @@ impl MapLitCtx {
             ExprKind::TupleLit(elems) => {
                 for x in elems { self.walk_expr(x, None, errors); }
             }
-            ExprKind::RecordLit { fields, .. } => {
+            ExprKind::RecordLit { type_name, fields } => {
+                // Plan 52 Ф.3: D55 map-coercion. Анонимный record-литерал
+                // `{field: v}` в позиции, ожидающей тип с маркером
+                // `#from_fields` (= HashMap) — это НЕ record-coercion (поля
+                // литерала ≠ поля struct'а HashMap), а map-coercion: имена
+                // полей становятся строковыми ключами.
+                if type_name.is_none() {
+                    if let Some(exp) = expected {
+                        if self.expected_is_from_fields(exp) {
+                            self.check_record_map_coercion(e, fields, exp, errors);
+                            // Значения уже проверены внутри; рекурсия в них.
+                            for f in fields {
+                                if let Some(v) = &f.value {
+                                    self.walk_expr(v, None, errors);
+                                }
+                            }
+                            return;
+                        }
+                    }
+                }
                 for f in fields {
                     if let Some(v) = &f.value { self.walk_expr(v, None, errors); }
                 }
@@ -5210,6 +5251,96 @@ impl MapLitCtx {
         if let Some(k) = &key_ty {
             self.check_hashable(k, e.span, errors);
         }
+    }
+
+    /// Plan 52 Ф.3: `true` если ожидаемый тип несёт маркер `#from_fields`
+    /// (str-keyed map-тип для D55 map-coercion). Bootstrap: распознаётся
+    /// по последнему сегменту пути среди `from_fields_types`.
+    fn expected_is_from_fields(&self, expected: &TypeRef) -> bool {
+        let TypeRef::Named { path, .. } = expected else { return false; };
+        match path.last() {
+            Some(name) => self.from_fields_types.contains(name),
+            None => false,
+        }
+    }
+
+    /// Plan 52 Ф.3: проверка D55 map-coercion анонимного record-литерала
+    /// `{field: v}` в позиции, ожидающей `#from_fields`-тип (`HashMap[str, V]`).
+    ///
+    /// Имена полей литерала → строковые ключи (тип `str`, тривиально
+    /// Hashable). Все значения полей унифицируются в `V`. Field-punning
+    /// (`{debug, verbose}`) поддержан — значение это одноимённая переменная,
+    /// тип которой здесь не проверяется (NameResCtx ловит undefined).
+    fn check_record_map_coercion(
+        &self,
+        e: &Expr,
+        fields: &[RecordLitField],
+        expected: &TypeRef,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        // Извлечь V из ожидаемого `HashMap[str, V]`.
+        let exp_v = match expected {
+            TypeRef::Named { path, generics, .. }
+                if path.last().map(|s| s.as_str()) == Some("HashMap")
+                    && generics.len() == 2 =>
+            {
+                // Ключ map-coercion всегда str — проверим, что ожидаемый
+                // K-параметр это действительно str (или any/generic).
+                if let TypeRef::Named { path: kpath, .. } = &generics[0] {
+                    if kpath.len() == 1
+                        && kpath[0] != "str"
+                        && kpath[0] != "any"
+                        && !self.fn_generics.contains(&kpath[0])
+                    {
+                        errors.push(Diagnostic::new(
+                            format!(
+                                "record-literal map-coercion `{{field: v}}` produces \
+                                 string keys, but the expected map key type is `{}` \
+                                 — use a map literal `[\"field\": v]` for non-string \
+                                 keys, or annotate `HashMap[str, V]`",
+                                typeref_render(&generics[0])
+                            ),
+                            e.span,
+                        ));
+                        return;
+                    }
+                }
+                Some(&generics[1])
+            }
+            // `#from_fields`-тип без 2 generic-параметров — permissive
+            // (bootstrap honored только HashMap[K,V]; иные формы — будущее).
+            _ => None,
+        };
+
+        // Спред в map-coerced record-литерале — не поддержан в bootstrap
+        // (D60-spread для мап — отдельная фича).
+        for f in fields {
+            if f.is_spread {
+                errors.push(Diagnostic::new(
+                    "spread `...` in a map-coercion record literal is not \
+                     supported in bootstrap — insert entries explicitly",
+                    f.span,
+                ));
+                return;
+            }
+        }
+
+        // Унифицировать типы значений полей в `V`. Field-punning
+        // (`value: None`) — значение это переменная `f.name`, тип не
+        // выводим локально (None из simple_expr_type) → permissive.
+        let value_exprs: Vec<&Expr> = fields
+            .iter()
+            .filter_map(|f| f.value.as_ref())
+            .collect();
+        let _ = self.unify_exprs(
+            value_exprs.into_iter(),
+            exp_v,
+            "value",
+            e.span,
+            errors,
+        );
+        // Ключи — строковые имена полей, str тривиально Hashable: проверка
+        // не нужна.
     }
 
     /// Унифицирует типы набора выражений. Если задан `expected` — все
