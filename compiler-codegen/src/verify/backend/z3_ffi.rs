@@ -180,4 +180,19 @@ extern "C" {
         num_args: c_uint,
         args: *const Z3_ast,
     ) -> Z3_ast;
+
+    // Error handler: перехватывает Z3 API ошибки (sort mismatch, etc.)
+    // вместо abort(). Тип callback: fn(ctx, error_code).
+    // error_code — Z3_error_code enum (see z3_api.h), нас интересует
+    // только сам факт ошибки.
+    pub fn Z3_set_error_handler(
+        c: Z3_context,
+        h: Option<unsafe extern "C" fn(c: Z3_context, e: c_int)>,
+    );
+
+    // Получить текущий error code контекста.
+    pub fn Z3_get_error_code(c: Z3_context) -> c_int;
+
+    // Сбросить error code.
+    pub fn Z3_reset_error_code(c: Z3_context);
 }

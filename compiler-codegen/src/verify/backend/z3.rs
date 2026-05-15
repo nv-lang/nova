@@ -23,14 +23,41 @@
 
 #![cfg(feature = "z3-backend")]
 
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::ffi::{CStr, CString};
-use std::os::raw::c_uint;
+use std::os::raw::{c_int, c_uint};
 use std::ptr;
 
 use super::super::ir::*;
 use super::SmtBackend;
 use super::z3_ffi as ffi;
+
+// Thread-local флаг: Z3 error handler ставит его при любой API ошибке.
+// translate_inner проверяет после каждого вызова и возвращает Err.
+thread_local! {
+    static Z3_ERROR: Cell<bool> = Cell::new(false);
+    static Z3_ERROR_MSG: std::cell::RefCell<String> = std::cell::RefCell::new(String::new());
+}
+
+unsafe extern "C" fn z3_error_handler(_ctx: ffi::Z3_context, code: c_int) {
+    Z3_ERROR.with(|f| f.set(true));
+    Z3_ERROR_MSG.with(|m| {
+        *m.borrow_mut() = format!("Z3 API error code {}", code);
+    });
+}
+
+fn check_z3_error() -> Result<(), String> {
+    Z3_ERROR.with(|f| {
+        if f.get() {
+            f.set(false);
+            let msg = Z3_ERROR_MSG.with(|m| m.borrow().clone());
+            Err(msg)
+        } else {
+            Ok(())
+        }
+    })
+}
 
 /// Полноценный SMT backend через libz3.
 ///
@@ -96,6 +123,8 @@ impl Z3Backend {
 
             let ctx = ffi::Z3_mk_context_rc(cfg);
             ffi::Z3_del_config(cfg);
+            // Перехватываем Z3 API ошибки (sort mismatch и т.д.) вместо abort().
+            ffi::Z3_set_error_handler(ctx, Some(z3_error_handler));
 
             let int_sort = ffi::Z3_mk_int_sort(ctx);
             let bool_sort = ffi::Z3_mk_bool_sort(ctx);
@@ -162,10 +191,24 @@ impl Z3Backend {
     /// одинаковые subterm'ы share структуру, ref-counting на нашей стороне
     /// безопасно.
     fn translate(&mut self, term: &SmtTerm) -> Result<ffi::Z3_ast, String> {
+        // Сбросить флаг ошибки перед каждым top-level translate.
+        Z3_ERROR.with(|f| f.set(false));
         unsafe { self.translate_inner(term) }
     }
 
     unsafe fn translate_inner(&mut self, term: &SmtTerm) -> Result<ffi::Z3_ast, String> {
+        let result = self.translate_inner_impl(term);
+        // Проверить не возникла ли Z3 API ошибка (sort mismatch и т.п.)
+        // после любого вложенного вызова.
+        if result.is_ok() {
+            if let Err(msg) = check_z3_error() {
+                return Err(msg);
+            }
+        }
+        result
+    }
+
+    unsafe fn translate_inner_impl(&mut self, term: &SmtTerm) -> Result<ffi::Z3_ast, String> {
         match term {
             SmtTerm::IntLit(n) => {
                 let ast = ffi::Z3_mk_int64(self.ctx, *n, self.int_sort);
