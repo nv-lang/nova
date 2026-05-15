@@ -98,3 +98,32 @@ test "Result2[str] Ok2" {
     assert(r.is_ok())
     assert(r.unwrap_or("") == "value")
 }
+
+
+// === 4. Protocol-bounded dispatch в generic body ===
+// Plan 48 Ф.7.7: когда `k: K` и K имеет bound, method call k.method(...)
+// в мономорфном теле должен диспетчиться на конкретный тип.
+
+type GrmEq protocol {
+    eq(other Self) -> bool
+}
+
+type GrmPoint {
+    x int
+    y int
+}
+
+export fn GrmPoint @eq(other GrmPoint) -> bool => @x == other.x && @y == other.y
+
+fn contains_point[K GrmEq](items []K, target K) -> bool {
+    for it in items {
+        if it.eq(target) { return true }
+    }
+    false
+}
+
+test "protocol-bounded dispatch: GrmPoint.eq через generic fn" {
+    let pts = [GrmPoint { x: 1, y: 2 }, GrmPoint { x: 3, y: 4 }]
+    assert(contains_point(pts, GrmPoint { x: 1, y: 2 }) == true)
+    assert(contains_point(pts, GrmPoint { x: 5, y: 6 }) == false)
+}
