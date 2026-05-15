@@ -4660,33 +4660,44 @@ Sub-plans 35.A-E:
 - **Приоритет:** H — это soundness gap (gate заявляет верификацию,
   но не верифицирует).
 
-### [V13] Composition в контрактах → EncodingError::Unsupported
-- **Где:** `compiler-codegen/src/verify/encode.rs:110`
-  (`EncodingError::Unsupported("function call in contract expression not yet supported")`).
-- **Что упрощено:** `#pure fn helper(x int) -> bool => x > 0`;
-  `requires helper(n)` — compile-time `#pure` check проходит, но SMT
-  encoding возвращает Unsupported и контракт не верифицируется.
-- **Почему:** UF-encoding для `#pure` composition требовало готового
-  Z3 backend. Plan 33.3 bootstrap завершился до реализации этой части.
-- **Как чинить:** Plan 33.4 Ф.2 — `encode_expr(Call)` для `#pure` fn:
-  declare UF, inline-substitute простые тела, emit axiom связи.
-- **Приоритет:** H — без этого composition в контрактах (Plan 33.2
-  D-feature) не работает.
+### [ЗАКР 2026-05-15] Composition в контрактах — [V13]
+- **Закрыто (Plan 33.4 D.0.2, 2026-05-15):**
+  * `encode_expr(Call)` для `#pure` fn → UF `_pure_fn_<name>(args)`.
+  * `collect_pure_fns` — реестр `#pure` fn с сортами параметров.
+  * Body axiom: `∀ params. uf(params) == encoded_body` (для `=> expr` тел).
+  * Тесты: `composition_trivial_positive.nv`, `composition_z3_positive.nv`.
+  * Regression: 68/68 PASS contracts/.
+- **Ещё открыто:** SCC mutual-recursive `#pure` fn — V2. См. [V3].
 
-### [V14] Loop invariants/decreases — только parse+skip, нет AST полей
-- **Где:** `parser/mod.rs::skip_loop_clauses`; `ast/mod.rs`
-  `ExprKind::For/While/Loop` (нет полей `invariants`/`decreases`).
-- **Что упрощено:** `invariant <expr>` и `decreases <expr>` внутри
-  loop парсятся и игнорируются (`skip_loop_clauses`). AST не хранит.
-  Дополнительно: `decreases` в fn — runtime depth-counter `depth++ > 10000`
-  вместо well-founded ordinal (emit_c.rs:5183-5197).
-- **Почему:** AST breaking change (все downstream match'и) + Z3
-  havoc+invariant encoding — одновременно требовали готового Z3
-  и достаточно большого patch'а. Отложено после Z3 milestone.
-- **Как чинить:** Plan 33.4 Ф.3 (loop AST + SMT) + Ф.4 (well-founded
-  decreases через Z3 rекурсивный constraint вместо depth-counter).
-- **Приоритет:** H — loop invariants это core Plan 33.2 feature;
-  без SMT verification они не более чем runtime assert debug-only.
+### [ЗАКР 2026-05-15] Loop invariants/decreases в AST + SMT — [V14]
+- **Закрыто (Plan 33.4 D.0.3 + D.0.4, 2026-05-15):**
+  * AST: `invariants: Vec<Expr>`, `decreases: Option<Box<Expr>>`
+    в `ExprKind::For/While/WhileLet/Loop`.
+  * Parser: `parse_loop_clauses` сохраняет в AST.
+  * SMT entry-check: `collect_loop_invariants_in_body` + proof given requires.
+  * `decreases` в fn: SMT доказывает `dec >= 0` на входе и `dec(args_rec) < dec(entry)`.
+  * Тесты: `loop_invariant_smt_positive.nv`, `decreases_wf_z3_positive.nv`.
+  * Regression: 68/68 PASS, 9 SKIP (Z3-only).
+- **Ещё открыто:**
+  * Loop havoc + preservation (полный SMT) — V2 (entry-check partial).
+  * `decreases` в цикле SMT — Plan 33.4 D.1.x.
+
+### [V15] Frame SMT axiom — нет `var_post == var_pre` для non-modifies
+- **Где:** `verify/pipeline.rs` (нет frame axiom assertion).
+- **Что упрощено:** `modifies x, y` type-check'ится, но SMT не добавляет
+  frame axiom. Переменные вне `modifies` не equated с entry-state —
+  ensures с `old(z)` где `z ∉ modifies` не верифицируется.
+- **Почему:** Требует split-variable encoding (x → x_pre + x_post).
+  Текущий encoder не различает pre/post state.
+- **Как чинить:** Plan 33.4 D.1.2 — split-variable + frame axiom assertion.
+- **Приоритет:** M.
+
+### [V16] BinderType enum для EffectAxiom.binders
+- **Закрыто (Plan 33.4 P1-5, 2026-05-15):**
+  * `BinderType { Untyped, Typed(TypeRef), Generic(String) }` + `BinderDef`.
+  * `EffectAxiom.binders: Vec<BinderDef>` — три состояния различимы.
+  * Parser: Generic = path[0] ∈ generics. Downstream: types/pipeline обновлены.
+  * Regression: 68/68 PASS.
 
 
 ---
