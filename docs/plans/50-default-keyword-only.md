@@ -1,8 +1,29 @@
 # Plan 50: Параметр с дефолтом — keyword-only на месте вызова
 
-> **Создан 2026-05-15.** Production-grade, без упрощений.
+> **Создан 2026-05-15, ЗАКРЫТ 2026-05-15.** Production-grade, без упрощений.
 >
-> **СТАТУС:** план, не начат.
+> **СТАТУС:** ✅ Реализован (Ф.0-Ф.5). Правило keyword-only для дефолтных
+> параметров на всех путях вызова (free fn / static / instance /
+> generic); production-grade диагностика со structured suggestions
+> (`Diagnostic` расширен `notes` + `suggestion` + `Applicability`);
+> [M-interp-named] закрыт (`cmd_run` делает resolve_imports + callnorm).
+> 12 тестов (8 negative + 4 positive .nv + nova-cli integration-тест).
+> Полная регрессия PASS.
+>
+> **Архитектура:**
+> - `argbind.rs` — без структурных изменений: правило выводимо из
+>   `ArgBinding::Positional(ai)` где `params[pi].default.is_some()`.
+> - `types::check_call_argbind` — `check_keyword_only` после успешного
+>   `bind_call_args`: precedence (структурные ошибки argbind первыми,
+>   keyword-only последним), отдельная диагностика на каждый нарушающий
+>   аргумент, error recovery без каскада.
+> - `diag.rs` — `Suggestion` (machine-applicable, source-независимый —
+>   вставка `<name>: `), `Note`, `Applicability`; `SrcResolver` для
+>   single-file + cross-file рендера.
+> - `callnorm.rs` — без изменений (правило в diagnostic-фазе, до
+>   нормализации).
+> - `cmd_run` (nova-cli) — resolve_imports_inline + callnorm перед
+>   интерпретацией → [M-interp-named] RESOLVED.
 >
 > **Реализует:** ревизию [D102](../../spec/decisions/03-syntax.md#d102-именованные-аргументы-и-значения-параметров-по-умолчанию)
 > от 2026-05-15 («параметр с дефолтом — keyword-only»).

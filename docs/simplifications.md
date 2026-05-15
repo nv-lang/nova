@@ -4771,26 +4771,22 @@ spec-level work.
 
 ---
 
-### [M-interp-named] treewalk-interp: named args без reorder
+### [M-interp-named] treewalk-interp: named args без reorder — ✅ RESOLVED 2026-05-15
 
-- **Где:** `compiler-codegen/src/interp/mod.rs` (`CallArg::Named` arm)
-- **Что упрощено:** Plan 46 (D102) named args в treewalk-интерпретаторе
-  (`nova run`) — `CallArg::Named` value eval'ится позиционно, без
-  раскладки named→param-order. Работает для named args в естественном
-  порядке; переставленные named в interp дадут неверный результат.
-- **Почему:** Основной путь Nova — codegen (`nova test`/`nova build`),
-  где `callnorm` делает полную раскладку через двухфазный Block.
-  `nova run` (treewalk) — вторичный путь; `cmd_run` вызывает
-  `callnorm::normalize_module` для single-file (если callee в том же
-  файле — нормализация срабатывает и interp получает чистый
-  позиционный). Не нормализуются: импортированные callee в interp-mode
-  (cmd_run не делает resolve_imports_inline).
-- **Как починить:** либо `cmd_run` делает resolve_imports + полная
-  нормализация, либо interp call-handling использует `argbind::bind_call_args`
-  напрямую. ~80-120 LOC.
-- **Приоритет:** L — codegen path (главный) полностью корректен;
-  interp edge затрагивает только `nova run` с импортированными
-  callee + переставленные named.
+- **Resolved:** Plan 50 Ф.2 — `cmd_run` (`nova-cli/src/main.rs`) теперь
+  делает `resolve_imports_inline` ПЕРЕД `callnorm::normalize_module` —
+  тот же codepath, что `cmd_build` и `test_runner::codegen_to_c`.
+  Импортированные callee мёрджатся в `module` до нормализации →
+  `callnorm` видит ВСЕ сигнатуры (включая дефолты импортированных
+  функций) и раскладывает named args в param-order корректно. Interp
+  получает чистый позиционный AST для всех callee, не только
+  same-file. Graceful: файл вне Nova-проекта (нет nova.toml) →
+  resolve пропускается, single-file без импортов работает как прежде.
+- **Tests:** `nova_tests/named_params/imported_named_use.nv` (codegen-suite,
+  переставленные named для импортированного callee) +
+  `imported_named_run.nv` (codegen-suite через `EXPECT_STDOUT` +
+  nova-cli integration-тест `tests/run_interp_named.rs` через
+  `nova run` — двойное покрытие interp-пути).
 
 ---
 
