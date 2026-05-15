@@ -46,6 +46,12 @@ pub fn render_with_source(tree: &DocTree, source: Option<&str>) -> String {
         "nova_version",
         env!("CARGO_PKG_VERSION"),
     );
+    // Ф.22.3 / D107: `source_root` — абсолютный path к исходнику /
+    // workspace root. Опускается если None (e.g., из library API
+    // вызова без path context).
+    if let Some(root) = &tree.source_root {
+        w.field_str("source_root", root);
+    }
     w.field_array("doc_tests", |w| {
         for t in &tree.doc_tests {
             w.array_object(|w| {

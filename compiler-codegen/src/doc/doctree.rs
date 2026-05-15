@@ -27,6 +27,11 @@ pub struct DocTree {
     pub links: Vec<DocLink>,
     /// Plan 45 Ф.7: doc-tests, извлечённые из ` ```nova ` blocks.
     pub doc_tests: Vec<DocTest>,
+    /// Plan 45 Ф.22.3 / D107: абсолютный путь к корню документируемого
+    /// исходника (file's parent dir для single-file, либо workspace
+    /// root для `nova doc <dir>`). `None` если caller не задал —
+    /// поле опускается в JSON output.
+    pub source_root: Option<String>,
 }
 
 impl DocTree {
@@ -36,6 +41,7 @@ impl DocTree {
             modules: Vec::new(),
             links: Vec::new(),
             doc_tests: Vec::new(),
+            source_root: None,
         }
     }
 }

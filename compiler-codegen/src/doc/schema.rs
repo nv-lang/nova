@@ -36,6 +36,10 @@ const SCHEMA_V1: &str = r##"{
       "type": "string",
       "description": "Nova compiler version that produced this doc."
     },
+    "source_root": {
+      "type": "string",
+      "description": "Plan 45 Ф.22.3 / D107: absolute path to the documented source root (file's parent for single-file, workspace dir for `nova doc <dir>`). Omitted when caller did not set it (e.g., library API without path context)."
+    },
     "doc_tests": {
       "type": "array",
       "description": "Doc-tests extracted from `nova` fenced code blocks. Sorted by (from_id, index).",

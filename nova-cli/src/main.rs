@@ -939,6 +939,12 @@ fn cmd_doc(path: &Path, format: &str, json_schema: bool, include_private: bool, 
     let _ = nova_codegen::types::check_module(&module);
     nova_codegen::types::infer_effects(&mut module);
     let mut tree = nova_codegen::doc::build(&module);
+    // Plan 45 Ф.22.3 / D107: source_root = parent dir файла, relative
+    // от CWD (для portable/deterministic output across machines).
+    tree.source_root = path.parent().map(|d| {
+        let s = d.display().to_string();
+        if s.is_empty() { ".".to_string() } else { s.replace('\\', "/") }
+    });
     if !include_private {
         nova_codegen::doc::strip_private(&mut tree);
     }
@@ -1022,6 +1028,9 @@ fn cmd_doc_workspace(
         modules.push(m);
     }
     let mut tree = nova_codegen::doc::build_workspace(&modules);
+    // Plan 45 Ф.22.3 / D107: workspace source_root = переданный dir,
+    // как есть (relative от CWD для portability).
+    tree.source_root = Some(dir.display().to_string().replace('\\', "/"));
     if !include_private {
         nova_codegen::doc::strip_private(&mut tree);
     }
