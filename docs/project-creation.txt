@@ -11017,3 +11017,138 @@ preserved, token-stream invariant (doc precedes fn). Все PASS.
 
 Ветка `plan-45-doc` в worktree `d:\Sources\nova-lang-p45-doc`. Не
 мерджится до закрытия MVP (Plan 45 §12.0).
+
+## Сессия 2026-05-15 (продолжение): Plan 45 MVP end-to-end thread
+
+Пользователь запросил «продолжай сам по всем пунктам плана, я ушел».
+Реализован минимальный foundation thread от parsed Module до
+markdown/JSON output через `nova doc <file>`.
+
+### Ф.2 — Parser attach doc-comment'ов
+
+- AST: `DocBlock { kind, content, span }` + поля `doc: Option<DocBlock>`
+  на `Module`, `FnDecl`, `TypeDecl`, `ConstDecl`.
+- Parser: `consume_doc_block_of_kind(Outer|Inner)` — собирает подряд
+  идущие doc-токены того же kind'а, сливает через `\n\n`.
+- В `parse_item`: outer doc → `pending_doc` → передаётся в
+  parse_fn/parse_type_decl/parse_const_decl.
+- В `parse_module`: inner doc → `module_doc` (концат при множественных).
+- Interim shim Ф.1 удалён — DocComment-токены теперь в стриме и
+  консумятся явно.
+- 7 unit-тестов в `parser::doc_attach_tests`.
+
+**Pragmatic-scope:** generic `Vec<Attr>` refactor существующих
+specialized-полей (`realtime_attr`/`contracts`/`verify_mode`) НЕ
+сделан — doc работает поверх; refactor — `[M-doc-attrs-not-generic]`,
+отдельная задача.
+
+### Ф.3 — Doc attributes — DEFERRED
+
+`#deprecated`/`#stable`/`#unstable`/`#experimental`/`#hide_doc`/
+`#doc_alias`/`#doc(...)` НЕ парсятся collector'ом в MVP. Они нужны для
+полного D105, но не блокируют end-to-end thread. Добавятся в следующей
+итерации.
+
+### Ф.4 — DocModel + collector
+
+`compiler-codegen/src/doc/`:
+- `doctree.rs` (~240 LOC) — typed IR с tagged unions: DocTree,
+  DocModule, DocItem, ItemKind (Fn/Type/Const/Effect/Protocol),
+  Signature, Receiver, GenericParam, Param, TypeDefinition (Record/
+  Sum/Alias), RecordField, SumVariant, VariantPayload,
+  EffectMethodSig, ProtocolMethodSig, Visibility.
+- `collector.rs` (~310 LOC) — `collect(&Module) -> DocTree`. Один pass:
+  iterate items, build sigs, concat `//!` inner с `#doc` module-attrs,
+  sort items by stable `id` (deterministic). Pretty-print TypeRef и
+  Expr (MVP best-effort).
+- Stable IDs: `<module>::<name>` для свободных, `<module>::<Type>.<method>`
+  для методов. Канонический link target по D107.
+
+### Ф.5 — Markdown summary extraction
+
+`markdown.rs` (~145 LOC) — `extract_summary(content)`:
+- Первое предложение (`.`/`!`/`?` после которого whitespace или EOF).
+- Игнорирует терминаторы внутри inline-code (backtick'ов).
+- До первого `\n\n` (paragraph break).
+- 7 unit-тестов.
+
+Полный markdown-парсинг (CommonMark через pulldown-cmark) — следующая
+итерация Ф.5.
+
+### Ф.6 / Ф.7 — DEFERRED
+
+Intra-doc link resolver + doc-test extractor/runner — отложены.
+В JSON `links`/`doc_tests` поля выводятся пустыми массивами (D107
+permits).
+
+### Ф.8 — Markdown renderer
+
+`render_md.rs` (~220 LOC) — DocTree → markdown string.
+- Module header → summary → description.
+- Секции по item kind'ам: Types, Effects, Protocols, Constants,
+  Functions (порядок фиксированный для дисциплины style guide §11.5).
+- Per-item: triple-backtick `nova` block с signature/definition/value;
+  затем summary; затем description.
+- Visibility filter: только Export items (private — будущий
+  `--include-private`).
+
+### Ф.9 — JSON renderer (D107 v1 MVP subset)
+
+`render_json.rs` (~415 LOC) — DocTree → JSON по D107 schema v1.
+- `format_version: 1` обязательный; `nova_version` из CARGO_PKG_VERSION.
+- Top-level: `modules`, `items`, `links` (пустой), `doc_tests` (пустой).
+- Item tagged union с `kind` discriminator (fn/type/const/effect/
+  protocol).
+- Signature: params (с `keyword_only` D102 flag), effects, raises,
+  generics, receiver, contracts (UNVERIFIED placeholder).
+- **Deterministic output**: object-keys alphabetical, arrays sorted
+  (items by id, peers alphabetically). Manual JSON writer без
+  serde_json (гарантирует byte-identical между прогонами).
+
+### Ф.12 — CLI `nova doc`
+
+`nova-cli/src/main.rs`:
+- `nova doc <file> [--format markdown|json] [--json-schema]`.
+- MVP single-file mode: НЕ резолвит imports — иначе items из
+  auto-imported `std/prelude` засоряют output. Workspace-mode —
+  Plan 45.A.
+- `--json-schema` печатает embedded JSON Schema 2020-12 (для CI и
+  LLM tool-context).
+- Type-check ошибки прощаются (без `--check`) — для partial docs
+  даже на broken коде. `nova doc --check` (Ф.14) добавит strict.
+
+### Ф.14 / Ф.15 / Ф.17 / Ф.19 / Ф.20 — DEFERRED
+
+`--check`/`--watch`/CI integration/full test corpus/user docs —
+отдельные итерации.
+
+### Smoke fixture
+
+`nova_tests/doc/fixtures/basic/sample.nv` — содержит inner module
+doc (`//!`), exported fn / type / const + один private helper.
+Все три CLI режима работают end-to-end:
+- `nova doc sample.nv` — markdown с правильной секцией structure.
+- `nova doc --format json sample.nv` — валидный JSON v1.
+- `nova doc --json-schema fake.nv` — embedded JSON Schema 2020-12.
+
+### Регрессия
+
+Все critical test sets зелёные после изменений:
+- basics: 8/0, named_params: 8/0, negative_capability: 80/0,
+  syntax: 57/0. Итого 153/0.
+- lexer::doc_comment_tests: 19/0.
+- parser::doc_attach_tests: 7/0.
+- markdown::tests: 7/0.
+
+### Итого сессии (Ф.0+Ф.1+Ф.2+Ф.4+Ф.5+Ф.8+Ф.9+Ф.12):
+
+LOC: ~3000+ (specs 944 + lexer 245 + parser 95 + doc/ 1385 +
+CLI 90 + fixture 30). Тесты: 40+ unit-тестов.
+
+**Plan 45 MVP foundation ✓**. Следующие итерации добавят deferred
+phases: doc-attrs (Ф.3), intra-doc links (Ф.6), doc-test runner (Ф.7),
+--check/--watch (Ф.14/Ф.15), full test corpus (Ф.19), user docs (Ф.20).
+
+Ветка `plan-45-doc` (worktree `d:\Sources\nova-lang-p45-doc`),
+запушена в `origin/plan-45-doc`. НЕ мерджится в main до закрытия
+полного MVP — по Plan 45 §12.0 acceptance.
