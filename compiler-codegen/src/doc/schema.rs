@@ -79,9 +79,11 @@ const SCHEMA_V1: &str = r##"{
       "type": "object",
       "required": ["id", "kind", "module_path", "name", "source"],
       "properties": {
+        "aliases": { "type": "array", "items": { "type": "string" }, "description": "Plan 45 Ф.3 / D105: search-aliases from `#doc_alias(...)`. Sorted + deduplicated." },
         "deprecation": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/Deprecation" }] },
         "description": { "type": ["string", "null"] },
-        "doc_attrs": { "type": "array", "items": { "type": "object" } },
+        "doc_attrs": { "type": "array", "items": { "type": "object" }, "description": "Reserved for unrecognized doc-attrs (forward-compat)." },
+        "doc_test_handlers": { "type": ["string", "null"], "description": "Plan 45 Ф.3 / D105: `#doc(test_handlers=\"path\")` — handler-path for doc-tests." },
         "id": { "type": "string", "description": "Stable id: `<module_path>::<name>` or `<module_path>::<Type>.<method>`." },
         "kind": { "type": "string", "enum": ["fn", "type", "const", "effect", "protocol"] },
         "module_path": { "type": "string" },
@@ -266,6 +268,8 @@ const SCHEMA_V1: &str = r##"{
       "required": ["tier"],
       "additionalProperties": false,
       "properties": {
+        "feature": { "type": ["string", "null"], "description": "Plan 45 Ф.22.2 / D105: для `#unstable(feature = \"name\")` — имя feature-флага. null для stable/experimental." },
+        "note": { "type": ["string", "null"], "description": "Plan 45 Ф.22.2 / D105: для `#experimental(note = \"...\")` — объяснение, что может измениться. null для stable/unstable." },
         "since": { "type": ["string", "null"] },
         "tier": { "type": "string", "enum": ["stable", "unstable", "experimental"] }
       }

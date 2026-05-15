@@ -15,7 +15,7 @@
       ],
       "kind": "file",
       "name": "sample",
-      "path": "nova_tests.doc.fixtures.stability.sample",
+      "path": "nova_tests.doc.fixtures.real_attrs.sample",
       "peers": [
 
       ],
@@ -24,14 +24,15 @@
         "line": 1
       },
       "stability": null,
-      "summary": "Plan 45 Ф.3: fixture для stability / deprecation / since.",
-      "description": null
+      "summary": "Plan 45 Ф.21.3 / D105 — real doc-attrs через parser.",
+      "description": "Демонстрирует все 8 атрибутов D105:\n- `#deprecated(since=..., note=..., until=?)`\n- `#since(\"X\")` или `#since(version=\"X\")`\n- `#stable[(since=...)]`\n- `#unstable(feature=...)`\n- `#experimental(note=...)`\n- `#hide_doc`\n- `#doc_alias(\"a\", \"b\", ...)`\n- `#doc(inline)` / `#doc(no_inline)` / `#doc(summary=...)` /\n  `#doc(section=...)` / `#doc(test_handlers=...)`"
     }
   ],
   "items": [
     {
       "aliases": [
-
+        "plus",
+        "sum"
       ],
       "deprecation": null,
       "description": null,
@@ -39,16 +40,16 @@
 
       ],
       "doc_test_handlers": null,
-      "id": "nova_tests.doc.fixtures.stability.sample::add",
+      "id": "nova_tests.doc.fixtures.real_attrs.sample::add",
       "kind": "fn",
-      "module_path": "nova_tests.doc.fixtures.stability.sample",
+      "module_path": "nova_tests.doc.fixtures.real_attrs.sample",
       "name": "add",
       "sections": {
-        "since": "1.0.0"
+
       },
       "source": {
         "file_id": 0,
-        "line": 21
+        "line": 23
       },
       "stability": {
         "feature": null,
@@ -101,29 +102,29 @@
 
       ],
       "deprecation": null,
-      "description": "Описание (не attr).",
+      "description": null,
       "doc_attrs": [
 
       ],
       "doc_test_handlers": null,
-      "id": "nova_tests.doc.fixtures.stability.sample::maybe_add",
+      "id": "nova_tests.doc.fixtures.real_attrs.sample::maybe_add",
       "kind": "fn",
-      "module_path": "nova_tests.doc.fixtures.stability.sample",
+      "module_path": "nova_tests.doc.fixtures.real_attrs.sample",
       "name": "maybe_add",
       "sections": {
 
       },
       "source": {
         "file_id": 0,
-        "line": 29
+        "line": 28
       },
       "stability": {
         "feature": null,
-        "note": null,
+        "note": "may change in 0.5",
         "since": "0.3.0",
         "tier": "experimental"
       },
-      "summary": "Экспериментальная функция.",
+      "summary": "Экспериментальная.",
       "signature": {
         "contracts": {
           "ensures": [
@@ -167,34 +168,77 @@
       "aliases": [
 
       ],
+      "deprecation": null,
+      "description": null,
+      "doc_attrs": [
+
+      ],
+      "doc_test_handlers": null,
+      "id": "nova_tests.doc.fixtures.real_attrs.sample::override_demo",
+      "kind": "fn",
+      "module_path": "nova_tests.doc.fixtures.real_attrs.sample",
+      "name": "override_demo",
+      "sections": {
+
+      },
+      "source": {
+        "file_id": 0,
+        "line": 36
+      },
+      "stability": null,
+      "summary": "Computed override summary",
+      "signature": {
+        "contracts": {
+          "ensures": [
+
+          ],
+          "requires": [
+
+          ],
+          "verify_status": "UNVERIFIED"
+        },
+        "effects": [
+
+        ],
+        "generics": [
+
+        ],
+        "params": [
+
+        ],
+        "raises": [
+
+        ],
+        "receiver": null,
+        "return_type": "int"
+      }
+    },
+    {
+      "aliases": [
+
+      ],
       "deprecation": {
-        "note": "Use `add` instead.",
-        "since": null
+        "note": "use [add] instead",
+        "since": "0.4.0"
       },
       "description": null,
       "doc_attrs": [
 
       ],
       "doc_test_handlers": null,
-      "id": "nova_tests.doc.fixtures.stability.sample::plus",
+      "id": "nova_tests.doc.fixtures.real_attrs.sample::plus",
       "kind": "fn",
-      "module_path": "nova_tests.doc.fixtures.stability.sample",
+      "module_path": "nova_tests.doc.fixtures.real_attrs.sample",
       "name": "plus",
       "sections": {
-        "deprecated": "Use `add` instead.",
-        "since": "0.1.0"
+
       },
       "source": {
         "file_id": 0,
-        "line": 14
+        "line": 18
       },
-      "stability": {
-        "feature": null,
-        "note": null,
-        "since": "0.1.0",
-        "tier": "unstable"
-      },
-      "summary": "Сложить два числа.",
+      "stability": null,
+      "summary": "Старая функция сложения.",
       "signature": {
         "contracts": {
           "ensures": [
@@ -226,6 +270,60 @@
             "type": "int",
             "variadic": false
           }
+        ],
+        "raises": [
+
+        ],
+        "receiver": null,
+        "return_type": "int"
+      }
+    },
+    {
+      "aliases": [
+
+      ],
+      "deprecation": null,
+      "description": null,
+      "doc_attrs": [
+
+      ],
+      "doc_test_handlers": null,
+      "id": "nova_tests.doc.fixtures.real_attrs.sample::select_channel",
+      "kind": "fn",
+      "module_path": "nova_tests.doc.fixtures.real_attrs.sample",
+      "name": "select_channel",
+      "sections": {
+
+      },
+      "source": {
+        "file_id": 0,
+        "line": 40
+      },
+      "stability": {
+        "feature": "channel_select",
+        "note": null,
+        "since": null,
+        "tier": "unstable"
+      },
+      "summary": "Unstable feature-gated API.",
+      "signature": {
+        "contracts": {
+          "ensures": [
+
+          ],
+          "requires": [
+
+          ],
+          "verify_status": "UNVERIFIED"
+        },
+        "effects": [
+
+        ],
+        "generics": [
+
+        ],
+        "params": [
+
         ],
         "raises": [
 

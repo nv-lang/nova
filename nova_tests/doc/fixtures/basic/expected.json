@@ -39,11 +39,15 @@
   ],
   "items": [
     {
+      "aliases": [
+
+      ],
       "deprecation": null,
       "description": null,
       "doc_attrs": [
 
       ],
+      "doc_test_handlers": null,
       "id": "nova_tests.doc.fixtures.basic.sample::MAX_BUF",
       "kind": "const",
       "module_path": "nova_tests.doc.fixtures.basic.sample",
@@ -61,11 +65,15 @@
       "value": "4096"
     },
     {
+      "aliases": [
+
+      ],
       "deprecation": null,
       "description": null,
       "doc_attrs": [
 
       ],
+      "doc_test_handlers": null,
       "id": "nova_tests.doc.fixtures.basic.sample::Point",
       "kind": "type",
       "module_path": "nova_tests.doc.fixtures.basic.sample",
@@ -96,11 +104,15 @@
       }
     },
     {
+      "aliases": [
+
+      ],
       "deprecation": null,
       "description": "Пример:\n\n```nova\nassert(abs(-5) == 5)\n```",
       "doc_attrs": [
 
       ],
+      "doc_test_handlers": null,
       "id": "nova_tests.doc.fixtures.basic.sample::abs",
       "kind": "fn",
       "module_path": "nova_tests.doc.fixtures.basic.sample",

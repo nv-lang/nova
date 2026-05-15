@@ -196,6 +196,42 @@ pub struct LemmaDecl {
     pub span: Span,
 }
 
+/// Plan 45 Ф.3 / D105: doc-атрибуты (`#deprecated(...)`, `#since(...)`,
+/// `#stable`, `#unstable(feature=...)`, `#experimental(note=...)`,
+/// `#hide_doc`, `#doc_alias("a","b")`, `#doc(summary=...)`,
+/// `#doc(inline)` / `#doc(no_inline)`, `#doc(section="Name")`).
+#[derive(Debug, Clone)]
+pub enum DocAttr {
+    /// `#deprecated(since = "X", note = "...", until = "Y"?)`.
+    Deprecated {
+        since: Option<String>,
+        note: Option<String>,
+        until: Option<String>,
+    },
+    /// `#since("X.Y")` или `#since(version = "X.Y")`.
+    Since(String),
+    /// `#stable` или `#stable(since = "X.Y")`.
+    Stable { since: Option<String> },
+    /// `#unstable(feature = "name")`.
+    Unstable { feature: Option<String> },
+    /// `#experimental(note = "...")`.
+    Experimental { note: Option<String> },
+    /// `#hide_doc` — exported, но скрыт из nova doc output.
+    HideDoc,
+    /// `#doc_alias("name", "name", ...)` — alternative names для search.
+    DocAlias(Vec<String>),
+    /// `#doc(inline)` — re-export рендерится inline (default same-package).
+    DocInline,
+    /// `#doc(no_inline)` — re-export рендерится только ссылкой.
+    DocNoInline,
+    /// `#doc(summary = "...")` — override первого-предложения summary.
+    DocSummary(String),
+    /// `#doc(section = "Name")` — custom section grouping.
+    DocSection(String),
+    /// `#doc(test_handlers = "path.to.handlers")`.
+    DocTestHandlers(String),
+}
+
 /// Функция: и свободная, и метод (через `receiver`).
 #[derive(Debug, Clone)]
 pub struct FnDecl {
@@ -203,6 +239,8 @@ pub struct FnDecl {
     /// несколько подряд идущих `///` непосредственно перед `fn`).
     /// `None` — у функции нет doc-comment'а.
     pub doc: Option<DocBlock>,
+    /// Plan 45 Ф.3 / D105: doc-атрибуты, собранные парсером.
+    pub doc_attrs: Vec<DocAttr>,
     pub is_export: bool,
     /// D82: external fn — реализована в nova_rt/*.h. Body отсутствует
     /// (FnBody::External). Только в std.runtime.* whitelisted.
@@ -433,6 +471,8 @@ pub enum FnBody {
 pub struct TypeDecl {
     /// Plan 45 / D104: doc-comment перед `type`.
     pub doc: Option<DocBlock>,
+    /// Plan 45 Ф.3 / D105: doc-атрибуты.
+    pub doc_attrs: Vec<DocAttr>,
     pub is_export: bool,
     pub name: String,
     /// Plan 15 (D72): `[K Hashable, V]` — имена + optional bounds.
@@ -630,6 +670,8 @@ pub struct LetDecl {
 pub struct ConstDecl {
     /// Plan 45 / D104: doc-comment перед `const`.
     pub doc: Option<DocBlock>,
+    /// Plan 45 Ф.3 / D105: doc-атрибуты.
+    pub doc_attrs: Vec<DocAttr>,
     pub is_export: bool,
     pub name: String,
     pub ty: Option<TypeRef>,

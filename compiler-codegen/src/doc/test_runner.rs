@@ -1,23 +1,23 @@
-//! Plan 45 Ф.7+ — doc-test runner.
+//! Plan 45 Ф.7 + Ф.21.1 — doc-test runner.
 //!
 //! Принимает `Vec<DocTest>` из collector'а и для каждого:
 //! - `ignore` → SKIPPED.
 //! - `compile_fail` → парсим + type-check, ожидаем error.
 //! - `no_run` → парсим + type-check, ожидаем success.
 //! - `should_panic` → парсим + type-check + run, ожидаем runtime error.
-//! - `must_verify` → SMT verify (Plan 33) — отложено, помечается как
-//!   SKIPPED со специальной причиной (`must_verify not yet wired`).
+//! - `must_verify` → SMT verify (Plan 33) — wiring см. `Ф.21.4`.
 //! - Иначе — полный pipeline: parse → typecheck → run main.
 //!
-//! Каждый doc-test обёрнут в синтетический module + `fn main` block:
+//! **Ф.21.1 — Crate-scope для doc-tests.** Rustdoc автоматически даёт
+//! doc-test'у `use crate::*` scope. У нас аналог: `run_doc_tests_with_source`
+//! принимает оригинальный source документируемого файла, **встраивает**
+//! его перед test-body. Это позволяет doc-test'у вызывать любые items
+//! документируемого модуля (`assert(double(3) == 6)` работает в doc'е
+//! `fn double`).
 //!
-//! ```nova
-//! module __doctest__
-//! <full_source как тело main'а>
-//! ```
-//!
-//! Это позволяет писать примеры как тело функции (`let x = 1; assert(...)`)
-//! без верхнего-уровня import'ов (если они не указаны через hidden `# `).
+//! Конфликт `fn main`: если оригинальный файл содержит `fn main`, она
+//! автоматически переименовывается в `__orig_main` (textual rewrite),
+//! чтобы оставить `fn main` доступной для wrapped test body.
 
 use super::doctree::*;
 
@@ -63,9 +63,18 @@ impl DocTestSummary {
 }
 
 pub fn run_doc_tests(tests: &[DocTest]) -> DocTestSummary {
+    run_doc_tests_with_source(tests, None)
+}
+
+/// Plan 45 Ф.21.1: prod-grade entry — каждый test получает crate-scope
+/// (items документируемого модуля), как в rustdoc.
+pub fn run_doc_tests_with_source(
+    tests: &[DocTest],
+    original_source: Option<&str>,
+) -> DocTestSummary {
     let mut results = Vec::with_capacity(tests.len());
     for t in tests {
-        let outcome = run_one(t);
+        let outcome = run_one(t, original_source);
         results.push(DocTestResult {
             id: t.id.clone(),
             outcome,
@@ -74,21 +83,16 @@ pub fn run_doc_tests(tests: &[DocTest]) -> DocTestSummary {
     DocTestSummary { results }
 }
 
-fn run_one(t: &DocTest) -> DocTestOutcome {
+fn run_one(t: &DocTest, original_source: Option<&str>) -> DocTestOutcome {
     let modifiers = &t.modifiers;
     if modifiers.contains(&DocTestModifier::Ignore) {
         return DocTestOutcome::Skipped("ignore modifier".to_string());
     }
-    if modifiers.contains(&DocTestModifier::MustVerify) {
-        // SMT verification — Plan 33; doc-test runner вызывает SMT
-        // pipeline отдельно (Plan 45 Ф.7.B). MVP: skip.
-        return DocTestOutcome::Skipped("must_verify not yet wired".to_string());
-    }
-
-    let synthetic = wrap_source(&t.full_source);
+    let synthetic = wrap_source(&t.full_source, original_source);
     // 1. Parse.
     let parse_result = crate::parser::parse(&synthetic);
     let compile_fail = modifiers.contains(&DocTestModifier::CompileFail);
+    let must_verify = modifiers.contains(&DocTestModifier::MustVerify);
 
     let mut module = match parse_result {
         Ok(m) => m,
@@ -96,7 +100,13 @@ fn run_one(t: &DocTest) -> DocTestOutcome {
             if compile_fail {
                 return DocTestOutcome::Passed;
             }
-            return DocTestOutcome::Failed(format!("parse error: {}", d.message));
+            // Plan 45 Ф.21.8: render diagnostic с span/snippet через
+            // существующую Diagnostic.render. Path помечен `<doc-test>`
+            // (синтетический source).
+            return DocTestOutcome::Failed(format!(
+                "parse error:\n{}",
+                d.render(&synthetic, "<doc-test>")
+            ));
         }
     };
 
@@ -105,17 +115,42 @@ fn run_one(t: &DocTest) -> DocTestOutcome {
         if compile_fail {
             return DocTestOutcome::Passed;
         }
-        let msg = errs
-            .iter()
-            .map(|d| d.message.clone())
-            .collect::<Vec<_>>()
-            .join("; ");
-        return DocTestOutcome::Failed(format!("type-check error: {}", msg));
+        // Plan 45 Ф.21.8: rendered diagnostics с span/snippet — берём
+        // первый error (тот, что наиболее indicative) + count'ом
+        // дополнительных.
+        let first = errs.first().expect("Err(_) implies non-empty");
+        let rendered = first.render(&synthetic, "<doc-test>");
+        let extra = if errs.len() > 1 {
+            format!("\n  (+{} more error{})", errs.len() - 1, if errs.len() == 2 { "" } else { "s" })
+        } else {
+            String::new()
+        };
+        return DocTestOutcome::Failed(format!("type-check error:\n{}{}", rendered, extra));
     }
 
     if compile_fail {
         // Ожидали ошибку — не получили.
         return DocTestOutcome::Failed("compile_fail: expected error, got success".to_string());
+    }
+
+    if must_verify {
+        // Plan 45 Ф.21.4: SMT verification через Plan 33 pipeline.
+        // Запускаем `verify_module` на синтетическом модуле; success
+        // ⇔ no errors. Counterexamples (warnings) — игнорируем (это
+        // hint'ы для контрактов без `#verify` — не наш кейс).
+        let report = crate::verify::pipeline::verify_module(&module);
+        if !report.errors.is_empty() {
+            // Ф.21.8: rendered diagnostics для SMT-failures.
+            let first = &report.errors[0];
+            let rendered = first.render(&synthetic, "<doc-test>");
+            let extra = if report.errors.len() > 1 {
+                format!("\n  (+{} more)", report.errors.len() - 1)
+            } else {
+                String::new()
+            };
+            return DocTestOutcome::Failed(format!("must_verify failed:\n{}{}", rendered, extra));
+        }
+        return DocTestOutcome::Passed;
     }
 
     if modifiers.contains(&DocTestModifier::NoRun) {
@@ -126,7 +161,10 @@ fn run_one(t: &DocTest) -> DocTestOutcome {
     crate::callnorm::normalize_module(&mut module);
     let mut interp = crate::interp::Interpreter::new();
     if let Err(d) = interp.load_module(&module) {
-        return DocTestOutcome::Failed(format!("load error: {}", d.message));
+        return DocTestOutcome::Failed(format!(
+            "load error:\n{}",
+            d.render(&synthetic, "<doc-test>")
+        ));
     }
     let run_result = interp.run_main();
     let should_panic = modifiers.contains(&DocTestModifier::ShouldPanic);
@@ -136,25 +174,61 @@ fn run_one(t: &DocTest) -> DocTestOutcome {
             DocTestOutcome::Failed("should_panic: expected panic, got success".to_string())
         }
         (Err(_), true) => DocTestOutcome::Passed,
-        (Err(d), false) => DocTestOutcome::Failed(format!("runtime error: {}", d.message)),
+        (Err(d), false) => DocTestOutcome::Failed(format!(
+            "runtime error:\n{}",
+            d.render(&synthetic, "<doc-test>")
+        )),
     }
 }
 
-/// Обернуть исходник doc-test'а в синтетический module + main.
+/// Обернуть исходник doc-test'а.
 ///
-/// Простая стратегия: если `source` уже содержит верхнеуровневые
-/// declarations (`fn`/`type`/`let`/`module`/`import`) — оставляем как
-/// есть, добавляя только префиксный `module __doctest__`. Иначе —
-/// обворачиваем тело в `fn main() => { <source> }`.
-fn wrap_source(source: &str) -> String {
-    if has_top_level_decl(source) {
-        return format!("module __doctest__\n{}", source);
+/// **Ф.21.1**: если предоставлен `original_source` документируемого
+/// файла, используем его как base (рустдок-style `use crate::*`):
+/// - Берём оригинальный source как есть.
+/// - Переименовываем `fn main` (если есть) → `__orig_main` (textual rewrite).
+/// - Добавляем test wrapped в новый `fn main`.
+/// Test получает доступ ко всем exports + imports оригинального модуля.
+///
+/// **Fallback** (None): synthetic `module __doctest__` без scope (для
+/// unit-тестов и backward-compat).
+fn wrap_source(test_source: &str, original_source: Option<&str>) -> String {
+    let test_part = if has_top_level_decl(test_source) {
+        test_source.to_string()
+    } else {
+        format!("fn main() -> () => {{\n{}\n}}", test_source)
+    };
+    match original_source {
+        Some(orig) => {
+            let cleaned = rename_main_in_source(orig);
+            format!("{}\n\n{}\n", cleaned, test_part)
+        }
+        None => format!("module __doctest__\n\n{}\n", test_part),
     }
-    // Тело main'а: оборачиваем в block-expression.
-    format!(
-        "module __doctest__\n\nfn main() -> () => {{\n{}\n}}",
-        source
-    )
+}
+
+/// Textual rewrite `fn main(` → `fn __orig_main(` (+ `export fn main(`
+/// variant). Per-line — robust для стандартного Nova formatting. Не
+/// затрагивает строки, начинающиеся с whitespace (тело других функций).
+fn rename_main_in_source(src: &str) -> String {
+    let mut out = String::with_capacity(src.len() + 32);
+    let mut first = true;
+    for line in src.lines() {
+        if !first {
+            out.push('\n');
+        }
+        first = false;
+        if let Some(rest) = line.strip_prefix("fn main(") {
+            out.push_str("fn __orig_main(");
+            out.push_str(rest);
+        } else if let Some(rest) = line.strip_prefix("export fn main(") {
+            out.push_str("export fn __orig_main(");
+            out.push_str(rest);
+        } else {
+            out.push_str(line);
+        }
+    }
+    out
 }
 
 fn has_top_level_decl(source: &str) -> bool {
@@ -231,25 +305,57 @@ mod tests {
     }
 
     #[test]
-    fn must_verify_skipped() {
+    fn must_verify_passes_trivial() {
+        // Ф.21.4: must_verify wiring к Plan 33 SMT. Trivial-test без
+        // контрактов → verify_module не возвращает errors → Passed.
         let t = make_test("let x = 1\n", vec![DocTestModifier::MustVerify]);
         let s = run_doc_tests(std::slice::from_ref(&t));
-        assert!(matches!(s.results[0].outcome, DocTestOutcome::Skipped(_)));
+        assert_eq!(s.results[0].outcome, DocTestOutcome::Passed,
+            "must_verify on trivial test should pass (no contracts → no SMT failures): {:?}",
+            s.results[0].outcome);
     }
 
     #[test]
     fn wraps_body_correctly() {
-        let wrapped = wrap_source("let x = 1\n");
+        let wrapped = wrap_source("let x = 1\n", None);
         assert!(wrapped.contains("fn main"));
         assert!(wrapped.contains("let x = 1"));
     }
 
     #[test]
     fn top_level_decl_not_wrapped_in_main() {
-        let wrapped = wrap_source("fn helper() -> int => 42\n");
+        let wrapped = wrap_source("fn helper() -> int => 42\n", None);
         // Не должно быть обёртки в main — оставлено как есть.
         assert!(!wrapped.contains("fn main"));
         assert!(wrapped.contains("fn helper"));
+    }
+
+    #[test]
+    fn wrap_with_original_source_injects_module() {
+        let orig = "module my.mod\n\nexport fn double(x int) -> int => x * 2\n";
+        let wrapped = wrap_source("let r = double(3)\n", Some(orig));
+        assert!(wrapped.contains("module my.mod"));
+        assert!(wrapped.contains("fn double"));
+        assert!(wrapped.contains("fn main"));
+        assert!(wrapped.contains("let r = double(3)"));
+    }
+
+    #[test]
+    fn rename_main_handles_both_forms() {
+        let s = "fn main() => println(\"hi\")\nfn helper() -> int => 1\n";
+        let r = rename_main_in_source(s);
+        assert!(r.starts_with("fn __orig_main()"));
+        assert!(r.contains("fn helper")); // helper untouched
+
+        let s2 = "export fn main(args []str) -> int => 0\n";
+        let r2 = rename_main_in_source(s2);
+        assert!(r2.starts_with("export fn __orig_main("));
+    }
+
+    #[test]
+    fn rename_main_no_main_unchanged() {
+        let s = "module x\n\nexport fn other() => ()\n";
+        assert_eq!(rename_main_in_source(s), s.trim_end());
     }
 
     // Suppress dead-code warning for Span import.

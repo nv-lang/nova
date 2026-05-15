@@ -411,6 +411,72 @@ type Db effect {
 
 ---
 
+## Следующий шаг: установить Z3
+
+### Зачем
+
+9 тестов в `nova_tests/contracts/` постоянно SKIP потому что Z3 не установлен.
+Без Z3 Plan 33.3 (Ф.10–Ф.14) невозможно двигать вперёд — всё, что требует
+нетривиального SMT-доказательства, упирается в TrivialBackend.
+
+### Порядок выполнения
+
+#### Шаг 1 — установить Z3 через vcpkg
+
+```bash
+# Windows (x64):
+cd compiler-codegen
+vcpkg install --triplet x64-windows-static --x-manifest-root=.
+
+# Linux (x64):
+cd compiler-codegen
+vcpkg install --triplet x64-linux --x-manifest-root=.
+```
+
+`vcpkg.json` уже содержит `z3` — ставить вручную не нужно.
+Результат: `vcpkg_installed/<triplet>/lib/libz3.a` (или `.lib` на Windows).
+
+#### Шаг 2 — пересобрать с feature `z3-backend`
+
+```bash
+cd nova-cli
+cargo build --release --features z3-backend
+```
+
+#### Шаг 3 — запустить 9 z3-only тестов
+
+```bash
+NOVA_SMT_BACKEND=z3 nova-cli/target/release/nova test nova_tests/contracts/
+# Ожидаемо: 91 PASS, 0 SKIP
+```
+
+#### Шаг 4 — если тесты PASS, снять маркеры и зафиксировать
+
+После прохождения можно убрать `// REQUIRES_SMT_BACKEND z3` из файлов,
+которые прошли без Z3-специфики (либо оставить — зависит от CI стратегии).
+
+#### Шаг 5 — продолжить Plan 33.3
+
+Разблокированные фазы:
+- **Ф.10**: Ghost state full codegen + `assume` + bounded quantifiers
+- **Ф.11**: IEEE 754 FP + strings (Seq) + Set[T]/Map[K,V] в SMT
+- **Ф.12**: Incremental cache + parallel verification + Z3↔CVC5 cross-check
+- **Ф.13**: `#must_verify_module` + `#trusted` external + AI-friendly JSON diag
+- **Ф.14**: Dafny-parity 20 примеров
+
+Также разблокируется:
+- **[V15]**: Generic axioms в SMT (сейчас возвращает Unknown)
+- **[V16]**: `post(Action)(view)` для block-body хендлеров
+
+### Что делать при ошибке сборки
+
+- `libz3.a not found` → vcpkg не завершил установку. Повторить шаг 1.
+- `z3-backend feature not enabled` → nova-codegen собран без feature.
+  Использовать `cargo build --release --features z3-backend` в `nova-cli/`.
+- SKIP вместо PASS → `NOVA_SMT_BACKEND=z3` не задан в окружении.
+
+---
+
 ## Z3 dev-setup
 
 ### Как работает linkage

@@ -6,9 +6,107 @@
 //! отдельные модули в `doc/passes/`.
 
 use crate::ast::{
-    ConstDecl, FnDecl, Item, Module, ModuleAttrKind, TypeDecl, TypeDeclKind,
+    ConstDecl, DocAttr, FnDecl, Item, Module, ModuleAttrKind, TypeDecl, TypeDeclKind,
 };
 use crate::doc::doctree::*;
+
+/// Plan 45 Ф.3 / D105: распарсенные doc-attrs → структурированные
+/// поля DocItem. Возвращается tuple для пер-call site применения.
+struct ExtractedDocAttrs {
+    deprecation: Option<Deprecation>,
+    stability: Option<Stability>,
+    aliases: Vec<String>,
+    hide_doc: bool,
+    summary_override: Option<String>,
+    doc_test_handlers: Option<String>,
+}
+
+fn extract_doc_attrs(attrs: &[DocAttr]) -> ExtractedDocAttrs {
+    let mut deprecation: Option<Deprecation> = None;
+    let mut aliases: Vec<String> = Vec::new();
+    let mut hide_doc = false;
+    let mut summary_override: Option<String> = None;
+    let mut doc_test_handlers: Option<String> = None;
+
+    // Pass 1: собрать explicit `#since(...)` (order-independent с tier'ом).
+    let mut explicit_since: Option<String> = None;
+    for a in attrs {
+        if let DocAttr::Since(v) = a {
+            explicit_since = Some(v.clone());
+        }
+    }
+
+    // Pass 2: tier + остальные атрибуты.
+    let mut tier: Option<StabilityTier> = None;
+    let mut tier_since: Option<String> = None;
+    let mut tier_feature: Option<String> = None;
+    let mut tier_note: Option<String> = None;
+    for a in attrs {
+        match a {
+            DocAttr::Deprecated { since, note, until: _ } => {
+                deprecation = Some(Deprecation {
+                    note: note.clone().unwrap_or_default(),
+                    since: since.clone().or_else(|| explicit_since.clone()),
+                });
+            }
+            DocAttr::Since(_) => {}
+            DocAttr::Stable { since } => {
+                tier = Some(StabilityTier::Stable);
+                tier_since = since.clone().or_else(|| explicit_since.clone());
+            }
+            DocAttr::Unstable { feature } => {
+                tier = Some(StabilityTier::Unstable);
+                tier_since = explicit_since.clone();
+                tier_feature = feature.clone();
+            }
+            DocAttr::Experimental { note } => {
+                tier = Some(StabilityTier::Experimental);
+                tier_since = explicit_since.clone();
+                tier_note = note.clone();
+            }
+            DocAttr::HideDoc => hide_doc = true,
+            DocAttr::DocAlias(xs) => aliases.extend(xs.iter().cloned()),
+            DocAttr::DocInline | DocAttr::DocNoInline => {}
+            DocAttr::DocSummary(s) => summary_override = Some(s.clone()),
+            DocAttr::DocSection(_) => {}
+            DocAttr::DocTestHandlers(p) => doc_test_handlers = Some(p.clone()),
+        }
+    }
+    let stability = match tier {
+        Some(t) => Some(Stability {
+            tier: t,
+            since: tier_since,
+            feature: tier_feature,
+            note: tier_note,
+        }),
+        None => explicit_since.as_ref().map(|v| Stability {
+            tier: if is_post_1_0_version(v) {
+                StabilityTier::Stable
+            } else {
+                StabilityTier::Unstable
+            },
+            since: Some(v.clone()),
+            feature: None,
+            note: None,
+        }),
+    };
+    aliases.sort();
+    aliases.dedup();
+    ExtractedDocAttrs {
+        deprecation,
+        stability,
+        aliases,
+        hide_doc,
+        summary_override,
+        doc_test_handlers,
+    }
+}
+
+fn is_post_1_0_version(v: &str) -> bool {
+    let v = v.trim().trim_start_matches('v');
+    let major = v.split('.').next().unwrap_or("0");
+    matches!(major.parse::<u32>(), Ok(n) if n >= 1)
+}
 
 /// Plan 45 Ф.4 — построить `DocTree` из парсенного, type-checked `Module`.
 ///
@@ -24,11 +122,28 @@ use crate::doc::doctree::*;
 ///   module-attr (D101).
 pub fn collect(module: &Module) -> DocTree {
     let mut tree = DocTree::new();
-    let module_path = module.name.clone();
+    tree.modules.push(collect_one(module));
+    tree
+}
 
+/// Plan 45 Ф.21.7: workspace mode — собрать многомодульный DocTree.
+/// Modules уже type-checked + effects-inferred caller'ом. Порядок modules
+/// в tree.modules — сортируется по `path` для детерминизма.
+pub fn collect_workspace(modules: &[Module]) -> DocTree {
+    let mut tree = DocTree::new();
+    for m in modules {
+        tree.modules.push(collect_one(m));
+    }
+    // Deterministic order: по path.
+    tree.modules.sort_by(|a, b| a.path.cmp(&b.path));
+    tree
+}
+
+/// Helper: один Module → DocModule.
+fn collect_one(module: &Module) -> DocModule {
+    let module_path = module.name.clone();
     // Module-level documentation: концат `//!` (inner doc) + все
-    // `#doc "..."` module-attr строки (alphabetical filename order
-    // уже обеспечивается parser'ом).
+    // `#doc "..."` module-attr строки.
     let mut module_doc_parts: Vec<String> = Vec::new();
     for attr in &module.attrs {
         if let ModuleAttrKind::Doc(s) = &attr.kind {
@@ -49,21 +164,12 @@ pub fn collect(module: &Module) -> DocTree {
     let mut items: Vec<DocItem> = Vec::new();
     for item in &module.items {
         match item {
-            Item::Fn(f) => {
-                items.push(collect_fn(&module_path, f));
-            }
-            Item::Type(t) => {
-                items.push(collect_type(&module_path, t));
-            }
-            Item::Const(c) => {
-                items.push(collect_const(&module_path, c));
-            }
-            // `Item::Let` / `Item::Test` / `Item::Lemma` не документируются.
+            Item::Fn(f) => items.push(collect_fn(&module_path, f)),
+            Item::Type(t) => items.push(collect_type(&module_path, t)),
+            Item::Const(c) => items.push(collect_const(&module_path, c)),
             Item::Let(_) | Item::Test(_) | Item::Lemma(_) => {}
         }
     }
-
-    // Deterministic order: по `id`.
     items.sort_by(|a, b| a.id.cmp(&b.id));
 
     let module_name = module_path.last().cloned().unwrap_or_default();
@@ -78,7 +184,7 @@ pub fn collect(module: &Module) -> DocTree {
         .filter_map(|pf| pf.path.file_name().map(|s| s.to_string_lossy().into_owned()))
         .collect();
 
-    tree.modules.push(DocModule {
+    DocModule {
         path: module_path,
         name: module_name,
         kind,
@@ -87,9 +193,7 @@ pub fn collect(module: &Module) -> DocTree {
         description: module_description,
         items,
         source_span: module.span,
-    });
-
-    tree
+    }
 }
 
 fn collect_fn(module_path: &[String], f: &FnDecl) -> DocItem {
@@ -98,13 +202,15 @@ fn collect_fn(module_path: &[String], f: &FnDecl) -> DocItem {
         Some(r) => format!("{}::{}.{}", module_str, r.type_name, f.name),
         None => format!("{}::{}", module_str, f.name),
     };
-    let (summary, description, sections) = crate::doc::doctree::split_doc(&f.doc);
+    let (summary_auto, description, sections) = crate::doc::doctree::split_doc(&f.doc);
     let visibility = if f.is_export {
         Visibility::Export
     } else {
         Visibility::Private
     };
     let signature = build_signature(f);
+    let attrs = extract_doc_attrs(&f.doc_attrs);
+    let summary = attrs.summary_override.clone().or(summary_auto);
     DocItem {
         id,
         module_path: module_path.to_vec(),
@@ -113,8 +219,11 @@ fn collect_fn(module_path: &[String], f: &FnDecl) -> DocItem {
         summary,
         description,
         sections,
-        deprecation: None,
-        stability: None,
+        deprecation: attrs.deprecation,
+        stability: attrs.stability,
+        aliases: attrs.aliases,
+        hide_doc: attrs.hide_doc,
+        doc_test_handlers: attrs.doc_test_handlers,
         kind: ItemKind::Fn(signature),
         source_span: f.span,
     }
@@ -123,12 +232,14 @@ fn collect_fn(module_path: &[String], f: &FnDecl) -> DocItem {
 fn collect_type(module_path: &[String], t: &TypeDecl) -> DocItem {
     let module_str = module_path.join(".");
     let id = format!("{}::{}", module_str, t.name);
-    let (summary, description, sections) = crate::doc::doctree::split_doc(&t.doc);
+    let (summary_auto, description, sections) = crate::doc::doctree::split_doc(&t.doc);
     let visibility = if t.is_export {
         Visibility::Export
     } else {
         Visibility::Private
     };
+    let attrs = extract_doc_attrs(&t.doc_attrs);
+    let summary = attrs.summary_override.clone().or(summary_auto);
     let kind = match &t.kind {
         TypeDeclKind::Record(fields) => {
             let record_fields = fields
@@ -228,8 +339,11 @@ fn collect_type(module_path: &[String], t: &TypeDecl) -> DocItem {
         summary,
         description,
         sections,
-        deprecation: None,
-        stability: None,
+        deprecation: attrs.deprecation,
+        stability: attrs.stability,
+        aliases: attrs.aliases,
+        hide_doc: attrs.hide_doc,
+        doc_test_handlers: attrs.doc_test_handlers,
         kind,
         source_span: t.span,
     }
@@ -238,12 +352,14 @@ fn collect_type(module_path: &[String], t: &TypeDecl) -> DocItem {
 fn collect_const(module_path: &[String], c: &ConstDecl) -> DocItem {
     let module_str = module_path.join(".");
     let id = format!("{}::{}", module_str, c.name);
-    let (summary, description, sections) = crate::doc::doctree::split_doc(&c.doc);
+    let (summary_auto, description, sections) = crate::doc::doctree::split_doc(&c.doc);
     let visibility = if c.is_export {
         Visibility::Export
     } else {
         Visibility::Private
     };
+    let attrs = extract_doc_attrs(&c.doc_attrs);
+    let summary = attrs.summary_override.clone().or(summary_auto);
     let ty = c
         .ty
         .as_ref()
@@ -257,8 +373,11 @@ fn collect_const(module_path: &[String], c: &ConstDecl) -> DocItem {
         summary,
         description,
         sections,
-        deprecation: None,
-        stability: None,
+        deprecation: attrs.deprecation,
+        stability: attrs.stability,
+        aliases: attrs.aliases,
+        hide_doc: attrs.hide_doc,
+        doc_test_handlers: attrs.doc_test_handlers,
         kind: ItemKind::Const {
             ty,
             value: render_expr(&c.value),

@@ -1,0 +1,40 @@
+//! Plan 45 Ф.21.3 / D105 — real doc-attrs через parser.
+//!
+//! Демонстрирует все 8 атрибутов D105:
+//! - `#deprecated(since=..., note=..., until=?)`
+//! - `#since("X")` или `#since(version="X")`
+//! - `#stable[(since=...)]`
+//! - `#unstable(feature=...)`
+//! - `#experimental(note=...)`
+//! - `#hide_doc`
+//! - `#doc_alias("a", "b", ...)`
+//! - `#doc(inline)` / `#doc(no_inline)` / `#doc(summary=...)` /
+//!   `#doc(section=...)` / `#doc(test_handlers=...)`
+
+module nova_tests.doc.fixtures.real_attrs.sample
+
+/// Старая функция сложения.
+#deprecated(since = "0.4.0", note = "use [add] instead")
+export fn plus(a int, b int) -> int => a + b
+
+/// Стабильное API.
+#stable(since = "1.0.0")
+#doc_alias("sum", "plus")
+export fn add(a int, b int) -> int => a + b
+
+/// Экспериментальная.
+#experimental(note = "may change in 0.5")
+#since("0.3.0")
+export fn maybe_add(a int, b int) -> int => a + b
+
+/// Internal helper.
+#hide_doc
+export fn _internal() -> int => 42
+
+/// Original summary (overridden).
+#doc(summary = "Computed override summary")
+export fn override_demo() -> int => 0
+
+/// Unstable feature-gated API.
+#unstable(feature = "channel_select")
+export fn select_channel() -> int => 0

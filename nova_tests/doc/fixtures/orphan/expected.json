@@ -30,11 +30,15 @@
   ],
   "items": [
     {
+      "aliases": [
+
+      ],
       "deprecation": null,
       "description": null,
       "doc_attrs": [
 
       ],
+      "doc_test_handlers": null,
       "id": "nova_tests.doc.fixtures.orphan.sample::id",
       "kind": "fn",
       "module_path": "nova_tests.doc.fixtures.orphan.sample",

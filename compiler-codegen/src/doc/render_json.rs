@@ -121,6 +121,12 @@ fn write_module(w: &mut JsonWriter, m: &DocModule) {
 }
 
 fn write_item(w: &mut JsonWriter, it: &DocItem) {
+    // alphabetical key order: aliases < deprecation < description < doc_attrs < doc_test_handlers < id
+    w.field_array("aliases", |w| {
+        for a in &it.aliases {
+            w.array_str(a);
+        }
+    });
     match &it.deprecation {
         None => w.field_null_or_str("deprecation", None),
         Some(d) => w.field_object("deprecation", |w| {
@@ -130,6 +136,7 @@ fn write_item(w: &mut JsonWriter, it: &DocItem) {
     }
     w.field_null_or_str("description", it.description.as_deref());
     w.field_array("doc_attrs", |_| {});
+    w.field_null_or_str("doc_test_handlers", it.doc_test_handlers.as_deref());
     w.field_str("id", &it.id);
     w.field_str("kind", item_kind_str(&it.kind));
     w.field_str("module_path", &it.module_path.join("."));
@@ -147,6 +154,9 @@ fn write_item(w: &mut JsonWriter, it: &DocItem) {
     match &it.stability {
         None => w.field_null_or_str("stability", None),
         Some(s) => w.field_object("stability", |w| {
+            // alphabetical: feature < note < since < tier
+            w.field_null_or_str("feature", s.feature.as_deref());
+            w.field_null_or_str("note", s.note.as_deref());
             w.field_null_or_str("since", s.since.as_deref());
             w.field_str("tier", s.tier.as_str());
         }),

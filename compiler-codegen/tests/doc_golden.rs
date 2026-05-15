@@ -103,3 +103,8 @@ fn golden_doctests() {
 fn golden_stability() {
     run_one("stability");
 }
+
+#[test]
+fn golden_real_attrs() {
+    run_one("real_attrs");
+}

@@ -39,11 +39,15 @@
   ],
   "items": [
     {
+      "aliases": [
+
+      ],
       "deprecation": null,
       "description": "Длинное описание: возвращает целочисленный quotient. Для нулевого\n`b` функция возвращает ошибку через effect-row.",
       "doc_attrs": [
 
       ],
+      "doc_test_handlers": null,
       "id": "nova_tests.doc.fixtures.sections.sample::divide",
       "kind": "fn",
       "module_path": "nova_tests.doc.fixtures.sections.sample",
@@ -59,6 +63,8 @@
         "line": 27
       },
       "stability": {
+        "feature": null,
+        "note": null,
         "since": "0.1.0",
         "tier": "unstable"
       },

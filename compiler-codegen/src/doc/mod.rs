@@ -46,6 +46,21 @@ use crate::ast::Module;
 /// сигнатуры валидны).
 pub fn build(module: &Module) -> DocTree {
     let mut tree = collector::collect(module);
+    // `#hide_doc` фильтруется до link-resolution, чтобы ссылки на скрытые
+    // items сразу попадали в broken-list.
+    strip_hidden_doc(&mut tree);
+    links::resolve_intra_doc_links(&mut tree);
+    doctests::collect_doc_tests(&mut tree);
+    stability::propagate_stability(&mut tree);
+    tree
+}
+
+/// Plan 45 Ф.21.7 — workspace-режим: построить unified DocTree из
+/// нескольких модулей. Cross-module intra-doc-links резолвятся
+/// корректно — links pass видит все items.
+pub fn build_workspace(modules: &[Module]) -> DocTree {
+    let mut tree = collector::collect_workspace(modules);
+    strip_hidden_doc(&mut tree);
     links::resolve_intra_doc_links(&mut tree);
     doctests::collect_doc_tests(&mut tree);
     stability::propagate_stability(&mut tree);
@@ -57,6 +72,14 @@ pub fn build(module: &Module) -> DocTree {
 pub fn strip_private(tree: &mut DocTree) {
     for m in &mut tree.modules {
         m.items.retain(|it| it.visibility == doctree::Visibility::Export);
+    }
+}
+
+/// Plan 45 Ф.3 / D105: pass `strip_hidden_doc` — отбрасывает items с
+/// `#hide_doc` attr. Применяется ВСЕГДА (это explicit сигнал автора).
+pub fn strip_hidden_doc(tree: &mut DocTree) {
+    for m in &mut tree.modules {
+        m.items.retain(|it| !it.hide_doc);
     }
 }
 

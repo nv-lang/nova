@@ -64,8 +64,11 @@ jobs:
       - name: Build nova-cli (release)
         run: cargo build --release --manifest-path nova-cli/Cargo.toml
       - name: Run nova doc --test on fixtures
+        shell: bash
         run: |
           set -e
+          shopt -s globstar
+          # `**` без globstar матчит только один уровень — Ф.21.6 fix.
           for f in nova_tests/doc/fixtures/**/sample.nv; do
             echo "::group::test $f"
             ./nova-cli/target/release/nova doc "$f" --test
@@ -81,3 +84,7 @@ jobs:
         run: "cargo test --release --manifest-path compiler-codegen/Cargo.toml --lib doc::"
       - name: "Run cargo test --test doc_golden"
         run: "cargo test --release --manifest-path compiler-codegen/Cargo.toml --test doc_golden"
+      - name: "Run cargo test --test doc_schema_shape (Ф.21.5)"
+        run: "cargo test --release --manifest-path compiler-codegen/Cargo.toml --test doc_schema_shape"
+      - name: "Run cargo test --test doc_perf (Ф.21.9)"
+        run: "cargo test --release --manifest-path compiler-codegen/Cargo.toml --test doc_perf"
