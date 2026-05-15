@@ -13,8 +13,9 @@ fn connect(host str, port int = 8080, tls bool = false) -> int {
 fn slice_len(xs []int, from int = 0, to int = xs.len) -> int =>
     to - from
 
-test "все позиционно" {
-    assert(connect("ab", 80, true) == 2 + 80 + 1)
+test "обязательный позиционно + дефолтные по имени" {
+    // Plan 50 (D102 ревизия): port/tls с дефолтом — keyword-only.
+    assert(connect("ab", port: 80, tls: true) == 2 + 80 + 1)
 }
 
 test "все дефолты" {
@@ -29,8 +30,9 @@ test "именованные переставлены" {
     assert(connect("ab", tls: true, port: 80) == 2 + 80 + 1)
 }
 
-test "часть позиционно, часть именованно" {
-    assert(connect("ab", 80, tls: true) == 2 + 80 + 1)
+test "часть именованно, часть через дефолт" {
+    // port именованный, tls опущен (дефолт false).
+    assert(connect("ab", port: 80) == 2 + 80 + 0)
 }
 
 test "опущенный средний параметр через дефолт" {
