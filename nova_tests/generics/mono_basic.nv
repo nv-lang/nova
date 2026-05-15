@@ -1,0 +1,20 @@
+module nova_tests.generics.mono_basic
+
+fn identity[T](x T) -> T { x }
+
+fn apply[T](f fn(T) -> T, x T) -> T { f(x) }
+
+test "mono: identity int" {
+    let r = identity[int](42)
+    assert(r == 42)
+}
+
+test "mono: identity str" {
+    let r = identity[str]("hello")
+    assert(r == "hello")
+}
+
+test "mono: apply closure" {
+    let r = apply[int](fn(x int) -> int { x + 1 }, 10)
+    assert(r == 11)
+}
