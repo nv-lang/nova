@@ -264,11 +264,44 @@ impl VerificationPipeline {
             }
         }
 
+        // 2.5. Ф.4.1: применить `apply lemma(args)` из тела fn.
+        // Для каждого apply-statement в блоке: найти лемму в модуле,
+        // замените lemma.params → args в каждом ensures, assert в backend.
+        // Это даёт caller доступ к lemma.ensures как аксиоме SMT.
+        for (lemma_name, args, apply_span) in collect_apply_stmts_in_body(&fd.body) {
+            if let Some(lemma_ensures) = find_lemma_ensures(module, &lemma_name) {
+                for (param_names, ensures_expr) in &lemma_ensures {
+                    if param_names.len() != args.len() { continue; }
+                    // Кодируем args в SMT.
+                    let encoded_args: Vec<Option<SmtTerm>> = args.iter()
+                        .map(|a| encode::encode_expr_with_ctx(a, &ctx).ok())
+                        .collect();
+                    if encoded_args.iter().any(|a| a.is_none()) { continue; }
+                    // Кодируем ensures_expr лемммы.
+                    if let Ok(ensures_term) = encode::encode_expr_with_ctx(ensures_expr, &ctx) {
+                        // Подставляем: каждый param_name → encoded_arg.
+                        let mut term = ensures_term;
+                        for (pname, enc_arg) in param_names.iter().zip(encoded_args.iter()) {
+                            if let Some(ea) = enc_arg {
+                                term = term.substitute(pname, ea);
+                            }
+                        }
+                        backend.assert(Assertion {
+                            formula: term,
+                            label: Some(format!("apply@{}:{}", lemma_name, apply_span.start)),
+                        });
+                    }
+                }
+            }
+        }
+
         // 3. Encode body value. РўРѕР»СЊРєРѕ РґР»СЏ `=> expr` С„РѕСЂРј
         // (block-bodies СЃ trailing-only С‚РѕР¶Рµ OK).
+        // Ф.4.1: блок, содержащий только ghost `apply`-стейтменты, тоже считается
+        // trailing-only — apply стираются в runtime, не влияют на значение body.
         let body_val = match &fd.body {
             FnBody::Expr(e) => encode::encode_expr_with_ctx(e, &ctx).ok(),
-            FnBody::Block(b) if b.stmts.is_empty() => {
+            FnBody::Block(b) if block_has_only_ghost_stmts(b) => {
                 b.trailing.as_ref().and_then(|e| encode::encode_expr_with_ctx(e, &ctx).ok())
             }
             _ => None,
@@ -517,6 +550,106 @@ impl VerificationPipeline {
         }
 
         let _ = self.timeout_ms; // РёСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ РєРѕРіРґР° РґРѕР±Р°РІРёРј Z3-backend
+        results
+    }
+
+    /// Ф.4.1: верификация тела леммы.
+    ///
+    /// Лемма = proven proof term: её `ensures` должны следовать из `requires`
+    /// и тела (body). Модель проверки идентична verify_fn, но:
+    /// - Лемма обязана верифицироваться (hard error если нет).
+    /// - Нет decreases / loop invariants (V1 scope).
+    /// - Нет effectful params.
+    pub fn verify_lemma(
+        &self,
+        module: &Module,
+        ld: &LemmaDecl,
+        inferred_pure: &std::collections::HashSet<String>,
+    ) -> Vec<(Span, VerifyResult)> {
+        if ld.contracts.is_empty() { return Vec::new(); }
+
+        let mut backend = self.create_backend();
+        let pure_views = collect_pure_views(module);
+        let pure_fns = collect_pure_fns(module, inferred_pure);
+        let ctx = super::encode::EncodeCtx { pure_views: &pure_views, pure_fns: &pure_fns };
+
+        // Pre-declare pure_view UFs.
+        for (op_name, sig) in &pure_views {
+            let uf = super::encode::pure_view_uf_name(&sig.effect_name, op_name);
+            backend.declare_function(&uf, &sig.param_sorts, sig.return_sort.clone());
+        }
+        // Pre-declare pure_fn UFs.
+        for (fn_name, info) in &pure_fns {
+            let uf = super::encode::pure_fn_uf_name(fn_name);
+            backend.declare_function(&uf, &info.param_sorts, info.return_sort.clone());
+        }
+
+        // Объявляем параметры леммы как SMT переменные.
+        for p in &ld.params {
+            let sort = type_to_sort(&p.ty);
+            backend.declare_var(&p.name, sort);
+        }
+
+        // Assert requires.
+        let mut requires_failed = false;
+        for c in &ld.contracts {
+            if matches!(c.kind, ContractKind::Requires) {
+                match encode::encode_expr_with_ctx(&c.expr, &ctx) {
+                    Ok(t) => backend.assert(Assertion {
+                        formula: t,
+                        label: Some(format!("lemma_requires@{}", c.span.start)),
+                    }),
+                    Err(_) => { requires_failed = true; }
+                }
+            }
+        }
+
+        // Encode body value (лемма — это доказательство, body = proof term).
+        let body_val = match &ld.body {
+            FnBody::Expr(e) => encode::encode_expr_with_ctx(e, &ctx).ok(),
+            FnBody::Block(b) if block_has_only_ghost_stmts(b) => {
+                b.trailing.as_ref().and_then(|e| encode::encode_expr_with_ctx(e, &ctx).ok())
+            }
+            _ => None,
+        };
+
+        // Verify each ensures clause.
+        let mut results = Vec::new();
+        for c in &ld.contracts {
+            if !matches!(c.kind, ContractKind::Ensures) { continue; }
+            if requires_failed {
+                results.push((c.span, VerifyResult::EncodingFailed(
+                    "lemma requires-context failed to encode".into())));
+                continue;
+            }
+            let encoded = match encode::encode_expr_with_ctx(&c.expr, &ctx) {
+                Ok(t) => t,
+                Err(super::encode::EncodingError::Unsupported(msg)) => {
+                    results.push((c.span, VerifyResult::EncodingFailed(msg)));
+                    continue;
+                }
+            };
+            let goal = if let Some(bv) = &body_val {
+                encoded.substitute("result", bv)
+            } else {
+                results.push((c.span, VerifyResult::EncodingFailed(
+                    "lemma body not encodable".into())));
+                continue;
+            };
+            let goal = substitute_old(&goal);
+            match try_prove(&mut *backend, goal) {
+                SatResult::Unsat(_) => results.push((c.span, VerifyResult::Proven)),
+                SatResult::Sat(model) => {
+                    let cex = format_counterexample(&model);
+                    results.push((c.span, VerifyResult::Disproved(model, cex)));
+                }
+                SatResult::Unknown(reason) => {
+                    results.push((c.span, VerifyResult::Unknown(
+                        unknown_to_diag_message(reason))));
+                }
+            }
+        }
+
         results
     }
 }
@@ -973,7 +1106,77 @@ fn find_recursive_calls_in_expr(e: &Expr, fn_name: &str, out: &mut Vec<(Span, Ve
     }
 }
 
-/// Plan 33.4 D.0.3: СЃРѕР±СЂР°С‚СЊ РІСЃРµ loop invariant'С‹ РёР· С‚РµР»Р° С„СѓРЅРєС†РёРё.
+/// Ф.4.1: блок "ghost-only" — все стейтменты ghost (`apply`).
+/// Такой блок при верификации трактуется как trailing-only (apply стираются).
+fn block_has_only_ghost_stmts(b: &Block) -> bool {
+    b.stmts.iter().all(|s| matches!(s, Stmt::Apply { .. }))
+}
+
+/// Ф.4.1: собрать все `apply lemma(args)` из тела функции.
+/// Возвращает Vec<(lemma_name, args, span)>.
+fn collect_apply_stmts_in_body(body: &FnBody) -> Vec<(String, Vec<Expr>, Span)> {
+    let mut out = Vec::new();
+    match body {
+        FnBody::Block(b) => collect_apply_in_block(b, &mut out),
+        FnBody::Expr(_) | FnBody::External => {}
+    }
+    out
+}
+
+fn collect_apply_in_block(b: &Block, out: &mut Vec<(String, Vec<Expr>, Span)>) {
+    for s in &b.stmts {
+        collect_apply_in_stmt(s, out);
+    }
+}
+
+fn collect_apply_in_stmt(s: &Stmt, out: &mut Vec<(String, Vec<Expr>, Span)>) {
+    match s {
+        Stmt::Apply { lemma, args, span } => {
+            out.push((lemma.clone(), args.clone(), *span));
+        }
+        Stmt::Let(d) => collect_apply_in_expr(&d.value, out),
+        Stmt::Expr(e) => collect_apply_in_expr(e, out),
+        _ => {}
+    }
+}
+
+fn collect_apply_in_expr(e: &Expr, out: &mut Vec<(String, Vec<Expr>, Span)>) {
+    use crate::ast::ElseBranch;
+    match &e.kind {
+        ExprKind::Block(b) => collect_apply_in_block(b, out),
+        ExprKind::If { cond, then, else_: Some(el), .. } => {
+            collect_apply_in_expr(cond, out);
+            collect_apply_in_block(then, out);
+            match el {
+                ElseBranch::Block(b) => collect_apply_in_block(b, out),
+                ElseBranch::If(ie) => collect_apply_in_expr(ie, out),
+            }
+        }
+        ExprKind::If { cond, then, else_: None, .. } => {
+            collect_apply_in_expr(cond, out);
+            collect_apply_in_block(then, out);
+        }
+        _ => {}
+    }
+}
+
+/// Ф.4.1: найти лемму в модуле и вернуть её ensures-клаузы как
+/// Vec<(param_names, ensures_expr)>. None — лемма не найдена.
+fn find_lemma_ensures(module: &Module, name: &str) -> Option<Vec<(Vec<String>, Expr)>> {
+    for item in &module.items {
+        let Item::Lemma(ld) = item else { continue };
+        if ld.name != name { continue; }
+        let param_names: Vec<String> = ld.params.iter().map(|p| p.name.clone()).collect();
+        let ensures: Vec<(Vec<String>, Expr)> = ld.contracts.iter()
+            .filter(|c| matches!(c.kind, ContractKind::Ensures))
+            .map(|c| (param_names.clone(), c.expr.clone()))
+            .collect();
+        return Some(ensures);
+    }
+    None
+}
+
+/// Plan 33.4 D.0.3: СЃРѕР±СЂР°С‚СЊ РІСЃРµ loop invariant’С‹ РёР· С‚РµР»Р° С„СѓРЅРєС†РёРё.
 /// Р’РѕР·РІСЂР°С‰Р°РµС‚ Vec<(Span, Expr)> вЂ” span С†РёРєР»Р° + invariant expression.
 fn collect_loop_invariants_in_body(body: &FnBody) -> Vec<(Span, Expr)> {
     let mut out = Vec::new();
@@ -2115,11 +2318,45 @@ pub fn verify_module(module: &Module) -> ModuleVerifyReport {
                 }
             }
         }
+        // Ф.4.1: верифицируем все леммы модуля.
+        // Лемма — это proven proof term: failure = hard error (always MustVerify).
+        if let Item::Lemma(ld) = item {
+            if ld.contracts.is_empty() { continue; }
+            let results = pipeline.verify_lemma(module, ld, &inferred_pure);
+            for (span, vr) in results {
+                match vr {
+                    VerifyResult::Proven => {
+                        report.proven.push((ld.name.clone(), span));
+                    }
+                    VerifyResult::Disproved(_, cex) => {
+                        report.errors.push(Diagnostic::new(
+                            format!("lemma `{}` не доказана:\n  counterexample: {}\n  \
+                                     Лемма должна быть доказуема — проверьте requires/ensures/body.",
+                                ld.name, cex),
+                            span));
+                    }
+                    VerifyResult::Unknown(reason) => {
+                        report.errors.push(Diagnostic::new(
+                            format!("lemma `{}` не удалось верифицировать:\n  {}\n  \
+                                     Лемма требует полной верификации (не runtime fallback).",
+                                ld.name, reason),
+                            span));
+                    }
+                    VerifyResult::EncodingFailed(reason) => {
+                        report.errors.push(Diagnostic::new(
+                            format!("lemma `{}`: тело или контракт не encodable: {}\n  \
+                                     Только int/bool/str/record/binary-ops/if поддерживается в V1.",
+                                ld.name, reason),
+                            span));
+                    }
+                }
+            }
+        }
     }
     report
 }
 
-/// Aggregated РѕС‚С‡С‘С‚ РїРѕ РІРµСЂРёС„РёРєР°С†РёРё РјРѕРґСѓР»СЏ.
+/// Aggregated РѕС‚С‡С’С‚ РїРѕ РІРµСЂРёС„РёРєР°С†РёРё РјРѕРґСѓР»СЏ.
 #[derive(Debug, Default)]
 pub struct ModuleVerifyReport {
     /// Р”РѕРєР°Р·Р°РЅРЅС‹Рµ РєРѕРЅС‚СЂР°РєС‚С‹ вЂ” `(fn_name, span)`. РСЃРїРѕР»СЊР·СѓСЋС‚СЃСЏ codegen'РѕРј

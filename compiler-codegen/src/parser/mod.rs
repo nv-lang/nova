@@ -667,6 +667,7 @@ impl Parser {
             TokenKind::KwLet => Item::Let(self.parse_let_decl()?),
             TokenKind::KwConst => Item::Const(self.parse_const_decl(is_export)?),
             TokenKind::KwTest if !is_export => Item::Test(self.parse_test_decl()?),
+            TokenKind::KwLemma if !is_export && !is_external => Item::Lemma(self.parse_lemma_decl()?),
             _ => {
                 let span = self.peek().span;
                 return Err(Diagnostic::new(
@@ -1776,6 +1777,83 @@ impl Parser {
             name,
             body,
             span: start.merge(body_span),
+        })
+    }
+
+    // ─── lemma ───────────────────────────────────────────────────────────
+
+    /// Plan 33.5 Ф.4.1: `lemma name(params) requires P ensures Q { body }`.
+    ///
+    /// Синтаксис — упрощённый fn без effects/return_type/decreases/modifies.
+    /// Контракты: только `requires` и `ensures` (body доказывает ensures при requires).
+    fn parse_lemma_decl(&mut self) -> Result<LemmaDecl, Diagnostic> {
+        let start = self.expect(&TokenKind::KwLemma)?.span;
+        let name = match self.peek().kind.clone() {
+            TokenKind::Ident(n) => { self.bump(); n }
+            _ => return Err(Diagnostic::new(
+                "expected lemma name",
+                self.peek().span,
+            )),
+        };
+
+        // Generics: `[T]` form (optional).
+        let generics = if matches!(self.peek().kind, TokenKind::LBracket) {
+            self.parse_generic_decl_params()?
+        } else {
+            Vec::new()
+        };
+
+        // Params.
+        self.expect(&TokenKind::LParen)?;
+        let mut params = Vec::new();
+        while !matches!(self.peek().kind, TokenKind::RParen) {
+            params.push(self.parse_param()?);
+            if !matches!(self.peek().kind, TokenKind::RParen) {
+                self.expect(&TokenKind::Comma)?;
+            }
+        }
+        self.expect(&TokenKind::RParen)?;
+
+        // Contracts: requires / ensures (same parsing as in parse_fn).
+        let mut contracts = Vec::new();
+        loop {
+            self.skip_newlines();
+            let cstart = self.peek().span;
+            match self.peek().kind.clone() {
+                TokenKind::Ident(ref n) if n == "requires" => {
+                    self.bump();
+                    let expr = self.parse_expr()?;
+                    let span = cstart.merge(expr.span);
+                    contracts.push(Contract { kind: ContractKind::Requires, expr, span });
+                }
+                TokenKind::Ident(ref n) if n == "ensures" => {
+                    self.bump();
+                    let expr = self.parse_expr()?;
+                    let span = cstart.merge(expr.span);
+                    contracts.push(Contract { kind: ContractKind::Ensures, expr, span });
+                }
+                _ => break,
+            }
+        }
+
+        // Body: `=> expr` или `{ ... }` block (как у fn).
+        let (body, end_span) = if matches!(self.peek().kind, TokenKind::FatArrow) {
+            self.bump(); // consume `=>`
+            let expr = self.parse_expr()?;
+            let sp = expr.span;
+            (FnBody::Expr(expr), sp)
+        } else {
+            let b = self.parse_block()?;
+            let sp = b.span;
+            (FnBody::Block(b), sp)
+        };
+        Ok(LemmaDecl {
+            name,
+            generics,
+            params,
+            contracts,
+            body,
+            span: start.merge(end_span),
         })
     }
 
@@ -4327,6 +4405,29 @@ impl Parser {
                 let expr = self.parse_expr()?;
                 let span = start.merge(expr.span);
                 Ok(StmtOrExpr::Stmt(Stmt::Assume { expr, span }))
+            }
+            // Plan 33.5 Ф.4.1: `apply lemma_name(args)` — активация lemma.
+            TokenKind::KwApply => {
+                self.bump();
+                let name = match self.peek().kind.clone() {
+                    TokenKind::Ident(n) => { self.bump(); n }
+                    _ => return Err(Diagnostic::new(
+                        "expected lemma name after `apply`",
+                        self.peek().span,
+                    )),
+                };
+                // args — обязательный список в скобках, может быть пустым.
+                self.expect(&TokenKind::LParen)?;
+                let mut args = Vec::new();
+                while !matches!(self.peek().kind, TokenKind::RParen) {
+                    args.push(self.parse_expr()?);
+                    if !matches!(self.peek().kind, TokenKind::RParen) {
+                        self.expect(&TokenKind::Comma)?;
+                    }
+                }
+                let end = self.expect(&TokenKind::RParen)?.span;
+                let span = start.merge(end);
+                Ok(StmtOrExpr::Stmt(Stmt::Apply { lemma: name, args, span }))
             }
             _ => {
                 let expr = self.parse_expr()?;

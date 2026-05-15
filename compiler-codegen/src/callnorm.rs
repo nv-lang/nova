@@ -115,6 +115,8 @@ fn normalize_item(item: &mut Item, sigs: &Sigs) {
         Item::Const(c) => normalize_expr(&mut c.value, sigs),
         Item::Let(l) => normalize_expr(&mut l.value, sigs),
         Item::Type(_) => {}
+        // Ф.4.1: lemma не emit'ится в runtime — нормализацию пропускаем.
+        Item::Lemma(_) => {}
     }
 }
 
@@ -142,6 +144,10 @@ fn normalize_stmt(s: &mut Stmt, sigs: &Sigs) {
         Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. } => normalize_expr(body, sigs),
         Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => normalize_expr(expr, sigs),
         Stmt::Break(_) | Stmt::Continue(_) => {}
+        // Ф.4.1: apply — ghost, аргументы нормализуем.
+        Stmt::Apply { args, .. } => {
+            for a in args { normalize_expr(a, sigs); }
+        }
     }
 }
 

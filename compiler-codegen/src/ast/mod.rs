@@ -151,6 +151,28 @@ pub enum Item {
     Let(LetDecl),
     Const(ConstDecl),
     Test(TestDecl),
+    /// Plan 33.5 Ф.4.1: `lemma` — proven proof term.
+    /// Тело SMT-верифицируется (unknown == fail), не emit'ится в runtime.
+    /// Может применяться через `apply lemma_name(args)` в телах функций.
+    Lemma(LemmaDecl),
+}
+
+/// Plan 33.5 Ф.4.1: декларация lemma.
+///
+/// `lemma name(params) requires P ensures Q { proof_body }`
+///
+/// - Тело верифицируется SMT (`verify_mode == MustVerify` по умолчанию).
+/// - Не emit'ится в C (ghost, только для proof).
+/// - `apply name(args)` в теле fn добавляет `ensures[args/params]` как
+///   assertion в SMT-scope вызывающей fn (подстановкой аргументов).
+#[derive(Debug, Clone)]
+pub struct LemmaDecl {
+    pub name: String,
+    pub generics: Vec<GenericParam>,
+    pub params: Vec<Param>,
+    pub contracts: Vec<Contract>,
+    pub body: FnBody,
+    pub span: Span,
 }
 
 /// Функция: и свободная, и метод (через `receiver`).
@@ -682,6 +704,14 @@ pub enum Stmt {
     /// вне `#trusted` функции.
     Assume {
         expr: Expr,
+        span: Span,
+    },
+    /// Plan 33.5 Ф.4.1: `apply lemma_name(args)` — активировать lemma.
+    /// В SMT-scope: добавляет `ensures[args/params]` как assertion.
+    /// Не emit'ится в runtime (ghost statement).
+    Apply {
+        lemma: String,
+        args: Vec<Expr>,
         span: Span,
     },
 }

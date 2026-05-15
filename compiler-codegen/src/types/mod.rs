@@ -157,9 +157,10 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
                 }
                 env.consts.insert(cd.name.clone(), cd.clone());
             }
-            Item::Let(_) | Item::Test(_) => {
+            Item::Let(_) | Item::Test(_) | Item::Lemma(_) => {
                 // top-level let вЂ” РЅРµ РёСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ РІ Nova-РёСЃС…РѕРґРЅРёРєР°С…. test вЂ”
                 // СЂРµРіРёСЃС‚СЂРёСЂСѓРµС‚СЃСЏ РѕС‚РґРµР»СЊРЅРѕ, РёРјСЏ РЅРµ РєРѕРЅС„Р»РёРєС‚СѓРµС‚.
+                // Ф.4.1: lemma — ghost, только для proof; не регистрируется в env.
             }
         }
     }
@@ -452,6 +453,10 @@ impl<'a> BoundCtx<'a> {
             }
             // Plan 33.2 Р¤.8: assert_static вЂ” walk expr.
             Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => self.walk_expr(expr, scope, errors),
+            // Ф.4.1: apply — ghost statement, args walk'аем (для name resolution).
+            Stmt::Apply { args, .. } => {
+                for a in args { self.walk_expr(a, scope, errors); }
+            }
         }
     }
 
@@ -1384,6 +1389,8 @@ impl<'a> CapabilityCtx<'a> {
             }
             // Plan 33.2 Р¤.8: assert_static вЂ” walk expr.
             Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => self.walk_expr(expr, state, errors),
+            // Ф.4.1: apply — ghost, нет capability-эффектов.
+            Stmt::Apply { .. } => {}
         }
     }
 
@@ -1852,7 +1859,7 @@ impl NameResCtx {
                     Item::Const(cd) => {
                         out.insert(cd.name.clone());
                     }
-                    Item::Let(_) | Item::Test(_) => {}
+                    Item::Let(_) | Item::Test(_) | Item::Lemma(_) => {}
                 }
             }
         }
@@ -2002,6 +2009,7 @@ impl NameResCtx {
                 Item::Const(c) => c.span.file_id,
                 Item::Type(t) => t.span.file_id,
                 Item::Let(l) => l.span.file_id,
+                Item::Lemma(ld) => ld.span.file_id,
             };
             match item {
                 Item::Fn(f) => self.walk_fn(f, file_id, errors),
@@ -2099,6 +2107,10 @@ impl NameResCtx {
             // Plan 33.2 Р¤.8: assert_static вЂ” walk expr.
             Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => self.walk_expr(expr, file_id, scope, errors),
             Stmt::Break(_) | Stmt::Continue(_) => {}
+            // Ф.4.1: apply — ghost, args walk для name-resolution.
+            Stmt::Apply { args, .. } => {
+                for a in args { self.walk_expr(a, file_id, scope, errors); }
+            }
         }
     }
 
@@ -2691,6 +2703,8 @@ fn has_throw_in_stmt(s: &Stmt) -> bool {
         Stmt::Defer { .. } | Stmt::ErrDefer { .. } => false,
         // Plan 33.2 Р¤.8: assert_static вЂ” bool expr, no throw inside.
         Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => has_throw_in_expr(expr),
+        // Ф.4.1: apply — ghost, args могут содержать throw (теоретически нет, но проверяем).
+        Stmt::Apply { args, .. } => args.iter().any(has_throw_in_expr),
     }
 }
 
@@ -3369,6 +3383,9 @@ fn walk_block_for_handler_lits(b: &Block, never_ops: &HashSet<(String, String)>,
             }
             Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => walk_expr_for_handler_lits(expr, never_ops, errors),
             Stmt::Break(_) | Stmt::Continue(_) => {}
+            Stmt::Apply { args, .. } => {
+                for a in args { walk_expr_for_handler_lits(a, never_ops, errors); }
+            }
         }
     }
     if let Some(t) = &b.trailing { walk_expr_for_handler_lits(t, never_ops, errors); }
@@ -3704,6 +3721,9 @@ fn walk_block_for_defers(b: &Block, fn_effects: &HashMap<String, Vec<TypeRef>>, 
             Stmt::Throw { value, .. } => walk_expr_for_defers(value, fn_effects, errors),
             Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => walk_expr_for_defers(expr, fn_effects, errors),
             Stmt::Break(_) | Stmt::Continue(_) => {}
+            Stmt::Apply { args, .. } => {
+                for a in args { walk_expr_for_defers(a, fn_effects, errors); }
+            }
         }
     }
     if let Some(t) = &b.trailing {
@@ -4141,6 +4161,10 @@ fn check_defer_body_block(b: &Block, kw: &str, fn_effects: &HashMap<String, Vec<
             Stmt::ErrDefer { body, .. } => check_defer_body(body, true, fn_effects, errors),
             // Plan 33.2 Р¤.8: assert_static РІ defer body вЂ” walk expr.
             Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => check_defer_body_inner(expr, kw, fn_effects, ctx, errors),
+            // Ф.4.1: apply — ghost, args walk.
+            Stmt::Apply { args, .. } => {
+                for a in args { check_defer_body_inner(a, kw, fn_effects, ctx, errors); }
+            }
         }
     }
     if let Some(t) = &b.trailing {

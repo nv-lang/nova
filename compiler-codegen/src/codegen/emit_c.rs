@@ -584,7 +584,8 @@ impl CEmitter {
             | Stmt::Defer { span, .. }
             | Stmt::ErrDefer { span, .. }
             | Stmt::AssertStatic { span, .. }
-            | Stmt::Assume { span, .. } => *span,
+            | Stmt::Assume { span, .. }
+            | Stmt::Apply { span, .. } => *span,
             Stmt::Break(s) | Stmt::Continue(s) => *s,
         }
     }
@@ -6217,6 +6218,12 @@ impl CEmitter {
                     ));
                     self.line("#endif");
                 }
+            }
+            // Plan 33.5 Ф.4.1: `apply lemma_name(args)` — ghost statement,
+            // полностью стирается в codegen. SMT-семантика обрабатывается
+            // в verify/pipeline.rs (assert lemma.ensures[args/params]).
+            Stmt::Apply { .. } => {
+                // Ghost erasure — никакого C-кода не эмитируем.
             }
         }
         Ok(())
