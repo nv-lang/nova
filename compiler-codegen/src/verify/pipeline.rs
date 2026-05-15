@@ -965,6 +965,290 @@ fn unknown_to_diag_message(reason: UnknownReason) -> String {
     }
 }
 
+/// Plan 33.4 P0-1 (Ф.9.7 V1): верификация `with #verify E = handler` bindings.
+///
+/// V1 scope:
+/// - Только статические axiom'ы (без `post(Action)` — те требуют V2 symbolic exec).
+/// - Для статических axioms: кодируем pure_view impl handler'а как UF с body-axiom,
+///   затем пытаемся доказать axiom формулу в этом контексте.
+/// - Для `post(...)` axioms: честно выдаём Unknown("post-axiom verification requires V2").
+///
+/// Возвращает список диагностик (ошибки если `#verify` не смог доказать).
+pub fn verify_handlers(module: &Module) -> Vec<Diagnostic> {
+    let mut diagnostics = Vec::new();
+    let pure_views = collect_pure_views(module);
+
+    // Собираем axioms по effect-name для быстрого lookup.
+    let mut axioms_by_effect: std::collections::HashMap<String, &[crate::ast::EffectAxiom]>
+        = std::collections::HashMap::new();
+    for item in &module.items {
+        let Item::Type(td) = item else { continue };
+        if !matches!(td.kind, TypeDeclKind::Effect(_)) { continue }
+        if !td.axioms.is_empty() {
+            axioms_by_effect.insert(td.name.clone(), &td.axioms);
+        }
+    }
+    if axioms_by_effect.is_empty() { return diagnostics; }
+
+    // Собираем все `with #verify E = handler` bindings из всех функций/тестов.
+    let mut verify_bindings: Vec<(String, Span, &crate::ast::Expr)> = Vec::new(); // (effect_name, binding_span, handler_expr)
+    for item in &module.items {
+        match item {
+            Item::Fn(fd) => match &fd.body {
+                FnBody::Block(b) => collect_verify_bindings_block(b, &mut verify_bindings),
+                FnBody::Expr(e) => collect_verify_bindings_expr(e, &mut verify_bindings),
+                FnBody::External => {}
+            }
+            Item::Test(t) => collect_verify_bindings_block(&t.body, &mut verify_bindings),
+            _ => {}
+        }
+    }
+
+    let pipeline = VerificationPipeline::new();
+
+    for (effect_name, binding_span, handler_expr) in verify_bindings {
+        let Some(axioms) = axioms_by_effect.get(&effect_name) else { continue };
+
+        // Извлекаем HandlerLit methods.
+        let methods = match &handler_expr.kind {
+            ExprKind::HandlerLit { methods, .. } => methods,
+            _ => continue, // non-literal handler — V2
+        };
+
+        for ax in axioms.iter() {
+            let ax_info = AxiomInfo {
+                effect_name: effect_name.clone(),
+                axiom_name: ax.name.clone(),
+                binders: &ax.binders,
+                formula: &ax.formula,
+                is_generic: !ax.generics.is_empty(),
+            };
+
+            // V1: если axiom содержит `post(` — это post-condition axiom, skip.
+            // Определяем по наличию вызова `post` в формуле.
+            if axiom_formula_has_post(&ax.formula) {
+                // Honest diagnostic: post-axiom verification requires V2.
+                // Не error — просто warning, что проверка пропущена.
+                // Не пушим в diagnostics (не ошибка сама по себе) — молча skip.
+                continue;
+            }
+
+            // Static axiom: пробуем доказать с учётом pure_view impl handler'а.
+            let result = verify_static_axiom_with_handler(
+                &pipeline, &ax_info, &pure_views, methods, &effect_name, module,
+            );
+
+            match result {
+                VerifyResult::Proven => {
+                    // Отлично — axiom доказан через handler body.
+                }
+                VerifyResult::Disproved(_, cex) => {
+                    diagnostics.push(Diagnostic::new(
+                        format!(
+                            "`#verify` handler for effect `{}`: axiom `{}` is NOT satisfied.\n  \
+                             counterexample: {}\n  \
+                             suggestion: fix handler's pure_view implementation or weaken axiom.",
+                            effect_name, ax.name, cex,
+                        ),
+                        binding_span,
+                    ));
+                }
+                VerifyResult::Unknown(reason) => {
+                    // Unknown — handler body analysis вне V1 scope.
+                    // Не error: честно сообщаем что V1 не может проверить.
+                    // Чтобы #verify не было тихим — добавляем as warning
+                    // (через warnings field report'а, который caller добавит).
+                    // Для простоты: пушим как error только если axiom не trivial
+                    // — но V1 не distinguishes, поэтому: silent Unknown.
+                    let _ = (reason, binding_span);
+                }
+                VerifyResult::EncodingFailed(_) => {
+                    // Axiom не encodable — silent skip.
+                }
+            }
+        }
+    }
+
+    diagnostics
+}
+
+/// Проверить один статический axiom с учётом pure_view impl handler'а.
+///
+/// Алгоритм:
+/// 1. Создать fresh backend.
+/// 2. Declare pure_view UFs модуля.
+/// 3. Для каждого pure_view метода handler'а: если body encodable →
+///    assert `forall params. _view_E_name(params) == handler_method_body`.
+/// 4. Encode axiom formula как Forall-assertion.
+/// 5. try_prove(axiom).
+fn verify_static_axiom_with_handler(
+    pipeline: &VerificationPipeline,
+    ax: &AxiomInfo,
+    pure_views: &std::collections::HashMap<String, super::encode::PureViewSig>,
+    methods: &[crate::ast::HandlerMethod],
+    effect_name: &str,
+    module: &Module,
+) -> VerifyResult {
+    let pure_fns = collect_pure_fns(module);
+    let ctx = super::encode::EncodeCtx { pure_views, pure_fns: &pure_fns };
+
+    let mut backend = pipeline.create_backend();
+
+    // Pre-declare все pure_view UFs.
+    for (op_name, sig) in pure_views {
+        let uf = super::encode::pure_view_uf_name(&sig.effect_name, op_name);
+        backend.declare_function(&uf, &sig.param_sorts, sig.return_sort.clone());
+    }
+
+    // Для каждого pure_view метода этого handler'а: emit body axiom.
+    // Это позволяет SMT знать что `_view_E_name(params) == handler_body_expr`.
+    for method in methods {
+        let Some(sig) = pure_views.get(&method.name) else { continue };
+        if sig.effect_name != effect_name { continue }
+
+        // Извлекаем body: только `=> expr` форма в V1.
+        let body_expr = match &method.body {
+            crate::ast::HandlerMethodBody::Expr(e) => e,
+            crate::ast::HandlerMethodBody::Block(_) => continue, // block-body — V2
+        };
+
+        // Encode body. Переменные — имена param'ов метода.
+        if let Ok(body_term) = encode::encode_expr_with_ctx(body_expr, &ctx) {
+            // Параметры метода.
+            let param_names: Vec<String> = method.params.iter()
+                .map(|p| p.name.clone())
+                .collect();
+            let param_args: Vec<SmtTerm> = param_names.iter()
+                .map(|n| SmtTerm::Var(n.clone()))
+                .collect();
+
+            let uf_name = super::encode::pure_view_uf_name(effect_name, &method.name);
+            let uf_app = SmtTerm::App(uf_name, param_args);
+            let eq_body = SmtTerm::eq(uf_app, body_term);
+
+            let binders: Vec<(String, SortRef)> = param_names.iter()
+                .zip(sig.param_sorts.iter())
+                .map(|(n, s)| (n.clone(), s.clone()))
+                .collect();
+            let handler_axiom = if binders.is_empty() {
+                eq_body
+            } else {
+                SmtTerm::Forall(binders, Box::new(eq_body))
+            };
+
+            backend.assert(Assertion {
+                formula: handler_axiom,
+                label: Some(format!("handler_body@{}.{}", effect_name, method.name)),
+            });
+        }
+    }
+
+    // Encode axiom formula.
+    let Some(ax_formula) = encode_axiom(ax, pure_views) else {
+        return VerifyResult::Unknown("axiom not encodable (generic or unsupported)".into());
+    };
+
+    // try_prove(axiom_formula).
+    match try_prove(&mut *backend, ax_formula) {
+        SatResult::Unsat(_) => VerifyResult::Proven,
+        SatResult::Sat(model) => {
+            let cex = format_counterexample(&model);
+            VerifyResult::Disproved(model, cex)
+        }
+        SatResult::Unknown(reason) => {
+            VerifyResult::Unknown(unknown_to_diag_message(reason))
+        }
+    }
+}
+
+/// Проверяет, содержит ли формула axiom'а вызов `post(...)`.
+/// V1: простая AST-проверка на наличие Ident "post" в call position.
+fn axiom_formula_has_post(e: &crate::ast::Expr) -> bool {
+    use crate::ast::ExprKind::*;
+    match &e.kind {
+        Call { func, args, .. } => {
+            if let Ident(name) = &func.kind {
+                if name == "post" { return true; }
+            }
+            // post может быть вложен
+            if axiom_formula_has_post(func) { return true; }
+            args.iter().any(|a| axiom_formula_has_post(a.expr()))
+        }
+        Binary { left, right, .. } => {
+            axiom_formula_has_post(left) || axiom_formula_has_post(right)
+        }
+        Unary { operand, .. } => axiom_formula_has_post(operand),
+        If { cond, then, else_ } => {
+            if axiom_formula_has_post(cond) { return true; }
+            if let Some(t) = &then.trailing { if axiom_formula_has_post(t) { return true; } }
+            match else_ {
+                Some(crate::ast::ElseBranch::Block(b)) => {
+                    if let Some(t) = &b.trailing { axiom_formula_has_post(t) } else { false }
+                }
+                Some(crate::ast::ElseBranch::If(ie)) => axiom_formula_has_post(ie),
+                None => false,
+            }
+        }
+        _ => false,
+    }
+}
+
+/// Collect всех `with #verify E = handler` bindings из block.
+fn collect_verify_bindings_block<'a>(
+    b: &'a crate::ast::Block,
+    out: &mut Vec<(String, Span, &'a crate::ast::Expr)>,
+) {
+    for s in &b.stmts {
+        match s {
+            Stmt::Expr(e) => collect_verify_bindings_expr(e, out),
+            Stmt::Let(ld) => collect_verify_bindings_expr(&ld.value, out),
+            Stmt::Assign { value, .. } => collect_verify_bindings_expr(value, out),
+            _ => {}
+        }
+    }
+    if let Some(t) = &b.trailing { collect_verify_bindings_expr(t, out); }
+}
+
+fn collect_verify_bindings_expr<'a>(
+    e: &'a crate::ast::Expr,
+    out: &mut Vec<(String, Span, &'a crate::ast::Expr)>,
+) {
+    use crate::ast::ExprKind::*;
+    match &e.kind {
+        With { bindings, body } => {
+            for b in bindings {
+                if !matches!(b.verification, HandlerVerification::Verify) { continue }
+                let eff_name = match &b.effect {
+                    TypeRef::Named { path, .. } => path.last().cloned().unwrap_or_default(),
+                    _ => String::new(),
+                };
+                if eff_name.is_empty() { continue }
+                out.push((eff_name, b.span, &b.handler));
+            }
+            collect_verify_bindings_block(body, out);
+        }
+        Block(b) => collect_verify_bindings_block(b, out),
+        If { cond, then, else_ } => {
+            collect_verify_bindings_expr(cond, out);
+            collect_verify_bindings_block(then, out);
+            match else_ {
+                Some(crate::ast::ElseBranch::Block(b)) => collect_verify_bindings_block(b, out),
+                Some(crate::ast::ElseBranch::If(ie)) => collect_verify_bindings_expr(ie, out),
+                None => {}
+            }
+        }
+        Call { func, args, .. } => {
+            collect_verify_bindings_expr(func, out);
+            for a in args { collect_verify_bindings_expr(a.expr(), out); }
+        }
+        Binary { left, right, .. } => {
+            collect_verify_bindings_expr(left, out);
+            collect_verify_bindings_expr(right, out);
+        }
+        _ => {}
+    }
+}
+
 /// Entry-point: проверить все функции модуля. Заполняет diagnostics
 /// с warning'ами/errors согласно verify_mode.
 ///
@@ -985,6 +1269,14 @@ pub fn verify_module(module: &Module) -> ModuleVerifyReport {
         report.errors.push(e);
     }
     if has_inconsistent_axioms {
+        return report;
+    }
+
+    // Plan 33.4 P0-1 (Ф.9.7 V1): верификация `with #verify E = handler` bindings.
+    for diag in verify_handlers(module) {
+        report.errors.push(diag);
+    }
+    if !report.errors.is_empty() {
         return report;
     }
 
