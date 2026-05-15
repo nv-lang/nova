@@ -5102,6 +5102,40 @@ Plan 39 Ф.2 Issue D:
    - method_overloads[(c_ty, "next")] check
    - fallback: method_overloads[(c_ty, "iter")] → recurse next() on
      iter return type
+
+---
+
+## Plan 33.4 P1-4: Liskov-проверка effect-операций — заблокировано (2026-05-15)
+
+### Что задумано
+
+P1-4 предполагает: при `with #verify P = impl` проверять, что `impl`
+удовлетворяет контрактам (`requires`/`ensures`) каждой операции протокола `P`
+по правилам Liskov (контравариантное pre, ковариантное post).
+
+### Почему не реализовано сейчас
+
+`EffectMethod` (AST-узел для операций effect/protocol) не имеет поля
+`contracts: Vec<Contract>`. Контракты (`requires`/`ensures`) существуют
+только на `FnDecl`. Операции эффектов/протоколов описывают только сигнатуру
+(`params`, `return_type`, `effects`) и вид (`EffectOpKind::Operation` vs
+`PureView`) — без pre/post-условий.
+
+Текущий `verify_handlers` (Plan 33.3 Ф.9) уже проверяет `axiom`-формулы
+эффекта против реализации handler'а. Это близко к P1-4 для `pure_view`-методов,
+но не то же самое: Liskov-проверка операций требует именно per-operation contracts.
+
+### Статус
+
+Заблокировано до V2. Нужно:
+1. Добавить `contracts: Vec<Contract>` в `EffectMethod`.
+2. Расширить парсер для `requires`/`ensures` внутри `effect`/`protocol`-блоков.
+3. Расширить `verify_handlers` для Liskov-проверки: для каждого `op` с контрактами
+   найти `handler.op`, закодировать тело handler'а и проверить:
+   - contravariant pre: `handler.requires ⇒ protocol.requires`
+   - covariant post: `protocol.ensures ⇒ handler.ensures`
+
+Приоритет: M (нужен для осмысленной верификации protocol-handlers).
    - clear error if neither
 2. Assert `is_mut=true` для `next()`.
 3. Improve diagnostic с конкретным type name + method names searched.
