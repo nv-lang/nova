@@ -13,6 +13,12 @@ module nova_tests.doc.fixtures.doctests.sample
 /// let y = x * 2
 /// ```
 ///
+/// Crate-scope (Ф.21.1): вызов документируемой функции:
+///
+/// ```nova
+/// assert(double(3) == 6)
+/// ```
+///
 /// Не запускаем (compile-only):
 ///
 /// ```nova,no_run

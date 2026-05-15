@@ -963,7 +963,7 @@ fn cmd_doc(path: &Path, format: &str, json_schema: bool, include_private: bool, 
         std::process::exit(1);
     }
     if run_doc_tests {
-        let summary = nova_codegen::doc::test_runner::run_doc_tests(&tree.doc_tests);
+        let summary = nova_codegen::doc::test_runner::run_doc_tests_with_source(&tree.doc_tests, Some(&src));
         let total = summary.results.len();
         let passed = summary.passed();
         let failed = summary.failed();

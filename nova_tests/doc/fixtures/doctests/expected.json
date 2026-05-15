@@ -14,9 +14,19 @@
     },
     {
       "from_id": "nova_tests.doc.fixtures.doctests.sample::double",
-      "full_source": "let big = 1_000_000 * 2",
+      "full_source": "assert(double(3) == 6)",
       "id": "nova_tests.doc.fixtures.doctests.sample::doc_test_2",
       "index": 2,
+      "modifiers": [
+
+      ],
+      "visible_source": "assert(double(3) == 6)"
+    },
+    {
+      "from_id": "nova_tests.doc.fixtures.doctests.sample::double",
+      "full_source": "let big = 1_000_000 * 2",
+      "id": "nova_tests.doc.fixtures.doctests.sample::doc_test_3",
+      "index": 3,
       "modifiers": [
         "no_run"
       ],
@@ -25,8 +35,8 @@
     {
       "from_id": "nova_tests.doc.fixtures.doctests.sample::double",
       "full_source": "undefined_symbol()",
-      "id": "nova_tests.doc.fixtures.doctests.sample::doc_test_3",
-      "index": 3,
+      "id": "nova_tests.doc.fixtures.doctests.sample::doc_test_4",
+      "index": 4,
       "modifiers": [
         "ignore"
       ],
@@ -35,8 +45,8 @@
     {
       "from_id": "nova_tests.doc.fixtures.doctests.sample::double",
       "full_source": "let x: int = \"not an int\"",
-      "id": "nova_tests.doc.fixtures.doctests.sample::doc_test_4",
-      "index": 4,
+      "id": "nova_tests.doc.fixtures.doctests.sample::doc_test_5",
+      "index": 5,
       "modifiers": [
         "compile_fail"
       ],
@@ -79,11 +89,11 @@
       "module_path": "nova_tests.doc.fixtures.doctests.sample",
       "name": "double",
       "sections": {
-        "examples": "Тривиальный пример:\n\n```nova\nlet x = 21\nlet y = x * 2\n```\n\nНе запускаем (compile-only):\n\n```nova,no_run\nlet big = 1_000_000 * 2\n```\n\nИгнорируем (показано, но не запускается):\n\n```nova,ignore\nundefined_symbol()\n```\n\nCompile-fail тест (ожидаемая ошибка типа):\n\n```nova,compile_fail\nlet x: int = \"not an int\"\n```"
+        "examples": "Тривиальный пример:\n\n```nova\nlet x = 21\nlet y = x * 2\n```\n\nCrate-scope (Ф.21.1): вызов документируемой функции:\n\n```nova\nassert(double(3) == 6)\n```\n\nНе запускаем (compile-only):\n\n```nova,no_run\nlet big = 1_000_000 * 2\n```\n\nИгнорируем (показано, но не запускается):\n\n```nova,ignore\nundefined_symbol()\n```\n\nCompile-fail тест (ожидаемая ошибка типа):\n\n```nova,compile_fail\nlet x: int = \"not an int\"\n```"
       },
       "source": {
         "file_id": 0,
-        "line": 33
+        "line": 39
       },
       "stability": null,
       "summary": "Удваивает `x`.",
