@@ -18,6 +18,7 @@ pub(crate) struct ContractAttrs {
     pub verify_mode: VerifyMode,
     pub verify_timeout_ms: Option<u32>,
     pub purity: Purity,
+    pub is_trusted: bool,
 }
 
 impl ContractAttrs {
@@ -25,6 +26,7 @@ impl ContractAttrs {
         matches!(self.verify_mode, VerifyMode::Default)
             && self.verify_timeout_ms.is_none()
             && matches!(self.purity, Purity::Unknown)
+            && !self.is_trusted
     }
 }
 
@@ -431,11 +433,25 @@ impl Parser {
             let is_forbid = matches!(next_kind, Some(TokenKind::KwForbid));
             let is_cfg = matches!(&next_kind, Some(TokenKind::Ident(name)) if name == "cfg");
             let is_doc = matches!(&next_kind, Some(TokenKind::Ident(name)) if name == "doc");
-            if !is_forbid && !is_cfg && !is_doc {
+            let is_must_verify_module = matches!(&next_kind, Some(TokenKind::Ident(name)) if name == "must_verify_module");
+            if !is_forbid && !is_cfg && !is_doc && !is_must_verify_module {
                 break; // not a module-level attribute
             }
             let attr_start = self.peek().span;
             self.bump(); // #
+
+            if is_must_verify_module {
+                // Plan 33.3 Ф.13: `#must_verify_module` — все функции MustVerify.
+                self.bump(); // must_verify_module (ident)
+                self.expect_newline_or_eof()?;
+                let attr_end = self.tokens[self.pos.saturating_sub(1)].span;
+                module_attrs.push(ModuleAttr {
+                    kind: ModuleAttrKind::MustVerifyModule,
+                    effects: Vec::new(),
+                    span: attr_start.merge(attr_end),
+                });
+                continue;
+            }
 
             if is_doc {
                 // Plan 42.11: `#doc "..."` — module-level documentation line.
@@ -786,14 +802,26 @@ impl Parser {
         // Не keyword'ы в лексере (контекстный разбор после `#`).
         let contract_attrs = self.parse_contract_attrs()?;
         if !contract_attrs.is_empty()
-            && !matches!(self.peek().kind, TokenKind::KwFn)
+            && !matches!(self.peek().kind, TokenKind::KwFn | TokenKind::KwExternal)
         {
             let span = self.peek().span;
             return Err(Diagnostic::new(
-                "contract attributes (`#verify` / `#unverified` / `#verify_timeout` / `#pure`) are only valid before `fn`",
+                "contract attributes (`#verify` / `#unverified` / `#verify_timeout` / `#pure` / `#trusted`) are only valid before `fn` or `external fn`",
                 span,
             ));
         }
+        // Plan 33.3 Ф.13: #trusted external fn — парсим `external` здесь,
+        // если contract_attrs содержат #trusted.
+        let is_external = if contract_attrs.is_trusted && matches!(self.peek().kind, TokenKind::KwExternal) {
+            self.bump(); // external
+            if !matches!(self.peek().kind, TokenKind::KwFn) {
+                let span = self.peek().span;
+                return Err(Diagnostic::new("`external` is only valid before `fn`", span));
+            }
+            true
+        } else {
+            is_external
+        };
         let parsed = match self.peek().kind {
             TokenKind::KwFn => Item::Fn(self.parse_fn(is_export, is_external, realtime_attr, contract_attrs, pending_doc.clone(), pending_doc_attrs.clone())?),
             TokenKind::KwType => Item::Type(self.parse_type_decl(is_export, pending_doc.clone(), pending_doc_attrs.clone())?),
@@ -1284,6 +1312,13 @@ impl Parser {
                     self.bump(); // pure
                     attrs.purity = Purity::Pure;
                 }
+                "trusted" => {
+                    // Plan 33.3 Ф.13: #trusted — только для external fn.
+                    // Enforcement (must be external) в type-checker или pipeline.
+                    self.bump(); // #
+                    self.bump(); // trusted
+                    attrs.is_trusted = true;
+                }
                 _ => break, // unknown #-name — не contract-attr, выходим
             }
             self.skip_newlines();
@@ -1561,9 +1596,8 @@ impl Parser {
         // до тела. `requires <expr>` / `ensures <expr>` / `reads ...` /
         // `modifies ...` на отдельных строках.
         let (contracts, reads, modifies, decreases) = self.parse_contracts()?;
-        // external fn не может иметь контрактов в 33.1.
-        // (В 33.3 будет `#trusted` external — отдельный путь.)
-        if is_external && (!contracts.is_empty() || !reads.is_empty() || !modifies.is_empty() || decreases.is_some()) {
+        // external fn не может иметь контрактов (кроме #trusted external fn — Plan 33.3 Ф.13).
+        if is_external && !contract_attrs.is_trusted && (!contracts.is_empty() || !reads.is_empty() || !modifies.is_empty() || decreases.is_some()) {
             let span = contracts.first().map(|c| c.span)
                 .or_else(|| reads.first().map(|f| f.span()))
                 .or_else(|| modifies.first().map(|f| f.span()))
@@ -1633,6 +1667,7 @@ impl Parser {
             verify_mode: contract_attrs.verify_mode,
             verify_timeout_ms: contract_attrs.verify_timeout_ms,
             purity: contract_attrs.purity,
+            is_trusted: contract_attrs.is_trusted,
         })
     }
 

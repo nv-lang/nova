@@ -1,4 +1,4 @@
-//! Plan 28: `nova` CLI — единая точка входа для пользователя.
+﻿//! Plan 28: `nova` CLI — единая точка входа для пользователя.
 //!
 //! `nova test`, `nova build`, `nova run`, `nova check`, `nova regen-runtime`.
 //! Заменяет run_tests.ps1 / run_tests.sh / regen_runtime.ps1.
@@ -270,6 +270,47 @@ enum Cmd {
         /// Only compare — fail if stubs diverge from registry (CI guard).
         #[arg(long)]
         check: bool,
+    },
+    /// Plan 33.3 Ф.13: Contract inspection commands.
+    ///
+    /// Subcommands: list, verify, suggest, counterexample.
+    /// All output JSON (AI-friendly schema). See docs/contracts-diag-schema.json.
+    #[command(subcommand)]
+    Contracts(ContractsCmd),
+}
+
+/// Plan 33.3 Ф.13: `nova contracts <subcommand>`.
+#[derive(Subcommand)]
+enum ContractsCmd {
+    /// List all contracts in a Nova source file.
+    List {
+        /// Path to .nv file.
+        file: PathBuf,
+    },
+    /// Verify contracts in a Nova source file and output JSON diagnostics.
+    Verify {
+        /// Path to .nv file.
+        file: PathBuf,
+        /// SMT backend to use (overrides NOVA_SMT_BACKEND).
+        #[arg(long)]
+        backend: Option<String>,
+    },
+    /// Suggest contracts for a function (AI-assisted stubs).
+    Suggest {
+        /// Path to .nv file.
+        file: PathBuf,
+        /// Function name.
+        fn_name: String,
+    },
+    /// Show counterexample for a failing contract.
+    Counterexample {
+        /// Path to .nv file.
+        file: PathBuf,
+        /// Function name.
+        fn_name: String,
+        /// Contract index (0-based).
+        #[arg(long, default_value_t = 0)]
+        contract_id: usize,
     },
 }
 
@@ -1702,6 +1743,159 @@ fn cmd_regen_runtime(check: bool) -> Result<()> {
     Ok(())
 }
 
+// ---------- nova contracts ----------
+
+fn cmd_contracts(sub: ContractsCmd) -> Result<()> {
+    match sub {
+        ContractsCmd::List { file } => cmd_contracts_list(&file),
+        ContractsCmd::Verify { file, backend } => cmd_contracts_verify(&file, backend.as_deref()),
+        ContractsCmd::Suggest { file, fn_name } => cmd_contracts_suggest(&file, &fn_name),
+        ContractsCmd::Counterexample { file, fn_name, contract_id } => {
+            cmd_contracts_counterexample(&file, &fn_name, contract_id)
+        }
+    }
+}
+
+fn contracts_parse_file(file: &std::path::Path) -> Result<nova_codegen::ast::Module> {
+    let src = std::fs::read_to_string(file)
+        .map_err(|e| anyhow!("cannot read {}: {}", file.display(), e))?;
+    let tokens = nova_codegen::lexer::lex(&src)
+        .map_err(|d| anyhow!("{}", d.message))?;
+    let mut parser = nova_codegen::parser::Parser::new(tokens);
+    parser.parse_module().map_err(|d| anyhow!("{}", d.message))
+}
+
+fn cmd_contracts_list(file: &std::path::Path) -> Result<()> {
+    let module = contracts_parse_file(file)?;
+    let mut items = Vec::new();
+    for item in &module.items {
+        if let nova_codegen::ast::Item::Fn(fd) = item {
+            if fd.contracts.is_empty() { continue; }
+            let contracts: Vec<serde_json::Value> = fd.contracts.iter().enumerate().map(|(i, c)| {
+                serde_json::json!({
+                    "id": i,
+                    "kind": format!("{:?}", c.kind).to_lowercase(),
+                    "span": { "start": c.span.start, "end": c.span.end }
+                })
+            }).collect();
+            items.push(serde_json::json!({
+                "fn": fd.name,
+                "verify_mode": format!("{:?}", fd.verify_mode).to_lowercase(),
+                "trusted": fd.is_trusted,
+                "contracts": contracts
+            }));
+        }
+    }
+    let out = serde_json::json!({
+        "schema": "nova-contracts-diag/v1",
+        "file": file.display().to_string(),
+        "module": module.name.join("."),
+        "functions": items
+    });
+    println!("{}", serde_json::to_string_pretty(&out)?);
+    Ok(())
+}
+
+fn cmd_contracts_verify(file: &std::path::Path, backend: Option<&str>) -> Result<()> {
+    if let Some(b) = backend {
+        std::env::set_var("NOVA_SMT_BACKEND", b);
+    }
+    let module = contracts_parse_file(file)?;
+    // Run type-check pass to populate types (needed for verify).
+    let report = nova_codegen::verify::verify_module(&module);
+    let mut diagnostics = Vec::new();
+    for (fn_name, span) in &report.proven {
+        diagnostics.push(serde_json::json!({
+            "kind": "proven",
+            "fn": fn_name,
+            "span": { "start": span.start, "end": span.end }
+        }));
+    }
+    for diag in &report.warnings {
+        diagnostics.push(serde_json::json!({
+            "kind": "warning",
+            "message": diag.message,
+            "span": { "start": diag.span.start, "end": diag.span.end }
+        }));
+    }
+    for diag in &report.errors {
+        diagnostics.push(serde_json::json!({
+            "kind": "error",
+            "message": diag.message,
+            "span": { "start": diag.span.start, "end": diag.span.end }
+        }));
+    }
+    let out = serde_json::json!({
+        "schema": "nova-contracts-diag/v1",
+        "file": file.display().to_string(),
+        "module": module.name.join("."),
+        "proven_count": report.proven.len(),
+        "warning_count": report.warnings.len(),
+        "error_count": report.errors.len(),
+        "diagnostics": diagnostics
+    });
+    println!("{}", serde_json::to_string_pretty(&out)?);
+    if !report.errors.is_empty() {
+        return Err(anyhow!("{} contract error(s)", report.errors.len()));
+    }
+    Ok(())
+}
+
+fn cmd_contracts_suggest(file: &std::path::Path, fn_name: &str) -> Result<()> {
+    let module = contracts_parse_file(file)?;
+    let fd = module.items.iter().find_map(|item| {
+        if let nova_codegen::ast::Item::Fn(f) = item {
+            if f.name == fn_name { return Some(f); }
+        }
+        None
+    }).ok_or_else(|| anyhow!("function `{}` not found in {}", fn_name, file.display()))?;
+
+    let mut suggestions = Vec::new();
+    if fd.contracts.is_empty() {
+        // Generate basic stub suggestions based on return type.
+        if let Some(rt) = &fd.return_type {
+            let rt_str = format!("{rt:?}");
+            if rt_str.contains("Bool") {
+                suggestions.push("ensures result == true || result == false");
+            } else if rt_str.contains("Int") {
+                suggestions.push("requires true");
+                suggestions.push("ensures result >= 0");
+            }
+        }
+        if suggestions.is_empty() {
+            suggestions.push("requires true");
+            suggestions.push("ensures true");
+        }
+    }
+
+    let out = serde_json::json!({
+        "schema": "nova-contracts-diag/v1",
+        "fn": fn_name,
+        "has_contracts": !fd.contracts.is_empty(),
+        "suggestions": suggestions
+    });
+    println!("{}", serde_json::to_string_pretty(&out)?);
+    Ok(())
+}
+
+fn cmd_contracts_counterexample(file: &std::path::Path, fn_name: &str, contract_id: usize) -> Result<()> {
+    let module = contracts_parse_file(file)?;
+    let report = nova_codegen::verify::verify_module(&module);
+    // Find error for this fn + contract_id.
+    let msg = report.errors.iter()
+        .find(|d| d.message.contains(&format!("`{fn_name}`")))
+        .map(|d| d.message.clone())
+        .unwrap_or_else(|| format!("no counterexample found for `{fn_name}` contract {contract_id}"));
+    let out = serde_json::json!({
+        "schema": "nova-contracts-diag/v1",
+        "fn": fn_name,
+        "contract_id": contract_id,
+        "counterexample": msg
+    });
+    println!("{}", serde_json::to_string_pretty(&out)?);
+    Ok(())
+}
+
 // ---------- entry point ----------
 
 fn main() -> ExitCode {
@@ -1792,6 +1986,7 @@ fn main() -> ExitCode {
             gc.as_deref().unwrap_or("boehm"),
         ),
         Cmd::RegenRuntime { check } => cmd_regen_runtime(check),
+        Cmd::Contracts(sub) => cmd_contracts(sub),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,

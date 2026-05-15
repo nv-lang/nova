@@ -2799,9 +2799,14 @@ pub fn verify_module(module: &Module) -> ModuleVerifyReport {
     // СЂРµРєСѓСЂСЃРёРІРЅС‹Р№ РѕР±С…РѕРґ AST РЅР° РєР°Р¶РґСѓСЋ С„СѓРЅРєС†РёСЋ (overhead + СЂРёСЃРє stack overflow).
     let inferred_pure = infer_pure_fns_scc(module);
 
+    // Plan 33.3 Ф.13: #must_verify_module — все функции MustVerify.
+    let module_strict = module.attrs.iter().any(|a| matches!(a.kind, ModuleAttrKind::MustVerifyModule));
+
     for item in &module.items {
         if let Item::Fn(fd) = item {
             if fd.contracts.is_empty() { continue; }
+            // Plan 33.3 Ф.13: #trusted external fn — контракты axioms, SMT-verify пропускается.
+            if fd.is_trusted && fd.is_external { continue; }
             // Skip Fail-functions вЂ” ContractCtx СѓР¶Рµ РІС‹РґР°Р» error.
             // Mut-РїР°СЂР°РјРµС‚СЂС‹ в†’ РїСЂРѕРїСѓСЃС‚РёС‚СЊ (33.2). РЎРµР№С‡Р°СЃ РґРµС‚РµРєС‚РёРј С‡РµСЂРµР·
             // РѕС‚СЃСѓС‚СЃС‚РІРёРµ РІ С‚РёРїР°С….
@@ -2812,7 +2817,8 @@ pub fn verify_module(module: &Module) -> ModuleVerifyReport {
                 for c in &fd.contracts { if matches!(c.kind, ContractKind::Ensures) { report.proven.push((fd.name.clone(), c.span)); } }
                 continue;
             }
-            let t0 = std::time::Instant::now();
+                        let effective_mode = if module_strict && matches!(fd.verify_mode, VerifyMode::Default) { VerifyMode::MustVerify } else { fd.verify_mode };
+let t0 = std::time::Instant::now();
             let results = pipeline.verify_fn(module, fd, &inferred_pure);
             let elapsed_ms = t0.elapsed().as_millis() as u64;
             for (span, vr) in results {
@@ -2831,7 +2837,7 @@ pub fn verify_module(module: &Module) -> ModuleVerifyReport {
                              3. Weaken `ensures` to actual behavior;\n    \
                              4. Mark `#unverified` if intentional disprove",
                             fd.name, cex);
-                        match fd.verify_mode {
+                        match effective_mode {
                             VerifyMode::MustVerify => report.errors.push(
                                 Diagnostic::new(msg, span)),
                             _ => report.warnings.push(
@@ -2842,7 +2848,7 @@ pub fn verify_module(module: &Module) -> ModuleVerifyReport {
                         // РџРѕ D24 / Plan 33.1: default вЂ” runtime fallback РІ debug,
                         // РІ release РєРѕРЅС‚СЂР°РєС‚ СЃС‚РёСЂР°РµС‚СЃСЏ СЃ warning (РёР»Рё error РµСЃР»Рё
                         // `#verify`).
-                        match fd.verify_mode {
+                        match effective_mode {
                             VerifyMode::MustVerify => {
                                 // Plan 33.3 Р¤.9.10: AI-friendly format СЃ
                                 // РєР°С‚РµРіРѕСЂРёР·РёСЂРѕРІР°РЅРЅС‹Рј reason + suggestions
@@ -2861,7 +2867,7 @@ pub fn verify_module(module: &Module) -> ModuleVerifyReport {
                     }
                     VerifyResult::EncodingFailed(reason) => {
                         // РђРЅР°Р»РѕРіРёС‡РЅРѕ Unknown.
-                        if matches!(fd.verify_mode, VerifyMode::MustVerify) {
+                        if matches!(effective_mode, VerifyMode::MustVerify) {
                             let msg = format!(
                                 "`#verify` failed for `{}`:\n  encoder cannot represent contract: {}\n  \
                                  hint: Plan 33.1 encoder РїРѕРґРґРµСЂР¶РёРІР°РµС‚ С‚РѕР»СЊРєРѕ int/bool/str/record/binary-ops/if/old. \
