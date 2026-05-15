@@ -10916,3 +10916,104 @@ simplifications.md [V12]-[V14]:
 - docs/plans/33.4-contracts-parity-gaps.md (новый план)
 - docs/simplifications.md (V1 partial, V6 закрыт, V12-V14 новые)
 - docs/project-creation.txt (эта секция)
+
+## Сессия 2026-05-15: Plan 45 MVP старт — Ф.0 + Ф.1 (worktree)
+
+Пользователь запросил «делай работу по плану 45 изолировано в отдельной
+папке d:\Sources\nova-lang-p45-doc без упрощений как для прода». Работа
+ведётся в worktree `plan-45-doc` от main; не мерджится до закрытия MVP.
+
+### Ф.0 — Spec D104-D107
+
+Четыре D-decisions добавлены: D104 в 03-syntax.md, D105/D106/D107 в
+09-tooling.md. Все D-номера верифицированы свободными (max был D103,
+D108 уже занят Plan 52 — между ними D104-D107 чистые).
+
+- **D104** (синтаксис doc-comment'ов): `///` outer + `//!` inner.
+  Правила: position (inner только в начале модуля), `////` НЕ doc
+  (rustdoc-mirror, защищает section-divider'ы), merging подряд идущих
+  doc-line того же kind'а, indentation stripping (common-prefix),
+  пустые doc-блоки → warning. Сосуществование с D101 `#doc "..."`
+  module-attr: комплементарны; nova doc склеивает.
+- **D105** (doc-атрибуты): фиксированный каталог 11 атрибутов:
+  `#deprecated(since, note, until?)`, `#since`, `#stable`/`#unstable`/
+  `#experimental` (3 mutex tier'а), `#hide_doc` (opt-out — соответствует
+  private-by-default D5), `#doc_alias`, `#doc(inline|no_inline)` для
+  re-export'ов, `#doc(summary)`, `#doc(section)` (MVP только парс),
+  `#doc(test_handlers)`. Namespace `#doc` делится с D101: lookahead-
+  дисамбигуация по string-literal vs LPAREN.
+- **D106** (doc-test semantics): code-блоки lang=nova внутри
+  doc-comment'а. 5 модификаторов: `no_run`/`ignore`/`compile_fail`/
+  `should_panic`/`must_verify` (Nova-unique, SMT через Plan 33).
+  Hidden lines `# `. Module-private access (rustdoc-paritet). Setup
+  через `#doc(test_handlers)` или peer `_doctest_setup.nv`. Компилит
+  synthetic module __nova_doc_test_<hash>; runner — Plan 24 reuse.
+  EXPECT-markers интегрированы: compile_fail→EXPECT_COMPILE_ERROR,
+  should_panic→EXPECT_RUNTIME_PANIC, must_verify→REQUIRES_SMT_BACKEND.
+- **D107** (JSON schema v1): `format_version: u32` обязательный, top-
+  level modules/items/links/doc_tests. Item — tagged union, kind-
+  discriminator. Signature: params (keyword_only D102 flag), effects,
+  raises, generics, receiver, contracts (PROVEN/UNVERIFIED/TIMEOUT/
+  TRUSTED). Стабильные ID: `<mod>::<name>` для free, `<mod>::<Type>.
+  <method>` для методов. Sorted, deterministic; SOURCE_DATE_EPOCH
+  elides generated_at. v1 mvp-stable до ≥1 milestone'а реального
+  использования; затем promote к stable. nova-doc-types — published
+  consumer-крейт (rustdoc-types precedent), version-locked с
+  format_version.
+
+Драфт сначала был написан на английском (commit 00f8bf03d3e), затем
+переведён на русский (commit 06e43a3922a) — пользователь уточнил
+конвенцию: chat в English, docs в Russian. Перевод — содержательно
+эквивалент, только проза по-русски; code identifiers, attribute-
+имена, CLI-флаги, lint-имена остаются English.
+
+Итог Ф.0: +949 LOC spec (соответствует Plan 45 §12 Ф.0 оценке 600-900).
+
+### Ф.1 — Lexer doc-comment'ов
+
+- `TokenKind::DocComment { kind: DocCommentKind, content: String }`
+  добавлен в token.rs.
+- `Lexer::lex` теперь вызывает `scan_trivia_and_doc()` вместо
+  void `skip_trivia()`. При встрече `///` или `//!` — собирает все
+  подряд идущие строки того же kind'а в один токен через
+  `lex_doc_comment()`.
+- Классификация: `//!` → Inner, `///` ровно → Outer, `////` (4+) →
+  обычный комментарий (mirrors rustdoc).
+- Каждая строка: префикс снят, один опциональный leading space убран,
+  CRLF tolerance, на continuation допустим leading whitespace перед
+  префиксом.
+- После сбора: uniform indentation stripping (min leading-ws по
+  не-пустым строкам, снимается единообразно).
+
+Parser — interim shim в `parse_with_file_id`: фильтрует DocComment-
+токены ДО передачи Parser'у. Сохраняет существующее поведение, пока
+Ф.2 не добавит accumulator pending-attrs/pending-docs. Shim
+удаляется в Ф.2.
+
+**19 unit-тестов** в `lexer::doc_comment_tests`: outer/inner single/
+multi-line, `////` not doc, `////` terminates block, plain `//`,
+один leading-space, indentation, CRLF, blank-line separation,
+declaration-separation, outer+inner distinct, continuation с leading
+whitespace, EOF без trailing newline, empty doc-line, nova code-block
+preserved, token-stream invariant (doc precedes fn). Все PASS.
+
+**Регрессия** (--gc malloc, libuv инициализирован):
+- nova_tests/basics: 8 PASS / 0 FAIL.
+- nova_tests/named_params: 8 PASS / 0 FAIL.
+- nova_tests/negative_capability: 80 PASS / 0 FAIL.
+- nova_tests/syntax: 57 PASS / 0 FAIL.
+
+Итого 153 PASS / 0 FAIL по критическому набору.
+
+Итог Ф.1: lexer +245 LOC + 19 tests; parser shim +6 LOC.
+
+### Следующее
+
+- Ф.2: parser-attach. Generic Vec<Attr> + doc field на Item'ах,
+  pending-accumulator перед декларациями. Удалить interim shim.
+- Ф.3: doc-attrs (#deprecated, #since, #stable, ...).
+- Ф.4: DocModel + collector.
+- ...
+
+Ветка `plan-45-doc` в worktree `d:\Sources\nova-lang-p45-doc`. Не
+мерджится до закрытия MVP (Plan 45 §12.0).
