@@ -2334,7 +2334,11 @@ pub fn detect_boehm(cg_include: &Path) -> Option<BoehmConfig> {
         let lib_dir = PathBuf::from(&lib_dir_env);
         let include_dir = std::env::var("NOVA_GC_INCLUDE_DIR")
             .ok()
-            .map(PathBuf::from);
+            .map(PathBuf::from)
+            .or_else(|| {
+                // Авто-вывод include из lib: lib/../include (vcpkg-layout).
+                lib_dir.parent().map(|p| p.join("include")).filter(|p| p.exists())
+            });
         return Some(BoehmConfig {
             include_dir,
             lib_dir: Some(lib_dir),
