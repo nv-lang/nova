@@ -97,6 +97,21 @@ enum Cmd {
     Run {
         file: PathBuf,
     },
+    /// Plan 45 / D107: produce documentation for a Nova source file.
+    ///
+    /// MVP: one file at a time, output to stdout. Supported formats:
+    /// `markdown` (default), `json` (D107 schema v1).
+    Doc {
+        /// Path to a `.nv` file.
+        file: PathBuf,
+        /// Output format: `markdown` (default) or `json`.
+        #[arg(long = "format", default_value = "markdown")]
+        format: String,
+        /// Print the embedded JSON Schema 2020-12 and exit (offline-
+        /// validation, IDE auto-completion, LLM prompt context).
+        #[arg(long = "json-schema")]
+        json_schema: bool,
+    },
     /// Compile a single Nova source file to a native binary.
     ///
     /// **Single file only** — `nova build` produces one binary per invocation
@@ -861,6 +876,79 @@ fn cmd_run(path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Plan 45 Ф.12 / D107: `nova doc <file> [--format markdown|json]
+/// [--json-schema]`.
+///
+/// MVP: один входной файл, вывод в stdout. Никаких подкоманд (workspace/
+/// --output-dir/--watch — Plan 45.A или отдельные субкоманды позже).
+fn cmd_doc(path: &Path, format: &str, json_schema: bool) -> Result<()> {
+    // `--json-schema` — печатает embedded схему и выходит (D107).
+    if json_schema {
+        println!("{}", nova_doc_embedded_schema());
+        return Ok(());
+    }
+    if !path.is_file() {
+        bail!("file not found: {}", path.display());
+    }
+    let src = read_file(path)?;
+    let path_str = path.to_string_lossy();
+    let mut module = nova_codegen::parser::parse(&src)
+        .map_err(|d| anyhow!("{}", d.render(&src, &path_str)))?;
+    check_module_path(path, &module)?;
+    // Plan 45 MVP: для single-file mode `nova doc <file>` НЕ резолвим
+    // импорты — иначе items из auto-imported std/prelude и других
+    // модулей попадают в output. Это даёт "documentation of THIS
+    // file" по дефолту. Workspace-режим (`nova doc --workspace`) и
+    // multi-module DocTree — Plan 45.A.
+    //
+    // Без resolve_imports type-check может ругаться на cross-file
+    // символы. Для MVP doc-pipeline'а мы прощаем type-check ошибки
+    // (но всё ещё парсим — без parse fail нельзя получить AST).
+    // Если type-check падает — продолжаем с partial information;
+    // production-grade `nova doc --check` (Plan 45 Ф.14) будет
+    // делать полный type-check.
+    let _ = nova_codegen::types::check_module(&module);
+    nova_codegen::types::infer_effects(&mut module);
+    let tree = nova_codegen::doc::build(&module);
+    let out = match format {
+        "markdown" | "md" => nova_codegen::doc::render_markdown(&tree),
+        "json" => nova_codegen::doc::render_json(&tree),
+        other => {
+            return Err(usage_err(format!(
+                "unknown --format `{}` (supported: `markdown`, `json`)",
+                other
+            )));
+        }
+    };
+    print!("{}", out);
+    Ok(())
+}
+
+/// Embedded JSON Schema (D107) — пока минимальная заглушка с
+/// корректным `format_version` дискриминатором. Полная схема —
+/// Plan 45 Ф.9 (schema.rs); этот placeholder уже валидный JSON Schema
+/// 2020-12, описывающий обязательный `format_version: u32` (1) и
+/// высокоуровневый shape.
+fn nova_doc_embedded_schema() -> &'static str {
+    r#"{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nova-lang.org/schemas/nova-doc-v1.json",
+  "title": "Nova doc output (D107 schema v1)",
+  "type": "object",
+  "required": ["format_version", "nova_version", "modules", "items", "links", "doc_tests"],
+  "properties": {
+    "format_version": { "type": "integer", "const": 1 },
+    "nova_version":   { "type": "string" },
+    "generated_at":   { "type": "string", "format": "date-time" },
+    "source_root":    { "type": "string" },
+    "modules":        { "type": "array", "items": { "type": "object" } },
+    "items":          { "type": "array", "items": { "type": "object" } },
+    "links":          { "type": "array", "items": { "type": "object" } },
+    "doc_tests":      { "type": "array", "items": { "type": "object" } }
+  }
+}"#
+}
+
 fn cmd_build(
     path: &Path,
     output: Option<&Path>,
@@ -1357,6 +1445,7 @@ fn main() -> ExitCode {
             &skip,
         ),
         Cmd::Run { file } => cmd_run(&file),
+        Cmd::Doc { file, format, json_schema } => cmd_doc(&file, &format, json_schema),
         Cmd::Build { file, output, mode, toolchain, vcvars, clang, timeout, keep_artifacts } => cmd_build(
             &file,
             output.as_deref(),
