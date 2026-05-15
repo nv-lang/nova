@@ -206,3 +206,19 @@ README плана, simplifications.md если есть `[M-*]`, project-creatio
 | Тесты positive + negative | ~250 |
 | Spec + docs | ~80 |
 | **Итого** | **~520** |
+
+---
+
+## Ф.5 — Production hardening (2026-05-15)
+
+**Ф.5.1 — Structured `if let` suggestion на refutable array.**
+- Сейчас `check_let_pattern_irrefutable` (types/mod.rs:888) для
+  `Pattern::Array` выдаёт сообщение «array pattern in let is
+  refutable» без `Suggestion`. Для sum-variant case уже есть
+  structured suggestion на `match` — array-кейс асимметричен.
+- **Fix:** Добавить `Suggestion { applicability: MachineApplicable }`
+  с заменой `let [a, b] = xs` → `if let [a, b] = xs { ... }` (для
+  expression-let — span к whole let, replacement приоретительный).
+- AI-first: LLM авто-исправляет; symmetric с sum-variant.
+- Тест: `nova_tests/negative_capability/p53_let_array_pattern.nv`
+  обновить — добавить EXPECT_STDOUT с suggestion-текстом.
