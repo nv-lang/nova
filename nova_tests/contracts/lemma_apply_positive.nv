@@ -1,0 +1,21 @@
+// Plan 33.5 Ф.4.1: apply lemma в теле функции — активирует ensures леммы как SMT-аксиому.
+// Рефлексивные леммы (trivial backend provable) + apply в caller fn.
+
+module nova_tests.contracts.lemma_apply_positive
+
+lemma double_lemma(x int)
+    ensures result == x * 2
+=> x * 2
+
+#verify
+fn use_lemma(n int) -> int
+    ensures result == n * 2
+{
+    apply double_lemma(n)
+    n * 2
+}
+
+test "lemma apply positive" {
+    assert(use_lemma(3) == 6)
+    assert(use_lemma(0) == 0)
+}

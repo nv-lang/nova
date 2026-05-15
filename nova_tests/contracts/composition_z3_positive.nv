@@ -1,0 +1,17 @@
+// REQUIRES_SMT_BACKEND z3
+module nova_tests.contracts.composition_z3_positive
+
+#pure
+fn is_positive(x int) -> bool => x > 0
+
+// Verify that `is_positive(n)` in requires is usable in SMT context.
+// Uses linear result (n + 1 > 0 when n > 0) to stay in LIA.
+#verify
+fn increment_positive(n int) -> int
+    requires is_positive(n)
+    ensures result > 0
+=> n + 1
+
+test "composition verified" {
+    assert(increment_positive(3) == 4)
+}

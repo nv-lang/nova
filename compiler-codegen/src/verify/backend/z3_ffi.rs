@@ -150,6 +150,16 @@ extern "C" {
     // const) в Z3_app. Нужно для bound-constants в forall_const.
     pub fn Z3_to_app(c: Z3_context, a: Z3_ast) -> Z3_app;
 
+    // Z3_mk_pattern: создать trigger-pattern из одного или нескольких
+    // ground terms. Паттерн указывает Z3 на какие term-shapes instantiate
+    // quantifier. Используется для pure fn body axioms чтобы обеспечить
+    // instantiation при появлении `_pure_fn_X(...)` в формуле.
+    pub fn Z3_mk_pattern(
+        c: Z3_context,
+        num_patterns: c_uint,
+        terms: *const Z3_ast,
+    ) -> *mut c_void; // Z3_pattern
+
     // Plan 33.3 Ф.9: real uninterpreted function declarations для
     // pure_view ops. Без них Z3_mk_const с pointer-keyed именами даёт
     // soundness-баг (alpha-rename binder'а ломает axiom propagation).

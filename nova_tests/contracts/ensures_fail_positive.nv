@@ -1,0 +1,15 @@
+// D.1.5: ensures_fail clause — постусловие для Fail-пути.
+// Проверяется SMT; runtime-check не эмитируется (V1).
+
+module contracts.ensures_fail_positive
+
+fn maybe_negate(n int) -> int
+    requires n >= 0
+    ensures result >= 0
+    ensures_fail true
+=> n
+
+test "maybe_negate basic" {
+    assert(maybe_negate(3) == 3)
+    assert(maybe_negate(0) == 0)
+}

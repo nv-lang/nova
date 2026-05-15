@@ -1,19 +1,19 @@
-//! Type checker и effect inference.
+﻿//! Type checker Рё effect inference.
 //!
-//! Минимальная реализация: проверяем имена типов, выводим типы локальных
-//! переменных, выводим эффекты для private функций (D28). Generic-параметры
-//! проверяются как abstract names — мономорфизация делается при
-//! интерпретации (treewalk не требует всего).
+//! РњРёРЅРёРјР°Р»СЊРЅР°СЏ СЂРµР°Р»РёР·Р°С†РёСЏ: РїСЂРѕРІРµСЂСЏРµРј РёРјРµРЅР° С‚РёРїРѕРІ, РІС‹РІРѕРґРёРј С‚РёРїС‹ Р»РѕРєР°Р»СЊРЅС‹С…
+//! РїРµСЂРµРјРµРЅРЅС‹С…, РІС‹РІРѕРґРёРј СЌС„С„РµРєС‚С‹ РґР»СЏ private С„СѓРЅРєС†РёР№ (D28). Generic-РїР°СЂР°РјРµС‚СЂС‹
+//! РїСЂРѕРІРµСЂСЏСЋС‚СЃСЏ РєР°Рє abstract names вЂ” РјРѕРЅРѕРјРѕСЂС„РёР·Р°С†РёСЏ РґРµР»Р°РµС‚СЃСЏ РїСЂРё
+//! РёРЅС‚РµСЂРїСЂРµС‚Р°С†РёРё (treewalk РЅРµ С‚СЂРµР±СѓРµС‚ РІСЃРµРіРѕ).
 
 use crate::ast::*;
 use crate::diag::{Diagnostic, FileId, MAIN_FILE_ID, Span};
 use std::collections::{HashMap, HashSet};
 
-/// Очень упрощённая система типов для bootstrap'а.
+/// РћС‡РµРЅСЊ СѓРїСЂРѕС‰С‘РЅРЅР°СЏ СЃРёСЃС‚РµРјР° С‚РёРїРѕРІ РґР»СЏ bootstrap'Р°.
 ///
-/// Treewalk-интерпретатор работает с динамическими значениями, поэтому
-/// здесь мы выполняем минимум: проверки имён, базовая совместимость,
-/// effect inference через accumulated set.
+/// Treewalk-РёРЅС‚РµСЂРїСЂРµС‚Р°С‚РѕСЂ СЂР°Р±РѕС‚Р°РµС‚ СЃ РґРёРЅР°РјРёС‡РµСЃРєРёРјРё Р·РЅР°С‡РµРЅРёСЏРјРё, РїРѕСЌС‚РѕРјСѓ
+/// Р·РґРµСЃСЊ РјС‹ РІС‹РїРѕР»РЅСЏРµРј РјРёРЅРёРјСѓРј: РїСЂРѕРІРµСЂРєРё РёРјС‘РЅ, Р±Р°Р·РѕРІР°СЏ СЃРѕРІРјРµСЃС‚РёРјРѕСЃС‚СЊ,
+/// effect inference С‡РµСЂРµР· accumulated set.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Ty {
     Int,
@@ -22,10 +22,10 @@ pub enum Ty {
     Bool,
     Unit,
     Never,
-    /// Любой тип / неизвестный (для bootstrap'а — fallback).
+    /// Р›СЋР±РѕР№ С‚РёРї / РЅРµРёР·РІРµСЃС‚РЅС‹Р№ (РґР»СЏ bootstrap'Р° вЂ” fallback).
     Any,
-    /// Именованный тип (record, sum, effect, newtype, alias).
-    /// Generics не разворачиваются — они мономорфизируются позже.
+    /// РРјРµРЅРѕРІР°РЅРЅС‹Р№ С‚РёРї (record, sum, effect, newtype, alias).
+    /// Generics РЅРµ СЂР°Р·РІРѕСЂР°С‡РёРІР°СЋС‚СЃСЏ вЂ” РѕРЅРё РјРѕРЅРѕРјРѕСЂС„РёР·РёСЂСѓСЋС‚СЃСЏ РїРѕР·Р¶Рµ.
     Named(String),
     Array(Box<Ty>),
     Tuple(Vec<Ty>),
@@ -36,39 +36,39 @@ pub enum Ty {
     },
 }
 
-/// Результат проверки модуля — карта имён top-level → тип.
+/// Р РµР·СѓР»СЊС‚Р°С‚ РїСЂРѕРІРµСЂРєРё РјРѕРґСѓР»СЏ вЂ” РєР°СЂС‚Р° РёРјС‘РЅ top-level в†’ С‚РёРї.
 ///
-/// **D84 overloading:** `fns` хранит **Vec** для каждого имени, потому
-/// что одно имя может иметь несколько перегрузок (методы с одним именем
-/// на одном receiver-type, free-functions с разными signatures, разные
-/// `From[X]`). Резолв на call-site по argument-types — ответственность
+/// **D84 overloading:** `fns` С…СЂР°РЅРёС‚ **Vec** РґР»СЏ РєР°Р¶РґРѕРіРѕ РёРјРµРЅРё, РїРѕС‚РѕРјСѓ
+/// С‡С‚Рѕ РѕРґРЅРѕ РёРјСЏ РјРѕР¶РµС‚ РёРјРµС‚СЊ РЅРµСЃРєРѕР»СЊРєРѕ РїРµСЂРµРіСЂСѓР·РѕРє (РјРµС‚РѕРґС‹ СЃ РѕРґРЅРёРј РёРјРµРЅРµРј
+/// РЅР° РѕРґРЅРѕРј receiver-type, free-functions СЃ СЂР°Р·РЅС‹РјРё signatures, СЂР°Р·РЅС‹Рµ
+/// `From[X]`). Р РµР·РѕР»РІ РЅР° call-site РїРѕ argument-types вЂ” РѕС‚РІРµС‚СЃС‚РІРµРЅРЅРѕСЃС‚СЊ
 /// codegen / bound-checker.
 #[derive(Debug, Default)]
 pub struct ModuleEnv {
     pub types: HashMap<String, TypeDecl>,
     pub fns: HashMap<String, Vec<FnDecl>>,
     pub consts: HashMap<String, ConstDecl>,
-    /// Plan 33.1 Ф.3: список доказанных (fn_name, contract span) контрактов.
-    /// Codegen в release-сборке стирает соответствующие runtime-checks
-    /// (zero-cost guarantee). В debug — checks всегда emit'ятся.
+    /// Plan 33.1 Р¤.3: СЃРїРёСЃРѕРє РґРѕРєР°Р·Р°РЅРЅС‹С… (fn_name, contract span) РєРѕРЅС‚СЂР°РєС‚РѕРІ.
+    /// Codegen РІ release-СЃР±РѕСЂРєРµ СЃС‚РёСЂР°РµС‚ СЃРѕРѕС‚РІРµС‚СЃС‚РІСѓСЋС‰РёРµ runtime-checks
+    /// (zero-cost guarantee). Р’ debug вЂ” checks РІСЃРµРіРґР° emit'СЏС‚СЃСЏ.
     pub proven_contracts: Vec<(String, Span)>,
 }
 
-/// Минимальная проверка модуля. Регистрирует имена и базовую структуру —
-/// для bootstrap'а этого достаточно: интерпретатор ловит ошибки типов в
-/// runtime через match-mismatch и method-not-found.
+/// РњРёРЅРёРјР°Р»СЊРЅР°СЏ РїСЂРѕРІРµСЂРєР° РјРѕРґСѓР»СЏ. Р РµРіРёСЃС‚СЂРёСЂСѓРµС‚ РёРјРµРЅР° Рё Р±Р°Р·РѕРІСѓСЋ СЃС‚СЂСѓРєС‚СѓСЂСѓ вЂ”
+/// РґР»СЏ bootstrap'Р° СЌС‚РѕРіРѕ РґРѕСЃС‚Р°С‚РѕС‡РЅРѕ: РёРЅС‚РµСЂРїСЂРµС‚Р°С‚РѕСЂ Р»РѕРІРёС‚ РѕС€РёР±РєРё С‚РёРїРѕРІ РІ
+/// runtime С‡РµСЂРµР· match-mismatch Рё method-not-found.
 pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
     let mut env = ModuleEnv::default();
     let mut errors = Vec::new();
     let mut names: HashSet<String> = HashSet::new();
 
-    // D82: `external fn` whitelisted только в `std/runtime/*.nv`. User-код
-    // не должен использовать external — это keyword для документирования
-    // stdlib runtime-функций, реализованных в nova_rt/*.h. Будущий
-    // `extern("C")` для FFI к сторонним libs — отдельный keyword.
+    // D82: `external fn` whitelisted С‚РѕР»СЊРєРѕ РІ `std/runtime/*.nv`. User-РєРѕРґ
+    // РЅРµ РґРѕР»Р¶РµРЅ РёСЃРїРѕР»СЊР·РѕРІР°С‚СЊ external вЂ” СЌС‚Рѕ keyword РґР»СЏ РґРѕРєСѓРјРµРЅС‚РёСЂРѕРІР°РЅРёСЏ
+    // stdlib runtime-С„СѓРЅРєС†РёР№, СЂРµР°Р»РёР·РѕРІР°РЅРЅС‹С… РІ nova_rt/*.h. Р‘СѓРґСѓС‰РёР№
+    // `extern("C")` РґР»СЏ FFI Рє СЃС‚РѕСЂРѕРЅРЅРёРј libs вЂ” РѕС‚РґРµР»СЊРЅС‹Р№ keyword.
     //
-    // Plan 42 Sub-plan 42.6: detect runtime module по обоих declaration
-    // форматов (rev-1 legacy + rev-3 parent.X). Logic — в manifest helper.
+    // Plan 42 Sub-plan 42.6: detect runtime module РїРѕ РѕР±РѕРёС… declaration
+    // С„РѕСЂРјР°С‚РѕРІ (rev-1 legacy + rev-3 parent.X). Logic вЂ” РІ manifest helper.
     let is_runtime_module = crate::manifest::is_stdlib_runtime_module(&module.name);
     if !is_runtime_module {
         for item in &module.items {
@@ -104,29 +104,29 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
                     Some(r) => format!("{}.{}", r.type_name, fd.name),
                     None => fd.name.clone(),
                 };
-                // D84: overload по любой из четырёх осей (receiver-type,
-                // arg-types, result-type, arity). Под одним именем может
-                // быть несколько overloads, различающихся sig'ами; codegen
-                // и bound-checker резолвят call-site по argument-types.
+                // D84: overload РїРѕ Р»СЋР±РѕР№ РёР· С‡РµС‚С‹СЂС‘С… РѕСЃРµР№ (receiver-type,
+                // arg-types, result-type, arity). РџРѕРґ РѕРґРЅРёРј РёРјРµРЅРµРј РјРѕР¶РµС‚
+                // Р±С‹С‚СЊ РЅРµСЃРєРѕР»СЊРєРѕ overloads, СЂР°Р·Р»РёС‡Р°СЋС‰РёС…СЃСЏ sig'Р°РјРё; codegen
+                // Рё bound-checker СЂРµР·РѕР»РІСЏС‚ call-site РїРѕ argument-types.
                 //
-                // Запрещено только **точное дублирование signature**
-                // (одинаковые arity + одинаковые arg-types) — это была бы
-                // ambiguity без возможности резолва. Проверка ниже.
-                names.insert(key.clone()); // names — для конфликтов с типами/const'ами
+                // Р—Р°РїСЂРµС‰РµРЅРѕ С‚РѕР»СЊРєРѕ **С‚РѕС‡РЅРѕРµ РґСѓР±Р»РёСЂРѕРІР°РЅРёРµ signature**
+                // (РѕРґРёРЅР°РєРѕРІС‹Рµ arity + РѕРґРёРЅР°РєРѕРІС‹Рµ arg-types) вЂ” СЌС‚Рѕ Р±С‹Р»Р° Р±С‹
+                // ambiguity Р±РµР· РІРѕР·РјРѕР¶РЅРѕСЃС‚Рё СЂРµР·РѕР»РІР°. РџСЂРѕРІРµСЂРєР° РЅРёР¶Рµ.
+                names.insert(key.clone()); // names вЂ” РґР»СЏ РєРѕРЅС„Р»РёРєС‚РѕРІ СЃ С‚РёРїР°РјРё/const'Р°РјРё
                 let entry = env.fns.entry(key.clone()).or_default();
-                // D84: overload-disambiguation по любой из четырёх осей.
-                // Точное дублирование запрещено — это требует одновременного
-                // совпадения **arity + arg-types + return-type** (плюс
-                // receiver-type, который уже включён в `key`). Если хоть одна
-                // ось различается — overload валиден.
+                // D84: overload-disambiguation РїРѕ Р»СЋР±РѕР№ РёР· С‡РµС‚С‹СЂС‘С… РѕСЃРµР№.
+                // РўРѕС‡РЅРѕРµ РґСѓР±Р»РёСЂРѕРІР°РЅРёРµ Р·Р°РїСЂРµС‰РµРЅРѕ вЂ” СЌС‚Рѕ С‚СЂРµР±СѓРµС‚ РѕРґРЅРѕРІСЂРµРјРµРЅРЅРѕРіРѕ
+                // СЃРѕРІРїР°РґРµРЅРёСЏ **arity + arg-types + return-type** (РїР»СЋСЃ
+                // receiver-type, РєРѕС‚РѕСЂС‹Р№ СѓР¶Рµ РІРєР»СЋС‡С‘РЅ РІ `key`). Р•СЃР»Рё С…РѕС‚СЊ РѕРґРЅР°
+                // РѕСЃСЊ СЂР°Р·Р»РёС‡Р°РµС‚СЃСЏ вЂ” overload РІР°Р»РёРґРµРЅ.
                 let new_arg_tys: Vec<&TypeRef> = fd.params.iter().map(|p| &p.ty).collect();
                 let dup_existing = entry.iter().find(|existing| {
-                    // Arity + arg-types одинаковы?
+                    // Arity + arg-types РѕРґРёРЅР°РєРѕРІС‹?
                     let args_equal = existing.params.len() == fd.params.len()
                         && existing.params.iter().zip(new_arg_tys.iter())
                             .all(|(p, new_ty)| typeref_equal(&p.ty, new_ty));
                     if !args_equal { return false; }
-                    // Return-type одинаков? (None / None или Some/Some equal).
+                    // Return-type РѕРґРёРЅР°РєРѕРІ? (None / None РёР»Рё Some/Some equal).
                     match (&existing.return_type, &fd.return_type) {
                         (None, None) => true,
                         (Some(a), Some(b)) => typeref_equal(a, b),
@@ -137,8 +137,8 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
                     errors.push(Diagnostic::new(
                         format!(
                             "duplicate definition `{}` with same signature \
-                             (overload requires distinct param types, arity, или return type — \
-                             см. D84); previous definition has identical params and return type",
+                             (overload requires distinct param types, arity, РёР»Рё return type вЂ” \
+                             СЃРј. D84); previous definition has identical params and return type",
                             key
                         ),
                         fd.span,
@@ -157,117 +157,118 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
                 }
                 env.consts.insert(cd.name.clone(), cd.clone());
             }
-            Item::Let(_) | Item::Test(_) => {
-                // top-level let — не используется в Nova-исходниках. test —
-                // регистрируется отдельно, имя не конфликтует.
+            Item::Let(_) | Item::Test(_) | Item::Lemma(_) => {
+                // top-level let вЂ” РЅРµ РёСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ РІ Nova-РёСЃС…РѕРґРЅРёРєР°С…. test вЂ”
+                // СЂРµРіРёСЃС‚СЂРёСЂСѓРµС‚СЃСЏ РѕС‚РґРµР»СЊРЅРѕ, РёРјСЏ РЅРµ РєРѕРЅС„Р»РёРєС‚СѓРµС‚.
+                // Ф.4.1: lemma — ghost, только для proof; не регистрируется в env.
             }
         }
     }
 
-    // (typeref_equal — helper для D84 duplicate-signature detection,
-    // определён в конце файла.)
+    // (typeref_equal вЂ” helper РґР»СЏ D84 duplicate-signature detection,
+    // РѕРїСЂРµРґРµР»С‘РЅ РІ РєРѕРЅС†Рµ С„Р°Р№Р»Р°.)
 
     // Plan 15 (D72): generic bounds enforcement.
     //
-    // Собираем protocol_specs (методы каждого protocol-типа) и
-    // method_table (методы каждого concrete-типа). Затем ходим по
-    // всем call-сайтам в bodies, для generic-вызовов с bounds
-    // проверяем satisfaction concrete-аргументов.
+    // РЎРѕР±РёСЂР°РµРј protocol_specs (РјРµС‚РѕРґС‹ РєР°Р¶РґРѕРіРѕ protocol-С‚РёРїР°) Рё
+    // method_table (РјРµС‚РѕРґС‹ РєР°Р¶РґРѕРіРѕ concrete-С‚РёРїР°). Р—Р°С‚РµРј С…РѕРґРёРј РїРѕ
+    // РІСЃРµРј call-СЃР°Р№С‚Р°Рј РІ bodies, РґР»СЏ generic-РІС‹Р·РѕРІРѕРІ СЃ bounds
+    // РїСЂРѕРІРµСЂСЏРµРј satisfaction concrete-Р°СЂРіСѓРјРµРЅС‚РѕРІ.
     let bound_ctx = BoundCtx::build(module);
     bound_ctx.check_module(module, &mut errors);
 
     // Plan 16 (D63 forbid + D64 realtime): capability enforcement.
     //
-    // Walk fn bodies + tests, отслеживая forbidden-effects стек +
-    // realtime-флаг. На каждом Call-сайте — проверка intersect'а
-    // callee.effects с forbidden-set; в realtime — Net/Fs/Db/Time
-    // suspend-effects запрещены; в `realtime nogc` — alloc-fn'ы
-    // запрещены. Установка handler'а для forbidden-эффекта внутри
-    // forbid-блока — error.
+    // Walk fn bodies + tests, РѕС‚СЃР»РµР¶РёРІР°СЏ forbidden-effects СЃС‚РµРє +
+    // realtime-С„Р»Р°Рі. РќР° РєР°Р¶РґРѕРј Call-СЃР°Р№С‚Рµ вЂ” РїСЂРѕРІРµСЂРєР° intersect'Р°
+    // callee.effects СЃ forbidden-set; РІ realtime вЂ” Net/Fs/Db/Time
+    // suspend-effects Р·Р°РїСЂРµС‰РµРЅС‹; РІ `realtime nogc` вЂ” alloc-fn'С‹
+    // Р·Р°РїСЂРµС‰РµРЅС‹. РЈСЃС‚Р°РЅРѕРІРєР° handler'Р° РґР»СЏ forbidden-СЌС„С„РµРєС‚Р° РІРЅСѓС‚СЂРё
+    // forbid-Р±Р»РѕРєР° вЂ” error.
     let cap_ctx = CapabilityCtx::build(module);
     cap_ctx.check_module(module, &mut errors);
 
-    // D90 Plan 20 Ф.3: defer/errdefer body constraints.
+    // D90 Plan 20 Р¤.3: defer/errdefer body constraints.
     //
-    // Body запрещает:
-    //  - exit-control (return/throw/break/continue) — нельзя hijack
-    //    exit семантику scope'а.
-    //  - Fail-эффект (?/!!/throw) — double-throw невозможно сделать
-    //    корректно. throw обнаруживается через AST-walk; ?/!! — в codegen
-    //    они desugar'ятся в throw, поэтому достаточно catch throw.
-    //  - suspend-операции (Net.*, Fs.*, Db.*, Time.sleep, parallel for,
-    //    spawn, supervised, select) — defer должен быть быстрым cleanup.
+    // Body Р·Р°РїСЂРµС‰Р°РµС‚:
+    //  - exit-control (return/throw/break/continue) вЂ” РЅРµР»СЊР·СЏ hijack
+    //    exit СЃРµРјР°РЅС‚РёРєСѓ scope'Р°.
+    //  - Fail-СЌС„С„РµРєС‚ (?/!!/throw) вЂ” double-throw РЅРµРІРѕР·РјРѕР¶РЅРѕ СЃРґРµР»Р°С‚СЊ
+    //    РєРѕСЂСЂРµРєС‚РЅРѕ. throw РѕР±РЅР°СЂСѓР¶РёРІР°РµС‚СЃСЏ С‡РµСЂРµР· AST-walk; ?/!! вЂ” РІ codegen
+    //    РѕРЅРё desugar'СЏС‚СЃСЏ РІ throw, РїРѕСЌС‚РѕРјСѓ РґРѕСЃС‚Р°С‚РѕС‡РЅРѕ catch throw.
+    //  - suspend-РѕРїРµСЂР°С†РёРё (Net.*, Fs.*, Db.*, Time.sleep, parallel for,
+    //    spawn, supervised, select) вЂ” defer РґРѕР»Р¶РµРЅ Р±С‹С‚СЊ Р±С‹СЃС‚СЂС‹Рј cleanup.
     //
-    // Walks по всем bodies всех функций. Spec — D90.
+    // Walks РїРѕ РІСЃРµРј bodies РІСЃРµС… С„СѓРЅРєС†РёР№. Spec вЂ” D90.
     check_defer_bodies(module, &mut errors);
 
-    // D61 §1430-1434 / D90 Ф.8 (1): handler-method для эффект-операции
-    // с return type `Never` ОБЯЗАН закончиться exit-control'ом
-    // (`interrupt v` или `throw err` / `panic` / `exit`). Иначе нет
-    // значения типа Never для возврата — handler не может законно
-    // завершиться normally.
+    // D61 В§1430-1434 / D90 Р¤.8 (1): handler-method РґР»СЏ СЌС„С„РµРєС‚-РѕРїРµСЂР°С†РёРё
+    // СЃ return type `Never` РћР‘РЇР—РђРќ Р·Р°РєРѕРЅС‡РёС‚СЊСЃСЏ exit-control'РѕРј
+    // (`interrupt v` РёР»Рё `throw err` / `panic` / `exit`). РРЅР°С‡Рµ РЅРµС‚
+    // Р·РЅР°С‡РµРЅРёСЏ С‚РёРїР° Never РґР»СЏ РІРѕР·РІСЂР°С‚Р° вЂ” handler РЅРµ РјРѕР¶РµС‚ Р·Р°РєРѕРЅРЅРѕ
+    // Р·Р°РІРµСЂС€РёС‚СЊСЃСЏ normally.
     //
-    // Применяется к: Fail.fail (built-in, return Never), любым
-    // user-defined effect-operations с return type Never.
+    // РџСЂРёРјРµРЅСЏРµС‚СЃСЏ Рє: Fail.fail (built-in, return Never), Р»СЋР±С‹Рј
+    // user-defined effect-operations СЃ return type Never.
     //
-    // Walks все handler-литералы в module, проверяет для каждого
-    // method'а, является ли соответствующая operation Never-возврат-
-    // ной, и если да — body должен diverge (static analysis).
+    // Walks РІСЃРµ handler-Р»РёС‚РµСЂР°Р»С‹ РІ module, РїСЂРѕРІРµСЂСЏРµС‚ РґР»СЏ РєР°Р¶РґРѕРіРѕ
+    // method'Р°, СЏРІР»СЏРµС‚СЃСЏ Р»Рё СЃРѕРѕС‚РІРµС‚СЃС‚РІСѓСЋС‰Р°СЏ operation Never-РІРѕР·РІСЂР°С‚-
+    // РЅРѕР№, Рё РµСЃР»Рё РґР° вЂ” body РґРѕР»Р¶РµРЅ diverge (static analysis).
     check_handler_never_ops(module, &mut errors);
 
-    // Plan 33.3 Ф.9 (D24): validate axiom-bodies в effect-блоках.
-    // Каждый axiom должен ссылаться только на binders + pure_view-ops
-    // **того же эффекта** + литералы + boolean/arith operators. Любой
-    // другой identifier (включая non-pure_view ops) → error. Это
-    // фундамент SMT encoding (UF mapping в Ф.9.4).
+    // Plan 33.3 Р¤.9 (D24): validate axiom-bodies РІ effect-Р±Р»РѕРєР°С….
+    // РљР°Р¶РґС‹Р№ axiom РґРѕР»Р¶РµРЅ СЃСЃС‹Р»Р°С‚СЊСЃСЏ С‚РѕР»СЊРєРѕ РЅР° binders + pure_view-ops
+    // **С‚РѕРіРѕ Р¶Рµ СЌС„С„РµРєС‚Р°** + Р»РёС‚РµСЂР°Р»С‹ + boolean/arith operators. Р›СЋР±РѕР№
+    // РґСЂСѓРіРѕР№ identifier (РІРєР»СЋС‡Р°СЏ non-pure_view ops) в†’ error. Р­С‚Рѕ
+    // С„СѓРЅРґР°РјРµРЅС‚ SMT encoding (UF mapping РІ Р¤.9.4).
     check_effect_axioms(module, &mut errors);
 
-    // Plan 33.3 Ф.9.6: handler verification gate.
-    // Если эффект имеет pure_view-ops, любая `with E = handler` для
-    // этого эффекта обязана быть помечена `#verify_handler` или
-    // `#trusted_handler`. Без атрибута — compile error.
+    // Plan 33.3 Р¤.9.6: handler verification gate.
+    // Р•СЃР»Рё СЌС„С„РµРєС‚ РёРјРµРµС‚ pure_view-ops, Р»СЋР±Р°СЏ `with E = handler` РґР»СЏ
+    // СЌС‚РѕРіРѕ СЌС„С„РµРєС‚Р° РѕР±СЏР·Р°РЅР° Р±С‹С‚СЊ РїРѕРјРµС‡РµРЅР° `#verify_handler` РёР»Рё
+    // `#trusted_handler`. Р‘РµР· Р°С‚СЂРёР±СѓС‚Р° вЂ” compile error.
     check_handler_verification_gate(module, &mut errors);
 
-    // Name-resolution фаза: статический поиск undefined идентификаторов
-    // в expr-position. Запускается ПОСЛЕ BoundCtx/CapabilityCtx, чтобы
-    // более фундаментальные ошибки (signatures/effects) приходили первыми.
+    // Name-resolution С„Р°Р·Р°: СЃС‚Р°С‚РёС‡РµСЃРєРёР№ РїРѕРёСЃРє undefined РёРґРµРЅС‚РёС„РёРєР°С‚РѕСЂРѕРІ
+    // РІ expr-position. Р—Р°РїСѓСЃРєР°РµС‚СЃСЏ РџРћРЎР›Р• BoundCtx/CapabilityCtx, С‡С‚РѕР±С‹
+    // Р±РѕР»РµРµ С„СѓРЅРґР°РјРµРЅС‚Р°Р»СЊРЅС‹Рµ РѕС€РёР±РєРё (signatures/effects) РїСЂРёС…РѕРґРёР»Рё РїРµСЂРІС‹РјРё.
     //
-    // Без этой фазы код вроде `let r = 1 | undefined_var` проходил
-    // typecheck и падал только на cc-этапе с малочитаемой ошибкой
-    // "необъявленный идентификатор". См. NameResCtx ниже.
+    // Р‘РµР· СЌС‚РѕР№ С„Р°Р·С‹ РєРѕРґ РІСЂРѕРґРµ `let r = 1 | undefined_var` РїСЂРѕС…РѕРґРёР»
+    // typecheck Рё РїР°РґР°Р» С‚РѕР»СЊРєРѕ РЅР° cc-СЌС‚Р°РїРµ СЃ РјР°Р»РѕС‡РёС‚Р°РµРјРѕР№ РѕС€РёР±РєРѕР№
+    // "РЅРµРѕР±СЉСЏРІР»РµРЅРЅС‹Р№ РёРґРµРЅС‚РёС„РёРєР°С‚РѕСЂ". РЎРј. NameResCtx РЅРёР¶Рµ.
     let name_res = NameResCtx::build(module);
     name_res.check_module(module, &mut errors);
 
-    // Plan 33.1 Ф.2 (D24): contract checking + purity inference.
-    // Минимальный pass: проверка базовых правил для контрактов:
-    // - `result` запрещён в `requires`;
-    // - `old(...)` запрещён в `requires`;
-    // - composition (вызов другой fn в контракте) запрещён в 33.1
-    //   (будет разрешён для #pure в 33.2).
+    // Plan 33.1 Р¤.2 (D24): contract checking + purity inference.
+    // РњРёРЅРёРјР°Р»СЊРЅС‹Р№ pass: РїСЂРѕРІРµСЂРєР° Р±Р°Р·РѕРІС‹С… РїСЂР°РІРёР» РґР»СЏ РєРѕРЅС‚СЂР°РєС‚РѕРІ:
+    // - `result` Р·Р°РїСЂРµС‰С‘РЅ РІ `requires`;
+    // - `old(...)` Р·Р°РїСЂРµС‰С‘РЅ РІ `requires`;
+    // - composition (РІС‹Р·РѕРІ РґСЂСѓРіРѕР№ fn РІ РєРѕРЅС‚СЂР°РєС‚Рµ) Р·Р°РїСЂРµС‰С‘РЅ РІ 33.1
+    //   (Р±СѓРґРµС‚ СЂР°Р·СЂРµС€С‘РЅ РґР»СЏ #pure РІ 33.2).
     let contract_ctx = ContractCtx::build(module);
     contract_ctx.check_module(module, &mut errors);
 
-    // Plan 33.3 Ф.9.7 (D24): ghost-var usage check.
-    // Non-ghost код не может читать ghost-var (Verus/Dafny semantics).
-    // До этого: catch'илось на C-level через «undeclared identifier»;
-    // теперь — proper compile-error с понятным сообщением.
+    // Plan 33.3 Р¤.9.7 (D24): ghost-var usage check.
+    // Non-ghost РєРѕРґ РЅРµ РјРѕР¶РµС‚ С‡РёС‚Р°С‚СЊ ghost-var (Verus/Dafny semantics).
+    // Р”Рѕ СЌС‚РѕРіРѕ: catch'РёР»РѕСЃСЊ РЅР° C-level С‡РµСЂРµР· В«undeclared identifierВ»;
+    // С‚РµРїРµСЂСЊ вЂ” proper compile-error СЃ РїРѕРЅСЏС‚РЅС‹Рј СЃРѕРѕР±С‰РµРЅРёРµРј.
     check_ghost_usage(module, &mut errors);
 
-    // Plan 33.1 Ф.3 (D24): SMT verification.
-    // TrivialBackend по умолчанию (Z3 — отдельная feature в будущем).
-    // Доказанные контракты записываются в env для zero-cost release.
-    // `#must_verify` errors / counterexample warnings — попадают в errors.
+    // Plan 33.1 Р¤.3 (D24): SMT verification.
+    // TrivialBackend РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ (Z3 вЂ” РѕС‚РґРµР»СЊРЅР°СЏ feature РІ Р±СѓРґСѓС‰РµРј).
+    // Р”РѕРєР°Р·Р°РЅРЅС‹Рµ РєРѕРЅС‚СЂР°РєС‚С‹ Р·Р°РїРёСЃС‹РІР°СЋС‚СЃСЏ РІ env РґР»СЏ zero-cost release.
+    // `#must_verify` errors / counterexample warnings вЂ” РїРѕРїР°РґР°СЋС‚ РІ errors.
     if errors.is_empty() {
-        // Verify только если предыдущие фазы прошли (иначе encode на
-        // невалидном AST может крашнуть).
+        // Verify С‚РѕР»СЊРєРѕ РµСЃР»Рё РїСЂРµРґС‹РґСѓС‰РёРµ С„Р°Р·С‹ РїСЂРѕС€Р»Рё (РёРЅР°С‡Рµ encode РЅР°
+        // РЅРµРІР°Р»РёРґРЅРѕРј AST РјРѕР¶РµС‚ РєСЂР°С€РЅСѓС‚СЊ).
         let report = crate::verify::verify_module(module);
         env.proven_contracts = report.proven;
         for e in report.errors { errors.push(e); }
-        // warnings пока silent — добавим warning infrastructure
-        // в Plan 36 production hardening.
-        // Note: counterexample-warnings (без #must_verify) бэк-port'ятся
-        // в errors временно, чтобы в 33.1 negative-тесты могли их детектить.
-        // Это будет уточнено когда добавится warning severity (Plan 36).
+        // warnings РїРѕРєР° silent вЂ” РґРѕР±Р°РІРёРј warning infrastructure
+        // РІ Plan 36 production hardening.
+        // Note: counterexample-warnings (Р±РµР· #must_verify) Р±СЌРє-port'СЏС‚СЃСЏ
+        // РІ errors РІСЂРµРјРµРЅРЅРѕ, С‡С‚РѕР±С‹ РІ 33.1 negative-С‚РµСЃС‚С‹ РјРѕРіР»Рё РёС… РґРµС‚РµРєС‚РёС‚СЊ.
+        // Р­С‚Рѕ Р±СѓРґРµС‚ СѓС‚РѕС‡РЅРµРЅРѕ РєРѕРіРґР° РґРѕР±Р°РІРёС‚СЃСЏ warning severity (Plan 36).
         let _ = report.warnings; // intentionally silent
     }
 
@@ -278,33 +279,33 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
     }
 }
 
-/// Plan 15 (D72): registry для bound enforcement.
+/// Plan 15 (D72): registry РґР»СЏ bound enforcement.
 ///
-/// `protocol_specs`: для каждого `type Foo protocol { ... }` — список
-/// required methods (TypeDeclKind::Effect; в Nova protocol/effect единая
-/// форма по D62).
+/// `protocol_specs`: РґР»СЏ РєР°Р¶РґРѕРіРѕ `type Foo protocol { ... }` вЂ” СЃРїРёСЃРѕРє
+/// required methods (TypeDeclKind::Effect; РІ Nova protocol/effect РµРґРёРЅР°СЏ
+/// С„РѕСЂРјР° РїРѕ D62).
 ///
-/// `fn_decls`: top-level fn-декларации (для resolve вызова по имени).
+/// `fn_decls`: top-level fn-РґРµРєР»Р°СЂР°С†РёРё (РґР»СЏ resolve РІС‹Р·РѕРІР° РїРѕ РёРјРµРЅРё).
 ///
-/// `method_table`: для каждого concrete-типа — методы (по имени), для
-/// проверки "type T satisfies protocol P".
+/// `method_table`: РґР»СЏ РєР°Р¶РґРѕРіРѕ concrete-С‚РёРїР° вЂ” РјРµС‚РѕРґС‹ (РїРѕ РёРјРµРЅРё), РґР»СЏ
+/// РїСЂРѕРІРµСЂРєРё "type T satisfies protocol P".
 struct BoundCtx<'a> {
-    /// Plan 15 D53 strict: только protocol-kind типов. Effect-kind
-    /// сюда не попадает — effects не разрешены как D72 bounds.
+    /// Plan 15 D53 strict: С‚РѕР»СЊРєРѕ protocol-kind С‚РёРїРѕРІ. Effect-kind
+    /// СЃСЋРґР° РЅРµ РїРѕРїР°РґР°РµС‚ вЂ” effects РЅРµ СЂР°Р·СЂРµС€РµРЅС‹ РєР°Рє D72 bounds.
     protocol_specs: HashMap<String, &'a [EffectMethod]>,
-    /// Plan 15 D53 strict: effect-kind типы. Используется для
-    /// дифференциированного error-сообщения, если их пытаются
-    /// использовать как bound («`Db` is an effect, not a protocol»).
+    /// Plan 15 D53 strict: effect-kind С‚РёРїС‹. РСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ РґР»СЏ
+    /// РґРёС„С„РµСЂРµРЅС†РёРёСЂРѕРІР°РЅРЅРѕРіРѕ error-СЃРѕРѕР±С‰РµРЅРёСЏ, РµСЃР»Рё РёС… РїС‹С‚Р°СЋС‚СЃСЏ
+    /// РёСЃРїРѕР»СЊР·РѕРІР°С‚СЊ РєР°Рє bound (В«`Db` is an effect, not a protocolВ»).
     effect_decls: HashMap<String, &'a TypeDecl>,
-    /// D84: HashMap → Vec<&FnDecl> чтобы хранить multiple overloads
-    /// одного имени (методы и свободные функции). Резолв в check_call_bounds —
-    /// фильтр по arity. Полный type-based resolve остаётся за codegen (где
-    /// есть type-инфер аргументов).
+    /// D84: HashMap в†’ Vec<&FnDecl> С‡С‚РѕР±С‹ С…СЂР°РЅРёС‚СЊ multiple overloads
+    /// РѕРґРЅРѕРіРѕ РёРјРµРЅРё (РјРµС‚РѕРґС‹ Рё СЃРІРѕР±РѕРґРЅС‹Рµ С„СѓРЅРєС†РёРё). Р РµР·РѕР»РІ РІ check_call_bounds вЂ”
+    /// С„РёР»СЊС‚СЂ РїРѕ arity. РџРѕР»РЅС‹Р№ type-based resolve РѕСЃС‚Р°С‘С‚СЃСЏ Р·Р° codegen (РіРґРµ
+    /// РµСЃС‚СЊ type-РёРЅС„РµСЂ Р°СЂРіСѓРјРµРЅС‚РѕРІ).
     fn_decls: HashMap<String, Vec<&'a FnDecl>>,
     method_table: HashMap<String, HashMap<String, Vec<&'a FnDecl>>>,
-    /// Plan 53: имена sum-variant'ов (для refutability check let-pattern).
-    /// `type Color | Red | Green` → {"Red", "Green"}. Используется чтобы
-    /// отличить `let Color.Red { x } = obj` (refutable, error) от
+    /// Plan 53: РёРјРµРЅР° sum-variant'РѕРІ (РґР»СЏ refutability check let-pattern).
+    /// `type Color | Red | Green` в†’ {"Red", "Green"}. РСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ С‡С‚РѕР±С‹
+    /// РѕС‚Р»РёС‡РёС‚СЊ `let Color.Red { x } = obj` (refutable, error) РѕС‚
     /// `let Pair { x, y } = p` (irrefutable record).
     sum_variant_names: std::collections::HashSet<String>,
 }
@@ -320,9 +321,9 @@ impl<'a> BoundCtx<'a> {
         for item in &module.items {
             match item {
                 Item::Type(t) => {
-                    // Plan 15 D53 strict: protocol-kind → eligible как
-                    // bound (D72); effect-kind → отдельный registry для
-                    // диагностики «used as bound but it's an effect».
+                    // Plan 15 D53 strict: protocol-kind в†’ eligible РєР°Рє
+                    // bound (D72); effect-kind в†’ РѕС‚РґРµР»СЊРЅС‹Р№ registry РґР»СЏ
+                    // РґРёР°РіРЅРѕСЃС‚РёРєРё В«used as bound but it's an effectВ».
                     match &t.kind {
                         TypeDeclKind::Protocol(methods) => {
                             protocol_specs.insert(t.name.clone(), methods.as_slice());
@@ -330,7 +331,7 @@ impl<'a> BoundCtx<'a> {
                         TypeDeclKind::Effect(_) => {
                             effect_decls.insert(t.name.clone(), t);
                         }
-                        // Plan 53: sum-variants для refutability check.
+                        // Plan 53: sum-variants РґР»СЏ refutability check.
                         TypeDeclKind::Sum(variants) => {
                             for v in variants {
                                 sum_variant_names.insert(v.name.clone());
@@ -348,7 +349,7 @@ impl<'a> BoundCtx<'a> {
                             .or_default()
                             .push(f);
                     } else {
-                        // D84: свободные функции тоже могут иметь overloads.
+                        // D84: СЃРІРѕР±РѕРґРЅС‹Рµ С„СѓРЅРєС†РёРё С‚РѕР¶Рµ РјРѕРіСѓС‚ РёРјРµС‚СЊ overloads.
                         fn_decls.entry(f.name.clone()).or_default().push(f);
                     }
                 }
@@ -364,15 +365,15 @@ impl<'a> BoundCtx<'a> {
             match item {
                 Item::Fn(f) => {
                     let mut scope: HashMap<String, TypeRef> = HashMap::new();
-                    // Регистрируем параметры функции с их типами.
+                    // Р РµРіРёСЃС‚СЂРёСЂСѓРµРј РїР°СЂР°РјРµС‚СЂС‹ С„СѓРЅРєС†РёРё СЃ РёС… С‚РёРїР°РјРё.
                     for p in &f.params {
                         scope.insert(p.name.clone(), p.ty.clone());
                     }
                     self.walk_fn_body(f, &mut scope, errors);
                 }
                 Item::Test(t) => {
-                    // Plan 15: тесты тоже могут содержать generic-вызовы
-                    // c bounds — обходим их body со свежим scope.
+                    // Plan 15: С‚РµСЃС‚С‹ С‚РѕР¶Рµ РјРѕРіСѓС‚ СЃРѕРґРµСЂР¶Р°С‚СЊ generic-РІС‹Р·РѕРІС‹
+                    // c bounds вЂ” РѕР±С…РѕРґРёРј РёС… body СЃРѕ СЃРІРµР¶РёРј scope.
                     let mut scope: HashMap<String, TypeRef> = HashMap::new();
                     self.walk_block(&t.body, &mut scope, errors);
                 }
@@ -390,8 +391,8 @@ impl<'a> BoundCtx<'a> {
     }
 
     fn walk_block(&self, b: &Block, scope: &mut HashMap<String, TypeRef>, errors: &mut Vec<Diagnostic>) {
-        // Сохраняем snapshot для bindings которые let'аются в этом блоке —
-        // чтобы вернуть scope после блока (block-out shadowing semantics).
+        // РЎРѕС…СЂР°РЅСЏРµРј snapshot РґР»СЏ bindings РєРѕС‚РѕСЂС‹Рµ let'Р°СЋС‚СЃСЏ РІ СЌС‚РѕРј Р±Р»РѕРєРµ вЂ”
+        // С‡С‚РѕР±С‹ РІРµСЂРЅСѓС‚СЊ scope РїРѕСЃР»Рµ Р±Р»РѕРєР° (block-out shadowing semantics).
         let mut snapshot: Vec<(String, Option<TypeRef>)> = Vec::new();
         for s in &b.stmts {
             if let Stmt::Let(d) = s {
@@ -406,7 +407,7 @@ impl<'a> BoundCtx<'a> {
         if let Some(t) = &b.trailing {
             self.walk_expr(t, scope, errors);
         }
-        // Восстановим shadowed bindings (block-out).
+        // Р’РѕСЃСЃС‚Р°РЅРѕРІРёРј shadowed bindings (block-out).
         for (n, prev) in snapshot {
             match prev {
                 Some(t) => { scope.insert(n, t); }
@@ -420,13 +421,13 @@ impl<'a> BoundCtx<'a> {
             Stmt::Expr(e) => self.walk_expr(e, scope, errors),
             Stmt::Let(d) => {
                 self.walk_expr(&d.value, scope, errors);
-                // Plan 53: refutable pattern в `let` — compile error.
-                // Допустимы только irrefutable patterns (Ident, Wildcard,
+                // Plan 53: refutable pattern РІ `let` вЂ” compile error.
+                // Р”РѕРїСѓСЃС‚РёРјС‹ С‚РѕР»СЊРєРѕ irrefutable patterns (Ident, Wildcard,
                 // Tuple, plain-Record). Refutable (Literal, Variant, Or,
-                // Array, Record-к-sum-variant) ловим здесь — codegen и
-                // interp ассамят irrefutable.
+                // Array, Record-Рє-sum-variant) Р»РѕРІРёРј Р·РґРµСЃСЊ вЂ” codegen Рё
+                // interp Р°СЃСЃР°РјСЏС‚ irrefutable.
                 self.check_let_pattern_irrefutable(&d.pattern, errors);
-                // Регистрируем simple-Ident pattern с inferred типом.
+                // Р РµРіРёСЃС‚СЂРёСЂСѓРµРј simple-Ident pattern СЃ inferred С‚РёРїРѕРј.
                 if let Some(name) = pattern_simple_name(&d.pattern) {
                     let inferred = d.ty.clone()
                         .or_else(|| Self::infer_arg_ty(&d.value, scope));
@@ -444,19 +445,27 @@ impl<'a> BoundCtx<'a> {
             }
             Stmt::Throw { value, .. } => self.walk_expr(value, scope, errors),
             Stmt::Break(_) | Stmt::Continue(_) => {}
-            // D90 Plan 20 Ф.2: body парсится, walk'аем — bound-checker
-            // получит call'ы внутри body. Body-constraint проверки
-            // (no Fail, no suspend, no exit-control) добавляются в Ф.3.
+            // D90 Plan 20 Р¤.2: body РїР°СЂСЃРёС‚СЃСЏ, walk'Р°РµРј вЂ” bound-checker
+            // РїРѕР»СѓС‡РёС‚ call'С‹ РІРЅСѓС‚СЂРё body. Body-constraint РїСЂРѕРІРµСЂРєРё
+            // (no Fail, no suspend, no exit-control) РґРѕР±Р°РІР»СЏСЋС‚СЃСЏ РІ Р¤.3.
             Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. } => {
                 self.walk_expr(body, scope, errors);
             }
-            // Plan 33.2 Ф.8: assert_static — walk expr.
+            // Plan 33.2 Р¤.8: assert_static вЂ” walk expr.
             Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => self.walk_expr(expr, scope, errors),
+            // Ф.4.1: apply — ghost statement, args walk'аем (для name resolution).
+            Stmt::Apply { args, .. } => {
+                for a in args { self.walk_expr(a, scope, errors); }
+            }
+            // Ф.4.2: calc — ghost, шаги walk'аем.
+            Stmt::Calc { steps, .. } => {
+                for step in steps { self.walk_expr(&step.expr, scope, errors); }
+            }
         }
     }
 
     fn walk_expr(&self, e: &Expr, scope: &mut HashMap<String, TypeRef>, errors: &mut Vec<Diagnostic>) {
-        // Проверяем сам call перед рекурсией в args (порядок не важен).
+        // РџСЂРѕРІРµСЂСЏРµРј СЃР°Рј call РїРµСЂРµРґ СЂРµРєСѓСЂСЃРёРµР№ РІ args (РїРѕСЂСЏРґРѕРє РЅРµ РІР°Р¶РµРЅ).
         self.check_call_bounds(e, scope, errors);
         // Plan 46 (D102): argument binding diagnostics.
         self.check_call_argbind(e, scope, errors);
@@ -473,7 +482,7 @@ impl<'a> BoundCtx<'a> {
                             self.walk_block(&tb.body, scope, errors)
                         }
                         crate::ast::Trailing::Fn(sb) => {
-                            // Trailing-fn body: Expr или Block.
+                            // Trailing-fn body: Expr РёР»Рё Block.
                             match &sb.body {
                                 FnBody::Expr(e) => self.walk_expr(e, scope, errors),
                                 FnBody::Block(b) => self.walk_block(b, scope, errors),
@@ -559,9 +568,9 @@ impl<'a> BoundCtx<'a> {
                 }
             }
             ExprKind::Lambda { body, .. } => self.walk_expr(body, scope, errors),
-            // Plan 19, C5: BoundCtx обходит тело closure-light /
-            // closure-full для генерик-bound проверок. Полный
-            // bidirectional inference — фаза C6; здесь — только walk.
+            // Plan 19, C5: BoundCtx РѕР±С…РѕРґРёС‚ С‚РµР»Рѕ closure-light /
+            // closure-full РґР»СЏ РіРµРЅРµСЂРёРє-bound РїСЂРѕРІРµСЂРѕРє. РџРѕР»РЅС‹Р№
+            // bidirectional inference вЂ” С„Р°Р·Р° C6; Р·РґРµСЃСЊ вЂ” С‚РѕР»СЊРєРѕ walk.
             ExprKind::ClosureLight { body, .. } => match body {
                 crate::ast::ClosureBody::Expr(e) => self.walk_expr(e, scope, errors),
                 crate::ast::ClosureBody::Block(b) => self.walk_block(b, scope, errors),
@@ -587,7 +596,7 @@ impl<'a> BoundCtx<'a> {
                 self.walk_expr(iter, scope, errors);
                 self.walk_block(body, scope, errors);
             }
-            ExprKind::While { cond, body } => {
+            ExprKind::While { cond, body, .. } => {
                 self.walk_expr(cond, scope, errors);
                 self.walk_block(body, scope, errors);
             }
@@ -595,7 +604,7 @@ impl<'a> BoundCtx<'a> {
                 self.walk_expr(scrutinee, scope, errors);
                 self.walk_block(body, scope, errors);
             }
-            ExprKind::Loop { body } => self.walk_block(body, scope, errors),
+            ExprKind::Loop { body, .. } => self.walk_block(body, scope, errors),
             ExprKind::Select { arms } => {
                 for arm in arms {
                     match &arm.op {
@@ -619,7 +628,12 @@ impl<'a> BoundCtx<'a> {
                 if let Some(e) = opt { self.walk_expr(e, scope, errors); }
             }
             ExprKind::With { body, .. } => self.walk_block(body, scope, errors),
-            // Литералы / ident'ы / handler-литералы — без рекурсии в bound-проверке.
+            // D.1.3: РєРІР°РЅС‚РѕСЂ вЂ” С‚РѕР»СЊРєРѕ РІ РєРѕРЅС‚СЂР°РєС‚Р°С…; РѕР±С…РѕРґРёРј range Рё body.
+            ExprKind::Forall { range, body, .. } | ExprKind::Exists { range, body, .. } => {
+                self.walk_expr(range, scope, errors);
+                self.walk_expr(body, scope, errors);
+            }
+            // Р›РёС‚РµСЂР°Р»С‹ / ident'С‹ / handler-Р»РёС‚РµСЂР°Р»С‹ вЂ” Р±РµР· СЂРµРєСѓСЂСЃРёРё РІ bound-РїСЂРѕРІРµСЂРєРµ.
             ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::BoolLit(_)
             | ExprKind::StrLit(_) | ExprKind::CharLit(_) | ExprKind::UnitLit
             | ExprKind::Ident(_) | ExprKind::Path(_) | ExprKind::SelfAccess
@@ -627,11 +641,11 @@ impl<'a> BoundCtx<'a> {
         }
     }
 
-    /// Plan 15 Ф.3: проверить bound'ы на конкретном call-site.
+    /// Plan 15 Р¤.3: РїСЂРѕРІРµСЂРёС‚СЊ bound'С‹ РЅР° РєРѕРЅРєСЂРµС‚РЅРѕРј call-site.
     ///
-    /// Если callee — top-level fn с generics+bounds, и есть turbofish
-    /// type_args (или возможна простая inference из args) — проверить
-    /// что concrete-T удовлетворяет bound'у.
+    /// Р•СЃР»Рё callee вЂ” top-level fn СЃ generics+bounds, Рё РµСЃС‚СЊ turbofish
+    /// type_args (РёР»Рё РІРѕР·РјРѕР¶РЅР° РїСЂРѕСЃС‚Р°СЏ inference РёР· args) вЂ” РїСЂРѕРІРµСЂРёС‚СЊ
+    /// С‡С‚Рѕ concrete-T СѓРґРѕРІР»РµС‚РІРѕСЂСЏРµС‚ bound'Сѓ.
     fn check_call_bounds(
         &self,
         e: &Expr,
@@ -639,36 +653,36 @@ impl<'a> BoundCtx<'a> {
         errors: &mut Vec<Diagnostic>,
     ) {
         let ExprKind::Call { func, args, .. } = &e.kind else { return; };
-        // Распакуем turbofish, чтобы добраться до базового идентификатора.
+        // Р Р°СЃРїР°РєСѓРµРј turbofish, С‡С‚РѕР±С‹ РґРѕР±СЂР°С‚СЊСЃСЏ РґРѕ Р±Р°Р·РѕРІРѕРіРѕ РёРґРµРЅС‚РёС„РёРєР°С‚РѕСЂР°.
         let (base, type_args): (&Expr, &[TypeRef]) = match &func.kind {
             ExprKind::TurboFish { base, type_args } => (base, type_args.as_slice()),
             _ => (func.as_ref(), &[][..]),
         };
         let fn_name = match &base.kind {
             ExprKind::Ident(n) => n.clone(),
-            _ => return, // методы и т.п. — отдельная задача
+            _ => return, // РјРµС‚РѕРґС‹ Рё С‚.Рї. вЂ” РѕС‚РґРµР»СЊРЅР°СЏ Р·Р°РґР°С‡Р°
         };
-        // D84: fn_decls — Vec<&FnDecl>. Резолв overload по arity (то, что
-        // bound-checker может определить без full type-inference).
-        // Если несколько overloads подходят по arity — bound-checker не
-        // делает разрешение (это работа codegen, у которого есть type-info).
-        // Bound-проверка пропускается; codegen ловит ambiguity на своём
-        // уровне.
+        // D84: fn_decls вЂ” Vec<&FnDecl>. Р РµР·РѕР»РІ overload РїРѕ arity (С‚Рѕ, С‡С‚Рѕ
+        // bound-checker РјРѕР¶РµС‚ РѕРїСЂРµРґРµР»РёС‚СЊ Р±РµР· full type-inference).
+        // Р•СЃР»Рё РЅРµСЃРєРѕР»СЊРєРѕ overloads РїРѕРґС…РѕРґСЏС‚ РїРѕ arity вЂ” bound-checker РЅРµ
+        // РґРµР»Р°РµС‚ СЂР°Р·СЂРµС€РµРЅРёРµ (СЌС‚Рѕ СЂР°Р±РѕС‚Р° codegen, Сѓ РєРѕС‚РѕСЂРѕРіРѕ РµСЃС‚СЊ type-info).
+        // Bound-РїСЂРѕРІРµСЂРєР° РїСЂРѕРїСѓСЃРєР°РµС‚СЃСЏ; codegen Р»РѕРІРёС‚ ambiguity РЅР° СЃРІРѕС‘Рј
+        // СѓСЂРѕРІРЅРµ.
         let Some(overloads) = self.fn_decls.get(&fn_name) else { return; };
         let arity_matches: Vec<&&FnDecl> = overloads.iter()
             .filter(|f| f.params.len() == args.len())
             .collect();
         let callee: &FnDecl = match arity_matches.as_slice() {
             [single] => *single,
-            _ => return, // нет однозначной overload по arity — пропускаем
+            _ => return, // РЅРµС‚ РѕРґРЅРѕР·РЅР°С‡РЅРѕР№ overload РїРѕ arity вЂ” РїСЂРѕРїСѓСЃРєР°РµРј
         };
-        // Bounds присутствуют?
+        // Bounds РїСЂРёСЃСѓС‚СЃС‚РІСѓСЋС‚?
         let has_bounds = callee.generics.iter().any(|g| g.bound.is_some());
         if !has_bounds { return; }
-        // Сматчим concrete T. Стратегия:
-        //   - turbofish — explicit type_args[i] для callee.generics[i].
-        //   - иначе simple inference: для каждого param с TypeRef::Named{path:[T]}
-        //     где T — generic-param, тип arg'а на той же позиции = concrete T.
+        // РЎРјР°С‚С‡РёРј concrete T. РЎС‚СЂР°С‚РµРіРёСЏ:
+        //   - turbofish вЂ” explicit type_args[i] РґР»СЏ callee.generics[i].
+        //   - РёРЅР°С‡Рµ simple inference: РґР»СЏ РєР°Р¶РґРѕРіРѕ param СЃ TypeRef::Named{path:[T]}
+        //     РіРґРµ T вЂ” generic-param, С‚РёРї arg'Р° РЅР° С‚РѕР№ Р¶Рµ РїРѕР·РёС†РёРё = concrete T.
         let mut bindings: HashMap<String, TypeRef> = HashMap::new();
         if !type_args.is_empty() {
             for (i, gp) in callee.generics.iter().enumerate() {
@@ -677,7 +691,7 @@ impl<'a> BoundCtx<'a> {
                 }
             }
         } else {
-            // Simple inference из позиционных args.
+            // Simple inference РёР· РїРѕР·РёС†РёРѕРЅРЅС‹С… args.
             for (i, param) in callee.params.iter().enumerate() {
                 let Some(call_arg) = args.get(i) else { continue; };
                 let arg_expr = call_arg.expr();
@@ -688,12 +702,12 @@ impl<'a> BoundCtx<'a> {
                 }
             }
         }
-        // Для каждого bounded generic — проверить.
+        // Р”Р»СЏ РєР°Р¶РґРѕРіРѕ bounded generic вЂ” РїСЂРѕРІРµСЂРёС‚СЊ.
         for gp in &callee.generics {
             let Some(bound) = &gp.bound else { continue; };
             let Some(concrete) = bindings.get(&gp.name) else {
-                // Inference не удалась — пропускаем (best-effort).
-                // Strict-mode мог бы требовать explicit turbofish.
+                // Inference РЅРµ СѓРґР°Р»Р°СЃСЊ вЂ” РїСЂРѕРїСѓСЃРєР°РµРј (best-effort).
+                // Strict-mode РјРѕРі Р±С‹ С‚СЂРµР±РѕРІР°С‚СЊ explicit turbofish.
                 continue;
             };
             self.check_satisfaction(
@@ -702,14 +716,14 @@ impl<'a> BoundCtx<'a> {
         }
     }
 
-    /// Plan 46 (D102): проверить argument binding на call-site.
-    /// Резолвит callee (free fn / static-method по Path), сопоставляет
-    /// позиционные + именованные аргументы с параметрами через
-    /// `argbind::bind_call_args`, эмитит diagnostics.
+    /// Plan 46 (D102): РїСЂРѕРІРµСЂРёС‚СЊ argument binding РЅР° call-site.
+    /// Р РµР·РѕР»РІРёС‚ callee (free fn / static-method РїРѕ Path), СЃРѕРїРѕСЃС‚Р°РІР»СЏРµС‚
+    /// РїРѕР·РёС†РёРѕРЅРЅС‹Рµ + РёРјРµРЅРѕРІР°РЅРЅС‹Рµ Р°СЂРіСѓРјРµРЅС‚С‹ СЃ РїР°СЂР°РјРµС‚СЂР°РјРё С‡РµСЂРµР·
+    /// `argbind::bind_call_args`, СЌРјРёС‚РёС‚ diagnostics.
     ///
-    /// Резолв best-effort: если callee неоднозначен (overload по arity)
-    /// или не резолвится (instance-method через Member — нужен тип obj) —
-    /// проверка пропускается (codegen поймает на своём уровне).
+    /// Р РµР·РѕР»РІ best-effort: РµСЃР»Рё callee РЅРµРѕРґРЅРѕР·РЅР°С‡РµРЅ (overload РїРѕ arity)
+    /// РёР»Рё РЅРµ СЂРµР·РѕР»РІРёС‚СЃСЏ (instance-method С‡РµСЂРµР· Member вЂ” РЅСѓР¶РµРЅ С‚РёРї obj) вЂ”
+    /// РїСЂРѕРІРµСЂРєР° РїСЂРѕРїСѓСЃРєР°РµС‚СЃСЏ (codegen РїРѕР№РјР°РµС‚ РЅР° СЃРІРѕС‘Рј СѓСЂРѕРІРЅРµ).
     fn check_call_argbind(
         &self,
         e: &Expr,
@@ -717,23 +731,23 @@ impl<'a> BoundCtx<'a> {
         errors: &mut Vec<Diagnostic>,
     ) {
         let ExprKind::Call { func, args, trailing } = &e.kind else { return; };
-        // Распакуем turbofish до базового func-expr.
+        // Р Р°СЃРїР°РєСѓРµРј turbofish РґРѕ Р±Р°Р·РѕРІРѕРіРѕ func-expr.
         let base: &Expr = match &func.kind {
             ExprKind::TurboFish { base, .. } => base,
             _ => func.as_ref(),
         };
-        // Резолвим callee → список параметров.
+        // Р РµР·РѕР»РІРёРј callee в†’ СЃРїРёСЃРѕРє РїР°СЂР°РјРµС‚СЂРѕРІ.
         let callee_params: &[Param] = match &base.kind {
             ExprKind::Ident(name) => {
                 let Some(overloads) = self.fn_decls.get(name) else { return; };
                 match overloads.as_slice() {
                     [single] => &single.params,
-                    _ => return, // overload — пропускаем (D102: нет overload,
-                                 // но bootstrap fn_decls может иметь несколько).
+                    _ => return, // overload вЂ” РїСЂРѕРїСѓСЃРєР°РµРј (D102: РЅРµС‚ overload,
+                                 // РЅРѕ bootstrap fn_decls РјРѕР¶РµС‚ РёРјРµС‚СЊ РЅРµСЃРєРѕР»СЊРєРѕ).
                 }
             }
             ExprKind::Path(parts) if parts.len() == 2 => {
-                // `Type.method` — static-method резолв.
+                // `Type.method` вЂ” static-method СЂРµР·РѕР»РІ.
                 let Some(methods) = self.method_table.get(&parts[0]) else { return; };
                 let Some(overloads) = methods.get(&parts[1]) else { return; };
                 match overloads.as_slice() {
@@ -741,16 +755,16 @@ impl<'a> BoundCtx<'a> {
                     _ => return,
                 }
             }
-            // Plan 46 Ф.3 + Plan 50 follow-up: instance-method `obj.method(...)`.
-            // Первая попытка — receiver-type inference (best-effort через
-            // `infer_arg_ty`): если тип `obj` известен (Ident в scope,
-            // record-литерал, литерал-примитив) — точный резолв
-            // `method_table[type][method]`. Закрывает gap при collision
-            // имён методов: `Box.scaled` vs `Cube.scaled` с дефолтами
-            // больше не пропускает keyword-only диагностику.
-            // Fallback — name-only резолв (как было в Plan 46): уникальное
-            // имя метода через все типы. Для остальных случаев codegen
-            // резолвит через type-info.
+            // Plan 46 Р¤.3 + Plan 50 follow-up: instance-method `obj.method(...)`.
+            // РџРµСЂРІР°СЏ РїРѕРїС‹С‚РєР° вЂ” receiver-type inference (best-effort С‡РµСЂРµР·
+            // `infer_arg_ty`): РµСЃР»Рё С‚РёРї `obj` РёР·РІРµСЃС‚РµРЅ (Ident РІ scope,
+            // record-Р»РёС‚РµСЂР°Р», Р»РёС‚РµСЂР°Р»-РїСЂРёРјРёС‚РёРІ) вЂ” С‚РѕС‡РЅС‹Р№ СЂРµР·РѕР»РІ
+            // `method_table[type][method]`. Р—Р°РєСЂС‹РІР°РµС‚ gap РїСЂРё collision
+            // РёРјС‘РЅ РјРµС‚РѕРґРѕРІ: `Box.scaled` vs `Cube.scaled` СЃ РґРµС„РѕР»С‚Р°РјРё
+            // Р±РѕР»СЊС€Рµ РЅРµ РїСЂРѕРїСѓСЃРєР°РµС‚ keyword-only РґРёР°РіРЅРѕСЃС‚РёРєСѓ.
+            // Fallback вЂ” name-only СЂРµР·РѕР»РІ (РєР°Рє Р±С‹Р»Рѕ РІ Plan 46): СѓРЅРёРєР°Р»СЊРЅРѕРµ
+            // РёРјСЏ РјРµС‚РѕРґР° С‡РµСЂРµР· РІСЃРµ С‚РёРїС‹. Р”Р»СЏ РѕСЃС‚Р°Р»СЊРЅС‹С… СЃР»СѓС‡Р°РµРІ codegen
+            // СЂРµР·РѕР»РІРёС‚ С‡РµСЂРµР· type-info.
             ExprKind::Member { obj, name: method_name } => {
                 let resolved = self.resolve_instance_method(obj, method_name, scope);
                 match resolved {
@@ -760,20 +774,20 @@ impl<'a> BoundCtx<'a> {
             }
             _ => return,
         };
-        // Plan 46 Ф.3: trailing-форма (D43) связывает ПОСЛЕДНИЙ
-        // функциональный параметр. Bind'аем против params без него.
-        // Также: если named-arg назван как trailing-bound param — это
-        // double-bind (ловится ниже отдельно).
+        // Plan 46 Р¤.3: trailing-С„РѕСЂРјР° (D43) СЃРІСЏР·С‹РІР°РµС‚ РџРћРЎР›Р•Р”РќРР™
+        // С„СѓРЅРєС†РёРѕРЅР°Р»СЊРЅС‹Р№ РїР°СЂР°РјРµС‚СЂ. Bind'Р°РµРј РїСЂРѕС‚РёРІ params Р±РµР· РЅРµРіРѕ.
+        // РўР°РєР¶Рµ: РµСЃР»Рё named-arg РЅР°Р·РІР°РЅ РєР°Рє trailing-bound param вЂ” СЌС‚Рѕ
+        // double-bind (Р»РѕРІРёС‚СЃСЏ РЅРёР¶Рµ РѕС‚РґРµР»СЊРЅРѕ).
         let trailing_present = trailing.is_some();
         let effective_params: &[Param] = if trailing_present && !callee_params.is_empty() {
-            // Проверка: named-arg для trailing-bound параметра — error.
+            // РџСЂРѕРІРµСЂРєР°: named-arg РґР»СЏ trailing-bound РїР°СЂР°РјРµС‚СЂР° вЂ” error.
             let last = &callee_params[callee_params.len() - 1];
             for a in args.iter() {
                 if a.arg_name() == Some(last.name.as_str()) {
                     errors.push(Diagnostic::new(
                         format!(
-                            "параметр `{}` связан и trailing-формой, и именованным \
-                             аргументом (D102)",
+                            "РїР°СЂР°РјРµС‚СЂ `{}` СЃРІСЏР·Р°РЅ Рё trailing-С„РѕСЂРјРѕР№, Рё РёРјРµРЅРѕРІР°РЅРЅС‹Рј \
+                             Р°СЂРіСѓРјРµРЅС‚РѕРј (D102)",
                             last.name
                         ),
                         a.expr().span,
@@ -785,14 +799,14 @@ impl<'a> BoundCtx<'a> {
         } else {
             callee_params
         };
-        // Запускаем binding. Ошибка → diagnostic.
+        // Р—Р°РїСѓСЃРєР°РµРј binding. РћС€РёР±РєР° в†’ diagnostic.
         //
-        // Precedence (Plan 50): структурные ошибки argbind — арность,
-        // неизвестное имя, двойная привязка, позиционный-после-именованного
-        // — fail-fast в `bind_call_args` и эмитятся первыми. Правило
-        // keyword-only (Plan 50, D102 №1) проверяется ТОЛЬКО когда
-        // структура валидна (`Ok(bindings)`) — оно последнее в порядке
-        // диагностик.
+        // Precedence (Plan 50): СЃС‚СЂСѓРєС‚СѓСЂРЅС‹Рµ РѕС€РёР±РєРё argbind вЂ” Р°СЂРЅРѕСЃС‚СЊ,
+        // РЅРµРёР·РІРµСЃС‚РЅРѕРµ РёРјСЏ, РґРІРѕР№РЅР°СЏ РїСЂРёРІСЏР·РєР°, РїРѕР·РёС†РёРѕРЅРЅС‹Р№-РїРѕСЃР»Рµ-РёРјРµРЅРѕРІР°РЅРЅРѕРіРѕ
+        // вЂ” fail-fast РІ `bind_call_args` Рё СЌРјРёС‚СЏС‚СЃСЏ РїРµСЂРІС‹РјРё. РџСЂР°РІРёР»Рѕ
+        // keyword-only (Plan 50, D102 в„–1) РїСЂРѕРІРµСЂСЏРµС‚СЃСЏ РўРћР›Р¬РљРћ РєРѕРіРґР°
+        // СЃС‚СЂСѓРєС‚СѓСЂР° РІР°Р»РёРґРЅР° (`Ok(bindings)`) вЂ” РѕРЅРѕ РїРѕСЃР»РµРґРЅРµРµ РІ РїРѕСЂСЏРґРєРµ
+        // РґРёР°РіРЅРѕСЃС‚РёРє.
         match crate::argbind::bind_call_args(effective_params, args) {
             Err(err) => {
                 let span = {
@@ -802,24 +816,24 @@ impl<'a> BoundCtx<'a> {
                 errors.push(Diagnostic::new(err.message(), span));
             }
             Ok(bindings) => {
-                // Plan 50 (D102 ревизия): параметр с дефолтом — keyword-only.
-                // Позиционная привязка к дефолтному параметру — ошибка.
-                // Trailing-форма исключена структурно: trailing-bound
-                // параметр уже снят из `effective_params` выше, поэтому
-                // в `bindings` его нет — заполнение дефолтного последнего
-                // параметра trailing-формой не считается нарушением.
+                // Plan 50 (D102 СЂРµРІРёР·РёСЏ): РїР°СЂР°РјРµС‚СЂ СЃ РґРµС„РѕР»С‚РѕРј вЂ” keyword-only.
+                // РџРѕР·РёС†РёРѕРЅРЅР°СЏ РїСЂРёРІСЏР·РєР° Рє РґРµС„РѕР»С‚РЅРѕРјСѓ РїР°СЂР°РјРµС‚СЂСѓ вЂ” РѕС€РёР±РєР°.
+                // Trailing-С„РѕСЂРјР° РёСЃРєР»СЋС‡РµРЅР° СЃС‚СЂСѓРєС‚СѓСЂРЅРѕ: trailing-bound
+                // РїР°СЂР°РјРµС‚СЂ СѓР¶Рµ СЃРЅСЏС‚ РёР· `effective_params` РІС‹С€Рµ, РїРѕСЌС‚РѕРјСѓ
+                // РІ `bindings` РµРіРѕ РЅРµС‚ вЂ” Р·Р°РїРѕР»РЅРµРЅРёРµ РґРµС„РѕР»С‚РЅРѕРіРѕ РїРѕСЃР»РµРґРЅРµРіРѕ
+                // РїР°СЂР°РјРµС‚СЂР° trailing-С„РѕСЂРјРѕР№ РЅРµ СЃС‡РёС‚Р°РµС‚СЃСЏ РЅР°СЂСѓС€РµРЅРёРµРј.
                 //
-                // Отдельная диагностика на КАЖДЫЙ нарушающий аргумент
-                // (не «первый и стоп») — error recovery без каскада:
-                // просто продолжаем цикл.
+                // РћС‚РґРµР»СЊРЅР°СЏ РґРёР°РіРЅРѕСЃС‚РёРєР° РЅР° РљРђР–Р”Р«Р™ РЅР°СЂСѓС€Р°СЋС‰РёР№ Р°СЂРіСѓРјРµРЅС‚
+                // (РЅРµ В«РїРµСЂРІС‹Р№ Рё СЃС‚РѕРїВ») вЂ” error recovery Р±РµР· РєР°СЃРєР°РґР°:
+                // РїСЂРѕСЃС‚Рѕ РїСЂРѕРґРѕР»Р¶Р°РµРј С†РёРєР».
                 self.check_keyword_only(effective_params, args, &bindings, errors);
             }
         }
     }
 
-    /// Plan 50 (D102 №1): после успешного argbind — найти позиционные
-    /// аргументы, легшие на параметры с дефолтом, и эмитить production-grade
-    /// диагностику на каждый (имя параметра, `note: declared here`,
+    /// Plan 50 (D102 в„–1): РїРѕСЃР»Рµ СѓСЃРїРµС€РЅРѕРіРѕ argbind вЂ” РЅР°Р№С‚Рё РїРѕР·РёС†РёРѕРЅРЅС‹Рµ
+    /// Р°СЂРіСѓРјРµРЅС‚С‹, Р»РµРіС€РёРµ РЅР° РїР°СЂР°РјРµС‚СЂС‹ СЃ РґРµС„РѕР»С‚РѕРј, Рё СЌРјРёС‚РёС‚СЊ production-grade
+    /// РґРёР°РіРЅРѕСЃС‚РёРєСѓ РЅР° РєР°Р¶РґС‹Р№ (РёРјСЏ РїР°СЂР°РјРµС‚СЂР°, `note: declared here`,
     /// machine-applicable structured suggestion `name: <expr>`).
     fn check_keyword_only(
         &self,
@@ -836,13 +850,13 @@ impl<'a> BoundCtx<'a> {
             if param.default.is_none() {
                 continue;
             }
-            // Нарушение: позиционный аргумент `args[*ai]` лёг на
-            // дефолтный параметр `param`.
+            // РќР°СЂСѓС€РµРЅРёРµ: РїРѕР·РёС†РёРѕРЅРЅС‹Р№ Р°СЂРіСѓРјРµРЅС‚ `args[*ai]` Р»С‘Рі РЅР°
+            // РґРµС„РѕР»С‚РЅС‹Р№ РїР°СЂР°РјРµС‚СЂ `param`.
             let arg_span = args[*ai].expr().span;
-            // Structured suggestion — чистая ВСТАВКА `<name>: ` в начале
-            // выражения-аргумента (span нулевой ширины). Source-независимо:
-            // producer не читает исходник. Machine-applicable — edit
-            // корректен и авто-применим (`nova fix` / LSP code-action).
+            // Structured suggestion вЂ” С‡РёСЃС‚Р°СЏ Р’РЎРўРђР’РљРђ `<name>: ` РІ РЅР°С‡Р°Р»Рµ
+            // РІС‹СЂР°Р¶РµРЅРёСЏ-Р°СЂРіСѓРјРµРЅС‚Р° (span РЅСѓР»РµРІРѕР№ С€РёСЂРёРЅС‹). Source-РЅРµР·Р°РІРёСЃРёРјРѕ:
+            // producer РЅРµ С‡РёС‚Р°РµС‚ РёСЃС…РѕРґРЅРёРє. Machine-applicable вЂ” edit
+            // РєРѕСЂСЂРµРєС‚РµРЅ Рё Р°РІС‚Рѕ-РїСЂРёРјРµРЅРёРј (`nova fix` / LSP code-action).
             let insert_at = Span::with_file(arg_span.start, arg_span.start, arg_span.file_id);
             let suggestion = Suggestion {
                 message: format!("pass `{}` by name", param.name),
@@ -852,38 +866,38 @@ impl<'a> BoundCtx<'a> {
             };
             let diag = Diagnostic::new(
                 format!(
-                    "параметр `{}` имеет значение по умолчанию — \
-                     передаётся только по имени (D102)",
+                    "РїР°СЂР°РјРµС‚СЂ `{}` РёРјРµРµС‚ Р·РЅР°С‡РµРЅРёРµ РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ вЂ” \
+                     РїРµСЂРµРґР°С‘С‚СЃСЏ С‚РѕР»СЊРєРѕ РїРѕ РёРјРµРЅРё (D102)",
                     param.name,
                 ),
                 arg_span,
             )
             .with_note_at(
-                format!("параметр `{}` объявлен здесь", param.name),
+                format!("РїР°СЂР°РјРµС‚СЂ `{}` РѕР±СЉСЏРІР»РµРЅ Р·РґРµСЃСЊ", param.name),
                 param.span,
             )
             .with_note(
-                "параметры с дефолтом — keyword-only: обязательный — \
-                 позиционно, опциональный — по имени",
+                "РїР°СЂР°РјРµС‚СЂС‹ СЃ РґРµС„РѕР»С‚РѕРј вЂ” keyword-only: РѕР±СЏР·Р°С‚РµР»СЊРЅС‹Р№ вЂ” \
+                 РїРѕР·РёС†РёРѕРЅРЅРѕ, РѕРїС†РёРѕРЅР°Р»СЊРЅС‹Р№ вЂ” РїРѕ РёРјРµРЅРё",
             )
             .with_suggestion(suggestion);
             errors.push(diag);
         }
     }
 
-    /// Plan 53: refutability check для `let`-pattern. Допустимы только
+    /// Plan 53: refutability check РґР»СЏ `let`-pattern. Р”РѕРїСѓСЃС‚РёРјС‹ С‚РѕР»СЊРєРѕ
     /// irrefutable patterns:
     /// - `Ident`, `Wildcard`
-    /// - `Tuple(pats)` — рекурсивно irrefutable
-    /// - `Record` без type_path ИЛИ с type_path к record-типу (не
-    ///   sum-variant) — рекурсивно irrefutable для под-pattern'ов
-    /// - `Binding { inner, .. }` — inner irrefutable
+    /// - `Tuple(pats)` вЂ” СЂРµРєСѓСЂСЃРёРІРЅРѕ irrefutable
+    /// - `Record` Р±РµР· type_path РР›Р СЃ type_path Рє record-С‚РёРїСѓ (РЅРµ
+    ///   sum-variant) вЂ” СЂРµРєСѓСЂСЃРёРІРЅРѕ irrefutable РґР»СЏ РїРѕРґ-pattern'РѕРІ
+    /// - `Binding { inner, .. }` вЂ” inner irrefutable
     ///
     /// Refutable (compile error):
-    /// - `Literal`, `Variant`, `Or`, `Array` (всегда refutable)
-    /// - `Record` с type_path к sum-variant (нужен tag-check в runtime)
+    /// - `Literal`, `Variant`, `Or`, `Array` (РІСЃРµРіРґР° refutable)
+    /// - `Record` СЃ type_path Рє sum-variant (РЅСѓР¶РµРЅ tag-check РІ runtime)
     ///
-    /// Production-grade diagnostic: тип нарушения + подсказка `if let
+    /// Production-grade diagnostic: С‚РёРї РЅР°СЂСѓС€РµРЅРёСЏ + РїРѕРґСЃРєР°Р·РєР° `if let
     /// <pat> = <expr> { ... }` / `match`.
     fn check_let_pattern_irrefutable(&self, pat: &Pattern, errors: &mut Vec<Diagnostic>) {
         match pat {
@@ -894,31 +908,31 @@ impl<'a> BoundCtx<'a> {
                 }
             }
             Pattern::Record { type_path, fields, span, .. } => {
-                // Sum-variant в type_path — refutable.
+                // Sum-variant РІ type_path вЂ” refutable.
                 if let Some(path) = type_path {
                     if let Some(last) = path.last() {
                         if self.sum_variant_names.contains(last) {
                             errors.push(
                                 Diagnostic::new(
                                     format!(
-                                        "refutable pattern в `let`: `{}` — sum-variant, \
-                                         совпадение не гарантировано (D52). Используйте \
+                                        "refutable pattern РІ `let`: `{}` вЂ” sum-variant, \
+                                         СЃРѕРІРїР°РґРµРЅРёРµ РЅРµ РіР°СЂР°РЅС‚РёСЂРѕРІР°РЅРѕ (D52). РСЃРїРѕР»СЊР·СѓР№С‚Рµ \
                                          `if let` / `match`",
                                         path.join("."),
                                     ),
                                     *span,
                                 )
                                 .with_note(
-                                    "Plan 53: `let` принимает только irrefutable patterns \
+                                    "Plan 53: `let` РїСЂРёРЅРёРјР°РµС‚ С‚РѕР»СЊРєРѕ irrefutable patterns \
                                      (Ident, Wildcard, Tuple, plain-Record). Sum-variants \
-                                     требуют tag-check в runtime — `let` не может его сделать.",
+                                     С‚СЂРµР±СѓСЋС‚ tag-check РІ runtime вЂ” `let` РЅРµ РјРѕР¶РµС‚ РµРіРѕ СЃРґРµР»Р°С‚СЊ.",
                                 ),
                             );
                             return;
                         }
                     }
                 }
-                // Рекурсивно проверяем под-patterns полей.
+                // Р РµРєСѓСЂСЃРёРІРЅРѕ РїСЂРѕРІРµСЂСЏРµРј РїРѕРґ-patterns РїРѕР»РµР№.
                 for f in fields {
                     if let Some(sub) = &f.pattern {
                         self.check_let_pattern_irrefutable(sub, errors);
@@ -931,12 +945,12 @@ impl<'a> BoundCtx<'a> {
             Pattern::Literal(_, span) => {
                 errors.push(
                     Diagnostic::new(
-                        "refutable pattern в `let`: literal — совпадение не гарантировано. \
-                         Используйте `if let` / `match` либо обычный `let x = ...; if x == ...`",
+                        "refutable pattern РІ `let`: literal вЂ” СЃРѕРІРїР°РґРµРЅРёРµ РЅРµ РіР°СЂР°РЅС‚РёСЂРѕРІР°РЅРѕ. \
+                         РСЃРїРѕР»СЊР·СѓР№С‚Рµ `if let` / `match` Р»РёР±Рѕ РѕР±С‹С‡РЅС‹Р№ `let x = ...; if x == ...`",
                         *span,
                     )
                     .with_note(
-                        "пример: `if let 42 = n { ... }` или `let x = n; if x == 42 { ... }`",
+                        "РїСЂРёРјРµСЂ: `if let 42 = n { ... }` РёР»Рё `let x = n; if x == 42 { ... }`",
                     ),
                 );
             }
@@ -944,72 +958,72 @@ impl<'a> BoundCtx<'a> {
                 errors.push(
                     Diagnostic::new(
                         format!(
-                            "refutable pattern в `let`: `{}` — variant-pattern, \
-                             совпадение не гарантировано (D52/D59). Используйте \
+                            "refutable pattern РІ `let`: `{}` вЂ” variant-pattern, \
+                             СЃРѕРІРїР°РґРµРЅРёРµ РЅРµ РіР°СЂР°РЅС‚РёСЂРѕРІР°РЅРѕ (D52/D59). РСЃРїРѕР»СЊР·СѓР№С‚Рµ \
                              `if let` / `match`",
                             path.join("."),
                         ),
                         *span,
                     )
                     .with_note(
-                        "Plan 53: variant-patterns требуют tag-check в runtime — \
-                         `let` гарантирует binding, не fallible match.",
+                        "Plan 53: variant-patterns С‚СЂРµР±СѓСЋС‚ tag-check РІ runtime вЂ” \
+                         `let` РіР°СЂР°РЅС‚РёСЂСѓРµС‚ binding, РЅРµ fallible match.",
                     ),
                 );
             }
             Pattern::Or { span, .. } => {
                 errors.push(
                     Diagnostic::new(
-                        "refutable pattern в `let`: alternation `|` — совпадение не \
-                         гарантировано. Используйте `if let` / `match`",
+                        "refutable pattern РІ `let`: alternation `|` вЂ” СЃРѕРІРїР°РґРµРЅРёРµ РЅРµ \
+                         РіР°СЂР°РЅС‚РёСЂРѕРІР°РЅРѕ. РСЃРїРѕР»СЊР·СѓР№С‚Рµ `if let` / `match`",
                         *span,
                     )
                     .with_note(
-                        "пример: `match x { A | B => ..., _ => ... }`",
+                        "РїСЂРёРјРµСЂ: `match x { A | B => ..., _ => ... }`",
                     ),
                 );
             }
             Pattern::Array { span, .. } => {
                 errors.push(
                     Diagnostic::new(
-                        "refutable pattern в `let`: array — длина не гарантирована. \
-                         Используйте `if let` / `match` либо индексацию `xs[0]`, `xs.len`",
+                        "refutable pattern РІ `let`: array вЂ” РґР»РёРЅР° РЅРµ РіР°СЂР°РЅС‚РёСЂРѕРІР°РЅР°. \
+                         РСЃРїРѕР»СЊР·СѓР№С‚Рµ `if let` / `match` Р»РёР±Рѕ РёРЅРґРµРєСЃР°С†РёСЋ `xs[0]`, `xs.len`",
                         *span,
                     )
                     .with_note(
-                        "пример: `if let [a, b, c] = xs { ... } else { /* handle */ }` \
-                         или `match xs { [a, b, c] => ..., _ => ... }`",
+                        "РїСЂРёРјРµСЂ: `if let [a, b, c] = xs { ... } else { /* handle */ }` \
+                         РёР»Рё `match xs { [a, b, c] => ..., _ => ... }`",
                     )
                     .with_note(
-                        "Plan 53: array-длина проверяется в runtime — `let` принимает \
-                         только статически-гарантированные patterns.",
+                        "Plan 53: array-РґР»РёРЅР° РїСЂРѕРІРµСЂСЏРµС‚СЃСЏ РІ runtime вЂ” `let` РїСЂРёРЅРёРјР°РµС‚ \
+                         С‚РѕР»СЊРєРѕ СЃС‚Р°С‚РёС‡РµСЃРєРё-РіР°СЂР°РЅС‚РёСЂРѕРІР°РЅРЅС‹Рµ patterns.",
                     ),
                 );
             }
         }
     }
 
-    /// Plan 50 follow-up: резолв `obj.method` для argbind-диагностик.
+    /// Plan 50 follow-up: СЂРµР·РѕР»РІ `obj.method` РґР»СЏ argbind-РґРёР°РіРЅРѕСЃС‚РёРє.
     ///
-    /// Сначала best-effort receiver-type inference через `infer_arg_ty`
-    /// — если тип `obj` известен (Ident в scope / record-литерал /
-    /// литерал-примитив), точный резолв через `method_table[type][name]`.
-    /// Это закрывает gap при коллизии имён методов между типами
-    /// (`Box.scaled` vs `Cube.scaled` с дефолтами): без inference оба
-    /// попадали в name-only поиск, тот видел >1 sig → ambiguous → skip,
-    /// keyword-only диагностика терялась.
+    /// РЎРЅР°С‡Р°Р»Р° best-effort receiver-type inference С‡РµСЂРµР· `infer_arg_ty`
+    /// вЂ” РµСЃР»Рё С‚РёРї `obj` РёР·РІРµСЃС‚РµРЅ (Ident РІ scope / record-Р»РёС‚РµСЂР°Р» /
+    /// Р»РёС‚РµСЂР°Р»-РїСЂРёРјРёС‚РёРІ), С‚РѕС‡РЅС‹Р№ СЂРµР·РѕР»РІ С‡РµСЂРµР· `method_table[type][name]`.
+    /// Р­С‚Рѕ Р·Р°РєСЂС‹РІР°РµС‚ gap РїСЂРё РєРѕР»Р»РёР·РёРё РёРјС‘РЅ РјРµС‚РѕРґРѕРІ РјРµР¶РґСѓ С‚РёРїР°РјРё
+    /// (`Box.scaled` vs `Cube.scaled` СЃ РґРµС„РѕР»С‚Р°РјРё): Р±РµР· inference РѕР±Р°
+    /// РїРѕРїР°РґР°Р»Рё РІ name-only РїРѕРёСЃРє, С‚РѕС‚ РІРёРґРµР» >1 sig в†’ ambiguous в†’ skip,
+    /// keyword-only РґРёР°РіРЅРѕСЃС‚РёРєР° С‚РµСЂСЏР»Р°СЃСЊ.
     ///
-    /// Fallback — name-only через все типы (поведение Plan 46): подходит
-    /// когда тип receiver'а не выводим (сложное выражение / generic).
-    /// Уникальное имя метода → один тип → один sig → используем его.
-    /// Иначе — пропускаем, codegen резолвит через type-info.
+    /// Fallback вЂ” name-only С‡РµСЂРµР· РІСЃРµ С‚РёРїС‹ (РїРѕРІРµРґРµРЅРёРµ Plan 46): РїРѕРґС…РѕРґРёС‚
+    /// РєРѕРіРґР° С‚РёРї receiver'Р° РЅРµ РІС‹РІРѕРґРёРј (СЃР»РѕР¶РЅРѕРµ РІС‹СЂР°Р¶РµРЅРёРµ / generic).
+    /// РЈРЅРёРєР°Р»СЊРЅРѕРµ РёРјСЏ РјРµС‚РѕРґР° в†’ РѕРґРёРЅ С‚РёРї в†’ РѕРґРёРЅ sig в†’ РёСЃРїРѕР»СЊР·СѓРµРј РµРіРѕ.
+    /// РРЅР°С‡Рµ вЂ” РїСЂРѕРїСѓСЃРєР°РµРј, codegen СЂРµР·РѕР»РІРёС‚ С‡РµСЂРµР· type-info.
     fn resolve_instance_method(
         &self,
         obj: &Expr,
         method_name: &str,
         scope: &HashMap<String, TypeRef>,
     ) -> Option<&FnDecl> {
-        // Попытка 1: receiver-type inference.
+        // РџРѕРїС‹С‚РєР° 1: receiver-type inference.
         if let Some(recv_ty) = Self::infer_arg_ty(obj, scope) {
             if let TypeRef::Named { path, .. } = &recv_ty {
                 if path.len() == 1 {
@@ -1023,8 +1037,8 @@ impl<'a> BoundCtx<'a> {
                 }
             }
         }
-        // Попытка 2: name-only fallback. Уникальное имя метода через
-        // все типы → один sig, используем.
+        // РџРѕРїС‹С‚РєР° 2: name-only fallback. РЈРЅРёРєР°Р»СЊРЅРѕРµ РёРјСЏ РјРµС‚РѕРґР° С‡РµСЂРµР·
+        // РІСЃРµ С‚РёРїС‹ в†’ РѕРґРёРЅ sig, РёСЃРїРѕР»СЊР·СѓРµРј.
         let mut found: Option<&FnDecl> = None;
         let mut ambiguous = false;
         for methods in self.method_table.values() {
@@ -1041,8 +1055,8 @@ impl<'a> BoundCtx<'a> {
         found
     }
 
-    /// Если param's TypeRef — простой `Named{path: [T]}` где T в
-    /// списке generics, вернуть имя T. Иначе None.
+    /// Р•СЃР»Рё param's TypeRef вЂ” РїСЂРѕСЃС‚РѕР№ `Named{path: [T]}` РіРґРµ T РІ
+    /// СЃРїРёСЃРєРµ generics, РІРµСЂРЅСѓС‚СЊ РёРјСЏ T. РРЅР°С‡Рµ None.
     fn param_generic_name(ty: &TypeRef, generics: &[GenericParam]) -> Option<String> {
         let TypeRef::Named { path, generics: g, .. } = ty else { return None; };
         if path.len() != 1 || !g.is_empty() { return None; }
@@ -1053,8 +1067,8 @@ impl<'a> BoundCtx<'a> {
         }
     }
 
-    /// Минимальная inference типа argument'а — best-effort на основе
-    /// синтаксической формы и текущего scope (let-bindings).
+    /// РњРёРЅРёРјР°Р»СЊРЅР°СЏ inference С‚РёРїР° argument'Р° вЂ” best-effort РЅР° РѕСЃРЅРѕРІРµ
+    /// СЃРёРЅС‚Р°РєСЃРёС‡РµСЃРєРѕР№ С„РѕСЂРјС‹ Рё С‚РµРєСѓС‰РµРіРѕ scope (let-bindings).
     fn infer_arg_ty(e: &Expr, scope: &HashMap<String, TypeRef>) -> Option<TypeRef> {
         match &e.kind {
             ExprKind::Ident(name) => scope.get(name).cloned(),
@@ -1064,7 +1078,7 @@ impl<'a> BoundCtx<'a> {
                 span: e.span,
             }),
             ExprKind::ArrayLit(elems) => {
-                // []T — element type from first element.
+                // []T вЂ” element type from first element.
                 let inner = elems.iter().find_map(|el| match el {
                     ArrayElem::Item(it) | ArrayElem::Spread(it) => Self::infer_arg_ty(it, scope),
                 });
@@ -1084,8 +1098,8 @@ impl<'a> BoundCtx<'a> {
         }
     }
 
-    /// Plan 15 Ф.3: проверить, что concrete-тип удовлетворяет bound'у
-    /// (protocol-типу). При несоответствии — R5.3 diagnostic.
+    /// Plan 15 Р¤.3: РїСЂРѕРІРµСЂРёС‚СЊ, С‡С‚Рѕ concrete-С‚РёРї СѓРґРѕРІР»РµС‚РІРѕСЂСЏРµС‚ bound'Сѓ
+    /// (protocol-С‚РёРїСѓ). РџСЂРё РЅРµСЃРѕРѕС‚РІРµС‚СЃС‚РІРёРё вЂ” R5.3 diagnostic.
     fn check_satisfaction(
         &self,
         concrete: &TypeRef,
@@ -1097,16 +1111,16 @@ impl<'a> BoundCtx<'a> {
     ) {
         let bound_name = match bound {
             TypeRef::Named { path, .. } if path.len() == 1 => path[0].clone(),
-            _ => return, // complex bounds (Hashable[K], etc.) — отдельная задача
+            _ => return, // complex bounds (Hashable[K], etc.) вЂ” РѕС‚РґРµР»СЊРЅР°СЏ Р·Р°РґР°С‡Р°
         };
-        // Plan 15 D53 strict: bound должен быть protocol-kind. Если
-        // имя зарегистрировано как effect-kind — это spec violation
+        // Plan 15 D53 strict: bound РґРѕР»Р¶РµРЅ Р±С‹С‚СЊ protocol-kind. Р•СЃР»Рё
+        // РёРјСЏ Р·Р°СЂРµРіРёСЃС‚СЂРёСЂРѕРІР°РЅРѕ РєР°Рє effect-kind вЂ” СЌС‚Рѕ spec violation
         // (D72: bounds require protocols). R5.3-style diagnostic.
         if let Some(eff_decl) = self.effect_decls.get(&bound_name) {
             let _ = eff_decl;
             errors.push(Diagnostic::new(
                 format!(
-                    "type `{}` is an effect, not a protocol — generic bounds \
+                    "type `{}` is an effect, not a protocol вЂ” generic bounds \
                      require protocol-types (D72/D53). Hint: declare `{}` as \
                      `type {} protocol {{ ... }}` if structural-contract semantics \
                      is intended; effects are runtime-dispatched capabilities and \
@@ -1120,11 +1134,11 @@ impl<'a> BoundCtx<'a> {
         }
         let concrete_name = match concrete {
             TypeRef::Named { path, .. } if path.len() == 1 => path[0].clone(),
-            // Array/Tuple/Func — пока пропускаем (не обрабатываем составные T).
+            // Array/Tuple/Func вЂ” РїРѕРєР° РїСЂРѕРїСѓСЃРєР°РµРј (РЅРµ РѕР±СЂР°Р±Р°С‚С‹РІР°РµРј СЃРѕСЃС‚Р°РІРЅС‹Рµ T).
             _ => return,
         };
-        // Built-in primitives автоматически удовлетворяют ничему — у нас
-        // нет registry их методов в method_table. Skip (best-effort).
+        // Built-in primitives Р°РІС‚РѕРјР°С‚РёС‡РµСЃРєРё СѓРґРѕРІР»РµС‚РІРѕСЂСЏСЋС‚ РЅРёС‡РµРјСѓ вЂ” Сѓ РЅР°СЃ
+        // РЅРµС‚ registry РёС… РјРµС‚РѕРґРѕРІ РІ method_table. Skip (best-effort).
         if matches!(concrete_name.as_str(),
             "int" | "i8" | "i16" | "i32" | "i64"
             | "u8" | "u16" | "u32" | "u64"
@@ -1133,17 +1147,17 @@ impl<'a> BoundCtx<'a> {
             return;
         }
         let Some(spec_methods) = self.protocol_specs.get(&bound_name) else {
-            // Bound — не зарегистрирован ни как protocol, ни как effect.
-            // Может быть type alias / record / unknown. Пока пропускаем —
-            // formal check'а не делаем (best-effort permissive).
+            // Bound вЂ” РЅРµ Р·Р°СЂРµРіРёСЃС‚СЂРёСЂРѕРІР°РЅ РЅРё РєР°Рє protocol, РЅРё РєР°Рє effect.
+            // РњРѕР¶РµС‚ Р±С‹С‚СЊ type alias / record / unknown. РџРѕРєР° РїСЂРѕРїСѓСЃРєР°РµРј вЂ”
+            // formal check'Р° РЅРµ РґРµР»Р°РµРј (best-effort permissive).
             return;
         };
         let empty: HashMap<String, Vec<&FnDecl>> = HashMap::new();
         let concrete_methods = self.method_table.get(&concrete_name).unwrap_or(&empty);
         let mut missing: Vec<String> = Vec::new();
         for required in *spec_methods {
-            // Match по имени и arity. Полная sig-сверка с Self→T —
-            // дальнейшая задача (Ф.5).
+            // Match РїРѕ РёРјРµРЅРё Рё arity. РџРѕР»РЅР°СЏ sig-СЃРІРµСЂРєР° СЃ Selfв†’T вЂ”
+            // РґР°Р»СЊРЅРµР№С€Р°СЏ Р·Р°РґР°С‡Р° (Р¤.5).
             let found = concrete_methods.get(&required.name).map(|fns| {
                 fns.iter().any(|f| f.params.len() == required.params.len())
             }).unwrap_or(false);
@@ -1153,7 +1167,7 @@ impl<'a> BoundCtx<'a> {
             }
         }
         if !missing.is_empty() {
-            // R5.3 структурированный AI-first diagnostic.
+            // R5.3 СЃС‚СЂСѓРєС‚СѓСЂРёСЂРѕРІР°РЅРЅС‹Р№ AI-first diagnostic.
             let mut msg = format!(
                 "type `{}` does not satisfy `{}` bound (in call to `{}[{} {}]`).\n\n  `{}` requires:\n",
                 concrete_name, bound_name, fn_name, type_param_name, bound_name, bound_name);
@@ -1164,17 +1178,17 @@ impl<'a> BoundCtx<'a> {
             }
             msg.push_str(&format!("\n  `{}` is missing: {}\n", concrete_name, missing.join(", ")));
             msg.push_str(&format!(
-                "\n  fix: добавить недостающие методы для типа `{}`. \
-                 См. spec/decisions/02-types.md#d72.",
+                "\n  fix: РґРѕР±Р°РІРёС‚СЊ РЅРµРґРѕСЃС‚Р°СЋС‰РёРµ РјРµС‚РѕРґС‹ РґР»СЏ С‚РёРїР° `{}`. \
+                 РЎРј. spec/decisions/02-types.md#d72.",
                 concrete_name));
             errors.push(Diagnostic::new(msg, span));
         }
     }
 }
 
-/// Plan 15: extract simple identifier-name из Pattern. Используется
-/// для регистрации let-bindings в scope (только Pattern::Ident; complex
-/// patterns — tuple/variant — пропускаются).
+/// Plan 15: extract simple identifier-name РёР· Pattern. РСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ
+/// РґР»СЏ СЂРµРіРёСЃС‚СЂР°С†РёРё let-bindings РІ scope (С‚РѕР»СЊРєРѕ Pattern::Ident; complex
+/// patterns вЂ” tuple/variant вЂ” РїСЂРѕРїСѓСЃРєР°СЋС‚СЃСЏ).
 fn pattern_simple_name(p: &Pattern) -> Option<String> {
     match p {
         Pattern::Ident { name, .. } => Some(name.clone()),
@@ -1186,26 +1200,26 @@ fn pattern_simple_name(p: &Pattern) -> Option<String> {
 // Plan 16 (D63 forbid + D64 realtime): capability enforcement.
 // ============================================================================
 
-/// Plan 16: набор "suspend"-эффектов которые нельзя использовать внутри
-/// `realtime { ... }` блоков (D64). Эти эффекты по семантике могут
-/// приостановить fiber'а в production-runtime'е.
+/// Plan 16: РЅР°Р±РѕСЂ "suspend"-СЌС„С„РµРєС‚РѕРІ РєРѕС‚РѕСЂС‹Рµ РЅРµР»СЊР·СЏ РёСЃРїРѕР»СЊР·РѕРІР°С‚СЊ РІРЅСѓС‚СЂРё
+/// `realtime { ... }` Р±Р»РѕРєРѕРІ (D64). Р­С‚Рё СЌС„С„РµРєС‚С‹ РїРѕ СЃРµРјР°РЅС‚РёРєРµ РјРѕРіСѓС‚
+/// РїСЂРёРѕСЃС‚Р°РЅРѕРІРёС‚СЊ fiber'Р° РІ production-runtime'Рµ.
 fn realtime_suspend_effect(name: &str) -> bool {
     matches!(name, "Net" | "Fs" | "Db" | "Time" | "Blocking")
 }
 
-/// Plan 16: hardcoded whitelist callee-name'ов, которые **аллоцируют**
-/// в managed heap (и потому запрещены в `realtime nogc { ... }`).
-/// Идентификация по mangled C-name pattern + по высокоуровневым
+/// Plan 16: hardcoded whitelist callee-name'РѕРІ, РєРѕС‚РѕСЂС‹Рµ **Р°Р»Р»РѕС†РёСЂСѓСЋС‚**
+/// РІ managed heap (Рё РїРѕС‚РѕРјСѓ Р·Р°РїСЂРµС‰РµРЅС‹ РІ `realtime nogc { ... }`).
+/// РРґРµРЅС‚РёС„РёРєР°С†РёСЏ РїРѕ mangled C-name pattern + РїРѕ РІС‹СЃРѕРєРѕСѓСЂРѕРІРЅРµРІС‹Рј
 /// `Type.method` (e.g. `[]int.new`, `StringBuilder.new`).
 ///
-/// **Не покрывается** этим whitelist'ом:
-/// - User-defined record-конструкторы `Foo.new()` если они alloc'ят
-///   через nova_alloc — codegen всегда heap-боксит record-литералы,
-///   так что фактически любой record-литерал «аллоцирующий». Но
-///   detection требует bigger inference. Conservative — флагуем
-///   только статические fabric-методы.
-/// - `str.from(non-str)` если требует concat'а — пока считаем
-///   все `str.from`-вызовы "alloc'ирующими".
+/// **РќРµ РїРѕРєСЂС‹РІР°РµС‚СЃСЏ** СЌС‚РёРј whitelist'РѕРј:
+/// - User-defined record-РєРѕРЅСЃС‚СЂСѓРєС‚РѕСЂС‹ `Foo.new()` РµСЃР»Рё РѕРЅРё alloc'СЏС‚
+///   С‡РµСЂРµР· nova_alloc вЂ” codegen РІСЃРµРіРґР° heap-Р±РѕРєСЃРёС‚ record-Р»РёС‚РµСЂР°Р»С‹,
+///   С‚Р°Рє С‡С‚Рѕ С„Р°РєС‚РёС‡РµСЃРєРё Р»СЋР±РѕР№ record-Р»РёС‚РµСЂР°Р» В«Р°Р»Р»РѕС†РёСЂСѓСЋС‰РёР№В». РќРѕ
+///   detection С‚СЂРµР±СѓРµС‚ bigger inference. Conservative вЂ” С„Р»Р°РіСѓРµРј
+///   С‚РѕР»СЊРєРѕ СЃС‚Р°С‚РёС‡РµСЃРєРёРµ fabric-РјРµС‚РѕРґС‹.
+/// - `str.from(non-str)` РµСЃР»Рё С‚СЂРµР±СѓРµС‚ concat'Р° вЂ” РїРѕРєР° СЃС‡РёС‚Р°РµРј
+///   РІСЃРµ `str.from`-РІС‹Р·РѕРІС‹ "alloc'РёСЂСѓСЋС‰РёРјРё".
 fn nogc_blacklisted_call(callee_path: &[String]) -> bool {
     if callee_path.len() != 2 { return false; }
     let ty = callee_path[0].as_str();
@@ -1220,45 +1234,45 @@ fn nogc_blacklisted_call(callee_path: &[String]) -> bool {
     // Map/Set/Vec/Deque etc.
     if matches!(ty, "HashMap" | "Set" | "Vec" | "Deque" | "LinkedList" | "Lru" | "BloomFilter")
         && matches!(m, "new" | "with_capacity") { return true; }
-    // str.from: format/conversion может alloc'ать.
+    // str.from: format/conversion РјРѕР¶РµС‚ alloc'Р°С‚СЊ.
     if ty == "str" && m == "from" { return true; }
     false
 }
 
-/// Plan 16: registry для capability enforcement.
+/// Plan 16: registry РґР»СЏ capability enforcement.
 struct CapabilityCtx<'a> {
-    /// Top-level free fn-декларации (для resolve вызова по имени).
-    /// D84: Vec<&FnDecl> для multi-overload — все overloads имени.
-    /// Capability check ходит по всем overloads (см. check_capabilities_at).
+    /// Top-level free fn-РґРµРєР»Р°СЂР°С†РёРё (РґР»СЏ resolve РІС‹Р·РѕРІР° РїРѕ РёРјРµРЅРё).
+    /// D84: Vec<&FnDecl> РґР»СЏ multi-overload вЂ” РІСЃРµ overloads РёРјРµРЅРё.
+    /// Capability check С…РѕРґРёС‚ РїРѕ РІСЃРµРј overloads (СЃРј. check_capabilities_at).
     fn_decls: HashMap<String, Vec<&'a FnDecl>>,
-    /// Plan 15 reuse: type → method_name → fn-decls.
+    /// Plan 15 reuse: type в†’ method_name в†’ fn-decls.
     method_table: HashMap<String, HashMap<String, Vec<&'a FnDecl>>>,
-    /// Effect-type name registry (для distinguish'а effect-call vs ordinary).
+    /// Effect-type name registry (РґР»СЏ distinguish'Р° effect-call vs ordinary).
     effect_decls: HashMap<String, &'a TypeDecl>,
 }
 
-/// Plan 16: capability state передаётся через walk как mutable.
-/// Push/pop при входе/выходе из forbid/realtime блоков.
+/// Plan 16: capability state РїРµСЂРµРґР°С‘С‚СЃСЏ С‡РµСЂРµР· walk РєР°Рє mutable.
+/// Push/pop РїСЂРё РІС…РѕРґРµ/РІС‹С…РѕРґРµ РёР· forbid/realtime Р±Р»РѕРєРѕРІ.
 #[derive(Default, Clone)]
 struct CapState {
-    /// Stack forbidden-effects-set'ов от вложенных `forbid` блоков.
-    /// Effect разрешён если он не в **union'е** этих set'ов.
-    /// (Forbid внутри forbid — union, см. D63.)
+    /// Stack forbidden-effects-set'РѕРІ РѕС‚ РІР»РѕР¶РµРЅРЅС‹С… `forbid` Р±Р»РѕРєРѕРІ.
+    /// Effect СЂР°Р·СЂРµС€С‘РЅ РµСЃР»Рё РѕРЅ РЅРµ РІ **union'Рµ** СЌС‚РёС… set'РѕРІ.
+    /// (Forbid РІРЅСѓС‚СЂРё forbid вЂ” union, СЃРј. D63.)
     forbidden_stack: Vec<HashSet<String>>,
-    /// True если мы внутри `realtime { ... }` (или `realtime nogc`).
-    /// Suspend-effects (Net/Fs/Db/Time/Blocking) запрещены.
+    /// True РµСЃР»Рё РјС‹ РІРЅСѓС‚СЂРё `realtime { ... }` (РёР»Рё `realtime nogc`).
+    /// Suspend-effects (Net/Fs/Db/Time/Blocking) Р·Р°РїСЂРµС‰РµРЅС‹.
     realtime_active: bool,
-    /// True если мы внутри `realtime nogc { ... }`. Дополнительно к
-    /// realtime_active запрещены alloc-вызовы.
+    /// True РµСЃР»Рё РјС‹ РІРЅСѓС‚СЂРё `realtime nogc { ... }`. Р”РѕРїРѕР»РЅРёС‚РµР»СЊРЅРѕ Рє
+    /// realtime_active Р·Р°РїСЂРµС‰РµРЅС‹ alloc-РІС‹Р·РѕРІС‹.
     realtime_nogc: bool,
-    /// Stack handlers, установленных через `with X = ... { ... }`.
-    /// Используется для D63 forbid-handler-ban: `with X` внутри
-    /// `forbid X` — compile error.
+    /// Stack handlers, СѓСЃС‚Р°РЅРѕРІР»РµРЅРЅС‹С… С‡РµСЂРµР· `with X = ... { ... }`.
+    /// РСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ РґР»СЏ D63 forbid-handler-ban: `with X` РІРЅСѓС‚СЂРё
+    /// `forbid X` вЂ” compile error.
     with_handler_stack: Vec<String>,
 }
 
 impl CapState {
-    /// Union forbidden-set'ов всех уровней стека.
+    /// Union forbidden-set'РѕРІ РІСЃРµС… СѓСЂРѕРІРЅРµР№ СЃС‚РµРєР°.
     fn union_forbidden(&self) -> HashSet<String> {
         let mut out = HashSet::new();
         for s in &self.forbidden_stack { out.extend(s.iter().cloned()); }
@@ -1287,7 +1301,7 @@ impl<'a> CapabilityCtx<'a> {
                             .or_default()
                             .push(f);
                     } else {
-                        // D84: свободные функции тоже могут иметь overloads.
+                        // D84: СЃРІРѕР±РѕРґРЅС‹Рµ С„СѓРЅРєС†РёРё С‚РѕР¶Рµ РјРѕРіСѓС‚ РёРјРµС‚СЊ overloads.
                         fn_decls.entry(f.name.clone()).or_default().push(f);
                     }
                 }
@@ -1299,8 +1313,8 @@ impl<'a> CapabilityCtx<'a> {
 
     fn check_module(&self, module: &Module, errors: &mut Vec<Diagnostic>) {
         // Plan 42 Sub-plan 42.A: file-level #forbid declarations.
-        // Initial forbidden set из module.attrs (per-file scope).
-        // Все functions в этом file получают эти effects forbidden.
+        // Initial forbidden set РёР· module.attrs (per-file scope).
+        // Р’СЃРµ functions РІ СЌС‚РѕРј file РїРѕР»СѓС‡Р°СЋС‚ СЌС‚Рё effects forbidden.
         let mut file_forbidden: HashSet<String> = HashSet::new();
         for attr in &module.attrs {
             if matches!(attr.kind, crate::ast::ModuleAttrKind::Forbid) {
@@ -1317,8 +1331,8 @@ impl<'a> CapabilityCtx<'a> {
                     if !file_forbidden.is_empty() {
                         state.forbidden_stack.push(file_forbidden.clone());
                     }
-                    // Plan 16 Ф.5: @realtime атрибут оборачивает body
-                    // в realtime[+nogc] контекст.
+                    // Plan 16 Р¤.5: @realtime Р°С‚СЂРёР±СѓС‚ РѕР±РѕСЂР°С‡РёРІР°РµС‚ body
+                    // РІ realtime[+nogc] РєРѕРЅС‚РµРєСЃС‚.
                     match f.realtime_attr {
                         RealtimeAttr::None => {}
                         RealtimeAttr::Realtime => state.realtime_active = true,
@@ -1371,21 +1385,25 @@ impl<'a> CapabilityCtx<'a> {
             }
             Stmt::Throw { value, .. } => self.walk_expr(value, state, errors),
             Stmt::Break(_) | Stmt::Continue(_) => {}
-            // D90 Plan 20 Ф.2: проверяем capability'и внутри body
-            // defer'а. Полные constraints (no Fail/suspend/exit-control)
-            // — Ф.3.
+            // D90 Plan 20 Р¤.2: РїСЂРѕРІРµСЂСЏРµРј capability'Рё РІРЅСѓС‚СЂРё body
+            // defer'Р°. РџРѕР»РЅС‹Рµ constraints (no Fail/suspend/exit-control)
+            // вЂ” Р¤.3.
             Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. } => {
                 self.walk_expr(body, state, errors);
             }
-            // Plan 33.2 Ф.8: assert_static — walk expr.
+            // Plan 33.2 Р¤.8: assert_static вЂ” walk expr.
             Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => self.walk_expr(expr, state, errors),
+            // Ф.4.1: apply — ghost, нет capability-эффектов.
+            Stmt::Apply { .. } => {}
+            // Ф.4.2: calc — ghost, нет capability-эффектов.
+            Stmt::Calc { .. } => {}
         }
     }
 
     fn walk_expr(&self, e: &Expr, state: &mut CapState, errors: &mut Vec<Diagnostic>) {
-        // Сначала проверяем сам узел (call-bound checks), потом
-        // погружаемся внутрь с обновлённым state'ом для блочных
-        // конструкций (forbid/realtime/with).
+        // РЎРЅР°С‡Р°Р»Р° РїСЂРѕРІРµСЂСЏРµРј СЃР°Рј СѓР·РµР» (call-bound checks), РїРѕС‚РѕРј
+        // РїРѕРіСЂСѓР¶Р°РµРјСЃСЏ РІРЅСѓС‚СЂСЊ СЃ РѕР±РЅРѕРІР»С‘РЅРЅС‹Рј state'РѕРј РґР»СЏ Р±Р»РѕС‡РЅС‹С…
+        // РєРѕРЅСЃС‚СЂСѓРєС†РёР№ (forbid/realtime/with).
         self.check_capabilities_at(e, state, errors);
         match &e.kind {
             ExprKind::Forbid { effects, body } => {
@@ -1410,13 +1428,13 @@ impl<'a> CapabilityCtx<'a> {
                 state.realtime_nogc = prev_nogc;
             }
             ExprKind::With { bindings, body } => {
-                // Plan 16 D63: установка handler'а для forbidden-эффекта
-                // внутри forbid-блока — compile error.
+                // Plan 16 D63: СѓСЃС‚Р°РЅРѕРІРєР° handler'Р° РґР»СЏ forbidden-СЌС„С„РµРєС‚Р°
+                // РІРЅСѓС‚СЂРё forbid-Р±Р»РѕРєР° вЂ” compile error.
                 //
-                // WithBinding.effect: TypeRef. Для названия эффекта
-                // берём последний segment Named-path (e.g. `std.io.Net`
-                // → "Net"). Non-Named TypeRefs (Array/Tuple/Func/etc.) —
-                // невалидны для эффект-handler'ов, пропускаем.
+                // WithBinding.effect: TypeRef. Р”Р»СЏ РЅР°Р·РІР°РЅРёСЏ СЌС„С„РµРєС‚Р°
+                // Р±РµСЂС‘Рј РїРѕСЃР»РµРґРЅРёР№ segment Named-path (e.g. `std.io.Net`
+                // в†’ "Net"). Non-Named TypeRefs (Array/Tuple/Func/etc.) вЂ”
+                // РЅРµРІР°Р»РёРґРЅС‹ РґР»СЏ СЌС„С„РµРєС‚-handler'РѕРІ, РїСЂРѕРїСѓСЃРєР°РµРј.
                 let pushed: Vec<String> = bindings.iter()
                     .filter_map(|b| match &b.effect {
                         TypeRef::Named { path, .. } if !path.is_empty() => path.last().cloned(),
@@ -1429,8 +1447,8 @@ impl<'a> CapabilityCtx<'a> {
                         errors.push(Diagnostic::new(
                             format!(
                                 "cannot install handler for `{}` inside `forbid {}` block (D63): \
-                                 forbid is impenetrable — code in body cannot escape sandbox \
-                                 via `with X = …`.",
+                                 forbid is impenetrable вЂ” code in body cannot escape sandbox \
+                                 via `with X = вЂ¦`.",
                                 n, n
                             ),
                             e.span,
@@ -1534,9 +1552,9 @@ impl<'a> CapabilityCtx<'a> {
                 }
             }
             ExprKind::Lambda { body, .. } => self.walk_expr(body, state, errors),
-            // Plan 19, C5: CapabilityCtx обходит тело closure для
-            // forbid/realtime проверок (D63/D64). Closure-light и
-            // closure-full одинаково — walk by body kind.
+            // Plan 19, C5: CapabilityCtx РѕР±С…РѕРґРёС‚ С‚РµР»Рѕ closure РґР»СЏ
+            // forbid/realtime РїСЂРѕРІРµСЂРѕРє (D63/D64). Closure-light Рё
+            // closure-full РѕРґРёРЅР°РєРѕРІРѕ вЂ” walk by body kind.
             ExprKind::ClosureLight { body, .. } => match body {
                 crate::ast::ClosureBody::Expr(e) => self.walk_expr(e, state, errors),
                 crate::ast::ClosureBody::Block(b) => self.walk_block(b, state, errors),
@@ -1560,7 +1578,7 @@ impl<'a> CapabilityCtx<'a> {
                 self.walk_expr(iter, state, errors);
                 self.walk_block(body, state, errors);
             }
-            ExprKind::While { cond, body } => {
+            ExprKind::While { cond, body, .. } => {
                 self.walk_expr(cond, state, errors);
                 self.walk_block(body, state, errors);
             }
@@ -1568,7 +1586,7 @@ impl<'a> CapabilityCtx<'a> {
                 self.walk_expr(scrutinee, state, errors);
                 self.walk_block(body, state, errors);
             }
-            ExprKind::Loop { body } => self.walk_block(body, state, errors),
+            ExprKind::Loop { body, .. } => self.walk_block(body, state, errors),
             ExprKind::Select { arms } => {
                 for arm in arms {
                     match &arm.op {
@@ -1591,7 +1609,12 @@ impl<'a> CapabilityCtx<'a> {
             ExprKind::Interrupt(opt) => {
                 if let Some(e) = opt { self.walk_expr(e, state, errors); }
             }
-            // Литералы / ident'ы / handler-литералы — без рекурсии.
+            // D.1.3: РєРІР°РЅС‚РѕСЂ вЂ” С‚РѕР»СЊРєРѕ РІ РєРѕРЅС‚СЂР°РєС‚Р°С…; РѕР±С…РѕРґРёРј range Рё body.
+            ExprKind::Forall { range, body, .. } | ExprKind::Exists { range, body, .. } => {
+                self.walk_expr(range, state, errors);
+                self.walk_expr(body, state, errors);
+            }
+            // Р›РёС‚РµСЂР°Р»С‹ / ident'С‹ / handler-Р»РёС‚РµСЂР°Р»С‹ вЂ” Р±РµР· СЂРµРєСѓСЂСЃРёРё.
             ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::BoolLit(_)
             | ExprKind::StrLit(_) | ExprKind::CharLit(_) | ExprKind::UnitLit
             | ExprKind::Ident(_) | ExprKind::Path(_) | ExprKind::SelfAccess
@@ -1599,19 +1622,19 @@ impl<'a> CapabilityCtx<'a> {
         }
     }
 
-    /// Plan 16 Ф.2-Ф.4: проверка capability-rules на конкретном узле.
-    /// Сейчас — только для Call'ов; forbid/realtime/with управляют
-    /// state'ом, не вызывая check'ов на собственном узле.
+    /// Plan 16 Р¤.2-Р¤.4: РїСЂРѕРІРµСЂРєР° capability-rules РЅР° РєРѕРЅРєСЂРµС‚РЅРѕРј СѓР·Р»Рµ.
+    /// РЎРµР№С‡Р°СЃ вЂ” С‚РѕР»СЊРєРѕ РґР»СЏ Call'РѕРІ; forbid/realtime/with СѓРїСЂР°РІР»СЏСЋС‚
+    /// state'РѕРј, РЅРµ РІС‹Р·С‹РІР°СЏ check'РѕРІ РЅР° СЃРѕР±СЃС‚РІРµРЅРЅРѕРј СѓР·Р»Рµ.
     fn check_capabilities_at(&self, e: &Expr, state: &CapState, errors: &mut Vec<Diagnostic>) {
         let ExprKind::Call { func, .. } = &e.kind else { return; };
-        // Path-form: `Type.method`, `Effect.op` или `[]T.method`.
-        // Для `[]T.method()` парсер строит Member{obj: Path(["__array", T]), name}.
+        // Path-form: `Type.method`, `Effect.op` РёР»Рё `[]T.method`.
+        // Р”Р»СЏ `[]T.method()` РїР°СЂСЃРµСЂ СЃС‚СЂРѕРёС‚ Member{obj: Path(["__array", T]), name}.
         let path: Vec<String> = match &func.kind {
             ExprKind::Path(parts) => parts.clone(),
             ExprKind::Member { obj, name } => {
                 match &obj.kind {
                     ExprKind::Ident(n) => vec![n.clone(), name.clone()],
-                    // `[]T.method`: Path(["__array","T"]) → ["[]T", method].
+                    // `[]T.method`: Path(["__array","T"]) в†’ ["[]T", method].
                     ExprKind::Path(parts) if parts.len() == 2 && parts[0] == "__array" => {
                         vec![format!("[]{}", parts[1]), name.clone()]
                     }
@@ -1620,13 +1643,13 @@ impl<'a> CapabilityCtx<'a> {
                         v.push(name.clone());
                         v
                     }
-                    _ => return, // dynamic member-call; не resolve'им
+                    _ => return, // dynamic member-call; РЅРµ resolve'РёРј
                 }
             }
             ExprKind::Ident(n) => vec![n.clone()],
             _ => return,
         };
-        // 1. Effect-op call: `Effect.op(...)` где Effect — registered effect-type.
+        // 1. Effect-op call: `Effect.op(...)` РіРґРµ Effect вЂ” registered effect-type.
         if path.len() == 2 {
             let head = &path[0];
             if self.effect_decls.contains_key(head) {
@@ -1646,13 +1669,13 @@ impl<'a> CapabilityCtx<'a> {
             }
         }
         // 2. Free-fn call: lookup callee.effects.
-        // D84: fn_decls — Vec<&FnDecl>. Без полного type-resolve в
-        // bound-checker'е невозможно выбрать конкретную overload —
-        // проверяем эффекты у **всех** overloads (consistent с тем что
-        // делает method_table-ветка ниже). False-positive если разные
-        // overloads имеют разные эффекты — в реальных API маловероятно
-        // (overloads обычно отличаются типом аргумента, не эффектами),
-        // но если случится — программист дисамбигуирует через cast.
+        // D84: fn_decls вЂ” Vec<&FnDecl>. Р‘РµР· РїРѕР»РЅРѕРіРѕ type-resolve РІ
+        // bound-checker'Рµ РЅРµРІРѕР·РјРѕР¶РЅРѕ РІС‹Р±СЂР°С‚СЊ РєРѕРЅРєСЂРµС‚РЅСѓСЋ overload вЂ”
+        // РїСЂРѕРІРµСЂСЏРµРј СЌС„С„РµРєС‚С‹ Сѓ **РІСЃРµС…** overloads (consistent СЃ С‚РµРј С‡С‚Рѕ
+        // РґРµР»Р°РµС‚ method_table-РІРµС‚РєР° РЅРёР¶Рµ). False-positive РµСЃР»Рё СЂР°Р·РЅС‹Рµ
+        // overloads РёРјРµСЋС‚ СЂР°Р·РЅС‹Рµ СЌС„С„РµРєС‚С‹ вЂ” РІ СЂРµР°Р»СЊРЅС‹С… API РјР°Р»РѕРІРµСЂРѕСЏС‚РЅРѕ
+        // (overloads РѕР±С‹С‡РЅРѕ РѕС‚Р»РёС‡Р°СЋС‚СЃСЏ С‚РёРїРѕРј Р°СЂРіСѓРјРµРЅС‚Р°, РЅРµ СЌС„С„РµРєС‚Р°РјРё),
+        // РЅРѕ РµСЃР»Рё СЃР»СѓС‡РёС‚СЃСЏ вЂ” РїСЂРѕРіСЂР°РјРјРёСЃС‚ РґРёСЃР°РјР±РёРіСѓРёСЂСѓРµС‚ С‡РµСЂРµР· cast.
         if path.len() == 1 {
             if let Some(overloads) = self.fn_decls.get(&path[0]) {
                 for callee in overloads.iter() {
@@ -1660,9 +1683,9 @@ impl<'a> CapabilityCtx<'a> {
                 }
             }
         }
-        // 3. Method call: `Type.method` или `obj.method` — lookup в method_table.
-        // (Только receiver-Path формы; instance-method через obj.method
-        // требует type-инференции, отложен.)
+        // 3. Method call: `Type.method` РёР»Рё `obj.method` вЂ” lookup РІ method_table.
+        // (РўРѕР»СЊРєРѕ receiver-Path С„РѕСЂРјС‹; instance-method С‡РµСЂРµР· obj.method
+        // С‚СЂРµР±СѓРµС‚ type-РёРЅС„РµСЂРµРЅС†РёРё, РѕС‚Р»РѕР¶РµРЅ.)
         if path.len() == 2 {
             if let Some(methods) = self.method_table.get(&path[0]) {
                 if let Some(fns) = methods.get(&path[1]) {
@@ -1672,7 +1695,7 @@ impl<'a> CapabilityCtx<'a> {
                 }
             }
         }
-        // 4. Plan 16 Ф.4: nogc alloc-fn check.
+        // 4. Plan 16 Р¤.4: nogc alloc-fn check.
         if state.realtime_nogc && nogc_blacklisted_call(&path) {
             errors.push(Diagnostic::new(
                 format!(
@@ -1686,7 +1709,7 @@ impl<'a> CapabilityCtx<'a> {
         }
     }
 
-    /// Plan 16 Ф.2: проверка пересечения callee.effects с union forbidden-стека.
+    /// Plan 16 Р¤.2: РїСЂРѕРІРµСЂРєР° РїРµСЂРµСЃРµС‡РµРЅРёСЏ callee.effects СЃ union forbidden-СЃС‚РµРєР°.
     fn check_callee_effects(
         &self,
         callee: &FnDecl,
@@ -1695,7 +1718,7 @@ impl<'a> CapabilityCtx<'a> {
         span: Span,
         errors: &mut Vec<Diagnostic>,
     ) {
-        // Pure — всегда OK.
+        // Pure вЂ” РІСЃРµРіРґР° OK.
         if callee.effects.is_empty() && state.forbidden_stack.is_empty() && !state.realtime_active {
             return;
         }
@@ -1733,7 +1756,7 @@ impl<'a> CapabilityCtx<'a> {
         }
     }
 
-    /// Plan 16 D63: единичная проверка effect'a против forbidden-стека.
+    /// Plan 16 D63: РµРґРёРЅРёС‡РЅР°СЏ РїСЂРѕРІРµСЂРєР° effect'a РїСЂРѕС‚РёРІ forbidden-СЃС‚РµРєР°.
     fn check_forbid_intersection(
         &self,
         eff_name: &str,
@@ -1755,47 +1778,47 @@ impl<'a> CapabilityCtx<'a> {
 }
 
 // ============================================================================
-// Name-resolution фаза.
+// Name-resolution С„Р°Р·Р°.
 //
-// Pre-collects top-level имена (fns/types/consts/variants/built-ins) +
-// walk fn/test bodies со scope-стеком. На `ExprKind::Ident(name)`
-// проверяет, что `name` в (текущий scope ∪ top-level ∪ built-ins).
-// Иначе — diagnostic «undefined identifier`.
+// Pre-collects top-level РёРјРµРЅР° (fns/types/consts/variants/built-ins) +
+// walk fn/test bodies СЃРѕ scope-СЃС‚РµРєРѕРј. РќР° `ExprKind::Ident(name)`
+// РїСЂРѕРІРµСЂСЏРµС‚, С‡С‚Рѕ `name` РІ (С‚РµРєСѓС‰РёР№ scope в€Є top-level в€Є built-ins).
+// РРЅР°С‡Рµ вЂ” diagnostic В«undefined identifier`.
 //
-// **Конкервативная стратегия**: лучше пропустить undefined чем
-// false-positive. Случаи, где не проверяем:
-//   - `obj.method(args)` / `Type.method(args)` — method-имена resolve'ятся
-//     через method_table (могут быть на любом типе).
-//   - `obj.field` / `Record { field: val }` — поля, не идентификаторы.
-//   - Path-сегменты `mod1::mod2::name` (intermediate — модули, не expr).
+// **РљРѕРЅРєРµСЂРІР°С‚РёРІРЅР°СЏ СЃС‚СЂР°С‚РµРіРёСЏ**: Р»СѓС‡С€Рµ РїСЂРѕРїСѓСЃС‚РёС‚СЊ undefined С‡РµРј
+// false-positive. РЎР»СѓС‡Р°Рё, РіРґРµ РЅРµ РїСЂРѕРІРµСЂСЏРµРј:
+//   - `obj.method(args)` / `Type.method(args)` вЂ” method-РёРјРµРЅР° resolve'СЏС‚СЃСЏ
+//     С‡РµСЂРµР· method_table (РјРѕРіСѓС‚ Р±С‹С‚СЊ РЅР° Р»СЋР±РѕРј С‚РёРїРµ).
+//   - `obj.field` / `Record { field: val }` вЂ” РїРѕР»СЏ, РЅРµ РёРґРµРЅС‚РёС„РёРєР°С‚РѕСЂС‹.
+//   - Path-СЃРµРіРјРµРЅС‚С‹ `mod1::mod2::name` (intermediate вЂ” РјРѕРґСѓР»Рё, РЅРµ expr).
 //   - Tagged-template tags.
-//   - Generic-params в TypeRef (это типы, не expressions).
-//   - Sum-variant tag в pattern (`Some(x)` — constructor name, не expr).
+//   - Generic-params РІ TypeRef (СЌС‚Рѕ С‚РёРїС‹, РЅРµ expressions).
+//   - Sum-variant tag РІ pattern (`Some(x)` вЂ” constructor name, РЅРµ expr).
 // ============================================================================
 
-/// Plan 19+: статическая проверка undefined идентификаторов.
+/// Plan 19+: СЃС‚Р°С‚РёС‡РµСЃРєР°СЏ РїСЂРѕРІРµСЂРєР° undefined РёРґРµРЅС‚РёС„РёРєР°С‚РѕСЂРѕРІ.
 struct NameResCtx {
     /// Plan 42.15: per-group shared declarations (Rule C). Key = file_id
-    /// peer'а. Value = declarations всех peers ЕГО module-group (folder-
-    /// module с общим parent dir). Peers одной группы делят namespace;
-    /// между группами — НЕ делят (imported folder-module's decls не
-    /// протекают).
+    /// peer'Р°. Value = declarations РІСЃРµС… peers Р•Р“Рћ module-group (folder-
+    /// module СЃ РѕР±С‰РёРј parent dir). Peers РѕРґРЅРѕР№ РіСЂСѓРїРїС‹ РґРµР»СЏС‚ namespace;
+    /// РјРµР¶РґСѓ РіСЂСѓРїРїР°РјРё вЂ” РќР• РґРµР»СЏС‚ (imported folder-module's decls РЅРµ
+    /// РїСЂРѕС‚РµРєР°СЋС‚).
     group_decls: HashMap<FileId, HashSet<String>>,
-    /// Plan 42.15: fallback для legacy/single-file (peer_files пуст) —
-    /// flat все module.items. Используется когда file_id не в group_decls.
+    /// Plan 42.15: fallback РґР»СЏ legacy/single-file (peer_files РїСѓСЃС‚) вЂ”
+    /// flat РІСЃРµ module.items. РСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ РєРѕРіРґР° file_id РЅРµ РІ group_decls.
     shared_decls: HashSet<String>,
-    /// Plan 42.15: union ВСЕХ declarations (все группы + imported). НЕ
-    /// для name-resolution enforcement (это нарушило бы Rule C) —
-    /// используется ТОЛЬКО как эвристика в `collect_pattern_bindings`
-    /// (отличить pattern-binding `let x` от variant-pattern `Some`).
+    /// Plan 42.15: union Р’РЎР•РҐ declarations (РІСЃРµ РіСЂСѓРїРїС‹ + imported). РќР•
+    /// РґР»СЏ name-resolution enforcement (СЌС‚Рѕ РЅР°СЂСѓС€РёР»Рѕ Р±С‹ Rule C) вЂ”
+    /// РёСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ РўРћР›Р¬РљРћ РєР°Рє СЌРІСЂРёСЃС‚РёРєР° РІ `collect_pattern_bindings`
+    /// (РѕС‚Р»РёС‡РёС‚СЊ pattern-binding `let x` РѕС‚ variant-pattern `Some`).
     all_decls: HashSet<String>,
-    /// Plan 42.15: per-peer imported item names — items ставшие
-    /// видимыми в peer'е через его прямые `import` (после rename +
-    /// selective filter). Rule C: imports НЕ shared между peers.
+    /// Plan 42.15: per-peer imported item names вЂ” items СЃС‚Р°РІС€РёРµ
+    /// РІРёРґРёРјС‹РјРё РІ peer'Рµ С‡РµСЂРµР· РµРіРѕ РїСЂСЏРјС‹Рµ `import` (РїРѕСЃР»Рµ rename +
+    /// selective filter). Rule C: imports РќР• shared РјРµР¶РґСѓ peers.
     peer_imported_names: HashMap<FileId, HashSet<String>>,
-    /// Built-in имена, доступные в любом scope без объявления:
+    /// Built-in РёРјРµРЅР°, РґРѕСЃС‚СѓРїРЅС‹Рµ РІ Р»СЋР±РѕРј scope Р±РµР· РѕР±СЉСЏРІР»РµРЅРёСЏ:
     /// primitive types, prelude variants (None/Some/Ok/Err), bool
-    /// литералы (true/false), builtin functions (assert/print/...),
+    /// Р»РёС‚РµСЂР°Р»С‹ (true/false), builtin functions (assert/print/...),
     /// special idents (Self).
     builtins: HashSet<String>,
     /// Per-peer import namespace (Plan 42.4 Rule C).
@@ -1808,31 +1831,31 @@ impl NameResCtx {
     fn build(module: &Module) -> Self {
         // Plan 42.15: per-group shared declarations (Rule C).
         //
-        // **Module-group** = набор peer-файлов одного folder-module
-        // (имеют общий parent dir). Внутри группы peers делят
-        // declarations namespace (Rule C: «peers share declarations»).
-        // МЕЖДУ группами — НЕ делят (imported folder-module's decls не
-        // протекают в entry's namespace).
+        // **Module-group** = РЅР°Р±РѕСЂ peer-С„Р°Р№Р»РѕРІ РѕРґРЅРѕРіРѕ folder-module
+        // (РёРјРµСЋС‚ РѕР±С‰РёР№ parent dir). Р’РЅСѓС‚СЂРё РіСЂСѓРїРїС‹ peers РґРµР»СЏС‚
+        // declarations namespace (Rule C: В«peers share declarationsВ»).
+        // РњР•Р–Р”РЈ РіСЂСѓРїРїР°РјРё вЂ” РќР• РґРµР»СЏС‚ (imported folder-module's decls РЅРµ
+        // РїСЂРѕС‚РµРєР°СЋС‚ РІ entry's namespace).
         //
-        // `group_decls`: HashMap<FileId, HashSet<String>> — для каждого
-        // peer'а (по file_id) → declarations всех peers его группы.
+        // `group_decls`: HashMap<FileId, HashSet<String>> вЂ” РґР»СЏ РєР°Р¶РґРѕРіРѕ
+        // peer'Р° (РїРѕ file_id) в†’ declarations РІСЃРµС… peers РµРіРѕ РіСЂСѓРїРїС‹.
         let mut group_decls: HashMap<FileId, HashSet<String>> = HashMap::new();
-        // Fallback для legacy/single-file (peer_files пуст).
+        // Fallback РґР»СЏ legacy/single-file (peer_files РїСѓСЃС‚).
         let mut shared_decls: HashSet<String> = HashSet::new();
 
         fn collect_decl_names(items: &[Item], out: &mut HashSet<String>) {
             for item in items {
                 match item {
                     Item::Fn(fd) => {
-                        // free-functions (без receiver) валидны как
-                        // bare-ident `foo()`. Методы — через obj.method.
+                        // free-functions (Р±РµР· receiver) РІР°Р»РёРґРЅС‹ РєР°Рє
+                        // bare-ident `foo()`. РњРµС‚РѕРґС‹ вЂ” С‡РµСЂРµР· obj.method.
                         if fd.receiver.is_none() {
                             out.insert(fd.name.clone());
                         }
                     }
                     Item::Type(td) => {
                         out.insert(td.name.clone());
-                        // Variant-имена sum-типов: `Some(x)`, `Red`, etc.
+                        // Variant-РёРјРµРЅР° sum-С‚РёРїРѕРІ: `Some(x)`, `Red`, etc.
                         if let TypeDeclKind::Sum(variants) = &td.kind {
                             for v in variants {
                                 out.insert(v.name.clone());
@@ -1842,17 +1865,17 @@ impl NameResCtx {
                     Item::Const(cd) => {
                         out.insert(cd.name.clone());
                     }
-                    Item::Let(_) | Item::Test(_) => {}
+                    Item::Let(_) | Item::Test(_) | Item::Lemma(_) => {}
                 }
             }
         }
 
         if module.peer_files.is_empty() {
-            // Legacy/single-file: flat — все module.items.
+            // Legacy/single-file: flat вЂ” РІСЃРµ module.items.
             collect_decl_names(&module.items, &mut shared_decls);
         } else {
-            // Группируем peers по parent dir пути. Все peers одной
-            // папки = одна module-group, делят declarations.
+            // Р“СЂСѓРїРїРёСЂСѓРµРј peers РїРѕ parent dir РїСѓС‚Рё. Р’СЃРµ peers РѕРґРЅРѕР№
+            // РїР°РїРєРё = РѕРґРЅР° module-group, РґРµР»СЏС‚ declarations.
             let mut groups: HashMap<std::path::PathBuf, HashSet<String>> = HashMap::new();
             let mut peer_group_key: HashMap<FileId, std::path::PathBuf> = HashMap::new();
             for pf in &module.peer_files {
@@ -1863,7 +1886,7 @@ impl NameResCtx {
                 let entry = groups.entry(group_key).or_default();
                 collect_decl_names(&pf.items_here, entry);
             }
-            // Разворачиваем: для каждого peer'а — decls его группы.
+            // Р Р°Р·РІРѕСЂР°С‡РёРІР°РµРј: РґР»СЏ РєР°Р¶РґРѕРіРѕ peer'Р° вЂ” decls РµРіРѕ РіСЂСѓРїРїС‹.
             for pf in &module.peer_files {
                 if let Some(gk) = peer_group_key.get(&pf.file_id) {
                     if let Some(decls) = groups.get(gk) {
@@ -1880,7 +1903,7 @@ impl NameResCtx {
             "f32", "f64", "uint", "size",
             // Other primitives.
             "bool", "str", "byte", "char", "unit", "Never", "any",
-            // Boolean literals (parsed как Ident в bool-context кое-где).
+            // Boolean literals (parsed РєР°Рє Ident РІ bool-context РєРѕРµ-РіРґРµ).
             "true", "false",
             // Special idents.
             "Self", "self",
@@ -1890,32 +1913,32 @@ impl NameResCtx {
             "DivByZero", "Overflow", "IndexOutOfBounds",
             "TypeMismatch", "AssertFailed", "NoHandler",
             "RuntimeError",
-            // Built-in functions (см. codegen::emit_c.rs special-cases).
+            // Built-in functions (СЃРј. codegen::emit_c.rs special-cases).
             "assert", "debug_assert", "print", "println",
             "panic", "exit",
             // Plan 32: GC introspection namespace (std.runtime.gc).
-            // Используется как `gc.heap_size()`, `gc.collect()` и т.д.
-            // Source of truth для signatures: std/runtime/gc.nv (external fn).
-            // Codegen dispatch: emit_c.rs:7155 special-case на name == "gc".
-            // Builtin запись нужна потому что cross-file bare-name resolve
-            // не работает (Plan 35 Ф.1).
+            // РСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ РєР°Рє `gc.heap_size()`, `gc.collect()` Рё С‚.Рґ.
+            // Source of truth РґР»СЏ signatures: std/runtime/gc.nv (external fn).
+            // Codegen dispatch: emit_c.rs:7155 special-case РЅР° name == "gc".
+            // Builtin Р·Р°РїРёСЃСЊ РЅСѓР¶РЅР° РїРѕС‚РѕРјСѓ С‡С‚Рѕ cross-file bare-name resolve
+            // РЅРµ СЂР°Р±РѕС‚Р°РµС‚ (Plan 35 Р¤.1).
             "gc",
-            // Plan 44.2 Этап 3: fiber arena introspection namespace
+            // Plan 44.2 Р­С‚Р°Рї 3: fiber arena introspection namespace
             // (std.runtime.fibers). `fibers.slot_count()`, etc.
             // Source of truth: std/runtime/fibers.nv. Codegen dispatch:
             // emit_c.rs `name == "fibers"`.
             "fibers",
-            // Plan 44 Этап 0: M:N runtime control namespace
+            // Plan 44 Р­С‚Р°Рї 0: M:N runtime control namespace
             // (std.runtime.runtime). `runtime.init(n)`, `runtime.shutdown()`.
             "runtime",
             // Default Fail-effect type (D65 placeholder).
             "Fail",
-            // Detach effect-type для detach {} expression (D50).
+            // Detach effect-type РґР»СЏ detach {} expression (D50).
             "Detach",
-            // CancelToken — caller-owned cancellation handle (D75 revised,
-            // Plan 47). Builtin type: `CancelToken.new()` конструктор +
-            // тип параметра `cancel CancelToken`. Методы (cancel/is_cancelled/
-            // bind) — built-in dispatch в codegen на receiver NovaCancelToken*.
+            // CancelToken вЂ” caller-owned cancellation handle (D75 revised,
+            // Plan 47). Builtin type: `CancelToken.new()` РєРѕРЅСЃС‚СЂСѓРєС‚РѕСЂ +
+            // С‚РёРї РїР°СЂР°РјРµС‚СЂР° `cancel CancelToken`. РњРµС‚РѕРґС‹ (cancel/is_cancelled/
+            // bind) вЂ” built-in dispatch РІ codegen РЅР° receiver NovaCancelToken*.
             "CancelToken",
         ]
         .iter()
@@ -1923,7 +1946,7 @@ impl NameResCtx {
         .collect();
 
         // Plan 42.4 Rule C: per-peer import namespace isolation.
-        // Build a map from file_id → visible module names for that peer.
+        // Build a map from file_id в†’ visible module names for that peer.
         // If peer_files is empty (legacy/single-file), fall back to entry.
         let mut peer_module_names: HashMap<FileId, HashSet<String>> = HashMap::new();
 
@@ -1961,21 +1984,21 @@ impl NameResCtx {
             }
         }
 
-        // Plan 42.15: per-peer imported item names. Resolver наполнил
-        // `PeerFile.imported_item_names` (items притащенные прямыми
-        // imports этого peer'а). Rule C: imports не shared между peers.
+        // Plan 42.15: per-peer imported item names. Resolver РЅР°РїРѕР»РЅРёР»
+        // `PeerFile.imported_item_names` (items РїСЂРёС‚Р°С‰РµРЅРЅС‹Рµ РїСЂСЏРјС‹РјРё
+        // imports СЌС‚РѕРіРѕ peer'Р°). Rule C: imports РЅРµ shared РјРµР¶РґСѓ peers.
         let mut peer_imported_names: HashMap<FileId, HashSet<String>> = HashMap::new();
         for pf in &module.peer_files {
             peer_imported_names.insert(pf.file_id, pf.imported_item_names.clone());
         }
 
-        // Plan 42.15: all_decls — union ВСЕХ declarations (эвристика для
-        // pattern-binding detection, НЕ для enforcement).
+        // Plan 42.15: all_decls вЂ” union Р’РЎР•РҐ declarations (СЌРІСЂРёСЃС‚РёРєР° РґР»СЏ
+        // pattern-binding detection, РќР• РґР»СЏ enforcement).
         let mut all_decls: HashSet<String> = shared_decls.clone();
         for gd in group_decls.values() {
             all_decls.extend(gd.iter().cloned());
         }
-        // Также merged module.items (imported items для эвристики).
+        // РўР°РєР¶Рµ merged module.items (imported items РґР»СЏ СЌРІСЂРёСЃС‚РёРєРё).
         collect_decl_names(&module.items, &mut all_decls);
 
         NameResCtx {
@@ -1992,6 +2015,7 @@ impl NameResCtx {
                 Item::Const(c) => c.span.file_id,
                 Item::Type(t) => t.span.file_id,
                 Item::Let(l) => l.span.file_id,
+                Item::Lemma(ld) => ld.span.file_id,
             };
             match item {
                 Item::Fn(f) => self.walk_fn(f, file_id, errors),
@@ -2009,20 +2033,20 @@ impl NameResCtx {
     }
 
     fn walk_fn(&self, f: &FnDecl, file_id: FileId, errors: &mut Vec<Diagnostic>) {
-        // External — нет тела.
+        // External вЂ” РЅРµС‚ С‚РµР»Р°.
         if matches!(f.body, FnBody::External) { return; }
         let mut scope: Vec<HashSet<String>> = vec![HashSet::new()];
         let mut frame: HashSet<String> = HashSet::new();
-        // Receiver: self/Self доступны через builtins; нет нужды добавлять.
+        // Receiver: self/Self РґРѕСЃС‚СѓРїРЅС‹ С‡РµСЂРµР· builtins; РЅРµС‚ РЅСѓР¶РґС‹ РґРѕР±Р°РІР»СЏС‚СЊ.
         if let Some(_recv) = &f.receiver {
             frame.insert("self".to_string());
         }
         for p in &f.params {
             frame.insert(p.name.clone());
         }
-        // Generic-params могут использоваться в expr-position? — Нет
-        // (по spec). Но безопасно их добавить чтобы не флагать False+
-        // если parser/codegen где-то их так трактует.
+        // Generic-params РјРѕРіСѓС‚ РёСЃРїРѕР»СЊР·РѕРІР°С‚СЊСЃСЏ РІ expr-position? вЂ” РќРµС‚
+        // (РїРѕ spec). РќРѕ Р±РµР·РѕРїР°СЃРЅРѕ РёС… РґРѕР±Р°РІРёС‚СЊ С‡С‚РѕР±С‹ РЅРµ С„Р»Р°РіР°С‚СЊ False+
+        // РµСЃР»Рё parser/codegen РіРґРµ-С‚Рѕ РёС… С‚Р°Рє С‚СЂР°РєС‚СѓРµС‚.
         for g in &f.generics {
             frame.insert(g.name.clone());
         }
@@ -2062,9 +2086,9 @@ impl NameResCtx {
         match s {
             Stmt::Expr(e) => self.walk_expr(e, file_id, scope, errors),
             Stmt::Let(d) => {
-                // Right-side вычисляется в текущем scope (let не
-                // рекурсивный). Затем pattern-bindings добавляются в
-                // текущий frame.
+                // Right-side РІС‹С‡РёСЃР»СЏРµС‚СЃСЏ РІ С‚РµРєСѓС‰РµРј scope (let РЅРµ
+                // СЂРµРєСѓСЂСЃРёРІРЅС‹Р№). Р—Р°С‚РµРј pattern-bindings РґРѕР±Р°РІР»СЏСЋС‚СЃСЏ РІ
+                // С‚РµРєСѓС‰РёР№ frame.
                 self.walk_expr(&d.value, file_id, scope, errors);
                 let mut bindings: HashSet<String> = HashSet::new();
                 self.collect_pattern_bindings(&d.pattern, &mut bindings);
@@ -2080,15 +2104,23 @@ impl NameResCtx {
                 if let Some(v) = value { self.walk_expr(v, file_id, scope, errors); }
             }
             Stmt::Throw { value, .. } => self.walk_expr(value, file_id, scope, errors),
-            // D90 (Plan 20): defer/errdefer body — обычный expr в текущем
-            // scope. Bindings внутри body локальны их собственным under-scope'ам;
-            // на верхнем уровне defer не вводит новых имён.
+            // D90 (Plan 20): defer/errdefer body вЂ” РѕР±С‹С‡РЅС‹Р№ expr РІ С‚РµРєСѓС‰РµРј
+            // scope. Bindings РІРЅСѓС‚СЂРё body Р»РѕРєР°Р»СЊРЅС‹ РёС… СЃРѕР±СЃС‚РІРµРЅРЅС‹Рј under-scope'Р°Рј;
+            // РЅР° РІРµСЂС…РЅРµРј СѓСЂРѕРІРЅРµ defer РЅРµ РІРІРѕРґРёС‚ РЅРѕРІС‹С… РёРјС‘РЅ.
             Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. } => {
                 self.walk_expr(body, file_id, scope, errors);
             }
-            // Plan 33.2 Ф.8: assert_static — walk expr.
+            // Plan 33.2 Р¤.8: assert_static вЂ” walk expr.
             Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => self.walk_expr(expr, file_id, scope, errors),
             Stmt::Break(_) | Stmt::Continue(_) => {}
+            // Ф.4.1: apply — ghost, args walk для name-resolution.
+            Stmt::Apply { args, .. } => {
+                for a in args { self.walk_expr(a, file_id, scope, errors); }
+            }
+            // Ф.4.2: calc — ghost, шаги walk для name-resolution.
+            Stmt::Calc { steps, .. } => {
+                for step in steps { self.walk_expr(&step.expr, file_id, scope, errors); }
+            }
         }
     }
 
@@ -2108,15 +2140,15 @@ impl NameResCtx {
                     ));
                 }
             }
-            // Path-form `Module.func` / `Type.method`: head — модуль или
-            // type. Plan 42.15 Ф.3: head-segment check для lowercase
-            // module-alias'ов (Rule C: peer видит только свои imports).
+            // Path-form `Module.func` / `Type.method`: head вЂ” РјРѕРґСѓР»СЊ РёР»Рё
+            // type. Plan 42.15 Р¤.3: head-segment check РґР»СЏ lowercase
+            // module-alias'РѕРІ (Rule C: peer РІРёРґРёС‚ С‚РѕР»СЊРєРѕ СЃРІРѕРё imports).
             //
-            // Проверяем ТОЛЬКО lowercase head: Capitalized = тип/effect/
-            // variant (cross-file, bootstrap-консервативно пропускаем).
-            // lowercase head должен быть: builtin namespace (gc/fibers/
-            // runtime) ИЛИ module-alias в peer's import scope. Если нет —
-            // вероятно use чужого import'а (Rule C violation) или typo.
+            // РџСЂРѕРІРµСЂСЏРµРј РўРћР›Р¬РљРћ lowercase head: Capitalized = С‚РёРї/effect/
+            // variant (cross-file, bootstrap-РєРѕРЅСЃРµСЂРІР°С‚РёРІРЅРѕ РїСЂРѕРїСѓСЃРєР°РµРј).
+            // lowercase head РґРѕР»Р¶РµРЅ Р±С‹С‚СЊ: builtin namespace (gc/fibers/
+            // runtime) РР›Р module-alias РІ peer's import scope. Р•СЃР»Рё РЅРµС‚ вЂ”
+            // РІРµСЂРѕСЏС‚РЅРѕ use С‡СѓР¶РѕРіРѕ import'Р° (Rule C violation) РёР»Рё typo.
             ExprKind::Path(parts) => {
                 if let Some(head) = parts.first() {
                     let is_lowercase = head.chars().next()
@@ -2127,9 +2159,9 @@ impl NameResCtx {
                         let in_peer_modules = self.peer_module_names.get(&file_id)
                             .or_else(|| self.peer_module_names.get(&MAIN_FILE_ID))
                             .map_or(false, |s| s.contains(head));
-                        // Также head может быть local binding (struct в
-                        // scope) — тогда это фактически Member-access;
-                        // парсер иногда эмитит Path. Проверяем scope.
+                        // РўР°РєР¶Рµ head РјРѕР¶РµС‚ Р±С‹С‚СЊ local binding (struct РІ
+                        // scope) вЂ” С‚РѕРіРґР° СЌС‚Рѕ С„Р°РєС‚РёС‡РµСЃРєРё Member-access;
+                        // РїР°СЂСЃРµСЂ РёРЅРѕРіРґР° СЌРјРёС‚РёС‚ Path. РџСЂРѕРІРµСЂСЏРµРј scope.
                         let in_scope = scope.iter().rev()
                             .any(|frame| frame.contains(head));
                         if !in_builtins && !in_peer_modules && !in_scope {
@@ -2144,10 +2176,10 @@ impl NameResCtx {
                     }
                 }
             }
-            // SelfAccess — `@field` или `@method`. Не Ident.
+            // SelfAccess вЂ” `@field` РёР»Рё `@method`. РќРµ Ident.
             ExprKind::SelfAccess => {}
 
-            // Литералы.
+            // Р›РёС‚РµСЂР°Р»С‹.
             ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::BoolLit(_)
             | ExprKind::StrLit(_) | ExprKind::CharLit(_) | ExprKind::UnitLit => {}
 
@@ -2160,9 +2192,9 @@ impl NameResCtx {
             }
 
             ExprKind::Call { func, args, trailing } => {
-                // Special-case: если func — bare Ident, может быть
-                // variant-constructor (`Square(5)`) — top_level.contains.
-                // is_known покрывает оба варианта (fn + variant).
+                // Special-case: РµСЃР»Рё func вЂ” bare Ident, РјРѕР¶РµС‚ Р±С‹С‚СЊ
+                // variant-constructor (`Square(5)`) вЂ” top_level.contains.
+                // is_known РїРѕРєСЂС‹РІР°РµС‚ РѕР±Р° РІР°СЂРёР°РЅС‚Р° (fn + variant).
                 self.walk_expr(func, file_id, scope, errors);
                 for a in args {
                     self.walk_expr(a.expr(), file_id, scope, errors);
@@ -2186,7 +2218,7 @@ impl NameResCtx {
             }
             ExprKind::Unary { operand, .. } => self.walk_expr(operand, file_id, scope, errors),
 
-            // Member-access: проверяем obj (это expr), но НЕ name (field/method).
+            // Member-access: РїСЂРѕРІРµСЂСЏРµРј obj (СЌС‚Рѕ expr), РЅРѕ РќР• name (field/method).
             ExprKind::Member { obj, .. } => self.walk_expr(obj, file_id, scope, errors),
             ExprKind::Index { obj, index } => {
                 self.walk_expr(obj, file_id, scope, errors);
@@ -2205,7 +2237,7 @@ impl NameResCtx {
             }
             ExprKind::IfLet { pattern, scrutinee, then, else_ } => {
                 self.walk_expr(scrutinee, file_id, scope, errors);
-                // Pattern-bindings — в scope только для then-branch.
+                // Pattern-bindings вЂ” РІ scope С‚РѕР»СЊРєРѕ РґР»СЏ then-branch.
                 let mut bindings: HashSet<String> = HashSet::new();
                 self.collect_pattern_bindings(pattern, &mut bindings);
                 scope.push(bindings);
@@ -2234,7 +2266,7 @@ impl NameResCtx {
                     scope.pop();
                 }
             }
-            ExprKind::For { pattern, iter, body } => {
+            ExprKind::For { pattern, iter, body, .. } => {
                 self.walk_expr(iter, file_id, scope, errors);
                 let mut bindings: HashSet<String> = HashSet::new();
                 self.collect_pattern_bindings(pattern, &mut bindings);
@@ -2250,11 +2282,11 @@ impl NameResCtx {
                 self.walk_block(body, file_id, scope, errors);
                 scope.pop();
             }
-            ExprKind::While { cond, body } => {
+            ExprKind::While { cond, body, .. } => {
                 self.walk_expr(cond, file_id, scope, errors);
                 self.walk_block(body, file_id, scope, errors);
             }
-            ExprKind::WhileLet { pattern, scrutinee, body } => {
+            ExprKind::WhileLet { pattern, scrutinee, body, .. } => {
                 self.walk_expr(scrutinee, file_id, scope, errors);
                 let mut bindings: HashSet<String> = HashSet::new();
                 self.collect_pattern_bindings(pattern, &mut bindings);
@@ -2262,7 +2294,7 @@ impl NameResCtx {
                 self.walk_block(body, file_id, scope, errors);
                 scope.pop();
             }
-            ExprKind::Loop { body } => self.walk_block(body, file_id, scope, errors),
+            ExprKind::Loop { body, .. } => self.walk_block(body, file_id, scope, errors),
             ExprKind::Select { arms } => {
                 for arm in arms {
                     match &arm.op {
@@ -2309,8 +2341,8 @@ impl NameResCtx {
                         Some(v) => self.walk_expr(v, file_id, scope, errors),
                         None => {
                             // Shorthand `{ name }` (D52 field punning):
-                            // `name` — это ident, который должен быть
-                            // в scope.
+                            // `name` вЂ” СЌС‚Рѕ ident, РєРѕС‚РѕСЂС‹Р№ РґРѕР»Р¶РµРЅ Р±С‹С‚СЊ
+                            // РІ scope.
                             if !f.is_spread && !self.is_known(&f.name, file_id, scope) {
                                 errors.push(Diagnostic::new(
                                     format!("undefined identifier `{}`", f.name),
@@ -2322,18 +2354,18 @@ impl NameResCtx {
                 }
             }
 
-            // Tagged-template: tag — это специальный DSL-marker
-            // (sql, json, html, ...). В bootstrap'е tag-функция
-            // игнорируется (parts конкатенируются), но в production
-            // tag — это runtime-функция/macro. Не проверяем tag как
-            // Ident — это special-form syntax, не обычный expr-call.
-            // Args (`${expr}` интерполяции) — обычные expressions.
+            // Tagged-template: tag вЂ” СЌС‚Рѕ СЃРїРµС†РёР°Р»СЊРЅС‹Р№ DSL-marker
+            // (sql, json, html, ...). Р’ bootstrap'Рµ tag-С„СѓРЅРєС†РёСЏ
+            // РёРіРЅРѕСЂРёСЂСѓРµС‚СЃСЏ (parts РєРѕРЅРєР°С‚РµРЅРёСЂСѓСЋС‚СЃСЏ), РЅРѕ РІ production
+            // tag вЂ” СЌС‚Рѕ runtime-С„СѓРЅРєС†РёСЏ/macro. РќРµ РїСЂРѕРІРµСЂСЏРµРј tag РєР°Рє
+            // Ident вЂ” СЌС‚Рѕ special-form syntax, РЅРµ РѕР±С‹С‡РЅС‹Р№ expr-call.
+            // Args (`${expr}` РёРЅС‚РµСЂРїРѕР»СЏС†РёРё) вЂ” РѕР±С‹С‡РЅС‹Рµ expressions.
             ExprKind::TaggedTemplate { args, .. } => {
                 for a in args { self.walk_expr(a, file_id, scope, errors); }
             }
 
-            // Lambda (legacy) / closure-light / closure-full — params
-            // push'ятся как новый scope frame.
+            // Lambda (legacy) / closure-light / closure-full вЂ” params
+            // push'СЏС‚СЃСЏ РєР°Рє РЅРѕРІС‹Р№ scope frame.
             ExprKind::Lambda { params, body, .. } => {
                 let mut frame: HashSet<String> = HashSet::new();
                 for p in params { frame.insert(p.name.clone()); }
@@ -2366,14 +2398,14 @@ impl NameResCtx {
             }
 
             ExprKind::With { bindings, body } => {
-                // Effect-handler vals — обычные expressions.
+                // Effect-handler vals вЂ” РѕР±С‹С‡РЅС‹Рµ expressions.
                 for b in bindings {
                     self.walk_expr(&b.handler, file_id, scope, errors);
                 }
                 self.walk_block(body, file_id, scope, errors);
             }
             ExprKind::HandlerLit { methods, .. } => {
-                // Каждый method — handler-op с собственным scope params.
+                // РљР°Р¶РґС‹Р№ method вЂ” handler-op СЃ СЃРѕР±СЃС‚РІРµРЅРЅС‹Рј scope params.
                 for m in methods {
                     let mut frame: HashSet<String> = HashSet::new();
                     for p in &m.params { frame.insert(p.name.clone()); }
@@ -2400,15 +2432,24 @@ impl NameResCtx {
                 self.walk_block(body, file_id, scope, errors);
             }
             ExprKind::Supervised { body, cancel } => {
-                // Plan 47: `cancel:` expr — обычное выражение scope'а
-                // (типично `Ident` токена); резолвится в текущем scope'е,
-                // никаких новых биндингов не вводит.
+                // Plan 47: `cancel:` expr вЂ” РѕР±С‹С‡РЅРѕРµ РІС‹СЂР°Р¶РµРЅРёРµ scope'Р°
+                // (С‚РёРїРёС‡РЅРѕ `Ident` С‚РѕРєРµРЅР°); СЂРµР·РѕР»РІРёС‚СЃСЏ РІ С‚РµРєСѓС‰РµРј scope'Рµ,
+                // РЅРёРєР°РєРёС… РЅРѕРІС‹С… Р±РёРЅРґРёРЅРіРѕРІ РЅРµ РІРІРѕРґРёС‚.
                 if let Some(c) = cancel {
                     self.walk_expr(c, file_id, scope, errors);
                 }
                 self.walk_block(body, file_id, scope, errors);
             }
             ExprKind::Throw(inner) => self.walk_expr(inner, file_id, scope, errors),
+            // D.1.3: РєРІР°РЅС‚РѕСЂ вЂ” bound variable РІРІРѕРґРёС‚СЃСЏ РІ scope РґР»СЏ body.
+            ExprKind::Forall { var, range, body } | ExprKind::Exists { var, range, body } => {
+                self.walk_expr(range, file_id, scope, errors);
+                let mut frame: HashSet<String> = HashSet::new();
+                frame.insert(var.clone());
+                scope.push(frame);
+                self.walk_expr(body, file_id, scope, errors);
+                scope.pop();
+            }
         }
     }
 
@@ -2442,21 +2483,21 @@ impl NameResCtx {
         }
     }
 
-    /// Собрать все bindings из pattern (только names, без проверки
-    /// variant-tag'ов или field-name'ов — это constructor/field
-    /// references, не expr-bindings).
+    /// РЎРѕР±СЂР°С‚СЊ РІСЃРµ bindings РёР· pattern (С‚РѕР»СЊРєРѕ names, Р±РµР· РїСЂРѕРІРµСЂРєРё
+    /// variant-tag'РѕРІ РёР»Рё field-name'РѕРІ вЂ” СЌС‚Рѕ constructor/field
+    /// references, РЅРµ expr-bindings).
     fn collect_pattern_bindings(&self, p: &Pattern, out: &mut HashSet<String>) {
         match p {
             Pattern::Wildcard(_) => {}
             Pattern::Literal(_, _) => {}
             Pattern::Ident { name, .. } => {
-                // Edge-case: Pattern::Ident { name: "Some" } — это
-                // unit-variant Some? Нет, парсер emit'ит Variant { path:
-                // ["Some"], kind: Unit }. Здесь — настоящий binding.
-                // Но если имя совпадает с известным variant — считаем
-                // это variant-pattern, не binding (D52 семантика
-                // pattern-matching). Также Capitalized-имена в bootstrap
-                // — это всегда type/variant (cross-file), не binding.
+                // Edge-case: Pattern::Ident { name: "Some" } вЂ” СЌС‚Рѕ
+                // unit-variant Some? РќРµС‚, РїР°СЂСЃРµСЂ emit'РёС‚ Variant { path:
+                // ["Some"], kind: Unit }. Р—РґРµСЃСЊ вЂ” РЅР°СЃС‚РѕСЏС‰РёР№ binding.
+                // РќРѕ РµСЃР»Рё РёРјСЏ СЃРѕРІРїР°РґР°РµС‚ СЃ РёР·РІРµСЃС‚РЅС‹Рј variant вЂ” СЃС‡РёС‚Р°РµРј
+                // СЌС‚Рѕ variant-pattern, РЅРµ binding (D52 СЃРµРјР°РЅС‚РёРєР°
+                // pattern-matching). РўР°РєР¶Рµ Capitalized-РёРјРµРЅР° РІ bootstrap
+                // вЂ” СЌС‚Рѕ РІСЃРµРіРґР° type/variant (cross-file), РЅРµ binding.
                 let is_variant_like = self.builtins.contains(name)
                     || self.all_decls.contains(name)
                     || name.chars().next().map(|c| c.is_ascii_uppercase()).unwrap_or(false);
@@ -2465,7 +2506,7 @@ impl NameResCtx {
                 }
             }
             Pattern::Variant { kind, .. } => {
-                // path = variant-tag — не binding.
+                // path = variant-tag вЂ” РЅРµ binding.
                 match kind {
                     VariantPatternKind::Unit => {}
                     VariantPatternKind::Tuple { patterns, .. } => {
@@ -2479,8 +2520,8 @@ impl NameResCtx {
                 for f in fields {
                     match &f.pattern {
                         Some(sub) => self.collect_pattern_bindings(sub, out),
-                        // Shorthand `{ name }` — name — это binding
-                        // (одновременно field-name и bound variable).
+                        // Shorthand `{ name }` вЂ” name вЂ” СЌС‚Рѕ binding
+                        // (РѕРґРЅРѕРІСЂРµРјРµРЅРЅРѕ field-name Рё bound variable).
                         None => { out.insert(f.name.clone()); }
                     }
                 }
@@ -2502,8 +2543,8 @@ impl NameResCtx {
                 self.collect_pattern_bindings(inner, out);
             }
             Pattern::Or { alternatives, .. } => {
-                // По spec все alternatives имеют одинаковый набор
-                // bindings; берём из первого. (Bootstrap-семантика — см.
+                // РџРѕ spec РІСЃРµ alternatives РёРјРµСЋС‚ РѕРґРёРЅР°РєРѕРІС‹Р№ РЅР°Р±РѕСЂ
+                // bindings; Р±РµСЂС‘Рј РёР· РїРµСЂРІРѕРіРѕ. (Bootstrap-СЃРµРјР°РЅС‚РёРєР° вЂ” СЃРј.
                 // ast::Pattern::Or doc.)
                 if let Some(first) = alternatives.first() {
                     self.collect_pattern_bindings(first, out);
@@ -2514,17 +2555,17 @@ impl NameResCtx {
 
     fn is_known(&self, name: &str, file_id: FileId, scope: &[HashSet<String>]) -> bool {
         if self.builtins.contains(name) { return true; }
-        // Plan 42.15 Rule C: declarations module-group этого peer'а
-        // (peers одного folder-module делят declarations namespace).
-        // Fallback на flat shared_decls для legacy/single-file.
+        // Plan 42.15 Rule C: declarations module-group СЌС‚РѕРіРѕ peer'Р°
+        // (peers РѕРґРЅРѕРіРѕ folder-module РґРµР»СЏС‚ declarations namespace).
+        // Fallback РЅР° flat shared_decls РґР»СЏ legacy/single-file.
         if let Some(gd) = self.group_decls.get(&file_id) {
             if gd.contains(name) { return true; }
         } else if self.shared_decls.contains(name) {
             return true;
         }
-        // Plan 42.15: per-peer imported item names — items притащенные
-        // прямыми imports ИМЕННО этого peer'а. Rule C: imports НЕ shared.
-        // Fallback на MAIN_FILE_ID если file_id не найден (legacy).
+        // Plan 42.15: per-peer imported item names вЂ” items РїСЂРёС‚Р°С‰РµРЅРЅС‹Рµ
+        // РїСЂСЏРјС‹РјРё imports РРњР•РќРќРћ СЌС‚РѕРіРѕ peer'Р°. Rule C: imports РќР• shared.
+        // Fallback РЅР° MAIN_FILE_ID РµСЃР»Рё file_id РЅРµ РЅР°Р№РґРµРЅ (legacy).
         let imported = self.peer_imported_names.get(&file_id)
             .or_else(|| self.peer_imported_names.get(&MAIN_FILE_ID));
         if imported.map_or(false, |s| s.contains(name)) { return true; }
@@ -2535,14 +2576,14 @@ impl NameResCtx {
         for frame in scope.iter().rev() {
             if frame.contains(name) { return true; }
         }
-        // Bootstrap-консервативность: имена начинающиеся с заглавной
-        // буквы по convention — типы / variants / модули. Bootstrap
-        // не имеет cross-file name resolution, поэтому ident вроде
-        // `HashMap` (из другого .nv файла) приходит сюда не задекларированным.
-        // Чтобы не флагать такие cross-file типы как undefined,
-        // пропускаем Capitalized-ident'ы. Опечатки в lowercase
-        // именах (snake_case convention для vars/fns) — настоящие
-        // undefined и будут ловиться.
+        // Bootstrap-РєРѕРЅСЃРµСЂРІР°С‚РёРІРЅРѕСЃС‚СЊ: РёРјРµРЅР° РЅР°С‡РёРЅР°СЋС‰РёРµСЃСЏ СЃ Р·Р°РіР»Р°РІРЅРѕР№
+        // Р±СѓРєРІС‹ РїРѕ convention вЂ” С‚РёРїС‹ / variants / РјРѕРґСѓР»Рё. Bootstrap
+        // РЅРµ РёРјРµРµС‚ cross-file name resolution, РїРѕСЌС‚РѕРјСѓ ident РІСЂРѕРґРµ
+        // `HashMap` (РёР· РґСЂСѓРіРѕРіРѕ .nv С„Р°Р№Р»Р°) РїСЂРёС…РѕРґРёС‚ СЃСЋРґР° РЅРµ Р·Р°РґРµРєР»Р°СЂРёСЂРѕРІР°РЅРЅС‹Рј.
+        // Р§С‚РѕР±С‹ РЅРµ С„Р»Р°РіР°С‚СЊ С‚Р°РєРёРµ cross-file С‚РёРїС‹ РєР°Рє undefined,
+        // РїСЂРѕРїСѓСЃРєР°РµРј Capitalized-ident'С‹. РћРїРµС‡Р°С‚РєРё РІ lowercase
+        // РёРјРµРЅР°С… (snake_case convention РґР»СЏ vars/fns) вЂ” РЅР°СЃС‚РѕСЏС‰РёРµ
+        // undefined Рё Р±СѓРґСѓС‚ Р»РѕРІРёС‚СЊСЃСЏ.
         if let Some(c) = name.chars().next() {
             if c.is_ascii_uppercase() { return true; }
         }
@@ -2550,7 +2591,7 @@ impl NameResCtx {
     }
 }
 
-/// Render method signature `name(p1 T1, p2 T2) -> Ret` — для diagnostic'а.
+/// Render method signature `name(p1 T1, p2 T2) -> Ret` вЂ” РґР»СЏ diagnostic'Р°.
 fn render_method_sig(name: &str, params: &[Param], ret: &Option<TypeRef>) -> String {
     let p_strs: Vec<String> = params.iter().map(|p| {
         format!("{} {}", p.name, render_type_ref(&p.ty))
@@ -2584,23 +2625,23 @@ fn render_type_ref(t: &TypeRef) -> String {
     }
 }
 
-/// D28 effect inference для private fn.
+/// D28 effect inference РґР»СЏ private fn.
 ///
-/// Walk модуль mutably: для каждой private (`!is_export`) fn,
-/// если её тело использует `throw`, и в effect-row нет ни одного
-/// `Fail`/`Fail[E]`/`Fail[any]` — добавляем `Fail` (placeholder).
+/// Walk РјРѕРґСѓР»СЊ mutably: РґР»СЏ РєР°Р¶РґРѕР№ private (`!is_export`) fn,
+/// РµСЃР»Рё РµС‘ С‚РµР»Рѕ РёСЃРїРѕР»СЊР·СѓРµС‚ `throw`, Рё РІ effect-row РЅРµС‚ РЅРё РѕРґРЅРѕРіРѕ
+/// `Fail`/`Fail[E]`/`Fail[any]` вЂ” РґРѕР±Р°РІР»СЏРµРј `Fail` (placeholder).
 ///
-/// Это упрощённая реализация D28 для bootstrap'а:
-/// - Полная version выводила бы конкретный E из type-of(throw expr).
-///   Bootstrap не имеет точного типизатора, поэтому выводит просто
-///   `Fail` (placeholder, по D65 — inference placeholder).
-/// - Для public fn ничего не делаем (D62: явная декларация обязательна).
-/// - Транзитивная inference (callee имеет Fail → caller тоже) не
-///   реализована; программист должен явно импортировать.
+/// Р­С‚Рѕ СѓРїСЂРѕС‰С‘РЅРЅР°СЏ СЂРµР°Р»РёР·Р°С†РёСЏ D28 РґР»СЏ bootstrap'Р°:
+/// - РџРѕР»РЅР°СЏ version РІС‹РІРѕРґРёР»Р° Р±С‹ РєРѕРЅРєСЂРµС‚РЅС‹Р№ E РёР· type-of(throw expr).
+///   Bootstrap РЅРµ РёРјРµРµС‚ С‚РѕС‡РЅРѕРіРѕ С‚РёРїРёР·Р°С‚РѕСЂР°, РїРѕСЌС‚РѕРјСѓ РІС‹РІРѕРґРёС‚ РїСЂРѕСЃС‚Рѕ
+///   `Fail` (placeholder, РїРѕ D65 вЂ” inference placeholder).
+/// - Р”Р»СЏ public fn РЅРёС‡РµРіРѕ РЅРµ РґРµР»Р°РµРј (D62: СЏРІРЅР°СЏ РґРµРєР»Р°СЂР°С†РёСЏ РѕР±СЏР·Р°С‚РµР»СЊРЅР°).
+/// - РўСЂР°РЅР·РёС‚РёРІРЅР°СЏ inference (callee РёРјРµРµС‚ Fail в†’ caller С‚РѕР¶Рµ) РЅРµ
+///   СЂРµР°Р»РёР·РѕРІР°РЅР°; РїСЂРѕРіСЂР°РјРјРёСЃС‚ РґРѕР»Р¶РµРЅ СЏРІРЅРѕ РёРјРїРѕСЂС‚РёСЂРѕРІР°С‚СЊ.
 ///
-/// Эффекты типа Db/Net/Time/etc. **не** добавляются автоматически —
-/// они resource-capability и должны быть видны в сигнатуре, программист
-/// объявляет явно. Только Fail имеет особый placeholder-режим.
+/// Р­С„С„РµРєС‚С‹ С‚РёРїР° Db/Net/Time/etc. **РЅРµ** РґРѕР±Р°РІР»СЏСЋС‚СЃСЏ Р°РІС‚РѕРјР°С‚РёС‡РµСЃРєРё вЂ”
+/// РѕРЅРё resource-capability Рё РґРѕР»Р¶РЅС‹ Р±С‹С‚СЊ РІРёРґРЅС‹ РІ СЃРёРіРЅР°С‚СѓСЂРµ, РїСЂРѕРіСЂР°РјРјРёСЃС‚
+/// РѕР±СЉСЏРІР»СЏРµС‚ СЏРІРЅРѕ. РўРѕР»СЊРєРѕ Fail РёРјРµРµС‚ РѕСЃРѕР±С‹Р№ placeholder-СЂРµР¶РёРј.
 pub fn infer_effects(module: &mut Module) {
     for item in &mut module.items {
         if let Item::Fn(f) = item {
@@ -2619,20 +2660,20 @@ pub fn infer_effects(module: &mut Module) {
     }
 }
 
-/// Есть ли хотя бы один `Fail`/`Fail[...]` в effect-row.
+/// Р•СЃС‚СЊ Р»Рё С…РѕС‚СЏ Р±С‹ РѕРґРёРЅ `Fail`/`Fail[...]` РІ effect-row.
 fn has_fail_effect(effects: &[TypeRef]) -> bool {
     effects.iter().any(|e| {
         matches!(e, TypeRef::Named { path, .. } if path.len() == 1 && path[0] == "Fail")
     })
 }
 
-/// Содержит ли тело fn выражение `throw` (рекурсивно).
+/// РЎРѕРґРµСЂР¶РёС‚ Р»Рё С‚РµР»Рѕ fn РІС‹СЂР°Р¶РµРЅРёРµ `throw` (СЂРµРєСѓСЂСЃРёРІРЅРѕ).
 fn has_throw_in_fn(f: &FnDecl) -> bool {
     match &f.body {
         FnBody::Expr(e) => has_throw_in_expr(e),
         FnBody::Block(b) => has_throw_in_block(b),
-        // D82: external fn — тела нет; throw'ы декларируются через
-        // Fail[E] effect-аннотацию в сигнатуре, не в теле.
+        // D82: external fn вЂ” С‚РµР»Р° РЅРµС‚; throw'С‹ РґРµРєР»Р°СЂРёСЂСѓСЋС‚СЃСЏ С‡РµСЂРµР·
+        // Fail[E] effect-Р°РЅРЅРѕС‚Р°С†РёСЋ РІ СЃРёРіРЅР°С‚СѓСЂРµ, РЅРµ РІ С‚РµР»Рµ.
         FnBody::External => false,
     }
 }
@@ -2659,19 +2700,23 @@ fn has_throw_in_stmt(s: &Stmt) -> bool {
             has_throw_in_expr(target) || has_throw_in_expr(value),
         Stmt::Return { value, .. } => value.as_ref().map_or(false, has_throw_in_expr),
         Stmt::Throw { value, .. } => {
-            // Statement-level throw: явный сигнал, что Fail нужен.
+            // Statement-level throw: СЏРІРЅС‹Р№ СЃРёРіРЅР°Р», С‡С‚Рѕ Fail РЅСѓР¶РµРЅ.
             let _ = value;
             true
         }
         Stmt::Break(_) | Stmt::Continue(_) => false,
-        // D90: defer/errdefer body **запрещают** throw внутри (Ф.3
-        // body-constraint). Throw в body — compile error. Поэтому
-        // body не считается throw-носителем — он отдельный scope с
-        // ограничением. Если в body throw обнаружен — Ф.3 даст
-        // отдельную compile error раньше этой проверки.
+        // D90: defer/errdefer body **Р·Р°РїСЂРµС‰Р°СЋС‚** throw РІРЅСѓС‚СЂРё (Р¤.3
+        // body-constraint). Throw РІ body вЂ” compile error. РџРѕСЌС‚РѕРјСѓ
+        // body РЅРµ СЃС‡РёС‚Р°РµС‚СЃСЏ throw-РЅРѕСЃРёС‚РµР»РµРј вЂ” РѕРЅ РѕС‚РґРµР»СЊРЅС‹Р№ scope СЃ
+        // РѕРіСЂР°РЅРёС‡РµРЅРёРµРј. Р•СЃР»Рё РІ body throw РѕР±РЅР°СЂСѓР¶РµРЅ вЂ” Р¤.3 РґР°СЃС‚
+        // РѕС‚РґРµР»СЊРЅСѓСЋ compile error СЂР°РЅСЊС€Рµ СЌС‚РѕР№ РїСЂРѕРІРµСЂРєРё.
         Stmt::Defer { .. } | Stmt::ErrDefer { .. } => false,
-        // Plan 33.2 Ф.8: assert_static — bool expr, no throw inside.
+        // Plan 33.2 Р¤.8: assert_static вЂ” bool expr, no throw inside.
         Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => has_throw_in_expr(expr),
+        // Ф.4.1: apply — ghost, args могут содержать throw (теоретически нет, но проверяем).
+        Stmt::Apply { args, .. } => args.iter().any(has_throw_in_expr),
+        // Ф.4.2: calc — ghost, шаги могут содержать throw.
+        Stmt::Calc { steps, .. } => steps.iter().any(|s| has_throw_in_expr(&s.expr)),
     }
 }
 
@@ -2679,7 +2724,7 @@ fn has_throw_in_expr(e: &Expr) -> bool {
     match &e.kind {
         ExprKind::Throw(_) => true,
         ExprKind::Try(inner) => has_throw_in_expr(inner),
-        // Plan 19, C7 (D85): `!!` тоже может бросить (`Err`/`None`).
+        // Plan 19, C7 (D85): `!!` С‚РѕР¶Рµ РјРѕР¶РµС‚ Р±СЂРѕСЃРёС‚СЊ (`Err`/`None`).
         ExprKind::Bang(inner) => has_throw_in_expr(inner),
         ExprKind::Binary { left, right, .. } =>
             has_throw_in_expr(left) || has_throw_in_expr(right),
@@ -2712,11 +2757,11 @@ fn has_throw_in_expr(e: &Expr) -> bool {
                 MatchArmBody::Block(b) => has_throw_in_block(b),
             })
         }
-        ExprKind::While { cond, body } => has_throw_in_expr(cond) || has_throw_in_block(body),
+        ExprKind::While { cond, body, .. } => has_throw_in_expr(cond) || has_throw_in_block(body),
         ExprKind::WhileLet { scrutinee, body, .. } =>
             has_throw_in_expr(scrutinee) || has_throw_in_block(body),
         ExprKind::For { iter, body, .. } => has_throw_in_expr(iter) || has_throw_in_block(body),
-        ExprKind::Loop { body } => has_throw_in_block(body),
+        ExprKind::Loop { body, .. } => has_throw_in_block(body),
         ExprKind::Select { arms } => arms.iter().any(|a| {
             (match &a.op {
                 SelectOp::Recv { chan, .. } => has_throw_in_expr(chan),
@@ -2727,7 +2772,7 @@ fn has_throw_in_expr(e: &Expr) -> bool {
         }),
         ExprKind::Block(b) => has_throw_in_block(b),
         ExprKind::Lambda { .. } => false,
-            // Lambda has its own scope; throw inside lambda — её эффекты, не текущей fn.
+            // Lambda has its own scope; throw inside lambda вЂ” РµС‘ СЌС„С„РµРєС‚С‹, РЅРµ С‚РµРєСѓС‰РµР№ fn.
         ExprKind::Range { start, end, .. } =>
             has_throw_in_expr(start) || has_throw_in_expr(end),
         ExprKind::TupleLit(elems) => elems.iter().any(has_throw_in_expr),
@@ -2753,7 +2798,7 @@ fn has_throw_in_expr(e: &Expr) -> bool {
     }
 }
 
-/// Преобразует `TypeRef` AST в `Ty` для базовой проверки.
+/// РџСЂРµРѕР±СЂР°Р·СѓРµС‚ `TypeRef` AST РІ `Ty` РґР»СЏ Р±Р°Р·РѕРІРѕР№ РїСЂРѕРІРµСЂРєРё.
 pub fn ty_of_ref(tr: &TypeRef) -> Ty {
     match tr {
         TypeRef::Named { path, .. } => match path.last().map(|s| s.as_str()) {
@@ -2795,15 +2840,15 @@ pub fn ty_of_ref(tr: &TypeRef) -> Ty {
     }
 }
 
-/// D84: structural equality для TypeRef (игнорирует Span'ы).
+/// D84: structural equality РґР»СЏ TypeRef (РёРіРЅРѕСЂРёСЂСѓРµС‚ Span'С‹).
 ///
-/// Используется для detection дублированных signatures свободных
-/// функций — "точное совпадение" arity + arg-types запрещено как
-/// ambiguous overload без возможности резолва.
+/// РСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ РґР»СЏ detection РґСѓР±Р»РёСЂРѕРІР°РЅРЅС‹С… signatures СЃРІРѕР±РѕРґРЅС‹С…
+/// С„СѓРЅРєС†РёР№ вЂ” "С‚РѕС‡РЅРѕРµ СЃРѕРІРїР°РґРµРЅРёРµ" arity + arg-types Р·Р°РїСЂРµС‰РµРЅРѕ РєР°Рє
+/// ambiguous overload Р±РµР· РІРѕР·РјРѕР¶РЅРѕСЃС‚Рё СЂРµР·РѕР»РІР°.
 ///
-/// Не использует PartialEq/Eq derive потому что TypeRef содержит
-/// Span'ы (позиции в исходнике), которые отличаются у разных
-/// определений того же типа.
+/// РќРµ РёСЃРїРѕР»СЊР·СѓРµС‚ PartialEq/Eq derive РїРѕС‚РѕРјСѓ С‡С‚Рѕ TypeRef СЃРѕРґРµСЂР¶РёС‚
+/// Span'С‹ (РїРѕР·РёС†РёРё РІ РёСЃС…РѕРґРЅРёРєРµ), РєРѕС‚РѕСЂС‹Рµ РѕС‚Р»РёС‡Р°СЋС‚СЃСЏ Сѓ СЂР°Р·РЅС‹С…
+/// РѕРїСЂРµРґРµР»РµРЅРёР№ С‚РѕРіРѕ Р¶Рµ С‚РёРїР°.
 fn typeref_equal(a: &TypeRef, b: &TypeRef) -> bool {
     match (a, b) {
         (
@@ -2842,37 +2887,37 @@ fn typeref_equal(a: &TypeRef, b: &TypeRef) -> bool {
 }
 
 // ============================================================================
-// D90 Plan 20 Ф.3: defer/errdefer body constraints
+// D90 Plan 20 Р¤.3: defer/errdefer body constraints
 // ============================================================================
 //
-// Body запрещает три категории конструкций:
+// Body Р·Р°РїСЂРµС‰Р°РµС‚ С‚СЂРё РєР°С‚РµРіРѕСЂРёРё РєРѕРЅСЃС‚СЂСѓРєС†РёР№:
 //
-// 1. **Exit-control:** `return`, `throw`, `break`, `continue` нельзя
-//    использовать в defer body — defer часть exit-процесса, не может
-//    hijack его. Compile error: «defer body cannot use ... — это
-//    нарушит exit семантику scope'а».
+// 1. **Exit-control:** `return`, `throw`, `break`, `continue` РЅРµР»СЊР·СЏ
+//    РёСЃРїРѕР»СЊР·РѕРІР°С‚СЊ РІ defer body вЂ” defer С‡Р°СЃС‚СЊ exit-РїСЂРѕС†РµСЃСЃР°, РЅРµ РјРѕР¶РµС‚
+//    hijack РµРіРѕ. Compile error: В«defer body cannot use ... вЂ” СЌС‚Рѕ
+//    РЅР°СЂСѓС€РёС‚ exit СЃРµРјР°РЅС‚РёРєСѓ scope'Р°В».
 //
-// 2. **Fail-effect:** `?`, `!!`, `throw` desugar'ятся в throw через
-//    эффект Fail. Defer body должно быть infallible — double-throw
-//    невозможно сделать корректно. Detection через AST-walk
+// 2. **Fail-effect:** `?`, `!!`, `throw` desugar'СЏС‚СЃСЏ РІ throw С‡РµСЂРµР·
+//    СЌС„С„РµРєС‚ Fail. Defer body РґРѕР»Р¶РЅРѕ Р±С‹С‚СЊ infallible вЂ” double-throw
+//    РЅРµРІРѕР·РјРѕР¶РЅРѕ СЃРґРµР»Р°С‚СЊ РєРѕСЂСЂРµРєС‚РЅРѕ. Detection С‡РµСЂРµР· AST-walk
 //    (ExprKind::Throw, ExprKind::Try, ExprKind::Bang).
 //
 // 3. **Suspend operations:** Net.*, Fs.*, Db.*, Time.sleep,
 //    Channel.recv (blocking), parallel for, spawn, supervised, select.
-//    Defer должен быть быстрым cleanup — suspend делает exit-семантику
-//    непредсказуемой. Detection: AST-форма (ParallelFor, Spawn,
-//    Supervised) + callee.effects intersect с SUSPEND_EFFECTS списком.
+//    Defer РґРѕР»Р¶РµРЅ Р±С‹С‚СЊ Р±С‹СЃС‚СЂС‹Рј cleanup вЂ” suspend РґРµР»Р°РµС‚ exit-СЃРµРјР°РЅС‚РёРєСѓ
+//    РЅРµРїСЂРµРґСЃРєР°Р·СѓРµРјРѕР№. Detection: AST-С„РѕСЂРјР° (ParallelFor, Spawn,
+//    Supervised) + callee.effects intersect СЃ SUSPEND_EFFECTS СЃРїРёСЃРєРѕРј.
 
-/// Эффекты, которые считаются suspend в контексте defer body.
-/// Это approximation для bootstrap — D90 spec говорит «cleanup быстрый»,
-/// безопаснее запретить целую группу чем пытаться различить
-/// blocking vs non-blocking варианты для каждого эффекта.
+/// Р­С„С„РµРєС‚С‹, РєРѕС‚РѕСЂС‹Рµ СЃС‡РёС‚Р°СЋС‚СЃСЏ suspend РІ РєРѕРЅС‚РµРєСЃС‚Рµ defer body.
+/// Р­С‚Рѕ approximation РґР»СЏ bootstrap вЂ” D90 spec РіРѕРІРѕСЂРёС‚ В«cleanup Р±С‹СЃС‚СЂС‹Р№В»,
+/// Р±РµР·РѕРїР°СЃРЅРµРµ Р·Р°РїСЂРµС‚РёС‚СЊ С†РµР»СѓСЋ РіСЂСѓРїРїСѓ С‡РµРј РїС‹С‚Р°С‚СЊСЃСЏ СЂР°Р·Р»РёС‡РёС‚СЊ
+/// blocking vs non-blocking РІР°СЂРёР°РЅС‚С‹ РґР»СЏ РєР°Р¶РґРѕРіРѕ СЌС„С„РµРєС‚Р°.
 const SUSPEND_EFFECT_NAMES: &[&str] = &[
     "Net", "Fs", "Db", "Time",
 ];
 
-/// AST-формы которые сами по себе считаются suspend (даже если effects
-/// не объявлены).
+/// AST-С„РѕСЂРјС‹ РєРѕС‚РѕСЂС‹Рµ СЃР°РјРё РїРѕ СЃРµР±Рµ СЃС‡РёС‚Р°СЋС‚СЃСЏ suspend (РґР°Р¶Рµ РµСЃР»Рё effects
+/// РЅРµ РѕР±СЉСЏРІР»РµРЅС‹).
 fn is_suspend_expr_kind(kind: &ExprKind) -> bool {
     matches!(kind,
         ExprKind::ParallelFor { .. }
@@ -2882,23 +2927,23 @@ fn is_suspend_expr_kind(kind: &ExprKind) -> bool {
     )
 }
 
-/// D90 Ф.8 (1): walk модуля, для каждого `HandlerLit { methods }`
-/// проверяет, что methods обрабатывающие Never-operations завершаются
-/// exit-control'ом.
+/// D90 Р¤.8 (1): walk РјРѕРґСѓР»СЏ, РґР»СЏ РєР°Р¶РґРѕРіРѕ `HandlerLit { methods }`
+/// РїСЂРѕРІРµСЂСЏРµС‚, С‡С‚Рѕ methods РѕР±СЂР°Р±Р°С‚С‹РІР°СЋС‰РёРµ Never-operations Р·Р°РІРµСЂС€Р°СЋС‚СЃСЏ
+/// exit-control'РѕРј.
 ///
-/// Never-operation = operation, чей return type — `Never`. Handler-method
-/// для такой operation не может завершиться normally (нет значения типа
-/// Never). По D61 (стр. 1430-1434) body обязан `interrupt v`, `throw err`,
-/// `panic(...)` или `exit(...)`.
+/// Never-operation = operation, С‡РµР№ return type вЂ” `Never`. Handler-method
+/// РґР»СЏ С‚Р°РєРѕР№ operation РЅРµ РјРѕР¶РµС‚ Р·Р°РІРµСЂС€РёС‚СЊСЃСЏ normally (РЅРµС‚ Р·РЅР°С‡РµРЅРёСЏ С‚РёРїР°
+/// Never). РџРѕ D61 (СЃС‚СЂ. 1430-1434) body РѕР±СЏР·Р°РЅ `interrupt v`, `throw err`,
+/// `panic(...)` РёР»Рё `exit(...)`.
 ///
-/// Bootstrap-stage: знаем что built-in `Fail.fail(value) -> Never` —
-/// единственная Never-operation в prelude. Hardcoded effect_name="Fail",
-/// method_name="fail". User-defined effects с Never-methods будут покрыты
-/// общей effect-schema-аналитикой (Plan 25+).
+/// Bootstrap-stage: Р·РЅР°РµРј С‡С‚Рѕ built-in `Fail.fail(value) -> Never` вЂ”
+/// РµРґРёРЅСЃС‚РІРµРЅРЅР°СЏ Never-operation РІ prelude. Hardcoded effect_name="Fail",
+/// method_name="fail". User-defined effects СЃ Never-methods Р±СѓРґСѓС‚ РїРѕРєСЂС‹С‚С‹
+/// РѕР±С‰РµР№ effect-schema-Р°РЅР°Р»РёС‚РёРєРѕР№ (Plan 25+).
 fn check_handler_never_ops(module: &Module, errors: &mut Vec<Diagnostic>) {
-    // Сбор: какие user-defined effect-methods имеют return type Never.
-    // Bootstrap: только Fail.fail — встроенный. User effects парсятся
-    // через TypeDecl::Effect — анализируем их EffectMethod.return_type.
+    // РЎР±РѕСЂ: РєР°РєРёРµ user-defined effect-methods РёРјРµСЋС‚ return type Never.
+    // Bootstrap: С‚РѕР»СЊРєРѕ Fail.fail вЂ” РІСЃС‚СЂРѕРµРЅРЅС‹Р№. User effects РїР°СЂСЃСЏС‚СЃСЏ
+    // С‡РµСЂРµР· TypeDecl::Effect вЂ” Р°РЅР°Р»РёР·РёСЂСѓРµРј РёС… EffectMethod.return_type.
     let mut never_ops: HashSet<(String, String)> = HashSet::new();
     // Always-true: built-in Fail.fail.
     never_ops.insert(("Fail".to_string(), "fail".to_string()));
@@ -2916,7 +2961,7 @@ fn check_handler_never_ops(module: &Module, errors: &mut Vec<Diagnostic>) {
             }
         }
     }
-    // Walk all expressions, найдём HandlerLit'ы.
+    // Walk all expressions, РЅР°Р№РґС‘Рј HandlerLit'С‹.
     for item in &module.items {
         match item {
             Item::Fn(f) => {
@@ -2932,32 +2977,32 @@ fn check_handler_never_ops(module: &Module, errors: &mut Vec<Diagnostic>) {
     }
 }
 
-/// Plan 33.3 Ф.9.6 (D24): handler verification gate.
+/// Plan 33.3 Р¤.9.6 (D24): handler verification gate.
 ///
-/// Если эффект имеет хотя бы одну `pure_view` op'у, любое использование
-/// handler'а через `with E = h` обязано декларировать verification
-/// статус через `#verify_handler` или `#trusted_handler`. Без атрибута —
+/// Р•СЃР»Рё СЌС„С„РµРєС‚ РёРјРµРµС‚ С…РѕС‚СЏ Р±С‹ РѕРґРЅСѓ `pure_view` op'Сѓ, Р»СЋР±РѕРµ РёСЃРїРѕР»СЊР·РѕРІР°РЅРёРµ
+/// handler'Р° С‡РµСЂРµР· `with E = h` РѕР±СЏР·Р°РЅРѕ РґРµРєР»Р°СЂРёСЂРѕРІР°С‚СЊ verification
+/// СЃС‚Р°С‚СѓСЃ С‡РµСЂРµР· `#verify_handler` РёР»Рё `#trusted_handler`. Р‘РµР· Р°С‚СЂРёР±СѓС‚Р° вЂ”
 /// compile error.
 ///
-/// Семантика:
-/// - `#verify_handler` — symbolic verification handler.action body
-///   против axiom'ов эффекта (Ф.9.7). Bootstrap V1: атрибут принимается
-///   но реальной верификации нет — placeholder для Ф.9.7.
-/// - `#trusted_handler` — программист берёт ответственность.
-/// - Default (Unverified) для эффектов с pure_views — **error**.
+/// РЎРµРјР°РЅС‚РёРєР°:
+/// - `#verify_handler` вЂ” symbolic verification handler.action body
+///   РїСЂРѕС‚РёРІ axiom'РѕРІ СЌС„С„РµРєС‚Р° (Р¤.9.7). Bootstrap V1: Р°С‚СЂРёР±СѓС‚ РїСЂРёРЅРёРјР°РµС‚СЃСЏ
+///   РЅРѕ СЂРµР°Р»СЊРЅРѕР№ РІРµСЂРёС„РёРєР°С†РёРё РЅРµС‚ вЂ” placeholder РґР»СЏ Р¤.9.7.
+/// - `#trusted_handler` вЂ” РїСЂРѕРіСЂР°РјРјРёСЃС‚ Р±РµСЂС‘С‚ РѕС‚РІРµС‚СЃС‚РІРµРЅРЅРѕСЃС‚СЊ.
+/// - Default (Unverified) РґР»СЏ СЌС„С„РµРєС‚РѕРІ СЃ pure_views вЂ” **error**.
 ///
-/// Эффекты БЕЗ pure_views — никаких ограничений (default = Unverified
-/// допустим).
+/// Р­С„С„РµРєС‚С‹ Р‘Р•Р— pure_views вЂ” РЅРёРєР°РєРёС… РѕРіСЂР°РЅРёС‡РµРЅРёР№ (default = Unverified
+/// РґРѕРїСѓСЃС‚РёРј).
 ///
-/// Эта проверка консервативна: даже если body не вызывает pure_view-
-/// using функции, gate всё равно требует attribute для эффекта с
-/// pure_views. Это упрощает V1 (нет cross-fn analysis); Ф.9.7
-/// уточнит до actually-uses analysis.
+/// Р­С‚Р° РїСЂРѕРІРµСЂРєР° РєРѕРЅСЃРµСЂРІР°С‚РёРІРЅР°: РґР°Р¶Рµ РµСЃР»Рё body РЅРµ РІС‹Р·С‹РІР°РµС‚ pure_view-
+/// using С„СѓРЅРєС†РёРё, gate РІСЃС‘ СЂР°РІРЅРѕ С‚СЂРµР±СѓРµС‚ attribute РґР»СЏ СЌС„С„РµРєС‚Р° СЃ
+/// pure_views. Р­С‚Рѕ СѓРїСЂРѕС‰Р°РµС‚ V1 (РЅРµС‚ cross-fn analysis); Р¤.9.7
+/// СѓС‚РѕС‡РЅРёС‚ РґРѕ actually-uses analysis.
 fn check_handler_verification_gate(module: &Module, errors: &mut Vec<Diagnostic>) {
-    // Шаг 1: какие эффекты имеют axioms?
-    // Refactor: gate срабатывает только при axiom-присутствии — pure_view сам по
-    // себе ничего не утверждает, утверждение делает axiom. Без axiom handler
-    // верифицировать не на что.
+    // РЁР°Рі 1: РєР°РєРёРµ СЌС„С„РµРєС‚С‹ РёРјРµСЋС‚ axioms?
+    // Refactor: gate СЃСЂР°Р±Р°С‚С‹РІР°РµС‚ С‚РѕР»СЊРєРѕ РїСЂРё axiom-РїСЂРёСЃСѓС‚СЃС‚РІРёРё вЂ” pure_view СЃР°Рј РїРѕ
+    // СЃРµР±Рµ РЅРёС‡РµРіРѕ РЅРµ СѓС‚РІРµСЂР¶РґР°РµС‚, СѓС‚РІРµСЂР¶РґРµРЅРёРµ РґРµР»Р°РµС‚ axiom. Р‘РµР· axiom handler
+    // РІРµСЂРёС„РёС†РёСЂРѕРІР°С‚СЊ РЅРµ РЅР° С‡С‚Рѕ.
     let mut effects_with_axioms: HashSet<String> = HashSet::new();
     for item in &module.items {
         let Item::Type(td) = item else { continue };
@@ -2968,7 +3013,7 @@ fn check_handler_verification_gate(module: &Module, errors: &mut Vec<Diagnostic>
     }
     if effects_with_axioms.is_empty() { return; }
 
-    // Шаг 2: walk all expressions, найти WithBinding'и с такими эффектами.
+    // РЁР°Рі 2: walk all expressions, РЅР°Р№С‚Рё WithBinding'Рё СЃ С‚Р°РєРёРјРё СЌС„С„РµРєС‚Р°РјРё.
     for item in &module.items {
         match item {
             Item::Fn(f) => match &f.body {
@@ -3061,41 +3106,41 @@ fn type_ref_is_never(t: &TypeRef) -> bool {
     false
 }
 
-/// Plan 33.3 Ф.9 (D24): валидация axiom-формул внутри effect-блоков.
+/// Plan 33.3 Р¤.9 (D24): РІР°Р»РёРґР°С†РёСЏ axiom-С„РѕСЂРјСѓР» РІРЅСѓС‚СЂРё effect-Р±Р»РѕРєРѕРІ.
 ///
-/// Контракт: внутри `axiom name(binders) => formula` разрешены только:
-///   - литералы (int/bool/str/unit);
-///   - идентификаторы из `binders`;
-///   - вызовы pure_view-ops **того же эффекта**: `balance(id) >= 0`;
-///   - стандартные бинарные/унарные/comparison/boolean операторы;
-///   - `if/else` без stmts.
+/// РљРѕРЅС‚СЂР°РєС‚: РІРЅСѓС‚СЂРё `axiom name(binders) => formula` СЂР°Р·СЂРµС€РµРЅС‹ С‚РѕР»СЊРєРѕ:
+///   - Р»РёС‚РµСЂР°Р»С‹ (int/bool/str/unit);
+///   - РёРґРµРЅС‚РёС„РёРєР°С‚РѕСЂС‹ РёР· `binders`;
+///   - РІС‹Р·РѕРІС‹ pure_view-ops **С‚РѕРіРѕ Р¶Рµ СЌС„С„РµРєС‚Р°**: `balance(id) >= 0`;
+///   - СЃС‚Р°РЅРґР°СЂС‚РЅС‹Рµ Р±РёРЅР°СЂРЅС‹Рµ/СѓРЅР°СЂРЅС‹Рµ/comparison/boolean РѕРїРµСЂР°С‚РѕСЂС‹;
+///   - `if/else` Р±РµР· stmts.
 ///
-/// Запрещены:
+/// Р—Р°РїСЂРµС‰РµРЅС‹:
 ///   - non-pure_view operations (`SetBalance(...)`);
-///   - вызовы любых других fn (включая built-ins за пределами разрешённых
-///     операторов);
+///   - РІС‹Р·РѕРІС‹ Р»СЋР±С‹С… РґСЂСѓРіРёС… fn (РІРєР»СЋС‡Р°СЏ built-ins Р·Р° РїСЂРµРґРµР»Р°РјРё СЂР°Р·СЂРµС€С‘РЅРЅС‹С…
+///     РѕРїРµСЂР°С‚РѕСЂРѕРІ);
 ///   - record/sum constructors, member access, method calls.
 ///
-/// Эти ограничения нужны для чистой SMT-кодировки (`pure_view` → UF,
-/// axiom → assert) в Ф.9.4. Если разрешить произвольный код — SMT
-/// encoding теряет soundness.
+/// Р­С‚Рё РѕРіСЂР°РЅРёС‡РµРЅРёСЏ РЅСѓР¶РЅС‹ РґР»СЏ С‡РёСЃС‚РѕР№ SMT-РєРѕРґРёСЂРѕРІРєРё (`pure_view` в†’ UF,
+/// axiom в†’ assert) РІ Р¤.9.4. Р•СЃР»Рё СЂР°Р·СЂРµС€РёС‚СЊ РїСЂРѕРёР·РІРѕР»СЊРЅС‹Р№ РєРѕРґ вЂ” SMT
+/// encoding С‚РµСЂСЏРµС‚ soundness.
 fn check_effect_axioms(module: &Module, errors: &mut Vec<Diagnostic>) {
     for item in &module.items {
         let Item::Type(td) = item else { continue };
-        // Plan 33.3 Ф.9 (refactor): unique-name + axiom-formula checks
-        // применяются и к effect, и к protocol (в обоих можно объявлять
-        // #pure ops и axioms).
+        // Plan 33.3 Р¤.9 (refactor): unique-name + axiom-formula checks
+        // РїСЂРёРјРµРЅСЏСЋС‚СЃСЏ Рё Рє effect, Рё Рє protocol (РІ РѕР±РѕРёС… РјРѕР¶РЅРѕ РѕР±СЉСЏРІР»СЏС‚СЊ
+        // #pure ops Рё axioms).
         let methods = match &td.kind {
             TypeDeclKind::Effect(m) | TypeDeclKind::Protocol(m) => m,
             _ => continue,
         };
 
-        // Plan 33.3 (refactor): unique-name checks внутри effect/protocol.
+        // Plan 33.3 (refactor): unique-name checks РІРЅСѓС‚СЂРё effect/protocol.
         //
-        // Перегрузка op разрешена — уникальность по (name + param_types).
-        // Axioms уникальны по имени (overloading axioms не поддерживается).
-        // Axiom name не может совпадать с именем любого op (независимо от
-        // типов параметров) — они в одном logical namespace.
+        // РџРµСЂРµРіСЂСѓР·РєР° op СЂР°Р·СЂРµС€РµРЅР° вЂ” СѓРЅРёРєР°Р»СЊРЅРѕСЃС‚СЊ РїРѕ (name + param_types).
+        // Axioms СѓРЅРёРєР°Р»СЊРЅС‹ РїРѕ РёРјРµРЅРё (overloading axioms РЅРµ РїРѕРґРґРµСЂР¶РёРІР°РµС‚СЃСЏ).
+        // Axiom name РЅРµ РјРѕР¶РµС‚ СЃРѕРІРїР°РґР°С‚СЊ СЃ РёРјРµРЅРµРј Р»СЋР±РѕРіРѕ op (РЅРµР·Р°РІРёСЃРёРјРѕ РѕС‚
+        // С‚РёРїРѕРІ РїР°СЂР°РјРµС‚СЂРѕРІ) вЂ” РѕРЅРё РІ РѕРґРЅРѕРј logical namespace.
         fn type_key(ty: &TypeRef) -> String {
             match ty {
                 TypeRef::Named { path, generics, .. } => {
@@ -3128,7 +3173,7 @@ fn check_effect_axioms(module: &Module, errors: &mut Vec<Diagnostic>) {
             format!("{}({})", m.name, types.join(","))
         }
         let mut op_sigs: HashSet<String> = HashSet::new();
-        // op_names_only: все имена operations (для проверки axiom↔op коллизии).
+        // op_names_only: РІСЃРµ РёРјРµРЅР° operations (РґР»СЏ РїСЂРѕРІРµСЂРєРё axiomв†”op РєРѕР»Р»РёР·РёРё).
         let mut op_names_only: HashSet<&String> = HashSet::new();
         for m in methods {
             op_names_only.insert(&m.name);
@@ -3164,7 +3209,7 @@ fn check_effect_axioms(module: &Module, errors: &mut Vec<Diagnostic>) {
 
         if td.axioms.is_empty() { continue; }
 
-        // Собираем pure_view-имена эффекта: имя → ожидаемая арность.
+        // РЎРѕР±РёСЂР°РµРј pure_view-РёРјРµРЅР° СЌС„С„РµРєС‚Р°: РёРјСЏ в†’ РѕР¶РёРґР°РµРјР°СЏ Р°СЂРЅРѕСЃС‚СЊ.
         let mut pure_views: HashMap<String, usize> = HashMap::new();
         for m in methods {
             if matches!(m.kind, EffectOpKind::PureView) {
@@ -3175,23 +3220,23 @@ fn check_effect_axioms(module: &Module, errors: &mut Vec<Diagnostic>) {
         for ax in &td.axioms {
             // Duplicate-binder check.
             let mut seen: HashSet<&String> = HashSet::new();
-            for (b, _ty) in &ax.binders {
-                if !seen.insert(b) {
+            for bd in &ax.binders {
+                if !seen.insert(&bd.name) {
                     errors.push(Diagnostic::new(
                         format!("axiom `{}.{}`: duplicate binder `{}`",
-                            td.name, ax.name, b),
+                            td.name, ax.name, bd.name),
                         ax.span,
                     ));
                 }
             }
-            let binders: HashSet<&String> = ax.binders.iter().map(|(n, _)| n).collect();
+            let binders: HashSet<&String> = ax.binders.iter().map(|bd| &bd.name).collect();
             check_axiom_expr(&ax.formula, &td.name, &ax.name,
                              &binders, &pure_views, errors);
         }
     }
 }
 
-/// Walk `expr` в axiom-formula и пушит ошибки на запрещённые конструкции.
+/// Walk `expr` РІ axiom-formula Рё РїСѓС€РёС‚ РѕС€РёР±РєРё РЅР° Р·Р°РїСЂРµС‰С‘РЅРЅС‹Рµ РєРѕРЅСЃС‚СЂСѓРєС†РёРё.
 fn check_axiom_expr(
     e: &Expr,
     effect_name: &str,
@@ -3206,8 +3251,8 @@ fn check_axiom_expr(
         Ident(n) => {
             if binders.contains(&n.to_string()) { return; }
             if pure_views.contains_key(n) {
-                // Reference to pure_view без вызова — V1 запрещаем
-                // (требуем `name(args)`-форму для arity-clarity).
+                // Reference to pure_view Р±РµР· РІС‹Р·РѕРІР° вЂ” V1 Р·Р°РїСЂРµС‰Р°РµРј
+                // (С‚СЂРµР±СѓРµРј `name(args)`-С„РѕСЂРјСѓ РґР»СЏ arity-clarity).
                 errors.push(Diagnostic::new(
                     format!(
                         "axiom `{}.{}`: pure_view `{}` must be called \
@@ -3279,7 +3324,37 @@ fn check_axiom_expr(
                 ));
                 return;
             }
-            // V1: разрешена форма `<pure_view_name>(args)`.
+            // Plan 33.5 F.6: allow `post(ActionCall)(viewCall)` in axiom-formulas.
+            // Shape: outer Call{ func: Call{ func: Ident("post"), args:[action_call] }, args:[view_call] }
+            // Validate: action args and view args must only reference binders.
+            // (Action and view names are validated at pipeline verify time, not here.)
+            if let Call { func: inner_func, args: inner_args, .. } = &func.kind {
+                if let Ident(n) = &inner_func.kind {
+                    if n == "post" {
+                        // post(ActionCall)(ViewCall): only validate binder references
+                        // inside action args and view args; action/view names are
+                        // validated by pipeline at verify time.
+                        // inner_args[0] = ActionName(binder1, binder2, ...)
+                        if let Some(action_call) = inner_args.first() {
+                            if let Call { args: action_binder_args, .. } = &action_call.expr().kind {
+                                for a in action_binder_args {
+                                    check_axiom_expr(a.expr(), effect_name, axiom_name, binders, pure_views, errors);
+                                }
+                            }
+                        }
+                        // args[0] = ViewName(binder1, ...)
+                        if let Some(view_call) = args.first() {
+                            if let Call { args: view_binder_args, .. } = &view_call.expr().kind {
+                                for a in view_binder_args {
+                                    check_axiom_expr(a.expr(), effect_name, axiom_name, binders, pure_views, errors);
+                                }
+                            }
+                        }
+                        return;
+                    }
+                }
+            }
+            // V1: allowed form `<pure_view_name>(args)`.
             let pv_name = match &func.kind {
                 Ident(n) => n.clone(),
                 _ => {
@@ -3331,7 +3406,7 @@ fn check_axiom_expr(
     }
 }
 
-/// Walk block recursively: ищет HandlerLit, проверяет never-ops.
+/// Walk block recursively: РёС‰РµС‚ HandlerLit, РїСЂРѕРІРµСЂСЏРµС‚ never-ops.
 fn walk_block_for_handler_lits(b: &Block, never_ops: &HashSet<(String, String)>, errors: &mut Vec<Diagnostic>) {
     for s in &b.stmts {
         match s {
@@ -3350,6 +3425,12 @@ fn walk_block_for_handler_lits(b: &Block, never_ops: &HashSet<(String, String)>,
             }
             Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => walk_expr_for_handler_lits(expr, never_ops, errors),
             Stmt::Break(_) | Stmt::Continue(_) => {}
+            Stmt::Apply { args, .. } => {
+                for a in args { walk_expr_for_handler_lits(a, never_ops, errors); }
+            }
+            Stmt::Calc { steps, .. } => {
+                for step in steps { walk_expr_for_handler_lits(&step.expr, never_ops, errors); }
+            }
         }
     }
     if let Some(t) = &b.trailing { walk_expr_for_handler_lits(t, never_ops, errors); }
@@ -3358,7 +3439,7 @@ fn walk_block_for_handler_lits(b: &Block, never_ops: &HashSet<(String, String)>,
 fn walk_expr_for_handler_lits(e: &Expr, never_ops: &HashSet<(String, String)>, errors: &mut Vec<Diagnostic>) {
     match &e.kind {
         ExprKind::HandlerLit { effect_name, methods } => {
-            // effect_name — Vec<String>, последний компонент = effect's last name.
+            // effect_name вЂ” Vec<String>, РїРѕСЃР»РµРґРЅРёР№ РєРѕРјРїРѕРЅРµРЅС‚ = effect's last name.
             let eff_last = effect_name.last().cloned().unwrap_or_default();
             for m in methods {
                 let key = (eff_last.clone(), m.name.clone());
@@ -3366,10 +3447,10 @@ fn walk_expr_for_handler_lits(e: &Expr, never_ops: &HashSet<(String, String)>, e
                     if !handler_body_diverges(&m.body) {
                         errors.push(Diagnostic::new(
                             format!(
-                                "handler-method `{}.{}` обрабатывает операцию с возвращаемым типом `Never` \
-                                 (D61 §1430-1434, D65): body обязан завершиться через `interrupt v`, \
-                                 `throw err`, `panic(...)` или `exit(...)`. Нельзя завершить handler-method \
-                                 normally — нет значения типа `Never` для return.",
+                                "handler-method `{}.{}` РѕР±СЂР°Р±Р°С‚С‹РІР°РµС‚ РѕРїРµСЂР°С†РёСЋ СЃ РІРѕР·РІСЂР°С‰Р°РµРјС‹Рј С‚РёРїРѕРј `Never` \
+                                 (D61 В§1430-1434, D65): body РѕР±СЏР·Р°РЅ Р·Р°РІРµСЂС€РёС‚СЊСЃСЏ С‡РµСЂРµР· `interrupt v`, \
+                                 `throw err`, `panic(...)` РёР»Рё `exit(...)`. РќРµР»СЊР·СЏ Р·Р°РІРµСЂС€РёС‚СЊ handler-method \
+                                 normally вЂ” РЅРµС‚ Р·РЅР°С‡РµРЅРёСЏ С‚РёРїР° `Never` РґР»СЏ return.",
                                 eff_last, m.name
                             ),
                             m.span,
@@ -3377,7 +3458,7 @@ fn walk_expr_for_handler_lits(e: &Expr, never_ops: &HashSet<(String, String)>, e
                     }
                 }
             }
-            // Также recurse в bodies handler-методов (могут содержать nested
+            // РўР°РєР¶Рµ recurse РІ bodies handler-РјРµС‚РѕРґРѕРІ (РјРѕРіСѓС‚ СЃРѕРґРµСЂР¶Р°С‚СЊ nested
             // HandlerLit).
             for m in methods {
                 match &m.body {
@@ -3386,8 +3467,8 @@ fn walk_expr_for_handler_lits(e: &Expr, never_ops: &HashSet<(String, String)>, e
                 }
             }
         }
-        // Recurse в остальные expr-kinds (используем существующий walk
-        // через ExprKind::Block + остальные expressions).
+        // Recurse РІ РѕСЃС‚Р°Р»СЊРЅС‹Рµ expr-kinds (РёСЃРїРѕР»СЊР·СѓРµРј СЃСѓС‰РµСЃС‚РІСѓСЋС‰РёР№ walk
+        // С‡РµСЂРµР· ExprKind::Block + РѕСЃС‚Р°Р»СЊРЅС‹Рµ expressions).
         ExprKind::Block(b) => walk_block_for_handler_lits(b, never_ops, errors),
         ExprKind::With { bindings, body } => {
             for bd in bindings { walk_expr_for_handler_lits(&bd.handler, never_ops, errors); }
@@ -3425,11 +3506,11 @@ fn walk_expr_for_handler_lits(e: &Expr, never_ops: &HashSet<(String, String)>, e
             walk_expr_for_handler_lits(iter, never_ops, errors);
             walk_block_for_handler_lits(body, never_ops, errors);
         }
-        ExprKind::While { cond, body } | ExprKind::WhileLet { scrutinee: cond, body, .. } => {
+        ExprKind::While { cond, body, .. } | ExprKind::WhileLet { scrutinee: cond, body, .. } => {
             walk_expr_for_handler_lits(cond, never_ops, errors);
             walk_block_for_handler_lits(body, never_ops, errors);
         }
-        ExprKind::Loop { body } => walk_block_for_handler_lits(body, never_ops, errors),
+        ExprKind::Loop { body, .. } => walk_block_for_handler_lits(body, never_ops, errors),
         ExprKind::Select { arms } => {
             for arm in arms {
                 match &arm.op {
@@ -3514,7 +3595,7 @@ fn walk_expr_for_handler_lits(e: &Expr, never_ops: &HashSet<(String, String)>, e
             FnBody::Expr(e2) => walk_expr_for_handler_lits(e2, never_ops, errors),
             FnBody::External => {}
         },
-        // Interpolated string — recurse в её parts (могут содержать expressions).
+        // Interpolated string вЂ” recurse РІ РµС‘ parts (РјРѕРіСѓС‚ СЃРѕРґРµСЂР¶Р°С‚СЊ expressions).
         ExprKind::InterpolatedStr { parts } => {
             for p in parts {
                 if let InterpStrPart::Expr(e2) = p {
@@ -3522,29 +3603,34 @@ fn walk_expr_for_handler_lits(e: &Expr, never_ops: &HashSet<(String, String)>, e
                 }
             }
         }
-        // TaggedTemplate имеет args со sub-expressions — но bootstrap-stage
-        // редко используется; для completeness'а добавим shallow walk.
+        // TaggedTemplate РёРјРµРµС‚ args СЃРѕ sub-expressions вЂ” РЅРѕ bootstrap-stage
+        // СЂРµРґРєРѕ РёСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ; РґР»СЏ completeness'Р° РґРѕР±Р°РІРёРј shallow walk.
         ExprKind::TaggedTemplate { .. } => {}
-        // Leaf expressions — nothing to recurse into.
+        // D.1.3: РєРІР°РЅС‚РѕСЂ вЂ” С‚РѕР»СЊРєРѕ РІ РєРѕРЅС‚СЂР°РєС‚Р°С…; РѕР±С…РѕРґРёРј range Рё body.
+        ExprKind::Forall { range, body, .. } | ExprKind::Exists { range, body, .. } => {
+            walk_expr_for_handler_lits(range, never_ops, errors);
+            walk_expr_for_handler_lits(body, never_ops, errors);
+        }
+        // Leaf expressions вЂ” nothing to recurse into.
         ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::CharLit(_) | ExprKind::StrLit(_)
         | ExprKind::BoolLit(_) | ExprKind::Ident(_) | ExprKind::Path(_) | ExprKind::UnitLit
         | ExprKind::SelfAccess => {}
     }
 }
 
-/// Static analysis: завершается ли handler-method body через exit-control?
+/// Static analysis: Р·Р°РІРµСЂС€Р°РµС‚СЃСЏ Р»Рё handler-method body С‡РµСЂРµР· exit-control?
 ///
-/// Exit-control = `interrupt`, `throw`, `panic(...)`, `exit(...)` —
-/// expressions/stmts которые гарантированно НЕ возвращают control в
-/// caller операции (Never-returning).
+/// Exit-control = `interrupt`, `throw`, `panic(...)`, `exit(...)` вЂ”
+/// expressions/stmts РєРѕС‚РѕСЂС‹Рµ РіР°СЂР°РЅС‚РёСЂРѕРІР°РЅРЅРѕ РќР• РІРѕР·РІСЂР°С‰Р°СЋС‚ control РІ
+/// caller РѕРїРµСЂР°С†РёРё (Never-returning).
 ///
-/// Bootstrap conservative: проверяем самые частые паттерны:
+/// Bootstrap conservative: РїСЂРѕРІРµСЂСЏРµРј СЃР°РјС‹Рµ С‡Р°СЃС‚С‹Рµ РїР°С‚С‚РµСЂРЅС‹:
 ///   - Expr body = exit-control expression.
-///   - Block body = последний stmt/trailing — exit-control.
-///   - Conditional structures (if/match) — ВСЕ ветки exit-control.
+///   - Block body = РїРѕСЃР»РµРґРЅРёР№ stmt/trailing вЂ” exit-control.
+///   - Conditional structures (if/match) вЂ” Р’РЎР• РІРµС‚РєРё exit-control.
 ///
-/// Если не уверены — возвращаем `false` (нечасто-используемый граничный
-/// случай → программист обязан явно exit'нуть).
+/// Р•СЃР»Рё РЅРµ СѓРІРµСЂРµРЅС‹ вЂ” РІРѕР·РІСЂР°С‰Р°РµРј `false` (РЅРµС‡Р°СЃС‚Рѕ-РёСЃРїРѕР»СЊР·СѓРµРјС‹Р№ РіСЂР°РЅРёС‡РЅС‹Р№
+/// СЃР»СѓС‡Р°Р№ в†’ РїСЂРѕРіСЂР°РјРјРёСЃС‚ РѕР±СЏР·Р°РЅ СЏРІРЅРѕ exit'РЅСѓС‚СЊ).
 fn handler_body_diverges(body: &HandlerMethodBody) -> bool {
     match body {
         HandlerMethodBody::Expr(e) => expr_diverges(e),
@@ -3556,7 +3642,7 @@ fn expr_diverges(e: &Expr) -> bool {
     match &e.kind {
         // Direct exit-control.
         ExprKind::Interrupt(_) | ExprKind::Throw(_) => true,
-        // panic(...) / exit(...) — Never-returning builtins (D13).
+        // panic(...) / exit(...) вЂ” Never-returning builtins (D13).
         ExprKind::Call { func, .. } => {
             if let ExprKind::Ident(name) = &func.kind {
                 matches!(name.as_str(), "panic" | "exit")
@@ -3564,13 +3650,13 @@ fn expr_diverges(e: &Expr) -> bool {
                 false
             }
         }
-        // Conditional: все ветки должны diverge.
+        // Conditional: РІСЃРµ РІРµС‚РєРё РґРѕР»Р¶РЅС‹ diverge.
         ExprKind::If { then, else_, .. } => {
             block_diverges(then)
                 && match else_ {
                     Some(ElseBranch::Block(b)) => block_diverges(b),
                     Some(ElseBranch::If(e2)) => expr_diverges(e2),
-                    None => false, // нет else — fall-through possible
+                    None => false, // РЅРµС‚ else вЂ” fall-through possible
                 }
         }
         ExprKind::IfLet { then, else_, .. } => {
@@ -3590,21 +3676,21 @@ fn expr_diverges(e: &Expr) -> bool {
         }
         // Block-as-expr.
         ExprKind::Block(b) => block_diverges(b),
-        // Loop без condition — diverges (если нет break).
+        // Loop Р±РµР· condition вЂ” diverges (РµСЃР»Рё РЅРµС‚ break).
         ExprKind::Loop { .. } => true,
         _ => false,
     }
 }
 
 fn block_diverges(b: &Block) -> bool {
-    // Сначала проверим: есть ли в block.stmts unconditional throw/return/etc
-    // на верхнем уровне? Это early-diverge.
+    // РЎРЅР°С‡Р°Р»Р° РїСЂРѕРІРµСЂРёРј: РµСЃС‚СЊ Р»Рё РІ block.stmts unconditional throw/return/etc
+    // РЅР° РІРµСЂС…РЅРµРј СѓСЂРѕРІРЅРµ? Р­С‚Рѕ early-diverge.
     for s in &b.stmts {
         if stmt_diverges(s) {
             return true;
         }
     }
-    // Иначе — проверка trailing expression.
+    // РРЅР°С‡Рµ вЂ” РїСЂРѕРІРµСЂРєР° trailing expression.
     if let Some(t) = &b.trailing {
         return expr_diverges(t);
     }
@@ -3615,18 +3701,18 @@ fn stmt_diverges(s: &Stmt) -> bool {
     match s {
         Stmt::Return { .. } | Stmt::Throw { .. } => true,
         Stmt::Expr(e) => expr_diverges(e),
-        // Break/Continue exit'ят loop, не handler-fn — не diverge для
-        // handler-purposes (handler body должен иметь exit к caller'у
-        // операции, не к outer loop).
+        // Break/Continue exit'СЏС‚ loop, РЅРµ handler-fn вЂ” РЅРµ diverge РґР»СЏ
+        // handler-purposes (handler body РґРѕР»Р¶РµРЅ РёРјРµС‚СЊ exit Рє caller'Сѓ
+        // РѕРїРµСЂР°С†РёРё, РЅРµ Рє outer loop).
         Stmt::Break(_) | Stmt::Continue(_) => false,
         _ => false,
     }
 }
 
-/// Walk модуля: для каждого defer/errdefer statement в bodies функций
-/// и тестах — проверить body constraints.
+/// Walk РјРѕРґСѓР»СЏ: РґР»СЏ РєР°Р¶РґРѕРіРѕ defer/errdefer statement РІ bodies С„СѓРЅРєС†РёР№
+/// Рё С‚РµСЃС‚Р°С… вЂ” РїСЂРѕРІРµСЂРёС‚СЊ body constraints.
 fn check_defer_bodies(module: &Module, errors: &mut Vec<Diagnostic>) {
-    // Lookup callee effects: fn_name -> effects (для suspend detection).
+    // Lookup callee effects: fn_name -> effects (РґР»СЏ suspend detection).
     let mut fn_effects: HashMap<String, Vec<TypeRef>> = HashMap::new();
     for item in &module.items {
         if let Item::Fn(f) = item {
@@ -3638,7 +3724,7 @@ fn check_defer_bodies(module: &Module, errors: &mut Vec<Diagnostic>) {
         }
     }
 
-    // Walk bodies функций и тестов.
+    // Walk bodies С„СѓРЅРєС†РёР№ Рё С‚РµСЃС‚РѕРІ.
     for item in &module.items {
         match item {
             Item::Fn(f) => {
@@ -3656,9 +3742,9 @@ fn check_defer_bodies(module: &Module, errors: &mut Vec<Diagnostic>) {
     }
 }
 
-/// Walk block: для каждого Stmt::Defer/ErrDefer — проверить body;
-/// рекурсивно walk остальные stmts (там может быть вложенный block с
-/// defer'ами).
+/// Walk block: РґР»СЏ РєР°Р¶РґРѕРіРѕ Stmt::Defer/ErrDefer вЂ” РїСЂРѕРІРµСЂРёС‚СЊ body;
+/// СЂРµРєСѓСЂСЃРёРІРЅРѕ walk РѕСЃС‚Р°Р»СЊРЅС‹Рµ stmts (С‚Р°Рј РјРѕР¶РµС‚ Р±С‹С‚СЊ РІР»РѕР¶РµРЅРЅС‹Р№ block СЃ
+/// defer'Р°РјРё).
 fn walk_block_for_defers(b: &Block, fn_effects: &HashMap<String, Vec<TypeRef>>, errors: &mut Vec<Diagnostic>) {
     for s in &b.stmts {
         match s {
@@ -3680,6 +3766,12 @@ fn walk_block_for_defers(b: &Block, fn_effects: &HashMap<String, Vec<TypeRef>>, 
             Stmt::Throw { value, .. } => walk_expr_for_defers(value, fn_effects, errors),
             Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => walk_expr_for_defers(expr, fn_effects, errors),
             Stmt::Break(_) | Stmt::Continue(_) => {}
+            Stmt::Apply { args, .. } => {
+                for a in args { walk_expr_for_defers(a, fn_effects, errors); }
+            }
+            Stmt::Calc { steps, .. } => {
+                for step in steps { walk_expr_for_defers(&step.expr, fn_effects, errors); }
+            }
         }
     }
     if let Some(t) = &b.trailing {
@@ -3687,8 +3779,8 @@ fn walk_block_for_defers(b: &Block, fn_effects: &HashMap<String, Vec<TypeRef>>, 
     }
 }
 
-/// Walk expression: рекурсивно ищем вложенные блоки с defer'ами.
-/// Сам по себе expression не проверяется — только nested blocks.
+/// Walk expression: СЂРµРєСѓСЂСЃРёРІРЅРѕ РёС‰РµРј РІР»РѕР¶РµРЅРЅС‹Рµ Р±Р»РѕРєРё СЃ defer'Р°РјРё.
+/// РЎР°Рј РїРѕ СЃРµР±Рµ expression РЅРµ РїСЂРѕРІРµСЂСЏРµС‚СЃСЏ вЂ” С‚РѕР»СЊРєРѕ nested blocks.
 fn walk_expr_for_defers(e: &Expr, fn_effects: &HashMap<String, Vec<TypeRef>>, errors: &mut Vec<Diagnostic>) {
     match &e.kind {
         ExprKind::Block(b) => walk_block_for_defers(b, fn_effects, errors),
@@ -3718,7 +3810,7 @@ fn walk_expr_for_defers(e: &Expr, fn_effects: &HashMap<String, Vec<TypeRef>>, er
             walk_expr_for_defers(iter, fn_effects, errors);
             walk_block_for_defers(body, fn_effects, errors);
         }
-        ExprKind::While { cond, body } => {
+        ExprKind::While { cond, body, .. } => {
             walk_expr_for_defers(cond, fn_effects, errors);
             walk_block_for_defers(body, fn_effects, errors);
         }
@@ -3726,7 +3818,7 @@ fn walk_expr_for_defers(e: &Expr, fn_effects: &HashMap<String, Vec<TypeRef>>, er
             walk_expr_for_defers(scrutinee, fn_effects, errors);
             walk_block_for_defers(body, fn_effects, errors);
         }
-        ExprKind::Loop { body } => walk_block_for_defers(body, fn_effects, errors),
+        ExprKind::Loop { body, .. } => walk_block_for_defers(body, fn_effects, errors),
         ExprKind::Select { arms } => {
             for arm in arms {
                 match &arm.op {
@@ -3804,7 +3896,7 @@ fn walk_expr_for_defers(e: &Expr, fn_effects: &HashMap<String, Vec<TypeRef>>, er
                 if let Some(v) = &f.value { walk_expr_for_defers(v, fn_effects, errors); }
             }
         }
-        // Лямбды closure-full: body внутри FnSigBody.
+        // Р›СЏРјР±РґС‹ closure-full: body РІРЅСѓС‚СЂРё FnSigBody.
         ExprKind::ClosureFull(fsb) => {
             if let FnBody::Block(b) = &fsb.body { walk_block_for_defers(b, fn_effects, errors); }
             else if let FnBody::Expr(e2) = &fsb.body { walk_expr_for_defers(e2, fn_effects, errors); }
@@ -3815,7 +3907,7 @@ fn walk_expr_for_defers(e: &Expr, fn_effects: &HashMap<String, Vec<TypeRef>>, er
                 ClosureBody::Block(b) => walk_block_for_defers(b, fn_effects, errors),
             }
         }
-        // Простые узлы без вложенных блоков.
+        // РџСЂРѕСЃС‚С‹Рµ СѓР·Р»С‹ Р±РµР· РІР»РѕР¶РµРЅРЅС‹С… Р±Р»РѕРєРѕРІ.
         _ => {}
     }
 }
@@ -3823,54 +3915,54 @@ fn walk_expr_for_defers(e: &Expr, fn_effects: &HashMap<String, Vec<TypeRef>>, er
 /// Body constraint check: exit-control, Fail-effect, suspend.
 fn check_defer_body(body: &Expr, is_errdefer: bool, fn_effects: &HashMap<String, Vec<TypeRef>>, errors: &mut Vec<Diagnostic>) {
     let kw = if is_errdefer { "errdefer" } else { "defer" };
-    // D90 Plan 20 Ф.3 (revised): Вариант 3 — return/break/continue разрешены
-    // только внутри nested loop/fn-literal в defer body (local control). На
-    // top-level defer body они запрещены — нельзя hijack scope-exit
-    // окружающей функции/цикла.
+    // D90 Plan 20 Р¤.3 (revised): Р’Р°СЂРёР°РЅС‚ 3 вЂ” return/break/continue СЂР°Р·СЂРµС€РµРЅС‹
+    // С‚РѕР»СЊРєРѕ РІРЅСѓС‚СЂРё nested loop/fn-literal РІ defer body (local control). РќР°
+    // top-level defer body РѕРЅРё Р·Р°РїСЂРµС‰РµРЅС‹ вЂ” РЅРµР»СЊР·СЏ hijack scope-exit
+    // РѕРєСЂСѓР¶Р°СЋС‰РµР№ С„СѓРЅРєС†РёРё/С†РёРєР»Р°.
     //
-    // Ctx tracks: loop-nesting depth (break/continue ok если >0), fn-literal
-    // depth (return ok если >0).
+    // Ctx tracks: loop-nesting depth (break/continue ok РµСЃР»Рё >0), fn-literal
+    // depth (return ok РµСЃР»Рё >0).
     let ctx = DeferBodyCtx { loop_depth: 0, fn_depth: 0 };
     check_defer_body_inner(body, kw, fn_effects, &ctx, errors);
 }
 
 #[derive(Clone, Copy)]
 struct DeferBodyCtx {
-    /// Текущая глубина loop'ов (for/while/loop) внутри defer body. Если >0,
-    /// `break`/`continue` локальны — разрешены.
+    /// РўРµРєСѓС‰Р°СЏ РіР»СѓР±РёРЅР° loop'РѕРІ (for/while/loop) РІРЅСѓС‚СЂРё defer body. Р•СЃР»Рё >0,
+    /// `break`/`continue` Р»РѕРєР°Р»СЊРЅС‹ вЂ” СЂР°Р·СЂРµС€РµРЅС‹.
     loop_depth: usize,
-    /// Текущая глубина fn-литералов (closure/lambda) внутри defer body. Если
-    /// >0, `return` локален — разрешён (relates только к ближайшему fn).
+    /// РўРµРєСѓС‰Р°СЏ РіР»СѓР±РёРЅР° fn-Р»РёС‚РµСЂР°Р»РѕРІ (closure/lambda) РІРЅСѓС‚СЂРё defer body. Р•СЃР»Рё
+    /// >0, `return` Р»РѕРєР°Р»РµРЅ вЂ” СЂР°Р·СЂРµС€С‘РЅ (relates С‚РѕР»СЊРєРѕ Рє Р±Р»РёР¶Р°Р№С€РµРјСѓ fn).
     fn_depth: usize,
 }
 
 fn check_defer_body_inner(e: &Expr, kw: &str, fn_effects: &HashMap<String, Vec<TypeRef>>, ctx: &DeferBodyCtx, errors: &mut Vec<Diagnostic>) {
-    // Сначала проверяем узел сам по себе.
+    // РЎРЅР°С‡Р°Р»Р° РїСЂРѕРІРµСЂСЏРµРј СѓР·РµР» СЃР°Рј РїРѕ СЃРµР±Рµ.
     match &e.kind {
         // Exit-control: throw expression-form (D85 redirected via Fail).
         ExprKind::Throw(_) => {
             errors.push(Diagnostic::new(
-                format!("`throw` is not allowed inside `{}` body (D90): defer body must be infallible — \
+                format!("`throw` is not allowed inside `{}` body (D90): defer body must be infallible вЂ” \
                          it cannot raise errors. If cleanup may fail, wrap with `with Fail = ...` handler.", kw),
                 e.span,
             ));
         }
-        // ? и !! desugar в throw → запрещены по той же причине (no Fail).
+        // ? Рё !! desugar РІ throw в†’ Р·Р°РїСЂРµС‰РµРЅС‹ РїРѕ С‚РѕР№ Р¶Рµ РїСЂРёС‡РёРЅРµ (no Fail).
         ExprKind::Try(_) => {
             errors.push(Diagnostic::new(
-                format!("`?` operator is not allowed inside `{}` body (D90): defer body must be infallible — \
+                format!("`?` operator is not allowed inside `{}` body (D90): defer body must be infallible вЂ” \
                          `?` requires Fail effect.", kw),
                 e.span,
             ));
         }
         ExprKind::Bang(_) => {
             errors.push(Diagnostic::new(
-                format!("`!!` operator is not allowed inside `{}` body (D90): defer body must be infallible — \
+                format!("`!!` operator is not allowed inside `{}` body (D90): defer body must be infallible вЂ” \
                          `!!` requires Fail effect.", kw),
                 e.span,
             ));
         }
-        // Interrupt — досрочный exit with-блока, hijack'ит scope exit-семантику.
+        // Interrupt вЂ” РґРѕСЃСЂРѕС‡РЅС‹Р№ exit with-Р±Р»РѕРєР°, hijack'РёС‚ scope exit-СЃРµРјР°РЅС‚РёРєСѓ.
         ExprKind::Interrupt(_) => {
             errors.push(Diagnostic::new(
                 format!("`interrupt` is not allowed inside `{}` body (D90): defer body cannot hijack scope exit.", kw),
@@ -3886,7 +3978,7 @@ fn check_defer_body_inner(e: &Expr, kw: &str, fn_effects: &HashMap<String, Vec<T
                 e.span,
             ));
         }
-        // Call с suspend-эффектами (callee.effects ∩ SUSPEND_EFFECT_NAMES).
+        // Call СЃ suspend-СЌС„С„РµРєС‚Р°РјРё (callee.effects в€© SUSPEND_EFFECT_NAMES).
         ExprKind::Call { func, .. } => {
             if let Some(callee_name) = call_target_name(func) {
                 if let Some(effs) = fn_effects.get(&callee_name) {
@@ -3907,8 +3999,8 @@ fn check_defer_body_inner(e: &Expr, kw: &str, fn_effects: &HashMap<String, Vec<T
                     }
                 }
             }
-            // Also: built-in effect ops `Time.sleep`, `Net.get`, etc. —
-            // обнаруживаются по member-path первого identifier'а.
+            // Also: built-in effect ops `Time.sleep`, `Net.get`, etc. вЂ”
+            // РѕР±РЅР°СЂСѓР¶РёРІР°СЋС‚СЃСЏ РїРѕ member-path РїРµСЂРІРѕРіРѕ identifier'Р°.
             if let ExprKind::Member { obj, .. } = &func.kind {
                 if let ExprKind::Ident(head) = &obj.kind {
                     if SUSPEND_EFFECT_NAMES.contains(&head.as_str()) {
@@ -3927,8 +4019,8 @@ fn check_defer_body_inner(e: &Expr, kw: &str, fn_effects: &HashMap<String, Vec<T
         _ => {}
     }
 
-    // Рекурсивно вглубь — вложенные scope (block, if, etc.) подчиняются тем же
-    // ограничениям, т.к. они часть defer body.
+    // Р РµРєСѓСЂСЃРёРІРЅРѕ РІРіР»СѓР±СЊ вЂ” РІР»РѕР¶РµРЅРЅС‹Рµ scope (block, if, etc.) РїРѕРґС‡РёРЅСЏСЋС‚СЃСЏ С‚РµРј Р¶Рµ
+    // РѕРіСЂР°РЅРёС‡РµРЅРёСЏРј, С‚.Рє. РѕРЅРё С‡Р°СЃС‚СЊ defer body.
     walk_defer_subexprs(e, kw, fn_effects, ctx, errors);
 }
 
@@ -3968,7 +4060,7 @@ fn walk_defer_subexprs(e: &Expr, kw: &str, fn_effects: &HashMap<String, Vec<Type
             let inner = DeferBodyCtx { loop_depth: ctx.loop_depth + 1, fn_depth: ctx.fn_depth };
             check_defer_body_block(body, kw, fn_effects, &inner, errors);
         }
-        ExprKind::While { cond, body } => {
+        ExprKind::While { cond, body, .. } => {
             check_defer_body_inner(cond, kw, fn_effects, ctx, errors);
             let inner = DeferBodyCtx { loop_depth: ctx.loop_depth + 1, fn_depth: ctx.fn_depth };
             check_defer_body_block(body, kw, fn_effects, &inner, errors);
@@ -3978,7 +4070,7 @@ fn walk_defer_subexprs(e: &Expr, kw: &str, fn_effects: &HashMap<String, Vec<Type
             let inner = DeferBodyCtx { loop_depth: ctx.loop_depth + 1, fn_depth: ctx.fn_depth };
             check_defer_body_block(body, kw, fn_effects, &inner, errors);
         }
-        ExprKind::Loop { body } => {
+        ExprKind::Loop { body, .. } => {
             let inner = DeferBodyCtx { loop_depth: ctx.loop_depth + 1, fn_depth: ctx.fn_depth };
             check_defer_body_block(body, kw, fn_effects, &inner, errors);
         }
@@ -4007,8 +4099,8 @@ fn walk_defer_subexprs(e: &Expr, kw: &str, fn_effects: &HashMap<String, Vec<Type
                 match tr {
                     Trailing::Block(b) => check_defer_body_block(b, kw, fn_effects, ctx, errors),
                     Trailing::Fn(fsb) => {
-                        // Trailing fn-literal `fn { ... }` — это лямбда; return
-                        // внутри неё локален для лямбды, а не для defer body.
+                        // Trailing fn-literal `fn { ... }` вЂ” СЌС‚Рѕ Р»СЏРјР±РґР°; return
+                        // РІРЅСѓС‚СЂРё РЅРµС‘ Р»РѕРєР°Р»РµРЅ РґР»СЏ Р»СЏРјР±РґС‹, Р° РЅРµ РґР»СЏ defer body.
                         let inner = DeferBodyCtx { loop_depth: ctx.loop_depth, fn_depth: ctx.fn_depth + 1 };
                         if let FnBody::Block(b) = &fsb.body { check_defer_body_block(b, kw, fn_effects, &inner, errors); }
                         else if let FnBody::Expr(e2) = &fsb.body { check_defer_body_inner(e2, kw, fn_effects, &inner, errors); }
@@ -4051,14 +4143,14 @@ fn walk_defer_subexprs(e: &Expr, kw: &str, fn_effects: &HashMap<String, Vec<Type
                 if let Some(v) = &f.value { check_defer_body_inner(v, kw, fn_effects, ctx, errors); }
             }
         }
-        // Lambda/closure bodies — это отдельный scope для defer'а
-        // (defer внутри lambda относится к scope lambda, не parent).
-        // Не проверяем — это уже не defer body, а его callees, которые
-        // могут быть call'аны откуда угодно. Лямбда сама **может** быть
-        // call'нута асинхронно — но это не defer issue, это её caller's
+        // Lambda/closure bodies вЂ” СЌС‚Рѕ РѕС‚РґРµР»СЊРЅС‹Р№ scope РґР»СЏ defer'Р°
+        // (defer РІРЅСѓС‚СЂРё lambda РѕС‚РЅРѕСЃРёС‚СЃСЏ Рє scope lambda, РЅРµ parent).
+        // РќРµ РїСЂРѕРІРµСЂСЏРµРј вЂ” СЌС‚Рѕ СѓР¶Рµ РЅРµ defer body, Р° РµРіРѕ callees, РєРѕС‚РѕСЂС‹Рµ
+        // РјРѕРіСѓС‚ Р±С‹С‚СЊ call'Р°РЅС‹ РѕС‚РєСѓРґР° СѓРіРѕРґРЅРѕ. Р›СЏРјР±РґР° СЃР°РјР° **РјРѕР¶РµС‚** Р±С‹С‚СЊ
+        // call'РЅСѓС‚Р° Р°СЃРёРЅС…СЂРѕРЅРЅРѕ вЂ” РЅРѕ СЌС‚Рѕ РЅРµ defer issue, СЌС‚Рѕ РµС‘ caller's
         // concern.
         ExprKind::Lambda { .. } | ExprKind::ClosureLight { .. } | ExprKind::ClosureFull(_) => {}
-        // Suspend / Throw / Interrupt — уже flagged выше в check_defer_body_inner.
+        // Suspend / Throw / Interrupt вЂ” СѓР¶Рµ flagged РІС‹С€Рµ РІ check_defer_body_inner.
         _ => {}
     }
 }
@@ -4067,11 +4159,11 @@ fn check_defer_body_block(b: &Block, kw: &str, fn_effects: &HashMap<String, Vec<
     for s in &b.stmts {
         match s {
             Stmt::Return { span, value } => {
-                // Вариант 3 (D90): return локален только внутри nested fn-литерала.
+                // Р’Р°СЂРёР°РЅС‚ 3 (D90): return Р»РѕРєР°Р»РµРЅ С‚РѕР»СЊРєРѕ РІРЅСѓС‚СЂРё nested fn-Р»РёС‚РµСЂР°Р»Р°.
                 if ctx.fn_depth == 0 {
                     errors.push(Diagnostic::new(
                         format!("`return` is not allowed at the top level of `{}` body (D90): defer body cannot hijack scope exit of the enclosing function. \
-                                 (Local `return` inside nested `fn`/closure внутри defer body разрешён.)", kw),
+                                 (Local `return` inside nested `fn`/closure РІРЅСѓС‚СЂРё defer body СЂР°Р·СЂРµС€С‘РЅ.)", kw),
                         *span,
                     ));
                 }
@@ -4083,7 +4175,7 @@ fn check_defer_body_block(b: &Block, kw: &str, fn_effects: &HashMap<String, Vec<
                 if ctx.loop_depth == 0 {
                     errors.push(Diagnostic::new(
                         format!("`break` is not allowed at the top level of `{}` body (D90): defer body cannot hijack the enclosing loop. \
-                                 (Local `break` inside nested loop разрешён.)", kw),
+                                 (Local `break` inside nested loop СЂР°Р·СЂРµС€С‘РЅ.)", kw),
                         *span,
                     ));
                 }
@@ -4092,7 +4184,7 @@ fn check_defer_body_block(b: &Block, kw: &str, fn_effects: &HashMap<String, Vec<
                 if ctx.loop_depth == 0 {
                     errors.push(Diagnostic::new(
                         format!("`continue` is not allowed at the top level of `{}` body (D90): defer body cannot hijack the enclosing loop. \
-                                 (Local `continue` inside nested loop разрешён.)", kw),
+                                 (Local `continue` inside nested loop СЂР°Р·СЂРµС€С‘РЅ.)", kw),
                         *span,
                     ));
                 }
@@ -4109,14 +4201,22 @@ fn check_defer_body_block(b: &Block, kw: &str, fn_effects: &HashMap<String, Vec<
                 check_defer_body_inner(target, kw, fn_effects, ctx, errors);
                 check_defer_body_inner(value, kw, fn_effects, ctx, errors);
             }
-            // Nested defer/errdefer — это OK. Это новый scope (block),
-            // defer'ы внутри регистрируются для этого внутреннего scope'а,
-            // не для родительского. Их body тоже проверяется — но через
-            // основной walk (check_defer_bodies проходит по всем bodies).
+            // Nested defer/errdefer вЂ” СЌС‚Рѕ OK. Р­С‚Рѕ РЅРѕРІС‹Р№ scope (block),
+            // defer'С‹ РІРЅСѓС‚СЂРё СЂРµРіРёСЃС‚СЂРёСЂСѓСЋС‚СЃСЏ РґР»СЏ СЌС‚РѕРіРѕ РІРЅСѓС‚СЂРµРЅРЅРµРіРѕ scope'Р°,
+            // РЅРµ РґР»СЏ СЂРѕРґРёС‚РµР»СЊСЃРєРѕРіРѕ. РС… body С‚РѕР¶Рµ РїСЂРѕРІРµСЂСЏРµС‚СЃСЏ вЂ” РЅРѕ С‡РµСЂРµР·
+            // РѕСЃРЅРѕРІРЅРѕР№ walk (check_defer_bodies РїСЂРѕС…РѕРґРёС‚ РїРѕ РІСЃРµРј bodies).
             Stmt::Defer { body, .. } => check_defer_body(body, false, fn_effects, errors),
             Stmt::ErrDefer { body, .. } => check_defer_body(body, true, fn_effects, errors),
-            // Plan 33.2 Ф.8: assert_static в defer body — walk expr.
+            // Plan 33.2 Р¤.8: assert_static РІ defer body вЂ” walk expr.
             Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => check_defer_body_inner(expr, kw, fn_effects, ctx, errors),
+            // Ф.4.1: apply — ghost, args walk.
+            Stmt::Apply { args, .. } => {
+                for a in args { check_defer_body_inner(a, kw, fn_effects, ctx, errors); }
+            }
+            // Ф.4.2: calc — ghost, шаги walk.
+            Stmt::Calc { steps, .. } => {
+                for step in steps { check_defer_body_inner(&step.expr, kw, fn_effects, ctx, errors); }
+            }
         }
     }
     if let Some(t) = &b.trailing {
@@ -4124,7 +4224,7 @@ fn check_defer_body_block(b: &Block, kw: &str, fn_effects: &HashMap<String, Vec<
     }
 }
 
-/// Извлечь имя callee если выражение — call target (Ident или Type.method).
+/// РР·РІР»РµС‡СЊ РёРјСЏ callee РµСЃР»Рё РІС‹СЂР°Р¶РµРЅРёРµ вЂ” call target (Ident РёР»Рё Type.method).
 fn call_target_name(e: &Expr) -> Option<String> {
     match &e.kind {
         ExprKind::Ident(n) => Some(n.clone()),
@@ -4140,33 +4240,33 @@ fn call_target_name(e: &Expr) -> Option<String> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// Plan 33.1 Ф.2 (D24): ContractCtx — проверка базовых правил контрактов.
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+// Plan 33.1 Р¤.2 (D24): ContractCtx вЂ” РїСЂРѕРІРµСЂРєР° Р±Р°Р·РѕРІС‹С… РїСЂР°РІРёР» РєРѕРЅС‚СЂР°РєС‚РѕРІ.
 //
-// Минимальный pass для 33.1. Полная type-проверка (контракт должен быть
-// bool, result.value под guard'ом, и т.д.) — в Ф.3 вместе с SMT-кодировкой.
+// РњРёРЅРёРјР°Р»СЊРЅС‹Р№ pass РґР»СЏ 33.1. РџРѕР»РЅР°СЏ type-РїСЂРѕРІРµСЂРєР° (РєРѕРЅС‚СЂР°РєС‚ РґРѕР»Р¶РµРЅ Р±С‹С‚СЊ
+// bool, result.value РїРѕРґ guard'РѕРј, Рё С‚.Рґ.) вЂ” РІ Р¤.3 РІРјРµСЃС‚Рµ СЃ SMT-РєРѕРґРёСЂРѕРІРєРѕР№.
 //
-// Базовые правила (33.1):
-// 1. `result` запрещён в `requires` (значения ещё нет).
-// 2. `old(...)` запрещён в `requires` (нет «до»).
-// 3. composition: вызов другой fn в контракте — error в 33.1 (Plan 33.2
-//    разрешит для @pure функций).
-// ──────────────────────────────────────────────────────────────────────────
+// Р‘Р°Р·РѕРІС‹Рµ РїСЂР°РІРёР»Р° (33.1):
+// 1. `result` Р·Р°РїСЂРµС‰С‘РЅ РІ `requires` (Р·РЅР°С‡РµРЅРёСЏ РµС‰С‘ РЅРµС‚).
+// 2. `old(...)` Р·Р°РїСЂРµС‰С‘РЅ РІ `requires` (РЅРµС‚ В«РґРѕВ»).
+// 3. composition: РІС‹Р·РѕРІ РґСЂСѓРіРѕР№ fn РІ РєРѕРЅС‚СЂР°РєС‚Рµ вЂ” error РІ 33.1 (Plan 33.2
+//    СЂР°Р·СЂРµС€РёС‚ РґР»СЏ @pure С„СѓРЅРєС†РёР№).
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
-/// Контекст контракт-проверок.
+/// РљРѕРЅС‚РµРєСЃС‚ РєРѕРЅС‚СЂР°РєС‚-РїСЂРѕРІРµСЂРѕРє.
 ///
-/// Plan 33.2 Ф.7: разрешает composition — вызов `#pure` функций
-/// в контрактах. Non-`#pure` функции в контрактах — compile error.
+/// Plan 33.2 Р¤.7: СЂР°Р·СЂРµС€Р°РµС‚ composition вЂ” РІС‹Р·РѕРІ `#pure` С„СѓРЅРєС†РёР№
+/// РІ РєРѕРЅС‚СЂР°РєС‚Р°С…. Non-`#pure` С„СѓРЅРєС†РёРё РІ РєРѕРЅС‚СЂР°РєС‚Р°С… вЂ” compile error.
 struct ContractCtx {
-    /// Имена всех top-level fn.
+    /// РРјРµРЅР° РІСЃРµС… top-level fn.
     fn_names: HashSet<String>,
-    /// Имена fn объявленных `#pure` (через атрибут).
-    /// Используются для разрешения composition в контрактах (33.2).
+    /// РРјРµРЅР° fn РѕР±СЉСЏРІР»РµРЅРЅС‹С… `#pure` (С‡РµСЂРµР· Р°С‚СЂРёР±СѓС‚).
+    /// РСЃРїРѕР»СЊР·СѓСЋС‚СЃСЏ РґР»СЏ СЂР°Р·СЂРµС€РµРЅРёСЏ composition РІ РєРѕРЅС‚СЂР°РєС‚Р°С… (33.2).
     pure_fn_names: HashSet<String>,
-    /// Plan 33.3 Ф.9: pure_view-имя → (effect_name, arity).
-    /// При вызове `balance(id)` в контракте определяем (а) что это
-    /// pure_view, (б) к какому эффекту относится, (в) что эффект в
-    /// сигнатуре enclosing fn.
+    /// Plan 33.3 Р¤.9: pure_view-РёРјСЏ в†’ (effect_name, arity).
+    /// РџСЂРё РІС‹Р·РѕРІРµ `balance(id)` РІ РєРѕРЅС‚СЂР°РєС‚Рµ РѕРїСЂРµРґРµР»СЏРµРј (Р°) С‡С‚Рѕ СЌС‚Рѕ
+    /// pure_view, (Р±) Рє РєР°РєРѕРјСѓ СЌС„С„РµРєС‚Сѓ РѕС‚РЅРѕСЃРёС‚СЃСЏ, (РІ) С‡С‚Рѕ СЌС„С„РµРєС‚ РІ
+    /// СЃРёРіРЅР°С‚СѓСЂРµ enclosing fn.
     pure_views: HashMap<String, (String, usize)>,
 }
 
@@ -4182,6 +4282,7 @@ impl ContractCtx {
                     if matches!(fd.purity, Purity::Pure) {
                         pure_fn_names.insert(fd.name.clone());
                     }
+                    // Р¤.3 (Plan 33.5): SCC inference РґРѕР±Р°РІР»СЏРµС‚СЃСЏ РЅРёР¶Рµ.
                 }
                 Item::Type(td) => {
                     if let TypeDeclKind::Effect(methods) = &td.kind {
@@ -4198,6 +4299,14 @@ impl ContractCtx {
                 _ => {}
             }
         }
+        // Р¤.3 (Plan 33.5): SCC inference вЂ” Р°РІС‚Рѕ-РѕРїСЂРµРґРµР»СЏРµРј pure fn'С‹
+        // С‡РµСЂРµР· Tarjan SCC РЅР° call-graph (РїР°СЂРёС‚РµС‚ СЃ Dafny auto-pure).
+        // Р”РѕР±Р°РІР»СЏРµРј РІ pure_fn_names РµСЃР»Рё РЅРµ РїРѕРјРµС‡РµРЅС‹ СЏРІРЅРѕ Effectful.
+        // РЎС‚РµРє РЅРµ РїСЂРѕР±Р»РµРјР°: main() Р·Р°РїСѓСЃРєР°РµС‚СЃСЏ РІ РїРѕС‚РѕРєРµ СЃ 32 MiB СЃС‚РµРєР°.
+        let inferred = crate::verify::pipeline::infer_pure_fns_scc(module);
+        for name in inferred {
+            pure_fn_names.insert(name);
+        }
         Self { fn_names, pure_fn_names, pure_views }
     }
 
@@ -4210,32 +4319,32 @@ impl ContractCtx {
     }
 
     fn check_fn(&self, fd: &FnDecl, errors: &mut Vec<Diagnostic>) {
-        // Plan 33.2 Ф.5: проверка modifies-frame.
-        // Если объявлен `modifies`, все assignment'ы внутри body должны
-        // быть покрыты frame-target'ами.
+        // Plan 33.2 Р¤.5: РїСЂРѕРІРµСЂРєР° modifies-frame.
+        // Р•СЃР»Рё РѕР±СЉСЏРІР»РµРЅ `modifies`, РІСЃРµ assignment'С‹ РІРЅСѓС‚СЂРё body РґРѕР»Р¶РЅС‹
+        // Р±С‹С‚СЊ РїРѕРєСЂС‹С‚С‹ frame-target'Р°РјРё.
         if !fd.modifies.is_empty() {
             self.check_modifies_frame(fd, errors);
         }
-        // Plan 33.1 Ф.4: контракты на Fail-функциях требуют ContractResult
-        // + flow-аналитики для result.is_ok / result.value / result.error.
-        // Это полная реализация — отложена до Ф.3 SMT integration вместе
-        // с Z3-кодировкой ContractResult-datatype.
-        // В 33.1 — explicit compile error чтобы избежать silent unsoundness.
+        // Plan 33.1 Р¤.4: РєРѕРЅС‚СЂР°РєС‚С‹ РЅР° Fail-С„СѓРЅРєС†РёСЏС… С‚СЂРµР±СѓСЋС‚ ContractResult
+        // + flow-Р°РЅР°Р»РёС‚РёРєРё РґР»СЏ result.is_ok / result.value / result.error.
+        // Р­С‚Рѕ РїРѕР»РЅР°СЏ СЂРµР°Р»РёР·Р°С†РёСЏ вЂ” РѕС‚Р»РѕР¶РµРЅР° РґРѕ Р¤.3 SMT integration РІРјРµСЃС‚Рµ
+        // СЃ Z3-РєРѕРґРёСЂРѕРІРєРѕР№ ContractResult-datatype.
+        // Р’ 33.1 вЂ” explicit compile error С‡С‚РѕР±С‹ РёР·Р±РµР¶Р°С‚СЊ silent unsoundness.
         if !fd.contracts.is_empty() && Self::fn_has_fail(fd) {
             errors.push(Diagnostic::new(
                 format!(
                     "contracts on `Fail`-returning functions not yet supported in Plan 33.1 \
                      (`{}` has `Fail` effect; ContractResult + flow-analysis for \
-                     result.is_ok / result.value / result.error — Plan 33.1 Ф.3 / Ф.4 follow-up)",
+                     result.is_ok / result.value / result.error вЂ” Plan 33.1 Р¤.3 / Р¤.4 follow-up)",
                     fd.name
                 ),
                 fd.span,
             ));
-            // Контракты не проверяем дальше — error уже выдан.
+            // РљРѕРЅС‚СЂР°РєС‚С‹ РЅРµ РїСЂРѕРІРµСЂСЏРµРј РґР°Р»СЊС€Рµ вЂ” error СѓР¶Рµ РІС‹РґР°РЅ.
             return;
         }
-        // Plan 33.3 Ф.9: множество имён эффектов из сигнатуры функции
-        // (для разрешения pure_view-вызовов в контрактах).
+        // Plan 33.3 Р¤.9: РјРЅРѕР¶РµСЃС‚РІРѕ РёРјС‘РЅ СЌС„С„РµРєС‚РѕРІ РёР· СЃРёРіРЅР°С‚СѓСЂС‹ С„СѓРЅРєС†РёРё
+        // (РґР»СЏ СЂР°Р·СЂРµС€РµРЅРёСЏ pure_view-РІС‹Р·РѕРІРѕРІ РІ РєРѕРЅС‚СЂР°РєС‚Р°С…).
         let fn_effects: HashSet<String> = fd.effects.iter()
             .filter_map(|tr| match tr {
                 TypeRef::Named { path, .. } => path.last().cloned(),
@@ -4250,23 +4359,28 @@ impl ContractCtx {
                 ContractKind::Ensures => {
                     self.check_ensures_expr(&contract.expr, &fn_effects, &fd.name, errors);
                 }
+                ContractKind::EnsuresFail => {
+                    // D.1.5: ensures_fail вЂ” РїСЂРѕРІРµСЂСЏРµРј РєР°Рє ensures (V1 bootstrap).
+                    // V2: РґРѕР±Р°РІРёС‚СЊ РїСЂРѕРІРµСЂРєСѓ С‡С‚Рѕ `result` РЅРµ РёСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ.
+                    self.check_ensures_expr(&contract.expr, &fn_effects, &fd.name, errors);
+                }
             }
         }
     }
 
-    /// Plan 33.2 Ф.5: проверка `modifies`-frame.
-    /// Walks body, для каждого Stmt::Assign к **non-local** target'у
-    /// (параметр / self / поле) проверяет что target покрыт frame-target'ом.
+    /// Plan 33.2 Р¤.5: РїСЂРѕРІРµСЂРєР° `modifies`-frame.
+    /// Walks body, РґР»СЏ РєР°Р¶РґРѕРіРѕ Stmt::Assign Рє **non-local** target'Сѓ
+    /// (РїР°СЂР°РјРµС‚СЂ / self / РїРѕР»Рµ) РїСЂРѕРІРµСЂСЏРµС‚ С‡С‚Рѕ target РїРѕРєСЂС‹С‚ frame-target'РѕРј.
     ///
-    /// Локальные `let mut` НЕ требуют frame-cover'а — `modifies` относится
-    /// к **API-visible** mutations (параметры, self.fields). Это паритет с
-    /// Dafny: «modifies clause is about heap effect, not stack locals».
+    /// Р›РѕРєР°Р»СЊРЅС‹Рµ `let mut` РќР• С‚СЂРµР±СѓСЋС‚ frame-cover'Р° вЂ” `modifies` РѕС‚РЅРѕСЃРёС‚СЃСЏ
+    /// Рє **API-visible** mutations (РїР°СЂР°РјРµС‚СЂС‹, self.fields). Р­С‚Рѕ РїР°СЂРёС‚РµС‚ СЃ
+    /// Dafny: В«modifies clause is about heap effect, not stack localsВ».
     fn check_modifies_frame(&self, fd: &FnDecl, errors: &mut Vec<Diagnostic>) {
         let block = match &fd.body {
             FnBody::Block(b) => b,
             FnBody::Expr(_) | FnBody::External => return, // no assigns possible
         };
-        // Collect local-binding names (let / let mut в block).
+        // Collect local-binding names (let / let mut РІ block).
         let mut locals: std::collections::HashSet<String> = std::collections::HashSet::new();
         for stmt in &block.stmts {
             if let Stmt::Let(LetDecl { pattern, .. }) = stmt {
@@ -4324,7 +4438,7 @@ impl ContractCtx {
         }
     }
 
-    /// Проверка: один target покрыт `modifies`-list'ом.
+    /// РџСЂРѕРІРµСЂРєР°: РѕРґРёРЅ target РїРѕРєСЂС‹С‚ `modifies`-list'РѕРј.
     fn is_assign_covered(target: &Expr, frame: &[FrameTarget]) -> bool {
         for ft in frame {
             if Self::frame_covers(ft, target) {
@@ -4361,7 +4475,7 @@ impl ContractCtx {
         }
     }
 
-    /// Простой сравнитель l-value (без полного structural equality).
+    /// РџСЂРѕСЃС‚РѕР№ СЃСЂР°РІРЅРёС‚РµР»СЊ l-value (Р±РµР· РїРѕР»РЅРѕРіРѕ structural equality).
     fn same_lvalue(a: &Expr, b: &Expr) -> bool {
         match (&a.kind, &b.kind) {
             (ExprKind::Ident(n1), ExprKind::Ident(n2)) => n1 == n2,
@@ -4383,7 +4497,7 @@ impl ContractCtx {
         }
     }
 
-    /// Проверка: функция объявляет `Fail` (любой вариант) в effects.
+    /// РџСЂРѕРІРµСЂРєР°: С„СѓРЅРєС†РёСЏ РѕР±СЉСЏРІР»СЏРµС‚ `Fail` (Р»СЋР±РѕР№ РІР°СЂРёР°РЅС‚) РІ effects.
     fn fn_has_fail(fd: &FnDecl) -> bool {
         fd.effects.iter().any(|e| {
             matches!(e, TypeRef::Named { path, .. }
@@ -4391,7 +4505,7 @@ impl ContractCtx {
         })
     }
 
-    /// `requires`: запрещены `result` и `old(...)`.
+    /// `requires`: Р·Р°РїСЂРµС‰РµРЅС‹ `result` Рё `old(...)`.
     fn check_requires_expr(
         &self,
         e: &Expr,
@@ -4402,7 +4516,7 @@ impl ContractCtx {
         self.walk_expr(e, fn_effects, fn_name, errors, /*in_ensures*/ false);
     }
 
-    /// `ensures`: `result`/`old(...)` разрешены; composition запрещён в 33.1.
+    /// `ensures`: `result`/`old(...)` СЂР°Р·СЂРµС€РµРЅС‹; composition Р·Р°РїСЂРµС‰С‘РЅ РІ 33.1.
     fn check_ensures_expr(
         &self,
         e: &Expr,
@@ -4431,7 +4545,7 @@ impl ContractCtx {
                 }
             }
             ExprKind::Call { func, args, .. } => {
-                // Detect `old(...)` — special-cased call.
+                // Detect `old(...)` вЂ” special-cased call.
                 if let ExprKind::Ident(name) = &func.kind {
                     if name == "old" {
                         if !in_ensures {
@@ -4447,10 +4561,10 @@ impl ContractCtx {
                         }
                         return;
                     }
-                    // Plan 33.3 Ф.9.3 part 2: pure_view-вызов в контракте
-                    // разрешён только если соответствующий эффект объявлен в
-                    // сигнатуре enclosing fn (`(...) Eff -> ...`). pure_view
-                    // — read-only observation, нужен effect-handler в scope.
+                    // Plan 33.3 Р¤.9.3 part 2: pure_view-РІС‹Р·РѕРІ РІ РєРѕРЅС‚СЂР°РєС‚Рµ
+                    // СЂР°Р·СЂРµС€С‘РЅ С‚РѕР»СЊРєРѕ РµСЃР»Рё СЃРѕРѕС‚РІРµС‚СЃС‚РІСѓСЋС‰РёР№ СЌС„С„РµРєС‚ РѕР±СЉСЏРІР»РµРЅ РІ
+                    // СЃРёРіРЅР°С‚СѓСЂРµ enclosing fn (`(...) Eff -> ...`). pure_view
+                    // вЂ” read-only observation, РЅСѓР¶РµРЅ effect-handler РІ scope.
                     if let Some((effect_name, expected_arity)) = self.pure_views.get(name) {
                         if !fn_effects.contains(effect_name) {
                             errors.push(Diagnostic::new(
@@ -4472,15 +4586,15 @@ impl ContractCtx {
                                 e.span,
                             ));
                         }
-                        // pure_view-вызов разрешён; walk args, не walk
-                        // callee (это identifier-name pure_view, не fn).
+                        // pure_view-РІС‹Р·РѕРІ СЂР°Р·СЂРµС€С‘РЅ; walk args, РЅРµ walk
+                        // callee (СЌС‚Рѕ identifier-name pure_view, РЅРµ fn).
                         for a in args {
                             self.walk_expr(a.expr(), fn_effects, fn_name, errors, in_ensures);
                         }
                         return;
                     }
-                    // Plan 33.2 Ф.7 composition: вызов другой fn в контракте
-                    // разрешён ТОЛЬКО если она `#pure`.
+                    // Plan 33.2 Р¤.7 composition: РІС‹Р·РѕРІ РґСЂСѓРіРѕР№ fn РІ РєРѕРЅС‚СЂР°РєС‚Рµ
+                    // СЂР°Р·СЂРµС€С‘РЅ РўРћР›Р¬РљРћ РµСЃР»Рё РѕРЅР° `#pure`.
                     if self.fn_names.contains(name) && !self.pure_fn_names.contains(name) {
                         errors.push(Diagnostic::new(
                             format!(
@@ -4522,33 +4636,33 @@ impl ContractCtx {
                 self.walk_expr(l, fn_effects, fn_name, errors, in_ensures);
                 self.walk_expr(r, fn_effects, fn_name, errors, in_ensures);
             }
-            // Литералы, paths, и прочее — не интересно для базовых правил.
+            // Р›РёС‚РµСЂР°Р»С‹, paths, Рё РїСЂРѕС‡РµРµ вЂ” РЅРµ РёРЅС‚РµСЂРµСЃРЅРѕ РґР»СЏ Р±Р°Р·РѕРІС‹С… РїСЂР°РІРёР».
             _ => {}
         }
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// Plan 33.3 Ф.9.7 (D24): ghost-var usage check.
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+// Plan 33.3 Р¤.9.7 (D24): ghost-var usage check.
 //
-// Verus/Dafny semantics: ghost binding (`ghost let x = ...`) — spec-only,
-// не emit'ится в runtime. Non-ghost код не может читать ghost-var.
-// До этого: catch'илось C-compiler'ом как «undeclared identifier» (ghost
-// эрейзится в codegen). Теперь — proper compile-error на type-check этапе
-// с понятным сообщением.
+// Verus/Dafny semantics: ghost binding (`ghost let x = ...`) вЂ” spec-only,
+// РЅРµ emit'РёС‚СЃСЏ РІ runtime. Non-ghost РєРѕРґ РЅРµ РјРѕР¶РµС‚ С‡РёС‚Р°С‚СЊ ghost-var.
+// Р”Рѕ СЌС‚РѕРіРѕ: catch'РёР»РѕСЃСЊ C-compiler'РѕРј РєР°Рє В«undeclared identifierВ» (ghost
+// СЌСЂРµР№Р·РёС‚СЃСЏ РІ codegen). РўРµРїРµСЂСЊ вЂ” proper compile-error РЅР° type-check СЌС‚Р°РїРµ
+// СЃ РїРѕРЅСЏС‚РЅС‹Рј СЃРѕРѕР±С‰РµРЅРёРµРј.
 //
-// Эвристика: walk каждый fn body, в каждом block:
-// 1. Собираем `ghost let` имена в scope.
-// 2. Walk остальные stmt'ы (non-ghost) и trailing — если ident ссылается
-//    на ghost-name → error.
+// Р­РІСЂРёСЃС‚РёРєР°: walk РєР°Р¶РґС‹Р№ fn body, РІ РєР°Р¶РґРѕРј block:
+// 1. РЎРѕР±РёСЂР°РµРј `ghost let` РёРјРµРЅР° РІ scope.
+// 2. Walk РѕСЃС‚Р°Р»СЊРЅС‹Рµ stmt'С‹ (non-ghost) Рё trailing вЂ” РµСЃР»Рё ident СЃСЃС‹Р»Р°РµС‚СЃСЏ
+//    РЅР° ghost-name в†’ error.
 //
-// Ограничения bootstrap:
-// - Не учитываем `requires`/`ensures` (ghost OK там — но walk их не
-//   делаем, и не должны catches as «non-ghost»).
-// - Nested blocks: ghost из outer scope виден inner non-ghost — это
-//   ошибка (по Verus); ловим через accumulating ghost-set.
-// - Pattern bindings: только Ident-pattern (простой случай).
-// ──────────────────────────────────────────────────────────────────────────
+// РћРіСЂР°РЅРёС‡РµРЅРёСЏ bootstrap:
+// - РќРµ СѓС‡РёС‚С‹РІР°РµРј `requires`/`ensures` (ghost OK С‚Р°Рј вЂ” РЅРѕ walk РёС… РЅРµ
+//   РґРµР»Р°РµРј, Рё РЅРµ РґРѕР»Р¶РЅС‹ catches as В«non-ghostВ»).
+// - Nested blocks: ghost РёР· outer scope РІРёРґРµРЅ inner non-ghost вЂ” СЌС‚Рѕ
+//   РѕС€РёР±РєР° (РїРѕ Verus); Р»РѕРІРёРј С‡РµСЂРµР· accumulating ghost-set.
+// - Pattern bindings: С‚РѕР»СЊРєРѕ Ident-pattern (РїСЂРѕСЃС‚РѕР№ СЃР»СѓС‡Р°Р№).
+// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 fn check_ghost_usage(module: &Module, errors: &mut Vec<Diagnostic>) {
     for item in &module.items {
@@ -4568,21 +4682,21 @@ fn check_ghost_usage(module: &Module, errors: &mut Vec<Diagnostic>) {
 }
 
 fn check_ghost_in_block(b: &Block, parent_ghosts: &HashSet<String>, errors: &mut Vec<Diagnostic>) {
-    // Local ghost-set начинаем с parent + добавляем ghost-let'ы из этого
-    // block'а в порядке появления.
+    // Local ghost-set РЅР°С‡РёРЅР°РµРј СЃ parent + РґРѕР±Р°РІР»СЏРµРј ghost-let'С‹ РёР· СЌС‚РѕРіРѕ
+    // block'Р° РІ РїРѕСЂСЏРґРєРµ РїРѕСЏРІР»РµРЅРёСЏ.
     let mut ghosts = parent_ghosts.clone();
     for stmt in &b.stmts {
         if let Stmt::Let(decl) = stmt {
             if decl.is_ghost {
-                // Ghost let value-expr может читать другие ghost-vars
-                // — это OK. Не проверяем walk_expr на value.
+                // Ghost let value-expr РјРѕР¶РµС‚ С‡РёС‚Р°С‚СЊ РґСЂСѓРіРёРµ ghost-vars
+                // вЂ” СЌС‚Рѕ OK. РќРµ РїСЂРѕРІРµСЂСЏРµРј walk_expr РЅР° value.
                 if let Pattern::Ident { name, .. } = &decl.pattern {
                     ghosts.insert(name.clone());
                 }
                 continue;
             }
         }
-        // Non-ghost stmt: walk expr и проверяем что не читает ghost.
+        // Non-ghost stmt: walk expr Рё РїСЂРѕРІРµСЂСЏРµРј С‡С‚Рѕ РЅРµ С‡РёС‚Р°РµС‚ ghost.
         check_ghost_in_stmt(stmt, &ghosts, errors);
     }
     if let Some(t) = &b.trailing {
@@ -4593,7 +4707,7 @@ fn check_ghost_in_block(b: &Block, parent_ghosts: &HashSet<String>, errors: &mut
 fn check_ghost_in_stmt(s: &Stmt, ghosts: &HashSet<String>, errors: &mut Vec<Diagnostic>) {
     match s {
         Stmt::Let(decl) => {
-            // Non-ghost let: value не должен использовать ghost-vars.
+            // Non-ghost let: value РЅРµ РґРѕР»Р¶РµРЅ РёСЃРїРѕР»СЊР·РѕРІР°С‚СЊ ghost-vars.
             check_ghost_in_expr(&decl.value, ghosts, errors);
         }
         Stmt::Expr(e) => check_ghost_in_expr(e, ghosts, errors),
@@ -4604,8 +4718,8 @@ fn check_ghost_in_stmt(s: &Stmt, ghosts: &HashSet<String>, errors: &mut Vec<Diag
         Stmt::Return { value: Some(v), .. } => check_ghost_in_expr(v, ghosts, errors),
         Stmt::Throw { value, .. } => check_ghost_in_expr(value, ghosts, errors),
         Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. } => check_ghost_in_expr(body, ghosts, errors),
-        // assert_static/assume — это spec-уровень, ghost-vars там OK.
-        // Skip walk через них чтобы не выдавать false-positives.
+        // assert_static/assume вЂ” СЌС‚Рѕ spec-СѓСЂРѕРІРµРЅСЊ, ghost-vars С‚Р°Рј OK.
+        // Skip walk С‡РµСЂРµР· РЅРёС… С‡С‚РѕР±С‹ РЅРµ РІС‹РґР°РІР°С‚СЊ false-positives.
         Stmt::AssertStatic { .. } | Stmt::Assume { .. } => {}
         _ => {}
     }
@@ -4618,7 +4732,7 @@ fn check_ghost_in_expr(e: &Expr, ghosts: &HashSet<String>, errors: &mut Vec<Diag
                 errors.push(Diagnostic::new(
                     format!(
                         "ghost variable `{}` cannot be read in non-ghost code \
-                         (Plan 33.3 Ф.9.1: ghost vars are spec-only, Verus/Dafny semantics). \
+                         (Plan 33.3 Р¤.9.1: ghost vars are spec-only, Verus/Dafny semantics). \
                          Move usage into a contract clause (`requires`/`ensures`/`invariant`) \
                          or another `ghost let` binding.",
                         n
@@ -4662,3 +4776,4 @@ fn check_ghost_in_expr(e: &Expr, ghosts: &HashSet<String>, errors: &mut Vec<Diag
         _ => {}
     }
 }
+

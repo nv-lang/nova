@@ -7,6 +7,7 @@ pub mod ast;
 pub mod callnorm;
 pub mod codegen;
 pub mod diag;
+pub mod doc;
 pub mod imports;
 pub mod interp;
 pub mod lexer;

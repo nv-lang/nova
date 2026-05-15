@@ -1,0 +1,150 @@
+{
+  "format_version": 1,
+  "nova_version": "0.1.0",
+  "doc_tests": [
+    {
+      "from_id": "nova_tests.doc.fixtures.basic.sample::abs",
+      "full_source": "assert(abs(-5) == 5)",
+      "id": "nova_tests.doc.fixtures.basic.sample::doc_test_1",
+      "index": 1,
+      "modifiers": [
+
+      ],
+      "visible_source": "assert(abs(-5) == 5)"
+    }
+  ],
+  "links": [
+
+  ],
+  "modules": [
+    {
+      "deprecation": null,
+      "doc_attrs": [
+
+      ],
+      "kind": "file",
+      "name": "sample",
+      "path": "nova_tests.doc.fixtures.basic.sample",
+      "peers": [
+
+      ],
+      "source": {
+        "file_id": 0,
+        "line": 1
+      },
+      "stability": null,
+      "summary": "Plan 45 / D104: smoke-test fixture для `nova doc`.",
+      "description": "Этот модуль содержит образцы для всех item kind'ов, проверяя\nчто collector + renderer'ы рендерят их корректно."
+    }
+  ],
+  "items": [
+    {
+      "deprecation": null,
+      "description": null,
+      "doc_attrs": [
+
+      ],
+      "id": "nova_tests.doc.fixtures.basic.sample::MAX_BUF",
+      "kind": "const",
+      "module_path": "nova_tests.doc.fixtures.basic.sample",
+      "name": "MAX_BUF",
+      "sections": {
+
+      },
+      "source": {
+        "file_id": 0,
+        "line": 25
+      },
+      "stability": null,
+      "summary": "Максимальный размер буфера в байтах.",
+      "type": "int",
+      "value": "4096"
+    },
+    {
+      "deprecation": null,
+      "description": null,
+      "doc_attrs": [
+
+      ],
+      "id": "nova_tests.doc.fixtures.basic.sample::Point",
+      "kind": "type",
+      "module_path": "nova_tests.doc.fixtures.basic.sample",
+      "name": "Point",
+      "sections": {
+
+      },
+      "source": {
+        "file_id": 0,
+        "line": 19
+      },
+      "stability": null,
+      "summary": "Двухмерная точка.",
+      "definition": {
+        "fields": [
+          {
+            "mutable": false,
+            "name": "x",
+            "type": "int"
+          },
+          {
+            "mutable": false,
+            "name": "y",
+            "type": "int"
+          }
+        ],
+        "kind": "record"
+      }
+    },
+    {
+      "deprecation": null,
+      "description": "Пример:\n\n```nova\nassert(abs(-5) == 5)\n```",
+      "doc_attrs": [
+
+      ],
+      "id": "nova_tests.doc.fixtures.basic.sample::abs",
+      "kind": "fn",
+      "module_path": "nova_tests.doc.fixtures.basic.sample",
+      "name": "abs",
+      "sections": {
+
+      },
+      "source": {
+        "file_id": 0,
+        "line": 15
+      },
+      "stability": null,
+      "summary": "Возвращает абсолютное значение `x`.",
+      "signature": {
+        "contracts": {
+          "ensures": [
+
+          ],
+          "requires": [
+
+          ],
+          "verify_status": "UNVERIFIED"
+        },
+        "effects": [
+
+        ],
+        "generics": [
+
+        ],
+        "params": [
+          {
+            "default": null,
+            "keyword_only": false,
+            "name": "x",
+            "type": "int",
+            "variadic": false
+          }
+        ],
+        "raises": [
+
+        ],
+        "receiver": null,
+        "return_type": "int"
+      }
+    }
+  ]
+}

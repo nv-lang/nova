@@ -15,6 +15,19 @@ impl Token {
     }
 }
 
+/// Plan 45 / D104: kind doc-comment'а.
+///
+/// `Outer` (`///`) — внешний doc-comment, привязывается к следующей
+/// декларации (fn / type / const / effect / handler / protocol).
+/// `Inner` (`//!`) — внутренний, привязывается к окружающему модулю;
+/// валиден только в начале файла (после `module X` и любых `import`,
+/// до первой декларации).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DocCommentKind {
+    Outer,
+    Inner,
+}
+
 /// Виды токенов. Все ключевые слова — отдельные варианты, иначе
 /// `Ident(string)`.
 #[derive(Debug, Clone, PartialEq)]
@@ -25,6 +38,19 @@ pub enum TokenKind {
     Str(String),
     Backtick(String),
     Ident(String),
+    /// Plan 45 / D104: doc-comment. `///` (Outer) — внешний, к следующей
+    /// декларации; `//!` (Inner) — внутренний модуля.
+    ///
+    /// `content` — склеенный текст одной или нескольких подряд идущих
+    /// doc-line того же kind'а. С каждой строки снят префикс `///`/`//!`
+    /// и одна опциональная ведущая пробел-позиция; затем убран общий
+    /// leading whitespace (по всем непустым строкам). Строки склеены
+    /// через `\n`. Markdown на этом уровне НЕ парсится — это сырой
+    /// текст, передаётся в parser и далее в Plan 45 doc-collector.
+    DocComment {
+        kind: DocCommentKind,
+        content: String,
+    },
 
     // Ключевые слова
     KwModule,
@@ -81,6 +107,12 @@ pub enum TokenKind {
     KwErrDefer,
     /// D94: multiplexed channel operation.
     KwSelect,
+    /// Plan 33.5 Ф.4.1: `lemma` — proof term декларация (верифицируется SMT,
+    /// не emit'ится в runtime). Семантика как у ghost fn с обязательным verify.
+    KwLemma,
+    /// Plan 33.5 Ф.4.1: `apply lemma_name(args)` — активировать lemma в текущем
+    /// SMT-scope. Adds lemma.ensures как assertion; не emit'ится в runtime.
+    KwApply,
 
     // Пунктуация
     LParen,
@@ -157,6 +189,8 @@ impl TokenKind {
             TokenKind::Str(_) => "string literal",
             TokenKind::Backtick(_) => "backtick string",
             TokenKind::Ident(_) => "identifier",
+            TokenKind::DocComment { kind: DocCommentKind::Outer, .. } => "outer doc-comment `///`",
+            TokenKind::DocComment { kind: DocCommentKind::Inner, .. } => "inner doc-comment `//!`",
             TokenKind::KwModule => "`module`",
             TokenKind::KwImport => "`import`",
             TokenKind::KwUse => "`use`",
@@ -203,6 +237,8 @@ impl TokenKind {
             TokenKind::KwDefer => "`defer`",
             TokenKind::KwErrDefer => "`errdefer`",
             TokenKind::KwSelect => "`select`",
+            TokenKind::KwLemma => "`lemma`",
+            TokenKind::KwApply => "`apply`",
             TokenKind::LParen => "`(`",
             TokenKind::RParen => "`)`",
             TokenKind::LBracket => "`[`",

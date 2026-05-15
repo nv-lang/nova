@@ -1,0 +1,28 @@
+//! Plan 45 / D107: fixture для проверки section parsing (style-guide §11.5).
+
+module nova_tests.doc.fixtures.sections.sample
+
+/// Делит `a` на `b`.
+///
+/// Длинное описание: возвращает целочисленный quotient. Для нулевого
+/// `b` функция возвращает ошибку через effect-row.
+///
+/// # Examples
+///
+/// ```nova
+/// assert(divide(10, 3) == 6)
+/// ```
+///
+/// # Errors
+///
+/// Возвращает `DivisionByZero`, если `b == 0`.
+///
+/// # Panics
+///
+/// Никогда не паникует.
+///
+/// # Since
+///
+/// 0.1.0
+export fn divide(a int, b int) -> int =>
+    a / b

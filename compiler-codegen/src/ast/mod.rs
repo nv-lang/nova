@@ -34,6 +34,11 @@ pub struct Module {
     /// Имя `peer_files` (а не `files`) — чтобы не конфликтовать со
     /// смежным `diag::SourceFile` и явно отражать терминологию Plan 42 spec.
     pub peer_files: Vec<PeerFile>,
+    /// Plan 45 / D104: inner doc-comment модуля (`//!`), если присутствует.
+    /// Допустим только в начале файла (после `module X` и `import`-ов,
+    /// до первого item'а). Объединяется с `#doc "..."` module-attr
+    /// (D101) на этапе collector'а (Plan 45 Ф.4).
+    pub doc: Option<DocBlock>,
 }
 
 /// Plan 42 Sub-plan 42.4 (шаг 1, 2026-05-14): per-peer source attribution.
@@ -74,6 +79,22 @@ pub struct PeerFile {
     /// `is_entry_module = true` peers — иначе items импортированных
     /// folder-modules «протекли» бы в shared namespace (нарушение Rule C).
     pub is_entry_module: bool,
+}
+
+/// Plan 45 / D104: блок doc-comment'ов, привязанный к item'у или
+/// модулю. Это последовательность одного или нескольких подряд
+/// идущих `///` (outer) либо `//!` (inner) комментариев, склеенных
+/// лексером (см. `lexer::TokenKind::DocComment`).
+///
+/// `kind` — указывает, outer это (привязан к следующей декларации) или
+/// inner (привязан к окружающему модулю). `content` — сырой текст,
+/// markdown НЕ парсится на уровне AST; парсинг markdown +
+/// section-extraction — отдельный pass (`doc::passes::derive_sections`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct DocBlock {
+    pub kind: crate::lexer::DocCommentKind,
+    pub content: String,
+    pub span: Span,
 }
 
 /// Plan 42 Sub-plan 42.A: module-level attribute.
@@ -151,11 +172,37 @@ pub enum Item {
     Let(LetDecl),
     Const(ConstDecl),
     Test(TestDecl),
+    /// Plan 33.5 Ф.4.1: `lemma` — proven proof term.
+    /// Тело SMT-верифицируется (unknown == fail), не emit'ится в runtime.
+    /// Может применяться через `apply lemma_name(args)` в телах функций.
+    Lemma(LemmaDecl),
+}
+
+/// Plan 33.5 Ф.4.1: декларация lemma.
+///
+/// `lemma name(params) requires P ensures Q { proof_body }`
+///
+/// - Тело верифицируется SMT (`verify_mode == MustVerify` по умолчанию).
+/// - Не emit'ится в C (ghost, только для proof).
+/// - `apply name(args)` в теле fn добавляет `ensures[args/params]` как
+///   assertion в SMT-scope вызывающей fn (подстановкой аргументов).
+#[derive(Debug, Clone)]
+pub struct LemmaDecl {
+    pub name: String,
+    pub generics: Vec<GenericParam>,
+    pub params: Vec<Param>,
+    pub contracts: Vec<Contract>,
+    pub body: FnBody,
+    pub span: Span,
 }
 
 /// Функция: и свободная, и метод (через `receiver`).
 #[derive(Debug, Clone)]
 pub struct FnDecl {
+    /// Plan 45 / D104: doc-comment, прикреплённый парсером (один или
+    /// несколько подряд идущих `///` непосредственно перед `fn`).
+    /// `None` — у функции нет doc-comment'а.
+    pub doc: Option<DocBlock>,
     pub is_export: bool,
     /// D82: external fn — реализована в nova_rt/*.h. Body отсутствует
     /// (FnBody::External). Только в std.runtime.* whitelisted.
@@ -255,6 +302,10 @@ pub enum ContractKind {
     /// Доступны `result`, `result.is_ok`/`.is_err`/`.value`/`.error`,
     /// `old(expr)` для значений до вызова.
     Ensures,
+    /// D.1.5: `ensures_fail <bool-expr>` — постусловие для Fail-пути.
+    /// `result` недоступен (fn не вернула нормально); `old(x)` доступен.
+    /// SMT-верифицируется независимо; runtime-check не эмитируется (V1).
+    EnsuresFail,
 }
 
 /// Plan 33.1 (D24 §49): режим верификации контрактов функции.
@@ -380,6 +431,8 @@ pub enum FnBody {
 
 #[derive(Debug, Clone)]
 pub struct TypeDecl {
+    /// Plan 45 / D104: doc-comment перед `type`.
+    pub doc: Option<DocBlock>,
     pub is_export: bool,
     pub name: String,
     /// Plan 15 (D72): `[K Hashable, V]` — имена + optional bounds.
@@ -475,6 +528,10 @@ pub struct EffectMethod {
     ///   - SMT кодируются как uninterpreted functions (UF).
     ///   - Backward-compat: для protocol-методов всегда Operation.
     pub kind: EffectOpKind,
+    /// Plan 33.5 Ф.5.1: контракты метода эффекта (requires/ensures).
+    /// Используются в Ф.5.2 для верификации Liskov-подобия handler'ов.
+    /// Пустые = нет spec-контрактов (handler принимается без проверки).
+    pub contracts: Vec<Contract>,
 }
 
 /// Plan 33.3 Ф.9 (D24): Operation vs PureView для effect-метода.
@@ -501,6 +558,44 @@ pub enum EffectOpKind {
 /// }
 /// ```
 ///
+/// Plan 33.4 P1-5: вид binder'а в EffectAxiom.
+/// Различает три семантически разных состояния вместо Option<TypeRef>:
+/// - Untyped: `axiom foo(id)` — тип не аннотирован, выводится из usage
+/// - Typed: `axiom foo(id int)` — конкретный тип
+/// - Generic: `axiom foo[T](id T)` — ссылка на generic param по имени
+#[derive(Debug, Clone)]
+pub enum BinderType {
+    /// Тип не аннотирован — inference из usage.
+    Untyped,
+    /// Конкретный аннотированный тип: `int`, `str`, named type и т.п.
+    Typed(TypeRef),
+    /// Ссылка на generic-параметр аксиомы: `axiom foo[T](id T)` → Generic("T").
+    Generic(String),
+}
+
+/// Plan 33.4 P1-5: параметр (binder) аксиомы с типом.
+#[derive(Debug, Clone)]
+pub struct BinderDef {
+    pub name: String,
+    pub kind: BinderType,
+    pub span: Span,
+}
+
+impl BinderDef {
+    /// Если binder типизирован (не generic и не untyped), вернуть TypeRef.
+    pub fn typed_ref(&self) -> Option<&TypeRef> {
+        match &self.kind {
+            BinderType::Typed(t) => Some(t),
+            _ => None,
+        }
+    }
+
+    /// True если binder ссылается на generic-параметр аксиомы.
+    pub fn is_generic(&self) -> bool {
+        matches!(&self.kind, BinderType::Generic(_))
+    }
+}
+
 /// `binders` — параметры формулы (свободные переменные).
 /// `formula` обязана быть `bool`-выражением; видны binders + все
 /// pure_view ops эффекта.
@@ -510,10 +605,9 @@ pub struct EffectAxiom {
     /// Generic-параметры: `axiom foo[T](id T) => ...` → `generics = [T]`.
     /// V1: парсинг + AST; SMT encoding generic axioms — V2.
     pub generics: Vec<GenericParam>,
-    /// Параметры формулы с опциональными типами:
-    /// `axiom foo(id int, x str) => ...` → `[(id, Some(int)), (x, Some(str))]`.
-    /// `axiom foo(id) => ...` → `[(id, None)]` (тип выводится из usage).
-    pub binders: Vec<(String, Option<TypeRef>)>,
+    /// Plan 33.4 P1-5: параметры формулы с типами через BinderDef.
+    /// Заменяет Vec<(String, Option<TypeRef>)>.
+    pub binders: Vec<BinderDef>,
     pub formula: Expr,
     pub span: Span,
 }
@@ -534,6 +628,8 @@ pub struct LetDecl {
 
 #[derive(Debug, Clone)]
 pub struct ConstDecl {
+    /// Plan 45 / D104: doc-comment перед `const`.
+    pub doc: Option<DocBlock>,
     pub is_export: bool,
     pub name: String,
     pub ty: Option<TypeRef>,
@@ -643,6 +739,53 @@ pub enum Stmt {
         expr: Expr,
         span: Span,
     },
+    /// Plan 33.5 Ф.4.1: `apply lemma_name(args)` — активировать lemma.
+    /// В SMT-scope: добавляет `ensures[args/params]` как assertion.
+    /// Не emit'ится в runtime (ghost statement).
+    Apply {
+        lemma: String,
+        args: Vec<Expr>,
+        span: Span,
+    },
+    /// Plan 33.5 Ф.4.2: `calc { expr; == expr; == expr; }` — structured
+    /// equational reasoning. Ghost statement: each step asserts adjacency
+    /// relation in SMT; erased in codegen.
+    Calc {
+        steps: Vec<CalcStep>,
+        span: Span,
+    },
+}
+
+/// Один шаг calc-доказательства: отношение + выражение.
+/// Первый шаг (expr1) не имеет отношения; остальные — `== expr`, `<= expr`, etc.
+#[derive(Debug, Clone)]
+pub struct CalcStep {
+    /// None для первого шага, Some(rel) для последующих.
+    pub rel: Option<CalcRel>,
+    pub expr: Expr,
+    pub span: Span,
+}
+
+/// Отношение между шагами calc.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum CalcRel {
+    Eq,   // ==
+    Le,   // <=
+    Lt,   // <
+    Ge,   // >=
+    Gt,   // >
+}
+
+impl CalcRel {
+    pub fn to_smt_op(self) -> &'static str {
+        match self {
+            CalcRel::Eq => "=",
+            CalcRel::Le => "<=",
+            CalcRel::Lt => "<",
+            CalcRel::Ge => ">=",
+            CalcRel::Gt => ">",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -801,6 +944,10 @@ pub enum ExprKind {
         pattern: Pattern,
         iter: Box<Expr>,
         body: Block,
+        /// Plan 33.4 D.0.3: loop invariants (SMT + runtime).
+        invariants: Vec<Expr>,
+        /// Plan 33.4 D.0.3: well-founded termination measure.
+        decreases: Option<Box<Expr>>,
     },
     /// `parallel for x in iter { body }` — D14, fan-out body for each element.
     /// Desugars to `supervised { for x in iter { spawn { body } } }`.
@@ -812,15 +959,27 @@ pub enum ExprKind {
     While {
         cond: Box<Expr>,
         body: Block,
+        /// Plan 33.4 D.0.3: loop invariants (SMT + runtime).
+        invariants: Vec<Expr>,
+        /// Plan 33.4 D.0.3: well-founded termination measure.
+        decreases: Option<Box<Expr>>,
     },
     /// `while let pattern = expr { ... }` — D34
     WhileLet {
         pattern: Pattern,
         scrutinee: Box<Expr>,
         body: Block,
+        /// Plan 33.4 D.0.3: loop invariants.
+        invariants: Vec<Expr>,
+        /// Plan 33.4 D.0.3: well-founded termination measure.
+        decreases: Option<Box<Expr>>,
     },
     Loop {
         body: Block,
+        /// Plan 33.4 D.0.3: loop invariants (SMT + runtime).
+        invariants: Vec<Expr>,
+        /// Plan 33.4 D.0.3: well-founded termination measure.
+        decreases: Option<Box<Expr>>,
     },
     /// `select { Some(v) = rx.recv() => body, _ => default }` --- D94
     Select {
@@ -902,6 +1061,20 @@ pub enum ExprKind {
         start: Box<Expr>,
         end: Box<Expr>,
         inclusive: bool,
+    },
+    /// D.1.3: универсальный квантор в контрактах.
+    /// `forall x in lo..hi : P(x)`
+    Forall {
+        var: String,
+        range: Box<Expr>,
+        body: Box<Expr>,
+    },
+    /// D.1.3: экзистенциальный квантор в контрактах.
+    /// `exists x in lo..hi : P(x)`
+    Exists {
+        var: String,
+        range: Box<Expr>,
+        body: Box<Expr>,
     },
     /// Блок-выражение `{ stmts; expr }`
     Block(Block),

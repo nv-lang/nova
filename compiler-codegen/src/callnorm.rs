@@ -115,6 +115,8 @@ fn normalize_item(item: &mut Item, sigs: &Sigs) {
         Item::Const(c) => normalize_expr(&mut c.value, sigs),
         Item::Let(l) => normalize_expr(&mut l.value, sigs),
         Item::Type(_) => {}
+        // Ф.4.1: lemma не emit'ится в runtime — нормализацию пропускаем.
+        Item::Lemma(_) => {}
     }
 }
 
@@ -142,6 +144,14 @@ fn normalize_stmt(s: &mut Stmt, sigs: &Sigs) {
         Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. } => normalize_expr(body, sigs),
         Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => normalize_expr(expr, sigs),
         Stmt::Break(_) | Stmt::Continue(_) => {}
+        // Ф.4.1: apply — ghost, аргументы нормализуем.
+        Stmt::Apply { args, .. } => {
+            for a in args { normalize_expr(a, sigs); }
+        }
+        // Ф.4.2: calc — ghost, выражения шагов нормализуем.
+        Stmt::Calc { steps, .. } => {
+            for step in steps { normalize_expr(&mut step.expr, sigs); }
+        }
     }
 }
 
@@ -221,13 +231,13 @@ fn walk_children(e: &mut Expr, sigs: &Sigs) {
         ExprKind::ParallelFor { iter, body, .. } => {
             normalize_expr(iter, sigs); normalize_block(body, sigs);
         }
-        ExprKind::While { cond, body } => {
+        ExprKind::While { cond, body, .. } => {
             normalize_expr(cond, sigs); normalize_block(body, sigs);
         }
         ExprKind::WhileLet { scrutinee, body, .. } => {
             normalize_expr(scrutinee, sigs); normalize_block(body, sigs);
         }
-        ExprKind::Loop { body } => normalize_block(body, sigs),
+        ExprKind::Loop { body, .. } => normalize_block(body, sigs),
         ExprKind::Block(b) => normalize_block(b, sigs),
         ExprKind::Spawn(x) => normalize_expr(x, sigs),
         ExprKind::Detach(b) => normalize_block(b, sigs),
@@ -307,6 +317,11 @@ fn walk_children(e: &mut Expr, sigs: &Sigs) {
         ExprKind::Ident(_) | ExprKind::Path(_) | ExprKind::SelfAccess
         | ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::BoolLit(_)
         | ExprKind::StrLit(_) | ExprKind::CharLit(_) | ExprKind::UnitLit => {}
+        // D.1.3: квантор — только в контрактах, не в runtime-коде.
+        ExprKind::Forall { range, body, .. } | ExprKind::Exists { range, body, .. } => {
+            normalize_expr(range, sigs);
+            normalize_expr(body, sigs);
+        }
     }
 }
 

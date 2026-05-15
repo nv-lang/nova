@@ -1,0 +1,220 @@
+{
+  "format_version": 1,
+  "nova_version": "0.1.0",
+  "doc_tests": [
+
+  ],
+  "links": [
+
+  ],
+  "modules": [
+    {
+      "deprecation": null,
+      "doc_attrs": [
+
+      ],
+      "kind": "file",
+      "name": "sample",
+      "path": "nova_tests.doc.fixtures.stability.sample",
+      "peers": [
+
+      ],
+      "source": {
+        "file_id": 0,
+        "line": 1
+      },
+      "stability": null,
+      "summary": "Plan 45 Ф.3: fixture для stability / deprecation / since.",
+      "description": null
+    }
+  ],
+  "items": [
+    {
+      "deprecation": null,
+      "description": null,
+      "doc_attrs": [
+
+      ],
+      "id": "nova_tests.doc.fixtures.stability.sample::add",
+      "kind": "fn",
+      "module_path": "nova_tests.doc.fixtures.stability.sample",
+      "name": "add",
+      "sections": {
+        "since": "1.0.0"
+      },
+      "source": {
+        "file_id": 0,
+        "line": 21
+      },
+      "stability": {
+        "since": "1.0.0",
+        "tier": "stable"
+      },
+      "summary": "Стабильное API.",
+      "signature": {
+        "contracts": {
+          "ensures": [
+
+          ],
+          "requires": [
+
+          ],
+          "verify_status": "UNVERIFIED"
+        },
+        "effects": [
+
+        ],
+        "generics": [
+
+        ],
+        "params": [
+          {
+            "default": null,
+            "keyword_only": false,
+            "name": "a",
+            "type": "int",
+            "variadic": false
+          },
+          {
+            "default": null,
+            "keyword_only": false,
+            "name": "b",
+            "type": "int",
+            "variadic": false
+          }
+        ],
+        "raises": [
+
+        ],
+        "receiver": null,
+        "return_type": "int"
+      }
+    },
+    {
+      "deprecation": null,
+      "description": "Описание (не attr).",
+      "doc_attrs": [
+
+      ],
+      "id": "nova_tests.doc.fixtures.stability.sample::maybe_add",
+      "kind": "fn",
+      "module_path": "nova_tests.doc.fixtures.stability.sample",
+      "name": "maybe_add",
+      "sections": {
+
+      },
+      "source": {
+        "file_id": 0,
+        "line": 29
+      },
+      "stability": {
+        "since": "0.3.0",
+        "tier": "experimental"
+      },
+      "summary": "Экспериментальная функция.",
+      "signature": {
+        "contracts": {
+          "ensures": [
+
+          ],
+          "requires": [
+
+          ],
+          "verify_status": "UNVERIFIED"
+        },
+        "effects": [
+
+        ],
+        "generics": [
+
+        ],
+        "params": [
+          {
+            "default": null,
+            "keyword_only": false,
+            "name": "a",
+            "type": "int",
+            "variadic": false
+          },
+          {
+            "default": null,
+            "keyword_only": false,
+            "name": "b",
+            "type": "int",
+            "variadic": false
+          }
+        ],
+        "raises": [
+
+        ],
+        "receiver": null,
+        "return_type": "int"
+      }
+    },
+    {
+      "deprecation": {
+        "note": "Use `add` instead.",
+        "since": null
+      },
+      "description": null,
+      "doc_attrs": [
+
+      ],
+      "id": "nova_tests.doc.fixtures.stability.sample::plus",
+      "kind": "fn",
+      "module_path": "nova_tests.doc.fixtures.stability.sample",
+      "name": "plus",
+      "sections": {
+        "deprecated": "Use `add` instead.",
+        "since": "0.1.0"
+      },
+      "source": {
+        "file_id": 0,
+        "line": 14
+      },
+      "stability": {
+        "since": "0.1.0",
+        "tier": "unstable"
+      },
+      "summary": "Сложить два числа.",
+      "signature": {
+        "contracts": {
+          "ensures": [
+
+          ],
+          "requires": [
+
+          ],
+          "verify_status": "UNVERIFIED"
+        },
+        "effects": [
+
+        ],
+        "generics": [
+
+        ],
+        "params": [
+          {
+            "default": null,
+            "keyword_only": false,
+            "name": "a",
+            "type": "int",
+            "variadic": false
+          },
+          {
+            "default": null,
+            "keyword_only": false,
+            "name": "b",
+            "type": "int",
+            "variadic": false
+          }
+        ],
+        "raises": [
+
+        ],
+        "receiver": null,
+        "return_type": "int"
+      }
+    }
+  ]
+}

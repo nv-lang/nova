@@ -1,0 +1,84 @@
+{
+  "format_version": 1,
+  "nova_version": "0.1.0",
+  "doc_tests": [
+
+  ],
+  "links": [
+
+  ],
+  "modules": [
+    {
+      "deprecation": null,
+      "doc_attrs": [
+
+      ],
+      "kind": "file",
+      "name": "sample",
+      "path": "nova_tests.doc.fixtures.orphan.sample",
+      "peers": [
+
+      ],
+      "source": {
+        "file_id": 0,
+        "line": 1
+      },
+      "stability": null,
+      "summary": "Plan 45 Ф.3: fixture для orphan-doc warning.",
+      "description": null
+    }
+  ],
+  "items": [
+    {
+      "deprecation": null,
+      "description": null,
+      "doc_attrs": [
+
+      ],
+      "id": "nova_tests.doc.fixtures.orphan.sample::id",
+      "kind": "fn",
+      "module_path": "nova_tests.doc.fixtures.orphan.sample",
+      "name": "id",
+      "sections": {
+
+      },
+      "source": {
+        "file_id": 0,
+        "line": 9
+      },
+      "stability": null,
+      "summary": "А этот относится к нормальной fn'е — без warning.",
+      "signature": {
+        "contracts": {
+          "ensures": [
+
+          ],
+          "requires": [
+
+          ],
+          "verify_status": "UNVERIFIED"
+        },
+        "effects": [
+
+        ],
+        "generics": [
+
+        ],
+        "params": [
+          {
+            "default": null,
+            "keyword_only": false,
+            "name": "n",
+            "type": "int",
+            "variadic": false
+          }
+        ],
+        "raises": [
+
+        ],
+        "receiver": null,
+        "return_type": "int"
+      }
+    }
+  ]
+}
