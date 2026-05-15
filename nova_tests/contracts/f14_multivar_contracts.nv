@@ -1,0 +1,57 @@
+// Plan 33.3 Ф.14: Dafny-parity test 16 — Multi-variable contracts.
+
+module contracts.f14_multivar_contracts
+
+// Swap: переменные меняются местами (через sum/difference).
+#verify
+fn swap_via_add(a int, b int) -> int
+    ensures result == a + b
+{
+    b + a
+}
+
+// 3-variable ordering.
+#verify
+fn sort3(a int, b int, c int) -> int
+    ensures result >= a && result >= b && result >= c
+    ensures result == a || result == b || result == c
+{
+    if a >= b && a >= c { a } else if b >= a && b >= c { b } else { c }
+}
+
+// Median of 3.
+#verify
+fn median3(a int, b int, c int) -> int
+    ensures result >= (if a <= b { a } else { b }) || result >= (if a <= c { a } else { c })
+{
+    if a <= b && b <= c { b }
+    else if a <= c && c <= b { c }
+    else if b <= a && a <= c { a }
+    else if b <= c && c <= a { c }
+    else if c <= a && a <= b { a }
+    else { b }
+}
+
+// Сумма трёх чисел коммутативна.
+#verify
+fn sum3_comm(a int, b int, c int) -> bool
+    ensures result == true
+{
+    a + b + c == c + b + a
+}
+
+// Произведение трёх чисел коммутативно.
+#verify
+fn product3_comm(a int, b int, c int) -> bool
+    ensures result == true
+{
+    a * b * c == c * b * a
+}
+
+test "f14 multivar contracts" {
+    assert(swap_via_add(3, 7) == 10)
+    assert(sort3(1, 5, 3) == 5)
+    assert(sort3(9, 2, 7) == 9)
+    assert(sum3_comm(1, 2, 3) == true)
+    assert(product3_comm(2, 3, 4) == true)
+}

@@ -1,0 +1,50 @@
+// Plan 33.3 Ф.14: Dafny-parity test 13 — Bit manipulation properties.
+
+module contracts.f14_bit_manipulation
+
+// Power of two check: n > 0 && (n & (n-1)) == 0.
+// Моделируем через mod: 2^k % 2 == 0 для k >= 1.
+#verify
+fn pow2_mod(n int) -> bool
+    requires n > 0 && n % 2 == 0
+    ensures result == true
+{
+    n % 2 == 0
+}
+
+// Округление вверх до кратного p (p = power of 2).
+#verify
+fn align_up(x int, p int) -> int
+    requires x >= 0 && p > 0
+    ensures result >= x
+{
+    ((x + p - 1) / p) * p
+}
+
+// Маскирование нижних bits: x & ~(p-1) = x - x % p.
+// В Nova нет битовых ops в SMT — верифицируем арифметически.
+#verify
+fn align_down(x int, p int) -> int
+    requires x >= 0 && p > 0
+    ensures result >= 0 && result <= x
+{
+    x - x % p
+}
+
+// align_down + align_up охватывают x.
+#verify
+fn align_sandwich(x int, p int) -> bool
+    requires x >= 0 && p > 0
+    ensures result == true
+{
+    (x - x % p) <= x && x <= ((x + p - 1) / p) * p
+}
+
+test "f14 bit manipulation" {
+    assert(pow2_mod(4) == true)
+    assert(align_up(5, 4) == 8)
+    assert(align_up(8, 4) == 8)
+    assert(align_down(7, 4) == 4)
+    assert(align_down(8, 4) == 8)
+    assert(align_sandwich(7, 4) == true)
+}

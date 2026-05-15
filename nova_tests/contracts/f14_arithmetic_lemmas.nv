@@ -1,0 +1,78 @@
+// Plan 33.3 Ф.14: Dafny-parity test 5 — Arithmetic lemmas.
+// Аналог lemmas из Dafny стандартной библиотеки (Math.dfy).
+
+module contracts.f14_arithmetic_lemmas
+
+// abs корректен.
+#verify
+fn abs_val(x int) -> int
+    ensures result >= 0
+    ensures result == x || result == -x
+{
+    if x >= 0 { x } else { -x }
+}
+
+// div_floor: x / n * n <= x (для n > 0).
+#verify
+fn div_floor_prop(x int, n int) -> bool
+    requires n > 0 && x >= 0
+    ensures result == true
+{
+    x / n * n <= x
+}
+
+// mod_range: 0 <= x % n < n (для n > 0, x >= 0).
+#verify
+fn mod_range(x int, n int) -> bool
+    requires n > 0 && x >= 0
+    ensures result == true
+{
+    x % n >= 0 && x % n < n
+}
+
+// Коммутативность сложения.
+#verify
+fn add_comm(a int, b int) -> bool
+    ensures result == true
+{
+    a + b == b + a
+}
+
+// Ассоциативность сложения.
+#verify
+fn add_assoc(a int, b int, c int) -> bool
+    ensures result == true
+{
+    (a + b) + c == a + (b + c)
+}
+
+// Дистрибутивность (x + y) * z == x*z + y*z.
+#verify
+fn distrib(x int, y int, z int) -> bool
+    ensures result == true
+{
+    (x + y) * z == x * z + y * z
+}
+
+// Clamp в диапазон [lo, hi].
+#verify
+fn clamp(x int, lo int, hi int) -> int
+    requires lo <= hi
+    ensures result >= lo && result <= hi
+{
+    if x < lo { lo } else if x > hi { hi } else { x }
+}
+
+test "f14 arithmetic lemmas" {
+    assert(abs_val(-5) == 5)
+    assert(abs_val(5) == 5)
+    assert(abs_val(0) == 0)
+    assert(div_floor_prop(10, 3) == true)
+    assert(mod_range(10, 3) == true)
+    assert(add_comm(3, 7) == true)
+    assert(add_assoc(1, 2, 3) == true)
+    assert(distrib(2, 3, 4) == true)
+    assert(clamp(15, 0, 10) == 10)
+    assert(clamp(-5, 0, 10) == 0)
+    assert(clamp(5, 0, 10) == 5)
+}

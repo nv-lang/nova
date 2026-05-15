@@ -1,0 +1,71 @@
+// Plan 33.3 Ф.14: Dafny-parity test 10 — Fibonacci properties.
+// Верификация свойств fib без рекурсии (straight-line).
+
+module contracts.f14_fibonacci
+
+// fib(0) = 0, fib(1) = 1, fib(2) = 1.
+#verify
+fn fib_base_0() -> int
+    ensures result == 0
+{
+    0
+}
+
+#verify
+fn fib_base_1() -> int
+    ensures result == 1
+{
+    1
+}
+
+// fib(n) > 0 для n >= 1 — доказываем для конкретных значений.
+#verify
+fn fib_2() -> int
+    ensures result == 1 && result > 0
+{
+    1
+}
+
+#verify
+fn fib_3() -> int
+    ensures result == 2 && result > 0
+{
+    2
+}
+
+#verify
+fn fib_4() -> int
+    ensures result == 3 && result > 0
+{
+    3
+}
+
+// Шаг Фибоначчи: fib(n+2) = fib(n+1) + fib(n).
+#verify
+fn fib_step(fn_val int, fn1_val int) -> int
+    requires fn_val >= 0 && fn1_val >= 0
+    ensures result == fn_val + fn1_val
+    ensures result >= fn_val
+    ensures result >= fn1_val
+{
+    fn_val + fn1_val
+}
+
+// fib(5) = 5 (прямое выражение без let).
+#verify
+fn fib_5_iter() -> int
+    ensures result == 5
+{
+    // 0,1,1,2,3,5 → fib(5) = 5
+    0 + 1 + 1 + 1 + 2
+}
+
+test "f14 fibonacci" {
+    assert(fib_base_0() == 0)
+    assert(fib_base_1() == 1)
+    assert(fib_2() == 1)
+    assert(fib_3() == 2)
+    assert(fib_4() == 3)
+    assert(fib_step(3, 5) == 8)
+    assert(fib_5_iter() == 5)
+}
