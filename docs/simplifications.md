@@ -4501,26 +4501,20 @@ Sub-plans 35.A-E:
 
 ## Plan 33 contracts (bootstrap)
 
-### [V1] TrivialBackend SMT вместо Z3
-- **Где:** `compiler-codegen/src/verify/backend/trivial.rs`.
-- **Что упрощено:** SMT verification реализована через built-in
-  symbolic simplification + pattern matching (constant folding,
-  reflexivity, импликация-shortcuts, boolean idempotents). Доказывает
-  только тривиальные тавтологии типа `result == x*2` для body `=> x*2`
-  (reflexive после substitute) и явные counterexample типа
-  `result == 42` для body `=> 100`.
-- **Почему:** libz3 не установлен в системе/vcpkg на момент реализации.
-  Architecture-grade trait `SmtBackend` готов — Z3-backend подключается
-  как отдельная реализация trait'а. Это **engine-agnostic дизайн**
-  как требует D24 §148.
-- **Как чинить:** Установить libz3 в vcpkg (`vcpkg.json` + Windows
-  bindings) или системно (apt/dnf на Linux). Добавить feature-flag
-  `z3-backend` в `Cargo.toml`. Реализовать `Z3Backend: SmtBackend`
-  через `z3` crate. Activate через `nova test --smt-backend z3`.
-- **Приоритет:** H — без linear-arith reasoning (что Z3 даёт) trivial
-  backend не доказывает `ensures result > 0` для `=> x + 1` при
-  `requires x > 0`. Программисту приходится либо `#unverified`, либо
-  переписывать на reflexive form.
+### [V1-ЧАСТИЧНО 2026-05-14] TrivialBackend SMT — Z3 реализован, но не default
+- **Где:** `compiler-codegen/src/verify/backend/` (trivial.rs + z3.rs).
+- **Что было упрощено:** TrivialBackend (паттерн-матчинг) вместо Z3.
+- **Что сделано (Plan 33 V1, 2026-05-14):** Z3Backend через собственные
+  FFI-биндинги (`verify/backend/z3.rs`, без crate-dependency). Feature flag
+  `z3-backend` в `Cargo.toml`. Выбор через `NOVA_SMT_BACKEND=z3` env или
+  `--smt-backend z3` CLI. Тесты: `nova_tests/contracts/z3_*` (SKIP без
+  NOVA_SMT_BACKEND=z3, PASS с ним).
+- **Что осталось:** TrivialBackend — default (без env var). Для nova CI
+  нужно добавить `NOVA_SMT_BACKEND=z3` job чтобы z3_* тесты не всегда
+  SKIP. Также: Z3 static link (сейчас dynamic) — для портируемого binary.
+- **Как чинить остаток:** CI job `contracts-z3` с env NOVA_SMT_BACKEND=z3.
+  Опционально: `z3-static` feature через vcpkg для standalone binary.
+- **Приоритет:** M (Z3 работает; CI coverage — отдельная задача).
 
 ### [V2] Loop invariants парсятся, но не сохраняются в AST
 - **Где:** `parser::skip_loop_clauses` в `parse_while`/`parse_for`/`parse_loop`.
@@ -4576,18 +4570,24 @@ Sub-plans 35.A-E:
 - **Приоритет:** L — runtime overhead на пустом месте, но не
   unsoundness. Plan 33.3 описывает это как требование Dafny-parity.
 
-### [V6] pure_view + axiom + #verify_handler — НЕ реализованы
-- **Где:** Plan 33.3 spec.
-- **Что упрощено:** Контракты на handler-state (`ensures Db.balance(to)
-  == old(Db.balance(to)) + amount` из R4) не работают. Effect ops
-  объявить как `pure_view` нельзя.
-- **Почему:** Требует Z3 + axiom-based encoding + handler verification
-  pass. Это значительная работа в Z3 backend.
-- **Как чинить:** Plan 33.3 full — после libz3 setup. Полная семантика
-  pure_view (см. Plan 33.3 Ф.9): UF + axioms + axiom consistency check +
-  обязательный `#verify_handler` для handler'ов с pure_view contracts.
-- **Приоритет:** M — основная revolutionary feature D24/R4; без неё
-  контракты на handler-state остаются «aspirational», не enforced.
+### [ЗАКР 2026-05-14] pure_view + axiom + #verify/#trusted gate — [V6]
+- **Закрыто (Plan 33.3 Ф.9.1-9.6, 2026-05-14):**
+  * AST: `OpKind::PureView`, `EffectAxiom { binders: Vec<(String, Option<TypeRef>)>, generics }`.
+  * Parser: `#pure <op>(...) -> R` + `axiom name(binders) => formula` (typed/generic/untyped binders).
+  * Type-check: axiom body ссылается только на `#pure` views + binders + arith/bool.
+    Unique-name check по полной сигнатуре (name+param_types) — перекрытие ops с разными типами OK.
+  * SMT: `#pure view` → UF `Z3_mk_func_decl`; `axiom` → `Z3_mk_forall_const`.
+  * Axiom inconsistency check: pre-flight `assert true; check_sat` для conjunction axioms.
+  * `#verify` / `#trusted` gate на `with`-binding для эффектов с `axiom`.
+    Нет attr → compile error. `#verify` + `#trusted` вместе → compile error.
+  * Protocol symmetry: `protocol { #pure op; axiom ... }` — trusted-by-default.
+  * Overloaded ops: name-mangling (`balance__nova_int` / `balance__nova_str`) для vtable + dispatch.
+  * Naming refactor: `pure_view` keyword → `#pure` атрибут; `#verify_handler` → `#verify`.
+  * Тесты: 14 Ф.9 тестов (parse, type-check, SMT); z3_* PASS с NOVA_SMT_BACKEND=z3.
+  * Typed/generic binder тесты: 11 файлов (f9_axiom_typed/generic/overloaded_*).
+- **Ещё открыто (Plan 33.4 P0-1):**
+  * Ф.9.7 symbolic handler verification — `#verify` gate принимает атрибут
+    но реальной Z3 верификации handler body ещё нет (placeholder). См. [V12].
 
 ### [V7] Bounded quantifiers (`forall`/`exists`) — НЕ реализованы
 - **Где:** Plan 33.3 spec.
@@ -4637,10 +4637,56 @@ Sub-plans 35.A-E:
 - **Где:** Plan 33.3 Ф.14.
 - **Что упрощено:** Acceptance test «not worse than Dafny» через
   port 20 классических примеров не проведён.
-- **Почему:** Требует все вышеперечисленные V6/V7/V8 чтобы пройти.
-- **Как чинить:** После Z3 milestone + V6-V10 fixes.
+- **Почему:** Требует все вышеперечисленные V7/V8 + V12-V14 чтобы пройти.
+- **Как чинить:** После Plan 33.4 Ф.1-Ф.4.
 - **Приоритет:** M — критичный gate для production-claim
   «Dafny-parity».
+
+### [V12] `#verify` handler gate — placeholder, нет реальной верификации
+- **Где:** `compiler-codegen/src/types/mod.rs:2922-2925`
+  (комментарий verbatim: «Bootstrap V1: атрибут принимается но реальной
+  верификации нет — placeholder для Ф.9.7»).
+- **Что упрощено:** Программист пишет `with #verify Db = my_handler`
+  и ожидает, что Nova проверяет соответствие handler.action axiom'ам
+  эффекта. На деле gate принимает синтаксис, но **не делает ни одного
+  SMT-вызова** — soundness gap.
+- **Почему:** Ф.9.7 (symbolic handler verification) — research-grade,
+  требует symbolic execution handler body + Z3 доказательство
+  `view_post == X`. Отложено как отдельный milestone.
+- **Как чинить:** Plan 33.4 Ф.1 — symbolic handler verification.
+  Для `post(action)(view) == X` axiom: symbolic exec `action` body,
+  encode `view` через symbolic state, assert == X в Z3.
+  Handler с FFI/IO → обязан `#trusted`.
+- **Приоритет:** H — это soundness gap (gate заявляет верификацию,
+  но не верифицирует).
+
+### [V13] Composition в контрактах → EncodingError::Unsupported
+- **Где:** `compiler-codegen/src/verify/encode.rs:110`
+  (`EncodingError::Unsupported("function call in contract expression not yet supported")`).
+- **Что упрощено:** `#pure fn helper(x int) -> bool => x > 0`;
+  `requires helper(n)` — compile-time `#pure` check проходит, но SMT
+  encoding возвращает Unsupported и контракт не верифицируется.
+- **Почему:** UF-encoding для `#pure` composition требовало готового
+  Z3 backend. Plan 33.3 bootstrap завершился до реализации этой части.
+- **Как чинить:** Plan 33.4 Ф.2 — `encode_expr(Call)` для `#pure` fn:
+  declare UF, inline-substitute простые тела, emit axiom связи.
+- **Приоритет:** H — без этого composition в контрактах (Plan 33.2
+  D-feature) не работает.
+
+### [V14] Loop invariants/decreases — только parse+skip, нет AST полей
+- **Где:** `parser/mod.rs::skip_loop_clauses`; `ast/mod.rs`
+  `ExprKind::For/While/Loop` (нет полей `invariants`/`decreases`).
+- **Что упрощено:** `invariant <expr>` и `decreases <expr>` внутри
+  loop парсятся и игнорируются (`skip_loop_clauses`). AST не хранит.
+  Дополнительно: `decreases` в fn — runtime depth-counter `depth++ > 10000`
+  вместо well-founded ordinal (emit_c.rs:5183-5197).
+- **Почему:** AST breaking change (все downstream match'и) + Z3
+  havoc+invariant encoding — одновременно требовали готового Z3
+  и достаточно большого patch'а. Отложено после Z3 milestone.
+- **Как чинить:** Plan 33.4 Ф.3 (loop AST + SMT) + Ф.4 (well-founded
+  decreases через Z3 rекурсивный constraint вместо depth-counter).
+- **Приоритет:** H — loop invariants это core Plan 33.2 feature;
+  без SMT verification они не более чем runtime assert debug-only.
 
 
 ---

@@ -10725,3 +10725,118 @@ positive .nv + 4 negative p53_*).
 - docs/plans/53-let-destructuring.md
 - docs/plans/README.md
 - docs/project-creation.txt (эта секция)
+
+---
+
+## Шаг NNN+1. Plan 33.3 Ф.9 — effect overloaded ops + axiom typed/generic binders + Plan 33.4 audit (2026-05-14/15)
+
+### Проблема, с которой начали
+
+Когда effect объявляет два op с одинаковым именем но разными типами параметров
+(`balance(id int)` и `balance(id str)`), codegen эмитил C struct vtable с двумя
+полями `balance` → clang: duplicate field error.
+
+### C vtable name-mangling (emit_c.rs)
+
+Добавлена `fn mangle_op(name, param_c_types, all_methods) -> String`:
+- Если один op с данным именем → plain name (backward compat).
+- Если несколько → `balance__nova_int` / `balance__nova_str`.
+
+Добавлена `fn schema_lookup(schema, method_name) -> Option<...>`:
+- Сначала точное совпадение.
+- Fallback: поиск по prefix `name__` (для type-inference call-sites
+  которые знают только plain name).
+
+Обновлены: vtable struct, dispatch helper names, handler literal патч,
+scan_expr_fwd, 3 type-inference lookup-sites.
+
+### AST/Parser — typed + generic binders
+
+`EffectAxiom` расширен:
+- `binders: Vec<(String, Option<TypeRef>)>` — None = untyped (`id`), Some = typed (`id int`).
+- `generics: Vec<GenericParam>` — для `axiom name[T](id T) => ...`.
+
+Parser понимает:
+- `axiom name(id) => formula` — untyped (как раньше)
+- `axiom name(id int) => formula` — typed binder
+- `axiom name[T](id T) => formula` — generic binder
+
+### Type-check — unique-name check по полной сигнатуре
+
+`check_effect_axioms` теперь проверяет дубликаты по `(name, param_types)`,
+не только по `name` — два op с одинаковым именем но разными типами OK.
+
+### SMT encoding — generic axiom как V2
+
+generic axiom (`is_generic=true`) → `encode_axiom` возвращает `None` (skip).
+Typed binders используют явный sort из TypeRef; untyped → IntSort (как раньше).
+
+### Z3 backend (Plan 33 V1 milestone)
+
+Реализован `Z3Backend: SmtBackend` через собственные FFI биндинги
+(`verify/backend/z3.rs`) — без crate-dependency. Z3 C API через `build.rs`
+link. Feature flag `z3-backend` в `Cargo.toml`.
+Pipeline backend selector: `NOVA_SMT_BACKEND=z3` env var или `--smt-backend z3`.
+
+### #pure + axiom + #verify/#trusted gate (Ф.9.1-9.6)
+
+Полный stack реализован:
+- `#pure <op>` в effect/protocol → `OpKind::PureView`.
+- `axiom name(binders) => formula` → UF в Z3 + `Z3_mk_forall_const`.
+- Axiom inconsistency check: pre-flight `assert conjunction; check_sat`.
+- `#verify` / `#trusted` gate на `with` binding для effect'ов с axiom.
+- Naming refactor: `pure_view` → `#pure`; `#verify_handler` → `#verify`.
+- Protocol symmetry: `protocol { #pure op; axiom }` — trusted-by-default.
+
+Тесты: 14 Ф.9 тестов (parse/type-check/SMT) + 11 typed/generic binder тестов.
+
+Z3-only (REQUIRES NOVA_SMT_BACKEND=z3): z3_pure_view_axiom_positive,
+z3_pure_view_no_axiom_fail, z3_axiom_alpha_rename, z3_axioms_inconsistent_fail,
+z3_implication_chain, z3_linear_arith_positive, z3_unprovable_with_counterexample.
+
+### Что записано в Q (spec/open-questions.md)
+
+Q-axiom-binder-type: почему `Option<TypeRef>` а не `BinderType` enum с вариантами
+`Untyped/Typed/Generic`. Три состояния, два представления — техдолг читаемости.
+
+### Plan 33.4 — аудит gap'ов
+
+После завершения Ф.9 проведён сравнительный аудит Nova contracts vs Prusti/
+Creusot/Verus/Dafny. Выявлены 5 P0 + 6 P1 gap'ов. Записаны в Plan 33.4 и
+simplifications.md [V12]-[V14]:
+
+**P0-критические:**
+- [V12] `#verify` handler gate — placeholder (Ф.9.7 не реализован): `#verify`
+  принимается синтаксически, но реальной Z3 верификации handler body нет.
+- [V13] Composition в контрактах → `EncodingError::Unsupported` (encode.rs:110).
+- [V14] Loop invariants нет в AST (skip_loop_clauses); `decreases` = depth-counter,
+  не well-founded ordinal.
+
+**Nova-уникальные преимущества (защитить):**
+- `#pure <op>` + `axiom` прямо в effect-декларации — нет аналога в Rust/Go/TS.
+- built-in Z3 в nova binary — пользователь не устанавливает SMT тулзу.
+- собственные Z3 FFI без crate-dependency.
+
+### Регрессия
+
+47 contract тестов PASS + 7 SKIP (z3-only без NOVA_SMT_BACKEND); 0 FAIL.
+
+### Файлы
+
+- compiler-codegen/src/codegen/emit_c.rs (mangle_op + schema_lookup + vtable fix)
+- compiler-codegen/src/ast/mod.rs (EffectAxiom typed/generic binders)
+- compiler-codegen/src/parser/mod.rs (typed/generic binder parsing)
+- compiler-codegen/src/types/mod.rs (unique-name by full sig + handler gate)
+- compiler-codegen/src/types/mod.rs (imports.rs: partial — unrelated changes)
+- compiler-codegen/src/verify/pipeline.rs (AxiomInfo binders + is_generic)
+- compiler-codegen/src/verify/backend/z3.rs (Z3Backend FFI)
+- compiler-codegen/src/verify/pipeline.rs (backend selector)
+- spec/open-questions.md (Q-axiom-binder-type)
+- nova_tests/contracts/f9_axiom_typed_binders_positive.nv
+- nova_tests/contracts/f9_axiom_generic_binders_positive.nv (+ 9 more f9_* files)
+- nova_tests/contracts/z3_implication_chain.nv
+- nova_tests/contracts/z3_linear_arith_positive.nv
+- nova_tests/contracts/z3_unprovable_with_counterexample.nv
+- docs/plans/33.4-contracts-parity-gaps.md (новый план)
+- docs/simplifications.md (V1 partial, V6 закрыт, V12-V14 новые)
+- docs/project-creation.txt (эта секция)
