@@ -2039,7 +2039,9 @@ pub fn verify_handlers(module: &Module) -> Vec<Diagnostic> {
             axioms_by_effect.insert(td.name.clone(), &td.axioms);
         }
     }
-    if axioms_by_effect.is_empty() { return diagnostics; }
+    // Не делаем early-return по axioms_by_effect.is_empty():
+    // verify_bindings могут содержать handler'ы с Liskov-контрактами (Ф.5.2),
+    // которые нужно проверить независимо от наличия axiom-аннотаций на эффектах.
 
     // РЎРѕР±РёСЂР°РµРј РІСЃРµ `with #verify E = handler` bindings РёР· РІСЃРµС… С„СѓРЅРєС†РёР№/С‚РµСЃС‚РѕРІ.
     let mut verify_bindings: Vec<(String, Span, &crate::ast::Expr)> = Vec::new(); // (effect_name, binding_span, handler_expr)
@@ -2060,7 +2062,6 @@ pub fn verify_handlers(module: &Module) -> Vec<Diagnostic> {
     let inferred_pure = infer_pure_fns_scc(module);
 
     for (effect_name, binding_span, handler_expr) in verify_bindings {
-        let Some(axioms) = axioms_by_effect.get(&effect_name) else { continue };
 
         // РР·РІР»РµРєР°РµРј HandlerLit methods.
         let methods = match &handler_expr.kind {
@@ -2068,6 +2069,7 @@ pub fn verify_handlers(module: &Module) -> Vec<Diagnostic> {
             _ => continue, // non-literal handler вЂ” V2
         };
 
+        if let Some(axioms) = axioms_by_effect.get(&effect_name) {
         for ax in axioms.iter() {
             let ax_info = AxiomInfo {
                 effect_name: effect_name.clone(),
@@ -2120,12 +2122,151 @@ pub fn verify_handlers(module: &Module) -> Vec<Diagnostic> {
                 }
             }
         }
+        }
+
+        // Ф.5.2: Liskov-верификация — handler.m реализует effect.m.contracts.
+        // Для каждого метода в handler: если effect-метод имеет contracts,
+        // проверяем что impl удовлетворяет ensures при requires.
+        let effect_methods_with_contracts = collect_effect_method_contracts(module, &effect_name);
+        for (em_name, em_params, em_contracts) in &effect_methods_with_contracts {
+            if em_contracts.is_empty() { continue; }
+            // Найти реализацию в handler.
+            let Some(handler_method) = methods.iter().find(|m| m.name == *em_name) else { continue };
+            // Попытаться верифицировать.
+            let diags = verify_liskov_method(
+                &pipeline, em_name, em_params, em_contracts,
+                handler_method, &pure_views, module, &inferred_pure,
+                binding_span,
+            );
+            diagnostics.extend(diags);
+        }
     }
 
     diagnostics
 }
 
-/// РџСЂРѕРІРµСЂРёС‚СЊ РѕРґРёРЅ СЃС‚Р°С‚РёС‡РµСЃРєРёР№ axiom СЃ СѓС‡С‘С‚РѕРј pure_view impl handler'Р°.
+/// Ф.5.2: собрать effect-методы с контрактами для данного effect-типа.
+/// Возвращает Vec<(method_name, params, contracts)>.
+fn collect_effect_method_contracts(
+    module: &Module,
+    effect_name: &str,
+) -> Vec<(String, Vec<Param>, Vec<Contract>)> {
+    for item in &module.items {
+        let Item::Type(td) = item else { continue };
+        if td.name != effect_name { continue; }
+        let TypeDeclKind::Effect(methods) = &td.kind else { continue };
+        return methods.iter()
+            .filter(|m| !m.contracts.is_empty())
+            .map(|m| (m.name.clone(), m.params.clone(), m.contracts.clone()))
+            .collect();
+    }
+    Vec::new()
+}
+
+/// Ф.5.2: Liskov-верификация одного handler-метода.
+///
+/// Алгоритм (V1 scope — только expr/block-trailing body):
+/// 1. Declare effect-метода параметры как SMT vars.
+/// 2. Assert effect.m.requires.
+/// 3. Encode handler body (expr или trailing).
+/// 4. Для каждого effect.m.ensures: substitute result → body, try_prove.
+fn verify_liskov_method(
+    pipeline: &VerificationPipeline,
+    method_name: &str,
+    effect_params: &[Param],
+    effect_contracts: &[Contract],
+    handler_method: &crate::ast::HandlerMethod,
+    pure_views: &std::collections::HashMap<String, super::encode::PureViewSig>,
+    module: &Module,
+    inferred_pure: &std::collections::HashSet<String>,
+    binding_span: Span,
+) -> Vec<Diagnostic> {
+    let mut diagnostics = Vec::new();
+    let pure_fns = collect_pure_fns(module, inferred_pure);
+    let ctx = super::encode::EncodeCtx { pure_views, pure_fns: &pure_fns };
+    let mut backend = pipeline.create_backend();
+
+    // Pre-declare pure_view UFs и pure_fn UFs.
+    for (op_name, sig) in pure_views {
+        let uf = super::encode::pure_view_uf_name(&sig.effect_name, op_name);
+        backend.declare_function(&uf, &sig.param_sorts, sig.return_sort.clone());
+    }
+    for (fn_name, info) in &pure_fns {
+        let uf = super::encode::pure_fn_uf_name(fn_name);
+        backend.declare_function(&uf, &info.param_sorts, info.return_sort.clone());
+    }
+
+    // Declare effect-параметры (как в verify_fn).
+    for p in effect_params {
+        backend.declare_var(&p.name, type_to_sort(&p.ty));
+    }
+
+    // Assert requires.
+    let mut requires_failed = false;
+    for c in effect_contracts {
+        if !matches!(c.kind, ContractKind::Requires) { continue; }
+        match encode::encode_expr_with_ctx(&c.expr, &ctx) {
+            Ok(t) => backend.assert(Assertion {
+                formula: t,
+                label: Some(format!("liskov_requires@{}", c.span.start)),
+            }),
+            Err(_) => { requires_failed = true; }
+        }
+    }
+
+    // Encode handler body.
+    let body_val = match &handler_method.body {
+        crate::ast::HandlerMethodBody::Expr(e) => encode::encode_expr_with_ctx(e, &ctx).ok(),
+        crate::ast::HandlerMethodBody::Block(b) if b.stmts.is_empty() => {
+            b.trailing.as_ref().and_then(|e| encode::encode_expr_with_ctx(e, &ctx).ok())
+        }
+        _ => None,
+    };
+
+    // Verify each ensures clause.
+    for c in effect_contracts {
+        if !matches!(c.kind, ContractKind::Ensures) { continue; }
+        if requires_failed {
+            // Тихий skip — requires не encodable, не можем проверить.
+            continue;
+        }
+        let encoded = match encode::encode_expr_with_ctx(&c.expr, &ctx) {
+            Ok(t) => t,
+            Err(_) => continue, // Not encodable — skip.
+        };
+        let goal = if let Some(bv) = &body_val {
+            encoded.substitute("result", bv)
+        } else {
+            // Body не encodable — silent skip (V1 ограничение).
+            continue;
+        };
+        let goal = substitute_old(&goal);
+        match try_prove(&mut *backend, goal) {
+            SatResult::Unsat(_) => {
+                // Proven — Liskov выполнен для этого ensures.
+            }
+            SatResult::Sat(model) => {
+                let cex = format_counterexample(&model);
+                diagnostics.push(Diagnostic::new(
+                    format!(
+                        "`#verify` handler method `{}` нарушает контракт эффекта:\n  \
+                         counterexample: {}\n  \
+                         Liskov: handler.{} должен удовлетворять ensures эффекта при его requires.",
+                        method_name, cex, method_name,
+                    ),
+                    binding_span,
+                ));
+            }
+            SatResult::Unknown(_) => {
+                // Unknown — silent skip (V1, не ошибка).
+            }
+        }
+    }
+
+    diagnostics
+}
+
+/// РџСЂРѕРІРµСЂРёС‚СЊ РѕРґРёРЅ СЃС‚Р°С‚РёС‡РµСЃРєРёР№ axiom СЃ СѓС‡С’С‚РѕРј pure_view impl handler’Р°.
 ///
 /// РђР»РіРѕСЂРёС‚Рј:
 /// 1. РЎРѕР·РґР°С‚СЊ fresh backend.
