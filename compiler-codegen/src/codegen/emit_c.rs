@@ -4579,14 +4579,33 @@ impl CEmitter {
             return self.emit_generic_static_method_stub(f);
         }
         // D109: Methods whose params use bare type params (e.g. find_slot(key K)) generate
-        // broken erased code — hash/eq would dereference NULL. Stub these out.
-        // The monomorphized bodies (registered via 5b dispatch) handle them correctly.
+        // broken erased code when the body calls methods on those params (key.hash(),
+        // key.eq()). Stub only when the receiver type has Array fields with type-param
+        // element types (collection types like HashMap). Simple generic types (Result2,
+        // Option, Wrapper) just pass/return bare type-param params and work correctly in
+        // erased form — their erased body compiles to valid C.
         let has_type_param_params = f.params.iter().any(|p| {
             if let TypeRef::Named { path, generics, .. } = &p.ty {
                 generics.is_empty() && path.len() == 1 && type_params.contains(&path[0])
             } else { false }
         });
-        if has_type_param_params {
+        let has_array_fields_with_type_params = if has_type_param_params {
+            if let Some(template) = self.generic_type_templates.get(&recv.type_name).cloned() {
+                use crate::ast::TypeDeclKind;
+                if let TypeDeclKind::Record(fields) = &template.kind {
+                    fields.iter().any(|fld| {
+                        if let TypeRef::Array(inner, _) = &fld.ty {
+                            if let TypeRef::Named { generics, .. } = inner.as_ref() {
+                                !generics.is_empty() && generics.iter().any(|g| {
+                                    Self::type_ref_uses_any_type_param(g, &type_params)
+                                })
+                            } else { false }
+                        } else { false }
+                    })
+                } else { false }
+            } else { false }
+        } else { false };
+        if has_type_param_params && has_array_fields_with_type_params {
             return self.emit_generic_static_method_stub(f);
         }
         let mangled = self.mangle_fn(f);
@@ -4761,10 +4780,21 @@ impl CEmitter {
                 }
             }
         }
-        // Source 2: infer from actual arg types
+        // Source 2: infer from actual arg types.
+        // D109 Ф.7.7: two-pass — non-array params first so that a direct `target K` binding
+        // (e.g. K = Nova_GrmPoint*) is set before the array param `items []K` would infer
+        // K = nova_int from the erased NovaArray_nova_int* runtime representation.
         for (param, arg) in fn_decl.params.iter().zip(args.iter()) {
-            let arg_c = self.infer_expr_c_type(arg.expr());
-            Self::infer_type_param_binding(&param.ty, &arg_c, &mut subst);
+            if !matches!(param.ty, crate::ast::TypeRef::Array(..)) {
+                let arg_c = self.infer_expr_c_type(arg.expr());
+                Self::infer_type_param_binding(&param.ty, &arg_c, &mut subst);
+            }
+        }
+        for (param, arg) in fn_decl.params.iter().zip(args.iter()) {
+            if matches!(param.ty, crate::ast::TypeRef::Array(..)) {
+                let arg_c = self.infer_expr_c_type(arg.expr());
+                Self::infer_type_param_binding(&param.ty, &arg_c, &mut subst);
+            }
         }
         // Source 2b: for fn-typed params, infer return type T from closure arg body.
         // Handles `body fn() Fail[E] -> T` where arg is `|| 42` → T = nova_int.
@@ -5555,6 +5585,26 @@ impl CEmitter {
                 .collect::<Vec<_>>()
                 .join(", ")
         };
+        // D109 Ф.7.7: pre-populate array_element_types for []K params where K is substituted
+        // to a concrete pointer type. emit_for uses this to cast array elements correctly,
+        // so `for it in items` gives `Nova_GrmPoint* it = (Nova_GrmPoint*)arr->data[i]`
+        // instead of `nova_int it = arr->data[i]` when K = Nova_GrmPoint*.
+        let mut added_array_elem_keys: Vec<String> = Vec::new();
+        for param in &fn_decl.params {
+            if let crate::ast::TypeRef::Array(inner, _) = &param.ty {
+                if let crate::ast::TypeRef::Named { path, generics, .. } = inner.as_ref() {
+                    if generics.is_empty() {
+                        let tparam_name = path.join("_");
+                        if let Some(concrete) = self.current_type_subst.get(&tparam_name).cloned() {
+                            if concrete.ends_with('*') && concrete != "nova_int*" {
+                                self.array_element_types.insert(param.name.clone(), concrete);
+                                added_array_elem_keys.push(param.name.clone());
+                            }
+                        }
+                    }
+                }
+            }
+        }
         // Buffer body (same as emit_fn / emit_generic_fn_erased pattern)
         let saved_out = std::mem::take(&mut self.out);
         let saved_indent = self.indent;
@@ -5644,6 +5694,10 @@ impl CEmitter {
                 Some(old) => { self.fn_param_sigs.insert(name, old); }
                 None => { self.fn_param_sigs.remove(&name); }
             }
+        }
+        // D109 Ф.7.7: clean up array_element_types entries added for this call
+        for key in added_array_elem_keys {
+            self.array_element_types.remove(&key);
         }
         self.current_receiver_type = saved_recv;
         self.current_fn_return_ty = saved_ret_ty;
