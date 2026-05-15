@@ -4687,12 +4687,23 @@ Sub-plans 35.A-E:
   * Test: `nova_tests/contracts/frame_smt_positive.nv` (70/70 PASS).
 - **Остаток:** split-variable encoding (x_pre/x_post) для mutable params — V2.
 
-### [V16] BinderType enum для EffectAxiom.binders
+### [ЗАКР 2026-05-15] BinderType enum для EffectAxiom.binders — [V16]
 - **Закрыто (Plan 33.4 P1-5, 2026-05-15):**
   * `BinderType { Untyped, Typed(TypeRef), Generic(String) }` + `BinderDef`.
   * `EffectAxiom.binders: Vec<BinderDef>` — три состояния различимы.
   * Parser: Generic = path[0] ∈ generics. Downstream: types/pipeline обновлены.
   * Regression: 68/68 PASS.
+
+### [ЗАКР 2026-05-15] Fail-path contracts (`ensures_fail`) — [V17]
+- **Закрыто (Plan 33.4 D.1.5):**
+  * `ContractKind::EnsuresFail` — постусловие для Fail-пути.
+  * Синтаксис: `ensures_fail <bool-expr>` после сигнатуры функции.
+  * SMT-верификация: independent pass под `requires`-context;
+    `result` недоступен, `old(x)` доступен (V1 bootstrap).
+  * Без runtime check в V1 (specification annotation only).
+  * Test: `nova_tests/contracts/ensures_fail_positive.nv` (71/71 PASS).
+- **Остаток:** forbid `result` inside ensures_fail — V2; Fail-path
+  symbolic execution (caller sees «if throws, then ensures_fail holds») — V3.
 
 
 ---
