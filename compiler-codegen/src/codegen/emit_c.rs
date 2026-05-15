@@ -1232,16 +1232,25 @@ impl CEmitter {
             }
         }
 
-        // Plan 48: drain monomorphization worklist to fixpoint (R3: polymorphic recursion guard)
+        // Plan 48: drain monomorphization worklist to fixpoint (R3: polymorphic recursion guard).
+        // Ф.7.6: limit конфигурируется через NOVA_MONO_DEPTH env var (default 500).
+        // Полноценный CLI flag `--mono-depth=N` — V2 (требует BuildOpts расширения).
         {
+            const DEFAULT_MONO_DEPTH_LIMIT: usize = 500;
+            let limit = std::env::var("NOVA_MONO_DEPTH").ok()
+                .and_then(|s| s.parse::<usize>().ok())
+                .filter(|n| *n > 0)
+                .unwrap_or(DEFAULT_MONO_DEPTH_LIMIT);
             let mut safety = 0usize;
             while !self.mono_worklist.is_empty() {
                 safety += 1;
-                if safety > 500 {
-                    return Err(
-                        "instantiation depth limit exceeded (possible polymorphic recursion); \
-                         add a non-generic base case or use explicit bounds to terminate".into()
-                    );
+                if safety > limit {
+                    return Err(format!(
+                        "instantiation depth limit {} exceeded (possible polymorphic recursion); \
+                         add a non-generic base case, use explicit bounds to terminate, \
+                         or raise via NOVA_MONO_DEPTH env var",
+                        limit
+                    ));
                 }
                 let batch: Vec<_> = std::mem::take(&mut self.mono_worklist);
                 for (fn_name, type_subst, mono_name) in batch {
