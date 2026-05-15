@@ -171,6 +171,14 @@ pub struct DocItem {
     /// `propagate_stability` pass'ом из `#stable` / `#unstable` /
     /// `#experimental` doc-attr или `# Since` section.
     pub stability: Option<Stability>,
+    /// Plan 45 Ф.3 / D105: search-aliases из `#doc_alias("a", "b")`.
+    pub aliases: Vec<String>,
+    /// Plan 45 Ф.3 / D105: `#hide_doc` — item экспортирован, но не
+    /// рендерится. `strip_private` фильтрует такие items.
+    pub hide_doc: bool,
+    /// Plan 45 Ф.3 / D105: `#doc(test_handlers = "path")` — handler-path
+    /// для doc-test'ов. Сохраняется для будущего runner-integration.
+    pub doc_test_handlers: Option<String>,
     /// Kind-discriminator + специфичные поля.
     pub kind: ItemKind,
     /// Span декларации в исходнике — для "View Source".

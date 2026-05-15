@@ -159,9 +159,21 @@ impl Parser {
             if matches!(self.peek().kind, TokenKind::Hash) {
                 let next_kind = self.tokens.get(self.pos + 1).map(|t| &t.kind);
                 let is_forbid = matches!(next_kind, Some(TokenKind::KwForbid));
-                let is_doc =
-                    matches!(next_kind, Some(TokenKind::Ident(n)) if n == "doc");
-                if is_forbid || is_doc {
+                // `#doc` неоднозначен: D101 `#doc "string"` (module-attr) vs
+                // D105 `#doc(summary=...)` / `#doc(inline)` (item-attr).
+                // Disambig по третьему токену: string → module-attr;
+                // `(` → item-attr (передаём в parse_item).
+                let is_doc_module_attr = if let Some(TokenKind::Ident(n)) = next_kind {
+                    if n == "doc" {
+                        let third = self.tokens.get(self.pos + 2).map(|t| &t.kind);
+                        matches!(third, Some(TokenKind::Str(_)))
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+                if is_forbid || is_doc_module_attr {
                     let attr = if is_forbid { "#forbid" } else { "#doc" };
                     return Err(Diagnostic::new(
                         format!(
@@ -722,6 +734,14 @@ impl Parser {
             None
         };
 
+        // Plan 45 Ф.3 / D105: doc-атрибуты `#deprecated(...)`, `#since(...)`,
+        // `#stable[(...)]`, `#unstable(...)`, `#experimental(...)`,
+        // `#hide_doc`, `#doc_alias(...)`, `#doc(...)`. Парсятся ПЕРЕД
+        // export/external/realtime/contract attrs, ПОСЛЕ `#cfg`.
+        // Несколько подряд — собираются в Vec; передаются в parse_fn /
+        // parse_type_decl / parse_const_decl через pending_doc_attrs.
+        let pending_doc_attrs = self.parse_doc_attrs()?;
+
         let is_export = self.eat(&TokenKind::KwExport).is_some();
         // D82: `external` modifier — между `export` и `fn`. Только для fn.
         let is_external = self.eat(&TokenKind::KwExternal).is_some();
@@ -769,8 +789,8 @@ impl Parser {
             ));
         }
         let parsed = match self.peek().kind {
-            TokenKind::KwFn => Item::Fn(self.parse_fn(is_export, is_external, realtime_attr, contract_attrs, pending_doc.clone())?),
-            TokenKind::KwType => Item::Type(self.parse_type_decl(is_export, pending_doc.clone())?),
+            TokenKind::KwFn => Item::Fn(self.parse_fn(is_export, is_external, realtime_attr, contract_attrs, pending_doc.clone(), pending_doc_attrs.clone())?),
+            TokenKind::KwType => Item::Type(self.parse_type_decl(is_export, pending_doc.clone(), pending_doc_attrs.clone())?),
             TokenKind::KwLet => {
                 if let Some(d) = &pending_doc {
                     // Plan 45 Ф.3: orphan `///` warning — doc-comment'ы
@@ -784,7 +804,7 @@ impl Parser {
                 }
                 Item::Let(self.parse_let_decl()?)
             }
-            TokenKind::KwConst => Item::Const(self.parse_const_decl(is_export, pending_doc.clone())?),
+            TokenKind::KwConst => Item::Const(self.parse_const_decl(is_export, pending_doc.clone(), pending_doc_attrs.clone())?),
             TokenKind::KwTest if !is_export => {
                 if let Some(d) = &pending_doc {
                     eprintln!(
@@ -875,6 +895,313 @@ impl Parser {
     /// Контекстный разбор: keyword'ов в лексере нет, парсер ищет
     /// `#` + Ident в position перед `fn`. Префикс `#` (не `@`) —
     /// разделение от receiver-prefix.
+    /// Plan 45 Ф.3 / D105: парсит ноль или больше doc-атрибутов.
+    /// Распознаваемые: `#deprecated`, `#since`, `#stable`, `#unstable`,
+    /// `#experimental`, `#hide_doc`, `#doc_alias`, `#doc`. Каждый
+    /// разделён newline'ами. Останавливается на первом `#name`, который
+    /// не в whitelist'е (передаёт ход следующему parser'у —
+    /// `#realtime` / `#verify` / etc.).
+    fn parse_doc_attrs(&mut self) -> Result<Vec<crate::ast::DocAttr>, Diagnostic> {
+        use crate::ast::DocAttr;
+        let mut out: Vec<DocAttr> = Vec::new();
+        loop {
+            if !matches!(self.peek().kind, TokenKind::Hash) {
+                break;
+            }
+            let name = match &self.peek_at(1).kind {
+                TokenKind::Ident(n) => n.clone(),
+                _ => break,
+            };
+            let attr = match name.as_str() {
+                "deprecated" => {
+                    self.bump(); // #
+                    self.bump(); // deprecated
+                    let (since, note, until) = if matches!(self.peek().kind, TokenKind::LParen) {
+                        self.parse_deprecated_args()?
+                    } else {
+                        (None, None, None)
+                    };
+                    DocAttr::Deprecated { since, note, until }
+                }
+                "since" => {
+                    self.bump(); // #
+                    self.bump(); // since
+                    let v = self.parse_doc_attr_single_string("since")?;
+                    DocAttr::Since(v)
+                }
+                "stable" => {
+                    self.bump(); // #
+                    self.bump(); // stable
+                    let since = if matches!(self.peek().kind, TokenKind::LParen) {
+                        Some(self.parse_doc_attr_kv_string("since")?)
+                    } else {
+                        None
+                    };
+                    DocAttr::Stable { since }
+                }
+                "unstable" => {
+                    self.bump();
+                    self.bump();
+                    let feature = if matches!(self.peek().kind, TokenKind::LParen) {
+                        Some(self.parse_doc_attr_kv_string("feature")?)
+                    } else {
+                        None
+                    };
+                    DocAttr::Unstable { feature }
+                }
+                "experimental" => {
+                    self.bump();
+                    self.bump();
+                    let note = if matches!(self.peek().kind, TokenKind::LParen) {
+                        Some(self.parse_doc_attr_kv_string("note")?)
+                    } else {
+                        None
+                    };
+                    DocAttr::Experimental { note }
+                }
+                "hide_doc" => {
+                    self.bump();
+                    self.bump();
+                    DocAttr::HideDoc
+                }
+                "doc_alias" => {
+                    self.bump();
+                    self.bump();
+                    let aliases = self.parse_doc_attr_string_list()?;
+                    DocAttr::DocAlias(aliases)
+                }
+                "doc" => {
+                    self.bump();
+                    self.bump();
+                    self.parse_doc_attr_doc_variant()?
+                }
+                _ => break, // не наш — другому parser'у
+            };
+            out.push(attr);
+            self.skip_newlines();
+        }
+        Ok(out)
+    }
+
+    /// `#deprecated(since = "X", note = "Y", until = "Z"?)` — парсит
+    /// 1-3 named-args. Все опциональны.
+    fn parse_deprecated_args(
+        &mut self,
+    ) -> Result<(Option<String>, Option<String>, Option<String>), Diagnostic> {
+        let mut since = None;
+        let mut note = None;
+        let mut until = None;
+        if !matches!(self.peek().kind, TokenKind::LParen) {
+            return Err(Diagnostic::new("expected `(` after `#deprecated`", self.peek().span));
+        }
+        self.bump(); // (
+        loop {
+            if matches!(self.peek().kind, TokenKind::RParen) {
+                break;
+            }
+            let key = match &self.peek().kind {
+                TokenKind::Ident(n) => n.clone(),
+                _ => return Err(Diagnostic::new(
+                    "expected `since` / `note` / `until` key", self.peek().span,
+                )),
+            };
+            self.bump(); // key
+            // `key = "value"` (D96 named args).
+            if !matches!(self.peek().kind, TokenKind::Eq) {
+                return Err(Diagnostic::new(
+                    "expected `=` after attribute key", self.peek().span,
+                ));
+            }
+            self.bump(); // =
+            let val = match self.peek().kind.clone() {
+                TokenKind::Str(s) => { self.bump(); s }
+                _ => return Err(Diagnostic::new(
+                    "expected string literal", self.peek().span,
+                )),
+            };
+            match key.as_str() {
+                "since" => since = Some(val),
+                "note" => note = Some(val),
+                "until" => until = Some(val),
+                _ => return Err(Diagnostic::new(
+                    format!("unknown `#deprecated` key `{}`; expected since/note/until", key),
+                    self.peek().span,
+                )),
+            }
+            if matches!(self.peek().kind, TokenKind::Comma) {
+                self.bump();
+            }
+        }
+        if !matches!(self.peek().kind, TokenKind::RParen) {
+            return Err(Diagnostic::new("expected `)` closing `#deprecated`", self.peek().span));
+        }
+        self.bump(); // )
+        Ok((since, note, until))
+    }
+
+    /// `#name("value")` или `#name(key = "value")` — поддерживает обе
+    /// формы для single-string attrs (e.g. `#since("0.1.0")` или
+    /// `#since(version = "0.1.0")`).
+    fn parse_doc_attr_single_string(&mut self, attr_name: &str) -> Result<String, Diagnostic> {
+        if !matches!(self.peek().kind, TokenKind::LParen) {
+            return Err(Diagnostic::new(
+                format!("expected `(\"...\")` after `#{}`", attr_name),
+                self.peek().span,
+            ));
+        }
+        self.bump(); // (
+        let val = match self.peek().kind.clone() {
+            TokenKind::Str(s) => { self.bump(); s }
+            TokenKind::Ident(_) => {
+                // key=value форма
+                self.bump(); // ident (key — ignored — single key allowed)
+                if !matches!(self.peek().kind, TokenKind::Eq) {
+                    return Err(Diagnostic::new(
+                        format!("expected `=` or string literal in `#{}`", attr_name),
+                        self.peek().span,
+                    ));
+                }
+                self.bump(); // =
+                match self.peek().kind.clone() {
+                    TokenKind::Str(s) => { self.bump(); s }
+                    _ => return Err(Diagnostic::new(
+                        format!("expected string literal in `#{}`", attr_name),
+                        self.peek().span,
+                    )),
+                }
+            }
+            _ => return Err(Diagnostic::new(
+                format!("expected string literal in `#{}`", attr_name),
+                self.peek().span,
+            )),
+        };
+        if !matches!(self.peek().kind, TokenKind::RParen) {
+            return Err(Diagnostic::new(
+                format!("expected `)` closing `#{}`", attr_name),
+                self.peek().span,
+            ));
+        }
+        self.bump(); // )
+        Ok(val)
+    }
+
+    /// `#name(key = "value")` — парсит ровно одну named-pair.
+    fn parse_doc_attr_kv_string(&mut self, expected_key: &str) -> Result<String, Diagnostic> {
+        if !matches!(self.peek().kind, TokenKind::LParen) {
+            return Err(Diagnostic::new("expected `(`", self.peek().span));
+        }
+        self.bump(); // (
+        let key = match &self.peek().kind {
+            TokenKind::Ident(n) => n.clone(),
+            _ => return Err(Diagnostic::new(
+                format!("expected `{}` key", expected_key), self.peek().span,
+            )),
+        };
+        if key != expected_key {
+            return Err(Diagnostic::new(
+                format!("expected `{}`, got `{}`", expected_key, key),
+                self.peek().span,
+            ));
+        }
+        self.bump(); // key
+        if !matches!(self.peek().kind, TokenKind::Eq) {
+            return Err(Diagnostic::new("expected `=`", self.peek().span));
+        }
+        self.bump(); // =
+        let val = match self.peek().kind.clone() {
+            TokenKind::Str(s) => { self.bump(); s }
+            _ => return Err(Diagnostic::new("expected string literal", self.peek().span)),
+        };
+        if !matches!(self.peek().kind, TokenKind::RParen) {
+            return Err(Diagnostic::new("expected `)`", self.peek().span));
+        }
+        self.bump(); // )
+        Ok(val)
+    }
+
+    /// `#doc_alias("a", "b", ...)` — list of string literals.
+    fn parse_doc_attr_string_list(&mut self) -> Result<Vec<String>, Diagnostic> {
+        let mut out = Vec::new();
+        if !matches!(self.peek().kind, TokenKind::LParen) {
+            return Err(Diagnostic::new("expected `(` after `#doc_alias`", self.peek().span));
+        }
+        self.bump(); // (
+        loop {
+            if matches!(self.peek().kind, TokenKind::RParen) {
+                break;
+            }
+            match self.peek().kind.clone() {
+                TokenKind::Str(s) => { self.bump(); out.push(s); }
+                _ => return Err(Diagnostic::new(
+                    "expected string literal", self.peek().span,
+                )),
+            }
+            if matches!(self.peek().kind, TokenKind::Comma) {
+                self.bump();
+            }
+        }
+        self.bump(); // )
+        if out.is_empty() {
+            return Err(Diagnostic::new(
+                "`#doc_alias` requires at least one alias", self.peek().span,
+            ));
+        }
+        Ok(out)
+    }
+
+    /// `#doc(inline)` / `#doc(no_inline)` / `#doc(summary = "...")` /
+    /// `#doc(section = "...")` / `#doc(test_handlers = "...")`.
+    fn parse_doc_attr_doc_variant(&mut self) -> Result<crate::ast::DocAttr, Diagnostic> {
+        use crate::ast::DocAttr;
+        if !matches!(self.peek().kind, TokenKind::LParen) {
+            return Err(Diagnostic::new(
+                "expected `(<variant>)` after `#doc`", self.peek().span,
+            ));
+        }
+        self.bump(); // (
+        let key = match &self.peek().kind {
+            TokenKind::Ident(n) => n.clone(),
+            _ => return Err(Diagnostic::new(
+                "expected variant name after `#doc(`", self.peek().span,
+            )),
+        };
+        self.bump(); // key
+        let attr = match key.as_str() {
+            "inline" => DocAttr::DocInline,
+            "no_inline" => DocAttr::DocNoInline,
+            "summary" | "section" | "test_handlers" => {
+                if !matches!(self.peek().kind, TokenKind::Eq) {
+                    return Err(Diagnostic::new(
+                        format!("expected `=` after `#doc({}`", key),
+                        self.peek().span,
+                    ));
+                }
+                self.bump(); // =
+                let val = match self.peek().kind.clone() {
+                    TokenKind::Str(s) => { self.bump(); s }
+                    _ => return Err(Diagnostic::new(
+                        "expected string literal", self.peek().span,
+                    )),
+                };
+                match key.as_str() {
+                    "summary" => DocAttr::DocSummary(val),
+                    "section" => DocAttr::DocSection(val),
+                    "test_handlers" => DocAttr::DocTestHandlers(val),
+                    _ => unreachable!(),
+                }
+            }
+            _ => return Err(Diagnostic::new(
+                format!("unknown `#doc(...)` variant `{}`; expected inline/no_inline/summary/section/test_handlers", key),
+                self.peek().span,
+            )),
+        };
+        if !matches!(self.peek().kind, TokenKind::RParen) {
+            return Err(Diagnostic::new("expected `)` closing `#doc`", self.peek().span));
+        }
+        self.bump(); // )
+        Ok(attr)
+    }
+
     fn parse_contract_attrs(&mut self) -> Result<ContractAttrs, Diagnostic> {
         let mut attrs = ContractAttrs::default();
         loop {
@@ -1062,7 +1389,7 @@ impl Parser {
 
     // ─── fn ──────────────────────────────────────────────────────────────
 
-    fn parse_fn(&mut self, is_export: bool, is_external: bool, realtime_attr: RealtimeAttr, contract_attrs: ContractAttrs, doc: Option<crate::ast::DocBlock>) -> Result<FnDecl, Diagnostic> {
+    fn parse_fn(&mut self, is_export: bool, is_external: bool, realtime_attr: RealtimeAttr, contract_attrs: ContractAttrs, doc: Option<crate::ast::DocBlock>, doc_attrs: Vec<crate::ast::DocAttr>) -> Result<FnDecl, Diagnostic> {
         let start = self.peek().span;
         self.expect(&TokenKind::KwFn)?;
 
@@ -1276,6 +1603,7 @@ impl Parser {
         Self::check_record_lit_type_once(&return_type, receiver.as_ref(), &body)?;
         Ok(FnDecl {
             doc,
+            doc_attrs,
             is_export,
             is_external,
             name,
@@ -1435,7 +1763,7 @@ impl Parser {
 
     // ─── type declarations ───────────────────────────────────────────────
 
-    fn parse_type_decl(&mut self, is_export: bool, doc: Option<crate::ast::DocBlock>) -> Result<TypeDecl, Diagnostic> {
+    fn parse_type_decl(&mut self, is_export: bool, doc: Option<crate::ast::DocBlock>, doc_attrs: Vec<crate::ast::DocAttr>) -> Result<TypeDecl, Diagnostic> {
         let start = self.peek().span;
         self.expect(&TokenKind::KwType)?;
         let (name, _) = self.parse_ident()?;
@@ -1548,6 +1876,7 @@ impl Parser {
         let span = start.merge(self.tokens[self.pos.saturating_sub(1)].span);
         Ok(TypeDecl {
             doc,
+            doc_attrs,
             is_export,
             name,
             generics,
@@ -1899,7 +2228,7 @@ impl Parser {
         })
     }
 
-    fn parse_const_decl(&mut self, is_export: bool, doc: Option<crate::ast::DocBlock>) -> Result<ConstDecl, Diagnostic> {
+    fn parse_const_decl(&mut self, is_export: bool, doc: Option<crate::ast::DocBlock>, doc_attrs: Vec<crate::ast::DocAttr>) -> Result<ConstDecl, Diagnostic> {
         let start = self.peek().span;
         self.expect(&TokenKind::KwConst)?;
         let (name, _) = self.parse_ident()?;
@@ -1915,6 +2244,7 @@ impl Parser {
         self.expect_newline_or_eof().ok();
         Ok(ConstDecl {
             doc,
+            doc_attrs,
             is_export,
             name,
             ty,

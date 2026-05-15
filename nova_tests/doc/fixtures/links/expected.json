@@ -54,11 +54,15 @@
   ],
   "items": [
     {
+      "aliases": [
+
+      ],
       "deprecation": null,
       "description": "Используется в [translate].",
       "doc_attrs": [
 
       ],
+      "doc_test_handlers": null,
       "id": "nova_tests.doc.fixtures.links.sample::Point",
       "kind": "type",
       "module_path": "nova_tests.doc.fixtures.links.sample",
@@ -89,11 +93,15 @@
       }
     },
     {
+      "aliases": [
+
+      ],
       "deprecation": null,
       "description": null,
       "doc_attrs": [
 
       ],
+      "doc_test_handlers": null,
       "id": "nova_tests.doc.fixtures.links.sample::translate",
       "kind": "fn",
       "module_path": "nova_tests.doc.fixtures.links.sample",

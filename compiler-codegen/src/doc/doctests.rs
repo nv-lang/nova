@@ -190,6 +190,9 @@ mod tests {
             sections: Default::default(),
             deprecation: None,
             stability: None,
+            aliases: Vec::new(),
+            hide_doc: false,
+            doc_test_handlers: None,
             kind: ItemKind::Const {
                 ty: "int".to_string(),
                 value: "0".to_string(),

@@ -30,11 +30,15 @@
   ],
   "items": [
     {
+      "aliases": [
+
+      ],
       "deprecation": null,
       "description": null,
       "doc_attrs": [
 
       ],
+      "doc_test_handlers": null,
       "id": "nova_tests.doc.fixtures.kinds.sample::AccountId",
       "kind": "type",
       "module_path": "nova_tests.doc.fixtures.kinds.sample",
@@ -54,11 +58,15 @@
       }
     },
     {
+      "aliases": [
+
+      ],
       "deprecation": null,
       "description": null,
       "doc_attrs": [
 
       ],
+      "doc_test_handlers": null,
       "id": "nova_tests.doc.fixtures.kinds.sample::Color",
       "kind": "type",
       "module_path": "nova_tests.doc.fixtures.kinds.sample",
@@ -91,11 +99,15 @@
       }
     },
     {
+      "aliases": [
+
+      ],
       "deprecation": null,
       "description": null,
       "doc_attrs": [
 
       ],
+      "doc_test_handlers": null,
       "id": "nova_tests.doc.fixtures.kinds.sample::Counter",
       "kind": "effect",
       "module_path": "nova_tests.doc.fixtures.kinds.sample",
@@ -120,11 +132,15 @@
       ]
     },
     {
+      "aliases": [
+
+      ],
       "deprecation": null,
       "description": null,
       "doc_attrs": [
 
       ],
+      "doc_test_handlers": null,
       "id": "nova_tests.doc.fixtures.kinds.sample::Eq",
       "kind": "protocol",
       "module_path": "nova_tests.doc.fixtures.kinds.sample",
@@ -155,11 +171,15 @@
       ]
     },
     {
+      "aliases": [
+
+      ],
       "deprecation": null,
       "description": null,
       "doc_attrs": [
 
       ],
+      "doc_test_handlers": null,
       "id": "nova_tests.doc.fixtures.kinds.sample::Pixels",
       "kind": "type",
       "module_path": "nova_tests.doc.fixtures.kinds.sample",
