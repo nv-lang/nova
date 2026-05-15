@@ -40,6 +40,13 @@ type Slot[K, V]
     | Tombstone
     | Occupied { key K, value V }
 
+// `#from_fields` (Plan 52 / D55) — помечает HashMap как str-keyed
+// map-тип, в который анонимный record-литерал `{field: v}` коэрсится
+// через D55 map-coercion (имена полей становятся строковыми ключами).
+// Маркер honored компилятором по canonical identity
+// (`collections.hashmap.HashMap`), не по bare-имени — shadowing
+// локальным `HashMap` правило не ломает.
+#from_fields
 export type HashMap[K Hashable, V] {
     // buckets — массив слотов. Длина — степень двойки (для битовой маски
     // вместо modulo — `idx & (len - 1)`).
@@ -68,10 +75,30 @@ export fn HashMap[K, V].new() -> HashMap[K, V] =>
     HashMap[K, V].with_capacity(16)            // turbofish (D38), inference знает [K, V] из сигнатуры
 
 
-// HashMap.with_capacity(n) — пустая мапа с минимальной capacity n,
-// округлённой вверх до степени двойки.
+// HashMap.with_capacity(n) — пустая мапа, в которую можно вставить `n`
+// элементов **без единого rehash**.
+//
+// Контракт (Plan 52 Ф.6): аргумент — entry-count, не bucket-count. Это
+// совместимо с Rust `HashMap::with_capacity(n)` и нужно для десугаринга
+// map-литерала `[k: v]` (D108) — `with_capacity(N)` + `N` × `@insert`
+// гарантированно не вызывает rehash.
+//
+// Почему `ceil(4n/3)`. `@maybe_grow` триггерит rehash когда
+// `used >= threshold`, где `threshold = floor(cap * load_factor)` и
+// `load_factor = 0.75`. Чтобы `n` вставок прошли без rehash, нужно
+// `threshold >= n`, т.е. `floor(cap * 3/4) >= n`. Так как `cap` —
+// степень двойки ≥ 4, `cap` делится на 4, поэтому `cap * 3/4` целое и
+// условие сводится к `cap >= ceil(4n/3)`. `ceil(4n/3) = (4n + 2) / 3`
+// при целочисленном делении. Затем округляем вверх до степени двойки.
+//
+// Прежняя реализация трактовала аргумент как bucket-count: для n = 4,
+// 7, 8, 13, ... `next_pow2(n)` давал `threshold < n` → `n`-я вставка
+// вызывала rehash (нарушение контракта). Цена нового расчёта — чуть
+// больше бакетов; correctness гарантирована.
 export fn HashMap[K, V].with_capacity(min_capacity int) -> HashMap[K, V] {
-    let cap = next_pow2(if min_capacity < 4 { 4 } else { min_capacity })
+    // ceil(4 * min_capacity / 3) — entry-count → требуемый минимум бакетов.
+    let needed = if min_capacity < 4 { 4 } else { (min_capacity * 4 + 2) / 3 }
+    let cap = next_pow2(needed)
     HashMap {
         buckets: new_buckets[K, V](cap),
         count: 0,
@@ -439,7 +466,8 @@ test "from pairs constructor" {
 
 test "rehash on growth" {
     let mut m = HashMap[int, int].with_capacity(4)
-    // Capacity 4 → load_factor 0.75 → grow при 3 элементах
+    // with_capacity(4) → ceil(4*4/3)=6 → next_pow2(6)=8 бакетов.
+    // 100 вставок сильно превышают threshold → серия rehash'ей.
     for i in 0..100 {
         m.insert(i, i * 2)
     }
@@ -448,6 +476,47 @@ test "rehash on growth" {
     for i in 0..100 {
         assert(m.get(i) == Some(i * 2))
     }
+}
+
+// Plan 52 Ф.6: контракт with_capacity — `n` вставок без rehash.
+// `@capacity()` после ровно `n` вставок не должна измениться.
+// Проверяем граничные n: 4, 7, 8, 13, 16 — все бывшие баги, где
+// прежняя bucket-count реализация давала threshold < n.
+test "with_capacity contract — n inserts without rehash" {
+    // n = 4
+    let mut m4 = HashMap[int, int].with_capacity(4)
+    let cap4 = m4.capacity()
+    for i in 0..4 { m4.insert(i, i) }
+    assert(m4.capacity() == cap4)
+    assert(m4.len() == 4)
+
+    // n = 7
+    let mut m7 = HashMap[int, int].with_capacity(7)
+    let cap7 = m7.capacity()
+    for i in 0..7 { m7.insert(i, i) }
+    assert(m7.capacity() == cap7)
+    assert(m7.len() == 7)
+
+    // n = 8
+    let mut m8 = HashMap[int, int].with_capacity(8)
+    let cap8 = m8.capacity()
+    for i in 0..8 { m8.insert(i, i) }
+    assert(m8.capacity() == cap8)
+    assert(m8.len() == 8)
+
+    // n = 13
+    let mut m13 = HashMap[int, int].with_capacity(13)
+    let cap13 = m13.capacity()
+    for i in 0..13 { m13.insert(i, i) }
+    assert(m13.capacity() == cap13)
+    assert(m13.len() == 13)
+
+    // n = 16
+    let mut m16 = HashMap[int, int].with_capacity(16)
+    let cap16 = m16.capacity()
+    for i in 0..16 { m16.insert(i, i) }
+    assert(m16.capacity() == cap16)
+    assert(m16.len() == 16)
 }
 
 test "tombstones cleanup on rehash" {
