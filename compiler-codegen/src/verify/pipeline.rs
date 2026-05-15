@@ -221,6 +221,36 @@ impl VerificationPipeline {
             }
         }
 
+        // D.1.2: frame axiom — для каждого param NOT в modifies-списке
+        // assert _old_<x> == <x> (frame: значение не изменилось).
+        // Это позволяет Z3 reasoning'овать над `old(x)` в ensures:
+        // если x не в modifies, то old(x) == x тривиально в pre-state.
+        {
+            let modifies_names: std::collections::HashSet<String> = fd.modifies.iter()
+                .filter_map(|ft| match ft {
+                    FrameTarget::Whole(e) => {
+                        if let ExprKind::Ident(n) = &e.kind { Some(n.clone()) } else { None }
+                    }
+                    FrameTarget::Field { receiver, .. } => {
+                        if let ExprKind::Ident(n) = &receiver.kind { Some(n.clone()) } else { None }
+                    }
+                    _ => None,
+                })
+                .collect();
+            for p in &fd.params {
+                if !modifies_names.contains(&p.name) {
+                    // assert: _old_<x> == <x> (frame: param unchanged).
+                    let var_term = SmtTerm::Var(p.name.clone());
+                    let old_term = SmtTerm::Var(format!("_old_{}", p.name));
+                    let frame_eq = SmtTerm::eq(old_term, var_term);
+                    backend.assert(Assertion {
+                        formula: frame_eq,
+                        label: Some(format!("frame@{}", p.name)),
+                    });
+                }
+            }
+        }
+
         // 3. Encode body value. Только для `=> expr` форм
         // (block-bodies с trailing-only тоже OK).
         let body_val = match &fd.body {

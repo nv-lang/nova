@@ -241,6 +241,8 @@ pub fn encode_expr_with_ctx(e: &Expr, ctx: &EncodeCtx) -> Result<SmtTerm, Encodi
             ]);
             // forall x: Int. in_range => body
             let implies = SmtTerm::App("=>".into(), vec![in_range, body_t]);
+            // D.1.4: warn if no trigger found (optimization hint).
+            warn_if_no_trigger(var, &implies);
             Ok(SmtTerm::Forall(vec![(var.clone(), SortRef::Int)], Box::new(implies)))
         }
 
@@ -258,6 +260,8 @@ pub fn encode_expr_with_ctx(e: &Expr, ctx: &EncodeCtx) -> Result<SmtTerm, Encodi
             ]);
             let not_body = SmtTerm::not(body_t);
             let implies = SmtTerm::App("=>".into(), vec![in_range, not_body]);
+            // D.1.4: warn if no trigger found (optimization hint).
+            warn_if_no_trigger(var, &implies);
             let inner = SmtTerm::Forall(vec![(var.clone(), SortRef::Int)], Box::new(implies));
             Ok(SmtTerm::not(inner))
         }
@@ -265,6 +269,64 @@ pub fn encode_expr_with_ctx(e: &Expr, ctx: &EncodeCtx) -> Result<SmtTerm, Encodi
         _ => Err(EncodingError::Unsupported(format!(
             "expression kind not supported in contract encoder (33.1)"
         ))),
+    }
+}
+
+/// D.1.4: поиск trigger-pattern для кванторов.
+///
+/// Ищет в `body` подтерм `App(name, args)` где хотя бы один arg
+/// — `Var(bound_var)`. Если найден — возвращает его как trigger hint.
+///
+/// Примечание: SmtTerm::Forall не имеет поля `pattern` (IR расширение —
+/// Plan 33.5 V2). Сейчас функция используется только для диагностики:
+/// если trigger не найден в Z3-режиме, emit eprintln warning.
+/// Z3 backend через Z3_mk_forall_const с паттернами — future work.
+fn find_trigger_hint(body: &SmtTerm, bound_var: &str) -> Option<SmtTerm> {
+    match body {
+        SmtTerm::App(name, args) => {
+            // Пропускаем булевы операторы — они не годятся как triggers.
+            let is_logic_op = matches!(name.as_str(), "=>" | "and" | "or" | "not" | "=" | "!=" | "<" | "<=" | ">" | ">=");
+            if !is_logic_op {
+                // Проверяем что хотя бы один arg содержит bound_var.
+                let has_var = args.iter().any(|a| term_contains_var(a, bound_var));
+                if has_var {
+                    return Some(body.clone());
+                }
+            }
+            // Recurse в args.
+            for a in args {
+                if let Some(t) = find_trigger_hint(a, bound_var) {
+                    return Some(t);
+                }
+            }
+            None
+        }
+        SmtTerm::Forall(_, inner) => find_trigger_hint(inner, bound_var),
+        _ => None,
+    }
+}
+
+/// D.1.4: проверяет, содержит ли term переменную `var_name`.
+fn term_contains_var(t: &SmtTerm, var_name: &str) -> bool {
+    match t {
+        SmtTerm::Var(n) => n == var_name,
+        SmtTerm::App(_, args) => args.iter().any(|a| term_contains_var(a, var_name)),
+        SmtTerm::Forall(_, body) => term_contains_var(body, var_name),
+        _ => false,
+    }
+}
+
+/// D.1.4: emit warning если квантор не имеет очевидного trigger pattern.
+/// Вызывается из encode_expr_with_ctx при кодировании Forall/Exists.
+/// Предупреждение полезно в Z3-режиме; в trivial-backend триггеры не нужны.
+fn warn_if_no_trigger(bound_var: &str, body: &SmtTerm) {
+    if find_trigger_hint(body, bound_var).is_none() {
+        eprintln!(
+            "warning: SMT quantifier over `{}` may be slow without trigger pattern \
+             (no App(_, [Var({})]) found in body). \
+             Consider using a #pure fn call involving `{}` as trigger.",
+            bound_var, bound_var, bound_var
+        );
     }
 }
 

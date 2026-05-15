@@ -1,0 +1,40 @@
+// Plan 33.4 D.1.2: frame SMT axiom.
+//
+// Функция с `modifies x` — SMT-backend получает frame-axiom:
+// `_old_y == y` для параметра `y`, который НЕ в modifies.
+// Это позволяет Z3 reasoning'овать что old(y) == y в ensures.
+//
+// Тест проверяет что:
+// 1. frame-axiom не ломает компиляцию.
+// 2. Функции с modifies корректно компилируются и выполняются.
+// 3. `old(x)` в ensures корректно вычисляется через substitute_old.
+
+module contracts.frame_smt_positive
+
+// Функция модифицирует только `x`, поэтому по frame-axiom
+// `_old_y == y` — то есть y не меняется.
+// ensures result == old(y): поскольку y не в modifies, old(y) == y.
+#unverified
+fn add_to_x(x int, y int) -> int
+    modifies x
+    ensures result == old(y) + y
+=> y + y
+
+// Функция без modifies — все параметры получают frame-axiom.
+#unverified
+fn double_b(a int, b int) -> int
+    ensures result == old(b) + b
+=> b + b
+
+// #verify-тест: ensures result == x — доказывается reflexively.
+#verify
+fn identity_with_frame(x int, y int) -> int
+    modifies y
+    ensures result == x
+=> x
+
+test "frame SMT axiom positive" {
+    assert(add_to_x(0, 5) == 10)
+    assert(double_b(100, 7) == 14)
+    assert(identity_with_frame(42, 99) == 42)
+}
