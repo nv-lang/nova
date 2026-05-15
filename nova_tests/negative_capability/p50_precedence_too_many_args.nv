@@ -1,0 +1,17 @@
+// EXPECT_COMPILE_ERROR слишком много позиционных аргументов
+//
+// Plan 50 (D102 ревизия) precedence: правило keyword-only проверяется
+// ТОЛЬКО когда структура вызова валидна. При переборе арности
+// сообщается «слишком много позиционных аргументов» — НЕ «передаётся
+// только по имени». `connect` имеет 2 параметра, передано 3 → arity
+// error (precedence 1), а не keyword-only (precedence 5).
+
+module negative_capability.p50_precedence_too_many_args
+
+fn connect(host str, port int = 8080) -> int =>
+    host.len + port
+
+test "too-many-args reported as arity error, not keyword-only" {
+    let _ = connect("localhost", 9000, 7)
+    assert(true)
+}

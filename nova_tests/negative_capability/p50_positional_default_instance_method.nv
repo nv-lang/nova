@@ -1,0 +1,21 @@
+// EXPECT_COMPILE_ERROR передаётся только по имени
+//
+// Plan 50 (D102 ревизия): правило keyword-only применяется единообразно
+// ко всем путям вызова. Instance-метод (`@`-метод): receiver на позиции
+// 0 — позиционный, дефолта не имеет; правило бьёт по явным параметрам.
+// `factor` имеет дефолт — `b.scaled(3)` где `3` лёг позиционно → ошибка.
+
+module negative_capability.p50_positional_default_instance_method
+
+type Box {
+    base int
+}
+
+fn Box @scaled(factor int = 2) -> int =>
+    @base * factor
+
+test "positional arg on defaulted param of instance method rejected" {
+    let b = Box { base: 10 }
+    let _ = b.scaled(3)
+    assert(true)
+}

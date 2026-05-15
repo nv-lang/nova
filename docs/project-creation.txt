@@ -10444,7 +10444,6 @@ void-typed выражение (`assert(...)`), даёт невалидный C
   docs/project-creation.txt (Ф.5)
 - docs/plans/51-d55-record-literal-unification.md
 
-
 ================================================================================
 # Plan 48 — Monomorphization (Ф.0-Ф.2 + частично Ф.3): closures-in-generics
 
@@ -10538,3 +10537,184 @@ nova-cli (важно: CLI отдельный crate), затем `nova test` →
 - `docs/plans/48-closures-in-generics.md` (статус)
 - `docs/simplifications.md` (followups)
 
+## Сессия 2026-05-15: Plan 50 — параметр с дефолтом keyword-only
+
+Реализация ревизии D102 (2026-05-15): параметр со значением по умолчанию
+передаётся только по имени; позиционно — compile error. Type-agnostic,
+касается дефолта любого типа. Мотив — позиционные `bool`/`int`-флаги
+(`connect("h", false, true)`) остаются нечитаемыми и частой ошибкой
+LLM-генерации даже при наличии named args; правило переводит этот класс
+багов из «нежелательно» в ошибку компиляции. Ограничение поверх Plan 46;
+binding-инфраструктура (`argbind.rs`, `check_call_argbind`, `callnorm.rs`)
+не менялась структурно.
+
+### Ф.1 — Diagnostic: structured suggestions
+
+`diag.rs`: `Diagnostic` расширен `notes: Vec<Note>` + `suggestion:
+Option<Suggestion>` (+ `Applicability` enum: MachineApplicable /
+MaybeIncorrect / HasPlaceholders). `Suggestion` — машинно-применимый
+edit: `span` нулевой ширины = чистая вставка; producer формирует
+`message`/`replacement` БЕЗ доступа к source → suggestion
+source-независим и корректен для cross-file. `render`/`render_with_map`
+рендерят notes + suggestion под основным сообщением; единый
+`SrcResolver` (Single | Map) резолвит span→(source,path) для обоих
+путей. `Diagnostic::new` backward-compatible (пустые notes, нет
+suggestion) — 7 call-site не тронуты.
+
+### Ф.0 — правило keyword-only в check_call_argbind
+
+Precedence: `bind_call_args` fail-fast для структурных ошибок (арность,
+неизвестное имя, двойная привязка, позиционный-после-именованного) —
+эмитятся первыми. Keyword-only (D102 №1) проверяется ТОЛЬКО при
+`Ok(bindings)` — последнее в порядке диагностик. `check_keyword_only`:
+скан `bindings` на `Positional(ai)` где `effective_params[pi].default
+.is_some()`. Trailing-форма исключена структурно — trailing-bound
+параметр уже снят из `effective_params`, в `bindings` его нет. Отдельная
+диагностика на КАЖДЫЙ нарушающий аргумент (loop без early return =
+error recovery без каскада). Каждая несёт: имя параметра, `note:
+declared here` (через `param.span`), machine-applicable structured
+suggestion (вставка `<name>: ` в начале выражения-аргумента). Покрытие —
+тот же набор путей что Plan 46 (free fn / static / instance / generic
+через единый `bind_call_args`).
+
+### Ф.2 — [M-interp-named] закрытие
+
+`cmd_run` (nova-cli) теперь делает `resolve_imports_inline` ПЕРЕД
+`callnorm::normalize_module` — codepath идентичен `cmd_build` /
+`test_runner::codegen_to_c`. Импортированные callee мёрджатся в module
+до нормализации → `callnorm` видит все сигнатуры (вкл. дефолты
+импортированных fn) и раскладывает named args в param-order. Interp
+получает чистый позиционный AST для ВСЕХ резолвимых callee. Graceful:
+файл вне Nova-проекта → resolve пропускается. `interp/mod.rs`
+`CallArg::Named` arm — комментарий обновлён (теперь fallback только для
+ambiguous/unresolvable callee). [M-interp-named] → RESOLVED.
+
+### Ф.4 — тесты (12)
+
+Negative (`nova_tests/negative_capability/p50_*`, 7): позиционный дефолт
+— единственный / среди многих / несколько (отдельная диагностика на
+каждый) / instance-метод / static-метод / generic-функция / + trailing
+для другого параметра. Precedence-тест: too-many-args сообщается как
+arity error, не keyword-only. Positive (`nova_tests/named_params/`):
+`keyword_only.nv` — дефолт по имени / опущен / обязательный позиционно+
+дефолт по имени / обязательный по имени / переставленные named /
+trailing на дефолтном последнем функциональном параметре / вызов через
+fn-value (позиционный, без дефолтов). `imported_named_use.nv` +
+`imported_mod/` folder-module (2 peer-файла — исключены из standalone
+прогона) + `imported_named_run.nv` (`main`-форма, `EXPECT_STDOUT`) —
+переставленные named для импортированного callee. nova-cli
+integration-тест `tests/run_interp_named.rs` — `nova run` на фикстуре,
+двойное покрытие interp-пути.
+
+### Ф.3 — миграция
+
+Census: позиционные вызовы дефолтных параметров были ТОЛЬКО в
+`nova_tests/named_params/` (Plan 46 закрыт за день до Plan 50 —
+фича не успела разойтись). `std/`, `examples/` дефолтных параметров не
+используют; `spec/decisions/03-syntax.md` D102 уже описывал ревизию.
+Мигрированы `basic.nv` (позиционные → named) и `variadic.nv`
+(`sum_from(1,2,3)` с дефолтным `start` структурно невозможен после
+ревизии — named-параметр нельзя смешать с позиционным variadic-хвостом;
+разделено на `sum_all` с required `start` для позиционного+variadic и
+`sum_from` с дефолтным `start` для named+пустой пакет).
+
+### Ф.5 — spec + docs
+
+D102 (03-syntax.md) — ревизия уже была. `simplifications.md` —
+[M-interp-named] → RESOLVED. project-creation.txt — эта секция.
+
+### Регрессия
+
+379 PASS / 1 FAIL / 7 SKIP (release). Единственный FAIL —
+`concurrency/cancel_latency_bench` (latency-бенчмарк wake-latency
+under load) — проходит в изоляции; flaky под нагрузкой, не регрессия
+Plan 50 (изменения не трогают concurrency/cancellation). Эффективно
+380 PASS / 0 FAIL.
+
+### Файлы
+
+- compiler-codegen/src/diag.rs (Ф.1)
+- compiler-codegen/src/types/mod.rs (Ф.0 — check_keyword_only)
+- nova-cli/src/main.rs (Ф.2 — cmd_run)
+- compiler-codegen/src/interp/mod.rs (Ф.2 — комментарий)
+- nova_tests/negative_capability/p50_*.nv ×7 (Ф.4)
+- nova_tests/named_params/keyword_only.nv + imported_named_use.nv +
+  imported_named_run.nv + imported_mod/{config,limits}.nv (Ф.4)
+- nova_tests/named_params/{basic,variadic}.nv (Ф.3 миграция)
+- nova-cli/tests/run_interp_named.rs (Ф.4)
+- docs/simplifications.md, docs/project-creation.txt (Ф.5)
+
+## Сессия 2026-05-15: Plan 53 — record-destructuring в let
+
+Пользователь спросил «работает синтаксис `let {tx, rx} = ch`?». Парсер
+принимал — AST `Pattern::Record` уже был, `parse_pattern` его создавал;
+в match-armах работал. Но `emit_let_stmt` падал: «complex pattern in
+let binding not yet supported». Последняя миля.
+
+### Ф.0 — Codegen emit_record_destructure
+
+`emit_let_stmt`: перед общим путём — ветка `Pattern::Record →
+emit_record_destructure(decl)`. Eval RHS в fresh tmp с правильным
+C-типом, регистрация tmp в `var_types`, делегирование биндинга полей
+в существующий `pattern_bind_typed` (он уже умел plain-record case
+через `record_schemas`). Никакой дубль-логики.
+
+**Anonymous record-pattern fix:** `Pattern::Record { type_path: None }`
+— в `pattern_bind_typed` `type_name_from_path` был пустой, потому
+`is_plain_record` false → ушёл в sum-variant ветку (`->payload..`).
+Поправил: при отсутствии `type_path` выводим имя record-типа из
+`scr_ty` (e.g. `Nova_Pair*` → `Pair`).
+
+**Nested-pattern fix:** `let { inner: { tx, rx } }` — рекурсия в
+`pattern_bind_typed` для sub-pattern не знала тип `field_access`,
+снова уходила в sum-variant ветку. Поправил: перед recurse регистрируем
+тип field в `var_types[field_access]`.
+
+**Channel.new special-case:** mirror `emit_tuple_destructure` для
+`let (tx, rx) = Channel.new(cap)` — `Nova_ChannelPair` не в
+`record_schemas` (это C-runtime built-in, не user-declared type).
+
+### Ф.1 — Interp
+
+`match_pattern` уже умел `Pattern::Record` для `Value::Record` (используется
+в match-armах). `exec_stmt` Stmt::Let arm уже вызывал его. Работало
+из коробки — подтверждено `nova run` smoke-тестом.
+
+### Ф.2 — Type-checker refutability
+
+`BoundCtx` расширен `sum_variant_names: HashSet<String>` (собирается
+из `TypeDeclKind::Sum`). `check_let_pattern_irrefutable` рекурсивно
+проверяет let-pattern: разрешены `Ident`/`Wildcard`/`Tuple`/`Record`
+(без type_path или type_path к plain-record)/`Binding` (с irrefutable
+inner). Refutable (Literal/Variant/Or/Array, Record к sum-variant) —
+production-grade diagnostic с note + подсказкой на `if let`/`match`.
+Вызывается из `walk_stmt` для каждого `Stmt::Let`.
+
+### Ф.3 — Тесты
+
+Positive `nova_tests/syntax/let_destructure_record.nv` (7 кейсов):
+shorthand, type-prefix, rest `..`, renaming под-pattern, nested,
+single-eval RHS (порядок side-effects), Channel.new use case.
+
+Negative `nova_tests/negative_capability/p53_*.nv` (4):
+literal-pattern, variant-pattern, array-pattern, record-к-sum-variant.
+
+### Ф.4 — Spec + docs
+
+Plan 53 doc, README обновлён. simplifications.md без изменений (нет
+новых `[M-*]`).
+
+### Регрессия
+
+386 PASS / 0 FAIL / 7 SKIP (release). +5 от Plan 50 базы (381 → 386 = 1
+positive .nv + 4 negative p53_*).
+
+### Файлы
+
+- compiler-codegen/src/codegen/emit_c.rs (Ф.0)
+- compiler-codegen/src/types/mod.rs (Ф.2 refutability)
+- nova_tests/syntax/let_destructure_record.nv (Ф.3 positive)
+- nova_tests/negative_capability/p53_*.nv ×4 (Ф.3 negative)
+- docs/plans/53-let-destructuring.md
+- docs/plans/README.md
+- docs/project-creation.txt (эта секция)

@@ -5785,6 +5785,15 @@ impl CEmitter {
                 if let Pattern::Tuple(pats, _) = &decl.pattern {
                     return self.emit_tuple_destructure(pats, &decl.value);
                 }
+                // Plan 53: record destructure  `let { tx, rx } = expr` /
+                // `let Pair { tx, rx } = expr`. Делегирует биндинг
+                // полей в существующий `pattern_bind_typed` (он умеет
+                // plain-record case через record_schemas). Refutable
+                // patterns (sum-variant в type_path) ловятся
+                // type-checker'ом — codegen ассамит irrefutable.
+                if let Pattern::Record { .. } = &decl.pattern {
+                    return self.emit_record_destructure(decl);
+                }
                 // Infer type BEFORE emitting so record literals get the right type
                 let binding = self.pattern_binding(&decl.pattern)?;
                 let ty_c = if let Some(ty) = &decl.ty {
@@ -10561,6 +10570,92 @@ impl CEmitter {
         Ok(tmp)
     }
 
+    /// Plan 53: `let { tx, rx } = expr` / `let Pair { tx, rx } = expr` —
+    /// record-destructuring в let-statement. Eval `value` ровно один раз
+    /// в fresh tmp, потом `pattern_bind_typed` биндит поля (он уже умеет
+    /// plain-record case через `record_schemas`).
+    ///
+    /// Refutable patterns (sum-variant в type_path / Variant / Literal /
+    /// Or / Array) отсеиваются type-checker'ом — здесь ассамим plain
+    /// record.
+    fn emit_record_destructure(&mut self, decl: &LetDecl) -> Result<(), String> {
+        // D91/Plan 21 special-case: `let { tx, rx } = Channel.new(cap)`.
+        // `Channel.new` возвращает Nova_ChannelPair (value type, не
+        // зарегистрирован в record_schemas т.к. C-runtime built-in,
+        // не user-declared) — mirror tuple-special-case в
+        // emit_tuple_destructure.
+        let is_channel_new = match &decl.value.kind {
+            ExprKind::Call { func, .. } => {
+                let f = func.unwrap_turbofish();
+                match &f.kind {
+                    ExprKind::Member { obj, name } => {
+                        name == "new" && matches!(&obj.kind, ExprKind::Ident(n) if n == "Channel")
+                    }
+                    ExprKind::Path(parts) => {
+                        parts.len() == 2 && parts[0] == "Channel" && parts[1] == "new"
+                    }
+                    _ => false,
+                }
+            }
+            _ => false,
+        };
+        if is_channel_new {
+            if let Pattern::Record { fields, .. } = &decl.pattern {
+                let tmp = self.fresh_tmp();
+                let cap_expr = if let ExprKind::Call { args, .. } = &decl.value.kind {
+                    if let Some(a) = args.first() { self.emit_expr(a.expr())? } else { "0".into() }
+                } else { "0".into() };
+                self.line(&format!("Nova_ChannelPair {} = nova_channel_new({});", tmp, cap_expr));
+                let field_types: std::collections::HashMap<&str, &str> = [
+                    ("tx", "Nova_ChanWriter*"),
+                    ("rx", "Nova_ChanReader*"),
+                ].into_iter().collect();
+                for field in fields {
+                    let ty = field_types.get(field.name.as_str()).copied().unwrap_or("nova_int");
+                    let binding_name: String = match &field.pattern {
+                        None => field.name.clone(),
+                        Some(Pattern::Ident { name, .. }) => name.clone(),
+                        Some(Pattern::Wildcard(_)) => continue,
+                        Some(other) => return Err(format!(
+                            "nested pattern in Channel.new record destructure not supported: {:?}",
+                            other,
+                        )),
+                    };
+                    self.var_types.insert(binding_name.clone(), ty.to_string());
+                    self.line(&format!("{} {} = {}.{};", ty, binding_name, tmp, field.name));
+                }
+                return Ok(());
+            }
+        }
+
+        // Общий путь: eval RHS в tmp, делегируем биндинг полей в
+        // pattern_bind_typed (plain-record-aware).
+        let tmp = self.fresh_tmp();
+        let ty_c = if let Some(ty) = &decl.ty {
+            self.type_ref_to_c(ty)?
+        } else {
+            self.infer_expr_c_type(&decl.value)
+        };
+        // Plan 51 mirror: `let { ... } T = T { ... }` — typed-let
+        // прокидывает expected_record_type для typeless литералов.
+        let direct_typeless_record = matches!(
+            &decl.value.kind,
+            ExprKind::RecordLit { type_name: None, .. });
+        let saved_expected = self.expected_record_type.clone();
+        if decl.ty.is_some() && direct_typeless_record {
+            self.expected_record_type = Self::struct_name_from_c_type(&ty_c);
+        }
+        let val = self.emit_expr_with_target_type(&decl.value, &ty_c)?;
+        self.expected_record_type = saved_expected;
+        // Объявляем tmp с типом — `pattern_bind_typed` смотрит var_types
+        // чтобы понять, через `.` или `->` обращаться к полям.
+        self.var_types.insert(tmp.clone(), ty_c.clone());
+        self.line(&format!("{} {} = {};", ty_c, tmp, val));
+        // Делегируем биндинг полей в общий helper match-arm'ов.
+        self.pattern_bind_typed(&decl.pattern, &tmp)?;
+        Ok(())
+    }
+
     // ---- pattern helpers ----
 
     fn pattern_binding(&mut self, pat: &Pattern) -> Result<String, String> {
@@ -10994,7 +11089,21 @@ impl CEmitter {
             }
             Pattern::Record { type_path, fields, .. } => {
                 let scr_ty = self.var_types.get(scr).cloned().unwrap_or_default();
-                let type_name_from_path = type_path.as_ref().and_then(|p| p.last().cloned()).unwrap_or_default();
+                // Plan 53: anonymous record pattern `{ x, y }` (type_path
+                // is None) — выводим имя record-типа из scr_ty: e.g.
+                // `Nova_Pair*` → `Pair`. Это нужно для let-destructuring,
+                // где user обычно не пишет type-prefix.
+                let type_name_from_path = type_path
+                    .as_ref()
+                    .and_then(|p| p.last().cloned())
+                    .unwrap_or_else(|| {
+                        scr_ty
+                            .trim_end_matches('*')
+                            .trim()
+                            .strip_prefix("Nova_")
+                            .unwrap_or("")
+                            .to_string()
+                    });
                 let is_plain_record = self.record_schemas.contains_key(&type_name_from_path);
                 let accessor = if Self::is_value_type(&scr_ty) { "." } else { "->" };
                 if is_plain_record {
@@ -11015,6 +11124,12 @@ impl CEmitter {
                             }
                             Some(Pattern::Wildcard(_)) | Some(Pattern::Literal(..)) => {}
                             Some(sub_pat) => {
+                                // Plan 53: регистрируем тип field_access, чтобы
+                                // рекурсивный pattern_bind_typed видел тип
+                                // (нужно для nested record-destructure
+                                // `{ inner: { x, y } }` — иначе inner идёт в
+                                // sum-variant ветку из-за пустого scr_ty).
+                                self.var_types.insert(field_access.clone(), ty.clone());
                                 self.pattern_bind_typed(sub_pat, &field_access)?;
                             }
                         }

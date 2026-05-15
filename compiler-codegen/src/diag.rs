@@ -135,12 +135,52 @@ impl SourceMap {
     }
 }
 
-/// Диагностическое сообщение об ошибке. Минимальное по форме — для
-/// bootstrap'а структурированные ошибки не нужны.
+/// Насколько безопасно инструменту (`nova fix` / LSP code-action)
+/// авто-применять `Suggestion` без участия человека.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Applicability {
+    /// Замена корректна и может быть применена автоматически.
+    MachineApplicable,
+    /// Замена правдоподобна, но может быть неверна — требует ревью.
+    MaybeIncorrect,
+    /// Замена содержит плейсхолдеры — не применять без правки.
+    HasPlaceholders,
+}
+
+/// Структурированное предложение правки — машинно-применимый edit.
+///
+/// `span` — регион замены; **нулевая ширина** (`start == end`) означает
+/// чистую вставку в точке `start`. `replacement` — текст, который туда
+/// подставляется. `message` — человекочитаемая подсказка (producer
+/// формирует её без доступа к source — поэтому suggestion
+/// source-независим и применим для cross-file диагностик).
+#[derive(Debug, Clone)]
+pub struct Suggestion {
+    pub message: String,
+    pub span: Span,
+    pub replacement: String,
+    pub applicability: Applicability,
+}
+
+/// Дополнительный контекст к диагностике — `note: ...`. `span = Some`
+/// привязывает note к месту (например `parameter declared here`),
+/// `None` — общая ремарка.
+#[derive(Debug, Clone)]
+pub struct Note {
+    pub message: String,
+    pub span: Option<Span>,
+}
+
+/// Диагностическое сообщение об ошибке. Несёт основной `message` + span,
+/// опциональные `notes` (доп. контекст, в т.ч. с привязкой к месту) и
+/// `suggestion` (машинно-применимая правка — готова для `nova fix` /
+/// LSP code-action).
 #[derive(Debug, Clone)]
 pub struct Diagnostic {
     pub message: String,
     pub span: Span,
+    pub notes: Vec<Note>,
+    pub suggestion: Option<Suggestion>,
 }
 
 impl Diagnostic {
@@ -148,26 +188,105 @@ impl Diagnostic {
         Self {
             message: message.into(),
             span,
+            notes: Vec::new(),
+            suggestion: None,
         }
     }
 
+    /// Добавить `note` с привязкой к месту (`note: ... --> file:line`).
+    pub fn with_note_at(mut self, message: impl Into<String>, span: Span) -> Self {
+        self.notes.push(Note { message: message.into(), span: Some(span) });
+        self
+    }
+
+    /// Добавить общий `note` без привязки к месту.
+    pub fn with_note(mut self, message: impl Into<String>) -> Self {
+        self.notes.push(Note { message: message.into(), span: None });
+        self
+    }
+
+    /// Прикрепить структурированное предложение правки.
+    pub fn with_suggestion(mut self, suggestion: Suggestion) -> Self {
+        self.suggestion = Some(suggestion);
+        self
+    }
+
     /// Красиво отрендерить диагностику с фрагментом исходника.
-    /// (line, col) восстанавливается по тексту.
+    /// (line, col) восстанавливается по тексту. Notes и suggestion
+    /// рендерятся под основным сообщением.
     pub fn render(&self, source: &str, file: &str) -> String {
-        let (line, col) = byte_to_line_col(source, self.span.start);
-        format!("{}:{}:{}: error: {}", file, line, col, self.message)
+        let resolver = SrcResolver::Single { source, file };
+        let (src, path) = resolver.resolve(&self.span);
+        let (line, col) = byte_to_line_col(src, self.span.start);
+        let mut out = format!("{}:{}:{}: error: {}", path, line, col, self.message);
+        self.render_extras(&mut out, &resolver);
+        out
     }
 
     /// Plan 35 Ф.0: render через SourceMap — берёт source + path
     /// автоматически по `span.file_id`. Используется в cross-file
-    /// diagnostics.
+    /// diagnostics. Notes/suggestion резолвят свой `file_id` через map —
+    /// поэтому cross-file note показывает правильный файл.
     ///
     /// Если `file_id` не найден в map — fallback на "<unknown>".
     pub fn render_with_map(&self, map: &SourceMap) -> String {
-        let source = map.source_for(self.span.file_id);
-        let path = map.path_for(self.span.file_id);
-        let (line, col) = byte_to_line_col(source, self.span.start);
-        format!("{}:{}:{}: error: {}", path, line, col, self.message)
+        let resolver = SrcResolver::Map(map);
+        let (src, path) = resolver.resolve(&self.span);
+        let (line, col) = byte_to_line_col(src, self.span.start);
+        let mut out = format!("{}:{}:{}: error: {}", path, line, col, self.message);
+        self.render_extras(&mut out, &resolver);
+        out
+    }
+
+    /// Общий рендер `notes` + `suggestion`. `resolver` отдаёт
+    /// `(source, path)` для произвольного span'а — единая точка для
+    /// single-file и cross-file путей.
+    fn render_extras(&self, out: &mut String, resolver: &SrcResolver<'_>) {
+        for note in &self.notes {
+            match &note.span {
+                Some(s) => {
+                    let (src, path) = resolver.resolve(s);
+                    let (l, c) = byte_to_line_col(src, s.start);
+                    out.push_str(&format!("\n  note: {} --> {}:{}:{}", note.message, path, l, c));
+                }
+                None => out.push_str(&format!("\n  note: {}", note.message)),
+            }
+        }
+        if let Some(sg) = &self.suggestion {
+            let (src, path) = resolver.resolve(&sg.span);
+            let (l, c) = byte_to_line_col(src, sg.span.start);
+            out.push_str(&format!(
+                "\n  help: {} --> {}:{}:{} [{}]",
+                sg.message, path, l, c, applicability_tag(sg.applicability),
+            ));
+        }
+    }
+}
+
+/// Резолвер `span → (source, path)` для рендера диагностик. Единый
+/// интерфейс для single-file (`render`) и cross-file (`render_with_map`)
+/// путей — span'ы notes/suggestion резолвятся по своему `file_id`.
+enum SrcResolver<'a> {
+    /// Single-file: все span'ы из одного файла.
+    Single { source: &'a str, file: &'a str },
+    /// Cross-file: span резолвится по `file_id` через `SourceMap`.
+    Map(&'a SourceMap),
+}
+
+impl<'a> SrcResolver<'a> {
+    fn resolve(&self, span: &Span) -> (&str, &str) {
+        match self {
+            SrcResolver::Single { source, file } => (source, file),
+            SrcResolver::Map(m) => (m.source_for(span.file_id), m.path_for(span.file_id)),
+        }
+    }
+}
+
+fn applicability_tag(a: Applicability) -> &'static str {
+    match a {
+        Applicability::MachineApplicable => "machine-applicable",
+        Applicability::MaybeIncorrect => "maybe-incorrect",
+        Applicability::HasPlaceholders => "has-placeholders",
     }
 }
 

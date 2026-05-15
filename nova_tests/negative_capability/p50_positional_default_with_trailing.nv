@@ -1,0 +1,26 @@
+// EXPECT_COMPILE_ERROR передаётся только по имени
+//
+// Plan 50 (D102 ревизия): trailing-форма заполняет последний
+// функциональный параметр и из правила keyword-only исключена. Но
+// позиционный аргумент в скобках `(...)`, легший на ДРУГОЙ дефолтный
+// параметр, — по-прежнему ошибка. `factor` имеет дефолт; `run_scaled(5,
+// 3) fn(...)` — `3` лёг позиционно на `factor` → ошибка (trailing
+// заполняет `body`, это не нарушение).
+
+module negative_capability.p50_positional_default_with_trailing
+
+fn identity_fn(n int) -> int => n
+
+// `body` тоже с дефолтом — declaration-rule D102: параметры с дефолтом
+// идут строго после параметров без дефолта; `body` последний.
+fn run_scaled(x int, factor int = 2, body fn(int) -> int = identity_fn) -> int =>
+    body(x * factor)
+
+test "positional defaulted param alongside trailing form rejected" {
+    // trailing-форма заполняет `body` (исключение из правила), но `3`
+    // лёг позиционно на `factor` (дефолтный) → keyword-only ошибка.
+    let _ = run_scaled(5, 3) fn(n int) -> int {
+        n + 1
+    }
+    assert(true)
+}

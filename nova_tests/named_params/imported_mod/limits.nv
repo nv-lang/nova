@@ -1,0 +1,8 @@
+// Plan 50 Ф.2: второй peer folder-module `named_params.imported_mod`.
+// Нужен, чтобы папка содержала ≥2 peer-файла с одинаковым module name —
+// тогда `is_folder_module_peer` истинно и файлы не запускаются как
+// standalone-тесты (отсутствие `test`-блоков не даёт CC-FAIL).
+
+module named_params.imported_mod
+
+export const MAX_RETRIES int = 10

@@ -1,0 +1,76 @@
+// Plan 50 (D102 ревизия): параметр с дефолтом — keyword-only на месте
+// вызова. Positive smoke — все допустимые формы после ревизии.
+
+module named_params.keyword_only
+
+fn connect(host str, port int = 8080, tls bool = false) -> int {
+    let t = if tls { 1 } else { 0 }
+    host.len + port + t
+}
+
+test "дефолтный параметр по имени — ок" {
+    assert(connect("ab", port: 9000) == 2 + 9000 + 0)
+}
+
+test "дефолтный параметр опущен — ок" {
+    assert(connect("ab") == 2 + 8080 + 0)
+}
+
+test "обязательный позиционно + дефолтный по имени — ок" {
+    assert(connect("ab", tls: true) == 2 + 8080 + 1)
+}
+
+test "обязательный по имени — keyword-only не запрещает именовать обязательные" {
+    assert(connect(host: "ab", port: 80) == 2 + 80 + 0)
+}
+
+test "все дефолтные по имени, переставлены — ок" {
+    assert(connect("ab", tls: true, port: 80) == 2 + 80 + 1)
+}
+
+// --- trailing-форма на последнем функциональном параметре с дефолтом ---
+//
+// D102: trailing-форма синтаксически отлична от позиционного аргумента
+// в (...), поэтому заполнение последнего функционального параметра
+// trailing-формой допустимо ДАЖЕ если у него есть дефолт. Дефолт —
+// ссылка на именованную функцию (fn-value).
+
+fn identity_fn(n int) -> int => n
+
+fn run_with(x int, body fn(int) -> int = identity_fn) -> int =>
+    body(x)
+
+test "trailing-форма заполняет дефолтный последний функциональный параметр — ок" {
+    let v = run_with(7) fn(n int) -> int {
+        n * n
+    }
+    assert(v == 49)
+}
+
+test "дефолтный последний функциональный параметр опущен — используется дефолт" {
+    // body опущен → дефолт `identity_fn` → идентичность.
+    assert(run_with(7) == 7)
+}
+
+// --- вызов через fn-value: позиционный, без дефолтов ---
+//
+// Тип `fn(int, int) -> int` не несёт ни имён параметров, ни дефолтов
+// (стираются при получении fn-value). Вызов через fn-value — всегда
+// чисто позиционный; дефолтных параметров там быть не может, правило
+// keyword-only неприменимо. Закреплено тестом — поведение намеренное.
+
+fn add_scaled(a int, b int, scale int = 1) -> int =>
+    (a + b) * scale
+
+fn apply2(f fn(int, int) -> int, x int, y int) -> int =>
+    f(x, y)
+
+test "вызов через fn-value — позиционный, без дефолтов" {
+    // `add_scaled` как значение fn(int,int,int)->int НЕ берётся (3-арный
+    // с дефолтом). Берём 2-арную функцию: fn-value стирает сигнатуру до
+    // позиционной.
+    let total = apply2(combine2, 3, 4)
+    assert(total == 7)
+}
+
+fn combine2(a int, b int) -> int => a + b

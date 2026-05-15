@@ -1,0 +1,12 @@
+// Plan 50 Ф.2: folder-module peer — importable callee с дефолтными
+// параметрами. Пара к `../imported_named_use.nv`. Folder-module
+// (2 peer-файла, один module name) — runner исключает peers из
+// standalone-прогона, поэтому отсутствие `test`-блоков здесь не
+// порождает CC-FAIL.
+
+module named_params.imported_mod
+
+export fn configure(name str, retries int = 3, verbose bool = false) -> int {
+    let v = if verbose { 1000 } else { 0 }
+    name.len + retries * 10 + v
+}

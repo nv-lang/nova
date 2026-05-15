@@ -1,0 +1,70 @@
+// Plan 53: record-destructuring в let-биндингах.
+// `let { tx, rx } = ch` вместо `let tx = ch.tx; let rx = ch.rx`.
+
+module syntax.let_destructure_record
+
+type Pair {
+    tx int
+    rx int
+}
+
+type Outer {
+    inner Pair
+    label int
+}
+
+fn make_pair(a int, b int) -> Pair => { tx: a, rx: b }
+
+test "shorthand basic" {
+    let { tx, rx } = make_pair(1, 2)
+    assert(tx == 1)
+    assert(rx == 2)
+}
+
+test "type-prefix" {
+    let p = Pair { tx: 5, rx: 6 }
+    let Pair { tx, rx } = p
+    assert(tx == 5)
+    assert(rx == 6)
+}
+
+test "rest .. без bind" {
+    let p = Pair { tx: 7, rx: 8 }
+    let { tx, .. } = p
+    assert(tx == 7)
+}
+
+test "renaming через под-pattern" {
+    let p = Pair { tx: 9, rx: 10 }
+    let { tx: sender, rx: receiver } = p
+    assert(sender == 9)
+    assert(receiver == 10)
+}
+
+test "nested destructure" {
+    let o = Outer { inner: Pair { tx: 11, rx: 12 }, label: 42 }
+    let { inner: { tx, rx }, label } = o
+    assert(tx == 11)
+    assert(rx == 12)
+    assert(label == 42)
+}
+
+test "одиночный eval RHS — порядок side-effects" {
+    let count = []int.new()
+    let p = {
+        count.push(1)
+        Pair { tx: 100, rx: 200 }
+    }
+    let { tx, rx } = p
+    assert(tx == 100)
+    assert(rx == 200)
+    // p eval'нулся один раз; count.push выполнен ровно один раз.
+    assert(count.len == 1)
+}
+
+test "Channel.new use case" {
+    let { tx, rx } = Channel.new(1)
+    tx.close()
+    let _ = rx
+    assert(true)
+}

@@ -408,12 +408,17 @@ impl Interpreter {
                     for a in args {
                         match a {
                             CallArg::Item(e) => arg_values.push(self.eval_expr_value(e, env)?),
-                            // Plan 46 (D102): named-аргумент в treewalk-interp.
-                            // Bootstrap: eval value, push позиционно. Полная
-                            // раскладка named→param-order делается в codegen
-                            // (основной путь). interp — вторичный, named args
-                            // здесь работают для естественного порядка; reorder
-                            // не делается (см. simplifications [M-interp-named]).
+                            // Plan 46 (D102) / Plan 50 Ф.2: named-аргумент в
+                            // treewalk-interp. `cmd_run` делает
+                            // resolve_imports_inline + callnorm перед
+                            // интерпретацией — поэтому для любого резолвимого
+                            // callee (включая импортированные) `callnorm`
+                            // переписывает named→positional в param-order, и
+                            // interp получает чистый `CallArg::Item`. Этот arm
+                            // остаётся только для callee, которые `callnorm` не
+                            // смог резолвить (ambiguous/overloaded в bootstrap
+                            // fn_decls) — там сигнатуры нет, позиционный eval —
+                            // единственный и консистентный вариант.
                             CallArg::Named { value, .. } => {
                                 arg_values.push(self.eval_expr_value(value, env)?);
                             }

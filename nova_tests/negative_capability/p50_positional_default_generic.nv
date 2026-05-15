@@ -1,0 +1,17 @@
+// EXPECT_COMPILE_ERROR передаётся только по имени
+//
+// Plan 50 (D102 ревизия): правило keyword-only применяется к
+// generic-функциям — биндинг идёт по той же сигнатуре. `pick` —
+// generic `[T]`, `idx` имеет дефолт. `pick(xs, 1)` — `1` лёг позиционно
+// на `idx` → ошибка; корректно — `pick(xs, idx: 1)`.
+
+module negative_capability.p50_positional_default_generic
+
+fn pick[T](items []T, idx int = 0) -> T =>
+    items[idx]
+
+test "positional arg on defaulted param of generic fn rejected" {
+    let xs = [10, 20, 30]
+    let _ = pick(xs, 1)
+    assert(true)
+}

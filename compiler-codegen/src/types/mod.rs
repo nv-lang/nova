@@ -302,6 +302,11 @@ struct BoundCtx<'a> {
     /// есть type-инфер аргументов).
     fn_decls: HashMap<String, Vec<&'a FnDecl>>,
     method_table: HashMap<String, HashMap<String, Vec<&'a FnDecl>>>,
+    /// Plan 53: имена sum-variant'ов (для refutability check let-pattern).
+    /// `type Color | Red | Green` → {"Red", "Green"}. Используется чтобы
+    /// отличить `let Color.Red { x } = obj` (refutable, error) от
+    /// `let Pair { x, y } = p` (irrefutable record).
+    sum_variant_names: std::collections::HashSet<String>,
 }
 
 impl<'a> BoundCtx<'a> {
@@ -309,6 +314,7 @@ impl<'a> BoundCtx<'a> {
         let mut protocol_specs = HashMap::new();
         let mut fn_decls: HashMap<String, Vec<&FnDecl>> = HashMap::new();
         let mut method_table: HashMap<String, HashMap<String, Vec<&FnDecl>>> = HashMap::new();
+        let mut sum_variant_names: std::collections::HashSet<String> = std::collections::HashSet::new();
 
         let mut effect_decls: HashMap<String, &TypeDecl> = HashMap::new();
         for item in &module.items {
@@ -323,6 +329,12 @@ impl<'a> BoundCtx<'a> {
                         }
                         TypeDeclKind::Effect(_) => {
                             effect_decls.insert(t.name.clone(), t);
+                        }
+                        // Plan 53: sum-variants для refutability check.
+                        TypeDeclKind::Sum(variants) => {
+                            for v in variants {
+                                sum_variant_names.insert(v.name.clone());
+                            }
                         }
                         _ => {}
                     }
@@ -344,7 +356,7 @@ impl<'a> BoundCtx<'a> {
             }
         }
 
-        BoundCtx { protocol_specs, effect_decls, fn_decls, method_table }
+        BoundCtx { protocol_specs, effect_decls, fn_decls, method_table, sum_variant_names }
     }
 
     fn check_module(&self, module: &Module, errors: &mut Vec<Diagnostic>) {
@@ -408,6 +420,12 @@ impl<'a> BoundCtx<'a> {
             Stmt::Expr(e) => self.walk_expr(e, scope, errors),
             Stmt::Let(d) => {
                 self.walk_expr(&d.value, scope, errors);
+                // Plan 53: refutable pattern в `let` — compile error.
+                // Допустимы только irrefutable patterns (Ident, Wildcard,
+                // Tuple, plain-Record). Refutable (Literal, Variant, Or,
+                // Array, Record-к-sum-variant) ловим здесь — codegen и
+                // interp ассамят irrefutable.
+                self.check_let_pattern_irrefutable(&d.pattern, errors);
                 // Регистрируем simple-Ident pattern с inferred типом.
                 if let Some(name) = pattern_simple_name(&d.pattern) {
                     let inferred = d.ty.clone()
@@ -441,7 +459,7 @@ impl<'a> BoundCtx<'a> {
         // Проверяем сам call перед рекурсией в args (порядок не важен).
         self.check_call_bounds(e, scope, errors);
         // Plan 46 (D102): argument binding diagnostics.
-        self.check_call_argbind(e, errors);
+        self.check_call_argbind(e, scope, errors);
         match &e.kind {
             ExprKind::Call { func, args, trailing } => {
                 self.walk_expr(func, scope, errors);
@@ -695,6 +713,7 @@ impl<'a> BoundCtx<'a> {
     fn check_call_argbind(
         &self,
         e: &Expr,
+        scope: &HashMap<String, TypeRef>,
         errors: &mut Vec<Diagnostic>,
     ) {
         let ExprKind::Call { func, args, trailing } = &e.kind else { return; };
@@ -722,26 +741,19 @@ impl<'a> BoundCtx<'a> {
                     _ => return,
                 }
             }
-            // Plan 46 Ф.3: instance-method `obj.method(...)`. Без
-            // type-inference резолвим по уникальному имени метода: если
-            // метод с этим именем есть ровно на одном типе без overload
-            // — берём его сигнатуру. Иначе (несколько типов / overload)
-            // — пропускаем (codegen резолвит через type-info).
-            ExprKind::Member { name: method_name, .. } => {
-                let mut found: Option<&FnDecl> = None;
-                let mut ambiguous = false;
-                for methods in self.method_table.values() {
-                    if let Some(overloads) = methods.get(method_name) {
-                        for f in overloads {
-                            if found.is_some() {
-                                ambiguous = true;
-                            }
-                            found = Some(f);
-                        }
-                    }
-                }
-                if ambiguous { return; }
-                match found {
+            // Plan 46 Ф.3 + Plan 50 follow-up: instance-method `obj.method(...)`.
+            // Первая попытка — receiver-type inference (best-effort через
+            // `infer_arg_ty`): если тип `obj` известен (Ident в scope,
+            // record-литерал, литерал-примитив) — точный резолв
+            // `method_table[type][method]`. Закрывает gap при collision
+            // имён методов: `Box.scaled` vs `Cube.scaled` с дефолтами
+            // больше не пропускает keyword-only диагностику.
+            // Fallback — name-only резолв (как было в Plan 46): уникальное
+            // имя метода через все типы. Для остальных случаев codegen
+            // резолвит через type-info.
+            ExprKind::Member { obj, name: method_name } => {
+                let resolved = self.resolve_instance_method(obj, method_name, scope);
+                match resolved {
                     Some(f) => &f.params,
                     None => return,
                 }
@@ -774,13 +786,239 @@ impl<'a> BoundCtx<'a> {
             callee_params
         };
         // Запускаем binding. Ошибка → diagnostic.
-        if let Err(err) = crate::argbind::bind_call_args(effective_params, args) {
-            let span = {
-                let s = err.span();
-                if s == crate::diag::Span::dummy() { e.span } else { s }
-            };
-            errors.push(Diagnostic::new(err.message(), span));
+        //
+        // Precedence (Plan 50): структурные ошибки argbind — арность,
+        // неизвестное имя, двойная привязка, позиционный-после-именованного
+        // — fail-fast в `bind_call_args` и эмитятся первыми. Правило
+        // keyword-only (Plan 50, D102 №1) проверяется ТОЛЬКО когда
+        // структура валидна (`Ok(bindings)`) — оно последнее в порядке
+        // диагностик.
+        match crate::argbind::bind_call_args(effective_params, args) {
+            Err(err) => {
+                let span = {
+                    let s = err.span();
+                    if s == crate::diag::Span::dummy() { e.span } else { s }
+                };
+                errors.push(Diagnostic::new(err.message(), span));
+            }
+            Ok(bindings) => {
+                // Plan 50 (D102 ревизия): параметр с дефолтом — keyword-only.
+                // Позиционная привязка к дефолтному параметру — ошибка.
+                // Trailing-форма исключена структурно: trailing-bound
+                // параметр уже снят из `effective_params` выше, поэтому
+                // в `bindings` его нет — заполнение дефолтного последнего
+                // параметра trailing-формой не считается нарушением.
+                //
+                // Отдельная диагностика на КАЖДЫЙ нарушающий аргумент
+                // (не «первый и стоп») — error recovery без каскада:
+                // просто продолжаем цикл.
+                self.check_keyword_only(effective_params, args, &bindings, errors);
+            }
         }
+    }
+
+    /// Plan 50 (D102 №1): после успешного argbind — найти позиционные
+    /// аргументы, легшие на параметры с дефолтом, и эмитить production-grade
+    /// диагностику на каждый (имя параметра, `note: declared here`,
+    /// machine-applicable structured suggestion `name: <expr>`).
+    fn check_keyword_only(
+        &self,
+        effective_params: &[Param],
+        args: &[CallArg],
+        bindings: &[crate::argbind::ArgBinding],
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        use crate::argbind::ArgBinding;
+        use crate::diag::{Applicability, Span, Suggestion};
+        for (pi, binding) in bindings.iter().enumerate() {
+            let ArgBinding::Positional(ai) = binding else { continue; };
+            let param = &effective_params[pi];
+            if param.default.is_none() {
+                continue;
+            }
+            // Нарушение: позиционный аргумент `args[*ai]` лёг на
+            // дефолтный параметр `param`.
+            let arg_span = args[*ai].expr().span;
+            // Structured suggestion — чистая ВСТАВКА `<name>: ` в начале
+            // выражения-аргумента (span нулевой ширины). Source-независимо:
+            // producer не читает исходник. Machine-applicable — edit
+            // корректен и авто-применим (`nova fix` / LSP code-action).
+            let insert_at = Span::with_file(arg_span.start, arg_span.start, arg_span.file_id);
+            let suggestion = Suggestion {
+                message: format!("pass `{}` by name", param.name),
+                span: insert_at,
+                replacement: format!("{}: ", param.name),
+                applicability: Applicability::MachineApplicable,
+            };
+            let diag = Diagnostic::new(
+                format!(
+                    "параметр `{}` имеет значение по умолчанию — \
+                     передаётся только по имени (D102)",
+                    param.name,
+                ),
+                arg_span,
+            )
+            .with_note_at(
+                format!("параметр `{}` объявлен здесь", param.name),
+                param.span,
+            )
+            .with_note(
+                "параметры с дефолтом — keyword-only: обязательный — \
+                 позиционно, опциональный — по имени",
+            )
+            .with_suggestion(suggestion);
+            errors.push(diag);
+        }
+    }
+
+    /// Plan 53: refutability check для `let`-pattern. Допустимы только
+    /// irrefutable patterns:
+    /// - `Ident`, `Wildcard`
+    /// - `Tuple(pats)` — рекурсивно irrefutable
+    /// - `Record` без type_path ИЛИ с type_path к record-типу (не
+    ///   sum-variant) — рекурсивно irrefutable для под-pattern'ов
+    /// - `Binding { inner, .. }` — inner irrefutable
+    ///
+    /// Refutable (compile error):
+    /// - `Literal`, `Variant`, `Or`, `Array` (всегда refutable)
+    /// - `Record` с type_path к sum-variant (нужен tag-check в runtime)
+    ///
+    /// Production-grade diagnostic: тип нарушения + подсказка `if let
+    /// <pat> = <expr> { ... }` / `match`.
+    fn check_let_pattern_irrefutable(&self, pat: &Pattern, errors: &mut Vec<Diagnostic>) {
+        match pat {
+            Pattern::Ident { .. } | Pattern::Wildcard(_) => {}
+            Pattern::Tuple(pats, _) => {
+                for p in pats {
+                    self.check_let_pattern_irrefutable(p, errors);
+                }
+            }
+            Pattern::Record { type_path, fields, span, .. } => {
+                // Sum-variant в type_path — refutable.
+                if let Some(path) = type_path {
+                    if let Some(last) = path.last() {
+                        if self.sum_variant_names.contains(last) {
+                            errors.push(
+                                Diagnostic::new(
+                                    format!(
+                                        "refutable pattern в `let`: `{}` — sum-variant, \
+                                         совпадение не гарантировано (D52). Используйте \
+                                         `if let` / `match`",
+                                        path.join("."),
+                                    ),
+                                    *span,
+                                )
+                                .with_note(
+                                    "Plan 53: `let` принимает только irrefutable patterns \
+                                     (Ident, Wildcard, Tuple, plain-Record). Sum-variants \
+                                     требуют tag-check в runtime — `let` не может его сделать.",
+                                ),
+                            );
+                            return;
+                        }
+                    }
+                }
+                // Рекурсивно проверяем под-patterns полей.
+                for f in fields {
+                    if let Some(sub) = &f.pattern {
+                        self.check_let_pattern_irrefutable(sub, errors);
+                    }
+                }
+            }
+            Pattern::Binding { inner, .. } => {
+                self.check_let_pattern_irrefutable(inner, errors);
+            }
+            Pattern::Literal(_, span) => {
+                errors.push(Diagnostic::new(
+                    "refutable pattern в `let`: literal — совпадение не гарантировано. \
+                     Используйте `if let` / `match` либо обычный `let x = ...; if x == ...`",
+                    *span,
+                ));
+            }
+            Pattern::Variant { path, span, .. } => {
+                errors.push(
+                    Diagnostic::new(
+                        format!(
+                            "refutable pattern в `let`: `{}` — variant-pattern, \
+                             совпадение не гарантировано (D52/D59). Используйте \
+                             `if let` / `match`",
+                            path.join("."),
+                        ),
+                        *span,
+                    )
+                    .with_note(
+                        "Plan 53: variant-patterns требуют tag-check в runtime — \
+                         `let` гарантирует binding, не fallible match.",
+                    ),
+                );
+            }
+            Pattern::Or { span, .. } => {
+                errors.push(Diagnostic::new(
+                    "refutable pattern в `let`: alternation `|` — совпадение не \
+                     гарантировано. Используйте `if let` / `match`",
+                    *span,
+                ));
+            }
+            Pattern::Array { span, .. } => {
+                errors.push(Diagnostic::new(
+                    "refutable pattern в `let`: array — длина не гарантирована. \
+                     Используйте `if let` / `match` либо индексацию `xs[0]`, `xs.len`",
+                    *span,
+                ));
+            }
+        }
+    }
+
+    /// Plan 50 follow-up: резолв `obj.method` для argbind-диагностик.
+    ///
+    /// Сначала best-effort receiver-type inference через `infer_arg_ty`
+    /// — если тип `obj` известен (Ident в scope / record-литерал /
+    /// литерал-примитив), точный резолв через `method_table[type][name]`.
+    /// Это закрывает gap при коллизии имён методов между типами
+    /// (`Box.scaled` vs `Cube.scaled` с дефолтами): без inference оба
+    /// попадали в name-only поиск, тот видел >1 sig → ambiguous → skip,
+    /// keyword-only диагностика терялась.
+    ///
+    /// Fallback — name-only через все типы (поведение Plan 46): подходит
+    /// когда тип receiver'а не выводим (сложное выражение / generic).
+    /// Уникальное имя метода → один тип → один sig → используем его.
+    /// Иначе — пропускаем, codegen резолвит через type-info.
+    fn resolve_instance_method(
+        &self,
+        obj: &Expr,
+        method_name: &str,
+        scope: &HashMap<String, TypeRef>,
+    ) -> Option<&FnDecl> {
+        // Попытка 1: receiver-type inference.
+        if let Some(recv_ty) = Self::infer_arg_ty(obj, scope) {
+            if let TypeRef::Named { path, .. } = &recv_ty {
+                if path.len() == 1 {
+                    if let Some(methods) = self.method_table.get(&path[0]) {
+                        if let Some(overloads) = methods.get(method_name) {
+                            if let [single] = overloads.as_slice() {
+                                return Some(single);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // Попытка 2: name-only fallback. Уникальное имя метода через
+        // все типы → один sig, используем.
+        let mut found: Option<&FnDecl> = None;
+        let mut ambiguous = false;
+        for methods in self.method_table.values() {
+            if let Some(overloads) = methods.get(method_name) {
+                for f in overloads {
+                    if found.is_some() {
+                        ambiguous = true;
+                    }
+                    found = Some(f);
+                }
+            }
+        }
+        if ambiguous { return None; }
+        found
     }
 
     /// Если param's TypeRef — простой `Named{path: [T]}` где T в

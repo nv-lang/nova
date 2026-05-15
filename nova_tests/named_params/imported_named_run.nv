@@ -1,0 +1,30 @@
+// Plan 50 Ф.2 ([M-interp-named] закрытие): `main`-форма того же
+// сценария, что `imported_named_use.nv`, — но для interp-пути.
+//
+// `nova run` (treewalk-interp) исполняет `main`. `cmd_run` теперь делает
+// resolve_imports_inline + callnorm ПЕРЕД интерпретацией — поэтому
+// переставленные named args для ИМПОРТИРОВАННОГО callee раскладываются
+// в param-order корректно. Раньше импортированный callee не
+// нормализовался → reorder давал неверный результат ([M-interp-named]).
+//
+// Этот файл прогоняется и codegen-suite (через `EXPECT_STDOUT`), и
+// nova-cli integration-тестом `tests/run_interp_named.rs` (через
+// `nova run`) — двойное покрытие обоих путей.
+//
+// configure(name, retries=3, verbose=false) = name.len + retries*10 + (verbose?1000:0)
+//   configure("ab")                          → 2 + 30 + 0    = 32
+//   configure("ab", verbose:true, retries:5) → 2 + 50 + 1000 = 1052  (reorder)
+//   configure("abc", retries:2)              → 3 + 20 + 0    = 23
+
+module named_params.imported_named_run
+
+import nova_tests.named_params.imported_mod.{configure}
+
+// EXPECT_STDOUT p50-interp 32 1052 23
+
+fn main() Io -> () {
+    let a = configure("ab")
+    let b = configure("ab", verbose: true, retries: 5)
+    let c = configure("abc", retries: 2)
+    println("p50-interp ${a} ${b} ${c}")
+}
