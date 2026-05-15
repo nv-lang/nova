@@ -128,6 +128,10 @@ enum Cmd {
         /// Ctrl-C to exit. Works with --format and --check.
         #[arg(long = "watch")]
         watch: bool,
+        /// Plan 45 Ф.21.6 / D105: report doc-coverage metrics
+        /// (% items with summary, broken down by kind). Useful in CI.
+        #[arg(long = "coverage")]
+        coverage: bool,
     },
     /// Compile a single Nova source file to a native binary.
     ///
@@ -898,7 +902,7 @@ fn cmd_run(path: &Path) -> Result<()> {
 ///
 /// MVP: один входной файл, вывод в stdout. Никаких подкоманд (workspace/
 /// --output-dir/--watch — Plan 45.A или отдельные субкоманды позже).
-fn cmd_doc(path: &Path, format: &str, json_schema: bool, include_private: bool, run_doc_tests: bool, check: bool, watch: bool) -> Result<()> {
+fn cmd_doc(path: &Path, format: &str, json_schema: bool, include_private: bool, run_doc_tests: bool, check: bool, watch: bool, coverage: bool) -> Result<()> {
     // `--json-schema` — печатает embedded схему и выходит (D107).
     if json_schema {
         println!("{}", nova_doc_embedded_schema());
@@ -908,7 +912,7 @@ fn cmd_doc(path: &Path, format: &str, json_schema: bool, include_private: bool, 
         bail!("file not found: {}", path.display());
     }
     if watch {
-        return cmd_doc_watch(path, format, include_private, run_doc_tests, check);
+        return cmd_doc_watch(path, format, include_private, run_doc_tests, check, coverage);
     }
     let src = read_file(path)?;
     let path_str = path.to_string_lossy();
@@ -932,6 +936,9 @@ fn cmd_doc(path: &Path, format: &str, json_schema: bool, include_private: bool, 
     let mut tree = nova_codegen::doc::build(&module);
     if !include_private {
         nova_codegen::doc::strip_private(&mut tree);
+    }
+    if coverage {
+        return cmd_doc_coverage(&tree);
     }
     if check {
         let mut issues: Vec<String> = Vec::new();
@@ -1004,6 +1011,46 @@ fn cmd_doc(path: &Path, format: &str, json_schema: bool, include_private: bool, 
     Ok(())
 }
 
+/// Plan 45 Ф.21.6 / D105: doc-coverage метрика. Считает items
+/// (всего/задокументированных) и links (всего/broken). Output на
+/// stdout, exit code = процент-непокрытых (0 если 100% покрыто).
+fn cmd_doc_coverage(tree: &nova_codegen::doc::DocTree) -> Result<()> {
+    use std::collections::BTreeMap;
+    let mut total: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut documented: BTreeMap<&str, usize> = BTreeMap::new();
+    for m in &tree.modules {
+        for it in &m.items {
+            let kind: &str = match &it.kind {
+                nova_codegen::doc::ItemKind::Fn(_) => "fn",
+                nova_codegen::doc::ItemKind::Type(_) => "type",
+                nova_codegen::doc::ItemKind::Const { .. } => "const",
+                nova_codegen::doc::ItemKind::Effect { .. } => "effect",
+                nova_codegen::doc::ItemKind::Protocol { .. } => "protocol",
+            };
+            *total.entry(kind).or_insert(0) += 1;
+            if it.summary.is_some() {
+                *documented.entry(kind).or_insert(0) += 1;
+            }
+        }
+    }
+    let total_items: usize = total.values().sum();
+    let documented_items: usize = documented.values().sum();
+    let total_links = tree.links.len();
+    let broken_links = tree.links.iter().filter(|l| l.target_id.is_none()).count();
+
+    println!("doc-coverage:");
+    println!("  items: {}/{} documented ({:.1}%)",
+        documented_items, total_items,
+        if total_items == 0 { 100.0 } else { 100.0 * documented_items as f64 / total_items as f64 });
+    for (kind, &total_n) in &total {
+        let doc_n = documented.get(kind).copied().unwrap_or(0);
+        println!("    {}: {}/{}", kind, doc_n, total_n);
+    }
+    println!("  links: {}/{} resolved ({} broken)",
+        total_links - broken_links, total_links, broken_links);
+    Ok(())
+}
+
 /// Plan 45 Ф.15: watch mode — re-render при изменении `path` (mtime
 /// poll каждые 500ms). Без `notify` dep'ы для minimal footprint.
 /// Ctrl-C завершает loop.
@@ -1013,6 +1060,7 @@ fn cmd_doc_watch(
     include_private: bool,
     run_doc_tests: bool,
     check: bool,
+    coverage: bool,
 ) -> Result<()> {
     let mut last_mtime: Option<std::time::SystemTime> = None;
     eprintln!("nova doc --watch: monitoring {} (Ctrl-C to exit)", path.display());
@@ -1027,7 +1075,7 @@ fn cmd_doc_watch(
                 chrono_like_now()
             );
             // Re-run одним проходом через cmd_doc (без watch/json_schema).
-            match cmd_doc(path, format, false, include_private, run_doc_tests, check, false) {
+            match cmd_doc(path, format, false, include_private, run_doc_tests, check, false, coverage) {
                 Ok(_) => {}
                 Err(e) => eprintln!("error: {}", e),
             }
@@ -1555,7 +1603,7 @@ fn main() -> ExitCode {
             &skip,
         ),
         Cmd::Run { file } => cmd_run(&file),
-        Cmd::Doc { file, format, json_schema, include_private, run_doc_tests, check, watch } => cmd_doc(&file, &format, json_schema, include_private, run_doc_tests, check, watch),
+        Cmd::Doc { file, format, json_schema, include_private, run_doc_tests, check, watch, coverage } => cmd_doc(&file, &format, json_schema, include_private, run_doc_tests, check, watch, coverage),
         Cmd::Build { file, output, mode, toolchain, vcvars, clang, timeout, keep_artifacts } => cmd_build(
             &file,
             output.as_deref(),

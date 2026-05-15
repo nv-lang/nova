@@ -42,9 +42,8 @@ Critical-review revealed gaps: MVP формально закрыт, но **не 
 
 | # | Что | Status |
 |---|---|---|
-| Ф.21.5 | **Schema validation в CI test** — output может разойтись с embedded schema, никто не заметит. Нужен cargo-test, валидирующий все golden fixtures через python-jsonschema (или native Rust validator). | ✅ done |
-| Ф.21.6 | **CI globstar fix** — `for f in **/sample.nv` без `shopt -s globstar` работает случайно (один уровень вложенности). | ✅ done |
-| Ф.21.7 | **`--coverage` метрика** — процент задокументированных export items + JSON output. Rustdoc / godoc / typedoc все имеют. | ✅ done |
+| Ф.21.5 | **Schema validation в CI test** — output может разойтись с embedded schema, никто не заметит. | ✅ done — `tests/doc_schema_shape.rs` native Rust JSON parser + structural validator (9 tests, no new deps); CI workflow вызывает |
+| Ф.21.6 | **CI globstar fix + `--coverage` flag** — `**/sample.nv` без `shopt -s globstar` работало случайно. `--coverage` — процент задокументированных items. | ✅ done — `shopt -s globstar` + явный `shell: bash`; `nova doc <file> --coverage` показывает `items: N/M documented (X%)` per kind + broken-links count |
 | Ф.21.8 | **Doc-test diagnostics quality** — сейчас `parse error: <msg>` без span/snippet. Rustdoc показывает rust-style diagnostic. | ⏳ pending |
 | Ф.21.9 | **Workspace mode `nova doc <dir>`** — multi-file unified DocTree. Сейчас single-file only — main-stream usage невозможен. | ⏳ pending |
 
