@@ -20,7 +20,7 @@
 | 06 | [06-iter-protocol-codegen.md](06-iter-protocol-codegen.md) | `Iter[T]` protocol в codegen — общий for-in (D58 compliance) | ✅ выполнено |
 | 07 | [07-as-cast-saturation.md](07-as-cast-saturation.md) | `as`-cast saturation для float→int + spec D54 narrowing semantics | ✅ выполнено |
 | 08 | [08-from-into-conversions.md](08-from-into-conversions.md) | `From`/`Into` framework + char/byte/bool + strict if-cond + conversions.md | ✅ почти выполнено, Ф.6 отложен |
-| 09 | [09-clang-migration.md](09-clang-migration.md) | Миграция Windows-сборки с MSVC на Clang/LLVM (10-15% perf) | активный, не начат |
+| 09 | [09-clang-migration.md](09-clang-migration.md) | Миграция Windows-сборки с MSVC на Clang/LLVM (10-15% perf) | ✅ Ф.1-Ф.5 закрыты 2026-05-11 (Clang — default toolchain: `Auto` = Clang > MSVC > GCC); Ф.6 бенчмарки отложены |
 | 10 | [10-pgo-integration.md](10-pgo-integration.md) | PGO integration (stub, после плана 09) — 15-30% perf на hot path | stub / future |
 | 11 | [11-method-values-and-overload.md](11-method-values-and-overload.md) | Method values + overload по типу аргумента (закрывает Q-overloading вариант 1) | ✅ ЗАКРЫТ (Ф.8 sweep std — optional, не блокер) |
 | 12 | [12-builtins-driven-codegen.md](12-builtins-driven-codegen.md) | builtins.nv-driven external dispatch (Q-codegen-builtins-cleanup) | ✅ ЗАКРЫТ (Ф.6 type-checker gate отложен; Ф.4.5 auto-derive ❌ ОТМЕНЕНО Plan 13 Ф.9.5) |
