@@ -6402,3 +6402,21 @@ bootstrap-баг). Новая caller-owned: токен создаётся `Cance
   тело и не флашили `lambda_forward_decls` → `spawn` внутри generic-функции
   → ctx-typedef после использования → «undeclared NovaSpawnCtx_*». Fix:
   буферизация + flush (как emit_fn/emit_test).
+
+**Plan 48 Ф.7.7 codegen-фиксы (2026-05-15, protocol-bounded dispatch):**
+
+- Fix G: two-pass inference в `resolve_mono_type_args`. `contains_point[K]([]K,
+  K)` — Array-параметр `[]K` давал K=`nova_int` (erased array), перезаписывая
+  K=`Nova_GrmPoint*` из именованного параметра `target K`. Фикс: сначала
+  non-array параметры, потом array параметры (уже установленное K не
+  перезаписывается).
+- Fix H: pre-populate `array_element_types` в `emit_monomorphized_fn` для
+  `[]K` параметров с конкретным K-типом. Без этого `emit_for` Case 2 не
+  знал тип элемента при итерации и не эмитил cast `(Nova_GrmPoint*)`.
+- Fix I: сужение `has_type_param_params` stub в `emit_generic_method_erased`.
+  D109 стабировал все методы с bare type-param параметрами (включая
+  `Result2[T].unwrap_or(fallback T)`), хотя unwrap_or просто возвращает
+  fallback без вызовов методов на нём. Erased stub возвращал NULL →
+  `*(nova_str*)(NULL)` → SIGSEGV. Фикс: stub только если тип-получатель
+  имеет Array-поля с type-param element types (HashMap `buckets []Slot[K,V]`).
+  Простые generic типы (Result2, Option, Wrapper) — erased body валиден.

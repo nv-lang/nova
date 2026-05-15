@@ -11028,3 +11028,61 @@ monomorphization (K заменяется конкретным C-типом, meth
 - docs/plans/48-closures-in-generics.md (статус обновлён)
 - docs/simplifications.md ([M-mono-error-not-fallback] → ЗАКРЫТО)
 - docs/project-creation.txt (эта секция)
+
+================================================================================
+2026-05-15 Ф.7.7 финал: Fix G/H/I — generic_record_mono 10/10 PASS
+================================================================================
+
+Продолжение D109. После коммита 2ffcf1a11f8 `generic_record_mono` оставался
+в RUN-FAIL (SIGSEGV при запуске бинарника). Три независимых фикса.
+
+### Fix G: two-pass inference в resolve_mono_type_args
+
+Проблема: `contains_point[K GrmEq](items []K, target K)` при вызове
+`contains_point(pts, GrmPoint {...})` — инференция типа K из параметра
+`items []K` (Array) давала K = `nova_int` (erased тип array), что
+перезаписывало правильное K = `Nova_GrmPoint*` из параметра `target K`.
+
+Фикс: два прохода по параметрам — сначала non-Array (сразу устанавливают
+K = `Nova_GrmPoint*`), потом Array (не перезаписывают уже установленный K).
+
+### Fix H: pre-populate array_element_types в emit_monomorphized_fn
+
+Проблема: для параметра `items []K` с конкретным K = `Nova_GrmPoint*`,
+`emit_for` Case 2 не знал тип элемента при итерации и не эмитил cast.
+Итерация давала `nova_int it = arr->data[i]` вместо
+`Nova_GrmPoint* it = (Nova_GrmPoint*)arr->data[i]`.
+
+Фикс: в начале `emit_monomorphized_fn` для каждого `[]K`-параметра с
+конкретным K — вставляем `array_element_types[param_name] = K_c_type`.
+`emit_for` Case 2 видит запись и эмитит правильный cast.
+
+### Fix I: сужение has_type_param_params stub
+
+Проблема: D109 добавил в `emit_generic_method_erased` stub для ЛЮБОГО
+generic метода с bare type-param параметром (`fallback T`, `v T` и т.д.)
+— чтобы не генерировать erased тело с вызовами `key.hash()`/`key.eq()`
+на `void*` для HashMap. Но это также заглушало `Result2[T].unwrap_or(
+fallback T)` — метод, который просто возвращает fallback без вызовов
+методов на нём. Erased stub возвращал NULL → `*(nova_str*)(NULL)` → SIGSEGV.
+
+Корень ошибки: `Result2[T]` — sum type, тестируется через erased
+representation (`Nova_Result2*` + `void*` payload). Monomorphized версии
+не существуют, 5b dispatch не применяется → вызывается erased метод
+напрямую → stub → crash.
+
+Фикс: добавить условие `has_array_fields_with_type_params` — stub только
+если тип-получатель имеет Array-поля с type-param element types (HashMap
+с `buckets []Slot[K,V]`, Boehm-scan-unsafe). Простые generic типы
+(Result2, Wrapper, Pair) не имеют Array-полей → их erased body корректен.
+
+### Результат
+
+`generic_record_mono`: **10/10 PASS**. Полный suite: **391/0 PASS**.
+Commit: d0a2432f2cd (feat(48): Ф.7.7 — protocol-bounded dispatch + Result2 unwrap_or fix)
+
+### Файлы
+
+- compiler-codegen/src/codegen/emit_c.rs (+60/-6)
+- docs/simplifications.md (Plan 48 Ф.7.7 Fix G+H+I)
+- docs/project-creation.txt (эта секция)
