@@ -1,0 +1,52 @@
+// Plan 57 corpus 05: channel runtime + select multiplexing.
+// Measures channel send/recv codegen + select codegen.
+
+fn producer(tx ChanWriter[int], n int) -> () {
+    let mut i = 0
+    while i < n {
+        tx.send(i)
+        i = i + 1
+    }
+    tx.close()
+}
+
+fn consumer(rx ChanReader[int]) -> int {
+    let mut sum = 0
+    while let Some(v) = rx.recv() {
+        sum = sum + v
+    }
+    sum
+}
+
+fn dual_select() -> int {
+    let (tx_a, rx_a) = Channel.new(10)
+    let (tx_b, rx_b) = Channel.new(10)
+    supervised {
+        spawn { producer(tx_a, 5) }
+        spawn { producer(tx_b, 5) }
+    }
+    let mut total = 0
+    loop {
+        select {
+            msg <- rx_a => {
+                if let Some(v) = msg { total = total + v } else { break }
+            }
+            msg <- rx_b => {
+                if let Some(v) = msg { total = total + v } else { break }
+            }
+        }
+    }
+    total
+}
+
+fn main() Io -> () {
+    let (tx, rx) = Channel.new(100)
+    supervised {
+        spawn { producer(tx, 100) }
+    }
+    let s = consumer(rx)
+    println(str.from(s))
+
+    let d = dual_select()
+    println(str.from(d))
+}

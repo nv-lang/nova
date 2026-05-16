@@ -1,0 +1,35 @@
+// Plan 57: GC pressure micro-benches.
+//
+// Эти benches проверяют alloc-tracking (через `bench.allocs()` →
+// bench result JSON содержит `allocs_per_iter` / `allocs_total`).
+module bench.micro
+
+type Node {
+    value int
+    next  Option[Node]
+}
+
+bench "alloc 1k records" {
+    measure {
+        let mut head Option[Node] = None
+        let mut i = 0
+        while i < 1000 {
+            head = Some(Node { value: i, next: head })
+            i = i + 1
+        }
+        bench.opaque(head)
+        bench.elements(1000)
+    }
+}
+
+bench "alloc 100 hashmaps" {
+    measure {
+        let mut i = 0
+        while i < 100 {
+            let m = HashMap[int, int].new()
+            bench.opaque(m)
+            i = i + 1
+        }
+        bench.elements(100)
+    }
+}

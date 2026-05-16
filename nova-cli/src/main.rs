@@ -15,6 +15,8 @@ use std::time::Duration;
 
 use nova_codegen::test_runner;
 
+mod bench;
+
 // ---------- Plan 36 R7: structured CLI error types ----------
 
 /// Plan 36 R7: usage error — bad flag, path not found, wrong extension,
@@ -384,6 +386,204 @@ enum Cmd {
     /// All output JSON (AI-friendly schema). See docs/contracts-diag-schema.json.
     #[command(subcommand)]
     Contracts(ContractsCmd),
+    /// Plan 57: Benchmark commands.
+    ///
+    /// Subcommands: run, diff, gate.
+    /// Runs `bench "..." { measure { ... } }` declarations с Criterion-style
+    /// adaptive sampling, statistical analysis (median/MAD/Welch's t-test),
+    /// JSON v1 schema output, reproducibility metadata.
+    #[command(subcommand)]
+    Bench(BenchCmd),
+}
+
+/// Plan 57: `nova bench <subcommand>`.
+#[derive(Subcommand)]
+enum BenchCmd {
+    /// Run benchmarks in a .nv file. Compiles в release-mode, запускает,
+    /// собирает samples, выводит таблицу + опционально JSON/CSV/markdown.
+    Run {
+        /// Path to a .nv file containing `bench "..." { ... }` declarations.
+        file: PathBuf,
+        /// Substring filter — comma-separated bench-name fragments.
+        #[arg(long, value_name = "PATTERN")]
+        filter: Option<String>,
+        /// Override sample count (default 100).
+        #[arg(long)]
+        samples: Option<u64>,
+        /// Override warmup duration in ms (default 500).
+        #[arg(long = "warmup-ms")]
+        warmup_ms: Option<u64>,
+        /// Override per-bench time budget in seconds (default 10).
+        #[arg(long = "time-budget")]
+        time_budget_s: Option<u64>,
+        /// GC backend (malloc|boehm). Default boehm (Plan 27).
+        #[arg(long, default_value = "boehm")]
+        gc: String,
+        /// Build mode (release|dev). Release is preferred for bench
+        /// (5-20× faster + stable timings); dev is fallback когда
+        /// release-mode требует lld (linux LTO). Default: release.
+        #[arg(long, default_value = "release")]
+        mode: String,
+        /// Toolchain (auto|clang|msvc|gcc).
+        #[arg(long, default_value = "auto")]
+        toolchain: String,
+        /// Path to vcvars64.bat (Windows MSVC).
+        #[arg(long)]
+        vcvars: Option<PathBuf>,
+        /// Explicit clang path.
+        #[arg(long)]
+        clang: Option<PathBuf>,
+        /// Compile timeout in seconds.
+        #[arg(long, default_value_t = 120)]
+        compile_timeout: u64,
+        /// Bench process run timeout in seconds.
+        #[arg(long, default_value_t = 600)]
+        run_timeout: u64,
+        /// Keep intermediate .c / .exe artifacts in tmp dir (debug).
+        #[arg(long)]
+        keep_artifacts: bool,
+        /// Override mono instantiation depth limit.
+        #[arg(long, value_name = "N")]
+        mono_depth: Option<usize>,
+        /// Write JSON v1 result to file.
+        #[arg(long = "out")]
+        out_json: Option<PathBuf>,
+        /// Write CSV result to file.
+        #[arg(long = "out-csv")]
+        out_csv: Option<PathBuf>,
+        /// Write markdown result to file (для PR comment).
+        #[arg(long = "out-md")]
+        out_md: Option<PathBuf>,
+        /// Plan 57.B.2: Criterion-compatible JSON output directory.
+        /// Layout: `<dir>/<safe-name>/new/{estimates,sample,benchmark}.json`.
+        /// Compatible с cargo-criterion --message-format=criterion.
+        #[arg(long = "out-criterion")]
+        out_criterion: Option<PathBuf>,
+        /// Plan 57.A.5: profile mode (cpu|heap|gc) + output path.
+        /// CPU = wraps samply (must be installed via `cargo install samply`).
+        #[arg(long = "profile", value_names = ["MODE", "OUT"], num_args = 2)]
+        profile: Option<Vec<String>>,
+    },
+    /// Compare two bench JSON results. Outputs Welch's t-test p-values
+    /// + geomean delta + reproducibility check.
+    Diff {
+        /// Baseline JSON (older / reference).
+        baseline: PathBuf,
+        /// New JSON (recent / candidate).
+        new: PathBuf,
+        /// Output format (terminal|markdown|json).
+        #[arg(long, default_value = "terminal")]
+        format: String,
+    },
+    /// CI gate — apply thresholds from bench.toml. Exit 0 = pass, 1 = regress.
+    Gate {
+        /// Baseline JSON.
+        baseline: PathBuf,
+        /// New JSON.
+        new: PathBuf,
+        /// Path to bench.toml (default: ./bench.toml).
+        #[arg(long)]
+        config: Option<PathBuf>,
+        /// Path to .nova-bench-noise.json (Plan 57.A.3 auto noise-floor).
+        /// Default: ./.nova-bench-noise.json если есть.
+        #[arg(long = "noise")]
+        noise: Option<PathBuf>,
+    },
+    /// Plan 57.A.3: Auto-calibrate noise floor from N repeated runs of
+    /// same baseline. Saves to .nova-bench-noise.json (machine-specific).
+    Calibrate {
+        /// JSON result files (>= 2) from repeated runs of the same source.
+        #[arg(required = true, num_args = 2..)]
+        runs: Vec<PathBuf>,
+        /// Output noise floor JSON path.
+        #[arg(long, default_value = ".nova-bench-noise.json")]
+        out: PathBuf,
+    },
+    /// Plan 57.B.4: Diagnose CPU instructions counter availability.
+    /// Linux: tries perf_event_open + measures known loop. Other OS: stub.
+    #[command(name = "cpu-instr-check")]
+    CpuInstrCheck,
+    /// Plan 57.C.8: Measure per-pass compile time для corpus file(s).
+    /// Wraps nova build с NOVA_PERF_TIMER=1; parses __PERF__ markers.
+    Corpus {
+        /// .nv file or directory с .nv files.
+        path: PathBuf,
+        /// JSON output (default: terminal table).
+        #[arg(long)]
+        json: bool,
+        /// Build mode (release|dev).
+        #[arg(long, default_value = "release")]
+        mode: String,
+        /// Toolchain (auto|clang|msvc).
+        #[arg(long, default_value = "auto")]
+        toolchain: String,
+        /// GC backend (malloc|boehm).
+        #[arg(long, default_value = "boehm")]
+        gc: String,
+    },
+    /// Plan 57.A.1: Append result JSON to an orphan history branch.
+    #[command(name = "history-add")]
+    HistoryAdd {
+        /// Result JSON to append (output of `nova bench run --out`).
+        result: PathBuf,
+        /// Orphan branch name (default: bench-history).
+        #[arg(long, default_value = "bench-history")]
+        branch: String,
+        /// Push to remote after commit.
+        #[arg(long)]
+        push: bool,
+        /// Remote name when --push (default: origin).
+        #[arg(long, default_value = "origin")]
+        remote: String,
+        /// Dry-run: print what would be done, do not commit.
+        #[arg(long = "dry-run")]
+        dry_run: bool,
+    },
+    /// Plan 57.A.1: List bench history entries (newest first).
+    #[command(name = "history-list")]
+    HistoryList {
+        /// Branch (default: bench-history).
+        #[arg(long, default_value = "bench-history")]
+        branch: String,
+    },
+    /// Plan 57.C.6: squash older history entries по retention policy.
+    /// Yearly squash recommended (см. docs/perf-conventions.md).
+    #[command(name = "history-squash")]
+    HistorySquash {
+        /// Squash entries older than this date (YYYY-MM-DD UTC).
+        #[arg(long = "before-date")]
+        before_date: String,
+        /// Branch (default: bench-history).
+        #[arg(long, default_value = "bench-history")]
+        branch: String,
+        /// Push to remote after squash.
+        #[arg(long)]
+        push: bool,
+        /// Remote name when --push.
+        #[arg(long, default_value = "origin")]
+        remote: String,
+        /// Dry-run: print what would be removed, do not commit.
+        #[arg(long = "dry-run")]
+        dry_run: bool,
+    },
+    /// Plan 57.A.2: Generate static HTML dashboard from history.
+    /// Reads from history orphan branch, writes <out>/index.html +
+    /// <out>/bench-<safe>.html per bench, plus <out>/data.json.
+    Dashboard {
+        /// History branch (default: bench-history).
+        #[arg(long = "history-branch", default_value = "bench-history")]
+        history_branch: String,
+        /// Output directory (default: dashboard/).
+        #[arg(long, default_value = "dashboard")]
+        out: PathBuf,
+        /// Max history entries to include (newest first).
+        #[arg(long = "max-entries", default_value_t = 200)]
+        max_entries: usize,
+        /// Custom echarts URL (offline = local path).
+        #[arg(long = "echarts-url",
+              default_value = "https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js")]
+        echarts_url: String,
+    },
 }
 
 /// Plan 33.3 Ф.13: `nova contracts <subcommand>`.
@@ -2088,55 +2288,67 @@ fn cmd_build(
     let src = read_file(&path)?;
     let path_str = path.to_string_lossy();
 
-    // parse
-    let mut module = nova_codegen::parser::parse(&src)
-        .map_err(|d| anyhow!("{}", d.render(&src, &path_str)))?;
+    // parse — Plan 57.C.1 PerfTimer hooks
+    let mut module = {
+        let _t = nova_codegen::perf_timer::PerfTimer::new("parse");
+        nova_codegen::parser::parse(&src)
+            .map_err(|d| anyhow!("{}", d.render(&src, &path_str)))?
+    };
     check_module_path(&path, &module)?;
 
     // Plan 35 Ф.1 MVP: cross-file resolve через inline expansion.
-    // Walks `module.imports` recursively, парсит каждый imported .nv,
-    // merge'ит Item::Type и Item::Fn в текущий `module.items` ДО typecheck.
-    //
-    // Limitations (sub-plans 35.A-E):
-    //   - Нет visibility filter (is_export — informational, не enforced).
-    //   - Нет symbol mangling — collision error если user re-defines.
-    //   - Нет DCE — вся imported module emit'ится.
-    //   - Нет signature/body split — full re-typecheck merged AST.
-    //   - Wildcard `import X.*` не поддерживается (R25, sub-plan 35.A).
-    //
-    // Cycle detection: visited set по canonical path.
-    nova_codegen::imports::resolve_imports_inline(&path, &mut module, &repo, &paths.stdlib_dir)?;
+    {
+        let _t = nova_codegen::perf_timer::PerfTimer::new("imports-resolve");
+        nova_codegen::imports::resolve_imports_inline(&path, &mut module, &repo, &paths.stdlib_dir)?;
+    }
 
-    nova_codegen::types::check_module(&module).map_err(|errs| {
-        let msgs: Vec<String> = errs.iter()
-            .map(|d| d.render(&src, &path_str))
-            .collect();
-        anyhow!("{}", msgs.join("\n"))
-    })?;
-    nova_codegen::types::infer_effects(&mut module);
-    for w in nova_codegen::lints::lint_module(&module) {
-        let (line, col) = nova_codegen::diag::byte_to_line_col(&src, w.diag.span.start);
-        eprintln!("{} {}:{}:{}: {} [{}]", bold(&yellow("warning:")), path.display(), line, col, w.diag.message, w.rule);
+    {
+        let _t = nova_codegen::perf_timer::PerfTimer::new("type-check");
+        nova_codegen::types::check_module(&module).map_err(|errs| {
+            let msgs: Vec<String> = errs.iter()
+                .map(|d| d.render(&src, &path_str))
+                .collect();
+            anyhow!("{}", msgs.join("\n"))
+        })?;
+    }
+    {
+        let _t = nova_codegen::perf_timer::PerfTimer::new("effects-infer");
+        nova_codegen::types::infer_effects(&mut module);
+    }
+    {
+        let _t = nova_codegen::perf_timer::PerfTimer::new("lints");
+        for w in nova_codegen::lints::lint_module(&module) {
+            let (line, col) = nova_codegen::diag::byte_to_line_col(&src, w.diag.span.start);
+            eprintln!("{} {}:{}:{}: {} [{}]", bold(&yellow("warning:")), path.display(), line, col, w.diag.message, w.rule);
+        }
     }
 
     // Plan 52 Ф.4: десугаринг map-литералов `[k: v]` → block-expression.
-    // ПОСЛЕ lints (которые анализируют MapLit-узлы), ДО callnorm/codegen.
-    // Plan 52 Ф.7: аннотация inferred K/V для turbofish в десугаринге.
-    nova_codegen::types::annotate_map_literals(&mut module);
-    nova_codegen::desugar::desugar_module(&mut module);
-
-    // Plan 46 (D102) Ф.2: нормализация call-site — named args → positional
-    // + вставка defaults. После type-check, до codegen.
-    nova_codegen::callnorm::normalize_module(&mut module);
-
-    let mut emitter = nova_codegen::codegen::CEmitter::new();
-    emitter.set_source_for_annotations(src.clone());
-    if let Some(n) = mono_depth {
-        emitter.set_mono_depth_limit(n);
+    {
+        let _t = nova_codegen::perf_timer::PerfTimer::new("annotate-maps");
+        nova_codegen::types::annotate_map_literals(&mut module);
     }
-    let (c_code, warnings) = emitter
-        .emit_module(&module)
-        .map_err(|e| anyhow!("codegen error: {}", e))?;
+    {
+        let _t = nova_codegen::perf_timer::PerfTimer::new("desugar");
+        nova_codegen::desugar::desugar_module(&mut module);
+    }
+
+    // Plan 46 (D102) Ф.2: нормализация call-site — named args → positional.
+    {
+        let _t = nova_codegen::perf_timer::PerfTimer::new("callnorm");
+        nova_codegen::callnorm::normalize_module(&mut module);
+    }
+
+    let (c_code, warnings) = {
+        let _t = nova_codegen::perf_timer::PerfTimer::new("codegen");
+        let mut emitter = nova_codegen::codegen::CEmitter::new();
+        emitter.set_source_for_annotations(src.clone());
+        if let Some(n) = mono_depth {
+            emitter.set_mono_depth_limit(n);
+        }
+        emitter.emit_module(&module)
+            .map_err(|e| anyhow!("codegen error: {}", e))?
+    };
     for w in &warnings {
         eprintln!("{}", w);
     }
@@ -2197,7 +2409,10 @@ fn cmd_build(
         libuv: libuv.as_ref(),
         gc_kind: test_runner::GcKind::default(),
     };
-    test_runner::compile_c_to_exe(&tc, &build_opts, Duration::from_secs(timeout_secs))?;
+    {
+        let _t = nova_codegen::perf_timer::PerfTimer::new("c-compile");
+        test_runner::compile_c_to_exe(&tc, &build_opts, Duration::from_secs(timeout_secs))?;
+    }
 
     // move exe to final destination
     if let Some(parent) = final_exe.parent() {
@@ -2531,6 +2746,244 @@ fn cmd_contracts(sub: ContractsCmd) -> Result<()> {
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// Plan 57: `nova bench` command group.
+// ─────────────────────────────────────────────────────────────────────────
+
+fn cmd_bench(sub: BenchCmd) -> Result<()> {
+    match sub {
+        BenchCmd::Run { file, filter, samples, warmup_ms, time_budget_s,
+                        gc, mode, toolchain, vcvars, clang, compile_timeout, run_timeout,
+                        keep_artifacts, mono_depth, out_json, out_csv, out_md,
+                        out_criterion, profile } => {
+            let repo = find_repo_root()?;
+            let paths = resolve_paths(&repo);
+            let pref = test_runner::ToolchainPref::parse(&toolchain)?;
+            let gc_kind = test_runner::GcKind::parse(&gc)?;
+            let mode_enum = test_runner::Mode::parse(&mode)?;
+            let tc_opts = test_runner::ToolchainOpts {
+                pref,
+                explicit_clang: clang.as_deref(),
+                explicit_vcvars: vcvars.as_deref(),
+            };
+            let color = should_use_color();
+            let opts = bench::run::BenchRunOpts {
+                bench_path: &file,
+                repo: &repo,
+                stdlib_dir: &paths.stdlib_dir,
+                cg_include: &paths.cg_include,
+                rt_dir: &paths.rt_dir,
+                tc_opts,
+                filter,
+                samples,
+                warmup_ms,
+                time_budget_s,
+                gc_kind,
+                compile_timeout_secs: compile_timeout,
+                run_timeout_secs: run_timeout,
+                keep_artifacts,
+                mono_depth,
+                mode: mode_enum,
+                out_json: out_json.as_deref(),
+                out_csv: out_csv.as_deref(),
+                out_md: out_md.as_deref(),
+                out_criterion: out_criterion.as_deref(),
+                color,
+            };
+            // Plan 57.A.5: profile mode — отдельный run после measurement.
+            if let Some(prof_args) = profile.as_ref() {
+                if prof_args.len() != 2 {
+                    return Err(usage_err("--profile expects: MODE OUT (2 args)"));
+                }
+                let mode = bench::profile::ProfileMode::parse(&prof_args[0])?;
+                let prof_out = PathBuf::from(&prof_args[1]);
+                eprintln!("profile: building separate bench-exe (no instrumentation overhead в measurement run)...");
+                let exe = bench::run::compile_for_profile(&opts)?;
+                // Reduced samples для profile (don't need 100 — just enough trace).
+                let prof_opts = bench::profile::ProfileOpts {
+                    mode,
+                    out: &prof_out,
+                    bench_exe: &exe,
+                    filter: opts.filter.as_deref(),
+                    samples_override: 30,
+                };
+                let pexit = bench::profile::run(prof_opts)?;
+                if pexit != 0 { std::process::exit(pexit); }
+                return Ok(());
+            }
+            let exit = bench::run::run(opts)?;
+            if exit != 0 {
+                std::process::exit(exit);
+            }
+            Ok(())
+        }
+        BenchCmd::Diff { baseline, new, format } => {
+            let fmt = bench::diff::DiffFormat::parse(&format)?;
+            let exit = bench::diff::compare(&baseline, &new, fmt)?;
+            if exit != 0 { std::process::exit(exit); }
+            Ok(())
+        }
+        BenchCmd::Gate { baseline, new, config, noise } => {
+            let exit = bench::gate::run(&baseline, &new,
+                config.as_deref(), noise.as_deref())?;
+            if exit != 0 { std::process::exit(exit); }
+            Ok(())
+        }
+        BenchCmd::Corpus { path, json, mode, toolchain, gc } => {
+            // Discover nova-cli path (self).
+            let self_exe = std::env::current_exe()
+                .map_err(|e| anyhow!("locate self: {}", e))?;
+            let files = if path.is_dir() {
+                bench::corpus::list_corpus_files(&path)?
+            } else {
+                vec![path.clone()]
+            };
+            if files.is_empty() {
+                return Err(usage_err(format!("no .nv files in {}", path.display())));
+            }
+            eprintln!("nova bench corpus: {} files", files.len());
+            let mut entries = Vec::with_capacity(files.len());
+            for f in &files {
+                eprintln!("nova bench corpus: measuring {}", f.display());
+                let e = bench::corpus::measure_file(
+                    &self_exe, f, &gc, &mode, &toolchain)?;
+                entries.push(e);
+            }
+            if json {
+                let v = bench::corpus::render_json(&entries);
+                println!("{}", serde_json::to_string_pretty(&v)?);
+            } else {
+                print!("{}", bench::corpus::render_terminal(&entries));
+            }
+            Ok(())
+        }
+        BenchCmd::CpuInstrCheck => {
+            println!("CPU instructions counter availability:");
+            println!("  OS: {}", std::env::consts::OS);
+            println!("  Arch: {}", std::env::consts::ARCH);
+            let avail = bench::cpu_instr::available();
+            println!("  Available: {}", if avail { "yes ✓" } else { "no ✗" });
+            if avail {
+                let r = bench::cpu_instr::measure_instructions(|| {
+                    let mut x: u64 = 0;
+                    for _ in 0..1000 { x = x.wrapping_add(1); }
+                    std::hint::black_box(x);
+                });
+                match r {
+                    Ok(n) => println!("  Test (1000-iter loop): {} instructions", n),
+                    Err(e) => println!("  Test failed: {}", e),
+                }
+            } else if cfg!(target_os = "linux") {
+                println!("  Hint: try `sudo sysctl -w kernel.perf_event_paranoid=1`");
+                println!("        или grant `CAP_PERFMON` capability to nova binary.");
+            } else {
+                println!("  Note: CPU instructions counter is Linux-only \
+                          (uses perf_event_open syscall).");
+            }
+            Ok(())
+        }
+        BenchCmd::Calibrate { runs, out } => {
+            let n = bench::noise::calibrate(&runs)?;
+            n.save(&out)?;
+            eprintln!("calibration: saved to {} (suite noise={:.2}%, {} benches)",
+                out.display(), n.suite_noise_pct, n.per_bench.len());
+            for (name, noise_pct) in &n.per_bench {
+                eprintln!("  {:<40} noise={:.2}%", name, noise_pct);
+            }
+            Ok(())
+        }
+        BenchCmd::HistoryAdd { result, branch, push, remote, dry_run } => {
+            let repo = find_repo_root()?;
+            let opts = bench::history::HistoryAddOpts {
+                result_json: &result,
+                branch,
+                repo: &repo,
+                push,
+                remote,
+                dry_run,
+            };
+            let exit = bench::history::add(opts)?;
+            if exit != 0 { std::process::exit(exit); }
+            Ok(())
+        }
+        BenchCmd::HistorySquash { before_date, branch, push, remote, dry_run } => {
+            let repo = find_repo_root()?;
+            let before_unix = parse_date_to_unix(&before_date)?;
+            let exit = bench::history::squash(&repo, &branch, before_unix,
+                push, &remote, dry_run)?;
+            if exit != 0 { std::process::exit(exit); }
+            Ok(())
+        }
+        BenchCmd::HistoryList { branch } => {
+            let repo = find_repo_root()?;
+            let entries = bench::history::list(&repo, &branch)?;
+            if entries.is_empty() {
+                println!("(no entries in branch `{}`)", branch);
+            } else {
+                println!("{:<14}  {:<16}  filename", "timestamp", "sha");
+                for e in &entries {
+                    println!("{:<14}  {:<16}  {}", e.timestamp_unix,
+                        e.git_sha, e.filename);
+                }
+                println!("\n{} total entries", entries.len());
+            }
+            Ok(())
+        }
+        BenchCmd::Dashboard { history_branch, out, max_entries, echarts_url } => {
+            let repo = find_repo_root()?;
+            let opts = bench::dashboard::DashboardOpts {
+                repo: &repo,
+                history_branch,
+                out_dir: &out,
+                max_entries,
+                echarts_url,
+            };
+            let exit = bench::dashboard::generate(opts)?;
+            if exit != 0 { std::process::exit(exit); }
+            Ok(())
+        }
+    }
+}
+
+/// Plan 57.C.6: parse YYYY-MM-DD to unix timestamp (UTC midnight).
+/// Inverse of unix_to_ymdhms (Howard Hinnant alg).
+fn parse_date_to_unix(s: &str) -> Result<u64> {
+    let parts: Vec<&str> = s.split('-').collect();
+    if parts.len() != 3 {
+        return Err(usage_err(format!("expected YYYY-MM-DD, got `{}`", s)));
+    }
+    let y: i64 = parts[0].parse()
+        .map_err(|_| usage_err(format!("invalid year: {}", parts[0])))?;
+    let m: u64 = parts[1].parse()
+        .map_err(|_| usage_err(format!("invalid month: {}", parts[1])))?;
+    let d: u64 = parts[2].parse()
+        .map_err(|_| usage_err(format!("invalid day: {}", parts[2])))?;
+    if m < 1 || m > 12 || d < 1 || d > 31 {
+        return Err(usage_err(format!("invalid date: {}", s)));
+    }
+    // Howard Hinnant (inverse of unix_to_ymdhms).
+    let yp = if m <= 2 { y - 1 } else { y };
+    let era = if yp >= 0 { yp } else { yp - 399 } / 400;
+    let yoe = (yp - era * 400) as u64;  // [0, 399]
+    let mu = if m > 2 { m - 3 } else { m + 9 };
+    let doy = (153 * mu + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days_since_epoch = era * 146097 + (doe as i64) - 719468;
+    Ok((days_since_epoch * 86400) as u64)
+}
+
+/// True if terminal output should be colorized. Mirrors existing color
+/// detection — see ColorMode in main(). For bench subcommands мы вызываем
+/// эту утилиту до сложного command dispatch parsing.
+fn should_use_color() -> bool {
+    if std::env::var("NO_COLOR").is_ok() { return false; }
+    if let Ok(v) = std::env::var("CI") { if !v.is_empty() { return false; } }
+    if let Ok(v) = std::env::var("TERM") { if v == "dumb" { return false; } }
+    // Pessimistic — на Windows ConPTY часто работает, но безопаснее false.
+    std::env::var("CLICOLOR_FORCE").map(|v| !v.is_empty()).unwrap_or(false)
+        || std::io::IsTerminal::is_terminal(&std::io::stdout())
+}
+
 fn contracts_parse_file(file: &std::path::Path) -> Result<nova_codegen::ast::Module> {
     let src = std::fs::read_to_string(file)
         .map_err(|e| anyhow!("cannot read {}: {}", file.display(), e))?;
@@ -2784,6 +3237,7 @@ fn main() -> ExitCode {
         ),
         Cmd::RegenRuntime { check } => cmd_regen_runtime(check),
         Cmd::Contracts(sub) => cmd_contracts(sub),
+        Cmd::Bench(sub) => cmd_bench(sub),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,

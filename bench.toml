@@ -1,0 +1,41 @@
+# Plan 57: bench.toml — `nova bench gate` configuration.
+#
+# Per-bench gate thresholds для CI regression check.
+# Loaded by `nova bench gate <baseline.json> <new.json>` — default location
+# is `./bench.toml` (override via `--config`).
+#
+# Schema:
+#   [gate]                       — default thresholds (apply when no override matches)
+#   [gate.exempt]                — benches игнорируются gate'ом
+#   [gate.strict.<glob>]         — per-bench override (strict thresholds)
+#
+# Glob matching: `*` matches любые chars, `?` matches single. См. plan 57 §6.
+
+[gate]
+# Wall-clock median delta — % regression threshold.
+wall_clock_delta_pct = 5.0
+# Allocs/iter delta — % регрессия allocations per iter.
+allocs_delta_pct = 10.0
+# GC pause delta — % регрессия pause time (только если allocs > 0).
+gc_pause_delta_pct = 20.0
+# Welch's t-test significance — only flag регрессия if p < significance_p.
+# Avoids false positives on noise. 0.01 = 99% confidence.
+significance_p = 0.01
+# Auto noise-floor calibration: run baseline N times, ignore deltas внутри
+# измеренного noise band. См. Plan 57 §3 L6.
+auto_noise_floor = true
+noise_floor_calibration_runs = 5
+
+[gate.exempt]
+# Benches со sleep/IO имеют высокий noise — exempt от gate.
+benches = ["sleep_*", "*_io_*", "network_*"]
+
+# Tighter thresholds для compiler hot-path benches.
+[gate.strict.parse_*]
+wall_clock_delta_pct = 2.0
+
+[gate.strict.type_check_*]
+wall_clock_delta_pct = 2.0
+
+[gate.strict.codegen_*]
+wall_clock_delta_pct = 3.0

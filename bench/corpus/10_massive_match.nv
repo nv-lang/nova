@@ -1,0 +1,34 @@
+// Plan 57 corpus 10: match codegen на large sum-type.
+// Measures pattern-matching codegen scalability.
+
+type Op
+    | Add | Sub | Mul | Div | Mod
+    | And | Or  | Xor | Shl | Shr
+    | Eq  | Ne  | Lt  | Le  | Gt  | Ge
+    | Neg | Not | Inc | Dec
+    | Load | Store | Push | Pop | Dup | Swap
+    | Call | Ret  | Jmp | Branch | Halt
+
+fn opcode(o Op) -> int => match o {
+    Add => 1, Sub => 2, Mul => 3, Div => 4, Mod => 5,
+    And => 6, Or  => 7, Xor => 8, Shl => 9, Shr => 10,
+    Eq  => 11, Ne  => 12, Lt  => 13, Le  => 14, Gt  => 15, Ge  => 16,
+    Neg => 17, Not => 18, Inc => 19, Dec => 20,
+    Load  => 21, Store => 22, Push  => 23, Pop   => 24, Dup   => 25, Swap  => 26,
+    Call => 27, Ret  => 28, Jmp  => 29, Branch => 30, Halt => 31,
+}
+
+fn name(o Op) -> str => match o {
+    Add => "add", Sub => "sub", Mul => "mul", Div => "div", Mod => "mod",
+    And => "and", Or  => "or",  Xor => "xor", Shl => "shl", Shr => "shr",
+    Eq  => "eq",  Ne  => "ne",  Lt  => "lt",  Le  => "le",  Gt  => "gt",  Ge  => "ge",
+    Neg => "neg", Not => "not", Inc => "inc", Dec => "dec",
+    Load => "load", Store => "store", Push => "push", Pop => "pop",
+    Dup => "dup", Swap => "swap",
+    Call => "call", Ret => "ret", Jmp => "jmp", Branch => "branch", Halt => "halt",
+}
+
+fn main() Io -> () {
+    println(name(Add))
+    println(str.from(opcode(Halt)))
+}

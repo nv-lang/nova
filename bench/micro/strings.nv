@@ -1,0 +1,39 @@
+// Plan 57: string micro-benches.
+module bench.micro
+
+bench "string concat n=100" {
+    measure {
+        let mut s = ""
+        let mut i = 0
+        while i < 100 {
+            s = s + "abc"
+            i = i + 1
+        }
+        bench.opaque(s)
+        bench.bytes(300)  // 100 × 3 bytes
+    }
+}
+
+bench "string starts_with" {
+    let haystack = "the quick brown fox jumps over the lazy dog"
+    measure {
+        let mut i = 0
+        while i < 1000 {
+            bench.opaque(haystack.starts_with("the"))
+            i = i + 1
+        }
+        bench.elements(1000)
+    }
+}
+
+bench "string contains" {
+    let haystack = "the quick brown fox jumps over the lazy dog"
+    measure {
+        let mut i = 0
+        while i < 1000 {
+            bench.opaque(haystack.contains("fox"))
+            i = i + 1
+        }
+        bench.elements(1000)
+    }
+}

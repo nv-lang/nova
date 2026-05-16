@@ -950,6 +950,23 @@ impl Parser {
                 }
                 Item::Test(self.parse_test_decl()?)
             }
+            // Plan 57: контекстный `bench` ident. Распознаём как bench-decl
+            // только если за ним идёт string-literal: `bench "name" { ... }`.
+            // Иначе — обычный ident-expr (`bench.opaque(v)`, etc.) который
+            // тут не valid top-level item, ошибка ниже даст «expected fn/type/...».
+            TokenKind::Ident(ref s) if s == "bench" && !is_export
+                && matches!(self.peek_at(1).kind, TokenKind::Str(_)) =>
+            {
+                if let Some(d) = &pending_doc {
+                    eprintln!(
+                        "warning: doc-comment (`///`) before `bench` is ignored \
+                         — `bench` declarations are not documented (Plan 57). \
+                         span: {:?}",
+                        d.span
+                    );
+                }
+                Item::Bench(self.parse_bench_decl()?)
+            }
             TokenKind::KwLemma if !is_export && !is_external => {
                 if let Some(d) = &pending_doc {
                     eprintln!(
@@ -2469,6 +2486,251 @@ impl Parser {
             name,
             body,
             span: start.merge(body_span),
+        })
+    }
+
+    /// Plan 57: `bench "name" { setup_stmts; measure { measured_body } teardown_stmts }`
+    ///
+    /// Внутри body парсим обычные statements; при встрече ключевого
+    /// слова `measure` — переключаемся, парсим один measure-блок, затем
+    /// продолжаем как teardown.
+    ///
+    /// Ровно один `measure { ... }` блок в body. Иначе диагностика.
+    fn parse_bench_decl(&mut self) -> Result<BenchDecl, Diagnostic> {
+        let start = self.peek().span;
+        // Caller already verified `bench` ident + string-literal lookahead;
+        // here consume ident, then string.
+        match &self.peek().kind {
+            TokenKind::Ident(s) if s == "bench" => { self.bump(); }
+            _ => return Err(Diagnostic::new(
+                "expected `bench` keyword",
+                self.peek().span,
+            )),
+        }
+        let name = match &self.peek().kind {
+            TokenKind::Str(s) => {
+                let n = s.clone();
+                self.bump();
+                n
+            }
+            _ => {
+                return Err(Diagnostic::new(
+                    "expected bench name as string literal",
+                    self.peek().span,
+                ))
+            }
+        };
+        // Plan 57.B.3: optional parameter sweep — `(IDENT in [v1, v2, ...])`
+        // ДО opening brace.
+        let params = if matches!(self.peek().kind, TokenKind::LParen) {
+            let lp_span = self.peek().span;
+            self.bump();  // (
+            let var_name = match self.peek().kind.clone() {
+                TokenKind::Ident(n) => { self.bump(); n }
+                _ => return Err(Diagnostic::new(
+                    "expected parameter name after `(` in bench-sweep",
+                    self.peek().span)),
+            };
+            self.expect(&TokenKind::KwIn)?;
+            self.expect(&TokenKind::LBracket)?;
+            let mut values = Vec::new();
+            loop {
+                if matches!(self.peek().kind, TokenKind::RBracket) { break; }
+                match self.peek().kind.clone() {
+                    TokenKind::Int(n) => { values.push(n); self.bump(); }
+                    _ => return Err(Diagnostic::new(
+                        "bench-sweep values must be integer literals",
+                        self.peek().span)),
+                }
+                if matches!(self.peek().kind, TokenKind::Comma) {
+                    self.bump();
+                }
+            }
+            let rb_span = self.expect(&TokenKind::RBracket)?.span;
+            let rp_span = self.expect(&TokenKind::RParen)?.span;
+            if values.is_empty() {
+                return Err(Diagnostic::new(
+                    "bench-sweep values list cannot be empty",
+                    lp_span.merge(rp_span)));
+            }
+            Some(BenchParams {
+                var_name,
+                values,
+                span: lp_span.merge(rb_span),
+            })
+        } else {
+            None
+        };
+        let brace_open = self.expect(&TokenKind::LBrace)?.span;
+        self.skip_newlines();
+
+        // Plan 57.B.5: lookahead — если первый token внутри body — `group`-ident
+        // followed by string-literal, parsing pattern переключается в group mode.
+        let is_group_mode = match &self.peek().kind {
+            TokenKind::Ident(s) if s == "group"
+                && matches!(self.peek_at(1).kind, TokenKind::Str(_)) => true,
+            _ => false,
+        };
+        if is_group_mode {
+            let mut groups: Vec<BenchGroup> = Vec::new();
+            while !matches!(self.peek().kind, TokenKind::RBrace) {
+                let g_start = self.peek().span;
+                // expect `group "name" { ... }`
+                match &self.peek().kind {
+                    TokenKind::Ident(s) if s == "group" => { self.bump(); }
+                    _ => return Err(Diagnostic::new(
+                        "expected `group` keyword in bench body (group-mode)",
+                        self.peek().span)),
+                }
+                let group_name = match &self.peek().kind {
+                    TokenKind::Str(s) => { let n = s.clone(); self.bump(); n }
+                    _ => return Err(Diagnostic::new(
+                        "expected group name as string literal",
+                        self.peek().span)),
+                };
+                self.expect(&TokenKind::LBrace)?;
+                self.skip_newlines();
+                let mut cases: Vec<BenchCase> = Vec::new();
+                while !matches!(self.peek().kind, TokenKind::RBrace) {
+                    let c_start = self.peek().span;
+                    match &self.peek().kind {
+                        TokenKind::Ident(s) if s == "case" => { self.bump(); }
+                        _ => return Err(Diagnostic::new(
+                            "expected `case` keyword inside `group { ... }`",
+                            self.peek().span)),
+                    }
+                    let case_name = match &self.peek().kind {
+                        TokenKind::Str(s) => { let n = s.clone(); self.bump(); n }
+                        _ => return Err(Diagnostic::new(
+                            "expected case name as string literal",
+                            self.peek().span)),
+                    };
+                    // Case body = same as bench body (setup; measure { ... }; teardown).
+                    let cb_open = self.expect(&TokenKind::LBrace)?.span;
+                    self.skip_newlines();
+                    let mut c_setup: Vec<Stmt> = Vec::new();
+                    let mut c_measure: Option<Block> = None;
+                    let mut c_teardown: Vec<Stmt> = Vec::new();
+                    while !matches!(self.peek().kind, TokenKind::RBrace) {
+                        let is_meas = match &self.peek().kind {
+                            TokenKind::Ident(s) if s == "measure"
+                                && matches!(self.peek_at(1).kind, TokenKind::LBrace) => true,
+                            _ => false,
+                        };
+                        if is_meas {
+                            if c_measure.is_some() {
+                                return Err(Diagnostic::new(
+                                    "case must contain exactly one `measure { ... }` block",
+                                    self.peek().span));
+                            }
+                            self.bump();
+                            c_measure = Some(self.parse_block()?);
+                            self.skip_newlines();
+                            continue;
+                        }
+                        let so = self.parse_stmt_or_expr()?;
+                        let s = match so {
+                            StmtOrExpr::Stmt(s) => s,
+                            StmtOrExpr::Expr(e) => Stmt::Expr(e),
+                        };
+                        if c_measure.is_none() { c_setup.push(s) }
+                        else { c_teardown.push(s) }
+                        self.skip_newlines();
+                    }
+                    let cb_close = self.expect(&TokenKind::RBrace)?.span;
+                    let c_measure = c_measure.ok_or_else(|| Diagnostic::new(
+                        "case body must contain `measure { ... }` block",
+                        cb_open.merge(cb_close)))?;
+                    cases.push(BenchCase {
+                        name: case_name,
+                        setup: c_setup,
+                        measure_body: c_measure,
+                        teardown: c_teardown,
+                        span: c_start.merge(cb_close),
+                    });
+                    self.skip_newlines();
+                }
+                let g_close = self.expect(&TokenKind::RBrace)?.span;
+                if cases.is_empty() {
+                    return Err(Diagnostic::new(
+                        "group must contain at least one `case`",
+                        g_start.merge(g_close)));
+                }
+                groups.push(BenchGroup {
+                    name: group_name,
+                    cases,
+                    span: g_start.merge(g_close),
+                });
+                self.skip_newlines();
+            }
+            let brace_close = self.expect(&TokenKind::RBrace)?.span;
+            if groups.is_empty() {
+                return Err(Diagnostic::new(
+                    "group-mode bench requires at least one `group`",
+                    brace_open.merge(brace_close)));
+            }
+            return Ok(BenchDecl {
+                name,
+                setup: Vec::new(),
+                // Placeholder — never used когда groups непустой.
+                measure_body: Block { stmts: Vec::new(), trailing: None, span: brace_open.merge(brace_close) },
+                teardown: Vec::new(),
+                params,
+                groups,
+                span: start.merge(brace_close),
+            });
+        }
+
+        // Plain / parameterized mode (existing logic).
+        let mut setup: Vec<Stmt> = Vec::new();
+        let mut measure_body: Option<Block> = None;
+        let mut teardown: Vec<Stmt> = Vec::new();
+        while !matches!(self.peek().kind, TokenKind::RBrace) {
+            let is_measure_block = match &self.peek().kind {
+                TokenKind::Ident(s) if s == "measure"
+                    && matches!(self.peek_at(1).kind, TokenKind::LBrace) => true,
+                _ => false,
+            };
+            if is_measure_block {
+                if measure_body.is_some() {
+                    return Err(Diagnostic::new(
+                        "bench body must contain exactly one `measure { ... }` block",
+                        self.peek().span,
+                    ));
+                }
+                self.bump();
+                let mb = self.parse_block()?;
+                measure_body = Some(mb);
+                self.skip_newlines();
+                continue;
+            }
+            let so = self.parse_stmt_or_expr()?;
+            let s = match so {
+                StmtOrExpr::Stmt(s) => s,
+                StmtOrExpr::Expr(e) => Stmt::Expr(e),
+            };
+            if measure_body.is_none() {
+                setup.push(s);
+            } else {
+                teardown.push(s);
+            }
+            self.skip_newlines();
+        }
+        let brace_close = self.expect(&TokenKind::RBrace)?.span;
+        let measure_body = measure_body.ok_or_else(|| {
+            Diagnostic::new(
+                "bench body must contain `measure { ... }` block",
+                brace_open.merge(brace_close),
+            )
+        })?;
+        Ok(BenchDecl {
+            name,
+            setup,
+            measure_body,
+            teardown,
+            params,
+            groups: Vec::new(),
+            span: start.merge(brace_close),
         })
     }
 

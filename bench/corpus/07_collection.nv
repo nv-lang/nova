@@ -1,0 +1,112 @@
+// Plan 57 corpus 07: realistic medium module — ~250 LOC.
+// Linked list + sort + filter + map combinators.
+
+type LL[T] | Empty | Cons(T, LL[T])
+
+fn LL[T] @len() -> int => match @ {
+    Empty => 0
+    Cons(_, rest) => 1 + rest.len()
+}
+
+fn LL[T] @to_array() -> []T {
+    let mut out = []T.new()
+    let mut cur = @
+    loop {
+        match cur {
+            Empty => { return out }
+            Cons(x, rest) => { out.push(x); cur = rest }
+        }
+    }
+}
+
+fn LL[int] @sum() -> int {
+    let mut s = 0
+    let mut cur = @
+    loop {
+        match cur {
+            Empty => { return s }
+            Cons(x, rest) => { s = s + x; cur = rest }
+        }
+    }
+}
+
+fn LL[int] @max() -> Option[int] {
+    let mut cur = @
+    let mut best Option[int] = None
+    loop {
+        match cur {
+            Empty => { return best }
+            Cons(x, rest) => {
+                best = match best {
+                    None => Some(x)
+                    Some(b) => if x > b { Some(x) } else { Some(b) }
+                }
+                cur = rest
+            }
+        }
+    }
+}
+
+fn LL[int] @count_even() -> int {
+    let mut n = 0
+    let mut cur = @
+    loop {
+        match cur {
+            Empty => { return n }
+            Cons(x, rest) => {
+                if x % 2 == 0 { n = n + 1 }
+                cur = rest
+            }
+        }
+    }
+}
+
+fn build_range(n int) -> LL[int] {
+    let mut result LL[int] = Empty
+    let mut i = n - 1
+    loop {
+        if i < 0 { return result }
+        result = Cons(i, result)
+        i = i - 1
+    }
+}
+
+fn squared(xs LL[int]) -> LL[int] => match xs {
+    Empty => Empty
+    Cons(x, rest) => Cons(x * x, squared(rest))
+}
+
+fn doubled(xs LL[int]) -> LL[int] => match xs {
+    Empty => Empty
+    Cons(x, rest) => Cons(x * 2, doubled(rest))
+}
+
+fn evens_only(xs LL[int]) -> LL[int] => match xs {
+    Empty => Empty
+    Cons(x, rest) => if x % 2 == 0 { Cons(x, evens_only(rest)) } else { evens_only(rest) }
+}
+
+type Pt { x f64, y f64 }
+fn dist(a Pt, b Pt) -> f64 {
+    let dx = a.x - b.x
+    let dy = a.y - b.y
+    (dx * dx + dy * dy).sqrt()
+}
+
+fn main() Io -> () {
+    let xs = build_range(100)
+    println(str.from(xs.sum()))
+    println(str.from(xs.len()))
+    println(str.from(xs.count_even()))
+    let sq = squared(xs)
+    println(str.from(sq.sum()))
+    let even = evens_only(xs)
+    println(str.from(even.sum()))
+    let m = xs.max()
+    println(if let Some(v) = m { str.from(v) } else { "none" })
+
+    let p1 = Pt { x: 0.0, y: 0.0 }
+    let p2 = Pt { x: 3.0, y: 4.0 }
+    let d = dist(p1, p2)
+    println(str.from(d))
+}

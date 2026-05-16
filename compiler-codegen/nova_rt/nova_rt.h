@@ -391,4 +391,8 @@ typedef struct { char _dummy; } nova_unit;
  * от nova_str_eq, nova_str_hash, etc. */
 #include "vtables.h"
 
+/* Plan 57: bench DSL runtime (header-only). Подключается после alloc.h
+ * (uses nova_gc_alloc_count) и eventloop.h (optional uv_hrtime). */
+#include "bench.h"
+
 #endif /* NOVA_RT_H */

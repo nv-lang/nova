@@ -157,9 +157,10 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
                 }
                 env.consts.insert(cd.name.clone(), cd.clone());
             }
-            Item::Let(_) | Item::Test(_) | Item::Lemma(_) => {
-                // top-level let вЂ” РЅРµ РёСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ РІ Nova-РёСЃС…РѕРґРЅРёРєР°С…. test вЂ”
-                // СЂРµРіРёСЃС‚СЂРёСЂСѓРµС‚СЃСЏ РѕС‚РґРµР»СЊРЅРѕ, РёРјСЏ РЅРµ РєРѕРЅС„Р»РёРєС‚СѓРµС‚.
+            Item::Let(_) | Item::Test(_) | Item::Bench(_) | Item::Lemma(_) => {
+                // top-level let — не используется в Nova-исходниках. test/bench —
+                // регистрируются отдельно (имя — string-literal, не идентификатор),
+                // конфликта по имени быть не может.
                 // Ф.4.1: lemma — ghost, только для proof; не регистрируется в env.
             }
         }
@@ -1937,7 +1938,9 @@ impl NameResCtx {
                     Item::Const(cd) => {
                         out.insert(cd.name.clone());
                     }
-                    Item::Let(_) | Item::Test(_) | Item::Lemma(_) => {}
+                    // Plan 57: bench — top-level item но имя — string-literal,
+                    // не идентификатор; в name resolution не участвует.
+                    Item::Let(_) | Item::Test(_) | Item::Bench(_) | Item::Lemma(_) => {}
                 }
             }
         }
@@ -1995,6 +1998,12 @@ impl NameResCtx {
             // Builtin Р·Р°РїРёСЃСЊ РЅСѓР¶РЅР° РїРѕС‚РѕРјСѓ С‡С‚Рѕ cross-file bare-name resolve
             // РЅРµ СЂР°Р±РѕС‚Р°РµС‚ (Plan 35 Р¤.1).
             "gc",
+            // Plan 57: bench DSL builtins namespace (std.bench).
+            // `bench.opaque(v)`, `bench.iterations()`, `bench.reset_timer()`,
+            // `bench.bytes(n)`, `bench.elements(n)`, `bench.allocs()`,
+            // `bench.now_ns()`. Source of truth: std/bench.nv. Codegen
+            // dispatch: emit_c.rs special-case на `name == "bench"`.
+            "bench",
             // Plan 44.2 Р­С‚Р°Рї 3: fiber arena introspection namespace
             // (std.runtime.fibers). `fibers.slot_count()`, etc.
             // Source of truth: std/runtime/fibers.nv. Codegen dispatch:
@@ -2084,6 +2093,7 @@ impl NameResCtx {
             let file_id = match item {
                 Item::Fn(f) => f.span.file_id,
                 Item::Test(t) => t.span.file_id,
+                Item::Bench(b) => b.span.file_id,
                 Item::Const(c) => c.span.file_id,
                 Item::Type(t) => t.span.file_id,
                 Item::Let(l) => l.span.file_id,
@@ -2094,6 +2104,19 @@ impl NameResCtx {
                 Item::Test(t) => {
                     let mut scope: Vec<HashSet<String>> = vec![HashSet::new()];
                     self.walk_block(&t.body, file_id, &mut scope, errors);
+                }
+                // Plan 57: bench body — name-resolution как у test (один
+                // общий scope для setup → measure → teardown, потому что
+                // setup-bindings видны в measure и teardown).
+                Item::Bench(b) => {
+                    let mut scope: Vec<HashSet<String>> = vec![HashSet::new()];
+                    for s in &b.setup {
+                        self.walk_stmt(s, file_id, &mut scope, errors);
+                    }
+                    self.walk_block(&b.measure_body, file_id, &mut scope, errors);
+                    for s in &b.teardown {
+                        self.walk_stmt(s, file_id, &mut scope, errors);
+                    }
                 }
                 Item::Const(c) => {
                     let mut scope: Vec<HashSet<String>> = vec![HashSet::new()];
@@ -5129,6 +5152,17 @@ impl MapLitCtx {
                 Item::Test(t) => {
                     self.walk_block(&t.body, errors);
                 }
+                // Plan 57: bench — map-литералы могут встречаться в любом из
+                // трёх разделов; обходим setup/measure/teardown.
+                Item::Bench(b) => {
+                    for s in &b.setup {
+                        self.walk_stmt(s, errors);
+                    }
+                    self.walk_block(&b.measure_body, errors);
+                    for s in &b.teardown {
+                        self.walk_stmt(s, errors);
+                    }
+                }
                 Item::Const(c) => {
                     self.walk_expr(&c.value, c.ty.as_ref(), errors);
                 }
@@ -5905,6 +5939,17 @@ impl MapLitAnnotator {
                 Item::Test(t) => {
                     self.fn_generics.clear();
                     self.walk_block(&mut t.body);
+                }
+                // Plan 57: bench body — аннотируем все три раздела.
+                Item::Bench(b) => {
+                    self.fn_generics.clear();
+                    for s in &mut b.setup {
+                        self.walk_stmt(s);
+                    }
+                    self.walk_block(&mut b.measure_body);
+                    for s in &mut b.teardown {
+                        self.walk_stmt(s);
+                    }
                 }
                 Item::Const(c) => {
                     self.fn_generics.clear();

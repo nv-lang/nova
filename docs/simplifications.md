@@ -8453,3 +8453,159 @@ rule + decision tree + параллель Rust/C++.
 Закрывает фундаментальную bootstrap limitation. Programmer теперь
 пишет идиоматический Nova код для tuple destructure в любом контексте.
 Параллель Rust `(T1, T2)` per-type structs achieved.
+## [M-57-mvp-simplifications] — Plan 57 MVP simplifications (2026-05-16)
+
+В MVP закладки для Plan 57.A / 57.B; неблокеры для end-to-end use:
+
+### Closed в MVP (production-grade)
+- L1 wall-clock + alloc snapshot.
+- L2 DSL: `bench`/`measure` + `bench.*` namespace (7 builtins).
+- L3 statistical analysis (median/MAD/Tukey/Welch/bootstrap CI).
+- L4 terminal/JSON v1/CSV/markdown outputs.
+- L5 `nova bench diff` с Welch's t-test + geomean + reproducibility check.
+- L6 `nova bench gate` с bench.toml (per-bench overrides + exempt globs).
+- L8 partial canonical corpus (3/10 файлов; full set TBD Plan 57.A).
+- L10 reproducibility metadata + env warnings (governor, turbo, debug-build).
+
+### Deferred → Plan 57.A (production hardening)
+- **L7 historical orphan branch storage** — bench-history branch automation +
+  echarts HTML dashboard. CI workflow создан, ready для baseline branch
+  init.
+- **L9 profile integration** — samply flame graphs + heap/gc profiles.
+- **L4 HTML output** — interactive echarts dashboard.
+- **L6 auto noise-floor calibration** — config поле `auto_noise_floor`
+  exists, runtime calibration loop — TBD.
+- **L10 thermal throttle detection** — env warnings охватывают только
+  governor/turbo/build_mode; throttle + background load — TBD.
+
+### Deferred → Plan 57.B (advanced)
+- **L1 CPU instructions mode** — `perf_event_open` (Linux),
+  `QueryThreadCycleTime`+ETW (Win). Без этого CI на shared runners имеет
+  ±5-10% noise floor.
+- **L4 Criterion-compatible JSON output** — для interop с
+  `cargo-criterion --message-format`.
+- **Parameterized sweeps** — `#bench(params=[10, 100, 1000])` attribute form.
+- **L8 full canonical corpus** (10 файлов) + per-pass PerfTimer hooks
+  для compiler-perf breakdown.
+- **`group "..." { case "..." { ... } }`** sub-benchmarks (Criterion
+  `BenchmarkGroup` analogue). Parsed (TBD) → desugar в multiple flat
+  bench entries.
+
+### MVP design simplifications (намеренные, не TODO)
+- **Single-file bench** — `nova bench run X.nv` принимает только one file;
+  multi-file collection (recursive directory walk) — Phase B (mirror
+  test_runner discovery).
+- **Inline sampling вместо callback'ов** — emit_bench эмитит весь
+  sampling loop inline в C, не передаёт callback-pointers в
+  nova_bench_run. Это позволяет let-bindings из setup жить в одном
+  scope с measure (без TLS-state hoisting). Tradeoff: код longer,
+  duplicate-ит measure body 3x (warmup + calibration + samples).
+  Sub-benchmarks (group/case) потребуют callback'и → Phase A.
+- **Build mode flag --mode dev/release** — default release, но fallback
+  dev доступен когда LTO требует lld (Linux Clang без lld в PATH).
+  Production rec: --mode release c installed lld.
+- **GC mode flag --gc malloc/boehm** — default boehm, malloc для
+  development когда Boehm vcpkg не setup (Windows requires manual install).
+
+---
+
+## [M-57.A-deferred-runtime-integration] — Plan 57.A.5 profile heap/gc (2026-05-17)
+
+`nova bench run --profile heap/gc` MVP — CLI surface ready, stubs эмитят
+placeholder JSON/text. Real runtime integration отложен в Phase C:
+
+- **heap profile**: requires sampler thread в nova_rt/bench.h который
+  периодически читает `gc.heap_size()` (Plan 32) во время measure-block
+  и emit'ит `__HEAP_SAMPLE__ <ns> <bytes>` на stderr. CLI parses в
+  histogram. ~150 LOC.
+
+- **gc profile**: requires `gc.last_pause_ns()` API extension в
+  Plan 32 + emit'ing `__GC_PAUSE__ <ns>` на стартe каждого collect.
+  CLI парсит pause-list → histogram. ~100 LOC + Plan 32 ext ~50 LOC.
+
+CPU profile (samply) production-ready (samply делает sampling sам).
+
+## [M-57.B.1-perfTimer-hooks] — Per-pass compiler PerfTimer hooks (2026-05-17)
+
+bench/corpus/ canonical files complete (10/10), но per-pass breakdown
+(parse / type-check / mono-pass / codegen / c-compile) — TBD Phase C:
+
+- compiler-codegen: добавить `PerfTimer::start("parse")` etc вокруг
+  каждого pass. ~150 LOC.
+- Emit на stderr под `NOVA_PERF_TIMER=1` env как `__PERF__ <pass> <ns>`.
+- `nova bench corpus <file> --breakdown` parses → JSON с per-pass
+  timings + total.
+
+Без этого corpus benches measurable только через wall-clock total
+(no per-pass attribution).
+
+## [M-57.B.4-runtime-cpuinstr] — CPU instructions per-sample (2026-05-17)
+
+`nova bench cpu-instr-check` диагностика готова (Linux perf_event_open
+FFI работает). Но real per-sample counter integration в bench runtime
+требует:
+
+- nova_rt/bench.h: linux-only block с perf_event_open syscall.
+- nova_bench_run() добавляет counter reset/start/stop вокруг каждого
+  measure batch (как сейчас wall-clock).
+- JSON v1 schema extension: optional `instructions_per_iter` field.
+
+~250 LOC, Linux-only. Phase C/D.
+
+## [M-57-design-tradeoffs] — Plan 57 design tradeoffs accepted
+
+Принятые design decisions (не TODO, по дизайну):
+
+- **Single-file bench discovery** — `nova bench run X.nv` принимает только
+  один .nv файл; recursive directory walk — Phase C (mirror test_runner
+  walk_nv).
+- **Profile mode = separate exe build** — `compile_for_profile()` строит
+  exe заново вместо reuse measurement exe; tradeoff: extra ~3s compile
+  time, но isolation измерений / профилирования полная.
+- **TOML parser inline** — минималистичный (sections + key=value + arrays
+  strings only) вместо external `toml` crate; политика минимума deps
+  (feedback_third_party_libs). Покрывает все нужды bench.toml.
+- **Statistical functions pure-Rust** — без statrs/criterion-stats deps;
+  ~370 LOC покрывает median/MAD/Tukey/Welch+regularized beta+gammaln/
+  bootstrap CI/geomean/slope. Unit tests verify against scipy reference.
+
+---
+
+## [M-57.C-runtime-integration-closed] — Phase C closure (2026-05-17)
+
+Plan 57.C closed все 8 sub-tasks. Closures:
+
+- **57.C.1 PerfTimer hooks** — 10 passes instrumented в cmd_build.
+  Zero overhead под default (OnceLock probe). Per-pass __PERF__
+  markers via NOVA_PERF_TIMER=1 env.
+- **57.C.2 gc.last_pause_ns** — added к alloc.h + alloc_boehm.c
+  (monotonic timer) + alloc.c stub + std/runtime/gc.nv + codegen
+  dispatch. Plan 32 ext.
+- **57.C.3 heap sampler** — uv_thread_create в bench.h emits
+  __HEAP_SAMPLE__ markers; CLI parallel reader → histogram.
+- **57.C.4 CPU instructions** — Linux perf_event_open syscall FFI в
+  bench.h, ioctl reset/enable/disable/read per sample. JSON v1 ext.
+- **57.C.5 recursive discovery** — `nova bench run <dir>` walks
+  .nv files (skip hidden + corpus/), per-file pre-filter `bench ` keyword.
+- **57.C.6 history-squash** — yearly retention policy automation
+  с git rm + temp worktree + --dry-run.
+- **57.C.7 bench lints** — 4 rules emitted в lint_module: sleep/io/
+  empty/opaque-literal. Wired в bench/run.rs pipeline.
+- **57.C.8 nova bench corpus** — subprocess `nova build` с
+  NOVA_PERF_TIMER=1 + parse_perf_line. Table или JSON output.
+
+### Phase D backlog (открыто)
+
+Несложные follow-ups для будущих sessions:
+- **Aggregated JSON output для recursive mode** — `nova bench run <dir>
+  --out file.json` сейчас warns; нужно собрать все per-file results
+  в один RunResultParsed-style aggregated. ~80 LOC.
+- **sleep-lint contextual detection** — `Time.sleep(...)` ловится как
+  method call на `Time` ident. Если `Time` resolved как effect — не
+  будет match. Лучше cover после resolve. ~30 LOC.
+- **HTML compiler-perf dashboard** — отдельный output для `nova bench
+  corpus` (echarts time-series для compile-time). ~300 LOC.
+- **CI matrix multi-runner baselines** — multiple bench-history
+  branches per machine (bench-history-{runner_id}). ~100 LOC.
+- **PerfTimer для test runner** — extend wraps к `nova test` pipeline.
+  ~50 LOC.
