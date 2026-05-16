@@ -670,3 +670,163 @@ no-resize, keyword-diagnostic).
   (тип пишется один раз); scope не пересекается.
 - `std/collections/hashmap.nv` — целевой тип, несёт marker, требует
   fix `with_capacity`.
+
+---
+
+## Ф.9–Ф.16 — Production hardening (2026-05-16, post-audit)
+
+Production-grade аудит (2026-05-16) показал: 22 acceptance-чекбокса, реально
+покрыто тестами ~10-12; 5+ откровенно отсутствуют. Закрытие — Ф.9–Ф.16
+(test surface + flagship + edge cases + production parity).
+
+### Ф.9 — `EXPECT_COMPILE_WARNING` infrastructure (P0)
+
+**Проблема:** test_runner поддерживает только `EXPECT_COMPILE_ERROR`.
+Lint'ы NaN-key (Ф.2) и duplicate-key (Ф.2) реализованы, но **assert'нуть
+их в `nova test` нельзя** → acceptance-критерии «`[1: "a", 1: "b"]` →
+duplicate-key warning», «`[f64.NAN: "x"]` → NaN-key warning» формально
+невыполнены.
+
+- **Где:** `compiler-codegen/src/test_runner.rs:183-234`
+- **Fix:** Парсер `// EXPECT_COMPILE_WARNING <pattern>` + поле
+  `expected_warnings: Vec<String>` в `ExpectMarker` + сверка с
+  `lint_module()` результатами. Соответствует `EXPECT_COMPILE_ERROR`
+  pattern.
+- **LOC:** ~80.
+
+### Ф.10 — Positive-тесты `{field: v}` map-coercion (P0)
+
+**Проблема:** Ф.3 marker recognition + map-coercion реализованы, но
+`nova_tests/map_literals/` содержит **только `[k:v]` форму**. Ноль
+тестов для `{debug: true} → HashMap[str, bool]` flagship.
+
+- **Тесты:**
+  - `positive_record_coercion.nv` — let-аннотация, field-punning
+  - `positive_record_arg.nv` — `f({debug: true})` argument-position
+  - `positive_record_named.nv` — `f(opts: {debug: true})` named-arg
+  - `negative_record_non_str_key.nv` — `HashMap[int,V] = {a:1}` error
+- **LOC:** ~150 тестов.
+
+### Ф.11 — Flagship-примеры `JsonValue.object` + `configure` (P0)
+
+**Проблема:** Plan §641 явно требует «`JsonValue.object({name: "alice",
+age: 30.0})` компилируется и работает». В `nova_tests/map_literals/` —
+ноль файлов с `JsonValue` или `configure({width:80, height:25})`.
+Type-checker ветка Ф.3a (`resolve_call_params` → `arg_expected`) не
+покрыта integration-тестом — может ломаться silently.
+
+- **Тесты:**
+  - `positive_json_value.nv` — sum-coercion композируется с map-coercion
+  - `positive_configure_named.nv` — named-arg map-coercion
+- **LOC:** ~80.
+
+### Ф.12 — NaN-warn + dup-key-warn тесты (P0, требует Ф.9)
+
+**Проблема:** Acceptance §634 — «`[f64.NAN: "x"]` → NaN-key warning»,
+§633 — «`[1: "a", 1: "b"]` → duplicate-key warning». Lints работают
+(ручной test через `nova check` показывает warning); тестов нет.
+
+- **Тесты:**
+  - `lint_nan_key.nv` — `// EXPECT_COMPILE_WARNING NaN as map key`
+  - `lint_duplicate_int_key.nv` — `// EXPECT_COMPILE_WARNING duplicate key`
+  - `lint_duplicate_str_key.nv` — для str
+  - `lint_duplicate_bool_key.nv` — для bool
+- **LOC:** ~50.
+
+### Ф.13 — Observable eval-order тест (P1)
+
+**Проблема:** Plan §170, acceptance §630 требуют «observable в тестах
+через массив-лог». D108 spec нормативно фиксирует
+`k1,v1,k2,v2` слева-направо — но без observable-теста это пустая
+гарантия.
+
+- **Тест `positive_eval_order.nv`:**
+  - Global `let mut log: []str = []` (или через handler)
+  - Functions `record_key(s: str) -> str { log.push(s); s }` +
+    `record_val(s: str) -> int { log.push(s); 0 }`
+  - `let m = [record_key("k1"): record_val("v1"), record_key("k2"): record_val("v2")]`
+  - `assert(log == ["k1", "v1", "k2", "v2"])`
+- **LOC:** ~40.
+
+### Ф.14 — with_capacity для n=4/7/13/16 через десугаринг (P1)
+
+**Проблема:** Acceptance §634 — «для **всех** n: 4, 7, 8, 13, 16
+(бывшие баги)» в Ф.7. Контракт-тест есть в `hashmap.nv:485-520`, но это
+**прямой** test `with_capacity`, не через десугаринг. Если десугаринг
+сломает proxying (например, забудет turbofish), bug проскочит.
+
+- **Тест `positive_with_capacity_boundary.nv`:**
+  - 4 теста (n=4,7,13,16) — литерал с n entries + `assert(m.capacity()
+    == initial_capacity_for_n)`.
+- **LOC:** ~40.
+
+### Ф.15 — Nested `[1: [10: "x"]]` hygiene test (P1)
+
+**Проблема:** Plan §537, §638 — «вложенный литерал `[1: [10: "x"]]` —
+гигиена имён `_m0`/`_m1` не конфликтуют». Counter в `desugar.rs:64-68`
+per-module — работает, но не verified.
+
+- **Тест `positive_nested.nv`:**
+  - `let outer HashMap[int, HashMap[int, str]] = [1: [10: "x", 20: "y"]]`
+  - Проверить outer.get(1) даёт inner mapу, inner.get(10) == "x"
+- **LOC:** ~25.
+
+### Ф.16 — Type-inference без аннотации (M-52-type-inference-no-annotation, P2)
+
+**Проблема:** `let m = [k:v]` без аннотации RUN-FAIL в test-блоках
+(M-52-type-inference-no-annotation). Root cause скорее всего в
+peer_files mirror — annotate-pass покрывает items + peer_files, но
+trace показывал второй вызов с `None`. Это **прямое нарушение** Plan
+spec D108 §4702 (показано `let m = [1:"a",2:"b"]` без аннотации).
+
+- **Investigation:** Trace через annotate_map_literals + desugar для
+  test-блока с `let m = [...]` без аннотации.
+- **Fix:** Если корень в peer_files — гарантировать что аннотация
+  происходит на той же копии, что десугарится. Если корень в логике
+  fall-back walk_expr — проверить что `infer_unified_type` действительно
+  вызывается без expected.
+- **Альтернатива:** Если глубокий fix невозможен в bootstrap, добавить
+  fail-fast diagnostic «cannot infer K/V — annotate with HashMap[K,V]».
+- **LOC:** ~50-100.
+
+### Ф.17 — `#from_fields` canonical identity (M-52-from-fields-canonical, P2)
+
+**Проблема:** `MapLitCtx::expected_is_from_fields`
+(`types/mod.rs:5359-5365`) делает `path.last()` lookup — bare-name match.
+Plan §136 явно: «по canonical identity, не по bare-имени». Shadowing
+`let HashMap = ...` или user-тип `MyMap` со случайно тем же именем
+сломает правило.
+
+- **Fix:** Сравнивать полный path `["std","collections","hashmap","HashMap"]`
+  через resolver canonical-identity API.
+- **Test:** Negative — user-тип `type HashMap[K, V] { ... }` (без
+  #from_fields) — map-coercion НЕ должен applies'я.
+- **LOC:** ~30.
+
+### Размер Ф.9-Ф.17
+
+| Sub-phase | LOC |
+|---|---|
+| Ф.9 EXPECT_COMPILE_WARNING | ~80 |
+| Ф.10 record-coercion tests | ~150 |
+| Ф.11 flagship JsonValue/configure | ~80 |
+| Ф.12 lint tests | ~50 |
+| Ф.13 observable eval-order | ~40 |
+| Ф.14 with_capacity boundary | ~40 |
+| Ф.15 nested hygiene | ~25 |
+| Ф.16 type-inference fix | ~50-100 |
+| Ф.17 canonical identity | ~30 |
+| **Итого** | **~575** |
+
+### Acceptance Ф.9-Ф.17
+- [ ] `EXPECT_COMPILE_WARNING` парсится test_runner'ом и сверяется с lints
+- [ ] 4+ positive-теста `{field: v}` map-coercion (let / arg / named-arg)
+- [ ] `JsonValue.object({...})` flagship компилируется и работает
+- [ ] NaN-key + dup-key lints проверены через test_runner
+- [ ] Observable eval-order verified through side-effects array-log
+- [ ] with_capacity contract verified for n=4,7,8,13,16 **через десугаринг**
+- [ ] Nested map-literal hygiene verified
+- [ ] `let m = [k:v]` без аннотации либо works, либо fail-fast diagnostic
+- [ ] `#from_fields` по canonical identity (user `HashMap` тип не triggers)
+- [ ] Полная регрессия `nova test` без новых FAIL
+- [ ] Каждая Ф.X — отдельный commit

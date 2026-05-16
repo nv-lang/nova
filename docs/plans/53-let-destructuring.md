@@ -222,3 +222,89 @@ README плана, simplifications.md если есть `[M-*]`, project-creatio
 - AI-first: LLM авто-исправляет; symmetric с sum-variant.
 - Тест: `nova_tests/negative_capability/p53_let_array_pattern.nv`
   обновить — добавить EXPECT_STDOUT с suggestion-текстом.
+
+---
+
+## Ф.6 — Production hardening 2 (2026-05-16, post-audit)
+
+Production-grade аудит (2026-05-16) выявил несколько gap'ов между планом
+и реализацией. Закрытие — Ф.6 (4 sub-phase'а).
+
+**Ф.6.1 — Mojibake в diagnostic strings (4 negative-теста FAIL).**
+- **Проблема:** Все 4 `nova_tests/negative_capability/p53_*` тестов
+  reporters `NEG-WRONG-MSG`. Ожидаемый pattern `refutable pattern в
+  \`let\`` (UTF-8) — но binary эмитит double-encoded `refutable pattern
+  РІ \`let\`` (Cyrillic `в` → cp1251 → re-UTF-8 mojibake). Acceptance
+  criterion «refutable pattern в `let` — production-grade compile
+  error» формально нарушен — diagnostic unreadable.
+- **Где:** `compiler-codegen/src/types/mod.rs:929-1023` + `:437-442`
+- **Fix:** Переписать Cyrillic-строки правильным UTF-8 (либо latinise
+  ключевые слова в diagnostic'ах, чтобы исключить класс багов).
+- **Acceptance:** `nova test --filter negative_capability/p53` → 4/4 PASS.
+- **LOC:** ~50.
+
+**Ф.6.2 — Structured `Suggestion` на refutable patterns.**
+- **Проблема:** Ф.5.1 коммит обещал `Suggestion { applicability:
+  MachineApplicable }`, но в реальности используется только
+  `.with_note(...)`. Sum-variant case тоже без `with_suggestion()`.
+  AI-first/LSP code-action UX gap.
+- **Где:** `types/mod.rs:964-1020` — 5 refutable branches (Literal,
+  Variant, Or, Array, Record-sum-variant).
+- **Fix:** Добавить `with_suggestion(Suggestion { ... })` per-branch с
+  replacement `if let <pat> = <expr> { ... } else { ... }`.
+- **LOC:** ~80.
+
+**Ф.6.3 — `decl.mutable` propagation в record-destructure.**
+- **Проблема:** Plan §102 явно: «маркер mutability: каждый bind
+  получает `decl.mutable`». `emit_record_destructure`
+  (`emit_c.rs:12290-12366`) НЕ touches `self.var_mutable`. Plain path
+  (`:6931-6934`) делает; record-path нет. Затрагивает spawn-capture
+  decision (`:2526-2527` — `by_value = is_scalar && !is_mut`).
+- **Fix:** В `emit_record_destructure` для каждого bound name —
+  `var_mutable.insert(name)` если `decl.mutable`.
+- **Test:** `let mut { x, y } = ...; spawn { use(x); }; x = 99` — должен
+  capture by reference.
+- **LOC:** ~10 + ~25 test.
+
+**Ф.6.4 — `Channel.new` special-case → schema registration.**
+- **Проблема:** `emit_c.rs:12296-12338` хардкодит Pair-destructure для
+  `Channel.new` (50 LOC), нарушая Plan §97-100 («без дубль-логики»).
+- **Fix:** Зарегистрировать `Nova_ChannelPair` schema в module-init
+  (~5 LOC); общий path возьмётся.
+- **LOC:** ~5 add, ~50 remove (net -45).
+
+**Ф.6.5 — Acceptance gap: round-trip Channel-теста.**
+- **Проблема:** `nova_tests/syntax/let_destructure_record.nv:65-70`
+  использует `Channel.new`, но не verifies send/recv через destructured
+  handles. Acceptance flagship-кейс работает only по компиляции.
+- **Fix:** Расширить test — send value через `tx`, recv на `rx`,
+  assert значение.
+- **LOC:** ~10.
+
+**Ф.6.6 — Unknown field в destructure: Nova diagnostic.**
+- **Проблема:** `let { nonexistent } = p` (где p: Pair) → CC-FAIL
+  `no member named 'nonexistent' in 'struct Nova_Pair'` — leak C
+  internals.
+- **Fix:** type-checker валидирует field-names против `record_schemas`
+  до codegen + Levenshtein suggest «did you mean `tx`?».
+- **LOC:** ~40.
+
+### Размер Ф.6
+
+| Sub-phase | LOC |
+|---|---|
+| Ф.6.1 mojibake | ~50 |
+| Ф.6.2 Suggestion | ~80 |
+| Ф.6.3 mutable + test | ~35 |
+| Ф.6.4 Channel.new dedup | -45 |
+| Ф.6.5 round-trip test | ~10 |
+| Ф.6.6 unknown field diag | ~40 |
+| **Итого** | **~170** |
+
+### Acceptance Ф.6
+- [ ] `nova test --filter p53` → 4/4 PASS (mojibake fixed)
+- [ ] Все 5 refutable branches имеют `Suggestion`
+- [ ] `let mut { x } = ...` тест с mutation works
+- [ ] `Channel.new` round-trip тест — send+recv через destructured handles
+- [ ] Unknown field → Nova diagnostic «did you mean ...»
+- [ ] 0 регрессий vs main baseline
