@@ -8007,3 +8007,32 @@ Remaining:
   с .get()+match correct.
 - **Side-effect:** [M-52-multi-instance-hashmap-collision] ✅ полностью
   закрыто (раньше было partial).
+
+### Plan 55 followups итог (2026-05-16, EOD)
+
+После закрытия 6 фаз — закрыты 2 deferred маркера из 3:
+
+- ✅ **[M-mono-record-pattern-inner-bindings]** — Pattern::Record bindings
+  через record_variant_field_types map.
+- ✅ **[M-52-multi-instance-hashmap-collision]** — полностью закрыто
+  side-effect'ом mono-record fix.
+- 🟡 **[M-erased-generic-method-dispatch]** — preventive skip-placeholder-mono
+  в register_mono_method_instance + drain_generic_type_worklist (фундамент).
+  Полное закрытие (vtable dispatch для bound K methods) требует
+  архитектурной работы — выделено в Plan 56+.
+- 🟡 **[M-time-handler-sleep-mismatch]** — deferred Plan 56+. После анализа:
+  fix требует stdlib-wide migration:
+    1. Time effect schema sleep(int) → sleep(Duration).
+    2. Все Time.sleep(0), Time.sleep(50), Time.sleep(30) call-sites
+       в nova_tests и std/concurrency/* → migrate на Duration.
+    3. Runtime C impl Nova_Time_sleep также adapt'ить.
+  Это **semantic evolution** не bug-fix. Workaround доступен:
+  не использовать `mut_clock` handler в tests; `fixed_ms` работает.
+
+### Plan 55 — финальный итог
+
+- 6/6 фаз ✅ закрыты
+- 19 новых тестов в plan55/
+- ~15 коммитов (feat + docs)
+- baseline: 545 PASS / 25 FAIL / 40 SKIP (vs baseline 509/26/35 → **+36 PASS, -1 FAIL**)
+- 3 новых deferred M-маркера зафиксированы для Plan 56+
