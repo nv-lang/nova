@@ -12313,6 +12313,18 @@ negative (есть warning или ошибка):
   passing-side proven message «proven by witness: x = 5».
 - Коммит: `d207648816b` (test placeholder).
 
+### Ф.3.3 — pattern-aware suggested fixes
+
+- Новый модуль `verify/suggest.rs` (~140 LOC). 3 pattern matchers:
+  1. `x / k` или `x % k` без `requires k != 0` → suggest add requires.
+  2. `arr[i]` без `requires i.len()` — suggest bounds check.
+  3. `decreases X + N` (positive delta) → suggest decreases должен убывать.
+- Pipeline `Disproved` branch вызывает `suggest_fixes(fd)`, добавляет
+  `pattern-aware hints:` секцию в diagnostic.
+- Test: suggest_div_by_zero_fail (Z3-gated).
+- Регрессия: 140 PASS / 39 SKIP (+2 Z3-gated).
+- Коммит: `aa9f598ff43`.
+
 === Plan 45 �.25 � nova tests (positive + negative) ===
 
 ����� �������� �.25 (4 ����) �������� nova-tests .nv ��� �������� �����
