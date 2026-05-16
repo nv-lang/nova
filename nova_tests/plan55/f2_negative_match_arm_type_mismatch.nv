@@ -1,0 +1,13 @@
+// Plan 55 Ф.2 — negative: match arms возвращают несовместимые типы.
+// `Some(v) => v` (int) и `None => "str"` — type-check error.
+
+module plan55.f2_negative_match_arm_type_mismatch
+
+
+// EXPECT_CC_ERROR initializing
+fn bad(opt Option[int]) -> int {
+    match opt {
+        Some(v) => v
+        None    => "not an int"     // type mismatch
+    }
+}

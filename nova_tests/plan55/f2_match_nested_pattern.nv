@@ -1,0 +1,40 @@
+// Plan 55 Ф.2 — nested pattern: `Some(Ok(v))` — рекурсивная
+// pattern_inner_type. `v` должен иметь inner-inner тип (T из Result[T, E]).
+
+module plan55.f2_match_nested_pattern
+
+
+fn unwrap_some_ok(x Option[Result[int, str]], fallback int) -> int {
+    match x {
+        Some(Ok(v))  => v
+        Some(Err(_)) => -1
+        None         => fallback
+    }
+}
+
+
+fn unwrap_some_err_str(x Option[Result[int, str]], fallback str) -> str {
+    match x {
+        Some(Err(e)) => e
+        Some(Ok(_))  => "ok"
+        None         => fallback
+    }
+}
+
+
+test "Some(Ok(v)) inner v: int" {
+    let x Option[Result[int, str]] = Some(Ok(42))
+    assert(unwrap_some_ok(x, 0) == 42)
+}
+
+
+test "Some(Err(e)) inner e: str" {
+    let x Option[Result[int, str]] = Some(Err("oops"))
+    assert(unwrap_some_err_str(x, "fb") == "oops")
+}
+
+
+test "Some(Ok) shape, fallback path для Err" {
+    let x Option[Result[int, str]] = Some(Err("bad"))
+    assert(unwrap_some_ok(x, 99) == -1)
+}

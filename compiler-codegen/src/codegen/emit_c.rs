@@ -12193,14 +12193,37 @@ impl CEmitter {
 
         // Result type: infer from arms (prefer non-trivial types), fall back to fn return type
         let mut result_ty = "nova_unit".to_string();
-        // First pass: find a non-unit, non-nova_int type
-        'outer: for arm in arms {
+        // Plan 55 Ф.2: per-arm helper — scoped pattern_inner_types override.
+        // Для Some(v) с scr_ty=NovaOpt_T: register v: T в var_types на время
+        // inference body, потом restore. Это позволяет `Some(v) => v` правильно
+        // вернуть T, а не stale/leaked default. Также: nested patterns
+        // (Some(Ok(v))) и Block arm trailing получают binding.
+        let infer_arm = |this: &mut Self, arm: &MatchArm| -> String {
+            let bindings: Vec<(String, String)> =
+                Self::collect_pattern_inner_bindings(&arm.pattern, &scr_ty, this);
+            let saved: Vec<(String, Option<String>)> = bindings.iter()
+                .map(|(n, _)| (n.clone(), this.var_types.get(n).cloned()))
+                .collect();
+            for (n, t) in &bindings {
+                this.var_types.insert(n.clone(), t.clone());
+            }
             let t = match &arm.body {
-                MatchArmBody::Expr(e) => self.infer_expr_c_type(e),
+                MatchArmBody::Expr(e) => this.infer_expr_c_type(e),
                 MatchArmBody::Block(b) => b.trailing.as_ref()
-                    .map(|e| self.infer_expr_c_type(e))
+                    .map(|e| this.infer_expr_c_type(e))
                     .unwrap_or_else(|| "nova_unit".into()),
             };
+            for (n, prev) in saved {
+                match prev {
+                    Some(p) => { this.var_types.insert(n, p); }
+                    None => { this.var_types.remove(&n); }
+                }
+            }
+            t
+        };
+        // First pass: find a non-unit, non-nova_int type
+        'outer: for arm in arms {
+            let t = infer_arm(self, arm);
             if t != "nova_unit" && t != "nova_int" {
                 result_ty = t;
                 break 'outer;
@@ -12209,12 +12232,7 @@ impl CEmitter {
         // Second pass: settle for nova_int if no better type found
         if result_ty == "nova_unit" {
             for arm in arms {
-                let t = match &arm.body {
-                    MatchArmBody::Expr(e) => self.infer_expr_c_type(e),
-                    MatchArmBody::Block(b) => b.trailing.as_ref()
-                        .map(|e| self.infer_expr_c_type(e))
-                        .unwrap_or_else(|| "nova_unit".into()),
-                };
+                let t = infer_arm(self, arm);
                 if t != "nova_unit" { result_ty = t; break; }
             }
         }
@@ -12267,6 +12285,101 @@ impl CEmitter {
         }
 
         Ok(result_tmp)
+    }
+
+    /// Plan 55 Ф.2: extract pattern-bound variable types from scrutinee C-type.
+    /// Used during match-arm inference to give `Some(v) => v` the right result
+    /// type T (instead of stale/leaked var_types fallback).
+    ///
+    /// Supports:
+    /// - top-level `Ident { name }` — binding is whole scrutinee type.
+    /// - `Some(p)` / `None` — recurse with NovaOpt_T inner type.
+    /// - `Ok(p)` / `Err(p)` — recurse with Result Ok/Err payload type.
+    /// - `Tuple(...)` — recurse via tuple_element_types[scr_tmp]
+    ///   (not implemented for inference path — usually pattern is in let, not match).
+    /// - `Variant(...)` user sum-type — recurse via sum_schemas.
+    /// - `Or` — bindings from the first alternative.
+    /// - `Binding { name, inner }` — outer name has scrutinee type, recurse inner.
+    /// - `Record { fields }` — lookup record_schemas for field types.
+    fn collect_pattern_inner_bindings(
+        pat: &Pattern,
+        scr_ty: &str,
+        this: &Self,
+    ) -> Vec<(String, String)> {
+        match pat {
+            Pattern::Wildcard(_) | Pattern::Literal(..) => vec![],
+            Pattern::Ident { name, .. } => {
+                vec![(name.clone(), scr_ty.to_string())]
+            }
+            Pattern::Binding { name, inner, .. } => {
+                let mut out = vec![(name.clone(), scr_ty.to_string())];
+                out.extend(Self::collect_pattern_inner_bindings(inner, scr_ty, this));
+                out
+            }
+            Pattern::Or { alternatives, .. } => {
+                if let Some(first) = alternatives.first() {
+                    Self::collect_pattern_inner_bindings(first, scr_ty, this)
+                } else { vec![] }
+            }
+            Pattern::Variant { path, kind, .. } => {
+                let variant_name = path.last().cloned().unwrap_or_default();
+                let patterns = match kind {
+                    VariantPatternKind::Tuple { patterns, .. } => patterns.clone(),
+                    VariantPatternKind::Unit => vec![],
+                };
+                if patterns.is_empty() { return vec![]; }
+                // ---- Option ----
+                if variant_name == "Some" && patterns.len() == 1 {
+                    // scr_ty = "NovaOpt_<inner_id>" — recover real inner C-type
+                    // via novaopt_value_types (handles pointer-sanitization).
+                    if let Some(inner_id) = scr_ty.strip_prefix("NovaOpt_") {
+                        let inner_c = this.novaopt_value_types.borrow()
+                            .get(inner_id).cloned()
+                            .unwrap_or_else(|| inner_id.to_string());
+                        return Self::collect_pattern_inner_bindings(&patterns[0], &inner_c, this);
+                    }
+                    return vec![];
+                }
+                if variant_name == "None" { return vec![]; }
+                // ---- Result (Ok/Err) ----
+                // Mono'd Result type: Nova_Result____<Ok_c>__<Err_c>* or sanitized.
+                // For bootstrap — parse the canonical form.
+                if (variant_name == "Ok" || variant_name == "Err") && patterns.len() == 1 {
+                    let bare = scr_ty.trim_end_matches('*').trim();
+                    if let Some(suffix) = bare.strip_prefix("Nova_Result____") {
+                        // suffix = "<Ok_c>__<Err_c>"; split на 2 части по "__".
+                        // (Имена primitive C-типов не содержат "__".)
+                        let parts: Vec<&str> = suffix.splitn(2, "__").collect();
+                        if parts.len() == 2 {
+                            let inner_c = if variant_name == "Ok" { parts[0] } else { parts[1] };
+                            return Self::collect_pattern_inner_bindings(&patterns[0], inner_c, this);
+                        }
+                    }
+                    return vec![];
+                }
+                // ---- User sum-types ----
+                // Lookup sum_schemas: variant_field_types[(sum_name, variant_name)].
+                let sum_name = scr_ty.trim_end_matches('*').trim()
+                    .strip_prefix("Nova_").unwrap_or("").to_string();
+                if let Some(schema) = this.sum_schemas.get(&sum_name) {
+                    if let Some(variant_tys) = schema.get(&variant_name) {
+                        let mut out = vec![];
+                        for (i, p) in patterns.iter().enumerate() {
+                            if let Some(field_c) = variant_tys.get(i) {
+                                out.extend(Self::collect_pattern_inner_bindings(p, field_c, this));
+                            }
+                        }
+                        return out;
+                    }
+                }
+                vec![]
+            }
+            // For Tuple / Record / Array — would need tuple_element_types /
+            // record_schemas lookup which is path-dependent. Bootstrap covers
+            // 95% case (Option/Result/User sum-types via Variant above).
+            // Extension point — add as needed when concrete bug surfaces.
+            Pattern::Tuple(..) | Pattern::Record { .. } | Pattern::Array { .. } => vec![],
+        }
     }
 
     fn emit_match_arm_body(&mut self, body: &MatchArmBody, result_tmp: &str) -> Result<(), String> {

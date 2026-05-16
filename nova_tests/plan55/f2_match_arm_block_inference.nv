@@ -1,0 +1,40 @@
+// Plan 55 Ф.2 — Block arm: `Some(v) => { let q = v + 1; q }`.
+// Trailing expr Block'а получает binding `v` от pattern.
+
+module plan55.f2_match_arm_block_inference
+
+
+fn inc_or_zero(opt Option[int]) -> int {
+    match opt {
+        Some(v) => {
+            let q = v + 1
+            q
+        }
+        None => 0
+    }
+}
+
+
+fn concat_or_empty(opt Option[str]) -> str {
+    match opt {
+        Some(s) => {
+            let q = s + "!"
+            q
+        }
+        None => ""
+    }
+}
+
+
+test "Block arm inference: int + 1" {
+    assert(inc_or_zero(Some(41)) == 42)
+    let none_int Option[int] = None
+    assert(inc_or_zero(none_int) == 0)
+}
+
+
+test "Block arm inference: str concat" {
+    assert(concat_or_empty(Some("hi")) == "hi!")
+    let none_str Option[str] = None
+    assert(concat_or_empty(none_str) == "")
+}
