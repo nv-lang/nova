@@ -1,0 +1,25 @@
+// Ф.7.3 (Plan 33.6): loop decreases с неподдерживаемой конструкцией → W2402.
+// Используем match в decreases — не encodable.
+// EXPECT_COMPILE_WARNING W2402
+
+module contracts.loop_decreases_w2402
+
+fn count_down(n int) -> int
+    requires n >= 0
+    ensures result >= 0
+{
+    let mut i = n
+    let mut sum = 0
+    while i > 0
+        invariant i >= 0
+        decreases match i { _ => i }
+    {
+        sum = sum + i
+        i = i - 1
+    }
+    sum
+}
+
+test "loop decreases w2402" {
+    assert(count_down(3) == 6)
+}

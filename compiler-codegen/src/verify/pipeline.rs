@@ -612,7 +612,18 @@ impl VerificationPipeline {
                         }
                     }
                 }
-                Err(_) => {} // dec РЅРµ encodable вЂ" skip (РЅРµ Р»РѕРјР°РµРј СЃСѓС‰РµСЃС‚РІСѓСЋС‰РёРµ С‚РµСЃС‚С‹)
+                Err(e) => {
+                    // Ф.7.3 (Plan 33.6): decreases expr не encodable → W2402 вместо silent skip.
+                    let reason = match e {
+                        super::encode::EncodingError::Unsupported(s) => s,
+                    };
+                    let msg = format!(
+                        "loop decreases expr не закодирован в SMT [W2402]: {}.\n  \
+                         well-foundedness НЕ проверена. Упростите decreases или используйте \
+                         #unverified для явного отказа.",
+                        reason);
+                    results.push((dec_span, VerifyResult::Warning(msg)));
+                }
             }
         }
 
@@ -1701,8 +1712,17 @@ fn verify_loop_preservation(
                     label: Some("inv_pre_havoc".into()),
                 });
             }
-            Err(_) => {
-                // Invariant non-encodable в†' skip preservation for this loop.
+            Err(e) => {
+                // Ф.7.3 (Plan 33.6): invariant не encodable → W2402 (раньше silent return).
+                let reason = match e {
+                    super::encode::EncodingError::Unsupported(s) => s,
+                };
+                let msg = format!(
+                    "loop invariant preservation НЕ проверена [W2402]: invariant \
+                     не закодирован в SMT: {}.\n  \
+                     Упростите invariant или используйте #unverified.",
+                    reason);
+                results.push((lp.span, VerifyResult::Warning(msg)));
                 backend.pop();
                 return results;
             }
@@ -1726,8 +1746,17 @@ fn verify_loop_preservation(
                 let rhs_havoc = substitute_havoc(rhs_t);
                 post_map.insert(var.clone(), rhs_havoc);
             }
-            Err(_) => {
-                // Cannot encode rhs в†' fall back, no preservation check.
+            Err(e) => {
+                // Ф.7.3 (Plan 33.6): body rhs не encodable → W2402 (раньше silent return).
+                let reason = match e {
+                    super::encode::EncodingError::Unsupported(s) => s,
+                };
+                let msg = format!(
+                    "loop invariant preservation НЕ проверена [W2402]: body assignment \
+                     `{} := ...` не закодирован в SMT: {}.\n  \
+                     Упростите rhs или используйте #unverified.",
+                    var, reason);
+                results.push((lp.span, VerifyResult::Warning(msg)));
                 backend.pop();
                 return results;
             }
@@ -1773,7 +1802,17 @@ fn verify_loop_preservation(
                     }
                 }
             }
-            Err(_) => {} // non-encodable invariant в†' skip
+            Err(e) => {
+                // Ф.7.3 (Plan 33.6): non-encodable invariant in post-check → W2402.
+                let reason = match e {
+                    super::encode::EncodingError::Unsupported(s) => s,
+                };
+                let msg = format!(
+                    "loop invariant post-state НЕ проверен [W2402]: invariant не \
+                     закодирован в SMT (post): {}.",
+                    reason);
+                results.push((lp.span, VerifyResult::Warning(msg)));
+            }
         }
     }
 
