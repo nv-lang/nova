@@ -12773,7 +12773,6 @@ quirk в Plan 48 followup.
 - feat(52): Ф.23 — #from_pairs attribute для расширяемости [k:v] desugar
 - docs(52): Ф.24 → Plan 52.1 (deferred — codegen quirk pattern in while-body)
 
-
 ## Шаг NNN+6. Plan 48/49 production-revision audit fixes (2026-05-16 EOD)
 
 После initial closure Plan 48/49 проведён честный аудит на missing
@@ -12826,3 +12825,19 @@ poly_recursion). Zero new regressions.
 - test(48): verification tests (mn-runtime a751c7bb173)
 - feat(49 Ф.6 final): cross-type cascade с From (mn-runtime cab835ddd51)
 - feat(49 P3): tok.merge composition (mn-runtime afb9b108e23)
+
+### Acceptance-тесты Ф.18-Ф.24 (2026-05-16)
+
+Добавлены 3 новых теста через release nova:
+
+| Тест | Тип | Покрывает |
+|---|---|---|
+| positive_insert_new_correctness.nv | POS | Ф.21 — post-literal contains/get |
+| positive_iter_works.nv | POS | Ф.18 — все entries доступны independent of bucket order |
+| negative_user_from_pairs_shadows.nv | NEG | Ф.23 — user-локальный #from_pairs не trust'ится |
+
+Регресс-страховка: если canonical-check ослабнет, @insert_new нарушит
+инвариант, или iteration пропустит entry — тесты отловят.
+
+Ф.19 (negative_user_shadows_hashmap) и Ф.22 (positive_siphash_smoke)
+уже покрыты в предыдущих коммитах.
