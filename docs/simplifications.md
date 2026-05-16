@@ -7272,3 +7272,33 @@ duplicates AST pretty-printer (Plan 45.A roadmap'нут).
 переиспользовать в doc + diag + diagnostics. Plan 45.A.
 **Приоритет:** L — contracts redko используют complex expressions; explicit
 <kind> placeholder помогает diagnose limitation.
+
+---
+
+## Plan 45 Ф.27 Sprint summary (2026-05-16)
+
+Audit-triggered closure tech debt после Ф.26:
+
+**Ф.27.1 closed:** Workspace handler matrix non-functional > теперь works
+cross-file через populate_handler_matrix_workspace.
+
+**Ф.27.2 closed:** ender_expr _ => "..." placeholder > расширенное
+coverage (Index, If, SelfAccess, InterpolatedStr, TurboFish) + helpful
+<kind> fallback вместо anonymous.
+
+**Ф.27.3 closed:** Stale MVP markers в docstrings > обновлены под reality
+production-grade (links/collector/doctree/render_md/render_expr).
+
+**Remaining known simplifications (intentional, не tech debt):**
+- mutation.rs text-heuristic (Plan 45.A может real-exec при demand)
+- markdown.rs zero-deps extractor (production-grade, не нужен pulldown-cmark)
+- collect_handlers.rs text scanner (design choice — robust к AST changes)
+- allow_transit forever-empty (parser side — Plan 16 scope)
+
+**Plan 45.A backlog (большой scope, отдельный sprint):**
+- HTML output + search index
+- Theme/dark-mode
+- External crate-doc linking
+- MCP server для AI/LLM real-time queries
+- Mutation testing real exec через test_runner integration
+- AST pretty-printer shared util (для render_expr completion)

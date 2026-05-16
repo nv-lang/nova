@@ -13050,3 +13050,30 @@ expressions в contracts (x + 1 > old(x)) могли render'итьс€ как ... > old(x)
 **AST naming caveat:** Nova AST имеет If { cond, then, else_ }, не
 If { cond, then_branch, else_branch }. “акже нет MethodCall/Cast/Await/
 Resume/Yield как top-level ExprKind variants (вместо них Call с method-receiver).
+
+=== Plan 45 ‘.27.3 Ч Stale MVP markers cleanup (2026-05-16) ===
+
+Audit обнаружил stale "MVP" / "best-effort MVP" markers в docstring модулей doc/.
+Ёти комментарии были написаны до ‘.21-‘.27 production hardening и теперь
+mislead readers: код production-grade, но docstring говорит "minimal".
+
+**„то обновлено:**
+- links.rs:1 Ч "best-effort MVP" > "production-grade after ‘.21.7+‘.25.1"
+  с €вным перечислением capabilities (cross-module, ambiguous warnings, back-links).
+- collector.rs:1 Ч "MVP: один pass без passes-pipeline" > list of all
+  passes (strip_private, propagate_stability, ..., populate_handler_matrix,
+  populate_verify_status, infer_contracts).
+- doctree.rs:5 Ч "MVP Ч один module" > "single-file OR workspace mode".
+- ender_md.rs:1 Ч "MVP: один модуль = одна markdown-строка" > production
+  features list (badges, anchors, [src] links, verify-status, handler matrix).
+- ender_expr docstring (collector.rs:799) Ч "MVP: placeholder дл€ остального"
+  > coverage list + объ€снение <kind> fallback.
+
+**Tech debt не дл€ удалени€ (остаютс€ как known simplifications):**
+- mutation.rs text-heuristic Ч задокументирован в simplifications.md, Plan 45.A.
+- markdown.rs summary-extractor без pulldown-cmark Ч production-grade
+  (написан с zero deps after ‘.25.2).
+- collect_handlers.rs text scanner Ч design choice, не MVP (см. ‘.26.2 rationale).
+
+**Verification:** 13 doc integration test suites Ч 77 PASS, 0 fail. Zero
+behavior change, только documentation accuracy.

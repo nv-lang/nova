@@ -1,9 +1,14 @@
-﻿//! Plan 45 Р¤.4 вЂ” collector: AST в†’ DocTree.
+﻿//! Plan 45 Ф.4 — collector: AST → DocTree.
 //!
-//! MVP: РѕРґРёРЅ pass, Р±РµР· passes-pipeline (Plan 45 В§3). Production-grade
-//! passes (`strip_private`, `propagate_stability`, `resolve_intra_doc_links`,
-//! `collect_doc_tests`, `lint_docs`) РґРѕР±Р°РІР»СЏСЋС‚СЃСЏ РёРЅРєСЂРµРјРµРЅС‚Р°Р»СЊРЅРѕ РєР°Рє
-//! РѕС‚РґРµР»СЊРЅС‹Рµ РјРѕРґСѓР»Рё РІ `doc/passes/`.
+//! Production-grade pipeline (после Ф.21-Ф.27):
+//! - `collect()` / `collect_workspace()` — single-file / workspace mode entry.
+//! - Дополнительные passes (отдельные модули): `strip_private`,
+//!   `propagate_stability`, `resolve_intra_doc_links`, `collect_doc_tests`,
+//!   `run_lints`, `populate_handler_matrix`, `populate_verify_status`,
+//!   `infer_contracts_from_doctests`. Pipeline orchestration в `doc/mod.rs::build`.
+//! - Module-level `#forbid` propagates в каждый item.capabilities (Ф.24.1).
+//! - Implementors second-pass (workspace mode) opt-in через
+//!   `NOVA_DOC_EXPERIMENTAL_IMPLEMENTORS=1` (Ф.24.3, false-positive guard).
 
 use crate::ast::{
     ConstDecl, ContractKind, DocAttr, FnDecl, Item, Module, ModuleAttrKind, Purity,
@@ -796,9 +801,16 @@ fn extract_fail_inner(eff: &crate::ast::TypeRef) -> Option<String> {
     None
 }
 
-/// РњРёРЅРёРјР°Р»СЊРЅС‹Р№ pretty-print РІС‹СЂР°Р¶РµРЅРёСЏ РІ Nova source. **MVP**: РґР»СЏ
-/// Р»РёС‚РµСЂР°Р»РѕРІ Рё Ident вЂ” С‚РѕС‡РЅС‹Р№; РґР»СЏ РѕСЃС‚Р°Р»СЊРЅРѕРіРѕ вЂ” placeholder.
-/// РџРѕР»РЅС‹Р№ pretty-printer вЂ” Plan 45.A РёР»Рё separate util.
+/// Pretty-print expression в Nova source (для contracts JSON/MD).
+///
+/// **Coverage (Ф.27.2):** literals, idents, paths, binary/unary ops,
+/// arrays/tuples/records, member/index access, function calls, if-cond,
+/// turbofish, string interpolation, self-access.
+///
+/// **Fallback `<kind>`:** match/closure/with/forbid/realtime/etc — рендерятся
+/// как `<match>` / `<closure>` / `<with>`. Это редко в contracts (предикаты
+/// обычно boolean), но если encountered — explicit placeholder помогает
+/// diagnose. Full AST pretty-printer как shared util — Plan 45.A.
 fn render_expr(e: &crate::ast::Expr) -> String {
     use crate::ast::{ArrayElem, BinOp, CallArg, ExprKind, UnOp};
     match &e.kind {
