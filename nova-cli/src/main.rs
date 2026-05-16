@@ -1074,6 +1074,11 @@ fn cmd_run(path: &Path) -> Result<()> {
 /// MVP: один входной файл, вывод в stdout. Никаких подкоманд (workspace/
 /// --output-dir/--watch — Plan 45.A или отдельные субкоманды позже).
 fn cmd_doc(path: &Path, format: &str, json_schema: bool, include_private: bool, run_doc_tests: bool, check: bool, watch: bool, coverage: bool, coverage_threshold: Option<u32>, jobs: usize, scrape_examples: Option<&Path>, strict: bool, mutate_contracts: bool, real_exec: bool, output_dir: Option<&Path>) -> Result<()> {
+    // Plan 45 Ф.33.3: load nova.toml [doc] config if present. CLI args override.
+    let (final_strict, final_coverage_threshold) =
+        apply_doc_config(strict, coverage_threshold);
+    let strict = final_strict;
+    let coverage_threshold = final_coverage_threshold;
     // `--json-schema` — печатает embedded схему и выходит (D107).
     if json_schema {
         println!("{}", nova_doc_embedded_schema());
@@ -1527,6 +1532,44 @@ fn cmd_doc_query(path: &Path, query_str: &str) -> Result<()> {
     } else {
         bail!("unknown file extension `{}` — expected .nv or .json", ext);
     }
+}
+
+/// Plan 45 Ф.33.3 — load nova.toml [doc] config, apply to env, merge с CLI args.
+///
+/// Returns (effective_strict, effective_coverage_threshold). CLI values take
+/// priority когда explicitly set; config fills defaults.
+///
+/// Lookup: walk up от CWD до root looking for `nova.toml`. If found, parse.
+/// If not found OR parse fails, use defaults (no error — config optional).
+fn apply_doc_config(cli_strict: bool, cli_coverage_threshold: Option<u32>) -> (bool, Option<u32>) {
+    let cfg = match load_nova_toml_doc_config() {
+        Some(c) => c,
+        None => return (cli_strict, cli_coverage_threshold),
+    };
+    // Apply env vars (для downstream readers).
+    cfg.apply_env();
+    // CLI overrides config: если CLI flag set — use it, иначе config value.
+    let strict = cli_strict || cfg.strict;
+    let coverage_threshold = cli_coverage_threshold.or(cfg.coverage_threshold);
+    (strict, coverage_threshold)
+}
+
+fn load_nova_toml_doc_config() -> Option<nova_codegen::doc::config::DocConfig> {
+    let mut dir = std::env::current_dir().ok()?;
+    for _ in 0..16 { // safety: max 16 parent walks
+        let candidate = dir.join("nova.toml");
+        if candidate.is_file() {
+            if let Ok(content) = std::fs::read_to_string(&candidate) {
+                if let Ok(cfg) = nova_codegen::doc::config::DocConfig::from_toml_str(&content) {
+                    return Some(cfg);
+                }
+            }
+            // Found but parse failed — bail (don't keep walking).
+            return None;
+        }
+        if !dir.pop() { break; }
+    }
+    None
 }
 
 /// Plan 45 Ф.32.3 — `nova doc-mcp <file>` MCP server (JSON-RPC over stdio).
