@@ -13367,12 +13367,33 @@ annotation — erased (emit_generic_method_erased V1 fallback). Это
 Регрессия: 517 PASS / 26 FAIL (was 484/46 до Plan 54). Net **+33 PASS,
 -20 FAIL = +53 tests changed positively**.
 
-Открытые followup'ы (новые маркеры, не Plan 54 acceptance):
-- `[M-array-of-func-mono]` — `[]fn->T` type_ref_to_c.
-- Ф.5b match-arm pattern_inner_type helper.
-- Nova_Duration_method_into orthogonal codegen issue.
+Открытые followup'ы (новые маркеры, не Plan 54 acceptance) → собраны в
+**Plan 55** (`docs/plans/55-codegen-followups-from-plan-54.md`):
+- Ф.1 `[M-array-of-func-mono]` — `[]fn->T` type_ref_to_c (~80-120 LOC).
+- Ф.2 Ф.5b match-arm pattern_inner_type helper (~80 LOC).
+- Ф.3 Nova_Duration_method_into orthogonal codegen issue (~30-80 LOC).
+
+Итого Plan 55: ~190-280 LOC, mixed risk, P3 (local quality-of-life),
+все 3 фазы independent.
 
 ### Commits Plan 54 EOD
 
 - fix(plan54 Ф.2): int-extension primitive-receiver dispatch.
 - test(plan54 Ф.7): polymorphic recursion EXPECT_COMPILE_ERROR.
+
+## Шаг NNN+10. Plan 55 doc — codegen followups от Plan 54 (2026-05-16)
+
+Создал `docs/plans/55-codegen-followups-from-plan-54.md` — собирает 3
+orthogonal codegen issues выявленные во время Plan 54 sprint'а в
+дедикатеный план для closure.
+
+Каждый item имеет: симптом (с code/C-output примером), корень (с
+file/line указанием в emit_c.rs), fix approach (с code-skeleton),
+acceptance criteria + test-имена, LOC estimate + risk.
+
+Cмысл отдельного плана: маркеры в simplifications.md не дают clear
+"closed/open" state. Plan 55 обеспечивает дисциплину для проверки
+acceptance и аккуратное закрытие каждого Ф.* после fix'а.
+
+Имплементация Plan 55 — в следующем sprint'е (P3, не блокирует main
+work).

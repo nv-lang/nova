@@ -7796,6 +7796,14 @@ Go/Rust/TS. Все требуют explicit type annotation; наш подход
 
 ### Pending followup'ы (новые маркеры, не Plan 54 acceptance)
 
-- `[M-array-of-func-mono]` — Array-of-Func type_ref_to_c.
-- Ф.5b match-arm pattern_inner_type из scrutinee.
-- Nova_Duration_method_into stdlib codegen issue.
+Собраны в **Plan 55** (`docs/plans/55-codegen-followups-from-plan-54.md`):
+
+- Ф.1 `[M-array-of-func-mono]` — Array-of-Func type_ref_to_c
+  (~80-120 LOC, medium risk).
+- Ф.2 Ф.5b match-arm pattern_inner_type из scrutinee
+  (~80 LOC, medium risk).
+- Ф.3 Nova_Duration_method_into stdlib codegen issue
+  (~30-80 LOC, low risk).
+
+Total ~190-280 LOC. P3 — local quality-of-life fixes. Implementation
+в следующем sprint'е (3 фазы independent, можно параллельно).
