@@ -12144,6 +12144,20 @@ C-типа scrutinee (`Nova_LinkedList____nova_int*` → `LinkedList____nova_int
 - `docs/promts/read-toolchain.md`: секция Z3 build с Linux/Windows инструкцией.
 - V18 закрыт. Коммит: `03405cde85b`.
 
+### Ф.7 — Production audit 2: 5 P0 soundness gaps
+
+После закрытия PROD-CRITICAL gate проведён второй аудит с сравнением с Rust
+ecosystem (Creusot/Prusti/Kani/Flux/Aeneas). Найдено 5 P0 soundness gaps:
+программист видит «proven», SMT либо не вызывался либо вернул Unknown который
+проглочен. Раздел Ф.7 добавлен в план 33.6.
+
+### Ф.7.1 — f14_* gating
+
+- 19 файлов `f14_*` помечены `// REQUIRES_SMT_BACKEND z3` (кроме linked_list,
+  он PASS на trivial). До этого 19 CODEGEN-FAIL под default TrivialBackend.
+- После: 19 SKIP + 1 PASS, 0 FAIL.
+- Коммит: `72b53a0f632`.
+
 === Plan 45 �.25 � nova tests (positive + negative) ===
 
 ����� �������� �.25 (4 ����) �������� nova-tests .nv ��� �������� �����
