@@ -1226,6 +1226,14 @@ fn cmd_doc_workspace(
         bail!("все файлы в `{}` содержат ошибки парсинга", dir.display());
     }
     let mut tree = nova_codegen::doc::build_workspace(&modules);
+    // Plan 45 Ф.27.1: workspace handler matrix через per-module sources map.
+    // Modules и sources Vec'ы parallel'ные (same length, same order), но
+    // tree.modules sorted by path. Поэтому строим map module_path → source.
+    let sources_by_module: std::collections::BTreeMap<String, String> = modules.iter()
+        .zip(sources.iter())
+        .map(|(m, s)| (m.name.join("."), s.clone()))
+        .collect();
+    nova_codegen::doc::populate_handler_matrix_workspace(&mut tree, &sources_by_module);
     // Plan 45 Ф.22.3 / D107: workspace source_root = переданный dir,
     // как есть (relative от CWD для portability).
     tree.source_root = Some(dir.display().to_string().replace('\\', "/"));

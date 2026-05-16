@@ -12989,3 +12989,36 @@ Plan 48/49 total sub-cases: 50 в†’ **75 sub-cases**.
 test additions. Р‘Р°Р·РѕРІС‹Р№ 46 FAIL вЂ” pre-existing baseline (Plan 33.3 verify
 tests С‚СЂРµР±СѓСЋС‚ Z3 backend, std/collections/hashmap.nv `#from_pairs`
 attribute issue РѕС‚ Plan 52, doc/fixtures sample files Р±РµР· `fn main`).
+
+=== Plan 45 Ф.27.1 — Workspace mode handler matrix (2026-05-16) ===
+
+Audit обнаружил что Ф.26.2 закрыл handler matrix только для single-file mode;
+workspace mode silently выдавал handlers: [] для всех Effect'ов, даже когда
+handler usage был в других модулях того же workspace. Это нарушение заявленного
+Nova-unique feature (§19.4 п.4 «Effect > handler matrix vs Go/Rust/TS»).
+
+**Fix:**
+- New API populate_handler_matrix_workspace(tree, sources_by_module_path) —
+  принимает BTreeMap<String, String> mapping module_path > source.
+- collect_handlers::collect_handlers_workspace теперь функциональный (был noop):
+  для каждого fn-item достаёт source своего модуля по module_path, scan'ит
+  handler literals, populates Effect.handlers.
+- CLI workspace mode (cmd_doc_workspace) строит map при parse phase
+  (modules.iter().zip(sources.iter())) и вызывает new API.
+
+**Дизайн-решение — sources_by_module_path vs (file_id, source):**
+Изначально планировал использовать ile_id из span.file_id. Но CLI workspace
+pipeline сейчас не присваивает уникальные file_id parser'у — все modules
+имеют ile_id = 0 (MAIN_FILE_ID). Pragmatic: использовать module_path
+как natural key.
+
+**Tests:** 4 integration tests в compiler-codegen/tests/doc_handler_matrix_workspace.rs:
+- cross_file_handler_matrix_populated — Effect в module A + handler в module B
+- multiple_modules_multiple_handlers — Effect в одном module, 2 callers в разных
+- workspace_handlers_deterministic — multiple builds > identical handlers
+- workspace_no_handlers_empty_array — Effect без handlers > empty
+
+**Total после Ф.27.1:** 77 doc integration PASS (12 suites).
+
+**Closes** P1 blocker найденный аудитом: handler matrix теперь functional
+для real workspace кода.

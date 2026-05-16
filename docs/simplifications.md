@@ -7217,3 +7217,30 @@ inference engine through generic-call return types.
 
 - [M-reason-per-T-unbox] вЂ” silent UB fixed РґР»СЏ Tв‰ str.
 - [M-cross-type-from-cascade] вЂ” implemented С‡РµСЂРµР· D73/D77 From + tests.
+
+---
+
+## Plan 45 Ф.27.1 — Workspace handler matrix simplifications (2026-05-16)
+
+### sources_by_module_path вместо file_id-based (Ф.27.1)
+
+**Где:** collect_handlers::collect_handlers_workspace API.
+**Что упрощено:** Map ключ — module_path: String, не ile_id: u32.
+Один module = один source (правильно для file-modules; для folder-modules —
+concatenated source, items найдены через span offsets корректно).
+**Почему:** CLI workspace pipeline не присваивает уникальные file_id parser'у
+(все modules ile_id = 0). Использовать ile_id потребовало бы FileRegistry
+integration — это Plan 42 scope.
+**Как чинить:** при активации FileRegistry в Plan 42 — переключить на
+(file_id, source) map. Существующий API можно сохранить как helper.
+**Приоритет:** L — module_path стабилен и unique в workspace.
+
+### Folder-modules в handler matrix
+
+**Где:** workspace mode хранит один source на module даже если module folder-based.
+**Что упрощено:** Folder-module = sources всех peer-файлов concatenated в один
+string. Handler scanner работает по concatenated, item span'ы остаются valid.
+**Почему:** parser возвращает один Module с merged items; peer attribution
+сохранён в Item.peer_file. Concatenated source — natural fit для span lookup.
+**Как чинить:** не нужно — concatenation сохраняет handler-scan semantics.
+**Приоритет:** none — это правильное design choice.
