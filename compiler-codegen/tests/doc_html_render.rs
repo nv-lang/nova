@@ -128,6 +128,46 @@ export fn g() -> int => 2
 }
 
 #[test]
+fn html_includes_search_box_and_js() {
+    // Plan 45 Ф.31.2: search bar + inline JS filter.
+    let src = r#"
+module m
+
+export fn f() -> int => 1
+"#;
+    let tree = build_tree(src);
+    let html = doc::render_html(&tree);
+    assert!(html.contains("class=\"search-box\""),
+        "HTML должна содержать search input");
+    assert!(html.contains("id=\"nova-search\""),
+        "search input должен иметь id для JS attach");
+    assert!(html.contains("<script>"),
+        "HTML должна содержать inline JS для search");
+    assert!(html.contains("getElementById('nova-search')"),
+        "JS должна attachить к search input");
+}
+
+#[test]
+fn html_uses_css_variables_for_dark_mode() {
+    // Plan 45 Ф.31.3: CSS variables + prefers-color-scheme media query.
+    let src = r#"
+module m
+
+export fn f() -> int => 1
+"#;
+    let tree = build_tree(src);
+    let html = doc::render_html(&tree);
+    assert!(html.contains(":root {"),
+        "CSS должна использовать :root variables");
+    assert!(html.contains("--bg:"),
+        "CSS должна определять --bg variable");
+    assert!(html.contains("@media (prefers-color-scheme: dark)"),
+        "CSS должна иметь dark mode media query");
+    assert!(html.contains("var(--bg)"),
+        "CSS должна use var(--bg) (не hardcoded color)");
+}
+
+#[test]
 fn html_anchor_format_lowercased_dash_separated() {
     let src = r#"
 module myMod

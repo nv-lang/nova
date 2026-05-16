@@ -28,6 +28,10 @@ pub fn render(tree: &DocTree) -> String {
     out.push_str("<body>\n");
     write_sidebar(&mut out, tree);
     write_main(&mut out, tree);
+    // Plan 45 Ф.31.2: inline JS для search filter.
+    out.push_str("<script>\n");
+    out.push_str(EMBEDDED_JS);
+    out.push_str("</script>\n");
     out.push_str("</body>\n</html>\n");
     out
 }
@@ -48,31 +52,74 @@ fn write_html_head(out: &mut String, tree: &DocTree) {
     out.push_str("</head>\n");
 }
 
+/// Plan 45 Ф.31.1 (light) + Ф.31.3 (dark mode via CSS variables + media query).
 const EMBEDDED_CSS: &str = r#"
+  :root {
+    --bg: #fafafa;
+    --fg: #1f1f1f;
+    --sidebar-bg: #f0f0f0;
+    --border: #ddd;
+    --muted: #666;
+    --code-bg: #f0f0f0;
+    --pre-bg: #f5f5f5;
+    --pre-border: #e0e0e0;
+    --link: #0066cc;
+    --section-color: #333;
+    --item-color: #444;
+    --summary-color: #444;
+    --quote-border: #d0d0d0;
+    --quote-color: #555;
+    --target-bg: #fff8e0;
+    --search-bg: #fff;
+    --search-border: #ccc;
+    --dim-opacity: 0.25;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1a1a1a;
+      --fg: #e0e0e0;
+      --sidebar-bg: #222;
+      --border: #333;
+      --muted: #888;
+      --code-bg: #2a2a2a;
+      --pre-bg: #1f1f1f;
+      --pre-border: #3a3a3a;
+      --link: #4d9fff;
+      --section-color: #ddd;
+      --item-color: #ccc;
+      --summary-color: #bbb;
+      --quote-border: #444;
+      --quote-color: #aaa;
+      --target-bg: #2a2a1a;
+      --search-bg: #222;
+      --search-border: #444;
+    }
+  }
   body { font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-         color: #1f1f1f; background: #fafafa; margin: 0; display: grid;
+         color: var(--fg); background: var(--bg); margin: 0; display: grid;
          grid-template-columns: 260px 1fr; min-height: 100vh; }
-  nav.sidebar { background: #f0f0f0; padding: 1rem; border-right: 1px solid #ddd;
+  nav.sidebar { background: var(--sidebar-bg); padding: 1rem;
+                border-right: 1px solid var(--border);
                 overflow-y: auto; position: sticky; top: 0; height: 100vh; }
-  nav.sidebar h2 { font-size: 0.85rem; text-transform: uppercase; color: #666;
+  nav.sidebar h2 { font-size: 0.85rem; text-transform: uppercase; color: var(--muted);
                    margin: 1rem 0 0.3rem; letter-spacing: 0.05em; }
   nav.sidebar ul { list-style: none; padding-left: 0; margin: 0; }
   nav.sidebar li { margin: 0.15rem 0; }
-  nav.sidebar a { color: #0066cc; text-decoration: none; font-size: 0.9rem; }
+  nav.sidebar a { color: var(--link); text-decoration: none; font-size: 0.9rem; }
   nav.sidebar a:hover { text-decoration: underline; }
   main { padding: 2rem; max-width: 980px; }
-  h1 { font-size: 1.6rem; border-bottom: 1px solid #ddd; padding-bottom: 0.3rem; }
-  h2 { font-size: 1.3rem; margin-top: 2rem; color: #333; }
-  h3 { font-size: 1.05rem; margin-top: 1.5rem; color: #444;
+  h1 { font-size: 1.6rem; border-bottom: 1px solid var(--border); padding-bottom: 0.3rem; }
+  h2 { font-size: 1.3rem; margin-top: 2rem; color: var(--section-color); }
+  h3 { font-size: 1.05rem; margin-top: 1.5rem; color: var(--item-color);
        font-family: ui-monospace, "Cascadia Code", "Consolas", monospace; }
-  h4 { font-size: 0.95rem; color: #555; margin-top: 1rem; }
-  pre { background: #f5f5f5; border: 1px solid #e0e0e0; border-radius: 4px;
+  h4 { font-size: 0.95rem; color: var(--quote-color); margin-top: 1rem; }
+  pre { background: var(--pre-bg); border: 1px solid var(--pre-border); border-radius: 4px;
         padding: 0.8rem; overflow-x: auto;
         font: 13px/1.45 ui-monospace, "Cascadia Code", "Consolas", monospace; }
-  code { background: #f0f0f0; padding: 0.1rem 0.3rem; border-radius: 3px;
+  code { background: var(--code-bg); padding: 0.1rem 0.3rem; border-radius: 3px;
          font: 0.9em ui-monospace, "Cascadia Code", "Consolas", monospace; }
   pre code { background: none; padding: 0; }
-  a { color: #0066cc; text-decoration: none; }
+  a { color: var(--link); text-decoration: none; }
   a:hover { text-decoration: underline; }
   .badge { display: inline-block; padding: 0.1rem 0.4rem; border-radius: 3px;
            font-size: 0.75rem; margin-right: 0.3rem; }
@@ -83,21 +130,56 @@ const EMBEDDED_CSS: &str = r#"
   .badge-realtime { background: #e0e8ff; color: #2a4f8a; }
   .badge-pure { background: #d0e8ff; color: #1a3a6a; }
   .badge-forbid { background: #ffd0d0; color: #6a1a1a; }
-  .item { border-left: 3px solid #e0e0e0; padding-left: 1rem; margin: 1.5rem 0; }
-  .item:target { border-left-color: #0066cc; background: #fff8e0; padding: 0.5rem 1rem; }
-  .src-link { font-size: 0.75rem; color: #888; margin-left: 0.5rem; }
-  .summary { color: #444; font-style: italic; margin: 0.3rem 0; }
-  blockquote { border-left: 4px solid #d0d0d0; padding-left: 1rem; color: #555;
-               margin: 0.5rem 0; }
+  .item { border-left: 3px solid var(--border); padding-left: 1rem; margin: 1.5rem 0;
+          transition: opacity 0.15s ease; }
+  .item:target { border-left-color: var(--link); background: var(--target-bg);
+                 padding: 0.5rem 1rem; }
+  .item.dim { opacity: var(--dim-opacity); }
+  .src-link { font-size: 0.75rem; color: var(--muted); margin-left: 0.5rem; }
+  .summary { color: var(--summary-color); font-style: italic; margin: 0.3rem 0; }
+  blockquote { border-left: 4px solid var(--quote-border); padding-left: 1rem;
+               color: var(--quote-color); margin: 0.5rem 0; }
+  /* Plan 45 Ф.31.2 — search bar. */
+  .search-box { width: 100%; padding: 0.4rem 0.6rem; margin-bottom: 0.8rem;
+                background: var(--search-bg); color: var(--fg);
+                border: 1px solid var(--search-border); border-radius: 4px;
+                font-size: 0.9rem; box-sizing: border-box; }
+  .search-box:focus { outline: 2px solid var(--link); outline-offset: -1px; }
   @media (max-width: 720px) {
     body { grid-template-columns: 1fr; }
     nav.sidebar { position: static; height: auto; }
   }
 "#;
 
+/// Plan 45 Ф.31.2 — inline JS substring search filter (no external deps).
+const EMBEDDED_JS: &str = r##"
+  (function() {
+    var box = document.getElementById('nova-search');
+    if (!box) return;
+    var items = document.querySelectorAll('article.item');
+    var sidebarLinks = document.querySelectorAll('nav.sidebar a[href^="#"]');
+    box.addEventListener('input', function() {
+      var q = box.value.trim().toLowerCase();
+      items.forEach(function(it) {
+        if (!q) { it.classList.remove('dim'); return; }
+        var hay = (it.textContent || '').toLowerCase();
+        if (hay.indexOf(q) >= 0) { it.classList.remove('dim'); }
+        else { it.classList.add('dim'); }
+      });
+      sidebarLinks.forEach(function(a) {
+        if (!q) { a.style.display = ''; return; }
+        var t = (a.textContent || '').toLowerCase();
+        a.style.display = (t.indexOf(q) >= 0) ? '' : 'none';
+      });
+    });
+  })();
+"##;
+
 fn write_sidebar(out: &mut String, tree: &DocTree) {
     out.push_str("<nav class=\"sidebar\">\n");
     out.push_str("<strong>nova doc</strong>\n");
+    // Plan 45 Ф.31.2: search box.
+    out.push_str("<input type=\"text\" class=\"search-box\" id=\"nova-search\" placeholder=\"Search…\" autocomplete=\"off\">\n");
     for m in &tree.modules {
         let _ = writeln!(out, "<h2>{}</h2>", html_escape(&m.path.join(".")));
         if m.items.is_empty() { continue; }
