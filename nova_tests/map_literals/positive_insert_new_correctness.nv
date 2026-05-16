@@ -1,0 +1,53 @@
+// Plan 52 Ф.21: @insert_new fast-path correctness.
+//
+// Десугаринг map-литерала использует @insert_new вместо @insert
+// (skip Option allocation + branch + Tombstone check + @maybe_grow).
+// Контракт: only-after-with_capacity, no-duplicates.
+//
+// После литерала обычные @insert/@get/@remove операции должны
+// продолжать работать — @insert_new не должен оставить мапу в
+// inconsistent state. Этот тест проверяет post-literal операции.
+module map_literals.positive_insert_new_correctness
+
+import std.collections.hashmap.{HashMap}
+
+test "после литерала: contains работает корректно" {
+    let m HashMap[str, int] = [
+        "a": 1,
+        "b": 2,
+        "c": 3,
+    ]
+    assert(m.len() == 3)
+    assert(m.contains("a") == true)
+    assert(m.contains("b") == true)
+    assert(m.contains("c") == true)
+    assert(m.contains("d") == false)
+}
+
+test "после литерала: get возвращает Some для всех ключей" {
+    let m HashMap[str, int] = [
+        "x": 10,
+        "y": 20,
+    ]
+    assert(m.get("x") == Some(10))
+    assert(m.get("y") == Some(20))
+    assert(m.get("missing") == None)
+}
+
+test "литерал с n=8 (boundary case where with_capacity contract critical)" {
+    let m HashMap[int, int] = [
+        1: 10,
+        2: 20,
+        3: 30,
+        4: 40,
+        5: 50,
+        6: 60,
+        7: 70,
+        8: 80,
+    ]
+    assert(m.len() == 8)
+    assert(m.get(1) == Some(10))
+    assert(m.get(8) == Some(80))
+    // Capacity должна быть >= 8 (no rehash во время @insert_new).
+    assert(m.capacity() >= 8)
+}
