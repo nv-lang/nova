@@ -1,0 +1,19 @@
+// Ф.15.3 (Plan 33.6): edge case — много requires/ensures clauses через bounds prop.
+
+module contracts.edge_multi_requires_positive
+
+#verify
+fn many_constraints(a int) -> int
+    requires a >= 0
+    requires a <= 100
+    ensures result >= -10
+    ensures result <= 200
+    ensures result >= -100
+{
+    a
+}
+
+test "multi requires positive" {
+    assert(many_constraints(50) == 50)
+    assert(many_constraints(0) == 0)
+}

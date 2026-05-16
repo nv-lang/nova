@@ -1,0 +1,25 @@
+// Ф.15.2 (Plan 33.6): bounds propagation — `x >= 0 ⊢ x >= -1`.
+// Trivial weakening работает: если known L_known >= L_goal, ensures trivially true.
+
+module contracts.trivial_bound_weakening_positive
+
+#verify
+fn weak_lower(x int) -> int
+    requires x >= 0
+    ensures result >= -1
+{
+    x
+}
+
+#verify
+fn weak_upper(x int) -> int
+    requires x <= 100
+    ensures result <= 200
+{
+    x
+}
+
+test "bounds weakening trivial" {
+    assert(weak_lower(5) == 5)
+    assert(weak_upper(50) == 50)
+}
