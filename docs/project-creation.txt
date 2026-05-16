@@ -12085,3 +12085,45 @@ C-С‚РёРїР° scrutinee (`Nova_LinkedList____nova_int*` в†’ `LinkedList____nova_int
 - p33 в†’ main: 7 РєРѕРјРјРёС‚РѕРІ Plan 33.6 Р¤.1.1вЂ“Р¤.2.1 (fast-forward).
 - РџРѕСЃР»Рµ: РѕР±Р° СЂРµРїРѕ РЅР° РѕРґРЅРѕРј РєРѕРјРјРёС‚Рµ, 96 PASS / 19 FAIL (pre-existing f14_*).
 - Р’С‚РѕСЂРѕР№ sync: main РґРѕР±Р°РІРёР» 2 LICENSE РєРѕРјРјРёС‚Р° в†’ p33 fast-forward, СЃРЅРѕРІР° СЂР°РІРЅС‹.
+
+=== Plan 45 Ф.24 Sprint A — production hardening (2026-05-16) ===
+
+Ф.24.1 — Module-level #forbid propagation в DocItem.capabilities.
+Collector теперь extract'ит module-level #forbid X, Y из ItemAttr и
+propagate в каждый fn item через module_forbid: Vec<String>.
+
+Ф.24.2 — BTreeMap/BTreeSet вместо HashMap/HashSet в workspace implementors.
+Детерминистическая итерация. Тест doc_workspace_determinism: 100 runs,
+byte-for-byte identity. PASS.
+
+Ф.24.3 — Implementors env gate.
+NOVA_DOC_EXPERIMENTAL_IMPLEMENTORS=1 включает structural matching.
+Default: implementors: [] (честно, нет false-positives).
+MD section помечается "(experimental, may have false-positives)".
+
+Ф.24.4 — nova doc --check --format json.
+Structured JSON: {summary: {count, by_rule}, issues: [{rule, item_id, message, severity}]}.
+Default: human. --format json для CI/PR automation.
+
+Ф.24.5 — Schema downgrade > v1.0.0-rc1.
+Был преждевременный v1.0.0-stable. Downgrade после аудита — soak period
+нужен до promote в v1.0.0. Description объясняет условие promote.
+
+Ф.24.6 — Structural type via Nova parser.
+write_structural_type() теперь вызывает parse_type_str() из Nova parser.
+Fallback на ad-hoc shape detector только если parse fails.
+Map[str, int] > {kind: "named", name: "Map", generics: ["str", "int"]}.
+
+Ф.24.7 — Multi-line caret в diagnostics.
+append_snippet() в diag.rs: если span.end на другой строке — emit
+первая строка ^^^^, "... (N more lines)", последняя строка ~~~~.
+
+Nova tests Sprint A: f24_doc_attrs_positive/negative — все PASS.
+Cargo tests: doc_golden (14), doc_semver_diff (6), doc_expect_output (4),
+doc_workspace_determinism (1) — 25 PASS.
+
+=== Plan 45 — ЗАКРЫТ (все Ф.1–Ф.24) ===
+
+Итоговый статус: все 18 Ф.24 + 25 Ф.23 + MVP Ф.1-Ф.22 закрыты.
+25 cargo integration tests + 20 nova language tests — все PASS.
+plan-45-doc смержена в main (двусторонняя синхронизация).
