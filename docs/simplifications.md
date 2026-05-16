@@ -7960,3 +7960,11 @@ Remaining:
 - **Followup:** vtable-based bound-method dispatch для erased generics.
 - **Приоритет:** M (блокирует HashMap.@clone и любые helper-methods
   использующие bound K methods).
+
+### [M-52-type-inference-no-annotation] ✅ ЗАКРЫТО (Plan 55 Ф.5 auto, 2026-05-16)
+- **Где:** Решено side-effect'ом Ф.4 (save/restore + protocol whitelist).
+- **Было:** `let m = ["a":1]` → CC-FAIL `Nova_WriteBuffer_static_with_capacity`.
+- **Закрыто:** автоматически. Ф.4 устранил mono-pass corruption который
+  и был причиной mis-dispatch на WriteBuffer overload.
+- **Tests:** `nova_tests/plan55/f5_hashmap_infer_no_annot.nv`,
+  `f5_nested_map_infer.nv`.
