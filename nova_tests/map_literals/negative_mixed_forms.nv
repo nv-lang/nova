@@ -1,0 +1,10 @@
+// EXPECT_COMPILE_ERROR cannot mix array and map syntax
+//
+// Plan 52 Ф.7 (D108): `[a, b: c]` смешивает array-syntax (a без `:`)
+// и map-pair (b:c) → actionable error «либо все элементы k:v, либо
+// это массив».
+module map_literals.negative_mixed_forms
+
+fn main() -> () {
+    let bad = [1, 2: 3]
+}

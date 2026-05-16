@@ -4987,6 +4987,8 @@ impl MapLitCtx {
                     self.walk_expr(&l.value, l.ty.as_ref(), errors);
                 }
                 Item::Type(_) => {}
+                // Plan 33.3 Ф.13: lemma — spec-only, эрейзится в codegen.
+                Item::Lemma(_) => {}
             }
         }
     }
@@ -5029,6 +5031,8 @@ impl MapLitCtx {
             Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
                 self.walk_expr(expr, None, errors);
             }
+            // Plan 33.3 Ф.13: Apply/Calc — proof-statements, spec-only.
+            Stmt::Apply { .. } | Stmt::Calc { .. } => {}
         }
     }
 
@@ -5174,7 +5178,7 @@ impl MapLitCtx {
                 self.walk_expr(iter, None, errors);
                 self.walk_block(body, errors);
             }
-            ExprKind::While { cond, body } => {
+            ExprKind::While { cond, body, .. } => {
                 self.walk_expr(cond, None, errors);
                 self.walk_block(body, errors);
             }
@@ -5182,7 +5186,7 @@ impl MapLitCtx {
                 self.walk_expr(scrutinee, None, errors);
                 self.walk_block(body, errors);
             }
-            ExprKind::Loop { body } => self.walk_block(body, errors),
+            ExprKind::Loop { body, .. } => self.walk_block(body, errors),
             ExprKind::Block(b) => self.walk_block(b, errors),
             ExprKind::Spawn(x) => self.walk_expr(x, None, errors),
             ExprKind::Detach(b) => self.walk_block(b, errors),
@@ -5248,6 +5252,10 @@ impl MapLitCtx {
                     if let Some(g) = &arm.guard { self.walk_expr(g, None, errors); }
                     self.walk_block(&arm.body, errors);
                 }
+            }
+            // Plan 33.3 Ф.13: Forall/Exists — spec quantifiers.
+            ExprKind::Forall { body, .. } | ExprKind::Exists { body, .. } => {
+                self.walk_expr(body, None, errors);
             }
             // Листовые.
             ExprKind::Ident(_) | ExprKind::Path(_) | ExprKind::SelfAccess

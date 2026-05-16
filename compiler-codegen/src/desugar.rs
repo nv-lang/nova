@@ -78,6 +78,11 @@ impl DesugarCtx {
             Item::Let(l) => self.desugar_expr(&mut l.value),
             Item::Test(t) => self.desugar_block(&mut t.body),
             Item::Type(_) => {}
+            // Plan 33.3 Ф.13: lemma — spec-only declaration, body имеет
+            // proof-statements (Apply/Calc); карты литералов внутри
+            // proof-выражений не имеют смысла (lemma эрейзится в codegen),
+            // но для consistency обходим тело.
+            Item::Lemma(_) => {}
         }
     }
 
@@ -105,6 +110,10 @@ impl DesugarCtx {
             Stmt::Break(_) | Stmt::Continue(_) => {}
             Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. } => self.desugar_expr(body),
             Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => self.desugar_expr(expr),
+            // Plan 33.3 Ф.13: Apply/Calc — proof-statements внутри lemma-body.
+            // Spec-only, не emit'ятся в codegen. Map-литералы внутри proof —
+            // edge case, не покрываем (lemma body — spec, не runtime).
+            Stmt::Apply { .. } | Stmt::Calc { .. } => {}
         }
     }
 
@@ -284,7 +293,7 @@ impl DesugarCtx {
                 self.desugar_expr(iter);
                 self.desugar_block(body);
             }
-            ExprKind::While { cond, body } => {
+            ExprKind::While { cond, body, .. } => {
                 self.desugar_expr(cond);
                 self.desugar_block(body);
             }
@@ -292,7 +301,7 @@ impl DesugarCtx {
                 self.desugar_expr(scrutinee);
                 self.desugar_block(body);
             }
-            ExprKind::Loop { body } => self.desugar_block(body),
+            ExprKind::Loop { body, .. } => self.desugar_block(body),
             ExprKind::Block(b) => self.desugar_block(b),
             ExprKind::Spawn(x) => self.desugar_expr(x),
             ExprKind::Detach(b) => self.desugar_block(b),
@@ -354,6 +363,12 @@ impl DesugarCtx {
                     if let Some(g) = &mut arm.guard { self.desugar_expr(g); }
                     self.desugar_block(&mut arm.body);
                 }
+            }
+            // Plan 33.3 Ф.13: Forall/Exists — quantifiers в spec-выражениях.
+            // Body — proposition; map-литералы внутри не имеют runtime-смысла
+            // (spec эрейзится в codegen), но обходим тело для consistency.
+            ExprKind::Forall { body, .. } | ExprKind::Exists { body, .. } => {
+                self.desugar_expr(body);
             }
             // Листовые — нет под-выражений.
             ExprKind::Ident(_) | ExprKind::Path(_) | ExprKind::SelfAccess

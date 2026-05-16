@@ -47,6 +47,8 @@ pub fn lint_module(m: &Module) -> Vec<LintWarning> {
             Item::Const(c) => walk_expr_lints(&c.value, &mut warnings),
             Item::Let(l) => walk_expr_lints(&l.value, &mut warnings),
             Item::Type(_) => {}
+            // Plan 33.3 Ф.13: lemma — spec-only, эрейзится в codegen.
+            Item::Lemma(_) => {}
         }
     }
     warnings
@@ -77,6 +79,8 @@ fn walk_stmt_lints(s: &Stmt, out: &mut Vec<LintWarning>) {
         Stmt::Break(_) | Stmt::Continue(_) => {}
         Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. } => walk_expr_lints(body, out),
         Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => walk_expr_lints(expr, out),
+        // Plan 33.3 Ф.13: Apply/Calc — proof-statements, spec-only.
+        Stmt::Apply { .. } | Stmt::Calc { .. } => {}
     }
 }
 
@@ -168,13 +172,13 @@ fn walk_expr_lints(e: &Expr, out: &mut Vec<LintWarning>) {
         ExprKind::For { iter, body, .. } | ExprKind::ParallelFor { iter, body, .. } => {
             walk_expr_lints(iter, out); walk_block_lints(body, out);
         }
-        ExprKind::While { cond, body } => {
+        ExprKind::While { cond, body, .. } => {
             walk_expr_lints(cond, out); walk_block_lints(body, out);
         }
         ExprKind::WhileLet { scrutinee, body, .. } => {
             walk_expr_lints(scrutinee, out); walk_block_lints(body, out);
         }
-        ExprKind::Loop { body } => walk_block_lints(body, out),
+        ExprKind::Loop { body, .. } => walk_block_lints(body, out),
         ExprKind::Block(b) => walk_block_lints(b, out),
         ExprKind::Spawn(x) => walk_expr_lints(x, out),
         ExprKind::Detach(b) => walk_block_lints(b, out),
@@ -234,6 +238,10 @@ fn walk_expr_lints(e: &Expr, out: &mut Vec<LintWarning>) {
                 if let Some(g) = &arm.guard { walk_expr_lints(g, out); }
                 walk_block_lints(&arm.body, out);
             }
+        }
+        // Plan 33.3 Ф.13: Forall/Exists — spec quantifiers.
+        ExprKind::Forall { body, .. } | ExprKind::Exists { body, .. } => {
+            walk_expr_lints(body, out);
         }
         // Листовые — нет под-выражений.
         ExprKind::Ident(_) | ExprKind::Path(_) | ExprKind::SelfAccess

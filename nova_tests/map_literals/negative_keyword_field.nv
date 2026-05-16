@@ -1,0 +1,9 @@
+// EXPECT_COMPILE_ERROR keyword `type` cannot be used as a field name
+//
+// Plan 52 Ф.7 (D108): keyword `type` в field-position {...} → actionable
+// error с HELP-подсказкой использовать map-литерал ["type": value].
+module map_literals.negative_keyword_field
+
+fn main() -> () {
+    let bad = { type: 1 }
+}
