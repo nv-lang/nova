@@ -26,7 +26,10 @@ test "str→int single entry" {
     assert(m.get("only") == Some(42))
 }
 
-// NOTE: `let m = ["a": 1, "b": 2]` без аннотации сейчас RUN-FAIL —
-// annotate_module передаёт expected=None в walk_expr (let.ty=None),
-// инфер по pairs работает, но peer_files копия может остаться без
-// аннотации в edge case (отслеживается отдельно). С аннотацией всё OK.
+// Plan 55 Ф.5 closure: `let m = ["a": 1, "b": 2]` без аннотации работает
+// после auto-fix Ф.4 (mono-pass corruption + protocol whitelist).
+test "str→int БЕЗ аннотации — inferred" {
+    let m = ["a": 1, "b": 2]
+    assert(m.len() == 2)
+    assert(m.get("a") == Some(1))
+}
