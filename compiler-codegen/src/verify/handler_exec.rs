@@ -593,7 +593,17 @@ fn extract_match_assignments(
             }
         }
         // Если есть branches и default, строим nested ite.
-        let Some(default) = default_val else { continue; }; // V1: требуется wildcard
+        // Ф.14.2 (Plan 33.6): без wildcard — берём последний branch как fallback
+        // (assume exhaustive match, что Bool/finite-set normally satisfies).
+        let default = match default_val {
+            Some(d) => d,
+            None => {
+                // Если нет wildcard, последний branch становится fallback,
+                // удаляем его из active branches.
+                if branches.is_empty() { continue; }
+                branches.pop().unwrap().1
+            }
+        };
         let mut acc = default;
         for (cond, val) in branches.into_iter().rev() {
             acc = crate::ast::Expr {

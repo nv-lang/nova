@@ -1,0 +1,26 @@
+// Ф.14.2 (Plan 33.6): match handler без wildcard — last branch as fallback.
+// REQUIRES_SMT_BACKEND z3
+
+module contracts.handler_post_match_no_wildcard
+
+type BoolSetter effect {
+    SetFlag(v bool)
+    #pure get_flag() -> bool
+    axiom after_set(v) => post(SetFlag(v))(get_flag()) == v
+}
+
+test "handler match without wildcard" {
+    let mut store = false
+    with #verify BoolSetter = handler BoolSetter {
+        SetFlag(v) {
+            match v {
+                true => store = true,
+                false => store = false,
+            }
+        }
+        get_flag() => store
+    } {
+        BoolSetter.SetFlag(true)
+        assert(BoolSetter.get_flag() == true)
+    }
+}
