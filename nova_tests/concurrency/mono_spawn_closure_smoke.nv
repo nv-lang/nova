@@ -1,0 +1,48 @@
+// mono_spawn_closure_smoke.nv — Plan 48 Ф.4 smoke test.
+//
+// Покрывает оба бага которые блокировали std/concurrency/cancellation.nv:
+//
+//   [M-spawn-closure-capture-mono]
+//     В мономорфизированном теле generic fn closure-параметр (`body fn()->T`)
+//     должен переписываться через `_c->body` когда захватывается в spawn ctx.
+//     До фикса emit_call для fn-typed param-call использовал bare имя.
+//
+//   [M-mono-spawn-fwd-decls]
+//     Pre-scan forward-decl'ов выполняется ДО мономорфизации, поэтому
+//     spawn-body функция созданная внутри mono'д fn body была без
+//     forward declaration → undefined symbol на стадии C-codegen.
+//     Фикс пушит fwd-decl в mono_fwd_decls когда current_type_subst не пуст.
+
+module concurrency.mono_spawn_closure_smoke
+
+
+// Generic функция с closure-param, спавнит body в supervised scope.
+// Это упрощённый аналог `within[T]` из Plan 47.
+fn run_in_fiber[T](body fn() -> T) -> T {
+    supervised {
+        spawn { body() }
+    }
+    // После завершения supervised — вызываем body снова в main flow
+    // и возвращаем результат. Простейшая логика для smoke-проверки;
+    // production within[T] синхронизирует через канал, но для теста
+    // достаточно подтвердить что mono+spawn+capture компилируется.
+    body()
+}
+
+
+test "mono spawn закрывает closure-param: T=int" {
+    let r = run_in_fiber(|| 42)
+    assert(r == 42)
+}
+
+
+test "mono spawn закрывает closure-param: T=str" {
+    let r = run_in_fiber(|| "hello")
+    assert(r == "hello")
+}
+
+
+test "mono spawn закрывает closure-param: T=bool" {
+    let r = run_in_fiber(|| true)
+    assert(r == true)
+}

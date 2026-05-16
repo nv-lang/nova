@@ -2671,6 +2671,23 @@ impl CEmitter {
         let saved_indent = self.indent;
         self.indent = 0;
 
+        // Plan 48 Ф.4 ([M-mono-spawn-fwd-decls]): pre-scan `scan_expr_fwd`
+        // emits forward declarations for every spawn-body it sees in the
+        // ORIGINAL module AST, before fn definitions. Monomorphized fn
+        // bodies are synthesized during the mono-worklist drain, AFTER the
+        // pre-scan ran — so spawn-bodies emitted from inside a mono'd fn
+        // have no pre-scan'ed forward decl, and the mono'd fn would
+        // reference `_nova_spawn_N` undefined-identifier. Detect mono
+        // context via non-empty `current_type_subst` and push the missing
+        // forward decl into `mono_fwd_decls`, which gets spliced into the
+        // `/*__MONO_FWD_DECLS__*/` marker at the top of the C file (before
+        // any fn definition). Idempotent: each spawn_id is unique per
+        // counter, no risk of duplicates.
+        if !self.current_type_subst.is_empty() {
+            self.mono_fwd_decls.push_str(&format!(
+                "static void {}(mco_coro* _co);\n", spawn_id));
+        }
+
         self.line(&format!("static void {}(mco_coro* _co) {{", spawn_id));
         self.indent += 1;
         // Plan 44.5 Layer 5: _c всегда нужен — entry function reads
@@ -7469,6 +7486,24 @@ impl CEmitter {
         }
     }
 
+    /// Plan 48 Ф.4 ([M-spawn-closure-capture-mono]): if `name` is captured by
+    /// the current spawn-body, return the C expression to read it from the
+    /// spawn ctx (`_c->name` or `(*_c->name)`). Returns `None` otherwise so
+    /// the caller can use the bare identifier. Centralizes the rewrite so
+    /// both Ident reads and indirect uses (closure-call callee, address-of
+    /// for spawn nesting) stay consistent.
+    fn spawn_capture_access(&self, name: &str) -> Option<String> {
+        let caps = self.current_spawn_captures.as_ref()?;
+        if !caps.contains(name) { return None; }
+        let by_value = self.current_spawn_capture_by_value.as_ref()
+            .map(|s| s.contains(name)).unwrap_or(false);
+        Some(if by_value {
+            format!("_c->{}", name)
+        } else {
+            format!("(*_c->{})", name)
+        })
+    }
+
     fn emit_expr(&mut self, expr: &Expr) -> Result<String, String> {
         match &expr.kind {
             ExprKind::IntLit(n)   => Ok(format!("((nova_int){}LL)", n)),
@@ -9029,14 +9064,24 @@ impl CEmitter {
             if let Some((param_tys, ret_ty)) = self.fn_param_sigs.get(name).cloned() {
                 let mut arg_strs = Vec::new();
                 for a in args { arg_strs.push(self.emit_expr(a.expr())?); }
+                // Plan 48 Ф.4 ([M-spawn-closure-capture-mono]): when this
+                // closure call lives inside a spawn-body whose parent fn is
+                // monomorphized, the fn-param identifier (`body`) is actually
+                // captured into the spawn ctx. We must reach it via `_c->body`
+                // (by-value) or `(*_c->body)` (by-pointer) — same rewrite that
+                // emit_expr(Ident) does for plain reads. Without this, the
+                // generated C references an undeclared identifier in the
+                // spawn-entry function.
+                let callee_expr = self.spawn_capture_access(name);
+                let callee_str = callee_expr.as_deref().unwrap_or(name.as_str());
                 // Determine which NovaClos macro to use based on (params, ret) types
                 let macro_name = Self::clos_call_macro(&param_tys, &ret_ty);
                 return match macro_name {
                     Some(m) => {
                         if arg_strs.is_empty() {
-                            Ok(format!("{}({})", m, name))
+                            Ok(format!("{}({})", m, callee_str))
                         } else {
-                            Ok(format!("{}({}, {})", m, name, arg_strs.join(", ")))
+                            Ok(format!("{}({}, {})", m, callee_str, arg_strs.join(", ")))
                         }
                     }
                     None => {
@@ -9046,12 +9091,12 @@ impl CEmitter {
                         let mut cast_params = vec!["void*".to_string()];
                         cast_params.extend(param_tys.iter().cloned());
                         let cast_params_str = cast_params.join(", ");
-                        let mut all_args = vec![format!("((NovaClosBase*)({}))->env", name)];
+                        let mut all_args = vec![format!("((NovaClosBase*)({}))->env", callee_str)];
                         all_args.extend(arg_strs.iter().cloned());
                         Ok(format!("(({ret}(*)({params}))(((NovaClosBase*)({n}))->fn))({args})",
                             ret = ret_ty,
                             params = cast_params_str,
-                            n = name,
+                            n = callee_str,
                             args = all_args.join(", ")))
                     }
                 };
