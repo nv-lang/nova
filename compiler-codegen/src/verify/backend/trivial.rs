@@ -91,7 +91,14 @@ impl SmtBackend for TrivialBackend {
         // Извлекаем все `(= a b)` из conjunction, строим class-substitution,
         // применяем re-simplify. Это закрывает `requires a==b; requires b==c; ensures a==c`.
         let propagated = propagate_equalities(&simplified);
-        match &propagated {
+        // Plan 33.6 Ф.15.2 (followup, 2026-05-17): bounds propagation для
+        // inequality weakening. Раньше эта step была nested внутри
+        // propagate_equalities — но та early-return'ила при отсутствии
+        // equalities, что блокировало bounds prop в типичных cases
+        // (e.g. `requires x >= 0; ensures result >= -1` где no `=` clauses).
+        // Теперь bounds prop — independent phase в check_sat pipeline.
+        let final_term = apply_bounds_propagation(&propagated);
+        match &final_term {
             SmtTerm::BoolLit(true) => {
                 // SAT — есть модель (trivial: все vars = 0/false).
                 SatResult::Sat(Model { bindings: HashMap::new() })
@@ -369,6 +376,23 @@ fn propagate_equalities(term: &SmtTerm) -> SmtTerm {
     // → trivially true. Аналогично для `<=`.
     let bound_propagated = propagate_bounds(&resimplified);
 
+    let result = if bound_propagated.len() == 1 {
+        bound_propagated.into_iter().next().unwrap()
+    } else {
+        SmtTerm::App("and".into(), bound_propagated)
+    };
+    simplify(&result)
+}
+
+/// Plan 33.6 Ф.15.2 (followup, 2026-05-17): apply bounds propagation
+/// как standalone phase. Wraps `propagate_bounds` для full-term entry
+/// (вместо conjunct-list). Возвращает re-simplified term.
+fn apply_bounds_propagation(term: &SmtTerm) -> SmtTerm {
+    let conjuncts: Vec<SmtTerm> = match term {
+        SmtTerm::App(op, args) if op == "and" => args.clone(),
+        _ => vec![term.clone()],
+    };
+    let bound_propagated = propagate_bounds(&conjuncts);
     let result = if bound_propagated.len() == 1 {
         bound_propagated.into_iter().next().unwrap()
     } else {
