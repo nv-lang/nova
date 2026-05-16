@@ -4641,6 +4641,7 @@ impl CEmitter {
         Ok(())
     }
 
+
     /// Emit a type-erased version of a generic method (instance or static).
     /// Type params in recv.generics map to void*.
     fn emit_generic_method_erased(&mut self, f: &FnDecl) -> Result<(), String> {
@@ -4843,6 +4844,7 @@ impl CEmitter {
         Ok(())
     }
 
+
     // ---- Plan 48: monomorphization helpers ----
 
     /// Plan 48: sanitize a C type string to a valid C identifier component.
@@ -4881,6 +4883,66 @@ impl CEmitter {
             .collect::<Vec<_>>()
             .join("__");
         format!("{}____{}", base_c_name, args)
+    }
+
+    /// Plan 48 Ф.7.4 (partial): try to infer mono type-args for a bare variant
+    /// constructor call like `Ok2(42)` where the parent sum-type is generic.
+    /// Returns (parent_type_name, mangled_instance_c_name, type_args_c) when:
+    ///   - the variant's parent type is a generic template
+    ///   - the variant is tuple-shaped with at least one positional arg
+    ///   - every generic param can be inferred from a corresponding arg's C type
+    /// On success, also enqueues the instance for mono emission.
+    ///
+    /// Returns None for unit variants (`Err2`) or when inference is incomplete —
+    /// caller falls back to the erased emit path. Unit-variant inference would
+    /// need usage-context propagation (deferred to V2).
+    fn try_infer_variant_mono_args(
+        &self,
+        variant_name: &str,
+        args: &[crate::ast::CallArg],
+    ) -> Option<(String, String, Vec<String>)> {
+        use crate::ast::{TypeDeclKind, SumVariantKind};
+        // 1. Find parent sum-type by variant name.
+        let (parent_type, _) = self.find_variant(variant_name)?;
+        // 2. Must be a generic template (has type params).
+        let template = self.generic_type_templates.get(&parent_type)?.clone();
+        if template.generics.is_empty() { return None; }
+        // 3. Must be Sum with the variant present and tuple-shaped.
+        let variants = match &template.kind {
+            TypeDeclKind::Sum(vs) => vs,
+            _ => return None,
+        };
+        let variant = variants.iter().find(|v| v.name == variant_name)?;
+        let field_types = match &variant.kind {
+            SumVariantKind::Tuple(tys) => tys.clone(),
+            // Unit / record variants are out of scope for this helper.
+            _ => return None,
+        };
+        if field_types.is_empty() || args.is_empty() { return None; }
+        // 4. Infer subst[T] from each (declared field type, arg C type).
+        let mut subst: Vec<(String, Option<String>)> = template.generics.iter()
+            .map(|g| (g.name.clone(), None))
+            .collect();
+        for (field_ty, arg) in field_types.iter().zip(args.iter()) {
+            let arg_c = self.infer_expr_c_type(arg.expr());
+            Self::infer_type_param_binding(field_ty, &arg_c, &mut subst);
+        }
+        // 5. Require every generic param resolved.
+        let type_args_c: Vec<String> = subst.iter()
+            .map(|(_, opt)| opt.clone())
+            .collect::<Option<Vec<String>>>()?;
+        // 6. Compute mangled instance name and enqueue for mono emit.
+        let mangled = Self::compute_generic_type_c_name(&parent_type, &type_args_c);
+        if !self.emitted_generic_type_instances.contains(&mangled) {
+            let mut wl = self.generic_type_worklist.borrow_mut();
+            if !wl.iter().any(|(_, _, m)| m == &mangled) {
+                wl.push((parent_type.clone(), type_args_c.clone(), mangled.clone()));
+            }
+        }
+        self.generic_type_instance_info.borrow_mut()
+            .entry(mangled.clone())
+            .or_insert_with(|| (parent_type.clone(), type_args_c.clone()));
+        Some((parent_type, mangled, type_args_c))
     }
 
     /// Plan 48 Ф.0: resolve concrete type args for a generic fn call.
@@ -6181,7 +6243,15 @@ impl CEmitter {
                     // TurboFish calls to other generic methods with K/V unknowns).
                     return self.emit_generic_static_method_stub(f);
                 }
-                // Instance methods on generic types: type-erased emit.
+                // Instance methods on generic types. Concrete-instance code
+                // is emitted via drain_generic_type_worklist →
+                // emit_generic_type_instance whenever the type is monomorphized
+                // (Plan 48 Ф.3). The erased emit below remains as the V1
+                // fallback for code paths the mono pipeline doesn't yet cover:
+                // bare unit-variant references like `let r = Err2` where T
+                // cannot be inferred from the constructor alone. Ф.7.4 is
+                // therefore kept partial — full removal blocks on usage-context
+                // inference for unit variants (tracked as V2 follow-up).
                 return self.emit_generic_method_erased(f);
             }
         }
@@ -8974,7 +9044,20 @@ impl CEmitter {
         let func_c = match &func.kind {
             ExprKind::Ident(name) => {
                 if let Some((type_name, _)) = self.find_variant(name) {
-                    format!("nova_make_{}_{}", type_name, name)
+                    // Plan 48 Ф.7.4 (partial): when the parent sum-type is
+                    // generic and we can infer all type-args from the call args
+                    // (e.g. `Ok2(42)` → Result2[nova_int]), route through the
+                    // mono pipeline so the receiver gets a concrete C struct
+                    // type (`Nova_Result2____nova_int*`) and method calls hit
+                    // the mono dispatch path. Otherwise fall back to the erased
+                    // constructor.
+                    if let Some((_, mangled, _)) =
+                        self.try_infer_variant_mono_args(name, args)
+                    {
+                        format!("nova_make_{}_{}", mangled, name)
+                    } else {
+                        format!("nova_make_{}_{}", type_name, name)
+                    }
                 } else {
                     // D84: free-function overload resolution. Если в registry
                     // несколько overloads — резолвим по статическим типам args.
@@ -10727,10 +10810,15 @@ impl CEmitter {
         }
 
         // Non-generic (or generic method — still erased in V1) call path.
-        // is_generic_call is true for variant constructors on generic sum types (void* params).
+        // is_generic_call is true for variant constructors on generic sum types
+        // whose params are erased to `void*`. Plan 48 Ф.7.4 (partial): when
+        // try_infer_variant_mono_args succeeds, the constructor is routed to
+        // the monomorphized instance which expects concrete types — skip the
+        // void* boxing so the arg type matches the mono signature.
         let is_generic_call = if let ExprKind::Ident(name) = &func.kind {
             if let Some((type_name, _)) = self.find_variant(name) {
                 self.generic_types.contains(&type_name)
+                    && self.try_infer_variant_mono_args(name, args).is_none()
             } else { false }
         } else { false };
         // Bidirectional inference: extract callee name for HOF context lookup.
@@ -14491,6 +14579,17 @@ impl CEmitter {
                                 }
                             }
                             return "NovaOpt_nova_int".into();
+                        }
+                        // Plan 48 Ф.7.4 (partial): user-defined generic sum
+                        // constructor with args (`Ok2(42)` etc.) — infer mono
+                        // instance from arg types so the let-binding gets the
+                        // concrete `Nova_Result2____nova_int*` type, not the
+                        // erased `Nova_Result2*`. This is what feeds the mono
+                        // method-dispatch path on subsequent `.method()` calls.
+                        if let Some((_, mangled, _)) =
+                            self.try_infer_variant_mono_args(name, args)
+                        {
+                            return format!("{}*", mangled);
                         }
                         return format!("Nova_{}*", type_name);
                     }
