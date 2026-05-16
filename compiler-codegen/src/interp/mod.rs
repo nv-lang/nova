@@ -795,7 +795,7 @@ impl Interpreter {
             }
             // Plan 52 Ф.1: MapLit-заглушка. Реальная eval-логика
             // (`with_capacity` + `@insert`, нормативный порядок) — Ф.5.
-            ExprKind::MapLit(_) => {
+            ExprKind::MapLit { .. } => {
                 Err(Diagnostic::new(
                     "internal: map literal `[k: v]` reached interpreter without \
                      desugaring (Plan 52 Ф.5 not yet wired)",

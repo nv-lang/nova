@@ -125,34 +125,91 @@ impl DesugarCtx {
         // 1. Спуск в дети.
         self.desugar_children(e);
         // 2. Замена самого узла, если это MapLit.
-        if let ExprKind::MapLit(_) = &e.kind {
-            // take pairs из узла, заменяя его на UnitLit-заглушку, затем
-            // строим Block и кладём обратно.
+        if matches!(&e.kind, ExprKind::MapLit { .. }) {
+            // take pairs + inferred K/V из узла, заменяя его на UnitLit-
+            // заглушку, затем строим Block и кладём обратно.
             let span = e.span;
-            let pairs = match std::mem::replace(&mut e.kind, ExprKind::UnitLit) {
-                ExprKind::MapLit(p) => p,
-                _ => unreachable!(),
-            };
-            e.kind = self.build_map_block(pairs, span);
+            let (pairs, inferred_key, inferred_value) =
+                match std::mem::replace(&mut e.kind, ExprKind::UnitLit) {
+                    ExprKind::MapLit { pairs, inferred_key, inferred_value } => {
+                        (pairs, inferred_key, inferred_value)
+                    }
+                    _ => unreachable!(),
+                };
+            e.kind = self.build_map_block(pairs, inferred_key, inferred_value, span);
         }
     }
 
-    /// Строит block-expression `{ let mut _mN = HashMap.with_capacity(n);
+    /// Строит block-expression `{ let mut _mN = HashMap[K,V].with_capacity(n);
     /// let _ = _mN.insert(k, v); ...; _mN }` из пар map-литерала.
-    fn build_map_block(&mut self, pairs: Vec<(Expr, Expr)>, span: Span) -> ExprKind {
+    ///
+    /// Plan 52 Ф.7 production-fix: если `inferred_key`/`inferred_value`
+    /// заполнены type-checker'ом (MapLitCtx::annotate_module) — используем
+    /// turbofish `HashMap[K, V].with_capacity(n)` для корректной
+    /// мономорфизации. Без turbofish codegen инстанциирует
+    /// `HashMap[void*, void*]` → segfault на runtime при `K.hash()`/
+    /// `K.eq()` через generic-bound dispatch (Plan 48 Ф.7.7 partial).
+    ///
+    /// Fallback (K/V неизвестны): bare `HashMap.with_capacity(n)` — может
+    /// упасть в codegen без аннотации; type-checker эмитит «cannot infer»
+    /// до десугаринга если контекст не даёт K/V.
+    fn build_map_block(
+        &mut self,
+        pairs: Vec<(Expr, Expr)>,
+        inferred_key: Option<TypeRef>,
+        inferred_value: Option<TypeRef>,
+        span: Span,
+    ) -> ExprKind {
         let tmp = self.fresh_map_tmp();
         let n = pairs.len();
         let mut stmts: Vec<Stmt> = Vec::with_capacity(n + 1);
 
-        // `let mut _mN = HashMap.with_capacity(n)`
-        // Callee — Path(["HashMap", "with_capacity"]); без turbofish,
-        // мономорфизация выводит K/V из последующих insert-вызовов.
+        // Callee: `HashMap.with_capacity` (Path) или `HashMap[K, V].with_capacity`
+        // (TurboFish + Member) если K/V выведены.
+        let with_capacity_callee: Expr = match (inferred_key, inferred_value) {
+            (Some(k_ty), Some(v_ty)) => {
+                // TurboFish: `HashMap[K, V]` затем `.with_capacity`.
+                // AST: Member { obj: TurboFish { base: Ident("HashMap"),
+                //                                type_args: [K, V] },
+                //               name: "with_capacity" }
+                // ВАЖНО: base должен быть `Ident`, не `Path([_])` —
+                // парсер для одиночного имени строит Ident; codegen
+                // мономорфизирует только Ident-based callee.
+                let hashmap_ident = Expr::new(
+                    ExprKind::Ident("HashMap".to_string()),
+                    span,
+                );
+                let turbofish = Expr::new(
+                    ExprKind::TurboFish {
+                        base: Box::new(hashmap_ident),
+                        type_args: vec![k_ty, v_ty],
+                    },
+                    span,
+                );
+                Expr::new(
+                    ExprKind::Member {
+                        obj: Box::new(turbofish),
+                        name: "with_capacity".to_string(),
+                    },
+                    span,
+                )
+            }
+            _ => {
+                // Fallback: bare `HashMap.with_capacity` — мономорфизация
+                // через контекст (может не сработать для generic-methods,
+                // см. Plan 48 Ф.7.7 baseline-баг).
+                Expr::new(
+                    ExprKind::Path(vec![
+                        "HashMap".to_string(),
+                        "with_capacity".to_string(),
+                    ]),
+                    span,
+                )
+            }
+        };
         let with_capacity_call = Expr::new(
             ExprKind::Call {
-                func: Box::new(Expr::new(
-                    ExprKind::Path(vec!["HashMap".to_string(), "with_capacity".to_string()]),
-                    span,
-                )),
+                func: Box::new(with_capacity_callee),
                 args: vec![CallArg::Item(Expr::new(
                     ExprKind::IntLit(n as i64),
                     span,
@@ -212,7 +269,7 @@ impl DesugarCtx {
     /// `e` — это делает `desugar_expr`).
     fn desugar_children(&mut self, e: &mut Expr) {
         match &mut e.kind {
-            ExprKind::MapLit(pairs) => {
+            ExprKind::MapLit { pairs, .. } => {
                 for (k, v) in pairs.iter_mut() {
                     self.desugar_expr(k);
                     self.desugar_expr(v);

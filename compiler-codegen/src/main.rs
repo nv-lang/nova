@@ -265,6 +265,9 @@ fn cmd_run(path: &PathBuf) -> Result<()> {
     })?;
     // Plan 52 Ф.5: десугаринг map-литералов `[k: v]` → block-expression
     // ПОСЛЕ type-check (типы проверены), ДО интерпретации.
+    // Plan 52 Ф.7: аннотируем MapLit-узлы inferred K/V — для генерации
+    // turbofish `HashMap[K,V].with_capacity(n)` в десугаринге.
+    nova_codegen::types::annotate_map_literals(&mut module);
     nova_codegen::desugar::desugar_module(&mut module);
     let mut interp = nova_codegen::interp::Interpreter::new();
     interp.load_module(&module).map_err(|d| {
@@ -298,6 +301,9 @@ fn cmd_compile(path: &PathBuf, output: Option<&std::path::Path>, annotate_source
     // Plan 52 Ф.4: десугаринг map-литералов `[k: v]` → block-expression
     // ПОСЛЕ type-check, ДО effect-inference и codegen. После прохода
     // codegen видит обычные method-call'ы (with_capacity / insert).
+    // Plan 52 Ф.7: аннотируем MapLit-узлы inferred K/V — для генерации
+    // turbofish `HashMap[K,V].with_capacity(n)` в десугаринге.
+    nova_codegen::types::annotate_map_literals(&mut module);
     nova_codegen::desugar::desugar_module(&mut module);
     // D28: effect inference для private fn — добавить `Fail` если throw
     // в теле и нет явного Fail в effect-row.
@@ -343,6 +349,9 @@ fn cmd_test(path: &PathBuf) -> Result<()> {
     })?;
     check_module_path(path, &module)?;
     // Plan 52 Ф.5: десугаринг map-литералов перед интерпретацией тестов.
+    // Plan 52 Ф.7: аннотируем MapLit-узлы inferred K/V — для генерации
+    // turbofish `HashMap[K,V].with_capacity(n)` в десугаринге.
+    nova_codegen::types::annotate_map_literals(&mut module);
     nova_codegen::desugar::desugar_module(&mut module);
     let mut interp = nova_codegen::interp::Interpreter::new();
     interp.load_module(&module).map_err(|d| {

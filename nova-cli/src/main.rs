@@ -976,6 +976,8 @@ fn cmd_run(path: &Path) -> Result<()> {
     })?;
     // Plan 52 Ф.5: десугаринг map-литералов `[k: v]` → block-expression
     // ПОСЛЕ type-check, ДО callnorm/interp.
+    // Plan 52 Ф.7: аннотация inferred K/V для turbofish в десугаринге.
+    nova_codegen::types::annotate_map_literals(&mut module);
     nova_codegen::desugar::desugar_module(&mut module);
     // Plan 46 (D102) Ф.2: нормализация call-site для treewalk-interp —
     // named args → positional + вставка defaults. После resolve_imports
@@ -1804,6 +1806,8 @@ fn cmd_build(
 
     // Plan 52 Ф.4: десугаринг map-литералов `[k: v]` → block-expression.
     // ПОСЛЕ lints (которые анализируют MapLit-узлы), ДО callnorm/codegen.
+    // Plan 52 Ф.7: аннотация inferred K/V для turbofish в десугаринге.
+    nova_codegen::types::annotate_map_literals(&mut module);
     nova_codegen::desugar::desugar_module(&mut module);
 
     // Plan 46 (D102) Ф.2: нормализация call-site — named args → positional

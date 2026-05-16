@@ -87,11 +87,11 @@ fn walk_stmt_lints(s: &Stmt, out: &mut Vec<LintWarning>) {
 /// Plan 52 Ф.2: рекурсивный обход выражения. На каждом `MapLit` запускает
 /// map-литерал lints; рекурсивно спускается во все под-выражения.
 fn walk_expr_lints(e: &Expr, out: &mut Vec<LintWarning>) {
-    if let ExprKind::MapLit(pairs) = &e.kind {
+    if let ExprKind::MapLit { pairs, .. } = &e.kind {
         check_map_literal_lints(pairs, out);
     }
     match &e.kind {
-        ExprKind::MapLit(pairs) => {
+        ExprKind::MapLit { pairs, .. } => {
             for (k, v) in pairs {
                 walk_expr_lints(k, out);
                 walk_expr_lints(v, out);

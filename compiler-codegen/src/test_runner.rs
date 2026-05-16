@@ -1985,6 +1985,9 @@ fn codegen_to_c(path: &Path, src: &str) -> Result<Vec<String>, String> {
     // Plan 52 Ф.4: десугаринг map-литералов `[k: v]` → block-expression.
     // ПОСЛЕ type-check, ДО infer_effects/callnorm/codegen — codegen видит
     // обычные method-call'ы (with_capacity / insert).
+    // Plan 52 Ф.7: предварительная аннотация MapLit-узлов inferred K/V —
+    // для генерации turbofish в десугаринге.
+    types::annotate_map_literals(&mut module);
     crate::desugar::desugar_module(&mut module);
     types::infer_effects(&mut module);
 

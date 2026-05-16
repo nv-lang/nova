@@ -561,7 +561,7 @@ impl<'a> BoundCtx<'a> {
                     }
                 }
             }
-            ExprKind::MapLit(pairs) => {
+            ExprKind::MapLit { pairs, .. } => {
                 for (k, v) in pairs {
                     self.walk_expr(k, scope, errors);
                     self.walk_expr(v, scope, errors);
@@ -1551,7 +1551,7 @@ impl<'a> CapabilityCtx<'a> {
                     }
                 }
             }
-            ExprKind::MapLit(pairs) => {
+            ExprKind::MapLit { pairs, .. } => {
                 for (k, v) in pairs {
                     self.walk_expr(k, state, errors);
                     self.walk_expr(v, state, errors);
@@ -2357,7 +2357,7 @@ impl NameResCtx {
                     }
                 }
             }
-            ExprKind::MapLit(pairs) => {
+            ExprKind::MapLit { pairs, .. } => {
                 for (k, v) in pairs {
                     self.walk_expr(k, file_id, scope, errors);
                     self.walk_expr(v, file_id, scope, errors);
@@ -3608,7 +3608,7 @@ fn walk_expr_for_handler_lits(e: &Expr, never_ops: &HashSet<(String, String)>, e
                 }
             }
         }
-        ExprKind::MapLit(pairs) => {
+        ExprKind::MapLit { pairs, .. } => {
             for (k, v) in pairs {
                 walk_expr_for_handler_lits(k, never_ops, errors);
                 walk_expr_for_handler_lits(v, never_ops, errors);
@@ -5041,7 +5041,7 @@ impl MapLitCtx {
     /// протаскивая expected туда, где он известен (let / arg-позиции).
     fn walk_expr(&self, e: &Expr, expected: Option<&TypeRef>, errors: &mut Vec<Diagnostic>) {
         match &e.kind {
-            ExprKind::MapLit(pairs) => {
+            ExprKind::MapLit { pairs, .. } => {
                 self.check_map_lit(e, pairs, expected, errors);
                 // Рекурсия в ключи/значения — без expected (key/value
                 // expected-types выводятся внутри check_map_lit; для
@@ -5653,4 +5653,376 @@ fn simple_types_compatible(a: &TypeRef, b: &TypeRef) -> bool {
         }
         _ => false,
     }
+}
+
+// ============================================================================
+// Plan 52 Ф.7 production-fix: annotate_map_literals — mutable pass.
+//
+// После `check_module` (immutable: проверки/errors), но ДО `desugar_module`:
+// проходим по AST mutable, выводим K/V для каждого `MapLit` и записываем
+// в узел через поля `inferred_key`/`inferred_value`. Десугаринг затем
+// эмитит `HashMap[K, V].with_capacity(n)` с turbofish — иначе
+// мономорфизация инстанциирует `HashMap[void*, void*]` → segfault.
+//
+// Стратегия:
+//   - Build immutable `MapLitCtx` для type-таблиц (известные типы,
+//     #from_fields, param-types для arg-position resolve).
+//   - Mutable AST walker с expected-type propagation в let / FnBody::Expr-
+//     return / argument-position. Те же позиции что MapLitCtx::walk_expr.
+//   - На каждом `MapLit`: вычислить (K, V) через `simple_expr_type` +
+//     unify_inferred helper; записать в узел. Не emit errors (это сделал
+//     check_module).
+// ============================================================================
+
+/// Plan 52 Ф.7: пройти по AST mutable, записать inferred K/V для каждого
+/// `MapLit`. Вызывается ПОСЛЕ `check_module` (errors уже emitted), ДО
+/// `desugar_module` (читает inferred K/V для turbofish).
+pub fn annotate_map_literals(module: &mut Module) {
+    let ctx = MapLitCtx::build(module);
+    let mut ann = MapLitAnnotator { ctx, fn_generics: HashSet::new() };
+    ann.walk_module(module);
+    // Plan 42.4 / Plan 52 Ф.7: peer_files несут per-peer копии items для
+    // name resolution. Десугаринг обходит и peer_files.items_here, поэтому
+    // аннотировать нужно тоже их — иначе peer-копия MapLit'а останется без
+    // inferred K/V → fallback bare Path → segfault.
+    for pf in &mut module.peer_files {
+        ann.walk_items(&mut pf.items_here);
+    }
+}
+
+/// Mutable AST walker для аннотации MapLit-узлов inferred K/V.
+struct MapLitAnnotator {
+    /// Immutable type-таблицы (#from_fields, param-types).
+    ctx: MapLitCtx,
+    /// Generic-параметры текущей функции — для permissive Hashable.
+    fn_generics: HashSet<String>,
+}
+
+impl MapLitAnnotator {
+    fn walk_module(&mut self, module: &mut Module) {
+        self.walk_items(&mut module.items);
+    }
+
+    fn walk_items(&mut self, items: &mut [Item]) {
+        for item in items.iter_mut() {
+            match item {
+                Item::Fn(f) => {
+                    self.fn_generics =
+                        f.generics.iter().map(|g| g.name.clone()).collect();
+                    if let Some(recv) = &f.receiver {
+                        for g in &recv.generics {
+                            if let TypeRef::Named { path, .. } = g {
+                                if path.len() == 1 {
+                                    self.fn_generics.insert(path[0].clone());
+                                }
+                            }
+                        }
+                    }
+                    let return_ty = f.return_type.clone();
+                    match &mut f.body {
+                        FnBody::Expr(e) => self.walk_expr(e, return_ty.as_ref()),
+                        FnBody::Block(b) => self.walk_block(b),
+                        FnBody::External => {}
+                    }
+                }
+                Item::Test(t) => {
+                    self.fn_generics.clear();
+                    self.walk_block(&mut t.body);
+                }
+                Item::Const(c) => {
+                    self.fn_generics.clear();
+                    let ty = c.ty.clone();
+                    self.walk_expr(&mut c.value, ty.as_ref());
+                }
+                Item::Let(l) => {
+                    self.fn_generics.clear();
+                    let ty = l.ty.clone();
+                    self.walk_expr(&mut l.value, ty.as_ref());
+                }
+                Item::Type(_) | Item::Lemma(_) => {}
+            }
+        }
+    }
+
+    fn walk_block(&mut self, b: &mut Block) {
+        for s in &mut b.stmts {
+            self.walk_stmt(s);
+        }
+        if let Some(t) = &mut b.trailing {
+            self.walk_expr(t, None);
+        }
+    }
+
+    fn walk_stmt(&mut self, s: &mut Stmt) {
+        match s {
+            Stmt::Expr(e) => self.walk_expr(e, None),
+            Stmt::Let(d) => {
+                let ty = d.ty.clone();
+                self.walk_expr(&mut d.value, ty.as_ref());
+            }
+            Stmt::Assign { target, value, .. } => {
+                self.walk_expr(target, None);
+                self.walk_expr(value, None);
+            }
+            Stmt::Return { value, .. } => {
+                if let Some(v) = value { self.walk_expr(v, None); }
+            }
+            Stmt::Throw { value, .. } => self.walk_expr(value, None),
+            Stmt::Break(_) | Stmt::Continue(_) => {}
+            Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. } => {
+                self.walk_expr(body, None);
+            }
+            Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
+                self.walk_expr(expr, None);
+            }
+            Stmt::Apply { .. } | Stmt::Calc { .. } => {}
+        }
+    }
+
+    fn walk_expr(&mut self, e: &mut Expr, expected: Option<&TypeRef>) {
+        // 1. На MapLit — заполнить inferred_key/value (до спуска в дети).
+        if let ExprKind::MapLit { pairs, inferred_key, inferred_value } = &mut e.kind {
+            let (exp_k, exp_v) = extract_hashmap_kv(expected);
+            *inferred_key = infer_unified_type(
+                pairs.iter().map(|(k, _)| k),
+                exp_k,
+            );
+            *inferred_value = infer_unified_type(
+                pairs.iter().map(|(_, v)| v),
+                exp_v,
+            );
+        }
+        // 2. Спуск в под-выражения с propagation expected-type где известен.
+        match &mut e.kind {
+            ExprKind::MapLit { pairs, .. } => {
+                for (k, v) in pairs.iter_mut() {
+                    self.walk_expr(k, None);
+                    self.walk_expr(v, None);
+                }
+            }
+            ExprKind::ArrayLit(elems) => {
+                for el in elems.iter_mut() {
+                    match el {
+                        ArrayElem::Item(x) | ArrayElem::Spread(x) => {
+                            self.walk_expr(x, None);
+                        }
+                    }
+                }
+            }
+            ExprKind::Call { func, args, trailing } => {
+                self.walk_expr(func, None);
+                // Argument-позиция — propagation expected типа параметра
+                // (фундамент Ф.3a).
+                let params = self.ctx.resolve_call_params(func);
+                let mut positional_idx = 0usize;
+                for a in args.iter_mut() {
+                    let arg_expected: Option<TypeRef> = match (&params, a.arg_name()) {
+                        (Some(ps), Some(name)) => ps
+                            .iter()
+                            .find(|(pn, _)| pn == name)
+                            .map(|(_, t)| t.clone()),
+                        (Some(ps), None) => {
+                            let r = ps.get(positional_idx).map(|(_, t)| t.clone());
+                            positional_idx += 1;
+                            r
+                        }
+                        (None, _) => None,
+                    };
+                    let expr_mut = match a {
+                        CallArg::Item(x) | CallArg::Spread(x) => x,
+                        CallArg::Named { value, .. } => value,
+                    };
+                    self.walk_expr(expr_mut, arg_expected.as_ref());
+                }
+                if let Some(t) = trailing {
+                    match t {
+                        crate::ast::Trailing::Block(b) => self.walk_block(b),
+                        crate::ast::Trailing::LegacyBlockWithParams(tb) => {
+                            self.walk_block(&mut tb.body)
+                        }
+                        crate::ast::Trailing::Fn(sb) => match &mut sb.body {
+                            FnBody::Expr(x) => self.walk_expr(x, None),
+                            FnBody::Block(b) => self.walk_block(b),
+                            FnBody::External => {}
+                        },
+                    }
+                }
+            }
+            ExprKind::TurboFish { base, .. } => self.walk_expr(base, expected),
+            ExprKind::Try(x) | ExprKind::Bang(x) => self.walk_expr(x, None),
+            ExprKind::Coalesce(a, b) => {
+                self.walk_expr(a, None);
+                self.walk_expr(b, None);
+            }
+            ExprKind::As(x, _) | ExprKind::Is(x, _) => self.walk_expr(x, None),
+            ExprKind::Binary { left, right, .. } => {
+                self.walk_expr(left, None);
+                self.walk_expr(right, None);
+            }
+            ExprKind::Unary { operand, .. } => self.walk_expr(operand, None),
+            ExprKind::Member { obj, .. } => self.walk_expr(obj, None),
+            ExprKind::Index { obj, index } => {
+                self.walk_expr(obj, None);
+                self.walk_expr(index, None);
+            }
+            ExprKind::TupleLit(elems) => {
+                for x in elems.iter_mut() { self.walk_expr(x, None); }
+            }
+            ExprKind::RecordLit { fields, .. } => {
+                for f in fields.iter_mut() {
+                    if let Some(v) = &mut f.value { self.walk_expr(v, None); }
+                }
+            }
+            ExprKind::If { cond, then, else_ } => {
+                self.walk_expr(cond, None);
+                self.walk_block(then);
+                if let Some(eb) = else_ {
+                    match eb {
+                        ElseBranch::Block(b) => self.walk_block(b),
+                        ElseBranch::If(x) => self.walk_expr(x, None),
+                    }
+                }
+            }
+            ExprKind::IfLet { scrutinee, then, else_, .. } => {
+                self.walk_expr(scrutinee, None);
+                self.walk_block(then);
+                if let Some(eb) = else_ {
+                    match eb {
+                        ElseBranch::Block(b) => self.walk_block(b),
+                        ElseBranch::If(x) => self.walk_expr(x, None),
+                    }
+                }
+            }
+            ExprKind::Match { scrutinee, arms } => {
+                self.walk_expr(scrutinee, None);
+                for arm in arms.iter_mut() {
+                    if let Some(g) = &mut arm.guard { self.walk_expr(g, None); }
+                    match &mut arm.body {
+                        MatchArmBody::Expr(x) => self.walk_expr(x, None),
+                        MatchArmBody::Block(b) => self.walk_block(b),
+                    }
+                }
+            }
+            ExprKind::For { iter, body, .. } | ExprKind::ParallelFor { iter, body, .. } => {
+                self.walk_expr(iter, None);
+                self.walk_block(body);
+            }
+            ExprKind::While { cond, body, .. } => {
+                self.walk_expr(cond, None);
+                self.walk_block(body);
+            }
+            ExprKind::WhileLet { scrutinee, body, .. } => {
+                self.walk_expr(scrutinee, None);
+                self.walk_block(body);
+            }
+            ExprKind::Loop { body, .. } => self.walk_block(body),
+            ExprKind::Block(b) => self.walk_block(b),
+            ExprKind::Spawn(x) => self.walk_expr(x, None),
+            ExprKind::Detach(b) => self.walk_block(b),
+            ExprKind::Supervised { body, cancel } => {
+                self.walk_block(body);
+                if let Some(c) = cancel { self.walk_expr(c, None); }
+            }
+            ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. } => {
+                self.walk_block(body);
+            }
+            ExprKind::Throw(x) => self.walk_expr(x, None),
+            ExprKind::Interrupt(opt) => {
+                if let Some(x) = opt { self.walk_expr(x, None); }
+            }
+            ExprKind::Range { start, end, .. } => {
+                self.walk_expr(start, None);
+                self.walk_expr(end, None);
+            }
+            ExprKind::InterpolatedStr { parts } => {
+                for p in parts.iter_mut() {
+                    if let crate::ast::InterpStrPart::Expr(x) = p {
+                        self.walk_expr(x, None);
+                    }
+                }
+            }
+            ExprKind::TaggedTemplate { args, .. } => {
+                for x in args.iter_mut() { self.walk_expr(x, None); }
+            }
+            ExprKind::Lambda { body, .. } => self.walk_expr(body, None),
+            ExprKind::ClosureLight { body, .. } => match body {
+                ClosureBody::Expr(x) => self.walk_expr(x, None),
+                ClosureBody::Block(b) => self.walk_block(b),
+            },
+            ExprKind::ClosureFull(sb) => match &mut sb.body {
+                FnBody::Expr(x) => self.walk_expr(x, None),
+                FnBody::Block(b) => self.walk_block(b),
+                FnBody::External => {}
+            },
+            ExprKind::With { bindings, body } => {
+                for b in bindings.iter_mut() { self.walk_expr(&mut b.handler, None); }
+                self.walk_block(body);
+            }
+            ExprKind::HandlerLit { methods, .. } => {
+                for m in methods.iter_mut() {
+                    match &mut m.body {
+                        HandlerMethodBody::Expr(x) => self.walk_expr(x, None),
+                        HandlerMethodBody::Block(b) => self.walk_block(b),
+                    }
+                }
+            }
+            ExprKind::Select { arms } => {
+                for arm in arms.iter_mut() {
+                    match &mut arm.op {
+                        crate::ast::SelectOp::Recv { chan, .. } => {
+                            self.walk_expr(chan, None)
+                        }
+                        crate::ast::SelectOp::Send { chan, value } => {
+                            self.walk_expr(chan, None);
+                            self.walk_expr(value, None);
+                        }
+                        crate::ast::SelectOp::Default => {}
+                    }
+                    if let Some(g) = &mut arm.guard { self.walk_expr(g, None); }
+                    self.walk_block(&mut arm.body);
+                }
+            }
+            ExprKind::Forall { body, .. } | ExprKind::Exists { body, .. } => {
+                self.walk_expr(body, None);
+            }
+            ExprKind::Ident(_) | ExprKind::Path(_) | ExprKind::SelfAccess
+            | ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::BoolLit(_)
+            | ExprKind::StrLit(_) | ExprKind::CharLit(_) | ExprKind::UnitLit => {}
+        }
+        // Подавляем unused warnings.
+        let _ = &self.fn_generics;
+    }
+}
+
+/// Plan 52 Ф.7: извлечь (K, V) из ожидаемого типа `HashMap[K, V]`.
+/// Возвращает (None, None) если expected не HashMap[_, _].
+fn extract_hashmap_kv(expected: Option<&TypeRef>) -> (Option<&TypeRef>, Option<&TypeRef>) {
+    match expected {
+        Some(TypeRef::Named { path, generics, .. })
+            if path.last().map(|s| s.as_str()) == Some("HashMap")
+                && generics.len() == 2 =>
+        {
+            (Some(&generics[0]), Some(&generics[1]))
+        }
+        _ => (None, None),
+    }
+}
+
+/// Plan 52 Ф.7: вывести унифицированный тип набора выражений. Если задан
+/// `expected` — берём его (приоритет контекста). Иначе — best-effort
+/// первое выражение с известным simple_expr_type. Несовместимости не
+/// репортим (это работа check_map_lit, эта функция silent).
+fn infer_unified_type<'e>(
+    exprs: impl Iterator<Item = &'e Expr>,
+    expected: Option<&TypeRef>,
+) -> Option<TypeRef> {
+    if let Some(t) = expected {
+        return Some(t.clone());
+    }
+    for ex in exprs {
+        if let Some(t) = simple_expr_type(ex) {
+            return Some(t);
+        }
+    }
+    None
 }

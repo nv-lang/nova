@@ -927,7 +927,19 @@ pub enum ExprKind {
     /// значением). Десугарится в codegen/interp в `with_capacity`+`@insert`
     /// block-expression. Пустой `[]` остаётся `ArrayLit(vec![])` —
     /// разрешается по ожидаемому типу на type-check.
-    MapLit(Vec<(Expr, Expr)>),
+    ///
+    /// Plan 52 Ф.7 production-fix: `inferred_key`/`inferred_value` —
+    /// типы K/V, выведенные type-checker'ом (MapLitCtx::annotate_module)
+    /// после inference. Десугаринг использует их для генерации turbofish
+    /// `HashMap[K, V].with_capacity(n)` — без turbofish мономорфизация
+    /// инстанциирует `HashMap[void*, void*]` → runtime segfault на
+    /// generic-метод-резолюции. Парсер заполняет `None`, type-checker —
+    /// `Some(_)` если K/V определены однозначно.
+    MapLit {
+        pairs: Vec<(Expr, Expr)>,
+        inferred_key: Option<TypeRef>,
+        inferred_value: Option<TypeRef>,
+    },
     /// `{ field: value, ...spread, name }` — D17/D52/D60
     RecordLit {
         type_name: Option<Vec<String>>, // Some(["User"]) для `User { ... }`

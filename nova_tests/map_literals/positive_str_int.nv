@@ -1,0 +1,32 @@
+// Plan 52 Ф.7 positive: [k: v] map-литерал — HashMap[str, int].
+module map_literals.positive_str_int
+
+import std.collections.hashmap.{HashMap}
+
+test "str→int basic" {
+    let m HashMap[str, int] = ["one": 1, "two": 2, "three": 3]
+    assert(m.len() == 3)
+    assert(m.get("one") == Some(1))
+    assert(m.get("two") == Some(2))
+    assert(m.get("three") == Some(3))
+}
+
+test "str→int trailing comma" {
+    let m HashMap[str, int] = [
+        "x": 10,
+        "y": 20,
+        "z": 30,
+    ]
+    assert(m.len() == 3)
+}
+
+test "str→int single entry" {
+    let m HashMap[str, int] = ["only": 42]
+    assert(m.len() == 1)
+    assert(m.get("only") == Some(42))
+}
+
+// NOTE: `let m = ["a": 1, "b": 2]` без аннотации сейчас RUN-FAIL —
+// annotate_module передаёт expected=None в walk_expr (let.ty=None),
+// инфер по pairs работает, но peer_files копия может остаться без
+// аннотации в edge case (отслеживается отдельно). С аннотацией всё OK.

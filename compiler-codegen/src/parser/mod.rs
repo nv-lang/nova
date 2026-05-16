@@ -4407,7 +4407,14 @@ impl Parser {
             pairs.push((k, v));
         }
         let end = self.expect(&TokenKind::RBracket)?.span;
-        Ok(Expr::new(ExprKind::MapLit(pairs), start.merge(end)))
+        // Plan 52 Ф.7: inferred_key/value заполняются type-checker'ом
+        // через MapLitCtx::annotate_module — для генерации turbofish
+        // `HashMap[K,V].with_capacity(n)` в десугаринге. Парсер не имеет
+        // type-info, оставляет None.
+        Ok(Expr::new(
+            ExprKind::MapLit { pairs, inferred_key: None, inferred_value: None },
+            start.merge(end),
+        ))
     }
 
     // Plan 19, C13: try_parse_lambda удалена. Старая `(params) =>`
