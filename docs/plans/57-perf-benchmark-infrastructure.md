@@ -338,6 +338,63 @@ Sub-items (каждый — отдельный commit):
 
 **Total 57.A estimate:** ~1550 LOC.
 
+### **Plan 57.C — Runtime integration & deeper hooks — ~3-4 dev-days**
+
+Sub-items (каждый — отдельный commit):
+
+1. **57.C.1 — Per-pass `PerfTimer` hooks в compiler.**
+   - `PerfTimer` struct в compiler-codegen, RAII guard wraps каждого pass.
+   - `NOVA_PERF_TIMER=1` env enables; emits `__PERF__ <pass> <ns>` на stderr.
+   - Passes: parse / imports-resolve / type-check / desugar / callnorm /
+     codegen / c-compile / link.
+   - **LOC:** ~250.
+
+2. **57.C.2 — `gc.last_pause_ns()` API extension (Plan 32 ext).**
+   - `alloc.c` / `alloc_boehm.c`: track latest pause time delta.
+   - `external fn gc.last_pause_ns() -> int` в `std/runtime/gc.nv`.
+   - Codegen dispatch в `emit_c.rs` (рядом с `gc.heap_size()`).
+   - **LOC:** ~150.
+
+3. **57.C.3 — Heap sampler thread в `nova_rt/bench.h`.**
+   - Activated по `NOVA_BENCH_HEAP_SAMPLE_MS=N` env.
+   - Background thread читает `nova_gc_heap_size()` каждые N ms.
+   - Emit'ит `__HEAP_SAMPLE__ <ns> <bytes>` на stderr.
+   - CLI parses → histogram + `--profile heap` real output.
+   - **LOC:** ~200.
+
+4. **57.C.4 — CPU instructions per-sample runtime (Linux only).**
+   - Linux-only block в `nova_rt/bench.h` с `perf_event_open` syscall.
+   - `nova_bench_run` добавляет counter reset/start/stop вокруг каждого
+     measure batch.
+   - JSON v1 extension: optional `cpu_instructions_per_iter` field.
+   - `--measurement instructions` flag в `nova bench run`.
+   - **LOC:** ~300 (Linux-only).
+
+5. **57.C.5 — Recursive bench directory discovery.**
+   - `nova bench run <dir>` walks recursively (mirror `walk_nv`).
+   - Каждый .nv compiled + executed separately, aggregated results.
+   - **LOC:** ~150.
+
+6. **57.C.6 — `nova bench history-squash` retention.**
+   - `--before-date YYYY-MM-DD` flag: squash older entries в single commit.
+   - Yearly squash recommended (см. perf-conventions.md).
+   - **LOC:** ~150.
+
+7. **57.C.7 — Bench DSL lint warnings.**
+   - Warn если `Time.sleep` / `Io.println` внутри `measure` body.
+   - Warn если `measure` body empty.
+   - Warn если `bench.opaque` на constant literal (no-op).
+   - Integrated в `lints.rs` через walk_bench_lints.
+   - **LOC:** ~200.
+
+8. **57.C.8 — `nova bench corpus` subcommand.**
+   - `nova bench corpus <file> --breakdown` invokes compile (`nova check
+     -v` mode) + parses `__PERF__` from stderr → JSON per-pass timings.
+   - `nova bench corpus --all` runs whole `bench/corpus/` directory.
+   - **LOC:** ~200.
+
+**Total 57.C estimate:** ~1600 LOC.
+
 ### **Plan 57.B — Advanced — ~3-4 dev-days**
 
 Sub-items (каждый — отдельный commit):
@@ -398,6 +455,17 @@ Sub-items (каждый — отдельный commit):
       diagnostic subcommand; per-sample runtime integration — Phase C TBD).
 - [x] `bench "x" { group "g" { case "c" { ... } } }` parse + emit + 4-entry
       output (composite names `x/g/c`).
+
+### **Plan 57.C** — runtime integration, in progress 2026-05-17
+
+- [ ] PerfTimer hooks в compiler (8 passes) + `NOVA_PERF_TIMER=1`.
+- [ ] `gc.last_pause_ns()` API extension (Plan 32 ext).
+- [ ] Heap sampler thread + `nova bench --profile heap` real output.
+- [ ] CPU instructions per-sample runtime (Linux only).
+- [ ] Recursive `nova bench run <dir>` discovery.
+- [ ] `nova bench history-squash --before-date YYYY-MM-DD`.
+- [ ] Bench DSL lint warnings (sleep/println/empty/opaque-on-const).
+- [ ] `nova bench corpus <file> --breakdown`.
 
 ---
 
