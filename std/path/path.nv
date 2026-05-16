@@ -28,18 +28,19 @@
 module path.path
 
 
-/// Join path components с `/`-separator. Variadic — принимает spread `[...]`.
+/// Join path components с `/`-separator. Variadic — принимает позиционные
+/// args либо spread `...arr`.
 ///
 /// Stripping logic:
 /// - empty parts skipped;
 /// - leading `/` на не-первой части drop'нется (избегает `a//b`);
-/// - exact joining behavior: всегда вставляется ровно один `/` между непустыми компонентами.
+/// - всегда вставляется ровно один `/` между непустыми компонентами.
 ///
 /// # Examples
 /// ```nova
-/// assert(Path.join(["a", "b", "c"]) == "a/b/c")
-/// assert(Path.join(["/usr", "bin"]) == "/usr/bin")
-/// assert(Path.join(["a", "/b"]) == "a/b")
+/// assert(Path.join("a", "b", "c") == "a/b/c")          // positional
+/// assert(Path.join(...["usr", "bin"]) == "usr/bin")    // spread
+/// assert(Path.join("a", "/b") == "a/b")                // strip leading /
 /// ```
 #stable(since = "0.1")
 export fn Path.join(...parts []str) -> str {
@@ -47,12 +48,11 @@ export fn Path.join(...parts []str) -> str {
     let mut first = true
     for part in parts {
         if part.len == 0 { continue }
-        if !first && !buf.into().ends_with("/") && !part.starts_with("/") {
-            // Реальный buf нельзя так читать; используем альтернативу:
-        }
-        // Упрощённо: всегда вставляем "/" между непустыми частями
+        // Между непустыми частями всегда вставляем "/"; для не-первой части,
+        // которая сама начинается с "/", strip лидирующий — иначе вышло бы "//".
+        // (Случай "/usr/" + "..." с trailing "/" не возникает в join'е — каждая
+        // часть передаётся отдельной строкой без своего trailing slash.)
         if !first { buf.append('/') }
-        // Strip ведущий "/" если уже есть separator
         let cleaned = if !first && part.starts_with("/") {
             part.slice(1, part.len)
         } else {
@@ -174,7 +174,9 @@ export fn Path.normalize(p str) -> str {
         if part.len == 0 || part == "." { continue }
         if part == ".." {
             if stack.len > 0 {
-                stack.pop()
+                // pop() возвращает Option[str]; результат не нужен — явно отбрасываем
+                // (workaround compiler bug с разнотипными ветками if-expr в statement-position).
+                let _ = stack.pop()
             } else if !absolute {
                 stack.push("..")
             }
@@ -221,10 +223,14 @@ fn find_last_dot(s str) -> Option[int] {
 // ──────────────────────────────────────────────────────────────────────────
 
 test "join" {
-    assert(Path.join(["a", "b", "c"]) == "a/b/c")
-    assert(Path.join(["/usr", "bin"]) == "/usr/bin")
-    assert(Path.join(["a", "/b"]) == "a/b")          // strip leading /
-    assert(Path.join(["", "b"]) == "b")
+    // Positional variadic args.
+    assert(Path.join("a", "b", "c") == "a/b/c")
+    assert(Path.join("/usr", "bin") == "/usr/bin")
+    assert(Path.join("a", "/b") == "a/b")          // strip leading /
+    assert(Path.join("", "b") == "b")
+    // Spread from existing array.
+    let parts []str = ["x", "y", "z"]
+    assert(Path.join(...parts) == "x/y/z")
 }
 
 test "parent" {
