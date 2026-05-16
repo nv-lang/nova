@@ -1453,6 +1453,26 @@ impl CEmitter {
             let mut idx = 0usize;
             for item in &module.items {
                 if let Item::Bench(b) = item {
+                    // Plan 57.B.5: grouped — каждый case даёт отдельную entry.
+                    if !b.groups.is_empty() {
+                        for grp in &b.groups {
+                            for case in &grp.cases {
+                                let composite = format!("{}/{}/{}", b.name, grp.name, case.name);
+                                let cloned = BenchDecl {
+                                    name: composite,
+                                    setup: case.setup.clone(),
+                                    measure_body: case.measure_body.clone(),
+                                    teardown: case.teardown.clone(),
+                                    params: None,
+                                    groups: Vec::new(),
+                                    span: case.span,
+                                };
+                                self.emit_bench(&cloned, idx)?;
+                                idx += 1;
+                            }
+                        }
+                        continue;
+                    }
                     // Plan 57.B.3: parameterized sweep — emit одну entry
                     // на каждый param value, с let-binding prepended.
                     if let Some(p) = &b.params {
@@ -1470,6 +1490,7 @@ impl CEmitter {
                                 measure_body: b.measure_body.clone(),
                                 teardown: b.teardown.clone(),
                                 params: None,
+                                groups: Vec::new(),
                                 span: b.span,
                             };
                             self.emit_bench(&cloned, idx)?;
@@ -7246,12 +7267,20 @@ impl CEmitter {
         let tests: Vec<&TestDecl> = module.items.iter().filter_map(|i| {
             if let Item::Test(t) = i { Some(t) } else { None }
         }).collect();
-        // Plan 57.B.3: expand parameterized sweeps в plain entries.
-        // Каждый bench с params=Some даёт N entries с suffix `/p=<value>`.
+        // Plan 57.B.3 / 57.B.5: expand parameterized + grouped sweeps в plain
+        // entries. Каждый bench с params даёт N entries с suffix `/p=<value>`;
+        // каждый bench с groups даёт M entries с suffix `/<group>/<case>`.
         let mut benches_expanded: Vec<(String, &BenchDecl)> = Vec::new();
         for it in &module.items {
             if let Item::Bench(b) = it {
-                if let Some(p) = &b.params {
+                if !b.groups.is_empty() {
+                    for grp in &b.groups {
+                        for case in &grp.cases {
+                            benches_expanded.push((
+                                format!("{}/{}/{}", b.name, grp.name, case.name), b));
+                        }
+                    }
+                } else if let Some(p) = &b.params {
                     for v in &p.values {
                         benches_expanded.push((format!("{}/p={}", b.name, v), b));
                     }

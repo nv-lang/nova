@@ -736,17 +736,17 @@ pub struct TestDecl {
 
 /// Plan 57: benchmark declaration.
 ///
-/// `bench "name" [(param in [v1, v2, ...])] { setup; measure { body } teardown }`
+/// Three forms:
+///   1. Plain:           `bench "name" { setup; measure { body } teardown }`
+///   2. Parameterized:   `bench "name" (n in [v1, v2, ...]) { setup; measure { body } teardown }`
+///   3. Grouped (57.B.5): `bench "name" { group "g1" { case "c1" { ... } case "c2" { ... } } ... }`
 ///
-/// - `setup` — statements ДО `measure` блока (не measured, 1 раз).
-/// - `measure_body` — измеряемый блок; bench runner вызывает его в адаптивном
-///   sampling loop (warmup → calibration → N samples).
-/// - `teardown` — statements ПОСЛЕ `measure` блока (не measured, 1 раз).
-/// - `params` — Plan 57.B.3 sweep param. Если `Some`, codegen эмитит
-///   N bench entries (по одной на value), каждый с `let <param> = <value>;`
-///   prepended к setup. Name suffix: `<name>/p=<value>`.
-///
-/// Парсер требует **ровно один** `measure { ... }` блок в body.
+/// Fields:
+/// - `setup`, `measure_body`, `teardown` — для плоских benches (формы 1, 2).
+/// - `params` — sweep param для form 2 (Plan 57.B.3).
+/// - `groups` — для form 3 (Plan 57.B.5). Если непустой, поля setup/
+///   measure_body/teardown игнорируются; каждый case даёт отдельную
+///   entry с name `<bench>/<group>/<case>`.
 #[derive(Debug, Clone)]
 pub struct BenchDecl {
     pub name: String,
@@ -755,6 +755,8 @@ pub struct BenchDecl {
     pub teardown: Vec<Stmt>,
     /// Plan 57.B.3: parameter sweep — `(name in [v1, v2, ...])`.
     pub params: Option<BenchParams>,
+    /// Plan 57.B.5: sub-benchmarks via `group "..." { case "..." { ... } }`.
+    pub groups: Vec<BenchGroup>,
     pub span: Span,
 }
 
@@ -763,6 +765,24 @@ pub struct BenchDecl {
 pub struct BenchParams {
     pub var_name: String,
     pub values: Vec<i64>,
+    pub span: Span,
+}
+
+/// Plan 57.B.5: bench group — collection of cases sharing a logical context.
+#[derive(Debug, Clone)]
+pub struct BenchGroup {
+    pub name: String,
+    pub cases: Vec<BenchCase>,
+    pub span: Span,
+}
+
+/// Plan 57.B.5: single case within a bench group.
+#[derive(Debug, Clone)]
+pub struct BenchCase {
+    pub name: String,
+    pub setup: Vec<Stmt>,
+    pub measure_body: Block,
+    pub teardown: Vec<Stmt>,
     pub span: Span,
 }
 

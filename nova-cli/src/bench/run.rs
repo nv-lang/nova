@@ -323,13 +323,32 @@ pub fn compile_for_profile(opts: &BenchRunOpts) -> Result<std::path::PathBuf> {
     Ok(exe_file)
 }
 
-/// Plan 57.B.3: expand parameterized bench sweeps в N separate BenchDecl
-/// entries — runs ДО type-check для name-resolution validity.
+/// Plan 57.B.3 / 57.B.5: expand parameterized + grouped bench sweeps
+/// в N separate plain BenchDecl entries — runs ДО type-check для
+/// name-resolution validity.
 pub fn expand_bench_sweeps(module: &mut nova_codegen::ast::Module) {
     use nova_codegen::ast::{Item, BenchDecl, Stmt, LetDecl, Expr, ExprKind, Pattern};
     let mut new_items = Vec::with_capacity(module.items.len());
     for it in module.items.drain(..) {
         match it {
+            // Plan 57.B.5: groups → flat entries с composite names.
+            Item::Bench(b) if !b.groups.is_empty() => {
+                for grp in &b.groups {
+                    for case in &grp.cases {
+                        let composite = format!("{}/{}/{}", b.name, grp.name, case.name);
+                        new_items.push(Item::Bench(BenchDecl {
+                            name: composite,
+                            setup: case.setup.clone(),
+                            measure_body: case.measure_body.clone(),
+                            teardown: case.teardown.clone(),
+                            params: None,
+                            groups: Vec::new(),
+                            span: case.span,
+                        }));
+                    }
+                }
+            }
+            // Plan 57.B.3: params → flat entries с `let n = <v>;` prepended.
             Item::Bench(b) if b.params.is_some() => {
                 let params = b.params.unwrap();
                 for v in &params.values {
@@ -358,6 +377,7 @@ pub fn expand_bench_sweeps(module: &mut nova_codegen::ast::Module) {
                         measure_body: b.measure_body.clone(),
                         teardown: b.teardown.clone(),
                         params: None,
+                        groups: Vec::new(),
                         span: b.span,
                     }));
                 }
