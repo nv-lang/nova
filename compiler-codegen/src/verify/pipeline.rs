@@ -1942,8 +1942,11 @@ impl Default for VerificationPipeline {
 /// В«РЅРµ РґРѕРєР°Р·Р°РЅРѕ inconsistentВ» вЂ" silent fallback.
 ///
 /// Р'РѕР·РІСЂР°С‰Р°РµС‚ diagnostic'Рё (РїСѓСЃС‚РѕР№ Vec РµСЃР»Рё РІСЃС' consistent).
-pub fn check_axiom_consistency(module: &Module) -> Vec<Diagnostic> {
+/// Ф.7.4 (Plan 33.6): возвращает (errors, warnings).
+/// errors — inconsistent axioms (Unsat). warnings — Unknown под Trivial (W2402).
+pub fn check_axiom_consistency(module: &Module) -> (Vec<Diagnostic>, Vec<Diagnostic>) {
     let mut diagnostics = Vec::new();
+    let mut warnings: Vec<Diagnostic> = Vec::new();
     let pure_views = collect_pure_views(module);
 
     // Р"СЂСѓРїРїРёСЂСѓРµРј axioms РїРѕ effect-name.
@@ -2012,15 +2015,32 @@ pub fn check_axiom_consistency(module: &Module) -> Vec<Diagnostic> {
                         td.span,
                     ));
                 }
-                _ => {
-                    // SAT РёР»Рё Unknown вЂ" axioms consistent (РёР»Рё TrivialBackend
-                    // РЅРµ reasoning'СѓРµС‚ вЂ" silent OK).
+                SatResult::Sat(_) => {
+                    // axioms consistent — реально проверено backend'ом.
+                }
+                SatResult::Unknown(reason) => {
+                    // Ф.7.4 (Plan 33.6): Unknown под Trivial или Z3 timeout —
+                    // axiom consistency НЕ проверена, эмит W2402 чтобы user знал.
+                    let reason_str = match reason {
+                        UnknownReason::NotAttempted(s) => format!(
+                            "TrivialBackend не reasoning'ует ({})", s),
+                        UnknownReason::Timeout => "SMT timeout".to_string(),
+                        UnknownReason::NonLinearArithmetic => "non-linear arithmetic".to_string(),
+                        UnknownReason::UnsupportedTheory(s) => format!("unsupported theory: {}", s),
+                        UnknownReason::BackendError(s) => format!("backend error: {}", s),
+                    };
+                    let msg = format!(
+                        "axiom consistency для effect `{}` НЕ проверена [W2402]: {}.\n  \
+                         Используйте Z3 backend (`cargo build --features z3-backend` + \
+                         `NOVA_SMT_BACKEND=z3`) для полной проверки.",
+                        td.name, reason_str);
+                    warnings.push(Diagnostic::new(msg, td.span));
                 }
             }
         }
     }
 
-    diagnostics
+    (diagnostics, warnings)
 }
 
 /// Substitute `_old_<x>` → `<x>` (33.1: no mut, snapshot trivial).
@@ -2116,10 +2136,14 @@ pub fn verify_module(module: &Module) -> ModuleVerifyReport {
     // Р•СЃР»Рё axioms СЌС„С„РµРєС‚Р° inconsistent (Z3 в†' UNSAT) в†' compile-error,
     // skip РІСЃРµС… РѕСЃС‚Р°Р»СЊРЅС‹С… verify'РµРІ (Р»СЋР±Р°СЏ formula С‚СЂРёРІРёР°Р»СЊРЅРѕ РґРѕРєР°Р·СѓРµРјР°
     // РїРѕРґ inconsistent assumptions).
-    let inconsistency_errors = check_axiom_consistency(module);
+    let (inconsistency_errors, inconsistency_warnings) = check_axiom_consistency(module);
     let has_inconsistent_axioms = !inconsistency_errors.is_empty();
     for e in inconsistency_errors {
         report.errors.push(e);
+    }
+    // Ф.7.4: W2402 axiom consistency under Trivial backend — НЕ ломаем компиляцию.
+    for w in inconsistency_warnings {
+        report.warnings.push(w);
     }
     if has_inconsistent_axioms {
         return report;

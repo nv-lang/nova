@@ -2061,10 +2061,15 @@ fn codegen_to_c(path: &Path, src: &str, mono_depth: Option<usize>) -> Result<(Ve
     // Plan 52 Ф.9: lints — ПОСЛЕ check_module (типы validated), ДО
     // desugar (lints видят MapLit-узлы). Возвращаются caller'у для
     // EXPECT_COMPILE_WARNING сверки.
-    let lint_warnings: Vec<String> = crate::lints::lint_module(&module)
+    let mut lint_warnings: Vec<String> = crate::lints::lint_module(&module)
         .iter()
         .map(|w| w.diag.render(src, &path.to_string_lossy()))
         .collect();
+    // Ф.7.4 (Plan 33.6): verify-warnings (W2401/W2402) тоже dispatch'им в lint stream.
+    let verify_report = crate::verify::verify_module(&module);
+    for w in &verify_report.warnings {
+        lint_warnings.push(w.render(src, &path.to_string_lossy()));
+    }
     // Plan 52 Ф.4: десугаринг map-литералов `[k: v]` → block-expression.
     // ПОСЛЕ type-check, ДО infer_effects/callnorm/codegen — codegen видит
     // обычные method-call'ы (with_capacity / insert).
