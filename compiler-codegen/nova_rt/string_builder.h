@@ -187,6 +187,43 @@ static inline nova_str Nova_StringBuilder_method_into(Nova_StringBuilder* b) {
     return s;
 }
 
+/* @starts_with(prefix str) -> bool — non-consuming читает буфер.
+ * O(min(|prefix|, |buf|)) memcmp. После @into() возвращает false (consumed). */
+static inline nova_bool Nova_StringBuilder_method_starts_with(Nova_StringBuilder* b, nova_str prefix) {
+    if (b->consumed) return 0;
+    if ((int64_t)prefix.len > b->len) return 0;
+    if (prefix.len == 0) return 1;
+    return memcmp(b->data, prefix.ptr, prefix.len) == 0 ? 1 : 0;
+}
+
+/* @ends_with(suffix str) -> bool — non-consuming читает буфер.
+ * O(min(|suffix|, |buf|)) memcmp. */
+static inline nova_bool Nova_StringBuilder_method_ends_with(Nova_StringBuilder* b, nova_str suffix) {
+    if (b->consumed) return 0;
+    if ((int64_t)suffix.len > b->len) return 0;
+    if (suffix.len == 0) return 1;
+    int64_t offset = b->len - (int64_t)suffix.len;
+    return memcmp(b->data + offset, suffix.ptr, suffix.len) == 0 ? 1 : 0;
+}
+
+/* @is_empty() -> bool — non-consuming, O(1). */
+static inline nova_bool Nova_StringBuilder_method_is_empty(Nova_StringBuilder* b) {
+    if (b->consumed) return 1;
+    return b->len == 0 ? 1 : 0;
+}
+
+/* @peek() -> str — non-consuming snapshot буфера как str.
+ * ВАЖНО: pointer указывает на тот же buffer что и StringBuilder;
+ * subsequent append'ы могут invalidate (realloc). Использовать только
+ * для immediate read'а (sb.peek().ends_with(...)). */
+static inline nova_str Nova_StringBuilder_method_peek(Nova_StringBuilder* b) {
+    _nova_string_builder_check_live(b);
+    return (nova_str){
+        .ptr = (const char*)b->data,
+        .len = (size_t)b->len,
+    };
+}
+
 /* Validate UTF-8 bytes. Returns 1 if valid, 0 otherwise.
  * Используется в `str.try_from([]byte)` (D77). */
 static inline nova_bool _nova_validate_utf8(const nova_byte* data, int64_t len) {

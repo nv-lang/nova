@@ -48,3 +48,15 @@ export external fn StringBuilder @clone() -> Self
 // Финализировать в str. Infallible (UTF-8 invariant поддерживается append'ами). После consume mutating методы → runtime panic.
 export external fn StringBuilder @into() -> str
 
+// Non-consuming: проверить prefix буфера. Возвращает false после @into() (consumed).
+export external fn StringBuilder @starts_with(prefix str) -> bool
+
+// Non-consuming: проверить suffix буфера. Возвращает false после @into() (consumed).
+export external fn StringBuilder @ends_with(suffix str) -> bool
+
+// Non-consuming: true если буфер пуст (или consumed).
+export external fn StringBuilder @is_empty() -> bool
+
+// Non-consuming snapshot буфера как str. ВАЖНО: pointer на тот же buffer — subsequent append может realloc'нуть. Использовать только immediately (sb.peek().ends_with(...)).
+export external fn StringBuilder @peek() -> str
+
