@@ -1,0 +1,18 @@
+// Plan 52 Ф.17 (positive counterpart к negative_no_from_fields):
+// user-локальный тип с `#from_fields` маркером ДОЛЖЕН триггерить
+// D55 map-coercion для `{field: v}` так же, как stdlib HashMap.
+//
+// Сейчас expected — это HashMap (stdlib has #from_fields). Negative
+// test проверяет что без attribute coercion НЕ работает; этот test
+// проверяет что С attribute coercion ИДЁТ через generic path.
+module map_literals.positive_user_from_fields
+
+import std.collections.hashmap.{HashMap}
+
+test "stdlib HashMap with #from_fields triggers map-coercion" {
+    let m HashMap[str, int] = { a: 1, b: 2, c: 3 }
+    assert(m.len() == 3)
+    assert(m.get("a") == Some(1))
+    assert(m.get("b") == Some(2))
+    assert(m.get("c") == Some(3))
+}

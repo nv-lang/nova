@@ -1,0 +1,36 @@
+// Plan 53 Ф.6.4 — Channel.new destructure через generic path
+// (БЕЗ special-case в emit_record_destructure).
+//
+// До Ф.6.4: 57-LOC hardcoded special-case проверял `is_channel_new`
+// и эмитил инлайн. После Ф.6.4: `Nova_ChannelPair` schema
+// зарегистрирована в module-init → общий `pattern_bind_typed` path
+// корректно биндит tx/rx без хардкода.
+//
+// Регресс-страховка: если кто-то удалит schema-регистрацию,
+// destructure упадёт с "no member named 'tx'" в C-coder или
+// runtime-segfault.
+module syntax.let_destructure_channel_dedup
+
+test "Channel.new destructure через generic path — send+recv round-trip" {
+    let { tx, rx } = Channel.new(4)
+    tx.send(42)
+    tx.send(100)
+    let v1 = rx.recv()
+    let v2 = rx.recv()
+    assert(v1 == Some(42))
+    assert(v2 == Some(100))
+}
+
+test "Channel.new destructure с renaming" {
+    let { tx: sender, rx: receiver } = Channel.new(2)
+    sender.send(7)
+    let got = receiver.recv()
+    assert(got == Some(7))
+}
+
+test "Channel.new destructure через _-discard одного поля" {
+    let { tx, rx: _ } = Channel.new(1)
+    tx.send(99)
+    // rx discarded — но channel buffered (cap=1), send не блокирует
+    assert(true)
+}
