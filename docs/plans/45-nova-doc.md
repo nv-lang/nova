@@ -26,6 +26,7 @@
 | Ф.22 Hardening round 2 | ✅ done | см. ниже (8 пунктов P0+P1) |
 | Ф.23 Hardening round 3 (Nova-unique) | ✅ done | 25 пунктов — contracts/verify_status/capabilities/handler-matrix/must_verify/lints/schema v1.0.0-rc1/MD anchors/back-links/implementors/structural types/caret diagnostics/coverage/peer_file/newtype |
 | Ф.24 Production hardening Sprint A+B+C | ✅ done | 18 пунктов — forbid propagation, BTreeMap determinism, implementors guard, --check json, multi-line caret, structural-via-parser, schema rc1, expect_output, scrape-examples, semver-diff, doc_inline, workspace-parallelism, verify-badges, jq-queries, effect-matrix, realtime-matrix, infer-contracts |
+| Ф.25 Diagnostics & integrations hardening | ✅ done | 4 пункта — silent failures → DocWarning + `--strict`; markdown-aware summary extractor (fenced blocks, URLs, abbreviations, decimals); source URL linking (`NOVA_DOC_SOURCE_URL_TEMPLATE` env → JSON `source.url` + MD `[src]` link); doc-test mutation testing для contracts (`--mutate-contracts`, Nova-unique) |
 
 ## Ф.21 — Production hardening (2026-05-15, post-MVP audit)
 

@@ -32,6 +32,11 @@ pub struct DocTree {
     /// root для `nova doc <dir>`). `None` если caller не задал —
     /// поле опускается в JSON output.
     pub source_root: Option<String>,
+    /// Plan 45 Ф.25.1: diagnostic warnings, собранные при парсинге
+    /// doc-attrs, intra-doc-links, doc-tests. Не fail-blocking,
+    /// но видимы через `nova doc --strict` (exit 1) и в JSON output.
+    /// Sorted by (item_id, rule, message).
+    pub warnings: Vec<DocWarning>,
 }
 
 impl DocTree {
@@ -42,8 +47,27 @@ impl DocTree {
             links: Vec::new(),
             doc_tests: Vec::new(),
             source_root: None,
+            warnings: Vec::new(),
         }
     }
+}
+
+/// Plan 45 Ф.25.1: diagnostic warning из doc-tooling.
+///
+/// Используется для случаев когда мы можем продолжить (не fatal), но
+/// автор docs должен знать: malformed attr, ambiguous link, unknown
+/// modifier и т.п. Раньше эти случаи были silent (`unwrap_or_default()`
+/// без логирования) → автор не узнавал что его аннотации проигнорированы.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct DocWarning {
+    /// Машинно-читаемое имя правила: `malformed-stability-attr`,
+    /// `unknown-doc-attr`, `ambiguous-link`, `unknown-doctest-modifier`,
+    /// `summary-extraction-fallback`, `doctest-output-capture-failed`.
+    pub rule: String,
+    /// Item ID или `<module>` если warning относится к module-level.
+    pub item_id: String,
+    /// Человеко-читаемое объяснение, что именно не так.
+    pub message: String,
 }
 
 /// Plan 45 Ф.6: разрешённая intra-doc ссылка. По D107 §«Links shape».

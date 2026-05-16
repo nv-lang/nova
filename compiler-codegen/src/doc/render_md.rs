@@ -13,13 +13,51 @@ use crate::doc::doctree::*;
 use std::fmt::Write;
 
 pub fn render(tree: &DocTree) -> String {
+    render_with_source(tree, None)
+}
+
+/// Plan 45 Ф.25.3 — render с optional source text для точных line numbers
+/// в `[src]` URL'ах. Source — это текст single-file (для single-file mode);
+/// для workspace mode currently передаём None и используем placeholder.
+pub fn render_with_source(tree: &DocTree, source: Option<&str>) -> String {
     // Plan 45 Ф.23.14: build link→anchor map for intra-doc-link rewriting.
     let link_map = build_link_map(&tree.links);
+    // Plan 45 Ф.25.3: установить thread-local source для line resolution.
+    set_render_source(source);
     let mut out = String::new();
     for module in &tree.modules {
         render_module(module, &link_map, &mut out);
     }
+    clear_render_source();
     out
+}
+
+// Plan 45 Ф.25.3: thread-local source для byte→line conversion в [src] links.
+// Альтернатива — protokol-rewrite render_item signature, но source нужен
+// только в одном месте, а render иерархия глубокая.
+thread_local! {
+    static RENDER_SOURCE: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+fn set_render_source(src: Option<&str>) {
+    RENDER_SOURCE.with(|s| *s.borrow_mut() = src.map(|x| x.to_string()));
+}
+
+fn clear_render_source() {
+    RENDER_SOURCE.with(|s| *s.borrow_mut() = None);
+}
+
+fn line_of_byte(byte_offset: u32) -> u32 {
+    RENDER_SOURCE.with(|s| {
+        let src = s.borrow();
+        match src.as_ref() {
+            Some(text) => {
+                let (line, _col) = crate::diag::byte_to_line_col(text, byte_offset as usize);
+                line as u32
+            }
+            None => 1,
+        }
+    })
 }
 
 /// Build a map from link-text → anchor href for resolved links.
@@ -138,7 +176,13 @@ fn render_module(m: &DocModule, link_map: &std::collections::HashMap<String, Str
 }
 
 fn render_item(it: &DocItem, link_map: &std::collections::HashMap<String, String>, out: &mut String) {
-    let _ = writeln!(out, "### `{}`", it.name);
+    // Plan 45 Ф.25.3: heading с опциональным `[src]` link.
+    let line = line_of_byte(it.source_span.start as u32);
+    if let Some(url) = source_url_for_md(&it.module_path, it.peer_file.as_deref(), line) {
+        let _ = writeln!(out, "### `{}` [\\[src\\]]({})", it.name, url);
+    } else {
+        let _ = writeln!(out, "### `{}`", it.name);
+    }
     let _ = writeln!(out);
     if let Some(d) = &it.deprecation {
         let since = d.since.as_deref().map(|s| format!(" since {}", s)).unwrap_or_default();
@@ -330,6 +374,25 @@ fn render_item(it: &DocItem, link_map: &std::collections::HashMap<String, String
             let _ = writeln!(out);
         }
     }
+}
+
+/// Plan 45 Ф.25.3 — source URL для MD `[src]` link.
+/// Использует тот же template что и JSON renderer (NOVA_DOC_SOURCE_URL_TEMPLATE).
+fn source_url_for_md(module_path: &[String], peer_file: Option<&str>, line: u32) -> Option<String> {
+    let template = std::env::var("NOVA_DOC_SOURCE_URL_TEMPLATE").ok()?;
+    if template.is_empty() {
+        return None;
+    }
+    let path = if let Some(pf) = peer_file {
+        format!("{}/{}", module_path.join("/"), pf)
+    } else {
+        format!("{}.nv", module_path.join("/"))
+    };
+    Some(
+        template
+            .replace("{path}", &path)
+            .replace("{line}", &line.to_string()),
+    )
 }
 
 fn render_fn_signature(name: &str, sig: &Signature) -> String {

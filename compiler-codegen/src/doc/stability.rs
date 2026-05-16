@@ -16,6 +16,9 @@
 use super::doctree::*;
 
 pub fn propagate_stability(tree: &mut DocTree) {
+    // Plan 45 Ф.25.1: собираем warnings отдельно, чтобы не нарушать
+    // mutable-borrow цикл по modules.
+    let mut warnings: Vec<DocWarning> = Vec::new();
     for m in &mut tree.modules {
         // Ф.22.1 / D105: snapshot module-level stability/deprecation
         // ДО mutable-borrow на items, чтобы propagate'ить на items
@@ -23,7 +26,7 @@ pub fn propagate_stability(tree: &mut DocTree) {
         let module_stability = m.stability.clone();
         let module_deprecation = m.deprecation.clone();
         for it in &mut m.items {
-            derive_for_item(it);
+            derive_for_item(it, &mut warnings);
             // Propagate module → item только если item не имеет
             // явного override (set'нутого collector'ом или derive_for_item'ом).
             if it.stability.is_none() {
@@ -38,11 +41,14 @@ pub fn propagate_stability(tree: &mut DocTree) {
             }
         }
     }
+    tree.warnings.extend(warnings);
+    tree.warnings.sort();
+    tree.warnings.dedup();
 }
 
-fn derive_for_item(it: &mut DocItem) {
+fn derive_for_item(it: &mut DocItem, warnings: &mut Vec<DocWarning>) {
     // 1. Inline doc-attrs в начале description (если есть).
-    let attrs = extract_inline_attrs(it.description.as_deref().unwrap_or(""));
+    let attrs = extract_inline_attrs(it.description.as_deref().unwrap_or(""), &it.id, warnings);
     // Если attrs найдены — убираем их из description, чтобы не
     // дублировались в выводе.
     if attrs.has_any() {
@@ -134,7 +140,7 @@ fn strip_leading_attrs(desc: &str) -> String {
 ///
 /// Каждая такая строка — отдельный line (terminated by `\n`).
 /// Stops at first non-attr line.
-fn extract_inline_attrs(desc: &str) -> ExtractedAttrs {
+fn extract_inline_attrs(desc: &str, item_id: &str, warnings: &mut Vec<DocWarning>) -> ExtractedAttrs {
     let mut out = ExtractedAttrs::default();
     for line in desc.lines() {
         let t = line.trim();
@@ -146,19 +152,52 @@ fn extract_inline_attrs(desc: &str) -> ExtractedAttrs {
         }
         let inner = &t[2..t.len() - 1]; // content between `#[` and `]`
         if let Some(arg) = inner.strip_prefix("deprecated") {
-            let val = parse_attr_arg(arg).unwrap_or_default();
-            out.deprecated = Some(val);
+            match parse_attr_arg(arg) {
+                Some(val) => out.deprecated = Some(val),
+                None => {
+                    // Plan 45 Ф.25.1: было silent unwrap_or_default(), теперь warning.
+                    warnings.push(DocWarning {
+                        rule: "malformed-stability-attr".to_string(),
+                        item_id: item_id.to_string(),
+                        message: format!(
+                            "malformed #[deprecated{}] — expected #[deprecated(\"reason\")] or #[deprecated = \"reason\"]; ignored",
+                            arg
+                        ),
+                    });
+                }
+            }
         } else if let Some(arg) = inner.strip_prefix("since") {
-            let val = parse_attr_arg(arg).unwrap_or_default();
-            out.since = Some(val);
+            match parse_attr_arg(arg) {
+                Some(val) => out.since = Some(val),
+                None => {
+                    warnings.push(DocWarning {
+                        rule: "malformed-stability-attr".to_string(),
+                        item_id: item_id.to_string(),
+                        message: format!(
+                            "malformed #[since{}] — expected #[since(\"X.Y.Z\")] or #[since = \"X.Y.Z\"]; ignored",
+                            arg
+                        ),
+                    });
+                }
+            }
         } else if inner == "stable" {
             out.tier = Some(StabilityTier::Stable);
         } else if inner == "unstable" {
             out.tier = Some(StabilityTier::Unstable);
         } else if inner == "experimental" {
             out.tier = Some(StabilityTier::Experimental);
+        } else {
+            // Plan 45 Ф.25.1: было silent skip, теперь warning. Forward-compat
+            // сохраняется (мы продолжаем работу), но автор узнаёт о неизвестном attr.
+            warnings.push(DocWarning {
+                rule: "unknown-doc-attr".to_string(),
+                item_id: item_id.to_string(),
+                message: format!(
+                    "unknown doc-attribute #[{}] — not recognized by this Nova version; ignored",
+                    inner
+                ),
+            });
         }
-        // unknown — silently ignored (forward-compat).
     }
     out
 }
@@ -226,21 +265,27 @@ mod tests {
 
     #[test]
     fn inline_deprecated_with_string() {
-        let attrs = extract_inline_attrs("#[deprecated(\"use add instead\")]\n\nThe rest.");
+        let mut w = Vec::new();
+        let attrs = extract_inline_attrs("#[deprecated(\"use add instead\")]\n\nThe rest.", "test", &mut w);
         assert_eq!(attrs.deprecated.as_deref(), Some("use add instead"));
+        assert!(w.is_empty());
     }
 
     #[test]
     fn inline_stable() {
-        let attrs = extract_inline_attrs("#[stable]\n\nDescription.");
+        let mut w = Vec::new();
+        let attrs = extract_inline_attrs("#[stable]\n\nDescription.", "test", &mut w);
         assert_eq!(attrs.tier, Some(StabilityTier::Stable));
+        assert!(w.is_empty());
     }
 
     #[test]
     fn inline_attrs_stop_at_non_attr() {
-        let attrs = extract_inline_attrs("Description.\n#[stable]");
+        let mut w = Vec::new();
+        let attrs = extract_inline_attrs("Description.\n#[stable]", "test", &mut w);
         // Первая строка — не attr, остановились.
         assert_eq!(attrs.tier, None);
+        assert!(w.is_empty());
     }
 
     #[test]
@@ -257,5 +302,40 @@ mod tests {
             parse_attr_arg("= \"world\"").as_deref(),
             Some("world")
         );
+    }
+
+    #[test]
+    fn malformed_deprecated_emits_warning() {
+        // Plan 45 Ф.25.1: malformed attr раньше silent unwrap_or_default(),
+        // теперь — warning + skip.
+        let mut w = Vec::new();
+        let attrs = extract_inline_attrs("#[deprecated()]\n\nDesc.", "test::foo", &mut w);
+        assert!(attrs.deprecated.is_none());
+        assert_eq!(w.len(), 1);
+        assert_eq!(w[0].rule, "malformed-stability-attr");
+        assert_eq!(w[0].item_id, "test::foo");
+        assert!(w[0].message.contains("malformed #[deprecated"));
+    }
+
+    #[test]
+    fn unknown_attr_emits_warning() {
+        // Plan 45 Ф.25.1: unknown attr раньше silent skip,
+        // теперь — warning + skip (forward-compat сохраняется).
+        let mut w = Vec::new();
+        let attrs = extract_inline_attrs("#[future_thing]\n\nDesc.", "test::bar", &mut w);
+        assert!(attrs.tier.is_none());
+        assert_eq!(w.len(), 1);
+        assert_eq!(w[0].rule, "unknown-doc-attr");
+        assert_eq!(w[0].item_id, "test::bar");
+        assert!(w[0].message.contains("future_thing"));
+    }
+
+    #[test]
+    fn malformed_since_emits_warning() {
+        let mut w = Vec::new();
+        let attrs = extract_inline_attrs("#[since]\n", "test::baz", &mut w);
+        assert!(attrs.since.is_none());
+        assert_eq!(w.len(), 1);
+        assert_eq!(w[0].rule, "malformed-stability-attr");
     }
 }

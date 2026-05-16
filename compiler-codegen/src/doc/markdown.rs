@@ -1,9 +1,8 @@
-//! Plan 45 Ф.5 — markdown utilities для doc-content'а.
+//! Plan 45 Ф.5 + Ф.25.2 — markdown utilities для doc-content'а.
 //!
-//! MVP: минимальный summary-extractor + render passthrough.
-//!
-//! Полный markdown-парсинг (через pulldown-cmark) — добавляется в
-//! Plan 45 Ф.5; здесь MVP-обработка summary без внешних зависимостей.
+//! Без внешних зависимостей (no pulldown-cmark). Production-grade
+//! summary-extractor: учитывает inline code, fenced blocks, markdown
+//! links, naked URLs, decimal numbers, common abbreviations.
 
 /// Plan 45 Ф.5: разбить markdown-content на (summary, description).
 ///
@@ -168,35 +167,141 @@ fn canonical_section_name(heading: &str) -> Option<String> {
 
 /// Найти первое sentence-terminating предложение в строке. Игнорирует
 /// `.`/`?`/`!` внутри inline-кода (backtick'ов) и markdown-link'ов.
+/// Plan 45 Ф.25.2: markdown-aware first-sentence extractor.
+///
+/// Игнорирует терминаторы (`.`/`!`/`?`) внутри:
+/// - inline ``code`` (одинарные backticks)
+/// - ```fenced code blocks``` (тройные backticks)
+/// - markdown links `[text](url)` — URL может содержать `.`
+/// - common abbreviations: `e.g.`, `i.e.`, `etc.`, `Mr.`, `Mrs.`, `Dr.`,
+///   `vs.`, `cf.`, `Fig.`, `No.`, `St.`, `Ave.`, `vol.`, `pp.`
+/// - decimal numbers: `3.14`, `1.0.0` (терминатор следует за digit, до digit)
+/// - URLs без markdown wrapping: `https://x.com/path.`
+///
+/// Возвращает первое предложение включая terminator. Если терминатор
+/// не найден — весь text.
 fn first_sentence(text: &str) -> String {
     let bytes = text.as_bytes();
-    let mut in_inline_code = false;
     let mut i = 0;
     while i < bytes.len() {
         let b = bytes[i];
-        if b == b'`' {
-            in_inline_code = !in_inline_code;
-            i += 1;
+        // Fenced code block ```...```.
+        if i + 2 < bytes.len() && &bytes[i..i + 3] == b"```" {
+            // Skip until closing fence.
+            i += 3;
+            while i + 2 < bytes.len() && &bytes[i..i + 3] != b"```" {
+                i += 1;
+            }
+            i = (i + 3).min(bytes.len());
             continue;
         }
-        if !in_inline_code && (b == b'.' || b == b'!' || b == b'?') {
-            // Terminator-кандидат. Проверим, что после — whitespace
-            // или конец (иначе это часть слова типа `x.y`).
+        // Inline code `...`.
+        if b == b'`' {
+            i += 1;
+            while i < bytes.len() && bytes[i] != b'`' {
+                if bytes[i] == b'\n' { break; }
+                i += 1;
+            }
+            if i < bytes.len() && bytes[i] == b'`' {
+                i += 1;
+            }
+            continue;
+        }
+        // Markdown link [text](url) — пропускаем URL целиком.
+        if b == b'[' {
+            // Найти `]` затем `(` затем закрывающую `)`.
+            let mut j = i + 1;
+            let mut depth = 1;
+            while j < bytes.len() && depth > 0 {
+                match bytes[j] {
+                    b'[' => depth += 1,
+                    b']' => depth -= 1,
+                    _ => {}
+                }
+                j += 1;
+            }
+            if depth == 0 && j < bytes.len() && bytes[j] == b'(' {
+                // [text](url) — skip до `)`.
+                let mut k = j + 1;
+                let mut paren_depth = 1;
+                while k < bytes.len() && paren_depth > 0 {
+                    match bytes[k] {
+                        b'(' => paren_depth += 1,
+                        b')' => paren_depth -= 1,
+                        _ => {}
+                    }
+                    k += 1;
+                }
+                i = k;
+                continue;
+            }
+            // Просто [...] без URL — продолжаем дальше после `]`.
+            i = j;
+            continue;
+        }
+        // Naked URL: `https://...` / `http://...` — skip whitespace.
+        if b == b'h' && (text[i..].starts_with("http://") || text[i..].starts_with("https://")) {
+            // Skip до whitespace или конца строки.
+            while i < bytes.len() && !matches!(bytes[i], b' ' | b'\t' | b'\n') {
+                i += 1;
+            }
+            continue;
+        }
+        if b == b'.' || b == b'!' || b == b'?' {
+            // Decimal: digit . digit — не терминатор.
+            let prev = if i > 0 { bytes[i - 1] } else { 0 };
             let next = bytes.get(i + 1).copied();
+            if b == b'.'
+                && prev.is_ascii_digit()
+                && matches!(next, Some(n) if n.is_ascii_digit())
+            {
+                i += 1;
+                continue;
+            }
+            // Abbreviation check: ищем word до точки.
+            if b == b'.' && is_after_abbreviation(text, i) {
+                i += 1;
+                continue;
+            }
+            // Terminator: следующий символ — whitespace или конец.
             let is_terminator = match next {
                 None => true,
                 Some(b' ') | Some(b'\t') | Some(b'\n') => true,
                 _ => false,
             };
             if is_terminator {
-                // Включаем сам символ-терминатор.
                 return text[..=i].to_string();
             }
         }
         i += 1;
     }
-    // Не нашли терминатор — возвращаем всё.
     text.to_string()
+}
+
+/// Plan 45 Ф.25.2: проверка что точка на позиции `dot_idx` — часть
+/// known abbreviation (e.g., `e.g.`, `Mr.`). Берём слово до точки
+/// (буквы/цифры) и сравниваем case-insensitive с whitelist.
+fn is_after_abbreviation(text: &str, dot_idx: usize) -> bool {
+    const ABBREVIATIONS: &[&str] = &[
+        "e.g", "i.e", "etc", "vs", "cf", "fig", "no", "st", "ave",
+        "vol", "pp", "mr", "mrs", "ms", "dr", "prof", "jr", "sr",
+        "inc", "ltd", "co", "ca", "approx",
+    ];
+    let bytes = text.as_bytes();
+    let mut word_start = dot_idx;
+    while word_start > 0 {
+        let b = bytes[word_start - 1];
+        if b.is_ascii_alphanumeric() || b == b'.' {
+            word_start -= 1;
+        } else {
+            break;
+        }
+    }
+    if word_start >= dot_idx {
+        return false;
+    }
+    let word = &text[word_start..dot_idx].to_ascii_lowercase();
+    ABBREVIATIONS.iter().any(|abbr| word == abbr || word.ends_with(&format!(".{}", abbr)))
 }
 
 #[cfg(test)]
@@ -248,6 +353,78 @@ mod tests {
         let (s, d) = extract_summary("   \n\n   ");
         assert_eq!(s, None);
         assert_eq!(d, None);
+    }
+
+    // Plan 45 Ф.25.2 — markdown-aware summary extraction edge cases.
+
+    #[test]
+    fn ignores_dot_inside_markdown_link_url() {
+        // URL contains `.` — должно ignore.
+        let src = "See [docs](https://example.com/api.html) for more. Second sentence.";
+        let (s, _d) = extract_summary(src);
+        assert_eq!(s.as_deref(), Some("See [docs](https://example.com/api.html) for more."));
+    }
+
+    #[test]
+    fn ignores_dot_inside_fenced_code_block() {
+        // Fenced code с `.` внутри — терминатор НЕ должен срабатывать.
+        let src = "Uses `format!` with template.\n```\nlet x = a.b.c;\n```\nTrailing.";
+        let (s, _) = extract_summary(src);
+        // Должно остановиться на первой точке после `template`.
+        assert_eq!(s.as_deref(), Some("Uses `format!` with template."));
+    }
+
+    #[test]
+    fn ignores_decimal_numbers() {
+        let src = "Computes 3.14 * radius squared. End.";
+        let (s, _) = extract_summary(src);
+        // `3.14` — не терминатор.
+        assert_eq!(s.as_deref(), Some("Computes 3.14 * radius squared."));
+    }
+
+    #[test]
+    fn ignores_version_strings() {
+        let src = "Available since 1.0.0 of the library. After.";
+        let (s, _) = extract_summary(src);
+        assert_eq!(s.as_deref(), Some("Available since 1.0.0 of the library."));
+    }
+
+    #[test]
+    fn ignores_common_abbreviations_eg() {
+        let src = "Useful for collections, e.g. arrays and maps. Second.";
+        let (s, _) = extract_summary(src);
+        // `e.g.` — не терминатор.
+        assert_eq!(s.as_deref(), Some("Useful for collections, e.g. arrays and maps."));
+    }
+
+    #[test]
+    fn ignores_common_abbreviations_ie() {
+        let src = "Returns a copy, i.e. an independent value. After.";
+        let (s, _) = extract_summary(src);
+        assert_eq!(s.as_deref(), Some("Returns a copy, i.e. an independent value."));
+    }
+
+    #[test]
+    fn ignores_naked_url() {
+        let src = "Source: https://example.com/path.html and more. After.";
+        let (s, _) = extract_summary(src);
+        assert_eq!(s.as_deref(), Some("Source: https://example.com/path.html and more."));
+    }
+
+    #[test]
+    fn handles_exclamation_in_macro() {
+        // `format!` — НЕ терминатор, потому что после `!` идёт `(` или word char.
+        let src = "Uses `format!` for output. After.";
+        let (s, _) = extract_summary(src);
+        // `format!` внутри backticks → defended by inline-code handling.
+        assert_eq!(s.as_deref(), Some("Uses `format!` for output."));
+    }
+
+    #[test]
+    fn question_mark_terminator_works() {
+        let src = "Is this safe? Yes, it is.";
+        let (s, _) = extract_summary(src);
+        assert_eq!(s.as_deref(), Some("Is this safe?"));
     }
 
     #[test]

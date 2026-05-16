@@ -12127,3 +12127,62 @@ doc_workspace_determinism (1) — 25 PASS.
 Итоговый статус: все 18 Ф.24 + 25 Ф.23 + MVP Ф.1-Ф.22 закрыты.
 25 cargo integration tests + 20 nova language tests — все PASS.
 plan-45-doc смержена в main (двусторонняя синхронизация).
+
+=== Plan 45 Ф.25 — Diagnostics & integrations hardening (2026-05-16) ===
+
+После закрытия Ф.24 провели honest audit: что упрощено, что rustdoc/godoc/typedoc
+делают лучше, что мы можем сделать уникально. Результат — Sprint Ф.25.
+
+Ф.25.1 — Silent failures > DocWarning + --strict flag.
+Раньше 5 мест в коде silently unwrap_or_default() или skip'али unknown:
+- stability.rs:149,161 — malformed #stable/#since/#deprecated
+- doctests.rs:181 — unknown doc-test modifier
+- links.rs — ambiguous intra-doc link
+Теперь все эмитят DocWarning {rule, item_id, message}. Tree.warnings sorted+deduped.
+JSON output содержит warnings array. 
+ova doc --strict — exit 1 если non-empty.
+Forward-compat сохраняется (мы продолжаем работу, не fail'им), но автор узнаёт.
+
+Ф.25.2 — Markdown-aware summary extractor.
+Раньше split на ./!/? ломался на:
+- markdown links [text](url.com) — URL с .
+- fenced code `...`
+- decimals 3.14, versions 1.0.0
+- abbreviations e.g., i.e., etc., Mr., Dr.
+- naked URLs https://x.com
+Новый extractor — paren-depth + state machine, без external deps (no pulldown-cmark).
+10 новых unit-тестов покрывают все edge cases.
+
+Ф.25.3 — Source URL linking (env-template based).
+Новое: NOVA_DOC_SOURCE_URL_TEMPLATE env var с placeholders {path} {line}.
+Pример: https://github.com/user/repo/blob/main/{path}#L{line}.
+JSON: source.url field (per item + per module). MD: [src] link в headings.
+Если env не set — поля отсутствуют (backward-compat).
+render_markdown_with_source() + thread-local source для byte>line resolution.
+
+Ф.25.4 — Doc-test mutation testing для contracts (Nova-unique).
+
+ova doc --mutate-contracts — генерирует мутантов (> - >=, == - !=,
+drop equires) для каждой fn с contracts, оценивает kill rate (текстовая
+heuristic: содержит ли doc-test boundary literal + fn call).
+JSON output {summary: {total, killed, survived}, mutants: [...]}.
+Exit 1 если есть survived mutants > under-tested contract signal.
+Никто из rustdoc/godoc/typedoc не делает mutation testing для specifications.
+
+Результат Ф.25:
+- 53 integration tests (Ф.25.1 +6, Ф.25.3 +5, Ф.25.4 +6, прочие +36) — все PASS
+- 6 mutation unit tests, 9 markdown extract tests, 4 stability warning tests — PASS
+- Schema bump: warnings array + source.url field. Schema v1.0.0-rc1 backward-compat.
+
+Конкурентные gaps закрыты:
+- ? Diagnostic visibility (раньше silent > теперь warnings + --strict)
+- ? Source linking (Ф.25.3 теперь = rustdoc[src] / godoc clickable line / typedoc source)
+- ? Markdown extraction quality (теперь production-grade, не MVP)
+- ?? Mutation testing — Nova-exclusive feature
+
+Не входит в Ф.25 (Plan 45.A или Plan 45.B):
+- HTML output + search index — большой scope
+- External crate linking (--extern-html-root-url style)
+- MCP server для AI/LLM real-time queries
+- Theme customization
+- Semver-diff natural-language migration guide

@@ -31,6 +31,7 @@ pub mod test_runner;
 pub mod render_md;
 pub mod render_json;
 pub mod scraper;
+pub mod mutation;
 
 pub use doctree::{DocTree, DocModule, DocItem, ItemKind, Signature, Visibility};
 
@@ -97,6 +98,12 @@ pub fn strip_hidden_doc(tree: &mut DocTree) {
 /// Plan 45 Ф.8 — DocTree → Markdown.
 pub fn render_markdown(tree: &DocTree) -> String {
     render_md::render(tree)
+}
+
+/// Plan 45 Ф.25.3 — DocTree → Markdown с source text для точных line numbers
+/// в `[src]` URL'ах (если NOVA_DOC_SOURCE_URL_TEMPLATE задан).
+pub fn render_markdown_with_source(tree: &DocTree, source: &str) -> String {
+    render_md::render_with_source(tree, Some(source))
 }
 
 /// Plan 45 Ф.9 — DocTree → JSON (D107 schema v1).

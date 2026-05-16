@@ -95,6 +95,18 @@ pub fn render_with_source(tree: &DocTree, source: Option<&str>) -> String {
             }
         }
     });
+    // Plan 45 Ф.25.1: diagnostic warnings (malformed attrs, unknown modifiers,
+    // ambiguous links). Sorted, deduped в собирающих passes.
+    // Алфавитный порядок: w после v(=visible_source) и source_root(s).
+    w.field_array("warnings", |w| {
+        for warn in &tree.warnings {
+            w.array_object(|w| {
+                w.field_str("item_id", &warn.item_id);
+                w.field_str("message", &warn.message);
+                w.field_str("rule", &warn.rule);
+            });
+        }
+    });
     w.end_object();
     w.finish()
 }
@@ -157,6 +169,10 @@ fn write_module(w: &mut JsonWriter, m: &DocModule) {
         let span = m.source_span;
         w.field_u32("file_id", span.file_id);
         w.field_u32("line", w.line_of(span.start));
+        // Plan 45 Ф.25.3: source URL linking (template-based, opt-in).
+        if let Some(url) = source_url_for(&m.path, None, w.line_of(span.start)) {
+            w.field_str("url", &url);
+        }
     });
     match &m.stability {
         None => w.field_null_or_str("stability", None),
@@ -236,6 +252,10 @@ fn write_item(w: &mut JsonWriter, it: &DocItem) {
         w.field_u32("line", w.line_of(span.start));
         // Plan 45 Ф.23.11: peer_file attribution (folder-module mode).
         w.field_null_or_str("peer_file", it.peer_file.as_deref());
+        // Plan 45 Ф.25.3: source URL linking (template-based, opt-in).
+        if let Some(url) = source_url_for(&it.module_path, it.peer_file.as_deref(), w.line_of(span.start)) {
+            w.field_str("url", &url);
+        }
     });
     match &it.stability {
         None => w.field_null_or_str("stability", None),
@@ -764,6 +784,40 @@ fn normalize_source_root(root: &str) -> String {
         }
     }
     normalized
+}
+
+/// Plan 45 Ф.25.3 — source URL для item'а.
+///
+/// Template берётся из env var `NOVA_DOC_SOURCE_URL_TEMPLATE`.
+/// Placeholders:
+/// - `{path}` — relative path к файлу от source-root (module_path + .nv,
+///   или peer_file для folder-modules);
+/// - `{line}` — line number (1-indexed).
+///
+/// Примеры templates:
+/// - GitHub: `https://github.com/user/repo/blob/main/{path}#L{line}`
+/// - GitLab: `https://gitlab.com/user/repo/-/blob/main/{path}#L{line}`
+/// - Codeberg: `https://codeberg.org/user/repo/src/branch/main/{path}#L{line}`
+///
+/// Возвращает `None` если template не set — поле в JSON omits.
+fn source_url_for(module_path: &[String], peer_file: Option<&str>, line: u32) -> Option<String> {
+    let template = std::env::var("NOVA_DOC_SOURCE_URL_TEMPLATE").ok()?;
+    if template.is_empty() {
+        return None;
+    }
+    // Path: peer_file (если есть, для folder-modules) ИЛИ module_path.join('/') + .nv.
+    let path = if let Some(pf) = peer_file {
+        // Folder-module case: items'у явно атрибутирован peer-file.
+        // Path = module_path/<peer_file>.
+        format!("{}/{}", module_path.join("/"), pf)
+    } else {
+        format!("{}.nv", module_path.join("/"))
+    };
+    Some(
+        template
+            .replace("{path}", &path)
+            .replace("{line}", &line.to_string()),
+    )
 }
 
 fn generated_at_value() -> Option<String> {
