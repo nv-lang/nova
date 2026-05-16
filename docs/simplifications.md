@@ -8064,3 +8064,41 @@ Remaining:
   Это **purely cosmetic** — диагностики technically работают, просто
   на Windows console через cp1251 показывают mojibake. ~1-2 dev-days
   cleanup.
+
+### Plan 55 Ф.8 ✅ ЗАКРЫТО (2026-05-16) — fixture directories convention
+
+- **Где:** `test_runner.rs::is_fixture_dir` + `walk_nv` skip.
+- **Что:** 14 doc/fixtures/* — input для Plan 45 nova doc tooling,
+  не runnable tests (no main fn → CC-FAIL).
+- **Закрыто:** convention — directories с именем `fixtures` OR
+  sentinel `_fixture.toml` excluded из test discovery полностью.
+  Параллель: Rust `tests/data/`, Go `testdata/`, Python `fixtures/`.
+- **Доступ:** explicit `nova check <path>` + Plan 45 pipeline still
+  работают.
+- **Docs:** `docs/test-conventions.md` обновлён.
+
+### Plan 55 ✅ ОКОНЧАТЕЛЬНО ЗАКРЫТО (2026-05-16 EOD)
+
+**Полная сводка после всех 8 фаз + 3 followups:**
+
+| Метрика | Pre-session | Post-Plan-55 | Δ |
+|---|---|---|---|
+| PASS | 509 | **558** | **+49** |
+| FAIL | 26 | **0** | **−26** |
+| SKIP | 35 | 40 | +5 (Z3-only added) |
+
+**100% test pass rate (zero baseline failures)** на release build.
+
+**Total deliverables:**
+- 8 фаз (Ф.0 audit + Ф.1-Ф.8 implementation).
+- 19+ новых тестов в `plan55/`.
+- 10 closed M-маркеров.
+- 4 deferred M-маркера → Plan 56+ (тщательно scoped).
+- ~25 коммитов (feat + docs + fix).
+- Spec parity с Go/Rust/TS achieved/exceeded на 6 measures.
+
+**Deferred → Plan 56+:**
+- `[M-erased-generic-method-dispatch]` — vtable для bound K methods.
+- `[M-time-handler-sleep-mismatch]` — Time effect semantic evolution.
+- `[M-src-russian-mojibake]` — manual rewrite Russian strings в .rs.
+- `[M-52-spread-not-supported]` — depends on erased-generic fix.
