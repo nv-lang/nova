@@ -13744,3 +13744,41 @@ Plan 45 family — почти готов. Что осталось:
 
 После 14 sessions (Ф.25 > Ф.33) Plan 45 close on ~98%. Все user-facing
 features implemented с production-grade test coverage.
+
+=== Plan 45 Sprint Ф.34 — HTTP MCP + cache + stdlib doc-pass start (2026-05-16) ===
+
+3 large items в одной сессии closes большие deferred scopes.
+
+Ф.34.1 (5b055e7): HTTP MCP transport via std::net (no tokio dep!).
+  - `nova doc-mcp --port N` запускает HTTP server на 127.0.0.1:N.
+  - POST /mcp с JSON-RPC body, response в body.
+  - Single-threaded blocking accept loop (sufficient для local MCP clients).
+  - HTTP 1.1 без keep-alive — connection: close.
+  - Все other paths/methods > 404 / 400.
+  - 4 integration tests с реальным TCP (spawn server в thread, send POST,
+    verify response). Tests используют ephemeral ports (TcpListener::bind(":0")).
+
+Ф.34.2 (dff9e6e): Incremental cache — closes Ф.30.2 deferred.
+  - `doc/watch_cache.rs` — mtime-based AST cache.
+  - WatchCache holds `BTreeMap<PathBuf, (SystemTime, Arc<Module>)>`.
+  - `parse_with_cache(path)` returns (Arc<Module>, source, CacheOutcome).
+  - CacheOutcome::{Miss, Hit, Stale} — для logging в watch loop.
+  - Arc<Module> sharing — zero-copy reuse между ticks (Arc::ptr_eq verifies).
+  - 8 unit tests cover все cases (first/repeat/changed/clear/evict/missing/
+    malformed/arc-identity).
+  - `cmd_doc_watch` refactored использовать cache. Logs outcome
+    (parsed/cached/re-parsed) в каждом tick'е.
+
+Ф.34.3 (a946013): std/time/duration doc-pass partial.
+  - 14 doc-comments на key API: Duration type + 4 constants + 9 from_* constructors.
+  - Each с `#stable(since = "0.1")` annotation.
+  - # Examples где applicable.
+  - Coverage now 16% для duration.nv (87 items total — full pass для module
+    = remaining Plan 45.B scope).
+  - Demonstrates production-grade doc-comment style для stdlib pass.
+
+**Total после Ф.34:** ~200 doc tests PASS (26+ suites + 75+ unit).
+
+**Plan 45 status:**
+- Все Ф.1-Ф.34 sprints done. Plan close на ~99%.
+- Remaining: Plan 45.B full stdlib doc-pass (weeks), Plan 16/42 follow-ups.

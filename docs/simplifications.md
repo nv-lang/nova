@@ -8194,3 +8194,22 @@ Remaining:
   Production deploy не нуждается в этих features для [doc] section.
 - AST highlighting NOT incremental (re-lex'ит каждый раз). Plan 45.A round 3.
 - nova.toml lookup только до 16 parent dirs (защита от infinite walk).
+
+---
+
+## Plan 45 Sprint Ф.34 simplifications (2026-05-16)
+
+### Resolved:
+- MCP only stdio > HTTP transport (Ф.34.1, no tokio dep — std::net)
+- No incremental cache (Ф.30.2 deferred) > mtime-based AST cache (Ф.34.2)
+- Stdlib no docs > partial doc-pass для std/time/duration (Ф.34.3)
+
+### Remaining:
+- HTTP MCP: blocking single-threaded (no keep-alive, no concurrent clients).
+  Sufficient для local Claude Code / MCP Inspector use. Production-grade
+  multi-client server — Plan 45.A round 3 (требует tokio).
+- Cache: per-file mtime only. Cross-file import-graph invalidation не tracked.
+  Для single-file `--watch` — OK; workspace mode reuses cache but не invalidates
+  dependent modules when dependency changes.
+- Stdlib doc-pass: 1 module (duration) docs. 56 more stdlib modules undocumented.
+  Plan 45.B remaining scope = weeks of work.
