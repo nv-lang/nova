@@ -1,0 +1,44 @@
+// Plan 33.3 Ф.14: Dafny-parity test 8 — String operations (Seq theory).
+// Аналог string verification из Dafny Seq theory.
+
+module contracts.f14_string_ops
+
+// String equality reflexive.
+#verify
+fn str_refl(s str) -> bool
+    ensures result == true
+{
+    s == s
+}
+
+// String comparison symmetric: если a == b то b == a.
+#verify
+fn str_sym(a str, b str) -> bool
+    requires a == b
+    ensures result == true
+{
+    b == a
+}
+
+// Строка равна себе всегда.
+#verify
+fn str_self_eq(s str) -> str
+    ensures result == s
+{
+    s
+}
+
+// Bool-функция с string параметром.
+#verify
+fn str_to_bool(s str) -> bool
+    ensures result == (s == s)
+{
+    s == s
+}
+
+test "f14 string ops" {
+    assert(str_refl("hello") == true)
+    assert(str_sym("world", "world") == true)
+    assert(str_self_eq("nova") == "nova")
+    assert(str_to_bool("test") == true)
+}

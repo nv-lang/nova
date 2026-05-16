@@ -1,0 +1,59 @@
+// Plan 33.3 Ф.14: Dafny-parity test 14 — Interval/Range overlap.
+// Классические interval lemmas из Dafny.
+
+module contracts.f14_interval_overlap
+
+// Overlap: [a1, b1] ∩ [a2, b2] непусто iff a1 <= b2 && a2 <= b1.
+#verify
+fn intervals_overlap(a1 int, b1 int, a2 int, b2 int) -> bool
+    requires a1 <= b1 && a2 <= b2
+    ensures result == (a1 <= b2 && a2 <= b1)
+{
+    a1 <= b2 && a2 <= b1
+}
+
+// Subset: [a1, b1] ⊆ [a2, b2] iff a2 <= a1 && b1 <= b2.
+#verify
+fn interval_subset(a1 int, b1 int, a2 int, b2 int) -> bool
+    requires a1 <= b1 && a2 <= b2
+    ensures result == (a2 <= a1 && b1 <= b2)
+{
+    a2 <= a1 && b1 <= b2
+}
+
+// Length: b - a (для a <= b).
+#verify
+fn interval_len(a int, b int) -> int
+    requires a <= b
+    ensures result == b - a && result >= 0
+{
+    b - a
+}
+
+// Union length (non-overlapping): len1 + len2.
+#verify
+fn union_len_nonoverlap(a1 int, b1 int, a2 int, b2 int) -> int
+    requires a1 <= b1 && a2 <= b2 && b1 <= a2
+    ensures result == (b1 - a1) + (b2 - a2)
+{
+    (b1 - a1) + (b2 - a2)
+}
+
+// Point in interval.
+#verify
+fn point_in(x int, lo int, hi int) -> bool
+    requires lo <= hi
+    ensures result == (lo <= x && x <= hi)
+{
+    lo <= x && x <= hi
+}
+
+test "f14 interval overlap" {
+    assert(intervals_overlap(1, 5, 3, 8) == true)
+    assert(intervals_overlap(1, 3, 5, 8) == false)
+    assert(interval_subset(2, 4, 1, 5) == true)
+    assert(interval_len(3, 7) == 4)
+    assert(union_len_nonoverlap(1, 3, 5, 8) == 5)
+    assert(point_in(3, 1, 5) == true)
+    assert(point_in(7, 1, 5) == false)
+}

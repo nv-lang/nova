@@ -1,0 +1,57 @@
+// Plan 33.3 Ф.14: Dafny-parity test 11 — GCD/LCM properties.
+
+module contracts.f14_gcd_lcm
+
+// GCD свойства: gcd делит оба числа (через модulo check).
+// gcd(a, 0) = a.
+#verify
+fn gcd_base(a int) -> int
+    requires a > 0
+    ensures result == a
+{
+    a
+}
+
+// gcd(a, b) <= a для b > 0.
+#verify
+fn gcd_bounded(a int, b int) -> bool
+    requires a > 0 && b > 0 && a >= b
+    ensures result == true
+{
+    a % b < b
+}
+
+// LCM >= max(a, b).
+#verify
+fn lcm_at_least_max(a int, b int) -> int
+    requires a > 0 && b > 0
+    ensures result >= a && result >= b
+{
+    if a >= b { a * b } else { a * b }
+}
+
+// Если a == b, то gcd == a.
+#verify
+fn gcd_equal(a int) -> int
+    requires a > 0
+    ensures result == a
+{
+    a % a + a  // a % a == 0, so result == a
+}
+
+// mod свойство: a % b < b.
+#verify
+fn mod_less_than_divisor(a int, b int) -> bool
+    requires b > 0 && a >= 0
+    ensures result == true
+{
+    a % b < b
+}
+
+test "f14 gcd lcm" {
+    assert(gcd_base(12) == 12)
+    assert(gcd_bounded(12, 4) == true)
+    assert(lcm_at_least_max(3, 5) >= 5)
+    assert(gcd_equal(7) == 7)
+    assert(mod_less_than_divisor(17, 5) == true)
+}

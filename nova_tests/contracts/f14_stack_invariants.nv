@@ -1,0 +1,67 @@
+// Plan 33.3 Ф.14: Dafny-parity test 3 — Stack/Queue invariants.
+// Моделируем stack через size counter (без реальных arrays в SMT).
+
+module contracts.f14_stack_invariants
+
+// Stack push: size увеличивается на 1.
+#verify
+fn stack_push_size(size int) -> int
+    requires size >= 0
+    ensures result == size + 1
+{
+    size + 1
+}
+
+// Stack pop: size уменьшается на 1 (только если непустой).
+#verify
+fn stack_pop_size(size int) -> int
+    requires size > 0
+    ensures result == size - 1 && result >= 0
+{
+    size - 1
+}
+
+// Stack invariant: size >= 0 после операций.
+#verify
+fn stack_size_nonneg(size int) -> bool
+    requires size >= 0
+    ensures result == true
+{
+    size >= 0
+}
+
+// Queue enqueue: size увеличивается.
+#verify
+fn queue_enqueue_size(size int) -> int
+    requires size >= 0
+    ensures result == size + 1
+{
+    size + 1
+}
+
+// Queue dequeue: size уменьшается (непустая).
+#verify
+fn queue_dequeue_size(size int) -> int
+    requires size > 0
+    ensures result == size - 1 && result >= 0
+{
+    size - 1
+}
+
+// Последовательность push + pop возвращает исходный size.
+#verify
+fn push_then_pop(size int) -> int
+    requires size >= 0
+    ensures result == size
+{
+    (size + 1) - 1
+}
+
+test "f14 stack queue invariants" {
+    assert(stack_push_size(5) == 6)
+    assert(stack_pop_size(5) == 4)
+    assert(stack_size_nonneg(0) == true)
+    assert(queue_enqueue_size(3) == 4)
+    assert(queue_dequeue_size(3) == 2)
+    assert(push_then_pop(7) == 7)
+}

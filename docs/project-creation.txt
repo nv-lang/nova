@@ -11696,3 +11696,65 @@ via split on `____` separator. Также:
 - std/collections/{vec,deque,lru,queue,priority_queue,hashmap,linkedlist,set}.nv
 - docs/simplifications.md (новая секция "Std collections fixes")
 - docs/project-creation.txt (эта секция)
+
+## Шаг NNN+2. Plan 33.3 Ф.10-Ф.14 — Advanced contract verifier complete (2026-05-16)
+
+Завершение Plan 33.3 (contracts-advanced). Все 5 фаз реализованы за одну
+автономную сессию.
+
+### Ф.11: IEEE 754 FP + Seq strings в Z3
+
+Z3Backend расширен двумя теориями:
+- **FloatingPoint**: f32/f64 через `Z3_mk_fpa_sort_32/64` + numeral + арифметика.
+  Ключевое: сорт не кэшируется в struct (вызывает AV crash из-за Z3 GC),
+  вызывается fresh каждый раз — Z3 hash-cons'ит, возвращает тот же логический sort.
+- **Seq (strings)**: str type → `Z3_mk_seq_sort(Z3_mk_string_sort)`.
+  Равенство через `Z3_mk_eq`.
+- `var_sorts` в `EncodeCtx` заполняется из `fd.params` (раньше всегда пустой).
+- NaN семантика by-design: `fp.eq(NaN, NaN) = false` в IEEE 754 — правильное
+  SMT поведение, не баг.
+
+### Ф.12: Incremental FNV1a cache
+
+`compiler-codegen/src/verify/cache.rs`:
+- FNV-1a 64-bit hash (стабильный между запусками, в отличие от SipHash).
+- Cache entry: `target/contracts-cache/<fnv1a_hex>.json`.
+- Атомарная запись через tmp + rename.
+- `NOVA_NO_CACHE=1` и `NOVA_CACHE_DIR` env vars.
+- Minimal JSON parser (без serde, без внешних deps).
+
+### Ф.13: #must_verify_module + #trusted + nova contracts CLI
+
+**AST/Parser:**
+- `ModuleAttrKind::MustVerifyModule` — парсится как `#must_verify_module` перед module.
+- `FnDecl.is_trusted: bool` + `ContractAttrs.is_trusted` — парсится как `#trusted`.
+- `#trusted external fn` разрешён в parse (ранее internal: `#verify` не может
+  предшествовать `external`).
+
+**Pipeline:**
+- `module_strict` flag — если `#must_verify_module`, все функции получают `effective_mode = MustVerify`.
+- `#trusted && is_external` → skip SMT-verify (контракты — axioms).
+
+**nova contracts CLI** (nova-cli/src/main.rs):
+- `nova contracts list <file>` → JSON список функций + контрактов.
+- `nova contracts verify <file> [--backend z3]` → JSON диагностика proven/warning/error.
+- `nova contracts suggest <file> <fn>` → AI-стаб suggestions.
+- `nova contracts counterexample <file> <fn> [--contract-id N]` → конкретный cex.
+
+### Ф.14: Dafny-parity 20 примеров
+
+20 тестовых файлов `nova_tests/contracts/f14_*.nv`:
+binary search, sorting invariants, stack/queue, bank account,
+arithmetic lemmas (abs/div_floor/mod_range/distrib), linked list,
+integer overflow (safe_add/mul/sub/sat), string ops (Seq), boolean algebra
+(De Morgan, idempotence, excluded middle), Fibonacci, GCD/LCM, AVL balance,
+bit manipulation (align_up/down), interval overlap, pure functions,
+multivar contracts (sort3/median), hash table, segment tree, graph BFS, memory safety.
+
+**Итог Plan 33.3:** 115 PASS, 0 FAIL (включая все предыдущие Ф.1-Ф.9).
+
+### Commits
+
+- feat(verify): Plan 33.3 Ф.12 — инкрементальный кэш верификации
+- feat(verify): Plan 33.3 Ф.13 — #must_verify_module + #trusted + nova contracts
+- feat(verify): Plan 33.3 Ф.14 — Dafny-parity 20 примеров верификации

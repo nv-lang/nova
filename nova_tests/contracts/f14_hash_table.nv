@@ -1,0 +1,61 @@
+// Plan 33.3 Ф.14: Dafny-parity test 17 — Hash table properties.
+// Моделируем bucket arithmetic (без реальных maps в SMT).
+
+module contracts.f14_hash_table
+
+// Bucket index: hash % capacity.
+#verify
+fn bucket_index(hash int, capacity int) -> int
+    requires capacity > 0 && hash >= 0
+    ensures result >= 0 && result < capacity
+{
+    hash % capacity
+}
+
+// Load factor: count / capacity.
+// Invariant: capacity > 0, count <= capacity.
+#verify
+fn load_ok(count int, capacity int) -> bool
+    requires count >= 0 && capacity > 0 && count <= capacity
+    ensures result == true
+{
+    count <= capacity
+}
+
+// Resize trigger: count * 2 > capacity → нужен resize.
+#verify
+fn needs_resize(count int, capacity int) -> bool
+    requires count >= 0 && capacity > 0
+    ensures result == (count * 2 > capacity)
+{
+    count * 2 > capacity
+}
+
+// После resize: new_capacity >= 2 * old_capacity.
+#verify
+fn resize_capacity(capacity int) -> int
+    requires capacity > 0
+    ensures result >= capacity * 2
+{
+    capacity * 2
+}
+
+// Insert: count увеличивается на 1 (new key).
+#verify
+fn insert_count(count int, capacity int) -> int
+    requires count >= 0 && count < capacity
+    ensures result == count + 1 && result <= capacity
+{
+    count + 1
+}
+
+test "f14 hash table" {
+    assert(bucket_index(17, 8) == 1)
+    assert(bucket_index(0, 8) == 0)
+    assert(load_ok(6, 8) == true)
+    assert(needs_resize(5, 8) == true)
+    assert(needs_resize(4, 9) == false)
+    assert(needs_resize(6, 8) == true)
+    assert(resize_capacity(8) == 16)
+    assert(insert_count(5, 8) == 6)
+}

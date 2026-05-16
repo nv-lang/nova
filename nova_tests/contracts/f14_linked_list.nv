@@ -1,0 +1,57 @@
+// Plan 33.3 Ф.14: Dafny-parity test 6 — Linked list reversal invariant.
+// Моделируем через length counter (без указателей в SMT).
+
+module contracts.f14_linked_list
+
+// Длина списка сохраняется при reversal.
+#verify
+fn reverse_length(len int) -> int
+    requires len >= 0
+    ensures result == len
+{
+    len
+}
+
+// Prepend: длина увеличивается на 1.
+#verify
+fn prepend_length(len int) -> int
+    requires len >= 0
+    ensures result == len + 1
+{
+    len + 1
+}
+
+// Append: длина увеличивается на 1.
+#verify
+fn append_length(len int) -> int
+    requires len >= 0
+    ensures result == len + 1
+{
+    len + 1
+}
+
+// Concat: длины складываются.
+#verify
+fn concat_length(len1 int, len2 int) -> int
+    requires len1 >= 0 && len2 >= 0
+    ensures result == len1 + len2
+{
+    len1 + len2
+}
+
+// Slice [lo..hi]: длина = hi - lo.
+#verify
+fn slice_length(lo int, hi int) -> int
+    requires lo >= 0 && hi >= lo
+    ensures result == hi - lo
+{
+    hi - lo
+}
+
+test "f14 linked list" {
+    assert(reverse_length(5) == 5)
+    assert(prepend_length(4) == 5)
+    assert(append_length(4) == 5)
+    assert(concat_length(3, 4) == 7)
+    assert(slice_length(2, 7) == 5)
+}

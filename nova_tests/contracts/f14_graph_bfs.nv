@@ -1,0 +1,57 @@
+// Plan 33.3 Ф.14: Dafny-parity test 19 — Graph BFS distance properties.
+// Верификация инвариантов BFS без реальных графов (arithmetic).
+
+module contracts.f14_graph_bfs
+
+// BFS distance: d[v] <= d[u] + 1 для edge (u, v).
+#verify
+fn bfs_triangle_ineq(du int, dv int) -> bool
+    requires du >= 0 && dv >= 0
+    requires dv <= du + 1
+    ensures result == true
+{
+    dv <= du + 1
+}
+
+// Source distance: d[s] = 0.
+#verify
+fn bfs_source() -> int
+    ensures result == 0
+{
+    0
+}
+
+// Reachable: d[v] >= 0.
+#verify
+fn bfs_nonneg(d int) -> bool
+    requires d >= 0
+    ensures result == true
+{
+    d >= 0
+}
+
+// Frontier: все вершины на расстоянии k обработаны до k+1.
+#verify
+fn frontier_order(dk int, dk1 int) -> bool
+    requires dk >= 0 && dk1 == dk + 1
+    ensures result == true
+{
+    dk < dk1
+}
+
+// Max distance ограничен числом вершин n.
+#verify
+fn bfs_max_dist(d int, n int) -> bool
+    requires d >= 0 && n > 0 && d < n
+    ensures result == true
+{
+    d < n
+}
+
+test "f14 graph bfs" {
+    assert(bfs_triangle_ineq(3, 4) == true)
+    assert(bfs_source() == 0)
+    assert(bfs_nonneg(5) == true)
+    assert(frontier_order(2, 3) == true)
+    assert(bfs_max_dist(4, 10) == true)
+}

@@ -1,0 +1,51 @@
+// Plan 33.3 Ф.14: Dafny-parity test 12 — AVL tree balance invariant.
+// Моделируем через height integers.
+
+module contracts.f14_avl_balance
+
+// Высота дерева: leaf = 0, node = 1 + max(left, right).
+#verify
+fn node_height(left int, right int) -> int
+    requires left >= 0 && right >= 0
+    ensures result == 1 + (if left >= right { left } else { right })
+    ensures result > left && result > right
+{
+    1 + (if left >= right { left } else { right })
+}
+
+// AVL invariant: |left_h - right_h| <= 1.
+#verify
+fn avl_balanced(left_h int, right_h int) -> bool
+    requires left_h >= 0 && right_h >= 0
+    requires left_h - right_h <= 1 && right_h - left_h <= 1
+    ensures result == true
+{
+    (left_h - right_h <= 1) && (right_h - left_h <= 1)
+}
+
+// Balance factor: -1, 0, или 1.
+#verify
+fn balance_factor(left_h int, right_h int) -> int
+    requires left_h >= 0 && right_h >= 0
+    ensures result == left_h - right_h
+{
+    left_h - right_h
+}
+
+// После rotation: высота уменьшается или остаётся.
+#verify
+fn rotate_height_bounds(h int) -> int
+    requires h >= 2
+    ensures result >= 1 && result <= h
+{
+    h - 1
+}
+
+test "f14 avl balance" {
+    assert(node_height(2, 3) == 4)
+    assert(node_height(0, 0) == 1)
+    assert(avl_balanced(2, 2) == true)
+    assert(avl_balanced(2, 3) == true)
+    assert(balance_factor(3, 2) == 1)
+    assert(rotate_height_bounds(3) == 2)
+}

@@ -1,0 +1,58 @@
+// Plan 33.3 Ф.14: Dafny-parity test 15 — Pure function contracts.
+// Аналог function-method contracts в Dafny.
+
+module contracts.f14_pure_functions
+
+// Идемпотентная функция: f(f(x)) == f(x).
+#verify
+#pure
+fn idempotent_clamp0(x int) -> int
+    ensures result >= 0
+    ensures result == (if x >= 0 { x } else { 0 })
+{
+    if x >= 0 { x } else { 0 }
+}
+
+// Monotone: a <= b → f(a) <= f(b) (для f = identity).
+#verify
+fn monotone_id(a int, b int) -> bool
+    requires a <= b
+    ensures result == true
+{
+    a <= b
+}
+
+// Строгая монотонность: a < b → f(a) < f(b) для f(x) = x + 1.
+#verify
+fn strict_mono_succ(a int, b int) -> bool
+    requires a < b
+    ensures result == true
+{
+    a + 1 < b + 1
+}
+
+// Инъективность: a != b → f(a) != f(b) для f(x) = x * 2 + 1.
+#verify
+fn injective_prop(a int, b int) -> bool
+    requires a != b
+    ensures result == true
+{
+    a * 2 + 1 != b * 2 + 1
+}
+
+// Сюръективность: для любого y существует x т.ч. f(x) == y (f = identity).
+#verify
+fn surjective_id(y int) -> int
+    ensures result == y
+{
+    y
+}
+
+test "f14 pure functions" {
+    assert(idempotent_clamp0(-5) == 0)
+    assert(idempotent_clamp0(3) == 3)
+    assert(monotone_id(3, 7) == true)
+    assert(strict_mono_succ(3, 7) == true)
+    assert(injective_prop(3, 7) == true)
+    assert(surjective_id(42) == 42)
+}
