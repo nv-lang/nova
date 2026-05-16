@@ -430,6 +430,52 @@ fn propagate_bounds(conjuncts: &[SmtTerm]) -> Vec<SmtTerm> {
         return conjuncts.to_vec();
     }
     conjuncts.iter().map(|c| {
+        // Ф.17.2 (Plan 33.6): addition bounds propagation.
+        // `(>= (+ Var1 Var2) goal)` где lower(Var1) + lower(Var2) >= goal → true.
+        let try_addition_check = |inner: &SmtTerm| -> Option<bool> {
+            if let SmtTerm::App(iop, iargs) = inner {
+                if iop != ">=" || iargs.len() != 2 { return None; }
+                let goal = match &iargs[1] { SmtTerm::IntLit(n) => *n, _ => return None };
+                if let SmtTerm::App(aop, aargs) = &iargs[0] {
+                    if aop != "+" || aargs.len() != 2 { return None; }
+                    // Both args — Var.
+                    if let (SmtTerm::Var(a), SmtTerm::Var(b)) = (&aargs[0], &aargs[1]) {
+                        if let (Some(la), Some(lb)) = (lower.get(a), lower.get(b)) {
+                            if la.saturating_add(*lb) >= goal { return Some(true); }
+                        }
+                    }
+                    // (+ Var IntLit) или (+ IntLit Var).
+                    let (var_opt, lit_opt) = match (&aargs[0], &aargs[1]) {
+                        (SmtTerm::Var(v), SmtTerm::IntLit(n)) => (Some(v), Some(*n)),
+                        (SmtTerm::IntLit(n), SmtTerm::Var(v)) => (Some(v), Some(*n)),
+                        _ => (None, None),
+                    };
+                    if let (Some(v), Some(n)) = (var_opt, lit_opt) {
+                        if let Some(known_low) = lower.get(v) {
+                            if known_low.saturating_add(n) >= goal { return Some(true); }
+                        }
+                    }
+                }
+                None
+            } else { None }
+        };
+        // Ф.17.1 (Plan 33.6): negation monotone.
+        // `(>= (- 0 Var) goal)` где known upper(Var) <= -goal → true.
+        let try_negation_check = |inner: &SmtTerm| -> Option<bool> {
+            if let SmtTerm::App(iop, iargs) = inner {
+                if iop != ">=" || iargs.len() != 2 { return None; }
+                let goal = match &iargs[1] { SmtTerm::IntLit(n) => *n, _ => return None };
+                if let SmtTerm::App(sop, sargs) = &iargs[0] {
+                    if sop != "-" || sargs.len() != 2 { return None; }
+                    if let (SmtTerm::IntLit(0), SmtTerm::Var(v)) = (&sargs[0], &sargs[1]) {
+                        if let Some(known_up) = upper.get(v) {
+                            if known_up.saturating_neg() >= goal { return Some(true); }
+                        }
+                    }
+                }
+                None
+            } else { None }
+        };
         // Ф.16.3 (Plan 33.6): strict-monotone constant multiply.
         // `(>= (* L Var) goal)` где L > 0 и known lower(Var) * L >= goal → true.
         let try_const_mul_check = |inner: &SmtTerm| -> Option<bool> {
@@ -506,6 +552,14 @@ fn propagate_bounds(conjuncts: &[SmtTerm]) -> Vec<SmtTerm> {
         if let Some(b) = try_const_mul_check(c) {
             return SmtTerm::BoolLit(b);
         }
+        // Ф.17.2: addition check.
+        if let Some(b) = try_addition_check(c) {
+            return SmtTerm::BoolLit(b);
+        }
+        // Ф.17.1: negation check.
+        if let Some(b) = try_negation_check(c) {
+            return SmtTerm::BoolLit(b);
+        }
         // (not <inequality>) — invert result.
         if let SmtTerm::App(op, args) = c {
             if op == "not" && args.len() == 1 {
@@ -513,6 +567,12 @@ fn propagate_bounds(conjuncts: &[SmtTerm]) -> Vec<SmtTerm> {
                     return SmtTerm::BoolLit(!b);
                 }
                 if let Some(b) = try_const_mul_check(&args[0]) {
+                    return SmtTerm::BoolLit(!b);
+                }
+                if let Some(b) = try_addition_check(&args[0]) {
+                    return SmtTerm::BoolLit(!b);
+                }
+                if let Some(b) = try_negation_check(&args[0]) {
                     return SmtTerm::BoolLit(!b);
                 }
             }

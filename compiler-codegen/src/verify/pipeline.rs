@@ -2597,6 +2597,26 @@ let t0 = std::time::Instant::now();
             eprintln!("[verify] cache hits={} misses={} hit-rate={:.1}%", hits, misses, rate);
         }
     }
+    // Ф.17.3 (Plan 33.6): dead lemma tracking. Lemma defined but not applied.
+    let mut applied_lemmas: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for item in &module.items {
+        if let Item::Fn(fd) = item {
+            for (lemma_name, _, _) in collect_apply_stmts_in_body(&fd.body) {
+                applied_lemmas.insert(lemma_name);
+            }
+        }
+    }
+    for item in &module.items {
+        if let Item::Lemma(ld) = item {
+            if !applied_lemmas.contains(&ld.name) {
+                report.warnings.push(Diagnostic::new(
+                    format!("lemma `{}` определена, но не применена нигде в модуле [W2402]: \
+                             dead code — удалите лемму или добавьте `apply {}(...)` в caller.",
+                        ld.name, ld.name),
+                    ld.span));
+            }
+        }
+    }
     report
 }
 

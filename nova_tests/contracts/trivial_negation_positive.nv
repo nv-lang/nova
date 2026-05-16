@@ -1,0 +1,16 @@
+// Ф.17.1 (Plan 33.6): TrivialBackend negation monotone — `x<=100 ⊢ -x >= -100`.
+
+module contracts.trivial_negation_positive
+
+#verify
+fn negate_upper_bound(x int) -> int
+    requires x <= 100
+    ensures result >= -100
+{
+    0 - x
+}
+
+test "negation monotone trivial" {
+    assert(negate_upper_bound(50) == -50)
+    assert(negate_upper_bound(0) == 0)
+}

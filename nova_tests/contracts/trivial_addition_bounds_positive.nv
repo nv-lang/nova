@@ -1,0 +1,25 @@
+// Ф.17.2 (Plan 33.6): TrivialBackend addition bounds — `x>=0, y>=0 ⊢ x+y >= 0`.
+
+module contracts.trivial_addition_bounds_positive
+
+#verify
+fn sum_non_neg(x int, y int) -> int
+    requires x >= 0
+    requires y >= 0
+    ensures result >= 0
+{
+    x + y
+}
+
+#verify
+fn shifted(x int) -> int
+    requires x >= 5
+    ensures result >= 10
+{
+    x + 5
+}
+
+test "addition bounds trivial" {
+    assert(sum_non_neg(3, 4) == 7)
+    assert(shifted(7) == 12)
+}
