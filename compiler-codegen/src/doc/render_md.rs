@@ -192,16 +192,33 @@ fn render_item(it: &DocItem, link_map: &std::collections::HashMap<String, String
             let _ = writeln!(out, "{}", render_fn_signature(&it.name, sig));
             let _ = writeln!(out, "```");
             let _ = writeln!(out);
-            // Plan 45 Ф.23.2: verify_status badge.
-            let badge = match &sig.verify_status {
-                VerifyStatus::Proven => Some("✅ **proven**"),
-                VerifyStatus::HasCounterexample(_) => Some("❌ **counterexample**"),
-                VerifyStatus::Timeout => Some("⏱ **verify timeout**"),
-                VerifyStatus::NotAttempted => None,
-            };
-            if let Some(b) = badge {
-                let _ = writeln!(out, "> {}", b);
-                let _ = writeln!(out);
+            // Plan 45 Ф.24.14: verification badges — detailed Z3 badges.
+            // ✅ proven by Z3 / ⚠️ unverified / ❌ counterexample: <desc> / ⏱ timeout.
+            let has_contracts = !sig.contracts.is_empty();
+            match &sig.verify_status {
+                VerifyStatus::Proven => {
+                    let _ = writeln!(out, "> ✅ **proven by Z3**");
+                    let _ = writeln!(out);
+                }
+                VerifyStatus::HasCounterexample(desc) => {
+                    if desc.is_empty() {
+                        let _ = writeln!(out, "> ❌ **counterexample found**");
+                    } else {
+                        let _ = writeln!(out, "> ❌ **counterexample:** {}", desc);
+                    }
+                    let _ = writeln!(out);
+                }
+                VerifyStatus::Timeout => {
+                    let _ = writeln!(out, "> ⏱ **verify timeout** (Z3 exceeded limit)");
+                    let _ = writeln!(out);
+                }
+                VerifyStatus::NotAttempted => {
+                    // Show ⚠️ unverified only when there are contracts to verify.
+                    if has_contracts {
+                        let _ = writeln!(out, "> ⚠️ **unverified** (contracts present but not checked)");
+                        let _ = writeln!(out);
+                    }
+                }
             }
             // Plan 45 Ф.23.1: Contracts section.
             if !sig.contracts.is_empty() {
