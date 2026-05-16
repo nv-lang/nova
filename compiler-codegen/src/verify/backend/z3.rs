@@ -96,21 +96,11 @@ pub struct Z3Backend {
 unsafe impl Send for Z3Backend {}
 
 impl Z3Backend {
-    /// Создать backend. `timeout_ms` устанавливается глобально через
-    /// `Z3_global_param_set("timeout", ...)` (Z3 уважает per-check timeout).
+    /// Создать backend. `timeout_ms` устанавливается per-solver через
+    /// `Z3_solver_set_params` (Ф.8.3, Plan 33.6). Раньше использовался
+    /// `Z3_global_param_set` — race-condition при parallel verify.
     pub fn new(timeout_ms: u32) -> Self {
         unsafe {
-            // Глобальный timeout: эффективен для всех subsequent
-            // `Z3_solver_check`. Мы не дёргаем per-solver params чтобы не
-            // тянуть Z3_params API — простой global'ный setup достаточен
-            // для Plan 33 MVP.
-            //
-            // SAFETY: CString-биндинги живут до конца unsafe-блока.
-            // Z3 копирует строки себе при assignment'е.
-            let key = CString::new("timeout").unwrap();
-            let val = CString::new(timeout_ms.to_string()).unwrap();
-            ffi::Z3_global_param_set(key.as_ptr(), val.as_ptr());
-
             let cfg = ffi::Z3_mk_config();
             // model.completion: если в модели var не присвоена, дать ей
             // any value (default). Делает извлечение counterexample
@@ -119,8 +109,6 @@ impl Z3Backend {
             let tr = CString::new("true").unwrap();
             ffi::Z3_set_param_value(cfg, mk.as_ptr(), tr.as_ptr());
             // Хранение CString'ов в local-vars пока config не уничтожен.
-            let _hold_key = key;
-            let _hold_val = val;
             let _hold_mk = mk;
             let _hold_tr = tr;
 
@@ -140,6 +128,15 @@ impl Z3Backend {
 
             let solver = ffi::Z3_mk_solver(ctx);
             ffi::Z3_solver_inc_ref(ctx, solver);
+
+            // Ф.8.3 (Plan 33.6): per-solver timeout (раньше Z3_global_param_set —
+            // race-condition при parallel verify Ф.5.1).
+            let params = ffi::Z3_mk_params(ctx);
+            ffi::Z3_params_inc_ref(ctx, params);
+            let timeout_key = CString::new("timeout").unwrap();
+            let timeout_sym = ffi::Z3_mk_string_symbol(ctx, timeout_key.as_ptr());
+            ffi::Z3_params_set_uint(ctx, params, timeout_sym, timeout_ms);
+            ffi::Z3_solver_set_params(ctx, solver, params);
 
             Self {
                 ctx,
