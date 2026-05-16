@@ -12195,6 +12195,22 @@ ecosystem (Creusot/Prusti/Kani/Flux/Aeneas). Найдено 5 P0 soundness gaps:
 - Регрессия: 133 PASS (+1) / 34 SKIP.
 - Коммит: `a7aacc03a58`.
 
+### Ф.7.2 — V4 entry-snapshot для old()
+
+- Раньше `substitute_old` делал `_old_x → x` (тривиальная подстановка) — для mut
+  params это unsound: `ensures result == old(x) + 1` с mut x в body давал
+  silent «proven» при current x вместо entry-state.
+- Теперь: pipeline.rs declare'ит `_old_<x>` как отдельную SMT var для **каждого**
+  param. Frame axiom (D.1.2, уже был) асертит `_old_x == x` для non-modifies
+  params — Z3 видит равенство и доказывает.
+- Для **modifies** params (когда добавится Nova mut-spec) frame axiom не applies,
+  `_old_<x>` остаётся независимой и представляет entry-state значение.
+- `substitute_old` → no-op identity (preserved для API compat).
+- Test: v4_old_frame_positive — `ensures result == old(x)` доказывается под Trivial.
+- Регрессия: 133 PASS / 34 SKIP (без новых regressions).
+- V4 закрыт в simplifications.md (запись отдельным коммитом).
+- Коммит: `7c8a4477962`.
+
 === Plan 45 �.25 � nova tests (positive + negative) ===
 
 ����� �������� �.25 (4 ����) �������� nova-tests .nv ��� �������� �����

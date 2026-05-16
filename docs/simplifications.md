@@ -4544,18 +4544,15 @@ Sub-plans 35.A-E:
 - **Приоритет:** M — текущее поведение honest (программист обязан
   пометить), но требует boilerplate `#pure` на каждой helper-fn.
 
-### [V4] `old(...)` для mut params — snapshot trivial (значение = current)
-- **Где:** `verify/pipeline.rs::substitute_old`.
-- **Что упрощено:** `old(x)` подменяется на текущее значение `x`
-  (`old(x) → x` в SMT). Это корректно ТОЛЬКО для 33.1/33.2 scope
-  где нет `mut` параметров — в этих условиях snapshot тривиален.
-- **Почему:** Mut params + frame conditions не закрыты SMT-side
-  в bootstrap (parser + type-check есть, SMT verify ждёт Z3).
-- **Как чинить:** В Z3 backend каждый mut param получает две версии:
-  `x_entry` (snapshot) и `x` (текущее). `old(x)` → `x_entry`.
-  Frame-axiom для `modifies M`: всё что не в M — equated с entry.
-- **Приоритет:** M — без mut params в 33.1/33.2 это noop;
-  обязательно для 33.2 SMT verify + 33.3.
+### [V4] ✅ `old(...)` через entry-snapshot — ЗАКРЫТО Plan 33.6 Ф.7.2 (2026-05-16)
+- **Где:** `compiler-codegen/src/verify/pipeline.rs::verify_fn`.
+- **Что реализовано:** Каждый param получает SMT-двойник `_old_<x>`,
+  declared как отдельная var. Frame axiom (D.1.2) асертит `_old_x == x` для
+  non-modifies params, давая Z3 равенство. Для modifies-params (когда добавятся
+  в Nova spec) `_old_<x>` остаётся независимой → entry-state.
+- **`substitute_old` теперь no-op** (preserved для API compat), потому что
+  `_old_<x>` — first-class SMT var, не нуждается в substitution.
+- **Дата закрытия:** 2026-05-16.
 
 ### [ЗАКР 2026-05-16] Ghost erasure + ghost soundness — [V5]
 - **Закрыто (Plan 33.6 Ф.1.1, 2026-05-16, commit 85956feb):**
