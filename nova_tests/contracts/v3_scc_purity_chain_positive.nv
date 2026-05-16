@@ -1,0 +1,36 @@
+// Ф.9.9 (Plan 33.6): V3 coverage — SCC purity inference chain (3+ pure fns calling each other).
+
+module contracts.v3_scc_purity_chain_positive
+
+#pure
+fn helper_a(x int) -> int
+    ensures result == x + 1
+{
+    x + 1
+}
+
+#pure
+fn helper_b(x int) -> int
+    ensures result == x + 2
+{
+    helper_a(x + 1)
+}
+
+#pure
+fn helper_c(x int) -> int
+    ensures result == x + 3
+{
+    helper_b(x + 1)
+}
+
+fn use_chain(x int) -> int
+{
+    helper_c(x)
+}
+
+test "SCC purity chain" {
+    assert(helper_a(0) == 1)
+    assert(helper_b(0) == 2)
+    assert(helper_c(0) == 3)
+    assert(use_chain(10) == 13)
+}
