@@ -431,11 +431,92 @@ fn write_type_definition(w: &mut JsonWriter, def: &TypeDefinition) {
 /// Grammar (simplified): `[]T` = array, `?T` = optional, `(A, B)` = tuple,
 /// `fn(A) -> B` = function, `named` = named type.
 fn write_structural_type(w: &mut JsonWriter, ty: &str) {
+    // Plan 45 Ф.24.6: use Nova parser to get accurate structural type.
+    // Fallback to ad-hoc shape detector if parse fails.
+    if let Ok(type_ref) = crate::parser::parse_type_str(ty) {
+        write_typeref_structural(w, &type_ref);
+        return;
+    }
+    write_structural_type_fallback(w, ty);
+}
+
+fn write_typeref_structural(w: &mut JsonWriter, ty: &crate::ast::TypeRef) {
+    use crate::ast::TypeRef;
+    match ty {
+        TypeRef::Unit(_) => {
+            w.field_object("structural_type", |w| {
+                w.field_str("kind", "unit");
+            });
+        }
+        TypeRef::Named { path, generics, .. } => {
+            let name = path.last().cloned().unwrap_or_default();
+            if generics.is_empty() {
+                w.field_object("structural_type", |w| {
+                    w.field_str("kind", "named");
+                    w.field_str("name", &name);
+                });
+            } else {
+                let gen_strs: Vec<String> = generics
+                    .iter()
+                    .map(|g| typeref_to_str(g))
+                    .collect();
+                w.field_object("structural_type", |w| {
+                    w.field_str("kind", "named");
+                    w.field_str("name", &name);
+                    w.field_array("generics", |w| {
+                        for g in &gen_strs {
+                            w.array_str(g);
+                        }
+                    });
+                });
+            }
+        }
+        TypeRef::Array(inner, _) => {
+            let inner_str = typeref_to_str(inner);
+            w.field_object("structural_type", |w| {
+                w.field_str("elem", &inner_str);
+                w.field_str("kind", "array");
+            });
+        }
+        TypeRef::FixedArray(len, elem, _) => {
+            let elem_str = typeref_to_str(elem);
+            w.field_object("structural_type", |w| {
+                w.field_str("elem", &elem_str);
+                w.field_str("kind", "fixed_array");
+                w.field_str("len", &len.to_string());
+            });
+        }
+        TypeRef::Tuple(elems, _) => {
+            let elems_str: Vec<String> = elems.iter().map(typeref_to_str).collect();
+            w.field_object("structural_type", |w| {
+                w.field_str("kind", "tuple");
+                w.field_array("elems", |w| {
+                    for e in &elems_str {
+                        w.array_str(e);
+                    }
+                });
+            });
+        }
+        TypeRef::Func { params, effects, return_type, .. } => {
+            let source = super::collector::render_type_for_doc(ty);
+            w.field_object("structural_type", |w| {
+                w.field_str("kind", "function");
+                let _ = (params, effects, return_type);
+                w.field_str("source", &source);
+            });
+        }
+    }
+}
+
+fn typeref_to_str(ty: &crate::ast::TypeRef) -> String {
+    super::collector::render_type_for_doc(ty)
+}
+
+fn write_structural_type_fallback(w: &mut JsonWriter, ty: &str) {
     let ty = ty.trim();
     if ty.starts_with("[]") {
         w.field_object("structural_type", |w| {
             w.field_str("kind", "array");
-            // elem type as string — recursive structural would require alloc
             w.field_str("elem", &ty[2..]);
         });
     } else if ty.starts_with('?') {
@@ -448,18 +529,17 @@ fn write_structural_type(w: &mut JsonWriter, ty: &str) {
             w.field_str("kind", "function");
             w.field_str("source", ty);
         });
+    } else if ty == "()" {
+        w.field_object("structural_type", |w| {
+            w.field_str("kind", "unit");
+        });
     } else if ty.starts_with('(') && ty.ends_with(')') {
         w.field_object("structural_type", |w| {
             w.field_str("kind", "tuple");
             w.field_str("source", ty);
         });
-    } else if ty == "()" {
-        w.field_object("structural_type", |w| {
-            w.field_str("kind", "unit");
-        });
     } else {
         w.field_object("structural_type", |w| {
-            // Strip generic params for the base name.
             let base = ty.split('[').next().unwrap_or(ty);
             w.field_str("kind", "named");
             w.field_str("name", base);

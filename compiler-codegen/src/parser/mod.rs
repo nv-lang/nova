@@ -5466,6 +5466,14 @@ pub fn parse_with_file_id(src: &str, file_id: crate::diag::FileId) -> Result<Mod
     p.parse_module()
 }
 
+/// Plan 45 Ф.24.6: parse a Nova type expression string → TypeRef AST.
+/// Returns Err if the input is not a valid type expression.
+pub fn parse_type_str(ty: &str) -> Result<crate::ast::TypeRef, crate::diag::Diagnostic> {
+    let tokens = crate::lexer::lex(ty)?;
+    let mut p = Parser::with_src(tokens, ty.to_string());
+    p.parse_type()
+}
+
 #[cfg(test)]
 mod doc_attach_tests {
     //! Plan 45 Ф.2: проверяем, что парсер прикрепляет doc-блоки к

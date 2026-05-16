@@ -141,3 +141,8 @@ fn golden_should_panic() {
 fn golden_must_verify() {
     run_one("must_verify");
 }
+
+#[test]
+fn golden_capability_forbid() {
+    run_one("capability_forbid");
+}

@@ -304,16 +304,43 @@ impl std::error::Error for Diagnostic {}
 /// рендерингом диагностики.
 /// Plan 45 Ф.23.18: append source-line + caret (`^^^^`) to diagnostic output.
 fn append_snippet(out: &mut String, source: &str, span: &Span, line: usize, col: usize) {
-    // Extract the source line.
-    let line_text = source.lines().nth(line.saturating_sub(1)).unwrap_or("");
-    // Compute caret width: span length in chars, minimum 1.
-    let span_len = if span.end > span.start { span.end - span.start } else { 1 };
-    let caret_width = span_len.min(line_text.len().saturating_sub(col.saturating_sub(1))).max(1);
-    let indent = col.saturating_sub(1);
-    out.push('\n');
-    out.push_str(&format!("{} | {}", line, line_text));
-    out.push('\n');
-    out.push_str(&format!("  | {}{}", " ".repeat(indent), "^".repeat(caret_width)));
+    let lines: Vec<&str> = source.lines().collect();
+    let start_line = line.saturating_sub(1); // 0-indexed
+    // Compute end line/col from span.end.
+    let (end_line_1, end_col_1) = byte_to_line_col(source, span.end.saturating_sub(1).max(span.start));
+    let end_line = end_line_1.saturating_sub(1); // 0-indexed
+
+    if end_line <= start_line {
+        // Single-line snippet.
+        let line_text = lines.get(start_line).copied().unwrap_or("");
+        let span_len = if span.end > span.start { span.end - span.start } else { 1 };
+        let caret_width = span_len.min(line_text.len().saturating_sub(col.saturating_sub(1))).max(1);
+        let indent = col.saturating_sub(1);
+        out.push('\n');
+        out.push_str(&format!("{} | {}", line, line_text));
+        out.push('\n');
+        out.push_str(&format!("  | {}{}", " ".repeat(indent), "^".repeat(caret_width)));
+    } else {
+        // Plan 45 Ф.24.7: multi-line snippet — first line with ^^^^, last line with ~~~~.
+        let first_text = lines.get(start_line).copied().unwrap_or("");
+        let indent = col.saturating_sub(1);
+        let first_caret = first_text.len().saturating_sub(indent).max(1);
+        out.push('\n');
+        out.push_str(&format!("{} | {}", line, first_text));
+        out.push('\n');
+        out.push_str(&format!("  | {}{}", " ".repeat(indent), "^".repeat(first_caret)));
+        // Intermediate lines (skipped if adjacent).
+        if end_line > start_line + 1 {
+            out.push_str(&format!("\n  | ... ({} more lines)", end_line - start_line - 1));
+        }
+        // Last line with ~~~~.
+        let last_text = lines.get(end_line).copied().unwrap_or("");
+        let tilde_width = end_col_1.saturating_sub(1).max(1);
+        out.push('\n');
+        out.push_str(&format!("{} | {}", end_line_1, last_text));
+        out.push('\n');
+        out.push_str(&format!("  | {}", "~".repeat(tilde_width)));
+    }
 }
 
 pub fn byte_to_line_col(source: &str, offset: usize) -> (usize, usize) {

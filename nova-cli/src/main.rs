@@ -994,7 +994,7 @@ fn cmd_doc(path: &Path, format: &str, json_schema: bool, include_private: bool, 
         return cmd_doc_coverage(&tree);
     }
     if check {
-        return cmd_doc_check(&tree);
+        return cmd_doc_check(&tree, format);
     }
     if run_doc_tests {
         let summary = nova_codegen::doc::test_runner::run_doc_tests_with_source(&tree.doc_tests, Some(&src));
@@ -1105,7 +1105,7 @@ fn cmd_doc_workspace(
         return cmd_doc_coverage(&tree);
     }
     if check {
-        return cmd_doc_check(&tree);
+        return cmd_doc_check(&tree, format);
     }
     if run_doc_tests {
         // Plan 45 Ф.22.7: workspace doc-tests с crate-scope.
@@ -1145,37 +1145,91 @@ fn walk_nv_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
 
 /// Helper для check-mode (используется и single-file и workspace).
 /// Plan 45 Ф.23.12: теперь агрегирует все §11.5 lints.
-fn cmd_doc_check(tree: &nova_codegen::doc::DocTree) -> Result<()> {
-    let mut issues: Vec<String> = Vec::new();
-    // Existing: broken links + missing summaries.
+// Plan 45 Ф.24.4: structured check issue (rule + item_id + message + severity).
+struct CheckIssue {
+    rule: String,
+    item_id: String,
+    message: String,
+    severity: &'static str,
+}
+
+fn cmd_doc_check(tree: &nova_codegen::doc::DocTree, format: &str) -> Result<()> {
+    let mut issues: Vec<CheckIssue> = Vec::new();
+    // Broken links.
     for link in &tree.links {
         if link.target_id.is_none() {
-            let from = link.from_id.as_deref().unwrap_or("<module>");
-            issues.push(format!("[broken-link] [{}] in {}", link.text, from));
+            let from = link.from_id.as_deref().unwrap_or("<module>").to_string();
+            issues.push(CheckIssue {
+                rule: "broken-link".to_string(),
+                item_id: from,
+                message: format!("broken link [{}]", link.text),
+                severity: "error",
+            });
         }
     }
+    // Missing summaries.
     for m in &tree.modules {
         for it in &m.items {
             if it.visibility == nova_codegen::doc::Visibility::Export && it.summary.is_none() {
-                issues.push(format!("[missing-summary] exported item `{}`", it.id));
+                issues.push(CheckIssue {
+                    rule: "missing-summary".to_string(),
+                    item_id: it.id.clone(),
+                    message: "exported item has no summary".to_string(),
+                    severity: "error",
+                });
             }
         }
     }
-    // Plan 45 Ф.23.12: additional §11.5 lints.
+    // Lint violations.
     for v in nova_codegen::doc::run_lints(tree) {
-        issues.push(format!("[{}] {}: {}", v.rule, v.item_id, v.message));
+        issues.push(CheckIssue {
+            rule: v.rule.to_string(),
+            item_id: v.item_id,
+            message: v.message,
+            severity: "error",
+        });
     }
-    if issues.is_empty() {
-        println!("doc-check: ok ({} item(s), {} link(s))",
-            tree.modules.iter().map(|m| m.items.len()).sum::<usize>(),
-            tree.links.len());
-        return Ok(());
+
+    let has_errors = issues.iter().any(|i| i.severity == "error");
+
+    if format == "json" {
+        // Plan 45 Ф.24.4: structured JSON output for CI.
+        let mut by_rule: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+        for i in &issues {
+            *by_rule.entry(i.rule.clone()).or_insert(0) += 1;
+        }
+        let by_rule_str = by_rule
+            .iter()
+            .map(|(k, v)| format!("    {:?}: {}", k, v))
+            .collect::<Vec<_>>()
+            .join(",\n");
+        let issues_str = issues
+            .iter()
+            .map(|i| format!(
+                "    {{\"rule\": {:?}, \"item_id\": {:?}, \"message\": {:?}, \"severity\": {:?}}}",
+                i.rule, i.item_id, i.message, i.severity
+            ))
+            .collect::<Vec<_>>()
+            .join(",\n");
+        println!("{{\n  \"summary\": {{\n    \"count\": {},\n    \"by_rule\": {{\n{}\n    }}\n  }},\n  \"issues\": [\n{}\n  ]\n}}",
+            issues.len(), by_rule_str, issues_str);
+    } else {
+        if issues.is_empty() {
+            println!("doc-check: ok ({} item(s), {} link(s))",
+                tree.modules.iter().map(|m| m.items.len()).sum::<usize>(),
+                tree.links.len());
+            return Ok(());
+        }
+        for i in &issues {
+            eprintln!("doc-check: [{}] {}: {}", i.rule, i.item_id, i.message);
+        }
+        eprintln!("\ndoc-check: {} issue(s)", issues.len());
     }
-    for i in &issues {
-        eprintln!("doc-check: {}", i);
+
+    if has_errors {
+        std::process::exit(1);
     }
-    eprintln!("\ndoc-check: {} issue(s)", issues.len());
-    std::process::exit(1);
+    Ok(())
 }
 
 /// Helper: print doc-test summary + exit 1 on failures.

@@ -17,8 +17,8 @@ pub fn schema_v1() -> &'static str {
 const SCHEMA_V1: &str = r##"{
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://nova-lang.org/schemas/nova-doc-v1.json",
-  "title": "Nova doc output (D107 schema v1.0.0-stable)",
-  "description": "Output produced by `nova doc <file> --format json`. Stable v1.0.0 (Plan 45 Ф.23.13). Deterministic byte-for-byte; keys alphabetically sorted; arrays sorted by stable id. Backwards-compat guaranteed: additive fields only in minor bumps.",
+  "title": "Nova doc output (D107 schema v1.0.0-rc1)",
+  "description": "Output produced by `nova doc <file> --format json`. Release candidate v1.0.0-rc1 (Plan 45 Ф.24.5). Deterministic byte-for-byte; keys alphabetically sorted; arrays sorted by stable id. Will promote to v1.0.0 after 2-week soak without drift.",
   "type": "object",
   "required": ["format_version", "nova_version", "doc_tests", "links", "modules", "items"],
   "additionalProperties": false,
@@ -26,7 +26,7 @@ const SCHEMA_V1: &str = r##"{
     "format_version": {
       "type": "integer",
       "const": 1,
-      "description": "Schema version. Stable v1.0.0 (Plan 45 Ф.23.13). Bump major on breaking change; minor additions allowed without bump."
+      "description": "Schema version. RC v1.0.0-rc1 (Plan 45 Ф.24.5). Bump major on breaking change; minor additions allowed without bump."
     },
     "generated_at": {
       "type": "string",

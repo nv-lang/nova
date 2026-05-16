@@ -139,49 +139,52 @@ pub fn collect_workspace(modules: &[Module]) -> DocTree {
     // Deterministic order: по path.
     tree.modules.sort_by(|a, b| a.path.cmp(&b.path));
 
-    // Plan 45 Ф.23.16: populate Protocol.implementors via workspace scan.
-    // For each Protocol, find types that have methods matching all protocol method names.
-    // Collect: protocol_id → required method names.
-    let mut proto_methods: Vec<(String, std::collections::HashSet<String>)> = Vec::new();
-    for m in &tree.modules {
-        for it in &m.items {
-            if let ItemKind::Protocol { methods, .. } = &it.kind {
-                let names: std::collections::HashSet<String> =
-                    methods.iter().map(|m| m.name.clone()).collect();
-                if !names.is_empty() {
-                    proto_methods.push((it.id.clone(), names));
-                }
-            }
-        }
-    }
-    if !proto_methods.is_empty() {
-        // Collect type_name → set of method names (from Fn items with receiver).
-        // Method items have id of form "module::TypeName.method".
-        let mut type_methods: std::collections::HashMap<String, std::collections::HashSet<String>> =
-            std::collections::HashMap::new();
+    // Plan 45 Ф.24.3: implementors only when opt-in (structural matching has false-positives).
+    // Populate only when NOVA_DOC_EXPERIMENTAL_IMPLEMENTORS=1.
+    let experimental_implementors = std::env::var("NOVA_DOC_EXPERIMENTAL_IMPLEMENTORS")
+        .map(|v| v == "1")
+        .unwrap_or(false);
+
+    if experimental_implementors {
+        // Plan 45 Ф.24.2: use BTreeMap/BTreeSet for deterministic iteration order.
+        let mut proto_methods: Vec<(String, std::collections::BTreeSet<String>)> = Vec::new();
         for m in &tree.modules {
             for it in &m.items {
-                if let ItemKind::Fn(sig) = &it.kind {
-                    if let Some(recv) = &sig.receiver {
-                        let type_id = format!("{}::{}", m.path.join("."), recv.type_name);
-                        let method_name = it.id.rsplit('.').next().unwrap_or(&it.name).to_string();
-                        type_methods.entry(type_id).or_default().insert(method_name);
+                if let ItemKind::Protocol { methods, .. } = &it.kind {
+                    let names: std::collections::BTreeSet<String> =
+                        methods.iter().map(|m| m.name.clone()).collect();
+                    if !names.is_empty() {
+                        proto_methods.push((it.id.clone(), names));
                     }
                 }
             }
         }
-        // For each protocol, find types whose method set is a superset of required methods.
-        for m in &mut tree.modules {
-            for it in &mut m.items {
-                if let ItemKind::Protocol { implementors, .. } = &mut it.kind {
-                    if let Some((_, required)) = proto_methods.iter().find(|(id, _)| id == &it.id) {
-                        let mut found: Vec<String> = type_methods
-                            .iter()
-                            .filter(|(_, meths)| required.iter().all(|r| meths.contains(r)))
-                            .map(|(type_id, _)| type_id.clone())
-                            .collect();
-                        found.sort();
-                        *implementors = found;
+        if !proto_methods.is_empty() {
+            let mut type_methods: std::collections::BTreeMap<String, std::collections::BTreeSet<String>> =
+                std::collections::BTreeMap::new();
+            for m in &tree.modules {
+                for it in &m.items {
+                    if let ItemKind::Fn(sig) = &it.kind {
+                        if let Some(recv) = &sig.receiver {
+                            let type_id = format!("{}::{}", m.path.join("."), recv.type_name);
+                            let method_name = it.id.rsplit('.').next().unwrap_or(&it.name).to_string();
+                            type_methods.entry(type_id).or_default().insert(method_name);
+                        }
+                    }
+                }
+            }
+            for m in &mut tree.modules {
+                for it in &mut m.items {
+                    if let ItemKind::Protocol { implementors, .. } = &mut it.kind {
+                        if let Some((_, required)) = proto_methods.iter().find(|(id, _)| id == &it.id) {
+                            let found: Vec<String> = type_methods
+                                .iter()
+                                .filter(|(_, meths)| required.iter().all(|r| meths.contains(r)))
+                                .map(|(type_id, _)| type_id.clone())
+                                .collect();
+                            // already sorted (BTreeMap iteration is ordered)
+                            *implementors = found;
+                        }
                     }
                 }
             }
@@ -213,10 +216,23 @@ fn collect_one(module: &Module) -> DocModule {
     let (module_summary, module_description) =
         crate::doc::markdown::extract_summary(&module_doc_content);
 
+    // Plan 45 Ф.24.1: extract module-level #forbid effects to propagate into items.
+    let mut module_forbid: Vec<String> = Vec::new();
+    for attr in &module.attrs {
+        if let ModuleAttrKind::Forbid = &attr.kind {
+            for eff in &attr.effects {
+                if !module_forbid.contains(eff) {
+                    module_forbid.push(eff.clone());
+                }
+            }
+        }
+    }
+    module_forbid.sort();
+
     let mut items: Vec<DocItem> = Vec::new();
     for item in &module.items {
         match item {
-            Item::Fn(f) => items.push(collect_fn(&module_path, f)),
+            Item::Fn(f) => items.push(collect_fn(&module_path, f, &module_forbid)),
             Item::Type(t) => items.push(collect_type(&module_path, t)),
             Item::Const(c) => items.push(collect_const(&module_path, c)),
             Item::Let(_) | Item::Test(_) | Item::Lemma(_) => {}
@@ -254,7 +270,7 @@ fn collect_one(module: &Module) -> DocModule {
     }
 }
 
-fn collect_fn(module_path: &[String], f: &FnDecl) -> DocItem {
+fn collect_fn(module_path: &[String], f: &FnDecl, module_forbid: &[String]) -> DocItem {
     let module_str = module_path.join(".");
     let id = match &f.receiver {
         Some(r) => format!("{}::{}.{}", module_str, r.type_name, f.name),
@@ -273,7 +289,8 @@ fn collect_fn(module_path: &[String], f: &FnDecl) -> DocItem {
         realtime: matches!(f.realtime_attr, RealtimeAttr::Realtime | RealtimeAttr::RealtimeNogc),
         realtime_nogc: matches!(f.realtime_attr, RealtimeAttr::RealtimeNogc),
         pure_fn: matches!(f.purity, Purity::Pure),
-        forbid: Vec::new(),
+        // Plan 45 Ф.24.1: propagate module-level #forbid into each item.
+        forbid: module_forbid.to_vec(),
     };
     DocItem {
         id,
@@ -575,6 +592,11 @@ fn build_signature(f: &FnDecl) -> Signature {
 /// Минимальный pretty-print TypeRef в Nova source. **MVP-простой** —
 /// для популярных форм; сложные случаи могут округляться (best-effort
 /// строковое представление).
+/// Plan 45 Ф.24.6: public re-export of render_type for use in render_json.
+pub fn render_type_for_doc(ty: &crate::ast::TypeRef) -> String {
+    render_type(ty)
+}
+
 fn render_type(ty: &crate::ast::TypeRef) -> String {
     use crate::ast::TypeRef;
     match ty {
