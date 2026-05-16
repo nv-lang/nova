@@ -13077,3 +13077,23 @@ mislead readers: ��� production-grade, �� docstring ������� "minimal".
 
 **Verification:** 13 doc integration test suites � 77 PASS, 0 fail. Zero
 behavior change, ������ documentation accuracy.
+
+==============================================================================
+2026-05-16 — Plan 52.1 final session log
+==============================================================================
+
+## Финал Plan 52.1
+
+| Ф | Результат | Detail |
+|---|---|---|
+| Ф.4 user #from_pairs | ✅ ЗАКРЫТО | method-validation, ~50 LOC |
+| Ф.1 spread | ⛔ DEFERRED | codegen quirk более глубокий |
+| Ф.2 const map | ⛔ DEFERRED | ordering bug pre-existing |
+| Ф.3 MIR-lowering | ❌ unnecessary | capacity-формула УЖЕ в hashmap.nv |
+
+Регрессия: 25 map_literals PASS / 0 FAIL.
+
+Commits:
+- feat(52.1): Ф.4 — user-defined #from_pairs types
+- docs(52.1): Ф.1 spread — investigated codegen quirk, deferred
+- docs(52.1): Ф.2 const-map blocked, Ф.3 MIR reassessed
