@@ -1,0 +1,13 @@
+// EXPECT_COMPILE_ERROR undefined identifier
+//
+// Plan 45 Ф.26.1: newtype — негативный тест.
+// Newtype declarations + undefined function в теле = compile error.
+
+module doc.f26_newtype_negative
+
+export type Width int
+export type Height int
+
+fn area(w Width, h Height) -> int {
+    nonexistent_multiply_helper(w, h)
+}
