@@ -143,6 +143,13 @@ fn simplify_app(op: &str, args: &[SmtTerm]) -> SmtTerm {
             (SmtTerm::IntLit(a), SmtTerm::IntLit(b)) => SmtTerm::IntLit(a.saturating_add(*b)),
             (SmtTerm::IntLit(0), b) => b.clone(),
             (a, SmtTerm::IntLit(0)) => a.clone(),
+            // Ф.6.3 (Plan 33.6): commutativity normalization для consistent hash.
+            // Если оба не литерал — сортировать по pretty-print order.
+            (a, b) if !matches!(a, SmtTerm::IntLit(_)) && !matches!(b, SmtTerm::IntLit(_)) => {
+                let mut sorted = vec![a.clone(), b.clone()];
+                sorted.sort_by_key(|t| t.pretty());
+                SmtTerm::App("+".into(), sorted)
+            }
             _ => SmtTerm::App(op.into(), args.to_vec()),
         },
         "-" if args.len() == 2 => match (&args[0], &args[1]) {

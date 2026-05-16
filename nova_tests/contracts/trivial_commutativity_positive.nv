@@ -1,0 +1,15 @@
+// Ф.6.3 (Plan 33.6): TrivialBackend commutativity — `a + b == b + a` proven.
+// До этого fix'a TrivialBackend не нормализовал + порядок аргументов.
+
+module contracts.trivial_commutativity_positive
+
+#verify
+fn commutative_add(a int, b int) -> int
+    ensures result == b + a
+{
+    a + b
+}
+
+test "commutativity trivial positive" {
+    assert(commutative_add(3, 5) == 8)
+}
