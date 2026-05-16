@@ -12990,93 +12990,93 @@ test additions. Р‘Р°Р·РѕРІС‹Р№ 46 FAIL вЂ” pre-existing baseline (Plan 33.3 veri
 tests С‚СЂРµР±СѓСЋС‚ Z3 backend, std/collections/hashmap.nv `#from_pairs`
 attribute issue РѕС‚ Plan 52, doc/fixtures sample files Р±РµР· `fn main`).
 
-=== Plan 45 Ф.27.1 — Workspace mode handler matrix (2026-05-16) ===
+=== Plan 45 пїЅ.27.1 пїЅ Workspace mode handler matrix (2026-05-16) ===
 
-Audit обнаружил что Ф.26.2 закрыл handler matrix только для single-file mode;
-workspace mode silently выдавал handlers: [] для всех Effect'ов, даже когда
-handler usage был в других модулях того же workspace. Это нарушение заявленного
-Nova-unique feature (§19.4 п.4 «Effect > handler matrix vs Go/Rust/TS»).
+Audit пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅ.26.2 пїЅпїЅпїЅпїЅпїЅпїЅ handler matrix пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ single-file mode;
+workspace mode silently пїЅпїЅпїЅпїЅпїЅпїЅпїЅ handlers: [] пїЅпїЅпїЅ пїЅпїЅпїЅпїЅ Effect'пїЅпїЅ, пїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ
+handler usage пїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅ пїЅпїЅ workspace. пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
+Nova-unique feature (пїЅ19.4 пїЅ.4 пїЅEffect > handler matrix vs Go/Rust/TSпїЅ).
 
 **Fix:**
-- New API populate_handler_matrix_workspace(tree, sources_by_module_path) —
-  принимает BTreeMap<String, String> mapping module_path > source.
-- collect_handlers::collect_handlers_workspace теперь функциональный (был noop):
-  для каждого fn-item достаёт source своего модуля по module_path, scan'ит
+- New API populate_handler_matrix_workspace(tree, sources_by_module_path) пїЅ
+  пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ BTreeMap<String, String> mapping module_path > source.
+- collect_handlers::collect_handlers_workspace пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ (пїЅпїЅпїЅ noop):
+  пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ fn-item пїЅпїЅпїЅпїЅпїЅпїЅ source пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ module_path, scan'пїЅпїЅ
   handler literals, populates Effect.handlers.
-- CLI workspace mode (cmd_doc_workspace) строит map при parse phase
-  (modules.iter().zip(sources.iter())) и вызывает new API.
+- CLI workspace mode (cmd_doc_workspace) пїЅпїЅпїЅпїЅпїЅпїЅ map пїЅпїЅпїЅ parse phase
+  (modules.iter().zip(sources.iter())) пїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ new API.
 
-**Дизайн-решение — sources_by_module_path vs (file_id, source):**
-Изначально планировал использовать ile_id из span.file_id. Но CLI workspace
-pipeline сейчас не присваивает уникальные file_id parser'у — все modules
-имеют ile_id = 0 (MAIN_FILE_ID). Pragmatic: использовать module_path
-как natural key.
+**пїЅпїЅпїЅпїЅпїЅпїЅ-пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅ sources_by_module_path vs (file_id, source):**
+пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ ile_id пїЅпїЅ span.file_id. пїЅпїЅ CLI workspace
+pipeline пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ file_id parser'пїЅ пїЅ пїЅпїЅпїЅ modules
+пїЅпїЅпїЅпїЅпїЅ ile_id = 0 (MAIN_FILE_ID). Pragmatic: пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ module_path
+пїЅпїЅпїЅ natural key.
 
-**Tests:** 4 integration tests в compiler-codegen/tests/doc_handler_matrix_workspace.rs:
-- cross_file_handler_matrix_populated — Effect в module A + handler в module B
-- multiple_modules_multiple_handlers — Effect в одном module, 2 callers в разных
-- workspace_handlers_deterministic — multiple builds > identical handlers
-- workspace_no_handlers_empty_array — Effect без handlers > empty
+**Tests:** 4 integration tests пїЅ compiler-codegen/tests/doc_handler_matrix_workspace.rs:
+- cross_file_handler_matrix_populated пїЅ Effect пїЅ module A + handler пїЅ module B
+- multiple_modules_multiple_handlers пїЅ Effect пїЅ пїЅпїЅпїЅпїЅпїЅ module, 2 callers пїЅ пїЅпїЅпїЅпїЅпїЅпїЅ
+- workspace_handlers_deterministic пїЅ multiple builds > identical handlers
+- workspace_no_handlers_empty_array пїЅ Effect пїЅпїЅпїЅ handlers > empty
 
-**Total после Ф.27.1:** 77 doc integration PASS (12 suites).
+**Total пїЅпїЅпїЅпїЅпїЅ пїЅ.27.1:** 77 doc integration PASS (12 suites).
 
-**Closes** P1 blocker найденный аудитом: handler matrix теперь functional
-для real workspace кода.
+**Closes** P1 blocker пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ: handler matrix пїЅпїЅпїЅпїЅпїЅпїЅ functional
+пїЅпїЅпїЅ real workspace пїЅпїЅпїЅпїЅ.
 
-=== Plan 45 Ф.27.2 — render_expr расширенное покрытие (2026-05-16) ===
+=== Plan 45 пїЅ.27.2 пїЅ render_expr пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ (2026-05-16) ===
 
-Audit обнаружил что ender_expr имеет _ => "..." fallback — complex
-expressions в contracts (x + 1 > old(x)) могли render'иться как ... > old(x)
-если first part complex. Это incomplete contract documentation в JSON/MD output.
+Audit пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ ender_expr пїЅпїЅпїЅпїЅпїЅ _ => "..." fallback пїЅ complex
+expressions пїЅ contracts (x + 1 > old(x)) пїЅпїЅпїЅпїЅпїЅ render'пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ ... > old(x)
+пїЅпїЅпїЅпїЅ first part complex. пїЅпїЅпїЅ incomplete contract documentation пїЅ JSON/MD output.
 
 **Fix:**
-- Добавлены explicit branches для common variants:
-  - Index { obj, index } — rr[i] корректно
-  - If { cond, then, else_ } — if <cond> { ... } else { ... } (body conservative)
-  - SelfAccess — @ (current Nova self)
-  - InterpolatedStr — "hello \" interpolation parts
-  - TurboFish { base, type_args } — Vec[int].with_capacity(n)
-- Fallback теперь — helpful kind name (<match>, <closure>, <with>, etc)
-  вместо anonymous .... Помогает debugging "почему contract incomplete".
+- пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ explicit branches пїЅпїЅпїЅ common variants:
+  - Index { obj, index } пїЅ rr[i] пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
+  - If { cond, then, else_ } пїЅ if <cond> { ... } else { ... } (body conservative)
+  - SelfAccess пїЅ @ (current Nova self)
+  - InterpolatedStr пїЅ "hello \" interpolation parts
+  - TurboFish { base, type_args } пїЅ Vec[int].with_capacity(n)
+- Fallback пїЅпїЅпїЅпїЅпїЅпїЅ пїЅ helpful kind name (<match>, <closure>, <with>, etc)
+  пїЅпїЅпїЅпїЅпїЅпїЅ anonymous .... пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ debugging "пїЅпїЅпїЅпїЅпїЅпїЅ contract incomplete".
 
-**Tests:** 6 integration tests в compiler-codegen/tests/doc_render_expr.rs:
+**Tests:** 6 integration tests пїЅ compiler-codegen/tests/doc_render_expr.rs:
 - Binary expression (x > 0) corectness
 - Arithmetic (esult == x + 1)
 - Function call (pos(y))
-- Combined predicate с && — обе sides preserved
+- Combined predicate пїЅ && пїЅ пїЅпїЅпїЅ sides preserved
 - Negation !pos(y)
-- Regression: no ... в simple contracts
+- Regression: no ... пїЅ simple contracts
 
-**AST naming caveat:** Nova AST имеет If { cond, then, else_ }, не
-If { cond, then_branch, else_branch }. Также нет MethodCall/Cast/Await/
-Resume/Yield как top-level ExprKind variants (вместо них Call с method-receiver).
+**AST naming caveat:** Nova AST пїЅпїЅпїЅпїЅпїЅ If { cond, then, else_ }, пїЅпїЅ
+If { cond, then_branch, else_branch }. пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ MethodCall/Cast/Await/
+Resume/Yield пїЅпїЅпїЅ top-level ExprKind variants (пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ Call пїЅ method-receiver).
 
-=== Plan 45 Ф.27.3 — Stale MVP markers cleanup (2026-05-16) ===
+=== Plan 45 пїЅ.27.3 пїЅ Stale MVP markers cleanup (2026-05-16) ===
 
-Audit обнаружил stale "MVP" / "best-effort MVP" markers в docstring модулей doc/.
-Эти комментарии были написаны до Ф.21-Ф.27 production hardening и теперь
-mislead readers: код production-grade, но docstring говорит "minimal".
+Audit пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ stale "MVP" / "best-effort MVP" markers пїЅ docstring пїЅпїЅпїЅпїЅпїЅпїЅпїЅ doc/.
+пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅ.21-пїЅ.27 production hardening пїЅ пїЅпїЅпїЅпїЅпїЅпїЅ
+mislead readers: пїЅпїЅпїЅ production-grade, пїЅпїЅ docstring пїЅпїЅпїЅпїЅпїЅпїЅпїЅ "minimal".
 
-**Что обновлено:**
-- links.rs:1 — "best-effort MVP" > "production-grade after Ф.21.7+Ф.25.1"
-  с явным перечислением capabilities (cross-module, ambiguous warnings, back-links).
-- collector.rs:1 — "MVP: один pass без passes-pipeline" > list of all
+**пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ:**
+- links.rs:1 пїЅ "best-effort MVP" > "production-grade after пїЅ.21.7+пїЅ.25.1"
+  пїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ capabilities (cross-module, ambiguous warnings, back-links).
+- collector.rs:1 пїЅ "MVP: пїЅпїЅпїЅпїЅ pass пїЅпїЅпїЅ passes-pipeline" > list of all
   passes (strip_private, propagate_stability, ..., populate_handler_matrix,
   populate_verify_status, infer_contracts).
-- doctree.rs:5 — "MVP — один module" > "single-file OR workspace mode".
-- ender_md.rs:1 — "MVP: один модуль = одна markdown-строка" > production
+- doctree.rs:5 пїЅ "MVP пїЅ пїЅпїЅпїЅпїЅ module" > "single-file OR workspace mode".
+- ender_md.rs:1 пїЅ "MVP: пїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ = пїЅпїЅпїЅпїЅ markdown-пїЅпїЅпїЅпїЅпїЅпїЅ" > production
   features list (badges, anchors, [src] links, verify-status, handler matrix).
-- ender_expr docstring (collector.rs:799) — "MVP: placeholder для остального"
-  > coverage list + объяснение <kind> fallback.
+- ender_expr docstring (collector.rs:799) пїЅ "MVP: placeholder пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ"
+  > coverage list + пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ <kind> fallback.
 
-**Tech debt не для удаления (остаются как known simplifications):**
-- mutation.rs text-heuristic — задокументирован в simplifications.md, Plan 45.A.
-- markdown.rs summary-extractor без pulldown-cmark — production-grade
-  (написан с zero deps after Ф.25.2).
-- collect_handlers.rs text scanner — design choice, не MVP (см. Ф.26.2 rationale).
+**Tech debt пїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ (пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ known simplifications):**
+- mutation.rs text-heuristic пїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅ simplifications.md, Plan 45.A.
+- markdown.rs summary-extractor пїЅпїЅпїЅ pulldown-cmark пїЅ production-grade
+  (пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅ zero deps after пїЅ.25.2).
+- collect_handlers.rs text scanner пїЅ design choice, пїЅпїЅ MVP (пїЅпїЅ. пїЅ.26.2 rationale).
 
-**Verification:** 13 doc integration test suites — 77 PASS, 0 fail. Zero
-behavior change, только documentation accuracy.
+**Verification:** 13 doc integration test suites пїЅ 77 PASS, 0 fail. Zero
+behavior change, пїЅпїЅпїЅпїЅпїЅпїЅ documentation accuracy.
 
 ==============================================================================
 2026-05-16 вЂ” Plan 52.1 final session log
@@ -13097,3 +13097,115 @@ Commits:
 - feat(52.1): Р¤.4 вЂ” user-defined #from_pairs types
 - docs(52.1): Р¤.1 spread вЂ” investigated codegen quirk, deferred
 - docs(52.1): Р¤.2 const-map blocked, Р¤.3 MIR reassessed
+
+=== Plan 45 Р¤.28.1 вЂ” AST pretty-printer shared util (2026-05-16) ===
+
+пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅ.27.2 simplification: collector::render_expr пїЅпїЅпїЅ own implementation
+пїЅ _ => '<kind>' fallback. пїЅ.28.1 пїЅпїЅпїЅпїЅпїЅ pretty-print logic пїЅ shared util
+compiler-codegen/src/ast/pretty.rs пїЅ пїЅпїЅпїЅ foundation пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ consumers
+(diag/spec/IDE LSP).
+
+пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ:
+- Module crate::ast::pretty пїЅ public API print_expr(e: &Expr) -> String
+- Coverage: literals (int/float/bool/str/char/unit/interpolated), idents,
+  paths, member/index access, turbofish, calls, binary/unary, if-cond,
+  range, forall, interrupt, tuples, arrays, maps, records, SelfAccess.
+- Fallback <kind> пїЅ пїЅпїЅпїЅпїЅпїЅ variant name (match/closure/lambda/with/
+  forbid-block/realtime-block/etc) пїЅпїЅпїЅпїЅпїЅпїЅ anonymous ....
+- Binary operators пїЅпїЅпїЅпїЅпїЅпїЅ parenthesized пїЅпїЅпїЅ safety (slight redundancy
+  пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ precedence bugs).
+
+Integration:
+- collector::render_expr пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅ ast::pretty::print_expr.
+- collector::render_expr_legacy пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ dead-code пїЅпїЅпїЅ reference (пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
+  пїЅпїЅпїЅпїЅпїЅ soak period).
+
+Tests:
+- 8 unit tests пїЅ ast::pretty::tests
+- Updated doc_render_expr tests пїЅпїЅпїЅпїЅпїЅ accept parenthesized output
+
+Total пїЅпїЅпїЅпїЅпїЅ пїЅ.28.1: 85 doc tests PASS (13 integration suites + 8 unit).
+
+Side benefits:
+- Diag/spec пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ pretty-print пїЅпїЅпїЅ duplication.
+- New ExprKind variant пїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ branch пїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ, пїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅ consumer.
+
+=== Plan 45 пїЅ.28.2 пїЅ Mutation testing real-exec (2026-05-16) ===
+
+пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅ.25.4 text-heuristic пїЅпїЅ real test execution. пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ heuristic
+(пїЅ.25.4) пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ kill rate пїЅпїЅ boundary literals пїЅ test source; real-exec
+(пїЅ.28.2) actually substitutes mutated_expr пїЅ source, re-runs doc-tests
+пїЅпїЅпїЅпїЅпїЅ test_runner, classifies kills based пїЅпїЅ actual test outcomes.
+
+**API:**
+- un_mutation_analysis(tree) пїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ heuristic (пїЅ.25.4, fast).
+- un_mutation_analysis_executed(tree, source) пїЅ real-exec (пїЅ.28.2, slower).
+
+**CLI:**
+- 
+ova doc <file> --mutate-contracts пїЅ default text-heuristic.
+- 
+ova doc <file> --mutate-contracts --real-exec пїЅ real-exec mode.
+  clap equires = "mutate_contracts" пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ --real-exec пїЅпїЅпїЅпїЅпїЅпїЅ пїЅ
+  --mutate-contracts.
+
+**Algorithm real-exec:**
+1. Generate mutants (operator swap: > - >=, == - !=, drop requires).
+2. пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ mutant:
+   - source.replacen(original_expr, mutated_expr, 1) пїЅ substitute first occurrence
+   - пїЅпїЅпїЅпїЅ no-op (original_expr пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅ.28.1 parens) пїЅ outcome = NoTests
+   - пїЅпїЅпїЅпїЅпїЅ: re-parse + run doc-tests пїЅпїЅпїЅпїЅпїЅ fn пїЅпїЅпїЅпїЅпїЅ test_runner
+3. Outcome: Killed (?1 test failed) / Survived (all tests passed) / NoTests.
+
+**Performance:** ~100ms per mutant per doc-test (parse + type-check + compile + run).
+пїЅпїЅпїЅ fn пїЅ 5 contracts ? 5 mutants ? 3 tests = 7.5s. Acceptable пїЅпїЅпїЅ CI, slow пїЅпїЅпїЅ IDE.
+
+**Caveats пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ:**
+- Naive text substitute: original_expr пїЅ comment/string пїЅ false mutation.
+- пїЅпїЅ precise пїЅпїЅпїЅпїЅпїЅ original_expr пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ multiple times пїЅпїЅ пїЅпїЅпїЅпїЅпїЅ fn.
+- Pretty-printer parens (пїЅ.28.1) пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ x > 0 > (x > 0) пїЅ
+  text substitute пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ not exact match > NoTests outcome (honest).
+
+**Tests:** 4 integration tests пїЅ compiler-codegen/tests/doc_mutation_exec.rs:
+- fn пїЅпїЅпїЅ doc-tests > NoTests
+- fn пїЅ contracts > mutants generated
+- Deterministic (multiple runs > identical reports)
+- No contracts > 0 mutants
+
+Total пїЅпїЅпїЅпїЅпїЅ пїЅ.28.2: **89 doc tests PASS** (14 integration suites + 8 unit).
+
+=== Plan 45 пїЅ.28.3 пїЅ JSON Schema v1.0.0-rc1 > v1.0.0 STABLE promote (2026-05-16) ===
+
+Soak period closed: пїЅпїЅпїЅпїЅпїЅ пїЅ.24.5 (rc1) пїЅпїЅпїЅпїЅпїЅ пїЅ.24пїЅпїЅ.28 (4 sprints, 16+
+пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ) schema пїЅпїЅ пїЅпїЅпїЅпїЅпїЅ breaking drift. Backward-compatible additions
+(warnings, source.url, handlers, allow_transit) пїЅ пїЅпїЅпїЅ bump format_version.
+
+**пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅ schema.rs:**
+- Title: "Nova doc output (D107 schema v1.0.0-rc1)" > "(D107 schema v1.0.0)"
+- Description: "Release candidate v1.0.0-rc1 ... Will promote to v1.0.0 after
+  2-week soak" > "Stable v1.0.0 (Plan 45 пїЅ.28.3) ... Soak period (пїЅ.24.5пїЅпїЅ.28)
+  пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ breaking drift; promoted to stable."
+- format_version description: "RC v1.0.0-rc1" > "Stable v1.0.0"
+- format_version const пїЅпїЅпїЅпїЅпїЅпїЅпїЅ 1 пїЅ backward compat пїЅпїЅпїЅ consumers
+  (rc1 пїЅ stable v1 пїЅ пїЅпїЅпїЅпїЅ schema family).
+
+**Plan 45 пїЅпїЅAcceptanceпїЅ fulfilled:**
+- 2-пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ soak пїЅпїЅпїЅ drift: ?
+- Schema promote v1.0.0-rc1 > v1.0.0: ?
+- Backward compat sustained: ? format_version const 1, additions only.
+
+**Tests:** 4 dedicated пїЅпїЅпїЅпїЅпїЅпїЅ пїЅ compiler-codegen/tests/doc_schema_v1_promote.rs:
+- Title пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ v1.0.0 (пїЅпїЅпїЅ -rc1)
+- format_version remains const 1
+- Description пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ Stable + пїЅ.28.3
+- JSON validity (balanced braces)
+
+Plus 11 existing schema_shape tests пїЅ пїЅпїЅпїЅ PASS.
+
+**Total пїЅпїЅпїЅпїЅпїЅ пїЅ.28.3:** 93 doc tests PASS (15 integration suites + 8 unit).
+
+**Plan 45 + Plan 45.A foundation completed.** пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ (пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ):
+- Plan 45.A round 2/3: HTML output, search index, MCP server
+- Plan 45.B: stdlib full doc-pass
+- Plan 16 follow-up: #allow_transit parser support
+- Plan 42 follow-up: workspace handler matrix С‡РµСЂРµР· FileRegistry

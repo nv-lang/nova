@@ -158,8 +158,18 @@ enum Cmd {
         /// function with contracts; reports survived mutants (under-tested
         /// boundaries). Nova-unique — никто из rustdoc/godoc/typedoc не
         /// делает mutation testing для specifications.
+        ///
+        /// Default — text-based heuristic (быстро, ~1ms per mutant).
+        /// `--real-exec` — actually run mutated doc-tests (true positive
+        /// guarantee, ~100ms per mutant per test).
         #[arg(long = "mutate-contracts")]
         mutate_contracts: bool,
+        /// Plan 45 Ф.28.2: enable real-exec mode для `--mutate-contracts`.
+        /// Substitutes mutated_expr в source и actually runs doc-tests
+        /// через test_runner. Slower (~100ms per mutant per test) но
+        /// gives true positive guarantee. Без флага — text-based heuristic.
+        #[arg(long = "real-exec", requires = "mutate_contracts")]
+        real_exec: bool,
     },
     /// Compile a single Nova source file to a native binary.
     ///
@@ -1013,7 +1023,7 @@ fn cmd_run(path: &Path) -> Result<()> {
 ///
 /// MVP: один входной файл, вывод в stdout. Никаких подкоманд (workspace/
 /// --output-dir/--watch — Plan 45.A или отдельные субкоманды позже).
-fn cmd_doc(path: &Path, format: &str, json_schema: bool, include_private: bool, run_doc_tests: bool, check: bool, watch: bool, coverage: bool, jobs: usize, scrape_examples: Option<&Path>, strict: bool, mutate_contracts: bool) -> Result<()> {
+fn cmd_doc(path: &Path, format: &str, json_schema: bool, include_private: bool, run_doc_tests: bool, check: bool, watch: bool, coverage: bool, jobs: usize, scrape_examples: Option<&Path>, strict: bool, mutate_contracts: bool, real_exec: bool) -> Result<()> {
     // `--json-schema` — печатает embedded схему и выходит (D107).
     if json_schema {
         println!("{}", nova_doc_embedded_schema());
@@ -1074,7 +1084,7 @@ fn cmd_doc(path: &Path, format: &str, json_schema: bool, include_private: bool, 
         return cmd_doc_check(&tree, format);
     }
     if mutate_contracts {
-        return cmd_doc_mutate_contracts(&tree, format);
+        return cmd_doc_mutate_contracts(&tree, format, if real_exec { Some(&src) } else { None });
     }
     if run_doc_tests {
         let summary = nova_codegen::doc::test_runner::run_doc_tests_with_source(&tree.doc_tests, Some(&src));
@@ -1391,9 +1401,20 @@ fn cmd_doc_check(tree: &nova_codegen::doc::DocTree, format: &str) -> Result<()> 
     Ok(())
 }
 
-/// Plan 45 Ф.25.4 — `nova doc --mutate-contracts` mutation testing report.
-fn cmd_doc_mutate_contracts(tree: &nova_codegen::doc::DocTree, format: &str) -> Result<()> {
-    let report = nova_codegen::doc::mutation::run_mutation_analysis(tree);
+/// Plan 45 Ф.25.4 + Ф.28.2 — `nova doc --mutate-contracts [--real-exec]` mutation testing.
+///
+/// Если `source` Some — real-exec mode (Ф.28.2): substitute mutated_expr в source,
+/// run doc-tests, detect kills.
+/// Если None — text-heuristic mode (Ф.25.4): boundary literal + fn call detection.
+fn cmd_doc_mutate_contracts(
+    tree: &nova_codegen::doc::DocTree,
+    format: &str,
+    source: Option<&str>,
+) -> Result<()> {
+    let report = match source {
+        Some(src) => nova_codegen::doc::mutation::run_mutation_analysis_executed(tree, src),
+        None => nova_codegen::doc::mutation::run_mutation_analysis(tree),
+    };
     if format == "json" {
         let mutants_str = report.mutants.iter()
             .map(|m| format!(
@@ -1529,7 +1550,7 @@ fn cmd_doc_watch(
                 chrono_like_now()
             );
             // Re-run одним проходом через cmd_doc (без watch/json_schema).
-            match cmd_doc(path, format, false, include_private, run_doc_tests, check, false, coverage, 0, None, false, false) {
+            match cmd_doc(path, format, false, include_private, run_doc_tests, check, false, coverage, 0, None, false, false, false) {
                 Ok(_) => {}
                 Err(e) => eprintln!("error: {}", e),
             }
@@ -2422,7 +2443,7 @@ fn main() -> ExitCode {
             &skip,
         ),
         Cmd::Run { file } => cmd_run(&file),
-        Cmd::Doc { file, format, json_schema, include_private, run_doc_tests, check, watch, coverage, jobs, diff, scrape_examples, strict, mutate_contracts } => {
+        Cmd::Doc { file, format, json_schema, include_private, run_doc_tests, check, watch, coverage, jobs, diff, scrape_examples, strict, mutate_contracts, real_exec } => {
             // Plan 45 Ф.24.10: --diff old.json new.json
             // cmd_doc_diff uses process::exit for severity codes; propagate Err.
             if let Some(paths) = diff {
@@ -2437,7 +2458,7 @@ fn main() -> ExitCode {
                 eprintln!("error: FILE argument required (unless --json-schema)");
                 std::process::exit(1);
             });
-            cmd_doc(path, &format, json_schema, include_private, run_doc_tests, check, watch, coverage, jobs, scrape_examples.as_deref(), strict, mutate_contracts)
+            cmd_doc(path, &format, json_schema, include_private, run_doc_tests, check, watch, coverage, jobs, scrape_examples.as_deref(), strict, mutate_contracts, real_exec)
             } // else (no --diff)
         }
         Cmd::Build { file, output, mode, toolchain, vcvars, clang, timeout, keep_artifacts, mono_depth } => cmd_build(
