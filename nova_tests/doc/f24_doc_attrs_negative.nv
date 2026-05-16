@@ -1,0 +1,11 @@
+// EXPECT_COMPILE_ERROR undefined identifier
+//
+// Plan 45 Ф.24: негативный тест — вызов скрытой/undefined функции.
+// #hide_doc не влияет на видимость в runtime (скрытое — всё равно компилируется),
+// но вызов совсем несуществующей функции — compile error.
+
+module doc.f24_doc_attrs_negative
+
+fn helper(x int) -> int => x + 1
+
+fn broken(x int) -> int => completely_undefined_fn_xyz(x)

@@ -1,0 +1,17 @@
+// EXPECT_COMPILE_ERROR undefined identifier
+//
+// Plan 45 Ф.24.8: expect_output — негативный тест.
+// Функция, аннотированная для expect_output doc-tests,
+// с несуществующим вызовом — compile error.
+
+module doc.f24_expect_output_negative
+
+/// Function for expect_output demo.
+///
+/// # Examples
+///
+/// ```nova,expect_output
+/// println(compute(5))
+/// // Output: 10
+/// ```
+fn compute(x int) -> int => missing_runtime_fn_qwerty(x)

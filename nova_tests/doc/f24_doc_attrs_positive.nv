@@ -1,0 +1,91 @@
+// Plan 45 Ф.24.11 / Ф.23: doc attrs на функциях и типах.
+// Позитивный тест — #hide_doc, #stable, #doc(alias=...) не ломают
+// компиляцию и runtime поведение функций остаётся корректным.
+
+module doc.f24_doc_attrs_positive
+
+/// Публичная стабильная функция.
+#stable(since = "1.0")
+export fn square(x int) -> int => x * x
+
+/// Куб числа.
+#stable(since = "1.0")
+#doc_alias("cube_of")
+export fn cube(x int) -> int => x * x * x
+
+/// Скрытый хелпер — не отображается в docs.
+#hide_doc
+export fn internal_helper(x int) -> int => x + 42
+
+/// Unstable helper.
+#unstable(feature = "math_extras")
+export fn isqrt(n int) -> int {
+    // Целочисленный квадратный корень — линейный поиск.
+    if n <= 0 { 0 } else {
+        let mut r = 0
+        while (r + 1) * (r + 1) <= n {
+            r = r + 1
+        }
+        r
+    }
+}
+
+/// Экспериментальная функция.
+#experimental(note = "API may change")
+export fn hypot_sq(a int, b int) -> int => a * a + b * b
+
+test "square basic" {
+    assert(square(0) == 0)
+    assert(square(1) == 1)
+    assert(square(5) == 25)
+    assert(square(-3) == 9)
+    assert(square(10) == 100)
+}
+
+test "cube basic" {
+    assert(cube(0) == 0)
+    assert(cube(1) == 1)
+    assert(cube(2) == 8)
+    assert(cube(-2) == -8)
+    assert(cube(3) == 27)
+}
+
+test "internal_helper works despite hide_doc" {
+    assert(internal_helper(0) == 42)
+    assert(internal_helper(8) == 50)
+    assert(internal_helper(-42) == 0)
+}
+
+test "isqrt basic" {
+    assert(isqrt(0) == 0)
+    assert(isqrt(1) == 1)
+    assert(isqrt(4) == 2)
+    assert(isqrt(9) == 3)
+    assert(isqrt(16) == 4)
+    assert(isqrt(25) == 5)
+    assert(isqrt(100) == 10)
+}
+
+test "isqrt non-perfect" {
+    assert(isqrt(2) == 1)
+    assert(isqrt(8) == 2)
+    assert(isqrt(15) == 3)
+    assert(isqrt(26) == 5)
+}
+
+test "hypot_sq basic" {
+    assert(hypot_sq(3, 4) == 25)
+    assert(hypot_sq(0, 5) == 25)
+    assert(hypot_sq(1, 1) == 2)
+    assert(hypot_sq(5, 12) == 169)
+}
+
+test "stability attrs do not affect runtime" {
+    // #stable, #unstable, #experimental — только doc metadata.
+    let x = square(7)
+    let y = cube(3)
+    let z = hypot_sq(3, 4)
+    assert(x == 49)
+    assert(y == 27)
+    assert(z == 25)
+}

@@ -1,0 +1,101 @@
+// Plan 45 Ф.24.18: infer_contracts doc-test modifier.
+// Позитивный тест — функции, для которых assert() в infer_contracts doc-tests
+// определяют контракты, реально удовлетворяют этим контрактам в runtime.
+
+module doc.f24_infer_contracts_positive
+
+/// Возвращает абсолютное значение.
+///
+/// # Examples
+///
+/// ```nova,infer_contracts
+/// assert(abs_val(-5) == 5)
+/// assert(abs_val(0) == 0)
+/// assert(abs_val(3) == 3)
+/// ```
+export fn abs_val(x int) -> int => if x < 0 { 0 - x } else { x }
+
+/// Зажимает значение в диапазон [lo, hi].
+///
+/// # Examples
+///
+/// ```nova,infer_contracts
+/// assert(clamp(5, 0, 10) == 5)
+/// assert(clamp(-5, 0, 10) == 0)
+/// assert(clamp(15, 0, 10) == 10)
+/// ```
+export fn clamp(x int, lo int, hi int) -> int
+    requires lo <= hi
+    => if x < lo { lo } else if x > hi { hi } else { x }
+
+/// Минимум двух чисел.
+///
+/// # Examples
+///
+/// ```nova,infer_contracts
+/// assert(min_of(3, 7) == 3, "min returns smaller")
+/// assert(min_of(7, 3) == 3, "symmetric")
+/// assert(min_of(5, 5) == 5, "equal values")
+/// ```
+export fn min_of(a int, b int) -> int => if a < b { a } else { b }
+
+/// Факториал (n >= 0).
+///
+/// # Examples
+///
+/// ```nova,infer_contracts
+/// assert(factorial(0) == 1)
+/// assert(factorial(1) == 1)
+/// assert(factorial(5) == 120)
+/// ```
+export fn factorial(n int) -> int {
+    if n <= 0 { 1 } else { n * factorial(n - 1) }
+}
+
+test "abs_val satisfies inferred contracts" {
+    assert(abs_val(-5) == 5)
+    assert(abs_val(0) == 0)
+    assert(abs_val(3) == 3)
+    assert(abs_val(-100) == 100)
+    assert(abs_val(1) == 1)
+}
+
+test "abs_val always non-negative" {
+    assert(abs_val(-999) >= 0)
+    assert(abs_val(0) >= 0)
+    assert(abs_val(999) >= 0)
+}
+
+test "clamp satisfies inferred contracts" {
+    assert(clamp(5, 0, 10) == 5)
+    assert(clamp(-5, 0, 10) == 0)
+    assert(clamp(15, 0, 10) == 10)
+}
+
+test "clamp edge cases" {
+    assert(clamp(0, 0, 0) == 0)
+    assert(clamp(-1, 0, 5) == 0)
+    assert(clamp(6, 0, 5) == 5)
+    assert(clamp(3, 3, 3) == 3)
+}
+
+test "min_of satisfies inferred contracts" {
+    assert(min_of(3, 7) == 3)
+    assert(min_of(7, 3) == 3)
+    assert(min_of(5, 5) == 5)
+}
+
+test "min_of additional" {
+    assert(min_of(0, -1) == -1)
+    assert(min_of(-10, -20) == -20)
+    assert(min_of(100, 0) == 0)
+}
+
+test "factorial satisfies inferred contracts" {
+    assert(factorial(0) == 1)
+    assert(factorial(1) == 1)
+    assert(factorial(5) == 120)
+    assert(factorial(4) == 24)
+    assert(factorial(3) == 6)
+    assert(factorial(2) == 2)
+}
