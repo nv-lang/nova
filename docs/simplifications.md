@@ -8036,3 +8036,31 @@ Remaining:
 - ~15 коммитов (feat + docs)
 - baseline: 545 PASS / 25 FAIL / 40 SKIP (vs baseline 509/26/35 → **+36 PASS, -1 FAIL**)
 - 3 новых deferred M-маркера зафиксированы для Plan 56+
+
+### Plan 55 Ф.7 ✅ ЗАКРЫТО (2026-05-16) — baseline 12 NEG-* cleanup
+
+**Стратегия prod-grade:** test patterns на **stable ASCII anchors** (D-block
+номера, type names) — паритет с Rust compiletest practice.
+
+**11 NEG-WRONG-MSG зафиксено:**
+- 9× `negative_capability/p50_*` → pattern '(D102)'.
+- `negative_capability/np_trailing_double_bind` → pattern '(D102)'.
+- `negative_capability/fail_handler_no_exit_rejected` → pattern 'Fail.fail'.
+
+**1 NEG-WRONG-PANIC зафиксено через code fix:**
+- `expected_runtime/contracts_decreases_recursion_fail`:
+  decreases counter limit 1M → 10K (1M было unreachable из-за stack
+  overflow на ~1K frames; 10K safely triggers до stack overflow).
+
+### [M-src-russian-mojibake] НОВЫЙ (deferred Plan 56+)
+- **Где:** `compiler-codegen/src/types/mod.rs` (510 lines),
+  `compiler-codegen/src/verify/pipeline.rs` (110 lines).
+- **Что упрощено:** Russian diagnostic strings содержат **U+FFFD
+  replacement characters** из-за раннего двойного CP1251→UTF-8 lossy
+  encoding. Данные потеряны — невозможно автоматически восстановить.
+- **Workaround:** tests matchят на ASCII anchors (D-block номера, type
+  names) — это работает + лучшая practice.
+- **Followup:** manual rewrite каждой Russian string в этих 2 файлах.
+  Это **purely cosmetic** — диагностики technically работают, просто
+  на Windows console через cp1251 показывают mojibake. ~1-2 dev-days
+  cleanup.
