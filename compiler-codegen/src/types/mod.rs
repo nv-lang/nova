@@ -4878,6 +4878,9 @@ struct MapLitCtx {
     /// per-fn в `check_fn`. Generic `K` — permissive (Hashable не enforce'ится
     /// статически: bound-проверка — отдельный механизм Plan 15).
     fn_generics: HashSet<String>,
+    /// Plan 52 Ф.23: типы помеченные `#from_pairs` — target для desugar'а
+    /// `[k: v]` (canonical-identity check, как для from_fields).
+    from_pairs_types: HashSet<String>,
 }
 
 impl MapLitCtx {
@@ -4908,10 +4911,11 @@ impl MapLitCtx {
                 if t.name == type_name && t.attrs.contains(&TypeAttr::FromFields)))
         };
         let mut canonical_from_fields_types: HashSet<String> = HashSet::new();
+        let mut canonical_from_pairs_types: HashSet<String> = HashSet::new();
         for pf in &module.peer_files {
             let path_str = pf.path.to_string_lossy().replace('\\', "/").to_lowercase();
             // Canonical stdlib markers — собираем имена типов с
-            // #from_fields из peer-файлов в std/collections/.
+            // #from_fields / #from_pairs из peer-файлов в std/collections/.
             let is_stdlib = path_str.contains("/std/collections/")
                 || path_str.contains("std\\collections\\");
             if is_stdlib {
@@ -4919,6 +4923,9 @@ impl MapLitCtx {
                     if let Item::Type(t) = it {
                         if t.attrs.contains(&TypeAttr::FromFields) {
                             canonical_from_fields_types.insert(t.name.clone());
+                        }
+                        if t.attrs.contains(&TypeAttr::FromPairs) {
+                            canonical_from_pairs_types.insert(t.name.clone());
                         }
                     }
                 }
@@ -4928,8 +4935,10 @@ impl MapLitCtx {
         // attribute как раньше (bare-name). Это safety net для тестов где
         // peer_files пуст; в реальной компиляции stdlib HashMap всегда
         // приходит через folder-module → попадает в canonical set.
-        let use_canonical = !canonical_from_fields_types.is_empty();
+        let use_canonical = !canonical_from_fields_types.is_empty()
+            || !canonical_from_pairs_types.is_empty();
         let _ = is_canonical_stdlib_from_fields; // подавить warning о неиспользовании
+        let mut from_pairs_types: HashSet<String> = HashSet::new();
 
         for item in &module.items {
             match item {
@@ -4942,6 +4951,15 @@ impl MapLitCtx {
                     if t.attrs.contains(&TypeAttr::FromFields) {
                         if !use_canonical || canonical_from_fields_types.contains(&t.name) {
                             from_fields_types.insert(t.name.clone());
+                        }
+                    }
+                    // Plan 52 Ф.23: from_pairs аналогично. User-локальный
+                    // тип с `#from_pairs` СЕЙЧАС ИГНОРИРУЕТСЯ canonical-
+                    // check (только stdlib HashMap). Это safety-net для
+                    // bootstrap; релакс через explicit registry future.
+                    if t.attrs.contains(&TypeAttr::FromPairs) {
+                        if !use_canonical || canonical_from_pairs_types.contains(&t.name) {
+                            from_pairs_types.insert(t.name.clone());
                         }
                     }
                 }
@@ -4996,6 +5014,7 @@ impl MapLitCtx {
             method_param_types,
             unique_method_param_types,
             fn_generics: HashSet::new(),
+            from_pairs_types,
         }
     }
 
@@ -5012,6 +5031,7 @@ impl MapLitCtx {
                         method_param_types: self.method_param_types.clone(),
                         unique_method_param_types: self.unique_method_param_types.clone(),
                         fn_generics: f.generics.iter().map(|g| g.name.clone()).collect(),
+                        from_pairs_types: self.from_pairs_types.clone(),
                     };
                     // Generic-параметры receiver-типа тоже видимы.
                     if let Some(recv) = &f.receiver {
@@ -5419,6 +5439,17 @@ impl MapLitCtx {
         let TypeRef::Named { path, .. } = expected else { return false; };
         match path.last() {
             Some(name) => self.from_fields_types.contains(name),
+            None => false,
+        }
+    }
+
+    /// Plan 52 Ф.23: `true` если ожидаемый тип несёт маркер `#from_pairs`
+    /// (target для desugar'а `[k: v]`). User-типы получают support
+    /// литерала добавив attribute + with_capacity/insert_new методы.
+    fn expected_is_from_pairs(&self, expected: &TypeRef) -> bool {
+        let TypeRef::Named { path, .. } = expected else { return false; };
+        match path.last() {
+            Some(name) => self.from_pairs_types.contains(name),
             None => false,
         }
     }
@@ -5839,8 +5870,13 @@ impl MapLitAnnotator {
     }
 
     fn walk_expr(&mut self, e: &mut Expr, expected: Option<&TypeRef>) {
-        // 1. На MapLit — заполнить inferred_key/value (до спуска в дети).
-        if let ExprKind::MapLit { pairs, inferred_key, inferred_value } = &mut e.kind {
+        // 1. На MapLit — заполнить inferred_key/value/target_type (до спуска).
+        if let ExprKind::MapLit {
+            pairs,
+            inferred_key,
+            inferred_value,
+            inferred_target_type,
+        } = &mut e.kind {
             let (exp_k, exp_v) = extract_hashmap_kv(expected);
             *inferred_key = infer_unified_type(
                 pairs.iter().map(|(k, _)| k),
@@ -5850,6 +5886,13 @@ impl MapLitAnnotator {
                 pairs.iter().map(|(_, v)| v),
                 exp_v,
             );
+            // Plan 52 Ф.23: если expected помечен #from_pairs — записываем
+            // имя target-типа для desugar. Иначе fallback на HashMap.
+            if let Some(TypeRef::Named { path, .. }) = expected {
+                if self.ctx.expected_is_from_pairs(expected.unwrap()) {
+                    *inferred_target_type = Some(path.clone());
+                }
+            }
         }
         // Plan 52 Ф.10: D55 map-coercion для `{field: v}` в позиции
         // `#from_fields`-типа (= HashMap[str, V]). Если expected —

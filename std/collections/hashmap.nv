@@ -46,7 +46,14 @@ type Slot[K, V]
 // Маркер honored компилятором по canonical identity
 // (`collections.hashmap.HashMap`), не по bare-имени — shadowing
 // локальным `HashMap` правило не ломает.
+//
+// `#from_pairs` (Plan 52 Ф.23 / D108) — помечает HashMap как target для
+// desugar'а map-литерала `[k: v]`. Compiler видит attribute → знает что
+// тип предоставляет статический `with_capacity(int) -> Self` и
+// `mut @insert_new(K, V)` для построения. User-типы могут получить
+// support литерала через `#from_pairs` без модификации компилятора.
 #from_fields
+#from_pairs
 export type HashMap[K Hashable, V] {
     // buckets — массив слотов. Длина — степень двойки (для битовой маски
     // вместо modulo — `idx & (len - 1)`).

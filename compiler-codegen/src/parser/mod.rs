@@ -1458,6 +1458,19 @@ impl Parser {
                     self.bump(); // from_fields
                     attrs.push(crate::ast::TypeAttr::FromFields);
                 }
+                "from_pairs" => {
+                    // Plan 52 Ф.23: тип помечен как target для `[k:v]` desugar.
+                    if attrs.contains(&crate::ast::TypeAttr::FromPairs) {
+                        let span = self.peek().span;
+                        return Err(Diagnostic::new(
+                            "duplicate `#from_pairs` attribute",
+                            span,
+                        ));
+                    }
+                    self.bump(); // #
+                    self.bump(); // from_pairs
+                    attrs.push(crate::ast::TypeAttr::FromPairs);
+                }
                 _ => break, // unknown #-name — не type-attr, выходим
             }
             self.skip_newlines();
@@ -4415,7 +4428,12 @@ impl Parser {
         // `HashMap[K,V].with_capacity(n)` в десугаринге. Парсер не имеет
         // type-info, оставляет None.
         Ok(Expr::new(
-            ExprKind::MapLit { pairs, inferred_key: None, inferred_value: None },
+            ExprKind::MapLit {
+                pairs,
+                inferred_key: None,
+                inferred_value: None,
+                inferred_target_type: None,
+            },
             start.merge(end),
         ))
     }

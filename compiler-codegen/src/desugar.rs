@@ -129,14 +129,18 @@ impl DesugarCtx {
             // take pairs + inferred K/V из узла, заменяя его на UnitLit-
             // заглушку, затем строим Block и кладём обратно.
             let span = e.span;
-            let (pairs, inferred_key, inferred_value) =
+            let (pairs, inferred_key, inferred_value, inferred_target_type) =
                 match std::mem::replace(&mut e.kind, ExprKind::UnitLit) {
-                    ExprKind::MapLit { pairs, inferred_key, inferred_value } => {
-                        (pairs, inferred_key, inferred_value)
-                    }
+                    ExprKind::MapLit {
+                        pairs,
+                        inferred_key,
+                        inferred_value,
+                        inferred_target_type,
+                    } => (pairs, inferred_key, inferred_value, inferred_target_type),
                     _ => unreachable!(),
                 };
-            e.kind = self.build_map_block(pairs, inferred_key, inferred_value, span);
+            e.kind = self.build_map_block(
+                pairs, inferred_key, inferred_value, inferred_target_type, span);
         }
         // Plan 52 Ф.10: D55 map-coercion для `{field: v}`. Когда
         // annotate_map_literals установил `inferred_map_v: Some(V)` —
@@ -270,35 +274,42 @@ impl DesugarCtx {
         pairs: Vec<(Expr, Expr)>,
         inferred_key: Option<TypeRef>,
         inferred_value: Option<TypeRef>,
+        inferred_target_type: Option<Vec<String>>,
         span: Span,
     ) -> ExprKind {
+        // Plan 52 Ф.23: target_type определяется expected'ом (если
+        // помечен #from_pairs) или fallback на HashMap для legacy.
+        // Last-segment для Ident-конструкции: codegen мономорфизирует
+        // только Ident-based callee, не Path([...]).
+        let target_type_name: String = inferred_target_type
+            .as_ref()
+            .and_then(|path| path.last().cloned())
+            .unwrap_or_else(|| "HashMap".to_string());
         // Clone для Ф.16 typed-rebinding (см. ниже).
         let kv_for_hint = match (&inferred_key, &inferred_value) {
             (Some(k), Some(v)) => Some((k.clone(), v.clone())),
             _ => None,
         };
+        let target_for_hint = target_type_name.clone();
         let tmp = self.fresh_map_tmp();
         let n = pairs.len();
         let mut stmts: Vec<Stmt> = Vec::with_capacity(n + 1);
 
-        // Callee: `HashMap.with_capacity` (Path) или `HashMap[K, V].with_capacity`
-        // (TurboFish + Member) если K/V выведены.
+        // Callee: `<TargetType>.with_capacity` (Path) или
+        // `<TargetType>[K, V].with_capacity` (TurboFish + Member).
         let with_capacity_callee: Expr = match (inferred_key, inferred_value) {
             (Some(k_ty), Some(v_ty)) => {
-                // TurboFish: `HashMap[K, V]` затем `.with_capacity`.
-                // AST: Member { obj: TurboFish { base: Ident("HashMap"),
-                //                                type_args: [K, V] },
-                //               name: "with_capacity" }
+                // TurboFish: `<TargetType>[K, V]` затем `.with_capacity`.
                 // ВАЖНО: base должен быть `Ident`, не `Path([_])` —
                 // парсер для одиночного имени строит Ident; codegen
                 // мономорфизирует только Ident-based callee.
-                let hashmap_ident = Expr::new(
-                    ExprKind::Ident("HashMap".to_string()),
+                let target_ident = Expr::new(
+                    ExprKind::Ident(target_type_name.clone()),
                     span,
                 );
                 let turbofish = Expr::new(
                     ExprKind::TurboFish {
-                        base: Box::new(hashmap_ident),
+                        base: Box::new(target_ident),
                         type_args: vec![k_ty, v_ty],
                     },
                     span,
@@ -312,12 +323,12 @@ impl DesugarCtx {
                 )
             }
             _ => {
-                // Fallback: bare `HashMap.with_capacity` — мономорфизация
+                // Fallback: bare `<TargetType>.with_capacity` — мономорфизация
                 // через контекст (может не сработать для generic-methods,
                 // см. Plan 48 Ф.7.7 baseline-баг).
                 Expr::new(
                     ExprKind::Path(vec![
-                        "HashMap".to_string(),
+                        target_type_name.clone(),
                         "with_capacity".to_string(),
                     ]),
                     span,
@@ -411,7 +422,7 @@ impl DesugarCtx {
                 mutable: false,
                 pattern: Pattern::Ident { name: typed.clone(), span },
                 ty: Some(TypeRef::Named {
-                    path: vec!["HashMap".to_string()],
+                    path: vec![target_for_hint],
                     generics: vec![k_ty, v_ty],
                     span,
                 }),
