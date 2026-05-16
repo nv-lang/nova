@@ -42,6 +42,14 @@
       "aliases": [
 
       ],
+      "capabilities": {
+        "forbid": [
+
+        ],
+        "pure_fn": false,
+        "realtime": false,
+        "realtime_nogc": false
+      },
       "deprecation": null,
       "description": null,
       "doc_attrs": [
@@ -57,7 +65,8 @@
       },
       "source": {
         "file_id": 0,
-        "line": 25
+        "line": 25,
+        "peer_file": null
       },
       "stability": null,
       "summary": "Максимальный размер буфера в байтах.",
@@ -68,6 +77,14 @@
       "aliases": [
 
       ],
+      "capabilities": {
+        "forbid": [
+
+        ],
+        "pure_fn": false,
+        "realtime": false,
+        "realtime_nogc": false
+      },
       "deprecation": null,
       "description": null,
       "doc_attrs": [
@@ -83,7 +100,8 @@
       },
       "source": {
         "file_id": 0,
-        "line": 19
+        "line": 19,
+        "peer_file": null
       },
       "stability": null,
       "summary": "Двухмерная точка.",
@@ -107,6 +125,14 @@
       "aliases": [
 
       ],
+      "capabilities": {
+        "forbid": [
+
+        ],
+        "pure_fn": false,
+        "realtime": false,
+        "realtime_nogc": false
+      },
       "deprecation": null,
       "description": "Пример:\n\n```nova\nassert(abs(-5) == 5)\n```",
       "doc_attrs": [
@@ -122,19 +148,29 @@
       },
       "source": {
         "file_id": 0,
-        "line": 15
+        "line": 15,
+        "peer_file": null
       },
       "stability": null,
       "summary": "Возвращает абсолютное значение `x`.",
       "signature": {
         "contracts": {
+          "decreases": [
+
+          ],
           "ensures": [
+
+          ],
+          "ensures_fail": [
 
           ],
           "requires": [
 
           ],
-          "verify_status": "UNVERIFIED"
+          "verify_status": {
+            "counterexample": null,
+            "status": "not_attempted"
+          }
         },
         "effects": [
 
@@ -147,6 +183,10 @@
             "default": null,
             "keyword_only": false,
             "name": "x",
+            "structural_type": {
+              "kind": "named",
+              "name": "int"
+            },
             "type": "int",
             "variadic": false
           }
@@ -155,6 +195,10 @@
 
         ],
         "receiver": null,
+        "structural_type": {
+          "kind": "named",
+          "name": "int"
+        },
         "return_type": "int"
       }
     }

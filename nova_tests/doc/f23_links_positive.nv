@@ -1,0 +1,55 @@
+// Plan 45 Ф.23.14/23: Intra-doc links + back-links.
+// Позитивный тест: функции со ссылками [OtherFn] в doc-comments
+// работают в runtime; doc pipeline резолвит links (cargo-тесты).
+
+module doc.f23_links_positive
+
+/// Base computation. See [transform] for a higher-level version.
+export fn compute(x int) -> int => x * 3
+
+/// Transform using [compute] internally.
+///
+/// Related: [identity], [compute].
+export fn transform(x int) -> int => compute(x) + 1
+
+/// Identity function. Documented alongside [compute] and [transform].
+export fn identity(x int) -> int => x
+
+/// Negate the result of [compute].
+export fn negate_compute(x int) -> int => 0 - compute(x)
+
+test "compute basic" {
+    assert(compute(2) == 6)
+    assert(compute(0) == 0)
+    assert(compute(-1) == -3)
+}
+
+test "transform uses compute" {
+    assert(transform(2) == 7)
+    assert(transform(0) == 1)
+    assert(transform(-1) == -2)
+}
+
+test "identity passthrough" {
+    assert(identity(42) == 42)
+    assert(identity(0) == 0)
+    assert(identity(-5) == -5)
+}
+
+test "negate_compute" {
+    assert(negate_compute(3) == -9)
+    assert(negate_compute(0) == 0)
+    assert(negate_compute(-2) == 6)
+}
+
+test "links dont affect runtime" {
+    // Все 4 функции независимо работают
+    let c = compute(5)
+    let t = transform(5)
+    let id = identity(c)
+    let neg = negate_compute(5)
+    assert(c == 15)
+    assert(t == 16)
+    assert(id == 15)
+    assert(neg == -15)
+}

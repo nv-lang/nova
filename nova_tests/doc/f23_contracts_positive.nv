@@ -1,0 +1,59 @@
+// Plan 45 Ф.23.1: contracts extract в Signature.
+// Позитивный тест — функции с requires/ensures корректно выполняются
+// при валидных входах. Doc pipeline обязан видеть ContractDoc в Signature.
+
+module doc.f23_contracts_positive
+
+/// Returns absolute value.
+/// requires: x can be any int
+/// ensures: result >= 0
+export fn abs_val(x int) -> int
+    requires true
+    ensures result >= 0
+    => if x < 0 { 0 - x } else { x }
+
+/// Clamps x to [lo, hi].
+/// ensures: lo <= result <= hi
+export fn clamp(x int, lo int, hi int) -> int
+    requires lo <= hi
+    ensures result >= lo
+    ensures result <= hi
+    => if x < lo { lo } else if x > hi { hi } else { x }
+
+/// Safe division — divisor non-zero guaranteed.
+export fn safe_div(a int, b int) -> int
+    requires b != 0
+    => a / b
+
+test "abs_val positive" {
+    assert(abs_val(5) == 5)
+    assert(abs_val(0) == 0)
+    assert(abs_val(-7) == 7)
+    assert(abs_val(-1) == 1)
+}
+
+test "abs_val result is non-negative" {
+    assert(abs_val(100) >= 0)
+    assert(abs_val(-100) >= 0)
+    assert(abs_val(0) >= 0)
+}
+
+test "clamp within bounds" {
+    assert(clamp(5, 0, 10) == 5)
+    assert(clamp(-5, 0, 10) == 0)
+    assert(clamp(15, 0, 10) == 10)
+    assert(clamp(0, 0, 0) == 0)
+}
+
+test "clamp result satisfies ensures" {
+    let r = clamp(42, 10, 20)
+    assert(r >= 10)
+    assert(r <= 20)
+}
+
+test "safe_div basic" {
+    assert(safe_div(10, 2) == 5)
+    assert(safe_div(7, 3) == 2)
+    assert(safe_div(0, 5) == 0)
+    assert(safe_div(-10, 2) == -5)
+}

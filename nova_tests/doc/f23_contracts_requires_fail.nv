@@ -1,0 +1,11 @@
+// EXPECT_COMPILE_ERROR undefined identifier
+//
+// Plan 45 Ф.23.1: функция вызывает undefined функцию в теле.
+// Contracts корректны, но тело использует несуществующий идентификатор.
+
+module doc.f23_contracts_requires_fail
+
+fn uses_undefined(x int) -> int
+    requires x >= 0
+    ensures result >= 0
+    => nonexistent_helper(x)

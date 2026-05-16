@@ -34,6 +34,14 @@
         "plus",
         "sum"
       ],
+      "capabilities": {
+        "forbid": [
+
+        ],
+        "pure_fn": false,
+        "realtime": false,
+        "realtime_nogc": false
+      },
       "deprecation": null,
       "description": null,
       "doc_attrs": [
@@ -49,7 +57,8 @@
       },
       "source": {
         "file_id": 0,
-        "line": 23
+        "line": 23,
+        "peer_file": null
       },
       "stability": {
         "feature": null,
@@ -60,13 +69,22 @@
       "summary": "Стабильное API.",
       "signature": {
         "contracts": {
+          "decreases": [
+
+          ],
           "ensures": [
+
+          ],
+          "ensures_fail": [
 
           ],
           "requires": [
 
           ],
-          "verify_status": "UNVERIFIED"
+          "verify_status": {
+            "counterexample": null,
+            "status": "not_attempted"
+          }
         },
         "effects": [
 
@@ -79,6 +97,10 @@
             "default": null,
             "keyword_only": false,
             "name": "a",
+            "structural_type": {
+              "kind": "named",
+              "name": "int"
+            },
             "type": "int",
             "variadic": false
           },
@@ -86,6 +108,10 @@
             "default": null,
             "keyword_only": false,
             "name": "b",
+            "structural_type": {
+              "kind": "named",
+              "name": "int"
+            },
             "type": "int",
             "variadic": false
           }
@@ -94,6 +120,10 @@
 
         ],
         "receiver": null,
+        "structural_type": {
+          "kind": "named",
+          "name": "int"
+        },
         "return_type": "int"
       }
     },
@@ -101,6 +131,14 @@
       "aliases": [
 
       ],
+      "capabilities": {
+        "forbid": [
+
+        ],
+        "pure_fn": false,
+        "realtime": false,
+        "realtime_nogc": false
+      },
       "deprecation": null,
       "description": null,
       "doc_attrs": [
@@ -116,7 +154,8 @@
       },
       "source": {
         "file_id": 0,
-        "line": 28
+        "line": 28,
+        "peer_file": null
       },
       "stability": {
         "feature": null,
@@ -127,13 +166,22 @@
       "summary": "Экспериментальная.",
       "signature": {
         "contracts": {
+          "decreases": [
+
+          ],
           "ensures": [
+
+          ],
+          "ensures_fail": [
 
           ],
           "requires": [
 
           ],
-          "verify_status": "UNVERIFIED"
+          "verify_status": {
+            "counterexample": null,
+            "status": "not_attempted"
+          }
         },
         "effects": [
 
@@ -146,6 +194,10 @@
             "default": null,
             "keyword_only": false,
             "name": "a",
+            "structural_type": {
+              "kind": "named",
+              "name": "int"
+            },
             "type": "int",
             "variadic": false
           },
@@ -153,6 +205,10 @@
             "default": null,
             "keyword_only": false,
             "name": "b",
+            "structural_type": {
+              "kind": "named",
+              "name": "int"
+            },
             "type": "int",
             "variadic": false
           }
@@ -161,6 +217,10 @@
 
         ],
         "receiver": null,
+        "structural_type": {
+          "kind": "named",
+          "name": "int"
+        },
         "return_type": "int"
       }
     },
@@ -168,6 +228,14 @@
       "aliases": [
 
       ],
+      "capabilities": {
+        "forbid": [
+
+        ],
+        "pure_fn": false,
+        "realtime": false,
+        "realtime_nogc": false
+      },
       "deprecation": null,
       "description": null,
       "doc_attrs": [
@@ -183,19 +251,29 @@
       },
       "source": {
         "file_id": 0,
-        "line": 36
+        "line": 36,
+        "peer_file": null
       },
       "stability": null,
       "summary": "Computed override summary",
       "signature": {
         "contracts": {
+          "decreases": [
+
+          ],
           "ensures": [
+
+          ],
+          "ensures_fail": [
 
           ],
           "requires": [
 
           ],
-          "verify_status": "UNVERIFIED"
+          "verify_status": {
+            "counterexample": null,
+            "status": "not_attempted"
+          }
         },
         "effects": [
 
@@ -210,6 +288,10 @@
 
         ],
         "receiver": null,
+        "structural_type": {
+          "kind": "named",
+          "name": "int"
+        },
         "return_type": "int"
       }
     },
@@ -217,9 +299,18 @@
       "aliases": [
 
       ],
+      "capabilities": {
+        "forbid": [
+
+        ],
+        "pure_fn": false,
+        "realtime": false,
+        "realtime_nogc": false
+      },
       "deprecation": {
         "note": "use [add] instead",
-        "since": "0.4.0"
+        "since": "0.4.0",
+        "until": null
       },
       "description": null,
       "doc_attrs": [
@@ -235,19 +326,29 @@
       },
       "source": {
         "file_id": 0,
-        "line": 18
+        "line": 18,
+        "peer_file": null
       },
       "stability": null,
       "summary": "Старая функция сложения.",
       "signature": {
         "contracts": {
+          "decreases": [
+
+          ],
           "ensures": [
+
+          ],
+          "ensures_fail": [
 
           ],
           "requires": [
 
           ],
-          "verify_status": "UNVERIFIED"
+          "verify_status": {
+            "counterexample": null,
+            "status": "not_attempted"
+          }
         },
         "effects": [
 
@@ -260,6 +361,10 @@
             "default": null,
             "keyword_only": false,
             "name": "a",
+            "structural_type": {
+              "kind": "named",
+              "name": "int"
+            },
             "type": "int",
             "variadic": false
           },
@@ -267,6 +372,10 @@
             "default": null,
             "keyword_only": false,
             "name": "b",
+            "structural_type": {
+              "kind": "named",
+              "name": "int"
+            },
             "type": "int",
             "variadic": false
           }
@@ -275,6 +384,10 @@
 
         ],
         "receiver": null,
+        "structural_type": {
+          "kind": "named",
+          "name": "int"
+        },
         "return_type": "int"
       }
     },
@@ -282,6 +395,14 @@
       "aliases": [
 
       ],
+      "capabilities": {
+        "forbid": [
+
+        ],
+        "pure_fn": false,
+        "realtime": false,
+        "realtime_nogc": false
+      },
       "deprecation": null,
       "description": null,
       "doc_attrs": [
@@ -297,7 +418,8 @@
       },
       "source": {
         "file_id": 0,
-        "line": 40
+        "line": 40,
+        "peer_file": null
       },
       "stability": {
         "feature": "channel_select",
@@ -308,13 +430,22 @@
       "summary": "Unstable feature-gated API.",
       "signature": {
         "contracts": {
+          "decreases": [
+
+          ],
           "ensures": [
+
+          ],
+          "ensures_fail": [
 
           ],
           "requires": [
 
           ],
-          "verify_status": "UNVERIFIED"
+          "verify_status": {
+            "counterexample": null,
+            "status": "not_attempted"
+          }
         },
         "effects": [
 
@@ -329,6 +460,10 @@
 
         ],
         "receiver": null,
+        "structural_type": {
+          "kind": "named",
+          "name": "int"
+        },
         "return_type": "int"
       }
     }

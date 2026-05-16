@@ -22,6 +22,9 @@ Branch `plan-45-doc`, uncommitted после первоначального merg
 | Ф.17 CI integration | ✅ done | `.github/workflows/nova-doc.yml` — три job'а: `--check` clean fixtures + negative path; `--test` all fixtures; doc-module unit tests |
 | Ф.19 Tests/golden | ✅ done | 42 unit tests + 7 golden-snapshot integration tests (`compiler-codegen/tests/doc_golden.rs`) — committed `expected.json` per fixture, byte-for-byte regression check |
 | Ф.20 User docs | ✅ done | `docs/nova-doc.md` — quick start, sections, links, doc-tests, modifiers, stability, CLI flags, CI integration, style guide |
+| Ф.21 Hardening round 1 | ✅ done | см. ниже (9 пунктов P0+P1) |
+| Ф.22 Hardening round 2 | ✅ done | см. ниже (8 пунктов P0+P1) |
+| Ф.23 Hardening round 3 (Nova-unique) | 🟡 **в работе** | см. ниже (25 пунктов) — закрывает Nova-уникальные обещания §19: contracts/verify_status/capabilities/handler-matrix/real-must_verify; promote schema → stable v1.0.0 |
 
 ## Ф.21 — Production hardening (2026-05-15, post-MVP audit)
 
@@ -79,25 +82,170 @@ Critical-review revealed gaps: MVP формально закрыт, но **не 
 
 > **Сноска (Ф.22.4 implementors):** Protocol-implementors требуют scan'а workspace на `impl Protocol for T` блоки — в Nova это пока не специальный AST node (impl-блоки = methods с `Protocol` receiver). Полная реализация = scan через ALL DocModules с матчингом receiver-types против Protocol-method-name'ов. Сейчас эмитим `[]` (placeholder для forward-compat) + TODO note.
 
+## Ф.23 — Nova-unique production hardening (2026-05-16, round 3 audit)
+
+**Контекст.** Третий аудит (2026-05-16) вскрыл, что Ф.21 + Ф.22 закрыли **базовые rustdoc-фичи** (intra-doc-links, doc-tests, attrs, workspace), но **не Nova-уникальные**. План §19 заявляет «лучше rustdoc/godoc/typedoc» по линиям: эффекты, контракты, capabilities, must_verify, handler matrix, AI-first JSON. На практике большинство этих обещаний **не реализовано в output**. Test pass rate 100% / 84 tests — это **MVP-grade**, не production-grade.
+
+Цель Ф.23 — закрыть **именно Nova-уникальные** gaps, после чего:
+1. Schema v1 → promote из `mvp-stable` в `stable` (Plan §6 soak period closes).
+2. Сравнительная таблица §«Сравнение с production tools» — все ✅ становятся **реально** ✅, не 🟡.
+3. План 45 готов закрываться, дальше — Plan 45.A (HTML/search/diff/cache) и 45.B (stdlib doc-pass).
+
+### 🔴 P0 — BLOCKERS (Nova-unique promises violated)
+
+| # | Что | Spec | Где сейчас | Acceptance |
+|---|---|---|---|---|
+| Ф.23.1 | **Contracts (`requires`/`ensures`/`decreases`/`invariant`) НЕ извлекаются в Signature.** Парсер их понимает (Plan 33), AST хранит, но `collector::build_signature` (`compiler-codegen/src/doc/collector.rs:401-457`) их игнорирует. JSON: нет `signature.contracts`. Markdown: нет `# Contracts` section. | D24/D106; план §19.4 п.6 | `collector.rs::build_signature` извлекает `Vec<ContractClause>` для `requires`/`ensures`/`decreases`/`invariant`; `old(x)` / `result` сохраняются как символы | JSON `signature.contracts = { requires: [...], ensures: [...], decreases: [...], invariants: [...] }`; pretty-print через `verify::encode::ContractExpr::to_pretty()`; MD section `#### Contracts`; 2 fixture (Newton sqrt с реальными контрактами + record с invariant) |
+| Ф.23.2 | **`verify_status` НЕ wired** — Plan 33 SMT pipeline merged, но `doc::mod.rs::build` после type-check НЕ дёргает `verify::pipeline::verify_module`. Доктест `must_verify` (Ф.21.4) проверяет только что `report.errors` пуст, что для модуля без контрактов всегда true. | Plan 33; D106 must_verify | `doc::mod.rs::build_workspace` после type_check вызывает verify_module, мапит result в per-item `verify_status: Proven \| HasCounterexample { ... } \| Timeout \| NotAttempted` | JSON `signature.verify_status` per fn с contracts; MD badge `✅ proven` / `❌ counterexample` рядом с `## Function` heading; `nova doc --check` fail при `HasCounterexample`; smoke fixture с заведомо неверным `ensures` показывает counterexample |
+| Ф.23.3 | **Capabilities (`#forbid`/`#realtime`/`#allow_transit`/`#pure`) НЕ рендерятся** ни в md, ни в json. AST хранит (Plan 16), но collector их теряет. Plan §19.4 п.3 обещал «`--filter realtime`». | D63/D64; план §19.4 п.3 | `DocItem.capabilities: { forbid: Vec<String>, realtime: bool, allow_transit: Vec<String>, pure: bool }` + collector extract из ItemAttr + render in JSON + badges в MD: `🚫 forbid(Io)` / `⏱ realtime` / `📤 allow_transit(Db)` / `🧊 pure` | JSON capabilities populated; MD badges над signature; CLI `nova doc <dir> --filter capability:realtime` выводит только realtime items; 3 fixture |
+| Ф.23.4 | **Handler matrix (Effect → impls)** не реализован. Plan §19.4 п.4 заявлен как **unique edge** vs Go/Rust. Сейчас Effect-декларация рендерится изолированно, нет списка `handler X for Effect`. | План §19.4 п.4 | Workspace pass `collect_handlers`: scan всех `handler <Name> for <Effect>` блоков → `Effect.handlers: Vec<HandlerRef>`; reverse map | JSON `effect.handlers = [{name, source}]`; MD section `## Handlers` под Effect; cross-link на handler рендерится как item; 1 fixture (Fs effect + memory_handler + log_handler) |
+| Ф.23.5 | **must_verify fixture тривиальная** (`let _ = 1` — без contracts). Не доказывает что pipeline реально проверяет. Spec D106 заявляет это как уникальное обещание. | D106 | Заменить `compiler-codegen/tests/fixtures/doc/must_verify_smoke.nv` на реальную функцию с `requires`/`ensures`, добавить negative-fixture с заведомо неверным `ensures` (должно fail with EXPECT counterexample) | 2 fixture (positive + negative); negative-test в `doc_golden.rs` ловит counterexample в render; CI fails при regress |
+
+### 🟡 P1 — HIGH (spec/impl drift, обещанные unique-фичи частично)
+
+| # | Что | Где | Acceptance |
+|---|---|---|---|
+| Ф.23.6 | **`Deprecation.until` молча отбрасывается.** `doctree.rs:202-209` `Deprecation { since, note }` — `until` парсится из `#deprecated(since="0.5", note="...", until="0.7")`, но field в struct отсутствует → silent drop. Spec D105. | `doctree.rs` + `collector.rs::parse_deprecated` + `render_json.rs` + `render_md.rs` | `Deprecation.until: Option<String>`; JSON эмитит; MD рендерит как `⚠️ deprecated since 0.5 (until 0.7): <note>` |
+| Ф.23.7 | **`doc_test_handlers` парсится, не инжектится.** Spec D106 поддерживает `#doc(test_handlers=...)`. Парсер принимает, в `test_runner::wrap_source` не используется. Doc-tests с эффектами не могут запуститься без хендлера. | `test_runner.rs::wrap_source` + collector propagate | `wrap_source(src, modifier, handlers)` injects `with <handlers>` блок; 1 fixture (Fs effect doc-test с memory handler) проходит |
+| Ф.23.8 | **`# Effects` auto-derived section не существует.** Plan §4 обещал — effects из signature как отдельная секция с per-effect summary. Сейчас только inline `Fs Fail[X]` в signature. | `render_md.rs::render_function` + `render_json.rs::write_signature` | MD section `### Effects` с bullet per effect; JSON `effects: [{name, target_id, summary}]` (вместо string array) |
+| Ф.23.9 | **Row-polymorphism в signature не виден.** `fn f[E](x: int) E -> int` — effect row-variable `E`. Сейчас effects: []. | collector + render | Row-vars сохраняются как `effects: [{kind: "row_var", name: "E"}, ...]`; MD рендерит `(E)` |
+| Ф.23.10 | **Newtype отдельный variant отсутствует.** `type Email = newtype str` — попадает в `TypeAlias`. Spec D107 § «Item shape» различает. | `doctree.rs::TypeDefinition` enum + collector branch + render | `TypeDefinition::Newtype { inner }` отдельный variant; MD/JSON распознают; 1 fixture |
+| Ф.23.11 | **Per-item peer-file attribution.** Folder-modules: items не атрибутированы к peer-файлу. Plan §1.4 обещал. | `doctree.rs::DocItem.source.peer_file: Option<String>` + collector + JSON | JSON `source.peer_file: "io.nv"` populated; MD не меняется (single-page per module); 1 fixture |
+| Ф.23.12 | **Style-guide lints — реализовано 2 из 10** (broken-links + missing-summary). Plan §11.5 catalog обещал 10. | `doc/lints.rs` (new) | Добавить lints: imperative-mood (rule 1), section-order (rule 2), markdown-subset (rule 3), examples-missing-for-public-fn (rule 5), deprecated-missing-since-or-note (rule 6), public-stdlib-missing-stability (rule 7), summary-too-long (rule 8); `nova doc --check` agg, exit 1 if any |
+| Ф.23.13 | **Schema v1 на `mvp-stable`, не `stable`** — `format_version` показывает `1.0.0-mvp.7` или подобное. Plan §6 soak period requires real production usage без drift. | `doc/render_json.rs` constant + schema bump | После закрытия Ф.23.1-Ф.23.12 и регенерации golden — promote в `1.0.0`; добавить `tests/doc_schema_stable.rs` enforcing no breaking field changes; deprecation policy для будущих изменений |
+| Ф.23.14 | **Markdown intra-doc-link anchor rewriting.** JSON эмитит `target_id`, markdown оставляет `[std.io.println]` как plain text без `<a href="#std-io-println">`. | `render_md.rs::render_description` — post-pass через `tree.links` | MD links → `[std.io.println](#std-io-println-fn)`; работает single-file и workspace (cross-file `../io/index.md#println-fn`); 1 fixture |
+| Ф.23.15 | **Stability `feature`/`note` поля не рендерятся в MD.** JSON эмитит, MD показывает только badge `🧪 experimental`. | `render_md.rs::render_item` | Badge показывает `🧪 experimental(simd_ops): "may change before 1.0"` |
+
+### 🟢 P2 — MEDIUM (UX/DX polish, не блокеры)
+
+| # | Что | Где | Acceptance |
+|---|---|---|---|
+| Ф.23.16 | **`Protocol.implementors: []` placeholder** (Ф.22.4 footnote). Workspace mode позволяет реально scan'нуть. | `collector::collect_workspace` — second pass после items: scan methods с `Protocol` receiver-type, populate Protocol.implementors | `Protocol.implementors: [{type_id, source}]`; MD section `### Implementors`; 1 fixture (`Hash` protocol + `impl Hash for str/int`) |
+| Ф.23.17 | **`--json-schema` требует FILE.** Сейчас CLI парсер требует положительный позиционный аргумент (даже если ignored). | `nova-cli/src/main.rs:104-135` | `nova doc --json-schema` (без FILE) печатает schema; докум обновить |
+| Ф.23.18 | **Doc-test diagnostic без source-snippet caret.** Ф.21.8 формально done — есть `file:line:col`, но нет `^^^^` highlighting. Rustdoc показывает source-line с pointer. | `test_runner.rs` — передавать synthetic source как virtual-file в Diagnostic.render | Output типа `<doc-test>:5:18\n5 \| let x: int = "string"\n  \|              ^^^^^^^^ expected int, found str` |
+| Ф.23.19 | **`--coverage` без example-coverage column.** Сейчас coverage = % items с summary. Typedoc & rustdoc track examples coverage отдельно. | `cmd_doc` aggregate | Output: `items: 12/15 (80%) documented; 8/12 (67%) with examples; 3 broken links` |
+| Ф.23.20 | **`[internal]` badge для private items в MD при `--include-private`.** Сейчас не отличается visually от public. | `render_md.rs::render_item` | Private items получают badge `[internal]` |
+| Ф.23.21 | **`#hide_doc` на peer-file уровне.** Если peer-файл `_internal.nv` имеет module-attr `#hide_doc`, его items должны быть исключены без `--include-private`. Сейчас обрабатывается только item-level. | `strip_hidden_doc` pass — учитывать peer-level attrs | Items из peer'а с `#hide_doc` исключаются; 1 fixture |
+| Ф.23.22 | **Structural type JSON parallel к source-string.** Сейчас types в JSON — Nova-source strings (`"[]int"`). Для LLM удобнее структурный вид. | `render_json.rs::write_type` — добавить `structural_type` поле | JSON: `type: "[]int", structural_type: { kind: "array", elem: { kind: "named", name: "int" } }` |
+| Ф.23.23 | **Cross-link back-links.** Сейчас `links[]` — forward only. Добавить `item.linked_from: [item_id]` чтобы LLM мог найти «кто ссылается на меня». | `links.rs` после resolve — invert map | JSON populated; useful для `nova doc <fn> --who-uses` (future); golden update |
+| Ф.23.24 | **Performance regression gate** — `tests/doc_perf.rs` сейчас prints, не fails. Если кто-то добавит O(n²) — caught только при manual review. | `doc_perf.rs` — assert wall-clock under budget per Plan §14.5 | `assert!(elapsed < 12_000)` для workspace 50-module; CI fail if regress |
+| Ф.23.25 | **`source_root` нормализация.** Ф.22.3 done, но: на Windows path может быть `D:\Sources\...\plan-45-doc` — non-portable между machines. | `render_json.rs::write_source_root` | Нормализация relative-to-cwd OR `${WORKSPACE_ROOT}` placeholder с docstring |
+
+### Зависимости между Ф.23.* подпунктами
+
+```
+Ф.23.1 (contracts extract) ─┬─→ Ф.23.2 (verify_status; нужен contracts data)
+                            └─→ Ф.23.5 (real must_verify fixture; нужен contracts)
+Ф.23.3 (capabilities)       — независим
+Ф.23.4 (handler matrix)     — независим (требует workspace mode = уже есть)
+Ф.23.6 (until)              — независим
+Ф.23.7 (test_handlers)      — независим
+Ф.23.8 (Effects section)    — частично зависит от Ф.23.4 (если хотим link к handlers)
+Ф.23.9 (row-vars)           — независим
+Ф.23.10 (Newtype)           — независим
+Ф.23.11 (peer_file)         — независим
+Ф.23.12 (lints)             — независим, может идти параллельно
+Ф.23.13 (schema stable)     — ПОСЛЕ всех остальных (нельзя promote stable до закрытия drift)
+Ф.23.14 (MD anchors)        — независим
+Ф.23.15 (MD stability)      — независим
+Ф.23.16 (implementors)      — независим (workspace mode уже есть)
+Ф.23.17-25                  — независимы друг от друга
+```
+
+### Порядок реализации (рекомендация)
+
+**Sprint 1 — BLOCKERS (Nova-unique, ~5 дней):**
+1. Ф.23.1 contracts extract (1 день) — foundation для Ф.23.2/Ф.23.5
+2. Ф.23.2 verify_status wired (1 день)
+3. Ф.23.5 real must_verify fixture (0.5 дня)
+4. Ф.23.3 capabilities (1 день)
+5. Ф.23.4 handler matrix (1.5 дня)
+
+**Sprint 2 — HIGH (spec/impl drift, ~5 дней):**
+6. Ф.23.6 until deprecation (0.5 дня)
+7. Ф.23.7 doc_test_handlers inject (0.5 дня)
+8. Ф.23.8 Effects auto-section (0.5 дня)
+9. Ф.23.9 row-vars (0.5 дня)
+10. Ф.23.10 Newtype variant (0.5 дня)
+11. Ф.23.11 peer_file attribution (0.5 дня)
+12. Ф.23.12 8 additional lints (1.5 дня)
+13. Ф.23.14 MD anchors (0.5 дня)
+14. Ф.23.15 MD stability fields (<0.5 дня)
+
+**Sprint 3 — POLISH + schema promote (~3 дня):**
+15. Ф.23.16 implementors workspace scan (1 день)
+16. Ф.23.17-25 (по 0.25-0.5 дня каждый; ~2 дня total)
+17. Ф.23.13 schema → stable v1.0.0 (0.5 дня, last)
+
+**Acceptance Ф.23 (закрытие round 3 и MVP):**
+- Все 25 пунктов ✅ done с file-references в этой таблице.
+- Все 7 + N новых golden-fixtures проходят byte-for-byte.
+- `nova doc --check` на std/ проходит с 0 warnings (после `nova doc <std> --coverage` показывающего >80% items документированы).
+- Schema `format_version = "1.0.0"`, backwards-compat guarantee написана в [docs/nova-doc.md](../nova-doc.md).
+- Comparison table «Сравнение с production tools» обновлена: все ✅ — без 🟡 пометок.
+- Discussion-log entry в `nova-lang-private` (per [[feedback_discussion_log]]).
+- Commit per sub-phase (per [[feedback_project_docs]]).
+
+**Что НЕ в Ф.23 (явно):**
+- HTML output → Plan 45.A.
+- Search index (signature-aware) → Plan 45.A.
+- Source linking (file:line → web) → Plan 45.A.
+- `--diff` semantic API diff → Plan 45.A.
+- Incremental cache → Plan 45.A.
+- Stdlib full doc-pass → Plan 45.B.
+- Plugin API → 45.A (research-time).
+- Theme/customization → 45.A.
+
+---
+
 ### Сравнение с production tools
 
-| Фича | Rust (rustdoc) | Go (godoc) | TS (typedoc) | Nova |
-|---|---|---|---|---|
-| HTML output | ✅ | ✅ | ✅ | ❌ (Plan 45.A) |
-| Search index | ✅ | ✅ | ✅ | ❌ (Plan 45.A) |
-| Stable JSON output | nightly only | ❌ | ✅ | **✅ default** |
-| Embedded JSON Schema | ❌ | ❌ | ❌ | **✅** |
-| Deterministic by default | opt-in | ❌ | ❌ | **✅** |
-| Doc-tests | ✅ | partial (Example funcs) | ❌ | ✅ (after Ф.21.1) |
-| Doc-tests видят scope | ✅ | n/a | n/a | ✅ (after Ф.21.1) |
-| Intra-doc-links cross-module | ✅ | ❌ | ✅ | ✅ (after Ф.21.2) |
-| `--check` mode | ❌ (rustdoc-lints) | ❌ | ✅ | ✅ |
-| `--watch` mode | ❌ (cargo-watch ext) | ❌ | ✅ | ✅ |
-| `--coverage` | ✅ external | ❌ | ✅ | ✅ (after Ф.21.7) |
-| Workspace mode | ✅ | ✅ | ✅ | ❌ (Ф.21.9) |
-| SMT-verified examples | ❌ | ❌ | ❌ | **🟡 (Ф.21.4)** |
-| Effects в signature | ❌ | ❌ | ❌ | **✅ unique** |
-| Contracts (requires/ensures) | nightly | ❌ | ❌ | **✅ unique** |
+> **Honest-assessment колонка (audit 2026-05-16):** где «Nova (заявлено)» расходится с реальностью, добавлена «Nova (реально)». 🟡 = заявлено лучше, реально частично. 🔴 = заявлено, не реализовано вообще. Все 🟡/🔴 закрываются в Ф.23.
+
+| Фича | Rust (rustdoc) | Go (godoc) | TS (typedoc) | Nova (заявлено) | Nova (реально) | Closer |
+|---|---|---|---|---|---|---|
+| HTML output | ✅ | ✅ | ✅ | ❌ (Plan 45.A) | ❌ | 45.A |
+| Search index | ✅ | ✅ | ✅ | ❌ (Plan 45.A) | ❌ | 45.A |
+| Stable JSON output | nightly only | ❌ | ✅ | **✅ default** | ✅ (на `mvp-stable`) | Ф.23.13 → v1.0.0 |
+| Embedded JSON Schema | ❌ | ❌ | ❌ | **✅** | ✅ | — |
+| Deterministic by default | opt-in | ❌ | ❌ | **✅** | ✅ | — |
+| Doc-tests | ✅ | partial (Example funcs) | ❌ | ✅ (after Ф.21.1) | ✅ | — |
+| Doc-tests видят scope | ✅ | n/a | n/a | ✅ (after Ф.21.1) | ✅ | — |
+| Intra-doc-links cross-module | ✅ | ❌ | ✅ | ✅ (after Ф.21.2) | ✅ JSON, 🟡 markdown (нет anchor rewriting) | Ф.23.14 |
+| `--check` mode | ❌ (rustdoc-lints) | ❌ | ✅ | ✅ | 🟡 (2 из 10 lint'ов §11.5) | Ф.23.12 |
+| `--watch` mode | ❌ (cargo-watch ext) | ❌ | ✅ | ✅ | ✅ | — |
+| `--coverage` | ✅ external | ❌ | ✅ | ✅ (after Ф.21.7) | 🟡 (summary only, no example-coverage) | Ф.23.19 |
+| Workspace mode | ✅ | ✅ | ✅ | ✅ (after Ф.21.7) | ✅ | — |
+| Signature-aware search | ✅ | ❌ | ❌ | (45.A) | ❌ | 45.A |
+| Source linking (file:line→web) | ✅ | ✅ | ✅ | (45.A) | ❌ | 45.A |
+| Scrape examples | ✅ | ❌ | ❌ | (open) | ❌ | 45.A/B |
+| Doc-test deps injection | `Cargo.toml` | n/a | n/a | `#doc(test_handlers=)` | 🟡 parsed, not injected | Ф.23.7 |
+| Diagnostic snippet с caret | ✅ | n/a | partial | ✅ Ф.21.8 | 🟡 (file:line:col без `^^^^`) | Ф.23.18 |
+| **SMT-verified examples** | ❌ | ❌ | ❌ | **✅ Ф.21.4** | 🟡 (wiring done, fixture trivial; verify pipeline not auto-run) | Ф.23.2 + Ф.23.5 |
+| **Effects в signature** | ❌ | ❌ | ❌ | **✅ unique** | ✅ inline; 🟡 нет `# Effects` auto-section; 🟡 нет row-vars | Ф.23.8 + Ф.23.9 |
+| **Contracts (requires/ensures)** | nightly | ❌ | ❌ | **✅ unique** | 🔴 **НЕ извлекаются в Signature** (BLOCKER) | Ф.23.1 |
+| **`verify_status` (proven/counterexample)** | ❌ | ❌ | ❌ | **✅ unique** | 🔴 НЕ wired | Ф.23.2 |
+| **Capabilities (`#forbid`/`#realtime`/`#allow_transit`)** | ❌ | ❌ | ❌ | **✅ unique** | 🔴 НЕ рендерятся | Ф.23.3 |
+| **Handler matrix (Effect → impls)** | ❌ | ❌ | ❌ | **✅ unique** §19.4 | 🔴 НЕ реализован | Ф.23.4 |
+| **Protocol implementors** | partial | ❌ | partial | **✅ unique** | 🟡 placeholder `[]` | Ф.23.16 |
+| **`#deprecated(until)` timeline** | ❌ | ❌ | ❌ | **✅ unique** D105 | 🟡 silent-dropped | Ф.23.6 |
+| **§11.5 style-guide lints catalog** | external (clippy) | ❌ | partial | **✅ 10 lints** | 🟡 2/10 implemented | Ф.23.12 |
+| **Newtype отдельный variant** | ✅ tuple-struct | n/a | partial | **✅ unique** D107 | 🟡 свалено в TypeAlias | Ф.23.10 |
+| **Per-item peer-file attribution** | n/a | n/a | n/a | **✅ unique** | 🔴 не emitted | Ф.23.11 |
+| **`#hide_doc` peer-level** | n/a | n/a | n/a | **✅** | 🟡 только item-level | Ф.23.21 |
+| **Structural type JSON (LLM)** | source-string | source-string | partial | **✅ AI-first** | 🟡 source-string only | Ф.23.22 |
+| **Cross-link back-links** | ❌ | ❌ | ❌ | **✅ AI-first** | 🔴 forward-only | Ф.23.23 |
+| Performance regression gate | manual | manual | manual | ✅ Ф.21.9 prints | 🟡 не fails | Ф.23.24 |
+| Stability + experimental | `#[unstable]` | ❌ | `@experimental` | ✅ + 3 tiers | ✅ JSON; 🟡 MD без feature/note | Ф.23.15 |
+| Reproducibility | partial | n/a | partial | SOURCE_DATE_EPOCH | ✅ json+md | — |
+
+**Bottom line (audit 2026-05-16):**
+
+- 🟢 **Реально competitive** = rustdoc/typedoc: JSON output, embedded schema, determinism, intra-doc-links (JSON), `--watch`, workspace mode, doc-tests scope, deprecation/stability badges, reproducibility.
+- 🟡 **Заявлено, реально частично**: contracts (BLOCKER → Ф.23.1), capabilities (Ф.23.3), implementors (Ф.23.16), until-deprecation (Ф.23.6), lints catalog (Ф.23.12), markdown UX (Ф.23.14), `must_verify` fixture (Ф.23.5), structural-type JSON (Ф.23.22).
+- 🔴 **Заявлено уникально, НЕ реализовано вообще**: handler matrix (Ф.23.4), verify_status в JSON (Ф.23.2), contracts в signature (Ф.23.1), peer-file attribution (Ф.23.11), back-links (Ф.23.23).
+
+Закрытие Ф.23 → таблица содержит только ✅ (без 🟡/🔴) для линии «Nova (реально)»; schema promote `mvp-stable` → `stable v1.0.0`.
 
 ### Уникальные nova-преимущества (закрепить)
 
