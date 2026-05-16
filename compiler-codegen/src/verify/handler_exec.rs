@@ -178,12 +178,13 @@ pub fn verify_handlers(module: &Module) -> (Vec<Diagnostic>, Vec<Diagnostic>) {
         for (em_name, em_params, em_contracts) in &effect_methods_with_contracts {
             if em_contracts.is_empty() { continue; }
             let Some(handler_method) = methods.iter().find(|m| m.name == *em_name) else { continue };
-            let diags = verify_liskov_method(
+            let (liskov_errs, liskov_warns) = verify_liskov_method(
                 &pipeline, em_name, em_params, em_contracts,
                 handler_method, &pure_views, module, &inferred_pure,
                 binding_span,
             );
-            diagnostics.extend(diags);
+            diagnostics.extend(liskov_errs);
+            warnings.extend(liskov_warns);
         }
     }
 
@@ -221,8 +222,9 @@ fn verify_liskov_method(
     module: &Module,
     inferred_pure: &std::collections::HashSet<String>,
     binding_span: Span,
-) -> Vec<Diagnostic> {
+) -> (Vec<Diagnostic>, Vec<Diagnostic>) {
     let mut diagnostics = Vec::new();
+    let mut warnings: Vec<Diagnostic> = Vec::new();
     let pure_fns = collect_pure_fns(module, inferred_pure);
     let trusted_fns = collect_trusted_fns(module);
     let var_sorts: std::collections::HashMap<String, SortRef> = effect_params.iter()
@@ -251,7 +253,18 @@ fn verify_liskov_method(
                 formula: t,
                 label: Some(format!("liskov_requires@{}", c.span.start)),
             }),
-            Err(_) => { requires_failed = true; }
+            Err(e) => {
+                // Ф.8.1 (Plan 33.6): silent skip → W2402.
+                let reason = match e {
+                    super::encode::EncodingError::Unsupported(s) => s,
+                };
+                let msg = format!(
+                    "Liskov requires для handler method `{}` не закодирован в SMT [W2402]: {}.\n  \
+                     Verification handler не проверена.",
+                    method_name, reason);
+                warnings.push(Diagnostic::new(msg, binding_span));
+                requires_failed = true;
+            }
         }
     }
 
@@ -268,11 +281,27 @@ fn verify_liskov_method(
         if requires_failed { continue; }
         let encoded = match encode::encode_expr_with_ctx(&c.expr, &ctx) {
             Ok(t) => t,
-            Err(_) => continue,
+            Err(e) => {
+                // Ф.8.1 (Plan 33.6): silent skip → W2402.
+                let reason = match e {
+                    super::encode::EncodingError::Unsupported(s) => s,
+                };
+                let msg = format!(
+                    "Liskov ensures для handler method `{}` не закодирован в SMT [W2402]: {}.",
+                    method_name, reason);
+                warnings.push(Diagnostic::new(msg, binding_span));
+                continue;
+            }
         };
         let goal = if let Some(bv) = &body_val {
             encoded.substitute("result", bv)
         } else {
+            // Ф.8.1 (Plan 33.6): handler body не encodable → W2402.
+            let msg = format!(
+                "Liskov check для handler method `{}` пропущен [W2402]: \
+                 handler body не encodable в SMT (вероятно, complex statements).",
+                method_name);
+            warnings.push(Diagnostic::new(msg, binding_span));
             continue;
         };
         let goal = substitute_old(&goal);
@@ -290,11 +319,18 @@ fn verify_liskov_method(
                     binding_span,
                 ));
             }
-            SatResult::Unknown(_) => {}
+            SatResult::Unknown(reason) => {
+                // Ф.8.1 (Plan 33.6): Z3 Unknown → W2402.
+                let msg = format!(
+                    "Liskov check для handler method `{}` вернул Unknown [W2402]: {}.\n  \
+                     Используйте Z3 backend для полной проверки.",
+                    method_name, unknown_to_diag_message(reason));
+                warnings.push(Diagnostic::new(msg, binding_span));
+            }
         }
     }
 
-    diagnostics
+    (diagnostics, warnings)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

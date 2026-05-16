@@ -1,0 +1,19 @@
+// Ф.8.1 (Plan 33.6): Liskov ensures с не-encodable конструкцией → W2402.
+// match в ensures → encoding fail → W2402 + skip Liskov check.
+// EXPECT_COMPILE_WARNING W2402
+
+module contracts.liskov_unknown_w2402
+
+type Branchy effect {
+    classify(x int) -> int
+        ensures match result { _ => true }
+}
+
+test "liskov encoding fail → W2402" {
+    with #verify Branchy = handler Branchy {
+        classify(x) => x
+    } {
+        let r = Branchy.classify(5)
+        assert(r == 5)
+    }
+}
