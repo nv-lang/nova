@@ -1,0 +1,10 @@
+// Ф.22.1 (Plan 33.6): vacuous fn — `requires false` → W2402.
+// EXPECT_COMPILE_WARNING W2402
+
+module contracts.vacuous_fn_requires_false_w2402
+
+fn never_callable(x int) -> int
+    requires false
+{
+    x
+}
