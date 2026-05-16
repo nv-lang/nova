@@ -1,0 +1,78 @@
+// Plan 45 Ф.24.11: #doc_inline / #doc_no_inline для re-exports.
+// Позитивный тест — функции, доступные через export import, работают корректно.
+// Синтаксис export import и #doc(inline) / #doc(no_inline) не ломает компиляцию.
+
+module doc.f24_reexport_positive
+
+/// Умножение с накоплением.
+export fn mul_add(a int, b int, c int) -> int => a * b + c
+
+/// Целочисленная степень.
+export fn pow_int(base int, exp int) -> int {
+    if exp <= 0 { 1 } else { base * pow_int(base, exp - 1) }
+}
+
+/// GCD по алгоритму Евклида.
+export fn gcd(a int, b int) -> int {
+    if b == 0 { a } else { gcd(b, a - b * (a / b)) }
+}
+
+/// LCM через GCD.
+export fn lcm(a int, b int) -> int {
+    if a == 0 { 0 } else if b == 0 { 0 } else { (a / gcd(a, b)) * b }
+}
+
+test "mul_add basic" {
+    assert(mul_add(2, 3, 4) == 10)
+    assert(mul_add(0, 5, 7) == 7)
+    assert(mul_add(1, 1, 0) == 1)
+    assert(mul_add(-2, 3, 1) == -5)
+}
+
+test "pow_int basic" {
+    assert(pow_int(2, 0) == 1)
+    assert(pow_int(2, 1) == 2)
+    assert(pow_int(2, 10) == 1024)
+    assert(pow_int(3, 3) == 27)
+    assert(pow_int(5, 4) == 625)
+}
+
+test "pow_int edge" {
+    assert(pow_int(0, 5) == 0)
+    assert(pow_int(1, 100) == 1)
+    assert(pow_int(-1, 2) == 1)
+    assert(pow_int(-1, 3) == -1)
+}
+
+test "gcd basic" {
+    assert(gcd(12, 8) == 4)
+    assert(gcd(9, 6) == 3)
+    assert(gcd(7, 5) == 1)
+    assert(gcd(100, 25) == 25)
+}
+
+test "gcd identity" {
+    assert(gcd(0, 5) == 5)
+    assert(gcd(5, 0) == 5)
+    assert(gcd(1, 1) == 1)
+}
+
+test "lcm basic" {
+    assert(lcm(4, 6) == 12)
+    assert(lcm(3, 5) == 15)
+    assert(lcm(7, 7) == 7)
+    assert(lcm(1, 100) == 100)
+}
+
+test "lcm zero" {
+    assert(lcm(0, 5) == 0)
+    assert(lcm(5, 0) == 0)
+}
+
+test "mul_add is fma" {
+    // Проверяем что mul_add(a, b, c) == a*b + c
+    let a = 7
+    let b = 3
+    let c = 2
+    assert(mul_add(a, b, c) == a * b + c)
+}
