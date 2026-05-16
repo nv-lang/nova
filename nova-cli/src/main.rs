@@ -133,6 +133,10 @@ enum Cmd {
         /// (% items with summary, broken down by kind). Useful in CI.
         #[arg(long = "coverage")]
         coverage: bool,
+        /// Plan 45 Ф.24.13: number of parallel parse jobs for workspace mode.
+        /// Default 0 = auto (uses all logical CPUs). Ignored for single-file.
+        #[arg(long = "jobs", default_value = "0")]
+        jobs: usize,
     },
     /// Compile a single Nova source file to a native binary.
     ///
@@ -465,6 +469,28 @@ fn bold(s: &str) -> String {
 fn read_file(path: &Path) -> Result<String> {
     std::fs::read_to_string(path)
         .map_err(|e| anyhow!("failed to read {}: {}", path.display(), e))
+}
+
+/// Plan 45 Ф.24.13: parse + typecheck + infer_effects one .nv file.
+/// Returns Ok((source, module)) or Err(warning_string) for graceful-fail.
+fn parse_one_file(f: &Path) -> Result<(String, nova_codegen::ast::Module), String> {
+    let src = match std::fs::read_to_string(f) {
+        Ok(s) => s,
+        Err(e) => return Err(format!("warning: {}: {}", f.display(), e)),
+    };
+    let path_str = f.to_string_lossy();
+    match nova_codegen::parser::parse(&src) {
+        Ok(mut m) => {
+            let _ = nova_codegen::types::check_module(&m);
+            nova_codegen::types::infer_effects(&mut m);
+            Ok((src, m))
+        }
+        Err(d) => Err(format!(
+            "warning: {}: {}",
+            path_str,
+            d.render(&src, &path_str)
+        )),
+    }
 }
 
 fn default_tmp_dir() -> PathBuf {
@@ -944,7 +970,7 @@ fn cmd_run(path: &Path) -> Result<()> {
 ///
 /// MVP: один входной файл, вывод в stdout. Никаких подкоманд (workspace/
 /// --output-dir/--watch — Plan 45.A или отдельные субкоманды позже).
-fn cmd_doc(path: &Path, format: &str, json_schema: bool, include_private: bool, run_doc_tests: bool, check: bool, watch: bool, coverage: bool) -> Result<()> {
+fn cmd_doc(path: &Path, format: &str, json_schema: bool, include_private: bool, run_doc_tests: bool, check: bool, watch: bool, coverage: bool, jobs: usize) -> Result<()> {
     // `--json-schema` — печатает embedded схему и выходит (D107).
     if json_schema {
         println!("{}", nova_doc_embedded_schema());
@@ -953,7 +979,7 @@ fn cmd_doc(path: &Path, format: &str, json_schema: bool, include_private: bool, 
     // Plan 45 Ф.21.7: workspace-режим. Если path — каталог, рекурсивно
     // парсим все *.nv и строим multi-module DocTree.
     if path.is_dir() {
-        return cmd_doc_workspace(path, format, include_private, run_doc_tests, check, coverage);
+        return cmd_doc_workspace(path, format, include_private, run_doc_tests, check, coverage, jobs);
     }
     if !path.is_file() {
         bail!("file not found: {}", path.display());
@@ -1049,6 +1075,7 @@ fn cmd_doc_workspace(
     run_doc_tests: bool,
     check: bool,
     coverage: bool,
+    jobs: usize,
 ) -> Result<()> {
     let mut files: Vec<PathBuf> = Vec::new();
     walk_nv_files(dir, &mut files)?;
@@ -1056,36 +1083,77 @@ fn cmd_doc_workspace(
     if files.is_empty() {
         bail!("no .nv files found under `{}`", dir.display());
     }
+
+    // Plan 45 Ф.24.13: parallel parse+typecheck via std::thread::scope.
+    // Threshold: ≥4 files. Below — sequential (thread overhead not worth it).
+    // jobs=0 → auto (logical CPUs); jobs=1 → sequential; jobs=N → N threads.
+    const PARALLEL_THRESHOLD: usize = 4;
+    let use_parallel = files.len() >= PARALLEL_THRESHOLD && jobs != 1;
+
+    // Result type per file: Ok(source, module) or Err(warning_string).
+    type ParseResult = Result<(String, nova_codegen::ast::Module), String>;
+
+    let raw_results: Vec<ParseResult> = if use_parallel {
+        let num_threads = if jobs == 0 {
+            std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(4)
+                .min(files.len())
+        } else {
+            jobs.min(files.len())
+        };
+
+        // Chunk files into num_threads buckets; each thread processes its chunk
+        // sequentially. This avoids spawning one thread per file while still
+        // saturating available CPUs.
+        let chunk_size = files.len().div_ceil(num_threads);
+        let chunks: Vec<&[PathBuf]> = files.chunks(chunk_size).collect();
+
+        // Use a Mutex-wrapped results Vec so threads can push in order-agnostic way.
+        // Then we re-sort by original file index to maintain deterministic order.
+        let indexed_results: std::sync::Mutex<Vec<(usize, ParseResult)>> =
+            std::sync::Mutex::new(Vec::with_capacity(files.len()));
+
+        std::thread::scope(|s| {
+            let mut base = 0usize;
+            for chunk in &chunks {
+                let chunk = *chunk;
+                let start_idx = base;
+                base += chunk.len();
+                let results_ref = &indexed_results;
+                s.spawn(move || {
+                    for (i, f) in chunk.iter().enumerate() {
+                        let file_idx = start_idx + i;
+                        let pr = parse_one_file(f);
+                        results_ref.lock().unwrap().push((file_idx, pr));
+                    }
+                });
+            }
+        });
+
+        // Reconstruct in original file order.
+        let mut indexed = indexed_results.into_inner().unwrap();
+        indexed.sort_by_key(|(i, _)| *i);
+        indexed.into_iter().map(|(_, r)| r).collect()
+    } else {
+        // Sequential path — identical logic, no threads.
+        files.iter().map(|f| parse_one_file(f)).collect()
+    };
+
     // Plan 45 Ф.22.5 / D107: workspace graceful-fail — продолжаем при
     // parse-ошибках в отдельных файлах (как rustdoc), выводим warnings
     // в stderr. Hard-fail только если 0 файлов распарсилось.
     let mut modules: Vec<nova_codegen::ast::Module> = Vec::with_capacity(files.len());
-    // Для Ф.22.7: храним source каждого файла рядом с модулем.
     let mut sources: Vec<String> = Vec::with_capacity(files.len());
     let mut parse_warnings: Vec<String> = Vec::new();
-    for f in &files {
-        let src = match read_file(f) {
-            Ok(s) => s,
-            Err(e) => {
-                parse_warnings.push(format!("warning: {}: {}", f.display(), e));
-                continue;
-            }
-        };
-        let path_str = f.to_string_lossy();
-        match nova_codegen::parser::parse(&src) {
-            Ok(mut m) => {
-                let _ = nova_codegen::types::check_module(&m);
-                nova_codegen::types::infer_effects(&mut m);
+
+    for pr in raw_results {
+        match pr {
+            Ok((src, m)) => {
                 sources.push(src);
                 modules.push(m);
             }
-            Err(d) => {
-                parse_warnings.push(format!(
-                    "warning: {}: {}",
-                    path_str,
-                    d.render(&src, &path_str)
-                ));
-            }
+            Err(w) => parse_warnings.push(w),
         }
     }
     for w in &parse_warnings {
@@ -1328,7 +1396,7 @@ fn cmd_doc_watch(
                 chrono_like_now()
             );
             // Re-run одним проходом через cmd_doc (без watch/json_schema).
-            match cmd_doc(path, format, false, include_private, run_doc_tests, check, false, coverage) {
+            match cmd_doc(path, format, false, include_private, run_doc_tests, check, false, coverage, 0) {
                 Ok(_) => {}
                 Err(e) => eprintln!("error: {}", e),
             }
@@ -2009,7 +2077,7 @@ fn main() -> ExitCode {
             &skip,
         ),
         Cmd::Run { file } => cmd_run(&file),
-        Cmd::Doc { file, format, json_schema, include_private, run_doc_tests, check, watch, coverage } => {
+        Cmd::Doc { file, format, json_schema, include_private, run_doc_tests, check, watch, coverage, jobs } => {
             // Plan 45 Ф.23.17: --json-schema works without FILE argument.
             if json_schema && file.is_none() {
                 println!("{}", nova_doc_embedded_schema());
@@ -2019,7 +2087,7 @@ fn main() -> ExitCode {
                 eprintln!("error: FILE argument required (unless --json-schema)");
                 std::process::exit(1);
             });
-            cmd_doc(path, &format, json_schema, include_private, run_doc_tests, check, watch, coverage)
+            cmd_doc(path, &format, json_schema, include_private, run_doc_tests, check, watch, coverage, jobs)
         }
         Cmd::Build { file, output, mode, toolchain, vcvars, clang, timeout, keep_artifacts } => cmd_build(
             &file,
