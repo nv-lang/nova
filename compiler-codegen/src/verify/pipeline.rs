@@ -2115,12 +2115,30 @@ pub fn verify_handlers(module: &Module) -> Vec<Diagnostic> {
                             binding_span,
                         ));
                     }
-                    VerifyResult::Unknown(_reason) => {
-                        // Cannot verify this post-axiom - silent skip (not an error).
-                        let _ = _reason;
+                    VerifyResult::Unknown(reason) => {
+                        // Ф.1.3 (Plan 33.6): #verify handler + Unknown = compile error E2402.
+                        // Программист запросил верификацию — если verifier не может → явная ошибка.
+                        // Подсказка: используй #trusted для opt-out от verification.
+                        diagnostics.push(Diagnostic::new(
+                            format!(
+                                "#verify handler для эффекта {}: post-axiom '{}' не удалось верифицировать [E2402].\
+                                 \n  причина: {}\
+                                 \n  V1 symbolic exec поддерживает только линейные handler bodies (без if/match/loop/FFI).\
+                                 \n  используйте #trusted чтобы пропустить верификацию.",
+                                effect_name, ax.name, reason,
+                            ),
+                            binding_span,
+                        ));
                     }
-                    VerifyResult::EncodingFailed(_) => {
-                        // Encoding failed — silent skip.
+                    VerifyResult::EncodingFailed(reason) => {
+                        // Ф.1.3: encoding failed тоже = error для #verify handler.
+                        diagnostics.push(Diagnostic::new(
+                            format!(
+                                "#verify handler для эффекта {}: post-axiom '{}' не encodable [E2402]: {}",
+                                effect_name, ax.name, reason,
+                            ),
+                            binding_span,
+                        ));
                     }
                 }
                 continue;

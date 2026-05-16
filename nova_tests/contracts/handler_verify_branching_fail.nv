@@ -1,0 +1,27 @@
+// EXPECT_COMPILE_ERROR E2402
+//
+// Ф.1.3 (Plan 33.6): handler с branching в action body под #verify →
+// symbolic exec V1 не поддерживает if/match → Unknown → compile error E2402.
+
+module contracts.handler_verify_branching_fail
+
+type Db effect {
+    SetBalance(id int, amount int)
+    #pure balance(id int) -> int
+    axiom after_set(id, x) => post(SetBalance(id, x))(balance(id)) == x
+}
+
+test "handler с branching под #verify даёт E2402" {
+    let mut store = 0
+    with #verify Db = handler Db {
+        SetBalance(id, amount) {
+            if amount >= 0 {
+                store = amount  // branching — V1 не поддерживает
+            }
+        }
+        balance(id) => store
+    } {
+        Db.SetBalance(1, 42)
+        assert(Db.balance(1) == 42)
+    }
+}
