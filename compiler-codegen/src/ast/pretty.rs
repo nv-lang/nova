@@ -136,17 +136,31 @@ fn write_expr(out: &mut String, e: &Expr) {
             out.push(')');
         }
         ExprKind::Binary { op, left, right } => {
-            out.push('(');
+            // Plan 45 Ф.29.2: precedence-aware parens. Omit parens когда child
+            // имеет higher precedence чем parent (или equal на правильной side
+            // для associativity).
+            let my_prec = binop_prec(op);
+            // Left assoc: skip parens на left если child_prec >= my_prec.
+            let left_needs = needs_paren_left(left, my_prec);
+            let right_needs = needs_paren_right(right, my_prec);
+            if left_needs { out.push('('); }
             write_expr(out, left);
+            if left_needs { out.push(')'); }
             out.push(' ');
             out.push_str(binop_str(op));
             out.push(' ');
+            if right_needs { out.push('('); }
             write_expr(out, right);
-            out.push(')');
+            if right_needs { out.push(')'); }
         }
         ExprKind::Unary { op, operand } => {
+            // Unary имеет высокий precedence; operand parens нужны если
+            // он binary с lower prec.
+            let needs = matches!(operand.kind, ExprKind::Binary { .. });
             out.push_str(unop_str(op));
+            if needs { out.push('('); }
             write_expr(out, operand);
+            if needs { out.push(')'); }
         }
         ExprKind::If { cond, .. } => {
             // Body — Block; render compact placeholder.
@@ -193,6 +207,45 @@ fn write_call_arg(out: &mut String, a: &CallArg) {
             out.push_str(": ");
             write_expr(out, value);
         }
+    }
+}
+
+/// Plan 45 Ф.29.2 — precedence levels по Nova syntax priority.
+/// Higher number = tighter binding.
+fn binop_prec(op: &BinOp) -> u8 {
+    match op {
+        BinOp::Mul | BinOp::Div | BinOp::Mod => 12,
+        BinOp::Add | BinOp::Sub => 11,
+        BinOp::Shl | BinOp::Shr => 10,
+        BinOp::BitAnd => 9,
+        BinOp::BitXor => 8,
+        BinOp::BitOr => 7,
+        BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => 6,
+        BinOp::Eq | BinOp::Neq => 5,
+        BinOp::And => 4,
+        BinOp::Or => 3,
+        BinOp::Implies => 2,
+        BinOp::Iff => 1,
+    }
+}
+
+/// Left side: skip parens если child_prec > my_prec (strictly higher),
+/// или child_prec == my_prec (left-assoc default — already binds correctly).
+fn needs_paren_left(child: &Expr, my_prec: u8) -> bool {
+    if let ExprKind::Binary { op, .. } = &child.kind {
+        binop_prec(op) < my_prec
+    } else {
+        false
+    }
+}
+
+/// Right side: skip parens если child_prec > my_prec (strictly higher).
+/// При equal — нужны parens (left-assoc; `a - b - c` ≠ `a - (b - c)`).
+fn needs_paren_right(child: &Expr, my_prec: u8) -> bool {
+    if let ExprKind::Binary { op, .. } = &child.kind {
+        binop_prec(op) <= my_prec
+    } else {
+        false
     }
 }
 
@@ -264,7 +317,8 @@ mod tests {
     }
 
     #[test]
-    fn binary_op_paren() {
+    fn binary_op_no_paren_with_literals() {
+        // Plan 45 Ф.29.2: precedence-aware — literal/ident operands не нуждаются в parens.
         let lhs = e(ExprKind::Ident("x".to_string()));
         let rhs = e(ExprKind::IntLit(1));
         let bin = e(ExprKind::Binary {
@@ -272,17 +326,81 @@ mod tests {
             left: Box::new(lhs),
             right: Box::new(rhs),
         });
-        assert_eq!(print_expr(&bin), "(x + 1)");
+        assert_eq!(print_expr(&bin), "x + 1");
     }
 
     #[test]
-    fn comparison_gt() {
+    fn comparison_gt_no_paren() {
         let bin = e(ExprKind::Binary {
             op: BinOp::Gt,
             left: Box::new(e(ExprKind::Ident("x".to_string()))),
             right: Box::new(e(ExprKind::IntLit(0))),
         });
-        assert_eq!(print_expr(&bin), "(x > 0)");
+        assert_eq!(print_expr(&bin), "x > 0");
+    }
+
+    #[test]
+    fn higher_prec_no_paren() {
+        // a + b * c — `*` имеет higher prec → нет parens вокруг `b * c`.
+        let mul = e(ExprKind::Binary {
+            op: BinOp::Mul,
+            left: Box::new(e(ExprKind::Ident("b".to_string()))),
+            right: Box::new(e(ExprKind::Ident("c".to_string()))),
+        });
+        let add = e(ExprKind::Binary {
+            op: BinOp::Add,
+            left: Box::new(e(ExprKind::Ident("a".to_string()))),
+            right: Box::new(mul),
+        });
+        assert_eq!(print_expr(&add), "a + b * c");
+    }
+
+    #[test]
+    fn lower_prec_needs_paren() {
+        // (a + b) * c — `+` имеет lower prec чем `*` parent → parens нужны.
+        let add = e(ExprKind::Binary {
+            op: BinOp::Add,
+            left: Box::new(e(ExprKind::Ident("a".to_string()))),
+            right: Box::new(e(ExprKind::Ident("b".to_string()))),
+        });
+        let mul = e(ExprKind::Binary {
+            op: BinOp::Mul,
+            left: Box::new(add),
+            right: Box::new(e(ExprKind::Ident("c".to_string()))),
+        });
+        assert_eq!(print_expr(&mul), "(a + b) * c");
+    }
+
+    #[test]
+    fn same_prec_right_needs_paren() {
+        // a - (b - c) — right side same prec, не left-assoc → parens нужны.
+        let inner = e(ExprKind::Binary {
+            op: BinOp::Sub,
+            left: Box::new(e(ExprKind::Ident("b".to_string()))),
+            right: Box::new(e(ExprKind::Ident("c".to_string()))),
+        });
+        let outer = e(ExprKind::Binary {
+            op: BinOp::Sub,
+            left: Box::new(e(ExprKind::Ident("a".to_string()))),
+            right: Box::new(inner),
+        });
+        assert_eq!(print_expr(&outer), "a - (b - c)");
+    }
+
+    #[test]
+    fn same_prec_left_no_paren() {
+        // (a - b) - c — left side same prec, left-assoc default → no parens.
+        let inner = e(ExprKind::Binary {
+            op: BinOp::Sub,
+            left: Box::new(e(ExprKind::Ident("a".to_string()))),
+            right: Box::new(e(ExprKind::Ident("b".to_string()))),
+        });
+        let outer = e(ExprKind::Binary {
+            op: BinOp::Sub,
+            left: Box::new(inner),
+            right: Box::new(e(ExprKind::Ident("c".to_string()))),
+        });
+        assert_eq!(print_expr(&outer), "a - b - c");
     }
 
     #[test]

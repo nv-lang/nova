@@ -177,7 +177,7 @@
       "summary": "Counter — простой effect с axiom.",
       "axioms": [
         {
-          "formula": "(x >= 0)",
+          "formula": "x >= 0",
           "name": "non_negative"
         }
       ],
