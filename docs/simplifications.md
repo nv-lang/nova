@@ -7120,3 +7120,35 @@ Rust (нет stdlib merge).
 - Plan 49 acceptance: 11/11 main + 6/6 Ф.6 = весь Plan 49 закрыт.
 - Beyond state-of-the-art фичи: tok.merge + typed CancelToken[T] +
   USER-precedence — Nova строго лучше Go/Rust/TS в cancellation modeling.
+
+
+## Test coverage расширение (2026-05-16 EOD — post audit-fix)
+
+Plan 48/49 test coverage расширен после audit-fix sprint. Все 11
+test files PASS, **75 sub-cases** (было 50).
+
+### Расширения
+
+- **Edge / boundary positives** — large int, negative int, idempotency
+  multiple cancel, chained merge (3+ источника), cross-type multi-child.
+- **Negative behavior** (positive runtime tests verifying что обратное
+  НЕ происходит) — reason() None default, within не throw, cascade
+  directional (parent → child only, не обратно).
+- **True negative EXPECT_COMPILE_ERROR** — cross-type cascade без
+  `From[B] for A` → compiler reject с понятным сообщением.
+
+### Pre-existing limits documented (V2 followup'ы)
+
+**[M-pattern-var-leak]:** var_types['v'] от pattern-bound `Some(v)`
+не очищается между fn bodies; перекрёстный inference между tests.
+Workaround: уникальные pattern-bind имена (`vi_big`, `vi_w`).
+Plan 50 — clean pattern-vars on fn scope exit.
+
+**[M-generic-nested-call-inference]:** type-inference не пробрасывается
+через nested generic call (`with_timeout` → `within`). Plan 50 — extend
+inference engine through generic-call return types.
+
+### Закрытые маркеры (от audit-fix sprint)
+
+- [M-reason-per-T-unbox] — silent UB fixed для T≠str.
+- [M-cross-type-from-cascade] — implemented через D73/D77 From + tests.
