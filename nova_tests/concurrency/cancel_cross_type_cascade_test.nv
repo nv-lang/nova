@@ -42,3 +42,66 @@ test "cross-type cascade: ChildErr.from(ParentErr) — child получает co
     parent.cancel(ParentErr { code: 7 })
     assert(child.is_cancelled())
 }
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Edge cases — multi-child cascade, idempotency
+// ──────────────────────────────────────────────────────────────────────────
+
+
+test "cross-type: 2 children cascaded от одного parent — оба cancelled" {
+    let parent CancelToken[ParentErr] = CancelToken.new()
+    let c1 CancelToken[ChildErr] = CancelToken.new()
+    let c2 CancelToken[ChildErr] = CancelToken.new()
+    c1.cancelled_by(parent)
+    c2.cancelled_by(parent)
+    parent.cancel(ParentErr { code: 5 })
+    assert(c1.is_cancelled())
+    assert(c2.is_cancelled())
+}
+
+
+test "cross-type: parent уже cancelled до cascade-bind — child тоже cancelled" {
+    let parent CancelToken[ParentErr] = CancelToken.new()
+    parent.cancel(ParentErr { code: 1 })
+    assert(parent.is_cancelled())
+    let child CancelToken[ChildErr] = CancelToken.new()
+    child.cancelled_by(parent)
+    // bind_cascade_typed при cancel-already-fired срабатывает converter
+    // немедленно и отменяет child.
+    assert(child.is_cancelled())
+}
+
+
+test "same-type pre-cancelled: child получает реальную причину" {
+    let p1 CancelToken[ParentErr] = CancelToken.new()
+    p1.cancel(ParentErr { code: 99 })
+    let p2 CancelToken[ParentErr] = CancelToken.new()
+    p2.cancelled_by(p1)
+    assert(p2.is_cancelled())
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Negative behavior — same-type cascade не пробрасывает обратно
+// ──────────────────────────────────────────────────────────────────────────
+
+
+test "negative: cancel SAMOГО child НЕ отменяет parent" {
+    let parent CancelToken[ParentErr] = CancelToken.new()
+    let child  CancelToken[ChildErr]  = CancelToken.new()
+    child.cancelled_by(parent)
+    child.cancel(ChildErr { msg: "child only" })
+    assert(child.is_cancelled())
+    assert(!parent.is_cancelled())  // cascade течёт parent → child, не обратно
+}
+
+
+test "negative: cross-type cascade не cancel'ит parent или child до actual cancel" {
+    let parent CancelToken[ParentErr] = CancelToken.new()
+    let child  CancelToken[ChildErr]  = CancelToken.new()
+    child.cancelled_by(parent)
+    // bind сам по себе не cancel'ит — только при parent.cancel().
+    assert(!parent.is_cancelled())
+    assert(!child.is_cancelled())
+}

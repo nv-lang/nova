@@ -51,3 +51,79 @@ test "merge: оба uncancelled - merged тоже uncancelled" {
     assert(!t1.is_cancelled())
     assert(!t2.is_cancelled())
 }
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Edge cases — chained merge, idempotency
+// ──────────────────────────────────────────────────────────────────────────
+
+
+test "merge chained 3 источника: cancel первого пробрасывается" {
+    // merged3 = (t1.merge(t2)).merge(t3) — любой из 3 cancel → merged3.
+    let t1 = CancelToken.new()
+    let t2 = CancelToken.new()
+    let t3 = CancelToken.new()
+    let m12 = t1.merge(t2)
+    let m123 = m12.merge(t3)
+    assert(!m123.is_cancelled())
+    t1.cancel("through chain")
+    assert(m123.is_cancelled())
+}
+
+
+test "merge chained: cancel ПОСЛЕДНЕГО (через chain)" {
+    let t1 = CancelToken.new()
+    let t2 = CancelToken.new()
+    let t3 = CancelToken.new()
+    let m12 = t1.merge(t2)
+    let m123 = m12.merge(t3)
+    t3.cancel("last source")
+    assert(m123.is_cancelled())
+}
+
+
+test "merge: cancel SAMOГО merged не пропагируется в источники" {
+    // Directional: merged cancelled когда любой источник cancelled,
+    // но cancel merged НЕ отменяет источники (parent → child каскад,
+    // не обратно).
+    let t1 = CancelToken.new()
+    let t2 = CancelToken.new()
+    let merged = t1.merge(t2)
+    merged.cancel("only merged")
+    assert(merged.is_cancelled())
+    assert(!t1.is_cancelled())
+    assert(!t2.is_cancelled())
+}
+
+
+test "merge с уже cancelled источником: merged сразу cancelled" {
+    // Если t1 cancelled ДО merge — merged должен сразу подобрать cancel.
+    let t1 = CancelToken.new()
+    t1.cancel("pre-merge")
+    let t2 = CancelToken.new()
+    let merged = t1.merge(t2)
+    // bind_cascade при cancel-already-fired бросает cancel в child немедленно
+    assert(merged.is_cancelled())
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Negative behavior
+// ──────────────────────────────────────────────────────────────────────────
+
+
+test "negative: merge не cancel'ит источники при создании" {
+    let t1 = CancelToken.new()
+    let t2 = CancelToken.new()
+    let _ = t1.merge(t2)
+    assert(!t1.is_cancelled())
+    assert(!t2.is_cancelled())
+}
+
+
+test "negative: merged.is_cancelled() = false до любого cancel" {
+    let t1 = CancelToken.new()
+    let t2 = CancelToken.new()
+    let merged = t1.merge(t2)
+    assert(!merged.is_cancelled())
+}

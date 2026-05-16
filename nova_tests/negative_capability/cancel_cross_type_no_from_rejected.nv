@@ -1,0 +1,34 @@
+// EXPECT_COMPILE_ERROR requires `ChildErr2.from(ParentErr2)` to be defined
+//
+// Plan 49 Ф.6 final negative test: cross-type cascade `child:CancelToken[A].cancelled_by(parent:CancelToken[B])`
+// БЕЗ определённого `A.from(B)` — должно отвергаться компилятором с
+// понятным сообщением.
+//
+// До Plan 49 cross-type cascade молча падал на UB (передавал raw
+// reason_ptr типа B в child:A → un-box B как A → memory corruption).
+// После: compile-time проверка `A: From[B]` через D73/D77 `From` protocol;
+// нет From[B] for A → compile-error с suggestion «add fn A.from(v B)».
+
+module negative_capability.cancel_cross_type_no_from_rejected
+
+
+type ParentErr2 {
+    code int
+}
+
+type ChildErr2 {
+    msg str
+}
+
+// NB: ChildErr2.from(ParentErr2) НАМЕРЕННО НЕ определена.
+// child.cancelled_by(parent) должен отвергаться компилятором.
+
+
+test "negative: cross-type cascade без From → compile error" {
+    let parent CancelToken[ParentErr2] = CancelToken.new()
+    let child  CancelToken[ChildErr2]  = CancelToken.new()
+    // Ниже строка должна получить compile error с pattern
+    // "requires `ChildErr2.from(ParentErr2)` to be defined".
+    child.cancelled_by(parent)
+    parent.cancel(ParentErr2 { code: 0 })
+}

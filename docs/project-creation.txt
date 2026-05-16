@@ -12826,6 +12826,7 @@ poly_recursion). Zero new regressions.
 - feat(49 Ф.6 final): cross-type cascade с From (mn-runtime cab835ddd51)
 - feat(49 P3): tok.merge composition (mn-runtime afb9b108e23)
 
+
 ### Acceptance-тесты Ф.18-Ф.24 (2026-05-16)
 
 Добавлены 3 новых теста через release nova:
@@ -12894,3 +12895,70 @@ ova-cli/target/release/nova.exe test.
 **Issue encountered:** Plan 33.6 production hardening (Ф.1.2) сделал #pure
 без contracts → compile error E2401. Убрал #pure annotations из теста
 (они не нужны для runtime — это doc/verify metadata).
+
+
+## Шаг NNN+7. Tests расширены — positive edges + negative (2026-05-16 EOD)
+
+После audit-fix sprint расширил test coverage Plan 48/49:
+
+### Расширенные / новые тесты (5 файлов, +24 sub-cases)
+
+| File | Before | After | Delta |
+|---|---|---|---|
+| cancel_reason_typed_test.nv | 7 | 13 | +6 edge/negative |
+| cancellation_test.nv | 5 | 8 | +3 race2 sanity + neg behavior |
+| cancel_merge_test.nv | 4 | 10 | +6 chained + neg |
+| cancel_cross_type_cascade_test.nv | 2 | 7 | +5 multi-child + neg |
+| cancel_cross_type_no_from_rejected.nv (NEW negative) | 0 | 1 | +1 EXPECT_COMPILE_ERROR |
+
+Plan 48/49 total sub-cases: 50 → **75 sub-cases**.
+
+### Категории добавлений
+
+**Edge / boundary positives:**
+- Большие int (1e9) и крупные отрицательные через nova_cancel_box_copy_raw.
+- Multiple cancel() — first-cancel-wins idempotency для всех T.
+- Chained merge (3+ источника через m12.merge(t3)) — cancel пробрасывается.
+- Pre-cancelled source merge → merged сразу cancelled.
+- Cross-type cascade multi-child (2 children от одного parent).
+- Cross-type pre-cancelled parent → child cancelled при bind через converter.
+
+**Negative behavior verifications (positive runtime tests что обратное НЕ происходит):**
+- reason() для нового tok НЕ возвращает Some.
+- is_cancelled() = false после .new() для всех T.
+- within не throw наружу на success (Plan 49 Ф.3 regression guard).
+- race2 не throw на normal completion.
+- cancel SAMOГО merged НЕ пропагируется в источники.
+- cancel SAMOГО child НЕ отменяет parent (cascade directional).
+- merge при создании НЕ cancel'ит источники.
+
+**True negative (EXPECT_COMPILE_ERROR):**
+- Cross-type cascade без From[B] for A → compile-error «requires
+  `ChildErr2.from(ParentErr2)` to be defined». Регрессия-гард: если
+  кто-то снимет compile-time check, тест поймает silent UB.
+
+### Pre-existing limits documented
+
+- pattern-bound `v` leak между tests: var_types['v'] не очищается
+  между fn bodies; перекрёстный inference (test 3 bool v, test 6
+  int v → bool-inference). Workaround: уникальные имена pattern-bind
+  (`vi_big`, `vi_w` и т.д.). Зафиксировано как `[M-pattern-var-leak]`.
+- Generic-nested call: `with_timeout` (= wrapper над `within`) →
+  type-inference не пробрасывается через nested generic call. Tentative
+  with_timeout positive tests опущены, sufficient indirect coverage
+  через within. Зафиксировано как `[M-generic-nested-call-inference]`.
+
+### Commits
+
+- test(49 Ф.6 P0): cancel_reason_typed расширен edge + negative
+- test(48 Ф.7, 49 Ф.7): cancellation_test расширен race2 + negative behavior
+- test(49 Ф.6): negative compile-error для cross-type cascade без From[B]
+- test(49 P3): cancel_merge_test расширен chained + negative behavior
+- test(49 Ф.6): cancel_cross_type_cascade_test расширен edge + negative
+
+### Регрессия
+
+Все 11 Plan 48/49 test files PASS (75 sub-cases). Zero regressions от
+test additions. Базовый 46 FAIL — pre-existing baseline (Plan 33.3 verify
+tests требуют Z3 backend, std/collections/hashmap.nv `#from_pairs`
+attribute issue от Plan 52, doc/fixtures sample files без `fn main`).
