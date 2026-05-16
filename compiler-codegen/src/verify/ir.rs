@@ -21,6 +21,10 @@ pub enum SortRef {
     Int,
     Bool,
     Str,
+    /// IEEE 754 single-precision (f32 → FP 8 24).
+    F32,
+    /// IEEE 754 double-precision (f64 → FP 11 53).
+    F64,
     /// Uninterpreted sort, named (например для record-типов).
     Named(String),
 }
@@ -33,6 +37,9 @@ pub enum SmtTerm {
     IntLit(i64),
     BoolLit(bool),
     StrLit(String),
+    /// IEEE 754 float literals (f64 хранит как bits для точности).
+    F32Lit(u32),  // f32::to_bits()
+    F64Lit(u64),  // f64::to_bits()
     /// Symbolic variable (параметр функции, `result`, `old(...)`).
     Var(String),
     /// Application: `op(args...)`.
@@ -174,6 +181,8 @@ impl SmtTerm {
             SmtTerm::IntLit(n) => n.to_string(),
             SmtTerm::BoolLit(b) => b.to_string(),
             SmtTerm::StrLit(s) => format!("\"{}\"", s),
+            SmtTerm::F32Lit(bits) => format!("{}f32", f32::from_bits(*bits)),
+            SmtTerm::F64Lit(bits) => format!("{}f64", f64::from_bits(*bits)),
             SmtTerm::Var(n) => n.clone(),
             SmtTerm::App(op, args) => {
                 let args_str: Vec<String> = args.iter().map(|a| a.pretty()).collect();

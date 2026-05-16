@@ -1,0 +1,49 @@
+// Plan 33.3 Ф.14: Dafny-parity test 7 — Integer overflow guards.
+// Аналог overflow-safe arithmetic из Dafny.
+
+module contracts.f14_integer_overflow
+
+// Safe add: проверяем что сумма не переполняется (в рамках диапазона).
+#verify
+fn safe_add(a int, b int, max_val int) -> int
+    requires a >= 0 && b >= 0 && a + b <= max_val
+    ensures result == a + b && result <= max_val
+{
+    a + b
+}
+
+// Safe multiply: произведение не переполняется.
+#verify
+fn safe_mul(a int, b int, max_val int) -> int
+    requires a >= 0 && b >= 0 && a * b <= max_val
+    ensures result == a * b && result <= max_val
+{
+    a * b
+}
+
+// Safe subtract: нет underflow.
+#verify
+fn safe_sub(a int, b int) -> int
+    requires a >= b && b >= 0
+    ensures result >= 0 && result == a - b
+{
+    a - b
+}
+
+// Saturating add: если бы a+b > max_val — возвращаем max_val.
+#verify
+fn sat_add(a int, b int, max_val int) -> int
+    requires a >= 0 && b >= 0 && max_val >= 0
+    ensures result <= max_val
+    ensures result >= 0
+{
+    if a + b > max_val { max_val } else { a + b }
+}
+
+test "f14 integer overflow" {
+    assert(safe_add(3, 4, 100) == 7)
+    assert(safe_mul(3, 4, 100) == 12)
+    assert(safe_sub(10, 3) == 7)
+    assert(sat_add(80, 50, 100) == 100)
+    assert(sat_add(30, 50, 100) == 80)
+}

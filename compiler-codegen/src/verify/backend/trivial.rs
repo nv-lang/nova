@@ -120,7 +120,8 @@ impl SmtBackend for TrivialBackend {
 /// - boolean idempotent: `x && x → x`, `x || x → x`, `x && true → x`.
 pub fn simplify(term: &SmtTerm) -> SmtTerm {
     match term {
-        SmtTerm::IntLit(_) | SmtTerm::BoolLit(_) | SmtTerm::StrLit(_) | SmtTerm::Var(_) => {
+        SmtTerm::IntLit(_) | SmtTerm::BoolLit(_) | SmtTerm::StrLit(_)
+        | SmtTerm::F32Lit(_) | SmtTerm::F64Lit(_) | SmtTerm::Var(_) => {
             term.clone()
         }
         SmtTerm::App(op, args) => {

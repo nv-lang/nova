@@ -1,0 +1,49 @@
+// Plan 33.3 Ф.14: Dafny-parity test 4 — Bank account transfer.
+// Аналог bank account example из Dafny tutorial.
+
+module contracts.f14_bank_account
+
+// Deposit: баланс увеличивается на amount.
+#verify
+fn deposit(balance int, amount int) -> int
+    requires amount > 0
+    ensures result == balance + amount
+    ensures result > balance
+{
+    balance + amount
+}
+
+// Withdraw: баланс уменьшается на amount (достаточно средств).
+#verify
+fn withdraw(balance int, amount int) -> int
+    requires amount > 0 && amount <= balance
+    ensures result == balance - amount
+    ensures result >= 0
+{
+    balance - amount
+}
+
+// Transfer: сумма балансов сохраняется.
+#verify
+fn transfer_total(from_balance int, to_balance int, amount int) -> int
+    requires amount > 0 && amount <= from_balance
+    ensures result == from_balance + to_balance
+{
+    (from_balance - amount) + (to_balance + amount)
+}
+
+// Invariant: баланс >= 0 после всех операций.
+#verify
+fn balance_nonneg(balance int, amount int) -> int
+    requires balance >= 0 && amount >= 0 && amount <= balance
+    ensures result >= 0
+{
+    balance - amount
+}
+
+test "f14 bank account" {
+    assert(deposit(100, 50) == 150)
+    assert(withdraw(100, 30) == 70)
+    assert(transfer_total(100, 50, 30) == 150)
+    assert(balance_nonneg(100, 100) == 0)
+}

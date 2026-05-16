@@ -126,6 +126,9 @@ pub enum ModuleAttrKind {
     /// module purpose прямо в peer-файле без CLI invoke.
     /// Consumer: Plan 45 (nova doc).
     Doc(String),
+    /// Plan 33.3 Ф.13: `#must_verify_module` — все функции модуля
+    /// автоматически получают MustVerify. Любой unproven контракт → compile error.
+    MustVerifyModule,
 }
 
 /// Plan 42.12 Ф.2 + Plan 42.14 Ф.1: cfg predicate.
@@ -293,6 +296,9 @@ pub struct FnDecl {
     /// Реальная purity выводится в Ф.2 через SCC по call-graph;
     /// если выведенная не соответствует объявленной — compile error.
     pub purity: Purity,
+    /// Plan 33.3 Ф.13: `#trusted` external fn — контракты становятся axioms
+    /// (без SMT-доказательства). Допустим только для `external fn`.
+    pub is_trusted: bool,
 }
 
 /// Plan 33.1 (D24): один контракт-clause функции.

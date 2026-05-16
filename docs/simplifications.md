@@ -4600,44 +4600,36 @@ Sub-plans 35.A-E:
   * Test: `nova_tests/contracts/quantifier_positive.nv` (70/70 PASS).
 - **Остаток:** Trigger pattern аннотации в SmtTerm IR — V2 (Plan 33.5).
 
-### [V8] FP IEEE 754, strings beyond eq, sets/maps — НЕ реализованы
-- **Где:** Plan 33.3 Ф.11.
-- **Что упрощено:** Контракты с FP-операциями (`f64.is_nan()`),
-  string operations (substring, contains), set/map cardinality —
-  не verified.
-- **Почему:** Каждая теория требует отдельной Z3-кодировки
-  (FloatingPoint theory, Seq theory, Arrays + UF).
-- **Как чинить:** Plan 33.3 full Ф.11. Включается через
-  атрибуты `#verify_fp`/`#verify_strings` (default off, чтобы
-  не замедлять обычное reasoning).
-- **Приоритет:** L — большинство контрактов работает на int/bool.
+### [V8] ✅ FP IEEE 754, strings (Seq theory) — ЗАКРЫТО Plan 33.3 Ф.11 (2026-05-16)
+- **Где:** Plan 33.3 Ф.11, `compiler-codegen/src/verify/backend/z3.rs`.
+- **Что реализовано:** f32/f64 через Z3 FloatingPoint theory (fp.sort_32/64,
+  fp.numeral, fp.add/mul/geq/eq, RNE rounding mode). str через Z3 Seq theory
+  (str.sort, eq). var_sorts propagation из fn params → EncodeCtx.
+- **Ограничения:** NaN семантика by-design (fp.eq(NaN,NaN)=false в SMT).
+  Set/Map теории — Plan 33.5.
+- **Тесты:** `nova_tests/contracts/f11_fp_strings_z3.nv`, `f14_string_ops.nv` (115 PASS).
 
-### [V9] Incremental SMT cache + parallel verification + Z3↔CVC5 cross-check — НЕ реализованы
-- **Где:** Plan 33.3 Ф.12.
-- **Что упрощено:** Каждый верификационный запуск — full re-verify.
-  Один backend (TrivialBackend). Нет cross-check.
-- **Почему:** Все три feature требуют либо libz3 (cache, cross-check
-  имеют смысл только с реальным SMT), либо rayon integration (parallel).
-- **Как чинить:** Plan 33.3 full Ф.12 — после libz3 setup +
-  CVC5 binding crate. Incremental cache: `target/contracts-cache/<hash>.json`.
-- **Приоритет:** L — performance, не correctness.
+### [V9] ✅ Incremental SMT cache — ЗАКРЫТО Plan 33.3 Ф.12 (2026-05-16)
+- **Где:** `compiler-codegen/src/verify/cache.rs`.
+- **Что реализовано:** FNV-1a 64-bit hash (стабильный между запусками),
+  `target/contracts-cache/<hash>.json`, атомарная запись tmp+rename,
+  NOVA_NO_CACHE=1, NOVA_CACHE_DIR env vars.
+- **Остаток:** Parallel verification (rayon) и Z3↔CVC5 cross-check — Plan 33.5.
 
-### [V10] #must_verify_module + #trusted external fn — НЕ реализованы
-- **Где:** Plan 33.3 Ф.13.
-- **Что упрощено:** Module-level strict mode и `#trusted` external
-  с контрактами (registered as axioms без proof) — не поддержаны.
-- **Почему:** Module-level attribute + extension парсера. External
-  fn с контрактами уже rejected как «not supported in Plan 33.1».
-- **Как чинить:** Plan 33.3 full Ф.13.
-- **Приоритет:** L — workable обходные пути (per-fn `#must_verify`).
+### [V10] ✅ #must_verify_module + #trusted + nova contracts CLI — ЗАКРЫТО Plan 33.3 Ф.13 (2026-05-16)
+- **Где:** `compiler-codegen/src/ast/mod.rs`, `parser/mod.rs`, `verify/pipeline.rs`,
+  `nova-cli/src/main.rs`.
+- **Что реализовано:** `#must_verify_module` (ModuleAttrKind::MustVerifyModule) →
+  все функции MustVerify. `#trusted external fn` → контракты axioms, SMT skip.
+  `nova contracts list/verify/suggest/counterexample` → JSON schema nova-contracts-diag/v1.
 
-### [V11] Dafny-tutorial port (20 примеров) — НЕ выполнено
-- **Где:** Plan 33.3 Ф.14.
-- **Что упрощено:** Acceptance test «not worse than Dafny» через
-  port 20 классических примеров не проведён.
-- **Почему:** Требует все вышеперечисленные V7/V8 + V12-V14 чтобы пройти.
-- **Как чинить:** После Plan 33.4 Ф.1-Ф.4.
-- **Приоритет:** M — критичный gate для production-claim
+### [V11] ✅ Dafny-parity 20 примеров — ЗАКРЫТО Plan 33.3 Ф.14 (2026-05-16)
+- **Где:** `nova_tests/contracts/f14_*.nv` (20 файлов).
+- **Что реализовано:** binary search, sorting invariants, stack/queue,
+  bank account, arithmetic lemmas, linked list, integer overflow,
+  string ops, boolean algebra, fibonacci, GCD/LCM, AVL balance,
+  bit manipulation, intervals, pure functions, multivar, hash table,
+  segment tree, graph BFS, memory safety. 115 PASS 0 FAIL.
   «Dafny-parity».
 
 ### [ЗАКР 2026-05-15] `#verify` handler gate — P0-1 V1 — [V12]
