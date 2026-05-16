@@ -963,19 +963,29 @@ protocol FromPairs[K, V] {
 `impl FromPairs[K,V] for MyMap`, `let m MyMap[str,int] = ["a": 1]`
 работает.
 
-### Ф.24 — Spread/merge `[...defaults, k:v]`
+### Ф.24 — Spread/merge `[...defaults, k:v]` → Plan 52.1 (deferred)
 
 **Проблема:** Common pattern (config defaults + overrides). TS
 поддерживает (`{...d, x: 1}`), Rust `extend()`, Go вручную. Plan §332
 flagged deferred.
 
-**Решение:** Расширить parser `parse_map_lit_rest`:
-- `...expr` элемент = spread (тип должен быть `HashMap[K,V]` или
-  `[(K,V)]`-iterable)
-- Desugar: `[...m, k: v]` → `let _t = m.clone(); _t.@insert(k, v); _t`
+**Изначальное решение:** Расширить parser + добавить `HashMap.@clone()` /
+`@merge_from()` в stdlib.
 
-**Acceptance:** test `let m = [...base, "extra": 99]` — base
-unchanged, m содержит base+extra.
+**Status (2026-05-16): DEFERRED → Plan 52.1.** Попытка реализации
+вскрыла codegen quirk: pattern-match `Occupied { key, value }` в
+позиции expression-body of while-loop падает с «anonymous record
+literal without spread not supported in codegen». Это пред-existing
+ограничение codegen для record-pattern destructuring в expression
+position (не в let). Sequential while-loop с pattern-match работает в
+top-level fn-body (см. @insert, @get) но не в helper'е добавленном в
+stdlib.
+
+**Workaround для bootstrap:** spread доступен через `HashMap.from(arr)`
+для построения с нуля. Immutable-update patterns пока требуют explicit
+loop. После закрытия codegen-ограничения (отдельный план — связан с
+Plan 48 mono pass) — реализация Ф.24 тривиальна (parser + desugar
+~50 LOC поверх already-working `merge_from`).
 
 ### Ф.25 — const map-literal (perfect-hash) → Plan 52.1
 

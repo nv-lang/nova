@@ -254,6 +254,15 @@ export fn HashMap[K, V] mut @clear() {
 }
 
 
+// Plan 52 Ф.24 deferred → Plan 52.1: HashMap.@clone() / @merge_from
+// для spread-pattern `[...defaults, k: v]`. Реализация требует
+// итерации по бакетам с pattern-match — упирается в codegen quirk
+// (anonymous record literal without spread support в pattern-position
+// в while-body). Workaround: использовать публичный API на user-side
+// с явным циклом через keys/values (когда они будут добавлены), либо
+// HashMap.from(array_of_pairs) для построения с нуля.
+
+
 // HashMap.@get_or_insert(key, default) — get с lazy default.
 //
 // Если ключ есть — возвращает Some/Ok. Иначе вставляет default()
