@@ -12291,6 +12291,18 @@ negative (есть warning или ошибка):
 - Регрессия: 140 PASS / 36 SKIP (+1).
 - Коммит: `b8c0cce54a7`.
 
+### Ф.3.1 — counterexample minimisation (sort + cap + Skolem filter)
+
+- `format_counterexample`:
+  - Filter: вырезаны `_skolem_*` (internal Z3 names, user не понимает).
+  - Sort: parameters (no `_` prefix) first, internal vars last.
+  - Cap: первые 10 bindings; остальные → `... (N more bindings)`.
+- До этого все bindings выводились в random hash order, без cap,
+  включая Skolem.
+- Test: counterexample_minimal_positive (Z3-gated, 6 params).
+- Регрессия: 140 PASS / 37 SKIP (+1).
+- Коммит: `06e7423867a`.
+
 === Plan 45 �.25 � nova tests (positive + negative) ===
 
 ����� �������� �.25 (4 ����) �������� nova-tests .nv ��� �������� �����
