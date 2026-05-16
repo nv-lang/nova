@@ -48,6 +48,10 @@
 | Ф.34.1 HTTP MCP transport | ✅ done | `nova doc-mcp --port N` HTTP server через `std::net::TcpListener` (no tokio dep). POST /mcp routes к JSON-RPC handler. 4 integration tests с real TCP. ~120 LOC. |
 | Ф.34.2 Incremental cache | ✅ done | `doc/watch_cache.rs` — mtime-based `BTreeMap<PathBuf, (SystemTime, Arc<Module>)>`. `cmd_doc_watch` использует cache, logs Hit/Miss/Stale outcomes. 8 unit tests. Closes Ф.30.2 deferred. |
 | Ф.34.3 Plan 45.B partial: std/time/duration doc-pass | ✅ done | 14 doc-comments на `std/time/duration.nv`: Duration type, ZERO/SECOND/MINUTE/HOUR constants, from_* constructors. Coverage 16% (87 items total — full pass for module = Plan 45.B remaining scope). |
+| Ф.35.1 std/time/duration finish | ✅ done | 87/87 items (100%), 19 with examples. Все as_*/is_*/arithmetic ops + DurationParts + Timestamp + Time effect + int/f64 extensions + measure/deadline_in. `#stable(since = "0.1")` на всех export items. Exceeded ≥80% target. |
+| Ф.35.2 std/collections/vec doc-pass | ✅ done | 7/7 items (100%), 7 with examples. map/filter/fold/any/all/first/last на `[]T` с method-level generics. |
+| Ф.35.3 std/encoding/json doc-pass | ✅ done | 23/23 items (100%), 4 with examples. JsonValue (sum-type) + ParseJsonError + 6 constructors + 6 is_*/5 as_* + Json.parse + From[str]/Into[str] + pretty. |
+| Ф.35.4 std/path/path doc-pass | ✅ done | 6/6 items (100%), 6 with examples. Path.join/parent/basename/extension/is_absolute/normalize. |
 
 ## Ф.21 — Production hardening (2026-05-15, post-MVP audit)
 

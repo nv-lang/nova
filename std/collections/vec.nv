@@ -10,18 +10,38 @@
 // (`fn []T @method`). Никакой Vec-обёртки — `[]T` это и есть «Vec
 // в Nova-семантике».
 
+//! Plan 45 Ф.35.2 — функциональные комбинаторы для `[]T` (Nova-аналог Vec).
+//!
+//! `[]T` — встроенный динамический массив (D27 syntax, D32 representation
+//! `(ptr, len, cap)`). Базовый API (`len`, `cap`, `push`, `pop`,
+//! `with_capacity`, `iter`, `[i]`) — встроенный. Этот модуль добавляет
+//! функциональные комбинаторы через D35 (`fn []T @method`) и D42
+//! method-level generics.
+//!
+//! # Examples
+//!
+//! ```nova
+//! let nums []int = [1, 2, 3, 4, 5]
+//! let squared = nums.map(|x| x * x)
+//! let evens = nums.filter(|x| x % 2 == 0)
+//! let total = nums.fold(0, |acc, x| acc + x)
+//! assert(total == 15)
+//! ```
+
 module collections.vec
 
 
-// ──────────────────────────────────────────────────────────────────────────
-// Функциональные комбинаторы
-// ──────────────────────────────────────────────────────────────────────────
-
-// Метод-уровневые generics ([D42 Модель B](../spec/decisions/02-types.md#d42))
-// дают полиморфизм без привязки `[T]` к каждому методу.
-
-// map — новый массив с применённой функцией.
-// `[U]` на методе — один []T работает с любым U.
+/// Apply `f` к каждому элементу — новый массив `[]U`.
+///
+/// Method-level generic `[U]` (D42 Модель B) позволяет одному `[]T`-методу
+/// работать с любым target type без привязки к receiver.
+///
+/// # Examples
+/// ```nova
+/// let v []int = [1, 2, 3]
+/// assert(v.map(|x| x * 2) == [2, 4, 6])
+/// ```
+#stable(since = "0.1")
 export fn []T @map[U](f fn(T) -> U) -> []U {
     let mut out []U = []U.with_capacity(@len)
     for x in @ {                          // implicit iter (D58)
@@ -30,7 +50,16 @@ export fn []T @map[U](f fn(T) -> U) -> []U {
     out
 }
 
-// filter — оставить только удовлетворяющие предикату.
+/// Keep только элементы где `pred(x) == true`.
+///
+/// Preserves order. Returns new array — original не mutated.
+///
+/// # Examples
+/// ```nova
+/// let v []int = [1, 2, 3, 4, 5]
+/// assert(v.filter(|x| x % 2 == 0) == [2, 4])
+/// ```
+#stable(since = "0.1")
 export fn []T @filter(pred fn(T) -> bool) -> []T {
     let mut out []T = []
     for x in @ {
@@ -39,7 +68,17 @@ export fn []T @filter(pred fn(T) -> bool) -> []T {
     out
 }
 
-// fold — свёртка слева. `[Acc]` на методе — независим от T.
+/// Left fold (reduce): аккумулятор `init`, обновляется `f(acc, x)` для каждого `x`.
+///
+/// Method-level generic `[Acc]` независим от `T` — позволяет fold'ить в разные
+/// типы (sum в int, concatenation в str, etc.).
+///
+/// # Examples
+/// ```nova
+/// let v []int = [1, 2, 3, 4]
+/// assert(v.fold(0, |acc, x| acc + x) == 10)
+/// ```
+#stable(since = "0.1")
 export fn []T @fold[Acc](init Acc, f fn(Acc, T) -> Acc) -> Acc {
     let mut acc = init
     for x in @ {
@@ -48,7 +87,17 @@ export fn []T @fold[Acc](init Acc, f fn(Acc, T) -> Acc) -> Acc {
     acc
 }
 
-// any — есть ли элемент, удовлетворяющий предикату.
+/// True если хоть один элемент удовлетворяет `pred`. Short-circuits на первом match.
+///
+/// На пустом массиве — `false` (no element witnesses).
+///
+/// # Examples
+/// ```nova
+/// let v []int = [1, 2, 3]
+/// assert(v.any(|x| x > 2))
+/// assert(!v.any(|x| x > 10))
+/// ```
+#stable(since = "0.1")
 export fn []T @any(pred fn(T) -> bool) -> bool {
     for x in @ {
         if pred(x) { return true }
@@ -56,7 +105,16 @@ export fn []T @any(pred fn(T) -> bool) -> bool {
     false
 }
 
-// all — все ли элементы удовлетворяют.
+/// True если все элементы удовлетворяют `pred`. Short-circuits на первом mismatch.
+///
+/// Vacuous truth: пустой массив → `true`.
+///
+/// # Examples
+/// ```nova
+/// let v []int = [2, 4, 6]
+/// assert(v.all(|x| x % 2 == 0))
+/// ```
+#stable(since = "0.1")
 export fn []T @all(pred fn(T) -> bool) -> bool {
     for x in @ {
         if !pred(x) { return false }
@@ -64,12 +122,25 @@ export fn []T @all(pred fn(T) -> bool) -> bool {
     true
 }
 
-// first/last — head/tail-доступ через Option.
-// D55: Some/None оставляем явно — match-arms с unit-альтернативой
-// (Q-style-coercion).
+/// Первый элемент через `Option[T]`. `None` если пусто.
+///
+/// # Examples
+/// ```nova
+/// let v []int = [10, 20, 30]
+/// assert(v.first() == Some(10))
+/// ```
+#stable(since = "0.1")
 export fn []T @first() -> Option[T] =>
     if @len == 0 { None } else { Some(@get(0).unwrap()) }
 
+/// Последний элемент через `Option[T]`. `None` если пусто.
+///
+/// # Examples
+/// ```nova
+/// let v []int = [10, 20, 30]
+/// assert(v.last() == Some(30))
+/// ```
+#stable(since = "0.1")
 export fn []T @last() -> Option[T] =>
     if @len == 0 { None } else { Some(@get(@len - 1).unwrap()) }
 

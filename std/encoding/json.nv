@@ -42,16 +42,36 @@
 //   - JsonValue.from(s str)                        D73 From[str] (alias parse)
 //   - v.@into() -> str                             D73 Into[str] (сериализация)
 
+//! Plan 45 Ф.35.3 — JSON parser/serializer по RFC 8259.
+//!
+//! Independent implementation — не порт. Покрывает все JSON-типы (null,
+//! bool, number, string, array, object), escape-sequences (включая
+//! surrogate pairs для emoji), любые number-форматы (integer/fraction/
+//! exponent). Не поддерживает (намеренно): comments, trailing commas,
+//! single quotes, NaN/Infinity, unquoted keys — это JSON5/JSONC, отдельные
+//! форматы.
+//!
+//! Round-trip property: `JsonValue.from(v.into()) == v` для любого `v`.
+//!
+//! # Examples
+//!
+//! ```nova
+//! let v = Json.parse("{\"name\": \"alice\", \"age\": 30}")
+//! match v.as_object() {
+//!     Some(m) => assert(m.get("name") == Some(Str("alice")))
+//!     None    => assert(false)
+//! }
+//! ```
+
 module encoding.json
 
 
-// ──────────────────────────────────────────────────────────────────────────
-// Тип
-// ──────────────────────────────────────────────────────────────────────────
-
-// JsonValue — рекурсивный sum-type. Поддерживает D55 coercion: литерал
-// `42` в позиции `JsonValue` подгонится в `Num(42.0)` (если кодек умный),
-// иначе программист пишет конструктор явно.
+/// JsonValue — рекурсивный sum-type для произвольного JSON-документа.
+///
+/// Поддерживает D55 record-coercion: literal `{ "k": v }` в позиции
+/// `JsonValue` подгоняется в `Object`. Поддерживает structural equality
+/// (тесты round-trip полагаются на `==`).
+#stable(since = "0.1")
 export type JsonValue
     | Null
     | Bool(bool)
@@ -61,12 +81,11 @@ export type JsonValue
     | Object(HashMap[str, JsonValue])
 
 
-// ──────────────────────────────────────────────────────────────────────────
-// Ошибки
-// ──────────────────────────────────────────────────────────────────────────
-
-// `ParseJsonError` — namespace ошибок парсера. Префикс типа по конвенции
-// D30 («Parse<TypeName>Error»), позиция (line/column) для отладки.
+/// `ParseJsonError` — категории ошибок JSON-парсера с позицией для диагностики.
+///
+/// Конвенция D30 (`Parse<TypeName>Error`). Все варианты содержат `line` и
+/// `col` (1-based) — для IDE squiggles или CLI error messages.
+#stable(since = "0.1")
 export type ParseJsonError
     | UnexpectedChar { line int, col int, found char }
     | UnexpectedEof { line int, col int }
@@ -77,17 +96,32 @@ export type ParseJsonError
     | TrailingContent { line int, col int }
 
 
-// ──────────────────────────────────────────────────────────────────────────
-// Static-конструкторы доменные
-// ──────────────────────────────────────────────────────────────────────────
-
-// Удобные shortcut'ы — краткая форма для частых случаев. Можно писать
-// явный конструктор `JsonValue.Null` / `JsonValue.Num(42.0)` тоже.
+/// Construct JSON null. Shortcut для `JsonValue.Null`.
+#stable(since = "0.1")
 export fn JsonValue.null() -> Self => Null
+
+/// Construct JSON boolean. Shortcut для `JsonValue.Bool(b)`.
+#stable(since = "0.1")
 export fn JsonValue.bool(b bool) -> Self => Bool(b)
+
+/// Construct JSON number (any f64). Использует full f64 range — для
+/// целых > 2^53 точность теряется.
+#stable(since = "0.1")
 export fn JsonValue.num(n f64) -> Self => Num(n)
+
+/// Construct JSON string. Encoding — UTF-8.
+#stable(since = "0.1")
 export fn JsonValue.str(s str) -> Self => Str(s)
+
+/// Construct JSON array из `[]JsonValue`.
+#stable(since = "0.1")
 export fn JsonValue.array(items []JsonValue) -> Self => Array(items)
+
+/// Construct JSON object из `HashMap[str, JsonValue]`.
+///
+/// Order keys не гарантируется (HashMap не upholds insertion order). Для
+/// canonical output используйте sorted iteration.
+#stable(since = "0.1")
 export fn JsonValue.object(fields HashMap[str, JsonValue]) -> Self => Object(fields)
 
 
@@ -95,26 +129,58 @@ export fn JsonValue.object(fields HashMap[str, JsonValue]) -> Self => Object(fie
 // Геттеры / предикаты
 // ──────────────────────────────────────────────────────────────────────────
 
+/// True если value — JSON null.
+#stable(since = "0.1")
 export fn JsonValue @is_null()   -> bool => match @ { Null => true, _ => false }
+
+/// True если value — JSON boolean.
+#stable(since = "0.1")
 export fn JsonValue @is_bool()   -> bool => match @ { Bool(_) => true, _ => false }
+
+/// True если value — JSON number.
+#stable(since = "0.1")
 export fn JsonValue @is_num()    -> bool => match @ { Num(_) => true, _ => false }
+
+/// True если value — JSON string.
+#stable(since = "0.1")
 export fn JsonValue @is_str()    -> bool => match @ { Str(_) => true, _ => false }
+
+/// True если value — JSON array.
+#stable(since = "0.1")
 export fn JsonValue @is_array()  -> bool => match @ { Array(_) => true, _ => false }
+
+/// True если value — JSON object.
+#stable(since = "0.1")
 export fn JsonValue @is_object() -> bool => match @ { Object(_) => true, _ => false }
 
-// Type-safe extractors через Option (не throw, не panic).
+/// Extract bool. `None` если тип не Bool — no panic, no throw.
+///
+/// # Examples
+/// ```nova
+/// assert(Json.parse("true").as_bool() == Some(true))
+/// assert(Json.parse("42").as_bool() == None)
+/// ```
+#stable(since = "0.1")
 export fn JsonValue @as_bool() -> Option[bool] =>
     match @ { Bool(b) => Some(b), _ => None }
 
+/// Extract `f64`. `None` если тип не Num.
+#stable(since = "0.1")
 export fn JsonValue @as_num() -> Option[f64] =>
     match @ { Num(n) => Some(n), _ => None }
 
+/// Extract `str`. `None` если тип не Str.
+#stable(since = "0.1")
 export fn JsonValue @as_str() -> Option[str] =>
     match @ { Str(s) => Some(s), _ => None }
 
+/// Extract array slice. `None` если тип не Array.
+#stable(since = "0.1")
 export fn JsonValue @as_array() -> Option[[]JsonValue] =>
     match @ { Array(xs) => Some(xs), _ => None }
 
+/// Extract object map. `None` если тип не Object.
+#stable(since = "0.1")
 export fn JsonValue @as_object() -> Option[HashMap[str, JsonValue]] =>
     match @ { Object(m) => Some(m), _ => None }
 
@@ -534,11 +600,19 @@ fn Parser mut @parse_member(fields HashMap[str, JsonValue]) Fail[ParseJsonError]
 // Public API: парсинг
 // ──────────────────────────────────────────────────────────────────────────
 
-// `Json.parse(s)` — основная точка входа. Throws Fail[ParseJsonError]
-// на любой ошибке (lexical, syntactic).
-//
-// По D67 `?` после parse запрещён — throw сам пробрасывается через
-// Fail[ParseJsonError].
+/// Parse JSON-документ из строки. Главная точка входа.
+///
+/// Throws `Fail[ParseJsonError]` на любой ошибке (lexical/syntactic);
+/// caller handles через `with Fail[...] = ...` block или пропагирует
+/// дальше. D67 запрещает `?` поверх effect-throws — `throw` сам
+/// пробрасывается компилятором.
+///
+/// # Examples
+/// ```nova
+/// let v = Json.parse("[1, 2, 3]")
+/// assert(v.is_array())
+/// ```
+#stable(since = "0.1")
 export fn Json.parse(s str) Fail[ParseJsonError] -> JsonValue {
     let mut p = Parser.new(s)
     let v = p.parse_value()
@@ -550,9 +624,11 @@ export fn Json.parse(s str) Fail[ParseJsonError] -> JsonValue {
     }
 }
 
-// `JsonValue.from(s str)` — D73 From[str]. Алиас Json.parse, чтобы
-// стандартная from/into-форма тоже работала: `JsonValue.from(s)` /
-// `let v JsonValue = s.into()`.
+/// D73 `From[str]` — алиас [`Json.parse`].
+///
+/// Позволяет `let v JsonValue = s.into()` через автоматический Into.
+/// Поведение идентично `Json.parse`.
+#stable(since = "0.1")
 export fn JsonValue.from(s str) Fail[ParseJsonError] -> Self =>
     Json.parse(s)
 
@@ -561,13 +637,18 @@ export fn JsonValue.from(s str) Fail[ParseJsonError] -> Self =>
 // Сериализация: @into() -> str
 // ──────────────────────────────────────────────────────────────────────────
 
-// `JsonValue @into() -> str` — D73 Into[str]. Компилятор синтезирует
-// парный `str.from(v JsonValue)`, поэтому обе формы вызова работают:
-//   let s str = v.into()
-//   let s = str.from(v)
-//
-// Compact-формат (без отступов). Pretty-print — отдельная функция
-// `pretty(v)` (см. ниже).
+/// D73 `Into[str]` — сериализация в compact JSON (single line, без отступов).
+///
+/// Компилятор синтезирует парный `str.from(v)`, поэтому работают обе формы:
+/// `v.into()` и `str.from(v)`. Для multi-line форматирования используй
+/// [`pretty`].
+///
+/// # Examples
+/// ```nova
+/// let v = Array([Num(1.0), Str("a")])
+/// assert(v.into() == "[1,\"a\"]")
+/// ```
+#stable(since = "0.1")
 export fn JsonValue @into() -> str => match @ {
     Null      => "null"
     Bool(b)   => if b { "true" } else { "false" }
@@ -651,9 +732,19 @@ fn format_object(m HashMap[str, JsonValue]) -> str {
 // Pretty-print с отступами
 // ──────────────────────────────────────────────────────────────────────────
 
-// `pretty(v)` — multi-line форматирование для логов / debug. Не покрывает
-// D73 (не часть Into[str]) — отдельная функция, потому что compact —
-// каноническое представление для round-trip.
+/// Pretty-print с 2-space отступами для логов и debug.
+///
+/// Не часть D73 `Into[str]` — caller'у нужна явная функция. Compact-форма
+/// (`@into`) считается canonical для round-trip; pretty — для людей.
+///
+/// # Examples
+/// ```nova
+/// let mut m = HashMap[str, JsonValue].new()
+/// m.insert("name", Str("alice"))
+/// let s = pretty(Object(m))
+/// assert(s.contains("\n"))
+/// ```
+#stable(since = "0.1")
 export fn pretty(v JsonValue) -> str => pretty_at(v, 0)
 
 fn pretty_at(v JsonValue, depth int) -> str => match v {

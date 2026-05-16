@@ -13351,8 +13351,21 @@ impl CEmitter {
 
     fn emit_array_lit(&mut self, elems: &[ArrayElem]) -> Result<String, String> {
         // Infer element type from first item (best-effort default: nova_int).
+        // For Spread-only arrays (например, variadic-fn вызван с `...arr`)
+        // — derive elem type из spread'нутого NovaArray_<T>*.
         let first_item_ty = elems.iter().find_map(|e| {
             if let ArrayElem::Item(expr) = e { Some(self.infer_expr_c_type(expr)) } else { None }
+        }).or_else(|| {
+            // No direct Item — look for first Spread'а: его выражение
+            // должно иметь тип `NovaArray_<T>*`. Element type = `<T>`.
+            elems.iter().find_map(|e| {
+                if let ArrayElem::Spread(expr) = e {
+                    let t = self.infer_expr_c_type(expr);
+                    // "NovaArray_nova_str*" → "nova_str"
+                    let stripped = t.trim_start_matches("NovaArray_").trim_end_matches('*');
+                    if stripped != t { Some(stripped.to_string()) } else { None }
+                } else { None }
+            })
         }).unwrap_or_else(|| "nova_int".into());
         // Plan 55 Ф.1: closure-literal elements → void_p storage so they survive
         // as raw NovaClos_X* pointers (not int-cast'd) and can be dispatched
