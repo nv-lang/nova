@@ -321,10 +321,21 @@ impl VerificationPipeline {
         // Для каждого apply-statement в блоке: найти лемму в модуле,
         // замените lemma.params → args в каждом ensures, assert в backend.
         // Это даёт caller доступ к lemma.ensures как аксиоме SMT.
+        let mut apply_warnings: Vec<(Span, VerifyResult)> = Vec::new();
         for (lemma_name, args, apply_span) in collect_apply_stmts_in_body(&fd.body) {
             if let Some(lemma_ensures) = find_lemma_ensures(module, &lemma_name) {
                 for (param_names, ensures_expr) in &lemma_ensures {
-                    if param_names.len() != args.len() { continue; }
+                    if param_names.len() != args.len() {
+                        // Ф.11.3 (Plan 33.6): arity mismatch — suggest correct call
+                        // (UX hint via W2402).
+                        let _ = (ensures_expr,);
+                        let suggested = format!("apply {}({})", lemma_name, param_names.join(", "));
+                        apply_warnings.push((apply_span, VerifyResult::Warning(format!(
+                            "`apply {}` имеет {} args, ожидалось {} [W2402]:\n  \
+                             hint: `{}`",
+                            lemma_name, args.len(), param_names.len(), suggested))));
+                        continue;
+                    }
                     // Кодируем args в SMT.
                     let encoded_args: Vec<Option<SmtTerm>> = args.iter()
                         .map(|a| encode::encode_expr_with_ctx(a, &ctx).ok())
@@ -370,6 +381,8 @@ impl VerificationPipeline {
         // Ф.1.2: включаем failures от requires encoding.
         let mut results = calc_step_results; // Ф.4.2: calc шаги добавляются первыми
         results.extend(req_failures);
+        // Ф.11.3 (Plan 33.6): apply arity-mismatch warnings.
+        results.extend(apply_warnings);
         for c in &fd.contracts {
             if !matches!(c.kind, ContractKind::Ensures) { continue; }
             if requires_failed {

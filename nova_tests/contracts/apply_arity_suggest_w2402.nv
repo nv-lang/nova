@@ -1,0 +1,16 @@
+// Ф.11.3 (Plan 33.6): apply lemma arity mismatch → W2402 с suggest.
+// EXPECT_COMPILE_WARNING W2402
+
+module contracts.apply_arity_suggest_w2402
+
+lemma my_lemma(x int, y int)
+    ensures result == x + y
+=> x + y
+
+#verify
+fn use_lemma() -> int
+    ensures result == 5
+{
+    apply my_lemma(1)
+    5
+}
