@@ -13857,3 +13857,106 @@ Acceptance:
 
 Worktree commit план: один коммит "feat(57): MVP Plan 57 — production-
 grade benchmark infrastructure" после полного regression check.
+
+
+================================================================================
+Session: Plan 57.A + 57.B — Production hardening + Advanced (2026-05-17)
+================================================================================
+
+Worktree: nova-lang-p57 (branch plan-57)
+Дополнено к MVP closure (предыдущая session, commit 75192f361f3).
+
+Plan 57.A — Production hardening (5 sub-tasks, 5 commits):
+
+  57.A.1 (commit 4bc471e3765) — nova bench history-add: orphan branch
+  automation для historical bench results storage. Subprocess git
+  wrapper (no libgit2). Filename: <unix_ts>-<git_sha>.json. Supports
+  --push --dry-run --branch. history-list subcommand для inspection.
+
+  57.A.2 (commit b3fd1d8dd85) — nova bench dashboard: static HTML с
+  echarts CDN. Reads orphan branch entries → generates index.html
+  (overview + log-scale time-series) + bench-<safe>.html per-bench
+  + data.json. ~430 LOC HTML template literals.
+
+  57.A.3 (commit a0febf67e86) — nova bench calibrate + gate --noise:
+  auto noise-floor calibration. N>=2 runs → pairwise deltas → per-bench
+  90th percentile noise floor + suite-wide median. Saved в
+  .nova-bench-noise.json (machine fingerprint). Gate inflates threshold
+  до max(config, noise_floor). Nova-unique vs Criterion/benchstat.
+
+  57.A.4 (commit 378c1312556) — thermal/load/nice/affinity detection:
+  4 additional ReproMeta fields (cpu_temp_c, background_cpu_load_pct,
+  process_nice, cpu_affinity_count) с Linux best-effort detection
+  (/sys/class/thermal, /proc/stat 2-sample, /proc/self/{stat,status}).
+  env_warnings() расширен — critical/warn для temp>=90/80°C,
+  load>30/10%, info для nice/affinity.
+
+  57.A.5 (commit 2ca4c65138e) — --profile cpu/heap/gc:
+  - cpu: wraps samply external tool ("cargo install samply").
+  - heap/gc: stubs с env hooks (NOVA_BENCH_HEAP_SAMPLE_MS=10,
+    NOVA_BENCH_GC_TRACE=1) — runtime integration в Phase C.
+  Profile run separate от measurement (no instrumentation noise).
+  compile_for_profile() — отдельный exe build chain.
+
+Plan 57.B — Advanced (5 sub-tasks):
+
+  57.B.1 — extended corpus: 7 more files (03_generic_heavy ~80 LOC,
+  04_effects_handlers ~100 LOC с 5 effects + 8 handlers,
+  05_channels_select ~50 LOC, 06_contracts ~60 LOC,
+  07_collection ~120 LOC, 08_folder_module/ 4 peers,
+  09_deep_imports ~70 LOC). + CHECKSUMS sha256 lockfile для
+  drift detection. Per-pass PerfTimer hooks в compiler — Phase C TBD.
+
+  57.B.2 (commit 0102df4d996) — Criterion-compatible JSON output:
+  --out-criterion <dir> emits <bench>/new/{estimates,sample,benchmark}.json
+  в Criterion 0.5 schema. ~190 LOC pure serde_json.
+
+  57.B.3 (commit 9f9a3abda67) — parameterized sweeps DSL:
+  `bench "name" (n in [10, 100, 1000]) { ... }` → N entries
+  с suffix `/p=<value>`. AST: BenchDecl.params: Option<BenchParams>.
+  Parser: optional `(IDENT in [INT, ...])` после bench name.
+  Expansion pass `expand_bench_sweeps()` flat'ит ДО type-check
+  (чтобы name-resolution видел param как regular let).
+
+  57.B.4 (commit 80bb1591c37) — CPU instructions counter:
+  Linux perf_event_open via libc FFI (no external deps).
+  bench::cpu_instr::InstrCounter с reset/start/stop/read.
+  `nova bench cpu-instr-check` diagnostic с graceful Win/Mac note.
+  Runtime per-sample integration — Phase C TBD.
+
+  57.B.5 (commit f790fd1234a) — group/case sub-benchmarks DSL:
+  `bench "x" { group "g" { case "c" { measure { ... } } } }` →
+  composite names `x/g/c`. AST: BenchDecl.groups: Vec<BenchGroup>;
+  BenchGroup { name, cases }; BenchCase { name, setup, measure_body,
+  teardown }. Parser: lookahead на `group "..." {` → group-mode.
+  Expansion pass + emit_main_wrapper handles все 3 form (plain/
+  params/groups) через if-else chain.
+
+Verification:
+- 43/43 unit tests pass (32 MVP + 11 новых через 57.A/B).
+- 562/562 nova test PASS (zero regressions vs MVP baseline).
+- E2E smoke verified:
+  - sweep.nv: `bench "param sum" (n in [10, 100, 1000])` → 3 entries
+    с linear 10× scaling iter time.
+  - groups.nv: `bench "math" { group "int" { case "add 1k" {...} } }` →
+    4 entries (int/add, int/mul, f64/add, f64/mul).
+  - history-add → dashboard → 4 files (index + 2 per-bench + data.json).
+  - calibrate → noise.json → gate использует.
+  - cpu-instr-check → graceful "not available" на Windows.
+
+Plan 57 — completely closed across MVP + 57.A + 57.B.
+Backlog (Phase C): runtime CPU instr per-sample, heap sampler thread
+в bench.h, gc.last_pause_ns API extension, per-pass PerfTimer hooks.
+
+11 commits в plan-57 branch:
+- 75192f361f3 feat(57): MVP
+- e6f29785a85 docs(57): plan doc rewrite
+- 4bc471e3765 feat(57.A.1) history-add
+- b3fd1d8dd85 feat(57.A.2) dashboard
+- a0febf67e86 feat(57.A.3) calibrate + gate --noise
+- 378c1312556 feat(57.A.4) thermal/load detection
+- 2ca4c65138e feat(57.A.5) profile samply
+- 0102df4d996 feat(57.B.2) Criterion JSON  (57.B.1 corpus в этом же)
+- 9f9a3abda67 feat(57.B.3) parameterized sweeps
+- 80bb1591c37 feat(57.B.4) CPU instructions
+- f790fd1234a feat(57.B.5) group/case sub-benchmarks
