@@ -254,20 +254,22 @@ export fn HashMap[K, V] mut @clear() {
 }
 
 
-// Plan 52.2 Ф.1: HashMap.@clone() / @merge_from — partially implemented.
+// Plan 52.3 Ф.2/Ф.3: HashMap.@clone() / @merge_from — DEFERRED.
 //
-// Empty {} parser fix (52.2 Ф.1) разблокировал match-arm-block в
-// helper-methods, НО второй слой проблемы остался: generic helper
-// HashMap[K, V] @clone() при mono pass для конкретных K, V даёт
-// codegen-fail (`if condition must be bool, got nova_int` —
-// span ложится в недоступную область generated code).
+// Investigation: попытка добавить generic helper-method с pattern-match
+// триггерит mono pass для **всего** HashMap chain (@maybe_grow, etc).
+// В @maybe_grow выражение `if used < threshold { return }` правильно
+// типизировано как bool, но check_bool_condition в codegen для mono'd
+// контекста получает cond_ty=nova_int (а не nova_bool), и
+// current_fn_return_ty = "nova_int" вместо unit. Это указывает на
+// **mono-pass corruption** в передаче type-context между helper-methods.
 //
-// Это **отдельная** mono-pass issue для generic helper-methods —
-// нужен отдельный план (Plan 48 followup для mono'rphization
-// stdlib helpers с generic Self).
+// Регрессия при попытке: 522 → 501 PASS (-21), 25 → 48 FAIL (+23).
 //
-// Workaround для spread в bootstrap: `HashMap.from(array_of_pairs)`
-// либо явный цикл insert на user-side.
+// Это глубокая mono-pass issue требующая отдельной investigation
+// (Plan 48 followup). Spread `[...m, k: v]` ждёт closure этого.
+//
+// Workaround в bootstrap: HashMap.from(array_of_pairs).
 
 
 // HashMap.@get_or_insert(key, default) — get с lazy default.
