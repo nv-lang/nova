@@ -1,13 +1,13 @@
 Nova is dual-licensed under either of:
 
-  - Apache License, Version 2.0 (see LICENSE-APACHE or
-    http://www.apache.org/licenses/LICENSE-2.0)
-  - MIT License (see LICENSE-MIT or
-    http://opensource.org/licenses/MIT)
+  - Apache License, Version 2.0 — see ./LICENSE-APACHE
+  - MIT License             — see ./LICENSE-MIT
 
 at your option.
 
 SPDX-License-Identifier: MIT OR Apache-2.0
+
+Copyright (c) 2026 Nova Language Contributors.
 
 Documentation and the language specification are licensed under
 CC-BY-4.0 (https://creativecommons.org/licenses/by/4.0/).
