@@ -1626,14 +1626,50 @@ impl CEmitter {
         self.out = self.out.replace("/*__MONO_FWD_DECLS__*/", &mono_fwd);
         // Plan 59: splice mono'd tuple struct typedefs.
         // Layout: typedef struct { T1 f0; T2 f1; ...; } _NovaTuple____<T1>__<T2>__...;
-        // Ordered alphabetically для determinism (HashSet itter order не stable).
+        // Topo sort: tuple A depends on tuple B если B's mangled name
+        // appears как element type в A — nested tuples (tuple-of-tuples)
+        // нуждаются в forward order чтобы C видел inner typedef'ы first.
         let mut tuple_instances: Vec<Vec<String>> = self.mono_tuple_instances
             .borrow().iter().cloned().collect();
-        tuple_instances.sort();
+        tuple_instances.sort(); // initial deterministic order для tie-breaking
+        let known_names: std::collections::HashSet<String> = tuple_instances.iter()
+            .map(|inst| Self::compute_mono_tuple_c_name(inst))
+            .collect();
+        let mut emitted: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut sorted: Vec<Vec<String>> = Vec::with_capacity(tuple_instances.len());
+        let mut remaining = tuple_instances;
+        while !remaining.is_empty() {
+            let mut next_remaining = Vec::new();
+            let mut progress = false;
+            for inst in remaining.drain(..) {
+                // Element types могут быть `_NovaTuple____...` mangled (direct
+                // mono'd struct value — нуждается в complete typedef) или
+                // `_NovaTuple____..._p` / `_NovaTuple____...*` (pointer —
+                // incomplete OK, без dep). Strip pointer suffix для check.
+                let deps_satisfied = inst.iter().all(|elem| {
+                    let core = elem.trim_end_matches('*').trim_end_matches("_p");
+                    !known_names.contains(core) || emitted.contains(core)
+                });
+                if deps_satisfied {
+                    emitted.insert(Self::compute_mono_tuple_c_name(&inst));
+                    sorted.push(inst);
+                    progress = true;
+                } else {
+                    next_remaining.push(inst);
+                }
+            }
+            if !progress {
+                // Cyclic deps не возможны для value-tuple struct'ов; emit
+                // оставшиеся anyway чтобы не зависнуть.
+                sorted.extend(next_remaining);
+                break;
+            }
+            remaining = next_remaining;
+        }
         let mut tuple_decls = String::new();
-        if !tuple_instances.is_empty() {
+        if !sorted.is_empty() {
             tuple_decls.push_str("/* Plan 59: mono'd tuple typedefs — real element types, no int-slot erasure. */\n");
-            for inst in &tuple_instances {
+            for inst in &sorted {
                 let mangled = Self::compute_mono_tuple_c_name(inst);
                 let fields: String = inst.iter().enumerate()
                     .map(|(i, c)| format!("{} f{}; ", c, i))
@@ -1944,12 +1980,6 @@ impl CEmitter {
             let fields: String = (0..n).map(|i| format!("nova_int f{};", i)).collect::<Vec<_>>().join(" ");
             self.line(&format!("typedef struct {{ {} }} _NovaTuple{};", fields, n));
         }
-        // Plan 59: mono'd tuple struct typedefs — splice marker; replaced
-        // в finalize. Layout: typedef struct { T1 f0; T2 f1; ... }
-        // _NovaTuple____<T1>__<T2>__...;. Real types (e.g. nova_str, не
-        // nova_int slot) — fit структуры >8 байт.
-        self.line("/*__MONO_TUPLE_TYPEDEFS__*/");
-        self.line("");
         // Plan 36 followup: forward decls user types ДО NovaOpt typedef'ов.
         // Иначе `NovaOpt_Nova_Range_p { Nova_Range* value; }` падает с
         // `unknown type name 'Nova_Range'` — типы декларируются после
@@ -1957,6 +1987,13 @@ impl CEmitter {
         // Решение: pre-pass forward-decl всех user types через отдельный
         // marker, splice'ится в emit_module finalize.
         self.line("/*__USER_TYPE_FWD_DECLS__*/");
+        // Plan 59: mono'd tuple struct typedefs — splice marker; replaced
+        // в finalize. Layout: typedef struct { T1 f0; T2 f1; ... }
+        // _NovaTuple____<T1>__<T2>__...;. Real types (e.g. nova_str, не
+        // nova_int slot) — fit структуры >8 байт. Placed ПОСЛЕ user-type
+        // fwd decls — tuple elements могут быть `Nova_X*` (pointer), которым
+        // достаточно incomplete typedef.
+        self.line("/*__MONO_TUPLE_TYPEDEFS__*/");
         // Plan 14 Ф.1: маркер для splice'а typedef'ов NovaOpt_<T> (для T
         // без NOVA_ARRAY_DECL в runtime). Заполняется в `register_novaopt_decl`
         // в registration order (innermost first); splice'ится в финальный
@@ -5484,6 +5521,53 @@ impl CEmitter {
             .replace('-', "_")
     }
 
+    /// Plan 59: partial inverse of `sanitize_c_for_ident` для restore tuple
+    /// element C type из mangled name (`_NovaTuple____<elem>__<elem>__...`).
+    /// Только handles common element type idents (`nova_int`, `Nova_Foo_p`,
+    /// `NovaArray_<T>_p`) — nested mono'd tuples с inner `____` не
+    /// recoverable из этой mangle scheme. Caller обязан validate.
+    fn desanitize_c_from_ident(s: &str) -> String {
+        if let Some(stem) = s.strip_suffix("_p") {
+            format!("{}*", stem)
+        } else {
+            s.to_string()
+        }
+    }
+
+    /// Plan 59: detect mono'd tuple return-type mismatch. Returns true if
+    /// `ret_ty` and `actual_ty` are both `_NovaTuple____...` mangled names
+    /// but different (e.g. element types disagree). Such struct-to-struct
+    /// assignment fails C type-check; caller emits field-wise copy instead.
+    fn needs_tuple_field_copy(ret_ty: &str, actual_ty: &str) -> bool {
+        ret_ty.starts_with("_NovaTuple____")
+            && actual_ty.starts_with("_NovaTuple____")
+            && ret_ty != actual_ty
+    }
+
+    /// Plan 59: emit field-wise copy for mono'd tuple return value. Если
+    /// types match — simple `T tmp = val;`. Если mismatch (mono'd tuples
+    /// of same arity, different element types) — emit per-field assignment
+    /// with cast: `T tmp; tmp.f0 = (E1)val.f0; ...`. Bit-compatible value
+    /// types (nova_int, void*, fn pointer) round-trip transparently.
+    fn emit_tuple_return_stash(&mut self, ret_ty: &str, tmp: &str, val: &str, actual_ty: &str) {
+        if !Self::needs_tuple_field_copy(ret_ty, actual_ty) {
+            self.line(&format!("{} {} = {};", ret_ty, tmp, val));
+            return;
+        }
+        if let Some(rest) = ret_ty.strip_prefix("_NovaTuple____") {
+            let elem_tys: Vec<String> = rest.split("__")
+                .filter(|s| !s.is_empty())
+                .map(|s| Self::desanitize_c_from_ident(s))
+                .collect();
+            self.line(&format!("{} {};", ret_ty, tmp));
+            for (i, ety) in elem_tys.iter().enumerate() {
+                self.line(&format!("{}.f{} = ({}){}.f{};", tmp, i, ety, val, i));
+            }
+        } else {
+            self.line(&format!("{} {} = {};", ret_ty, tmp, val));
+        }
+    }
+
     /// Plan 49 Ф.6 cross-type cascade helper: C-type string → Nova type name
     /// (для lookup в from_targets и user-friendly diagnostic messages).
     /// "nova_int"  → "int"
@@ -6414,6 +6498,11 @@ impl CEmitter {
                         // but fn returns non-unit. Emit side-effect + dummy unreachable return.
                         self.line(&format!("{};", val));
                         self.line(&format!("return ({})0; /* unreachable */", ret_c));
+                    } else if Self::needs_tuple_field_copy(&ret_c, &trailing_ty) {
+                        // Plan 59: mono'd tuple return type mismatch — field-wise.
+                        let tmp = self.fresh_tmp();
+                        self.emit_tuple_return_stash(&ret_c, &tmp, &val, &trailing_ty);
+                        self.line(&format!("return {};", tmp));
                     } else {
                         self.line(&format!("return {};", val));
                     }
@@ -6818,6 +6907,11 @@ impl CEmitter {
                     } else if trailing_ty == "nova_unit" && ret_c != "nova_unit" {
                         self.line(&format!("{};", val));
                         self.line(&format!("return ({})0; /* unreachable */", ret_c));
+                    } else if Self::needs_tuple_field_copy(&ret_c, &trailing_ty) {
+                        // Plan 59: mono'd tuple return type mismatch — field-wise.
+                        let tmp = self.fresh_tmp();
+                        self.emit_tuple_return_stash(&ret_c, &tmp, &val, &trailing_ty);
+                        self.line(&format!("return {};", tmp));
                     } else {
                         self.line(&format!("return {};", val));
                     }
@@ -7915,7 +8009,9 @@ impl CEmitter {
             } else {
                 // Stash result in a tmp so defer cleanup runs *before* the return.
                 let tmp = self.fresh_tmp();
-                self.line(&format!("{} {} = {};", ret_ty, tmp, val));
+                // Plan 59: mono'd tuple type mismatch — field-wise copy.
+                let trailing_ty = self.infer_expr_c_type(trailing);
+                self.emit_tuple_return_stash(ret_ty, &tmp, &val, &trailing_ty);
                 self.leave_defer_scope(block_id);
                 self.line(&format!("return {};", tmp));
             }
@@ -8280,7 +8376,9 @@ impl CEmitter {
                         // Stash result in a tmp so defer bodies can't see
                         // it / mutate it.
                         let tmp = self.fresh_tmp();
-                        self.line(&format!("{} {} = {};", ret_ty, tmp, val));
+                        // Plan 59: mono'd tuple type mismatch — field-wise copy.
+                        let val_ty = self.infer_expr_c_type(v);
+                        self.emit_tuple_return_stash(&ret_ty, &tmp, &val, &val_ty);
                         self.emit_early_exit_cleanup(/*stop_at_loop=*/false);
                         self.line(&format!("return {};", tmp));
                     }
@@ -9232,6 +9330,12 @@ impl CEmitter {
                     for (i, v) in emitted_vals.iter().enumerate() {
                         self.line(&format!("{}.f{} = {};", tmp, i, v));
                     }
+                    // Plan 59: register types для propagation. Без этого
+                    // `pair.0` typing fails — let-rebind infers nova_int
+                    // вместо actual element type. Бьёт types/arrays where
+                    // tuple-of-arrays loses NovaArray*-typing.
+                    self.var_types.insert(tmp.clone(), mangled.clone());
+                    self.tuple_element_types.insert(tmp.clone(), emitted_types);
                     return Ok(tmp);
                 }
                 // Legacy fallback _NovaTupleN.
@@ -12981,6 +13085,27 @@ impl CEmitter {
                         self.line(&format!(
                             "_NovaTuple{} {} = ({}.value == NULL) ? (_NovaTuple{}){{0}} : *({}.value);",
                             arity, binding, opt_tmp, arity, opt_tmp));
+                    } else if elem_c_ty.starts_with("_NovaTuple____") {
+                        // Plan 59: mono'd tuple stored as value в
+                        // NovaOpt_<mono>.value. Direct copy + populate
+                        // tuple_element_types если ещё не populated (для
+                        // non-generic iter, where mono_return_ty path не
+                        // triggered registration).
+                        self.line(&format!(
+                            "{} {} = {}.value;",
+                            elem_c_ty, binding, opt_tmp));
+                        if !self.tuple_element_types.contains_key(binding.as_str()) {
+                            if let Some(rest) = elem_c_ty.strip_prefix("_NovaTuple____") {
+                                let elems: Vec<String> = rest.split("__")
+                                    .filter(|s| !s.is_empty())
+                                    .map(|s| Self::desanitize_c_from_ident(s))
+                                    .collect();
+                                if elems.len() == arity {
+                                    self.tuple_element_types
+                                        .insert(binding.clone(), elems);
+                                }
+                            }
+                        }
                     } else {
                         return Err(format!(
                             "for-in tuple-pattern: непонятный elem-type `{}`", elem_c_ty));
@@ -13948,28 +14073,41 @@ impl CEmitter {
                 Ok(())
             }
             _ => {
-                // General case: emit RHS to a tmp struct, then bind each field
-                // Infer element types from patterns via var_types (best-effort nova_int)
+                // General case: emit RHS to a tmp struct, then bind each field.
+                // Plan 59: infer RHS type — может быть legacy `_NovaTupleN`
+                // или mono'd `_NovaTuple____<T1>__...`. Используем actual type
+                // RHS, иначе тип binding не совпадёт с фактическим (legacy
+                // hardcoded `_NovaTupleN` ломало mono'd return values).
                 let n = pats.len();
-                let struct_name = format!("_NovaTuple{}", n);
+                let inferred = self.infer_expr_c_type(value);
+                let (struct_name, elem_tys): (String, Vec<String>) =
+                    if inferred.starts_with("_NovaTuple____") {
+                        let elems: Vec<String> = inferred
+                            .strip_prefix("_NovaTuple____")
+                            .map(|rest| rest.split("__")
+                                .filter(|s| !s.is_empty())
+                                .map(|s| Self::desanitize_c_from_ident(s))
+                                .collect())
+                            .unwrap_or_default();
+                        if elems.len() == n {
+                            (inferred.clone(), elems)
+                        } else {
+                            (format!("_NovaTuple{}", n), vec!["nova_int".to_string(); n])
+                        }
+                    } else {
+                        (format!("_NovaTuple{}", n), vec!["nova_int".to_string(); n])
+                    };
                 let tmp = self.fresh_tmp();
-                // We don't know the element types without type inference, so use nova_int
-                // as a best-effort (sufficient for numeric tuples).
-                let elem_ty = "nova_int";
-                // Emit the struct type definition
-                let fields_decl: String = (0..n)
-                    .map(|i| format!("{} f{};", elem_ty, i))
-                    .collect::<Vec<_>>().join(" ");
-                // Use pre-declared _NovaTupleN typedef (no struct re-declaration needed)
                 let rhs = self.emit_expr(value)?;
-                let _ = fields_decl;
                 self.line(&format!("{} {} = {};", struct_name, tmp, rhs));
                 for (i, pat) in pats.iter().enumerate() {
                     match pat {
                         Pattern::Wildcard(_) => {}
                         Pattern::Ident { name, .. } => {
-                            self.var_types.insert(name.clone(), elem_ty.to_string());
-                            self.line(&format!("{} {} = {}.f{};", elem_ty, name, tmp, i));
+                            let fty = elem_tys.get(i).cloned()
+                                .unwrap_or_else(|| "nova_int".to_string());
+                            self.var_types.insert(name.clone(), fty.clone());
+                            self.line(&format!("{} {} = {}.f{};", fty, name, tmp, i));
                         }
                         _ => {
                             return Err(format!(
