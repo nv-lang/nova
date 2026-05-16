@@ -145,6 +145,10 @@ pub struct DocModule {
     pub hide_doc: bool,
     /// Items этого модуля.
     pub items: Vec<DocItem>,
+    /// Plan 45 Ф.24.16: auto-generated effect composition matrix.
+    /// Lists each exported fn name with its effect set. Renderers use
+    /// this to show an "Effects overview" section. Empty if no fn has effects.
+    pub effect_matrix: Vec<EffectMatrixEntry>,
     /// Span первого токена модуля — для "View Source" links (D107).
     pub source_span: Span,
 }
@@ -228,6 +232,17 @@ pub struct DocItem {
     /// `true` → inline the target item's content here (rustdoc `#[doc(inline)]` equivalent).
     /// `false` → render as a "Re-exported from ..." link (default for cross-module re-exports).
     pub doc_inline: bool,
+}
+
+/// Plan 45 Ф.24.16: one row of the effect composition matrix.
+#[derive(Debug, Clone)]
+pub struct EffectMatrixEntry {
+    /// Stable item ID (e.g. `"my.mod::send"`).
+    pub item_id: String,
+    /// Function name (display).
+    pub fn_name: String,
+    /// Effect names present in this fn's signature (e.g. `["Io", "Fail[IoError]"]`).
+    pub effects: Vec<String>,
 }
 
 /// Plan 45 Ф.24.9: one scraped call-site example.

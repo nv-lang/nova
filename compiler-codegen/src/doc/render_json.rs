@@ -108,6 +108,20 @@ fn write_module(w: &mut JsonWriter, m: &DocModule) {
         }),
     }
     w.field_array("doc_attrs", |_| {});
+    // Plan 45 Ф.24.16: effect composition matrix (empty array if no effectful fns).
+    w.field_array("effect_matrix", |w| {
+        for entry in &m.effect_matrix {
+            w.array_object(|w| {
+                w.field_array("effects", |w| {
+                    for eff in &entry.effects {
+                        w.array_str(eff);
+                    }
+                });
+                w.field_str("fn_name", &entry.fn_name);
+                w.field_str("item_id", &entry.item_id);
+            });
+        }
+    });
     w.field_str(
         "kind",
         match m.kind {

@@ -323,8 +323,29 @@ fn collect_one(module: &Module) -> DocModule {
         .filter_map(|pf| pf.path.file_name().map(|s| s.to_string_lossy().into_owned()))
         .collect();
 
-    // Plan 45 Р¤.22.1 / D105: module-level doc-attrs.
+    // Plan 45 Ф.22.1 / D105: module-level doc-attrs.
     let mod_attrs = extract_doc_attrs(&module.doc_attrs);
+
+    // Plan 45 Ф.24.16: effect composition matrix — collect exported fns with effects.
+    let effect_matrix: Vec<crate::doc::doctree::EffectMatrixEntry> = {
+        let mut entries = Vec::new();
+        for item in &items {
+            if item.visibility != Visibility::Export {
+                continue;
+            }
+            if let ItemKind::Fn(sig) = &item.kind {
+                if !sig.effects.is_empty() {
+                    let effect_names: Vec<String> = sig.effects.iter().map(|e| e.name.clone()).collect();
+                    entries.push(crate::doc::doctree::EffectMatrixEntry {
+                        item_id: item.id.clone(),
+                        fn_name: item.name.clone(),
+                        effects: effect_names,
+                    });
+                }
+            }
+        }
+        entries
+    };
 
     DocModule {
         path: module_path,
@@ -337,6 +358,7 @@ fn collect_one(module: &Module) -> DocModule {
         stability: mod_attrs.stability,
         hide_doc: mod_attrs.hide_doc,
         items,
+        effect_matrix,
         source_span: module.span,
     }
 }
