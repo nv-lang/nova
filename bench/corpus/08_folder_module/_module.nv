@@ -1,0 +1,4 @@
+// Plan 57 corpus 08: folder module — peers + folder resolve performance.
+module corpus.folder_demo
+
+export type Public { x int }

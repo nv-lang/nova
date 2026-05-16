@@ -1,0 +1,58 @@
+// Plan 57 corpus 09: import depth measurement.
+// Bench: how parser+resolver scale на deep import chains.
+// (Self-contained, не использует actual stdlib imports — измеряет
+//  parser performance with many `module X.Y.Z.W` declarations.)
+
+module bench.corpus.deep.module_with_long_namespace_name
+
+type DeepType { value int }
+
+fn DeepType.new(v int) -> DeepType => DeepType { value: v }
+fn DeepType @double() -> DeepType => DeepType { value: @value * 2 }
+fn DeepType @triple() -> DeepType => DeepType { value: @value * 3 }
+fn DeepType @add(other DeepType) -> DeepType =>
+    DeepType { value: @value + other.value }
+
+type Layer1 { data DeepType }
+type Layer2 { inner Layer1 }
+type Layer3 { inner Layer2 }
+type Layer4 { inner Layer3 }
+type Layer5 { inner Layer4 }
+type Layer6 { inner Layer5 }
+type Layer7 { inner Layer6 }
+type Layer8 { inner Layer7 }
+type Layer9 { inner Layer8 }
+type Layer10 { inner Layer9 }
+
+fn wrap10(v int) -> Layer10 {
+    let dt = DeepType.new(v)
+    Layer10 { inner:
+        Layer9 { inner:
+            Layer8 { inner:
+                Layer7 { inner:
+                    Layer6 { inner:
+                        Layer5 { inner:
+                            Layer4 { inner:
+                                Layer3 { inner:
+                                    Layer2 { inner:
+                                        Layer1 { data: dt }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn unwrap10(l Layer10) -> int {
+    l.inner.inner.inner.inner.inner.inner.inner.inner.inner.data.value
+}
+
+fn main() Io -> () {
+    let w = wrap10(42)
+    let u = unwrap10(w)
+    println(str.from(u))
+}
