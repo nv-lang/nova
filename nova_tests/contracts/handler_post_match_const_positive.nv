@@ -1,0 +1,28 @@
+// Ф.13.2 (Plan 33.6): handler с match-branching по constant patterns.
+// extract_match_assignments конвертирует в nested ite.
+// REQUIRES_SMT_BACKEND z3
+
+module contracts.handler_post_match_const_positive
+
+type Setter effect {
+    SetByCode(c int)
+    #pure get_value() -> int
+    axiom after_code_0(c) => post(SetByCode(c))(get_value()) == c
+}
+
+test "handler match-branching const patterns" {
+    let mut store = 0
+    with #verify Setter = handler Setter {
+        SetByCode(c) {
+            match c {
+                0 => store = 0,
+                1 => store = 1,
+                _ => store = c,
+            }
+        }
+        get_value() => store
+    } {
+        Setter.SetByCode(5)
+        assert(Setter.get_value() == 5)
+    }
+}

@@ -517,11 +517,104 @@ fn extract_block_assignments(block: &crate::ast::Block) -> Vec<(String, crate::a
                         }
                     }
                 }
+                // Ф.13.2 (Plan 33.6): match с constant patterns — конвертируем в nested ite.
+                if let crate::ast::ExprKind::Match { scrutinee, arms } = &e.kind {
+                    extract_match_assignments(scrutinee, arms, &mut result, e.span);
+                }
             }
             _ => {}
         }
     }
     result
+}
+
+/// Ф.13.2 (Plan 33.6): match handler-branching с constant patterns.
+/// Конвертирует `match scrutinee { lit1 => block1; lit2 => block2; _ => block_def }`
+/// → nested ite по pattern == lit.
+fn extract_match_assignments(
+    scrutinee: &crate::ast::Expr,
+    arms: &[crate::ast::MatchArm],
+    result: &mut Vec<(String, crate::ast::Expr)>,
+    match_span: crate::diag::Span,
+) {
+    // Собрать (cond, assignments) per arm.
+    let mut arm_data: Vec<(Option<crate::ast::Expr>, Vec<(String, crate::ast::Expr)>)> = Vec::new();
+    for arm in arms {
+        let asgns = match &arm.body {
+            crate::ast::MatchArmBody::Block(b) => extract_block_assignments(b),
+            crate::ast::MatchArmBody::Expr(_) => continue, // expr arm: no assignment
+        };
+        if asgns.is_empty() { continue; }
+        let cond = match &arm.pattern {
+            crate::ast::Pattern::Literal(lit, _) => {
+                let lit_expr_kind = match lit {
+                    crate::ast::Literal::Int(n) => crate::ast::ExprKind::IntLit(*n),
+                    crate::ast::Literal::Bool(b) => crate::ast::ExprKind::BoolLit(*b),
+                    _ => continue, // skip Str/Float/Char patterns (not encodable easily)
+                };
+                let lit_expr = crate::ast::Expr {
+                    kind: lit_expr_kind,
+                    span: arm.span,
+                };
+                Some(crate::ast::Expr {
+                    kind: crate::ast::ExprKind::Binary {
+                        op: crate::ast::BinOp::Eq,
+                        left: Box::new(scrutinee.clone()),
+                        right: Box::new(lit_expr),
+                    },
+                    span: arm.span,
+                })
+            }
+            crate::ast::Pattern::Wildcard(_) => None, // catch-all else
+            _ => continue, // unsupported pattern (Variant/Record/Tuple/...)
+        };
+        arm_data.push((cond, asgns));
+    }
+
+    // Найти все vars присваиваемые хотя бы в одной arm.
+    let mut vars: Vec<String> = Vec::new();
+    for (_, asgns) in &arm_data {
+        for (v, _) in asgns {
+            if !vars.contains(v) { vars.push(v.clone()); }
+        }
+    }
+
+    // Для каждой var построить nested ite.
+    for var in &vars {
+        // Find arms where var is assigned + collect (cond, val) pairs.
+        let mut branches: Vec<(crate::ast::Expr, crate::ast::Expr)> = Vec::new(); // cond → val
+        let mut default_val: Option<crate::ast::Expr> = None;
+        for (cond, asgns) in &arm_data {
+            if let Some((_, val)) = asgns.iter().find(|(v, _)| v == var) {
+                match cond {
+                    Some(c) => branches.push((c.clone(), val.clone())),
+                    None => default_val = Some(val.clone()),
+                }
+            }
+        }
+        // Если есть branches и default, строим nested ite.
+        let Some(default) = default_val else { continue; }; // V1: требуется wildcard
+        let mut acc = default;
+        for (cond, val) in branches.into_iter().rev() {
+            acc = crate::ast::Expr {
+                kind: crate::ast::ExprKind::If {
+                    cond: Box::new(cond.clone()),
+                    then: crate::ast::Block {
+                        stmts: Vec::new(),
+                        trailing: Some(Box::new(val.clone())),
+                        span: val.span,
+                    },
+                    else_: Some(crate::ast::ElseBranch::Block(crate::ast::Block {
+                        stmts: Vec::new(),
+                        trailing: Some(Box::new(acc.clone())),
+                        span: acc.span,
+                    })),
+                },
+                span: match_span,
+            };
+        }
+        result.push((var.clone(), acc));
+    }
 }
 
 fn parse_post_call(
