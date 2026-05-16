@@ -1,5 +1,7 @@
-// Plan 33.3 Ф.14: Dafny-parity test 1 — Binary search.
+﻿// Plan 33.3 Ф.14: Dafny-parity test 1 — Binary search.
 // Классический пример из Dafny tutorial.
+
+// REQUIRES_SMT_BACKEND z3
 
 module contracts.f14_binary_search
 

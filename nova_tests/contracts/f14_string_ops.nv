@@ -1,5 +1,7 @@
-// Plan 33.3 Ф.14: Dafny-parity test 8 — String operations (Seq theory).
+﻿// Plan 33.3 Ф.14: Dafny-parity test 8 — String operations (Seq theory).
 // Аналог string verification из Dafny Seq theory.
+
+// REQUIRES_SMT_BACKEND z3
 
 module contracts.f14_string_ops
 

@@ -1,5 +1,7 @@
-// Plan 33.3 Ф.14: Dafny-parity test 10 — Fibonacci properties.
+﻿// Plan 33.3 Ф.14: Dafny-parity test 10 — Fibonacci properties.
 // Верификация свойств fib без рекурсии (straight-line).
+
+// REQUIRES_SMT_BACKEND z3
 
 module contracts.f14_fibonacci
 

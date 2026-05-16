@@ -1,5 +1,7 @@
-// Plan 33.3 Ф.14: Dafny-parity test 17 — Hash table properties.
+﻿// Plan 33.3 Ф.14: Dafny-parity test 17 — Hash table properties.
 // Моделируем bucket arithmetic (без реальных maps в SMT).
+
+// REQUIRES_SMT_BACKEND z3
 
 module contracts.f14_hash_table
 

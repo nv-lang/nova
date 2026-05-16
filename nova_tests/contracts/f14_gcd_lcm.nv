@@ -1,4 +1,6 @@
-// Plan 33.3 Ф.14: Dafny-parity test 11 — GCD/LCM properties.
+﻿// Plan 33.3 Ф.14: Dafny-parity test 11 — GCD/LCM properties.
+
+// REQUIRES_SMT_BACKEND z3
 
 module contracts.f14_gcd_lcm
 
