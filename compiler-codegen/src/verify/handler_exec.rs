@@ -305,16 +305,21 @@ fn verify_liskov_method(
             continue;
         };
         let goal = substitute_old(&goal);
+        // Ф.10.4 (Plan 33.6): сохраняем pretty-print ensures-выражения
+        // для position-aware diagnostic.
+        let clause_pretty = format!("{:?}", c.expr.kind).chars().take(80).collect::<String>();
         match try_prove(&mut *backend, goal) {
             SatResult::Unsat(_) => {}
             SatResult::Sat(model) => {
                 let cex = format_counterexample(&model);
                 diagnostics.push(Diagnostic::new(
                     format!(
-                        "`#verify` handler method `{}` нарушает контракт эффекта:\n  \
+                        "`#verify` handler method `{}` нарушает контракт эффекта @ position {}:\n  \
+                         clause: {}\n  \
                          counterexample: {}\n  \
-                         Liskov: handler.{} должен удовлетворять ensures эффекта при его requires.",
-                        method_name, cex, method_name,
+                         Liskov: handler.{} должен удовлетворять ensures эффекта при его requires.\n  \
+                         hint: fix handler body или ослабьте именно этот ensures в effect-decl.",
+                        method_name, c.span.start, clause_pretty, cex, method_name,
                     ),
                     binding_span,
                 ));
