@@ -9435,6 +9435,19 @@ impl CEmitter {
                                 return Ok(format!(
                                     "nova_cancel_token_reason_str({})", obj_c));
                             }
+                            "merge" => {
+                                // Plan 49 P3: `tok1.merge(tok2)` — композиция.
+                                // Возвращает новый CancelToken который cancel'ится
+                                // когда любой из источников cancel'ится. Same-T
+                                // в V1 (cross-T merge — V2 нужны converter pair).
+                                if let Some(other_arg) = args.first() {
+                                    let other_c = self.emit_expr(other_arg.expr())?;
+                                    return Ok(format!(
+                                        "nova_cancel_token_merge2({}, {})",
+                                        obj_c, other_c
+                                    ));
+                                }
+                            }
                             "cancelled_by" => {
                                 // `child.cancelled_by(parent)` — направленный
                                 // каскад: parent.cancel() отменяет и child.
@@ -15144,6 +15157,7 @@ impl CEmitter {
                         match method.as_str() {
                             "is_cancelled" => return "nova_bool".into(),
                             "cancel" | "cancelled_by" => return "nova_unit".into(),
+                            "merge" => return "NovaCancelToken*".into(),
                             "reason" => {
                                 if let ExprKind::Ident(name) = &obj.kind {
                                     if let Some(t_c) = self.cancel_token_t_map.get(name) {

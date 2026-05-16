@@ -775,6 +775,33 @@ static inline void nova_cancel_token_bind_cascade_typed(
     }
 }
 
+/* Plan 49 P3: `tok = tok1.merge(tok2)` — композиция токенов. Возвращает
+ * новый CancelToken который cancelled когда ЛЮБОЙ из источников cancelled.
+ * Реализация: создать new token, bind его cascade'м с tok1 И tok2.
+ * Любой из них при cancel() пробросит cancel на merged.
+ *
+ * Семантика first-cancel-wins для reason'а — тот источник кто отменился
+ * первым, его reason оказывается в merged.reason() (cancel_reason
+ * idempotent → second-cancel no-op).
+ *
+ * Превосходит индустрию:
+ *   - Go: context.WithCancel(parent) cascade parent → child, но НЕТ
+ *     general merge нескольких источников; нужно вручную select-loop.
+ *   - TS: AbortSignal.any([...]) — TC39 stage 3, но reason: any.
+ *   - Rust: tokio_util::sync::CancellationToken.child_token() — child
+ *     cancelled когда parent cancelled, но опять no general merge of N.
+ *
+ * Same-type only в V1 (merged: CancelToken[T] где T = T1 = T2).
+ * Cross-type merge — V2 (требует converter pair). */
+static inline NovaCancelToken* nova_cancel_token_merge2(
+    NovaCancelToken* a, NovaCancelToken* b)
+{
+    NovaCancelToken* merged = nova_cancel_token_new();
+    if (a) nova_cancel_token_bind_cascade(merged, a);
+    if (b) nova_cancel_token_bind_cascade(merged, b);
+    return merged;
+}
+
 /* Plan 44.5 Layer 5 fix: common base prefix for all generated SpawnCtx structs.
  * Worker loop (runtime.c _worker_main) accesses these via NovaSpawnCtxBase* cast
  * from mco_get_user_data(co). Codegen guarantees these are the FIRST five fields
