@@ -33,6 +33,7 @@ pub mod render_json;
 pub mod scraper;
 pub mod mutation;
 pub mod collect_handlers;
+pub mod render_html;
 
 pub use doctree::{DocTree, DocModule, DocItem, ItemKind, Signature, Visibility};
 
@@ -110,6 +111,11 @@ pub fn render_markdown_with_source(tree: &DocTree, source: &str) -> String {
 /// Plan 45 Ф.9 — DocTree → JSON (D107 schema v1).
 pub fn render_json(tree: &DocTree) -> String {
     render_json::render(tree)
+}
+
+/// Plan 45 Ф.31.1 — DocTree → HTML MVP (single-page, embedded CSS).
+pub fn render_html(tree: &DocTree) -> String {
+    render_html::render(tree)
 }
 
 /// Plan 45 Ф.9 — DocTree → JSON с source text для точной line-info.

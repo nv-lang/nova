@@ -1117,9 +1117,11 @@ fn cmd_doc(path: &Path, format: &str, json_schema: bool, include_private: bool, 
     let out = match format {
         "markdown" | "md" => nova_codegen::doc::render_markdown_with_source(&tree, &src),
         "json" => nova_codegen::doc::render_json_with_source(&tree, &src),
+        // Plan 45 Ф.31.1: HTML output MVP (single-page, embedded CSS).
+        "html" => nova_codegen::doc::render_html(&tree),
         other => {
             return Err(usage_err(format!(
-                "unknown --format `{}` (supported: `markdown`, `json`)",
+                "unknown --format `{}` (supported: `markdown`, `json`, `html`)",
                 other
             )));
         }
@@ -1284,7 +1286,9 @@ fn cmd_doc_workspace(
     let out = match format {
         "markdown" | "md" => nova_codegen::doc::render_markdown(&tree),
         "json" => nova_codegen::doc::render_json(&tree),
-        other => bail!("unknown --format `{}`", other),
+        // Plan 45 Ф.31.1: HTML output MVP в workspace mode.
+        "html" => nova_codegen::doc::render_html(&tree),
+        other => bail!("unknown --format `{}` (supported: `markdown`, `json`, `html`)", other),
     };
     print!("{}", out);
     // Plan 45 Ф.25.1: --strict — fail на любые diagnostic warnings.
