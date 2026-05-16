@@ -68,3 +68,22 @@ test "Channel.new use case" {
     let _ = rx
     assert(true)
 }
+
+// Plan 53 Ф.6.5: round-trip через destructured handles.
+// Acceptance §192: «Channel.new use-case работает (получает
+// Nova_ChanWriter* + Nova_ChanReader*)». Прежний тест выше только
+// проверял что `tx.close()` not crash — не verified что обе половины
+// действительно функциональны после destructure.
+test "Channel.new round-trip — destructured tx send → rx recv" {
+    let { tx, rx } = Channel.new(4)
+    let _ = tx.send(42)
+    let _ = tx.send(99)
+    tx.close()
+    // Receive через destructured rx — оба handle должны работать.
+    // Используем == сравнение вместо if-let (pre-existing codegen
+    // if-let-as-expr quirk).
+    assert(rx.recv() == Some(42))
+    assert(rx.recv() == Some(99))
+    // После close + drain — recv даёт None.
+    assert(rx.recv() == None)
+}
