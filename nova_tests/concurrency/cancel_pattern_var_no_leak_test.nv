@@ -1,0 +1,46 @@
+// cancel_pattern_var_no_leak_test.nv — Plan 54 Ф.1 verification.
+//
+// Pattern-bound `v` in match-arm НЕ leak'ит между tests. До Ф.1 fix —
+// test 1 binds `v: bool`, test 2 reuses same `v` для int → match-arm
+// inference upирался в stale bool, тест 2 fail'ил.
+// После fix — каждый test имеет clean var_types.
+
+module concurrency.cancel_pattern_var_no_leak_test
+
+
+test "pattern v bool — does not leak" {
+    let tok_b CancelToken[bool] = CancelToken.new()
+    tok_b.cancel(true)
+    let r_b = tok_b.reason()
+    let got_b = match r_b {
+        Some(v) => v        // v: bool
+        None    => false
+    }
+    assert(got_b == true)
+}
+
+
+test "pattern v int — same name, different type, must work" {
+    // Тот же name `v` что в предыдущем test. До Ф.1 fix — var_types['v']
+    // leak'ил bool, тест fail'ил с stale-inference.
+    let tok_i CancelToken[int] = CancelToken.new()
+    tok_i.cancel(42)
+    let r_i = tok_i.reason()
+    let got_i = match r_i {
+        Some(v) => v        // v: int (must NOT be bool!)
+        None    => -1
+    }
+    assert(got_i == 42)
+}
+
+
+test "pattern v str — same name, str type, must work" {
+    let tok_s = CancelToken.new()
+    tok_s.cancel("hello")
+    let r_s = tok_s.reason()
+    let got_s = match r_s {
+        Some(v) => v        // v: str
+        None    => "no"
+    }
+    assert(got_s == "hello")
+}

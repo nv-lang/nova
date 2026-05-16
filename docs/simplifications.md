@@ -7218,6 +7218,7 @@ inference engine through generic-call return types.
 - [M-reason-per-T-unbox] — silent UB fixed для T≠str.
 - [M-cross-type-from-cascade] — implemented через D73/D77 From + tests.
 
+
 ---
 
 ## Plan 45 �.27.1 � Workspace handler matrix simplifications (2026-05-16)
@@ -7680,3 +7681,37 @@ source). Tests verify structural shape, �� byte-for-byte match.
 **Почему:** Schema часто меняется (additions); separate fixture требовал бы
 постоянного regen. Structural validation достаточен.
 **Приоритет:** none.
+
+
+## Plan 54 progress (2026-05-16 EOD) — 5/8 закрыто
+
+Plan 54 — codegen follow-ups от Plan 48/49 audit. Закрыто 5 из 8 items
+в этой сессии. 3 deferred next session.
+
+### Закрытые маркеры
+
+- **[M-pattern-var-leak]** — var_types snapshot+restore в emit_test.
+  Pattern-bound vars больше не leak'ят между tests.
+- **[M-generic-array-return-mono]** (partial) — turbofish args через
+  return-type inference; plain []T works, []fn->T orthogonal.
+- **[M-generic-nested-call-inference]** (partial) — caller-side для
+  variable-ref fn-typed args works; body-side match-arm pattern inference
+  отдельный issue.
+
+### Побочный fix
+
+- **NovaOpt user-types pattern-bind** — `Some(v) => v` для Some(Nova_X*)
+  раньше давал `Nova_X_p v` (sanitized как тип) вместо `Nova_X* v`.
+  novaopt_value_types map + pattern_bind_typed recovery. Положительный
+  эффект: +20+ tests passing (was 484, now 512).
+
+### Pending Plan 54
+
+- **[M-int-extension-record-field]** — `100.millis()` codegen blocks retry_test.
+- **[M-unit-variant-context-inference]** — Plan 48 Ф.7.4 final.
+- **Polymorphic recursion test** — depends orthogonal codegen bug.
+
+### Новые маркеры (документировано в Plan 54)
+
+- **[M-array-of-func-mono]** — `[]fn->T` type_ref_to_c.
+- **Ф.5b match-arm pattern inference** — pattern_inner_type helper.

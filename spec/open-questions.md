@@ -6162,6 +6162,160 @@ pub enum BinderType {
 
 ---
 
+## Q-with-deadline-vs-within. `with_deadline[T](deadline_ms, body)` — отмена по точке времени
+
+**Контекст.** В stdlib `std/concurrency/cancellation.nv` есть `within[T](timeout_ms, body)`
+— отмена через duration от вызова. В distributed системах (Go context, gRPC, Tower)
+принято передавать **deadline** (абсолютный timestamp) между сервисами, чтобы каждый
+hop подсчитывал свой timeout как `min(local_timeout, deadline - now)`.
+
+**Предложение.** Добавить `with_deadline[T](deadline_ms_unix, body fn() -> T) -> Option[T]`:
+```nova
+let deadline = parent_request_deadline_ms()   // unix-ms, например, 1716470000000
+let r = with_deadline(deadline, || fetch_data())
+```
+Реализация — тривиальная обёртка над `within`:
+```nova
+fn with_deadline[T](deadline_ms int, body fn() -> T) -> Option[T] {
+    let now = Time.now()                  // unix-ms (через Time.now_ms когда будет)
+    let remaining = if deadline_ms > now { deadline_ms - now } else { 0 }
+    within(remaining, body)
+}
+```
+Зависимости: `Time.now()` возвращает unix-ms (или новый `Time.now_ms()` с правильной
+semantics — runtime сейчас `now()` returns monotonic ms, не unix).
+
+**Trade-off.** `with_deadline` удобен для RPC-цепочек, но Time.now_ms() vs Time.monotonic
+— два разных concept'а (wall vs monotonic clock). within работает на monotonic; deadline
+обычно на wall. Нужна decision про какие часы используем.
+
+**Связь:** `std/concurrency/cancellation.nv`, `Time` effect (`std/time/duration.nv` §289 comment).
+
+---
+
+## Q-tok-checked. `tok.checked()` — cooperative yield + cancel-check одной операцией
+
+**Контекст.** Сейчас в CPU-bound loop'е без `Time.sleep` / `Channel.recv` fiber может
+не yield'нуть scheduler'у долго → отмена «не успевает»:
+```nova
+for i in 0..10_000_000 {
+    if tok.is_cancelled() { return }      // флаг проверяем, scheduler не дёргаем
+    heavy_computation(i)
+}
+```
+
+Если `tok.cancel()` из другого fiber'а — этот fiber может НИКОГДА не yield'нуть,
+и cancel не сработает до конца loop'а.
+
+**Предложение.** Метод `tok.checked()` — explicit yield + cancel-throw одной операцией:
+```nova
+for i in 0..10_000_000 {
+    tok.checked()                  // 1) yield; 2) if cancel → throw CANCEL
+    heavy_computation(i)
+}
+```
+
+Аналоги: Go `runtime.Gosched()` + `ctx.Err()`, Rust `tokio::task::yield_now()`.
+
+Реализация: `nova_cancel_token_checked` — wrapper над `nova_fiber_yield()` +
+`nova_throw_cancel_reason(scope.cancel_reason_ptr)` если cancelled.
+
+**Trade-off.** Может быть путаница с `is_cancelled()` (non-throwing bool). API surface
+ширится. Зато явный pattern для CPU-loops.
+
+**Связь:** Plan 49 Ф.2 (cooperative cancel), `nova_fiber_yield` (`fibers.h`).
+
+---
+
+## Q-cancel-token-with-timeout. `CancelToken.with_timeout(ms)` factory — auto-cancelling token
+
+**Контекст.** Хочется factory который создаёт CancelToken и сам отменяет его через
+заданное время — как `AbortSignal.timeout(5000)` в TC39 (WHATWG DOM standard).
+
+**Желаемое API:**
+```nova
+let tok = CancelToken.with_timeout(5000)   // через 5 сек авто-cancel
+do_long_work(tok)
+```
+
+**Проблема — design choice.** Кто-то должен в фоне ждать 5 секунд и вызвать `cancel()`.
+Варианты:
+
+1. **Background fiber outside structured scope** — нарушает structured concurrency
+   (Plan 47 D50/D75: spawn только внутри supervised). Token живёт каллер-side, fiber'у
+   нужен parent-scope для drop'а. Сложно без leak'а.
+
+2. **OS timer callback (libuv `uv_timer_t`)** — callback в event-loop thread вызывает
+   `nova_cancel_token_cancel()`. Обходит fiber-runtime, нужен thread-safe path.
+
+3. **Lazy timer queue** — separate fire-and-forget queue для таких timer'ов с GC
+   ownership. Новая infrastructure.
+
+**Текущий workaround** (works today, чуть более многословно):
+```nova
+let tok = CancelToken.new()
+supervised(cancel: tok) {
+    spawn { Time.sleep(5000); tok.cancel("timeout") }
+    spawn { do_long_work(tok) }
+}
+```
+Это уже `within[T]` pattern в stdlib (`std/concurrency/cancellation.nv`).
+
+**Trade-off.** Factory удобнее (один-liner для async patterns), но требует или нарушения
+structured-concurrency (background fiber outside scope), или новой timer-queue
+infrastructure. Решение влияет на rest of cancellation design.
+
+**Связь:** Plan 49 (cancellation), Plan 22 (libuv timers), TC39 AbortSignal.timeout proposal.
+
+---
+
+## Q-context-value-equivalent. Go `context.Value` (typed request-scoped values) для Nova
+
+**Контекст.** В distributed системах request-scoped values (trace ID, user ID, locale,
+deadline) пробрасываются через всё дерево вызовов. Передавать каждый параметром →
+много boilerplate; глобальные variables → не thread-safe / не fiber-scoped.
+
+**Go-style (минусы):**
+```go
+ctx := context.WithValue(parent, traceKey, "abc-123")
+trace := ctx.Value(traceKey).(string)   // type-assert, no compile-time safety
+```
+Key — `interface{}`, value — `interface{}`. Нет type safety. Конвенция использовать
+private types для key чтобы избежать collision'ов — ad hoc.
+
+**Желаемое API (typed):**
+```nova
+context.set[TraceId]("abc-123")
+context.set[UserId](42)
+
+let trace = context.get[TraceId]()      // -> Option[TraceId], typed
+let user  = context.get[UserId]()       // -> Option[UserId]
+```
+
+**Альтернатива — Nova effects (уже есть):**
+```nova
+type Trace effect { current() -> str }
+with Trace = trace_handler("abc-123") {
+    do_work()    // внутри: Trace.current() → "abc-123"
+}
+```
+Effects дают тот же use-case с typed dispatch + handler swap.
+
+**Trade-off.** Два пути:
+1. Использовать existing effects (не вводить новый API) — паритет с Go context,
+   но handler-ceremony более многословно.
+2. Ввести typed `context.set/get[T]()` API — короче на use-site, но new infrastructure
+   (где живут values: TLS / fiber-locals / scope-stack?), propagation rules через spawn
+   / handler boundary не определены.
+
+**Решение:** Нужен полноценный design plan (Plan 51 tentative). Use-cases собрать,
+сравнить effects-based vs typed-context API, решить storage model. Не в текущем sprint.
+
+**Связь:** Plan 47/49 (cancellation), spec/decisions/04-effects.md (effects design),
+Go `context` package, Rust `tokio::task_local!`, TC39 `AsyncContext`.
+
+---
+
 ## Финальное напоминание
 
 Прежде чем продолжать **дизайн**, прочитай:

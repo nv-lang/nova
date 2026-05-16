@@ -13101,3 +13101,74 @@ Plan 48/49 total sub-cases: 50 → **75 sub-cases**.
 test additions. Базовый 46 FAIL — pre-existing baseline (Plan 33.3 verify
 tests требуют Z3 backend, std/collections/hashmap.nv `#from_pairs`
 attribute issue от Plan 52, doc/fixtures sample files без `fn main`).
+
+
+## Шаг NNN+8. Plan 54 — codegen follow-ups: 5/8 закрыто (2026-05-16 EOD)
+
+После audit Plan 48/49 создан Plan 54 (`docs/plans/54-codegen-followups-from-48-49-audit.md`)
+со списком 8 deferred codegen items. В этой сессии закрыто 5 из 8.
+
+### Закрыто (5)
+
+**Ф.1 — `[M-pattern-var-leak]`** (commit 5eb1168c5d0):
+var_types/var_mutable/cancel_token_t_map snapshot+restore в emit_test.
+До fix'а pattern-bound `Some(v) => v` leak'ил тип `v` между tests
+(test 1 bool, test 2 int → stale bool inference). Test 3 sub-cases
+с reused `v` именем для bool/int/str — все PASS.
+
+**Ф.4 — `[M-generic-array-return-mono]`** (commit 901b29f6608, partial):
+turbofish args extract'ятся ПЕРЕД unwrap_turbofish в return-type
+inference. До fix'а `copy[int]([...])` (где return type []int)
+давал void* receiver. После — правильный NovaArray_nova_int*.
+2 sub-cases PASS для plain []T return; array-of-func — отдельный
+followup `[M-array-of-func-mono]`.
+
+**Ф.5 — `[M-generic-nested-call-inference]`** (commit cf20c2d0c76, partial):
+Source 2d добавлен в resolve_mono_type_args + infer_expr_c_type:
+для variable references to fn-typed params lookup fn_param_sigs[var]
+substituted return type. Caller-side `with_timeout(ms, body)` → `within(body)`
+T pass-through теперь работает. Body-side match-arm pattern inference —
+orthogonal issue (Some(v) where v inner type — нужен pattern_inner_type
+helper из scrutinee), зафиксирован как Ф.5b followup.
+
+**Ф.8 — Plan 48 acceptance checkboxes** (commit 3e287605710):
+обновлены `[ ]` → `[x]/[⚠️ partial]` отражая реальный статус 8/10
+closed (2 partial с явным Plan 54 references).
+
+**Ф.9 — cross-type cascade child.reason() round-trip** (commit 63bd0e4416e):
+verification hole закрыт. + Plan 54 Ф.9 побочный fix:
+- novaopt_value_types: HashMap<sanitized, c_ty> — recovery real C-type
+  для pattern_bind_typed (sanitized id ≠ c_ty для pointer T).
+- register_novaopt_decl фиксирует mapping.
+- pattern_bind_typed recovery через map.
+- emit_call(tok.reason()): pointer T — read-back БЕЗ deref (cancel()
+  сохранил без box); value T — через `*(T*)reason_raw()` deref.
+
+Positive побочный эффект: 484 → 510-512 PASS (фиксил pre-existing
+NovaOpt user-types pattern-bind incorrectness).
+
+### Не закрыто (3 — Plan 54 still pending)
+
+- **Ф.2 [M-int-extension-record-field]** — `100.millis()` codegen в
+  record-literal field generic static ctor. Blocks retry_test.nv.
+  Deep codegen fix (2-4 hours).
+- **Ф.3 [M-unit-variant-context-inference]** — `let r = Err2; r.method(arg)`
+  forward analysis. Plan 48 Ф.7.4 final closure (полное удаление
+  emit_generic_method_erased). High risk, 4-8 hours.
+- **Ф.7 polymorphic recursion compile-error test** — depends Ф.4 для
+  orthogonal codegen bug ("anonymous record literal").
+
+### Регрессия
+
+512 PASS / 25 FAIL (was 484/46 до Plan 54). Net +28 PASS, -21 FAIL =
++49 tests changed positively — many от побочного эффекта Ф.9 novaopt
+fix. Zero regressions от Plan 54 items.
+
+### Commits
+
+- plan(54): codegen follow-ups document
+- docs(48 Ф.8 plan54): acceptance checkboxes updated
+- feat(plan54 Ф.9): cross-type round-trip + novaopt_value_types fix
+- fix(plan54 Ф.1): pattern-var-leak — var_types scope cleanup в emit_test
+- feat(plan54 Ф.5 partial): nested-call inference caller-side
+- fix(plan54 Ф.4): generic-array-return turbofish through infer

@@ -374,6 +374,12 @@ pub struct CEmitter {
     /// из `NOVA_ARRAY_DECL` списка в `nova_rt/array.h` — runtime их
     /// уже даёт, не нужен duplicate typedef.
     novaopt_decls_seen: std::cell::RefCell<std::collections::HashSet<String>>,
+    /// Plan 54 Ф.9: sanitized NovaOpt-id → real C-type значения. Нужно
+    /// чтобы pattern_bind_typed для `Some(v) => v` где scrutinee
+    /// `NovaOpt_Nova_X_p` (sanitized) восстановил correct `v` тип
+    /// `Nova_X*` (не sanitized "Nova_X_p"). Без map'a `t_from_scr` =
+    /// strip("NovaOpt_") даёт sanitized, что breaks pointer types.
+    novaopt_value_types: std::cell::RefCell<std::collections::HashMap<String, String>>,
     /// Accumulated lint warnings from codegen (e.g. anonymous-embed override).
     /// Returned from emit_module instead of printed directly to stderr,
     /// so test runner can route them to captured_stderr rather than leaking
@@ -573,6 +579,15 @@ impl CEmitter {
                 s.insert("nova_str".to_string());
                 s.insert("nova_f64".to_string());
                 std::cell::RefCell::new(s)
+            },
+            // Plan 54 Ф.9: pre-populated primitive sanitized → c_ty
+            // pairs (для них sanitized совпадает с c_ty).
+            novaopt_value_types: {
+                let mut m = std::collections::HashMap::new();
+                for t in ["nova_int", "nova_byte", "nova_bool", "nova_str", "nova_f64"] {
+                    m.insert(t.to_string(), t.to_string());
+                }
+                std::cell::RefCell::new(m)
             },
             defer_scopes: Vec::new(),
             defer_block_counter: 0,
@@ -1506,12 +1521,26 @@ impl CEmitter {
         let saved_out = std::mem::take(&mut self.out);
         let saved_indent = self.indent;
         self.indent = 0;
+        // Plan 54 Ф.1: snapshot var_types перед test body, restore после.
+        // Без этого pattern-bound vars (`Some(v) => v`) и регулярные
+        // let-bindings leak'ят между tests, что ломает match-arm inference
+        // (например test 3 binds `v: bool`, test 6 binds `v: int` через
+        // тот же match-pattern → infer_expr_c_type(`v`) возвращает
+        // stale bool → match-result inferred bool → assert fails).
+        // Same scope-cleanup для var_mutable + cancel_token_t_map.
+        let saved_var_types = self.var_types.clone();
+        let saved_var_mutable = self.var_mutable.clone();
+        let saved_cancel_token_t_map = self.cancel_token_t_map.clone();
         self.line(&format!("static nova_unit nova_test_{}(void) {{", safe));
         self.indent = 1;
         self.emit_block_stmts(&t.body, "nova_unit")?;
         self.indent = 0;
         self.line("}");
         self.line("");
+        // Restore scope-state — fixes leak (Plan 54 Ф.1).
+        self.var_types = saved_var_types;
+        self.var_mutable = saved_var_mutable;
+        self.cancel_token_t_map = saved_cancel_token_t_map;
         let test_body = std::mem::replace(&mut self.out, saved_out);
         self.indent = saved_indent;
         // Flush any lambdas discovered during this test's emit
@@ -5120,6 +5149,24 @@ impl CEmitter {
                 };
                 if !closure_ret_c.is_empty() {
                     Self::infer_type_param_binding(ret_ty_ref.as_ref(), &closure_ret_c, &mut subst);
+                }
+            }
+        }
+        // Plan 54 Ф.5 (Source 2d): для fn-typed param когда arg —
+        // variable reference (не closure literal). Если var_types/
+        // fn_param_sigs знают return-type of variable's closure, можем
+        // infer T. Пример: nested generic call `with_timeout[T] calls
+        // within(ms, body)` — body's return type из fn_param_sigs уже
+        // substituted (если we внутри mono'd with_timeout body), используем
+        // его чтобы infer within's T.
+        for (param, arg) in fn_decl.params.iter().zip(args.iter()) {
+            if let crate::ast::TypeRef::Func { return_type: Some(ret_ty_ref), .. } = &param.ty {
+                if let ExprKind::Ident(name) = &arg.expr().kind {
+                    if let Some((_, ret_c)) = self.fn_param_sigs.get(name) {
+                        if !ret_c.is_empty() && ret_c != "void*" && ret_c != "nova_unit" {
+                            Self::infer_type_param_binding(ret_ty_ref.as_ref(), ret_c, &mut subst);
+                        }
+                    }
                 }
             }
         }
@@ -9424,15 +9471,31 @@ impl CEmitter {
                                 } else { None };
                                 if let Some(t_c) = t_c {
                                     if t_c != "nova_str" {
-                                        // Per-T un-box через ternary + compound
-                                        // literal. NovaOpt_<T_c> существует для
-                                        // primitives (NOVA_ARRAY_DECL declares
-                                        // NovaArray_T + NovaOpt_T pair).
+                                        // Plan 54 Ф.9: read-back зависит от
+                                        // pointer/value T:
+                                        //   T pointer (Nova_X*) — reason_ptr
+                                        //     УЖЕ is Nova_X* (cancel() сделал
+                                        //     `(void*)(ptr_value)` без box).
+                                        //     Cast: `(Nova_X*)reason_raw(tok)`.
+                                        //   T value (nova_int, etc) — boxed
+                                        //     via box_copy_raw на heap; read
+                                        //     `*(T*)reason_raw(tok)`.
+                                        // NovaOpt typedef emit'ится через
+                                        // register_novaopt_decl.
+                                        let sanitized = Self::sanitize_c_for_ident(&t_c);
+                                        self.register_novaopt_decl(&sanitized, &t_c);
+                                        let read_back = if t_c.ends_with('*') {
+                                            format!("({})nova_cancel_token_reason_raw({})",
+                                                t_c, obj_c)
+                                        } else {
+                                            format!("*({}*)nova_cancel_token_reason_raw({})",
+                                                t_c, obj_c)
+                                        };
                                         return Ok(format!(
                                             "(nova_cancel_token_has_reason({tok}) \
-                                              ? (NovaOpt_{t}){{ .tag = NOVA_TAG_Option_Some, .value = *({t}*)nova_cancel_token_reason_raw({tok}) }} \
-                                              : (NovaOpt_{t}){{ .tag = NOVA_TAG_Option_None }})",
-                                            tok = obj_c, t = t_c
+                                              ? (NovaOpt_{sn}){{ .tag = NOVA_TAG_Option_Some, .value = {rb} }} \
+                                              : (NovaOpt_{sn}){{ .tag = NOVA_TAG_Option_None }})",
+                                            tok = obj_c, rb = read_back, sn = sanitized
                                         ));
                                     }
                                 }
@@ -13132,8 +13195,15 @@ impl CEmitter {
                                 // "NovaOpt_" из scr_ty чтобы получить
                                 // реальный T (nova_bool, NovaOpt_nova_int,
                                 // _NovaTuple2, Nova_Foo*, etc.).
+                                // Plan 54 Ф.9: для pointer T (Nova_X*) sanitized
+                                // id ≠ c_ty. recovery через novaopt_value_types
+                                // если ранее зарегистрировано register_novaopt_decl.
                                 let t_from_scr = scr_ty.strip_prefix("NovaOpt_")
-                                    .map(str::to_string);
+                                    .map(|s| {
+                                        self.novaopt_value_types.borrow()
+                                            .get(s).cloned()
+                                            .unwrap_or_else(|| s.to_string())
+                                    });
                                 if sub_is_opt_variant {
                                     // Inner — Option-typed (nested). Используем
                                     // sub_t если оно тоже NovaOpt_*; иначе legacy
@@ -14274,6 +14344,10 @@ impl CEmitter {
         let mut seen = self.novaopt_decls_seen.borrow_mut();
         if seen.contains(sanitized) { return; }
         seen.insert(sanitized.to_string());
+        // Plan 54 Ф.9: запомнить реальный c_ty для recovery в
+        // pattern_bind_typed (sanitized id ≠ c_ty для pointer types).
+        self.novaopt_value_types.borrow_mut()
+            .insert(sanitized.to_string(), c_ty.to_string());
         let line = format!(
             "typedef struct NovaOpt_{} {{ int tag; {} value; }} NovaOpt_{};\n",
             sanitized, c_ty, sanitized);
@@ -14787,7 +14861,14 @@ impl CEmitter {
                 format!("NovaVtable_{}*", effect_name.join("_"))
             }
             ExprKind::Call { func, args, .. } => {
-                // D38 turbofish прозрачен для inference — unwrap base.
+                // D38 turbofish прозрачен для inference — но extract type_args
+                // ПЕРЕД unwrap чтобы Plan 54 Ф.4 return-type inference (для
+                // generic-fn возвращающей []T) могла использовать turbofish
+                // как Source 1.
+                let turbofish_args: Vec<crate::ast::TypeRef> =
+                    if let ExprKind::TurboFish { type_args, .. } = &func.kind {
+                        type_args.clone()
+                    } else { vec![] };
                 let func = func.unwrap_turbofish();
                 // D109: TurboFish member call on generic type, e.g. HashMap[str,int].new().
                 // func = Member { obj: TurboFish(Ident("HashMap"), [str,int]), name: "new" }.
@@ -15036,6 +15117,18 @@ impl CEmitter {
                                 let mut subst: Vec<(String, Option<String>)> = fn_decl.generics.iter()
                                     .map(|g| (g.name.clone(), None))
                                     .collect();
+                                // Plan 54 Ф.4 Source 1: turbofish args (наибольший
+                                // приоритет). Без этого `collect_all[int]([...])` —
+                                // T=int lost при inference → return-type void*.
+                                for (i, tr) in turbofish_args.iter().enumerate() {
+                                    if i < subst.len() {
+                                        if let Ok(c_ty) = self.type_ref_to_c(tr) {
+                                            if !c_ty.is_empty() && c_ty != "void*" {
+                                                subst[i].1 = Some(c_ty);
+                                            }
+                                        }
+                                    }
+                                }
                                 for (param, arg) in fn_decl.params.iter().zip(args.iter()) {
                                     let arg_c = self.infer_expr_c_type(arg.expr());
                                     Self::infer_type_param_binding(&param.ty, &arg_c, &mut subst);
@@ -15063,6 +15156,21 @@ impl CEmitter {
                                         };
                                         if !closure_ret_c.is_empty() {
                                             Self::infer_type_param_binding(ret_ty_ref.as_ref(), &closure_ret_c, &mut subst);
+                                        }
+                                    }
+                                }
+                                // Plan 54 Ф.5 Source 2d: for variable references
+                                // to fn-typed params — look up registered return
+                                // type in fn_param_sigs (already substituted в
+                                // outer mono context).
+                                for (param, arg) in fn_decl.params.iter().zip(args.iter()) {
+                                    if let crate::ast::TypeRef::Func { return_type: Some(ret_ty_ref), .. } = &param.ty {
+                                        if let ExprKind::Ident(name) = &arg.expr().kind {
+                                            if let Some((_, ret_c)) = self.fn_param_sigs.get(name) {
+                                                if !ret_c.is_empty() && ret_c != "void*" && ret_c != "nova_unit" {
+                                                    Self::infer_type_param_binding(ret_ty_ref.as_ref(), ret_c, &mut subst);
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -15167,7 +15275,13 @@ impl CEmitter {
                                 if let ExprKind::Ident(name) = &obj.kind {
                                     if let Some(t_c) = self.cancel_token_t_map.get(name) {
                                         if t_c != "nova_str" {
-                                            return format!("NovaOpt_{}", t_c);
+                                            // Plan 54 Ф.9: использовать
+                                            // sanitize_c_for_ident для NovaOpt
+                                            // suffix чтобы соответствовать
+                                            // register_novaopt_decl naming
+                                            // (особенно для pointer types).
+                                            let sanitized = Self::sanitize_c_for_ident(t_c);
+                                            return format!("NovaOpt_{}", sanitized);
                                         }
                                     }
                                 }
