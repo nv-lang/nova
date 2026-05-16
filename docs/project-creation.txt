@@ -12277,6 +12277,20 @@ negative (есть warning или ошибка):
 - Регрессия: 140 PASS / 35 SKIP (no change, Z3 не активен в release без feature).
 - Коммит: `ac0012e949c`.
 
+### Ф.3.6 — calc pinpoint pretty-print previous/expected
+
+- pipeline.rs:1282-1305 — failing calc step теперь эмитит:
+  - `calc proof step N failed`
+  - `previous (step N-1): <expr.pretty>`
+  - `expected (REL step N): <expr.pretty>`
+  - `cannot prove: <prev> REL <expected>`
+  - `counterexample: <model>`
+- Раньше было только `calc step {i} {op} {i+1} failed: {cex}` — пользователь
+  не видел какое именно выражение pretty-printed.
+- Test: calc_pinpoint_step_fail (`x; == x; == x*3` → step 2 failed, REQUIRES Z3).
+- Регрессия: 140 PASS / 36 SKIP (+1).
+- Коммит: `b8c0cce54a7`.
+
 === Plan 45 �.25 � nova tests (positive + negative) ===
 
 ����� �������� �.25 (4 ����) �������� nova-tests .nv ��� �������� �����
