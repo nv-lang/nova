@@ -497,6 +497,24 @@ enum BenchCmd {
         #[arg(long, default_value = "bench-history")]
         branch: String,
     },
+    /// Plan 57.A.2: Generate static HTML dashboard from history.
+    /// Reads from history orphan branch, writes <out>/index.html +
+    /// <out>/bench-<safe>.html per bench, plus <out>/data.json.
+    Dashboard {
+        /// History branch (default: bench-history).
+        #[arg(long = "history-branch", default_value = "bench-history")]
+        history_branch: String,
+        /// Output directory (default: dashboard/).
+        #[arg(long, default_value = "dashboard")]
+        out: PathBuf,
+        /// Max history entries to include (newest first).
+        #[arg(long = "max-entries", default_value_t = 200)]
+        max_entries: usize,
+        /// Custom echarts URL (offline = local path).
+        #[arg(long = "echarts-url",
+              default_value = "https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js")]
+        echarts_url: String,
+    },
 }
 
 /// Plan 33.3 Ф.13: `nova contracts <subcommand>`.
@@ -2686,6 +2704,19 @@ fn cmd_bench(sub: BenchCmd) -> Result<()> {
                 }
                 println!("\n{} total entries", entries.len());
             }
+            Ok(())
+        }
+        BenchCmd::Dashboard { history_branch, out, max_entries, echarts_url } => {
+            let repo = find_repo_root()?;
+            let opts = bench::dashboard::DashboardOpts {
+                repo: &repo,
+                history_branch,
+                out_dir: &out,
+                max_entries,
+                echarts_url,
+            };
+            let exit = bench::dashboard::generate(opts)?;
+            if exit != 0 { std::process::exit(exit); }
             Ok(())
         }
     }
