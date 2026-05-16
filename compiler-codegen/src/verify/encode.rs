@@ -273,8 +273,11 @@ pub fn encode_expr_with_ctx(e: &Expr, ctx: &EncodeCtx) -> Result<SmtTerm, Encodi
 
         ExprKind::UnitLit => Ok(SmtTerm::Var("_unit".into())),
 
-        // Member access (record fields) — uninterpreted в 33.1.
-        // Кодируем как UF: `field_x(obj)`.
+        // Member access (record fields) — uninterpreted UF.
+        // Ф.9.2 (Plan 33.6): naming сейчас `_field_<name>` без типа в имени.
+        // V1 ограничение: если один field используется в разных типах (Bool/Int)
+        // в одной формуле, Z3 auto-declare'ит с первым встретившимся sort →
+        // sort mismatch на втором. KNOWN LIMITATION (V2: type-aware naming).
         ExprKind::Member { obj, name } => {
             let obj_t = encode_expr_with_ctx(obj, ctx)?;
             Ok(SmtTerm::App(format!("_field_{}", name), vec![obj_t]))
