@@ -242,8 +242,16 @@ typedef struct {
      * cooperative cancel других fiber'ов в scope.
      *
      * NULL = no error. Read через nova_aptr_load(acquire) в main thread
-     * после `pending_remote == 0` — корректный happens-before. */
+     * после `pending_remote == 0` — корректный happens-before.
+     *
+     * Plan 49 Ф.5: kind + reason пишутся ПОСЛЕ успешного CAS на msg
+     * (обычный store, не atomic — happens-before гарантирован release/acquire
+     * на msg pointer). Reader (main supervised_run) читает kind/reason
+     * увидев non-NULL msg. USER-precedence: см. nova_fiber_report_atomic_kinded
+     * — compare-kind CAS-loop overwrite CANCEL→USER. */
     nova_atomic_ptr first_error_atomic;
+    NovaThrowKind   first_error_atomic_kind;     /* USER (default) или CANCEL */
+    void*           first_error_atomic_reason;   /* box'нутый T для CANCEL */
     /* Plan 44.5 Layer 5 park/wake: M:N fiber re-dispatch hook.
      * Set by runtime.c on worker scopes (в nova_runtime_init).
      * NULL = single-thread scope (main thread, test scopes) — no M:N.
@@ -810,6 +818,63 @@ static inline void nova_fiber_report_error(const char* msg) {
     nova_fiber_report_error_kinded(msg, NOVA_THROW_USER, NULL);
 }
 
+/* Plan 49 Ф.5: M:N cross-worker kinded error report.
+ * Worker fiber'е (parent_scope != NULL): CAS msg pointer + USER-precedence
+ * для kind. Используется emit_spawn в remote-error-path (vs local
+ * report_error_kinded). Reader main supervised_run видит kind/reason
+ * через usual release/acquire на msg pointer.
+ *
+ * Algorithm:
+ *   loop {
+ *     exp = aptr_load(first_error_atomic);
+ *     if (exp == NULL):
+ *       CAS NULL → msg; success → store kind/reason → set cancel_requested → break
+ *     else: // already set
+ *       cur_kind = first_error_atomic_kind;
+ *       if (cur_kind == CANCEL && incoming == USER):
+ *         CAS prev_msg → msg; success → overwrite kind/reason → break
+ *       else: keep (CANCEL keep на CANCEL incoming; USER keep на любое)
+ *   }
+ * NB: race: между load kind и CAS msg кто-то ещё может overwrite. Acceptable
+ * (precedence — best-effort hint, не strict ordering): main reader получит
+ * либо USER либо raison; CANCEL никогда не "тащит за собой" USER. */
+static inline void nova_fiber_report_atomic_kinded(NovaFiberQueue* parent,
+                                                   const char* msg,
+                                                   NovaThrowKind kind,
+                                                   void* reason_ptr) {
+    if (!parent || !msg) return;
+    for (;;) {
+        const void* expected = nova_aptr_load(&parent->first_error_atomic);
+        if (expected == NULL) {
+            const void* exp_for_cas = NULL;
+            if (nova_aptr_cas(&parent->first_error_atomic, &exp_for_cas,
+                              (const void*)msg)) {
+                parent->first_error_atomic_kind = kind;
+                parent->first_error_atomic_reason = reason_ptr;
+                parent->cancel_requested = true;
+                return;
+            }
+            /* CAS failed → loop: someone else wrote first, re-evaluate. */
+            continue;
+        }
+        /* Already non-NULL: precedence check. */
+        if (parent->first_error_atomic_kind == NOVA_THROW_CANCEL
+            && kind == NOVA_THROW_USER) {
+            const void* exp_for_cas = expected;
+            if (nova_aptr_cas(&parent->first_error_atomic, &exp_for_cas,
+                              (const void*)msg)) {
+                parent->first_error_atomic_kind = kind;
+                parent->first_error_atomic_reason = reason_ptr;
+                /* cancel_requested already true; no change needed. */
+                return;
+            }
+            continue;  /* expected changed под нами — retry. */
+        }
+        /* Keep existing (CANCEL+CANCEL, USER+anything → first-USER-wins). */
+        return;
+    }
+}
+
 /* Single round-robin pass: resume each live fiber in the queue ONCE.
  * Returns the number of still-live fibers after the pass.
  *
@@ -1004,7 +1069,7 @@ static inline void nova_supervised_run_impl(NovaFiberQueue* q,
         }
         /* unreachable */
     }
-    /* Plan 49 Ф.3: kind-aware re-throw.
+    /* Plan 49 Ф.3 + Ф.5: kind-aware re-throw.
      * CANCEL → scope отменён штатно, наружу НИЧЕГО не летит (отмена сделала
      *          работу). Это паритет с Go: `ctx` отменён → функция просто
      *          возвращается.
@@ -1013,12 +1078,13 @@ static inline void nova_supervised_run_impl(NovaFiberQueue* q,
      * USER-precedence (Ф.2) гарантирует что если БЫЛИ и CANCEL и USER —
      * naружу всплывёт USER (реальная ошибка не теряется).
      *
-     * NB: kind хранится в q->first_error_kind. Remote (M:N) atomic-err
-     * пока не несёт kind — Ф.5 расширит. До тех пор remote ошибки
-     * считаются USER (re-throw'ятся), что совместимо с прошлой
-     * семантикой. */
+     * Plan 49 Ф.5: kind для cross-worker (M:N) ошибок читается из
+     * first_error_atomic_kind. Приоритет: local first_error побеждает над
+     * atomic (если оба есть — local зафиксировался первым в этом thread'е).
+     * Если только atomic — берём atomic_kind. */
     if (err) {
-        NovaThrowKind kind = q->first_error_kind;
+        NovaThrowKind kind = q->first_error ? q->first_error_kind
+                                            : q->first_error_atomic_kind;
         if (kind == NOVA_THROW_CANCEL) {
             /* Отмена не убегает наружу. Caller продолжает выполнение. */
             return;

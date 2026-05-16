@@ -2807,14 +2807,13 @@ impl CEmitter {
         self.line("} else {");
         self.indent += 1;
         // Plan 44.5 Layer 5: error reporting — remote vs local.
-        // Plan 49 Ф.2: kinded — пробрасываем _ff.error_kind / error_reason_ptr.
+        // Plan 49 Ф.2 + Ф.5: kinded — пробрасываем _ff.error_kind / error_reason_ptr.
         // Local path: USER-precedence через nova_fiber_report_error_kinded.
-        // Remote path: M:N atomic — Ф.5 расширит CAS-петлю для compare-kind.
+        // Remote path: kinded atomic report (compare-kind CAS-loop —
+        // CANCEL→USER overwrite, иначе keep).
         self.line("if (_c->_nova_parent_scope) {");
         self.indent += 1;
-        self.line("const void* _exp = NULL;");
-        self.line("(void)nova_aptr_cas(&_c->_nova_parent_scope->first_error_atomic, &_exp, (const void*)_ff.error_msg.ptr);");
-        self.line("_c->_nova_parent_scope->cancel_requested = true;");
+        self.line("nova_fiber_report_atomic_kinded(_c->_nova_parent_scope, _ff.error_msg.ptr, _ff.error_kind, _ff.error_reason_ptr);");
         self.indent -= 1;
         self.line("} else {");
         self.indent += 1;
