@@ -45,6 +45,9 @@
 | Ф.33.1 Server-side syntax highlighting | ✅ done | `doc/highlight.rs` — uses Nova lexer для accurate tokenization. CSS classes (.tok-kw/.tok-type/.tok-str/.tok-num/.tok-comment). Context-aware (`fn` в string НЕ highlighted as keyword). 9 unit tests. |
 | Ф.33.2 Doc coverage CI gate | ✅ done | CLI `--coverage-threshold N` (0-100). `--coverage` теперь exit 1 если actual % < threshold. CI-friendly: `nova doc <dir> --coverage --coverage-threshold 80`. |
 | Ф.33.3 nova.toml [doc] config | ✅ done | `doc/config.rs` — minimal TOML subset parser (no serde). Reads `[doc]` section: strict/coverage_threshold/source_url_template/extern_links/site_url. CLI args override config; config sets env defaults. 12 unit tests. |
+| **Ф.34.1 HTTP MCP transport** (in-progress) | 🟡 | `nova doc-mcp --port N` HTTP server (std::net::TcpListener, no tokio dep). POST /mcp с JSON-RPC body, response в body. Production deploy для multi-client MCP. |
+| **Ф.34.2 Incremental cache** (in-progress) | 🟡 | Mtime-based AST cache для `--watch` mode. Caches `Module` per file через `clone()` (no serde). Re-parse только changed files. ~200 LOC + tests. Closes Ф.30.2 deferred. |
+| **Ф.34.3 Plan 45.B partial: std/option doc-pass** (in-progress) | 🟡 | Document `std/option/option.nv` — key stdlib module. Demonstrates production-grade doc-comments (summary, examples, contracts если есть). Foundation для full Plan 45.B. |
 
 ## Ф.21 — Production hardening (2026-05-15, post-MVP audit)
 
