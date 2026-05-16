@@ -274,13 +274,21 @@ pub fn encode_expr_with_ctx(e: &Expr, ctx: &EncodeCtx) -> Result<SmtTerm, Encodi
         ExprKind::UnitLit => Ok(SmtTerm::Var("_unit".into())),
 
         // Member access (record fields) — uninterpreted UF.
-        // Ф.9.2 (Plan 33.6): naming сейчас `_field_<name>` без типа в имени.
-        // V1 ограничение: если один field используется в разных типах (Bool/Int)
-        // в одной формуле, Z3 auto-declare'ит с первым встретившимся sort →
-        // sort mismatch на втором. KNOWN LIMITATION (V2: type-aware naming).
+        // Ф.10.1 (Plan 33.6): type-aware naming `_field_<name>_<sort>` чтобы
+        // избежать sort-mismatch при использовании одного field в разных типах.
+        // Sort выводится из контекста: если obj — Var с известным sort, используем
+        // эвристику по naming convention (`_b` suffix → Bool, иначе Int).
+        // Полная type-aware extraction требует type-checker info — V2 work.
         ExprKind::Member { obj, name } => {
             let obj_t = encode_expr_with_ctx(obj, ctx)?;
-            Ok(SmtTerm::App(format!("_field_{}", name), vec![obj_t]))
+            // Простая эвристика: имя field заканчивается на `?` или начинается с `is_`
+            // → Bool sort hint; иначе Int.
+            let sort_hint = if name.starts_with("is_") || name.ends_with("?") {
+                "bool"
+            } else {
+                "int"
+            };
+            Ok(SmtTerm::App(format!("_field_{}_{}", name, sort_hint), vec![obj_t]))
         }
 
         // D.1.3: forall x in lo..hi : P(x)

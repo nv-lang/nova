@@ -79,6 +79,8 @@ pub fn render_with_source(tree: &DocTree, source: Option<&str>) -> String {
             w.array_object(|w| {
                 w.field_null_or_str("from_id", link.from_id.as_deref());
                 w.field_null_or_str("target_id", link.target_id.as_deref());
+                // Plan 45 Ф.30.1: external crate-doc URL.
+                w.field_null_or_str("target_url", link.target_url.as_deref());
                 w.field_str("text", &link.text);
             });
         }

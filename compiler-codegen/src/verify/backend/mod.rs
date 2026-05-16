@@ -19,7 +19,7 @@ pub mod z3;
 #[cfg(feature = "z3-backend")]
 pub use z3::Z3Backend;
 
-use super::ir::{Assertion, Formula, SatResult, SortRef};
+use super::ir::{Assertion, Formula, SatResult, SortRef, ModelValue};
 
 /// Backend для check-sat запросов. Engine-agnostic.
 ///
@@ -62,6 +62,16 @@ pub trait SmtBackend: Send {
 
     /// Check satisfiability of all current assertions.
     fn check_sat(&mut self) -> SatResult;
+
+    /// Ф.10.2 (Plan 33.6): извлечь witness value для variable `var_name`
+    /// из последнего satisfying model. Используется для `exists` witness
+    /// в diagnostic info-notes.
+    ///
+    /// Default: None (TrivialBackend не имеет полной модели).
+    /// Z3Backend override'ит через Z3_get_model + Z3_model_get_const_interp.
+    fn get_witness(&mut self, _var_name: &str) -> Option<ModelValue> {
+        None
+    }
 }
 
 /// Helper: prove that formula `goal` holds given current assertions.

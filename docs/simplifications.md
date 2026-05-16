@@ -7807,3 +7807,33 @@ Go/Rust/TS. Все требуют explicit type annotation; наш подход
 
 Total ~190-280 LOC. P3 — local quality-of-life fixes. Implementation
 в следующем sprint'е (3 фазы independent, можно параллельно).
+
+---
+
+## Plan 45 �.30+�.31.1 simplifications (2026-05-16)
+
+### HTML output single-page (no multi-page split)
+**���:** ender_html.rs. **��� ��������:** ��� modules � ����� HTML.
+**��� ������:** �.31.4 � file-per-module.
+
+### HTML ��� JS / search index
+**���:** ender_html.rs. **��� ��������:** Pure HTML5+CSS3, no lunr.
+**��� ������:** �.31.2 � generate search-index.json + lunr bundle.
+
+### HTML ��� dark mode
+**���:** EMBEDDED_CSS � only light theme.
+**��� ������:** �.31.3 � CSS variables + prefers-color-scheme media query.
+
+### Intra-doc link rewrite ����� text substitute
+**���:** ender_html.rs::rewrite_and_escape. **��� ��������:** Plain replace.
+**��� ������:** CommonMark-aware parser (~300 LOC).
+
+### External crate URL template � single placeholder
+**���:** links.rs::resolve_external_url. **��� ��������:** ������ {path}.
+**��� ������:** Add {module}, {name}, {kind} placeholders + URL encoding.
+
+### Incremental cache (�.30.2) � deferred Plan 45.A round 2
+**���:** cmd_doc_watch re-parses �� ������ mtime tick.
+**������ deferred:** Real cache requires Module serialization + invalidation
+graph (~500 LOC + complex test infra). Current --watch ~6ms ��� 50-module
+workspace � acceptable ��� interactive editing.

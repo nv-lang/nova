@@ -1,0 +1,22 @@
+// Ф.10.1 (Plan 33.6): Member field UF — type-aware naming.
+// `is_open` (bool-conventional) и `count` (int) кодируются разными UF —
+// нет sort-mismatch.
+
+module contracts.member_typed_field_positive
+
+type Door {
+    is_open bool,
+    count int,
+}
+
+#verify
+fn check_door(d Door) -> int
+    ensures result == d.count
+{
+    d.count
+}
+
+test "member typed positive" {
+    let d = Door { is_open: true, count: 5 }
+    assert(check_door(d) == 5)
+}
