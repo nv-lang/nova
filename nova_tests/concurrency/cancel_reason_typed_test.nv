@@ -95,6 +95,94 @@ test "backward-compat: CancelToken (= [str]).reason() работает" {
 }
 
 
+// ──────────────────────────────────────────────────────────────────────────
+// Edge cases + negative behavior verification
+// ──────────────────────────────────────────────────────────────────────────
+
+
+test "edge int big roundtrip" {
+    // Plan 49 Ф.6 P0 fix: memcpy через nova_cancel_box_copy_raw —
+    // полностью копирует sizeof(nova_int) байт; крупные int должны
+    // survive round-trip.
+    // NB: pattern-bound var имя уникально (`vi_big`) — pre-existing
+    // codegen leak'ит var_types['v'] между tests (если test раньше
+    // использовал `Some(v) => v` где v: bool, далее `Some(v) => v` для
+    // int упирается в stale bool inference).
+    let tok CancelToken[int] = CancelToken.new()
+    let big_n = 1000000000
+    tok.cancel(big_n)
+    let r = tok.reason()
+    let got = match r {
+        Some(vi_big) => vi_big
+        None         => -1
+    }
+    assert(got == big_n)
+}
+
+
+test "edge крупные отрицательные не теряются" {
+    let tok CancelToken[int] = CancelToken.new()
+    let small_n = -987654321
+    tok.cancel(small_n)
+    let r = tok.reason()
+    let got = match r {
+        Some(vi_small) => vi_small
+        None           => -1
+    }
+    assert(got == small_n)
+}
+
+
+test "edge multiple cancel first-cancel-wins T=int" {
+    // Plan 49 idempotency: первый reason сохраняется.
+    let tok CancelToken[int] = CancelToken.new()
+    tok.cancel(111)
+    tok.cancel(222)  // no-op
+    tok.cancel(333)  // no-op
+    let r = tok.reason()
+    let got = match r {
+        Some(vi_first) => vi_first
+        None           => -1
+    }
+    assert(got == 111)
+}
+
+
+test "negative-behavior: reason() для нового tok НЕ возвращает Some" {
+    // Verification что default value НЕ Some(garbage) — regression guard.
+    let tok CancelToken[int] = CancelToken.new()
+    let r = tok.reason()
+    let saw_some = match r {
+        Some(_) => true
+        None    => false
+    }
+    assert(!saw_some)
+}
+
+
+test "negative-behavior: tok НЕ cancelled после .new()" {
+    let tok CancelToken[int] = CancelToken.new()
+    assert(!tok.is_cancelled())
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Backward-compat: str-form через два разных pathways
+// ──────────────────────────────────────────────────────────────────────────
+
+
+test "backward-compat: CancelToken (= [str]).reason() работает" {
+    let tok = CancelToken.new()
+    tok.cancel("hello world")
+    let r = tok.reason()
+    let got = match r {
+        Some(s) => s
+        None    => "no-reason"
+    }
+    assert(got == "hello world")
+}
+
+
 test "backward-compat: CancelToken[str] explicit + reason()" {
     let tok CancelToken[str] = CancelToken.new()
     tok.cancel("explicit")
