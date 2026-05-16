@@ -220,6 +220,10 @@ enum Cmd {
     DocMcp {
         /// Path to .nv source или .json (pre-generated `nova doc --format json`).
         file: PathBuf,
+        /// Plan 45 Ф.34.1: run as HTTP server на 127.0.0.1:PORT (POST /mcp).
+        /// По умолчанию — stdio JSON-RPC loop.
+        #[arg(long = "port", value_name = "PORT")]
+        port: Option<u16>,
     },
     /// Compile a single Nova source file to a native binary.
     ///
@@ -1572,8 +1576,9 @@ fn load_nova_toml_doc_config() -> Option<nova_codegen::doc::config::DocConfig> {
     None
 }
 
-/// Plan 45 Ф.32.3 — `nova doc-mcp <file>` MCP server (JSON-RPC over stdio).
-fn cmd_doc_mcp(path: &Path) -> Result<()> {
+/// Plan 45 Ф.32.3 + Ф.34.1 — `nova doc-mcp <file>` MCP server.
+/// Default — stdio JSON-RPC loop. With `--port N` — HTTP server on 127.0.0.1:N.
+fn cmd_doc_mcp(path: &Path, port: Option<u16>) -> Result<()> {
     // Load tree JSON: .nv → build + render_json, .json → read directly.
     let tree_json_str = match path.extension().and_then(|e| e.to_str()) {
         Some("nv") => {
@@ -1592,11 +1597,20 @@ fn cmd_doc_mcp(path: &Path) -> Result<()> {
     };
     let tree_json = nova_codegen::doc::json_parse::parse(&tree_json_str)
         .map_err(|e| anyhow!("JSON parse: {}", e))?;
-    eprintln!("nova doc-mcp: loaded doc tree from {}, ready (read JSON-RPC on stdin)",
-        path.display());
-    let stdin = std::io::stdin();
-    let stdout = std::io::stdout();
-    nova_codegen::doc::mcp::run_mcp_loop(&tree_json, stdin.lock(), stdout.lock())?;
+    eprintln!("nova doc-mcp: loaded doc tree from {}", path.display());
+    match port {
+        Some(p) => {
+            // Plan 45 Ф.34.1: HTTP server mode.
+            nova_codegen::doc::mcp::run_http_server(&tree_json, p)?;
+        }
+        None => {
+            // Default: stdio JSON-RPC loop.
+            eprintln!("nova doc-mcp: ready (read JSON-RPC on stdin)");
+            let stdin = std::io::stdin();
+            let stdout = std::io::stdout();
+            nova_codegen::doc::mcp::run_mcp_loop(&tree_json, stdin.lock(), stdout.lock())?;
+        }
+    }
     Ok(())
 }
 
@@ -1757,6 +1771,8 @@ fn cmd_doc_watch(
     check: bool,
     coverage: bool,
 ) -> Result<()> {
+    // Plan 45 Ф.34.2: use WatchCache для incremental parse.
+    let mut cache = nova_codegen::doc::watch_cache::WatchCache::new();
     let mut last_mtime: Option<std::time::SystemTime> = None;
     eprintln!("nova doc --watch: monitoring {} (Ctrl-C to exit)", path.display());
     loop {
@@ -1769,9 +1785,41 @@ fn cmd_doc_watch(
                 "─── nova doc --watch ({}) ───",
                 chrono_like_now()
             );
-            // Re-run одним проходом через cmd_doc (без watch/json_schema).
-            match cmd_doc(path, format, false, include_private, run_doc_tests, check, false, coverage, None, 0, None, false, false, false, None) {
-                Ok(_) => {}
+            // Plan 45 Ф.34.2: parse через cache (re-uses unchanged AST).
+            match cache.parse_with_cache(path) {
+                Ok((module_arc, src, outcome)) => {
+                    let tag = match outcome {
+                        nova_codegen::doc::watch_cache::CacheOutcome::Miss => "parsed",
+                        nova_codegen::doc::watch_cache::CacheOutcome::Hit => "cached",
+                        nova_codegen::doc::watch_cache::CacheOutcome::Stale => "re-parsed",
+                    };
+                    eprintln!("({})", tag);
+                    let mut tree = nova_codegen::doc::build(&*module_arc);
+                    nova_codegen::doc::populate_handler_matrix(&mut tree, &src);
+                    tree.source_root = path.parent().map(|d| {
+                        let s = d.display().to_string();
+                        if s.is_empty() { ".".to_string() } else { s.replace('\\', "/") }
+                    });
+                    if !include_private {
+                        nova_codegen::doc::strip_private(&mut tree);
+                    }
+                    if coverage {
+                        let _ = cmd_doc_coverage(&tree, None);
+                    } else if check {
+                        let _ = cmd_doc_check(&tree, format);
+                    } else if run_doc_tests {
+                        let summary = nova_codegen::doc::test_runner::run_doc_tests_with_source(&tree.doc_tests, Some(&src));
+                        let _ = print_doc_test_summary(summary);
+                    } else {
+                        let out = match format {
+                            "markdown" | "md" => nova_codegen::doc::render_markdown_with_source(&tree, &src),
+                            "json" => nova_codegen::doc::render_json_with_source(&tree, &src),
+                            "html" => nova_codegen::doc::render_html(&tree),
+                            other => { eprintln!("unknown --format `{}`", other); continue; }
+                        };
+                        print!("{}", out);
+                    }
+                }
                 Err(e) => eprintln!("error: {}", e),
             }
         }
@@ -2682,7 +2730,7 @@ fn main() -> ExitCode {
             } // else (no --diff)
         }
         Cmd::DocQuery { json_file, query } => cmd_doc_query(&json_file, &query),
-        Cmd::DocMcp { file } => cmd_doc_mcp(&file),
+        Cmd::DocMcp { file, port } => cmd_doc_mcp(&file, port),
         Cmd::Build { file, output, mode, toolchain, vcvars, clang, timeout, keep_artifacts, mono_depth } => cmd_build(
             &file,
             output.as_deref(),

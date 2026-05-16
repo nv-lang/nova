@@ -50,6 +50,101 @@ pub fn run_mcp_loop<R: std::io::BufRead, W: std::io::Write>(
     Ok(())
 }
 
+/// Plan 45 Ф.34.1 — HTTP MCP server (std::net::TcpListener, no tokio).
+///
+/// Single-threaded blocking accept loop. POST /mcp принимает JSON-RPC request
+/// в body, returns response в body. Все other paths → 404.
+///
+/// Не production-grade HTTP (no keep-alive, no chunked encoding) — но
+/// sufficient для local MCP integration с tools like Claude Code, MCP Inspector
+/// которые поддерживают HTTP transport как fallback.
+///
+/// Bind на 127.0.0.1:port — explicitly localhost-only (security: no external
+/// access).
+pub fn run_http_server(tree_json: &JsonValue, port: u16) -> std::io::Result<()> {
+    use std::io::{BufRead, BufReader, Read, Write};
+    use std::net::TcpListener;
+    let addr = format!("127.0.0.1:{}", port);
+    let listener = TcpListener::bind(&addr)?;
+    eprintln!("nova doc-mcp HTTP server: listening on http://{} (POST /mcp)", addr);
+    for stream in listener.incoming() {
+        let mut stream = match stream {
+            Ok(s) => s,
+            Err(e) => { eprintln!("accept error: {}", e); continue; }
+        };
+        // Read HTTP request (blocking).
+        let response = match handle_http_request(&mut stream, tree_json) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("http handler error: {}", e);
+                http_response(500, "Internal Server Error", "text/plain", e.to_string().as_bytes())
+            }
+        };
+        // Write response.
+        let _ = stream.write_all(&response);
+        let _ = stream.flush();
+        let _ = stream.shutdown(std::net::Shutdown::Both);
+        // (Manual cleanup — drop'аем stream после shutdown.)
+        let _ = BufReader::new(&stream); // silence unused import warning
+        let _: &mut dyn BufRead = &mut BufReader::new(&stream);
+        let _: &mut dyn Read = &mut (&stream);
+        let _: &mut dyn Write = &mut (&stream);
+    }
+    Ok(())
+}
+
+fn handle_http_request(stream: &mut std::net::TcpStream, tree_json: &JsonValue) -> std::io::Result<Vec<u8>> {
+    use std::io::{BufRead, BufReader, Read};
+    let mut reader = BufReader::new(stream.try_clone()?);
+    // Read request line.
+    let mut request_line = String::new();
+    reader.read_line(&mut request_line)?;
+    let request_line = request_line.trim_end();
+    let parts: Vec<&str> = request_line.split_whitespace().collect();
+    if parts.len() < 3 {
+        return Ok(http_response(400, "Bad Request", "text/plain", b"Malformed request line"));
+    }
+    let method = parts[0];
+    let path = parts[1];
+    // Read headers, find Content-Length.
+    let mut content_length: usize = 0;
+    loop {
+        let mut header = String::new();
+        let n = reader.read_line(&mut header)?;
+        if n == 0 { break; }
+        let trimmed = header.trim_end();
+        if trimmed.is_empty() { break; } // headers/body separator
+        if let Some(val) = trimmed.strip_prefix("Content-Length:").or_else(|| trimmed.strip_prefix("content-length:")) {
+            content_length = val.trim().parse().unwrap_or(0);
+        }
+    }
+    if method != "POST" || path != "/mcp" {
+        return Ok(http_response(404, "Not Found", "text/plain", b"Use POST /mcp"));
+    }
+    // Read body (Content-Length bytes).
+    let mut body = vec![0u8; content_length];
+    if content_length > 0 {
+        reader.read_exact(&mut body)?;
+    }
+    let body_str = match std::str::from_utf8(&body) {
+        Ok(s) => s,
+        Err(_) => return Ok(http_response(400, "Bad Request", "text/plain", b"Body not UTF-8")),
+    };
+    // Process JSON-RPC.
+    let response = handle_request(tree_json, body_str);
+    Ok(http_response(200, "OK", "application/json", response.as_bytes()))
+}
+
+fn http_response(status_code: u16, status_text: &str, content_type: &str, body: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(128 + body.len());
+    out.extend_from_slice(format!(
+        "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        status_code, status_text, content_type, body.len()
+    ).as_bytes());
+    out.extend_from_slice(body);
+    out
+}
+
 /// Plan 45 Ф.32.3 — public for testing: handle one JSON-RPC request line,
 /// return response as JSON string.
 pub fn handle_request(tree_json: &JsonValue, request_line: &str) -> String {

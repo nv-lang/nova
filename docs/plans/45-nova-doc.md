@@ -45,6 +45,9 @@
 | Ф.33.1 Server-side syntax highlighting | ✅ done | `doc/highlight.rs` — uses Nova lexer для accurate tokenization. CSS classes (.tok-kw/.tok-type/.tok-str/.tok-num/.tok-comment). Context-aware (`fn` в string НЕ highlighted as keyword). 9 unit tests. |
 | Ф.33.2 Doc coverage CI gate | ✅ done | CLI `--coverage-threshold N` (0-100). `--coverage` теперь exit 1 если actual % < threshold. CI-friendly: `nova doc <dir> --coverage --coverage-threshold 80`. |
 | Ф.33.3 nova.toml [doc] config | ✅ done | `doc/config.rs` — minimal TOML subset parser (no serde). Reads `[doc]` section: strict/coverage_threshold/source_url_template/extern_links/site_url. CLI args override config; config sets env defaults. 12 unit tests. |
+| Ф.34.1 HTTP MCP transport | ✅ done | `nova doc-mcp --port N` HTTP server через `std::net::TcpListener` (no tokio dep). POST /mcp routes к JSON-RPC handler. 4 integration tests с real TCP. ~120 LOC. |
+| Ф.34.2 Incremental cache | ✅ done | `doc/watch_cache.rs` — mtime-based `BTreeMap<PathBuf, (SystemTime, Arc<Module>)>`. `cmd_doc_watch` использует cache, logs Hit/Miss/Stale outcomes. 8 unit tests. Closes Ф.30.2 deferred. |
+| Ф.34.3 Plan 45.B partial: std/time/duration doc-pass | ✅ done | 14 doc-comments на `std/time/duration.nv`: Duration type, ZERO/SECOND/MINUTE/HOUR constants, from_* constructors. Coverage 16% (87 items total — full pass for module = Plan 45.B remaining scope). |
 
 ## Ф.21 — Production hardening (2026-05-15, post-MVP audit)
 

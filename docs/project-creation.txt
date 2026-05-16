@@ -13794,3 +13794,12 @@ Plan 45 family ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½. ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 
 ï¿½ï¿½ï¿½ï¿½ï¿½ 14 sessions (ï¿½.25 > ï¿½.33) Plan 45 close on ~98%. ï¿½ï¿½ï¿½ user-facing
 features implemented ï¿½ production-grade test coverage.
+
+=== Plan 45 Sprint Ô.34 — HTTP MCP + cache + stdlib doc-pass (2026-05-16) ===
+
+Ô.34.1 (5b055e7): HTTP MCP transport via std::net (no tokio). `nova doc-mcp --port N`.
+Ô.34.2 (dff9e6e): Incremental cache (closes Ô.30.2). WatchCache + Arc<Module> sharing.
+Ô.34.3 (a946013): std/time/duration doc-pass partial (14 docs, 16% coverage).
+
+200+ doc tests PASS (26+ suites + 75+ unit). Plan 45 close ~99%.
+Remaining: Plan 45.B full stdlib doc-pass (weeks).

@@ -14,6 +14,20 @@
 // AI-first: Time effect позволяет в тестах подменить часы:
 //   with Time = th.fixed_ms(1700000000000) { ... детерминированный код ... }
 
+//! Plan 45 Ф.34.3 — Duration + Timestamp + Time effect.
+//!
+//! Time-related types: представление длительностей и моментов времени.
+//! Sensible defaults: nanosecond precision, signed Duration (поддерживает
+//! отрицательные интервалы), `Time` effect для дeterministic testing.
+//!
+//! # Examples
+//!
+//! ```nova
+//! let d = Duration.from_secs(5)
+//! assert(d.as_secs() == 5)
+//! assert(d.as_millis() == 5000)
+//! ```
+
 module time.duration
 
 import std.testing.handlers as th
@@ -23,15 +37,36 @@ import std.testing.handlers as th
 // Duration — длительность (signed, ±292 года)
 // ──────────────────────────────────────────────────────────────────────────
 
+/// Duration — signed time interval с nanosecond precision.
+///
+/// Range: ±292 years (i64::MAX nanoseconds). Used для timeouts, intervals,
+/// delays. Constructed через `Duration.from_*` static methods (one per unit).
+///
+/// # Examples
+///
+/// ```nova
+/// let d = Duration.from_millis(500)
+/// assert(d.as_millis() == 500)
+/// ```
+#stable(since = "0.1")
 export type Duration {
     readonly nanos i64
 }
 
+/// Zero duration — 0 nanoseconds. Useful как default / sentinel value.
+#stable(since = "0.1")
 export const ZERO Duration = { nanos: 0 }
 
-// Маркеры для удобства
+/// One second.
+#stable(since = "0.1")
 export const SECOND Duration = { nanos: 1_000_000_000 }
+
+/// One minute (60 seconds).
+#stable(since = "0.1")
 export const MINUTE Duration = { nanos: 60_000_000_000 }
+
+/// One hour (3600 seconds).
+#stable(since = "0.1")
 export const HOUR   Duration = { nanos: 3_600_000_000_000 }
 
 
@@ -39,16 +74,55 @@ export const HOUR   Duration = { nanos: 3_600_000_000_000 }
 // Static-конструкторы Duration.from_X (D55: -> Self)
 // ──────────────────────────────────────────────────────────────────────────
 
+/// Construct Duration from nanoseconds.
+///
+/// # Examples
+/// ```nova
+/// let d = Duration.from_nanos(1_000_000)
+/// assert(d.as_micros() == 1000)
+/// ```
+#stable(since = "0.1")
 export fn Duration.from_nanos(n i64) -> Self => { nanos: n }
+
+/// Construct Duration from microseconds (1 μs = 1000 ns).
+#stable(since = "0.1")
 export fn Duration.from_micros(n i64) -> Self => { nanos: n * 1_000 }
+
+/// Construct Duration from milliseconds (1 ms = 1_000_000 ns).
+///
+/// # Examples
+/// ```nova
+/// let d = Duration.from_millis(500)
+/// assert(d.as_millis() == 500)
+/// ```
+#stable(since = "0.1")
 export fn Duration.from_millis(n i64) -> Self => { nanos: n * 1_000_000 }
+
+/// Construct Duration from seconds.
+#stable(since = "0.1")
 export fn Duration.from_secs(n i64) -> Self => { nanos: n * 1_000_000_000 }
+
+/// Construct Duration from minutes (60 seconds per minute).
+#stable(since = "0.1")
 export fn Duration.from_mins(n i64) -> Self => { nanos: n * 60 * 1_000_000_000 }
+
+/// Construct Duration from hours (3600 seconds per hour).
+#stable(since = "0.1")
 export fn Duration.from_hours(n i64) -> Self => { nanos: n * 3_600 * 1_000_000_000 }
+
+/// Construct Duration from days (86400 seconds per day).
+#stable(since = "0.1")
 export fn Duration.from_days(n i64) -> Self => { nanos: n * 86_400 * 1_000_000_000 }
+
+/// Construct Duration from weeks (7 days per week).
+#stable(since = "0.1")
 export fn Duration.from_weeks(n i64) -> Self => { nanos: n * 7 * 86_400 * 1_000_000_000 }
 
-// Из дробных секунд (для convertов из double / measurement libraries).
+/// Construct Duration from fractional seconds (e.g. 0.5 → 500ms).
+///
+/// Useful для converting measurements (sensor data, sampling intervals)
+/// которые natively f64.
+#stable(since = "0.1")
 export fn Duration.from_secs_f64(s f64) -> Self =>
     { nanos: (s * 1_000_000_000.0) as i64 }
 

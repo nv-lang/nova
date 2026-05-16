@@ -8245,3 +8245,17 @@ Remaining:
   bootstrap. Когда cross-crate compilation потребует (Plan 03 package
   ecosystem) — раскачать.
 - Vtable runtime infrastructure готова, ABI документирован.
+
+---
+
+## Plan 45 Sprint �.34 simplifications (2026-05-16)
+
+Resolved:
+- MCP stdio-only > HTTP via std::net (�.34.1)
+- Cache deferred > mtime-based WatchCache (�.34.2)
+- Stdlib zero docs > partial duration doc-pass (�.34.3)
+
+Remaining:
+- HTTP MCP: blocking single-threaded (sufficient ��� localhost)
+- Cache: per-file mtime only (no import-graph invalidation)
+- Stdlib: 56 modules undocumented (Plan 45.B = weeks)
