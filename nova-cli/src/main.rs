@@ -137,6 +137,11 @@ enum Cmd {
         /// Default 0 = auto (uses all logical CPUs). Ignored for single-file.
         #[arg(long = "jobs", default_value = "0")]
         jobs: usize,
+        /// Plan 45 Ф.24.10: diff two JSON doc outputs for semver change detection.
+        /// Usage: nova doc --diff old.json new.json
+        /// Exit code: 0 = no breaking changes, 1 = major, 2 = minor, 3 = patch.
+        #[arg(long = "diff", num_args = 2, value_names = ["OLD", "NEW"])]
+        diff: Option<Vec<PathBuf>>,
     },
     /// Compile a single Nova source file to a native binary.
     ///
@@ -1419,6 +1424,204 @@ fn chrono_like_now() -> String {
     format!("{:02}:{:02}:{:02} UTC", h, m, s)
 }
 
+// ── Plan 45 Ф.24.10: semver diff ─────────────────────────────────────────────
+
+/// Severity of a doc API change.
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
+enum DiffSeverity {
+    Patch,  // docs-only: summary/description changed, signature same
+    Minor,  // added public item or new export
+    Major,  // removed item, changed signature, changed kind
+}
+
+impl DiffSeverity {
+    fn label(&self) -> &'static str {
+        match self {
+            DiffSeverity::Patch => "patch",
+            DiffSeverity::Minor => "minor",
+            DiffSeverity::Major => "major",
+        }
+    }
+    /// CLI exit code per severity level.
+    /// 0 = no changes, 1 = major, 2 = minor, 3 = patch.
+    fn exit_code(max: Option<DiffSeverity>) -> u8 {
+        match max {
+            None => 0,
+            Some(DiffSeverity::Major) => 1,
+            Some(DiffSeverity::Minor) => 2,
+            Some(DiffSeverity::Patch) => 3,
+        }
+    }
+}
+
+struct DiffChange {
+    severity: DiffSeverity,
+    item_id: String,
+    description: String,
+}
+
+/// Plan 45 Ф.24.10: structural diff of two `nova doc --format json` outputs.
+/// Compares items by stable ID, classifies changes, exits with severity code.
+fn cmd_doc_diff(old_path: &Path, new_path: &Path) -> Result<()> {
+    let old_src = std::fs::read_to_string(old_path)
+        .map_err(|e| anyhow!("cannot read {}: {}", old_path.display(), e))?;
+    let new_src = std::fs::read_to_string(new_path)
+        .map_err(|e| anyhow!("cannot read {}: {}", new_path.display(), e))?;
+
+    let old_json: serde_json::Value = serde_json::from_str(&old_src)
+        .map_err(|e| anyhow!("{}: invalid JSON: {}", old_path.display(), e))?;
+    let new_json: serde_json::Value = serde_json::from_str(&new_src)
+        .map_err(|e| anyhow!("{}: invalid JSON: {}", new_path.display(), e))?;
+
+    // Build id → item maps from "items" array.
+    let old_items = collect_items_by_id(&old_json);
+    let new_items = collect_items_by_id(&new_json);
+
+    let mut changes: Vec<DiffChange> = Vec::new();
+
+    // 1. Removed items (major).
+    for (id, old_item) in &old_items {
+        if is_public(old_item) && !new_items.contains_key(id.as_str()) {
+            changes.push(DiffChange {
+                severity: DiffSeverity::Major,
+                item_id: id.clone(),
+                description: "removed public item".to_string(),
+            });
+        }
+    }
+
+    // 2. Added items (minor).
+    for (id, new_item) in &new_items {
+        if is_public(new_item) && !old_items.contains_key(id.as_str()) {
+            changes.push(DiffChange {
+                severity: DiffSeverity::Minor,
+                item_id: id.clone(),
+                description: "added public item".to_string(),
+            });
+        }
+    }
+
+    // 3. Changed items.
+    for (id, old_item) in &old_items {
+        if let Some(new_item) = new_items.get(id.as_str()) {
+            if !is_public(old_item) && !is_public(new_item) {
+                continue; // private → private, skip
+            }
+            // visibility change: private→public (minor) or public→private (major)
+            if is_public(old_item) != is_public(new_item) {
+                let sev = if is_public(old_item) {
+                    DiffSeverity::Major // was public, now private → breaking
+                } else {
+                    DiffSeverity::Minor // was private, now public → additive
+                };
+                changes.push(DiffChange {
+                    severity: sev,
+                    item_id: id.clone(),
+                    description: if is_public(old_item) {
+                        "item became private (was public)".to_string()
+                    } else {
+                        "item became public (was private)".to_string()
+                    },
+                });
+                continue;
+            }
+            // kind change → major
+            let old_kind = old_item.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+            let new_kind = new_item.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+            if old_kind != new_kind {
+                changes.push(DiffChange {
+                    severity: DiffSeverity::Major,
+                    item_id: id.clone(),
+                    description: format!("kind changed {} → {}", old_kind, new_kind),
+                });
+                continue;
+            }
+            // signature change → major (compare signature sub-object as JSON)
+            let old_sig = old_item.get("signature");
+            let new_sig = new_item.get("signature");
+            if signature_changed(old_sig, new_sig) {
+                changes.push(DiffChange {
+                    severity: DiffSeverity::Major,
+                    item_id: id.clone(),
+                    description: "signature changed".to_string(),
+                });
+                continue;
+            }
+            // docs-only change → patch
+            let old_summary = old_item.get("summary").and_then(|v| v.as_str()).unwrap_or("");
+            let new_summary = new_item.get("summary").and_then(|v| v.as_str()).unwrap_or("");
+            let old_desc = old_item.get("description").and_then(|v| v.as_str()).unwrap_or("");
+            let new_desc = new_item.get("description").and_then(|v| v.as_str()).unwrap_or("");
+            if old_summary != new_summary || old_desc != new_desc {
+                changes.push(DiffChange {
+                    severity: DiffSeverity::Patch,
+                    item_id: id.clone(),
+                    description: "documentation changed".to_string(),
+                });
+            }
+        }
+    }
+
+    // Sort: major first, then minor, then patch; within each — by id.
+    changes.sort_by(|a, b| b.severity.cmp(&a.severity).then(a.item_id.cmp(&b.item_id)));
+
+    let max_severity = changes.iter().map(|c| c.severity).max();
+
+    // Output.
+    if changes.is_empty() {
+        println!("doc-diff: no changes between {} and {}", old_path.display(), new_path.display());
+    } else {
+        println!("doc-diff: {} change(s) [{} max severity]",
+            changes.len(),
+            max_severity.map(|s| s.label()).unwrap_or("none"));
+        for c in &changes {
+            println!("  [{}] {}: {}", c.severity.label(), c.item_id, c.description);
+        }
+    }
+
+    let code = DiffSeverity::exit_code(max_severity);
+    if code != 0 {
+        std::process::exit(code as i32);
+    }
+    Ok(())
+}
+
+/// Build a map of item_id → &Value from `items` array in a doc JSON output.
+fn collect_items_by_id(doc: &serde_json::Value) -> std::collections::BTreeMap<String, &serde_json::Value> {
+    let mut map = std::collections::BTreeMap::new();
+    if let Some(arr) = doc.get("items").and_then(|v| v.as_array()) {
+        for item in arr {
+            if let Some(id) = item.get("id").and_then(|v| v.as_str()) {
+                map.insert(id.to_string(), item);
+            }
+        }
+    }
+    map
+}
+
+fn is_public(item: &serde_json::Value) -> bool {
+    item.get("visibility").and_then(|v| v.as_str()) == Some("export")
+}
+
+/// Signature comparison: compare params array + return_type + effects.
+/// Ignores line/column source info and verify_status (runtime result, not API).
+fn signature_changed(old_sig: Option<&serde_json::Value>, new_sig: Option<&serde_json::Value>) -> bool {
+    match (old_sig, new_sig) {
+        (None, None) => false,
+        (Some(_), None) | (None, Some(_)) => true,
+        (Some(o), Some(n)) => {
+            // Compare structural fields relevant to API compat.
+            let fields = ["params", "return_type", "effects", "receiver"];
+            for f in fields {
+                if o.get(f) != n.get(f) {
+                    return true;
+                }
+            }
+            false
+        }
+    }
+}
+
 /// Embedded JSON Schema (D107) — пока минимальная заглушка с
 /// корректным `format_version` дискриминатором. Полная схема —
 /// Plan 45 Ф.9 (schema.rs); этот placeholder уже валидный JSON Schema
@@ -2077,7 +2280,12 @@ fn main() -> ExitCode {
             &skip,
         ),
         Cmd::Run { file } => cmd_run(&file),
-        Cmd::Doc { file, format, json_schema, include_private, run_doc_tests, check, watch, coverage, jobs } => {
+        Cmd::Doc { file, format, json_schema, include_private, run_doc_tests, check, watch, coverage, jobs, diff } => {
+            // Plan 45 Ф.24.10: --diff old.json new.json
+            // cmd_doc_diff uses process::exit for severity codes; propagate Err.
+            if let Some(paths) = diff {
+                cmd_doc_diff(&paths[0], &paths[1])
+            } else {
             // Plan 45 Ф.23.17: --json-schema works without FILE argument.
             if json_schema && file.is_none() {
                 println!("{}", nova_doc_embedded_schema());
@@ -2088,6 +2296,7 @@ fn main() -> ExitCode {
                 std::process::exit(1);
             });
             cmd_doc(path, &format, json_schema, include_private, run_doc_tests, check, watch, coverage, jobs)
+            } // else (no --diff)
         }
         Cmd::Build { file, output, mode, toolchain, vcvars, clang, timeout, keep_artifacts } => cmd_build(
             &file,
