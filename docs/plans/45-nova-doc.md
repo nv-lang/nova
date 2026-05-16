@@ -256,6 +256,115 @@ Critical-review revealed gaps: MVP формально закрыт, но **не 
 
 ---
 
+## Ф.24 — Honest production audit fixes (2026-05-16, post-Ф.23 audit)
+
+После закрытия 24 из 25 пунктов Ф.23 проведён honest audit (см. сессию
+2026-05-16 в discussion-log). Выявлены дыры в "production hardening"
+качестве: некоторые Ф.23 пункты closed формально, но с known limitations;
+plus — features из rustdoc/godoc/typedoc с высоким ROI которые не вошли
+в MVP. Ф.24 закрывает эти дыры до настоящего production v1.0.0.
+
+**Цель Ф.24:** превратить `mvp-stable` lab quality в полноценный prod
+quality. После Ф.24 → schema promote `v1.0.0-rc1` → 2-недельный soak →
+**v1.0.0 final**.
+
+### Sprint A — Honest fixes (известные дыры, ~2 дня)
+
+| # | Проблема | Где | Fix | Acceptance |
+|---|----------|-----|-----|------------|
+| Ф.24.1 | **`capabilities.forbid: Vec::new()` hardcoded** — module-level `#forbid X, Y` не extract'ится в DocItem. AST имеет, collector игнорирует. | `compiler-codegen/src/doc/collector.rs:599` (collect_fn) | Extract module-level `#forbid` attrs → propagate в каждый Item.capabilities.forbid. Golden update. | Fixture с `#forbid Mutate` → JSON показывает `forbid: ["Mutate"]` |
+| Ф.24.2 | **HashMap iteration в workspace mode** — `collect_workspace` second-pass для implementors использует `HashMap<String, HashSet<String>>`. Iter non-deterministic → ломает byte-for-byte determinism. | `compiler-codegen/src/doc/collector.rs` (collect_workspace, implementors block) | Заменить `HashMap` → `BTreeMap`, `HashSet` → `BTreeSet`. Доп. test: запустить build_workspace 100 раз, проверить identity всех outputs. | Test `doc_workspace_determinism` PASS |
+| Ф.24.3 | **Ф.23.16 implementors false-positives** — structural matching по method names: тип с `len()` → implementor любого Protocol с `len()`. | `compiler-codegen/src/doc/collector.rs` (workspace second-pass) | Опция-gate: `implementors: []` по умолчанию; populate только при env `NOVA_DOC_EXPERIMENTAL_IMPLEMENTORS=1`. Это honest до настоящих nominal impls (Plan 15.A?). MD section "Implementors (experimental, may have false-positives)". | Default — `[]`, opt-in via env |
+| Ф.24.4 | **`nova doc --check` только human output** — CI нужен structured. | `nova-cli/src/main.rs::cmd_doc_check` | Добавить `--format json\|human` (default human). JSON output: `{issues: [{rule, item_id, message, severity}], summary: {count, by_rule}}`. Exit code = 1 если есть issues. | CI test может parse JSON и raise PR comment |
+| Ф.24.5 | **Schema label преждевременен** — `v1.0.0-stable` без soak. Если найдём bug — придётся breaking. | `compiler-codegen/src/doc/schema.rs` | Downgrade: `v1.0.0-rc1`. После 2-недельного soak без drift → promote в `v1.0.0`. Все упоминания в title + description. | Schema title содержит `rc1` |
+| Ф.24.6 | **Ф.23.22 ad-hoc shape detector** — `Map[K, V]`, `?[]int` парсятся как `named`. | `compiler-codegen/src/doc/render_json.rs::write_structural_type` | Reuse Nova parser: `parse_type(&ty)` → AST → structural JSON; fallback на shape detector если parse fails. | `Map[str, int]` → `{kind: "named", name: "Map", generics: ["str", "int"]}` |
+| Ф.24.7 | **Ф.23.18 caret single-line** — multi-line spans truncate. | `compiler-codegen/src/diag.rs::append_snippet` | Если span.end на другой line — emit multi-line snippet с `^^^^` на первой и `~~~~` на последней. | Multi-line type error в doc-test показывает full range |
+
+### Sprint B — Inspired by rustdoc/godoc/typedoc (~5 дней)
+
+| # | Откуда | Что добавить | Acceptance |
+|---|--------|--------------|------------|
+| Ф.24.8 | **godoc `// Output:` verified examples** | Doc-test modifier `expect_output`: блок ```nova,expect_output\n...code...\n```\n// Output: 42\n``` — runner запускает test, capture stdout, diff с expected. Fail если mismatch. | Fixture: example с `// Output: 42`, runner ловит drift |
+| Ф.24.9 | **rustdoc `--scrape-examples`** | `nova doc <module> --scrape-examples <workspace>` — сканирует workspace на call-sites функций модуля, embed'ит топ-3 real-life examples в каждый DocItem. JSON field: `scraped_examples: [{file, line, snippet, caller}]`. | Test: документация `Vec.push` показывает call в `nova_tests/...` |
+| Ф.24.10 | **cargo-semver-checks-style schema diff gate** | `nova doc --diff old.json new.json` — структурный diff: added/removed/changed items; classify по semver (major: removed/changed signature; minor: added; patch: docs only). CI gate: PR fails если major change без version bump. | `tests/doc_semver_diff.rs` с fixture pairs |
+| Ф.24.11 | **`#[doc(inline)]` / `#[doc(no_inline)]`** | Attrs `#doc_inline` / `#doc_no_inline` на re-exports. Default: public re-exports — no_inline (показывают как ссылку); private — inline (раскрывают tree). Override через attr. | Fixture: re-export с `#doc_no_inline` → MD shows `Re-exported as Foo` link |
+| Ф.24.12 | **rustdoc HTML output + search** (Plan 45.A) | `nova doc --format html` → static site с search index (lunr.js или similar lightweight). Workspace mode: merged single-site. | `nova doc workspace/ --format html -o out/` → openable in browser |
+| Ф.24.13 | **Workspace parallelism (rayon)** | `nova doc <dir>` парсит N файлов parallel. Threshold: ≥4 файлов. `--jobs N` опция. | Bench: workspace 50 файлов на 8-core CPU ≤ 1s (vs 3s sequential budget) |
+
+### Sprint C — Nova-unique extensions (~3 дня)
+
+| # | Идея | Описание |
+|---|------|----------|
+| Ф.24.14 | **Verification badges в Markdown** | MD рядом с fn-signature: `✅ proven by Z3 (12ms)` / `⚠️ unverified` / `❌ counterexample: x = -1`. JSON уже есть verify_status, MD пока только slug. |
+| Ф.24.15 | **Standard jq queries в docs/nova-doc.md** | Каталог "Common queries for LLM consumption": "find all pure fns", "what contracts protect X", "what effects does fn Y use", "list deprecated items with until date", etc. Каждый — copy-paste-ready `jq` snippet. |
+| Ф.24.16 | **Effect composition matrix** | Auto-generated section в MD: для каждого Effect — таблица "compose with: A, B, C; conflicts with: D". На основе handler signatures. Koka это не делает, у нас effects структурные → можно. |
+| Ф.24.17 | **Capability constraint matrix** | Для функций с `#realtime` — auto-generated "Forbidden in scope: heap allocation, blocking I/O, ...". На основе AST capability analysis. |
+| Ф.24.18 | **Contract-aware doc-tests** | Modifier `infer_contracts`: при выполнении test, runtime tracks input/output → suggest contracts для функции. Output как hint: "// Suggested: requires x > 0; ensures result == x + 1". |
+
+### Что НЕ в Ф.24 (явно deferred)
+
+- Plugin/theme system → Plan 45.A
+- Man page output → low ROI (не Unix-first)
+- Incremental cache → Plan 45.A
+- Stdlib full doc-pass → Plan 45.B
+- Live playground "Run" button → Plan 45.A
+- IDE LSP integration → отдельный план
+
+### Acceptance Ф.24 (закрытие к v1.0.0)
+
+- Все Sprint A пункты ✅ done (это honest production gate).
+- Минимум Ф.24.8 (Output:), Ф.24.10 (semver-diff), Ф.24.13 (parallelism) из Sprint B.
+- 2-недельный soak `v1.0.0-rc1` без обнаружения drift.
+- Comparison table обновлена с новыми ✅.
+- Schema promote `v1.0.0-rc1` → `v1.0.0` (без `-rc`).
+- Discussion-log entry + project-creation.txt + simplifications.md.
+- Commit per sub-phase.
+
+### Зависимости между Ф.24.* пунктами
+
+```
+Ф.24.1 (forbid), Ф.24.2 (BTreeMap), Ф.24.4 (--check json), Ф.24.7 (caret) — независимы
+Ф.24.3 (implementors guard) → перед Ф.24.10 (diff может ломаться false-positives)
+Ф.24.5 (rc1 label) — после ВСЕХ Sprint A fixes
+Ф.24.6 (structural via parser) → может block'нуть Ф.24.10 (diff структурный)
+Ф.24.8 (Output:) — независим
+Ф.24.9 (scrape-examples) → нужен AST workspace visitor (новый pass)
+Ф.24.10 (semver-diff) — независим от others, но useful после Ф.24.6
+Ф.24.11 (doc_inline) — нужен parser change (новый attr)
+Ф.24.12 (HTML) — большой scope, отдельный sprint
+Ф.24.13 (parallelism) — независим
+Ф.24.14-18 (Nova-unique) — независимы
+```
+
+### Порядок реализации (рекомендация)
+
+**Sprint A — критичные дыры (~2 дня):**
+1. Ф.24.5 schema downgrade rc1 (5 минут — first)
+2. Ф.24.2 BTreeMap determinism (0.5 дня)
+3. Ф.24.1 forbid extraction (0.5 дня)
+4. Ф.24.3 implementors guard (0.25 дня)
+5. Ф.24.4 --check json (0.5 дня)
+6. Ф.24.7 multi-line caret (0.25 дня)
+7. Ф.24.6 structural via parser (0.5 дня)
+
+**Sprint B — high-value adds (~5 дней):**
+8. Ф.24.13 parallelism (0.5 дня)
+9. Ф.24.8 Output: verification (1 день — modifier + runner)
+10. Ф.24.10 semver-diff (1.5 дня)
+11. Ф.24.11 doc_inline attrs (1 день)
+12. Ф.24.9 scrape-examples (1 день)
+
+**Sprint C — Nova-unique (~3 дня):**
+13. Ф.24.14 verify badges MD (0.25 дня)
+14. Ф.24.15 jq queries doc (0.5 дня)
+15. Ф.24.16 effect composition matrix (1 день)
+16. Ф.24.17 capability constraint matrix (0.75 дня)
+17. Ф.24.18 infer_contracts (0.5 дня)
+
+**После Ф.24:** soak 2 недели → schema v1.0.0 без `-rc1` → tag релиза.
+
+---
+
 **Производственные расширения (опциональные для MVP-cutoff):** doc-attrs wiring, `--watch` mode, CI integration, user guide.
 
 ---
