@@ -80,6 +80,10 @@ pub struct DocLink {
     pub text: String,
     /// ID цели, если разрешена. `None` — broken link.
     pub target_id: Option<String>,
+    /// Plan 45 Ф.30.1: external crate-doc URL если ссылка резолвится через
+    /// `NOVA_DOC_EXTERN_LINKS` env var (e.g. `[std.io.println]` → `https://...`).
+    /// `None` — internal link (target_id Some) или broken (target_id None).
+    pub target_url: Option<String>,
 }
 
 /// Plan 45 Ф.7: один извлечённый doc-test. По D104 §«Doc-test modifiers».

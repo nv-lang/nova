@@ -65,9 +65,15 @@ fn line_of_byte(byte_offset: u32) -> u32 {
 
 /// Build a map from link-text → anchor href for resolved links.
 /// Anchor = `#<slug>-<kind>` where slug = last segment of target_id lowercased with `.` → `-`.
+/// Plan 45 Ф.30.1: если link имеет `target_url` (external crate-doc) — use that вместо anchor.
 fn build_link_map(links: &[DocLink]) -> std::collections::HashMap<String, String> {
     let mut map = std::collections::HashMap::new();
     for l in links {
+        // Plan 45 Ф.30.1: external URL priority over internal anchor.
+        if let Some(url) = &l.target_url {
+            map.insert(l.text.clone(), url.clone());
+            continue;
+        }
         if let Some(tid) = &l.target_id {
             // Derive anchor from target_id: "mod.path::Type.method" → "type-method"
             let last = tid.rsplit("::").next().unwrap_or(tid);
