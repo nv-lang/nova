@@ -177,6 +177,7 @@ fn parse_modifiers(info: &str) -> Vec<DocTestModifier> {
             "should_panic" => Some(DocTestModifier::ShouldPanic),
             "must_verify" => Some(DocTestModifier::MustVerify),
             "expect_output" => Some(DocTestModifier::ExpectOutput),
+            "infer_contracts" => Some(DocTestModifier::InferContracts),
             _ => None, // unknown — forward-compat skip
         };
         if let Some(m) = m {

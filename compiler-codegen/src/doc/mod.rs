@@ -54,6 +54,8 @@ pub fn build(module: &Module) -> DocTree {
     links::resolve_intra_doc_links(&mut tree);
     doctests::collect_doc_tests(&mut tree);
     stability::propagate_stability(&mut tree);
+    // Plan 45 Ф.24.18: infer contracts from doc-tests with `infer_contracts` modifier.
+    infer_contracts_from_doctests(&mut tree);
     // Plan 45 Ф.23.2 / D106: verify_status per-fn wired through Plan 33.
     populate_verify_status(&mut tree, module);
     tree
@@ -68,6 +70,7 @@ pub fn build_workspace(modules: &[Module]) -> DocTree {
     links::resolve_intra_doc_links(&mut tree);
     doctests::collect_doc_tests(&mut tree);
     stability::propagate_stability(&mut tree);
+    infer_contracts_from_doctests(&mut tree);
     // In workspace mode — no single Module available; verify_status stays NotAttempted.
     tree
 }
@@ -174,4 +177,81 @@ fn populate_verify_status(tree: &mut DocTree, module: &Module) {
             }
         }
     }
+}
+
+/// Plan 45 Ф.24.18: infer contracts from doc-tests with `infer_contracts` modifier.
+///
+/// For each DocTest with `InferContracts` modifier:
+/// - Parse `assert(expr)` calls in the test body (visible_source).
+/// - Emit each assertion as a ContractDoc with kind="inferred" on the parent fn's signature.
+fn infer_contracts_from_doctests(tree: &mut DocTree) {
+    use doctree::{ContractDoc, DocTestModifier, ItemKind};
+    let mut inferred: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+    for dt in &tree.doc_tests {
+        if !dt.modifiers.contains(&DocTestModifier::InferContracts) { continue; }
+        let from_id = match &dt.from_id { Some(id) => id.clone(), None => continue, };
+        for assertion in extract_assert_exprs(&dt.visible_source) {
+            inferred.entry(from_id.clone()).or_default().push(assertion);
+        }
+    }
+    if inferred.is_empty() { return; }
+    for module in &mut tree.modules {
+        for item in &mut module.items {
+            if let Some(exprs) = inferred.get(&item.id) {
+                if let ItemKind::Fn(sig) = &mut item.kind {
+                    for expr in exprs {
+                        let already = sig.contracts.iter().any(|c| &c.expr == expr);
+                        if !already {
+                            sig.contracts.push(ContractDoc {
+                                kind: "inferred".to_string(),
+                                expr: expr.clone(),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn extract_assert_exprs(source: &str) -> Vec<String> {
+    let mut results = Vec::new();
+    let mut pos = 0;
+    let bytes = source.as_bytes();
+    while pos < bytes.len() {
+        if let Some(idx) = source[pos..].find("assert(") {
+            let call_start = pos + idx + "assert(".len();
+            let mut depth = 1usize;
+            let mut i = call_start;
+            while i < bytes.len() && depth > 0 {
+                match bytes[i] {
+                    b'(' => depth += 1,
+                    b')' => { depth -= 1; if depth == 0 { break; } }
+                    _ => {}
+                }
+                i += 1;
+            }
+            if depth == 0 && i > call_start {
+                let expr = source[call_start..i].trim();
+                let first_arg = first_comma_arg(expr);
+                if !first_arg.is_empty() { results.push(first_arg.to_string()); }
+            }
+            pos = call_start;
+        } else { break; }
+    }
+    results
+}
+
+fn first_comma_arg(s: &str) -> &str {
+    let mut depth = 0usize;
+    for (i, c) in s.char_indices() {
+        match c {
+            '(' | '[' => depth += 1,
+            ')' | ']' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => return s[..i].trim(),
+            _ => {}
+        }
+    }
+    s.trim()
 }

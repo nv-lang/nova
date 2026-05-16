@@ -99,6 +99,11 @@ pub enum DocTestModifier {
     /// Plan 45 Ф.24.8: `expect_output` — run + capture stdout, diff with
     /// `// Output: <text>` lines embedded in the fenced block.
     ExpectOutput,
+    /// Plan 45 Ф.24.18: `infer_contracts` — analyze assert() calls in this
+    /// doc-test and emit them as `ensures` clauses on the documented fn.
+    /// The inferred contracts appear in `DocItem.signature.contracts` with
+    /// kind = "inferred".
+    InferContracts,
 }
 
 impl DocTestModifier {
@@ -110,6 +115,7 @@ impl DocTestModifier {
             DocTestModifier::ShouldPanic => "should_panic",
             DocTestModifier::MustVerify => "must_verify",
             DocTestModifier::ExpectOutput => "expect_output",
+            DocTestModifier::InferContracts => "infer_contracts",
         }
     }
 }
