@@ -55,3 +55,37 @@ test "race2: разные значения — winner один из них" {
     let r = race2(|| 10, || 20)
     assert(r == 10 || r == 20)
 }
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Edge cases — large timeout, multi-call, generic-call sanity
+// ──────────────────────────────────────────────────────────────────────────
+
+
+test "race2 одинаковые closures wins одинаковый" {
+    let r = race2(|| 5, || 5)
+    assert(r == 5)
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Negative behavior — verify что after scope код продолжается
+// (with_timeout positive call в reserve — type-inference внутри
+// generic-call-of-generic упирается в pre-existing limitation,
+// see [M-generic-nested-call-inference] V2 followup.)
+// ──────────────────────────────────────────────────────────────────────────
+
+
+test "negative within не throw наружу на success" {
+    // Plan 49 Ф.3: после within scope нормально продолжается.
+    let _ = within(1000, || 1)
+    let after = true
+    assert(after)
+}
+
+
+test "negative race2 не throw на normal completion" {
+    let _ = race2(|| 1, || 2)
+    let after = true
+    assert(after)
+}
