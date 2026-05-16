@@ -1,0 +1,85 @@
+// Plan 45 Ф.23.8/9: Effects structured в doc — EffectEntry с is_row_var.
+// Позитивный тест: функции с effects корректно работают.
+// Правильный синтаксис Nova effects: без `fn` keyword в effect body.
+
+module doc.f23_effects_positive
+
+type Logger effect {
+    log(msg str) -> ()
+}
+
+type Counter effect {
+    tick() -> ()
+    get() -> int
+}
+
+/// Log a message — requires Logger effect.
+export fn log_message(msg str) Logger -> () {
+    Logger.log(msg)
+}
+
+/// Count up to n using Counter effect.
+export fn count_to(n int) Counter -> int {
+    let mut i = 0
+    while i < n {
+        Counter.tick()
+        i = i + 1
+    }
+    Counter.get()
+}
+
+test "log with handler — void result" {
+    let mut calls = 0
+    with Logger = handler Logger {
+        log(msg str) {
+            calls = calls + 1
+            return ()
+        }
+    } {
+        log_message("hello")
+        log_message("world")
+    }
+    assert(calls == 2)
+}
+
+test "count_to basic" {
+    let mut n = 0
+    let result = with Counter = handler Counter {
+        tick() { n = n + 1; return () }
+        get() { return n }
+    } {
+        count_to(5)
+    }
+    assert(result == 5)
+}
+
+test "count_to zero" {
+    let mut n = 0
+    let result = with Counter = handler Counter {
+        tick() { n = n + 1; return () }
+        get() { return n }
+    } {
+        count_to(0)
+    }
+    assert(result == 0)
+}
+
+test "effects compose sequentially" {
+    let mut log_count = 0
+    let mut cnt = 0
+    with Logger = handler Logger {
+        log(_msg str) { log_count = log_count + 1; return () }
+    } {
+        log_message("start")
+        let inner = with Counter = handler Counter {
+            tick() { cnt = cnt + 1; return () }
+            get() { return cnt }
+        } {
+            count_to(3)
+        }
+        log_message("end")
+        assert(inner == 3)
+    }
+    assert(log_count == 2)
+    assert(cnt == 3)
+}

@@ -1,0 +1,47 @@
+// Plan 45 Ф.23.10: TypeDefinition::Newtype — отдельный variant в doc.
+// Позитивные тесты: newtype создаётся, используется, type-safe.
+// Синтаксис Nova: `type Email str` (без `=`, без `newtype` keyword).
+// Unwrap через `as UnderlyingType` (не `.0` — codegen не поддерживает).
+
+module doc.f23_newtype_positive
+
+/// User ID — newtype over int for type safety.
+export type UserId int
+
+/// Score — newtype over int.
+export type Score int
+
+test "newtype construction" {
+    let uid = 42 as UserId
+    assert(uid as int == 42)
+}
+
+test "newtype zero" {
+    let z = 0 as UserId
+    assert(z as int == 0)
+}
+
+test "newtype negative" {
+    let n = -5 as Score
+    assert(n as int == -5)
+}
+
+test "newtype arithmetic on underlying" {
+    let a = 10 as UserId
+    let b = 32 as UserId
+    assert(a as int + b as int == 42)
+}
+
+test "newtype identity round-trip" {
+    let x = 99 as Score
+    let y = x as int
+    let z = y as Score
+    assert(z as int == 99)
+}
+
+test "newtype comparison via underlying" {
+    let a = 5 as Score
+    let b = 10 as Score
+    assert(a as int < b as int)
+    assert(b as int > a as int)
+}

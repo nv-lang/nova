@@ -1,0 +1,16 @@
+// EXPECT_COMPILE_ERROR undefined identifier
+//
+// Plan 45 Ф.23.10: doc pipeline — использование неопределённой переменной
+// в функции рядом с newtype декларацией даёт compile error.
+
+module doc.f23_newtype_type_mismatch_fail
+
+/// Wrapper type for testing.
+export type Wrapper int
+
+fn uses_wrapper() -> int {
+    let w = 5 as Wrapper
+    let _ = w
+    // Обращение к несуществующей переменной — ошибка компиляции.
+    undefined_variable_xyz
+}

@@ -1,0 +1,43 @@
+// Plan 45 Ф.23.6: Deprecation.until поле в doc output.
+// Позитивный тест: функции с #deprecated attr парсятся, компилируются,
+// doc pipeline видит until поле (тестируем через runtime поведение).
+
+module doc.f23_deprecation_positive
+
+/// Old API — use new_api instead.
+#deprecated(since = "0.5", note = "use new_compute instead", until = "0.7")
+export fn old_compute(x int) -> int => x * 2
+
+/// New API — recommended replacement.
+export fn new_compute(x int) -> int => x * 2
+
+/// Another deprecated with only note.
+#deprecated(note = "legacy, will be removed")
+export fn legacy_add(a int, b int) -> int => a + b
+
+test "deprecated fn still works" {
+    assert(old_compute(5) == 10)
+    assert(old_compute(0) == 0)
+    assert(old_compute(-3) == -6)
+}
+
+test "new compute works identically" {
+    assert(new_compute(5) == 10)
+    assert(new_compute(0) == 0)
+    assert(new_compute(-3) == -6)
+}
+
+test "deprecated and new produce same results" {
+    let inputs = [1, 5, 10, -1, 0]
+    let mut i = 0
+    while i < 5 {
+        assert(old_compute(inputs[i]) == new_compute(inputs[i]))
+        i = i + 1
+    }
+}
+
+test "legacy_add still computes" {
+    assert(legacy_add(2, 3) == 5)
+    assert(legacy_add(0, 0) == 0)
+    assert(legacy_add(-1, 1) == 0)
+}

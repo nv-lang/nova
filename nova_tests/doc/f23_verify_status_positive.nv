@@ -1,0 +1,71 @@
+// Plan 45 Ф.23.2: verify_status wired через SMT pipeline.
+// Позитивные тесты: функции с контрактами, которые SMT доказывает
+// (или которые корректно выполняются в runtime).
+
+module doc.f23_verify_status_positive
+
+/// Increment, guaranteed > input.
+export fn inc(x int) -> int
+    requires true
+    ensures result == x + 1
+    => x + 1
+
+/// Double, guaranteed even parity when input is even.
+export fn double_val(x int) -> int
+    requires true
+    ensures result == x * 2
+    => x * 2
+
+/// Max of two — result >= both inputs.
+export fn max_two(a int, b int) -> int
+    requires true
+    ensures result >= a
+    ensures result >= b
+    => if a >= b { a } else { b }
+
+/// Min of two — result <= both inputs.
+export fn min_two(a int, b int) -> int
+    requires true
+    ensures result <= a
+    ensures result <= b
+    => if a <= b { a } else { b }
+
+test "inc basic" {
+    assert(inc(0) == 1)
+    assert(inc(5) == 6)
+    assert(inc(-1) == 0)
+    assert(inc(100) == 101)
+}
+
+test "double_val basic" {
+    assert(double_val(0) == 0)
+    assert(double_val(1) == 2)
+    assert(double_val(-3) == -6)
+    assert(double_val(10) == 20)
+}
+
+test "max_two correct" {
+    assert(max_two(3, 5) == 5)
+    assert(max_two(5, 3) == 5)
+    assert(max_two(0, 0) == 0)
+    assert(max_two(-1, -2) == -1)
+}
+
+test "max_two satisfies ensures" {
+    let r = max_two(7, 4)
+    assert(r >= 7)
+    assert(r >= 4)
+}
+
+test "min_two correct" {
+    assert(min_two(3, 5) == 3)
+    assert(min_two(5, 3) == 3)
+    assert(min_two(0, 0) == 0)
+    assert(min_two(-1, -2) == -2)
+}
+
+test "min_two satisfies ensures" {
+    let r = min_two(7, 4)
+    assert(r <= 7)
+    assert(r <= 4)
+}

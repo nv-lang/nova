@@ -1,0 +1,39 @@
+// Plan 45 Ф.22.6 + Ф.23: doc_alias attrs парсятся и не ломают runtime.
+// Позитивный тест: функции с #doc_alias работают нормально.
+
+module doc.f23_doc_aliases_positive
+
+/// Compute absolute value.
+#doc_alias("abs", "magnitude")
+export fn absolute(x int) -> int => if x < 0 { 0 - x } else { x }
+
+/// Convert to string representation.
+#doc_alias("stringify", "to_str")
+export fn to_string_repr(n int) -> str {
+    if n == 0 { return "0" }
+    if n == 1 { return "1" }
+    if n == 2 { return "2" }
+    "other"
+}
+
+test "absolute value positive input" {
+    assert(absolute(5) == 5)
+    assert(absolute(0) == 0)
+}
+
+test "absolute value negative input" {
+    assert(absolute(-5) == 5)
+    assert(absolute(-1) == 1)
+}
+
+test "to_string_repr basic" {
+    assert(to_string_repr(0) == "0")
+    assert(to_string_repr(1) == "1")
+    assert(to_string_repr(2) == "2")
+    assert(to_string_repr(99) == "other")
+}
+
+test "aliases dont affect runtime" {
+    assert(absolute(-42) == 42)
+    assert(absolute(42) == 42)
+}
