@@ -12085,3 +12085,61 @@ C-типа scrutinee (`Nova_LinkedList____nova_int*` → `LinkedList____nova_int
 - p33 → main: 7 коммитов Plan 33.6 Ф.1.1–Ф.2.1 (fast-forward).
 - После: оба репо на одном коммите, 96 PASS / 19 FAIL (pre-existing f14_*).
 - Второй sync: main добавил 2 LICENSE коммита → p33 fast-forward, снова равны.
+
+## Plan 33.6 — Production hardening (2026-05-16, сессия 2)
+
+### Ф.6.1 — V19 close: exhaustive encode_expr
+
+- `encode.rs`: убрана generic `_ =>` catch-all, заменена явными ветками на все ExprKind:
+  Path → Var, CharLit → IntLit, Block (пустой) → delegate trailing, TupleLit/Match/IfLet/
+  Lambda/ClosureLight/ClosureFull/Index/RecordLit/ArrayLit/Try/Bang/Coalesce/As/Is/
+  SelfAccess/InterpolatedStr/TurboFish/Range/For/While/WhileLet/Loop/ParallelFor/
+  Spawn/Supervised/Select/With/HandlerLit/Interrupt/Forbid/Realtime → Unsupported с
+  user-friendly сообщениями и suggestions.
+- Тесты: e2401_match_in_ensures_fail, e2401_lambda_in_requires_fail,
+  e2401_try_in_requires_fail, e2401_array_lit_in_ensures_fail — все PASS.
+- V19 закрыт. Коммит: `f58c27ba132`.
+
+### Ф.6.2 — Silent fallback elimination (W2402)
+
+- `pipeline.rs`: добавлен `VerifyResult::Warning(String)` вариант.
+  Loop invariant EncodingFailed → Warning вместо silence.
+  Unknown (non-NotAttempted) в Default mode → W2402 diagnostic.
+  MustVerify + body limitation → W2402 в pipeline.
+- `handler_exec.rs`, `doc/mod.rs`: добавлены Warning arms в match.
+- Коммит: `b548557ab3e`.
+
+### Ф.4.1 — #must_verify_module strict mode (E2403)
+
+- `pipeline.rs`: добавлена проверка конфликта `#unverified` fn внутри `#must_verify_module`.
+  Результат: E2403 с actionable message вместо молчаливого игнорирования.
+- Тесты: must_verify_module_positive, must_verify_module_unsupported_fail (E2401),
+  must_verify_module_unverified_conflict_fail (E2403) — все PASS.
+- V10 (part) закрыт. Коммит: `8d383a9a569`.
+
+### Ф.4.2 — #trusted external fn axiom injection
+
+- `encode.rs`: TrustedFnInfo struct, trusted_fn_uf_name(), EncodeCtx.trusted_fns поле.
+  ExprKind::Call к trusted fn → SmtTerm::App(UF, args).
+- `pipeline.rs`: collect_trusted_fns(), UF declaration + forall ensures axiom injection
+  перед requires encode caller'а.
+- `handler_exec.rs`: обновлены 3 точки создания EncodeCtx.
+- Тесты: external_no_trusted_fail (error без #trusted), external_trusted_positive (Z3).
+- V10 закрыт полностью. Коммит: `9220d452b02`.
+
+### Ф.3.4 — #proof_budget module/fn timeout и vc_count_max
+
+- `ast/mod.rs`: ModuleAttrKind::ProofBudget { timeout_ms, vc_count_max }.
+- `parser/mod.rs`: парсинг `#proof_budget(key=val, ...)` с key=value синтаксисом.
+- `pipeline.rs`: module_vc_used счётчик, BudgetExceeded error при превышении;
+  per-fn timeout = #verify_timeout > #proof_budget > pipeline default (2000ms).
+  VerificationPipeline::timeout_ms — pub.
+- Тесты: proof_budget_vc_exceeded_fail (BudgetExceeded), proof_budget_positive — PASS.
+- Коммит: `4b1cbea14ad`.
+
+### Ф.5.2 — Z3 CI matrix
+
+- `.github/workflows/contracts-z3.yml`: два jobs — TrivialBackend и Z3 backend
+  (apt libz3-dev + --features z3-backend + NOVA_SMT_BACKEND=z3).
+- `docs/promts/read-toolchain.md`: секция Z3 build с Linux/Windows инструкцией.
+- V18 закрыт. Коммит: `03405cde85b`.

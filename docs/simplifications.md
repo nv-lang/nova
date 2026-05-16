@@ -4630,30 +4630,20 @@ Sub-plans 35.A-E:
   segment tree, graph BFS, memory safety. 115 PASS 0 FAIL.
   «Dafny-parity».
 
-### [V18] Z3 не default в CI — только TrivialBackend
-- **Где:** `compiler-codegen/src/verify/pipeline.rs`, `nova-cli/Cargo.toml`.
-- **Что упрощено:** Z3 backend (`--features z3-backend`) не включён в
-  стандартный `cargo test` / `nova test`. CI проверяет только TrivialBackend.
-  Z3 тесты запускаются вручную: `$env:NOVA_SMT_BACKEND="z3"` + `--features z3-backend`.
-- **Почему:** Z3 — нативная зависимость, требует vcpkg/cmake; добавляет ~30 сек
-  к каждому CI прогону. Большинство тестов не требуют полного SMT.
-- **Как чинить:** Plan 33.7 CI matrix: отдельный job `test-z3` с z3-backend
-  feature flag. Возможно через GitHub Actions `matrix.include`.
-- **Приоритет:** M — soundness пропусков нет (TrivialBackend честно Unknown),
-  но z3-specific тесты могут регрессировать незамеченно.
+### [V18] ✅ Z3 CI matrix — ЗАКРЫТО Plan 33.6 Ф.5.2 (2026-05-16)
+- **Где:** `.github/workflows/contracts-z3.yml`.
+- **Что реализовано:** CI matrix с двумя jobs: TrivialBackend (default) и Z3
+  (`--features z3-backend` + `NOVA_SMT_BACKEND=z3`). Тесты `REQUIRES_SMT_BACKEND z3`
+  прогоняются в z3-job, пропускаются в trivial-job.
+  `docs/promts/read-toolchain.md` обновлён с Z3 build инструкцией.
+- **Дата закрытия:** 2026-05-16
 
-### [V19] EncodingError::Unsupported не покрывает field/method/pattern
+### [V19] ✅ Exhaustive encode_expr — ЗАКРЫТО Plan 33.6 Ф.6.1 (2026-05-16)
 - **Где:** `compiler-codegen/src/verify/encode.rs`, функция `encode_expr`.
-- **Что упрощено:** `EncodingError::Unsupported` генерируется для tuple expressions
-  и неизвестных ExprKind'ов, но field access (`obj.field`), method calls на non-pure
-  receivers, и pattern match в contract expressions дают `_ =>` fallback без
-  явного Unsupported — они молча становятся TrivialBackend limitation, а не E2401.
-- **Почему:** Каждый ExprKind требует отдельного case в encode_expr с явной
-  проверкой purity/encodability. Не было сделано при первоначальной реализации.
-- **Как чинить:** Plan 33.6 Ф.2.x: добавить exhaustive match в encode_expr,
-  каждый неподдерживаемый случай → `Err(EncodingError::Unsupported(...))`.
-- **Приоритет:** H — потенциальный soundness gap: контракт с field access может
-  silently skip вместо E2401.
+- **Что реализовано:** Exhaustive match по всем ExprKind вариантам с явными
+  `Err(EncodingError::Unsupported(...))` сообщениями и suggestions (tuple → separate vars,
+  match → if/else, lambda → #pure fn и т.д.). Soundness gap закрыт.
+- **Дата закрытия:** 2026-05-16
 
 ### [ЗАКР 2026-05-16] pipeline.rs монолит — handler code в отдельный модуль [Ф.2.1]
 - **Закрыто (Plan 33.6 Ф.2.1, 2026-05-16, commit ddc11f2e):**
