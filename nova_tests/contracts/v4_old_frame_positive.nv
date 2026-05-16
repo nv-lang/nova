@@ -1,0 +1,23 @@
+// Ф.7.2 (Plan 33.6, V4 close): `old(x)` для immutable param через
+// `_old_<x>` SMT var + frame axiom (`_old_x == x`).
+// Под TrivialBackend reflexive `result == old(x)` доказывается:
+// `_old_x == x`, `result == x` → `result == _old_x`.
+
+module contracts.v4_old_frame_positive
+
+fn identity_with_old(x int) -> int
+    ensures result == old(x)
+{
+    x
+}
+
+fn add_ones(x int, y int) -> int
+    ensures result == old(x) + old(y)
+{
+    x + y
+}
+
+test "v4 old frame positive" {
+    assert(identity_with_old(42) == 42)
+    assert(add_ones(2, 3) == 5)
+}

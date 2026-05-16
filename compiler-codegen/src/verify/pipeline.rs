@@ -232,9 +232,17 @@ impl VerificationPipeline {
         }
 
         // 1. Declare params as Vars.
+        // Ф.7.2 (Plan 33.6): + declare `_old_<param>` для каждого param как
+        // entry-snapshot (V4 close). Раньше substitute_old делал
+        // тривиальную подстановку `_old_x → x` — unsound для mut params.
+        // Теперь `_old_<x>` — отдельная SMT var, frame axiom (далее) ассертит
+        // `_old_x == x` для non-modifies params. Для modifies-params (когда
+        // появятся в Nova) — frame axiom не applies, `_old_<x>` представляет
+        // entry-state значение независимо от current `x`.
         for p in &fd.params {
             let sort = type_to_sort(&p.ty);
-            backend.declare_var(&p.name, sort);
+            backend.declare_var(&p.name, sort.clone());
+            backend.declare_var(&format!("_old_{}", p.name), sort);
         }
 
         // Plan 33.3 Р¤.9: РґР»СЏ РєР°Р¶РґРѕРіРѕ СЌС„С„РµРєС‚Р° РІ СЃРёРіРЅР°С‚СѓСЂРµ fn СЂРµРіРёСЃС‚СЂРёСЂСѓРµРј
@@ -2082,18 +2090,12 @@ pub fn check_axiom_consistency(module: &Module) -> (Vec<Diagnostic>, Vec<Diagnos
     (diagnostics, warnings)
 }
 
-/// Substitute `_old_<x>` → `<x>` (33.1: no mut, snapshot trivial).
+/// Ф.7.2 (Plan 33.6 / V4 close): после introduction `_old_<x>` как
+/// отдельных SMT vars (с frame axiom для non-modifies params),
+/// substitute_old превращается в no-op identity-fn — preserved для
+/// API compat, но больше не делает unsound подстановку `_old_x → x`.
 pub(super) fn substitute_old(t: &SmtTerm) -> SmtTerm {
-    match t {
-        SmtTerm::Var(n) if n.starts_with("_old_") => {
-            SmtTerm::Var(n.strip_prefix("_old_").unwrap().to_string())
-        }
-        SmtTerm::App(op, args) => SmtTerm::App(
-            op.clone(),
-            args.iter().map(substitute_old).collect(),
-        ),
-        _ => t.clone(),
-    }
+    t.clone()
 }
 
 pub(super) fn type_to_sort(ty: &TypeRef) -> SortRef {
