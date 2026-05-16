@@ -1,5 +1,7 @@
-// Plan 33.3 Ф.14: Dafny-parity test 2 — Sorting invariants.
+﻿// Plan 33.3 Ф.14: Dafny-parity test 2 — Sorting invariants.
 // Арифметические инварианты, аналог Dafny quicksort/mergesort lemmas.
+
+// REQUIRES_SMT_BACKEND z3
 
 module contracts.f14_sorting_invariants
 

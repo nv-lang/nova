@@ -1,5 +1,7 @@
-// Plan 33.3 Ф.14: Dafny-parity test 9 — Boolean algebra lemmas.
+﻿// Plan 33.3 Ф.14: Dafny-parity test 9 — Boolean algebra lemmas.
 // Законы де Моргана, идемпотентность, дистрибутивность.
+
+// REQUIRES_SMT_BACKEND z3
 
 module contracts.f14_boolean_algebra
 

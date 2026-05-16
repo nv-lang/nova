@@ -1,4 +1,6 @@
-// Plan 33.3 Ф.14: Dafny-parity test 16 — Multi-variable contracts.
+﻿// Plan 33.3 Ф.14: Dafny-parity test 16 — Multi-variable contracts.
+
+// REQUIRES_SMT_BACKEND z3
 
 module contracts.f14_multivar_contracts
 

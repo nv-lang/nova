@@ -1,5 +1,7 @@
-// Plan 33.3 Ф.14: Dafny-parity test 15 — Pure function contracts.
+﻿// Plan 33.3 Ф.14: Dafny-parity test 15 — Pure function contracts.
 // Аналог function-method contracts в Dafny.
+
+// REQUIRES_SMT_BACKEND z3
 
 module contracts.f14_pure_functions
 

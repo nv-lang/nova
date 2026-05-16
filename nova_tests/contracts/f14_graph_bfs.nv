@@ -1,5 +1,7 @@
-// Plan 33.3 Ф.14: Dafny-parity test 19 — Graph BFS distance properties.
+﻿// Plan 33.3 Ф.14: Dafny-parity test 19 — Graph BFS distance properties.
 // Верификация инвариантов BFS без реальных графов (arithmetic).
+
+// REQUIRES_SMT_BACKEND z3
 
 module contracts.f14_graph_bfs
 

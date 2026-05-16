@@ -31,9 +31,11 @@ use super::pipeline::{
 ///   затем пытаемся доказать axiom формулу в этом контексте.
 /// - Для `post(...)` axioms: честно выдаём Unknown("post-axiom verification requires V2").
 ///
-/// Возвращает список диагностик (ошибки если `#verify` не смог доказать).
-pub fn verify_handlers(module: &Module) -> Vec<Diagnostic> {
+/// Ф.7.5 (Plan 33.6): возвращает (errors, warnings).
+/// errors — Disproved axioms (compile-blocking). warnings — Unknown/EncodingFailed (W2402).
+pub fn verify_handlers(module: &Module) -> (Vec<Diagnostic>, Vec<Diagnostic>) {
     let mut diagnostics = Vec::new();
+    let mut warnings: Vec<Diagnostic> = Vec::new();
     let pure_views = collect_pure_views(module);
 
     let mut axioms_by_effect: std::collections::HashMap<String, &[crate::ast::EffectAxiom]>
@@ -148,9 +150,22 @@ pub fn verify_handlers(module: &Module) -> Vec<Diagnostic> {
                     ));
                 }
                 VerifyResult::Unknown(reason) => {
-                    let _ = (reason, binding_span);
+                    // Ф.7.5 (Plan 33.6): static-axiom check Unknown — emit W2402
+                    // (раньше silent discard через `let _`).
+                    let msg = format!(
+                        "`#verify` handler for effect `{}`: static axiom `{}` check returned Unknown [W2402]: {}\n  \
+                         Используйте Z3 backend для полной проверки (NOVA_SMT_BACKEND=z3).",
+                        effect_name, ax.name, reason);
+                    warnings.push(Diagnostic::new(msg, binding_span));
                 }
-                VerifyResult::EncodingFailed(_) => {}
+                VerifyResult::EncodingFailed(reason) => {
+                    // Ф.7.5: тоже не silent — это либо bug в нашем encoder'е, либо
+                    // unsupported конструкция в axiom — пользователь должен знать.
+                    let msg = format!(
+                        "`#verify` handler for effect `{}`: axiom `{}` failed to encode [W2402]: {}",
+                        effect_name, ax.name, reason);
+                    warnings.push(Diagnostic::new(msg, binding_span));
+                }
                 VerifyResult::Warning(msg) => {
                     diagnostics.push(Diagnostic::new(msg, binding_span));
                 }
@@ -172,7 +187,7 @@ pub fn verify_handlers(module: &Module) -> Vec<Diagnostic> {
         }
     }
 
-    diagnostics
+    (diagnostics, warnings)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

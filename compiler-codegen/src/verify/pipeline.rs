@@ -232,9 +232,17 @@ impl VerificationPipeline {
         }
 
         // 1. Declare params as Vars.
+        // Ф.7.2 (Plan 33.6): + declare `_old_<param>` для каждого param как
+        // entry-snapshot (V4 close). Раньше substitute_old делал
+        // тривиальную подстановку `_old_x → x` — unsound для mut params.
+        // Теперь `_old_<x>` — отдельная SMT var, frame axiom (далее) ассертит
+        // `_old_x == x` для non-modifies params. Для modifies-params (когда
+        // появятся в Nova) — frame axiom не applies, `_old_<x>` представляет
+        // entry-state значение независимо от current `x`.
         for p in &fd.params {
             let sort = type_to_sort(&p.ty);
-            backend.declare_var(&p.name, sort);
+            backend.declare_var(&p.name, sort.clone());
+            backend.declare_var(&format!("_old_{}", p.name), sort);
         }
 
         // Plan 33.3 Р¤.9: РґР»СЏ РєР°Р¶РґРѕРіРѕ СЌС„С„РµРєС‚Р° РІ СЃРёРіРЅР°С‚СѓСЂРµ fn СЂРµРіРёСЃС‚СЂРёСЂСѓРµРј
@@ -612,7 +620,18 @@ impl VerificationPipeline {
                         }
                     }
                 }
-                Err(_) => {} // dec РЅРµ encodable вЂ" skip (РЅРµ Р»РѕРјР°РµРј СЃСѓС‰РµСЃС‚РІСѓСЋС‰РёРµ С‚РµСЃС‚С‹)
+                Err(e) => {
+                    // Ф.7.3 (Plan 33.6): decreases expr не encodable → W2402 вместо silent skip.
+                    let reason = match e {
+                        super::encode::EncodingError::Unsupported(s) => s,
+                    };
+                    let msg = format!(
+                        "loop decreases expr не закодирован в SMT [W2402]: {}.\n  \
+                         well-foundedness НЕ проверена. Упростите decreases или используйте \
+                         #unverified для явного отказа.",
+                        reason);
+                    results.push((dec_span, VerifyResult::Warning(msg)));
+                }
             }
         }
 
@@ -1701,8 +1720,17 @@ fn verify_loop_preservation(
                     label: Some("inv_pre_havoc".into()),
                 });
             }
-            Err(_) => {
-                // Invariant non-encodable в†' skip preservation for this loop.
+            Err(e) => {
+                // Ф.7.3 (Plan 33.6): invariant не encodable → W2402 (раньше silent return).
+                let reason = match e {
+                    super::encode::EncodingError::Unsupported(s) => s,
+                };
+                let msg = format!(
+                    "loop invariant preservation НЕ проверена [W2402]: invariant \
+                     не закодирован в SMT: {}.\n  \
+                     Упростите invariant или используйте #unverified.",
+                    reason);
+                results.push((lp.span, VerifyResult::Warning(msg)));
                 backend.pop();
                 return results;
             }
@@ -1726,8 +1754,17 @@ fn verify_loop_preservation(
                 let rhs_havoc = substitute_havoc(rhs_t);
                 post_map.insert(var.clone(), rhs_havoc);
             }
-            Err(_) => {
-                // Cannot encode rhs в†' fall back, no preservation check.
+            Err(e) => {
+                // Ф.7.3 (Plan 33.6): body rhs не encodable → W2402 (раньше silent return).
+                let reason = match e {
+                    super::encode::EncodingError::Unsupported(s) => s,
+                };
+                let msg = format!(
+                    "loop invariant preservation НЕ проверена [W2402]: body assignment \
+                     `{} := ...` не закодирован в SMT: {}.\n  \
+                     Упростите rhs или используйте #unverified.",
+                    var, reason);
+                results.push((lp.span, VerifyResult::Warning(msg)));
                 backend.pop();
                 return results;
             }
@@ -1773,7 +1810,17 @@ fn verify_loop_preservation(
                     }
                 }
             }
-            Err(_) => {} // non-encodable invariant в†' skip
+            Err(e) => {
+                // Ф.7.3 (Plan 33.6): non-encodable invariant in post-check → W2402.
+                let reason = match e {
+                    super::encode::EncodingError::Unsupported(s) => s,
+                };
+                let msg = format!(
+                    "loop invariant post-state НЕ проверен [W2402]: invariant не \
+                     закодирован в SMT (post): {}.",
+                    reason);
+                results.push((lp.span, VerifyResult::Warning(msg)));
+            }
         }
     }
 
@@ -1942,8 +1989,11 @@ impl Default for VerificationPipeline {
 /// В«РЅРµ РґРѕРєР°Р·Р°РЅРѕ inconsistentВ» вЂ" silent fallback.
 ///
 /// Р'РѕР·РІСЂР°С‰Р°РµС‚ diagnostic'Рё (РїСѓСЃС‚РѕР№ Vec РµСЃР»Рё РІСЃС' consistent).
-pub fn check_axiom_consistency(module: &Module) -> Vec<Diagnostic> {
+/// Ф.7.4 (Plan 33.6): возвращает (errors, warnings).
+/// errors — inconsistent axioms (Unsat). warnings — Unknown под Trivial (W2402).
+pub fn check_axiom_consistency(module: &Module) -> (Vec<Diagnostic>, Vec<Diagnostic>) {
     let mut diagnostics = Vec::new();
+    let mut warnings: Vec<Diagnostic> = Vec::new();
     let pure_views = collect_pure_views(module);
 
     // Р"СЂСѓРїРїРёСЂСѓРµРј axioms РїРѕ effect-name.
@@ -2012,29 +2062,40 @@ pub fn check_axiom_consistency(module: &Module) -> Vec<Diagnostic> {
                         td.span,
                     ));
                 }
-                _ => {
-                    // SAT РёР»Рё Unknown вЂ" axioms consistent (РёР»Рё TrivialBackend
-                    // РЅРµ reasoning'СѓРµС‚ вЂ" silent OK).
+                SatResult::Sat(_) => {
+                    // axioms consistent — реально проверено backend'ом.
+                }
+                SatResult::Unknown(reason) => {
+                    // Ф.7.4 (Plan 33.6): Unknown под Trivial или Z3 timeout —
+                    // axiom consistency НЕ проверена, эмит W2402 чтобы user знал.
+                    let reason_str = match reason {
+                        UnknownReason::NotAttempted(s) => format!(
+                            "TrivialBackend не reasoning'ует ({})", s),
+                        UnknownReason::Timeout => "SMT timeout".to_string(),
+                        UnknownReason::NonLinearArithmetic => "non-linear arithmetic".to_string(),
+                        UnknownReason::UnsupportedTheory(s) => format!("unsupported theory: {}", s),
+                        UnknownReason::BackendError(s) => format!("backend error: {}", s),
+                    };
+                    let msg = format!(
+                        "axiom consistency для effect `{}` НЕ проверена [W2402]: {}.\n  \
+                         Используйте Z3 backend (`cargo build --features z3-backend` + \
+                         `NOVA_SMT_BACKEND=z3`) для полной проверки.",
+                        td.name, reason_str);
+                    warnings.push(Diagnostic::new(msg, td.span));
                 }
             }
         }
     }
 
-    diagnostics
+    (diagnostics, warnings)
 }
 
-/// Substitute `_old_<x>` → `<x>` (33.1: no mut, snapshot trivial).
+/// Ф.7.2 (Plan 33.6 / V4 close): после introduction `_old_<x>` как
+/// отдельных SMT vars (с frame axiom для non-modifies params),
+/// substitute_old превращается в no-op identity-fn — preserved для
+/// API compat, но больше не делает unsound подстановку `_old_x → x`.
 pub(super) fn substitute_old(t: &SmtTerm) -> SmtTerm {
-    match t {
-        SmtTerm::Var(n) if n.starts_with("_old_") => {
-            SmtTerm::Var(n.strip_prefix("_old_").unwrap().to_string())
-        }
-        SmtTerm::App(op, args) => SmtTerm::App(
-            op.clone(),
-            args.iter().map(substitute_old).collect(),
-        ),
-        _ => t.clone(),
-    }
+    t.clone()
 }
 
 pub(super) fn type_to_sort(ty: &TypeRef) -> SortRef {
@@ -2116,18 +2177,27 @@ pub fn verify_module(module: &Module) -> ModuleVerifyReport {
     // Р•СЃР»Рё axioms СЌС„С„РµРєС‚Р° inconsistent (Z3 в†' UNSAT) в†' compile-error,
     // skip РІСЃРµС… РѕСЃС‚Р°Р»СЊРЅС‹С… verify'РµРІ (Р»СЋР±Р°СЏ formula С‚СЂРёРІРёР°Р»СЊРЅРѕ РґРѕРєР°Р·СѓРµРјР°
     // РїРѕРґ inconsistent assumptions).
-    let inconsistency_errors = check_axiom_consistency(module);
+    let (inconsistency_errors, inconsistency_warnings) = check_axiom_consistency(module);
     let has_inconsistent_axioms = !inconsistency_errors.is_empty();
     for e in inconsistency_errors {
         report.errors.push(e);
+    }
+    // Ф.7.4: W2402 axiom consistency under Trivial backend — НЕ ломаем компиляцию.
+    for w in inconsistency_warnings {
+        report.warnings.push(w);
     }
     if has_inconsistent_axioms {
         return report;
     }
 
     // Plan 33.4 P0-1 (Р¤.9.7 V1): РІРµСЂРёС„РёРєР°С†РёСЏ `with #verify E = handler` bindings.
-    for diag in super::handler_exec::verify_handlers(module) {
+    // Ф.7.5 (Plan 33.6): verify_handlers возвращает (errors, warnings).
+    let (handler_errors, handler_warnings) = super::handler_exec::verify_handlers(module);
+    for diag in handler_errors {
         report.errors.push(diag);
+    }
+    for w in handler_warnings {
+        report.warnings.push(w);
     }
     if !report.errors.is_empty() {
         return report;

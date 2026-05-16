@@ -1,0 +1,19 @@
+// Ф.7.4 (Plan 33.6): axiom consistency под TrivialBackend → W2402.
+// Под Trivial backend нельзя проверить inconsistency, эмитится warning.
+// EXPECT_COMPILE_WARNING W2402
+
+module contracts.axiom_consistency_w2402_trivial
+
+type Flag effect {
+    #pure enabled() -> bool
+    axiom always_false() => enabled() == false
+}
+
+fn check() -> bool
+{
+    true
+}
+
+test "axiom consistency trivial → W2402" {
+    assert(check())
+}

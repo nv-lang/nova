@@ -1,5 +1,7 @@
-// Plan 33.3 Ф.14: Dafny-parity test 12 — AVL tree balance invariant.
+﻿// Plan 33.3 Ф.14: Dafny-parity test 12 — AVL tree balance invariant.
 // Моделируем через height integers.
+
+// REQUIRES_SMT_BACKEND z3
 
 module contracts.f14_avl_balance
 

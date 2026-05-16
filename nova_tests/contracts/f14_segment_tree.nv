@@ -1,5 +1,7 @@
-// Plan 33.3 Ф.14: Dafny-parity test 18 — Segment tree properties.
+﻿// Plan 33.3 Ф.14: Dafny-parity test 18 — Segment tree properties.
 // Range query / update arithmetic invariants.
+
+// REQUIRES_SMT_BACKEND z3
 
 module contracts.f14_segment_tree
 
