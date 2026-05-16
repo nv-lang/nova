@@ -8404,3 +8404,52 @@ Closes:
 - Path.normalize — workaround вместо настоящего compiler-fix'а (if-expr
   type-unification).
 - Plan 45.B — остаётся ~50 stdlib modules без docs (по 100-200 items).
+
+## Plan 59 ✅ ЗАКРЫТО (2026-05-17) — Tuple monomorphization
+
+Compiler теперь generate'ит mono'd `_NovaTuple____<T1>__<T2>__...`
+structures per concrete type combination — параллель Rust `(T1, T2)`
+mono. Zero-cost: direct field access, no nova_int slot erasure, no
+heap boxing для struct value elements (nova_str, user records).
+
+**Generated C example:**
+```c
+typedef struct { nova_str f0; nova_int f1; } _NovaTuple____nova_str__nova_int;
+typedef struct NovaOpt__NovaTuple____nova_str__nova_int {
+    int tag;
+    _NovaTuple____nova_str__nova_int value;
+} NovaOpt__NovaTuple____nova_str__nova_int;
+```
+
+### Что закрыто
+
+- ✅ `[M-mono-tuple-element-types]` (Plan 55 followup).
+- ✅ `for (k, v) in hashmap` — идиоматичный Nova syntax работает для
+  любых K, V (str/int/bool/user types).
+- ✅ Stdlib HashMap.@merge_from / @filter могли бы быть переписаны на
+  idiomatic syntax (но текущая direct field access реализация тоже
+  works — оставлена).
+
+### Decision tree
+
+1. All tuple elements concrete (resolved через current_type_subst) →
+   mono'd `_NovaTuple____<...>` struct, zero-cost direct access.
+2. Erased context (placeholders) → fallback legacy `_NovaTupleN` с
+   nova_int slot + runtime cast.
+
+### Tests
+
+`nova_tests/plan59/f1_for_tuple_in_hashmap.nv` — 3 sub-tests
+(HashMap[str,int] sum values, HashMap[int,str] count keys, collect
+both K and V с condition checks).
+
+### Spec D111 added
+
+`spec/decisions/02-types.md` D111 (Tuple monomorphization) — describes
+rule + decision tree + параллель Rust/C++.
+
+### Импакт
+
+Закрывает фундаментальную bootstrap limitation. Programmer теперь
+пишет идиоматический Nova код для tuple destructure в любом контексте.
+Параллель Rust `(T1, T2)` per-type structs achieved.

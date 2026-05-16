@@ -3223,3 +3223,76 @@ Codegen (Plan 56 Ф.1 + Ф.2):
 - [D53](#d53-anonymous-protocol-literals) — protocol-типы.
 - [D24](#d24-контракты) — vtable lookups compatible с proven-contracts
   skip (no-op).
+
+## D111. Tuple monomorphization
+
+> **Status:** active (spec). Реализация — [Plan 59](../../docs/plans/59-tuple-monomorphization.md).
+
+### Что
+
+Tuple типы `(T1, T2, ..., TN)` monomorphized — для каждой concrete
+комбинации element types compiler generate'ит отдельную struct
+`_NovaTuple____<T1>__<T2>__...` с **real** field types (не nova_int
+slot erasure).
+
+### Правило
+
+```nova
+let p (str, int) = ("a", 1)
+//                   ^^^^^^^ generates _NovaTuple____nova_str__nova_int
+//                   { nova_str f0; nova_int f1; }
+
+for (k, v) in hashmap {
+//   ^^^^^^^^^^^^^^^^ implicit Iter (D58) + tuple destructure через
+//                    mono'd struct (k: nova_str, v: nova_int direct field access)
+}
+```
+
+**Параллель:** Rust `(T1, T2)` mono'd per concrete instantiation,
+zero-cost. C++ `std::tuple<T1, T2>` template — то же. Nova bootstrap
+теперь паритет (vs предыдущий int-slot erasure breaking struct
+elements).
+
+### Decision tree
+
+При codegen tuple type:
+1. **All elements concrete** (resolved via current_type_subst,
+   no type-param placeholders) → use mono'd `_NovaTuple____<...>`
+   struct. Zero erasure cost.
+2. **Erased context** (one or more element types unresolved) →
+   fallback legacy `_NovaTupleN` (nova_int slot) с runtime cast.
+   Bootstrap-compat для truly generic contexts.
+
+### Constraints
+
+- **Tuple field access** (`p.0`, `p.1`) — direct C field access
+  (`.f0`, `.f1`) на mono'd struct.
+- **Tuple destructure** (`let (a, b) = ...`) — direct binding, no cast.
+- **Nested tuples** (`((int, str), bool)`) — recursive mono'd (inner
+  tuple registered first).
+- **Tuple in collections** (`HashMap[K, V]` returns `Option[(K, V)]` from
+  `iter().next()`) — mono'd через template + subst at iter mono pass.
+
+### Почему
+
+1. **Correctness** — struct value types (nova_str, user records)
+   не fit'ят в nova_int slot. Без mono `(str, int)` was broken.
+2. **Zero-cost** — direct field access, no intptr_t cast, no heap
+   alloc для tuple value.
+3. **Параллель Rust/C++** — индустриальный standard для tuples.
+
+### Что отвергнуто
+
+- **Universal tuple type** (all elements `any`) — type-erased, runtime
+  type-tag overhead, breaks AOT zero-cost goal.
+- **Tuple subtyping** (`(int, str) <: (any, any)`) — overkill для
+  bootstrap; не нужен в practice.
+
+### Связь
+
+- [D27](03-syntax.md#d27-синтаксис-массивов-t-префикс-nt-фиксированные)
+  — tuple литерал синтаксис.
+- [D58 Iter protocol] — `for (k, v) in coll` использует mono'd tuple
+  через implicit `.iter()`.
+- [Plan 48](../../docs/plans/48-closures-in-generics.md) —
+  monomorphization infrastructure (mono pass).
