@@ -223,10 +223,6 @@ export fn HashMap[K, V] mut @insert_new(key K, value V) {
 // Производит копию через iteration + insert_new. Каждый concrete instance
 // HashMap[K, V] получает mono'd @clone — bound K methods resolve через
 // mono path. Erased generic body stub'ится (caller-side mono drives).
-//
-// Note: @merge_from(other) и @filter(pred) пока deferred — block'аются
-// cross-instance .buckets field access typing (другой mono pass issue,
-// orthogonal к bound dispatch). См. simplifications.md.
 export fn HashMap[K, V] @clone() -> HashMap[K, V] {
     let mut copy = HashMap[K, V].with_capacity(@count)
     for i in 0..@buckets.len {
@@ -236,6 +232,33 @@ export fn HashMap[K, V] @clone() -> HashMap[K, V] {
         }
     }
     copy
+}
+
+
+// HashMap.@merge_from(other) — Plan 56.
+// Merge entries из other в self (override semantics: existing keys
+// заменяются на other's values).
+export fn HashMap[K, V] mut @merge_from(other HashMap[K, V]) {
+    for i in 0..other.buckets.len {
+        match other.buckets[i] {
+            Occupied { key: k, value: v } => @insert(k, v)
+            _ => {}
+        }
+    }
+}
+
+
+// HashMap.@filter(pred) — Plan 56.
+// Возвращает новый HashMap с парами для которых pred(k, v) == true.
+export fn HashMap[K, V] @filter(pred fn(K, V) -> bool) -> HashMap[K, V] {
+    let mut out = HashMap[K, V].with_capacity(@count)
+    for i in 0..@buckets.len {
+        match @buckets[i] {
+            Occupied { key: k, value: v } => if pred(k, v) { out.insert_new(k, v) }
+            _ => {}
+        }
+    }
+    out
 }
 
 

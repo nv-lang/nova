@@ -5448,6 +5448,78 @@ impl CEmitter {
         }
     }
 
+    /// Plan 56 followup: compute real array element type для произвольной
+    /// глубины field-access chains (`obj.f1.f2.f3.field[i]` где `field` —
+    /// array of mono'd struct pointers).
+    ///
+    /// Возвращает Some(elem_c_ty) если obj indicates struct AND field is
+    /// Array field в struct schema/template. None — fallback на caller
+    /// default.
+    ///
+    /// Worker для emit_expr/infer_expr_c_type Index path: cast cast'ит
+    /// `data[i]` в proper struct pointer вместо nova_int default.
+    fn compute_field_array_elem_type(&self, obj: &Expr, field: &str) -> Option<String> {
+        let obj_ty = self.infer_expr_c_type(obj);
+        // Strip Nova_ prefix и trailing *.
+        let struct_name = obj_ty
+            .strip_prefix("Nova_")
+            .unwrap_or("")
+            .trim_end_matches('*').trim();
+        if struct_name.is_empty() { return None; }
+        // Try concrete mono schema first.
+        if let Some(schema) = self.record_schemas.get(struct_name) {
+            if let Some(field_c_ty) = schema.get(field) {
+                if let Some(elem_raw) = field_c_ty.strip_prefix("NovaArray_") {
+                    let elem = elem_raw.trim_end_matches('*').trim();
+                    if !elem.is_empty() && elem != "nova_int" {
+                        return Some(if field_c_ty.ends_with("**") {
+                            format!("{}*", elem)
+                        } else { elem.to_string() });
+                    }
+                }
+            }
+        }
+        // Try template + subst (mono'd name like "HashMap____<K>__<V>").
+        let base_name: &str = struct_name.split("____").next().unwrap_or(struct_name);
+        if base_name.len() < struct_name.len() {
+            let args_str = &struct_name[base_name.len() + 4..]; // skip "____"
+            let type_args: Vec<String> = args_str.split("__")
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string())
+                .collect();
+            if let Some(template) = self.generic_type_templates.get(base_name).cloned() {
+                if let crate::ast::TypeDeclKind::Record(fields) = &template.kind {
+                    if let Some(field_decl) = fields.iter().find(|f| f.name == field) {
+                        if let crate::ast::TypeRef::Array(inner, _) = &field_decl.ty {
+                            // Compute concrete element type via subst.
+                            let subst: Vec<(String, Option<String>)> = template.generics.iter()
+                                .zip(type_args.iter())
+                                .map(|(g, c)| (g.name.clone(), Some(c.clone())))
+                                .collect();
+                            if let Some(elem_c) = Self::apply_type_subst_to_ref(inner, &subst) {
+                                return Some(elem_c);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Plan 56 followup: deep version — компонует chain `obj.f1.f2.field[i]`
+    /// рекурсивно вызывая compute_field_array_elem_type на каждом уровне.
+    /// Возвращает element type для **самого внутреннего** array.
+    fn compute_array_elem_type_for_obj(&self, obj: &Expr) -> Option<String> {
+        match &obj.kind {
+            ExprKind::Ident(n) => self.array_element_types.get(n).cloned(),
+            ExprKind::Member { obj: inner, name } => {
+                self.compute_field_array_elem_type(inner, name)
+            }
+            _ => None,
+        }
+    }
+
     /// Plan 48: apply a type param substitution to a TypeRef, returning a C type string.
     /// Used in infer_expr_c_type for resolving the return type of generic fn calls.
     /// Returns None if type cannot be resolved from the subst alone (e.g. non-named types).
@@ -9043,7 +9115,10 @@ impl CEmitter {
                     let inner_elem_ty = arr_var_name
                         .and_then(|n| self.array_element_types.get(n).cloned())
                         // Fallback: look up by the emitted C expression string (covers @field[idx])
-                        .or_else(|| self.array_element_types.get(o.as_str()).cloned());
+                        .or_else(|| self.array_element_types.get(o.as_str()).cloned())
+                        // Plan 56 followup: deep field-access chain — obj.f1.f2.field[i].
+                        // Compute from record schema / template + subst.
+                        .or_else(|| self.compute_array_elem_type_for_obj(obj));
                     if let Some(ref inner_ty) = inner_elem_ty {
                         if inner_ty.starts_with("NovaArray_") {
                             // array-of-arrays: cast the element and get data pointer
@@ -15345,6 +15420,13 @@ impl CEmitter {
                         if let Some(et) = self.array_element_types.get(&key) {
                             return et.clone();
                         }
+                    }
+                }
+                // Plan 56 followup: deep field-access chain — obj.f1.f2.field[i].
+                // Compute real element type from record schema / template + subst.
+                if let Some(elem) = self.compute_array_elem_type_for_obj(obj) {
+                    if !elem.is_empty() && elem != "nova_int" {
+                        return elem;
                     }
                 }
                 // Если obj — NovaArray_T*, элемент имеет тип T (из имени).
