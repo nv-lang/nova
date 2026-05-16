@@ -282,9 +282,126 @@ pub fn encode_expr_with_ctx(e: &Expr, ctx: &EncodeCtx) -> Result<SmtTerm, Encodi
             Ok(SmtTerm::not(inner))
         }
 
-        _ => Err(EncodingError::Unsupported(format!(
-            "expression kind not supported in contract encoder (33.1)"
-        ))),
+        // Path — qualified name (Module.Const, Effect.op). Encode как Var.
+        ExprKind::Path(parts) => Ok(SmtTerm::Var(parts.join("::"))),
+
+        // CharLit — unicode codepoint, encode как int literal.
+        ExprKind::CharLit(n) => Ok(SmtTerm::IntLit(*n as i64)),
+
+        // Block с единственным trailing-выражением — делегируем в trailing.
+        // Если есть statements (побочные эффекты) — unsupported.
+        ExprKind::Block(block) => {
+            if !block.stmts.is_empty() {
+                return Err(EncodingError::Unsupported(
+                    "block с statements в контракте не поддерживается; \
+                     используйте чистое выражение или вынесите логику в #pure fn".into()));
+            }
+            match &block.trailing {
+                Some(e) => encode_expr_with_ctx(e, ctx),
+                None => Err(EncodingError::Unsupported(
+                    "пустой block в контракте не поддерживается".into())),
+            }
+        }
+
+        // Tuple literal — SMT не имеет product-type по умолчанию.
+        ExprKind::TupleLit(_) => Err(EncodingError::Unsupported(
+            "tuple-литерал в контракте не поддерживается SMT-encoder'ом; \
+             используйте отдельные переменные или #unverified".into())),
+
+        // Match — ветвление без статической структуры; используйте if/else.
+        ExprKind::Match { .. } => Err(EncodingError::Unsupported(
+            "match-выражение в контракте не поддерживается; \
+             используйте if/else или вынесите логику в #pure fn".into())),
+
+        // IfLet — комбинация pattern и ветвления.
+        ExprKind::IfLet { .. } => Err(EncodingError::Unsupported(
+            "if let в контракте не поддерживается; используйте if/else".into())),
+
+        // Lambda / closure — анонимные функции не кодируются в SMT.
+        ExprKind::Lambda { .. } | ExprKind::ClosureLight { .. } | ExprKind::ClosureFull(_) => {
+            Err(EncodingError::Unsupported(
+                "лямбда/closure в контракте не поддерживается; \
+                 вынесите логику в именованную #pure fn".into()))
+        }
+
+        // Index (arr[i]) — массивы не поддерживаются в V1 encoder'е.
+        ExprKind::Index { .. } => Err(EncodingError::Unsupported(
+            "индексирование (arr[i]) в контракте не поддерживается в V1; \
+             используйте #pure fn для абстракции доступа".into())),
+
+        // RecordLit / ArrayLit — составные литералы без SMT-аналогов.
+        ExprKind::RecordLit { type_name, .. } => {
+            let name = type_name.as_ref()
+                .map(|p| p.join("."))
+                .unwrap_or_else(|| "анонимный record".into());
+            Err(EncodingError::Unsupported(format!(
+                "record-литерал `{}` в контракте не поддерживается; \
+                 используйте #pure fn возвращающую нужное поле", name)))
+        }
+        ExprKind::ArrayLit(_) => Err(EncodingError::Unsupported(
+            "array-литерал в контракте не поддерживается; \
+             используйте forall-квантор или #pure fn".into())),
+
+        // Try (?) / Bang (!!) / Coalesce (??) — error-propagation в контрактах бессмысленна.
+        ExprKind::Try(_) => Err(EncodingError::Unsupported(
+            "оператор `?` в контракте не поддерживается; \
+             контракты должны быть чистыми выражениями".into())),
+        ExprKind::Bang(_) => Err(EncodingError::Unsupported(
+            "оператор `!!` в контракте не поддерживается; \
+             контракты должны быть чистыми выражениями".into())),
+        ExprKind::Coalesce(_, _) => Err(EncodingError::Unsupported(
+            "оператор `??` в контракте не поддерживается; \
+             используйте if/else или #pure fn".into())),
+
+        // As (type cast) / Is (type check) — типовые операции вне SMT.
+        ExprKind::As(_, ty) => Err(EncodingError::Unsupported(format!(
+            "type cast `as {:?}` в контракте не поддерживается; \
+             используйте #pure fn для конвертации", ty))),
+        ExprKind::Is(_, ty) => Err(EncodingError::Unsupported(format!(
+            "type check `is {:?}` в контракте не поддерживается; \
+             используйте discriminant через #pure fn", ty))),
+
+        // SelfAccess (@field) — нет контекста receiver'а в SMT.
+        ExprKind::SelfAccess => Err(EncodingError::Unsupported(
+            "`@field` (self-access) в контракте не поддерживается; \
+             передавайте поля явным параметром в #pure fn".into())),
+
+        // InterpolatedStr — строковая интерполяция вне SMT.
+        ExprKind::InterpolatedStr { .. } => Err(EncodingError::Unsupported(
+            "интерполированная строка в контракте не поддерживается".into())),
+
+        // TurboFish — generic-instantiation. Delegate к base если возможно.
+        ExprKind::TurboFish { base, .. } => encode_expr_with_ctx(base, ctx),
+
+        // Range — lo..hi как выражение вне forall/exists контекста.
+        ExprKind::Range { .. } => Err(EncodingError::Unsupported(
+            "range-выражение в контракте разрешено только внутри forall/exists квантора".into())),
+
+        // Loops, spawn, with, handlers — control-flow недопустим в контрактах.
+        ExprKind::For { .. } | ExprKind::While { .. } | ExprKind::WhileLet { .. }
+        | ExprKind::Loop { .. } | ExprKind::ParallelFor { .. } => {
+            Err(EncodingError::Unsupported(
+                "цикл в контракте не поддерживается; \
+                 используйте forall-квантор для итерационных свойств".into()))
+        }
+        ExprKind::Spawn(_) | ExprKind::Supervised { .. } | ExprKind::Select { .. } => {
+            Err(EncodingError::Unsupported(
+                "concurrency-конструкция в контракте не поддерживается".into()))
+        }
+        ExprKind::With { .. } | ExprKind::HandlerLit { .. } => {
+            Err(EncodingError::Unsupported(
+                "with/handler в контракте не поддерживается".into()))
+        }
+        ExprKind::Interrupt(_) | ExprKind::Forbid { .. } | ExprKind::Realtime { .. } => {
+            Err(EncodingError::Unsupported(
+                "interrupt/forbid/realtime в контракте не поддерживается".into()))
+        }
+
+        // Прочие конструкции — generic fallback с названием.
+        _ => Err(EncodingError::Unsupported(
+            "данная конструкция не поддерживается в SMT-encoder'е контрактов; \
+             используйте только int/bool/str/forall/exists/if/pure-fn-call".into()
+        )),
     }
 }
 

@@ -1,0 +1,10 @@
+// Ф.6.1 (Plan 33.6): array literal в ensures → E2401.
+// EXPECT_COMPILE_ERROR E2401
+
+module contracts.e2401_array_lit_in_ensures_fail
+
+fn build(x int) -> int
+    ensures [x, x + 1].len() > 0
+{
+    x
+}
