@@ -1521,12 +1521,26 @@ impl CEmitter {
         let saved_out = std::mem::take(&mut self.out);
         let saved_indent = self.indent;
         self.indent = 0;
+        // Plan 54 Ф.1: snapshot var_types перед test body, restore после.
+        // Без этого pattern-bound vars (`Some(v) => v`) и регулярные
+        // let-bindings leak'ят между tests, что ломает match-arm inference
+        // (например test 3 binds `v: bool`, test 6 binds `v: int` через
+        // тот же match-pattern → infer_expr_c_type(`v`) возвращает
+        // stale bool → match-result inferred bool → assert fails).
+        // Same scope-cleanup для var_mutable + cancel_token_t_map.
+        let saved_var_types = self.var_types.clone();
+        let saved_var_mutable = self.var_mutable.clone();
+        let saved_cancel_token_t_map = self.cancel_token_t_map.clone();
         self.line(&format!("static nova_unit nova_test_{}(void) {{", safe));
         self.indent = 1;
         self.emit_block_stmts(&t.body, "nova_unit")?;
         self.indent = 0;
         self.line("}");
         self.line("");
+        // Restore scope-state — fixes leak (Plan 54 Ф.1).
+        self.var_types = saved_var_types;
+        self.var_mutable = saved_var_mutable;
+        self.cancel_token_t_map = saved_cancel_token_t_map;
         let test_body = std::mem::replace(&mut self.out, saved_out);
         self.indent = saved_indent;
         // Flush any lambdas discovered during this test's emit
