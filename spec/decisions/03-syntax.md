@@ -2218,6 +2218,19 @@ Style-guide:
 - [D20](#d20--вместо-void-и-сводка-стрелок) — `-> ()` опускается всегда.
 - [07-modules.md → D47](07-modules.md#d47) — `export` функции и линтер.
 
+### Реализация (Plan 55 Ф.3, 2026-05-16)
+
+Bootstrap-codegen (`compiler-codegen/src/codegen/emit_c.rs::return_type_c`)
+реализует **только** Expr-body inference (FnBody::Expr) — Block-body
+без аннотации → `nova_unit` (как раньше; см. «Что отвергнуто» выше).
+
+Inference при registration call-site signatures (free fn + method)
+делегируется в `return_type_c`. Это гарантирует что caller'ы видят
+правильный return type **до** emit_fn собственно body.
+
+Edge-case: если body Expr возвращает `void*` или unknown — fallback
+на `nova_unit` (safety).
+
 ---
 
 ## D46. Перегрузка операторов через `@`-методы
@@ -4872,6 +4885,58 @@ TIMTOWTDI: `{}` и `[]` покрывают **разные** случаи (имя
   `{...}`, с которым `[]` намеренно не конфликтует.
 - [Plan 52](../../docs/plans/52-hashmap-literals.md) — реализация
   D108 + ревизии D55 (map-coercion).
+
+### Spread в map-литерале (Plan 55 followup, 2026-05-16)
+
+`...m` внутри map-литерала разворачивает другую map того же типа:
+
+```nova
+let defaults HashMap[str, int] = ["a": 1, "b": 2]
+let m HashMap[str, int] = [...defaults, "c": 3]      // {a:1, b:2, c:3}
+let m HashMap[str, int] = [...defaults, "a": 100]    // {a:100, b:2} (override)
+let m HashMap[str, int] = [...a, ...b]               // merge two maps
+```
+
+Семантика «right-most wins»: при duplicate keys позже встретившаяся
+запись побеждает (как JS object spread, Python `{**a, **b}`).
+
+Парсер использует **lookahead** для disambiguation: `[...x, y, z]`
+рассматривается как array, `[...x, k: v]` — как map. Edge case
+`[...x]` (только spread без pairs) — type-directed: если expected тип
+помечен `#from_pairs` (HashMap), интерпретируется как map.
+
+**Status (bootstrap):** parser + desugar + annotator готовы; codegen
+для `[...src]` с **non-empty** src блокирован orthogonal
+[M-mono-tuple-element-types] (Plan 56 scope). Эффективно работает
+spread пустых map'ов + pair-only литералов.
+
+### Mono invariants (Plan 55 Ф.4, 2026-05-16)
+
+Codegen (`emit_c.rs`) при monomorphization сохраняет следующие
+invariants:
+
+1. **`current_fn_return_ty` save/restore** в `emit_fn` через
+   `mem::replace` + restore в конце. Это предотвращает leak prior
+   return type в recursive emit (mono'd transitively'd deps).
+2. **Protocol-method return-type whitelist** — для well-known
+   protocol methods (`eq`/`ne`/`lt`/`le`/`gt`/`ge`/`is_*` → `bool`;
+   `hash` → `int`) infer возвращает stable тип до fallback на
+   `fn_ret_<m>` lookup (который может содержать stale из другой fn).
+3. **Placeholder mono skip** — `register_mono_method_instance` +
+   `drain_generic_type_worklist` отвергают type_subst содержащий
+   `Nova_<G>*` placeholders (G ∈ fn.generics). Это предотвращает
+   broken erased generic emit для recursive generic calls
+   (e.g. `HashMap[K,V].with_capacity` внутри `HashMap.@clone()` body).
+4. **`current_type_subst` save/restore** в local scope — каждая
+   recursive mono call имеет свой subst stack, не leak глобально.
+5. **Pattern::Record bindings** — `collect_pattern_inner_bindings`
+   для record-form variant patterns (`Slot.Occupied { key: k }`)
+   использует `record_variant_field_types` map с lookup mono'd
+   sum_name first, fallback на base. Это предотвращает leak stale
+   var_types между mono'd instances.
+
+Полное описание — [Plan 55](../../docs/plans/55-codegen-followups-from-plan-54.md)
+Ф.0-Ф.6.
 
 
 ---
