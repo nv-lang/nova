@@ -53,6 +53,43 @@ pub fn lint_module(m: &Module) -> Vec<LintWarning> {
                 for s in &b.teardown {
                     walk_stmt_lints(s, &mut warnings);
                 }
+                // Plan 57.C.7: bench-specific lint warnings внутри measure body.
+                walk_bench_measure_lints(&b.measure_body, &b.name, &mut warnings);
+                // Plan 57.C.7: empty measure body warning.
+                if b.measure_body.stmts.is_empty() && b.measure_body.trailing.is_none() {
+                    warnings.push(LintWarning {
+                        rule: "bench-empty-measure",
+                        diag: crate::diag::Diagnostic::new(
+                            format!("bench \"{}\": empty `measure` block — no work \
+                                     to measure, results will reflect только overhead",
+                                b.name),
+                            b.measure_body.span,
+                        ),
+                    });
+                }
+                // Group cases — same checks per case.
+                for grp in &b.groups {
+                    for case in &grp.cases {
+                        for s in &case.setup {
+                            walk_stmt_lints(s, &mut warnings);
+                        }
+                        walk_block_lints(&case.measure_body, &mut warnings);
+                        for s in &case.teardown {
+                            walk_stmt_lints(s, &mut warnings);
+                        }
+                        let label = format!("{}/{}/{}", b.name, grp.name, case.name);
+                        walk_bench_measure_lints(&case.measure_body, &label, &mut warnings);
+                        if case.measure_body.stmts.is_empty() && case.measure_body.trailing.is_none() {
+                            warnings.push(LintWarning {
+                                rule: "bench-empty-measure",
+                                diag: crate::diag::Diagnostic::new(
+                                    format!("case \"{}\": empty `measure` block", label),
+                                    case.measure_body.span,
+                                ),
+                            });
+                        }
+                    }
+                }
             }
             Item::Const(c) => walk_expr_lints(&c.value, &mut warnings),
             Item::Let(l) => walk_expr_lints(&l.value, &mut warnings),
@@ -71,6 +108,116 @@ fn walk_block_lints(b: &Block, out: &mut Vec<LintWarning>) {
     }
     if let Some(t) = &b.trailing {
         walk_expr_lints(t, out);
+    }
+}
+
+/// Plan 57.C.7: bench-specific lints для measure body. Detects:
+///   - Time.sleep / Time.sleep_ms (noise → unreliable measurement).
+///   - Io.println / println (I/O overhead dominates measure timing).
+///   - bench.opaque(<literal>) (no-op: constant folding не происходит на literals).
+fn walk_bench_measure_lints(b: &Block, bench_name: &str, out: &mut Vec<LintWarning>) {
+    for s in &b.stmts {
+        check_bench_stmt(s, bench_name, out);
+    }
+    if let Some(t) = &b.trailing {
+        check_bench_expr(t, bench_name, out);
+    }
+}
+
+fn check_bench_stmt(s: &Stmt, bench_name: &str, out: &mut Vec<LintWarning>) {
+    match s {
+        Stmt::Expr(e) => check_bench_expr(e, bench_name, out),
+        Stmt::Let(l) => check_bench_expr(&l.value, bench_name, out),
+        Stmt::Assign { value, .. } => check_bench_expr(value, bench_name, out),
+        _ => {}
+    }
+}
+
+fn check_bench_expr(e: &Expr, bench_name: &str, out: &mut Vec<LintWarning>) {
+    use crate::ast::{ExprKind, ElseBranch};
+    match &e.kind {
+        // Method call = Call where func — Member.
+        ExprKind::Call { func, args, .. } => {
+            if let ExprKind::Member { obj, name: method } = &func.kind {
+                if let ExprKind::Ident(n) = &obj.kind {
+                    if n == "Time" && (method == "sleep" || method == "sleep_ms"
+                                    || method == "sleep_ns") {
+                        out.push(LintWarning {
+                            rule: "bench-sleep-in-measure",
+                            diag: crate::diag::Diagnostic::new(
+                                format!("bench \"{}\": `Time.{}` inside `measure` block — \
+                                         sleep dominates timing noise; consider exempt в bench.toml \
+                                         или move в setup", bench_name, method),
+                                e.span,
+                            ),
+                        });
+                    }
+                    if n == "Io" && (method == "println" || method == "print"
+                                  || method == "eprintln") {
+                        out.push(LintWarning {
+                            rule: "bench-io-in-measure",
+                            diag: crate::diag::Diagnostic::new(
+                                format!("bench \"{}\": `Io.{}` inside `measure` block — \
+                                         I/O latency dominates; results unreliable",
+                                    bench_name, method),
+                                e.span,
+                            ),
+                        });
+                    }
+                    if n == "bench" && method == "opaque" && args.len() == 1 {
+                        let arg = args[0].expr();
+                        if matches!(&arg.kind,
+                            ExprKind::IntLit(_) | ExprKind::FloatLit(_)
+                            | ExprKind::StrLit(_) | ExprKind::BoolLit(_)) {
+                            out.push(LintWarning {
+                                rule: "bench-opaque-literal",
+                                diag: crate::diag::Diagnostic::new(
+                                    format!("bench \"{}\": `bench.opaque(<literal>)` — \
+                                             barrier no-op на constant literals; opaque нужен только \
+                                             для derived values", bench_name),
+                                    e.span,
+                                ),
+                            });
+                        }
+                    }
+                }
+            }
+            // Free `println(...)` / `print(...)` calls.
+            if let ExprKind::Ident(n) = &func.kind {
+                if n == "println" || n == "print" || n == "eprintln" {
+                    out.push(LintWarning {
+                        rule: "bench-io-in-measure",
+                        diag: crate::diag::Diagnostic::new(
+                            format!("bench \"{}\": `{}` inside `measure` block — \
+                                     I/O latency dominates measurement", bench_name, n),
+                            e.span,
+                        ),
+                    });
+                }
+            }
+            check_bench_expr(func, bench_name, out);
+            for a in args { check_bench_expr(a.expr(), bench_name, out); }
+        }
+        ExprKind::If { cond, then, else_, .. } => {
+            check_bench_expr(cond, bench_name, out);
+            walk_bench_measure_lints(then, bench_name, out);
+            if let Some(eb) = else_ {
+                match eb {
+                    ElseBranch::Block(b) => walk_bench_measure_lints(b, bench_name, out),
+                    ElseBranch::If(if_expr) => check_bench_expr(if_expr, bench_name, out),
+                }
+            }
+        }
+        ExprKind::While { cond, body, .. } => {
+            check_bench_expr(cond, bench_name, out);
+            walk_bench_measure_lints(body, bench_name, out);
+        }
+        ExprKind::Loop { body, .. } => walk_bench_measure_lints(body, bench_name, out),
+        ExprKind::For { iter, body, .. } => {
+            check_bench_expr(iter, bench_name, out);
+            walk_bench_measure_lints(body, bench_name, out);
+        }
+        _ => {}
     }
 }
 
