@@ -631,6 +631,14 @@ impl SmtBackend for Z3Backend {
         }
     }
 
+    fn get_witness(&mut self, var_name: &str) -> Option<ModelValue> {
+        // Ф.10.2 (Plan 33.6): извлечь witness через текущую модель Z3.
+        // Только после check_sat → Sat. Если check_sat не вызывался или дал
+        // не-Sat — extract_model даст пустую модель → return None.
+        let model = self.extract_model();
+        model.bindings.get(var_name).cloned()
+    }
+
     fn check_sat(&mut self) -> SatResult {
         let res = unsafe { ffi::Z3_solver_check(self.ctx, self.solver) };
         match res {
