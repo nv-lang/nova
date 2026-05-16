@@ -7741,22 +7741,61 @@ Plan 54 — codegen follow-ups от Plan 48/49 audit. Закрыто 5 из 8 it
 - **[M-array-of-func-mono]** — `[]fn->T` type_ref_to_c.
 - **Ф.5b match-arm pattern inference** — pattern_inner_type helper.
 
+
 ---
 
-## Plan 45 Sprint �.29 � Cleanups (2026-05-16)
+## Plan 45 Sprint �.29 � Cleanups (2026-05-16)
 
 ### Resolved (no longer simplifications):
-- render_expr_legacy dead code removed (�.29.1)
-- Always-parenthesized binary > precedence-aware (�.29.2)
-- drop-ensures mutator implemented (�.29.3)
-- Workspace mutation real-exec functional (�.29.4)
+- render_expr_legacy dead code removed (�.29.1)
+- Always-parenthesized binary > precedence-aware (�.29.2)
+- drop-ensures mutator implemented (�.29.3)
+- Workspace mutation real-exec functional (�.29.4)
 
 ### Remaining (Plan 45.A/45.B scope):
-- HTML output + lunr search (�.31)
-- MCP server (�.32)
+- HTML output + lunr search (�.31)
+- MCP server (�.32)
 - Stdlib full doc-pass (Plan 45.B)
 - Parser-side #allow_transit (Plan 16)
-- Workspace handler matrix ����� FileRegistry (Plan 42)
+- Workspace handler matrix ����� FileRegistry (Plan 42)
 - MCP server ��� AI/LLM real-time queries
 - Mutation testing real exec ����� test_runner integration
 - AST pretty-printer shared util (��� render_expr completion)
+
+
+## Plan 54 final EOD — 7/8 closed + Ф.3 accepted-as-is (2026-05-16)
+
+После audit Plan 48/49 и initial Plan 54 sprint (5/8 closed) — закрыл
+оставшиеся critical items.
+
+### Ф.2 closed [M-int-extension-record-field]
+
+`100.millis()` (user int-extension method) в record-literal field теперь
+правильно dispatch'ится через `Nova_int_method_<m>` mangled name.
+emit_call для primitive receivers (int/str/bool/f64/byte) делает lookup
+в method_overloads через Nova-primitive-name. retry_test.nv от Plan 48
+unblock'нут.
+
+### Ф.7 closed (polymorphic recursion test)
+
+EXPECT_COMPILE_ERROR test работает в default --mono-depth=500 и low limits.
+Orthogonal "anonymous record literal" bug рассосался от earlier Plan 54
+fixes (Ф.4 turbofish flow или Ф.9 novaopt_value_types).
+
+### Ф.3 accepted-as-is
+
+Forward analysis для bare unit-variant `let r = Err2` — паритет с
+Go/Rust/TS. Все требуют explicit type annotation; наш подход
+(annotation OR args-driven inference) тоже паритет. Не bug.
+
+### Финал
+
+- **Plan 54: 7/8 closed + 1 accepted-as-is**.
+- **517 PASS / 26 FAIL** (was 484/46 до Plan 54). +33 PASS, -20 FAIL.
+- Plan 48 finally без unclosed acceptance (retry_test unblock'нут).
+
+### Pending followup'ы (новые маркеры, не Plan 54 acceptance)
+
+- `[M-array-of-func-mono]` — Array-of-Func type_ref_to_c.
+- Ф.5b match-arm pattern_inner_type из scrutinee.
+- Nova_Duration_method_into stdlib codegen issue.

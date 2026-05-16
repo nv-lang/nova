@@ -10348,6 +10348,39 @@ impl CEmitter {
                         }
                     });
                 }
+                // Plan 54 Ф.2: user-defined extension methods на primitives
+                // (`fn int @millis() -> Duration`, `fn str @len() -> int`, etc).
+                // Lookup в method_overloads через primitive Nova-name ("int",
+                // "str", "bool", "f64", "byte"). Если найдено instance overload
+                // — dispatch на mangled c_name (`Nova_int_method_millis`).
+                // Это закрывает `[M-int-extension-record-field]` — bug когда
+                // `100.millis()` в record-literal field generic static ctor
+                // эмитил invalid C member-access на nova_int.
+                {
+                    let prim_nova_name = match obj_ty.as_str() {
+                        "nova_int"  => Some("int"),
+                        "nova_str"  => Some("str"),
+                        "nova_bool" => Some("bool"),
+                        "nova_f64"  => Some("f64"),
+                        "nova_f32"  => Some("f32"),
+                        "nova_byte" => Some("byte"),
+                        _ => None,
+                    };
+                    if let Some(prim) = prim_nova_name {
+                        let key = (prim.to_string(), method.clone());
+                        if let Some(overloads) = self.method_overloads.get(&key).cloned() {
+                            let inst_overloads: Vec<MethodSig> = overloads.into_iter()
+                                .filter(|s| s.is_instance)
+                                .collect();
+                            if let Some(sig) = inst_overloads.first() {
+                                let obj_c = self.emit_expr(obj)?;
+                                let mut arg_strs = vec![obj_c];
+                                for a in args { arg_strs.push(self.emit_expr(a.expr())?); }
+                                return Ok(format!("{}({})", sig.c_name, arg_strs.join(", ")));
+                            }
+                        }
+                    }
+                }
                 // 3c. D74 math methods on int (selected — abs, sign):
                 //     `n.abs()` → `llabs(n)`. Большинство int-методов — это
                 //     int-to-string, обработаны в str.from(...).
