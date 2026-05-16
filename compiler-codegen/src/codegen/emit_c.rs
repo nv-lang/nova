@@ -5607,6 +5607,24 @@ impl CEmitter {
         if self.mono_instantiated.contains(mono_name) {
             return;
         }
+        // Plan 55 followup ([M-erased-generic-method-dispatch]): skip mono'd
+        // emit когда type_subst содержит placeholder (Nova_X* для X из
+        // fn_decl.generics). Это случается когда @clone()/@something в generic
+        // body делает рекурсивный call на Self type (e.g. HashMap[K, V].with_
+        // capacity внутри @clone) — placeholder становится "concrete" subst,
+        // что приводит к broken `key->hash()` C-syntax для bound K methods.
+        // Real mono triggers только с фактически concrete types.
+        let generic_names: std::collections::HashSet<String> = fn_decl.generics.iter()
+            .map(|g| g.name.clone()).collect();
+        if !generic_names.is_empty() {
+            let has_placeholder = type_subst.iter().any(|(_, c)| {
+                let trimmed = c.trim_end_matches('*').trim();
+                if let Some(name) = trimmed.strip_prefix("Nova_") {
+                    generic_names.contains(name)
+                } else { false }
+            });
+            if has_placeholder { return; }
+        }
         self.mono_instantiated.insert(mono_name.to_string());
         // Compute param and return C types with substitution applied
         let saved_subst = std::mem::replace(
@@ -5927,6 +5945,23 @@ impl CEmitter {
                 self.generic_type_worklist.borrow_mut().drain(..).collect();
             for (base_name, type_args_c, mangled) in batch {
                 if self.emitted_generic_type_instances.contains(&mangled) { continue; }
+                // Plan 55 followup ([M-erased-generic-method-dispatch]): skip
+                // type-instance emit когда type-args содержат placeholder
+                // (Nova_X* для X из template.generics). Это случается когда
+                // generic method (например @clone) рекурсивно instantiates
+                // Self type с unresolved K/V — даёт broken C-emit для
+                // bound-method calls (`key->hash()` на Nova_K incomplete type).
+                if let Some(template) = self.generic_type_templates.get(&base_name) {
+                    let generic_names: std::collections::HashSet<String> = template.generics.iter()
+                        .map(|g| g.name.clone()).collect();
+                    let has_placeholder = type_args_c.iter().any(|c| {
+                        let trimmed = c.trim_end_matches('*').trim();
+                        if let Some(name) = trimmed.strip_prefix("Nova_") {
+                            generic_names.contains(name)
+                        } else { false }
+                    });
+                    if has_placeholder { continue; }
+                }
                 self.emitted_generic_type_instances.insert(mangled.clone());
                 // Register instance info for Source 2c in resolve_mono_type_args:
                 // "Nova_Box____nova_int" → ("Box", ["nova_int"])
