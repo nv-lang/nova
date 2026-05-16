@@ -13455,3 +13455,52 @@ Plan 45 family �������:
 - �.32 MCP server (��������� crate)
 - Plan 45.B stdlib doc-pass (��������� effort)
 - Plan 45.A round 2: incremental cache, syntax highlighting
+==============================================================================
+2026-05-16 — Plan 52.3 — remaining map features
+==============================================================================
+
+## Что сделано
+
+### Ф.1 — empty `[]` in map-position ✅ ЗАКРЫТО
+
+Закрывает M-52-empty-array-in-map-position. `let m HashMap[K,V] = []`
+теперь работает.
+
+Fix в annotate_module (type-checker): empty ArrayLit с expected
+типом помеченным #from_pairs → конвертим в empty MapLit. Annotate
+ниже заполняет inferred_key/value/target_type из expected. Desugar
+эмитит `with_capacity(0)` → пустая мапа.
+
+Test: positive_empty_in_map_position.nv (3 subtests).
+
+### Ф.2/Ф.3 — clone/merge_from/spread ⛔ DEFERRED
+
+Investigation: попытка @clone/@merge_from в hashmap.nv привела к
+регрессии 522 → 501 PASS (-21). Trace показал что mono pass для
+helper-method триггерит mono всего chain (@maybe_grow), и в этой
+цепочке type-context corrupted (cond_ty=nova_int вместо nova_bool
+для `if used < threshold`).
+
+Это **глубокая mono-pass corruption** issue требующая отдельной
+работы (Plan 48 followup). Spread `[...m, k:v]` ждёт closure
+этого quirk.
+
+### Ф.4 — type inference no-annotation ⛔ DEFERRED
+
+Repro: `let m = ["a": 1]` → CC-FAIL `Nova_WriteBuffer_static_with_capacity`.
+Trace: `inferred_target_type = Some(["HashMap"])` устанавливается,
+но mono выбирает WriteBuffer вместо HashMap из-за name-collision
+overload'ов `with_capacity`.
+
+Это **mono name-collision** — explicit-turbofish call должен
+выигрывать над erased name-resolve. Та же категория что Ф.2.
+
+## Регрессия
+
+522 PASS / 25 FAIL (baseline preserved) + 3 новых тестов через Ф.1.
+
+### Commits
+
+- docs(52.3): создан подплан
+- feat(52.3 Ф.1): empty [] в map-position теперь работает
+- docs(52.3): Ф.2/Ф.3 deferred — mono-pass corruption discovered
