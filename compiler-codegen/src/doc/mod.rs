@@ -34,6 +34,7 @@ pub mod scraper;
 pub mod mutation;
 pub mod collect_handlers;
 pub mod render_html;
+pub mod query;
 
 pub use doctree::{DocTree, DocModule, DocItem, ItemKind, Signature, Visibility};
 

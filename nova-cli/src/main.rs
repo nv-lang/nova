@@ -176,6 +176,28 @@ enum Cmd {
         #[arg(long = "output-dir", value_name = "DIR")]
         output_dir: Option<PathBuf>,
     },
+    /// Plan 45 Ф.32.1 — query JSON doc output via DSL.
+    ///
+    /// Reads `nova doc --format json` output, filters items по query DSL,
+    /// prints matched results as compact JSON.
+    ///
+    /// Query syntax: comma-separated key=value pairs. Supported keys:
+    /// `kind`, `name`, `module`, `module-prefix`, `capability`, `effect`,
+    /// `has-contracts`, `verified`, `stability`, `deprecated`.
+    ///
+    /// Examples:
+    ///   nova doc-query out.json "kind=fn,capability=pure"
+    ///   nova doc-query out.json "name=add,has-contracts=true"
+    ///   nova doc-query out.json "module-prefix=std,effect=Fs"
+    ///
+    /// Foundation для future MCP server (Ф.32.2).
+    DocQuery {
+        /// Path to JSON file produced by `nova doc --format json`.
+        json_file: PathBuf,
+        /// Query DSL string (see command help для syntax).
+        #[arg(default_value = "")]
+        query: String,
+    },
     /// Compile a single Nova source file to a native binary.
     ///
     /// **Single file only** — `nova build` produces one binary per invocation
@@ -1447,6 +1469,42 @@ fn cmd_doc_mutate_contracts(
     print_mutation_report(&report, format)
 }
 
+/// Plan 45 Ф.32.1 — query JSON doc output via DSL.
+///
+/// Реализация: parse nova doc JSON в DocTree, выполнить query, print results.
+/// Это требует deserialize JSON → DocTree. Мы не имеем serde, поэтому
+/// **MVP подход**: re-parse исходник если path указывает на .nv файл,
+/// иначе assume JSON file и parse subset нужный для query (items array
+/// + кеу fields).
+///
+/// MVP скоп: принимает .nv source file path (не JSON). Re-parses через
+/// nova_codegen::doc::build, потом query. Это упрощение honest documented
+/// — proper JSON parsing — Ф.32.2 (когда добавим serde dep или write parser).
+fn cmd_doc_query(path: &Path, query_str: &str) -> Result<()> {
+    let q = nova_codegen::doc::query::parse_query(query_str)
+        .map_err(|e| anyhow!("query parse error: {}", e))?;
+
+    // Если path — .nv source — parse + build DocTree.
+    // Если path — .json — пока bail с hint на Ф.32.2 roadmap.
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+    if ext == "nv" {
+        let src = read_file(path)?;
+        let path_str = path.to_string_lossy();
+        let mut module = nova_codegen::parser::parse(&src)
+            .map_err(|d| anyhow!("{}", d.render(&src, &path_str)))?;
+        let _ = nova_codegen::types::check_module(&module);
+        nova_codegen::types::infer_effects(&mut module);
+        let tree = nova_codegen::doc::build(&module);
+        let results = nova_codegen::doc::query::execute(&tree, &q);
+        print!("{}", nova_codegen::doc::query::render_results_json(&results));
+        Ok(())
+    } else if ext == "json" {
+        bail!("JSON input parsing — Plan 45 Ф.32.2 roadmap. Use .nv source file для now: `nova doc-query <file.nv> '<query>'`");
+    } else {
+        bail!("unknown file extension `{}` — expected .nv (or .json — Ф.32.2)", ext);
+    }
+}
+
 /// Plan 45 Ф.31.4 — write multi-page HTML output to directory.
 /// Creates directory if not exists. Writes each `(filename, html)` pair.
 fn write_html_multipage(tree: &nova_codegen::doc::DocTree, out_dir: &Path) -> Result<()> {
@@ -2513,6 +2571,7 @@ fn main() -> ExitCode {
             cmd_doc(path, &format, json_schema, include_private, run_doc_tests, check, watch, coverage, jobs, scrape_examples.as_deref(), strict, mutate_contracts, real_exec, output_dir.as_deref())
             } // else (no --diff)
         }
+        Cmd::DocQuery { json_file, query } => cmd_doc_query(&json_file, &query),
         Cmd::Build { file, output, mode, toolchain, vcvars, clang, timeout, keep_artifacts, mono_depth } => cmd_build(
             &file,
             output.as_deref(),

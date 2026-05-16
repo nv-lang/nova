@@ -7848,3 +7848,17 @@ workspace пїЅ acceptable пїЅпїЅпїЅ interactive editing.
 - No JS dark mode toggle пїЅ system-aware (no localStorage complexity)
 - No sitemap.xml (Plan 45.A round 2 пїЅпїЅпїЅпїЅ SEO-critical)
 - No syntax highlighting (Plan 45.A round 3)
+
+---
+
+## Plan 45 Ф.31.5/6 + Ф.32.1 simplifications (2026-05-16)
+
+Resolved:
+- HTML без syntax highlight > JS regex tokenizer (Ф.31.5)
+- Multi-page без sitemap > sitemap.xml (Ф.31.6)
+- No query API > doc-query CLI foundation (Ф.32.1)
+
+Remaining:
+- Syntax highlighter regex-based (95% cases) — AST-based Plan 45.A round 3
+- doc-query input — .nv only (JSON parsing Ф.32.2)
+- MCP server proper — Ф.32.2/3 (отдельный crate, ~400 LOC)

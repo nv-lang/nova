@@ -168,6 +168,32 @@ export fn f() -> int => 1
 }
 
 #[test]
+fn html_includes_syntax_highlighter() {
+    // Plan 45 Ф.31.5 — syntax highlighting JS + CSS classes embedded.
+    let src = r#"
+module m
+
+export fn f() -> int => 1
+"#;
+    let tree = build_tree(src);
+    let html = doc::render_html(&tree);
+    // CSS classes для tokens.
+    assert!(html.contains(".tok-kw"),
+        "CSS должна определять .tok-kw для keywords");
+    assert!(html.contains(".tok-type"),
+        "CSS должна определять .tok-type для built-in types");
+    assert!(html.contains(".tok-str"),
+        "CSS должна определять .tok-str для strings");
+    // JS tokenizer присутствует.
+    assert!(html.contains("KEYWORDS"),
+        "JS должна содержать KEYWORDS list");
+    assert!(html.contains("tokenize"),
+        "JS должна содержать tokenize function");
+    assert!(html.contains("pre > code"),
+        "JS должна applyить к pre>code blocks");
+}
+
+#[test]
 fn html_anchor_format_lowercased_dash_separated() {
     let src = r#"
 module myMod
