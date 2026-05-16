@@ -4655,6 +4655,16 @@ Sub-plans 35.A-E:
 - **Приоритет:** H — потенциальный soundness gap: контракт с field access может
   silently skip вместо E2401.
 
+### [ЗАКР 2026-05-16] pipeline.rs монолит — handler code в отдельный модуль [Ф.2.1]
+- **Закрыто (Plan 33.6 Ф.2.1, 2026-05-16, commit ddc11f2e):**
+  * `compiler-codegen/src/verify/handler_exec.rs` — 689 строк handler verification:
+    `verify_handlers`, `verify_post_axiom_with_handler`, `verify_static_axiom_with_handler`,
+    `verify_liskov_method`, symbolic exec V2 helpers, collect_verify_bindings_*.
+  * `pipeline.rs`: 2952 → 2188 строк (было > 2700, цель выполнена).
+  * `verify/mod.rs`: `pub mod handler_exec` + реэкспорт `verify_handlers`.
+  * Вспомогательные функции — `pub(super)` для доступа между модулями.
+- **Дата закрытия:** 2026-05-16
+
 ### [ЗАКР 2026-05-15] `#verify` handler gate — P0-1 V1 — [V12]
 - **Закрыто (Plan 33.4 P0-1, 2026-05-15):**
   * `verify_handlers(module)` в pipeline.rs — walks `with #verify E = h` bindings.

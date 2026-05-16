@@ -12031,3 +12031,57 @@ C-типа scrutinee (`Nova_LinkedList____nova_int*` → `LinkedList____nova_int
 ### Commits
 
 - fix(codegen): std/collections hashmap+set+linkedlist — 10 codegen фикса
+
+---
+
+## Сессия 2026-05-16 — Plan 33.6 Ф.2.1 + тесты + sync (продолжение)
+
+### Ф.2.1 — Вынести handler_exec.rs из pipeline.rs
+
+- `compiler-codegen/src/verify/handler_exec.rs` (новый, 689 строк):
+  `verify_handlers`, `verify_post_axiom_with_handler`, `verify_static_axiom_with_handler`,
+  `verify_liskov_method`, `collect_effect_method_contracts`, `rewrite_post_in_expr`,
+  `parse_post_call`, `subst_ident_in_expr`, `subst_call_arg`, `extract_block_assignments`,
+  `axiom_formula_has_post`, `collect_verify_bindings_*`.
+- `pipeline.rs`: 2952 → 2188 строк (цель ≤2700 выполнена).
+  Вспомогательные функции (`substitute_old`, `type_to_sort`, `format_counterexample`,
+  `unknown_to_diag_message`, `collect_pure_views`, `collect_pure_fns`, `encode_axiom`,
+  `infer_binder_sorts`, `AxiomInfo`) — `pub(super)` для доступа из handler_exec.
+- `verify/mod.rs`: `pub mod handler_exec` + `pub use handler_exec::verify_handlers`.
+- `post_action_view_positive.nv`: добавлен `REQUIRES_SMT_BACKEND z3` (TrivialBackend
+  не доказывает `x==x` после symbolic rewrite).
+- Интеграция с main: `EncodeCtx.var_sorts` (новое поле из main) — добавлено в
+  handler_exec.rs при merge.
+- Коммит: `ddc11f2e` — refactor(verify): Ф.2.1.
+
+### Дополнительные тесты Plan 33.6 (10 новых)
+
+Ф.1.1 ghost erasure:
+- `ghost_in_ensures_positive.nv` — ghost в ensures (spec position) → OK
+- `ghost_in_return_fail.nv` — ghost в trailing expr (runtime return) → error
+- `ghost_in_assume_positive.nv` — ghost в assume → OK
+- `ghost_in_arith_fail.nv` — ghost в runtime арифметике → error
+
+Ф.1.2 E2401:
+- `e2401_ensures_tuple_fail.nv` — tuple в ensures → E2401
+- `e2401_default_mode_hint_fail.nv` — Default mode + tuple → E2401 + hint
+- `w2401_unverified_tuple_positive.nv` — #unverified + tuple → W2401, работает
+
+Ф.1.3 E2402:
+- `e2402_verify_linear_ok_positive.nv` — #verify + static axiom → OK
+- `e2402_trusted_no_check_positive.nv` — #trusted + complex branching → OK
+
+Ф.2.1:
+- `handler_exec_split_positive.nv` — verify_handlers работает после рефакторинга
+
+Все 10 PASS. Итого Plan 33.6: 23 теста (13 + 10), все PASS.
+Коммит: `446dbb32` — test(33.6): дополнительные тесты.
+
+### Синхронизация nova-lang ↔ nova-lang-p33
+
+Двусторонняя синхронизация без GitHub (локальный git fetch/merge):
+- main → p33: 74 коммита Plan 45/48/std затянуты. Конфликты в pipeline.rs
+  (взят Ф.1.2 E2401), mod.rs (оба модуля), project-creation.txt (объединены логи).
+- p33 → main: 7 коммитов Plan 33.6 Ф.1.1–Ф.2.1 (fast-forward).
+- После: оба репо на одном коммите, 96 PASS / 19 FAIL (pre-existing f14_*).
+- Второй sync: main добавил 2 LICENSE коммита → p33 fast-forward, снова равны.
