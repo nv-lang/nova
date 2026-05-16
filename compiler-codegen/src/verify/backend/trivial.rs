@@ -256,6 +256,17 @@ fn simplify_app(op: &str, args: &[SmtTerm]) -> SmtTerm {
                     }
                 }
             }
+            // Ф.21.1 (Plan 33.6): contradiction `X ∧ ¬X = false`.
+            for t in &filtered {
+                let negated = SmtTerm::App("not".into(), vec![t.clone()]);
+                if filtered.contains(&negated) { return SmtTerm::BoolLit(false); }
+                if let SmtTerm::App(op2, a2) = t {
+                    if op2 == "not" && a2.len() == 1 {
+                        // ¬X already в filtered, ищем X.
+                        if filtered.contains(&a2[0]) { return SmtTerm::BoolLit(false); }
+                    }
+                }
+            }
             match filtered.len() {
                 0 => SmtTerm::BoolLit(true),
                 1 => filtered.into_iter().next().unwrap(),
@@ -270,6 +281,16 @@ fn simplify_app(op: &str, args: &[SmtTerm]) -> SmtTerm {
                     SmtTerm::BoolLit(true) => return SmtTerm::BoolLit(true),
                     _ => {
                         if !filtered.contains(a) { filtered.push(a.clone()); }
+                    }
+                }
+            }
+            // Ф.21.1 (Plan 33.6): excluded middle `X ∨ ¬X = true`.
+            for t in &filtered {
+                let negated = SmtTerm::App("not".into(), vec![t.clone()]);
+                if filtered.contains(&negated) { return SmtTerm::BoolLit(true); }
+                if let SmtTerm::App(op2, a2) = t {
+                    if op2 == "not" && a2.len() == 1 {
+                        if filtered.contains(&a2[0]) { return SmtTerm::BoolLit(true); }
                     }
                 }
             }
