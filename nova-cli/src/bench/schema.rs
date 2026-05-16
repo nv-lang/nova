@@ -27,6 +27,8 @@ pub struct RawBenchResult {
     pub throughput_elements: Option<u64>,
     pub allocs_per_iter: Option<i64>,
     pub allocs_total: Option<i64>,
+    /// Plan 57.C.4: per-sample CPU instructions / iter (Linux only).
+    pub cpu_instructions: Vec<u64>,
 }
 
 impl RawBenchResult {
@@ -45,10 +47,14 @@ impl RawBenchResult {
         let throughput_elements = v.get("throughput_elements").and_then(|x| x.as_u64());
         let allocs_per_iter = v.get("allocs_per_iter").and_then(|x| x.as_i64());
         let allocs_total = v.get("allocs_total").and_then(|x| x.as_i64());
+        let cpu_instructions: Vec<u64> = v.get("cpu_instructions")
+            .and_then(|x| x.as_array())
+            .map(|arr| arr.iter().filter_map(|y| y.as_u64()).collect())
+            .unwrap_or_default();
         Some(Self {
             name, iters_per_sample, samples_count, raw_ns,
             throughput_bytes, throughput_elements,
-            allocs_per_iter, allocs_total,
+            allocs_per_iter, allocs_total, cpu_instructions,
         })
     }
 }
@@ -129,6 +135,13 @@ pub fn analyzed_to_json(a: &AnalyzedBench) -> Value {
     if let Some(a_t) = a.raw.allocs_total {
         m.insert("allocs_total".to_string(), json!(a_t));
     }
+    if !a.raw.cpu_instructions.is_empty() {
+        m.insert("cpu_instructions".to_string(), json!(a.raw.cpu_instructions));
+        let mut sorted = a.raw.cpu_instructions.clone();
+        sorted.sort();
+        let median_instr = sorted[sorted.len() / 2];
+        m.insert("cpu_instructions_median".to_string(), json!(median_instr));
+    }
     obj
 }
 
@@ -183,10 +196,14 @@ impl RunResultParsed {
             let throughput_elements = b.get("throughput_elements").and_then(|x| x.as_u64());
             let allocs_per_iter = b.get("allocs_per_iter").and_then(|x| x.as_i64());
             let allocs_total = b.get("allocs_total").and_then(|x| x.as_i64());
+            let cpu_instructions: Vec<u64> = b.get("cpu_instructions")
+                .and_then(|x| x.as_array())
+                .map(|arr| arr.iter().filter_map(|y| y.as_u64()).collect())
+                .unwrap_or_default();
             let raw = RawBenchResult {
                 name, iters_per_sample, samples_count, raw_ns,
                 throughput_bytes, throughput_elements,
-                allocs_per_iter, allocs_total,
+                allocs_per_iter, allocs_total, cpu_instructions,
             };
             if let Some(a) = AnalyzedBench::from_raw(raw) {
                 benches.push(a);

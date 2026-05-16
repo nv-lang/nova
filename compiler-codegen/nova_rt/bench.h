@@ -175,11 +175,13 @@ typedef struct {
 extern NOVA_THREAD_LOCAL NovaBenchState _nova_bench_state;
 
 /* Definition — emitted once в codegen (emit_main_wrapper в bench-mode).
- * Plan 57.C.3: heap sampler globals также определены здесь. */
+ * Plan 57.C.3: heap sampler globals также определены здесь.
+ * Plan 57.C.4: instruction counter globals (Linux-only). */
 #define NOVA_BENCH_STATE_DEFINE \
     NOVA_THREAD_LOCAL NovaBenchState _nova_bench_state = {0}; \
     volatile int _nova_bench_heap_sampler_stop = 0; \
-    uint64_t _nova_bench_heap_sample_interval_ns = 0
+    uint64_t _nova_bench_heap_sample_interval_ns = 0; \
+    NOVA_BENCH_INSTR_DEFINE
 
 /* ─────────────────────────────────────────────────────────────────────────── */
 /* GC introspection bridge (Plan 32 dependency).                               */
@@ -206,6 +208,91 @@ static inline int64_t nova_bench_alloc_count_snapshot(void) {
 
 /* Forward decl — definition в "Sample collection" section ниже. */
 static inline uint64_t nova_bench_env_u64(const char* name, uint64_t def);
+
+/* ─────────────────────────────────────────────────────────────────────────── */
+/* Plan 57.C.4 — CPU instructions counter (Linux only).                        */
+/* Activated по NOVA_BENCH_MEASURE_INSTRUCTIONS=1 env. Per-sample reset+       */
+/* enable+measure+disable+read через perf_event_open syscall. Result emitted   */
+/* в `__INSTR_SAMPLE__ <iters> <instr>` markers; CLI aggregates median.        */
+/* ─────────────────────────────────────────────────────────────────────────── */
+
+#if defined(__linux__)
+#  include <linux/perf_event.h>
+#  include <sys/syscall.h>
+#  include <sys/ioctl.h>
+#  include <unistd.h>
+#  include <string.h>
+
+static inline long nova_bench_perf_event_open_syscall(
+        struct perf_event_attr* attr, pid_t pid, int cpu,
+        int group_fd, unsigned long flags) {
+    return syscall(__NR_perf_event_open, attr, pid, cpu, group_fd, flags);
+}
+
+extern int _nova_bench_instr_fd;
+extern int _nova_bench_instr_enabled;
+
+#define NOVA_BENCH_INSTR_DEFINE \
+    int _nova_bench_instr_fd = -1; \
+    int _nova_bench_instr_enabled = 0;
+
+static inline void nova_bench_instr_start(void) {
+    if (nova_bench_env_u64("NOVA_BENCH_MEASURE_INSTRUCTIONS", 0) == 0) return;
+    if (_nova_bench_instr_fd >= 0) return;
+    struct perf_event_attr attr;
+    memset(&attr, 0, sizeof(attr));
+    attr.type = PERF_TYPE_HARDWARE;
+    attr.size = sizeof(struct perf_event_attr);
+    attr.config = PERF_COUNT_HW_INSTRUCTIONS;
+    attr.disabled = 1;
+    attr.exclude_kernel = 1;
+    attr.exclude_hv = 1;
+    long fd = nova_bench_perf_event_open_syscall(&attr, 0, -1, -1, 0);
+    if (fd < 0) {
+        fprintf(stderr, "nova bench: perf_event_open failed (errno=%d) — "
+                "skip instructions counter\n", (int)fd);
+        return;
+    }
+    _nova_bench_instr_fd = (int)fd;
+    _nova_bench_instr_enabled = 1;
+}
+
+static inline void nova_bench_instr_stop(void) {
+    if (_nova_bench_instr_fd >= 0) {
+        close(_nova_bench_instr_fd);
+        _nova_bench_instr_fd = -1;
+    }
+    _nova_bench_instr_enabled = 0;
+}
+
+static inline void nova_bench_instr_sample_reset(void) {
+    if (!_nova_bench_instr_enabled) return;
+    ioctl(_nova_bench_instr_fd, PERF_EVENT_IOC_RESET, 0);
+    ioctl(_nova_bench_instr_fd, PERF_EVENT_IOC_ENABLE, 0);
+}
+
+static inline uint64_t nova_bench_instr_sample_read(void) {
+    if (!_nova_bench_instr_enabled) return 0;
+    ioctl(_nova_bench_instr_fd, PERF_EVENT_IOC_DISABLE, 0);
+    uint64_t val = 0;
+    ssize_t n = read(_nova_bench_instr_fd, &val, sizeof(val));
+    if (n != sizeof(val)) return 0;
+    return val;
+}
+
+static inline int nova_bench_instr_active(void) {
+    return _nova_bench_instr_enabled;
+}
+
+#else
+/* Non-Linux: stubs returning 0 (CPU instructions counter unavailable). */
+#define NOVA_BENCH_INSTR_DEFINE
+static inline void nova_bench_instr_start(void) {}
+static inline void nova_bench_instr_stop(void) {}
+static inline void nova_bench_instr_sample_reset(void) {}
+static inline uint64_t nova_bench_instr_sample_read(void) { return 0; }
+static inline int nova_bench_instr_active(void) { return 0; }
+#endif
 
 /* Volatile flag — set to 1 by main to signal sampler stop. */
 extern volatile int _nova_bench_heap_sampler_stop;

@@ -1706,6 +1706,9 @@ impl CEmitter {
 
         // Plan 57.C.3: start heap sampler thread (no-op если env не set).
         self.line("nova_bench_heap_sampler_start();");
+        // Plan 57.C.4: open CPU instructions counter (Linux-only no-op
+        // на других platforms; no-op если NOVA_BENCH_MEASURE_INSTRUCTIONS=0).
+        self.line("nova_bench_instr_start();");
 
         // ── Warmup ──────────────────────────────────────────────────
         self.line("{");
@@ -1754,8 +1757,13 @@ impl CEmitter {
         self.line("uint64_t _b_collected = 0;");
         self.line("int64_t _b_alloc_pre = nova_bench_alloc_count_snapshot();");
         self.line("uint64_t _b_suite_start = nova_bench_now_ns();");
+        // Plan 57.C.4: per-sample CPU instructions counter.
+        self.line("uint64_t* _b_instr = (uint64_t*)calloc((size_t)_b_n_samples, sizeof(uint64_t));");
+        self.line("if (!_b_instr) { fprintf(stderr, \"nova bench: malloc failed (instr)\\n\"); free(_b_samples); return NOVA_UNIT; }");
+        self.line("int _b_instr_active = nova_bench_instr_active();");
         self.line("for (uint64_t _b_i = 0; _b_i < _b_n_samples; _b_i++) {");
         self.indent += 1;
+        self.line("if (_b_instr_active) nova_bench_instr_sample_reset();");
         self.line("_nova_bench_state.timer_start_ns = nova_bench_now_ns();");
         self.line("for (uint64_t _b_k = 0; _b_k < _b_iters_per_sample; _b_k++) {");
         self.indent += 1;
@@ -1769,12 +1777,15 @@ impl CEmitter {
         self.indent -= 1;
         self.line("}");
         self.line("uint64_t _b_t_end = nova_bench_now_ns();");
+        self.line("if (_b_instr_active) _b_instr[_b_i] = nova_bench_instr_sample_read();");
         self.line("uint64_t _b_elapsed = _b_t_end - _nova_bench_state.timer_start_ns;");
         self.line("_b_samples[_b_i] = _b_elapsed / _b_iters_per_sample;");
         self.line("_b_collected++;");
         self.line("if (nova_bench_now_ns() - _b_suite_start > _b_time_budget) break;");
         self.indent -= 1;
         self.line("}");
+        // Plan 57.C.4: close counter после sample loop.
+        self.line("nova_bench_instr_stop();");
         self.line("int64_t _b_alloc_post = nova_bench_alloc_count_snapshot();");
 
         // Plan 57.C.3: stop heap sampler thread.
@@ -1817,9 +1828,24 @@ impl CEmitter {
         self.line("fprintf(stdout, \",\\\"allocs_total\\\":%lld\", (long long)_b_alloc_delta);");
         self.indent -= 1;
         self.line("}");
+        // Plan 57.C.4: emit per-sample instructions array (only if counter active).
+        self.line("if (_b_instr_active) {");
+        self.indent += 1;
+        self.line("fputs(\",\\\"cpu_instructions\\\":[\", stdout);");
+        self.line("for (uint64_t _b_j = 0; _b_j < _b_collected; _b_j++) {");
+        self.indent += 1;
+        self.line("if (_b_j > 0) fputc(',', stdout);");
+        // Per-iter instructions = total per batch / iters_per_sample.
+        self.line("fprintf(stdout, \"%llu\", (unsigned long long)(_b_instr[_b_j] / _b_iters_per_sample));");
+        self.indent -= 1;
+        self.line("}");
+        self.line("fputc(']', stdout);");
+        self.indent -= 1;
+        self.line("}");
         self.line("fputs(\"}\\n\", stdout);");
         self.line("fflush(stdout);");
         self.line("free(_b_samples);");
+        self.line("free(_b_instr);");
 
         self.line("return NOVA_UNIT;");
         self.indent = 0;
