@@ -12424,6 +12424,49 @@ negative (есть warning или ошибка):
 **Plan 33.6 status:** beta-production gate ✅ achieved. GA-production gate
 ~80% (deferred items имеют clean V2 scope). **Готово к Plan 33.7 (vertical scaling).**
 
+## Ф.10 — закрыть deferred V2 из Ф.9 (full GA)
+
+### Ф.10.1 — Member field UF type-aware naming
+
+- encode.rs:281 Member кодирование: `_field_<name>_<sort>` где sort выводится
+  из эвристики (`is_*` / `*?` → bool, иначе int).
+- До: один UF `_field_<name>` использовался для Int и Bool → Z3 sort mismatch.
+- Test: member_typed_field_positive.
+- Регрессия: 146 PASS (+1).
+- Коммит: `e2b93593925`.
+
+### Ф.10.2 — Witness extraction V2 (SmtBackend trait extension)
+
+- `SmtBackend::get_witness(&mut self, var_name) -> Option<ModelValue>` метод
+  добавлен в trait. Default = None.
+- TrivialBackend наследует None (не reasoning'ует exists).
+- Z3Backend override через `extract_model` + bindings lookup.
+- API готов для pipeline wiring (info-note proven-witness — V2).
+- Регрессия: 146 PASS (no change — API only).
+- Коммит: `39861a0ae14`.
+
+### Ф.10.4 — Liskov per-clause diagnostic
+
+- handler_exec.rs:310 Sat-branch: добавлено `@ position {}` + `clause: <pretty>` +
+  hint «ослабьте именно этот ensures».
+- До: generic «нарушает контракт эффекта» — user не знал какой именно clause.
+- Регрессия: liskov_handler_fail PASS (pattern «нарушает контракт эффекта» сохранён).
+- Коммит: `0da255e6629`.
+
+### Ф.10.3 + Ф.10.5 — deferred V2 (риск регрессии)
+
+- Ф.10.3 (apply auto-inference): требует parser change (`apply X` без скобок) +
+  verify unification. High regression risk на 2 apply tests (positive/fail). Defer.
+- Ф.10.5 (handler post V2 branching): требует symbolic exec через if/match в
+  extract_block_assignments — 2-day design + risk break post-axiom tests. Defer
+  как Plan 33.7 R&D scope.
+
+**Итого Ф.10:** 3 закрыто, 2 deferred V2 с обоснованным risk-justification.
+**146 PASS / 39 SKIP / 1 pre-existing FAIL.**
+
+**Plan 33.6 finale:** GA-production gate ~95%. Beta-production fully achieved.
+**Ready для Plan 33.7 (vertical scaling).**
+
 === Plan 45 �.25 � nova tests (positive + negative) ===
 
 ����� �������� �.25 (4 ����) �������� nova-tests .nv ��� �������� �����
@@ -13253,23 +13296,23 @@ fix. Zero regressions от Plan 54 items.
 - feat(plan54 Ф.5 partial): nested-call inference caller-side
 - fix(plan54 Ф.4): generic-array-return turbofish through infer
 
-=== Plan 45 Sprint �.29 � Cleanup sprint (2026-05-16) ===
+=== Plan 45 Sprint �.29 � Cleanup sprint (2026-05-16) ===
 
-4 smaller items ������� � ����� ������ ����� �.28 completion.
+4 smaller items ������� � ����� ������ ����� �.28 completion.
 
-�.29.1 (ebd6138): Remove render_expr_legacy dead code, 127 LOC.
-�.29.2 (389e9c1): Precedence-aware parens � Nova precedence table + helpers.
-�.29.3 (d64eaa5): Drop-ensures mutator parallel to drop-requires.
-�.29.4 (286c6ad): Workspace mutation testing real-exec ����� sources_by_module_path.
+�.29.1 (ebd6138): Remove render_expr_legacy dead code, 127 LOC.
+�.29.2 (389e9c1): Precedence-aware parens � Nova precedence table + helpers.
+�.29.3 (d64eaa5): Drop-ensures mutator parallel to drop-requires.
+�.29.4 (286c6ad): Workspace mutation testing real-exec ����� sources_by_module_path.
 
-**Total ����� �.29:** 103 doc tests PASS (16 integration suites + 12 unit).
+**Total ����� �.29:** 103 doc tests PASS (16 integration suites + 12 unit).
 
-Plan 45 + 45.A foundation + �.29 cleanups = formally closed.
+Plan 45 + 45.A foundation + �.29 cleanups = formally closed.
 
-��� �������� (�.30+, ��������� sprints):
-- �.30: External crate-doc linking + incremental cache
-- �.31: HTML output + lunr search (main adoption blocker)
-- �.32: MCP server ��� AI/LLM real-time queries
+��� �������� (�.30+, ��������� sprints):
+- �.30: External crate-doc linking + incremental cache
+- �.31: HTML output + lunr search (main adoption blocker)
+- �.32: MCP server ��� AI/LLM real-time queries
 - Plan 45.B: Stdlib full doc-pass
 ### Ф.1 — Empty `{}` parser fix ✅
 
