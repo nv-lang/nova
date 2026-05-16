@@ -1,0 +1,31 @@
+// Plan 56 Ф.2.7 — positive: pure bound protocols работают.
+
+module plan56.f6_pure_bound_protocols
+
+
+type MyHashable protocol {
+    hash() -> u64
+    eq(other Self) -> bool
+}
+
+
+type MyDisplay protocol {
+    show() -> str
+}
+
+
+type Counter {
+    n int
+}
+
+
+fn Counter @hash() -> u64 => @n as u64
+fn Counter @eq(other Counter) -> bool => @n == other.n
+
+
+test "pure bound protocol declarations compile" {
+    let c = Counter { n: 42 }
+    assert(c.hash() == 42 as u64)
+    assert(c.eq(Counter { n: 42 }))
+    assert(!c.eq(Counter { n: 99 }))
+}

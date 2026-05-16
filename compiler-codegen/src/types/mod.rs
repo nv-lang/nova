@@ -374,6 +374,35 @@ impl<'a> BoundCtx<'a> {
     }
 
     fn check_module(&self, module: &Module, errors: &mut Vec<Diagnostic>) {
+        // Plan 56 Ф.2.7: effect-free enforcement в bound (protocol) methods.
+        // Rationale: vtable dispatch не propagates effect handlers, поэтому
+        // bound methods обязаны быть pure (нет Io/Fail/Db/etc effects).
+        // Параллель Rust trait methods — pure unless explicitly async.
+        for item in &module.items {
+            if let Item::Type(t) = item {
+                if let TypeDeclKind::Protocol(methods) = &t.kind {
+                    for m in methods {
+                        if !m.effects.is_empty() {
+                            let effect_names: Vec<String> = m.effects.iter()
+                                .filter_map(|e| match e {
+                                    TypeRef::Named { path, .. } => Some(path.join(".")),
+                                    _ => None,
+                                })
+                                .collect();
+                            errors.push(Diagnostic::new(
+                                format!(
+                                    "bound method `{}.{}` has effects [{}] — bound methods must be pure \
+                                     (rationale: vtable dispatch does not propagate effect handlers). \
+                                     Drop the effect row, or use handler-as-parameter instead of bound (D110, Plan 56).",
+                                    t.name, m.name, effect_names.join(", ")
+                                ),
+                                m.span,
+                            ));
+                        }
+                    }
+                }
+            }
+        }
         for item in &module.items {
             match item {
                 Item::Fn(f) => {

@@ -1,0 +1,10 @@
+// Plan 56 Ф.2.7 — negative: bound protocol method с effect → reject.
+// Rationale: vtable dispatch не propagates effect handlers.
+
+module plan56.f5_negative_bound_effect
+
+
+// EXPECT_COMPILE_ERROR D110
+type BadBound protocol {
+    save() Io -> ()
+}
