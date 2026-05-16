@@ -156,51 +156,6 @@ Top-level fields:
 
 См. `--json-schema` для полной спецификации.
 
-## Standard jq queries (Plan 45 Ф.24.15)
-
-Работа с `nova doc --format json` через `jq` — стандартные рецепты:
-
-```bash
-# Список всех public fn с summary
-nova doc src/api.nv --format json \
-  | jq '[.items[] | select(.kind=="fn" and .visibility=="export") | {id,summary}]'
-
-# Все items без summary (не задокументированные)
-nova doc src/api.nv --format json \
-  | jq '[.items[] | select(.summary == null) | .id]'
-
-# Все #unstable или #experimental items
-nova doc src/api.nv --format json \
-  | jq '[.items[] | select(.stability.tier != null and .stability.tier != "stable") | {id, tier: .stability.tier}]'
-
-# Все #deprecated items с заменой
-nova doc src/api.nv --format json \
-  | jq '[.items[] | select(.deprecation != null) | {id, note: .deprecation.note}]'
-
-# Функции с @realtime
-nova doc src/api.nv --format json \
-  | jq '[.items[] | select(.capabilities.realtime==true) | .id]'
-
-# Функции с SMT-контрактами (Proven)
-nova doc src/api.nv --format json \
-  | jq '[.items[] | select(.signature?.verify_status=="proven") | .id]'
-
-# Все re-exports (doc_inline=true)
-nova doc src/api.nv --format json \
-  | jq '[.items[] | select(.kind=="reexport" and .doc_inline==true) | {id, source: .reexport_from}]'
-
-# Items с scraped examples
-nova doc src/api.nv --format json --scrape-examples . \
-  | jq '[.items[] | select(.scraped_examples | length > 0) | {id, count: (.scraped_examples | length)}]'
-
-# Все broken intra-doc links (target_id == null)
-nova doc src/api.nv --format json \
-  | jq '[.links[] | select(.target_id == null) | .text]'
-
-# Семver diff: список major changes
-nova doc --diff old.json new.json 2>&1 | grep '\[major\]'
-```
-
 ## CI integration
 
 ```bash

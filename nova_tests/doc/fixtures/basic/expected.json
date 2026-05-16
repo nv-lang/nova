@@ -22,16 +22,10 @@
       "doc_attrs": [
 
       ],
-      "effect_matrix": [
-
-      ],
       "kind": "file",
       "name": "sample",
       "path": "nova_tests.doc.fixtures.basic.sample",
       "peers": [
-
-      ],
-      "realtime_matrix": [
 
       ],
       "source": {
@@ -66,10 +60,6 @@
       "kind": "const",
       "module_path": "nova_tests.doc.fixtures.basic.sample",
       "name": "MAX_BUF",
-      "reexport_from": null,
-      "scraped_examples": [
-
-      ],
       "sections": {
 
       },
@@ -105,10 +95,6 @@
       "kind": "type",
       "module_path": "nova_tests.doc.fixtures.basic.sample",
       "name": "Point",
-      "reexport_from": null,
-      "scraped_examples": [
-
-      ],
       "sections": {
 
       },
@@ -157,10 +143,6 @@
       "kind": "fn",
       "module_path": "nova_tests.doc.fixtures.basic.sample",
       "name": "abs",
-      "reexport_from": null,
-      "scraped_examples": [
-
-      ],
       "sections": {
 
       },

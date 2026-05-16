@@ -7,47 +7,7 @@ use super::value::*;
 use super::Interpreter;
 use crate::ast::Expr;
 use crate::diag::{Diagnostic, Span};
-use std::cell::RefCell;
 use std::rc::Rc;
-
-// Plan 45 Ф.24.8: thread-local output capture for expect_output doc-tests.
-// When active (Some), print/println write to buffer instead of stdout.
-// Doc-tests run sequentially, so no concurrency concern.
-thread_local! {
-    static OUTPUT_CAPTURE: RefCell<Option<String>> = RefCell::new(None);
-}
-
-/// Begin capturing stdout output for this thread. Replaces any previous capture.
-pub fn capture_output_start() {
-    OUTPUT_CAPTURE.with(|c| *c.borrow_mut() = Some(String::new()));
-}
-
-/// Stop capturing and return accumulated output (without trailing newline).
-pub fn capture_output_finish() -> String {
-    OUTPUT_CAPTURE.with(|c| {
-        c.borrow_mut()
-            .take()
-            .unwrap_or_default()
-            .trim_end_matches('\n')
-            .to_string()
-    })
-}
-
-/// Write text through the output system (capture buffer or stdout).
-fn output_write(text: &str) {
-    let captured = OUTPUT_CAPTURE.with(|c| {
-        let mut b = c.borrow_mut();
-        if let Some(buf) = b.as_mut() {
-            buf.push_str(text);
-            true
-        } else {
-            false
-        }
-    });
-    if !captured {
-        print!("{}", text);
-    }
-}
 
 pub fn install(env: &Env) {
     env.define(
@@ -56,7 +16,7 @@ pub fn install(env: &Env) {
             name: "print".into(),
             func: Box::new(|args| {
                 for a in args {
-                    output_write(&format!("{}", a));
+                    print!("{}", a);
                 }
                 Ok(Value::Unit)
             }),
@@ -68,9 +28,9 @@ pub fn install(env: &Env) {
             name: "println".into(),
             func: Box::new(|args| {
                 for a in args {
-                    output_write(&format!("{}", a));
+                    print!("{}", a);
                 }
-                output_write("\n");
+                println!();
                 Ok(Value::Unit)
             }),
         })),

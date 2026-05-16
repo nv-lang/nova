@@ -189,30 +189,8 @@ impl Parser {
                         self.peek().span));
                 }
             }
-            // Plan 45 Ф.24.11: `#doc_inline` / `#doc_no_inline` before import/re-export.
-            // Collect doc-attrs that apply to an immediately-following import statement.
-            let import_doc_attrs = if matches!(self.peek().kind, TokenKind::Hash) {
-                let next_kind = self.tokens.get(self.pos + 1).map(|t| &t.kind);
-                let is_import_doc_attr = matches!(next_kind,
-                    Some(TokenKind::Ident(n)) if n == "doc_inline" || n == "no_inline" || n == "doc_no_inline");
-                let is_doc_paren = if let Some(TokenKind::Ident(n)) = next_kind {
-                    if n == "doc" {
-                        let third = self.tokens.get(self.pos + 2).map(|t| &t.kind);
-                        matches!(third, Some(TokenKind::LParen))
-                    } else { false }
-                } else { false };
-                if is_import_doc_attr || is_doc_paren {
-                    let attrs = self.parse_doc_attrs()?;
-                    self.skip_newlines();
-                    attrs
-                } else {
-                    Vec::new()
-                }
-            } else {
-                Vec::new()
-            };
             if matches!(self.peek().kind, TokenKind::KwImport | TokenKind::KwUse) {
-                imports.push(self.parse_import_with_attrs(import_doc_attrs)?);
+                imports.push(self.parse_import()?);
                 continue;
             }
             // Plan 35 sub-plan 35.A (R26): `export import X` re-export
@@ -226,13 +204,9 @@ impl Parser {
                     TokenKind::KwImport | TokenKind::KwUse
                 )
             {
-                imports.push(self.parse_import_with_attrs(import_doc_attrs)?);
+                imports.push(self.parse_import()?);
                 continue;
             }
-            // If doc_attrs were collected but no import follows, they belong to parse_item.
-            // parse_item will re-read them from source — but we've consumed them here.
-            // This is fine: if #doc_inline is before a non-import, it's an error in parse_doc_attrs
-            // (unknown attr). Drop them silently (parse_item will re-encounter the next token).
             // Plan 42.14 Ф.2: parse_item возвращает Option — None если
             // item gated `#cfg(...)` predicate'ом который inactive для
             // current target/features → item дропается на parse-этапе.
@@ -652,15 +626,7 @@ impl Parser {
 
     // ─── imports ─────────────────────────────────────────────────────────
 
-    fn parse_import_with_attrs(&mut self, doc_attrs: Vec<crate::ast::DocAttr>) -> Result<Import, Diagnostic> {
-        self.parse_import_inner(doc_attrs)
-    }
-
     fn parse_import(&mut self) -> Result<Import, Diagnostic> {
-        self.parse_import_inner(Vec::new())
-    }
-
-    fn parse_import_inner(&mut self, doc_attrs: Vec<crate::ast::DocAttr>) -> Result<Import, Diagnostic> {
         // Plan 35 sub-plan 35.A: support `import X.Y.{A, B as C}` selective
         // и `export import X.{A}` re-export.
         // Detect leading `export` keyword. Парсер уже потребил `KwExport`
@@ -749,7 +715,7 @@ impl Parser {
         }
         self.expect_newline_or_eof()?;
         let span = start.merge(self.tokens[self.pos.saturating_sub(1)].span);
-        Ok(Import { path, items, alias, is_export, span, doc_attrs })
+        Ok(Import { path, items, alias, is_export, span })
     }
 
     // ─── top-level items ─────────────────────────────────────────────────

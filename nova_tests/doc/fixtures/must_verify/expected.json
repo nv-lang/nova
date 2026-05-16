@@ -22,16 +22,10 @@
       "doc_attrs": [
 
       ],
-      "effect_matrix": [
-
-      ],
       "kind": "file",
       "name": "sample",
       "path": "nova_tests.doc.fixtures.must_verify.sample",
       "peers": [
-
-      ],
-      "realtime_matrix": [
 
       ],
       "source": {
@@ -66,10 +60,6 @@
       "kind": "const",
       "module_path": "nova_tests.doc.fixtures.must_verify.sample",
       "name": "ZERO",
-      "reexport_from": null,
-      "scraped_examples": [
-
-      ],
       "sections": {
 
       },
@@ -105,10 +95,6 @@
       "kind": "fn",
       "module_path": "nova_tests.doc.fixtures.must_verify.sample",
       "name": "abs",
-      "reexport_from": null,
-      "scraped_examples": [
-
-      ],
       "sections": {
 
       },
@@ -190,10 +176,6 @@
       "kind": "fn",
       "module_path": "nova_tests.doc.fixtures.must_verify.sample",
       "name": "max",
-      "reexport_from": null,
-      "scraped_examples": [
-
-      ],
       "sections": {
 
       },

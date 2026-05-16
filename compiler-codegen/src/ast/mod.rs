@@ -169,9 +169,6 @@ pub struct Import {
     /// При false — обычный import.
     pub is_export: bool,
     pub span: Span,
-    /// Plan 45 Ф.24.11: doc-attrs on import/re-export.
-    /// Currently: DocInline, DocNoInline (controls inline rendering in nova doc).
-    pub doc_attrs: Vec<DocAttr>,
 }
 
 /// Top-level декларация в модуле.

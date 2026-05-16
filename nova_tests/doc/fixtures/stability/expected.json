@@ -13,16 +13,10 @@
       "doc_attrs": [
 
       ],
-      "effect_matrix": [
-
-      ],
       "kind": "file",
       "name": "sample",
       "path": "nova_tests.doc.fixtures.stability.sample",
       "peers": [
-
-      ],
-      "realtime_matrix": [
 
       ],
       "source": {
@@ -57,10 +51,6 @@
       "kind": "fn",
       "module_path": "nova_tests.doc.fixtures.stability.sample",
       "name": "add",
-      "reexport_from": null,
-      "scraped_examples": [
-
-      ],
       "sections": {
         "since": "1.0.0"
       },
@@ -158,10 +148,6 @@
       "kind": "fn",
       "module_path": "nova_tests.doc.fixtures.stability.sample",
       "name": "maybe_add",
-      "reexport_from": null,
-      "scraped_examples": [
-
-      ],
       "sections": {
 
       },
@@ -263,10 +249,6 @@
       "kind": "fn",
       "module_path": "nova_tests.doc.fixtures.stability.sample",
       "name": "plus",
-      "reexport_from": null,
-      "scraped_examples": [
-
-      ],
       "sections": {
         "deprecated": "Use `add` instead.",
         "since": "0.1.0"

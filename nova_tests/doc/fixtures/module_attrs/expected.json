@@ -13,16 +13,10 @@
       "doc_attrs": [
 
       ],
-      "effect_matrix": [
-
-      ],
       "kind": "file",
       "name": "sample",
       "path": "nova_tests.doc.fixtures.module_attrs.sample",
       "peers": [
-
-      ],
-      "realtime_matrix": [
 
       ],
       "source": {
@@ -62,10 +56,6 @@
       "kind": "fn",
       "module_path": "nova_tests.doc.fixtures.module_attrs.sample",
       "name": "bar",
-      "reexport_from": null,
-      "scraped_examples": [
-
-      ],
       "sections": {
 
       },
@@ -152,10 +142,6 @@
       "kind": "fn",
       "module_path": "nova_tests.doc.fixtures.module_attrs.sample",
       "name": "foo",
-      "reexport_from": null,
-      "scraped_examples": [
-
-      ],
       "sections": {
 
       },

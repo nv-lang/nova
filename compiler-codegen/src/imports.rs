@@ -120,7 +120,6 @@ pub fn resolve_imports_inline_ex(
                 alias: None,
                 is_export: false,
                 span: crate::diag::Span::dummy(),
-                doc_attrs: Vec::new(),
             });
         }
     }

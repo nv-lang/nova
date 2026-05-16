@@ -4655,6 +4655,16 @@ Sub-plans 35.A-E:
 - **Приоритет:** H — потенциальный soundness gap: контракт с field access может
   silently skip вместо E2401.
 
+### [ЗАКР 2026-05-16] pipeline.rs монолит — handler code в отдельный модуль [Ф.2.1]
+- **Закрыто (Plan 33.6 Ф.2.1, 2026-05-16, commit ddc11f2e):**
+  * `compiler-codegen/src/verify/handler_exec.rs` — 689 строк handler verification:
+    `verify_handlers`, `verify_post_axiom_with_handler`, `verify_static_axiom_with_handler`,
+    `verify_liskov_method`, symbolic exec V2 helpers, collect_verify_bindings_*.
+  * `pipeline.rs`: 2952 → 2188 строк (было > 2700, цель выполнена).
+  * `verify/mod.rs`: `pub mod handler_exec` + реэкспорт `verify_handlers`.
+  * Вспомогательные функции — `pub(super)` для доступа между модулями.
+- **Дата закрытия:** 2026-05-16
+
 ### [ЗАКР 2026-05-15] `#verify` handler gate — P0-1 V1 — [V12]
 - **Закрыто (Plan 33.4 P0-1, 2026-05-15):**
   * `verify_handlers(module)` в pipeline.rs — walks `with #verify E = h` bindings.
@@ -6857,20 +6867,3 @@ mono-схему в `sum_schemas`. Fallback на `find_variant` при отсут
 
 - **std/collections: 10/10 PASS**
 - **nova_tests: 397 PASS / 44 FAIL / 13 SKIP**
-
-## Plan 45 Ф.24 simplifications (2026-05-16)
-
-- **#doc_inline parsing**: doc-attrs before `export import` required skip_newlines() after
-  parse_doc_attrs() in parse_module loop — without it, newline token broke lookahead.
-- **doc_semver_diff race**: parallel test threads writing to same old.json/new.json temp files
-  → fixed by per-thread dirs (pid + thread_id in path).
-- **ItemKind::ReExport**: re-exports are first-class DocItems in JSON (kind="reexport"),
-  not just links. Renderers decide inline vs link based on doc_inline field.
-- **infer_contracts**: textual assert() extraction sufficient for documentation purposes
-  (false positives = string literal match acceptable). No full parse needed.
-- **effect_matrix/realtime_matrix**: auto-derived from existing DocItem fields, zero AST cost.
-  Enables jq queries without knowledge of signature structure.
-- **scrape-examples word boundary**: verified `name(` check via prev-byte non-ident is
-  sufficient; `.foo(` correctly excluded by prev byte `.` being non-ident... wait, `.` is
-  non-ident so it would match. But method calls on external types are not in our DocItems
-  anyway, so false positives from `obj.foo(` are harmless.
