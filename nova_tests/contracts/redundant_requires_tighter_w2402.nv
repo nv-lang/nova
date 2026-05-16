@@ -1,0 +1,11 @@
+// Ф.22.2 (Plan 33.6): redundant `requires x >= L_weak` если есть `requires x >= L_strong`.
+// EXPECT_COMPILE_WARNING W2402
+
+module contracts.redundant_requires_tighter_w2402
+
+fn dual_lower(x int) -> int
+    requires x >= 0
+    requires x >= 5
+{
+    x
+}

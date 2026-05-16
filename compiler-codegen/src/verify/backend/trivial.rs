@@ -242,6 +242,18 @@ fn simplify_app(op: &str, args: &[SmtTerm]) -> SmtTerm {
         "not" if args.len() == 1 => match &args[0] {
             SmtTerm::BoolLit(b) => SmtTerm::BoolLit(!b),
             SmtTerm::App(op2, a2) if op2 == "not" && a2.len() == 1 => a2[0].clone(),
+            // Ф.22.3 (Plan 33.6): De Morgan для and/or (2-arg).
+            // `not (and X Y)` → `or (not X) (not Y)`.
+            SmtTerm::App(op2, a2) if op2 == "and" && a2.len() == 2 => {
+                let nx = simplify_app("not", &[a2[0].clone()]);
+                let ny = simplify_app("not", &[a2[1].clone()]);
+                simplify_app("or", &[nx, ny])
+            }
+            SmtTerm::App(op2, a2) if op2 == "or" && a2.len() == 2 => {
+                let nx = simplify_app("not", &[a2[0].clone()]);
+                let ny = simplify_app("not", &[a2[1].clone()]);
+                simplify_app("and", &[nx, ny])
+            }
             _ => SmtTerm::App(op.into(), args.to_vec()),
         },
         "and" => {
