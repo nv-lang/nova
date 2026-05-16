@@ -13153,3 +13153,39 @@ ova doc <file> --mutate-contracts --real-exec — real-exec mode.
 - No contracts > 0 mutants
 
 Total после Ф.28.2: **89 doc tests PASS** (14 integration suites + 8 unit).
+
+=== Plan 45 Ф.28.3 — JSON Schema v1.0.0-rc1 > v1.0.0 STABLE promote (2026-05-16) ===
+
+Soak period closed: после Ф.24.5 (rc1) через Ф.24–Ф.28 (4 sprints, 16+
+коммитов) schema не имела breaking drift. Backward-compatible additions
+(warnings, source.url, handlers, allow_transit) — без bump format_version.
+
+**Что изменено в schema.rs:**
+- Title: "Nova doc output (D107 schema v1.0.0-rc1)" > "(D107 schema v1.0.0)"
+- Description: "Release candidate v1.0.0-rc1 ... Will promote to v1.0.0 after
+  2-week soak" > "Stable v1.0.0 (Plan 45 Ф.28.3) ... Soak period (Ф.24.5–Ф.28)
+  прошёл без breaking drift; promoted to stable."
+- format_version description: "RC v1.0.0-rc1" > "Stable v1.0.0"
+- format_version const остаётся 1 — backward compat для consumers
+  (rc1 и stable v1 — одна schema family).
+
+**Plan 45 §«Acceptance» fulfilled:**
+- 2-недельный soak без drift: ?
+- Schema promote v1.0.0-rc1 > v1.0.0: ?
+- Backward compat sustained: ? format_version const 1, additions only.
+
+**Tests:** 4 dedicated тестов в compiler-codegen/tests/doc_schema_v1_promote.rs:
+- Title содержит v1.0.0 (без -rc1)
+- format_version remains const 1
+- Description упоминает Stable + Ф.28.3
+- JSON validity (balanced braces)
+
+Plus 11 existing schema_shape tests — все PASS.
+
+**Total после Ф.28.3:** 93 doc tests PASS (15 integration suites + 8 unit).
+
+**Plan 45 + Plan 45.A foundation completed.** Что осталось (отдельные плана):
+- Plan 45.A round 2/3: HTML output, search index, MCP server
+- Plan 45.B: stdlib full doc-pass
+- Plan 16 follow-up: #allow_transit parser support
+- Plan 42 follow-up: workspace handler matrix через FileRegistry

@@ -7373,3 +7373,29 @@ results — Plan 45.A.
 **Почему:** Drop-ensures concept ill-defined; operator mutations покрывают
 boundary cases.
 **Приоритет:** none — design choice, не tech debt.
+
+---
+
+## Plan 45 Ф.28.3 — Schema v1.0.0 promote (2026-05-16)
+
+### format_version остаётся const 1 — semver не bump'нут
+
+**Где:** schema.rs — "format_version": { "const": 1 }.
+**Что упрощено:** Promote с v1.0.0-rc1 на v1.0.0 НЕ меняет format_version
+(остаётся 1). Это namespace для major-bumped breaking changes; rc/stable
+суффикс — quality marker, не version.
+**Почему:** Consumers parsing ormat_version == 1 уже работают; bump на
+2 был бы fake breaking change. Schema title — единственное место где promote
+visible.
+**Как чинить:** не нужно — это правильная semver semantics.
+**Приоритет:** none.
+
+### Schema fixture в tests НЕ regen'ируется
+
+**Где:** 	ests/doc_schema_shape.rs — uses embedded schema через
+schema_v1() rust function.
+**Что упрощено:** Нет separate JSON fixture file для schema (embedded в Rust
+source). Tests verify structural shape, не byte-for-byte match.
+**Почему:** Schema часто меняется (additions); separate fixture требовал бы
+постоянного regen. Structural validation достаточен.
+**Приоритет:** none.
