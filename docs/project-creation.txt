@@ -12680,6 +12680,27 @@ witness wire. Reasonable LIA subset без Z3.
 **Plan 33.6 итог за 17 спринтов:** все TrivialBackend tactics для LIA +
 dead lemma diagnostic. Reasonable LIA subset без Z3.
 
+## Ф.18 — TrivialBackend subtraction bounds
+
+### Ф.18.1 — subtraction bounds
+
+- `try_subtraction_check`: `(>= (- A B) goal)` через lower(A) - upper(B),
+  плюс `(- Var Lit)` через lower(Var) - N и `(- Lit Var)` через N - upper(Var).
+- Test: trivial_subtraction_bounds_positive (3 patterns: Var-Var, Var-Lit, Lit-Var).
+- Регрессия: 158 PASS (+1) / 42 SKIP / 0 FAIL.
+- Коммит: `eb6b48223d8`.
+
+### Ф.18.2 + Ф.18.3 — deferred
+
+- Ф.18.2 comparison transitivity Var-to-Var inequalities → graph reasoning, V3.
+- Ф.18.3 dead axiom tracking → high false-positive risk без proper Effect.op
+  call tracking. Defer.
+
+**Итого Ф.18:** 1 closed. **158 PASS / 42 SKIP / 0 FAIL.**
+
+**Plan 33.6 итог за 18 спринтов:** TrivialBackend полный LIA-MVP стек
++ субтракция. Reasonable LIA без Z3.
+
 === Plan 45 �.25 � nova tests (positive + negative) ===
 
 ����� �������� �.25 (4 ����) �������� nova-tests .nv ��� �������� �����
