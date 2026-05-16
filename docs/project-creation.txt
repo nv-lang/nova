@@ -13396,3 +13396,48 @@ Plan 45 family status:
 - HTML polish Ф.31.2-4 (search/dark mode/multi-page) ? next session
 - MCP server Ф.32 ? separate sprint
 - Stdlib doc-pass Plan 45.B ? separate effort
+
+=== Plan 45 Sprint Ф.31 — HTML polish trio (2026-05-16) ===
+
+3 HTML improvements закрывают Ф.31 sprint после Ф.31.1 MVP foundation.
+
+**Ф.31.2 (ca94cd6):** HTML search index + inline JS filter.
+- Search box в sidebar + JS substring filter.
+- Matched items visible, остальные .dim (opacity 0.25 — visible но faded).
+- No external dep (no lunr) — ~25 LOC inline JS.
+- Sidebar links также filter'ятся.
+
+**Ф.31.3 (ca94cd6):** Dark mode через CSS variables + prefers-color-scheme.
+- 14 CSS variables (--bg, --fg, --border, --link, --code-bg, etc).
+- @media (prefers-color-scheme: dark) override для всех vars.
+- No JS toggle — system-aware, respects OS setting.
+
+**Ф.31.4 (072365c):** Multi-page HTML output.
+- New API ender_html_multipage(tree) -> BTreeMap<String, String>
+  (filename > HTML content).
+- index.html — workspace overview с links на все modules.
+- <module.path>.html — per-module page.
+- Cross-page links resolved через item_pages: HashMap<item_id, "module.html#anchor">.
+- Sidebar в per-module page содержит:
+  - Link на index.html
+  - Search box (одинаковый везде)
+  - List всех modules (current marked "(here)")
+  - Items текущего module
+- CLI flag --output-dir <dir> writes pages на disk.
+- 6 integration tests + new doc_html_multipage suite.
+
+**Total после Ф.31:** ~125 doc integration tests PASS (19 suites + 14 unit).
+
+**HTML user experience complete:**
+- Light/dark mode auto (CSS variables)
+- Inline search (no deps)
+- Multi-page navigation (file-per-module)
+- XSS-safe escaping
+- Responsive (mobile breakpoint at 720px)
+- Embedded CSS+JS (zero external requests, works offline)
+
+**Что осталось из Plan 45 family:**
+- Ф.32: MCP server (отдельный crate, separate sprint)
+- Plan 45.B: stdlib full doc-pass (отдельный effort)
+- Plan 45.A round 2: incremental cache (deferred Ф.30.2)
+- Plan 16/42 follow-ups

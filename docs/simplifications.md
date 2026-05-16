@@ -7829,3 +7829,20 @@ Go/Rust/TS. Р’СЃРµ С‚СЂРµР±СѓСЋС‚ explicit type annotation; РЅР°С€ РїРѕРґС…РѕРґ
 **Почему deferred:** Real cache requires Module serialization + invalidation
 graph (~500 LOC + complex test infra). Current --watch ~6ms для 50-module
 workspace — acceptable для interactive editing.
+
+---
+
+## Plan 45 Sprint Ф.31 — HTML polish trio (2026-05-16)
+
+### Resolved (no longer simplifications):
+- HTML single-page only (Ф.31.1) > multi-page output (Ф.31.4 done)
+- HTML без search (Ф.31.1) > inline JS substring filter (Ф.31.2 done)
+- HTML только light theme (Ф.31.1) > CSS variables + prefers-color-scheme (Ф.31.3 done)
+
+### Remaining:
+- Search через substring match (no fuzzy/relevance ranking). Lunr.js был бы
+  smarter, но adds dep + 30KB bundle. Substring достаточен для navigation.
+- Dark mode без user toggle (always follows OS). User toggle требует JS +
+  localStorage — extra complexity для marginal benefit.
+- Multi-page без site map (sitemap.xml). Plan 45.A round 2 если SEO-critical.
+- No syntax highlighting (highlight.js or shiki). Plan 45.A round 3.
