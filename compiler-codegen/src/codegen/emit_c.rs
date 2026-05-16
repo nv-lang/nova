@@ -704,6 +704,19 @@ impl CEmitter {
             );
         }
 
+        // Plan 53 Ф.6.4: register Nova_ChannelPair schema so the generic
+        // `pattern_bind_typed` path can destructure `let { tx, rx } = Channel.new(cap)`
+        // without a hardcoded special-case. `Nova_ChannelPair` is a C-runtime
+        // value-type (declared in nova_rt/channel.h) — schema mirrors the C
+        // struct layout. `is_value_type` already returns true for it so the
+        // generic path uses `.` accessor.
+        {
+            let mut cp_schema = HashMap::new();
+            cp_schema.insert("tx".to_string(), "Nova_ChanWriter*".to_string());
+            cp_schema.insert("rx".to_string(), "Nova_ChanReader*".to_string());
+            self.record_schemas.insert("ChannelPair".to_string(), cp_schema);
+        }
+
         // D26 prelude: RuntimeError — sum-тип встроенных runtime-сбоев.
         // Variants (D65): DivByZero, Overflow, IndexOutOfBounds {index,length},
         // TypeMismatch(str), AssertFailed(str), NoHandler(str).
@@ -12350,63 +12363,14 @@ impl CEmitter {
     /// Or / Array) отсеиваются type-checker'ом — здесь ассамим plain
     /// record.
     fn emit_record_destructure(&mut self, decl: &LetDecl) -> Result<(), String> {
-        // D91/Plan 21 special-case: `let { tx, rx } = Channel.new(cap)`.
-        // `Channel.new` возвращает Nova_ChannelPair (value type, не
-        // зарегистрирован в record_schemas т.к. C-runtime built-in,
-        // не user-declared) — mirror tuple-special-case в
-        // emit_tuple_destructure.
-        let is_channel_new = match &decl.value.kind {
-            ExprKind::Call { func, .. } => {
-                let f = func.unwrap_turbofish();
-                match &f.kind {
-                    ExprKind::Member { obj, name } => {
-                        name == "new" && matches!(&obj.kind, ExprKind::Ident(n) if n == "Channel")
-                    }
-                    ExprKind::Path(parts) => {
-                        parts.len() == 2 && parts[0] == "Channel" && parts[1] == "new"
-                    }
-                    _ => false,
-                }
-            }
-            _ => false,
-        };
-        if is_channel_new {
-            if let Pattern::Record { fields, .. } = &decl.pattern {
-                let tmp = self.fresh_tmp();
-                let cap_expr = if let ExprKind::Call { args, .. } = &decl.value.kind {
-                    if let Some(a) = args.first() { self.emit_expr(a.expr())? } else { "0".into() }
-                } else { "0".into() };
-                self.line(&format!("Nova_ChannelPair {} = nova_channel_new({});", tmp, cap_expr));
-                let field_types: std::collections::HashMap<&str, &str> = [
-                    ("tx", "Nova_ChanWriter*"),
-                    ("rx", "Nova_ChanReader*"),
-                ].into_iter().collect();
-                for field in fields {
-                    let ty = field_types.get(field.name.as_str()).copied().unwrap_or("nova_int");
-                    let binding_name: String = match &field.pattern {
-                        None => field.name.clone(),
-                        Some(Pattern::Ident { name, .. }) => name.clone(),
-                        Some(Pattern::Wildcard(_)) => continue,
-                        Some(other) => return Err(format!(
-                            "nested pattern in Channel.new record destructure not supported: {:?}",
-                            other,
-                        )),
-                    };
-                    self.var_types.insert(binding_name.clone(), ty.to_string());
-                    // Plan 53 Ф.6.3: propagate decl.mutable to each bind so
-                    // spawn-capture and assignment-rewrite decisions use the
-                    // correct mutability (was missing → silent gap).
-                    if decl.mutable {
-                        self.var_mutable.insert(binding_name.clone());
-                    } else {
-                        self.var_mutable.remove(&binding_name);
-                    }
-                    self.line(&format!("{} {} = {}.{};", ty, binding_name, tmp, field.name));
-                }
-                return Ok(());
-            }
-        }
-
+        // Plan 53 Ф.6.4: Channel.new больше не нуждается в special-case —
+        // `Nova_ChannelPair` schema зарегистрирована в module-init
+        // (см. emit_c.rs ~711, after Error). `is_value_type("Nova_ChannelPair")`
+        // → true (accessor `.`), `infer_expr_c_type(Channel.new(_))` возвращает
+        // `"Nova_ChannelPair"`. Общий путь ниже делегирует биндинг полей в
+        // `pattern_bind_typed` — Plain-record case с tx: Nova_ChanWriter*,
+        // rx: Nova_ChanReader*.
+        //
         // Общий путь: eval RHS в tmp, делегируем биндинг полей в
         // pattern_bind_typed (plain-record-aware).
         let tmp = self.fresh_tmp();
