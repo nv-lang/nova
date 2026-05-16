@@ -426,9 +426,8 @@ fn propagate_bounds(conjuncts: &[SmtTerm]) -> Vec<SmtTerm> {
             }
         }
     }
-    if lower.is_empty() && upper.is_empty() {
-        return conjuncts.to_vec();
-    }
+    // Ф.19.1 (Plan 33.6): modulus check не требует lower/upper context (работает
+    // по самой constant). Поэтому даже без bounds tracking — проходим через walker.
     conjuncts.iter().map(|c| {
         // Ф.17.2 (Plan 33.6): addition bounds propagation.
         // `(>= (+ Var1 Var2) goal)` где lower(Var1) + lower(Var2) >= goal → true.
@@ -453,6 +452,24 @@ fn propagate_bounds(conjuncts: &[SmtTerm]) -> Vec<SmtTerm> {
                     if let (Some(v), Some(n)) = (var_opt, lit_opt) {
                         if let Some(known_low) = lower.get(v) {
                             if known_low.saturating_add(n) >= goal { return Some(true); }
+                        }
+                    }
+                }
+                None
+            } else { None }
+        };
+        // Ф.19.1 (Plan 33.6): modulus bounds. `(% Var Lit)` где Lit > 0:
+        // - result >= 0 если goal <= 0 → true.
+        // - result < Lit (но это эквивалентно `<` form).
+        let try_modulus_check = |inner: &SmtTerm| -> Option<bool> {
+            if let SmtTerm::App(iop, iargs) = inner {
+                if iop != ">=" || iargs.len() != 2 { return None; }
+                let goal = match &iargs[1] { SmtTerm::IntLit(n) => *n, _ => return None };
+                if let SmtTerm::App(mop, margs) = &iargs[0] {
+                    if mop != "%" || margs.len() != 2 { return None; }
+                    if let (SmtTerm::Var(_), SmtTerm::IntLit(divisor)) = (&margs[0], &margs[1]) {
+                        if *divisor > 0 && goal <= 0 {
+                            return Some(true);
                         }
                     }
                 }
@@ -592,6 +609,10 @@ fn propagate_bounds(conjuncts: &[SmtTerm]) -> Vec<SmtTerm> {
         if let Some(b) = try_subtraction_check(c) {
             return SmtTerm::BoolLit(b);
         }
+        // Ф.19.1: modulus check.
+        if let Some(b) = try_modulus_check(c) {
+            return SmtTerm::BoolLit(b);
+        }
         // Ф.17.1: negation check.
         if let Some(b) = try_negation_check(c) {
             return SmtTerm::BoolLit(b);
@@ -609,6 +630,9 @@ fn propagate_bounds(conjuncts: &[SmtTerm]) -> Vec<SmtTerm> {
                     return SmtTerm::BoolLit(!b);
                 }
                 if let Some(b) = try_subtraction_check(&args[0]) {
+                    return SmtTerm::BoolLit(!b);
+                }
+                if let Some(b) = try_modulus_check(&args[0]) {
                     return SmtTerm::BoolLit(!b);
                 }
                 if let Some(b) = try_negation_check(&args[0]) {

@@ -1,0 +1,23 @@
+// Ф.19.1 (Plan 33.6): TrivialBackend modulus bounds — `x % 10 >= 0`.
+
+module contracts.trivial_modulus_bounds_positive
+
+#verify
+fn mod_non_neg(x int) -> int
+    ensures result >= 0
+{
+    x % 10
+}
+
+#verify
+fn mod_neg_bound(x int) -> int
+    ensures result >= -5
+{
+    x % 7
+}
+
+test "modulus bounds trivial" {
+    assert(mod_non_neg(25) == 5)
+    assert(mod_non_neg(0) == 0)
+    assert(mod_neg_bound(8) == 1)
+}
