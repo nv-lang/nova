@@ -21,12 +21,12 @@
 use super::doctree::*;
 use std::fmt::Write;
 
-/// Plan 45 Ф.31.1 — entry point: DocTree → HTML string.
+/// Plan 45 Ф.31.1 — entry point: DocTree → HTML string (single-page).
 pub fn render(tree: &DocTree) -> String {
     let mut out = String::with_capacity(8192);
     write_html_head(&mut out, tree);
     out.push_str("<body>\n");
-    write_sidebar(&mut out, tree);
+    write_sidebar(&mut out, tree, None);
     write_main(&mut out, tree);
     // Plan 45 Ф.31.2: inline JS для search filter.
     out.push_str("<script>\n");
@@ -34,6 +34,167 @@ pub fn render(tree: &DocTree) -> String {
     out.push_str("</script>\n");
     out.push_str("</body>\n</html>\n");
     out
+}
+
+/// Plan 45 Ф.31.4 — multi-page HTML output.
+///
+/// Возвращает map `filename → html_content`:
+/// - `index.html` — overview всех modules с links на per-module pages.
+/// - `<module.path>.html` — per-module page (один module = один file).
+///
+/// Каждая page содержит свою sidebar (с links на все modules через
+/// `<page>.html#anchor`), embedded CSS+JS (одинаковый везде для simplicity).
+///
+/// Cross-page links: если link target — item в другом module,
+/// rewriting через `<module>.html#anchor`. Within same module — `#anchor`.
+///
+/// CLI usage: `nova doc <dir> --format html --output-dir <out>`.
+pub fn render_multipage(tree: &DocTree) -> std::collections::BTreeMap<String, String> {
+    let mut pages = std::collections::BTreeMap::new();
+    // Build cross-page link index: item_id → "<module>.html#anchor".
+    let mut item_pages: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    for m in &tree.modules {
+        let mod_file = module_filename(&m.path);
+        for it in &m.items {
+            item_pages.insert(it.id.clone(),
+                format!("{}#{}", mod_file, item_anchor(&it.id)));
+        }
+    }
+
+    // index.html — overview.
+    pages.insert("index.html".to_string(), render_index(tree));
+
+    // Per-module pages.
+    for m in &tree.modules {
+        let filename = module_filename(&m.path);
+        pages.insert(filename, render_module_page(tree, m, &item_pages));
+    }
+
+    pages
+}
+
+/// Plan 45 Ф.31.4 — index.html (workspace overview).
+fn render_index(tree: &DocTree) -> String {
+    let mut out = String::with_capacity(4096);
+    write_html_head(&mut out, tree);
+    out.push_str("<body>\n");
+    // Sidebar: links на все module pages.
+    out.push_str("<nav class=\"sidebar\">\n");
+    out.push_str("<strong>nova doc</strong>\n");
+    out.push_str("<input type=\"text\" class=\"search-box\" id=\"nova-search\" placeholder=\"Search…\" autocomplete=\"off\">\n");
+    out.push_str("<h2>Modules</h2>\n<ul>\n");
+    for m in &tree.modules {
+        let path = m.path.join(".");
+        let file = module_filename(&m.path);
+        let _ = writeln!(out, "  <li><a href=\"{}\">{}</a></li>",
+            html_escape(&file), html_escape(&path));
+    }
+    out.push_str("</ul>\n</nav>\n");
+    // Main: brief listing.
+    out.push_str("<main>\n");
+    out.push_str("<h1>API documentation</h1>\n");
+    let _ = writeln!(out, "<p>{} module(s) documented.</p>", tree.modules.len());
+    out.push_str("<h2>Modules</h2>\n<ul>\n");
+    for m in &tree.modules {
+        let path = m.path.join(".");
+        let file = module_filename(&m.path);
+        let summary = m.summary.as_deref().unwrap_or("");
+        let _ = writeln!(out,
+            "<li><a href=\"{}\"><code>{}</code></a> — {}</li>",
+            html_escape(&file), html_escape(&path), html_escape(summary));
+    }
+    out.push_str("</ul>\n</main>\n");
+    out.push_str("<script>\n");
+    out.push_str(EMBEDDED_JS);
+    out.push_str("</script>\n");
+    out.push_str("</body>\n</html>\n");
+    out
+}
+
+/// Plan 45 Ф.31.4 — per-module page rendering.
+fn render_module_page(
+    tree: &DocTree,
+    m: &DocModule,
+    item_pages: &std::collections::HashMap<String, String>,
+) -> String {
+    let mut out = String::with_capacity(8192);
+    // Mini DocTree-like header.
+    let title = format!("nova doc — {}", m.path.join("."));
+    out.push_str("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n");
+    out.push_str("<meta charset=\"utf-8\">\n");
+    out.push_str("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n");
+    let _ = writeln!(out, "<title>{}</title>", html_escape(&title));
+    out.push_str("<style>\n");
+    out.push_str(EMBEDDED_CSS);
+    out.push_str("</style>\n");
+    out.push_str("</head>\n");
+    out.push_str("<body>\n");
+    // Sidebar — навигация по всем modules + items текущего module.
+    out.push_str("<nav class=\"sidebar\">\n");
+    out.push_str("<strong><a href=\"index.html\">nova doc</a></strong>\n");
+    out.push_str("<input type=\"text\" class=\"search-box\" id=\"nova-search\" placeholder=\"Search…\" autocomplete=\"off\">\n");
+    out.push_str("<h2>Modules</h2>\n<ul>\n");
+    for other in &tree.modules {
+        let path = other.path.join(".");
+        let file = module_filename(&other.path);
+        let current_marker = if std::ptr::eq(other, m) { " <strong>(here)</strong>" } else { "" };
+        let _ = writeln!(out, "  <li><a href=\"{}\">{}</a>{}</li>",
+            html_escape(&file), html_escape(&path), current_marker);
+    }
+    out.push_str("</ul>\n");
+    if !m.items.is_empty() {
+        out.push_str("<h2>Items</h2>\n<ul>\n");
+        for it in &m.items {
+            let anchor = item_anchor(&it.id);
+            let _ = writeln!(out, "  <li><a href=\"#{}\">{}</a></li>",
+                anchor, html_escape(&it.name));
+        }
+        out.push_str("</ul>\n");
+    }
+    out.push_str("</nav>\n");
+    // Main — текущий module rendered (с cross-page links).
+    out.push_str("<main>\n");
+    write_module_with_xpage_links(&mut out, m, &tree.links, item_pages);
+    out.push_str("</main>\n");
+    out.push_str("<script>\n");
+    out.push_str(EMBEDDED_JS);
+    out.push_str("</script>\n");
+    out.push_str("</body>\n</html>\n");
+    out
+}
+
+/// Same as `write_module` но links используют cross-page URLs из `item_pages`.
+fn write_module_with_xpage_links(
+    out: &mut String,
+    m: &DocModule,
+    links: &[DocLink],
+    item_pages: &std::collections::HashMap<String, String>,
+) {
+    // Build per-page link map: text → URL (single-page anchor OR cross-page).
+    let mut effective_links: Vec<DocLink> = links.iter().map(|l| {
+        let mut effective = l.clone();
+        // Если target_url есть (external) — оставить.
+        // Если target_id есть — substitute cross-page URL.
+        if effective.target_url.is_none() {
+            if let Some(tid) = &effective.target_id {
+                if let Some(url) = item_pages.get(tid) {
+                    effective.target_url = Some(url.clone());
+                }
+            }
+        }
+        effective
+    }).collect();
+    // Filter to keep relevant only (perf). Не важно для correctness.
+    let _ = effective_links.len();
+    write_module(out, m, &effective_links);
+}
+
+fn module_filename(path: &[String]) -> String {
+    if path.is_empty() {
+        "_root.html".to_string()
+    } else {
+        format!("{}.html", path.join("."))
+    }
 }
 
 fn write_html_head(out: &mut String, tree: &DocTree) {
@@ -175,7 +336,7 @@ const EMBEDDED_JS: &str = r##"
   })();
 "##;
 
-fn write_sidebar(out: &mut String, tree: &DocTree) {
+fn write_sidebar(out: &mut String, tree: &DocTree, _multipage_marker: Option<&DocModule>) {
     out.push_str("<nav class=\"sidebar\">\n");
     out.push_str("<strong>nova doc</strong>\n");
     // Plan 45 Ф.31.2: search box.

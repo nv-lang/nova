@@ -170,6 +170,11 @@ enum Cmd {
         /// gives true positive guarantee. Без флага — text-based heuristic.
         #[arg(long = "real-exec", requires = "mutate_contracts")]
         real_exec: bool,
+        /// Plan 45 Ф.31.4: write multi-page HTML output to directory.
+        /// Each module → separate file (`<module.path>.html`). `index.html`
+        /// — workspace overview. Only valid с `--format html`.
+        #[arg(long = "output-dir", value_name = "DIR")]
+        output_dir: Option<PathBuf>,
     },
     /// Compile a single Nova source file to a native binary.
     ///
@@ -1023,7 +1028,7 @@ fn cmd_run(path: &Path) -> Result<()> {
 ///
 /// MVP: один входной файл, вывод в stdout. Никаких подкоманд (workspace/
 /// --output-dir/--watch — Plan 45.A или отдельные субкоманды позже).
-fn cmd_doc(path: &Path, format: &str, json_schema: bool, include_private: bool, run_doc_tests: bool, check: bool, watch: bool, coverage: bool, jobs: usize, scrape_examples: Option<&Path>, strict: bool, mutate_contracts: bool, real_exec: bool) -> Result<()> {
+fn cmd_doc(path: &Path, format: &str, json_schema: bool, include_private: bool, run_doc_tests: bool, check: bool, watch: bool, coverage: bool, jobs: usize, scrape_examples: Option<&Path>, strict: bool, mutate_contracts: bool, real_exec: bool, output_dir: Option<&Path>) -> Result<()> {
     // `--json-schema` — печатает embedded схему и выходит (D107).
     if json_schema {
         println!("{}", nova_doc_embedded_schema());
@@ -1034,7 +1039,7 @@ fn cmd_doc(path: &Path, format: &str, json_schema: bool, include_private: bool, 
     if path.is_dir() {
         // Plan 45 Ф.25.4: mutate_contracts пока single-file only (workspace
         // mode требует cross-module test-runner integration — Ф.25.5).
-        return cmd_doc_workspace(path, format, include_private, run_doc_tests, check, coverage, jobs, strict, mutate_contracts, real_exec);
+        return cmd_doc_workspace(path, format, include_private, run_doc_tests, check, coverage, jobs, strict, mutate_contracts, real_exec, output_dir);
     }
     if !path.is_file() {
         bail!("file not found: {}", path.display());
@@ -1114,6 +1119,12 @@ fn cmd_doc(path: &Path, format: &str, json_schema: bool, include_private: bool, 
         }
         return Ok(());
     }
+    // Plan 45 Ф.31.4: html + --output-dir → multi-page output.
+    if format == "html" {
+        if let Some(out_dir) = output_dir {
+            return write_html_multipage(&tree, out_dir);
+        }
+    }
     let out = match format {
         "markdown" | "md" => nova_codegen::doc::render_markdown_with_source(&tree, &src),
         "json" => nova_codegen::doc::render_json_with_source(&tree, &src),
@@ -1153,6 +1164,7 @@ fn cmd_doc_workspace(
     strict: bool,
     mutate_contracts: bool,
     real_exec: bool,
+    output_dir: Option<&Path>,
 ) -> Result<()> {
     let mut files: Vec<PathBuf> = Vec::new();
     walk_nv_files(dir, &mut files)?;
@@ -1282,6 +1294,12 @@ fn cmd_doc_workspace(
             Some(&combined_source),
         );
         return print_doc_test_summary(summary);
+    }
+    // Plan 45 Ф.31.4: html + --output-dir → multi-page output (workspace mode).
+    if format == "html" {
+        if let Some(out_dir) = output_dir {
+            return write_html_multipage(&tree, out_dir);
+        }
     }
     let out = match format {
         "markdown" | "md" => nova_codegen::doc::render_markdown(&tree),
@@ -1429,6 +1447,22 @@ fn cmd_doc_mutate_contracts(
     print_mutation_report(&report, format)
 }
 
+/// Plan 45 Ф.31.4 — write multi-page HTML output to directory.
+/// Creates directory if not exists. Writes each `(filename, html)` pair.
+fn write_html_multipage(tree: &nova_codegen::doc::DocTree, out_dir: &Path) -> Result<()> {
+    std::fs::create_dir_all(out_dir)?;
+    let pages = nova_codegen::doc::render_html_multipage(tree);
+    let mut count = 0;
+    for (filename, content) in &pages {
+        let target = out_dir.join(filename);
+        std::fs::write(&target, content)?;
+        count += 1;
+    }
+    eprintln!("nova doc --format html --output-dir: wrote {} file(s) to {}",
+        count, out_dir.display());
+    Ok(())
+}
+
 /// Plan 45 Ф.29.4 — shared mutation report printer (single-file + workspace).
 fn print_mutation_report(
     report: &nova_codegen::doc::mutation::MutationReport,
@@ -1568,7 +1602,7 @@ fn cmd_doc_watch(
                 chrono_like_now()
             );
             // Re-run одним проходом через cmd_doc (без watch/json_schema).
-            match cmd_doc(path, format, false, include_private, run_doc_tests, check, false, coverage, 0, None, false, false, false) {
+            match cmd_doc(path, format, false, include_private, run_doc_tests, check, false, coverage, 0, None, false, false, false, None) {
                 Ok(_) => {}
                 Err(e) => eprintln!("error: {}", e),
             }
@@ -2461,7 +2495,7 @@ fn main() -> ExitCode {
             &skip,
         ),
         Cmd::Run { file } => cmd_run(&file),
-        Cmd::Doc { file, format, json_schema, include_private, run_doc_tests, check, watch, coverage, jobs, diff, scrape_examples, strict, mutate_contracts, real_exec } => {
+        Cmd::Doc { file, format, json_schema, include_private, run_doc_tests, check, watch, coverage, jobs, diff, scrape_examples, strict, mutate_contracts, real_exec, output_dir } => {
             // Plan 45 Ф.24.10: --diff old.json new.json
             // cmd_doc_diff uses process::exit for severity codes; propagate Err.
             if let Some(paths) = diff {
@@ -2476,7 +2510,7 @@ fn main() -> ExitCode {
                 eprintln!("error: FILE argument required (unless --json-schema)");
                 std::process::exit(1);
             });
-            cmd_doc(path, &format, json_schema, include_private, run_doc_tests, check, watch, coverage, jobs, scrape_examples.as_deref(), strict, mutate_contracts, real_exec)
+            cmd_doc(path, &format, json_schema, include_private, run_doc_tests, check, watch, coverage, jobs, scrape_examples.as_deref(), strict, mutate_contracts, real_exec, output_dir.as_deref())
             } // else (no --diff)
         }
         Cmd::Build { file, output, mode, toolchain, vcvars, clang, timeout, keep_artifacts, mono_depth } => cmd_build(
