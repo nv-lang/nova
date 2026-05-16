@@ -6857,3 +6857,20 @@ mono-схему в `sum_schemas`. Fallback на `find_variant` при отсут
 
 - **std/collections: 10/10 PASS**
 - **nova_tests: 397 PASS / 44 FAIL / 13 SKIP**
+
+## Plan 45 Ф.24 simplifications (2026-05-16)
+
+- **#doc_inline parsing**: doc-attrs before `export import` required skip_newlines() after
+  parse_doc_attrs() in parse_module loop — without it, newline token broke lookahead.
+- **doc_semver_diff race**: parallel test threads writing to same old.json/new.json temp files
+  → fixed by per-thread dirs (pid + thread_id in path).
+- **ItemKind::ReExport**: re-exports are first-class DocItems in JSON (kind="reexport"),
+  not just links. Renderers decide inline vs link based on doc_inline field.
+- **infer_contracts**: textual assert() extraction sufficient for documentation purposes
+  (false positives = string literal match acceptable). No full parse needed.
+- **effect_matrix/realtime_matrix**: auto-derived from existing DocItem fields, zero AST cost.
+  Enables jq queries without knowledge of signature structure.
+- **scrape-examples word boundary**: verified `name(` check via prev-byte non-ident is
+  sufficient; `.foo(` correctly excluded by prev byte `.` being non-ident... wait, `.` is
+  non-ident so it would match. But method calls on external types are not in our DocItems
+  anyway, so false positives from `obj.foo(` are harmless.

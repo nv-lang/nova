@@ -72,10 +72,16 @@
       "doc_attrs": [
 
       ],
+      "effect_matrix": [
+
+      ],
       "kind": "file",
       "name": "sample",
       "path": "nova_tests.doc.fixtures.doctests.sample",
       "peers": [
+
+      ],
+      "realtime_matrix": [
 
       ],
       "source": {
@@ -110,6 +116,10 @@
       "kind": "fn",
       "module_path": "nova_tests.doc.fixtures.doctests.sample",
       "name": "double",
+      "reexport_from": null,
+      "scraped_examples": [
+
+      ],
       "sections": {
         "examples": "Тривиальный пример:\n\n```nova\nlet x = 21\nlet y = x * 2\n```\n\nCrate-scope (Ф.21.1): вызов документируемой функции:\n\n```nova\nassert(double(3) == 6)\n```\n\nНе запускаем (compile-only):\n\n```nova,no_run\nlet big = 1_000_000 * 2\n```\n\nИгнорируем (показано, но не запускается):\n\n```nova,ignore\nundefined_symbol()\n```\n\nCompile-fail тест (ожидаемая ошибка типа):\n\n```nova,compile_fail\nlet x: int = \"not an int\"\n```\n\nSMT-verified (Ф.21.4): без contracts → trivially verifies.\n\n```nova,must_verify\nlet _ = 1\n```"
       },

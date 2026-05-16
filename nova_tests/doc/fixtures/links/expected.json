@@ -37,10 +37,16 @@
       "doc_attrs": [
 
       ],
+      "effect_matrix": [
+
+      ],
       "kind": "file",
       "name": "sample",
       "path": "nova_tests.doc.fixtures.links.sample",
       "peers": [
+
+      ],
+      "realtime_matrix": [
 
       ],
       "source": {
@@ -78,6 +84,10 @@
       ],
       "module_path": "nova_tests.doc.fixtures.links.sample",
       "name": "Point",
+      "reexport_from": null,
+      "scraped_examples": [
+
+      ],
       "sections": {
 
       },
@@ -129,6 +139,10 @@
       ],
       "module_path": "nova_tests.doc.fixtures.links.sample",
       "name": "translate",
+      "reexport_from": null,
+      "scraped_examples": [
+
+      ],
       "sections": {
 
       },

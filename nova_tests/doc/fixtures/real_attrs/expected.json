@@ -13,10 +13,16 @@
       "doc_attrs": [
 
       ],
+      "effect_matrix": [
+
+      ],
       "kind": "file",
       "name": "sample",
       "path": "nova_tests.doc.fixtures.real_attrs.sample",
       "peers": [
+
+      ],
+      "realtime_matrix": [
 
       ],
       "source": {
@@ -52,6 +58,10 @@
       "kind": "fn",
       "module_path": "nova_tests.doc.fixtures.real_attrs.sample",
       "name": "add",
+      "reexport_from": null,
+      "scraped_examples": [
+
+      ],
       "sections": {
 
       },
@@ -149,6 +159,10 @@
       "kind": "fn",
       "module_path": "nova_tests.doc.fixtures.real_attrs.sample",
       "name": "maybe_add",
+      "reexport_from": null,
+      "scraped_examples": [
+
+      ],
       "sections": {
 
       },
@@ -246,6 +260,10 @@
       "kind": "fn",
       "module_path": "nova_tests.doc.fixtures.real_attrs.sample",
       "name": "override_demo",
+      "reexport_from": null,
+      "scraped_examples": [
+
+      ],
       "sections": {
 
       },
@@ -321,6 +339,10 @@
       "kind": "fn",
       "module_path": "nova_tests.doc.fixtures.real_attrs.sample",
       "name": "plus",
+      "reexport_from": null,
+      "scraped_examples": [
+
+      ],
       "sections": {
 
       },
@@ -413,6 +435,10 @@
       "kind": "fn",
       "module_path": "nova_tests.doc.fixtures.real_attrs.sample",
       "name": "select_channel",
+      "reexport_from": null,
+      "scraped_examples": [
+
+      ],
       "sections": {
 
       },

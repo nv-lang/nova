@@ -13,10 +13,16 @@
       "doc_attrs": [
 
       ],
+      "effect_matrix": [
+
+      ],
       "kind": "file",
       "name": "sample",
       "path": "nova_tests.doc.fixtures.capability_forbid.sample",
       "peers": [
+
+      ],
+      "realtime_matrix": [
 
       ],
       "source": {
@@ -51,6 +57,10 @@
       "kind": "fn",
       "module_path": "nova_tests.doc.fixtures.capability_forbid.sample",
       "name": "add",
+      "reexport_from": null,
+      "scraped_examples": [
+
+      ],
       "sections": {
 
       },
