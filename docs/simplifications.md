@@ -8335,3 +8335,35 @@ These are **owned by Plan 33.6** (verify subsystem). Separate concern.
 | Plan 56 | open | ✅ closed (production-grade) | |
 | New plans | — | 57, 58, 59 created | |
 | M-маркеров closed | — | 11+ | |
+
+## Session окончательный финал (2026-05-17)
+
+**568 PASS / 0 FAIL / 42 SKIP** — полный clean baseline.
+
+### Дополнительно (после Plan 56 closure):
+
+**Bonus fix:** Plan 33.6 Ф.15.2 followup — `apply_bounds_propagation`
+extracted как standalone phase в TrivialBackend::check_sat (раньше был
+nested внутри propagate_equalities, early-return блокировал bounds
+prop когда нет equalities в conjuncts).
+
+Closes:
+- contracts/trivial_bound_weakening_positive (PASS).
+- contracts/edge_multi_requires_positive (PASS).
+
+### Сessионный итог финальный
+
+| | Pre-session | Post finale | Δ |
+|---|---|---|---|
+| PASS | 509 | **568** | **+59** |
+| FAIL | 26 | **0** | **−26** |
+| Plans closed | — | 55, 56 | 2 |
+| Plans created | — | 57, 58, 59 | 3 |
+| M-маркеров closed | — | 11+ | |
+| Spec D-blocks added | — | D110 | 1 |
+| Test files added | — | ~25 | |
+| Commits | — | ~60 | |
+
+**Все известные baseline FAIL'ы закрыты.** Plan 55 + Plan 56 ✅.
+3 deferred planов (57 perf bench / 58 cross-toolchain / 59 mono tuples)
+зарегистрированы для future work.
