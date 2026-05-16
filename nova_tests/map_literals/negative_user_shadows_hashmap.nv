@@ -1,0 +1,24 @@
+// EXPECT_CC_ERROR
+//
+// Plan 52 Ф.19 (canonical identity): user-локальный `type HashMap[K,V]
+// #from_fields { ... }` с тем же именем что stdlib НЕ должен триггерить
+// map-coercion. Canonical-identity check через peer_files.path фильтрует
+// только canonical std/collections/ types.
+//
+// Здесь user объявляет свой `HashMap` с #from_fields, но coercion НЕ
+// сработает: from_fields_types в MapLitCtx::build примет только stdlib
+// HashMap (peer-файл которого в std/collections/hashmap/). User-HashMap
+// без import конфликтует с stdlib именем; пытаемся coerce {a:1} →
+// codegen падает.
+//
+// Если бы Ф.19 был broken — coercion прошёл бы silently (через bare-name)
+// и сгенерировал неверный код.
+module map_literals.negative_user_shadows_hashmap
+
+#from_fields
+type HashMap[K, V] { data int }
+
+fn main() -> () {
+    let m HashMap[str, int] = { a: 1, b: 2 }
+    let _ = m
+}
