@@ -476,10 +476,49 @@ fn subst_call_arg(
 fn extract_block_assignments(block: &crate::ast::Block) -> Vec<(String, crate::ast::Expr)> {
     let mut result = Vec::new();
     for stmt in &block.stmts {
-        if let crate::ast::Stmt::Assign { target, value, .. } = stmt {
-            if let crate::ast::ExprKind::Ident(var) = &target.kind {
-                result.push((var.clone(), value.clone()));
+        match stmt {
+            crate::ast::Stmt::Assign { target, value, .. } => {
+                if let crate::ast::ExprKind::Ident(var) = &target.kind {
+                    result.push((var.clone(), value.clone()));
+                }
             }
+            // Ф.11.5 (Plan 33.6): if-branching MVP — если оба branches содержат
+            // одинаковые assignments к одной var с if-expression в value,
+            // эмитим объединённую assignment через ite.
+            crate::ast::Stmt::Expr(e) => {
+                if let crate::ast::ExprKind::If { cond, then, else_ } = &e.kind {
+                    let then_asgns = extract_block_assignments(then);
+                    let else_asgns = if let Some(crate::ast::ElseBranch::Block(b)) = else_ {
+                        extract_block_assignments(b)
+                    } else {
+                        Vec::new()
+                    };
+                    // Для каждого var присвоенного в обоих ветках — emit ite(cond, then_val, else_val).
+                    for (var, then_val) in &then_asgns {
+                        if let Some((_, else_val)) = else_asgns.iter().find(|(v, _)| v == var) {
+                            // Build synthetic if-expr: `if cond { then_val } else { else_val }`.
+                            let ite_expr = crate::ast::Expr {
+                                kind: crate::ast::ExprKind::If {
+                                    cond: cond.clone(),
+                                    then: crate::ast::Block {
+                                        stmts: Vec::new(),
+                                        trailing: Some(Box::new(then_val.clone())),
+                                        span: then_val.span,
+                                    },
+                                    else_: Some(crate::ast::ElseBranch::Block(crate::ast::Block {
+                                        stmts: Vec::new(),
+                                        trailing: Some(Box::new(else_val.clone())),
+                                        span: else_val.span,
+                                    })),
+                                },
+                                span: e.span,
+                            };
+                            result.push((var.clone(), ite_expr));
+                        }
+                    }
+                }
+            }
+            _ => {}
         }
     }
     result

@@ -1,0 +1,29 @@
+// Ф.11.5 (Plan 33.6): handler с if-branching в action body —
+// extract_block_assignments извлекает оба branches как ite.
+// REQUIRES_SMT_BACKEND z3
+// (Под TrivialBackend post-axiom вернёт Unknown — нужен Z3 для решения ite.)
+
+module contracts.handler_post_if_branching_positive
+
+type Flag effect {
+    SetFlag(v bool)
+    #pure get_flag() -> bool
+    axiom after_set(v) => post(SetFlag(v))(get_flag()) == v
+}
+
+test "handler if-branching post-axiom" {
+    let mut store = false
+    with #verify Flag = handler Flag {
+        SetFlag(v) {
+            if v {
+                store = true
+            } else {
+                store = false
+            }
+        }
+        get_flag() => store
+    } {
+        Flag.SetFlag(true)
+        assert(Flag.get_flag() == true)
+    }
+}
