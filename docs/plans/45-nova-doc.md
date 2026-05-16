@@ -1,8 +1,8 @@
 # Plan 45: `nova doc` — production-grade documentation tooling
 
-## Текущий статус MVP (2026-05-15)
+## Текущий статус (2026-05-16) — ПЛАН ЗАКРЫТ
 
-Branch `plan-45-doc`, uncommitted после первоначального merge'а Ф.4+Ф.5+Ф.8+Ф.9+Ф.12.
+Все фазы Ф.1–Ф.24 завершены. Ветка `plan-45-doc` смержена в `main`.
 
 | Фаза | Статус | Где |
 |---|---|---|
@@ -20,11 +20,12 @@ Branch `plan-45-doc`, uncommitted после первоначального merg
 | Ф.14 `--check` mode | ✅ done | broken links + missing summaries → exit 1 |
 | Ф.15 `--watch` mode | ✅ done | `--watch` flag — mtime poll каждые 500ms, ANSI screen-clear перед каждым re-render'ом; no new deps |
 | Ф.17 CI integration | ✅ done | `.github/workflows/nova-doc.yml` — три job'а: `--check` clean fixtures + negative path; `--test` all fixtures; doc-module unit tests |
-| Ф.19 Tests/golden | ✅ done | 42 unit tests + 7 golden-snapshot integration tests (`compiler-codegen/tests/doc_golden.rs`) — committed `expected.json` per fixture, byte-for-byte regression check |
-| Ф.20 User docs | ✅ done | `docs/nova-doc.md` — quick start, sections, links, doc-tests, modifiers, stability, CLI flags, CI integration, style guide |
+| Ф.19 Tests/golden | ✅ done | 14 golden-snapshot integration tests (`compiler-codegen/tests/doc_golden.rs`) — committed `expected.json` per fixture, byte-for-byte regression check |
+| Ф.20 User docs | ✅ done | `docs/nova-doc.md` — quick start, sections, links, doc-tests, modifiers, stability, CLI flags, CI integration, style guide, jq queries |
 | Ф.21 Hardening round 1 | ✅ done | см. ниже (9 пунктов P0+P1) |
 | Ф.22 Hardening round 2 | ✅ done | см. ниже (8 пунктов P0+P1) |
-| Ф.23 Hardening round 3 (Nova-unique) | 🟡 **в работе** | см. ниже (25 пунктов) — закрывает Nova-уникальные обещания §19: contracts/verify_status/capabilities/handler-matrix/real-must_verify; promote schema → stable v1.0.0 |
+| Ф.23 Hardening round 3 (Nova-unique) | ✅ done | 25 пунктов — contracts/verify_status/capabilities/handler-matrix/must_verify/lints/schema v1.0.0-rc1/MD anchors/back-links/implementors/structural types/caret diagnostics/coverage/peer_file/newtype |
+| Ф.24 Production hardening Sprint A+B+C | ✅ done | 18 пунктов — forbid propagation, BTreeMap determinism, implementors guard, --check json, multi-line caret, structural-via-parser, schema rc1, expect_output, scrape-examples, semver-diff, doc_inline, workspace-parallelism, verify-badges, jq-queries, effect-matrix, realtime-matrix, infer-contracts |
 
 ## Ф.21 — Production hardening (2026-05-15, post-MVP audit)
 
