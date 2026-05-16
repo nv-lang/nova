@@ -471,6 +471,20 @@ enum BenchCmd {
         /// Path to bench.toml (default: ./bench.toml).
         #[arg(long)]
         config: Option<PathBuf>,
+        /// Path to .nova-bench-noise.json (Plan 57.A.3 auto noise-floor).
+        /// Default: ./.nova-bench-noise.json если есть.
+        #[arg(long = "noise")]
+        noise: Option<PathBuf>,
+    },
+    /// Plan 57.A.3: Auto-calibrate noise floor from N repeated runs of
+    /// same baseline. Saves to .nova-bench-noise.json (machine-specific).
+    Calibrate {
+        /// JSON result files (>= 2) from repeated runs of the same source.
+        #[arg(required = true, num_args = 2..)]
+        runs: Vec<PathBuf>,
+        /// Output noise floor JSON path.
+        #[arg(long, default_value = ".nova-bench-noise.json")]
+        out: PathBuf,
     },
     /// Plan 57.A.1: Append result JSON to an orphan history branch.
     #[command(name = "history-add")]
@@ -2672,9 +2686,20 @@ fn cmd_bench(sub: BenchCmd) -> Result<()> {
             if exit != 0 { std::process::exit(exit); }
             Ok(())
         }
-        BenchCmd::Gate { baseline, new, config } => {
-            let exit = bench::gate::run(&baseline, &new, config.as_deref())?;
+        BenchCmd::Gate { baseline, new, config, noise } => {
+            let exit = bench::gate::run(&baseline, &new,
+                config.as_deref(), noise.as_deref())?;
             if exit != 0 { std::process::exit(exit); }
+            Ok(())
+        }
+        BenchCmd::Calibrate { runs, out } => {
+            let n = bench::noise::calibrate(&runs)?;
+            n.save(&out)?;
+            eprintln!("calibration: saved to {} (suite noise={:.2}%, {} benches)",
+                out.display(), n.suite_noise_pct, n.per_bench.len());
+            for (name, noise_pct) in &n.per_bench {
+                eprintln!("  {:<40} noise={:.2}%", name, noise_pct);
+            }
             Ok(())
         }
         BenchCmd::HistoryAdd { result, branch, push, remote, dry_run } => {
