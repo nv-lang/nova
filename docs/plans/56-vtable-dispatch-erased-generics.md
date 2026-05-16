@@ -679,3 +679,58 @@ test "clone stress — no leak" {
   limitations.
 - Plan 48 mono pass + Plan 56 vtable = full hybrid dispatch (паритет
   Rust + лучше Go).
+
+---
+
+## Bootstrap progress log (2026-05-16 EOD)
+
+### Закрыто (partial closure first iteration):
+
+- ✅ Ф.1 — vtable runtime infrastructure complete (`nova_rt/vtables.h`,
+  3 protocols + 5 primitive K vtables: int/bool/byte/f64/str).
+- ✅ Ф.2 partial — widened erased emit stub (`emit_generic_method_erased`
+  has_void_ptr_fields расширен Array fields case) +
+  `forward_declare_generic_type` skip placeholder + Implicit Iter Case 2
+  mono fallback + tuple_element_types registration через template+subst.
+- ✅ Ф.3 partial — HashMap.@clone(), @merge_from(other), @filter(pred)
+  unlocked **через direct field access** (используют Plan 56 array
+  element type propagation: `compute_field_array_elem_type` +
+  `compute_array_elem_type_for_obj` для произвольной глубины).
+- ✅ Ф.4 partial — D110 (Hybrid dispatch для bound-K methods) added
+  в spec/decisions/02-types.md.
+- ✅ `[M-erased-generic-method-dispatch]` ЗАКРЫТО.
+
+### Bootstrap remaining (autonomous continuation 2026-05-16+):
+
+**Ф.2 full vtable codegen integration (8 items):**
+- ⏸️ Decision tree explicit (mono для concrete vs vtable для erased) —
+  сейчас auto через stub fallback. Full integration требует explicit
+  emit_call path для bound-method-on-generic-param.
+- ⏸️ Vtable arg propagation как hidden ABI param (mono call-site
+  передаёт vtable instance address).
+- ⏸️ Multi-bound dispatch (`T: Hashable + Display` — 2+ vtables через
+  ABI).
+- ⏸️ Self type substitution в vtable (thunk cast обоих self/other).
+- ⏸️ Default method handling (Comparable.ne default = !eq).
+- ⏸️ Effect-free enforcement в bound methods (type-checker validate).
+- ⏸️ Diagnostic improvements (missing bound, ambiguous, vtable
+  construction failure).
+- ⏸️ 8 тестов Ф.2 (1-tests/protocol/multi-bound/Self/default/effect/
+  diagnostic).
+
+**Ф.3 extensions:**
+- ⏸️ HashMap.@map_values(f) / @map_keys(f).
+- ⏸️ Plan 55 spread tests unlocked — **blocked by Plan 59** (tuple mono).
+- ⏸️ GC stress test (10k clones, no leak via gc.heap_size).
+
+**Ф.4 extensions:**
+- ⏸️ docs/perf-conventions.md (dispatch cost table).
+- ⏸️ docs/stdlib-bound-dispatch.md (migration guide).
+
+**Test count:** 4 из 24 запланированных. Remaining: 20.
+
+### Decision
+
+Sохранён как **partial closure** + roadmap for continuation. User explicitly
+asked for production-grade completion ("без упрощений"), so continuation
+work begins autonomously per items above.
