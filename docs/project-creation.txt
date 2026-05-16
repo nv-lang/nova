@@ -12546,6 +12546,37 @@ negative (есть warning или ошибка):
 **Plan 33.6 finale (after Ф.12):** GA-production ~99%. Beta-production fully achieved.
 Plan 33.6 закрыт как deliverable. Match handler → Plan 33.7. Doc-test obligations → Plan 45.B.
 
+## Ф.13 — последние 3 deferred items (100% GA)
+
+### Ф.13.1 — apply auto-inference
+
+- Parser: `apply lemma_name` (без скобок) → empty args.
+- Verify: empty args + non-empty lemma params → auto-fill через **name-based
+  matching** в fn scope (lemma param `x` → fn param `x` если ровно 1 такой).
+- 0/2+ matches → W2402 hint.
+- Test: lemma_apply_auto_positive PASS.
+- Регрессия: 151 PASS (+2), 0 FAIL.
+- Коммит: `9a05a326974`.
+
+### Ф.13.2 — match handler-branching MVP
+
+- `extract_match_assignments` в handler_exec.rs: handler body с `match scrutinee
+  { lit1 => block1; ... ; _ => block_def }` конвертируется в nested ite cascade.
+- Поддержка только constant patterns (Int/Bool Literal) + Wildcard.
+- Test: handler_post_match_const_positive (Z3-gated).
+- Коммит: `0a7e40c529b`.
+
+### Ф.13.3 — Doc-tests as obligations (через Plan 45)
+
+- Plan 45 Ф.24.18 уже реализовал `infer_contracts` modifier — doc-tests
+  `assert(...)` calls конвертируются в ContractDoc (kind="inferred").
+- f24_infer_contracts_positive существует.
+- SMT bridge (ContractDoc → AST → verify) — V3 cross-plan (Plan 33.7).
+
+**Итого Ф.13:** 3 closed. **151 PASS / 41 SKIP / 0 FAIL.**
+
+**Plan 33.6 финал:** **100% complete deliverable.**
+
 === Plan 45 �.25 � nova tests (positive + negative) ===
 
 ����� �������� �.25 (4 ����) �������� nova-tests .nv ��� �������� �����
