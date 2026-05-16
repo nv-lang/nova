@@ -6,7 +6,9 @@
 > (2) `CancelToken` → **`CancelToken[T]`** — типизированная причина отмены,
 > строго лучше Go (`error`) и TS (`any`).
 >
-> **СТАТУС:** план, не начат.
+> **СТАТУС (2026-05-16):** ✅ **DONE** — Ф.0–Ф.5 + Ф.6 partial + Ф.7 закрыты.
+> reason()-Option[T] per-T un-box + cross-type From-cascade — V2 followup
+> (см. в конце "V2 / Plan 50 followup").
 >
 > **Приоритет:** P1 — закрывает `[M-cancel-throw-routing]` и
 > `[M-within-error-conflation]`; делает отмену first-class: «отмена ≠
@@ -406,42 +408,59 @@ fail-frame unwinding'у; Ф.4 явно тестирует defer+errdefer при 
 
 ---
 
-## Acceptance criteria
+## Acceptance criteria (final 2026-05-16)
 
-- [ ] `nova_throw_cancel` → `CANCEL`-kind; `nova_throw` → `USER`; kind
+- [x] `nova_throw_cancel` → `CANCEL`-kind; `nova_throw` → `USER`; kind
       переживает longjmp.
-- [ ] Кооперативная отмена (yield/channels/sleep/select) бросает `CANCEL`
+- [x] Кооперативная отмена (yield/channels/sleep/select) бросает `CANCEL`
       с reason из токена.
-- [ ] `CancelToken` (= `[str]`): `cancel()` / `cancel(reason)` /
+- [x] `CancelToken` (= `[str]`): `cancel()` / `cancel(reason)` /
       `is_cancelled()` / `reason() -> str?` — caller-owned, reason
       переживает scope.
-- [ ] `supervised(cancel: tok)` + `tok.cancel()` БЕЗ `with Fail`-обёртки:
+- [x] `supervised(cancel: tok)` + `tok.cancel()` БЕЗ `with Fail`-обёртки:
       scope выходит чисто, throw наружу не летит.
-- [ ] Реальная ошибка fiber'а (`USER`) → `supervised` re-throw'ит,
+- [x] Реальная ошибка fiber'а (`USER`) → `supervised` re-throw'ит,
       внешний `with Fail` handler вызывается с этим сообщением.
-- [ ] USER-precedence: отмена + поздняя реальная ошибка → наружу летит
+- [x] USER-precedence: отмена + поздняя реальная ошибка → наружу летит
       ошибка, не отмена.
-- [ ] `with Fail` НЕ перехватывает cancel-throw как Fail.
-- [ ] `defer` / `errdefer` отменённого fiber'а выполняются.
-- [ ] Кооперативный `is_cancelled()` → fiber выходит `return` без throw'а.
-- [ ] M:N: cross-worker cancel не убегает; cross-worker USER-ошибка
-      re-throw'ится; USER-precedence соблюдается.
-- [ ] Полный `nova test` (release) — без новых FAIL.
-- [ ] `[M-cancel-throw-routing]` + `[M-within-error-conflation]` сняты.
+- [x] `with Fail` НЕ перехватывает cancel-throw как Fail.
+- [x] `defer` / `errdefer` отменённого fiber'а выполняются (наследуется
+      от существующего fail-frame unwinding'а — cancel-throw идёт через
+      тот же longjmp механизм).
+- [x] Кооперативный `is_cancelled()` → fiber выходит `return` без throw'а
+      (наследуется от Plan 47).
+- [x] M:N: cross-worker cancel не убегает; cross-worker USER-ошибка
+      re-throw'ится; USER-precedence соблюдается (Ф.5: kinded atomic
+      report + compare-kind CAS-loop).
+- [x] Полный `nova test` (release) — без новых FAIL (413 PASS / 46 FAIL,
+      baseline + Plan 49 smoke tests, zero new fails).
+- [x] `[M-cancel-throw-routing]` + `[M-within-error-conflation]` сняты.
 
-**После Plan 48 (Ф.6):**
+**Ф.6 partial (CancelToken[T] generic):**
 
-- [ ] `CancelToken[T].new()`, `cancel(reason: T)`, `reason() -> Option[T]`
-      — типизированная причина; `match` по структурированной причине
-      работает.
-- [ ] `CancelToken` без параметра == `CancelToken[str]` (existing-код
+- [x] `CancelToken[T]` синтаксис принимается (default `CancelToken` ==
+      `CancelToken[str]`).
+- [x] `tok.cancel(reason: T)` для T=str / T=pointer / T=primitive —
+      type-aware boxing через nova_cancel_box_str / cast / box_copy_raw.
+- [ ] `reason() -> Option[T]` per-T un-box — V2 followup: текущая
+      реализация возвращает Option[str] для любого T (правильно для
+      T=str, не используется для других в smoke test).
+- [x] `CancelToken` без параметра == `CancelToken[str]` (existing-код
       компилируется без изменений).
-- [ ] Cross-type каскад: `child.cancelled_by(parent)` где
-      `child: CancelToken[A]`, `parent: CancelToken[B]` — требует
-      `A: From[B]`; при отмене `parent` с `b_reason` ребёнок отменяется
-      с `A.from(b_reason)`. Нет `From[B] for A` → понятная compile-error.
-- [ ] Same-type каскад (`A == B`) — причина родителя пробрасывается
-      ребёнку как есть, без конвертации.
+- [ ] Cross-type каскад с `From`-конвертацией — V2 followup: текущий
+      каскад same-type only (child получает тот же reason_ptr что parent).
+- [x] Same-type каскад — причина родителя пробрасывается ребёнку как есть.
+
+**V2 / Plan 50 followup:**
+- `reason() -> Option[T]` per-T un-box: нужен mono'd helper по T или
+  infer-context propagation от receiver. Текущая реализация: один
+  runtime getter `nova_cancel_token_reason_str` всегда возвращает
+  Option[str]. Для T=str работает корректно; для T≠str — incorrect
+  результат (нужен Plan 50).
+- Cross-type cascade с From: `child.cancelled_by(parent)` где
+  `child: CancelToken[A]`, `parent: CancelToken[B]` — требует
+  compile-time проверки `A: From[B]` и инжекции `A.from(b_reason)`
+  в каскад. Сейчас same-type предположение (передаём reason_ptr as-is).
 
 ---
 
