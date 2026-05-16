@@ -8102,3 +8102,22 @@ Remaining:
 - `[M-time-handler-sleep-mismatch]` — Time effect semantic evolution.
 - `[M-src-russian-mojibake]` — manual rewrite Russian strings в .rs.
 - `[M-52-spread-not-supported]` — depends on erased-generic fix.
+
+### Plan 55 save/restore audit (2026-05-16) — ✅ CLEAN
+
+Полный grep-audit `emit_c.rs` на save/restore паирность для
+`current_fn_return_ty` и `current_type_subst`:
+
+**`current_fn_return_ty`:**
+- 3 save points: lines 5810, 6249, 6618 (Ф.4 fix).
+- 3 restores: lines 5916, 6316, 6827.
+- Все паирные. 0 leak'ов.
+
+**`current_type_subst`:**
+- 9 save points (saved_subst + saved_inner): lines 5577, 5637, 5685,
+  6016, 6182, 10439, 10724, 10855, 11268, 11454, ...
+- 9 паирных restores. 0 leak'ов.
+- Никаких прямых `.insert()`/`.extend()`/`.clear()` без save.
+
+Audit подтверждает: Plan 55 Ф.4 invariant'ы (save/restore через
+`mem::replace`) выполняются across весь codegen.
