@@ -7968,3 +7968,28 @@ Remaining:
   и был причиной mis-dispatch на WriteBuffer overload.
 - **Tests:** `nova_tests/plan55/f5_hashmap_infer_no_annot.nv`,
   `f5_nested_map_infer.nv`.
+
+### [M-52-multi-instance-hashmap-collision — частично] ✅ ЗАКРЫТО (Plan 55 Ф.6, 2026-05-16)
+- **Где:** Решено side-effect'ами Ф.4 + добавлен str_method_to_rt['len'].
+- **Было:** HashMap[str,int] + HashMap[int,str] в одной fn → CC-FAIL.
+- **Закрыто (частично):**
+  - 2 разных HashMap[K,V] в одной fn — works (если используются
+    .len(), .insert(), no .get()+.match).
+  - 3 same-shape HashMap[K,V] — works.
+  - 3 different generic types [A,B] — works (id, pair_first, pair_second).
+  - str.len() через method теперь корректно эмитится (был picked
+    HashMap.@len через last-wins overload).
+- **Tests:** `nova_tests/plan55/f6_multi_hashmap_in_fn.nv`,
+  `f6_triple_generic_instance.nv`.
+
+### [M-mono-record-pattern-inner-bindings] НОВЫЙ (deferred Plan 56+)
+- **Где:** `emit_c.rs::collect_pattern_inner_bindings`.
+- **Что упрощено:** Pattern::Record (e.g. `Slot.Occupied { value }`)
+  не извлекает field types из mono'd schema. Это значит scrutinee
+  match arms с user sum-types в record-form leak'ают var_types
+  между mono instances HashMap[int, str] → HashMap[int, int].
+- **Workaround:** explicit annotation на match result, или избегать
+  HashMap.@get() с разных V в одной fn.
+- **Followup:** расширить collect_pattern_inner_bindings для
+  Pattern::Record + mono schema lookup. ~50 LOC.
+- **Приоритет:** M (узкий case, но блокирует full multi-instance).
