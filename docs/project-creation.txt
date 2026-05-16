@@ -12729,6 +12729,31 @@ dead lemma diagnostic. Reasonable LIA subset без Z3.
 **Plan 33.6 итог за 19 спринтов:** TrivialBackend + diagnostic UX полностью
 покрывают LIA-MVP + dead-code/trivial-contract detection.
 
+## Ф.20 — division + ite identity
+
+### Ф.20.1 — division bounds
+
+- `try_division_check`: `(>= (/ Var Lit) goal)` где Lit > 0 + goal <= 0 +
+  known lower(Var) >= 0 → true.
+- Test: trivial_division_bounds_positive.
+- Коммит: `cc57f4f36fb`.
+
+### Ф.20.2 — ite identity
+
+- `simplify_app` для `"ite"`: `(ite c X X)` → `X`, `(ite true X Y)` → `X`,
+  `(ite false X Y)` → `Y`.
+- Test: trivial_ite_identity_positive.
+- Коммит: `cc57f4f36fb`.
+
+### Ф.20.3 — constant return detection (defer)
+
+- False-positive risk (программист может явно хотеть assert значения).
+- Defer как opt-in feature под env flag.
+
+**Итого Ф.20:** 2 closed. **163 PASS (+2) / 42 SKIP / 0 FAIL.**
+
+**Plan 33.6 итог за 20 спринтов:** TrivialBackend полный + ite + integer ops.
+
 === Plan 45 �.25 � nova tests (positive + negative) ===
 
 ����� �������� �.25 (4 ����) �������� nova-tests .nv ��� �������� �����

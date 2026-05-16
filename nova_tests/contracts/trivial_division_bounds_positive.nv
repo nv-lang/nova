@@ -1,0 +1,18 @@
+// Ф.20.1 (Plan 33.6): TrivialBackend division bounds.
+// `x >= 0 ⊢ x / 10 >= 0`.
+
+module contracts.trivial_division_bounds_positive
+
+#verify
+fn div_non_neg(x int) -> int
+    requires x >= 0
+    ensures result >= 0
+{
+    x / 10
+}
+
+test "division bounds trivial" {
+    assert(div_non_neg(50) == 5)
+    assert(div_non_neg(0) == 0)
+    assert(div_non_neg(9) == 0)
+}

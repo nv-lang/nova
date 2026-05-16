@@ -1,0 +1,15 @@
+// Ф.20.2 (Plan 33.6): TrivialBackend ite identity — `if c { x } else { x }` → `x`.
+
+module contracts.trivial_ite_identity_positive
+
+#verify
+fn ite_same_branches(c bool, x int) -> int
+    ensures result == x
+{
+    if c { x } else { x }
+}
+
+test "ite identity trivial" {
+    assert(ite_same_branches(true, 5) == 5)
+    assert(ite_same_branches(false, 5) == 5)
+}

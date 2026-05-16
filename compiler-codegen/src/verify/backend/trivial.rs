@@ -294,6 +294,15 @@ fn simplify_app(op: &str, args: &[SmtTerm]) -> SmtTerm {
             SmtTerm::App("=>".into(), args.to_vec())
         }
 
+        // Ф.20.2 (Plan 33.6): ite identity — `(ite c X X)` → `X`.
+        // Plus constant condition: `(ite true X Y)` → `X`, `(ite false X Y)` → `Y`.
+        "ite" if args.len() == 3 => {
+            if matches!(&args[0], SmtTerm::BoolLit(true)) { return args[1].clone(); }
+            if matches!(&args[0], SmtTerm::BoolLit(false)) { return args[2].clone(); }
+            if args[1] == args[2] { return args[1].clone(); }
+            SmtTerm::App("ite".into(), args.to_vec())
+        }
+
         _ => SmtTerm::App(op.into(), args.to_vec()),
     }
 }
@@ -458,6 +467,28 @@ fn propagate_bounds(conjuncts: &[SmtTerm]) -> Vec<SmtTerm> {
                 None
             } else { None }
         };
+        // Ф.20.1 (Plan 33.6): division bounds. `(/ Var Lit)` где Lit > 0:
+        // - если goal <= 0 и known lower(Var) >= 0 → result non-negative → true.
+        // - integer division: result <= Var/Lit (всегда <= Var/Lit для positive).
+        let try_division_check = |inner: &SmtTerm| -> Option<bool> {
+            if let SmtTerm::App(iop, iargs) = inner {
+                if iop != ">=" || iargs.len() != 2 { return None; }
+                let goal = match &iargs[1] { SmtTerm::IntLit(n) => *n, _ => return None };
+                if let SmtTerm::App(dop, dargs) = &iargs[0] {
+                    if dop != "/" || dargs.len() != 2 { return None; }
+                    if let (SmtTerm::Var(v), SmtTerm::IntLit(divisor)) = (&dargs[0], &dargs[1]) {
+                        if *divisor > 0 && goal <= 0 {
+                            if let Some(known_low) = lower.get(v) {
+                                if *known_low >= 0 {
+                                    return Some(true);
+                                }
+                            }
+                        }
+                    }
+                }
+                None
+            } else { None }
+        };
         // Ф.19.1 (Plan 33.6): modulus bounds. `(% Var Lit)` где Lit > 0:
         // - result >= 0 если goal <= 0 → true.
         // - result < Lit (но это эквивалентно `<` form).
@@ -613,6 +644,10 @@ fn propagate_bounds(conjuncts: &[SmtTerm]) -> Vec<SmtTerm> {
         if let Some(b) = try_modulus_check(c) {
             return SmtTerm::BoolLit(b);
         }
+        // Ф.20.1: division check.
+        if let Some(b) = try_division_check(c) {
+            return SmtTerm::BoolLit(b);
+        }
         // Ф.17.1: negation check.
         if let Some(b) = try_negation_check(c) {
             return SmtTerm::BoolLit(b);
@@ -633,6 +668,9 @@ fn propagate_bounds(conjuncts: &[SmtTerm]) -> Vec<SmtTerm> {
                     return SmtTerm::BoolLit(!b);
                 }
                 if let Some(b) = try_modulus_check(&args[0]) {
+                    return SmtTerm::BoolLit(!b);
+                }
+                if let Some(b) = try_division_check(&args[0]) {
                     return SmtTerm::BoolLit(!b);
                 }
                 if let Some(b) = try_negation_check(&args[0]) {
