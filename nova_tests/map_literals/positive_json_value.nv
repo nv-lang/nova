@@ -1,0 +1,42 @@
+// Plan 52 Ф.11 (flagship): композиция D55 sum-coercion (per value)
+// + map-coercion (record). Acceptance §641: «JsonValue.object({...})
+// компилируется и работает».
+//
+// Каждое значение оборачивается в variant через sum-coercion;
+// имена полей становятся строковыми ключами через map-coercion.
+module map_literals.positive_json_value
+
+import std.collections.hashmap.{HashMap}
+
+type Json
+    | JStr(str)
+    | JNum(int)
+    | JBool(bool)
+
+fn count_fields(obj HashMap[str, Json]) -> int =>
+    obj.len()
+
+fn get_str(obj HashMap[str, Json], key str) -> str {
+    match obj.get(key) {
+        Some(JStr(s)) => s
+        _ => "missing"
+    }
+}
+
+test "{field: v} → HashMap[str, Json] heterogeneous values" {
+    let m HashMap[str, Json] = {
+        name: JStr("alice"),
+        age: JNum(30),
+        admin: JBool(true),
+    }
+    assert(m.len() == 3)
+    assert(get_str(m, "name") == "alice")
+}
+
+test "flagship — map-coercion in argument position with sum-coercion values" {
+    let n = count_fields({
+        host: JStr("localhost"),
+        port: JNum(8080),
+    })
+    assert(n == 2)
+}
