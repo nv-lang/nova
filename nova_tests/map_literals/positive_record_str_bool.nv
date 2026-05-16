@@ -1,0 +1,10 @@
+module map_literals.positive_record_str_bool
+
+import std.collections.hashmap.{HashMap}
+
+test "{field: v} → HashMap[str, bool] basic" {
+    let cfg HashMap[str, bool] = { debug: true, verbose: false }
+    assert(cfg.len() == 2)
+    assert(cfg.get("debug") == Some(true))
+    assert(cfg.get("verbose") == Some(false))
+}

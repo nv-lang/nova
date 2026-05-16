@@ -5136,7 +5136,7 @@ impl MapLitCtx {
             ExprKind::TupleLit(elems) => {
                 for x in elems { self.walk_expr(x, None, errors); }
             }
-            ExprKind::RecordLit { type_name, fields } => {
+            ExprKind::RecordLit { type_name, fields, .. } => {
                 // Plan 52 Ф.3: D55 map-coercion. Анонимный record-литерал
                 // `{field: v}` в позиции, ожидающей тип с маркером
                 // `#from_fields` (= HashMap) — это НЕ record-coercion (поля
@@ -5807,6 +5807,21 @@ impl MapLitAnnotator {
                 pairs.iter().map(|(_, v)| v),
                 exp_v,
             );
+        }
+        // Plan 52 Ф.10: D55 map-coercion для `{field: v}` в позиции
+        // `#from_fields`-типа (= HashMap[str, V]). Если expected —
+        // HashMap-with-#from_fields-маркер И литерал анонимный,
+        // записываем V в `inferred_map_v`. Codegen `emit_record_as_map`
+        // эмитит как `HashMap[str,V].with_capacity + insert("field", v)`.
+        if let ExprKind::RecordLit { type_name: None, inferred_map_v, .. } = &mut e.kind {
+            if let Some(exp) = expected {
+                if self.ctx.expected_is_from_fields(exp) {
+                    let (_, exp_v) = extract_hashmap_kv(Some(exp));
+                    if let Some(v) = exp_v {
+                        *inferred_map_v = Some(v.clone());
+                    }
+                }
+            }
         }
         // 2. Спуск в под-выражения с propagation expected-type где известен.
         match &mut e.kind {

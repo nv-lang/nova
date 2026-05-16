@@ -138,6 +138,122 @@ impl DesugarCtx {
                 };
             e.kind = self.build_map_block(pairs, inferred_key, inferred_value, span);
         }
+        // Plan 52 Ф.10: D55 map-coercion для `{field: v}`. Когда
+        // annotate_map_literals установил `inferred_map_v: Some(V)` —
+        // это анонимный record-литерал в позиции `HashMap[str, V]`.
+        // Превращаем в pairs = [("field", v), ...] и десугарим как
+        // обычный MapLit с K=str, V=inferred_map_v.
+        else if let ExprKind::RecordLit { type_name: None, inferred_map_v: Some(_), .. } = &e.kind {
+            let span = e.span;
+            let (fields, v_ty) =
+                match std::mem::replace(&mut e.kind, ExprKind::UnitLit) {
+                    ExprKind::RecordLit { fields, inferred_map_v: Some(v_ty), .. } => {
+                        (fields, v_ty)
+                    }
+                    _ => unreachable!(),
+                };
+            e.kind = self.build_record_map_block(fields, v_ty, span);
+        }
+    }
+
+    /// Plan 52 Ф.10: десугаринг D55 map-coercion `{field: v}` →
+    /// `HashMap[str, V].with_capacity(n) + n × insert("field", v)`
+    /// block-expression. Mirror MapLit-десугаринга для consistency.
+    ///
+    /// Spread (`...src`) уже отвергнут type-checker'ом (Plan 52 Ф.3);
+    /// здесь молча пропускаем (panic если встретится — bug type-check'а).
+    /// Field-punning `{ name }` — значение это переменная `name` в scope.
+    fn build_record_map_block(
+        &mut self,
+        fields: Vec<RecordLitField>,
+        v_ty: TypeRef,
+        span: Span,
+    ) -> ExprKind {
+        let tmp = self.fresh_map_tmp();
+        let n = fields.len();
+        let mut stmts: Vec<Stmt> = Vec::with_capacity(n + 1);
+
+        // Callee: HashMap[str, V].with_capacity (mirror MapLit с
+        // turbofish — codegen mono требует Ident-based callee, не Path).
+        let str_ty = TypeRef::Named {
+            path: vec!["str".to_string()],
+            generics: Vec::new(),
+            span,
+        };
+        let hashmap_ident = Expr::new(ExprKind::Ident("HashMap".to_string()), span);
+        let turbofish = Expr::new(
+            ExprKind::TurboFish {
+                base: Box::new(hashmap_ident),
+                type_args: vec![str_ty, v_ty],
+            },
+            span,
+        );
+        let with_capacity_callee = Expr::new(
+            ExprKind::Member {
+                obj: Box::new(turbofish),
+                name: "with_capacity".to_string(),
+            },
+            span,
+        );
+        let with_capacity_call = Expr::new(
+            ExprKind::Call {
+                func: Box::new(with_capacity_callee),
+                args: vec![CallArg::Item(Expr::new(ExprKind::IntLit(n as i64), span))],
+                trailing: None,
+            },
+            span,
+        );
+        stmts.push(Stmt::Let(LetDecl {
+            mutable: true,
+            pattern: Pattern::Ident { name: tmp.clone(), span },
+            ty: None,
+            value: with_capacity_call,
+            span,
+            is_ghost: false,
+        }));
+
+        // Для каждого поля: `let _ = _mN.insert("name", value_expr)`
+        for f in fields {
+            if f.is_spread {
+                // type-checker должен был отвергнуть; пропускаем silently.
+                continue;
+            }
+            let key_expr = Expr::new(ExprKind::StrLit(f.name.clone()), span);
+            // Field-punning: { name } → значение это переменная `name`.
+            let value_expr = match f.value {
+                Some(v) => v,
+                None => Expr::new(ExprKind::Ident(f.name.clone()), span),
+            };
+            let insert_call = Expr::new(
+                ExprKind::Call {
+                    func: Box::new(Expr::new(
+                        ExprKind::Member {
+                            obj: Box::new(Expr::new(ExprKind::Ident(tmp.clone()), span)),
+                            name: "insert".to_string(),
+                        },
+                        span,
+                    )),
+                    args: vec![CallArg::Item(key_expr), CallArg::Item(value_expr)],
+                    trailing: None,
+                },
+                span,
+            );
+            stmts.push(Stmt::Let(LetDecl {
+                mutable: false,
+                pattern: Pattern::Wildcard(span),
+                ty: None,
+                value: insert_call,
+                span,
+                is_ghost: false,
+            }));
+        }
+
+        let trailing = Expr::new(ExprKind::Ident(tmp), span);
+        ExprKind::Block(Block {
+            stmts,
+            trailing: Some(Box::new(trailing)),
+            span,
+        })
     }
 
     /// Строит block-expression `{ let mut _mN = HashMap[K,V].with_capacity(n);

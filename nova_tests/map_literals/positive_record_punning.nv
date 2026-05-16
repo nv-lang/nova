@@ -1,0 +1,23 @@
+// Plan 52 Ф.10: D55 map-coercion field-punning.
+// `{ name }` shorthand = `{ name: name }` — значение это переменная
+// `name` в scope (D52 record-literal field-punning, унифицированно
+// с map-coercion).
+module map_literals.positive_record_punning
+
+import std.collections.hashmap.{HashMap}
+
+test "{ field-punning } → HashMap[str, bool]" {
+    let debug = true
+    let verbose = false
+    let cfg HashMap[str, bool] = { debug, verbose }
+    assert(cfg.len() == 2)
+    assert(cfg.get("debug") == Some(true))
+    assert(cfg.get("verbose") == Some(false))
+}
+
+test "{ punning } single field" {
+    let enabled = true
+    let m HashMap[str, bool] = { enabled }
+    assert(m.len() == 1)
+    assert(m.get("enabled") == Some(true))
+}

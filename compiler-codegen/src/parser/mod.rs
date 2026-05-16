@@ -4248,6 +4248,9 @@ impl Parser {
             ExprKind::RecordLit {
                 type_name: if path.is_empty() { None } else { Some(path) },
                 fields,
+                // Plan 52 Ф.10: заполняется type-checker'ом (MapLitAnnotator)
+                // если запись стоит в позиции #from_fields-типа.
+                inferred_map_v: None,
             },
             start.merge(end),
         ))

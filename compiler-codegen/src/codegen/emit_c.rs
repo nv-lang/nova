@@ -8022,7 +8022,12 @@ impl CEmitter {
                 }
             }
 
-            ExprKind::RecordLit { type_name, fields } => {
+            ExprKind::RecordLit { type_name, fields, .. } => {
+                // Plan 52 Ф.10: D55 map-coercion для `{field: v}` — обрабатывается
+                // в desugar.rs (mirror MapLit-десугаринга) ДО codegen. Если узел
+                // дошёл сюда с `inferred_map_v: Some(_)` без desugar — это bug,
+                // но codegen консервативно идёт обычным record-path (упадёт на
+                // mismatch'е полей если так).
                 let lit = self.emit_record_lit(type_name.as_deref(), fields)?;
                 // Plan 33.3 Ф.9.2 (D24): record invariant auto-enforce.
                 // Если у type есть invariants — wrap'нуть конструкцию
@@ -11827,6 +11832,63 @@ impl CEmitter {
 
     // ---- record literal ----
 
+    /// Plan 52 Ф.10 production-fix: D55 map-coercion для `{field: v}`.
+    /// Когда annotate_map_literals (types/mod.rs::MapLitAnnotator)
+    /// устанавливает `RecordLit.inferred_map_v = Some(V)` — значит это
+    /// map-coercion в позиции `HashMap[str, V]`. Эмитим mirror MapLit-
+    /// десугаринга: `HashMap[str, V].with_capacity(n) + n × insert`.
+    /// Не строим intermediate AST — прямой C-emit.
+    fn emit_record_as_map(
+        &mut self,
+        fields: &[RecordLitField],
+        v_ty: &TypeRef,
+    ) -> Result<String, String> {
+        let v_c = self.type_ref_to_c(v_ty)?;
+        // Mangled HashMap[str, V] type name + static_with_capacity ctor.
+        // Mirror как для MapLit с turbofish — codegen monomorph даёт
+        // Nova_HashMap____nova_str__<V_c>.
+        let v_mangled = v_c
+            .replace('*', "")
+            .replace(' ', "_");
+        let map_ty = format!("Nova_HashMap____nova_str__{}", v_mangled);
+        let with_cap_fn = format!("{}_static_with_capacity", map_ty);
+        let insert_fn = format!("{}_method_insert", map_ty);
+
+        let n = fields.len();
+        let tmp = self.fresh_tmp();
+        self.line(&format!(
+            "{}* {} = {}((nova_int){}LL);",
+            map_ty, tmp, with_cap_fn, n
+        ));
+        self.var_types.insert(tmp.clone(), format!("{}*", map_ty));
+
+        for f in fields {
+            if f.is_spread {
+                return Err(
+                    "spread `...` in map-coercion record-literal is not supported \
+                     (Plan 52 Ф.3 spec; type-checker should have caught this)".into(),
+                );
+            }
+            // Field-punning: { name } → значение это переменная `name` в scope.
+            let value_expr_str = match &f.value {
+                Some(v_expr) => self.emit_expr(v_expr)?,
+                None => f.name.clone(),
+            };
+            // Ключ — str literal из имени поля.
+            let key_str = format!(
+                "(nova_str){{.ptr=\"{}\", .len={}}}",
+                Self::escape_c_str(&f.name),
+                f.name.len()
+            );
+            // `insert` возвращает Option[V] (старое значение) — discard.
+            self.line(&format!(
+                "(void){}({}, {}, {});",
+                insert_fn, tmp, key_str, value_expr_str
+            ));
+        }
+        Ok(tmp)
+    }
+
     fn emit_record_lit(
         &mut self,
         type_name: Option<&[String]>,
@@ -14242,7 +14304,7 @@ impl CEmitter {
                     "nova_unit".into()
                 }
             }
-            ExprKind::RecordLit { type_name: Some(name), fields } => {
+            ExprKind::RecordLit { type_name: Some(name), fields, .. } => {
                 let raw_name = name.join("_");
                 let struct_name = if raw_name == "Self" {
                     self.current_receiver_type.clone().unwrap_or(raw_name)

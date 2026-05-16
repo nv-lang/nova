@@ -944,6 +944,17 @@ pub enum ExprKind {
     RecordLit {
         type_name: Option<Vec<String>>, // Some(["User"]) для `User { ... }`
         fields: Vec<RecordLitField>,
+        /// Plan 52 Ф.10 production-fix: D55 map-coercion маркер. Когда
+        /// type-checker (`MapLitAnnotator`) обнаруживает, что
+        /// анонимный `{field: v}` стоит в позиции, ожидающей тип с
+        /// `#from_fields` (= `HashMap[str, V]`) — записывает сюда
+        /// `Some(V)`. Десугаринг тогда превращает узел в
+        /// `HashMap[str, V].with_capacity(n) + insert("field", v)`
+        /// block-expression (mirror MapLit-desugar). Без этого flag'а
+        /// codegen пытался бы построить record-struct из полей →
+        /// «no member named 'debug' in 'struct Nova_HashMap'».
+        /// `None` для обычного record-литерала или type_name = Some.
+        inferred_map_v: Option<TypeRef>,
     },
     /// `(a, b, c)` кортеж
     TupleLit(Vec<Expr>),

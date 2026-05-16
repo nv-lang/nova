@@ -802,7 +802,7 @@ impl Interpreter {
                     expr.span,
                 ))
             }
-            ExprKind::RecordLit { type_name, fields } => {
+            ExprKind::RecordLit { type_name, fields, .. } => {
                 let mut out: HashMap<String, Value> = HashMap::new();
                 for f in fields {
                     if f.is_spread {

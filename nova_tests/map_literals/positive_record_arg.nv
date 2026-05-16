@@ -1,0 +1,23 @@
+// Plan 52 Ф.10 + Ф.3a: {field: v} в argument-position.
+// `configure({width: 80})` — flagship для Ф.3a (D55 caller-side).
+module map_literals.positive_record_arg
+
+import std.collections.hashmap.{HashMap}
+
+fn configure(opts HashMap[str, int]) -> int {
+    if let Some(w) = opts.get("width") {
+        w
+    } else {
+        0
+    }
+}
+
+test "{field: v} in positional argument" {
+    let width = configure({ width: 80, height: 25 })
+    assert(width == 80)
+}
+
+test "{field: v} in named argument" {
+    let width = configure(opts: { width: 120, retry: 3 })
+    assert(width == 120)
+}

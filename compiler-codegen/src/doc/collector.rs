@@ -816,7 +816,7 @@ fn render_expr(e: &crate::ast::Expr) -> String {
             let parts: Vec<String> = xs.iter().map(render_expr).collect();
             format!("({})", parts.join(", "))
         }
-        ExprKind::RecordLit { type_name, fields } => {
+        ExprKind::RecordLit { type_name, fields, .. } => {
             let head = type_name
                 .as_ref()
                 .map(|p| format!("{} ", p.join(".")))
