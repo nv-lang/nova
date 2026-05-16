@@ -21,6 +21,7 @@ pub mod gate;
 pub mod report;
 pub mod history;
 pub mod dashboard;
+pub mod noise;
 
 pub use stats::SampleStats;
 pub use schema::{RawBenchResult, AnalyzedBench, RunResultParsed, run_result_to_json, SCHEMA_VERSION};

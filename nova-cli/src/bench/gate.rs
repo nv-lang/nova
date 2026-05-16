@@ -24,7 +24,9 @@ pub struct GateVerdict {
     pub regressed: bool,
 }
 
-pub fn run(baseline_path: &Path, new_path: &Path, config_path: Option<&Path>) -> Result<i32> {
+pub fn run(baseline_path: &Path, new_path: &Path,
+           config_path: Option<&Path>,
+           noise_path: Option<&Path>) -> Result<i32> {
     let base_text = std::fs::read_to_string(baseline_path)
         .map_err(|e| anyhow!("read baseline {}: {}", baseline_path.display(), e))?;
     let new_text = std::fs::read_to_string(new_path)
@@ -54,6 +56,50 @@ pub fn run(baseline_path: &Path, new_path: &Path, config_path: Option<&Path>) ->
         eprintln!("bench.toml: {}", err);
     }
 
+    // Plan 57.A.3: load noise floor если doступен.
+    let noise = if let Some(p) = noise_path {
+        match super::noise::NoiseFloor::load(p) {
+            Ok(n) => {
+                if !super::noise::fingerprint_matches(&n, &new.metadata) {
+                    eprintln!("⚠ noise floor fingerprint mismatch:\n\
+                               calibrated: {}\n\
+                               current:    {}|{}|{}\n\
+                               → ignoring noise floor for this run.",
+                        n.machine_fingerprint,
+                        new.metadata.cpu_model.as_deref().unwrap_or("unknown"),
+                        new.metadata.os, new.metadata.arch);
+                    None
+                } else {
+                    eprintln!("noise floor: loaded from {} (suite={:.1}%, {} per-bench)",
+                        p.display(), n.suite_noise_pct, n.per_bench.len());
+                    Some(n)
+                }
+            }
+            Err(e) => {
+                eprintln!("noise floor: skip — {}", e);
+                None
+            }
+        }
+    } else {
+        // Try default location в current dir.
+        let default = std::env::current_dir().ok()
+            .map(|d| d.join(super::noise::DEFAULT_NOISE_FILE));
+        match default {
+            Some(p) if p.exists() => {
+                match super::noise::NoiseFloor::load(&p) {
+                    Ok(n) => {
+                        if super::noise::fingerprint_matches(&n, &new.metadata) {
+                            eprintln!("noise floor: loaded from {}", p.display());
+                            Some(n)
+                        } else { None }
+                    }
+                    Err(_) => None,
+                }
+            }
+            _ => None,
+        }
+    };
+
     let rows = compute_diff(&baseline.benches, &new.benches);
 
     let mut verdicts = Vec::new();
@@ -64,14 +110,18 @@ pub fn run(baseline_path: &Path, new_path: &Path, config_path: Option<&Path>) ->
         };
         let gate = cfg.gate_for(&r.name);
         let exempt = cfg.is_exempt(&r.name);
+        // Plan 57.A.3: inflate threshold by per-bench noise floor.
+        // Эффективный threshold = max(config, noise_floor).
+        let noise_floor_pct = noise.as_ref().map(|n| n.get(&r.name)).unwrap_or(0.0);
+        let effective_threshold = gate.wall_clock_delta_pct.max(noise_floor_pct);
         let regressed = !exempt
-            && delta > gate.wall_clock_delta_pct
+            && delta > effective_threshold
             && p < gate.significance_p;
         verdicts.push(GateVerdict {
             bench_name: r.name.clone(),
             delta_pct: delta,
             p_value: p,
-            threshold_pct: gate.wall_clock_delta_pct,
+            threshold_pct: effective_threshold,
             threshold_p: gate.significance_p,
             exempt,
             regressed,
