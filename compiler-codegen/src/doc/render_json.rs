@@ -108,6 +108,20 @@ fn write_module(w: &mut JsonWriter, m: &DocModule) {
         }),
     }
     w.field_array("doc_attrs", |_| {});
+    // Plan 45 Ф.24.16: effect composition matrix (empty array if no effectful fns).
+    w.field_array("effect_matrix", |w| {
+        for entry in &m.effect_matrix {
+            w.array_object(|w| {
+                w.field_array("effects", |w| {
+                    for eff in &entry.effects {
+                        w.array_str(eff);
+                    }
+                });
+                w.field_str("fn_name", &entry.fn_name);
+                w.field_str("item_id", &entry.item_id);
+            });
+        }
+    });
     w.field_str(
         "kind",
         match m.kind {
@@ -122,6 +136,21 @@ fn write_module(w: &mut JsonWriter, m: &DocModule) {
         sorted.sort();
         for p in &sorted {
             w.array_str(p);
+        }
+    });
+    // Plan 45 Ф.24.17: realtime constraint matrix.
+    w.field_array("realtime_matrix", |w| {
+        for entry in &m.realtime_matrix {
+            w.array_object(|w| {
+                w.field_array("forbidden_effects", |w| {
+                    for eff in &entry.forbidden_effects {
+                        w.array_str(eff);
+                    }
+                });
+                w.field_str("fn_name", &entry.fn_name);
+                w.field_str("item_id", &entry.item_id);
+                w.field_bool("nogc", entry.nogc);
+            });
         }
     });
     w.field_object("source", |w| {
@@ -169,6 +198,10 @@ fn write_item(w: &mut JsonWriter, it: &DocItem) {
     }
     w.field_null_or_str("description", it.description.as_deref());
     w.field_array("doc_attrs", |_| {});
+    // Plan 45 Ф.24.11: doc_inline rendering hint for re-exports.
+    if it.reexport_from.is_some() {
+        w.field_bool("doc_inline", it.doc_inline);
+    }
     w.field_null_or_str("doc_test_handlers", it.doc_test_handlers.as_deref());
     w.field_str("id", &it.id);
     w.field_str("kind", item_kind_str(&it.kind));
@@ -180,6 +213,18 @@ fn write_item(w: &mut JsonWriter, it: &DocItem) {
     }
     w.field_str("module_path", &it.module_path.join("."));
     w.field_str("name", &it.name);
+    // Plan 45 Ф.24.11: re-export source path (only present for re-exported items).
+    w.field_null_or_str("reexport_from", it.reexport_from.as_deref());
+    // Plan 45 Ф.24.9: scraped call-site examples (empty array when not scraped).
+    w.field_array("scraped_examples", |w| {
+        for ex in &it.scraped_examples {
+            w.array_object(|w| {
+                w.field_str("file", &ex.file);
+                w.field_u32("line", ex.line);
+                w.field_str("snippet", &ex.snippet);
+            });
+        }
+    });
     w.field_object("sections", |w| {
         for (key, val) in &it.sections {
             w.field_str(key, val);
@@ -238,6 +283,9 @@ fn write_item(w: &mut JsonWriter, it: &DocItem) {
                     });
                 }
             });
+        }
+        ItemKind::ReExport { .. } => {
+            // Re-exports have no extra kind-specific fields; source is in reexport_from.
         }
         ItemKind::Protocol { methods, implementors } => {
             // Plan 45 Ф.23.16: implementors populated in workspace mode.
@@ -557,6 +605,7 @@ fn item_kind_str(k: &ItemKind) -> &'static str {
         ItemKind::Const { .. } => "const",
         ItemKind::Effect { .. } => "effect",
         ItemKind::Protocol { .. } => "protocol",
+        ItemKind::ReExport { .. } => "reexport",
     }
 }
 

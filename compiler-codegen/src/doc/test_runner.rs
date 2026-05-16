@@ -166,9 +166,24 @@ fn run_one(t: &DocTest, original_source: Option<&str>) -> DocTestOutcome {
             d.render(&synthetic, "<doc-test>")
         ));
     }
+
+    let expect_output = modifiers.contains(&DocTestModifier::ExpectOutput);
+    // Plan 45 Ф.24.8: activate output capture before run_main when expect_output.
+    if expect_output {
+        crate::interp::stdlib::capture_output_start();
+    }
+
     let run_result = interp.run_main();
     let should_panic = modifiers.contains(&DocTestModifier::ShouldPanic);
-    match (run_result, should_panic) {
+
+    // Collect captured output before deciding outcome.
+    let actual_output = if expect_output {
+        Some(crate::interp::stdlib::capture_output_finish())
+    } else {
+        None
+    };
+
+    let base_outcome = match (run_result, should_panic) {
         (Ok(_), false) => DocTestOutcome::Passed,
         (Ok(_), true) => {
             DocTestOutcome::Failed("should_panic: expected panic, got success".to_string())
@@ -178,7 +193,30 @@ fn run_one(t: &DocTest, original_source: Option<&str>) -> DocTestOutcome {
             "runtime error:\n{}",
             d.render(&synthetic, "<doc-test>")
         )),
+    };
+
+    // Plan 45 Ф.24.8: if base run passed and expect_output + expected annotation present — diff.
+    // If no // Output: annotations found (expected_output = None) — skip output check,
+    // just verify the test ran without error (useful for documenting side-effectful examples).
+    if expect_output {
+        if let DocTestOutcome::Passed = base_outcome {
+            if let Some(expected) = t.expected_output.as_deref() {
+                let actual = actual_output.unwrap_or_default();
+                let actual_norm = actual.replace("\r\n", "\n");
+                let expected_norm = expected.replace("\r\n", "\n");
+                if actual_norm == expected_norm {
+                    return DocTestOutcome::Passed;
+                } else {
+                    return DocTestOutcome::Failed(format!(
+                        "expect_output mismatch:\n  expected: {:?}\n  actual:   {:?}",
+                        expected_norm, actual_norm
+                    ));
+                }
+            }
+        }
     }
+
+    base_outcome
 }
 
 /// Обернуть исходник doc-test'а.
@@ -268,6 +306,8 @@ mod tests {
             modifiers,
             visible_source: source.to_string(),
             full_source: source.to_string(),
+            test_handlers: None,
+            expected_output: None,
         }
     }
 
@@ -322,14 +362,14 @@ mod tests {
 
     #[test]
     fn wraps_body_correctly() {
-        let wrapped = wrap_source("let x = 1\n", None);
+        let wrapped = wrap_source("let x = 1\n", None, None);
         assert!(wrapped.contains("fn main"));
         assert!(wrapped.contains("let x = 1"));
     }
 
     #[test]
     fn top_level_decl_not_wrapped_in_main() {
-        let wrapped = wrap_source("fn helper() -> int => 42\n", None);
+        let wrapped = wrap_source("fn helper() -> int => 42\n", None, None);
         // Не должно быть обёртки в main — оставлено как есть.
         assert!(!wrapped.contains("fn main"));
         assert!(wrapped.contains("fn helper"));
@@ -338,7 +378,7 @@ mod tests {
     #[test]
     fn wrap_with_original_source_injects_module() {
         let orig = "module my.mod\n\nexport fn double(x int) -> int => x * 2\n";
-        let wrapped = wrap_source("let r = double(3)\n", Some(orig));
+        let wrapped = wrap_source("let r = double(3)\n", Some(orig), None);
         assert!(wrapped.contains("module my.mod"));
         assert!(wrapped.contains("fn double"));
         assert!(wrapped.contains("fn main"));

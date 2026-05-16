@@ -12,7 +12,7 @@
 pub mod env;
 pub mod value;
 
-mod stdlib;
+pub mod stdlib;
 
 use crate::ast::*;
 use crate::diag::{Diagnostic, Span};

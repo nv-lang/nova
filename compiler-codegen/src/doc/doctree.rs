@@ -77,6 +77,10 @@ pub struct DocTest {
     /// Plan 45 Ф.23.7 / D106: `#doc(test_handlers = "path")` — handler-path
     /// для инжекции `with <handler>` в wrap_source. Наследуется от item.
     pub test_handlers: Option<String>,
+    /// Plan 45 Ф.24.8: godoc-style expected stdout output.
+    /// Populated when modifier `expect_output` is present and `// Output: <text>`
+    /// comment lines appear inside the fenced block. Runner diffs actual vs expected.
+    pub expected_output: Option<String>,
 }
 
 /// Plan 45 Ф.7: doc-test modifier. По D104.
@@ -92,6 +96,14 @@ pub enum DocTestModifier {
     ShouldPanic,
     /// `must_verify` — ожидается successful SMT verification (Plan 33).
     MustVerify,
+    /// Plan 45 Ф.24.8: `expect_output` — run + capture stdout, diff with
+    /// `// Output: <text>` lines embedded in the fenced block.
+    ExpectOutput,
+    /// Plan 45 Ф.24.18: `infer_contracts` — analyze assert() calls in this
+    /// doc-test and emit them as `ensures` clauses on the documented fn.
+    /// The inferred contracts appear in `DocItem.signature.contracts` with
+    /// kind = "inferred".
+    InferContracts,
 }
 
 impl DocTestModifier {
@@ -102,6 +114,8 @@ impl DocTestModifier {
             DocTestModifier::CompileFail => "compile_fail",
             DocTestModifier::ShouldPanic => "should_panic",
             DocTestModifier::MustVerify => "must_verify",
+            DocTestModifier::ExpectOutput => "expect_output",
+            DocTestModifier::InferContracts => "infer_contracts",
         }
     }
 }
@@ -137,6 +151,14 @@ pub struct DocModule {
     pub hide_doc: bool,
     /// Items этого модуля.
     pub items: Vec<DocItem>,
+    /// Plan 45 Ф.24.16: auto-generated effect composition matrix.
+    /// Lists each exported fn name with its effect set. Renderers use
+    /// this to show an "Effects overview" section. Empty if no fn has effects.
+    pub effect_matrix: Vec<EffectMatrixEntry>,
+    /// Plan 45 Ф.24.17: capability constraint matrix for #realtime functions.
+    /// Lists each @realtime fn with its realtime constraints (nogc, forbidden effects).
+    /// Empty if no @realtime fns in module.
+    pub realtime_matrix: Vec<RealtimeConstraintEntry>,
     /// Span первого токена модуля — для "View Source" links (D107).
     pub source_span: Span,
 }
@@ -208,6 +230,53 @@ pub struct DocItem {
     /// Plan 45 Ф.23.23: back-links — IDs items, которые ссылаются на этот
     /// item через intra-doc-link. Заполняется `resolve_intra_doc_links` pass'ом.
     pub linked_from: Vec<String>,
+    /// Plan 45 Ф.24.9: scraped call-site examples from workspace source files.
+    /// Each entry: (file_path_display, line_number_1based, source_snippet).
+    /// Empty when `--scrape-examples` was not requested or no call-sites found.
+    pub scraped_examples: Vec<ScrapedExample>,
+    /// Plan 45 Ф.24.11: if this item is a re-export (`export import X.{Foo}`),
+    /// this holds the canonical source path (e.g. `"other.module::Foo"`).
+    /// None for items defined in this module.
+    pub reexport_from: Option<String>,
+    /// Plan 45 Ф.24.11: rendering hint for re-exports.
+    /// `true` → inline the target item's content here (rustdoc `#[doc(inline)]` equivalent).
+    /// `false` → render as a "Re-exported from ..." link (default for cross-module re-exports).
+    pub doc_inline: bool,
+}
+
+/// Plan 45 Ф.24.17: one row of the realtime capability constraint matrix.
+#[derive(Debug, Clone)]
+pub struct RealtimeConstraintEntry {
+    /// Stable item ID.
+    pub item_id: String,
+    /// Function name (display).
+    pub fn_name: String,
+    /// `true` if `@realtime nogc` (no GC allocations allowed).
+    pub nogc: bool,
+    /// Forbidden effects from `#forbid` on this fn or its module.
+    pub forbidden_effects: Vec<String>,
+}
+
+/// Plan 45 Ф.24.16: one row of the effect composition matrix.
+#[derive(Debug, Clone)]
+pub struct EffectMatrixEntry {
+    /// Stable item ID (e.g. `"my.mod::send"`).
+    pub item_id: String,
+    /// Function name (display).
+    pub fn_name: String,
+    /// Effect names present in this fn's signature (e.g. `["Io", "Fail[IoError]"]`).
+    pub effects: Vec<String>,
+}
+
+/// Plan 45 Ф.24.9: one scraped call-site example.
+#[derive(Debug, Clone)]
+pub struct ScrapedExample {
+    /// Display path of the source file (relative to workspace root if available).
+    pub file: String,
+    /// 1-based line number of the call expression.
+    pub line: u32,
+    /// Source snippet: the call-expression line (trimmed) + up to 2 lines of context.
+    pub snippet: String,
 }
 
 /// Plan 45 Ф.23.3 / D63/D64: capability annotations на item.
@@ -282,6 +351,11 @@ pub enum ItemKind {
         ty: String,
         value: String,
     },
+    /// Plan 45 Ф.24.11: re-exported item (`export import X.{Foo}`).
+    /// `source` is the canonical stable ID of the original item (e.g. `"other.mod::Foo"`).
+    /// When `doc_inline=true` on the parent DocItem, renderers should embed the source item
+    /// inline; when false, they should emit "Re-exported from <source>" with a link.
+    ReExport { source: String },
     /// Effect-декларация (D62).
     Effect {
         methods: Vec<EffectMethodSig>,

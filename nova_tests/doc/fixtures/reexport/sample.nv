@@ -1,0 +1,9 @@
+//! Module demonstrating re-export doc attrs.
+module nova_tests.doc.fixtures.reexport.sample
+
+export fn square(x int) -> int => x * x
+
+export import nova_tests.doc.fixtures.reexport.other.{helper}
+
+#doc(inline)
+export import nova_tests.doc.fixtures.reexport.other.{helper_two}
