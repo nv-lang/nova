@@ -220,6 +220,10 @@ enum Cmd {
     DocMcp {
         /// Path to .nv source или .json (pre-generated `nova doc --format json`).
         file: PathBuf,
+        /// Plan 45 Ф.34.1: run as HTTP server на 127.0.0.1:PORT (POST /mcp).
+        /// По умолчанию — stdio JSON-RPC loop.
+        #[arg(long = "port", value_name = "PORT")]
+        port: Option<u16>,
     },
     /// Compile a single Nova source file to a native binary.
     ///
@@ -1572,8 +1576,9 @@ fn load_nova_toml_doc_config() -> Option<nova_codegen::doc::config::DocConfig> {
     None
 }
 
-/// Plan 45 Ф.32.3 — `nova doc-mcp <file>` MCP server (JSON-RPC over stdio).
-fn cmd_doc_mcp(path: &Path) -> Result<()> {
+/// Plan 45 Ф.32.3 + Ф.34.1 — `nova doc-mcp <file>` MCP server.
+/// Default — stdio JSON-RPC loop. With `--port N` — HTTP server on 127.0.0.1:N.
+fn cmd_doc_mcp(path: &Path, port: Option<u16>) -> Result<()> {
     // Load tree JSON: .nv → build + render_json, .json → read directly.
     let tree_json_str = match path.extension().and_then(|e| e.to_str()) {
         Some("nv") => {
@@ -1592,11 +1597,20 @@ fn cmd_doc_mcp(path: &Path) -> Result<()> {
     };
     let tree_json = nova_codegen::doc::json_parse::parse(&tree_json_str)
         .map_err(|e| anyhow!("JSON parse: {}", e))?;
-    eprintln!("nova doc-mcp: loaded doc tree from {}, ready (read JSON-RPC on stdin)",
-        path.display());
-    let stdin = std::io::stdin();
-    let stdout = std::io::stdout();
-    nova_codegen::doc::mcp::run_mcp_loop(&tree_json, stdin.lock(), stdout.lock())?;
+    eprintln!("nova doc-mcp: loaded doc tree from {}", path.display());
+    match port {
+        Some(p) => {
+            // Plan 45 Ф.34.1: HTTP server mode.
+            nova_codegen::doc::mcp::run_http_server(&tree_json, p)?;
+        }
+        None => {
+            // Default: stdio JSON-RPC loop.
+            eprintln!("nova doc-mcp: ready (read JSON-RPC on stdin)");
+            let stdin = std::io::stdin();
+            let stdout = std::io::stdout();
+            nova_codegen::doc::mcp::run_mcp_loop(&tree_json, stdin.lock(), stdout.lock())?;
+        }
+    }
     Ok(())
 }
 
@@ -2682,7 +2696,7 @@ fn main() -> ExitCode {
             } // else (no --diff)
         }
         Cmd::DocQuery { json_file, query } => cmd_doc_query(&json_file, &query),
-        Cmd::DocMcp { file } => cmd_doc_mcp(&file),
+        Cmd::DocMcp { file, port } => cmd_doc_mcp(&file, port),
         Cmd::Build { file, output, mode, toolchain, vcvars, clang, timeout, keep_artifacts, mono_depth } => cmd_build(
             &file,
             output.as_deref(),
