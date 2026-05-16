@@ -5152,6 +5152,24 @@ impl CEmitter {
                 }
             }
         }
+        // Plan 54 Ф.5 (Source 2d): для fn-typed param когда arg —
+        // variable reference (не closure literal). Если var_types/
+        // fn_param_sigs знают return-type of variable's closure, можем
+        // infer T. Пример: nested generic call `with_timeout[T] calls
+        // within(ms, body)` — body's return type из fn_param_sigs уже
+        // substituted (если we внутри mono'd with_timeout body), используем
+        // его чтобы infer within's T.
+        for (param, arg) in fn_decl.params.iter().zip(args.iter()) {
+            if let crate::ast::TypeRef::Func { return_type: Some(ret_ty_ref), .. } = &param.ty {
+                if let ExprKind::Ident(name) = &arg.expr().kind {
+                    if let Some((_, ret_c)) = self.fn_param_sigs.get(name) {
+                        if !ret_c.is_empty() && ret_c != "void*" && ret_c != "nova_unit" {
+                            Self::infer_type_param_binding(ret_ty_ref.as_ref(), ret_c, &mut subst);
+                        }
+                    }
+                }
+            }
+        }
         // Source 2c: for generic-type params (e.g. `box_get[T](b Box[T])`), extract T from
         // monomorphized instance info. After Ф.3, Box[int] arg has C type Nova_Box____nova_int*
         // and generic_type_instance_info maps "Nova_Box____nova_int" → ("Box", ["nova_int"]).
@@ -15119,6 +15137,21 @@ impl CEmitter {
                                         };
                                         if !closure_ret_c.is_empty() {
                                             Self::infer_type_param_binding(ret_ty_ref.as_ref(), &closure_ret_c, &mut subst);
+                                        }
+                                    }
+                                }
+                                // Plan 54 Ф.5 Source 2d: for variable references
+                                // to fn-typed params — look up registered return
+                                // type in fn_param_sigs (already substituted в
+                                // outer mono context).
+                                for (param, arg) in fn_decl.params.iter().zip(args.iter()) {
+                                    if let crate::ast::TypeRef::Func { return_type: Some(ret_ty_ref), .. } = &param.ty {
+                                        if let ExprKind::Ident(name) = &arg.expr().kind {
+                                            if let Some((_, ret_c)) = self.fn_param_sigs.get(name) {
+                                                if !ret_c.is_empty() && ret_c != "void*" && ret_c != "nova_unit" {
+                                                    Self::infer_type_param_binding(ret_ty_ref.as_ref(), ret_c, &mut subst);
+                                                }
+                                            }
                                         }
                                     }
                                 }
