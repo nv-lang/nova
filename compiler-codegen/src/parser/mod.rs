@@ -2520,6 +2520,47 @@ impl Parser {
                 ))
             }
         };
+        // Plan 57.B.3: optional parameter sweep — `(IDENT in [v1, v2, ...])`
+        // ДО opening brace.
+        let params = if matches!(self.peek().kind, TokenKind::LParen) {
+            let lp_span = self.peek().span;
+            self.bump();  // (
+            let var_name = match self.peek().kind.clone() {
+                TokenKind::Ident(n) => { self.bump(); n }
+                _ => return Err(Diagnostic::new(
+                    "expected parameter name after `(` in bench-sweep",
+                    self.peek().span)),
+            };
+            self.expect(&TokenKind::KwIn)?;
+            self.expect(&TokenKind::LBracket)?;
+            let mut values = Vec::new();
+            loop {
+                if matches!(self.peek().kind, TokenKind::RBracket) { break; }
+                match self.peek().kind.clone() {
+                    TokenKind::Int(n) => { values.push(n); self.bump(); }
+                    _ => return Err(Diagnostic::new(
+                        "bench-sweep values must be integer literals",
+                        self.peek().span)),
+                }
+                if matches!(self.peek().kind, TokenKind::Comma) {
+                    self.bump();
+                }
+            }
+            let rb_span = self.expect(&TokenKind::RBracket)?.span;
+            let rp_span = self.expect(&TokenKind::RParen)?.span;
+            if values.is_empty() {
+                return Err(Diagnostic::new(
+                    "bench-sweep values list cannot be empty",
+                    lp_span.merge(rp_span)));
+            }
+            Some(BenchParams {
+                var_name,
+                values,
+                span: lp_span.merge(rb_span),
+            })
+        } else {
+            None
+        };
         let brace_open = self.expect(&TokenKind::LBrace)?.span;
         self.skip_newlines();
         let mut setup: Vec<Stmt> = Vec::new();
@@ -2570,6 +2611,7 @@ impl Parser {
             setup,
             measure_body,
             teardown,
+            params,
             span: start.merge(brace_close),
         })
     }

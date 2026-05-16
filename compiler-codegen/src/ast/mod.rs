@@ -736,21 +736,33 @@ pub struct TestDecl {
 
 /// Plan 57: benchmark declaration.
 ///
-/// `bench "name" { setup_stmts; measure { measured_body } teardown_stmts }`
+/// `bench "name" [(param in [v1, v2, ...])] { setup; measure { body } teardown }`
 ///
-/// - `setup` — statements ДО `measure` блока (не measured, выполняются 1 раз).
+/// - `setup` — statements ДО `measure` блока (не measured, 1 раз).
 /// - `measure_body` — измеряемый блок; bench runner вызывает его в адаптивном
 ///   sampling loop (warmup → calibration → N samples).
 /// - `teardown` — statements ПОСЛЕ `measure` блока (не measured, 1 раз).
+/// - `params` — Plan 57.B.3 sweep param. Если `Some`, codegen эмитит
+///   N bench entries (по одной на value), каждый с `let <param> = <value>;`
+///   prepended к setup. Name suffix: `<name>/p=<value>`.
 ///
-/// Парсер требует **ровно один** `measure { ... }` блок в body —
-/// иначе диагностика.
+/// Парсер требует **ровно один** `measure { ... }` блок в body.
 #[derive(Debug, Clone)]
 pub struct BenchDecl {
     pub name: String,
     pub setup: Vec<Stmt>,
     pub measure_body: Block,
     pub teardown: Vec<Stmt>,
+    /// Plan 57.B.3: parameter sweep — `(name in [v1, v2, ...])`.
+    pub params: Option<BenchParams>,
+    pub span: Span,
+}
+
+/// Plan 57.B.3: parameterized sweep — `bench "name" (n in [10, 100, 1000]) { ... }`.
+#[derive(Debug, Clone)]
+pub struct BenchParams {
+    pub var_name: String,
+    pub values: Vec<i64>,
     pub span: Span,
 }
 
