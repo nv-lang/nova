@@ -133,6 +133,11 @@ enum Cmd {
         /// (% items with summary, broken down by kind). Useful in CI.
         #[arg(long = "coverage")]
         coverage: bool,
+        /// Plan 45 Ф.33.2: doc-coverage CI gate. If `--coverage-threshold N`
+        /// is given (0-100), exit с non-zero code если % documented items <
+        /// threshold. Useful как CI step: `nova doc <dir> --coverage --coverage-threshold 80`.
+        #[arg(long = "coverage-threshold", value_name = "PERCENT")]
+        coverage_threshold: Option<u32>,
         /// Plan 45 Ф.24.13: number of parallel parse jobs for workspace mode.
         /// Default 0 = auto (uses all logical CPUs). Ignored for single-file.
         #[arg(long = "jobs", default_value = "0")]
@@ -1068,7 +1073,7 @@ fn cmd_run(path: &Path) -> Result<()> {
 ///
 /// MVP: один входной файл, вывод в stdout. Никаких подкоманд (workspace/
 /// --output-dir/--watch — Plan 45.A или отдельные субкоманды позже).
-fn cmd_doc(path: &Path, format: &str, json_schema: bool, include_private: bool, run_doc_tests: bool, check: bool, watch: bool, coverage: bool, jobs: usize, scrape_examples: Option<&Path>, strict: bool, mutate_contracts: bool, real_exec: bool, output_dir: Option<&Path>) -> Result<()> {
+fn cmd_doc(path: &Path, format: &str, json_schema: bool, include_private: bool, run_doc_tests: bool, check: bool, watch: bool, coverage: bool, coverage_threshold: Option<u32>, jobs: usize, scrape_examples: Option<&Path>, strict: bool, mutate_contracts: bool, real_exec: bool, output_dir: Option<&Path>) -> Result<()> {
     // `--json-schema` — печатает embedded схему и выходит (D107).
     if json_schema {
         println!("{}", nova_doc_embedded_schema());
@@ -1079,7 +1084,7 @@ fn cmd_doc(path: &Path, format: &str, json_schema: bool, include_private: bool, 
     if path.is_dir() {
         // Plan 45 Ф.25.4: mutate_contracts пока single-file only (workspace
         // mode требует cross-module test-runner integration — Ф.25.5).
-        return cmd_doc_workspace(path, format, include_private, run_doc_tests, check, coverage, jobs, strict, mutate_contracts, real_exec, output_dir);
+        return cmd_doc_workspace(path, format, include_private, run_doc_tests, check, coverage, coverage_threshold, jobs, strict, mutate_contracts, real_exec, output_dir);
     }
     if !path.is_file() {
         bail!("file not found: {}", path.display());
@@ -1123,7 +1128,7 @@ fn cmd_doc(path: &Path, format: &str, json_schema: bool, include_private: bool, 
         nova_codegen::doc::scraper::scrape_examples(&mut tree, ws);
     }
     if coverage {
-        return cmd_doc_coverage(&tree);
+        return cmd_doc_coverage(&tree, coverage_threshold);
     }
     if check {
         return cmd_doc_check(&tree, format);
@@ -1200,6 +1205,7 @@ fn cmd_doc_workspace(
     run_doc_tests: bool,
     check: bool,
     coverage: bool,
+    coverage_threshold: Option<u32>,
     jobs: usize,
     strict: bool,
     mutate_contracts: bool,
@@ -1307,7 +1313,7 @@ fn cmd_doc_workspace(
         nova_codegen::doc::strip_private(&mut tree);
     }
     if coverage {
-        return cmd_doc_coverage(&tree);
+        return cmd_doc_coverage(&tree, coverage_threshold);
     }
     if check {
         return cmd_doc_check(&tree, format);
@@ -1632,7 +1638,10 @@ fn print_doc_test_summary(summary: nova_codegen::doc::test_runner::DocTestSummar
 /// Plan 45 Ф.21.6 / D105: doc-coverage метрика. Считает items
 /// (всего/задокументированных) и links (всего/broken). Output на
 /// stdout, exit code = процент-непокрытых (0 если 100% покрыто).
-fn cmd_doc_coverage(tree: &nova_codegen::doc::DocTree) -> Result<()> {
+///
+/// Plan 45 Ф.33.2: optional `threshold` — если задан и actual coverage %
+/// < threshold, exit 1 (CI gate). 0 если threshold None или satisfied.
+fn cmd_doc_coverage(tree: &nova_codegen::doc::DocTree, threshold: Option<u32>) -> Result<()> {
     use std::collections::BTreeMap;
     let mut total: BTreeMap<&str, usize> = BTreeMap::new();
     let mut documented: BTreeMap<&str, usize> = BTreeMap::new();
@@ -1679,6 +1688,18 @@ fn cmd_doc_coverage(tree: &nova_codegen::doc::DocTree) -> Result<()> {
     }
     println!("  links: {}/{} resolved ({} broken)",
         total_links - broken_links, total_links, broken_links);
+    // Plan 45 Ф.33.2: CI gate.
+    if let Some(min) = threshold {
+        let pct = if total_items == 0 { 100.0 } else {
+            100.0 * documented_items as f64 / total_items as f64
+        };
+        if (pct as u32) < min {
+            eprintln!("\nERROR: documentation coverage {:.1}% < threshold {}%",
+                pct, min);
+            std::process::exit(1);
+        }
+        println!("\nOK: documentation coverage {:.1}% >= threshold {}%", pct, min);
+    }
     Ok(())
 }
 
@@ -1706,7 +1727,7 @@ fn cmd_doc_watch(
                 chrono_like_now()
             );
             // Re-run одним проходом через cmd_doc (без watch/json_schema).
-            match cmd_doc(path, format, false, include_private, run_doc_tests, check, false, coverage, 0, None, false, false, false, None) {
+            match cmd_doc(path, format, false, include_private, run_doc_tests, check, false, coverage, None, 0, None, false, false, false, None) {
                 Ok(_) => {}
                 Err(e) => eprintln!("error: {}", e),
             }
@@ -2599,7 +2620,7 @@ fn main() -> ExitCode {
             &skip,
         ),
         Cmd::Run { file } => cmd_run(&file),
-        Cmd::Doc { file, format, json_schema, include_private, run_doc_tests, check, watch, coverage, jobs, diff, scrape_examples, strict, mutate_contracts, real_exec, output_dir } => {
+        Cmd::Doc { file, format, json_schema, include_private, run_doc_tests, check, watch, coverage, coverage_threshold, jobs, diff, scrape_examples, strict, mutate_contracts, real_exec, output_dir } => {
             // Plan 45 Ф.24.10: --diff old.json new.json
             // cmd_doc_diff uses process::exit for severity codes; propagate Err.
             if let Some(paths) = diff {
@@ -2614,7 +2635,7 @@ fn main() -> ExitCode {
                 eprintln!("error: FILE argument required (unless --json-schema)");
                 std::process::exit(1);
             });
-            cmd_doc(path, &format, json_schema, include_private, run_doc_tests, check, watch, coverage, jobs, scrape_examples.as_deref(), strict, mutate_contracts, real_exec, output_dir.as_deref())
+            cmd_doc(path, &format, json_schema, include_private, run_doc_tests, check, watch, coverage, coverage_threshold, jobs, scrape_examples.as_deref(), strict, mutate_contracts, real_exec, output_dir.as_deref())
             } // else (no --diff)
         }
         Cmd::DocQuery { json_file, query } => cmd_doc_query(&json_file, &query),
