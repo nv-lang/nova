@@ -1,0 +1,41 @@
+// Plan 55 Ф.1 — capture внутри `[]fn` closure'ов.
+//
+// Если closure захватывает локальную переменную, и хранится в массиве,
+// env должен сохраняться через push/pop массива (Boehm GC видит элементы
+// как pointers и conservative-scan'ит env через NovaClos_X*).
+//
+// Параллель Rust: `vec![Box::new(move || n + 1), ...]` — captures move'аются
+// в env замыкания. У нас то же — NovaClos_X*.env хранит copies.
+
+module plan55.f1_closure_array_with_capture
+
+
+fn run_all(fns []fn() -> int) -> []int {
+    let mut out []int = []
+    for f in fns {
+        out.push(f())
+    }
+    out
+}
+
+
+test "captured int — каждый closure возвращает свой capture" {
+    let a = 10
+    let b = 20
+    let c = 30
+    let xs = run_all([|| a, || b, || c])
+    assert(xs.len() == 3)
+    assert(xs[0] == 10)
+    assert(xs[1] == 20)
+    assert(xs[2] == 30)
+}
+
+
+test "captured expression — closures видят результат let'ов" {
+    let x = 5
+    let y = 7
+    let xs = run_all([|| x + y, || x * y, || y - x])
+    assert(xs[0] == 12)
+    assert(xs[1] == 35)
+    assert(xs[2] == 2)
+}

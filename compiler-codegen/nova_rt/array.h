@@ -112,6 +112,50 @@ NOVA_ARRAY_IMPL(nova_bool)
 NOVA_ARRAY_DECL(nova_f64)
 NOVA_ARRAY_IMPL(nova_f64)
 
+/* ---- void_p — array of opaque pointers (used for closures via NovaClosBase*).
+ *
+ * Plan 55 Ф.1: `[]fn(...) -> T` (array of closures) → NovaArray_void_p*.
+ * Closure stored as void* (= NovaClos_X*); call-site routes through
+ * NOVA_CLOS_CALL_* / NovaClosBase dispatch. Boehm conservative-scan
+ * sees each data[i] as potential pointer → env retained correctly.
+ */
+typedef void* void_p;
+NOVA_ARRAY_DECL(void_p)
+static NovaArray_void_p* nova_array_new_void_p(int64_t init_cap) {
+    NovaArray_void_p* a = (NovaArray_void_p*)nova_alloc(sizeof(NovaArray_void_p));
+    a->cap  = init_cap > 0 ? init_cap : 8;
+    a->len  = 0;
+    a->data = (void_p*)nova_alloc((size_t)(a->cap) * sizeof(void_p));
+    return a;
+}
+static void nova_array_push_void_p(NovaArray_void_p* a, void_p v) {
+    if (a->len >= a->cap) {
+        int64_t new_cap = a->cap * 2;
+        void_p* new_data = (void_p*)nova_alloc((size_t)new_cap * sizeof(void_p));
+        memcpy(new_data, a->data, (size_t)(a->len) * sizeof(void_p));
+        a->data = new_data;
+        a->cap  = new_cap;
+    }
+    a->data[a->len++] = v;
+}
+static NovaOpt_void_p nova_array_get_void_p(NovaArray_void_p* a, int64_t i) {
+    NovaOpt_void_p r;
+    if (i >= 0 && i < a->len) { r.tag = NOVA_TAG_Option_Some; r.value = a->data[i]; }
+    else                       { r.tag = NOVA_TAG_Option_None; r.value = (void_p)0; }
+    return r;
+}
+static NovaOpt_void_p nova_array_pop_void_p(NovaArray_void_p* a) {
+    NovaOpt_void_p r;
+    if (a->len > 0) { a->len--; r.tag = NOVA_TAG_Option_Some; r.value = a->data[a->len]; }
+    else             { r.tag = NOVA_TAG_Option_None; r.value = (void_p)0; }
+    return r;
+}
+static nova_bool nova_array_eq_void_p(NovaArray_void_p* a, NovaArray_void_p* b) {
+    if (a->len != b->len) return 0;
+    for (int64_t _i = 0; _i < a->len; _i++) { if (a->data[_i] != b->data[_i]) return 0; }
+    return 1;
+}
+
 /* ---- nova_str array (cannot use macro: eq needs nova_str_eq) ---- */
 #ifndef NOVA_RT_H  /* nova_str defined in nova_rt.h; skip if not included yet */
 #endif

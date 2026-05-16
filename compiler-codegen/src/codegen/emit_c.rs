@@ -289,6 +289,12 @@ pub struct CEmitter {
     /// Maps local variable name → (param_c_types, return_c_type) for function-typed parameters.
     /// Used to emit proper function pointer calls for `body(args)` where body is a fn param.
     fn_param_sigs: HashMap<String, (Vec<String>, String)>,
+    /// Plan 55 Ф.1: maps variable name of `[]fn(P...) -> R` type → element closure
+    /// signature `(P_c_tys, R_c_ty)`. Used in `emit_for` so that `for f in fns { f() }`
+    /// can register the loop binding in `fn_param_sigs` and route `f()` through
+    /// `NOVA_CLOS_CALL_*` / `NovaClosBase` dispatch instead of treating `f` as a free
+    /// function name (which previously emitted undefined `nova_fn_f()`).
+    array_param_fn_sigs: HashMap<String, (Vec<String>, String)>,
     /// Plan 14 Ф.3: signature of every top-level user fn (`fn name(...)`).
     /// Используется для emit free-fn-as-value: при `let f = inc` или
     /// `xs.map(inc)` — нужно знать sig чтобы построить thunk и closure.
@@ -549,6 +555,7 @@ impl CEmitter {
             expected_record_type: None,
             current_array_elem_hint: None,
             fn_param_sigs: HashMap::new(),
+            array_param_fn_sigs: HashMap::new(),
             user_fn_sigs: HashMap::new(),
             hof_param_fn_sigs: HashMap::new(),
             user_fn_variadic: HashSet::new(),
@@ -1944,6 +1951,12 @@ impl CEmitter {
             }
             TypeRef::Unit(_) => Ok("nova_unit".into()),
             TypeRef::Array(inner, _) => {
+                // Plan 55 Ф.1: `[]fn(...) -> T` → array of closure pointers.
+                // Storage = NovaArray_void_p* (typedef void* void_p).
+                // Element call goes through NovaClosBase dispatch.
+                if matches!(inner.as_ref(), TypeRef::Func { .. }) {
+                    return Ok("NovaArray_void_p*".into());
+                }
                 // Мономорфизация по primitive elem-type. Каждый primitive
                 // type имеет собственный NovaArray_T с реальным packed
                 // storage (не int64-erasure). Для byte это критично:
@@ -5203,6 +5216,58 @@ impl CEmitter {
                 }
             }
         }
+        // Plan 55 Ф.1 (Source 2b-array): for `[]fn(P...) -> T` params, infer T
+        // from the array literal's first closure element. Without this, the
+        // `[]T` Source 2 above sees concrete=`NovaArray_void_p*` and would
+        // bind T = "void_p", which is wrong. This source overrides with the
+        // actual closure return type.
+        for (param, arg) in fn_decl.params.iter().zip(args.iter()) {
+            if let crate::ast::TypeRef::Array(inner, _) = &param.ty {
+                if let crate::ast::TypeRef::Func { return_type: Some(ret_ty_ref), .. } = inner.as_ref() {
+                    // Find first closure-literal element of the array arg.
+                    let closure_ret_c: String = if let ExprKind::ArrayLit(elems) = &arg.expr().kind {
+                        elems.iter().find_map(|e| {
+                            let ArrayElem::Item(expr) = e else { return None; };
+                            match &expr.kind {
+                                ExprKind::ClosureLight { body, .. } => match body {
+                                    crate::ast::ClosureBody::Expr(ce) => {
+                                        let t = self.infer_expr_c_type(ce);
+                                        if t.is_empty() || t == "void*" { None } else { Some(t) }
+                                    }
+                                    crate::ast::ClosureBody::Block(b) => b.trailing.as_ref()
+                                        .map(|ce| self.infer_expr_c_type(ce))
+                                        .filter(|t| !t.is_empty() && t != "void*"),
+                                },
+                                ExprKind::ClosureFull(sb) => sb.return_type.as_ref()
+                                    .and_then(|rt| self.type_ref_to_c(rt).ok())
+                                    .filter(|t| !t.is_empty() && t != "void*"),
+                                _ => None,
+                            }
+                        }).unwrap_or_default()
+                    } else if let ExprKind::Ident(name) = &arg.expr().kind {
+                        // Variable holding a []fn(...) -> T value — look up element sig.
+                        self.array_param_fn_sigs.get(name)
+                            .map(|(_, r)| r.clone())
+                            .filter(|t| !t.is_empty() && t != "void*" && t != "nova_unit")
+                            .unwrap_or_default()
+                    } else {
+                        String::new()
+                    };
+                    if !closure_ret_c.is_empty() {
+                        // Clear any prior "void_p" binding before re-binding to the real T.
+                        if let Some(name) = match ret_ty_ref.as_ref() {
+                            crate::ast::TypeRef::Named { path, generics, .. } if generics.is_empty() => Some(path.join("_")),
+                            _ => None,
+                        } {
+                            if let Some(slot) = subst.iter_mut().find(|(n, _)| n == &name) {
+                                if slot.1.as_deref() == Some("void_p") { slot.1 = None; }
+                            }
+                        }
+                        Self::infer_type_param_binding(ret_ty_ref.as_ref(), &closure_ret_c, &mut subst);
+                    }
+                }
+            }
+        }
         // Plan 54 Ф.5 (Source 2d): для fn-typed param когда arg —
         // variable reference (не closure literal). Если var_types/
         // fn_param_sigs знают return-type of variable's closure, можем
@@ -6513,7 +6578,17 @@ impl CEmitter {
                 }
                 // Register element type for array params of non-primitive types
                 if let TypeRef::Array(inner, _) = &p.ty {
-                    if let Ok(elem_ty) = self.type_ref_to_c(inner) {
+                    // Plan 55 Ф.1: `[]fn(P...) -> R` param → record element-closure
+                    // signature so emit_for can register loop var in fn_param_sigs.
+                    if let TypeRef::Func { params: fp, return_type, .. } = inner.as_ref() {
+                        let inner_ptys: Vec<String> = fp.iter()
+                            .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".into()))
+                            .collect();
+                        let inner_ret = return_type.as_ref()
+                            .map(|rt| self.type_ref_to_c(rt).unwrap_or_else(|_| "nova_int".into()))
+                            .unwrap_or_else(|| "nova_unit".into());
+                        self.array_param_fn_sigs.insert(p.name.clone(), (inner_ptys, inner_ret));
+                    } else if let Ok(elem_ty) = self.type_ref_to_c(inner) {
                         if elem_ty != "nova_int" && elem_ty != "nova_bool" && elem_ty != "nova_f64" && elem_ty != "nova_str" {
                             // Arrays store tuples and structs as heap pointers
                             let stored_ty = if elem_ty.starts_with("_NovaTuple") && !elem_ty.ends_with('*') {
@@ -7228,6 +7303,23 @@ impl CEmitter {
                 // Propagate array element type so xs[i].field can be correctly typed
                 if let Some(arr_elem_ty) = self.array_element_types.get(&val).cloned() {
                     self.array_element_types.insert(binding.clone(), arr_elem_ty);
+                }
+                // Plan 55 Ф.1: track element closure-sig for local `[]fn(...) -> T` vars
+                // so `for f in xs { f() }` and `xs.push(|| ...)` work in non-param contexts.
+                if let Some(crate::ast::TypeRef::Array(inner, _)) = &decl.ty {
+                    if let crate::ast::TypeRef::Func { params: fp, return_type, .. } = inner.as_ref() {
+                        let ptys: Vec<String> = fp.iter()
+                            .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".into()))
+                            .collect();
+                        let rty = return_type.as_ref()
+                            .map(|rt| self.type_ref_to_c(rt).unwrap_or_else(|_| "nova_int".into()))
+                            .unwrap_or_else(|| "nova_unit".into());
+                        self.array_param_fn_sigs.insert(binding.clone(), (ptys, rty));
+                        // Hint emit_array_lit when value is `[]` so storage uses void_p.
+                        if matches!(decl.value.kind, ExprKind::ArrayLit(ref e) if e.is_empty()) {
+                            // Already handled via emit_expr_with_target_type below if hint set.
+                        }
+                    }
                 }
                 // Special case: `let xs = s.bytes()` / `s.chars()` — set element type
                 // explicitly, even though val is not a known variable.
@@ -11800,6 +11892,21 @@ impl CEmitter {
                 self.line(&format!("{} {} = {}->data[{}];", elem_ty, binding, arr_tmp, idx_tmp));
             }
             self.var_types.insert(binding.clone(), elem_ty.clone());
+            // Plan 55 Ф.1: array stored as NovaArray_void_p (= array of closures).
+            // Register binding as fn-typed so `f()` routes through NOVA_CLOS_CALL_*.
+            // Source of sig: array_param_fn_sigs (when iter is a fn-param) or by
+            // peeking the array literal's first closure element.
+            if arr_ty == "NovaArray_void_p*" {
+                let sig_opt: Option<(Vec<String>, String)> = if let ExprKind::Ident(n) = &iter.kind {
+                    self.array_param_fn_sigs.get(n.as_str()).cloned()
+                        .or_else(|| self.fn_param_sigs.get(n.as_str()).cloned())
+                } else {
+                    None
+                };
+                if let Some(sig) = sig_opt {
+                    self.fn_param_sigs.insert(binding.clone(), sig);
+                }
+            }
             // Plan 48 Ф.8.2: tuple-pattern in array for-loop.
             // `for (k, v) in pairs` where pairs is [](K, V) (array of tuples).
             // Elements are stored as nova_int (pointer-stomped _NovaTupleN*).
@@ -12846,10 +12953,21 @@ impl CEmitter {
         let first_item_ty = elems.iter().find_map(|e| {
             if let ArrayElem::Item(expr) = e { Some(self.infer_expr_c_type(expr)) } else { None }
         }).unwrap_or_else(|| "nova_int".into());
+        // Plan 55 Ф.1: closure-literal elements → void_p storage so they survive
+        // as raw NovaClos_X* pointers (not int-cast'd) and can be dispatched
+        // through NovaClosBase at call site.
+        let first_is_closure = elems.iter().any(|e| {
+            if let ArrayElem::Item(expr) = e {
+                matches!(expr.kind, ExprKind::ClosureLight { .. } | ExprKind::ClosureFull(_))
+            } else { false }
+        });
         // Primitive value types use their own native array storage.
         // All other types (records, sum types, user types) use nova_int (pointer boxing).
         // When elements don't determine type (e.g. empty []), use hint from context.
-        let elem_ty: &str = match first_item_ty.as_str() {
+        let elem_ty: &str = if first_is_closure || first_item_ty == "void*"
+            || self.current_array_elem_hint.as_deref() == Some("void_p") {
+            "void_p"
+        } else { match first_item_ty.as_str() {
             "nova_str"  => "nova_str",
             "nova_bool" => "nova_bool",
             "nova_f64"  => "nova_f64",
@@ -12859,9 +12977,10 @@ impl CEmitter {
                 "nova_bool" => "nova_bool",
                 "nova_f64"  => "nova_f64",
                 "nova_byte" => "nova_byte",
+                "void_p"    => "void_p",
                 _           => "nova_int",
             },
-        };
+        }};
         let arr_ty = format!("NovaArray_{}", elem_ty);
         let tmp = self.fresh_tmp();
         // Count non-spread elements to set initial capacity

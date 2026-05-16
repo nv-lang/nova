@@ -1,0 +1,53 @@
+// Plan 55 Ф.1 — [M-array-of-func-mono]: positive case.
+//
+// Generic-fn принимает `[]fn() -> T` и iterates через for-in вызывая
+// каждый closure. До fix'а: `f()` пытается nova_fn_f() (undefined symbol).
+// После fix'а: `f()` корректно routed через NOVA_CLOS_CALL_* macro.
+//
+// Параллель Go: `func collect[T any](fns []func() T) []T`.
+// Параллель Rust: `fn collect<T>(fns: Vec<Box<dyn Fn() -> T>>) -> Vec<T>`.
+// В обоих языках работает естественно. Nova должна — не хуже.
+
+module plan55.f1_fn_array_collect_positive
+
+
+fn collect_int(fns []fn() -> int) -> []int {
+    let mut out []int = []
+    for f in fns {
+        out.push(f())
+    }
+    out
+}
+
+
+fn collect_str(fns []fn() -> str) -> []str {
+    let mut out []str = []
+    for f in fns {
+        out.push(f())
+    }
+    out
+}
+
+
+test "collect_int: вызов closures из массива возвращает значения" {
+    let xs = collect_int([|| 1, || 2, || 3])
+    assert(xs.len() == 3)
+    assert(xs[0] == 1)
+    assert(xs[1] == 2)
+    assert(xs[2] == 3)
+}
+
+
+test "collect_str: closures возвращают str" {
+    let xs = collect_str([|| "a", || "b", || "c"])
+    assert(xs.len() == 3)
+    assert(xs[0] == "a")
+    assert(xs[1] == "b")
+    assert(xs[2] == "c")
+}
+
+
+test "collect_int: пустой массив closures" {
+    let xs = collect_int([])
+    assert(xs.len() == 0)
+}

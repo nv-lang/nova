@@ -1,0 +1,48 @@
+// Plan 55 Ф.1 — GC stress test для `[]fn` closure storage.
+//
+// 1000 closures × 50 циклов. Каждая итерация: создать массив, прогнать.
+// После — gc.collect(). Heap не должен расти линейно — closures
+// должны быть собраны.
+//
+// Acceptance: heap_size в конце ≤ 4× от baseline после первого reset.
+// (4× — широкий margin, чтобы избежать flaky на разных GC backend'ах;
+// linear leak дал бы 50×.)
+//
+// На malloc-backend: gc.heap_size() возвращает 0 (honest sentinel) →
+// тест проходит тривиально. Реальный GC-test — под boehm.
+
+module plan55.f1_closure_array_gc_stress
+
+
+fn run_one() -> int {
+    let mut arr []fn() -> int = []
+    for i in 0..1000 {
+        arr.push(|| i + 1)
+    }
+    let mut sum = 0
+    for f in arr {
+        sum = sum + f()
+    }
+    sum
+}
+
+
+test "1000 closures × 50 циклов — heap bounded" {
+    // Warm-up + reset
+    let _ = run_one()
+    gc.collect()
+    gc.reset_stats()
+    let baseline = gc.heap_size()
+
+    for _ in 0..50 {
+        let _ = run_one()
+    }
+    gc.collect()
+    let after = gc.heap_size()
+
+    // Bounded growth: малок-backend (baseline=0) → after=0 (всегда trivial).
+    // Boehm — позволяем рост × 4 (closure'ы могут оставаться в roots
+    // короткое время между gc.collect()).
+    let upper = if baseline == 0 { 8 * 1024 * 1024 } else { baseline * 4 }
+    assert(after <= upper)
+}

@@ -1,0 +1,19 @@
+// Plan 55 Ф.1 — negative: arity mismatch внутри `[]fn` literal
+//
+// Closure-литералы в одном массиве должны иметь одинаковую signature.
+// Mixed arity → type-check error (или codegen-error на собрать-этапе).
+//
+// Параллель Rust: `vec![|| 1, |x| 2]` — compile error.
+// Параллель TS: `[() => 1, (x) => 2]` — type-mismatch.
+
+module plan55.f1_negative_fn_array_arity_mismatch
+
+
+// EXPECT_COMPILE_ERROR
+fn bad(fns []fn() -> int) -> int => 0
+
+
+fn main() {
+    // closure |x| 2 имеет arity 1, не 0 — несовместимо с []fn() -> int
+    let _ = bad([|| 1, |x| x + 1])
+}
