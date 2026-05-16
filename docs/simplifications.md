@@ -7862,3 +7862,27 @@ Remaining:
 - Syntax highlighter regex-based (95% cases) � AST-based Plan 45.A round 3
 - doc-query input � .nv only (JSON parsing �.32.2)
 - MCP server proper � �.32.2/3 (��������� crate, ~400 LOC)
+
+
+## Plan 55 Ф.1 ✅ ЗАКРЫТО (2026-05-16) — [M-array-of-func-mono]
+
+### [M-array-of-func-mono] ✅ ЗАКРЫТО (Plan 55 Ф.1, 2026-05-16)
+- **Где:** `compiler-codegen/src/codegen/emit_c.rs::type_ref_to_c` +
+  `runtime/array.h` + `emit_for` + `emit_array_lit` +
+  `resolve_mono_type_args`.
+- **Было:** `[]fn(...) -> T` → `NovaArray_nova_int*` (fallback);
+  `for f in fns { f() }` пытался `nova_fn_f()` (undefined).
+- **Закрыто:**
+  1. `runtime/array.h`: `typedef void* void_p` + `NovaArray_void_p` set.
+  2. `type_ref_to_c`: `Array(Func)` → `NovaArray_void_p*`.
+  3. `array_param_fn_sigs` map для tracking element-closure sig
+     (params + locals). emit_for регистрирует loop var в
+     `fn_param_sigs` → `f()` routes через `NOVA_CLOS_CALL_*`.
+  4. emit_array_lit: closure elements → void_p storage.
+  5. resolve_mono_type_args Source 2b-array: infer T из closure
+     return type (not 'void_p' storage).
+- **Tests:** `nova_tests/plan55/f1_*.nv` — 4 positive/edge/negative;
+  +regress closure: `concurrency/fn_array_generic_smoke` теперь PASS
+  (был FAIL c .len()==4 для T=int).
+- **Параллель:** Go `[]func()`, Rust `Vec<Box<dyn Fn>>`, TS `(()=>T)[]`.
+
