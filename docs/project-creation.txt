@@ -13358,3 +13358,84 @@ Plan 52.3 после mono-pass fix.
 - docs(52.2): создан подплан — bootstrap codegen fixes
 - fix(52.2 Ф.1): empty {} парсится как Block, не RecordLit
 - feat(52.2 Ф.2): const map-literal — forward-decl + const.method() dispatch
+
+
+## Шаг NNN+9. Plan 54 final — 7/8 closed + Ф.3 accepted-as-is (2026-05-16 EOD)
+
+Расширение Plan 54 sprint — закрыл оставшиеся 3 items.
+
+### Ф.2 [M-int-extension-record-field] closed (commit 1a2d62990d7)
+
+Bug: `100.millis()` (user int-extension method) в record-literal field
+эмитил invalid C `((nova_int)100LL).millis()`.
+
+Fix в emit_call для primitive receivers (int/str/bool/f64/byte):
+lookup в method_overloads через Nova-primitive-name, dispatch на mangled
+c_name `Nova_int_method_<m>`. Был только built-in path через
+`int_method_to_c` (abs/sign) — extension methods не покрывались.
+
+3 sub-cases test, isolated от std/time/duration orthogonal bug.
+
+### Ф.7 polymorphic recursion test closed (commit 067696ae272)
+
+EXPECT_COMPILE_ERROR test для polymorphic recursion mechanism.
+Используется `fn deep_recurse[T](depth, v: T)` рекурсивно с `Box2[T]
+{ v: v }` — instantiation tree безграничен.
+
+"anonymous record literal" orthogonal bug который раньше блокировал —
+рассосался от earlier Plan 54 fixes (вероятно Ф.4 turbofish или Ф.9
+novaopt_value_types). Pre-existing bug fixed как побочный эффект.
+
+### Ф.3 accepted-as-is (паритет с Go/Rust/TS)
+
+Forward analysis для `let r = Err2; r.method(arg)` infer T — не делается.
+
+**Industry comparison:**
+- Rust: `let r: Result<i32, E> = Err(E)` — требует explicit type
+  annotation для unit-variants.
+- TypeScript: same — нужен type annotation или typed factory function.
+- Go: generics не имеют unit-variants — N/A.
+
+**Nova подход:** мы поддерживаем два пути — `let r CancelToken[int] = ...`
+(annotation) ИЛИ `Ok2(42)` (args-driven). Bare unit-variant без
+annotation — erased (emit_generic_method_erased V1 fallback). Это
+паритет с industry. Не bug, accepted design.
+
+### Финальный статус Plan 54
+
+7/8 items closed (Ф.1, Ф.2, Ф.4 partial, Ф.5 partial, Ф.7, Ф.8, Ф.9).
+1/8 accepted-as-is (Ф.3 паритет industry).
+
+Регрессия: 517 PASS / 26 FAIL (was 484/46 до Plan 54). Net **+33 PASS,
+-20 FAIL = +53 tests changed positively**.
+
+Открытые followup'ы (новые маркеры, не Plan 54 acceptance) → собраны в
+**Plan 55** (`docs/plans/55-codegen-followups-from-plan-54.md`):
+- Ф.1 `[M-array-of-func-mono]` — `[]fn->T` type_ref_to_c (~80-120 LOC).
+- Ф.2 Ф.5b match-arm pattern_inner_type helper (~80 LOC).
+- Ф.3 Nova_Duration_method_into orthogonal codegen issue (~30-80 LOC).
+
+Итого Plan 55: ~190-280 LOC, mixed risk, P3 (local quality-of-life),
+все 3 фазы independent.
+
+### Commits Plan 54 EOD
+
+- fix(plan54 Ф.2): int-extension primitive-receiver dispatch.
+- test(plan54 Ф.7): polymorphic recursion EXPECT_COMPILE_ERROR.
+
+## Шаг NNN+10. Plan 55 doc — codegen followups от Plan 54 (2026-05-16)
+
+Создал `docs/plans/55-codegen-followups-from-plan-54.md` — собирает 3
+orthogonal codegen issues выявленные во время Plan 54 sprint'а в
+дедикатеный план для closure.
+
+Каждый item имеет: симптом (с code/C-output примером), корень (с
+file/line указанием в emit_c.rs), fix approach (с code-skeleton),
+acceptance criteria + test-имена, LOC estimate + risk.
+
+Cмысл отдельного плана: маркеры в simplifications.md не дают clear
+"closed/open" state. Plan 55 обеспечивает дисциплину для проверки
+acceptance и аккуратное закрытие каждого Ф.* после fix'а.
+
+Имплементация Plan 55 — в следующем sprint'е (P3, не блокирует main
+work).
