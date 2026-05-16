@@ -1,0 +1,42 @@
+name: contracts-z3
+
+# Ф.5.2 (Plan 33.6): Z3 backend CI matrix.
+#
+# Прогоняет тесты помеченные REQUIRES_SMT_BACKEND=z3 через Z3 backend.
+# Дополняет основной CI (TrivialBackend) — оба должны быть зелёными.
+#
+# Требует: libz3 доступна в runner'е (ubuntu — via apt, windows — vcpkg).
+
+on:
+  pull_request:
+    paths:
+      - "compiler-codegen/src/verify/**"
+      - "nova_tests/contracts/**"
+      - ".github/workflows/contracts-z3.yml"
+  push:
+    branches: [main]
+
+jobs:
+  contracts-trivial:
+    name: contracts / TrivialBackend (default)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build nova-cli (release, no z3)
+        run: cargo build --release --manifest-path nova-cli/Cargo.toml
+      - name: Run contracts tests (TrivialBackend)
+        run: ./nova-cli/target/release/nova test . --filter contracts
+
+  contracts-z3:
+    name: contracts / Z3 backend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install libz3-dev
+        run: sudo apt-get install -y libz3-dev
+      - name: Build nova-cli (release, z3-backend feature)
+        run: cargo build --release --features z3-backend --manifest-path nova-cli/Cargo.toml
+      - name: Run contracts tests with Z3
+        env:
+          NOVA_SMT_BACKEND: z3
+        run: ./nova-cli/target/release/nova test . --filter contracts

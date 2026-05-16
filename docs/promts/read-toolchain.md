@@ -85,6 +85,24 @@ Nova-файлы, добавлять тесты, работать с nova CLI**. 
    - `nova-codegen emit-runtime-stubs` — то же что `nova regen-runtime`
    Прямой вызов нужен для отладки; пользователь использует `nova`.
 
+10. **Z3 backend (Ф.5.2 / Plan 33.6):**
+    - По умолчанию используется TrivialBackend (константное сворачивание).
+    - Z3 активируется через feature flag + env var:
+      ```sh
+      # Linux / CI:
+      sudo apt-get install libz3-dev
+      cargo build --release --features z3-backend --manifest-path nova-cli/Cargo.toml
+      NOVA_SMT_BACKEND=z3 ./nova-cli/target/release/nova test . --filter contracts
+
+      # Windows (vcpkg):
+      vcpkg install z3:x64-windows
+      $env:NOVA_SMT_BACKEND = "z3"
+      cargo build --release --features z3-backend --manifest-path nova-cli/Cargo.toml
+      .\nova-cli\target\release\nova.exe test .\ --filter contracts
+      ```
+    - Тесты помеченные `// REQUIRES_SMT_BACKEND z3` пропускаются без Z3.
+    - CI matrix: `.github/workflows/contracts-z3.yml` запускает оба варианта.
+
 ---
 
 ## Ключевые ловушки
