@@ -1,0 +1,12 @@
+// Ф.3.3 (Plan 33.6): pattern-aware hint — деление без `requires k != 0`.
+// REQUIRES_SMT_BACKEND z3 (без Z3 TrivialBackend не вернёт Disproved для деления)
+// EXPECT_COMPILE_ERROR требует add `requires k != 0`
+
+module contracts.suggest_div_by_zero_fail
+
+#verify
+fn divide(x int, k int) -> int
+    ensures result == x / k
+{
+    x / k
+}

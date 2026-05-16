@@ -2335,15 +2335,24 @@ let t0 = std::time::Instant::now();
                     }
                     VerifyResult::Disproved(_, cex) => {
                         // Plan 33.3 Р¤.9.10: AI-friendly format.
-                        // Р'РєР»СЋС‡Р°РµС‚: fn name, counterexample values (РёР»Рё hint),
-                        // suggestions РґР»СЏ РёСЃРїСЂР°РІР»РµРЅРёСЏ.
+                        // Ф.3.3 (Plan 33.6): pattern-aware suggested fixes из AST.
+                        let pattern_suggestions = super::suggest::suggest_fixes(fd);
+                        let pattern_block = if pattern_suggestions.is_empty() {
+                            String::new()
+                        } else {
+                            let mut s = String::from("\n  pattern-aware hints:\n");
+                            for (i, h) in pattern_suggestions.iter().enumerate() {
+                                s.push_str(&format!("    {}. {}\n", i + 1, h));
+                            }
+                            s
+                        };
                         let msg = format!(
                             "contract violation in `{}`:\n  counterexample: {}\n  \
                              suggestions:\n    1. Add `requires` precondition restricting input;\n    \
                              2. Fix function body to match `ensures`;\n    \
                              3. Weaken `ensures` to actual behavior;\n    \
-                             4. Mark `#unverified` if intentional disprove",
-                            fd.name, cex);
+                             4. Mark `#unverified` if intentional disprove{}",
+                            fd.name, cex, pattern_block);
                         match effective_mode {
                             VerifyMode::MustVerify => report.errors.push(
                                 Diagnostic::new(msg, span)),
