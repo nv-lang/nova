@@ -99,6 +99,12 @@ pub fn render_markdown(tree: &DocTree) -> String {
     render_md::render(tree)
 }
 
+/// Plan 45 Ф.25.3 — DocTree → Markdown с source text для точных line numbers
+/// в `[src]` URL'ах (если NOVA_DOC_SOURCE_URL_TEMPLATE задан).
+pub fn render_markdown_with_source(tree: &DocTree, source: &str) -> String {
+    render_md::render_with_source(tree, Some(source))
+}
+
 /// Plan 45 Ф.9 — DocTree → JSON (D107 schema v1).
 pub fn render_json(tree: &DocTree) -> String {
     render_json::render(tree)

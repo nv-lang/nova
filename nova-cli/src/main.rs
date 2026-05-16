@@ -1071,7 +1071,7 @@ fn cmd_doc(path: &Path, format: &str, json_schema: bool, include_private: bool, 
         return Ok(());
     }
     let out = match format {
-        "markdown" | "md" => nova_codegen::doc::render_markdown(&tree),
+        "markdown" | "md" => nova_codegen::doc::render_markdown_with_source(&tree, &src),
         "json" => nova_codegen::doc::render_json_with_source(&tree, &src),
         other => {
             return Err(usage_err(format!(

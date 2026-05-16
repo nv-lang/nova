@@ -304,7 +304,9 @@ const SCHEMA_V1: &str = r##"{
       "additionalProperties": false,
       "properties": {
         "file_id": { "type": "integer" },
-        "line": { "type": "integer", "minimum": 1 }
+        "line": { "type": "integer", "minimum": 1 },
+        "peer_file": { "type": ["string", "null"], "description": "Plan 45 Ф.23.11: peer-file attribution для folder-modules (file name внутри module-folder). null для file-modules." },
+        "url": { "type": "string", "description": "Plan 45 Ф.25.3: web URL к источнику (e.g., GitHub/GitLab/Codeberg). Опционально — populated если NOVA_DOC_SOURCE_URL_TEMPLATE env var задан. Template: `https://.../{path}#L{line}`." }
       }
     }
   }
