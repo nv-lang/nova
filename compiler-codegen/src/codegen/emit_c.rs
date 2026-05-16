@@ -374,6 +374,12 @@ pub struct CEmitter {
     /// из `NOVA_ARRAY_DECL` списка в `nova_rt/array.h` — runtime их
     /// уже даёт, не нужен duplicate typedef.
     novaopt_decls_seen: std::cell::RefCell<std::collections::HashSet<String>>,
+    /// Plan 54 Ф.9: sanitized NovaOpt-id → real C-type значения. Нужно
+    /// чтобы pattern_bind_typed для `Some(v) => v` где scrutinee
+    /// `NovaOpt_Nova_X_p` (sanitized) восстановил correct `v` тип
+    /// `Nova_X*` (не sanitized "Nova_X_p"). Без map'a `t_from_scr` =
+    /// strip("NovaOpt_") даёт sanitized, что breaks pointer types.
+    novaopt_value_types: std::cell::RefCell<std::collections::HashMap<String, String>>,
     /// Accumulated lint warnings from codegen (e.g. anonymous-embed override).
     /// Returned from emit_module instead of printed directly to stderr,
     /// so test runner can route them to captured_stderr rather than leaking
@@ -573,6 +579,15 @@ impl CEmitter {
                 s.insert("nova_str".to_string());
                 s.insert("nova_f64".to_string());
                 std::cell::RefCell::new(s)
+            },
+            // Plan 54 Ф.9: pre-populated primitive sanitized → c_ty
+            // pairs (для них sanitized совпадает с c_ty).
+            novaopt_value_types: {
+                let mut m = std::collections::HashMap::new();
+                for t in ["nova_int", "nova_byte", "nova_bool", "nova_str", "nova_f64"] {
+                    m.insert(t.to_string(), t.to_string());
+                }
+                std::cell::RefCell::new(m)
             },
             defer_scopes: Vec::new(),
             defer_block_counter: 0,
@@ -9424,15 +9439,31 @@ impl CEmitter {
                                 } else { None };
                                 if let Some(t_c) = t_c {
                                     if t_c != "nova_str" {
-                                        // Per-T un-box через ternary + compound
-                                        // literal. NovaOpt_<T_c> существует для
-                                        // primitives (NOVA_ARRAY_DECL declares
-                                        // NovaArray_T + NovaOpt_T pair).
+                                        // Plan 54 Ф.9: read-back зависит от
+                                        // pointer/value T:
+                                        //   T pointer (Nova_X*) — reason_ptr
+                                        //     УЖЕ is Nova_X* (cancel() сделал
+                                        //     `(void*)(ptr_value)` без box).
+                                        //     Cast: `(Nova_X*)reason_raw(tok)`.
+                                        //   T value (nova_int, etc) — boxed
+                                        //     via box_copy_raw на heap; read
+                                        //     `*(T*)reason_raw(tok)`.
+                                        // NovaOpt typedef emit'ится через
+                                        // register_novaopt_decl.
+                                        let sanitized = Self::sanitize_c_for_ident(&t_c);
+                                        self.register_novaopt_decl(&sanitized, &t_c);
+                                        let read_back = if t_c.ends_with('*') {
+                                            format!("({})nova_cancel_token_reason_raw({})",
+                                                t_c, obj_c)
+                                        } else {
+                                            format!("*({}*)nova_cancel_token_reason_raw({})",
+                                                t_c, obj_c)
+                                        };
                                         return Ok(format!(
                                             "(nova_cancel_token_has_reason({tok}) \
-                                              ? (NovaOpt_{t}){{ .tag = NOVA_TAG_Option_Some, .value = *({t}*)nova_cancel_token_reason_raw({tok}) }} \
-                                              : (NovaOpt_{t}){{ .tag = NOVA_TAG_Option_None }})",
-                                            tok = obj_c, t = t_c
+                                              ? (NovaOpt_{sn}){{ .tag = NOVA_TAG_Option_Some, .value = {rb} }} \
+                                              : (NovaOpt_{sn}){{ .tag = NOVA_TAG_Option_None }})",
+                                            tok = obj_c, rb = read_back, sn = sanitized
                                         ));
                                     }
                                 }
@@ -13132,8 +13163,15 @@ impl CEmitter {
                                 // "NovaOpt_" из scr_ty чтобы получить
                                 // реальный T (nova_bool, NovaOpt_nova_int,
                                 // _NovaTuple2, Nova_Foo*, etc.).
+                                // Plan 54 Ф.9: для pointer T (Nova_X*) sanitized
+                                // id ≠ c_ty. recovery через novaopt_value_types
+                                // если ранее зарегистрировано register_novaopt_decl.
                                 let t_from_scr = scr_ty.strip_prefix("NovaOpt_")
-                                    .map(str::to_string);
+                                    .map(|s| {
+                                        self.novaopt_value_types.borrow()
+                                            .get(s).cloned()
+                                            .unwrap_or_else(|| s.to_string())
+                                    });
                                 if sub_is_opt_variant {
                                     // Inner — Option-typed (nested). Используем
                                     // sub_t если оно тоже NovaOpt_*; иначе legacy
@@ -14274,6 +14312,10 @@ impl CEmitter {
         let mut seen = self.novaopt_decls_seen.borrow_mut();
         if seen.contains(sanitized) { return; }
         seen.insert(sanitized.to_string());
+        // Plan 54 Ф.9: запомнить реальный c_ty для recovery в
+        // pattern_bind_typed (sanitized id ≠ c_ty для pointer types).
+        self.novaopt_value_types.borrow_mut()
+            .insert(sanitized.to_string(), c_ty.to_string());
         let line = format!(
             "typedef struct NovaOpt_{} {{ int tag; {} value; }} NovaOpt_{};\n",
             sanitized, c_ty, sanitized);
@@ -15167,7 +15209,13 @@ impl CEmitter {
                                 if let ExprKind::Ident(name) = &obj.kind {
                                     if let Some(t_c) = self.cancel_token_t_map.get(name) {
                                         if t_c != "nova_str" {
-                                            return format!("NovaOpt_{}", t_c);
+                                            // Plan 54 Ф.9: использовать
+                                            // sanitize_c_for_ident для NovaOpt
+                                            // suffix чтобы соответствовать
+                                            // register_novaopt_decl naming
+                                            // (особенно для pointer types).
+                                            let sanitized = Self::sanitize_c_for_ident(t_c);
+                                            return format!("NovaOpt_{}", sanitized);
                                         }
                                     }
                                 }

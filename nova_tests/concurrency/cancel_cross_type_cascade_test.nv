@@ -105,3 +105,45 @@ test "negative: cross-type cascade не cancel'ит parent или child до act
     assert(!parent.is_cancelled())
     assert(!child.is_cancelled())
 }
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Round-trip reason() verification — Plan 54 Ф.9
+// ──────────────────────────────────────────────────────────────────────────
+
+
+test "cross-type round-trip: child.reason() возвращает converted A" {
+    // Это закрывает verification hole: до Plan 54 Ф.9 tested только
+    // child.is_cancelled(), не reason(). Если cross-type cascade
+    // (через converter wrapper) molча падал на UB (передавал raw
+    // B-reason cast as A), reason() возвращал бы garbage. Этот тест —
+    // regression guard.
+    let parent CancelToken[ParentErr] = CancelToken.new()
+    let child  CancelToken[ChildErr]  = CancelToken.new()
+    child.cancelled_by(parent)
+    parent.cancel(ParentErr { code: 12345 })
+    assert(child.is_cancelled())
+    let r = child.reason()
+    // ChildErr.from(ParentErr) → ChildErr { msg: "from-parent" }
+    let msg = match r {
+        Some(ce_rt) => ce_rt.msg
+        None        => "no-reason"
+    }
+    assert(msg == "from-parent")
+}
+
+
+test "cross-type round-trip: same-type cascade reason() пробрасывается" {
+    // Sanity: same-type cascade (B == A) — child получает тот же
+    // reason_ptr что parent, reason() возвращает то же значение.
+    let p1 CancelToken[ParentErr] = CancelToken.new()
+    let p2 CancelToken[ParentErr] = CancelToken.new()
+    p2.cancelled_by(p1)
+    p1.cancel(ParentErr { code: 777 })
+    let r = p2.reason()
+    let code = match r {
+        Some(pe_rt) => pe_rt.code
+        None        => -1
+    }
+    assert(code == 777)
+}
