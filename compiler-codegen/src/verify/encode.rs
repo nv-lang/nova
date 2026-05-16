@@ -437,6 +437,20 @@ pub fn encode_expr_with_ctx(e: &Expr, ctx: &EncodeCtx) -> Result<SmtTerm, Encodi
                 "interrupt/forbid/realtime в контракте не поддерживается".into()))
         }
 
+        // Ф.9.1 (Plan 33.6): specific catch-alls с actionable suggestion.
+        ExprKind::Detach(_) => Err(EncodingError::Unsupported(
+            "`detach { ... }` (concurrency primitive) в контракте не поддерживается; \
+             контракты должны быть pure expressions без spawn/detach".into())),
+        ExprKind::Throw(_) => Err(EncodingError::Unsupported(
+            "`throw expr` (error-throw) в контракте не поддерживается; \
+             используйте `requires` для предусловий вместо throw в expression".into())),
+        ExprKind::MapLit { .. } => Err(EncodingError::Unsupported(
+            "map-литерал `[k:v]` в контракте не поддерживается SMT-encoder'ом; \
+             используйте `forall` quantifier или вынесите проверку в #pure fn".into())),
+        ExprKind::TaggedTemplate { .. } => Err(EncodingError::Unsupported(
+            "tagged template `tag\"...\"` в контракте не поддерживается; \
+             контракт должен быть pure boolean expression".into())),
+
         // Прочие конструкции — generic fallback с названием.
         _ => Err(EncodingError::Unsupported(
             "данная конструкция не поддерживается в SMT-encoder'е контрактов; \
