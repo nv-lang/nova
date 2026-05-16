@@ -12627,6 +12627,31 @@ Plan 33.6 закрыт как deliverable. Match handler → Plan 33.7. Doc-test
 TrivialBackend coverage (reflexivity, commutativity, transitivity, congruence,
 bounds propagation) + witness API. Pipeline wiring witness — V3.
 
+## Ф.16 — witness wire + const mul
+
+### Ф.16.1 — witness в pipeline для exists ensures
+
+- pipeline.rs: `find_exists_var` walker; для ensures с exists используем
+  `try_prove_with_witness`; при Proven + extracted witness → emit info-Warning
+  «proven via witness: var = value [info]».
+- Коммит: `dc8f15fe6e2`.
+
+### Ф.16.2 — doc-test bridge (defer V3 Plan 45.B)
+
+- Cross-plan integration (verify → doc) → circular dependency risk. Defer.
+
+### Ф.16.3 — TrivialBackend strict-monotone const mul
+
+- `try_const_mul_check` в `propagate_bounds`: `(>= (* L Var) goal)` где L > 0
+  и known lower(Var) * L >= goal → BoolLit(true). Обрабатывает обе порядка args.
+- Test: trivial_const_mul_positive (`requires x >= 0; ensures 2*x >= 0`).
+- Коммит: `58cc06e4ec7`.
+
+**Итого Ф.16:** 2 closed + 1 deferred V3. **154 PASS / 42 SKIP / 0 FAIL.**
+
+**Plan 33.6 итог за 16 спринтов:** TrivialBackend coverage до const mul +
+witness wire. Reasonable LIA subset без Z3.
+
 === Plan 45 �.25 � nova tests (positive + negative) ===
 
 ����� �������� �.25 (4 ����) �������� nova-tests .nv ��� �������� �����
@@ -13826,11 +13851,11 @@ Plan 45 family � ����� �����. ��� ������
 ����� 14 sessions (�.25 > �.33) Plan 45 close on ~98%. ��� user-facing
 features implemented � production-grade test coverage.
 
-=== Plan 45 Sprint �.34 � HTTP MCP + cache + stdlib doc-pass (2026-05-16) ===
+=== Plan 45 Sprint �.34 � HTTP MCP + cache + stdlib doc-pass (2026-05-16) ===
 
-�.34.1 (5b055e7): HTTP MCP transport via std::net (no tokio). `nova doc-mcp --port N`.
-�.34.2 (dff9e6e): Incremental cache (closes �.30.2). WatchCache + Arc<Module> sharing.
-�.34.3 (a946013): std/time/duration doc-pass partial (14 docs, 16% coverage).
+�.34.1 (5b055e7): HTTP MCP transport via std::net (no tokio). `nova doc-mcp --port N`.
+�.34.2 (dff9e6e): Incremental cache (closes �.30.2). WatchCache + Arc<Module> sharing.
+�.34.3 (a946013): std/time/duration doc-pass partial (14 docs, 16% coverage).
 
 200+ doc tests PASS (26+ suites + 75+ unit). Plan 45 close ~99%.
 Remaining: Plan 45.B full stdlib doc-pass (weeks).
