@@ -149,6 +149,10 @@ pub struct DocModule {
     /// Lists each exported fn name with its effect set. Renderers use
     /// this to show an "Effects overview" section. Empty if no fn has effects.
     pub effect_matrix: Vec<EffectMatrixEntry>,
+    /// Plan 45 Ф.24.17: capability constraint matrix for #realtime functions.
+    /// Lists each @realtime fn with its realtime constraints (nogc, forbidden effects).
+    /// Empty if no @realtime fns in module.
+    pub realtime_matrix: Vec<RealtimeConstraintEntry>,
     /// Span первого токена модуля — для "View Source" links (D107).
     pub source_span: Span,
 }
@@ -232,6 +236,19 @@ pub struct DocItem {
     /// `true` → inline the target item's content here (rustdoc `#[doc(inline)]` equivalent).
     /// `false` → render as a "Re-exported from ..." link (default for cross-module re-exports).
     pub doc_inline: bool,
+}
+
+/// Plan 45 Ф.24.17: one row of the realtime capability constraint matrix.
+#[derive(Debug, Clone)]
+pub struct RealtimeConstraintEntry {
+    /// Stable item ID.
+    pub item_id: String,
+    /// Function name (display).
+    pub fn_name: String,
+    /// `true` if `@realtime nogc` (no GC allocations allowed).
+    pub nogc: bool,
+    /// Forbidden effects from `#forbid` on this fn or its module.
+    pub forbidden_effects: Vec<String>,
 }
 
 /// Plan 45 Ф.24.16: one row of the effect composition matrix.

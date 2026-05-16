@@ -138,6 +138,21 @@ fn write_module(w: &mut JsonWriter, m: &DocModule) {
             w.array_str(p);
         }
     });
+    // Plan 45 Ф.24.17: realtime constraint matrix.
+    w.field_array("realtime_matrix", |w| {
+        for entry in &m.realtime_matrix {
+            w.array_object(|w| {
+                w.field_array("forbidden_effects", |w| {
+                    for eff in &entry.forbidden_effects {
+                        w.array_str(eff);
+                    }
+                });
+                w.field_str("fn_name", &entry.fn_name);
+                w.field_str("item_id", &entry.item_id);
+                w.field_bool("nogc", entry.nogc);
+            });
+        }
+    });
     w.field_object("source", |w| {
         let span = m.source_span;
         w.field_u32("file_id", span.file_id);

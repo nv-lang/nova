@@ -346,6 +346,24 @@ fn collect_one(module: &Module) -> DocModule {
         }
         entries
     };
+    // Plan 45 Ф.24.17: realtime constraint matrix — collect @realtime fns.
+    let realtime_matrix: Vec<crate::doc::doctree::RealtimeConstraintEntry> = {
+        let mut entries = Vec::new();
+        for item in &items {
+            if item.visibility != Visibility::Export {
+                continue;
+            }
+            if item.capabilities.realtime {
+                entries.push(crate::doc::doctree::RealtimeConstraintEntry {
+                    item_id: item.id.clone(),
+                    fn_name: item.name.clone(),
+                    nogc: item.capabilities.realtime_nogc,
+                    forbidden_effects: item.capabilities.forbid.clone(),
+                });
+            }
+        }
+        entries
+    };
 
     DocModule {
         path: module_path,
@@ -359,6 +377,7 @@ fn collect_one(module: &Module) -> DocModule {
         hide_doc: mod_attrs.hide_doc,
         items,
         effect_matrix,
+        realtime_matrix,
         source_span: module.span,
     }
 }
