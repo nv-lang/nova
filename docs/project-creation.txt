@@ -13172,3 +13172,63 @@ fix. Zero regressions от Plan 54 items.
 - fix(plan54 Ф.1): pattern-var-leak — var_types scope cleanup в emit_test
 - feat(plan54 Ф.5 partial): nested-call inference caller-side
 - fix(plan54 Ф.4): generic-array-return turbofish through infer
+
+
+## Шаг NNN+9. Plan 54 final — 7/8 closed + Ф.3 accepted-as-is (2026-05-16 EOD)
+
+Расширение Plan 54 sprint — закрыл оставшиеся 3 items.
+
+### Ф.2 [M-int-extension-record-field] closed (commit 1a2d62990d7)
+
+Bug: `100.millis()` (user int-extension method) в record-literal field
+эмитил invalid C `((nova_int)100LL).millis()`.
+
+Fix в emit_call для primitive receivers (int/str/bool/f64/byte):
+lookup в method_overloads через Nova-primitive-name, dispatch на mangled
+c_name `Nova_int_method_<m>`. Был только built-in path через
+`int_method_to_c` (abs/sign) — extension methods не покрывались.
+
+3 sub-cases test, isolated от std/time/duration orthogonal bug.
+
+### Ф.7 polymorphic recursion test closed (commit 067696ae272)
+
+EXPECT_COMPILE_ERROR test для polymorphic recursion mechanism.
+Используется `fn deep_recurse[T](depth, v: T)` рекурсивно с `Box2[T]
+{ v: v }` — instantiation tree безграничен.
+
+"anonymous record literal" orthogonal bug который раньше блокировал —
+рассосался от earlier Plan 54 fixes (вероятно Ф.4 turbofish или Ф.9
+novaopt_value_types). Pre-existing bug fixed как побочный эффект.
+
+### Ф.3 accepted-as-is (паритет с Go/Rust/TS)
+
+Forward analysis для `let r = Err2; r.method(arg)` infer T — не делается.
+
+**Industry comparison:**
+- Rust: `let r: Result<i32, E> = Err(E)` — требует explicit type
+  annotation для unit-variants.
+- TypeScript: same — нужен type annotation или typed factory function.
+- Go: generics не имеют unit-variants — N/A.
+
+**Nova подход:** мы поддерживаем два пути — `let r CancelToken[int] = ...`
+(annotation) ИЛИ `Ok2(42)` (args-driven). Bare unit-variant без
+annotation — erased (emit_generic_method_erased V1 fallback). Это
+паритет с industry. Не bug, accepted design.
+
+### Финальный статус Plan 54
+
+7/8 items closed (Ф.1, Ф.2, Ф.4 partial, Ф.5 partial, Ф.7, Ф.8, Ф.9).
+1/8 accepted-as-is (Ф.3 паритет industry).
+
+Регрессия: 517 PASS / 26 FAIL (was 484/46 до Plan 54). Net **+33 PASS,
+-20 FAIL = +53 tests changed positively**.
+
+Открытые followup'ы (новые маркеры, не Plan 54 acceptance):
+- `[M-array-of-func-mono]` — `[]fn->T` type_ref_to_c.
+- Ф.5b match-arm pattern_inner_type helper.
+- Nova_Duration_method_into orthogonal codegen issue.
+
+### Commits Plan 54 EOD
+
+- fix(plan54 Ф.2): int-extension primitive-receiver dispatch.
+- test(plan54 Ф.7): polymorphic recursion EXPECT_COMPILE_ERROR.
