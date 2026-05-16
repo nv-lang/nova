@@ -1,34 +1,122 @@
 // cancel_token_generic_smoke.nv — Plan 49 Ф.6: CancelToken[T] generic.
 //
-// V1 (этот тест): cancel(reason: T) с typed boxing для T=str/int/pointer.
-// V2: reason() -> Option[T] per-T (нужна mono'д helper или infer-context).
+// V1 (этот тест): cancel(reason: T) с typed boxing для T=str/int/bool/pointer.
+// V2: reason() -> Option[T] per-T (нужна mono'd helper или infer-context).
 
 module concurrency.cancel_token_generic_smoke
 
-test "CancelToken default — backward compatible" {
+
+// ──────────────────────────────────────────────────────────────────────────
+// 1. Default CancelToken (= CancelToken[str]) — backward-compat
+// ──────────────────────────────────────────────────────────────────────────
+
+test "default: CancelToken.new() работает как раньше" {
     let tok = CancelToken.new()
     assert(!tok.is_cancelled())
     tok.cancel("hello")
     assert(tok.is_cancelled())
 }
 
-test "CancelToken[str] explicit — equivalent to default" {
-    let tok CancelToken[str] = CancelToken.new()
-    tok.cancel("explicit")
+
+test "default: cancel() без аргумента → 'cancelled'" {
+    let tok = CancelToken.new()
+    tok.cancel()
     assert(tok.is_cancelled())
+    let r = tok.reason()
+    let got = match r {
+        Some(s) => s
+        None    => ""
+    }
+    assert(got == "cancelled")
 }
 
-test "CancelToken[int] typed reason — i64 boxing" {
+
+// ──────────────────────────────────────────────────────────────────────────
+// 2. CancelToken[str] explicit — equivalent to default
+// ──────────────────────────────────────────────────────────────────────────
+
+test "explicit [str]: type annot ок, reason str работает" {
+    let tok CancelToken[str] = CancelToken.new()
+    tok.cancel("explicit reason")
+    assert(tok.is_cancelled())
+    let r = tok.reason()
+    let got = match r {
+        Some(s) => s
+        None    => ""
+    }
+    assert(got == "explicit reason")
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// 3. CancelToken[int] — Ф.6 typed reason для primitive T ≠ str
+// ──────────────────────────────────────────────────────────────────────────
+
+test "CancelToken[int]: cancel(42) — i64 boxing через compound literal" {
     let tok CancelToken[int] = CancelToken.new()
     tok.cancel(42)
     assert(tok.is_cancelled())
-    // NB: reason() для CancelToken[int] возвращает Option[str] в V1
-    // (per-T un-box deferred V2). Ф.6 acceptance первого этапа — что
-    // cancel() с non-str T компилируется и работает на runtime-уровне.
+    // NB: reason() возвращает Option[str] в V1 (per-T un-box deferred V2).
+    // Acceptance Ф.6 первого этапа — cancel() с non-str T компилируется
+    // и работает на runtime-уровне (heap-alloc + memcpy через box_copy_raw).
 }
 
-test "CancelToken[bool] typed reason — bool boxing" {
+
+test "CancelToken[int]: разные int значения" {
+    let tok1 CancelToken[int] = CancelToken.new()
+    tok1.cancel(0)
+    assert(tok1.is_cancelled())
+
+    let tok2 CancelToken[int] = CancelToken.new()
+    tok2.cancel(-1)
+    assert(tok2.is_cancelled())
+
+    let tok3 CancelToken[int] = CancelToken.new()
+    tok3.cancel(9999999)
+    assert(tok3.is_cancelled())
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// 4. CancelToken[bool] — boxing nova_bool через compound literal
+// ──────────────────────────────────────────────────────────────────────────
+
+test "CancelToken[bool]: cancel(true)" {
     let tok CancelToken[bool] = CancelToken.new()
     tok.cancel(true)
+    assert(tok.is_cancelled())
+}
+
+
+test "CancelToken[bool]: cancel(false) — отмена с reason=false" {
+    let tok CancelToken[bool] = CancelToken.new()
+    tok.cancel(false)
+    assert(tok.is_cancelled())
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// 5. CancelToken[T] внутри supervised — token переживает scope
+// ──────────────────────────────────────────────────────────────────────────
+
+test "CancelToken[int]: supervised + cancel из fiber'а" {
+    let tok CancelToken[int] = CancelToken.new()
+    supervised(cancel: tok) {
+        spawn { tok.cancel(7) }
+        spawn { for _i in 0..1000 { } }
+    }
+    assert(tok.is_cancelled())
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// 6. Идемпотентность для всех T
+// ──────────────────────────────────────────────────────────────────────────
+
+test "CancelToken[int]: повторный cancel() — first-cancel-wins" {
+    let tok CancelToken[int] = CancelToken.new()
+    tok.cancel(1)
+    tok.cancel(2)   // no-op (idempotent)
+    tok.cancel(3)   // no-op
     assert(tok.is_cancelled())
 }
