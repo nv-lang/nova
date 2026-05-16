@@ -12780,6 +12780,32 @@ dead lemma diagnostic. Reasonable LIA subset без Z3.
 **Plan 33.6 итог за 21 спринт:** TrivialBackend + boolean logic excluded middle
 + contradictory ensures E2404.
 
+## Ф.22 — vacuous fn + redundant requires + De Morgan
+
+### Ф.22.1 — vacuous fn (`requires false`)
+
+- pipeline.rs: detect `requires BoolLit(false)` → W2402 «vacuous fn never callable».
+- Test: vacuous_fn_requires_false_w2402 (EXPECT_COMPILE_WARNING W2402).
+- Коммит: `60d91c2f5bc`.
+
+### Ф.22.2 — redundant requires (tightness)
+
+- pipeline.rs: collect lower/upper bounds per Var из всех requires;
+  если 2+ literal bounds → W2402 для нестрожайших.
+- Test: redundant_requires_tighter_w2402.
+- Коммит: `60d91c2f5bc`.
+
+### Ф.22.3 — De Morgan simplification
+
+- trivial.rs: `not (and X Y)` → `or (not X) (not Y)` (и наоборот) в `simplify_app`.
+- Закрывает классический case `not (a == b ∧ b == c)` через `or` decomposition.
+- Коммит: `60d91c2f5bc`.
+
+**Итого Ф.22:** 3 closed. **167 PASS (+2) / 42 SKIP / 0 FAIL.**
+
+**Plan 33.6 итог за 22 спринта:** полный contract lint set + boolean logic
+с De Morgan.
+
 === Plan 45 �.25 � nova tests (positive + negative) ===
 
 ����� �������� �.25 (4 ����) �������� nova-tests .nv ��� �������� �����
