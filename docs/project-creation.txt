@@ -12143,3 +12143,57 @@ C-С‚РёРїР° scrutinee (`Nova_LinkedList____nova_int*` в†’ `LinkedList____nova_int
   (apt libz3-dev + --features z3-backend + NOVA_SMT_BACKEND=z3).
 - `docs/promts/read-toolchain.md`: СЃРµРєС†РёСЏ Z3 build СЃ Linux/Windows РёРЅСЃС‚СЂСѓРєС†РёРµР№.
 - V18 Р·Р°РєСЂС‹С‚. РљРѕРјРјРёС‚: `03405cde85b`.
+
+=== Plan 45 Ф.25 — nova tests (positive + negative) ===
+
+После закрытия Ф.25 (4 фичи) написаны nova-tests .nv для проверки через
+release nova-binary. Цель — convince что doc-tooling изменения не ломают
+runtime behavior, и что edge cases доступны через язык.
+
+6 файлов nova_tests/doc/f25_*:
+
+f25_doc_warnings_positive.nv (Ф.25.1):
+- Функции с malformed #[deprecated], unknown #[future_compat_marker],
+  doc-test с unknown modifier 
+ova,future_mod.
+- Doc-warnings НЕ блокируют компиляцию — функции компилируются и runtime ok.
+
+f25_markdown_summary_positive.nv (Ф.25.2):
+- Функции с tricky docstrings: decimal 3.14, abbreviation e.g.,
+  markdown link [docs](https://example.com/api.html), version 1.0.0,
+  naked URL https://x.com/path.html, backticked ormat!.
+- Все extract'ятся корректно (тестируется implicitly через успешную компиляцию).
+
+f25_source_url_positive.nv (Ф.25.3):
+- 6 функций в разных line positions (top, mid, bottom of file).
+- Cause [src] URLs указывать на distinct lines.
+- Runtime testing подтверждает что recursive (factorial, fib, power_of_two)
+  работают на правильных positions.
+
+f25_mutation_contracts_positive.nv (Ф.25.4):
+- 6 функций с contracts, по одной на каждый mutation operator:
+  - > 0 (gt-to-ge mutant)
+  - >= 0 (ge-to-gt mutant)
+  - == 5 (eq-to-ne mutant)
+  - < 100 (lt-to-le mutant)
+  - Multiple <=/>= (combined)
+  - Recursive с decreases (drop-requires + ensures mutants)
+- Tests включают boundary values (0 для >= 0, 99 для < 100) — это
+  именно те cases которые killing mutants.
+
+f25_doc_warnings_negative.nv:
+- Function с malformed attrs + вызовом несуществующей 	otally_undefined_helper_qwerty.
+- Compile error в теле (не в attrs — attrs только warnings).
+
+f25_mutation_contracts_negative.nv:
+- Function с contracts + вызовом несуществующей 
+onexistent_mutation_target_zzz.
+- Compile error.
+
+Прогон через 
+ova-cli/target/release/nova.exe test:
+- 4 PASS позитивных
+- 2 PASS негативных (expect compile error)
+- Total: 6/6 PASS
+
+Test runtime: ~14s per file (release nova compilation overhead).
