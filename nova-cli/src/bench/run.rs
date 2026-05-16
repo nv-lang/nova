@@ -49,6 +49,9 @@ pub struct BenchRunOpts<'a> {
     pub out_csv: Option<&'a Path>,
     /// Output markdown path.
     pub out_md: Option<&'a Path>,
+    /// Plan 57.B.2: Criterion-compatible JSON directory output.
+    /// Creates `<dir>/<bench>/new/{estimates,sample,benchmark}.json`.
+    pub out_criterion: Option<&'a Path>,
     /// Print colored terminal output (auto-detect via main if None).
     pub color: bool,
 }
@@ -209,6 +212,11 @@ pub fn run(opts: BenchRunOpts) -> Result<i32> {
         std::fs::write(p, report::csv_report(&benches))
             .map_err(|e| anyhow!("write CSV: {}", e))?;
         eprintln!("wrote CSV to {}", p.display());
+    }
+    if let Some(p) = opts.out_criterion {
+        let n = super::criterion_compat::write_all(p, &benches)?;
+        eprintln!("wrote Criterion-compat layout to {} ({} benches)",
+            p.display(), n);
     }
     if let Some(p) = opts.out_md {
         let mut md = String::new();

@@ -450,6 +450,11 @@ enum BenchCmd {
         /// Write markdown result to file (для PR comment).
         #[arg(long = "out-md")]
         out_md: Option<PathBuf>,
+        /// Plan 57.B.2: Criterion-compatible JSON output directory.
+        /// Layout: `<dir>/<safe-name>/new/{estimates,sample,benchmark}.json`.
+        /// Compatible с cargo-criterion --message-format=criterion.
+        #[arg(long = "out-criterion")]
+        out_criterion: Option<PathBuf>,
         /// Plan 57.A.5: profile mode (cpu|heap|gc) + output path.
         /// CPU = wraps samply (must be installed via `cargo install samply`).
         #[arg(long = "profile", value_names = ["MODE", "OUT"], num_args = 2)]
@@ -2644,7 +2649,8 @@ fn cmd_bench(sub: BenchCmd) -> Result<()> {
     match sub {
         BenchCmd::Run { file, filter, samples, warmup_ms, time_budget_s,
                         gc, mode, toolchain, vcvars, clang, compile_timeout, run_timeout,
-                        keep_artifacts, mono_depth, out_json, out_csv, out_md, profile } => {
+                        keep_artifacts, mono_depth, out_json, out_csv, out_md,
+                        out_criterion, profile } => {
             let repo = find_repo_root()?;
             let paths = resolve_paths(&repo);
             let pref = test_runner::ToolchainPref::parse(&toolchain)?;
@@ -2676,6 +2682,7 @@ fn cmd_bench(sub: BenchCmd) -> Result<()> {
                 out_json: out_json.as_deref(),
                 out_csv: out_csv.as_deref(),
                 out_md: out_md.as_deref(),
+                out_criterion: out_criterion.as_deref(),
                 color,
             };
             // Plan 57.A.5: profile mode — отдельный run после measurement.
