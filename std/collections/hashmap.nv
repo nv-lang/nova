@@ -188,6 +188,30 @@ export fn HashMap[K, V] mut @insert(key K, value V) -> Option[V] {
 }
 
 
+// HashMap.mut @insert_new(key, value) — fast-path вставка БЕЗ возврата
+// старого значения. Используется десугарингом map-литерала `[k: v, ...]`
+// (Plan 52 Ф.21) где гарантировано что мапа только что создана через
+// `with_capacity` → старого значения быть не может.
+//
+// Семантически идентично `@insert` но:
+// - не возвращает Option[V] — пропускает branch и allocation Option-обёртки
+// - НЕ проверяет Tombstone (после with_capacity все слоты Empty)
+// - НЕ вызывает @maybe_grow (with_capacity гарантирует n вставок без rehash)
+//
+// **Контракт:** вызывать ТОЛЬКО на мапе которая
+// (a) только что создана через `with_capacity(n)` где n ≥ итоговое count
+// (b) ещё не имеет вставок других ключей
+// Иначе — undefined behavior (дубликат не будет обнаружен, may overwrite).
+//
+// Это микро-оптимизация для literal-desugar. User-код должен использовать
+// обычный @insert.
+export fn HashMap[K, V] mut @insert_new(key K, value V) {
+    let idx = @find_slot(key)
+    @buckets[idx] = Occupied { key, value }
+    @count += 1
+}
+
+
 // HashMap.mut @remove(key) — удалить пару по ключу.
 //
 // Возвращает Some(value) если было удалено, None иначе.

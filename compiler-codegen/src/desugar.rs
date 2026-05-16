@@ -224,12 +224,15 @@ impl DesugarCtx {
                 Some(v) => v,
                 None => Expr::new(ExprKind::Ident(f.name.clone()), span),
             };
+            // Plan 52 Ф.21: используем `insert_new` (нет возврата Option) —
+            // мапа только что создана через with_capacity, дубликатов
+            // быть не может. См. std/collections/hashmap.nv::@insert_new.
             let insert_call = Expr::new(
                 ExprKind::Call {
                     func: Box::new(Expr::new(
                         ExprKind::Member {
                             obj: Box::new(Expr::new(ExprKind::Ident(tmp.clone()), span)),
-                            name: "insert".to_string(),
+                            name: "insert_new".to_string(),
                         },
                         span,
                     )),
@@ -238,14 +241,7 @@ impl DesugarCtx {
                 },
                 span,
             );
-            stmts.push(Stmt::Let(LetDecl {
-                mutable: false,
-                pattern: Pattern::Wildcard(span),
-                ty: None,
-                value: insert_call,
-                span,
-                is_ghost: false,
-            }));
+            stmts.push(Stmt::Expr(insert_call));
         }
 
         let trailing = Expr::new(ExprKind::Ident(tmp), span);
@@ -376,12 +372,16 @@ impl DesugarCtx {
                 span,
                 is_ghost: false,
             }));
+            // Plan 52 Ф.21: используем `insert_new` (нет возврата Option) —
+            // мапа только что создана через with_capacity, дубликатов
+            // ключей быть не может (дубликаты compile-time const ловятся
+            // dup-key lint'ом). См. std/collections/hashmap.nv::@insert_new.
             let insert_call = Expr::new(
                 ExprKind::Call {
                     func: Box::new(Expr::new(
                         ExprKind::Member {
                             obj: Box::new(Expr::new(ExprKind::Ident(tmp.clone()), span)),
-                            name: "insert".to_string(),
+                            name: "insert_new".to_string(),
                         },
                         span,
                     )),
@@ -393,14 +393,7 @@ impl DesugarCtx {
                 },
                 span,
             );
-            stmts.push(Stmt::Let(LetDecl {
-                mutable: false,
-                pattern: Pattern::Wildcard(span),
-                ty: None,
-                value: insert_call,
-                span,
-                is_ghost: false,
-            }));
+            stmts.push(Stmt::Expr(insert_call));
         }
 
         // Plan 52 Ф.16: typed-rebinding для Block-trailing inference.
