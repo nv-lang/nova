@@ -236,8 +236,13 @@ export fn HashMap[K, V] @clone() -> HashMap[K, V] {
 
 
 // HashMap.@merge_from(other) — Plan 56.
-// Merge entries из other в self (override semantics: existing keys
-// заменяются на other's values).
+// Merge entries из other в self (override semantics).
+// Note: идиоматичный `for (k, v) in other` (implicit Iter D58 + tuple
+// destructure) **сейчас не работает** из-за bootstrap limitation —
+// tuples в Nova не monomorphized (_NovaTupleN.f* всегда nova_int slots,
+// не fit'ит struct types типа nova_str). Требует mono'd tuple support
+// (separate plan). Bootstrap workaround — direct field access на
+// .buckets через Plan 56 array-element-type propagation fix.
 export fn HashMap[K, V] mut @merge_from(other HashMap[K, V]) {
     for i in 0..other.buckets.len {
         match other.buckets[i] {

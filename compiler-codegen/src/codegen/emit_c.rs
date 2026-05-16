@@ -12276,6 +12276,55 @@ impl CEmitter {
                     "if ({}.tag == NOVA_TAG_Option_None) break;", opt_tmp));
                 if let Pattern::Tuple(parts, _) = pattern {
                     let arity = parts.len();
+                    // Plan 56 followup: register mono'd tuple element types для
+                    // binding tmp — used by pattern_destructure_tuple для
+                    // proper Ident binding types (вместо nova_int default).
+                    //
+                    // Source: mono'd iter type's next() return — Option[(K, V)]
+                    // applied subst. Look up через generic_type_templates
+                    // (iter_struct_base) + apply mono args.
+                    if iter_struct != iter_struct_base {
+                        let info = self.generic_type_instance_info.borrow();
+                        let instance_args = info.get(&format!("Nova_{}", iter_struct))
+                            .map(|(_, args)| args.clone());
+                        drop(info);
+                        if let Some(type_args_c) = instance_args {
+                            // Try lookup template's @next method return type.
+                            let next_method = self.generic_type_methods.get(&iter_struct_base)
+                                .and_then(|ms| ms.iter().find(|m| m.name == "next"))
+                                .cloned();
+                            if let Some(next_decl) = next_method {
+                                if let Some(template) = self.generic_type_templates.get(&iter_struct_base).cloned() {
+                                    let subst: Vec<(String, Option<String>)> = template.generics.iter()
+                                        .zip(type_args_c.iter())
+                                        .map(|(g, c)| (g.name.clone(), Some(c.clone())))
+                                        .collect();
+                                    // next return type — Option[(T1, T2, ...)].
+                                    if let Some(ret_ty) = next_decl.return_type.as_ref() {
+                                        // Extract tuple element types after Option strip.
+                                        let elem_tys_opt = match ret_ty {
+                                            crate::ast::TypeRef::Named { path, generics, .. }
+                                                if path.last().map(|s| s.as_str()) == Some("Option")
+                                                && generics.len() == 1 =>
+                                            {
+                                                if let crate::ast::TypeRef::Tuple(tuple_elems, _) = &generics[0] {
+                                                    let elem_cs: Vec<String> = tuple_elems.iter()
+                                                        .map(|e| Self::apply_type_subst_to_ref(e, &subst)
+                                                            .unwrap_or_else(|| "nova_int".into()))
+                                                        .collect();
+                                                    Some(elem_cs)
+                                                } else { None }
+                                            }
+                                            _ => None,
+                                        };
+                                        if let Some(tys) = elem_tys_opt {
+                                            self.tuple_element_types.insert(binding.clone(), tys);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                     if elem_c_ty == format!("_NovaTuple{}", arity) {
                         // Plan 14 Ф.1: NovaOpt_<_NovaTuple_N> хранит tuple
                         // как value напрямую (struct в struct). Direct
@@ -12323,8 +12372,13 @@ impl CEmitter {
         // метод `iter` — синтезируем call: `for x in coll` →
         // `for x in coll.iter()` и дёргаемся обратно. Без infinite loop:
         // у получаемого результата ДОЛЖЕН быть `next` (иначе error).
+        //
+        // Plan 56 followup: для mono'd types (e.g. HashMap____<K>__<V>),
+        // all_methods registered только на base name (HashMap). Fallback
+        // на base, как уже сделано для Case 1 (next-method check выше).
         if !iter_struct.is_empty()
-            && self.all_methods.contains(&(iter_struct.clone(), "iter".to_string()))
+            && (self.all_methods.contains(&(iter_struct.clone(), "iter".to_string()))
+                || self.all_methods.contains(&(iter_struct_base.clone(), "iter".to_string())))
         {
             // Synthesize Member-call: iter.iter()
             let iter_call = Expr {
@@ -13503,14 +13557,27 @@ impl CEmitter {
     ) -> Result<(), String> {
         if let Pattern::Tuple(parts, _) = pat {
             let accessor = if scr_is_pointer { "->" } else { "." };
+            // Plan 56 followup: lookup mono'd tuple element types если registered
+            // (e.g. для `for (k, v) in coll.iter()` где coll — generic mono'd).
+            // Без этого все tuple binds получают default `nova_int`.
+            let elem_tys = self.tuple_element_types.get(scr_tmp).cloned();
             for (i, p) in parts.iter().enumerate() {
                 let field = format!("{}{}f{}", scr_tmp, accessor, i);
+                let elem_ty = elem_tys.as_ref()
+                    .and_then(|v| v.get(i))
+                    .cloned()
+                    .filter(|t| !t.is_empty())
+                    .unwrap_or_else(|| "nova_int".to_string());
                 match p {
                     Pattern::Ident { name, .. } => {
-                        // Default тип nova_int — bootstrap'ная convention
-                        // (tuple-payload хранится как nova_int slots).
-                        self.line(&format!("nova_int {} = {};", name, field));
-                        self.var_types.insert(name.clone(), "nova_int".to_string());
+                        // Если elem_ty это pointer type, cast applied (tuple
+                        // stores pointers as int slots in legacy paths).
+                        if elem_ty.ends_with('*') && elem_ty != "nova_int*" {
+                            self.line(&format!("{} {} = ({}){};", elem_ty, name, elem_ty, field));
+                        } else {
+                            self.line(&format!("{} {} = {};", elem_ty, name, field));
+                        }
+                        self.var_types.insert(name.clone(), elem_ty);
                     }
                     Pattern::Wildcard(_) => {
                         // Skip — `_` биндинг не используется.
