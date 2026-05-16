@@ -12652,6 +12652,34 @@ bounds propagation) + witness API. Pipeline wiring witness — V3.
 **Plan 33.6 итог за 16 спринтов:** TrivialBackend coverage до const mul +
 witness wire. Reasonable LIA subset без Z3.
 
+## Ф.17 — Trivial bounds extensions + dead lemma
+
+### Ф.17.1 — negation monotone
+
+- `try_negation_check`: `(>= (- 0 Var) goal)` через known upper(Var).
+- Test: trivial_negation_positive.
+- Коммит: `6bc3456759b`.
+
+### Ф.17.2 — addition bounds propagation
+
+- `try_addition_check`: `(>= (+ Var1 Var2) goal)` где lower(V1) + lower(V2) >= goal.
+  Также `(+ Var IntLit)` через lower(Var) + N.
+- Test: trivial_addition_bounds_positive.
+- Коммит: `6bc3456759b`.
+
+### Ф.17.3 — dead lemma usage tracking
+
+- pipeline.rs: после verify сборка `applied_lemmas` HashSet через
+  collect_apply_stmts_in_body во всех fn-bodies.
+- Lemma не в HashSet → push W2402 «dead code, удалите или apply».
+- Test: dead_lemma_w2402 (EXPECT_COMPILE_WARNING W2402).
+- Коммит: `d5fb939fdb8`.
+
+**Итого Ф.17:** 3 closed. **157 PASS (+3) / 42 SKIP / 0 FAIL.**
+
+**Plan 33.6 итог за 17 спринтов:** все TrivialBackend tactics для LIA +
+dead lemma diagnostic. Reasonable LIA subset без Z3.
+
 === Plan 45 �.25 � nova tests (positive + negative) ===
 
 ����� �������� �.25 (4 ����) �������� nova-tests .nv ��� �������� �����
