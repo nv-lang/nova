@@ -264,16 +264,36 @@ pub fn generate_mutants(tree: &DocTree) -> Vec<Mutant> {
                             outcome: MutantOutcome::NoTests,
                         });
                     }
-                    // Drop-requires mutant (только для requires).
-                    if kind == "requires" {
-                        out.push(Mutant {
-                            item_id: it.id.clone(),
-                            contract_kind: kind.to_string(),
-                            original_expr: contract.expr.clone(),
-                            mutated_expr: "true".to_string(),
-                            operator: "drop-requires".to_string(),
-                            outcome: MutantOutcome::NoTests,
-                        });
+                    // Drop mutants — заменяют predicate на `true` (vacuously satisfied).
+                    // Если test всё ещё проходит — contract является vacuous; killed
+                    // если test fail'ит (e.g., contract пропускает valid input в test).
+                    match kind {
+                        "requires" => {
+                            out.push(Mutant {
+                                item_id: it.id.clone(),
+                                contract_kind: kind.to_string(),
+                                original_expr: contract.expr.clone(),
+                                mutated_expr: "true".to_string(),
+                                operator: "drop-requires".to_string(),
+                                outcome: MutantOutcome::NoTests,
+                            });
+                        }
+                        "ensures" => {
+                            // Plan 45 Ф.29.3: drop-ensures mutator. Заменяет
+                            // postcondition на `true` — если test не имеет
+                            // post-call assertion, mutant survives (under-tested).
+                            // Если есть assert(result == ...) — killed (test catches
+                            // что postcondition реально нужно).
+                            out.push(Mutant {
+                                item_id: it.id.clone(),
+                                contract_kind: kind.to_string(),
+                                original_expr: contract.expr.clone(),
+                                mutated_expr: "true".to_string(),
+                                operator: "drop-ensures".to_string(),
+                                outcome: MutantOutcome::NoTests,
+                            });
+                        }
+                        _ => {}
                     }
                 }
             }

@@ -45,7 +45,8 @@ export fn abs_val(x int) -> int
 }
 
 #[test]
-fn ensures_generates_mutants_no_drop() {
+fn ensures_generates_drop_ensures_mutant() {
+    // Plan 45 Ф.29.3: drop-ensures теперь generated (раньше только drop-requires).
     let src = "
 module x
 
@@ -57,9 +58,29 @@ export fn inc(x int) -> int
     let tree = build_tree(src);
     let report = run_mutation_analysis(&tree);
     // `result == x + 1` → `result != x + 1` (eq-to-ne).
-    // No drop-ensures mutator (только requires).
     assert!(report.mutants.iter().any(|m| m.operator == "eq-to-ne"));
+    // Plan 45 Ф.29.3: drop-ensures mutator теперь существует.
+    assert!(report.mutants.iter().any(|m| m.operator == "drop-ensures"),
+        "expected drop-ensures mutant для ensures-contract, got: {:?}",
+        report.mutants.iter().map(|m| m.operator.as_str()).collect::<Vec<_>>());
+    // No drop-requires (это ensures fn без requires).
     assert!(!report.mutants.iter().any(|m| m.operator == "drop-requires"));
+}
+
+#[test]
+fn fn_with_both_requires_and_ensures_gets_both_drops() {
+    let src = "
+module x
+
+export fn safe_inc(x int) -> int
+    requires x >= 0
+    ensures result == x + 1
+    => x + 1
+";
+    let tree = build_tree(src);
+    let report = run_mutation_analysis(&tree);
+    assert!(report.mutants.iter().any(|m| m.operator == "drop-requires"));
+    assert!(report.mutants.iter().any(|m| m.operator == "drop-ensures"));
 }
 
 #[test]
