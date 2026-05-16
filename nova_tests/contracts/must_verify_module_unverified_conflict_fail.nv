@@ -1,0 +1,12 @@
+// Ф.4.1 (Plan 33.6): #unverified fn внутри #must_verify_module → E2403.
+// EXPECT_COMPILE_ERROR E2403
+
+#must_verify_module
+module contracts.must_verify_module_unverified_conflict_fail
+
+#unverified
+fn skip_me(x int) -> int
+    ensures result == x
+{
+    x
+}

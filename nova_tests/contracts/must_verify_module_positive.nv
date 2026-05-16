@@ -1,0 +1,30 @@
+// Ф.4.1 (Plan 33.6): #must_verify_module — все fn MustVerify без явного #verify.
+// TrivialBackend доказывает простые рефлексивные контракты.
+
+#must_verify_module
+module contracts.must_verify_module_positive
+
+fn double(x int) -> int
+    ensures result == x * 2
+{
+    x * 2
+}
+
+fn add_positive(x int, y int) -> int
+    requires x > 0
+    requires y > 0
+    ensures result == x + y
+{
+    x + y
+}
+
+// Fn без контрактов — MustVerify не применяется, OK.
+fn no_contract(x int) -> int {
+    x + 1
+}
+
+test "must_verify_module positive" {
+    assert(double(4) == 8)
+    assert(add_positive(2, 3) == 5)
+    assert(no_contract(10) == 11)
+}

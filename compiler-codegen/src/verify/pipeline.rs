@@ -2082,6 +2082,17 @@ pub fn verify_module(module: &Module) -> ModuleVerifyReport {
             if fd.contracts.is_empty() { continue; }
             // Plan 33.3 Ф.13: #trusted external fn -- контракты axioms, SMT-verify пропускается.
             if fd.is_trusted && fd.is_external { continue; }
+            // Ф.4.1 (Plan 33.6): #unverified fn внутри #must_verify_module → conflict error.
+            if module_strict && matches!(fd.verify_mode, VerifyMode::Unverified) {
+                let span = fd.contracts.first().map(|c| c.span).unwrap_or(fd.span);
+                let msg = format!(
+                    "fn '{}' помечена `#unverified` внутри `#must_verify_module` [E2403]: \
+                     нельзя отказаться от верификации в strict-модуле. \
+                     Уберите `#unverified` или перенесите fn в другой модуль.",
+                    fd.name);
+                report.errors.push(Diagnostic::new(msg, span));
+                continue;
+            }
             // Skip Fail-functions вЂ" ContractCtx СѓР¶Рµ РІС‹РґР°Р» error.
             // Mut-РїР°СЂР°РјРµС‚СЂС‹ в†' РїСЂРѕРїСѓСЃС‚РёС‚СЊ (33.2). РЎРµР№С‡Р°СЃ РґРµС‚РµРєС‚РёРј С‡РµСЂРµР·
             // РѕС‚СЃСѓС‚СЃС‚РІРёРµ РІ С‚РёРїР°С….
