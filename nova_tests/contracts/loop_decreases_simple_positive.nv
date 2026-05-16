@@ -1,0 +1,27 @@
+// Ф.7.3 positive (Plan 33.6): простой encodable decreases — W2402 не эмитится.
+// `decreases i` тривиально кодируется, well-foundedness pre-проверяется.
+
+module contracts.loop_decreases_simple_positive
+
+fn sum_down(n int) -> int
+    requires n >= 0
+    ensures result >= 0
+{
+    let mut i = n
+    let mut sum = 0
+    while i > 0
+        invariant i >= 0
+        invariant sum >= 0
+        decreases i
+    {
+        sum = sum + i
+        i = i - 1
+    }
+    sum
+}
+
+test "encodable decreases → no W2402" {
+    assert(sum_down(3) == 6)
+    assert(sum_down(0) == 0)
+    assert(sum_down(5) == 15)
+}
