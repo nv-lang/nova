@@ -7302,3 +7302,36 @@ production-grade (links/collector/doctree/render_md/render_expr).
 - MCP server для AI/LLM real-time queries
 - Mutation testing real exec через test_runner integration
 - AST pretty-printer shared util (для render_expr completion)
+
+---
+
+## Plan 45 Ф.28.1 — AST pretty-printer simplifications (2026-05-16)
+
+### Binary operators always parenthesized
+
+**Где:** st::pretty::write_expr — Binary { ... } arm.
+**Что упрощено:** Каждое binary expression обёрнуто в () без precedence
+analysis. Например  + b * c рендерится как (a + (b * c)).
+**Почему:** Без precedence parsing easy to introduce bugs где pretty(parse(x))
+имеет другую semantics. Parens гарантируют correctness.
+**Как чинить:** добавить precedence table, omit parens когда possible.
+~50 LOC. Cosmetic improvement.
+**Приоритет:** L — extra parens valid Nova syntax, не ломают consumer'ов.
+
+### Complex stmts (Match/For/While body) — \<kind>\ placeholder
+
+**Где:** st::pretty::expr_kind_name fallback.
+**Что упрощено:** Match arms, For/While body, ClosureFull body — рендерятся
+как <match> / <for> / <while> / <closure-full> (kind name).
+**Почему:** Full implementation для каждого variant — ~200 LOC additional.
+Contract expressions редко содержат match/for (predicates are boolean).
+**Как чинить:** добавить write_block + write_stmt helpers (Plan 45.A).
+**Приоритет:** L — debugging clear через kind name; LLM может infer structure.
+
+### Legacy render_expr сохранён dead-code
+
+**Где:** collector::render_expr_legacy.
+**Что упрощено:** Old impl helper marked #[allow(dead_code)].
+**Почему:** Soak period — если shared util имеет regression, easy fallback.
+**Как чинить:** удалить через 2 недели если 0 issues. Tracking note в этом файле.
+**Приоритет:** L — cleanup task.

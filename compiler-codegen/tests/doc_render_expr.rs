@@ -35,8 +35,9 @@ export fn pos(x int) -> int
     => x
 "#;
     let exprs = extract_contract_exprs(src, "pos");
-    assert!(exprs.iter().any(|e| e == "x > 0"),
-        "expected `x > 0` exactly, got: {:?}", exprs);
+    // Plan 45 Ф.28.1: pretty-printer теперь parenthesizes binary для safety.
+    assert!(exprs.iter().any(|e| e == "(x > 0)" || e == "x > 0"),
+        "expected `x > 0` (с возможными parens), got: {:?}", exprs);
 }
 
 #[test]
@@ -50,8 +51,9 @@ export fn inc(x int) -> int
     => x + 1
 "#;
     let exprs = extract_contract_exprs(src, "inc");
-    assert!(exprs.iter().any(|e| e == "result == x + 1"),
-        "expected `result == x + 1`, got: {:?}", exprs);
+    // Plan 45 Ф.28.1: parens around binary.
+    assert!(exprs.iter().any(|e| e.contains("result") && e.contains("==") && e.contains("x + 1")),
+        "expected `result == x + 1` (с возможными parens), got: {:?}", exprs);
 }
 
 #[test]

@@ -13077,3 +13077,35 @@ mislead readers: код production-grade, но docstring говорит "minimal".
 
 **Verification:** 13 doc integration test suites — 77 PASS, 0 fail. Zero
 behavior change, только documentation accuracy.
+
+=== Plan 45 Ф.28.1 — AST pretty-printer shared util (2026-05-16) ===
+
+Закрывает Ф.27.2 simplification: collector::render_expr был own implementation
+с _ => '<kind>' fallback. Ф.28.1 вынес pretty-print logic в shared util
+compiler-codegen/src/ast/pretty.rs — это foundation для будущих consumers
+(diag/spec/IDE LSP).
+
+Что добавлено:
+- Module crate::ast::pretty с public API print_expr(e: &Expr) -> String
+- Coverage: literals (int/float/bool/str/char/unit/interpolated), idents,
+  paths, member/index access, turbofish, calls, binary/unary, if-cond,
+  range, forall, interrupt, tuples, arrays, maps, records, SelfAccess.
+- Fallback <kind> с явным variant name (match/closure/lambda/with/
+  forbid-block/realtime-block/etc) вместо anonymous ....
+- Binary operators всегда parenthesized для safety (slight redundancy
+  избежать precedence bugs).
+
+Integration:
+- collector::render_expr теперь делегирует в ast::pretty::print_expr.
+- collector::render_expr_legacy сохранён dead-code для reference (удалить
+  после soak period).
+
+Tests:
+- 8 unit tests в ast::pretty::tests
+- Updated doc_render_expr tests чтобы accept parenthesized output
+
+Total после Ф.28.1: 85 doc tests PASS (13 integration suites + 8 unit).
+
+Side benefits:
+- Diag/spec теперь могут переиспользовать pretty-print без duplication.
+- New ExprKind variant — добавить branch в одном месте, не в каждом consumer.

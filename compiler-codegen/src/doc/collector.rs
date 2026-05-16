@@ -803,15 +803,17 @@ fn extract_fail_inner(eff: &crate::ast::TypeRef) -> Option<String> {
 
 /// Pretty-print expression в Nova source (для contracts JSON/MD).
 ///
-/// **Coverage (Ф.27.2):** literals, idents, paths, binary/unary ops,
-/// arrays/tuples/records, member/index access, function calls, if-cond,
-/// turbofish, string interpolation, self-access.
-///
-/// **Fallback `<kind>`:** match/closure/with/forbid/realtime/etc — рендерятся
-/// как `<match>` / `<closure>` / `<with>`. Это редко в contracts (предикаты
-/// обычно boolean), но если encountered — explicit placeholder помогает
-/// diagnose. Full AST pretty-printer как shared util — Plan 45.A.
+/// **Plan 45 Ф.28.1:** делегирует в shared util `crate::ast::pretty::print_expr`.
+/// Раньше был own implementation (Ф.27.2 расширение). Shared util — единая
+/// pretty-print logic, переиспользуема в diag/spec.
 fn render_expr(e: &crate::ast::Expr) -> String {
+    crate::ast::pretty::print_expr(e)
+}
+
+/// Plan 45 Ф.27.2 (deprecated после Ф.28.1) — own pretty-print, kept for
+/// reference. Удалить после verify что shared util покрывает все cases.
+#[allow(dead_code)]
+fn render_expr_legacy(e: &crate::ast::Expr) -> String {
     use crate::ast::{ArrayElem, BinOp, CallArg, ExprKind, UnOp};
     match &e.kind {
         ExprKind::IntLit(n) => n.to_string(),
