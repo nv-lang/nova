@@ -495,6 +495,10 @@ enum BenchCmd {
         #[arg(long, default_value = ".nova-bench-noise.json")]
         out: PathBuf,
     },
+    /// Plan 57.B.4: Diagnose CPU instructions counter availability.
+    /// Linux: tries perf_event_open + measures known loop. Other OS: stub.
+    #[command(name = "cpu-instr-check")]
+    CpuInstrCheck,
     /// Plan 57.A.1: Append result JSON to an orphan history branch.
     #[command(name = "history-add")]
     HistoryAdd {
@@ -2722,6 +2726,31 @@ fn cmd_bench(sub: BenchCmd) -> Result<()> {
             let exit = bench::gate::run(&baseline, &new,
                 config.as_deref(), noise.as_deref())?;
             if exit != 0 { std::process::exit(exit); }
+            Ok(())
+        }
+        BenchCmd::CpuInstrCheck => {
+            println!("CPU instructions counter availability:");
+            println!("  OS: {}", std::env::consts::OS);
+            println!("  Arch: {}", std::env::consts::ARCH);
+            let avail = bench::cpu_instr::available();
+            println!("  Available: {}", if avail { "yes ✓" } else { "no ✗" });
+            if avail {
+                let r = bench::cpu_instr::measure_instructions(|| {
+                    let mut x: u64 = 0;
+                    for _ in 0..1000 { x = x.wrapping_add(1); }
+                    std::hint::black_box(x);
+                });
+                match r {
+                    Ok(n) => println!("  Test (1000-iter loop): {} instructions", n),
+                    Err(e) => println!("  Test failed: {}", e),
+                }
+            } else if cfg!(target_os = "linux") {
+                println!("  Hint: try `sudo sysctl -w kernel.perf_event_paranoid=1`");
+                println!("        или grant `CAP_PERFMON` capability to nova binary.");
+            } else {
+                println!("  Note: CPU instructions counter is Linux-only \
+                          (uses perf_event_open syscall).");
+            }
             Ok(())
         }
         BenchCmd::Calibrate { runs, out } => {
