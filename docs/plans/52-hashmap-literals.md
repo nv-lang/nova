@@ -6,7 +6,18 @@
 > диагностика keyword-ключей, C-гигиена имени temp'а, Go eval-order,
 > TS `Map`/`{}` дуальность, D55 positions-inconsistency, scope Ф.3a).
 >
-> **СТАТУС:** план, не начат.
+> **СТАТУС:** ✅ **ЗАКРЫТ 2026-05-16** (Ф.0–Ф.8). AST `MapLit { pairs,
+> inferred_key, inferred_value }`, parser `[k:v]` + `#from_fields`
+> attribute, type-checker `MapLitCtx` + `annotate_map_literals` mutable
+> pass (выводит K/V для turbofish-десугаринга), codegen+interp через
+> AST-desugar (общий `desugar.rs`). Stdlib `hashmap.nv`: `with_capacity`
+> entry-based (баг для n=4/7/8/13 закрыт), `#from_fields` маркер. Plan 52
+> Ф.7 production-fix: десугаринг эмитит `HashMap[K, V].with_capacity(n)`
+> с turbofish (через inferred K/V из annotate pass), иначе мономорфизация
+> инстанциирует `HashMap[void*, void*]` → segfault. Тесты: 2 negative
+> (keyword-field, mixed forms) + 3 positive (HashMap[str,int],
+> [int,str], [int,int] — basic + trailing comma + expressions-as-keys
+> + no-rehash). 0 регрессий vs main baseline.
 >
 > **Реализует:** [D108](../../spec/decisions/03-syntax.md#d108-map-литерал-k-v)
 > (map-литерал `[k: v]`) + ревизию [D55](../../spec/decisions/02-types.md#d55-literal-coercion-в-позиции-с-явным-типом-sum-конструкторы-и-record-литералы)
