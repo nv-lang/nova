@@ -1,0 +1,16 @@
+// EXPECT_COMPILE_ERROR undefined identifier
+//
+// Plan 45 Ф.24.18: infer_contracts — негативный тест.
+// infer_contracts modifier работает с assert() в doc-tests.
+// Функция с несуществующим телом — compile error, не связан с doc pipeline.
+
+module doc.f24_infer_contracts_negative
+
+/// Function with infer_contracts doc-test but broken body.
+///
+/// # Examples
+///
+/// ```nova,infer_contracts
+/// assert(broken_fn(1) == 2)
+/// ```
+fn broken_fn(x int) -> int => nonexistent_helper_abc(x)

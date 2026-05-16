@@ -1,0 +1,82 @@
+// Plan 45 Ф.24.8: expect_output doc-test modifier.
+// Позитивный тест — функции, используемые в expect_output doc-tests,
+// возвращают корректные значения. Runtime поведение совпадает с аннотацией.
+
+module doc.f24_expect_output_positive
+
+/// Добавляет два числа.
+///
+/// # Examples
+///
+/// ```nova,expect_output
+/// println(add(2, 3))
+/// // Output: 5
+/// ```
+export fn add(a int, b int) -> int => a + b
+
+/// Повторяет строку n раз.
+///
+/// # Examples
+///
+/// ```nova,expect_output
+/// println(repeat("ab", 3))
+/// // Output: ababab
+/// ```
+export fn repeat(s str, n int) -> str {
+    let mut result = ""
+    let mut i = 0
+    while i < n {
+        result = result + s
+        i = i + 1
+    }
+    result
+}
+
+/// Максимум двух чисел.
+///
+/// # Examples
+///
+/// ```nova,expect_output
+/// println(max_of(4, 7))
+/// // Output: 7
+/// ```
+export fn max_of(a int, b int) -> int => if a > b { a } else { b }
+
+test "add basic" {
+    assert(add(2, 3) == 5)
+    assert(add(0, 0) == 0)
+    assert(add(-1, 1) == 0)
+    assert(add(100, 200) == 300)
+}
+
+test "add commutativity" {
+    assert(add(3, 7) == add(7, 3))
+    assert(add(0, 42) == add(42, 0))
+}
+
+test "repeat basic" {
+    assert(repeat("ab", 3) == "ababab")
+    assert(repeat("x", 1) == "x")
+    assert(repeat("z", 0) == "")
+    assert(repeat("ha", 4) == "hahahaha")
+}
+
+test "repeat empty string" {
+    assert(repeat("", 5) == "")
+    assert(repeat("", 0) == "")
+}
+
+test "max_of basic" {
+    assert(max_of(4, 7) == 7)
+    assert(max_of(7, 4) == 7)
+    assert(max_of(5, 5) == 5)
+    assert(max_of(-3, -1) == -1)
+    assert(max_of(0, -5) == 0)
+}
+
+test "output matches doc annotation" {
+    // Проверяем что значения, задокументированные в expect_output, верны.
+    assert(add(2, 3) == 5)
+    assert(repeat("ab", 3) == "ababab")
+    assert(max_of(4, 7) == 7)
+}

@@ -146,3 +146,13 @@ fn golden_must_verify() {
 fn golden_capability_forbid() {
     run_one("capability_forbid");
 }
+
+#[test]
+fn golden_expect_output() {
+    run_one("expect_output");
+}
+
+#[test]
+fn golden_reexport() {
+    run_one("reexport");
+}

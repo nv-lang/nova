@@ -2,7 +2,26 @@
   "format_version": 1,
   "nova_version": "0.1.0",
   "doc_tests": [
-
+    {
+      "from_id": "nova_tests.doc.fixtures.expect_output.sample::add",
+      "full_source": "println(add(2, 3))",
+      "id": "nova_tests.doc.fixtures.expect_output.sample::doc_test_1",
+      "index": 1,
+      "modifiers": [
+        "expect_output"
+      ],
+      "visible_source": "println(add(2, 3))\n// Output: 5"
+    },
+    {
+      "from_id": "nova_tests.doc.fixtures.expect_output.sample::greet",
+      "full_source": "println(greet(\"Nova\"))",
+      "id": "nova_tests.doc.fixtures.expect_output.sample::doc_test_2",
+      "index": 2,
+      "modifiers": [
+        "expect_output"
+      ],
+      "visible_source": "println(greet(\"Nova\"))\n// Output: Hello, Nova!"
+    }
   ],
   "links": [
 
@@ -18,7 +37,7 @@
       ],
       "kind": "file",
       "name": "sample",
-      "path": "nova_tests.doc.fixtures.module_attrs.sample",
+      "path": "nova_tests.doc.fixtures.expect_output.sample",
       "peers": [
 
       ],
@@ -29,14 +48,9 @@
         "file_id": 0,
         "line": 1
       },
-      "stability": {
-        "feature": null,
-        "note": null,
-        "since": "1.0.0",
-        "tier": "stable"
-      },
-      "summary": "Ф.22.1 — модуль с module-level doc-attrs.",
-      "description": "Проверяет: `#stable` / `#deprecated` на уровне модуля,\npropagation stability → items без явного override."
+      "stability": null,
+      "summary": null,
+      "description": null
     }
   ],
   "items": [
@@ -58,29 +72,24 @@
 
       ],
       "doc_test_handlers": null,
-      "id": "nova_tests.doc.fixtures.module_attrs.sample::bar",
+      "id": "nova_tests.doc.fixtures.expect_output.sample::add",
       "kind": "fn",
-      "module_path": "nova_tests.doc.fixtures.module_attrs.sample",
-      "name": "bar",
+      "module_path": "nova_tests.doc.fixtures.expect_output.sample",
+      "name": "add",
       "reexport_from": null,
       "scraped_examples": [
 
       ],
       "sections": {
-
+        "examples": "```nova,expect_output\nprintln(add(2, 3))\n// Output: 5\n```"
       },
       "source": {
         "file_id": 0,
-        "line": 15,
+        "line": 11,
         "peer_file": null
       },
-      "stability": {
-        "feature": null,
-        "note": "may change",
-        "since": null,
-        "tier": "experimental"
-      },
-      "summary": "Экспериментальная функция — overrides module-stable.",
+      "stability": null,
+      "summary": "Compute sum of two integers.",
       "signature": {
         "contracts": {
           "decreases": [
@@ -110,7 +119,18 @@
           {
             "default": null,
             "keyword_only": false,
-            "name": "x",
+            "name": "a",
+            "structural_type": {
+              "kind": "named",
+              "name": "int"
+            },
+            "type": "int",
+            "variadic": false
+          },
+          {
+            "default": null,
+            "keyword_only": false,
+            "name": "b",
             "structural_type": {
               "kind": "named",
               "name": "int"
@@ -148,29 +168,24 @@
 
       ],
       "doc_test_handlers": null,
-      "id": "nova_tests.doc.fixtures.module_attrs.sample::foo",
+      "id": "nova_tests.doc.fixtures.expect_output.sample::greet",
       "kind": "fn",
-      "module_path": "nova_tests.doc.fixtures.module_attrs.sample",
-      "name": "foo",
+      "module_path": "nova_tests.doc.fixtures.expect_output.sample",
+      "name": "greet",
       "reexport_from": null,
       "scraped_examples": [
 
       ],
       "sections": {
-
+        "examples": "```nova,expect_output\nprintln(greet(\"Nova\"))\n// Output: Hello, Nova!\n```"
       },
       "source": {
         "file_id": 0,
-        "line": 11,
+        "line": 21,
         "peer_file": null
       },
-      "stability": {
-        "feature": null,
-        "note": null,
-        "since": "1.0.0",
-        "tier": "stable"
-      },
-      "summary": "Функция без собственного stability — наследует module-stable.",
+      "stability": null,
+      "summary": "Format a greeting.",
       "signature": {
         "contracts": {
           "decreases": [
@@ -200,12 +215,12 @@
           {
             "default": null,
             "keyword_only": false,
-            "name": "x",
+            "name": "name",
             "structural_type": {
               "kind": "named",
-              "name": "int"
+              "name": "str"
             },
-            "type": "int",
+            "type": "str",
             "variadic": false
           }
         ],
@@ -215,9 +230,9 @@
         "receiver": null,
         "structural_type": {
           "kind": "named",
-          "name": "int"
+          "name": "str"
         },
-        "return_type": "int"
+        "return_type": "str"
       }
     }
   ]

@@ -13,10 +13,16 @@
       "doc_attrs": [
 
       ],
+      "effect_matrix": [
+
+      ],
       "kind": "file",
       "name": "sample",
       "path": "nova_tests.doc.fixtures.kinds.sample",
       "peers": [
+
+      ],
+      "realtime_matrix": [
 
       ],
       "source": {
@@ -51,6 +57,10 @@
       "kind": "type",
       "module_path": "nova_tests.doc.fixtures.kinds.sample",
       "name": "AccountId",
+      "reexport_from": null,
+      "scraped_examples": [
+
+      ],
       "sections": {
 
       },
@@ -88,6 +98,10 @@
       "kind": "type",
       "module_path": "nova_tests.doc.fixtures.kinds.sample",
       "name": "Color",
+      "reexport_from": null,
+      "scraped_examples": [
+
+      ],
       "sections": {
 
       },
@@ -138,6 +152,10 @@
       "kind": "effect",
       "module_path": "nova_tests.doc.fixtures.kinds.sample",
       "name": "Counter",
+      "reexport_from": null,
+      "scraped_examples": [
+
+      ],
       "sections": {
 
       },
@@ -186,6 +204,10 @@
       "kind": "protocol",
       "module_path": "nova_tests.doc.fixtures.kinds.sample",
       "name": "Eq",
+      "reexport_from": null,
+      "scraped_examples": [
+
+      ],
       "sections": {
 
       },
@@ -241,6 +263,10 @@
       "kind": "type",
       "module_path": "nova_tests.doc.fixtures.kinds.sample",
       "name": "Pixels",
+      "reexport_from": null,
+      "scraped_examples": [
+
+      ],
       "sections": {
 
       },

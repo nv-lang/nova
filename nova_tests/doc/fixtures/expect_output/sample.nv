@@ -1,0 +1,21 @@
+module nova_tests.doc.fixtures.expect_output.sample
+
+/// Compute sum of two integers.
+///
+/// # Examples
+///
+/// ```nova,expect_output
+/// println(add(2, 3))
+/// // Output: 5
+/// ```
+export fn add(a int, b int) -> int => a + b
+
+/// Format a greeting.
+///
+/// # Examples
+///
+/// ```nova,expect_output
+/// println(greet("Nova"))
+/// // Output: Hello, Nova!
+/// ```
+export fn greet(name str) -> str => "Hello, " + name + "!"
