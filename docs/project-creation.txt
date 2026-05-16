@@ -11970,3 +11970,28 @@ C-типа scrutinee (`Nova_LinkedList____nova_int*` → `LinkedList____nova_int
 ### Commits
 
 - fix(codegen): std/collections hashmap+set+linkedlist — 10 codegen фикса
+
+=== Plan 45 Ф.24 — production hardening + Sprint B/C features (2026-05-16) ===
+
+Sprint A (7 critical fixes — already done in previous session):
+- Ф.24.1: module-level #forbid extraction
+- Ф.24.2: deterministic workspace output (BTreeMap)
+- Ф.24.3: NOVA_DOC_EXPERIMENTAL_IMPLEMENTORS env gate
+- Ф.24.4: nova doc --check JSON format + structured CheckIssue
+- Ф.24.5: schema v1.0.0-rc1
+- Ф.24.6: parser-first structural type rendering
+- Ф.24.7: multi-line span diagnostics
+
+Sprint B (adoption from rustdoc/godoc/typedoc):
+- Ф.24.13: workspace parallelism (std::thread::scope, auto jobs)
+- Ф.24.8: godoc-style // Output: verified examples (expect_output modifier)
+- Ф.24.10: nova doc --diff OLD NEW semver gate (exit 0/1/2/3)
+- Ф.24.11: #doc_inline / #doc_no_inline for re-exports (export import → DocItem::ReExport)
+- Ф.24.9: nova doc --scrape-examples <workspace> call-site scanner (top-3 per fn)
+
+Sprint C (Nova-unique extensions):
+- Ф.24.14: verification badges in Markdown (✅ proven by Z3, ⚠️ unverified, ❌ counterexample)
+- Ф.24.15: standard jq queries in docs/nova-doc.md (10 recipes)
+- Ф.24.16: effect composition matrix auto-generated in DocModule JSON
+- Ф.24.17: realtime capability constraint matrix in DocModule JSON
+- Ф.24.18: infer_contracts modifier — assert() calls → ContractDoc{kind="inferred"}
