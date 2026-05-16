@@ -42,9 +42,9 @@
 | Ф.32.1 nova doc-query CLI | ✅ done | New subcommand `nova doc-query <file.nv> "<query>"`. Query DSL: comma-separated key=value (kind, name, module, capability, effect, has-contracts, verified, stability, deprecated). 11 integration + 5 unit tests. Foundation для Ф.32.2 MCP server. |
 | Ф.32.2 JSON input parser | ✅ done | Minimal recursive-descent JSON parser в `doc/json_parse.rs` (no serde). `JsonValue` enum + Parser struct. doc-query teперь accept'ит и `.nv` и `.json`. ~280 LOC + 14 unit + 5 integration tests. |
 | Ф.32.3 MCP server skeleton | ✅ done | JSON-RPC 2.0 over stdio, MCP protocol subset. Tools: `query_items`, `list_modules`, `get_item`. CLI `nova doc-mcp <file>`. 11 unit + 7 integration tests. Compatible с Claude Code / MCP Inspector. |
-| **Ф.33.1 AST-based syntax highlighting** (in-progress) | 🟡 | Server-side highlighting через `ast::pretty` (replaces JS regex Ф.31.5). Pre-rendered HTML with `<span class="tok-X">` markers — accurate context-aware. No-JS fallback works. |
-| **Ф.33.2 Doc coverage CI gate** (in-progress) | 🟡 | CLI `--coverage-threshold N` (0-100). `--check` fails if % documented exports < threshold. Useful CI integration вместо manual review. |
-| **Ф.33.3 nova.toml [doc] config** (in-progress) | 🟡 | Read `[doc]` section из nova.toml (strict/coverage_threshold/source_url_template/etc). CLI args override. ~150 LOC minimal TOML parser (subset). |
+| Ф.33.1 Server-side syntax highlighting | ✅ done | `doc/highlight.rs` — uses Nova lexer для accurate tokenization. CSS classes (.tok-kw/.tok-type/.tok-str/.tok-num/.tok-comment). Context-aware (`fn` в string НЕ highlighted as keyword). 9 unit tests. |
+| Ф.33.2 Doc coverage CI gate | ✅ done | CLI `--coverage-threshold N` (0-100). `--coverage` теперь exit 1 если actual % < threshold. CI-friendly: `nova doc <dir> --coverage --coverage-threshold 80`. |
+| Ф.33.3 nova.toml [doc] config | ✅ done | `doc/config.rs` — minimal TOML subset parser (no serde). Reads `[doc]` section: strict/coverage_threshold/source_url_template/extern_links/site_url. CLI args override config; config sets env defaults. 12 unit tests. |
 
 ## Ф.21 — Production hardening (2026-05-15, post-MVP audit)
 

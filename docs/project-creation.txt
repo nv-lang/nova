@@ -13705,3 +13705,42 @@ Plan 45 family — почти готов. Что осталось:
 - Plan 45.B stdlib full doc-pass (weeks)
 - Plan 45.A round 2: incremental cache, HTTP/SSE MCP, AST highlight
 - Plan 16/42 follow-ups
+
+=== Plan 45 Sprint Ф.33 — Production polish (2026-05-16) ===
+
+3 production polish items в одной сессии:
+
+Ф.33.1 (953c57c): Server-side syntax highlighting.
+- `doc/highlight.rs` использует Nova lexer для accurate tokenization
+  (replaces JS regex Ф.31.5 которая имела context-blind matching).
+- HTML output с `<span class="tok-X">` markers, no JS needed.
+- 9 unit tests + critical context-aware test: `fn` внутри string literal
+  НЕ highlighted as keyword (regex tokenizer ловит, AST не ловит).
+
+Ф.33.2 (cb1dbe7): Doc coverage CI gate.
+- New CLI flag `--coverage-threshold N` (0-100).
+- `--coverage` теперь exit 1 если actual coverage % < threshold.
+- CI integration: `nova doc <dir> --coverage --coverage-threshold 80`.
+- Threshold validation 0..=100, error if out of range.
+
+Ф.33.3 (8585c03): nova.toml [doc] config.
+- `doc/config.rs` — minimal TOML subset parser (no serde dep).
+- Fields: strict, coverage_threshold, source_url_template, extern_links, site_url.
+- CLI args override config; config sets env defaults.
+- nova.toml lookup walks up to 16 parent dirs.
+- 12 unit tests cover parsing, validation, escapes, edge cases.
+
+**Total после Ф.33:** ~190 doc tests PASS (24+ suites + 55+ unit).
+
+**Plan 45 family closure status:**
+- ? Core (Ф.1-Ф.28), Cleanup (Ф.29), Small wins (Ф.30), HTML (Ф.31.1-6),
+  AI integration (Ф.32.1-3), Production polish (Ф.33.1-3)
+
+**Что осталось:**
+- Plan 45.B — stdlib full doc-pass (weeks effort, отдельный план)
+- Plan 45.A round 2 — HTTP/SSE MCP transport, incremental cache
+- Plan 16 follow-up — parser `#allow_transit`
+- Plan 42 follow-up — FileRegistry для handler matrix workspace
+
+После 14 sessions (Ф.25 > Ф.33) Plan 45 close on ~98%. Все user-facing
+features implemented с production-grade test coverage.
