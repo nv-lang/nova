@@ -12169,6 +12169,19 @@ ecosystem (Creusot/Prusti/Kani/Flux/Aeneas). Найдено 5 P0 soundness gaps:
 - Регрессия: 131 PASS / 34 SKIP / 1 pre-existing FAIL (decreases_recursion_fail flaky).
 - Коммит: `dd062422c3b`.
 
+### Ф.7.5 — static-axiom Unknown в handler_exec → W2402
+
+- `verify_handlers` сигнатура: `Vec<Diagnostic>` → `(errors, warnings)`.
+- Раньше [handler_exec.rs:150](compiler-codegen/src/verify/handler_exec.rs#L150) делал
+  `let _ = (reason, binding_span);` — silent discard. Pure soundness gap.
+- Теперь:
+  - VerifyResult::Unknown → warnings.push(W2402 с reason)
+  - VerifyResult::EncodingFailed → warnings.push(W2402 «axiom failed to encode»)
+- pipeline.rs обновлён: дишение (errors, warnings) → report.errors / report.warnings.
+- Test: static_axiom_unknown_w2402 — EXPECT_COMPILE_WARNING W2402, PASS.
+- Регрессия: 132 PASS (+1) / 34 SKIP.
+- Коммит: `ea66f7d9abb`.
+
 === Plan 45 �.25 � nova tests (positive + negative) ===
 
 ����� �������� �.25 (4 ����) �������� nova-tests .nv ��� �������� �����
