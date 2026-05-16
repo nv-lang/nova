@@ -7732,3 +7732,29 @@ Plan 54 вЂ” codegen follow-ups РѕС‚ Plan 48/49 audit. Р—Р°РєСЂС‹С‚Рѕ 5 РёР· 8 it
 - Stdlib full doc-pass (Plan 45.B)
 - Parser-side #allow_transit (Plan 16)
 - Workspace handler matrix через FileRegistry (Plan 42)
+
+---
+
+## Plan 45 Ф.30.2 — Incremental cache deferred (2026-05-16)
+
+### Honest decision: deferred to Plan 45.A round 2
+
+**Где:** cmd_doc_watch re-parses workspace целиком каждый mtime tick.
+**Что упрощено:** Нет per-file AST cache. Каждый --watch rebuild = full pipeline (parse + type-check + collector + passes).
+**Почему НЕ closed в Ф.30.2:**
+- Real cache требует:
+  1. Serialize Module > JSON (большой Rust struct, complex enums)
+  2. Track file mtimes в watch state
+  3. Per-file invalidation logic (file changed > drop cached module + cross-file dependents)
+  4. Cache poisoning prevention (env changes, schema bumps)
+- Это **~500 LOC + complex test infrastructure** — отдельный sprint.
+- Текущий --watch для 50-module workspace ~6ms per re-render (Ф.21.9 benchmark) — **acceptable** для interactive editing.
+- Speedup был бы critical только для огромных workspace'ов (1000+ files) — не наш target сейчас.
+
+**Как чинить (Plan 45.A round 2):**
+- Use serde_json derive на Module (требует Serialize/Deserialize на всех AST nodes — non-trivial).
+- Watch state BTreeMap<PathBuf, (mtime, Arc<Module>)>.
+- Per-tick: read mtime каждого file, если изменился — re-parse, otherwise reuse cached Arc.
+- Invalidate dependent modules когда impact'нутый file changed (требует import-graph).
+
+**Приоритет:** L — current performance acceptable; cache необходим только для very-large workspaces.
