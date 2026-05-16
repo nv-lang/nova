@@ -1,8 +1,8 @@
 //! Plan 45 Ф.4: typed IR для рендеринга documentation.
 //!
 //! `DocTree` — корневая структура. Содержит один `DocModule` (для
-//! single-file `nova doc`) или несколько (для `--workspace` режима в
-//! Plan 45.A). MVP — один module.
+//! single-file `nova doc <file>`) или несколько (для workspace mode
+//! `nova doc <dir>` — Ф.21.7).
 //!
 //! Дизайн:
 //! - **Strings rendered as Nova source** для типов и signatures (см.

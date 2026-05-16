@@ -124,6 +124,18 @@ pub fn populate_handler_matrix(tree: &mut DocTree, source: &str) {
     collect_handlers::collect_handlers_with_source(tree, source);
 }
 
+/// Plan 45 Ф.27.1: workspace-mode handler matrix.
+///
+/// Принимает `sources_by_module_path: &BTreeMap<String, String>` — карту
+/// module_path (e.g. `"std.io"`) → source файла этого module'а. Для каждого
+/// fn item в DocTree находит источник по `module_path`, scan'ит handler
+/// literals, populates Effect.handlers cross-file.
+///
+/// CLI workspace mode передаёт map собранную при parse phase.
+pub fn populate_handler_matrix_workspace(tree: &mut DocTree, sources_by_module_path: &std::collections::BTreeMap<String, String>) {
+    collect_handlers::collect_handlers_workspace(tree, sources_by_module_path);
+}
+
 /// Plan 45 Ф.23.12: run style-guide lints, return violations.
 pub fn run_lints(tree: &DocTree) -> Vec<lints::DocLintViolation> {
     lints::run_lints(tree)

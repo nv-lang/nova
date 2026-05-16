@@ -7217,3 +7217,88 @@ inference engine through generic-call return types.
 
 - [M-reason-per-T-unbox] вЂ” silent UB fixed РґР»СЏ Tв‰ str.
 - [M-cross-type-from-cascade] вЂ” implemented С‡РµСЂРµР· D73/D77 From + tests.
+
+---
+
+## Plan 45 Ф.27.1 — Workspace handler matrix simplifications (2026-05-16)
+
+### sources_by_module_path вместо file_id-based (Ф.27.1)
+
+**Где:** collect_handlers::collect_handlers_workspace API.
+**Что упрощено:** Map ключ — module_path: String, не ile_id: u32.
+Один module = один source (правильно для file-modules; для folder-modules —
+concatenated source, items найдены через span offsets корректно).
+**Почему:** CLI workspace pipeline не присваивает уникальные file_id parser'у
+(все modules ile_id = 0). Использовать ile_id потребовало бы FileRegistry
+integration — это Plan 42 scope.
+**Как чинить:** при активации FileRegistry в Plan 42 — переключить на
+(file_id, source) map. Существующий API можно сохранить как helper.
+**Приоритет:** L — module_path стабилен и unique в workspace.
+
+### Folder-modules в handler matrix
+
+**Где:** workspace mode хранит один source на module даже если module folder-based.
+**Что упрощено:** Folder-module = sources всех peer-файлов concatenated в один
+string. Handler scanner работает по concatenated, item span'ы остаются valid.
+**Почему:** parser возвращает один Module с merged items; peer attribution
+сохранён в Item.peer_file. Concatenated source — natural fit для span lookup.
+**Как чинить:** не нужно — concatenation сохраняет handler-scan semantics.
+**Приоритет:** none — это правильное design choice.
+
+---
+
+## Plan 45 Ф.27.2 — render_expr simplifications (2026-05-16)
+
+### If body conservative render
+
+**Где:** collector.rs::render_expr — If { cond, then, else_ } arm.
+**Что упрощено:** Body branches рендерятся как { ... } (без content),
+condition — корректно через render_expr recursion.
+**Почему:** If с body в contract — редкость (обычно condition ? a : b стиль
+через if a > b { a } else { b } в ensures). Body content rare значимая для
+verification (ensures сами по себе boolean condition).
+**Как чинить:** добавить ender_block(b) который рекурсивно render'ит
+last expression block'а. ~30 LOC. Низкий приоритет.
+**Приоритет:** L.
+
+### Match/closure/lambda/with/forbid/realtime — kind name fallback
+
+**Где:** collector.rs::render_expr — _ => arm.
+**Что упрощено:** Сложные expressions (match, closure, with-block, forbid-block)
+рендерятся как <match> / <closure> / <with> placeholder instead of full source.
+**Почему:** Full pretty-printer для всех ExprKind variants — ~200 LOC,
+duplicates AST pretty-printer (Plan 45.A roadmap'нут).
+**Как чинить:** добавить st::pretty::print_expr(e) -> String shared util,
+переиспользовать в doc + diag + diagnostics. Plan 45.A.
+**Приоритет:** L — contracts redko используют complex expressions; explicit
+<kind> placeholder помогает diagnose limitation.
+
+---
+
+## Plan 45 Ф.27 Sprint summary (2026-05-16)
+
+Audit-triggered closure tech debt после Ф.26:
+
+**Ф.27.1 closed:** Workspace handler matrix non-functional > теперь works
+cross-file через populate_handler_matrix_workspace.
+
+**Ф.27.2 closed:** ender_expr _ => "..." placeholder > расширенное
+coverage (Index, If, SelfAccess, InterpolatedStr, TurboFish) + helpful
+<kind> fallback вместо anonymous.
+
+**Ф.27.3 closed:** Stale MVP markers в docstrings > обновлены под reality
+production-grade (links/collector/doctree/render_md/render_expr).
+
+**Remaining known simplifications (intentional, не tech debt):**
+- mutation.rs text-heuristic (Plan 45.A может real-exec при demand)
+- markdown.rs zero-deps extractor (production-grade, не нужен pulldown-cmark)
+- collect_handlers.rs text scanner (design choice — robust к AST changes)
+- allow_transit forever-empty (parser side — Plan 16 scope)
+
+**Plan 45.A backlog (большой scope, отдельный sprint):**
+- HTML output + search index
+- Theme/dark-mode
+- External crate-doc linking
+- MCP server для AI/LLM real-time queries
+- Mutation testing real exec через test_runner integration
+- AST pretty-printer shared util (для render_expr completion)

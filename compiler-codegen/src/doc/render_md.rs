@@ -1,13 +1,16 @@
-//! Plan 45 Ф.8 — DocTree → Markdown renderer.
+//! Plan 45 Ф.8 — DocTree → Markdown renderer (production-grade after Ф.23+Ф.25).
 //!
-//! MVP: один модуль = одна markdown-строка. Items в каноническом
-//! порядке (по `id` — DocTree гарантирует sorted). Per-item rendering:
-//! signature (для fn) / definition (для type) / value (для const) +
-//! summary + description.
+//! Один модуль = одна markdown-строка. Items в каноническом порядке (по `id` —
+//! DocTree гарантирует sorted). Per-item rendering: signature (для fn) /
+//! definition (для type) / value (для const) + summary + description +
+//! sections (canonical order через `markdown::split_sections`).
 //!
-//! Style guide (Plan 45 §11.5) — определяет section order; renderer
-//! pass'ит через `sections` уже расположенные в правильном порядке
-//! (Ф.5 `sections.rs` сделает разбиение; MVP — summary + body).
+//! **Production features:**
+//! - Stability/deprecation/capability badges (Ф.23.3+Ф.23.15)
+//! - Intra-doc-link anchor rewriting (Ф.23.14)
+//! - `[src]` URL links (Ф.25.3) через thread-local source
+//! - Verify-status badges (Ф.24.14: ✅/❌/⏱️/⚠️)
+//! - Handler matrix section (Ф.26.2): `#### Handlers` под Effect
 
 use crate::doc::doctree::*;
 use std::fmt::Write;
