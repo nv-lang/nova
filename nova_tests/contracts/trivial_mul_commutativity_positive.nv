@@ -1,0 +1,15 @@
+// Ф.9.4 (Plan 33.6): TrivialBackend commutativity для * — `a * b == b * a`.
+
+module contracts.trivial_mul_commutativity_positive
+
+#verify
+fn commutative_mul(a int, b int) -> int
+    ensures result == b * a
+{
+    a * b
+}
+
+test "mul commutativity trivial" {
+    assert(commutative_mul(3, 5) == 15)
+    assert(commutative_mul(0, 7) == 0)
+}
