@@ -7993,3 +7993,17 @@ Remaining:
 - **Followup:** расширить collect_pattern_inner_bindings для
   Pattern::Record + mono schema lookup. ~50 LOC.
 - **Приоритет:** M (узкий case, но блокирует full multi-instance).
+
+### [M-mono-record-pattern-inner-bindings] ✅ ЗАКРЫТО (Plan 55 Ф.6 followup, 2026-05-16)
+- **Где:** `emit_c.rs::collect_pattern_inner_bindings::Pattern::Record arm`.
+- **Было:** Pattern::Record (record-form variant patterns, e.g.
+  Slot.Occupied { key, value }) не извлекался → bindings брались
+  из stale var_types → multi-instance HashMap[K1,V1] + [K2,V2] в одной
+  fn с .get()+match leak'ало типы между mono instances.
+- **Закрыто:** lookup через record_variant_field_types map. Mono-suffixed
+  key первым (для concrete instance), fallback на base. Shorthand fields
+  работают тоже.
+- **Test:** `f6_full_multi_instance_get.nv` — 3 разных HashMap[K,V]
+  с .get()+match correct.
+- **Side-effect:** [M-52-multi-instance-hashmap-collision] ✅ полностью
+  закрыто (раньше было partial).
