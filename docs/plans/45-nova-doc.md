@@ -34,6 +34,9 @@
 | Ф.30.1 External crate-doc linking | ✅ done | `NOVA_DOC_EXTERN_LINKS` env (prefix=template;...) → JSON `links[].target_url` + MD external href |
 | Ф.30.2 Incremental cache | ⏳ deferred Plan 45.A round 2 | Mtime-based AST cache для `--watch` mode. Требует deep refactor watch loop + Module serialization story. Honest scope ~500 LOC + complex test infrastructure — отдельный sprint. Текущий `--watch` re-parses всё каждый mtime tick (~6ms для 50-module workspace = acceptable для interactive editing). |
 | Ф.31.1 HTML output MVP | ✅ done | Single-page HTML render (index.html + per-module sections); embedded CSS (light theme, ~50 lines); XSS-safe (html_escape); badges (stability/deprecation/capability); ~370 LOC + 8 integration tests + 2 unit. Без lunr search (Ф.31.2 follow-up). |
+| **Ф.31.2 HTML search index** (in-progress) | 🟡 | Inline JS substring filter (no lunr dep — zero external deps). Search bar в sidebar; matched items visible, остальные dimmed. ~80 LOC JS + 30 LOC CSS. |
+| **Ф.31.3 Dark mode** (in-progress) | 🟡 | CSS variables (`--bg`, `--fg`, `--border`, etc) + `@media (prefers-color-scheme: dark)` override. No JS toggle (system-aware). |
+| **Ф.31.4 Multi-page output** (in-progress) | 🟡 | `render_html_multipage(tree) -> BTreeMap<String, String>` (filename → HTML). CLI flag `--output-dir <out>` для writing files на disk. Cross-page links resolved. |
 
 ## Ф.21 — Production hardening (2026-05-15, post-MVP audit)
 
