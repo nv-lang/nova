@@ -92,6 +92,12 @@ pub fn run(opts: BenchRunOpts) -> Result<i32> {
         anyhow!("{}", msgs.join("\n"))
     })?;
     nova_codegen::types::infer_effects(&mut module);
+    // Plan 57.C.7: run lints (включая bench-specific warnings).
+    for w in nova_codegen::lints::lint_module(&module) {
+        let (line, col) = nova_codegen::diag::byte_to_line_col(&src, w.diag.span.start);
+        eprintln!("warning: {}:{}:{}: {} [{}]",
+            bench_path.display(), line, col, w.diag.message, w.rule);
+    }
     nova_codegen::types::annotate_map_literals(&mut module);
     nova_codegen::desugar::desugar_module(&mut module);
     nova_codegen::callnorm::normalize_module(&mut module);
