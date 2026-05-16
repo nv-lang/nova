@@ -12664,3 +12664,50 @@ future parser-side implementation (Plan 16/45 follow-up).
 - MD badge renders
 
 Total после Ф.26.3: 73 doc integration PASS (11 suites).
+
+=== Plan 45 Ф.26.4 — Дополнить §11.5 lints catalog (2026-05-16) ===
+
+Plan §11.5 заявил **10 lints** в catalog. Audit показал 8 уже реализованы;
+ещё 3 отсутствуют. Реализовал недостающие:
+
+**Добавлено в lints.rs:**
+
+1. **summary-not-sentence** (style-guide rule №1).
+   - Summary должно быть полным грамматическим предложением:
+     capital first letter + ends with . / ! / ?.
+   - Message указывает что именно не так (capital OR terminator OR both).
+
+2. **unknown-section** (style-guide rule №2).
+   - Если в it.sections есть key не из canonical catalog
+     (examples / errors / panics / safety / effects / contracts / since /
+     see also / deprecated) — warning.
+   - Helps catch typos типа # Exemple или non-standard sections.
+
+3. **deprecated-overdue** (style-guide rule №6).
+   - Если #deprecated(until = "X.Y") и текущая Nova version >= X.Y >
+     error: item должен быть удалён.
+   - Version source: NOVA_VERSION env var (CI-controlled) либо fallback
+     CARGO_PKG_VERSION (Nova compiler version).
+   - Semver-ish сравнение через ersion_at_or_above: parse digits-and-dots
+     префикс, lexicographic compare Vec<u32>. Conservative: malformed input
+     > false (не flag'ит).
+
+**Helper:** parse_version + ersion_at_or_above (private). Handles:
+- 1.0.0 > strips 
+- 1.0.0-rc1 > takes 1.0.0, ignores suffix
+- garbage > None > false (conservative)
+
+**Tests:** 4 new unit tests в doc::lints::tests:
+- ersion_parse_basic — basic parsing
+- ersion_compare_basic — semver compare
+- ersion_compare_different_lengths — 1.0 vs 1.0.0
+- ersion_unparseable_returns_false — conservative fallback
+
+**Total lints implemented:** 11 unique rules (был 8):
+- broken-link, missing-summary (в cmd_doc_check)
+- imperative-mood, section-order, markdown-subset, examples-missing,
+  deprecated-incomplete, public-missing-stability, summary-too-long
+  (в lints.rs §11.5)
+- **summary-not-sentence, unknown-section, deprecated-overdue** (новое Ф.26.4)
+
+Plan §11.5 catalog claim '10 lints' теперь **полностью покрыт** (11 implemented).
