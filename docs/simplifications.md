@@ -8363,3 +8363,44 @@ FFI работает). Но real per-sample counter integration в bench runtime
 - **Statistical functions pure-Rust** — без statrs/criterion-stats deps;
   ~370 LOC покрывает median/MAD/Tukey/Welch+regularized beta+gammaln/
   bootstrap CI/geomean/slope. Unit tests verify against scipy reference.
+
+---
+
+## [M-57.C-runtime-integration-closed] — Phase C closure (2026-05-17)
+
+Plan 57.C closed все 8 sub-tasks. Closures:
+
+- **57.C.1 PerfTimer hooks** — 10 passes instrumented в cmd_build.
+  Zero overhead под default (OnceLock probe). Per-pass __PERF__
+  markers via NOVA_PERF_TIMER=1 env.
+- **57.C.2 gc.last_pause_ns** — added к alloc.h + alloc_boehm.c
+  (monotonic timer) + alloc.c stub + std/runtime/gc.nv + codegen
+  dispatch. Plan 32 ext.
+- **57.C.3 heap sampler** — uv_thread_create в bench.h emits
+  __HEAP_SAMPLE__ markers; CLI parallel reader → histogram.
+- **57.C.4 CPU instructions** — Linux perf_event_open syscall FFI в
+  bench.h, ioctl reset/enable/disable/read per sample. JSON v1 ext.
+- **57.C.5 recursive discovery** — `nova bench run <dir>` walks
+  .nv files (skip hidden + corpus/), per-file pre-filter `bench ` keyword.
+- **57.C.6 history-squash** — yearly retention policy automation
+  с git rm + temp worktree + --dry-run.
+- **57.C.7 bench lints** — 4 rules emitted в lint_module: sleep/io/
+  empty/opaque-literal. Wired в bench/run.rs pipeline.
+- **57.C.8 nova bench corpus** — subprocess `nova build` с
+  NOVA_PERF_TIMER=1 + parse_perf_line. Table или JSON output.
+
+### Phase D backlog (открыто)
+
+Несложные follow-ups для будущих sessions:
+- **Aggregated JSON output для recursive mode** — `nova bench run <dir>
+  --out file.json` сейчас warns; нужно собрать все per-file results
+  в один RunResultParsed-style aggregated. ~80 LOC.
+- **sleep-lint contextual detection** — `Time.sleep(...)` ловится как
+  method call на `Time` ident. Если `Time` resolved как effect — не
+  будет match. Лучше cover после resolve. ~30 LOC.
+- **HTML compiler-perf dashboard** — отдельный output для `nova bench
+  corpus` (echarts time-series для compile-time). ~300 LOC.
+- **CI matrix multi-runner baselines** — multiple bench-history
+  branches per machine (bench-history-{runner_id}). ~100 LOC.
+- **PerfTimer для test runner** — extend wraps к `nova test` pipeline.
+  ~50 LOC.
