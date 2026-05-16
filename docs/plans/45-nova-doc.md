@@ -40,8 +40,8 @@
 | Ф.31.5 Syntax highlighting | ✅ done | Inline JS regex-based highlighter (~80 LOC JS). Tokenize Nova keywords, types, strings, numbers, comments. CSS classes (.tok-kw, .tok-type, .tok-str, .tok-num, .tok-comment) с light/dark variants. No external deps. |
 | Ф.31.6 sitemap.xml | ✅ done | `render_sitemap` в multi-page output. Standard sitemaps.org/0.9 format. `NOVA_DOC_SITE_URL` env для absolute URLs (иначе relative). index.html priority 1.0, modules 0.8. |
 | Ф.32.1 nova doc-query CLI | ✅ done | New subcommand `nova doc-query <file.nv> "<query>"`. Query DSL: comma-separated key=value (kind, name, module, capability, effect, has-contracts, verified, stability, deprecated). 11 integration + 5 unit tests. Foundation для Ф.32.2 MCP server. |
-| **Ф.32.2 JSON input parser** (in-progress) | 🟡 | Ручной JSON parser specifically для doc-query (no serde dep). Reads `nova doc --format json` output, extracts items array, applies query filter. ~250 LOC + tests. |
-| **Ф.32.3 MCP server skeleton** (in-progress) | 🟡 | JSON-RPC over stdio (MCP base protocol). Tools: `query_items`, `get_item`, `list_modules`. Standalone в `nova-cli` (без new crate). ~200 LOC + integration tests. |
+| Ф.32.2 JSON input parser | ✅ done | Minimal recursive-descent JSON parser в `doc/json_parse.rs` (no serde). `JsonValue` enum + Parser struct. doc-query teперь accept'ит и `.nv` и `.json`. ~280 LOC + 14 unit + 5 integration tests. |
+| Ф.32.3 MCP server skeleton | ✅ done | JSON-RPC 2.0 over stdio, MCP protocol subset. Tools: `query_items`, `list_modules`, `get_item`. CLI `nova doc-mcp <file>`. 11 unit + 7 integration tests. Compatible с Claude Code / MCP Inspector. |
 
 ## Ф.21 — Production hardening (2026-05-15, post-MVP audit)
 

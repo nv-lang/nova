@@ -7862,3 +7862,48 @@ Remaining:
 - Syntax highlighter regex-based (95% cases) — AST-based Plan 45.A round 3
 - doc-query input — .nv only (JSON parsing Ф.32.2)
 - MCP server proper — Ф.32.2/3 (отдельный crate, ~400 LOC)
+
+---
+
+## Plan 45 Ф.32.2/3 simplifications (2026-05-16)
+
+### JSON parser — minimal scope (no floats, no \uXXXX)
+
+**Где:** `doc/json_parse.rs`.
+**Что упрощено:** Только то что emit'ит наш render_json. Floats не парсятся
+(мы emit'им integers only). Unicode escapes `\uXXXX` не поддерживаются
+(мы emit'им raw UTF-8). Не используется serde.
+**Почему:** Full JSON parser — ~600 LOC + edge cases. Minimal subset
+закрывает 100% наших use cases (parse output что мы сами и emit'им).
+**Как чинить:** заменить на serde когда добавим Cargo dep. Plan 45.A round 3.
+**Приоритет:** L — текущий 100% functional для doc-query/MCP use cases.
+
+### MCP server — stdio only (no SSE/HTTP)
+
+**Где:** `doc/mcp.rs::run_mcp_loop`.
+**Что упрощено:** Только stdio transport. Нет SSE (Server-Sent Events)
+для long-running sessions, нет HTTP. Single-shot request/response loop.
+**Почему:** Real-world MCP clients (Claude Code, MCP Inspector) work с stdio.
+SSE/HTTP — extra complexity для marginal benefit (multiplexing, hot-reload).
+**Как чинить:** Plan 45.A round 3 — добавить tokio + axum + SSE handler.
+~300 LOC additional. Notification support, capabilities negotiation.
+**Приоритет:** L — production MCP works через stdio.
+
+### MCP — tree loaded once at startup (no hot-reload)
+
+**Где:** `cmd_doc_mcp` loads tree once, server holds reference.
+**Что упрощено:** Если source file changes during server lifetime — server
+serves stale doc tree. Restart needed.
+**Почему:** mtime polling + invalidation добавляет complexity. MCP sessions
+usually short-lived (LLM tool call > response > end).
+**Как чинить:** add tool `reload_tree(path)` для explicit refresh, или
+mtime-watch на file. Plan 45.A round 3.
+**Приоритет:** L.
+
+### MCP — no notifications support
+
+**Где:** `doc/mcp.rs::handle_request` — request-response only.
+**Что упрощено:** Server не sends server-initiated notifications
+(progress, resource changes). MCP spec разрешает но не требует.
+**Почему:** Notifications нужны для long-running tasks. Doc query — instant.
+**Приоритет:** none — out of scope для documentation server.

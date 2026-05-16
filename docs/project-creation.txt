@@ -13518,3 +13518,40 @@ Plan 45 family остаЄтс€:
 - Plan 45.B Ч stdlib full doc-pass
 - Plan 45.A round 2 Ч incremental cache, etc
 - Plan 16/42 follow-ups
+
+=== Plan 45 Sprint ‘.32.2/3 Ч JSON parser + MCP server (2026-05-16) ===
+
+2 features в одной сессии Ч completes ‘.32 sprint (AI/LLM integration).
+
+‘.32.2 (53022051): Minimal JSON parser в `doc/json_parse.rs`.
+- Recursive-descent parser, ~280 LOC, no serde dep.
+- Supports: null, bool, int (i64), str (с \n/\t/\r/\\/\" escapes), array, object.
+- Ќе supports: floats, \uXXXX escapes, trailing commas (nova doc не emit'ит).
+- `JsonValue` enum + helpers (as_object/as_array/as_str/as_int/as_bool/get).
+- doc-query CLI теперь accept'ит `.json` files (previously только `.nv`).
+- 14 unit tests + 5 integration tests verify shape parity между native query
+  и JSON-routed query.
+
+‘.32.3 (26b07fb): MCP server skeleton Ч Nova-unique feature!
+- New subcommand `nova doc-mcp <file>` Ч JSON-RPC 2.0 over stdio.
+- Reads line-delimited JSON-RPC requests, writes responses.
+- Protocol subset (MCP 2024-11-05): initialize, tools/list, tools/call.
+- 3 tools exposed:
+  - query_items(query) Ч DSL search
+  - list_modules() Ч module path list
+  - get_item(item_id) Ч full item JSON
+- Compatible с MCP clients: Claude Code, MCP Inspector, custom integrations.
+- All responses parsed back as valid JSON (verified via 7 integration tests).
+- 11 unit tests + 7 integration tests = 18 MCP tests.
+
+**Nova-unique capability:** никто из rustdoc/godoc/typedoc Ќ≈ имеет MCP server
+дл€ doc queries. AI/LLM tools могут natively query Nova doc tree через
+standard MCP protocol без custom integrations.
+
+**Total после ‘.32.2/3:** 165+ doc tests PASS (24+ suites + 34+ unit).
+
+**Plan 45 family Ч что осталось:**
+- Plan 45.B Ч stdlib full doc-pass (отдельный effort, weeks)
+- Plan 45.A round 2 Ч incremental cache (‘.30.2 deferred), syntax highlight
+  upgrade (AST-based vs regex), HTTP/SSE MCP transport
+- Plan 16/42 follow-ups
