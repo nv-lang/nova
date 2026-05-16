@@ -241,6 +241,7 @@ mod tests {
             throughput_elements: None,
             allocs_per_iter: None,
             allocs_total: None,
+            cpu_instructions: Vec::new(),
         };
         AnalyzedBench::from_raw(raw).unwrap()
     }
