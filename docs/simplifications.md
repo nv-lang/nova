@@ -7931,3 +7931,32 @@ Remaining:
 - **Followup:** Plan 56 или newer — расширить Time.sleep accept'ить
   Duration (proper effect signature evolution).
 - **Приоритет:** L (workaround доступен).
+
+### [M-mono-pass-corruption — частично] ✅ ЗАКРЫТО (Plan 55 Ф.4, 2026-05-16)
+- **Где:** `emit_c.rs::emit_fn` (save/restore current_fn_return_ty) +
+  `infer_expr_c_type` (protocol-method whitelist) + NOVA_DEBUG_MONO tool.
+- **Было:**
+  1. emit_fn устанавливал current_fn_return_ty без save/restore → leak
+     в recursive emit (mono pass транзитивных deps).
+  2. Method-call infer (`k.eq(key)`) падал в global fn_ret_<m> lookup,
+     где stale entry (e.g. fn 'eq' с int return) корраптила результат →
+     'if cond' получал nova_int → check_bool FAIL.
+- **Закрыто:**
+  1. mem::replace + restore current_fn_return_ty в emit_fn (как уже было
+     в других emit_*).
+  2. Whitelist protocol-method names ДО fn_ret lookup:
+     eq/ne/lt/le/gt/ge/is_* → nova_bool, hash → nova_int.
+  3. NOVA_DEBUG_MONO=1 env tool для future diagnosis.
+- **Tests:** `nova_tests/plan55/f4_*.nv` (3 файла).
+
+### [M-erased-generic-method-dispatch] НОВЫЙ (deferred Plan 56+)
+- **Где:** `emit_c.rs::emit_call` для generic-bound method в erased context.
+- **Что упрощено:** добавление @clone() в HashMap (которая вызывает
+  `key.hash()` где K — generic с Hashable bound) даёт CC-FAIL: erased
+  emit генерирует `key->hash()` (member access на Nova_K* incomplete
+  type) вместо vtable dispatch.
+- **Workaround:** не добавлять методы которые требуют bound-method
+  dispatch в generic stdlib types. Mono pass работает; erased — нет.
+- **Followup:** vtable-based bound-method dispatch для erased generics.
+- **Приоритет:** M (блокирует HashMap.@clone и любые helper-methods
+  использующие bound K methods).
