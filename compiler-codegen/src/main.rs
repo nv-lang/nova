@@ -513,6 +513,7 @@ fn cmd_test_build(
         timeout: std::time::Duration::from_secs(timeout_secs),
         gc_kind,
         verbosity: test_runner::Verbosity::Normal,
+        mono_depth: None,
     };
     let status = test_runner::run_one(&opts);
     let label = status.label();
@@ -632,6 +633,7 @@ fn cmd_test_all(
         filter_from: None,
         shuffle_seed: None,
         skip: &[],
+        mono_depth: None,
     };
     let summary = test_runner::run_all(opts)?;
     test_runner::print_summary(&summary, format);

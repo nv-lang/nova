@@ -430,6 +430,10 @@ pub struct CEmitter {
     /// Plan 48 Ф.3: mangled type name → (base_type_name, type_args_c).
     /// Uses RefCell so type_ref_to_c (&self) can register instances.
     generic_type_instance_info: std::cell::RefCell<HashMap<String, (String, Vec<String>)>>,
+    /// Plan 48 Ф.7.6: maximum monomorphization-worklist drain depth.
+    /// Default 500; overridable via CLI `--mono-depth=N` or env var
+    /// `NOVA_MONO_DEPTH` (CLI wins). Guards against polymorphic recursion.
+    mono_depth_limit: usize,
 }
 
 /// Plan 20 Ф.4: per-defer-stmt entry — tracks one `defer { ... }` or
@@ -574,7 +578,20 @@ impl CEmitter {
             generic_type_methods: HashMap::new(),
             generic_type_defs_buf: String::new(),
             generic_type_instance_info: std::cell::RefCell::new(HashMap::new()),
+            // Plan 48 Ф.7.6: NOVA_MONO_DEPTH env var still honored as a
+            // fallback; CLI `--mono-depth=N` overrides via set_mono_depth_limit.
+            mono_depth_limit: std::env::var("NOVA_MONO_DEPTH").ok()
+                .and_then(|s| s.parse::<usize>().ok())
+                .filter(|n| *n > 0)
+                .unwrap_or(500),
         }
+    }
+
+    /// Plan 48 Ф.7.6: CLI override for the monomorphization-worklist drain
+    /// depth limit. Called from `nova build` / `nova test` / `nova test-build`
+    /// when `--mono-depth=N` is set; takes priority over `NOVA_MONO_DEPTH`.
+    pub fn set_mono_depth_limit(&mut self, n: usize) {
+        if n > 0 { self.mono_depth_limit = n; }
     }
 
     /// Enable source-annotation mode: codegen will insert `/* SRC: ... */`
@@ -1335,14 +1352,10 @@ impl CEmitter {
         }
 
         // Plan 48: drain monomorphization worklist to fixpoint (R3: polymorphic recursion guard).
-        // Ф.7.6: limit конфигурируется через NOVA_MONO_DEPTH env var (default 500).
-        // Полноценный CLI flag `--mono-depth=N` — V2 (требует BuildOpts расширения).
+        // Ф.7.6: limit задаётся через CLI `--mono-depth=N` (set_mono_depth_limit)
+        // или fallback на env var `NOVA_MONO_DEPTH`; оба читаются в `new()`.
         {
-            const DEFAULT_MONO_DEPTH_LIMIT: usize = 500;
-            let limit = std::env::var("NOVA_MONO_DEPTH").ok()
-                .and_then(|s| s.parse::<usize>().ok())
-                .filter(|n| *n > 0)
-                .unwrap_or(DEFAULT_MONO_DEPTH_LIMIT);
+            let limit = self.mono_depth_limit;
             let mut safety = 0usize;
             while !self.mono_worklist.is_empty() {
                 safety += 1;
@@ -1350,7 +1363,7 @@ impl CEmitter {
                     return Err(format!(
                         "instantiation depth limit {} exceeded (possible polymorphic recursion); \
                          add a non-generic base case, use explicit bounds to terminate, \
-                         or raise via NOVA_MONO_DEPTH env var",
+                         or raise via --mono-depth=N CLI flag (or NOVA_MONO_DEPTH env var)",
                         limit
                     ));
                 }
@@ -5643,8 +5656,12 @@ impl CEmitter {
                 self.out = saved_out;
             }
             depth += 1;
-            if depth > 500 {
-                return Err("generic type instantiation depth limit exceeded (possible recursive generic types)".into());
+            if depth > self.mono_depth_limit {
+                return Err(format!(
+                    "generic type instantiation depth limit {} exceeded (possible recursive generic types); \
+                     raise via --mono-depth=N CLI flag (or NOVA_MONO_DEPTH env var)",
+                    self.mono_depth_limit
+                ));
             }
         }
         Ok(())
