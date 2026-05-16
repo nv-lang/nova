@@ -8245,3 +8245,59 @@ Remaining:
   bootstrap. Когда cross-crate compilation потребует (Plan 03 package
   ecosystem) — раскачать.
 - Vtable runtime infrastructure готова, ABI документирован.
+
+---
+
+## [M-57-mvp-simplifications] — Plan 57 MVP simplifications (2026-05-16)
+
+В MVP закладки для Plan 57.A / 57.B; неблокеры для end-to-end use:
+
+### Closed в MVP (production-grade)
+- L1 wall-clock + alloc snapshot.
+- L2 DSL: `bench`/`measure` + `bench.*` namespace (7 builtins).
+- L3 statistical analysis (median/MAD/Tukey/Welch/bootstrap CI).
+- L4 terminal/JSON v1/CSV/markdown outputs.
+- L5 `nova bench diff` с Welch's t-test + geomean + reproducibility check.
+- L6 `nova bench gate` с bench.toml (per-bench overrides + exempt globs).
+- L8 partial canonical corpus (3/10 файлов; full set TBD Plan 57.A).
+- L10 reproducibility metadata + env warnings (governor, turbo, debug-build).
+
+### Deferred → Plan 57.A (production hardening)
+- **L7 historical orphan branch storage** — bench-history branch automation +
+  echarts HTML dashboard. CI workflow создан, ready для baseline branch
+  init.
+- **L9 profile integration** — samply flame graphs + heap/gc profiles.
+- **L4 HTML output** — interactive echarts dashboard.
+- **L6 auto noise-floor calibration** — config поле `auto_noise_floor`
+  exists, runtime calibration loop — TBD.
+- **L10 thermal throttle detection** — env warnings охватывают только
+  governor/turbo/build_mode; throttle + background load — TBD.
+
+### Deferred → Plan 57.B (advanced)
+- **L1 CPU instructions mode** — `perf_event_open` (Linux),
+  `QueryThreadCycleTime`+ETW (Win). Без этого CI на shared runners имеет
+  ±5-10% noise floor.
+- **L4 Criterion-compatible JSON output** — для interop с
+  `cargo-criterion --message-format`.
+- **Parameterized sweeps** — `#bench(params=[10, 100, 1000])` attribute form.
+- **L8 full canonical corpus** (10 файлов) + per-pass PerfTimer hooks
+  для compiler-perf breakdown.
+- **`group "..." { case "..." { ... } }`** sub-benchmarks (Criterion
+  `BenchmarkGroup` analogue). Parsed (TBD) → desugar в multiple flat
+  bench entries.
+
+### MVP design simplifications (намеренные, не TODO)
+- **Single-file bench** — `nova bench run X.nv` принимает только one file;
+  multi-file collection (recursive directory walk) — Phase B (mirror
+  test_runner discovery).
+- **Inline sampling вместо callback'ов** — emit_bench эмитит весь
+  sampling loop inline в C, не передаёт callback-pointers в
+  nova_bench_run. Это позволяет let-bindings из setup жить в одном
+  scope с measure (без TLS-state hoisting). Tradeoff: код longer,
+  duplicate-ит measure body 3x (warmup + calibration + samples).
+  Sub-benchmarks (group/case) потребуют callback'и → Phase A.
+- **Build mode flag --mode dev/release** — default release, но fallback
+  dev доступен когда LTO требует lld (Linux Clang без lld в PATH).
+  Production rec: --mode release c installed lld.
+- **GC mode flag --gc malloc/boehm** — default boehm, malloc для
+  development когда Boehm vcpkg не setup (Windows requires manual install).

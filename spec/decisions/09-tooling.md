@@ -1773,3 +1773,121 @@ Boehm GC). Собственные биндинги дают:
 - `compiler-codegen/src/verify/backend/mod.rs` — `SolverBackend` trait,
   factory/selector по env/flag.
 - `compiler-codegen/build.rs` — feature `z3-backend`; link Z3 shared lib.
+
+
+---
+
+## D109. Benchmark DSL — `bench "..." { measure { ... } }`
+
+### Что
+
+Top-level `bench "name" { setup; measure { measured_body } teardown }`
+construct + namespace `bench.*` (`bench.opaque`, `bench.iterations`,
+`bench.reset_timer`, `bench.bytes`, `bench.elements`, `bench.allocs`,
+`bench.now_ns`). Compiled в bench main entry **только** при `nova bench`
+invocation; в `nova test`/`nova build` bench-items игнорируются.
+
+### Правило
+
+Синтаксис идентичен top-level `test`-declaration (D89), но keyword'ы
+`bench` и `measure` — **контекстуальные** (parses как item только когда
+за `bench` идёт string-literal; `measure` парсится как block-start только
+внутри `bench`-body). Это позволяет identifier'ам `bench` (например
+namespace `bench.opaque`) и `measure` существовать без коллизий.
+
+```nova
+module bench.my_module
+
+bench "name of this benchmark" {
+    // Setup — НЕ measured, выполняется один раз.
+    let mut m = HashMap[int, int].new()
+    let n = 1000
+
+    // Measured block — adaptive sampling (Criterion-style).
+    measure {
+        let mut i = 0
+        while i < n {
+            m.insert(i, i)
+            i = i + 1
+        }
+        bench.elements(n)
+    }
+
+    // Teardown (optional).
+}
+```
+
+**Body grammar:**
+
+```
+bench_decl := "bench" string_lit "{" bench_body "}"
+bench_body := stmt* measure_block stmt*
+measure_block := "measure" "{" block_body "}"
+```
+
+Body должен содержать **ровно один** `measure { ... }` блок. Statements
+ДО `measure` — setup (1×, не measured); statements ПОСЛЕ — teardown
+(1×, не measured); `measure`-body — adaptively sampled.
+
+**`bench.*` namespace functions** (declared в `std/bench.nv`,
+dispatched hardcoded в emit_c.rs):
+
+| Function | Signature | Purpose |
+|---|---|---|
+| `bench.opaque(v)` | `[T] (T) -> T` | Black-box barrier (prevent constant-folding) |
+| `bench.iterations()` | `() -> int` | Current `iters_per_sample` (adaptive) |
+| `bench.reset_timer()` | `() -> ()` | Reset sample timer (skip in-measure setup) |
+| `bench.bytes(n)` | `(int) -> ()` | Throughput: bytes/iter |
+| `bench.elements(n)` | `(int) -> ()` | Throughput: elements/iter |
+| `bench.allocs()` | `() -> int` | Snapshot alloc count (Plan 32 bridge) |
+| `bench.now_ns()` | `() -> int` | Monotonic high-res timer |
+
+### Adaptive sampling protocol
+
+Codegen эмитит для каждого `bench`-declaration entry point, который:
+
+1. **Warmup** (default 500ms via env `NOVA_BENCH_WARMUP_NS`): крутит
+   measure до warmup-budget elapsed.
+2. **Calibration**: single measure, compute `iters_per_sample = max(1,
+   target_ns / single_ns)`. Target default 1ms.
+3. **Sampling**: 100 batches of `iters_per_sample × measure`, recording
+   per-iter wall-clock per batch. Stop early если total > `time_budget_ns`
+   (default 10s).
+4. **Emit JSONL** на stdout: `__BENCH_RESULT__ {...}` с raw samples +
+   throughput + alloc delta.
+
+CLI (`nova bench run`) parses JSONL, runs **statistical analysis**
+(median, MAD, mean, stddev, p25/p75, IQR, Tukey outliers, bootstrap 95%
+CI, slope+R²), и emits human/JSON/CSV/MD output.
+
+### Почему
+
+- **Criterion (Rust)** / **`testing.B` + benchstat (Go)** / **tinybench
+  (TS)** — все эти решения внешние библиотеки, не часть языка. Nova
+  делает встроенным — exposed surface минимален, edge cases
+  (init/teardown leaks, sample noise, alloc counting) обрабатываются
+  один раз в runtime.
+- **Effect-row aware**: компилятор знает по сигнатуре pure-fn → может
+  гарантировать детерминизм measure-блока. **Уникально для Nova.**
+- **`gc.alloc_count()` встроен** (Plan 32) — alloc tracking бесплатен.
+
+### Что отвергнуто
+
+- **`#bench` attribute на `fn`** (Criterion-style) — отложено в Plan
+  57.B (для parameterized sweeps). Top-level `bench` syntax —
+  consistent c `test` (D89), привычно.
+- **`group`/`case` sub-benches** — отложено в Plan 57.A (требует
+  больше parser changes).
+- **`bench` как hard keyword** — ломает existing identifier'ы
+  (`module bench.X`, namespace `bench.opaque`). Решено через
+  contextual lexing (как `apply` в Plan 33.5).
+- **Statistical analysis в runtime (C)** — perf overhead, complexity.
+  Делается в CLI (Rust): bench-bin emits raw samples JSONL, CLI агрегирует.
+
+### Связь
+
+- D89 (test tooling) — bench parallel/sibling.
+- Plan 32 (`gc.*` introspection) — alloc tracking bridge.
+- Plan 22 (libuv integration) — `uv_hrtime()` для measurement primitive.
+- Plan 57 (полный 10-layer design + MVP / 57.A / 57.B phasing).
+- [docs/perf-conventions.md](../../docs/perf-conventions.md) — pragmatic guide.

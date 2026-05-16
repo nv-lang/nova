@@ -950,6 +950,23 @@ impl Parser {
                 }
                 Item::Test(self.parse_test_decl()?)
             }
+            // Plan 57: контекстный `bench` ident. Распознаём как bench-decl
+            // только если за ним идёт string-literal: `bench "name" { ... }`.
+            // Иначе — обычный ident-expr (`bench.opaque(v)`, etc.) который
+            // тут не valid top-level item, ошибка ниже даст «expected fn/type/...».
+            TokenKind::Ident(ref s) if s == "bench" && !is_export
+                && matches!(self.peek_at(1).kind, TokenKind::Str(_)) =>
+            {
+                if let Some(d) = &pending_doc {
+                    eprintln!(
+                        "warning: doc-comment (`///`) before `bench` is ignored \
+                         — `bench` declarations are not documented (Plan 57). \
+                         span: {:?}",
+                        d.span
+                    );
+                }
+                Item::Bench(self.parse_bench_decl()?)
+            }
             TokenKind::KwLemma if !is_export && !is_external => {
                 if let Some(d) = &pending_doc {
                     eprintln!(
@@ -2469,6 +2486,91 @@ impl Parser {
             name,
             body,
             span: start.merge(body_span),
+        })
+    }
+
+    /// Plan 57: `bench "name" { setup_stmts; measure { measured_body } teardown_stmts }`
+    ///
+    /// Внутри body парсим обычные statements; при встрече ключевого
+    /// слова `measure` — переключаемся, парсим один measure-блок, затем
+    /// продолжаем как teardown.
+    ///
+    /// Ровно один `measure { ... }` блок в body. Иначе диагностика.
+    fn parse_bench_decl(&mut self) -> Result<BenchDecl, Diagnostic> {
+        let start = self.peek().span;
+        // Caller already verified `bench` ident + string-literal lookahead;
+        // here consume ident, then string.
+        match &self.peek().kind {
+            TokenKind::Ident(s) if s == "bench" => { self.bump(); }
+            _ => return Err(Diagnostic::new(
+                "expected `bench` keyword",
+                self.peek().span,
+            )),
+        }
+        let name = match &self.peek().kind {
+            TokenKind::Str(s) => {
+                let n = s.clone();
+                self.bump();
+                n
+            }
+            _ => {
+                return Err(Diagnostic::new(
+                    "expected bench name as string literal",
+                    self.peek().span,
+                ))
+            }
+        };
+        let brace_open = self.expect(&TokenKind::LBrace)?.span;
+        self.skip_newlines();
+        let mut setup: Vec<Stmt> = Vec::new();
+        let mut measure_body: Option<Block> = None;
+        let mut teardown: Vec<Stmt> = Vec::new();
+        while !matches!(self.peek().kind, TokenKind::RBrace) {
+            // `measure` — контекстный keyword: distinguishes by next-token-is-`{`.
+            // `measure_var = 1` (assignment to var named measure) парсится как stmt.
+            let is_measure_block = match &self.peek().kind {
+                TokenKind::Ident(s) if s == "measure"
+                    && matches!(self.peek_at(1).kind, TokenKind::LBrace) => true,
+                _ => false,
+            };
+            if is_measure_block {
+                if measure_body.is_some() {
+                    return Err(Diagnostic::new(
+                        "bench body must contain exactly one `measure { ... }` block",
+                        self.peek().span,
+                    ));
+                }
+                self.bump(); // consume `measure` ident
+                let mb = self.parse_block()?;
+                measure_body = Some(mb);
+                self.skip_newlines();
+                continue;
+            }
+            let so = self.parse_stmt_or_expr()?;
+            let s = match so {
+                StmtOrExpr::Stmt(s) => s,
+                StmtOrExpr::Expr(e) => Stmt::Expr(e),
+            };
+            if measure_body.is_none() {
+                setup.push(s);
+            } else {
+                teardown.push(s);
+            }
+            self.skip_newlines();
+        }
+        let brace_close = self.expect(&TokenKind::RBrace)?.span;
+        let measure_body = measure_body.ok_or_else(|| {
+            Diagnostic::new(
+                "bench body must contain `measure { ... }` block",
+                brace_open.merge(brace_close),
+            )
+        })?;
+        Ok(BenchDecl {
+            name,
+            setup,
+            measure_body,
+            teardown,
+            span: start.merge(brace_close),
         })
     }
 

@@ -1,0 +1,37 @@
+// Plan 57: arithmetic micro-benches — smoke tests для hot-loop codegen.
+module bench.micro
+
+bench "int add accumulate" {
+    measure {
+        let mut acc = 0
+        let mut i = 0
+        while i < 10000 {
+            acc = bench.opaque(acc + i)
+            i = i + 1
+        }
+        bench.elements(10000)
+    }
+}
+
+bench "f64 mul accumulate" {
+    measure {
+        let mut acc f64 = 1.0
+        let mut i = 0
+        while i < 1000 {
+            acc = bench.opaque(acc * 1.0000001)
+            i = i + 1
+        }
+        bench.elements(1000)
+    }
+}
+
+bench "fibonacci recursive n=20" {
+    measure {
+        bench.opaque(fib(20))
+    }
+}
+
+fn fib(n int) -> int {
+    if n < 2 { return n }
+    fib(n - 1) + fib(n - 2)
+}

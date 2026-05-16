@@ -1,0 +1,122 @@
+# Plan 57 §3 L6 — bench regression gate on every PR.
+#
+# Этот workflow — always-on regression check. Запускает bench suite
+# на dedicated self-hosted runner (для noise floor < 2%) и сравнивает с
+# baseline (main branch).
+#
+# IMPORTANT: для production требует self-hosted runner с:
+#   - CPU governor=performance (Linux: cpupower frequency-set -g performance)
+#   - Disabled turbo boost для consistent clock
+#   - Pinned cores (taskset) — TODO в job script
+#   - Network isolated
+#
+# Если используется GitHub-hosted runner — добавьте `[noise]` префикс к
+# bench-name'ам для exempt'а из gate (см. bench.toml [gate.exempt]).
+#
+# Setup:
+#   1. Сохранить baseline в orphan branch `bench-history/main-baseline.json`:
+#      git checkout --orphan bench-history
+#      git rm -rf .
+#      nova bench run bench/micro/hashmap.nv --out main-baseline.json
+#      git add main-baseline.json
+#      git commit -m "Initial baseline"
+#      git push origin bench-history
+#   2. Этот workflow читает baseline из той branch, сравнивает с PR.
+
+name: bench-regression
+
+on:
+  pull_request:
+    paths:
+      - 'compiler-codegen/src/**'
+      - 'nova-cli/src/**'
+      - 'compiler-codegen/nova_rt/**'
+      - 'std/**'
+      - 'bench/**'
+
+jobs:
+  bench:
+    # Use self-hosted runner для stable measurements. Fall back to
+    # ubuntu-latest для smoke (но gate ослаблен — см. bench.toml).
+    runs-on: ${{ vars.BENCH_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Setup CPU governor (Linux self-hosted)
+        if: runner.os == 'Linux' && contains(vars.BENCH_RUNNER, 'self-hosted')
+        run: |
+          echo "Current governor:"
+          cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor || echo "no cpufreq"
+          # Already configured by runner setup — just verify.
+
+      - name: Install Boehm GC (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libgc-dev
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.85
+
+      - name: Build nova-cli (release)
+        run: |
+          cd nova-cli
+          cargo build --release
+
+      - name: Fetch baseline from bench-history branch
+        id: fetch-baseline
+        continue-on-error: true
+        run: |
+          git fetch origin bench-history:bench-history 2>&1 || \
+            echo "no bench-history branch yet — first run will become baseline"
+          if git rev-parse --verify bench-history >/dev/null 2>&1; then
+            git show bench-history:main-baseline.json > baseline.json 2>&1 || \
+              echo "no main-baseline.json in branch"
+            test -f baseline.json && echo "baseline_found=true" >> $GITHUB_OUTPUT || \
+              echo "baseline_found=false" >> $GITHUB_OUTPUT
+          else
+            echo "baseline_found=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Run benches (new)
+        run: |
+          # Все micro-benches агрегированы в один run; multiple files (Phase B).
+          ./nova-cli/target/release/nova bench run bench/micro/hello.nv \
+            --gc malloc --mode release \
+            --samples 100 --warmup-ms 500 --time-budget 10 \
+            --out new.json
+
+      - name: Compare с baseline
+        if: steps.fetch-baseline.outputs.baseline_found == 'true'
+        id: diff
+        run: |
+          ./nova-cli/target/release/nova bench diff baseline.json new.json \
+            --format markdown > diff.md
+          cat diff.md
+
+      - name: PR comment с diff
+        if: steps.fetch-baseline.outputs.baseline_found == 'true'
+        uses: peter-evans/create-or-update-comment@v3
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          body-file: diff.md
+
+      - name: Gate
+        if: steps.fetch-baseline.outputs.baseline_found == 'true'
+        run: |
+          ./nova-cli/target/release/nova bench gate baseline.json new.json \
+            --config bench.toml
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-results-${{ github.run_id }}
+          path: |
+            new.json
+            diff.md
+          retention-days: 30

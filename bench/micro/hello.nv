@@ -1,0 +1,21 @@
+// Trivial smoke bench for Plan 57 MVP verification.
+module bench.micro
+
+bench "noop" {
+    measure {
+        bench.opaque(42)
+    }
+}
+
+bench "int add tight loop" {
+    let mut acc = 0
+    measure {
+        let n = bench.iterations()
+        let mut i = 0
+        while i < n {
+            acc = bench.opaque(acc + i)
+            i = i + 1
+        }
+        bench.elements(n)
+    }
+}

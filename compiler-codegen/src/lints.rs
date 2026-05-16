@@ -44,6 +44,16 @@ pub fn lint_module(m: &Module) -> Vec<LintWarning> {
             Item::Test(t) => {
                 walk_block_lints(&t.body, &mut warnings);
             }
+            // Plan 57: lint обходит все три раздела bench.
+            Item::Bench(b) => {
+                for s in &b.setup {
+                    walk_stmt_lints(s, &mut warnings);
+                }
+                walk_block_lints(&b.measure_body, &mut warnings);
+                for s in &b.teardown {
+                    walk_stmt_lints(s, &mut warnings);
+                }
+            }
             Item::Const(c) => walk_expr_lints(&c.value, &mut warnings),
             Item::Let(l) => walk_expr_lints(&l.value, &mut warnings),
             Item::Type(_) => {}

@@ -617,6 +617,12 @@ impl<'a> Lexer<'a> {
             "break" => TokenKind::KwBreak,
             "continue" => TokenKind::KwContinue,
             "test" => TokenKind::KwTest,
+            // Plan 57: `bench` и `measure` — контекстуальные keyword'ы.
+            // В lexer'е остаются обычными identifier'ами (иначе ломают
+            // `module bench.X` paths, `bench.opaque(v)` namespace dispatch,
+            // и identifier'ы пользователя с таким именем). Парсер distinguishes
+            // по контексту: top-level `bench "<string>"` parses bench decl,
+            // `bench.X` parses identifier expr. Аналог `apply` keyword.
             "true" => TokenKind::KwTrue,
             "false" => TokenKind::KwFalse,
             "with" => TokenKind::KwWith,

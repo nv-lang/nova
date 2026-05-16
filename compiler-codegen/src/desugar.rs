@@ -77,6 +77,17 @@ impl DesugarCtx {
             Item::Const(c) => self.desugar_expr(&mut c.value),
             Item::Let(l) => self.desugar_expr(&mut l.value),
             Item::Test(t) => self.desugar_block(&mut t.body),
+            // Plan 57: bench setup/measure_body/teardown — обходим всё
+            // (map-литералы внутри setup и measure тоже должны desugar'иться).
+            Item::Bench(b) => {
+                for s in &mut b.setup {
+                    self.desugar_stmt(s);
+                }
+                self.desugar_block(&mut b.measure_body);
+                for s in &mut b.teardown {
+                    self.desugar_stmt(s);
+                }
+            }
             Item::Type(_) => {}
             // Plan 33.3 Ф.13: lemma — spec-only declaration, body имеет
             // proof-statements (Apply/Calc); карты литералов внутри

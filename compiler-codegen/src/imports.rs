@@ -480,7 +480,8 @@ fn resolve_one(
                 Item::Type(t) => Some(t.name.clone()),
                 Item::Fn(f) => Some(f.name.clone()),
                 Item::Const(c) => Some(c.name.clone()),
-                Item::Test(_) | Item::Let(_) | Item::Lemma(_) => None,
+                // Plan 57: bench не экспортируется (как test/let/lemma).
+                Item::Test(_) | Item::Bench(_) | Item::Let(_) | Item::Lemma(_) => None,
             };
             match (&item, name) {
                 (Item::Type(_) | Item::Fn(_) | Item::Const(_), Some(item_name)) => {
