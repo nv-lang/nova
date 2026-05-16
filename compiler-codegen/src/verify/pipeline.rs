@@ -2633,6 +2633,16 @@ let t0 = std::time::Instant::now();
                                          удалите — это no-op.", fd.name),
                                 c.span));
                         }
+                        // Ф.22.1 (Plan 33.6): `requires false` — vacuous fn.
+                        if matches!(c.expr.kind, ExprKind::BoolLit(false)) {
+                            report.warnings.push(Diagnostic::new(
+                                format!("fn `{}`: vacuous fn — `requires false` [W2402]:\n  \
+                                         эта fn никогда не может быть вызвана (precondition \
+                                         невыполним). Возможно, опечатка или TODO-stub. \
+                                         Используйте `panic` body вместо `requires false`.",
+                                    fd.name),
+                                c.span));
+                        }
                     }
                     ContractKind::Ensures => {
                         // Ф.19.2: `ensures x == x` (left структурно == right) → trivial reflexive.
@@ -2680,6 +2690,52 @@ let t0 = std::time::Instant::now();
                                  Они одновременно невыполнимы — fn никогда не пройдёт verify.",
                             fd.name, conflicts_str.join(", ")),
                         span));
+                }
+            }
+            // Ф.22.2 (Plan 33.6): redundant requires — tightness check.
+            // Собрать lower bounds для каждой Var: (var → Vec<(literal, span)>).
+            let mut lower_bounds: std::collections::HashMap<String, Vec<(i64, Span)>> =
+                std::collections::HashMap::new();
+            let mut upper_bounds: std::collections::HashMap<String, Vec<(i64, Span)>> =
+                std::collections::HashMap::new();
+            for c in &fd.contracts {
+                if !matches!(c.kind, ContractKind::Requires) { continue; }
+                if let ExprKind::Binary { op, left, right } = &c.expr.kind {
+                    if let (ExprKind::Ident(name), ExprKind::IntLit(n)) =
+                        (&left.kind, &right.kind)
+                    {
+                        match op {
+                            BinOp::Ge => lower_bounds.entry(name.clone()).or_default().push((*n, c.span)),
+                            BinOp::Le => upper_bounds.entry(name.clone()).or_default().push((*n, c.span)),
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            for (var, bounds) in &lower_bounds {
+                if bounds.len() < 2 { continue; }
+                let max_bound = bounds.iter().map(|(n, _)| *n).max().unwrap();
+                for (n, sp) in bounds {
+                    if *n < max_bound {
+                        report.warnings.push(Diagnostic::new(
+                            format!("fn `{}`: redundant `requires {} >= {}` [W2402]:\n  \
+                                     уже есть строжайшая `requires {} >= {}` — удалите эту.",
+                                fd.name, var, n, var, max_bound),
+                            *sp));
+                    }
+                }
+            }
+            for (var, bounds) in &upper_bounds {
+                if bounds.len() < 2 { continue; }
+                let min_bound = bounds.iter().map(|(n, _)| *n).min().unwrap();
+                for (n, sp) in bounds {
+                    if *n > min_bound {
+                        report.warnings.push(Diagnostic::new(
+                            format!("fn `{}`: redundant `requires {} <= {}` [W2402]:\n  \
+                                     уже есть строжайшая `requires {} <= {}` — удалите эту.",
+                                fd.name, var, n, var, min_bound),
+                            *sp));
+                    }
                 }
             }
         }
