@@ -386,4 +386,9 @@ typedef struct { char _dummy; } nova_unit;
 #  endif
 #endif
 
+/* Plan 56 Ф.1: vtable dispatch для bound-K methods в erased generics.
+ * Must be included AFTER nova_str / nova_int / array.h т.к. зависит
+ * от nova_str_eq, nova_str_hash, etc. */
+#include "vtables.h"
+
 #endif /* NOVA_RT_H */

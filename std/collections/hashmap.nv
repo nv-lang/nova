@@ -219,6 +219,26 @@ export fn HashMap[K, V] mut @insert_new(key K, value V) {
 }
 
 
+// HashMap.@clone() — Plan 56.
+// Производит копию через iteration + insert_new. Каждый concrete instance
+// HashMap[K, V] получает mono'd @clone — bound K methods resolve через
+// mono path. Erased generic body stub'ится (caller-side mono drives).
+//
+// Note: @merge_from(other) и @filter(pred) пока deferred — block'аются
+// cross-instance .buckets field access typing (другой mono pass issue,
+// orthogonal к bound dispatch). См. simplifications.md.
+export fn HashMap[K, V] @clone() -> HashMap[K, V] {
+    let mut copy = HashMap[K, V].with_capacity(@count)
+    for i in 0..@buckets.len {
+        match @buckets[i] {
+            Occupied { key: k, value: v } => copy.insert_new(k, v)
+            _ => {}
+        }
+    }
+    copy
+}
+
+
 // HashMap.mut @remove(key) — удалить пару по ключу.
 //
 // Возвращает Some(value) если было удалено, None иначе.

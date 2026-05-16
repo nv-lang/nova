@@ -1,0 +1,36 @@
+// Plan 56 Ф.1 — HashMap.@clone() smoke test.
+// Каждый concrete instance HashMap[K, V] получает mono'd @clone().
+// Bound K methods (key.hash(), key.eq()) resolve через mono path
+// (для concrete K) или vtable (для erased generic body).
+
+module plan56.f1_hashmap_clone_basic
+
+import std.collections.hashmap.{HashMap}
+
+
+test "HashMap[str, int].clone() — пустая мапа" {
+    let m HashMap[str, int] = []
+    let c = m.clone()
+    assert(c.len() == 0)
+}
+
+
+test "HashMap[str, int].clone() — копия с данными" {
+    let mut m HashMap[str, int] = ["a": 1, "b": 2, "c": 3]
+    let c = m.clone()
+    assert(c.len() == 3)
+    assert(c.get("a") == Some(1))
+    assert(c.get("b") == Some(2))
+    assert(c.get("c") == Some(3))
+}
+
+
+test "HashMap[str, int].clone() — mutate копии не влияет на оригинал" {
+    let mut m HashMap[str, int] = ["a": 1, "b": 2]
+    let mut c = m.clone()
+    c.insert("z", 99)
+    assert(m.len() == 2)
+    assert(m.get("z") == None)
+    assert(c.len() == 3)
+    assert(c.get("z") == Some(99))
+}

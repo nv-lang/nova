@@ -3908,6 +3908,22 @@ impl CEmitter {
             .filter_map(|g| self.type_ref_to_c(g).ok())
             .collect();
         if type_args_c.len() != generics.len() { return; }
+        // Plan 56 followup: skip placeholder forward decl (Nova_K* / Nova_V*
+        // — generic param placeholders, не concrete). Это soft-guard для
+        // recursive generic calls в @clone() body etc. — placeholder instance
+        // не должна emit'иться вообще (нет concrete struct definition для
+        // placeholder type → references на forward decl ломают C compile).
+        if let Some(template) = self.generic_type_templates.get(&base_name) {
+            let generic_names: std::collections::HashSet<String> = template.generics.iter()
+                .map(|g| g.name.clone()).collect();
+            let has_placeholder = type_args_c.iter().any(|c| {
+                let trimmed = c.trim_end_matches('*').trim();
+                trimmed.strip_prefix("Nova_")
+                    .map(|name| generic_names.contains(name))
+                    .unwrap_or(false)
+            });
+            if has_placeholder { return; }
+        }
         let mono_name = Self::compute_generic_type_c_name(&base_name, &type_args_c);
         // Forward-declare через typedef. Idempotent если повторно вызван.
         self.line(&format!("typedef struct {0} {0};", mono_name));
@@ -4886,6 +4902,15 @@ impl CEmitter {
                         path.len() >= 1
                         && !generics.is_empty()
                         && generics.iter().any(|g| Self::type_ref_uses_any_type_param(g, &type_params))
+                    } else if let TypeRef::Array(inner, _) = &fld.ty {
+                        // Plan 56 followup: Array field с generic inner type
+                        // (e.g. HashMap.buckets: []Slot[K, V]) — также triggers
+                        // erased body issues. Stub safe choice — caller-side
+                        // mono pass генерирует proper concrete instance.
+                        if let TypeRef::Named { generics, .. } = inner.as_ref() {
+                            !generics.is_empty() && generics.iter().any(|g|
+                                Self::type_ref_uses_any_type_param(g, &type_params))
+                        } else { false }
                     } else { false }
                 })
             } else { false }

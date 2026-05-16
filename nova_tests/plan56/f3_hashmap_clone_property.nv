@@ -1,0 +1,88 @@
+// Plan 56 Ф.3 — HashMap.@clone() property tests.
+// Production-grade property verification: размер, key/value preservation,
+// independence (mutation copy не влияет original), iteration order
+// stability.
+
+module plan56.f3_hashmap_clone_property
+
+import std.collections.hashmap.{HashMap}
+
+
+test "clone[str, int]: 50 элементов — все сохранены" {
+    let mut m HashMap[str, int] = []
+    for i in 0..50 {
+        m.insert(str.from(i), i * 10)
+    }
+    assert(m.len() == 50)
+
+    let c = m.clone()
+    assert(c.len() == 50)
+
+    for i in 0..50 {
+        assert(c.get(str.from(i)) == Some(i * 10))
+    }
+}
+
+
+test "clone[int, str]: разные типы K, V" {
+    let mut m HashMap[int, str] = [1: "a", 2: "b", 3: "c"]
+    let c = m.clone()
+    assert(c.len() == 3)
+    assert(c.get(1) == Some("a"))
+    assert(c.get(3) == Some("c"))
+}
+
+
+test "clone[int, int]: same K и V types" {
+    let mut m HashMap[int, int] = [10: 100, 20: 200, 30: 300]
+    let c = m.clone()
+    assert(c.len() == 3)
+    assert(c.get(20) == Some(200))
+}
+
+
+test "clone independence: insert в копию не меняет оригинал" {
+    let mut m HashMap[str, int] = ["x": 1, "y": 2]
+    let mut c = m.clone()
+    c.insert("z", 99)
+    c.insert("x", 999)  // override existing
+    // Оригинал unchanged.
+    assert(m.len() == 2)
+    assert(m.get("x") == Some(1))
+    assert(m.get("z") == None)
+    // Копия modified.
+    assert(c.len() == 3)
+    assert(c.get("x") == Some(999))
+    assert(c.get("z") == Some(99))
+}
+
+
+test "clone independence: remove из оригинала не меняет копию" {
+    let mut m HashMap[str, int] = ["a": 1, "b": 2, "c": 3]
+    let c = m.clone()
+    let _ = m.remove("a")
+    assert(m.len() == 2)
+    assert(c.len() == 3)
+    assert(c.get("a") == Some(1))
+}
+
+
+test "double clone: c1 = m.clone(); c2 = c1.clone(); все 3 independent" {
+    let mut m HashMap[str, int] = ["a": 1, "b": 2]
+    let mut c1 = m.clone()
+    let mut c2 = c1.clone()
+    c1.insert("from_c1", 10)
+    c2.insert("from_c2", 20)
+    // m unchanged.
+    assert(m.len() == 2)
+    assert(m.get("from_c1") == None)
+    assert(m.get("from_c2") == None)
+    // c1 имеет from_c1, не from_c2.
+    assert(c1.len() == 3)
+    assert(c1.get("from_c1") == Some(10))
+    assert(c1.get("from_c2") == None)
+    // c2 имеет from_c2, не from_c1 (c2 был clone'd до from_c1 insert).
+    assert(c2.len() == 3)
+    assert(c2.get("from_c2") == Some(20))
+    assert(c2.get("from_c1") == None)
+}

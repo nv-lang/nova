@@ -3166,3 +3166,60 @@ Ghost state позволяет писать контракты в термина
   в SMT-encoding как обычные fresh-vars.
 
 ---
+
+## D110. Hybrid dispatch для bound-K methods
+
+> **Status:** active (spec). Реализация — [Plan 56](../../docs/plans/56-vtable-dispatch-erased-generics.md).
+
+### Что
+
+Generic-bound method call'ы dispatch'аются по hybrid strategy:
+
+1. **Mono path** — для concrete K на call-site (e.g. `HashMap[str, int]`):
+   compiler instantiates generic method с substituted K, V. Bound
+   methods (`key.hash()`, `key.eq()`) resolve в direct call к concrete
+   K methods (`nova_str_hash(key)`). **Zero-cost** — паритет Rust
+   `impl<T: Hashable>`.
+
+2. **Erased path** — для generic body emit (когда compiler не может /
+   не должен mono'd, e.g. recursive generic call на Self type внутри
+   generic method body): generic body эмитится как **stub** (call'еры
+   полагаются на mono path для concrete instances). Bootstrap не
+   использует vtable — простая stub-fallback стратегия.
+
+3. **Vtable path** (future, Plan 56 Ф.2 full): для truly erased
+   contexts (cross-crate generic, `dyn Trait`-like), bound methods
+   dispatch'аются через vtable structure. Vtable runtime defined в
+   `compiler-codegen/nova_rt/vtables.h` (Plan 56 Ф.1).
+
+### Bootstrap status (2026-05-16)
+
+- ✅ Mono path для bound methods works (HashMap.@clone() пример).
+- ✅ Vtable runtime infrastructure готова (`NovaVtable_Hashable`,
+  `NovaVtable_Comparable`, `NovaVtable_Display` + 4 primitive K
+  vtables: int/bool/byte/f64/str).
+- ✅ Erased emit для bound-method-using generic methods stub'ится
+  (`emit_generic_method_erased` — wider stub condition включает Array
+  fields с generic inner type).
+- ⏸️ Vtable codegen integration (truly erased dispatch) — deferred
+  до cross-crate compilation (Plan 03).
+
+### Acceptance criteria для bound methods
+
+Type-checker (Plan 15 / D72) enforces:
+- Bound должны быть protocol-типами (D53).
+- Concrete K на call-site должен implement все bound methods (D72
+  enforcement).
+
+Codegen (Plan 56 Ф.1 + Ф.2):
+- Bound methods обязаны быть **pure** (нет `Fail` / `Io` / `Db`
+  effects). Rationale: vtable dispatch не propagates effect handlers.
+- Self type в bound method signature substitutes runtime receiver type.
+
+### Связь
+
+- [D72](#d72-generic-bounds-через-t-protocol--protocol-как-тип) —
+  generic bounds enforcement (type-checker side).
+- [D53](#d53-anonymous-protocol-literals) — protocol-типы.
+- [D24](#d24-контракты) — vtable lookups compatible с proven-contracts
+  skip (no-op).
