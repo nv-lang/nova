@@ -48,6 +48,10 @@
 | Ф.34.1 HTTP MCP transport | ✅ done | `nova doc-mcp --port N` HTTP server через `std::net::TcpListener` (no tokio dep). POST /mcp routes к JSON-RPC handler. 4 integration tests с real TCP. ~120 LOC. |
 | Ф.34.2 Incremental cache | ✅ done | `doc/watch_cache.rs` — mtime-based `BTreeMap<PathBuf, (SystemTime, Arc<Module>)>`. `cmd_doc_watch` использует cache, logs Hit/Miss/Stale outcomes. 8 unit tests. Closes Ф.30.2 deferred. |
 | Ф.34.3 Plan 45.B partial: std/time/duration doc-pass | ✅ done | 14 doc-comments на `std/time/duration.nv`: Duration type, ZERO/SECOND/MINUTE/HOUR constants, from_* constructors. Coverage 16% (87 items total — full pass for module = Plan 45.B remaining scope). |
+| **Ф.35.1 std/time/duration finish** (in-progress) | 🟡 | Document остальные ~70 items: as_*, is_*, arithmetic ops, Timestamp type, Time effect. Target coverage ≥80%. |
+| **Ф.35.2 std/collections/vec doc-pass** (in-progress) | 🟡 | Document Vec type + push/pop/get/len/iter/etc. Target ≥80% coverage. |
+| **Ф.35.3 std/encoding/json doc-pass** (in-progress) | 🟡 | Document JsonValue + parse/stringify/get/etc. ≥80% coverage. |
+| **Ф.35.4 std/path/path doc-pass** (in-progress) | 🟡 | Document Path type + join/parent/extension/etc. ≥80% coverage. |
 
 ## Ф.21 — Production hardening (2026-05-15, post-MVP audit)
 
