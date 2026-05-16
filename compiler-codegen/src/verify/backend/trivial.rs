@@ -459,6 +459,38 @@ fn propagate_bounds(conjuncts: &[SmtTerm]) -> Vec<SmtTerm> {
                 None
             } else { None }
         };
+        // Ф.18.1 (Plan 33.6): subtraction bounds.
+        // `(>= (- VarA VarB) goal)` где lower(A) - upper(B) >= goal → true.
+        // `(>= (- Var IntLit) goal)` где lower(Var) - N >= goal → true.
+        // `(>= (- IntLit Var) goal)` где N - upper(Var) >= goal → true.
+        let try_subtraction_check = |inner: &SmtTerm| -> Option<bool> {
+            if let SmtTerm::App(iop, iargs) = inner {
+                if iop != ">=" || iargs.len() != 2 { return None; }
+                let goal = match &iargs[1] { SmtTerm::IntLit(n) => *n, _ => return None };
+                if let SmtTerm::App(sop, sargs) = &iargs[0] {
+                    if sop != "-" || sargs.len() != 2 { return None; }
+                    match (&sargs[0], &sargs[1]) {
+                        (SmtTerm::Var(a), SmtTerm::Var(b)) => {
+                            if let (Some(la), Some(ub)) = (lower.get(a), upper.get(b)) {
+                                if la.saturating_sub(*ub) >= goal { return Some(true); }
+                            }
+                        }
+                        (SmtTerm::Var(v), SmtTerm::IntLit(n)) => {
+                            if let Some(known_low) = lower.get(v) {
+                                if known_low.saturating_sub(*n) >= goal { return Some(true); }
+                            }
+                        }
+                        (SmtTerm::IntLit(n), SmtTerm::Var(v)) => {
+                            if let Some(known_up) = upper.get(v) {
+                                if n.saturating_sub(*known_up) >= goal { return Some(true); }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                None
+            } else { None }
+        };
         // Ф.17.1 (Plan 33.6): negation monotone.
         // `(>= (- 0 Var) goal)` где known upper(Var) <= -goal → true.
         let try_negation_check = |inner: &SmtTerm| -> Option<bool> {
@@ -556,6 +588,10 @@ fn propagate_bounds(conjuncts: &[SmtTerm]) -> Vec<SmtTerm> {
         if let Some(b) = try_addition_check(c) {
             return SmtTerm::BoolLit(b);
         }
+        // Ф.18.1: subtraction check.
+        if let Some(b) = try_subtraction_check(c) {
+            return SmtTerm::BoolLit(b);
+        }
         // Ф.17.1: negation check.
         if let Some(b) = try_negation_check(c) {
             return SmtTerm::BoolLit(b);
@@ -570,6 +606,9 @@ fn propagate_bounds(conjuncts: &[SmtTerm]) -> Vec<SmtTerm> {
                     return SmtTerm::BoolLit(!b);
                 }
                 if let Some(b) = try_addition_check(&args[0]) {
+                    return SmtTerm::BoolLit(!b);
+                }
+                if let Some(b) = try_subtraction_check(&args[0]) {
                     return SmtTerm::BoolLit(!b);
                 }
                 if let Some(b) = try_negation_check(&args[0]) {

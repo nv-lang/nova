@@ -1,0 +1,35 @@
+// Ф.18.1 (Plan 33.6): TrivialBackend subtraction bounds.
+// `x >= 5, y <= 3 ⊢ x - y >= 2`.
+
+module contracts.trivial_subtraction_bounds_positive
+
+#verify
+fn diff_bounded(x int, y int) -> int
+    requires x >= 5
+    requires y <= 3
+    ensures result >= 2
+{
+    x - y
+}
+
+#verify
+fn shift_neg(x int) -> int
+    requires x >= 10
+    ensures result >= 5
+{
+    x - 5
+}
+
+#verify
+fn const_minus_var(x int) -> int
+    requires x <= 50
+    ensures result >= 50
+{
+    100 - x
+}
+
+test "subtraction bounds trivial" {
+    assert(diff_bounded(10, 1) == 9)
+    assert(shift_neg(20) == 15)
+    assert(const_minus_var(30) == 70)
+}
