@@ -37,15 +37,17 @@ pub fn resolve_intra_doc_links(tree: &mut DocTree) {
     }
 
     let mut found: Vec<DocLink> = Vec::new();
+    let mut warnings: Vec<DocWarning> = Vec::new();
     for m in &tree.modules {
         // Module-level links.
+        let module_id = format!("<module:{}>", m.path.join("."));
         let texts: Vec<&str> = [m.summary.as_deref(), m.description.as_deref()]
             .into_iter()
             .flatten()
             .collect();
         for text in texts {
             for cand in extract_link_candidates(text) {
-                found.push(resolve_one(None, cand, &by_short, &by_full));
+                found.push(resolve_one(None, cand, &by_short, &by_full, &module_id, &mut warnings));
             }
         }
         for it in &m.items {
@@ -57,7 +59,7 @@ pub fn resolve_intra_doc_links(tree: &mut DocTree) {
             }
             for text in item_texts {
                 for cand in extract_link_candidates(text) {
-                    found.push(resolve_one(Some(it.id.clone()), cand, &by_short, &by_full));
+                    found.push(resolve_one(Some(it.id.clone()), cand, &by_short, &by_full, &it.id, &mut warnings));
                 }
             }
         }
@@ -90,6 +92,9 @@ pub fn resolve_intra_doc_links(tree: &mut DocTree) {
     }
 
     tree.links = found;
+    tree.warnings.extend(warnings);
+    tree.warnings.sort();
+    tree.warnings.dedup();
 }
 
 fn item_short_key(id: &str) -> String {
@@ -106,8 +111,10 @@ fn resolve_one(
     text: String,
     by_short: &HashMap<String, Vec<String>>,
     by_full: &HashMap<String, String>,
+    warn_source_id: &str,
+    warnings: &mut Vec<DocWarning>,
 ) -> DocLink {
-    let target_id = resolve_text(&text, by_short, by_full);
+    let target_id = resolve_text(&text, by_short, by_full, warn_source_id, warnings);
     DocLink { from_id, text, target_id }
 }
 
@@ -115,6 +122,8 @@ fn resolve_text(
     text: &str,
     by_short: &HashMap<String, Vec<String>>,
     by_full: &HashMap<String, String>,
+    warn_source_id: &str,
+    warnings: &mut Vec<DocWarning>,
 ) -> Option<String> {
     // 1. Full id match — текст уже `mod.path::Name`.
     if let Some(id) = by_full.get(text) {
@@ -125,7 +134,22 @@ fn resolve_text(
         if ids.len() == 1 {
             return Some(ids[0].clone());
         }
-        return None; // ambiguous
+        // Plan 45 Ф.25.1: ambiguous short link раньше silent → None.
+        // Теперь — warning перечисляющий candidates, чтобы автор знал что
+        // надо disambiguate через full path.
+        let mut candidates: Vec<String> = ids.clone();
+        candidates.sort();
+        warnings.push(DocWarning {
+            rule: "ambiguous-link".to_string(),
+            item_id: warn_source_id.to_string(),
+            message: format!(
+                "intra-doc link `[{}]` is ambiguous between {} items: [{}]; use full path to disambiguate",
+                text,
+                candidates.len(),
+                candidates.join(", ")
+            ),
+        });
+        return None;
     }
     // 3. `mod.path.Name` форма (без `::`) — попробуем сопоставить.
     if let Some((module, name)) = text.rsplit_once('.') {

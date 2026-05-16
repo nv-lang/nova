@@ -95,6 +95,18 @@ pub fn render_with_source(tree: &DocTree, source: Option<&str>) -> String {
             }
         }
     });
+    // Plan 45 Ф.25.1: diagnostic warnings (malformed attrs, unknown modifiers,
+    // ambiguous links). Sorted, deduped в собирающих passes.
+    // Алфавитный порядок: w после v(=visible_source) и source_root(s).
+    w.field_array("warnings", |w| {
+        for warn in &tree.warnings {
+            w.array_object(|w| {
+                w.field_str("item_id", &warn.item_id);
+                w.field_str("message", &warn.message);
+                w.field_str("rule", &warn.rule);
+            });
+        }
+    });
     w.end_object();
     w.finish()
 }

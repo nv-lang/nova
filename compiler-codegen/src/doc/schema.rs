@@ -59,6 +59,11 @@ const SCHEMA_V1: &str = r##"{
       "type": "array",
       "description": "DocItem entries (fn / type / const / effect / protocol). Sorted by id.",
       "items": { "$ref": "#/$defs/DocItem" }
+    },
+    "warnings": {
+      "type": "array",
+      "description": "Plan 45 Ф.25.1: diagnostic warnings (malformed doc-attrs, unknown doc-test modifiers, ambiguous intra-doc links). Non-fatal — author should review. `nova doc --strict` returns exit 1 if non-empty. Sorted by (item_id, rule, message), deduplicated.",
+      "items": { "$ref": "#/$defs/DocWarning" }
     }
   },
   "$defs": {
@@ -244,6 +249,17 @@ const SCHEMA_V1: &str = r##"{
         "from_id": { "type": ["string", "null"], "description": "Item id where link was found. null = module-level." },
         "target_id": { "type": ["string", "null"], "description": "Resolved target item id. null = broken or ambiguous." },
         "text": { "type": "string", "description": "Raw link text as written: `Name`, `Type.method`, `mod.Name`." }
+      }
+    },
+    "DocWarning": {
+      "type": "object",
+      "required": ["item_id", "message", "rule"],
+      "additionalProperties": false,
+      "description": "Plan 45 Ф.25.1: non-fatal diagnostic from doc-tooling. Author should review; tools may treat as error via `--strict`.",
+      "properties": {
+        "rule": { "type": "string", "description": "Machine-readable rule name (e.g., `malformed-stability-attr`, `unknown-doc-attr`, `unknown-doctest-modifier`, `ambiguous-link`)." },
+        "item_id": { "type": "string", "description": "Item id where the issue was found, or `<module:path>` for module-level." },
+        "message": { "type": "string", "description": "Human-readable explanation." }
       }
     },
     "DocTest": {

@@ -28,13 +28,15 @@ use super::doctree::*;
 pub fn collect_doc_tests(tree: &mut DocTree) {
     let mut found: Vec<DocTest> = Vec::new();
     let mut counter: u32 = 0;
+    let mut warnings: Vec<DocWarning> = Vec::new();
     for m in &tree.modules {
         // Module-level tests.
+        let module_id = format!("<module:{}>", m.path.join("."));
         for text in [m.summary.as_deref(), m.description.as_deref()]
             .into_iter()
             .flatten()
         {
-            extract_from_text(text, None, &m.path.join("."), &mut counter, None, &mut found);
+            extract_from_text(text, None, &m.path.join("."), &mut counter, None, &mut found, &module_id, &mut warnings);
         }
         for it in &m.items {
             let mut texts: Vec<&str> = Vec::new();
@@ -51,6 +53,8 @@ pub fn collect_doc_tests(tree: &mut DocTree) {
                     &mut counter,
                     it.doc_test_handlers.as_deref(),
                     &mut found,
+                    &it.id,
+                    &mut warnings,
                 );
             }
         }
@@ -62,6 +66,9 @@ pub fn collect_doc_tests(tree: &mut DocTree) {
             .then(a.index.cmp(&b.index))
     });
     tree.doc_tests = found;
+    tree.warnings.extend(warnings);
+    tree.warnings.sort();
+    tree.warnings.dedup();
 }
 
 fn extract_from_text(
@@ -71,6 +78,8 @@ fn extract_from_text(
     counter: &mut u32,
     test_handlers: Option<&str>,
     out: &mut Vec<DocTest>,
+    item_id: &str,
+    warnings: &mut Vec<DocWarning>,
 ) {
     let mut lines = text.lines().peekable();
     while let Some(line) = lines.next() {
@@ -90,7 +99,7 @@ fn extract_from_text(
             }
             continue;
         }
-        let modifiers = parse_modifiers(info);
+        let modifiers = parse_modifiers(info, item_id, warnings);
         let has_expect_output = modifiers.contains(&DocTestModifier::ExpectOutput);
         // Считываем тело до закрывающего ```.
         let mut visible = String::new();
@@ -161,7 +170,7 @@ fn is_nova_fence(info: &str) -> bool {
     lang == "nova"
 }
 
-fn parse_modifiers(info: &str) -> Vec<DocTestModifier> {
+fn parse_modifiers(info: &str, item_id: &str, warnings: &mut Vec<DocWarning>) -> Vec<DocTestModifier> {
     let mut out = Vec::new();
     // info = "nova,no_run,ignore" → берём всё после первой запятой.
     let rest = match info.split_once(',') {
@@ -170,6 +179,7 @@ fn parse_modifiers(info: &str) -> Vec<DocTestModifier> {
     };
     for tok in rest.split(',') {
         let t = tok.trim();
+        if t.is_empty() { continue; }
         let m = match t {
             "no_run" => Some(DocTestModifier::NoRun),
             "ignore" => Some(DocTestModifier::Ignore),
@@ -178,10 +188,22 @@ fn parse_modifiers(info: &str) -> Vec<DocTestModifier> {
             "must_verify" => Some(DocTestModifier::MustVerify),
             "expect_output" => Some(DocTestModifier::ExpectOutput),
             "infer_contracts" => Some(DocTestModifier::InferContracts),
-            _ => None, // unknown — forward-compat skip
+            _ => None,
         };
-        if let Some(m) = m {
-            out.push(m);
+        match m {
+            Some(m) => out.push(m),
+            None => {
+                // Plan 45 Ф.25.1: было silent forward-compat skip.
+                // Теперь — warning. Skip остаётся (forward-compat сохранён).
+                warnings.push(DocWarning {
+                    rule: "unknown-doctest-modifier".to_string(),
+                    item_id: item_id.to_string(),
+                    message: format!(
+                        "unknown doc-test modifier `{}` in fence info `{}` — ignored (forward-compat). Known: no_run, ignore, compile_fail, should_panic, must_verify, expect_output, infer_contracts",
+                        t, info
+                    ),
+                });
+            }
         }
     }
     out
@@ -234,6 +256,7 @@ mod tests {
             capabilities: Default::default(),
             reexport_from: None,
             doc_inline: false,
+            scraped_examples: Vec::new(),
         }
     }
 
@@ -250,6 +273,8 @@ mod tests {
             stability: None,
             hide_doc: false,
             items,
+            effect_matrix: Vec::new(),
+            realtime_matrix: Vec::new(),
             source_span: crate::diag::Span {
                 start: 0,
                 end: 0,
@@ -296,12 +321,19 @@ mod tests {
     }
 
     #[test]
-    fn unknown_modifier_skipped() {
+    fn unknown_modifier_skipped_with_warning() {
+        // Plan 45 Ф.25.1: unknown modifier раньше silently skip,
+        // теперь — skip + warning в tree.warnings.
         let item = make_item("m::f", "Demo.", Some("```nova,wat\nlet x = 1\n```"));
         let mut tree = make_tree(vec![item]);
         collect_doc_tests(&mut tree);
         assert_eq!(tree.doc_tests.len(), 1);
         assert!(tree.doc_tests[0].modifiers.is_empty());
+        // Warning generated.
+        assert_eq!(tree.warnings.len(), 1);
+        assert_eq!(tree.warnings[0].rule, "unknown-doctest-modifier");
+        assert_eq!(tree.warnings[0].item_id, "m::f");
+        assert!(tree.warnings[0].message.contains("wat"));
     }
 
     #[test]

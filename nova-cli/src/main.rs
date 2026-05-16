@@ -147,6 +147,12 @@ enum Cmd {
         /// workspace root (all *.nv files scanned recursively).
         #[arg(long = "scrape-examples", value_name = "WORKSPACE")]
         scrape_examples: Option<PathBuf>,
+        /// Plan 45 Ф.25.1: treat diagnostic warnings as errors. With
+        /// `--strict`, the command exits non-zero if any warnings were
+        /// produced (malformed doc-attrs, unknown doc-test modifiers,
+        /// ambiguous intra-doc-links). Useful in CI to enforce clean docs.
+        #[arg(long = "strict")]
+        strict: bool,
     },
     /// Compile a single Nova source file to a native binary.
     ///
@@ -980,7 +986,7 @@ fn cmd_run(path: &Path) -> Result<()> {
 ///
 /// MVP: один входной файл, вывод в stdout. Никаких подкоманд (workspace/
 /// --output-dir/--watch — Plan 45.A или отдельные субкоманды позже).
-fn cmd_doc(path: &Path, format: &str, json_schema: bool, include_private: bool, run_doc_tests: bool, check: bool, watch: bool, coverage: bool, jobs: usize, scrape_examples: Option<&Path>) -> Result<()> {
+fn cmd_doc(path: &Path, format: &str, json_schema: bool, include_private: bool, run_doc_tests: bool, check: bool, watch: bool, coverage: bool, jobs: usize, scrape_examples: Option<&Path>, strict: bool) -> Result<()> {
     // `--json-schema` — печатает embedded схему и выходит (D107).
     if json_schema {
         println!("{}", nova_doc_embedded_schema());
@@ -989,7 +995,7 @@ fn cmd_doc(path: &Path, format: &str, json_schema: bool, include_private: bool, 
     // Plan 45 Ф.21.7: workspace-режим. Если path — каталог, рекурсивно
     // парсим все *.nv и строим multi-module DocTree.
     if path.is_dir() {
-        return cmd_doc_workspace(path, format, include_private, run_doc_tests, check, coverage, jobs);
+        return cmd_doc_workspace(path, format, include_private, run_doc_tests, check, coverage, jobs, strict);
     }
     if !path.is_file() {
         bail!("file not found: {}", path.display());
@@ -1075,6 +1081,14 @@ fn cmd_doc(path: &Path, format: &str, json_schema: bool, include_private: bool, 
         }
     };
     print!("{}", out);
+    // Plan 45 Ф.25.1: --strict — fail на любые diagnostic warnings.
+    if strict && !tree.warnings.is_empty() {
+        eprintln!("\ndoc: {} warning(s) (--strict mode)", tree.warnings.len());
+        for w in &tree.warnings {
+            eprintln!("  [{}] {}: {}", w.rule, w.item_id, w.message);
+        }
+        std::process::exit(1);
+    }
     Ok(())
 }
 
@@ -1090,6 +1104,7 @@ fn cmd_doc_workspace(
     check: bool,
     coverage: bool,
     jobs: usize,
+    strict: bool,
 ) -> Result<()> {
     let mut files: Vec<PathBuf> = Vec::new();
     walk_nv_files(dir, &mut files)?;
@@ -1209,6 +1224,14 @@ fn cmd_doc_workspace(
         other => bail!("unknown --format `{}`", other),
     };
     print!("{}", out);
+    // Plan 45 Ф.25.1: --strict — fail на любые diagnostic warnings.
+    if strict && !tree.warnings.is_empty() {
+        eprintln!("\ndoc: {} warning(s) (--strict mode)", tree.warnings.len());
+        for w in &tree.warnings {
+            eprintln!("  [{}] {}: {}", w.rule, w.item_id, w.message);
+        }
+        std::process::exit(1);
+    }
     Ok(())
 }
 
@@ -1269,6 +1292,18 @@ fn cmd_doc_check(tree: &nova_codegen::doc::DocTree, format: &str) -> Result<()> 
             item_id: v.item_id,
             message: v.message,
             severity: "error",
+        });
+    }
+
+    // Plan 45 Ф.25.1: doc-collection warnings (malformed attrs, ambiguous links,
+    // unknown modifiers). Severity = warning — `--check` сам по себе не fail'ит
+    // на warnings; `--strict` поверх него — fail. CI выбирает policy.
+    for w in &tree.warnings {
+        issues.push(CheckIssue {
+            rule: w.rule.clone(),
+            item_id: w.item_id.clone(),
+            message: w.message.clone(),
+            severity: "warning",
         });
     }
 
@@ -1411,7 +1446,7 @@ fn cmd_doc_watch(
                 chrono_like_now()
             );
             // Re-run одним проходом через cmd_doc (без watch/json_schema).
-            match cmd_doc(path, format, false, include_private, run_doc_tests, check, false, coverage, 0, None) {
+            match cmd_doc(path, format, false, include_private, run_doc_tests, check, false, coverage, 0, None, false) {
                 Ok(_) => {}
                 Err(e) => eprintln!("error: {}", e),
             }
@@ -2290,7 +2325,7 @@ fn main() -> ExitCode {
             &skip,
         ),
         Cmd::Run { file } => cmd_run(&file),
-        Cmd::Doc { file, format, json_schema, include_private, run_doc_tests, check, watch, coverage, jobs, diff, scrape_examples } => {
+        Cmd::Doc { file, format, json_schema, include_private, run_doc_tests, check, watch, coverage, jobs, diff, scrape_examples, strict } => {
             // Plan 45 Ф.24.10: --diff old.json new.json
             // cmd_doc_diff uses process::exit for severity codes; propagate Err.
             if let Some(paths) = diff {
@@ -2305,7 +2340,7 @@ fn main() -> ExitCode {
                 eprintln!("error: FILE argument required (unless --json-schema)");
                 std::process::exit(1);
             });
-            cmd_doc(path, &format, json_schema, include_private, run_doc_tests, check, watch, coverage, jobs, scrape_examples.as_deref())
+            cmd_doc(path, &format, json_schema, include_private, run_doc_tests, check, watch, coverage, jobs, scrape_examples.as_deref(), strict)
             } // else (no --diff)
         }
         Cmd::Build { file, output, mode, toolchain, vcvars, clang, timeout, keep_artifacts } => cmd_build(
