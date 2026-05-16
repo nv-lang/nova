@@ -11,7 +11,42 @@
 //! не делаем (наивный V1). Достаточно для exact-match VCs.
 
 use std::collections::HashMap;
+use std::cell::RefCell;
 use crate::verify::ir::SmtTerm;
+
+// Ф.12.3 (Plan 33.6): module-scoped thread-local cache.
+// Reset'ится в начале verify_module. Используется через with_cache helper.
+thread_local! {
+    static MODULE_CACHE: RefCell<SubsumptionCache> = RefCell::new(SubsumptionCache::new());
+}
+
+/// Reset module-scoped cache (вызывается в начале verify_module).
+pub fn reset_module_cache() {
+    MODULE_CACHE.with(|c| {
+        let mut cache = c.borrow_mut();
+        cache.map.clear();
+        cache.hits = 0;
+        cache.misses = 0;
+    });
+}
+
+/// Get stats после verify_module (для diagnostic).
+pub fn module_cache_stats() -> (u64, u64) {
+    MODULE_CACHE.with(|c| {
+        let cache = c.borrow();
+        (cache.hits, cache.misses)
+    })
+}
+
+/// Lookup в module cache (thread-local).
+pub fn module_cache_lookup(term: &SmtTerm) -> Option<CachedSat> {
+    MODULE_CACHE.with(|c| c.borrow_mut().lookup(term))
+}
+
+/// Insert в module cache (thread-local).
+pub fn module_cache_insert(term: &SmtTerm, result: CachedSat) {
+    MODULE_CACHE.with(|c| c.borrow_mut().insert(term, result))
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum CachedSat {
@@ -22,7 +57,7 @@ pub enum CachedSat {
 
 #[derive(Debug, Default)]
 pub struct SubsumptionCache {
-    map: HashMap<u64, CachedSat>,
+    pub map: HashMap<u64, CachedSat>,
     pub hits: u64,
     pub misses: u64,
 }

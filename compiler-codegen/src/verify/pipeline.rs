@@ -2241,6 +2241,11 @@ pub fn verify_module(module: &Module) -> ModuleVerifyReport {
     let module_name = module.name.join(".");
     let mut report = ModuleVerifyReport::default();
 
+    // Ф.12.3 (Plan 33.6): reset module-scoped subsumption cache.
+    // try_prove_module_cached использует thread-local cache, который live
+    // на весь verify_module call. Stats emit'ятся в конце.
+    super::subsumption_cache::reset_module_cache();
+
     // Plan 33.3 Р¤.9.5: РїСЂРѕРІРµСЂРєР° consistency axiom'РѕРІ РґРѕ per-fn verify.
     // Р•СЃР»Рё axioms СЌС„С„РµРєС‚Р° inconsistent (Z3 в†' UNSAT) в†' compile-error,
     // skip РІСЃРµС… РѕСЃС‚Р°Р»СЊРЅС‹С… verify'РµРІ (Р»СЋР±Р°СЏ formula С‚СЂРёРІРёР°Р»СЊРЅРѕ РґРѕРєР°Р·СѓРµРјР°
@@ -2497,6 +2502,16 @@ let t0 = std::time::Instant::now();
                     }
                 }
             }
+        }
+    }
+    // Ф.12.3 (Plan 33.6): emit cache stats как info-warning если есть hits.
+    let (hits, misses) = super::subsumption_cache::module_cache_stats();
+    if hits + misses > 0 && hits > 0 {
+        let rate = (hits as f64) / ((hits + misses) as f64) * 100.0;
+        // Не push в report.warnings — это noise для каждого compile.
+        // V2: emit только под NOVA_VERIFY_STATS=1 env flag.
+        if std::env::var("NOVA_VERIFY_STATS").is_ok() {
+            eprintln!("[verify] cache hits={} misses={} hit-rate={:.1}%", hits, misses, rate);
         }
     }
     report
