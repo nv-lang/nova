@@ -8239,11 +8239,16 @@ impl CEmitter {
                 self.emit_array_lit(elems)
             }
 
-            // Plan 52 Ф.1: MapLit-заглушка. Реальный десугаринг
-            // (`with_capacity` + `@insert` block-expression) — Ф.4.
+            // Plan 52 Ф.20: invariant — MapLit ДОЛЖЕН быть устранён
+            // desugar pass'ом (desugar.rs::desugar_module) ДО входа в
+            // codegen. Pipeline: parse → type-check → annotate → desugar
+            // → codegen. Если сюда попал raw MapLit — compiler bug
+            // (забыли вызвать desugar_module в pipeline wiring).
             ExprKind::MapLit { .. } => {
-                Err("internal: map literal `[k: v]` reached codegen without \
-                     desugaring (Plan 52 Ф.4 not yet wired)".into())
+                Err("compiler bug: map literal `[k: v]` reached codegen без \
+                     desugar pass — нарушение pipeline invariant. \
+                     desugar_module() обязан быть вызван до codegen. \
+                     Report issue: https://github.com/unitcraft/nova-lang/issues".into())
             }
 
             ExprKind::TupleLit(elems) => {
