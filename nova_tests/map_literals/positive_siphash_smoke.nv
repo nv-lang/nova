@@ -1,0 +1,67 @@
+// Plan 52 Ф.22: smoke-test для SipHash-1-3 + per-process seed.
+//
+// Раньше Nova использовал FNV-1a без seed → vulnerable к hash-flooding.
+// Теперь SipHash-1-3 c per-process random seed (BCryptGenRandom на
+// Windows, getrandom на Linux/macOS). Hash deterministic в пределах
+// одного процесса (важно для correctness HashMap), но **разный между
+// запусками** программы (защита от offline collision-precompute).
+//
+// Этот тест НЕ может проверить рандомизацию seed между запусками
+// (тест-фреймворк не запускает программу дважды), но проверяет что
+// hash вообще работает (basic-correctness) — что бы collision'ы
+// не сломали элементарную вставку/поиск.
+//
+// Полная проверка против collision-attack — отдельный benchmark
+// (см. docs/plans/52-hashmap-literals.md Ф.22).
+module map_literals.positive_siphash_smoke
+
+import std.collections.hashmap.{HashMap}
+
+test "SipHash: вставка и поиск работают для разнообразных string-ключей" {
+    // Набор строк который у плохой hash-функции (типа sum-of-bytes)
+    // даёт collision: anagrams.
+    let m HashMap[str, int] = [
+        "abc": 1,
+        "cba": 2,
+        "bac": 3,
+        "acb": 4,
+        "bca": 5,
+        "cab": 6,
+    ]
+    assert(m.len() == 6)
+    assert(m.get("abc") == Some(1))
+    assert(m.get("cba") == Some(2))
+    assert(m.get("bac") == Some(3))
+    assert(m.get("acb") == Some(4))
+    assert(m.get("bca") == Some(5))
+    assert(m.get("cab") == Some(6))
+}
+
+test "SipHash: empty string and same-length strings differentiated" {
+    let m HashMap[str, int] = [
+        "": 0,
+        "a": 1,
+        "ab": 2,
+        "abc": 3,
+        "abcd": 4,
+    ]
+    assert(m.len() == 5)
+    assert(m.get("") == Some(0))
+    assert(m.get("a") == Some(1))
+    assert(m.get("ab") == Some(2))
+    assert(m.get("abc") == Some(3))
+    assert(m.get("abcd") == Some(4))
+}
+
+test "SipHash: int-keys работают" {
+    let m HashMap[int, str] = [
+        0: "zero",
+        1: "one",
+        100: "hundred",
+        -1: "neg",
+        9223372036854775807: "max",
+    ]
+    assert(m.len() == 5)
+    assert(m.get(0) == Some("zero"))
+    assert(m.get(9223372036854775807) == Some("max"))
+}

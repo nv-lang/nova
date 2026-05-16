@@ -167,37 +167,102 @@ static inline nova_bool nova_str_le(nova_str a, nova_str b) { return nova_str_cm
 static inline nova_bool nova_str_gt(nova_str a, nova_str b) { return nova_str_cmp(a, b) >  0; }
 static inline nova_bool nova_str_ge(nova_str a, nova_str b) { return nova_str_cmp(a, b) >= 0; }
 
-/* D109: FNV-1a hash для примитивных типов. Используется в std.collections. */
-static inline nova_int nova_str_hash(nova_str s) {
-    uint64_t h = 14695981039346656037ULL;
-    const unsigned char* p = (const unsigned char*)s.ptr;
-    for (size_t i = 0; i < s.len; i++) {
-        h ^= (uint64_t)p[i];
-        h *= 1099511628211ULL;
+/* Plan 52 Ф.22: DoS-resistant hash (SipHash-1-3 + per-process random seed).
+ *
+ * SipHash by Jean-Philippe Aumasson & Daniel J. Bernstein (public domain).
+ * Используется как default hash в Rust HashMap, Python dict, Ruby Hash, Perl —
+ * защищает от hash-flooding атак (attacker control'нл keys → O(n²) deg).
+ *
+ * Раньше Nova использовал FNV-1a без seed — vulnerable: с фиксированным
+ * hash function attacker может precompute collision'ы для known target.
+ * SipHash + per-process random seed делает collision-precompute невозможным
+ * (seed unknown во время атаки).
+ *
+ * Variant: SipHash-1-3 (1 compression round, 3 finalization rounds) — Rust
+ * default. Trade-off: ~2× быстрее SipHash-2-4 при сравнимой security для
+ * default-hashmap usage. Для cryptographic уровня — SipHash-2-4 (через
+ * #[secure_hash], future). */
+
+/* Per-process random seed. Инициализируется lazy при первом
+ * hash-вызове (или явно в nova_runtime_init для предсказуемости) —
+ * через getrandom() / BCryptGenRandom (cryptographically secure).
+ *
+ * `nova_hash_seed_ensure_init` — idempotent thread-safe init. Вызывается
+ * на entry в каждый hash-helper. На hot path после init — single
+ * atomic load `_hash_seed_inited` (predicted-true).
+ *
+ * Стоимость per-hash check: один atomic load + branch (~1ns на x86_64,
+ * predict-true). Negligible vs SipHash compute (~10ns/8bytes). */
+extern uint64_t nova_hash_seed_k0;
+extern uint64_t nova_hash_seed_k1;
+extern void nova_hash_seed_ensure_init(void);
+
+#define NOVA_SIP_ROTL(x, b) (uint64_t)(((x) << (b)) | ((x) >> (64 - (b))))
+#define NOVA_SIP_ROUND(v0, v1, v2, v3) do { \
+    v0 += v1; v1 = NOVA_SIP_ROTL(v1, 13); v1 ^= v0; v0 = NOVA_SIP_ROTL(v0, 32); \
+    v2 += v3; v3 = NOVA_SIP_ROTL(v3, 16); v3 ^= v2; \
+    v0 += v3; v3 = NOVA_SIP_ROTL(v3, 21); v3 ^= v0; \
+    v2 += v1; v1 = NOVA_SIP_ROTL(v1, 17); v1 ^= v2; v2 = NOVA_SIP_ROTL(v2, 32); \
+} while (0)
+
+/* SipHash-1-3 core: c=1 compression, d=3 finalization. */
+static inline uint64_t nova_siphash13(const uint8_t* data, size_t len,
+                                      uint64_t k0, uint64_t k1) {
+    uint64_t v0 = 0x736f6d6570736575ULL ^ k0;
+    uint64_t v1 = 0x646f72616e646f6dULL ^ k1;
+    uint64_t v2 = 0x6c7967656e657261ULL ^ k0;
+    uint64_t v3 = 0x7465646279746573ULL ^ k1;
+    const uint8_t* end = data + (len - (len % 8));
+    for (; data != end; data += 8) {
+        uint64_t m;
+        memcpy(&m, data, 8);
+        v3 ^= m;
+        NOVA_SIP_ROUND(v0, v1, v2, v3);
+        v0 ^= m;
     }
-    return (nova_int)h;
+    uint64_t b = ((uint64_t)len) << 56;
+    switch (len & 7) {
+        case 7: b |= ((uint64_t)data[6]) << 48; /* fallthrough */
+        case 6: b |= ((uint64_t)data[5]) << 40; /* fallthrough */
+        case 5: b |= ((uint64_t)data[4]) << 32; /* fallthrough */
+        case 4: b |= ((uint64_t)data[3]) << 24; /* fallthrough */
+        case 3: b |= ((uint64_t)data[2]) << 16; /* fallthrough */
+        case 2: b |= ((uint64_t)data[1]) << 8;  /* fallthrough */
+        case 1: b |= ((uint64_t)data[0]);
+        case 0: break;
+    }
+    v3 ^= b;
+    NOVA_SIP_ROUND(v0, v1, v2, v3);
+    v0 ^= b;
+    v2 ^= 0xff;
+    NOVA_SIP_ROUND(v0, v1, v2, v3);
+    NOVA_SIP_ROUND(v0, v1, v2, v3);
+    NOVA_SIP_ROUND(v0, v1, v2, v3);
+    return v0 ^ v1 ^ v2 ^ v3;
+}
+
+static inline nova_int nova_str_hash(nova_str s) {
+    nova_hash_seed_ensure_init();
+    return (nova_int)nova_siphash13((const uint8_t*)s.ptr, s.len,
+                                    nova_hash_seed_k0, nova_hash_seed_k1);
 }
 static inline nova_int nova_int_hash(nova_int v) {
-    uint64_t h = 14695981039346656037ULL;
+    nova_hash_seed_ensure_init();
     uint64_t bits = (uint64_t)v;
-    for (int i = 0; i < 8; i++) {
-        h ^= (bits >> (i * 8)) & 0xFFU;
-        h *= 1099511628211ULL;
-    }
-    return (nova_int)h;
+    return (nova_int)nova_siphash13((const uint8_t*)&bits, sizeof(bits),
+                                    nova_hash_seed_k0, nova_hash_seed_k1);
 }
 static inline nova_int nova_bool_hash(nova_bool v) {
+    /* Bool: 2 значения, DoS не релевантен (не может быть collision storm
+     * на 2-value space). Простой identity. */
     return (nova_int)(uint64_t)(v != 0);
 }
 static inline nova_int nova_f64_hash(nova_f64 v) {
+    nova_hash_seed_ensure_init();
     uint64_t bits = 0;
     memcpy(&bits, &v, sizeof(bits));
-    uint64_t h = 14695981039346656037ULL;
-    for (int i = 0; i < 8; i++) {
-        h ^= (bits >> (i * 8)) & 0xFFU;
-        h *= 1099511628211ULL;
-    }
-    return (nova_int)h;
+    return (nova_int)nova_siphash13((const uint8_t*)&bits, sizeof(bits),
+                                    nova_hash_seed_k0, nova_hash_seed_k1);
 }
 
 /* nova_str_char_len: count UTF-8 code points (not bytes).
