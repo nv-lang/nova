@@ -1204,4 +1204,22 @@ static inline nova_int Nova_Time_now(void) {
     return _nova_time_default_now();
 }
 
+/* Plan 48 Ф.5: aliases for handlers.nv `now_ms` / `now_ns` shape.
+ * Default-impl делегирует к now() (which is monotonic ms); now_ns
+ * умножает на 1e6 (overflow безопасен в i64 для разумных значений).
+ * User-handler-path использует vtable-slot напрямую. */
+static inline nova_int Nova_Time_now_ms(void) {
+    if (_nova_handler_Time) {
+        return _nova_handler_Time->now_ms(_nova_handler_Time->ctx);
+    }
+    return _nova_time_default_now();
+}
+
+static inline nova_int Nova_Time_now_ns(void) {
+    if (_nova_handler_Time) {
+        return _nova_handler_Time->now_ns(_nova_handler_Time->ctx);
+    }
+    return _nova_time_default_now() * (nova_int)1000000;
+}
+
 #endif /* NOVA_RT_FIBERS_H */

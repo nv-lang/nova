@@ -405,11 +405,20 @@ static inline nova_unit Nova_Fail_fail(nova_str msg) {
  * User override: `with Time = handler Time { sleep(ms) { ... } now() { ... } } { body }`
  * — для тестов (fixed clock, mock sleep). */
 
-/* Layout matches codegen-generated layout for user effects. */
+/* Layout matches codegen-generated layout for user effects.
+ *
+ * Plan 48 Ф.5: now_ms / now_ns добавлены чтобы handlers.nv (fixed_ms,
+ * mut_clock — std/testing/handlers.nv:171-201) могли регистрировать
+ * полный набор Time-методов. Default-импл (Nova_Time_now_ms / _now_ns)
+ * — wrapper'ы вокруг now() (которая возвращает monotonic ms). Field
+ * order MUST совпадать с codegen-emitted layout: ctx, sleep, now,
+ * now_ms, now_ns (см. emit_handler_decl / fixed_ms vtable init). */
 typedef struct {
     void*     ctx;
     nova_unit (*sleep)(void* _ctx, nova_int ms);
     nova_int  (*now)(void* _ctx);
+    nova_int  (*now_ms)(void* _ctx);
+    nova_int  (*now_ns)(void* _ctx);
 } NovaVtable_Time;
 
 #ifdef _MSC_VER
