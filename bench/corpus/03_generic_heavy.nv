@@ -1,0 +1,88 @@
+// Plan 57 corpus 03: mono-pass stress — 10 generic types, ~200 LOC.
+// Measures monomorphization worklist drain + codegen scalability.
+
+type Pair[A, B]   { first A, second B }
+type Triple[A, B, C] { first A, second B, third C }
+type Option2[T]   | Some2(T) | None2
+type Result2[T, E] | Ok2(T) | Err2(E)
+type LinkedList[T] {
+    value T
+    next  Option2[LinkedList[T]]
+}
+type Stack[T] {
+    items []T
+}
+type Queue[T] {
+    items []T
+}
+type BinTree[T]
+    | Leaf
+    | Node { value T, left BinTree[T], right BinTree[T] }
+type HashMapWrap[K, V] {
+    inner HashMap[K, V]
+}
+type Container[T] {
+    value T
+    label str
+}
+
+fn Pair[A, B].new(a A, b B) -> Pair[A, B] => Pair { first: a, second: b }
+fn Triple[A, B, C].new(a A, b B, c C) -> Triple[A, B, C] => Triple { first: a, second: b, third: c }
+
+fn LinkedList[T].new(v T) -> LinkedList[T] => LinkedList { value: v, next: None2 }
+fn LinkedList[T] @push(v T) -> LinkedList[T] => LinkedList { value: v, next: Some2(@) }
+fn LinkedList[T] @len() -> int {
+    let mut n = 1
+    let mut cur = @next
+    loop {
+        match cur {
+            None2 => { return n }
+            Some2(next) => { n = n + 1; cur = next.next }
+        }
+    }
+}
+
+fn Stack[T].new() -> Stack[T] => Stack { items: [] }
+fn Stack[T] mut @push(v T) -> () => @items.push(v)
+fn Stack[T] mut @pop() -> Option2[T] {
+    if @items.len() == 0 { return None2 }
+    let last = @items[@items.len() - 1]
+    @items.truncate(@items.len() - 1)
+    Some2(last)
+}
+
+fn Queue[T].new() -> Queue[T] => Queue { items: [] }
+fn Queue[T] mut @enq(v T) -> () => @items.push(v)
+
+fn Container[T].new(v T, label str) -> Container[T] =>
+    Container { value: v, label }
+
+fn BinTree[T] @depth() -> int => match @ {
+    Leaf => 0
+    Node { left, right, .. } => {
+        let l = left.depth()
+        let r = right.depth()
+        1 + (if l > r { l } else { r })
+    }
+}
+
+fn use_int_generics() Io -> () {
+    let p = Pair[int, int].new(1, 2)
+    let t = Triple[int, int, int].new(1, 2, 3)
+    let ll = LinkedList[int].new(10).push(20).push(30)
+    println(str.from(ll.len()))
+    println(str.from(p.first))
+    println(str.from(t.third))
+}
+
+fn use_str_generics() Io -> () {
+    let p = Pair[str, str].new("a", "b")
+    let c = Container[str].new("hello", "greeting")
+    println(p.first)
+    println(c.value)
+}
+
+fn main() Io -> () {
+    use_int_generics()
+    use_str_generics()
+}

@@ -1,0 +1,8 @@
+module corpus.folder_demo
+
+fn helper3() -> int => 3
+fn combine() -> int => helper1() + helper2() + helper3()
+
+fn main() Io -> () {
+    println(str.from(combine()))
+}
