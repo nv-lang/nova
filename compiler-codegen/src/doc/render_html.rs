@@ -306,15 +306,104 @@ const EMBEDDED_CSS: &str = r#"
                 border: 1px solid var(--search-border); border-radius: 4px;
                 font-size: 0.9rem; box-sizing: border-box; }
   .search-box:focus { outline: 2px solid var(--link); outline-offset: -1px; }
+  /* Plan 45 Ф.31.5 — syntax highlighting classes. */
+  .tok-kw { color: #c084fc; font-weight: 600; }
+  .tok-type { color: #38bdf8; }
+  .tok-str { color: #a3e635; }
+  .tok-num { color: #fbbf24; }
+  .tok-comment { color: var(--muted); font-style: italic; }
+  @media (prefers-color-scheme: light) {
+    .tok-kw { color: #8b5cf6; }
+    .tok-type { color: #0284c7; }
+    .tok-str { color: #65a30d; }
+    .tok-num { color: #b45309; }
+  }
   @media (max-width: 720px) {
     body { grid-template-columns: 1fr; }
     nav.sidebar { position: static; height: auto; }
   }
 "#;
 
-/// Plan 45 Ф.31.2 — inline JS substring search filter (no external deps).
+/// Plan 45 Ф.31.2 — inline JS substring search filter + Ф.31.5 syntax highlighter.
 const EMBEDDED_JS: &str = r##"
   (function() {
+    // Plan 45 Ф.31.5 — syntax highlighting для Nova code blocks.
+    // Regex-based tokenizer (без deps); applied к <pre><code> blocks.
+    var KEYWORDS = ['fn','let','const','mut','if','else','match','while','for','in',
+      'return','break','continue','export','import','module','type','protocol',
+      'effect','handler','with','spawn','await','async','defer','errdefer',
+      'requires','ensures','decreases','invariant','axiom','ghost','assume',
+      'forall','exists','newtype','alias','as','true','false','self','forbid',
+      'realtime','nogc','pure','stable','unstable','experimental','deprecated',
+      'public','private','interrupt','resume','throw','yield','where','impl'];
+    var TYPES = ['int','str','bool','float','char','unit','void','any',
+      'i8','i16','i32','i64','u8','u16','u32','u64','f32','f64'];
+    function tokenize(text) {
+      var out = '';
+      var i = 0;
+      while (i < text.length) {
+        var c = text[i];
+        // Comment // ... \n
+        if (c === '/' && text[i+1] === '/') {
+          var end = text.indexOf('\n', i);
+          if (end < 0) end = text.length;
+          out += '<span class="tok-comment">' + escapeHtml(text.slice(i, end)) + '</span>';
+          i = end;
+          continue;
+        }
+        // String "..."
+        if (c === '"') {
+          var j = i + 1;
+          while (j < text.length && text[j] !== '"') {
+            if (text[j] === '\\' && j + 1 < text.length) j++;
+            j++;
+          }
+          j = Math.min(j + 1, text.length);
+          out += '<span class="tok-str">' + escapeHtml(text.slice(i, j)) + '</span>';
+          i = j;
+          continue;
+        }
+        // Number
+        if (c >= '0' && c <= '9') {
+          var j = i;
+          while (j < text.length && /[0-9._]/.test(text[j])) j++;
+          out += '<span class="tok-num">' + escapeHtml(text.slice(i, j)) + '</span>';
+          i = j;
+          continue;
+        }
+        // Identifier / keyword
+        if (/[a-zA-Z_]/.test(c)) {
+          var j = i;
+          while (j < text.length && /[a-zA-Z0-9_]/.test(text[j])) j++;
+          var word = text.slice(i, j);
+          if (KEYWORDS.indexOf(word) >= 0) {
+            out += '<span class="tok-kw">' + word + '</span>';
+          } else if (TYPES.indexOf(word) >= 0) {
+            out += '<span class="tok-type">' + word + '</span>';
+          } else {
+            out += escapeHtml(word);
+          }
+          i = j;
+          continue;
+        }
+        out += escapeHtml(c);
+        i++;
+      }
+      return out;
+    }
+    function escapeHtml(s) {
+      return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+    // Apply на все <pre><code> blocks (skip уже highlighted).
+    document.querySelectorAll('pre > code').forEach(function(el) {
+      if (el.dataset.hl === '1') return;
+      // textContent декодирует existing HTML entities; берём raw text.
+      var raw = el.textContent;
+      el.innerHTML = tokenize(raw);
+      el.dataset.hl = '1';
+    });
+
+    // Plan 45 Ф.31.2 — search filter.
     var box = document.getElementById('nova-search');
     if (!box) return;
     var items = document.querySelectorAll('article.item');
