@@ -118,6 +118,12 @@ pub fn render_html(tree: &DocTree) -> String {
     render_html::render(tree)
 }
 
+/// Plan 45 Ф.31.4 — DocTree → multi-page HTML (index.html + per-module pages).
+/// Returns map `filename → html_content`. Caller pишет на disk.
+pub fn render_html_multipage(tree: &DocTree) -> std::collections::BTreeMap<String, String> {
+    render_html::render_multipage(tree)
+}
+
 /// Plan 45 Ф.9 — DocTree → JSON с source text для точной line-info.
 pub fn render_json_with_source(tree: &DocTree, source: &str) -> String {
     render_json::render_with_source(tree, Some(source))

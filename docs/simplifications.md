@@ -7837,3 +7837,18 @@ Total ~190-280 LOC. P3 вЂ” local quality-of-life fixes. Implementation
 **пїЅпїЅпїЅпїЅпїЅпїЅ deferred:** Real cache requires Module serialization + invalidation
 graph (~500 LOC + complex test infra). Current --watch ~6ms пїЅпїЅпїЅ 50-module
 workspace пїЅ acceptable пїЅпїЅпїЅ interactive editing.
+
+---
+
+## Plan 45 Sprint Ф.31 simplifications (2026-05-16)
+
+### Resolved:
+- HTML single-page (Ф.31.1) > multi-page (Ф.31.4)
+- HTML без search > JS substring filter (Ф.31.2)
+- HTML только light theme > CSS variables + prefers-color-scheme (Ф.31.3)
+
+### Remaining:
+- Substring search (no fuzzy) — lunr.js dep avoided
+- No JS dark mode toggle — system-aware (no localStorage complexity)
+- No sitemap.xml (Plan 45.A round 2 если SEO-critical)
+- No syntax highlighting (Plan 45.A round 3)
