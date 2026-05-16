@@ -32,6 +32,9 @@ pub struct EncodeCtx<'a> {
     pub pure_views: &'a HashMap<String, PureViewSig>,
     /// Plan 33.4 D.0.2: реестр `#pure` fn-ов модуля. Ключ — fn name.
     pub pure_fns: &'a HashMap<String, PureFnInfo>,
+    /// Ф.4.2 (Plan 33.6): реестр `#trusted external fn`. Ключ — fn name.
+    /// При встрече вызова → UF application; ensures инжектируются как axioms.
+    pub trusted_fns: &'a HashMap<String, TrustedFnInfo>,
     /// Plan 33.3 Ф.11: типы переменных (params + let bindings).
     /// Нужны для dispatch `+` → `fp.add` vs Int `+` при FP аргументах.
     pub var_sorts: HashMap<String, SortRef>,
@@ -65,6 +68,21 @@ pub struct PureViewSig {
     pub param_sorts: Vec<SortRef>,
 }
 
+/// Ф.4.2 (Plan 33.6): информация о `#trusted external fn` для SMT axiom injection.
+#[derive(Debug, Clone)]
+pub struct TrustedFnInfo {
+    pub param_names: Vec<String>,
+    pub param_sorts: Vec<SortRef>,
+    pub return_sort: SortRef,
+    /// ensures-контракты (encoded); инжектируются как forall axiom в caller scope.
+    pub ensures_exprs: Vec<crate::ast::Expr>,
+}
+
+/// SMT UF name для trusted external fn: `_trusted_<name>`.
+pub fn trusted_fn_uf_name(fn_name: &str) -> String {
+    format!("_trusted_{}", fn_name)
+}
+
 impl<'a> EncodeCtx<'a> {
     /// Empty context — pure_view-ы не известны (старые тесты + bootstrap).
     pub fn empty() -> EncodeCtx<'static> {
@@ -72,9 +90,11 @@ impl<'a> EncodeCtx<'a> {
         // Используется только для backward-compat encode_expr.
         static EMPTY_VIEWS: std::sync::OnceLock<HashMap<String, PureViewSig>> = std::sync::OnceLock::new();
         static EMPTY_FNS: std::sync::OnceLock<HashMap<String, PureFnInfo>> = std::sync::OnceLock::new();
+        static EMPTY_TRUSTED: std::sync::OnceLock<HashMap<String, TrustedFnInfo>> = std::sync::OnceLock::new();
         let views = EMPTY_VIEWS.get_or_init(HashMap::new);
         let fns = EMPTY_FNS.get_or_init(HashMap::new);
-        EncodeCtx { pure_views: views, pure_fns: fns, var_sorts: HashMap::new() }
+        let trusted = EMPTY_TRUSTED.get_or_init(HashMap::new);
+        EncodeCtx { pure_views: views, pure_fns: fns, trusted_fns: trusted, var_sorts: HashMap::new() }
     }
 }
 
@@ -163,6 +183,26 @@ pub fn encode_expr_with_ctx(e: &Expr, ctx: &EncodeCtx) -> Result<SmtTerm, Encodi
                             let uf = pure_fn_uf_name(name);
                             return Ok(SmtTerm::App(uf, encoded_args));
                         }
+                    }
+                }
+            }
+            // Ф.4.2 (Plan 33.6): #trusted external fn → UF application.
+            // ensures-аксиомы инжектируются в pipeline (не здесь — нет доступа к backend).
+            if trailing.is_none() {
+                if let ExprKind::Ident(name) = &func.kind {
+                    if let Some(info) = ctx.trusted_fns.get(name) {
+                        if args.len() != info.param_sorts.len() {
+                            return Err(EncodingError::Unsupported(format!(
+                                "trusted fn `{}` arity mismatch: expected {}, got {}",
+                                name, info.param_sorts.len(), args.len()
+                            )));
+                        }
+                        let mut encoded_args = Vec::with_capacity(args.len());
+                        for a in args {
+                            encoded_args.push(encode_expr_with_ctx(a.expr(), ctx)?);
+                        }
+                        let uf = trusted_fn_uf_name(name);
+                        return Ok(SmtTerm::App(uf, encoded_args));
                     }
                 }
             }

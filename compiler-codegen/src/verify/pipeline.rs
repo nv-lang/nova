@@ -146,7 +146,8 @@ impl VerificationPipeline {
         }
         let var_sorts: std::collections::HashMap<String, SortRef> = fd.params.iter()
             .map(|p| (p.name.clone(), type_to_sort(&p.ty))).collect();
-        let ctx = super::encode::EncodeCtx { pure_views: &pure_views, pure_fns: &pure_fns, var_sorts };
+        let trusted_fns = collect_trusted_fns(module);
+        let ctx = super::encode::EncodeCtx { pure_views: &pure_views, pure_fns: &pure_fns, trusted_fns: &trusted_fns, var_sorts };
 
         // Plan 33.3 Р¤.9: pre-declare РІСЃРµ pure_view UFs РІ backend'Рµ.
         // Р'РµР· СЌС‚РѕРіРѕ Z3 auto-declare'РёС‚ UF СЃ Int sorts РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ;
@@ -188,6 +189,43 @@ impl VerificationPipeline {
                     backend.assert(Assertion {
                         formula: axiom,
                         label: Some(format!("pure_fn_body@{}", pfd.name)),
+                    });
+                }
+            }
+        }
+
+        // Ф.4.2 (Plan 33.6): declare UFs для #trusted external fn + inject ensures axioms.
+        // ensures(params, result) → (forall (params result) (=> true ensures)).
+        // "result" — специальная переменная, обозначает возвращаемое значение UF.
+        for (fn_name, info) in &trusted_fns {
+            let uf = encode::trusted_fn_uf_name(fn_name);
+            backend.declare_function(&uf, &info.param_sorts, info.return_sort.clone());
+            // Build axiom: forall params, result. ensures_expr
+            // Substitution: "result" → uf(params) в ensures.
+            let param_vars: Vec<SmtTerm> = info.param_names.iter()
+                .map(|n| SmtTerm::Var(n.clone())).collect();
+            let uf_app = SmtTerm::App(uf.clone(), param_vars);
+            let result_var = "_trusted_result".to_string();
+            // Binders: params + _trusted_result
+            let mut binders: Vec<(String, SortRef)> = info.param_names.iter()
+                .zip(info.param_sorts.iter())
+                .map(|(n, s)| (n.clone(), s.clone()))
+                .collect();
+            binders.push((result_var.clone(), info.return_sort.clone()));
+            // Substitute "result" → _trusted_result in ensures, then assert forall
+            let result_binding = SmtTerm::eq(SmtTerm::Var(result_var.clone()), uf_app);
+            for ensures_expr in &info.ensures_exprs {
+                // Encode ensures with result → _trusted_result substitution in ctx.
+                let mut ctx_with_result = ctx.clone();
+                ctx_with_result.var_sorts.insert(result_var.clone(), info.return_sort.clone());
+                if let Ok(ensures_term) = encode::encode_expr_with_ctx(ensures_expr, &ctx_with_result) {
+                    // Replace "result" var with _trusted_result in encoded term.
+                    let ensures_subst = ensures_term.substitute("result", &SmtTerm::Var(result_var.clone()));
+                    let body = SmtTerm::App("and".into(), vec![result_binding.clone(), ensures_subst]);
+                    let axiom = SmtTerm::Forall(binders.clone(), vec![], Box::new(body));
+                    backend.assert(Assertion {
+                        formula: axiom,
+                        label: Some(format!("trusted_fn_ensures@{}", fn_name)),
                     });
                 }
             }
@@ -602,7 +640,8 @@ impl VerificationPipeline {
         let pure_fns = collect_pure_fns(module, inferred_pure);
         let var_sorts: std::collections::HashMap<String, SortRef> = ld.params.iter()
             .map(|p| (p.name.clone(), type_to_sort(&p.ty))).collect();
-        let ctx = super::encode::EncodeCtx { pure_views: &pure_views, pure_fns: &pure_fns, var_sorts };
+        let trusted_fns = collect_trusted_fns(module);
+        let ctx = super::encode::EncodeCtx { pure_views: &pure_views, pure_fns: &pure_fns, trusted_fns: &trusted_fns, var_sorts };
 
         // Pre-declare pure_view UFs.
         for (op_name, sig) in &pure_views {
@@ -741,6 +780,28 @@ pub(super) fn collect_pure_fns(
             param_sorts,
             return_sort,
             body_expr,
+        });
+    }
+    out
+}
+
+/// Ф.4.2 (Plan 33.6): собрать все `#trusted external fn` модуля в реестр для encoder'а.
+pub(super) fn collect_trusted_fns(module: &Module) -> std::collections::HashMap<String, encode::TrustedFnInfo> {
+    let mut out = std::collections::HashMap::new();
+    for item in &module.items {
+        let Item::Fn(fd) = item else { continue };
+        if !fd.is_trusted || !fd.is_external { continue; }
+        let param_sorts = fd.params.iter().map(|p| type_to_sort(&p.ty)).collect();
+        let return_sort = fd.return_type.as_ref().map(type_to_sort).unwrap_or(SortRef::Int);
+        let ensures_exprs: Vec<_> = fd.contracts.iter()
+            .filter(|c| matches!(c.kind, ContractKind::Ensures))
+            .map(|c| c.expr.clone())
+            .collect();
+        out.insert(fd.name.clone(), encode::TrustedFnInfo {
+            param_names: fd.params.iter().map(|p| p.name.clone()).collect(),
+            param_sorts,
+            return_sort,
+            ensures_exprs,
         });
     }
     out
@@ -1793,8 +1854,10 @@ pub(super) fn encode_axiom(
     infer_binder_sorts(ax.formula, &binder_names, pure_views, &mut binder_sorts);
     // Encode body.
     static EMPTY_FNS: std::sync::OnceLock<std::collections::HashMap<String, super::encode::PureFnInfo>> = std::sync::OnceLock::new();
+    static EMPTY_TRUSTED: std::sync::OnceLock<std::collections::HashMap<String, super::encode::TrustedFnInfo>> = std::sync::OnceLock::new();
     let empty_fns = EMPTY_FNS.get_or_init(std::collections::HashMap::new);
-    let ctx = super::encode::EncodeCtx { pure_views, pure_fns: empty_fns, var_sorts: std::collections::HashMap::new() };
+    let empty_trusted = EMPTY_TRUSTED.get_or_init(std::collections::HashMap::new);
+    let ctx = super::encode::EncodeCtx { pure_views, pure_fns: empty_fns, trusted_fns: empty_trusted, var_sorts: std::collections::HashMap::new() };
     let body = super::encode::encode_expr_with_ctx(ax.formula, &ctx).ok()?;
     // Build binders Vec вЂ" СЏРІРЅС‹Р№ РёР»Рё inferred sort, default Int.
     let binders: Vec<(String, SortRef)> = binder_names.iter()
