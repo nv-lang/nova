@@ -7903,3 +7903,31 @@ Remaining:
   Block arm trailing — тот же путь.
 - **Tests:** `nova_tests/plan55/f2_*.nv` — 4 positive/nested/Block/neg.
 - **Параллель:** Rust/Swift exhaustive inference, TS narrows.
+
+### [Nova_Duration_method_into / inferred-return-type-from-body] ✅ ЗАКРЫТО (Plan 55 Ф.3, 2026-05-16)
+- **Где:** `compiler-codegen/src/codegen/emit_c.rs::return_type_c` +
+  два места в register_fn (1c).
+- **Было:** `fn @method() => expr` без `-> T` annotation давал return
+  type = nova_unit (hardcoded fallback). → callers видели метод
+  unit-returning → wrong type → CC-FAIL.
+- **Закрыто:** return_type_c теперь infer'ит из body когда annotation
+  отсутствует:
+  * FnBody::Expr → infer_expr_c_type(e).
+  * FnBody::Block → infer trailing (или unit если None).
+  * External → unit.
+  Все 3 register_fn места теперь делегируют return_type_c.
+- **Дополнительно:** Stmt::Expr cast в (void)(...) для unit/struct
+  чтобы избежать CC 'statement requires scalar' (нашёл при тесте).
+- **Tests:** `nova_tests/plan55/f3_*.nv` (3 файла).
+- **Параллель:** Rust/Swift/Kotlin — implicit return type inference
+  стандарт. Nova теперь паритет.
+
+### [M-time-handler-sleep-mismatch] НОВЫЙ (deferred, не Plan 55 scope)
+- **Где:** `std/testing/handlers.nv::mut_clock` + emit_c.rs Time effect schema.
+- **Что упрощено:** handler `Time { sleep(d Duration) { ... d.nanos ... } }`
+  не работает: effect schema говорит sleep(nova_int), handler body
+  trying to access `d.nanos` на nova_int. CC-FAIL.
+- **Workaround:** не использовать mut_clock в tests; fixed_ms работает.
+- **Followup:** Plan 56 или newer — расширить Time.sleep accept'ить
+  Duration (proper effect signature evolution).
+- **Приоритет:** L (workaround доступен).
