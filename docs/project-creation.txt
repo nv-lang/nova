@@ -12711,3 +12711,54 @@ Plan §11.5 заявил **10 lints** в catalog. Audit показал 8 уже реализованы;
 - **summary-not-sentence, unknown-section, deprecated-overdue** (новое Ф.26.4)
 
 Plan §11.5 catalog claim '10 lints' теперь **полностью покрыт** (11 implemented).
+
+=== Plan 45 Ф.26 nova tests (positive + negative, 2026-05-16) ===
+
+После closure Sprint Ф.26 (4 фичи: Newtype fix / handler matrix / allow_transit /
+3 lints) написаны nova-tests для проверки runtime correctness через release nova.
+
+**Подход — indirect testing** (тот же что Ф.25): 
+ova test запускает compiled
+binary, у него нет access к doc-tooling output (JSON/MD). Поэтому nova-tests
+проверяют что Nova-код **компилируется и runtime корректен** при использовании
+фич, а doc-tooling output покрыт cargo integration tests (73 PASS).
+
+**6 файлов в nova_tests/doc/:**
+
+**f26_newtype_positive.nv** (Ф.26.1):
+- 	ype Email str, 	ype AccountId int — newtype declarations
+- 	ype UserName alias str — alias для contrast
+- Runtime: newtype используется как distinct type, alias works for plain types
+- Doc-pipeline: эти newtype'ы рендерятся как kind: "newtype" в JSON (verified
+  в cargo doc_newtype.rs)
+
+**f26_handler_matrix_positive.nv** (Ф.26.2):
+- 2 effects (Counter, Logger) + 3 fn'ы с handler literals
+- single handler usage, multiple handlers, handler reuse
+- Doc-pipeline: scanner находит handler Counter { literals и populate'ит
+  Counter.handlers = [{caller_item_id: "count_to"}, {caller_item_id: "count_twice"}, ...]
+
+**f26_capabilities_positive.nv** (Ф.26.3):
+- #realtime + #realtime nogc функции (без export — D63/D64 attr position)
+- Pure functions без #pure (Plan 33.6 hardening заблокировал #pure без contracts)
+- Doc-pipeline: allow_transit пока всегда [] (parser support — Plan 16 follow-up)
+
+**f26_lints_positive.nv** (Ф.26.4):
+- 5 lint-clean functions (proper summary, # Examples, #stable attr)
+- Все §11.5 правила соблюдены: imperative-mood, section-order, examples-present,
+  stability-tagged, summary < 120 chars, no raw HTML
+- Doc-pipeline: 
+ova doc --check на этом файле — 0 lint violations
+
+**f26_handler_matrix_negative.nv:**
+- handler literal + undefined fn в Set call > compile error
+
+**f26_newtype_negative.nv:**
+- newtype declarations + undefined helper в теле fn > compile error
+
+**Результат:** 6/6 PASS через 
+ova-cli/target/release/nova.exe test.
+
+**Issue encountered:** Plan 33.6 production hardening (Ф.1.2) сделал #pure
+без contracts > compile error E2401. Убрал #pure annotations из теста
+(они не нужны для runtime — это doc/verify metadata).

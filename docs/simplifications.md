@@ -7197,3 +7197,35 @@ edge case.
 ~150 chars message.
 **Почему:** Author should see exactly what's wrong > educational.
 **Как чинить:** не нужно — это deliberate UX choice.
+
+---
+
+## Plan 45 Ф.26 nova-tests — упрощения (2026-05-16)
+
+### #pure annotations убраны из Ф.26 tests
+
+**Где:** 
+ova_tests/doc/f26_capabilities_positive.nv
+**Что упрощено:** Изначально использовал #pure attribute на runtime fn,
+но Plan 33.6 Ф.1.2 (E2401) hardening заблокировал #pure без contracts —
+теперь это compile error. Убрал #pure annotations.
+**Почему:** #pure теперь требует verify-pipeline integration; runtime fn
+без contracts не может быть #pure. Это legitimate Plan 33.6 enforcement,
+не bug Plan 45.
+**Как чинить:** заменить #pure fn square(x int) -> int => x * x на
+#pure fn square(x int) -> int requires true ensures result == x * x => x * x
+— но это complicates test для doc-feature testing.
+**Приоритет:** L — capability #realtime остался в тесте, покрывает primary
+goal (что capabilities runtime-safe).
+
+### #realtime только без export (D64 attr position)
+
+**Где:** 
+ova_tests/doc/f26_capabilities_positive.nv rt-fn'ы.
+**Что упрощено:** #realtime fn ... работает, #realtime export fn ... —
+parser error. Сделал rt-fn'ы без export, runtime tested через doc-tests.
+**Почему:** Parser порядок attrs — D64 spec; doc-tooling видит attr на fn
+независимо от export visibility.
+**Как чинить:** parser — split attr position handling (currently strict).
+Это Plan 16 follow-up если будет need для public #realtime API.
+**Приоритет:** L.
