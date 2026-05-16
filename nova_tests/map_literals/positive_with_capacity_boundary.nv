@@ -1,0 +1,58 @@
+// Plan 52 Ф.14: with_capacity entry-based contract — через десугаринг.
+//
+// Acceptance §634: «with_capacity(n) гарантирует n вставок без rehash
+// (entry-based); @capacity() не меняется при построении n-элементного
+// литерала для всех n: 4, 7, 8, 13, 16 (бывшие баги)».
+//
+// До Ф.6 fix с with_capacity(min) → cap = next_pow2(max(4, min))
+// (bucket-count). Для n=4 → cap=4, threshold=floor(4*0.75)=3 →
+// 4-я вставка ловила used(3) >= threshold(3) → rehash → нарушение
+// контракта.
+//
+// После Ф.6: cap = next_pow2(max(4, ceil(4n/3))). Для n=4 → ceil(16/3)=6
+// → next_pow2(6)=8 → threshold=6 ≥ 4 ✓.
+//
+// Этот тест проверяет контракт **через десугаринг** (не прямой вызов
+// with_capacity). Если бы Ф.13 fix или Ф.7 turbofish сломали proxy,
+// rehash триггерился бы и @capacity() менялась.
+module map_literals.positive_with_capacity_boundary
+
+import std.collections.hashmap.{HashMap}
+
+test "n=4 via desugar — no rehash" {
+    let m HashMap[int, int] = [
+        0: 0, 1: 1, 2: 2, 3: 3,
+    ]
+    assert(m.len() == 4)
+    // capacity для n=4 должна быть 8 (next_pow2(ceil(16/3))=next_pow2(6)).
+    assert(m.capacity() == 8)
+}
+
+test "n=7 via desugar — no rehash (was rehash bug pre-Ф.6)" {
+    let m HashMap[int, int] = [
+        0: 0, 1: 1, 2: 2, 3: 3, 4: 4, 5: 5, 6: 6,
+    ]
+    assert(m.len() == 7)
+    // n=7: ceil(28/3)=10, next_pow2(10)=16.
+    assert(m.capacity() == 16)
+}
+
+test "n=13 via desugar — no rehash (boundary)" {
+    let m HashMap[int, int] = [
+        0: 0, 1: 1, 2: 2, 3: 3, 4: 4, 5: 5, 6: 6,
+        7: 7, 8: 8, 9: 9, 10: 10, 11: 11, 12: 12,
+    ]
+    assert(m.len() == 13)
+    // n=13: ceil(52/3)=18, next_pow2(18)=32.
+    assert(m.capacity() == 32)
+}
+
+test "n=16 via desugar — no rehash" {
+    let m HashMap[int, int] = [
+        0: 0, 1: 1, 2: 2, 3: 3, 4: 4, 5: 5, 6: 6, 7: 7,
+        8: 8, 9: 9, 10: 10, 11: 11, 12: 12, 13: 13, 14: 14, 15: 15,
+    ]
+    assert(m.len() == 16)
+    // n=16: ceil(64/3)=22, next_pow2(22)=32.
+    assert(m.capacity() == 32)
+}

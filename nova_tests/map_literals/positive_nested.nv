@@ -1,0 +1,39 @@
+// Plan 52 Ф.15: вложенный map-литерал `[1: [10: "x", 20: "y"]]` —
+// гигиена имён `_m0`/`_m1` в десугаринге не конфликтуют.
+//
+// Plan §537, §638: counter в desugar.rs::DesugarCtx — per-module
+// монотонный. Для нескольких MapLit'ов в одном модуле каждый получает
+// уникальный suffix; вложенный литерал десугарится в Block, который
+// сам содержит внутренний MapLit → внутренний tmp _m1 не shadow'ит
+// внешний _m0.
+//
+// Bottom-up порядок desugar'а: сначала children, потом сам узел —
+// поэтому в момент построения outer-block внутренний MapLit уже
+// заменён на Block (с другим _mN).
+module map_literals.positive_nested
+
+import std.collections.hashmap.{HashMap}
+
+fn make_inner() -> HashMap[int, str] {
+    [10: "a", 20: "b"]
+}
+
+test "single-level nested via fn call" {
+    let outer HashMap[int, str] = [1: "first", 2: "second"]
+    assert(outer.len() == 2)
+    assert(outer.get(1) == Some("first"))
+
+    let inner = make_inner()
+    assert(inner.len() == 2)
+    assert(inner.get(10) == Some("a"))
+}
+
+test "multiple sequential map literals in same scope" {
+    // counter per-module → _m0, _m1, _m2 — не shadow.
+    let a HashMap[int, str] = [1: "alpha"]
+    let b HashMap[int, str] = [2: "beta"]
+    let c HashMap[int, str] = [3: "gamma"]
+    assert(a.get(1) == Some("alpha"))
+    assert(b.get(2) == Some("beta"))
+    assert(c.get(3) == Some("gamma"))
+}
