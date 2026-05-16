@@ -12596,6 +12596,37 @@ Plan 33.6 закрыт как deliverable. Match handler → Plan 33.7. Doc-test
 
 **Plan 33.6 после Ф.14:** 100% complete (13 спринтов + 1 polish). 151 PASS / 42 SKIP.
 
+## Ф.15 — witness API + bounds propagation + edge tests
+
+### Ф.15.1 — try_prove_with_witness helper
+
+- backend/mod.rs: `try_prove_with_witness(backend, goal, var_name)` →
+  `(SatResult, Option<ModelValue>)`. Separate check approach: после try_prove
+  Unsat, делаем push + assert goal + check_sat → если Sat, get_witness.
+- API ready для pipeline wiring (V3).
+- Коммит: `3cebde1c37f`.
+
+### Ф.15.2 — TrivialBackend bounds propagation
+
+- `propagate_bounds`: collect lower/upper per Var из `(>= var L)` / `(<= var L)`.
+- Apply weakening: `(>= var L_goal)` где L_known >= L_goal → BoolLit(true).
+- Handle `<`/`>` symmetrically. Handle `(not <inequality>)` через инверсию.
+- Закрывает `requires x >= 0; ensures x >= -1` без Z3.
+- Test: trivial_bound_weakening_positive (+ multi tests).
+- Коммит: `3cebde1c37f`.
+
+### Ф.15.3 — Edge case multi-clause
+
+- Test: edge_multi_requires_positive — 2 requires + 3 ensures с разными bounds
+  доказываются через propagation.
+- Коммит: `651e2e11b54`.
+
+**Итого Ф.15:** 3 closed. **153 PASS (+2) / 42 SKIP / 0 FAIL.**
+
+**Plan 33.6 итог за 15 спринтов:** все silent fallbacks + GA features +
+TrivialBackend coverage (reflexivity, commutativity, transitivity, congruence,
+bounds propagation) + witness API. Pipeline wiring witness — V3.
+
 === Plan 45 �.25 � nova tests (positive + negative) ===
 
 ����� �������� �.25 (4 ����) �������� nova-tests .nv ��� �������� �����
