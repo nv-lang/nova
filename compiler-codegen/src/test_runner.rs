@@ -1415,6 +1415,9 @@ pub struct TestBuildOpts<'a> {
     pub gc_kind: GcKind,
     /// Plan 27 Б.3: verbosity — при Verbose захватываем stdout/stderr PASS.
     pub verbosity: Verbosity,
+    /// Plan 48 Ф.7.6: optional monomorphization-depth override (`--mono-depth=N`).
+    /// `None` = use codegen default (env var NOVA_MONO_DEPTH or 500).
+    pub mono_depth: Option<usize>,
 }
 
 /// Plan 26 Ф.2: unique tmp subdir per test. Хеш от display даёт
@@ -1553,7 +1556,8 @@ pub fn run_one(opts: &TestBuildOpts) -> Outcome {
     // (anonymous-embed override etc); lint_warnings — от lints::lint_module
     // (Plan 52 Ф.9: NaN-key, duplicate-map-key, и др. для
     // EXPECT_COMPILE_WARNING сверки).
-    let codegen_result = codegen_to_c(opts.nv_file, &src);
+    // Plan 48 Ф.7.6: mono_depth прокинут через opts (None = default 500).
+    let codegen_result = codegen_to_c(opts.nv_file, &src, opts.mono_depth);
     let codegen_warnings: Vec<String> = match &codegen_result {
         Ok((ws, _)) => ws.clone(),
         Err(_) => vec![],
@@ -2021,7 +2025,10 @@ fn is_folder_module_peer(path: &Path) -> bool {
 /// используются для `EXPECT_COMPILE_WARNING` сверки. Lints вызываются
 /// после type-check, ДО desugar — иначе MapLit/RecordLit-узлы уже
 /// заменены на Block'и, и lint check_map_literal_lints не сработает.
-fn codegen_to_c(path: &Path, src: &str) -> Result<(Vec<String>, Vec<String>), String> {
+///
+/// Plan 48 Ф.7.6: `mono_depth` — optional CLI override для
+/// CEmitter.mono_depth_limit (None = default из env var или 500).
+fn codegen_to_c(path: &Path, src: &str, mono_depth: Option<usize>) -> Result<(Vec<String>, Vec<String>), String> {
     let mut module = parser::parse(src).map_err(|d| d.render(src, &path.to_string_lossy()))?;
     // Plan 42 D29 rev-3: detect — is this file a peer of folder-module?
     // Folder-module = parent dir содержит >1 .nv files, и все они
@@ -2073,6 +2080,9 @@ fn codegen_to_c(path: &Path, src: &str) -> Result<(Vec<String>, Vec<String>), St
 
     let mut emitter = CEmitter::new();
     emitter.set_source_for_annotations(src.to_string());
+    if let Some(n) = mono_depth {
+        emitter.set_mono_depth_limit(n);
+    }
     let (c_code, warnings) = emitter
         .emit_module(&module)
         .map_err(|e| format!("codegen error: {}", e))?;
@@ -2138,6 +2148,10 @@ pub struct TestAllOpts<'a> {
     /// Example: `--skip std/runtime/` исключает все runtime тесты.
     /// Repeatable: `--skip A --skip B` исключает оба.
     pub skip: &'a [String],
+    /// Plan 48 Ф.7.6: optional monomorphization-depth override.
+    /// Propagated to every per-test TestBuildOpts so polymorphic-recursion
+    /// guard уходит из hardcoded 500 в configurable CLI knob.
+    pub mono_depth: Option<usize>,
 }
 
 // ---------- Plan 26 Ф.13: graceful Ctrl+C ----------
@@ -3249,6 +3263,7 @@ pub fn run_all(opts: TestAllOpts) -> Result<Summary> {
             let keep_artifacts = opts.keep_artifacts;
             let retries = opts.retries;
             let gc_kind = opts.gc_kind;
+            let mono_depth = opts.mono_depth;
 
             s.spawn(move || loop {
                 if is_cancelled() { return; }
@@ -3268,6 +3283,7 @@ pub fn run_all(opts: TestAllOpts) -> Result<Summary> {
                     timeout,
                     gc_kind,
                     verbosity,
+                    mono_depth,
                 };
                 // Plan 26 Ф.12: retry для transient AV/linker race fails.
                 // Exponential backoff: 100ms, 200ms, 400ms.

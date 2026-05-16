@@ -12401,3 +12401,162 @@ pre-existing mojibake в diagnostic strings + doc fixture link issues
 - refactor(53): Ф.6.4 — Channel.new dedup via record schema
 - docs(52,53): final — Ф.17/Ф.6.4 + 53.1 deferred (Ф.6.2/6.6)
 - test(52,53): acceptance-тесты сессии (Ф.17 positive + Ф.6.4 regress)
+
+
+## Шаг NNN+4. Plan 48 final — все оставшиеся фазы закрыты (2026-05-16)
+
+Закрыты последние 4 фазы Plan 48 (closures-в-generics + мономорфизация):
+
+### Ф.7.4 partial — bare-variant constructor mono inference
+
+Bare variant constructors с args (`Ok2(42)`) теперь триггерят mono pipeline
+вместо erased пути. Helper `try_infer_variant_mono_args` находит parent
+sum-template, инференцирует type-args из arg C-типов, enqueue'ит instance,
+возвращает mono имя. Применён в emit_call (constructor c_name), в
+infer_expr_c_type (return type → правильный pointer-тип), в is_generic_call
+flag (отключает void*-boxing для mono пути).
+
+`emit_generic_method_erased` оставлен как V1 fallback для unit-variant
+references (`let r = Err2`) — usage-context инференция T deferred V2
+(Ф.7.4 final). Test `types/generic_record_mono` остался зелёным.
+
+### Ф.7.6 — --mono-depth=N CLI flag
+
+Hardcoded depth limit (500) выведен в CLI флаг через nova-cli (commands
+build, test, test-build) → BuildOpts/TestAllOpts.mono_depth → CEmitter.
+NOVA_MONO_DEPTH env var остался как fallback (CLI приоритетнее).
+
+### Ф.4 — spawn + closure-capture в mono pipeline
+
+[M-spawn-closure-capture-mono]: emit_call для fn-typed param call
+не учитывал spawn ctx. Helper `spawn_capture_access(name)` централизует
+rewrite "name → _c->name/(*_c->name)" — applied к NOVA_CLOS_CALL_*
+и arbitrary-signature closure calls.
+
+[M-mono-spawn-fwd-decls]: pre-scan fwd-decls работает по оригинальному
+AST до mono drain → spawn-body fns внутри mono'д fn были без fwd-decl.
+Fix: в emit_spawn если current_type_subst non-empty, пушим fwd-decl
+в mono_fwd_decls (splice в маркер до всех fn defs).
+
+Smoke test: nova_tests/concurrency/mono_spawn_closure_smoke.nv —
+generic `run_in_fiber[T](body fn()->T)` для T=int/str/bool, все PASS.
+C-output подтверждает корректный `(*_c->body)` rewrite + fwd-decls.
+
+### Ф.5 partial — NovaVtable_Time schema fix
+
+Runtime NovaVtable_Time расширен полями now_ms, now_ns (codegen-emitted
+layout: ctx → sleep → now → now_ms → now_ns). Default-impl делегируется
+к _nova_time_default_now (monotonic ms). handlers.nv (fixed_ms/mut_clock)
+теперь регистрируются без "no member named 'now_ms'".
+
+retry_test.nv не написан — pre-existing codegen bug: `100.millis()`
+(int-extension method) в record-literal field внутри generic static
+ctor → invalid C `((nova_int)100LL).millis()`. Любой import retry.nv
+валит build. Plan 49 followup [M-int-extension-record-field].
+
+### Регрессия
+
+411 PASS / 46 FAIL — baseline 410/46 + новый mono_spawn_closure_smoke
+test. Никаких регрессий от Plan 48 финальных правок.
+
+### Commits
+
+- feat(48): Ф.7.4 partial — bare-variant mono inference + erased fallback
+  (mn-runtime fb21ca75f43)
+- feat(48): Ф.7.6 — --mono-depth=N CLI flag через nova-cli → emit_c.rs
+  (mn-runtime 62f011661c2)
+- feat(48): Ф.4 — spawn + closure-capture в mono pipeline (cancellation unblock)
+  (mn-runtime f0b1551d7e2)
+- runtime(48): Ф.5 — NovaVtable_Time schema alignment (now_ms/now_ns)
+  (mn-runtime 1c0b0e9a33a)
+- docs(48): Ф.7.4 partial — bare-variant mono done, erased fallback documented
+  (main 1b42eeedd30)
+
+
+## Шаг NNN+5. Plan 49 — Cancellation semantics first-class (2026-05-16)
+
+Закрыты Ф.0–Ф.5 + Ф.6 partial + Ф.7. Отмена теперь structurally separate
+от ошибок: kinded throws, typed reason, USER-precedence, with-Fail не
+глотает CANCEL.
+
+### Ф.0 — NovaThrowKind + frame fields + nova_throw_cancel
+
+- effects.h: enum NOVA_THROW_USER (default) / NOVA_THROW_CANCEL.
+- NovaFailFrame расширен error_kind + error_reason_ptr (переживают longjmp).
+- nova_throw stamps USER (backward-compat); nova_throw_cancel + nova_throw_cancel_reason — новые API.
+- NOVA_CATCH_KIND / NOVA_CATCH_REASON макросы.
+
+### Ф.1 — cancel reason на CancelToken (str-форма)
+
+- NovaCancelToken: reason_ptr (void*-box) + has_reason поля.
+- nova_cancel_token_cancel_reason / _reason / _has_reason / _reason_str API.
+- nova_cancel_box_str helper для GC-heap allocation.
+- emit_c.rs: tok.cancel(reason) / tok.cancel() / tok.reason() dispatch
+  → Option[str] return type для tok.reason().
+
+### Ф.2 — cooperative cancel CANCEL+reason + USER-precedence + audit
+
+- NovaFiberQueue: first_error_kind/reason + cancel_reason_ptr поля.
+- nova_fiber_yield бросает kind=CANCEL с reason из scope.
+- channels.h: 3 cancel-throw сайта (recv/send/select) на nova_throw_cancel.
+- nova_cancel_token_bind/_cancel_reason пропагируют reason в scope.
+- nova_fiber_report_error_kinded — USER-precedence таблица: CANCEL+USER
+  → overwrite (USER win); first-USER-wins. Реальная ошибка не теряется
+  даже если cancel случился раньше (Go errgroup теряет — у нас нет).
+
+### Ф.3 — supervised_run + emit_with kind-aware
+
+- nova_supervised_run_impl: CANCEL → return без re-throw (отмена не
+  убегает); USER → re-throw (старый путь).
+- emit_with else-branch: if frame.error_kind == CANCEL → pop frames
+  + restore handlers + nova_throw_cancel_reason (re-throw к outer
+  supervised). USER → старая семантика (handler did its job).
+
+### Ф.4 — semantics smoke tests
+
+nova_tests/concurrency/cancel_semantics_test.nv:
+- Отмена не убегает из supervised(cancel:) без with Fail.
+- tok.cancel("deadline") → tok.reason() == Some("deadline").
+- tok.cancel() default reason "cancelled".
+- tok.reason() до отмены — None.
+- Реальная ошибка (throw 42) ловится внешним with Fail.
+
+### Ф.5 — M:N atomic kind+reason cross-worker
+
+- NovaFiberQueue: first_error_atomic_kind/reason добавлены рядом с
+  existing atomic msg pointer (release/acquire через msg pointer).
+- nova_fiber_report_atomic_kinded — CAS-loop с compare-kind: NULL
+  → write; CANCEL → USER overwrite через secondary CAS; иначе keep.
+- supervised_run reads kind из local или atomic при re-throw decision.
+- emit_c.rs (remote catch-branch): nova_fiber_report_atomic_kinded
+  вместо raw CAS.
+
+### Ф.6 partial — CancelToken[T] generic
+
+- CancelToken[T] синтаксис принят (default = CancelToken[str]).
+- nova_cancel_box_copy_raw(src, size) — generic memcpy в GC-heap.
+- emit_c.rs cancel(): type-aware boxing
+  - T=str → nova_cancel_box_str (existing).
+  - T=pointer → cast в void*.
+  - T=primitive/value-struct → compound literal `&((T){val})` + box_copy_raw.
+
+nova_tests/concurrency/cancel_token_generic_smoke.nv:
+- CancelToken default — backward-compat.
+- CancelToken[str] explicit annotation.
+- CancelToken[int] cancel(42) — i64 boxing.
+- CancelToken[bool] cancel(true) — bool boxing.
+
+V2 followup (Plan 50): reason() -> Option[T] per-T un-box;
+cross-type cascade через From-конвертацию.
+
+### Регрессия
+
+413 PASS / 46 FAIL (baseline 411 + 2 Plan 49 smoke tests, zero new fails).
+
+### Commits
+
+- feat(49): Ф.0-Ф.4 — kinded throws + cancel reason + USER-precedence
+  + smoke tests (mn-runtime 62bd0ca22a2)
+- feat(49): Ф.5 — M:N atomic kind+reason в cross-worker (835b154de3c)
+- feat(49): Ф.6 partial — CancelToken[T] typed cancel reason для T≠str
+  (9ccc6096d43)

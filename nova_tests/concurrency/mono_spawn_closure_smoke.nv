@@ -1,0 +1,98 @@
+// mono_spawn_closure_smoke.nv — Plan 48 Ф.4 + Ф.7.6 smoke tests.
+//
+// Покрывает баги которые блокировали std/concurrency/cancellation.nv:
+//
+//   [M-spawn-closure-capture-mono]
+//     В мономорфизированном теле generic fn closure-параметр (`body fn()->T`)
+//     должен переписываться через `_c->body` когда захватывается в spawn ctx.
+//     До фикса emit_call для fn-typed param-call использовал bare имя.
+//
+//   [M-mono-spawn-fwd-decls]
+//     Pre-scan forward-decl'ов выполняется ДО мономорфизации, поэтому
+//     spawn-body функция созданная внутри mono'д fn body была без
+//     forward declaration → undefined symbol на стадии C-codegen.
+//     Фикс пушит fwd-decl в mono_fwd_decls когда current_type_subst не пуст.
+
+module concurrency.mono_spawn_closure_smoke
+
+
+// Generic функция с closure-param, спавнит body в supervised scope.
+// Это упрощённый аналог `within[T]` из Plan 47.
+fn run_in_fiber[T](body fn() -> T) -> T {
+    supervised {
+        spawn { body() }
+    }
+    // После завершения supervised — вызываем body снова в main flow
+    // и возвращаем результат.
+    body()
+}
+
+
+test "mono spawn закрывает closure-param: T=int" {
+    let r = run_in_fiber(|| 42)
+    assert(r == 42)
+}
+
+
+test "mono spawn закрывает closure-param: T=str" {
+    let r = run_in_fiber(|| "hello")
+    assert(r == "hello")
+}
+
+
+test "mono spawn закрывает closure-param: T=bool" {
+    let r = run_in_fiber(|| true)
+    assert(r == true)
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Generic fn с closure-param НЕ внутри spawn — sanity-check
+// (этот путь работал и до Ф.4, проверяем что не сломали)
+// ──────────────────────────────────────────────────────────────────────────
+
+fn just_call[T](body fn() -> T) -> T => body()
+
+test "generic fn без spawn: T=int" {
+    let r = just_call(|| 100)
+    assert(r == 100)
+}
+
+test "generic fn без spawn: T=str" {
+    let r = just_call(|| "ok")
+    assert(r == "ok")
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Multiple spawns одного generic fn — каждая mono'д инстанция получает
+// свой spawn_id, fwd-decls коректны
+// ──────────────────────────────────────────────────────────────────────────
+
+fn spawn_twice[T](body fn() -> T) -> int {
+    let mut count = 0
+    supervised {
+        spawn { body(); count += 1 }
+        spawn { body(); count += 1 }
+    }
+    count
+}
+
+test "mono spawn: множественные spawns в одной generic fn" {
+    let c1 = spawn_twice(|| 1)
+    assert(c1 == 2)
+
+    let c2 = spawn_twice(|| "x")
+    assert(c2 == 2)
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Plan 48 Ф.7.6 sanity: --mono-depth не должен ломать нормальные тесты
+// (этот тест проходит при любом разумном --mono-depth, default 500)
+// ──────────────────────────────────────────────────────────────────────────
+
+test "mono depth sanity: generic call глубиной 3 уровня" {
+    let r = run_in_fiber(|| run_in_fiber(|| run_in_fiber(|| 42)))
+    assert(r == 42)
+}

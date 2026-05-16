@@ -23,9 +23,23 @@
  *   nova_fail_pop();
  */
 
+/* Plan 49 Ф.0: kinded throws — у throw'а есть «вид», переживающий longjmp.
+ * USER = обычная пользовательская ошибка (throw, ?, !!, assert);
+ * CANCEL = кооперативная отмена scope'а — не «убегает» наружу.
+ * См. supervised_run + emit_with kind-aware dispatch (Ф.3). */
+typedef enum {
+    NOVA_THROW_USER   = 0,
+    NOVA_THROW_CANCEL = 1,
+} NovaThrowKind;
+
 typedef struct NovaFailFrame {
     jmp_buf            jmp;
     nova_str           error_msg;   /* payload on throw */
+    NovaThrowKind      error_kind;  /* Plan 49 Ф.0: USER (default) или CANCEL */
+    /* Plan 49 Ф.1: typed cancel reason. `error_reason_ptr` хранит box'нутый
+     * `T` (`void*`); для `CancelToken[str]` (default) указывает на `nova_str`.
+     * NULL когда reason нет (USER-throw без структурированного payload). */
+    void*              error_reason_ptr;
     struct NovaFailFrame* prev;
 } NovaFailFrame;
 
@@ -45,10 +59,13 @@ static inline void nova_fail_pop(void) {
     if (_nova_fail_top) _nova_fail_top = _nova_fail_top->prev;
 }
 
-/* Throw: store error, longjmp to nearest handler */
+/* Throw: store error, longjmp to nearest handler.
+ * Plan 49 Ф.0: stamp kind=USER, reason=NULL (default — обычная ошибка). */
 static inline void nova_throw(nova_str msg) {
     if (_nova_fail_top) {
         _nova_fail_top->error_msg = msg;
+        _nova_fail_top->error_kind = NOVA_THROW_USER;
+        _nova_fail_top->error_reason_ptr = NULL;
         longjmp(_nova_fail_top->jmp, 1);
     }
     /* No handler: abort. Plan 20 Ф.8 follow-up: flush stdout перед
@@ -61,8 +78,43 @@ static inline void nova_throw(nova_str msg) {
     abort();
 }
 
+/* Plan 49 Ф.0: cancel-throw — kind=CANCEL, reason=NULL (Ф.1 заполняет
+ * caller через _reason вариант). Без активного handler'а отмена бесполезна
+ * (некому её перехватить) — abort с диагностикой. */
+static inline void nova_throw_cancel(nova_str msg) {
+    if (_nova_fail_top) {
+        _nova_fail_top->error_msg = msg;
+        _nova_fail_top->error_kind = NOVA_THROW_CANCEL;
+        _nova_fail_top->error_reason_ptr = NULL;
+        longjmp(_nova_fail_top->jmp, 1);
+    }
+    fflush(stdout);
+    fprintf(stderr, "nova: cancel-throw outside any supervised scope: %.*s\n",
+        (int)msg.len, msg.ptr);
+    abort();
+}
+
+/* Plan 49 Ф.1: cancel-throw с типизированной причиной. `reason_ptr` —
+ * box'нутый `T` (caller-owned, переживает scope). Для CancelToken[str]
+ * указывает на nova_str; для CancelToken[T] (Ф.6) — на box'нутый T. */
+static inline void nova_throw_cancel_reason(nova_str msg, void* reason_ptr) {
+    if (_nova_fail_top) {
+        _nova_fail_top->error_msg = msg;
+        _nova_fail_top->error_kind = NOVA_THROW_CANCEL;
+        _nova_fail_top->error_reason_ptr = reason_ptr;
+        longjmp(_nova_fail_top->jmp, 1);
+    }
+    fflush(stdout);
+    fprintf(stderr, "nova: cancel-throw outside any supervised scope: %.*s\n",
+        (int)msg.len, msg.ptr);
+    abort();
+}
+
 #define NOVA_TRY(frame)   (nova_fail_push(&(frame)), setjmp((frame).jmp) == 0)
 #define NOVA_CATCH(frame) (nova_fail_pop(), (frame).error_msg)
+/* Plan 49 Ф.0: kind/reason accessors — read AFTER setjmp returned non-zero. */
+#define NOVA_CATCH_KIND(frame)   ((frame).error_kind)
+#define NOVA_CATCH_REASON(frame) ((frame).error_reason_ptr)
 #define NOVA_THROW(msg)   nova_throw(nova_str_from_cstr(msg))
 
 /* Plan 19, C7 (D85): postfix `!!` runtime helpers.
@@ -405,11 +457,20 @@ static inline nova_unit Nova_Fail_fail(nova_str msg) {
  * User override: `with Time = handler Time { sleep(ms) { ... } now() { ... } } { body }`
  * — для тестов (fixed clock, mock sleep). */
 
-/* Layout matches codegen-generated layout for user effects. */
+/* Layout matches codegen-generated layout for user effects.
+ *
+ * Plan 48 Ф.5: now_ms / now_ns добавлены чтобы handlers.nv (fixed_ms,
+ * mut_clock — std/testing/handlers.nv:171-201) могли регистрировать
+ * полный набор Time-методов. Default-импл (Nova_Time_now_ms / _now_ns)
+ * — wrapper'ы вокруг now() (которая возвращает monotonic ms). Field
+ * order MUST совпадать с codegen-emitted layout: ctx, sleep, now,
+ * now_ms, now_ns (см. emit_handler_decl / fixed_ms vtable init). */
 typedef struct {
     void*     ctx;
     nova_unit (*sleep)(void* _ctx, nova_int ms);
     nova_int  (*now)(void* _ctx);
+    nova_int  (*now_ms)(void* _ctx);
+    nova_int  (*now_ns)(void* _ctx);
 } NovaVtable_Time;
 
 #ifdef _MSC_VER

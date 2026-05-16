@@ -430,6 +430,10 @@ pub struct CEmitter {
     /// Plan 48 Ф.3: mangled type name → (base_type_name, type_args_c).
     /// Uses RefCell so type_ref_to_c (&self) can register instances.
     generic_type_instance_info: std::cell::RefCell<HashMap<String, (String, Vec<String>)>>,
+    /// Plan 48 Ф.7.6: maximum monomorphization-worklist drain depth.
+    /// Default 500; overridable via CLI `--mono-depth=N` or env var
+    /// `NOVA_MONO_DEPTH` (CLI wins). Guards against polymorphic recursion.
+    mono_depth_limit: usize,
 }
 
 /// Plan 20 Ф.4: per-defer-stmt entry — tracks one `defer { ... }` or
@@ -574,7 +578,20 @@ impl CEmitter {
             generic_type_methods: HashMap::new(),
             generic_type_defs_buf: String::new(),
             generic_type_instance_info: std::cell::RefCell::new(HashMap::new()),
+            // Plan 48 Ф.7.6: NOVA_MONO_DEPTH env var still honored as a
+            // fallback; CLI `--mono-depth=N` overrides via set_mono_depth_limit.
+            mono_depth_limit: std::env::var("NOVA_MONO_DEPTH").ok()
+                .and_then(|s| s.parse::<usize>().ok())
+                .filter(|n| *n > 0)
+                .unwrap_or(500),
         }
+    }
+
+    /// Plan 48 Ф.7.6: CLI override for the monomorphization-worklist drain
+    /// depth limit. Called from `nova build` / `nova test` / `nova test-build`
+    /// when `--mono-depth=N` is set; takes priority over `NOVA_MONO_DEPTH`.
+    pub fn set_mono_depth_limit(&mut self, n: usize) {
+        if n > 0 { self.mono_depth_limit = n; }
     }
 
     /// Enable source-annotation mode: codegen will insert `/* SRC: ... */`
@@ -1348,14 +1365,10 @@ impl CEmitter {
         }
 
         // Plan 48: drain monomorphization worklist to fixpoint (R3: polymorphic recursion guard).
-        // Ф.7.6: limit конфигурируется через NOVA_MONO_DEPTH env var (default 500).
-        // Полноценный CLI flag `--mono-depth=N` — V2 (требует BuildOpts расширения).
+        // Ф.7.6: limit задаётся через CLI `--mono-depth=N` (set_mono_depth_limit)
+        // или fallback на env var `NOVA_MONO_DEPTH`; оба читаются в `new()`.
         {
-            const DEFAULT_MONO_DEPTH_LIMIT: usize = 500;
-            let limit = std::env::var("NOVA_MONO_DEPTH").ok()
-                .and_then(|s| s.parse::<usize>().ok())
-                .filter(|n| *n > 0)
-                .unwrap_or(DEFAULT_MONO_DEPTH_LIMIT);
+            let limit = self.mono_depth_limit;
             let mut safety = 0usize;
             while !self.mono_worklist.is_empty() {
                 safety += 1;
@@ -1363,7 +1376,7 @@ impl CEmitter {
                     return Err(format!(
                         "instantiation depth limit {} exceeded (possible polymorphic recursion); \
                          add a non-generic base case, use explicit bounds to terminate, \
-                         or raise via NOVA_MONO_DEPTH env var",
+                         or raise via --mono-depth=N CLI flag (or NOVA_MONO_DEPTH env var)",
                         limit
                     ));
                 }
@@ -2100,11 +2113,37 @@ impl CEmitter {
         self.line("}");
 
         // Close fail-frame outer if we opened it
-        if fframe.is_some() {
+        if let Some(ff) = &fframe {
             self.indent -= 1;
             self.line("} else {");
             self.indent += 1;
-            // Fail path: handler already ran; result is unit/zero.
+            // Plan 49 Ф.3: kind-aware re-dispatch.
+            // CANCEL throw НЕ обработан этим Fail-handler'ом (отмена
+            // структурна, не ошибка) — re-throw нагору с тем же reason.
+            // Pop fail-frame ПЕРЕД re-throw чтобы next-outer-frame
+            // получил throw, не наш собственный (защита от двойного unwind,
+            // см. Plan 49 Риск R3).
+            self.line(&format!("if ({ff}.error_kind == NOVA_THROW_CANCEL) {{",
+                ff = ff));
+            self.indent += 1;
+            self.line("nova_fail_pop();");
+            // Также pop interrupt frame чтобы инвариант stack discipline
+            // сохранился (open/close симметрично с normal path).
+            self.line("nova_interrupt_pop();");
+            // Restore handlers — отмена не должна оставить scope handlers
+            // активным; emit_with normal-path делает то же ниже.
+            for (effect_name, prev_var) in saves.iter().rev() {
+                self.line(&format!("_nova_handler_{eff} = {prev};",
+                    eff = effect_name, prev = prev_var));
+            }
+            self.line(&format!(
+                "nova_throw_cancel_reason({ff}.error_msg, {ff}.error_reason_ptr);",
+                ff = ff));
+            self.indent -= 1;
+            self.line("}");
+            // USER path: handler already ran; result is unit/zero. (Existing
+            // semantics: D65 Fail-handler сам decide'ит результат через
+            // interrupt v ИЛИ throw; если throw — мы здесь, результат default).
             match category {
                 WithResultCategory::IntLike | WithResultCategory::UnitVoid => {
                     self.line(&format!("{} = ((nova_int)0LL);", result_tmp));
@@ -2671,6 +2710,23 @@ impl CEmitter {
         let saved_indent = self.indent;
         self.indent = 0;
 
+        // Plan 48 Ф.4 ([M-mono-spawn-fwd-decls]): pre-scan `scan_expr_fwd`
+        // emits forward declarations for every spawn-body it sees in the
+        // ORIGINAL module AST, before fn definitions. Monomorphized fn
+        // bodies are synthesized during the mono-worklist drain, AFTER the
+        // pre-scan ran — so spawn-bodies emitted from inside a mono'd fn
+        // have no pre-scan'ed forward decl, and the mono'd fn would
+        // reference `_nova_spawn_N` undefined-identifier. Detect mono
+        // context via non-empty `current_type_subst` and push the missing
+        // forward decl into `mono_fwd_decls`, which gets spliced into the
+        // `/*__MONO_FWD_DECLS__*/` marker at the top of the C file (before
+        // any fn definition). Idempotent: each spawn_id is unique per
+        // counter, no risk of duplicates.
+        if !self.current_type_subst.is_empty() {
+            self.mono_fwd_decls.push_str(&format!(
+                "static void {}(mco_coro* _co);\n", spawn_id));
+        }
+
         self.line(&format!("static void {}(mco_coro* _co) {{", spawn_id));
         self.indent += 1;
         // Plan 44.5 Layer 5: _c всегда нужен — entry function reads
@@ -2764,17 +2820,17 @@ impl CEmitter {
         self.line("} else {");
         self.indent += 1;
         // Plan 44.5 Layer 5: error reporting — remote vs local.
-        // Remote (parent_scope != NULL, worker'е): atomic CAS на parent.first_error_atomic.
-        // Local (parent_scope == NULL): old path через scope arrays.
+        // Plan 49 Ф.2 + Ф.5: kinded — пробрасываем _ff.error_kind / error_reason_ptr.
+        // Local path: USER-precedence через nova_fiber_report_error_kinded.
+        // Remote path: kinded atomic report (compare-kind CAS-loop —
+        // CANCEL→USER overwrite, иначе keep).
         self.line("if (_c->_nova_parent_scope) {");
         self.indent += 1;
-        self.line("const void* _exp = NULL;");
-        self.line("(void)nova_aptr_cas(&_c->_nova_parent_scope->first_error_atomic, &_exp, (const void*)_ff.error_msg.ptr);");
-        self.line("_c->_nova_parent_scope->cancel_requested = true;");
+        self.line("nova_fiber_report_atomic_kinded(_c->_nova_parent_scope, _ff.error_msg.ptr, _ff.error_kind, _ff.error_reason_ptr);");
         self.indent -= 1;
         self.line("} else {");
         self.indent += 1;
-        self.line("nova_fiber_report_error(_ff.error_msg.ptr);");
+        self.line("nova_fiber_report_error_kinded(_ff.error_msg.ptr, _ff.error_kind, _ff.error_reason_ptr);");
         self.indent -= 1;
         self.line("}");
         self.indent -= 1;
@@ -4660,6 +4716,7 @@ impl CEmitter {
         Ok(())
     }
 
+
     /// Emit a type-erased version of a generic method (instance or static).
     /// Type params in recv.generics map to void*.
     fn emit_generic_method_erased(&mut self, f: &FnDecl) -> Result<(), String> {
@@ -4862,6 +4919,7 @@ impl CEmitter {
         Ok(())
     }
 
+
     // ---- Plan 48: monomorphization helpers ----
 
     /// Plan 48: sanitize a C type string to a valid C identifier component.
@@ -4900,6 +4958,66 @@ impl CEmitter {
             .collect::<Vec<_>>()
             .join("__");
         format!("{}____{}", base_c_name, args)
+    }
+
+    /// Plan 48 Ф.7.4 (partial): try to infer mono type-args for a bare variant
+    /// constructor call like `Ok2(42)` where the parent sum-type is generic.
+    /// Returns (parent_type_name, mangled_instance_c_name, type_args_c) when:
+    ///   - the variant's parent type is a generic template
+    ///   - the variant is tuple-shaped with at least one positional arg
+    ///   - every generic param can be inferred from a corresponding arg's C type
+    /// On success, also enqueues the instance for mono emission.
+    ///
+    /// Returns None for unit variants (`Err2`) or when inference is incomplete —
+    /// caller falls back to the erased emit path. Unit-variant inference would
+    /// need usage-context propagation (deferred to V2).
+    fn try_infer_variant_mono_args(
+        &self,
+        variant_name: &str,
+        args: &[crate::ast::CallArg],
+    ) -> Option<(String, String, Vec<String>)> {
+        use crate::ast::{TypeDeclKind, SumVariantKind};
+        // 1. Find parent sum-type by variant name.
+        let (parent_type, _) = self.find_variant(variant_name)?;
+        // 2. Must be a generic template (has type params).
+        let template = self.generic_type_templates.get(&parent_type)?.clone();
+        if template.generics.is_empty() { return None; }
+        // 3. Must be Sum with the variant present and tuple-shaped.
+        let variants = match &template.kind {
+            TypeDeclKind::Sum(vs) => vs,
+            _ => return None,
+        };
+        let variant = variants.iter().find(|v| v.name == variant_name)?;
+        let field_types = match &variant.kind {
+            SumVariantKind::Tuple(tys) => tys.clone(),
+            // Unit / record variants are out of scope for this helper.
+            _ => return None,
+        };
+        if field_types.is_empty() || args.is_empty() { return None; }
+        // 4. Infer subst[T] from each (declared field type, arg C type).
+        let mut subst: Vec<(String, Option<String>)> = template.generics.iter()
+            .map(|g| (g.name.clone(), None))
+            .collect();
+        for (field_ty, arg) in field_types.iter().zip(args.iter()) {
+            let arg_c = self.infer_expr_c_type(arg.expr());
+            Self::infer_type_param_binding(field_ty, &arg_c, &mut subst);
+        }
+        // 5. Require every generic param resolved.
+        let type_args_c: Vec<String> = subst.iter()
+            .map(|(_, opt)| opt.clone())
+            .collect::<Option<Vec<String>>>()?;
+        // 6. Compute mangled instance name and enqueue for mono emit.
+        let mangled = Self::compute_generic_type_c_name(&parent_type, &type_args_c);
+        if !self.emitted_generic_type_instances.contains(&mangled) {
+            let mut wl = self.generic_type_worklist.borrow_mut();
+            if !wl.iter().any(|(_, _, m)| m == &mangled) {
+                wl.push((parent_type.clone(), type_args_c.clone(), mangled.clone()));
+            }
+        }
+        self.generic_type_instance_info.borrow_mut()
+            .entry(mangled.clone())
+            .or_insert_with(|| (parent_type.clone(), type_args_c.clone()));
+        Some((parent_type, mangled, type_args_c))
     }
 
     /// Plan 48 Ф.0: resolve concrete type args for a generic fn call.
@@ -5600,8 +5718,12 @@ impl CEmitter {
                 self.out = saved_out;
             }
             depth += 1;
-            if depth > 500 {
-                return Err("generic type instantiation depth limit exceeded (possible recursive generic types)".into());
+            if depth > self.mono_depth_limit {
+                return Err(format!(
+                    "generic type instantiation depth limit {} exceeded (possible recursive generic types); \
+                     raise via --mono-depth=N CLI flag (or NOVA_MONO_DEPTH env var)",
+                    self.mono_depth_limit
+                ));
             }
         }
         Ok(())
@@ -6200,7 +6322,15 @@ impl CEmitter {
                     // TurboFish calls to other generic methods with K/V unknowns).
                     return self.emit_generic_static_method_stub(f);
                 }
-                // Instance methods on generic types: type-erased emit.
+                // Instance methods on generic types. Concrete-instance code
+                // is emitted via drain_generic_type_worklist →
+                // emit_generic_type_instance whenever the type is monomorphized
+                // (Plan 48 Ф.3). The erased emit below remains as the V1
+                // fallback for code paths the mono pipeline doesn't yet cover:
+                // bare unit-variant references like `let r = Err2` where T
+                // cannot be inferred from the constructor alone. Ф.7.4 is
+                // therefore kept partial — full removal blocks on usage-context
+                // inference for unit variants (tracked as V2 follow-up).
                 return self.emit_generic_method_erased(f);
             }
         }
@@ -7399,6 +7529,24 @@ impl CEmitter {
             }
             _ => self.emit_expr(expr),
         }
+    }
+
+    /// Plan 48 Ф.4 ([M-spawn-closure-capture-mono]): if `name` is captured by
+    /// the current spawn-body, return the C expression to read it from the
+    /// spawn ctx (`_c->name` or `(*_c->name)`). Returns `None` otherwise so
+    /// the caller can use the bare identifier. Centralizes the rewrite so
+    /// both Ident reads and indirect uses (closure-call callee, address-of
+    /// for spawn nesting) stay consistent.
+    fn spawn_capture_access(&self, name: &str) -> Option<String> {
+        let caps = self.current_spawn_captures.as_ref()?;
+        if !caps.contains(name) { return None; }
+        let by_value = self.current_spawn_capture_by_value.as_ref()
+            .map(|s| s.contains(name)).unwrap_or(false);
+        Some(if by_value {
+            format!("_c->{}", name)
+        } else {
+            format!("(*_c->{})", name)
+        })
     }
 
     fn emit_expr(&mut self, expr: &Expr) -> Result<String, String> {
@@ -8973,14 +9121,24 @@ impl CEmitter {
             if let Some((param_tys, ret_ty)) = self.fn_param_sigs.get(name).cloned() {
                 let mut arg_strs = Vec::new();
                 for a in args { arg_strs.push(self.emit_expr(a.expr())?); }
+                // Plan 48 Ф.4 ([M-spawn-closure-capture-mono]): when this
+                // closure call lives inside a spawn-body whose parent fn is
+                // monomorphized, the fn-param identifier (`body`) is actually
+                // captured into the spawn ctx. We must reach it via `_c->body`
+                // (by-value) or `(*_c->body)` (by-pointer) — same rewrite that
+                // emit_expr(Ident) does for plain reads. Without this, the
+                // generated C references an undeclared identifier in the
+                // spawn-entry function.
+                let callee_expr = self.spawn_capture_access(name);
+                let callee_str = callee_expr.as_deref().unwrap_or(name.as_str());
                 // Determine which NovaClos macro to use based on (params, ret) types
                 let macro_name = Self::clos_call_macro(&param_tys, &ret_ty);
                 return match macro_name {
                     Some(m) => {
                         if arg_strs.is_empty() {
-                            Ok(format!("{}({})", m, name))
+                            Ok(format!("{}({})", m, callee_str))
                         } else {
-                            Ok(format!("{}({}, {})", m, name, arg_strs.join(", ")))
+                            Ok(format!("{}({}, {})", m, callee_str, arg_strs.join(", ")))
                         }
                     }
                     None => {
@@ -8990,12 +9148,12 @@ impl CEmitter {
                         let mut cast_params = vec!["void*".to_string()];
                         cast_params.extend(param_tys.iter().cloned());
                         let cast_params_str = cast_params.join(", ");
-                        let mut all_args = vec![format!("((NovaClosBase*)({}))->env", name)];
+                        let mut all_args = vec![format!("((NovaClosBase*)({}))->env", callee_str)];
                         all_args.extend(arg_strs.iter().cloned());
                         Ok(format!("(({ret}(*)({params}))(((NovaClosBase*)({n}))->fn))({args})",
                             ret = ret_ty,
                             params = cast_params_str,
-                            n = name,
+                            n = callee_str,
                             args = all_args.join(", ")))
                     }
                 };
@@ -9005,7 +9163,20 @@ impl CEmitter {
         let func_c = match &func.kind {
             ExprKind::Ident(name) => {
                 if let Some((type_name, _)) = self.find_variant(name) {
-                    format!("nova_make_{}_{}", type_name, name)
+                    // Plan 48 Ф.7.4 (partial): when the parent sum-type is
+                    // generic and we can infer all type-args from the call args
+                    // (e.g. `Ok2(42)` → Result2[nova_int]), route through the
+                    // mono pipeline so the receiver gets a concrete C struct
+                    // type (`Nova_Result2____nova_int*`) and method calls hit
+                    // the mono dispatch path. Otherwise fall back to the erased
+                    // constructor.
+                    if let Some((_, mangled, _)) =
+                        self.try_infer_variant_mono_args(name, args)
+                    {
+                        format!("nova_make_{}_{}", mangled, name)
+                    } else {
+                        format!("nova_make_{}_{}", type_name, name)
+                    }
                 } else {
                     // D84: free-function overload resolution. Если в registry
                     // несколько overloads — резолвим по статическим типам args.
@@ -9147,17 +9318,55 @@ impl CEmitter {
                     }
                 }
                 // D75 (revised, Plan 47): built-in methods on NovaCancelToken*.
+                // Plan 49 Ф.1: `cancel(reason)` принимает optional str reason;
+                // `reason() -> Option[str]` возвращает причину отмены.
                 {
                     let obj_ty = self.infer_expr_c_type(obj);
                     if obj_ty == "NovaCancelToken*" {
                         let obj_c = self.emit_expr(obj)?;
                         match method.as_str() {
                             "cancel" => {
+                                // Plan 49 Ф.1 + Ф.6: optional reason argument.
+                                // Type-aware boxing:
+                                //   T=str           → nova_cancel_box_str (existing).
+                                //   T=pointer       → cast напрямую в void* (передаём ptr).
+                                //   T=primitive/struct value
+                                //                   → compound literal + memcpy через
+                                //                     nova_cancel_box_copy_raw.
+                                // Без аргументов — default "cancelled" str (T=str default).
+                                if let Some(reason_arg) = args.first() {
+                                    let reason_c = self.emit_expr(reason_arg.expr())?;
+                                    let arg_ty = self.infer_expr_c_type(reason_arg.expr());
+                                    let boxed = if arg_ty == "nova_str" {
+                                        format!("nova_cancel_box_str({})", reason_c)
+                                    } else if arg_ty.ends_with('*') {
+                                        // Pointer types (record/sum/array) — pass as-is.
+                                        format!("(void*)({})", reason_c)
+                                    } else {
+                                        // Primitive/value-struct — compound literal + box.
+                                        format!(
+                                            "nova_cancel_box_copy_raw(&(({}){{ {} }}), (int64_t)sizeof({}))",
+                                            arg_ty, reason_c, arg_ty
+                                        )
+                                    };
+                                    return Ok(format!(
+                                        "(nova_cancel_token_cancel_reason({}, {}), NOVA_UNIT)",
+                                        obj_c, boxed
+                                    ));
+                                }
                                 return Ok(format!(
-                                    "(nova_cancel_token_cancel({}), NOVA_UNIT)", obj_c));
+                                    "(nova_cancel_token_cancel_reason({}, nova_cancel_box_str((nova_str){{.ptr=\"cancelled\",.len=9}})), NOVA_UNIT)",
+                                    obj_c));
                             }
                             "is_cancelled" => {
                                 return Ok(format!("nova_cancel_token_is_cancelled({})", obj_c));
+                            }
+                            "reason" => {
+                                // Plan 49 Ф.1: typed getter — Option[str] для
+                                // CancelToken[str] (default). Ф.6 расширит до
+                                // CancelToken[T] (mono-per-T helper).
+                                return Ok(format!(
+                                    "nova_cancel_token_reason_str({})", obj_c));
                             }
                             "cancelled_by" => {
                                 // `child.cancelled_by(parent)` — направленный
@@ -10758,10 +10967,15 @@ impl CEmitter {
         }
 
         // Non-generic (or generic method — still erased in V1) call path.
-        // is_generic_call is true for variant constructors on generic sum types (void* params).
+        // is_generic_call is true for variant constructors on generic sum types
+        // whose params are erased to `void*`. Plan 48 Ф.7.4 (partial): when
+        // try_infer_variant_mono_args succeeds, the constructor is routed to
+        // the monomorphized instance which expects concrete types — skip the
+        // void* boxing so the arg type matches the mono signature.
         let is_generic_call = if let ExprKind::Ident(name) = &func.kind {
             if let Some((type_name, _)) = self.find_variant(name) {
                 self.generic_types.contains(&type_name)
+                    && self.try_infer_variant_mono_args(name, args).is_none()
             } else { false }
         } else { false };
         // Bidirectional inference: extract callee name for HOF context lookup.
@@ -14625,6 +14839,17 @@ impl CEmitter {
                             }
                             return "NovaOpt_nova_int".into();
                         }
+                        // Plan 48 Ф.7.4 (partial): user-defined generic sum
+                        // constructor with args (`Ok2(42)` etc.) — infer mono
+                        // instance from arg types so the let-binding gets the
+                        // concrete `Nova_Result2____nova_int*` type, not the
+                        // erased `Nova_Result2*`. This is what feeds the mono
+                        // method-dispatch path on subsequent `.method()` calls.
+                        if let Some((_, mangled, _)) =
+                            self.try_infer_variant_mono_args(name, args)
+                        {
+                            return format!("{}*", mangled);
+                        }
                         return format!("Nova_{}*", type_name);
                     }
                     let key = format!("fn_ret_{}", name);
@@ -14765,10 +14990,13 @@ impl CEmitter {
                         }
                     }
                     // D75: instance methods on NovaCancelToken*.
+                    // Plan 49 Ф.1: reason() возвращает Option[str] —
+                    // NovaOpt_nova_str runtime тип.
                     if self.infer_expr_c_type(obj) == "NovaCancelToken*" {
                         match method.as_str() {
                             "is_cancelled" => return "nova_bool".into(),
                             "cancel" | "cancelled_by" => return "nova_unit".into(),
+                            "reason" => return "NovaOpt_nova_str".into(),
                             _ => {}
                         }
                     }

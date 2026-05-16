@@ -190,6 +190,11 @@ enum Cmd {
         /// Keep .c / .exe / .obj build artifacts after the build.
         #[arg(long = "keep-artifacts")]
         keep_artifacts: bool,
+        /// Plan 48 Ф.7.6: max monomorphization-instantiation depth (guards
+        /// against polymorphic recursion). Default 500 unless overridden
+        /// via env var NOVA_MONO_DEPTH.
+        #[arg(long = "mono-depth", value_name = "N")]
+        mono_depth: Option<usize>,
     },
     /// Run Nova tests from a directory or single file.
     ///
@@ -264,6 +269,11 @@ enum Cmd {
         /// Example: `nova test std/ --skip std/runtime/`.
         #[arg(long = "skip", value_name = "PATTERN")]
         skip: Vec<String>,
+        /// Plan 48 Ф.7.6: max monomorphization-instantiation depth (guards
+        /// against polymorphic recursion). Default 500 unless overridden
+        /// via env var NOVA_MONO_DEPTH.
+        #[arg(long = "mono-depth", value_name = "N")]
+        mono_depth: Option<usize>,
     },
     /// Build and run a single Nova test file (used by IDE / CI for one-shot debug).
     #[command(name = "test-build")]
@@ -291,6 +301,11 @@ enum Cmd {
         /// Reserved for Plan 27 — currently accepted but has no effect.
         #[arg(long, value_parser = ["boehm", "malloc"])]
         gc: Option<String>,
+        /// Plan 48 Ф.7.6: max monomorphization-instantiation depth (guards
+        /// against polymorphic recursion). Default 500 unless overridden
+        /// via env var NOVA_MONO_DEPTH.
+        #[arg(long = "mono-depth", value_name = "N")]
+        mono_depth: Option<usize>,
     },
     /// Regenerate std/runtime/*.nv stubs from the runtime registry.
     #[command(name = "regen-runtime")]
@@ -1743,6 +1758,7 @@ fn cmd_build(
     clang: Option<&Path>,
     timeout_secs: u64,
     keep_artifacts: bool,
+    mono_depth: Option<usize>,
 ) -> Result<()> {
     if timeout_secs == 0 {
         return Err(usage_err("--timeout must be >= 1 second"));
@@ -1816,6 +1832,9 @@ fn cmd_build(
 
     let mut emitter = nova_codegen::codegen::CEmitter::new();
     emitter.set_source_for_annotations(src.clone());
+    if let Some(n) = mono_depth {
+        emitter.set_mono_depth_limit(n);
+    }
     let (c_code, warnings) = emitter
         .emit_module(&module)
         .map_err(|e| anyhow!("codegen error: {}", e))?;
@@ -1916,6 +1935,7 @@ fn cmd_test(
     filter_from: Option<&Path>,
     shuffle: Option<Option<u64>>,
     skip: &[String],
+    mono_depth: Option<usize>,
 ) -> Result<()> {
     if timeout_secs == 0 {
         return Err(usage_err("--timeout must be >= 1 second"));
@@ -2068,6 +2088,7 @@ fn cmd_test(
         filter_from,
         shuffle_seed,
         skip,
+        mono_depth,
     };
 
     let summary = test_runner::run_all(opts)?;
@@ -2089,6 +2110,7 @@ fn cmd_test_build(
     timeout_secs: u64,
     keep_artifacts: bool,
     gc: &str,
+    mono_depth: Option<usize>,
 ) -> Result<()> {
     if timeout_secs == 0 {
         bail!("--timeout must be >= 1 second");
@@ -2133,6 +2155,7 @@ fn cmd_test_build(
         timeout: Duration::from_secs(timeout_secs),
         gc_kind,
         verbosity: test_runner::Verbosity::Normal,
+        mono_depth,
     };
 
     test_runner::install_cancel_handler();
@@ -2407,7 +2430,7 @@ fn main() -> ExitCode {
             cmd_doc(path, &format, json_schema, include_private, run_doc_tests, check, watch, coverage, jobs, scrape_examples.as_deref(), strict, mutate_contracts)
             } // else (no --diff)
         }
-        Cmd::Build { file, output, mode, toolchain, vcvars, clang, timeout, keep_artifacts } => cmd_build(
+        Cmd::Build { file, output, mode, toolchain, vcvars, clang, timeout, keep_artifacts, mono_depth } => cmd_build(
             &file,
             output.as_deref(),
             &mode,
@@ -2416,12 +2439,13 @@ fn main() -> ExitCode {
             clang.as_deref(),
             timeout,
             keep_artifacts,
+            mono_depth,
         ),
         Cmd::Test {
             path, filter, jobs, format, mode, toolchain, vcvars, clang, timeout,
             verbose, quiet, results_file, rerun_failed, retries,
             include_stdlib, keep_artifacts, gc,
-            list, filter_from, shuffle, skip,
+            list, filter_from, shuffle, skip, mono_depth,
         } => cmd_test(
             path.as_deref(),
             filter.as_deref(),
@@ -2444,8 +2468,9 @@ fn main() -> ExitCode {
             filter_from.as_deref(),
             shuffle,
             &skip,
+            mono_depth,
         ),
-        Cmd::TestBuild { file, mode, toolchain, vcvars, clang, timeout, keep_artifacts, gc } => cmd_test_build(
+        Cmd::TestBuild { file, mode, toolchain, vcvars, clang, timeout, keep_artifacts, gc, mono_depth } => cmd_test_build(
             &file,
             &mode,
             &toolchain,
@@ -2454,6 +2479,7 @@ fn main() -> ExitCode {
             timeout,
             keep_artifacts,
             gc.as_deref().unwrap_or("boehm"),
+            mono_depth,
         ),
         Cmd::RegenRuntime { check } => cmd_regen_runtime(check),
         Cmd::Contracts(sub) => cmd_contracts(sub),

@@ -1,0 +1,80 @@
+// cancel_negative_behavior_test.nv — Plan 49 Ф.3 negative-behavior verifications.
+//
+// «Negative» здесь: проверяем что НЕ происходит того, что было до Plan 49.
+// Раньше CANCEL-throw обрабатывался как Fail; теперь — нет. Раньше отмена
+// убегала из supervised(cancel:) как ошибка; теперь — нет.
+
+module concurrency.cancel_negative_behavior_test
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Negative 1: with Fail НЕ запускает handler на cancel-throw
+// ──────────────────────────────────────────────────────────────────────────
+
+test "negative: with Fail handler не вызывается на CANCEL" {
+    // До Plan 49 Ф.3 handler сработал бы на "scope cancelled" throw
+    // (он был USER-kind). После — frame.error_kind == CANCEL → re-throw
+    // дальше, handler не запускается, scope-выход через outer supervised.
+    let tok = CancelToken.new()
+    let mut handler_fired = false
+    let _ = with Fail[int] = |_e| {
+        handler_fired = true
+        0
+    } {
+        supervised(cancel: tok) {
+            spawn { tok.cancel() }
+            spawn { for _i in 0..1000 { } }
+        }
+        0
+    }
+    // CANCEL throw НЕ долетел до with Fail (отмена не убегает),
+    // потому handler НЕ сработал. Если в будущем regression вернёт
+    // старую семантику — handler_fired станет true и тест упадёт.
+    assert(!handler_fired)
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Negative 2: scope с cancel:tok возвращается, не throw'ит наружу
+// ──────────────────────────────────────────────────────────────────────────
+
+test "negative: cancel НЕ долетает как throw в caller код" {
+    let tok = CancelToken.new()
+    let mut after_scope_executed = false
+    supervised(cancel: tok) {
+        spawn { tok.cancel() }
+        spawn { for _i in 0..1000 { } }
+    }
+    // Если бы CANCEL убегал — мы бы сюда не попали (Fail propagated).
+    // Тот факт что код продолжается после scope = отмена не убежала.
+    after_scope_executed = true
+    assert(after_scope_executed)
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Negative 3: reason() возвращает None до отмены (не Some(garbage))
+// ──────────────────────────────────────────────────────────────────────────
+
+test "negative: reason() до cancel — None, не Some" {
+    let tok = CancelToken.new()
+    let r = tok.reason()
+    let saw_some = match r {
+        Some(_) => true   // если бы возвращали garbage Some — тест упал бы
+        None    => false
+    }
+    assert(!saw_some)
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Negative 4: is_cancelled() = false до cancel() (intent-флаг clean)
+// ──────────────────────────────────────────────────────────────────────────
+
+test "negative: is_cancelled() до cancel — false" {
+    let tok CancelToken[int] = CancelToken.new()
+    assert(!tok.is_cancelled())
+    // также для default CancelToken[str]
+    let tok2 = CancelToken.new()
+    assert(!tok2.is_cancelled())
+}

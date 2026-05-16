@@ -173,12 +173,20 @@ typedef struct {
     nova_bool**     fiber_did_throw;     /* dynamic [count] */
     int             capacity;            /* alloc'нутая длина массивов */
     int             count;
-    /* Scope error: first error captured from any fiber. Reset on init. */
+    /* Scope error: first error captured from any fiber. Reset on init.
+     * Plan 49 Ф.2: kind + reason добавлены — supervised_run (Ф.3) различает
+     * USER (re-throw) от CANCEL (silent return). USER-precedence: реальная
+     * ошибка может overwrite предыдущую CANCEL (см. nova_fiber_report_error). */
     const char*     first_error;
+    NovaThrowKind   first_error_kind;     /* USER (default) или CANCEL */
+    void*           first_error_reason;   /* box'нутый T для CANCEL, NULL для USER */
     /* Cancellation: set to true after the first fiber throws.
      * Other fibers see this on their next yield-point and throw "cancelled"
-     * (cooperative cancellation — D50). */
+     * (cooperative cancellation — D50).
+     * Plan 49 Ф.2: cancel_reason_ptr — причина из bound token'а, копируется
+     * при cancel(). Используется nova_fiber_yield для throw'а CANCEL+reason. */
     nova_bool       cancel_requested;
+    void*           cancel_reason_ptr;    /* box'нутый T (TLV-owned), NULL если без причины */
     /* Pending interrupt: when a fiber's handler-method calls `interrupt v`
      * but the matching with-frame lives on main-stack (not in fiber), we
      * cannot longjmp across the mco boundary. Instead we record the
@@ -234,8 +242,16 @@ typedef struct {
      * cooperative cancel других fiber'ов в scope.
      *
      * NULL = no error. Read через nova_aptr_load(acquire) в main thread
-     * после `pending_remote == 0` — корректный happens-before. */
+     * после `pending_remote == 0` — корректный happens-before.
+     *
+     * Plan 49 Ф.5: kind + reason пишутся ПОСЛЕ успешного CAS на msg
+     * (обычный store, не atomic — happens-before гарантирован release/acquire
+     * на msg pointer). Reader (main supervised_run) читает kind/reason
+     * увидев non-NULL msg. USER-precedence: см. nova_fiber_report_atomic_kinded
+     * — compare-kind CAS-loop overwrite CANCEL→USER. */
     nova_atomic_ptr first_error_atomic;
+    NovaThrowKind   first_error_atomic_kind;     /* USER (default) или CANCEL */
+    void*           first_error_atomic_reason;   /* box'нутый T для CANCEL */
     /* Plan 44.5 Layer 5 park/wake: M:N fiber re-dispatch hook.
      * Set by runtime.c on worker scopes (в nova_runtime_init).
      * NULL = single-thread scope (main thread, test scopes) — no M:N.
@@ -495,6 +511,12 @@ typedef struct NovaCancelToken {
     struct NovaCancelToken**  linked;            /* cascade children (GC array) */
     int                       linked_count;
     int                       linked_cap;
+    /* Plan 49 Ф.1: typed reason — box'нутый T (caller-owned, переживает
+     * scope). Для CancelToken[str] указывает на nova_str с сообщением
+     * (default "cancelled" если cancel() без arg). NULL когда cancel()
+     * ещё не вызван. Ф.6 расширит до произвольного T через мономорфизацию. */
+    void*                     reason_ptr;
+    nova_bool                 has_reason;        /* true ↔ cancel() уже сработал */
 } NovaCancelToken;
 
 /* Аллокация GC-managed токена. nova_alloc zero-инициализирует — все поля
@@ -514,9 +536,12 @@ static inline void nova_cancel_token_bind(NovaCancelToken* t, NovaFiberQueue* q)
         abort();
     }
     t->bound_scope = q;
-    /* cancel-before-bind: pending intent пробрасывается в новый scope. */
+    /* cancel-before-bind: pending intent пробрасывается в новый scope.
+     * Plan 49 Ф.2: reason тоже копируется чтобы nova_fiber_yield увидел
+     * её при throw'е CANCEL. */
     if (t->cancel_requested) {
         q->cancel_requested = true;
+        q->cancel_reason_ptr = t->reason_ptr;
         nova_sched_cancel_all_pending(q);
     }
 }
@@ -529,25 +554,39 @@ static inline void nova_cancel_token_unbind(NovaCancelToken* t) {
     t->bound_scope = NULL;
 }
 
-/* Запросить отмену. Idempotent. Всегда записывает intent в сам токен;
- * если привязан к живому scope'у — ставит его cancel_requested + будит
- * parked-fiber'ов; каскадно отменяет linked[]. На отвязанном / завершённом
- * scope'е — безвредно (только intent-флаг). */
-static inline void nova_cancel_token_cancel(NovaCancelToken* t) {
+/* Запросить отмену с типизированной причиной (Plan 49 Ф.1). `reason_ptr` —
+ * box'нутый T (caller-owned). NULL допустим (отмена без структурированной
+ * причины). Idempotent: повторный cancel сохраняет ПЕРВУЮ причину
+ * (first-cancel-wins) — как в Go context.Cause. */
+static inline void nova_cancel_token_cancel_reason(NovaCancelToken* t, void* reason_ptr) {
     if (!t) return;
-    if (t->cancel_requested) return;          /* idempotent */
+    if (t->cancel_requested) return;          /* idempotent — first-cancel-wins */
     t->cancel_requested = true;
+    t->reason_ptr = reason_ptr;
+    t->has_reason = true;
     if (t->bound_scope) {
         t->bound_scope->cancel_requested = true;
+        /* Plan 49 Ф.2: пропагируем reason в scope queue чтобы nova_fiber_yield
+         * увидел причину при throw'е CANCEL. */
+        t->bound_scope->cancel_reason_ptr = reason_ptr;
         /* Plan 22 Ф.4 (D93): wake all parked fiber'ов через registered
          * stop_cb's — immediate, не дожидаясь следующего yield-point'а. */
         nova_sched_cancel_all_pending(t->bound_scope);
     }
-    /* Каскад: отменяем все linked-токены (kill-switch composition). */
+    /* Каскад: отменяем все linked-токены (kill-switch composition).
+     * Plan 49 Ф.6 расширит каскад типизированной конвертацией через `From`;
+     * сейчас child получает тот же reason_ptr (same-type предположение). */
     for (int i = 0; i < t->linked_count; i++) {
         NovaCancelToken* other = t->linked[i];
-        if (other) nova_cancel_token_cancel(other);
+        if (other) nova_cancel_token_cancel_reason(other, reason_ptr);
     }
+}
+
+/* Backward-compatible wrapper: cancel без явной причины. Plan 49 Ф.1:
+ * default reason — NULL (caller-сайт codegen передаёт `"cancelled"` для
+ * CancelToken[str] чтобы reason() возвращал Some, а не None). */
+static inline void nova_cancel_token_cancel(NovaCancelToken* t) {
+    nova_cancel_token_cancel_reason(t, NULL);
 }
 
 /* Чтение intent-флага без yield. Не throws. Отражает «был ли вызван
@@ -555,6 +594,60 @@ static inline void nova_cancel_token_cancel(NovaCancelToken* t) {
 static inline nova_bool nova_cancel_token_is_cancelled(NovaCancelToken* t) {
     if (!t) return false;
     return t->cancel_requested;
+}
+
+/* Plan 49 Ф.1: возвращает box'нутую причину отмены или NULL если отмена
+ * ещё не вызвана / была без reason. Caller'у вернётся `Option[T]` на
+ * Nova-уровне (NULL → None, иначе Some). */
+static inline void* nova_cancel_token_reason(NovaCancelToken* t) {
+    if (!t) return NULL;
+    if (!t->has_reason) return NULL;
+    return t->reason_ptr;
+}
+
+/* Plan 49 Ф.1: проверка наличия reason — нужна codegen'у чтобы решить
+ * между None и Some(deref(reason_ptr)). Отделена от is_cancelled потому
+ * что cancel может быть вызван с NULL reason (отмена без причины). */
+static inline nova_bool nova_cancel_token_has_reason(NovaCancelToken* t) {
+    if (!t) return false;
+    return t->has_reason && t->reason_ptr != NULL;
+}
+
+/* Plan 49 Ф.1: typed-getter для CancelToken[str] — возвращает Option[str].
+ * `reason_ptr` хранит box'нутый nova_str (caller-side boxed на cancel-site).
+ * Codegen дергает эту функцию для `tok.reason()` когда T=str (default).
+ * Ф.6 добавит per-T mono'д варианты (`nova_cancel_token_reason_<T>`). */
+static inline NovaOpt_nova_str nova_cancel_token_reason_str(NovaCancelToken* t) {
+    NovaOpt_nova_str r;
+    if (!t || !t->has_reason || t->reason_ptr == NULL) {
+        r.tag = NOVA_TAG_Option_None;
+        r.value = (nova_str){0, 0};
+        return r;
+    }
+    r.tag = NOVA_TAG_Option_Some;
+    r.value = *(nova_str*)t->reason_ptr;
+    return r;
+}
+
+/* Plan 49 Ф.1: helper — alloc copy of nova_str on GC heap so reason
+ * outlives the caller's stack frame. Used by codegen для `tok.cancel(reason)`
+ * когда T=str (default CancelToken). */
+static inline void* nova_cancel_box_str(nova_str s) {
+    nova_str* boxed = (nova_str*)nova_alloc(sizeof(nova_str));
+    *boxed = s;
+    return (void*)boxed;
+}
+
+/* Plan 49 Ф.6: generic box для CancelToken[T] где T ≠ str — memcpy
+ * произвольного size'а в GC-heap, возврат void*. Codegen эмитит
+ * через compound literal: `nova_cancel_box_copy_raw(&((T){val}), sizeof(T))`.
+ * Per-T un-box на стороне reason()-getter'а (см. emit_c.rs). */
+static inline void* nova_cancel_box_copy_raw(const void* src, int64_t size) {
+    void* boxed = nova_alloc((size_t)size);
+    if (src && size > 0) {
+        memcpy(boxed, src, (size_t)size);
+    }
+    return boxed;
 }
 
 /* Направленный каскад: Nova-уровень `child.cancelled_by(parent)` — когда
@@ -698,13 +791,95 @@ extern __thread volatile int*   _nova_preempt_ptr;
  * функцию. Worker'е _nova_active_scope = &w->scope (worker's own scope,
  * не parent) — вызов report_error пошёл бы в wrong scope. Codegen
  * routes на _c->_nova_parent_scope.first_error_atomic CAS вместо. */
+/* Plan 49 Ф.2: kinded report — USER-precedence таблица:
+ *   current=(none)  → write (CANCEL или USER)
+ *   current=CANCEL  → keep если incoming=CANCEL; overwrite если USER
+ *   current=USER    → keep всегда (first-USER-wins)
+ * Это даёт: реальная ошибка ВСЕГДА surface'ится наружу, даже если отмена
+ * случилась раньше. Go errgroup делает first-wins и ТЕРЯЕТ реальную
+ * ошибку после cancel'а — у нас она не теряется (см. Plan 49 раздел 4). */
+static inline void nova_fiber_report_error_kinded(const char* msg,
+                                                  NovaThrowKind kind,
+                                                  void* reason_ptr) {
+    if (!_nova_active_scope || _nova_active_slot < 0) return;
+    _nova_active_scope->fiber_error[_nova_active_slot] = msg;
+    NovaFiberQueue* q = _nova_active_scope;
+    if (q->first_error == NULL) {
+        q->first_error = msg;
+        q->first_error_kind = kind;
+        q->first_error_reason = reason_ptr;
+    } else if (q->first_error_kind == NOVA_THROW_CANCEL && kind == NOVA_THROW_USER) {
+        /* USER overwrite CANCEL — реальная ошибка приоритетнее отмены. */
+        q->first_error = msg;
+        q->first_error_kind = kind;
+        q->first_error_reason = reason_ptr;
+    }
+    /* USER errors також сигналят cancel_requested (peer fibers пробудятся
+     * и выйдут через CANCEL); CANCEL errors не сбрасывают чужие USER'ы. */
+    q->cancel_requested = true;
+}
+
+/* Backward-compatible wrapper для existing codegen — старый report_error
+ * без kind/reason считает throw USER (текущая семантика). Когда codegen
+ * перейдёт на kinded-emit, эту обёртку можно будет удалить. */
 static inline void nova_fiber_report_error(const char* msg) {
-    if (_nova_active_scope && _nova_active_slot >= 0) {
-        _nova_active_scope->fiber_error[_nova_active_slot] = msg;
-        if (_nova_active_scope->first_error == NULL) {
-            _nova_active_scope->first_error = msg;
+    nova_fiber_report_error_kinded(msg, NOVA_THROW_USER, NULL);
+}
+
+/* Plan 49 Ф.5: M:N cross-worker kinded error report.
+ * Worker fiber'е (parent_scope != NULL): CAS msg pointer + USER-precedence
+ * для kind. Используется emit_spawn в remote-error-path (vs local
+ * report_error_kinded). Reader main supervised_run видит kind/reason
+ * через usual release/acquire на msg pointer.
+ *
+ * Algorithm:
+ *   loop {
+ *     exp = aptr_load(first_error_atomic);
+ *     if (exp == NULL):
+ *       CAS NULL → msg; success → store kind/reason → set cancel_requested → break
+ *     else: // already set
+ *       cur_kind = first_error_atomic_kind;
+ *       if (cur_kind == CANCEL && incoming == USER):
+ *         CAS prev_msg → msg; success → overwrite kind/reason → break
+ *       else: keep (CANCEL keep на CANCEL incoming; USER keep на любое)
+ *   }
+ * NB: race: между load kind и CAS msg кто-то ещё может overwrite. Acceptable
+ * (precedence — best-effort hint, не strict ordering): main reader получит
+ * либо USER либо raison; CANCEL никогда не "тащит за собой" USER. */
+static inline void nova_fiber_report_atomic_kinded(NovaFiberQueue* parent,
+                                                   const char* msg,
+                                                   NovaThrowKind kind,
+                                                   void* reason_ptr) {
+    if (!parent || !msg) return;
+    for (;;) {
+        const void* expected = nova_aptr_load(&parent->first_error_atomic);
+        if (expected == NULL) {
+            const void* exp_for_cas = NULL;
+            if (nova_aptr_cas(&parent->first_error_atomic, &exp_for_cas,
+                              (const void*)msg)) {
+                parent->first_error_atomic_kind = kind;
+                parent->first_error_atomic_reason = reason_ptr;
+                parent->cancel_requested = true;
+                return;
+            }
+            /* CAS failed → loop: someone else wrote first, re-evaluate. */
+            continue;
         }
-        _nova_active_scope->cancel_requested = true;
+        /* Already non-NULL: precedence check. */
+        if (parent->first_error_atomic_kind == NOVA_THROW_CANCEL
+            && kind == NOVA_THROW_USER) {
+            const void* exp_for_cas = expected;
+            if (nova_aptr_cas(&parent->first_error_atomic, &exp_for_cas,
+                              (const void*)msg)) {
+                parent->first_error_atomic_kind = kind;
+                parent->first_error_atomic_reason = reason_ptr;
+                /* cancel_requested already true; no change needed. */
+                return;
+            }
+            continue;  /* expected changed под нами — retry. */
+        }
+        /* Keep existing (CANCEL+CANCEL, USER+anything → first-USER-wins). */
+        return;
     }
 }
 
@@ -902,8 +1077,27 @@ static inline void nova_supervised_run_impl(NovaFiberQueue* q,
         }
         /* unreachable */
     }
+    /* Plan 49 Ф.3 + Ф.5: kind-aware re-throw.
+     * CANCEL → scope отменён штатно, наружу НИЧЕГО не летит (отмена сделала
+     *          работу). Это паритет с Go: `ctx` отменён → функция просто
+     *          возвращается.
+     * USER  → реальная ошибка fiber'а. Re-throw на main flow; внешний
+     *          `with Fail` handler пользователя поймает её.
+     * USER-precedence (Ф.2) гарантирует что если БЫЛИ и CANCEL и USER —
+     * naружу всплывёт USER (реальная ошибка не теряется).
+     *
+     * Plan 49 Ф.5: kind для cross-worker (M:N) ошибок читается из
+     * first_error_atomic_kind. Приоритет: local first_error побеждает над
+     * atomic (если оба есть — local зафиксировался первым в этом thread'е).
+     * Если только atomic — берём atomic_kind. */
     if (err) {
-        /* Re-throw on main-flow (back in caller's stack — safe to longjmp). */
+        NovaThrowKind kind = q->first_error ? q->first_error_kind
+                                            : q->first_error_atomic_kind;
+        if (kind == NOVA_THROW_CANCEL) {
+            /* Отмена не убегает наружу. Caller продолжает выполнение. */
+            return;
+        }
+        /* USER: re-throw on main-flow (back in caller's stack — safe to longjmp). */
         nova_throw(nova_str_from_cstr(err));
     }
 }
@@ -932,9 +1126,15 @@ static inline void nova_supervised_run_cancel(NovaFiberQueue* q,
 static inline void nova_fiber_yield(void) {
     mco_coro* co = mco_running();
     if (!co) return;
-    /* Cooperative cancellation check. _nova_active_scope set by step. */
+    /* Cooperative cancellation check. _nova_active_scope set by step.
+     * Plan 49 Ф.2: бросаем kind=CANCEL (вместо USER) и тащим причину
+     * из bound token'а scope'а (если есть). Это позволяет supervised_run
+     * (Ф.3) различать отмену от реальной ошибки и не пробрасывать наружу. */
     if (_nova_active_scope && _nova_active_scope->cancel_requested) {
-        nova_throw(nova_str_from_cstr("scope cancelled"));
+        void* reason = _nova_active_scope->cancel_reason_ptr;
+        nova_throw_cancel_reason(
+            nova_str_from_cstr("scope cancelled"),
+            reason);
     }
     mco_yield(co);
 }
@@ -1202,6 +1402,24 @@ static inline nova_int Nova_Time_now(void) {
         return _nova_handler_Time->now(_nova_handler_Time->ctx);
     }
     return _nova_time_default_now();
+}
+
+/* Plan 48 Ф.5: aliases for handlers.nv `now_ms` / `now_ns` shape.
+ * Default-impl делегирует к now() (which is monotonic ms); now_ns
+ * умножает на 1e6 (overflow безопасен в i64 для разумных значений).
+ * User-handler-path использует vtable-slot напрямую. */
+static inline nova_int Nova_Time_now_ms(void) {
+    if (_nova_handler_Time) {
+        return _nova_handler_Time->now_ms(_nova_handler_Time->ctx);
+    }
+    return _nova_time_default_now();
+}
+
+static inline nova_int Nova_Time_now_ns(void) {
+    if (_nova_handler_Time) {
+        return _nova_handler_Time->now_ns(_nova_handler_Time->ctx);
+    }
+    return _nova_time_default_now() * (nova_int)1000000;
 }
 
 #endif /* NOVA_RT_FIBERS_H */
