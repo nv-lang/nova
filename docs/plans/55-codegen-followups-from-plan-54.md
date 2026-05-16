@@ -13,9 +13,161 @@
 > collision). Логично закрывать вместе с Ф.1/Ф.2 которые тоже про
 > mono-pass.
 >
-> **Приоритет:** P3 — local quality-of-life fixes. Ф.4-Ф.6 блокируют
-> финальное закрытие Plan 52 limitations (spread, type-inference,
-> multi-instance) — после mono-pass fix они тривиальны.
+> **Ревизия 2026-05-16 (prod-grade upgrade):** план повышен до **P1**
+> (был P3). Причины:
+> 1. Ф.4 (mono-pass corruption) — фундаментальный bug, который **уже
+>    блокирует** добавление любых helper-method'ов в generic stdlib
+>    типы. Real prod-grade язык такого не имеет (Go: no generics until
+>    1.18; Rust: monomorphization "always works"; TS: structural всё).
+> 2. Ф.5/Ф.6 — UX блокеры: `let m = ["a":1]` без аннотации **должно**
+>    работать (Rust HashMap! macro, Go map literal, TS object literal).
+>    Workaround "explicit annotation" — это не паритет.
+> 3. Ф.1 — `[]fn->T` в generic-fn — базовый паттерн functional API
+>    (Rust `Vec<Box<dyn Fn>>`, Go `[]func()`). Без него `parallel for`
+>    + `retry` + `pipeline` patterns ограничены.
+> 4. Ф.2 — match-arm inference — основа safe pattern matching.
+>    Rust/Swift делают это идеально, TS narrows полностью.
+> 5. Ф.3 — Duration.into() — блокирует `import std.concurrency.retry`.
+>
+> **Priority:** P1 — пользователь явно потребовал prod-grade. Все
+> упрощения которые «accepted as-is» в исходном плане — пересмотрены.
+
+---
+
+## Ф.0 — Production-grade principles & audit (новое, 2026-05-16)
+
+### Ф.0.1 — Сравнение с Go/Rust/TS (что значит «не хуже»)
+
+| Фича | Go | Rust | TS | Nova сейчас | Nova target |
+|---|---|---|---|---|---|
+| Array of fn типов | `[]func() T` works | `Vec<Box<dyn Fn>>`/`Vec<F>` | `(() => T)[]` | ❌ silently mismatched | ✅ Ф.1 |
+| Match on Option(v) | N/A (no sum types) | exhaustive inference | `if Some(x)` narrow | ❌ leaks stale | ✅ Ф.2 |
+| Method `Self -> str` body `=> "..."` | N/A | работает | работает | ❌ возвращает unit | ✅ Ф.3 |
+| Generic helper methods на user types | N/A | mono всё работает | structural | ❌ corrupt context | ✅ Ф.4 |
+| `let m = {a:1, b:2}` без annot | `map[string]int{...}` нужен type | turbofish/inference | inferred | ❌ выбирает wrong overload | ✅ Ф.5 |
+| Multi-instance generic в одной fn | mono'd separately | mono'd separately | structural | ❌ instance leak | ✅ Ф.6 |
+
+**Acceptance principle:** для каждого Ф.* — repro-test показывает
+«как в Go/Rust/TS работает» + assertion что в Nova работает **так же
+или лучше**. Lower-bound — паритет.
+
+### Ф.0.2 — Production-grade non-negotiables (всем фазам)
+
+Применяется к каждой Ф.1-Ф.6:
+
+1. **Repro-test перед fix** — `nova_tests/plan55/<feature>_repro.nv` с
+   фиксированным EXPECT-маркером. Тест **компилируется и проходит**
+   после fix; **CC-FAIL'ит с понятной диагностикой** до fix (мы видели).
+2. **Negative test** — для каждой фичи добавить тест с **ожидаемой
+   ошибкой**, который проверяет качество диагностики (Plan 36 R7 quality
+   bar: error message → file:line + suggestion).
+3. **Interpreter parity** — `nova run <repro>.nv` даёт **тот же
+   результат** что `nova build && exe`. Если interp ещё не поддерживает —
+   `// SKIP_INTERP: <reason>` маркер + TODO в interp.rs.
+4. **Regression sweep** — после fix запустить **полный** `nova test`
+   release; **0 регрессий**. Документировать diff в commit message.
+5. **`docs/simplifications.md`** — закрывающая запись `[M-<marker>] ✅
+   ЗАКРЫТО (Plan 55 Ф.X, <date>)` с `Где / Было / Закрыто / Test`.
+6. **`docs/project-creation.txt`** — секция «Plan 55 Ф.X (<date>)» с
+   что/почему/как/measurement.
+7. **Commit message** — `feat(55.X): <subject>` или `fix(55.X): ...`,
+   без AI-trailer'ов (per [feedback_commit_trailer]).
+8. **Spec update** — если fix меняет наблюдаемое поведение языка
+   (Ф.5 inference rules, Ф.6 mono semantics) — обновить
+   `spec/decisions/*.md` с rationale.
+9. **Cross-toolchain** — если fix трогает C codegen (Ф.1, Ф.3, Ф.4-Ф.6) —
+   `nova test --filter <fix-area>` с Clang (default) и MSVC если доступен.
+10. **Diagnostic improvement** — каждый Ф.* должен **улучшить** хотя
+    бы одно error-message в области fix (даже если не было запроса) —
+    error должны вести к user-actionable fix.
+
+### Ф.0.3 — Risk register (mitigation для high-risk фаз)
+
+| Phase | Risk | Mitigation | Rollback |
+|---|---|---|---|
+| Ф.4 | mono-pass save/restore затрагивает hot path → perf regression | Bench `nova test` wall-time до/после; threshold ±5% | `git revert <commit>`; патч изолирован одним commit'ом |
+| Ф.4 | Изменение invariant'а в `current_fn_return_ty` ломает другие места | Audit-grep всех `current_fn_return_ty.*=`; verify save/restore parity | Tests catch immediately |
+| Ф.6 | Глобальный mono-pass refactor → каскадные FAIL'ы | Pre-flight: dump mono'd C для 5 «тяжёлых» tests (channel, hashmap, retry, supervised, contracts); diff до/после | Изолированный commit |
+| Ф.5 | Изменение overload resolution → silent breakage | Explicit log: при resolve через turbofish — emit comment `/* MONO: resolved <T>::<m> via turbofish */` (debug only) | Single-call-site change |
+| Ф.1 | NovaArray_void_p может конфликтовать с existing erasure | Audit все usages `void*` в codegen; гарантировать ABI-compatibility | New typedef изолирован |
+| Ф.3 | Duration.into() может затрагивать D73 Into auto-derive | Repro **в обоих режимах** (interp + codegen); diff `nova check` output | Если глубже — выделить в Plan 56 |
+
+### Ф.0.4 — Что raising bar даёт (delta vs original P3 план)
+
+| Дополнение | Что добавляет |
+|---|---|
+| Ф.0.1 сравнение | Чёткий критерий «не хуже Go/Rust/TS» — измеримо |
+| Ф.0.2 non-negotiables | Каждая фаза = atomic prod-ready unit (test + interp + neg + diag + docs) |
+| Ф.0.3 risk register | Безопасный rollback для high-risk Ф.4/Ф.6 |
+| Закрытие interpreter gap | `nova run` parity — раньше игнорировали |
+| Spec sync | Поведенческие изменения зафиксированы в D-блоках |
+| Cross-toolchain test | Clang+MSVC, не только default |
+| Diagnostic improvements | Каждый fix улучшает UX (Plan 36 quality bar) |
+
+### Ф.0.5 — Скрытые моменты (найденные при audit, 2026-05-16)
+
+1. **`[]fn->T` with capture** — Ф.1 нужно проверить closures с
+   capture (`let n = 5; xs.push(|| n)`). NovaClosBase хранит env,
+   но при storage в массиве — env должен сохраняться. Тест:
+   `closure_capture_in_array.nv`.
+2. **Nested mono (mono-call внутри mono'd fn)** — Ф.4 может пропустить
+   nested case: `fn outer[A]() { inner[A]() }` — `current_type_subst`
+   для outer должен быть accessible при mono inner. Тест:
+   `nested_mono_subst.nv`.
+3. **Match arm Block (не Expr)** — Ф.2 helper должен работать и для
+   `Some(v) => { let q = v + 1; q }` (Block with trailing). Сейчас
+   план обрабатывает только Expr arm. Расширить.
+4. **Pattern глубокий** — `Some(Ok(v))` — Ф.2 должен рекурсировать.
+   Иначе `match opt { Some(Ok(v)) => v; ... }` не получит правильный T.
+5. **Duration.into() через `From`-derive** — Ф.3 может оказаться
+   симптомом D73 Into auto-derive bug. Если так — нужно фиксить
+   auto-derive, иначе все `@into() -> T` методы будут broken.
+6. **Mono `with_capacity` collision** — Ф.5 root cause: `HashMap.with_capacity`
+   vs `WriteBuffer.with_capacity` vs `StringBuilder.with_capacity` —
+   3 встроенных типа имеют тот же method. Mono pass должен respect'ить
+   turbofish target **до** name-lookup. Это **не P3**, это **P1
+   correctness** (silent wrong-codegen — самый плохой класс bugs).
+7. **Multi-instance collision корень** — Ф.6 может оказаться leak'ом
+   `current_type_subst` между call-sites. Investigation должна
+   начаться с **dump'а subst** на entry/exit каждого emit_call (debug
+   trace через NOVA_DEBUG_MONO env-var).
+8. **GC roots для array-of-closures** — Ф.1 закрывает codegen, но
+   нужно verify что NovaArray элементы (void* = NovaClos_X*) видимы
+   для Boehm GC. Если NovaArray.data — `T*` где T=void*, Boehm должен
+   conservative-scan их. Тест: `closure_array_gc_stress.nv` (1000
+   closures * 100 циклов, no leak).
+9. **Cross-file resolve для `[]fn->T`** — Plan 35 cross-file generic
+   bounds может frame `[]fn->T` parameter type некорректно. После
+   Ф.1 — verify через cross-file test (`std/concurrency/retry.nv`
+   import).
+10. **Annotate-pass для closures в `[k:v]` literal** — Ф.5 fix может
+    требовать MapLitAnnotator расширение чтобы понимать `[k:fn_expr]`
+    (HashMap[str, fn() -> T]). Test: `hashmap_str_to_fn.nv`.
+
+### Ф.0.6 — Test plan (что добавится)
+
+Минимум **18 новых тестов** (3 на каждую фазу: positive + negative +
+edge case) в `nova_tests/plan55/`:
+
+| Phase | Tests |
+|---|---|
+| Ф.1 | `fn_array_collect_positive.nv`, `fn_array_collect_with_capture.nv`, `negative_fn_array_arity_mismatch.nv`, `closure_array_gc_stress.nv` |
+| Ф.2 | `match_some_v_inference.nv`, `match_nested_pattern.nv`, `match_arm_block_inference.nv`, `negative_match_arm_type_mismatch.nv` |
+| Ф.3 | `duration_into_str.nv`, `into_auto_derive_str.nv`, `retry_via_duration.nv`, `negative_into_wrong_return.nv` |
+| Ф.4 | `hashmap_clone_method.nv`, `generic_helper_chain.nv`, `nested_mono_subst.nv`, `negative_helper_invariant_violation.nv` |
+| Ф.5 | `hashmap_infer_no_annot.nv`, `nested_map_infer.nv`, `negative_map_ambiguous.nv` |
+| Ф.6 | `multi_hashmap_in_fn.nv`, `triple_generic_instance.nv`, `negative_instance_type_mismatch.nv` |
+
+Все — с EXPECT-маркерами (D89) и SKIP_INTERP маркерами где нужно.
+
+### Ф.0.7 — Performance baseline
+
+Перед началом Ф.4 — записать:
+- `nova test` wall-clock (release, 16 cores)
+- Mono'd .c file size для top-5 tests (channel/hashmap/retry)
+- Memory peak во время `nova test --filter mono`
+
+После каждой high-risk фазы (Ф.4, Ф.6) — повторить, threshold ±5%.
 
 ---
 
@@ -94,18 +246,45 @@ type, → T inferred wrong.
 закрытие хранится через `NovaClosBase*` (см. Plan 11 Ф.4). Array
 of closures = `NovaArray_NovaClosBase_p*` или подобный mangled name.
 
-### Acceptance
+### Acceptance (prod-grade)
 
 - `fn collect[T](fns []fn() -> T) -> []T` компилируется и работает.
 - `for f in fns { f() }` корректно вызывает closure через
   `NOVA_CLOS_CALL_*` macro или fallback indirect-call.
-- Test: `nova_tests/concurrency/fn_array_closure_test.nv` — `collect`
-  pattern для T=int/str/bool.
+- **Closure с capture** (`let n = 5; [|| n + 1]`) сохраняет env в массиве.
+- **GC stress test:** 1000 closures × 100 циклов — no leak (через
+  `gc.heap_size()` baseline + assertion `< 2x baseline`).
+- **Interp parity:** `nova run` даёт тот же результат.
+- **Cross-toolchain:** Clang + (MSVC если доступен) — оба компилируют.
+- **Diagnostic:** при использовании `[]fn->T` с wrong arity (например
+  `[|| 1, |x| 2]`) — error на этапе type-check, не codegen.
+- Tests (4):
+  - `nova_tests/plan55/f1_fn_array_collect_positive.nv` — T=int/str/bool.
+  - `nova_tests/plan55/f1_closure_array_with_capture.nv` — capture works.
+  - `nova_tests/plan55/f1_closure_array_gc_stress.nv` — GC scan.
+  - `nova_tests/plan55/f1_negative_fn_array_arity_mismatch.nv` — neg diag.
+
+### Implementation guideline
+
+1. **Runtime:** `compiler-codegen/nova_rt/array.h` — добавить
+   `NOVA_ARRAY_DECL(void_p)` + `NOVA_ARRAY_IMPL(void_p)` с
+   `typedef void* void_p;` (или inline в DECL — но проверить C99-compat).
+2. **codegen `type_ref_to_c`:** для `TypeRef::Array(inner, _)` где
+   `inner = TypeRef::Func{..}` → return `"NovaArray_void_p*"`.
+3. **codegen `resolve_mono_type_args`:** Source 2 inference для `[]T`
+   когда concrete = "NovaArray_void_p" — fallback на Source 2b
+   (closure-arg return-type inference) — он уже умеет.
+4. **codegen emit_for body для `for f in fns`:** при iteration over
+   `NovaArray_void_p*`, элемент `f` имеет тип `void*` (closure pointer).
+   Call `f()` → routing через NOVA_CLOS_CALL_<sig> в зависимости от
+   inferred sig из turbofish T.
+5. **GC:** Boehm conservative-scan'ит data[] как pointer array (T = void*),
+   pointers в env сохраняются.
 
 ### Estimate
 
-~80-120 LOC. Risk medium — затрагивает type_ref_to_c + resolve_mono +
-emit_for body. Зависимостей нет.
+~80-120 LOC + 4 tests. Risk medium — затрагивает type_ref_to_c +
+resolve_mono + emit_for body + array.h runtime. Зависимостей нет.
 
 ---
 
@@ -187,20 +366,30 @@ Helper `pattern_inner_types(pattern, scr_ty)`:
 - User sum-types: `Variant(a, b, c)` — lookup variants schema, type
   поле-binds.
 
-### Acceptance
+### Acceptance (prod-grade)
 
 - `match r { Some(v) => v; None => default }` где `r: NovaOpt_<T>` —
   match-result правильно typed как T.
-- Test: `nova_tests/concurrency/match_arm_inference_test.nv` —
-  Some/None для int/str/bool/user-types.
+- **Nested:** `match opt { Some(Ok(v)) => v; ... }` — рекурсивная
+  pattern_inner_type.
+- **Block arm:** `match opt { Some(v) => { let q = v + 1; q }; ... }`
+  — Block trailing получает правильный inner T.
+- **User sum-types:** `match e { MyVar(a, b) => ... }` — типизированы
+  по variant schema.
+- **Interp parity:** `nova run` matches `nova build`.
+- **No regression:** existing ~30 match-тестов pass.
+- **Scoped restore:** var_types перезапись scoped по arm.
+- Tests (4):
+  - `nova_tests/plan55/f2_match_some_v_inference.nv` — int/str/bool.
+  - `nova_tests/plan55/f2_match_nested_pattern.nv` — Some(Ok(v)).
+  - `nova_tests/plan55/f2_match_arm_block_inference.nv` — Block arm.
+  - `nova_tests/plan55/f2_negative_match_arm_type_mismatch.nv` — diag.
 
 ### Estimate
 
-~80 LOC. Risk medium — изменяет infer_expr_c_type для match (часто
-вызываемый path), может ломать существующие тесты. Mitigation:
-helper'ы сохраняют backward-compat когда `scr_ty` не Optional-like.
-
-Зависимостей нет, но complement'ит Ф.1 (var_types cleanup).
+~120 LOC (Block + nested поверх original 80) + 4 tests. Risk
+medium-low (scoped save/restore изолирует риск). Зависимостей нет,
+но complement'ит Ф.1 (var_types cleanup).
 
 ---
 
@@ -244,16 +433,39 @@ export fn Duration @into() -> str => "..."   // → нужно вернуть st
    maps идёт, where falls into nova_unit default.
 3. Если bug в Into-protocol auto-derive — отдельный path.
 
-### Acceptance
+### Acceptance (prod-grade)
 
 - `Nova_Duration_method_into(d)` возвращает `nova_str`, не `nova_unit`.
 - `std/time/duration.nv` self-test'ы (если есть) проходят.
-- retry_test.nv с full `import std.concurrency.retry` (через duration.nv
+- `retry_test.nv` с full `import std.concurrency.retry` (через duration.nv
   dependency) компилируется.
+- **Generalized `@into() -> T`:** любой user `@into()` метод с return
+  type работает (не только Duration).
+- **D73 Into auto-derive:** если bug в auto-derive — fixed для всех
+  типов.
+- **Interp parity:** `nova run` тот же результат.
+- **Diagnostic:** если `@into()` имеет inconsistent return — error
+  на type-check, не codegen.
+- Tests (4):
+  - `nova_tests/plan55/f3_duration_into_str.nv` — direct Duration.
+  - `nova_tests/plan55/f3_into_auto_derive_str.nv` — generic @into.
+  - `nova_tests/plan55/f3_retry_via_duration.nv` — retry unblock.
+  - `nova_tests/plan55/f3_negative_into_wrong_return.nv` — diag.
+
+### Implementation approach
+
+1. **Repro isolated** — minimum `fn Duration @into() -> str => "test"` →
+   проверить эмитится ли правильный return type.
+2. **Bisect:**
+   - Path A: `emit_fn` для method'а — где Some(TypeRef) → C-string maps?
+   - Path B: D73 Into protocol auto-derivation — какой path выбирается?
+   - Path C: `infer_expr_c_type` для body `=> "..."` — возвращает unit?
+3. **Fix:** в правильном path; если глубже Plan 55 scope (требует
+   рефакторинг D73) — выделить в Plan 56 и описать workaround.
 
 ### Estimate
 
-~30-80 LOC. Risk low (узкий fix), но требует repro + bisect debug.
+~30-80 LOC + 4 tests. Risk low (узкий fix), но требует repro + bisect.
 Зависимостей нет.
 
 ---
@@ -312,17 +524,57 @@ mono-pass invocation chained methods.
 3. `infer_expr_c_type` для Binary::Lt возвращает nova_bool в general
    case, но в mono'd helper — что-то другое перезаписывает
 
-### Acceptance
+### Acceptance (prod-grade)
 
 - [ ] `HashMap.@clone()` + `@merge_from()` в stdlib compile cleanly
-- [ ] 0 регрессий от добавления методов
+- [ ] 0 регрессий от добавления методов (test suite delta = 0 FAIL,
+      ≥ +baseline PASS)
 - [ ] После: M-52-spread-not-supported разблокирован — реализация
-      spread parser/desugar тривиальна (~50 LOC)
+      spread parser/desugar тривиальна (~50 LOC) — **закрыть в той
+      же сессии** для validation
+- [ ] **DEBUG trace tool**: добавить `NOVA_DEBUG_MONO=1` env flag,
+      который при mono-pass dump'ит `(fn_name, type_subst, return_ty)`
+      на entry/exit emit_fn. Позволяет diagnose corruption в будущем.
+- [ ] **Save/restore audit**: grep всех мест где
+      `current_fn_return_ty`/`current_type_subst` пишутся — verify
+      что каждое имеет соответствующее restore.
+- [ ] **Generic helper chain test**: цепочка 5 generic-методов
+      (A→B→C→D→E) — каждый mono'd с разным subst — все правильны.
+- [ ] **Nested mono**: `outer[A]() { inner[A]() }` — inner получает
+      A через outer subst.
+- [ ] **Perf bench**: `nova test` wall-clock до/после; threshold ±5%.
+- [ ] **Spec sync**: если save/restore meaningful — описать invariant
+      в `spec/decisions/03-syntax.md` (D108 mono-pass invariants).
+- Tests (4):
+  - `nova_tests/plan55/f4_hashmap_clone_method.nv` — root repro.
+  - `nova_tests/plan55/f4_generic_helper_chain.nv` — A→B→C→D→E.
+  - `nova_tests/plan55/f4_nested_mono_subst.nv` — outer/inner.
+  - `nova_tests/plan55/f4_negative_helper_invariant_violation.nv` —
+    diag (если возможно).
+
+### Implementation guideline
+
+1. **Investigation phase (must-do before fix):**
+   - Add `NOVA_DEBUG_MONO=1` env-flag → eprintln traces в emit_fn entry/exit.
+   - Repro: backport `HashMap.@clone()` в hashmap.nv, run failing test
+     with NOVA_DEBUG_MONO=1, capture trace.
+   - Identify exact stack-frame where `current_fn_return_ty` flips
+     from "nova_unit" to "nova_int" or `current_type_subst` leaks.
+2. **Fix (predictions, verify by trace):**
+   - `current_fn_return_ty` save/restore around recursive mono'd
+     emit_fn в emit_call.
+   - `current_type_subst` push/pop stack semantics — каждый mono-call
+     должен иметь свой subst on top, restored on return.
+3. **Audit:** все `current_fn_return_ty = ...` и
+   `current_type_subst.clear()` / `.insert(...)` должны иметь
+   matching restore (RAII pattern предпочтительно).
+4. **Rollback:** isolated commit; `git revert` если regression > 1%.
 
 ### Estimate
 
-~50-150 LOC investigation + fix. Risk **high** — затрагивает mono
-pass type-context propagation, может ломать существующее.
+~50-150 LOC investigation + fix + 4 tests + audit tooling. Risk
+**high** — затрагивает mono pass type-context propagation. Mitigation
+через DEBUG trace + audit-grep + perf-bench.
 
 ---
 
@@ -365,16 +617,40 @@ annotate-pass'ом в desugar. Desugar строит `HashMap[K, V].with_capacity
 `std.collections.hashmap.HashMap[K,V].with_capacity` — но требует
 import resolution в desugar (нетривиально).
 
-### Acceptance
+### Acceptance (prod-grade)
 
 - [ ] `let m = [k:v]` без аннотации работает (resolves to HashMap)
 - [ ] Не ломает explicit-annotation case (`let m HashMap[...] = [...]`)
-- [ ] Test: `positive_infer` без аннотации (сейчас закомментирован)
+- [ ] **Nested map literal:** `let m = [k: [k2: v]]` (HashMap of
+      HashMap) — inference rec.
+- [ ] **Mixed value types:** `let m = ["a": ["x":1]]` works.
+- [ ] **Diagnostic improvement:** при ambiguous overload — error
+      с предложением turbofish (Plan 36 R7).
+- [ ] **Interp parity:** `nova run` тот же результат.
+- [ ] **Codegen debug:** при resolve через turbofish — `/* MONO:
+      resolved <T>::<m> via turbofish hint */` comment (debug only).
+- Tests (3+):
+  - `nova_tests/plan55/f5_hashmap_infer_no_annot.nv` — positive.
+  - `nova_tests/plan55/f5_nested_map_infer.nv` — nested.
+  - `nova_tests/plan55/f5_negative_map_ambiguous.nv` — diagnostic.
+
+### Implementation guideline
+
+1. **In mono-pass static-call resolution** (look for `with_capacity`
+   resolve in emit_c.rs ~5700+):
+   - If `path = [T_name, method]` with `inferred_target_type` set
+     (или explicit turbofish on T) — match **strict** на T_name.
+   - Иначе fallback to current overload-by-arity.
+2. **Annotation pass:** verify MapLitAnnotator передаёт
+   `inferred_target_type` в desugared call.
+3. **No-op for explicit annotation:** existing path uses expected-
+   type propagation — не трогать.
 
 ### Estimate
 
-~30-50 LOC. Risk **medium** — затрагивает mono method resolution
-path, регрессия возможна.
+~50 LOC + 3 tests + diag improvement. Risk **medium** — затрагивает
+mono method resolution path, регрессия возможна. Mitigation:
+isolated commit, single-call-site change.
 
 ---
 
@@ -412,48 +688,95 @@ Investigation в mono pass:
 - `instantiate_type_subst` — leak между instances?
 - `current_type_subst` save/restore при nested mono'd calls
 
-### Acceptance
+### Acceptance (prod-grade)
 
 - [ ] Test с 3 разными HashMap[K, V] инстансами в одной fn работает
 - [ ] Удалить workaround "split into 3 files" в map_literals tests
 - [ ] M-52-multi-instance-hashmap-collision закрыт
+- [ ] **Triple instance**: `HashMap[str,int]` + `HashMap[int,str]` +
+      `HashMap[int,int]` в одной fn — все 3 mono'd correctly.
+- [ ] **Same K diff V**: `HashMap[str,int]` + `HashMap[str,bool]` —
+      разные V не collidять.
+- [ ] **Same V diff K**: симметричный case.
+- [ ] **Generic types в целом** (не только HashMap): `Box[int]` +
+      `Box[str]` в одной fn — works.
+- [ ] **Perf bench**: `nova test` wall-clock до/после; ±5%.
+- [ ] **Spec sync**: invariant'ы mono pass — в spec/decisions/03-syntax.md.
+- [ ] **DEBUG trace** (от Ф.4): `NOVA_DEBUG_MONO=1` dumps subst per
+      call-site — verify нет leak'а между instances.
+- Tests (3+):
+  - `nova_tests/plan55/f6_multi_hashmap_in_fn.nv` — root repro.
+  - `nova_tests/plan55/f6_triple_generic_instance.nv` — 3 generic types.
+  - `nova_tests/plan55/f6_negative_instance_type_mismatch.nv` — diag.
+
+### Implementation guideline
+
+1. **Pre-flight diff:** dump mono'd .c для 5 «тяжёлых» tests до/после:
+   `channels_*.nv`, `hashmap_*.nv`, `retry_*.nv`, `supervised_*.nv`,
+   `contracts_*.nv`. Изменения должны быть только additive (новые
+   instance, не модификация existing).
+2. **Investigation:** при NOVA_DEBUG_MONO=1 — посмотреть subst для
+   каждого emit_call в multi-instance test; identify где subst
+   меняется не на call boundary.
+3. **Fix prediction:** `resolve_mono_type_args` или
+   `instantiate_type_subst` имеет shared mutable state между instances.
+   Fix: snapshot subst per-call в local variable, не через
+   `self.current_type_subst.insert(...)` без restore.
+4. **Rollback:** isolated commit; `git revert` если > 1% regression.
 
 ### Estimate
 
-~80-150 LOC. Risk **high** — затрагивает core mono pass, регрессии
-вероятны. Mitigation: extensive test coverage перед commit.
+~80-150 LOC + 3 tests + dump tooling. Risk **high** — затрагивает
+core mono pass. Mitigation: pre-flight diff, perf-bench, isolated
+commit.
 
 ---
 
-## Acceptance criteria (Plan 55)
+## Acceptance criteria (Plan 55, prod-grade)
 
+- [ ] Ф.0 — все non-negotiables (Ф.0.2) применены на каждой фазе.
 - [ ] Ф.1 — `[M-array-of-func-mono]` fixed; `collect[T](fns []fn->T)`
-      pattern компилируется + работает.
+      pattern компилируется + работает; capture + GC stress test pass.
 - [ ] Ф.2 — Ф.5b match-arm pattern_inner_type implementation; Some/None
-      match-результат правильно typed как inner T.
+      match-результат правильно typed как inner T; nested + Block + diag.
 - [ ] Ф.3 — `Nova_Duration_method_into` returns nova_str; retry_test
-      без isolation workaround'а проходит.
+      без isolation workaround'а проходит; generic @into works.
 - [ ] Ф.4 — mono-pass type-context corruption fixed; `HashMap.@clone()`
-      работает; M-52-spread-not-supported разблокирован.
+      работает; M-52-spread-not-supported разблокирован + spread
+      реализован (validation); NOVA_DEBUG_MONO tool готов.
 - [ ] Ф.5 — mono name-collision fixed; `let m = [k:v]` без аннотации
-      работает; M-52-type-inference-no-annotation закрыт.
+      работает; M-52-type-inference-no-annotation закрыт; nested map ok.
 - [ ] Ф.6 — multi-instance HashMap collision fixed;
-      M-52-multi-instance-hashmap-collision закрыт.
-- [ ] Полный `nova test` (release) — без новых FAIL.
+      M-52-multi-instance-hashmap-collision закрыт; triple instance ok.
+- [ ] Полный `nova test` (release) — **0 новых FAIL**, ≥ baseline PASS.
+- [ ] **`nova run` interp parity** — все Plan 55 positive tests pass
+      в interp (или SKIP_INTERP marker с explained reason).
+- [ ] **18 новых тестов** в `nova_tests/plan55/` (см. Ф.0.6 plan).
+- [ ] **Perf bench** — `nova test` wall-clock ±5% от baseline.
+- [ ] **`docs/simplifications.md`** — 6 закрывающих записей.
+- [ ] **`docs/project-creation.txt`** — секция Plan 55 EOD с summary.
+- [ ] **`docs/plans/README.md`** — статус Plan 55 → ✅ ЗАКРЫТ.
+- [ ] **Spec sync** — D-блоки обновлены для поведенческих изменений
+      (минимум: D108 mono invariants если Ф.4/Ф.6 затрагивают inv'ы).
 
 ---
 
-## Size estimate
+## Size estimate (prod-grade, 2026-05-16)
 
-| Фаза | LOC | Risk | Зависимости |
-|---|---|---|---|
-| Ф.1 — array-of-func-mono | ~80-120 | medium | нет |
-| Ф.2 — match-arm pattern_inner_type | ~80 | medium | complement к Ф.1 (Plan 54) |
-| Ф.3 — Duration.into() codegen | ~30-80 | low | нет |
-| Ф.4 — mono-pass type-context corruption | ~50-150 | high | unlocks Plan 52 spread |
-| Ф.5 — mono name-collision | ~30-50 | medium | independent |
-| Ф.6 — multi-instance HashMap collision | ~80-150 | high | independent |
-| **Итого** | **~350-630** | mixed | mostly independent |
+| Фаза | LOC | Tests | Risk | Зависимости |
+|---|---|---|---|---|
+| Ф.0 — principles & audit | docs only | — | — | — |
+| Ф.1 — array-of-func-mono + capture + GC | ~120-180 | 4 | medium | runtime/array.h |
+| Ф.2 — match-arm pattern_inner_type + nested + Block | ~120-160 | 4 | medium-low | complement Ф.1 |
+| Ф.3 — Duration.into() + auto-derive | ~30-100 | 4 | low | нет |
+| Ф.4 — mono-pass corruption + DEBUG tool + spread validation | ~150-250 | 4+spread | high | unlocks Plan 52 spread |
+| Ф.5 — mono name-collision + nested map + diag | ~50-80 | 3 | medium | independent |
+| Ф.6 — multi-instance + pre-flight diff + perf-bench | ~100-200 | 3 | high | independent |
+| **Итого** | **~570-970 LOC** | **22 tests** | mixed | mostly independent |
+
+Was P3 ~350-630 LOC / 6 tests. Now P1 ~570-970 / 22 tests + tooling.
+Delta — это и есть production-grade gap (test coverage, tooling,
+docs, perf bench).
 
 ### Внутренние зависимости Ф.4-Ф.6
 
