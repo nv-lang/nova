@@ -1,0 +1,14 @@
+// Plan 57.C.3 smoke: long-running bench для heap sampler verification.
+module bench.micro
+
+bench "slow work" {
+    measure {
+        // ~100µs delay через busy work — даёт heap sampler время эмитнуть samples.
+        let mut acc = 0
+        let mut i = 0
+        while i < 100000 {
+            acc = bench.opaque(acc + i)
+            i = i + 1
+        }
+    }
+}

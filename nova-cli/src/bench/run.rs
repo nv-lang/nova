@@ -163,14 +163,37 @@ pub fn run(opts: BenchRunOpts) -> Result<i32> {
         cmd.env("NOVA_BENCH_TIME_BUDGET_NS", tb_ns.to_string());
     }
     cmd.stdout(std::process::Stdio::piped());
-    cmd.stderr(std::process::Stdio::inherit());
+    // Plan 57.C.3: pipe stderr тоже, чтобы parse __HEAP_SAMPLE__.
+    cmd.stderr(std::process::Stdio::piped());
 
     // Run with timeout via thread+join (no async runtime required).
     let mut child = cmd.spawn().map_err(|e| anyhow!("spawn bench exe: {}", e))?;
     let stdout = child.stdout.take().ok_or_else(|| anyhow!("no stdout from bench exe"))?;
+    let stderr = child.stderr.take().ok_or_else(|| anyhow!("no stderr from bench exe"))?;
 
-    // Read stdout in current thread; child is reaped after.
+    // Read stdout + stderr concurrently (parallel threads).
     use std::io::{BufRead, BufReader};
+    let stderr_handle = std::thread::spawn(move || -> Vec<(u64, u64)> {
+        let reader = BufReader::new(stderr);
+        let mut heap_samples: Vec<(u64, u64)> = Vec::new();
+        for line in reader.lines() {
+            let line = match line { Ok(l) => l, Err(_) => break };
+            // __HEAP_SAMPLE__ <ts_ns> <bytes>
+            if let Some(rest) = line.strip_prefix("__HEAP_SAMPLE__ ") {
+                let mut parts = rest.splitn(2, ' ');
+                let ts = parts.next().and_then(|s| s.parse::<u64>().ok());
+                let by = parts.next().and_then(|s| s.parse::<u64>().ok());
+                if let (Some(t), Some(b)) = (ts, by) {
+                    heap_samples.push((t, b));
+                    continue;
+                }
+            }
+            // Pass through non-__HEAP_SAMPLE__ stderr lines (diagnostics).
+            eprintln!("{}", line);
+        }
+        heap_samples
+    });
+
     let reader = BufReader::new(stdout);
     let mut raw_results: Vec<RawBenchResult> = Vec::new();
     for line in reader.lines() {
@@ -180,9 +203,20 @@ pub fn run(opts: BenchRunOpts) -> Result<i32> {
         } else if line.starts_with("__BENCH_START__") {
             eprintln!("{}", line.trim_start_matches("__BENCH_START__").trim());
         }
-        // Other lines passed silently (stderr inherited получает diagnostics).
+        // Other lines passed silently.
     }
     let status = child.wait().map_err(|e| anyhow!("wait bench exe: {}", e))?;
+    let heap_samples = stderr_handle.join().unwrap_or_default();
+    if !heap_samples.is_empty() {
+        let bytes_only: Vec<u64> = heap_samples.iter().map(|(_, b)| *b).collect();
+        let min_b = *bytes_only.iter().min().unwrap_or(&0);
+        let max_b = *bytes_only.iter().max().unwrap_or(&0);
+        let mut sorted = bytes_only.clone();
+        sorted.sort();
+        let median_b = sorted[sorted.len() / 2];
+        eprintln!("heap profile: {} samples, min={} KB, median={} KB, max={} KB",
+            heap_samples.len(), min_b / 1024, median_b / 1024, max_b / 1024);
+    }
     if !status.success() {
         // Soft warn — некоторые benches могут assert-fail, всё равно показываем результаты.
         eprintln!("warning: bench process exited non-zero: {:?}", status.code());

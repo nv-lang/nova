@@ -1449,7 +1449,9 @@ impl CEmitter {
         // обычно. В bench_mode tests игнорируются (см. emit_main_wrapper).
         if self.bench_mode {
             // Plan 57: define TLS bench state once per binary.
-            self.out.push_str("NOVA_BENCH_STATE_DEFINE;\n\n");
+            self.out.push_str("NOVA_BENCH_STATE_DEFINE;\n");
+            // Plan 57.C.3: heap sampler thread globals (libuv-conditional).
+            self.out.push_str("NOVA_BENCH_HEAP_SAMPLER_THREAD_DEFINE\n\n");
             let mut idx = 0usize;
             for item in &module.items {
                 if let Item::Bench(b) = item {
@@ -1702,6 +1704,9 @@ impl CEmitter {
             self.emit_stmt(stmt)?;
         }
 
+        // Plan 57.C.3: start heap sampler thread (no-op если env не set).
+        self.line("nova_bench_heap_sampler_start();");
+
         // ── Warmup ──────────────────────────────────────────────────
         self.line("{");
         self.indent += 1;
@@ -1771,6 +1776,9 @@ impl CEmitter {
         self.indent -= 1;
         self.line("}");
         self.line("int64_t _b_alloc_post = nova_bench_alloc_count_snapshot();");
+
+        // Plan 57.C.3: stop heap sampler thread.
+        self.line("nova_bench_heap_sampler_stop();");
 
         // ── Teardown ────────────────────────────────────────────────
         for stmt in &b.teardown {
