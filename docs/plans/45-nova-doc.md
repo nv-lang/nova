@@ -37,6 +37,9 @@
 | Ф.31.2 HTML search index | ✅ done | Inline JS substring filter (no lunr dep). Search bar в sidebar; matched items visible, остальные dimmed via `.dim` class. ~25 LOC JS + 5 LOC CSS. |
 | Ф.31.3 Dark mode | ✅ done | CSS variables (`--bg`, `--fg`, `--border`, 14 total) + `@media (prefers-color-scheme: dark)` override. No JS toggle (system-aware). |
 | Ф.31.4 Multi-page output | ✅ done | `render_html_multipage(tree) -> BTreeMap<String, String>` (filename → HTML). CLI `--output-dir <out>`. Index.html + per-module pages. Cross-page links resolved через item_pages map. ~200 LOC + 6 integration tests. |
+| **Ф.31.5 Syntax highlighting** (in-progress) | 🟡 | Inline JS regex-based highlighter для `<code>` blocks. Tokenize Nova keywords (fn, let, const, etc), string literals, comments, types. ~80 LOC JS + 40 LOC CSS. No external deps. |
+| **Ф.31.6 sitemap.xml** (in-progress) | 🟡 | Generation `sitemap.xml` в multi-page output (для SEO + crawlers). ~30 LOC. CLI flag `--site-url <base>` для absolute URLs. |
+| **Ф.32.1 nova doc-query CLI** (in-progress) | 🟡 | Foundation для future MCP server. Subcommand `nova doc-query <json-file> <query>` где query — JSON DSL `{kind?, capability?, effect?, name_substring?}`. Read JSON output, filter, print matching items. ~150 LOC + tests. |
 
 ## Ф.21 — Production hardening (2026-05-15, post-MVP audit)
 
