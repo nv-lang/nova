@@ -12158,6 +12158,17 @@ ecosystem (Creusot/Prusti/Kani/Flux/Aeneas). Найдено 5 P0 soundness gaps:
 - После: 19 SKIP + 1 PASS, 0 FAIL.
 - Коммит: `72b53a0f632`.
 
+### Ф.7.4 — axiom consistency W2402
+
+- `check_axiom_consistency` сигнатура: `Vec<Diagnostic>` → `(errors, warnings)`.
+- При SatResult::Unknown под TrivialBackend (или Z3 timeout) — warning W2402
+  с reason и инструкцией «Используйте Z3 backend».
+- `test_runner.rs::compile_only_nv` теперь dispatch'ит `verify_module.warnings`
+  в lint stream (раньше silent — нарушение Ф.6.2).
+- Test: axiom_consistency_w2402_trivial — EXPECT_COMPILE_WARNING W2402, PASS.
+- Регрессия: 131 PASS / 34 SKIP / 1 pre-existing FAIL (decreases_recursion_fail flaky).
+- Коммит: `dd062422c3b`.
+
 === Plan 45 �.25 � nova tests (positive + negative) ===
 
 ����� �������� �.25 (4 ����) �������� nova-tests .nv ��� �������� �����
