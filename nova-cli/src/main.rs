@@ -472,6 +472,31 @@ enum BenchCmd {
         #[arg(long)]
         config: Option<PathBuf>,
     },
+    /// Plan 57.A.1: Append result JSON to an orphan history branch.
+    #[command(name = "history-add")]
+    HistoryAdd {
+        /// Result JSON to append (output of `nova bench run --out`).
+        result: PathBuf,
+        /// Orphan branch name (default: bench-history).
+        #[arg(long, default_value = "bench-history")]
+        branch: String,
+        /// Push to remote after commit.
+        #[arg(long)]
+        push: bool,
+        /// Remote name when --push (default: origin).
+        #[arg(long, default_value = "origin")]
+        remote: String,
+        /// Dry-run: print what would be done, do not commit.
+        #[arg(long = "dry-run")]
+        dry_run: bool,
+    },
+    /// Plan 57.A.1: List bench history entries (newest first).
+    #[command(name = "history-list")]
+    HistoryList {
+        /// Branch (default: bench-history).
+        #[arg(long, default_value = "bench-history")]
+        branch: String,
+    },
 }
 
 /// Plan 33.3 Ф.13: `nova contracts <subcommand>`.
@@ -2632,6 +2657,35 @@ fn cmd_bench(sub: BenchCmd) -> Result<()> {
         BenchCmd::Gate { baseline, new, config } => {
             let exit = bench::gate::run(&baseline, &new, config.as_deref())?;
             if exit != 0 { std::process::exit(exit); }
+            Ok(())
+        }
+        BenchCmd::HistoryAdd { result, branch, push, remote, dry_run } => {
+            let repo = find_repo_root()?;
+            let opts = bench::history::HistoryAddOpts {
+                result_json: &result,
+                branch,
+                repo: &repo,
+                push,
+                remote,
+                dry_run,
+            };
+            let exit = bench::history::add(opts)?;
+            if exit != 0 { std::process::exit(exit); }
+            Ok(())
+        }
+        BenchCmd::HistoryList { branch } => {
+            let repo = find_repo_root()?;
+            let entries = bench::history::list(&repo, &branch)?;
+            if entries.is_empty() {
+                println!("(no entries in branch `{}`)", branch);
+            } else {
+                println!("{:<14}  {:<16}  filename", "timestamp", "sha");
+                for e in &entries {
+                    println!("{:<14}  {:<16}  {}", e.timestamp_unix,
+                        e.git_sha, e.filename);
+                }
+                println!("\n{} total entries", entries.len());
+            }
             Ok(())
         }
     }
