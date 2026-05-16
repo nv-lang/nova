@@ -2618,8 +2618,11 @@ let t0 = std::time::Instant::now();
         }
     }
     // Ф.19.2 + Ф.19.3 (Plan 33.6): detection trivial/redundant contracts.
+    // Ф.21.2 (Plan 33.6): contradictory ensures detection.
     for item in &module.items {
         if let Item::Fn(fd) = item {
+            // Ф.21.2: собрать literal-eq ensures: result == LIT.
+            let mut result_eq_lit: Vec<(i64, Span)> = Vec::new();
             for c in &fd.contracts {
                 match c.kind {
                     ContractKind::Requires => {
@@ -2642,9 +2645,41 @@ let t0 = std::time::Instant::now();
                                         fd.name),
                                     c.span));
                             }
+                            // Ф.21.2: collect `result == IntLit`.
+                            if let (ExprKind::Ident(name), ExprKind::IntLit(n)) =
+                                (&left.kind, &right.kind)
+                            {
+                                if name == "result" {
+                                    result_eq_lit.push((*n, c.span));
+                                }
+                            }
+                            if let (ExprKind::IntLit(n), ExprKind::Ident(name)) =
+                                (&left.kind, &right.kind)
+                            {
+                                if name == "result" {
+                                    result_eq_lit.push((*n, c.span));
+                                }
+                            }
                         }
                     }
                     _ => {}
+                }
+            }
+            // Ф.21.2: если 2+ ensures с разными литералами → contradictory error.
+            if result_eq_lit.len() >= 2 {
+                let first_val = result_eq_lit[0].0;
+                let conflicting: Vec<(i64, Span)> = result_eq_lit.iter()
+                    .filter(|(n, _)| *n != first_val).copied().collect();
+                if !conflicting.is_empty() {
+                    let span = conflicting[0].1;
+                    let conflicts_str: Vec<String> = result_eq_lit.iter()
+                        .map(|(n, _)| n.to_string()).collect();
+                    report.errors.push(Diagnostic::new(
+                        format!("fn `{}`: contradictory ensures [E2404]: \
+                                 multiple `result == LIT` ensures с разными литералами: [{}]. \
+                                 Они одновременно невыполнимы — fn никогда не пройдёт verify.",
+                            fd.name, conflicts_str.join(", ")),
+                        span));
                 }
             }
         }
