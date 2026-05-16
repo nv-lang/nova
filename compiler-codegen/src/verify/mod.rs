@@ -22,6 +22,7 @@ pub mod pipeline;
 pub mod handler_exec;
 pub mod cache;
 pub mod suggest;
+pub mod subsumption_cache;
 
 pub use ir::{Formula, SmtTerm, SortRef, SatResult, Model, UnsatCore, UnknownReason};
 pub use backend::SmtBackend;
