@@ -12701,6 +12701,34 @@ dead lemma diagnostic. Reasonable LIA subset без Z3.
 **Plan 33.6 итог за 18 спринтов:** TrivialBackend полный LIA-MVP стек
 + субтракция. Reasonable LIA без Z3.
 
+## Ф.19 — modulus + trivial contract detection
+
+### Ф.19.1 — modulus bounds
+
+- `try_modulus_check`: `(>= (% Var Lit) goal)` где Lit > 0 и goal <= 0 → true.
+- Работает без bounds context (modulus inherently non-negative для positive
+  divisor) — убран early-return из propagate_bounds.
+- Test: trivial_modulus_bounds_positive.
+- Коммит: `6ee89c5a758`.
+
+### Ф.19.2 — self-referential ensures
+
+- `verify_module`: detection `ensures (Binary Eq left right)` где `left` и `right`
+  структурно equal (debug-format match) → W2402 «possibly typo».
+- Test: self_ref_ensures_w2402.
+- Коммит: `6227aa87bec`.
+
+### Ф.19.3 — redundant requires true
+
+- `verify_module`: detection `requires BoolLit(true)` → W2402 «no-op».
+- Test: redundant_requires_true_w2402.
+- Коммит: `6227aa87bec`.
+
+**Итого Ф.19:** 3 closed. **161 PASS (+3) / 42 SKIP / 0 FAIL.**
+
+**Plan 33.6 итог за 19 спринтов:** TrivialBackend + diagnostic UX полностью
+покрывают LIA-MVP + dead-code/trivial-contract detection.
+
 === Plan 45 �.25 � nova tests (positive + negative) ===
 
 ����� �������� �.25 (4 ����) �������� nova-tests .nv ��� �������� �����
