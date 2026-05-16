@@ -169,6 +169,10 @@ fn write_item(w: &mut JsonWriter, it: &DocItem) {
     }
     w.field_null_or_str("description", it.description.as_deref());
     w.field_array("doc_attrs", |_| {});
+    // Plan 45 Ф.24.11: doc_inline rendering hint for re-exports.
+    if it.reexport_from.is_some() {
+        w.field_bool("doc_inline", it.doc_inline);
+    }
     w.field_null_or_str("doc_test_handlers", it.doc_test_handlers.as_deref());
     w.field_str("id", &it.id);
     w.field_str("kind", item_kind_str(&it.kind));
@@ -180,6 +184,8 @@ fn write_item(w: &mut JsonWriter, it: &DocItem) {
     }
     w.field_str("module_path", &it.module_path.join("."));
     w.field_str("name", &it.name);
+    // Plan 45 Ф.24.11: re-export source path (only present for re-exported items).
+    w.field_null_or_str("reexport_from", it.reexport_from.as_deref());
     w.field_object("sections", |w| {
         for (key, val) in &it.sections {
             w.field_str(key, val);
@@ -238,6 +244,9 @@ fn write_item(w: &mut JsonWriter, it: &DocItem) {
                     });
                 }
             });
+        }
+        ItemKind::ReExport { .. } => {
+            // Re-exports have no extra kind-specific fields; source is in reexport_from.
         }
         ItemKind::Protocol { methods, implementors } => {
             // Plan 45 Ф.23.16: implementors populated in workspace mode.
@@ -557,6 +566,7 @@ fn item_kind_str(k: &ItemKind) -> &'static str {
         ItemKind::Const { .. } => "const",
         ItemKind::Effect { .. } => "effect",
         ItemKind::Protocol { .. } => "protocol",
+        ItemKind::ReExport { .. } => "reexport",
     }
 }
 

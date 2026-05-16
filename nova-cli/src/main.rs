@@ -1341,6 +1341,7 @@ fn cmd_doc_coverage(tree: &nova_codegen::doc::DocTree) -> Result<()> {
                 nova_codegen::doc::ItemKind::Const { .. } => "const",
                 nova_codegen::doc::ItemKind::Effect { .. } => "effect",
                 nova_codegen::doc::ItemKind::Protocol { .. } => "protocol",
+                nova_codegen::doc::ItemKind::ReExport { .. } => "reexport",
             };
             *total.entry(kind).or_insert(0) += 1;
             if it.summary.is_some() {

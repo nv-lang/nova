@@ -228,6 +228,11 @@ mod tests {
                 end: 0,
                 file_id: 0,
             },
+            peer_file: None,
+            linked_from: Vec::new(),
+            capabilities: Default::default(),
+            reexport_from: None,
+            doc_inline: false,
         }
     }
 

@@ -52,6 +52,7 @@
       "kind": "fn",
       "module_path": "nova_tests.doc.fixtures.real_attrs.sample",
       "name": "add",
+      "reexport_from": null,
       "sections": {
 
       },
@@ -149,6 +150,7 @@
       "kind": "fn",
       "module_path": "nova_tests.doc.fixtures.real_attrs.sample",
       "name": "maybe_add",
+      "reexport_from": null,
       "sections": {
 
       },
@@ -246,6 +248,7 @@
       "kind": "fn",
       "module_path": "nova_tests.doc.fixtures.real_attrs.sample",
       "name": "override_demo",
+      "reexport_from": null,
       "sections": {
 
       },
@@ -321,6 +324,7 @@
       "kind": "fn",
       "module_path": "nova_tests.doc.fixtures.real_attrs.sample",
       "name": "plus",
+      "reexport_from": null,
       "sections": {
 
       },
@@ -413,6 +417,7 @@
       "kind": "fn",
       "module_path": "nova_tests.doc.fixtures.real_attrs.sample",
       "name": "select_channel",
+      "reexport_from": null,
       "sections": {
 
       },

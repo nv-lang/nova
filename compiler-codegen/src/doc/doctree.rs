@@ -216,6 +216,14 @@ pub struct DocItem {
     /// Plan 45 Ф.23.23: back-links — IDs items, которые ссылаются на этот
     /// item через intra-doc-link. Заполняется `resolve_intra_doc_links` pass'ом.
     pub linked_from: Vec<String>,
+    /// Plan 45 Ф.24.11: if this item is a re-export (`export import X.{Foo}`),
+    /// this holds the canonical source path (e.g. `"other.module::Foo"`).
+    /// None for items defined in this module.
+    pub reexport_from: Option<String>,
+    /// Plan 45 Ф.24.11: rendering hint for re-exports.
+    /// `true` → inline the target item's content here (rustdoc `#[doc(inline)]` equivalent).
+    /// `false` → render as a "Re-exported from ..." link (default for cross-module re-exports).
+    pub doc_inline: bool,
 }
 
 /// Plan 45 Ф.23.3 / D63/D64: capability annotations на item.
@@ -290,6 +298,11 @@ pub enum ItemKind {
         ty: String,
         value: String,
     },
+    /// Plan 45 Ф.24.11: re-exported item (`export import X.{Foo}`).
+    /// `source` is the canonical stable ID of the original item (e.g. `"other.mod::Foo"`).
+    /// When `doc_inline=true` on the parent DocItem, renderers should embed the source item
+    /// inline; when false, they should emit "Re-exported from <source>" with a link.
+    ReExport { source: String },
     /// Effect-декларация (D62).
     Effect {
         methods: Vec<EffectMethodSig>,

@@ -362,14 +362,14 @@ mod tests {
 
     #[test]
     fn wraps_body_correctly() {
-        let wrapped = wrap_source("let x = 1\n", None);
+        let wrapped = wrap_source("let x = 1\n", None, None);
         assert!(wrapped.contains("fn main"));
         assert!(wrapped.contains("let x = 1"));
     }
 
     #[test]
     fn top_level_decl_not_wrapped_in_main() {
-        let wrapped = wrap_source("fn helper() -> int => 42\n", None);
+        let wrapped = wrap_source("fn helper() -> int => 42\n", None, None);
         // Не должно быть обёртки в main — оставлено как есть.
         assert!(!wrapped.contains("fn main"));
         assert!(wrapped.contains("fn helper"));
@@ -378,7 +378,7 @@ mod tests {
     #[test]
     fn wrap_with_original_source_injects_module() {
         let orig = "module my.mod\n\nexport fn double(x int) -> int => x * 2\n";
-        let wrapped = wrap_source("let r = double(3)\n", Some(orig));
+        let wrapped = wrap_source("let r = double(3)\n", Some(orig), None);
         assert!(wrapped.contains("module my.mod"));
         assert!(wrapped.contains("fn double"));
         assert!(wrapped.contains("fn main"));

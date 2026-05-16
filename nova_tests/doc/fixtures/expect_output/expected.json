@@ -70,6 +70,7 @@
       "kind": "fn",
       "module_path": "nova_tests.doc.fixtures.expect_output.sample",
       "name": "add",
+      "reexport_from": null,
       "sections": {
         "examples": "```nova,expect_output\nprintln(add(2, 3))\n// Output: 5\n```"
       },
@@ -162,6 +163,7 @@
       "kind": "fn",
       "module_path": "nova_tests.doc.fixtures.expect_output.sample",
       "name": "greet",
+      "reexport_from": null,
       "sections": {
         "examples": "```nova,expect_output\nprintln(greet(\"Nova\"))\n// Output: Hello, Nova!\n```"
       },

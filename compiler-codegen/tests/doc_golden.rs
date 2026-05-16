@@ -151,3 +151,8 @@ fn golden_capability_forbid() {
 fn golden_expect_output() {
     run_one("expect_output");
 }
+
+#[test]
+fn golden_reexport() {
+    run_one("reexport");
+}

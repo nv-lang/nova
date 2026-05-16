@@ -275,6 +275,15 @@ fn render_item(it: &DocItem, link_map: &std::collections::HashMap<String, String
                 let _ = writeln!(out);
             }
         }
+        // Plan 45 Ф.24.11: re-export rendering.
+        ItemKind::ReExport { source } => {
+            if it.doc_inline {
+                let _ = writeln!(out, "*Inlined re-export of `{}`.*", source);
+            } else {
+                let _ = writeln!(out, "*Re-exported from [`{}`]({}).*", source, source);
+            }
+            let _ = writeln!(out);
+        }
     }
     if let Some(s) = &it.summary {
         let _ = writeln!(out, "{}", rewrite_links(s, link_map));

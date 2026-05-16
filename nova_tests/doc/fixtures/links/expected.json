@@ -78,6 +78,7 @@
       ],
       "module_path": "nova_tests.doc.fixtures.links.sample",
       "name": "Point",
+      "reexport_from": null,
       "sections": {
 
       },
@@ -129,6 +130,7 @@
       ],
       "module_path": "nova_tests.doc.fixtures.links.sample",
       "name": "translate",
+      "reexport_from": null,
       "sections": {
 
       },

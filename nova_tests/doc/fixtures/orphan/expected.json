@@ -51,6 +51,7 @@
       "kind": "fn",
       "module_path": "nova_tests.doc.fixtures.orphan.sample",
       "name": "id",
+      "reexport_from": null,
       "sections": {
 
       },

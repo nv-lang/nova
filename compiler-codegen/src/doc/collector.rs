@@ -238,6 +238,75 @@ fn collect_one(module: &Module) -> DocModule {
             Item::Let(_) | Item::Test(_) | Item::Lemma(_) => {}
         }
     }
+    // Plan 45 Ф.24.11: collect re-exported items (`export import X.{Foo}`) as DocItems.
+    // `#doc_inline` → doc_inline=true (render inline), `#doc_no_inline` → false (render as link).
+    // Default: doc_inline=false (show "Re-exported from …" link, like rustdoc default).
+    for imp in &module.imports {
+        if !imp.is_export {
+            continue;
+        }
+        let source_module = imp.path.join(".");
+        // Determine inline hint from doc_attrs.
+        let doc_inline = imp.doc_attrs.iter().any(|a| matches!(a, crate::ast::DocAttr::DocInline));
+        // no_inline explicitly overrides inline.
+        let doc_no_inline = imp.doc_attrs.iter().any(|a| matches!(a, crate::ast::DocAttr::DocNoInline));
+        let effective_inline = doc_inline && !doc_no_inline;
+
+        if let Some(selective_items) = &imp.items {
+            for sel in selective_items {
+                let local_name = sel.alias.as_ref().unwrap_or(&sel.name).clone();
+                let reexport_from = format!("{}::{}", source_module, sel.name);
+                let id = format!("{}::{}", module_path.join("."), local_name);
+                items.push(DocItem {
+                    id,
+                    module_path: module_path.to_vec(),
+                    name: local_name,
+                    visibility: Visibility::Export,
+                    summary: None,
+                    description: None,
+                    sections: std::collections::BTreeMap::new(),
+                    deprecation: None,
+                    stability: None,
+                    aliases: Vec::new(),
+                    hide_doc: false,
+                    doc_test_handlers: None,
+                    capabilities: Capabilities::default(),
+                    kind: ItemKind::ReExport { source: reexport_from.clone() },
+                    source_span: imp.span,
+                    peer_file: None,
+                    linked_from: Vec::new(),
+                    reexport_from: Some(reexport_from),
+                    doc_inline: effective_inline,
+                });
+            }
+        } else {
+            // Whole-module re-export: `export import X` — emit a module-level re-export marker.
+            let local_name = imp.alias.as_ref().unwrap_or(imp.path.last().unwrap_or(&String::new())).clone();
+            let reexport_from = source_module.clone();
+            let id = format!("{}::{}", module_path.join("."), local_name);
+            items.push(DocItem {
+                id,
+                module_path: module_path.to_vec(),
+                name: local_name,
+                visibility: Visibility::Export,
+                summary: None,
+                description: None,
+                sections: std::collections::BTreeMap::new(),
+                deprecation: None,
+                stability: None,
+                aliases: Vec::new(),
+                hide_doc: false,
+                doc_test_handlers: None,
+                capabilities: Capabilities::default(),
+                kind: ItemKind::ReExport { source: reexport_from.clone() },
+                source_span: imp.span,
+                peer_file: None,
+                linked_from: Vec::new(),
+                reexport_from: Some(reexport_from),
+                doc_inline: effective_inline,
+            });
+        }
+    }
     items.sort_by(|a, b| a.id.cmp(&b.id));
 
     let module_name = module_path.last().cloned().unwrap_or_default();
@@ -310,6 +379,8 @@ fn collect_fn(module_path: &[String], f: &FnDecl, module_forbid: &[String]) -> D
         source_span: f.span,
         peer_file: None,
         linked_from: Vec::new(),
+        reexport_from: None,
+        doc_inline: false,
     }
 }
 
@@ -444,6 +515,8 @@ fn collect_type(module_path: &[String], t: &TypeDecl) -> DocItem {
         source_span: t.span,
         peer_file: None,
         linked_from: Vec::new(),
+        reexport_from: None,
+        doc_inline: false,
     }
 }
 
@@ -484,6 +557,8 @@ fn collect_const(module_path: &[String], c: &ConstDecl) -> DocItem {
         source_span: c.span,
         peer_file: None,
         linked_from: Vec::new(),
+        reexport_from: None,
+        doc_inline: false,
     }
 }
 
