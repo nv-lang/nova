@@ -33,6 +33,15 @@ pub struct ReproMeta {
     pub timestamp_unix: u64,
     /// Sampling parameters used.
     pub sampling: SamplingMeta,
+    /// Plan 57.A.4: CPU temperature в °C (Linux /sys/class/thermal).
+    /// None если не доступно (Windows/macOS чаще всего).
+    pub cpu_temp_c: Option<f64>,
+    /// Plan 57.A.4: background CPU load % at run start (0..100).
+    pub background_cpu_load_pct: Option<f64>,
+    /// Plan 57.A.4: process nice value (Linux).
+    pub process_nice: Option<i32>,
+    /// Plan 57.A.4: CPU pinning affinity mask (count of cores process can use).
+    pub cpu_affinity_count: Option<usize>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -70,6 +79,10 @@ pub fn collect(gc_mode: &str, sampling: SamplingMeta) -> ReproMeta {
             .map(|d| d.as_secs())
             .unwrap_or(0),
         sampling,
+        cpu_temp_c: detect_cpu_temp(),
+        background_cpu_load_pct: detect_background_load(),
+        process_nice: detect_nice(),
+        cpu_affinity_count: detect_affinity_count(),
     }
 }
 
@@ -98,7 +111,11 @@ impl ReproMeta {
                 "target_ns": self.sampling.target_ns,
                 "samples": self.sampling.samples,
                 "time_budget_ns": self.sampling.time_budget_ns,
-            }
+            },
+            "cpu_temp_c": self.cpu_temp_c,
+            "background_cpu_load_pct": self.background_cpu_load_pct,
+            "process_nice": self.process_nice,
+            "cpu_affinity_count": self.cpu_affinity_count,
         })
     }
 
@@ -135,6 +152,10 @@ impl ReproMeta {
                 samples: sampling_v.get("samples").and_then(|x| x.as_u64()).unwrap_or(0),
                 time_budget_ns: sampling_v.get("time_budget_ns").and_then(|x| x.as_u64()).unwrap_or(0),
             },
+            cpu_temp_c: v.get("cpu_temp_c").and_then(|x| x.as_f64()),
+            background_cpu_load_pct: v.get("background_cpu_load_pct").and_then(|x| x.as_f64()),
+            process_nice: v.get("process_nice").and_then(|x| x.as_i64()).map(|x| x as i32),
+            cpu_affinity_count: v.get("cpu_affinity_count").and_then(|x| x.as_u64()).map(|x| x as usize),
         })
     }
 
@@ -182,6 +203,45 @@ impl ReproMeta {
             w.push(("info".into(),
                 "Turbo Boost enabled — variable clock may add ±5% noise. \
                  For deterministic benches, disable in BIOS.".into()));
+        }
+        // Plan 57.A.4: thermal throttle warning.
+        if let Some(temp) = self.cpu_temp_c {
+            if temp >= 90.0 {
+                w.push(("critical".into(),
+                    format!("CPU temperature {:.1}°C — likely thermal throttling. \
+                             Cool system before benchmarking.", temp)));
+            } else if temp >= 80.0 {
+                w.push(("warn".into(),
+                    format!("CPU temperature {:.1}°C — approaching throttle threshold. \
+                             Expect degrading samples.", temp)));
+            }
+        }
+        // Plan 57.A.4: background load warning.
+        if let Some(load) = self.background_cpu_load_pct {
+            if load > 30.0 {
+                w.push(("critical".into(),
+                    format!("background CPU load {:.0}% — close other processes \
+                             before benchmarking (>± 20-30% noise expected).", load)));
+            } else if load > 10.0 {
+                w.push(("warn".into(),
+                    format!("background CPU load {:.0}% — may add ±10% noise.", load)));
+            }
+        }
+        // Plan 57.A.4: low priority warning (Linux).
+        if let Some(nice) = self.process_nice {
+            if nice > 0 {
+                w.push(("info".into(),
+                    format!("process nice value {} (low priority) — \
+                             may add scheduling jitter. Use `nice -n -20 nova bench ...`.", nice)));
+            }
+        }
+        // Plan 57.A.4: CPU pinning recommendation.
+        if let Some(cnt) = self.cpu_affinity_count {
+            if cnt > 1 && cnt == self.cpu_count {
+                w.push(("info".into(),
+                    "no CPU affinity set — process can migrate across cores \
+                     (cache misses). Use `taskset -c N nova bench ...` для pinning.".into()));
+            }
         }
         w
     }
@@ -275,6 +335,85 @@ fn detect_build_mode() -> String {
     } else {
         "release".to_string()
     }
+}
+
+// ── Plan 57.A.4: thermal / load / priority / affinity detection ────────
+
+/// Read first available CPU temperature from `/sys/class/thermal/thermal_zone*/temp`.
+/// Returns °C. Linux-only.
+fn detect_cpu_temp() -> Option<f64> {
+    for i in 0..16 {
+        let path = format!("/sys/class/thermal/thermal_zone{}/temp", i);
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            let trimmed = content.trim();
+            if let Ok(millideg) = trimmed.parse::<i64>() {
+                // Convention: millidegrees Celsius.
+                return Some(millideg as f64 / 1000.0);
+            }
+        }
+    }
+    None
+}
+
+/// Sample CPU load by reading /proc/stat twice (100ms apart).
+/// Returns 0..100 — percentage of CPU NOT idle. Linux-only.
+fn detect_background_load() -> Option<f64> {
+    fn read_proc_stat() -> Option<(u64, u64)> {
+        let s = std::fs::read_to_string("/proc/stat").ok()?;
+        let line = s.lines().next()?;
+        if !line.starts_with("cpu ") { return None; }
+        let parts: Vec<u64> = line.split_whitespace()
+            .skip(1).take(8)
+            .filter_map(|x| x.parse().ok())
+            .collect();
+        if parts.len() < 4 { return None; }
+        // total = user + nice + system + idle + iowait + irq + softirq + steal
+        let total: u64 = parts.iter().sum();
+        let idle = parts[3] + parts.get(4).copied().unwrap_or(0);  // idle + iowait
+        Some((total, idle))
+    }
+    let (t1, i1) = read_proc_stat()?;
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    let (t2, i2) = read_proc_stat()?;
+    if t2 <= t1 { return None; }
+    let dt = (t2 - t1) as f64;
+    let di = (i2.saturating_sub(i1)) as f64;
+    Some(((dt - di) / dt) * 100.0)
+}
+
+/// Process nice value (Linux). Negative = high priority, positive = low.
+fn detect_nice() -> Option<i32> {
+    // Read from /proc/self/stat field 19 (nice).
+    let s = std::fs::read_to_string("/proc/self/stat").ok()?;
+    // Skip pid + (comm) — comm может содержать пробелы и скобки.
+    let close_paren = s.rfind(')')?;
+    let rest = &s[close_paren + 1..];
+    let fields: Vec<&str> = rest.split_whitespace().collect();
+    // After ')', field 17 = priority, field 18 = nice (1-indexed from rest's start).
+    // 0=state, ... 16=priority, 17=nice.
+    fields.get(16).and_then(|x| x.parse().ok())
+}
+
+/// Number of CPUs process can run on (affinity mask). Linux-only via
+/// /proc/self/status `Cpus_allowed_list`.
+fn detect_affinity_count() -> Option<usize> {
+    let s = std::fs::read_to_string("/proc/self/status").ok()?;
+    for line in s.lines() {
+        if let Some(rest) = line.strip_prefix("Cpus_allowed_list:") {
+            let mut count = 0;
+            for range in rest.trim().split(',') {
+                if let Some((a, b)) = range.split_once('-') {
+                    let lo: usize = a.trim().parse().ok()?;
+                    let hi: usize = b.trim().parse().ok()?;
+                    count += hi.saturating_sub(lo) + 1;
+                } else if !range.trim().is_empty() {
+                    if range.trim().parse::<usize>().is_ok() { count += 1; }
+                }
+            }
+            return Some(count);
+        }
+    }
+    None
 }
 
 #[cfg(test)]

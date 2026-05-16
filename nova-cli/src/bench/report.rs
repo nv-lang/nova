@@ -55,6 +55,20 @@ pub fn terminal_report(meta: &ReproMeta, benches: &[AnalyzedBench], color: bool)
             gov,
             if meta.turbo == Some(true) { ", turbo: on" } else { "" });
     }
+    // Plan 57.A.4: показываем доп. metrics если есть.
+    let mut extras: Vec<String> = Vec::new();
+    if let Some(t) = meta.cpu_temp_c {
+        extras.push(format!("CPU temp: {:.1}°C", t));
+    }
+    if let Some(l) = meta.background_cpu_load_pct {
+        extras.push(format!("background load: {:.0}%", l));
+    }
+    if let Some(a) = meta.cpu_affinity_count {
+        extras.push(format!("affinity: {} cores", a));
+    }
+    if !extras.is_empty() {
+        let _ = writeln!(out, "  {}", extras.join("  "));
+    }
     let _ = writeln!(out, "");
 
     // Environment warnings.
