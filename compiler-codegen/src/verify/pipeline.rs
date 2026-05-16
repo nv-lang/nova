@@ -681,6 +681,7 @@ impl VerificationPipeline {
 
         // Assert requires.
         let mut requires_failed = false;
+        let mut req_failures: Vec<(Span, VerifyResult)> = Vec::new();
         for c in &ld.contracts {
             if matches!(c.kind, ContractKind::Requires) {
                 match encode::encode_expr_with_ctx(&c.expr, &ctx) {
@@ -688,7 +689,17 @@ impl VerificationPipeline {
                         formula: t,
                         label: Some(format!("lemma_requires@{}", c.span.start)),
                     }),
-                    Err(_) => { requires_failed = true; }
+                    Err(e) => {
+                        // Ф.8.2 (Plan 33.6): lemma requires encoding fail →
+                        // EncodingFailed (NOT silent flag). Без этого лемма
+                        // становилась vacuously proven (Z3 без контекста доказывает что угодно).
+                        let reason = match e {
+                            super::encode::EncodingError::Unsupported(s) => s,
+                        };
+                        req_failures.push((c.span, VerifyResult::EncodingFailed(
+                            format!("[CONTRACT_UNSUPPORTED] lemma requires: {}", reason))));
+                        requires_failed = true;
+                    }
                 }
             }
         }
@@ -704,11 +715,14 @@ impl VerificationPipeline {
 
         // Verify each ensures clause.
         let mut results = Vec::new();
+        // Ф.8.2 (Plan 33.6): эмитим req_failures (E2401) первыми — пользователь
+        // увидит точную причину почему requires не encoded.
+        results.extend(req_failures);
         for c in &ld.contracts {
             if !matches!(c.kind, ContractKind::Ensures) { continue; }
             if requires_failed {
                 results.push((c.span, VerifyResult::EncodingFailed(
-                    "lemma requires-context failed to encode".into())));
+                    "[CONTRACT_UNSUPPORTED] lemma ensures skipped: requires not encoded".into())));
                 continue;
             }
             let encoded = match encode::encode_expr_with_ctx(&c.expr, &ctx) {
@@ -2400,11 +2414,20 @@ let t0 = std::time::Instant::now();
                             span));
                     }
                     VerifyResult::EncodingFailed(reason) => {
-                        report.errors.push(Diagnostic::new(
-                            format!("lemma `{}`: тело или контракт не encodable: {}\n  \
-                                     Только int/bool/str/record/binary-ops/if поддерживается в V1.",
-                                ld.name, reason),
-                            span));
+                        // Ф.8.2 (Plan 33.6): [CONTRACT_UNSUPPORTED] префикс → E2401.
+                        if reason.starts_with("[CONTRACT_UNSUPPORTED]") {
+                            let display = reason.trim_start_matches("[CONTRACT_UNSUPPORTED] ");
+                            report.errors.push(Diagnostic::new(
+                                format!("lemma `{}` контракт не поддерживается SMT-encoder'ом [E2401]: {}",
+                                    ld.name, display),
+                                span));
+                        } else {
+                            report.errors.push(Diagnostic::new(
+                                format!("lemma `{}`: тело или контракт не encodable: {}\n  \
+                                         Только int/bool/str/record/binary-ops/if поддерживается в V1.",
+                                    ld.name, reason),
+                                span));
+                        }
                     }
                     VerifyResult::Warning(msg) => {
                         report.warnings.push(Diagnostic::new(msg, span));

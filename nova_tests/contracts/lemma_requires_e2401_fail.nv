@@ -1,0 +1,10 @@
+// Ф.8.2 (Plan 33.6): lemma requires с не-encodable конструкцией → E2401.
+// Раньше silent skip + vacuous truth, теперь явная ошибка.
+// EXPECT_COMPILE_ERROR E2401
+
+module contracts.lemma_requires_e2401_fail
+
+lemma bad_lemma(x int)
+    requires match x { _ => true }
+    ensures result == x
+=> x
