@@ -1,0 +1,353 @@
+//! Plan 45 Ф.31.1 — HTML output MVP.
+//!
+//! Single-page HTML render с minimal embedded CSS.
+//! Layout:
+//! - `<head>` с title + inline `<style>` (light theme, ~50 lines CSS)
+//! - `<body>` с sidebar (module index) + main content (per-module sections)
+//! - Per-item: signature в `<pre>`, summary, sections, badges
+//!
+//! **Out-of-scope для MVP:**
+//! - Search index (lunr.js) — Ф.31.2
+//! - Theme switcher (dark mode) — Ф.31.3
+//! - Multi-page output (each module → separate file) — Ф.31.4
+//! - Syntax highlighting (highlight.js) — Plan 45.A round 3
+//!
+//! **Design choices:**
+//! - Embedded CSS (no separate file): single-page принцип, no bundle complexity
+//! - Pure HTML5 + CSS3 (no JS) — works в browsers и в text-mode browsers
+//! - HTML escape всех user content для XSS safety
+//! - Stable byte-for-byte output (deterministic order, no timestamps)
+
+use super::doctree::*;
+use std::fmt::Write;
+
+/// Plan 45 Ф.31.1 — entry point: DocTree → HTML string.
+pub fn render(tree: &DocTree) -> String {
+    let mut out = String::with_capacity(8192);
+    write_html_head(&mut out, tree);
+    out.push_str("<body>\n");
+    write_sidebar(&mut out, tree);
+    write_main(&mut out, tree);
+    out.push_str("</body>\n</html>\n");
+    out
+}
+
+fn write_html_head(out: &mut String, tree: &DocTree) {
+    let title = if tree.modules.len() == 1 {
+        format!("nova doc — {}", tree.modules[0].path.join("."))
+    } else {
+        format!("nova doc — {} modules", tree.modules.len())
+    };
+    out.push_str("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n");
+    out.push_str("<meta charset=\"utf-8\">\n");
+    out.push_str("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n");
+    let _ = writeln!(out, "<title>{}</title>", html_escape(&title));
+    out.push_str("<style>\n");
+    out.push_str(EMBEDDED_CSS);
+    out.push_str("</style>\n");
+    out.push_str("</head>\n");
+}
+
+const EMBEDDED_CSS: &str = r#"
+  body { font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+         color: #1f1f1f; background: #fafafa; margin: 0; display: grid;
+         grid-template-columns: 260px 1fr; min-height: 100vh; }
+  nav.sidebar { background: #f0f0f0; padding: 1rem; border-right: 1px solid #ddd;
+                overflow-y: auto; position: sticky; top: 0; height: 100vh; }
+  nav.sidebar h2 { font-size: 0.85rem; text-transform: uppercase; color: #666;
+                   margin: 1rem 0 0.3rem; letter-spacing: 0.05em; }
+  nav.sidebar ul { list-style: none; padding-left: 0; margin: 0; }
+  nav.sidebar li { margin: 0.15rem 0; }
+  nav.sidebar a { color: #0066cc; text-decoration: none; font-size: 0.9rem; }
+  nav.sidebar a:hover { text-decoration: underline; }
+  main { padding: 2rem; max-width: 980px; }
+  h1 { font-size: 1.6rem; border-bottom: 1px solid #ddd; padding-bottom: 0.3rem; }
+  h2 { font-size: 1.3rem; margin-top: 2rem; color: #333; }
+  h3 { font-size: 1.05rem; margin-top: 1.5rem; color: #444;
+       font-family: ui-monospace, "Cascadia Code", "Consolas", monospace; }
+  h4 { font-size: 0.95rem; color: #555; margin-top: 1rem; }
+  pre { background: #f5f5f5; border: 1px solid #e0e0e0; border-radius: 4px;
+        padding: 0.8rem; overflow-x: auto;
+        font: 13px/1.45 ui-monospace, "Cascadia Code", "Consolas", monospace; }
+  code { background: #f0f0f0; padding: 0.1rem 0.3rem; border-radius: 3px;
+         font: 0.9em ui-monospace, "Cascadia Code", "Consolas", monospace; }
+  pre code { background: none; padding: 0; }
+  a { color: #0066cc; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .badge { display: inline-block; padding: 0.1rem 0.4rem; border-radius: 3px;
+           font-size: 0.75rem; margin-right: 0.3rem; }
+  .badge-stable { background: #e0f2e0; color: #2a5f2a; }
+  .badge-unstable { background: #fff4cc; color: #8a6800; }
+  .badge-experimental { background: #ffe0e0; color: #8a2a2a; }
+  .badge-deprecated { background: #444; color: #fff; }
+  .badge-realtime { background: #e0e8ff; color: #2a4f8a; }
+  .badge-pure { background: #d0e8ff; color: #1a3a6a; }
+  .badge-forbid { background: #ffd0d0; color: #6a1a1a; }
+  .item { border-left: 3px solid #e0e0e0; padding-left: 1rem; margin: 1.5rem 0; }
+  .item:target { border-left-color: #0066cc; background: #fff8e0; padding: 0.5rem 1rem; }
+  .src-link { font-size: 0.75rem; color: #888; margin-left: 0.5rem; }
+  .summary { color: #444; font-style: italic; margin: 0.3rem 0; }
+  blockquote { border-left: 4px solid #d0d0d0; padding-left: 1rem; color: #555;
+               margin: 0.5rem 0; }
+  @media (max-width: 720px) {
+    body { grid-template-columns: 1fr; }
+    nav.sidebar { position: static; height: auto; }
+  }
+"#;
+
+fn write_sidebar(out: &mut String, tree: &DocTree) {
+    out.push_str("<nav class=\"sidebar\">\n");
+    out.push_str("<strong>nova doc</strong>\n");
+    for m in &tree.modules {
+        let _ = writeln!(out, "<h2>{}</h2>", html_escape(&m.path.join(".")));
+        if m.items.is_empty() { continue; }
+        out.push_str("<ul>\n");
+        for it in &m.items {
+            let anchor = item_anchor(&it.id);
+            let _ = writeln!(out, "  <li><a href=\"#{}\">{}</a></li>",
+                anchor, html_escape(&it.name));
+        }
+        out.push_str("</ul>\n");
+    }
+    out.push_str("</nav>\n");
+}
+
+fn write_main(out: &mut String, tree: &DocTree) {
+    out.push_str("<main>\n");
+    for m in &tree.modules {
+        write_module(out, m, &tree.links);
+    }
+    out.push_str("</main>\n");
+}
+
+fn write_module(out: &mut String, m: &DocModule, links: &[DocLink]) {
+    let module_anchor = m.path.join("-");
+    let _ = writeln!(out, "<section id=\"mod-{}\">", html_escape(&module_anchor));
+    let _ = writeln!(out, "<h1>{}</h1>", html_escape(&m.path.join(".")));
+    if let Some(s) = &m.summary {
+        let _ = writeln!(out, "<p class=\"summary\">{}</p>", rewrite_and_escape(s, links));
+    }
+    if let Some(d) = &m.description {
+        let _ = writeln!(out, "<p>{}</p>", rewrite_and_escape(d, links));
+    }
+    for it in &m.items {
+        write_item(out, it, links);
+    }
+    out.push_str("</section>\n");
+}
+
+fn write_item(out: &mut String, it: &DocItem, links: &[DocLink]) {
+    let anchor = item_anchor(&it.id);
+    let _ = writeln!(out, "<article class=\"item\" id=\"{}\">", html_escape(&anchor));
+    let _ = writeln!(out, "<h3>{}</h3>", html_escape(&it.name));
+    // Badges row.
+    write_badges(out, it);
+    // Signature / definition.
+    write_kind(out, it);
+    // Summary + description.
+    if let Some(s) = &it.summary {
+        let _ = writeln!(out, "<p class=\"summary\">{}</p>", rewrite_and_escape(s, links));
+    }
+    if let Some(d) = &it.description {
+        let _ = writeln!(out, "<p>{}</p>", rewrite_and_escape(d, links));
+    }
+    // Sections (canonical order).
+    const CANONICAL_ORDER: &[(&str, &str)] = &[
+        ("examples", "Examples"),
+        ("errors", "Errors"),
+        ("panics", "Panics"),
+        ("safety", "Safety"),
+        ("effects", "Effects"),
+        ("contracts", "Contracts"),
+        ("since", "Since"),
+        ("see also", "See also"),
+        ("deprecated", "Deprecated"),
+    ];
+    for (key, title) in CANONICAL_ORDER {
+        if let Some(body) = it.sections.get(*key) {
+            let _ = writeln!(out, "<h4>{}</h4>", html_escape(title));
+            let _ = writeln!(out, "<div>{}</div>", rewrite_and_escape(body, links));
+        }
+    }
+    out.push_str("</article>\n");
+}
+
+fn write_badges(out: &mut String, it: &DocItem) {
+    // Collect badges first, then emit if non-empty.
+    let mut badges: Vec<(&'static str, String)> = Vec::new();
+    if let Some(s) = &it.stability {
+        let class = match s.tier {
+            StabilityTier::Stable => "badge-stable",
+            StabilityTier::Unstable => "badge-unstable",
+            StabilityTier::Experimental => "badge-experimental",
+        };
+        badges.push((class, s.tier.as_str().to_string()));
+    }
+    if it.deprecation.is_some() {
+        badges.push(("badge-deprecated", "deprecated".to_string()));
+    }
+    let cap = &it.capabilities;
+    if cap.realtime_nogc {
+        badges.push(("badge-realtime", "realtime nogc".to_string()));
+    } else if cap.realtime {
+        badges.push(("badge-realtime", "realtime".to_string()));
+    }
+    if cap.pure_fn {
+        badges.push(("badge-pure", "pure".to_string()));
+    }
+    for f in &cap.forbid {
+        badges.push(("badge-forbid", format!("forbid {}", f)));
+    }
+    if badges.is_empty() { return; }
+    out.push_str("<p>");
+    for (class, text) in &badges {
+        let _ = write!(out, "<span class=\"badge {}\">{}</span>",
+            class, html_escape(text));
+    }
+    out.push_str("</p>\n");
+}
+
+fn write_kind(out: &mut String, it: &DocItem) {
+    out.push_str("<pre><code>");
+    match &it.kind {
+        ItemKind::Fn(sig) => {
+            // Compact fn signature: fn name(params) -> ret
+            out.push_str("fn ");
+            out.push_str(&html_escape(&it.name));
+            out.push('(');
+            for (i, p) in sig.params.iter().enumerate() {
+                if i > 0 { out.push_str(", "); }
+                let _ = write!(out, "{} {}", html_escape(&p.name), html_escape(&p.ty));
+            }
+            let _ = write!(out, ") -> {}", html_escape(&sig.return_type));
+        }
+        ItemKind::Const { ty, value } => {
+            let _ = write!(out, "const {} {} = {}",
+                html_escape(&it.name), html_escape(ty), html_escape(value));
+        }
+        ItemKind::Type(def) => {
+            write_type_def(out, &it.name, def);
+        }
+        ItemKind::Effect { methods, axioms: _, handlers: _ } => {
+            let _ = writeln!(out, "type {} effect {{", html_escape(&it.name));
+            for m in methods {
+                let _ = write!(out, "    fn {}(", html_escape(&m.name));
+                for (i, p) in m.params.iter().enumerate() {
+                    if i > 0 { out.push_str(", "); }
+                    let _ = write!(out, "{} {}", html_escape(&p.name), html_escape(&p.ty));
+                }
+                let _ = writeln!(out, ") -> {}", html_escape(&m.return_type));
+            }
+            out.push('}');
+        }
+        ItemKind::Protocol { methods, implementors: _ } => {
+            let _ = writeln!(out, "type {} protocol {{", html_escape(&it.name));
+            for m in methods {
+                let _ = write!(out, "    fn {}(", html_escape(&m.name));
+                for (i, p) in m.params.iter().enumerate() {
+                    if i > 0 { out.push_str(", "); }
+                    let _ = write!(out, "{} {}", html_escape(&p.name), html_escape(&p.ty));
+                }
+                let _ = writeln!(out, ") -> {}", html_escape(&m.return_type));
+            }
+            out.push('}');
+        }
+        ItemKind::ReExport { source } => {
+            let _ = write!(out, "export import {} (as {})", html_escape(source), html_escape(&it.name));
+        }
+    }
+    out.push_str("</code></pre>\n");
+}
+
+fn write_type_def(out: &mut String, name: &str, def: &TypeDefinition) {
+    match def {
+        TypeDefinition::Alias(ty) => {
+            let _ = write!(out, "type {} alias {}", html_escape(name), html_escape(ty));
+        }
+        TypeDefinition::Newtype { inner } => {
+            let _ = write!(out, "type {} {}", html_escape(name), html_escape(inner));
+        }
+        TypeDefinition::Record(fields) => {
+            let _ = writeln!(out, "type {} {{", html_escape(name));
+            for f in fields {
+                let _ = writeln!(out, "    {} {}", html_escape(&f.name), html_escape(&f.ty));
+            }
+            out.push('}');
+        }
+        TypeDefinition::Sum(variants) => {
+            let _ = write!(out, "type {}", html_escape(name));
+            for v in variants {
+                let _ = write!(out, " | {}", html_escape(&v.name));
+            }
+        }
+    }
+}
+
+/// Stable anchor для item ID: lowercase, `.`→`-`, `::`→`-`.
+fn item_anchor(item_id: &str) -> String {
+    item_id.to_lowercase().replace("::", "-").replace('.', "-")
+}
+
+/// HTML escape: `<`, `>`, `&`, `"`, `'`.
+fn html_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&#39;"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+/// Rewrite intra-doc links `[Name]` к `<a href="#anchor">Name</a>` или external URL.
+/// Then HTML-escape rest (preserving our `<a>` tags).
+fn rewrite_and_escape(text: &str, links: &[DocLink]) -> String {
+    // Build link map: text → (anchor или external URL).
+    let mut map: std::collections::HashMap<&str, String> = std::collections::HashMap::new();
+    for l in links {
+        if let Some(url) = &l.target_url {
+            map.insert(l.text.as_str(), url.clone());
+        } else if let Some(tid) = &l.target_id {
+            map.insert(l.text.as_str(), format!("#{}", item_anchor(tid)));
+        }
+    }
+    if map.is_empty() {
+        return html_escape(text);
+    }
+    // Naive replacement: для каждого link, replace `[text]` на `<a href="...">text</a>`.
+    // First HTML-escape full text, then substitute.
+    let mut escaped = html_escape(text);
+    for (link_text, target) in &map {
+        let pat = format!("[{}]", link_text);
+        let pat_escaped = html_escape(&pat);
+        let repl = format!(
+            "<a href=\"{}\">{}</a>",
+            html_escape(target), html_escape(link_text)
+        );
+        escaped = escaped.replace(&pat_escaped, &repl);
+    }
+    escaped
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn html_escape_basic() {
+        assert_eq!(html_escape("a < b > c"), "a &lt; b &gt; c");
+        assert_eq!(html_escape("\"quoted\""), "&quot;quoted&quot;");
+        assert_eq!(html_escape("a & b"), "a &amp; b");
+    }
+
+    #[test]
+    fn item_anchor_format() {
+        assert_eq!(item_anchor("std.io::println"), "std-io-println");
+        assert_eq!(item_anchor("mod::Type.method"), "mod-type-method");
+    }
+}

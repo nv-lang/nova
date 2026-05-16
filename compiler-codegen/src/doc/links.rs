@@ -121,7 +121,54 @@ fn resolve_one(
     warnings: &mut Vec<DocWarning>,
 ) -> DocLink {
     let target_id = resolve_text(&text, by_short, by_full, warn_source_id, warnings);
-    DocLink { from_id, text, target_id }
+    // Plan 45 Ф.30.1: external crate-doc fallback. Если target_id None и текст
+    // имеет префикс из NOVA_DOC_EXTERN_LINKS map — emit external URL.
+    let target_url = if target_id.is_none() {
+        resolve_external_url(&text)
+    } else {
+        None
+    };
+    DocLink { from_id, text, target_id, target_url }
+}
+
+/// Plan 45 Ф.30.1 — resolve external crate-doc URL по env var
+/// `NOVA_DOC_EXTERN_LINKS`.
+///
+/// Format env var: `prefix1=template1;prefix2=template2`
+/// где template содержит `{path}` placeholder.
+///
+/// Example: `std=https://docs.nova-lang.org/std/{path};myorg.lib=https://myorg.dev/docs/{path}`
+///
+/// Lookup: для текста `std.io.println`, prefix match `std` → URL
+/// `https://docs.nova-lang.org/std/io.println` (path = всё после prefix.).
+fn resolve_external_url(text: &str) -> Option<String> {
+    let env = std::env::var("NOVA_DOC_EXTERN_LINKS").ok()?;
+    if env.is_empty() {
+        return None;
+    }
+    // Parse env: prefix=template;prefix=template
+    for entry in env.split(';') {
+        let entry = entry.trim();
+        if entry.is_empty() { continue; }
+        let (prefix, template) = match entry.split_once('=') {
+            Some((p, t)) => (p.trim(), t.trim()),
+            None => continue,
+        };
+        if prefix.is_empty() || template.is_empty() {
+            continue;
+        }
+        // Match: text начинается с `prefix.` или равен prefix.
+        let prefix_dot = format!("{}.", prefix);
+        let path = if text == prefix {
+            String::new()
+        } else if let Some(rest) = text.strip_prefix(&prefix_dot) {
+            rest.to_string()
+        } else {
+            continue;
+        };
+        return Some(template.replace("{path}", &path));
+    }
+    None
 }
 
 fn resolve_text(

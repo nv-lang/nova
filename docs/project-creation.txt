@@ -13376,3 +13376,23 @@ annotation вЂ” erased (emit_generic_method_erased V1 fallback). Р­С‚Рѕ
 
 - fix(plan54 Р¤.2): int-extension primitive-receiver dispatch.
 - test(plan54 Р¤.7): polymorphic recursion EXPECT_COMPILE_ERROR.
+
+=== Plan 45 Sprint Ф.30+Ф.31.1 — External links + HTML MVP (2026-05-16) ===
+
+Ф.30.1 (a166019): External crate-doc linking via NOVA_DOC_EXTERN_LINKS env.
+  Format: prefix=template;prefix=template (placeholder {path}).
+  JSON links[].target_url + MD external href. 6 integration tests.
+
+Ф.30.2: Incremental cache DEFERRED to Plan 45.A round 2 (honest decision,
+  документ'нут в simplifications.md). ~500 LOC + complex test infrastructure
+  не realistic в одной сессии.
+
+Ф.31.1 (1d430d8): HTML output MVP — main adoption blocker closure.
+  Single-page HTML с embedded CSS (light theme), sidebar навигация, badges,
+  XSS-safe escaping. 370 LOC + 8 integration + 2 unit tests. CLI --format html.
+
+Plan 45 family status:
+- Core (Ф.1-Ф.28) + Cleanup (Ф.29) + Small wins (Ф.30) + HTML MVP (Ф.31.1) ?
+- HTML polish Ф.31.2-4 (search/dark mode/multi-page) ? next session
+- MCP server Ф.32 ? separate sprint
+- Stdlib doc-pass Plan 45.B ? separate effort

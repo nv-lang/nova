@@ -7799,3 +7799,33 @@ Go/Rust/TS. Р’СЃРµ С‚СЂРµР±СѓСЋС‚ explicit type annotation; РЅР°С€ РїРѕРґС…РѕРґ
 - `[M-array-of-func-mono]` вЂ” Array-of-Func type_ref_to_c.
 - Р¤.5b match-arm pattern_inner_type РёР· scrutinee.
 - Nova_Duration_method_into stdlib codegen issue.
+
+---
+
+## Plan 45 Ф.30+Ф.31.1 simplifications (2026-05-16)
+
+### HTML output single-page (no multi-page split)
+**Где:** ender_html.rs. **Что упрощено:** Все modules в одном HTML.
+**Как чинить:** Ф.31.4 — file-per-module.
+
+### HTML без JS / search index
+**Где:** ender_html.rs. **Что упрощено:** Pure HTML5+CSS3, no lunr.
+**Как чинить:** Ф.31.2 — generate search-index.json + lunr bundle.
+
+### HTML без dark mode
+**Где:** EMBEDDED_CSS — only light theme.
+**Как чинить:** Ф.31.3 — CSS variables + prefers-color-scheme media query.
+
+### Intra-doc link rewrite через text substitute
+**Где:** ender_html.rs::rewrite_and_escape. **Что упрощено:** Plain replace.
+**Как чинить:** CommonMark-aware parser (~300 LOC).
+
+### External crate URL template — single placeholder
+**Где:** links.rs::resolve_external_url. **Что упрощено:** Только {path}.
+**Как чинить:** Add {module}, {name}, {kind} placeholders + URL encoding.
+
+### Incremental cache (Ф.30.2) — deferred Plan 45.A round 2
+**Где:** cmd_doc_watch re-parses всё каждый mtime tick.
+**Почему deferred:** Real cache requires Module serialization + invalidation
+graph (~500 LOC + complex test infra). Current --watch ~6ms для 50-module
+workspace — acceptable для interactive editing.

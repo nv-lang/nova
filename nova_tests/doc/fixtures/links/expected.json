@@ -8,26 +8,31 @@
     {
       "from_id": null,
       "target_id": "nova_tests.doc.fixtures.links.sample::Point",
+      "target_url": null,
       "text": "Point"
     },
     {
       "from_id": null,
       "target_id": "nova_tests.doc.fixtures.links.sample::translate",
+      "target_url": null,
       "text": "translate"
     },
     {
       "from_id": null,
       "target_id": null,
+      "target_url": null,
       "text": "unknown_link"
     },
     {
       "from_id": "nova_tests.doc.fixtures.links.sample::Point",
       "target_id": "nova_tests.doc.fixtures.links.sample::translate",
+      "target_url": null,
       "text": "translate"
     },
     {
       "from_id": "nova_tests.doc.fixtures.links.sample::translate",
       "target_id": "nova_tests.doc.fixtures.links.sample::Point",
+      "target_url": null,
       "text": "Point"
     }
   ],
