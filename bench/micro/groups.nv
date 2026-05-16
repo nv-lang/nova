@@ -1,0 +1,53 @@
+// Plan 57.B.5 smoke: group/case sub-benchmarks DSL.
+module bench.micro
+
+bench "math" {
+    group "int" {
+        case "add 1k" {
+            measure {
+                let mut acc = 0
+                let mut i = 0
+                while i < 1000 {
+                    acc = bench.opaque(acc + i)
+                    i = i + 1
+                }
+                bench.elements(1000)
+            }
+        }
+        case "mul 1k" {
+            measure {
+                let mut acc = 1
+                let mut i = 1
+                while i < 1000 {
+                    acc = bench.opaque(acc * i)
+                    i = i + 1
+                }
+                bench.elements(1000)
+            }
+        }
+    }
+    group "f64" {
+        case "add 1k" {
+            measure {
+                let mut acc f64 = 0.0
+                let mut i = 0
+                while i < 1000 {
+                    acc = bench.opaque(acc + 1.5)
+                    i = i + 1
+                }
+                bench.elements(1000)
+            }
+        }
+        case "mul 1k" {
+            measure {
+                let mut acc f64 = 1.0
+                let mut i = 0
+                while i < 1000 {
+                    acc = bench.opaque(acc * 1.0001)
+                    i = i + 1
+                }
+                bench.elements(1000)
+            }
+        }
+    }
+}
