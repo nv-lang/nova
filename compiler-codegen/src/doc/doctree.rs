@@ -77,6 +77,10 @@ pub struct DocTest {
     /// Plan 45 Ф.23.7 / D106: `#doc(test_handlers = "path")` — handler-path
     /// для инжекции `with <handler>` в wrap_source. Наследуется от item.
     pub test_handlers: Option<String>,
+    /// Plan 45 Ф.24.8: godoc-style expected stdout output.
+    /// Populated when modifier `expect_output` is present and `// Output: <text>`
+    /// comment lines appear inside the fenced block. Runner diffs actual vs expected.
+    pub expected_output: Option<String>,
 }
 
 /// Plan 45 Ф.7: doc-test modifier. По D104.
@@ -92,6 +96,9 @@ pub enum DocTestModifier {
     ShouldPanic,
     /// `must_verify` — ожидается successful SMT verification (Plan 33).
     MustVerify,
+    /// Plan 45 Ф.24.8: `expect_output` — run + capture stdout, diff with
+    /// `// Output: <text>` lines embedded in the fenced block.
+    ExpectOutput,
 }
 
 impl DocTestModifier {
@@ -102,6 +109,7 @@ impl DocTestModifier {
             DocTestModifier::CompileFail => "compile_fail",
             DocTestModifier::ShouldPanic => "should_panic",
             DocTestModifier::MustVerify => "must_verify",
+            DocTestModifier::ExpectOutput => "expect_output",
         }
     }
 }

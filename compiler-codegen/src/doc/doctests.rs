@@ -91,13 +91,28 @@ fn extract_from_text(
             continue;
         }
         let modifiers = parse_modifiers(info);
+        let has_expect_output = modifiers.contains(&DocTestModifier::ExpectOutput);
         // Считываем тело до закрывающего ```.
         let mut visible = String::new();
         let mut full = String::new();
+        // Plan 45 Ф.24.8: accumulate `// Output: <text>` lines when expect_output.
+        let mut output_lines: Vec<String> = Vec::new();
         for l in lines.by_ref() {
             let t = l.trim_start();
             if t.starts_with("```") {
                 break;
+            }
+            // Plan 45 Ф.24.8: `// Output: <text>` — expected stdout line.
+            // These appear in the fenced block but are NOT compiled — they are
+            // metadata extracted here, visible in render but excluded from full_source.
+            if has_expect_output {
+                if let Some(expected) = t.strip_prefix("// Output:") {
+                    output_lines.push(expected.trim().to_string());
+                    // Still include in visible (godoc shows them), skip from full_source.
+                    visible.push_str(l);
+                    visible.push('\n');
+                    continue;
+                }
             }
             // Hidden lines: `# ` (rustdoc) → в full, не в visible.
             if let Some(hidden_content) = strip_hidden_prefix(l) {
@@ -110,6 +125,12 @@ fn extract_from_text(
                 full.push('\n');
             }
         }
+        // Build expected_output: join lines with '\n'; None if no Output: annotations found.
+        let expected_output = if has_expect_output && !output_lines.is_empty() {
+            Some(output_lines.join("\n"))
+        } else {
+            None
+        };
         *counter += 1;
         out.push(DocTest {
             id: format!("{}::doc_test_{}", module_path, *counter),
@@ -119,6 +140,7 @@ fn extract_from_text(
             visible_source: visible.trim_end_matches('\n').to_string(),
             full_source: full.trim_end_matches('\n').to_string(),
             test_handlers: test_handlers.map(|s| s.to_string()),
+            expected_output,
         });
     }
 }
@@ -154,6 +176,7 @@ fn parse_modifiers(info: &str) -> Vec<DocTestModifier> {
             "compile_fail" => Some(DocTestModifier::CompileFail),
             "should_panic" => Some(DocTestModifier::ShouldPanic),
             "must_verify" => Some(DocTestModifier::MustVerify),
+            "expect_output" => Some(DocTestModifier::ExpectOutput),
             _ => None, // unknown — forward-compat skip
         };
         if let Some(m) = m {
