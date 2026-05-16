@@ -7886,3 +7886,20 @@ Remaining:
   (был FAIL c .len()==4 для T=int).
 - **Параллель:** Go `[]func()`, Rust `Vec<Box<dyn Fn>>`, TS `(()=>T)[]`.
 
+
+### [Ф.5b match-arm pattern_inner_type] ✅ ЗАКРЫТО (Plan 55 Ф.2, 2026-05-16)
+- **Где:** `compiler-codegen/src/codegen/emit_c.rs::emit_match` +
+  `collect_pattern_inner_bindings` (new helper).
+- **Было:** infer_expr_c_type для Match не учитывал pattern-binds
+  из scrutinee. `Some(v) => v` brала var_types[v] (стрэйл/default)
+  → wrong match result type → CC-FAIL (assigning NovaOpt_str from
+  NovaOpt_bool, или nova_str вместо nova_bool).
+- **Закрыто:** новый helper collect_pattern_inner_bindings extracts
+  per-arm pattern-bind types из scrutinee C-type. emit_match infer
+  passes делают scoped override var_types на время arm-body inference
+  и restore после.
+  Поддержка: Ident, Variant(Some/None/Ok/Err + user sum-types),
+  Or, Binding, recursion для nested patterns (Some(Ok(v))).
+  Block arm trailing — тот же путь.
+- **Tests:** `nova_tests/plan55/f2_*.nv` — 4 positive/nested/Block/neg.
+- **Параллель:** Rust/Swift exhaustive inference, TS narrows.
