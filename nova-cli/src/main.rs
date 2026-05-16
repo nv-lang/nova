@@ -524,6 +524,26 @@ enum BenchCmd {
         #[arg(long, default_value = "bench-history")]
         branch: String,
     },
+    /// Plan 57.C.6: squash older history entries по retention policy.
+    /// Yearly squash recommended (см. docs/perf-conventions.md).
+    #[command(name = "history-squash")]
+    HistorySquash {
+        /// Squash entries older than this date (YYYY-MM-DD UTC).
+        #[arg(long = "before-date")]
+        before_date: String,
+        /// Branch (default: bench-history).
+        #[arg(long, default_value = "bench-history")]
+        branch: String,
+        /// Push to remote after squash.
+        #[arg(long)]
+        push: bool,
+        /// Remote name when --push.
+        #[arg(long, default_value = "origin")]
+        remote: String,
+        /// Dry-run: print what would be removed, do not commit.
+        #[arg(long = "dry-run")]
+        dry_run: bool,
+    },
     /// Plan 57.A.2: Generate static HTML dashboard from history.
     /// Reads from history orphan branch, writes <out>/index.html +
     /// <out>/bench-<safe>.html per bench, plus <out>/data.json.
@@ -2792,6 +2812,14 @@ fn cmd_bench(sub: BenchCmd) -> Result<()> {
             if exit != 0 { std::process::exit(exit); }
             Ok(())
         }
+        BenchCmd::HistorySquash { before_date, branch, push, remote, dry_run } => {
+            let repo = find_repo_root()?;
+            let before_unix = parse_date_to_unix(&before_date)?;
+            let exit = bench::history::squash(&repo, &branch, before_unix,
+                push, &remote, dry_run)?;
+            if exit != 0 { std::process::exit(exit); }
+            Ok(())
+        }
         BenchCmd::HistoryList { branch } => {
             let repo = find_repo_root()?;
             let entries = bench::history::list(&repo, &branch)?;
@@ -2821,6 +2849,33 @@ fn cmd_bench(sub: BenchCmd) -> Result<()> {
             Ok(())
         }
     }
+}
+
+/// Plan 57.C.6: parse YYYY-MM-DD to unix timestamp (UTC midnight).
+/// Inverse of unix_to_ymdhms (Howard Hinnant alg).
+fn parse_date_to_unix(s: &str) -> Result<u64> {
+    let parts: Vec<&str> = s.split('-').collect();
+    if parts.len() != 3 {
+        return Err(usage_err(format!("expected YYYY-MM-DD, got `{}`", s)));
+    }
+    let y: i64 = parts[0].parse()
+        .map_err(|_| usage_err(format!("invalid year: {}", parts[0])))?;
+    let m: u64 = parts[1].parse()
+        .map_err(|_| usage_err(format!("invalid month: {}", parts[1])))?;
+    let d: u64 = parts[2].parse()
+        .map_err(|_| usage_err(format!("invalid day: {}", parts[2])))?;
+    if m < 1 || m > 12 || d < 1 || d > 31 {
+        return Err(usage_err(format!("invalid date: {}", s)));
+    }
+    // Howard Hinnant (inverse of unix_to_ymdhms).
+    let yp = if m <= 2 { y - 1 } else { y };
+    let era = if yp >= 0 { yp } else { yp - 399 } / 400;
+    let yoe = (yp - era * 400) as u64;  // [0, 399]
+    let mu = if m > 2 { m - 3 } else { m + 9 };
+    let doy = (153 * mu + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days_since_epoch = era * 146097 + (doe as i64) - 719468;
+    Ok((days_since_epoch * 86400) as u64)
 }
 
 /// True if terminal output should be colorized. Mirrors existing color
