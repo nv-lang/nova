@@ -1,0 +1,19 @@
+// Ф.3.2 (Plan 33.6): exists в ensures — proven witness отображается info-note.
+// REQUIRES_SMT_BACKEND z3
+// V1: Z3 доказывает exists через двойное отрицание, witness не extract'ается
+// concrete-значением (V2: Z3_get_model + Skolem decl extraction).
+// Тест проверяет только что exists не ломает компиляцию.
+
+module contracts.witness_exists_positive
+
+#verify
+fn has_positive(n int) -> int
+    requires n >= 1
+    ensures exists x in 1..2 : x == 1
+{
+    n
+}
+
+test "witness exists v1 positive" {
+    assert(has_positive(5) == 5)
+}
