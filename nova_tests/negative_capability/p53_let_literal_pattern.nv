@@ -1,4 +1,4 @@
-// EXPECT_COMPILE_ERROR refutable pattern в `let`
+// EXPECT_COMPILE_ERROR refutable pattern in `let`
 //
 // Plan 53: `let`-pattern должен быть irrefutable. Литерал — refutable
 // (значение может не совпасть), для match-like нужен `if let` / `match`.

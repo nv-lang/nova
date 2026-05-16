@@ -1,4 +1,4 @@
-// EXPECT_COMPILE_ERROR refutable pattern в `let`
+// EXPECT_COMPILE_ERROR refutable pattern in `let`
 //
 // Plan 53: variant-patterns требуют tag-check в runtime — `let` гарантирует
 // binding, не fallible match. Для variant — `if let` / `match`.

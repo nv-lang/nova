@@ -1,4 +1,4 @@
-// EXPECT_COMPILE_ERROR refutable pattern в `let`
+// EXPECT_COMPILE_ERROR refutable pattern in `let`
 //
 // Plan 53: array-patterns refutable — длина не гарантирована. Для
 // извлечения элементов — `xs[i]` или `if let` / `match`.

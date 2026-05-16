@@ -927,31 +927,38 @@ impl<'a> BoundCtx<'a> {
                 }
             }
             Pattern::Record { type_path, fields, span, .. } => {
-                // Sum-variant РІ type_path вЂ” refutable.
+                // Sum-variant in type_path — refutable.
                 if let Some(path) = type_path {
                     if let Some(last) = path.last() {
                         if self.sum_variant_names.contains(last) {
+                            let path_str = path.join(".");
                             errors.push(
                                 Diagnostic::new(
                                     format!(
-                                        "refutable pattern РІ `let`: `{}` вЂ” sum-variant, \
-                                         СЃРѕРІРїР°РґРµРЅРёРµ РЅРµ РіР°СЂР°РЅС‚РёСЂРѕРІР°РЅРѕ (D52). РСЃРїРѕР»СЊР·СѓР№С‚Рµ \
-                                         `if let` / `match`",
-                                        path.join("."),
+                                        "refutable pattern in `let`: `{}` is a sum-variant — \
+                                         match is not statically guaranteed (D52). Use \
+                                         `if let` or `match` instead.",
+                                        path_str,
                                     ),
                                     *span,
                                 )
                                 .with_note(
-                                    "Plan 53: `let` РїСЂРёРЅРёРјР°РµС‚ С‚РѕР»СЊРєРѕ irrefutable patterns \
-                                     (Ident, Wildcard, Tuple, plain-Record). Sum-variants \
-                                     С‚СЂРµР±СѓСЋС‚ tag-check РІ runtime вЂ” `let` РЅРµ РјРѕР¶РµС‚ РµРіРѕ СЃРґРµР»Р°С‚СЊ.",
+                                    "Plan 53: `let` accepts only irrefutable patterns (Ident, \
+                                     Wildcard, Tuple, plain-Record). Sum-variants need a \
+                                     runtime tag-check — `let` cannot perform it.",
+                                )
+                                .with_note(
+                                    format!(
+                                        "example: `if let {} {{ ... }} = <expr> {{ ... }}`",
+                                        path_str,
+                                    ),
                                 ),
                             );
                             return;
                         }
                     }
                 }
-                // Р РµРєСѓСЂСЃРёРІРЅРѕ РїСЂРѕРІРµСЂСЏРµРј РїРѕРґ-patterns РїРѕР»РµР№.
+                // Recurse into sub-patterns of fields.
                 for f in fields {
                     if let Some(sub) = &f.pattern {
                         self.check_let_pattern_irrefutable(sub, errors);
@@ -964,58 +971,67 @@ impl<'a> BoundCtx<'a> {
             Pattern::Literal(_, span) => {
                 errors.push(
                     Diagnostic::new(
-                        "refutable pattern РІ `let`: literal вЂ” СЃРѕРІРїР°РґРµРЅРёРµ РЅРµ РіР°СЂР°РЅС‚РёСЂРѕРІР°РЅРѕ. \
-                         РСЃРїРѕР»СЊР·СѓР№С‚Рµ `if let` / `match` Р»РёР±Рѕ РѕР±С‹С‡РЅС‹Р№ `let x = ...; if x == ...`",
+                        "refutable pattern in `let`: literal match is not statically \
+                         guaranteed. Use `if let` / `match`, or a plain \
+                         `let x = ...; if x == ...`",
                         *span,
                     )
                     .with_note(
-                        "РїСЂРёРјРµСЂ: `if let 42 = n { ... }` РёР»Рё `let x = n; if x == 42 { ... }`",
+                        "example: `if let 42 = n { ... }` or `let x = n; if x == 42 { ... }`",
                     ),
                 );
             }
             Pattern::Variant { path, span, .. } => {
+                let path_str = path.join(".");
                 errors.push(
                     Diagnostic::new(
                         format!(
-                            "refutable pattern РІ `let`: `{}` вЂ” variant-pattern, \
-                             СЃРѕРІРїР°РґРµРЅРёРµ РЅРµ РіР°СЂР°РЅС‚РёСЂРѕРІР°РЅРѕ (D52/D59). РСЃРїРѕР»СЊР·СѓР№С‚Рµ \
-                             `if let` / `match`",
-                            path.join("."),
+                            "refutable pattern in `let`: `{}` is a variant-pattern — \
+                             match is not statically guaranteed (D52/D59). Use `if let` \
+                             or `match` instead.",
+                            path_str,
                         ),
                         *span,
                     )
                     .with_note(
-                        "Plan 53: variant-patterns С‚СЂРµР±СѓСЋС‚ tag-check РІ runtime вЂ” \
-                         `let` РіР°СЂР°РЅС‚РёСЂСѓРµС‚ binding, РЅРµ fallible match.",
+                        "Plan 53: variant-patterns need a runtime tag-check — `let` \
+                         guarantees binding, not a fallible match.",
+                    )
+                    .with_note(
+                        format!(
+                            "example: `if let {}(..) = <expr> {{ ... }}`",
+                            path_str,
+                        ),
                     ),
                 );
             }
             Pattern::Or { span, .. } => {
                 errors.push(
                     Diagnostic::new(
-                        "refutable pattern РІ `let`: alternation `|` вЂ” СЃРѕРІРїР°РґРµРЅРёРµ РЅРµ \
-                         РіР°СЂР°РЅС‚РёСЂРѕРІР°РЅРѕ. РСЃРїРѕР»СЊР·СѓР№С‚Рµ `if let` / `match`",
+                        "refutable pattern in `let`: alternation `|` is not statically \
+                         guaranteed to match. Use `if let` / `match`.",
                         *span,
                     )
                     .with_note(
-                        "РїСЂРёРјРµСЂ: `match x { A | B => ..., _ => ... }`",
+                        "example: `match x { A | B => ..., _ => ... }`",
                     ),
                 );
             }
             Pattern::Array { span, .. } => {
                 errors.push(
                     Diagnostic::new(
-                        "refutable pattern РІ `let`: array вЂ” РґР»РёРЅР° РЅРµ РіР°СЂР°РЅС‚РёСЂРѕРІР°РЅР°. \
-                         РСЃРїРѕР»СЊР·СѓР№С‚Рµ `if let` / `match` Р»РёР±Рѕ РёРЅРґРµРєСЃР°С†РёСЋ `xs[0]`, `xs.len`",
+                        "refutable pattern in `let`: array length is not statically \
+                         guaranteed. Use `if let` / `match`, or index/length checks \
+                         like `xs[0]`, `xs.len`.",
                         *span,
                     )
                     .with_note(
-                        "РїСЂРёРјРµСЂ: `if let [a, b, c] = xs { ... } else { /* handle */ }` \
-                         РёР»Рё `match xs { [a, b, c] => ..., _ => ... }`",
+                        "example: `if let [a, b, c] = xs { ... } else { /* handle */ }` \
+                         or `match xs { [a, b, c] => ..., _ => ... }`",
                     )
                     .with_note(
-                        "Plan 53: array-РґР»РёРЅР° РїСЂРѕРІРµСЂСЏРµС‚СЃСЏ РІ runtime вЂ” `let` РїСЂРёРЅРёРјР°РµС‚ \
-                         С‚РѕР»СЊРєРѕ СЃС‚Р°С‚РёС‡РµСЃРєРё-РіР°СЂР°РЅС‚РёСЂРѕРІР°РЅРЅС‹Рµ patterns.",
+                        "Plan 53: array-length is checked at runtime — `let` accepts \
+                         only statically-guaranteed patterns.",
                     ),
                 );
             }
