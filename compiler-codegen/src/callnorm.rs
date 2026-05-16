@@ -112,6 +112,18 @@ fn normalize_item(item: &mut Item, sigs: &Sigs) {
             }
         }
         Item::Test(t) => normalize_block(&mut t.body, sigs),
+        // Plan 57: bench setup/measure_body/teardown — все три раздела
+        // обычные блоки statement'ов, требуют такой же нормализации
+        // вызовов, как test body.
+        Item::Bench(b) => {
+            for s in &mut b.setup {
+                normalize_stmt(s, sigs);
+            }
+            normalize_block(&mut b.measure_body, sigs);
+            for s in &mut b.teardown {
+                normalize_stmt(s, sigs);
+            }
+        }
         Item::Const(c) => normalize_expr(&mut c.value, sigs),
         Item::Let(l) => normalize_expr(&mut l.value, sigs),
         Item::Type(_) => {}

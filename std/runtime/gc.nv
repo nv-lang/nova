@@ -83,3 +83,9 @@ export external fn gc.collect() -> ()
 // per-test isolation. GC stats самого Boehm не сбрасываются (Boehm
 // не поддерживает reset на runtime-уровне).
 export external fn gc.reset_stats() -> ()
+
+// Plan 57.C.2: длительность последнего collect-цикла в наносекундах.
+// Под malloc backend всегда 0 (нет collect-cycle). Под boehm —
+// измеряется monotonic timer'ом вокруг `GC_gcollect()`. Полезно для
+// `nova bench run --profile gc` consumer и для production observability.
+export external fn gc.last_pause_ns() -> int

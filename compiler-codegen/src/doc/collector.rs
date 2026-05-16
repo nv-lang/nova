@@ -240,7 +240,8 @@ fn collect_one(module: &Module) -> DocModule {
             Item::Fn(f) => items.push(collect_fn(&module_path, f, &module_forbid)),
             Item::Type(t) => items.push(collect_type(&module_path, t)),
             Item::Const(c) => items.push(collect_const(&module_path, c)),
-            Item::Let(_) | Item::Test(_) | Item::Lemma(_) => {}
+            // Plan 57: bench-декларации не документируются (как test/lemma).
+            Item::Let(_) | Item::Test(_) | Item::Bench(_) | Item::Lemma(_) => {}
         }
     }
     // Plan 45 Р¤.24.11: collect re-exported items (`export import X.{Foo}`) as DocItems.

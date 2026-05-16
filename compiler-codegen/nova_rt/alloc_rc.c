@@ -64,3 +64,9 @@ size_t nova_gc_alloc_count(void) { return _alloc_count; }
 size_t nova_gc_free_count(void)  { return _free_count; }
 size_t nova_gc_live_count(void)  { return _alloc_count - _free_count; }
 void   nova_gc_reset_stats(void) { _alloc_count = 0; _free_count = 0; }
+
+/* Plan 32 + 57.C.2: introspection stubs для RC backend (legacy, unused
+ * in default builds). RC не имеет collect-cycle — sentinel zeros. */
+size_t   nova_gc_heap_size(void)     { return 0; }
+void     nova_gc_collect(void)       { /* no-op: RC is incremental */ }
+uint64_t nova_gc_last_pause_ns(void) { return 0; }

@@ -1,0 +1,56 @@
+// Plan 57 corpus 06: contracts type-check cost.
+// Measures requires/ensures/old/decreases parsing + analysis.
+
+fn abs(x int) -> int
+    ensures result >= 0
+    ensures (x >= 0 && result == x) || (x < 0 && result == -x)
+=> if x < 0 { -x } else { x }
+
+fn max(a int, b int) -> int
+    ensures result >= a
+    ensures result >= b
+    ensures result == a || result == b
+=> if a > b { a } else { b }
+
+fn factorial(n int) -> int
+    requires n >= 0
+    decreases n
+=> if n == 0 { 1 } else { n * factorial(n - 1) }
+
+fn binary_search(arr []int, target int, lo int, hi int) -> int
+    requires lo >= 0
+    requires hi >= lo
+    requires hi <= arr.len()
+    decreases hi - lo
+{
+    if lo >= hi { return -1 }
+    let mid = lo + (hi - lo) / 2
+    let v = arr[mid]
+    if v == target { mid }
+    else if v < target { binary_search(arr, target, mid + 1, hi) }
+    else { binary_search(arr, target, lo, mid) }
+}
+
+fn sum_positive(xs []int) -> int
+    requires xs.len() > 0
+    ensures result >= 0
+{
+    let mut s = 0
+    let mut i = 0
+    while i < xs.len()
+        invariant i >= 0
+        invariant i <= xs.len()
+        invariant s >= 0
+    {
+        let x = xs[i]
+        if x > 0 { s = s + x }
+        i = i + 1
+    }
+    s
+}
+
+fn main() Io -> () {
+    println(str.from(abs(-7)))
+    println(str.from(max(3, 5)))
+    println(str.from(factorial(5)))
+}

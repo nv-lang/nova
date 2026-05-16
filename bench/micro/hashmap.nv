@@ -1,0 +1,44 @@
+// Plan 57: HashMap micro-benches.
+module bench.micro
+
+bench "hashmap insert n=1000" {
+    measure {
+        let mut m = HashMap[int, int].new()
+        let n = 1000
+        let mut i = 0
+        while i < n {
+            m.insert(i, i)
+            i = i + 1
+        }
+        bench.opaque(m)
+        bench.elements(n)
+    }
+}
+
+bench "hashmap get hit n=1000" {
+    let mut m = HashMap[int, int].new()
+    let mut k = 0
+    while k < 1000 { m.insert(k, k); k = k + 1 }
+    measure {
+        let mut i = 0
+        while i < 1000 {
+            bench.opaque(m.get(i))
+            i = i + 1
+        }
+        bench.elements(1000)
+    }
+}
+
+bench "hashmap get miss n=1000" {
+    let mut m = HashMap[int, int].new()
+    let mut k = 0
+    while k < 1000 { m.insert(k, k); k = k + 1 }
+    measure {
+        let mut i = 0
+        while i < 1000 {
+            bench.opaque(m.get(i + 1000))
+            i = i + 1
+        }
+        bench.elements(1000)
+    }
+}

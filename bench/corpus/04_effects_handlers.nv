@@ -1,0 +1,102 @@
+// Plan 57 corpus 04: handler dispatch codegen — 5 effects, 8 handlers.
+// Measures effect-row inference + handler-stack codegen.
+
+type Logger effect {
+    log(msg str) -> ()
+}
+
+type Counter effect {
+    incr() -> ()
+    get() -> int
+}
+
+type Cache[K, V] effect {
+    fetch(key K) -> Option[V]
+    store(key K, value V) -> ()
+}
+
+type Random effect {
+    next_int() -> int
+}
+
+type Audit effect {
+    record(event str) -> ()
+}
+
+fn process(x int) Logger Counter -> int {
+    Logger.log("processing")
+    Counter.incr()
+    x * 2
+}
+
+fn fetch_with_cache(key str) Cache[str, int] Logger -> Option[int] {
+    let cached = Cache.fetch(key)
+    if let Some(v) = cached {
+        Logger.log("cache hit")
+        return Some(v)
+    }
+    Logger.log("cache miss")
+    None
+}
+
+fn audit_action(action str) Audit Logger -> () {
+    Logger.log("auditing")
+    Audit.record(action)
+}
+
+fn main() Io -> () {
+    // 8 handler literals — each emits its own ctx struct + impl fn.
+    let console = handler Logger {
+        log(msg) => println("[LOG] ${msg}")
+    }
+    let null_log = handler Logger {
+        log(_msg) => ()
+    }
+    let mut count_val = 0
+    let counter = handler Counter {
+        incr() => { count_val = count_val + 1 }
+        get()  => count_val
+    }
+    let zero_counter = handler Counter {
+        incr() => ()
+        get()  => 0
+    }
+    let in_memory_cache = handler Cache[str, int] {
+        fetch(_k)    => None
+        store(_k, _v) => ()
+    }
+    let always_42 = handler Random {
+        next_int() => 42
+    }
+    let stdout_audit = handler Audit {
+        record(event) => println("AUDIT: ${event}")
+    }
+    let silent_audit = handler Audit {
+        record(_event) => ()
+    }
+
+    with Logger = console, Counter = counter {
+        let r = process(10)
+        println(str.from(r))
+    }
+
+    with Logger = null_log, Counter = zero_counter {
+        let r = process(5)
+        println(str.from(r))
+    }
+
+    with Cache[str, int] = in_memory_cache, Logger = console {
+        let r = fetch_with_cache("key")
+        println(if let Some(v) = r { str.from(v) } else { "none" })
+    }
+
+    with Audit = stdout_audit, Logger = console {
+        audit_action("user-login")
+    }
+
+    with Audit = silent_audit, Logger = null_log {
+        audit_action("noop-action")
+    }
+
+    let _ = always_42
+}

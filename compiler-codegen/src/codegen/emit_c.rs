@@ -464,6 +464,11 @@ pub struct CEmitter {
     /// между fn-bodies, поэтому single per-test contains-check НЕ ловит
     /// re-emit между tests. Этот set tracks все уже emitted wrappers.
     emitted_cancel_converters: HashSet<String>,
+    /// Plan 57: bench mode. When true, emit_main_wrapper генерирует
+    /// `bench main` (вызовы `nova_bench_run` per BenchDecl) вместо
+    /// обычного main или test runner. test items в этом режиме игнорируются.
+    /// Активируется set_bench_mode(true) из nova-cli `nova bench`.
+    bench_mode: bool,
 }
 
 /// Plan 20 Ф.4: per-defer-stmt entry — tracks one `defer { ... }` or
@@ -627,7 +632,14 @@ impl CEmitter {
                 .unwrap_or(500),
             cancel_token_t_map: HashMap::new(),
             emitted_cancel_converters: HashSet::new(),
+            bench_mode: false,
         }
+    }
+
+    /// Plan 57: enable bench-mode. Activated by `nova bench` CLI.
+    /// emit_main_wrapper будет генерить bench main вместо test/main.
+    pub fn set_bench_mode(&mut self, enable: bool) {
+        self.bench_mode = enable;
     }
 
     /// Plan 48 Ф.7.6: CLI override for the monomorphization-worklist drain
@@ -1439,6 +1451,68 @@ impl CEmitter {
             }
         }
 
+        // 5b. Plan 57: Bench function definitions (только в bench_mode).
+        // В обычной сборке bench items игнорируются — tests/main работают
+        // обычно. В bench_mode tests игнорируются (см. emit_main_wrapper).
+        if self.bench_mode {
+            // Plan 57: define TLS bench state once per binary.
+            self.out.push_str("NOVA_BENCH_STATE_DEFINE;\n");
+            // Plan 57.C.3: heap sampler thread globals (libuv-conditional).
+            self.out.push_str("NOVA_BENCH_HEAP_SAMPLER_THREAD_DEFINE\n\n");
+            let mut idx = 0usize;
+            for item in &module.items {
+                if let Item::Bench(b) = item {
+                    // Plan 57.B.5: grouped — каждый case даёт отдельную entry.
+                    if !b.groups.is_empty() {
+                        for grp in &b.groups {
+                            for case in &grp.cases {
+                                let composite = format!("{}/{}/{}", b.name, grp.name, case.name);
+                                let cloned = BenchDecl {
+                                    name: composite,
+                                    setup: case.setup.clone(),
+                                    measure_body: case.measure_body.clone(),
+                                    teardown: case.teardown.clone(),
+                                    params: None,
+                                    groups: Vec::new(),
+                                    span: case.span,
+                                };
+                                self.emit_bench(&cloned, idx)?;
+                                idx += 1;
+                            }
+                        }
+                        continue;
+                    }
+                    // Plan 57.B.3: parameterized sweep — emit одну entry
+                    // на каждый param value, с let-binding prepended.
+                    if let Some(p) = &b.params {
+                        for v in &p.values {
+                            let suffix_name = format!("{}/p={}", b.name, v);
+                            let mut prepended_setup = vec![
+                                Self::synth_int_let(&p.var_name, *v, p.span),
+                            ];
+                            for s in &b.setup {
+                                prepended_setup.push(s.clone());
+                            }
+                            let cloned = BenchDecl {
+                                name: suffix_name,
+                                setup: prepended_setup,
+                                measure_body: b.measure_body.clone(),
+                                teardown: b.teardown.clone(),
+                                params: None,
+                                groups: Vec::new(),
+                                span: b.span,
+                            };
+                            self.emit_bench(&cloned, idx)?;
+                            idx += 1;
+                        }
+                    } else {
+                        self.emit_bench(b, idx)?;
+                        idx += 1;
+                    }
+                }
+            }
+        }
+
         // Plan 48: drain monomorphization worklist to fixpoint (R3: polymorphic recursion guard).
         // Ф.7.6: limit задаётся через CLI `--mono-depth=N` (set_mono_depth_limit)
         // или fallback на env var `NOVA_MONO_DEPTH`; оба читаются в `new()`.
@@ -1573,11 +1647,250 @@ impl CEmitter {
     }
 
     /// Mangle a test name and append a numeric suffix to guarantee uniqueness.
+    /// Plan 57.B.3: synthesize `let <name> = <value>;` Stmt для prepending
+    /// param-substitution в setup.
+    fn synth_int_let(name: &str, value: i64, span: crate::diag::Span) -> Stmt {
+        let int_lit = Expr {
+            kind: ExprKind::IntLit(value),
+            span,
+        };
+        Stmt::Let(LetDecl {
+            mutable: false,
+            pattern: Pattern::Ident { name: name.to_string(), span },
+            ty: None,
+            value: int_lit,
+            span,
+            is_ghost: false,
+        })
+    }
+
     fn mangle_test_name_indexed(name: &str, index: usize) -> String {
         let base: String = name.chars()
             .map(|c| if c.is_ascii_alphanumeric() || c == '_' { c } else { '_' })
             .collect();
         format!("{}_{}", base, index)
+    }
+
+    /// Plan 57: emit setup/measure/teardown functions for one BenchDecl.
+    /// Аналогично emit_test, но эмитит ТРИ static функции:
+    ///   - nova_bench_setup_<safe>()
+    ///   - nova_bench_measure_<safe>()
+    ///   - nova_bench_teardown_<safe>()
+    /// Orchestration делается в emit_main_wrapper bench-mode: вызывает
+    /// nova_bench_run("name", setup, measure, teardown).
+    fn emit_bench(&mut self, b: &BenchDecl, idx: usize) -> Result<(), String> {
+        let safe = Self::mangle_test_name_indexed(&b.name, idx);
+        let saved_out = std::mem::take(&mut self.out);
+        let saved_indent = self.indent;
+        let saved_var_types = self.var_types.clone();
+        let saved_var_mutable = self.var_mutable.clone();
+        let saved_cancel_token_t_map = self.cancel_token_t_map.clone();
+
+        // Подход: setup и teardown эмитятся как ТЕЛО функций, а measure —
+        // отдельная функция. Setup mutates var_types — эти переменные
+        // будут локальны для setup-функции, не видны в measure (это
+        // ограничение MVP: TODO Phase B — поднимать setup-state в TLS
+        // struct и передавать в measure). Для MVP реальные benches
+        // выкручиваются через global mut consts или single inline-блок.
+        //
+        // Для MVP — упрощение: эмитим всё в **ОДНУ** функцию
+        // nova_bench_main_<safe>(), которая делает:
+        //     setup_stmts;
+        //     for (sample) { for (iter) { measure; } record; }
+        //     teardown_stmts;
+        // Это позволяет let-bindings из setup жить в одном scope с measure.
+        // Sampling logic — embedded inline (вместо callback'ов в nova_bench_run).
+        //
+        // Plan 57 Phase A TODO: extract в callback'и с TLS state struct,
+        // чтобы поддерживать sub-benchmarks (`group "..." { case "..." { } }`).
+
+        self.indent = 0;
+        self.line(&format!("static nova_unit nova_bench_main_{}(void) {{", safe));
+        self.indent = 1;
+
+        // Reset bench TLS state.
+        self.line("memset(&_nova_bench_state, 0, sizeof(_nova_bench_state));");
+        // Knobs from env.
+        self.line("uint64_t _b_warmup_ns   = nova_bench_env_u64(\"NOVA_BENCH_WARMUP_NS\",   NOVA_BENCH_DEFAULT_WARMUP_NS);");
+        self.line("uint64_t _b_target_ns   = nova_bench_env_u64(\"NOVA_BENCH_TARGET_NS\",   NOVA_BENCH_DEFAULT_TARGET_NS);");
+        self.line("uint64_t _b_n_samples   = nova_bench_env_u64(\"NOVA_BENCH_SAMPLES\",     NOVA_BENCH_DEFAULT_SAMPLES);");
+        self.line("uint64_t _b_time_budget = nova_bench_env_u64(\"NOVA_BENCH_TIME_BUDGET_NS\", NOVA_BENCH_DEFAULT_TIME_BUDGET_NS);");
+        self.line("if (_b_n_samples == 0) _b_n_samples = NOVA_BENCH_DEFAULT_SAMPLES;");
+        self.line("if (_b_n_samples > NOVA_BENCH_MAX_SAMPLES) _b_n_samples = NOVA_BENCH_MAX_SAMPLES;");
+
+        // BENCH_START marker.
+        let escaped = Self::escape_c_str(&b.name);
+        self.line("fputs(\"__BENCH_START__ \", stdout);");
+        self.line(&format!("nova_bench_print_json_str(\"{}\");", escaped));
+        self.line("fputc('\\n', stdout);");
+        self.line("fflush(stdout);");
+
+        // ── Setup ───────────────────────────────────────────────────
+        for stmt in &b.setup {
+            self.emit_stmt(stmt)?;
+        }
+
+        // Plan 57.C.3: start heap sampler thread (no-op если env не set).
+        self.line("nova_bench_heap_sampler_start();");
+        // Plan 57.C.4: open CPU instructions counter (Linux-only no-op
+        // на других platforms; no-op если NOVA_BENCH_MEASURE_INSTRUCTIONS=0).
+        self.line("nova_bench_instr_start();");
+
+        // ── Warmup ──────────────────────────────────────────────────
+        self.line("{");
+        self.indent += 1;
+        self.line("uint64_t _b_t_start = nova_bench_now_ns();");
+        self.line("do {");
+        self.indent += 1;
+        // Inline measure body.
+        for s in &b.measure_body.stmts {
+            self.emit_stmt(s)?;
+        }
+        if let Some(t) = &b.measure_body.trailing {
+            // trailing — expression, эмитим и discard'им result.
+            let v = self.emit_expr(t)?;
+            self.line(&format!("(void)({});", v));
+        }
+        self.indent -= 1;
+        self.line("} while (nova_bench_now_ns() - _b_t_start < _b_warmup_ns);");
+        self.indent -= 1;
+        self.line("}");
+
+        // ── Calibration: single iter ──────────────────────────────
+        self.line("_nova_bench_state.iters_per_sample = 1;");
+        self.line("uint64_t _b_calib_t0 = nova_bench_now_ns();");
+        self.line("{");
+        self.indent += 1;
+        for s in &b.measure_body.stmts {
+            self.emit_stmt(s)?;
+        }
+        if let Some(t) = &b.measure_body.trailing {
+            let v = self.emit_expr(t)?;
+            self.line(&format!("(void)({});", v));
+        }
+        self.indent -= 1;
+        self.line("}");
+        self.line("uint64_t _b_single_ns = nova_bench_now_ns() - _b_calib_t0;");
+        self.line("if (_b_single_ns == 0) _b_single_ns = 1;");
+        self.line("uint64_t _b_iters_per_sample = _b_target_ns / _b_single_ns;");
+        self.line("if (_b_iters_per_sample < 1) _b_iters_per_sample = 1;");
+        self.line("if (_b_iters_per_sample > 1000000) _b_iters_per_sample = 1000000;");
+        self.line("_nova_bench_state.iters_per_sample = _b_iters_per_sample;");
+
+        // ── Sample collection ─────────────────────────────────────
+        self.line("uint64_t* _b_samples = (uint64_t*)malloc(sizeof(uint64_t) * (size_t)_b_n_samples);");
+        self.line("if (!_b_samples) { fprintf(stderr, \"nova bench: malloc failed\\n\"); return NOVA_UNIT; }");
+        self.line("uint64_t _b_collected = 0;");
+        self.line("int64_t _b_alloc_pre = nova_bench_alloc_count_snapshot();");
+        self.line("uint64_t _b_suite_start = nova_bench_now_ns();");
+        // Plan 57.C.4: per-sample CPU instructions counter.
+        self.line("uint64_t* _b_instr = (uint64_t*)calloc((size_t)_b_n_samples, sizeof(uint64_t));");
+        self.line("if (!_b_instr) { fprintf(stderr, \"nova bench: malloc failed (instr)\\n\"); free(_b_samples); return NOVA_UNIT; }");
+        self.line("int _b_instr_active = nova_bench_instr_active();");
+        self.line("for (uint64_t _b_i = 0; _b_i < _b_n_samples; _b_i++) {");
+        self.indent += 1;
+        self.line("if (_b_instr_active) nova_bench_instr_sample_reset();");
+        self.line("_nova_bench_state.timer_start_ns = nova_bench_now_ns();");
+        self.line("for (uint64_t _b_k = 0; _b_k < _b_iters_per_sample; _b_k++) {");
+        self.indent += 1;
+        for s in &b.measure_body.stmts {
+            self.emit_stmt(s)?;
+        }
+        if let Some(t) = &b.measure_body.trailing {
+            let v = self.emit_expr(t)?;
+            self.line(&format!("(void)({});", v));
+        }
+        self.indent -= 1;
+        self.line("}");
+        self.line("uint64_t _b_t_end = nova_bench_now_ns();");
+        self.line("if (_b_instr_active) _b_instr[_b_i] = nova_bench_instr_sample_read();");
+        self.line("uint64_t _b_elapsed = _b_t_end - _nova_bench_state.timer_start_ns;");
+        self.line("_b_samples[_b_i] = _b_elapsed / _b_iters_per_sample;");
+        self.line("_b_collected++;");
+        self.line("if (nova_bench_now_ns() - _b_suite_start > _b_time_budget) break;");
+        self.indent -= 1;
+        self.line("}");
+        // Plan 57.C.4: close counter после sample loop.
+        self.line("nova_bench_instr_stop();");
+        self.line("int64_t _b_alloc_post = nova_bench_alloc_count_snapshot();");
+
+        // Plan 57.C.3: stop heap sampler thread.
+        self.line("nova_bench_heap_sampler_stop();");
+
+        // ── Teardown ────────────────────────────────────────────────
+        for stmt in &b.teardown {
+            self.emit_stmt(stmt)?;
+        }
+
+        // ── Emit JSONL result ──────────────────────────────────────
+        self.line("fputs(\"__BENCH_RESULT__ {\\\"name\\\":\", stdout);");
+        self.line(&format!("nova_bench_print_json_str(\"{}\");", escaped));
+        self.line("fprintf(stdout, \",\\\"iters_per_sample\\\":%llu\", (unsigned long long)_b_iters_per_sample);");
+        self.line("fprintf(stdout, \",\\\"samples_count\\\":%llu\", (unsigned long long)_b_collected);");
+        self.line("fputs(\",\\\"raw_ns\\\":[\", stdout);");
+        self.line("for (uint64_t _b_j = 0; _b_j < _b_collected; _b_j++) {");
+        self.indent += 1;
+        self.line("if (_b_j > 0) fputc(',', stdout);");
+        self.line("fprintf(stdout, \"%llu\", (unsigned long long)_b_samples[_b_j]);");
+        self.indent -= 1;
+        self.line("}");
+        self.line("fputc(']', stdout);");
+        self.line("if (_nova_bench_state.throughput_bytes) {");
+        self.indent += 1;
+        self.line("fprintf(stdout, \",\\\"throughput_bytes\\\":%llu\", (unsigned long long)_nova_bench_state.throughput_bytes);");
+        self.indent -= 1;
+        self.line("}");
+        self.line("if (_nova_bench_state.throughput_elements) {");
+        self.indent += 1;
+        self.line("fprintf(stdout, \",\\\"throughput_elements\\\":%llu\", (unsigned long long)_nova_bench_state.throughput_elements);");
+        self.indent -= 1;
+        self.line("}");
+        self.line("int64_t _b_total_iters = (int64_t)_b_iters_per_sample * (int64_t)_b_collected;");
+        self.line("if (_b_total_iters > 0) {");
+        self.indent += 1;
+        self.line("int64_t _b_alloc_delta = _b_alloc_post - _b_alloc_pre;");
+        self.line("int64_t _b_per_iter = _b_alloc_delta / _b_total_iters;");
+        self.line("fprintf(stdout, \",\\\"allocs_per_iter\\\":%lld\", (long long)_b_per_iter);");
+        self.line("fprintf(stdout, \",\\\"allocs_total\\\":%lld\", (long long)_b_alloc_delta);");
+        self.indent -= 1;
+        self.line("}");
+        // Plan 57.C.4: emit per-sample instructions array (only if counter active).
+        self.line("if (_b_instr_active) {");
+        self.indent += 1;
+        self.line("fputs(\",\\\"cpu_instructions\\\":[\", stdout);");
+        self.line("for (uint64_t _b_j = 0; _b_j < _b_collected; _b_j++) {");
+        self.indent += 1;
+        self.line("if (_b_j > 0) fputc(',', stdout);");
+        // Per-iter instructions = total per batch / iters_per_sample.
+        self.line("fprintf(stdout, \"%llu\", (unsigned long long)(_b_instr[_b_j] / _b_iters_per_sample));");
+        self.indent -= 1;
+        self.line("}");
+        self.line("fputc(']', stdout);");
+        self.indent -= 1;
+        self.line("}");
+        self.line("fputs(\"}\\n\", stdout);");
+        self.line("fflush(stdout);");
+        self.line("free(_b_samples);");
+        self.line("free(_b_instr);");
+
+        self.line("return NOVA_UNIT;");
+        self.indent = 0;
+        self.line("}");
+        self.line("");
+
+        self.var_types = saved_var_types;
+        self.var_mutable = saved_var_mutable;
+        self.cancel_token_t_map = saved_cancel_token_t_map;
+        let bench_body = std::mem::replace(&mut self.out, saved_out);
+        self.indent = saved_indent;
+        if !self.lambda_forward_decls.is_empty() {
+            self.out.push_str(&std::mem::take(&mut self.lambda_forward_decls));
+        }
+        if !self.lambda_impls.is_empty() {
+            self.out.push_str(&std::mem::take(&mut self.lambda_impls));
+        }
+        self.out.push_str(&bench_body);
+        Ok(())
     }
 
     fn emit_test(&mut self, t: &TestDecl, idx: usize) -> Result<(), String> {
@@ -7111,7 +7424,96 @@ impl CEmitter {
         let tests: Vec<&TestDecl> = module.items.iter().filter_map(|i| {
             if let Item::Test(t) = i { Some(t) } else { None }
         }).collect();
+        // Plan 57.B.3 / 57.B.5: expand parameterized + grouped sweeps в plain
+        // entries. Каждый bench с params даёт N entries с suffix `/p=<value>`;
+        // каждый bench с groups даёт M entries с suffix `/<group>/<case>`.
+        let mut benches_expanded: Vec<(String, &BenchDecl)> = Vec::new();
+        for it in &module.items {
+            if let Item::Bench(b) = it {
+                if !b.groups.is_empty() {
+                    for grp in &b.groups {
+                        for case in &grp.cases {
+                            benches_expanded.push((
+                                format!("{}/{}/{}", b.name, grp.name, case.name), b));
+                        }
+                    }
+                } else if let Some(p) = &b.params {
+                    for v in &p.values {
+                        benches_expanded.push((format!("{}/p={}", b.name, v), b));
+                    }
+                } else {
+                    benches_expanded.push((b.name.clone(), b));
+                }
+            }
+        }
+        let benches: Vec<&BenchDecl> = module.items.iter().filter_map(|i| {
+            if let Item::Bench(b) = i { Some(b) } else { None }
+        }).collect();
+        let _ = benches;  // (kept для legacy ref'ов)
 
+        // Plan 57: bench-mode main — приоритет над test-runner main.
+        // Игнорируем test-items, эмитим bench runner который последовательно
+        // вызывает все nova_bench_main_<idx>().
+        if self.bench_mode && !benches_expanded.is_empty() && !has_main {
+            self.line("static nova_unit nova_fn_main_impl(void) {");
+            self.indent += 1;
+            self.line(&format!("int _nova_benches_total = {};", benches_expanded.len()));
+            // Bench filter via NOVA_BENCH_FILTER env: comma-separated substrings.
+            self.line("const char* _bench_filter = getenv(\"NOVA_BENCH_FILTER\");");
+            self.line("fprintf(stderr, \"Running %d benches...\\n\", _nova_benches_total);");
+            for (idx, (effective_name, _bd)) in benches_expanded.iter().enumerate() {
+                let safe = Self::mangle_test_name_indexed(effective_name, idx);
+                let escaped = Self::escape_c_str(effective_name);
+                self.line("{");
+                self.indent += 1;
+                self.line(&format!("const char* _bench_name = \"{}\";", escaped));
+                self.line("int _run = 1;");
+                self.line("if (_bench_filter && *_bench_filter) {");
+                self.indent += 1;
+                self.line("_run = 0;");
+                self.line("const char* _f = _bench_filter;");
+                self.line("while (*_f) {");
+                self.indent += 1;
+                self.line("const char* _comma = strchr(_f, ',');");
+                self.line("size_t _flen = _comma ? (size_t)(_comma - _f) : strlen(_f);");
+                self.line("if (_flen > 0) {");
+                self.indent += 1;
+                self.line("size_t _bn_len = strlen(_bench_name);");
+                self.line("if (_bn_len >= _flen) {");
+                self.indent += 1;
+                self.line("for (size_t _i = 0; _i + _flen <= _bn_len; _i++) {");
+                self.indent += 1;
+                self.line("if (memcmp(_bench_name + _i, _f, _flen) == 0) { _run = 1; break; }");
+                self.indent -= 1;
+                self.line("}");
+                self.indent -= 1;
+                self.line("}");
+                self.indent -= 1;
+                self.line("}");
+                self.line("if (_run) break;");
+                self.line("if (!_comma) break;");
+                self.line("_f = _comma + 1;");
+                self.indent -= 1;
+                self.line("}");
+                self.indent -= 1;
+                self.line("}");
+                self.line("if (_run) {");
+                self.indent += 1;
+                self.line(&format!("nova_bench_main_{}();", safe));
+                self.indent -= 1;
+                self.line("} else {");
+                self.indent += 1;
+                self.line(&format!("fprintf(stderr, \"  SKIP: {} (filtered)\\n\");", escaped));
+                self.indent -= 1;
+                self.line("}");
+                self.indent -= 1;
+                self.line("}");
+            }
+            self.line("return NOVA_UNIT;");
+            self.indent -= 1;
+            self.line("}");
+            self.line("");
+        } else
         if !tests.is_empty() && !has_main {
             // Generate a test runner as nova_fn_main_impl + C main
             self.line("static nova_unit nova_fn_main_impl(void) {");
@@ -10504,6 +10906,49 @@ impl CEmitter {
                             return Ok(format!("nova_int_from_f64_bits({})", v));
                         }
                     }
+                    // Plan 57: bench DSL builtins — std.bench.
+                    // Namespace-style dispatch (как `gc.*`); только видим
+                    // внутри bench-блока, но codegen этого не enforce'ит
+                    // (выгоднее не накладывать ограничений — `bench.opaque(v)`
+                    // в обычной функции просто работает как identity barrier).
+                    if name == "bench" {
+                        match method.as_str() {
+                            "opaque" if args.len() == 1 => {
+                                let v = self.emit_expr(args[0].expr())?;
+                                // Primitive black-box. На GCC/Clang inline-asm,
+                                // на MSVC volatile cast. Macros в bench.h.
+                                return Ok(format!("NOVA_BENCH_OPAQUE_PRIM({})", v));
+                            }
+                            "iterations" if args.is_empty() => {
+                                return Ok("nova_bench_iterations()".to_string());
+                            }
+                            "reset_timer" if args.is_empty() => {
+                                return Ok("(nova_bench_reset_timer(), (nova_int)0LL)".to_string());
+                            }
+                            "bytes" if args.len() == 1 => {
+                                // Setter — записывает throughput_bytes в TLS.
+                                let v = self.emit_expr(args[0].expr())?;
+                                return Ok(format!(
+                                    "(nova_bench_set_throughput_bytes({}), (nova_int)0LL)",
+                                    v));
+                            }
+                            "elements" if args.len() == 1 => {
+                                let v = self.emit_expr(args[0].expr())?;
+                                return Ok(format!(
+                                    "(nova_bench_set_throughput_elements({}), (nova_int)0LL)",
+                                    v));
+                            }
+                            "allocs" if args.is_empty() => {
+                                // Возвращает текущий alloc_count snapshot.
+                                return Ok("((nova_int)nova_bench_alloc_count_snapshot())".to_string());
+                            }
+                            "now_ns" if args.is_empty() => {
+                                // Эспозит timer для advanced bench patterns.
+                                return Ok("((nova_int)nova_bench_now_ns())".to_string());
+                            }
+                            _ => {}
+                        }
+                    }
                     // Plan 32: GC introspection API — std.runtime.gc.
                     // Хардкод как `gc.*` для namespace-style dispatch (без
                     // receiver-type, args без self).
@@ -10525,6 +10970,11 @@ impl CEmitter {
                             }
                             "reset_stats" if args.is_empty() => {
                                 return Ok("(nova_gc_reset_stats(), (nova_int)0LL)".to_string());
+                            }
+                            // Plan 57.C.2: gc.last_pause_ns() — длительность
+                            // последнего collect-цикла (под malloc = 0).
+                            "last_pause_ns" if args.is_empty() => {
+                                return Ok("((nova_int)nova_gc_last_pause_ns())".to_string());
                             }
                             _ => {}
                         }

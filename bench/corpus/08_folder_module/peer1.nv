@@ -1,0 +1,3 @@
+module corpus.folder_demo
+
+fn helper1() -> int => 1

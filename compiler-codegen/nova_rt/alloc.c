@@ -35,5 +35,7 @@ size_t nova_gc_live_count(void)  { return _alloc_count - _free_count; }
 void   nova_gc_reset_stats(void) { _alloc_count = 0; _free_count = 0; }
 
 /* Plan 32: introspection — under plain malloc honest "not supported". */
-size_t nova_gc_heap_size(void) { return 0; }
-void   nova_gc_collect(void)   { /* no-op: no GC to invoke */ }
+size_t   nova_gc_heap_size(void) { return 0; }
+void     nova_gc_collect(void)   { /* no-op: no GC to invoke */ }
+/* Plan 57.C.2: under malloc — нет collect-cycle, последний pause всегда 0. */
+uint64_t nova_gc_last_pause_ns(void) { return 0; }
