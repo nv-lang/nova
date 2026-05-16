@@ -1,0 +1,57 @@
+// cancellation_test.nv — Plan 47/48/49 acceptance test
+// (std/concurrency/cancellation.nv: within[T], race2[T], with_timeout[T])
+
+module concurrency.cancellation_test
+
+import std.concurrency.cancellation
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// within[T] — success path (body завершается до timeout)
+// ──────────────────────────────────────────────────────────────────────────
+
+test "within: body fast → Some(result)" {
+    // Body тривиальный — должен завершиться сразу.
+    let r = within(1000, || 42)
+    let got = match r {
+        Some(v) => v
+        None    => -1
+    }
+    assert(got == 42)
+}
+
+
+test "within: body str → Some str" {
+    let r = within(1000, || "hello")
+    let got = match r {
+        Some(s) => s
+        None    => "timeout"
+    }
+    assert(got == "hello")
+}
+
+
+test "within: body bool → Some bool" {
+    let r = within(1000, || true)
+    let got = match r {
+        Some(b) => b
+        None    => false
+    }
+    assert(got == true)
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// race2[T] — two-fiber competition
+// ──────────────────────────────────────────────────────────────────────────
+
+test "race2: оба возвращают одно значение → любой wins" {
+    let r = race2(|| 7, || 7)
+    assert(r == 7)
+}
+
+
+test "race2: разные значения — winner один из них" {
+    let r = race2(|| 10, || 20)
+    assert(r == 10 || r == 20)
+}
