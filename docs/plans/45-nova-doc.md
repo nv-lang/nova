@@ -37,9 +37,9 @@
 | Ф.31.2 HTML search index | ✅ done | Inline JS substring filter (no lunr dep). Search bar в sidebar; matched items visible, остальные dimmed via `.dim` class. ~25 LOC JS + 5 LOC CSS. |
 | Ф.31.3 Dark mode | ✅ done | CSS variables (`--bg`, `--fg`, `--border`, 14 total) + `@media (prefers-color-scheme: dark)` override. No JS toggle (system-aware). |
 | Ф.31.4 Multi-page output | ✅ done | `render_html_multipage(tree) -> BTreeMap<String, String>` (filename → HTML). CLI `--output-dir <out>`. Index.html + per-module pages. Cross-page links resolved через item_pages map. ~200 LOC + 6 integration tests. |
-| **Ф.31.5 Syntax highlighting** (in-progress) | 🟡 | Inline JS regex-based highlighter для `<code>` blocks. Tokenize Nova keywords (fn, let, const, etc), string literals, comments, types. ~80 LOC JS + 40 LOC CSS. No external deps. |
-| **Ф.31.6 sitemap.xml** (in-progress) | 🟡 | Generation `sitemap.xml` в multi-page output (для SEO + crawlers). ~30 LOC. CLI flag `--site-url <base>` для absolute URLs. |
-| **Ф.32.1 nova doc-query CLI** (in-progress) | 🟡 | Foundation для future MCP server. Subcommand `nova doc-query <json-file> <query>` где query — JSON DSL `{kind?, capability?, effect?, name_substring?}`. Read JSON output, filter, print matching items. ~150 LOC + tests. |
+| Ф.31.5 Syntax highlighting | ✅ done | Inline JS regex-based highlighter (~80 LOC JS). Tokenize Nova keywords, types, strings, numbers, comments. CSS classes (.tok-kw, .tok-type, .tok-str, .tok-num, .tok-comment) с light/dark variants. No external deps. |
+| Ф.31.6 sitemap.xml | ✅ done | `render_sitemap` в multi-page output. Standard sitemaps.org/0.9 format. `NOVA_DOC_SITE_URL` env для absolute URLs (иначе relative). index.html priority 1.0, modules 0.8. |
+| Ф.32.1 nova doc-query CLI | ✅ done | New subcommand `nova doc-query <file.nv> "<query>"`. Query DSL: comma-separated key=value (kind, name, module, capability, effect, has-contracts, verified, stability, deprecated). 11 integration + 5 unit tests. Foundation для Ф.32.2 MCP server. |
 
 ## Ф.21 — Production hardening (2026-05-15, post-MVP audit)
 

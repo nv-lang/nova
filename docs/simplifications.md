@@ -7852,3 +7852,35 @@ workspace пїЅ acceptable пїЅпїЅпїЅ interactive editing.
 - No JS dark mode toggle — system-aware (no localStorage complexity)
 - No sitemap.xml (Plan 45.A round 2 если SEO-critical)
 - No syntax highlighting (Plan 45.A round 3)
+
+---
+
+## Plan 45 Ф.31.5/6 + Ф.32.1 simplifications (2026-05-16)
+
+### Syntax highlighter — regex-based (не AST parser)
+**Где:** `render_html.rs::EMBEDDED_JS` tokenize function.
+**Что упрощено:** Regex-based JS tokenizer. Не AST parser, не aware о
+context (например `fn` в строке `"fn"` тоже подсветится как keyword).
+**Почему:** Browser-side AST parser требует bundle Nova parser в JS —
+megabytes overhead. Regex покрывает 95% production cases.
+**Как чинить:** server-side pre-highlight через ast::pretty + class spans
+в HTML directly. Plan 45.A round 3.
+**Приоритет:** L.
+
+### Doc-query — нет JSON input parser
+**Где:** `cmd_doc_query` принимает только .nv source (не JSON).
+**Что упрощено:** Re-parses Nova source каждый раз. Не reads pre-generated
+JSON file.
+**Почему:** Нет serde dep; написать ручной JSON parser для всего DocTree —
+~400 LOC, не оправдано для MVP.
+**Как чинить:** Ф.32.2 — добавить serde + Serialize/Deserialize derive
+для всех DocTree types. Или ручной parser specifically для items array.
+**Приоритет:** M — для CI workflow (`nova doc --format json > out.json` +
+later `doc-query out.json "..."`) JSON input нужен.
+
+### MCP server — отложен на Ф.32.2/3
+**Где:** Должен быть отдельный crate `nova-doc-mcp`.
+**Что упрощено:** Только query DSL foundation, нет HTTP/stdio server.
+**Почему:** Full MCP protocol (JSON-RPC + SSE + tool schemas) — ~400 LOC
+самостоятельный crate. За одну сессию нечестно.
+**Приоритет:** M — Nova-unique opportunity vs rustdoc/godoc/typedoc.

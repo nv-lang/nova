@@ -13455,3 +13455,39 @@ Plan 45 family остаётся:
 - Ф.32 MCP server (отдельный crate)
 - Plan 45.B stdlib doc-pass (отдельный effort)
 - Plan 45.A round 2: incremental cache, syntax highlighting
+
+=== Plan 45 Sprint Ф.31.5/6 + Ф.32.1 (2026-05-16) ===
+
+3 features в одной сессии:
+
+Ф.31.5 (ed27942): Nova syntax highlighting через inline JS regex tokenizer.
+  - KEYWORDS list (fn, let, requires, ensures, etc) + TYPES (int, str, bool, etc)
+  - Tokenize: comments //, strings "...", numbers, idents/keywords
+  - Apply на pre>code blocks at DOMContentLoaded; dataset.hl=1 prevent re-apply
+  - CSS classes с light/dark variants
+  - No external dep (no highlight.js, no shiki).
+
+Ф.31.6 (b48e8e7): sitemap.xml generation в multi-page output.
+  - Standard sitemaps.org/0.9 format
+  - NOVA_DOC_SITE_URL env для absolute URLs (production deploy)
+  - Без env — relative paths (local file:// browsing OK)
+  - index.html priority 1.0, modules priority 0.8
+
+Ф.32.1 (fdbe11b): nova doc-query CLI — foundation для future MCP server.
+  - Query DSL: comma-separated key=value pairs
+  - Keys: kind, name, module, module-prefix, capability, effect,
+    has-contracts, verified, stability, deprecated
+  - Capability syntax: pure, realtime, realtime_nogc, forbid:EffectName
+  - Output: JSON array QueryResult'ов (compact для scripts/LLM)
+  - CLI: nova doc-query <file.nv> "<query>" (MVP — JSON input scheduled
+    для Ф.32.2 когда добавим JSON parser)
+  - 11 integration + 5 unit tests
+
+Total после Ф.31.5/6 + Ф.32.1: 138+ doc tests PASS (21+ suites + 19+ unit).
+
+Plan 45 family остаётся:
+- Ф.32.2 — JSON input parser для doc-query (читать `nova doc --format json` output)
+- Ф.32.3 — MCP server proper (JSON-RPC, http+stdio, tool schemas)
+- Plan 45.B — stdlib full doc-pass (weeks)
+- Plan 45.A round 2 — incremental cache, etc
+- Plan 16/42 follow-ups
