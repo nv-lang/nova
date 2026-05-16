@@ -242,6 +242,7 @@ fn collect_fn(module_path: &[String], f: &FnDecl) -> DocItem {
         kind: ItemKind::Fn(signature),
         source_span: f.span,
         peer_file: None,
+        linked_from: Vec::new(),
     }
 }
 
@@ -375,6 +376,7 @@ fn collect_type(module_path: &[String], t: &TypeDecl) -> DocItem {
         kind,
         source_span: t.span,
         peer_file: None,
+        linked_from: Vec::new(),
     }
 }
 
@@ -414,6 +416,7 @@ fn collect_const(module_path: &[String], c: &ConstDecl) -> DocItem {
         },
         source_span: c.span,
         peer_file: None,
+        linked_from: Vec::new(),
     }
 }
 

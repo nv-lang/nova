@@ -70,6 +70,25 @@ pub fn resolve_intra_doc_links(tree: &mut DocTree) {
             .then(a.text.cmp(&b.text))
     });
     found.dedup_by(|a, b| a.from_id == b.from_id && a.text == b.text);
+
+    // Plan 45 Ф.23.23: populate back-links (item.linked_from).
+    // Build inverted map: target_id → Vec<from_id>.
+    let mut back: HashMap<String, Vec<String>> = HashMap::new();
+    for l in &found {
+        if let (Some(from), Some(target)) = (&l.from_id, &l.target_id) {
+            back.entry(target.clone()).or_default().push(from.clone());
+        }
+    }
+    for m in &mut tree.modules {
+        for it in &mut m.items {
+            if let Some(mut froms) = back.remove(&it.id) {
+                froms.sort();
+                froms.dedup();
+                it.linked_from = froms;
+            }
+        }
+    }
+
     tree.links = found;
 }
 

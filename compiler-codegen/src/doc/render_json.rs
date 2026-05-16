@@ -46,11 +46,13 @@ pub fn render_with_source(tree: &DocTree, source: Option<&str>) -> String {
         "nova_version",
         env!("CARGO_PKG_VERSION"),
     );
-    // Ф.22.3 / D107: `source_root` — абсолютный path к исходнику /
-    // workspace root. Опускается если None (e.g., из library API
-    // вызова без path context).
+    // Ф.22.3 / D107: `source_root` — path к исходнику / workspace root.
+    // Plan 45 Ф.23.25: normalize to forward slashes for cross-platform
+    // portability. If NOVA_DOC_WORKSPACE_ROOT env var is set, make relative
+    // to it using ${WORKSPACE_ROOT}/... placeholder.
     if let Some(root) = &tree.source_root {
-        w.field_str("source_root", root);
+        let normalized = normalize_source_root(root);
+        w.field_str("source_root", &normalized);
     }
     w.field_array("doc_tests", |w| {
         for t in &tree.doc_tests {
@@ -170,6 +172,12 @@ fn write_item(w: &mut JsonWriter, it: &DocItem) {
     w.field_null_or_str("doc_test_handlers", it.doc_test_handlers.as_deref());
     w.field_str("id", &it.id);
     w.field_str("kind", item_kind_str(&it.kind));
+    // Plan 45 Ф.23.23: back-links — IDs that link to this item.
+    if !it.linked_from.is_empty() {
+        w.field_array("linked_from", |w| {
+            for id in &it.linked_from { w.array_str(id); }
+        });
+    }
     w.field_str("module_path", &it.module_path.join("."));
     w.field_str("name", &it.name);
     w.field_object("sections", |w| {
@@ -559,6 +567,27 @@ impl<'src> JsonWriter<'src> {
 /// - `SOURCE_DATE_EPOCH=<seconds>` → конвертируем в простой ISO-8601-
 ///   подобный формат `YYYY-MM-DDTHH:MM:SSZ`;
 /// - иначе → `None` (deterministic by default).
+/// Plan 45 Ф.23.25: normalize source_root path for cross-platform portability.
+/// - Backslashes → forward slashes.
+/// - If NOVA_DOC_WORKSPACE_ROOT env var is set and root starts with that prefix,
+///   replaces prefix with `${WORKSPACE_ROOT}` for machine-agnostic output.
+fn normalize_source_root(root: &str) -> String {
+    let normalized = root.replace('\\', "/");
+    if let Ok(ws_root) = std::env::var("NOVA_DOC_WORKSPACE_ROOT") {
+        let ws_norm = ws_root.replace('\\', "/");
+        if !ws_norm.is_empty() {
+            if normalized == ws_norm {
+                return "${WORKSPACE_ROOT}".to_string();
+            }
+            let prefix_slash = format!("{}/", ws_norm);
+            if let Some(rest) = normalized.strip_prefix(&prefix_slash) {
+                return format!("${{WORKSPACE_ROOT}}/{}", rest);
+            }
+        }
+    }
+    normalized
+}
+
 fn generated_at_value() -> Option<String> {
     if let Ok(ts) = std::env::var("NOVA_DOC_GENERATED_AT") {
         if !ts.is_empty() {

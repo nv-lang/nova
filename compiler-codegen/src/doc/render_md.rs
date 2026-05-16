@@ -13,14 +13,70 @@ use crate::doc::doctree::*;
 use std::fmt::Write;
 
 pub fn render(tree: &DocTree) -> String {
+    // Plan 45 Ф.23.14: build link→anchor map for intra-doc-link rewriting.
+    let link_map = build_link_map(&tree.links);
     let mut out = String::new();
     for module in &tree.modules {
-        render_module(module, &mut out);
+        render_module(module, &link_map, &mut out);
     }
     out
 }
 
-fn render_module(m: &DocModule, out: &mut String) {
+/// Build a map from link-text → anchor href for resolved links.
+/// Anchor = `#<slug>-<kind>` where slug = last segment of target_id lowercased with `.` → `-`.
+fn build_link_map(links: &[DocLink]) -> std::collections::HashMap<String, String> {
+    let mut map = std::collections::HashMap::new();
+    for l in links {
+        if let Some(tid) = &l.target_id {
+            // Derive anchor from target_id: "mod.path::Type.method" → "type-method"
+            let last = tid.rsplit("::").next().unwrap_or(tid);
+            let slug = last.to_lowercase().replace('.', "-");
+            map.insert(l.text.clone(), format!("#{}", slug));
+        }
+    }
+    map
+}
+
+/// Rewrite `[Name]` intra-doc links in markdown text to `[Name](#anchor)`.
+fn rewrite_links(text: &str, link_map: &std::collections::HashMap<String, String>) -> String {
+    if link_map.is_empty() || !text.contains('[') {
+        return text.to_string();
+    }
+    let mut result = String::with_capacity(text.len() + 64);
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'[' {
+            // Find closing ].
+            let mut j = i + 1;
+            while j < bytes.len() && bytes[j] != b']' && bytes[j] != b'\n' {
+                j += 1;
+            }
+            if j < bytes.len() && bytes[j] == b']' {
+                let inner = &text[i + 1..j];
+                let next = bytes.get(j + 1).copied();
+                // Only rewrite bare [Name] (not [text](url) or [text][ref]).
+                if !matches!(next, Some(b'(') | Some(b'[')) {
+                    if let Some(anchor) = link_map.get(inner) {
+                        result.push('[');
+                        result.push_str(inner);
+                        result.push(']');
+                        result.push('(');
+                        result.push_str(anchor);
+                        result.push(')');
+                        i = j + 1;
+                        continue;
+                    }
+                }
+            }
+        }
+        result.push(bytes[i] as char);
+        i += 1;
+    }
+    result
+}
+
+fn render_module(m: &DocModule, link_map: &std::collections::HashMap<String, String>, out: &mut String) {
     let path = m.path.join(".");
     let _ = writeln!(out, "# {} ({})", m.name, path);
     let _ = writeln!(out);
@@ -29,11 +85,11 @@ fn render_module(m: &DocModule, out: &mut String) {
         let _ = writeln!(out);
     }
     if let Some(s) = &m.summary {
-        let _ = writeln!(out, "{}", s);
+        let _ = writeln!(out, "{}", rewrite_links(s, link_map));
         let _ = writeln!(out);
     }
     if let Some(d) = &m.description {
-        let _ = writeln!(out, "{}", d);
+        let _ = writeln!(out, "{}", rewrite_links(d, link_map));
         let _ = writeln!(out);
     }
 
@@ -57,31 +113,31 @@ fn render_module(m: &DocModule, out: &mut String) {
     if !types.is_empty() {
         let _ = writeln!(out, "## Types");
         let _ = writeln!(out);
-        for it in &types { render_item(it, out); }
+        for it in &types { render_item(it, link_map, out); }
     }
     if !effects.is_empty() {
         let _ = writeln!(out, "## Effects");
         let _ = writeln!(out);
-        for it in &effects { render_item(it, out); }
+        for it in &effects { render_item(it, link_map, out); }
     }
     if !protocols.is_empty() {
         let _ = writeln!(out, "## Protocols");
         let _ = writeln!(out);
-        for it in &protocols { render_item(it, out); }
+        for it in &protocols { render_item(it, link_map, out); }
     }
     if !consts.is_empty() {
         let _ = writeln!(out, "## Constants");
         let _ = writeln!(out);
-        for it in &consts { render_item(it, out); }
+        for it in &consts { render_item(it, link_map, out); }
     }
     if !fns.is_empty() {
         let _ = writeln!(out, "## Functions");
         let _ = writeln!(out);
-        for it in &fns { render_item(it, out); }
+        for it in &fns { render_item(it, link_map, out); }
     }
 }
 
-fn render_item(it: &DocItem, out: &mut String) {
+fn render_item(it: &DocItem, link_map: &std::collections::HashMap<String, String>, out: &mut String) {
     let _ = writeln!(out, "### `{}`", it.name);
     let _ = writeln!(out);
     if let Some(d) = &it.deprecation {
@@ -92,7 +148,22 @@ fn render_item(it: &DocItem, out: &mut String) {
     }
     if let Some(s) = &it.stability {
         let since = s.since.as_deref().map(|v| format!(" since {}", v)).unwrap_or_default();
-        let _ = writeln!(out, "> *Stability:* **{}**{}", s.tier.as_str(), since);
+        // Plan 45 Ф.23.15: show feature/note for unstable/experimental.
+        let extra = match s.tier {
+            StabilityTier::Unstable => s.feature.as_deref()
+                .map(|f| format!("({})", f))
+                .unwrap_or_default(),
+            StabilityTier::Experimental => s.note.as_deref()
+                .map(|n| format!(": \"{}\"", n))
+                .unwrap_or_default(),
+            StabilityTier::Stable => String::new(),
+        };
+        let _ = writeln!(out, "> *Stability:* **{}**{}{}", s.tier.as_str(), extra, since);
+        let _ = writeln!(out);
+    }
+    // Plan 45 Ф.23.20: [internal] badge for private items when rendered.
+    if it.visibility == Visibility::Private {
+        let _ = writeln!(out, "> *[internal]*");
         let _ = writeln!(out);
     }
     // Plan 45 Ф.22.6 / D105: aliases из `#doc_alias(...)` — отображаются
@@ -197,11 +268,11 @@ fn render_item(it: &DocItem, out: &mut String) {
         }
     }
     if let Some(s) = &it.summary {
-        let _ = writeln!(out, "{}", s);
+        let _ = writeln!(out, "{}", rewrite_links(s, link_map));
         let _ = writeln!(out);
     }
     if let Some(d) = &it.description {
-        let _ = writeln!(out, "{}", d);
+        let _ = writeln!(out, "{}", rewrite_links(d, link_map));
         let _ = writeln!(out);
     }
     // Style-guide §11.5 fixed section order.

@@ -73,6 +73,9 @@
       "doc_test_handlers": null,
       "id": "nova_tests.doc.fixtures.links.sample::Point",
       "kind": "type",
+      "linked_from": [
+        "nova_tests.doc.fixtures.links.sample::translate"
+      ],
       "module_path": "nova_tests.doc.fixtures.links.sample",
       "name": "Point",
       "sections": {
@@ -121,6 +124,9 @@
       "doc_test_handlers": null,
       "id": "nova_tests.doc.fixtures.links.sample::translate",
       "kind": "fn",
+      "linked_from": [
+        "nova_tests.doc.fixtures.links.sample::Point"
+      ],
       "module_path": "nova_tests.doc.fixtures.links.sample",
       "name": "translate",
       "sections": {

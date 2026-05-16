@@ -1164,6 +1164,7 @@ fn cmd_doc_coverage(tree: &nova_codegen::doc::DocTree) -> Result<()> {
     use std::collections::BTreeMap;
     let mut total: BTreeMap<&str, usize> = BTreeMap::new();
     let mut documented: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut with_examples: BTreeMap<&str, usize> = BTreeMap::new();
     for m in &tree.modules {
         for it in &m.items {
             let kind: &str = match &it.kind {
@@ -1177,10 +1178,17 @@ fn cmd_doc_coverage(tree: &nova_codegen::doc::DocTree) -> Result<()> {
             if it.summary.is_some() {
                 *documented.entry(kind).or_insert(0) += 1;
             }
+            // Plan 45 Ф.23.19: track items with Examples section or doc-tests.
+            let has_examples = it.sections.contains_key("examples")
+                || tree.doc_tests.iter().any(|t| t.from_id.as_deref() == Some(&it.id));
+            if has_examples {
+                *with_examples.entry(kind).or_insert(0) += 1;
+            }
         }
     }
     let total_items: usize = total.values().sum();
     let documented_items: usize = documented.values().sum();
+    let total_with_examples: usize = with_examples.values().sum();
     let total_links = tree.links.len();
     let broken_links = tree.links.iter().filter(|l| l.target_id.is_none()).count();
 
@@ -1188,9 +1196,13 @@ fn cmd_doc_coverage(tree: &nova_codegen::doc::DocTree) -> Result<()> {
     println!("  items: {}/{} documented ({:.1}%)",
         documented_items, total_items,
         if total_items == 0 { 100.0 } else { 100.0 * documented_items as f64 / total_items as f64 });
+    println!("  examples: {}/{} with examples ({:.1}%)",
+        total_with_examples, total_items,
+        if total_items == 0 { 100.0 } else { 100.0 * total_with_examples as f64 / total_items as f64 });
     for (kind, &total_n) in &total {
         let doc_n = documented.get(kind).copied().unwrap_or(0);
-        println!("    {}: {}/{}", kind, doc_n, total_n);
+        let ex_n = with_examples.get(kind).copied().unwrap_or(0);
+        println!("    {}: {}/{} documented, {}/{} with examples", kind, doc_n, total_n, ex_n, total_n);
     }
     println!("  links: {}/{} resolved ({} broken)",
         total_links - broken_links, total_links, broken_links);

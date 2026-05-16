@@ -205,6 +205,9 @@ pub struct DocItem {
     /// Plan 45 Ф.23.11: peer-file attribution — имя файла (basename)
     /// откуда пришёл item (в folder-module режиме). None в single-file.
     pub peer_file: Option<String>,
+    /// Plan 45 Ф.23.23: back-links — IDs items, которые ссылаются на этот
+    /// item через intra-doc-link. Заполняется `resolve_intra_doc_links` pass'ом.
+    pub linked_from: Vec<String>,
 }
 
 /// Plan 45 Ф.23.3 / D63/D64: capability annotations на item.
