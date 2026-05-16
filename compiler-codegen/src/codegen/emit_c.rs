@@ -434,6 +434,13 @@ pub struct CEmitter {
     /// Default 500; overridable via CLI `--mono-depth=N` or env var
     /// `NOVA_MONO_DEPTH` (CLI wins). Guards against polymorphic recursion.
     mono_depth_limit: usize,
+    /// Plan 49 Ф.6 P0 fix: per-variable Nova-level CancelToken[T] tracking.
+    /// key = local variable name (`tok`), value = T's C-type (`nova_int`).
+    /// Populated при `let tok CancelToken[T] = ...` или `let tok = CancelToken[T].new()`.
+    /// Использовано emit_call для `tok.reason()` — emit'ит per-T un-box вместо
+    /// runtime-fixed `nova_cancel_token_reason_str` (которая молча возвращает
+    /// garbage для T≠str). Без entry — default str-form (backward compat).
+    cancel_token_t_map: HashMap<String, String>,
 }
 
 /// Plan 20 Ф.4: per-defer-stmt entry — tracks one `defer { ... }` or
@@ -584,6 +591,7 @@ impl CEmitter {
                 .and_then(|s| s.parse::<usize>().ok())
                 .filter(|n| *n > 0)
                 .unwrap_or(500),
+            cancel_token_t_map: HashMap::new(),
         }
     }
 
@@ -7070,6 +7078,19 @@ impl CEmitter {
                 // For pointer types: the emitted tmp expression already carries the type.
                 // Just declare the binding with the right type.
                 self.var_types.insert(binding.clone(), ty_c.clone());
+                // Plan 49 Ф.6 P0 fix: track CancelToken[T] T для per-T `reason()`
+                // un-box. Rebind ОЧИЩАЕТ предыдущую запись чтобы не утечь между
+                // function/test bodies (cancel_token_t_map не scope'd).
+                self.cancel_token_t_map.remove(&binding);
+                if let Some(crate::ast::TypeRef::Named { path, generics, .. }) = &decl.ty {
+                    if path.len() == 1 && path[0] == "CancelToken" {
+                        if let Some(t_ref) = generics.first() {
+                            if let Ok(t_c) = self.type_ref_to_c(t_ref) {
+                                self.cancel_token_t_map.insert(binding.clone(), t_c);
+                            }
+                        }
+                    }
+                }
                 // Track mutability so spawn-capture can decide copy-by-value vs by-ptr.
                 if decl.mutable {
                     self.var_mutable.insert(binding.clone());
@@ -9362,9 +9383,29 @@ impl CEmitter {
                                 return Ok(format!("nova_cancel_token_is_cancelled({})", obj_c));
                             }
                             "reason" => {
-                                // Plan 49 Ф.1: typed getter — Option[str] для
-                                // CancelToken[str] (default). Ф.6 расширит до
-                                // CancelToken[T] (mono-per-T helper).
+                                // Plan 49 Ф.6 P0 fix: per-T un-box когда
+                                // receiver — tracked CancelToken[T] переменная.
+                                // Без этого default str-getter возвращает
+                                // Option[str] с garbage content для T≠str
+                                // (silent UB).
+                                let t_c = if let ExprKind::Ident(name) = &obj.kind {
+                                    self.cancel_token_t_map.get(name).cloned()
+                                } else { None };
+                                if let Some(t_c) = t_c {
+                                    if t_c != "nova_str" {
+                                        // Per-T un-box через ternary + compound
+                                        // literal. NovaOpt_<T_c> существует для
+                                        // primitives (NOVA_ARRAY_DECL declares
+                                        // NovaArray_T + NovaOpt_T pair).
+                                        return Ok(format!(
+                                            "(nova_cancel_token_has_reason({tok}) \
+                                              ? (NovaOpt_{t}){{ .tag = NOVA_TAG_Option_Some, .value = *({t}*)nova_cancel_token_reason_raw({tok}) }} \
+                                              : (NovaOpt_{t}){{ .tag = NOVA_TAG_Option_None }})",
+                                            tok = obj_c, t = t_c
+                                        ));
+                                    }
+                                }
+                                // Default / fallback: T=str (или unknown — backward-compat).
                                 return Ok(format!(
                                     "nova_cancel_token_reason_str({})", obj_c));
                             }
@@ -14990,13 +15031,23 @@ impl CEmitter {
                         }
                     }
                     // D75: instance methods on NovaCancelToken*.
-                    // Plan 49 Ф.1: reason() возвращает Option[str] —
-                    // NovaOpt_nova_str runtime тип.
+                    // Plan 49 Ф.1 + Ф.6 P0 fix: reason() возвращает Option[T]
+                    // где T определяется из cancel_token_t_map (если receiver —
+                    // tracked Ident). Backward-compat: Option[str] default.
                     if self.infer_expr_c_type(obj) == "NovaCancelToken*" {
                         match method.as_str() {
                             "is_cancelled" => return "nova_bool".into(),
                             "cancel" | "cancelled_by" => return "nova_unit".into(),
-                            "reason" => return "NovaOpt_nova_str".into(),
+                            "reason" => {
+                                if let ExprKind::Ident(name) = &obj.kind {
+                                    if let Some(t_c) = self.cancel_token_t_map.get(name) {
+                                        if t_c != "nova_str" {
+                                            return format!("NovaOpt_{}", t_c);
+                                        }
+                                    }
+                                }
+                                return "NovaOpt_nova_str".into();
+                            }
                             _ => {}
                         }
                     }

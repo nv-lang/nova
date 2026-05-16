@@ -615,8 +615,7 @@ static inline nova_bool nova_cancel_token_has_reason(NovaCancelToken* t) {
 
 /* Plan 49 Ф.1: typed-getter для CancelToken[str] — возвращает Option[str].
  * `reason_ptr` хранит box'нутый nova_str (caller-side boxed на cancel-site).
- * Codegen дергает эту функцию для `tok.reason()` когда T=str (default).
- * Ф.6 добавит per-T mono'д варианты (`nova_cancel_token_reason_<T>`). */
+ * Codegen дергает эту функцию для `tok.reason()` когда T=str (default). */
 static inline NovaOpt_nova_str nova_cancel_token_reason_str(NovaCancelToken* t) {
     NovaOpt_nova_str r;
     if (!t || !t->has_reason || t->reason_ptr == NULL) {
@@ -627,6 +626,18 @@ static inline NovaOpt_nova_str nova_cancel_token_reason_str(NovaCancelToken* t) 
     r.tag = NOVA_TAG_Option_Some;
     r.value = *(nova_str*)t->reason_ptr;
     return r;
+}
+
+/* Plan 49 Ф.6 P0 fix: raw void* reason getter для per-T un-box.
+ * Codegen для `tok.reason()` где T≠str эмитит ternary:
+ *   nova_cancel_token_has_reason(tok)
+ *     ? (NovaOpt_T){.tag=Some, .value=*(T*)nova_cancel_token_reason_raw(tok)}
+ *     : (NovaOpt_T){.tag=None}
+ * Возвращает NULL когда отмены не было или reason_ptr NULL —
+ * caller использует has_reason() как guard. */
+static inline void* nova_cancel_token_reason_raw(NovaCancelToken* t) {
+    if (!t || !t->has_reason) return NULL;
+    return t->reason_ptr;
 }
 
 /* Plan 49 Ф.1: helper — alloc copy of nova_str on GC heap so reason
