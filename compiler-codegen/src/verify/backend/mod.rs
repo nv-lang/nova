@@ -124,3 +124,33 @@ pub fn try_prove_module_cached<B: SmtBackend + ?Sized>(
     }
     result
 }
+
+/// Ф.15.1 (Plan 33.6): try_prove + extract witness для exists-формул.
+/// Если goal `(exists x. P)` proven (try_prove даёт Unsat для not goal):
+/// делаем separate check `assert P_with_skolem`, если Sat — extract value.
+///
+/// Возвращает (proof_result, optional_witness_value).
+/// Witness осмыслен только когда proof_result = Unsat (proven).
+pub fn try_prove_with_witness<B: SmtBackend + ?Sized>(
+    backend: &mut B,
+    goal: Formula,
+    witness_var: &str,
+) -> (SatResult, Option<crate::verify::ir::ModelValue>) {
+    let proof = try_prove(backend, goal.clone());
+    let witness = if matches!(proof, SatResult::Unsat(_)) {
+        // Separate check: assert goal directly, if Sat → extract witness var.
+        backend.push();
+        backend.assert(Assertion { formula: goal, label: Some("witness-extract".into()) });
+        let sat = backend.check_sat();
+        let w = if matches!(sat, SatResult::Sat(_)) {
+            backend.get_witness(witness_var)
+        } else {
+            None
+        };
+        backend.pop();
+        w
+    } else {
+        None
+    };
+    (proof, witness)
+}

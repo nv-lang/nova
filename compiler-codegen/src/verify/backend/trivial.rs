@@ -363,12 +363,106 @@ fn propagate_equalities(term: &SmtTerm) -> SmtTerm {
 
     // Step 3: re-simplify each conjunct + wrap.
     let resimplified: Vec<SmtTerm> = substituted.iter().map(simplify).collect();
-    let result = if resimplified.len() == 1 {
-        resimplified.into_iter().next().unwrap()
+
+    // Ф.15.2 (Plan 33.6): bounds propagation для inequality weakening.
+    // Если в conjunction `(>= var L)` known, то weaker `(>= var L')` где L' ≤ L
+    // → trivially true. Аналогично для `<=`.
+    let bound_propagated = propagate_bounds(&resimplified);
+
+    let result = if bound_propagated.len() == 1 {
+        bound_propagated.into_iter().next().unwrap()
     } else {
-        SmtTerm::App("and".into(), resimplified)
+        SmtTerm::App("and".into(), bound_propagated)
     };
     simplify(&result)
+}
+
+/// Ф.15.2 (Plan 33.6): bounds propagation. Collect known lower/upper bounds
+/// (Var >= IntLit / Var <= IntLit) from conjunction, simplify weaker bounds
+/// to BoolLit(true).
+fn propagate_bounds(conjuncts: &[SmtTerm]) -> Vec<SmtTerm> {
+    use std::collections::HashMap;
+    // var → tightest known lower bound (max of `Var >= L_i`)
+    let mut lower: HashMap<String, i64> = HashMap::new();
+    // var → tightest known upper bound (min of `Var <= L_i`)
+    let mut upper: HashMap<String, i64> = HashMap::new();
+    for c in conjuncts {
+        if let SmtTerm::App(op, args) = c {
+            if args.len() != 2 { continue; }
+            match (op.as_str(), &args[0], &args[1]) {
+                (">=", SmtTerm::Var(v), SmtTerm::IntLit(n)) => {
+                    let e = lower.entry(v.clone()).or_insert(*n);
+                    if *n > *e { *e = *n; }
+                }
+                ("<=", SmtTerm::Var(v), SmtTerm::IntLit(n)) => {
+                    let e = upper.entry(v.clone()).or_insert(*n);
+                    if *n < *e { *e = *n; }
+                }
+                _ => {}
+            }
+        }
+    }
+    if lower.is_empty() && upper.is_empty() {
+        return conjuncts.to_vec();
+    }
+    conjuncts.iter().map(|c| {
+        // Helper for inner check: bool result или None.
+        let try_check = |inner: &SmtTerm| -> Option<bool> {
+            if let SmtTerm::App(iop, iargs) = inner {
+                if iargs.len() == 2 {
+                    match (iop.as_str(), &iargs[0], &iargs[1]) {
+                        (">=", SmtTerm::Var(v), SmtTerm::IntLit(n)) => {
+                            if let Some(known) = lower.get(v) {
+                                if *known >= *n { return Some(true); }
+                            }
+                            if let Some(known) = upper.get(v) {
+                                if *known < *n { return Some(false); }
+                            }
+                        }
+                        ("<=", SmtTerm::Var(v), SmtTerm::IntLit(n)) => {
+                            if let Some(known) = upper.get(v) {
+                                if *known <= *n { return Some(true); }
+                            }
+                            if let Some(known) = lower.get(v) {
+                                if *known > *n { return Some(false); }
+                            }
+                        }
+                        ("<", SmtTerm::Var(v), SmtTerm::IntLit(n)) => {
+                            if let Some(known) = lower.get(v) {
+                                if *known >= *n { return Some(false); }
+                            }
+                            if let Some(known) = upper.get(v) {
+                                if *known < *n { return Some(true); }
+                            }
+                        }
+                        (">", SmtTerm::Var(v), SmtTerm::IntLit(n)) => {
+                            if let Some(known) = upper.get(v) {
+                                if *known <= *n { return Some(false); }
+                            }
+                            if let Some(known) = lower.get(v) {
+                                if *known > *n { return Some(true); }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            None
+        };
+        // Direct check.
+        if let Some(b) = try_check(c) {
+            return SmtTerm::BoolLit(b);
+        }
+        // (not <inequality>) — invert result.
+        if let SmtTerm::App(op, args) = c {
+            if op == "not" && args.len() == 1 {
+                if let Some(b) = try_check(&args[0]) {
+                    return SmtTerm::BoolLit(!b);
+                }
+            }
+        }
+        c.clone()
+    }).collect()
 }
 
 #[cfg(test)]
