@@ -785,10 +785,10 @@ commit.
       defensive measure, real fix через vtable.
 - [ ] `nova run` interp parity — interpreter currently отстаёт от
       codegen, к нему возвращаемся позже (отдельная инициатива).
-- [ ] Perf bench ±5% — не измерялся явно (нет очевидного индикатора
-      регрессии; wall-clock test suite ~10 мин стабилен).
-- [ ] Cross-toolchain MSVC — все tests прогонялись на Clang (default
-      Plan 09). MSVC verification — optional/future.
+- [ ] Perf bench ±5% — не измерялся явно → **Plan 57** (perf benchmark
+      infrastructure).
+- [ ] Cross-toolchain MSVC + GCC verification → **Plan 58** (cross-
+      toolchain matrix).
 
 ---
 
