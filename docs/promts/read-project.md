@@ -86,7 +86,15 @@ nova-cli/target/release/nova regen-runtime --check
 nova-cli/target/release/nova test
 ```
 
-Baseline: **171/171 PASS**. Не сломай регрессию.
+Baseline (2026-05-16): **509 PASS / 26 FAIL / 35 SKIP** (~10 мин на 16 ядрах).
+
+26 known FAIL'ов до этой работы (НЕ регрессии новой задачи):
+- 13× `doc/fixtures/*` — Plan 45 фикстуры без `main`, test runner подбирает по ошибке (выносить отдельно)
+- 9× `negative_capability/p50_*` — expectation drift Plan 50 (ждут паттерн «передаётся только по имени», текст диагностики изменился)
+- 3× прочие expectation drift'ы: `contracts_decreases_recursion_fail`, `fail_handler_no_exit_rejected`, `np_trailing_double_bind`
+- 1× `concurrency/fn_array_generic_smoke` — `[]fn->T` для T=int возвращает `.len() == 4` (вероятно related Plan 48 monomorphization in-progress)
+
+Перед началом работы прогони baseline и сверь — твоя задача не должна добавить FAIL'ов.
 
 ---
 
