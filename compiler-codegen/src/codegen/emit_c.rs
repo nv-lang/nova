@@ -6718,7 +6718,10 @@ impl CEmitter {
             // используем static local внутри fn (init=0, sticky между calls).
             self.line(&format!("static int {} = 0;", var));
             self.line("#ifdef NOVA_CONTRACTS_RUNTIME");
-            self.line(&format!("if ({}++ > 1000000) nova_contract_violation(NOVA_CONTRACT_PRE, \"{}\", \"decreases recursion depth exceeded 1000000\", \"<decreases>\", {});",
+            // Plan 55 Ф.7: lower limit to 10000 чтобы trigger ДО stack
+            // overflow (frame ~1KB debug × 1M limit > stack 1MB — никогда
+            // не triggered, был latent bug). 10K — safe (stack ~10MB позволяет).
+            self.line(&format!("if ({}++ > 10000) nova_contract_violation(NOVA_CONTRACT_PRE, \"{}\", \"decreases recursion depth exceeded 10000\", \"<decreases>\", {});",
                 var, f.name, f.span.start));
             self.line("#endif");
             Some(var)
