@@ -1,13 +1,21 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-# Plan 55: Codegen follow-ups от Plan 54
+# Plan 55: Codegen follow-ups от Plan 54 + Plan 52.x mono-pass blockers
 
-> **Создан 2026-05-16 EOD.** Собирает 3 codegen issues выявленные во
-> время Plan 54 sprint'а. Каждый — изолированный bug ограниченного
-> scope, не блокирует main acceptance criteria Plan 48/49/54, но
-> накапливается как technical debt.
+> **Создан 2026-05-16 EOD.** Собирает codegen issues выявленные во
+> время Plan 54 sprint'а (Ф.1-Ф.3) + 3 mono-pass blockers выявленных
+> в Plan 52.x (Ф.4-Ф.6). Все — orthogonal codegen bugs ограниченного
+> scope, не блокируют main acceptance criteria, но накапливаются как
+> technical debt.
 >
-> **Приоритет:** P3 — local quality-of-life fixes. Решать когда есть
-> spare bandwidth перед следующим major plan'ом.
+> **Расширение 2026-05-16:** добавлены Ф.4-Ф.6 после Plan 52.3 закрытия —
+> 3 M-52-* маркера оказались в **той же категории**: mono-pass
+> infrastructure issues (corruption / name-collision / multi-instance
+> collision). Логично закрывать вместе с Ф.1/Ф.2 которые тоже про
+> mono-pass.
+>
+> **Приоритет:** P3 — local quality-of-life fixes. Ф.4-Ф.6 блокируют
+> финальное закрытие Plan 52 limitations (spread, type-inference,
+> multi-instance) — после mono-pass fix они тривиальны.
 
 ---
 
@@ -250,6 +258,173 @@ export fn Duration @into() -> str => "..."   // → нужно вернуть st
 
 ---
 
+---
+
+## Ф.4 — `[M-52-spread-not-supported]`: mono-pass corruption для generic helper-methods
+
+### Симптом
+
+Добавление `HashMap[K, V] @clone()` / `@merge_from(other)` методов в
+stdlib hashmap.nv приводит к **регрессии всего HashMap'а**: 522 → 501
+PASS (-21), 25 → 48 FAIL (+23).
+
+```nova
+export fn HashMap[K, V] @clone() -> HashMap[K, V] {
+    let mut copy = HashMap[K, V].with_capacity(@count)
+    for i in 0..@buckets.len {
+        match @buckets[i] {
+            Occupied { key: k, value: v } => copy.insert_new(k, v)
+            _ => {}
+        }
+    }
+    copy
+}
+```
+
+Любой test использующий HashMap → CC-FAIL.
+
+### Корень
+
+DEBUG trace на `check_bool_condition_at` показал:
+- `if used < threshold` в `@maybe_grow()` (line 400 hashmap.nv) получает
+  `cond_ty=nova_int` (а не `nova_bool`!)
+- `current_fn_return_ty = "nova_int"` вместо unit
+
+То есть mono pass для `@clone()` триггерит mono pass всего
+HashMap chain (@maybe_grow, @find_slot etc), и в этой цепочке
+**type-context corrupted** — простые arithmetic-comparisons
+эмитятся как nova_int вместо nova_bool.
+
+Mini-repro вне stdlib **работает** (Bag[K, V] с pattern-match copy):
+- Bag не имеет internal helpers
+- HashMap имеет много (@maybe_grow, @find_slot, @rehash)
+- Corruption происходит **при триггере чужих fns через clone**
+
+### Fix
+
+Investigation: где именно теряется/перезаписывается type-context при
+mono-pass invocation chained methods.
+
+Возможные подозрения:
+1. `current_fn_return_ty` save/restore — может новый mono context
+   читает stale value
+2. `current_type_subst` — substitution leak между mono'd instances
+3. `infer_expr_c_type` для Binary::Lt возвращает nova_bool в general
+   case, но в mono'd helper — что-то другое перезаписывает
+
+### Acceptance
+
+- [ ] `HashMap.@clone()` + `@merge_from()` в stdlib compile cleanly
+- [ ] 0 регрессий от добавления методов
+- [ ] После: M-52-spread-not-supported разблокирован — реализация
+      spread parser/desugar тривиальна (~50 LOC)
+
+### Estimate
+
+~50-150 LOC investigation + fix. Risk **high** — затрагивает mono
+pass type-context propagation, может ломать существующее.
+
+---
+
+## Ф.5 — `[M-52-type-inference-no-annotation]`: mono name-collision
+
+### Симптом
+
+`let m = ["a": 1, "b": 2]` (без явной аннотации `HashMap[str, int]`)
+→ CC-FAIL:
+
+```c
+nova_int _m0 = Nova_WriteBuffer_static_with_capacity(((nova_int)2LL));
+//             ↑ WriteBuffer вместо HashMap
+_m0.insert_new(_m0_k0, _m0_v0);  // ← method call on nova_int!
+```
+
+Mono pass для `_m.with_capacity` выбирает **WriteBuffer.with_capacity**
+вместо HashMap из-за overload collision (множество types имеют этот
+method).
+
+### Корень
+
+Trace: `inferred_target_type = Some(["HashMap"])` **уже устанавливается**
+annotate-pass'ом в desugar. Desugar строит `HashMap[K, V].with_capacity(n)`
+с turbofish. Но **mono pass игнорирует turbofish hint** и резолвит
+по name lookup, выбирая first overload (`WriteBuffer`).
+
+С explicit annotation `let m HashMap[K,V] = [...]` — работает
+(там путь другой через expected propagation).
+
+### Fix
+
+В mono-pass resolution для method-call с turbofish:
+- Если `obj.kind == TurboFish { base: Ident(T), type_args: [...] }` —
+  resolve **строго** по T name (skip overload name-collision).
+- Сейчас path фильтрует только по arity/param-types — не учитывает
+  явную turbofish target.
+
+Альтернатива: в desugar.rs всегда эмитить **path-qualified callee**
+`std.collections.hashmap.HashMap[K,V].with_capacity` — но требует
+import resolution в desugar (нетривиально).
+
+### Acceptance
+
+- [ ] `let m = [k:v]` без аннотации работает (resolves to HashMap)
+- [ ] Не ломает explicit-annotation case (`let m HashMap[...] = [...]`)
+- [ ] Test: `positive_infer` без аннотации (сейчас закомментирован)
+
+### Estimate
+
+~30-50 LOC. Risk **medium** — затрагивает mono method resolution
+path, регрессия возможна.
+
+---
+
+## Ф.6 — `[M-52-multi-instance-hashmap-collision]`: multi-mono collision
+
+### Симптом
+
+```nova
+fn f() {
+    let a HashMap[str, int]  = ["x": 1]
+    let b HashMap[int, str]  = [1: "x"]   // ← разные K, V
+    let c HashMap[int, int]  = [1: 1]     // ← третья пара
+}
+```
+
+→ CC-FAIL `assigning NovaOpt_nova_str from NovaOpt_nova_bool`
+(или похожие type-mismatch errors).
+
+Workaround сейчас: разделять positive-тесты Plan 52 на 3 файла
+(str→int, int→str, int→int).
+
+### Корень
+
+Pre-existing baseline mono pass issue (Plan 48). Когда **несколько**
+HashMap inst используются в одной fn, mono pass:
+- Корректно генерирует Nova_HashMap____nova_str__nova_int,
+  Nova_HashMap____nova_int__nova_str, etc (отдельные structs)
+- НО где-то path резолюции method-call использует **первый**
+  mono'd instance — даёт неверный type assignment
+
+### Fix
+
+Investigation в mono pass:
+- `resolve_mono_type_args` — корректно ли picks instance per call-site
+- `instantiate_type_subst` — leak между instances?
+- `current_type_subst` save/restore при nested mono'd calls
+
+### Acceptance
+
+- [ ] Test с 3 разными HashMap[K, V] инстансами в одной fn работает
+- [ ] Удалить workaround "split into 3 files" в map_literals tests
+- [ ] M-52-multi-instance-hashmap-collision закрыт
+
+### Estimate
+
+~80-150 LOC. Risk **high** — затрагивает core mono pass, регрессии
+вероятны. Mitigation: extensive test coverage перед commit.
+
+---
+
 ## Acceptance criteria (Plan 55)
 
 - [ ] Ф.1 — `[M-array-of-func-mono]` fixed; `collect[T](fns []fn->T)`
@@ -258,6 +433,12 @@ export fn Duration @into() -> str => "..."   // → нужно вернуть st
       match-результат правильно typed как inner T.
 - [ ] Ф.3 — `Nova_Duration_method_into` returns nova_str; retry_test
       без isolation workaround'а проходит.
+- [ ] Ф.4 — mono-pass type-context corruption fixed; `HashMap.@clone()`
+      работает; M-52-spread-not-supported разблокирован.
+- [ ] Ф.5 — mono name-collision fixed; `let m = [k:v]` без аннотации
+      работает; M-52-type-inference-no-annotation закрыт.
+- [ ] Ф.6 — multi-instance HashMap collision fixed;
+      M-52-multi-instance-hashmap-collision закрыт.
 - [ ] Полный `nova test` (release) — без новых FAIL.
 
 ---
@@ -269,16 +450,41 @@ export fn Duration @into() -> str => "..."   // → нужно вернуть st
 | Ф.1 — array-of-func-mono | ~80-120 | medium | нет |
 | Ф.2 — match-arm pattern_inner_type | ~80 | medium | complement к Ф.1 (Plan 54) |
 | Ф.3 — Duration.into() codegen | ~30-80 | low | нет |
-| **Итого** | **~190-280** | mixed | independent |
+| Ф.4 — mono-pass type-context corruption | ~50-150 | high | unlocks Plan 52 spread |
+| Ф.5 — mono name-collision | ~30-50 | medium | independent |
+| Ф.6 — multi-instance HashMap collision | ~80-150 | high | independent |
+| **Итого** | **~350-630** | mixed | mostly independent |
+
+### Внутренние зависимости Ф.4-Ф.6
+
+Все 3 — **одна категория** (mono-pass infrastructure), но **разные
+instance** проблем:
+- Ф.4: **corruption** — type-context перезаписывается между mono calls
+- Ф.5: **name-collision** — turbofish hint игнорируется при overload
+- Ф.6: **multi-instance leak** — instance picked wrong per call-site
+
+Может быть один root cause (что-то в save/restore type-state mono pass),
+тогда fix Ф.4 закроет и Ф.5/Ф.6. Может быть 3 разные — придётся
+последовательно.
+
+**Рекомендуемый порядок:** Ф.4 первой (даёт DEBUG trace для category)
+→ Ф.5 (independent проверка) → Ф.6 (тяжёлая, нужна с stable Ф.4 базой).
 
 ---
 
 ## Связь
 
-- Plan 48 — closures-in-generics; Ф.1 этого плана closure final Ф.7
+- **Plan 48** — closures-in-generics; Ф.1 этого плана closure final Ф.7
   acceptance для `[]fn->T` (после Ф.1 — Plan 48 `[]fn()->T` полностью
-  closed).
-- Plan 49 — `Ф.2` касается reason()/match patterns для CancelToken[T];
+  closed). Ф.6 — Plan 48 mono baseline.
+- **Plan 49** — `Ф.2` касается reason()/match patterns для CancelToken[T];
   fix снимает workaround «уникальные pattern-var names».
-- Plan 54 — этот план — direct followup от Plan 54 EOD findings.
-- D73 `From`/`Into` protocols — Ф.3 касается Into auto-derive path.
+- **Plan 52.x** — Ф.4/Ф.5/Ф.6 блокируют финальное закрытие limitations:
+  - Ф.4 → разблокирует M-52-spread-not-supported (Plan 52.1 Ф.1
+    deferred, Plan 52.3 Ф.2/Ф.3 deferred)
+  - Ф.5 → разблокирует M-52-type-inference-no-annotation (Plan 52.3 Ф.4
+    deferred)
+  - Ф.6 → разблокирует M-52-multi-instance-hashmap-collision
+    (workaround "split tests" в map_literals/)
+- **Plan 54** — Ф.1/Ф.2/Ф.3 — direct followup от Plan 54 EOD findings.
+- **D73** `From`/`Into` protocols — Ф.3 касается Into auto-derive path.
