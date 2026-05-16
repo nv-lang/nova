@@ -174,21 +174,99 @@ typedef struct {
 
 extern NOVA_THREAD_LOCAL NovaBenchState _nova_bench_state;
 
-/* Definition — emitted once в codegen (emit_main_wrapper в bench-mode). */
+/* Definition — emitted once в codegen (emit_main_wrapper в bench-mode).
+ * Plan 57.C.3: heap sampler globals также определены здесь. */
 #define NOVA_BENCH_STATE_DEFINE \
-    NOVA_THREAD_LOCAL NovaBenchState _nova_bench_state = {0}
+    NOVA_THREAD_LOCAL NovaBenchState _nova_bench_state = {0}; \
+    volatile int _nova_bench_heap_sampler_stop = 0; \
+    uint64_t _nova_bench_heap_sample_interval_ns = 0
 
 /* ─────────────────────────────────────────────────────────────────────────── */
 /* GC introspection bridge (Plan 32 dependency).                               */
 /* ─────────────────────────────────────────────────────────────────────────── */
 
 /* Forward-decls — реализация в alloc.c / alloc_boehm.c. */
-size_t nova_gc_alloc_count(void);
-size_t nova_gc_heap_size(void);
+size_t   nova_gc_alloc_count(void);
+size_t   nova_gc_heap_size(void);
+uint64_t nova_gc_last_pause_ns(void);  /* Plan 57.C.2 */
 
 static inline int64_t nova_bench_alloc_count_snapshot(void) {
     return (int64_t)nova_gc_alloc_count();
 }
+
+/* ─────────────────────────────────────────────────────────────────────────── */
+/* Plan 57.C.3 — Heap sampler thread.                                          */
+/* Activated по NOVA_BENCH_HEAP_SAMPLE_MS=N env. Background thread каждые N    */
+/* ms emits `__HEAP_SAMPLE__ <ns> <bytes>` на stderr. CLI parses → histogram. */
+/* ─────────────────────────────────────────────────────────────────────────── */
+
+#ifdef NOVA_USE_LIBUV
+#  include <uv.h>
+#endif
+
+/* Forward decl — definition в "Sample collection" section ниже. */
+static inline uint64_t nova_bench_env_u64(const char* name, uint64_t def);
+
+/* Volatile flag — set to 1 by main to signal sampler stop. */
+extern volatile int _nova_bench_heap_sampler_stop;
+extern uint64_t _nova_bench_heap_sample_interval_ns;
+
+#define NOVA_BENCH_HEAP_SAMPLER_DEFINE \
+    volatile int _nova_bench_heap_sampler_stop = 0; \
+    uint64_t _nova_bench_heap_sample_interval_ns = 0;
+
+#ifdef NOVA_USE_LIBUV
+/* libuv-thread entry — sleeps interval_ns, reads heap_size, emits marker. */
+static void nova_bench_heap_sampler_thread(void* arg) {
+    (void)arg;
+    while (!_nova_bench_heap_sampler_stop) {
+        uint64_t t = nova_bench_now_ns();
+        size_t hs = nova_gc_heap_size();
+        fprintf(stderr, "__HEAP_SAMPLE__ %llu %zu\n",
+                (unsigned long long)t, hs);
+        fflush(stderr);
+        /* Sleep coarse-grained — Sleep(ms) на Windows, nanosleep на POSIX. */
+        uint64_t ns = _nova_bench_heap_sample_interval_ns;
+#if defined(_WIN32)
+        Sleep((DWORD)(ns / 1000000ULL));
+#else
+        struct timespec ts;
+        ts.tv_sec  = (time_t)(ns / 1000000000ULL);
+        ts.tv_nsec = (long)(ns % 1000000000ULL);
+        nanosleep(&ts, NULL);
+#endif
+    }
+}
+
+extern uv_thread_t _nova_bench_heap_sampler_tid;
+extern int _nova_bench_heap_sampler_active;
+
+#define NOVA_BENCH_HEAP_SAMPLER_THREAD_DEFINE \
+    uv_thread_t _nova_bench_heap_sampler_tid; \
+    int _nova_bench_heap_sampler_active = 0;
+
+static inline void nova_bench_heap_sampler_start(void) {
+    uint64_t ms = nova_bench_env_u64("NOVA_BENCH_HEAP_SAMPLE_MS", 0);
+    if (ms == 0) return;  /* disabled */
+    _nova_bench_heap_sample_interval_ns = ms * 1000000ULL;
+    _nova_bench_heap_sampler_stop = 0;
+    _nova_bench_heap_sampler_active = 1;
+    uv_thread_create(&_nova_bench_heap_sampler_tid,
+                     nova_bench_heap_sampler_thread, NULL);
+}
+
+static inline void nova_bench_heap_sampler_stop(void) {
+    if (!_nova_bench_heap_sampler_active) return;
+    _nova_bench_heap_sampler_stop = 1;
+    uv_thread_join(&_nova_bench_heap_sampler_tid);
+    _nova_bench_heap_sampler_active = 0;
+}
+#else
+/* Без libuv — sampler thread не доступен; emit-stub no-op. */
+#define NOVA_BENCH_HEAP_SAMPLER_THREAD_DEFINE
+static inline void nova_bench_heap_sampler_start(void) {}
+static inline void nova_bench_heap_sampler_stop(void) {}
+#endif
 
 /* ─────────────────────────────────────────────────────────────────────────── */
 /* Sample collection                                                           */
