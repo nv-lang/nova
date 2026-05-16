@@ -1,0 +1,24 @@
+// Plan 55 Ф.5 — HashMap[K,V] инфирится из map-литерала БЕЗ explicit
+// type annotation. До fix'а mono pass для `_m.with_capacity` выбирал
+// WriteBuffer вместо HashMap из-за overload collision.
+//
+// Параллель Go: `m := map[string]int{"a":1}` — inferred. Rust: type
+// hint через turbofish.
+
+module plan55.f5_hashmap_infer_no_annot
+
+import std.collections.hashmap.{HashMap}
+
+
+test "let m = [k:v] без annotation → HashMap" {
+    let m = ["a": 1, "b": 2, "c": 3]
+    assert(m.len() == 3)
+    assert(m.get("a") == Some(1))
+}
+
+
+test "let m = [int:str] без annotation → HashMap" {
+    let m = [1: "one", 2: "two", 3: "three"]
+    assert(m.len() == 3)
+    assert(m.get(2) == Some("two"))
+}
