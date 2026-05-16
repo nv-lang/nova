@@ -4940,6 +4940,22 @@ impl MapLitCtx {
         let _ = is_canonical_stdlib_from_fields; // подавить warning о неиспользовании
         let mut from_pairs_types: HashSet<String> = HashSet::new();
 
+        // Plan 52.1 Ф.4: pre-pass для собирания всех methods (нужно для
+        // method-validation user-типов с #from_pairs ниже). Без pre-pass
+        // type'ы обрабатываются до своих fn-методов → method-check
+        // упирается в пустой type_methods.
+        let mut prepass_type_methods: HashMap<String, HashSet<String>> = HashMap::new();
+        for item in &module.items {
+            if let Item::Fn(f) = item {
+                if let Some(recv) = &f.receiver {
+                    prepass_type_methods
+                        .entry(recv.type_name.clone())
+                        .or_default()
+                        .insert(f.name.clone());
+                }
+            }
+        }
+
         for item in &module.items {
             match item {
                 Item::Type(t) => {
@@ -4953,13 +4969,39 @@ impl MapLitCtx {
                             from_fields_types.insert(t.name.clone());
                         }
                     }
-                    // Plan 52 Ф.23: from_pairs аналогично. User-локальный
-                    // тип с `#from_pairs` СЕЙЧАС ИГНОРИРУЕТСЯ canonical-
-                    // check (только stdlib HashMap). Это safety-net для
-                    // bootstrap; релакс через explicit registry future.
+                    // Plan 52.1 Ф.4: from_pairs canonical-check с
+                    // method-validation. User-локальный `type #from_pairs`
+                    // honored ЕСЛИ имеет требуемые методы
+                    // (`with_capacity(int) -> Self` и `insert_new(K, V)`).
+                    // Это безопасно: codegen эмитит вызовы этих методов,
+                    // и они существуют.
+                    //
+                    // Без validation user мог бы получить codegen-fail
+                    // ('no method with_capacity' / 'no method insert_new')
+                    // — confusing. Validation даёт actionable error
+                    // через type-check ('type X #from_pairs but missing
+                    // with_capacity method').
                     if t.attrs.contains(&TypeAttr::FromPairs) {
-                        if !use_canonical || canonical_from_pairs_types.contains(&t.name) {
+                        let is_canonical = canonical_from_pairs_types.contains(&t.name);
+                        let is_user = !is_canonical;
+                        if is_canonical {
                             from_pairs_types.insert(t.name.clone());
+                        } else if is_user {
+                            // User-локальный тип — проверяем методы через
+                            // prepass_type_methods (собран до этого цикла,
+                            // т.к. types и fns могут идти в любом порядке).
+                            let methods = prepass_type_methods.get(&t.name);
+                            let has_with_capacity = methods
+                                .map_or(false, |m| m.contains("with_capacity"));
+                            let has_insert_new = methods
+                                .map_or(false, |m| m.contains("insert_new"));
+                            if has_with_capacity && has_insert_new {
+                                from_pairs_types.insert(t.name.clone());
+                            }
+                            // Если методов нет — silently ignore. Better-error
+                            // diagnostic — отдельная фаза (требует mutable
+                            // errors vec в build, что нарушает текущую сигнатуру).
+                            // Без validation user получит CC-error при использовании.
                         }
                     }
                 }
@@ -5380,21 +5422,26 @@ impl MapLitCtx {
         expected: Option<&TypeRef>,
         errors: &mut Vec<Diagnostic>,
     ) {
-        // Извлечь K, V из ожидаемого типа `HashMap[K, V]`, если он задан.
+        // Извлечь K, V из ожидаемого типа.
+        // Plan 52.1 Ф.4: Принимаем `HashMap[K, V]` (legacy hardcode) ИЛИ
+        // любой тип помеченный `#from_pairs` (Ф.23 + Ф.4 user-types
+        // через method-validation в MapLitCtx::build).
         let (exp_k, exp_v) = match expected {
             Some(TypeRef::Named { path, generics, .. })
-                if path.last().map(|s| s.as_str()) == Some("HashMap")
+                if (path.last().map(|s| s.as_str()) == Some("HashMap")
+                    || self.expected_is_from_pairs(expected.unwrap()))
                     && generics.len() == 2 =>
             {
                 (Some(&generics[0]), Some(&generics[1]))
             }
-            // Ожидаемый тип задан, но это не HashMap — литерал `[k:v]`
-            // конструирует HashMap, поэтому несовместимо.
+            // Ожидаемый тип задан, но это не HashMap и не #from_pairs тип —
+            // литерал `[k:v]` не может быть coerce'нут.
             Some(other) if !is_unknown_type(other) => {
                 errors.push(Diagnostic::new(
                     format!(
-                        "map literal `[k: v]` constructs a `HashMap`, but the \
-                         expected type here is `{}`",
+                        "map literal `[k: v]` requires a `HashMap` or \
+                         `#from_pairs`-marked type, but the expected type \
+                         here is `{}`",
                         typeref_render(other)
                     ),
                     e.span,

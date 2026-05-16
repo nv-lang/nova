@@ -1,0 +1,38 @@
+// Plan 52.1 Ф.4: user-локальный тип с `#from_pairs` + правильными
+// методами (with_capacity, insert_new) ДОЛЖЕН поддерживать литерал
+// `[k: v]`.
+//
+// Type-checker валидирует наличие требуемых методов перед добавлением
+// в from_pairs_types. Без validation user получил бы CC-error
+// 'no method with_capacity' — confusing. С validation либо тип работает,
+// либо silently fallback на HashMap (требует mismatch).
+//
+// Здесь определяем MyBag — простой wrapper над int counter (не
+// настоящая мапа), но с правильной сигнатурой методов. Литерал
+// должен десугариться через MyBag.with_capacity + insert_new.
+module map_literals.positive_user_from_pairs_with_methods
+
+#from_pairs
+type MyBag[K, V] {
+    count int
+}
+
+export fn MyBag[K, V].with_capacity(n int) -> MyBag[K, V] {
+    MyBag { count: 0 }
+}
+
+export fn MyBag[K, V] mut @insert_new(k K, v V) {
+    @count += 1
+}
+
+export fn MyBag[K, V] @len() -> int => @count
+
+test "user MyBag через literal — корректное число вставок" {
+    let m MyBag[int, str] = [1: "a", 2: "b", 3: "c"]
+    assert(m.len() == 3)
+}
+
+test "user MyBag через literal — empty case без literal" {
+    let m = MyBag[int, str].with_capacity(0)
+    assert(m.len() == 0)
+}
