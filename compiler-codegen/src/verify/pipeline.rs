@@ -322,9 +322,40 @@ impl VerificationPipeline {
         // замените lemma.params → args в каждом ensures, assert в backend.
         // Это даёт caller доступ к lemma.ensures как аксиоме SMT.
         let mut apply_warnings: Vec<(Span, VerifyResult)> = Vec::new();
-        for (lemma_name, args, apply_span) in collect_apply_stmts_in_body(&fd.body) {
+        for (lemma_name, mut args, apply_span) in collect_apply_stmts_in_body(&fd.body) {
             if let Some(lemma_ensures) = find_lemma_ensures(module, &lemma_name) {
                 for (param_names, ensures_expr) in &lemma_ensures {
+                    // Ф.13.1 (Plan 33.6): apply auto-inference. Если args.is_empty()
+                    // и lemma имеет params — пытаемся auto-fill через **name-based
+                    // matching**: lemma param `x` → fn param `x` если ровно 1 такой.
+                    if args.is_empty() && !param_names.is_empty() {
+                        let mut auto_args: Vec<crate::ast::Expr> = Vec::new();
+                        let mut auto_ok = true;
+                        for pname in param_names {
+                            let matches: Vec<&crate::ast::Param> = fd.params.iter()
+                                .filter(|p| p.name == *pname).collect();
+                            if matches.len() == 1 {
+                                auto_args.push(crate::ast::Expr {
+                                    kind: ExprKind::Ident(pname.clone()),
+                                    span: apply_span,
+                                });
+                            } else {
+                                auto_ok = false;
+                                break;
+                            }
+                        }
+                        if auto_ok {
+                            args = auto_args;
+                        } else {
+                            let suggested = format!("apply {}({})", lemma_name, param_names.join(", "));
+                            apply_warnings.push((apply_span, VerifyResult::Warning(format!(
+                                "`apply {}` auto-inference не удалась [W2402]: \
+                                 не найдено уникальных matching params в scope.\n  \
+                                 hint: `{}`",
+                                lemma_name, suggested))));
+                            continue;
+                        }
+                    }
                     if param_names.len() != args.len() {
                         // Ф.11.3 (Plan 33.6): arity mismatch — suggest correct call
                         // (UX hint via W2402).
