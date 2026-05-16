@@ -5917,6 +5917,26 @@ impl MapLitAnnotator {
     }
 
     fn walk_expr(&mut self, e: &mut Expr, expected: Option<&TypeRef>) {
+        // Plan 52.3 Ф.1: empty `[]` в позиции #from_pairs-типа конвертим
+        // в empty MapLit. Codegen ArrayLit пустой → array (CC-FAIL для
+        // HashMap-target). MapLit пустой → with_capacity(0) — пустая мапа.
+        if let ExprKind::ArrayLit(elems) = &e.kind {
+            if elems.is_empty() {
+                if let Some(exp) = expected {
+                    if self.ctx.expected_is_from_pairs(exp) {
+                        // Конвертим в empty MapLit. annotate ниже заполнит
+                        // inferred_key/value/target_type из expected.
+                        e.kind = ExprKind::MapLit {
+                            pairs: Vec::new(),
+                            inferred_key: None,
+                            inferred_value: None,
+                            inferred_target_type: None,
+                        };
+                    }
+                }
+            }
+        }
+
         // 1. На MapLit — заполнить inferred_key/value/target_type (до спуска).
         if let ExprKind::MapLit {
             pairs,

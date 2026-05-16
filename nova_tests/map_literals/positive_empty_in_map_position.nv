@@ -1,0 +1,28 @@
+// Plan 52.3 Ф.1: `let m HashMap[K,V] = []` теперь работает.
+// До фикса: codegen treats [] as array → CC-FAIL.
+// Fix: annotate_module конвертит empty ArrayLit с expected
+// #from_pairs тип в empty MapLit → with_capacity(0).
+module map_literals.positive_empty_in_map_position
+
+import std.collections.hashmap.{HashMap}
+
+test "empty map literal через []" {
+    let m HashMap[str, int] = []
+    assert(m.len() == 0)
+    assert(m.is_empty() == true)
+    assert(m.get("nonexistent") == None)
+}
+
+test "empty map с другими типами ключа" {
+    let m HashMap[int, str] = []
+    assert(m.len() == 0)
+    assert(m.get(42) == None)
+}
+
+test "после empty literal — можно вставлять (returns Option от @insert)" {
+    let mut m HashMap[str, int] = []
+    let _ = m.insert("first", 1)
+    let _ = m.insert("second", 2)
+    assert(m.len() == 2)
+    assert(m.get("first") == Some(1))
+}
