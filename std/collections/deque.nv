@@ -19,72 +19,72 @@ module collections.deque
 // Bootstrap-уровень — без circular buffer оптимизаций (push_front
 // через unshift O(n)). Production-stdlib даст полноценный ringbuf.
 export type Deque[T] {
-    mut items []T
+    mut _items []T   // internal storage
 }
 
 
-export fn Deque[T].new() -> Self => { items: [] }
+export fn Deque[T].new() -> Self => { _items: [] }
 
-export fn Deque[T] @len() -> int => @items.len
-export fn Deque[T] @is_empty() -> bool => @items.len == 0
+export fn Deque[T] @len() -> int => @_items.len
+export fn Deque[T] @is_empty() -> bool => @_items.len == 0
 
 
 // O(1) amortized — append к концу
 export fn Deque[T] mut @push_back(x T) -> () {
-    @items.push(x)
+    @_items.push(x)
 }
 
 // O(n) на bootstrap-реализации (нужно сдвинуть всё)
 // Production: O(1) через ring buffer.
 export fn Deque[T] mut @push_front(x T) -> () {
     let mut new_items []T = [x]
-    for it in @items { new_items.push(it) }
-    @items = new_items
+    for it in @_items { new_items.push(it) }
+    @_items = new_items
 }
 
 
 // O(1)
 export fn Deque[T] mut @pop_back() -> Option[T] {
-    if @items.len == 0 { return None }
-    let last_idx = @items.len - 1
-    let value = @items[last_idx]
+    if @_items.len == 0 { return None }
+    let last_idx = @_items.len - 1
+    let value = @_items[last_idx]
     let mut new_items []T = []
     for i in 0..last_idx {
-        new_items.push(@items[i])
+        new_items.push(@_items[i])
     }
-    @items = new_items
+    @_items = new_items
     Some(value)
 }
 
 
 // O(n) на bootstrap (shift); O(1) в production через head pointer.
 export fn Deque[T] mut @pop_front() -> Option[T] {
-    if @items.len == 0 { return None }
-    let value = @items[0]
+    if @_items.len == 0 { return None }
+    let value = @_items[0]
     let mut new_items []T = []
     let mut i = 1
-    while i < @items.len {
-        new_items.push(@items[i])
+    while i < @_items.len {
+        new_items.push(@_items[i])
         i += 1
     }
-    @items = new_items
+    @_items = new_items
     Some(value)
 }
 
 
 // Peek, без удаления
 export fn Deque[T] @front() -> Option[T] {
-    if @items.len == 0 { None } else { Some(@items[0]) }
+    if @_items.len == 0 { None } else { Some(@_items[0]) }
 }
 
 export fn Deque[T] @back() -> Option[T] {
-    if @items.len == 0 { None } else { Some(@items[@items.len - 1]) }
+    if @_items.len == 0 { None } else { Some(@_items[@_items.len - 1]) }
 }
 
 
 // Random access
 export fn Deque[T] @get(i int) -> Option[T] {
-    if i < 0 || i >= @items.len { None } else { Some(@items[i]) }
+    if i < 0 || i >= @_items.len { None } else { Some(@_items[i]) }
 }
 
 

@@ -15,28 +15,28 @@ import std.collections.hashmap.{HashMap}
 // и HashMap для O(1) lookup. Простая реализация для bootstrap; production
 // использует doubly-linked list для O(1) move-to-front.
 export type Lru[K Hashable, V] {
-    readonly capacity int
-    mut order []K                // index 0 = most recent
-    mut store HashMap[K, V]
+    readonly capacity int        // public config
+    mut _order []K               // internal: index 0 = most recent
+    mut _store HashMap[K, V]     // internal storage
 }
 
 
 export fn Lru[K, V].new(capacity int) -> Self =>
     {
         capacity,
-        order: [],
-        store: HashMap[K, V].new(),
+        _order: [],
+        _store: HashMap[K, V].new(),
     }
 
 
-export fn Lru[K, V] @len() -> int => @store.len()
-export fn Lru[K, V] @is_empty() -> bool => @store.len() == 0
-export fn Lru[K, V] @contains(k K) -> bool => @store.contains(k)
+export fn Lru[K, V] @len() -> int => @_store.len()
+export fn Lru[K, V] @is_empty() -> bool => @_store.len() == 0
+export fn Lru[K, V] @contains(k K) -> bool => @_store.contains(k)
 
 
 // O(n) в простой реализации из-за поиска в order.
 export fn Lru[K, V] mut @get(k K) -> Option[V] {
-    match @store.get(k) {
+    match @_store.get(k) {
         None => None
         Some(v) => {
             // Move to front
@@ -48,39 +48,39 @@ export fn Lru[K, V] mut @get(k K) -> Option[V] {
 
 
 export fn Lru[K, V] mut @put(k K, v V) -> () {
-    if @store.contains(k) {
-        @store.insert(k, v)
+    if @_store.contains(k) {
+        @_store.insert(k, v)
         @move_to_front(k)
         return ()
     }
 
-    if @order.len >= @capacity {
+    if @_order.len >= @capacity {
         // Evict LRU (last element)
-        let evicted = @order[@order.len - 1]
-        @store.remove(evicted)
+        let evicted = @_order[@_order.len - 1]
+        @_store.remove(evicted)
         // Удаляем последний элемент из order
         let mut new_order []K = []
-        for i in 0..@order.len - 1 {
-            new_order.push(@order[i])
+        for i in 0..@_order.len - 1 {
+            new_order.push(@_order[i])
         }
-        @order = new_order
+        @_order = new_order
     }
 
     // Insert front
     let mut new_order []K = [k]
-    for x in @order { new_order.push(x) }
-    @order = new_order
-    @store.insert(k, v)
+    for x in @_order { new_order.push(x) }
+    @_order = new_order
+    @_store.insert(k, v)
 }
 
 
 fn Lru[K, V] mut @move_to_front(k K) -> () {
     // Найти k в order, удалить, поставить в начало.
     let mut new_order []K = [k]
-    for x in @order {
+    for x in @_order {
         if x != k { new_order.push(x) }
     }
-    @order = new_order
+    @_order = new_order
 }
 
 

@@ -35,7 +35,7 @@ export type LinkedList[T]
 export fn LinkedList[T].new() => Empty
 
 // Из массива — fold справа налево.
-export fn LinkedList[T].from_array(xs []T) -> Self {
+export fn LinkedList[T].from_array(xs []T) -> LinkedList[T] {
     let mut acc LinkedList[T] = Empty
     let mut i = xs.len - 1
     while i >= 0 {
@@ -45,7 +45,7 @@ export fn LinkedList[T].from_array(xs []T) -> Self {
     acc
 }
 
-export fn LinkedList[T].from_iter(it Iter[T]) -> Self {
+export fn LinkedList[T].from_iter(it Iter[T]) -> LinkedList[T] {
     // Prepend каждый элемент → получаем обратный список (O(1) на шаг).
     // Затем reverse — суммарно O(n), без вспомогательного массива.
     let mut acc LinkedList[T] = Empty
@@ -113,7 +113,7 @@ export fn LinkedList[T] @append(x T) -> LinkedList[T] =>
 // ──────────────────────────────────────────────────────────────────────────
 
 // Reverse — O(n) с одним проходом через accumulator.
-export fn LinkedList[T] @reverse() -> Self {
+export fn LinkedList[T] @reverse() -> LinkedList[T] {
     let mut acc = Empty
     let mut cur = @
     let mut done = false

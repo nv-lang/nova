@@ -26,9 +26,9 @@ export type SnowflakeError
 
 // Generator state — mutable, держится одним процессом / thread.
 export type SnowflakeGen {
-    readonly machine_id i64                  // 0..1023
-    mut last_ms i64                           // ms прошлой генерации
-    mut sequence i64                          // 0..4095
+    readonly machine_id i64                  // public config: 0..1023
+    mut _last_ms i64                         // internal: ms прошлой генерации
+    mut _sequence i64                        // internal: 0..4095
 }
 
 
@@ -38,8 +38,8 @@ export fn SnowflakeGen.new(machine_id int) Fail[SnowflakeError] -> Self {
     }
     {
         machine_id: machine_id as i64,
-        last_ms: 0,
-        sequence: 0,
+        _last_ms: 0,
+        _sequence: 0,
     }
 }
 
@@ -49,28 +49,28 @@ export fn SnowflakeGen.new(machine_id int) Fail[SnowflakeError] -> Self {
 export fn SnowflakeGen mut @next() Time Fail[SnowflakeError] -> i64 {
     let now = Time.now_ms() as i64
 
-    if now < @last_ms {
-        throw ClockBackwards { now: now, last: @last_ms }
+    if now < @_last_ms {
+        throw ClockBackwards { now: now, last: @_last_ms }
     }
 
-    if now == @last_ms {
-        @sequence = @sequence + 1
-        if @sequence >= 4096 {
+    if now == @_last_ms {
+        @_sequence = @_sequence + 1
+        if @_sequence >= 4096 {
             // Sequence overflow в одной ms — busy-wait до следующей ms.
             // В production-runtime — Time.sleep(1.millis()), но bootstrap
             // не имеет sleep handler, поэтому assert.
             // Workaround: бампим last_ms.
-            @last_ms = @last_ms + 1
-            @sequence = 0
+            @_last_ms = @_last_ms + 1
+            @_sequence = 0
         }
     } else {
-        @sequence = 0
-        @last_ms = now
+        @_sequence = 0
+        @_last_ms = now
     }
 
-    let ts_offset = @last_ms - TWITTER_EPOCH_MS
+    let ts_offset = @_last_ms - TWITTER_EPOCH_MS
     // Layout: [42 bit ts][10 bit machine][12 bit sequence]
-    (ts_offset << 22) | (@machine_id << 12) | @sequence
+    (ts_offset << 22) | (@machine_id << 12) | @_sequence
 }
 
 

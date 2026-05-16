@@ -676,3 +676,63 @@ struct, lifetimes для self в C). Может потребовать GC integr
   — закрывается этим планом частично (Variant 1).
 - `compiler-codegen/src/codegen/emit_c.rs` — `method_receivers`,
   `into_targets`, метод-resolution paths.
+
+---
+
+## Follow-up: Self в return type generic-методов (2026-05-17)
+
+**Bug:** `-> Self` в signature методов **generic** типа не резолвится
+в codegen — emit'ит литеральный `Nova_Self` как C type name, что даёт
+linker error `unknown type name 'Nova_Self'`.
+
+### Воспроизведение
+
+```nova
+export type LinkedList[T]
+    | Empty
+    | Cons(T, LinkedList[T])
+
+export fn LinkedList[T] @reverse() -> Self { ... }    // ← Self → Nova_Self в C
+```
+
+Generated C:
+```c
+static Nova_Self Nova_LinkedList_method_reverse(...) { ... }   // unknown type
+```
+
+### Где работает
+
+- **Static method `.new() -> Self`** на generic type — работает (compiler
+  знает Self из enclosing-fn signature).
+- **Не-generic types** (Snowflake, BloomFilter) — работает.
+- **Lru.new()** (generic, static, return literal `{...}`) — работает,
+  потому что Self в return type **statically** заменяется на enclosing
+  type instance, и литерал `{...}` инфер'ится.
+
+### Где ломается
+
+| Контекст | Status |
+|---|---|
+| Generic instance method `-> Self` | ❌ `Nova_Self` |
+| Generic instance method `-> Self { ... }` (Self literal) | ❌ undefined |
+| Generic static method `Self.method()` (call site) | ❌ linker undefined |
+| Generic instance method `Self.method()` (call site) | ❌ linker undefined |
+
+### Workaround в stdlib (применён 2026-05-17)
+
+Все методы generic-типов используют **explicit type** вместо `Self`:
+- `HashMap[K, V].new() -> HashMap[K, V] => HashMap[K, V].with_capacity(16)`
+- `LinkedList[T] @reverse() -> LinkedList[T]`
+
+### Proper fix (TODO)
+
+Codegen `Self` type resolution: при emit'е signature методов нужно
+substitute `Self` → enclosing-fn's receiver type (с generic params).
+Изменения в `compiler-codegen/src/codegen/emit_c.rs` — функция
+`type_ref_to_c` для `TypeRef::Named { path: ["Self"], ... }`.
+
+Сейчас, видимо, `type_ref_to_c` для `Self` emit'ит `Nova_Self`
+буквально, не зная контекста. Нужен `recv_type` context (как в
+`external_registry::type_ref_to_c`).
+
+Status: **открыт**, документирован как known issue.

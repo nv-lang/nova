@@ -131,7 +131,7 @@ export fn []T @all(pred fn(T) -> bool) -> bool {
 /// ```
 #stable(since = "0.1")
 export fn []T @first() -> Option[T] =>
-    if @len == 0 { None } else { Some(@get(0).unwrap()) }
+    if @len == 0 { None } else { Some(@[0]) }
 
 /// Последний элемент через `Option[T]`. `None` если пусто.
 ///
@@ -142,7 +142,7 @@ export fn []T @first() -> Option[T] =>
 /// ```
 #stable(since = "0.1")
 export fn []T @last() -> Option[T] =>
-    if @len == 0 { None } else { Some(@get(@len - 1).unwrap()) }
+    if @len == 0 { None } else { Some(@[@len - 1]) }
 
 
 // ──────────────────────────────────────────────────────────────────────────

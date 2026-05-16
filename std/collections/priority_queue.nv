@@ -12,45 +12,45 @@ module collections.priority_queue
 
 
 export type PriorityQueue[T Ord] {
-    mut items []T              // heap-ordered: items[0] = min
+    mut _items []T              // internal: heap-ordered, _items[0] = min
 }
 
 
 export fn PriorityQueue[T].new() -> Self =>
-    { items: [] }
+    { _items: [] }
 
-export fn PriorityQueue[T] @len() -> int => @items.len
-export fn PriorityQueue[T] @is_empty() -> bool => @items.len == 0
+export fn PriorityQueue[T] @len() -> int => @_items.len
+export fn PriorityQueue[T] @is_empty() -> bool => @_items.len == 0
 
 
 // Min element без удаления.
 export fn PriorityQueue[T] @peek() -> Option[T] {
-    if @items.len == 0 { None } else { Some(@items[0]) }
+    if @_items.len == 0 { None } else { Some(@_items[0]) }
 }
 
 
 // Добавить элемент. O(log n).
 export fn PriorityQueue[T] mut @push(item T) -> () {
-    @items.push(item)
-    @sift_up(@items.len - 1)
+    @_items.push(item)
+    @sift_up(@_items.len - 1)
 }
 
 
 // Удалить и вернуть min. O(log n).
 export fn PriorityQueue[T] mut @pop() -> Option[T] {
-    if @items.len == 0 { return None }
-    let top = @items[0]
-    let last = @items.len - 1
+    if @_items.len == 0 { return None }
+    let top = @_items[0]
+    let last = @_items.len - 1
     if last > 0 {
-        @items[0] = @items[last]
+        @_items[0] = @_items[last]
     }
     // Удаляем последний элемент (используем вспомогательный массив).
     let mut new_items []T = []
     for i in 0..last {
-        new_items.push(@items[i])
+        new_items.push(@_items[i])
     }
-    @items = new_items
-    if @items.len > 0 {
+    @_items = new_items
+    if @_items.len > 0 {
         @sift_down(0)
     }
     Some(top)
@@ -65,11 +65,11 @@ fn PriorityQueue[T] mut @sift_up(idx int) -> () {
     let mut i = idx
     while i > 0 {
         let parent = (i - 1) / 2
-        if @items[i] < @items[parent] {
+        if @_items[i] < @_items[parent] {
             // swap
-            let tmp = @items[i]
-            @items[i] = @items[parent]
-            @items[parent] = tmp
+            let tmp = @_items[i]
+            @_items[i] = @_items[parent]
+            @_items[parent] = tmp
             i = parent
         } else {
             return ()
@@ -80,21 +80,21 @@ fn PriorityQueue[T] mut @sift_up(idx int) -> () {
 
 fn PriorityQueue[T] mut @sift_down(idx int) -> () {
     let mut i = idx
-    let n = @items.len
+    let n = @_items.len
     loop {
         let left = 2 * i + 1
         let right = 2 * i + 2
         let mut smallest = i
-        if left < n && @items[left] < @items[smallest] {
+        if left < n && @_items[left] < @_items[smallest] {
             smallest = left
         }
-        if right < n && @items[right] < @items[smallest] {
+        if right < n && @_items[right] < @_items[smallest] {
             smallest = right
         }
         if smallest == i { return () }
-        let tmp = @items[i]
-        @items[i] = @items[smallest]
-        @items[smallest] = tmp
+        let tmp = @_items[i]
+        @_items[i] = @_items[smallest]
+        @_items[smallest] = tmp
         i = smallest
     }
 }
