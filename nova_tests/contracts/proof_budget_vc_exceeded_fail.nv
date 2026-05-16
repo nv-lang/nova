@@ -1,0 +1,23 @@
+// Ф.3.4 (Plan 33.6): #proof_budget vc_count_max превышен → BudgetExceeded error.
+// EXPECT_COMPILE_ERROR BudgetExceeded
+
+#proof_budget(vc_count_max = 2)
+module contracts.proof_budget_vc_exceeded_fail
+
+fn f1(x int) -> int
+    ensures result == x
+{
+    x
+}
+
+fn f2(x int) -> int
+    ensures result == x + 1
+{
+    x + 1
+}
+
+fn f3(x int) -> int
+    ensures result == x + 2
+{
+    x + 2
+}

@@ -1,0 +1,25 @@
+// Ф.3.4 (Plan 33.6): #proof_budget module-level + per-fn #verify_timeout override.
+// Module budget: timeout_ms=5000, vc_count_max=100.
+// Fn с простым контрактом проходит верификацию через TrivialBackend.
+
+#proof_budget(timeout_ms = 5000, vc_count_max = 100)
+module contracts.proof_budget_positive
+
+fn add(x int, y int) -> int
+    ensures result == x + y
+{
+    x + y
+}
+
+// #verify_timeout переопределяет module-level timeout на 1000ms.
+#verify_timeout(1000)
+fn identity(x int) -> int
+    ensures result == x
+{
+    x
+}
+
+test "proof_budget positive" {
+    assert(add(2, 3) == 5)
+    assert(identity(42) == 42)
+}

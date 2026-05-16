@@ -74,7 +74,7 @@ impl BackendChoice {
 }
 
 pub struct VerificationPipeline {
-    timeout_ms: u32,
+    pub timeout_ms: u32,
     backend: BackendChoice,
 }
 
@@ -2140,6 +2140,14 @@ pub fn verify_module(module: &Module) -> ModuleVerifyReport {
     // Plan 33.3 Ф.13: #must_verify_module -- все функции MustVerify.
     let module_strict = module.attrs.iter().any(|a| matches!(a.kind, ModuleAttrKind::MustVerifyModule));
 
+    // Ф.3.4 (Plan 33.6): #proof_budget module-level.
+    let (module_timeout_ms, module_vc_count_max) = module.attrs.iter()
+        .find_map(|a| if let ModuleAttrKind::ProofBudget { timeout_ms, vc_count_max } = &a.kind {
+            Some((*timeout_ms, *vc_count_max))
+        } else { None })
+        .unwrap_or((None, None));
+    let mut module_vc_used: u32 = 0;
+
     for item in &module.items {
         if let Item::Fn(fd) = item {
             if fd.contracts.is_empty() { continue; }
@@ -2166,9 +2174,34 @@ pub fn verify_module(module: &Module) -> ModuleVerifyReport {
                 for c in &fd.contracts { if matches!(c.kind, ContractKind::Ensures) { report.proven.push((fd.name.clone(), c.span)); } }
                 continue;
             }
-                        let effective_mode = if module_strict && matches!(fd.verify_mode, VerifyMode::Default) { VerifyMode::MustVerify } else { fd.verify_mode };
+            let effective_mode = if module_strict && matches!(fd.verify_mode, VerifyMode::Default) { VerifyMode::MustVerify } else { fd.verify_mode };
+            // Ф.3.4: per-fn timeout = fn-level override > module budget > pipeline default.
+            let fn_timeout_ms = fd.verify_timeout_ms
+                .map(|ms| ms as u32)
+                .or(module_timeout_ms)
+                .unwrap_or(pipeline.timeout_ms);
+            // Ф.3.4: vc_count_max budget check.
+            if let Some(max_vc) = module_vc_count_max {
+                let fn_vc_count = fd.contracts.len() as u32;
+                if module_vc_used + fn_vc_count > max_vc {
+                    let span = fd.contracts.first().map(|c| c.span).unwrap_or(fd.span);
+                    let msg = format!(
+                        "fn '{}': #proof_budget vc_count_max={} превышен \
+                         (использовано {}, попытка добавить {}) [BudgetExceeded]; \
+                         увеличьте vc_count_max или вынесите fn в другой модуль.",
+                        fd.name, max_vc, module_vc_used, fn_vc_count);
+                    report.errors.push(Diagnostic::new(msg, span));
+                    continue;
+                }
+                module_vc_used += fn_vc_count;
+            }
 let t0 = std::time::Instant::now();
-            let results = pipeline.verify_fn(module, fd, &inferred_pure);
+            // Ф.3.4: если timeout отличается от default — создаём временный pipeline.
+            let results = if fn_timeout_ms != pipeline.timeout_ms {
+                VerificationPipeline::with_timeout(fn_timeout_ms).verify_fn(module, fd, &inferred_pure)
+            } else {
+                pipeline.verify_fn(module, fd, &inferred_pure)
+            };
             let elapsed_ms = t0.elapsed().as_millis() as u64;
             for (span, vr) in results {
                 match vr {
