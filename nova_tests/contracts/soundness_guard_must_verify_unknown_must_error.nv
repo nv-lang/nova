@@ -1,0 +1,12 @@
+// EXPECT_COMPILE_ERROR E2401
+//
+// Ф.1.4 soundness regression guard (Plan 33.6):
+// #verify fn с неподдерживаемым контрактом (tuple expression) → E2401.
+// Если #verify перестанет блокировать Unsupported — этот тест упадёт.
+
+module contracts.soundness_guard_must_verify_unknown_must_error
+
+#verify
+fn strict_fn(x int) -> int
+    requires (x, x).0 >= 0
+=> x
