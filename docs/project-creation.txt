@@ -12182,6 +12182,19 @@ ecosystem (Creusot/Prusti/Kani/Flux/Aeneas). Найдено 5 P0 soundness gaps:
 - Регрессия: 132 PASS (+1) / 34 SKIP.
 - Коммит: `ea66f7d9abb`.
 
+### Ф.7.3 — 3 silent skips в loop encoding → W2402
+
+- pipeline.rs:615 — decreases expr не encodable → silent → теперь W2402 с reason.
+- pipeline.rs:1715 — loop invariant non-encodable → silent return → теперь W2402.
+- pipeline.rs:1740 — body assignment rhs не encodable → silent return → теперь W2402.
+- pipeline.rs:1805 — post-state invariant non-encodable → silent skip → теперь W2402.
+- pipeline.rs:1658 (Mul/Div skip в helper-функции) — НЕ silent skip soundness-wise:
+  это over-approximation для havoc-analysis, делает verify консервативнее.
+  Оставлено как есть.
+- Test: loop_decreases_w2402 — `decreases match i { _ => i }` → W2402.
+- Регрессия: 133 PASS (+1) / 34 SKIP.
+- Коммит: `a7aacc03a58`.
+
 === Plan 45 �.25 � nova tests (positive + negative) ===
 
 ����� �������� �.25 (4 ����) �������� nova-tests .nv ��� �������� �����
