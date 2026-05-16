@@ -81,17 +81,17 @@ export fn Range @contains(x int) -> bool =>
 // `mut next() -> Option[int]`. Никаких `impl Iter for ...`-блоков.
 export type RangeIter {
     readonly end int
-    mut cur      int
+    mut _cur     int
 }
 
 // `Range.iter()` — конструктор итератора.
 export fn Range @iter() -> RangeIter =>
-    { end: @end, cur: @start }
+    { end: @end, _cur: @start }
 
 export fn RangeIter mut @next() -> Option[int] {
-    if @cur >= @end { return None }
-    let v = @cur
-    @cur += 1
+    if @_cur >= @end { return None }
+    let v = @_cur
+    @_cur += 1
     Some(v)
 }
 
@@ -109,7 +109,7 @@ export fn RangeIter mut @next() -> Option[int] {
 export type StepRangeIter {
     readonly end  int
     readonly step int                       // должен быть > 0
-    mut cur       int
+    mut _cur      int
 }
 
 // Range.@step_by(n) -> Iter[int] — итератор с шагом n.
@@ -118,13 +118,13 @@ export fn Range @step_by(step int) Fail[OverflowError] -> StepRangeIter {
     if step <= 0 {
         throw OverflowError { msg: "Range.step_by: step must be positive, got ${step}" }
     }
-    StepRangeIter { end: @end, step, cur: @start }
+    StepRangeIter { end: @end, step, _cur: @start }
 }
 
 export fn StepRangeIter mut @next() -> Option[int] {
-    if @cur >= @end { return None }
-    let v = @cur
-    @cur += @step
+    if @_cur >= @end { return None }
+    let v = @_cur
+    @_cur += @step
     Some(v)
 }
 
@@ -138,25 +138,25 @@ export fn StepRangeIter mut @next() -> Option[int] {
 
 export type ReverseRangeIter {
     readonly start int
-    mut cur        int                      // следующее значение для выдачи
+    mut _cur       int                      // internal: следующее значение для выдачи
                                             // (decremented после каждого next)
-    mut done       bool                     // флаг завершения (для start == int.MIN)
+    mut _done      bool                     // internal: флаг завершения (для start == int.MIN)
 }
 
 // Range.@reverse() -> Iter[int] — итератор в обратном порядке.
 export fn Range @reverse() -> ReverseRangeIter {
-    let cur = if @end > @start { @end - 1 } else { @start }
-    let done = @end <= @start
-    ReverseRangeIter { start: @start, cur, done }
+    let _cur = if @end > @start { @end - 1 } else { @start }
+    let _done = @end <= @start
+    ReverseRangeIter { start: @start, _cur, _done }
 }
 
 export fn ReverseRangeIter mut @next() -> Option[int] {
-    if @done { return None }
-    let v = @cur
-    if @cur == @start {
-        @done = true                        // следующая итерация завершит
+    if @_done { return None }
+    let v = @_cur
+    if @_cur == @start {
+        @_done = true                       // следующая итерация завершит
     } else {
-        @cur -= 1
+        @_cur -= 1
     }
     Some(v)
 }

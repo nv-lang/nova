@@ -19,9 +19,9 @@ module collections.bloom_filter
 
 
 export type BloomFilter {
-    readonly bits_size int
-    readonly num_hashes int
-    mut bits []byte                  // packed: 1 byte = 8 bits
+    readonly bits_size int          // public config
+    readonly num_hashes int         // public config (k)
+    mut _bits []byte                // internal: packed bit array (1 byte = 8 bits)
 }
 
 
@@ -30,12 +30,12 @@ export type BloomFilter {
 //   num_hashes — k, число hash-функций
 export fn BloomFilter.new(bits_size int, num_hashes int) -> Self {
     let byte_size = (bits_size + 7) / 8
-    let mut bits []byte = []
-    for i in 0..byte_size { bits.push(0) }
+    let mut _bits []byte = []
+    for i in 0..byte_size { _bits.push(0) }
     {
         bits_size,
         num_hashes,
-        bits,
+        _bits,
     }
 }
 
@@ -50,7 +50,7 @@ export fn BloomFilter.optimal(expected_n int, false_pos_rate f64) -> Self {
     // k = (m/n) * ln(2)
     let k = ((m as f64 / n) * ln2).ceil() as int
     let k_safe = if k < 1 { 1 } else { k }
-    BloomFilter.new(m, k_safe)
+    Self.new(m, k_safe)
 }
 
 
@@ -87,7 +87,7 @@ fn BloomFilter mut @set_bit(idx int) -> () {
     let byte_idx = idx / 8
     let bit_in_byte = idx % 8
     let mask = (1 << bit_in_byte) as byte
-    @bits[byte_idx] = ((@bits[byte_idx] as int) | (mask as int)) as byte
+    @_bits[byte_idx] = ((@_bits[byte_idx] as int) | (mask as int)) as byte
 }
 
 
@@ -95,7 +95,7 @@ fn BloomFilter @get_bit(idx int) -> bool {
     let byte_idx = idx / 8
     let bit_in_byte = idx % 8
     let mask = (1 << bit_in_byte)
-    ((@bits[byte_idx] as int) & mask) != 0
+    ((@_bits[byte_idx] as int) & mask) != 0
 }
 
 

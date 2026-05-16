@@ -27,16 +27,16 @@ export type Set[T] {
 // Конструкторы
 // ──────────────────────────────────────────────────────────────────────────
 
-// D55: имя Set[T] из `-> Set[T]`. В record-литерале — имя поля `map`.
-export fn Set[T].new() -> Set[T] =>
+// D55: имя Set[T] из `-> Self`. В record-литерале — имя embed-поля `map`.
+export fn Set[T].new() -> Self =>
     { map: HashMap[T, ()].new() }
 
-export fn Set[T].with_capacity(cap int) -> Set[T] =>
+export fn Set[T].with_capacity(cap int) -> Self =>
     { map: HashMap[T, ()].with_capacity(cap) }
 
 // Из массива/итератора.
-export fn Set[T].from_iter(it Iter[T]) -> Set[T] {
-    let mut s = Set[T].new()
+export fn Set[T].from_iter(it Iter[T]) -> Self {
+    let mut s = Self.new()
     for x in it {
         s.insert(x)
     }
@@ -84,16 +84,16 @@ export fn Set[T] mut @clear() -> () => @map.clear()
 
 // Объединение `a | b` — все элементы из обоих.
 // Имя метода фиксировано D46: `@or` ↔ `|`.
-export fn Set[T] @or(other Set[T]) -> Set[T] {
-    let mut out = Set[T].new()
+export fn Set[T] @or(other Set[T]) -> Self {
+    let mut out = Self.new()
     for x in @map.keys() { out.insert(x) }
     for x in other.map.keys() { out.insert(x) }
     out
 }
 
 // Пересечение `a & b` — общие элементы.
-export fn Set[T] @and(other Set[T]) -> Set[T] {
-    let mut out = Set[T].new()
+export fn Set[T] @and(other Set[T]) -> Self {
+    let mut out = Self.new()
     for x in @map.keys() {
         if other.contains(x) { out.insert(x) }
     }
@@ -101,8 +101,8 @@ export fn Set[T] @and(other Set[T]) -> Set[T] {
 }
 
 // Разность `a - b` — элементы a, которых нет в b.
-export fn Set[T] @minus(other Set[T]) -> Set[T] {
-    let mut out = Set[T].new()
+export fn Set[T] @minus(other Set[T]) -> Self {
+    let mut out = Self.new()
     for x in @map.keys() {
         if !other.contains(x) { out.insert(x) }
     }

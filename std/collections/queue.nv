@@ -23,8 +23,8 @@ module collections.queue
 // pop забирает с конца `out`. Когда `out` пуст, переливаем `in` в
 // `out` в обратном порядке.
 export type Queue[T] {
-    mut inbox  []T
-    mut outbox []T
+    mut _inbox  []T   // internal: входная сторона FIFO
+    mut _outbox []T   // internal: выходная сторона FIFO (reversed in)
 }
 
 
@@ -32,12 +32,11 @@ export type Queue[T] {
 // Конструкторы
 // ──────────────────────────────────────────────────────────────────────────
 
-// D55: имя Queue[T] из `-> Queue[T]`.
-export fn Queue[T].new() -> Queue[T] =>
-    { inbox: [], outbox: [] }
+export fn Queue[T].new() -> Self =>
+    { _inbox: [], _outbox: [] }
 
-export fn Queue[T].with_capacity(cap int) -> Queue[T] =>
-    { inbox: []T.with_capacity(cap), outbox: []T.with_capacity(cap) }
+export fn Queue[T].with_capacity(cap int) -> Self =>
+    { _inbox: []T.with_capacity(cap), _outbox: []T.with_capacity(cap) }
 
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -45,10 +44,10 @@ export fn Queue[T].with_capacity(cap int) -> Queue[T] =>
 // ──────────────────────────────────────────────────────────────────────────
 
 export fn Queue[T] @len() -> int =>
-    @inbox.len + @outbox.len
+    @_inbox.len + @_outbox.len
 
 export fn Queue[T] @is_empty() -> bool =>
-    @inbox.is_empty && @outbox.is_empty
+    @_inbox.is_empty && @_outbox.is_empty
 
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -57,7 +56,7 @@ export fn Queue[T] @is_empty() -> bool =>
 
 // Положить в очередь — всегда в `in`. O(1) амортизированно.
 export fn Queue[T] mut @push(item T) -> () =>
-    @inbox.push(item)
+    @_inbox.push(item)
 
 // Забрать из очереди (FIFO). Если `out` пуст — перелить `in` в
 // обратном порядке. O(1) амортизированно.
@@ -65,35 +64,35 @@ export fn Queue[T] mut @push(item T) -> () =>
 // D55: Some/None в return-position сохранены явно — match-arms с
 // unit-альтернативой, [Q-style-coercion](../spec/open-questions.md).
 export fn Queue[T] mut @pop() -> Option[T] {
-    if @outbox.is_empty {
+    if @_outbox.is_empty {
         // Перелить `in` в `out` в обратном порядке.
         loop {
-            match @inbox.pop() {
-                Some(x) => @outbox.push(x)
+            match @_inbox.pop() {
+                Some(x) => @_outbox.push(x)
                 None    => break
             }
         }
     }
-    @outbox.pop()
+    @_outbox.pop()
 }
 
 // Просмотреть голову без удаления.
 export fn Queue[T] @peek() -> Option[T] {
-    if !@outbox.is_empty {
+    if !@_outbox.is_empty {
         // Голова outbox — последний элемент (pop забирает с конца).
-        @outbox.get(@outbox.len - 1)
-    } else if !@inbox.is_empty {
+        @_outbox.get(@_outbox.len - 1)
+    } else if !@_inbox.is_empty {
         // Голова находится в `in[0]` (она «дальше всего» от выхода
         // тоже, но ещё не перелита).
-        @inbox.get(0)
+        @_inbox.get(0)
     } else {
         None
     }
 }
 
 export fn Queue[T] mut @clear() -> () {
-    @inbox.clear()
-    @outbox.clear()
+    @_inbox.clear()
+    @_outbox.clear()
 }
 
 
