@@ -242,8 +242,75 @@ pub fn run(opts: BenchRunOpts) -> Result<i32> {
     Ok(0)
 }
 
+/// Plan 57.A.5: compile a bench file и вернуть exe-path для последующего
+/// profile-run (отдельный invocation от measurement run чтобы
+/// instrumentation noise не влиял на baseline numbers).
+pub fn compile_for_profile(opts: &BenchRunOpts) -> Result<std::path::PathBuf> {
+    let bench_path = opts.bench_path.canonicalize()
+        .map_err(|e| anyhow!("cannot resolve {}: {}", opts.bench_path.display(), e))?;
+    let src = std::fs::read_to_string(&bench_path)
+        .map_err(|e| anyhow!("read bench source: {}", e))?;
+    let path_str = bench_path.to_string_lossy();
+
+    let mut module = nova_codegen::parser::parse(&src)
+        .map_err(|d| anyhow!("{}", d.render(&src, &path_str)))?;
+    nova_codegen::imports::resolve_imports_inline(
+        &bench_path, &mut module, opts.repo, opts.stdlib_dir,
+    )?;
+    nova_codegen::types::check_module(&module).map_err(|errs| {
+        let msgs: Vec<String> = errs.iter()
+            .map(|d| d.render(&src, &path_str))
+            .collect();
+        anyhow!("{}", msgs.join("\n"))
+    })?;
+    nova_codegen::types::infer_effects(&mut module);
+    nova_codegen::types::annotate_map_literals(&mut module);
+    nova_codegen::desugar::desugar_module(&mut module);
+    nova_codegen::callnorm::normalize_module(&mut module);
+
+    let mut emitter = nova_codegen::codegen::CEmitter::new();
+    emitter.set_source_for_annotations(src.clone());
+    emitter.set_bench_mode(true);
+    if let Some(n) = opts.mono_depth {
+        emitter.set_mono_depth_limit(n);
+    }
+    let (c_code, _warnings) = emitter
+        .emit_module(&module)
+        .map_err(|e| anyhow!("codegen error: {}", e))?;
+
+    let stem = bench_path.file_stem().and_then(|s| s.to_str()).unwrap_or("bench");
+    let exe_name = if cfg!(target_os = "windows") {
+        format!("{}_profile.exe", stem)
+    } else {
+        format!("{}_profile", stem)
+    };
+    let hash = simple_hash(&bench_path.display().to_string());
+    let tmp_path = std::env::temp_dir().join(format!("nova-bench-profile-{}", &hash[..hash.len().min(12)]));
+    std::fs::create_dir_all(&tmp_path).map_err(|e| anyhow!("create tmp: {}", e))?;
+    let c_file = tmp_path.join(format!("{}_profile.c", stem));
+    let exe_file = tmp_path.join(&exe_name);
+    std::fs::write(&c_file, &c_code).map_err(|e| anyhow!("write .c: {}", e))?;
+
+    let tc = test_runner::detect_toolchain(&opts.tc_opts)?;
+    let libuv = test_runner::detect_or_build_libuv(opts.rt_dir, opts.repo, tc.vcvars_path());
+    test_runner::install_cancel_handler();
+
+    let build_opts = test_runner::BuildOpts {
+        c_file: &c_file,
+        exe_file: &exe_file,
+        obj_dir: &tmp_path,
+        cg_include: opts.cg_include,
+        rt_dir: opts.rt_dir,
+        mode: opts.mode,
+        libuv: libuv.as_ref(),
+        gc_kind: opts.gc_kind,
+    };
+    test_runner::compile_c_to_exe(&tc, &build_opts, Duration::from_secs(opts.compile_timeout_secs))?;
+    Ok(exe_file)
+}
+
 /// Deterministic content-free hash for tmp-dir naming. Не cryptographic.
-fn simple_hash(s: &str) -> String {
+pub fn simple_hash(s: &str) -> String {
     let mut h: u64 = 0xcbf29ce484222325;
     for b in s.bytes() {
         h ^= b as u64;
