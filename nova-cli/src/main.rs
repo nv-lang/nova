@@ -499,6 +499,24 @@ enum BenchCmd {
     /// Linux: tries perf_event_open + measures known loop. Other OS: stub.
     #[command(name = "cpu-instr-check")]
     CpuInstrCheck,
+    /// Plan 57.C.8: Measure per-pass compile time для corpus file(s).
+    /// Wraps nova build с NOVA_PERF_TIMER=1; parses __PERF__ markers.
+    Corpus {
+        /// .nv file or directory с .nv files.
+        path: PathBuf,
+        /// JSON output (default: terminal table).
+        #[arg(long)]
+        json: bool,
+        /// Build mode (release|dev).
+        #[arg(long, default_value = "release")]
+        mode: String,
+        /// Toolchain (auto|clang|msvc).
+        #[arg(long, default_value = "auto")]
+        toolchain: String,
+        /// GC backend (malloc|boehm).
+        #[arg(long, default_value = "boehm")]
+        gc: String,
+    },
     /// Plan 57.A.1: Append result JSON to an orphan history branch.
     #[command(name = "history-add")]
     HistoryAdd {
@@ -2761,6 +2779,34 @@ fn cmd_bench(sub: BenchCmd) -> Result<()> {
             let exit = bench::gate::run(&baseline, &new,
                 config.as_deref(), noise.as_deref())?;
             if exit != 0 { std::process::exit(exit); }
+            Ok(())
+        }
+        BenchCmd::Corpus { path, json, mode, toolchain, gc } => {
+            // Discover nova-cli path (self).
+            let self_exe = std::env::current_exe()
+                .map_err(|e| anyhow!("locate self: {}", e))?;
+            let files = if path.is_dir() {
+                bench::corpus::list_corpus_files(&path)?
+            } else {
+                vec![path.clone()]
+            };
+            if files.is_empty() {
+                return Err(usage_err(format!("no .nv files in {}", path.display())));
+            }
+            eprintln!("nova bench corpus: {} files", files.len());
+            let mut entries = Vec::with_capacity(files.len());
+            for f in &files {
+                eprintln!("nova bench corpus: measuring {}", f.display());
+                let e = bench::corpus::measure_file(
+                    &self_exe, f, &gc, &mode, &toolchain)?;
+                entries.push(e);
+            }
+            if json {
+                let v = bench::corpus::render_json(&entries);
+                println!("{}", serde_json::to_string_pretty(&v)?);
+            } else {
+                print!("{}", bench::corpus::render_terminal(&entries));
+            }
             Ok(())
         }
         BenchCmd::CpuInstrCheck => {
